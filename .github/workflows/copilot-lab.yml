@@ -1,0 +1,313 @@
+# The Copilot CLI discovery lab (TCL-970, moved off per-PR CI by TCL-1046).
+#
+# This is the suite that measures COPILOT's own behaviour: its permission
+# grammar and deny-tool syntax, its native sandbox flags and backends, its wire
+# shape, its platform cache layout. It runs the REAL pinned CLI against a
+# deterministic localhost mock provider and diffs committed goldens.
+#
+# It does not run on every push, and that is the point. The CLI version is
+# pinned, so a third-party binary's behaviour cannot change between two of our
+# pushes — asking these questions per-PR re-proved a constant for about nine
+# minutes of runner time a run, and made a PTY-timing flake a blocker on
+# changes that had nothing to do with Copilot. The scenarios where TCLAUDE's
+# own code meets the CLI are the ones that can regress per-push, and those stay
+# in ci.yml's `copilot-smoke` job.
+#
+# When this runs:
+#
+#   - On demand, which is the important one. Bumping the pinned CLI means
+#     running this workflow and READING THE GOLDEN DIFF: that diff is the
+#     compatibility evidence the suite exists to produce.
+#   - Automatically on any PR that touches the fixture package, the Copilot
+#     harness itself, or this workflow — the changes that can invalidate the
+#     evidence from our side.
+#
+# Credential-free, like the smoke job: COPILOT_PROVIDER_BASE_URL activates
+# BYOK mode, which the CLI documents as not requiring GitHub authentication,
+# and the runner scrubs every token variable from the child environment so a
+# regression back into an auth dependency fails here rather than passing on a
+# logged-in machine.
+name: Copilot lab
+
+on:
+  workflow_dispatch:
+  pull_request:
+    # Same set as ci.yml's, so a PR cannot get the lab without the smoke.
+    branches: [main, main-codex, implement-stable-agent-identity, dnd-palette]
+    paths:
+      - 'pkg/claude/harness/copilotfixture/**'
+      - 'pkg/claude/harness/copilot*.go'
+      - '.github/workflows/copilot-lab.yml'
+      # The smoke job's npm spec lives here. Bumping it without running the lab
+      # is how the two pins drift apart, so a change to it earns a lab run.
+      - '.github/workflows/ci.yml'
+      # Sourced by the Linux arm's sandbox provisioning, which degrades to a
+      # warning rather than a failure when its helper goes missing.
+      - 'scripts/lib/smoke/common.sh'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  # Two platforms, with DIFFERENT scopes, and the asymmetry is deliberate.
+  #
+  # The compatibility evidence (wire shape, session layout, exit codes, event
+  # stream) is not OS-specific, so running all of it twice would buy a
+  # duplicate answer at double the cost. What IS OS-specific is anything
+  # touching a security boundary or a platform path:
+  #
+  #   - Copilot's own sandbox (TCL-977): bubblewrap on Linux, Seatbelt on
+  #     macOS, and a finding about one kernel is not a finding about the other.
+  #   - tclaude's outer layer (TCL-978): the baseline's package cache moves to
+  #     ~/Library/Caches/copilot on macOS and the device-id file to
+  #     ~/Library/Application Support/Microsoft/DeveloperTools — two different
+  #     Library trees, neither XDG-shaped. That last one was DISCOVERED by this
+  #     macOS arm refuting the catalog's original claim, which is the whole
+  #     argument for the arm existing.
+  lab:
+    name: Copilot CLI lab (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-latest
+            # Everything: the compatibility fixtures and the sandbox ones.
+            run_filter: TestCopilot
+            # Below any healthy run; catches "the gate variable was renamed and
+            # the whole suite silently skipped", which is the failure mode a
+            # green-because-nothing-ran job actually has. See the gate step.
+            # Observed on a real run: 74 matched, ~4 legitimately skip.
+            min_passes: 60
+            # Table rows, counted separately because a parent whose subtests
+            # ALL skipped still prints `--- PASS: Parent` — so the floor above
+            # is blind to exactly the scenarios permission_contract.json cites.
+            # Observed on the same run: 136 across both steps.
+            min_subtest_passes: 100
+          - platform: macos
+            runner: macos-latest
+            # The Seatbelt half of TCL-977's evidence, plus TCL-978's platform
+            # and assert-off scenarios, plus the two scenarios that are
+            # macOS-only BY NATURE: they need a runner whose $TMPDIR is spelled
+            # /var/folders/… while the kernel's directory is
+            # /private/var/folders/…, which is the entire defect behind
+            # TCL-987. On Linux they have no alternate spelling to supply and
+            # skip themselves, so this arm is the only place they are evidence.
+            run_filter: TestCopilotNativeSandbox|TestCopilotSandboxBaseline|TestCopilotDefaultCachePlacement|TestCopilotPackageCacheIsExecutable|TestCopilotInnerSandbox|TestCopilotLegacyConfig|TestCopilotStartupDialsOnlyContractedHosts|TestCopilotConvStoreMatchesTheUnresolvedCwdSpelling|TestCopilotPermissionPathGrants|TestCopilotDirTrust
+            min_passes: 15
+            # Deliberately slack: no macOS run has been measured since the
+            # split, so this is sized to catch a wholesale skip and nothing
+            # finer. Tighten it from the first green run's numbers.
+            min_subtest_passes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          # This job runs `npm install --global` and then a third-party CLI.
+          # Neither has any business seeing a persisted git credential, and the
+          # job only needs the source tree.
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Node for the Copilot CLI
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      # The version is pinned in pkg/claude/harness/copilotfixture/version.go
+      # and re-asserted by the suite itself in lab mode, so an install drift
+      # cannot pass silently. Keep the two in sync when bumping — and note that
+      # ci.yml's smoke job pins independently and does NOT assert the pin,
+      # because its scenarios are behavioural.
+      - name: Install pinned Copilot CLI
+        shell: bash
+        run: |
+          npm install --global @github/copilot@1.0.77
+          copilot --version
+
+      # Copilot's Linux sandbox backend is bubblewrap, and the native-sandbox
+      # scenarios assert real enforcement wherever it can start. Provisioning
+      # it here is what keeps the ENFORCING arm running instead of the
+      # fail-closed one: `bwrap` on PATH is not sufficient, the kernel must
+      # also permit an unprivileged user namespace, which Ubuntu's AppArmor
+      # restricts by default. Relaxing it on an ephemeral runner is safe and is
+      # verified below rather than assumed.
+      - name: Provision the Linux sandbox backend
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          source "$GITHUB_WORKSPACE/scripts/lib/smoke/common.sh"
+          if declare -F smoke::apt_update >/dev/null 2>&1; then
+            smoke::apt_update
+          else
+            echo "::warning title=Missing smoke helper::smoke::apt_update was not found after sourcing common.sh. This checkout may predate the helper; rebase onto main is the likely fix. Falling back to plain apt-get update without Microsoft-source isolation."
+            if ! sudo apt-get update; then
+              echo "::error::apt-get update failed while using the stale-PR fallback; inspect the apt output above"
+              exit 1
+            fi
+          fi
+          sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          bwrap --ro-bind / / --proc /proc --dev /dev true \
+            && echo "bwrap can create a namespace" \
+            || echo "::warning::bwrap cannot create a namespace; the enforcing arm will not run"
+
+      # -parallel 8 deliberately oversubscribes the runner's 4 vCPUs, and is
+      # not a CPU bet. These scenarios are overwhelmingly IDLE: each launches a
+      # CLI on a pseudo-terminal and then waits — for the screen to stop
+      # redrawing, for a quiet window to close, for a prompt nobody will ever
+      # answer. Sized to cores, this job spent most of ten minutes with the
+      # runner parked.
+      #
+      # What makes the oversubscription safe is that no scenario classifies on
+      # absolute time: every verdict is relative to the CLI's own output — it
+      # settled when its evidence arrived, it is blocked when its transcript
+      # stood still — and the absolute deadlines are outer bounds set well
+      # above any observed run. Contention stretches a scenario; it does not
+      # change what the scenario concludes.
+      #
+      # 2x is what was VERIFIED, not assumed: the suite was run green under a
+      # deliberately harsher budget — pinned to two cores at -parallel 4, the
+      # same 2x ratio this line asks of a four-core runner — and the timing
+      # constants (blockedQuiet in particular) were sized from the output gaps
+      # that run produced. The scenarios that could not take it are sequential
+      # and say why: see requireSmokeParallel, and the PTY TIMING lines in this
+      # job's own log, which are what a future re-tuning should argue from.
+      - name: Copilot lab suite
+        shell: bash
+        env:
+          TCLAUDE_COPILOT_FIXTURE_SMOKE: "1"
+          TCLAUDE_COPILOT_FIXTURE_LAB: "1"
+        run: |
+          set -o pipefail
+          go test ./pkg/claude/harness/copilotfixture/... \
+            -run '${{ matrix.run_filter }}' -v -count=1 -parallel 8 -timeout 1500s 2>&1 \
+            | tee "$RUNNER_TEMP/copilot-lab.log"
+
+      # A skipped test still exits 0, and the suite is gated on TWO env vars —
+      # a typo or a rename in either would turn this job into a silent no-op
+      # that reports success forever.
+      #
+      # Be precise about what this catches and what it does not. These are
+      # FLOORS, not a manifest: they catch the real failure mode (a gate went
+      # soft and nothing ran) and they cannot catch one scenario quietly
+      # starting to skip. Enumerating all ~110 names is what the previous
+      # incarnation did, and the list rotted faster than it caught anything.
+      #
+      # TWO floors, because one is not enough. Go prints `--- PASS: Parent`
+      # for a table whose subtests every one SKIPPED, so a top-level count is
+      # blind to precisely the rows permission_contract.json cites as evidence.
+      # The indented count is what sees those.
+      #
+      # Skips are printed rather than gated because several are legitimate and
+      # platform-dependent (the bubblewrap-argv policy scenario has no Seatbelt
+      # counterpart; the cwd-spelling scenarios have no alternate spelling on
+      # Linux). Read them; they are the honest surface here.
+      - name: Reject a silently skipped lab
+        shell: bash
+        run: |
+          log="$RUNNER_TEMP/copilot-lab.log"
+          passes=$(grep -cE '^--- PASS: ' "$log" || true)
+          # Leading whitespace is how `go test -v` marks a subtest.
+          subtests=$(grep -cE '^[[:space:]]+--- PASS: ' "$log" || true)
+          {
+            echo "### Copilot lab (${{ matrix.platform }})"
+            echo
+            echo "Scenario passes: **$passes** (floor: ${{ matrix.min_passes }})"
+            echo "Table-row passes: **$subtests** (floor: ${{ matrix.min_subtest_passes }})"
+            echo
+            echo "Skipped:"
+            echo '```'
+            grep -E '^[[:space:]]*--- SKIP: ' "$log" || echo "(none)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if (( passes < ${{ matrix.min_passes }} )); then
+            echo "::error::Only $passes lab scenarios passed, below the floor of ${{ matrix.min_passes }}. The suite gate (TCLAUDE_COPILOT_FIXTURE_SMOKE / TCLAUDE_COPILOT_FIXTURE_LAB) has almost certainly gone soft, or the run filter no longer matches."
+            exit 1
+          fi
+          if (( subtests < ${{ matrix.min_subtest_passes }} )); then
+            echo "::error::Only $subtests lab table rows passed, below the floor of ${{ matrix.min_subtest_passes }}. A parent test whose rows all skip still reports PASS, so this is the gate that sees it — the permission matrix rows cited by permission_contract.json are the likely casualty."
+            exit 1
+          fi
+          # The contract guard is named explicitly because it is the one test
+          # whose whole job is to notice that other tests went missing. Linux
+          # only: it is not in the macOS run filter, so requiring it there
+          # would demand a pass from a scenario that never ran.
+          if [[ "${{ matrix.platform }}" == "linux" ]] &&
+             ! grep -qE '^--- PASS: TestCopilotPermissionContractIsBackedByScenarios ' "$log"; then
+            echo "::error::The permission-contract guard did not pass; permission_contract.json may cite scenarios that no longer exist."
+            exit 1
+          fi
+
+      # The scenarios above ran with a usable backend. The single measurement
+      # that establishes TCL-977's conclusion — that Copilot's built-in file
+      # edits never enter the OS sandbox — can only be made on a host where the
+      # backend CANNOT start: it is the run where an edit lands while every
+      # shell command fails. Requiring a usable backend everywhere (the step
+      # after this one) would leave that arm dead in CI, so the decisive
+      # evidence for a security capability decision would have no automated
+      # coverage at all.
+      #
+      # Re-restricting the AppArmor knob is the same condition a hardened host
+      # or a nested container presents, which is the category the arm exists to
+      # describe.
+      - name: Copilot sandbox lab with the backend denied
+        if: matrix.platform == 'linux'
+        shell: bash
+        env:
+          TCLAUDE_COPILOT_FIXTURE_SMOKE: "1"
+          TCLAUDE_COPILOT_FIXTURE_LAB: "1"
+        run: |
+          set -o pipefail
+          # Tolerated exactly like the provisioning step's write. On a runner
+          # without this knob the raw sysctl error would preempt the descriptive
+          # gate below, which was written for precisely that case.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1 || true
+          go test ./pkg/claude/harness/copilotfixture/... \
+            -run 'TestCopilotNativeSandbox' -v -count=1 -parallel 8 -timeout 900s 2>&1 \
+            | tee "$RUNNER_TEMP/copilot-lab-nobackend.log"
+
+      - name: Require the backend-denied arm to have run
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          log="$RUNNER_TEMP/copilot-lab-nobackend.log"
+          if ! grep -q 'OS sandbox backend available: false' "$log"; then
+            echo "::error::The backend-denied step still reported a usable sandbox backend, so the decisive in-process-edit arm did not run. Denying unprivileged user namespaces no longer works on this runner; find another way to deny the backend rather than dropping the arm."
+            exit 1
+          fi
+          grep -qE '^--- PASS: TestCopilotNativeSandboxBuiltinEditsAreInProcessOnly ' "$log" || {
+            echo "::error::The decisive scenario did not pass in the backend-denied arm."
+            exit 1
+          }
+
+      # The sandbox scenarios assert real enforcement where Copilot's OS backend
+      # can start and fail-closed degradation where it cannot, so they stay green
+      # either way — which is exactly why the ARM has to be checked separately.
+      # A runner that silently lost its backend would keep this job green while
+      # quietly stopping to test the thing the job exists for.
+      - name: Require the enforcing sandbox arm
+        shell: bash
+        run: |
+          log="$RUNNER_TEMP/copilot-lab.log"
+          verdicts="$(grep -o 'OS sandbox backend available: [a-z]*' "$log" | sort -u || true)"
+          {
+            echo "### Copilot sandbox backend"
+            echo
+            echo '```'
+            echo "${verdicts:-(no verdict logged)}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if ! grep -q 'OS sandbox backend available: true' "$log"; then
+            echo "::error::Copilot's OS sandbox backend never started on this runner, so the native-sandbox scenarios only exercised their fail-closed arm. On Linux the provisioning step (bubblewrap + unprivileged user namespaces) has regressed; on macOS Seatbelt is expected to be present unconditionally. Note this checks the FIRST log only; the backend-denied arm has its own gate above."
+            exit 1
+          fi

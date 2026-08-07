@@ -346,7 +346,7 @@ func webFetchCatalog(t *testing.T, online bool, args ...string) []string {
 // tool under study — an MCP toolset appearing, say — this arm would not be the
 // narrow probe it is described as.
 func TestCopilotPermissionWebFetchNeedsTheOnlineArm(t *testing.T) {
-	requireSmokeParallel(t)
+	requireLabParallel(t)
 
 	offline := webFetchCatalog(t, false)
 	assert.NotContains(t, offline, webFetchToolName,
@@ -390,7 +390,7 @@ func TestCopilotPermissionWebFetchNeedsTheOnlineArm(t *testing.T) {
 // component that ignored the proxy entirely would have nothing to reach — a
 // convention this leans on, not a guarantee it asserts.
 func TestCopilotPermissionWebFetchEgressWallIsInForce(t *testing.T) {
-	requireSmokeParallel(t)
+	requireLabParallel(t)
 
 	turns := []copilotfixture.Turn{
 		{ToolCall: &copilotfixture.ToolCall{
@@ -471,7 +471,7 @@ func TestCopilotPermissionWebFetchGate(t *testing.T) {
 	} {
 		rows = append(rows, tc.name)
 		t.Run(tc.name, func(t *testing.T) {
-			requireSmokeParallel(t)
+			requireLabParallel(t)
 			verdict, mock, capture, res := webFetchRun(t, webFetchTurns(), webFetchProbeHost, tc.args)
 			assert.Equal(t, tc.want, verdict.Outcome)
 
@@ -526,7 +526,7 @@ func TestCopilotPermissionWebFetchGate(t *testing.T) {
 // that do, and the turn continues — no prompt, with NO permission flags granted
 // anywhere in the launch.
 func TestCopilotPermissionWebFetchExclusionRemovesTheTool(t *testing.T) {
-	requireSmokeParallel(t)
+	requireLabParallel(t)
 
 	base := webFetchCatalog(t, true)
 	require.Contains(t, base, webFetchToolName,
@@ -613,7 +613,7 @@ func TestCopilotPermissionWebFetchURLDenyEnforcement(t *testing.T) {
 	} {
 		rows = append(rows, tc.name)
 		t.Run(tc.name, func(t *testing.T) {
-			requireSmokeParallel(t)
+			requireLabParallel(t)
 			args := append([]string{"--allow-all-tools", "--no-ask-user"}, tc.rule...)
 			verdict, mock, capture, res := webFetchRun(t, webFetchTurns(), webFetchProbeHost, args)
 

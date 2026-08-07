@@ -853,21 +853,51 @@ them would be a large, version-coupled blob that churns on every CLI bump while
 proving nothing tclaude depends on. UUIDs, timestamps, ports, and absolute
 paths are normalized before anything is written.
 
-Running it, given the pinned CLI on PATH:
+The package runs in two modes, and the split is what keeps a discovery suite
+off the critical path of every PR.
+
+**Regression mode** — `TCLAUDE_COPILOT_FIXTURE_SMOKE=1` alone:
 
 ```bash
 TCLAUDE_COPILOT_FIXTURE_SMOKE=1 go test ./pkg/claude/harness/copilotfixture/...
 ```
 
-Without that variable the real-binary scenarios skip and only the (binary-free)
-sanitizer unit tests run, so `go test ./...` stays green on a machine with no
-Copilot install. CI runs the gated job on Linux and fails if any scenario
-reports anything other than an explicit pass.
+runs only the scenarios where *tclaude's own code* meets the real CLI: the
+production spawner's command string, the directory-trust seeder, the installed
+hook file, the conv-store, `tclaude ask`'s capture and exact resume, the
+soft-exit injection, and the credential-free turn and tool round trip they all
+rest on. These assert behaviour, so they hold for any release that still
+honours the contract — they neither check the version pin nor diff a golden.
+This is what CI's `copilot-smoke` job runs on every push, on Linux, from the
+scenario list in `.github/copilot-smoke-scenarios.txt` (which is both the
+`-run` filter and the anti-skip gate, so the two cannot drift).
 
-Version drift is deliberately manual: the pin lives in `version.go`, the test
-asserts `copilot --version` matches it, and re-recording is an explicit
-`-update` run whose diff **is** the compatibility evidence — so a floating or
-auto-updating install cannot absorb a contract change silently.
+**Lab mode** — add `TCLAUDE_COPILOT_FIXTURE_LAB=1`:
+
+```bash
+TCLAUDE_COPILOT_FIXTURE_SMOKE=1 TCLAUDE_COPILOT_FIXTURE_LAB=1 \
+  go test ./pkg/claude/harness/copilotfixture/...
+```
+
+runs the full discovery suite — Copilot's own permission grammar, deny-tool
+syntax, native sandbox flags and backends, wire goldens, platform cache layout
+— and asserts the version pin and the committed goldens. It does not run per
+push: the CLI version is pinned, so those answers cannot change between two of
+our commits. It runs from the `Copilot lab` workflow, on demand and on any PR
+touching the fixture package or the Copilot harness.
+
+Without either variable the real-binary scenarios skip and only the
+(binary-free) sanitizer unit tests run, so `go test ./...` stays green on a
+machine with no Copilot install.
+
+Version drift is deliberately manual, and belongs to lab mode: the pin lives in
+`version.go`, the lab asserts `copilot --version` matches it, and re-recording
+is an explicit `-update` run (which implies lab mode) whose diff **is** the
+compatibility evidence — so a floating or auto-updating install cannot absorb a
+contract change silently. **Bumping the CLI means running the lab workflow and
+reading that diff.** The per-PR job pins its own npm spec in the workflow, the
+same way the OpenCode, Codex and Claude Code smokes do, purely so an upstream
+publish cannot redden unrelated PRs.
 
 #### Copilot sandbox baseline
 
