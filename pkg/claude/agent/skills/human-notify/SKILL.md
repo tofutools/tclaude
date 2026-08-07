@@ -106,8 +106,8 @@ private data directory, and the Messages reader exposes an authenticated
 download button, so this also works through remote dashboard access. The reader
 renders some types in place rather than only offering the download: an image
 gets a thumbnail and a zoomable preview, and a Markdown file up to 1 MiB is
-rendered directly in the message, with a **View source** control for the
-original text — so a written report is better sent as `report.md` than as
+rendered directly in the message, with a **View** control that opens it in a
+resizable viewer (whose Rendered/Source toggle reaches the original text) — so a written report is better sent as `report.md` than as
 `report.txt`. A rendered report can illustrate itself: attach the images
 alongside it (`--attach report.md --attach chart.png`) and reference one by its
 filename (`![the chart](chart.png)`) to have it appear in the document. An

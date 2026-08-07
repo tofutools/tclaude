@@ -42,13 +42,12 @@ function okText(body) {
   return { ok: true, status: 200, text: async () => body };
 }
 
-function controls(mounted) {
-  const found = {};
-  for (const button of mounted.container.querySelectorAll('.human-attachment-markdown-trigger')) {
-    if (/View source/.test(button.textContent)) found.source = button;
-    else if (/Open/.test(button.textContent)) found.open = button;
-  }
-  return found;
+// The card carries exactly one control. The source is not a second button on
+// it — it is a mode of the viewer that button opens.
+function viewControl(mounted) {
+  const found = mounted.container.querySelectorAll('.human-attachment-markdown-trigger');
+  assert.equal(found.length, 1, 'the attachment card offers exactly one viewer control');
+  return found[0];
 }
 
 async function mount(t, respond, item = attachment, messageID = 42) {
@@ -89,12 +88,13 @@ test('a Markdown attachment renders its document in the message', async (t) => {
 
 // The message column is narrow, so a long document needs the same dedicated
 // viewer an image attachment gets.
-test('the open control shows the rendered document in a dedicated viewer', async (t) => {
+test('the view control shows the rendered document in a dedicated viewer', async (t) => {
   const { harness, mounted } = await mount(t, () => okText(document));
 
-  const trigger = controls(mounted).open;
-  assert.ok(trigger, 'a Markdown attachment offers an open control');
-  assert.equal(trigger.getAttribute('aria-label'), 'Open plan.md in the document viewer');
+  const trigger = viewControl(mounted);
+  assert.ok(trigger, 'a Markdown attachment offers a viewer control');
+  assert.match(trigger.textContent, /View/);
+  assert.equal(trigger.getAttribute('aria-label'), 'View plan.md in the document viewer');
 
   await harness.act(() => {
     trigger.focus();
@@ -130,39 +130,37 @@ test('the open control shows the rendered document in a dedicated viewer', async
   await mounted.unmount();
 });
 
-test('the control opens the original Markdown source', async (t) => {
+// The original Markdown is still reachable — from inside the viewer, which is
+// the only place it is offered now.
+test('the viewer reaches the original Markdown source through its toggle', async (t) => {
   const { harness, mounted } = await mount(t, () => okText(document));
 
-  const trigger = controls(mounted).source;
-  assert.ok(trigger, 'a Markdown attachment offers a source control');
-  assert.match(trigger.textContent, /View source/);
-  assert.equal(trigger.getAttribute('aria-label'), 'View the Markdown source of plan.md');
+  const trigger = viewControl(mounted);
   assert.ok(!trigger.disabled, 'the control is live once the document has loaded');
-
   await harness.act(() => {
     trigger.focus();
     trigger.click();
   });
+  await settle(harness);
 
-  const overlay = mounted.container.querySelector('.markdown-preview-overlay');
-  assert.ok(overlay, 'the control opens the modal source view');
-  const dialog = overlay.querySelector('[role="dialog"]');
-  assert.equal(dialog.getAttribute('aria-modal'), 'true');
-  assert.equal(dialog.querySelector('h2').textContent, 'plan.md');
+  const dialog = mounted.container.querySelector('.markdown-preview-overlay [role="dialog"]');
+  assertSameNode(harness.document.activeElement, dialog.querySelector('.markdown-preview-close'),
+    'the viewer focuses its close control');
+
+  const sourceMode = dialog.querySelectorAll('.markdown-preview-mode')[1];
+  await harness.act(() => { sourceMode.click(); });
   assert.equal(dialog.querySelector('.markdown-preview-source').textContent, document,
-    'the source view shows the unrendered text verbatim');
+    'the source mode shows the unrendered text verbatim');
   assert.equal(dialog.querySelector('.markdown-document'), null,
-    'the overlay is the source, not a second rendering');
+    'the source mode is not a second rendering');
   assert.equal(dialog.querySelector('.markdown-preview-download').getAttribute('href'),
     '/api/human-messages/42/attachments/4');
-  assertSameNode(harness.document.activeElement, dialog.querySelector('.markdown-preview-close'),
-    'the source view focuses its close control');
 
   await harness.act(() => {
     harness.fireEvent(harness.document, 'keydown', { key: 'Escape' });
   });
   assert.equal(mounted.container.querySelector('.markdown-preview-overlay'), null,
-    'Escape closes the topmost source view');
+    'Escape closes the topmost viewer');
   assertSameNode(harness.document.activeElement, trigger,
     'closing restores focus to the invoker');
   await mounted.unmount();
@@ -179,17 +177,14 @@ test('the source control is inert until the document has been read', async (t) =
     <${MarkdownAttachment} messageID=${42} attachment=${attachment} />
   `);
 
-  const pending = controls(mounted);
-  assert.equal(pending.open.disabled, true, 'the open control is disabled while the fetch is in flight');
-  assert.equal(pending.source.disabled, true, 'the source control is disabled while the fetch is in flight');
+  assert.equal(viewControl(mounted).disabled, true,
+    'the control is disabled while the fetch is in flight');
   assert.match(mounted.container.querySelector('.markdown-attachment-state').textContent,
     /loading document/i);
 
   await harness.act(async () => { release(); await new Promise((resolve) => setTimeout(resolve, 0)); });
   await settle(harness);
-  const ready = controls(mounted);
-  assert.equal(ready.open.disabled, false);
-  assert.equal(ready.source.disabled, false);
+  assert.equal(viewControl(mounted).disabled, false);
   await mounted.unmount();
 });
 

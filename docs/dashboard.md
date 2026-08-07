@@ -1593,11 +1593,12 @@ is **rendered in the message itself**, on its own row inside the attachment card
 headings, lists, tables, fenced code, block quotes, links, and images. A report
 an agent wrote to be read is the content of that notification, so it is not put
 behind a control. The card keeps its file line, size, and download link above the
-document, and adds two controls that open the same modal viewer an image
-attachment gets, for a document the message column is too narrow to read:
-**Open** lands on the rendered document, **View source** on the original
-Markdown. A Rendered/Source toggle in the viewer's header switches between them,
-so arriving in either mode is not a dead end. Both the quick notification reader
+document, and adds a **View** control that opens the same modal viewer an image
+attachment gets, for a document the message column is too narrow to read. It
+lands on the rendered document; the original Markdown is a click further, on the
+viewer's own Rendered/Source toggle. The card carries one control rather than
+two because that toggle already switches between the modes, and the card — a
+filename, a media type, a size, a download link — has no width to spare. Both the quick notification reader
 and Messages render it, and both share the same components.
 
 The document is fetched when the message is shown; a file the cleanup already
