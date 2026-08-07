@@ -36,8 +36,11 @@ func TestDashboardHTML_HumanAttachmentWired(t *testing.T) {
 	// fixed }` at the top of the stylesheet would otherwise pin it to the
 	// window instead of the dialog. Behaviour: jstest/dialog-resize.test.mjs
 	// covers the resizing itself.
-	if !strings.Contains(css, ".image-preview-footer {\n  position: static;") {
-		t.Error("the image viewer footer must reset position, or the page footer rule tears it out of the dialog")
+	footerRule, _, _ := strings.Cut(css[strings.Index(css, ".image-preview-footer {"):], "}")
+	for _, reset := range []string{"position: static", "z-index: auto"} {
+		if !strings.Contains(footerRule, reset) {
+			t.Errorf("the image viewer footer must reset %q, or the page-level footer rule reaches into the dialog", reset)
+		}
 	}
 	if !strings.Contains(css, ".dialog-resizer {") {
 		t.Error("dashboard CSS is missing the resize grip shared by the attachment viewers")

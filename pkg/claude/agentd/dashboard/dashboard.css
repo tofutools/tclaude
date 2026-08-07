@@ -1392,13 +1392,16 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 }
 .image-preview-state strong { color: #f0f6fc; font-size: 13px; }
 .image-preview-state span { color: #8b949e; font-size: 11px; }
-/* position:static undoes the page-level `footer { position: fixed }` at the top
-   of this file, which is meant for the dashboard's status bar and would
-   otherwise tear this footer out of the dialog and pin it to the window. The
-   right padding clears the corner grip; .grow is the spacer that pushes the
-   zoom cluster over to meet it. */
+/* This block undoes the page-level `footer { … }` rule at the top of the file,
+   which is meant for the dashboard's status bar and reaches this footer too:
+   `position` would tear it out of the dialog and pin it to the window;
+   `z-index` applies even unpositioned (a flex item takes it), and at 40 it
+   painted over the corner grip in the same stacking context and swallowed its
+   pointer events; `height` ties it to the status bar's --footer-h. The right
+   padding clears the grip; .grow is the spacer that pushes the zoom cluster
+   over to meet it. */
 .image-preview-footer {
-  position: static;
+  position: static; z-index: auto; height: auto;
   display: flex; align-items: center; gap: 8px; min-height: 54px;
   padding: 0 26px 0 14px; border-top: 1px solid #30363d; background: #161b22;
 }

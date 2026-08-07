@@ -225,6 +225,29 @@ test('the image viewer is resizable too, under its own pref key', async (t) => {
   await mounted.unmount();
 });
 
+// The reason the gesture persists as it runs rather than only on release: a
+// viewer can go away mid-drag (Escape, a list refresh), and the size the
+// operator dragged to must not go with it.
+test('a viewer torn down mid-drag keeps the size that was dragged', async (t) => {
+  const { harness, prefs, mounted, dialog } = await openMarkdownViewer(t);
+  const grip = dialog.querySelector('.dialog-resizer');
+  pinSize(dialog, 900, 860);
+
+  await harness.act(() => {
+    harness.fireEvent(grip, 'pointerdown', { button: 0, pointerId: 8, clientX: 0, clientY: 0 });
+    harness.fireEvent(grip, 'pointermove', { pointerId: 8, clientX: 60, clientY: 0 });
+  });
+  // No pointerup: the overlay closes out from under the gesture.
+  await harness.act(() => { harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }); });
+  await settle(harness);
+
+  assert.equal(mounted.container.querySelector('.markdown-preview-overlay'), null);
+  assert.deepEqual(prefs.writes.at(-1),
+    ['tclaude.dash.attachmentViewer.markdown.size', JSON.stringify({ w: 1020, h: 860 })],
+    'the dragged size survives the teardown');
+  await mounted.unmount();
+});
+
 // Every notification card with an attachment mounts its viewer up front, so a
 // size kept in component state would stick only to the card that was dragged —
 // and dragging a second card would start from the default and overwrite the

@@ -166,9 +166,11 @@ export function useDialogResize({ dialogRef, prefKey }) {
       // Doubled: the dialog is centred, so it grows away from the pointer by
       // as much as it grows toward it.
       resizeBy((moveEvent.clientX - startX) * 2, (moveEvent.clientY - startY) * 2, start);
-      // Persisted as the drag runs, not only on release: dashPrefs debounces
-      // per key, so this is one write either way, and a dialog that unmounts
-      // mid-gesture (Escape, a list refresh) still keeps the size.
+      // Persisted as the drag runs, not only on release, so a dialog that
+      // unmounts mid-gesture (Escape, a list refresh) still keeps the size.
+      // dashPrefs coalesces this to at most one write per 400ms rather than one
+      // per move — a handful of upserts across a drag, and the last move always
+      // lands in the pending batch, so the stored value is the final one.
       persist();
     };
     const onUp = () => {
