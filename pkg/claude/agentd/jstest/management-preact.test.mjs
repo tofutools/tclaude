@@ -1860,6 +1860,9 @@ test('sandbox pre-launch validation mirrors daemon limits without reserving PATH
   }));
   assert.deepEqual(model.sandboxPreLaunchValidation(valid).errors, [],
     'all four inclusive maxima and reserved-but-intentional exports are accepted');
+  assert.deepEqual(model.sandboxPreLaunchExportNames('PATH,,  TOOL_HOME,\t,'),
+    ['PATH', 'TOOL_HOME'],
+    'repeated and trailing separators do not create empty export names');
 
   const invalid = [
     { name: 'duplicate', script: 'true\n', exports: [] },
