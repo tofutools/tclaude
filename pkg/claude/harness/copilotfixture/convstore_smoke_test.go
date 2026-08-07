@@ -149,7 +149,7 @@ func TestCopilotConvStoreReadsRealSessionState(t *testing.T) {
 // into ListConvs and Resolve exactly as the environment produced it. Resolving
 // it first is what would make the test pass against the old lexical comparison.
 func TestCopilotConvStoreMatchesTheUnresolvedCwdSpelling(t *testing.T) {
-	requireSmoke(t)
+	requireLab(t)
 
 	dirs := copilotfixture.NewSandboxDirs(t)
 	if dirs.UnresolvedWorkDir == dirs.WorkDir {
@@ -205,7 +205,7 @@ func TestCopilotConvStoreMatchesTheUnresolvedCwdSpelling(t *testing.T) {
 // how tclaude carries a launch-time title, so a session started that way must
 // surface as an operator override rather than a generated summary.
 func TestCopilotConvStoreReadsUserNamedSession(t *testing.T) {
-	requireSmoke(t)
+	requireLab(t)
 
 	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{{Text: "MOCK ANSWER"}})
 	dirs := copilotfixture.NewSandboxDirs(t)
@@ -234,7 +234,7 @@ func TestCopilotConvStoreReadsUserNamedSession(t *testing.T) {
 // workspace.yaml's git block. It is the reason no SQLite read is needed: the
 // branch is in the per-session file, not only in session-store.db.
 func TestCopilotConvStoreReadsGitContext(t *testing.T) {
-	requireSmoke(t)
+	requireLab(t)
 
 	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{{Text: "MOCK ANSWER"}})
 	dirs := copilotfixture.NewSandboxDirs(t)
@@ -256,7 +256,7 @@ func TestCopilotConvStoreReadsGitContext(t *testing.T) {
 // COPILOT_HOME the CLI has never run under lists nothing and errors on
 // nothing, so a fresh install is indistinguishable from "no conversations".
 func TestCopilotConvStoreEmptyOnUntouchedHome(t *testing.T) {
-	requireSmoke(t)
+	requireLab(t)
 
 	dirs := copilotfixture.NewSandboxDirs(t)
 	store := convStore(t, dirs.Home)

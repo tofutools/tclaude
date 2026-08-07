@@ -1,0 +1,37 @@
+# The per-PR Copilot regression set (TCL-1046).
+#
+# Every scenario here measures TCLAUDE's code against the real Copilot CLI, so
+# it can regress on any push. Scenarios that measure COPILOT's own behaviour
+# live in the discovery lab instead (TCLAUDE_COPILOT_FIXTURE_LAB=1, run from
+# .github/workflows/copilot-lab.yml) — a pinned third-party binary cannot
+# change between two of our pushes, so re-proving it per-PR costs minutes and
+# proves nothing.
+#
+# This file is BOTH the `-run` filter and the anti-skip gate in the
+# copilot-smoke job, so the two cannot drift: a scenario that is renamed
+# without being renamed here stops matching the filter, does not run, and then
+# fails the gate. Adding a scenario means adding a line; moving one to the lab
+# means deleting a line and switching its requireSmoke* call to requireLab*.
+#
+# Blank lines and #-comments are ignored.
+
+# Our spawner's real argv reaches a provider and pins the session id.
+TestCopilotProductionSpawnerLaunches
+# Our directory-trust seeder clears the modal that would otherwise freeze
+# every unattended pane (TCL-973).
+TestCopilotDirTrustProductionSeedingClearsTheModal
+# Our hook installer's file actually fires from a real session.
+TestCopilotHooksFireFromTheInstalledFile
+# Our conv-store reads a real session-state database.
+TestCopilotConvStoreReadsRealSessionState
+# Caller-chosen --session-id is honoured and --resume continues it.
+TestCopilotSessionEnrollmentAndResume
+# Our `tclaude ask` capture: clean stdout, and an exact resume.
+TestCopilotAskCaptureIsCleanOnStdout
+TestCopilotAskResumesExactly
+# Our retire path really closes a pane mid-turn (TCL-1001).
+TestCopilotSoftExitCancelFirstExitsMidTurn
+# The baseline both of the above rest on: a credential-free BYOK turn
+# completes, and a tool call round-trips back as a second request.
+TestCopilotCredentialFreeTextTurn
+TestCopilotToolCallRoundTrip

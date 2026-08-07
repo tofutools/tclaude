@@ -303,7 +303,7 @@ func requireCompletionsWire(t *testing.T, opts copilotfixture.RunOptions) {
 // all — zero provider requests. A detached pane dies here, before any flag in
 // the proposed approval catalog has a chance to matter.
 func TestCopilotPermissionFolderTrustBlocksFirst(t *testing.T) {
-	requireSmokeParallel(t)
+	requireLabParallel(t)
 
 	verdict, mock, res := permissionRun(t, bashTurns(safeShellCommand), false,
 		copilotfixture.RunOptions{})
@@ -361,7 +361,7 @@ func TestCopilotPermissionTrustBypassSurface(t *testing.T) {
 	} {
 		rows = append(rows, tc.name)
 		t.Run(tc.name, func(t *testing.T) {
-			requireSmokeParallel(t)
+			requireLabParallel(t)
 			mock := copilotfixture.NewMockProvider(t, bashTurns(safeShellCommand))
 			dirs := copilotfixture.NewSandboxDirs(t)
 			args := tc.args
@@ -441,7 +441,7 @@ func TestCopilotPermissionToolApprovalGate(t *testing.T) {
 	} {
 		rows = append(rows, tc.name)
 		t.Run(tc.name, func(t *testing.T) {
-			requireSmokeParallel(t)
+			requireLabParallel(t)
 			verdict, mock, res := permissionRun(t, bashTurns(tc.command), true,
 				copilotfixture.RunOptions{
 					OmitAllowAllTools: !tc.allow,
@@ -502,7 +502,7 @@ func TestCopilotPermissionURLGateUnderToolApproval(t *testing.T) {
 	} {
 		rows = append(rows, tc.name)
 		t.Run(tc.name, func(t *testing.T) {
-			requireSmokeParallel(t)
+			requireLabParallel(t)
 			verdict, mock, res := permissionRun(t, bashTurns(urlShellCommand), true,
 				copilotfixture.RunOptions{OmitAllowAllTools: !tc.allow})
 			assert.Equal(t, tc.want, verdict.Outcome)
@@ -547,7 +547,7 @@ func TestCopilotPermissionAmbientAllowAllPromotes(t *testing.T) {
 	} {
 		rows = append(rows, tc.name)
 		t.Run(tc.name, func(t *testing.T) {
-			requireSmokeParallel(t)
+			requireLabParallel(t)
 			mock := copilotfixture.NewMockProvider(t, bashTurns(unsafeShellCommand))
 			dirs := copilotfixture.NewSandboxDirs(t)
 			// NOT trusted: the trust gate is the detector here, because it is
@@ -631,7 +631,7 @@ func TestCopilotPermissionDenyToolGrammar(t *testing.T) {
 	} {
 		rows = append(rows, tc.pattern)
 		t.Run(tc.pattern, func(t *testing.T) {
-			requireSmokeParallel(t)
+			requireLabParallel(t)
 			// The mock is what makes the two outcomes separable. An earlier
 			// version of this scenario ran with no provider at all, on the
 			// theory that argument validation happens before anything else --
@@ -691,7 +691,7 @@ func TestCopilotPermissionDenyToolGrammar(t *testing.T) {
 // it, so `--no-ask-user` is a no-op there and a headless scenario would report
 // the flag as working while measuring nothing.
 func TestCopilotPermissionNoAskUserRemovesTheTool(t *testing.T) {
-	requireSmokeParallel(t)
+	requireLabParallel(t)
 
 	catalog := func(t *testing.T, args ...string) []string {
 		t.Helper()
@@ -746,7 +746,7 @@ func TestCopilotPermissionNoAskUserRemovesTheTool(t *testing.T) {
 // starts refusing headlessly instead of auto-allowing, the PTY discipline this
 // file is built on has changed and somebody must re-read the reasoning.
 func TestCopilotPermissionHeadlessIsNotEvidence(t *testing.T) {
-	requireSmokeParallel(t)
+	requireLabParallel(t)
 
 	mock := copilotfixture.NewMockProvider(t, bashTurns(unsafeShellCommand))
 	dirs := copilotfixture.NewSandboxDirs(t)
@@ -1026,7 +1026,7 @@ func TestCopilotPermissionPathGrants(t *testing.T) {
 	} {
 		rows = append(rows, tc.name)
 		t.Run(tc.name, func(t *testing.T) {
-			requireSmokeParallel(t)
+			requireLabParallel(t)
 			dirs := copilotfixture.NewSandboxDirs(t)
 			// Pinned, so "the system temp dir" is something this scenario
 			// chose rather than a property of the host running it.
@@ -1111,7 +1111,7 @@ func TestCopilotPermissionAddDirWrites(t *testing.T) {
 	} {
 		rows = append(rows, tc.name)
 		t.Run(tc.name, func(t *testing.T) {
-			requireSmokeParallel(t)
+			requireLabParallel(t)
 			dirs := copilotfixture.NewSandboxDirs(t)
 			childTemp := filepath.Join(dirs.Root, "child-temp")
 			require.NoError(t, os.MkdirAll(childTemp, 0o755))
@@ -1165,7 +1165,7 @@ func TestCopilotPermissionFlagNameExactness(t *testing.T) {
 	} {
 		rows = append(rows, tc.name)
 		t.Run(tc.name, func(t *testing.T) {
-			requireSmokeParallel(t)
+			requireLabParallel(t)
 			mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{{Text: "MOCK PARSER PROBE"}})
 			dirs := copilotfixture.NewSandboxDirs(t)
 			copilotfixture.TrustFolder(t, dirs.Home, dirs.WorkDir)
@@ -1205,7 +1205,7 @@ func TestCopilotPermissionFlagNameExactness(t *testing.T) {
 // received a new prompt sends [system user assistant user] — the earlier
 // exchange followed by the new turn.
 func TestCopilotPermissionResumeSubmitsPrompt(t *testing.T) {
-	requireSmokeParallel(t)
+	requireLabParallel(t)
 
 	dirs := copilotfixture.NewSandboxDirs(t)
 	copilotfixture.TrustFolder(t, dirs.Home, dirs.WorkDir)
@@ -1290,7 +1290,7 @@ func TestCopilotPermissionInPaneAllowAllCannotOverrideDeny(t *testing.T) {
 	// three-phase conversation with a real terminal has no business racing
 	// three other CLIs for two cores when the whole scenario costs twelve
 	// seconds to run alone.
-	requireSmoke(t)
+	requireLab(t)
 
 	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{
 		// The launch prompt, answered with plain text so the session settles at

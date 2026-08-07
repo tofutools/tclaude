@@ -215,7 +215,7 @@ func exists(t *testing.T, path string) bool {
 // host instead of demanding a particular one. A file write that succeeds while
 // the sandbox cannot even be entered is a write that never entered it.
 func TestCopilotNativeSandboxBuiltinEditsAreInProcessOnly(t *testing.T) {
-	requireSmokeParallel(t)
+	requireLabParallel(t)
 
 	dirs := newNativeSandboxDirs(t)
 	enableNativeSandbox(t, dirs, true)
@@ -279,7 +279,7 @@ func TestCopilotNativeSandboxBuiltinEditsAreInProcessOnly(t *testing.T) {
 // on a defect in it — which is a materially different claim, and the one this
 // suite is willing to make.
 func TestCopilotNativeSandboxBuiltinEditPolicyResolvesSymlinksAndTraversal(t *testing.T) {
-	requireSmokeParallel(t)
+	requireLabParallel(t)
 
 	dirs := newNativeSandboxDirs(t)
 	enableNativeSandbox(t, dirs, true)
@@ -338,7 +338,7 @@ func TestCopilotNativeSandboxBuiltinEditPolicyResolvesSymlinksAndTraversal(t *te
 // degradation where it does not. Neither arm is a skip, and a host that changes
 // category changes which assertions run, not whether any do.
 func TestCopilotNativeSandboxShellEnforcementIsHostConditional(t *testing.T) {
-	requireSmokeParallel(t)
+	requireLabParallel(t)
 
 	dirs := newNativeSandboxDirs(t)
 	enableNativeSandbox(t, dirs, true)
@@ -438,7 +438,7 @@ func TestCopilotNativeSandboxShellEnforcementIsHostConditional(t *testing.T) {
 //     the thing the earlier assertion got wrong: these targets are inside a
 //     granted surface, so a write landing there is not an escape.
 func TestCopilotNativeSandboxShellBasePolicySurface(t *testing.T) {
-	requireSmokeParallel(t)
+	requireLabParallel(t)
 
 	configurations := []struct {
 		name string
@@ -499,7 +499,7 @@ func TestCopilotNativeSandboxShellBasePolicySurface(t *testing.T) {
 // launch arguments that WOULD turn it on need that flag, which is the one
 // tclaude-layer refuses.
 func TestCopilotNativeSandboxNeedsNoExperimentalFlag(t *testing.T) {
-	requireSmokeParallel(t)
+	requireLabParallel(t)
 
 	for _, experimental := range []bool{false, true} {
 		t.Run(fmt.Sprintf("experimental=%v", experimental), func(t *testing.T) {
@@ -530,7 +530,7 @@ func TestCopilotNativeSandboxNeedsNoExperimentalFlag(t *testing.T) {
 // containment at all, which is the state tclaude confines Copilot from the
 // outside for.
 func TestCopilotNativeSandboxDisabledAppliesNoPolicy(t *testing.T) {
-	requireSmokeParallel(t)
+	requireLabParallel(t)
 
 	dirs := newNativeSandboxDirs(t)
 	enableNativeSandbox(t, dirs, false)
@@ -568,7 +568,7 @@ func TestCopilotNativeSandboxDisabledAppliesNoPolicy(t *testing.T) {
 // Five arms, each a real launch: either file alone enables the sandbox, neither
 // file leaves it off, and when the two disagree config.json decides.
 func TestCopilotNativeSandboxSettingsSourcesAndPrecedence(t *testing.T) {
-	requireSmokeParallel(t)
+	requireLabParallel(t)
 
 	cases := []struct {
 		name string

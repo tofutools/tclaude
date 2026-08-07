@@ -108,7 +108,7 @@ func TestCopilotSoftExitBareExitIsDiscardedMidTurn(t *testing.T) {
 	// startup that had not finished yet and were discarded, so the scenario was
 	// one assertion away from reporting the bug it exists to reproduce on
 	// evidence that had nothing to do with the bug.
-	requireSmoke(t)
+	requireLab(t)
 
 	res := softExitRun(t, softExitKeys(""))
 

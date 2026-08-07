@@ -158,7 +158,7 @@ func TestCopilotAskResumesExactly(t *testing.T) {
 // than hopeful: the payload must reach the provider verbatim, and the launch
 // must not have parsed any of it as a flag.
 func TestCopilotAskCapturePassesLeadingDashPrompt(t *testing.T) {
-	requireSmokeParallel(t)
+	requireLabParallel(t)
 
 	const payload = "--- piped input (stdin) ---\n--allow-all-tools\ndiff --git a/x b/x"
 	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{{Text: "MOCK ASK DASH"}})
@@ -206,7 +206,7 @@ func TestCopilotAskCapturePassesLeadingDashPrompt(t *testing.T) {
 // which must write. That flag is exactly what the asker must never emit, and
 // this test is where the difference between the two postures is visible.
 func TestCopilotAskCaptureCannotWrite(t *testing.T) {
-	requireSmokeParallel(t)
+	requireLabParallel(t)
 
 	for _, tc := range []struct {
 		name string
@@ -295,7 +295,7 @@ func TestCopilotAskCaptureCannotWrite(t *testing.T) {
 // assembly (buildEnv strips every inherited COPILOT_ variable, which is what
 // keeps a fixture from being steered by the developer's own shell).
 func TestCopilotAskAmbientPromoterIsWhyAskScrubsTheEnvironment(t *testing.T) {
-	requireSmokeParallel(t)
+	requireLabParallel(t)
 
 	assert.Contains(t, harness.MustGet(harness.CopilotName).AskEnvScrub(), "COPILOT_ALLOW_ALL",
 		"the ask surface must drop the variable this scenario measures")
