@@ -191,6 +191,8 @@ type templateInlineProfileJSON struct {
 	ToolGovernance         string            `json:"tools,omitempty"`
 	AskUserQuestionTimeout string            `json:"ask_user_question_timeout,omitempty"`
 	AutoCompactWindow      string            `json:"auto_compact_window,omitempty"`
+	ContextWindowMax       int64             `json:"context_window_max,omitempty"`
+	CopilotAPI             *bool             `json:"copilot_api,omitempty"`
 	AutoReview             *bool             `json:"auto_review,omitempty"`
 	TrustDir               *bool             `json:"trust_dir,omitempty"`
 	RemoteControl          *bool             `json:"remote_control,omitempty"`
@@ -219,6 +221,8 @@ func inlineProfileToJSON(p *SpawnProfile) string {
 		ToolGovernance:         p.ToolGovernance,
 		AskUserQuestionTimeout: p.AskUserQuestionTimeout,
 		AutoCompactWindow:      p.AutoCompactWindow,
+		ContextWindowMax:       p.ContextWindowMax,
+		CopilotAPI:             p.CopilotAPI,
 		AutoReview:             p.AutoReview,
 		TrustDir:               p.TrustDir,
 		RemoteControl:          p.RemoteControl,
@@ -256,6 +260,8 @@ func inlineProfileFromJSON(s string) *SpawnProfile {
 		ToolGovernance:         j.ToolGovernance,
 		AskUserQuestionTimeout: j.AskUserQuestionTimeout,
 		AutoCompactWindow:      j.AutoCompactWindow,
+		ContextWindowMax:       j.ContextWindowMax,
+		CopilotAPI:             j.CopilotAPI,
 		AutoReview:             j.AutoReview,
 		TrustDir:               j.TrustDir,
 		RemoteControl:          j.RemoteControl,

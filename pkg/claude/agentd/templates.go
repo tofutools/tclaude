@@ -1354,15 +1354,6 @@ func roleProfileSource(role *db.Role, profile *db.SpawnProfile) string {
 	return fmt.Sprintf(`role %q profile %q`, role.Name, profile.Name)
 }
 
-// traceMemberLaunch re-traces a live group member's OBSERVABLE launch fields
-// from its most-recent session row for a from-group template snapshot (JOH-239)
-// — harness, model, effort, sandbox, approval, and auto-review. Each field is
-// normalized through the traced harness's catalog
-// and dropped to "" if it doesn't validate (e.g. the session's model DISPLAY
-// alias rather than the resume-safe model_id), so a snapshot never stores a
-// value that would fail at the next instantiate. A member with no session row
-// (pruned) or no observable value yields all-blank — "inherit the group
-// default", the pre-JOH-239 behaviour.
 // copilotAPIPointer renders a traced launch's Copilot drive as the tri-state a
 // snapshot's inline profile carries: nil when nothing recorded a posture, so
 // the snapshot stays silent on the axis rather than asserting send-keys for an
@@ -1375,6 +1366,15 @@ func copilotAPIPointer(launch templateAgentLaunch) *bool {
 	return &value
 }
 
+// traceMemberLaunch re-traces a live group member's OBSERVABLE launch fields
+// from its most-recent session row for a from-group template snapshot (JOH-239)
+// — harness, model, effort, sandbox, approval, and auto-review. Each field is
+// normalized through the traced harness's catalog
+// and dropped to "" if it doesn't validate (e.g. the session's model DISPLAY
+// alias rather than the resume-safe model_id), so a snapshot never stores a
+// value that would fail at the next instantiate. A member with no session row
+// (pruned) or no observable value yields all-blank — "inherit the group
+// default", the pre-JOH-239 behaviour.
 func traceMemberLaunch(convID string) templateAgentLaunch {
 	prof, err := db.SessionLaunchProfileForConv(convID)
 	if err != nil || prof == (db.SessionLaunchProfile{}) {

@@ -841,52 +841,67 @@ func persistCopilotUsageContext(sess *db.SessionRow, snapshot db.CopilotUsageSna
 	}
 }
 
-// copilotConfiguredContextWindowMax returns only durable launch intent. A zero
-// value means no explicit cap, allowing the observed model's static default to
-// be selected by the caller. The fallback profile keeps legacy/pending
-// conversations working until their stable agent row is available.
-func copilotConfiguredContextWindowMax(convID string) int64 {
-	if profile, err := db.AgentRelaunchProfileForConv(convID); err == nil && profile != nil &&
-		profile.ConfiguredContextWindowMax != nil {
-		if value, err := harness.ResolveCopilotContextWindow(
-			&harness.Harness{Name: harness.CopilotName}, *profile.ConfiguredContextWindowMax); err == nil {
-			return value
-		}
-	}
-	if conversation, err := db.ConversationResumeProfileForConv(convID); err == nil &&
-		conversation != nil && conversation.FallbackRelaunch != nil &&
-		conversation.FallbackRelaunch.ConfiguredContextWindowMax != nil {
-		if value, err := harness.ResolveCopilotContextWindow(
-			&harness.Harness{Name: harness.CopilotName}, *conversation.FallbackRelaunch.ConfiguredContextWindowMax); err == nil {
-			return value
-		}
-	}
-	return 0
+// copilotLaunchIntent is the durable Copilot launch intent a conversation was
+// started with: the configured context cap and which drive it runs on. Both are
+// tclaude intent with no sessions column of their own, so both live in the same
+// two durable records — the stable agent relaunch profile, then the
+// conversation fallback that keeps legacy/pending conversations answerable until
+// that agent row exists.
+//
+// They are read TOGETHER on purpose. The dashboard asks for both on every
+// snapshot tick for every Copilot agent, and resolving them separately doubled
+// the durable-record reads per agent per tick for no benefit.
+//
+// Zero means no explicit cap, leaving the caller free to pick the observed
+// model's static default; false means the tmux send-keys drive, which is what
+// every Copilot agent ran before the drive was selectable.
+type copilotLaunchIntent struct {
+	ContextWindowMax int64
+	API              bool
 }
 
-// copilotDriveIsAPI reports whether this conversation was launched onto the
-// API-backed Copilot drive. It reads the same two durable records as
-// copilotConfiguredContextWindowMax above, and for the same reason: the drive is
-// launch intent with no sessions column, and the conversation fallback keeps
-// legacy/pending conversations answerable until their stable agent row exists.
-// An unrecorded posture is send-keys — what every Copilot agent ran before the
-// drive was selectable.
-func copilotDriveIsAPI(convID string) bool {
+func copilotLaunchIntentForConv(convID string) copilotLaunchIntent {
 	copilot := &harness.Harness{Name: harness.CopilotName}
-	if profile, err := db.AgentRelaunchProfileForConv(convID); err == nil && profile != nil &&
-		profile.CopilotAPI != nil {
-		if value, err := harness.ResolveCopilotAPI(copilot, profile.CopilotAPI); err == nil {
-			return value
+	var out copilotLaunchIntent
+	var haveMax, haveAPI bool
+
+	// Highest-precedence record first, then the fallback fills only what the
+	// agent profile left unrecorded — so a managed agent's frozen posture always
+	// wins field-by-field, matching composeAgentRelaunchProfile's ordering.
+	apply := func(profile *db.AgentRelaunchProfile) {
+		if profile == nil {
+			return
 		}
+		if !haveMax && profile.ConfiguredContextWindowMax != nil {
+			if value, err := harness.ResolveCopilotContextWindow(
+				copilot, *profile.ConfiguredContextWindowMax); err == nil {
+				out.ContextWindowMax, haveMax = value, true
+			}
+		}
+		if !haveAPI && profile.CopilotAPI != nil {
+			if value, err := harness.ResolveCopilotAPI(copilot, profile.CopilotAPI); err == nil {
+				out.API, haveAPI = value, true
+			}
+		}
+	}
+
+	if profile, err := db.AgentRelaunchProfileForConv(convID); err == nil {
+		apply(profile)
+	}
+	if haveMax && haveAPI {
+		return out
 	}
 	if conversation, err := db.ConversationResumeProfileForConv(convID); err == nil &&
-		conversation != nil && conversation.FallbackRelaunch != nil &&
-		conversation.FallbackRelaunch.CopilotAPI != nil {
-		if value, err := harness.ResolveCopilotAPI(copilot, conversation.FallbackRelaunch.CopilotAPI); err == nil {
-			return value
-		}
+		conversation != nil {
+		apply(conversation.FallbackRelaunch)
 	}
-	return false
+	return out
+}
+
+// copilotConfiguredContextWindowMax returns only the configured cap, for the
+// usage paths that have no use for the drive.
+func copilotConfiguredContextWindowMax(convID string) int64 {
+	return copilotLaunchIntentForConv(convID).ContextWindowMax
 }
 
 // copilotEffectiveContextWindow is the ONE place the meter's effective

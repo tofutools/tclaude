@@ -255,3 +255,42 @@ func TestCopilotDrive_SurvivesReincarnateAndClone(t *testing.T) {
 	require.True(t, ok, "no spawn recorded for clone conv %s", cloned.NewConv)
 	assert.True(t, got, "a clone must inherit the API drive")
 }
+
+// TestCopilotDrive_ExplicitOffBeatsAnAmbientProfile is the regression guard for
+// the default-off promise at its weakest point. executeSpawn runs a safety-net
+// overlay that re-resolves the whole tier stack, and it can only tell "the
+// operator said off" from "nobody spoke" if the spawn boundary hands it the
+// SET flag alongside the value. Without that, an explicit false falls through
+// and an ambient default profile turns the API drive on underneath the
+// operator — and, because the resolved-launch echo is computed before the
+// overlay runs, the echo would still claim send-keys while the pane ran on the
+// API.
+//
+// The dashboard spawn modal sends an explicit false on every Copilot spawn, so
+// this is the ordinary path, not a hand-built request.
+func TestCopilotDrive_ExplicitOffBeatsAnAmbientProfile(t *testing.T) {
+	f := newCopilotFlow(t)
+	f.HaveGroup("crew")
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "copilot-global", "harness": harness.CopilotName, "copilot_api": true,
+	}).Code)
+	require.Equal(t, http.StatusOK, setGlobalProfile(t, f, "copilot-global").Code)
+
+	resp, _ := spawnCopilot(t, f, "crew", map[string]any{
+		"name": "copilot-worker", "copilot_api": false,
+	})
+
+	got, ok := f.World.SpawnCopilotAPI(resp.ConvID)
+	require.True(t, ok, "no spawn recorded for conv %s", resp.ConvID)
+	assert.False(t, got,
+		"an explicit copilot_api=false must beat a global default profile's opt-in")
+
+	// The frozen record must agree, or the unwanted drive would become permanent
+	// across every later resume/reincarnate/clone.
+	recorded, err := db.AgentRelaunchProfileForConv(resp.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, recorded)
+	require.NotNil(t, recorded.CopilotAPI)
+	assert.False(t, *recorded.CopilotAPI,
+		"the durable record must freeze the drive the operator actually chose")
+}

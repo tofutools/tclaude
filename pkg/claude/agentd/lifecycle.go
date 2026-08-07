@@ -3425,9 +3425,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// opt-in (spawn body or a matching Copilot profile) selects the API drive, so
 	// a launch nobody steered is byte-for-byte the launch it was before this
 	// field existed. See TCL-1053.
-	var copilotAPI bool
+	var copilotAPI, copilotAPISet bool
 	var copilotAPINote, copilotAPISource string
-	copilotAPI, _, copilotAPISource, copilotAPINote, fieldFail = resolveBoolLaunchField(
+	copilotAPI, copilotAPISet, copilotAPISource, copilotAPINote, fieldFail = resolveBoolLaunchField(
 		"copilot_api", body.CopilotAPI != nil && *body.CopilotAPI, body.CopilotAPI != nil, h.Name, profileTiers,
 		func(p *db.SpawnProfile) *bool { return p.CopilotAPI },
 		func(v bool) (bool, error) { return harness.ResolveCopilotAPI(h, &v) })
@@ -3949,11 +3949,12 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		AutoCompactWindow:          autoCompactWindow,
 		ContextWindowMax:           body.ContextWindowMax,
 		CopilotAPI:                 copilotAPI,
+		CopilotAPISet:              copilotAPISet,
 		ReplyToConv:                replyToConv,
 		SpawnedByConv:              spawnerConvID,
 		IsOwner:                    body.IsOwner,
 		PermissionOverrides:        permOverrides,
-		Timeout:                    timeout,
+		Timeout:             timeout,
 		// Verbatim snapshot of the spawn request, recorded onto the new actor's
 		// agents.initial_spawn_config in enrollSpawnedConv (a durable, agent-level
 		// "what was this spawned with" record). Marshalling the already-decoded
@@ -4234,6 +4235,13 @@ type spawnParams struct {
 	CopilotAPI bool
 	// CopilotAPISet preserves a higher tier's explicit answer through
 	// applyDefaultProfileAtLaunch's safety-net overlay — mirroring AutoReviewSet.
+	//
+	// Load-bearing for the default-off promise, and easy to under-rate: the
+	// overlay re-resolves the tier stack, so without this flag an answer of
+	// "off" is indistinguishable from "nobody spoke" and a group/global default
+	// profile flips a launch the operator explicitly left on send-keys. The
+	// dashboard sends exactly that explicit false on every Copilot spawn, so the
+	// gap is reachable from the most-used surface, not just a hand-built request.
 	CopilotAPISet bool
 	// AskUserQuestionTimeout is the resolved per-session Claude Code
 	// AskUserQuestion idle-timeout override (never|60s|5m|10m), forwarding

@@ -2369,12 +2369,15 @@ func stateForConvInSessionsBatched(
 			out.AutoCompactWindow = harness.AutoCompactWindowTokens(pick.AutoCompactWindow)
 		}
 		if pick.Harness == harness.CopilotName {
-			out.CopilotAPI = copilotDriveIsAPI(pick.ConvID)
+			// One read for both pieces of launch intent — this runs for every
+			// Copilot agent on every snapshot tick.
+			intent := copilotLaunchIntentForConv(pick.ConvID)
+			out.CopilotAPI = intent.API
 			// A configured cap is launch intent and remains usable before Copilot
 			// has disclosed an observed model. Only the static fallback needs an
 			// observed model id; keeping these branches separate prevents a blank
 			// model from hiding an operator-supplied denominator.
-			out.ContextWindowMax = copilotConfiguredContextWindowMax(pick.ConvID)
+			out.ContextWindowMax = intent.ContextWindowMax
 			if out.ContextWindowMax > 0 {
 				out.ContextWindowSource = "configured"
 			} else if model := strings.TrimSpace(snap.Model); model != "" {
