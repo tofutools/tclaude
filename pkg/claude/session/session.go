@@ -463,6 +463,14 @@ func UniqueTmuxSessionName(base string) string {
 			return candidate
 		}
 	}
+	// Every candidate is occupied. Returning the taken base hands the launch a
+	// name tmux will refuse — a clean, immediate "duplicate session" the caller
+	// reports — which is the right failure. The alternative, searching without
+	// a bound, spins the launcher on tmux subprocesses forever instead of ever
+	// telling anyone. 998 live sessions sharing one base means something is
+	// badly wrong upstream, so say so rather than failing mutely.
+	slog.Warn("tmux launch: no free session name; the launch will fail with tmux's duplicate-session error",
+		"base", base, "suffixes_tried", 998)
 	return base
 }
 
