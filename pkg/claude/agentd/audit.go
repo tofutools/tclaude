@@ -332,11 +332,6 @@ func describeGitProxy(c *auditCtx) {
 	}
 }
 
-// AuditedGitHubProxyVerbForTest reports whether "<resource>.<action>" has an
-// audit classification. Exported for the flow test that checks the map against
-// the routes serve.go registers.
-func AuditedGitHubProxyVerbForTest(verb string) bool { return auditedGitHubProxyVerbs[verb] }
-
 // describeGitHubProxy names a github-proxy row "github.pr.create",
 // "github.issue.comment", … from the path. Same rule as above: path only,
 // never the body — a PR title or comment body must not land in the audit log.

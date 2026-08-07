@@ -2,9 +2,6 @@ package agentd_test
 
 import (
 	"net/http"
-	"os"
-	"regexp"
-	"sort"
 	"strings"
 	"testing"
 
@@ -14,55 +11,17 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
-// githubproxy_audit_flow_test.go pins the thing that makes the GitHub proxy's
-// reads POSTs at all.
+// githubproxy_audit_flow_test.go is the end-to-end half of the GitHub proxy's
+// audit contract: a row actually reaches the database, through the real daemon
+// mux, carrying the repository and the exit code but none of the content read.
 //
-// Every one of these routes spends the OPERATOR's GitHub credential against
-// what may be a private repository. The design answer is that they are POSTs
-// so the audit middleware records them — "this agent read the issue list as
-// me" belongs in the trail beside "this agent opened a PR as me".
-//
-// The failure mode is silent in both directions. A route absent from
-// auditedGitHubProxyVerbs has its verb cleared by describeGitHubProxy and its
-// row dropped by recordAuditRow, while the handler still computes an audit
-// detail that is then discarded — so the call looks audited from the handler
-// and leaves nothing behind. Three consecutive verbs were added without
-// noticing.
+// The other half — that every registered route is classifiable at all — is a
+// unit test in githubproxy_audit_test.go, which needs no mux.
 
-// ghProxyRoutePattern matches the route registrations in serve.go.
-var ghProxyRoutePattern = regexp.MustCompile(`"POST (/v1/github/([a-z]+)/([a-z-]+))"`)
-
-// TestAuditCoversEveryGitHubProxyRoute reads the routes serve.go REGISTERS and
-// requires each to be classifiable.
-//
-// Scanning the source is deliberate. A table of routes maintained by hand in
-// this file would have exactly the gap it is meant to catch: someone adding a
-// route and forgetting the audit map is equally likely to forget the table.
-// Deriving the list from the registration site means the only way to add an
-// unaudited GitHub proxy route is to make this test fail.
-func TestAuditCoversEveryGitHubProxyRoute(t *testing.T) {
-	source, err := os.ReadFile("serve.go")
-	require.NoError(t, err, "this test derives its expectations from the route registrations")
-
-	matches := ghProxyRoutePattern.FindAllStringSubmatch(string(source), -1)
-	require.NotEmpty(t, matches, "found no /v1/github/ routes — has the registration moved?")
-
-	var unaudited []string
-	for _, m := range matches {
-		path, resource, action := m[1], m[2], m[3]
-		if !agentd.AuditedGitHubProxyVerbForTest(resource + "." + action) {
-			unaudited = append(unaudited, path)
-		}
-	}
-	sort.Strings(unaudited)
-	assert.Empty(t, unaudited,
-		"these routes spend the operator's GitHub credential and would write NO audit row; "+
-			"add %q to auditedGitHubProxyVerbs in audit.go", unaudited)
-}
-
-// TestGHProxy_ReadsLandInTheAuditTrail is the end-to-end half: the map entry
-// exists AND a row actually reaches the database, carrying the repository and
-// the exit code but none of the content that was read.
+// TestGHProxy_ReadsLandInTheAuditTrail covers the reads specifically. They are
+// POSTs for exactly this reason: spending the operator's GitHub credential
+// against a private repository is what an operator reviews later, and a read
+// that leaves no trace is indistinguishable from one that never happened.
 func TestGHProxy_ReadsLandInTheAuditTrail(t *testing.T) {
 	for _, tc := range []struct {
 		verb string
