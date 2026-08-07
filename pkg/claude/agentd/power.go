@@ -67,6 +67,12 @@ var shutdownPollInterval = 100 * time.Millisecond
 // bug (or a fat-fingered value) can't wedge the request for minutes.
 const shutdownGraceCap = 2 * time.Minute
 
+// powerOnConcurrency bounds the expensive part of bulk resume: each worker
+// performs synchronous database/filesystem checks and starts a child process.
+// A small pool keeps group/global operations parallel without turning a large
+// dashboard roster into an unbounded process and file-descriptor burst.
+const powerOnConcurrency = 4
+
 // Per-agent outcome strings for a shutdown. Stable wire values — the
 // dashboard reads them back into the result toast.
 const (
@@ -391,36 +397,51 @@ func runShutdown(targets []string, grace time.Duration) []powerAgentOutcome {
 // dashboard wake button. The caller joins all workers before summarising the
 // successes and failures.
 func runPowerOn(targets []string) []powerAgentOutcome {
+	return runPowerOnWithResume(targets, func(convID string) memberOpResult {
+		return resumeOneConvWithTrustRoot(convID, false)
+	})
+}
+
+func runPowerOnWithResume(targets []string, resume func(string) memberOpResult) []powerAgentOutcome {
 	outcomes := make([]powerAgentOutcome, len(targets))
+	jobs := make(chan int)
 	var wg sync.WaitGroup
-	for i, convID := range targets {
+	workers := min(len(targets), powerOnConcurrency)
+	for range workers {
 		wg.Add(1)
-		go func(i int, convID string) {
+		go func() {
 			defer wg.Done()
-			out := powerAgentOutcome{AgentID: peerAgentID(convID), ConvID: convID, Title: agent.FreshTitle(convID)}
-			res := resumeOneConvWithTrustRoot(convID, false)
-			switch res.Action {
-			case "resumed":
-				out.Outcome = powerOnResumed
-			case "skipped:already_online":
-				// Raced — the agent came online between collection and now.
-				out.Outcome = powerOnAlreadyOnline
-			default:
-				// "error" — the resume spawn failed — or "error:missing_cwd", the
-				// agent's recorded launch dir was deleted (Detail carries the path).
-				// A bulk power-on can't recreate dirs interactively, so it surfaces
-				// the failure; the human recreates via `agent resume --recreate-dir`
-				// or the dashboard wake confirm. ("skipped:no_conv_id" can't reach
-				// here: offlineConvIDs already drops empty ids.)
-				out.Outcome = powerOnFailed
-				out.Detail = res.Detail
-				if out.Detail == "" {
-					out.Detail = "resume failed (" + res.Action + ")"
+			for i := range jobs {
+				convID := targets[i]
+				out := powerAgentOutcome{AgentID: peerAgentID(convID), ConvID: convID, Title: agent.FreshTitle(convID)}
+				res := resume(convID)
+				switch res.Action {
+				case "resumed":
+					out.Outcome = powerOnResumed
+				case "skipped:already_online":
+					// Raced — the agent came online between collection and now.
+					out.Outcome = powerOnAlreadyOnline
+				default:
+					// "error" — the resume spawn failed — or "error:missing_cwd", the
+					// agent's recorded launch dir was deleted (Detail carries the path).
+					// A bulk power-on can't recreate dirs interactively, so it surfaces
+					// the failure; the human recreates via `agent resume --recreate-dir`
+					// or the dashboard wake confirm. ("skipped:no_conv_id" can't reach
+					// here: offlineConvIDs already drops empty ids.)
+					out.Outcome = powerOnFailed
+					out.Detail = res.Detail
+					if out.Detail == "" {
+						out.Detail = "resume failed (" + res.Action + ")"
+					}
 				}
+				outcomes[i] = out
 			}
-			outcomes[i] = out
-		}(i, convID)
+		}()
 	}
+	for i := range targets {
+		jobs <- i
+	}
+	close(jobs)
 	wg.Wait()
 	return outcomes
 }
