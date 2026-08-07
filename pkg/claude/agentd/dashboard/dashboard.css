@@ -1653,7 +1653,14 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 .markdown-document th, .markdown-document td {
   padding: 6px 11px; border: 1px solid #30363d;
 }
-.markdown-document th { background: #161b22; color: #f0f6fc; font-weight: 600; }
+/* The page-level `table th` rule is for the dashboard's own data tables and
+   reaches this one too, so a document's `| Name |` came out as an 11px
+   letterspaced NAME that could not wrap. This is the author's text: restate the
+   typography the surrounding document uses. */
+.markdown-document th {
+  background: #161b22; color: #f0f6fc; font-weight: 600;
+  font-size: inherit; text-transform: none; letter-spacing: normal; white-space: normal;
+}
 .markdown-document tbody tr:nth-child(even) { background: rgba(22, 27, 34, .55); }
 
 /* The document fills the viewer, with no measure cap of its own: the operator
@@ -1736,9 +1743,11 @@ body.wizard :is(.markdown-preview-download, .image-preview-download):focus-visib
 body.wizard :is(.markdown-preview-close, .image-preview-close) {
   border-color: #3a2f57; background: #1d1730; color: #b39ddb;
 }
-body.wizard :is(.markdown-preview-close, .image-preview-close):hover,
-body.wizard :is(.markdown-preview-close, .image-preview-close):focus-visible {
-  border-color: #7c5cc4; color: #e6dcff;
+body.wizard :is(.markdown-preview-overlay, .image-preview-overlay)
+  header :is(.markdown-preview-close, .image-preview-close):hover,
+body.wizard :is(.markdown-preview-overlay, .image-preview-overlay)
+  header :is(.markdown-preview-close, .image-preview-close):focus-visible {
+  background: #2a2140; border-color: #7c5cc4; color: #e6dcff;
 }
 body.wizard .markdown-preview-modes { border-color: #3a2f57; }
 body.wizard .markdown-preview-mode {
@@ -1787,9 +1796,11 @@ body.slop :is(.markdown-preview-download, .image-preview-download):focus-visible
 body.slop :is(.markdown-preview-close, .image-preview-close) {
   border-color: #8b0000; background: #2a0a0a; color: #c9a86b;
 }
-body.slop :is(.markdown-preview-close, .image-preview-close):hover,
-body.slop :is(.markdown-preview-close, .image-preview-close):focus-visible {
-  border-color: #ffd700; color: #ffe88c;
+body.slop :is(.markdown-preview-overlay, .image-preview-overlay)
+  header :is(.markdown-preview-close, .image-preview-close):hover,
+body.slop :is(.markdown-preview-overlay, .image-preview-overlay)
+  header :is(.markdown-preview-close, .image-preview-close):focus-visible {
+  background: #3d0d0d; border-color: #ffd700; color: #ffe88c;
 }
 body.slop .markdown-preview-modes { border-color: #8b0000; }
 body.slop .markdown-preview-mode {
@@ -1797,8 +1808,8 @@ body.slop .markdown-preview-mode {
 }
 body.slop .markdown-preview-mode + .markdown-preview-mode { border-left: 1px solid #8b0000; }
 body.slop .markdown-preview-mode:hover { background: #3d0d0d; color: #ffe88c; }
-body.slop .markdown-preview-mode[aria-pressed="true"]:hover { background: #4a0a0a; }
-body.slop .markdown-preview-mode[aria-pressed="true"] { background: #4a0a0a; color: #ffd700; }
+body.slop .markdown-preview-mode[aria-pressed="true"]:hover { background: #8b1a1a; }
+body.slop .markdown-preview-mode[aria-pressed="true"] { background: #8b1a1a; color: #ffd700; }
 body.slop .markdown-preview-mode:focus-visible { box-shadow: inset 0 0 0 2px #ffd700; color: #ffe88c; }
 body.slop :is(.markdown-preview-stage, .image-preview-footer) { background: #1a0505; }
 body.slop .image-preview-footer { border-top-color: #8b0000; }

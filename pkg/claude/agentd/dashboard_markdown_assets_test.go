@@ -142,4 +142,14 @@ func TestDashboardMarkdownViewerWired(t *testing.T) {
 			t.Errorf("dashboard CSS is missing the %s rule", rule)
 		}
 	}
+
+	// A document's table header is the author's text, not a dashboard column
+	// heading. The page-level `table th` rule reaches it, so the document's own
+	// rule has to restate the typography or `| Name |` renders as NAME.
+	thRule, _, _ := strings.Cut(css[strings.Index(css, ".markdown-document th {"):], "}")
+	for _, reset := range []string{"text-transform: none", "letter-spacing: normal", "font-size: inherit"} {
+		if !strings.Contains(thRule, reset) {
+			t.Errorf("`.markdown-document th` must reset %q, or the page-level table rule restyles a document's own table header", reset)
+		}
+	}
 }
