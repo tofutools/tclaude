@@ -254,7 +254,10 @@ function setMessageQuery(value) {
   const key = 'tclaude.dash.filter.messages';
   if (mail.messageQuery) dashPrefs.setItem(key, mail.messageQuery);
   else dashPrefs.removeItem(key);
-  onMailSearchChanged();
+  // Pass the authoritative value through to the search hook. In particular,
+  // the clear button updates state before the DOM-controlled input has
+  // repainted; rereading the input there would restore the old query.
+  onMailSearchChanged(mail.messageQuery);
 }
 
 function mailTabActive() {
@@ -534,10 +537,14 @@ function scheduleMailReload() {
 // filtered folder, so the filter can't be a client-side repaint. Repaints
 // the bulk bar immediately so it feels responsive while the debounced
 // fetch is in flight.
-function onMailSearchChanged() {
+function onMailSearchChanged(query) {
   // Compatibility for callers that still invoke this hook directly.
-  const input = $('#filter-messages');
-  if (input) mail.messageQuery = input.value;
+  if (query === undefined) {
+    const input = $('#filter-messages');
+    if (input) mail.messageQuery = input.value;
+  } else {
+    mail.messageQuery = String(query ?? '');
+  }
   mail.page = 1;
   mail.selectedMsgs.clear();
   paintListBulkBar();

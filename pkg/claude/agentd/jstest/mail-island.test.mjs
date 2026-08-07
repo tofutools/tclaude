@@ -175,6 +175,40 @@ test('Messages interactions freeze mailbox changes while busy, wire agent mark-a
   await mounted.unmount();
 });
 
+test('Messages clear action keeps the cleared query when the input has not repainted yet', async (t) => {
+  const harness = await createPreactHarness(t);
+  // mail.js imports these modules for the live dashboard, but the search
+  // action only needs their small exported seams. Stubbing them keeps this
+  // regression focused on the production Messages controller without
+  // starting the full dashboard bootstrap.
+  await harness.replaceDashboardModule('js/dashboard.js', `
+    export let lastSnapshot = null;
+    export function setLastSnapshot(value) { lastSnapshot = value; }
+  `);
+  await harness.replaceDashboardModule('js/refresh.js', `
+    export function confirmModal() {}
+    export function toast() {}
+  `);
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({ messages: [], total: 0, total_unfiltered: 0 }),
+  });
+  t.after(() => { globalThis.fetch = previousFetch; });
+
+  const { mailController } = await harness.importDashboardModule('js/mail.js');
+  const input = harness.document.body.appendChild(harness.document.createElement('input'));
+  input.id = 'filter-messages';
+  input.value = 'stale query';
+  mailController.state.data.messageQuery = 'stale query';
+
+  mailController.setMessageQuery('');
+
+  assert.equal(mailController.state.data.messageQuery, '');
+  clearTimeout(mailController.state.data.searchTimer);
+  mailController.state.data.searchTimer = null;
+});
+
 test('Messages production mount registers cleanup for listeners, bridge ownership, and Preact DOM', async (t) => {
   const harness = await createPreactHarness(t);
   const { mountMailIsland } = await harness.importDashboardModule('js/mail-island.js');
