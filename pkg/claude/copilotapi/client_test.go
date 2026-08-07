@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -270,6 +272,48 @@ func TestUndecodableMessageDoesNotKillTheConnection(t *testing.T) {
 	// The drops must be visible rather than silent.
 	if got := client.MalformedFrames(); got != 2 {
 		t.Errorf("MalformedFrames() = %d, want 2", got)
+	}
+}
+
+// deadlineFailingConn makes SetWriteDeadline report the connection as closed
+// on demand, which is what a real conn does when shutdown closes it out from
+// under an in-flight write.
+type deadlineFailingConn struct {
+	net.Conn
+	fail atomic.Bool
+}
+
+func (c *deadlineFailingConn) SetWriteDeadline(deadline time.Time) error {
+	if c.fail.Load() {
+		return &net.OpError{Op: "set", Net: "tcp", Err: net.ErrClosed}
+	}
+	return c.Conn.SetWriteDeadline(deadline)
+}
+
+func TestWriteSidePeerDeathReportsErrClosed(t *testing.T) {
+	// Every writeRaw failure has to wrap ErrClosed, including the ones from
+	// the deadline calls rather than the write itself. A consumer gating
+	// redial on ErrClosed would otherwise miss a connection that died while a
+	// request was being written — the interleaving CI hit before this was
+	// fixed, and which is timing-dependent without the injection below.
+	server := newFakeServer(t)
+	var conn *deadlineFailingConn
+	client := dialTest(t, server, &Options{
+		Dialer: func(ctx context.Context, address string) (net.Conn, error) {
+			var dialer net.Dialer
+			raw, err := dialer.DialContext(ctx, "tcp", address)
+			if err != nil {
+				return nil, err
+			}
+			conn = &deadlineFailingConn{Conn: raw}
+			return conn, nil
+		},
+	})
+
+	conn.fail.Store(true)
+	err := client.Call(context.Background(), MethodPing, nil, nil)
+	if !errors.Is(err, ErrClosed) {
+		t.Fatalf("err = %v, want it to wrap ErrClosed", err)
 	}
 }
 

@@ -491,19 +491,27 @@ func (c *Client) writeRaw(body []byte) error {
 		return ErrClosed
 	}
 
+	// Every failure below goes through translateConnError, including the
+	// deadline calls: a connection closed concurrently by shutdown surfaces
+	// here as net.ErrClosed, and reporting that untranslated would hide
+	// "server gone" from a caller gating redial on ErrClosed.
 	if err := c.conn.SetWriteDeadline(time.Now().Add(defaultWriteTimeout)); err != nil {
-		return err
+		return translateConnError(err)
 	}
 	if err := writeFrame(c.conn, body); err != nil {
 		// A partial frame leaves the peer's parser mid-message, so the
-		// connection cannot be reused. Translate the same way as the read
-		// path, so a caller gating redial on ErrClosed sees "server gone"
-		// whichever side noticed it first.
+		// connection cannot be reused.
 		translated := translateConnError(err)
 		c.shutdown(translated)
 		return translated
 	}
-	return c.conn.SetWriteDeadline(time.Time{})
+	// The bytes are on the wire, so this call has succeeded no matter what
+	// clearing the deadline reports. Returning an error here would tell the
+	// caller a request failed that the server has in fact received — and for
+	// session.send that means a retry duplicates a prompt the agent already
+	// queued.
+	_ = c.conn.SetWriteDeadline(time.Time{})
+	return nil
 }
 
 // Subscription is a stream of server notifications. Every subscription
