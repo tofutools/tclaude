@@ -85,7 +85,7 @@ func TestTaskForceDeploy_DefaultProfile_SkipsConfiguredMembers(t *testing.T) {
 	createBody := map[string]any{
 		"name": "team",
 		"agents": []map[string]any{
-			{"name": "inliner", "role": "dev", "model": "opus"}, // inline model, blank profile
+			{"name": "inliner", "role": "dev", "model": "opus"},                // inline model, blank profile
 			{"name": "roled", "role": "qa", "role_ref": "tf-default-reviewer"}, // launch via role
 		},
 	}

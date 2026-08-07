@@ -13,9 +13,9 @@ import (
 
 // Scenario: a human runs
 //
-//   tclaude agent groups create reviewer-team \
-//     --member name=lead,role=tech-lead,descr=Owns the diff \
-//     --member name=tester,role=test-runner
+//	tclaude agent groups create reviewer-team \
+//	  --member name=lead,role=tech-lead,descr=Owns the diff \
+//	  --member name=tester,role=test-runner
 //
 // from a project tree. The CLI must:
 //  1. create the group via POST /v1/groups,

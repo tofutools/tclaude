@@ -401,7 +401,7 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 			// deferred cleanup.
 			cc := f.World.CCs.GetByConvID(conv)
 			require.NotNil(t, cc, "no CCSim registered for %s", conv)
-			exitPane := holdRetiringPane(t, cc)
+			exitPane := holdRetiringPane(t, f, cc, "tmux-rwpx")
 
 			mux := agentd.BuildDashboardHandlerForTest()
 			query := url.Values{
@@ -451,7 +451,7 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 
 			cc := f.World.CCs.GetByConvID(conv)
 			require.NotNil(t, cc, "no CCSim registered for %s", conv)
-			exitPane := holdRetiringPane(t, cc)
+			exitPane := holdRetiringPane(t, f, cc, "tmux-rwps")
 
 			mux := agentd.BuildDashboardHandlerForTest()
 			query := url.Values{

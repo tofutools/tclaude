@@ -43,8 +43,8 @@ func TestIssueKeyFromURL(t *testing.T) {
 	}{
 		{"linear.app/acme/issue/JOH-245/title", "joh-245"},
 		{"https://linear.app/acme/issue/JOH-245", "joh-245"},
-		{"https://linear.app/acme-2/issue/JOH-9/x", "joh-9"},   // org slug "acme-2" is key-shaped; the /issue/ one wins
-		{"https://tracker.example/browse/PROJ-42", "proj-42"},  // no "issue" segment → first key-shaped segment
+		{"https://linear.app/acme-2/issue/JOH-9/x", "joh-9"},    // org slug "acme-2" is key-shaped; the /issue/ one wins
+		{"https://tracker.example/browse/PROJ-42", "proj-42"},   // no "issue" segment → first key-shaped segment
 		{"https://github.com/tofutools/tclaude/issues/123", ""}, // number is not letters-dashed
 		{"https://example.com/no/key/here", ""},
 	}

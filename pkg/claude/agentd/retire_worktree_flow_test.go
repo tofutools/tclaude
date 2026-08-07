@@ -423,7 +423,7 @@ func TestRetire_DeleteWorktreeDeferredUntilAgentExits(t *testing.T) {
 	// the handler's liveness check see a live pane every time.
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc, "no CCSim registered for %s", conv)
-	exitPane := holdRetiringPane(t, cc)
+	exitPane := holdRetiringPane(t, f, cc, "tmux-rwdf")
 
 	mux := agentd.BuildDashboardHandlerForTest()
 	code, resp := postRetireWt(t, mux, conv, "shutdown=1&delete_worktree=1")
@@ -469,7 +469,7 @@ func TestRetire_DeleteWorktreeDeferredFailurePostsNotice(t *testing.T) {
 
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc, "no CCSim registered for %s", conv)
-	exitPane := holdRetiringPane(t, cc)
+	exitPane := holdRetiringPane(t, f, cc, "tmux-rwfa")
 
 	mux := agentd.BuildDashboardHandlerForTest()
 	code, resp := postRetireWt(t, mux, conv, "shutdown=1&delete_worktree=1")
@@ -488,11 +488,16 @@ func TestRetire_DeleteWorktreeDeferredFailurePostsNotice(t *testing.T) {
 		"the notice should carry the failure reason; body=%q", msgs[0].Body)
 }
 
-// Scenario: a DEFERRED delete whose agent ignores /exit. Before TCL-1001 this
-// was the leak the operator reported: nothing stronger followed the soft exit,
-// so the grace expired with the pane still running and the delete was skipped.
-// The escalation ladder now finishes the pane inside the grace, so the human's
-// delete actually happens and no "kept" notice is needed.
+// Scenario: a delete whose agent ignores /exit. Before TCL-1001 this was the
+// leak the operator reported: nothing stronger followed the soft exit, so the
+// grace expired with the pane still running and the delete was skipped. The
+// escalation ladder finishes the pane, so the human's delete actually happens
+// and no "kept" notice is needed.
+//
+// The retire now WAITS for that ladder, so convergence happens inside the
+// request: the pane is already gone when the worktree step runs, and the
+// removal is INLINE ("removed") rather than a promise ("scheduled"). The
+// operator gets the real outcome in the response instead of a maybe.
 func TestRetire_DeleteWorktreeEscalatesPastAgentThatIgnoresExit(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	// Shrink the grace so the deferred waiter resolves fast instead of after
@@ -522,7 +527,9 @@ func TestRetire_DeleteWorktreeEscalatesPastAgentThatIgnoresExit(t *testing.T) {
 	code, resp := postRetireWt(t, mux, conv, "shutdown=1&delete_worktree=1")
 	require.Equal(t, http.StatusOK, code)
 	require.NotNil(t, resp.Worktree)
-	assert.Equal(t, "scheduled", resp.Worktree.Action)
+	assert.Equal(t, "removed", resp.Worktree.Action,
+		"the wait converges the ladder inside the request, so the delete is done, not promised; detail=%s",
+		resp.Worktree.Detail)
 
 	agentd.WaitForBackgroundForTest()
 

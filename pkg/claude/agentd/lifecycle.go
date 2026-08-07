@@ -471,9 +471,19 @@ func captureLifecycleTarget(sess *db.SessionRow) (*lifecycleTarget, error) {
 	return &lifecycleTarget{sessionID: sess.ID, convID: sess.ConvID, tmuxSession: sess.TmuxSession, generation: identity.Generation, paneID: p.paneID, panePID: p.panePID, paneGenerationBound: p.generation != ""}, nil
 }
 
+// probeLifecyclePane reads the pane's identity and liveness in one tmux call.
+//
+// Bounded by tmuxCommandTimeout, like every other tmux subprocess the daemon
+// runs on a latency-sensitive path. It matters more here than most: a stop that
+// WAITS calls this in a loop from inside an HTTP handler while holding the
+// conversation's launch lock, so a tmux client that connects and never returns
+// would park the request forever and block every later wake/stop/retire for
+// that conv. The loop's own deadline bounds the polling, not the subprocess
+// inside it — only this does that.
 func probeLifecyclePane(tmuxSession string) (lifecyclePaneProbe, error) {
 	format := "#{session_name}|#{pane_id}|#{pane_pid}|#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}|#{@tclaude_exit_generation}"
-	out, err := clcommon.TmuxCommand("display-message", "-p", "-t", clcommon.ExactTarget(tmuxSession)+":", format).Output()
+	out, err := tmuxOutputWithTimeout(
+		"display-message", "-p", "-t", clcommon.ExactTarget(tmuxSession)+":", format)
 	if err != nil {
 		return lifecyclePaneProbe{state: paneProbeUnknown}, err
 	}
@@ -512,7 +522,9 @@ func killLifecycleTarget(t *lifecycleTarget) error {
 		logLifecycleStopFailure("revalidate", t.paneID, t.sessionID, err)
 		return err
 	}
-	if err := clcommon.TmuxCommand("kill-pane", "-t", t.paneID).Run(); err != nil {
+	// Bounded: the escalation ladder runs this from inside a waiting stop's
+	// request goroutine, under the launch lock.
+	if err := runTmuxCommand("kill-pane", "-t", t.paneID); err != nil {
 		logLifecycleStopFailure("kill", t.paneID, t.sessionID, err)
 		return err
 	}
@@ -724,8 +736,12 @@ func lifecycleProbeMatchesTarget(probe lifecyclePaneProbe, target *lifecycleTarg
 		(target.panePID <= 0 || probe.panePID == target.panePID) && generationMatches
 }
 
+// lifecycleSessionAlive reports whether tmux still lists tmuxSession, and
+// whether the answer is known at all. Bounded for the same reason as
+// probeLifecyclePane: the ladder's signal rungs poll it from a request
+// goroutine, and an unbounded call there is an unbounded request.
 func lifecycleSessionAlive(tmuxSession string) (alive, known bool) {
-	out, err := clcommon.TmuxCommand("list-sessions", "-F", "#{session_name}").Output()
+	out, err := tmuxOutputWithTimeout("list-sessions", "-F", "#{session_name}")
 	if err != nil {
 		return false, false
 	}
@@ -2257,21 +2273,23 @@ type retireTeardown struct {
 //
 // The order is load-bearing:
 //
-//  1. Stop the pane. This one is deliberately FIRE-AND-FORGET, unlike the
-//     delete paths: steps 2 and 3 do not act immediately. Both
-//     cleanupAgentDirectoriesAfterRetire and scheduleRetireWorktreeCleanup
-//     already defer their destructive half to a background waiter that polls
-//     until the pane is actually offline (retireWorktreeExitGrace), and report
-//     to the human via the Messages tab when that promise cannot be kept. So
-//     "wait until the process really stopped before touching what it holds" is
-//     already honoured here — asynchronously, without holding the request open
-//     for the escalation window. The pane is still guaranteed to die: the
-//     out-of-band ladder armed by the stop converges well inside that grace,
-//     which is what TCL-1001 added it for.
-//  2. Agent-owned directory cleanup (deferred internally until the pane exits).
+//  1. Stop the pane, and WAIT for the process to actually be gone. Waiting is
+//     the default for every stop that has work behind it: the response then
+//     means what it says, and steps 2 and 3 get to do their job inline instead
+//     of promising it. The bulk surfaces make this affordable by running their
+//     members concurrently, so the cost is the slowest agent rather than the
+//     sum.
+//  2. Agent-owned directory cleanup.
 //  3. Worktree + branch cleanup, from the view the CALLER resolved before any
 //     demotion or shutdown (wt) — resolving it here would read a world the
-//     stop above already changed. Also deferred internally.
+//     stop above already changed.
+//
+// Both cleanups keep their own deferred fallback for the case the wait cannot
+// resolve: a pane that survives the whole escalation ladder (softExitStuck) is
+// still alive when they run, so they schedule themselves behind a background
+// exit-waiter and report to the human via the Messages tab if that promise
+// cannot be kept. That is why retire does NOT use stopBeforePurge's refusal —
+// unlike a purge, it has somewhere safe to land.
 //
 // The demotion itself (retireAgentConv) stays with the caller: only it knows
 // the precondition to enforce (live-generation guard, require_offline) and the
@@ -2279,7 +2297,7 @@ type retireTeardown struct {
 func finishRetiredConv(convID string, shutdown, deleteWorktree bool, wt agentWorktreeView, relatedEventID string) retireTeardown {
 	var td retireTeardown
 	if shutdown {
-		td.Stop = stopOneConvWithIntent(convID, false /* soft exit */, db.AgentExitActionRetire, relatedEventID)
+		td.Stop, _ = stopOneConvAndWait(convID, false /* soft exit */, db.AgentExitActionRetire, relatedEventID, 0)
 		switch td.Stop.Action {
 		case "soft_stopped":
 			// Harness-agnostic wording on purpose: the group-retire copy of this
@@ -2540,12 +2558,19 @@ func handleAgentDelete(w http.ResponseWriter, r *http.Request, targetConv string
 			writeError(w, http.StatusConflict, "alive", stopErr.Error())
 			return
 		}
+		// Deliberately NOT gated on stopRes.Action here. The force path is
+		// soft-first now, and a soft exit whose injection failed reports
+		// Action="error" and then falls through to the ladder — which routinely
+		// goes on to kill the pane successfully. stopBeforePurge returning nil
+		// IS the authority that the process is gone; failing the delete on the
+		// injection's Action would 500 on an agent we just killed and leave its
+		// rows behind.
 	} else {
 		stopRes = stopOneConv(targetConv, force)
-	}
-	if stopRes.Action == "error" {
-		writeError(w, http.StatusInternalServerError, "stop", stopRes.Detail)
-		return
+		if stopRes.Action == "error" {
+			writeError(w, http.StatusInternalServerError, "stop", stopRes.Detail)
+			return
+		}
 	}
 	// If the conv is alive but force wasn't passed, stopOneConv
 	// returned `soft_stopped` (sent /exit) — the tmux pane may still
