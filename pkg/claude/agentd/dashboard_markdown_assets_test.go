@@ -123,8 +123,8 @@ func TestDashboardMarkdownViewerWired(t *testing.T) {
 
 	source := dashboardAssetFile(t, "js/markdown-attachment.js")
 	for needle, why := range map[string]string{
-		`role="dialog"`:     "the source view exposes dialog semantics",
-		`aria-modal="true"`: "the source view is modal",
+		`role="dialog"`:     "the document viewer exposes dialog semantics",
+		`aria-modal="true"`: "the document viewer is modal",
 	} {
 		if !strings.Contains(source, needle) {
 			t.Errorf("markdown attachment source missing %q (%s)", needle, why)
@@ -135,6 +135,7 @@ func TestDashboardMarkdownViewerWired(t *testing.T) {
 	for _, rule := range []string{
 		".markdown-preview-dialog {", ".markdown-document {",
 		".markdown-attachment-document {", ".human-attachment-markdown-trigger {",
+		".markdown-preview-mode {", ".markdown-preview-document {",
 		".markdown-remote-image {", ".markdown-remote-image-notice {",
 	} {
 		if !strings.Contains(css, rule) {

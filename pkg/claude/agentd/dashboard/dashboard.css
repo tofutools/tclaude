@@ -1306,6 +1306,27 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
   flex: 0 0 100%; order: -1;
 }
 
+/* Shared corner grip for the resizable attachment viewers (dialog-resize.js).
+   It is absolutely positioned against the dialog, so it lands on the same
+   corner whether the dialog's last row is a footer or the scrolling stage.
+   z-index keeps it above a stage scrollbar that reaches the same corner. */
+.dialog-resizer {
+  position: absolute; z-index: 2; right: 0; bottom: 0;
+  width: 20px; height: 20px; padding: 0;
+  border: 0; background: none; cursor: nwse-resize;
+  color: #56606b; touch-action: none;
+}
+.dialog-resizer:hover, .dialog-resizer:focus-visible { color: #58a6ff; }
+.dialog-resizer:focus-visible { outline: 2px solid #58a6ff; outline-offset: -2px; }
+/* Three diagonal ticks, drawn in currentColor so the states above tint them. */
+.dialog-resizer-grip {
+  position: absolute; right: 3px; bottom: 3px; width: 13px; height: 13px;
+  background-image: repeating-linear-gradient(-45deg,
+    currentColor 0 1.5px, transparent 1.5px 4px);
+  -webkit-mask-image: linear-gradient(-45deg, #000 42%, transparent 62%);
+  mask-image: linear-gradient(-45deg, #000 42%, transparent 62%);
+}
+
 /* Shared single-image viewer. It is a real .modal-overlay so the dashboard's
    overlay stack, Escape routing, and refresh suspension all see it. */
 .image-preview-overlay {
@@ -1313,8 +1334,9 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
   backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
 }
 .image-preview-dialog {
-  width: min(1100px, calc(100vw - 32px));
-  height: min(860px, calc(100vh - 32px)); min-height: 0;
+  position: relative;
+  width: min(var(--dialog-w, 1100px), calc(100vw - 32px));
+  height: min(var(--dialog-h, 860px), calc(100vh - 32px)); min-height: 0;
   display: flex; flex-direction: column; overflow: hidden;
   border: 1px solid #364454; border-radius: 9px;
   background: #0b1016; color: #c9d1d9;
@@ -1374,10 +1396,20 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 }
 .image-preview-state strong { color: #f0f6fc; font-size: 13px; }
 .image-preview-state span { color: #8b949e; font-size: 11px; }
+/* This block undoes the page-level `footer { … }` rule at the top of the file,
+   which is meant for the dashboard's status bar and reaches this footer too:
+   `position` would tear it out of the dialog and pin it to the window;
+   `z-index` applies even unpositioned (a flex item takes it), and at 40 it
+   painted over the corner grip in the same stacking context and swallowed its
+   pointer events; `height` ties it to the status bar's --footer-h. The right
+   padding clears the grip; .grow is the spacer that pushes the zoom cluster
+   over to meet it. */
 .image-preview-footer {
+  position: static; z-index: auto; height: auto;
   display: flex; align-items: center; gap: 8px; min-height: 54px;
-  padding: 0 14px; border-top: 1px solid #30363d; background: #161b22;
+  padding: 0 26px 0 14px; border-top: 1px solid #30363d; background: #161b22;
 }
+.image-preview-footer .grow { flex: 1; }
 .image-preview-footer-file {
   max-width: 34%; overflow: hidden; color: #c9d1d9;
   text-overflow: ellipsis; white-space: nowrap; font-size: 11px;
@@ -1398,6 +1430,7 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
   .image-preview-stage { padding: 12px; }
   .image-preview-footer { min-height: 52px; padding: 0 10px; }
   .image-preview-footer-file { max-width: 42%; }
+  .dialog-resizer { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1406,7 +1439,8 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 
 /* Human-notify Markdown attachments. The document renders in the card itself,
    on its own full-width row below the file line, because it IS the message.
-   The control beside the download link opens the original source instead. */
+   The controls beside the download link open the modal viewer — on the rendered
+   document, or on the original source. */
 .human-attachment-markdown-trigger {
   display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px;
   border: 1px solid #30363d; border-radius: 4px; background: #21262d;
@@ -1435,7 +1469,8 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 .markdown-attachment-state strong { color: #f0f6fc; font-size: 13px; }
 .markdown-attachment-state span { color: #8b949e; font-size: 11px; }
 
-/* Shared Markdown source view. Like the image viewer it is a real
+/* Shared Markdown document viewer (rendered or source). Like the image viewer
+   it is a real
    .modal-overlay, so the dashboard's overlay stack, Escape routing, and
    refresh suspension all see it. */
 .markdown-preview-overlay {
@@ -1443,8 +1478,9 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
   backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
 }
 .markdown-preview-dialog {
-  width: min(900px, calc(100vw - 32px));
-  height: min(860px, calc(100vh - 32px)); min-height: 0;
+  position: relative;
+  width: min(var(--dialog-w, 900px), calc(100vw - 32px));
+  height: min(var(--dialog-h, 860px), calc(100vh - 32px)); min-height: 0;
   display: flex; flex-direction: column; overflow: hidden;
   border: 1px solid #364454; border-radius: 9px;
   background: #0b1016; color: #c9d1d9;
@@ -1465,15 +1501,37 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
   border: 1px solid #30363d; border-radius: 4px; background: #21262d;
   color: #c9d1d9; cursor: pointer; font: inherit; font-size: 12px;
 }
+/* Rendered/Source toggle. Whichever control opened the viewer, the other mode
+   stays one click away rather than requiring a close-and-reopen. */
+.markdown-preview-modes {
+  display: inline-flex; overflow: hidden;
+  border: 1px solid #30363d; border-radius: 4px;
+}
+.markdown-preview-mode {
+  padding: 5px 10px; border: 0; background: #21262d;
+  color: #8b949e; cursor: pointer; font: inherit; font-size: 12px;
+}
+.markdown-preview-mode + .markdown-preview-mode { border-left: 1px solid #30363d; }
+.markdown-preview-mode:hover { color: #f0f6fc; }
+.markdown-preview-mode[aria-pressed="true"] { background: rgba(31, 111, 235, .18); color: #58a6ff; }
+/* The group clips an outline, so the focus ring is drawn inside the button —
+   the same treatment .sbx-segmented-option uses. It follows the pressed rule so
+   the selected mode shows a ring too. */
+.markdown-preview-mode:focus-visible {
+  box-shadow: inset 0 0 0 2px #58a6ff; outline: 0; position: relative; z-index: 1;
+  color: #f0f6fc;
+}
 .markdown-preview-download { padding: 5px 9px; border-color: #1f6feb; color: #58a6ff; text-decoration: none; }
 .markdown-preview-download:hover, .markdown-preview-download:focus-visible { background: rgba(31, 111, 235, .14); }
 .markdown-preview-close { width: 30px; height: 30px; padding: 0; color: #8b949e; font-size: 19px; }
 .markdown-preview-close:hover, .markdown-preview-close:focus-visible {
   border-color: #58a6ff; color: #f0f6fc;
 }
+/* The extra bottom padding keeps the document clear of the corner grip, which
+   floats over this stage (the image viewer has a footer there instead). */
 .markdown-preview-stage {
   position: relative; min-height: 0; flex: 1; overflow: auto;
-  padding: 22px 24px; background: #0b1016;
+  padding: 22px 24px 30px; background: #0b1016;
 }
 .markdown-document-state {
   display: flex; flex-direction: column; gap: 5px; max-width: 420px;
@@ -1575,6 +1633,12 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 .markdown-document th { background: #161b22; color: #f0f6fc; font-weight: 600; }
 .markdown-document tbody tr:nth-child(even) { background: rgba(22, 27, 34, .55); }
 
+/* The viewer is wider than the message column, so the rendered document keeps a
+   readable measure instead of running the full dialog width. It follows the
+   .markdown-document block deliberately: the element carries both classes at
+   equal specificity, so source order is what decides the font size. */
+.markdown-preview-document { max-width: 760px; margin: 0 auto; font-size: 14px; }
+
 @media (max-width: 720px) {
   .markdown-preview-overlay { padding: 0; }
   .markdown-preview-dialog { width: 100%; height: 100%; border: 0; border-radius: 0; }
@@ -1584,7 +1648,9 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
   .markdown-preview-heading span { display: block; overflow: hidden; margin-top: 2px; text-overflow: ellipsis; }
   .markdown-preview-header-actions { flex: 0 0 auto; }
   .markdown-preview-download { padding: 5px 7px; font-size: 11px; }
-  .markdown-preview-stage { padding: 16px 14px; }
+  .markdown-preview-mode { padding: 5px 7px; font-size: 11px; }
+  .markdown-preview-stage { padding: 16px 14px 22px; }
+  .markdown-preview-document { font-size: 13.5px; }
   .markdown-attachment-document { margin-top: 8px; padding-top: 10px; }
 }
 

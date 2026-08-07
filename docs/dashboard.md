@@ -1577,6 +1577,14 @@ preview overlay, which supports zoom, authenticated missing-file checks, and
 Escape-to-return while keeping the original download action available. SVG
 and other non-raster files remain download-only.
 
+Both attachment viewers are **resizable**: a corner grip drags the dialog to any
+size between a small floor and the viewport, arrow keys resize it from the
+keyboard, and double-clicking the grip (or pressing Home on it) restores the
+default. Each viewer remembers its own size — a screenshot and a report do not
+want the same shape — server-side under `tclaude.dash.attachmentViewer.*.size`,
+so it survives a reload, a daemon restart, and a different browser profile. On a
+narrow viewport the viewers are already full-screen, so the grip is hidden.
+
 A published **Markdown document** gets the same treatment in reading form. A
 file the daemon recognises as Markdown — by a `text/markdown` or
 `text/x-markdown` media type, or by a `.md`/`.markdown`/`.mdown`/`.mkd`/`.mkdn`
@@ -1585,10 +1593,12 @@ is **rendered in the message itself**, on its own row inside the attachment card
 headings, lists, tables, fenced code, block quotes, links, and images. A report
 an agent wrote to be read is the content of that notification, so it is not put
 behind a control. The card keeps its file line, size, and download link above the
-document, and adds a **View source** control that opens the original Markdown in
-a modal — the reverse of the usual arrangement, since the rendered form is
-already on screen. Both the quick notification reader and Messages render it, and
-both share the same components.
+document, and adds two controls that open the same modal viewer an image
+attachment gets, for a document the message column is too narrow to read:
+**Open** lands on the rendered document, **View source** on the original
+Markdown. A Rendered/Source toggle in the viewer's header switches between them,
+so arriving in either mode is not a dead end. Both the quick notification reader
+and Messages render it, and both share the same components.
 
 The document is fetched when the message is shown; a file the cleanup already
 removed, or one that cannot be read, says so in the document's place and leaves
