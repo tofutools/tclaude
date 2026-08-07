@@ -593,6 +593,11 @@ type tuiModel struct {
 	viewportOffset int
 	width          int
 	height         int
+	// helpOffset is the first help line on screen, in body lines rather than
+	// terminal rows. The help text is longer than most terminals, so it gets a
+	// viewport of its own — see renderHelpView — reset every time the view is
+	// opened.
+	helpOffset int
 
 	mode tuiMode
 	// notice is the outcome of the last thing the operator did (a spawn, a
@@ -2143,6 +2148,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.ensureCursorVisible()
+		// A terminal that grew leaves the help view scrolled further than there
+		// is now text below, which would show a screen of blank rows. Only the
+		// open view pays for the recount; every other mode opens at the top
+		// anyway.
+		if m.mode == tuiModeHelp {
+			m.helpOffset = min(m.helpOffset, m.helpMaxOffset(m.helpBodyLines()))
+		}
 		return m, nil
 
 	case tuiTickMsg:
@@ -2522,8 +2534,7 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	switch m.mode {
 	case tuiModeHelp:
-		m.mode = tuiModeList
-		return m, nil
+		return m.handleHelpKey(msg)
 
 	case tuiModeConfirmQuit:
 		// Only "y" or a second Ctrl-C confirms. Enter is the reflexive dismiss key and the
@@ -2630,6 +2641,9 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case "?", "h":
 		m.mode = tuiModeHelp
+		// Always opens at the top: the view is opened to read it, and where a
+		// previous reading was left is no use two minutes later.
+		m.helpOffset = 0
 	}
 	return m, nil
 }
@@ -2649,6 +2663,47 @@ func tuiReconciliationBlocksMutation(mode tuiMode, key string) bool {
 	default:
 		return false
 	}
+}
+
+// handleHelpKey scrolls the help view, or closes it. Anything that is not a
+// scroll key closes it, which is the contract the view has always had and the
+// footer still states: the help is a glance rather than a mode to get stuck
+// in, so the keys it swallows are only the ones it needs.
+//
+// The scroll keys are the listing's own — ↑/k, ↓/j, pgup/pgdn, home/g, end/G
+// — so nothing new has to be learned to read the rest of a page.
+func (m tuiModel) handleHelpKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	lines := m.helpBodyLines()
+	maxOffset := m.helpMaxOffset(lines)
+	if maxOffset <= 0 {
+		// The whole text is on screen, so the footer promises that any key
+		// closes it — and a scroll key must not be the exception that leaves an
+		// operator pressing ↓ at a view that neither scrolls nor closes.
+		m.mode = tuiModeList
+		m.helpOffset = 0
+		return m, nil
+	}
+	// A page is what is on screen less one line, so the line the eye stopped on
+	// is still there after the jump.
+	page := max(len(m.helpWindow(lines, m.helpOffset))-1, 1)
+	switch msg.String() {
+	case "up", "k":
+		m.helpOffset = max(m.helpOffset-1, 0)
+	case "down", "j":
+		m.helpOffset = min(m.helpOffset+1, maxOffset)
+	case "pgup", "ctrl+b":
+		m.helpOffset = max(m.helpOffset-page, 0)
+	case "pgdown", "ctrl+f":
+		m.helpOffset = min(m.helpOffset+page, maxOffset)
+	case "home", "g":
+		m.helpOffset = 0
+	case "end", "G":
+		m.helpOffset = maxOffset
+	default:
+		m.mode = tuiModeList
+		m.helpOffset = 0
+	}
+	return m, nil
 }
 
 func (m tuiModel) handleSpawnKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -2764,7 +2819,7 @@ func (m *tuiModel) ensureCursorVisible() {
 func (m tuiModel) View() tea.View {
 	switch m.mode {
 	case tuiModeHelp:
-		return tea.View{Content: m.renderHelp(), AltScreen: true}
+		return tea.View{Content: m.renderHelpView(), AltScreen: true}
 	case tuiModeSpawn:
 		return tea.View{Content: m.renderSpawnForm(), AltScreen: true}
 	case tuiModeShell:
@@ -3384,7 +3439,31 @@ func tuiHint(show bool, hint string) string {
 	return hint
 }
 
+// renderHelp is the whole help text: every body line with the closing hint
+// under it. renderHelpView is what the console actually shows — it windows the
+// same body to the terminal — so this is the text in full, whatever the
+// terminal can hold of it.
 func (m tuiModel) renderHelp() string {
+	return strings.Join(m.helpBodyLines(), "\n") + "\n\n" + tuiHelpCloseHint + "\n"
+}
+
+// tuiHelpCloseHint is the footer under a help view that fits on the terminal,
+// and tuiHelpScrollHint the one under a view that does not. Both are one row
+// by contract — renderHelpView trims rather than wraps them, as the usage line
+// does — so the body's row budget is fixed at tuiHelpChrome.
+const (
+	tuiHelpCloseHint  = "  Press any key to close."
+	tuiHelpScrollHint = "  ↑/↓ scroll • pgup/pgdn page • home/end jump • any other key closes"
+)
+
+// tuiHelpChrome is what renderHelpView spends on everything that is not a body
+// line: the blank line above the footer, and the footer.
+const tuiHelpChrome = 2
+
+// helpBodyLines is the help text as terminal lines, without the footer pinned
+// under it. The console scrolls this slice rather than the rendered string, so
+// a body taller than the terminal stays reachable to its last line.
+func (m tuiModel) helpBodyLines() []string {
 	var b strings.Builder
 	b.WriteString("\n  tclaude terminal dashboard — keys\n\n")
 	b.WriteString("  List\n")
@@ -3513,6 +3592,98 @@ func (m tuiModel) renderHelp() string {
 		writeTokenBlock(&b, m.tokenLines, "  ")
 		b.WriteString("\n")
 	}
-	b.WriteString("  Press any key to close.\n")
-	return b.String()
+	return strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
+}
+
+// helpLineRows is how many terminal rows a body line takes once the terminal
+// has wrapped it. The help text is hand-wrapped to a comfortable width rather
+// than the terminal's, so a narrow one wraps it again — and the viewport has
+// to pay for every row a line took, or the footer is pushed off the bottom.
+func (m tuiModel) helpLineRows(line string) int {
+	w := lipgloss.Width(line)
+	if m.width <= 0 || w <= m.width {
+		return 1
+	}
+	return (w + m.width - 1) / m.width
+}
+
+// helpBodyRows is how many rows the help body has to fit in.
+func (m tuiModel) helpBodyRows() int {
+	return max(m.height-tuiHelpChrome, 1)
+}
+
+// helpWindow is the run of body lines visible at offset off: as many as the
+// row budget holds. A line the budget cannot hold even on its own still shows,
+// because leaving the viewport empty would strand every line after it — but
+// cut to the rows there are, since overflowing the alt screen is the thing
+// this viewport exists to stop.
+func (m tuiModel) helpWindow(lines []string, off int) []string {
+	off = min(max(off, 0), max(len(lines)-1, 0))
+	budget := m.helpBodyRows()
+	rows := 0
+	out := make([]string, 0, len(lines)-off)
+	for _, line := range lines[off:] {
+		r := m.helpLineRows(line)
+		if rows+r > budget {
+			if len(out) > 0 {
+				break
+			}
+			if m.width > 0 {
+				line = tuiTruncate(line, budget*m.width)
+			}
+			return []string{line}
+		}
+		rows += r
+		out = append(out, line)
+	}
+	return out
+}
+
+// helpMaxOffset is the furthest the help view scrolls: the offset that puts
+// the last body line on the last body row. Zero means the whole text fits, and
+// so does a console that has had no WindowSizeMsg yet — with no height to
+// window to, renderHelpView shows everything rather than one line of it.
+//
+// It never goes past the last line, even when that line alone is taller than
+// the budget: an offset with no line to name is one the range readout would
+// count past the end of the text, and one that end/G would park a dead
+// keystroke on.
+func (m tuiModel) helpMaxOffset(lines []string) int {
+	if m.height <= 0 || len(lines) == 0 {
+		return 0
+	}
+	budget := m.helpBodyRows()
+	rows := 0
+	for i := len(lines) - 1; i >= 0; i-- {
+		rows += m.helpLineRows(lines[i])
+		if rows > budget {
+			return min(i+1, len(lines)-1)
+		}
+	}
+	return 0
+}
+
+// renderHelpView is the help text windowed to this terminal, which is what the
+// console shows. Below a body that fits it says so and nothing more; below one
+// that does not it names the scroll keys and where in the text the view is.
+func (m tuiModel) renderHelpView() string {
+	lines := m.helpBodyLines()
+	maxOffset := m.helpMaxOffset(lines)
+	if maxOffset <= 0 {
+		return m.renderHelp()
+	}
+	off := min(max(m.helpOffset, 0), maxOffset)
+	window := m.helpWindow(lines, off)
+	body := strings.Join(window, "\n") + "\n"
+	if m.height <= tuiHelpChrome {
+		// No room for both a line of help and the footer under it. The help is
+		// what the view is for, so the footer is what goes — and the keys it
+		// would have named still work.
+		return body
+	}
+	hint := tuiHelpScrollHint + fmt.Sprintf("  (%d–%d of %d)", off+1, off+len(window), len(lines))
+	if m.width > 0 {
+		hint = tuiTruncate(hint, m.width)
+	}
+	return body + "\n" + hint + "\n"
 }
