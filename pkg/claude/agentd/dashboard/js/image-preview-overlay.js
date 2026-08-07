@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { useDialogFocus } from './dialog-focus.js';
 import { isTopmostOverlay } from './overlay-stack.js';
+import { DialogResizer, useDialogResize } from './dialog-resize.js';
 
 const html = htm.bind(h);
 
@@ -66,6 +67,10 @@ export function ImageAttachmentPreview({ messageID, attachment, surface = 'attac
     onEscape: close,
     shouldHandle: () => isTopmostOverlay(overlayRef.current),
   });
+  const { dialogStyle, resizerProps } = useDialogResize({
+    dialogRef,
+    prefKey: 'tclaude.dash.attachmentViewer.image.size',
+  });
 
   useEffect(() => {
     if (!open) return undefined;
@@ -101,7 +106,7 @@ export function ImageAttachmentPreview({ messageID, attachment, surface = 'attac
         }
       }}>
       <div ref=${dialogRef} class="image-preview-dialog" role="dialog" aria-modal="true"
-        aria-labelledby=${titleID} aria-describedby=${detailsID}>
+        aria-labelledby=${titleID} aria-describedby=${detailsID} style=${dialogStyle}>
         <header class="image-preview-header">
           <div class="image-preview-heading">
             <h2 id=${titleID}>${filename}</h2>
@@ -134,6 +139,7 @@ export function ImageAttachmentPreview({ messageID, attachment, surface = 'attac
             aria-label="Reset zoom">${Math.round(zoom * 100)}%</button>
           <button type="button" onClick=${() => setZoom((value) => Math.min(3, value + .5))}
             disabled=${zoom >= 3} aria-label="Zoom in">+</button>
+          <${DialogResizer} ...${resizerProps} label="Resize the image viewer" />
         </footer>
       </div>
     </div>`}

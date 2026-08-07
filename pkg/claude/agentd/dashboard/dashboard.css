@@ -1302,6 +1302,27 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
   flex: 0 0 100%; order: -1;
 }
 
+/* Shared corner grip for the resizable attachment viewers (dialog-resize.js).
+   It is absolutely positioned against the dialog, so it lands on the same
+   corner whether the dialog's last row is a footer or the scrolling stage.
+   z-index keeps it above a stage scrollbar that reaches the same corner. */
+.dialog-resizer {
+  position: absolute; z-index: 2; right: 0; bottom: 0;
+  width: 20px; height: 20px; padding: 0;
+  border: 0; background: none; cursor: nwse-resize;
+  color: #56606b; touch-action: none;
+}
+.dialog-resizer:hover, .dialog-resizer:focus-visible { color: #58a6ff; }
+.dialog-resizer:focus-visible { outline: 2px solid #58a6ff; outline-offset: -2px; }
+/* Three diagonal ticks, drawn in currentColor so the states above tint them. */
+.dialog-resizer-grip {
+  position: absolute; right: 3px; bottom: 3px; width: 13px; height: 13px;
+  background-image: repeating-linear-gradient(-45deg,
+    currentColor 0 1.5px, transparent 1.5px 4px);
+  -webkit-mask-image: linear-gradient(-45deg, #000 42%, transparent 62%);
+  mask-image: linear-gradient(-45deg, #000 42%, transparent 62%);
+}
+
 /* Shared single-image viewer. It is a real .modal-overlay so the dashboard's
    overlay stack, Escape routing, and refresh suspension all see it. */
 .image-preview-overlay {
@@ -1309,8 +1330,9 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
   backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
 }
 .image-preview-dialog {
-  width: min(1100px, calc(100vw - 32px));
-  height: min(860px, calc(100vh - 32px)); min-height: 0;
+  position: relative;
+  width: min(var(--dialog-w, 1100px), calc(100vw - 32px));
+  height: min(var(--dialog-h, 860px), calc(100vh - 32px)); min-height: 0;
   display: flex; flex-direction: column; overflow: hidden;
   border: 1px solid #364454; border-radius: 9px;
   background: #0b1016; color: #c9d1d9;
@@ -1372,7 +1394,7 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 .image-preview-state span { color: #8b949e; font-size: 11px; }
 .image-preview-footer {
   display: flex; align-items: center; gap: 8px; min-height: 54px;
-  padding: 0 14px; border-top: 1px solid #30363d; background: #161b22;
+  padding: 0 26px 0 14px; border-top: 1px solid #30363d; background: #161b22;
 }
 .image-preview-footer-file {
   max-width: 34%; overflow: hidden; color: #c9d1d9;
@@ -1394,6 +1416,7 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
   .image-preview-stage { padding: 12px; }
   .image-preview-footer { min-height: 52px; padding: 0 10px; }
   .image-preview-footer-file { max-width: 42%; }
+  .dialog-resizer { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1441,8 +1464,9 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
   backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
 }
 .markdown-preview-dialog {
-  width: min(900px, calc(100vw - 32px));
-  height: min(860px, calc(100vh - 32px)); min-height: 0;
+  position: relative;
+  width: min(var(--dialog-w, 900px), calc(100vw - 32px));
+  height: min(var(--dialog-h, 860px), calc(100vh - 32px)); min-height: 0;
   display: flex; flex-direction: column; overflow: hidden;
   border: 1px solid #364454; border-radius: 9px;
   background: #0b1016; color: #c9d1d9;

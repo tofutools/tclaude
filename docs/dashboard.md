@@ -1557,6 +1557,14 @@ preview overlay, which supports zoom, authenticated missing-file checks, and
 Escape-to-return while keeping the original download action available. SVG
 and other non-raster files remain download-only.
 
+Both attachment viewers are **resizable**: a corner grip drags the dialog to any
+size between a small floor and the viewport, arrow keys resize it from the
+keyboard, and double-clicking the grip (or pressing Home on it) restores the
+default. Each viewer remembers its own size — a screenshot and a report do not
+want the same shape — server-side under `tclaude.dash.attachmentViewer.*.size`,
+so it survives a reload, a daemon restart, and a different browser profile. On a
+narrow viewport the viewers are already full-screen, so the grip is hidden.
+
 A published **Markdown document** gets the same treatment in reading form. A
 file the daemon recognises as Markdown — by a `text/markdown` or
 `text/x-markdown` media type, or by a `.md`/`.markdown`/`.mdown`/`.mkd`/`.mkdn`

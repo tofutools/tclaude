@@ -20,6 +20,7 @@ import { useDialogFocus } from './dialog-focus.js';
 import { isTopmostOverlay } from './overlay-stack.js';
 import { attachmentHrefByID, attachmentSize } from './human-attachments.js';
 import { MarkdownDocument } from './markdown-document.js';
+import { DialogResizer, useDialogResize } from './dialog-resize.js';
 
 const html = htm.bind(h);
 
@@ -67,6 +68,10 @@ export function MarkdownAttachment({ messageID, attachment, surface = 'attachmen
     initialFocusRef: closeRef,
     onEscape: close,
     shouldHandle: () => isTopmostOverlay(overlayRef.current),
+  });
+  const { dialogStyle, resizerProps } = useDialogResize({
+    dialogRef,
+    prefKey: 'tclaude.dash.attachmentViewer.markdown.size',
   });
 
   // Fetched when the message is shown rather than on demand: the document is
@@ -119,7 +124,7 @@ export function MarkdownAttachment({ messageID, attachment, surface = 'attachmen
         }
       }}>
       <div ref=${dialogRef} class="markdown-preview-dialog" role="dialog" aria-modal="true"
-        aria-labelledby=${titleID}>
+        aria-labelledby=${titleID} style=${dialogStyle}>
         <header class="markdown-preview-header">
           <div class="markdown-preview-heading">
             <h2 id=${titleID}>${filename}</h2>
@@ -146,6 +151,7 @@ export function MarkdownAttachment({ messageID, attachment, surface = 'attachmen
             ? html`<pre class="markdown-preview-source">${source}</pre>`
             : html`<${MarkdownDocument} source=${source} className="markdown-document markdown-preview-document" />`}
         </div>
+        <${DialogResizer} ...${resizerProps} label="Resize the document viewer" />
       </div>
     </div>`}
   </${Fragment}>`;
