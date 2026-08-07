@@ -450,14 +450,14 @@ test('agent-spawn actions preserve effort memory, HTTP errors, upload retry inpu
       agent_id: 'agt_webworker', conv_id: 'abcdef1234', label: 'web-worker', focus_mode: 'browser',
       focus_ws: '/api/spawn-focus-ws/web-worker',
     },
-    { name: 'web-worker', group: 'alpha', autoFocus: true },
+    { name: 'web-worker', group: 'alpha', autoFocus: true, harness: 'copilot' },
   );
   const webCompletionCalls = calls.slice(beforeWebCompletion);
   assert.deepEqual(
     webCompletionCalls.find(([kind]) => kind === 'pane')?.[1],
     {
       ws: '/api/spawn-focus-ws/web-worker', label: 'web-worker', key: 'window:agt_webworker',
-      hideConv: 'abcdef1234', agent: 'agt_webworker',
+      hideConv: 'abcdef1234', agent: 'agt_webworker', harness: 'copilot',
     },
     'web-terminal preference opens a label-keyed pane in the Terminals tab',
   );
