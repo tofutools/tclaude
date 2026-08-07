@@ -15,6 +15,7 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`id="sandbox-profile-editor-environment"`:                                      "raw environment editor",
 		`id="sandbox-profile-editor-includes"`:                                         "raw includes editor",
 		`id="sandbox-profile-editor-agent-directories"`:                                "raw agent-owned directory editor",
+		`id="sandbox-profile-editor-pre-launch"`:                                       "raw pre-launch script editor",
 		`id="sandbox-profile-editor-submit"`:                                           "stable submit hook for plain and wizard skins",
 		`class="tool sandbox-profile-clone"`:                                           "clone action in each sandbox-profile card",
 		`actions.openSandboxClone(item)`:                                               "clone action opens the guarded sandbox editor",
