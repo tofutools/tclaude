@@ -46,6 +46,8 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 	for _, needle := range []string{
 		"term.attachCustomKeyEventHandler(",
 		"if (isBrowserPasteShortcut(event)) return false",
+		"if (isTerminalClipboardRequestShortcut(event)) {",
+		"armTmuxClipboardFromGesture();\n      return true;",
 		"const input = terminalKeyInput(event)",
 		"term.input(input)",
 		"term.onSelectionChange(",

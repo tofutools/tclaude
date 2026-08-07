@@ -56,6 +56,21 @@ export function isBrowserPasteShortcut(event) {
   return pasteKey && Boolean(event.ctrlKey || event.metaKey);
 }
 
+// A TUI may own its selection and use the ordinary platform copy chord to
+// publish it through OSC 52. Copilot CLI does exactly that: the selection is
+// invisible to xterm, Ctrl/Cmd+C stays application input, and the resulting
+// OSC arrives asynchronously over the PTY. Recognize only the exact copy
+// gesture so the caller can arm browser clipboard access without consuming the
+// key -- the running application must still receive it and decide what it
+// means. An application that emits no OSC leaves only a quiet, bounded token.
+export function isTerminalClipboardRequestShortcut(event) {
+  if (!event || event.type !== 'keydown' || event.altKey || event.shiftKey ||
+      event.isComposing || event.keyCode === 229) return false;
+  const copyKey = event.code === 'KeyC' ||
+    (typeof event.key === 'string' && event.key.toLowerCase() === 'c');
+  return copyKey && Boolean(event.ctrlKey || event.metaKey);
+}
+
 export function isComposeMessageShortcut(event) {
   if (!event || event.type !== 'keydown' || event.altKey || event.shiftKey ||
       event.isComposing || event.keyCode === 229) return false;
@@ -694,6 +709,14 @@ export function attachTerminalInteractions({
     // Do not call preventDefault: Chrome still needs to dispatch the paste
     // event to xterm's textarea (and our capture listener above it).
     if (isBrowserPasteShortcut(event)) return false;
+    if (isTerminalClipboardRequestShortcut(event)) {
+      // Start the permission-sensitive browser write inside the trusted
+      // keydown, then leave the chord entirely to xterm/the TUI. Copilot's OSC
+      // 52 response resolves it; Ctrl+C applications that merely cancel work
+      // emit nothing and the pending token expires without changing clipboard.
+      armTmuxClipboardFromGesture();
+      return true;
+    }
     const input = terminalKeyInput(event);
     if (input !== null) {
       event.preventDefault();

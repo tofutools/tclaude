@@ -2056,8 +2056,11 @@ clipboard using tmux's standard OSC 52 sequence. This follows tmux's
 `set-clipboard` setting (`external` by default), so explicitly setting it to
 `off` disables browser propagation too. The clipboard request begins inside
 the drag's mouse event and waits for tmux's response, preserving the user
-gesture required by browsers such as Safari. Unsolicited OSC 52 sequences are
-ignored; only an explicitly armed mouse copy may update the clipboard.
+gesture required by browsers such as Safari. A TUI-owned **Ctrl/Cmd-C** copy
+uses the same guarded path: the keyboard gesture arms one response while the
+key still reaches the running application. Unsolicited OSC 52 sequences are
+ignored; only an explicitly armed mouse or keyboard copy may update the
+clipboard.
 To make a browser-owned selection instead, use **Option-drag on macOS** or
 **Shift-drag on Linux/Windows**, then press **Ctrl/⌘-Shift-C** or click
 **Copy**. Clicking Copy without a browser selection shows this modifier hint.

@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {
 	attachTerminalInteractions, beginGestureClipboardWrite, decodeOSC52,
 	isBrowserPasteShortcut, isComposeMessageShortcut, safeTerminalLink,
-	shouldArmTmuxClipboard, terminalKeyInput, visibleLocalFileLinkProvider,
+	isTerminalClipboardRequestShortcut, shouldArmTmuxClipboard, terminalKeyInput,
+	visibleLocalFileLinkProvider,
 	visibleLocalFileLinks,
 } from '../dashboard/js/terminal-interactions.js';
 
@@ -56,6 +57,23 @@ test('unrelated and Alt-modified V chords remain terminal-owned', () => {
     key({ key: 'v', code: 'KeyV', ctrlKey: true, altKey: true })), false);
   assert.equal(isBrowserPasteShortcut(
     key({ type: 'keyup', key: 'v', code: 'KeyV', ctrlKey: true })), false);
+});
+
+test('plain Ctrl/Cmd+C arms an application clipboard request without claiming modified chords', () => {
+  assert.equal(isTerminalClipboardRequestShortcut(
+    key({ key: 'c', code: 'KeyC', ctrlKey: true })), true);
+  assert.equal(isTerminalClipboardRequestShortcut(
+    key({ key: 'C', code: 'KeyC', metaKey: true })), true);
+  assert.equal(isTerminalClipboardRequestShortcut(
+    key({ key: 'c', code: 'KeyC', ctrlKey: true, shiftKey: true })), false);
+  assert.equal(isTerminalClipboardRequestShortcut(
+    key({ key: 'c', code: 'KeyC', ctrlKey: true, altKey: true })), false);
+  assert.equal(isTerminalClipboardRequestShortcut(
+    key({ key: 'c', code: 'KeyC' })), false);
+  assert.equal(isTerminalClipboardRequestShortcut(
+    key({ type: 'keyup', key: 'c', code: 'KeyC', ctrlKey: true })), false);
+  assert.equal(isTerminalClipboardRequestShortcut(
+    key({ key: 'c', code: 'KeyC', ctrlKey: true, isComposing: true })), false);
 });
 
 test('Shift+Enter remains xterm-owned while an IME composition is active', () => {
@@ -270,7 +288,7 @@ function drag(harness, ownerDocument) {
   ownerDocument.dispatch('mouseup', { ...plain, clientX: 10, clientY: 1 });
 }
 
-test('terminal lifecycle accepts only the latest armed pane OSC 52', async () => {
+test('terminal lifecycle accepts OSC 52 only after a pointer or keyboard copy gesture', async () => {
   const oldNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
   const oldClipboardItem = Object.getOwnPropertyDescriptor(globalThis, 'ClipboardItem');
   const writes = [];
@@ -299,24 +317,30 @@ test('terminal lifecycle accepts only the latest armed pane OSC 52', async () =>
     first.osc52(`;${Buffer.from('poison').toString('base64')}`);
     assert.equal(writes.length, 0);
 
+    const copyEvent = key({ key: 'c', code: 'KeyC', ctrlKey: true });
+    assert.equal(first.key(copyEvent), true, 'the application must still receive Ctrl+C');
+    assert.equal(writes.length, 1, 'keyboard gesture starts the deferred browser write');
+    first.osc52(`;${Buffer.from('copilot selection').toString('base64')}`);
+    assert.deepEqual(await writes[0], { type: 'text/plain', text: 'copilot selection' });
+
     drag(first, doc);
-    assert.equal(writes.length, 1);
+    assert.equal(writes.length, 2);
     drag(second, doc);
-    assert.equal(writes.length, 2, 'new pane supersedes the first page-global write');
-    await assert.rejects(writes[0], /canceled/);
+    assert.equal(writes.length, 3, 'new pane supersedes the first page-global write');
+    await assert.rejects(writes[1], /canceled/);
 
     // The canceled pane no longer owns the active token, so its later OSC is
     // ignored rather than resolving the second pane's clipboard item.
     first.osc52(`;${Buffer.from('stale').toString('base64')}`);
     second.osc52(`;${Buffer.from('latest 🧇').toString('base64')}`);
-    assert.deepEqual(await writes[1], { type: 'text/plain', text: 'latest 🧇' });
+    assert.deepEqual(await writes[2], { type: 'text/plain', text: 'latest 🧇' });
 
     drag(first, doc);
-    assert.equal(writes.length, 3);
+    assert.equal(writes.length, 4);
     firstInteractions.invalidate();
-    await assert.rejects(writes[2], /canceled/);
+    await assert.rejects(writes[3], /canceled/);
     first.osc52(`;${Buffer.from('after invalidate').toString('base64')}`);
-    assert.equal(writes.length, 3);
+    assert.equal(writes.length, 4);
   } finally {
     firstInteractions.dispose();
     secondInteractions.dispose();
