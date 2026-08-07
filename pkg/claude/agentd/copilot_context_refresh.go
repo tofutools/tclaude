@@ -260,9 +260,10 @@ func persistCopilotContextSnapshot(
 	// sweep's first row, everything below behaves exactly as it did.
 	//
 	// Both writers reaching the same values matters as much as which wins. They
-	// share copilotContextPct and read the same window column, so the sweep and
-	// this refresh converge rather than flapping the row between two answers on
-	// alternating polls.
+	// share copilotContextPct AND copilotEffectiveContextWindow (configured
+	// cap, else the observed model's static assumption, else the disclosed
+	// window), so the sweep and this refresh converge rather than flapping the
+	// row between two answers on alternating polls.
 	live, hasLive := lookupCopilotLiveUsage(sess.ID, sess.ConvID, sess.CreatedAt)
 
 	if snap.Usage != nil {

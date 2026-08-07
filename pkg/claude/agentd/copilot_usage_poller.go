@@ -792,12 +792,14 @@ func lookupCopilotLiveUsage(sessionID, convID string, createdAt time.Time) (copi
 // write sessions.model or sessions.effort_level; once a usage row exists, this
 // sweep is the sole owner of those two dashboard columns, so they cannot flap.
 //
-// The denominator is tclaude intent: an explicit Copilot cap persisted with
-// the conversation's relaunch profile, otherwise the static assumption for
-// the observed model. Copilot does not report a context cap, so this must not
-// overwrite context_window_size, which remains the observed snapshot owned by
-// the durable context follower. With no observed model and no configured cap,
-// the percentage stays 0 while token counts are still written.
+// The denominator is the shared effective resolution: an explicit Copilot cap
+// persisted with the conversation's relaunch profile, else the static
+// assumption for the observed model, else whatever window the durable
+// follower has recorded as disclosed. Copilot does not report a context cap
+// on its own, so this must not overwrite context_window_size, which remains
+// the observed snapshot owned by the durable context follower. With no cap
+// resolvable from any arm, the percentage stays 0 while token counts are
+// still written.
 func persistCopilotUsageContext(sess *db.SessionRow, snapshot db.CopilotUsageSnapshot) {
 	stored, err := db.GetContextSnapshot(sess.ID)
 	if err != nil {
