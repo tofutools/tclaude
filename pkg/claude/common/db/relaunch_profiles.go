@@ -72,9 +72,13 @@ type AgentRelaunchProfile struct {
 	ModelID                     *string `json:"model_id,omitempty"`
 	Effort                      *string `json:"effort,omitempty"`
 	ContextWindowSize           *int64  `json:"context_window_size,omitempty"`
-	AskUserQuestionTimeout      *string `json:"ask_user_question_timeout,omitempty"`
-	RemoteControl               *bool   `json:"remote_control,omitempty"`
-	AutoMemory                  *bool   `json:"auto_memory,omitempty"`
+	// ConfiguredContextWindowMax is the Copilot launch-intent cap. It is
+	// deliberately distinct from ContextWindowSize, which is an observed
+	// context snapshot used by status/dashboard projections.
+	ConfiguredContextWindowMax *int64  `json:"context_window_max,omitempty"`
+	AskUserQuestionTimeout     *string `json:"ask_user_question_timeout,omitempty"`
+	RemoteControl              *bool   `json:"remote_control,omitempty"`
+	AutoMemory                 *bool   `json:"auto_memory,omitempty"`
 	// SSHWorkaround is the durable Codex Git-over-SSH compatibility posture.
 	// nil means unknown/legacy; false is an explicit opt-out.
 	SSHWorkaround *bool `json:"ssh_workaround,omitempty"`
@@ -476,6 +480,51 @@ func SetConversationResumeProfile(convID string, profile ConversationResumeProfi
 	return err
 }
 
+// SetSessionConfiguredContextWindowMax records the configured Copilot meter
+// denominator in the conversation fallback owned by the session's
+// conversation. The cap is tclaude launch intent, not a sessions observation
+// column, so it must be updated directly alongside the other relaunch facts.
+// Managed agents also keep the stable agent profile; this fallback write makes
+// a direct `session new --context-window-max` survive the next resume.
+func SetSessionConfiguredContextWindowMax(sessionID string, value int64) error {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return nil
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	var convID, harnessName, cwd string
+	err = d.QueryRow(`SELECT conv_id, harness, cwd FROM sessions WHERE id = ?`, sessionID).
+		Scan(&convID, &harnessName, &cwd)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	convID = strings.TrimSpace(convID)
+	if convID == "" {
+		return nil
+	}
+	conversation, err := ConversationResumeProfileForConv(convID)
+	if err != nil {
+		return err
+	}
+	if conversation == nil {
+		conversation = &ConversationResumeProfile{
+			Version: RelaunchProfileVersion, Harness: strings.TrimSpace(harnessName), Cwd: cwd,
+		}
+	}
+	if conversation.FallbackRelaunch == nil {
+		conversation.FallbackRelaunch = &AgentRelaunchProfile{Version: RelaunchProfileVersion}
+	}
+	max := value
+	conversation.FallbackRelaunch.ConfiguredContextWindowMax = &max
+	return SetConversationResumeProfile(convID, *conversation)
+}
+
 // BackfillDurableRelaunchProfilesFromLatestSession is the explicit legacy
 // bridge for records created before v145 (and tests/older binaries that wrote a
 // session without the new dual-write). It persists the newest session snapshot
@@ -796,6 +845,9 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		}
 		if agent.ContextWindowSize != nil {
 			merged.ContextWindowSize = agent.ContextWindowSize
+		}
+		if agent.ConfiguredContextWindowMax != nil {
+			merged.ConfiguredContextWindowMax = agent.ConfiguredContextWindowMax
 		}
 		if agent.RemoteControl != nil {
 			merged.RemoteControl = agent.RemoteControl

@@ -1354,6 +1354,9 @@ type dashboardHarness struct {
 	// harness whose auto-compaction capacity tclaude can pin (Claude Code). The
 	// spawn dialog and profile editor gate their token-window input on it.
 	CanAutoCompactWindow bool `json:"can_auto_compact_window"`
+	// CanContextWindowMax is the Copilot-only configured/assumed context cap
+	// control. It is separate from the observed context_window_size snapshot.
+	CanContextWindowMax bool `json:"can_context_window_max"`
 	// CanTclaudeLayer reports whether the EXPERIMENTAL tclaude-layer sandbox
 	// implementation can confine this harness's authoritative tool executor.
 	// Read through the capability path (session.ValidateTclaudeLayerHarness),
@@ -1372,6 +1375,8 @@ type dashboardHarness struct {
 	// Both 0 for a harness that cannot pin a window.
 	AutoCompactWindowMin int64 `json:"auto_compact_window_min,omitempty"`
 	AutoCompactWindowMax int64 `json:"auto_compact_window_max,omitempty"`
+	ContextWindowMaxMin  int64 `json:"context_window_max_min,omitempty"`
+	ContextWindowMaxMax  int64 `json:"context_window_max_max,omitempty"`
 	// ContextFeatures is the trim catalog this harness offers, in presentation
 	// order, so the dialog can render the rows (label + description + cautions)
 	// without a second endpoint. [] (not null) for a harness with none, so the
@@ -1427,6 +1432,7 @@ func buildHarnessCatalog() []dashboardHarness {
 
 			CanContextFeatures:         h.CanContextFeatures(),
 			CanAutoCompactWindow:       h.CanAutoCompactWindow(),
+			CanContextWindowMax:        h.Name == harness.CopilotName,
 			CanTclaudeLayer:            session.ValidateTclaudeLayerHarness(h.Name) == nil,
 			CanStacked:                 h.SupportsNestedSandbox(),
 			TclaudeLayerServerBoundary: session.TclaudeLayerUsesServerBoundary(h.Name),
@@ -1438,6 +1444,10 @@ func buildHarnessCatalog() []dashboardHarness {
 		if dh.CanAutoCompactWindow {
 			dh.AutoCompactWindowMin = harness.MinAutoCompactWindow
 			dh.AutoCompactWindowMax = harness.MaxAutoCompactWindow
+		}
+		if dh.CanContextWindowMax {
+			dh.ContextWindowMaxMin = harness.MinCopilotContextWindow
+			dh.ContextWindowMaxMax = harness.MaxCopilotContextWindow
 		}
 		dh.ContextFeatures = []dashboardContextFeature{}
 		if h.CanContextFeatures() {
@@ -1937,7 +1947,12 @@ type agentState struct {
 	// itself (0 = none), so the UI can say WHY the window is smaller than the
 	// model's.
 	ContextWindowSize int64 `json:"context_window_size,omitempty"`
-	AutoCompactWindow int64 `json:"auto_compact_window,omitempty"`
+	// ContextWindowMax is tclaude's configured or observed-model-assumed cap.
+	// It is intentionally distinct from ContextWindowSize, which remains the
+	// observed context snapshot.
+	ContextWindowMax    int64  `json:"context_window_max,omitempty"`
+	ContextWindowSource string `json:"context_window_source,omitempty"`
+	AutoCompactWindow   int64  `json:"auto_compact_window,omitempty"`
 	// Model is the LLM model display name the agent is running on
 	// ("Opus 4.8", "Sonnet 4.6", …), recorded by the statusline hook.
 	// Empty until the statusbar has ticked at least once; the dashboard
@@ -2343,6 +2358,20 @@ func stateForConvInSessionsBatched(
 			out.ContextWindowSize = harness.EffectiveContextWindow(
 				snap.ContextWindowSize, harness.AutoCompactWindowTokens(pick.AutoCompactWindow))
 			out.AutoCompactWindow = harness.AutoCompactWindowTokens(pick.AutoCompactWindow)
+		}
+		if pick.Harness == harness.CopilotName {
+			// A configured cap is launch intent and remains usable before Copilot
+			// has disclosed an observed model. Only the static fallback needs an
+			// observed model id; keeping these branches separate prevents a blank
+			// model from hiding an operator-supplied denominator.
+			out.ContextWindowMax = copilotConfiguredContextWindowMax(pick.ConvID)
+			if out.ContextWindowMax > 0 {
+				out.ContextWindowSource = "configured"
+			} else if model := strings.TrimSpace(snap.Model); model != "" {
+				if out.ContextWindowMax = harness.CopilotContextWindowDefault(model); out.ContextWindowMax > 0 {
+					out.ContextWindowSource = "assumed"
+				}
+			}
 		}
 		out.Model = snap.Model
 		out.EffortLevel = snap.EffortLevel

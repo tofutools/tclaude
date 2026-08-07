@@ -331,31 +331,35 @@ func runSelfSlash(followUp, askHuman, path, label string, stdout, stderr io.Writ
 // /v1/agent/{selector}/context). CallerConv is only set on the
 // cross-agent path.
 type contextInfoResp struct {
-	ConvID            string  `json:"conv_id"`
-	SessionID         string  `json:"session_id,omitempty"`
-	ContextPct        float64 `json:"context_pct"`
-	TokensInput       int64   `json:"tokens_input"`
-	TokensOutput      int64   `json:"tokens_output"`
-	ContextWindowSize int64   `json:"context_window_size"`
-	Model             string  `json:"model,omitempty"`
-	CallerConv        string  `json:"caller_conv,omitempty"`
-	CallerAgentID     string  `json:"caller_agent_id,omitempty"`
+	ConvID              string  `json:"conv_id"`
+	SessionID           string  `json:"session_id,omitempty"`
+	ContextPct          float64 `json:"context_pct"`
+	TokensInput         int64   `json:"tokens_input"`
+	TokensOutput        int64   `json:"tokens_output"`
+	ContextWindowSize   int64   `json:"context_window_size"`
+	ContextWindowMax    int64   `json:"context_window_max,omitempty"`
+	ContextWindowSource string  `json:"context_window_source,omitempty"`
+	Model               string  `json:"model,omitempty"`
+	CallerConv          string  `json:"caller_conv,omitempty"`
+	CallerAgentID       string  `json:"caller_agent_id,omitempty"`
 }
 
 // groupContextEntry mirrors the daemon's per-member wire shape for
 // GET /v1/groups/{name}/context.
 type groupContextEntry struct {
-	AgentID           string  `json:"agent_id,omitempty"`
-	ConvID            string  `json:"conv_id"`
-	Title             string  `json:"title"`
-	Role              string  `json:"role,omitempty"`
-	Online            bool    `json:"online"`
-	HasSnapshot       bool    `json:"has_snapshot"`
-	ContextPct        float64 `json:"context_pct"`
-	TokensInput       int64   `json:"tokens_input"`
-	TokensOutput      int64   `json:"tokens_output"`
-	ContextWindowSize int64   `json:"context_window_size"`
-	Model             string  `json:"model,omitempty"`
+	AgentID             string  `json:"agent_id,omitempty"`
+	ConvID              string  `json:"conv_id"`
+	Title               string  `json:"title"`
+	Role                string  `json:"role,omitempty"`
+	Online              bool    `json:"online"`
+	HasSnapshot         bool    `json:"has_snapshot"`
+	ContextPct          float64 `json:"context_pct"`
+	TokensInput         int64   `json:"tokens_input"`
+	TokensOutput        int64   `json:"tokens_output"`
+	ContextWindowSize   int64   `json:"context_window_size"`
+	ContextWindowMax    int64   `json:"context_window_max,omitempty"`
+	ContextWindowSource string  `json:"context_window_source,omitempty"`
+	Model               string  `json:"model,omitempty"`
 }
 
 func runContextInfo(p *contextInfoParams, stdout, stderr io.Writer) int {
@@ -394,14 +398,23 @@ func runContextInfo(p *contextInfoParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "caller:  %s\n", shortAgentID(resp.CallerAgentID, resp.CallerConv))
 	}
 	tokensTotal := resp.TokensInput + resp.TokensOutput
-	if resp.ContextWindowSize > 0 && tokensTotal > 0 {
+	window := resp.ContextWindowSize
+	if resp.ContextWindowMax > 0 {
+		window = resp.ContextWindowMax
+	}
+	if window > 0 && tokensTotal > 0 {
 		// Authoritative shape: real abs counts + real window size from CC.
-		fmt.Fprintf(stdout, "context: %.0f%% (%s in + %s out = %s of %s tokens)\n",
+		fmt.Fprintf(stdout, "context: %.0f%% (%s in + %s out = %s of %s tokens)",
 			resp.ContextPct,
 			formatTokens(resp.TokensInput),
 			formatTokens(resp.TokensOutput),
 			formatTokens(tokensTotal),
-			formatTokens(resp.ContextWindowSize))
+			formatTokens(window))
+		if resp.ContextWindowMax > 0 {
+			fmt.Fprintf(stdout, " (%s cap)\n", resp.ContextWindowSource)
+		} else {
+			fmt.Fprintln(stdout)
+		}
 	} else {
 		// Statusline hook hasn't fired with the new fields yet (or
 		// running pre-v2.1.132 Claude Code). Fall back to percentage-only.
@@ -473,10 +486,14 @@ func formatContextPct(e groupContextEntry) string {
 // yet — the percentage in CTX% still carries the headline figure.
 func formatContextTokens(e groupContextEntry) string {
 	total := e.TokensInput + e.TokensOutput
-	if !e.HasSnapshot || e.ContextWindowSize <= 0 || total <= 0 {
+	window := e.ContextWindowSize
+	if e.ContextWindowMax > 0 {
+		window = e.ContextWindowMax
+	}
+	if !e.HasSnapshot || window <= 0 || total <= 0 {
 		return ""
 	}
-	return formatTokens(total) + " / " + formatTokens(e.ContextWindowSize)
+	return formatTokens(total) + " / " + formatTokens(window)
 }
 
 // formatTokens renders an int64 as a short human-readable token count

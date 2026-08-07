@@ -85,10 +85,13 @@ type spawnProfileJSON struct {
 	// — a value on a Codex profile is a 400 (buildProfileFromJSON gates it on the
 	// profile's harness).
 	AutoCompactWindow string `json:"auto_compact_window,omitempty"`
-	AutoReview        *bool  `json:"auto_review,omitempty"`
-	TrustDir          *bool  `json:"trust_dir,omitempty"`
-	AutoMemory        *bool  `json:"auto_memory,omitempty"`
-	SSHWorkaround     *bool  `json:"ssh_workaround,omitempty"`
+	// ContextWindowMax is a Copilot-only configured context cap. Zero
+	// leaves the cap unset so the observed-model default may speak.
+	ContextWindowMax int64 `json:"context_window_max,omitempty"`
+	AutoReview       *bool `json:"auto_review,omitempty"`
+	TrustDir         *bool `json:"trust_dir,omitempty"`
+	AutoMemory       *bool `json:"auto_memory,omitempty"`
+	SSHWorkaround    *bool `json:"ssh_workaround,omitempty"`
 	// RemoteControl is the profile's "start with Claude Code Remote Access on"
 	// default — tri-state (null = unset, false = off, true = on). A group's
 	// remote-control policy overrides it at spawn (JOH-262).
@@ -143,6 +146,7 @@ func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 		ToolGovernance:             p.ToolGovernance,
 		AskUserQuestionTimeout:     p.AskUserQuestionTimeout,
 		AutoCompactWindow:          p.AutoCompactWindow,
+		ContextWindowMax:           p.ContextWindowMax,
 		AutoReview:                 p.AutoReview,
 		TrustDir:                   p.TrustDir,
 		AutoMemory:                 p.AutoMemory,
@@ -303,6 +307,10 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 	if err != nil {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_auto_compact_window", err.Error()}
 	}
+	contextWindowMax, err := harness.ResolveCopilotContextWindow(h, body.ContextWindowMax)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_context_window_max", err.Error()}
+	}
 	if body.AutoReview != nil {
 		if _, err := harness.ResolveAutoReview(h, *body.AutoReview); err != nil {
 			return nil, &spawnFailure{http.StatusBadRequest, "invalid_auto_review", err.Error()}
@@ -406,6 +414,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		ToolGovernance:             toolGovernance,
 		AskUserQuestionTimeout:     askTimeout,
 		AutoCompactWindow:          autoCompactWindow,
+		ContextWindowMax:           contextWindowMax,
 		AutoReview:                 body.AutoReview,
 		TrustDir:                   body.TrustDir,
 		RemoteControl:              body.RemoteControl,

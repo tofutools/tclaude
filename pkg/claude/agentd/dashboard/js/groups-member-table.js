@@ -514,17 +514,20 @@ function fmtTokens(value) {
 
 function ContextMeter({ state }) {
   const pct = Math.max(0, Math.min(100, Number(state?.context_pct || 0)));
-  const known = pct > 0 || Number(state?.context_window_size || 0) > 0;
+  const configuredMax = Number(state?.context_window_max || 0);
+  const known = pct > 0 || configuredMax > 0 || Number(state?.context_window_size || 0) > 0;
   const filled = pct > 0 ? Math.min(5, Math.max(1, Math.round(pct / 20))) : 0;
   const total = Number(state?.tokens_input || 0) + Number(state?.tokens_output || 0);
   // The window here is already the effective one and context_pct is measured
   // against it, so the regular usage figures are sufficient on their own.
-  const win = Number(state?.context_window_size || 0);
+  const win = configuredMax > 0 ? configuredMax : Number(state?.context_window_size || 0);
+  const source = state?.context_window_source === 'configured' ? ' (configured cap)'
+    : state?.context_window_source === 'assumed' ? ' (assumed cap)' : '';
   const regularTitle = !known ? 'context window: usage not reported yet'
-    : win > 0 && total > 0 ? `context: ${fmtTokens(total)} / ${fmtTokens(win)} tokens — ${Math.round(pct)}%`
+    : win > 0 && total > 0 ? `context: ${fmtTokens(total)} / ${fmtTokens(win)} tokens${source} — ${Math.round(pct)}%`
       : `context: ${Math.round(pct)}% full`;
   const wizardTitle = !known ? '🔮 Mana reserves: not yet divined'
-    : win > 0 && total > 0 ? `🔮 Mana: ${fmtTokens(total)} / ${fmtTokens(win)} channeled — ${Math.round(pct)}%`
+    : win > 0 && total > 0 ? `🔮 Mana: ${fmtTokens(total)} / ${fmtTokens(win)} channeled${source} — ${Math.round(pct)}%`
       : `🔮 Mana: ${Math.round(pct)}% channeled`;
   const segments = [...Array(5)].map((_, i) => {
     const band = i >= 4 ? 'red' : i >= 2 ? 'yellow' : 'green';

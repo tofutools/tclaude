@@ -63,6 +63,9 @@ type ResolvedLaunch struct {
 	Harness ResolvedField `json:"harness"`
 	Model   ResolvedField `json:"model"`
 	Effort  ResolvedField `json:"effort"`
+	// ContextWindowMax is tclaude's Copilot configured/assumed meter cap. It is
+	// intentionally separate from the observed context_window_size snapshot.
+	ContextWindowMax ResolvedField `json:"context_window_max"`
 	// SandboxImpl names WHO OWNS OS-level containment for this launch and which
 	// tier chose it. It is echoed rather than left to Notes because a spawn that
 	// silently inherited the experimental tclaude-layer from a group or global
@@ -398,6 +401,11 @@ type SpawnRequest struct {
 	// is a 400. Forwarded to `tclaude session new --auto-compact-window`.
 	AutoCompactWindow string `json:"auto_compact_window,omitempty"`
 
+	// ContextWindowMax is tclaude's configured Copilot context cap. Copilot does
+	// not receive this as a harness flag; it is persisted as launch intent and
+	// used by the usage meter as the configured/assumed denominator.
+	ContextWindowMax int64 `json:"context_window_max,omitempty"`
+
 	// WorktreePath / WorktreeBranch describe a git worktree the agent
 	// should do its code work in, when Cwd is a parent "monorepo"
 	// directory rather than the repo itself. They are purely
@@ -654,6 +662,10 @@ type SpawnParams struct {
 	// defers to the profile chain and an explicit value overrides it.
 	AutoCompactWindow string `long:"auto-compact-window" optional:"true" help:"Context capacity in tokens for the new agent's Claude Code auto-compaction (CLAUDE_CODE_AUTO_COMPACT_WINDOW). Accepts 450000, 450k or 0.5M. Pin it below a 1M model's real window so a long-lived agent compacts while it is still sharp. Capped at the model's actual window. Unset = filled by the profile chain, then the model default. Not applicable to codex"`
 
+	// ContextWindowMax is a Copilot-only tclaude meter cap. It is not forwarded
+	// to Copilot CLI, which does not report or accept this intent.
+	ContextWindowMax int64 `long:"context-window-max" optional:"true" help:"Configured Copilot context cap in tokens for the context meter. Unset = filled by the profile chain, then the observed model's static assumption. Copilot only; not a harness-reported value"`
+
 	// SandboxImpl picks WHO OWNS OS-level containment for the new agent — an axis
 	// independent of --sandbox, which picks a mode WITHIN whatever sandbox is in
 	// force. Blank defers to the profile chain and then to the harness's
@@ -751,6 +763,7 @@ type resolvedSpawnFields struct {
 	SandboxImpl            string
 	AskUserQuestionTimeout string
 	AutoCompactWindow      string
+	ContextWindowMax       int64
 	Approval               string
 	ToolGovernance         string
 
@@ -862,6 +875,10 @@ func mergeProfileIntoSpawn(p *SpawnParams, explicitMessage string, prof *profile
 		out.Sandbox = pick(p.Sandbox, prof.Sandbox)
 		out.AskUserQuestionTimeout = pick(p.AskUserQuestionTimeout, prof.AskUserQuestionTimeout)
 		out.AutoCompactWindow = pick(p.AutoCompactWindow, prof.AutoCompactWindow)
+		out.ContextWindowMax = p.ContextWindowMax
+		if out.ContextWindowMax == 0 {
+			out.ContextWindowMax = prof.ContextWindowMax
+		}
 		out.SandboxImpl = pick(p.SandboxImpl, prof.SandboxImplementation)
 		out.Approval = pick(p.Approval, prof.Approval)
 		out.ToolGovernance = pick(p.ToolGovernance, prof.ToolGovernance)
@@ -878,6 +895,7 @@ func mergeProfileIntoSpawn(p *SpawnParams, explicitMessage string, prof *profile
 		out.Sandbox = strings.TrimSpace(p.Sandbox)
 		out.AskUserQuestionTimeout = strings.TrimSpace(p.AskUserQuestionTimeout)
 		out.AutoCompactWindow = strings.TrimSpace(p.AutoCompactWindow)
+		out.ContextWindowMax = p.ContextWindowMax
 		out.SandboxImpl = strings.TrimSpace(p.SandboxImpl)
 		out.Approval = strings.TrimSpace(p.Approval)
 		out.ToolGovernance = strings.TrimSpace(p.ToolGovernance)
@@ -1099,6 +1117,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	toolGovernance := strings.TrimSpace(p.ToolGovernance)
 	askTimeout := strings.TrimSpace(p.AskUserQuestionTimeout)
 	autoCompactWindow := strings.TrimSpace(p.AutoCompactWindow)
+	contextWindowMax := merged.ContextWindowMax
 	sandboxImpl := strings.TrimSpace(p.SandboxImpl)
 	autoReview := p.AutoReview
 	trustDir := false
@@ -1143,6 +1162,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 			Approval: p.Approval, ToolGovernance: p.ToolGovernance,
 			AskUserQuestionTimeout: p.AskUserQuestionTimeout,
 			AutoCompactWindow:      p.AutoCompactWindow,
+			ContextWindowMax:       p.ContextWindowMax,
 			SandboxImpl:            p.SandboxImpl,
 			AutoReview:             p.AutoReview,
 		}
@@ -1198,6 +1218,10 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		// unparseable or out-of-range token count. The daemon re-validates and
 		// re-normalizes server-side.
 		if _, err = harness.ResolveAutoCompactWindow(h, validationFields.AutoCompactWindow); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return nil, rcInvalidArg
+		}
+		if _, err = harness.ResolveCopilotContextWindow(h, validationFields.ContextWindowMax); err != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", err)
 			return nil, rcInvalidArg
 		}
@@ -1282,6 +1306,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		SandboxImplementation:  sandboxImpl,
 		AskUserQuestionTimeout: askTimeout,
 		AutoCompactWindow:      autoCompactWindow,
+		ContextWindowMax:       contextWindowMax,
 		ApprovalPolicy:         approvalPolicy,
 		ToolGovernance:         toolGovernance,
 		AutoReview:             autoReview,
@@ -1456,6 +1481,9 @@ func printResolvedLaunch(stdout io.Writer, rl *ResolvedLaunch) {
 	fmt.Fprintf(stdout, "  Harness: %s\n", formatResolvedField(rl.Harness))
 	fmt.Fprintf(stdout, "  Model:   %s\n", formatResolvedField(rl.Model))
 	fmt.Fprintf(stdout, "  Effort:  %s\n", formatResolvedField(rl.Effort))
+	if strings.TrimSpace(rl.ContextWindowMax.Value) != "" {
+		fmt.Fprintf(stdout, "  Context max: %s\n", formatResolvedField(rl.ContextWindowMax))
+	}
 	// Echoed only when something actually pinned it, so a default-off launch
 	// prints exactly the three lines it printed before this field existed.
 	if strings.TrimSpace(rl.SandboxImpl.Value) != "" {

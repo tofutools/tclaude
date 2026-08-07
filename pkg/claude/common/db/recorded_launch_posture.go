@@ -54,6 +54,9 @@ func ComposeAgentRelaunchProfile(base, overlay *AgentRelaunchProfile) *AgentRela
 	if overlay.ContextWindowSize != nil {
 		merged.ContextWindowSize = overlay.ContextWindowSize
 	}
+	if overlay.ConfiguredContextWindowMax != nil {
+		merged.ConfiguredContextWindowMax = overlay.ConfiguredContextWindowMax
+	}
 	if overlay.AskUserQuestionTimeout != nil {
 		merged.AskUserQuestionTimeout = overlay.AskUserQuestionTimeout
 	}

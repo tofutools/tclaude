@@ -39,6 +39,7 @@ import {
   syncSpawnWorktree,
   validateSpawnDraft,
   autoCompactWindowHintFor,
+  contextWindowMaxHintFor,
   harnessBuiltinModeHelpForImplementation,
   harnessBuiltinModeControlLabel,
   harnessBuiltinModeOptionsForImplementation,
@@ -66,6 +67,8 @@ const AUTO_COMPACT_WINDOW_TITLE = 'Context capacity in tokens for Claude Code\'s
   + '(CLAUDE_CODE_AUTO_COMPACT_WINDOW). Accepts 450000, 450k or 0.5M; blank uses the model default. '
   + 'Pin it below a 1M model\'s real window so a long-lived agent compacts while it is still sharp. '
   + 'Capped at the model\'s actual context window.';
+const CONTEXT_WINDOW_MAX_TITLE = 'Configured/assumed context cap for the Copilot context meter. '
+  + 'Copilot does not report its context limit; a blank value uses the observed model\'s static assumption.';
 // Names WHO enforces the wall, which the Sandbox row above does not: that row
 // picks a mode within whatever sandbox is in force, this one picks which
 // sandbox that is. The experimental caveat and the platform requirement are
@@ -84,7 +87,7 @@ const PROFILE_OWNED_FIELDS = [
   'profile', 'name', 'role', 'descr', 'task', 'initialMessage',
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'tools', 'askTimeout',
   'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'sshWorkaround', 'owner', 'permissionOverrides',
-  'contextFeatures', 'autoCompactWindow', 'sandboxImpl', 'sandboxImplCleared',
+  'contextFeatures', 'autoCompactWindow', 'contextWindowMax', 'sandboxImpl', 'sandboxImplCleared',
   'syncWorktree', 'autoFocus', 'includeGroupContext',
 ];
 
@@ -721,6 +724,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   const toolsHelp = view.tools.help[draft.tools] || '';
   const askTimeoutHelp = view.askTimeout.help[draft.askTimeout] || '';
   const autoCompactWindowHint = autoCompactWindowHintFor(draft, view);
+  const contextWindowMaxHint = contextWindowMaxHintFor(draft, view);
   // The blank row names the answer the daemon gave, in the same words the
   // concrete option below it uses.
   const resolvedSandboxImplLabel = sandboxImplResolvedLabel(
@@ -901,12 +905,27 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
           onInput=${(event) => update('autoCompactWindow', event.currentTarget.value)}
           placeholder="ctx limit" autocomplete="off" spellcheck="false" inputmode="numeric" />
       </label>
+      <label class="cron-create-row" id="agent-spawn-context-window-max-row" hidden=${!view.showContextWindowMax}
+        title=${CONTEXT_WINDOW_MAX_TITLE}>
+        <span class="cron-create-label">Context max</span>
+        <input id="agent-spawn-context-window-max" type="text" aria-label="Configured Copilot context max (tokens)"
+          value=${draft.contextWindowMax} disabled=${busy}
+          onInput=${(event) => update('contextWindowMax', event.currentTarget.value)}
+          placeholder="blank = assumed; e.g. 272000" autocomplete="off" spellcheck="false" inputmode="numeric" />
+      </label>
     </div>
     ${view.showAutoCompactWindow && autoCompactWindowHint && html`
       <div class="cron-create-row" id="agent-spawn-auto-compact-window-hint">
         <span class="cron-create-label"></span>
         <div class="cron-create-target">
           <div class=${`spawn-field-hint${autoCompactWindowHint.warn ? ' warn' : ''}`}>${autoCompactWindowHint.text}</div>
+        </div>
+      </div>`}
+    ${view.showContextWindowMax && contextWindowMaxHint && html`
+      <div class="cron-create-row" id="agent-spawn-context-window-max-hint">
+        <span class="cron-create-label"></span>
+        <div class="cron-create-target">
+          <div class=${`spawn-field-hint${contextWindowMaxHint.warn ? ' warn' : ''}`}>${contextWindowMaxHint.text}</div>
         </div>
       </div>`}
     <label class="cron-create-row" id="agent-spawn-model-custom-row" hidden=${selectedModel !== MODEL_CUSTOM_VALUE}

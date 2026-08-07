@@ -66,6 +66,51 @@ const copilotMaxModelLen = 128
 // never seen must still be forwardable.
 type copilotModels struct{}
 
+const (
+	// Copilot's configured context cap is an operator assumption, not a value
+	// reported by the harness. Keep the accepted range aligned with the other
+	// token-window control so the spawn/profile surfaces have one sensible
+	// validation boundary.
+	MinCopilotContextWindow = int64(10_000)
+	MaxCopilotContextWindow = int64(10_000_000)
+	CopilotContextWindow    = int64(272_000)
+)
+
+// CopilotContextWindowDefault returns tclaude's static denominator assumption
+// for a model observed in Copilot's usage store. Copilot's automatic model
+// selection means the observed model, rather than the launch request, is the
+// only reliable model identity available to the usage poller.
+func CopilotContextWindowDefault(model string) int64 {
+	model = strings.TrimSpace(model)
+	switch {
+	case strings.HasPrefix(model, "gpt-5.6"):
+		return CopilotContextWindow
+	case strings.HasPrefix(model, "claude-"):
+		return 1_000_000
+	case model != "":
+		return 200_000
+	default:
+		return 0
+	}
+}
+
+// ResolveCopilotContextWindow validates a configured Copilot context cap.
+// Zero means unset. A non-zero value is only valid for Copilot; this keeps the
+// field out of the other harnesses even when a profile is reused across tiers.
+func ResolveCopilotContextWindow(h *Harness, value int64) (int64, error) {
+	if value == 0 {
+		return 0, nil
+	}
+	if h == nil || h.Name != CopilotName {
+		return 0, fmt.Errorf("context window max is only supported for %s", CopilotName)
+	}
+	if value < MinCopilotContextWindow || value > MaxCopilotContextWindow {
+		return 0, fmt.Errorf("context window max must be between %d and %d tokens, got %d",
+			MinCopilotContextWindow, MaxCopilotContextWindow, value)
+	}
+	return value, nil
+}
+
 // copilotEffortLevels is the exact `--effort` vocabulary advertised by the
 // pinned Copilot CLI release (1.0.77). It intentionally lives beside the
 // Copilot catalog rather than widening common.ValidEffortLevels: Claude Code

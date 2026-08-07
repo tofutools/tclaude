@@ -79,6 +79,10 @@ func (f launchCarryoverField) classify(applied any, outcome carryOutcome) carryO
 		if !v {
 			return carryAppliedDefault
 		}
+	case int64:
+		if v == 0 {
+			return carryAppliedDefault
+		}
 	}
 	return carryApplied
 }
@@ -340,6 +344,22 @@ var launchCarryoverFields = []launchCarryoverField{
 			return window, carryApplied
 		},
 	},
+	{
+		flag:     "context-window-max",
+		recorded: "ConfiguredContextWindowMax",
+		supplied: func(p *NewParams) bool { return p.ContextWindowMax != 0 },
+		carry: func(h *harness.Harness, rec *db.AgentRelaunchProfile, p *NewParams) (any, carryOutcome) {
+			if rec.ConfiguredContextWindowMax == nil {
+				return nil, carryUnrecorded
+			}
+			max, err := harness.ResolveCopilotContextWindow(h, *rec.ConfiguredContextWindowMax)
+			if err != nil {
+				return nil, carryDropped
+			}
+			p.ContextWindowMax = max
+			return max, carryApplied
+		},
+	},
 }
 
 // applyRecordedLaunchPosture fills every launch flag the caller left out of a
@@ -443,6 +463,7 @@ type LaunchPosture struct {
 	AutoMemory        bool
 	ContextFeatures   map[string]string
 	AutoCompactWindow string
+	ContextWindowMax  int64
 	RemoteControl     bool
 }
 
@@ -483,6 +504,12 @@ func RecordLaunchPosture(sessionID string, h *harness.Harness, posture LaunchPos
 		if err := db.SetSessionAutoCompactWindow(sessionID, posture.AutoCompactWindow); err != nil {
 			slog.Warn("failed to record session auto-compact window",
 				"session_id", sessionID, "auto_compact_window", posture.AutoCompactWindow, "error", err)
+		}
+	}
+	if h.Name == harness.CopilotName {
+		if err := db.SetSessionConfiguredContextWindowMax(sessionID, posture.ContextWindowMax); err != nil {
+			slog.Warn("failed to record session Copilot context max",
+				"session_id", sessionID, "context_window_max", posture.ContextWindowMax, "error", err)
 		}
 	}
 	// Remote Access is the one carried posture whose column no launch used to

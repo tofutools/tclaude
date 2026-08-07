@@ -35,7 +35,7 @@ import {
   sandboxPreLaunchValidation,
 } from './sandbox-pre-launch.js';
 import {
-  approvalControlsVisibleFor, autoCompactWindowHintFor, harnessBuiltinModeHelpForImplementation,
+  approvalControlsVisibleFor, autoCompactWindowHintFor, contextWindowMaxHintFor, harnessBuiltinModeHelpForImplementation,
   sandboxImplHintFor, sandboxImplCaveatFor, sandboxImplClearedNoticeFor, sandboxImplOptionsFor,
   harnessBuiltinModeControlLabel, harnessBuiltinModeOptionsForImplementation,
 } from './agent-spawn-model.js';
@@ -63,6 +63,8 @@ const AUTO_COMPACT_WINDOW_TITLE = 'Context capacity in tokens for Claude Code\'s
   + '(CLAUDE_CODE_AUTO_COMPACT_WINDOW). Accepts 450000, 450k or 0.5M; blank uses the model default. '
   + 'Pin it below a 1M model\'s real window so a long-lived agent compacts while it is still sharp. '
   + 'Capped at the model\'s actual context window.';
+const CONTEXT_WINDOW_MAX_TITLE = 'Configured/assumed context cap for the Copilot context meter. '
+  + 'Copilot does not report its context limit; a blank value uses the observed model\'s static assumption.';
 const NETWORK_ACCESS_HELP = 'Choose Allow or Deny independently for built-in packs and manual '
   + 'destinations. Deny all starts closed; Allow rules release matching traffic and Deny rules can '
   + 'narrow those releases. Allow all starts open; Deny rules restrict matching traffic and Allow '
@@ -1035,6 +1037,13 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
       autoCompactWindowMax: Number(hEntry?.auto_compact_window_max) || 0,
     },
   );
+  const contextWindowMaxHint = contextWindowMaxHintFor(
+    { contextWindowMax: draft.context_window_max },
+    {
+      contextWindowMaxMin: Number(hEntry?.context_window_max_min) || 0,
+      contextWindowMaxMax: Number(hEntry?.context_window_max_max) || 0,
+    },
+  );
   const harnessLabel = hEntry?.display_name || hEntry?.name || '';
   const sandboxImplOptions = sandboxImplOptionsFor(
     sandboxImpl?.options, harnessLabel, hEntry?.can_builtin_os_sandbox !== false,
@@ -1191,6 +1200,16 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
           class=${`spawn-field-hint${autoCompactWindowHint.warn ? ' warn' : ''}`}>${autoCompactWindowHint.text}</div>`}
       </div>
     </${Row}>`}
+    ${profile && hEntry?.can_context_window_max && html`<${Row} label="Context max"
+      title=${CONTEXT_WINDOW_MAX_TITLE}>
+      <div class="cron-create-target">
+        <input id="profile-editor-context-window-max" type="text" aria-label="Configured Copilot context max (tokens)"
+          value=${draft.context_window_max}
+          onInput=${(event) => change(setDraft, 'context_window_max', event.currentTarget.value)}
+          placeholder="blank = assumed; e.g. 272000" autocomplete="off" spellcheck="false" inputmode="numeric" />
+        ${contextWindowMaxHint && html`<div class=${`spawn-field-hint${contextWindowMaxHint.warn ? ' warn' : ''}`}>${contextWindowMaxHint.text}</div>`}
+      </div>
+    </${Row}>`}
   `;
 }
 
@@ -1200,14 +1219,24 @@ function ProfileEditor({ descriptor, state, actions, confirmDiscard, openProfile
   const baseline = useMemo(() => profileDraft(seed, options, catalog), [descriptor]);
   const [draft, setDraft] = useState(() => clone(baseline));
   const dirty = dirtyDraft(draft, baseline); const local = !!options.local;
+  const hEntry = harnessByName(catalog, draft.harness);
   const submit = async () => {
     state.error.value = '';
     if (!local && !draft.name.trim()) { state.error.value = 'profile name is required'; return; }
     if (!local && draft.disabled && !draft.disabled_reason.trim()) { state.error.value = 'a reason is required when disabling a profile'; return; }
+    if (hEntry?.can_context_window_max) {
+      const hint = contextWindowMaxHintFor(
+        { contextWindowMax: draft.context_window_max },
+        {
+          contextWindowMaxMin: Number(hEntry.context_window_max_min) || 0,
+          contextWindowMaxMax: Number(hEntry.context_window_max_max) || 0,
+        },
+      );
+      if (hint?.warn) { state.error.value = hint.text; return; }
+    }
     await actions.saveProfile({ draft, original: options.editExisting === false ? null : seed, options, payload: profilePayload(draft, seed, catalog, { local }) });
   };
   const saving = state.busy.value === 'profile-save';
-  const hEntry = harnessByName(catalog, draft.harness);
   const sshWorkaroundAvailable = !!hEntry?.can_ssh_workaround
     && draft.sandbox === 'tclaude-agent';
   return html`<${Overlay} id="profile-editor-modal" labelledby="profile-editor-title" onClose=${state.closeDialog} onSubmitHotkey=${saving ? null : submit} dirty=${dirty} blocked=${saving} confirmDiscard=${confirmDiscard} registerClose=${registerClose}><h3 id="profile-editor-title">${local ? wizWord('Custom launch — this agent only', 'Bespoke summons — this familiar only') : options.cloneSourceName ? wizWord(`Clone profile: ${options.cloneSourceName}`, `Mirror pattern: ${options.cloneSourceName}`) : seed && options.editExisting !== false ? wizWord(`Edit profile: ${seed.name}`, `Edit pattern: ${seed.name}`) : wizWord('New spawn profile', 'New familiar pattern')}</h3>

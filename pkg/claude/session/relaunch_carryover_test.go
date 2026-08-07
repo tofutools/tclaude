@@ -53,17 +53,18 @@ func carryoverTestHome(t *testing.T) string {
 func fullClaudePosture() *db.AgentRelaunchProfile {
 	features := map[string]string{"bundled-skills": "off"}
 	return &db.AgentRelaunchProfile{
-		Version:                db.RelaunchProfileVersion,
-		HarnessBuiltinMode:     ptr(harness.ClaudeSandboxOn),
-		SandboxImplementation:  ptr(string(sandboxpolicy.ImplementationTclaudeLayer)),
-		ApprovalPolicy:         ptr("plan"),
-		ApprovalAutoReview:     ptr(true),
-		AskUserQuestionTimeout: ptr("5m"),
-		RemoteControl:          ptr(true),
-		AutoMemory:             ptr(true),
-		ContextFeatures:        &features,
-		AutoCompactWindow:      ptr("450000"),
-		ToolGovernance:         ptr("ask"),
+		Version:                    db.RelaunchProfileVersion,
+		HarnessBuiltinMode:         ptr(harness.ClaudeSandboxOn),
+		SandboxImplementation:      ptr(string(sandboxpolicy.ImplementationTclaudeLayer)),
+		ApprovalPolicy:             ptr("plan"),
+		ApprovalAutoReview:         ptr(true),
+		AskUserQuestionTimeout:     ptr("5m"),
+		RemoteControl:              ptr(true),
+		AutoMemory:                 ptr(true),
+		ContextFeatures:            &features,
+		AutoCompactWindow:          ptr("450000"),
+		ConfiguredContextWindowMax: ptr(int64(100000)),
+		ToolGovernance:             ptr("ask"),
 	}
 }
 
@@ -77,6 +78,8 @@ func carryoverHarness(t *testing.T, flag string) *harness.Harness {
 		name = harness.OpenCodeName
 	case "auto-review":
 		name = harness.CodexName
+	case "context-window-max":
+		name = harness.CopilotName
 	}
 	h, err := harness.Resolve(name)
 	require.NoError(t, err)
@@ -333,7 +336,7 @@ func TestLaunchCarryoverDropsValuesTheHarnessCannotHonour(t *testing.T) {
 	// A dropped value must be reported as dropped, not as "nothing recorded" —
 	// that distinction is what makes the operator warning possible.
 	for _, flag := range []string{"sandbox", "auto-memory", "context-features",
-		"auto-compact-window", "remote-control", "ask-user-question-timeout"} {
+		"auto-compact-window", "context-window-max", "remote-control", "ask-user-question-timeout"} {
 		assert.True(t, dropped[flag], "a recorded --%s Codex cannot honour must report carryDropped", flag)
 	}
 	assert.False(t, params.AutoMemory)
@@ -344,6 +347,20 @@ func TestLaunchCarryoverDropsValuesTheHarnessCannotHonour(t *testing.T) {
 	assert.Empty(t, params.Sandbox, "Claude's sandbox modes are not Codex's")
 	assert.Empty(t, params.Approval, "Claude's permission modes are not Codex approval policies")
 	assert.Empty(t, params.ToolGovernance, "tool governance is an OpenCode knob")
+}
+
+func TestLaunchCarryover_CopilotContextMaxCarries(t *testing.T) {
+	recorded := fullClaudePosture()
+	params := &NewParams{}
+	for _, field := range launchCarryoverFields {
+		if field.flag != "context-window-max" {
+			continue
+		}
+		h, err := harness.Resolve(harness.CopilotName)
+		require.NoError(t, err)
+		assert.Equal(t, carryApplied, field.classify(field.carry(h, recorded, params)))
+		assert.Equal(t, int64(100_000), params.ContextWindowMax)
+	}
 }
 
 // TestLaunchCarryoverReadsTheFieldItDeclares closes the gap between the
