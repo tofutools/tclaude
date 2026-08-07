@@ -904,7 +904,7 @@ binary starts:
 "pre_launch": [
   {
     "name": "playwright",
-    "script": "pw=/tmp/pw-$$\nmkdir -p \"$pw\"/{config,cache,data}\nexport PLAYWRIGHT_MCP_BROWSER=chrome\n",
+    "script": "pw=\"$TCLAUDE_PW_HOME\"\nmkdir -p \"$pw\"/{config,cache,data}\nexport PLAYWRIGHT_MCP_BROWSER=chrome\n",
     "exports": ["PLAYWRIGHT_MCP_BROWSER"]
   }
 ]
@@ -960,6 +960,114 @@ sandbox, or with no sandbox at all, the pane is unconfined and so is the block.
 
 Blocks are shell for a tmux pane, so they do not apply to `tclaude ask`, which
 execs an argv with no shell at all.
+
+### Reference: scoping `playwright-cli` to one agent
+
+The worked example, and the reason `pre_launch` exists. It gives Playwright
+private XDG directories, a per-agent session, and a fixed browser, without any
+of that leaking into the agent's other tools. Pair it with
+`"agent_directories": ["TCLAUDE_PW_HOME"]` so the directory is per-agent and
+writable.
+
+```bash
+pw="$TCLAUDE_PW_HOME"
+# Resolve the real binary with our own wrapper directory removed from PATH.
+# Blocks re-run on every launch including resume, so by the second launch the
+# wrapper may already be first on PATH; a plain lookup would find the wrapper
+# and wrap it in itself, an exec loop that hangs with no output. Excluding the
+# directory makes a re-run idempotent instead of fatal.
+pw_search=""
+IFS=: read -ra pw_parts <<< "$PATH"
+for pw_entry in "${pw_parts[@]}"; do
+  [ "$pw_entry" = "$pw/bin" ] && continue
+  pw_search="${pw_search:+$pw_search:}$pw_entry"
+done
+real="$(PATH="$pw_search" command -v playwright-cli || true)"
+if [ -z "$real" ]; then
+  echo "playwright-cli is not installed on this host" >&2
+  false  # abort the launch; tclaude names this block in the failure
+fi
+export TCLAUDE_PW_REAL="$real"
+mkdir -p "$pw"/{config,cache,data,bin}
+# A QUOTED heredoc: nothing is interpolated at write time, so a directory
+# containing $, backtick, backslash or quote cannot corrupt the wrapper. The
+# wrapper reads both values from its environment at run time instead.
+cat > "$pw/bin/playwright-cli" <<'WRAPPER'
+#!/bin/bash
+XDG_CONFIG_HOME="$TCLAUDE_PW_HOME/config" \
+XDG_CACHE_HOME="$TCLAUDE_PW_HOME/cache" \
+XDG_DATA_HOME="$TCLAUDE_PW_HOME/data" \
+exec "$TCLAUDE_PW_REAL" "$@"
+WRAPPER
+chmod +x "$pw/bin/playwright-cli"
+export PATH="$pw/bin:$PATH"
+export PLAYWRIGHT_CLI_WRAPPER_DIR="$pw/bin"
+# Playwright's downloaded browser bundles live under $XDG_CACHE_HOME, which we
+# just made per-agent — so without this every agent would see an empty browser
+# registry and re-download hundreds of MB. Keep the registry shared.
+export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"
+export PLAYWRIGHT_CLI_SESSION="$(basename "$pw")"
+export PLAYWRIGHT_MCP_BROWSER=chrome
+export PLAYWRIGHT_MCP_SANDBOX=false
+```
+
+Declare `"exports": ["PLAYWRIGHT_CLI_WRAPPER_DIR", "PLAYWRIGHT_CLI_SESSION",
+"PLAYWRIGHT_MCP_BROWSER", "PLAYWRIGHT_MCP_SANDBOX"]`. Note what is *not* there:
+`PATH` is always set, so declaring it would prove nothing — the check is
+set-ness, and it would pass even if the block never touched `PATH`. The
+wrapper-directory sentinel is set alongside it and is genuinely absent if the
+block did not get that far.
+
+Five things are load-bearing:
+
+- **The wrapper, not a global export.** XDG is exported *inside* the wrapper,
+  so only Playwright sees it. Exporting it into the agent would take `gh`,
+  `git`, `codex` and `claude` with it.
+- **Resolve the real binary with the wrapper directory excluded from `PATH`.**
+  Blocks re-run on every launch including resume, so by the second launch the
+  wrapper is already first on `PATH`; a plain lookup would find the wrapper and
+  wrap it in itself, which exec-loops in a single process — a hang with no
+  output, on the second launch only. Excluding the directory makes a re-run a
+  no-op instead.
+- **A quoted heredoc.** Nothing is interpolated when the wrapper is written, so
+  a directory containing `$`, a backtick, a backslash or a quote cannot corrupt
+  it; the wrapper reads both values from its environment at run time. With an
+  unquoted heredoc the corruption is silent — the wrapper simply points
+  somewhere else.
+- **`PLAYWRIGHT_BROWSERS_PATH` stays shared.** Playwright's downloaded browser
+  bundles live under `$XDG_CACHE_HOME`, which the block just made per-agent, so
+  without this every agent sees an empty browser registry and re-downloads
+  hundreds of megabytes. This reference uses `chrome`, a system channel rather
+  than a downloaded bundle, which hides the problem until someone switches to
+  `chromium`.
+- **The session id comes from the agent directory,** not `$$`. It has to be
+  unique between agents and stable across a resume of the same agent; a PID is
+  neither, and a shared session means one agent steering another's browser.
+- **`false`, not `exit 1`.** Letting the command fail trips tclaude's `ERR`
+  trap, which names the block in the failure message. An explicit `exit`
+  bypasses it and the operator gets an unattributed exit code.
+
+One limitation worth knowing before you write a test around this:
+`playwright-cli` refuses the `file:` protocol unless
+`allowUnrestrictedFileAccess` is set. It can be set — a project
+`./.playwright/cli.config.json`, the global `~/.playwright/cli.config.json`,
+`--config <path>`, or `PLAYWRIGHT_MCP_ALLOW_UNRESTRICTED_FILE_ACCESS` — but
+every one of those grants the browser unrestricted filesystem reads, and the
+global config lives in the agent's real `$HOME`, which this wrapper deliberately
+does *not* redirect, so it would leak to every agent on the machine. Serving the
+page over loopback renders the same local file without granting any of that.
+
+`pkg/claude/session/pre_launch_playwright_reference_test.go` executes this block
+on every run, and a test compares the fenced block above against the script the
+tests actually run, so the two cannot drift. Two tests in it drive a real
+browser and are opt-in:
+
+```bash
+TCLAUDE_PLAYWRIGHT_SMOKE=1 go test ./pkg/claude/session/ -run TestPlaywrightReference -v
+```
+
+They render a page, check the PNG comes out at the requested size, close the
+session, and run two agents concurrently to prove their sessions do not collide.
 
 By default the shared parent root is granted once, so the agent can create,
 rewrite, and delete its own env-var'd directories. Setting
