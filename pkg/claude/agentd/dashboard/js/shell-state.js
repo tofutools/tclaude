@@ -9,6 +9,8 @@ export function createShellState({ setTimer = setTimeout, clearTimer = clearTime
   let confirmationResolve = null;
   let confirmationReject = null;
   let confirmationAction = null;
+  let busySeq = 0;
+  let activeBusy = null;
 
   function showStatus(text, error = false) {
     status.value = { text: String(text || ''), error: !!error };
@@ -76,13 +78,18 @@ export function createShellState({ setTimer = setTimeout, clearTimer = clearTime
       confirmationResolve = null;
       confirmationReject = null;
       confirmationAction = null;
-      confirmation.value = { ...confirmation.value, busy: true };
+      // The token IDENTIFIES this dialog. "Is the current modal busy?" is not
+      // the same question — with two blocking confirms in flight, the first to
+      // settle would tear down the second's still-running dialog and put the
+      // operator right back at "the button did nothing".
+      const token = ++busySeq;
+      confirmation.value = { ...confirmation.value, busy: true, token };
       const settle = (finish, value) => {
-        // Only clear a modal that is still OURS — a late settle must not tear
-        // down a dialog something else has since put up.
-        if (confirmation.value && confirmation.value.busy) confirmation.value = null;
+        if (activeBusy?.token === token) activeBusy = null;
+        if (confirmation.value?.token === token) confirmation.value = null;
         finish(value);
       };
+      activeBusy = { token, resolve };
       Promise.resolve()
         .then(action)
         .then((value) => settle(resolve, value), (err) => settle(reject, err));
@@ -100,6 +107,17 @@ export function createShellState({ setTimer = setTimeout, clearTimer = clearTime
     toastTimer = null;
     toast.value = { ...toast.value, visible: false };
     resolveConfirmation(false);
+    // A blocking action detached itself from the pending slot, so the call
+    // above cannot reach it. Unmounting still has to answer its promise —
+    // otherwise the caller awaiting the confirm is stranded forever. The
+    // request itself is already in flight and keeps running; only the UI
+    // contract is being closed out.
+    if (activeBusy) {
+      const { resolve } = activeBusy;
+      activeBusy = null;
+      confirmation.value = null;
+      resolve(false);
+    }
   }
 
   return Object.freeze({

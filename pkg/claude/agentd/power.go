@@ -410,7 +410,7 @@ func runPowerOnWithResume(targets []string, resume func(string) memberOpResult) 
 			// Without this a resume that dies during harness startup reports
 			// success and the operator is left with a "resumed" agent that is
 			// not running.
-			if !waitForConvOnline(convID, powerOnOnlineGrace) {
+			if !confirmConvOnline(convID, powerOnOnlineGrace) {
 				out.Outcome = powerOnFailed
 				out.Detail = "resume was launched but the agent did not come online within " +
 					powerOnOnlineGrace.String()
@@ -541,8 +541,24 @@ func joinPowerDetail(existing, add string) string {
 // response said "resumed" and the agent simply was not there. The operator's
 // report was exactly that ("one failed to resume without any indication").
 //
+// The budget matches reincarnateSpawnTimeout, which the repo already uses for
+// exactly this event ("a resumed pane's FRESH session row comes online"). A
+// shorter window would report healthy agents as failed whenever a cold sandbox
+// or harness start runs long — a wrong failure is worse than the silent success
+// this replaces.
+//
 // A package var so flow tests can shrink it.
-var powerOnOnlineGrace = 15 * time.Second
+var powerOnOnlineGrace = reincarnateSpawnTimeout
+
+// confirmConvOnline is the online-verification seam. Production always points
+// at waitForConvOnline; the unit test that measures resume CONCURRENCY drives
+// runPowerOnWithResume with a fake resume that never launches a real session,
+// and would otherwise sit through the full spawn budget per target and see
+// every one of them reported failed.
+var confirmConvOnline = waitForConvOnline
+
+// onlinePollInterval is how often waitForConvOnline re-checks tmux liveness.
+const onlinePollInterval = 250 * time.Millisecond
 
 // waitForConvOnline is the mirror of waitForConvOffline: it polls until convID
 // HAS a live tmux session, or the grace closes. Returns true if the agent came
@@ -557,7 +573,11 @@ func waitForConvOnline(convID string, grace time.Duration) bool {
 		if remaining <= 0 {
 			return false
 		}
-		sleep := shutdownPollInterval
+		// Slower than the shutdown poll on purpose: each pass is a DB query
+		// plus tmux liveness probes per candidate row, and a startup is not
+		// something we can hurry by asking more often. Matches the cadence
+		// armRemoteControlAfterResume uses for the same wait.
+		sleep := onlinePollInterval
 		if sleep > remaining {
 			sleep = remaining
 		}

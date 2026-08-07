@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,6 +15,13 @@ func TestRunPowerOnBoundsConcurrentResumes(t *testing.T) {
 	for i := range targets {
 		targets[i] = fmt.Sprintf("bulk-resume-%02d", i)
 	}
+
+	// This test measures concurrency, not liveness: the fake resume below never
+	// launches anything, so the real online check would burn the whole grace per
+	// target and report every one failed.
+	previousConfirm := confirmConvOnline
+	confirmConvOnline = func(string, time.Duration) bool { return true }
+	t.Cleanup(func() { confirmConvOnline = previousConfirm })
 
 	entered := make(chan struct{}, len(targets))
 	release := make(chan struct{})

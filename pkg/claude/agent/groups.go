@@ -969,7 +969,13 @@ func runGroupsLifecycle(path string, ask time.Duration, stdout, stderr io.Writer
 			Warnings []string `json:"warnings,omitempty"`
 		} `json:"members"`
 	}
-	opts := DaemonOpts{AskHuman: ask}
+	// Both endpoints WAIT: stop holds until each agent's pane is actually gone,
+	// resume until each resumed agent is confirmed online. With a fan-out over a
+	// whole group that runs well past the 10s default, and a client that gave up
+	// early would report "the daemon did not answer" for work the daemon is
+	// finishing correctly — the exact case (an agent that never comes up) these
+	// waits exist to report.
+	opts := DaemonOpts{AskHuman: ask, Timeout: 5 * time.Minute}
 	err := DaemonRequest(http.MethodPost, path, nil, &resp, opts)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)

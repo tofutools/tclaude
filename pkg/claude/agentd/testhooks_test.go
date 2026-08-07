@@ -53,16 +53,6 @@ type OpenCodeRuntimeFixture struct {
 // SetOpenCodeRuntimeForTest swaps the managed-server subprocess and prompt
 // boundaries so flow tests can exercise OpenCode's production spawn path
 // without requiring a locally installed OpenCode binary.
-// SetPowerOnOnlineGraceForTest shrinks how long a bulk resume waits for a
-// resumed agent to actually appear online. Production keeps 15s so a real
-// harness has time to boot; a flow test that asserts the never-came-up path
-// must not sit through it.
-func SetPowerOnOnlineGraceForTest(d time.Duration) func() {
-	prev := powerOnOnlineGrace
-	powerOnOnlineGrace = d
-	return func() { powerOnOnlineGrace = prev }
-}
-
 func SetOpenCodeRuntimeForTest(start func(sessionID, cwd, title, resumeID string) (OpenCodeRuntimeFixture, error)) func() {
 	previousStart := startOpenCodeRuntimeForSpawn
 	previousSend := sendOpenCodePromptForSpawn
@@ -1641,3 +1631,13 @@ func SetTUIAttachForTest(fn func(agentName, tmuxSession string, inTmux bool) tea
 func HoldSeanceWorktreeForTest(dir string) func() { return holdSeanceWorktree(dir) }
 
 func HeldSeanceWorktreesForTest() []string { return heldSeanceWorktrees() }
+
+// SetPowerOnOnlineGraceForTest shrinks how long a bulk resume waits for a
+// resumed agent to actually appear online. Production keeps the full spawn
+// budget so a real harness has time to boot; a flow test that asserts the
+// never-came-up path must not sit through it.
+func SetPowerOnOnlineGraceForTest(d time.Duration) func() {
+	prev := powerOnOnlineGrace
+	powerOnOnlineGrace = d
+	return func() { powerOnOnlineGrace = prev }
+}

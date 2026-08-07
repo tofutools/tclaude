@@ -1099,6 +1099,10 @@ func handleGroupResume(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 			res := resumeOneConvLocked(convID, false, true)
 			res.AgentID = peerAgentID(convID)
 			res.Title = agent.FreshTitle(convID)
+			// Same verification the fan-out applies — a member rescued through
+			// the popup must not be the one path that still reports a resume
+			// that never came up.
+			confirmResumedConvOnline(convID, &res)
 			out.Members[i] = res
 		}
 	}
@@ -1157,7 +1161,7 @@ func confirmResumedConvOnline(convID string, res *memberOpResult) {
 	if res.Action != "resumed" {
 		return
 	}
-	if waitForConvOnline(convID, powerOnOnlineGrace) {
+	if confirmConvOnline(convID, powerOnOnlineGrace) {
 		return
 	}
 	res.Action = "error:not_online"

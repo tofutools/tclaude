@@ -549,3 +549,47 @@ func TestPowerOn_ReportsAnAgentThatNeverComesOnlineAsFailed(t *testing.T) {
 		"the human must be told this one did not come up; agents=%+v", resp.Agents)
 	assert.False(t, f.World.Tmux.IsAlive("tmux-pwno"), "pre-condition: it really is not running")
 }
+
+// Scenario: the GROUP resume endpoint — the one the CLI and the dashboard's
+// per-group Resume both drive — must apply the same verification. The bulk
+// power-on path and this one resolve resumes separately, so a fix in only one
+// of them leaves the other reporting a resume that never came up.
+func TestGroupResume_ReportsAnAgentThatNeverComesOnlineAsAnError(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	t.Cleanup(agentd.SetPowerOnOnlineGraceForTest(150 * time.Millisecond))
+	f := newFlow(t)
+
+	const group = "resume-team"
+	const conv = "grpr-1111-2222-3333-4444"
+	cwd := filepath.Join(t.TempDir(), "worktree")
+	require.NoError(t, os.Mkdir(cwd, 0o755))
+	f.HaveGroup(group)
+	f.HaveConvWithTitle(conv, "wont-come-up")
+	f.HaveAliveSession(conv, "spwn-grpr", "tmux-grpr", cwd)
+	f.HaveMember(group, conv)
+	f.MarkOffline("tmux-grpr")
+
+	dead := &deadSpawner{}
+	prevSpawn := agentd.Spawn
+	agentd.Spawn = dead
+	t.Cleanup(func() { agentd.Spawn = prevSpawn })
+
+	rec := testharness.Serve(f.Mux,
+		agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/groups/"+group+"/resume", nil)))
+	require.Equalf(t, http.StatusOK, rec.Code, "resume: %s", rec.Body.String())
+	require.Equal(t, 1, dead.resumes, "the resume must actually have been attempted")
+
+	var out struct {
+		Members []struct {
+			ConvID string `json:"conv_id"`
+			Action string `json:"action"`
+			Detail string `json:"detail"`
+		} `json:"members"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	require.Len(t, out.Members, 1)
+	assert.Equal(t, conv, out.Members[0].ConvID)
+	assert.Equal(t, "error:not_online", out.Members[0].Action,
+		"a resume that never came up must not be reported as resumed; member=%+v", out.Members[0])
+	assert.Contains(t, out.Members[0].Detail, "did not come online")
+}
