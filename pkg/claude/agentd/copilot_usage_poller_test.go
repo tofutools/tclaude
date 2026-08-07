@@ -484,9 +484,16 @@ func TestStopCopilotUsagePollerRefusesFurtherWork(t *testing.T) {
 // alternating polls.
 //
 // The durable log here discloses a compaction at 50% of a 128k window. The
-// sweep then reports a much smaller live prompt. The row must end up with the
-// durable WINDOW, the sweep's NUMERATOR, and a percentage computed from the
-// two — not the compaction's stale 50%.
+// sweep then reports a much smaller live prompt under an observed model. The
+// row must end up with the durable WINDOW in the observed column, the sweep's
+// NUMERATOR, and a percentage computed against the EFFECTIVE denominator —
+// the observed model's static band, per the settled TCL-1048 precedence
+// (configured cap, else static assumption, else the disclosed window as last
+// resort). Measuring against the static band even when a disclosure exists is
+// deliberate: the dashboard's displayed denominator resolves the same way, so
+// the percentage and the "x / y" beside it describe the same ratio. (Whether
+// a disclosed window should outrank the static assumption is an open operator
+// question recorded on TCL-1048; this test pins the behavior as shipped.)
 func TestCopilotDurableFollowerYieldsNumeratorToSweep(t *testing.T) {
 	setupTestDB(t)
 	resetCopilotUsageStateForTest()
@@ -521,11 +528,12 @@ func TestCopilotDurableFollowerYieldsNumeratorToSweep(t *testing.T) {
 	snap, err = db.GetContextSnapshot(sess.ID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(128000), snap.ContextWindowSize,
-		"the durable log still owns the denominator")
+		"the durable log still owns the observed window column")
 	assert.Equal(t, int64(20000), snap.TokensInput,
 		"the sweep owns the numerator once it has a row")
-	assert.InDelta(t, 15.625, snap.ContextPct, 0.01,
-		"the percentage is recomputed, not left at the compaction's reading")
+	assert.InDelta(t, 10.0, snap.ContextPct, 0.01,
+		"the percentage is recomputed against the observed model's static band, "+
+			"not left at the compaction's reading")
 
 	// Repeated polls must be stable: this is the flapping the shared
 	// copilotContextPct and window read exist to prevent.
