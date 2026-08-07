@@ -209,3 +209,30 @@ func TestTmuxSim_ExactPinnedPaneTargetsFailBeyondSendKeys(t *testing.T) {
 	assert.NoError(t, sim.Command("kill-pane", "-t", "%88").Run())
 	assert.False(t, sim.IsAlive("par"))
 }
+
+// Real tmux refuses `new-session -s <name>` for a name it still LISTS, and a
+// remain-on-exit corpse is still listed even though its pane is dead. The sim
+// modelled new-session as always succeeding, which hid a production failure
+// exactly there: a launch that picks its name by asking "is an agent alive?"
+// gets back a name new-session then rejects with "duplicate session".
+func TestTmuxSim_NewSessionRefusesANameItStillLists(t *testing.T) {
+	sim := newTmuxSim()
+
+	if err := sim.Command("new-session", "-d", "-s", "fresh", "-c", "/tmp").Run(); err != nil {
+		t.Fatalf("a free name must be accepted: %v", err)
+	}
+	if err := sim.Command("new-session", "-d", "-s", "fresh", "-c", "/tmp").Run(); err == nil {
+		t.Error("a LIVE session's name must be refused")
+	}
+
+	exit := 1
+	sim.MarkPaneDead("fresh", &exit, "")
+	if err := sim.Command("new-session", "-d", "-s", "fresh", "-c", "/tmp").Run(); err == nil {
+		t.Error("a remain-on-exit CORPSE still holds the name; new-session must be refused")
+	}
+
+	sim.MarkOffline("fresh")
+	if err := sim.Command("new-session", "-d", "-s", "fresh", "-c", "/tmp").Run(); err != nil {
+		t.Errorf("once the corpse is gone the name is free again: %v", err)
+	}
+}
