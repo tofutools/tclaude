@@ -49,6 +49,63 @@
 // that trusts it silently proceeds against a session that does not exist and
 // only fails later, on every subsequent `session.*` call. Use `session.create`.
 //
+// # Driving a session
+//
+// The bootstrap sequence, verified end to end:
+//
+//	client, _ := copilotapi.DialRetry(ctx, "127.0.0.1:4599", nil)
+//	events := client.Subscribe()                    // before creating, so nothing is missed
+//	info, _ := client.CreateSession(ctx, copilotapi.CreateSessionParams{
+//		WorkingDirectory: dir, ClientName: "tclaude", Streaming: true,
+//	})
+//	client.SetForegroundSession(ctx, info.SessionID) // the TUI switches to it
+//	client.Send(ctx, copilotapi.SendParams{SessionID: info.SessionID, Prompt: "..."})
+//
+// [Client.Send] is fire-and-forget: it returns a message ID as soon as the
+// message is queued, not when the agent has answered. Turn completion is
+// observable only on the event stream, as a `session.idle` event.
+//
+// A single turn produces on the order of thirty events. The order observed
+// live, which a consumer can rely on for shape but should not treat as an
+// exhaustive list, is: `user.message`, `assistant.turn_start`,
+// `model.call_start`, `assistant.message_start`, repeated
+// `assistant.streaming_delta` and `assistant.message_delta`,
+// `assistant.usage`, `assistant.message`, `assistant.reasoning`,
+// `assistant.turn_end`, `session.usage_checkpoint`, `assistant.idle`, and
+// finally `session.idle`. Session setup additionally emits `session.start`,
+// `session.model_change`, `session.skills_loaded`, `session.tools_updated`,
+// `session.mcp_server_status_changed` and `session.title_changed`.
+//
+// [SessionEvent.Data] is deliberately left raw. The event vocabulary is open
+// and Copilot extends it freely, so decoding only the types a consumer
+// handles keeps unknown ones from becoming errors.
+//
+// Reading usage back has two traps worth repeating from the type docs.
+// [UsageMetrics.ModelMetrics] nests token counts under
+// [ModelMetric.Usage] and request counts under [ModelMetric.Requests]; a
+// flattened struct decodes the same payload without error and reports zero
+// for everything. And [Client.ContextInfo] legitimately returns nil before a
+// session's first turn completes, which is a normal state rather than a
+// failure.
+//
+// # Running a server to talk to
+//
+//	copilot --ui-server --port 4599 --allow-all-tools
+//
+// The process needs a real terminal. Without a PTY the CLI takes a different
+// startup branch, never mounts the TUI, and therefore never starts the
+// embedded server — it exits having logged nothing about a listener, which
+// looks like a crash rather than a missing terminal. Anything launching this
+// programmatically must allocate a PTY; tmux panes already have one.
+//
+// The port is not advertised anywhere machine-readable. Omitting `--port`
+// binds an OS-assigned one recorded only in a log line, so callers should
+// choose the port themselves. It binds a few seconds after exec, behind auth
+// and workspace initialisation, which is what [DialRetry] absorbs.
+//
+// COPILOT_HOME relocates config and state and `--log-dir` relocates logs,
+// which keeps test runs out of the operator's real profile.
+//
 // # Versioning
 //
 // [Client.Connect] records the server's protocol version and CLI version. The

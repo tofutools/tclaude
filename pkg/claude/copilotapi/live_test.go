@@ -202,6 +202,74 @@ func TestLiveSessionsOpenReportsMissingSessionAsSuccess(t *testing.T) {
 	}
 }
 
+func TestLiveMultipleClientsShareOneServer(t *testing.T) {
+	// Consumers are expected to split roles across connections — one driving
+	// prompts, another consuming events — so this pins down that a second
+	// connection sees the first one's session and can drive it.
+	address := startLiveServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	driver, err := DialRetry(ctx, address, nil)
+	if err != nil {
+		t.Fatalf("connect driver: %v", err)
+	}
+	t.Cleanup(func() { _ = driver.Close() })
+
+	observer, err := DialRetry(ctx, address, nil)
+	if err != nil {
+		t.Fatalf("connect observer: %v", err)
+	}
+	t.Cleanup(func() { _ = observer.Close() })
+
+	// Subscribe before the session exists so the creation event cannot be
+	// missed.
+	subscription := observer.Subscribe()
+	t.Cleanup(subscription.Close)
+
+	info, err := driver.CreateSession(ctx, CreateSessionParams{
+		WorkingDirectory: t.TempDir(),
+		ClientName:       "tclaude-copilotapi-driver",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession on the driver: %v", err)
+	}
+
+	// The observer must see the driver's session on its own event stream.
+	deadline := time.After(30 * time.Second)
+	for seen := false; !seen; {
+		select {
+		case notification, ok := <-subscription.C():
+			if !ok {
+				t.Fatalf("observer subscription ended early: %v", subscription.Err())
+			}
+			if notification.Method != MethodSessionLifecycle {
+				continue
+			}
+			lifecycle, err := notification.Lifecycle()
+			if err != nil {
+				t.Fatalf("decode lifecycle: %v", err)
+			}
+			if lifecycle.SessionID == info.SessionID && lifecycle.Type == LifecycleSessionCreated {
+				seen = true
+			}
+		case <-deadline:
+			t.Fatal("the observer never saw the driver's session.created event")
+		}
+	}
+
+	// ...and must be able to drive a session it did not create.
+	if err := observer.SetSessionName(ctx, info.SessionID, "renamed by the observer"); err != nil {
+		t.Fatalf("observer could not drive the driver's session: %v", err)
+	}
+
+	// One client closing must not disturb the other.
+	_ = driver.Close()
+	if _, err := observer.Ping(ctx, "still here"); err != nil {
+		t.Errorf("observer broke when the driver disconnected: %v", err)
+	}
+}
+
 func TestLiveSessionBootstrap(t *testing.T) {
 	client := liveClient(t)
 	subscription := client.Subscribe()
