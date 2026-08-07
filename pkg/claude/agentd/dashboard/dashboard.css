@@ -4385,7 +4385,17 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 }
 .modal h3 { margin: 0 0 8px; font-size: 16px; color: #d4d4d4; }
 .modal p { margin: 8px 0; color: #c9d1d9; }
-.modal .confirm-body-preformatted { white-space: pre-wrap; }
+/* Preformatted confirm bodies carry daemon-supplied dumps — bulk power-on
+   failure lists, recorded sandbox details — whose length and token widths are
+   not ours to predict. .modal has no height bound and .modal-overlay centres
+   without scrolling, so an unbounded body pushes its own buttons past the
+   viewport with no way to reach them; and an unbroken token (a launch path)
+   overflows sideways. Bound and break it here, as .access-body already does
+   for the same class of text. */
+.modal .confirm-body-preformatted {
+  white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere;
+  max-height: 50vh; overflow-y: auto;
+}
 .modal .modal-meta {
   background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
   padding: 8px 12px; font-family: ui-monospace, monospace; font-size: 12px;
