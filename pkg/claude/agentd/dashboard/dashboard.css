@@ -1254,7 +1254,10 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 /* One line, clipped — same treatment the filename above it already gets. A
    media type is long enough to wrap to three lines in the drawer's width, and a
    wrapped line grows the file column UNDER the card's buttons instead of
-   pushing them aside, which reads as the metadata overlapping them. */
+   pushing them aside, which reads as the metadata overlapping them.
+   The size is written FIRST so the clip eats the media type rather than the
+   size: for a plain file with no viewer, this card is the only place the size
+   appears. The full string stays available as the span's title. */
 .human-notification-drawer-file span {
   margin-top: 2px; overflow: hidden; color: #7d8590; font-size: 10px;
   text-overflow: ellipsis; white-space: nowrap;
@@ -1446,8 +1449,8 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 
 /* Human-notify Markdown attachments. The document renders in the card itself,
    on its own full-width row below the file line, because it IS the message.
-   The controls beside the download link open the modal viewer — on the rendered
-   document, or on the original source. */
+   The control beside the download link opens the modal viewer, on the rendered
+   document; its Rendered/Source toggle reaches the original text. */
 .human-attachment-markdown-trigger {
   display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px;
   border: 1px solid #30363d; border-radius: 4px; background: #21262d;
@@ -1508,8 +1511,9 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
   border: 1px solid #30363d; border-radius: 4px; background: #21262d;
   color: #c9d1d9; cursor: pointer; font: inherit; font-size: 12px;
 }
-/* Rendered/Source toggle. Whichever control opened the viewer, the other mode
-   stays one click away rather than requiring a close-and-reopen. */
+/* Rendered/Source toggle. This is the ONLY way to the original text — the card
+   deliberately carries one control, so the source is a mode here rather than a
+   second entry point out there. */
 .markdown-preview-modes {
   display: inline-flex; overflow: hidden;
   border: 1px solid #30363d; border-radius: 4px;

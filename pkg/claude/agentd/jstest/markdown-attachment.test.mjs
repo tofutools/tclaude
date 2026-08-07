@@ -46,7 +46,7 @@ function okText(body) {
 // it — it is a mode of the viewer that button opens.
 function viewControl(mounted) {
   const found = mounted.container.querySelectorAll('.human-attachment-markdown-trigger');
-  assert.ok(found.length <= 1, 'the attachment card offers at most one viewer control');
+  assert.equal(found.length, 1, 'the attachment card offers exactly one viewer control');
   return found[0];
 }
 

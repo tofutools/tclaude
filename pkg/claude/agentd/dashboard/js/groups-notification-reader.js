@@ -117,7 +117,8 @@ function Attachment({ message }) {
         <span class="human-notification-drawer-file-icon" aria-hidden="true">▣</span>
         <span class="human-notification-drawer-file">
           <strong>${filename}</strong>
-          <span>${attachment.content_type || 'file'} · ${attachmentSize(attachment.size_bytes)}</span>
+          <span title=${`${attachmentSize(attachment.size_bytes)} · ${attachment.content_type || 'file'}`}>
+            ${attachmentSize(attachment.size_bytes)} · ${attachment.content_type || 'file'}</span>
         </span>
       </a>
       <a class="human-notification-drawer-download" href=${href}
