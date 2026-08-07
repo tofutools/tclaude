@@ -92,7 +92,12 @@ renders some types in place rather than only offering the download: an image
 gets a thumbnail and a zoomable preview, and a Markdown file up to 1 MiB is
 rendered directly in the message, with a **View source** control for the
 original text — so a written report is better sent as `report.md` than as
-`report.txt`. The cap is
+`report.txt`. A rendered report can illustrate itself: attach the images
+alongside it (`--attach report.md --attach chart.png`) and reference one by its
+filename (`![the chart](chart.png)`) to have it appear in the document. An
+image at an `http(s)` URL is NOT fetched when the human opens the message; it
+shows as a placeholder naming the host that the human must click to load, so
+prefer attaching the picture. The cap is
 256 MiB per published artifact. Deleting the message deletes the stored bytes.
 Top-level symlinks are rejected; pass the resolved path explicitly. Stored
 attachments are also capped at 512 MiB per stable agent and 2 GiB total, so

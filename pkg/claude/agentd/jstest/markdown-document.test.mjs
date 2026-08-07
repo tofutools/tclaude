@@ -7,6 +7,15 @@ import { createPreactHarness } from './preact-harness.mjs';
 // dead code. They are exercised here by swapping the model module the
 // component imports, which is the only seam that can make the on-demand
 // import fail without breaking the vendored parser for every other suite.
+
+// A stub stands in for the whole model module, so it has to offer the whole
+// export surface: a missing named export is a module-load error, not a quiet
+// undefined. The parts these tests do not exercise live here once.
+const MODEL_REST = `
+  export const REMOTE_IMAGE = 'remote-image';
+  export function remoteImageSources() { return []; }
+`;
+
 async function mountWith(t, modelSource, source = '# Title\n') {
   const harness = await createPreactHarness(t);
   await harness.replaceDashboardModule('js/markdown-model.js', modelSource);
@@ -22,6 +31,7 @@ test('a parser that will not load leaves the download as the way through', async
   const mounted = await mountWith(t, `
     export function loadMarkdownParser() { return Promise.reject(new Error('offline')); }
     export function markdownToTree() { return []; }
+    ${MODEL_REST}
   `);
   const state = mounted.container.querySelector('.markdown-document-state');
   assert.ok(state);
@@ -35,6 +45,7 @@ test('a document that fails to parse says so instead of blanking', async (t) => 
   const mounted = await mountWith(t, `
     export function loadMarkdownParser() { return Promise.resolve({}); }
     export function markdownToTree() { throw new Error('bad tokens'); }
+    ${MODEL_REST}
   `);
   const state = mounted.container.querySelector('.markdown-document-state');
   assert.ok(state);
@@ -47,6 +58,7 @@ test('an empty document is reported as empty, not as a failure', async (t) => {
   const mounted = await mountWith(t, `
     export function loadMarkdownParser() { return Promise.resolve({}); }
     export function markdownToTree() { return []; }
+    ${MODEL_REST}
   `, '   \n');
   const state = mounted.container.querySelector('.markdown-document-state');
   assert.ok(state);
@@ -67,6 +79,7 @@ test('a failed parser load is not cached', async (t) => {
       return attempts === 1 ? Promise.reject(new Error('offline')) : Promise.resolve({});
     }
     export function markdownToTree() { return [{ tag: 'p', attrs: {}, children: ['second try'] }]; }
+    ${MODEL_REST}
   `);
   const model = await harness.importDashboardModule('js/markdown-model.js');
   const { MarkdownDocument } = await harness.importDashboardModule('js/markdown-document.js');
