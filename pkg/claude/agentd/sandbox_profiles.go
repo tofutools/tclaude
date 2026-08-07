@@ -84,6 +84,12 @@ func handleSandboxCommonRuleCatalog(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// sandboxProfileMaxBodyBytes bounds a profile document. The PATCH handler reads
+// the body whole so it can tell an absent pre_launch from an explicit empty
+// one, and an unbounded ReadAll would hold whatever was sent. Generous: the
+// largest real profile is orders of magnitude under it.
+const sandboxProfileMaxBodyBytes = 8 << 20
+
 const (
 	sandboxProfileExportFormat        = "tclaude-sandbox-profiles"
 	sandboxProfileExportVersion       = 12
@@ -335,7 +341,7 @@ func handleSandboxProfileByName(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "changed", "sandbox profile changed since preview; reopen it and review the latest changes")
 			return
 		}
-		raw, err := io.ReadAll(r.Body)
+		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, sandboxProfileMaxBodyBytes))
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 			return
@@ -352,11 +358,10 @@ func handleSandboxProfileByName(w http.ResponseWriter, r *http.Request) {
 		// when they merely renamed a profile. Probe the raw JSON: an absent key
 		// and an explicit `[]` both decode to a nil slice, but only the second
 		// one means "remove them".
+		// Errors are impossible here and deliberately ignored: any input this
+		// could reject was already rejected by the struct decode above.
 		var present map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &present); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
-			return
-		}
+		_ = json.Unmarshal(raw, &present)
 		if _, sent := present["pre_launch"]; !sent {
 			body.PreLaunch = existing.PreLaunch
 		}

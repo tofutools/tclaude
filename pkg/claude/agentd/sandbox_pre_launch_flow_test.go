@@ -165,8 +165,7 @@ func TestSandboxProfileUpdateWithoutPreLaunchKeepsTheBlocks(t *testing.T) {
 	})
 	require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
 
-	// An update shaped like the dashboard's: every field it knows about, and no
-	// pre_launch at all.
+	// A client that knows about every other field and nothing about this one.
 	rec = profileReq(t, f, http.MethodPatch, "/v1/sandbox-profiles/keeps-blocks", map[string]any{
 		"name":              "keeps-blocks",
 		"filesystem":        []map[string]any{},
@@ -204,4 +203,56 @@ func TestSandboxProfileUpdateWithEmptyPreLaunchClearsTheBlocks(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, stored)
 	assert.Empty(t, stored.PreLaunch, "an explicit empty list must clear the blocks")
+}
+
+// The dashboard never commits its own body: it previews, shows the operator a
+// diff, then saves the preview's rendering. So the preview is the payload that
+// actually reaches storage, and if a dry run dropped the blocks the operator
+// would be shown a diff that silently deletes them.
+func TestSandboxProfilePreviewWithoutPreLaunchStillCarriesTheBlocks(t *testing.T) {
+	f := newFlow(t)
+	const script = "export PLAYWRIGHT_CLI_SESSION=preview-me\n"
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
+		"name":       "previewed",
+		"pre_launch": []map[string]any{{"name": "setup", "script": script}},
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+
+	rec = profileReq(t, f, http.MethodPatch, "/v1/sandbox-profiles/previewed?dry_run=1", map[string]any{
+		"name":        "previewed",
+		"filesystem":  []map[string]any{},
+		"environment": []map[string]any{},
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	var preview struct {
+		After wirePreLaunchProfile `json:"after"`
+	}
+	testharness.DecodeJSON(t, rec, &preview)
+	require.Len(t, preview.After.PreLaunch, 1,
+		"the preview the operator confirms must still carry the blocks")
+	assert.Equal(t, script, preview.After.PreLaunch[0].Script)
+}
+
+// A present-but-null pre_launch is a clear, not a no-op. The guard keys on the
+// key being sent, so a client that serializes a nullable field as null gets the
+// same result as sending []. Pinned because the difference is invisible.
+func TestSandboxProfileUpdateWithNullPreLaunchClearsTheBlocks(t *testing.T) {
+	f := newFlow(t)
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
+		"name":       "nulled",
+		"pre_launch": []map[string]any{{"name": "setup", "script": "true\n"}},
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+
+	rec = profileReq(t, f, http.MethodPatch, "/v1/sandbox-profiles/nulled", map[string]any{
+		"name":       "nulled",
+		"pre_launch": nil,
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	stored, err := db.GetSandboxProfile("nulled")
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.Empty(t, stored.PreLaunch, "an explicit null is a clear, like an explicit []")
 }

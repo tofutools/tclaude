@@ -319,7 +319,7 @@ export function sandboxPredictionWarnings(prediction) {
     // them read alike.
     capability.push(...refusals.map((refusal) => `Launch refused: ${refusal.message}`));
     if (target.refusal) continue;
-    for (const axis of ['filesystem', 'environment', 'agent_directories', 'pre_launch', 'network', 'unix_sockets']) {
+    for (const axis of ['filesystem', 'environment', 'agent_directories', 'network', 'unix_sockets']) {
       const verdict = target.axes?.[axis];
       if (verdict && verdict.outcome !== 'enforced') capability.push(verdict.detail);
     }
@@ -386,12 +386,13 @@ function effectiveRuleRows(context = {}, constructedRoot = false) {
   // preview names them and says what they promise to define, without pretending
   // a script can be summarised the way a grant can.
   for (const block of context.pre_launch || []) {
-    const exports = (block && block.exports || []).join(', ');
+    if (!block || !block.name) continue;
+    const exports = (block.exports || []).join(', ');
     rows.push({
       axis: 'pre_launch',
       label: exports
         ? `Pre-launch script: ${block.name} → ${exports}`
-        : `Pre-launch script: ${block && block.name}`,
+        : `Pre-launch script: ${block.name}`,
     });
   }
 
@@ -512,7 +513,14 @@ export function sandboxRuleBuckets(axes = {}, context = {}, networkEntries = [],
   for (const rule of effectiveRuleRows(context, axes?.constructed_root === true)) {
     const rowPrediction = rule.networkKey
       ? networkPredictions.get(rule.networkKey) : null;
-    const verdict = rowPrediction || (rule.axis === 'control_socket'
+    // control_socket and pre_launch have no daemon verdict, for opposite
+    // reasons: the socket floor is always reachable, and a pre-launch block is
+    // not an access rule at all — it is shell that always runs, so there is no
+    // enforcement axis to predict. Without a synthetic verdict both fall into
+    // the not_enforced fallback and the preview tells the operator their
+    // working setup script is unsupported and will not be applied, which is
+    // worse than not showing it.
+    const verdict = rowPrediction || (rule.axis === 'control_socket' || rule.axis === 'pre_launch'
       ? { outcome: 'enforced', detail: '' }
       : axes?.[rule.axis] || { outcome: 'not_enforced', detail: 'No enforcement verdict was returned.' });
     const bucket = buckets[bucketKey(verdict.outcome)];

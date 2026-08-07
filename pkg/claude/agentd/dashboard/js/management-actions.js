@@ -923,7 +923,15 @@ export function createManagementActions({
         notify('Sandbox profile save cancelled');
         return false;
       }
-      await sandbox.saveSandboxProfile(targetName, preview.after, preview.revision || '');
+      // The commit sends the server's own rendering, but pre_launch carries
+      // omitempty — so a deliberate "delete every block" ([]) comes back from
+      // the preview with the key absent, and absence means "keep them". Carry
+      // the intent across explicitly, or clearing a block would silently do
+      // nothing.
+      const committed = body.pre_launch === undefined
+        ? preview.after
+        : { ...preview.after, pre_launch: body.pre_launch };
+      await sandbox.saveSandboxProfile(targetName, committed, preview.revision || '');
       state.closeDialog();
       notify(`sandbox profile saved: ${preview.after.name}`);
       await load('sandbox');
