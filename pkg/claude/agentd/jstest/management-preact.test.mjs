@@ -39,6 +39,17 @@ function segment(control, value) {
   return control.querySelector(`[role="radio"][data-value="${value}"]`);
 }
 
+async function waitForSelectorCount(harness, root, selector, count) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const matches = [...root.querySelectorAll(selector)];
+    if (matches.length === count) return matches;
+    await harness.act(() => new Promise((resolve) => setTimeout(resolve, 10)));
+  }
+  const actual = root.querySelectorAll(selector).length;
+  assert.equal(actual, count, `timed out waiting for ${count} matches of ${selector}`);
+  return [];
+}
+
 test('management model preserves full-replace profile and role semantics', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/management-model.js');
@@ -2470,12 +2481,18 @@ test('new deny drafts apply default pack references once and pack rows stay read
 
   const newState = createManagementState();
   newState.openDialog({ kind: 'sandbox-editor', seed: null, options: {} });
-  const newDraft = mountSandboxEditor(harness, mountManagementIsland, newState);
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+  const newDraft = mountSandboxEditor(harness, mountManagementIsland, newState, {
+    async loadCommonRuleCatalog() {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      return COMMON_RULES;
+    },
+  });
   const newBaseline = newDraft.host.querySelector('#sandbox-profile-editor-network-baseline');
   assert.equal(selectedValue(newBaseline), 'inherit');
   await harness.act(() => { choose(newBaseline, 'deny'); harness.fireEvent(newBaseline, 'change'); });
-  const packModes = [...newDraft.host.querySelectorAll('.sbx-network-pack-mode')];
+  const packModes = await waitForSelectorCount(
+    harness, newDraft.host, '.sbx-network-pack-mode', 3,
+  );
   const packDisclosure = newDraft.host.querySelector('.sbx-network-packs');
   assert.equal(packDisclosure.hasAttribute('open'), false,
     'built-in packs use the editor collapsed-by-default disclosure pattern');
