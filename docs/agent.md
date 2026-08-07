@@ -961,6 +961,80 @@ sandbox, or with no sandbox at all, the pane is unconfined and so is the block.
 Blocks are shell for a tmux pane, so they do not apply to `tclaude ask`, which
 execs an argv with no shell at all.
 
+### Reference: scoping `playwright-cli` to one agent
+
+The worked example, and the reason `pre_launch` exists. It gives Playwright
+private XDG directories, a per-agent session, and a fixed browser, without any
+of that leaking into the agent's other tools. Pair it with
+`"agent_directories": ["TCLAUDE_PW_HOME"]` so the directory is per-agent and
+writable.
+
+```bash
+pw="$TCLAUDE_PW_HOME"
+real="$(command -v playwright-cli || true)"
+if [ -z "$real" ]; then
+  echo "playwright-cli is not installed on this host" >&2
+  false  # abort the launch; tclaude names this block in the failure
+fi
+if [ "$real" = "$pw/bin/playwright-cli" ]; then
+  echo "playwright-cli already resolves to the wrapper; refusing to wrap it again" >&2
+  false
+fi
+mkdir -p "$pw"/{config,cache,data,bin}
+cat > "$pw/bin/playwright-cli" <<WRAPPER
+#!/bin/bash
+XDG_CONFIG_HOME="$pw/config" \
+XDG_CACHE_HOME="$pw/cache" \
+XDG_DATA_HOME="$pw/data" \
+exec "$real" "\$@"
+WRAPPER
+chmod +x "$pw/bin/playwright-cli"
+export PATH="$pw/bin:$PATH"
+export PLAYWRIGHT_CLI_SESSION="$(basename "$pw")"
+export PLAYWRIGHT_MCP_BROWSER=chrome
+export PLAYWRIGHT_MCP_SANDBOX=false
+```
+
+Declare `"exports": ["PATH", "PLAYWRIGHT_CLI_SESSION", "PLAYWRIGHT_MCP_BROWSER",
+"PLAYWRIGHT_MCP_SANDBOX"]` so a launch that silently fails to set one stops
+instead of starting a misconfigured agent.
+
+Four things are load-bearing:
+
+- **The wrapper, not a global export.** `XDG_CONFIG_HOME` is exported *inside*
+  the wrapper, so only Playwright sees it. Exporting it into the agent would
+  take `gh`, `git`, `codex` and `claude` with it.
+- **Resolve the real binary before prepending to `PATH`.** Blocks re-run on
+  every launch including resume; if the wrapper directory were already on
+  `PATH`, `command -v` would find the wrapper and wrap it in itself. The second
+  guard refuses that rather than building an exec loop that only appears on the
+  next launch.
+- **The session id comes from the agent directory,** not `$$`. It has to be
+  unique between agents and stable across a resume of the same agent; a PID is
+  neither, and a shared session means one agent steering another's browser.
+- **`false`, not `exit 1`.** Letting the command fail trips tclaude's `ERR`
+  trap, which names the block in the failure message. An explicit `exit`
+  bypasses it and the operator gets an unattributed exit code.
+
+One limitation worth knowing before you write a test around this:
+`playwright-cli` blocks the `file:` protocol unless its config sets
+`allowUnrestrictedFileAccess`, and that config is only read from
+`./.playwright/cli.config.json` relative to the working directory — i.e. inside
+the agent's repo. Serving the page over loopback renders the same local file
+without committing a config or granting the browser unrestricted filesystem
+reads.
+
+`pkg/claude/session/pre_launch_playwright_reference_test.go` executes this block
+on every run, so it cannot rot into prose. Two tests in it drive a real browser
+and are opt-in:
+
+```bash
+TCLAUDE_PLAYWRIGHT_SMOKE=1 go test ./pkg/claude/session/ -run TestPlaywrightReference -v
+```
+
+They render a page, check the PNG comes out at the requested size, close the
+session, and run two agents concurrently to prove their sessions do not collide.
+
 By default the shared parent root is granted once, so the agent can create,
 rewrite, and delete its own env-var'd directories. Setting
 `features.agent_dirs_mount_parent` to `false` (in the config file or dashboard
