@@ -1,10 +1,6 @@
 package agentd
 
-import (
-	"errors"
-
-	"golang.org/x/sync/errgroup"
-)
+import "golang.org/x/sync/errgroup"
 
 // Shared fan-out for the daemon's bulk agent operations.
 //
@@ -104,22 +100,4 @@ func forEachAgentConcurrently[T any](items []T, limit int, fn func(i int, item T
 		})
 	}
 	_ = eg.Wait() // fn never returns an error — per-item failures ride in its result
-}
-
-// joinAgentOpErrors runs fn for every item concurrently and joins whatever the
-// workers returned into ONE error, in input order, with the nils dropped.
-//
-// This is the variant for bulk work whose per-item failure is a plain error
-// rather than an outcome row: the caller gets a single error that names every
-// target that failed instead of aborting on the first one. Returns nil when
-// every worker succeeded.
-func joinAgentOpErrors[T any](items []T, limit int, fn func(i int, item T) error) error {
-	if len(items) == 0 {
-		return nil
-	}
-	errs := make([]error, len(items))
-	forEachAgentConcurrently(items, limit, func(i int, item T) {
-		errs[i] = fn(i, item)
-	})
-	return errors.Join(errs...)
 }
