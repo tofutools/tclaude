@@ -20,22 +20,28 @@ import (
 // fakeProcTree stands in for the /proc readers convIDForPID walks. It
 // models an ancestor chain as name + parent maps and installs itself over
 // the procName / procParent package seams for the duration of a test.
+// exe carries per-pid executable basenames for the processes whose comm is
+// not their binary's name; pids left out of it read back as "" (no
+// executable evidence), which is also what keeps the walk deterministic —
+// the real reader would consult whatever host process holds that pid.
 type fakeProcTree struct {
 	name   map[int]string
+	exe    map[int]string
 	parent map[int]int
 }
 
 func (f fakeProcTree) install(t *testing.T) {
 	t.Helper()
-	prevName, prevParent := procName, procParent
+	prevName, prevParent, prevExe := procName, procParent, procExeName
 	procName = func(pid int) string { return f.name[pid] }
+	procExeName = func(pid int) string { return f.exe[pid] }
 	procParent = func(pid int) int {
 		if p, ok := f.parent[pid]; ok {
 			return p
 		}
 		return 1 // reaching init ends the walk
 	}
-	t.Cleanup(func() { procName, procParent = prevName, prevParent })
+	t.Cleanup(func() { procName, procParent, procExeName = prevName, prevParent, prevExe })
 }
 
 // TestConvIDForPID_CodexAncestorResolvesViaPaneShPID is the JOH-206
