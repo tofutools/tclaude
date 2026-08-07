@@ -1710,8 +1710,13 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 
 /* ─── Attachment viewers under the cosmetic themes ────────────────────
    Both viewers are chrome opened FROM the notification surfaces, so they
-   re-skin with the shell the way the reader below does. Everything stays under
-   the two overlay classes, which nothing else uses.
+   re-skin with the shell the way the reader below does. The dialog CHROME
+   stays under the two overlay classes, which nothing else uses. The rendered
+   DOCUMENT is themed unscoped further down, because the same document renders
+   in the message card as well as in the viewer, and .markdown-document has no
+   consumer outside those notification surfaces (markdown-attachment.js is the
+   only place MarkdownDocument is mounted) — so that is a deliberate exception
+   to the overlay scoping, not a leak.
 
    The first rules UNDO rather than add: `body.wizard header` and `body.slop
    header` are bare element selectors meant for the page banner, so they reach

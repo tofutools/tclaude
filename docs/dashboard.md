@@ -1588,7 +1588,10 @@ narrow viewport the viewers are already full-screen, so the grip is hidden.
 Both viewers are chrome opened from the notification surfaces, so they re-skin
 with the shell: the grimoire under the wizard theme, the casino under slop,
 including the rendered document's own colours and the stage's scrollbar. The
-skins stay under the two overlay classes. Note that the page-level
+dialog chrome stays under the two overlay classes; the rendered document is
+themed unscoped, because the same document renders in the message card as well
+as in the viewer and `.markdown-document` has no consumer outside these
+notification surfaces. Note that the page-level
 `body.wizard header` / `body.slop header` rules are bare element selectors meant
 for the page banner, so a dialog `<header>` needs to undo them explicitly.
 
