@@ -92,8 +92,8 @@ time, because **`sessions.open` looks like it works and then does not**:
   `{"status": "created", "sessionId": ...}` and creates a session-state directory on
   disk. But **that session is not in the RPC session registry**: every `session.*` call
   against it fails with `Session not found`, and `setForeground` returns
-  `{"success": false}`. The danger is not a missing create path; it is a create path
-  that exists and produces a session you cannot drive.
+  `{"success": false, "error": "Session not found: <id>"}`. The danger is not a missing
+  create path; it is a create path that exists and produces a session you cannot drive.
 - `sessions.open {kind: "attach"}` against the pane's own **startup** session returns
   `{"status": "resumed"}` — and the session is *still* undrivable. So attach is not a
   rescue path either, which is the first thing most implementers try.
