@@ -1412,6 +1412,46 @@ test('sandbox editor discloses missing includes and preserves their authored nam
   host.remove();
 });
 
+// Pre-launch blocks reach the editor only through the raw JSON panel, so the two things worth pinning
+// are that an untouched profile keeps them and that an explicit empty array survives as a real clear.
+test('the sandbox editor round-trips pre-launch blocks and forwards an explicit clear', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), [{ name: 'dev' }]);
+  const blocks = [{ name: 'playwright', script: 'export FOO=bar\n', exports: ['FOO'] }];
+  state.openDialog({ kind: 'sandbox-editor', seed: {
+    name: 'dev', filesystem: [], environment: [], includes: [], agent_directories: [],
+    pre_launch: blocks,
+  }, options: {} });
+  let saved = null;
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async saveSandbox(value) { saved = value; },
+  });
+  await harness.act(() => Promise.resolve());
+
+  host.querySelector('#sandbox-profile-editor-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(saved.draft.pre_launch, blocks,
+    'an untouched load→save round-trip never drops the operator-authored blocks');
+
+  const toggle = host.querySelector('.sbx-advanced-toggle');
+  await harness.act(() => toggle.click());
+  const raw = host.querySelector('#sandbox-profile-editor-pre-launch');
+  assert.deepEqual(JSON.parse(raw.value), blocks, 'the raw panel opens seeded from the draft');
+  raw.value = '[]';
+  raw.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  host.querySelector('#sandbox-profile-editor-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(saved.draft.pre_launch, [],
+    'an explicit empty array reaches the save path so the daemon can tell "clear" from "leave alone"');
+  unmount();
+  host.remove();
+});
+
 const COMMON_RULES = {
   version: 1,
   home: '/home/op',
