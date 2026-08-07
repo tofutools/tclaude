@@ -715,6 +715,14 @@ export function attachTerminalInteractions({
       // 52 response resolves it; Ctrl+C applications that merely cancel work
       // emit nothing and the pending token expires without changing clipboard.
       armTmuxClipboardFromGesture();
+      if (event.metaKey && !event.ctrlKey) {
+        event.preventDefault();
+        // xterm maps Meta+C to an Escape-prefixed character rather than the
+        // Ctrl+C byte Copilot's terminal UI binds. Inject ETX through
+        // Terminal.input so it follows the ordinary onData/WebSocket path once.
+        term.input('\x03');
+        return false;
+      }
       return true;
     }
     const input = terminalKeyInput(event);

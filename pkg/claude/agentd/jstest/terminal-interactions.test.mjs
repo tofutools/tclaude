@@ -183,6 +183,7 @@ function terminalHarness(ownerDocument) {
   let osc52 = null;
   let keyHandler = null;
   let linkProvider = null;
+  const inputs = [];
   const term = {
     options: {},
     buffer: { active: { getLine() { return null; } } },
@@ -202,11 +203,13 @@ function terminalHarness(ownerDocument) {
     attachCustomKeyEventHandler(handler) { keyHandler = handler; },
     hasSelection() { return false; },
     getSelection() { return ''; },
+    input(value) { inputs.push(value); },
     focus() {},
   };
   return {
     host, term,
     key: (event) => keyHandler(event),
+    inputs,
     linkProvider: () => linkProvider,
     osc52: (payload) => osc52(payload),
   };
@@ -319,28 +322,41 @@ test('terminal lifecycle accepts OSC 52 only after a pointer or keyboard copy ge
 
     const copyEvent = key({ key: 'c', code: 'KeyC', ctrlKey: true });
     assert.equal(first.key(copyEvent), true, 'the application must still receive Ctrl+C');
+    assert.deepEqual(first.inputs, [], 'xterm owns the ordinary Ctrl+C encoding');
     assert.equal(writes.length, 1, 'keyboard gesture starts the deferred browser write');
     first.osc52(`;${Buffer.from('copilot selection').toString('base64')}`);
     assert.deepEqual(await writes[0], { type: 'text/plain', text: 'copilot selection' });
 
-    drag(first, doc);
+    let metaPrevented = false;
+    const metaCopyEvent = key({
+      key: 'c', code: 'KeyC', metaKey: true,
+      preventDefault() { metaPrevented = true; },
+    });
+    assert.equal(first.key(metaCopyEvent), false, 'xterm must not translate Cmd+C to Escape-c');
+    assert.equal(metaPrevented, true);
+    assert.deepEqual(first.inputs, ['\x03'], 'Cmd+C reaches the TUI as the Ctrl+C byte');
     assert.equal(writes.length, 2);
+    first.osc52(`;${Buffer.from('mac copilot selection').toString('base64')}`);
+    assert.deepEqual(await writes[1], { type: 'text/plain', text: 'mac copilot selection' });
+
+    drag(first, doc);
+    assert.equal(writes.length, 3);
     drag(second, doc);
-    assert.equal(writes.length, 3, 'new pane supersedes the first page-global write');
-    await assert.rejects(writes[1], /canceled/);
+    assert.equal(writes.length, 4, 'new pane supersedes the first page-global write');
+    await assert.rejects(writes[2], /canceled/);
 
     // The canceled pane no longer owns the active token, so its later OSC is
     // ignored rather than resolving the second pane's clipboard item.
     first.osc52(`;${Buffer.from('stale').toString('base64')}`);
     second.osc52(`;${Buffer.from('latest 🧇').toString('base64')}`);
-    assert.deepEqual(await writes[2], { type: 'text/plain', text: 'latest 🧇' });
+    assert.deepEqual(await writes[3], { type: 'text/plain', text: 'latest 🧇' });
 
     drag(first, doc);
-    assert.equal(writes.length, 4);
+    assert.equal(writes.length, 5);
     firstInteractions.invalidate();
-    await assert.rejects(writes[3], /canceled/);
+    await assert.rejects(writes[4], /canceled/);
     first.osc52(`;${Buffer.from('after invalidate').toString('base64')}`);
-    assert.equal(writes.length, 4);
+    assert.equal(writes.length, 5);
   } finally {
     firstInteractions.dispose();
     secondInteractions.dispose();

@@ -2061,6 +2061,12 @@ uses the same guarded path: the keyboard gesture arms one response while the
 key still reaches the running application. Unsolicited OSC 52 sequences are
 ignored; only an explicitly armed mouse or keyboard copy may update the
 clipboard.
+
+When Copilot CLI is installed, `tclaude setup` offers to persist its documented
+`copyOnSelect: true` preference. An existing value is treated as an operator
+choice and left unchanged; the keyboard path above remains available when the
+preference is deliberately disabled.
+
 To make a browser-owned selection instead, use **Option-drag on macOS** or
 **Shift-drag on Linux/Windows**, then press **Ctrl/⌘-Shift-C** or click
 **Copy**. Clicking Copy without a browser selection shows this modifier hint.
