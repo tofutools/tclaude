@@ -2149,8 +2149,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.ensureCursorVisible()
 		// A terminal that grew leaves the help view scrolled further than there
-		// is now text below, which would show a screen of blank rows.
-		m.helpOffset = min(m.helpOffset, m.helpMaxOffset(m.helpBodyLines()))
+		// is now text below, which would show a screen of blank rows. Only the
+		// open view pays for the recount; every other mode opens at the top
+		// anyway.
+		if m.mode == tuiModeHelp {
+			m.helpOffset = min(m.helpOffset, m.helpMaxOffset(m.helpBodyLines()))
+		}
 		return m, nil
 
 	case tuiTickMsg:
@@ -2671,6 +2675,14 @@ func tuiReconciliationBlocksMutation(mode tuiMode, key string) bool {
 func (m tuiModel) handleHelpKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	lines := m.helpBodyLines()
 	maxOffset := m.helpMaxOffset(lines)
+	if maxOffset <= 0 {
+		// The whole text is on screen, so the footer promises that any key
+		// closes it — and a scroll key must not be the exception that leaves an
+		// operator pressing ↓ at a view that neither scrolls nor closes.
+		m.mode = tuiModeList
+		m.helpOffset = 0
+		return m, nil
+	}
 	// A page is what is on screen less one line, so the line the eye stopped on
 	// is still there after the jump.
 	page := max(len(m.helpWindow(lines, m.helpOffset))-1, 1)
@@ -3601,8 +3613,10 @@ func (m tuiModel) helpBodyRows() int {
 }
 
 // helpWindow is the run of body lines visible at offset off: as many as the
-// row budget holds. A single line taller than the whole budget still shows,
-// because leaving the viewport empty would strand every line after it.
+// row budget holds. A line the budget cannot hold even on its own still shows,
+// because leaving the viewport empty would strand every line after it — but
+// cut to the rows there are, since overflowing the alt screen is the thing
+// this viewport exists to stop.
 func (m tuiModel) helpWindow(lines []string, off int) []string {
 	off = min(max(off, 0), max(len(lines)-1, 0))
 	budget := m.helpBodyRows()
@@ -3610,8 +3624,14 @@ func (m tuiModel) helpWindow(lines []string, off int) []string {
 	out := make([]string, 0, len(lines)-off)
 	for _, line := range lines[off:] {
 		r := m.helpLineRows(line)
-		if rows+r > budget && len(out) > 0 {
-			break
+		if rows+r > budget {
+			if len(out) > 0 {
+				break
+			}
+			if m.width > 0 {
+				line = tuiTruncate(line, budget*m.width)
+			}
+			return []string{line}
 		}
 		rows += r
 		out = append(out, line)
@@ -3623,8 +3643,13 @@ func (m tuiModel) helpWindow(lines []string, off int) []string {
 // the last body line on the last body row. Zero means the whole text fits, and
 // so does a console that has had no WindowSizeMsg yet — with no height to
 // window to, renderHelpView shows everything rather than one line of it.
+//
+// It never goes past the last line, even when that line alone is taller than
+// the budget: an offset with no line to name is one the range readout would
+// count past the end of the text, and one that end/G would park a dead
+// keystroke on.
 func (m tuiModel) helpMaxOffset(lines []string) int {
-	if m.height <= 0 {
+	if m.height <= 0 || len(lines) == 0 {
 		return 0
 	}
 	budget := m.helpBodyRows()
@@ -3632,7 +3657,7 @@ func (m tuiModel) helpMaxOffset(lines []string) int {
 	for i := len(lines) - 1; i >= 0; i-- {
 		rows += m.helpLineRows(lines[i])
 		if rows > budget {
-			return i + 1
+			return min(i+1, len(lines)-1)
 		}
 	}
 	return 0
@@ -3649,9 +3674,16 @@ func (m tuiModel) renderHelpView() string {
 	}
 	off := min(max(m.helpOffset, 0), maxOffset)
 	window := m.helpWindow(lines, off)
+	body := strings.Join(window, "\n") + "\n"
+	if m.height <= tuiHelpChrome {
+		// No room for both a line of help and the footer under it. The help is
+		// what the view is for, so the footer is what goes — and the keys it
+		// would have named still work.
+		return body
+	}
 	hint := tuiHelpScrollHint + fmt.Sprintf("  (%d–%d of %d)", off+1, off+len(window), len(lines))
 	if m.width > 0 {
 		hint = tuiTruncate(hint, m.width)
 	}
-	return strings.Join(window, "\n") + "\n\n" + hint + "\n"
+	return body + "\n" + hint + "\n"
 }

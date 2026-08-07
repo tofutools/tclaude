@@ -824,22 +824,69 @@ func TestTUIHelpMentionsTheMissingDashboard(t *testing.T) {
 // tuiNamedKey builds the KeyPressMsg for a key with no character of its own.
 func tuiNamedKey(code rune) tea.KeyPressMsg { return tea.KeyPressMsg{Code: code} }
 
+// tuiWrappedRows counts the rows a rendered view takes on a terminal width
+// columns wide, wrapping each line as the terminal would. It is deliberately
+// its own arithmetic rather than a call to helpLineRows: the point of the
+// tests below is to catch a viewport that mis-counts its own rows.
+func tuiWrappedRows(view string, width int) int {
+	rows := 0
+	for line := range strings.SplitSeq(strings.TrimSuffix(view, "\n"), "\n") {
+		w := lipgloss.Width(line)
+		if width <= 0 || w <= width {
+			rows++
+			continue
+		}
+		rows += (w + width - 1) / width
+	}
+	return rows
+}
+
 // The help text is longer than most terminals, so the view is windowed: it
 // renders no more rows than the terminal has, whatever it costs the text.
+//
+// Rows rather than lines, because the body is hand-wrapped to a comfortable
+// width and a narrower terminal wraps it again — an overflow the line count
+// cannot see.
 func TestTUIHelpViewFitsTheTerminal(t *testing.T) {
-	m := newTUIModel(nil)
-	m.width, m.height = 100, 24
-	body := m.helpBodyLines()
-	require.Greater(t, len(body), m.height, "the help has to overflow for this test to mean anything")
+	body := newTUIModel(nil).helpBodyLines()
+	require.Greater(t, len(body), 24, "the help has to overflow for this test to mean anything")
 
-	// The trailing newline is a line terminator rather than a row — the same
-	// shape renderList's own budget renders to.
-	assert.LessOrEqual(t, lipgloss.Height(m.renderHelpView()), m.height+1)
+	// Widths from comfortable down to narrower than the body's own wrap, and
+	// heights down to terminals too short to hold a line and the footer both.
+	for _, width := range []int{100, 60, 40, 24, 20} {
+		for _, height := range []int{40, 24, 10, 5, 3, 2, 1} {
+			m := newTUIModel(nil)
+			m.width, m.height = width, height
+			// Every offset the keys can reach, not just the top one.
+			for off := 0; off <= m.helpMaxOffset(body); off++ {
+				m.helpOffset = off
+				assert.LessOrEqualf(t, tuiWrappedRows(m.renderHelpView(), width), height,
+					"help overflows a %dx%d terminal at offset %d", width, height, off)
+			}
+		}
+	}
+}
 
-	// Narrow enough that the hand-wrapped body wraps again, which costs rows
-	// the line count does not show.
-	m.width = 40
-	assert.LessOrEqual(t, lipgloss.Height(m.renderHelpView()), m.height+1)
+// The range readout counts real lines: an offset past the last one would
+// number a line the text does not have, and leave end/G on a dead keystroke.
+func TestTUIHelpMaxOffsetStaysWithinTheText(t *testing.T) {
+	for _, width := range []int{100, 40, 20, 16} {
+		for _, height := range []int{24, 5, 4, 3} {
+			m := newTUIModel(nil)
+			m.width, m.height = width, height
+			body := m.helpBodyLines()
+			maxOffset := m.helpMaxOffset(body)
+			require.Lessf(t, maxOffset, len(body), "offset past the last line on %dx%d", width, height)
+			m.helpOffset = maxOffset
+
+			// The bottom of the scroll is the bottom of the text, and the last
+			// line it counts is one the text has.
+			window := m.helpWindow(body, maxOffset)
+			require.NotEmptyf(t, window, "empty window on %dx%d", width, height)
+			assert.Lessf(t, maxOffset+len(window), len(body)+1,
+				"the range readout would count past the text on %dx%d", width, height)
+		}
+	}
 }
 
 // Everything the help says stays reachable: the keys scroll it to its last
@@ -908,8 +955,20 @@ func TestTUIHelpOpensAtTheTop(t *testing.T) {
 func TestTUIHelpWithoutScrollingSaysSo(t *testing.T) {
 	m := newTUIModel(nil)
 	m.width, m.height = 100, 500
+	m.mode = tuiModeHelp
 	assert.Contains(t, m.renderHelpView(), tuiHelpCloseHint)
 	assert.NotContains(t, m.renderHelpView(), "any other key closes")
+
+	// And means it: with nothing to scroll, the scroll keys close the view
+	// like every other key rather than being swallowed by a viewport that has
+	// no work to do.
+	for _, key := range []tea.KeyPressMsg{
+		tuiNamedKey(tea.KeyDown), tuiNamedKey(tea.KeyUp), tuiNamedKey(tea.KeyPgDown),
+		tuiNamedKey(tea.KeyEnd), tuiKey("j"), tuiKey("G"),
+	} {
+		closed, _ := m.handleKey(key)
+		assert.Equalf(t, tuiModeList, closed.(tuiModel).mode, "%s left the help open", key.String())
+	}
 
 	// No WindowSizeMsg yet: no height to window to.
 	unsized := newTUIModel(nil)
