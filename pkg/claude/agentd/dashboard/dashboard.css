@@ -1392,10 +1392,17 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 }
 .image-preview-state strong { color: #f0f6fc; font-size: 13px; }
 .image-preview-state span { color: #8b949e; font-size: 11px; }
+/* position:static undoes the page-level `footer { position: fixed }` at the top
+   of this file, which is meant for the dashboard's status bar and would
+   otherwise tear this footer out of the dialog and pin it to the window. The
+   right padding clears the corner grip; .grow is the spacer that pushes the
+   zoom cluster over to meet it. */
 .image-preview-footer {
+  position: static;
   display: flex; align-items: center; gap: 8px; min-height: 54px;
   padding: 0 26px 0 14px; border-top: 1px solid #30363d; background: #161b22;
 }
+.image-preview-footer .grow { flex: 1; }
 .image-preview-footer-file {
   max-width: 34%; overflow: hidden; color: #c9d1d9;
   text-overflow: ellipsis; white-space: nowrap; font-size: 11px;
@@ -1513,9 +1520,11 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 .markdown-preview-close:hover, .markdown-preview-close:focus-visible {
   border-color: #58a6ff; color: #f0f6fc;
 }
+/* The extra bottom padding keeps the document clear of the corner grip, which
+   floats over this stage (the image viewer has a footer there instead). */
 .markdown-preview-stage {
   position: relative; min-height: 0; flex: 1; overflow: auto;
-  padding: 22px 24px; background: #0b1016;
+  padding: 22px 24px 30px; background: #0b1016;
 }
 .markdown-document-state {
   display: flex; flex-direction: column; gap: 5px; max-width: 420px;
@@ -1597,7 +1606,7 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
   .markdown-preview-header-actions { flex: 0 0 auto; }
   .markdown-preview-download { padding: 5px 7px; font-size: 11px; }
   .markdown-preview-mode { padding: 5px 7px; font-size: 11px; }
-  .markdown-preview-stage { padding: 16px 14px; }
+  .markdown-preview-stage { padding: 16px 14px 22px; }
   .markdown-preview-document { font-size: 13.5px; }
   .markdown-attachment-document { margin-top: 8px; padding-top: 10px; }
 }

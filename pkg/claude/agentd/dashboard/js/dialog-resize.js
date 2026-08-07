@@ -21,7 +21,7 @@
 // travels half the size change.
 
 import { h } from 'preact';
-import { useCallback, useMemo, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { dashPrefs } from './prefs.js';
 
@@ -67,6 +67,25 @@ function loadSize(prefKey) {
   return null;
 }
 
+// The size is per PREF KEY, not per component. Every notification card with an
+// attachment mounts its viewer up front, so a size held in component state
+// would stick only to the one card whose grip was dragged: opening any other
+// card's viewer would show the stylesheet default, and dragging it would start
+// from that default and overwrite the stored size. This module-level cell is
+// the session's authoritative copy, and every mounted viewer follows it.
+const sizes = new Map();          // prefKey -> {w, h} | null (null = CSS default)
+const subscribers = new Set();    // (prefKey) => void
+
+function currentSize(prefKey) {
+  if (!sizes.has(prefKey)) sizes.set(prefKey, loadSize(prefKey));
+  return sizes.get(prefKey);
+}
+
+function publishSize(prefKey, size) {
+  sizes.set(prefKey, size);
+  for (const notify of subscribers) notify(prefKey);
+}
+
 // useDialogResize gives a centred modal dialog a remembered size.
 //
 // `dialogRef` is the same ref the dialog element already carries (the one
@@ -74,17 +93,27 @@ function loadSize(prefKey) {
 // trusting state, so a drag that starts from the CSS default — or from a size
 // the viewport clamped — still tracks the pointer exactly.
 export function useDialogResize({ dialogRef, prefKey }) {
-  // Read the pref once per open. dashPrefs is a synchronous cache that boot
-  // has already filled, so there is no flash of the default size.
-  const [size, setSize] = useState(() => loadSize(prefKey));
-  // The gesture writes through a ref as well, because the pointerup that
-  // persists the result closes over the state from the render it started in.
+  // dashPrefs is a synchronous cache that boot has already filled, so the
+  // stored size is there for the first render — no flash of the default.
+  const [size, setSize] = useState(() => currentSize(prefKey));
+  // The gesture reads through a ref as well, because the handlers it installs
+  // close over the state from the render they started in.
   const sizeRef = useRef(size);
+  sizeRef.current = size;
+
+  // Follow the shared cell, so a size dragged on one viewer is the size every
+  // other viewer of the same kind opens at.
+  useEffect(() => {
+    const notify = (key) => { if (key === prefKey) setSize(currentSize(prefKey)); };
+    subscribers.add(notify);
+    notify(prefKey);
+    return () => { subscribers.delete(notify); };
+  }, [prefKey]);
 
   const applySize = useCallback((next) => {
     sizeRef.current = next;
-    setSize(next);
-  }, []);
+    publishSize(prefKey, next);
+  }, [prefKey]);
 
   const persist = useCallback(() => {
     const current = sizeRef.current;
@@ -127,12 +156,20 @@ export function useDialogResize({ dialogRef, prefKey }) {
     const startX = event.clientX, startY = event.clientY;
     let moved = false;
     grip.setPointerCapture?.(event.pointerId);
+    // preventDefault above suppressed the click's default focus action, and the
+    // grip's own label promises arrow keys. Focus it so that promise holds
+    // straight after a drag, not only after tabbing to it.
+    grip.focus?.();
 
     const onMove = (moveEvent) => {
       moved = true;
       // Doubled: the dialog is centred, so it grows away from the pointer by
       // as much as it grows toward it.
       resizeBy((moveEvent.clientX - startX) * 2, (moveEvent.clientY - startY) * 2, start);
+      // Persisted as the drag runs, not only on release: dashPrefs debounces
+      // per key, so this is one write either way, and a dialog that unmounts
+      // mid-gesture (Escape, a list refresh) still keeps the size.
+      persist();
     };
     const onUp = () => {
       grip.removeEventListener('pointermove', onMove);

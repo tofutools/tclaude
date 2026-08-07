@@ -139,8 +139,8 @@ export function ImageAttachmentPreview({ messageID, attachment, surface = 'attac
             aria-label="Reset zoom">${Math.round(zoom * 100)}%</button>
           <button type="button" onClick=${() => setZoom((value) => Math.min(3, value + .5))}
             disabled=${zoom >= 3} aria-label="Zoom in">+</button>
-          <${DialogResizer} ...${resizerProps} label="Resize the image viewer" />
         </footer>
+        <${DialogResizer} ...${resizerProps} label="Resize the image viewer" />
       </div>
     </div>`}
   </${Fragment}>`;

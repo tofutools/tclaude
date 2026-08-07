@@ -10,8 +10,16 @@ const PREFS_STUB = `
   export const writes = [];
   export const dashPrefs = {
     getItem: (key) => (store.has(key) ? store.get(key) : null),
-    setItem: (key, value) => { store.set(key, String(value)); writes.push([key, String(value)]); },
-    removeItem: (key) => { store.delete(key); writes.push([key, null]); },
+    // Mirrors the real store's no-op on an unchanged value / absent key, which
+    // is what collapses a drag's repeated writes into one.
+    setItem: (key, value) => {
+      if (store.get(key) === String(value)) return;
+      store.set(key, String(value)); writes.push([key, String(value)]);
+    },
+    removeItem: (key) => {
+      if (!store.has(key)) return;
+      store.delete(key); writes.push([key, null]);
+    },
     syncItem: (key, value) => { if (value == null) store.delete(key); else store.set(key, String(value)); },
   };
   export const initDashPrefs = async () => {};
@@ -95,12 +103,13 @@ test('dragging the grip resizes the viewer from both edges and stores the size',
   });
   assert.equal(dialog.style.getPropertyValue('--dialog-w'), '1000px', '+50px of pointer = +100px of width');
   assert.equal(dialog.style.getPropertyValue('--dialog-h'), '820px', '-20px of pointer = -40px of height');
-  assert.deepEqual(prefs.writes, [], 'nothing is stored mid-gesture');
 
   await harness.act(() => { harness.fireEvent(grip, 'pointerup', { pointerId: 3 }); });
-  assert.deepEqual(prefs.writes, [
+  // Stored as the drag runs — dashPrefs debounces the network write per key —
+  // so a dialog torn down mid-gesture keeps the size the operator dragged to.
+  assert.deepEqual(prefs.writes.at(-1),
     ['tclaude.dash.attachmentViewer.markdown.size', JSON.stringify({ w: 1000, h: 820 })],
-  ], 'releasing stores the size the operator settled on');
+    'the size the operator settled on is stored');
   await mounted.unmount();
 });
 
@@ -213,6 +222,58 @@ test('the image viewer is resizable too, under its own pref key', async (t) => {
   assert.deepEqual(prefs.writes, [
     ['tclaude.dash.attachmentViewer.image.size', JSON.stringify({ w: 1160, h: 920 })],
   ], 'the image viewer keeps a size of its own');
+  await mounted.unmount();
+});
+
+// Every notification card with an attachment mounts its viewer up front, so a
+// size kept in component state would stick only to the card that was dragged —
+// and dragging a second card would start from the default and overwrite the
+// stored size. The size belongs to the pref key, and every viewer follows it.
+test('a size dragged on one attachment is the size the next one opens at', async (t) => {
+  const { harness, prefs } = await setup(t);
+  const { MarkdownAttachment } = await harness.importDashboardModule('js/markdown-attachment.js');
+  stubFetch(t, async () => ({ ok: true, status: 200, text: async () => '# Plan\n' }));
+  const second = { ...markdownAttachment, id: 7, url: '/api/human-messages/42/attachments/7' };
+  const mounted = await harness.mount(harness.html`
+    <div>
+      <${MarkdownAttachment} messageID=${42} attachment=${markdownAttachment} surface="messages" />
+      <${MarkdownAttachment} messageID=${42} attachment=${second} surface="messages" />
+    </div>
+  `);
+  await settle(harness);
+  const [openA, openB] = [...mounted.container.querySelectorAll('.human-attachment-markdown-trigger')]
+    .filter((button) => /Open/.test(button.textContent));
+
+  await harness.act(() => { openA.click(); });
+  await settle(harness);
+  const dialogA = mounted.container.querySelector('.markdown-preview-dialog');
+  const gripA = dialogA.querySelector('.dialog-resizer');
+  pinSize(dialogA, 900, 860);
+  await harness.act(() => {
+    harness.fireEvent(gripA, 'pointerdown', { button: 0, pointerId: 1, clientX: 0, clientY: 0 });
+    harness.fireEvent(gripA, 'pointermove', { pointerId: 1, clientX: 100, clientY: 0 });
+    harness.fireEvent(gripA, 'pointerup', { pointerId: 1 });
+    harness.fireEvent(harness.document, 'keydown', { key: 'Escape' });
+  });
+  await settle(harness);
+  assert.equal(prefs.writes.at(-1)[1], JSON.stringify({ w: 1100, h: 860 }));
+
+  await harness.act(() => { openB.click(); });
+  await settle(harness);
+  const dialogB = mounted.container.querySelector('.markdown-preview-dialog');
+  assert.equal(dialogB.style.getPropertyValue('--dialog-w'), '1100px',
+    'the second viewer opens at the size the first was dragged to');
+
+  // And dragging the second does not start from the stylesheet default, which
+  // is what would have quietly thrown the stored size away.
+  const gripB = dialogB.querySelector('.dialog-resizer');
+  pinSize(dialogB, 1100, 860);
+  await harness.act(() => {
+    harness.fireEvent(gripB, 'pointerdown', { button: 0, pointerId: 2, clientX: 0, clientY: 0 });
+    harness.fireEvent(gripB, 'pointermove', { pointerId: 2, clientX: 10, clientY: 0 });
+    harness.fireEvent(gripB, 'pointerup', { pointerId: 2 });
+  });
+  assert.equal(prefs.writes.at(-1)[1], JSON.stringify({ w: 1120, h: 860 }));
   await mounted.unmount();
 });
 

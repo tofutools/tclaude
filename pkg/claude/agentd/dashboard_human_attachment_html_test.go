@@ -32,6 +32,21 @@ func TestDashboardHTML_HumanAttachmentWired(t *testing.T) {
 	if !strings.Contains(css, ".mail-attachment {") {
 		t.Error("dashboard CSS is missing the attachment card styles")
 	}
+	// The zoom footer is a <footer>, and the page-level `footer { position:
+	// fixed }` at the top of the stylesheet would otherwise pin it to the
+	// window instead of the dialog. Behaviour: jstest/dialog-resize.test.mjs
+	// covers the resizing itself.
+	if !strings.Contains(css, ".image-preview-footer {\n  position: static;") {
+		t.Error("the image viewer footer must reset position, or the page footer rule tears it out of the dialog")
+	}
+	if !strings.Contains(css, ".dialog-resizer {") {
+		t.Error("dashboard CSS is missing the resize grip shared by the attachment viewers")
+	}
+	for _, name := range []string{"js/image-preview-overlay.js", "js/markdown-attachment.js"} {
+		if !strings.Contains(dashboardAssetFile(t, name), "DialogResizer") {
+			t.Errorf("%s does not offer the resize grip", name)
+		}
+	}
 	for needle, why := range map[string]string{
 		"role=\"dialog\"":     "the image viewer exposes dialog semantics",
 		"aria-modal=\"true\"": "the image viewer is modal",
