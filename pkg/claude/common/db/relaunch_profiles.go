@@ -75,8 +75,13 @@ type AgentRelaunchProfile struct {
 	// ConfiguredContextWindowMax is the Copilot launch-intent cap. It is
 	// deliberately distinct from ContextWindowSize, which is an observed
 	// context snapshot used by status/dashboard projections.
-	ConfiguredContextWindowMax *int64  `json:"context_window_max,omitempty"`
-	AskUserQuestionTimeout     *string `json:"ask_user_question_timeout,omitempty"`
+	ConfiguredContextWindowMax *int64 `json:"context_window_max,omitempty"`
+	// CopilotAPI is the durable "this agent is driven over the Copilot API
+	// rather than tmux send-keys" posture. nil means unknown/legacy, which
+	// resolves to the send-keys path — so an agent recorded before this field
+	// existed relaunches exactly as it did before. See TCL-1053.
+	CopilotAPI             *bool   `json:"copilot_api,omitempty"`
+	AskUserQuestionTimeout *string `json:"ask_user_question_timeout,omitempty"`
 	RemoteControl              *bool   `json:"remote_control,omitempty"`
 	AutoMemory                 *bool   `json:"auto_memory,omitempty"`
 	// SSHWorkaround is the durable Codex Git-over-SSH compatibility posture.
@@ -487,6 +492,30 @@ func SetConversationResumeProfile(convID string, profile ConversationResumeProfi
 // Managed agents also keep the stable agent profile; this fallback write makes
 // a direct `session new --context-window-max` survive the next resume.
 func SetSessionConfiguredContextWindowMax(sessionID string, value int64) error {
+	return updateSessionFallbackRelaunch(sessionID, func(fallback *AgentRelaunchProfile) {
+		max := value
+		fallback.ConfiguredContextWindowMax = &max
+	})
+}
+
+// SetSessionCopilotAPI records whether this session is driven over the Copilot
+// API rather than tmux send-keys, in the same conversation fallback and for the
+// same reason as SetSessionConfiguredContextWindowMax above: the posture is
+// tclaude launch intent with no sessions column of its own, and a direct
+// `session new --copilot-api` must survive the next resume.
+func SetSessionCopilotAPI(sessionID string, value bool) error {
+	return updateSessionFallbackRelaunch(sessionID, func(fallback *AgentRelaunchProfile) {
+		api := value
+		fallback.CopilotAPI = &api
+	})
+}
+
+// updateSessionFallbackRelaunch loads (or seeds) the conversation resume
+// profile owned by sessionID's conversation, lets apply mutate its fallback
+// relaunch facts, and writes it back. A session or conversation that does not
+// exist is a no-op rather than an error: these are best-effort launch-intent
+// records, and failing a launch over one would be the worse trade.
+func updateSessionFallbackRelaunch(sessionID string, apply func(*AgentRelaunchProfile)) error {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return nil
@@ -520,8 +549,7 @@ func SetSessionConfiguredContextWindowMax(sessionID string, value int64) error {
 	if conversation.FallbackRelaunch == nil {
 		conversation.FallbackRelaunch = &AgentRelaunchProfile{Version: RelaunchProfileVersion}
 	}
-	max := value
-	conversation.FallbackRelaunch.ConfiguredContextWindowMax = &max
+	apply(conversation.FallbackRelaunch)
 	return SetConversationResumeProfile(convID, *conversation)
 }
 
@@ -848,6 +876,9 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		}
 		if agent.ConfiguredContextWindowMax != nil {
 			merged.ConfiguredContextWindowMax = agent.ConfiguredContextWindowMax
+		}
+		if agent.CopilotAPI != nil {
+			merged.CopilotAPI = agent.CopilotAPI
 		}
 		if agent.RemoteControl != nil {
 			merged.RemoteControl = agent.RemoteControl

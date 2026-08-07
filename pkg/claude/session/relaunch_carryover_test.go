@@ -64,6 +64,7 @@ func fullClaudePosture() *db.AgentRelaunchProfile {
 		ContextFeatures:            &features,
 		AutoCompactWindow:          ptr("450000"),
 		ConfiguredContextWindowMax: ptr(int64(100000)),
+		CopilotAPI:                 ptr(true),
 		ToolGovernance:             ptr("ask"),
 	}
 }
@@ -78,7 +79,7 @@ func carryoverHarness(t *testing.T, flag string) *harness.Harness {
 		name = harness.OpenCodeName
 	case "auto-review":
 		name = harness.CodexName
-	case "context-window-max":
+	case "context-window-max", "copilot-api":
 		name = harness.CopilotName
 	}
 	h, err := harness.Resolve(name)

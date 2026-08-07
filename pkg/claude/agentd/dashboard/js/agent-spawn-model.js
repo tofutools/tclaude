@@ -553,6 +553,7 @@ export function spawnCapabilityView(draft, context, resolvedSandboxImpl = '') {
     showContextFeatures: harness ? !!harness.can_context_features : draft.harness === 'claude',
     showAutoCompactWindow: harness ? !!harness.can_auto_compact_window : draft.harness === 'claude',
     showContextWindowMax: harness ? !!harness.can_context_window_max : draft.harness === 'copilot',
+    showCopilotAPI: harness ? !!harness.can_copilot_api : draft.harness === 'copilot',
     ...sandboxImplView(harness, context),
     showHarnessBuiltinMode: !!(sandbox.visible && harness?.can_builtin_os_sandbox !== false
       && (selectedSandboxImpl === SANDBOX_IMPL_DEFAULT || resolvedBuiltinSandbox)),
@@ -721,6 +722,7 @@ function harnessDefaults(harness, rememberedEffort = () => '') {
     sshWorkaround: !!harness?.can_ssh_workaround,
     autoCompactWindow: '',
     contextWindowMax: '',
+    copilotAPI: false,
     // "" = unset, so the daemon's profile tier stack still speaks. Sending
     // harness-builtin here instead would pin it and silence every lower tier.
     sandboxImpl: '',
@@ -812,6 +814,9 @@ export function selectSpawnHarness(draft, harnessName, context, rememberedEffort
     // would send a value the daemon rejects with a 400.
     autoCompactWindow: harness?.can_auto_compact_window ? draft.autoCompactWindow : '',
     contextWindowMax: harness?.can_context_window_max ? draft.contextWindowMax : '',
+    // A harness with no API-backed drive keeps the checkbox off rather than
+    // sending an opt-in the daemon would reject with a 400.
+    copilotAPI: harness?.can_copilot_api ? draft.copilotAPI : false,
     // Every harness keeps the operator's selection visible. An incapable
     // switch becomes an inline refusal warning; the browser never decides by
     // erasing the value before the launch/apply authority can reject it.
@@ -893,6 +898,11 @@ export function applySpawnProfile(
     ? text(profile.auto_compact_window) : '';
   next.contextWindowMax = view.showContextWindowMax && profile.context_window_max
     ? text(profile.context_window_max) : '';
+  // Same rule as auto_memory: a profile that says nothing about the drive clears
+  // whatever the previously selected profile put here rather than letting an
+  // opt-in ride along onto a profile that never asked for it.
+  next.copilotAPI = view.showCopilotAPI && profile.copilot_api != null
+    ? !!profile.copilot_api : false;
   // Same rule again: a profile that pins nothing clears whatever the previously
   // selected profile put here, rather than letting an implementation ride along
   // onto a profile that never asked for it.
@@ -945,6 +955,7 @@ export function clearSpawnProfileFields(draft, context, {
     approvalReviewer: defaults.approvalReviewer,
     askTimeout: defaults.askTimeout,
     contextWindowMax: defaults.contextWindowMax,
+    copilotAPI: defaults.copilotAPI,
     trustDir: false,
     trustDirSpecified: false,
     remoteControl: defaults.remoteControl,
@@ -1087,6 +1098,7 @@ export function spawnProfileSeed(draft, context) {
   // chip on a field they never touched — indistinguishable from a deliberate
   // pin, and it would opt the profile out of any future default change.
   if (view.showAutoMemory && draft.autoMemory) seed.auto_memory = true;
+  if (view.showCopilotAPI && draft.copilotAPI) seed.copilot_api = true;
   if (view.showSSHWorkaround) seed.ssh_workaround = !!draft.sshWorkaround;
   if (view.showAutoCompactWindow && text(draft.autoCompactWindow)) {
     seed.auto_compact_window = text(draft.autoCompactWindow);
@@ -1107,7 +1119,7 @@ export function spawnProfileSeed(draft, context) {
 const DIRTY_FIELDS = [
   'group', 'profile', 'name', 'role', 'descr', 'task', 'initialMessage',
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'sandboxProfile', 'approval',
-  'approvalReviewer', 'tools', 'askTimeout', 'autoCompactWindow', 'contextWindowMax', 'sandboxImpl', 'allowUnenforcedSandbox', 'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'sshWorkaround', 'owner',
+  'approvalReviewer', 'tools', 'askTimeout', 'autoCompactWindow', 'contextWindowMax', 'copilotAPI', 'sandboxImpl', 'allowUnenforcedSandbox', 'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'sshWorkaround', 'owner',
   'cwd', 'wtRepo', 'worktree', 'worktreeBranch', 'worktreeBase',
   'syncWorktree', 'autoFocus', 'includeGroupContext',
 ];
@@ -1198,6 +1210,10 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
   }
   if (view.showRemoteControl) body.remote_control = !!draft.remoteControl;
   if (view.showAutoMemory) body.auto_memory = !!draft.autoMemory;
+  // Sent as an explicit true/false for a Copilot launch — like auto_memory, the
+  // modal is authoritative, so an unchecked box overrides a profile's opt-in.
+  // Omitted entirely for every other harness, leaving the pointer nil.
+  if (view.showCopilotAPI) body.copilot_api = !!draft.copilotAPI;
   if (view.showSSHWorkaround) {
     body.ssh_workaround = !!(view.sshWorkaroundAvailable && draft.sshWorkaround);
   }

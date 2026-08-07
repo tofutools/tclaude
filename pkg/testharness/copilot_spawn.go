@@ -186,6 +186,7 @@ func (s *simSpawner) recordCopilotSpawnObservability(convID string, args clcommo
 	s.w.RecordSpawnTrustDir(convID, args.TrustDir)
 	s.w.RecordSpawnRemoteControl(convID, args.RemoteControl)
 	s.w.RecordSpawnSandboxImplementation(convID, args.SandboxImplementation)
+	s.w.RecordSpawnCopilotAPI(convID, args.CopilotAPI)
 	s.w.RecordSpawnCwdWriteProof(convID, args.CwdWriteProof)
 	s.w.RecordSpawnDirWriteProof(convID, args.DirWriteProof)
 	s.w.RecordSpawnGitWorktreeWriteDirs(convID, args.GitWorktreeWriteDirs)

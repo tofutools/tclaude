@@ -239,6 +239,11 @@ type NewParams struct {
 	// the observed context_window_size snapshot.
 	ContextWindowMax int64 `long:"context-window-max" optional:"true" help:"Configured Copilot context cap in tokens for the context meter. Unset uses the observed model's static assumption. Copilot only; not a harness-reported value"`
 
+	// CopilotAPI selects the API-backed Copilot mode. Recorded as launch intent
+	// here; the runtime that acts on it is separate work (TCL-1054/1056), so
+	// today this flag only decides which mode the conversation is pinned to.
+	CopilotAPI bool `long:"copilot-api" help:"EXPERIMENTAL: drive this Copilot agent over its embedded JSON-RPC API instead of tmux send-keys. Off by default. Copilot only"`
+
 	// --join-group makes the new session auto-join an existing agent group
 	// the moment its conv-id materialises. Routed through the daemon's
 	// `groups.spawn` orchestration; not compatible with --resume / --label.
@@ -860,6 +865,14 @@ func runNew(params *NewParams) error {
 		return err
 	}
 	params.ContextWindowMax = contextWindowMax
+	// Opt-in only on this surface: the flag's absence leaves the posture false,
+	// so a launch that never asked for it keeps the send-keys path exactly as it
+	// was. A request for a harness with no API-backed mode is refused here.
+	copilotAPI, err := harness.ResolveCopilotAPI(h, &params.CopilotAPI)
+	if err != nil {
+		return err
+	}
+	params.CopilotAPI = copilotAPI
 
 	if params.JoinGroup != "" {
 		if JoinGroupHandler == nil {
@@ -2170,6 +2183,7 @@ func runNew(params *NewParams) error {
 		ContextFeatures:   contextFeatures,
 		AutoCompactWindow: autoCompactWindow,
 		ContextWindowMax:  params.ContextWindowMax,
+		CopilotAPI:        params.CopilotAPI,
 		RemoteControl:     remoteControl,
 	})
 	// Claude reports its live model and effort through the statusline hook.

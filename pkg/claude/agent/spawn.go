@@ -66,6 +66,13 @@ type ResolvedLaunch struct {
 	// ContextWindowMax is tclaude's Copilot configured/assumed meter cap. It is
 	// intentionally separate from the observed context_window_size snapshot.
 	ContextWindowMax ResolvedField `json:"context_window_max"`
+	// CopilotAPI names WHICH DRIVE tclaude uses for a Copilot agent — its
+	// embedded JSON-RPC API, or tmux send-keys — and which tier chose it. It is
+	// echoed for the same reason SandboxImpl is: with two drives live at once,
+	// an operator debugging an agent has to be able to see which one it is on
+	// without reading the profile chain back by hand. Blank Value = the
+	// send-keys default, echoed like any unpinned field. See TCL-1053.
+	CopilotAPI ResolvedField `json:"copilot_api"`
 	// SandboxImpl names WHO OWNS OS-level containment for this launch and which
 	// tier chose it. It is echoed rather than left to Notes because a spawn that
 	// silently inherited the experimental tclaude-layer from a group or global
@@ -406,6 +413,21 @@ type SpawnRequest struct {
 	// used by the usage meter as the configured/assumed denominator.
 	ContextWindowMax int64 `json:"context_window_max,omitempty"`
 
+	// CopilotAPI selects the API-backed Copilot mode: tclaude drives the agent
+	// over Copilot CLI's embedded JSON-RPC server rather than tmux send-keys.
+	// Tri-state (*bool) for the same reason as AutoMemory: a non-nil value is the
+	// AUTHORITATIVE per-spawn intent and overrides any profile default, while nil
+	// = unspecified, so the daemon's profile tier stack fills it — falling back to
+	// FALSE, the send-keys path.
+	//
+	// Off is the deliberate default and the property this field exists to
+	// protect: the API drive is built alongside the send-keys one so both can run
+	// side by side, and agents migrate per spawn once it proves out. The daemon
+	// gates a non-nil true on the chosen harness having an API-backed mode
+	// (Copilot); requesting it for Claude Code or Codex is a 400. Forwarded to
+	// `tclaude session new --copilot-api`. See TCL-1051 / TCL-1053.
+	CopilotAPI *bool `json:"copilot_api,omitempty"`
+
 	// WorktreePath / WorktreeBranch describe a git worktree the agent
 	// should do its code work in, when Cwd is a parent "monorepo"
 	// directory rather than the repo itself. They are purely
@@ -665,6 +687,12 @@ type SpawnParams struct {
 	// ContextWindowMax is a Copilot-only tclaude meter cap. It is not forwarded
 	// to Copilot CLI, which does not report or accept this intent.
 	ContextWindowMax int64 `long:"context-window-max" optional:"true" help:"Configured Copilot context cap in tokens for the context meter. Unset = filled by the profile chain, then the observed model's static assumption. Copilot only; not a harness-reported value"`
+
+	// CopilotAPI opts the new agent into the API-backed Copilot drive. Opt-in
+	// only on the CLI, like --auto-memory and --remote-control: the flag sends
+	// &true and its absence leaves the pointer nil so a profile default can still
+	// speak (and, unset everywhere, resolve to the send-keys default).
+	CopilotAPI bool `long:"copilot-api" help:"EXPERIMENTAL: drive the new Copilot agent over its embedded JSON-RPC API instead of tmux send-keys. Off by default — the send-keys path is unchanged unless you pass this. Unset = filled by the profile chain, then off. Copilot only"`
 
 	// SandboxImpl picks WHO OWNS OS-level containment for the new agent — an axis
 	// independent of --sandbox, which picks a mode WITHIN whatever sandbox is in
@@ -1123,6 +1151,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	trustDir := false
 	remoteControl := p.RemoteControl
 	autoMemory := p.AutoMemory
+	copilotAPI := p.CopilotAPI
 	// --context-features is tri-state on the wire: unset leaves the map nil so the
 	// daemon's profile tier stack still speaks, while an explicit `none` sends an
 	// empty (non-nil) map, which is how the CLI says "ignore the profile, trim
@@ -1264,6 +1293,12 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 			fmt.Fprintf(stderr, "Error: %v\n", err)
 			return nil, rcInvalidArg
 		}
+		// Gate --copilot-api the same way: only a harness with an API-backed mode
+		// (Copilot) can be asked for one. The daemon re-gates server-side.
+		if copilotAPI, err = harness.ResolveCopilotAPI(h, &p.CopilotAPI); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return nil, rcInvalidArg
+		}
 		// Gate --context-features the same way: unknown slugs, bad states, and
 		// trims asked of a harness with no steerable startup context all fail fast
 		// here with a clear message. The daemon re-gates server-side. When the flag
@@ -1338,6 +1373,13 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	if autoMemory {
 		on := true
 		req.AutoMemory = &on
+	}
+	// --copilot-api follows the same opt-in-only discipline, and for the same
+	// reason: leaving the pointer nil is what lets a profile tier speak, and the
+	// nil case resolves server-side to off — the unchanged send-keys path.
+	if copilotAPI {
+		on := true
+		req.CopilotAPI = &on
 	}
 	// Group context: --no-group-context forces exclude, else a --profile may set
 	// it; an omitted pointer means the daemon includes the group context by
@@ -1483,6 +1525,13 @@ func printResolvedLaunch(stdout io.Writer, rl *ResolvedLaunch) {
 	fmt.Fprintf(stdout, "  Effort:  %s\n", formatResolvedField(rl.Effort))
 	if strings.TrimSpace(rl.ContextWindowMax.Value) != "" {
 		fmt.Fprintf(stdout, "  Context max: %s\n", formatResolvedField(rl.ContextWindowMax))
+	}
+	// Only the API drive is announced. A blank value is the send-keys default
+	// every Copilot agent has always had, and printing a line for it on every
+	// spawn — including the two harnesses the field cannot apply to — would be
+	// noise rather than the debugging aid this echo exists to be.
+	if strings.TrimSpace(rl.CopilotAPI.Value) != "" {
+		fmt.Fprintf(stdout, "  Copilot drive: %s\n", formatResolvedField(rl.CopilotAPI))
 	}
 	// Echoed only when something actually pinned it, so a default-off launch
 	// prints exactly the three lines it printed before this field existed.

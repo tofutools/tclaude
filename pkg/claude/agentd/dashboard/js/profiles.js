@@ -244,6 +244,9 @@ function profileSummary(p, { status = true } = {}) {
   if (p.remote_control != null) parts.push(`remote-control ${p.remote_control ? 'on' : 'off'}`);
   if (p.auto_memory != null) parts.push(`auto-memory ${p.auto_memory ? 'on' : 'off'}`);
   if (p.ssh_workaround != null) parts.push(`ssh-workaround ${p.ssh_workaround ? 'on' : 'off'}`);
+  // The drive names the mode rather than on/off: "copilot-api off" would read as
+  // a disabled feature instead of the send-keys path it actually selects.
+  if (p.copilot_api != null) parts.push(`drive ${p.copilot_api ? 'api' : 'send-keys'}`);
   if (p.sync_worktree != null) parts.push(`sync-wt ${p.sync_worktree ? 'on' : 'off'}`);
   if (p.auto_focus != null) parts.push(`focus ${p.auto_focus ? 'on' : 'off'}`);
   if (p.include_group_default_context != null) {
@@ -297,6 +300,7 @@ function profileDetailChips(p) {
   toggle('remote-control', p.remote_control);
   toggle('auto-memory', p.auto_memory);
   toggle('ssh-workaround', p.ssh_workaround);
+  if (p.copilot_api != null) parts.push(`drive ${p.copilot_api ? 'api' : 'send-keys'}`);
   text('name', p.agent_name);
   text('role', p.role);
   text('descr', p.descr);

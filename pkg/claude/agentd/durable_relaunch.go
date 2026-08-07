@@ -43,6 +43,7 @@ type durableRelaunchConfig struct {
 	ContextFeatures             map[string]string
 	AutoCompactWindow           string
 	ContextWindowMax            int64
+	CopilotAPI                  bool
 }
 
 // activeSandboxImplementation returns the implementation for this process
@@ -117,9 +118,15 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 	// own threshold across relaunches, not inherit one a later profile edit adds.
 	autoCompactWindow := p.AutoCompactWindow
 	configuredContextWindowMax := (*int64)(nil)
+	copilotAPI := (*bool)(nil)
 	if harnessOrDefault(p.Harness) == harness.CopilotName {
 		value := p.ContextWindowMax
 		configuredContextWindowMax = &value
+		// Frozen for a Copilot launch even when false, so a relaunch replays "this
+		// agent is on send-keys" as a known posture rather than an unknown one a
+		// later profile edit could fill in differently.
+		api := p.CopilotAPI
+		copilotAPI = &api
 	}
 	return db.AgentRelaunchProfile{
 		Version:               db.RelaunchProfileVersion,
@@ -136,6 +143,7 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 		Effort:                     &effort,
 		ContextWindowSize:          &contextWindowSize,
 		ConfiguredContextWindowMax: configuredContextWindowMax,
+		CopilotAPI:                 copilotAPI,
 		AskUserQuestionTimeout:     &askTimeout,
 		RemoteControl:              &remoteControl,
 		AutoMemory:                 &autoMemory,
@@ -338,6 +346,14 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 			contextWindowMax = resolved
 		}
 	}
+	copilotAPI := false
+	if agentProfile.CopilotAPI != nil {
+		// Fails soft to the send-keys default: a recorded posture the resolved
+		// harness cannot honour costs the relaunch its drive, never its launch.
+		if resolved, apiErr := harness.ResolveCopilotAPI(h, agentProfile.CopilotAPI); apiErr == nil {
+			copilotAPI = resolved
+		}
+	}
 
 	sshWorkaround, err := harness.ResolveSSHWorkaround(h, agentProfile.SSHWorkaround)
 	if err != nil {
@@ -371,5 +387,6 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 		ContextFeatures:             contextFeatures,
 		AutoCompactWindow:           autoCompactWindow,
 		ContextWindowMax:            contextWindowMax,
+		CopilotAPI:                  copilotAPI,
 	}, nil
 }

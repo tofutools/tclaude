@@ -151,6 +151,14 @@ export function HarnessLine({ member, snapshot }) {
     showDetails=${!!snapshot?.recorded_sandbox_details_enabled} />`;
   const remote = html`<${RemoteBadge} member=${member} />`;
   const refused = html`<${BrokerRefusalBadge} member=${member} />`;
+  // Only the API drive is marked. send-keys is what every Copilot agent has
+  // always been, so a chip for it would be noise on every row; the point of the
+  // marker is telling the two apart while both drives are live.
+  const drive = state.copilot_api
+    ? html`<span class="harness-drive" role="note"
+        title="Driven over Copilot's embedded JSON-RPC API (copilot --ui-server), not tmux send-keys"
+        aria-label="Copilot API drive">api</span>`
+    : null;
   if (!model) {
     // A pre-tick row has no metadata text to trail, but an armed indicator is
     // still worth a minimal line — including a sandbox verdict, which is
@@ -166,7 +174,7 @@ export function HarnessLine({ member, snapshot }) {
       return indicated ? html`<div class="agent-harness">${sandbox}${remote}${refused}</div>` : null;
     }
     const title = `${offline ? 'Last used harness' : 'Harness'}: ${labels.long}`;
-    return html`<div class="agent-harness" title=${title}><span class=${metadataClass} role="note" aria-label=${title}><span class="harness-name">${labels.short}</span></span>${sandbox}${remote}${refused}</div>`;
+    return html`<div class="agent-harness" title=${title}><span class=${metadataClass} role="note" aria-label=${title}><span class="harness-name">${labels.short}</span>${drive}</span>${sandbox}${remote}${refused}</div>`;
   }
   const effort = state.effort_level || '';
   const cost = Number(state.cost_usd || 0);
@@ -176,7 +184,7 @@ export function HarnessLine({ member, snapshot }) {
   if (cost > 0) title += ` — API cost this session: $${cost.toFixed(4)} (API/enterprise pricing — no subscription limits)`;
   if (virtualCost > 0) title += ` — WHAT-IF cost this session: $${virtualCost.toFixed(4)} (estimated if billed pay-per-token — you're on a subscription, so this is hypothetical, not a real charge)`;
   return html`<div class="agent-harness" title=${title}>
-    <span class=${metadataClass} role="note" aria-label=${title}><span class="harness-name">${labels.short}</span><span class="harness-sep">·</span><span class="harness-model">${shortModel(model, harness)}</span>
+    <span class=${metadataClass} role="note" aria-label=${title}><span class="harness-name">${labels.short}</span>${drive}<span class="harness-sep">·</span><span class="harness-model">${shortModel(model, harness)}</span>
       ${effort ? html`<span class="harness-effort" title=${effort}>${shortEffort(effort)}</span>` : null}
       ${cost > 0 ? html`<span class="harness-cost">${cost >= 0.005 ? `$${cost.toFixed(2)}` : '<1¢'}</span>` : null}
       ${virtualCost > 0 ? html`<span class="harness-cost harness-cost-whatif" title="Estimated pay-per-token-equivalent cost this session — hypothetical, not a real charge (subscription)">${virtualCost >= 0.005 ? `≈$${virtualCost.toFixed(2)}` : '≈<1¢'}</span>` : null}

@@ -13,6 +13,13 @@ export const AUTO_MEMORY_TRI_OPTIONS = [
   ['', 'Default (off — recommended)'], ['1', 'on'], ['0', 'off'],
 ];
 
+// The Copilot drive's unset default is send-keys — the path every Copilot agent
+// took before the API drive existed. Spell that out so "Default" is not read as
+// "whatever tclaude prefers today".
+export const COPILOT_API_TRI_OPTIONS = [
+  ['', 'Default (send-keys)'], ['1', 'API (experimental)'], ['0', 'send-keys'],
+];
+
 export function triValue(value) {
   return value == null ? '' : value ? '1' : '0';
 }
@@ -86,6 +93,7 @@ export function profileDraft(seed = null, { editExisting = true, local = null, c
     approval_reviewer: reviewerValue(seed?.auto_review),
     trust_dir: triValue(seed?.trust_dir), remote_control: triValue(seed?.remote_control),
     auto_memory: triValue(seed?.auto_memory),
+    copilot_api: triValue(seed?.copilot_api),
     ssh_workaround: seed?.ssh_workaround !== false,
     agent_name: seed?.agent_name || '', role: seed?.role || '', descr: seed?.descr || '',
     initial_message: seed?.initial_message || '', sync_worktree: triValue(seed?.sync_worktree),
@@ -137,6 +145,8 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
   if (remote != null) body.remote_control = remote;
   const autoMemory = (!h || h.can_auto_memory) ? readTri(draft.auto_memory) : null;
   if (autoMemory != null) body.auto_memory = autoMemory;
+  const copilotAPI = (!h || h.can_copilot_api) ? readTri(draft.copilot_api) : null;
+  if (copilotAPI != null) body.copilot_api = copilotAPI;
   if (h?.can_ssh_workaround) {
     body.ssh_workaround = draft.sandbox === 'tclaude-agent' && !!draft.ssh_workaround;
   }

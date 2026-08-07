@@ -67,8 +67,14 @@ type profileJSON struct {
 	AutoCompactWindow string `json:"auto_compact_window,omitempty"`
 	// ContextWindowMax is a Copilot-only configured context cap.
 	ContextWindowMax int64 `json:"context_window_max,omitempty"`
-	AutoReview       *bool `json:"auto_review,omitempty"`
-	TrustDir         *bool `json:"trust_dir,omitempty"`
+	// CopilotAPI is the profile's Copilot-only "drive over the embedded JSON-RPC
+	// API instead of tmux send-keys" default (tri-state). NOTE: like
+	// remote_control / auto_memory, `tclaude agent spawn --profile` does NOT fold
+	// this in client-side — the daemon resolves it down the full tier stack, so
+	// leaving it out here is what lets the group/global tiers speak too.
+	CopilotAPI *bool `json:"copilot_api,omitempty"`
+	AutoReview *bool `json:"auto_review,omitempty"`
+	TrustDir   *bool `json:"trust_dir,omitempty"`
 	// RemoteControl is the profile's "start with Remote Access on" default
 	// (tri-state). NOTE: `tclaude agent spawn --profile` does NOT inherit this —
 	// the CLI can't see the group's remote-control policy, which must win, so use
@@ -735,6 +741,15 @@ func printProfileHuman(w io.Writer, p profileJSON) {
 		{"auto_memory", p.AutoMemory},
 		{"ssh_workaround", p.SSHWorkaround},
 	})...)
+	// Spelled as the drive it picks rather than as an on/off toggle: "copilot_api
+	// off" would read as a broken feature instead of the send-keys path.
+	if p.CopilotAPI != nil {
+		drive := "send-keys"
+		if *p.CopilotAPI {
+			drive = "api"
+		}
+		launch = append(launch, "copilot_drive="+drive)
+	}
 	if len(launch) > 0 {
 		fmt.Fprintf(w, "  launch:  %s\n", strings.Join(launch, " · "))
 	}

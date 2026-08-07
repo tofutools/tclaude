@@ -776,6 +776,12 @@ type templateAgentLaunch struct {
 	// separate from the observed context snapshot and is carried into the
 	// durable relaunch profile by the shared spawn core.
 	ContextWindowMax int64
+	// CopilotAPI selects the API-backed Copilot drive for a template-deployed
+	// agent. Like AutoCompactWindow there is no template-LOCAL spelling: a
+	// template selects it by referencing a Copilot spawn profile that carries it.
+	// CopilotAPISet records that a tier actually spoke, mirroring AutoReviewSet.
+	CopilotAPI    bool
+	CopilotAPISet bool
 	// Notes disclose profile-tier fields that were skipped because they are not
 	// valid for the independently resolved harness. They ride the per-agent
 	// instantiate result so template launches have the same least-surprise
@@ -955,6 +961,11 @@ func validateInlineProfileForHarness(agentName string, h *harness.Harness, p *db
 	if p.SSHWorkaround != nil {
 		if _, err := harness.ResolveSSHWorkaround(h, p.SSHWorkaround); err != nil {
 			return wrap(http.StatusBadRequest, "invalid_ssh_workaround", err.Error())
+		}
+	}
+	if p.CopilotAPI != nil {
+		if _, err := harness.ResolveCopilotAPI(h, p.CopilotAPI); err != nil {
+			return wrap(http.StatusBadRequest, "invalid_copilot_api", err.Error())
 		}
 	}
 	if len(p.ContextFeatures) > 0 {
@@ -1203,7 +1214,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	// profile carrying either is validated at save and only adopted above when
 	// the harness matched, so this won't fire — but a mismatch is a clean
 	// per-agent 400, not a silent drop.
-	trustDir, trustDirSet, note, fail := resolveBoolLaunchField("trust_dir", false, false, h.Name, tiers,
+	trustDir, trustDirSet, _, note, fail := resolveBoolLaunchField("trust_dir", false, false, h.Name, tiers,
 		func(p *db.SpawnProfile) *bool { return p.TrustDir }, func(v bool) (bool, error) { return harness.ResolveTrustDir(h, v) })
 	if fail != nil {
 		return templateAgentLaunch{}, fail
@@ -1211,7 +1222,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	if note != "" {
 		notes = append(notes, note)
 	}
-	autoReview, autoReviewSet, note, fail := resolveBoolLaunchField("auto_review", false, false, h.Name, tiers,
+	autoReview, autoReviewSet, _, note, fail := resolveBoolLaunchField("auto_review", false, false, h.Name, tiers,
 		func(p *db.SpawnProfile) *bool { return p.AutoReview }, func(v bool) (bool, error) { return harness.ResolveAutoReview(h, v) })
 	if fail != nil {
 		return templateAgentLaunch{}, fail
@@ -1223,7 +1234,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	// harness-gated, off/"" unless a profile tier explicitly set them — so a
 	// template-local or referenced profile's value actually reaches the spawn
 	// (pre-profile_inline these two never made it past the profile row).
-	remoteControl, _, note, fail := resolveBoolLaunchField("remote_control", false, false, h.Name, tiers,
+	remoteControl, _, _, note, fail := resolveBoolLaunchField("remote_control", false, false, h.Name, tiers,
 		func(p *db.SpawnProfile) *bool { return p.RemoteControl }, func(v bool) (bool, error) { return harness.ResolveRemoteControl(h, v) })
 	if fail != nil {
 		return templateAgentLaunch{}, fail
@@ -1234,7 +1245,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	// Auto memory rides the same pattern, but its default is the load-bearing
 	// one: unset resolves to off, i.e. tclaude disables Claude Code's shared
 	// per-project memory store for template-deployed agents too.
-	autoMemory, _, memNote, fail := resolveBoolLaunchField("auto_memory", false, false, h.Name, tiers,
+	autoMemory, _, _, memNote, fail := resolveBoolLaunchField("auto_memory", false, false, h.Name, tiers,
 		func(p *db.SpawnProfile) *bool { return p.AutoMemory },
 		func(v bool) (bool, error) { return harness.ResolveAutoMemory(h, &v) })
 	if fail != nil {
@@ -1243,7 +1254,22 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	if memNote != "" {
 		notes = append(notes, memNote)
 	}
-	sshWorkaround, sshWorkaroundSet, sshNote, fail := resolveBoolLaunchField(
+	// The Copilot drive rides the same pattern, with the same default: unset
+	// resolves to off, i.e. a template-deployed Copilot agent stays on send-keys
+	// unless a profile tier explicitly asked for the API. There is no
+	// template-LOCAL spelling — a template selects the drive by referencing a
+	// Copilot spawn profile that carries one. See TCL-1053.
+	copilotAPI, copilotAPISet, _, copilotAPINote, fail := resolveBoolLaunchField(
+		"copilot_api", false, false, h.Name, tiers,
+		func(p *db.SpawnProfile) *bool { return p.CopilotAPI },
+		func(v bool) (bool, error) { return harness.ResolveCopilotAPI(h, &v) })
+	if fail != nil {
+		return templateAgentLaunch{}, fail
+	}
+	if copilotAPINote != "" {
+		notes = append(notes, copilotAPINote)
+	}
+	sshWorkaround, sshWorkaroundSet, _, sshNote, fail := resolveBoolLaunchField(
 		"ssh_workaround", false, false, h.Name, tiers,
 		func(p *db.SpawnProfile) *bool { return p.SSHWorkaround },
 		func(v bool) (bool, error) { return harness.ResolveSSHWorkaround(h, &v) })
@@ -1307,6 +1333,8 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		AskUserQuestionTimeout: askTimeout,
 		AutoCompactWindow:      autoCompactWindow,
 		ContextWindowMax:       contextWindowMax,
+		CopilotAPI:             copilotAPI,
+		CopilotAPISet:          copilotAPISet,
 		SandboxImplementation:  sandboxImplementation,
 		Notes:                  notes,
 	}, nil
@@ -1335,6 +1363,18 @@ func roleProfileSource(role *db.Role, profile *db.SpawnProfile) string {
 // value that would fail at the next instantiate. A member with no session row
 // (pruned) or no observable value yields all-blank — "inherit the group
 // default", the pre-JOH-239 behaviour.
+// copilotAPIPointer renders a traced launch's Copilot drive as the tri-state a
+// snapshot's inline profile carries: nil when nothing recorded a posture, so
+// the snapshot stays silent on the axis rather than asserting send-keys for an
+// agent that predates the field.
+func copilotAPIPointer(launch templateAgentLaunch) *bool {
+	if !launch.CopilotAPISet {
+		return nil
+	}
+	value := launch.CopilotAPI
+	return &value
+}
+
 func traceMemberLaunch(convID string) templateAgentLaunch {
 	prof, err := db.SessionLaunchProfileForConv(convID)
 	if err != nil || prof == (db.SessionLaunchProfile{}) {
@@ -1405,10 +1445,17 @@ func traceMemberLaunch(convID string) templateAgentLaunch {
 			out.SSHWorkaroundSet = true
 		}
 	}
-	if durable, err := db.AgentRelaunchProfileForConv(convID); err == nil &&
-		durable != nil && durable.ConfiguredContextWindowMax != nil {
-		if value, err := harness.ResolveCopilotContextWindow(h, *durable.ConfiguredContextWindowMax); err == nil {
-			out.ContextWindowMax = value
+	if durable, err := db.AgentRelaunchProfileForConv(convID); err == nil && durable != nil {
+		if durable.ConfiguredContextWindowMax != nil {
+			if value, err := harness.ResolveCopilotContextWindow(h, *durable.ConfiguredContextWindowMax); err == nil {
+				out.ContextWindowMax = value
+			}
+		}
+		if durable.CopilotAPI != nil {
+			if value, err := harness.ResolveCopilotAPI(h, durable.CopilotAPI); err == nil {
+				out.CopilotAPI = value
+				out.CopilotAPISet = true
+			}
 		}
 	}
 	return out
@@ -3828,6 +3875,13 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile) *db.SpawnProfile 
 	if out.SSHWorkaround == nil {
 		out.SSHWorkaround = prev.SSHWorkaround
 	}
+	// The drive IS observable (traceMemberLaunch reads it off the member's
+	// durable relaunch profile), so a traced answer wins — including a traced
+	// false, which is how a member moved back to send-keys clears the template's
+	// previous opt-in. nil means "could not observe", and falls back to prev.
+	if out.CopilotAPI == nil {
+		out.CopilotAPI = prev.CopilotAPI
+	}
 	// ContextFeatures IS observable, so the traced value wins like harness/model —
 	// INCLUDING an observed "trims nothing", which must be able to CLEAR the
 	// template's previous trims. That is why the signal here is nil-vs-empty
@@ -3867,7 +3921,7 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile) *db.SpawnProfile 
 		out.StartupContext == "" &&
 		out.AutoCompactWindow == "" && out.SandboxImplementation == "" &&
 		out.AutoReview == nil && out.TrustDir == nil && out.RemoteControl == nil && out.AutoMemory == nil &&
-		out.SSHWorkaround == nil &&
+		out.SSHWorkaround == nil && out.CopilotAPI == nil &&
 		len(out.ContextFeatures) == 0 &&
 		out.IsOwner == nil && len(out.PermissionOverrides) == 0 {
 		return nil
@@ -3922,7 +3976,7 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 		// starts life behind the read-only "legacy inline" notice.
 		launch := traceMemberLaunch(convID)
 		var inline *db.SpawnProfile
-		if launch.Harness != "" || launch.Model != "" || launch.Effort != "" || launch.Sandbox != "" || launch.Approval != "" || launch.AutoReviewSet || launch.SSHWorkaroundSet || len(launch.ContextFeatures) > 0 || launch.AutoCompactWindow != "" || launch.ContextWindowMax > 0 || launch.SandboxImplementation != "" || len(perms) > 0 {
+		if launch.Harness != "" || launch.Model != "" || launch.Effort != "" || launch.Sandbox != "" || launch.Approval != "" || launch.AutoReviewSet || launch.SSHWorkaroundSet || len(launch.ContextFeatures) > 0 || launch.AutoCompactWindow != "" || launch.ContextWindowMax > 0 || launch.CopilotAPISet || launch.SandboxImplementation != "" || len(perms) > 0 {
 			po := map[string]string{}
 			for _, s := range perms {
 				po[s] = db.PermEffectGrant
@@ -3936,6 +3990,7 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 				AutoCompactWindow:     launch.AutoCompactWindow,
 				ContextWindowMax:      launch.ContextWindowMax,
 				SandboxImplementation: launch.SandboxImplementation,
+				CopilotAPI:            copilotAPIPointer(launch),
 				PermissionOverrides:   po,
 				ContextFeatures:       launch.ContextFeatures,
 			}

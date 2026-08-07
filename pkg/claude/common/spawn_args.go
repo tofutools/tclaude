@@ -267,4 +267,11 @@ type SpawnArgs struct {
 	// It is forwarded to `tclaude session new` so launch intent is recorded, not
 	// to Copilot CLI, which neither reports nor accepts a context cap.
 	ContextWindowMax int64
+
+	// CopilotAPI selects the API-backed Copilot mode for this launch: tclaude
+	// drives the agent over Copilot's embedded JSON-RPC server instead of tmux
+	// send-keys. Forwarded to `tclaude session new --copilot-api`, which records
+	// it as launch intent. false — the default, and what every harness other than
+	// Copilot resolves to — leaves the send-keys path untouched. See TCL-1053.
+	CopilotAPI bool
 }

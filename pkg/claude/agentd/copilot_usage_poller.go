@@ -864,6 +864,31 @@ func copilotConfiguredContextWindowMax(convID string) int64 {
 	return 0
 }
 
+// copilotDriveIsAPI reports whether this conversation was launched onto the
+// API-backed Copilot drive. It reads the same two durable records as
+// copilotConfiguredContextWindowMax above, and for the same reason: the drive is
+// launch intent with no sessions column, and the conversation fallback keeps
+// legacy/pending conversations answerable until their stable agent row exists.
+// An unrecorded posture is send-keys — what every Copilot agent ran before the
+// drive was selectable.
+func copilotDriveIsAPI(convID string) bool {
+	copilot := &harness.Harness{Name: harness.CopilotName}
+	if profile, err := db.AgentRelaunchProfileForConv(convID); err == nil && profile != nil &&
+		profile.CopilotAPI != nil {
+		if value, err := harness.ResolveCopilotAPI(copilot, profile.CopilotAPI); err == nil {
+			return value
+		}
+	}
+	if conversation, err := db.ConversationResumeProfileForConv(convID); err == nil &&
+		conversation != nil && conversation.FallbackRelaunch != nil &&
+		conversation.FallbackRelaunch.CopilotAPI != nil {
+		if value, err := harness.ResolveCopilotAPI(copilot, conversation.FallbackRelaunch.CopilotAPI); err == nil {
+			return value
+		}
+	}
+	return false
+}
+
 // copilotEffectiveContextWindow is the ONE place the meter's effective
 // denominator is resolved, shared by the sweep and the read-through follower
 // so the two writers converge on the same percentage instead of flapping the
