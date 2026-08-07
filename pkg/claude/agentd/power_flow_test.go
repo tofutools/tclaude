@@ -3,6 +3,8 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -331,6 +333,51 @@ func TestPowerOn_GroupScope_ResumesOfflineSkipsOnline(t *testing.T) {
 	dg := groupInSnap(snap, group)
 	require.NotNil(t, dg, "the group survives a resume-only op")
 	assert.Len(t, dg.Members, 2, "both members stay enrolled in the group")
+}
+
+// Scenario: both bulk Power On scopes have the same human trust root as
+// clicking each member's wake button. Replacing stopped agents' launch
+// directories changes their filesystem identities; bulk resume must recover
+// those identities and launch every member, then join the results.
+func TestPowerOn_UsesIndividualHumanResumeForEveryBulkScope(t *testing.T) {
+	for _, scope := range []string{"group", "all"} {
+		t.Run(scope, func(t *testing.T) {
+			t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+			f := newFlow(t)
+			mux := agentd.BuildDashboardHandlerForTest()
+
+			const group = "resume-team"
+			convs := []string{
+				"power-human-resume-aaaa-bbbb-111111111111",
+				"power-human-resume-cccc-dddd-222222222222",
+			}
+			f.HaveGroup(group)
+			for i, convID := range convs {
+				cwd := filepath.Join(t.TempDir(), "worktree")
+				replaced := cwd + "-replaced"
+				require.NoError(t, os.Mkdir(cwd, 0o755))
+				f.HaveConvWithTitle(convID, "sleeping-worker")
+				f.HaveAliveSession(convID, "resume-session-"+string(rune('a'+i)), "resume-tmux-"+string(rune('a'+i)), cwd)
+				f.HaveMember(group, convID)
+				f.MarkOffline("resume-tmux-" + string(rune('a'+i)))
+				require.NoError(t, os.Rename(cwd, replaced))
+				require.NoError(t, os.Mkdir(cwd, 0o755))
+			}
+
+			body := map[string]any{"scope": scope}
+			if scope == "group" {
+				body["group"] = group
+			}
+			code, resp := postPowerOn(t, mux, body)
+			require.Equal(t, http.StatusOK, code)
+			assert.Equal(t, 2, resp.Targeted)
+			assert.Equal(t, 2, resp.Resumed, "agents=%+v", resp.Agents)
+			assert.Zero(t, resp.Failed, "agents=%+v", resp.Agents)
+			for _, convID := range convs {
+				assert.Equal(t, "resumed", outcomeFor(resp.Agents, convID))
+			}
+		})
+	}
 }
 
 // Scenario: a whole-dashboard power-on reaches every OFFLINE agent —
