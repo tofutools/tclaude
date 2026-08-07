@@ -88,10 +88,16 @@ type spawnProfileJSON struct {
 	// ContextWindowMax is a Copilot-only configured context cap. Zero
 	// leaves the cap unset so the observed-model default may speak.
 	ContextWindowMax int64 `json:"context_window_max,omitempty"`
-	AutoReview       *bool `json:"auto_review,omitempty"`
-	TrustDir         *bool `json:"trust_dir,omitempty"`
-	AutoMemory       *bool `json:"auto_memory,omitempty"`
-	SSHWorkaround    *bool `json:"ssh_workaround,omitempty"`
+	// CopilotAPI is the profile's Copilot-only API-backed-drive default —
+	// tri-state (null = unset, false = tmux send-keys, true = the embedded
+	// JSON-RPC API). Unset resolves to send-keys at spawn. A value on a
+	// non-Copilot profile is a 400 (buildProfileFromJSON gates it on the
+	// profile's harness).
+	CopilotAPI    *bool `json:"copilot_api,omitempty"`
+	AutoReview    *bool `json:"auto_review,omitempty"`
+	TrustDir      *bool `json:"trust_dir,omitempty"`
+	AutoMemory    *bool `json:"auto_memory,omitempty"`
+	SSHWorkaround *bool `json:"ssh_workaround,omitempty"`
 	// RemoteControl is the profile's "start with Claude Code Remote Access on"
 	// default — tri-state (null = unset, false = off, true = on). A group's
 	// remote-control policy overrides it at spawn (JOH-262).
@@ -147,6 +153,7 @@ func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 		AskUserQuestionTimeout:     p.AskUserQuestionTimeout,
 		AutoCompactWindow:          p.AutoCompactWindow,
 		ContextWindowMax:           p.ContextWindowMax,
+		CopilotAPI:                 p.CopilotAPI,
 		AutoReview:                 p.AutoReview,
 		TrustDir:                   p.TrustDir,
 		AutoMemory:                 p.AutoMemory,
@@ -311,6 +318,11 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 	if err != nil {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_context_window_max", err.Error()}
 	}
+	if body.CopilotAPI != nil {
+		if _, err := harness.ResolveCopilotAPI(h, body.CopilotAPI); err != nil {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_copilot_api", err.Error()}
+		}
+	}
 	if body.AutoReview != nil {
 		if _, err := harness.ResolveAutoReview(h, *body.AutoReview); err != nil {
 			return nil, &spawnFailure{http.StatusBadRequest, "invalid_auto_review", err.Error()}
@@ -415,6 +427,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		AskUserQuestionTimeout:     askTimeout,
 		AutoCompactWindow:          autoCompactWindow,
 		ContextWindowMax:           contextWindowMax,
+		CopilotAPI:                 body.CopilotAPI,
 		AutoReview:                 body.AutoReview,
 		TrustDir:                   body.TrustDir,
 		RemoteControl:              body.RemoteControl,

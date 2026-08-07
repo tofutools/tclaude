@@ -1357,6 +1357,9 @@ type dashboardHarness struct {
 	// CanContextWindowMax is the Copilot-only configured/assumed context cap
 	// control. It is separate from the observed context_window_size snapshot.
 	CanContextWindowMax bool `json:"can_context_window_max"`
+	// CanCopilotAPI is the Copilot-only API-backed-drive opt-in. The spawn
+	// dialog and profile editor gate their checkbox on it.
+	CanCopilotAPI bool `json:"can_copilot_api"`
 	// CanTclaudeLayer reports whether the EXPERIMENTAL tclaude-layer sandbox
 	// implementation can confine this harness's authoritative tool executor.
 	// Read through the capability path (session.ValidateTclaudeLayerHarness),
@@ -1433,6 +1436,7 @@ func buildHarnessCatalog() []dashboardHarness {
 			CanContextFeatures:         h.CanContextFeatures(),
 			CanAutoCompactWindow:       h.CanAutoCompactWindow(),
 			CanContextWindowMax:        h.Name == harness.CopilotName,
+			CanCopilotAPI:              h.CanCopilotAPI(),
 			CanTclaudeLayer:            session.ValidateTclaudeLayerHarness(h.Name) == nil,
 			CanStacked:                 h.SupportsNestedSandbox(),
 			TclaudeLayerServerBoundary: session.TclaudeLayerUsesServerBoundary(h.Name),
@@ -1952,7 +1956,12 @@ type agentState struct {
 	// observed context snapshot.
 	ContextWindowMax    int64  `json:"context_window_max,omitempty"`
 	ContextWindowSource string `json:"context_window_source,omitempty"`
-	AutoCompactWindow   int64  `json:"auto_compact_window,omitempty"`
+	// CopilotAPI reports that this agent is driven over Copilot's embedded
+	// JSON-RPC API rather than tmux send-keys. Omitted (false) for every
+	// send-keys agent and for every other harness, so the two drives are
+	// distinguishable at a glance while both are live. See TCL-1053.
+	CopilotAPI        bool  `json:"copilot_api,omitempty"`
+	AutoCompactWindow int64 `json:"auto_compact_window,omitempty"`
 	// Model is the LLM model display name the agent is running on
 	// ("Opus 4.8", "Sonnet 4.6", …), recorded by the statusline hook.
 	// Empty until the statusbar has ticked at least once; the dashboard
@@ -2360,11 +2369,15 @@ func stateForConvInSessionsBatched(
 			out.AutoCompactWindow = harness.AutoCompactWindowTokens(pick.AutoCompactWindow)
 		}
 		if pick.Harness == harness.CopilotName {
+			// One read for both pieces of launch intent — this runs for every
+			// Copilot agent on every snapshot tick.
+			intent := copilotLaunchIntentForConv(pick.ConvID)
+			out.CopilotAPI = intent.API
 			// A configured cap is launch intent and remains usable before Copilot
 			// has disclosed an observed model. Only the static fallback needs an
 			// observed model id; keeping these branches separate prevents a blank
 			// model from hiding an operator-supplied denominator.
-			out.ContextWindowMax = copilotConfiguredContextWindowMax(pick.ConvID)
+			out.ContextWindowMax = intent.ContextWindowMax
 			if out.ContextWindowMax > 0 {
 				out.ContextWindowSource = "configured"
 			} else if model := strings.TrimSpace(snap.Model); model != "" {

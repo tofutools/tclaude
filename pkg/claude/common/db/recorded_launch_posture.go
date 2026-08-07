@@ -57,6 +57,9 @@ func ComposeAgentRelaunchProfile(base, overlay *AgentRelaunchProfile) *AgentRela
 	if overlay.ConfiguredContextWindowMax != nil {
 		merged.ConfiguredContextWindowMax = overlay.ConfiguredContextWindowMax
 	}
+	if overlay.CopilotAPI != nil {
+		merged.CopilotAPI = overlay.CopilotAPI
+	}
 	if overlay.AskUserQuestionTimeout != nil {
 		merged.AskUserQuestionTimeout = overlay.AskUserQuestionTimeout
 	}

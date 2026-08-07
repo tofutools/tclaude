@@ -3299,6 +3299,11 @@ tr:hover .row-actions { opacity: 1; }
 }
 .agent-harness .harness-name { color: #6e7681; }
 .agent-harness .harness-sep { color: #484f58; margin: 0 3px; }
+/* Copilot drive marker ("CP api · GPT-5.6"): rendered only for an agent driven
+   over Copilot's embedded JSON-RPC API, never for the send-keys default, so its
+   presence alone is the signal. Amber, to read as "experimental path" rather
+   than as one more piece of the harness/model text. */
+.agent-harness .harness-drive { color: #d29922; margin-left: 4px; }
 /* The reasoning-effort token trails the model after a small gap, a shade
    brighter than the surrounding harness text so the eye catches the
    current effort level. */

@@ -1693,6 +1693,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		ContextFeatures:            launchConfig.ContextFeatures,
 		AutoCompactWindow:          launchConfig.AutoCompactWindow,
 		ContextWindowMax:           launchConfig.ContextWindowMax,
+		CopilotAPI:                 launchConfig.CopilotAPI,
 	}); err != nil {
 		res.Action = "error"
 		res.Detail = "spawn: " + err.Error()
@@ -3409,14 +3410,14 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	}
 	var autoReviewSet, trustDirSet, sshWorkaroundSet bool
 	var autoReviewNote, trustDirNote, autoMemoryNote, sshWorkaroundNote, contextFeaturesNote string
-	body.AutoReview, autoReviewSet, autoReviewNote, fieldFail = resolveBoolLaunchField(
+	body.AutoReview, autoReviewSet, _, autoReviewNote, fieldFail = resolveBoolLaunchField(
 		"auto_review", body.AutoReview, body.AutoReviewSpecified(), h.Name, profileTiers,
 		func(p *db.SpawnProfile) *bool { return p.AutoReview }, func(v bool) (bool, error) { return harness.ResolveAutoReview(h, v) })
 	if fieldFail != nil {
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return
 	}
-	sshWorkaround, sshWorkaroundSet, sshWorkaroundNote, fieldFail := resolveBoolLaunchField(
+	sshWorkaround, sshWorkaroundSet, _, sshWorkaroundNote, fieldFail := resolveBoolLaunchField(
 		"ssh_workaround", body.SSHWorkaround != nil && *body.SSHWorkaround, body.SSHWorkaround != nil, h.Name, profileTiers,
 		func(p *db.SpawnProfile) *bool { return p.SSHWorkaround },
 		func(v bool) (bool, error) { return harness.ResolveSSHWorkaround(h, &v) })
@@ -3427,7 +3428,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if !sshWorkaroundSet {
 		sshWorkaround, _ = harness.ResolveSSHWorkaround(h, nil)
 	}
-	body.TrustDir, trustDirSet, trustDirNote, fieldFail = resolveBoolLaunchField(
+	body.TrustDir, trustDirSet, _, trustDirNote, fieldFail = resolveBoolLaunchField(
 		"trust_dir", body.TrustDir, body.TrustDirSpecified(), h.Name, profileTiers,
 		func(p *db.SpawnProfile) *bool { return p.TrustDir }, func(v bool) (bool, error) { return harness.ResolveTrustDir(h, v) })
 	if fieldFail != nil {
@@ -3441,10 +3442,25 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// leaving it on cross-pollutes their notes. Only an explicit opt-in (spawn
 	// body or a matching profile) turns it back on.
 	var autoMemory bool
-	autoMemory, _, autoMemoryNote, fieldFail = resolveBoolLaunchField(
+	autoMemory, _, _, autoMemoryNote, fieldFail = resolveBoolLaunchField(
 		"auto_memory", body.AutoMemory != nil && *body.AutoMemory, body.AutoMemory != nil, h.Name, profileTiers,
 		func(p *db.SpawnProfile) *bool { return p.AutoMemory },
 		func(v bool) (bool, error) { return harness.ResolveAutoMemory(h, &v) })
+	if fieldFail != nil {
+		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+		return
+	}
+	// The Copilot drive rides the same tier stack, with the same fallback the
+	// send-keys path has always had: unset everywhere is FALSE. Only an explicit
+	// opt-in (spawn body or a matching Copilot profile) selects the API drive, so
+	// a launch nobody steered is byte-for-byte the launch it was before this
+	// field existed. See TCL-1053.
+	var copilotAPI, copilotAPISet bool
+	var copilotAPINote, copilotAPISource string
+	copilotAPI, copilotAPISet, copilotAPISource, copilotAPINote, fieldFail = resolveBoolLaunchField(
+		"copilot_api", body.CopilotAPI != nil && *body.CopilotAPI, body.CopilotAPI != nil, h.Name, profileTiers,
+		func(p *db.SpawnProfile) *bool { return p.CopilotAPI },
+		func(v bool) (bool, error) { return harness.ResolveCopilotAPI(h, &v) })
 	if fieldFail != nil {
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return
@@ -3471,6 +3487,10 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if body.ContextWindowMax > 0 {
 		contextWindowMaxValue = strconv.FormatInt(body.ContextWindowMax, 10)
 	}
+	copilotAPIValue := ""
+	if copilotAPI {
+		copilotAPIValue = "api"
+	}
 	resolvedLaunch := &agent.ResolvedLaunch{
 		Harness: agent.ResolvedField{Value: h.Name, Source: harnessSource},
 		Model:   agent.ResolvedField{Value: body.Model, Source: modelSource, Note: modelNote},
@@ -3478,6 +3498,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		ContextWindowMax: agent.ResolvedField{
 			Value: contextWindowMaxValue, Source: contextWindowMaxSource,
 		},
+		// Named for what it selects, not for the flag that selects it: "api" reads
+		// correctly whether or not send-keys is still the other option.
+		CopilotAPI: agent.ResolvedField{Value: copilotAPIValue, Source: copilotAPISource},
 	}
 	resolvedLaunch.SandboxImpl = agent.ResolvedField{
 		Value: body.SandboxImplementation, Source: sandboxImplSource, Note: sandboxImplNote}
@@ -3489,7 +3512,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if body.SandboxImplementation == "" && sandboxImplNote != "" {
 		resolvedLaunch.Notes = append(resolvedLaunch.Notes, sandboxImplNote)
 	}
-	for _, note := range []string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, contextWindowMaxNote, autoReviewNote, trustDirNote, autoMemoryNote, sshWorkaroundNote, contextFeaturesNote, profileContextNote} {
+	for _, note := range []string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, contextWindowMaxNote, copilotAPINote, autoReviewNote, trustDirNote, autoMemoryNote, sshWorkaroundNote, contextFeaturesNote, profileContextNote} {
 		if note != "" {
 			resolvedLaunch.Notes = append(resolvedLaunch.Notes, note)
 		}
@@ -3955,11 +3978,13 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		ContextFeatures:            contextFeatures,
 		AutoCompactWindow:          autoCompactWindow,
 		ContextWindowMax:           body.ContextWindowMax,
+		CopilotAPI:                 copilotAPI,
+		CopilotAPISet:              copilotAPISet,
 		ReplyToConv:                replyToConv,
 		SpawnedByConv:              spawnerConvID,
 		IsOwner:                    body.IsOwner,
 		PermissionOverrides:        permOverrides,
-		Timeout:                    timeout,
+		Timeout:             timeout,
 		// Verbatim snapshot of the spawn request, recorded onto the new actor's
 		// agents.initial_spawn_config in enrollSpawnedConv (a durable, agent-level
 		// "what was this spawned with" record). Marshalling the already-decoded
@@ -4230,6 +4255,24 @@ type spawnParams struct {
 	// meter. It is launch intent, not the observed context_window_size snapshot,
 	// and is deliberately not forwarded as a harness launch argument.
 	ContextWindowMax int64
+	// CopilotAPI selects the API-backed Copilot drive for the new agent,
+	// forwarding `--copilot-api` to `tclaude session new`. false (the default,
+	// and what an unset profile chain resolves to) leaves the agent on the tmux
+	// send-keys path unchanged. Resolved down the profile tier stack at the spawn
+	// boundary (handleGroupSpawn → harness.ResolveCopilotAPI) and harness-gated
+	// there; a harness with no API-backed mode rejects a true value. See
+	// TCL-1053.
+	CopilotAPI bool
+	// CopilotAPISet preserves a higher tier's explicit answer through
+	// applyDefaultProfileAtLaunch's safety-net overlay — mirroring AutoReviewSet.
+	//
+	// Load-bearing for the default-off promise, and easy to under-rate: the
+	// overlay re-resolves the tier stack, so without this flag an answer of
+	// "off" is indistinguishable from "nobody spoke" and a group/global default
+	// profile flips a launch the operator explicitly left on send-keys. The
+	// dashboard sends exactly that explicit false on every Copilot spawn, so the
+	// gap is reachable from the most-used surface, not just a hand-built request.
+	CopilotAPISet bool
 	// AskUserQuestionTimeout is the resolved per-session Claude Code
 	// AskUserQuestion idle-timeout override (never|60s|5m|10m), forwarding
 	// `--ask-user-question-timeout <v>` to `tclaude session new`; "" omits it.
@@ -4712,20 +4755,25 @@ func stringLaunchFieldSkipNote(source, field, harnessName string, validationErr 
 	return fmt.Sprintf("%s %s ignored (%s)", source, field, reason)
 }
 
+// resolveBoolLaunchField is the tri-state counterpart to
+// resolveStringLaunchField. It returns the resolved value, whether any tier
+// actually spoke, the tier that supplied it, any disclosure note, and a
+// failure. The source is reported for the same reason the string/int resolvers
+// report one: a launch echo that says "on" without saying WHO turned it on
+// cannot tell an explicit request apart from an inherited default profile.
 func resolveBoolLaunchField(
 	field string, explicitValue, explicitSet bool, harnessName string,
 	tiers []launchProfileTier,
 	profileValue func(*db.SpawnProfile) *bool,
 	validate func(bool) (bool, error),
-) (bool, bool, string, *spawnFailure) {
+) (value, set bool, source, note string, fail *spawnFailure) {
 	if explicitSet {
 		value, err := validate(explicitValue)
 		if err != nil {
-			return false, false, "", &spawnFailure{http.StatusBadRequest, "invalid_" + field, err.Error()}
+			return false, false, "", "", &spawnFailure{http.StatusBadRequest, "invalid_" + field, err.Error()}
 		}
-		return value, true, "", nil
+		return value, true, agent.ProvExplicit, "", nil
 	}
-	var note string
 	for _, tier := range tiers {
 		if tier.profile == nil || profileValue(tier.profile) == nil {
 			continue
@@ -4740,12 +4788,12 @@ func resolveBoolLaunchField(
 		}
 		value, err := validate(*profileValue(tier.profile))
 		if err == nil {
-			return value, true, note, nil
+			return value, true, tier.source, note, nil
 		}
-		return false, false, "", &spawnFailure{http.StatusBadRequest, "invalid_" + field,
+		return false, false, "", "", &spawnFailure{http.StatusBadRequest, "invalid_" + field,
 			fmt.Sprintf("profile %q: %v", tier.profile.Name, err)}
 	}
-	return false, false, note, nil
+	return false, false, agent.ProvHarnessDefault, note, nil
 }
 
 // resolveContextFeaturesLaunchField resolves the startup-context trim map down
@@ -4927,19 +4975,25 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	if fail := sandboxImplementationPostureFailure(h.Name, p.SandboxImplementation); fail != nil {
 		return fail
 	}
-	p.AutoReview, p.AutoReviewSet, _, fail = resolveBoolLaunchField("auto_review", p.AutoReview,
+	p.AutoReview, p.AutoReviewSet, _, _, fail = resolveBoolLaunchField("auto_review", p.AutoReview,
 		p.AutoReviewSet || p.AutoReview, h.Name, tiers, func(prof *db.SpawnProfile) *bool { return prof.AutoReview },
 		func(v bool) (bool, error) { return harness.ResolveAutoReview(h, v) })
 	if fail != nil {
 		return fail
 	}
-	p.TrustDir, p.TrustDirSet, _, fail = resolveBoolLaunchField("trust_dir", p.TrustDir,
+	p.TrustDir, p.TrustDirSet, _, _, fail = resolveBoolLaunchField("trust_dir", p.TrustDir,
 		p.TrustDirSet || p.TrustDir, h.Name, tiers, func(prof *db.SpawnProfile) *bool { return prof.TrustDir },
 		func(v bool) (bool, error) { return harness.ResolveTrustDir(h, v) })
 	if fail != nil {
 		return fail
 	}
-	p.SSHWorkaround, p.SSHWorkaroundSet, _, fail = resolveBoolLaunchField(
+	p.CopilotAPI, p.CopilotAPISet, _, _, fail = resolveBoolLaunchField("copilot_api", p.CopilotAPI,
+		p.CopilotAPISet || p.CopilotAPI, h.Name, tiers, func(prof *db.SpawnProfile) *bool { return prof.CopilotAPI },
+		func(v bool) (bool, error) { return harness.ResolveCopilotAPI(h, &v) })
+	if fail != nil {
+		return fail
+	}
+	p.SSHWorkaround, p.SSHWorkaroundSet, _, _, fail = resolveBoolLaunchField(
 		"ssh_workaround", p.SSHWorkaround, p.SSHWorkaroundSet, h.Name, tiers,
 		func(prof *db.SpawnProfile) *bool { return prof.SSHWorkaround },
 		func(v bool) (bool, error) { return harness.ResolveSSHWorkaround(h, &v) })
@@ -5302,6 +5356,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		ContextFeatures:            p.ContextFeatures,
 		AutoCompactWindow:          p.AutoCompactWindow,
 		ContextWindowMax:           p.ContextWindowMax,
+		CopilotAPI:                 p.CopilotAPI,
 	}
 	routeHelperConvID := ""
 	routeHelperGeneration := ""
@@ -7346,7 +7401,21 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	args = appendContextFeaturesFlag(args, a.ContextFeatures)
 	args = appendAutoCompactWindowFlag(args, a.AutoCompactWindow)
 	args = appendContextWindowMaxFlag(args, a.ContextWindowMax)
+	args = appendCopilotAPIFlag(args, a.CopilotAPI)
 	args = appendInitialPromptArg(args, a)
+	return args
+}
+
+// appendCopilotAPIFlag adds `--copilot-api` to a `tclaude session new` argv when
+// the launch selected the API-backed Copilot drive. false omits it — the
+// send-keys default — so a launch that never asked for the API produces exactly
+// the argv it produced before this flag existed. Bare boolean flag; the forked
+// `session new` re-validates it against the harness (a non-Copilot harness
+// rejects an explicit opt-in).
+func appendCopilotAPIFlag(args []string, copilotAPI bool) []string {
+	if copilotAPI {
+		args = append(args, "--copilot-api")
+	}
 	return args
 }
 
@@ -7516,6 +7585,9 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	// 450K comes back running to the model's full window.
 	args = appendAutoCompactWindowFlag(args, a.AutoCompactWindow)
 	args = appendContextWindowMaxFlag(args, a.ContextWindowMax)
+	// Preserve the SOURCE conv's drive across the relaunch: an agent deliberately
+	// spawned onto the API must not come back on send-keys (or vice versa).
+	args = appendCopilotAPIFlag(args, a.CopilotAPI)
 	return args
 }
 

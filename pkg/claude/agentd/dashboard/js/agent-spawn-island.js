@@ -69,6 +69,9 @@ const AUTO_COMPACT_WINDOW_TITLE = 'Context capacity in tokens for Claude Code\'s
   + 'Capped at the model\'s actual context window.';
 const CONTEXT_WINDOW_MAX_TITLE = 'Configured/assumed context cap for the Copilot context meter. '
   + 'Copilot does not report its context limit; a blank value uses the observed model\'s static assumption.';
+const COPILOT_API_TITLE = 'EXPERIMENTAL: drive this Copilot agent over its embedded JSON-RPC API '
+  + '(copilot --ui-server) instead of typing into its pane with tmux send-keys. Off by default — the '
+  + 'two drives run side by side and agents move over one at a time. Copilot only.';
 // Names WHO enforces the wall, which the Sandbox row above does not: that row
 // picks a mode within whatever sandbox is in force, this one picks which
 // sandbox that is. The experimental caveat and the platform requirement are
@@ -87,7 +90,7 @@ const PROFILE_OWNED_FIELDS = [
   'profile', 'name', 'role', 'descr', 'task', 'initialMessage',
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'tools', 'askTimeout',
   'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'sshWorkaround', 'owner', 'permissionOverrides',
-  'contextFeatures', 'autoCompactWindow', 'contextWindowMax', 'sandboxImpl', 'sandboxImplCleared',
+  'contextFeatures', 'autoCompactWindow', 'contextWindowMax', 'copilotAPI', 'sandboxImpl', 'sandboxImplCleared',
   'syncWorktree', 'autoFocus', 'includeGroupContext',
 ];
 
@@ -419,7 +422,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   };
   const changeHarness = (value) => {
     touched.current.add('harness');
-    for (const key of ['model', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'tools', 'askTimeout', 'trustDir', 'remoteControl', 'autoMemory', 'sshWorkaround', 'contextFeatures']) {
+    for (const key of ['model', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'tools', 'askTimeout', 'trustDir', 'remoteControl', 'autoMemory', 'sshWorkaround', 'copilotAPI', 'contextFeatures']) {
       touched.current.add(key);
     }
     setDraft((before) => selectSpawnHarness(before, value, context, rememberedEffort));
@@ -1175,6 +1178,12 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       <input id="agent-spawn-auto-memory" type="checkbox" checked=${draft.autoMemory} disabled=${busy}
         onChange=${(event) => update('autoMemory', event.currentTarget.checked)} />
       Keep Claude Code auto memory on — off by default to stop agents cross-polluting one project memory
+    </label>
+    <label class="cron-create-enabled" id="agent-spawn-copilot-api-row" hidden=${!view.showCopilotAPI}
+      title=${COPILOT_API_TITLE}>
+      <input id="agent-spawn-copilot-api" type="checkbox" checked=${draft.copilotAPI} disabled=${busy}
+        onChange=${(event) => update('copilotAPI', event.currentTarget.checked)} />
+      Drive over the Copilot API instead of tmux send-keys — experimental, off by default
     </label>
     <label class="cron-create-enabled" id="agent-spawn-ssh-workaround-row" hidden=${!view.showSSHWorkaround}
       title=${view.sshWorkaroundAvailable

@@ -360,6 +360,22 @@ var launchCarryoverFields = []launchCarryoverField{
 			return max, carryApplied
 		},
 	},
+	{
+		flag:     "copilot-api",
+		recorded: "CopilotAPI",
+		supplied: func(p *NewParams) bool { return p.CopilotAPI },
+		carry: func(h *harness.Harness, rec *db.AgentRelaunchProfile, p *NewParams) (any, carryOutcome) {
+			if rec.CopilotAPI == nil {
+				return nil, carryUnrecorded
+			}
+			api, err := harness.ResolveCopilotAPI(h, rec.CopilotAPI)
+			if err != nil {
+				return nil, carryDropped
+			}
+			p.CopilotAPI = api
+			return api, carryApplied
+		},
+	},
 }
 
 // applyRecordedLaunchPosture fills every launch flag the caller left out of a
@@ -464,6 +480,7 @@ type LaunchPosture struct {
 	ContextFeatures   map[string]string
 	AutoCompactWindow string
 	ContextWindowMax  int64
+	CopilotAPI        bool
 	RemoteControl     bool
 }
 
@@ -510,6 +527,12 @@ func RecordLaunchPosture(sessionID string, h *harness.Harness, posture LaunchPos
 		if err := db.SetSessionConfiguredContextWindowMax(sessionID, posture.ContextWindowMax); err != nil {
 			slog.Warn("failed to record session Copilot context max",
 				"session_id", sessionID, "context_window_max", posture.ContextWindowMax, "error", err)
+		}
+	}
+	if h.SupportsCopilotAPI() {
+		if err := db.SetSessionCopilotAPI(sessionID, posture.CopilotAPI); err != nil {
+			slog.Warn("failed to record session Copilot API mode",
+				"session_id", sessionID, "copilot_api", posture.CopilotAPI, "error", err)
 		}
 	}
 	// Remote Access is the one carried posture whose column no launch used to

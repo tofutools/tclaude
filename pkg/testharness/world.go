@@ -96,6 +96,7 @@ type World struct {
 	spawnAutoMemory    map[string]bool
 	spawnContextTrims  map[string]map[string]string
 	spawnCompactWindow map[string]string
+	spawnCopilotAPI    map[string]bool
 	spawnSandboxImpl   map[string]string
 	spawnCwdProofs     map[string]string
 	spawnDirProofs     map[string]string
@@ -164,6 +165,7 @@ func New(t *testing.T) *World {
 		spawnAutoMemory:     map[string]bool{},
 		spawnContextTrims:   map[string]map[string]string{},
 		spawnCompactWindow:  map[string]string{},
+		spawnCopilotAPI:     map[string]bool{},
 		spawnSandboxImpl:    map[string]string{},
 		spawnCwdProofs:      map[string]string{},
 		spawnDirProofs:      map[string]string{},
@@ -428,6 +430,25 @@ func (w *World) SpawnAutoMemory(convID string) (bool, bool) {
 	defer w.spawnMu.Unlock()
 	mem, ok := w.spawnAutoMemory[convID]
 	return mem, ok
+}
+
+// RecordSpawnCopilotAPI captures the Copilot drive a simSpawner.SpawnNew /
+// SpawnResume received, keyed by the new conv-id. false is recorded too, and is
+// the assertion that matters most: it is what every send-keys launch must
+// produce, and it is distinct from a conv the spawner never saw.
+func (w *World) RecordSpawnCopilotAPI(convID string, copilotAPI bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	w.spawnCopilotAPI[convID] = copilotAPI
+}
+
+// SpawnCopilotAPI returns the Copilot drive recorded for a spawned conv-id and
+// whether a spawn for that conv was observed.
+func (w *World) SpawnCopilotAPI(convID string) (bool, bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	api, ok := w.spawnCopilotAPI[convID]
+	return api, ok
 }
 
 // RecordSpawnContextFeatures captures the startup-context trim map a

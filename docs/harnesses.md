@@ -250,6 +250,7 @@ covers **interactive human sessions**:
 | **Directory pre-trust at spawn** ([below](#directory-trust-at-spawn)) | ✅ opt-in `trust_dir` appends the launch dir to `trustedFolders` in `<COPILOT_HOME>/config.json`. Copilot's modal blocks *before* any provider contact, so an unseeded detached pane never reaches its first turn |
 | **Approval / permissions** | ⚠️ `allow-tools` (default) / `inherit` / `yolo`. Three tokens, each rendering only flags measured against the pinned binary on a real terminal. None makes a Copilot pane unconditionally nonblocking — folder trust is unreachable from the argv even under `yolo` — and `yolo` without `--sandbox-impl tclaude-layer` leaves the agent with no file boundary at all, which tclaude warns about at spawn. See [below](#copilot-approvals-and-permissions) for exactly which prompt each one closes and which it leaves standing |
 | **Usage, cost & context** | ⚠️ followed incrementally from Copilot's durable event log, with a byte-offset checkpoint so a daemon restart resumes rather than rescans. Output tokens advance per turn (`assistant.message`); input tokens, context occupancy and window size advance only at an authoritative disclosure — a compaction, a truncation, or a shutdown — and nothing is written between them, so a real reading is never overwritten by a zero. Cost is carried in the **nano-AI units Copilot emits**; no USD figure is derived, because Copilot documents an AI credit as $0.01 in a different structure and nowhere states that one AIU is one credit |
+| **Drive (how tclaude talks to the agent)** | ⚠️ tmux `send-keys` by default. An **experimental, opt-in** API drive is being built alongside it: `--copilot-api` on `tclaude agent spawn` / `tclaude session new`, a `copilot_api` field on spawn profiles, and a checkbox in the dashboard spawn modal. See [below](#copilot-drive-send-keys-vs-api) |
 | **Ad-hoc ask** ([guide](ask.md)) | ✅ buffered `copilot -p` (capture) / `copilot -i` TUI (interactive), conv-id pre-minted (`--session-id`), resumed exactly (`--resume=<full uuid>`). See [below](#copilot-ask) |
 | **Live-streamed ask output** (print mode → a TTY) | ➖ buffered — the answer arrives whole at the end of the turn |
 | **Everything else in the matrix** | ➖ not yet — no tool governance, remote control, or status bar |
@@ -729,6 +730,47 @@ Two limits follow, and neither is a bug to route around:
   the CLI auto-approves still run. `--deny-tool` is not used to harden this
   further: URL rules are known to parse and then match nothing at runtime, so a
   deny that denies nothing would be worse than no claim at all.
+
+#### Copilot drive: send-keys vs API
+
+Everything above describes tclaude driving a Copilot pane the way it drives
+every other harness: by typing into its TUI with tmux `send-keys`. That path is
+unchanged and remains the default.
+
+Copilot CLI also ships a hidden `--ui-server` flag — one process running a fully
+interactive TUI *and* an embedded JSON-RPC server on a TCP port. That is a much
+better shape for tclaude than keystrokes: typed lifecycle calls instead of an
+injection sink, and a real event stream instead of screen-scraping. tclaude is
+building that drive **alongside** the send-keys one rather than replacing it, so
+both can run side by side on real agents and agents move over one at a time.
+
+Selecting it is per-spawn, and off unless something asks:
+
+| Surface | How you ask for the API drive |
+|---|---|
+| `tclaude agent spawn` | `--copilot-api` |
+| `tclaude session new` | `--copilot-api` |
+| Spawn profile | `copilot_api` (tri-state: unset / `true` / `false`) |
+| Dashboard | the "Drive over the Copilot API…" checkbox in the spawn modal; a "Copilot drive" row in the profile editor |
+
+It resolves through the same precedence chain as every other launch field —
+explicit flag → `--profile` → the group's default profile → the global default
+profile → the harness default (send-keys) — and is refused for a harness that
+has no API-backed mode, rather than being silently dropped. The choice is frozen
+onto the conversation's durable relaunch record at launch, so resume,
+reincarnate, and clone all land on the same drive.
+
+Which drive an agent is on is visible in three places: the spawn command's
+resolved-launch echo (a `Copilot drive:` line, printed only when the API drive
+was selected), the dashboard's per-agent harness line (an amber `api` marker
+next to the harness name), and the profile listings.
+
+The API drive currently records intent only — the runtime that launches Copilot
+with `--ui-server`, discovers its port, and speaks to it is separate, later work.
+Note also that `--ui-server` has **no authentication and no per-connection
+scoping**; that is an accepted, deliberate trade for an opt-in experimental path
+in a single-operator trust domain, not a template for how tclaude does
+API-backed harnesses.
 
 #### Copilot soft exit
 
