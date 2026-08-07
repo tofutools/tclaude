@@ -161,12 +161,16 @@ function Toast({ feedback }) {
 
 function Confirm({ feedback }) {
   const model = feedback.confirmation.value;
+  // Busy means a confirmed blocking action is still in flight. The dialog stays
+  // up with both buttons disabled and the primary swapped to its spinner label
+  // — the same busy vocabulary the transaction dialogs already use.
+  const busy = !!model?.busy;
   const okRef = useRef(null);
   useLayoutEffect(() => {
-    if (model) okRef.current?.focus();
-  }, [model]);
+    if (model && !busy) okRef.current?.focus();
+  }, [model, busy]);
   useEffect(() => {
-    if (!model) return undefined;
+    if (!model || busy) return undefined;
     const onKey = (event) => {
       if (event.key === 'Escape') {
         event.preventDefault();
@@ -182,8 +186,12 @@ function Confirm({ feedback }) {
     };
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
-  }, [model, feedback]);
+  }, [model, busy, feedback]);
+  // A busy modal is not dismissible: the work is already in flight, so Escape
+  // or a backdrop click would only hide it, not stop it — and hiding it puts
+  // the operator right back to "did anything happen?".
   const dismissBackdrop = (event) => {
+    if (busy) return;
     if (event.currentTarget === event.target) feedback.resolveConfirmation(false);
   };
   return html`
@@ -193,8 +201,14 @@ function Confirm({ feedback }) {
         <p id="confirm-body" class=${model?.preformatted ? 'confirm-body-preformatted' : ''}>${model?.body || ''}</p>
         <div class="modal-meta" id="confirm-meta" style=${`display:${model?.meta ? 'block' : 'none'}`}>${model?.meta || ''}</div>
         <div class="modal-buttons">
-          ${model?.informational ? null : html`<button id="confirm-cancel" onClick=${() => feedback.resolveConfirmation(false)}>${model?.cancelLabel || 'Cancel'}</button>`}
-          <button ref=${okRef} id="confirm-ok" class=${model?.informational ? '' : 'confirm-danger'} onClick=${() => feedback.resolveConfirmation(true)}>${model?.okLabel || 'Confirm'}</button>
+          ${model?.informational ? null : html`<button id="confirm-cancel" disabled=${busy} onClick=${() => feedback.resolveConfirmation(false)}>${model?.cancelLabel || 'Cancel'}</button>`}
+          <button ref=${okRef} id="confirm-ok" class=${model?.informational ? '' : 'confirm-danger'}
+            disabled=${busy} aria-busy=${busy ? 'true' : undefined}
+            onClick=${() => feedback.resolveConfirmation(true)}>
+            ${busy
+              ? html`<span class="btn-spinner" aria-hidden="true"></span>${model?.busyLabel || 'Working…'}`
+              : (model?.okLabel || 'Confirm')}
+          </button>
         </div>
       </div>
     </div>

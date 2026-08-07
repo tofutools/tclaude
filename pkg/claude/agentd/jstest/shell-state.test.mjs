@@ -35,3 +35,88 @@ test('shell feedback state replaces and cleans timers and resolves confirmations
   state.dispose();
   assert.equal(await pending, false, 'unmount cannot leave a confirmation promise pending');
 });
+
+test('a confirm with an action blocks until the work settles', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createShellState } = await harness.importDashboardModule('js/shell-state.js');
+  const state = createShellState({ setTimer: () => 0, clearTimer: () => {} });
+
+  // Confirming a blocking action keeps the SAME dialog up in its busy state
+  // instead of dismissing it and running the work invisibly.
+  let release;
+  const work = new Promise((resolve) => { release = resolve; });
+  const answered = state.confirm({
+    title: 'Shutdown?', okLabel: 'Shut down', busyLabel: 'Shutting down…',
+    action: () => work,
+  });
+  state.resolveConfirmation(true);
+  await Promise.resolve();
+  assert.equal(state.confirmation.value?.busy, true, 'the modal stays up, busy');
+  assert.equal(state.confirmation.value?.busyLabel, 'Shutting down…');
+
+  // A busy dialog ignores the dismissal paths, so an Escape or backdrop click
+  // cannot hide work that is already in flight.
+  state.resolveConfirmation(false);
+  assert.equal(state.confirmation.value?.busy, true, 'a busy dialog is not dismissible');
+
+  release('response');
+  assert.equal(await answered, 'response', 'the confirm resolves with the action result');
+  assert.equal(state.confirmation.value, null, 'settling takes the dialog down');
+
+  // A rejected action rejects the confirm and still clears the dialog, so a
+  // failed request cannot strand the operator on a spinner.
+  const boom = state.confirm({ title: 'Power on?', action: () => Promise.reject(new Error('nope')) });
+  state.resolveConfirmation(true);
+  await assert.rejects(boom, /nope/);
+  assert.equal(state.confirmation.value, null);
+
+  // Cancelling never runs the action and answers false, as an ordinary confirm.
+  let ran = false;
+  const cancelled = state.confirm({ title: 'Shutdown?', action: () => { ran = true; } });
+  state.resolveConfirmation(false);
+  assert.equal(await cancelled, false);
+  assert.equal(ran, false, 'a cancelled confirm must not run its action');
+  assert.equal(state.confirmation.value, null);
+
+  // A late settle from a finished operation must not tear down a dialog that
+  // something else has since put up — including another BUSY one, which is the
+  // case a plain "is the modal busy?" check gets wrong.
+  let releaseSlow;
+  const slow = new Promise((resolve) => { releaseSlow = resolve; });
+  const slowAnswer = state.confirm({ title: 'Slow', action: () => slow });
+  state.resolveConfirmation(true);
+  await Promise.resolve();
+  let releaseSecond;
+  const second = new Promise((resolve) => { releaseSecond = resolve; });
+  const secondAnswer = state.confirm({ title: 'Newer', action: () => second });
+  state.resolveConfirmation(true);
+  await Promise.resolve();
+  assert.equal(state.confirmation.value?.title, 'Newer');
+
+  releaseSlow('done');
+  assert.equal(await slowAnswer, 'done');
+  assert.equal(state.confirmation.value?.title, 'Newer',
+    'an older action settling must not dismiss a newer busy dialog');
+  releaseSecond('second');
+  assert.equal(await secondAnswer, 'second');
+  assert.equal(state.confirmation.value, null);
+});
+
+test('unmount answers a blocking confirmation that is still in flight', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createShellState } = await harness.importDashboardModule('js/shell-state.js');
+  const state = createShellState({ setTimer: () => 0, clearTimer: () => {} });
+
+  // A busy action has detached itself from the pending-confirmation slot, so
+  // dispose() has to close it out explicitly — otherwise unmounting strands the
+  // caller awaiting the confirm, and leaves the busy overlay on screen.
+  const stuck = state.confirm({ title: 'Shutdown?', action: () => new Promise(() => {}) });
+  state.resolveConfirmation(true);
+  await Promise.resolve();
+  assert.equal(state.confirmation.value?.busy, true);
+
+  state.dispose();
+  assert.equal(await stuck, false, 'unmount cannot leave a blocking confirm pending');
+  assert.equal(state.confirmation.value, null, 'unmount takes the busy dialog down');
+});
+

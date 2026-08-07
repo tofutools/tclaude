@@ -6,10 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -493,4 +495,101 @@ func TestShutdown_HarnessRefusesSoftExit_ForceKillsAndReportsIt(t *testing.T) {
 
 	assert.False(t, f.World.Tmux.IsAlive(tmux),
 		"the pane must actually be gone — a Shutdown button that leaves a busy agent running is the bug")
+}
+
+// deadSpawner reports every resume as launched successfully but never brings a
+// session up — a harness that dies during startup, a sandbox that refuses, a
+// cwd that vanished between the pre-check and the launch. The spawn call
+// returning nil is the daemon's only signal, which is exactly why it is not
+// enough on its own.
+type deadSpawner struct{ resumes int }
+
+func (d *deadSpawner) SpawnNew(clcommon.SpawnArgs) error    { return nil }
+func (d *deadSpawner) SpawnResume(clcommon.SpawnArgs) error { d.resumes++; return nil }
+
+// Scenario: a bulk power-on whose spawn succeeds but whose agent never comes
+// online must report it FAILED, not resumed.
+//
+// The regression this pins is operator-reported: "one failed to resume without
+// any indication". A resume launches `tclaude session new -r` DETACHED, so the
+// spawn returning means the child started, not that the agent is up. Reporting
+// "resumed" off the spawn alone left the human with an agent the dashboard
+// claimed was resumed and that was simply not running.
+func TestPowerOn_ReportsAnAgentThatNeverComesOnlineAsFailed(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	t.Cleanup(agentd.SetPowerOnOnlineGraceForTest(150 * time.Millisecond))
+	f := newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	const group = "resume-team"
+	const conv = "pwno-1111-2222-3333-4444"
+	cwd := filepath.Join(t.TempDir(), "worktree")
+	require.NoError(t, os.Mkdir(cwd, 0o755))
+	f.HaveGroup(group)
+	f.HaveConvWithTitle(conv, "wont-come-up")
+	f.HaveAliveSession(conv, "spwn-pwno", "tmux-pwno", cwd)
+	f.HaveMember(group, conv)
+	f.MarkOffline("tmux-pwno")
+
+	// Swapped AFTER setup so the fixture's own spawns still work.
+	dead := &deadSpawner{}
+	prevSpawn := agentd.Spawn
+	agentd.Spawn = dead
+	t.Cleanup(func() { agentd.Spawn = prevSpawn })
+
+	code, resp := postPowerOn(t, mux, map[string]any{"scope": "group", "group": group})
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, 1, dead.resumes, "the resume must actually have been attempted")
+
+	assert.Equal(t, 1, resp.Targeted)
+	assert.Equal(t, 0, resp.Resumed,
+		"an agent that never came online must not be counted as resumed; agents=%+v", resp.Agents)
+	assert.Equal(t, 1, resp.Failed, "agents=%+v", resp.Agents)
+	assert.Equal(t, "failed", outcomeFor(resp.Agents, conv),
+		"the human must be told this one did not come up; agents=%+v", resp.Agents)
+	assert.False(t, f.World.Tmux.IsAlive("tmux-pwno"), "pre-condition: it really is not running")
+}
+
+// Scenario: the GROUP resume endpoint — the one the CLI and the dashboard's
+// per-group Resume both drive — must apply the same verification. The bulk
+// power-on path and this one resolve resumes separately, so a fix in only one
+// of them leaves the other reporting a resume that never came up.
+func TestGroupResume_ReportsAnAgentThatNeverComesOnlineAsAnError(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	t.Cleanup(agentd.SetPowerOnOnlineGraceForTest(150 * time.Millisecond))
+	f := newFlow(t)
+
+	const group = "resume-team"
+	const conv = "grpr-1111-2222-3333-4444"
+	cwd := filepath.Join(t.TempDir(), "worktree")
+	require.NoError(t, os.Mkdir(cwd, 0o755))
+	f.HaveGroup(group)
+	f.HaveConvWithTitle(conv, "wont-come-up")
+	f.HaveAliveSession(conv, "spwn-grpr", "tmux-grpr", cwd)
+	f.HaveMember(group, conv)
+	f.MarkOffline("tmux-grpr")
+
+	dead := &deadSpawner{}
+	prevSpawn := agentd.Spawn
+	agentd.Spawn = dead
+	t.Cleanup(func() { agentd.Spawn = prevSpawn })
+
+	rec := testharness.Serve(f.Mux,
+		agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/groups/"+group+"/resume", nil)))
+	require.Equalf(t, http.StatusOK, rec.Code, "resume: %s", rec.Body.String())
+	require.Equal(t, 1, dead.resumes, "the resume must actually have been attempted")
+
+	var out struct {
+		Members []struct {
+			ConvID string `json:"conv_id"`
+			Action string `json:"action"`
+			Detail string `json:"detail"`
+		} `json:"members"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	require.Len(t, out.Members, 1)
+	assert.Equal(t, conv, out.Members[0].ConvID)
+	assert.Equal(t, "error:not_online", out.Members[0].Action,
+		"a resume that never came up must not be reported as resumed; member=%+v", out.Members[0])
+	assert.Contains(t, out.Members[0].Detail, "did not come online")
 }
