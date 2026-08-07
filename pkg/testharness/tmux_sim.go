@@ -219,6 +219,14 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 		if name == "" {
 			return exec.Command(falseBin)
 		}
+		// tmux refuses a name it still lists, and a remain-on-exit CORPSE is
+		// still listed even though its pane is dead. Modelling only the live
+		// case would hide the production failure exactly here: a launch that
+		// picked its name by asking "is an agent alive there?" gets back a
+		// name new-session then rejects with "duplicate session".
+		if t.hasSession(name) {
+			return exec.Command(falseBin)
+		}
 		t.MarkAlive(name)
 		t.mu.Lock()
 		t.sessions[name].remainOnExit = t.newSessionRemainOnExit

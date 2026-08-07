@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -453,16 +454,69 @@ func GenerateSessionID() string {
 // check and `tmux new-session` just makes that spawn fail with a
 // duplicate-name error — no corruption.)
 func UniqueTmuxSessionName(base string) string {
-	if base == "" || !IsTmuxSessionAlive(base) {
+	if base == "" || tmuxLaunchNameFree(base) {
 		return base
 	}
 	for i := 2; i < 1000; i++ {
 		candidate := fmt.Sprintf("%s-%d", base, i)
-		if !IsTmuxSessionAlive(candidate) {
+		if tmuxLaunchNameFree(candidate) {
 			return candidate
 		}
 	}
 	return base
+}
+
+// tmuxLaunchNameFree reports whether `tmux new-session -s name` will be
+// accepted, reaping a dead-pane corpse of ours when that is the only thing
+// holding the name.
+//
+// "Is an agent alive there?" and "will tmux accept this name?" are DIFFERENT
+// questions, and this is the one place the difference bites. Agent panes run
+// with remain-on-exit ON so the exit audit can read pane_dead_status after the
+// harness exits (see session/exit_callback.go), which means an exited agent
+// leaves the session listed with a dead pane. IsTmuxSessionAlive correctly
+// calls that offline — but tmux only cares that the NAME is taken, so asking
+// it here handed back a name new-session then refused:
+//
+//	Error: failed to create tmux session: exit status 1: duplicate session: 019fde64
+//
+// which is a resume that fails after the daemon has already reported the spawn
+// launched. It clears on its own once the corpse is reaped, which is exactly
+// why it looked intermittent.
+//
+// Reaping rather than suffixing keeps "short if possible" true: the corpse is
+// this conversation's own previous generation, its pane-died audit ran at death
+// time, and leaving it would drift the agent onto -2, -3, … names for good.
+// Only a confirmed-dead pane is reaped — a name held by a LIVE session falls
+// through to the suffix, so this can never take a session out from under a
+// running agent.
+func tmuxLaunchNameFree(name string) bool {
+	if !tmuxSessionNameTaken(name) {
+		return true
+	}
+	if IsTmuxSessionAlive(name) {
+		return false
+	}
+	// Taken but not alive: a remain-on-exit corpse. IsTmuxSessionAlive reports
+	// true when it cannot read the pane, so reaching here means pane_dead was
+	// read as 1 — not merely that the probe failed.
+	if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(name)).Run(); err != nil {
+		slog.Warn("tmux launch: could not reap dead session holding the name",
+			"tmux_session", name, "error", err)
+		return false
+	}
+	slog.Info("tmux launch: reaped dead session holding the launch name",
+		"tmux_session", name)
+	return !tmuxSessionNameTaken(name)
+}
+
+// tmuxSessionNameTaken reports whether tmux still lists the name, dead pane or
+// not — the question `new-session -s` actually asks.
+func tmuxSessionNameTaken(name string) bool {
+	if name == "" {
+		return false
+	}
+	return clcommon.TmuxCommand("has-session", "-t", clcommon.ExactTarget(name)).Run() == nil
 }
 
 // sessionHandle is the short, human-facing identifier for a session — its
