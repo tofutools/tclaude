@@ -42,6 +42,7 @@ type durableRelaunchConfig struct {
 	SSHWorkaround               bool
 	ContextFeatures             map[string]string
 	AutoCompactWindow           string
+	ContextWindowMax            int64
 }
 
 // activeSandboxImplementation returns the implementation for this process
@@ -115,6 +116,11 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 	// agent deliberately spawned with no pinned window should keep the model's
 	// own threshold across relaunches, not inherit one a later profile edit adds.
 	autoCompactWindow := p.AutoCompactWindow
+	configuredContextWindowMax := (*int64)(nil)
+	if harnessOrDefault(p.Harness) == harness.CopilotName {
+		value := p.ContextWindowMax
+		configuredContextWindowMax = &value
+	}
 	return db.AgentRelaunchProfile{
 		Version:               db.RelaunchProfileVersion,
 		HarnessBuiltinMode:    &harnessBuiltinMode,
@@ -122,19 +128,20 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 		// Frozen alongside the mode it explains: a relaunch replays both, so an
 		// agent keeps naming the profile that chose its containment instead of
 		// degrading to an anonymous "this launch" on its first restart.
-		HarnessBuiltinModeSource: &harnessBuiltinModeSource,
-		ApprovalPolicy:           &approvalPolicy,
-		ToolGovernance:           &toolGovernance,
-		ApprovalAutoReview:       &autoReview,
-		ModelID:                  &model,
-		Effort:                   &effort,
-		ContextWindowSize:        &contextWindowSize,
-		AskUserQuestionTimeout:   &askTimeout,
-		RemoteControl:            &remoteControl,
-		AutoMemory:               &autoMemory,
-		SSHWorkaround:            &sshWorkaround,
-		ContextFeatures:          &contextFeatures,
-		AutoCompactWindow:        &autoCompactWindow,
+		HarnessBuiltinModeSource:   &harnessBuiltinModeSource,
+		ApprovalPolicy:             &approvalPolicy,
+		ToolGovernance:             &toolGovernance,
+		ApprovalAutoReview:         &autoReview,
+		ModelID:                    &model,
+		Effort:                     &effort,
+		ContextWindowSize:          &contextWindowSize,
+		ConfiguredContextWindowMax: configuredContextWindowMax,
+		AskUserQuestionTimeout:     &askTimeout,
+		RemoteControl:              &remoteControl,
+		AutoMemory:                 &autoMemory,
+		SSHWorkaround:              &sshWorkaround,
+		ContextFeatures:            &contextFeatures,
+		AutoCompactWindow:          &autoCompactWindow,
 	}
 }
 
@@ -325,6 +332,12 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 			autoCompactWindow = resolved
 		}
 	}
+	contextWindowMax := int64(0)
+	if h.Name == harness.CopilotName && agentProfile.ConfiguredContextWindowMax != nil {
+		if resolved, maxErr := harness.ResolveCopilotContextWindow(h, *agentProfile.ConfiguredContextWindowMax); maxErr == nil {
+			contextWindowMax = resolved
+		}
+	}
 
 	sshWorkaround, err := harness.ResolveSSHWorkaround(h, agentProfile.SSHWorkaround)
 	if err != nil {
@@ -357,5 +370,6 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 		SSHWorkaround:               sshWorkaround,
 		ContextFeatures:             contextFeatures,
 		AutoCompactWindow:           autoCompactWindow,
+		ContextWindowMax:            contextWindowMax,
 	}, nil
 }

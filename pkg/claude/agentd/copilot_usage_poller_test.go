@@ -219,11 +219,10 @@ func TestApplyCopilotUsageCallsAccumulatesAcrossSweeps(t *testing.T) {
 	assert.Equal(t, int64(2), snapshot.LastEventID)
 }
 
-// TestCopilotUsageWritesContextColumnsWithoutWindow is the honesty case. The
-// store carries no token limit, and — verified against the shipped CLI — the
-// limit exists nowhere on disk. So the tokens are reported and the percentage
-// stays 0, which every harness's snapshot already means as "unknown".
-func TestCopilotUsageWritesContextColumnsWithoutWindow(t *testing.T) {
+// TestCopilotUsageUsesObservedModelDefault covers the no-explicit-cap path.
+// Copilot reports no cap, so tclaude uses the observed model's static
+// assumption while keeping the observed context-window snapshot untouched.
+func TestCopilotUsageUsesObservedModelDefault(t *testing.T) {
 	setupTestDB(t)
 	resetCopilotUsageStateForTest()
 	t.Cleanup(resetCopilotUsageStateForTest)
@@ -236,14 +235,14 @@ func TestCopilotUsageWritesContextColumnsWithoutWindow(t *testing.T) {
 	assert.Equal(t, int64(25114), snap.TokensInput,
 		"an occupancy with no denominator is still worth reporting")
 	assert.Equal(t, int64(300), snap.TokensOutput)
-	assert.Zero(t, snap.ContextPct, "0 means unknown, not 'empty window'")
+	assert.InDelta(t, 12.557, snap.ContextPct, 0.001)
 	assert.Zero(t, snap.ContextWindowSize)
 }
 
-// TestCopilotUsageUsesDurableWindowAsDenominator is the precedence rule's other
-// half: the sweep owns the numerator, the durable log owns the denominator, and
-// the percentage is the two combined.
-func TestCopilotUsageUsesDurableWindowAsDenominator(t *testing.T) {
+// TestCopilotUsagePreservesObservedWindow is the field-separation rule: the
+// configured/assumed cap drives the percentage, while the durable follower's
+// observed snapshot remains in context_window_size.
+func TestCopilotUsagePreservesObservedWindow(t *testing.T) {
 	setupTestDB(t)
 	resetCopilotUsageStateForTest()
 	t.Cleanup(resetCopilotUsageStateForTest)
@@ -261,7 +260,30 @@ func TestCopilotUsageUsesDurableWindowAsDenominator(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(128000), snap.ContextWindowSize, "the sweep must not clear the window")
 	assert.Equal(t, int64(64000), snap.TokensInput)
-	assert.InDelta(t, 50.0, snap.ContextPct, 0.001)
+	assert.InDelta(t, 32.0, snap.ContextPct, 0.001)
+}
+
+func TestCopilotUsageConfiguredMaxOverridesModelDefault(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotUsageStateForTest()
+	t.Cleanup(resetCopilotUsageStateForTest)
+
+	sess := copilotUsageSession(t, "s-copilot", "conv-1")
+	agentID, _, err := db.EnsureAgentForConv(sess.ConvID, "spawn")
+	require.NoError(t, err)
+	max := int64(100_000)
+	require.NoError(t, db.SetAgentRelaunchProfile(agentID, db.AgentRelaunchProfile{
+		Version: db.RelaunchProfileVersion, ConfiguredContextWindowMax: &max,
+	}))
+
+	call := copilotUsageCall(1, 75_000, 300)
+	call.Model = "claude-sonnet-4.6"
+	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{call})
+
+	snap, err := db.GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	assert.InDelta(t, 75.0, snap.ContextPct, 0.001)
+	assert.Zero(t, snap.ContextWindowSize, "configured max must not overwrite observed window")
 }
 
 // TestCopilotUsagePrecedenceSurvivesCompaction is the self-correcting argument
@@ -284,14 +306,14 @@ func TestCopilotUsagePrecedenceSurvivesCompaction(t *testing.T) {
 	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{copilotUsageCall(1, 120000, 300)})
 	snap, err := db.GetContextSnapshot(sess.ID)
 	require.NoError(t, err)
-	assert.InDelta(t, 93.75, snap.ContextPct, 0.01)
+	assert.InDelta(t, 60.0, snap.ContextPct, 0.01)
 
 	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{copilotUsageCall(2, 20000, 100)})
 	snap, err = db.GetContextSnapshot(sess.ID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(20000), snap.TokensInput,
 		"the post-compaction call's prompt is the new occupancy")
-	assert.InDelta(t, 15.625, snap.ContextPct, 0.01)
+	assert.InDelta(t, 10.0, snap.ContextPct, 0.01)
 }
 
 // TestCopilotUsageRefusesStaleGeneration covers a session pruned and recreated

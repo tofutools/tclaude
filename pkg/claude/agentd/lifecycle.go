@@ -2593,6 +2593,7 @@ func spawnAuditProfileSnapshot(p *db.SpawnProfile) any {
 		"tools":                         p.ToolGovernance,
 		"ask_user_question_timeout":     p.AskUserQuestionTimeout,
 		"auto_compact_window":           p.AutoCompactWindow,
+		"context_window_max":            p.ContextWindowMax,
 		"auto_review":                   p.AutoReview,
 		"trust_dir":                     p.TrustDir,
 		"remote_control":                p.RemoteControl,
@@ -2659,6 +2660,7 @@ func spawnAuditResolution(p spawnParams, launch *agent.ResolvedLaunch, requested
 			"auto_memory":               p.AutoMemory,
 			"context_features":          features,
 			"auto_compact_window":       p.AutoCompactWindow,
+			"context_window_max":        p.ContextWindowMax,
 			"ask_user_question_timeout": p.AskUserQuestionTimeout,
 			"reply_to_conv":             p.ReplyToConv,
 			"spawned_by_conv":           p.SpawnedByConv,
@@ -3033,6 +3035,16 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return
 	}
+	var contextWindowMaxNote string
+	var contextWindowMaxSource string
+	body.ContextWindowMax, contextWindowMaxSource, contextWindowMaxNote, fieldFail = resolveIntLaunchField(
+		contextWindowMaxField, body.ContextWindowMax, h.Name, profileTiers,
+		func(p *db.SpawnProfile) int64 { return p.ContextWindowMax },
+		func(value int64) (int64, error) { return harness.ResolveCopilotContextWindow(h, value) })
+	if fieldFail != nil {
+		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+		return
+	}
 	// The sandbox IMPLEMENTATION rides the same tier stack, but only its HARNESS
 	// applicability is validated inside the validator. That placement is the
 	// whole design: a lower-tier profile pinned to a different harness is
@@ -3126,10 +3138,17 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// compatible tier. It has no per-spawn override: unlike initial_message this
 	// is policy attached to the selected model/profile, not a task default.
 	profileContext, profileContextNote := resolveProfileStartupContext(h.Name, profileTiers)
+	contextWindowMaxValue := ""
+	if body.ContextWindowMax > 0 {
+		contextWindowMaxValue = strconv.FormatInt(body.ContextWindowMax, 10)
+	}
 	resolvedLaunch := &agent.ResolvedLaunch{
 		Harness: agent.ResolvedField{Value: h.Name, Source: harnessSource},
 		Model:   agent.ResolvedField{Value: body.Model, Source: modelSource, Note: modelNote},
 		Effort:  agent.ResolvedField{Value: body.Effort, Source: effortSource, Note: effortNote},
+		ContextWindowMax: agent.ResolvedField{
+			Value: contextWindowMaxValue, Source: contextWindowMaxSource,
+		},
 	}
 	resolvedLaunch.SandboxImpl = agent.ResolvedField{
 		Value: body.SandboxImplementation, Source: sandboxImplSource, Note: sandboxImplNote}
@@ -3141,7 +3160,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if body.SandboxImplementation == "" && sandboxImplNote != "" {
 		resolvedLaunch.Notes = append(resolvedLaunch.Notes, sandboxImplNote)
 	}
-	for _, note := range []string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, autoReviewNote, trustDirNote, autoMemoryNote, sshWorkaroundNote, contextFeaturesNote, profileContextNote} {
+	for _, note := range []string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, contextWindowMaxNote, autoReviewNote, trustDirNote, autoMemoryNote, sshWorkaroundNote, contextFeaturesNote, profileContextNote} {
 		if note != "" {
 			resolvedLaunch.Notes = append(resolvedLaunch.Notes, note)
 		}
@@ -3606,6 +3625,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		AutoMemory:                 autoMemory,
 		ContextFeatures:            contextFeatures,
 		AutoCompactWindow:          autoCompactWindow,
+		ContextWindowMax:           body.ContextWindowMax,
 		ReplyToConv:                replyToConv,
 		SpawnedByConv:              spawnerConvID,
 		IsOwner:                    body.IsOwner,
@@ -3877,6 +3897,10 @@ type spawnParams struct {
 	// (handleGroupSpawn → harness.ResolveAutoCompactWindow) and harness-gated
 	// there; a harness with no such knob (Codex, OpenCode) rejects a value.
 	AutoCompactWindow string
+	// ContextWindowMax is the configured Copilot context cap used by tclaude's
+	// meter. It is launch intent, not the observed context_window_size snapshot,
+	// and is deliberately not forwarded as a harness launch argument.
+	ContextWindowMax int64
 	// AskUserQuestionTimeout is the resolved per-session Claude Code
 	// AskUserQuestion idle-timeout override (never|60s|5m|10m), forwarding
 	// `--ask-user-question-timeout <v>` to `tclaude session new`; "" omits it.
@@ -4218,8 +4242,9 @@ func resolveProfileStartupContext(harnessName string, tiers []launchProfileTier)
 }
 
 const (
-	modelField  = "model"
-	effortField = "effort"
+	modelField            = "model"
+	effortField           = "effort"
+	contextWindowMaxField = "context_window_max"
 )
 
 // harnessPinnedLaunchField reports whether a launch field names something that
@@ -4233,7 +4258,7 @@ const (
 // Copilot CLI. The gate is keyed on the FIELD, inside the resolver, so no
 // current or future resolution path can forget to apply it.
 func harnessPinnedLaunchField(field string) bool {
-	return field == modelField || field == effortField
+	return field == modelField || field == effortField || field == contextWindowMaxField
 }
 
 // harnessMismatchSkipNote discloses a default tier skipped because the profile
@@ -4304,6 +4329,53 @@ func resolveStringLaunchField(
 			tier.source, field, harnessName, err))
 	}
 	return "", agent.ProvHarnessDefault, strings.Join(notes, "; "), nil
+}
+
+// resolveIntLaunchField is the integer counterpart to
+// resolveStringLaunchField. Zero means unset, while a non-zero explicit value
+// is direct intent and fails loudly when it does not apply to the chosen
+// harness. Profile values from a foreign default tier are ambient configuration
+// and fall through, just like model and effort.
+func resolveIntLaunchField(
+	field string, explicitValue int64, harnessName string,
+	tiers []launchProfileTier,
+	profileValue func(*db.SpawnProfile) int64,
+	validate func(int64) (int64, error),
+) (value int64, source, note string, fail *spawnFailure) {
+	if explicitValue != 0 {
+		value, err := validate(explicitValue)
+		if err != nil {
+			return 0, "", "", &spawnFailure{http.StatusBadRequest, "invalid_" + field, err.Error()}
+		}
+		return value, agent.ProvExplicit, "", nil
+	}
+	var notes []string
+	for _, tier := range tiers {
+		if tier.profile == nil {
+			continue
+		}
+		raw := profileValue(tier.profile)
+		if raw == 0 {
+			continue
+		}
+		if harnessPinnedLaunchField(field) && tier.defaultTier &&
+			!profileMatchesHarness(tier.profile, harnessName) {
+			notes = append(notes, harnessMismatchSkipNote(
+				tier.source, field, tier.profile.Harness, harnessName))
+			continue
+		}
+		value, err := validate(raw)
+		if err == nil {
+			return value, tier.source, strings.Join(notes, "; "), nil
+		}
+		if profileMatchesHarness(tier.profile, harnessName) {
+			return 0, "", "", &spawnFailure{http.StatusBadRequest, "invalid_" + field,
+				fmt.Sprintf("profile %q: %v", tier.profile.Name, err)}
+		}
+		notes = append(notes, stringLaunchFieldSkipNote(
+			tier.source, field, harnessName, err))
+	}
+	return 0, agent.ProvHarnessDefault, strings.Join(notes, "; "), nil
 }
 
 func stringLaunchFieldSkipNote(source, field, harnessName string, validationErr error) string {
@@ -4498,6 +4570,12 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	if fail != nil {
 		return fail
 	}
+	p.ContextWindowMax, _, _, fail = resolveIntLaunchField(contextWindowMaxField, p.ContextWindowMax, h.Name, tiers,
+		func(prof *db.SpawnProfile) int64 { return prof.ContextWindowMax },
+		func(raw int64) (int64, error) { return harness.ResolveCopilotContextWindow(h, raw) })
+	if fail != nil {
+		return fail
+	}
 	if strings.TrimSpace(p.ProfileContext) == "" {
 		p.ProfileContext, _ = resolveProfileStartupContext(h.Name, tiers)
 	}
@@ -4575,6 +4653,9 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	}
 	if p.AutoCompactWindow, err = harness.ResolveAutoCompactWindow(h, p.AutoCompactWindow); err != nil {
 		return &spawnFailure{http.StatusBadRequest, "invalid_auto_compact_window", err.Error()}
+	}
+	if p.ContextWindowMax, err = harness.ResolveCopilotContextWindow(h, p.ContextWindowMax); err != nil {
+		return &spawnFailure{http.StatusBadRequest, "invalid_context_window_max", err.Error()}
 	}
 	if p.AutoReview, err = harness.ResolveAutoReview(h, p.AutoReview); err != nil {
 		return &spawnFailure{http.StatusBadRequest, "invalid_auto_review", err.Error()}

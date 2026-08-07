@@ -552,11 +552,14 @@ export function spawnCapabilityView(draft, context, resolvedSandboxImpl = '') {
     sshWorkaroundAvailable,
     showContextFeatures: harness ? !!harness.can_context_features : draft.harness === 'claude',
     showAutoCompactWindow: harness ? !!harness.can_auto_compact_window : draft.harness === 'claude',
+    showContextWindowMax: harness ? !!harness.can_context_window_max : draft.harness === 'copilot',
     ...sandboxImplView(harness, context),
     showHarnessBuiltinMode: !!(sandbox.visible && harness?.can_builtin_os_sandbox !== false
       && (selectedSandboxImpl === SANDBOX_IMPL_DEFAULT || resolvedBuiltinSandbox)),
     autoCompactWindowMin: Number(harness?.auto_compact_window_min) || 0,
     autoCompactWindowMax: Number(harness?.auto_compact_window_max) || 0,
+    contextWindowMaxMin: Number(harness?.context_window_max_min) || 0,
+    contextWindowMaxMax: Number(harness?.context_window_max_max) || 0,
     contextFeatureCatalog: Array.isArray(harness?.context_features) ? harness.context_features : [],
     sandboxProfilesDisabled,
   };
@@ -646,6 +649,19 @@ export function autoCompactWindowHintFor(draft, view) {
   };
 }
 
+export function contextWindowMaxHintFor(draft, view) {
+  const raw = text(draft.contextWindowMax);
+  if (!raw) return null;
+  if (!/^\d+$/.test(raw.trim())) return { warn: true, text: 'Use a whole number of tokens.' };
+  const value = Number(raw.trim());
+  const min = view.contextWindowMaxMin || 0;
+  const max = view.contextWindowMaxMax || 0;
+  if (!Number.isSafeInteger(value) || (min && value < min) || (max && value > max)) {
+    return { warn: true, text: `${formatTokenWindow(value)} is outside the accepted range (${formatTokenWindow(min)}–${formatTokenWindow(max)}).` };
+  }
+  return { warn: false, text: 'Used as a configured cap when set; otherwise the observed model gets a static assumed cap.' };
+}
+
 // formatTokenWindow renders a token count the way an operator writes one.
 export function formatTokenWindow(tokens) {
   if (!tokens) return '';
@@ -697,6 +713,7 @@ function harnessDefaults(harness, rememberedEffort = () => '') {
     autoMemory: false,
     sshWorkaround: !!harness?.can_ssh_workaround,
     autoCompactWindow: '',
+    contextWindowMax: '',
     // "" = unset, so the daemon's profile tier stack still speaks. Sending
     // harness-builtin here instead would pin it and silence every lower tier.
     sandboxImpl: '',
@@ -787,6 +804,7 @@ export function selectSpawnHarness(draft, harnessName, context, rememberedEffort
     // Likewise a harness with no auto-compaction knob: keeping a typed window
     // would send a value the daemon rejects with a 400.
     autoCompactWindow: harness?.can_auto_compact_window ? draft.autoCompactWindow : '',
+    contextWindowMax: harness?.can_context_window_max ? draft.contextWindowMax : '',
     // Every harness keeps the operator's selection visible. An incapable
     // switch becomes an inline refusal warning; the browser never decides by
     // erasing the value before the launch/apply authority can reject it.
@@ -866,6 +884,8 @@ export function applySpawnProfile(
   // silently ride along onto a profile that never asked for it.
   next.autoCompactWindow = view.showAutoCompactWindow && profile.auto_compact_window
     ? text(profile.auto_compact_window) : '';
+  next.contextWindowMax = view.showContextWindowMax && profile.context_window_max
+    ? text(profile.context_window_max) : '';
   // Same rule again: a profile that pins nothing clears whatever the previously
   // selected profile put here, rather than letting an implementation ride along
   // onto a profile that never asked for it.
@@ -917,12 +937,14 @@ export function clearSpawnProfileFields(draft, context, {
     tools: defaults.tools,
     approvalReviewer: defaults.approvalReviewer,
     askTimeout: defaults.askTimeout,
+    contextWindowMax: defaults.contextWindowMax,
     trustDir: false,
     trustDirSpecified: false,
     remoteControl: defaults.remoteControl,
     autoMemory: false,
     sshWorkaround: !!findSpawnHarness(context.harnesses, defaults.harness)?.can_ssh_workaround,
     autoCompactWindow: defaults.autoCompactWindow,
+    contextWindowMax: defaults.contextWindowMax,
     sandboxImpl: defaults.sandboxImpl,
     allowUnenforcedSandbox: defaults.allowUnenforcedSandbox,
     sandboxImplCleared: null,
@@ -1063,6 +1085,9 @@ export function spawnProfileSeed(draft, context) {
   if (view.showAutoCompactWindow && text(draft.autoCompactWindow)) {
     seed.auto_compact_window = text(draft.autoCompactWindow);
   }
+  if (view.showContextWindowMax && text(draft.contextWindowMax)) {
+    seed.context_window_max = Number(text(draft.contextWindowMax).trim());
+  }
   // Seed only an explicit selection. Leaving it unset keeps the profile silent
   // so lower tiers still speak — and a profile that pinned harness-builtin
   // merely because the operator never touched the row would be an override
@@ -1076,7 +1101,7 @@ export function spawnProfileSeed(draft, context) {
 const DIRTY_FIELDS = [
   'group', 'profile', 'name', 'role', 'descr', 'task', 'initialMessage',
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'sandboxProfile', 'approval',
-  'approvalReviewer', 'tools', 'askTimeout', 'autoCompactWindow', 'sandboxImpl', 'allowUnenforcedSandbox', 'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'sshWorkaround', 'owner',
+  'approvalReviewer', 'tools', 'askTimeout', 'autoCompactWindow', 'contextWindowMax', 'sandboxImpl', 'allowUnenforcedSandbox', 'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'sshWorkaround', 'owner',
   'cwd', 'wtRepo', 'worktree', 'worktreeBranch', 'worktreeBase',
   'syncWorktree', 'autoFocus', 'includeGroupContext',
 ];
@@ -1109,6 +1134,10 @@ export function validateSpawnDraft(draft, context) {
   if (view.showAutoCompactWindow) {
     const windowHint = autoCompactWindowHintFor(draft, view);
     if (windowHint?.warn) return windowHint.text;
+  }
+  if (view.showContextWindowMax) {
+    const maxHint = contextWindowMaxHintFor(draft, view);
+    if (maxHint?.warn) return maxHint.text;
   }
   return '';
 }
@@ -1170,6 +1199,9 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
   // daemon normalizes "450k" to plain digits, so the raw field text is sent.
   if (view.showAutoCompactWindow && text(draft.autoCompactWindow)) {
     body.auto_compact_window = text(draft.autoCompactWindow);
+  }
+  if (view.showContextWindowMax && text(draft.contextWindowMax)) {
+    body.context_window_max = Number(text(draft.contextWindowMax).trim());
   }
   // Blank omits the key, so an untouched row leaves the daemon's profile tier
   // stack in charge and the launch stays default-off. An explicit selection —

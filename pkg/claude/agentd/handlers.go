@@ -2273,14 +2273,17 @@ func handleAgentContext(w http.ResponseWriter, r *http.Request, targetConv strin
 func writeContextInfo(w http.ResponseWriter, convID, caller string) {
 	aliveSessions, _ := session.LiveTmuxSessions()
 	snap, sessionID, _ := contextSnapshotForConvIn(convID, aliveSessions)
+	state := stateForConvIn(convID, aliveSessions)
 	resp := map[string]any{
-		"conv_id":             convID,
-		"session_id":          sessionID,
-		"context_pct":         snap.ContextPct,
-		"tokens_input":        snap.TokensInput,
-		"tokens_output":       snap.TokensOutput,
-		"context_window_size": snap.ContextWindowSize,
-		"model":               snap.Model,
+		"conv_id":               convID,
+		"session_id":            sessionID,
+		"context_pct":           snap.ContextPct,
+		"tokens_input":          snap.TokensInput,
+		"tokens_output":         snap.TokensOutput,
+		"context_window_size":   snap.ContextWindowSize,
+		"context_window_max":    state.ContextWindowMax,
+		"context_window_source": state.ContextWindowSource,
+		"model":                 snap.Model,
 	}
 	if caller != "" && caller != convID {
 		resp["caller_conv"] = caller
@@ -3867,13 +3870,15 @@ type groupContextEntry struct {
 	// task-force status) agrees with the dashboard force block's rollup:
 	// offline → dead, online+idle → idle, anything else in flight →
 	// working. Empty when no session row exists for the conv.
-	Status            string  `json:"status,omitempty"`
-	HasSnapshot       bool    `json:"has_snapshot"`
-	ContextPct        float64 `json:"context_pct"`
-	TokensInput       int64   `json:"tokens_input"`
-	TokensOutput      int64   `json:"tokens_output"`
-	ContextWindowSize int64   `json:"context_window_size"`
-	Model             string  `json:"model,omitempty"`
+	Status              string  `json:"status,omitempty"`
+	HasSnapshot         bool    `json:"has_snapshot"`
+	ContextPct          float64 `json:"context_pct"`
+	TokensInput         int64   `json:"tokens_input"`
+	TokensOutput        int64   `json:"tokens_output"`
+	ContextWindowSize   int64   `json:"context_window_size"`
+	ContextWindowMax    int64   `json:"context_window_max,omitempty"`
+	ContextWindowSource string  `json:"context_window_source,omitempty"`
+	Model               string  `json:"model,omitempty"`
 }
 
 // handleGroupContext returns the context-window state of every member of
@@ -3911,18 +3916,20 @@ func handleGroupContext(w http.ResponseWriter, r *http.Request, g *db.AgentGroup
 		// — the separate hasSession gate was redundant.
 		st := stateForConvIn(m.ConvID, aliveSessions)
 		out = append(out, groupContextEntry{
-			AgentID:           peerAgentID(m.ConvID),
-			ConvID:            m.ConvID,
-			Title:             agent.FreshTitle(m.ConvID),
-			Role:              m.Role,
-			Online:            isConvOnlineIn(m.ConvID, aliveSessions),
-			Status:            st.Status,
-			HasSnapshot:       agentStateHasSnapshot(st),
-			ContextPct:        st.ContextPct,
-			TokensInput:       st.TokensInput,
-			TokensOutput:      st.TokensOutput,
-			ContextWindowSize: st.ContextWindowSize,
-			Model:             st.Model,
+			AgentID:             peerAgentID(m.ConvID),
+			ConvID:              m.ConvID,
+			Title:               agent.FreshTitle(m.ConvID),
+			Role:                m.Role,
+			Online:              isConvOnlineIn(m.ConvID, aliveSessions),
+			Status:              st.Status,
+			HasSnapshot:         agentStateHasSnapshot(st),
+			ContextPct:          st.ContextPct,
+			TokensInput:         st.TokensInput,
+			TokensOutput:        st.TokensOutput,
+			ContextWindowSize:   st.ContextWindowSize,
+			ContextWindowMax:    st.ContextWindowMax,
+			ContextWindowSource: st.ContextWindowSource,
+			Model:               st.Model,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

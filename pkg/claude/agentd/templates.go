@@ -772,6 +772,10 @@ type templateAgentLaunch struct {
 	// There is no template-LOCAL spelling for it: a template pins the window by
 	// referencing a spawn profile that carries one.
 	AutoCompactWindow string
+	// ContextWindowMax is tclaude's configured Copilot context cap. It is
+	// separate from the observed context snapshot and is carried into the
+	// durable relaunch profile by the shared spawn core.
+	ContextWindowMax int64
 	// Notes disclose profile-tier fields that were skipped because they are not
 	// valid for the independently resolved harness. They ride the per-agent
 	// instantiate result so template launches have the same least-surprise
@@ -1138,6 +1142,15 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	if note != "" {
 		notes = append(notes, note)
 	}
+	contextWindowMax, _, note, fail := resolveIntLaunchField(contextWindowMaxField, 0, h.Name, tiers,
+		func(p *db.SpawnProfile) int64 { return p.ContextWindowMax },
+		func(raw int64) (int64, error) { return harness.ResolveCopilotContextWindow(h, raw) })
+	if fail != nil {
+		return templateAgentLaunch{}, fail
+	}
+	if note != "" {
+		notes = append(notes, note)
+	}
 	// The sandbox IMPLEMENTATION rides the same tier stack. Only the harness gate
 	// runs here; the host-capability gate belongs to the launch, which the deploy
 	// reaches by handing this value to the spawn boundary as an explicit request.
@@ -1293,6 +1306,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		StartupContext:         startupContext,
 		AskUserQuestionTimeout: askTimeout,
 		AutoCompactWindow:      autoCompactWindow,
+		ContextWindowMax:       contextWindowMax,
 		SandboxImplementation:  sandboxImplementation,
 		Notes:                  notes,
 	}, nil
@@ -1389,6 +1403,12 @@ func traceMemberLaunch(convID string) templateAgentLaunch {
 		if resolved, err := harness.ResolveSSHWorkaround(h, durable.SSHWorkaround); err == nil {
 			out.SSHWorkaround = resolved
 			out.SSHWorkaroundSet = true
+		}
+	}
+	if durable, err := db.AgentRelaunchProfileForConv(convID); err == nil &&
+		durable != nil && durable.ConfiguredContextWindowMax != nil {
+		if value, err := harness.ResolveCopilotContextWindow(h, *durable.ConfiguredContextWindowMax); err == nil {
+			out.ContextWindowMax = value
 		}
 	}
 	return out

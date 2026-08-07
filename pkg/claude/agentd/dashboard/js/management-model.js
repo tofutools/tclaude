@@ -77,6 +77,7 @@ export function profileDraft(seed = null, { editExisting = true, local = null, c
     approval: seed?.approval || defaults.approval, tools: seed?.tools || defaults.tools,
     ask_user_question_timeout: seed?.ask_user_question_timeout || defaults.ask_user_question_timeout,
     auto_compact_window: seed?.auto_compact_window || '',
+    context_window_max: seed?.context_window_max ? String(seed.context_window_max) : '',
     sandbox_implementation: seed?.sandbox_implementation || defaults.sandbox_implementation,
     // Retained for backward-compatible local draft shape. Harness switches no
     // longer discard an explicit implementation selection.
@@ -118,6 +119,9 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
   // field simply omits the key rather than sending "".
   if ((!h || h.can_auto_compact_window) && String(draft.auto_compact_window || '').trim()) {
     body.auto_compact_window = String(draft.auto_compact_window).trim();
+  }
+  if (h?.can_context_window_max && String(draft.context_window_max || '').trim()) {
+    body.context_window_max = Number(String(draft.context_window_max).trim());
   }
   // Blank omits the key: an untouched row must leave the profile silent rather
   // than pinning harness-builtin over whatever a lower spawn tier would supply.

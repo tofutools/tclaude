@@ -65,8 +65,10 @@ type profileJSON struct {
 	// AutoCompactWindow is the profile's auto-compaction context capacity in
 	// tokens ("450000"; "" = unset). Claude-Code-only.
 	AutoCompactWindow string `json:"auto_compact_window,omitempty"`
-	AutoReview        *bool  `json:"auto_review,omitempty"`
-	TrustDir          *bool  `json:"trust_dir,omitempty"`
+	// ContextWindowMax is a Copilot-only configured context cap.
+	ContextWindowMax int64 `json:"context_window_max,omitempty"`
+	AutoReview       *bool `json:"auto_review,omitempty"`
+	TrustDir         *bool `json:"trust_dir,omitempty"`
 	// RemoteControl is the profile's "start with Remote Access on" default
 	// (tri-state). NOTE: `tclaude agent spawn --profile` does NOT inherit this —
 	// the CLI can't see the group's remote-control policy, which must win, so use

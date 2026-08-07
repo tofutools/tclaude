@@ -242,6 +242,7 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			SSHWorkaroundSet:         launch.SSHWorkaroundSet,
 			ContextFeatures:          launch.ContextFeatures,
 			AutoCompactWindow:        launch.AutoCompactWindow,
+			ContextWindowMax:         launch.ContextWindowMax,
 			AskUserQuestionTimeout:   launch.AskUserQuestionTimeout,
 			GroupContext:             agentContext,
 			ReplyToConv:              caller,

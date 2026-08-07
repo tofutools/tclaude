@@ -783,30 +783,26 @@ func lookupCopilotLiveUsage(sessionID, convID string, createdAt time.Time) (copi
 // write sessions.model or sessions.effort_level; once a usage row exists, this
 // sweep is the sole owner of those two dashboard columns, so they cannot flap.
 //
-// The window (the DENOMINATOR) is taken from the row rather than computed:
-// Copilot's store does not carry a token limit at all, and — verified against
-// the shipped CLI — the limit exists nowhere on disk, because the TUI reads it
-// from an in-memory model catalog populated from server metadata at session
-// start. The durable event log's occasional disclosures at a compaction or a
-// truncation are therefore the only honest source, and that is exactly what the
-// read-through follower already maintains in this column.
-//
-// With no disclosed window the percentage stays 0, which every harness's
-// snapshot already means as "unknown". The token counts are still written: an
-// occupancy without a denominator is worth reporting honestly, and it is what
-// CopilotContextTelemetry has always done.
+// The denominator is tclaude intent: an explicit Copilot cap persisted with
+// the conversation's relaunch profile, otherwise the static assumption for
+// the observed model. Copilot does not report a context cap, so this must not
+// overwrite context_window_size, which remains the observed snapshot owned by
+// the durable context follower. With no observed model and no configured cap,
+// the percentage stays 0 while token counts are still written.
 func persistCopilotUsageContext(sess *db.SessionRow, snapshot db.CopilotUsageSnapshot) {
-	// The window is read back from the row rather than carried, because its
-	// only writer is the OTHER path — the durable follower — and it changes
-	// rarely. This read happens only on a sweep that actually folded new rows,
-	// not on every tick.
 	stored, err := db.GetContextSnapshot(sess.ID)
 	if err != nil {
 		slog.Warn("copilot-usage: failed to read context window; skipping context write",
 			"session_id", sess.ID, "error", err, "module", "agentd")
 		return
 	}
-	window := stored.ContextWindowSize
+	window := int64(0)
+	if strings.TrimSpace(snapshot.Model) != "" {
+		window = copilotConfiguredContextWindowMax(sess.ConvID)
+		if window == 0 {
+			window = harness.CopilotContextWindowDefault(snapshot.Model)
+		}
+	}
 	pct := copilotContextPct(snapshot.LastCallInputTokens, window)
 
 	// tokens_output may only ever ADVANCE, hence max() rather than the sweep's
@@ -832,12 +828,35 @@ func persistCopilotUsageContext(sess *db.SessionRow, snapshot db.CopilotUsageSna
 	}
 	if _, err := db.UpdateContextSnapshotAndModelEffortForGeneration(
 		sess.ID, sess.ConvID, sess.CreatedAt,
-		pct, snapshot.LastCallInputTokens, output, window,
+		pct, snapshot.LastCallInputTokens, output, stored.ContextWindowSize,
 		snapshot.Model, snapshot.ReasoningEffort,
 	); err != nil {
 		slog.Warn("copilot-usage: failed to persist context snapshot",
 			"session_id", sess.ID, "error", err, "module", "agentd")
 	}
+}
+
+// copilotConfiguredContextWindowMax returns only durable launch intent. A zero
+// value means no explicit cap, allowing the observed model's static default to
+// be selected by the caller. The fallback profile keeps legacy/pending
+// conversations working until their stable agent row is available.
+func copilotConfiguredContextWindowMax(convID string) int64 {
+	if profile, err := db.AgentRelaunchProfileForConv(convID); err == nil && profile != nil &&
+		profile.ConfiguredContextWindowMax != nil {
+		if value, err := harness.ResolveCopilotContextWindow(
+			&harness.Harness{Name: harness.CopilotName}, *profile.ConfiguredContextWindowMax); err == nil {
+			return value
+		}
+	}
+	if conversation, err := db.ConversationResumeProfileForConv(convID); err == nil &&
+		conversation != nil && conversation.FallbackRelaunch != nil &&
+		conversation.FallbackRelaunch.ConfiguredContextWindowMax != nil {
+		if value, err := harness.ResolveCopilotContextWindow(
+			&harness.Harness{Name: harness.CopilotName}, *conversation.FallbackRelaunch.ConfiguredContextWindowMax); err == nil {
+			return value
+		}
+	}
+	return 0
 }
 
 // copilotContextPct is the ONE place Copilot's occupancy percentage is

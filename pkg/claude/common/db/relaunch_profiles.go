@@ -72,9 +72,13 @@ type AgentRelaunchProfile struct {
 	ModelID                     *string `json:"model_id,omitempty"`
 	Effort                      *string `json:"effort,omitempty"`
 	ContextWindowSize           *int64  `json:"context_window_size,omitempty"`
-	AskUserQuestionTimeout      *string `json:"ask_user_question_timeout,omitempty"`
-	RemoteControl               *bool   `json:"remote_control,omitempty"`
-	AutoMemory                  *bool   `json:"auto_memory,omitempty"`
+	// ConfiguredContextWindowMax is the Copilot launch-intent cap. It is
+	// deliberately distinct from ContextWindowSize, which is an observed
+	// context snapshot used by status/dashboard projections.
+	ConfiguredContextWindowMax *int64  `json:"context_window_max,omitempty"`
+	AskUserQuestionTimeout     *string `json:"ask_user_question_timeout,omitempty"`
+	RemoteControl              *bool   `json:"remote_control,omitempty"`
+	AutoMemory                 *bool   `json:"auto_memory,omitempty"`
 	// SSHWorkaround is the durable Codex Git-over-SSH compatibility posture.
 	// nil means unknown/legacy; false is an explicit opt-out.
 	SSHWorkaround *bool `json:"ssh_workaround,omitempty"`
@@ -796,6 +800,9 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		}
 		if agent.ContextWindowSize != nil {
 			merged.ContextWindowSize = agent.ContextWindowSize
+		}
+		if agent.ConfiguredContextWindowMax != nil {
+			merged.ConfiguredContextWindowMax = agent.ConfiguredContextWindowMax
 		}
 		if agent.RemoteControl != nil {
 			merged.RemoteControl = agent.RemoteControl
