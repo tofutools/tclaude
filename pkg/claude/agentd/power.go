@@ -46,9 +46,10 @@ import (
 // a grace window, and force-kill the tmux session only if the agent
 // is still alive when the window closes. Every agent in scope is
 // escalated in PARALLEL so one hung agent can't delay the rest.
-// Power-on needs no grace/escalation — resume either starts a session
-// or fails — so it runs a plain sequential loop, the same shape as
-// the bulk groups.resume path (handleGroupResume).
+// Power-on runs each human-authorized resume in parallel and joins the
+// per-agent outcomes before replying. That keeps the bulk button on the same
+// resume path as an individual dashboard wake while avoiding one slow launch
+// serialising the rest of the scope.
 
 // shutdownGrace is the soft→hard escalation window: how long an agent
 // has to honour its injected /exit before it gets force-killed. A
@@ -65,6 +66,12 @@ var shutdownPollInterval = 100 * time.Millisecond
 // shutdownGraceCap bounds the per-request grace override so a browser
 // bug (or a fat-fingered value) can't wedge the request for minutes.
 const shutdownGraceCap = 2 * time.Minute
+
+// powerOnConcurrency bounds the expensive part of bulk resume: each worker
+// performs synchronous database/filesystem checks and starts a child process.
+// A small pool keeps group/global operations parallel without turning a large
+// dashboard roster into an unbounded process and file-descriptor burst.
+const powerOnConcurrency = 4
 
 // Per-agent outcome strings for a shutdown. Stable wire values — the
 // dashboard reads them back into the result toast.
@@ -215,7 +222,7 @@ func handleShutdown(w http.ResponseWriter, r *http.Request) {
 //	  {"scope":"all"}                      — every offline agent
 //
 // For each OFFLINE agent in scope it spawns a fresh detached tmux
-// session for the conv (resumeOneConv — the same primitive the
+// session for the conv (resumeOneConvWithTrustRoot — the same primitive the
 // per-agent "wake" button and `tclaude agent groups resume` use).
 // Agents already online are skipped at collection, mirroring how
 // shutdown skips already-offline ones. Resume-only: nothing is
@@ -384,37 +391,58 @@ func runShutdown(targets []string, grace time.Duration) []powerAgentOutcome {
 	return outcomes
 }
 
-// runPowerOn resumes every offline target and returns one outcome per
-// target, in input order. resumeOneConv only spawns a detached
-// subprocess (no blocking wait), so a plain sequential loop is enough
-// — the same shape as the bulk groups.resume path. There is no grace
-// window to parallelise around the way runShutdown has.
+// runPowerOn resumes every offline target in parallel and returns one outcome
+// per target, in input order. The dashboard cookie has already authenticated
+// the human, so each worker uses the same trust-root resume as the individual
+// dashboard wake button. The caller joins all workers before summarising the
+// successes and failures.
 func runPowerOn(targets []string) []powerAgentOutcome {
-	outcomes := make([]powerAgentOutcome, 0, len(targets))
-	for _, convID := range targets {
-		out := powerAgentOutcome{AgentID: peerAgentID(convID), ConvID: convID, Title: agent.FreshTitle(convID)}
-		res := resumeOneConv(convID)
-		switch res.Action {
-		case "resumed":
-			out.Outcome = powerOnResumed
-		case "skipped:already_online":
-			// Raced — the agent came online between collection and now.
-			out.Outcome = powerOnAlreadyOnline
-		default:
-			// "error" — the resume spawn failed — or "error:missing_cwd", the
-			// agent's recorded launch dir was deleted (Detail carries the path).
-			// A bulk power-on can't recreate dirs interactively, so it surfaces
-			// the failure; the human recreates via `agent resume --recreate-dir`
-			// or the dashboard wake confirm. ("skipped:no_conv_id" can't reach
-			// here: offlineConvIDs already drops empty ids.)
-			out.Outcome = powerOnFailed
-			out.Detail = res.Detail
-			if out.Detail == "" {
-				out.Detail = "resume failed (" + res.Action + ")"
+	return runPowerOnWithResume(targets, func(convID string) memberOpResult {
+		return resumeOneConvWithTrustRoot(convID, false)
+	})
+}
+
+func runPowerOnWithResume(targets []string, resume func(string) memberOpResult) []powerAgentOutcome {
+	outcomes := make([]powerAgentOutcome, len(targets))
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	workers := min(len(targets), powerOnConcurrency)
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range jobs {
+				convID := targets[i]
+				out := powerAgentOutcome{AgentID: peerAgentID(convID), ConvID: convID, Title: agent.FreshTitle(convID)}
+				res := resume(convID)
+				switch res.Action {
+				case "resumed":
+					out.Outcome = powerOnResumed
+				case "skipped:already_online":
+					// Raced — the agent came online between collection and now.
+					out.Outcome = powerOnAlreadyOnline
+				default:
+					// "error" — the resume spawn failed — or "error:missing_cwd", the
+					// agent's recorded launch dir was deleted (Detail carries the path).
+					// A bulk power-on can't recreate dirs interactively, so it surfaces
+					// the failure; the human recreates via `agent resume --recreate-dir`
+					// or the dashboard wake confirm. ("skipped:no_conv_id" can't reach
+					// here: offlineConvIDs already drops empty ids.)
+					out.Outcome = powerOnFailed
+					out.Detail = res.Detail
+					if out.Detail == "" {
+						out.Detail = "resume failed (" + res.Action + ")"
+					}
+				}
+				outcomes[i] = out
 			}
-		}
-		outcomes = append(outcomes, out)
+		}()
 	}
+	for i := range targets {
+		jobs <- i
+	}
+	close(jobs)
+	wg.Wait()
 	return outcomes
 }
 

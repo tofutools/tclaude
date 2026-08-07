@@ -18,7 +18,8 @@ import {
 } from './links-controller.js';
 import {
   chooseTerminalDirectory, openAgentExportDialog, openCloneAgentDialog,
-  openNestGroupDialog, openReincarnateAgentDialog, openTaskLinkDialog,
+  openNestGroupDialog, openReincarnateAgentDialog, openSandboxImplDialog,
+  openTaskLinkDialog,
 } from './action-dialog-controller.js';
 import {
   openDeleteAgentDialog, openRetireAgentDialog, openShutdownAgentDialog,
@@ -617,6 +618,19 @@ export async function handleRowAction(action) {
         // agent. The modal enforces the required follow_up and
         // handles the POST + refresh.
         openReincarnateAgentDialog(agent, label);
+        return;
+      }
+      case 'sandbox-impl': {
+        // Open the picker that assigns the durable sandbox implementation. The
+        // dialog loads the recorded posture itself — the row's sandbox fields
+        // describe the LAST LAUNCH, which is a different question from what the
+        // next one will use. The button is disabled while the agent is online,
+        // and the daemon re-checks and refuses if it came back up meanwhile.
+        openSandboxImplDialog({
+          conv: agent,
+          label,
+          harness: data.harness || '',
+        });
         return;
       }
       case 'export-summary': {

@@ -385,7 +385,8 @@ func tclaudeLayerRouteAuthorityRelayFlags(plan sandboxpolicy.MountPlan, helper T
 }
 
 func tclaudeLayerPreserveRouteHelperFD(command string) string {
-	return strings.Replace(command, " -- /bin/sh -c ", " --preserve-fds 1 -- /bin/sh -c ", 1)
+	prefix := sandboxExecShellPrefix()
+	return strings.Replace(command, prefix, " --preserve-fds 1"+prefix, 1)
 }
 
 func tclaudeLayerRouteHelperBootstrapPrefix(helper TclaudeLayerRouteHelper) string {

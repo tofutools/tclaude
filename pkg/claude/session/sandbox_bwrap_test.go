@@ -1558,7 +1558,7 @@ func TestBwrapCommandShellQuotesHarnessCommand(t *testing.T) {
 	got, err := bwrapCommand("/usr/bin/bwrap", nil, nil, nil, nil, nil,
 		sandboxpolicy.MountPlan{}, "export X='a b'; exec agent --flag")
 	require.NoError(t, err)
-	assert.Contains(t, got, " -- /bin/sh -c ")
+	assert.Contains(t, got, sandboxExecShellPrefix())
 	assert.Contains(t, got, "export X=")
 	assert.Contains(t, got, "--new-session")
 }

@@ -73,11 +73,27 @@ tclaude agent notify-human --file -                  # body from stdin
 tclaude agent notify-human "Report ready" --attach report.md
 tclaude agent notify-human "Site bundle ready" --attach dist/ --name site.zip
 tclaude agent notify-human "Artifacts ready" -a report.md -a chart.png
+tclaude agent notify-human --subject "Dashboard mock" -a mock.png   # no body
 ```
 
 Prefer `--file` for long, multi-line, or code-heavy bodies — it
 sidesteps shell quoting (an inline backtick is eaten by the shell).
 Same reasoning as `tclaude agent message --file`.
+
+### Sending without a body
+
+A body is normally required, but you may omit it when the message **is**
+the attachment: `--subject` plus at least one `--attach` is a complete
+notification on its own. The subject names what arrived and the file
+carries the content, so there is no need to invent a line of prose
+restating it — a rendered mock, a screenshot, or a report sent for review
+is often clearer with just a subject.
+
+The two halves are both required for that form. A subject with nothing
+attached is a headline over an empty page, and an attachment with no
+subject says nothing about what arrived; either alone is rejected. Keep
+writing a body whenever you actually have something to say about the file
+— what to look at, what decision you need, what changed.
 
 Use repeatable `--attach <path>` flags when the result itself is a file the
 human should receive. A single file keeps its name and type. Up to 20 attached
@@ -92,7 +108,12 @@ renders some types in place rather than only offering the download: an image
 gets a thumbnail and a zoomable preview, and a Markdown file up to 1 MiB is
 rendered directly in the message, with a **View source** control for the
 original text — so a written report is better sent as `report.md` than as
-`report.txt`. The cap is
+`report.txt`. A rendered report can illustrate itself: attach the images
+alongside it (`--attach report.md --attach chart.png`) and reference one by its
+filename (`![the chart](chart.png)`) to have it appear in the document. An
+image at an `http(s)` URL is NOT fetched when the human opens the message; it
+shows as a placeholder naming the host that the human must click to load, so
+prefer attaching the picture. The cap is
 256 MiB per published artifact. Deleting the message deletes the stored bytes.
 Top-level symlinks are rejected; pass the resolved path explicitly. Stored
 attachments are also capped at 512 MiB per stable agent and 2 GiB total, so

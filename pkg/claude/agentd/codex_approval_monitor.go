@@ -197,7 +197,7 @@ func codexApprovalProfileOwnedByLivePane(path string, paneStarts []string) bool 
 	profileArg := " -p " + profile
 	cleanup := "rm -f -- " + clcommon.ShellQuoteArg(path)
 	for _, rendered := range paneStarts {
-		// Script-launch shape (current): `sh <launch-script> <profile-path>`.
+		// Script-launch shape (current): `<shell> <launch-script> <profile-path>`.
 		// The profile path rides the pane argv as an inert marker precisely so
 		// this recovery can match it (session.CodexProfileMarkerArgs).
 		if codexApprovalScriptPaneOwnsProfile(rendered, path) {
@@ -223,16 +223,17 @@ func codexApprovalProfileOwnedByLivePane(path string, paneStarts []string) bool 
 }
 
 // codexApprovalScriptPaneOwnsProfile matches the script-launch pane shape —
-// `sh <launch-script> <profile-path>` — against one rendered
+// `<shell> <launch-script> <profile-path>` — against one rendered
 // #{pane_start_command}. The argv is daemon-built and carries no prompt or
 // other user text (the whole bootstrap lives in the script file), so an
 // exact decoded-word match is sound where the inline shape needed the
 // codex-segment/cleanup-tail heuristics. Word 1 must look like a tclaude
-// launch script so arbitrary `sh <something> <path>` panes cannot claim a
+// launch script so arbitrary `<shell> <something> <path>` panes cannot claim a
 // profile.
 func codexApprovalScriptPaneOwnsProfile(rendered, profilePath string) bool {
 	words, ok := codexApprovalRenderedWords(rendered)
-	if !ok || len(words) < 3 || words[0] != "sh" || !codexApprovalLaunchScriptWord(words[1]) {
+	if !ok || len(words) < 3 || !clcommon.IsBootstrapShellWord(words[0]) ||
+		!codexApprovalLaunchScriptWord(words[1]) {
 		return false
 	}
 	for _, word := range words[2:] {

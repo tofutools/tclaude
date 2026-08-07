@@ -13,6 +13,7 @@ import {
   humanNotificationSenderQuery, memberHumanMessages, memberUnreadHumanCount,
   openHumanNotificationReader,
 } from './human-notification-attention.js';
+import { bodilessNotice } from './human-attachments.js';
 
 const html = htm.bind(h);
 
@@ -638,6 +639,27 @@ function SandboxRestartMenuItem({ member }) {
   />`;
 }
 
+// SandboxImplMenuItem opens the picker that assigns the sandbox IMPLEMENTATION
+// this agent will relaunch under. It is the inverse of the two items above: they
+// need a LIVE agent because they restart one, while this records durable intent
+// that the next launch applies — so a running agent is exactly when it cannot be
+// used, and saying why beats a 409 the operator has to click to discover.
+function SandboxImplMenuItem({ member }) {
+  const label = member.title || member.conv_id;
+  const regular = '🧩 sandbox implementation…';
+  const title = member.online
+    ? `${regular} is unavailable while ${label} is running — the implementation is applied by the launch that follows it. Stop the agent first, assign, then wake it.`
+    : `Choose which layer owns OS-level confinement for ${label}'s next launch — for example a per-agent cgroup (resource-only) for an agent created before that existed. Recorded now, applied when you wake it.`;
+  // data-harness is a fallback only. The dialog renders its catalog from the
+  // harness the SERVER reports with the posture; this covers the case where that
+  // field is absent, and is never consulted otherwise.
+  return html`<${MenuButton}
+    member=${member} act="sandbox-impl" regular=${regular} wizard="🧩 ward implementation…"
+    attrs=${{ 'data-harness': member.state?.harness || '' }}
+    title=${title} disabled=${!!member.online}
+  />`;
+}
+
 function MenuSeparator() {
   return html`<div class="menu-sep" role="separator"></div>`;
 }
@@ -672,6 +694,7 @@ function MemberMenu({ member, group, snapshot, actions, ungrouped }) {
     <${MenuButton} member=${member} act="reincarnate" regular="reincarnate" wizard="reincarnate familiar" title=${wizardCopy('Reincarnate this agent — by default ask it to do so itself (it writes its own handoff); or force an immediate daemon-driven reincarnation.', 'Reincarnate this familiar — by default ask it to write its own handoff; or force its immediate return in a fresh vessel.')} />
     <${RestartMenuItem} member=${member} />
     <${SandboxRestartMenuItem} member=${member} />
+    <${SandboxImplMenuItem} member=${member} />
     <${MenuSeparator} />
     ${ungrouped
       ? html`<${MenuButton} member=${member} selector="conv" act="retire-agent" className="warn" regular="retire" wizard="banish" title=${wizardCopy('Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored).', 'Banish this familiar — return it to a plain conversation, revoking its party memberships and boons. Reversible via reinstate.')} /><${MenuButton} member=${member} act="delete-agent" className="danger" regular="delete" wizard="erase familiar" title=${wizardCopy('Permanently delete this agent and conversation', 'Permanently erase this familiar and its conversation scroll')} />`
@@ -728,7 +751,8 @@ function HumanNotificationAttention({ member, snapshot }) {
         <strong>${message.subject || '(no subject)'}</strong>
         <span>${relTime(message.created_at)}</span>
       </span>
-      <span class="human-notification-preview-body">${message.body || '(empty notification)'}</span>
+      <span class="human-notification-preview-body">${message.body
+        || bodilessNotice(message) || '(empty notification)'}</span>
       <span class="human-notification-preview-foot">
         ${attachment
           ? html`<span class="human-notification-preview-attachment">📎 ${attachment.filename || 'attachment'}</span>`

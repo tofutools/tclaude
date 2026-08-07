@@ -49,11 +49,12 @@ export function inspectSandboxDirectories(body) { return request('/api/sandbox-p
 export function createSandboxDirectories(body) { return request('/api/sandbox-profile-directories/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); }
 
 export function sandboxProfileSummary(profile) {
-  const fs = profile.filesystem || []; const env = profile.environment || []; const inc = profile.includes || []; const own = profile.agent_directories || [];
+  const fs = profile.filesystem || []; const env = profile.environment || []; const inc = profile.includes || []; const own = profile.agent_directories || []; const pre = profile.pre_launch || [];
   const parts = [['read', 'read'], ['write', 'write'], ['deny', 'deny']].flatMap(([access, label]) => { const count = fs.filter((entry) => entry.access === access).length; return count ? [`${count} ${label}`] : []; });
   if (inc.length) parts.push(`${inc.length} include${inc.length === 1 ? '' : 's'}`);
   if (env.length) parts.push(`${env.length} env key${env.length === 1 ? '' : 's'}`);
   if (own.length) parts.push(`${own.length} agent dir${own.length === 1 ? '' : 's'}`);
+  if (pre.length) parts.push(`${pre.length} pre-launch script${pre.length === 1 ? '' : 's'}`);
   const limits = profile.resource_limits || {};
   if (limits.memory) parts.push(`memory ${limits.memory}`);
   if (limits.cpu != null) parts.push(`CPU ${limits.cpu}`);
@@ -381,6 +382,19 @@ function effectiveRuleRows(context = {}, constructedRoot = false) {
   for (const name of context.agent_directories || []) {
     rows.push({ axis: 'agent_directories', label: `Private read/write directory: $${name}` });
   }
+  // Blocks are the one axis that is arbitrary shell rather than a rule, so the
+  // preview names them and says what they promise to define, without pretending
+  // a script can be summarised the way a grant can.
+  for (const block of context.pre_launch || []) {
+    if (!block || !block.name) continue;
+    const exports = (block.exports || []).join(', ');
+    rows.push({
+      axis: 'pre_launch',
+      label: exports
+        ? `Pre-launch script: ${block.name} → ${exports}`
+        : `Pre-launch script: ${block.name}`,
+    });
+  }
 
   const axes = sandboxAccessAxes(context);
   if (axes.network.mode === 'open') {
@@ -499,7 +513,14 @@ export function sandboxRuleBuckets(axes = {}, context = {}, networkEntries = [],
   for (const rule of effectiveRuleRows(context, axes?.constructed_root === true)) {
     const rowPrediction = rule.networkKey
       ? networkPredictions.get(rule.networkKey) : null;
-    const verdict = rowPrediction || (rule.axis === 'control_socket'
+    // control_socket and pre_launch have no daemon verdict, for opposite
+    // reasons: the socket floor is always reachable, and a pre-launch block is
+    // not an access rule at all — it is shell that always runs, so there is no
+    // enforcement axis to predict. Without a synthetic verdict both fall into
+    // the not_enforced fallback and the preview tells the operator their
+    // working setup script is unsupported and will not be applied, which is
+    // worse than not showing it.
+    const verdict = rowPrediction || (rule.axis === 'control_socket' || rule.axis === 'pre_launch'
       ? { outcome: 'enforced', detail: '' }
       : axes?.[rule.axis] || { outcome: 'not_enforced', detail: 'No enforcement verdict was returned.' });
     const bucket = buckets[bucketKey(verdict.outcome)];
@@ -545,6 +566,7 @@ export function sandboxOtherAssignmentWarnings(overallAxes = {}, selectedAxes = 
     filesystem: 'Directory rules',
     environment: 'Environment rules',
     agent_directories: 'Private-directory rules',
+    pre_launch: 'Pre-launch scripts',
     network: 'Network rules',
     unix_sockets: 'Unix-socket rules',
   };

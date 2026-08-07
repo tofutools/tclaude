@@ -334,6 +334,13 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 			}
 			dashboardSandboxRestartAgent(w, r, convSelector)
 			return
+		case "sandbox-impl":
+			if r.Method != http.MethodGet && r.Method != http.MethodPost {
+				http.Error(w, "GET or POST only", http.StatusMethodNotAllowed)
+				return
+			}
+			dashboardSandboxImplementationAgent(w, r, convSelector)
+			return
 		case "clone":
 			if r.Method != http.MethodPost {
 				http.Error(w, "POST only", http.StatusMethodNotAllowed)

@@ -358,13 +358,19 @@ func formatHumanMessage(fromTitle, group, subject, body string) (title, notifBod
 	}
 
 	var b strings.Builder
+	trimmedBody := strings.TrimSpace(body)
 	if s := strings.TrimSpace(subject); s != "" {
 		// Title already carries the subject; lead the body with the
 		// sender so the human knows who, even when the subject is set.
 		b.WriteString(who)
-		b.WriteString(": ")
+		// A notification may carry a subject and an attachment but no body.
+		// The banner then says who sent it, with no dangling "…: " where the
+		// message would have been.
+		if trimmedBody != "" {
+			b.WriteString(": ")
+		}
 	}
-	b.WriteString(strings.TrimSpace(body))
+	b.WriteString(trimmedBody)
 	if g := strings.TrimSpace(group); g != "" {
 		b.WriteString("\n— ")
 		b.WriteString(g)

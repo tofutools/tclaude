@@ -90,6 +90,7 @@ func FlattenWithNotices(in Profile, lookup LookupProfile) (Profile, []AccessNoti
 	}
 	out := Profile{
 		Name:                    root.Name,
+		PreLaunch:               clonePreLaunch(parts.preLaunch),
 		Filesystem:              make([]FilesystemGrant, 0, len(parts.filesystem)),
 		Environment:             make([]EnvironmentEntry, 0, len(parts.environment)),
 		AgentDirectories:        make([]string, 0, len(parts.agentDirectories)),
@@ -193,6 +194,11 @@ type flattenedParts struct {
 	hasNewUnixSockets       bool
 	resourceLimits          ResourceLimits
 	darwinAllowMachRegister bool
+	// preLaunch keeps composed blocks in execution order. Unlike every other
+	// merged field it is a SLICE, not a map: an override replaces a same-named
+	// block in place rather than re-keying it, because these are sequential
+	// statements and reordering them would change what they do.
+	preLaunch               []PreLaunchBlock
 	networkListContributors []string
 	socketListContributors  []string
 }
@@ -313,11 +319,13 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 		out.unixSockets = intersectUnixSocketRules(out.unixSockets, parts.unixSockets)
 		out.hasNewNetwork = out.hasNewNetwork || parts.hasNewNetwork
 		out.hasNewUnixSockets = out.hasNewUnixSockets || parts.hasNewUnixSockets
+		out.preLaunch = mergePreLaunch(out.preLaunch, parts.preLaunch)
 		out.networkListContributors = appendUniqueStrings(
 			out.networkListContributors, parts.networkListContributors...)
 		out.socketListContributors = appendUniqueStrings(
 			out.socketListContributors, parts.socketListContributors...)
 	}
+	out.preLaunch = mergePreLaunch(out.preLaunch, p.PreLaunch)
 	for _, grant := range p.Filesystem {
 		// Include override is keyed on the guest path: "the same rule" means the
 		// same position inside the sandbox. For an unremapped rule that is the

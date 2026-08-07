@@ -31,6 +31,16 @@ import (
 // client hang-up that leaves the agent unsure whether a PR was created.
 const ghProxyTimeout = 90 * time.Second
 
+// ghProxyBulkTimeout is the bound for the two reads the daemon allows longer
+// than its own 60s default: `run log-failed` (180s there — it downloads a
+// run's whole log archive) and `pr comments` (90s — two calls under one
+// budget). A client cap below the daemon's would turn a slow-but-succeeding
+// read into a hang-up that reports nothing, which is the failure that leaves
+// an agent unsure whether it saw all the feedback. One generous constant
+// rather than one per verb: this is a backstop against a hung daemon, and the
+// daemon's own bound is what actually ends a slow call.
+const ghProxyBulkTimeout = 210 * time.Second
+
 func githubCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:     "github",
@@ -48,6 +58,7 @@ func githubCmd() *cobra.Command {
 		SubCmds: []*cobra.Command{
 			githubPRCmd(),
 			githubIssueCmd(),
+			githubRunCmd(),
 		},
 	}.ToCobra()
 }
@@ -108,6 +119,12 @@ func (o *ghProxyOutcome) render(stdout, stderr io.Writer, what string) int {
 
 // ghProxyCall is the shared tail of every github verb.
 func ghProxyCall(path string, body map[string]any, askHuman, what string, stdout, stderr io.Writer) int {
+	return ghProxyCallTimeout(path, body, askHuman, what, ghProxyTimeout, stdout, stderr)
+}
+
+// ghProxyCallTimeout is ghProxyCall for the verbs the daemon allows longer
+// than its own 60s default.
+func ghProxyCallTimeout(path string, body map[string]any, askHuman, what string, timeout time.Duration, stdout, stderr io.Writer) int {
 	ask, err := agent.ParseAskHuman(askHuman)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -122,7 +139,7 @@ func ghProxyCall(path string, body map[string]any, askHuman, what string, stdout
 	// caller that pipes the output into a parser.
 	var resp ghProxyOutcome
 	if err := agent.DaemonRequest(http.MethodPost, path, body, &resp,
-		agent.DaemonOpts{AskHuman: ask, Timeout: ghProxyTimeout}); err != nil {
+		agent.DaemonOpts{AskHuman: ask, Timeout: timeout}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return agent.MapDaemonErrorToRC(err)
 	}
@@ -143,6 +160,7 @@ func githubPRCmd() *cobra.Command {
 			githubPRListCmd(),
 			githubPRViewCmd(),
 			githubPRChecksCmd(),
+			githubPRCommentsCmd(),
 			githubPRCommentCmd(),
 			githubPREditCmd(),
 			githubPRReadyCmd(),
@@ -271,6 +289,35 @@ func githubPRChecksCmd() *cobra.Command {
 	}.ToCobra()
 }
 
+func githubPRCommentsCmd() *cobra.Command {
+	return boa.CmdT[githubNumberParams]{
+		Use:     "comments",
+		Aliases: []string{"thread"},
+		Short:   "Read all review feedback on a pull request",
+		Long: "Prints everything said on a pull request, in two sections. This is the READ; `pr comment` " +
+			"is the write.\n\n" +
+			"  1. the conversation — issue comments and the body of each review submission, oldest first " +
+			"(what `gh pr view N --comments` shows)\n" +
+			"  2. the inline review comments — the line-level notes inside each review's diff threads, each " +
+			"with its file, line and permalink\n\n" +
+			"Both sections matter for a review bot: CodeRabbit posts its summary as a review body, but " +
+			"every actionable finding is an inline comment. Section 1 alone tells you the PR was reviewed " +
+			"and not what the review said.\n\n" +
+			"The output is text, not JSON. Each section is bounded separately, so a long conversation " +
+			"cannot squeeze out the inline findings; if one is too large you get its tail — the newest " +
+			"comments, which are the ones you are usually here for.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *githubNumberParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *githubNumberParams, _ *cobra.Command, _ []string) {
+			os.Exit(ghProxyCallTimeout("/v1/github/pr/comments", numberBody(p), p.AskHuman,
+				"pr comments", ghProxyBulkTimeout, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
 func githubPRReadyCmd() *cobra.Command {
 	return boa.CmdT[githubNumberParams]{
 		Use:         "ready",
@@ -297,7 +344,7 @@ type githubCommentParams struct {
 func githubPRCommentCmd() *cobra.Command {
 	return boa.CmdT[githubCommentParams]{
 		Use:         "comment",
-		Short:       "Comment on a pull request",
+		Short:       "Comment on a pull request (to read the thread, see `pr comments`)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *githubCommentParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)
@@ -426,6 +473,119 @@ func githubIssueCommentCmd() *cobra.Command {
 		},
 		RunFunc: func(p *githubCommentParams, _ *cobra.Command, _ []string) {
 			os.Exit(runGitHubComment("/v1/github/issue/comment", p, "issue comment", os.Stdin, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+// ---------------------------------------------------------------------------
+// github run
+// ---------------------------------------------------------------------------
+
+func githubRunCmd() *cobra.Command {
+	return boa.CmdT[struct{}]{
+		Use:         "run",
+		Aliases:     []string{"ci"},
+		Short:       "GitHub Actions workflow runs",
+		ParamEnrich: common.DefaultParamEnricher(),
+		SubCmds: []*cobra.Command{
+			githubRunListCmd(),
+			githubRunLogFailedCmd(),
+		},
+	}.ToCobra()
+}
+
+type githubRunListParams struct {
+	Branch   string `long:"branch" short:"b" optional:"true" help:"Only runs for this branch."`
+	Status   string `long:"status" short:"s" optional:"true" help:"Only runs with this status (e.g. 'failure', 'in_progress', 'success')."`
+	Limit    int    `long:"limit" optional:"true" help:"Maximum rows (1-100, default 20)."`
+	Remote   string `long:"remote" optional:"true" help:"Remote naming the repository to act on (default: origin)."`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout. Capped at 300s. Timeout = deny."`
+}
+
+func githubRunListCmd() *cobra.Command {
+	return boa.CmdT[githubRunListParams]{
+		Use:     "ls",
+		Aliases: []string{"list"},
+		Short:   "List GitHub Actions workflow runs",
+		Long: "Lists workflow runs, most recent first. The `databaseId` in each row is the run id " +
+			"`run log-failed` takes.\n\n" +
+			"This is how you find a failed run:\n\n" +
+			"    tclaude proxy github run ls --branch my-branch --status failure\n\n" +
+			"It also reaches runs `pr checks` cannot show at all: that rollup is scoped to the pull " +
+			"request's HEAD COMMIT, so after a force-push or an amend every run against the superseded " +
+			"commit disappears from it, while `run ls --branch` still lists them. Compare `headSha` " +
+			"against the commit you care about.\n\n" +
+			"Re-runs are not such a case: re-running adds an attempt to the SAME run id rather than " +
+			"creating a new run, so a failure that was re-run green reports as green in both. The " +
+			"`attempt` field tells you a run has been re-run; reading the earlier attempt's log is not " +
+			"something this proxy offers.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *githubRunListParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)
+			boa.GetParamT(ctx, &p.Status).SetAlternatives(ghRunStatusAlternatives)
+			return nil
+		},
+		RunFunc: func(p *githubRunListParams, _ *cobra.Command, _ []string) {
+			os.Exit(ghProxyCall("/v1/github/run/list", map[string]any{
+				"remote": strings.TrimSpace(p.Remote),
+				"branch": strings.TrimSpace(p.Branch),
+				"status": strings.TrimSpace(p.Status),
+				"limit":  p.Limit,
+			}, p.AskHuman, "run ls", os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+// ghRunStatusAlternatives mirrors gh's `run list --status` vocabulary for shell
+// completion. The daemon validates independently — this is a convenience, not
+// a gate, and a stale entry here costs a refusal rather than a bad argv.
+//
+// A copy rather than an import: the CLI must not depend on the daemon package,
+// because a check made in this process is a check the caller could have
+// skipped. TestGHRunStatusCompletionMatchesTheGate pins it to the authority in
+// pkg/claude/agentd.
+var ghRunStatusAlternatives = []string{
+	"queued", "completed", "in_progress", "requested", "waiting", "pending",
+	"action_required", "cancelled", "failure", "neutral", "skipped", "stale",
+	"startup_failure", "success", "timed_out",
+}
+
+// GHRunStatusAlternativesForTest exposes the completion vocabulary so it can be
+// pinned against the daemon's gate.
+func GHRunStatusAlternativesForTest() []string {
+	return append([]string(nil), ghRunStatusAlternatives...)
+}
+
+type githubRunParams struct {
+	RunID    int64  `pos:"true" name:"run-id" help:"Workflow-run id (the number in an Actions URL, .../actions/runs/<run-id>)."`
+	Remote   string `long:"remote" optional:"true" help:"Remote naming the repository to act on (default: origin)."`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout. Capped at 300s. Timeout = deny."`
+}
+
+func githubRunLogFailedCmd() *cobra.Command {
+	return boa.CmdT[githubRunParams]{
+		Use:     "log-failed",
+		Aliases: []string{"failed-log"},
+		Short:   "Show the log of the failed steps in a workflow run",
+		Long: "Prints the log of whatever steps failed in a GitHub Actions run — the same thing " +
+			"`gh run view <run-id> --log-failed` shows. This is the follow-up to `pr checks`: checks tells " +
+			"you which job went red, this tells you why.\n\n" +
+			"Get the run id from the `detailsUrl` of a failed check in `pr checks` output; it is the number " +
+			"in `…/actions/runs/<run-id>/job/<job-id>`.\n\n" +
+			"Only the failed steps are available — never the full log of a run, which for a green matrix " +
+			"build is megabytes that say nothing the check rollup did not. Output is text; if it exceeds " +
+			"the daemon's bound the tail is returned, which is where a failing step's error is.\n\n" +
+			"The daemon downloads the run's log archive, so this is slower than the other reads.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *githubRunParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *githubRunParams, _ *cobra.Command, _ []string) {
+			os.Exit(ghProxyCallTimeout("/v1/github/run/log-failed", map[string]any{
+				"remote": strings.TrimSpace(p.Remote),
+				"run_id": p.RunID,
+			}, p.AskHuman, "run log-failed", ghProxyBulkTimeout, os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
 }

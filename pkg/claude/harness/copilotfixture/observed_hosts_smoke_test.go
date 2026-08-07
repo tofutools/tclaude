@@ -46,7 +46,7 @@ import (
 // produced it. This scenario stays as it is — credential-free, refusing every
 // tunnel — because it is the one that can run anywhere.
 func TestCopilotStartupDialsOnlyContractedHosts(t *testing.T) {
-	requireSmokeParallel(t)
+	requireLabParallel(t)
 
 	capture := copilotfixture.NewProxyCapture(t)
 	dirs := copilotfixture.NewSandboxDirs(t)

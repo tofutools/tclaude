@@ -16,6 +16,13 @@ const RelaunchProfileVersion = 1
 // operator override on every relaunch surface.
 const TemporaryHarnessBuiltinModeSource = "temporary dashboard unlock"
 
+// AssignedSandboxImplementationSource is the attribution paired with a durable
+// operator reassignment of an existing agent's sandbox implementation. It is not
+// a resolution tier: no spawn profile chose this posture, an operator replaced it
+// after the fact, and the badge must say so rather than keep crediting whichever
+// tier supplied the mode this assignment overwrote.
+const AssignedSandboxImplementationSource = "operator sandbox assignment"
+
 // AgentRelaunchProfile is mutable launch intent owned by the stable agent.
 //
 // The Go identifiers on its sandbox-mode fields say harness-builtin; the
@@ -358,6 +365,92 @@ func TemporaryHarnessBuiltinModeForAgent(agentID string) (mode string, ok bool, 
 		return "", false, err
 	}
 	return strings.TrimSpace(*profile.TemporaryHarnessBuiltinMode), true, nil
+}
+
+// ErrTemporarySandboxOverrideActive rejects a durable posture write while the
+// reversible dashboard unlock is in force. The two states are layered — the
+// override deliberately preserves the normal posture underneath so restore can
+// put it back byte-for-byte — so writing the normal posture from under an active
+// override would silently change what "restore" restores.
+var ErrTemporarySandboxOverrideActive = errors.New(
+	"this agent is running under the temporary sandbox unlock; restore its normal sandbox first")
+
+// AssignAgentSandboxImplementation durably rewrites the sandbox posture a stable
+// agent will RELAUNCH under: the implementation that owns OS-level confinement,
+// the harness-builtin mode that implementation implies, and the attribution for
+// that mode.
+//
+// All three move together because they are one posture. The implementation
+// decides what the harness's own sandbox may be — `resource-only` and `off`
+// resolve every harness to its no-confinement mode — so recording a new
+// implementation while leaving the old mode behind would leave the durable
+// record describing a launch that never happens. The caller resolves both values
+// through the harness layer (harness.ResolveSandboxImplementationMode) and passes
+// the results; this function only persists them atomically.
+//
+// The source is the operator attribution for the assignment, not a spawn-profile
+// tier: the mode is no longer the one any profile chose, and crediting the
+// original tier for a posture an operator replaced is the false attribution the
+// relaunch profile's HarnessBuiltinModeSource exists to prevent.
+func AssignAgentSandboxImplementation(
+	agentID string,
+	implementation string,
+	harnessBuiltinMode string,
+	source string,
+) error {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return errors.New("AssignAgentSandboxImplementation: agent_id required")
+	}
+	implementation = strings.TrimSpace(implementation)
+	if implementation == "" {
+		return errors.New("AssignAgentSandboxImplementation: implementation required")
+	}
+	harnessBuiltinMode = strings.TrimSpace(harnessBuiltinMode)
+	if harnessBuiltinMode == "" {
+		return errors.New("AssignAgentSandboxImplementation: harness-builtin mode required")
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var raw string
+	err = tx.QueryRow(`SELECT relaunch_profile FROM agents WHERE agent_id = ?`,
+		agentID).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("AssignAgentSandboxImplementation: unknown agent %s", agentID)
+	}
+	if err != nil {
+		return err
+	}
+	profile, err := decodeAgentRelaunchProfile(raw)
+	if err != nil {
+		return err
+	}
+	if profile == nil {
+		profile = &AgentRelaunchProfile{Version: RelaunchProfileVersion}
+	}
+	if profile.TemporaryHarnessBuiltinMode != nil {
+		return ErrTemporarySandboxOverrideActive
+	}
+	profile.SandboxImplementation = stringPtr(implementation)
+	profile.HarnessBuiltinMode = stringPtr(harnessBuiltinMode)
+	profile.HarnessBuiltinModeSource = stringPtr(strings.TrimSpace(source))
+	encoded, err := encodeRelaunchProfile(*profile)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE agents SET relaunch_profile = ? WHERE agent_id = ?`,
+		encoded, agentID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func SetConversationResumeProfile(convID string, profile ConversationResumeProfile) error {

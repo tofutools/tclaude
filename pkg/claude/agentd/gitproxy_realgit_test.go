@@ -391,6 +391,46 @@ func TestRealGit_RunProxyCommandBoundsOutputAndSurvivesFailure(t *testing.T) {
 	assert.NotEqual(t, 0, res.ExitCode)
 }
 
+// TestRealGit_RunProxyCommandHonoursMaxOutputBytes pins the seam's half of the
+// per-command output bound at the PRODUCTION boundary.
+//
+// The flow tests can only assert on the ProxyCommand the daemon builds; the
+// recorder they run against ignores every field on it. So without this, the
+// whole MaxOutputBytes mechanism could be reverted to the fixed constant and
+// nothing would fail — `pr comments` and `run log-failed` would quietly go
+// back to a 16 KiB tail, which is not an error, just a truncated answer.
+func TestRealGit_RunProxyCommandHonoursMaxOutputBytes(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh available")
+	}
+	// 300 lines of 100 bytes ≈ 30 KiB — over the 16 KiB default, under the
+	// raised bound, so the two cases must give visibly different answers.
+	const line = "0123456789"
+	script := "i=0; while [ $i -lt 300 ]; do echo " + strings.Repeat(line, 10) + "; i=$((i+1)); done"
+
+	t.Run("default bound truncates", func(t *testing.T) {
+		res, err := runProxyCommand(context.Background(), ProxyCommand{
+			Tool: "git", Path: sh, Args: []string{"-c", script}, Dir: t.TempDir(),
+		})
+		require.NoError(t, err)
+		assert.True(t, res.Truncated, "30 KiB must not fit in the 16 KiB default")
+		assert.LessOrEqual(t, len(res.Stdout), gitProxyMaxOutputBytes)
+	})
+
+	t.Run("raised bound keeps the whole answer", func(t *testing.T) {
+		res, err := runProxyCommand(context.Background(), ProxyCommand{
+			Tool: "gh", Path: sh, Args: []string{"-c", script}, Dir: t.TempDir(),
+			MaxOutputBytes: maxGHProxyTextBytes,
+		})
+		require.NoError(t, err)
+		assert.False(t, res.Truncated, "30 KiB fits well inside the bulk bound")
+		assert.Greater(t, len(res.Stdout), gitProxyMaxOutputBytes,
+			"the raised bound must actually reach the tail, not just ride on the struct")
+		assert.Equal(t, 300, strings.Count(res.Stdout, "\n"))
+	})
+}
+
 // TestRealGit_ShowScopeAttributesIncludedKeysToTheIncludingScope locks the
 // assumption the credential-config gate rests on.
 //

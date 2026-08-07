@@ -142,7 +142,12 @@ test('a stored size reopens the viewer at that size, as custom properties', asyn
 });
 
 test('a corrupt or absurd stored size falls back to the stylesheet default', async (t) => {
-  for (const value of ['not json', JSON.stringify({ w: 0, h: 0 }), JSON.stringify({ w: -5, h: 'wide' })]) {
+  for (const value of [
+    'not json', JSON.stringify({ w: 0, h: 0 }), JSON.stringify({ w: -5, h: 'wide' }),
+    // "Infinity" survives Number() and a > 0 test, and would reach the
+    // stylesheet as `Infinitypx`.
+    JSON.stringify({ w: 'Infinity', h: 700 }),
+  ]) {
     const { mounted, dialog } = await openMarkdownViewer(t, {
       seedPref: ['tclaude.dash.attachmentViewer.markdown.size', value],
     });

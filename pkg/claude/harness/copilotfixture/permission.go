@@ -449,8 +449,16 @@ type PermissionContract struct {
 // anyone iterates on one row, and a registry keyed on execution would make the
 // contract check fail for every partial run — which trains people to ignore
 // it. Keyed on declaration it answers the question that actually matters, "is
-// this contract entry backed by a scenario that still exists", while CI's
-// per-name PASS grep answers the other one, "did that scenario really run".
+// this contract entry backed by a scenario that still exists".
+//
+// The other question, "did that scenario really run", is answered elsewhere
+// and answered more weakly than it used to be. CI enumerated every scenario by
+// name until TCL-1046; these are lab scenarios now, and the lab gates on pass
+// COUNTS — one for scenarios and one for table rows, since these entries cite
+// subtests and a parent whose rows all skipped still prints PASS. A floor
+// catches the whole matrix going quiet, not a single row. Anything finer would
+// have to come back here, as an execution-keyed registry, and pay the
+// partial-run cost described above.
 var registeredScenarios = map[string]bool{}
 
 // RegisterScenario records that a scenario with this name exists. Call it from

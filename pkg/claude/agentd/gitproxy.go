@@ -222,6 +222,12 @@ type ProxyCommand struct {
 	Args []string // argv[1:]
 	Dir  string   // working directory; always explicit, never inherited
 	Env  []string // complete environment; NOT the daemon's
+
+	// MaxOutputBytes overrides the per-stream tail kept from this command.
+	// Zero means gitProxyMaxOutputBytes, which suits every command whose
+	// output is a diagnosis. A verb whose output IS the payload — a CI log,
+	// a comment thread — sets its own, larger bound.
+	MaxOutputBytes int
 }
 
 // ProxyResult is the bounded outcome of a proxied subprocess.
@@ -255,8 +261,12 @@ func runProxyCommand(ctx context.Context, spec ProxyCommand) (ProxyResult, error
 	cmd := exec.CommandContext(ctx, spec.Path, spec.Args...)
 	cmd.Dir = spec.Dir
 	cmd.Env = spec.Env
-	stdout := newProxyTail(gitProxyMaxOutputBytes)
-	stderr := newProxyTail(gitProxyMaxOutputBytes)
+	maxOutput := spec.MaxOutputBytes
+	if maxOutput <= 0 {
+		maxOutput = gitProxyMaxOutputBytes
+	}
+	stdout := newProxyTail(maxOutput)
+	stderr := newProxyTail(maxOutput)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	configureProxyCommand(cmd)

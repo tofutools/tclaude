@@ -50,7 +50,7 @@ const (
 
 func requireAuthCapture(t *testing.T) []string {
 	t.Helper()
-	requireSmoke(t)
+	requireLab(t)
 	if os.Getenv(authCaptureEnv) != "1" {
 		t.Skipf("set %s=1 to run the local credentialed destination capture "+
 			"(never in CI: it uses a real Copilot account)", authCaptureEnv)

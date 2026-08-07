@@ -896,6 +896,179 @@ agent recreates the declared directories empty at their frozen paths. A name
 cannot also have a literal `environment` value, and the normal reserved-variable
 rules apply.
 
+`pre_launch` is an ordered array of named shell blocks run **inside the
+sandbox**, after the profile's `environment` is exported and before the harness
+binary starts:
+
+```json
+"pre_launch": [
+  {
+    "name": "playwright",
+    "script": "pw=\"$TCLAUDE_PW_HOME\"\nmkdir -p \"$pw\"/{config,cache,data}\nexport PLAYWRIGHT_MCP_BROWSER=chrome\n",
+    "exports": ["PLAYWRIGHT_MCP_BROWSER"]
+  }
+]
+```
+
+Use it for setup the declarative fields cannot express: a value that must be
+computed per launch, a directory layout a tool insists on, a wrapper dropped
+earlier on `PATH`. Prefer `environment` for a fixed value and
+`agent_directories` for a private writable directory — those can be inspected,
+composed and disclosed, while a script can only be run.
+
+The blocks are **bash**, and they run in the launching shell itself so the
+environment they set reaches the harness. `set -e` is in force with a trap that
+names the failing block: a block that fails aborts the launch rather than
+starting a half-configured agent. Both are unwound before the harness command,
+so nothing leaks into its own shell semantics. A host with no bash refuses to
+launch a profile carrying blocks rather than running them under `/bin/sh`.
+
+`exports` is optional. It declares the names a block promises to define, and
+the launch checks that promise: a block that finishes without setting one of
+them stops the launch and names both the block and the variable. That catches
+the quiet failure — the block ran fine, but a path moved or a branch was not
+taken, so the tool starts misconfigured and the blame lands on the tool. A name
+set to an empty string counts as defined; only *undefined* fails.
+
+You do not need `exports` to make values reach a tool. A block runs in the
+launching shell, so what it exports is in the harness process's environment, and
+all four harnesses pass that down to the commands they run — including Codex,
+whose `shell_environment_policy` defaults to `inherit = "all"`. The one case
+that still gets dropped is an operator `~/.codex/config.toml` that narrows
+`inherit` or excludes the name; restoring it there needs the value at
+command-build time, which a block-computed value does not have, so that is
+tracked separately rather than solved here.
+
+Unlike `environment`, these names are not checked against the reserved list —
+reaching `XDG_CONFIG_HOME` or `PATH` is much of the point.
+
+> Do **not** export `XDG_CONFIG_HOME` / `XDG_CACHE_HOME` / `XDG_DATA_HOME`
+> globally into the agent's environment. Every other XDG-aware tool in the
+> agent — `gh`, `git`, `codex`, `claude` — then loses its normal configuration.
+> Put a small wrapper earlier on `PATH` instead, scoping those variables to the
+> one tool that needs them before exec'ing the real binary.
+
+Composition follows the other fields: included profiles' blocks run first in
+include order, then the profile's own; a same-named block from a later tier
+replaces the earlier one **in place**, keeping its position, because these are
+sequential statements. Blocks are frozen into the launch snapshot, so resume and
+reincarnate replay the same setup. They take no part in lineage containment: a
+block runs after the sandbox is established, with authority the launch has
+already checked, so it is setup rather than authority itself. Note that "inside
+the sandbox" is only as strong as the sandbox in force — under a harness-native
+sandbox, or with no sandbox at all, the pane is unconfined and so is the block.
+
+Blocks are shell for a tmux pane, so they do not apply to `tclaude ask`, which
+execs an argv with no shell at all.
+
+### Reference: scoping `playwright-cli` to one agent
+
+The worked example, and the reason `pre_launch` exists. It gives Playwright
+private XDG directories, a per-agent session, and a fixed browser, without any
+of that leaking into the agent's other tools. Pair it with
+`"agent_directories": ["TCLAUDE_PW_HOME"]` so the directory is per-agent and
+writable.
+
+```bash
+pw="$TCLAUDE_PW_HOME"
+# Resolve the real binary with our own wrapper directory removed from PATH.
+# Blocks re-run on every launch including resume, so by the second launch the
+# wrapper may already be first on PATH; a plain lookup would find the wrapper
+# and wrap it in itself, an exec loop that hangs with no output. Excluding the
+# directory makes a re-run idempotent instead of fatal.
+pw_search=""
+IFS=: read -ra pw_parts <<< "$PATH"
+for pw_entry in "${pw_parts[@]}"; do
+  [ "$pw_entry" = "$pw/bin" ] && continue
+  pw_search="${pw_search:+$pw_search:}$pw_entry"
+done
+real="$(PATH="$pw_search" command -v playwright-cli || true)"
+if [ -z "$real" ]; then
+  echo "playwright-cli is not installed on this host" >&2
+  false  # abort the launch; tclaude names this block in the failure
+fi
+export TCLAUDE_PW_REAL="$real"
+mkdir -p "$pw"/{config,cache,data,bin}
+# A QUOTED heredoc: nothing is interpolated at write time, so a directory
+# containing $, backtick, backslash or quote cannot corrupt the wrapper. The
+# wrapper reads both values from its environment at run time instead.
+cat > "$pw/bin/playwright-cli" <<'WRAPPER'
+#!/bin/bash
+XDG_CONFIG_HOME="$TCLAUDE_PW_HOME/config" \
+XDG_CACHE_HOME="$TCLAUDE_PW_HOME/cache" \
+XDG_DATA_HOME="$TCLAUDE_PW_HOME/data" \
+exec "$TCLAUDE_PW_REAL" "$@"
+WRAPPER
+chmod +x "$pw/bin/playwright-cli"
+export PATH="$pw/bin:$PATH"
+export PLAYWRIGHT_CLI_WRAPPER_DIR="$pw/bin"
+# Playwright's downloaded browser bundles live under $XDG_CACHE_HOME, which we
+# just made per-agent — so without this every agent would see an empty browser
+# registry and re-download hundreds of MB. Keep the registry shared.
+export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"
+export PLAYWRIGHT_CLI_SESSION="$(basename "$pw")"
+export PLAYWRIGHT_MCP_BROWSER=chrome
+export PLAYWRIGHT_MCP_SANDBOX=false
+```
+
+Declare `"exports": ["PLAYWRIGHT_CLI_WRAPPER_DIR", "PLAYWRIGHT_CLI_SESSION",
+"PLAYWRIGHT_MCP_BROWSER", "PLAYWRIGHT_MCP_SANDBOX"]`. Note what is *not* there:
+`PATH` is always set, so declaring it would prove nothing — the check is
+set-ness, and it would pass even if the block never touched `PATH`. The
+wrapper-directory sentinel is set alongside it and is genuinely absent if the
+block did not get that far.
+
+Five things are load-bearing:
+
+- **The wrapper, not a global export.** XDG is exported *inside* the wrapper,
+  so only Playwright sees it. Exporting it into the agent would take `gh`,
+  `git`, `codex` and `claude` with it.
+- **Resolve the real binary with the wrapper directory excluded from `PATH`.**
+  Blocks re-run on every launch including resume, so by the second launch the
+  wrapper is already first on `PATH`; a plain lookup would find the wrapper and
+  wrap it in itself, which exec-loops in a single process — a hang with no
+  output, on the second launch only. Excluding the directory makes a re-run a
+  no-op instead.
+- **A quoted heredoc.** Nothing is interpolated when the wrapper is written, so
+  a directory containing `$`, a backtick, a backslash or a quote cannot corrupt
+  it; the wrapper reads both values from its environment at run time. With an
+  unquoted heredoc the corruption is silent — the wrapper simply points
+  somewhere else.
+- **`PLAYWRIGHT_BROWSERS_PATH` stays shared.** Playwright's downloaded browser
+  bundles live under `$XDG_CACHE_HOME`, which the block just made per-agent, so
+  without this every agent sees an empty browser registry and re-downloads
+  hundreds of megabytes. This reference uses `chrome`, a system channel rather
+  than a downloaded bundle, which hides the problem until someone switches to
+  `chromium`.
+- **The session id comes from the agent directory,** not `$$`. It has to be
+  unique between agents and stable across a resume of the same agent; a PID is
+  neither, and a shared session means one agent steering another's browser.
+- **`false`, not `exit 1`.** Letting the command fail trips tclaude's `ERR`
+  trap, which names the block in the failure message. An explicit `exit`
+  bypasses it and the operator gets an unattributed exit code.
+
+One limitation worth knowing before you write a test around this:
+`playwright-cli` refuses the `file:` protocol unless
+`allowUnrestrictedFileAccess` is set. It can be set — a project
+`./.playwright/cli.config.json`, the global `~/.playwright/cli.config.json`,
+`--config <path>`, or `PLAYWRIGHT_MCP_ALLOW_UNRESTRICTED_FILE_ACCESS` — but
+every one of those grants the browser unrestricted filesystem reads, and the
+global config lives in the agent's real `$HOME`, which this wrapper deliberately
+does *not* redirect, so it would leak to every agent on the machine. Serving the
+page over loopback renders the same local file without granting any of that.
+
+`pkg/claude/session/pre_launch_playwright_reference_test.go` executes this block
+on every run, and a test compares the fenced block above against the script the
+tests actually run, so the two cannot drift. Two tests in it drive a real
+browser and are opt-in:
+
+```bash
+TCLAUDE_PLAYWRIGHT_SMOKE=1 go test ./pkg/claude/session/ -run TestPlaywrightReference -v
+```
+
+They render a page, check the PNG comes out at the requested size, close the
+session, and run two agents concurrently to prove their sessions do not collide.
+
 By default the shared parent root is granted once, so the agent can create,
 rewrite, and delete its own env-var'd directories. Setting
 `features.agent_dirs_mount_parent` to `false` (in the config file or dashboard
@@ -939,7 +1112,8 @@ tclaude agent sandbox-profiles draft --token <dashboard-token> --file profile.js
 ```
 
 `show --json` emits the same profile shape accepted by `create` and `edit`,
-including `filesystem`, `environment`, and `agent_directories` arrays.
+including `filesystem`, `environment`, `agent_directories`, and `pre_launch`
+arrays.
 The names `export` and `import` are reserved for the portable-transfer routes
 and are rejected case-insensitively at create, rename, and import boundaries.
 Export bundles are portable and versioned. Assignment export is opt-in, and an
@@ -964,6 +1138,74 @@ The `draft` command is deliberately not a mutation. It requires only
 structured proposal to the human dashboard. It cannot create or edit a saved
 profile, change global/group assignments, or launch an agent; the human must
 preview the result and explicitly save it through the ordinary editor.
+
+### sandbox-impl
+
+The sandbox *implementation* — which layer owns OS-level confinement — is
+chosen at spawn and recorded as durable relaunch intent. `sandbox-impl` reads
+and rewrites that record for an agent that already exists, which is how an
+agent spawned before an implementation existed reaches it. The common case is
+moving an older agent onto `resource-only` so its next launch gets a per-agent
+cgroup.
+
+```bash
+tclaude agent sandbox-impl show <agent> [--json]
+tclaude agent sandbox-impl set <agent> <implementation> [--sandbox MODE] [--json]
+                                                        [--ask-human DUR]
+```
+
+There is no self-targeted form, and the agent selector is positional rather
+than the `--target` flag the self-defaulting lifecycle verbs use: the
+implementation is applied by a launch, and the assignment is refused while the
+agent is running (`409 agent_online`). Stop the agent, assign, then wake it.
+
+The dashboard exposes the same operation as **🧩 sandbox implementation…** in
+the agent row menu, which opens a picker listing each implementation with its
+description. The menu item is disabled while the agent is running and says why.
+The dialog reads the durable posture from the server rather than the row it was
+opened from — the row's sandbox fields describe the agent's last *launch*, which
+diverges from relaunch intent as soon as an assignment is recorded.
+
+The recorded harness sandbox **mode** moves with the implementation, because
+the implementation decides what the harness's own sandbox may be —
+`resource-only`, `off` and `tclaude-layer` all derive the mode their launch runs
+under. The mode's attribution becomes `operator sandbox assignment`, since no
+spawn profile chose it.
+
+When the implementation being replaced derived the mode that way, the recorded
+mode is not carried forward: it was an artifact of that implementation, not
+anyone's choice, so the harness's own default is recorded instead. Without that,
+putting an agent back on `harness-builtin` would pair it with the off mode its
+previous implementation forced — an agent with no confinement at all, under the
+command issued to restore some. `--sandbox` pins a mode explicitly.
+
+The assignment runs the gates a launch runs, against the chain that relaunch
+will resolve — not the one recorded at the last launch, which is stale the
+moment a global or group profile changes. So an implementation this harness
+cannot run or this host cannot provide is refused here rather than at wake time,
+as are rules the implementation cannot represent (a `mount_path` outside the
+Linux tclaude-layer) and a ceiling it cannot carry (`off` refuses resource
+limits). Those refusals matter more here than at spawn: a relaunch has no
+equivalent of the dashboard's **allow launch without enforcement** control, so a
+posture that fails them would leave the agent unable to start at all.
+
+An implementation that needs a per-agent cgroup additionally probes that this
+host can create one, by creating and removing the real boundary. A relaunch of a
+ceiling-free boundary deliberately degrades to a notice rather than refusing
+(see [Sandboxing](sandboxing.md#a-cgroup-with-no-ceiling)), so the assignment is
+the only place that refusal is actionable.
+
+The command requires the `agent.sandbox-impl` permission — reads included, on
+the same reasoning that gates sandbox-profile payload reads. Unlike the other
+cross-agent verbs, **group ownership does not confer it**: the assignment can
+move an agent onto an implementation with no access confinement at all, and a
+lead that could do that to a member would walk around the sandbox-lineage guard
+that caps what it can spawn. It is operator policy, like
+`sandbox-profiles.manage`, and is not default-granted.
+
+A reversible dashboard sandbox unlock suspends the durable posture rather than
+replacing it, so an assignment is refused while one is active
+(`409 temporary_sandbox_override`); restore the agent's normal sandbox first.
 
 ### spawn
 
@@ -2041,7 +2283,7 @@ gate group, messaging, template, and permission administration.
 | Family        | Slugs |
 |---------------|-------|
 | `self.*`      | `self.rename`, `self.compact`, `self.clone`, `self.schedule`, `self.remote-control`, `self.task`, `self.pr`, `self.tags`, `self.dir-repair` |
-| `agent.*`     | `agent.rename`, `agent.compact`, `agent.reincarnate`, `agent.clone`, `agent.context-info`, `agent.resume`, `agent.stop`, `agent.delete`, `agent.schedule`, `agent.promote`, `agent.retire`, `agent.remote-control` |
+| `agent.*`     | `agent.rename`, `agent.compact`, `agent.reincarnate`, `agent.clone`, `agent.context-info`, `agent.resume`, `agent.stop`, `agent.delete`, `agent.schedule`, `agent.promote`, `agent.retire`, `agent.remote-control`, `agent.sandbox-impl` (not owner-conferred) |
 | `groups.*`    | `groups.create`, `groups.rm`, `groups.archive`, `groups.stop`, `groups.resume`, `groups.retire`, `groups.spawn`, `groups.own`, `groups.link.add`, `groups.link.rm`, `groups.export`, `groups.import` |
 | `member.*`    | `member.add`, `member.remove`, `member.redesignate` |
 | `permissions.*` | `permissions.grant`, `permissions.revoke` |
@@ -2157,14 +2399,17 @@ for Claude Code, plus both `~/.agents/skills/` and `$CODEX_HOME/skills`
   to publish generated files or directories as downloadable artifacts (a small
   set of files stays separate; a directory or a large set is zipped). An
   attached image gets a thumbnail and an attached `.md` file is rendered in
-  the message, so a written report is worth sending as Markdown.
+  the message, so a written report is worth sending as Markdown. The body may
+  be omitted when `--subject` accompanies `--attach` — the artifact is then
+  the message.
 - **`human-clipboard`** — copy text to the human's system clipboard via
   `tclaude agent clipboard`; the daemon runs the platform copy tool on
   the host. Gated on `human.clipboard` (explicit grant or `--ask-human`
   popup; not owner-implied).
-- **`proxy-git`** — fetch, push, and open GitHub pull requests through
-  `tclaude proxy git` / `tclaude proxy github` when the agent's own sandbox
-  holds no credentials. See [Git & GitHub proxy](git-proxy.md).
+- **`proxy-git`** — fetch, push, open GitHub pull requests, and read back
+  their review comments and CI failure logs through `tclaude proxy git` /
+  `tclaude proxy github` when the agent's own sandbox holds no credentials.
+  See [Git & GitHub proxy](git-proxy.md).
 
 Re-run `tclaude setup --install-agent-skills` after `go install
 …@latest` to refresh the on-disk copies with whatever the new binary

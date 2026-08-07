@@ -75,7 +75,10 @@ func TestDashboardMarkdownImportMap(t *testing.T) {
 // this fails the build if the implementation ever takes the innerHTML shortcut,
 // which would silently turn a document into markup.
 func TestDashboardMarkdownRendersWithoutHTMLInjection(t *testing.T) {
-	for _, name := range []string{"js/markdown-model.js", "js/markdown-document.js", "js/markdown-attachment.js"} {
+	for _, name := range []string{
+		"js/markdown-model.js", "js/markdown-document.js", "js/markdown-attachment.js",
+		"js/markdown-remote-image.js",
+	} {
 		source := dashboardAssetFile(t, name)
 		for _, forbidden := range []string{"innerHTML", "insertAdjacentHTML", "dangerouslySetInnerHTML", ".render("} {
 			if strings.Contains(source, forbidden) {
@@ -105,8 +108,16 @@ func TestDashboardMarkdownViewerWired(t *testing.T) {
 	// it must come from, so pinning the import statement's exact spelling would
 	// only break on a reformat.
 	for _, name := range []string{"js/groups-notification-reader.js", "js/mail-island.js"} {
-		if !strings.Contains(dashboardAssetFile(t, name), "MarkdownAttachment") {
+		source := dashboardAssetFile(t, name)
+		if !strings.Contains(source, "MarkdownAttachment") {
 			t.Errorf("%s does not render published Markdown documents", name)
+		}
+		// Without the sibling list a document cannot resolve `![map](map.png)`
+		// against the image published beside it, and every such reference
+		// silently degrades to alt text on that surface only.
+		if !strings.Contains(source, "siblings=") {
+			t.Errorf("%s renders documents without the notification's other files, "+
+				"so an attached image cannot be shown inline", name)
 		}
 	}
 
@@ -125,6 +136,7 @@ func TestDashboardMarkdownViewerWired(t *testing.T) {
 		".markdown-preview-dialog {", ".markdown-document {",
 		".markdown-attachment-document {", ".human-attachment-markdown-trigger {",
 		".markdown-preview-mode {", ".markdown-preview-document {",
+		".markdown-remote-image {", ".markdown-remote-image-notice {",
 	} {
 		if !strings.Contains(css, rule) {
 			t.Errorf("dashboard CSS is missing the %s rule", rule)

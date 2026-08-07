@@ -226,7 +226,7 @@ func redactPolicy(argv []string) string {
 // TestCopilotNativeSandboxGeneratedLinuxPolicy records the policy and asserts
 // the four properties that would decide how tclaude could describe it.
 func TestCopilotNativeSandboxGeneratedLinuxPolicy(t *testing.T) {
-	requireSmoke(t)
+	requireLab(t)
 	if runtime.GOOS != "linux" {
 		t.Skipf("the bubblewrap backend is Linux-only; the darwin Seatbelt profile "+
 			"needs a `sandbox-exec` shim this scenario does not implement (GOOS=%s)",

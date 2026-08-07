@@ -67,7 +67,7 @@ func nativeSandboxFlagPosture(t *testing.T, dirs nativeSandboxDirs, enabled bool
 // that starts listing the flags in `--help` is a release where the feature may
 // have left experimental, which is one of the recorded revisit triggers.
 func TestCopilotNativeSandboxSessionFlagsAreAccepted(t *testing.T) {
-	requireSmokeParallel(t)
+	requireLabParallel(t)
 
 	t.Run("hidden-from-help", func(t *testing.T) {
 		help, err := exec.Command("copilot", "--no-auto-update", "--no-color", "--help").
@@ -143,7 +143,7 @@ func TestCopilotNativeSandboxSessionFlagsAreAccepted(t *testing.T) {
 // "disabled + --sandbox + --experimental enforced" would be consistent with
 // experimental features enabling the sandbox by themselves.
 func TestCopilotNativeSandboxSessionFlagsNeedExperimental(t *testing.T) {
-	requireSmokeParallel(t)
+	requireLabParallel(t)
 
 	for _, testCase := range []struct {
 		name string
@@ -227,7 +227,7 @@ func TestCopilotNativeSandboxSessionFlagsNeedExperimental(t *testing.T) {
 // lives on exactly that path, and neither `--autopilot` nor `--yolo` reproduces
 // it at launch here.
 func TestCopilotNativeSandboxAllowBypassDemotesEnforcementToAPrompt(t *testing.T) {
-	requireSmokeParallel(t)
+	requireLabParallel(t)
 
 	// The result text of a bypass request that reached nobody. Matched rather
 	// than the sandbox marker because the whole finding is that the two are
@@ -317,7 +317,7 @@ func TestCopilotNativeSandboxAllowBypassDemotesEnforcementToAPrompt(t *testing.T
 // above), so a non-experimental run would establish only that a no-op writes
 // nothing — which is true of every unknown flag and says nothing about these.
 func TestCopilotNativeSandboxSessionFlagsDoNotPersist(t *testing.T) {
-	requireSmokeParallel(t)
+	requireLabParallel(t)
 
 	for _, testCase := range []struct {
 		name            string

@@ -293,6 +293,11 @@ var permissionRegistry = []PermSlug{
 			"Group owners can toggle members of groups they own without this slug.",
 	},
 	{
+		Slug: PermAgentSandboxImplementation,
+		Description: "Assign the durable sandbox implementation an EXISTING offline agent relaunches under (tclaude agent sandbox-impl set). " +
+			"It can move an agent onto an implementation with no OS-level access confinement, so group ownership does NOT confer it and it is not default-granted (effectively human-only).",
+	},
+	{
 		Slug:       PermAgentInboxWatch,
 		OwnerScope: ownerScopeMember,
 		Description: "Watch ANOTHER agent's inbox — a live read of messages addressed to it. " +
@@ -397,9 +402,10 @@ var permissionRegistry = []PermSlug{
 	},
 	{
 		Slug: PermGitHubRead,
-		Description: "Read GitHub pull requests and issues through the daemon's gh credentials (tclaude proxy github pr ls/view/checks, " +
-			"issue ls/view). Restricted to the repository the agent's own remote resolves to, and only when that remote is on the " +
-			"operator's allow-list. Not default-granted: it reads private repository data as the operator.",
+		Description: "Read GitHub pull requests, issues and CI results through the daemon's gh credentials (tclaude proxy github " +
+			"pr ls/view/checks/comments, issue ls/view, run ls/log-failed). Restricted to the repository the agent's own remote " +
+			"resolves to, and only when that remote is on the operator's allow-list. Not default-granted: it reads private " +
+			"repository data as the operator.",
 	},
 	{
 		Slug: PermGitHubWrite,

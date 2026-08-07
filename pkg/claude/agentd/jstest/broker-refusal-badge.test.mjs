@@ -154,7 +154,7 @@ test('the machine-level notice reports refusals a badge may not show', async (t)
   const mount = async (snapshot) =>
     harness.mount(harness.html`<${BrokerRefusalNotice} snapshot=${snapshot} />`);
 
-  await t.test('it appears once the daemon has refused an unplaceable caller', async () => {
+  await t.test('it appears once an unplaceable caller repeats', async () => {
     const mounted = await mount({ broker_refusals_total: 7, broker_refusals_unplaceable: 7 });
     try {
       const el = mounted.container.querySelector('.broker-refusal-notice');
@@ -164,6 +164,15 @@ test('the machine-level notice reports refusals a badge may not show', async (t)
       // The counter alone is not actionable; the daemon log is where the
       // caller pid is, and that pointer is the whole value of the notice.
       assert.match(el.textContent, /daemon log/);
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  await t.test('one unplaceable callback during teardown stays quiet', async () => {
+    const mounted = await mount({ broker_refusals_total: 1, broker_refusals_unplaceable: 1 });
+    try {
+      assertAbsent(mounted.container.querySelector('.broker-refusal-notice'));
     } finally {
       await mounted.unmount();
     }
@@ -209,7 +218,7 @@ test('the machine-level notice reports refusals a badge may not show', async (t)
     // on the operator's screen — the same reason it is not allowed to
     // decide which row gets a badge. A snapshot carrying hostile-looking
     // siblings must change nothing about what is rendered.
-    const clean = { broker_refusals_total: 1, broker_refusals_unplaceable: 1 };
+    const clean = { broker_refusals_total: 1, broker_refusals_unplaceable: 0 };
     const hostile = {
       ...clean,
       claimed_session_id: 'spwn-PEER-VICTIM',

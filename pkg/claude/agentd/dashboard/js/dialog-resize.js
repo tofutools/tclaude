@@ -59,7 +59,11 @@ function loadSize(prefKey) {
     if (saved && typeof saved === 'object') {
       const w = Number(saved.w);
       const h = Number(saved.h);
-      if (w > 0 && h > 0) return { w: Math.max(MIN_W, w), h: Math.max(MIN_H, h) };
+      // Finite as well as positive: "Infinity" survives Number() and > 0, and
+      // would reach the stylesheet as the custom property `Infinitypx`.
+      if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
+        return { w: Math.max(MIN_W, w), h: Math.max(MIN_H, h) };
+      }
     }
   } catch {
     // Missing or corrupt — the CSS default stands.

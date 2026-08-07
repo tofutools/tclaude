@@ -3112,6 +3112,6 @@ func bwrapCommand(
 	}
 	// Harness spawners return a safe shell command rather than argv. Keep that
 	// contract intact inside the namespace instead of reparsing it here.
-	command += " -- /bin/sh -c " + clcommon.ShellQuoteArg(harnessCommand)
+	command += sandboxExecShellPrefix() + clcommon.ShellQuoteArg(harnessCommand)
 	return command, nil
 }

@@ -76,6 +76,13 @@ export function createActionDialogState() {
     openExport({ conv, label = '' }) {
       return !!open({ kind: 'agent-export', conv, label });
     },
+    // The dialog deliberately carries no current implementation: the row's
+    // recorded value comes from the last LAUNCH, while what this dialog edits is
+    // durable relaunch intent, and those differ the moment an assignment lands.
+    // It loads the authoritative posture itself when it opens.
+    openSandboxImpl({ conv, label = '', harness = '' }) {
+      return !!open({ kind: 'sandbox-impl', conv, label, harness });
+    },
     openTerminalDirectory({ label = '' }) {
       return openChoice({ kind: 'terminal-directory', label });
     },

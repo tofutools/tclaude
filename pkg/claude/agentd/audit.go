@@ -288,17 +288,32 @@ var (
 		"fetch":     true,
 		"push":      true,
 	}
+	// auditedGitHubProxyVerbs must name EVERY /v1/github/{resource}/{action}
+	// route the mux registers. A route missing here is not merely unlabelled:
+	// describeGitHubProxy clears the verb, and recordAuditRow drops any row
+	// whose verb is empty — so the call runs, spends the operator's GitHub
+	// credential, and leaves nothing in the audit log.
+	//
+	// That is exactly what the reads are POSTs to prevent (see the header
+	// comment in githubproxy_handlers.go), and it is a silent failure: the
+	// handler still computes an audit detail via setAuditDetail, which is then
+	// thrown away with the row. TestAuditCoversEveryGitHubProxyRoute pins the
+	// map against the routes serve.go actually registers, because three
+	// consecutive additions slipped through without it.
 	auditedGitHubProxyVerbs = map[string]bool{
-		"pr.create":     true,
-		"pr.list":       true,
-		"pr.view":       true,
-		"pr.checks":     true,
-		"pr.comment":    true,
-		"pr.edit":       true,
-		"pr.ready":      true,
-		"issue.list":    true,
-		"issue.view":    true,
-		"issue.comment": true,
+		"pr.create":      true,
+		"pr.list":        true,
+		"pr.view":        true,
+		"pr.checks":      true,
+		"pr.comment":     true,
+		"pr.comments":    true,
+		"pr.edit":        true,
+		"pr.ready":       true,
+		"issue.list":     true,
+		"issue.view":     true,
+		"issue.comment":  true,
+		"run.list":       true,
+		"run.log-failed": true,
 	}
 )
 
@@ -859,6 +874,12 @@ var auditedAgentVerbs = map[string]bool{
 	"retire":         true,
 	"reinstate":      true,
 	"notify":         true,
+	// A durable rewrite of which layer confines an agent — including onto one
+	// with no access confinement at all. That is precisely the kind of change an
+	// operator reconstructing "when did this agent stop being sandboxed" needs to
+	// find, and the /v1 route reserves it to a non-owner-conferred slug for the
+	// same reason.
+	"sandbox-impl": true,
 }
 
 func describeAgentVerb(c *auditCtx) {

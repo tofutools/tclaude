@@ -18,21 +18,44 @@ import (
 
 // smokeEnv gates every test in this file. Plain `go test ./...` therefore runs
 // the pure unit tests in this package but never launches the installed binary:
-// a real-CLI run needs a pinned npm install that most developer machines and
-// most CI jobs do not have, and silently skipping is better than failing for
-// an absent dependency. The dedicated CI job sets it and then greps for an
-// explicit PASS so that a skip cannot masquerade as coverage.
+// a real-CLI run needs an npm install that most developer machines and most CI
+// jobs do not have, and silently skipping is better than failing for an absent
+// dependency. The CI jobs that DO set it then grep for an explicit PASS so
+// that a skip cannot masquerade as coverage.
 const smokeEnv = "TCLAUDE_COPILOT_FIXTURE_SMOKE"
+
+// labEnv separates the two things this package is used for, which used to be
+// one thing and should not have been.
+//
+// Unset — REGRESSION mode. The small per-PR set runs: scenarios where
+// tclaude's OWN code meets the real CLI (our spawner's argv, our trust seeder,
+// our hook file, our conv-store, our ask capture). These assert behaviour, so
+// they are true of any Copilot release that still honours the contract, and
+// they neither assert the version pin nor diff a golden. That is what lets the
+// per-PR job track an npm spec the way every other harness's job does instead
+// of being welded to one release.
+//
+// Set to 1 — LAB mode. The full discovery suite from TCL-970 and friends,
+// which measures COPILOT's own behaviour (permission grammar, native sandbox
+// flags, wire shape, platform cache layout) rather than ours. That evidence is
+// only meaningful against a known release, so this mode asserts the pin and
+// diffs the committed goldens. It is what to run when bumping the CLI: the
+// resulting diff IS the compatibility evidence.
+const labEnv = "TCLAUDE_COPILOT_FIXTURE_LAB"
 
 var update = flag.Bool("update", false, "re-record sanitized Copilot fixtures")
 
+// labMode reports whether this run is pinned discovery rather than per-PR
+// regression. Re-recording is inherently a lab act, so -update implies it.
+func labMode() bool { return os.Getenv(labEnv) == "1" || *update }
+
 // installedVersion runs `copilot --version` once per test binary.
 //
-// The pin is asserted before EVERY scenario, which is the right guarantee and
-// was the wrong implementation: the answer cannot change while a single test
-// binary runs — the binary on PATH is fixed for the process — so re-launching
-// Node once per test bought nothing and cost half a second each time, on a
-// suite with seventy of them.
+// The pin is asserted before EVERY lab scenario, which is the right guarantee
+// and was the wrong implementation: the answer cannot change while a single
+// test binary runs — the binary on PATH is fixed for the process — so
+// re-launching Node once per test bought nothing and cost half a second each
+// time, on a suite with seventy of them.
 var installedVersion = sync.OnceValues(func() (string, error) {
 	out, err := exec.Command("copilot", "--version").CombinedOutput()
 	return string(out), err
@@ -41,17 +64,47 @@ var installedVersion = sync.OnceValues(func() (string, error) {
 func requireSmoke(t *testing.T) {
 	t.Helper()
 	if os.Getenv(smokeEnv) != "1" {
-		t.Skipf("set %s=1 with %s installed to run the Copilot fixture smoke",
-			smokeEnv, copilotfixture.PinnedCLISpec)
+		t.Skipf("set %s=1 with the Copilot CLI installed to run the Copilot fixture smoke",
+			smokeEnv)
 	}
-	// The pin is asserted before any scenario runs, so goldens can never be
-	// compared against — or re-recorded from — an unintended release.
+	if !labMode() {
+		// Regression mode: the assertions below this call are behavioural, so
+		// pinning the release would only convert an upstream publish into a
+		// red PR without telling us anything about our own code.
+		return
+	}
+	// Lab mode: the pin is asserted before any scenario runs, so goldens can
+	// never be compared against — or re-recorded from — an unintended release.
 	out, err := installedVersion()
 	require.NoError(t, err, "running `copilot --version`")
 	require.Contains(t, out, copilotfixture.VersionBanner,
-		"pinned Copilot CLI version drift: fixtures describe %s only. "+
-			"Install the pin, or bump PinnedCLIVersion and re-record with -update "+
-			"so the contract diff gets reviewed.", copilotfixture.PinnedCLIVersion)
+		"pinned Copilot CLI version drift: lab fixtures describe %s only. "+
+			"Install %s, or bump PinnedCLIVersion and re-record with -update "+
+			"so the contract diff gets reviewed.",
+		copilotfixture.PinnedCLIVersion, copilotfixture.PinnedCLISpec)
+}
+
+// requireLab skips a scenario that is discovery rather than regression.
+//
+// These measure the CLI's own behaviour against a pinned release, so running
+// them per-PR would re-prove a third-party binary that cannot have changed
+// since the previous push. They stay in-tree and run from the on-demand lab
+// workflow, which is also where a version bump re-reads them.
+func requireLab(t *testing.T) {
+	t.Helper()
+	requireSmoke(t)
+	if !labMode() {
+		t.Skipf("discovery scenario: set %s=1 (with the pinned %s) to run the lab suite",
+			labEnv, copilotfixture.PinnedCLISpec)
+	}
+}
+
+// requireLabParallel is requireLab for a lab scenario safe to run alongside
+// the rest of the suite. See requireSmokeParallel for what "safe" excludes.
+func requireLabParallel(t *testing.T) {
+	t.Helper()
+	requireLab(t)
+	t.Parallel()
 }
 
 // requireSmokeParallel is requireSmoke for a scenario that may run alongside
@@ -93,7 +146,7 @@ func requireSmokeParallel(t *testing.T) {
 // TestCopilotVersionPin is the cheapest drift signal: it fails the moment the
 // installed CLI stops being the version the goldens describe.
 func TestCopilotVersionPin(t *testing.T) {
-	requireSmokeParallel(t)
+	requireLabParallel(t)
 }
 
 // TestCopilotEffortVocabularyHelp compares the actual pinned CLI help with
@@ -101,7 +154,7 @@ func TestCopilotVersionPin(t *testing.T) {
 // so this is the evidence bridge from Copilot's advertised surface to the
 // per-harness values tclaude accepts.
 func TestCopilotEffortVocabularyHelp(t *testing.T) {
-	requireSmokeParallel(t)
+	requireLabParallel(t)
 
 	live, err := exec.Command("copilot", "--no-auto-update", "--no-color", "--help").CombinedOutput()
 	require.NoError(t, err, "running `copilot --help`")
@@ -115,7 +168,7 @@ func TestCopilotEffortVocabularyHelp(t *testing.T) {
 // excerpt, so this is the evidence bridge from Copilot's documented concrete
 // model ids to the dropdown suggestions tclaude exposes.
 func TestCopilotModelVocabularyHelp(t *testing.T) {
-	requireSmokeParallel(t)
+	requireLabParallel(t)
 
 	live, err := exec.Command("copilot", "--no-auto-update", "--no-color", "help", "config").CombinedOutput()
 	require.NoError(t, err, "running `copilot help config`")
@@ -194,7 +247,7 @@ func TestCopilotToolCallRoundTrip(t *testing.T) {
 // 429 → 6 requests over ~100s. A fixture built on 500 or 429 would spend
 // essentially all its runtime in backoff for no extra evidence.
 func TestCopilotProviderFailure(t *testing.T) {
-	requireSmokeParallel(t)
+	requireLabParallel(t)
 
 	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{
 		{FailStatus: 400},
@@ -282,7 +335,7 @@ func TestCopilotSessionEnrollmentAndResume(t *testing.T) {
 // string, and the response is a named-event SSE sequence that terminates at
 // response.completed with no [DONE] sentinel. Both halves are exercised here.
 func TestCopilotReasoningEffortOnResponsesWire(t *testing.T) {
-	requireSmokeParallel(t)
+	requireLabParallel(t)
 
 	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{
 		{Text: "MOCK RESPONSES ANSWER"},
@@ -317,7 +370,7 @@ func TestCopilotReasoningEffortOnResponsesWire(t *testing.T) {
 // effort this is observable on the default wire, and it needs no subscription:
 // the wire model is simply whatever the CLI was told to ask for.
 func TestCopilotModelSelection(t *testing.T) {
-	requireSmokeParallel(t)
+	requireLabParallel(t)
 
 	const override = "copilotfixture-override-model"
 	mock := copilotfixture.NewMockProvider(t, []copilotfixture.Turn{{Text: "MOCK OK"}})
@@ -429,6 +482,17 @@ func compareGolden(
 	pinnedSessionIDs ...string,
 ) {
 	t.Helper()
+	if !labMode() {
+		// Regression mode. A golden is a byte-level record of ONE release's
+		// wire shape — it is the reason this package needed a version pin at
+		// all — so diffing it per-PR would make an upstream publish look like
+		// our regression. Every caller of this helper carries its own named
+		// behavioural assertions (exit code, credential-free traffic, message
+		// roles, x-initiator, the session id being honoured), and those are
+		// what the per-PR set is actually for. The byte diff is lab evidence
+		// and runs there.
+		return
+	}
 	sanitizer := newSanitizer(dirs)
 	// A scenario-chosen id gets its own placeholder, so the golden records
 	// that enrollment was honoured instead of flattening it to <uuid>.

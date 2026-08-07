@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -150,7 +151,7 @@ func TestResumeLaunchCmd_ResourceOnlyResumesOverAGlobTheMaterializerWouldRefuse(
 	setupTestDB(t)
 	clearAmbientResumeOverride(t)
 
-	dir := filepath.Join(t.TempDir(), "sockets")
+	dir := filepath.Join(agentipctest.ShortSocketDir(t), "sockets")
 	require.NoError(t, os.Mkdir(dir, 0o755))
 	listener, err := net.Listen("unix", filepath.Join(dir, "agent.sock"))
 	require.NoError(t, err)

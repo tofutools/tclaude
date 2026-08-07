@@ -10,9 +10,17 @@ func TestHumanNotificationAttentionAssetsAreWired(t *testing.T) {
 		asset  string
 		needle string
 	}{
-		"member row":      {"js/groups-member-table.js", "human-notification-attention"},
-		"hover preview":   {"js/groups-member-table.js", "human-notification-preview"},
-		"preview a11y":    {"js/groups-member-table.js", "aria-describedby"},
+		"member row":    {"js/groups-member-table.js", "human-notification-attention"},
+		"hover preview": {"js/groups-member-table.js", "human-notification-preview"},
+		"preview a11y":  {"js/groups-member-table.js", "aria-describedby"},
+		// A notification may carry a subject and an attachment but no body. Every
+		// surface that shows a body must say the emptiness is deliberate rather
+		// than leaving a blank gap (or, in the hover preview, calling it empty).
+		"bodiless copy":   {"js/human-attachments.js", "the attached file is the notification"},
+		"bodiless hover":  {"js/groups-member-table.js", "bodilessNotice(message)"},
+		"bodiless reader": {"js/mail-island.js", "bodilessNotice(message)"},
+		"bodiless drawer": {"js/groups-notification-reader.js", "bodilessNotice(message)"},
+		"bodiless style":  {"dashboard.css", ".notification-bodiless"},
 		"group bots":      {"js/groups-list.js", "human-notification-hint"},
 		"global bots":     {"js/shell-island.js", "human-notification-hint"},
 		"reader launch":   {"js/human-notification-attention.js", "tclaude:open-human-notification"},

@@ -133,20 +133,23 @@ with no confinement at all (see below). They do not make the guest report a
 smaller machine;
 interfaces such as `/proc/meminfo` may still describe host memory.
 
-Leaving both fields blank preserves the previous launch path exactly: tclaude
-does not probe controllers, create a cgroup, or add a wrapper. Configured limits
-are Linux-only in this MVP. A macOS launch, an `off` implementation, or a Linux
-host without usable delegated cgroup v2 controllers refuses by default. The
-dashboard's existing **allow launch without enforcement** checkbox is the
-operator-controlled escape hatch and records a visible degradation notice.
+Leaving both fields blank preserves the previous launch path exactly — tclaude
+does not probe controllers, create a cgroup, or add a wrapper — for every
+implementation except `resource-only`, which creates the cgroup either way (see
+"A cgroup with no ceiling" below). Configured limits are Linux-only in this MVP.
+A macOS launch, an `off` implementation, or a Linux host without usable delegated
+cgroup v2 controllers refuses by default. The dashboard's existing **allow launch
+without enforcement** checkbox is the operator-controlled escape hatch and
+records a visible degradation notice.
 
 ### Limits without confinement: the `resource-only` implementation
 
 `resource-only` is the sandbox implementation for operators who want a per-agent
-CPU/memory budget and no access confinement at all. It creates and joins the
-same cgroup every other implementation uses, and it uses no bubblewrap, no
-namespaces, and no harness-native sandbox: the harness launches under its own
-no-confinement mode, exactly as under `off`.
+cgroup — a CPU/memory budget, or just the accounting boundary — and no access
+confinement at all. It creates and joins the same cgroup every other
+implementation uses, and it uses no bubblewrap, no namespaces, and no
+harness-native sandbox: the harness launches under its own no-confinement mode,
+exactly as under `off`.
 
 Reach for it when the goal is blast-radius control rather than confinement — a
 runaway browser or build under one agent should not be able to exhaust host
@@ -159,13 +162,64 @@ want no wall; `resource-only` trades confinement away, it does not add anything
 
 The two unconfined implementations differ on exactly one axis:
 
-| | access confinement | `resource_limits` |
-|---|---|---|
-| `off` | none | refused |
-| `resource-only` | none | enforced in a per-launch cgroup |
+| | access confinement | `resource_limits` | with no limits authored |
+|---|---|---|---|
+| `off` | none | refused | nothing |
+| `resource-only` | none | enforced in a per-launch cgroup | per-launch cgroup, no ceiling |
 
 `off` keeps meaning "tclaude enforces nothing here", which is why it refuses
 limits rather than quietly applying them.
+
+#### A cgroup with no ceiling
+
+`resource-only` with no `resource_limits` authored anywhere in the chain is not a
+no-op — that spelling exists for the cgroup itself, so the launch gets the
+boundary without a ceiling. What that buys:
+
+- per-agent accounting: `memory.current`, `memory.peak` and `cpu.stat` for the
+  whole workload tree, under a cgroup named for the session (`pids.current` too,
+  but only where the delegation carries the `pids` controller — the
+  `Delegate=cpu memory` prescribed below does not);
+- OOM attribution: `memory.events`' `oom_kill` counter includes kills by the
+  *host* OOM killer, so tclaude's `resource_limit_oom` exit reason fires for an
+  agent the host killed under memory pressure, not only for one that hit its own
+  `memory.max`;
+- a kill handle for every process the agent started, however it daemonized.
+
+The `memory`, `cpu` and `pids` controllers are enabled in the delegated parent
+so those counters exist. Unlike a ceiling, a controller the delegation does not
+carry is *not* a refusal here: it costs visibility, not enforcement, so the
+launch proceeds and logs which counters are unavailable. Note that enabling a
+controller in the shared delegated parent turns it on for every workload cgroup
+under it, so sibling launches gain the same counters (and their own untouched
+`memory.max`/`cpu.max` files) whether or not they asked.
+
+The cgroup itself is required on a fresh launch. If the host cannot create it —
+no delegated subtree, an undelegated hierarchy root — the launch is refused with
+the error naming the missing delegation, exactly as for a ceiling, and **allow
+launch without enforcement** is the same escape hatch. A launch that asked for a
+boundary and quietly got none is indistinguishable from one that never tried.
+
+A **relaunch** of a boundary with no ceiling degrades instead: it proceeds without
+the cgroup and records a `resource_cgroup_unavailable` notice naming what is
+missing. Refusing there would make an agent already recorded as `resource-only`
+permanently unlaunchable, because the launch override is a fresh-spawn control
+with no relaunch equivalent. "Relaunch" covers a resume, a reincarnated successor
+and a no-copy clone — the last two fork a launch with no `-r`, so they carry an
+explicit continuation marker instead. A ceiling still fails closed on all of
+them.
+
+One seam is still outside this: `tclaude conv resume` (and watch-mode
+auto-resume) launches without creating or joining a cgroup at all, so a
+`resource-only` conversation resumed that way runs unbounded with no notice. That
+predates the accounting boundary — it applies to authored ceilings too — and is
+tracked separately.
+
+This changed behavior: before, `resource-only` with no limits silently created
+nothing and was indistinguishable from `off`. A conversation recorded that way
+now creates its cgroup where the host allows it, refuses a fresh launch where it
+does not, and discloses the gap on a resume. Off Linux the implementation is
+still refused outright, as it always was.
 
 A `resource-only` launch still resolves the sandbox-profile chain, because that
 chain is what carries `resource_limits`. The chain is the whole stack — global,
@@ -197,6 +251,43 @@ sandbox** action. That action trades access confinement away, and this
 implementation has none to trade — the only thing it would remove is the
 CPU/memory ceiling, which is the opposite of what the action means.
 
+#### Moving an existing agent onto it
+
+An agent that predates `resource-only` — or any agent spawned under a different
+implementation — can be moved onto it without being recreated:
+
+```bash
+tclaude agent stop <agent>
+tclaude agent sandbox-impl set <agent> resource-only
+tclaude agent resume <agent>
+```
+
+or, in the dashboard, **🧩 sandbox implementation…** in the agent's row menu —
+disabled while the agent is running, and it opens a picker listing each
+implementation with its description.
+
+The implementation is durable relaunch intent, so the assignment takes effect on
+the next launch and is refused while the agent is running. The recorded harness
+sandbox mode moves with it (`resource-only` stands the harness's own wall down),
+and the mode's attribution becomes `operator sandbox assignment` rather than
+whichever spawn tier chose the mode it replaced.
+
+The assignment is validated against the chain the relaunch will resolve, not the
+one recorded at the last launch, and it runs the same gates that launch runs —
+including the one that refuses `off` for a chain carrying a ceiling. Passing
+those gates at assignment time is what keeps a recorded posture from being one
+every later wake fails closed on.
+
+The cgroup itself is probed too, by creating and removing the real boundary. That
+check exists because the launch this assignment takes effect on is a *relaunch*,
+which degrades a ceiling-free boundary to a notice rather than refusing — so
+without probing here, an operator on an undelegated host would record a boundary
+and silently get nothing.
+
+See [Agent coordination → sandbox-impl](agent.md#sandbox-impl) for the full
+command and the `agent.sandbox-impl` permission (which group ownership
+deliberately does not confer).
+
 When agentd is run as a systemd service, its unit must delegate the required
 controllers to an otherwise empty parent. With systemd 254 or newer, configure
 `Delegate=cpu memory`, `DelegateSubgroup=tclaude-supervisor`, and
@@ -204,6 +295,47 @@ controllers to an otherwise empty parent. With systemd 254 or newer, configure
 siblings and leaves the delegated unit node process-free. A delegation or
 controller failure is reported at launch with an actionable error; tclaude
 never widens a configured limit without the explicit operator override.
+
+`DelegateSubgroup=` only places the main process systemd forks itself, so it has
+no effect on a **scope**: a scope's processes are started by something else and
+merely registered into it, and systemd never moves them. An agentd brought up
+inside a `systemd-run --scope` wrapper alongside its tmux server therefore leaves
+the delegated node holding processes, and cgroup v2 refuses to enable controllers
+in a node that is not process-free — reported as `EBUSY` ("device or resource
+busy") on `cgroup.subtree_control`. Either run agentd as a real service unit, or
+create the scope with `Delegate=` as usual and have the launcher move itself into
+the subgroup before starting anything else, so every later process inherits it
+(the move needs that delegation; without it the `mkdir` is refused outright):
+
+```sh
+cg=/sys/fs/cgroup$(sed -n 's|^0::||p' /proc/self/cgroup)
+mkdir -p "$cg/tclaude-supervisor"
+echo $$ > "$cg/tclaude-supervisor/cgroup.procs"
+```
+
+The subgroup name is what the derivation below looks for, so it must be exactly
+`tclaude-supervisor`.
+
+Panes also have to write their own PID into the workload cgroup's
+`cgroup.procs`, which a mandatory access control policy can deny even where the
+subtree is correctly delegated and the permission bits allow it. Under AppArmor
+that is a rule on the pane's profile — and on a stacked profile it must be
+present in every profile of the stack, since a stack permits only what all of
+them permit.
+
+Without such a unit, agentd derives the delegated parent from its own
+`/proc/self/cgroup`. Inside a container or an unshared cgroup namespace the
+unified path reads `/`, so that derivation resolves to the root of whatever is
+mounted at `/sys/fs/cgroup`. That works only where the namespace's own cgroup
+root is delegated and writable, as it is for systemd in a container with a
+private cgroup namespace. It does not work where the host hierarchy is mounted
+into the namespace instead — a bubblewrap sandbox binding the host
+`/sys/fs/cgroup` under `--unshare-cgroup`, for example: the derived root is
+root-owned, and the kernel's `nsdelegate` refuses writes to every cgroup outside
+the namespace root, so no other path under that mount serves either. A launch in
+that state fails with an error naming the cause; run agentd outside the cgroup
+namespace as the unit above, or give the namespace a delegated, writable cgroup
+root.
 
 For deployments where tmux panes must survive agentd service upgrades, put the
 `-L tclaude` tmux server in a separate, long-lived systemd unit with

@@ -763,6 +763,10 @@ button.tool:hover { border-color: #58a6ff; }
    the reader instead of forcing a horizontal scroll. */
 .mail-reader-body a { color: #58a6ff; text-decoration: none; overflow-wrap: anywhere; }
 .mail-reader-body a:hover { text-decoration: underline; }
+/* Stands where the body would be when a notification deliberately has none
+   (`notify-human --subject … --attach …`, where the file IS the message).
+   Muted and italic so it reads as the reader speaking, not as agent text. */
+.notification-bodiless { color: #7d8590; font-style: italic; }
 .mail-attachment { margin-top: 14px; padding: 10px 12px; border: 1px solid #30363d; border-radius: 6px; display: flex; align-items: center; flex-wrap: wrap; gap: 9px; background: #0d1117; }
 .mail-attachment-label { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
 .mail-attachment a { color: #58a6ff; font-weight: 600; text-decoration: none; overflow-wrap: anywhere; }
@@ -1583,6 +1587,42 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 }
 .markdown-document pre code { padding: 0; border-radius: 0; background: none; font-size: 12px; }
 .markdown-document img { max-width: 100%; height: auto; border-radius: 5px; }
+
+/* A remote image the operator has not asked for yet. Inline-level throughout,
+   because an image lives inside a paragraph. */
+.markdown-remote-image {
+  display: inline-flex; align-items: center; gap: 9px; max-width: 100%;
+  margin: 2px 0; padding: 7px 9px; border: 1px dashed #3d4a58; border-radius: 6px;
+  background: rgba(13, 17, 23, .6); vertical-align: middle;
+}
+.markdown-remote-image[data-failed="true"] { border-color: #6a3d3d; }
+.markdown-remote-image-icon { flex: 0 0 auto; color: #8b949e; font-size: 15px; }
+.markdown-remote-image-text {
+  display: flex; flex-direction: column; gap: 1px; min-width: 0; overflow: hidden;
+}
+.markdown-remote-image-text strong {
+  overflow: hidden; color: #c9d1d9; font-size: 12px; font-weight: 600;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.markdown-remote-image-text > span {
+  overflow: hidden; color: #8b949e; font-size: 11px;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.markdown-remote-image-load, .markdown-remote-image-notice-load {
+  flex: 0 0 auto; padding: 4px 9px; border: 1px solid #1f6feb; border-radius: 4px;
+  background: #21262d; color: #58a6ff; cursor: pointer; font: inherit; font-size: 11px;
+}
+.markdown-remote-image-load:hover, .markdown-remote-image-load:focus-visible,
+.markdown-remote-image-notice-load:hover, .markdown-remote-image-notice-load:focus-visible {
+  background: rgba(31, 111, 235, .14);
+}
+.markdown-remote-image-loaded { max-width: 100%; height: auto; border-radius: 5px; }
+.markdown-remote-image-notice {
+  display: flex; align-items: center; gap: 10px; margin: 0 0 13px;
+  padding: 8px 11px; border: 1px solid #30363d; border-radius: 6px;
+  background: rgba(22, 27, 34, .7);
+}
+.markdown-remote-image-notice-text { flex: 1; min-width: 0; color: #8b949e; font-size: 11.5px; }
 .markdown-document table {
   margin: 0 0 13px; border-collapse: collapse; display: block;
   max-width: 100%; overflow-x: auto; font-size: 12.5px;
@@ -4066,6 +4106,59 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
   background: #4d1d1d; border-color: #f85149; color: #f85149;
 }
 .modal-buttons button.confirm-danger:hover { background: #f85149; color: #fff; }
+
+/* Sandbox-implementation assignment dialog (small-dialog-components.js). It
+   rides the plain .modal skin rather than .cron-create-modal, so it lives here
+   beside that skin's own rules and re-states the three things .modal does not
+   give it: a scroll container, a wider label column, and .primary.
+
+   A radio list rather than a <select> because each implementation trades a
+   different thing away, and the catalog descriptions are what make that
+   legible — a select would hide them behind the closed control. */
+#sandbox-impl-modal .modal {
+  max-width: 560px;
+  /* .modal has no height bound, and .modal-overlay centres without scrolling,
+     so a list this tall would push its own buttons past the viewport on a
+     laptop with no way to reach them. */
+  max-height: 86vh; overflow-y: auto;
+  /* .cron-create-modal defines --cron-label-w; under .modal the shared field
+     rows fall back to the 72px literal, which wraps "Harness sandbox mode"
+     across three lines. */
+  --cron-label-w: 148px;
+}
+.sandbox-impl-loading { margin: 8px 0; font-size: 12px; color: #7d8590; }
+#sandbox-impl-options { display: flex; flex-direction: column; gap: 5px; margin: 10px 0 4px; }
+.sandbox-impl-option {
+  display: flex; align-items: flex-start; gap: 9px; padding: 7px 9px;
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px; cursor: pointer;
+}
+.sandbox-impl-option:hover { border-color: #3b4b5f; }
+.sandbox-impl-option.selected { border-color: #58a6ff; background: #10202f; }
+.sandbox-impl-option input[type=radio] { margin: 2px 0 0; flex: 0 0 auto; }
+.sandbox-impl-option-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sandbox-impl-option-name {
+  font-family: ui-monospace, monospace; font-size: 12px; color: #e6edf3;
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.sandbox-impl-option-label { font-size: 11.5px; color: #c9d1d9; }
+.sandbox-impl-option-descr { font-size: 11px; color: #8b949e; line-height: 1.45; }
+.sandbox-impl-tag {
+  font-family: ui-sans-serif, system-ui, sans-serif; font-size: 10px; color: #3fb950;
+  border: 1px solid #2c4b33; border-radius: 8px; padding: 0 6px;
+}
+.sandbox-impl-tag.warn { color: #e3a008; border-color: #6b4f1d; }
+.sandbox-impl-hint { margin: 8px 0 0; font-size: 11px; color: #7d8590; line-height: 1.45; }
+.sandbox-impl-warn { color: #e3a008; }
+/* .primary is styled per modal family (.cron-create-modal, .sudo-grant-modal,
+   …) rather than globally, and this dialog renders the plain .modal skin — so
+   it carries its own rule instead of inheriting a call-to-action treatment that
+   does not reach it. */
+#sandbox-impl-modal .modal-buttons button.primary {
+  background: #1f6feb; border-color: #1f6feb; color: #fff;
+}
+#sandbox-impl-modal .modal-buttons button.primary:disabled {
+  background: #6e7681; border-color: #6e7681; cursor: default;
+}
 .modal-buttons button:hover { border-color: #58a6ff; }
 .modal .field { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; }
 .modal .field label { font-size: 12px; color: #7d8590; }
@@ -4974,6 +5067,7 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 .cron-create-row input[type=text],
 .cron-create-row input:not([type]),
 .sbx-section input:not([type]),
+.sbx-section textarea,
 .sbx-section select,
 .cron-create-row input[type=number],
 .cron-create-row input[type=url],
@@ -5678,6 +5772,95 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   grid-template-columns: 14rem minmax(10rem, 1fr) auto;
   min-width: 0;
 }
+.sbx-prelaunch-intro {
+  color: var(--text-muted);
+  font-size: .82rem;
+  line-height: 1.4;
+}
+.sbx-prelaunch-list {
+  display: flex;
+  flex-direction: column;
+  gap: .65rem;
+}
+.sbx-prelaunch-card {
+  background: rgba(110, 118, 129, .045);
+  border: 1px solid #30363d;
+  border-left: 3px solid #58a6ff;
+  border-radius: .35rem;
+  display: flex;
+  flex-direction: column;
+  gap: .4rem;
+  padding: .6rem;
+}
+.sbx-prelaunch-card.is-invalid { border-left-color: #f85149; }
+.sbx-prelaunch-head {
+  align-items: end;
+  display: grid;
+  gap: .5rem;
+  grid-template-columns: auto minmax(10rem, 1fr) auto;
+}
+.sbx-prelaunch-order {
+  align-items: center;
+  align-self: center;
+  background: rgba(56, 139, 253, .16);
+  border: 1px solid rgba(56, 139, 253, .35);
+  border-radius: 999px;
+  color: #79c0ff;
+  display: inline-flex;
+  font-size: .76rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  height: 1.7rem;
+  justify-content: center;
+  width: 1.7rem;
+}
+.sbx-prelaunch-name,
+.sbx-prelaunch-script,
+.sbx-prelaunch-exports {
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  font-size: .78rem;
+  gap: .2rem;
+  min-width: 0;
+}
+.sbx-prelaunch-script textarea {
+  box-sizing: border-box;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  max-height: 24rem;
+  min-height: 8rem;
+  resize: vertical;
+  width: 100%;
+}
+.sbx-prelaunch-exports > span { font-size: .7rem; }
+.sbx-prelaunch-name input,
+.sbx-prelaunch-exports input {
+  box-sizing: border-box;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  width: 100%;
+}
+.sbx-prelaunch-actions { display: flex; gap: .3rem; }
+.sbx-prelaunch-actions button {
+  background: #21262d;
+  border: 1px solid #2a3340;
+  border-radius: 4px;
+  color: #c9d1d9;
+  cursor: pointer;
+  font: inherit;
+  font-size: .76rem;
+  min-height: 29px;
+  padding: 0 .55rem;
+}
+.sbx-prelaunch-actions button:hover { background: #2d333b; }
+.sbx-prelaunch-actions button:disabled { cursor: default; opacity: .35; }
+.sbx-prelaunch-actions .sbx-prelaunch-remove { color: #f0b0b0; }
+.sbx-prelaunch-actions .sbx-prelaunch-remove:hover { border-color: #6e3a3a; }
+.sbx-prelaunch-error { color: #ff7b72; font-size: .76rem; line-height: 1.35; }
+.sbx-prelaunch-add:disabled { cursor: default; opacity: .45; }
+@media (max-width: 700px) {
+  .sbx-prelaunch-head { align-items: stretch; grid-template-columns: auto minmax(0, 1fr); }
+  .sbx-prelaunch-actions { grid-column: 2; }
+}
 .sbx-section .sbx-environment-row > input {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
@@ -5941,6 +6124,7 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 .cron-create-row input[type=text]:focus,
 .cron-create-row input:not([type]):focus,
 .sbx-section input:not([type]):focus,
+.sbx-section textarea:focus,
 .sbx-section select:focus,
 .cron-create-row input[type=number]:focus,
 .cron-create-row input[type=url]:focus,
@@ -12120,6 +12304,7 @@ body.wizard #sandbox-profile-editor-modal .cron-create-label { color: #b39ddb; }
 body.wizard #sandbox-profile-editor-modal .cron-create-row input[type=text],
 body.wizard #sandbox-profile-editor-modal .cron-create-row input:not([type]),
 body.wizard #sandbox-profile-editor-modal .sbx-section input:not([type]),
+body.wizard #sandbox-profile-editor-modal .sbx-section textarea,
 body.wizard #sandbox-profile-editor-modal .sbx-section select,
 body.wizard #sandbox-profile-editor-modal .cron-create-row textarea {
   background: #140f28;
@@ -12130,6 +12315,7 @@ body.wizard #sandbox-profile-editor-modal .sbx-network-value-readonly { color: #
 body.wizard #sandbox-profile-editor-modal .cron-create-row input[type=text]:focus,
 body.wizard #sandbox-profile-editor-modal .cron-create-row input:not([type]):focus,
 body.wizard #sandbox-profile-editor-modal .sbx-section input:not([type]):focus,
+body.wizard #sandbox-profile-editor-modal .sbx-section textarea:focus,
 body.wizard #sandbox-profile-editor-modal .sbx-section select:focus,
 body.wizard #sandbox-profile-editor-modal .cron-create-row textarea:focus { border-color: #a97bd6; }
 /* Secondary + inline buttons (Cancel / 🤖 configure). :not(#…-submit) excludes

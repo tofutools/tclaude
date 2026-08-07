@@ -4942,7 +4942,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 			return nil, &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_network", err.Error()}
 		}
 		resourceCgroupDir, resourceCleanup, resourceErr := prepareManagedServerResourceCgroup(
-			label, p.EffectiveSandbox, p.AllowUnenforcedSandbox)
+			label, p.EffectiveSandbox, p.SandboxImplementation, p.AllowUnenforcedSandbox, false)
 		if resourceErr != nil {
 			return nil, &spawnFailure{http.StatusUnprocessableEntity,
 				"unsupported_sandbox_profile_resource_limits", resourceErr.Error()}
@@ -6871,6 +6871,9 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	if a.AllowUnenforcedSandbox {
 		args = append(args, "--allow-unenforced-sandbox")
 	}
+	if a.SandboxContinuation {
+		args = append(args, "--sandbox-continuation")
+	}
 	if a.CwdWriteProof != "" {
 		args = append(args, "--cwd-write-proof", a.CwdWriteProof)
 	}
@@ -7522,7 +7525,7 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 			return sandboxErr
 		}
 		resourceCgroupDir, resourceCleanup, resourceErr := prepareManagedServerResourceCgroup(
-			a.ConvID, a.EffectiveSandbox, a.AllowUnenforcedSandbox)
+			a.ConvID, a.EffectiveSandbox, a.SandboxImplementation, a.AllowUnenforcedSandbox, true)
 		if resourceErr != nil {
 			return resourceErr
 		}

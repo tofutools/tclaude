@@ -47,7 +47,11 @@ function LoadState({ state }) {
   return null;
 }
 
-export function MarkdownAttachment({ messageID, attachment, surface = 'attachment' }) {
+// `siblings` is every file published with the same notification, so a document
+// can show `![map](map.png)` as the image attached beside it. The document's
+// own entry is in the list and harmless: only files the daemon confirmed are
+// raster images can be referenced as one.
+export function MarkdownAttachment({ messageID, attachment, siblings, surface = 'attachment' }) {
   const [loadState, setLoadState] = useState('idle');
   const [source, setSource] = useState('');
   // null while closed; otherwise the mode the viewer is showing.
@@ -114,7 +118,7 @@ export function MarkdownAttachment({ messageID, attachment, surface = 'attachmen
     </button>
     <div class="markdown-attachment-document">
       <${LoadState} state=${loadState} />
-      ${loadState === 'ready' && html`<${MarkdownDocument} source=${source} />`}
+      ${loadState === 'ready' && html`<${MarkdownDocument} source=${source} attachments=${siblings} />`}
     </div>
     ${viewerOpen && html`<div ref=${overlayRef} class="modal-overlay show markdown-preview-overlay"
       onMouseDown=${(event) => {
@@ -149,7 +153,8 @@ export function MarkdownAttachment({ messageID, attachment, surface = 'attachmen
           aria-label=${viewMode === 'source' ? `${filename} source` : filename}>
           ${viewMode === 'source'
             ? html`<pre class="markdown-preview-source">${source}</pre>`
-            : html`<${MarkdownDocument} source=${source} className="markdown-document markdown-preview-document" />`}
+            : html`<${MarkdownDocument} source=${source} attachments=${siblings}
+                className="markdown-document markdown-preview-document" />`}
         </div>
         <${DialogResizer} ...${resizerProps} label="Resize the document viewer" />
       </div>

@@ -31,6 +31,19 @@ type SpawnSpec struct {
 	// any pass-through), so the Spawner stays agnostic about which vars
 	// matter to which harness.
 	EnvExports string
+	// PreLaunchScript is operator-authored shell from the sandbox profile's
+	// pre_launch blocks, already rendered by the caller. Every adapter emits it
+	// AFTER EnvExports and BEFORE the binary, and nowhere else.
+	//
+	// The order is load-bearing in both directions. EnvExports forwards the
+	// daemon's whole environment, so a block placed before it would have the
+	// values it just set overwritten by ambient ones — which is the entire
+	// point of the field for names like XDG_CONFIG_HOME and PATH. And it must
+	// precede the binary because the harness has to inherit what the block set.
+	//
+	// Empty for a profile with no blocks, so the rendered command is unchanged
+	// from before the field existed.
+	PreLaunchScript string
 	// ShellEnvironment contains environment values that must remain authoritative
 	// in commands the harness launches after startup. Codex can initialize tool
 	// commands from a saved user-shell snapshot, which may otherwise replace an

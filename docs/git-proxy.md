@@ -104,7 +104,7 @@ Four slugs, none granted by default and none conferred by group ownership:
 |---|---|
 | `git.read` | `git remotes`, `git ls-remote`, `git fetch` |
 | `git.push` | `git push` |
-| `github.read` | `github pr ls/view/checks`, `github issue ls/view` |
+| `github.read` | `github pr ls/view/checks/comments`, `github issue ls/view`, `github run ls/log-failed` |
 | `github.write` | `github pr create/edit/comment/ready`, `github issue comment` |
 
 ```bash
@@ -135,13 +135,83 @@ tclaude proxy github pr create --title "…" --body-file pr.md
 tclaude proxy github pr ls --state open
 tclaude proxy github pr view 42
 tclaude proxy github pr checks 42
+tclaude proxy github pr comments 42            # read ALL review feedback
 tclaude proxy github pr comment 42 --body-file reply.md
 tclaude proxy github pr edit 42 --body-file new-description.md
 tclaude proxy github pr ready 42
 tclaude proxy github issue ls
 tclaude proxy github issue view 7
 tclaude proxy github issue comment 7 --body-file note.md
+tclaude proxy github run ls --branch feat/x --status failure
+tclaude proxy github run log-failed 18234567890   # why that check went red
 ```
+
+### Reading review feedback and CI failures
+
+`pr checks` names the job that went red; `run log-failed` says why; `run ls`
+finds the run id in between. An agent can walk from "CI is red" to the failing
+assertion without a token and without a browser:
+
+```bash
+tclaude proxy github run ls --branch feat/x --status failure --limit 5
+tclaude proxy github run log-failed <databaseId from that listing>
+```
+
+The id is also recoverable from the `detailsUrl` in a `pr checks` rollup
+(`…/actions/runs/<run-id>/job/<job-id>`), which is worth knowing but is the
+long way round.
+
+`run ls` additionally reaches runs `pr checks` cannot show at all: a
+`statusCheckRollup` is scoped to the pull request's **head commit**, so a
+force-push or an amend takes every run against the superseded commit out of
+`pr checks`, while `run ls --branch` still lists them. Compare `headSha`
+against the commit you care about.
+
+Re-runs are **not** such a case, and it is worth being explicit because the
+intuition points the wrong way: re-running a workflow does not create a new
+run, it adds an *attempt* to the same run id. A failure that was re-run green
+therefore reports as green in `pr checks` and in `run ls` alike, and
+`run log-failed` reads the latest attempt. The `attempt` field shows that a run
+has been re-run; reading an earlier attempt's log is not something the proxy
+offers.
+
+`pr comments` returns everything said on the pull request, in two sections:
+the **conversation** (issue comments and the body of each review submission,
+what `gh pr view --comments` shows) and the **inline review comments** (the
+line-level notes inside each review's diff threads, with file, line and
+permalink). Both are needed for a review bot: CodeRabbit posts its summary as a
+review body and every actionable finding as an inline comment, so the
+conversation alone tells you the PR was reviewed and not what the review said.
+
+`pr comments` and `run log-failed` are the only verbs that return **text rather
+than JSON** — every other read, `pr checks` included, is `gh --json` passed
+through unmodelled and bounded at 16 KiB. These two are different because their
+output is the payload rather than a diagnosis: each section keeps a 256 KiB
+tail, so a long conversation cannot squeeze out the inline findings, and
+`run log-failed` is allowed 180s because gh downloads the run's whole log
+archive rather than calling one endpoint. Only the *failed* steps are ever
+available; there is no `--log` equivalent, because the full log of a green
+matrix build is megabytes that say nothing the check rollup did not.
+
+Two answers that look like nothing going wrong, and are not:
+
+- `run log-failed` on a run with **no failed steps** prints nothing and exits 0.
+  Silence means the run is green, not that the read failed.
+- `run log-failed` on a run **still in progress** exits non-zero; gh's message
+  says so. Wait and retry rather than treating it as a broken command.
+
+The inline section is a projection rather than raw passthrough — GitHub returns
+a `diff_hunk` per comment that repeats the surrounding diff and is routinely
+larger than the comments themselves, which is a poor trade for an agent reading
+under a context budget. The projection is a single jq constant in
+`githubproxy_handlers.go`.
+
+> **These two verbs carry third-party prose into an agent's context.** A PR
+> comment can be written by anyone who can comment on the repository, and a CI
+> log echoes branch and PR titles. Every other proxy read returns structured
+> gh JSON; these return free text that an agent will read as part of its
+> instructions unless it has been told otherwise. The bundled `proxy-git` skill
+> says so; keep it in mind if you write your own guidance.
 
 `git remotes` is the command to point an agent at when something is refused: it
 lists every remote with the allow-list verdict and the reason, so the agent can

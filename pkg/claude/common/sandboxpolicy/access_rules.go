@@ -143,6 +143,14 @@ const (
 	// has to be told so, because a resolved profile that shows up in the
 	// snapshot otherwise reads as a policy in force.
 	AccessNoticeReasonUnconfinedImplementation = "unconfined_implementation"
+	// AccessNoticeReasonResourceCgroupUnavailable records that a launch which
+	// asked for the per-agent cgroup with NO ceiling authored did not get one,
+	// because the host has no delegated cgroup v2 subtree to create it in. It is
+	// deliberately not a refusal: accounting is observability, so refusing would
+	// make an agent unlaunchable — and unresumable, where the dashboard's
+	// fresh-spawn override does not exist — over counters. A launch that
+	// authored a ceiling still fails closed instead of taking this notice.
+	AccessNoticeReasonResourceCgroupUnavailable = "resource_cgroup_unavailable"
 	// AccessNoticeReasonProxyEngineNoProxyOverride carries the proxy engine's
 	// proxy-environment ownership: an inherited NO_PROXY/no_proxy is overridden
 	// to empty inside the sandbox rather than honored or refused over. It is

@@ -26,6 +26,32 @@ const (
 
 var idempotencyOwnerID = uuid.NewString()
 
+// bulkReadRoutes are POST routes that change nothing and whose RESPONSE is a
+// bulk payload rather than a receipt.
+//
+// They are POSTs only so the audit middleware records them — spending the
+// operator's GitHub credential is exactly what they want to review later (see
+// the header comment in githubproxy_handlers.go). That makes them look like
+// mutations to this middleware, which then buffers each response and persists
+// it to ~/.tclaude/data/db.sqlite for the full idempotency TTL.
+//
+// For an ordinary verb that costs a few hundred bytes and buys real safety:
+// replaying "the PR was created" beats creating it twice. For these two it
+// buys nothing — re-running a read is free and correct — while costing up to
+// half a megabyte of CI log per call in a database that has no auto_vacuum and
+// so never gives the space back. An agent polling a failing matrix build would
+// inflate the operator's daemon DB by hundreds of megabytes.
+//
+// Deliberately just these two, not every proxy read: the criterion is that the
+// response is BULK, and the JSON reads are bounded at 16 KiB, where the
+// durable copy is cheap enough not to be worth reasoning about.
+var bulkReadRoutes = map[string]bool{
+	"/v1/github/pr/comments":    true,
+	"/v1/github/run/log-failed": true,
+}
+
+func isBulkReadRoute(path string) bool { return bulkReadRoutes[path] }
+
 func idempotencyRequests(h http.Handler) http.Handler {
 	return idempotencyRequestsWithOwner(h, idempotencyOwnerID)
 }
@@ -42,7 +68,7 @@ func idempotencyRequestsWithOwner(h http.Handler, ownerID string) http.Handler {
 func idempotencyRequestsWithOwnerAndWaitHook(h http.Handler, ownerID string, waitHook func()) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := strings.TrimSpace(r.Header.Get(agent.IdempotencyKeyHeader))
-		if key == "" || !isMutatingMethod(r.Method) {
+		if key == "" || !isMutatingMethod(r.Method) || isBulkReadRoute(r.URL.Path) {
 			h.ServeHTTP(w, r)
 			return
 		}

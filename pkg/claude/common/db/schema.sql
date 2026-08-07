@@ -787,7 +787,7 @@ CREATE TABLE "sandbox_profiles" (
 			environment_json TEXT NOT NULL DEFAULT '[]',
 			created_at       INTEGER NOT NULL,
 			updated_at       INTEGER NOT NULL
-		, includes_json TEXT NOT NULL DEFAULT '[]', agent_directories_json TEXT NOT NULL DEFAULT '[]', network_access TEXT NOT NULL DEFAULT '', network_json TEXT NOT NULL DEFAULT '', unix_sockets_json TEXT NOT NULL DEFAULT '', filesystem_spellings_json TEXT NOT NULL DEFAULT '', resource_limits_json TEXT NOT NULL DEFAULT '{}', darwin_allow_mach_register INTEGER NOT NULL DEFAULT 0 CHECK (darwin_allow_mach_register IN (0, 1))) STRICT;
+		, includes_json TEXT NOT NULL DEFAULT '[]', agent_directories_json TEXT NOT NULL DEFAULT '[]', network_access TEXT NOT NULL DEFAULT '', network_json TEXT NOT NULL DEFAULT '', unix_sockets_json TEXT NOT NULL DEFAULT '', filesystem_spellings_json TEXT NOT NULL DEFAULT '', resource_limits_json TEXT NOT NULL DEFAULT '{}', darwin_allow_mach_register INTEGER NOT NULL DEFAULT 0 CHECK (darwin_allow_mach_register IN (0, 1)), pre_launch_json TEXT NOT NULL DEFAULT '[]') STRICT;
 
 CREATE TABLE "agent_group_permissions" (
 			group_id   INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,

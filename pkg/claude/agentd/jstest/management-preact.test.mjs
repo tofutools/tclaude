@@ -39,6 +39,17 @@ function segment(control, value) {
   return control.querySelector(`[role="radio"][data-value="${value}"]`);
 }
 
+async function waitForSelectorCount(harness, root, selector, count) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const matches = [...root.querySelectorAll(selector)];
+    if (matches.length === count) return matches;
+    await harness.act(() => new Promise((resolve) => setTimeout(resolve, 10)));
+  }
+  const actual = root.querySelectorAll(selector).length;
+  assert.equal(actual, count, `timed out waiting for ${count} matches of ${selector}`);
+  return [];
+}
+
 test('management model preserves full-replace profile and role semantics', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/management-model.js');
@@ -982,6 +993,87 @@ test('sandbox actions preserve dry-run, canonical commit, delete, and import bou
   await actions.importSandboxBundle({ profiles: [draft] }, 'skip'); assert.equal(calls.find((call) => call[0] === 'import')[2], 'skip');
 });
 
+test('sandbox pre-launch-only changes always reach the diff and delete-last commits an explicit empty list', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { createManagementActions }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'),
+    harness.importDashboardModule('js/management-actions.js'),
+    harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const scenarios = [
+    {
+      label: 'add',
+      before: undefined,
+      next: [{ name: 'setup', script: 'export FOO=added\n', exports: ['FOO'] }],
+      diffText: 'added',
+    },
+    {
+      label: 'edit',
+      before: [{ name: 'setup', script: 'export FOO=old\n', exports: ['FOO'] }],
+      next: [{ name: 'setup', script: 'export FOO=new\n', exports: ['FOO'] }],
+      diffText: 'new',
+    },
+    {
+      label: 'delete-last',
+      before: [{ name: 'setup', script: 'export FOO=old\n', exports: ['FOO'] }],
+      next: [],
+      diffText: 'pre_launch',
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const state = createManagementState();
+    const notices = []; const commits = [];
+    const sandboxAPI = {
+      async loadSandboxProfiles() { return []; },
+      async previewSandboxProfile(_name, body) {
+        const before = structuredClone(body);
+        if (scenario.before === undefined) delete before.pre_launch;
+        else before.pre_launch = structuredClone(scenario.before);
+        const after = structuredClone(body);
+        if (scenario.next.length === 0) delete after.pre_launch;
+        return { before, after, revision: `r-${scenario.label}`, notices: [] };
+      },
+      async saveSandboxProfile(...args) { commits.push(args); },
+    };
+    const actions = createManagementActions({
+      state, sandboxAPI, confirm: async () => true,
+      notify(text) { notices.push(text); }, refreshSandboxSpawn: async () => {},
+    });
+    const cleanups = []; const host = harness.document.createElement('div');
+    harness.document.body.appendChild(host);
+    mountManagementIsland({
+      host, state, actions, confirmDiscard: async () => true,
+      openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); },
+    });
+    const draft = {
+      name: 'scripts', filesystem: [], environment: [], includes: [], agent_directories: [],
+      pre_launch: structuredClone(scenario.next),
+    };
+    const pending = actions.saveSandbox({ draft, original: { name: 'scripts' } });
+    await harness.act(() => Promise.resolve());
+    const modal = host.querySelector('#sandbox-profile-diff-modal');
+    assert.ok(modal, `${scenario.label}: a pre-launch-only change opens the save diff`);
+    assert.ok(modal.querySelectorAll('.dl.add, .dl.del').length > 0,
+      `${scenario.label}: the rendered delta is non-empty`);
+    assert.match(modal.querySelector('#sandbox-profile-diff-body').textContent,
+      new RegExp(scenario.diffText), `${scenario.label}: delta names the changed script content`);
+    assert.equal(notices.includes('No sandbox profile changes to save'), false,
+      `${scenario.label}: the no-op guard must not discard the change`);
+    state.cancelSandboxDiff(true);
+    assert.equal(await pending, true);
+    assert.equal(commits.length, 1);
+    if (scenario.label === 'delete-last') {
+      assert.deepEqual(commits[0][1].pre_launch, [],
+        'omitempty preview omission is repaired before the actual save');
+    } else {
+      assert.deepEqual(commits[0][1].pre_launch, scenario.next);
+    }
+    cleanups.reverse().forEach((fn) => fn());
+    host.remove();
+  }
+});
+
 test('sandbox access-axis model preserves legacy meaning and validates structured rows', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/sandbox-profiles-data.js');
@@ -1412,6 +1504,46 @@ test('sandbox editor discloses missing includes and preserves their authored nam
   host.remove();
 });
 
+// Pre-launch blocks reach the editor only through the raw JSON panel, so the two things worth pinning
+// are that an untouched profile keeps them and that an explicit empty array survives as a real clear.
+test('the sandbox editor round-trips pre-launch blocks and forwards an explicit clear', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), [{ name: 'dev' }]);
+  const blocks = [{ name: 'playwright', script: 'export FOO=bar\n', exports: ['FOO'] }];
+  state.openDialog({ kind: 'sandbox-editor', seed: {
+    name: 'dev', filesystem: [], environment: [], includes: [], agent_directories: [],
+    pre_launch: blocks,
+  }, options: {} });
+  let saved = null;
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async saveSandbox(value) { saved = value; },
+  });
+  await harness.act(() => Promise.resolve());
+
+  host.querySelector('#sandbox-profile-editor-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(saved.draft.pre_launch, blocks,
+    'an untouched load→save round-trip never drops the operator-authored blocks');
+
+  const toggle = host.querySelector('.sbx-advanced-toggle');
+  await harness.act(() => toggle.click());
+  const raw = host.querySelector('#sandbox-profile-editor-pre-launch');
+  assert.deepEqual(JSON.parse(raw.value), blocks, 'the raw panel opens seeded from the draft');
+  raw.value = '[]';
+  raw.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  host.querySelector('#sandbox-profile-editor-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(saved.draft.pre_launch, [],
+    'an explicit empty array reaches the save path so the daemon can tell "clear" from "leave alone"');
+  unmount();
+  host.remove();
+});
+
 const COMMON_RULES = {
   version: 1,
   home: '/home/op',
@@ -1528,6 +1660,7 @@ test('sandbox editor sections start collapsed and keep disclosure help reachable
     'sandbox-profile-editor-unix-sockets-section',
     'sandbox-profile-editor-filesystem-section',
     'sandbox-profile-editor-environment-section',
+    'sandbox-profile-editor-pre-launch-section',
     'sandbox-profile-editor-includes-section',
     'sandbox-profile-editor-agent-directories-section',
     'sandbox-profile-editor-effective-policy-section',
@@ -1574,6 +1707,10 @@ test('sandbox editor section summaries show live profile entry counts', async (t
         { path: '$GOCACHE', access: 'write' },
       ],
       environment: [{ name: 'POLICY_OWNER', value: 'agent' }],
+      pre_launch: [
+        { name: 'paths', script: 'export PATH=/tools:$PATH\n', exports: ['PATH'] },
+        { name: 'session', script: 'export SESSION=ready\n', exports: ['SESSION'] },
+      ],
       includes: [],
       agent_directories: ['GOCACHE'],
       network: {
@@ -1598,6 +1735,7 @@ test('sandbox editor section summaries show live profile entry counts', async (t
   assert.equal(count('sandbox-profile-editor-unix-sockets-section').textContent, '1 entry');
   assert.equal(count('sandbox-profile-editor-filesystem-section').textContent, '2 entries');
   assert.equal(count('sandbox-profile-editor-environment-section').textContent, '1 entry');
+  assert.equal(count('sandbox-profile-editor-pre-launch-section').textContent, '2 entries');
   const includesCount = count('sandbox-profile-editor-includes-section');
   assert.equal(includesCount.textContent, '0 entries');
   assert.equal(includesCount.classList.contains('sbx-section-count-empty'), true,
@@ -1618,6 +1756,193 @@ test('sandbox editor section summaries show live profile entry counts', async (t
   assert.equal(count('sandbox-profile-editor-filesystem-section').textContent, '1 entry',
     'counts update immediately when a row is removed');
   unmount();
+});
+
+test('sandbox pre-launch editor is a first-class ordered multiline section and deletes the last block explicitly', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: {
+      name: 'scripts', filesystem: [], environment: [], includes: [], agent_directories: [],
+      pre_launch: [
+        { name: 'first', script: 'export FIRST=1\n', exports: ['FIRST'] },
+        { name: 'second', script: 'export SECOND=2\n', exports: ['SECOND'] },
+        { name: 'third', script: 'export THIRD=3\n', exports: ['THIRD'] },
+      ],
+    },
+    options: {},
+  });
+  const saves = [];
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async saveSandbox(value) { saves.push(value); },
+  });
+  await harness.act(() => Promise.resolve());
+
+  const section = host.querySelector('#sandbox-profile-editor-pre-launch-section');
+  assert.equal(section.tagName, 'DETAILS');
+  assert.equal(section.hasAttribute('open'), false, 'the peer section starts folded like the others');
+  assert.equal(section.querySelector('.sbx-section-count').textContent, '3 entries');
+  assert.match(section.querySelector('.sbx-prelaunch-intro').textContent, /top to bottom/);
+  assert.deepEqual([...section.querySelectorAll('.sbx-prelaunch-order')].map((node) => node.textContent), ['1', '2', '3']);
+  assert.equal(section.querySelectorAll('.sbx-prelaunch-script textarea').length, 3,
+    'each entry is a real multiline script box');
+  assert.deepEqual([...section.querySelectorAll('.sbx-prelaunch-card')].map((card) => card.getAttribute('aria-label')),
+    ['Block 1: first', 'Block 2: second', 'Block 3: third'],
+    'repeated field labels are scoped by an accessible position-and-name group');
+
+  const movingUp = section.querySelector('button[aria-label="Move block 3 up"]');
+  movingUp.focus();
+  await harness.act(() => harness.fireEvent(movingUp, 'click'));
+  assertSameNode(harness.document.activeElement, movingUp,
+    'a moved block keeps keyboard focus on its own stable keyed control');
+  assert.deepEqual([...section.querySelectorAll('.sbx-prelaunch-name input')].map((input) => input.value),
+    ['first', 'third', 'second'], 'up/down controls change execution order on screen');
+  assert.equal(movingUp.getAttribute('aria-label'), 'Move block 2 up');
+  await harness.act(() => harness.fireEvent(movingUp, 'click'));
+  assertSameNode(harness.document.activeElement, movingUp,
+    'repeating the keyboard action continues moving the same block');
+  assert.deepEqual([...section.querySelectorAll('.sbx-prelaunch-name input')].map((input) => input.value),
+    ['third', 'first', 'second']);
+  const exports = section.querySelectorAll('.sbx-prelaunch-exports input')[0];
+  exports.value = 'THIRD, PATH XDG_CONFIG_HOME';
+  await harness.act(() => harness.fireEvent(exports, 'input'));
+  await harness.act(() => harness.fireEvent(host.querySelector('#sandbox-profile-editor-submit'), 'click'));
+  assert.deepEqual(saves[0].draft.pre_launch.map((block) => block.name), ['third', 'first', 'second']);
+  assert.deepEqual(saves[0].draft.pre_launch[0].exports, ['THIRD', 'PATH', 'XDG_CONFIG_HOME']);
+  assert.equal('_exports_text' in saves[0].draft.pre_launch[0], false,
+    'editor-only export text never reaches the daemon');
+  assert.equal('_editor_id' in saves[0].draft.pre_launch[0], false,
+    'stable editor row identities never reach the daemon');
+
+  await harness.act(() => harness.fireEvent(section.querySelector('.sbx-prelaunch-remove'), 'click'));
+  await harness.act(() => harness.fireEvent(section.querySelector('.sbx-prelaunch-remove'), 'click'));
+  await harness.act(() => harness.fireEvent(section.querySelector('.sbx-prelaunch-remove'), 'click'));
+  assert.equal(section.querySelector('.sbx-section-count').textContent, '0 entries');
+  await harness.act(() => harness.fireEvent(host.querySelector('#sandbox-profile-editor-submit'), 'click'));
+  assert.deepEqual(saves[1].draft.pre_launch, [],
+    'removing the final card retains explicit clear intent');
+  unmount();
+  host.remove();
+});
+
+test('sandbox pre-launch editor and Advanced raw JSON stay synchronized in both directions', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({ kind: 'sandbox-editor', seed: {
+    name: 'scripts', filesystem: [], environment: [], includes: [], agent_directories: [],
+    pre_launch: [{ name: 'setup', script: 'export OLD=1\n', exports: ['OLD'] }],
+  }, options: {} });
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state);
+  await harness.act(() => Promise.resolve());
+
+  const script = host.querySelector('.sbx-prelaunch-script textarea');
+  script.value = 'export FORM=1\n';
+  await harness.act(() => harness.fireEvent(script, 'input'));
+  await harness.act(() => harness.fireEvent(host.querySelector('.sbx-advanced-toggle'), 'click'));
+  const raw = host.querySelector('#sandbox-profile-editor-pre-launch');
+  assert.match(raw.value, /FORM/,
+    'opening Advanced serializes the current first-class form instead of stale seed data');
+  raw.value = JSON.stringify([{ name: 'raw', script: 'export RAW=1\n', exports: ['RAW'] }], null, 2);
+  await harness.act(() => harness.fireEvent(raw, 'input'));
+  await harness.act(() => harness.fireEvent(host.querySelector('.sbx-advanced-toggle'), 'click'));
+  assert.equal(host.querySelector('.sbx-prelaunch-name input').value, 'raw');
+  assert.equal(host.querySelector('.sbx-prelaunch-script textarea').value, 'export RAW=1\n');
+  assert.equal(host.querySelector('.sbx-prelaunch-exports input').value, 'RAW');
+  unmount();
+  host.remove();
+});
+
+test('Advanced clear overrides newly added pre-launch editor rows without leaking private fields', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({ kind: 'sandbox-editor', seed: {
+    name: 'scripts-clear', filesystem: [], environment: [], includes: [], agent_directories: [],
+  }, options: {} });
+  let saved = null;
+  const predictions = [];
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async saveSandbox(value) { saved = value; },
+    async predictSandbox(draft) { predictions.push(draft); return { targets: [], contexts: [] }; },
+  });
+  await harness.act(() => Promise.resolve());
+
+  const section = host.querySelector('#sandbox-profile-editor-pre-launch-section');
+  await harness.act(() => harness.fireEvent(section.querySelector('.sbx-prelaunch-add'), 'click'));
+  const name = section.querySelector('.sbx-prelaunch-name input');
+  name.value = 'setup';
+  await harness.act(() => harness.fireEvent(name, 'input'));
+  const script = section.querySelector('.sbx-prelaunch-script textarea');
+  script.value = 'export TOOL_HOME=/tmp/tool\n';
+  await harness.act(() => harness.fireEvent(script, 'input'));
+  const exportsInput = section.querySelector('.sbx-prelaunch-exports input');
+  exportsInput.value = 'TOOL_HOME';
+  await harness.act(() => harness.fireEvent(exportsInput, 'input'));
+
+  await harness.act(() => harness.fireEvent(host.querySelector('.sbx-advanced-toggle'), 'click'));
+  const raw = host.querySelector('#sandbox-profile-editor-pre-launch');
+  assert.equal(JSON.parse(raw.value)[0].name, 'setup');
+  raw.value = '[]';
+  await harness.act(() => harness.fireEvent(raw, 'input'));
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+
+  const hasPrivateKey = (value) => value != null && typeof value === 'object'
+    && Object.entries(value).some(([key, child]) => key.startsWith('_') || hasPrivateKey(child));
+  assert.deepEqual(predictions.at(-1).pre_launch, [],
+    'the effective preview treats the authoritative raw empty array as an explicit clear');
+  assert.equal(hasPrivateKey(predictions.at(-1)), false,
+    'editor-private fields never reach the prediction payload');
+
+  await harness.act(() => harness.fireEvent(host.querySelector('#sandbox-profile-editor-submit'), 'click'));
+  assert.deepEqual(saved.draft.pre_launch, [],
+    'the authoritative raw empty array clears structured blocks added after a block-less baseline');
+  assert.equal(hasPrivateKey(saved.draft), false,
+    'no editor-private field reaches any part of the save payload');
+  unmount();
+  host.remove();
+});
+
+test('sandbox pre-launch validation mirrors daemon limits without reserving PATH or XDG names', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/sandbox-pre-launch.js');
+  const valid = Array.from({ length: 32 }, (_, index) => ({
+    name: index === 0 ? 'A'.repeat(128) : `block-${index}`,
+    script: index === 0 ? 'x'.repeat(64 * 1024) : 'true\n',
+    exports: index === 0
+      ? ['PATH', 'XDG_CONFIG_HOME', ...Array.from({ length: 62 }, (__, i) => `VALUE_${i}`)]
+      : [],
+  }));
+  assert.deepEqual(model.sandboxPreLaunchValidation(valid).errors, [],
+    'all four inclusive maxima and reserved-but-intentional exports are accepted');
+  assert.deepEqual(model.sandboxPreLaunchExportNames('PATH,,  TOOL_HOME,\t,'),
+    ['PATH', 'TOOL_HOME'],
+    'repeated and trailing separators do not create empty export names');
+
+  const invalid = [
+    { name: 'duplicate', script: 'true\n', exports: [] },
+    { name: 'duplicate', script: ' \n', exports: ['NOT-AN-ENV'] },
+    { name: 'x'.repeat(129), script: `${'x'.repeat(64 * 1024)}x`, exports: [] },
+  ];
+  const result = model.sandboxPreLaunchValidation(invalid);
+  assert.equal(result.blocks[0].name.some((error) => /unique/.test(error)), true);
+  assert.equal(result.blocks[1].name.some((error) => /unique/.test(error)), true);
+  assert.equal(result.blocks[1].script.some((error) => /required/.test(error)), true);
+  assert.equal(result.blocks[1].exports.some((error) => /environment-variable/.test(error)), true);
+  assert.equal(result.blocks[2].name.some((error) => /128 bytes/.test(error)), true);
+  assert.equal(result.blocks[2].script.some((error) => /65536/.test(error)), true);
+  assert.match(model.sandboxPreLaunchValidation([...valid, { name: 'extra', script: 'true' }]).errors[0],
+    /at most 32 blocks/);
+  assert.match(model.sandboxPreLaunchValidation([{ name: 'nul', script: 'x\0y' }]).errors[0],
+    /NUL/);
 });
 
 test('sandbox editor tolerates legacy and modern sparse profile payloads', async (t) => {
@@ -2156,12 +2481,18 @@ test('new deny drafts apply default pack references once and pack rows stay read
 
   const newState = createManagementState();
   newState.openDialog({ kind: 'sandbox-editor', seed: null, options: {} });
-  const newDraft = mountSandboxEditor(harness, mountManagementIsland, newState);
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+  const newDraft = mountSandboxEditor(harness, mountManagementIsland, newState, {
+    async loadCommonRuleCatalog() {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      return COMMON_RULES;
+    },
+  });
   const newBaseline = newDraft.host.querySelector('#sandbox-profile-editor-network-baseline');
   assert.equal(selectedValue(newBaseline), 'inherit');
   await harness.act(() => { choose(newBaseline, 'deny'); harness.fireEvent(newBaseline, 'change'); });
-  const packModes = [...newDraft.host.querySelectorAll('.sbx-network-pack-mode')];
+  const packModes = await waitForSelectorCount(
+    harness, newDraft.host, '.sbx-network-pack-mode', 3,
+  );
   const packDisclosure = newDraft.host.querySelector('.sbx-network-packs');
   assert.equal(packDisclosure.hasAttribute('open'), false,
     'built-in packs use the editor collapsed-by-default disclosure pattern');
