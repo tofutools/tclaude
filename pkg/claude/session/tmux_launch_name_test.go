@@ -1,70 +1,47 @@
-package session
+package session_test
 
 import (
-	"os/exec"
-	"strings"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/session"
+	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
-// corpseTmux models the state agent panes actually leave behind. Panes run with
-// remain-on-exit ON so the exit audit can read pane_dead_status, so an exited
-// agent stays LISTED (has-session exits 0) with a DEAD pane (#{pane_dead} = 1).
-// kill-session removes it, which is the only way the name comes free again.
-type corpseTmux struct {
-	mu sync.Mutex
-	// live and dead are session names; a dead one is a remain-on-exit corpse.
-	live map[string]bool
-	dead map[string]bool
-	// kills records every kill-session target, so a test can prove the reap is
-	// aimed at the corpse and never at a live agent.
-	kills []string
+// corpseWorld installs TmuxSim as the tmux boundary and returns it. TmuxSim is
+// used rather than a hand-rolled fake on purpose: it models tmux's unique-PREFIX
+// target matching, so a launch-name probe that dropped clcommon.ExactTarget
+// would reach a neighbouring session here exactly as it would in production. A
+// fake that only string-matches cannot fail that way, which would make the
+// "unrelated live session is untouched" assertion below vacuous.
+func corpseWorld(t *testing.T) *testharness.TmuxSim {
+	t.Helper()
+	w := testharness.New(t)
+	prev := clcommon.Default
+	clcommon.Default = w.Tmux
+	t.Cleanup(func() { clcommon.Default = prev })
+	return w.Tmux
 }
 
-func (c *corpseTmux) Command(args ...string) *exec.Cmd {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	// The target follows -t, which is args[2] for has-session/kill-session and
-	// args[3] for `display-message -p -t <target> <format>`.
-	name := ""
-	for i := 0; i < len(args)-1; i++ {
-		if args[i] == "-t" {
-			name = strings.TrimSuffix(strings.TrimPrefix(args[i+1], "="), ":0.0")
-			break
+// listed reports whether tmux would still refuse the name — dead pane or not.
+// That is the question new-session asks, and the one the fix turns on, so the
+// assertions below test it rather than pane liveness.
+func listed(tm *testharness.TmuxSim, name string) bool {
+	for _, n := range tm.Sessions() {
+		if n == name {
+			return true
 		}
 	}
-	switch {
-	case len(args) >= 3 && args[0] == "has-session":
-		if c.live[name] || c.dead[name] {
-			return exec.Command("true")
-		}
-		return exec.Command("false")
-	case len(args) >= 3 && args[0] == "kill-session":
-		c.kills = append(c.kills, name)
-		delete(c.live, name)
-		delete(c.dead, name)
-		return exec.Command("true")
-	case len(args) >= 2 && args[0] == "display-message":
-		// IsTmuxSessionAlive's pane_dead probe, target "=<name>:0.0".
-		if c.dead[name] {
-			return exec.Command("echo", "1")
-		}
-		return exec.Command("echo", "0")
-	}
-	return exec.Command("false")
+	return false
 }
 
-func (c *corpseTmux) ListSessions() (map[string]struct{}, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	out := map[string]struct{}{}
-	for name := range c.live {
-		out[name] = struct{}{}
-	}
-	return out, nil
+// markCorpse leaves name in the state an exited agent pane actually leaves
+// behind: still LISTED (remain-on-exit keeps the session), with a dead pane.
+func markCorpse(t *testing.T, tm *testharness.TmuxSim, name string, exitCode int) {
+	t.Helper()
+	tm.MarkAlive(name)
+	tm.MarkPaneDead(name, &exitCode, "")
 }
 
 // Scenario: a resume whose previous generation left a remain-on-exit corpse
@@ -80,50 +57,51 @@ func (c *corpseTmux) ListSessions() (map[string]struct{}, error) {
 // launched the spawn, and a later attempt succeeded once something else reaped
 // the corpse.
 func TestUniqueTmuxSessionName_ReapsARemainOnExitCorpseHoldingTheName(t *testing.T) {
-	fake := &corpseTmux{
-		live: map[string]bool{},
-		dead: map[string]bool{"019fde64": true},
-	}
-	prev := clcommon.Default
-	clcommon.Default = fake
-	t.Cleanup(func() { clcommon.Default = prev })
+	tm := corpseWorld(t)
+	markCorpse(t, tm, "019fde64", 1)
 
-	assert.Equal(t, "019fde64", UniqueTmuxSessionName("019fde64"),
+	assert.Equal(t, "019fde64", session.UniqueTmuxSessionName("019fde64"),
 		"the canonical name must come back free; suffixing here would drift the agent onto -2, -3, ... for good")
-	assert.Equal(t, []string{"019fde64"}, fake.kills, "the corpse, and only the corpse, is reaped")
-	assert.False(t, fake.dead["019fde64"], "the name is actually free afterwards")
+	assert.False(t, listed(tm, "019fde64"), "the name is actually free afterwards")
 }
 
 // The reap is strictly for corpses: a name held by a LIVE agent falls through
 // to the -N suffix and is never killed. Getting this wrong would take a session
 // out from under a running agent, which is far worse than the bug being fixed.
 func TestUniqueTmuxSessionName_NeverReapsALiveSession(t *testing.T) {
-	fake := &corpseTmux{
-		live: map[string]bool{"019fde64": true},
-		dead: map[string]bool{},
-	}
-	prev := clcommon.Default
-	clcommon.Default = fake
-	t.Cleanup(func() { clcommon.Default = prev })
+	tm := corpseWorld(t)
+	tm.MarkAlive("019fde64")
 
-	assert.Equal(t, "019fde64-2", UniqueTmuxSessionName("019fde64"),
+	assert.Equal(t, "019fde64-2", session.UniqueTmuxSessionName("019fde64"),
 		"a live holder must be worked around, not killed")
-	assert.Empty(t, fake.kills, "a live session must never be reaped")
-	assert.True(t, fake.live["019fde64"], "the running agent keeps its session")
+	assert.True(t, listed(tm, "019fde64"), "the running agent keeps its session")
 }
 
 // Mixed: the base is a corpse and the first suffix is LIVE. The base is reaped
-// and reused, so the suffix ladder is not even reached.
-func TestUniqueTmuxSessionName_PrefersTheReapedBaseOverAFreeSuffix(t *testing.T) {
-	fake := &corpseTmux{
-		live: map[string]bool{"019fde64-2": true},
-		dead: map[string]bool{"019fde64": true},
-	}
-	prev := clcommon.Default
-	clcommon.Default = fake
-	t.Cleanup(func() { clcommon.Default = prev })
+// and reused, and the live neighbour — whose name the base is a strict PREFIX
+// of — must survive. That is the assertion TmuxSim's prefix matching makes real.
+func TestUniqueTmuxSessionName_PrefersTheReapedBaseAndSparesItsLiveNeighbour(t *testing.T) {
+	tm := corpseWorld(t)
+	markCorpse(t, tm, "019fde64", 0)
+	tm.MarkAlive("019fde64-2")
 
-	assert.Equal(t, "019fde64", UniqueTmuxSessionName("019fde64"))
-	assert.Equal(t, []string{"019fde64"}, fake.kills)
-	assert.True(t, fake.live["019fde64-2"], "the unrelated live session is untouched")
+	assert.Equal(t, "019fde64", session.UniqueTmuxSessionName("019fde64"))
+	assert.False(t, listed(tm, "019fde64"), "the corpse is gone")
+	assert.True(t, listed(tm, "019fde64-2"), "the unrelated live session is untouched")
+}
+
+// A name whose pane cannot be PROVEN dead is left alone. IsTmuxSessionAlive
+// reports alive when it cannot read the pane, so an unreadable probe must
+// suffix rather than reap — the reap is only ever entitled by positive
+// evidence.
+func TestUniqueTmuxSessionName_LeavesAnUnprovableSessionAlone(t *testing.T) {
+	tm := corpseWorld(t)
+	markCorpse(t, tm, "019fde64", 1)
+	// IsTmuxSessionAlive's pane_dead probe is the first display-message the
+	// launch-name check issues; failing it models a pane that cannot be read.
+	tm.FailNextCommand("display-message")
+
+	assert.Equal(t, "019fde64-2", session.UniqueTmuxSessionName("019fde64"),
+		"without readable proof the pane is dead, the launch must work around the name")
+	assert.True(t, listed(tm, "019fde64"), "nothing unproven is killed")
 }

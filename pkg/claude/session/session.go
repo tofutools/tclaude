@@ -473,10 +473,10 @@ func UniqueTmuxSessionName(base string) string {
 // "Is an agent alive there?" and "will tmux accept this name?" are DIFFERENT
 // questions, and this is the one place the difference bites. Agent panes run
 // with remain-on-exit ON so the exit audit can read pane_dead_status after the
-// harness exits (see session/exit_callback.go), which means an exited agent
-// leaves the session listed with a dead pane. IsTmuxSessionAlive correctly
-// calls that offline — but tmux only cares that the NAME is taken, so asking
-// it here handed back a name new-session then refused:
+// harness exits (see exit_callback.go), which means an exited agent leaves the
+// session listed with a dead pane. IsTmuxSessionAlive correctly calls that
+// offline — but tmux only cares that the NAME is taken, so asking it here
+// handed back a name new-session then refused:
 //
 //	Error: failed to create tmux session: exit status 1: duplicate session: 019fde64
 //
@@ -484,12 +484,15 @@ func UniqueTmuxSessionName(base string) string {
 // launched. It clears on its own once the corpse is reaped, which is exactly
 // why it looked intermittent.
 //
-// Reaping rather than suffixing keeps "short if possible" true: the corpse is
-// this conversation's own previous generation, its pane-died audit ran at death
-// time, and leaving it would drift the agent onto -2, -3, … names for good.
-// Only a confirmed-dead pane is reaped — a name held by a LIVE session falls
-// through to the suffix, so this can never take a session out from under a
-// running agent.
+// Reaping rather than suffixing keeps "short if possible" true: suffixing would
+// drift the agent onto -2, -3, ... for good and leave the husks on the server.
+// The removal goes through CleanupDeadTmuxPane — the same primitive the exit
+// callback and the watchdog use — so it re-proves the pane identity between
+// probe and kill, kills the PANE rather than the session, and only falls back
+// to kill-session after that fails repeatedly against unchanged evidence. If
+// the session survives because some OTHER pane in it is alive (an operator's
+// own split running a log tail), the name is still taken and the caller falls
+// through to the suffix, which is the correct outcome.
 func tmuxLaunchNameFree(name string) bool {
 	if !tmuxSessionNameTaken(name) {
 		return true
@@ -500,14 +503,36 @@ func tmuxLaunchNameFree(name string) bool {
 	// Taken but not alive: a remain-on-exit corpse. IsTmuxSessionAlive reports
 	// true when it cannot read the pane, so reaching here means pane_dead was
 	// read as 1 — not merely that the probe failed.
-	if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(name)).Run(); err != nil {
-		slog.Warn("tmux launch: could not reap dead session holding the name",
+	evidence, err := InspectDeadTmuxSessionPane(name)
+	if err != nil {
+		slog.Warn("tmux launch: could not prove the dead pane holding the launch name; leaving it alone",
 			"tmux_session", name, "error", err)
 		return false
 	}
-	slog.Info("tmux launch: reaped dead session holding the launch name",
-		"tmux_session", name)
+	// A corpse that is STILL HOLDING THE NAME means the exit callback did not
+	// complete — the happy path cleans up within milliseconds of death. The
+	// daemon's reaper deliberately retains such a corpse for a bounded window
+	// so it can recover the exit code/signal off the pane. Freeing the name
+	// discards that, so the evidence goes to the log first: the reaper will now
+	// fall back to an unknown cause, and this line is the only remaining record
+	// of what the agent actually exited with.
+	slog.Warn("tmux launch: reaping a retained dead pane to free the launch name; unrecorded exit evidence is being discarded",
+		"tmux_session", name, "pane_id", evidence.PaneID, "generation", evidence.Generation,
+		"exit_code", exitCodeForLog(evidence.ExitCode), "signal", evidence.Signal)
+	if err := CleanupDeadTmuxPane(evidence); err != nil {
+		slog.Warn("tmux launch: could not reap the dead pane holding the launch name",
+			"tmux_session", name, "pane_id", evidence.PaneID, "error", err)
+		return false
+	}
 	return !tmuxSessionNameTaken(name)
+}
+
+// exitCodeForLog renders a possibly-absent exit code for a log field.
+func exitCodeForLog(code *int) string {
+	if code == nil {
+		return ""
+	}
+	return strconv.Itoa(*code)
 }
 
 // tmuxSessionNameTaken reports whether tmux still lists the name, dead pane or
