@@ -1848,6 +1848,58 @@ test('sandbox pre-launch editor and Advanced raw JSON stay synchronized in both 
   host.remove();
 });
 
+test('Advanced clear overrides newly added pre-launch editor rows without leaking private fields', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({ kind: 'sandbox-editor', seed: {
+    name: 'scripts-clear', filesystem: [], environment: [], includes: [], agent_directories: [],
+  }, options: {} });
+  let saved = null;
+  const predictions = [];
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async saveSandbox(value) { saved = value; },
+    async predictSandbox(draft) { predictions.push(draft); return { targets: [], contexts: [] }; },
+  });
+  await harness.act(() => Promise.resolve());
+
+  const section = host.querySelector('#sandbox-profile-editor-pre-launch-section');
+  await harness.act(() => harness.fireEvent(section.querySelector('.sbx-prelaunch-add'), 'click'));
+  const name = section.querySelector('.sbx-prelaunch-name input');
+  name.value = 'setup';
+  await harness.act(() => harness.fireEvent(name, 'input'));
+  const script = section.querySelector('.sbx-prelaunch-script textarea');
+  script.value = 'export TOOL_HOME=/tmp/tool\n';
+  await harness.act(() => harness.fireEvent(script, 'input'));
+  const exportsInput = section.querySelector('.sbx-prelaunch-exports input');
+  exportsInput.value = 'TOOL_HOME';
+  await harness.act(() => harness.fireEvent(exportsInput, 'input'));
+
+  await harness.act(() => harness.fireEvent(host.querySelector('.sbx-advanced-toggle'), 'click'));
+  const raw = host.querySelector('#sandbox-profile-editor-pre-launch');
+  assert.equal(JSON.parse(raw.value)[0].name, 'setup');
+  raw.value = '[]';
+  await harness.act(() => harness.fireEvent(raw, 'input'));
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+
+  const hasPrivateKey = (value) => value != null && typeof value === 'object'
+    && Object.entries(value).some(([key, child]) => key.startsWith('_') || hasPrivateKey(child));
+  assert.deepEqual(predictions.at(-1).pre_launch, [],
+    'the effective preview treats the authoritative raw empty array as an explicit clear');
+  assert.equal(hasPrivateKey(predictions.at(-1)), false,
+    'editor-private fields never reach the prediction payload');
+
+  await harness.act(() => harness.fireEvent(host.querySelector('#sandbox-profile-editor-submit'), 'click'));
+  assert.deepEqual(saved.draft.pre_launch, [],
+    'the authoritative raw empty array clears structured blocks added after a block-less baseline');
+  assert.equal(hasPrivateKey(saved.draft), false,
+    'no editor-private field reaches any part of the save payload');
+  unmount();
+  host.remove();
+});
+
 test('sandbox pre-launch validation mirrors daemon limits without reserving PATH or XDG names', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/sandbox-pre-launch.js');

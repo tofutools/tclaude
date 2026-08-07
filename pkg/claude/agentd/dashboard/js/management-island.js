@@ -1470,12 +1470,13 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   const parseRaw = () => { const filesystem = JSON.parse(rawFS || '[]'); const filesystem_spellings = JSON.parse(rawSpellings || 'null'); const environment = JSON.parse(rawEnv || '[]'); const includes = JSON.parse(rawIncludes || '[]'); const agent_directories = JSON.parse(rawAgentDirs || '[]'); const network = JSON.parse(rawNetwork || '{}'); const unix_sockets = JSON.parse(rawSockets || '{}'); const resource_limits = JSON.parse(rawResources || '{}'); if (![filesystem, environment, includes, agent_directories].every(Array.isArray)) throw new Error('filesystem, environment, includes and agent dirs must be arrays'); if (filesystem_spellings !== null && (!filesystem_spellings || Array.isArray(filesystem_spellings))) throw new Error('filesystem spellings must be a JSON object or null'); if (!network || typeof network !== 'object' || Array.isArray(network) || !unix_sockets || typeof unix_sockets !== 'object' || Array.isArray(unix_sockets) || !resource_limits || typeof resource_limits !== 'object' || Array.isArray(resource_limits)) throw new Error('network and unix sockets must be JSON objects; resource limits must be a JSON object'); if (network.allow != null && !Array.isArray(network.allow) || network.deny != null && !Array.isArray(network.deny) || unix_sockets.allow != null && !Array.isArray(unix_sockets.allow)) throw new Error('network allow/deny and Unix-socket allow fields must be arrays'); if (network.packs != null && !Array.isArray(network.packs) || network.deny_packs != null && !Array.isArray(network.deny_packs)) throw new Error('network packs and deny_packs must be arrays'); const resourceErrors = sandboxResourceLimitErrors(resource_limits); if (resourceErrors.length) throw new Error(resourceErrors[0]); const rowError = accessRowShapeError(network, unix_sockets); if (rowError) throw new Error(rowError); const pre_launch = JSON.parse(rawPreLaunch || '[]'); const preLaunchErrors = sandboxPreLaunchValidation(pre_launch).errors; if (preLaunchErrors.length) throw new Error(preLaunchErrors[0]); const axes = sandboxAccessAxes({ network, unix_sockets }); /* Omitting the key on a block-less profile keeps the draft byte-identical to the baseline, so merely
      opening and closing this panel does not raise a spurious discard prompt. Clearing an existing profile's
      blocks still emits the explicit empty array the daemon needs to distinguish "clear" from "leave alone". */
-  return { filesystem, filesystem_spellings, environment, includes, agent_directories, ...(baseline.pre_launch === undefined && pre_launch.length === 0 ? {} : { pre_launch }), network: axes.network, unix_sockets: axes.unix_sockets, resource_limits: sandboxResourceLimitsForWire(resource_limits) }; };
+  return { filesystem, filesystem_spellings, environment, includes, agent_directories, ...(baseline.pre_launch === undefined && draft.pre_launch === undefined && pre_launch.length === 0 ? {} : { pre_launch }), network: axes.network, unix_sockets: axes.unix_sockets, resource_limits: sandboxResourceLimitsForWire(resource_limits) }; };
+  const rawDraftForWire = (parsed) => { const next = { ...draft, ...parsed }; if (parsed.pre_launch === undefined) delete next.pre_launch; else next.pre_launch = sandboxPreLaunchForWire(parsed.pre_launch); return next; };
   const applyRaw = () => { try { const parsed = parseRaw(); setDraft((value) => { const next = { ...value, ...parsed, filesystem: sandboxFilesystemEditorRows(parsed.filesystem, parsed.filesystem_spellings) }; if (parsed.pre_launch === undefined) delete next.pre_launch; else next.pre_launch = sandboxPreLaunchEditorRows(parsed.pre_launch, value.pre_launch); return next; }); state.error.value = ''; return true; } catch (error) { state.error.value = error.message || String(error); return false; } };
   const toggleAdvanced = () => { if (advanced && !applyRaw()) return; if (!advanced) { const wire = sandboxFilesystemWire(draft, baseline); setRawFS(JSON.stringify(wire.filesystem, null, 2)); setRawSpellings(JSON.stringify(wire.filesystem_spellings, null, 2)); setRawEnv(JSON.stringify(draft.environment, null, 2)); setRawIncludes(JSON.stringify(draft.includes, null, 2)); setRawAgentDirs(JSON.stringify(draft.agent_directories, null, 2)); setRawNetwork(JSON.stringify(draft.network, null, 2)); setRawSockets(JSON.stringify(draft.unix_sockets, null, 2)); setRawResources(JSON.stringify(sandboxResourceLimitsForWire(draft.resource_limits), null, 2)); setRawPreLaunch(JSON.stringify(sandboxPreLaunchForWire(draft.pre_launch || []), null, 2)); } setAdvanced(!advanced); };
   const submit = async () => {
     let value = { ...draft, ...sandboxFilesystemWire(draft, baseline), resource_limits: sandboxResourceLimitsForWire(draft.resource_limits), ...(draft.pre_launch === undefined ? {} : { pre_launch: sandboxPreLaunchForWire(draft.pre_launch) }) };
-    if (advanced) { try { value = { ...draft, ...parseRaw() }; } catch (error) { state.error.value = error.message || String(error); return; } }
+    if (advanced) { try { value = rawDraftForWire(parseRaw()); } catch (error) { state.error.value = error.message || String(error); return; } }
     await actions.saveSandbox({ draft: value, original: seed, options });
   };
   useEffect(() => {
@@ -1489,7 +1490,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   let predictionDraft = { ...draft, ...sandboxFilesystemWire(draft, baseline), resource_limits: sandboxResourceLimitsForWire(draft.resource_limits), ...(draft.pre_launch === undefined ? {} : { pre_launch: sandboxPreLaunchForWire(draft.pre_launch) }) };
   let predictionDraftError = '';
   if (advanced) {
-    try { predictionDraft = { ...draft, ...parseRaw() }; }
+    try { predictionDraft = rawDraftForWire(parseRaw()); }
     catch (error) { predictionDraftError = message(error); }
   }
   const authoredNetwork = sandboxNetworkAuthoring(
@@ -1553,7 +1554,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   const configureWithAgent = () => {
     let value = { ...draft, ...sandboxFilesystemWire(draft, baseline), resource_limits: sandboxResourceLimitsForWire(draft.resource_limits), ...(draft.pre_launch === undefined ? {} : { pre_launch: sandboxPreLaunchForWire(draft.pre_launch) }) };
     if (advanced) {
-      try { value = { ...draft, ...parseRaw() }; }
+      try { value = rawDraftForWire(parseRaw()); }
       catch (error) { state.error.value = error.message || String(error); return; }
     }
     const handoffErrors = [
