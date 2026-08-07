@@ -103,8 +103,9 @@ time, because **`sessions.open` looks like it works and then does not**:
   explicitly) — but a caller that only checks for transport errors will sail past it and
   see the failure much later as `Session not found`.
 
-Use `session.create`. It is absent from the schema and it is the only path that yields a
-drivable session.
+Use `session.create`. It is absent from the schema, and it is the only path *verified* to
+yield a drivable session — `sessions.fork`, `sessions.connect`, `session.factory.*` and
+the remaining `sessions.open` kinds were not tested and could plausibly register one too.
 
 ## Session bootstrap
 
