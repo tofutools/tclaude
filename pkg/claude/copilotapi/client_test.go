@@ -229,6 +229,50 @@ func TestServerGoneFailsPendingAndFutureCalls(t *testing.T) {
 	}
 }
 
+func TestUndecodableMessageDoesNotKillTheConnection(t *testing.T) {
+	// Framing is length-delimited, so a body that will not decode costs us
+	// that one message and nothing else. Tearing the connection down would
+	// turn an unrecognised message into the loss of every in-flight call and
+	// every subscription.
+	server := newFakeServer(t)
+	client := dialTest(t, server, nil)
+	sub := client.Subscribe()
+	t.Cleanup(sub.Close)
+
+	// A JSON-RPC id may legitimately be a string; this client numbers its own
+	// ids, so such a message is undecodable rather than merely unknown.
+	server.sendRaw(`{"jsonrpc":"2.0","id":"a-string-id","result":{}}`)
+	server.sendRaw(`{not json at all`)
+
+	// The connection must still work afterwards.
+	result, err := client.Ping(context.Background(), "still here")
+	if err != nil {
+		t.Fatalf("ping after an undecodable message: %v", err)
+	}
+	if result.Message != "pong: still here" {
+		t.Errorf("Message = %q", result.Message)
+	}
+	select {
+	case <-client.Done():
+		t.Fatal("connection closed because of an undecodable message")
+	default:
+	}
+	// The subscription must be untouched: neither fed the garbage nor ended.
+	select {
+	case notification, ok := <-sub.C():
+		if !ok {
+			t.Fatalf("subscription ended: %v", sub.Err())
+		}
+		t.Errorf("an undecodable message was delivered as a notification: %s", notification.Method)
+	default:
+	}
+
+	// The drops must be visible rather than silent.
+	if got := client.MalformedFrames(); got != 2 {
+		t.Errorf("MalformedFrames() = %d, want 2", got)
+	}
+}
+
 func TestNotificationsReachEverySubscriber(t *testing.T) {
 	server := newFakeServer(t)
 	client := dialTest(t, server, nil)

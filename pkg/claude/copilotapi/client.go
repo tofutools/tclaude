@@ -67,13 +67,14 @@ type Client struct {
 
 	writeMu sync.Mutex
 
-	mu       sync.Mutex
-	nextID   int64
-	pending  map[int64]chan *rpcMessage
-	nextSub  int64
-	subs     map[int64]*Subscription
-	closed   bool
-	closeErr error
+	mu              sync.Mutex
+	nextID          int64
+	pending         map[int64]chan *rpcMessage
+	nextSub         int64
+	subs            map[int64]*Subscription
+	closed          bool
+	closeErr        error
+	malformedFrames int
 
 	done chan struct{}
 
@@ -260,23 +261,40 @@ func (c *Client) readLoop() {
 	for {
 		frame, err := readFrame(reader)
 		if err != nil {
-			c.shutdown(translateReadError(err))
+			c.shutdown(translateConnError(err))
 			return
 		}
 		var message rpcMessage
 		if err := json.Unmarshal(frame, &message); err != nil {
-			// A frame we cannot parse means the stream no longer means what
-			// we think it does; continuing would mis-correlate later replies.
-			c.shutdown(fmt.Errorf("copilotapi: decode message: %w", err))
-			return
+			// Framing is length-delimited, so a body we cannot parse costs us
+			// that one message and nothing else: the next frame boundary is
+			// already known. Tearing the connection down here would turn one
+			// unrecognised message into the loss of every in-flight call and
+			// every subscription. Only a *framing* error is unrecoverable,
+			// and readFrame reports that separately above.
+			c.mu.Lock()
+			c.malformedFrames++
+			c.mu.Unlock()
+			continue
 		}
 		c.dispatch(&message)
 	}
 }
 
-// translateReadError maps a peer hangup onto ErrClosed so callers can treat
-// "server gone" uniformly, and leaves genuine faults intact.
-func translateReadError(err error) error {
+// MalformedFrames counts messages dropped because their body did not decode.
+// Framing is length-delimited so these are survivable, but a non-zero count
+// means we are silently ignoring something the server sent, which is worth
+// surfacing rather than leaving invisible.
+func (c *Client) MalformedFrames() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.malformedFrames
+}
+
+// translateConnError maps a peer hangup onto ErrClosed so callers can treat
+// "server gone" uniformly whether it was noticed on a read or a write, and
+// leaves genuine faults intact.
+func translateConnError(err error) error {
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, net.ErrClosed) {
 		return ErrClosed
 	}
@@ -399,23 +417,39 @@ func (c *Client) Call(ctx context.Context, method string, params any, result any
 		c.abandon(id)
 		return fmt.Errorf("copilotapi: call %s: %w", method, ctx.Err())
 	case <-c.done:
+		// A reply can land in the same instant the connection dies, and select
+		// picks uniformly among ready cases. Check for one before reporting
+		// the connection error, so a caller never retries a `session.send`
+		// whose prompt the server already accepted.
+		select {
+		case reply, ok := <-replies:
+			if ok {
+				return decodeReply(method, reply, result)
+			}
+		default:
+		}
 		c.abandon(id)
 		return fmt.Errorf("copilotapi: call %s: %w", method, c.Err())
 	case reply, ok := <-replies:
 		if !ok {
 			return fmt.Errorf("copilotapi: call %s: %w", method, c.Err())
 		}
-		if reply.Error != nil {
-			return reply.Error
-		}
-		if result == nil || len(reply.Result) == 0 {
-			return nil
-		}
-		if err := json.Unmarshal(reply.Result, result); err != nil {
-			return fmt.Errorf("copilotapi: decode %s result: %w", method, err)
-		}
+		return decodeReply(method, reply, result)
+	}
+}
+
+// decodeReply turns a server response into an error or a decoded result.
+func decodeReply(method string, reply *rpcMessage, result any) error {
+	if reply.Error != nil {
+		return reply.Error
+	}
+	if result == nil || len(reply.Result) == 0 {
 		return nil
 	}
+	if err := json.Unmarshal(reply.Result, result); err != nil {
+		return fmt.Errorf("copilotapi: decode %s result: %w", method, err)
+	}
+	return nil
 }
 
 // Notify sends a notification, which has no reply.
@@ -462,9 +496,12 @@ func (c *Client) writeRaw(body []byte) error {
 	}
 	if err := writeFrame(c.conn, body); err != nil {
 		// A partial frame leaves the peer's parser mid-message, so the
-		// connection cannot be reused.
-		c.shutdown(err)
-		return err
+		// connection cannot be reused. Translate the same way as the read
+		// path, so a caller gating redial on ErrClosed sees "server gone"
+		// whichever side noticed it first.
+		translated := translateConnError(err)
+		c.shutdown(translated)
+		return translated
 	}
 	return c.conn.SetWriteDeadline(time.Time{})
 }

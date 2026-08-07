@@ -3,6 +3,7 @@ package copilotapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -164,6 +165,54 @@ func TestGetForegroundSessionReportsTheTUISession(t *testing.T) {
 	}
 	if info.SessionID != "tui-session" {
 		t.Errorf("SessionID = %q", info.SessionID)
+	}
+}
+
+func TestGetForegroundSessionReportsNoForegroundSession(t *testing.T) {
+	// With nothing foregrounded the server answers {} rather than erroring.
+	// Reporting that as success would hand back a blank session ID that only
+	// fails later, as a confusing "Session not found" from whatever used it.
+	server := newFakeServer(t)
+	server.handle(MethodSessionGetFg, func(json.RawMessage) (any, *Error) {
+		return map[string]any{}, nil
+	})
+	client := dialTest(t, server, nil)
+
+	info, err := client.GetForegroundSession(context.Background())
+	if !errors.Is(err, ErrNoForegroundSession) {
+		t.Fatalf("err = %v, want ErrNoForegroundSession", err)
+	}
+	if info.SessionID != "" {
+		t.Errorf("SessionID = %q, want empty", info.SessionID)
+	}
+}
+
+func TestSessionEventDecodesEnvelopeFields(t *testing.T) {
+	// agentId is how a consumer tells a sub-agent's idle from the root
+	// agent's, so the envelope around Data has to be modelled even though
+	// Data itself stays raw.
+	notification := Notification{
+		Method: MethodSessionEvent,
+		Params: json.RawMessage(`{"sessionId":"s","event":{
+			"type":"session.idle","id":"e1","agentId":"sub-7","parentId":"e0",
+			"ephemeral":true,"timestamp":"2026-08-07T22:08:30Z","data":{"k":1}}}`),
+	}
+	decoded, err := notification.SessionEvent()
+	if err != nil {
+		t.Fatalf("SessionEvent: %v", err)
+	}
+	event := decoded.Event
+	if event.AgentID != "sub-7" {
+		t.Errorf("AgentID = %q, want %q", event.AgentID, "sub-7")
+	}
+	if event.ParentID != "e0" {
+		t.Errorf("ParentID = %q, want %q", event.ParentID, "e0")
+	}
+	if !event.Ephemeral {
+		t.Error("Ephemeral = false, want true")
+	}
+	if event.Type != "session.idle" || event.ID != "e1" {
+		t.Errorf("event = %+v", event)
 	}
 }
 

@@ -108,7 +108,9 @@
 //
 // # Versioning
 //
-// [Client.Connect] records the server's protocol version and CLI version. The
+// [Dial] performs the handshake and records the server's protocol version and
+// CLI version, readable via [Client.ProtocolVersion] and
+// [Client.ServerVersion]. The
 // protocol version is checked against [SupportedProtocolVersion] and a
 // mismatch fails loudly, because the alternative — running a client built for
 // a different contract and misreading its replies — is exactly the silent

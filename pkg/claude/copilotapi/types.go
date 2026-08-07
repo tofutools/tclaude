@@ -224,9 +224,22 @@ type SessionEventNotification struct {
 // large open set of event types (assistant.turn_start, session.idle,
 // assistant.usage, …); Data is left raw so consumers decode only what they
 // handle and unknown types stay forward-compatible.
+//
+// The envelope fields around Data are modelled, because they are common to
+// every event type and a consumer cannot interpret an event without them.
 type SessionEvent struct {
-	Type      string          `json:"type"`
-	ID        string          `json:"id,omitempty"`
+	Type string `json:"type"`
+	ID   string `json:"id,omitempty"`
+	// AgentID identifies the sub-agent instance that produced the event, and
+	// is absent for the root agent. Without it a consumer cannot tell whether
+	// a `session.idle` means the agent is done or merely one of its
+	// sub-agents.
+	AgentID string `json:"agentId,omitempty"`
+	// ParentID links an event to the one it was produced under.
+	ParentID string `json:"parentId,omitempty"`
+	// Ephemeral marks an event that is not persisted to the event log; the
+	// server itself filters these out when replaying history.
+	Ephemeral bool            `json:"ephemeral,omitempty"`
 	Timestamp string          `json:"timestamp,omitempty"`
 	Data      json.RawMessage `json:"data,omitempty"`
 }

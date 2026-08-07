@@ -172,6 +172,16 @@ func (s *fakeServer) request(id int64, method string) {
 	}
 }
 
+// sendRaw frames an arbitrary body, bypassing the JSON-RPC types, so tests can
+// deliver payloads the client is not expected to be able to decode.
+func (s *fakeServer) sendRaw(body string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, conn := range s.conns {
+		_ = writeFrame(conn, []byte(body))
+	}
+}
+
 // hangUp drops every client connection, standing in for the pane's Copilot
 // process dying.
 func (s *fakeServer) hangUp() {

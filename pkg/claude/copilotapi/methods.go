@@ -88,10 +88,20 @@ func (c *Client) SetForegroundSession(ctx context.Context, sessionID string) err
 // Before we have created and foregrounded our own session this is the pane's
 // startup session, which is not drivable: every `session.*` call against it
 // fails with an error [IsSessionNotFound] recognises.
+//
+// When nothing is foregrounded the server answers with an empty object rather
+// than an error, which is returned here as [ErrNoForegroundSession]. Reporting
+// it as success would hand back a blank session ID that only fails later, as a
+// confusing "Session not found" from whatever call used it.
 func (c *Client) GetForegroundSession(ctx context.Context) (SessionInfo, error) {
 	var info SessionInfo
-	err := c.Call(ctx, MethodSessionGetFg, struct{}{}, &info)
-	return info, err
+	if err := c.Call(ctx, MethodSessionGetFg, struct{}{}, &info); err != nil {
+		return SessionInfo{}, err
+	}
+	if info.SessionID == "" {
+		return SessionInfo{}, ErrNoForegroundSession
+	}
+	return info, nil
 }
 
 // Send delivers a user message to a session and returns its message ID. It

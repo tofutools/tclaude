@@ -36,6 +36,11 @@ var ErrClosed = errors.New("copilotapi: connection closed")
 // [SupportedProtocolVersion].
 var ErrProtocolVersion = errors.New("copilotapi: unsupported protocol version")
 
+// ErrNoForegroundSession reports that the TUI is not displaying any session.
+// It is an expected state rather than a fault, but it is returned as an error
+// so it cannot be mistaken for a session with a blank ID.
+var ErrNoForegroundSession = errors.New("copilotapi: no foreground session")
+
 // ErrSubscriptionOverrun reports a subscription whose buffer filled because
 // the consumer fell behind. The subscription is closed and its channel drained
 // no further: a consumer that silently skipped events would misreport agent
