@@ -242,6 +242,7 @@ func RunPTY(t *testing.T, opts PTYOptions) PTYResult {
 	cmd := exec.CommandContext(ctx, "copilot", args...)
 	cmd.Dir = run.WorkDir
 	cmd.Env = buildEnv(run)
+	configurePTYCommand(cmd)
 	// Without this a descendant holding the terminal keeps Wait blocked past
 	// the deadline the scenario chose, so a "blocked" verdict would cost the
 	// whole test timeout instead of the deadline.
@@ -428,6 +429,9 @@ loop:
 		// rather than waited on — waiting would hang until the test timeout.
 		cancel()
 		<-waitDone
+	}
+	if err := cleanupPTYCommand(cmd); err != nil {
+		t.Errorf("copilotfixture: cleaning up pty process group: %v", err)
 	}
 
 	// Closing the master BEFORE waiting on the reader is what bounds this
