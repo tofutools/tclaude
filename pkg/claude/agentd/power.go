@@ -6,7 +6,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -379,15 +378,13 @@ func offlineConvIDs(convIDs []string) []string {
 // own slot — never the others.
 func runShutdown(targets []string, grace time.Duration) []powerAgentOutcome {
 	outcomes := make([]powerAgentOutcome, len(targets))
-	var wg sync.WaitGroup
-	for i, convID := range targets {
-		wg.Add(1)
-		go func(i int, convID string) {
-			defer wg.Done()
-			outcomes[i] = escalateShutdown(convID, grace)
-		}(i, convID)
-	}
-	wg.Wait()
+	// Deliberately unbounded (limit = the whole cohort): a shutdown is the one
+	// bulk op whose wall-clock IS the grace window, and queueing agents behind
+	// a small pool would multiply it by the number of batches. Each worker is
+	// asleep in a poll for almost all of that time.
+	forEachAgentConcurrently(targets, len(targets), func(i int, convID string) {
+		outcomes[i] = escalateShutdown(convID, grace)
+	})
 	return outcomes
 }
 
@@ -404,45 +401,30 @@ func runPowerOn(targets []string) []powerAgentOutcome {
 
 func runPowerOnWithResume(targets []string, resume func(string) memberOpResult) []powerAgentOutcome {
 	outcomes := make([]powerAgentOutcome, len(targets))
-	jobs := make(chan int)
-	var wg sync.WaitGroup
-	workers := min(len(targets), powerOnConcurrency)
-	for range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := range jobs {
-				convID := targets[i]
-				out := powerAgentOutcome{AgentID: peerAgentID(convID), ConvID: convID, Title: agent.FreshTitle(convID)}
-				res := resume(convID)
-				switch res.Action {
-				case "resumed":
-					out.Outcome = powerOnResumed
-				case "skipped:already_online":
-					// Raced — the agent came online between collection and now.
-					out.Outcome = powerOnAlreadyOnline
-				default:
-					// "error" — the resume spawn failed — or "error:missing_cwd", the
-					// agent's recorded launch dir was deleted (Detail carries the path).
-					// A bulk power-on can't recreate dirs interactively, so it surfaces
-					// the failure; the human recreates via `agent resume --recreate-dir`
-					// or the dashboard wake confirm. ("skipped:no_conv_id" can't reach
-					// here: offlineConvIDs already drops empty ids.)
-					out.Outcome = powerOnFailed
-					out.Detail = res.Detail
-					if out.Detail == "" {
-						out.Detail = "resume failed (" + res.Action + ")"
-					}
-				}
-				outcomes[i] = out
+	forEachAgentConcurrently(targets, powerOnConcurrency, func(i int, convID string) {
+		out := powerAgentOutcome{AgentID: peerAgentID(convID), ConvID: convID, Title: agent.FreshTitle(convID)}
+		res := resume(convID)
+		switch res.Action {
+		case "resumed":
+			out.Outcome = powerOnResumed
+		case "skipped:already_online":
+			// Raced — the agent came online between collection and now.
+			out.Outcome = powerOnAlreadyOnline
+		default:
+			// "error" — the resume spawn failed — or "error:missing_cwd", the
+			// agent's recorded launch dir was deleted (Detail carries the path).
+			// A bulk power-on can't recreate dirs interactively, so it surfaces
+			// the failure; the human recreates via `agent resume --recreate-dir`
+			// or the dashboard wake confirm. ("skipped:no_conv_id" can't reach
+			// here: offlineConvIDs already drops empty ids.)
+			out.Outcome = powerOnFailed
+			out.Detail = res.Detail
+			if out.Detail == "" {
+				out.Detail = "resume failed (" + res.Action + ")"
 			}
-		}()
-	}
-	for i := range targets {
-		jobs <- i
-	}
-	close(jobs)
-	wg.Wait()
+		}
+		outcomes[i] = out
+	})
 	return outcomes
 }
 
@@ -468,58 +450,81 @@ func escalateShutdown(convID string, grace time.Duration) powerAgentOutcome {
 
 // escalateShutdownUnderLaunchLock performs the full soft→hard sequence while
 // its caller holds the conversation launch lock.
+//
+// The sequence itself is NOT reimplemented here. This used to be a second,
+// slightly different escalation ladder living next to the one in
+// soft_exit_escalation.go: it went soft exit → grace → `tmux kill-session` and
+// stopped there, reporting force_killed on a successful tmux call without ever
+// checking that the harness process had actually died — and never reaching the
+// SIGTERM/SIGKILL rungs that exist precisely for a pane tmux cannot close. The
+// power buttons now run the SAME ladder every other stop runs, with the
+// per-request grace as its deadline, so there is one definition of "stopped".
 func escalateShutdownUnderLaunchLock(convID string, grace time.Duration) powerAgentOutcome {
 	out := powerAgentOutcome{AgentID: peerAgentID(convID), ConvID: convID, Title: agent.FreshTitle(convID)}
 
-	// Step 1: soft exit — inject /exit, exactly as the per-agent
-	// "soft exit" shutdown button does.
-	soft := stopOneConvWithIntentUnderLaunchLock(
-		convID, false, db.AgentExitActionStop, "",
+	stopped, outcome := stopOneConvUnderLaunchLock(
+		convID, false, db.AgentExitActionStop, "", stopWaitForExit(grace),
 	)
-	switch soft.Action {
-	case "skipped:already_offline":
+	if stopped.Action == "skipped:already_offline" {
 		// Raced — the agent exited between collection and now.
 		out.Outcome = shutdownOffline
 		return out
-	case "soft_stopped":
-		// Step 2: give the agent the grace window to honour /exit. A
-		// quick exiter is noticed on the first poll and never killed.
-		if waitForConvOffline(convID, grace) {
+	}
+
+	// softExitUnattempted means the soft path never reached the pane — target
+	// capture failed, the launch intent went stale, or a busy OpenCode TUI
+	// refused control input — so no exit command was delivered and no rung of
+	// the ladder ran. The pre-ladder code force-killed here, and it must keep
+	// doing so: a Shutdown button that leaves the agent running because its TUI
+	// was busy is the bug, and reporting that as a graceful exit is worse.
+	forced := false
+	if outcome == softExitUnattempted {
+		out.Detail = "soft exit unavailable (" + stopped.Detail + "); escalated to force-kill"
+		forced = true
+		stopped, outcome = stopOneConvUnderLaunchLock(
+			convID, true, db.AgentExitActionForceStop, "", stopWaitForExit(0),
+		)
+		if stopped.Action == "skipped:already_offline" {
+			// It went away between the two attempts — the kill was a no-op.
 			out.Outcome = shutdownExited
 			return out
 		}
-	default:
-		// The /exit injection itself failed (send-keys error). Waiting
-		// would accomplish nothing — escalate straight to a force-kill.
-		out.Detail = "soft exit failed (" + soft.Detail + "); escalated to force-kill"
+	} else if stopped.Action == "error" {
+		// The exit command itself failed to land (a send-keys error), but the
+		// ladder DID run for it, so the outcome below is what decides — this
+		// note only records why it got there.
+		out.Detail = "soft exit failed (" + stopped.Detail + ")"
 	}
 
-	// Step 3: still alive (or the soft exit never landed) — force-kill.
-	hard := stopOneConvWithIntentUnderLaunchLock(
-		convID, true, db.AgentExitActionForceStop, "",
-	)
-	switch hard.Action {
-	case "killed":
-		out.Outcome = shutdownKilled
-	case "skipped:already_offline":
-		// It exited during or just after the grace window — the kill
-		// was a no-op, so count it as a graceful exit.
-		out.Outcome = shutdownExited
-	default:
+	switch {
+	case outcome == softExitUnattempted:
+		// Even the force attempt could not act on the pane.
 		out.Outcome = shutdownFailed
-		detail := "force-kill failed: " + hard.Detail
-		if out.Detail != "" {
-			detail = out.Detail + "; " + detail
-		}
-		out.Detail = detail
+		out.Detail = joinPowerDetail(out.Detail, "could not act on the pane: "+stopped.Detail)
+	case outcome == softExitStuck:
+		out.Outcome = shutdownFailed
+		out.Detail = joinPowerDetail(out.Detail, "pane process still alive after kill escalation")
+	case outcome == softExitEscalated || forced:
+		out.Outcome = shutdownKilled
+	default:
+		out.Outcome = shutdownExited
 	}
 	return out
+}
+
+// joinPowerDetail appends a clause to a power outcome's detail, keeping the
+// existing "why we got here" prefix in front of it.
+func joinPowerDetail(existing, add string) string {
+	if existing == "" {
+		return add
+	}
+	return existing + "; " + add
 }
 
 // waitForConvOffline polls convID's tmux liveness until it goes
 // offline or the grace window closes. Returns true if the agent
 // exited within the window. A grace of 0 means "check once, don't
-// wait" — the escalation then proceeds straight to the force-kill.
+// wait".
 func waitForConvOffline(convID string, grace time.Duration) bool {
 	deadline := time.Now().Add(grace)
 	for {

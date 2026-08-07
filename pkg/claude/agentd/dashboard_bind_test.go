@@ -15,7 +15,7 @@ import (
 // (so it can't silently regress to raw-JSON-only).
 func TestDashboardConfigTab_DashboardBindFieldWired(t *testing.T) {
 	for _, needle := range []string{
-		`id="cfg-agent-dashboardbind"`,                          // the labeled field (HTML)
+		`id="cfg-agent-dashboardbind"`,                           // the labeled field (HTML)
 		"$('#cfg-agent-dashboardbind').value = a.dashboard_bind", // populated on load (config.js)
 		"a.dashboard_bind = dbRaw",                               // written on save (config.js)
 	} {
@@ -70,7 +70,7 @@ func TestIsLoopbackHost(t *testing.T) {
 		{"::", false},
 		{"192.168.1.5", false},
 		{"10.0.0.9", false},
-		{"localhost", true}, // the literal localhost is loopback (no false network warning)
+		{"localhost", true},    // the literal localhost is loopback (no false network warning)
 		{"box.example", false}, // any other hostname → conservative non-loopback
 	}
 	for _, tc := range cases {

@@ -39,7 +39,7 @@ func TestOpenShellCmdFor_NonAppleScriptCarriesKeepalive(t *testing.T) {
 		terminal.IDAlacritty, terminal.IDFoot, terminal.IDKonsole,
 		terminal.IDGnomeTerminal, terminal.IDXfce4Terminal,
 		terminal.IDXTermEmulator, terminal.IDXterm,
-		"" /* unresolved — safe default is the keepalive form */,
+		"", /* unresolved — safe default is the keepalive form */
 	} {
 		t.Run(id, func(t *testing.T) {
 			got := openShellCmdFor("/Users/me/some dir", id)

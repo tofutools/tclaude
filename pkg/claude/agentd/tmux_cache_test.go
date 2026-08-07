@@ -10,7 +10,7 @@ import (
 // TTL boundaries are exact rather than wall-clock-dependent.
 type fakeClock struct{ t time.Time }
 
-func (c *fakeClock) now() time.Time  { return c.t }
+func (c *fakeClock) now() time.Time      { return c.t }
 func (c *fakeClock) add(d time.Duration) { c.t = c.t.Add(d) }
 
 // TestTmuxSessionCache_CoalescesWithinTTL pins the three cache invariants the

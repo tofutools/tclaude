@@ -464,7 +464,7 @@ func TestReincarnateDefersSupersededDirectoryCleanupUntilPredecessorExits(t *tes
 	// would otherwise end the pane on its own 20ms deadline).
 	codex := f.World.Codexes.GetByConvID(target.ConvID)
 	require.NotNil(t, codex)
-	exitPane := holdRetiringCodexPane(t, codex)
+	exitPane := holdRetiringCodexPane(t, f, codex, target.TmuxSession)
 
 	rec := agentReq(t, f, target.ConvID, http.MethodPost, "/v1/whoami/reincarnate",
 		map[string]any{"follow_up": "continue"})

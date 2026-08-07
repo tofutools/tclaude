@@ -454,16 +454,19 @@ func retireSummaryWriterClone(cloneConv string) {
 	if cloneConv == "" {
 		return
 	}
-	stopOneConv(cloneConv, true /* force kill — the clone is done */)
 	if _, _, err := db.EnsureAgentForConv(cloneConv, "export-clone"); err != nil {
 		slog.Warn("export clone: ensure-actor-before-retire failed", "conv", cloneConv, "error", err)
 	}
 	if _, _, err := retireAgentConv(cloneConv, "system:export-clone",
 		"export complete — retired to preserve cost"); err != nil {
 		slog.Warn("export clone: retire failed", "conv", cloneConv, "error", err)
-	} else {
-		cleanupAgentDirectoriesAfterRetire(cloneConv, true)
+		return
 	}
+	// The shared post-demotion teardown, same as every other retire surface:
+	// stop the clone's pane (soft-first through the escalation ladder) and wait
+	// for the process before removing its agent-owned directories. A clone has
+	// no worktree of its own to clean up.
+	finishRetiredConv(cloneConv, true /* shutdown */, false /* no worktree */, agentWorktreeView{}, "")
 }
 
 // deleteSummaryWriterClone tears down a summary-writer clone that did NOT do
@@ -478,7 +481,14 @@ func deleteSummaryWriterClone(cloneConv string) {
 	if cloneConv == "" {
 		return
 	}
-	stopOneConv(cloneConv, true /* force kill */)
+	// Wait for the pane process before unlinking anything: the purge below
+	// removes the clone's directories and its conversation rows. A clone that
+	// survives the whole ladder keeps them — a leaked clone conversation is
+	// cheap to clean up later; a live process writing into deleted paths is not.
+	if _, stopErr := stopBeforePurge(cloneConv, ""); stopErr != nil {
+		slog.Warn("export clone: keeping clone; could not stop it", "conv", cloneConv, "error", stopErr)
+		return
+	}
 	if _, err := removeAgentDirectoriesForConv(cloneConv); err != nil {
 		slog.Warn("export clone: agent-owned directory cleanup failed", "conv", cloneConv, "error", err)
 		return

@@ -29,6 +29,19 @@ func runTmuxCommand(args ...string) error {
 	return runCommandWithTimeout(clcommon.TmuxCommand(args...), tmuxCommandTimeout)
 }
 
+// tmuxOutputWithTimeout runs a tmux command under tmuxCommandTimeout and
+// returns its stdout. The read twin of runTmuxCommand, for the probes the
+// lifecycle paths make while a request is blocked on them.
+func tmuxOutputWithTimeout(args ...string) ([]byte, error) {
+	cmd := clcommon.TmuxCommand(args...)
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := runCommandWithTimeout(cmd, tmuxCommandTimeout); err != nil {
+		return nil, err
+	}
+	return stdout.Bytes(), nil
+}
+
 // liveTmuxSessionsWithTimeout returns one batch liveness snapshot under the
 // same subprocess deadline as the nudge path. Snapshot-shaped delivery (cron
 // group fan-out) must not fork one has-session command per recipient, and a

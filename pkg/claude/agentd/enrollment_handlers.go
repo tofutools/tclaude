@@ -290,22 +290,17 @@ func handleAgentRetire(w http.ResponseWriter, r *http.Request, convID string) {
 		"outcome": outcome,
 	}
 
-	// Shutdown after the demotion: the agent is already a plain
-	// conversation by the time it processes /exit. Soft only — a
-	// retired agent's pane should close gracefully, not be killed.
+	// Everything after the demotion is the shared teardown (finishRetiredConv):
+	// stop the pane soft-first and wait for the process to really be gone, then
+	// remove the agent-owned directories, then apply the worktree plan resolved
+	// above. Soft only — a retired agent's pane should close gracefully; the
+	// escalation ladder inside the stop is what handles one that will not.
+	td := finishRetiredConv(convID, shutdown, deleteWorktree, wt, auditRequestEventID(r))
 	if shutdown {
-		resp["shutdown"] = stopOneConvWithIntent(convID, false, /* soft exit */
-			db.AgentExitActionRetire, auditRequestEventID(r))
+		resp["shutdown"] = td.Stop
 	}
-	cleanupAgentDirectoriesAfterRetire(convID, shutdown)
-
-	// Worktree+branch cleanup runs only after the agent's process exits
-	// (its cwd is the worktree). scheduleRetireWorktreeCleanup removes
-	// inline when the agent is already offline, defers to a background
-	// waiter when a /exit is in flight, and keeps the worktree when the
-	// session is left running.
-	if deleteWorktree {
-		resp["worktree"] = scheduleRetireWorktreeCleanup(convID, wt, shutdown)
+	if td.Worktree != nil {
+		resp["worktree"] = *td.Worktree
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

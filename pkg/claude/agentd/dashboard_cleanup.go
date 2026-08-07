@@ -153,49 +153,75 @@ func dashboardCleanupGroup(w http.ResponseWriter, r *http.Request) {
 
 	resp := cleanupResponse{Mode: "group", Outcomes: []cleanupOutcome{}}
 	ownersRemoved := 0
-	for _, raw := range body.Members {
+
+	// One outcome slot per requested member, filled concurrently. The dominant
+	// per-member cost here is isConvOnline — a tmux probe, i.e. a subprocess —
+	// so the old sequential walk made "clean up this group" scale linearly in
+	// process spawns for work that is entirely independent per member. ownerSet
+	// is read-only from here on and each worker writes only its own slot, so the
+	// counters and the ownerless warning are still folded by one goroutine
+	// afterwards, in input order.
+	type groupCleanupResult struct {
+		outcome      cleanupOutcome
+		keep         bool
+		removedOwner bool
+	}
+	slots := make([]groupCleanupResult, len(body.Members))
+	forEachAgentConcurrently(body.Members, batchAgentOpConcurrency, func(idx int, raw string) {
 		if strings.TrimSpace(raw) == "" {
-			continue
+			return
 		}
 		convID, ok := resolveCleanupConv(raw)
 		out := cleanupOutcome{AgentID: peerAgentID(convID), ConvID: convID, Title: cleanupTitle(convID)}
+		removedOwner := false
 		switch {
 		case !ok:
 			out.Result, out.Detail = "skipped", "could not resolve conv-id"
-			resp.Skipped++
 		case isConvOnline(convID):
 			// The tmux double-check: snapshot said offline, reality
 			// says otherwise — leave it alone.
 			out.Result, out.Detail = "skipped", "still online — tmux session is alive"
-			resp.Skipped++
 		default:
 			isOwner := ownerSet[convID]
 			member, ferr := db.FindMemberInGroup(g.ID, convID)
 			switch {
 			case ferr != nil:
 				out.Result, out.Detail = "failed", "membership lookup: "+ferr.Error()
-				resp.Failed++
 			case member == nil && !isOwner:
 				out.Result, out.Detail = "skipped", "not in group "+g.Name
-				resp.Skipped++
 			case isOwner && !body.IncludeOwners:
 				out.Result, out.Detail = "skipped", "group owner — enable \"include offline owners\" to remove"
-				resp.Skipped++
 			default:
 				if rerr := removeConvFromGroup(g.ID, convID, isOwner, member != nil); rerr != nil {
 					out.Result, out.Detail = "failed", rerr.Error()
-					resp.Failed++
 				} else {
 					out.Result = "removed"
-					resp.Removed++
 					if isOwner {
-						ownersRemoved++
+						removedOwner = true
 						out.Detail = "owner status also removed"
 					}
 				}
 			}
 		}
-		resp.Outcomes = append(resp.Outcomes, out)
+		slots[idx] = groupCleanupResult{outcome: out, keep: true, removedOwner: removedOwner}
+	})
+
+	for _, slot := range slots {
+		if !slot.keep {
+			continue
+		}
+		resp.Outcomes = append(resp.Outcomes, slot.outcome)
+		switch slot.outcome.Result {
+		case "skipped":
+			resp.Skipped++
+		case "failed":
+			resp.Failed++
+		case "removed":
+			resp.Removed++
+		}
+		if slot.removedOwner {
+			ownersRemoved++
+		}
 	}
 
 	if ownerCountBefore > 0 && ownersRemoved >= ownerCountBefore {
@@ -350,21 +376,40 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 	// their template-seeded rhythms disabled exactly once.
 	retiredGroups := map[int64]*db.AgentGroup{}
 
-	for _, tg := range targets {
+	// Per-target side effects a worker cannot merge itself: the group ids its
+	// retire may have orphaned, and the groups it left. Each worker owns its own
+	// slot, so the maps above are still built by ONE goroutine after the join.
+	type cleanupSideEffects struct {
+		outcome     cleanupOutcome
+		ownerGroups []int64
+		leftGroups  []*db.AgentGroup
+	}
+	effects := make([]cleanupSideEffects, len(targets))
+
+	// This is the fleet-wide bulk surface — "retire every idle agent", "retire
+	// the ungrouped ones", "delete the retired backlog" — and it used to walk
+	// its targets one at a time. Per target that is a tmux liveness probe, the
+	// demotion writes, a soft stop that now WAITS for the pane to die, directory
+	// removal and (on delete) a full conversation purge; sequentially the human
+	// watched a spinning dialog retire an agent or two at a time. The work is
+	// independent per target — every shared input (the worktree claim snapshot,
+	// the willDelete set) was deliberately resolved above, before anything
+	// mutates — so it fans out under the same bound as the group retire.
+	forEachAgentConcurrently(targets, batchAgentOpConcurrency, func(idx int, tg cleanupTarget) {
 		// Resolve the title up-front: the delete path wipes the
 		// conv_index row, so a post-delete lookup would come back empty.
 		out := cleanupOutcome{AgentID: peerAgentID(tg.convID), ConvID: tg.convID, Title: cleanupTitle(tg.convID)}
+		var ownerGroupIDs []int64
+		var leftGroups []*db.AgentGroup
 		switch {
 		case !tg.ok:
 			out.Result, out.Detail = "skipped", "could not resolve conv-id"
-			resp.Skipped++
 		case tg.online && !body.IncludeOnline && mode != "reinstate":
 			// The tmux double-check: snapshot said offline (or the human
 			// ticked it anyway), reality says alive — leave it untouched
 			// unless the request opted in. Reinstate is non-destructive,
 			// so it never blocks on liveness.
 			out.Result, out.Detail = "skipped", "still online — enable \"include online sessions\" to act on it"
-			resp.Skipped++
 		case mode == "reinstate":
 			// The inverse of retire: clear the retired flag, returning a
 			// demoted agent to the active roster. Groups and grants stay
@@ -373,14 +418,11 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 			switch {
 			case rerr != nil:
 				out.Result, out.Detail = "failed", "reinstate: "+rerr.Error()
-				resp.Failed++
 			case !did:
 				out.Result, out.Detail = "skipped", "not a retired agent — nothing to reinstate"
-				resp.Skipped++
 			default:
 				out.Result = "reinstated"
 				out.Detail = "returned to the active roster — groups and permissions were not restored"
-				resp.Reinstated++
 			}
 		case mode == "retire":
 			// Soft-delete: demote to a plain conversation. The .jsonl
@@ -395,45 +437,27 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 			switch {
 			case rerr != nil:
 				out.Result, out.Detail = "failed", "retire: "+rerr.Error()
-				resp.Failed++
 			case !outcome.Retired:
 				out.Result, out.Detail = "skipped", "not an active agent — nothing to retire"
-				resp.Skipped++
 			default:
 				out.Result = "retired"
 				out.Groups = outcome.GroupsLeft
 				out.Detail = fmt.Sprintf("demoted to a plain conversation · left %d group(s), revoked %d perm + %d sudo grant(s)",
 					len(outcome.GroupsLeft), outcome.PermsRevoked, outcome.SudoRevoked)
-				resp.Retired++
-				for _, g := range groupsBefore {
-					retiredGroups[g.ID] = g
-				}
-				for _, gid := range ownerGroups {
-					ownerless[gid] = true
-				}
-				// Optionally soft-stop the now-retired agent's session.
-				// stopOneConv is idempotent — an already-dead session
-				// (the common case for an offline target) is a no-op, so
-				// the detail note only appears when a pane was running.
-				if retireShutdown {
-					switch st := stopOneConv(tg.convID, false /* soft exit */); st.Action {
-					case "soft_stopped":
-						out.Detail += " · session soft-stopped"
-					case "error":
-						out.Detail += " · session shutdown failed: " + st.Detail
-					}
-				}
-				cleanupAgentDirectoriesAfterRetire(tg.convID, retireShutdown)
-				// Worktree + branch cleanup, honouring the same per-agent
-				// safety rules as the single-agent retire: the main repo and
-				// any worktree a surviving agent still works in are kept, and
-				// the removal is deferred until a soft-exited pane dies (kept
-				// outright when shutdown was declined). The one-line plan note
-				// is folded into Detail so the outcome row says what happened.
-				if body.DeleteWorktrees {
-					if plan := scheduleRetireWorktreeCleanup(tg.convID, retireWorktrees[tg.convID], retireShutdown); plan.Action != "none" {
-						out.Detail += " · " + plan.Detail
-					}
+				leftGroups = groupsBefore
+				ownerGroupIDs = ownerGroups
+				// The shared post-demotion teardown: stop the pane and wait
+				// for the process to actually be gone, remove the agent-owned
+				// directories, then apply the worktree plan resolved above
+				// (per-agent safety rules unchanged — the main repo and any
+				// worktree a surviving agent still works in are kept). Each
+				// step's one-line note is folded into Detail so the outcome row
+				// says what happened.
+				for _, note := range finishRetiredConv(
+					tg.convID, retireShutdown, body.DeleteWorktrees,
+					retireWorktrees[tg.convID], "",
+				).Notes {
+					out.Detail += " · " + note
 				}
 			}
 		case mode == "delete":
@@ -443,13 +467,23 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 			// Capture owned groups before the purge so the warning
 			// sweep can tell which ones lose their last owner.
 			ownedBefore, _ := db.ListGroupsOwnedBy(tg.convID)
-			// Best-effort stop. The conv is confirmed offline, so this
-			// is normally a no-op; kept for parity with the per-agent
-			// delete button, which force-kills any lingering pane.
-			stopOneConv(tg.convID, true)
+			// Stop anything still running BEFORE the purge, and wait for it
+			// to be gone: the next two steps unlink the agent's directories
+			// and its .jsonl, which must not happen under a live process. The
+			// stop goes through the soft-exit ladder rather than straight to a
+			// kill — the harness gets its exit command (and the double-tap
+			// re-injections) first, and only a pane that will not go is killed.
+			// Normally a no-op: the target is confirmed offline unless the
+			// human ticked "include online sessions".
+			if _, stopErr := stopBeforePurge(tg.convID, ""); stopErr != nil {
+				// Refuse THIS target and move on; the rest of the batch is
+				// unaffected. Purging under a live process would leave an orphan
+				// writing into a conversation that no longer exists.
+				out.Result, out.Detail = "failed", stopErr.Error()
+				break
+			}
 			if _, cleanupErr := removeAgentDirectoriesForConv(tg.convID); cleanupErr != nil {
 				out.Result, out.Detail = "failed", "delete agent-owned directories: "+cleanupErr.Error()
-				resp.Failed++
 				break
 			}
 			// Actor-aware (JOH-26 PR3d): an agent's head-generation delete
@@ -457,7 +491,6 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 			counts, _, derr := conv.DeleteAgentAllGenerations(tg.convID)
 			if derr != nil {
 				out.Result, out.Detail = "failed", "delete: "+derr.Error()
-				resp.Failed++
 			} else {
 				out.Result = "deleted"
 				out.Detail = fmt.Sprintf("purged · dropped %d group + %d owner row(s)",
@@ -465,25 +498,19 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 				if note := applyWorktreeCleanup(wt, body.DeleteWorktrees); note != "" {
 					out.Detail += " · " + note
 				}
-				resp.Deleted++
-				for _, gid := range ownedBefore {
-					ownerless[gid] = true
-				}
+				ownerGroupIDs = ownedBefore
 			}
 		default:
 			removed, kept, ownerGroups, rerr := unjoinConvFromAllGroups(tg.convID, body.IncludeOwners)
 			switch {
 			case rerr != nil:
 				out.Result, out.Detail = "failed", rerr.Error()
-				resp.Failed++
 			case len(removed) == 0 && len(kept) == 0:
 				out.Result, out.Detail = "skipped", "not a member of any group"
-				resp.Skipped++
 			case len(removed) == 0:
 				out.Result = "skipped"
 				out.Detail = "only owns group(s) — enable \"include offline owners\" to remove"
 				out.Groups = kept
-				resp.Skipped++
 			default:
 				out.Result = "removed"
 				out.Groups = removed
@@ -491,13 +518,37 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 				if len(kept) > 0 {
 					out.Detail += " · kept in " + strings.Join(kept, ", ") + " (owner)"
 				}
-				resp.Removed++
-				for _, gid := range ownerGroups {
-					ownerless[gid] = true
-				}
+				ownerGroupIDs = ownerGroups
 			}
 		}
-		resp.Outcomes = append(resp.Outcomes, out)
+		effects[idx] = cleanupSideEffects{outcome: out, ownerGroups: ownerGroupIDs, leftGroups: leftGroups}
+	})
+
+	// Single-threaded fold: the counters, the ownerless set and the
+	// rhythm-sweep roster are all derived here, in input order, so the response
+	// is byte-identical to what the sequential loop produced.
+	for _, eff := range effects {
+		resp.Outcomes = append(resp.Outcomes, eff.outcome)
+		switch eff.outcome.Result {
+		case "skipped":
+			resp.Skipped++
+		case "failed":
+			resp.Failed++
+		case "reinstated":
+			resp.Reinstated++
+		case "retired":
+			resp.Retired++
+		case "deleted":
+			resp.Deleted++
+		case "removed":
+			resp.Removed++
+		}
+		for _, gid := range eff.ownerGroups {
+			ownerless[gid] = true
+		}
+		for _, g := range eff.leftGroups {
+			retiredGroups[g.ID] = g
+		}
 	}
 
 	for _, g := range retiredGroups {

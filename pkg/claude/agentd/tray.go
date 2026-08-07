@@ -733,17 +733,17 @@ func pngToICO(pngBytes []byte, size int) []byte {
 		b = uint8(size)
 	}
 	var buf bytes.Buffer
-	_ = binary.Write(&buf, binary.LittleEndian, uint16(0)) // reserved
-	_ = binary.Write(&buf, binary.LittleEndian, uint16(1)) // type = ICO
-	_ = binary.Write(&buf, binary.LittleEndian, uint16(1)) // image count
-	buf.WriteByte(b)                                       // width
-	buf.WriteByte(b)                                       // height
-	buf.WriteByte(0)                                       // palette
-	buf.WriteByte(0)                                       // reserved
-	_ = binary.Write(&buf, binary.LittleEndian, uint16(1))           // planes
-	_ = binary.Write(&buf, binary.LittleEndian, uint16(32))          // bpp
+	_ = binary.Write(&buf, binary.LittleEndian, uint16(0))             // reserved
+	_ = binary.Write(&buf, binary.LittleEndian, uint16(1))             // type = ICO
+	_ = binary.Write(&buf, binary.LittleEndian, uint16(1))             // image count
+	buf.WriteByte(b)                                                   // width
+	buf.WriteByte(b)                                                   // height
+	buf.WriteByte(0)                                                   // palette
+	buf.WriteByte(0)                                                   // reserved
+	_ = binary.Write(&buf, binary.LittleEndian, uint16(1))             // planes
+	_ = binary.Write(&buf, binary.LittleEndian, uint16(32))            // bpp
 	_ = binary.Write(&buf, binary.LittleEndian, uint32(len(pngBytes))) // size
-	_ = binary.Write(&buf, binary.LittleEndian, uint32(22))          // offset
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(22))            // offset
 	buf.Write(pngBytes)
 	return buf.Bytes()
 }

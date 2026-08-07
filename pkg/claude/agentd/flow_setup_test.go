@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -146,52 +147,63 @@ func newFlow(t *testing.T) *testharness.Flow {
 
 // holdRetiringPane wedges a retiring agent's /exit and hands the moment of its
 // death to the test, deterministically. The returned func ends the pane; call
-// it once the scenario's drift is in place, and ALWAYS before draining the
-// background — the parked watchdog holds a background slot, so a drain that
-// precedes the release blocks until the go test timeout.
+// it once the scenario's drift is in place.
 //
-// Scenarios that watch what happens BETWEEN a soft exit and the work it
-// unblocks need a pane that is still alive when the retire response is written
-// and that exits only after the test says so. Wedging /exit in the simulator
-// (TCL-760) is half of that: it stops the simulator from ending the pane on its
-// own. It stopped being the whole of it once the soft-exit escalation ladder
-// landed (TCL-1001, 40dc0c504) — a pane that ignores /exit is precisely the
-// pane that watchdog exists to kill, and flow tests shrink its deadline to 20ms
-// (SetSoftExitEscalationTimingForTest above). That kill ends the pane on a
-// timer, so a deferred retire cleanup's exit-wait could be satisfied — and its
-// live-claimant snapshot taken — before the test had installed the drift it
-// asserts about. That is TCL-1019, and TCL-760's identical failure text.
+// Two things must hold for a scenario that watches what happens BETWEEN a soft
+// exit and the work it unblocks: the pane must ignore its exit command, and it
+// must survive the escalation ladder that exists to kill exactly such a pane.
+// Wedging /exit in the simulator (TCL-760) is the first half. The second used
+// to be freezing the ladder's probe loop on a channel — which worked only while
+// that loop ran on a background goroutine.
 //
-// So the ladder's probe loop blocks until the release. Pane death then has
-// exactly one cause here: the fixture asking for it, with no wall-clock budget
-// on either side. Tests that assert on the ladder itself must NOT use this —
-// they wedge /exit directly and let the watchdog run.
-func holdRetiringPane(t *testing.T, cc *testharness.CCSim) func() {
+// A stop that WAITS runs the ladder inline, inside the request, so freezing it
+// parks the handler itself on a release the test cannot send until the handler
+// returns. So the pane is made ladder-PROOF instead of the ladder being
+// frozen: tmux kill-pane/kill-session keep reporting success while the session
+// stays alive, and the process rungs report the pid still there. The ladder
+// runs to exhaustion in milliseconds under the shrunk test timings
+// (SetSoftExitEscalationTimingForTest above), the stop reports back that the
+// pane is stuck, and the pane is still alive when the response is written —
+// the same fixture state as before, now reached the way production reaches it
+// rather than by stopping the clock.
+//
+// Pane death still has exactly one cause here: the returned func.
+func holdRetiringPane(t *testing.T, f *testharness.Flow, cc *testharness.CCSim, tmuxSession string) func() {
 	t.Helper()
 	require.NotNil(t, cc, "no CCSim to hold")
 	cc.OnInput("/exit", func(*testharness.CCSim, string) bool {
 		return true
 	})
-	release := holdSoftExitEscalation(t)
-	return func() {
-		cc.MarkDead()
-		release()
-	}
+	makePaneLadderProof(t, f, tmuxSession)
+	return func() { cc.MarkDead() }
+}
+
+// makePaneLadderProof makes tmuxSession's pane survive every rung of the
+// soft-exit escalation ladder: tmux kill-pane/kill-session report success and
+// change nothing, and the process probe keeps saying the pid is alive so the
+// signal rungs cannot resolve either.
+//
+// It is what lets a fixture own the moment of pane death even though a waiting
+// stop drives the ladder synchronously.
+func makePaneLadderProof(t *testing.T, f *testharness.Flow, tmuxSession string) {
+	t.Helper()
+	f.World.Tmux.SetKillResistantForTest(tmuxSession, true)
+	cleanupAfterBackgroundDrain(t, agentd.SetSoftExitEscalationProcessForTest(
+		func(int) bool { return true },
+		func(int, syscall.Signal) error { return nil },
+	))
 }
 
 // holdRetiringCodexPane is holdRetiringPane for a Codex pane, whose exit
 // command is /quit.
-func holdRetiringCodexPane(t *testing.T, cx *testharness.CodexSim) func() {
+func holdRetiringCodexPane(t *testing.T, f *testharness.Flow, cx *testharness.CodexSim, tmuxSession string) func() {
 	t.Helper()
 	require.NotNil(t, cx, "no CodexSim to hold")
 	cx.OnInput("/quit", func(*testharness.CodexSim, string) bool {
 		return true
 	})
-	release := holdSoftExitEscalation(t)
-	return func() {
-		cx.MarkDead()
-		release()
-	}
+	makePaneLadderProof(t, f, tmuxSession)
+	return func() { cx.MarkDead() }
 }
 
 // escalationWitness observes whether the soft-exit escalation watchdog has
