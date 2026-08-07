@@ -223,6 +223,41 @@ func stopOneConvAndWait(convID string, force bool, lifecycleAction, relatedEvent
 	return stopOneConvUnderLaunchLock(convID, force, lifecycleAction, relatedEventID, stopWaitForExit(deadline))
 }
 
+// errAgentStillRunning reports that a stop ran the whole escalation ladder (or
+// could not act on the pane at all) and the process is STILL alive.
+var errAgentStillRunning = errors.New("agent is still running after the full stop escalation")
+
+// stopBeforePurge is the stop every DESTRUCTIVE path must use before it unlinks
+// what the agent holds — its agent-owned directories, its worktree, its .jsonl,
+// its rows.
+//
+// Retire does not need this: its cleanups defer themselves until the pane is
+// observed offline and keep whatever they cannot safely remove. A purge has no
+// such luxury — it acts immediately and cannot be undone — so it needs the
+// strong contract: soft exit first (with the double-tap re-injections), then
+// kill-pane, SIGTERM, SIGKILL, and a definite answer about whether the process
+// is gone.
+//
+// A softExitStuck or softExitUnattempted outcome is a REFUSAL, not a warning.
+// Deleting a running agent's files leaves a live orphan writing into paths that
+// no longer exist and rows that no longer exist — strictly worse than the
+// delete not happening. Callers surface the error; the human retries or
+// investigates. An already-offline conv returns immediately with no error,
+// which is the overwhelmingly common case for a delete.
+func stopBeforePurge(convID, relatedEventID string) (memberOpResult, error) {
+	res, outcome := stopOneConvAndWait(
+		convID, false /* soft exit first */, db.AgentExitActionForceStop, relatedEventID, 0)
+	switch outcome {
+	case softExitStuck, softExitUnattempted:
+		detail := res.Detail
+		if detail == "" {
+			detail = res.Action
+		}
+		return res, fmt.Errorf("%w: %s", errAgentStillRunning, detail)
+	}
+	return res, nil
+}
+
 // stopOneConvUnderLaunchLock is the one stop implementation both contracts go
 // through; waitPolicy picks which. The softExitOutcome is only meaningful when
 // waitPolicy.wait is set (it is softExitClosed otherwise — nothing was
@@ -2496,7 +2531,15 @@ func handleAgentDelete(w http.ResponseWriter, r *http.Request, targetConv string
 	// caller retry, so blocking it for the escalation window would buy nothing.
 	var stopRes memberOpResult
 	if force {
-		stopRes, _ = stopOneConvAndWait(targetConv, force, db.AgentExitActionForceStop, auditRequestEventID(r), 0)
+		var stopErr error
+		stopRes, stopErr = stopBeforePurge(targetConv, auditRequestEventID(r))
+		if stopErr != nil {
+			// The ladder is exhausted and the agent is still up. Purging now
+			// would leave a live orphan writing into rows and a .jsonl that no
+			// longer exist.
+			writeError(w, http.StatusConflict, "alive", stopErr.Error())
+			return
+		}
 	} else {
 		stopRes = stopOneConv(targetConv, force)
 	}

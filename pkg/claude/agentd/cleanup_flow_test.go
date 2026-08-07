@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -1167,4 +1168,63 @@ func TestCleanup_Agents_MixedCategoriesDelete(t *testing.T) {
 	f.AssertDeleted(active)
 	f.AssertDeleted(retired)
 	f.AssertDeleted(plain)
+}
+
+// Scenario: the bulk DELETE tier refuses a target it could not actually stop.
+//
+// An agent that ignores its exit command AND survives tmux kill-pane and every
+// signal rung is still running when the purge would start. Deleting its
+// directories, .jsonl and rows there leaves a live orphan writing into paths
+// and a conversation that no longer exist — strictly worse than the delete not
+// happening. So the target comes back "failed" and its data survives, while the
+// rest of the batch proceeds normally.
+func TestCleanupDelete_RefusesATargetItCouldNotStop(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	// The pane survives every rung: tmux reports success but keeps the session,
+	// and the process probe keeps saying "still alive".
+	cleanupAfterBackgroundDrain(t, agentd.SetSoftExitEscalationProcessForTest(
+		func(int) bool { return true },
+		func(int, syscall.Signal) error { return nil },
+	))
+
+	const (
+		unkillable = "cdun-1111-2222-3333-4444"
+		normal     = "cdok-1111-2222-3333-4444"
+	)
+	f.HaveConvWithTitle(unkillable, "unkillable-worker")
+	f.HaveAliveSession(unkillable, "spwn-cdun", "tmux-cdun", f.TestCwd("cd-unkillable"))
+	f.HaveConvWithTitle(normal, "offline-worker")
+	f.World.Tmux.SetKillResistantForTest("tmux-cdun", true)
+
+	cc := f.World.CCs.GetByConvID(unkillable)
+	require.NotNil(t, cc, "no CCSim registered for %s", unkillable)
+	cc.OnInput("/exit", func(c *testharness.CCSim, _ string) bool {
+		_ = c.WriteUserTurn("[hung agent: /exit ignored]")
+		return true
+	})
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	resp := postCleanup(t, mux, "/api/cleanup/agents",
+		`{"agents":["`+unkillable+`","`+normal+`"],"mode":"delete","include_online":true}`)
+
+	var unkillableResult, normalResult string
+	for _, o := range resp.Outcomes {
+		switch o.ConvID {
+		case unkillable:
+			unkillableResult = o.Result
+		case normal:
+			normalResult = o.Result
+		}
+	}
+	assert.Equal(t, "failed", unkillableResult,
+		"a target that survived the whole stop ladder must NOT be purged; outcomes=%+v", resp.Outcomes)
+	assert.Equal(t, "deleted", normalResult,
+		"one refused target must not stop the rest of the batch; outcomes=%+v", resp.Outcomes)
+
+	// The refusal is real: the conversation is still there to retry against.
+	row, err := db.GetConvIndex(unkillable)
+	require.NoError(t, err)
+	assert.NotNil(t, row, "a refused delete must leave the conversation intact")
 }

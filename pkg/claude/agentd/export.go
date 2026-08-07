@@ -482,8 +482,13 @@ func deleteSummaryWriterClone(cloneConv string) {
 		return
 	}
 	// Wait for the pane process before unlinking anything: the purge below
-	// removes the clone's directories and its conversation rows.
-	stopOneConvAndWait(cloneConv, false /* soft exit first */, db.AgentExitActionForceStop, "", 0)
+	// removes the clone's directories and its conversation rows. A clone that
+	// survives the whole ladder keeps them — a leaked clone conversation is
+	// cheap to clean up later; a live process writing into deleted paths is not.
+	if _, stopErr := stopBeforePurge(cloneConv, ""); stopErr != nil {
+		slog.Warn("export clone: keeping clone; could not stop it", "conv", cloneConv, "error", stopErr)
+		return
+	}
 	if _, err := removeAgentDirectoriesForConv(cloneConv); err != nil {
 		slog.Warn("export clone: agent-owned directory cleanup failed", "conv", cloneConv, "error", err)
 		return

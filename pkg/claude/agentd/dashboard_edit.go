@@ -509,7 +509,10 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 	// intent, but a harness still gets its exit command and the double-tap
 	// re-injections before kill-pane / SIGTERM / SIGKILL), which for the
 	// usual case — deleting an already-offline conv — returns immediately.
-	stopOneConvAndWait(convID, false /* soft exit first */, db.AgentExitActionForceStop, auditRequestEventID(r), 0)
+	if _, stopErr := stopBeforePurge(convID, auditRequestEventID(r)); stopErr != nil {
+		http.Error(w, stopErr.Error(), http.StatusConflict)
+		return
+	}
 
 	// Single source of truth for the comprehensive cleanup: filesystem
 	// + DB union purge across every conv-id-referencing table +
@@ -597,7 +600,10 @@ func handleDashboardAgentGenerationDelete(w http.ResponseWriter, r *http.Request
 	// process; a reincarnate soft-exits the original), but stop and wait out
 	// any lingering pane before teardown — same discipline as the agent
 	// delete, so the row + .jsonl purge below cannot race a live process.
-	stopOneConvAndWait(convID, false /* soft exit first */, db.AgentExitActionForceStop, auditRequestEventID(r), 0)
+	if _, stopErr := stopBeforePurge(convID, auditRequestEventID(r)); stopErr != nil {
+		http.Error(w, stopErr.Error(), http.StatusConflict)
+		return
+	}
 
 	// Exact, single-generation teardown: rows + .jsonl for THIS conv only.
 	// db.DeleteAgentByConvID takes the predecessor-unlink branch (this is not

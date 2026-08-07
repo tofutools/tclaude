@@ -475,7 +475,13 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 			// re-injections) first, and only a pane that will not go is killed.
 			// Normally a no-op: the target is confirmed offline unless the
 			// human ticked "include online sessions".
-			stopOneConvAndWait(tg.convID, false /* soft exit first */, db.AgentExitActionForceStop, "", 0)
+			if _, stopErr := stopBeforePurge(tg.convID, ""); stopErr != nil {
+				// Refuse THIS target and move on; the rest of the batch is
+				// unaffected. Purging under a live process would leave an orphan
+				// writing into a conversation that no longer exists.
+				out.Result, out.Detail = "failed", stopErr.Error()
+				break
+			}
 			if _, cleanupErr := removeAgentDirectoriesForConv(tg.convID); cleanupErr != nil {
 				out.Result, out.Detail = "failed", "delete agent-owned directories: "+cleanupErr.Error()
 				break
