@@ -37,6 +37,13 @@ func TestFormatHumanMessage(t *testing.T) {
 		assert.Equal(t, "PO: hi\n— dev", body)
 	})
 
+	// A notification whose subject and attachment are the whole message.
+	t.Run("no body: the banner names the sender without a dangling colon", func(t *testing.T) {
+		title, body := formatHumanMessage("tclaude-PO", "tclaude-dev", "dashboard mock", "")
+		assert.Equal(t, "Claude: dashboard mock", title)
+		assert.Equal(t, "tclaude-PO\n— tclaude-dev", body)
+	})
+
 	t.Run("over-long body is truncated to the body cap", func(t *testing.T) {
 		_, body := formatHumanMessage("PO", "", "", strings.Repeat("x", notifyBodyMaxLen+500))
 		assert.LessOrEqual(t, len([]rune(body)), notifyBodyMaxLen)

@@ -10,7 +10,7 @@ import {
   moveRowSelection,
 } from './mail-keynav.js';
 import { idTooltip, relTime, shortAgentId, shortId } from './helpers.js';
-import { attachmentHref, messageAttachments } from './human-attachments.js';
+import { attachmentHref, bodilessNotice, messageAttachments } from './human-attachments.js';
 import { dashboardState } from './snapshot-store.js';
 import { ImageAttachmentPreview } from './image-preview-overlay.js';
 import { MarkdownAttachment } from './markdown-attachment.js';
@@ -489,7 +489,9 @@ function MessageReader({ current, controller, model }) {
         <${HeaderRow} label="Status">${stateBits}</${HeaderRow}>
       </div>
     </div>
-    <div class="mail-reader-body"><${LinkifiedBody} text=${message.body || ''} /></div>
+    <div class="mail-reader-body">${bodilessNotice(message)
+      ? html`<span class="notification-bodiless">${bodilessNotice(message)}</span>`
+      : html`<${LinkifiedBody} text=${message.body || ''} />`}</div>
     ${human && html`<${HumanAttachment} message=${message} />`}
     <div class="mail-reader-actions">
       ${human && message.from_conv && html`<${Fragment}><button data-act="msg-reply" data-id=${message.id} data-agent=${message.from_agent || ''}

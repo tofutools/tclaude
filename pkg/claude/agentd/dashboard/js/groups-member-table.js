@@ -13,6 +13,7 @@ import {
   humanNotificationSenderQuery, memberHumanMessages, memberUnreadHumanCount,
   openHumanNotificationReader,
 } from './human-notification-attention.js';
+import { bodilessNotice } from './human-attachments.js';
 
 const html = htm.bind(h);
 
@@ -750,7 +751,8 @@ function HumanNotificationAttention({ member, snapshot }) {
         <strong>${message.subject || '(no subject)'}</strong>
         <span>${relTime(message.created_at)}</span>
       </span>
-      <span class="human-notification-preview-body">${message.body || '(empty notification)'}</span>
+      <span class="human-notification-preview-body">${message.body
+        || bodilessNotice(message) || '(empty notification)'}</span>
       <span class="human-notification-preview-foot">
         ${attachment
           ? html`<span class="human-notification-preview-attachment">📎 ${attachment.filename || 'attachment'}</span>`

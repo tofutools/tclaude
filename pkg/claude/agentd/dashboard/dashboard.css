@@ -763,6 +763,10 @@ button.tool:hover { border-color: #58a6ff; }
    the reader instead of forcing a horizontal scroll. */
 .mail-reader-body a { color: #58a6ff; text-decoration: none; overflow-wrap: anywhere; }
 .mail-reader-body a:hover { text-decoration: underline; }
+/* Stands where the body would be when a notification deliberately has none
+   (`notify-human --subject … --attach …`, where the file IS the message).
+   Muted and italic so it reads as the reader speaking, not as agent text. */
+.notification-bodiless { color: #7d8590; font-style: italic; }
 .mail-attachment { margin-top: 14px; padding: 10px 12px; border: 1px solid #30363d; border-radius: 6px; display: flex; align-items: center; flex-wrap: wrap; gap: 9px; background: #0d1117; }
 .mail-attachment-label { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
 .mail-attachment a { color: #58a6ff; font-weight: 600; text-decoration: none; overflow-wrap: anywhere; }

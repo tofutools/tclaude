@@ -1561,7 +1561,12 @@ download card per published file. Up to 20 attached files arrive as separate
 downloads — so an image stays viewable instead of being buried in an archive —
 while a directory or a larger set is packaged as one zip. `--zip` and
 `--separate` force either shape, and `--name` (which renames a single download)
-implies `--zip`. Daemon-verified PNG, JPEG, GIF, WebP, and AVIF attachments also
+implies `--zip`. A notification that publishes a file may carry a subject and
+no body at all — the artifact is then the message. Where the body would be,
+the reader says so ("the attached file is the notification") rather than
+leaving a blank gap above the download card.
+
+Daemon-verified PNG, JPEG, GIF, WebP, and AVIF attachments also
 show a contain-fit thumbnail. Selecting the thumbnail opens the shared image
 preview overlay, which supports zoom, authenticated missing-file checks, and
 Escape-to-return while keeping the original download action available. SVG

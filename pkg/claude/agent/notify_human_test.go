@@ -142,6 +142,34 @@ func TestResolveNotifyHumanAttachMode(t *testing.T) {
 	assert.Equal(t, rcInvalidArg, rc)
 }
 
+// A published artifact under a subject is a complete message on its own, so the
+// body may be dropped there — and only there.
+func TestNotifyHumanHasContent(t *testing.T) {
+	assert.True(t, notifyHumanHasContent("status update", &notifyHumanParams{}),
+		"a plain body needs nothing else")
+	assert.True(t, notifyHumanHasContent("  ", &notifyHumanParams{
+		Subject: "screenshot", Attach: []string{"shot.png"}}),
+		"a subject plus an attachment stands in for the body")
+	assert.False(t, notifyHumanHasContent("  ", &notifyHumanParams{Subject: "screenshot"}),
+		"a subject with nothing published is a headline over an empty page")
+	assert.False(t, notifyHumanHasContent("", &notifyHumanParams{Attach: []string{"shot.png"}}),
+		"an unlabelled attachment says nothing about what arrived")
+	assert.False(t, notifyHumanHasContent("", &notifyHumanParams{
+		Subject: "   ", Attach: []string{"shot.png"}}),
+		"a blank subject is no subject")
+}
+
+// The bodiless form is refused when it is missing the subject or the attachment
+// that justify it, before the CLI ever reaches the daemon.
+func TestRunNotifyHuman_RejectsBodilessWithoutSubjectAndAttachment(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	rc := runNotifyHuman(&notifyHumanParams{Subject: "screenshot"},
+		new(bytes.Buffer), &stdout, &stderr)
+	assert.Equal(t, rcInvalidArg, rc)
+	assert.Contains(t, stderr.String(), "a notification body is required")
+	assert.Empty(t, stdout.String())
+}
+
 // Two files sharing a base name must both survive the upload.
 func TestBuildMultipartAttachments_DisambiguatesNameCollisions(t *testing.T) {
 	dirA, dirB := t.TempDir(), t.TempDir()
