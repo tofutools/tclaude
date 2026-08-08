@@ -70,9 +70,23 @@ func queueAgentMessage(m *db.AgentMessage) (int64, error) {
 	return id, nil
 }
 
+// queueCronAgentMessage is the scheduler-specific queue policy: one pending
+// tick per job and recipient, with the newest tick occupying the newest queue
+// position. The database replacement and provenance insert are atomic; only
+// after commit do we arm the shared delivery worker.
+func queueCronAgentMessage(m *db.AgentMessage, cronJobID int64) (int64, error) {
+	id, _, err := db.InsertLatestCronAgentMessage(m, cronJobID)
+	if err != nil {
+		return 0, err
+	}
+	enqueueDeliveryForConv(m.ToConv)
+	return id, nil
+}
+
 // queueRegularAgentMessage is the bounded entry point for human/agent
-// one-shot sends. Internal lifecycle, cron, process, and coordination traffic
-// keeps using queueAgentMessage so queue pressure cannot break correctness.
+// one-shot sends. Internal lifecycle, process, and coordination traffic keeps
+// using queueAgentMessage so queue pressure cannot break correctness. Cron has
+// its own latest-pending-tick policy in queueCronAgentMessage.
 func queueRegularAgentMessage(m *db.AgentMessage) (id int64, pending int, err error) {
 	id, pending, err = db.InsertAgentMessageBounded(m, regularAgentMessageQueueLimit)
 	if err == nil {
