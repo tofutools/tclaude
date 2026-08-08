@@ -1292,9 +1292,12 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 		}
 	}
 
-	// Copy the full permission posture — grant AND deny overrides — so
-	// the clone inherits the source's lockdown, not just its grants.
-	oldPerms, err := db.ListAgentPermissionOverridesForConv(target)
+	// Copy the full permission posture — grant AND deny overrides, WITH
+	// their scopes — so the clone inherits the source's lockdown, not just
+	// its grants. Dropping the scope here would let any agent holding the
+	// default-granted self.clone mint an unscoped copy of a grant an
+	// operator deliberately narrowed.
+	oldPerms, err := db.ListAgentPermissionOverrideRowsForConv(target)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io",
 			"snapshot perms: "+err.Error())
@@ -1553,7 +1556,7 @@ func inheritEffectiveSandboxSnapshotForGroup(sourceConv, targetConv string, reso
 // is logged, not fatal); returns the descriptors copied (for the response /
 // audit). Shared by the human/agent clone orchestration and the same-group
 // export clone (JOH-266), which snapshot the source's identity and pass it here.
-func applyClonedIdentity(newConv, granter string, members []*db.AgentGroupMember, perms map[string]string, ownedIDs []int64) []string {
+func applyClonedIdentity(newConv, granter string, members []*db.AgentGroupMember, perms []db.AgentPermission, ownedIDs []int64) []string {
 	copied := []string{}
 	for _, m := range members {
 		// Membership rows carry no name of their own — the clone's single name
@@ -1571,12 +1574,14 @@ func applyClonedIdentity(newConv, granter string, members []*db.AgentGroupMember
 		copied = append(copied, fmt.Sprintf("group:%d", m.GroupID))
 	}
 
-	for slug, effect := range perms {
-		if err := db.SetAgentPermissionOverride(newConv, slug, effect, granter); err != nil {
-			slog.Warn("clone: copy new perm failed", "slug", slug, "effect", effect, "error", err)
+	for _, perm := range perms {
+		if err := db.SetAgentPermissionOverrideWithScope(
+			newConv, perm.Slug, perm.Effect, perm.ScopeJSON, granter); err != nil {
+			slog.Warn("clone: copy new perm failed",
+				"slug", perm.Slug, "effect", perm.Effect, "error", err)
 			continue
 		}
-		copied = append(copied, "perm:"+slug)
+		copied = append(copied, "perm:"+perm.Slug)
 	}
 
 	for _, gID := range ownedIDs {

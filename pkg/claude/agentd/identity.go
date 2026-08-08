@@ -444,17 +444,42 @@ func resolvePermissionWithSudoGrantID(convID, slug string) (permResolution, int6
 	return resolvePermissionWithDefault(convID, slug, cfg.HasDefaultPermission(slug))
 }
 
-func resolvePermissionForRequest(r *http.Request, convID, slug string) permResolution {
+// resolvePermissionVerdictForRequest is the request-scoped resolver the two
+// gates use. They need the whole verdict, not just the resolution, because a
+// scoped allow can only be answered against the request's ActionContext.
+func resolvePermissionVerdictForRequest(r *http.Request, convID, slug string) permVerdict {
 	if defaults, ok := r.Context().Value(permissionDefaultsKey{}).(map[string]bool); ok {
-		resolution, _ := resolvePermissionWithDefault(convID, slug, defaults[slug])
-		return resolution
+		return resolvePermissionVerdict(convID, slug, defaults[slug])
 	}
-	return resolvePermission(convID, slug)
+	cfg, _ := config.Load()
+	return resolvePermissionVerdict(convID, slug, cfg.HasDefaultPermission(slug))
 }
 
 func resolvePermissionWithDefault(convID, slug string, defaultAllowed bool) (permResolution, int64) {
 	v := resolvePermissionVerdict(convID, slug, defaultAllowed)
-	return v.Resolution, v.SudoGrantID
+	return contextFreeResolution(v), v.SudoGrantID
+}
+
+// contextFreeResolution collapses a verdict for a reader that cannot say what
+// the action targets — every boolean sibling of the gate, and the gates
+// themselves before an ActionContext exists.
+//
+// A SCOPED allow is not an allow to such a reader: there is nothing to
+// evaluate the scope against, so it degrades to permUndecided. That is the
+// same fail-closed answer requirePermissionEx gives when a gate site omits a
+// dimension, applied at the one place every context-free reader passes
+// through, so a scoped grant can never authorize an action nobody checked.
+//
+// permUndecided rather than permDeny: an unsatisfied scope means "this grant
+// does not speak to this action", not "this action is forbidden". The
+// structural owner bypass and the ask-human popup stay reachable exactly as
+// they are for an agent holding no grant at all — narrowing the owner bypass
+// itself is Phase 6.
+func contextFreeResolution(v permVerdict) permResolution {
+	if v.Resolution == permAllow && !evalPermissionScope(v, "", ActionContext{}).Unscoped {
+		return permUndecided
+	}
+	return v.Resolution
 }
 
 // permSource names which of resolvePermissionVerdict's ordered sources
@@ -485,8 +510,11 @@ type permVerdict struct {
 	Resolution  permResolution
 	Source      permSource
 	SudoGrantID int64
-	// ScopeJSON carries the winning tier's persisted scope rows for display
-	// only in Phase 1. Authorization deliberately ignores it until Phase 2.
+	// ScopeJSON carries the winning tier's persisted scope rows — one entry
+	// per source row in that tier, "" for an unscoped row. It is what
+	// evalPermissionScope evaluates against an ActionContext at the gate and
+	// what permissionProvenance renders for the listing, so enforcement and
+	// display read the same value.
 	ScopeJSON []string
 }
 
@@ -615,8 +643,12 @@ func resolvePermissionVerdictFrom(src permSources, slug string, defaultAllowed b
 // Returns (convID, true) on success — convID is "" for the human path,
 // the resolved conv-id for an agent. On failure the response is
 // already written; the caller just returns.
-func requirePermission(w http.ResponseWriter, r *http.Request, perm string) (string, bool) {
-	return requirePermissionEx(w, r, perm, nil)
+//
+// actx optionally describes what the request targets, for slugs whose grants
+// may be scoped (§4). Omitting it is the norm and costs nothing for an
+// unscoped grant; see requirePermissionEx for what a scoped grant does then.
+func requirePermission(w http.ResponseWriter, r *http.Request, perm string, actx ...ActionContext) (string, bool) {
+	return requirePermissionEx(w, r, perm, nil, actx...)
 }
 
 // requireGroupPermission gates a GROUP-scoped endpoint behind perm with
@@ -627,11 +659,21 @@ func requirePermission(w http.ResponseWriter, r *http.Request, perm string) (str
 // lifecycle without an explicit grant. Consistent with the universal
 // precedence — the bypass fills only the permUndecided gap, an explicit
 // deny override still suppresses it, and a non-owner still needs the slug.
-func requireGroupPermission(w http.ResponseWriter, r *http.Request, perm string, g *db.AgentGroup) (string, bool) {
+//
+// It is also the one gate that fills in an ActionContext by itself: the
+// target group is its whole reason for existing, so a grant scoped to
+// {"group": [...]} is evaluated here rather than waiting for a per-handler
+// migration. Any caller-supplied context wins, so a handler that also knows
+// the profile or template can pass a fuller one.
+func requireGroupPermission(w http.ResponseWriter, r *http.Request, perm string, g *db.AgentGroup, actx ...ActionContext) (string, bool) {
+	ctx := actionContextOf(actx)
+	if ctx.Group == "" {
+		ctx.Group = g.Name
+	}
 	return requirePermissionEx(w, r, perm, func(convID string) bool {
 		owns, err := db.IsAgentGroupOwner(g.ID, convID)
 		return err == nil && owns
-	})
+	}, ctx)
 }
 
 // requirePermissionEx is the shared core of requirePermission and
@@ -642,7 +684,20 @@ func requireGroupPermission(w http.ResponseWriter, r *http.Request, perm string,
 // always authoritative and suppresses the bypass, the same precedence
 // every other gate follows. ownerBypass == nil reproduces plain
 // requirePermission behaviour exactly.
-func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ownerBypass func(convID string) bool) (string, bool) {
+//
+// actx (at most one) describes what the request targets, and is evaluated
+// against the winning grant's scope (§4/§6):
+//
+//   - Unscoped winning allow → pass, exactly as before scopes existed. This
+//     is every grant that exists today, so the sites passing no context are
+//     unaffected.
+//   - Scoped allow the context satisfies → pass, and the matched scope is
+//     recorded on the request's audit row.
+//   - Scoped allow the context does not satisfy, or a scoped dimension the
+//     site did not describe → the grant does not decide this action: the
+//     structural owner bypass may still fill the gap, then the ask-human
+//     popup, then 403. Never a silent allow.
+func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ownerBypass func(convID string) bool, actx ...ActionContext) (string, bool) {
 	p := peerFromContext(r.Context())
 	switch classify(p) {
 	case classUnidentified:
@@ -686,11 +741,22 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ow
 	allowed := false
 	if hasWriteProofApprovalContinuation(r, p.ConvID, perm, p.ConvID) ||
 		hasHumanApprovalContinuation(r, perm, p.ConvID) {
+		// A human already approved this exact operation; the standing
+		// grants (and their scopes) are not consulted at all.
 		allowed = true
 	} else {
-		switch resolvePermissionForRequest(r, p.ConvID, perm) {
+		v := resolvePermissionVerdictForRequest(r, p.ConvID, perm)
+		switch v.Resolution {
 		case permAllow:
-			allowed = true
+			eval := evalPermissionScope(v, p.ConvID, actionContextOf(actx))
+			if eval.Satisfied {
+				allowed = true
+				recordAuditPermissionScope(r, perm, eval.Matched)
+			} else {
+				// The grant is scoped away from this action, so it decides
+				// nothing here — the same gap permUndecided leaves.
+				allowed = ownerBypass != nil && ownerBypass(p.ConvID)
+			}
 		case permUndecided:
 			allowed = ownerBypass != nil && ownerBypass(p.ConvID)
 		case permDeny:
