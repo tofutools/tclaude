@@ -48,6 +48,25 @@ func TestAgentLineageDirectTransitiveAndRetirementPersistence(t *testing.T) {
 	assert.True(t, direct, "retirement must not erase birth facts")
 }
 
+func TestDeleteAgentLineageForChildRemovesOnlyThatBirthEdge(t *testing.T) {
+	setupTestDB(t)
+	parent := "agt_lineage_delete_parent"
+	child := "agt_lineage_delete_child"
+	grandchild := "agt_lineage_delete_grandchild"
+	require.NoError(t, RecordAgentLineage(child, parent, time.Now()))
+	require.NoError(t, RecordAgentLineage(grandchild, child, time.Now()))
+
+	n, err := DeleteAgentLineageForChild(child)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, n)
+	direct, err := IsDirectAgentChild(parent, child)
+	require.NoError(t, err)
+	assert.False(t, direct)
+	direct, err = IsDirectAgentChild(child, grandchild)
+	require.NoError(t, err)
+	assert.True(t, direct, "rollback deletion must not sweep a real child's outgoing edges")
+}
+
 func TestAgentLineageReincarnationKeepsStableParentActor(t *testing.T) {
 	setupTestDB(t)
 	parent, _, err := EnsureAgentForConv("lineage-parent-old", "spawn")
