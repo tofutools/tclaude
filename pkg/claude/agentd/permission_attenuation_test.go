@@ -122,3 +122,23 @@ func TestPermissionOverrideJSONUnion(t *testing.T) {
 	assert.Equal(t, db.Deny(), back["legacy"], "a legacy bare effect decodes as unscoped")
 	assert.Equal(t, `{"group":["x"]}`, back["new"].Scope)
 }
+
+// The popup's "Always allow for this agent" button persists an UNSCOPED
+// grant, and the popup is precisely what fires when a SCOPED grant failed to
+// cover an action — so an auto-grantable slug that also declared scope
+// dimensions would let one click replace an operator's narrowing with the
+// widest possible grant.
+//
+// persistAlwaysAllowGrant refuses that case at runtime, but refusing means the
+// human's "always" silently does not stick. This guard makes the drift a build
+// failure instead: whoever adds ScopeDims to an auto-grantable slug (or marks a
+// scopeable slug auto-grantable) has to decide what "always" means for a scoped
+// action first.
+func TestPermissionRegistry_AutoGrantableSlugsAreNotScopeable(t *testing.T) {
+	for _, slug := range AutoGrantableSlugs() {
+		dims := permissionScopeDimsForSlug(slug)
+		assert.Emptyf(t, dims,
+			"auto-grantable slug %q declares scope dimensions %v: decide what the popup's "+
+				"\"always allow\" should persist for a scoped action before allowing this", slug, dims)
+	}
+}

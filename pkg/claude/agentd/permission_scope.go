@@ -124,6 +124,18 @@ func canonicalPermissionScopeForSlug(slug, raw string) (string, error) {
 	return canonical, nil
 }
 
+// permissionScopeDimsForSlug returns the dimensions slug's grants may
+// constrain. Empty for an unknown slug and for one that is not scopeable at
+// all — both mean "a grant for this slug is always unscoped".
+func permissionScopeDimsForSlug(slug string) []ScopeDim {
+	for _, p := range permissionRegistry {
+		if p.Slug == slug {
+			return p.ScopeDims
+		}
+	}
+	return nil
+}
+
 // validatePermissionScopeForSlug rejects dimensions that are meaningful in
 // general but not declared for this slug. Unknown slugs remain subject to the
 // existing endpoint rule; an empty scope does not add a new rejection path.
