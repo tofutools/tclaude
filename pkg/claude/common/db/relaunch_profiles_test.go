@@ -999,3 +999,65 @@ func TestCompareAndSetAgentCopilotAPIRefusesAnAgentWithNoProfile(t *testing.T) {
 	assert.False(t, ok)
 	assert.Contains(t, err.Error(), "no durable relaunch profile")
 }
+
+// The conversation-fallback twin, and the empirical half of the claim its doc
+// makes: SQLite's json_set edits a leaf but does not create intermediate
+// objects, so a profile with no fallback_relaunch object is a guard MISS rather
+// than an error or a silent no-op. Asserted rather than assumed, because the
+// whole parent-exists argument rests on that behaviour.
+func TestCompareAndSetConversationCopilotAPIGuardsTheWholeProfile(t *testing.T) {
+	setupTestDB(t)
+	const (
+		withDrive = "cas-conv-with-drive"
+		noParent  = "cas-conv-no-parent"
+	)
+
+	// A conversation whose recorded drive is ON, which is the only shape this path
+	// targets: the object holding that value must exist for the value to exist.
+	require.NoError(t, SetConversationCopilotAPI(withDrive, "copilot", "/tmp/cas-conv", true))
+	require.NoError(t, SetConversationResumeProfile(noParent, ConversationResumeProfile{
+		Version: RelaunchProfileVersion, Harness: "copilot", Cwd: "/tmp/cas-conv",
+	}))
+
+	raw, err := ConversationResumeProfileRaw(withDrive)
+	require.NoError(t, err)
+	require.NotEmpty(t, raw)
+
+	ok, err := CompareAndSetConversationCopilotAPI(withDrive, false, raw)
+	require.NoError(t, err)
+	require.True(t, ok, "the guard must hold when nothing else has written")
+
+	after, err := ConversationResumeProfileForConv(withDrive)
+	require.NoError(t, err)
+	require.NotNil(t, after)
+	require.NotNil(t, after.FallbackRelaunch)
+	require.NotNil(t, after.FallbackRelaunch.CopilotAPI)
+	assert.False(t, *after.FallbackRelaunch.CopilotAPI)
+	// Sibling fields on the ENCLOSING profile must survive too — the seeded harness
+	// and cwd are what a resume needs and what a whole-blob rewrite would risk.
+	assert.Equal(t, "copilot", after.Harness)
+	assert.Equal(t, "/tmp/cas-conv", after.Cwd)
+	assert.Equal(t, RelaunchProfileVersion, after.Version)
+
+	// Stale guard: refused, and the refusal did not land.
+	ok, err = CompareAndSetConversationCopilotAPI(withDrive, true, raw)
+	require.NoError(t, err)
+	assert.False(t, ok, "a stale expected blob must not be allowed to write")
+	unchanged, err := ConversationResumeProfileForConv(withDrive)
+	require.NoError(t, err)
+	require.NotNil(t, unchanged.FallbackRelaunch.CopilotAPI)
+	assert.False(t, *unchanged.FallbackRelaunch.CopilotAPI)
+
+	// No fallback_relaunch object: a guard miss, NOT an error, and nothing invented.
+	parentless, err := ConversationResumeProfileRaw(noParent)
+	require.NoError(t, err)
+	require.NotEmpty(t, parentless)
+	ok, err = CompareAndSetConversationCopilotAPI(noParent, false, parentless)
+	require.NoError(t, err, "a missing parent object must not raise")
+	assert.False(t, ok, "a missing parent object must read as a guard miss")
+	still, err := ConversationResumeProfileForConv(noParent)
+	require.NoError(t, err)
+	require.NotNil(t, still)
+	assert.Nil(t, still.FallbackRelaunch,
+		"this function must not materialise a fallback object it has no business inventing")
+}

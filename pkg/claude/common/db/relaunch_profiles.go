@@ -347,6 +347,106 @@ func CompareAndSetAgentCopilotAPI(agentID string, value bool, expected string) (
 	return n > 0, nil
 }
 
+// ConversationResumeProfileRaw returns the stored conversation profile blob
+// verbatim, for a caller that intends to compare-and-set it. Verbatim for the
+// same reason AgentRelaunchProfileRaw is: a guard on bytes cannot be built out of
+// a decode/re-encode round trip. An empty string means no row.
+func ConversationResumeProfileRaw(convID string) (string, error) {
+	convID = strings.TrimSpace(convID)
+	if convID == "" {
+		return "", errors.New("ConversationResumeProfileRaw: conv_id required")
+	}
+	d, err := Open()
+	if err != nil {
+		return "", err
+	}
+	var raw string
+	err = d.QueryRow(`SELECT profile_json FROM conversation_resume_profiles WHERE conv_id = ?`,
+		convID).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return raw, nil
+}
+
+// CompareAndSetConversationCopilotAPI is the conversation-fallback twin of
+// CompareAndSetAgentCopilotAPI, and exists so that BOTH records a durable drive
+// change can land on are race-free rather than only the modern one.
+//
+// # Why this needed its own function rather than SetConversationCopilotAPI
+//
+// SetConversationCopilotAPI and SetSessionCopilotAPI both go through a plain
+// read-modify-write of the whole conversation profile
+// (updateConversationFallbackRelaunch / updateSessionFallbackRelaunch:
+// load, mutate, write back) with no guard anywhere. That is sound while the
+// writers are launches, which do not contend for one conversation. It stops
+// being sound the moment an operator-initiated change writes the same record
+// from another process, and the damage lands exactly where it hurts most:
+// SetConversationCopilotAPI's own doc explains that for a conversation with no
+// stable agent profile the launch-time write is the ONLY writer and one lost
+// write is permanent. Those are precisely the conversations that reach this
+// function, so an unguarded operator write here would be the erased-rollback
+// case on the record class where erasure does not heal.
+//
+// # Why the parent-object guard is not defensive padding
+//
+// SQLite's json_set replaces or appends a LEAF; it does not create intermediate
+// objects. So this can only edit a profile that already has a fallback_relaunch
+// object. That is not a limitation on this path in practice, and the reason is
+// worth stating rather than discovering later: the only conversations a durable
+// "turn this drive off" targets here are ones whose recorded drive is currently
+// ON in the fallback, and the object holding that value must exist for it to be
+// recorded. A missing parent therefore means "this conversation's drive is not
+// recorded here", which is a guard miss for the caller to report — not an error,
+// and not something to paper over by materialising a parent this function has no
+// business inventing.
+//
+// updated_at is bumped so an operator's change is as visible to anything reading
+// recency as a launch's would be.
+func CompareAndSetConversationCopilotAPI(
+	convID string, value bool, expected string,
+) (bool, error) {
+	convID = strings.TrimSpace(convID)
+	if convID == "" {
+		return false, errors.New("CompareAndSetConversationCopilotAPI: conv_id required")
+	}
+	if strings.TrimSpace(expected) == "" {
+		return false, fmt.Errorf(
+			"CompareAndSetConversationCopilotAPI: conversation %s has no resume profile "+
+				"to edit; a targeted field update needs an existing profile to edit inside",
+			convID)
+	}
+	encoded := "false"
+	if value {
+		encoded = "true"
+	}
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := d.Exec(`
+		UPDATE conversation_resume_profiles
+		   SET profile_json = json_set(
+		           profile_json, '$.fallback_relaunch.copilot_api', json(?)),
+		       updated_at = ?
+		 WHERE conv_id = ?
+		   AND profile_json = ?
+		   AND json_valid(profile_json) = 1
+		   AND json_type(profile_json, '$.fallback_relaunch') = 'object'`,
+		encoded, dbTime(time.Now().UTC()), convID, expected)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 // SetTemporaryHarnessBuiltinMode atomically sets or clears a stable agent's temporary
 // sandbox override. When enabling it, normalMode/normalImplementation/
 // normalSource freeze the already-resolved normal launch posture if the
