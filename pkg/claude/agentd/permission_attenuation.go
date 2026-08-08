@@ -341,9 +341,18 @@ func checkTemplateDeployAttenuation(agents []db.GroupTemplateAgent, callerConvID
 	for _, a := range agents {
 		var role *db.Role
 		if ref := strings.TrimSpace(a.RoleRef); ref != "" {
-			if rl, err := db.GetRole(ref); err == nil {
-				role = rl
+			rl, err := db.GetRole(ref)
+			if err != nil {
+				// Fail the DEPLOY, do not check a smaller grant set. A role
+				// carries default grants, so a lookup that errors makes this
+				// check judge strictly LESS than the deploy will confer. The
+				// wave runner reads the role again at spawn time, and a
+				// transient failure here that succeeds there would mint the
+				// role's grants having never compared them to anything.
+				return fmt.Errorf("template agent %q: could not read role %q to check "+
+					"what this deploy would confer: %w", a.Name, ref, err)
 			}
+			role = rl
 		}
 		_, overrides, fail := resolveTemplateAgentAccess(a, role)
 		if fail != nil {

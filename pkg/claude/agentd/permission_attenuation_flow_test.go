@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -536,5 +537,60 @@ func TestAttenuation_SpawnProfileTierConferralIsAttenuated(t *testing.T) {
 				"the default profile's unscoped %s must not have been conferred",
 				agentd.PermRoutesPublish)
 		}
+	})
+}
+
+// Scenario: the spawn body is decoded BEFORE the groups.spawn gate, because
+// the gate has to judge the profile the request asks for. That decode must not
+// infer "no body" from Content-Length: a chunked request carries -1, and
+// reading that as empty would hand the handler a zero-valued SpawnRequest —
+// spawning with defaults while silently discarding the caller's name, profile
+// and permission_overrides, and leaving the spawn_profile dimension to be
+// judged on a profile the request never got to state.
+//
+// httptest.NewRequest sets a real Content-Length, so the chunked case is
+// reproduced the way the handler sees it: ContentLength -1 with the body still
+// readable.
+func TestAttenuation_SpawnBodySurvivesUnknownContentLength(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "chunked-p1"})
+	require.NoError(t, err)
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "chunked-p2"})
+	require.NoError(t, err)
+
+	const lead = "atten-lead-aaaa-bbbb-cccc-000000000010"
+	haveSpawnCapableMember(t, f, "alpha", lead)
+	// groups.spawn pinned to ONE profile — the dimension the decode feeds.
+	grantScoped(t, f, lead, agentd.PermGroupsSpawn,
+		map[string]any{"spawn_profile": []string{"chunked-p1"}})
+
+	chunkedSpawn := func(t *testing.T, body map[string]any) *httptest.ResponseRecorder {
+		t.Helper()
+		r := agentd.AsAgentPeer(testharness.JSONRequest(t,
+			http.MethodPost, "/v1/groups/alpha/spawn", body), lead)
+		// What net/http hands a handler for a chunked request.
+		r.ContentLength = -1
+		return testharness.Serve(f.Mux, r)
+	}
+
+	t.Run("the stated profile is still what the gate judges", func(t *testing.T) {
+		// Refused because the body SAID chunked-p2 — not silently accepted as a
+		// profile-less spawn, and not refused for the wrong reason.
+		rec := chunkedSpawn(t, map[string]any{"name": "chunk-denied", "profile": "chunked-p2"})
+		require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	})
+
+	t.Run("a chunked spawn keeps the fields it sent", func(t *testing.T) {
+		rec := chunkedSpawn(t, map[string]any{"name": "chunk-worker", "profile": "chunked-p1"})
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var named bool
+		for _, m := range f.ListGroupMembers("alpha") {
+			if m.Title == "chunk-worker" {
+				named = true
+			}
+		}
+		assert.True(t, named,
+			"the name in the chunked body reached the spawn instead of being dropped")
 	})
 }

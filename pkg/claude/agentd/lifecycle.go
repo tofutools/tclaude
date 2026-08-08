@@ -3069,16 +3069,31 @@ func spawnAuditResolution(p spawnParams, launch *agent.ResolvedLaunch, requested
 // On a malformed body it writes the 400 and returns false. That 400 now
 // precedes the groups.spawn refusal for an unauthorized caller; it discloses
 // nothing beyond "your JSON did not parse".
+//
+// "Was there a body" is decided from the bytes actually READ, not from
+// ContentLength. A chunked request carries ContentLength -1, so testing it for
+// <= 0 would hand the handler a zero-valued SpawnRequest and spawn with
+// defaults — silently dropping the caller's name, profile and permission
+// overrides, and leaving the spawn_profile gate to judge a profile the request
+// never got to state. Only ContentLength == 0 is a declared empty body, and
+// even that falls through to the same trimmed-length test.
 func decodeSpawnBody(w http.ResponseWriter, r *http.Request, body *agent.SpawnRequest) bool {
-	if r.ContentLength <= 0 {
+	if r.Body == nil {
 		return true
 	}
-	raw, err := io.ReadAll(r.Body)
+	// The popup's restore bound is the sibling limit and the natural ceiling: a
+	// body this path cannot buffer is one snapshotRequestBody could not preview
+	// either. Without it, ReadAll on an unbounded chunked stream is a trivial
+	// pre-authorization memory sink — this runs BEFORE the groups.spawn gate.
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxApprovalRestoreBody))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "json", err.Error())
 		return false
 	}
 	r.Body = io.NopCloser(bytes.NewReader(raw))
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return true
+	}
 	if err := json.Unmarshal(raw, body); err != nil {
 		writeError(w, http.StatusBadRequest, "json", err.Error())
 		return false
