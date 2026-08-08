@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMigrateV191ToV192CreatesCronMessageOrigins(t *testing.T) {
+func TestMigrateV192ToV193CreatesCronMessageOrigins(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
 	require.NoError(t, err)
@@ -45,11 +45,11 @@ func TestMigrateV191ToV192CreatesCronMessageOrigins(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = d.Exec(`DROP TABLE agent_cron_messages; UPDATE schema_version SET version = 191`)
+	_, err = d.Exec(`DROP TABLE agent_cron_messages; UPDATE schema_version SET version = 192`)
 	require.NoError(t, err)
-	require.NoError(t, migrateV191toV192(d))
-	require.NoError(t, migrateV191toV192(d), "migration is idempotent")
-	assert.Equal(t, 192, schemaVersion(d))
+	require.NoError(t, migrateV192toV193(d))
+	require.NoError(t, migrateV192toV193(d), "migration is idempotent")
+	assert.Equal(t, 193, schemaVersion(d))
 
 	var have int
 	require.NoError(t, d.QueryRow(

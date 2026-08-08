@@ -5,26 +5,26 @@ import (
 	"fmt"
 )
 
-// migrateV191toV192 records which cron job produced each durable inbox row.
+// migrateV192toV193 records which cron job produced each durable inbox row.
 // The scheduler uses this trusted provenance to keep at most one unclaimed,
 // undelivered tick from a job buffered for each recipient.
-func migrateV191toV192(d *sql.DB) error {
+func migrateV192toV193(d *sql.DB) error {
 	tx, err := d.Begin()
 	if err != nil {
-		return fmt.Errorf("migrate v191→v192 (cron message origins): begin: %w", err)
+		return fmt.Errorf("migrate v192→v193 (cron message origins): begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	// Several migration heal tests intentionally carry only the table a much
-	// older migration repairs. A real v191 database has both tables, but this
+	// older migration repairs. A real v192 database has both tables, but this
 	// head migration must still advance those partial fixtures without trying
 	// to query absent history.
 	var haveMessages, haveJobs int
 	if err := tx.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'agent_messages'`).Scan(&haveMessages); err != nil {
-		return fmt.Errorf("migrate v191→v192 (cron message origins): probe messages: %w", err)
+		return fmt.Errorf("migrate v192→v193 (cron message origins): probe messages: %w", err)
 	}
 	if err := tx.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'agent_cron_jobs'`).Scan(&haveJobs); err != nil {
-		return fmt.Errorf("migrate v191→v192 (cron message origins): probe jobs: %w", err)
+		return fmt.Errorf("migrate v192→v193 (cron message origins): probe jobs: %w", err)
 	}
 	if haveMessages > 0 && haveJobs > 0 {
 		if _, err := tx.Exec(`
@@ -103,14 +103,14 @@ func migrateV191toV192(d *sql.DB) error {
 			)
 		);
 	`); err != nil {
-			return fmt.Errorf("migrate v191→v192 (cron message origins): apply: %w", err)
+			return fmt.Errorf("migrate v192→v193 (cron message origins): apply: %w", err)
 		}
 	}
-	if _, err := tx.Exec(`UPDATE schema_version SET version = 192`); err != nil {
-		return fmt.Errorf("migrate v191→v192 (cron message origins): version: %w", err)
+	if _, err := tx.Exec(`UPDATE schema_version SET version = 193`); err != nil {
+		return fmt.Errorf("migrate v192→v193 (cron message origins): version: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("migrate v191→v192 (cron message origins): commit: %w", err)
+		return fmt.Errorf("migrate v192→v193 (cron message origins): commit: %w", err)
 	}
 	return nil
 }

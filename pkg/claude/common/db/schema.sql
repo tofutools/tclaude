@@ -1252,3 +1252,4 @@ CREATE TABLE agent_cron_messages (
 
 CREATE INDEX idx_agent_cron_messages_job
 			ON agent_cron_messages(cron_job_id);
+
