@@ -1777,7 +1777,7 @@ func TestDashboardHTML_WizardTemplateFromGroup(t *testing.T) {
 // TestDashboardHTML_WizardGroupDialogs pins the wizard re-skins of the three
 // remaining group dialogs in the templates family (modal-templates.js):
 // import ("⤒ Unseal a party archive"), startup context ("📜 The party's
-// standing orders") and clone ("⧉ Mirror the party").
+// lore") and clone ("⧉ Mirror the party").
 func TestDashboardHTML_WizardGroupDialogs(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
@@ -1792,10 +1792,11 @@ func TestDashboardHTML_WizardGroupDialogs(t *testing.T) {
 	must(`<${Words} plain="Import a group from a .zip archive" wizard="⤒ Unseal a party archive"/>`, "the import title ships both voices")
 	must("body.wizard #group-import-modal #group-import-submit", "the Import button gets the gilded chrome (label kept honest)")
 
-	// Startup context.
+	// Startup context. Wizard mode names it "party lore", not "standing
+	// orders" — the latter is a separate feature with its own cog entry.
 	must("body.wizard #group-context-modal .cron-create-modal", "the context dialog surface is re-skinned")
-	must(`<${Words} plain="Group startup context" wizard="📜 The party's standing orders"/>`, "the context title ships both voices")
-	must(`content: "📜 Decree it!"`, "the context submit lever reads Decree it in wizard mode")
+	must(`<${Words} plain="Group startup context" wizard="📜 The party's lore"/>`, "the context title ships both voices")
+	must(`content: "📜 Inscribe it!"`, "the context submit lever reads Inscribe it in wizard mode")
 
 	// Clone.
 	must("body.wizard #group-clone-modal .cron-create-modal", "the clone dialog surface is re-skinned")
