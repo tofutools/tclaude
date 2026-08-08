@@ -496,14 +496,52 @@ func applyRecordedLaunchPosture(params *NewParams, explicit explicitLaunchFields
 // LaunchPosture is what a launch actually resolved to. It is the WRITE side of
 // the relaunch contract; db.AgentRelaunchProfile is the read side, and every
 // field here must have a counterpart there or the value cannot survive a hop.
+// LaunchPosture is what a launch actually resolved to. It is the WRITE side of
+// the relaunch contract; db.AgentRelaunchProfile is the read side, and every
+// field here must have a counterpart there or the value cannot survive a hop.
+//
+// # Why two fields are pointers and the rest are not
+//
+// A launch may only ASSERT a posture it actually resolved. The plain fields are
+// resolved by every path that writes this struct: each relaunch surface reads the
+// recorded value, applies it to the pane's environment or the harness's launch
+// flags, and re-records it — so their zero honestly means "known: nothing
+// pinned", and re-asserting is what keeps them alive (TCL-730).
+//
+// The two pointers are the fields a non-daemon resume cannot resolve.
+// `pkg/claude/conv` renders no `--ui-server` — the API channel is created and
+// held inside agentd and cannot be produced from outside it — and it chooses no
+// Copilot meter cap. Before TCL-1076 it wrote both anyway, because an omitted
+// field in a composite literal is its zero and a zero here is an ASSERTION:
+// `copilot_api=false` over a conversation that had chosen the API drive, which
+// since TCL-1058 is the record deciding whether a message travels over RPC or is
+// TYPED into the pane, plus `context_window_max=0` over a configured meter
+// denominator. True statements about one launch; false statements about the
+// conversation.
+//
+// nil means "this surface did not resolve this field; leave the record to the
+// surface that did", and skipping the write is what PRESERVES the value: neither
+// field has a session column, so projectSessionRelaunchProfilesTx carries the
+// existing conversation record forward untouched. That property is specific to
+// these two — TCL-1059 made their carry-forward unconditional — and it is why
+// FastMode is deliberately NOT a pointer: its carry-forward is gated on the
+// source generation, so a resume that passed nil would silently LOSE the pinned
+// Codex tier rather than preserve it. Preserving that one takes a carry (a read
+// before the write, plus a launch that actually renders `--fast-mode`), which is
+// its own change; today `pkg/claude/conv` asserts "" for it, as it always has.
+//
+// TestEveryLaunchPostureLiteralNamesEveryField forces every literal to state
+// each decision, so a future relaunch surface cannot inherit this bug by
+// omission.
 type LaunchPosture struct {
 	AutoMemory        bool
 	ContextFeatures   map[string]string
 	AutoCompactWindow string
-	ContextWindowMax  int64
-	CopilotAPI        bool
 	FastMode          string
 	RemoteControl     bool
+
+	ContextWindowMax *int64
+	CopilotAPI       *bool
 }
 
 // RecordLaunchPosture persists the launch postures SaveSession's UPSERT
@@ -513,11 +551,12 @@ type LaunchPosture struct {
 // "nothing recorded" — which is how a posture that survived one relaunch
 // evaporated at the second (TCL-730).
 //
-// Every field is written unconditionally, including its zero value, so the row
-// records "known: nothing pinned" rather than a legacy unknown. That is only
-// safe because every relaunch path now CARRIES these values first — a path that
-// resolved a blank default and recorded it here would erase the record, which
-// is the bug this all exists to fix.
+// A field the caller RESOLVED is written unconditionally, including its zero
+// value, so the row records "known: nothing pinned" rather than a legacy
+// unknown. That is only safe because every relaunch path carries such values
+// first — a path that resolved a blank default and recorded it here would erase
+// the record, which is the bug this all exists to fix. A field the caller could
+// not resolve arrives nil and is skipped instead; see LaunchPosture.
 //
 // Best-effort by design. The pane is already running with the right
 // environment, so a failed write costs a future relaunch its posture, not this
@@ -545,16 +584,27 @@ func RecordLaunchPosture(sessionID string, h *harness.Harness, posture LaunchPos
 				"session_id", sessionID, "auto_compact_window", posture.AutoCompactWindow, "error", err)
 		}
 	}
-	if h.Name == harness.CopilotName {
-		if err := db.SetSessionConfiguredContextWindowMax(sessionID, posture.ContextWindowMax); err != nil {
+	// The two fields written CONDITIONALLY, and the condition is not the harness
+	// gate — it is whether the CALLER resolved the field at all.
+	//
+	// Every other field is written unconditionally because every relaunch path
+	// carries it first, so a zero honestly means "known: nothing pinned". These
+	// two break that premise on a non-daemon resume, which has no resolved value
+	// to carry and would assert its own zero over the conversation's recorded
+	// choice — TCL-1076. A nil skips the write, and skipping is what PRESERVES
+	// the value: neither field has a session column, so
+	// projectSessionRelaunchProfilesTx sees nothing for them and carries the
+	// existing conversation record forward untouched.
+	if h.Name == harness.CopilotName && posture.ContextWindowMax != nil {
+		if err := db.SetSessionConfiguredContextWindowMax(sessionID, *posture.ContextWindowMax); err != nil {
 			slog.Warn("failed to record session Copilot context max",
-				"session_id", sessionID, "context_window_max", posture.ContextWindowMax, "error", err)
+				"session_id", sessionID, "context_window_max", *posture.ContextWindowMax, "error", err)
 		}
 	}
-	if h.SupportsCopilotAPI() {
-		if err := db.SetSessionCopilotAPI(sessionID, posture.CopilotAPI); err != nil {
+	if h.SupportsCopilotAPI() && posture.CopilotAPI != nil {
+		if err := db.SetSessionCopilotAPI(sessionID, *posture.CopilotAPI); err != nil {
 			slog.Warn("failed to record session Copilot API mode",
-				"session_id", sessionID, "copilot_api", posture.CopilotAPI, "error", err)
+				"session_id", sessionID, "copilot_api", *posture.CopilotAPI, "error", err)
 		}
 	}
 	if h.CanFastMode() {

@@ -1895,6 +1895,31 @@ func AutoCompactWindowForConv(convID string) (string, error) {
 	return *p.AutoCompactWindow, nil
 }
 
+// CopilotAPIForConv reports which drive this conversation's launches CHOSE:
+// true for the Copilot API channel, false for tmux send-keys or for a
+// conversation with no record at all.
+//
+// Same merge and same precedence as every sibling above — the stable agent's
+// birth-frozen profile wins field-by-field over the conversation fallback — and
+// that is load-bearing rather than incidental. Since TCL-1058 this record
+// decides whether a message travels over RPC or is typed into the pane, so a
+// reader that resolved it differently from agentd's own routing would be
+// answering a different question than the one its caller is asking. The gate in
+// pkg/claude/conv exists precisely to compare a launch it is about to perform
+// against what routing will believe afterwards.
+//
+// The two-way collapse (send-keys and unrecorded both read false) is
+// deliberate and matches agentd's copilotLaunchIntentForConv: both mean "do not
+// assume the API channel". A caller that needs to tell them apart needs a
+// different function, not a tri-state here.
+func CopilotAPIForConv(convID string) (bool, error) {
+	p, err := RecordedLaunchPostureForConv(convID)
+	if err != nil || p == nil || p.CopilotAPI == nil {
+		return false, err
+	}
+	return *p.CopilotAPI, nil
+}
+
 // AskTimeoutForConv returns durable agent intent, or the unmanaged conversation
 // fallback. Legacy sessions are consulted only when v145 projection has not
 // occurred.

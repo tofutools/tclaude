@@ -19,6 +19,12 @@ type ResumeParams struct {
 	ConvID   string `pos:"true" help:"Conversation ID to resume (can be short prefix)"`
 	Global   bool   `short:"g" help:"Search for conversation across all projects"`
 	Detached bool   `short:"d" long:"detached" help:"Start detached (don't attach to session)"`
+	// SendKeys is the deliberate override for the Copilot API drive refusal.
+	// First-class rather than an escape hatch: `tclaude agent resume` needs a
+	// running daemon, so without this a refusal would wall a human out of a pane
+	// at exactly the moment agentd is the thing that is broken. See
+	// resumeCopilotDriveGate.
+	SendKeys bool `long:"send-keys" help:"Resume on tmux send-keys even if this conversation chose the Copilot API drive. The API channel exists only under tclaude agentd, so a managed agent resumed this way keeps holding its mail until it is relaunched with 'tclaude agent resume'"`
 }
 
 func ResumeCmd() *cobra.Command {
@@ -142,10 +148,10 @@ func RunResume(params *ResumeParams, stdout, stderr *os.File) int {
 		return 1
 	}
 
-	return runResumeWithSession(rc, !params.Detached, stdout, stderr)
+	return runResumeWithSession(rc, !params.Detached, params.SendKeys, stdout, stderr)
 }
 
-func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File) int {
+func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stderr *os.File) int {
 	// Check tmux is installed
 	if err := session.CheckTmuxInstalled(); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -207,6 +213,18 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 	}
 	if stackedProof != nil {
 		defer stackedProof.Cleanup()
+	}
+	// Before anything is launched: a conversation that chose the Copilot API
+	// drive cannot get it from here, so this either refuses with the daemon
+	// command that can, or discloses the downgrade. Inert — "" and no error —
+	// for every conversation that did not choose it. See copilot_drive.go.
+	driveNotice, err := resumeCopilotDriveGate(h, rc.ConvID, sendKeys)
+	if err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return 1
+	}
+	if driveNotice != "" {
+		fmt.Fprintln(stdout, driveNotice)
 	}
 	approvalState, err := resumeApprovalState(h, rc.ConvID)
 	if err != nil {
@@ -340,12 +358,11 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 	// like the spawn path: SaveSession's UPSERT does not own these columns.
 	// Best-effort — the pane is already running with the right env, and a lost
 	// write only costs a FUTURE resume its opt-in.
-	session.RecordLaunchPosture(sessionID, h, session.LaunchPosture{
-		AutoMemory:        autoMemory,
-		ContextFeatures:   contextFeatures,
-		AutoCompactWindow: autoCompactWindow,
-		RemoteControl:     remoteControl,
-	})
+	// What this surface may and may not assert lives in resumeLaunchPosture,
+	// shared with the watch-mode resume: the same launch, the same limits, and
+	// one place for the decision rather than two copies of it.
+	session.RecordLaunchPosture(sessionID, h,
+		resumeLaunchPosture(autoMemory, contextFeatures, autoCompactWindow, remoteControl))
 
 	displayName := rc.DisplayName
 	if len(displayName) > 50 {

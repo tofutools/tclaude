@@ -2237,10 +2237,16 @@ func runNew(params *NewParams) error {
 		AutoMemory:        autoMemory,
 		ContextFeatures:   contextFeatures,
 		AutoCompactWindow: autoCompactWindow,
-		ContextWindowMax:  params.ContextWindowMax,
-		CopilotAPI:        params.CopilotAPI,
-		FastMode:          params.FastMode,
 		RemoteControl:     remoteControl,
+		FastMode:          params.FastMode,
+		// The authoring surface for both pointer fields, and the only one: this
+		// launch resolved --context-window-max and --copilot-api (an explicit
+		// flag, the profile chain, or the conversation's own record via
+		// applyRecordedLaunchPosture) and rendered the launch from them, so it may
+		// assert either value including a zero. A surface that cannot resolve them
+		// passes nil instead — see LaunchPosture.
+		ContextWindowMax: &params.ContextWindowMax,
+		CopilotAPI:       &params.CopilotAPI,
 	})
 	// Claude reports its live model and effort through the statusline hook.
 	// Codex and OpenCode have no equivalent startup callback, so seed the
