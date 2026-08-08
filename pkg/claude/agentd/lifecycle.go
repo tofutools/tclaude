@@ -3527,7 +3527,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// merely NAMES a profile honour its toggle — the agentd TUI does exactly that,
 	// while `tclaude agent spawn` and the dashboard both send an explicit flag.
 	// Unset at every tier keeps the long-standing default: include.
-	includeGroupContext, includeGroupContextSet, _, includeGroupContextNote, fieldFail := resolveBoolLaunchField(
+	includeGroupContext, includeGroupContextSet, includeGroupContextSource, _, fieldFail := resolveBoolLaunchField(
 		includeGroupContextField, body.IncludeGroupContext != nil && *body.IncludeGroupContext,
 		body.IncludeGroupContext != nil, h.Name, profileTiers,
 		func(p *db.SpawnProfile) *bool { return p.IncludeGroupDefaultContext },
@@ -3538,6 +3538,17 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	}
 	if !includeGroupContextSet {
 		includeGroupContext = true
+	}
+	// Disclose a tier nobody typed at this launch. A DEFAULT profile silently
+	// withholding the group's shared guidance is exactly the action-at-a-distance
+	// the launch echo exists to surface: the operator sees WHICH tier decided,
+	// not just an agent that mysteriously arrived unbriefed. The resolver's own
+	// note channel stays silent for this field — it only speaks on the harness
+	// mismatch this field skips — so the disclosure is built here.
+	includeGroupContextNote := ""
+	if includeGroupContextSet && includeGroupContextSource != agent.ProvExplicit {
+		includeGroupContextNote = fmt.Sprintf("%s include_group_context = %v",
+			includeGroupContextSource, includeGroupContext)
 	}
 	// Startup-context trims ride the tier stack whole rather than merging — see
 	// resolveContextFeaturesLaunchField. Unset everywhere means "trim nothing",

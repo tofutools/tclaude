@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
 // A spawn profile's include_group_default_context toggle used to be applied
@@ -18,21 +18,24 @@ import (
 // include_group_context now rides the same explicit > named > group default >
 // global default tier stack as every other profile field.
 
-// setGroupContext stores a group's shared startup context, failing the test if
-// the write does not land.
-func setGroupContext(t *testing.T, group, ctx string) {
+// setGroupContext stores a group's shared startup context through the same
+// PATCH the operator uses, so the test rides the production write path
+// (normalization included) rather than reaching past it into the DB.
+func setGroupContext(t *testing.T, f *testharness.Flow, group, ctx string) {
 	t.Helper()
-	_, err := db.SetAgentGroupDefaultContext(group, ctx)
-	require.NoError(t, err, "SetAgentGroupDefaultContext")
+	require.Equal(t, http.StatusOK,
+		patchGroup(t, f, group, map[string]any{"default_context": ctx}),
+		"PATCH default_context")
 }
 
 // Scenario: the spawn names a profile whose group-context toggle is off and
 // sends no include_group_context flag of its own — the agentd TUI's request
-// shape. The profile's "off" must decide, so the agent gets no briefing at all.
+// shape. The profile's "off" must decide: the task brief still arrives, without
+// the group's shared guidance folded into it.
 func TestSpawnProfileGroupContext_NamedProfileOptsOut(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
-	setGroupContext(t, "alpha", "GROUP GUIDANCE MUST BE OMITTED")
+	setGroupContext(t, f, "alpha", "GROUP GUIDANCE MUST BE OMITTED")
 
 	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
 		"name": "solo", "include_group_default_context": false,
@@ -40,12 +43,13 @@ func TestSpawnProfileGroupContext_NamedProfileOptsOut(t *testing.T) {
 
 	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
 		"name": "worker", "profile": "solo",
+		"initial_message": "Implement the requested change.",
 	})
 	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
 
-	rows, err := db.ListAgentMessagesForConv(spawn.ConvID, 100)
-	require.NoError(t, err, "ListAgentMessagesForConv")
-	assert.Empty(t, rows, "a profile that opts out of the group context must get no briefing")
+	msg := soleInboxMessage(t, spawn.ConvID)
+	assert.Contains(t, msg.Body, "Implement the requested change", "the task brief still rides")
+	assert.NotContains(t, msg.Body, "GROUP GUIDANCE MUST BE OMITTED")
 }
 
 // Scenario: the same toggle, one tier down — the group's DEFAULT profile turns
@@ -54,7 +58,7 @@ func TestSpawnProfileGroupContext_NamedProfileOptsOut(t *testing.T) {
 func TestSpawnProfileGroupContext_GroupDefaultProfileOptsOut(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
-	setGroupContext(t, "alpha", "GROUP GUIDANCE MUST BE OMITTED")
+	setGroupContext(t, f, "alpha", "GROUP GUIDANCE MUST BE OMITTED")
 
 	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
 		"name": "team-default", "include_group_default_context": false,
@@ -69,6 +73,12 @@ func TestSpawnProfileGroupContext_GroupDefaultProfileOptsOut(t *testing.T) {
 	msg := soleInboxMessage(t, spawn.ConvID)
 	assert.Contains(t, msg.Body, "Implement the requested change", "the task brief still rides")
 	assert.NotContains(t, msg.Body, "GROUP GUIDANCE MUST BE OMITTED")
+
+	// A tier nobody typed at this launch decided it, so the launch echo says
+	// which one — an agent must not arrive unbriefed with no trace of why.
+	assert.Contains(t, string(spawn.Raw),
+		`group default profile \"team-default\" include_group_context = false`,
+		"resolved echo discloses which tier decided")
 }
 
 // Scenario: the profile says off, the request says on. An explicit flag is
@@ -77,7 +87,7 @@ func TestSpawnProfileGroupContext_GroupDefaultProfileOptsOut(t *testing.T) {
 func TestSpawnProfileGroupContext_ExplicitRequestWins(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
-	setGroupContext(t, "alpha", "You are part of Project Phoenix.")
+	setGroupContext(t, f, "alpha", "You are part of Project Phoenix.")
 
 	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
 		"name": "solo", "include_group_default_context": false,
@@ -92,6 +102,56 @@ func TestSpawnProfileGroupContext_ExplicitRequestWins(t *testing.T) {
 	assert.Contains(t, msg.Body, "Project Phoenix", "an explicit true beats the profile's false")
 }
 
+// Scenario: the safety direction of the same rule — the request says off, the
+// profile says on. A profile must never be able to force the group's guidance
+// back onto an agent whose spawner explicitly declined it (`--no-group-context`
+// / the dashboard's unticked checkbox).
+func TestSpawnProfileGroupContext_ExplicitOptOutBeatsProfileOptIn(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	setGroupContext(t, f, "alpha", "GROUP GUIDANCE MUST BE OMITTED")
+
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "chatty", "include_group_default_context": true,
+	}).Code)
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+		"name": "worker", "profile": "chatty",
+		"initial_message":       "Implement the requested change.",
+		"include_group_context": false,
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+
+	msg := soleInboxMessage(t, spawn.ConvID)
+	assert.Contains(t, msg.Body, "Implement the requested change", "the task brief still rides")
+	assert.NotContains(t, msg.Body, "GROUP GUIDANCE MUST BE OMITTED")
+}
+
+// Scenario: two tiers disagree and neither is the request. The NAMED profile is
+// the one the spawner chose at this launch, so it outranks the group's ambient
+// default — the same ordering the launch fields use.
+func TestSpawnProfileGroupContext_NamedProfileBeatsGroupDefault(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	setGroupContext(t, f, "alpha", "You are part of Project Phoenix.")
+
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "team-default", "include_group_default_context": false,
+	}).Code)
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "briefed", "include_group_default_context": true,
+	}).Code)
+	require.Equal(t, http.StatusOK, setGroupProfile(t, f, "alpha", "team-default").Code)
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+		"name": "worker", "profile": "briefed",
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+
+	msg := soleInboxMessage(t, spawn.ConvID)
+	assert.Contains(t, msg.Body, "Project Phoenix", "the named profile outranks the group default")
+}
+
 // Scenario: the group's default profile targets another harness. Group-context
 // inclusion is policy about what the new agent is TOLD, not about how its
 // harness runs, so it is inherited across the vendor boundary — unlike a model
@@ -99,7 +159,7 @@ func TestSpawnProfileGroupContext_ExplicitRequestWins(t *testing.T) {
 func TestSpawnProfileGroupContext_ForeignHarnessProfileStillSpeaks(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
-	setGroupContext(t, "alpha", "GROUP GUIDANCE MUST BE OMITTED")
+	setGroupContext(t, f, "alpha", "GROUP GUIDANCE MUST BE OMITTED")
 
 	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
 		"name": "codex-default", "harness": "codex",
@@ -124,7 +184,7 @@ func TestSpawnProfileGroupContext_ForeignHarnessProfileStillSpeaks(t *testing.T)
 func TestSpawnProfileGroupContext_SilentProfileKeepsDefault(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
-	setGroupContext(t, "alpha", "You are part of Project Phoenix.")
+	setGroupContext(t, f, "alpha", "You are part of Project Phoenix.")
 
 	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
 		"name": "quiet", "model": "sonnet",

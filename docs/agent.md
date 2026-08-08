@@ -508,11 +508,16 @@ A profile's `include_group_default_context` toggle decides whether agents that
 resolve it receive the group's shared startup context. It is resolved by the
 daemon down the usual tier stack — an explicit per-spawn choice (the dashboard
 checkbox, `--no-group-context`) first, then the named profile, then the group's
-default profile, then the global one — so it applies to every spawn surface,
-including ones that only name a profile. Unlike a model or effort, it is not
-gated on the harness: it decides what the agent is told, not how its harness
-runs, so a profile authored for another vendor still speaks. Unset everywhere
-means the context is delivered.
+default profile, then the global one — so it holds on every surface that spawns
+into a group, including ones that only name a profile. Unlike a model or
+effort, it is not gated on the harness: it decides what the agent is told, not
+how its harness runs, so a profile authored for another vendor still speaks.
+Unset everywhere means the context is delivered. When a tier other than the
+per-spawn choice decides it, the spawn's `resolved` echo names that tier.
+
+Template and wave deploys are the exception: they compose each agent's startup
+context themselves from the template and the mission, so this toggle has no
+meaning there and is not part of a template-local inline profile.
 
 Codex profiles may also carry `fast_mode` as a three-state launch choice:
 unset inherits the operator's `~/.codex/config.toml`, `true` forces the fast
@@ -1283,7 +1288,9 @@ again); a branch that already existed survives.
 to the new agent once it lands (off by default for the CLI — spawns are
 usually programmatic — whereas the dashboard modal defaults it on).
 `--no-group-context` opts the new agent out of the group's shared
-startup context (delivered by default, like every other spawn path).
+startup context. The flag is the highest tier: with it unset, the
+resolving [spawn profile](#spawn-profiles) decides, and with no profile
+saying anything the context is delivered, as on every other spawn path.
 `--sandbox-profile P` composes an explicit sandbox profile after the ambient
 global and group tiers. `--omit-sandbox-profiles` instead suppresses every tier
 for this launch, including environment values and agent-owned directories.
