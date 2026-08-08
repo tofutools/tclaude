@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -24,15 +25,14 @@ import (
 //
 //	TCLAUDE_COPILOT_LIVE=1 go test ./pkg/claude/agentd/ -run TestLiveCopilotAPIState -v
 //
-// IT CANNOT PASS FROM INSIDE AN AGENT SANDBOX ON A LINUX HOST, regardless of
-// whether Copilot is logged in. Copilot resolves its GitHub credentials through
-// the OS keyring, and a sandboxed agent has no DBUS_SESSION_BUS_ADDRESS, no
-// XDG_RUNTIME_DIR and no keyring socket, so the CLI comes up, serves RPC,
-// accepts the prompt, and answers with
-// `session.error → {"errorType":"authentication"}`. That is a containment
-// artifact and not a broken login: the same login works on the host. An agent
-// that hits it should ask the operator to run the command outside the sandbox
-// rather than trying to re-authenticate.
+// It DOES run from inside an agent sandbox. An earlier version of this comment
+// claimed the opposite — that Copilot resolves its GitHub credentials through
+// the OS keyring, which a sandbox cannot reach — on the strength of a single
+// `session.error → {"errorType":"authentication"}`. That was wrong: the token
+// is read from `~/.config/gh/hosts.yml`, and the claim did not survive contact
+// with ~30 in-sandbox launches under TCL-1078, none of which saw that error.
+// The one run that did has never been explained. An agent that hits it should
+// report it rather than conclude the sandbox is at fault.
 //
 // It is opt-in because it needs Copilot installed and authenticated and spends
 // the operator's quota, and it exists because the unit tests above cannot catch
@@ -170,7 +170,12 @@ func TestLiveCopilotAPIStateWritesWhatTheServerReports(t *testing.T) {
 // returns once it is listening, with the address, the working directory, and the
 // pid holding the listener. The PTY is not optional: without a terminal the CLI
 // takes a different startup branch and never starts the embedded server.
-func startLiveCopilotServer(t *testing.T, binary, realHome string) (string, string, int) {
+//
+// extra is appended to the argv, for the launch options a caller needs to state
+// rather than inherit — `--model` in particular, which production passes
+// whenever the spec names a model (copilot_spawner.go, copilot_asker.go) and
+// omits otherwise.
+func startLiveCopilotServer(t *testing.T, binary, realHome string, extra ...string) (string, string, int) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -185,8 +190,9 @@ func startLiveCopilotServer(t *testing.T, binary, realHome string) (string, stri
 		require.NoError(t, os.MkdirAll(dir, 0o755))
 	}
 
-	command := exec.Command(binary, "--ui-server", "--port", strconv.Itoa(port),
-		"--allow-all-tools", "--log-dir", logs)
+	argv := append([]string{"--ui-server", "--port", strconv.Itoa(port),
+		"--allow-all-tools", "--log-dir", logs}, extra...)
+	command := exec.Command(binary, argv...)
 	command.Dir = workdir
 	// A throwaway COPILOT_HOME keeps the run out of the operator's real
 	// profile; the real HOME is what makes it authenticated.
@@ -247,12 +253,78 @@ func portFromAddress(t *testing.T, address string) int {
 // about this fix, which is worse than no evidence.
 //
 // This one reads usage BEFORE any prompt is sent, when no call has resolved a
-// model, so the sentinel is present by construction rather than by luck. It
-// spends no quota: no turn is run.
+// model, so the sentinel is what usage reports rather than an accident of when
+// the read landed. It spends no quota: no turn is run, in any attempt.
 //
 // It FAILS rather than skips when the session is not in automatic selection,
 // because the whole point is that it must never report success without having
 // verified the thing it is named after.
+//
+// # Why it relaunches
+//
+// Measured against Copilot CLI 1.0.78 (TCL-1078), usage.currentModel is not the
+// model the session will run on. It carries whatever model was EXPLICITLY
+// SELECTED, and a fresh session's startup selection of "auto" is a race that
+// Copilot loses a substantial fraction of the time. Whether it happened is visible on
+// the event stream as a bare `session.model_change {"newModel":"auto"}` — no
+// contextTier, no reasoningEffort, unlike the startup event of the same name —
+// and when it fires, usage reports the sentinel about 50ms later. When it does
+// not, currentModel stays "" for the life of the session and goes straight to
+// the resolved model once a call completes.
+//
+// Waiting longer does not help: across twelve launches the sentinel was there
+// within one second of session.create or was still absent after 45 seconds of
+// polling, with nothing in between. So the wait per attempt is short and the
+// retry is a fresh server — each launch is an independent trial costing a few
+// seconds and no quota.
+//
+// # The residual false-failure rate, as a number
+//
+// A retry-until-reproduced test has a false-failure rate by construction, so
+// here is the measurement it rests on rather than an assurance. Per-attempt hit
+// rate for the launch below, on 1.0.78 from an agent sandbox: 16 of 17 in one
+// back-to-back batch, and 8 of 14 across eight separate runs of this test as
+// written — attempt counts of 4, 2, 1, 1, 1, 2, 2, 1. The rate is not stable;
+// it is a property of a Copilot build racing a network fetch, not of this code.
+// The loop is sized on the WORSE figure.
+//
+// Resist the obvious arithmetic. 1-p^10 would put ten attempts at p≈0.57 near
+// one failure in ten thousand runs, and that number assumes the attempts are
+// INDEPENDENT. They may well not be: they race the same model-list fetch, so
+// the attempts of one run plausibly share whatever state the machine was in
+// when it started. That is a HYPOTHESIS and the evidence for it is weak. The
+// first run ever measured needed 4 attempts and later ones needed 1, which
+// looks like a warming curve; but a deliberate test — ten minutes idle, then
+// two runs — produced 2 attempts and then 1, which is the same direction and
+// nowhere near the same size. n is small and the mechanism is inferred, so
+// treat the 4 as unexplained rather than as evidence of warming.
+//
+// So do not read a probability off this. What survives the weak evidence is a
+// direction worth knowing: if the attempts are correlated at all, the loop is
+// weakest on a first run against a cold machine, because a low per-attempt rate
+// then applies to all ten attempts at once instead of to each independently.
+//
+// It is also why there is no separate warm-up launch. If warming is real,
+// attempt 1 already is one and the loop absorbs it; if it is not, a warm-up
+// buys nothing by construction. Either way it would cost every run an extra
+// launch to insure against a mechanism nobody has established.
+//
+// Read a failure accordingly. Ten misses most likely means the precondition
+// stopped being reproducible on this host or this Copilot build — try again
+// before concluding anything. It does NOT mean the fix is broken; a broken fix
+// fails on the assertion below, with the sentinel in hand, which looks entirely
+// different.
+//
+// Nothing budgets for this in CI. The whole file is gated behind
+// TCLAUDE_COPILOT_LIVE=1, which CI does not set, so these runs are an
+// operator's or an agent's and never a pipeline's.
+//
+// Note what this rules out. The first repair anyone reaches for — wait for
+// `session.model_change`, then re-read — does NOT work, and a run that took a
+// turn shows why: model_change to "auto" arrived at 4.74s with usage still
+// answering "" a second later, and currentModel went "" → "gpt-5-mini" without
+// ever passing through the sentinel. The event says a selection happened; only
+// the usage read says what usage will report.
 func TestLiveCopilotAPINeverPublishesTheAutoSentinel(t *testing.T) {
 	if os.Getenv("TCLAUDE_COPILOT_LIVE") != "1" {
 		t.Skip("set TCLAUDE_COPILOT_LIVE=1 to run against a real copilot --ui-server")
@@ -262,32 +334,53 @@ func TestLiveCopilotAPINeverPublishesTheAutoSentinel(t *testing.T) {
 		t.Skipf("copilot not on PATH: %v", err)
 	}
 	realHome := os.Getenv("HOME")
-	address, workdir, _ := startLiveCopilotServer(t, binary, realHome)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	client, err := copilotapi.DialRetry(ctx, address, nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = client.Close() })
-
-	info, err := client.CreateSession(ctx, copilotapi.CreateSessionParams{
-		SessionID: copilotapi.NewSessionID(), WorkingDirectory: workdir,
-		ClientName: "tclaude", Streaming: true,
-	})
-	require.NoError(t, err)
-
-	metrics, err := client.UsageMetrics(ctx, info.SessionID)
-	require.NoError(t, err)
-	t.Logf("pre-turn usage: currentModel=%q modelMetrics=%d",
-		metrics.CurrentModel, len(metrics.ModelMetrics))
-
-	if metrics.CurrentModel != copilotAPIAutoModel {
-		t.Fatalf("this run did NOT reproduce automatic model selection: usage reports "+
-			"currentModel=%q before any call. The auto-model fix is therefore NOT "+
-			"verified by this run — do not read this failure as a defect in the fix. "+
-			"Re-run with Copilot's model set to automatic selection, or report that "+
-			"this host cannot reproduce it", metrics.CurrentModel)
+	const attempts = 10
+	var metrics copilotapi.UsageMetrics
+	reproduced := false
+	for attempt := 1; attempt <= attempts && !reproduced; attempt++ {
+		// A subtest per attempt, so the server, its PTY and its temporary
+		// COPILOT_HOME are torn down as the attempt ends rather than piling up
+		// ten live copilots until the parent finishes.
+		ok := t.Run(fmt.Sprintf("launch-%d", attempt), func(t *testing.T) {
+			metrics, reproduced = liveCopilotAutoSentinelAttempt(t, binary, realHome)
+		})
+		// An attempt that failed OUTRIGHT — copilot never opened the listener,
+		// the RPC never answered — says nothing about the sentinel, and retrying
+		// it nine more times says nothing nine more times. Worse, each retry
+		// costs that attempt's full timeout: ten launch timeouts is ten minutes,
+		// which outlasts `go test`'s own default and turns a legible failure
+		// into `panic: test timed out` with the diagnostic below never printed.
+		// The subtest has already failed the parent and said why, so stop here
+		// and let its message stand rather than overwriting it with one about
+		// automatic selection that would not be true.
+		if !ok {
+			return
+		}
 	}
+
+	if !reproduced {
+		t.Fatalf("none of %d launches reproduced automatic model selection: usage kept "+
+			"reporting currentModel=%q before any call. The auto-model fix is therefore "+
+			"NOT verified by this run — do not read this failure as a defect in the fix. "+
+			"Report it: at the rate measured on 1.0.78 this should be far rarer than a "+
+			"single run, so a host that never reproduces it has changed something about "+
+			"how Copilot records the startup model selection", attempts, metrics.CurrentModel)
+	}
+
+	// Part of the precondition rather than an aside, and not redundant: DO NOT
+	// DELETE IT as an obvious-looking check on a value nobody reads.
+	//
+	// copilotAPIReadingModel returns "" for two unrelated reasons — the sentinel
+	// was suppressed, which is what this test is about, or modelMetrics held
+	// anything other than exactly one key, which is not. Without this guard a
+	// green run could come from the second: assertion satisfied, subject never
+	// exercised. That is the original bug's own failure mode — a plausible
+	// answer that is not the quantity it claims to be — reappearing inside the
+	// test written to prevent it.
+	require.Empty(t, metrics.ModelMetrics,
+		"the sentinel is present but a call has already been billed, so an empty reading "+
+			"model would no longer be evidence about the sentinel branch")
 
 	// The fix, applied to the real payload the server just produced.
 	assert.Empty(t, copilotAPIReadingModel(metrics),
@@ -300,4 +393,73 @@ func TestLiveCopilotAPINeverPublishesTheAutoSentinel(t *testing.T) {
 	assert.Equal(t, int64(200000), harness.CopilotContextWindowDefault(copilotAPIAutoModel),
 		"if this stops being a plausible-looking wrong answer, the trap this test "+
 			"guards has changed shape and the reasoning above needs rereading")
+}
+
+// copilotUnavailableModelName is a model Copilot will not have. Naming one is
+// how this test reaches automatic selection; see liveCopilotAutoSentinelAttempt
+// for why that is the production condition rather than a trick.
+const copilotUnavailableModelName = "tclaude-no-such-model-9x"
+
+// liveCopilotAutoSentinelAttempt runs one trial: a fresh server, a fresh
+// session, and a short poll for the sentinel. It reports the metrics it last
+// read and whether they carry the sentinel. No prompt is sent.
+//
+// # Why the launch names a model Copilot does not have
+//
+// It looks like a trick and is the opposite of one. Copilot validates `--model`
+// against a model list it is still fetching — `session.model.list` answers
+// `{"list":[]}` at this point in startup — so a name it cannot find produces
+// `Model "X" from --model flag is not available. Using "auto" instead.` and the
+// session lands in automatic selection with the sentinel recorded. That is not
+// a synthetic path: real tclaude spawns hit exactly this message in the field,
+// which is how the condition arises in production at all.
+//
+// It is also the highest-yield way in. Measured across launches on 1.0.78:
+// an unavailable name reproduced the sentinel 16 times in 17 in one batch,
+// `--model=auto` 8 times in 13, and a bare launch 2 in 4. The unavailable name
+// is the best of the three on every batch measured, which is what it is chosen
+// for; the loop above is nonetheless sized against a worse rate than any batch
+// showed.
+//
+// The two paths produce the SAME observable, which is the part worth checking
+// rather than assuming, since the whole test rests on it: the raw
+// `session.usage.getMetrics` payload is identical under both — `"modelMetrics":
+// {}` with `"currentModel":"auto"` — and the code under test reads nothing but
+// that field.
+func liveCopilotAutoSentinelAttempt(
+	t *testing.T, binary, realHome string,
+) (copilotapi.UsageMetrics, bool) {
+	t.Helper()
+	address, workdir, _ := startLiveCopilotServer(t, binary, realHome,
+		"--model="+copilotUnavailableModelName)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	client, err := copilotapi.DialRetry(ctx, address, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+
+	info, err := client.CreateSession(ctx, copilotapi.CreateSessionParams{
+		SessionID: copilotapi.NewSessionID(), WorkingDirectory: workdir,
+		ClientName: "tclaude", Streaming: true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, client.SetForegroundSession(ctx, info.SessionID))
+
+	// Five seconds against a selection that lands inside one, so a slow host is
+	// covered several times over while a launch that lost the race is abandoned
+	// promptly enough that ten of them stay cheap.
+	var metrics copilotapi.UsageMetrics
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		metrics, err = client.UsageMetrics(ctx, info.SessionID)
+		require.NoError(t, err)
+		if metrics.CurrentModel == copilotAPIAutoModel || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Logf("pre-turn usage: currentModel=%q modelMetrics=%d",
+		metrics.CurrentModel, len(metrics.ModelMetrics))
+	return metrics, metrics.CurrentModel == copilotAPIAutoModel
 }
