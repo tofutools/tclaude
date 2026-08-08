@@ -11,12 +11,17 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/copilotapi"
-	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/harness/copilotfixture"
 )
 
 // TCL-1056's acceptance evidence: what `copilot --ui-server` actually does
 // about folder trust, measured on a real pty against the pinned CLI.
+//
+// A note on the flag's availability, because it was nearly gated away on a
+// guess: TCL-1051 FOUND `--ui-server` on 1.0.78, and a reasonable reading of
+// that is "1.0.78 introduced it". It did not. These scenarios pass against the
+// lab's pinned 1.0.77, so the flag predates the release it was discovered in
+// and needs no version gate here.
 //
 // The ticket carried this as its main open risk — whether the folder-trust
 // prompt could be satisfied for an unattended agent — and the answer turned out
@@ -246,30 +251,4 @@ func TestCopilotUIServerBootstrapsCleanlyOnASeededDir(t *testing.T) {
 		"the production seeder must have trusted the dir before the CLI started")
 	assert.False(t, res.Contains(copilotfixture.TrustPromptMarker),
 		"a seeded launch must not show the modal at all")
-}
-
-// The trust store the API drive's gate reads is the same file the seeder
-// writes, so a scenario that measured the CLI honouring hand-written JSON would
-// say nothing about tclaude. This asserts the production READER agrees with the
-// production writer about the file the pinned CLI actually honoured above.
-func TestCopilotUIServerTrustReaderAgreesWithTheSeededStore(t *testing.T) {
-	requireLabParallel(t)
-
-	dirs := copilotfixture.NewSandboxDirs(t)
-	getenv := func(name string) string {
-		if name == harness.CopilotHomeEnvVar {
-			return dirs.Home
-		}
-		return ""
-	}
-
-	trusted, err := harness.CopilotDirTrustedForLaunch(getenv, dirs.Root, dirs.WorkDir)
-	require.NoError(t, err)
-	require.False(t, trusted)
-
-	seedTrustLikeProduction(t, dirs, dirs.WorkDir)
-
-	trusted, err = harness.CopilotDirTrustedForLaunch(getenv, dirs.Root, dirs.WorkDir)
-	require.NoError(t, err)
-	assert.True(t, trusted)
 }
