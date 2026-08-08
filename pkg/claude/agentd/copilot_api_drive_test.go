@@ -337,18 +337,157 @@ func TestCopilotAPISpawnWelcomeGoesOverSessionSend(t *testing.T) {
 	fixture.assertNoKeystrokes(t)
 }
 
-// The wait's own contract: it returns as soon as a handle appears, and reports
-// false rather than blocking forever when one never does.
-func TestWaitForCopilotAPISessionFollowsTheHandle(t *testing.T) {
+// TCL-1080's defect, asserted as the TRANSITION that separates the two
+// predicates rather than as a level that both satisfy.
+//
+// The wait must follow the CONNECTION. It used to loop on copilotAPIDriven,
+// which is true from the durable launch posture that completeCopilotAPILaunch
+// writes BEFORE it starts the bootstrap — so it returned on its first iteration
+// of every API-drive launch and never waited for anything.
+//
+// The state below is the exact one it got wrong: the posture is recorded and no
+// handle exists. Note what a single-instant assertion cannot do here. "The wait
+// has not returned" is equally true of a wait that is working and of a wait
+// that has hung, and "the wait returned true" is equally true of a wait that
+// saw the handle and of the bug. Only the transition — blocked while
+// disconnected, THEN returning true once the handle lands — is produced by the
+// live behaviour and by nothing else. The second half is also this test's
+// positive control: without it a permanently-stuck wait would pass.
+func TestTheSpawnPostInitWaitFollowsTheConnectionAndNotTheLaunchPosture(t *testing.T) {
 	fixture := newCopilotAPIDriveFixture(t)
-	assert.True(t, waitForCopilotAPISession(fixture.convID),
-		"a conversation that already has a handle must not wait at all")
+	haveCopilotAPILaunchIntent(t, fixture.agentID)
 
+	// The bootstrap window: the launch has opted in durably and its channel has
+	// not come up. The two predicates disagree here and nowhere else, which is
+	// why this is the state the call site had to get right.
+	//
+	// Drop closes the connection it forgets, so the handle adopted further down
+	// is built around a FRESH one. Re-adopting the closed original would be
+	// adopting something Handle immediately evicts as dead — the wait would
+	// still be right to keep waiting, and the test would fail for a reason that
+	// has nothing to do with what it is about.
 	copilotAPISessions.Drop(fixture.convID)
-	// Not run to its real deadline — that is 90s by design. What matters here
-	// is that the loop's answer follows the registry, which the positive arm
-	// above establishes; the negative arm is the same predicate inverted.
-	assert.False(t, copilotAPIDriven(fixture.convID))
+	require.True(t, copilotAPIDriven(fixture.convID),
+		"the launch BELONGS to the API channel — that is what the posture records")
+	require.False(t, copilotAPIConnected(fixture.convID),
+		"and the channel is not up, which is the question the wait is asking")
+
+	returned := make(chan bool, 1)
+	go func() { returned <- waitForCopilotAPISession(fixture.convID) }()
+	select {
+	case result := <-returned:
+		t.Fatalf("the wait returned %v while the channel was down: it is answering "+
+			"the routing question again, and every API-drive spawn's rename and "+
+			"welcome go out before the bootstrap has foregrounded its session", result)
+	case <-time.After(750 * time.Millisecond):
+	}
+
+	// The channel comes up. Adopt is what runCopilotAPIBootstrap does, and it
+	// does it only after the session was created, foregrounded and prompted —
+	// so this is the moment the post-init delivery becomes safe.
+	copilotAPISessions.Adopt(&copilotAPISession{
+		ConvID: fixture.convID, SessionID: "copilot-session-1",
+		Port: fixture.server.port(), PanePID: os.Getpid(),
+		Client: dialFakeCopilot(t, fixture.server),
+	})
+	t.Cleanup(func() { copilotAPISessions.Drop(fixture.convID) })
+	select {
+	case result := <-returned:
+		assert.True(t, result, "the wait must report the channel it just watched come up")
+	case <-time.After(10 * time.Second):
+		t.Fatal("the wait never noticed the handle it exists to wait for")
+	}
+}
+
+// The other half of the contract: the wait gives up rather than blocking
+// forever, and its budget is the bootstrap's own.
+//
+// The deadline arm needs a budget a test can outlast. copilotAPIBootstrapTimeout
+// is copilotAPIStartupTimeout + 30s by construction, deliberately so it stays
+// "the port wait's ceiling plus a margin" when a test shortens that ceiling —
+// so reaching a sub-second budget means driving the ceiling negative. That is
+// not a state production can produce; it is arithmetic on the same expression
+// the real wait uses, and it exercises the same comparison.
+func TestTheSpawnPostInitWaitGivesUpAtTheBootstrapsBudget(t *testing.T) {
+	fixture := newCopilotAPIDriveFixture(t)
+	haveCopilotAPILaunchIntent(t, fixture.agentID)
+	copilotAPISessions.Drop(fixture.convID)
+
+	previous := copilotAPIStartupTimeout
+	copilotAPIStartupTimeout = 300*time.Millisecond - 30*time.Second
+	t.Cleanup(func() { copilotAPIStartupTimeout = previous })
+	require.Equal(t, 300*time.Millisecond, copilotAPIBootstrapTimeout(),
+		"the shortening below is only meaningful if it moved the real budget")
+
+	started := time.Now()
+	assert.False(t, waitForCopilotAPISession(fixture.convID),
+		"a channel that never came up is a real answer, not a timeout to retry")
+	elapsed := time.Since(started)
+
+	// BRACKETED, not merely bounded above. A one-sided "it finished within 10s"
+	// passes against a wait that uses any budget at all — including a hardcoded
+	// one unrelated to the bootstrap's — which would leave the property in this
+	// test's own name untested. That property is load-bearing rather than
+	// cosmetic: the pane fallback is safe because this wait outlives the
+	// bootstrap's context, and it only outlives it because the two budgets are
+	// the same expression. A wait that gave up early would put back exactly
+	// TCL-1080's failure, with the bootstrap foregrounding a fresh session over
+	// the pane the fallback just typed into.
+	//
+	// The lower bound is the budget itself; the upper allows one poll interval
+	// plus loaded-host slack, and is deliberately tight enough that a budget an
+	// order of magnitude larger fails.
+	assert.GreaterOrEqual(t, elapsed, copilotAPIBootstrapTimeout(),
+		"the wait gave up BEFORE the bootstrap's budget, so it is no longer "+
+			"guaranteed to outlive the bootstrap's context")
+	assert.Less(t, elapsed, copilotAPIBootstrapTimeout()+copilotAPIPollInterval+2*time.Second,
+		"the wait outlasted the bootstrap's budget by more than a poll, so it is "+
+			"not using that budget")
+}
+
+// The override, at the seam, against a channel that is genuinely up.
+//
+// Two things are pinned here and they are easy to conflate. The first is that
+// the routed default is untouched: a live API channel still takes
+// session.name.set and still types nothing. The second is that the pane
+// override REACHES THE SINK.
+//
+// The second one is not hypothetical fussiness. The first version of this
+// change set the channel at deliverRename and stopped there, on the reasoning
+// that the routing decision lives in one place. It does not: deliverRename's
+// pane arm calls injectSlashCommand, which calls dispatchSlashCommand, which
+// asks copilotAPIDriven again on its own account and has no typed RPC for a
+// rename token — so the forced-to-the-pane rename was refused with "lifecycle
+// command has no typed RPC mapping" and the agent stayed nameless. An override
+// applied at the top of a call chain is not an override; it has to reach every
+// predicate between the decision and the sink.
+//
+// So the assertion below is deliberately on the KEYSTROKE and not on
+// deliverRenameOn's return value. The broken version returned false, which a
+// require.True would have caught — but a variant that returned true while
+// delivering nothing is the same class of bug and is what the keystroke pins.
+func TestTheCopilotPaneOverrideChangesTheChannelAndNothingElseDoes(t *testing.T) {
+	fixture := newCopilotAPIDriveFixture(t)
+
+	require.True(t, deliverRenameOn(fixture.convID, "routed title", deliveryChannelRouted))
+	assert.Contains(t, fixture.server.methodsCalled(), copilotapi.MethodSessionNameSet,
+		"a live API channel still carries the rename; the override changes one caller, "+
+			"not the rule")
+	fixture.assertNoKeystrokes(t)
+
+	require.True(t, deliverRenameOn(fixture.convID, "pane title", deliveryChannelPane))
+	var typed bool
+	for _, command := range fixture.tmux.snapshot() {
+		for _, argument := range command {
+			if strings.Contains(argument, "/rename pane title") {
+				typed = true
+			}
+		}
+	}
+	assert.True(t, typed,
+		"the pane override must reach the pane. It failed here once already, one "+
+			"call deeper than the predicate it was written against, and the only "+
+			"symptom was a WARN line")
 }
 
 // haveCopilotAPILaunchIntent records the durable opt-in without a connection —
@@ -483,6 +622,223 @@ func TestCopilotAPIUnreadReminderGoesOverSessionSend(t *testing.T) {
 // ---------------------------------------------------------------------------
 // The delivery family, asserted structurally
 // ---------------------------------------------------------------------------
+
+// copilotAPIChannelChain is the call chain a spawn's post-init pane override
+// travels, from the function that decides it to the function that types.
+//
+// Each entry names a function that MUST take the caller's deliveryChannel and
+// hand it to the next one. The list is the artefact; the guard below is
+// mechanical over it.
+var copilotAPIChannelChain = []struct{ from, to string }{
+	{"deliverRenameOn", "injectSlashCommandOn"},
+	{"injectSlashCommandOn", "dispatchSlashCommandOn"},
+}
+
+// copilotAPIChannelLessVariants are the routed-default wrappers. Calling one
+// from inside the chain is precisely how the override was silently dropped the
+// first time, so the chain may not contain them at all.
+var copilotAPIChannelLessVariants = []string{
+	"deliverRename", "injectSlashCommand", "dispatchSlashCommand",
+}
+
+// The override has to reach the sink, and this is the mechanical statement of
+// that rather than a comment asking for it.
+//
+// # The defect it exists for
+//
+// The spawn's post-init pane fallback was first written by setting the channel
+// at deliverRenameOn and stopping there. deliverRenameOn's pane arm called
+// injectSlashCommand — the routed-default wrapper — which dispatched, asked
+// copilotAPIDriven on its own account, took the Copilot branch, found no typed
+// RPC for a rename token and refused. The override existed, read correctly,
+// compiled, and did nothing.
+//
+// A guard on the OVERRIDE CONSTANT's call sites would have been green through
+// all of that: the constant had exactly one call site the whole time. What
+// broke was the threading, so the threading is what is asserted.
+//
+// # What this covers, and what it does not
+//
+// Covered: every hop listed in copilotAPIChannelChain takes a deliveryChannel
+// parameter named `channel`, passes that identifier onward, and calls no
+// routed-default wrapper; and dispatchSlashCommandOn's copilotAPIDriven test is
+// guarded by `channel` rather than standing alone.
+//
+// NOT covered: a NEW predicate inserted between the decision and the sink
+// tomorrow. Nothing here notices a fourth hop appearing, because the chain is a
+// written list and a new function is not on it. That gap is stated rather than
+// left to be discovered — the behavioural arm of
+// TestTheCopilotPaneOverrideChangesTheChannelAndNothingElseDoes is what would
+// catch it, by asserting the keystroke rather than the shape.
+func TestTheCopilotPaneOverrideIsThreadedAllTheWayToTheSink(t *testing.T) {
+	functions := map[string]*ast.FuncDecl{}
+	entries, err := os.ReadDir(".")
+	require.NoError(t, err)
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		source, err := os.ReadFile(name)
+		require.NoError(t, err)
+		parsed, err := parser.ParseFile(token.NewFileSet(), name, source, 0)
+		require.NoError(t, err)
+		for _, decl := range parsed.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Recv == nil && fn.Body != nil {
+				functions[fn.Name.Name] = fn
+			}
+		}
+	}
+
+	// The positive control. Every assertion below is over functions looked up
+	// by name, so a rename would silently empty the whole guard.
+	for _, hop := range copilotAPIChannelChain {
+		require.Containsf(t, functions, hop.from,
+			"%s is the chain's own subject and no longer exists; the guard is "+
+				"watching nothing", hop.from)
+		require.Containsf(t, functions, hop.to, "%s no longer exists", hop.to)
+	}
+
+	for _, hop := range copilotAPIChannelChain {
+		fn := functions[hop.from]
+		assert.Truef(t, declaresChannelParam(fn), "%s must take the caller's "+
+			"deliveryChannel as a parameter named `channel`", hop.from)
+
+		var passedOn bool
+		ast.Inspect(fn.Body, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			callee, ok := call.Fun.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			assert.NotContainsf(t, copilotAPIChannelLessVariants, callee.Name,
+				"%s calls %s, the routed-default wrapper. That silently drops the "+
+					"caller's channel, and the only symptom is a delivery refused in a "+
+					"log line", hop.from, callee.Name)
+			if callee.Name == hop.to {
+				for _, argument := range call.Args {
+					if ident, ok := argument.(*ast.Ident); ok && ident.Name == "channel" {
+						passedOn = true
+					}
+				}
+			}
+			return true
+		})
+		assert.Truef(t, passedOn,
+			"%s must pass its own `channel` to %s; a hop that re-derives the "+
+				"channel, or defaults it, is the override quietly ending here",
+			hop.from, hop.to)
+	}
+
+	// A hop may not REASSIGN the channel it was handed. Threading it perfectly
+	// and then overwriting it mid-chain —
+	//
+	//	if copilotAPIDriven(convID) { channel = deliveryChannelRouted }
+	//
+	// — destroys the override in transit while every assertion above still
+	// passes, because the identifier is still declared and still passed on.
+	// That spelling is a plausible "normalize the channel" edit, which is
+	// exactly the kind this package has had a guard sail past before.
+	for _, hop := range copilotAPIChannelChain {
+		ast.Inspect(functions[hop.from].Body, func(node ast.Node) bool {
+			assign, ok := node.(*ast.AssignStmt)
+			if !ok {
+				return true
+			}
+			for _, target := range assign.Lhs {
+				if ident, ok := target.(*ast.Ident); ok && ident.Name == "channel" {
+					assert.Failf(t, "the channel is reassigned mid-chain",
+						"%s assigns to its own `channel` parameter. The caller's "+
+							"override then ends here, and it ends silently: the "+
+							"identifier is still threaded onward, so every other check "+
+							"in this guard still passes", hop.from)
+				}
+			}
+			return true
+		})
+	}
+
+	// The override constant's containment. Weaker than the threading above —
+	// the constant had exactly one call site the entire time the rename was
+	// being refused one hop deeper — but it is the property deliveryChannelPane's
+	// own comment claims, so it is asserted rather than claimed.
+	var paneCallSites int
+	for name, fn := range functions {
+		if name == "deliverRenameOn" || name == "injectSlashCommandOn" ||
+			name == "dispatchSlashCommandOn" {
+			// The chain itself compares against the routed constant; only uses
+			// that SELECT the pane are call sites in the sense meant here.
+			continue
+		}
+		ast.Inspect(fn.Body, func(node ast.Node) bool {
+			if ident, ok := node.(*ast.Ident); ok && ident.Name == "deliveryChannelPane" {
+				paneCallSites++
+			}
+			return true
+		})
+	}
+	assert.Equal(t, 1, paneCallSites,
+		"deliveryChannelPane must have exactly one non-test call site. Its doc "+
+			"argues the entitlement for ONE caller — a one-shot delivery with no "+
+			"retry — and a second caller has to argue its own case rather than "+
+			"inheriting that one")
+
+	// The last hop is the one that actually chooses, so its choice must READ
+	// the channel. Without this the chain could thread it perfectly and then
+	// ignore it.
+	sink := functions["dispatchSlashCommandOn"]
+	var guarded bool
+	ast.Inspect(sink.Body, func(node ast.Node) bool {
+		binary, ok := node.(*ast.BinaryExpr)
+		if !ok {
+			return true
+		}
+		var mentionsChannel, testsDriven bool
+		ast.Inspect(binary, func(inner ast.Node) bool {
+			switch typed := inner.(type) {
+			case *ast.Ident:
+				if typed.Name == "channel" {
+					mentionsChannel = true
+				}
+			case *ast.CallExpr:
+				if callee, ok := typed.Fun.(*ast.Ident); ok &&
+					callee.Name == "copilotAPIDriven" {
+					testsDriven = true
+				}
+			}
+			return true
+		})
+		if mentionsChannel && testsDriven {
+			guarded = true
+		}
+		return true
+	})
+	assert.True(t, guarded,
+		"dispatchSlashCommandOn's copilotAPIDriven test must be guarded by the "+
+			"caller's channel. Unguarded, it re-decides the routing the caller "+
+			"already decided — which is the bug this whole chain exists to close")
+}
+
+func declaresChannelParam(fn *ast.FuncDecl) bool {
+	if fn.Type.Params == nil {
+		return false
+	}
+	for _, field := range fn.Type.Params.List {
+		ident, ok := field.Type.(*ast.Ident)
+		if !ok || ident.Name != "deliveryChannel" {
+			continue
+		}
+		for _, name := range field.Names {
+			if name.Name == "channel" {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // copilotAPIKeystrokeSinkFiles lists every file allowed to put text into a
 // pane, and why each one is either already API-aware or unreachable for an

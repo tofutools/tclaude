@@ -1491,7 +1491,21 @@ func messageInlineText(m *db.AgentMessage) (string, bool) {
 // between them. That is consistent with the best-effort follow-up
 // ordering described above and is not a regression.
 func injectSlashCommand(convID, line, followUp, reason string) bool {
-	transport, _ := dispatchSlashCommand(convID, line, followUp, reason)
+	return injectSlashCommandOn(convID, line, followUp, reason, deliveryChannelRouted)
+}
+
+// injectSlashCommandOn is injectSlashCommand with the caller's delivery channel
+// carried through to the dispatch.
+//
+// It exists because an override applied only at the top is not an override. The
+// first version of the spawn's pane fallback set the channel at deliverRenameOn
+// and stopped there; the rename it forced to the pane was then refused by
+// dispatchSlashCommand, which asks copilotAPIDriven again on its own account
+// and has no typed RPC for a rename token. See [deliveryChannel].
+func injectSlashCommandOn(
+	convID, line, followUp, reason string, channel deliveryChannel,
+) bool {
+	transport, _ := dispatchSlashCommandOn(convID, line, followUp, reason, channel)
 	return transport != slashTransportNone
 }
 
@@ -1542,6 +1556,16 @@ const (
 func dispatchSlashCommand(
 	convID, line, followUp, reason string,
 ) (slashTransport, slashFailure) {
+	return dispatchSlashCommandOn(convID, line, followUp, reason, deliveryChannelRouted)
+}
+
+// dispatchSlashCommandOn is dispatchSlashCommand with the caller's delivery
+// channel. Everything but the spawn's post-init pane fallback passes
+// [deliveryChannelRouted] and behaves exactly as before; see [deliveryChannel]
+// for what entitles the one exception and why it must never be widened.
+func dispatchSlashCommandOn(
+	convID, line, followUp, reason string, channel deliveryChannel,
+) (slashTransport, slashFailure) {
 	sess := aliveSessionForConv(convID)
 	if sess == nil {
 		return slashTransportNone, slashFailureNoPane
@@ -1557,7 +1581,7 @@ func dispatchSlashCommand(
 	// sink must not be returned to it one failure at a time, and "the channel
 	// is not up" is a refusal rather than permission to type. See
 	// copilot_api_drive.go.
-	if copilotAPIDriven(convID) {
+	if channel == deliveryChannelRouted && copilotAPIDriven(convID) {
 		if dispatchCopilotAPISlashCommand(sess, line, followUp, reason) {
 			return slashTransportCopilotAPI, slashFailureNone
 		}
