@@ -167,6 +167,28 @@ func TestSetAgentPermissionOverrideByAgentID_RejectsMissingAndRetired(t *testing
 	assert.Zero(t, count, "rejected stable-id writes must not persist authority")
 }
 
+func TestSetAgentPermissionOverrideByAgentIDWithScope_RejectsScopedDeny(t *testing.T) {
+	setupTestDB(t)
+
+	agentID, _, err := EnsureAgentForConv("scoped-deny-conv", "test")
+	require.NoError(t, err)
+
+	err = SetAgentPermissionOverrideByAgentIDWithScope(
+		agentID,
+		"groups.spawn",
+		PermEffectDeny,
+		`{"group":["dev"]}`,
+		"test",
+	)
+	assert.ErrorContains(t, err, "cannot carry a scope")
+
+	d, err := Open()
+	require.NoError(t, err)
+	var count int
+	require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM agent_permissions WHERE agent_id = ?`, agentID).Scan(&count))
+	assert.Zero(t, count, "rejected scoped deny must not persist authority")
+}
+
 func TestAgentPermissions_ApplyOverridesPreservesProvenanceAndClearsAtomically(t *testing.T) {
 	setupTestDB(t)
 

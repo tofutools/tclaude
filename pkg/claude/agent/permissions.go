@@ -54,12 +54,14 @@ type permissionsState struct {
 	Grants   map[string][]string `json:"grants"`
 	// Overrides is the full tri-state per-conv view — conv-id → slug →
 	// "grant" | "deny". Grants is its grant-only projection.
-	Overrides map[string]map[string]string `json:"overrides"`
+	Overrides map[string]map[string]string          `json:"overrides"`
+	Scopes    map[string]map[string]permissionScope `json:"scopes"`
 	// GroupGrants is group name → slugs that group grants to every member
 	// — a standing source the daemon's resolver consults directly, so it
 	// belongs in the roster next to the defaults. Empty against a daemon
 	// that predates the field.
-	GroupGrants map[string][]string `json:"group_grants"`
+	GroupGrants map[string][]string                   `json:"group_grants"`
+	GroupScopes map[string]map[string]permissionScope `json:"group_scopes"`
 	// AgentIDs projects the stable agent_id behind each conv key (conv-id
 	// → agent_id), so the roster can lead with the rotation-immune id while
 	// the maps above stay conv-keyed (JOH-325). Absent for a conv with no
@@ -117,16 +119,20 @@ type permSlugEntry struct {
 	// OwnerScope says how far that bypass reaches — "group" (the owned
 	// groups), "member" (their members) or "any" (unscoped). Empty from a
 	// daemon that predates the field.
-	OwnerScope string `json:"owner_scope,omitempty"`
+	OwnerScope string   `json:"owner_scope,omitempty"`
+	ScopeDims  []string `json:"scope_dims,omitempty"`
 }
 
+type permissionScope map[string][]string
+
 type permissionsMutateResp struct {
-	Target    string   `json:"target"`
-	TargetKey string   `json:"target_key,omitempty"`
-	AgentID   string   `json:"agent_id,omitempty"`
-	Title     string   `json:"title,omitempty"`
-	Slug      string   `json:"slug"`
-	Effective []string `json:"effective"`
+	Target    string          `json:"target"`
+	TargetKey string          `json:"target_key,omitempty"`
+	AgentID   string          `json:"agent_id,omitempty"`
+	Title     string          `json:"title,omitempty"`
+	Slug      string          `json:"slug"`
+	Scope     permissionScope `json:"scope,omitempty"`
+	Effective []string        `json:"effective"`
 }
 
 // --- permissions ls ---
@@ -217,7 +223,7 @@ func renderPermissionsState(state permissionsState, stdout io.Writer) int {
 			if effect == "deny" {
 				denied = append(denied, slug)
 			} else {
-				granted = append(granted, slug)
+				granted = append(granted, scopedPermissionLabel(slug, state.Scopes[k][slug]))
 			}
 		}
 		sort.Strings(granted)
@@ -256,10 +262,36 @@ func renderGroupGrants(state permissionsState, stdout io.Writer) {
 	sort.Strings(names)
 	fmt.Fprintln(stdout, "GROUP GRANTS (held by every member):")
 	for _, name := range names {
-		slugs := append([]string{}, state.GroupGrants[name]...)
+		slugs := make([]string, 0, len(state.GroupGrants[name]))
+		for _, slug := range state.GroupGrants[name] {
+			slugs = append(slugs, scopedPermissionLabel(slug, state.GroupScopes[name][slug]))
+		}
 		sort.Strings(slugs)
 		fmt.Fprintf(stdout, "  %s: %s\n", name, strings.Join(slugs, ", "))
 	}
+}
+
+func scopedPermissionLabel(slug string, scope permissionScope) string {
+	if rendered := renderPermissionScope(scope); rendered != "" {
+		return slug + " [" + rendered + "]"
+	}
+	return slug
+}
+
+func renderPermissionScope(scope permissionScope) string {
+	if len(scope) == 0 {
+		return ""
+	}
+	dims := make([]string, 0, len(scope))
+	for dim := range scope {
+		dims = append(dims, dim)
+	}
+	sort.Strings(dims)
+	parts := make([]string, 0, len(dims))
+	for _, dim := range dims {
+		parts = append(parts, dim+"="+strings.Join(scope[dim], ","))
+	}
+	return strings.Join(parts, " ")
 }
 
 // renderEffectivePerms asks the daemon for the resolved effective view of
@@ -332,23 +364,42 @@ func renderEffectivePerms(p *permissionsLsParams, stdout, stderr io.Writer) int 
 // else. ownerImplied keeps the historical unscoped wording working
 // against a daemon that predates the provenance map.
 func permSourceNote(source string, ownerImplied bool, ownedGroups []string) string {
-	switch source {
+	base, scope := splitPermissionProvenance(source)
+	var note string
+	switch base {
 	case "sudo":
-		return "(via sudo elevation)"
+		note = "via sudo elevation"
 	case "override":
-		return "(via agent grant)"
+		note = "via agent grant"
 	case "group":
-		return "(via group)"
+		note = "via group"
 	case "default":
-		return ""
+		if scope == "" {
+			return ""
+		}
+		note = "via default"
 	}
-	if scope, ok := strings.CutPrefix(source, "owner:"); ok {
-		return ownerScopeNote(scope, ownedGroups)
+	if note != "" {
+		if scope != "" {
+			note += "; scope: " + scope
+		}
+		return "(" + note + ")"
 	}
-	if source == "owner" || ownerImplied {
+	if ownerScope, ok := strings.CutPrefix(base, "owner:"); ok {
+		return ownerScopeNote(ownerScope, ownedGroups)
+	}
+	if base == "owner" || ownerImplied {
 		return "(via ownership)"
 	}
 	return ""
+}
+
+func splitPermissionProvenance(source string) (base, scope string) {
+	i := strings.Index(source, " [")
+	if i < 0 {
+		return source, ""
+	}
+	return source[:i], strings.TrimSpace(source[i+1:])
 }
 
 // ownerScopeNote phrases an owner-conferred slug's reach. With no owned
@@ -395,9 +446,40 @@ func printDaemonAmbiguous(out io.Writer, selector string, de *DaemonError) {
 // --- permissions grant ---
 
 type permissionsGrantParams struct {
-	Target   string `pos:"true" help:"'default' or a conv selector (UUID, prefix, or current title)"`
-	Slug     string `pos:"true" help:"Permission slug to grant (see 'tclaude agent permissions slugs')"`
-	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
+	Target   string   `pos:"true" help:"'default' or a conv selector (UUID, prefix, or current title)"`
+	Slug     string   `pos:"true" help:"Permission slug to grant (see 'tclaude agent permissions slugs')"`
+	Scope    []string `long:"scope" optional:"true" help:"Limit the grant with dim=v1,v2. Repeat for multiple dimensions."`
+	AskHuman string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
+}
+
+func parsePermissionScopeFlags(flags []string) (permissionScope, error) {
+	if len(flags) == 0 {
+		return nil, nil
+	}
+	scope := permissionScope{}
+	seen := map[string]map[string]bool{}
+	for _, flag := range flags {
+		dim, values, ok := strings.Cut(flag, "=")
+		dim = strings.TrimSpace(dim)
+		if !ok || dim == "" || strings.TrimSpace(values) == "" {
+			return nil, fmt.Errorf("invalid --scope %q (want dim=v1,v2)", flag)
+		}
+		if seen[dim] == nil {
+			seen[dim] = map[string]bool{}
+		}
+		for _, raw := range strings.Split(values, ",") {
+			value := strings.TrimSpace(raw)
+			if value == "" {
+				return nil, fmt.Errorf("invalid --scope %q: matcher must not be empty", flag)
+			}
+			if !seen[dim][value] {
+				scope[dim] = append(scope[dim], value)
+				seen[dim][value] = true
+			}
+		}
+		sort.Strings(scope[dim])
+	}
+	return scope, nil
 }
 
 func permissionsGrantCmd() *cobra.Command {
@@ -412,7 +494,7 @@ func permissionsGrantCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *permissionsGrantParams, _ *cobra.Command, _ []string) {
-			os.Exit(runPermissionsMutate("/v1/permissions/grant", "Granted", p.Target, p.Slug, p.AskHuman, os.Stdout, os.Stderr))
+			os.Exit(runPermissionsMutate("/v1/permissions/grant", "Granted", p.Target, p.Slug, p.Scope, p.AskHuman, os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
 }
@@ -440,7 +522,7 @@ func permissionsDenyCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *permissionsDenyParams, _ *cobra.Command, _ []string) {
-			os.Exit(runPermissionsMutate("/v1/permissions/deny", "Denied", p.Target, p.Slug, p.AskHuman, os.Stdout, os.Stderr))
+			os.Exit(runPermissionsMutate("/v1/permissions/deny", "Denied", p.Target, p.Slug, nil, p.AskHuman, os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
 }
@@ -465,20 +547,25 @@ func permissionsRevokeCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *permissionsRevokeParams, _ *cobra.Command, _ []string) {
-			os.Exit(runPermissionsMutate("/v1/permissions/revoke", "Revoked", p.Target, p.Slug, p.AskHuman, os.Stdout, os.Stderr))
+			os.Exit(runPermissionsMutate("/v1/permissions/revoke", "Revoked", p.Target, p.Slug, nil, p.AskHuman, os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
 }
 
 // runPermissionsMutate is shared between grant and revoke; the only
 // difference is the path and the verb used in success output.
-func runPermissionsMutate(path, verb, target, slug, askHumanRaw string, stdout, stderr io.Writer) int {
+func runPermissionsMutate(path, verb, target, slug string, scopeFlags []string, askHumanRaw string, stdout, stderr io.Writer) int {
 	if target == "" {
 		fmt.Fprintln(stderr, "Error: target is required ('default' or a conv selector)")
 		return rcInvalidArg
 	}
 	if slug == "" {
 		fmt.Fprintln(stderr, "Error: slug is required")
+		return rcInvalidArg
+	}
+	scope, err := parsePermissionScopeFlags(scopeFlags)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcInvalidArg
 	}
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
@@ -493,10 +580,14 @@ func runPermissionsMutate(path, verb, target, slug, askHumanRaw string, stdout, 
 		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
 	}
 	var resp permissionsMutateResp
-	if err := DaemonRequest(http.MethodPost, path, map[string]string{
+	body := map[string]any{
 		"target": target,
 		"slug":   slug,
-	}, &resp, DaemonOpts{AskHuman: ask}); err != nil {
+	}
+	if len(scope) != 0 {
+		body["scope"] = scope
+	}
+	if err := DaemonRequest(http.MethodPost, path, body, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -579,11 +670,12 @@ func runPermissionsSlugs(p *permissionsSlugsParams, stdout, stderr io.Writer) in
 	tbl := table.New(
 		table.Column{Header: "SLUG", MinWidth: 12, Weight: 0.5, Truncate: true},
 		table.Column{Header: "OWNER", Width: 8},
+		table.Column{Header: "SCOPES", MinWidth: 8, Weight: 0.4, Truncate: true},
 		table.Column{Header: "DESCRIPTION", MinWidth: 20, Weight: 1.5, Truncate: true},
 	)
 	tbl.SetTerminalWidth(table.GetTerminalWidth())
 	for _, s := range slugs {
-		tbl.AddRow(table.Row{Cells: []string{s.Slug, ownerScopeCell(s), s.Description}})
+		tbl.AddRow(table.Row{Cells: []string{s.Slug, ownerScopeCell(s), strings.Join(s.ScopeDims, ", "), s.Description}})
 	}
 	fmt.Fprintln(stdout, tbl.Render())
 	fmt.Fprintln(stdout, "\nOWNER = group ownership confers this slug without an explicit grant.")

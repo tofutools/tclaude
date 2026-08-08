@@ -82,6 +82,26 @@ func TestMarshalStampsFormatVersion(t *testing.T) {
 	assert.Equal(t, FormatVersion, got.FormatVersion)
 }
 
+func TestScopedPermissionFieldsRequireV4(t *testing.T) {
+	assert.Equal(t, 4, FormatVersion, "scope-bearing archives must be rejected by v3 readers")
+	exp := sampleExport()
+	exp.Group.Permissions = []GroupPermission{{
+		Slug: "groups.spawn", ScopeJSON: `{"group":["dev"]}`,
+	}}
+	exp.Permissions[0].ScopeJSON = `{"group":["dev"]}`
+	exp.SudoGrants = []SudoGrant{{
+		ConvID: "conv-a", Slug: "groups.spawn", ScopeJSON: `{"group":["dev"]}`,
+	}}
+
+	archive, err := Marshal(exp)
+	require.NoError(t, err)
+	got, err := Unmarshal(archive)
+	require.NoError(t, err)
+	assert.Equal(t, exp.Group.Permissions, got.Group.Permissions)
+	assert.Equal(t, exp.Permissions, got.Permissions)
+	assert.Equal(t, exp.SudoGrants, got.SudoGrants)
+}
+
 // TestUnmarshalNotAZip rejects bytes that are not a zip archive at all —
 // the "someone uploaded a random file" case.
 func TestUnmarshalNotAZip(t *testing.T) {
@@ -125,6 +145,16 @@ func TestUnmarshalAcceptsOlderV2Archive(t *testing.T) {
 	assert.Empty(t, exp.Group.Permissions)
 	assert.Empty(t, exp.Group.AttachmentURL)
 	assert.Empty(t, exp.Group.AttachmentLabel)
+}
+
+func TestUnmarshalAcceptsOlderV3Archive(t *testing.T) {
+	archive := zipWithManifest(t, `{"format_version":3,"source_group":"team","group":{"permissions":[{"slug":"human.notify"}]}}`)
+	exp, err := Unmarshal(archive)
+	require.NoError(t, err)
+	assert.Equal(t, 3, exp.FormatVersion)
+	require.Len(t, exp.Group.Permissions, 1)
+	assert.Equal(t, "human.notify", exp.Group.Permissions[0].Slug)
+	assert.Empty(t, exp.Group.Permissions[0].ScopeJSON)
 }
 
 // TestUnmarshalMissingFormatVersion rejects a manifest with no (or zero)

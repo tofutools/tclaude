@@ -333,6 +333,9 @@ func inspectGroupImport(archive []byte, asName string) (*importInspection, int, 
 	if err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
+	if err := canonicalizeImportedPermissionScopes(exp); err != nil {
+		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
+	}
 	attachmentURL, attachmentLabel, err := reflink.NormalizeOptional(
 		exp.Group.AttachmentURL, exp.Group.AttachmentLabel)
 	if err != nil {
@@ -463,9 +466,43 @@ func SetGroupImportAfterCollisionCheckForTest(fn func()) func() {
 	return func() { groupImportAfterCollisionCheckForTest = old }
 }
 
+func canonicalizeImportedPermissionScopes(exp *groupexport.Export) error {
+	for i := range exp.Group.Permissions {
+		permission := &exp.Group.Permissions[i]
+		canonical, err := canonicalPermissionScopeForSlug(permission.Slug, permission.ScopeJSON)
+		if err != nil {
+			return fmt.Errorf("group permission %q has invalid scope: %w", permission.Slug, err)
+		}
+		permission.ScopeJSON = canonical
+	}
+	for i := range exp.Permissions {
+		permission := &exp.Permissions[i]
+		canonical, err := canonicalPermissionScopeForSlug(permission.Slug, permission.ScopeJSON)
+		if err != nil {
+			return fmt.Errorf("permission %s/%s has invalid scope: %w", permission.ConvID, permission.Slug, err)
+		}
+		if permission.Effect == db.PermEffectDeny && canonical != "" {
+			return fmt.Errorf("deny permission %s/%s cannot carry a scope", permission.ConvID, permission.Slug)
+		}
+		permission.ScopeJSON = canonical
+	}
+	for i := range exp.SudoGrants {
+		grant := &exp.SudoGrants[i]
+		canonical, err := canonicalPermissionScopeForSlug(grant.Slug, grant.ScopeJSON)
+		if err != nil {
+			return fmt.Errorf("sudo grant %s/%s has invalid scope: %w", grant.ConvID, grant.Slug, err)
+		}
+		grant.ScopeJSON = canonical
+	}
+	return nil
+}
+
 func runGroupImport(archive []byte, into, asName, caller string) (*importResponse, int, error) {
 	exp, err := groupexport.Unmarshal(archive)
 	if err != nil {
+		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
+	}
+	if err := canonicalizeImportedPermissionScopes(exp); err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
 	attachmentURL, attachmentLabel, err := reflink.NormalizeOptional(
@@ -643,12 +680,13 @@ func runGroupImport(archive []byte, into, asName, caller string) (*importRespons
 
 	// --- the transactional DB write ---
 	result, err := db.ImportGroup(db.GroupImportPlan{
-		Export:                   exp,
-		TargetName:               targetName,
-		TargetCwd:                targetCwd,
-		ConvRemap:                convRemap,
-		ClaimedConversationPaths: claimedConversationPaths,
-		ByConv:                   caller,
+		Export:                      exp,
+		TargetName:                  targetName,
+		TargetCwd:                   targetCwd,
+		ConvRemap:                   convRemap,
+		ClaimedConversationPaths:    claimedConversationPaths,
+		ByConv:                      caller,
+		CanonicalizePermissionScope: canonicalPermissionScopeForSlug,
 	})
 	if err != nil {
 		cleanupPlaced()
