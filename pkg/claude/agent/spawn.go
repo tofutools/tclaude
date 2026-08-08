@@ -13,6 +13,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -529,7 +530,7 @@ type SpawnRequest struct {
 	// authority (permissions.grant), and like IsOwner an OMITTED key adopts the
 	// profile tier stack's map while an explicit empty object states "none" — so
 	// a client whose dialog has a permission editor should always post the key.
-	PermissionOverrides map[string]string `json:"permission_overrides,omitempty"`
+	PermissionOverrides map[string]db.PermissionOverride `json:"permission_overrides,omitempty"`
 
 	// Presence bits preserve an explicit JSON false across profile overlays.
 	// They are populated by UnmarshalJSON and intentionally stay off the wire.
@@ -619,7 +620,7 @@ func (r SpawnRequest) MarshalJSON() ([]byte, error) {
 		// daemon's presence check; an explicit "no overrides" has to be {}.
 		overrides := r.PermissionOverrides
 		if overrides == nil {
-			overrides = map[string]string{}
+			overrides = map[string]db.PermissionOverride{}
 		}
 		stated["permission_overrides"] = overrides
 	}
@@ -930,7 +931,7 @@ type resolvedSpawnFields struct {
 	AutoFocus  bool
 
 	IsOwner             bool
-	PermissionOverrides map[string]string
+	PermissionOverrides map[string]db.PermissionOverride
 	// Deliberately NO ContextFeatures here. The CLI does not fold a --profile's
 	// trims into the request: it sends its own map or nothing, and lets the
 	// daemon's tier stack resolve the named profile (the same reason

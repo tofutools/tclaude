@@ -122,8 +122,8 @@ type spawnProfileJSON struct {
 	// Birth-time access controls the profile pre-fills. IsOwner is
 	// tri-state (null = unset). PermissionOverrides maps slug → "grant" | "deny"
 	// (absent = no overrides); validated against the slug registry at save.
-	IsOwner             *bool             `json:"is_owner,omitempty"`
-	PermissionOverrides map[string]string `json:"permission_overrides,omitempty"`
+	IsOwner             *bool                            `json:"is_owner,omitempty"`
+	PermissionOverrides map[string]db.PermissionOverride `json:"permission_overrides,omitempty"`
 
 	// ContextFeatures is the profile's per-agent startup-context trim map (slug →
 	// "on" | "off"; absent = trims nothing), validated against the catalog AND
@@ -1202,12 +1202,18 @@ func seedProfileFromConv(convID string) spawnProfileJSON {
 	if features, _ := db.ContextFeaturesForConv(convID); len(features) > 0 {
 		seed.ContextFeatures = features
 	}
-	if perms, _ := db.ListAgentPermissionsForConv(convID); len(perms) > 0 {
-		overrides := make(map[string]string, len(perms))
-		for _, s := range perms {
-			if s != "" {
-				overrides[s] = "grant"
+	// Capture the member's grants WITH their scopes. Reading only the slug
+	// list (as this did before scopes existed) would turn a narrowly scoped
+	// live grant into an unscoped birth-time one the moment a human saved the
+	// captured profile — a capture that quietly widens is worse than no
+	// capture at all.
+	if rows, _ := db.ListAgentPermissionOverrideRowsForConv(convID); len(rows) > 0 {
+		overrides := make(map[string]db.PermissionOverride, len(rows))
+		for _, row := range rows {
+			if row.Slug == "" || row.Effect != db.PermEffectGrant {
+				continue
 			}
+			overrides[row.Slug] = db.PermissionOverride{Effect: db.PermEffectGrant, Scope: row.ScopeJSON}
 		}
 		if len(overrides) > 0 {
 			seed.PermissionOverrides = overrides

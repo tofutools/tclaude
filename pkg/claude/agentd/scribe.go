@@ -143,25 +143,28 @@ func handleScribeSummon(w http.ResponseWriter, r *http.Request) {
 	// Slugs → birth-time grants. Reuse the spawn-boundary normaliser so an
 	// unknown slug is rejected with the same actionable "known slugs: …" list
 	// the spawn endpoint gives.
-	in := make(map[string]string, len(body.Slugs))
+	// A scribe summon names bare slugs, so every grant it mints is UNSCOPED —
+	// the widest form. checkGrantAttenuation below is what stops a caller
+	// whose own hold on a slug is scoped from laundering it wide this way.
+	in := make(map[string]db.PermissionOverride, len(body.Slugs))
 	for _, s := range body.Slugs {
 		if s = strings.TrimSpace(s); s != "" {
-			in[s] = db.PermEffectGrant
+			in[s] = db.Grant()
 		}
 	}
 	for _, s := range body.DenySlugs {
 		if s = strings.TrimSpace(s); s != "" {
-			if in[s] == db.PermEffectGrant {
+			if in[s].Effect == db.PermEffectGrant {
 				writeError(w, http.StatusBadRequest, "slugs", "permission slug "+s+" cannot be both granted and denied")
 				return
 			}
-			in[s] = db.PermEffectDeny
+			in[s] = db.Deny()
 		}
 	}
 	if body.Exclusive {
 		for _, spec := range permissionRegistry {
-			if in[spec.Slug] != db.PermEffectGrant {
-				in[spec.Slug] = db.PermEffectDeny
+			if in[spec.Slug].Effect != db.PermEffectGrant {
+				in[spec.Slug] = db.Deny()
 			}
 		}
 	}
@@ -187,6 +190,13 @@ func handleScribeSummon(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		permissionGrantSudoID = sudoID
+		// A summon's grants are unscoped by construction, so a caller whose
+		// own hold on one of these slugs is scoped is refused here rather than
+		// laundering it wide through a scribe.
+		if err := checkGrantAttenuation(spawnerConvID, conferredGrantsFromOverrides(overrides)); err != nil {
+			writeError(w, http.StatusForbidden, "scope_not_attenuated", err.Error())
+			return
+		}
 	}
 
 	brief := strings.TrimSpace(body.Brief)
@@ -303,7 +313,7 @@ var scribeSummonMu sync.Mutex
 // summonScribe is the reusable core: ensure the scribe-kind group, reuse one
 // exact compatible structured scope when requested, or spawn a fresh uniquely
 // named agent in the shared pre-trusted workdir with birth-time grants.
-func summonScribe(name string, overrides map[string]string, brief string, exclusive bool, scopeKey, taskURL, taskLabel, granter, spawnerConvID string) (*scribeOutcome, bool, *spawnFailure) {
+func summonScribe(name string, overrides map[string]db.PermissionOverride, brief string, exclusive bool, scopeKey, taskURL, taskLabel, granter, spawnerConvID string) (*scribeOutcome, bool, *spawnFailure) {
 	scribeSummonMu.Lock()
 	defer scribeSummonMu.Unlock()
 
@@ -399,7 +409,7 @@ func scribeScopeDescr(scopeKey string) string {
 // reuseScopedScribe returns the one alive, active, permission-compatible
 // scribe for scopeKey. The caller holds scribeSummonMu, making lookup plus
 // potential spawn idempotent across concurrent clicks.
-func reuseScopedScribe(g *db.AgentGroup, scopeKey string, overrides map[string]string, brief, taskURL, taskLabel string) (*scribeOutcome, *spawnFailure) {
+func reuseScopedScribe(g *db.AgentGroup, scopeKey string, overrides map[string]db.PermissionOverride, brief, taskURL, taskLabel string) (*scribeOutcome, *spawnFailure) {
 	members, err := db.ListAgentGroupMembers(g.ID)
 	if err != nil {
 		return nil, &spawnFailure{http.StatusInternalServerError, "group", "list reusable scribes: " + err.Error()}
@@ -413,7 +423,10 @@ func reuseScopedScribe(g *db.AgentGroup, scopeKey string, overrides map[string]s
 		if err != nil || state != db.AgentStateActive {
 			continue
 		}
-		current, err := db.ListAgentPermissionOverridesForConv(member.ConvID)
+		// Compare the full override shape, scope included: a candidate whose
+		// grant is narrower (or wider) than the one being summoned is a
+		// different capability set and must not be reused.
+		current, err := agentPermissionOverrides(member.ConvID)
 		if err != nil || !maps.Equal(current, overrides) {
 			continue
 		}
@@ -673,7 +686,7 @@ func pruneDeadScribes(g *db.AgentGroup) {
 
 // enforceExclusiveScribeOverrides pins the complete capability set after
 // enrollment. Exclusive sandbox scribes fail closed on any write error.
-func enforceExclusiveScribeOverrides(convID string, overrides map[string]string, granter string) error {
+func enforceExclusiveScribeOverrides(convID string, overrides map[string]db.PermissionOverride, granter string) error {
 	if _, err := db.RevokeSudoGrantsByConv(convID); err != nil {
 		return fmt.Errorf("revoke active sudo grants: %w", err)
 	}
