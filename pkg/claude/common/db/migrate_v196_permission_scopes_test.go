@@ -9,17 +9,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMigrateV194toV195AddsPermissionScopes(t *testing.T) {
+func TestMigrateV195toV196AddsPermissionScopes(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
 	require.NoError(t, err)
 	for _, table := range []string{"agent_permissions", "agent_group_permissions", "agent_sudo_grants"} {
 		mustExec(t, d, `ALTER TABLE `+table+` DROP COLUMN scope_json`)
 	}
-	mustExec(t, d, `UPDATE schema_version SET version = 194`)
+	mustExec(t, d, `UPDATE schema_version SET version = 195`)
 
-	require.NoError(t, migrateV194toV195(d))
-	assert.Equal(t, 195, schemaVersion(d))
+	require.NoError(t, migrateV195toV196(d))
+	assert.Equal(t, 196, schemaVersion(d))
 	for _, table := range []string{"agent_permissions", "agent_group_permissions", "agent_sudo_grants"} {
 		var have int
 		require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = 'scope_json'`, table).Scan(&have))
@@ -34,16 +34,16 @@ func TestMigrateV194toV195AddsPermissionScopes(t *testing.T) {
 		VALUES ((SELECT id FROM agent_groups WHERE name = 'scope-check'), 'groups.spawn', 1, 'test', ?)`,
 		strings.Repeat("x", 262145))
 	require.Error(t, err)
-	require.NoError(t, migrateV194toV195(d), "partially applied migration converges")
+	require.NoError(t, migrateV195toV196(d), "partially applied migration converges")
 }
 
-func TestMigrateV194toV195SurvivesMinimalHealSchema(t *testing.T) {
+func TestMigrateV195toV196SurvivesMinimalHealSchema(t *testing.T) {
 	d, err := sql.Open("sqlite", t.TempDir()+"/minimal.sqlite")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = d.Close() })
 	mustExec(t, d, `CREATE TABLE schema_version (version INTEGER NOT NULL)`)
-	mustExec(t, d, `INSERT INTO schema_version VALUES (194)`)
+	mustExec(t, d, `INSERT INTO schema_version VALUES (195)`)
 
-	require.NoError(t, migrateV194toV195(d))
-	assert.Equal(t, 195, schemaVersion(d))
+	require.NoError(t, migrateV195toV196(d))
+	assert.Equal(t, 196, schemaVersion(d))
 }
