@@ -1,6 +1,9 @@
 package agentd
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -9,6 +12,34 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
+
+func TestInfoProjectsGitProxyEnabled(t *testing.T) {
+	readProjection := func(t *testing.T) bool {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		handleInfo(recorder, httptest.NewRequest(http.MethodGet, "/v1/info", nil))
+		require.Equal(t, http.StatusOK, recorder.Code)
+		var info struct {
+			Proxy *bool `json:"proxy"`
+		}
+		require.NoError(t, json.NewDecoder(recorder.Body).Decode(&info))
+		require.NotNil(t, info.Proxy, "current daemon must distinguish disabled from an old daemon that omits the field")
+		return *info.Proxy
+	}
+
+	t.Run("disabled", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		assert.False(t, readProjection(t))
+	})
+
+	t.Run("enabled", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{
+			GitProxy: &config.GitProxyConfig{AllowedRemotes: []string{"github.com/acme"}},
+		}}))
+		assert.True(t, readProjection(t))
+	})
+}
 
 // gitproxy_test.go pins the REFUSALS. Every case here is a way a repository an
 // agent can write could otherwise aim the daemon's credentials somewhere the

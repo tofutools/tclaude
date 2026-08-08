@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
 // TestCommandTreeConstructs builds the entire cobra command tree and asserts it
@@ -33,6 +34,51 @@ func TestCommandTreeConstructs(t *testing.T) {
 	if Cmd() == nil {
 		t.Fatal("Cmd() returned nil")
 	}
+}
+
+func TestProxyTreeRequiresSemanticProxyConfig(t *testing.T) {
+	t.Setenv("TCLAUDE_AGENTD_SOCKET", "")
+	t.Setenv("CODEX_PERMISSION_PROFILE", "")
+
+	hasProxy := func(root *cobra.Command) bool {
+		for _, child := range root.Commands() {
+			if child.Name() == "proxy" {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("absent", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		if hasProxy(Cmd()) {
+			t.Fatal("proxy subtree present without proxy configuration")
+		}
+	})
+
+	t.Run("empty block", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		if err := config.Save(&config.Config{Agent: &config.AgentConfig{
+			GitProxy: &config.GitProxyConfig{},
+		}}); err != nil {
+			t.Fatalf("save config: %v", err)
+		}
+		if hasProxy(Cmd()) {
+			t.Fatal("proxy subtree present for semantically empty proxy configuration")
+		}
+	})
+
+	t.Run("configured", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		if err := config.Save(&config.Config{Agent: &config.AgentConfig{
+			GitProxy: &config.GitProxyConfig{AllowedRemotes: []string{"github.com/acme"}},
+		}}); err != nil {
+			t.Fatalf("save config: %v", err)
+		}
+		if !hasProxy(Cmd()) {
+			t.Fatal("proxy subtree absent with semantic proxy configuration")
+		}
+	})
 }
 
 func TestTUIDashboardLivesBesideBrowserDashboard(t *testing.T) {

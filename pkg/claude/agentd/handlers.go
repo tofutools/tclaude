@@ -43,6 +43,7 @@ func handleInfo(w http.ResponseWriter, r *http.Request) {
 		"popup_base_url": popupBaseURL,
 		"idempotency":    "v1",
 		"processes":      processRoutesEnabled(),
+		"proxy":          gitProxyRoutesEnabled(),
 	})
 }
 

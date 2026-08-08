@@ -136,6 +136,11 @@ const (
 // and the agent should tell its human rather than retry.
 const gitProxyDisabledCode = "git_proxy_disabled"
 
+func gitProxyRoutesEnabled() bool {
+	cfg, err := config.Load()
+	return err == nil && cfg.GitProxyEnabled()
+}
+
 // gitProxyDisabledMessage is written to be actionable for an agent that has
 // just been refused — it names the exact config the operator must add.
 const gitProxyDisabledMessage = "the git/github proxy is not enabled: no remotes are allow-listed. " +
