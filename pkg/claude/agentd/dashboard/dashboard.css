@@ -4891,14 +4891,14 @@ body.wizard .group-pending-title-wizard { display: inline; }
 }
 .toast {
   /* Clear the fixed footer bar (var(--footer-h)) so toasts never overlap it. */
-  position: fixed; bottom: calc(var(--footer-h) + 16px); right: 24px;
+  position: fixed; bottom: calc(var(--footer-h) + 16px); left: 50%;
   background: #161b22; border: 1px solid #2a3340; border-left: 3px solid #3fb950;
   border-radius: 4px; padding: 10px 14px; color: #c9d1d9;
-  font-size: 13px; max-width: 360px; z-index: 200;
-  opacity: 0; transform: translateY(8px); pointer-events: none;
+  font-size: 13px; width: max-content; max-width: min(360px, calc(100vw - 48px)); z-index: 200;
+  opacity: 0; transform: translate(-50%, 8px); pointer-events: none;
   transition: opacity 0.18s ease, transform 0.18s ease;
 }
-.toast.show { opacity: 1; transform: translateY(0); pointer-events: auto; }
+.toast.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
 .toast.error { border-left-color: #f85149; z-index: 10003; }
 .filter-bar {
   display: flex; align-items: center; gap: 8px;

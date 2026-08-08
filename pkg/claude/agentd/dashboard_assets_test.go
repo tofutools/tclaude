@@ -493,6 +493,23 @@ func TestDashboardCSS_TerminalStacksAboveEditors(t *testing.T) {
 	}
 }
 
+func TestDashboardCSS_ToastIsBottomCentered(t *testing.T) {
+	cssBytes, err := fs.ReadFile(dashboardAssetsFS, "dashboard.css")
+	if err != nil {
+		t.Fatalf("reading embedded dashboard.css: %v", err)
+	}
+	css := string(cssBytes)
+	for _, want := range []string{
+		"bottom: calc(var(--footer-h) + 16px); left: 50%;",
+		"transform: translate(-50%, 8px);",
+		".toast.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }",
+	} {
+		if !strings.Contains(css, want) {
+			t.Errorf("dashboard toast must remain bottom-centered; missing %q", want)
+		}
+	}
+}
+
 // TestDashboardCSS_RegistryManagePanelsResizable guards the paired CSS half of
 // the resizable registry management PANELS — group templates, spawn profiles,
 // roles and sandbox profiles. They are LIST panels, not forms, so unlike the
