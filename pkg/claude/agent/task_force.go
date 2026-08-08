@@ -195,6 +195,9 @@ func runTaskForceDeploy(p *taskForceDeployParams, stdin io.Reader, stdout, stder
 	for _, a := range resp.Agents {
 		if a.Error != "" {
 			fmt.Fprintf(stdout, "  ✗ %-24s  %s\n", a.FinalName, a.Error)
+			// Printed for a FAILURE too: a launch that was refused because a
+			// profile tier's value is invalid here is explained by that tier.
+			printAgentLaunchProvenance(stdout, a.Resolved)
 			continue
 		}
 		tags := []string{"conv " + short(a.ConvID)}
@@ -205,6 +208,7 @@ func runTaskForceDeploy(p *taskForceDeployParams, stdin io.Reader, stdout, stder
 			tags = append(tags, "granted: "+strings.Join(a.Granted, ","))
 		}
 		fmt.Fprintf(stdout, "  ✓ %-24s  %s\n", a.FinalName, strings.Join(tags, "  "))
+		printAgentLaunchProvenance(stdout, a.Resolved)
 	}
 	if resp.PatternDelivered > 0 {
 		fmt.Fprintf(stdout, "  work pattern: %d message%s delivered\n",

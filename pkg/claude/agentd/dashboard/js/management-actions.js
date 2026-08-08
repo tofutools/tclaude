@@ -8,6 +8,7 @@ import {
   importProfiles,
 } from './profiles.js';
 import { loadRoles, createRole, updateRole, deleteRole } from './roles.js';
+import { ambientLaunchDecisions } from './management-model.js';
 import { fetchUnsandboxedAutonomy } from './unsandboxed-autonomy.js';
 import { insertGroupBeside, setGroupOrderPref, sortGroupsByPref } from './group-order.js';
 import {
@@ -769,6 +770,17 @@ export function createManagementActions({
         failed > 0,
       );
     if (result.owner_note) notify(result.owner_note);
+    // Per-member launch provenance. A deploy resolves the group and global
+    // default profiles INSIDE the spawn, so a member can land on a harness,
+    // model, containment or Copilot drive that nobody picked in this dialog —
+    // and until TCL-1097 the only trace of that was a daemon log line. Only
+    // ambient decisions are announced: a value the deployer typed needs no
+    // telling, and a roster that inherited nothing produces no toasts at all.
+    for (const member of result.agents || []) {
+      const decisions = ambientLaunchDecisions(member.resolved);
+      if (!decisions.length) continue;
+      notify(`${member.final_name || member.name}: ${decisions.join(', ')}`);
+    }
     const patternErrors = result.pattern_errors || [];
     if (patternErrors.length)
       notify(

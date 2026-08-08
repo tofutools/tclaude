@@ -153,6 +153,18 @@ const (
 	ProvLaunchDefault  = "default profile (applied at launch)"
 )
 
+// ProvLaunchFillNote qualifies a field the launch-time safety-net overlay
+// resolved differently from the request's own resolution.
+//
+// It rides Note rather than Source because the two say different things and an
+// operator needs both: Source names the TIER they can go and edit, while this
+// says the value was decided after their request was resolved — which is why the
+// echo can differ from what the request looked like it would produce. Before
+// TCL-1097 the anonymous ProvLaunchDefault occupied Source and carried only the
+// second half, leaving the operator told that "a default profile" did it and
+// unable to find out which.
+const ProvLaunchFillNote = "filled by the launch-time overlay, after this request was resolved"
+
 // ProvGroupProfileSource / ProvGlobalProfileSource / ProvCLIProfileSource format
 // the three name-bearing provenance tiers. Exported so the daemon (which fills
 // the group/global tiers) and the CLI relabel path (which fills the --profile
@@ -1712,6 +1724,53 @@ func printResolvedLaunch(stdout io.Writer, rl *ResolvedLaunch) {
 	for _, warning := range rl.Warnings {
 		fmt.Fprintf(stdout, "  Warning: %s\n", warning)
 	}
+}
+
+// AmbientDecisions reports the echoed fields that a tier NOBODY TYPED at this
+// launch decided, as "field: value (tier)" lines — the subset of the echo a
+// reader has to see, as opposed to the whole shape a single-agent spawn can
+// afford to print in full.
+//
+// It exists for the multi-agent surfaces: a template deploy that printed all
+// seven fields for each of six members would bury the one line that matters
+// (say, a member put on the unverified Copilot API drive by a group default
+// profile) under forty that do not. An explicit request needs no announcement —
+// the caller typed it — and a harness default names no tier anyone can go and
+// change, so both are left out and a launch nobody steered prints nothing.
+//
+// Notes/Info/Warnings are deliberately NOT folded in: those are their own
+// channels with their own labels, and a caller that renders them keeps that
+// distinction.
+func (rl *ResolvedLaunch) AmbientDecisions() []string {
+	if rl == nil {
+		return nil
+	}
+	var out []string
+	for _, field := range []struct {
+		label string
+		value ResolvedField
+	}{
+		{"harness", rl.Harness},
+		{"model", rl.Model},
+		{"effort", rl.Effort},
+		{"context_window_max", rl.ContextWindowMax},
+		{"copilot drive", rl.CopilotAPI},
+		{"fast_mode", rl.FastMode},
+		{"sandbox_implementation", rl.SandboxImpl},
+	} {
+		// A blank value means nothing pinned the field; its source is then the
+		// harness default and there is no tier to announce.
+		if strings.TrimSpace(field.value.Value) == "" {
+			continue
+		}
+		switch strings.TrimSpace(field.value.Source) {
+		case "", ProvExplicit, ProvHarnessDefault:
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s: %s (%s)",
+			field.label, field.value.Value, field.value.Source))
+	}
+	return out
 }
 
 // formatResolvedField renders one resolved field as "value (source)", or just
