@@ -147,6 +147,35 @@ func TestDashboardOperatorMessageAnnouncesOnceToEveryLiveAgent(t *testing.T) {
 	assert.Empty(t, offlineRows, "offline agents are not queued")
 }
 
+func TestDashboardOperatorMessageAnnouncementDoesNotUseStalePollLiveness(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.SetTmuxCacheTTLForTest(time.Hour))
+	const (
+		conv = "announce-stale-live-5555"
+		tmux = "tmux-announce-stale"
+	)
+	f.HaveAliveSession(conv, "announce-stale", tmux, f.TestCwd("stale"))
+
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	muxHandler := agentd.BuildDashboardHandlerForTest()
+	_ = fetchSnapshotOnly(t, muxHandler) // prime the poll cache with the live session
+	f.World.Tmux.KillBySignalForTest(tmux)
+
+	rec := testharness.Serve(muxHandler, testharness.JSONRequest(t, http.MethodPost,
+		"/api/operator-message", map[string]any{
+			"all_live": true, "body": "Do not queue this for the stopped agent.",
+		}))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var response struct {
+		Recipients []json.RawMessage `json:"recipients"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
+	assert.Empty(t, response.Recipients)
+	rows, err := db.ListAgentMessagesForConv(conv, 10)
+	require.NoError(t, err)
+	assert.Empty(t, rows, "an agent offline at submit time receives no durable announcement")
+}
+
 func TestDashboardOperatorMessageRequiresDashboardAuth(t *testing.T) {
 	mux := http.NewServeMux()
 	agentd.RegisterDashboardRoutesForTest(mux)

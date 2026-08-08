@@ -16,6 +16,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 const (
@@ -140,7 +141,10 @@ func handleDashboardLiveAnnouncement(w http.ResponseWriter, r *http.Request, sub
 		writeError(w, http.StatusInternalServerError, "io", "list active agents: "+err.Error())
 		return
 	}
-	alive, err := cachedLiveTmuxSessions()
+	// Mutations must not use the dashboard poll cache: even its intentionally
+	// short TTL could retain a session that stopped just before the operator
+	// pressed Announce, leaving durable mail for an already-offline agent.
+	alive, err := session.LiveTmuxSessions()
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "tmux", "list live agents: "+err.Error())
 		return
