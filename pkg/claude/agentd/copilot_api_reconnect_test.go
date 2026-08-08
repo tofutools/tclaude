@@ -92,6 +92,19 @@ type copilotAPIReconnectFixture struct {
 
 func newCopilotAPIReconnectFixture(t *testing.T) *copilotAPIReconnectFixture {
 	t.Helper()
+	return newCopilotAPIReconnectFixtureWithPosture(t, true)
+}
+
+// newCopilotAPIReconnectFixtureWithPosture is the fixture with the launch's
+// recorded drive posture made optional, so a test can stand up the LEGACY shape:
+// a conversation that is genuinely running the API drive but whose posture was
+// never written. That is not an exotic state — it is what every conversation
+// launched before TCL-1059 closed the mint paths looks like, and it is the one
+// whose mail routes to keystrokes today.
+func newCopilotAPIReconnectFixtureWithPosture(
+	t *testing.T, recordPosture bool,
+) *copilotAPIReconnectFixture {
+	t.Helper()
 	setupTestDB(t)
 	t.Cleanup(SetInjectSettleDelayForTest(0))
 
@@ -119,7 +132,9 @@ func newCopilotAPIReconnectFixture(t *testing.T) *copilotAPIReconnectFixture {
 	// The durable posture the launch recorded. This is what makes the
 	// conversation's mail HOLD rather than route to keystrokes while it has no
 	// handle, so it is the state a restarted daemon actually finds.
-	require.NoError(t, db.SetConversationCopilotAPI(convID, harness.CopilotName, cwd, true))
+	if recordPosture {
+		require.NoError(t, db.SetConversationCopilotAPI(convID, harness.CopilotName, cwd, true))
+	}
 	require.NoError(t, db.UpsertCopilotAPIRuntime(db.CopilotAPIRuntime{
 		ConvID: convID, Port: server.port(),
 	}))
@@ -350,6 +365,36 @@ func TestCopilotAPIReconcileSkipsWhatItMustNotTouch(t *testing.T) {
 
 	assert.NotNil(t, copilotAPISessions.Handle("conv-held"),
 		"the handle this daemon already had must survive the sweep, not be replaced by it")
+}
+
+// The conversation with NO recorded posture is the one this sweep most needs to
+// find, and it must not be filtered out for looking unusual.
+//
+// It is the case where reconnecting does more than restore observation. With no
+// posture recorded, TCL-1058's durable routing arm answers "not the API
+// channel", so this conversation's peer-derived mail is being TYPED INTO ITS
+// PANE — the injection sink the drive exists to close. Adopting a handle flips
+// routing to the live-handle fast path and closes it. Skipping it to save a
+// bounded port wait would be trading the highest-value case for the cheapest
+// cost.
+func TestCopilotAPIReconnectStillAdoptsAConversationWithNoRecordedPosture(t *testing.T) {
+	// Everything a restarted daemon finds — port record, live Copilot pane —
+	// except the posture, exactly as a legacy conversation looks.
+	fixture := newCopilotAPIReconnectFixtureWithPosture(t, false)
+
+	require.False(t, copilotAPIPostureRecorded(fixture.convID),
+		"precondition: nothing may answer 'which drive did this launch take'")
+	require.False(t, copilotAPIDriven(fixture.convID),
+		"precondition: and so its mail routes to KEYSTROKES today, which is the sink "+
+			"this reconnect closes rather than merely observes")
+
+	fixture.reconcile(t)
+
+	assert.True(t, copilotAPISessions.Connected(fixture.convID),
+		"a missing posture record is a reason to LOG, never a reason to skip")
+	assert.True(t, copilotAPIDriven(fixture.convID),
+		"and with a live handle the routing question is answered by the connection, "+
+			"so the conversation stops being typed into")
 }
 
 // A launch that establishes the channel while the sweep is still working must

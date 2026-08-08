@@ -217,6 +217,23 @@ func reconcileCopilotAPISessions(ctx context.Context) {
 		if live == nil || live.Harness != harness.CopilotName {
 			continue
 		}
+		if !copilotAPIPostureRecorded(convID) {
+			// NOT a filter — see "What is deliberately NOT filtered" above. This
+			// candidate is reconnected like any other, and reconnecting it is the
+			// single highest-value thing this sweep does: with no recorded posture
+			// its mail routes to KEYSTROKES under TCL-1058's durable arm, so
+			// adopting a handle does not merely observe the conversation, it closes
+			// an open injection sink for it.
+			//
+			// Logged because TCL-1059 closed every path that mints a conv id, so an
+			// occurrence here is either a genuinely legacy conversation or a launch
+			// path nobody has taught to record the posture — and the second is a
+			// regression with no other signal at all.
+			slog.Warn("copilot API reconnect: this conversation has a port record but no "+
+				"recorded drive posture, so until it is reconnected its messages route as "+
+				"keystrokes; if it is not a legacy conversation, a launch path has stopped "+
+				"recording the posture", "conv_id", convID)
+		}
 		candidates = append(candidates, convID)
 	}
 	if len(candidates) == 0 {
