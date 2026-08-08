@@ -812,10 +812,9 @@ func TestTheCopilotPaneOverrideIsThreadedAllTheWayToTheSink(t *testing.T) {
 		})
 	}
 
-	// The override constant's containment. Weaker than the threading above —
-	// the constant had exactly one call site the entire time the rename was
-	// being refused one hop deeper — but it is the property deliveryChannelPane's
-	// own comment claims, so it is asserted rather than claimed.
+	// The pane override is now test-only. An API-posture launch whose bootstrap
+	// fails is shut down as crashed, so production must never select the pane as
+	// a one-shot fallback for its rename or welcome.
 	var paneCallSites int
 	for name, fn := range paneConstantHolders {
 		if name == "deliverRenameOn" || name == "injectSlashCommandOn" ||
@@ -831,11 +830,9 @@ func TestTheCopilotPaneOverrideIsThreadedAllTheWayToTheSink(t *testing.T) {
 			return true
 		})
 	}
-	assert.Equal(t, 1, paneCallSites,
-		"deliveryChannelPane must have exactly one non-test call site. Its doc "+
-			"argues the entitlement for ONE caller — a one-shot delivery with no "+
-			"retry — and a second caller has to argue its own case rather than "+
-			"inheriting that one")
+	assert.Zero(t, paneCallSites,
+		"deliveryChannelPane must have no non-test call sites: failed API-posture "+
+			"launches crash instead of falling back to keystrokes")
 
 	// The last hop is the one that actually chooses, so its choice must READ
 	// the channel. Without this the chain could thread it perfectly and then
