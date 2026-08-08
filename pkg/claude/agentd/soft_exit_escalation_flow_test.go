@@ -103,6 +103,11 @@ func TestSoftExitEscalation_KillsPaneThatNeverExits(t *testing.T) {
 	f.HaveConvWithTitle(conv, "wedged-worker")
 	f.HaveAliveSession(conv, "spwn-escb", tmuxSes, f.TestCwd("escb"))
 	f.World.Tmux.SetPaneIdentityForTest(tmuxSes, "%91", 9191)
+	stored, err := db.LoadSession("spwn-escb")
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	stored.PID = os.Getpid()
+	require.NoError(t, db.SaveSession(stored))
 
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc)
@@ -118,6 +123,11 @@ func TestSoftExitEscalation_KillsPaneThatNeverExits(t *testing.T) {
 		"a delivered exit that never closes the pane must be escalated to a kill")
 	assert.Contains(t, killTargets(f), "%91",
 		"the escalated kill must target the frozen pane id, not the session name")
+	stored, err = db.LoadSession("spwn-escb")
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.Equal(t, "exited", stored.Status,
+		"the verified stop must win over a stale live PID and disappear from session listings")
 }
 
 // Scenario: the injection itself failed (send-keys error), so there is no
@@ -252,4 +262,46 @@ func TestSoftExitEscalation_StandsDownForASuccessorPane(t *testing.T) {
 		"the successor pane must survive its predecessor's escalation")
 	assert.Empty(t, killTargets(f),
 		"a changed pane identity stands the ladder down instead of killing a stranger")
+	stored, err := db.LoadSession("spwn-esce")
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.NotEqual(t, "exited", stored.Status,
+		"a replacement pane under the same name must not be published as the predecessor's exit")
+}
+
+// Scenario: the deadline probe sees the pane alive, but it exits before the
+// escalation goroutine revalidates under the launch lock. That is a genuine
+// closed outcome, not an escalation, and it still has to publish exited; the
+// recorded live PID below makes the generic reaper unable to repair the row.
+func TestSoftExitEscalation_ReconcilesExitBetweenDeadlineAndRevalidation(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "escf-1111-2222-3333-4444"
+	const tmuxSes = "tmux-escf"
+	f.HaveConvWithTitle(conv, "deadline-race-worker")
+	f.HaveAliveSession(conv, "spwn-escf", tmuxSes, f.TestCwd("escf"))
+	stored, err := db.LoadSession("spwn-escf")
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	stored.PID = os.Getpid()
+	require.NoError(t, db.SaveSession(stored))
+
+	cc := f.World.CCs.GetByConvID(conv)
+	require.NotNil(t, cc)
+	cc.OnInput("/exit", func(c *testharness.CCSim, _ string) bool { return true })
+	var once sync.Once
+	cleanupAfterBackgroundDrain(t, agentd.SetBeforeSoftExitEscalationRevalidateForTest(func() {
+		once.Do(cc.MarkDead)
+	}))
+
+	f.AssertSoftStopped(f.AsHuman().Stop(conv, false))
+	agentd.WaitForBackgroundForTest()
+	assert.False(t, f.World.Tmux.IsAlive(tmuxSes))
+	assert.Empty(t, killTargets(f),
+		"the pane closed before escalation revalidation, so no kill rung may run")
+	stored, err = db.LoadSession("spwn-escf")
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.Equal(t, "exited", stored.Status,
+		"a natural exit in the deadline/revalidation window must be reconciled")
 }

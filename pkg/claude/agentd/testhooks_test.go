@@ -491,6 +491,15 @@ func SetSoftExitEscalationPollForTest(fn func()) func() {
 	return func() { softExitEscalationPollForTest = prev }
 }
 
+// SetBeforeSoftExitEscalationRevalidateForTest installs a seam in the narrow
+// window after the watchdog deadline and before escalation revalidates the
+// frozen pane under the conversation launch lock.
+func SetBeforeSoftExitEscalationRevalidateForTest(fn func()) func() {
+	prev := beforeSoftExitEscalationRevalidateForTest
+	beforeSoftExitEscalationRevalidateForTest = fn
+	return func() { beforeSoftExitEscalationRevalidateForTest = prev }
+}
+
 func SetBeforeOpenCodeTUICommandStatusCheckForTest(fn func()) func() {
 	previous := beforeOpenCodeTUICommandStatusCheckForTest
 	beforeOpenCodeTUICommandStatusCheckForTest = fn

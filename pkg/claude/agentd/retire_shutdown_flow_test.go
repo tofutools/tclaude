@@ -3,6 +3,8 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -75,6 +77,18 @@ func TestRetire_WithShutdownStopsRunningSession(t *testing.T) {
 	f.HaveEnrolledAgent(conv)
 	require.True(t, f.World.Tmux.IsAlive(tmuxSes), "pre: the agent's session is alive")
 
+	// Reproduce Copilot's stale-listing failure: its pane may disappear while
+	// the session row's recorded PID remains readable. The generic liveness
+	// refresh then keeps the old idle/running status forever, even though the
+	// tmux target is gone and attach cannot work. A managed retire has stronger
+	// evidence — it froze this pane and waited for it to disappear — and must
+	// publish exited before acknowledging the shutdown.
+	stored, err := db.LoadSession("spwn-rwsh")
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	stored.PID = os.Getpid()
+	require.NoError(t, db.SaveSession(stored))
+
 	code, resp := postRetire(t, mux, conv, "shutdown=1")
 	require.Equal(t, http.StatusOK, code)
 	require.NotNil(t, resp.Shutdown, "shutdown was requested — the response must report its outcome")
@@ -87,6 +101,45 @@ func TestRetire_WithShutdownStopsRunningSession(t *testing.T) {
 	require.NotNil(t, row, "the retired agent must appear in retired[]")
 	assert.False(t, row.Online, "retire-with-shutdown must leave the session stopped")
 	assert.False(t, f.World.Tmux.IsAlive(tmuxSes), "the tmux session must be gone")
+	stored, err = db.LoadSession("spwn-rwsh")
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.Equal(t, "exited", stored.Status,
+		"retire must not leave an unattachable live-PID row displayed as an ongoing session")
+}
+
+// A failed send followed by the pane disappearing during the graceful wait is
+// stopped, but it was not killed by the daemon. The synchronous retire path
+// must reconcile exited without inventing daemon_kill audit attribution.
+func TestRetire_FailedSoftExitThenNaturalCloseIsNotLabeledDaemonKill(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	const conv = "rfnc-1111-2222-3333-4444"
+	const tmuxSes = "tmux-rfnc"
+	f.HaveConvWithTitle(conv, "closing-worker")
+	f.HaveAliveSession(conv, "spwn-rfnc", tmuxSes, f.TestCwd("rfnc"))
+	f.HaveEnrolledAgent(conv)
+	cc := f.World.CCs.GetByConvID(conv)
+	require.NotNil(t, cc)
+	f.World.Tmux.FailNextCommand("send-keys")
+	var once sync.Once
+	cleanupAfterBackgroundDrain(t, agentd.SetSoftExitEscalationPollForTest(func() {
+		once.Do(cc.MarkDead)
+	}))
+
+	code, resp := postRetire(t, mux, conv, "shutdown=1")
+	require.Equal(t, http.StatusOK, code)
+	require.NotNil(t, resp.Shutdown)
+	assert.Equal(t, "error", resp.Shutdown.Action, "the injection failure remains visible")
+	stored, err := db.LoadSession("spwn-rfnc")
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.Equal(t, "exited", stored.Status)
+	reason, err := db.GetSessionExitReason("spwn-rfnc")
+	require.NoError(t, err)
+	assert.Empty(t, reason, "no escalation ran, so daemon_kill would be false attribution")
 }
 
 // Scenario: retire with shutdown OFF (the --no-shutdown / unticked
