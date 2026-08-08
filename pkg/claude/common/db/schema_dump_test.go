@@ -161,3 +161,44 @@ func TestClassifyIdentityColumn(t *testing.T) {
 		require.Equalf(t, tc.want, classifyIdentityColumn(tc.name), "classify %q", tc.name)
 	}
 }
+
+// advanceThroughMigrations walks the REGISTRATION LIST, applying every step
+// above from, and returns the version it reached.
+//
+// # What it replaces, and why by-name chaining was the bug
+//
+// The schema-parity tests used to advance a hand-upgraded fixture by naming each
+// migration in sequence — sixteen require.NoError lines, extended by hand every
+// time a migration landed. Those tests exist to catch schema divergence, and
+// chaining by name made them BLIND TO THE MOST COMMON CAUSE OF IT: a migration
+// that was written and never chained. Until someone extended the list, the
+// upgraded and fresh schemas genuinely differed, and the test reported that as a
+// failure of whatever change happened to be in flight.
+//
+// So the fixture is advanced from the same list the production migrate() loop
+// walks. A migration that reaches migrationSteps is applied here automatically;
+// one that does not reach it is invisible to the daemon too, which is the defect
+// [TestEveryMigrationFileIsRegisteredExactlyOnce] exists to catch. Between them
+// the two tests say: every migration file is in the list, and the parity tests
+// walk the list.
+//
+// This is the same shape as the incident that produced this rule (TCL-1093): two
+// PRs each claimed v195 and the list carried ONE entry for two migrations, so one
+// schema change would never have run. The compile error from the duplicate
+// function name is the only reason anybody looked.
+func advanceThroughMigrations(t *testing.T, d *sql.DB, from int) int {
+	t.Helper()
+	reached := from
+	for _, step := range migrationSteps {
+		if step.version <= from {
+			continue
+		}
+		require.NoErrorf(t, step.apply(d),
+			"advancing the upgraded fixture through v%d", step.version)
+		reached = step.version
+	}
+	require.Equalf(t, currentVersion, reached,
+		"the fixture must reach the head the daemon migrates to; it stopped at v%d",
+		reached)
+	return reached
+}
