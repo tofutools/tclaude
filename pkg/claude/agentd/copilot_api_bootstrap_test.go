@@ -589,7 +589,7 @@ func TestBootstrapCopilotAPISessionRefusesAnUnrecordedConversation(t *testing.T)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, err := bootstrapCopilotAPISession(ctx, "conv-unknown", "")
+	_, err := bootstrapCopilotAPISession(ctx, "conv-unknown", copilotAPILaunchFresh, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no recorded Copilot API port")
 }
@@ -604,20 +604,20 @@ func TestStartCopilotAPIBootstrapIsQuietWithoutADriveOrAConversation(t *testing.
 	called := make(chan string, 4)
 	original := bootstrapCopilotAPISessionFn
 	bootstrapCopilotAPISessionFn = func(
-		_ context.Context, convID, _ string,
+		_ context.Context, convID string, _ copilotAPILaunchKind, _ string,
 	) (*copilotAPISession, error) {
 		called <- convID
 		return nil, errors.New("should not have been reached")
 	}
 	t.Cleanup(func() { bootstrapCopilotAPISessionFn = original })
 
-	runCopilotAPIBootstrap("conv-1", false, "")
-	runCopilotAPIBootstrap("", true, "")
+	runCopilotAPIBootstrap("conv-1", false, copilotAPILaunchFresh, "")
+	runCopilotAPIBootstrap("", true, copilotAPILaunchFresh, "")
 
 	// The positive control. Without it the two negatives above would pass just
 	// as well against a function that never calls the seam at all, which is the
 	// exact failure this test was written to stop being.
-	runCopilotAPIBootstrap("conv-2", true, "")
+	runCopilotAPIBootstrap("conv-2", true, copilotAPILaunchFresh, "")
 	select {
 	case got := <-called:
 		assert.Equal(t, "conv-2", got,

@@ -85,6 +85,114 @@ func TestSessionProjectionPreservesExplicitFastMode(t *testing.T) {
 	}
 }
 
+// TestSessionProjectionPreservesTheCopilotLaunchFacts is the same shape as the
+// fast-mode test above, and it was NOT passing before the carry-forward it
+// pins: this projection rebuilt the conversation fallback from session columns
+// on every SaveSession, and neither Copilot launch fact has a session column,
+// so both were dropped by the first status tick after the launch recorded them.
+//
+// The drive matters more than the cap. Since TCL-1058 it decides whether a
+// message to this conversation is delivered over RPC or TYPED into its pane, so
+// an erased record does not degrade a badge — it routes a connected agent back
+// onto keystrokes. For a conversation with no stable agent profile of its own
+// (every clone, every direct `session new --copilot-api`) this fallback is the
+// ONLY holder, so the erasure was permanent.
+//
+// The second projection is driven at a NEW generation on purpose. A resume
+// mints a new session row, and its first SaveSession lands before the launch
+// re-asserts the posture — so a carry gated on sameSourceGeneration would leave
+// the record missing across exactly that window.
+func TestSessionProjectionPreservesTheCopilotLaunchFacts(t *testing.T) {
+	setupTestDB(t)
+	const convID = "copilot-launch-facts-conv"
+
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "copilot-launch-facts-1", ConvID: convID, Cwd: "/tmp/copilot-launch-facts",
+		Harness: "copilot", Status: "idle",
+	}))
+	require.NoError(t, SetSessionCopilotAPI("copilot-launch-facts-1", true))
+	require.NoError(t, SetSessionConfiguredContextWindowMax("copilot-launch-facts-1", 128_000))
+
+	// A later status projection on the SAME generation — a hook tick.
+	require.NoError(t, UpdateContextSnapshot("copilot-launch-facts-1", 25, 10, 20, 128_000))
+	// And a projection from a NEW generation — the first write of a resume,
+	// before that resume has re-asserted anything.
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "copilot-launch-facts-2", ConvID: convID, Cwd: "/tmp/copilot-launch-facts",
+		Harness: "copilot", Status: "idle",
+	}))
+
+	profile, err := ConversationResumeProfileForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, profile)
+	require.NotNil(t, profile.FallbackRelaunch)
+	require.NotNil(t, profile.FallbackRelaunch.CopilotAPI,
+		"the recorded drive must survive a projection that has nothing to say about it; "+
+			"a missing record reads as 'this agent chose keystrokes'")
+	assert.True(t, *profile.FallbackRelaunch.CopilotAPI)
+	require.NotNil(t, profile.FallbackRelaunch.ConfiguredContextWindowMax)
+	assert.Equal(t, int64(128_000), *profile.FallbackRelaunch.ConfiguredContextWindowMax)
+}
+
+// The other direction, which is what makes the unconditional carry above safe
+// rather than a way to pin a stale posture: a launch that turns the drive off
+// writes false over it, and false is what the record then says.
+func TestALaterLaunchCanTurnTheRecordedCopilotDriveOff(t *testing.T) {
+	setupTestDB(t)
+	const convID = "copilot-drive-off-conv"
+
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "copilot-drive-off-1", ConvID: convID, Cwd: "/tmp/copilot-drive-off",
+		Harness: "copilot", Status: "idle",
+	}))
+	require.NoError(t, SetSessionCopilotAPI("copilot-drive-off-1", true))
+
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "copilot-drive-off-2", ConvID: convID, Cwd: "/tmp/copilot-drive-off",
+		Harness: "copilot", Status: "idle",
+	}))
+	require.NoError(t, SetSessionCopilotAPI("copilot-drive-off-2", false))
+
+	profile, err := ConversationResumeProfileForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, profile.FallbackRelaunch.CopilotAPI)
+	assert.False(t, *profile.FallbackRelaunch.CopilotAPI,
+		"every relaunch re-asserts this posture INCLUDING its zero value, which is why "+
+			"carrying it across projections cannot make it permanent")
+}
+
+// The daemon-side writer, which exists because the launched process's own write
+// is best-effort and lands too late to decide routing for the window before it.
+// It has to work with nothing else in the database — that is the state a freshly
+// minted conv id is in.
+func TestSetConversationCopilotAPISeedsAConversationWithNoProfileYet(t *testing.T) {
+	setupTestDB(t)
+	const convID = "copilot-seeded-conv"
+
+	require.NoError(t, SetConversationCopilotAPI(convID, "copilot", "/tmp/copilot-seeded", true))
+
+	profile, err := ConversationResumeProfileForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, profile)
+	assert.Equal(t, "copilot", profile.Harness)
+	assert.Equal(t, "/tmp/copilot-seeded", profile.Cwd)
+	require.NotNil(t, profile.FallbackRelaunch.CopilotAPI)
+	assert.True(t, *profile.FallbackRelaunch.CopilotAPI)
+
+	// And it does not clobber what a launch records afterwards.
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "copilot-seeded-1", ConvID: convID, Cwd: "/tmp/copilot-seeded",
+		Harness: "copilot", Status: "idle", ApprovalPolicy: "never",
+	}))
+	after, err := ConversationResumeProfileForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, after.FallbackRelaunch.CopilotAPI)
+	assert.True(t, *after.FallbackRelaunch.CopilotAPI,
+		"the launch's own projection must inherit the daemon's record, not erase it")
+	require.NotNil(t, after.FallbackRelaunch.ApprovalPolicy)
+	assert.Equal(t, "never", *after.FallbackRelaunch.ApprovalPolicy)
+}
+
 func TestContextSnapshotTokenOnlyFastPathPreservesProjection(t *testing.T) {
 	setupTestDB(t)
 	const (

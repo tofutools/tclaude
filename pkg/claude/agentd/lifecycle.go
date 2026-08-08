@@ -7420,11 +7420,13 @@ func SpawnDetachedTclaudeNew(args clcommon.SpawnArgs) error {
 		return err
 	}
 	// SessionID is the PRESET conv id, and is empty on a launch that lets the
-	// harness mint one. Those callers record the port themselves once their
-	// discovery poll resolves the id; recording nothing here is correct rather
-	// than a gap. See recordCopilotAPIPort.
-	recordCopilotAPIPort(args.SessionID, args.CopilotAPIPort)
-	startCopilotAPIBootstrap(args.SessionID, args.CopilotAPI, args.InitialPrompt)
+	// harness mint one. Those callers complete the launch themselves once their
+	// discovery poll resolves the id; doing nothing here is correct rather than a
+	// gap. See completeCopilotAPILaunch.
+	//
+	// Fresh, unconditionally: this facade forks `tclaude session new` with no
+	// -r, so whatever conversation it lands on starts empty by construction.
+	completeCopilotAPILaunch(args.SessionID, copilotAPILaunchFresh, args)
 	return nil
 }
 
@@ -7449,8 +7451,13 @@ func SpawnDetachedTclaudeResume(args clcommon.SpawnArgs) error {
 	}
 	// A resume always knows its conversation — that is what it is resuming — so
 	// unlike the fresh-spawn path this never defers the record.
-	recordCopilotAPIPort(args.ConvID, args.CopilotAPIPort)
-	startCopilotAPIBootstrap(args.ConvID, args.CopilotAPI, args.InitialPrompt)
+	//
+	// And it is a RESUME, which for the Copilot API drive is not a label but the
+	// difference between reloading the conversation and replacing it: the pane
+	// was started `copilot --resume=<convID>`, so its conversation has history,
+	// and a bootstrap that created a session at that id would discard it. See
+	// bootstrapCopilotAPISession.
+	completeCopilotAPILaunch(args.ConvID, copilotAPILaunchResume, args)
 	return nil
 }
 

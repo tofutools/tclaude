@@ -107,7 +107,7 @@ func TestMain(m *testing.M) {
 	// Suppressed binary-wide for the same reason as the two defaults above:
 	// package agentd's internal tests share this binary and cannot reach
 	// newFlow. Tests that want to observe the kick-off swap their own.
-	restoreCopilotBootstrap := agentd.SetCopilotAPIBootstrapForTest(func(string, bool, string) {})
+	restoreCopilotBootstrap := agentd.SetCopilotAPIBootstrapForTest(func(string, bool, bool, string) {})
 	// And its consequence: with the bootstrap suppressed no handle can ever be
 	// adopted, so the spawn's post-init wait for one would burn its whole
 	// budget on every API-drive spawn before concluding what is already known

@@ -65,9 +65,19 @@ func freePort(t *testing.T) int {
 // starts; the process simply exits having logged nothing about a listener.
 func startLiveServer(t *testing.T) (string, *exec.Cmd) {
 	t.Helper()
+	return startLiveServerIn(t, t.TempDir())
+}
+
+// startLiveServerIn is startLiveServer against a CALLER-OWNED root, so two
+// successive servers can share one COPILOT_HOME. That is what makes a resume
+// testable at all: the conversation a resume reloads lives on disk under
+// `$COPILOT_HOME/session-state/<id>/`, and a per-server temp home would hand
+// the second process an empty profile and let a broken resume look identical to
+// a working one.
+func startLiveServerIn(t *testing.T, root string) (string, *exec.Cmd) {
+	t.Helper()
 	binary := requireLive(t)
 	port := freePort(t)
-	root := t.TempDir()
 	home := filepath.Join(root, "home")
 	logs := filepath.Join(root, "logs")
 	workdir := filepath.Join(root, "work")
@@ -769,4 +779,188 @@ func awaitLiveTurnStart(
 			t.Fatalf("waiting for a turn to start: %v", ctx.Err())
 		}
 	}
+}
+
+// TestLiveResumeReloadsHistoryAndCreateDestroysIt is the measurement behind
+// TCL-1059's resume fix, and the one thing in this package a reader should not
+// have to take on trust.
+//
+// The claim it settles has two halves, and BOTH are asserted here because
+// either alone is compatible with the bug:
+//
+//   - `session.resume` at an id with history behind it brings that history back.
+//   - `session.create` at the SAME id does not attach to it — it starts the id
+//     fresh, and the previous conversation is gone from the session's view.
+//
+// The second half is the control. Without it a green run proves only that
+// resume returned something, which a create would also do, and the test would
+// read as verification of a difference it never observed.
+//
+// It runs against TWO successive copilot processes sharing one COPILOT_HOME,
+// because that is what a tclaude resume actually is: the pane is relaunched, and
+// the conversation it continues exists only on disk. Doing it in one process
+// would resume a session the server still had in memory and prove less.
+//
+// It FAILS rather than skips when the history it needs is not there. A resume
+// test that quietly passes over an empty conversation is worse than no test:
+// green would mean "nothing was lost" about a run in which there was nothing to
+// lose.
+//
+//	TCLAUDE_COPILOT_LIVE=1 TCLAUDE_COPILOT_LIVE_SEND=1 \
+//	  go test ./pkg/claude/copilotapi/ -run TestLiveResumeReloadsHistoryAndCreateDestroysIt -v -count=1 -timeout 900s
+func TestLiveResumeReloadsHistoryAndCreateDestroysIt(t *testing.T) {
+	if os.Getenv("TCLAUDE_COPILOT_LIVE_SEND") != "1" {
+		t.Skip("set TCLAUDE_COPILOT_LIVE_SEND=1 to send a real prompt (consumes Copilot quota)")
+	}
+	root := t.TempDir()
+	workdir := t.TempDir()
+	sessionID := NewSessionID()
+
+	// ---- First process: seed a conversation with a real turn in it. --------
+	seeded := liveSessionEventCount(t, root, workdir, sessionID)
+	if seeded == 0 {
+		t.Fatal("the seeding turn left no events; there is no history for a resume to " +
+			"reload, so this run would certify rather than check")
+	}
+	t.Logf("seeded %d events under session %s", seeded, sessionID)
+
+	// ---- Second process: resume, and count what came back. -----------------
+	address, _ := startLiveServerIn(t, root)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	client, err := DialRetry(ctx, address, &Options{SubscriptionBuffer: 1024})
+	if err != nil {
+		t.Fatalf("connect to the resumed server: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	info, err := client.ResumeSession(ctx, ResumeSessionParams{
+		SessionID:        sessionID,
+		WorkingDirectory: workdir,
+		ClientName:       "tclaude-copilotapi-test",
+		Streaming:        true,
+	})
+	if err != nil {
+		t.Fatalf("ResumeSession: %v", err)
+	}
+	if info.SessionID != sessionID {
+		t.Fatalf("resumed session %q, want %q", info.SessionID, sessionID)
+	}
+	resumed := liveEventCount(ctx, t, client, sessionID)
+	if resumed < seeded {
+		t.Fatalf("the resumed session carries %d events but %d were persisted; a resume "+
+			"that loses history is the bug this test exists for", resumed, seeded)
+	}
+	t.Logf("resume reloaded %d events", resumed)
+
+	// ---- The control: create at the same id, on a third process. -----------
+	//
+	// A third process rather than the same one, so this measures the same
+	// thing the resume above did — what the call does to a conversation that
+	// exists only on disk. Deliberately last: it is destructive.
+	controlAddress, _ := startLiveServerIn(t, root)
+	controlClient, err := DialRetry(ctx, controlAddress, &Options{SubscriptionBuffer: 1024})
+	if err != nil {
+		t.Fatalf("connect to the control server: %v", err)
+	}
+	t.Cleanup(func() { _ = controlClient.Close() })
+
+	if _, err := controlClient.CreateSession(ctx, CreateSessionParams{
+		SessionID:        sessionID,
+		WorkingDirectory: workdir,
+		ClientName:       "tclaude-copilotapi-test",
+		Streaming:        true,
+	}); err != nil {
+		t.Fatalf("CreateSession at an id with history: %v", err)
+	}
+	created := liveEventCount(ctx, t, controlClient, sessionID)
+	if created >= seeded {
+		t.Fatalf("session.create at an id with %d events left %d in place; if create now "+
+			"attaches, the resume/create split in the bootstrap is no longer needed and "+
+			"this package's docs are stale", seeded, created)
+	}
+	t.Logf("control: create at the same id left %d events (was %d)", created, seeded)
+}
+
+// liveSessionEventCount seeds a session with one real turn on its own copilot
+// process, then stops that process and reports how many events were persisted.
+func liveSessionEventCount(t *testing.T, root, workdir, sessionID string) int {
+	t.Helper()
+	address, command := startLiveServerIn(t, root)
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+
+	client, err := DialRetry(ctx, address, &Options{SubscriptionBuffer: 1024})
+	if err != nil {
+		t.Fatalf("connect to the seeding server: %v", err)
+	}
+	subscription := client.Subscribe()
+	defer subscription.Close()
+
+	if _, err := client.CreateSession(ctx, CreateSessionParams{
+		SessionID:        sessionID,
+		WorkingDirectory: workdir,
+		ClientName:       "tclaude-copilotapi-test",
+		Streaming:        true,
+	}); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if err := client.SetForegroundSession(ctx, sessionID); err != nil {
+		t.Fatalf("SetForegroundSession: %v", err)
+	}
+	if _, err := client.Send(ctx, SendParams{
+		SessionID: sessionID,
+		Prompt:    "Reply with exactly the word: ack",
+	}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	deadline := time.After(150 * time.Second)
+	for idle := false; !idle; {
+		select {
+		case notification, ok := <-subscription.C():
+			if !ok {
+				t.Fatalf("subscription ended early: %v", subscription.Err())
+			}
+			if notification.Method != MethodSessionEvent {
+				continue
+			}
+			event, err := notification.SessionEvent()
+			if err != nil {
+				t.Fatalf("decode session event: %v", err)
+			}
+			if event.SessionID == sessionID && event.Event.Type == "session.idle" {
+				idle = true
+			}
+		case <-deadline:
+			t.Fatal("the seeding turn never reached session.idle")
+		case <-ctx.Done():
+			t.Fatalf("waiting for the seeding turn: %v", ctx.Err())
+		}
+	}
+
+	count := liveEventCount(ctx, t, client, sessionID)
+	// Stop this process before the caller starts the next one against the same
+	// COPILOT_HOME, so the resume really does read from disk.
+	_ = client.Close()
+	if command.Process != nil {
+		_ = command.Process.Kill()
+	}
+	_ = command.Wait()
+	return count
+}
+
+// liveEventCount reports how many events session.getMessages returns, which is
+// this test's stand-in for "how much of the conversation does the server
+// believe this session has".
+func liveEventCount(ctx context.Context, t *testing.T, client *Client, sessionID string) int {
+	t.Helper()
+	var result struct {
+		Events []json.RawMessage `json:"events"`
+	}
+	if err := client.Call(ctx, "session.getMessages",
+		map[string]string{"sessionId": sessionID}, &result); err != nil {
+		t.Fatalf("session.getMessages for %s: %v", sessionID, err)
+	}
+	return len(result.Events)
 }

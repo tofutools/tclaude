@@ -553,11 +553,12 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 						armRemoteControlOnNewRow(label)
 					}
 					// This branch IS the discovery channel for a harness-minted
-					// conv-id, so it is also the first moment the clone's already
-					// allocated Copilot API port can be recorded against a
-					// conversation. No-ops unless this launch took the API drive.
-					recordCopilotAPIPort(s.ConvID, proofArgs.CopilotAPIPort)
-					startCopilotAPIBootstrap(s.ConvID, proofArgs.CopilotAPI, proofArgs.InitialPrompt)
+					// conv-id, so it is also the first moment this clone's launch
+					// facts — the drive it took and the port it was handed — have a
+					// conversation to be recorded against. No-ops for a non-Copilot
+					// clone. Fresh: a no-copy clone starts its sibling on an empty
+					// conversation by definition.
+					completeCopilotAPILaunch(s.ConvID, copilotAPILaunchFresh, proofArgs)
 					res.NewConv, res.NewTmux, res.Label = s.ConvID, newTmux, label
 					commitRouteHelper()
 					return res, nil
