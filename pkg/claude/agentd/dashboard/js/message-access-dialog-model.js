@@ -78,6 +78,52 @@ export function permissionSeed(snapshot, descriptor) {
   return { ...(descriptor.overrides || {}) };
 }
 
+// permissionScopeSeed is the scope half of permissionSeed: slug → {dim:
+// [matchers]} for the agent's existing overrides. Only the live per-agent
+// editor reads persisted scopes; group grants and the buffered (pre-spawn)
+// editor have no scope storage behind them yet, so they seed empty and their
+// scope controls stay hidden rather than pretending to save something.
+export function permissionScopeSeed(snapshot, descriptor) {
+  if (descriptor.mode !== 'agent') return {};
+  const stored = (snapshot?.permissions?.scopes || {})[descriptor.conv] || {};
+  const out = {};
+  for (const [slug, scope] of Object.entries(stored)) {
+    out[slug] = Object.fromEntries(Object.entries(scope || {})
+      .map(([dim, values]) => [dim, [...(values || [])]]));
+  }
+  return out;
+}
+
+// scopeSupported reports whether this editor launch can persist scopes at all
+// — see permissionScopeSeed for why only the live per-agent editor can.
+export function scopeSupported(descriptor) {
+  return descriptor?.mode === 'agent';
+}
+
+// scopeDimOptions answers the picker's "what can I choose here" for ONE
+// dimension, from what the daemon advertised. A dimension the daemon knows but
+// has no catalogue for answers with its selectors and no values, which the
+// picker renders as free text — the same thing the CLI's --scope accepts. That
+// is what lets a dimension introduced by a later phase become editable with no
+// change here.
+export function scopeDimOptions(snapshot, dim) {
+  const advertised = (snapshot?.permissions?.scope_dim_options || {})[dim] || {};
+  return {
+    values: [...(advertised.values || [])],
+    selectors: [...(advertised.selectors || [])],
+  };
+}
+
+// scopeChips flattens a scope into the row's read-at-a-glance chips, in the
+// same dimension order the daemon's provenance line uses so the editor and
+// `permissions ls` never disagree about what a grant says.
+export function scopeChips(scope) {
+  return Object.entries(scope || {})
+    .filter(([, values]) => (values || []).length)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([dim, values]) => ({ dim, values: [...values], label: `${dim}=${values.join(', ')}` }));
+}
+
 function membershipGroups(snapshot, descriptor) {
   if (descriptor.mode === 'agent') {
     const agent = (snapshot?.agents || []).find((item) => item.conv_id === descriptor.conv);

@@ -5181,6 +5181,47 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
    editor's defaults give them. */
 #context-features-modal .perm-row-eff { flex: 0 0 108px; }
 #context-features-modal .perm-tristate { flex: 0 0 auto; }
+/* Scope chips + drawer (TCL-1072). The chips live in the info column so the
+   effective-source column keeps its place and a scope-less slug renders
+   byte-identically to before; the drawer is full width because a dimension
+   row needs room the tristate line does not have. */
+.perm-scope-chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 2px; }
+.perm-scope-chip {
+  display: inline-flex; align-items: center; gap: 3px;
+  background: #12233a; border: 1px solid #1f4b7a; color: #79c0ff;
+  border-radius: 10px; padding: 0 6px; font-size: 10px; line-height: 16px; white-space: nowrap;
+}
+.perm-scope-chip .dim { color: #6e93b8; }
+.perm-scope-chip .x {
+  background: none; border: none; padding: 0; margin: 0;
+  color: #5e7387; cursor: pointer; font-size: 11px; font-family: inherit; line-height: 1;
+}
+.perm-scope-chip .x:hover { color: #f0f6fc; }
+/* Amber, not blue: an unscoped grant is the wide one, and the chip is there
+   to say so rather than to look like just another matcher. */
+.perm-scope-chip.unscoped { background: #1c1606; border-color: #4d3a17; color: #e3b341; }
+.perm-scope-toggle {
+  background: none; border: none; padding: 0 2px 0 0; margin: 0;
+  color: #7d8590; font-size: 10px; font-family: inherit; cursor: pointer;
+}
+.perm-scope-toggle:hover { color: #c9d1d9; }
+.perm-scope-drawer {
+  background: #0f151c; border-bottom: 1px solid #21262d;
+  padding: 7px 10px 8px 20px; display: flex; flex-direction: column; gap: 3px;
+}
+.perm-scope-drawer-hint { font-size: 10px; color: #7d8590; margin-bottom: 3px; }
+.perm-scope-drawer-hint b { color: #c9d1d9; }
+.perm-scope-dim { display: flex; align-items: flex-start; gap: 8px; padding: 2px 0; }
+.perm-scope-dim-label { flex: 0 0 118px; font-size: 10px; color: #8b949e; padding-top: 2px; }
+.perm-scope-dim-label code { color: #d2a8ff; }
+.perm-scope-dim-body { flex: 1; min-width: 0; }
+.perm-scope-hint { font-size: 9px; color: #5e7387; margin-top: 3px; }
+.perm-scope-add, .perm-scope-free {
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 3px; color: #c9d1d9;
+  font-size: 10px; font-family: inherit; padding: 2px 5px;
+}
+.perm-scope-free { width: 130px; }
+.perm-scope-free:focus, .perm-scope-add:focus { outline: none; border-color: #58a6ff; }
 .perm-row-eff { flex: 0 0 78px; font-size: 10px; text-align: right; }
 .perm-row-eff.granted { color: #3fb950; }
 .perm-row-eff.denied { color: #f85149; }
