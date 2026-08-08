@@ -71,8 +71,8 @@ const CONTEXT_WINDOW_MAX_TITLE = 'Configured/assumed context cap for the Copilot
   + 'Copilot does not report its context limit; a blank value uses the observed model\'s static assumption.';
 const COPILOT_API_TITLE = 'EXPERIMENTAL: drive this Copilot agent over its embedded JSON-RPC API '
   + '(copilot --ui-server) instead of typing into its pane with tmux send-keys. Messages, rename and '
-  + 'compaction become typed calls, and status, context and usage are read rather than scraped; soft '
-  + 'exit still uses keystrokes. The spawn is REFUSED unless the launch directory is already trusted '
+  + 'compaction become typed calls, context is read live, and an agent blocked on a permission prompt '
+  + 'becomes visible; soft exit still uses keystrokes. The spawn is REFUSED unless the launch directory is already trusted '
   + '(or Pre-trust is checked) and the pane shares host loopback. The endpoint is unauthenticated and '
   + 'loopback-bound. Off by default — the two drives run side by side and agents move over one at a '
   + 'time. Copilot only.';

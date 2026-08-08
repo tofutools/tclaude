@@ -249,7 +249,7 @@ covers **interactive human sessions**:
 | **Model transport under a filtered network** | ⚠️ the default first-party GitHub Copilot route only (`api.githubcopilot.com`, `api.individual.githubcopilot.com`, `api.github.com`); the model host is assigned per account at token exchange, so only observed tiers are named and the rest stay denied. Every route-moving input is refused rather than followed, read from both settings files with the same precedence as the sandbox key |
 | **Directory pre-trust at spawn** ([below](#directory-trust-at-spawn)) | ✅ opt-in `trust_dir` appends the launch dir to `trustedFolders` in `<COPILOT_HOME>/config.json`. Copilot's modal blocks *before* any provider contact, so an unseeded detached pane never reaches its first turn. Opt-in under send-keys; **mandatory** under the [API drive](#copilot-drive-send-keys-vs-api), which refuses an untrusted launch dir rather than producing a working but invisible agent |
 | **Approval / permissions** | ⚠️ `allow-tools` (default) / `inherit` / `yolo`. Three tokens, each rendering only flags measured against the pinned binary on a real terminal. None makes a Copilot pane unconditionally nonblocking — folder trust is unreachable from the argv even under `yolo` — and `yolo` without `--sandbox-impl tclaude-layer` leaves the agent with no file boundary at all, which tclaude warns about at spawn. See [below](#copilot-approvals-and-permissions) for exactly which prompt each one closes and which it leaves standing |
-| **Usage, cost & context** | ⚠️ followed incrementally from Copilot's durable event log, with a byte-offset checkpoint so a daemon restart resumes rather than rescans. Output tokens advance per turn (`assistant.message`); input tokens, context occupancy and window size advance only at an authoritative disclosure — a compaction, a truncation, or a shutdown — and nothing is written between them, so a real reading is never overwritten by a zero. Cost is carried in the **nano-AI units Copilot emits**; no USD figure is derived, because Copilot documents an AI credit as $0.01 in a different structure and nowhere states that one AIU is one credit. Under the [API drive](#copilot-drive-send-keys-vs-api) context and usage are read live over RPC instead, and the log follower stands down while that reading is current |
+| **Usage, cost & context** | ⚠️ followed incrementally from Copilot's durable event log, with a byte-offset checkpoint so a daemon restart resumes rather than rescans. Output tokens advance per turn (`assistant.message`); input tokens, context occupancy and window size advance only at an authoritative disclosure — a compaction, a truncation, or a shutdown — and nothing is written between them, so a real reading is never overwritten by a zero. Cost is carried in the **nano-AI units Copilot emits**; no USD figure is derived, because Copilot documents an AI credit as $0.01 in a different structure and nowhere states that one AIU is one credit. Under the [API drive](#copilot-drive-send-keys-vs-api) context occupancy, the window and the token counts are read live over RPC instead, and the durable-log *context* follower stands down while that reading is current — **cost is unchanged**, still the AIU accounting swept from Copilot's own store |
 | **Drive (how tclaude talks to the agent)** | ⚠️ tmux `send-keys` by default. An **experimental, opt-in** API drive runs alongside it — `--copilot-api` on `tclaude agent spawn` / `tclaude session new`, a `copilot_api` field on spawn profiles, a checkbox in the dashboard spawn modal — driving `copilot --ui-server`'s embedded JSON-RPC server. It carries message delivery, rename and compaction as typed calls, and reads status/context/usage instead of scraping; soft exit deliberately stays on keystrokes. It **requires a pre-trusted launch directory** and host loopback, and the endpoint is unauthenticated. Off unless you ask. See [below](#copilot-drive-send-keys-vs-api) |
 | **Ad-hoc ask** ([guide](ask.md)) | ✅ buffered `copilot -p` (capture) / `copilot -i` TUI (interactive), conv-id pre-minted (`--session-id`), resumed exactly (`--resume=<full uuid>`). See [below](#copilot-ask) |
 | **Live-streamed ask output** (print mode → a TTY) | ➖ buffered — the answer arrives whole at the end of the turn |
@@ -483,10 +483,12 @@ audit covers all three:
   options that configure them). tclaude manages a local interactive TUI in a
   tmux pane, and every contract it advertises for Copilot describes that pane.
   `--ui-server`/`--host`/`--port` stay refused as pass-throughs even though
-  tclaude renders them itself for the [API drive](#copilot-drive-send-keys-vs-api):
-  there the port is one tclaude allocated and proved ownership of, and a
-  hand-supplied one would be a number nothing verified. Ask for that mode with
-  `--copilot-api`.
+  tclaude renders them itself for the [API drive](#copilot-drive-send-keys-vs-api).
+  Ask for that mode with `--copilot-api`, which is the spelling tclaude records
+  and can verify the resulting listener against; a pass-through would move the
+  pane's protocol behind every contract above. (`tclaude session new` does accept
+  an explicit `--copilot-api-port` alongside `--copilot-api`, for a launch driven
+  from a terminal rather than by agentd. agentd allocates the number itself.)
 - **Metadata** — `--model`, `--effort`/`--reasoning-effort`, `--name`/`-n`.
   These move no boundary, and
   they are refused anyway: tclaude validates and records each one, so a
@@ -752,7 +754,8 @@ unchanged and remains the default.
 Copilot CLI also ships a hidden `--ui-server` flag — one process running a fully
 interactive TUI *and* an embedded JSON-RPC server on a loopback TCP port. That is
 a much better shape for tclaude than keystrokes: typed lifecycle calls instead of
-an injection sink, and structured reads instead of screen-scraping. tclaude runs
+an injection sink, and structured reads where tclaude previously had to infer
+state from a file written after the fact. tclaude runs
 that drive **alongside** the send-keys one rather than replacing it, so both run
 side by side on real agents and agents move over one at a time.
 
@@ -795,8 +798,9 @@ listed here describes both drives.
 | **Compaction** (`tclaude agent compact`) | `/compact` typed into the pane | `session.history.compact`, with the follow-up prompt submitted after it returns rather than racing it. "Nothing to compact" is the ordinary answer for a young session, not a failure, and the follow-up is still submitted |
 | **Soft exit / graceful stop** | `C-c` then `/exit` typed into the pane | **unchanged — still `C-c` + `/exit`.** Deliberate; see below |
 | **Busy / idle** | tclaude's Copilot hooks | **unchanged — still the hooks.** They were measured firing for an RPC-created session, carrying the conversation's own id, so nothing is gained by adding a second writer |
-| **Waiting on a human** | not detectable — an agent sitting on a permission prompt looks like an agent working, because Copilot's `PermissionRequest` hook is [not installable](#copilot-hooks) | `session.permissions.pendingRequests` projects it onto the row, so the dashboard shows *awaiting permission* instead of *working*. Stays empty under `--allow-all-tools`, so it cannot mislabel an unattended agent |
-| **Context, usage & window** | followed from Copilot's durable event log — real, but only at the resolution of an authoritative disclosure (a compaction, a truncation, a shutdown) | `session.metadata.contextInfo` + `session.usage.getMetrics`, re-read whenever a session event says something may have changed (coalesced to at most one refresh per 750 ms, with a 30 s backstop). While a reading is current it is the single writer of those columns; if refreshes stop working it ages out and the durable-log follower takes the row back |
+| **Waiting on a human** | not detectable — an agent sitting on a permission prompt looks like an agent working, because Copilot's `PermissionRequest` hook is [deliberately not installed](#copilot-hooks) | `session.permissions.pendingRequests` projects it onto the row, so the dashboard shows *awaiting permission* instead of *working*. Stays empty under `--allow-all-tools`, so it cannot mislabel an unattended agent. Note the knock-on: an agent in an awaiting state **does not receive agent mail** until the prompt is resolved, so an API-driven Copilot agent left sitting on a permission dialog now goes quiet where before it merely looked busy |
+| **Context & token counts** | followed from Copilot's durable event log — real, but only at the resolution of an authoritative disclosure (a compaction, a truncation, a shutdown) | `session.metadata.contextInfo` + `session.usage.getMetrics`, re-read whenever a session event says something may have changed (coalesced to at most one refresh per 750 ms, with a 30 s backstop). While a reading is current it is the single writer of the context columns and the durable-log follower stands down; if refreshes stop working the reading ages out after 90 s and the follower takes the row back |
+| **Cost, model & effort** | AIU accounting swept from Copilot's own store | **unchanged.** The sweep keeps running and keeps owning `model` and `effort_level`; no cost figure comes from the API |
 | **Resume** | `copilot --resume=<id>` on the argv | `copilot --resume=<id>` on the argv **and** `session.resume` on the RPC session. Never `session.create` for a resumed launch — what create does at an id that already exists depends on whether the server currently holds that session, and a resuming caller cannot tell those cases apart in advance, so the call that is *defined* to continue a conversation is the one used. A failed resume is reported, never downgraded into a create |
 
 Nothing here is a fallback pair. If the channel is not up, a delivery **fails and
@@ -805,15 +809,9 @@ opted out of the keystroke path does not get handed back to it one failure at a
 time, which would reopen the injection sink precisely for the agent whose channel
 is in trouble.
 
-There is exactly one deliberate exception, at spawn. The spawn waits for the
-channel before sending the new agent its welcome — its identity, its group, and
-the pointer to the briefing in its inbox — because a message sent before the
-bootstrap has foregrounded tclaude's session lands in the pane's own startup
-session and is lost. If the channel never comes up at all, that welcome goes into
-the pane instead. That is not the fallback the rule above forbids: a bootstrap
-that never completed leaves the pane's own session in the foreground, so the pane
-genuinely *is* the agent's channel, and the alternative is an agent that is never
-told who it is.
+The rule holds at spawn too. A new agent's rename and its welcome — its
+identity, its group, and the pointer to the briefing waiting in its inbox — go
+over the channel like everything else, and are not typed in if it is not up.
 
 ##### Soft exit stays on send-keys, on purpose
 
@@ -880,19 +878,32 @@ discovering one, and positively observes that the listening socket belongs to th
 agent's own pane subtree before every drive call — a handle that cannot be
 re-proved refuses rather than sends.
 
-##### Known limitation: an agentd restart holds messages
+##### Known limitation: nothing works on an agent whose channel is down
 
 API connections live in the daemon's memory only. After an agentd restart, an
 already-running API-driven agent has no connection and cannot acquire one short
-of relaunching — so messages to it are **held and retried**, not delivered, until
-it relaunches. The same applies during the bootstrap window at launch, and to a
-bootstrap that failed outright.
+of relaunching. The same is true during the bootstrap window at launch, and
+permanently for a bootstrap that failed outright.
 
-That is the deliberate consequence of having no keystroke fallback: quietly
-typing the message in would reopen the injection sink for exactly the agent whose
-channel is in trouble. It is still a surprise if you meet it without warning.
-Reconnecting to an existing session after a daemon restart is tracked as
-TCL-1074.
+Everything routed over the channel is affected, not just mail:
+
+- **Agent messages** are **held and retried** — the durable inbox row stays, and
+  the delivery is not typed into the pane instead.
+- **`tclaude agent rename`** fails; the title is not written by any other route
+  either, because Copilot has an in-pane rename and so never falls back to the
+  out-of-band title store.
+- **`tclaude agent compact`** is refused as `control_unavailable`.
+- **The live context reading** stops, so the row falls back to the durable log's
+  coarser resolution.
+
+Soft stop, hard stop and the escalation ladder are unaffected — they never used
+the channel.
+
+The holding is the deliberate consequence of having no keystroke fallback:
+quietly typing the message in would reopen the injection sink for exactly the
+agent whose channel is in trouble. It is still a surprise if you meet it without
+warning. Reconnecting to an existing session after a daemon restart is tracked
+as TCL-1074.
 
 One case worth knowing about because it looks like the same symptom and is not:
 the daemon establishes the channel only for launches **it** started. A pane you

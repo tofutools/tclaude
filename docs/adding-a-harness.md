@@ -91,10 +91,12 @@ separate axis from the contracts.) Resist the temptation to fill the rest in fro
 plausible inference: a caller can detect an absent contract through the
 `Supports*` helpers and degrade, but it cannot detect one that is present and
 wrong. Ship the minimum bar, then add each further contract in its own
-fixture-backed slice — which is what happened here. `copilot.go` now also carries
-`Ask`, `Convs`, `Hooks`, `Sandbox` and `Approval`, each added once the fixture lab
-described in [harnesses.md](harnesses.md#compatibility-fixtures) could prove it
-against a real binary. Read the first wave as the starting point, not as the
+fixture-backed slice — which is what happened here. `copilot.go` has since grown
+`Ask`, `Convs`, `Hooks`, `Sandbox`, `Approval`, `ModelTransport` and `DirTrust`,
+plus `TclaudeLayerMode`, `BuiltinOSSandboxAbsenceReason` and several capability
+flags, each added once the fixture lab described in
+[harnesses.md](harnesses.md#compatibility-fixtures) could prove it against a real
+binary. Read the first wave as the starting point; `copilot.go` itself is the
 current state.
 
 `Sandbox` and `BuiltinOSSandbox` answer different questions. A harness can
@@ -128,9 +130,15 @@ ladder all keep working unchanged.
 The practical consequences for a new harness in that shape are worth naming,
 because they are what the two topologies do *not* share:
 
-- **The `Spawner` contract is enough.** The server is a flag on the same command
-  line (`harness/copilot_spawner.go` renders `--ui-server --host 127.0.0.1 --port
-  <n>`); nothing needs a launch-and-supervise seam.
+- **The `Spawner` contract is enough — but the launch's first turn leaves the
+  argv.** The server itself is just a flag on the same command line
+  (`harness/copilot_spawner.go` renders `--ui-server --host 127.0.0.1 --port
+  <n>`), so nothing needs a launch-and-supervise seam, and `SpawnSpec` only had
+  to grow the port. What is easy to miss is that the same spawner must then
+  **suppress `-i`**: the drive opens its own session under the conversation id
+  after launch, so a prompt delivered on the command line would run visibly in
+  the pane and then be discarded. If your harness's API opens the session, the
+  launch prompt belongs to the API too.
 - **Whoever consumes the API must hold the endpoint before the process exists.**
   agentd allocates the port and passes it down, rather than discovering it after
   the fact — Copilot publishes its chosen port only to a log line.
@@ -168,8 +176,8 @@ Implement as many as your harness needs; leave the rest `nil`. Claude Code
 them they cover every contract below at least once, so for each one there is a
 concrete implementation to copy. Copilot (`copilot*.go`) shipped as the minimal
 counter-example — `Spawner`, `ModelCatalog` and `Lifecycle` alone — and has since
-grown `Asker`, `ConvStore`, `HookInstaller`, `SandboxCatalog` and
-`ApprovalCatalog` one fixture-backed slice at a time.
+grown most of the optional contracts one fixture-backed slice at a time; read
+`copilot.go` for the current set rather than trusting a list here.
 
 ### `Spawner` — launch & resume *(required to spawn)*
 
