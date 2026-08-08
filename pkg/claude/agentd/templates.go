@@ -1036,18 +1036,29 @@ func validateInlineProfileForHarness(agentName string, h *harness.Harness, p *db
 // priority first:
 //
 //	per-agent inline override → per-agent spawn profile →
-//	  role inline defaults → role's spawn profile → harness secure default
+//	  role inline defaults → role's spawn profile →
+//	  group default spawn profile → global default profile → harness secure default
 //
-// (The group-default-profile tier of the general model is empty here — a
-// freshly-instantiated group carries no default profile.) As with direct spawn,
-// the harness resolves through the complete chain first. Each remaining field
-// then resolves independently: inline agent values are explicit and fail
-// loudly, while profile-like tiers validate against the chosen harness and a
-// foreign invalid value is skipped with a disclosure note. role is the
-// resolved role the agent references (nil = none). caller is the spawning
+// The last two tiers were missing until TCL-1110, on the strength of a comment
+// here that said "a freshly-instantiated group carries no default profile". A
+// deploy into an EXISTING group is the ordinary case and that group can very
+// well have one, so the deploy launched on `claude` where a direct spawn into
+// the same group launched on the profile's harness. The two default tiers are
+// consulted HERE, for the harness only, because the harness gates every other
+// field's validation: applyDefaultProfile fills the rest afterwards from the
+// same two profiles, but by then the harness is already chosen and a value it
+// skipped as foreign cannot be reconsidered.
+//
+// As with direct spawn, the harness resolves through the complete chain first.
+// Each remaining field then resolves independently: inline agent values are
+// explicit and fail loudly, while profile-like tiers validate against the chosen
+// harness and a foreign invalid value is skipped with a disclosure note. g is
+// the group being deployed into (nil = none, e.g. a pure resolution test). role
+// is the resolved role the agent references (nil = none). caller is the spawning
 // agent's conv-id (empty for a human): it lets a genuinely defaulted approval
 // posture be narrowed without losing that provenance during template
-// resolution.
+// resolution, and it is the identity the two default profiles are gated
+// against.
 //
 // cwd is the resolved instantiation cwd; it drives the Codex sandbox cwd-safety
 // guard so a template can't spawn a workspace-write Codex agent at/above $HOME.
@@ -1056,7 +1067,7 @@ func validateInlineProfileForHarness(agentName string, h *harness.Harness, p *db
 // to the rest of the roster) if a referenced profile vanished or a resolved
 // value is invalid for the harness. The returned Harness is the resolved
 // canonical name (e.g. "claude"); SpawnProfile is left empty (already consumed).
-func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, caller string) (templateAgentLaunch, *spawnFailure) {
+func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, role *db.Role, cwd, caller string) (templateAgentLaunch, *spawnFailure) {
 	var refProfile *db.SpawnProfile
 	if ref := strings.TrimSpace(a.SpawnProfile); ref != "" || a.SpawnProfileID > 0 {
 		var prof *db.SpawnProfile
@@ -1127,6 +1138,33 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		{profile: roleProfile, source: roleProfileSource(role, roleProfile)},
 	}
 
+	// The two ambient tiers, in the same order and with the same wording the
+	// direct spawn boundary uses (TCL-1110). They are NOT appended to `tiers`
+	// above: every other field is filled from these same two profiles by
+	// applyDefaultProfile after the spawn boundary is reached, and resolving them
+	// twice would make the deploy's own notes disagree with the launch's. Only
+	// the harness has to be decided here, because nothing downstream can undo a
+	// per-field validation run against the wrong one.
+	//
+	// Gated up front on BOTH profiles rather than only the one that wins, so a
+	// deploy blocked by a profile the caller may not use fails with that reason
+	// instead of with whatever the other profile's harness happens to make
+	// invalid. applyDefaultProfile runs the same gate again later; this one only
+	// moves the message earlier.
+	groupProfile := groupDefaultProfile(g)
+	globalProfile := globalDefaultProfile()
+	for _, prof := range []*db.SpawnProfile{groupProfile, globalProfile} {
+		if fail := profileSpawnFailure(prof, caller); fail != nil {
+			return templateAgentLaunch{}, fail
+		}
+	}
+	defaultTiers := []launchProfileTier{
+		{profile: groupProfile, source: profileSource(groupProfile, agent.ProvGroupProfileSource),
+			defaultTier: true},
+		{profile: globalProfile, source: profileSource(globalProfile, agent.ProvGlobalProfileSource),
+			defaultTier: true},
+	}
+
 	// Resolve harness independently. Partial inline-profile/role tiers only pin
 	// a harness when they name one; registry profiles pin their default harness
 	// even when the stored value is blank, matching direct spawn.
@@ -1157,6 +1195,20 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	if harnessName == "" && roleProfile != nil {
 		harnessName = harnessOrDefault(roleProfile.Harness)
 		harnessSource = tiers[3].source
+	}
+	// The ambient tiers, last. Like the registry-profile tiers above, a default
+	// profile pins its harness even when the stored value is blank — that is
+	// harnessOrDefault, and it is what makes "the group defaults to claude" a
+	// decision the group made rather than an absence.
+	for _, tier := range defaultTiers {
+		if harnessName != "" {
+			break
+		}
+		if tier.profile == nil {
+			continue
+		}
+		harnessName = harnessOrDefault(tier.profile.Harness)
+		harnessSource = tier.source
 	}
 	if harnessName == "" {
 		harnessSource = agent.ProvHarnessDefault

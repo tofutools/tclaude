@@ -25,7 +25,7 @@ func TestRoleProfileResolutionUsesIDLoadedBeforeRename(t *testing.T) {
 	require.Equal(t, profileID, loadedBeforeRename.SpawnProfileID)
 
 	require.NoError(t, db.UpdateSpawnProfile(&db.SpawnProfile{ID: profileID, Name: "after"}))
-	_, fail := resolveTemplateAgentLaunch(db.GroupTemplateAgent{}, loadedBeforeRename, home, "")
+	_, fail := resolveTemplateAgentLaunch(nil, db.GroupTemplateAgent{}, loadedBeforeRename, home, "")
 	require.Nil(t, fail, "the pre-rename role object must resolve its profile through the stable id")
 }
 
@@ -44,14 +44,14 @@ func TestOperatorOnlyTemplateAndRoleProfilesRejectAgentCaller(t *testing.T) {
 	agentSpec := db.GroupTemplateAgent{
 		Name: "worker", SpawnProfile: "operator", SpawnProfileID: profileID,
 	}
-	_, fail := resolveTemplateAgentLaunch(agentSpec, nil, home, "agent-caller")
+	_, fail := resolveTemplateAgentLaunch(nil, agentSpec, nil, home, "agent-caller")
 	require.NotNil(t, fail)
 	assert.Equal(t, "profile_operator_only", fail.Kind)
-	_, fail = resolveTemplateAgentLaunch(agentSpec, nil, home, "")
+	_, fail = resolveTemplateAgentLaunch(nil, agentSpec, nil, home, "")
 	require.Nil(t, fail, "the human trust root may use an operator-only profile")
 
 	role := &db.Role{Name: "trusted-role", SpawnProfile: "operator", SpawnProfileID: profileID}
-	_, fail = resolveTemplateAgentLaunch(db.GroupTemplateAgent{}, role, home, "agent-caller")
+	_, fail = resolveTemplateAgentLaunch(nil, db.GroupTemplateAgent{}, role, home, "agent-caller")
 	require.NotNil(t, fail)
 	assert.Equal(t, "profile_operator_only", fail.Kind)
 	assert.Contains(t, fail.Msg, `role "trusted-role"`)

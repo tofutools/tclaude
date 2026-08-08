@@ -38,23 +38,27 @@ type templateAgentSpec struct {
 
 // instantiateResult mirrors the JSON the instantiate endpoint returns.
 type instantiateResult struct {
-	Group   string `json:"group"`
-	Spawned int    `json:"spawned"`
-	Failed  int    `json:"failed"`
-	Agents  []struct {
-		Name           string   `json:"name"`
-		FinalName      string   `json:"final_name"`
-		ConvID         string   `json:"conv_id"`
-		Owner          bool     `json:"owner"`
-		WorktreePath   string   `json:"worktree_path"`
-		WorktreeBranch string   `json:"worktree_branch"`
-		Granted        []string `json:"granted"`
-		// Decoded through the PRODUCTION wire type, so a field the daemon renames
-		// or drops breaks the guards rather than silently decoding to a zero value
-		// — the failure mode that let a whole deploy disclosure reach no reader.
-		Resolved *agent.ResolvedLaunch `json:"resolved"`
-		Error    string                `json:"error"`
-	} `json:"agents"`
+	Group   string            `json:"group"`
+	Spawned int               `json:"spawned"`
+	Failed  int               `json:"failed"`
+	Agents  []instantiateMemb `json:"agents"`
+}
+
+// instantiateMemb is one member of a deploy result. Named rather than inline so
+// a helper can hand one back to a caller.
+type instantiateMemb struct {
+	Name           string   `json:"name"`
+	FinalName      string   `json:"final_name"`
+	ConvID         string   `json:"conv_id"`
+	Owner          bool     `json:"owner"`
+	WorktreePath   string   `json:"worktree_path"`
+	WorktreeBranch string   `json:"worktree_branch"`
+	Granted        []string `json:"granted"`
+	// Decoded through the PRODUCTION wire type, so a field the daemon renames
+	// or drops breaks the guards rather than silently decoding to a zero value
+	// — the failure mode that let a whole deploy disclosure reach no reader.
+	Resolved *agent.ResolvedLaunch `json:"resolved"`
+	Error    string                `json:"error"`
 }
 
 // Scenario: a human defines a 3-agent template — a PO marked owner and
