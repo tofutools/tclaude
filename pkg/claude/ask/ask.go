@@ -99,10 +99,17 @@ type askInput struct {
 	// profile, else the default). It is ignored for an existing thread, which
 	// keeps its own recorded harness — you can't switch a conversation's
 	// harness mid-thread. Empty falls back to harness.DefaultName.
-	Harness          string
-	StdinPayload     string // piped stdin, "" when stdin is a terminal
-	Model            string
-	Effort           string
+	Harness      string
+	StdinPayload string // piped stdin, "" when stdin is a terminal
+	Model        string
+	Effort       string
+	// ModelBuiltin and EffortBuiltin identify values supplied by tclaude's
+	// Claude-shaped built-in fallback. They are resolution-time state only:
+	// when a resumed thread uses another recorded harness, runAsk omits these
+	// values so that harness's own defaults apply. Explicit flags and configured
+	// ask defaults leave these false and are validated as before.
+	ModelBuiltin     bool
+	EffortBuiltin    bool
 	ForceInteractive bool
 	New              bool
 	// Verbose keeps the harness's capture-mode stderr transcript visible
@@ -173,7 +180,7 @@ func runFromCLI(p *Params, args []string) error {
 	if err != nil {
 		cfg = config.DefaultConfig()
 	}
-	harnessName, model, effort, err := resolveAskTarget(p.Model, p.Effort, cfg)
+	target, err := resolveAskTargetDetails(p.Model, p.Effort, cfg)
 	if err != nil {
 		return err
 	}
@@ -182,10 +189,12 @@ func runFromCLI(p *Params, args []string) error {
 		TermKey:          TerminalKey(),
 		Cwd:              cwd,
 		Question:         strings.TrimSpace(strings.Join(args, " ")),
-		Harness:          harnessName,
+		Harness:          target.Harness,
 		StdinPayload:     payload,
-		Model:            model,
-		Effort:           effort,
+		Model:            target.Model,
+		Effort:           target.Effort,
+		ModelBuiltin:     target.ModelBuiltin,
+		EffortBuiltin:    target.EffortBuiltin,
 		ForceInteractive: p.Interactive,
 		New:              p.New,
 		Verbose:          p.Verbose,
@@ -262,45 +271,83 @@ func printWhere(cwd string, w io.Writer) error {
 // harness's catalog by runAsk. db.ResolveSpawnProfile is the only I/O; a load
 // error degrades to the no-profile path rather than failing the ask.
 func resolveAskTarget(flagModel, flagEffort string, cfg *config.Config) (harnessName, model, effort string, resolveErr error) {
-	harnessName = harness.DefaultName
+	target, err := resolveAskTargetDetails(flagModel, flagEffort, cfg)
+	if err != nil {
+		return "", "", "", err
+	}
+	return target.Harness, target.Model, target.Effort, nil
+}
+
+// resolvedAskTarget is the fresh-ask target plus the source of each model and
+// effort value. The source markers let a resumed ask distinguish tclaude's
+// Claude-shaped built-ins from an explicit flag or configured default after it
+// switches to the thread's recorded harness.
+type resolvedAskTarget struct {
+	Harness       string
+	Model         string
+	Effort        string
+	ModelBuiltin  bool
+	EffortBuiltin bool
+}
+
+func resolveAskTargetDetails(flagModel, flagEffort string, cfg *config.Config) (resolvedAskTarget, error) {
+	target := resolvedAskTarget{Harness: harness.DefaultName}
+	var modelBuiltin, effortBuiltin bool
 
 	if name := cfg.AskProfileName(); name != "" {
 		if prof, err := db.ResolveSpawnProfile(name); err == nil && prof != nil {
 			if prof.Disabled {
-				return "", "", "", fmt.Errorf("spawn profile %q is disabled: %s", prof.Name, prof.DisabledReason)
+				return resolvedAskTarget{}, fmt.Errorf("spawn profile %q is disabled: %s", prof.Name, prof.DisabledReason)
 			}
 			if prof.Harness != "" {
-				harnessName = prof.Harness
+				target.Harness = prof.Harness
 			}
-			model, effort = prof.Model, prof.Effort
+			target.Model, target.Effort = prof.Model, prof.Effort
 		} else {
 			// Missing / unreadable profile → fall back to config.ask defaults.
-			model, effort = cfg.ResolvedAskProfile()
+			target.Model, target.Effort, modelBuiltin, effortBuiltin = resolveConfiguredAskDefaults(cfg)
 		}
 	} else {
-		model, effort = cfg.ResolvedAskProfile()
+		target.Model, target.Effort, modelBuiltin, effortBuiltin = resolveConfiguredAskDefaults(cfg)
 	}
 
 	// The built-in defaults only make sense for the Claude catalog.
 	// ResolvedAskProfile already applied them on the no-profile path; for a
 	// Claude profile with blank fields, apply them here too. A non-Claude
 	// harness keeps blanks (→ the asker omits the flags).
-	if harnessName == harness.DefaultName {
-		if model == "" {
-			model = config.DefaultAskModel
+	if target.Harness == harness.DefaultName {
+		if target.Model == "" {
+			target.Model = config.DefaultAskModel
+			modelBuiltin = true
 		}
-		if effort == "" {
-			effort = config.DefaultAskEffort
+		if target.Effort == "" {
+			target.Effort = config.DefaultAskEffort
+			effortBuiltin = true
 		}
 	}
 
 	if flagModel != "" {
-		model = flagModel
+		target.Model = flagModel
+		modelBuiltin = false
 	}
 	if flagEffort != "" {
-		effort = flagEffort
+		target.Effort = flagEffort
+		effortBuiltin = false
 	}
-	return harnessName, model, effort, nil
+	target.ModelBuiltin = modelBuiltin
+	target.EffortBuiltin = effortBuiltin
+	return target, nil
+}
+
+// resolveConfiguredAskDefaults returns only configured values and whether
+// either field is absent. Built-in values are applied later, after the fresh
+// harness is known, so a resumed ask can tell them apart from configured
+// defaults and omit them for a non-Claude recorded harness.
+func resolveConfiguredAskDefaults(cfg *config.Config) (model, effort string, modelBuiltin, effortBuiltin bool) {
+	if cfg != nil && cfg.Ask != nil {
+		model, effort = cfg.Ask.Model, cfg.Ask.Effort
+	}
+	return model, effort, model == "", effort == ""
 }
 
 func runAsk(in askInput, aio askIO) error {
@@ -366,6 +413,22 @@ func runAsk(in askInput, aio askIO) error {
 		fresh = true
 	}
 
+	// The built-in ask defaults are Claude-shaped (sonnet/medium). A resumed
+	// thread cannot change harness, so do not carry those values from the fresh
+	// config target into a non-Claude recorded harness; leaving them unset lets
+	// that harness choose its own configured defaults. Explicit flags and
+	// configured ask defaults are intentionally unaffected.
+	model := in.Model
+	effort := in.Effort
+	if !fresh && h.Name != harness.DefaultName {
+		if in.ModelBuiltin {
+			model = ""
+		}
+		if in.EffortBuiltin {
+			effort = ""
+		}
+	}
+
 	// Stream the answer live only when a human is actually watching it arrive:
 	// print mode, stdout is a real terminal, and the harness can emit an
 	// incremental event stream (StreamAsker). A piped/redirected stdout reads
@@ -375,15 +438,15 @@ func runAsk(in askInput, aio askIO) error {
 	streamRender := printMode && in.StdoutIsTerminal && h.SupportsAskStream()
 
 	spec := harness.AskSpec{Print: printMode, Stream: streamRender, Prompt: prompt}
-	if in.Model != "" {
-		m, err := h.Models.ValidateModel(in.Model)
+	if model != "" {
+		m, err := h.Models.ValidateModel(model)
 		if err != nil {
 			return fmt.Errorf("invalid --model: %w", err)
 		}
 		spec.Model = m
 	}
-	if in.Effort != "" {
-		e, err := h.Models.ValidateEffort(in.Effort)
+	if effort != "" {
+		e, err := h.Models.ValidateEffort(effort)
 		if err != nil {
 			return fmt.Errorf("invalid --effort: %w", err)
 		}

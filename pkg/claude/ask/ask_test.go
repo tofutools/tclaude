@@ -527,6 +527,42 @@ func TestResolveAskTarget_Profile(t *testing.T) {
 	})
 }
 
+// TestResolveAskTargetDetails_BuiltinSource tracks the source metadata that
+// runFromCLI carries into runAsk. Only values filled by tclaude's built-in
+// fallback are eligible to be dropped when a thread resumes under another
+// recorded harness; explicit and configured values remain pinned.
+func TestResolveAskTargetDetails_BuiltinSource(t *testing.T) {
+	t.Run("empty config marks both Claude built-ins", func(t *testing.T) {
+		target, err := resolveAskTargetDetails("", "", &config.Config{})
+		require.NoError(t, err)
+		assert.Equal(t, harness.DefaultName, target.Harness)
+		assert.Equal(t, config.DefaultAskModel, target.Model)
+		assert.Equal(t, config.DefaultAskEffort, target.Effort)
+		assert.True(t, target.ModelBuiltin)
+		assert.True(t, target.EffortBuiltin)
+	})
+
+	t.Run("configured values are not marked built-in", func(t *testing.T) {
+		target, err := resolveAskTargetDetails("", "", &config.Config{
+			Ask: &config.AskConfig{Model: "opus", Effort: "high"},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "opus", target.Model)
+		assert.Equal(t, "high", target.Effort)
+		assert.False(t, target.ModelBuiltin)
+		assert.False(t, target.EffortBuiltin)
+	})
+
+	t.Run("explicit values are not marked built-in", func(t *testing.T) {
+		target, err := resolveAskTargetDetails("haiku", "low", &config.Config{})
+		require.NoError(t, err)
+		assert.Equal(t, "haiku", target.Model)
+		assert.Equal(t, "low", target.Effort)
+		assert.False(t, target.ModelBuiltin)
+		assert.False(t, target.EffortBuiltin)
+	})
+}
+
 // TestAsk_EffortValidatedAndPassed checks a valid effort reaches the argv
 // as --effort, and an invalid one is rejected before running anything —
 // the effort twin of TestAsk_ModelValidatedAndPassed.
@@ -635,6 +671,83 @@ func TestAsk_CodexResumeRouting(t *testing.T) {
 		"resume uses the `codex exec resume <id>` subcommand")
 	assert.False(t, argvHas(p.Argv, "--session-id"))
 	assert.Equal(t, "follow up", p.Argv[len(p.Argv)-1], "question is the trailing positional")
+}
+
+// TestAsk_ResumedBuiltinDefaultsUseRecordedHarness is the cross-harness
+// regression for TCL-996. A fresh Claude-shaped target contributes sonnet and
+// medium, but a resumed non-Claude thread must leave both unset so that the
+// recorded harness chooses its own defaults. A resumed Claude thread keeps the
+// existing built-in values unchanged.
+func TestAsk_ResumedBuiltinDefaultsUseRecordedHarness(t *testing.T) {
+	cases := []struct {
+		name       string
+		harness    string
+		keepValues bool
+	}{
+		{name: "claude", harness: harness.DefaultName, keepValues: true},
+		{name: "codex", harness: harness.CodexName},
+		{name: "copilot", harness: harness.CopilotName},
+		{name: "opencode", harness: harness.OpenCodeName},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			setupAskTestDB(t)
+			forceConvExists(t, true)
+			f := &fakeRun{answer: "ok\n", started: true}
+			f.install(t)
+			require.NoError(t, db.SetAskThread("term-built-in", "/repo/x", "recorded-"+tc.name, tc.harness))
+
+			in := ttyInput("term-built-in", "/repo/x", "follow up")
+			in.Harness = harness.DefaultName // fresh config is Claude-shaped
+			in.Model = config.DefaultAskModel
+			in.Effort = config.DefaultAskEffort
+			in.ModelBuiltin = true
+			in.EffortBuiltin = true
+			aio, _, _ := io2buf()
+			require.NoError(t, runAsk(in, aio))
+
+			argv := f.last().Argv
+			if tc.keepValues {
+				model, ok := argvValue(argv, "--model")
+				require.True(t, ok, "resumed Claude keeps the built-in model")
+				assert.Equal(t, config.DefaultAskModel, model)
+				effort, ok := argvValue(argv, "--effort")
+				require.True(t, ok, "resumed Claude keeps the built-in effort")
+				assert.Equal(t, config.DefaultAskEffort, effort)
+			} else {
+				assert.False(t, argvHas(argv, "--model"), "non-Claude recorded harness chooses its own model")
+				assert.False(t, argvHas(argv, "--effort"), "non-Claude recorded harness chooses its own effort")
+			}
+		})
+	}
+}
+
+// TestAsk_ResumedConfiguredDefaultsRemainPinned confirms the source markers
+// do not broaden the fallback fix into configured ask defaults. Codex still
+// receives configured values and validates them against the recorded harness.
+func TestAsk_ResumedConfiguredDefaultsRemainPinned(t *testing.T) {
+	setupAskTestDB(t)
+	forceConvExists(t, true)
+	f := &fakeRun{answer: "ok\n", started: true}
+	f.install(t)
+	require.NoError(t, db.SetAskThread("term-configured", "/repo/x", "codex-configured", harness.CodexName))
+
+	in := ttyInput("term-configured", "/repo/x", "follow up")
+	in.Harness = harness.DefaultName
+	in.Model = "gpt-5"
+	in.Effort = "low"
+	// These are configured/explicit values, not the built-in fallback.
+	in.ModelBuiltin = false
+	in.EffortBuiltin = false
+	aio, _, _ := io2buf()
+	require.NoError(t, runAsk(in, aio))
+
+	model, ok := argvValue(f.last().Argv, "--model")
+	require.True(t, ok)
+	assert.Equal(t, "gpt-5", model)
+	assert.Contains(t, f.last().Argv, `model_reasoning_effort="low"`,
+		"Codex translates configured effort to its reasoning-effort override")
 }
 
 // TestAsk_CodexFreshNoConv_NoMapping: if a fresh Codex ask creates no
