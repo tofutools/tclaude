@@ -67,6 +67,9 @@ func dashboardDisableCodexFastModeAgent(w http.ResponseWriter, _ *http.Request, 
 		writeError(w, http.StatusNotFound, "not_found", "resolve agent: "+err.Error())
 		return
 	}
+	launchLock := resumeLaunchLock(resolved.ConvID)
+	launchLock.Lock()
+	defer launchLock.Unlock()
 	sess := aliveSessionForConv(resolved.ConvID)
 	if sess == nil {
 		writeError(w, http.StatusConflict, "offline", "agent has no live tmux session")
