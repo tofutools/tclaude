@@ -102,6 +102,11 @@ const copilotAPINameMaxRunes = 100
 // claiming anything about a connection. "Which channel does this belong to" and
 // "is that channel up" are the two questions, and this is the first one.
 //
+// The second one is [copilotAPIConnected], and it is named there rather than
+// left to be spelled out at each call site because leaving it unnamed is what
+// produced the third instance of this confusion: a caller wanting "is it up"
+// found this predicate adjacent, documented and compiling. See that function.
+//
 // # Cost
 //
 // Two small SQLite reads per delivery decision, on paths that are already doing
@@ -115,6 +120,52 @@ func copilotAPIDriven(convID string) bool {
 	}
 	return harnessForConv(convID).Name == harness.CopilotName &&
 		copilotLaunchIntentForConv(convID).API
+}
+
+// copilotAPIConnected reports whether a conversation's API channel is UP right
+// now. It is answered by the live handle and by nothing else.
+//
+// # Why this exists as a name
+//
+// It is the third question this seam asks, and until TCL-1080 it was the only
+// one without a name here. [copilotAPIDriven] answers "which channel do this
+// conversation's deliveries BELONG to"; [copilotAPIDrive] answers "may I send
+// on it for THIS call"; this answers "has it come up YET". The registry has
+// always been able to answer it — this delegates to
+// [copilotAPISessionRegistry.Connected], which is still the implementation and
+// still the place the reasoning about the port record lives — but a method on
+// a registry in another file is not part of the vocabulary a caller reads when
+// it opens this one.
+//
+// That is not a stylistic point. The spawn's post-init wait wanted this
+// question, found `copilotAPIDriven` adjacent and documented, and looped on it;
+// `copilotAPIDriven` is true from the durable posture that
+// completeCopilotAPILaunch writes BEFORE it starts the bootstrap, so the wait
+// returned on its first iteration and every API-drive spawn lost its rename and
+// its welcome. That was the third instance of this conflation, and the second
+// where the code and a comment warning against it shipped in the same commit —
+// so the fix is a predicate to reach for, not another warning. Prose cannot
+// bind a call site; a name the call site can find might.
+//
+// # What may NOT be derived from it
+//
+//   - NOT a routing decision. A false here means "not up yet" or "not up any
+//     more", never "this conversation is on send-keys". Writing
+//     `if connected { api } else { keystrokes }` is the injection sink
+//     re-opening for exactly the agent whose channel is in trouble — which is
+//     the whole reason [copilotAPIDriven] is a separate predicate. Route on
+//     that one.
+//   - NOT permission to send. Connectedness is true at one instant; the
+//     ownership re-proof that stands in for this endpoint's missing
+//     authentication is per call and lives in [copilotAPIDrive]. A caller that
+//     checks this and then sends has re-derived the single-predicate seam
+//     TCL-1058 removed.
+//
+// The one caller entitled to act on a false is [waitForCopilotAPISession],
+// and only because it acts on "false for the bootstrap's WHOLE budget", which
+// is a different fact — see the argument there.
+func copilotAPIConnected(convID string) bool {
+	return copilotAPISessions.Connected(convID)
 }
 
 // copilotAPIDrive returns the handle to send on, or an error saying why not.
@@ -167,6 +218,20 @@ func copilotAPIDrive(convID string) (*copilotAPISession, error) {
 // bootstrap can possibly take proves nothing, and waiting less would abandon a
 // healthy launch on a loaded host.
 //
+// # What it waits ON
+//
+// [copilotAPIConnected], and deliberately not [copilotAPIDriven]. The routing
+// predicate is true from the durable posture that completeCopilotAPILaunch
+// writes BEFORE it starts the bootstrap, so a wait on it returns on its first
+// iteration and this function does nothing at all — which is what it did until
+// TCL-1080, and it cost every API-drive spawn its rename and its welcome.
+//
+// Connectedness is also the STRONGER of the two in exactly the way this caller
+// needs: the registry gets its handle only from runCopilotAPIBootstrap, after
+// the whole bootstrap succeeded — session created, foregrounded, and the launch
+// prompt delivered. So a true here is not "a port answered" but "the session
+// the post-init delivery is about to land in is the one the pane is showing".
+//
 // Returns false when the channel never came up, which is a real state rather
 // than a timeout to retry — the bootstrap logs why. Its caller then falls back
 // to the pane, and that fallback is NOT the one copilotAPIDriven exists to
@@ -175,6 +240,18 @@ func copilotAPIDrive(convID string) (*copilotAPISession, error) {
 // the alternative is an agent that is never told who it is. That is the same
 // call the bootstrap already makes for itself — a failed channel is a loud log
 // line and an agent still usable through its pane, not a failed spawn.
+//
+// The fallback is safe against the obvious race — falling back to the pane a
+// moment before the bootstrap foregrounds a fresh session over it — and safe by
+// construction rather than by margin. Both deadlines are
+// copilotAPIBootstrapTimeout(); the bootstrap's starts at
+// completeCopilotAPILaunch, inside the spawn facade, and this one starts later,
+// after runSpawnPostInit has waited for the pane to come alive. So when this
+// wait expires the bootstrap's own context is already cancelled and it can no
+// longer create or foreground anything. [TestTheSpawnPostInitWaitOutlivesTheBootstrapsOwnDeadline]
+// pins the ordering, since it is what makes the fallback a decision rather than
+// a gamble.
+//
 // Indirected through a variable for the same reason the bootstrap kick-off is:
 // flow tests install a no-op bootstrap binary-wide, so no handle can ever
 // appear, and a spawn that waited the full budget for one would spend a minute
@@ -194,7 +271,7 @@ func SetCopilotAPIPostInitWaitForTest(fn func(convID string) bool) func() {
 func waitForCopilotAPISession(convID string) bool {
 	deadline := time.Now().Add(copilotAPIBootstrapTimeout())
 	for {
-		if copilotAPIDriven(convID) {
+		if copilotAPIConnected(convID) {
 			return true
 		}
 		if time.Now().After(deadline) {

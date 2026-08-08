@@ -255,6 +255,79 @@ func approvalForRelaunch(sourceConv, harnessName string) (string, bool) {
 // The out-of-band SetTitle path is a direct title-store write, not a
 // send-keys stream, so it is not a keystroke sink and is not gated here.
 func deliverRename(convID, title string) bool {
+	return deliverRenameOn(convID, title, deliveryChannelRouted)
+}
+
+// deliveryChannel selects which transport a delivery may use for a
+// conversation whose harness has an in-pane channel.
+//
+// It exists so that the ONE caller entitled to overrule the conversation's own
+// routing has to say so in a word, at its own call site, rather than by
+// re-deriving the routing decision somewhere else — and so the argument for why
+// it is entitled to lives on the constant instead of in a comment on a branch
+// nothing could reach.
+//
+// It is threaded all the way to the sink rather than consulted once. That is
+// not tidiness: the first version of this stopped at [deliverRenameOn], and the
+// rename it forced to the pane was refused one level further down by
+// [dispatchSlashCommand], which asks [copilotAPIDriven] again on its own
+// account and has no typed RPC for a rename token. The override was a comment
+// with a `//` in front of it. An override that does not reach every predicate
+// between the decision and the sink is not an override.
+type deliveryChannel int
+
+const (
+	// deliveryChannelRouted takes the transport from the conversation's own
+	// routing posture: [copilotAPIDriven] for a Copilot conversation, the pane
+	// otherwise. Every caller wants this. A conversation that belongs to the
+	// API channel and cannot be driven right now FAILS here; it is never typed
+	// into. See copilot_api_drive.go for why that is not a missing fallback.
+	deliveryChannelRouted deliveryChannel = iota
+	// deliveryChannelPane types the delivery into the pane even for a
+	// conversation whose deliveries belong to the API channel.
+	//
+	// This is the ONLY sanctioned override and it has exactly one non-test call
+	// site (runSpawnPostInit), which
+	// [TestTheCopilotPaneOverrideHasExactlyOneCallSite] pins structurally rather
+	// than leaving to this comment.
+	//
+	// # What entitles it, stated so it cannot be stretched
+	//
+	// ONE-SHOT DELIVERY WITH NO RETRY. Not "the drive failed", and not "there is
+	// no handle". TCL-1058's rule — an API-driven conversation HOLDS rather than
+	// falling back to keystrokes — was decided for a class of deliveries that
+	// all have a retry behind them: a nudge's retry is the durable inbox row, a
+	// lifecycle command's is the operator reissuing it. Holding is cheap there,
+	// so holding is right there, and this override must never reach any of them.
+	//
+	// The spawn's post-init is the one member of no such class. It runs once, in
+	// a background goroutine, and nothing anywhere re-delivers a rename or a
+	// welcome. For it, "hold" is spelled DROP, PERMANENTLY AND INVISIBLY — an
+	// agent that comes up nameless and unbriefed while looking, on every
+	// dashboard surface, exactly like one that read its brief and had nothing to
+	// say. That is the defect (TCL-1080), not the remedy.
+	//
+	// # Why the pane is a real channel at that moment
+	//
+	// The caller has waited out the API bootstrap's WHOLE budget, which outlives
+	// the bootstrap's own context (see waitForCopilotAPISession), so nothing is
+	// going to create a session over the pane's afterwards. The pane's startup
+	// session is what the agent is sitting in, and it is where a Copilot spawn
+	// that never asked for the drive is renamed today, through this same call
+	// with this same charset gate.
+	//
+	// # Do not widen it
+	//
+	// Not to "the API call failed": a failed call means the channel EXISTS,
+	// which is precisely when returning the agent to the pane is the silent
+	// re-opening of the injection sink that [copilotAPIDriven] exists to stop.
+	// Not to "no handle" either: that state is reached by the bootstrap window
+	// and by every agentd restart, where the retry-bearing deliveries are still
+	// obliged to hold.
+	deliveryChannelPane
+)
+
+func deliverRenameOn(convID, title string, channel deliveryChannel) bool {
 	h := harnessForConv(convID)
 
 	// Slash-injection rename (Claude Code): type `<rename-cmd> <title>`
@@ -272,7 +345,7 @@ func deliverRename(convID, title string) bool {
 		// send-keys path, which is still Copilot's default, and a title that
 		// renders differently depending on which transport a conversation
 		// happens to hold would be its own bug. See copilot_api_drive.go.
-		if copilotAPIDriven(convID) {
+		if channel == deliveryChannelRouted && copilotAPIDriven(convID) {
 			if err := renameCopilotAPISession(convID, title); err != nil {
 				slog.Warn("rename: Copilot API rename failed",
 					"conv", convID, "error", err)
@@ -281,7 +354,8 @@ func deliverRename(convID, title string) bool {
 			cacheDeliveredRename(convID, title, h.Name)
 			return true
 		}
-		if !injectSlashCommand(convID, h.Life.RenameCommand()+" "+title, "", "rename") {
+		if !injectSlashCommandOn(
+			convID, h.Life.RenameCommand()+" "+title, "", "rename", channel) {
 			return false
 		}
 		cacheDeliveredRename(convID, title, h.Name)

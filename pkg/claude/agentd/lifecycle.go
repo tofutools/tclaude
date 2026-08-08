@@ -7011,13 +7011,31 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 	// pane is alive. Its bootstrap creates a session under the conversation id
 	// and foregrounds it, so everything below — the rename and the welcome —
 	// must wait for that, or it lands in the startup session the bootstrap is
-	// about to replace and is lost. See awaitCopilotAPISession, which also
-	// explains why a channel that never comes up falls through to the pane
-	// rather than abandoning the welcome.
-	if h.Name == harness.CopilotName && copilotLaunchIntentForConv(convID).API &&
-		!awaitCopilotAPISession(convID) {
-		slog.Warn("spawn: the Copilot API channel never came up; delivering post-init "+
-			"through the pane instead", "conv", convID)
+	// about to replace and is lost. See awaitCopilotAPISession, which waits on
+	// the CONNECTION and not on the launch posture, and explains why the posture
+	// cannot answer this.
+	//
+	// copilotPaneFallback records the one outcome that changes where the two
+	// deliveries below go: the launch asked for the API channel and, after the
+	// bootstrap's whole budget, never got one. Both then take the pane. The
+	// entitlement for that — and the reason it must not be extended to any
+	// delivery that has a retry behind it — is on deliveryChannelPane; the short
+	// version is that post-init happens once and nothing re-delivers it, so
+	// holding here is not holding, it is dropping the agent's identity in
+	// silence.
+	copilotPaneFallback := h.Name == harness.CopilotName &&
+		copilotLaunchIntentForConv(convID).API && !awaitCopilotAPISession(convID)
+	if copilotPaneFallback {
+		// Error rather than Warn, and deliberately the second one: the bootstrap
+		// logs its own failure at Error too. The API drive is opt-in and not yet
+		// proven in the field, so an operator whose launch quietly ran on
+		// send-keys instead has to be able to find that out from the log rather
+		// than by noticing an agent behaving like a Copilot agent always did.
+		slog.Error("spawn: the Copilot API channel never came up within the bootstrap "+
+			"budget; this launch asked for the API drive and did not get one. The rename "+
+			"and the welcome are going through the pane instead, and this agent is "+
+			"running on send-keys",
+			"conv", convID, "budget", copilotAPIBootstrapTimeout())
 	}
 
 	// Apply the agent's name as the conversation title. The two harness
@@ -7040,7 +7058,11 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 			"conv", convID, "name", name)
 	}
 	if renameWanted && h.SupportsRename() {
-		if !deliverRename(convID, name) {
+		renameOn := deliveryChannelRouted
+		if copilotPaneFallback {
+			renameOn = deliveryChannelPane
+		}
+		if !deliverRenameOn(convID, name, renameOn) {
 			slog.Warn("spawn: rename delivery failed",
 				"conv", convID, "name", name)
 		}
@@ -7061,10 +7083,16 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 		switch {
 		case h.Name == harness.OpenCodeName:
 			err = sendOpenCodeNudge(convID, welcome)
-		case copilotAPIDriven(convID):
+		case !copilotPaneFallback && copilotAPIDriven(convID):
 			// The welcome is caller-derived text (name, role, descr, group, the
 			// spawner's title) and was the last piece of it still going into an
 			// API-driven pane as keystrokes.
+			//
+			// copilotPaneFallback is the sole exemption, and it is the same one
+			// the rename above takes — see deliveryChannelPane for what entitles
+			// it. Without the guard this case is still true in that state (the
+			// launch posture is durable and says API), the send fails "not
+			// connected", and the welcome is lost: the whole of TCL-1080.
 			err = sendCopilotAPIMessage(convID, welcome)
 		default:
 			err = injectTextAndSubmit(target, welcome)
