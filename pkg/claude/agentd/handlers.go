@@ -1206,17 +1206,18 @@ func handleOperatorMulticast(w http.ResponseWriter, req *sendReq) {
 // sender and the row is non-replyable. Agent sends pass false.
 func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string, memberFilter []string, operatorAuthored bool) ([]recipient, error) {
 	recipients, _, err := fanOutToGroupFiltered(
-		g, fromConv, subject, body, roleFilter, memberFilter, nil, true, operatorAuthored)
+		g, fromConv, subject, body, roleFilter, memberFilter, nil, true, operatorAuthored, 0)
 	return recipients, err
 }
 
 // fanOutToGroupFiltered optionally applies recipientFilter after all normal
 // membership/role/subset/self filters. A rejected recipient is counted but no
 // inbox row is inserted. Cron uses this to discard offline ticks by default;
-// bounded=false also keeps correctness-critical cron traffic exempt from
-// regular-message backpressure.
+// bounded=false keeps internal traffic exempt from regular-message
+// backpressure. A non-zero cronJobID additionally coalesces repeated cron
+// ticks to the latest undelivered row for each recipient.
 func fanOutToGroupFiltered(g *db.AgentGroup, fromConv, subject, body, roleFilter string, memberFilter []string,
-	recipientFilter func(string) bool, bounded, operatorAuthored bool,
+	recipientFilter func(string) bool, bounded, operatorAuthored bool, cronJobID int64,
 ) ([]recipient, int, error) {
 	members, err := db.ListAgentGroupMembers(g.ID)
 	if err != nil {
@@ -1312,6 +1313,11 @@ func fanOutToGroupFiltered(g *db.AgentGroup, fromConv, subject, body, roleFilter
 		var err error
 		if bounded {
 			id, pending, err = queueRegularAgentMessage(message)
+		} else if cronJobID > 0 {
+			id, err = queueCronAgentMessage(message, cronJobID)
+			if err == nil {
+				pending = queueDepthFor(finalConv, false)
+			}
 		} else {
 			id, err = queueAgentMessage(message)
 			if err == nil {

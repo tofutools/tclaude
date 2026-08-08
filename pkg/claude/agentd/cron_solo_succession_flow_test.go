@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -172,6 +173,60 @@ func TestCronSolo_OfflineTargetIsDiscardedUnlessJobOptsIntoQueue(t *testing.T) {
 	require.Equal(t, "ok", fireCronNow(t, f, queuedID))
 	msg := findCronMsg(t, target, "check this after resume")
 	assert.True(t, msg.DeliveredAt.IsZero(), "offline delivery remains queued")
+
+	// Repeated ticks from the same job do not build a stale delivery flood.
+	// The newest tick replaces the older undelivered row and is appended at the
+	// tail of the recipient's queue.
+	require.Equal(t, "ok", fireCronNow(t, f, queuedID))
+	rows, err := db.ListAgentMessagesForConv(target, 100)
+	require.NoError(t, err)
+	var cronRows []*db.AgentMessage
+	for _, row := range rows {
+		if row.Body == "check this after resume" {
+			cronRows = append(cronRows, row)
+		}
+	}
+	require.Len(t, cronRows, 1, "same-job offline ticks coalesce to the latest row")
+	assert.Greater(t, cronRows[0].ID, msg.ID, "replacement tick is appended at the queue tail")
+}
+
+// An interactive human-input hold is online, not offline. The offline queue
+// checkbox therefore remains false, but ticks still wait behind the hold and
+// must coalesce so answering the question cannot release a stale flood.
+func TestCronSolo_AwaitingHumanCoalescesWithoutOfflineQueueOptIn(t *testing.T) {
+	f := newFlow(t)
+	const target = "csol-held-aaaa-bbbb-cccc-000000000001"
+	f.HaveConvWithTitle(target, "held-worker")
+	f.HaveAliveSession(target, "spwn-csol-held", "tclaude-spwn-csol-held", f.TestCwd("work"))
+	f.SetSessionStatus(target, session.StatusAwaitingInput)
+
+	jobID, err := db.InsertAgentCronJob(&db.AgentCronJob{
+		Name: "held-nudge", OwnerConv: target,
+		TargetKind: db.CronTargetConv, TargetConv: target,
+		IntervalSeconds: 600, Body: "latest status check", Enabled: true,
+		// QueueWhenOffline deliberately remains false: the target is online,
+		// merely unsafe to inject into until the human answers.
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, "ok", fireCronNow(t, f, jobID))
+	agentd.WaitForBackgroundForTest()
+	first := findCronMsg(t, target, "latest status check")
+	assert.True(t, first.DeliveredAt.IsZero(), "interactive hold keeps the tick buffered")
+
+	require.Equal(t, "ok", fireCronNow(t, f, jobID))
+	agentd.WaitForBackgroundForTest()
+	latest := findCronMsg(t, target, "latest status check")
+	assert.Greater(t, latest.ID, first.ID, "new tick replaces and follows the older buffered tick")
+	assert.True(t, latest.DeliveredAt.IsZero())
+
+	f.SetSessionStatus(target, session.StatusIdle)
+	assert.Equal(t, 1, agentd.FlushUndeliveredForTest(target),
+		"clearing the hold delivers only the newest tick")
+	delivered, err := db.GetAgentMessage(latest.ID)
+	require.NoError(t, err)
+	require.NotNil(t, delivered)
+	assert.False(t, delivered.DeliveredAt.IsZero())
 }
 
 // Scenario C: the end-to-end happy path — reincarnate the target

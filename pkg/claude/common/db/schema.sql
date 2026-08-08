@@ -1244,3 +1244,12 @@ CREATE TABLE copilot_api_runtimes (
 		) STRICT
 	;
 
+CREATE TABLE agent_cron_messages (
+			message_id INTEGER PRIMARY KEY
+			           REFERENCES agent_messages(id) ON DELETE CASCADE,
+			cron_job_id INTEGER NOT NULL CHECK(cron_job_id > 0)
+		);
+
+CREATE INDEX idx_agent_cron_messages_job
+			ON agent_cron_messages(cron_job_id);
+
