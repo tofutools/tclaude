@@ -646,8 +646,8 @@ CREATE TABLE "agent_permissions" (
 				slug       TEXT NOT NULL,
 				granted_at INTEGER NOT NULL,
 				granted_by TEXT NOT NULL DEFAULT '',
-				effect     TEXT NOT NULL DEFAULT 'grant' CHECK (effect IN ('grant', 'deny')),
-				scope_json TEXT NOT NULL DEFAULT '' CHECK(length(CAST(scope_json AS BLOB)) BETWEEN 0 AND 262144),
+				effect     TEXT NOT NULL DEFAULT 'grant' CHECK (effect IN ('grant', 'deny')), scope_json TEXT NOT NULL DEFAULT ''
+			CHECK(length(CAST(scope_json AS BLOB)) BETWEEN 0 AND 262144),
 				PRIMARY KEY (agent_id, slug)
 			) STRICT;
 
@@ -662,9 +662,9 @@ CREATE TABLE "agent_sudo_grants" (
 				expires_at  INTEGER NOT NULL,
 				granted_by  TEXT NOT NULL,
 				reason      TEXT NOT NULL DEFAULT '',
-				revoked_at  INTEGER,
-				scope_json  TEXT NOT NULL DEFAULT '' CHECK(length(CAST(scope_json AS BLOB)) BETWEEN 0 AND 262144)
-			) STRICT;
+				revoked_at  INTEGER
+			, scope_json TEXT NOT NULL DEFAULT ''
+			CHECK(length(CAST(scope_json AS BLOB)) BETWEEN 0 AND 262144)) STRICT;
 
 CREATE INDEX idx_sudo_active
 				ON agent_sudo_grants(agent_id, expires_at) WHERE revoked_at IS NULL;
@@ -795,8 +795,8 @@ CREATE TABLE "agent_group_permissions" (
 			group_id   INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
 			slug       TEXT NOT NULL,
 			granted_at INTEGER NOT NULL,
-			granted_by TEXT NOT NULL DEFAULT '',
-			scope_json TEXT NOT NULL DEFAULT '' CHECK(length(CAST(scope_json AS BLOB)) BETWEEN 0 AND 262144),
+			granted_by TEXT NOT NULL DEFAULT '', scope_json TEXT NOT NULL DEFAULT ''
+			CHECK(length(CAST(scope_json AS BLOB)) BETWEEN 0 AND 262144),
 			PRIMARY KEY (group_id, slug)
 		) STRICT;
 
@@ -1255,3 +1255,4 @@ CREATE TABLE agent_cron_messages (
 
 CREATE INDEX idx_agent_cron_messages_job
 			ON agent_cron_messages(cron_job_id);
+
