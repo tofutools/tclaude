@@ -34,6 +34,19 @@ import (
 // against the granter's own shape, and only when the granter's own hold on
 // that slug is scoped. Tightening delegation to hold-it-to-grant-it is a
 // separate policy decision, not this one.
+//
+// That leniency is only safe because the granter cannot MANUFACTURE the
+// unheld state for itself. Two guards keep it honest, and both belong to this
+// rule rather than to the endpoints they live in:
+//
+//   - a DENY confers nothing (not "unconstrained"), so denying yourself a
+//     narrowly scoped slug does not buy you the right to re-grant it wide;
+//   - selfScopeShedRefused blocks an agent from revoking its own scoped grant.
+//
+// A residual remains by design: a DIFFERENT agent holding permissions.revoke
+// can strip A's scoped grant, after which A is genuinely unheld and the
+// leniency applies. That is collusion between two permission administrators,
+// and narrowing it belongs with the wider delegation-policy question above.
 
 // conferredGrant is one permission a request is about to mint onto another
 // agent: the slug plus the canonical scope JSON it would be written with
@@ -113,10 +126,9 @@ func permissionScopeCovers(granter, conferred PermissionScope) bool {
 // granterScopesForSlug returns the granter's own winning-tier scopes for slug,
 // or (nil, false) when the granter imposes no scope constraint at all.
 //
-// "No constraint" covers three cases that are different for authorization but
+// "No constraint" covers two cases that are different for authorization but
 // identical for delegation shape:
 //
-//   - the granter is the human (convID ""), who is unconstrained by design;
 //   - the granter's winning tier holds at least one UNSCOPED row (tier union
 //     with unscoped is unscoped — the same rule evalPermissionScope applies);
 //   - nothing grants the granter this slug, so there is no shape to attenuate
@@ -126,12 +138,19 @@ func permissionScopeCovers(granter, conferred PermissionScope) bool {
 // the group-lifecycle slugs structurally and carries no scope, so treating it
 // as a granting source here would read every group owner as an unscoped
 // granter of those slugs.
-func granterScopesForSlug(granterConvID, slug string) ([]PermissionScope, bool) {
-	if granterConvID == "" {
-		return nil, false
+func granterScopesForSlug(src permSources, cfg *config.Config, slug string) ([]PermissionScope, bool) {
+	v := resolvePermissionVerdictFrom(src, slug, cfg.HasDefaultPermission(slug))
+	if v.Resolution == permDeny {
+		// A granter DENIED a slug may confer nothing through it. Reading a deny
+		// as "unconstrained" (the same answer as "does not hold it") would make
+		// the whole rule sheddable: an agent whose grant is narrowly scoped
+		// could deny the slug ON ITSELF, which replaces the scoped row, and then
+		// confer it unscoped because it no longer "holds" a scope to attenuate
+		// against. An empty scope set is the fail-closed reading, and it costs
+		// nothing legitimate — an agent conferring a capability it is itself
+		// forbidden is not a flow worth preserving.
+		return []PermissionScope{}, true
 	}
-	cfg, _ := config.Load()
-	v := resolvePermissionVerdict(granterConvID, slug, cfg.HasDefaultPermission(slug))
 	if v.Resolution != permAllow || len(v.ScopeJSON) == 0 {
 		return nil, false
 	}
@@ -171,8 +190,13 @@ func checkGrantAttenuation(granterConvID string, grants []conferredGrant) error 
 	if granterConvID == "" || len(grants) == 0 {
 		return nil
 	}
+	// Read the granter's permission sources ONCE. A spawn conferring a dozen
+	// overrides would otherwise pay a config load plus three queries per slug
+	// for one unchanging caller state.
+	src := loadPermSources(granterConvID)
+	cfg, _ := config.Load()
 	for _, grant := range grants {
-		granterScopes, scoped := granterScopesForSlug(granterConvID, grant.Slug)
+		granterScopes, scoped := granterScopesForSlug(src, cfg, grant.Slug)
 		if !scoped {
 			continue
 		}
@@ -203,7 +227,7 @@ func checkGrantAttenuation(granterConvID string, grants []conferredGrant) error 
 // guessing. An empty set means "nothing" — every row was undecodable.
 func renderGranterScopes(scopes []PermissionScope) string {
 	if len(scopes) == 0 {
-		return "nothing (its stored scope cannot be read by this build)"
+		return "nothing (you hold no usable grant for it — it is denied, or its stored scope cannot be read by this build)"
 	}
 	rendered := make([]string, 0, len(scopes))
 	for _, scope := range scopes {
@@ -220,6 +244,45 @@ func renderConferredScope(scope PermissionScope) string {
 	return "[" + permissionScopeDisplay(scope) + "]"
 }
 
+// selfScopeShedRefused blocks an agent from REVOKING its own scoped grant.
+//
+// Attenuation asks "what is your own scope for this slug", and answers
+// "unconstrained" when the granter holds no scope — the settled reading, since
+// permissions.grant is recursive and an orchestrator routinely grants slugs it
+// does not hold. That answer is only safe if the granter cannot MANUFACTURE
+// the unheld state: an agent whose grant is pinned to one group could otherwise
+// revoke its own narrowed row and immediately confer the slug unscoped, on
+// itself or on a child, with the pin gone.
+//
+// So: your own narrowing is not yours to remove. It costs nothing legitimate —
+// an agent reducing its own authority can still deny itself the slug outright
+// (which granterScopesForSlug reads as "confers nothing"), and an operator or a
+// manager acting on a DIFFERENT agent is untouched.
+//
+// Returns true when the response has been written.
+func selfScopeShedRefused(w http.ResponseWriter, callerConvID string, target *resolvedTarget, slug string) bool {
+	if callerConvID == "" || target == nil || target.Sentinel || target.Key != callerConvID {
+		return false
+	}
+	rows, err := db.ListAgentPermissionOverrideRowsForConv(callerConvID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io",
+			"could not read your own permission overrides: "+err.Error())
+		return true
+	}
+	for _, row := range rows {
+		if row.Slug != slug || row.Effect != db.PermEffectGrant || row.ScopeJSON == "" {
+			continue
+		}
+		writeError(w, http.StatusForbidden, "scope_not_attenuated", fmt.Sprintf(
+			"permission %q: you may not remove the scope the operator put on your own grant — "+
+				"clearing it would let you re-acquire %s unscoped. Ask the operator to change it, "+
+				"or deny yourself the slug instead", slug, slug))
+		return true
+	}
+	return false
+}
+
 // normalizeBlueprintGrants validates a default-grant list authored on a role
 // or a template agent, and returns it canonicalized. It is the list twin of
 // normalizeSpawnPermissionOverrides and the same boundary: every slug must be
@@ -228,8 +291,16 @@ func renderConferredScope(scope PermissionScope) string {
 //
 // A blank slug is dropped rather than refused, keeping the pre-scope leniency
 // for an editor that posts an empty row.
+//
+// A repeated slug is REFUSED rather than deduped to one of its entries. When
+// entries were bare slugs a duplicate was meaningless; now [{S, narrow}, S] is
+// two different grants of S, and the tiering that consumes this list is
+// last-wins — so silently keeping either one picks a capability level the
+// author did not state. A list posted by an editor that cannot represent
+// scopes will land here rather than quietly deploying the unscoped arm.
 func normalizeBlueprintGrants(in []db.PermissionGrant) ([]db.PermissionGrant, *spawnFailure) {
 	out := []db.PermissionGrant{}
+	seen := map[string]bool{}
 	for _, grant := range in {
 		slug := strings.TrimSpace(grant.Slug)
 		if slug == "" {
@@ -239,6 +310,12 @@ func normalizeBlueprintGrants(in []db.PermissionGrant) ([]db.PermissionGrant, *s
 			return nil, &spawnFailure{http.StatusBadRequest, "unknown_slug",
 				fmt.Sprintf("unknown permission slug %q. Known slugs: %s.", slug, strings.Join(knownSlugs(), ", "))}
 		}
+		if seen[slug] {
+			return nil, &spawnFailure{http.StatusBadRequest, "duplicate_slug",
+				fmt.Sprintf("permission %q is listed more than once; list it exactly once, "+
+					"with the scope you want", slug)}
+		}
+		seen[slug] = true
 		canonical, err := canonicalPermissionScopeForSlug(slug, strings.TrimSpace(grant.Scope))
 		if err != nil {
 			return nil, &spawnFailure{http.StatusBadRequest, "invalid_scope",

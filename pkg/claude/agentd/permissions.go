@@ -1409,7 +1409,8 @@ func handlePermissionsDeny(w http.ResponseWriter, r *http.Request) {
 // per-conv target it clears whichever override (grant or deny) is
 // present, returning the slug to its inherited default. Idempotent.
 func handlePermissionsRevoke(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requirePermission(w, r, PermPermissionsRevoke); !ok {
+	caller, ok := requirePermission(w, r, PermPermissionsRevoke)
+	if !ok {
 		return
 	}
 	body, ok := decodeMutateReq(w, r)
@@ -1426,6 +1427,9 @@ func handlePermissionsRevoke(w http.ResponseWriter, r *http.Request) {
 	target, err := resolveTarget(body.Target)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
+		return
+	}
+	if selfScopeShedRefused(w, caller, target, body.Slug) {
 		return
 	}
 	resp := permissionsMutateResp{Target: body.Target, Slug: body.Slug, Effect: "default"}

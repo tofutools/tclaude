@@ -345,3 +345,134 @@ func TestAttenuation_BlueprintGrantListsCarryScopes(t *testing.T) {
 	})
 	assert.Equal(t, http.StatusBadRequest, bad.Code, bad.Body.String())
 }
+
+// The attenuation rule answers "unconstrained" when the granter holds no scope
+// for a slug, because permissions.grant is recursive by design. That is only
+// safe if a granter cannot MANUFACTURE the unheld state for itself — otherwise
+// every scoped agent shreds its own narrowing and re-grants wide, and the rule
+// has no force at all.
+//
+// Two shedding routes, both closed:
+//   - deny yourself the slug, then re-grant it unscoped;
+//   - revoke your own scoped row, then re-grant it unscoped.
+func TestAttenuation_GranterCannotShedItsOwnScope(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const lead = "atten-lead-aaaa-bbbb-cccc-000000000008"
+	f.HaveMember("alpha", lead)
+	grantScoped(t, f, lead, agentd.PermPermissionsGrant, nil)
+	grantScoped(t, f, lead, agentd.PermPermissionsRevoke, nil)
+	grantScoped(t, f, lead, agentd.PermRoutesPublish, map[string]any{"group": []string{"alpha"}})
+
+	agentPost := func(t *testing.T, verb string, body map[string]any) *httpResult {
+		t.Helper()
+		rec := agentReq(t, f, lead, http.MethodPost, "/v1/permissions/"+verb, body)
+		return &httpResult{Code: rec.Code, Body: rec.Body.String()}
+	}
+
+	// Route 1: self-deny is allowed (it only reduces authority) — but it does
+	// NOT unlock a wider re-grant, because a deny confers nothing.
+	denied := agentPost(t, "deny", map[string]any{"target": lead, "slug": agentd.PermRoutesPublish})
+	require.Equal(t, http.StatusOK, denied.Code, denied.Body)
+
+	regrant := agentPost(t, "grant", map[string]any{"target": lead, "slug": agentd.PermRoutesPublish})
+	require.Equal(t, http.StatusForbidden, regrant.Code, regrant.Body)
+	assert.Contains(t, regrant.Body, "scope_not_attenuated")
+
+	// Route 2: revoking your own SCOPED grant is refused outright.
+	require.Equal(t, http.StatusOK,
+		postPermissionScope(t, f, "revoke", map[string]any{"target": lead, "slug": agentd.PermRoutesPublish}).Code,
+		"operator clears the deny")
+	grantScoped(t, f, lead, agentd.PermRoutesPublish, map[string]any{"group": []string{"alpha"}})
+
+	shed := agentPost(t, "revoke", map[string]any{"target": lead, "slug": agentd.PermRoutesPublish})
+	require.Equal(t, http.StatusForbidden, shed.Code, shed.Body)
+	assert.Contains(t, shed.Body, "scope_not_attenuated")
+
+	// The narrowing is still in place after both attempts.
+	rows, err := db.ListAgentPermissionOverrideRowsForConv(lead)
+	require.NoError(t, err)
+	found := false
+	for _, row := range rows {
+		if row.Slug == agentd.PermRoutesPublish {
+			found = true
+			assert.Equal(t, db.PermEffectGrant, row.Effect)
+			assert.Equal(t, `{"group":["alpha"]}`, row.ScopeJSON)
+		}
+	}
+	assert.True(t, found, "the scoped grant survived both shedding attempts")
+
+	// Revoking a slug held UNSCOPED is untouched — this guard is about scopes,
+	// not about self-service permission management in general.
+	ok := agentPost(t, "revoke", map[string]any{"target": lead, "slug": agentd.PermPermissionsRevoke})
+	assert.Equal(t, http.StatusOK, ok.Code, ok.Body)
+}
+
+// A group grant is conferred on every member and is written UNSCOPED, so it is
+// a minting surface: an agent whose own hold is scoped must not be able to add
+// that slug to a group it belongs to and resolve unscoped on the next request
+// (the group tier unions its rows, and one unscoped row absorbs the tier).
+//
+// The endpoint gates on groups.rename, which is NOT in the permission registry
+// today — so no API grant can hand it to an agent and the path is effectively
+// human-only right now. This grants it at the storage layer, which is what the
+// daemon would resolve if the slug were ever registered, so the check is under
+// test before that day rather than after it.
+func TestAttenuation_GroupPermissionsPatchIsAttenuated(t *testing.T) {
+	f := newFlow(t)
+	group := f.HaveGroup("alpha")
+	const lead = "atten-lead-aaaa-bbbb-cccc-000000000009"
+	f.HaveMember("alpha", lead)
+	require.NoError(t, db.GrantAgentPermission(lead, agentd.PermGroupsRename, "<test>"))
+	grantScoped(t, f, lead, agentd.PermPermissionsGrant, nil)
+	grantScoped(t, f, lead, agentd.PermPermissionsRevoke, nil)
+	grantScoped(t, f, lead, agentd.PermRoutesPublish, map[string]any{"group": []string{"alpha"}})
+
+	rec := agentReq(t, f, lead, http.MethodPatch, "/v1/groups/alpha",
+		map[string]any{"permissions": []string{agentd.PermRoutesPublish}})
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "scope_not_attenuated")
+
+	grants, err := db.ListAgentGroupPermissionRows(group.ID)
+	require.NoError(t, err)
+	assert.Empty(t, grants, "a refused PATCH writes no group grant")
+}
+
+// agent_profiles pins a registry profile onto roster members that carry no
+// launch config of their own, and that profile's permission_overrides confer
+// grants the stored template never mentioned. The deploy check has to judge
+// the composed roster, not the template as stored.
+func TestAttenuation_TemplateDeployChecksDeployTimeProfileOverrides(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("home")
+	const lead = "atten-lead-aaaa-bbbb-cccc-000000000010"
+	haveSpawnCapableMember(t, f, "home", lead)
+	grantScoped(t, f, lead, agentd.PermTemplatesUse, nil)
+	grantScoped(t, f, lead, agentd.PermRoutesPublish, map[string]any{"group": []string{"home"}})
+
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{
+		Name:                "wide",
+		PermissionOverrides: db.UnscopedOverrides(map[string]string{agentd.PermRoutesPublish: db.PermEffectGrant}),
+	})
+	require.NoError(t, err)
+
+	// The stored template grants nothing at all.
+	require.Equal(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates",
+		map[string]any{
+			"name":   "bare-crew",
+			"agents": []map[string]any{{"name": "worker", "role": "worker"}},
+		}).Code)
+
+	rec := agentReq(t, f, lead, http.MethodPost, "/v1/templates/bare-crew/instantiate",
+		map[string]any{
+			"group_name":     "deployed-wide",
+			"task":           "t",
+			"agent_profiles": map[string]any{"worker": "wide"},
+		})
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "scope_not_attenuated")
+
+	g, err := db.GetAgentGroupByName("deployed-wide")
+	require.NoError(t, err)
+	assert.Nil(t, g, "a refused deploy must not create its group")
+}

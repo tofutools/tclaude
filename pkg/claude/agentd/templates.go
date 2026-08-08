@@ -2011,6 +2011,18 @@ func sanitizeImportedTemplate(body templateJSON) (templateJSON, []string) {
 						"agent %q: unknown permission slug %q — dropped", label, s))
 					continue
 				}
+				// A scope this build cannot make sense of degrades the same way
+				// an unknown slug does — the whole grant is DROPPED with a
+				// warning, never kept unscoped. Keeping it would import a
+				// deliberately narrow grant as a wildcard; 400ing the import
+				// would break the forward-compat contract the slug arm states
+				// one line up.
+				if _, err := canonicalPermissionScopeForSlug(s, strings.TrimSpace(grant.Scope)); err != nil {
+					warnings = append(warnings, fmt.Sprintf(
+						"agent %q: permission %q carries a scope this build cannot read (%v) — "+
+							"the whole grant was dropped rather than imported unscoped", label, s, err))
+					continue
+				}
 				grant.Slug = s
 				kept = append(kept, grant)
 			}
@@ -2344,10 +2356,6 @@ type permOverride struct {
 	// while dropping its scope would silently widen it.
 	Override db.PermissionOverride
 }
-
-// Effect is the bare effect, for the many readers (deploy reports, editor
-// previews) that only branch on grant vs deny.
-func (p permOverride) Effect() string { return p.Override.Effect }
 
 // effectiveTemplateAgentOwner computes the owner bit a deploy of this agent
 // would grant — resolveTemplateAgentAccess's owner tiers (referenced profile's
@@ -2909,19 +2917,6 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 	tmpl := spec.tmpl
 	reinforce := spec.intoExisting != nil
 
-	// Attenuation-only delegation, checked BEFORE anything is created or
-	// spawned. A deploy is a minting surface like any other: its roster confers
-	// birth-time grants composed from role defaults, the referenced profile and
-	// the template-local one. Without this an agent whose own grant is narrowly
-	// scoped could deploy a template that hands a worker the same slug unscoped
-	// and act through the worker — the bypass the spawn-boundary check exists to
-	// close. Up front, because refusing mid-roster would strand agents that
-	// already spawned. See permission_attenuation.go.
-	if err := checkTemplateDeployAttenuation(tmpl.Agents, spec.caller); err != nil {
-		writeError(w, http.StatusForbidden, "scope_not_attenuated", err.Error())
-		return
-	}
-
 	// The base context + the process rendered into each new agent's briefing
 	// differ by mode:
 	//   - create-new: the template's default_context (or the caller's edited copy,
@@ -2959,6 +2954,27 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 	// policy: they can select danger-full-access for otherwise-unconfigured
 	// members and therefore decide whether any policy tier applies at all.
 	roster := applyAgentProfileOverrides(tmpl.Agents, spec.agentProfiles)
+
+	// Attenuation-only delegation, checked BEFORE anything is created or
+	// spawned. A deploy is a minting surface like any other: its roster confers
+	// birth-time grants composed from role defaults, the referenced profile and
+	// the template-local one. Without this an agent whose own grant is narrowly
+	// scoped could deploy a template that hands a worker the same slug unscoped
+	// and act through the worker — the bypass the spawn-boundary check exists to
+	// close. Up front, because refusing mid-roster would strand agents that
+	// already spawned.
+	//
+	// It judges ROSTER, not tmpl.Agents: agent_profiles is a caller-supplied
+	// request field that pins a registry profile onto any member with no launch
+	// config of its own, and that profile's permission_overrides confer grants
+	// the stored template never mentioned. Checking the template alone would
+	// leave the widest tier of the composition unexamined. See
+	// permission_attenuation.go.
+	if err := checkTemplateDeployAttenuation(roster, spec.caller); err != nil {
+		cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
+		writeError(w, http.StatusForbidden, "scope_not_attenuated", err.Error())
+		return
+	}
 
 	// Freeze the target policy once for the whole template run. A create-new
 	// group has no group assignment yet, so it composes the global tier only;

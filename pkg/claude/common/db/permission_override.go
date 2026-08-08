@@ -67,21 +67,6 @@ func UnscopedOverrides(in map[string]string) map[string]PermissionOverride {
 	return out
 }
 
-// OverrideEffects projects the scoped shape back down to slug→effect, for
-// readers that genuinely only care about the effect (comparisons in the
-// dashboard editor, audit summaries, "which slugs does this blueprint touch").
-// Never use it on a WRITE path: it discards scopes.
-func OverrideEffects(in map[string]PermissionOverride) map[string]string {
-	if in == nil {
-		return nil
-	}
-	out := make(map[string]string, len(in))
-	for slug, override := range in {
-		out[slug] = override.Effect
-	}
-	return out
-}
-
 // SortedOverrideSlugs returns the map's slugs in a deterministic order, so a
 // deploy/grant report reads the same on every run (Go map order is not).
 func SortedOverrideSlugs(in map[string]PermissionOverride) []string {
@@ -146,18 +131,6 @@ func UnscopedGrants(slugs []string) []PermissionGrant {
 	out := make([]PermissionGrant, 0, len(slugs))
 	for _, slug := range slugs {
 		out = append(out, PermissionGrant{Slug: slug})
-	}
-	return out
-}
-
-// GrantSlugs projects the list back down to bare slugs, for readers that only
-// need to know WHICH permissions a blueprint mentions (counts, one-line
-// summaries, membership checks). Never use it on a WRITE path: it discards
-// scopes.
-func GrantSlugs(grants []PermissionGrant) []string {
-	out := make([]string, 0, len(grants))
-	for _, grant := range grants {
-		out = append(out, grant.Slug)
 	}
 	return out
 }

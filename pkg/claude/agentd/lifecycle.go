@@ -3095,8 +3095,10 @@ func decodeSpawnBody(w http.ResponseWriter, r *http.Request, body *agent.SpawnRe
 //
 // It returns "" whenever no named profile resolves, including for a request
 // naming one that does not exist. A scoped grant then finds the dimension
-// undescribed and fails closed; the request still reaches the ordinary
-// invalid_profile 400 further down, which is where a bad name belongs.
+// undescribed and fails closed, so a scoped caller sees 403 rather than the
+// ordinary invalid_profile 400 the unscoped caller still gets further down.
+// That ordering is deliberate: the gate must not leak which profile names
+// exist to a caller that is not allowed to spawn with them anyway.
 func resolvedSpawnProfileNameForScope(g *db.AgentGroup, requested string) string {
 	if name := strings.TrimSpace(requested); name != "" {
 		prof, err := db.ResolveSpawnProfile(name)
