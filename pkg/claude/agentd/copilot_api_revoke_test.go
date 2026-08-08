@@ -47,6 +47,24 @@ var copilotAPIPostureWriters = []struct {
 	// Legacy backfill for a conversation whose resume profile went missing.
 	{"lifecycle.go", "recoverMissingConversationResumeProfile", "SetAgentRelaunchProfile"},
 	{"lifecycle.go", "recoverMissingConversationResumeProfile", "SetConversationResumeProfile"},
+	// The OPERATOR's durable drive switch (TCL-1082), which is categorically not
+	// the write this guard forbids and does not reopen the decision on
+	// [copilotAPIChannelFailed]. That decision is about the DAEMON revoking from
+	// an OBSERVATION — a channel that failed to come up is not an agent that
+	// un-chose the drive, and weather must not withdraw a person's opt-out. These
+	// two writes have the opposite author: a person, through an authoring surface
+	// built for the purpose, arriving as a decision rather than as evidence. The
+	// daemon still never demotes an agent by itself.
+	//
+	// Both sites also do what that decision's own closing sentence asks of anyone
+	// building a durable revoke — reach for the agent profile DELIBERATELY, or not
+	// at all. The agent profile is written when a stable agent exists, because it
+	// is what routes; the conversation fallback is written only when there is no
+	// agent row at all (a clone, or a direct `session new`), which is the one
+	// shape where it is the sole holder rather than the inert-or-surprising record
+	// described there.
+	{"copilot_drive_assign.go", "writeCopilotDrive", "SetAgentRelaunchProfile"},
+	{"copilot_drive_assign.go", "writeCopilotDrive", "SetConversationCopilotAPI"},
 }
 
 // TestNoAutomaticRevokeOfTheCopilotAPIPosture is the mechanical statement that
@@ -61,6 +79,15 @@ var copilotAPIPostureWriters = []struct {
 // argument, including that this is PHASE-DEPENDENT and due for revisiting once
 // the drive is verified, is on [copilotAPIChannelFailed]. Read that before
 // adding an entry above.
+//
+// The rule is about the AUTHOR of the write, not about the write. Since TCL-1082
+// an operator can turn the drive off durably through `tclaude agent set-drive`,
+// and those writes are allow-listed above without weakening anything here: the
+// sentence this test enforces is that the daemon never demotes an agent BY
+// ITSELF. A person deciding to is the remedy that decision assumes exists, not an
+// exception to it. So a new entry is still the wrong move for anything the daemon
+// concludes on its own — the question to ask of a candidate entry is who authored
+// the change, not whether the code path looks similar.
 //
 // # Why a test rather than the doc comment alone
 //

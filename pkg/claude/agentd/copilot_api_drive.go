@@ -301,6 +301,14 @@ func copilotAPIConnected(convID string) bool {
 // (The projection path deliberately does NOT propagate upward — see
 // projectSessionRelaunchProfilesTx — so this is specific to enrollment, not a
 // general property of the fallback.)
+//
+// The OPERATOR-authored durable revoke this paragraph anticipates now exists:
+// `tclaude agent set-drive <agent> send-keys` (TCL-1082, writeCopilotDrive). It
+// takes the advice above literally — the agent profile when a stable agent
+// exists, the conversation fallback only when there is no agent row to have one.
+// It changes nothing here: this observation still writes no record, because the
+// distinction that matters is not which record a revoke lands in but whether a
+// PERSON or the WEATHER authored it.
 func copilotAPIChannelFailed(convID string) bool {
 	return copilotAPISessions.ChannelFailed(convID)
 }
