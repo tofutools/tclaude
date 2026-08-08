@@ -60,11 +60,13 @@ export function createMessageAccessDialogState({ canRestoreFocus = () => true } 
       return open({ kind: 'message', prefill: { ...prefill } });
     },
     openOperatorMessage(context = {}) {
-      if (!context.agent) return false;
+      const allLive = !!context.allLive;
+      if (!allLive && !context.agent) return false;
       return open({
         kind: 'operator-message',
-        agent: String(context.agent),
-        label: String(context.label || context.agent),
+        agent: allLive ? '' : String(context.agent),
+        label: String(context.label || (allLive ? 'all live agents' : context.agent)),
+        allLive,
         restoreFocus: typeof context.restoreFocus === 'function' ? context.restoreFocus : null,
       });
     },

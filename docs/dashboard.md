@@ -591,6 +591,12 @@ a tabbed operations surface. Common affordances across the data tabs:
   (`inherit → always show → always hide`).
 - **Expandable rows** — `<details>` open/closed state persists in
   `localStorage` across polls.
+- **Command palette** — the header button or **Ctrl/Cmd-K** opens searchable
+  dashboard actions. **Announce to all live agents…** opens a human-authored
+  message composer and sends one copy to every active agent whose tmux session
+  is live when you submit. Group boundaries do not apply: ungrouped agents are
+  included, agents in several groups receive one copy, and offline agents are
+  not queued.
 - Interactive list edits are generally **optimistic**: the UI applies the
   change locally, fires the API call, and rolls back on failure; the next
   2-second poll reconciles to canonical state.

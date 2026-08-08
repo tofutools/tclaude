@@ -66,6 +66,7 @@ function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
   const busyRef = useRef(false);
   const bodyRef = useRef(null);
   const fileInputRef = useRef(null);
+  const allLive = !!descriptor.allLive;
   const dirty = !!subject || !!body || files.length > 0;
 
   const addFiles = (incoming) => {
@@ -83,10 +84,11 @@ function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
       subject,
       body,
       files: Object.freeze([...files]),
+      ...(allLive ? { allLive: true } : {}),
     });
     setError('');
-    if (!draft.body.trim() && !draft.files.length) {
-      setError('Write a message or attach a file.');
+    if (!draft.body.trim() && (allLive || !draft.files.length)) {
+      setError(allLive ? 'Write an announcement.' : 'Write a message or attach a file.');
       return;
     }
     busyRef.current = true;
@@ -118,26 +120,35 @@ function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
     registerClose=${registerClose}
     guardBackdropDrag=${true}
     onPaste=${(event) => {
+      if (allLive) return;
       const pasted = Array.from(event.clipboardData?.files || []);
       if (!pasted.length) return;
       event.preventDefault();
       addFiles(pasted);
     }}
     onDragOver=${(event) => {
+      if (allLive) return;
       if (event.dataTransfer?.types?.includes('Files')) event.preventDefault();
     }}
     onDrop=${(event) => {
+      if (allLive) return;
       const dropped = Array.from(event.dataTransfer?.files || []);
       if (!dropped.length) return;
       event.preventDefault();
       addFiles(dropped);
     }}>
-    <h3 id="operator-message-title"><${Words} plain="Send message to agent" wizard="✒ Send a missive to the familiar"/></h3>
+    <h3 id="operator-message-title"><${Words}
+      plain=${allLive ? 'Announce to all live agents' : 'Send message to agent'}
+      wizard=${allLive ? '📯 Proclaim to all channeling familiars' : '✒ Send a missive to the familiar'}/></h3>
     <p class="modal-hint" id="operator-message-desc"><${Words}
-      plain="Queued through the agent mailbox, so incoming agent output cannot interfere with what you type."
-      wizard="Sealed into the familiar's mailbox, beyond the meddling of terminal omens."/></p>
+      plain=${allLive
+        ? 'Sent once to every agent that is live when you submit. Offline agents are not queued.'
+        : 'Queued through the agent mailbox, so incoming agent output cannot interfere with what you type.'}
+      wizard=${allLive
+        ? 'Sounded once to every familiar channeling when you proclaim; slumbering familiars will not be stirred.'
+        : "Sealed into the familiar's mailbox, beyond the meddling of terminal omens."}/></p>
     <div class="cron-create-row"><span class="cron-create-label"><${Words} plain="To" wizard="Familiar"/></span>
-      <div class="cron-create-target"><strong id="operator-message-to" title=${descriptor.agent}>${descriptor.label}</strong></div></div>
+      <div class="cron-create-target"><strong id="operator-message-to" title=${allLive ? 'Roster recalculated when sent' : descriptor.agent}>${descriptor.label}</strong></div></div>
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Subject" wizard="Seal"/></span>
       <input id="operator-message-subject" type="text" maxlength="256" placeholder="optional" autocomplete="off"
         value=${subject} readOnly=${busy} onInput=${(event) => setSubject(event.currentTarget.value)}/></label>
@@ -145,18 +156,18 @@ function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
       <textarea ref=${bodyRef} id="operator-message-body" rows="6" maxlength="16384"
         placeholder="Message text — Ctrl/Cmd+Enter to send" spellcheck=${true} value=${body} readOnly=${busy}
         onInput=${(event) => setBody(event.currentTarget.value)}></textarea></label>
-    <div class="cron-create-row"><span class="cron-create-label"><${Words} plain="Attachments" wizard="Enclosures"/></span>
+    ${!allLive && html`<div class="cron-create-row"><span class="cron-create-label"><${Words} plain="Attachments" wizard="Enclosures"/></span>
       <div class="cron-create-target spawn-attachments"><div class="spawn-attachments-controls">
         <button type="button" id="operator-message-attach-btn" disabled=${busy}
           onClick=${() => fileInputRef.current?.click()}><${Words} plain="📎 Attach files…" wizard="📎 Bind relics…"/></button>
         <input ref=${fileInputRef} type="file" id="operator-message-attach-input" multiple hidden disabled=${busy}
           onChange=${(event) => { addFiles(event.currentTarget.files); event.currentTarget.value = ''; }}/>
         <span class="spawn-attachments-hint"><${Words} plain="…or drag files here / paste a screenshot" wizard="…or draw relics here / paste a captured vision"/></span>
-      </div><${OperatorAttachmentList} files=${files} busy=${busy} remove=${removeFile}/></div></div>
+      </div><${OperatorAttachmentList} files=${files} busy=${busy} remove=${removeFile}/></div></div>`}
     <${ErrorLine} id="operator-message-error" value=${error}/>
     <div class="modal-buttons"><button id="operator-message-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></button>
       <span class="spacer"></span><button id="operator-message-submit" class="primary operator-message-submit" type="button" disabled=${busy} onClick=${submit}>
-        <${Words} plain=${busy ? 'Queueing…' : 'Send'} wizard=${busy ? '✒ Sending missive…' : '✒ Send missive'}/></button></div>
+        <${Words} plain=${busy ? 'Queueing…' : allLive ? 'Announce' : 'Send'} wizard=${busy ? '✒ Sending missive…' : allLive ? '📯 Proclaim' : '✒ Send missive'}/></button></div>
   </${Overlay}>`;
 }
 

@@ -69,6 +69,7 @@ import { scribeGroupVisible } from './scribe-groups.js';
 import { closeTerminalsForConvs, closeTerminalsForWindowOp, focusTerminalForConv, openWebWindowPane } from './terminals-tab.js';
 import { createPaletteWindowOperator, webWindowTargets } from './palette-window-ops.js';
 import { buildRegisteredCommands } from './command-registry.js';
+import { openOperatorMessageDialog } from './message-access-dialog-controller.js';
 
 // wiz(regular, wizard) returns the arcane string in 🧙 mode, else the plain
 // one. buildCommands wraps every command's PRESENTED label + hint (and its
@@ -237,6 +238,17 @@ export function buildCommands(snapshot) {
   const offlineAll = (snap.agents || []).filter(a => !a.online).length;
   if (onlineAll) {
     const plural = onlineAll === 1 ? '' : 's';
+    cmds.push({
+      icon: wiz('📣', '📯'), label: wiz('Announce to all live agents…', 'Proclaim to all channeling familiars…'),
+      hint: wiz(`send one human-authored message to ${onlineAll} currently live agent${plural}`,
+        `sound one human proclamation to ${onlineAll} channeling familiar${plural}`),
+      keywords: 'announce broadcast message notify all live online agents global everyone'
+        + ' proclaim herald trumpet channeling familiars',
+      run: () => openOperatorMessageDialog({
+        allLive: true,
+        label: `all live agents (currently ${onlineAll})`,
+      }),
+    });
     cmds.push({
       icon: wiz('⏻', '🌙'), label: wiz('Shut down all agents', 'Slumber all familiars'),
       hint: wiz(`stop ${onlineAll} running agent${plural} (resumable; no data deleted)`,
