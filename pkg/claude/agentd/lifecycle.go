@@ -7339,7 +7339,7 @@ func SpawnDetachedTclaudeNew(args clcommon.SpawnArgs) error {
 	// discovery poll resolves the id; recording nothing here is correct rather
 	// than a gap. See recordCopilotAPIPort.
 	recordCopilotAPIPort(args.SessionID, args.CopilotAPIPort)
-	startCopilotAPIBootstrap(args.SessionID, args.CopilotAPI)
+	startCopilotAPIBootstrap(args.SessionID, args.CopilotAPI, args.InitialPrompt)
 	return nil
 }
 
@@ -7365,7 +7365,7 @@ func SpawnDetachedTclaudeResume(args clcommon.SpawnArgs) error {
 	// A resume always knows its conversation — that is what it is resuming — so
 	// unlike the fresh-spawn path this never defers the record.
 	recordCopilotAPIPort(args.ConvID, args.CopilotAPIPort)
-	startCopilotAPIBootstrap(args.ConvID, args.CopilotAPI)
+	startCopilotAPIBootstrap(args.ConvID, args.CopilotAPI, args.InitialPrompt)
 	return nil
 }
 

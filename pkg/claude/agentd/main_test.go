@@ -107,7 +107,7 @@ func TestMain(m *testing.M) {
 	// Suppressed binary-wide for the same reason as the two defaults above:
 	// package agentd's internal tests share this binary and cannot reach
 	// newFlow. Tests that want to observe the kick-off swap their own.
-	restoreCopilotBootstrap := agentd.SetCopilotAPIBootstrapForTest(func(string, bool) {})
+	restoreCopilotBootstrap := agentd.SetCopilotAPIBootstrapForTest(func(string, bool, string) {})
 	restoreCodexProbe := session.SetCodexEffectiveConfigProbeForTest(
 		func(string, []sandboxpolicy.EnvironmentEntry, string) (json.RawMessage, error) {
 			return json.RawMessage(`{"config":{},"origins":{}}`), nil

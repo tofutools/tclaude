@@ -39,7 +39,7 @@ func TestCopilotBuildCommandEmbeddedServer(t *testing.T) {
 		{
 			// The server flags are tclaude's, so they sit with the other
 			// tclaude-owned options: after model/effort, before the permission
-			// flags and any pass-through args, with -i last.
+			// flags and any pass-through args.
 			name: "the embedded server sits before permission and pass-through args",
 			spec: SpawnSpec{
 				SessionID:      uuid,
@@ -47,11 +47,44 @@ func TestCopilotBuildCommandEmbeddedServer(t *testing.T) {
 				CopilotAPIPort: 4599,
 				ApprovalPolicy: CopilotApprovalAllowTools,
 				ExtraArgs:      []string{"--no-color"},
-				InitialPrompt:  "go",
 			},
 			want: cp("copilot --session-id " + uuid + " --model=claude-sonnet-4.6" +
 				" --ui-server --host 127.0.0.1 --port 4599" +
-				" --allow-all-tools --no-ask-user --no-color -i go"),
+				" --allow-all-tools --no-ask-user --no-color"),
+		},
+		{
+			// -i is SUPPRESSED under the API drive. Not tidiness: the drive
+			// creates its own RPC session at this same --session-id, and doing so
+			// starts that id fresh (measured), so a briefing delivered by -i would
+			// run in the pane, render, and then be discarded when the drive
+			// created the session moments later. The agent would come up having
+			// forgotten a turn the human watched it answer. The prompt goes over
+			// session.send instead.
+			name: "the API drive suppresses -i, since its session starts fresh",
+			spec: SpawnSpec{
+				SessionID:      uuid,
+				CopilotAPIPort: 4599,
+				InitialPrompt:  "go",
+			},
+			want: cp("copilot --session-id " + uuid +
+				" --ui-server --host 127.0.0.1 --port 4599"),
+		},
+		{
+			// The suppression is keyed on the DRIVE, not on the harness: a
+			// send-keys Copilot launch still gets its briefing on the command
+			// line, exactly as before this drive existed.
+			name: "the send-keys drive still gets -i",
+			spec: SpawnSpec{SessionID: uuid, InitialPrompt: "go"},
+			want: cp("copilot --session-id " + uuid + " -i go"),
+		},
+		{
+			// Same for a resumed API launch. --resume does carry a conversation
+			// forward, but the drive still creates at that id and still empties
+			// it, so the briefing is no safer here than on a fresh launch.
+			name: "a resumed API launch suppresses -i too",
+			spec: SpawnSpec{ResumeID: uuid, CopilotAPIPort: 4599, InitialPrompt: "go"},
+			want: cp("copilot --resume=" + uuid +
+				" --ui-server --host 127.0.0.1 --port 4599"),
 		},
 		{
 			// A negative or zero value is "no port", never a flag with a

@@ -1965,8 +1965,18 @@ type agentState struct {
 	// never came up. That is why it is not the whole answer — see
 	// CopilotAPIConnected.
 	CopilotAPI bool `json:"copilot_api,omitempty"`
-	// CopilotAPIConnected reports that tclaude holds a live, ownership-proved
-	// connection to this agent's embedded server RIGHT NOW.
+	// CopilotAPIConnected reports that tclaude still holds an OPEN connection to
+	// this agent's embedded server.
+	//
+	// Precisely that, and no more. It is not a re-proof of ownership: the
+	// connection was proved to belong to the agent's pane when it was
+	// established (see copilotAPISession.StillOwned), and what is re-read per
+	// tick is only whether that same socket is still open. Saying
+	// "ownership-proved right now" would be this series' proxy-value mistake
+	// committed in the field's own documentation — a true statement about the
+	// past, worn as a claim about the present. A caller about to ACT on the
+	// connection should call StillOwned; a caller rendering a badge should not
+	// pay for a /proc walk per agent per tick.
 	//
 	// A separate field from CopilotAPI rather than a refinement of it, because
 	// they are answers to different questions and the difference is exactly
@@ -2395,9 +2405,12 @@ func stateForConvInSessionsBatched(
 			intent := copilotLaunchIntentForConv(pick.ConvID)
 			out.CopilotAPI = intent.API
 			// Asked of the connection registry, not of intent and not of the
-			// port record. Cheap — a map read plus a non-blocking channel
-			// check — and asked only for an agent that was launched on the API
-			// drive, since for anyone else the answer is a foregone false.
+			// port record. Cheap by construction — a map read plus a
+			// non-blocking channel check, deliberately NOT the ownership
+			// re-proof, which is a kernel-table walk and belongs on the paths
+			// that act rather than on one that renders. Asked only for an agent
+			// launched on the API drive, since for anyone else the answer is a
+			// foregone false.
 			if intent.API {
 				out.CopilotAPIConnected = copilotAPISessions.Connected(pick.ConvID)
 			}

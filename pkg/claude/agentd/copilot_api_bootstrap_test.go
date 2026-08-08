@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -419,8 +420,11 @@ func TestCopilotAPISessionStillOwnedNeedsBothHalves(t *testing.T) {
 		"precondition: this test process owns the fake server's listener")
 	assert.True(t, owned.StillOwned())
 
+	// A real, live pid that is NOT the listener's owner — this test binary's own
+	// parent. pid 1 would be rejected by portowner before it ever compared an
+	// inode, so the arm would pass without exercising the comparison it names.
 	foreign := &copilotAPISession{
-		ConvID: "conv-1", Port: server.port(), PanePID: 1, Client: client,
+		ConvID: "conv-1", Port: server.port(), PanePID: os.Getppid(), Client: client,
 	}
 	assert.False(t, foreign.StillOwned(),
 		"a live connection to a listener owned by someone else is exactly the case "+
@@ -441,7 +445,7 @@ func TestBootstrapCopilotAPISessionRefusesAnUnrecordedConversation(t *testing.T)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, err := bootstrapCopilotAPISession(ctx, "conv-unknown")
+	_, err := bootstrapCopilotAPISession(ctx, "conv-unknown", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no recorded Copilot API port")
 }
@@ -449,8 +453,41 @@ func TestBootstrapCopilotAPISessionRefusesAnUnrecordedConversation(t *testing.T)
 // startCopilotAPIBootstrap must be a no-op for every launch that did not take
 // the drive, and for one whose conversation id is not known yet — those record
 // their port from the point they discover it and call this again there.
+// Called through runCopilotAPIBootstrap rather than the startCopilotAPIBootstrap
+// variable ON PURPOSE: TestMain swaps that variable for a binary-wide no-op, so
+// a test driving it would pass with both guard clauses deleted.
 func TestStartCopilotAPIBootstrapIsQuietWithoutADriveOrAConversation(t *testing.T) {
-	startCopilotAPIBootstrap("conv-1", false)
-	startCopilotAPIBootstrap("", true)
+	called := make(chan string, 4)
+	original := bootstrapCopilotAPISessionFn
+	bootstrapCopilotAPISessionFn = func(
+		_ context.Context, convID, _ string,
+	) (*copilotAPISession, error) {
+		called <- convID
+		return nil, errors.New("should not have been reached")
+	}
+	t.Cleanup(func() { bootstrapCopilotAPISessionFn = original })
+
+	runCopilotAPIBootstrap("conv-1", false, "")
+	runCopilotAPIBootstrap("", true, "")
+
+	// The positive control. Without it the two negatives above would pass just
+	// as well against a function that never calls the seam at all, which is the
+	// exact failure this test was written to stop being.
+	runCopilotAPIBootstrap("conv-2", true, "")
+	select {
+	case got := <-called:
+		assert.Equal(t, "conv-2", got,
+			"the only launch that asked for the drive AND named a conversation")
+	case <-time.After(10 * time.Second):
+		t.Fatal("an API launch with a conversation never reached the bootstrap")
+	}
+
+	// Drained after the control, so anything the guarded calls let through has
+	// had at least as long to arrive as the control took.
+	select {
+	case got := <-called:
+		t.Fatalf("a guarded call reached the bootstrap: conv_id=%q", got)
+	default:
+	}
 	assert.Nil(t, copilotAPISessions.Handle("conv-1"))
 }

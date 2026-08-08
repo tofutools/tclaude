@@ -556,7 +556,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 					// allocated Copilot API port can be recorded against a
 					// conversation. No-ops unless this launch took the API drive.
 					recordCopilotAPIPort(s.ConvID, proofArgs.CopilotAPIPort)
-					startCopilotAPIBootstrap(s.ConvID, proofArgs.CopilotAPI)
+					startCopilotAPIBootstrap(s.ConvID, proofArgs.CopilotAPI, proofArgs.InitialPrompt)
 					res.NewConv, res.NewTmux, res.Label = s.ConvID, newTmux, label
 					commitRouteHelper()
 					return res, nil

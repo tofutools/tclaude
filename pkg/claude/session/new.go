@@ -1654,7 +1654,8 @@ func runNew(params *NewParams) error {
 			launchEnvironment = launchSandbox.Effective.Environment
 		}
 		if err := ValidateCopilotAPIFolderTrust(
-			h, params.CopilotAPI, params.TrustDir, cwd, launchEnvironment,
+			h, params.CopilotAPI, params.TrustDir,
+			strings.TrimSpace(params.Resume) != "", cwd, launchEnvironment,
 		); err != nil {
 			return err
 		}

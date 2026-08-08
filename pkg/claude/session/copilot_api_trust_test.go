@@ -36,7 +36,7 @@ func copilotHarness(t *testing.T) *harness.Harness {
 func TestCopilotAPIFolderTrustIgnoresTheSendKeysDrive(t *testing.T) {
 	home := t.TempDir()
 	assert.NoError(t, ValidateCopilotAPIFolderTrust(
-		copilotHarness(t), false, false, t.TempDir(), copilotAPITrustEnv(home)))
+		copilotHarness(t), false, false, false, t.TempDir(), copilotAPITrustEnv(home)))
 }
 
 // A launch that is about to seed the directory is admitted on that promise.
@@ -46,7 +46,7 @@ func TestCopilotAPIFolderTrustIgnoresTheSendKeysDrive(t *testing.T) {
 func TestCopilotAPIFolderTrustAdmitsALaunchThatWillSeed(t *testing.T) {
 	home := t.TempDir()
 	assert.NoError(t, ValidateCopilotAPIFolderTrust(
-		copilotHarness(t), true, true, t.TempDir(), copilotAPITrustEnv(home)))
+		copilotHarness(t), true, true, false, t.TempDir(), copilotAPITrustEnv(home)))
 }
 
 // The refusal itself, and the reason it exists: an untrusted directory under
@@ -56,7 +56,7 @@ func TestCopilotAPIFolderTrustRefusesAnUntrustedDir(t *testing.T) {
 	cwd := t.TempDir()
 
 	err := ValidateCopilotAPIFolderTrust(
-		copilotHarness(t), true, false, cwd, copilotAPITrustEnv(home))
+		copilotHarness(t), true, false, false, cwd, copilotAPITrustEnv(home))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), cwd,
 		"the refusal must name the directory, since that is what the operator has to act on")
@@ -79,7 +79,7 @@ func TestCopilotAPIFolderTrustAdmitsAnAlreadyTrustedDir(t *testing.T) {
 		}, home, cwd))
 
 	assert.NoError(t, ValidateCopilotAPIFolderTrust(
-		copilotHarness(t), true, false, cwd, copilotAPITrustEnv(home)))
+		copilotHarness(t), true, false, false, cwd, copilotAPITrustEnv(home)))
 }
 
 // The store the check reads must be the store the LAUNCH reads. A profile that
@@ -100,10 +100,10 @@ func TestCopilotAPIFolderTrustReadsTheLaunchesOwnStore(t *testing.T) {
 		}, launchHome, cwd))
 
 	assert.NoError(t, ValidateCopilotAPIFolderTrust(
-		copilotHarness(t), true, false, cwd, copilotAPITrustEnv(launchHome)),
+		copilotHarness(t), true, false, false, cwd, copilotAPITrustEnv(launchHome)),
 		"the launch's own store trusts this directory")
 	assert.Error(t, ValidateCopilotAPIFolderTrust(
-		copilotHarness(t), true, false, cwd, copilotAPITrustEnv(otherHome)),
+		copilotHarness(t), true, false, false, cwd, copilotAPITrustEnv(otherHome)),
 		"a different store must produce a different answer, or the check is not "+
 			"reading the file it claims to")
 }
@@ -114,7 +114,7 @@ func TestCopilotAPIFolderTrustReadsTheLaunchesOwnStore(t *testing.T) {
 func TestCopilotAPIFolderTrustIsQuietWithoutACwd(t *testing.T) {
 	home := t.TempDir()
 	assert.NoError(t, ValidateCopilotAPIFolderTrust(
-		copilotHarness(t), true, false, "  ", copilotAPITrustEnv(home)))
+		copilotHarness(t), true, false, false, "  ", copilotAPITrustEnv(home)))
 }
 
 // Other harnesses have their own trust stores and no embedded server, so the
@@ -125,7 +125,34 @@ func TestCopilotAPIFolderTrustIgnoresOtherHarnesses(t *testing.T) {
 		h, err := harness.Resolve(name)
 		require.NoError(t, err)
 		assert.NoError(t, ValidateCopilotAPIFolderTrust(
-			h, true, false, filepath.Join(t.TempDir(), "x"), copilotAPITrustEnv(home)),
+			h, true, false, false, filepath.Join(t.TempDir(), "x"), copilotAPITrustEnv(home)),
 			"harness %s has no embedded server to be invisibly driven over", name)
 	}
+}
+
+// The resume path refuses on the same grounds but must not name a flag its argv
+// cannot carry. `session new -r` emits no --trust-dir, so an operator told to
+// pass one would add it to a command that has nowhere to put it, and would
+// conclude the tool is broken rather than that the trust entry went missing.
+func TestCopilotAPIFolderTrustTailorsTheRefusalOnAResume(t *testing.T) {
+	home := t.TempDir()
+	cwd := t.TempDir()
+
+	fresh := ValidateCopilotAPIFolderTrust(
+		copilotHarness(t), true, false, false, cwd, copilotAPITrustEnv(home))
+	resumed := ValidateCopilotAPIFolderTrust(
+		copilotHarness(t), true, false, true, cwd, copilotAPITrustEnv(home))
+	require.Error(t, fresh)
+	require.Error(t, resumed,
+		"a relaunch into a directory that lost its trust entry produces the same "+
+			"invisible agent, so it must refuse too")
+
+	assert.Contains(t, resumed.Error(), cwd)
+	assert.Contains(t, resumed.Error(), "relaunch",
+		"the operator has to be told why this command has no flag to fix it with")
+	assert.NotContains(t, resumed.Error(), "spawn modal",
+		"a relaunch does not come from the spawn modal")
+	assert.NotContains(t, resumed.Error(), "profile's trust_dir",
+		"a relaunch carries no profile")
+	assert.NotEqual(t, fresh.Error(), resumed.Error())
 }

@@ -37,7 +37,10 @@ func copilotAPIFolderTrustFailure(p spawnParams) *spawnFailure {
 		environment = p.EffectiveSandbox.Effective.Environment
 	}
 	if err := session.ValidateCopilotAPIFolderTrust(
-		h, p.CopilotAPI, p.TrustDir, p.Cwd, environment,
+		// resume=false: this is the fresh-spawn boundary. A relaunch never
+		// reaches executeSpawn — it forks `session new -r`, where the backstop
+		// runs with the resume wording.
+		h, p.CopilotAPI, p.TrustDir, false, p.Cwd, environment,
 	); err != nil {
 		return &spawnFailure{
 			http.StatusUnprocessableEntity, "copilot_api_untrusted_launch_dir", err.Error()}
@@ -96,12 +99,27 @@ type copilotAPISession struct {
 // The port proof is one-shot and has a residual TOCTOU window (TCL-1054): it
 // says the listening socket belonged to the pane's subtree at one instant, and
 // `--ui-server` has no authentication (TCL-1055), so there is no credential to
-// re-present. What replaces the credential is the connection itself. A listener
-// cannot be taken over while it is held: for another process to bind this port,
-// the pane's process must first release it, and releasing it kills the accepted
-// connection this handle holds. So a handle whose Client is still open AND
-// whose port is still owned by the same pane subtree is talking to the process
-// that was proved, not merely to something that answers on the same number.
+// re-present. What partly replaces the credential is the connection itself: our
+// socket stays open only as long as the process that accepted it lives, so it
+// is a continuous liveness signal in a way a re-read of a port number is not.
+//
+// Be precise about what the conjunction proves, because the tempting statement
+// is stronger than the truth. portowner matches the inode of a LISTENING socket;
+// our own connection is a separate ESTABLISHED socket. So this establishes
+// "my connection is still open" AND "someone in the agent's pane subtree is
+// listening on this port now" — NOT "my connection was accepted by that
+// listener". An interleaving that satisfies both while we talk to an impostor
+// exists on paper: proof passes, the pane's copilot releases the port, an
+// impostor binds it and accepts our dial, the impostor drops its listener, and
+// something back inside the pane subtree binds the port again. It needs the
+// pane's subtree to rebind a port copilot never rebinds, so it is not a
+// practical attack — but it is the honest limit of this check, and the reason
+// the wording here is "still consistent with being ours" rather than "proved".
+//
+// Closing it properly means matching the ESTABLISHED /proc/net/tcp entry for our
+// own local/remote port pair against the pane subtree, which portowner does not
+// expose today. Worth doing if this endpoint ever carries anything that matters
+// more than a coding agent's prompts.
 //
 // Both halves are load-bearing and neither is sufficient. An open connection
 // alone would be satisfied by a socket accepted from an impostor before the
@@ -150,16 +168,51 @@ func (s *copilotAPISession) StillOwned() bool {
 // and a session created against the wrong directory resolves the wrong
 // workspace and repository context while looking entirely healthy.
 //
+// # One conversation, one id
+//
+// The session is created under the CONVERSATION's own id, not a fresh one, and
+// that is the difference between owning the agent's conversation and owning a
+// second one beside it.
+//
+// An API-drive launch still pins `--session-id <convID>`, so the pane's startup
+// session IS the conversation: Copilot stores it at
+// `$COPILOT_HOME/session-state/<convID>/`, which is the path tclaude's own
+// conversation store, usage store, titles, transcript search and
+// `--resume=<convID>` all resolve. A session created here under a fresh UUID
+// would therefore be a SECOND conversation — drivable, foregrounded, and
+// invisible to every one of those readers, while the id they do read stopped
+// growing. `session.create` accepts the conv id (measured: it echoes it back),
+// so there is no reason to accept that split.
+//
+// What creating at the conv id costs is the startup session's contents: the id
+// is started FRESH rather than attached (measured: `alreadyInUse:false`, an
+// empty `getMessages`, and a model with no memory of the pane's first turn).
+// That is affordable only because an API-drive launch renders no `-i`, so there
+// is nothing in the startup session to lose — see copilotSpawner's suppression
+// of it, which exists for this reason and must not be undone on its own.
+//
+// Attaching instead is not on the table. The startup session is not in the RPC
+// session registry: `session.getForeground` reports its id but every other
+// `session.*` call against it fails "Session not found" — measured against a
+// session pinned with `--session-id`, not merely against an anonymous one — and
+// `sessions.open` with `{kind:"attach"}` reports `{"status":"resumed"}` for a
+// session that stays just as undrivable.
+//
+// # The initial prompt
+//
+// Delivered here, over `session.send`, because the launch could not deliver it:
+// see above. An empty prompt sends nothing, which is the ordinary case for a
+// launch that carried no briefing.
+//
 // # No subscription
 //
 // Deliberately not subscribed here even though the package docs tell consumers
 // to subscribe before creating. A subscription with nobody reading it fills its
 // buffer, overruns and closes — so opening one on the caller's behalf would
 // hand the event consumer (TCL-1057) a dead stream that looks like a live one.
-// What this function guarantees instead is the precondition that makes the
-// advice satisfiable: the returned client has never been used to send a prompt,
-// so the consumer can subscribe before the first turn and miss nothing.
-func bootstrapCopilotAPISession(ctx context.Context, convID string) (*copilotAPISession, error) {
+func bootstrapCopilotAPISession(
+	ctx context.Context, convID, initialPrompt string,
+) (*copilotAPISession, error) {
 	port, panePID, err := verifiedCopilotAPIPort(ctx, convID)
 	if err != nil {
 		return nil, err
@@ -182,12 +235,12 @@ func bootstrapCopilotAPISession(ctx context.Context, convID string) (*copilotAPI
 		return nil, err
 	}
 
-	// Re-proved AFTER the connection exists, which is the only ordering that
-	// closes the window the first proof leaves open. A proof taken before the
-	// dial says the port was the agent's a moment ago; taken after, with the
-	// connection already established, it says the process still holding the
-	// listener is the agent's — and this connection could only have been
-	// accepted by whoever held it.
+	// Re-proved AFTER the connection exists, because a proof taken before the
+	// dial says only that the port was the agent's a moment ago, while one taken
+	// after — with the connection already established and still open — says the
+	// pane subtree still holds the listener we dialled at. That narrows the
+	// window rather than eliminating it; see StillOwned for exactly what the
+	// conjunction does and does not establish.
 	if !handle.StillOwned() {
 		return closeOnFailure(fmt.Errorf(
 			"copilot API port %d for %s stopped being owned by the agent's pane subtree "+
@@ -198,7 +251,7 @@ func bootstrapCopilotAPISession(ctx context.Context, convID string) (*copilotAPI
 	}
 
 	info, err := client.CreateSession(ctx, copilotapi.CreateSessionParams{
-		SessionID:        copilotapi.NewSessionID(),
+		SessionID:        convID,
 		WorkingDirectory: workingDir,
 		ClientName:       copilotAPIClientName,
 		Streaming:        true,
@@ -216,6 +269,24 @@ func bootstrapCopilotAPISession(ctx context.Context, convID string) (*copilotAPI
 		// and here it would be produced by tclaude itself.
 		return closeOnFailure(fmt.Errorf(
 			"foreground the Copilot session %s for %s: %w", info.SessionID, convID, err))
+	}
+
+	// After foregrounding, so the human sees the briefing arrive in the session
+	// it belongs to rather than watching a turn answer itself in a pane that is
+	// still showing something else.
+	//
+	// A failure here is HARD, unlike most delivery failures. The launch already
+	// dropped its `-i` on the promise that this would carry the prompt, so a
+	// swallowed error would leave an agent idle and briefed by nobody — which on
+	// every dashboard surface looks exactly like an agent that finished its work.
+	if initialPrompt != "" {
+		if _, err := client.Send(ctx, copilotapi.SendParams{
+			SessionID: info.SessionID, Prompt: initialPrompt,
+		}); err != nil {
+			return closeOnFailure(fmt.Errorf(
+				"deliver the launch prompt to Copilot session %s for %s: %w",
+				info.SessionID, convID, err))
+		}
 	}
 	return handle, nil
 }
@@ -247,10 +318,18 @@ func copilotAPIWorkingDir(convID string) (string, error) {
 // In memory only, and that is the point rather than a limitation. A handle is a
 // live connection; persisting one would persist a claim that is false the
 // moment the process restarts, which is precisely the shape of value this
-// series keeps being bitten by. An agentd restart therefore forgets every
-// handle, and the next consumer bootstraps again through the full front door —
-// verified port included — which is the correct behaviour and not a recovery
-// gap.
+// series keeps being bitten by.
+//
+// What that costs today, stated plainly rather than glossed: a handle is
+// established ONLY at launch, from the spawn facades, so an agentd restart
+// leaves every already-running API-driven agent with no handle and no way to
+// acquire one short of relaunching. Those agents keep working — their panes are
+// untouched — but tclaude reports them as not connected, which is TRUE of
+// tclaude and misleading about the agent. There is deliberately no lazy
+// re-bootstrap wired into the read paths: the first step of a bootstrap is a
+// bounded wait of up to a minute, which is not something a dashboard snapshot
+// tick may block on. Reconnection belongs with the component that owns the
+// long-lived connection (TCL-1057) and is called out there.
 type copilotAPISessionRegistry struct {
 	mu       sync.Mutex
 	sessions map[string]*copilotAPISession
@@ -294,7 +373,13 @@ func (r *copilotAPISessionRegistry) Handle(convID string) *copilotAPISession {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	handle := r.sessions[convID]
-	if handle == nil {
+	// A nil Client is not reachable from bootstrapCopilotAPISession, which only
+	// ever adopts a handle around a live connection — but Adopt accepts one, and
+	// a handle that cannot answer "is this connection alive" must read as not
+	// connected rather than panic the caller. This runs on the dashboard's
+	// snapshot path, where a panic is a blank dashboard.
+	if handle == nil || handle.Client == nil {
+		delete(r.sessions, convID)
 		return nil
 	}
 	select {
@@ -356,20 +441,29 @@ var startCopilotAPIBootstrap = runCopilotAPIBootstrap
 // SetCopilotAPIBootstrapForTest swaps the bootstrap kick-off and returns a
 // restore function. TestMain installs a binary-wide no-op; a test that wants to
 // observe the call swaps its own.
-func SetCopilotAPIBootstrapForTest(fn func(convID string, copilotAPI bool)) func() {
+func SetCopilotAPIBootstrapForTest(fn func(convID string, copilotAPI bool, initialPrompt string)) func() {
 	previous := startCopilotAPIBootstrap
 	startCopilotAPIBootstrap = fn
 	return func() { startCopilotAPIBootstrap = previous }
 }
 
-func runCopilotAPIBootstrap(convID string, copilotAPI bool) {
+// bootstrapCopilotAPISessionFn is the seam the guard-clause test swaps, and it
+// exists for that test alone. Observing "the guards held" from the outside is
+// otherwise impossible in a useful way: a guard that failed to hold starts a
+// goroutine that goes on to fail — slowly, on a timeout — and adopts nothing,
+// which is indistinguishable from the guard holding for as long as any test
+// would be willing to wait. Without the seam the assertion can only be "nothing
+// was adopted", which stays true with both guards deleted.
+var bootstrapCopilotAPISessionFn = bootstrapCopilotAPISession
+
+func runCopilotAPIBootstrap(convID string, copilotAPI bool, initialPrompt string) {
 	if !copilotAPI || convID == "" {
 		return
 	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), copilotAPIBootstrapTimeout)
 		defer cancel()
-		handle, err := bootstrapCopilotAPISession(ctx, convID)
+		handle, err := bootstrapCopilotAPISessionFn(ctx, convID, initialPrompt)
 		if err != nil {
 			slog.Error("could not bring up the Copilot API session; the agent is still "+
 				"usable through its pane",

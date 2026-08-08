@@ -53,12 +53,30 @@ import (
 // not blocked here, because by the time the pane starts the entry will be
 // there.
 //
+// # The resume path refuses too, and says something different
+//
+// resume marks a relaunch of an existing conversation — `session new -r`, which
+// is the argv reincarnate and the dashboard's relaunch button fork. It changes
+// only the wording, never the verdict: a relaunched agent whose directory lost
+// its trust entry comes up just as invisible as a fresh one, and admitting it
+// because it used to be trusted would be the proxy-value mistake again — a
+// judgement about the launch that happened, applied to the launch happening
+// now.
+//
+// What it does change is that the relaunch argv carries no --trust-dir and no
+// profile, so a message leading with those hands the operator a remedy they
+// cannot reach from where they are standing. Naming a flag the failing command
+// cannot take is worse than naming none: it reads as "you forgot this", when
+// what is true is that the trust entry disappeared out from under a
+// conversation that had it.
+//
 // Silent for every non-Copilot harness and for every launch that did not ask
 // for the API drive: this gates the channel, not the harness.
 func ValidateCopilotAPIFolderTrust(
 	h *harness.Harness,
 	copilotAPI bool,
 	trustDir bool,
+	resume bool,
 	cwd string,
 	environment []sandboxpolicy.EnvironmentEntry,
 ) error {
@@ -109,13 +127,19 @@ func ValidateCopilotAPIFolderTrust(
 	// because they are reached from three different places and an operator who
 	// is told only that the launch needs trust has to go and find out which one
 	// applies to the surface they are standing in front of.
+	remedy := "Pre-trust the directory — the spawn modal's pre-trust checkbox, a spawn " +
+		"profile's trust_dir, or `tclaude session new --trust-dir` — or clear the dialog " +
+		"once in a pane there, or spawn without the API drive"
+	if resume {
+		remedy = "This is a relaunch, so it carries no --trust-dir of its own: the entry was " +
+			"there when the conversation was first launched and is not there now. Restore it " +
+			"by clearing the dialog once in a pane there, or by launching once with " +
+			"`tclaude session new --trust-dir` in that directory, then relaunch"
+	}
 	return fmt.Errorf(
 		"the API-backed Copilot drive needs %s to be trusted before launch, and it is not "+
 			"listed in %s. Copilot's folder-trust modal does not block the embedded server: "+
 			"the agent would come up drivable over the API while its pane sat on the dialog, "+
-			"so the human would be looking at a blocked pane for an agent that is running. "+
-			"Pre-trust the directory — the spawn modal's pre-trust checkbox, a spawn "+
-			"profile's trust_dir, or `tclaude session new --trust-dir` — or clear the dialog "+
-			"once in a pane there, or spawn without the API drive",
-		cwd, harness.DirTrustStore(h))
+			"so the human would be looking at a blocked pane for an agent that is running. %s",
+		cwd, harness.DirTrustStore(h), remedy)
 }
