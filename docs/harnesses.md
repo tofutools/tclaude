@@ -805,6 +805,16 @@ opted out of the keystroke path does not get handed back to it one failure at a
 time, which would reopen the injection sink precisely for the agent whose channel
 is in trouble.
 
+There is exactly one deliberate exception, at spawn. The spawn waits for the
+channel before sending the new agent its welcome — its identity, its group, and
+the pointer to the briefing in its inbox — because a message sent before the
+bootstrap has foregrounded tclaude's session lands in the pane's own startup
+session and is lost. If the channel never comes up at all, that welcome goes into
+the pane instead. That is not the fallback the rule above forbids: a bootstrap
+that never completed leaves the pane's own session in the foreground, so the pane
+genuinely *is* the agent's channel, and the alternative is an agent that is never
+told who it is.
+
 ##### Soft exit stays on send-keys, on purpose
 
 This is a decision, not a missing row. Measured against Copilot CLI 1.0.78, the
