@@ -209,12 +209,55 @@ func copilotAPIConnected(convID string) bool {
 // "is it up" want [copilotAPIConnected]; callers wanting "which channel does
 // this belong to" want [copilotAPIDriven].
 //
-// # Why it does not route, yet
+// # Why it does not route, and why nothing revokes
 //
-// It arrives with a read-only consumer and nothing else. Routing on it changes
-// how mail is delivered for a drive the operator has not verified in use, so it
-// lands as its own change with its own argument rather than riding in on a
-// surface.
+// It has a read-only consumer and nothing else, and that is now a settled
+// decision rather than a deferral. THE DAEMON NEVER REVOKES A CONVERSATION'S API
+// POSTURE. No code path demotes an agent to send-keys because its channel failed;
+// [TestNoAutomaticRevokeOfTheCopilotAPIPosture] is what keeps that true.
+//
+// The reason is that the API drive is a CONSTRAINT, not an optimisation. An
+// operator who turns it on is saying "do not put bytes in this agent's pane", so
+// a revoke IS the injection sink re-opening, and a revoke the daemon performs by
+// itself withdraws the opt-out by weather rather than by the person who chose it.
+// The drive is also still unverified in real use, which sharpens it: a silent
+// demote would make the drive's failures unobservable at exactly the moment they
+// are most informative, destroying the evidence this phase exists to collect. A
+// held agent is a loud, cheap, recoverable failure; a demoted one looks healthy
+// while doing the thing its operator opted out of, and only the first kind gets
+// fixed.
+//
+// The remedy is the operator's, and it already exists: relaunch the agent
+// (POST /api/agents/{id}/restart, which the dashboard's own control posts to).
+// That retries the API drive, because the relaunch profile still says API — which
+// is the point. A demote would spend the agent's posture permanently to fix one
+// launch, trading a recoverable state for an unrecoverable one to avoid an action
+// the operator can already take.
+//
+// THIS CALL IS PHASE-DEPENDENT, AND A LATER READER SHOULD KNOW IT RATHER THAN
+// INFER IT. "Constraint, no automatic revoke" is right while the drive is
+// unverified. Once it is verified and in ordinary use the balance may genuinely
+// shift: a mature drive that occasionally fails to come up is much closer to an
+// optimisation, and holding mail forever is a harsher default then than it is
+// now. So this is a decision to REVISIT AT VERIFICATION, not a permanent property
+// of the design — a reader who finds an unexplained hold and "fixes" it would be
+// reasoning correctly from a premise that had expired.
+//
+// # The distinction whoever revisits it must inherit
+//
+// "Revoke" carries two different changes, and keeping them apart is most of the
+// problem:
+//
+//   - Route THIS LAUNCH's mail to keystrokes. Lifetime: the launch.
+//   - This AGENT is no longer an API agent. Lifetime: the agent.
+//
+// The second is the only one the database can express, and the first is the only
+// one this observation's evidence supports. A conversation-scoped write does not
+// bridge them: [copilotLaunchIntentForConv] reads the agent relaunch profile
+// first and consults the conversation fallback only for fields the profile left
+// nil, and relaunchProfileForSpawn freezes CopilotAPI non-nil for every Copilot
+// launch — so a revoke written to the conversation fallback is INERT for every
+// spawned agent, which is precisely the population that has this problem.
 func copilotAPIChannelFailed(convID string) bool {
 	return copilotAPISessions.ChannelFailed(convID)
 }
