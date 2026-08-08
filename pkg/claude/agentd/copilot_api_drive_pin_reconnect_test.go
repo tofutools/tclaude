@@ -36,40 +36,62 @@ func pinConversationDriveOff(t *testing.T, convID string) {
 		"precondition: with no handle, the pinned record must already route to send-keys")
 }
 
-// TestAPinnedDriveIsReacquiredByTheReconnectSweep measures the lifetime of a
+// TestAPinnedDriveIsNotReacquiredByTheReconnectSweep is the lifetime of a
 // rollback performed against a still-running pane.
 //
 // The state is the ordinary one after a durable "off": the operator pinned the
 // record, the pane kept running (a pin does not stop anything), and agentd was
 // later restarted. The sweep then finds a recorded port and a live Copilot pane
-// — its two candidate conditions — and the operator's explicit false is not
-// among the things it looks at.
-func TestAPinnedDriveIsReacquiredByTheReconnectSweep(t *testing.T) {
+// — its two candidate conditions.
+//
+// This assertion is INVERTED from the one first committed here, which measured
+// the sweep adopting and was labelled current-behaviour rather than desired. The
+// inversion belongs in the same change as the condition that causes it, so the
+// diff reads as a rule changing rather than as a test being relaxed. Without
+// that condition a durable off holds for launches and evaporates for the running
+// pane at the next daemon restart, which is a rollback the operator believes
+// worked.
+func TestAPinnedDriveIsNotReacquiredByTheReconnectSweep(t *testing.T) {
 	fixture := newCopilotAPIReconnectFixture(t)
 	pinConversationDriveOff(t, fixture.convID)
 
 	fixture.reconcile(t)
 
-	adopted := copilotAPISessions.Connected(fixture.convID)
-	driven := copilotAPIDriven(fixture.convID)
-	t.Logf("MEASURED: pinned copilot_api=false + recorded port + live pane → "+
-		"reconnect adopted=%v, routing back on the API drive=%v", adopted, driven)
+	assert.False(t, copilotAPISessions.Connected(fixture.convID),
+		"an operator's explicit off must stand the sweep down; re-adopting it puts "+
+			"the conversation back on the drive it was taken off, with no disclosure "+
+			"anywhere")
+	assert.False(t, copilotAPIDriven(fixture.convID),
+		"and so the pinned conversation stays on the keystroke path its record asks for")
 
-	assert.True(t, adopted,
-		"MEASURED, and recorded as the current behaviour rather than as the desired "+
-			"one: the sweep's candidate test is a recorded port and a live pane, so an "+
-			"operator's explicit off is re-acquired at the next daemon restart while the "+
-			"pane it was pinned for is still running")
-	assert.True(t, driven,
-		"and once a handle exists it answers before the record, so the pinned "+
-			"conversation is back on the drive it was taken off")
-
-	// The durable record is untouched by the adoption — which is why the next
-	// LAUNCH still honours the pin, and why this is a bounded lifetime rather
-	// than a lost write.
 	target, err := db.CopilotDriveTargetForConv(fixture.convID)
 	require.NoError(t, err)
-	assert.False(t, target.Value,
-		"the pin itself survives; what does not survive is its effect on the pane "+
-			"that was already running")
+	assert.False(t, target.Value, "the pin itself is untouched by the sweep")
+}
+
+// TestAnUnrecordedDriveIsStillAdoptedAfterThePinCondition is the other half of
+// the same condition, and the one that keeps it honest.
+//
+// The skip is scoped to an explicit false. A conversation whose posture was
+// never recorded means UNKNOWN, its mail routes to keystrokes, and adopting it
+// closes that sink — the reason the sweep declines to filter on posture in the
+// first place. If this arm ever goes red, the change stopped being "respect an
+// operator" and became "stop closing the sink".
+//
+// TestCopilotAPIReconnectStillAdoptsAConversationWithNoRecordedPosture asserts
+// the same property from the reconnect side; this one exists beside the pin so
+// the boundary is visible to whoever edits the condition.
+func TestAnUnrecordedDriveIsStillAdoptedAfterThePinCondition(t *testing.T) {
+	fixture := newCopilotAPIReconnectFixtureWithPosture(t, false)
+	require.False(t, copilotAPIPostureRecorded(fixture.convID),
+		"precondition: nothing may answer which drive this launch took")
+	target, err := db.CopilotDriveTargetForConv(fixture.convID)
+	require.NoError(t, err)
+	require.Equal(t, db.CopilotDriveRecordNone, target.Record,
+		"precondition: unknown, not an operator's false")
+
+	fixture.reconcile(t)
+
+	assert.True(t, copilotAPISessions.Connected(fixture.convID),
+		"an UNRECORDED posture is not an operator's off and must still be adopted")
 }
