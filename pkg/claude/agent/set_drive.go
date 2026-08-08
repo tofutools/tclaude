@@ -12,6 +12,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -154,6 +155,17 @@ func runSetDriveDirect(target string, asJSON bool, stdout, stderr io.Writer) int
 		return rcNotFound
 	}
 	convID := resolved.ConvID
+	// Gate the harness here as well as in the daemon. Without it this path is
+	// Copilot-only by COINCIDENCE — a non-Copilot conversation has no drive
+	// recorded, so it exits at the "nothing recorded" refusal below — and a
+	// coincidence is not a check. It also means the two paths refuse the same
+	// thing for the same stated reason rather than one refusing by accident.
+	if h := recordedHarnessForConv(convID); h != "" && h != harness.CopilotName {
+		fmt.Fprintf(stderr,
+			"Error: the Copilot drive is a %s-only posture; conversation %s runs on %s.\n",
+			harness.CopilotName, short(convID), h)
+		return rcInvalidArg
+	}
 	drive, err := db.CopilotDriveTargetForConv(convID)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -203,6 +215,20 @@ func runSetDriveDirect(target string, asJSON bool, stdout, stderr io.Writer) int
 	resp.Record = string(drive.Record)
 	resp.Changed = true
 	return printSetDrive(&resp, asJSON, stdout, stderr)
+}
+
+// recordedHarnessForConv reads the harness from the conversation's own durable
+// resume record, which is the harness a relaunch would use and is readable with
+// the daemon down — the only condition this path runs under. An unreadable or
+// absent record answers "" (unknown) and does not gate: the "nothing records a
+// drive" refusal below is the honest answer for that state, and refusing on a
+// guess would be worse than refusing on a fact.
+func recordedHarnessForConv(convID string) string {
+	profile, err := db.ConversationResumeProfileForConv(convID)
+	if err != nil || profile == nil {
+		return ""
+	}
+	return strings.TrimSpace(profile.Harness)
 }
 
 func setDrivePath(target string) string {
@@ -262,9 +288,16 @@ func printSetDrive(resp *setDriveResp, asJSON bool, stdout, stderr io.Writer) in
 				"profile is the lever for those")
 	}
 	if resp.Live {
+		// Naming the restart is not a detail. Routing answers from the live handle
+		// first, so this pane keeps its channel — but an agentd restart drops every
+		// handle, and the reconnect sweep now declines to re-acquire a drive an
+		// operator turned off. So the pin starts biting at a restart, with no
+		// relaunch and no channel "ending" in any sense the operator can observe.
+		// Saying only "until that channel ends" would describe the wrong event.
 		fmt.Fprintln(stdout,
 			"  durable now; this conversation keeps its current API channel until that "+
-				"channel ends, so relaunch it if you want the change to bite immediately")
+				"channel ends or agentd restarts (a restart does not re-acquire a drive "+
+				"you turned off), so relaunch it if you want the change to bite immediately")
 	}
 	return rcOK
 }

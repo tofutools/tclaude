@@ -63,7 +63,12 @@ var copilotAPIPostureWriters = []struct {
 	// agent row at all (a clone, or a direct `session new`), which is the one
 	// shape where it is the sole holder rather than the inert-or-surprising record
 	// described there.
-	{"copilot_drive_assign.go", "writeCopilotDrive", "SetAgentRelaunchProfile"},
+	// SeedAgentRelaunchProfileIfEmpty is WATCHED as well as vouched. It is a new
+	// posture writer under a new name, and this guard's own limits say a writer it
+	// does not name is invisible to it — so adding the call site without adding
+	// the writer would have left the next one free. It writes a whole profile, so
+	// it can set a posture the same way SetAgentRelaunchProfile can.
+	{"copilot_drive_assign.go", "writeCopilotDrive", "SeedAgentRelaunchProfileIfEmpty"},
 	{"copilot_drive_assign.go", "writeCopilotDrive", "SetConversationCopilotAPI"},
 }
 

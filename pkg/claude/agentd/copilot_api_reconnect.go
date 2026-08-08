@@ -288,9 +288,27 @@ func reconcileCopilotAPISessions(ctx context.Context) {
 		// read failure and an absent record both mean unknown, and both keep
 		// adopting exactly as before, or this would have widened from "respect a
 		// decision" into "stop closing the sink".
+		//
+		// THE INVARIANT THIS RESTS ON, stated here because it is the thing that
+		// makes it safe rather than merely intentional: this is INTENT about the
+		// next launch overriding EVIDENCE about the pane in front of us — a
+		// recorded port, a live Copilot pane, a drivable session. That is only
+		// sound while no surface can produce a running `--ui-server` pane whose
+		// top-precedence record says false. It holds today because the only writer
+		// of a launch's posture writes the value that launch resolved. The day a
+		// per-launch "force the API on" override exists — the mirror of the
+		// `conv resume --send-keys` override that already does — an agent-profile
+		// false beside a real API pane becomes reachable, and this skip would leave
+		// that conversation's mail held forever with the one mechanism that would
+		// have fixed it declining to act. Whoever adds such an override changes
+		// this condition in the same commit.
+		//
+		// Logged at Warn rather than Info: the skip leaves a pane that was launched
+		// to be driven over RPC being typed into instead, which is an unusual
+		// steady state an operator should be able to find without knowing to look.
 		if target, err := db.CopilotDriveTargetForConv(convID); err == nil &&
 			target.Record != db.CopilotDriveRecordNone && !target.Value {
-			slog.Info("copilot API reconnect: skipping a conversation whose drive an "+
+			slog.Warn("copilot API reconnect: skipping a conversation whose drive an "+
 				"operator turned off; its pane keeps running and its mail routes as "+
 				"keystrokes until it is relaunched",
 				"conv_id", convID, "record", string(target.Record))

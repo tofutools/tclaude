@@ -406,6 +406,58 @@ type CopilotDriveTarget struct {
 	Raw string
 }
 
+// SeedAgentRelaunchProfileIfEmpty writes a whole relaunch profile for an agent
+// that has none, and ONLY while it still has none.
+//
+// # Why this is not SetAgentRelaunchProfile
+//
+// It is the same statement with a guard, and the guard is the point. A caller
+// that reads an empty blob and then replaces it is doing a read-modify-write
+// justified by "there was nothing to lose" — and nothing keeps that true between
+// the two steps. projectSessionRelaunchProfilesTx runs inside every SaveSession,
+// which is every status tick, and it populates an empty agent blob. So the window
+// is not theoretical: a tick lands approval, sandbox, model and their sources into
+// the record, and the unguarded seed then replaces the lot with its two fields.
+//
+// The damage is bounded rather than absent, which is what makes it worth guarding
+// instead of accepting: the composed conversation fallback re-answers most of
+// those fields at the next relaunch, but it cannot answer the ones that live only
+// on the agent — a temporary sandbox override being the obvious one.
+//
+// Reports false with no error when the guard did not hold, which the caller must
+// treat as "this agent grew a profile while we were deciding to seed one" and
+// answer by re-reading rather than by writing again.
+func SeedAgentRelaunchProfileIfEmpty(agentID string, profile AgentRelaunchProfile) (bool, error) {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return false, errors.New("SeedAgentRelaunchProfileIfEmpty: agent_id required")
+	}
+	if profile.Version == 0 {
+		profile.Version = RelaunchProfileVersion
+	}
+	encoded, err := encodeRelaunchProfile(profile)
+	if err != nil {
+		return false, err
+	}
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := d.Exec(`
+		UPDATE agents
+		   SET relaunch_profile = ?
+		 WHERE agent_id = ?
+		   AND TRIM(COALESCE(relaunch_profile, '')) = ''`, encoded, agentID)
+	if err != nil {
+		return false, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected > 0, nil
+}
+
 // CopilotDriveTargetForConv resolves which record a durable drive change must
 // write, in the SAME precedence routing uses.
 //

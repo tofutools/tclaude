@@ -183,15 +183,67 @@ func TestSetDrive_RefusesEscalationWhileTheAgentIsRunning(t *testing.T) {
 func TestSetDrive_ReportsANoOpAsUnchanged(t *testing.T) {
 	f := newCopilotFlow(t)
 	f.HaveGroup("crew")
+	haveCopilotAPIProfile(t, f)
 
-	resp, _ := spawnCopilot(t, f, "crew", map[string]any{"name": "copilot-worker"})
+	// Spawned ON the drive deliberately. A plain Copilot spawn already freezes
+	// copilot_api=false, so the FIRST run would land on the no-op branch too and
+	// the test would assert "unchanged" after "unchanged" — never observing the
+	// change-then-no-op sequence it claims. That is what the first version of this
+	// test did, and it passed.
+	resp, _ := runSpawnCLI(t, f, &agent.SpawnParams{
+		Group: "crew", Name: "copilot-worker", Harness: harness.CopilotName,
+		CopilotAPI: true, Profile: copilotAPIProfile,
+	})
+
 	stdout, stderr, rc := runSetDriveCLI(t, f, resp.ConvID, "send-keys")
 	require.Equalf(t, 0, rc, "first run failed: %s", stderr)
-	require.NotEmpty(t, stdout)
+	require.Contains(t, stdout, "→ send-keys",
+		"the first run must be a real CHANGE, or the second proves nothing")
+	require.NotContains(t, stdout, "unchanged")
 
 	stdout, stderr, rc = runSetDriveCLI(t, f, resp.ConvID, "send-keys")
 	require.Equalf(t, 0, rc, "second run failed: %s", stderr)
 	assert.Contains(t, stdout, "unchanged")
+}
+
+// TestSetDrive_SeedsTheConversationFallbackForAnAgentlessConversation covers the
+// one branch of writeCopilotDrive nobody had run: a conversation with no stable
+// agent row — a clone, or a plain `session new` — whose drive can only live in
+// the conversation fallback.
+//
+// It is also the branch most likely to be "simplified" later, because it reads
+// like the agent branch with a different setter.
+func TestSetDrive_SeedsTheConversationFallbackForAnAgentlessConversation(t *testing.T) {
+	f := newCopilotFlow(t)
+	f.HaveGroup("crew")
+	haveCopilotAPIProfile(t, f)
+
+	resp, _ := runSpawnCLI(t, f, &agent.SpawnParams{
+		Group: "crew", Name: "copilot-worker", Harness: harness.CopilotName,
+		CopilotAPI: true, Profile: copilotAPIProfile,
+	})
+	// A clone is a NEW agent whose drive lives only in the conversation fallback,
+	// which is exactly the shape this branch exists for.
+	cloned := f.AsHuman().CloneFresh(resp.ConvID)
+	require.NotEmptyf(t, cloned.NewConv, "no clone: %s", cloned.Raw)
+
+	target, err := db.CopilotDriveTargetForConv(cloned.NewConv)
+	require.NoError(t, err)
+	require.Equal(t, db.CopilotDriveRecordConversationFallback, target.Record,
+		"precondition: a clone's drive must live in the conversation fallback, or this "+
+			"measures the agent branch")
+	require.True(t, target.Value)
+
+	stdout, stderr, rc := runSetDriveCLI(t, f, cloned.NewConv, "send-keys")
+	require.Equalf(t, 0, rc, "set-drive on a clone failed: %s", stderr)
+
+	after, err := db.CopilotDriveTargetForConv(cloned.NewConv)
+	require.NoError(t, err)
+	assert.Equal(t, db.CopilotDriveRecordConversationFallback, after.Record)
+	assert.False(t, after.Value, "the clone must be off the drive durably")
+	assert.Contains(t, stdout, string(db.CopilotDriveRecordConversationFallback),
+		"the operator must be told it is the CONVERSATION record that answers here — "+
+			"the shape that an agent profile could later outvote")
 }
 
 // TestSetDrive_ReadBackNamesTheDeciderNotJustTheValue: the GET direction exists

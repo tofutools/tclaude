@@ -59,18 +59,45 @@ func TestSeedingTheDriveLeavesTheAgentRelaunchable(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, raw, "precondition: the seed path needs an EMPTY profile blob")
 
-	before, err := durableRelaunchConfigForConv(convID)
-	require.NoError(t, err, "precondition: this conversation must be relaunchable BEFORE the "+
-		"pin, or a failure afterwards would prove nothing about the seed")
+	// The baseline is taken from a SEPARATE conversation built the same way.
+	//
+	// Reading it from the subject would destroy the scenario: durableRelaunchConfigForConv
+	// backfills when the agent profile is nil, and the backfill populates BOTH the
+	// agent blob and the conversation fallback. An earlier version of this test
+	// took the baseline from the subject, noticed the agent blob had been
+	// repopulated, re-emptied THAT — and left the fallback populated, so it
+	// measured a seed in a state the hazard cannot occur in and would have stayed
+	// green with the real guarantee deleted. The most innocent-looking line in a
+	// test is the one that took a baseline to be careful.
+	const twinConv = "ses_copilot_drive_seed_twin"
+	const twinSession = "spwn-copilot-drive-seed-twin"
+	_, _, err = db.EnsureAgentForConv(twinConv, "test")
+	require.NoError(t, err)
+	require.NoError(t, session.SaveSessionState(&session.SessionState{
+		ID: twinSession, TmuxSession: twinSession, ConvID: twinConv,
+		Harness: harness.CopilotName, Status: session.StatusIdle,
+		Cwd: t.TempDir(),
+	}))
+	before, err := durableRelaunchConfigForConv(twinConv)
+	require.NoError(t, err, "precondition: a conversation of this shape must be relaunchable, "+
+		"or a failure on the subject afterwards would prove nothing about the seed")
 	require.NotNil(t, before)
 
-	// WHICH ARM IS THIS. Resolving a relaunch above runs the backfill for a nil
-	// profile, and the backfill WRITES one — measured: after the baseline read the
-	// blob is populated again. So the blob has to be emptied a SECOND time here,
-	// or the pin below exercises the ordinary append-into-an-existing-blob path
-	// while reading as a test of the seed.
-	_, err = handle.Exec(`UPDATE agents SET relaunch_profile = '' WHERE agent_id = ?`, agentID)
+	// And the subject's own pre-pin state is asserted directly rather than
+	// inferred from a resolve: this is the guarantee the seed depends on, so it is
+	// read rather than assumed.
+	conversation, err := db.ConversationResumeProfileForConv(convID)
 	require.NoError(t, err)
+	require.NotNil(t, conversation, "the conversation record must exist before the pin")
+	require.NotNil(t, conversation.FallbackRelaunch,
+		"the fallback is what answers for every field a minimal seeded profile leaves nil")
+	require.NotNil(t, conversation.FallbackRelaunch.ApprovalPolicy,
+		"approval policy is the one field whose absence is a HARD error at relaunch, so "+
+			"this is the specific thing that keeps a seed from wedging the agent")
+
+	// WHICH ARM IS THIS: still the empty blob, because the baseline was taken
+	// elsewhere. Re-read rather than assumed — that is the check that caught the
+	// earlier version of this test measuring the wrong branch.
 	rawBeforePin, err := db.AgentRelaunchProfileRaw(agentID)
 	require.NoError(t, err)
 	require.Empty(t, rawBeforePin,
@@ -102,5 +129,8 @@ func TestSeedingTheDriveLeavesTheAgentRelaunchable(t *testing.T) {
 	assert.Equal(t, before.Sandbox, after.Sandbox,
 		"nor its sandbox mode")
 	assert.Equal(t, before.Model, after.Model, "nor its model")
-	assert.Equal(t, before.Cwd, after.Cwd)
+	// Cwd is compared against the SUBJECT's own conversation record rather than
+	// the twin's: the twin is the same shape, not the same launch, and each gets
+	// its own directory.
+	assert.Equal(t, conversation.Cwd, after.Cwd, "nor its launch directory")
 }

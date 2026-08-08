@@ -273,6 +273,19 @@ func TestCopilotDrivePin_UnrecordedDriveAtRelaunchWithAGlobalDefault(t *testing.
 	}).Code)
 	require.Equal(t, http.StatusOK, setGlobalProfile(t, f, "copilot-api-global-default").Code)
 
+	// The positive control this arm needs and the group arm gets for free. Arm 4
+	// is self-discriminating — its agent is born ON the drive and must come up
+	// OFF it — whereas here both the before and after readings are "send-keys",
+	// so a stale or never-taken reading would look exactly like a pass. Proving
+	// the GLOBAL tier reaches a launch at all is what makes the silence below a
+	// measurement.
+	control, _ := spawnCopilot(t, f, "crew", map[string]any{"name": "control-worker"})
+	controlDrive, ok := f.World.SpawnCopilotAPI(control.ConvID)
+	require.True(t, ok, "no spawn recorded for control conv %s", control.ConvID)
+	require.True(t, controlDrive,
+		"the global default profile must reach a fresh spawn, or this arm's send-keys "+
+			"result is an absent scenario rather than a measurement")
+
 	// The same reduction to "nothing recorded" as the group arm, so the global
 	// tier is the only thing left that could speak.
 	agentID, err := db.AgentIDForConv(conv)

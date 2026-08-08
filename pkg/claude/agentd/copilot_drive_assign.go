@@ -96,7 +96,11 @@ func handleAgentCopilotDrive(w http.ResponseWriter, r *http.Request, convID stri
 		return
 	}
 	if r.Method == http.MethodGet {
-		writeCopilotDriveResponse(w, convID, copilotDriveWire{})
+		// The live-channel fact belongs on the READ as much as on the write: a
+		// read-back that says send-keys while the pane is still on a connected
+		// channel is the same misleading answer, arriving at the moment an operator
+		// is checking rather than acting.
+		writeCopilotDriveResponse(w, convID, copilotDriveWire{Live: copilotAPIConnected(convID)})
 		return
 	}
 	assignCopilotDrive(w, r, convID)
@@ -187,8 +191,14 @@ func assignCopilotDrive(w http.ResponseWriter, r *http.Request, convID string) {
 		writeCopilotDriveWriteError(w, err)
 		return
 	}
+	// Drive and Record are deliberately NOT echoed from what was just written:
+	// writeCopilotDriveResponse re-reads the record, so what the operator is told
+	// is what a launch would find rather than what this call believes it did.
+	// Passing them here as well would let a stale echo disagree with the re-read
+	// in exactly the case worth reporting.
+	_ = record
 	writeCopilotDriveResponse(w, convID, copilotDriveWire{
-		Drive: requested, Record: string(record), Created: created, Changed: true, Live: live,
+		Created: created, Changed: true, Live: live,
 	})
 }
 
@@ -249,6 +259,22 @@ func writeCopilotDrive(
 		if rawErr != nil {
 			return false, "", rawErr
 		}
+		if strings.TrimSpace(raw) == "" {
+			// Nothing to edit inside. Resolving the relaunch here does double duty
+			// and is the reason the whole-blob seed below is a last resort rather
+			// than the ordinary path: it refuses an unresolvable conversation before
+			// anything is written, AND its backfill materialises a profile from the
+			// latest session row when one exists. After that the targeted edit
+			// applies, so the common shape of "no drive recorded" never reaches a
+			// blob replacement at all.
+			if _, err := durableRelaunchConfigForConv(convID); err != nil {
+				return false, "", err
+			}
+			raw, rawErr = db.AgentRelaunchProfileRaw(target.AgentID)
+			if rawErr != nil {
+				return false, "", rawErr
+			}
+		}
 		if strings.TrimSpace(raw) != "" {
 			// A profile exists and simply never recorded a drive: json_set appends
 			// the leaf, so this is the ordinary compare-and-set rather than a seed.
@@ -262,15 +288,28 @@ func writeCopilotDrive(
 			}
 			return true, db.CopilotDriveRecordAgentProfile, nil
 		}
-		// An empty blob is the one hole a targeted edit cannot fill. Seeding a
-		// minimal profile loses nothing, because there is nothing there to lose —
-		// which is exactly why this is safe here and would not be safe as a general
-		// replace.
+		// An empty blob is the one hole a targeted edit cannot fill, so this is the
+		// one write here that is not a field edit. It is still guarded: "there was
+		// nothing to lose" was true when the blob was READ, and a status tick can
+		// populate it before this lands (projectSessionRelaunchProfilesTx runs
+		// inside every SaveSession and is not under the launch lock). An unguarded
+		// replace would be the lost-edit hazard the compare-and-set functions exist
+		// to prevent, arriving through the one path exempt from them.
+		//
+		// Reached only when even the backfill above could not produce a profile —
+		// an agent row with no session history to reconstruct from. The relaunch
+		// was already proved resolvable, so a minimal profile cannot wedge it: the
+		// conversation fallback answers for every field left nil.
 		value := wantAPI
-		if err := db.SetAgentRelaunchProfile(target.AgentID, db.AgentRelaunchProfile{
+		seeded, err := db.SeedAgentRelaunchProfileIfEmpty(target.AgentID, db.AgentRelaunchProfile{
 			Version: db.RelaunchProfileVersion, CopilotAPI: &value,
-		}); err != nil {
+		})
+		if err != nil {
 			return false, "", err
+		}
+		if !seeded {
+			return false, "", &copilotDriveWriteError{
+				"this agent grew a relaunch profile while the drive was being written"}
 		}
 		return true, db.CopilotDriveRecordAgentProfile, nil
 	}
@@ -297,6 +336,12 @@ func writeCopilotDriveWriteError(w http.ResponseWriter, err error) {
 	if errors.As(err, &conflict) {
 		writeError(w, http.StatusConflict, "copilot_drive_record_changed",
 			conflict.reason+"; nothing was written, read it again and retry")
+		return
+	}
+	if strings.Contains(err.Error(), "durable conversation resume profile is missing") {
+		writeError(w, http.StatusUnprocessableEntity, "copilot_drive_unresolvable_conversation",
+			"this conversation has no durable resume record to hold a drive, and one cannot "+
+				"be built from nothing: "+err.Error())
 		return
 	}
 	writeError(w, http.StatusInternalServerError, "db", err.Error())
