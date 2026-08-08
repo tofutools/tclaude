@@ -17,6 +17,13 @@ func migrateV194toV195(d *sql.DB) error {
 	defer func() { _ = tx.Rollback() }()
 
 	for _, table := range []string{"agent_permissions", "agent_group_permissions", "agent_sudo_grants"} {
+		exists, err := txTableExists(tx, table)
+		if err != nil {
+			return fmt.Errorf("migrate v194→v195 (inspect %s table): %w", table, err)
+		}
+		if !exists {
+			continue
+		}
 		var present int
 		if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = 'scope_json'`, table).Scan(&present); err != nil {
 			return fmt.Errorf("migrate v194→v195 (inspect %s): %w", table, err)

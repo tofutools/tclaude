@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"strings"
 	"testing"
 
@@ -34,4 +35,15 @@ func TestMigrateV194toV195AddsPermissionScopes(t *testing.T) {
 		strings.Repeat("x", 262145))
 	require.Error(t, err)
 	require.NoError(t, migrateV194toV195(d), "partially applied migration converges")
+}
+
+func TestMigrateV194toV195SurvivesMinimalHealSchema(t *testing.T) {
+	d, err := sql.Open("sqlite", t.TempDir()+"/minimal.sqlite")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+	mustExec(t, d, `CREATE TABLE schema_version (version INTEGER NOT NULL)`)
+	mustExec(t, d, `INSERT INTO schema_version VALUES (194)`)
+
+	require.NoError(t, migrateV194toV195(d))
+	assert.Equal(t, 195, schemaVersion(d))
 }
