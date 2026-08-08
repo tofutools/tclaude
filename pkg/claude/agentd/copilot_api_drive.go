@@ -444,6 +444,27 @@ func waitForCopilotAPISession(convID string) bool {
 // replaces: text typed into a pane mid-turn lands in whatever the TUI's input
 // box happens to be, while an enqueued message is one whole user turn or
 // nothing.
+//
+// # Taking a handle as a parameter would be a correctness regression
+//
+// This function proving ownership ITSELF, rather than accepting a handle a
+// caller already proved, is load-bearing for a caller that is not obvious from
+// here. Every other caller does hold a proved handle, so "just pass it in" reads
+// as an easy tidy-up. It is not.
+//
+// runCopilotAPICompaction reaches this function on its REFUSAL path —
+// specifically because ownership could not be re-proved. It declines to send
+// Compact and hands the follow-up here rather than over the handle it just
+// refused, on the understanding that this function re-asks on its own account:
+// the follow-up then either reaches a port still provably ours or is refused for
+// the same reason. Accepting a handle would make that path send different bytes
+// to the same unproved port, which is the exact outcome the refusal exists to
+// prevent (TCL-1075, TCL-1121).
+//
+// No test covers this. The compaction's own arms assert against a handle that is
+// already unprovable, so a refactor passing a handle in would still refuse there
+// — for a different reason — and the suite would stay green while the property
+// was gone.
 func sendCopilotAPIMessage(convID, text string) error {
 	handle, err := copilotAPIDrive(convID)
 	if err != nil {
