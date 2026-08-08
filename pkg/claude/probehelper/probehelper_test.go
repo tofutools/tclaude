@@ -174,6 +174,44 @@ func TestServeStubBoundsRequestsAndRefusesEndpointSymlink(t *testing.T) {
 	require.True(t, errors.Is(statErr, os.ErrNotExist))
 }
 
+func TestPublishAtDoesNotClobberExistingFile(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.Chmod(root, 0o700))
+	rootFD, err := openProbeRoot(root)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, unix.Close(rootFD)) })
+
+	require.NoError(t, publishAt(rootFD, "evidence", "first", 0o600))
+	require.Error(t, publishAt(rootFD, "evidence", "second", 0o600))
+	value, err := os.ReadFile(filepath.Join(root, "evidence"))
+	require.NoError(t, err)
+	assert.Equal(t, "first", string(value))
+}
+
+func TestPublishAtRemovesTempFile(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.Chmod(root, 0o700))
+	rootFD, err := openProbeRoot(root)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, unix.Close(rootFD)) })
+
+	require.NoError(t, publishAt(rootFD, "success", "value", 0o600))
+	requireNoPublishTemps(t, root, "success")
+	require.NoError(t, publishAt(rootFD, "failure", "first", 0o600))
+	require.Error(t, publishAt(rootFD, "failure", "second", 0o600))
+	requireNoPublishTemps(t, root, "failure")
+}
+
+func requireNoPublishTemps(t *testing.T, root, name string) {
+	t.Helper()
+	entries, err := os.ReadDir(root)
+	require.NoError(t, err)
+	prefix := "." + name + ".tmp-"
+	for _, entry := range entries {
+		assert.False(t, strings.HasPrefix(entry.Name(), prefix), "temporary publish file remains")
+	}
+}
+
 func postMessages(
 	t *testing.T,
 	endpoint, secret, body string,
