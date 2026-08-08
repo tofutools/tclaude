@@ -1816,6 +1816,55 @@ type AgentConfig struct {
 	// credentials to a sandboxed agent, so it must never come up enabled on
 	// an operator who has not configured it. See GitProxyConfig.
 	GitProxy *GitProxyConfig `json:"git_proxy,omitempty"`
+
+	// LinearProxy configures the daemon-mediated Linear proxy — `tclaude
+	// proxy linear`. Absent (the default) means the proxy is OFF, for the
+	// same reason GitProxy is: it lends the operator's Linear credential to
+	// a sandboxed agent, so it must never come up enabled on an operator who
+	// has not configured it. See LinearProxyConfig.
+	LinearProxy *LinearProxyConfig `json:"linear_proxy,omitempty"`
+}
+
+// LinearProxyConfig is the operator's policy for the daemon-mediated Linear
+// proxy. It answers the same question GitProxyConfig does, in Linear's
+// vocabulary: which teams may agentd reach with the operator's API key, on
+// behalf of an agent that holds no key of its own?
+//
+// Linear has no filesystem artifact that could anchor an agent the way a git
+// work tree anchors the git proxy — no `.git/config` equivalent ties a
+// conversation to an issue. The team allow-list is therefore the ONLY scope
+// gate, which is why it is mandatory and fail-closed.
+type LinearProxyConfig struct {
+	// AllowedTeams is the allow-list of Linear team keys the proxy may act
+	// on — the short prefix in an issue identifier, so "TCL" authorizes
+	// TCL-1, TCL-568 and so on. Compared case-insensitively.
+	//
+	// EMPTY OR ABSENT DISABLES THE PROXY ENTIRELY, exactly as an empty
+	// AllowedRemotes disables the git proxy. There is deliberately no
+	// wildcard and no "allow every team" setting: team keys are a flat
+	// namespace with no hierarchy to match a prefix against, so a wildcard
+	// would only ever mean "all of them" — which is the setting an operator
+	// should have to write out team by team.
+	AllowedTeams []string `json:"allowed_teams,omitempty"`
+
+	// APIKeyFile is a file whose contents become the Linear personal API
+	// key. When empty the daemon falls back to LINEAR_API_KEY in its own
+	// environment; with neither, the proxy reports itself unconfigured and
+	// refuses. The key is never written to config.json itself — that file is
+	// plaintext and shows up in the dashboard's Config tab and in backups.
+	//
+	// Accepts `~/…`, expanded against the home directory of the account
+	// agentd runs as. Shell variables are NOT expanded — a config file is
+	// not a shell.
+	APIKeyFile string `json:"api_key_file,omitempty"`
+
+	// AllowWrite permits the mutating verbs (`issue create`, `issue
+	// comment`, `issue update`, `issue link`) at all. Default off, so an
+	// operator who wants an agent to READ its ticket does not silently also
+	// let it write to the workspace under their name. The `linear.write`
+	// permission slug still gates the caller on top of this: the config is
+	// the operator's ceiling, the slug is the per-agent grant.
+	AllowWrite bool `json:"allow_write,omitempty"`
 }
 
 // GitProxyConfig is the operator's policy for the daemon-mediated Git-remote
@@ -1915,6 +1964,44 @@ func (c *Config) ResolvedGitProxy() GitProxyConfig {
 // with no git_proxy block never runs `git` or `gh` on an agent's behalf.
 func (c *Config) GitProxyEnabled() bool {
 	return len(c.ResolvedGitProxy().AllowedRemotes) > 0
+}
+
+// ResolvedLinearProxy returns the effective Linear-proxy policy. Nil-safe in
+// the same way ResolvedGitProxy is: a nil config, absent agent block, or
+// absent linear_proxy block all yield a zero policy whose empty AllowedTeams
+// means "proxy disabled".
+//
+// Team keys go through normalizeGitProxyPatterns despite the name: it trims,
+// de-blanks, de-duplicates and lower-cases, which is exactly the treatment a
+// team key needs, and the matcher lower-cases the other side too.
+func (c *Config) ResolvedLinearProxy() LinearProxyConfig {
+	var out LinearProxyConfig
+	if c != nil && c.Agent != nil && c.Agent.LinearProxy != nil {
+		src := c.Agent.LinearProxy
+		out.AllowedTeams = normalizeGitProxyPatterns(src.AllowedTeams)
+		out.APIKeyFile = strings.TrimSpace(src.APIKeyFile)
+		out.AllowWrite = src.AllowWrite
+	}
+	return out
+}
+
+// LinearProxyEnabled reports whether the operator has opted into the Linear
+// proxy at all. A daemon with no linear_proxy block never spends a Linear
+// credential on an agent's behalf.
+func (c *Config) LinearProxyEnabled() bool {
+	return len(c.ResolvedLinearProxy().AllowedTeams) > 0
+}
+
+// LinearTeamAllowed reports whether key names a team the operator allow-listed.
+// Exact, case-insensitive match on the whole key — there is no prefix or
+// wildcard rule here, unlike the remote matcher, because team keys are a flat
+// namespace: a prefix match would let "TCL" authorize "TCLX".
+func (p LinearProxyConfig) LinearTeamAllowed(key string) bool {
+	key = strings.ToLower(strings.TrimSpace(key))
+	if key == "" {
+		return false
+	}
+	return slices.Contains(p.AllowedTeams, key)
 }
 
 // normalizeGitProxyPatterns trims, lower-cases and de-blanks a pattern list,

@@ -1286,6 +1286,15 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/github/issue/list", handleGHProxyIssueList)
 	mux.HandleFunc("POST /v1/github/issue/view", handleGHProxyIssueView)
 	mux.HandleFunc("POST /v1/github/issue/comment", handleGHProxyIssueComment)
+	mux.HandleFunc("POST /v1/linear/whoami", handleLinearProxyWhoami)
+	mux.HandleFunc("POST /v1/linear/issue/view", handleLinearProxyIssueView)
+	mux.HandleFunc("POST /v1/linear/issue/list", handleLinearProxyIssueList)
+	mux.HandleFunc("POST /v1/linear/issue/search", handleLinearProxyIssueSearch)
+	mux.HandleFunc("POST /v1/linear/issue/comments", handleLinearProxyIssueComments)
+	mux.HandleFunc("POST /v1/linear/issue/comment", handleLinearProxyIssueComment)
+	mux.HandleFunc("POST /v1/linear/issue/create", handleLinearProxyIssueCreate)
+	mux.HandleFunc("POST /v1/linear/issue/update", handleLinearProxyIssueUpdate)
+	mux.HandleFunc("POST /v1/linear/issue/link", handleLinearProxyIssueLink)
 	// Experimental template-authoring surfaces remain registered so off means a
 	// stable 404 rather than a different mux shape. processRoute reloads the
 	// feature flag per request.

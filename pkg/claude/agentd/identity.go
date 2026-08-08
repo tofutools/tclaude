@@ -393,6 +393,8 @@ const (
 	PermGitPush     = "git.push"
 	PermGitHubRead  = "github.read"
 	PermGitHubWrite = "github.write"
+	PermLinearRead  = "linear.read"
+	PermLinearWrite = "linear.write"
 )
 
 // permResolution is the verdict of the non-interactive permission

@@ -274,6 +274,10 @@ var auditRoutes = []auditRoute{
 	// reads the body, so a PR title or comment never enters the trail.
 	{method: http.MethodPost, segs: []string{"git", "{verb}"}, describe: describeGitProxy},
 	{method: http.MethodPost, segs: []string{"github", "{resource}", "{action}"}, describe: describeGitHubProxy},
+	// Two shapes, because `whoami` has no resource to name. The one-segment
+	// route is matched first; a two-segment path falls through to the second.
+	{method: http.MethodPost, segs: []string{"linear", "{verb}"}, describe: describeLinearProxy},
+	{method: http.MethodPost, segs: []string{"linear", "{resource}", "{action}"}, describe: describeLinearProxyResource},
 }
 
 // auditedGitProxyVerbs / auditedGitHubProxyVerbs gate the path captures to the
@@ -315,6 +319,23 @@ var (
 		"run.list":       true,
 		"run.log-failed": true,
 	}
+	// auditedLinearProxyVerbs must name EVERY /v1/linear/… route the mux
+	// registers, for exactly the reason auditedGitHubProxyVerbs must: a route
+	// missing here is not merely unlabelled, it writes NO audit row at all —
+	// the call runs, spends the operator's Linear credential, and leaves
+	// nothing behind. TestAuditCoversEveryLinearProxyRoute pins the map
+	// against the routes serve.go actually registers.
+	auditedLinearProxyVerbs = map[string]bool{
+		"whoami":         true,
+		"issue.view":     true,
+		"issue.list":     true,
+		"issue.search":   true,
+		"issue.comments": true,
+		"issue.comment":  true,
+		"issue.create":   true,
+		"issue.update":   true,
+		"issue.link":     true,
+	}
 )
 
 // describeGitProxy names a git-proxy row "git.fetch", "git.push", … from the
@@ -338,6 +359,29 @@ func describeGitProxy(c *auditCtx) {
 func describeGitHubProxy(c *auditCtx) {
 	if verb := c.vars["resource"] + "." + c.vars["action"]; auditedGitHubProxyVerbs[verb] {
 		c.fields.Verb = "github." + verb
+	} else {
+		c.fields.Verb = ""
+	}
+}
+
+// describeLinearProxy names a one-segment linear-proxy row ("linear.whoami").
+// Same rule as the two above: the path only, never the body — an issue title
+// or a comment body must not land in the audit log.
+func describeLinearProxy(c *auditCtx) {
+	nameLinearProxyVerb(c, c.vars["verb"])
+}
+
+// describeLinearProxyResource names a two-segment row ("linear.issue.comment").
+func describeLinearProxyResource(c *auditCtx) {
+	nameLinearProxyVerb(c, c.vars["resource"]+"."+c.vars["action"])
+}
+
+// nameLinearProxyVerb is the shared tail. An unrecognised verb is CLEARED
+// rather than merely left alone, because recordAuditRow has already defaulted
+// it to the raw path capture.
+func nameLinearProxyVerb(c *auditCtx, verb string) {
+	if auditedLinearProxyVerbs[verb] {
+		c.fields.Verb = "linear." + verb
 	} else {
 		c.fields.Verb = ""
 	}

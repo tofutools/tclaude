@@ -413,6 +413,18 @@ var permissionRegistry = []PermSlug{
 			"(tclaude proxy github pr create/comment/ready, issue comment). Everything it writes is attributed to the operator's " +
 			"GitHub account, so it is not default-granted and not owner-implied.",
 	},
+	{
+		Slug: PermLinearRead,
+		Description: "Read Linear issues and comments through the daemon's Linear API key (tclaude proxy linear whoami, " +
+			"issue view/ls/comments/search). Restricted to the teams on the operator's agent.linear_proxy.allowed_teams list. " +
+			"Not default-granted: it reads private workspace data as the operator.",
+	},
+	{
+		Slug: PermLinearWrite,
+		Description: "Create and update Linear issues, comment on them, and attach links, through the daemon's Linear API key " +
+			"(tclaude proxy linear issue create/comment/update/link). Everything it writes is attributed to the operator's Linear " +
+			"account, and it additionally requires agent.linear_proxy.allow_write. Not default-granted and not owner-implied.",
+	},
 }
 
 // Permission slugs for the permissions-management endpoints themselves.
