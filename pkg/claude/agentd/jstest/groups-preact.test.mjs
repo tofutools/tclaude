@@ -1011,7 +1011,7 @@ test('native member rows preserve the legacy field, capability and selector matr
   assert.equal(menu.querySelector('[data-act="retire-agent"]').hasAttribute('data-agent'), false,
     'retire remains deliberately conv-keyed for dangling-agent recovery');
   assert.equal(menu.querySelector('[data-act="perm-edit"]').hasAttribute('data-agent'), false);
-  assert.equal(menu.querySelector('[data-act="sudo-grant"]').hasAttribute('data-agent'), false);
+  assert.equal(menu.querySelector('[data-act="sudo-grant"]').dataset.agent, 'agt-rich');
   assert.equal(menu.querySelector('[data-act="cron-new"]').hasAttribute('data-conv'), false);
   assert.equal(menu.querySelector('[data-act="cron-new"]').hasAttribute('data-agent'), false);
   assert.match(menu.querySelector('[data-act="cron-new"]').dataset.prefill, /"target":"agt-rich"/);
