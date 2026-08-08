@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -137,11 +138,10 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 // can make an informed decision.
 //
 // actx (at most one) carries the scope evaluation context, with the same
-// semantics as requirePermissionEx. It is deliberately NOT auto-filled from
-// targetConv: the target_agent dimension's identifier form is settled in
-// Phase 5 together with the lineage table, and guessing it here would bake a
-// wrong answer into every scoped retire/standdown grant. Until a caller
-// supplies it, a grant scoped on target_agent fails closed.
+// semantics as requirePermissionEx. target_agent is always the target's stable
+// agent_id and is derived centrally from targetConv when the caller did not
+// already supply it. A failed resolution leaves the dimension empty, so a
+// target-scoped grant fails closed.
 func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, targetConv string, actx ...ActionContext) (string, bool) {
 	p := peerFromContext(r.Context())
 	switch classify(p) {
@@ -163,10 +163,20 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 		hasHumanApprovalContinuation(r, perm, targetConv) {
 		return p.ConvID, true
 	}
+	scopeContext := actionContextOf(actx)
+	if scopeContext.TargetAgent == "" {
+		targetAgent, err := db.AgentIDForConv(targetConv)
+		if err != nil {
+			slog.Warn("permissions: cross-agent target lookup failed (scopes fail closed)",
+				"permission", perm, "target_conv", targetConv, "error", err)
+		} else {
+			scopeContext.TargetAgent = targetAgent
+		}
+	}
 	v := resolvePermissionVerdictForRequest(r, p.ConvID, perm)
 	switch v.Resolution {
 	case permAllow:
-		eval := evalPermissionScope(v, p.ConvID, actionContextOf(actx))
+		eval := evalPermissionScope(v, p.ConvID, scopeContext)
 		if eval.Satisfied {
 			recordAuditPermissionScope(r, perm, eval.Matched)
 			return p.ConvID, true

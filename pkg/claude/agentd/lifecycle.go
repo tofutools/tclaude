@@ -6577,10 +6577,13 @@ func completePendingSpawnBackfill(g *db.AgentGroup, p spawnParams, label, convID
 		requeuePendingSpawn(label, ps)
 		return
 	} else if m != nil {
-		// Same repair the sweeper's already-enrolled path performs: a prior
-		// attempt may have committed the membership but lost the task-ref
-		// write, and the claimed row is the only durable copy of the intent —
-		// requeue it on a failed repair so the sweeper retries.
+		// Same repairs the sweeper's already-enrolled path performs: a prior
+		// attempt may have committed membership but lost authorization lineage
+		// or the task-ref write. Requeue the only durable intent on failure.
+		if !ensurePendingSpawnLineageBound(convID, ps) {
+			requeuePendingSpawn(label, ps)
+			return
+		}
 		if !ensurePendingTaskRefBound(convID, ps) {
 			requeuePendingSpawn(label, ps)
 		}
@@ -6858,6 +6861,19 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 		}
 	}
 
+	// Durable spawn lineage is an authorization fact: @self-spawned and
+	// @descendants grants range over this edge. Resolve the stable parent from
+	// the pending-spawn companion when available, otherwise from the synchronous
+	// caller conv. An agent-initiated spawn must not silently land without its
+	// edge; failing enrollment is the safe direction because a missing edge
+	// would make a deliberately delegated capability unexpectedly unusable.
+	// Human-initiated spawns have no parent and therefore write no row. Clone is
+	// a separate lifecycle path and deliberately never calls this writer.
+	if err := recordSpawnLineage(agentID, p.SpawnedByAgent, p.SpawnedByConv); err != nil {
+		return 0, actorCreated, &spawnFailure{http.StatusInternalServerError, "identity",
+			"failed to record spawning agent lineage: " + err.Error()}
+	}
+
 	// Birth-time access controls: make the new agent a group owner
 	// and/or apply its requested per-slug permission overrides, the same writes
 	// the group-template instantiator performs after executeSpawn — but folded
@@ -6956,6 +6972,32 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 	return spawnContextMsgID, actorCreated, nil
 }
 
+// recordSpawnLineage resolves an agent-initiated spawn's stable parent and
+// records the immutable child edge. A human spawn has neither parent field and
+// is a no-op. Once a parent is present, an unresolved child identity is an
+// error: lineage is authorization state and must never be skipped silently.
+func recordSpawnLineage(childAgentID, spawnedByAgent, spawnedByConv string) error {
+	parentAgentID := strings.TrimSpace(spawnedByAgent)
+	if parentAgentID == "" && spawnedByConv != "" {
+		var err error
+		parentAgentID, err = db.AgentIDForConv(spawnedByConv)
+		if err != nil {
+			return fmt.Errorf("resolve spawning agent %s: %w", spawnedByConv, err)
+		}
+		if parentAgentID == "" {
+			return fmt.Errorf("resolve spawning agent %s: no stable actor", spawnedByConv)
+		}
+	}
+	if parentAgentID == "" {
+		return nil
+	}
+	childAgentID = strings.TrimSpace(childAgentID)
+	if childAgentID == "" {
+		return fmt.Errorf("resolve spawned child actor: no stable actor")
+	}
+	return db.RecordAgentLineage(childAgentID, parentAgentID, time.Now().UTC())
+}
+
 // rollbackSpawnEnrollment undoes enrollSpawnedConv when a launch-enrollment
 // spawn's fork itself fails to start (the `tclaude session new` subprocess
 // never even launches — e.g. the binary is missing from PATH). The enrollment
@@ -7013,6 +7055,16 @@ func rollbackSpawnEnrollment(g *db.AgentGroup, convID string, msgID int64, actor
 		slog.Warn("spawn: rollback failed to clear process command metadata", "conv", convID, "error", err)
 	}
 	if actorCreated {
+		agentID, err := db.AgentIDForConv(convID)
+		if err != nil {
+			slog.Warn("spawn: rollback failed to resolve stranded actor lineage",
+				"conv", convID, "error", err)
+		} else if agentID != "" {
+			if _, err := db.DeleteAgentLineageForChild(agentID); err != nil {
+				slog.Warn("spawn: rollback failed to delete stranded actor lineage",
+					"conv", convID, "agent", agentID, "error", err)
+			}
+		}
 		if _, err := db.DeleteAgentByConvID(convID); err != nil {
 			slog.Warn("spawn: rollback failed to delete stranded actor",
 				"conv", convID, "error", err)
