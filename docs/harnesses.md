@@ -239,18 +239,18 @@ covers **interactive human sessions**:
 | Capability | `copilot` — GitHub Copilot CLI |
 |---|---|
 | **Spawn** | ✅ `copilot`, with a caller-preset conv-id (`--session-id <uuid>`), a launch-time name (`--name=`), and an optional first turn (`-i <prompt>`) |
-| **Resume** | ✅ `copilot --resume=<id>` (exact id only on the CLI — never the picker, an id prefix, or a session name; tclaude resolves *its* own id prefixes to a full id first, via the conversation store below) |
+| **Resume** | ✅ `copilot --resume=<id>` (exact id only on the CLI — never the picker, an id prefix, or a session name; tclaude resolves *its* own id prefixes to a full id first, via the conversation store below). Under the [API drive](#copilot-drive-send-keys-vs-api) the RPC session is resumed too, never re-created |
 | **Model & effort at spawn** | ✅ `--model=` (including `auto`) and `--effort=` (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, as advertised by the pinned 1.0.77 CLI). Note `max`: the flag accepts the whole vocabulary, but the docs describe `max` as the highest-depth tier **for Anthropic models** — Copilot may reject it for a GPT model, so pair it with a model that has that tier |
-| **Rename / compact / graceful stop** | ✅ in-pane `/rename`, `/compact`, `/exit`. `/exit` closes the *current* session: with other sessions open in the same CLI it foregrounds the newest remaining one instead of quitting, so tclaude keeps its hard-kill fallback for a pane that doesn't actually exit. The exit is preceded by a **cancel keystroke** (`C-c`, `Lifecycle.SoftExitPrefixKeys`) — see below |
-| **Hooks / live status** | ✅ `<COPILOT_HOME>/hooks/tclaude.json` — a tclaude-**owned** drop-in file, merged by Copilot with the user's own hooks; no trust step, no `config.json` involvement. Registers `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `SessionEnd`, so a pane reports working/idle per turn and refreshes its current git branch (which also drives dashboard branch/PR links). See [below](#copilot-hooks) for what is deliberately left out |
+| **Rename / compact / graceful stop** | ✅ in-pane `/rename`, `/compact`, `/exit`. `/exit` closes the *current* session: with other sessions open in the same CLI it foregrounds the newest remaining one instead of quitting, so tclaude keeps its hard-kill fallback for a pane that doesn't actually exit. The exit is preceded by a **cancel keystroke** (`C-c`, `Lifecycle.SoftExitPrefixKeys`) — see below. Under the [API drive](#copilot-drive-send-keys-vs-api) rename and compact become typed RPC calls; `/exit` deliberately does not |
+| **Hooks / live status** | ✅ `<COPILOT_HOME>/hooks/tclaude.json` — a tclaude-**owned** drop-in file, merged by Copilot with the user's own hooks; no trust step, no `config.json` involvement. Registers `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `SessionEnd`, so a pane reports working/idle per turn and refreshes its current git branch (which also drives dashboard branch/PR links). See [below](#copilot-hooks) for what is deliberately left out. The hooks own busy/idle on both drives; the [API drive](#copilot-drive-send-keys-vs-api) adds the one state they cannot see — an agent blocked on a permission prompt |
 | **Conversation store** | ✅ cold list / resolve / cwd filter / title / existence, read from Copilot's own per-session `<COPILOT_HOME>/session-state/<id>/` files. No SQLite access at all — see [below](#copilot-conversation-store) |
 | **Sandbox** | ⚠️ `inherit` (default) / `off` — an *assertion*, not a lever. Copilot's own command sandbox has no per-launch lever tclaude can use — its hidden `--sandbox`/`--no-sandbox` flags need `--experimental`, which also lets the pane undo the choice — so tclaude neither enables nor disables it; `off` means "verified not engaged" and is what `--sandbox-impl tclaude-layer` resolves to. See [below](#copilot-and-tclaudes-outer-sandbox). Copilot's *own* command sandboxing was separately evaluated and deliberately not advertised as a harness-builtin implementation — see [below](#copilots-own-command-sandboxing) |
 | **tclaude-layer (outer OS sandbox)** | ✅ Linux bubblewrap / macOS Seatbelt, with Copilot's pre-approved directory catalog composed into the mount plan |
 | **Model transport under a filtered network** | ⚠️ the default first-party GitHub Copilot route only (`api.githubcopilot.com`, `api.individual.githubcopilot.com`, `api.github.com`); the model host is assigned per account at token exchange, so only observed tiers are named and the rest stay denied. Every route-moving input is refused rather than followed, read from both settings files with the same precedence as the sandbox key |
-| **Directory pre-trust at spawn** ([below](#directory-trust-at-spawn)) | ✅ opt-in `trust_dir` appends the launch dir to `trustedFolders` in `<COPILOT_HOME>/config.json`. Copilot's modal blocks *before* any provider contact, so an unseeded detached pane never reaches its first turn |
+| **Directory pre-trust at spawn** ([below](#directory-trust-at-spawn)) | ✅ opt-in `trust_dir` appends the launch dir to `trustedFolders` in `<COPILOT_HOME>/config.json`. Copilot's modal blocks *before* any provider contact, so an unseeded detached pane never reaches its first turn. Opt-in under send-keys; **mandatory** under the [API drive](#copilot-drive-send-keys-vs-api), which refuses an untrusted launch dir rather than producing a working but invisible agent |
 | **Approval / permissions** | ⚠️ `allow-tools` (default) / `inherit` / `yolo`. Three tokens, each rendering only flags measured against the pinned binary on a real terminal. None makes a Copilot pane unconditionally nonblocking — folder trust is unreachable from the argv even under `yolo` — and `yolo` without `--sandbox-impl tclaude-layer` leaves the agent with no file boundary at all, which tclaude warns about at spawn. See [below](#copilot-approvals-and-permissions) for exactly which prompt each one closes and which it leaves standing |
-| **Usage, cost & context** | ⚠️ followed incrementally from Copilot's durable event log, with a byte-offset checkpoint so a daemon restart resumes rather than rescans. Output tokens advance per turn (`assistant.message`); input tokens, context occupancy and window size advance only at an authoritative disclosure — a compaction, a truncation, or a shutdown — and nothing is written between them, so a real reading is never overwritten by a zero. Cost is carried in the **nano-AI units Copilot emits**; no USD figure is derived, because Copilot documents an AI credit as $0.01 in a different structure and nowhere states that one AIU is one credit |
-| **Drive (how tclaude talks to the agent)** | ⚠️ tmux `send-keys` by default. An **experimental, opt-in** API drive is being built alongside it: `--copilot-api` on `tclaude agent spawn` / `tclaude session new`, a `copilot_api` field on spawn profiles, and a checkbox in the dashboard spawn modal. See [below](#copilot-drive-send-keys-vs-api) |
+| **Usage, cost & context** | ⚠️ followed incrementally from Copilot's durable event log, with a byte-offset checkpoint so a daemon restart resumes rather than rescans. Output tokens advance per turn (`assistant.message`); input tokens, context occupancy and window size advance only at an authoritative disclosure — a compaction, a truncation, or a shutdown — and nothing is written between them, so a real reading is never overwritten by a zero. Cost is carried in the **nano-AI units Copilot emits**; no USD figure is derived, because Copilot documents an AI credit as $0.01 in a different structure and nowhere states that one AIU is one credit. Under the [API drive](#copilot-drive-send-keys-vs-api) context and usage are read live over RPC instead, and the log follower stands down while that reading is current |
+| **Drive (how tclaude talks to the agent)** | ⚠️ tmux `send-keys` by default. An **experimental, opt-in** API drive runs alongside it — `--copilot-api` on `tclaude agent spawn` / `tclaude session new`, a `copilot_api` field on spawn profiles, a checkbox in the dashboard spawn modal — driving `copilot --ui-server`'s embedded JSON-RPC server. It carries message delivery, rename and compaction as typed calls, and reads status/context/usage instead of scraping; soft exit deliberately stays on keystrokes. It **requires a pre-trusted launch directory** and host loopback, and the endpoint is unauthenticated. Off unless you ask. See [below](#copilot-drive-send-keys-vs-api) |
 | **Ad-hoc ask** ([guide](ask.md)) | ✅ buffered `copilot -p` (capture) / `copilot -i` TUI (interactive), conv-id pre-minted (`--session-id`), resumed exactly (`--resume=<full uuid>`). See [below](#copilot-ask) |
 | **Live-streamed ask output** (print mode → a TTY) | ➖ buffered — the answer arrives whole at the end of the turn |
 | **Everything else in the matrix** | ➖ not yet — no tool governance, remote control, or status bar |
@@ -258,10 +258,11 @@ covers **interactive human sessions**:
 Two consequences are worth stating plainly:
 
 - Copilot conversations **do** appear in `conv ls` and resolve for resume, and
-  they now carry usage and context figures — but at the durable log's
-  resolution, not a live meter's. Truly per-call usage and context are emitted
-  on Copilot's stdout JSONL stream and never persisted, so reading them is a
-  transport integration rather than a file tracker, and remains out of scope.
+  they now carry usage and context figures — but on the default send-keys drive
+  those come at the durable log's resolution, not a live meter's. Per-call usage
+  and context are not in that log; reading them takes a transport, which is
+  exactly what the opt-in [API drive](#copilot-drive-send-keys-vs-api) is. On
+  send-keys it remains out of scope.
 - Copilot agents are usable as detached agents in **one launch topology only**:
   sandbox implementation `tclaude-layer` with mode `off` — tclaude's own OS wall
   enforcing and Copilot's own (experimental, MXC) command sandbox asserted down,
@@ -298,6 +299,12 @@ Two consequences are worth stating plainly:
   paths the outer wall grants as well as the launch cwd. Elsewhere `trust_dir`
   stays opt-in, so a spawn that does not ask for it still parks before the model
   is contacted.
+
+  Adding the [API drive](#copilot-drive-send-keys-vs-api) narrows this further
+  in two ways, both refusals rather than surprises: the launch dir must be
+  trusted *before* launch rather than merely opt-in, and the `tclaude-layer`
+  wall must leave the pane on host loopback, so a detached API-driven Copilot
+  agent cannot also run under a filtered network posture today.
 
 The restraint is deliberate rather than incidental. This adapter was FIRST
 written against the official GitHub documentation alone, with no Copilot binary
@@ -475,6 +482,11 @@ audit covers all three:
   `--headless`, `--acp` (and the `--stdio`/`--host`/`--port`/`--auth-token-env`
   options that configure them). tclaude manages a local interactive TUI in a
   tmux pane, and every contract it advertises for Copilot describes that pane.
+  `--ui-server`/`--host`/`--port` stay refused as pass-throughs even though
+  tclaude renders them itself for the [API drive](#copilot-drive-send-keys-vs-api):
+  there the port is one tclaude allocated and proved ownership of, and a
+  hand-supplied one would be a number nothing verified. Ask for that mode with
+  `--copilot-api`.
 - **Metadata** — `--model`, `--effort`/`--reasoning-effort`, `--name`/`-n`.
   These move no boundary, and
   they are refused anyway: tclaude validates and records each one, so a
@@ -738,11 +750,11 @@ every other harness: by typing into its TUI with tmux `send-keys`. That path is
 unchanged and remains the default.
 
 Copilot CLI also ships a hidden `--ui-server` flag — one process running a fully
-interactive TUI *and* an embedded JSON-RPC server on a TCP port. That is a much
-better shape for tclaude than keystrokes: typed lifecycle calls instead of an
-injection sink, and a real event stream instead of screen-scraping. tclaude is
-building that drive **alongside** the send-keys one rather than replacing it, so
-both can run side by side on real agents and agents move over one at a time.
+interactive TUI *and* an embedded JSON-RPC server on a loopback TCP port. That is
+a much better shape for tclaude than keystrokes: typed lifecycle calls instead of
+an injection sink, and structured reads instead of screen-scraping. tclaude runs
+that drive **alongside** the send-keys one rather than replacing it, so both run
+side by side on real agents and agents move over one at a time.
 
 Selecting it is per-spawn, and off unless something asks:
 
@@ -763,14 +775,129 @@ reincarnate, and clone all land on the same drive.
 Which drive an agent is on is visible in three places: the spawn command's
 resolved-launch echo (a `Copilot drive:` line, printed only when the API drive
 was selected), the dashboard's per-agent harness line (an amber `api` marker
-next to the harness name), and the profile listings.
+next to the harness name), and the profile listings. The dashboard marker
+distinguishes *asked for* from *actually driving*: solid amber means tclaude
+holds a connection, dimmed-and-dashed means the launch chose the API drive but
+no connection is up — still starting, or its channel never came up.
 
-The API drive currently records intent only — the runtime that launches Copilot
-with `--ui-server`, discovers its port, and speaks to it is separate, later work.
-Note also that `--ui-server` has **no authentication and no per-connection
-scoping**; that is an accepted, deliberate trade for an opt-in experimental path
-in a single-operator trust domain, not a template for how tclaude does
-API-backed harnesses.
+##### What the API drive changes
+
+The launch itself is unchanged in shape: the pane still runs one `copilot`
+process, so liveness anchoring, the reaper and the escalation ladder all work
+exactly as they do under send-keys. What moves is how tclaude talks to it and
+where it reads state from. Everything in the Copilot table above that is not
+listed here describes both drives.
+
+| | send-keys (default) | `--copilot-api` |
+|---|---|---|
+| **Agent messages, welcomes, follow-ups** | typed into the pane as bracketed-paste keystrokes | `session.send` over the RPC connection |
+| **Rename** | `/rename <title>` typed into the pane | `session.name.set` — the same write, measured: it sets `name` and `user_named` in the session's `workspace.yaml`, the file the conversation store already reads for the title |
+| **Compaction** (`tclaude agent compact`) | `/compact` typed into the pane | `session.history.compact`, with the follow-up prompt submitted after it returns rather than racing it. "Nothing to compact" is the ordinary answer for a young session, not a failure, and the follow-up is still submitted |
+| **Soft exit / graceful stop** | `C-c` then `/exit` typed into the pane | **unchanged — still `C-c` + `/exit`.** Deliberate; see below |
+| **Busy / idle** | tclaude's Copilot hooks | **unchanged — still the hooks.** They were measured firing for an RPC-created session, carrying the conversation's own id, so nothing is gained by adding a second writer |
+| **Waiting on a human** | not detectable — an agent sitting on a permission prompt looks like an agent working, because Copilot's `PermissionRequest` hook is [not installable](#copilot-hooks) | `session.permissions.pendingRequests` projects it onto the row, so the dashboard shows *awaiting permission* instead of *working*. Stays empty under `--allow-all-tools`, so it cannot mislabel an unattended agent |
+| **Context, usage & window** | followed from Copilot's durable event log — real, but only at the resolution of an authoritative disclosure (a compaction, a truncation, a shutdown) | `session.metadata.contextInfo` + `session.usage.getMetrics`, re-read whenever a session event says something may have changed (coalesced to at most one refresh per 750 ms, with a 30 s backstop). While a reading is current it is the single writer of those columns; if refreshes stop working it ages out and the durable-log follower takes the row back |
+| **Resume** | `copilot --resume=<id>` on the argv | `copilot --resume=<id>` on the argv **and** `session.resume` on the RPC session. Never `session.create` for a resumed launch: at an id that already has history, create starts it *fresh*, and a failed resume is reported rather than downgraded into one |
+
+Nothing here is a fallback pair. If the channel is not up, a delivery **fails and
+is retried** — it is never quietly typed into the pane instead. An agent that
+opted out of the keystroke path does not get handed back to it one failure at a
+time, which would reopen the injection sink precisely for the agent whose channel
+is in trouble.
+
+##### Soft exit stays on send-keys, on purpose
+
+This is a decision, not a missing row. Measured against Copilot CLI 1.0.78, the
+RPCs that look like the answer are not one: `session.shutdown` and
+`sessions.close` both *succeed* and leave the `copilot` process running with its
+session still foregrounded, and `runtime.shutdown` refuses outright with "Runtime
+shutdown is not available for this server". They end a **session**, not the CLI.
+Routing soft exit through them would report a delivered exit for a pane that
+never dies — which every stop, retire and dashboard surface then reads as an
+agent that finished its work. `/exit` through the pane really does end the
+process, so it stays.
+
+##### Folder trust is a hard requirement, and the refusal says so
+
+An API-driven launch **is refused** when its launch directory is not already in
+Copilot's `trustedFolders` and the launch did not ask to seed it. The reason is
+specific to this drive: Copilot's folder-trust modal blocks the **TUI** but not
+the embedded server. `connect`, `session.create`, `setForeground` and
+`session.send` all succeed while the pane sits on the dialog, so an unattended
+launch into an untrusted directory would come up perfectly drivable over the API
+while the human stares at a blocked pane — a working, invisible agent. Seeding
+after the fact does not help either: `addTrusted` cannot retract a modal that has
+already been drawn.
+
+The remedy is to pre-trust the directory before launch — the spawn modal's
+pre-trust checkbox, a spawn profile's `trust_dir`, `tclaude session new
+--trust-dir` — or clear the dialog once by hand in a pane there, or spawn without
+the API drive. A detached child in tclaude's own verified default sibling
+worktree is pre-trusted automatically, so the common managed case does not hit
+this. On a **relaunch** the refusal is worded differently, because a relaunch
+carries no `--trust-dir` of its own: the entry was there when the conversation
+was first launched and is not there now.
+
+Two other launch-time refusals, both named rather than silent:
+
+- **A private loopback namespace.** The channel is a TCP connection agentd opens
+  to a process it does not itself launch, so under a `tclaude-layer` network
+  posture that unshares the network namespace, the `127.0.0.1` the pane binds is
+  not the `127.0.0.1` agentd holds and no amount of waiting makes it appear. The
+  API drive therefore requires the pane to share host loopback; anything else is
+  refused as `copilot_api_unreachable_network_posture` at spawn rather than
+  failing later as an unreachable port.
+- **A harness with no API-backed mode.** `--copilot-api` on Claude Code, Codex or
+  OpenCode is an error, not a silently dropped flag.
+
+##### Security posture, stated plainly
+
+`--ui-server` has **no authentication and no per-connection scoping**. A client
+that sends `connect` with no token is accepted (verified, even with
+`COPILOT_CONNECTION_TOKEN` exported), and any connected client can read the whole
+conversation stream and drive every session on that server. There is no knob to
+add a credential in this mode, and a unix socket is not an option — Copilot only
+ever binds TCP.
+
+This is accepted for now, deliberately, on the grounds that the mode is opt-in,
+off by default, and all tclaude agents share one operator trust domain. It is a
+step **down** from the OpenCode integration's posture (per-runtime password, and
+a proven control socket on Linux) and is not a template for how tclaude does
+API-backed harnesses. The revisit triggers are tracked on TCL-1055. What stands
+in for a credential meanwhile is structural: tclaude pins `--host 127.0.0.1`
+rather than inheriting Copilot's default, **allocates** the port itself instead of
+discovering one, and positively observes that the listening socket belongs to the
+agent's own pane subtree before every drive call — a handle that cannot be
+re-proved refuses rather than sends.
+
+##### Known limitation: an agentd restart holds messages
+
+API connections live in the daemon's memory only. After an agentd restart, an
+already-running API-driven agent has no connection and cannot acquire one short
+of relaunching — so messages to it are **held and retried**, not delivered, until
+it relaunches. The same applies during the bootstrap window at launch, and to a
+bootstrap that failed outright.
+
+That is the deliberate consequence of having no keystroke fallback: quietly
+typing the message in would reopen the injection sink for exactly the agent whose
+channel is in trouble. It is still a surprise if you meet it without warning.
+Reconnecting to an existing session after a daemon restart is tracked as
+TCL-1074.
+
+One case worth knowing about because it looks like the same symptom and is not:
+the daemon establishes the channel only for launches **it** started. A pane you
+start yourself with `tclaude session new --copilot-api` binds the embedded server
+and is a perfectly good interactive Copilot session, but agentd holds no
+connection to it.
+
+##### Version pinning
+
+`--ui-server` is hidden from `--help`. It is named in the shipped
+`@github/copilot-sdk` typings ("TUI+server mode"), which suggests it is intended
+rather than accidental, but it is absent from GitHub's public documentation and
+could change without notice. Every behaviour described above was measured against
+Copilot CLI **1.0.78** on Linux. Re-check this mode on a Copilot CLI upgrade
+rather than assuming it is stable.
 
 #### Copilot soft exit
 
