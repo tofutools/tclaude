@@ -135,7 +135,14 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 // permanent slug grant. The popup surfaces who's calling, what the
 // target is, and which perm slug is being requested so the human
 // can make an informed decision.
-func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, targetConv string) (string, bool) {
+//
+// actx (at most one) carries the scope evaluation context, with the same
+// semantics as requirePermissionEx. It is deliberately NOT auto-filled from
+// targetConv: the target_agent dimension's identifier form is settled in
+// Phase 5 together with the lineage table, and guessing it here would bake a
+// wrong answer into every scoped retire/standdown grant. Until a caller
+// supplies it, a grant scoped on target_agent fails closed.
+func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, targetConv string, actx ...ActionContext) (string, bool) {
 	p := peerFromContext(r.Context())
 	switch classify(p) {
 	case classUnidentified:
@@ -156,9 +163,20 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 		hasHumanApprovalContinuation(r, perm, targetConv) {
 		return p.ConvID, true
 	}
-	switch resolvePermissionForRequest(r, p.ConvID, perm) {
+	v := resolvePermissionVerdictForRequest(r, p.ConvID, perm)
+	switch v.Resolution {
 	case permAllow:
-		return p.ConvID, true
+		eval := evalPermissionScope(v, p.ConvID, actionContextOf(actx))
+		if eval.Satisfied {
+			recordAuditPermissionScope(r, perm, eval.Matched)
+			return p.ConvID, true
+		}
+		// Scoped away from this action: the grant decides nothing here, so
+		// fall through to the owner bypass and then the popup, exactly as an
+		// undecided verdict would.
+		if ownerOfGroupContaining(p.ConvID, targetConv) {
+			return p.ConvID, true
+		}
 	case permUndecided:
 		// No grant source — the group-owner structural bypass still
 		// applies: an owner can manage members of groups it owns.
