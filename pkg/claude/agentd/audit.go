@@ -67,6 +67,10 @@ type auditResult struct {
 	spawnResolved     any
 	responseBody      []byte
 	responseTruncated bool
+	// permScope records the grant scope that authorized this command, when
+	// the caller passed the gate on a SCOPED grant. Empty on every unscoped
+	// decision, which is what makes its presence meaningful.
+	permScope string
 }
 
 type auditResultContextKey struct{}
@@ -90,6 +94,24 @@ func setAuditTargetConv(r *http.Request, conv string) {
 func setAuditDetail(r *http.Request, detail string) {
 	if result, ok := r.Context().Value(auditResultContextKey{}).(*auditResult); ok {
 		result.detail = auditClip(detail, 240)
+	}
+}
+
+// recordAuditPermissionScope notes that a SCOPED grant authorized this
+// request, and which scope matched. A scoped grant narrows an agent to part
+// of what a slug can reach, so the audit trail has to say which part was
+// exercised — "spawned into dev" reads very differently once the same agent
+// is barred from prod. A no-op for the unscoped decisions (scope == "") and
+// on routes the audit middleware does not record.
+//
+// First writer wins: a handler that clears several gates records the one that
+// admitted it, not the last one it happened to touch.
+func recordAuditPermissionScope(r *http.Request, perm, scope string) {
+	if scope == "" {
+		return
+	}
+	if result, ok := r.Context().Value(auditResultContextKey{}).(*auditResult); ok && result.permScope == "" {
+		result.permScope = auditClip(perm+" ["+scope+"]", 200)
 	}
 }
 
@@ -552,6 +574,11 @@ func recordAuditRow(r *http.Request, route *auditRoute, vars map[string]string, 
 	if result != nil && result.detail != "" {
 		fields.Detail = result.detail
 	}
+	if result != nil && result.permScope != "" {
+		// Ahead of the spawn envelope below, so a spawn row carries the
+		// scope in its human-readable summary like every other verb.
+		fields.Detail = joinAuditDetail(fields.Detail, "scope: "+result.permScope)
+	}
 	if result != nil && result.targetConv != "" {
 		fields.TargetConv = result.targetConv
 	}
@@ -765,6 +792,15 @@ func auditClip(s string, max int) string {
 		return s[:max] + "…"
 	}
 	return s
+}
+
+// joinAuditDetail appends a second clause to a detail string, keeping the
+// whole thing inside the same 240-char bound setAuditDetail enforces.
+func joinAuditDetail(detail, extra string) string {
+	if detail == "" {
+		return auditClip(extra, 240)
+	}
+	return auditClip(detail+"; "+extra, 240)
 }
 
 // --- describers --------------------------------------------------------
