@@ -183,19 +183,6 @@ func ownerBypassPermittedForGroup(g *db.AgentGroup, convID, slug string, actx Ac
 	return permissionScopeSatisfied(convID, scope, actx)
 }
 
-// ownerBypassPermittedForGroupID is ownerBypassPermittedForGroup for a caller
-// that holds only the group id. A group that cannot be read denies the bypass:
-// the narrowing lives on the row, so an unread row is an unknown narrowing.
-func ownerBypassPermittedForGroupID(groupID int64, convID, slug string, actx ActionContext) bool {
-	g, err := db.GetAgentGroupByID(groupID)
-	if err != nil || g == nil {
-		slog.Warn("permissions: owner-scope group lookup failed (bypass fails closed)",
-			"group_id", groupID, "slug", slug, "error", err)
-		return false
-	}
-	return ownerBypassPermittedForGroup(g, convID, slug, actx)
-}
-
 // ownerOfGroupPermitting is the group-scoped bypass predicate: convID owns g
 // AND g's owner-scope map permits slug for this action. It replaces the bare
 // db.IsAgentGroupOwner test at every gate whose bypass reach is the group.
@@ -237,13 +224,15 @@ func ownerOfGroupPermitting(g *db.AgentGroup, convID, slug string, actx ActionCo
 // refused here — the fail-closed answer the design mandates when the target
 // group is absent from context.
 func ownsAnyGroupPermitting(convID, slug string, actx ActionContext) bool {
-	owned, err := db.ListGroupsOwnedBy(convID)
+	owned, err := db.ListOwnedGroupScopes(convID)
 	if err != nil {
 		slog.Warn("permissions: owned-group lookup failed", "conv", convID, "error", err)
 		return false
 	}
-	for _, id := range owned {
-		if ownerBypassPermittedForGroupID(id, convID, slug, actx) {
+	for _, g := range owned {
+		if ownerBypassPermittedForGroup(
+			&db.AgentGroup{ID: g.ID, Name: g.Name, OwnerScopesJSON: g.OwnerScopesJSON},
+			convID, slug, actx) {
 			return true
 		}
 	}
@@ -299,9 +288,25 @@ func ownerOfGroupContainingPermitting(convID, targetConv, slug string, actx Acti
 // narrowing — union with unrestricted is unrestricted, the same rule the grant
 // tiers apply to an unscoped row. Otherwise Scopes is the union of the
 // narrowings across owned groups, and the owner may act within any one of them.
+//
+// Degraded records that some owned group's contribution could NOT be
+// determined — its row would not read, or its map does not decode on this
+// build. Such a group confers nothing at the gate, and this flag is what stops
+// that from reading as "this agent has no owner-shape at all" in attenuation,
+// which would be the widest possible answer to a question the daemon just
+// failed to answer. It is exactly the treatment granterScopesForSlug already
+// gives a grant tier whose every row is undecodable.
 type ownerTierEntry struct {
 	Unrestricted bool
+	Degraded     bool
 	Scopes       []PermissionScope
+}
+
+// confers reports whether the entry actually authorizes anything. A
+// Degraded-only entry does not: the gate refuses it, so the listing must not
+// report the slug as effective (listing == gate).
+func (e ownerTierEntry) confers() bool {
+	return e.Unrestricted || len(e.Scopes) > 0
 }
 
 // ownerImpliedTier maps slug → what ownership confers. An absent slug is not
@@ -322,10 +327,11 @@ func (t ownerImpliedTier) slugs() []string {
 	return out
 }
 
-// satisfiedBy reports whether the owner tier authorizes slug for this action —
-// the LISTING's read of the same question the gate asks. Kept next to the gate
-// helpers deliberately: listing == gate is a guarded invariant, and the two
-// must not grow separate notions of "the owner may do this".
+// satisfiedBy answers, at the TIER level, whether ownership authorizes slug for
+// this action. The gate never calls it — it walks the owned groups one at a
+// time, which is what lets it pick the right group's map — so this exists to
+// pin the tier's union semantics against that walk in tests. Keep the two
+// answering the same question.
 func (t ownerImpliedTier) satisfiedBy(convID, slug string, actx ActionContext) bool {
 	entry, ok := t[slug]
 	if !ok {
@@ -345,34 +351,53 @@ func (t ownerImpliedTier) satisfiedBy(convID, slug string, actx ActionContext) b
 // ownerImpliedTierFor computes what ownership confers on convID across every
 // group it owns, applying each group's own narrowing.
 //
-// A group whose map is undecodable contributes NOTHING (it cannot widen and
-// must not silently confer), matching what the gate does with the same row. A
-// DB error degrades to "not an owner", the pre-existing behaviour: owner perms
-// go un-annotated rather than failing the whole listing.
+// A group whose map is undecodable contributes NOTHING to what the owner may
+// do (it cannot widen and must not silently confer), matching what the gate
+// does with the same row — but it is recorded as Degraded rather than simply
+// skipped. "We could not read this group's narrowing" and "this agent owns
+// nothing" are the same shape and must not be the same answer: the second is
+// legitimately unconstrained for delegation, the first is a failure that would
+// otherwise hand the owner an unbounded conferral through the very map that
+// was supposed to bound it.
+//
+// An agent that owns NOTHING still yields a nil tier — the pre-existing
+// reading, and the one delegation depends on (permissions.grant is recursive).
 func ownerImpliedTierFor(convID string) ownerImpliedTier {
-	owned, err := db.ListGroupsOwnedBy(convID)
+	implied := OwnerImpliedSlugs()
+	degradedTier := func() ownerImpliedTier {
+		tier := ownerImpliedTier{}
+		for _, slug := range implied {
+			tier[slug] = ownerTierEntry{Degraded: true}
+		}
+		return tier
+	}
+	owned, err := db.ListOwnedGroupScopes(convID)
 	if err != nil {
-		slog.Warn("permissions: owned-group lookup failed", "conv", convID, "error", err)
-		return nil
+		// We do not know WHETHER this agent owns groups, let alone what they
+		// narrow. Degrading to "not an owner" would be a guess in the widening
+		// direction for every owner-implied slug.
+		slog.Warn("permissions: owned-group lookup failed (owner tier degraded)",
+			"conv", convID, "error", err)
+		return degradedTier()
 	}
 	if len(owned) == 0 {
 		return nil
 	}
-	implied := OwnerImpliedSlugs()
 	tier := ownerImpliedTier{}
-	for _, id := range owned {
-		g, err := db.GetAgentGroupByID(id)
-		if err != nil || g == nil {
-			continue
-		}
+	for _, g := range owned {
 		scopes, err := ownerScopesForEval(g.OwnerScopesJSON)
-		if err != nil {
-			slog.Warn("permissions: undecodable group owner scopes ignored in listing",
+		degraded := err != nil
+		if degraded {
+			slog.Warn("permissions: undecodable group owner scopes (owner tier degraded)",
 				"group", g.Name, "error", err)
-			continue
 		}
 		for _, slug := range implied {
 			entry := tier[slug]
+			if degraded {
+				entry.Degraded = true
+				tier[slug] = entry
+				continue
+			}
 			if entry.Unrestricted {
 				continue
 			}

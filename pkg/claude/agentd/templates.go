@@ -3098,15 +3098,28 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 				slog.Warn("instantiate: set deploy meta failed", "group", spec.groupName, "error", err)
 			}
 		}
-		// Owner scopes (TCL-1071): the narrowing the blueprint declares for
-		// the force it deploys. Best-effort like the writes above — but note
-		// the failure direction is SAFE only in the sense that the group comes
-		// up with the historical unrestricted bypass, which is why it is
-		// logged loudly rather than silently.
+		// Owner scopes (TCL-1071): the narrowing the blueprint declares for the
+		// force it deploys. Deliberately NOT best-effort like the writes above.
+		// Every other post-create field fails in a direction the operator can
+		// see and fix — a missing cwd, a blank context. This one fails by
+		// deploying a force whose owners hold MORE authority than the blueprint
+		// says, and nothing about the running group would ever reveal it. So the
+		// deploy is refused and the (still empty, still member-less) group is
+		// taken back down rather than handed over half-configured.
 		if tmpl.OwnerScopesJSON != "" {
 			if _, err := db.SetAgentGroupOwnerScopes(spec.groupName, tmpl.OwnerScopesJSON); err != nil {
-				slog.Warn("instantiate: set owner scopes failed — the deployed group keeps the "+
-					"unrestricted owner bypass", "group", spec.groupName, "error", err)
+				slog.Error("instantiate: set owner scopes failed; refusing the deploy",
+					"group", spec.groupName, "error", err)
+				if delErr := db.DeleteAgentGroup(spec.groupName); delErr != nil {
+					slog.Error("instantiate: could not remove the half-configured group",
+						"group", spec.groupName, "error", delErr)
+				}
+				cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
+				writeError(w, http.StatusInternalServerError, "io",
+					"could not apply the template's owner-scope narrowing to the new group, so the "+
+						"deploy was refused rather than bringing up a force with a wider owner bypass "+
+						"than the template declares: "+err.Error())
+				return
 			}
 		}
 

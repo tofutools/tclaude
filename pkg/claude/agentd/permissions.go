@@ -1047,7 +1047,12 @@ func effectivePermsFor(state permissionsState, convID string, ownerImplied owner
 			// The owner bypass fills exactly this gap — see
 			// requirePermissionEx, where it is consulted only for
 			// permUndecided so an explicit deny stays authoritative.
-			if entry, ok := ownerImplied[slug]; ok {
+			// entry.confers() rather than mere presence: a DEGRADED entry
+			// (a group whose narrowing could not be read) authorizes nothing
+			// at the gate, so reporting the slug as effective here would be
+			// exactly the listing-vs-gate drift the shared resolver exists to
+			// prevent.
+			if entry, ok := ownerImplied[slug]; ok && entry.confers() {
 				effective = append(effective, slug)
 				ownerAdded = append(ownerAdded, slug)
 				// Carry the SCOPE, not just "owner": a reader told only

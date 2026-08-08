@@ -166,8 +166,16 @@ func granterScopesForSlug(src permSources, cfg *config.Config, ownerTier ownerIm
 		// bypass may — and if every owned group narrows the slug, that
 		// narrowing is the whole of the granter's authority for it.
 		entry, conferred := ownerTier[slug]
-		if !conferred || entry.Unrestricted || len(entry.Scopes) == 0 {
+		if !conferred || entry.Unrestricted {
 			return nil, false
+		}
+		// A DEGRADED entry reaches here with no usable scopes: the daemon
+		// could not read what one of the owner's groups narrows. That is a
+		// failure to answer, not an answer of "unconstrained" — the same
+		// fail-closed reading the all-rows-undecodable grant tier gets above.
+		// An empty scope set means the granter may confer nothing through it.
+		if len(entry.Scopes) == 0 {
+			return []PermissionScope{}, true
 		}
 		return entry.Scopes, true
 	}

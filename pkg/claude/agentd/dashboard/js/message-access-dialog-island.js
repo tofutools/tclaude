@@ -541,7 +541,11 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
     busyRef.current = true;
     setBusy(true); setError('');
     const full = Object.fromEntries(rows.map((row) => [row.slug, currentEffect(row.slug)]));
-    try { await actions.savePermissions(descriptor, full, ownerScopes); state.close(); }
+    // Only send the map when the box was actually EDITED. A save that merely
+    // flipped a grant must not carry owner_scopes at all: the daemon treats an
+    // absent field as "unchanged", and sending the box's current value would
+    // clear a stored narrowing this build could not decode into it.
+    try { await actions.savePermissions(descriptor, full, ownerScopesDirty ? ownerScopes : null); state.close(); }
     catch (cause) { setError(errorText(cause)); }
     finally { busyRef.current = false; setBusy(false); }
   };

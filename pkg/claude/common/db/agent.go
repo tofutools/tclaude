@@ -2732,6 +2732,47 @@ func ListAgentGroupOwners(groupID int64) ([]*AgentGroupOwner, error) {
 	return out, rows.Err()
 }
 
+// OwnedGroupScopes is one owned group's identity plus the only field the
+// owner-bypass evaluation needs from it. It exists so a caller that must
+// consult EVERY owned group's owner-scope map pays one query rather than
+// one per group — the dashboard roster runs that walk per agent, per poll.
+type OwnedGroupScopes struct {
+	ID              int64
+	Name            string
+	OwnerScopesJSON string
+}
+
+// ListOwnedGroupScopes returns the owner-scope narrowing carried by every
+// group convID owns, in one query. A group whose row cannot be read is not
+// silently absent: the query is a join, so a missing group simply has no
+// ownership row either.
+func ListOwnedGroupScopes(convID string) ([]OwnedGroupScopes, error) {
+	if convID == "" {
+		return nil, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT g.id, g.name, g.owner_scopes_json
+		FROM agent_group_owners o
+		JOIN agent_groups g ON g.id = o.group_id
+		WHERE o.agent_id = (SELECT agent_id FROM agent_conversations WHERE conv_id = ?)`, convID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []OwnedGroupScopes
+	for rows.Next() {
+		var g OwnedGroupScopes
+		if err := rows.Scan(&g.ID, &g.Name, &g.OwnerScopesJSON); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
 // ListGroupsOwnedBy returns every group_id convID owns. Used by the
 // auth check that asks "is the sender an owner of any group the
 // target is a member of?".

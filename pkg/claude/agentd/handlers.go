@@ -3949,10 +3949,6 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// ownerScopesWire renders a stored owner-scope map for a JSON response: the
-// decoded object, or an empty object when the group imposes no narrowing. A
-// raw string would force every client to double-decode, and json.RawMessage
-// of "" is not valid JSON.
 // ownerScopesWireOmitEmpty is ownerScopesWire for a field tagged omitempty: it
 // answers nil rather than an empty map so an unnarrowed group serializes with
 // no owner_scopes key at all.
@@ -3964,10 +3960,23 @@ func ownerScopesWireOmitEmpty(raw string) map[string]PermissionScope {
 	return out
 }
 
+// ownerScopesWire renders a stored owner-scope map for a JSON response: the
+// decoded object, or an empty object when the group imposes no narrowing. A
+// raw string would force every client to double-decode, and json.RawMessage
+// of "" is not valid JSON.
+//
+// A stored map this build cannot decode also renders empty — there is nothing
+// typed to show — so it is LOGGED here rather than passing silently. The
+// display is lossy in that case, but it cannot destroy the stored value: an
+// editor sends owner_scopes only when its box was edited, and an omitted field
+// leaves the row untouched.
 func ownerScopesWire(raw string) map[string]PermissionScope {
 	out := map[string]PermissionScope{}
 	scopes, err := ownerScopesForEval(raw)
 	if err != nil {
+		slog.Warn("permissions: stored owner scopes do not decode on this build; "+
+			"rendering them as absent (the gate still fails their bypass closed)",
+			"error", err)
 		return out
 	}
 	for slug, scope := range scopes {

@@ -221,3 +221,109 @@ func TestOwnerBypassFillsTheGroupDimensionFromTheCarryingGroup(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, ownerOfGroupPermitting(g, owner, PermGroupsSpawn, ActionContext{}))
 }
+
+// The failure the degraded flag exists for. A group whose stored map this
+// build cannot decode confers NOTHING at the gate — so the owner must not be
+// read as an UNCONSTRAINED granter, which is what "no tier entry" would mean.
+// Without this, an owner narrowed by a newer daemon's map could, after a
+// downgrade, mint a child an unscoped groups.spawn and act through it.
+func TestOwnerTierDegradesRatherThanVanishingOnUndecodableMap(t *testing.T) {
+	setupTestDB(t)
+	const owner = "owner-degraded-conv-0001"
+	_, _, err := db.EnsureAgentForConv(owner, "spawn")
+	require.NoError(t, err)
+	id, err := db.CreateAgentGroup("degraded", "")
+	require.NoError(t, err)
+	require.NoError(t, db.AddAgentGroupOwner(id, owner, "test"))
+	// Written straight to the row: the HTTP boundary would refuse this, which
+	// is precisely why it can only arrive from a build that knew the dimension.
+	_, err = db.SetAgentGroupOwnerScopes("degraded", `{"groups.spawn":{"mystery":["x"]}}`)
+	require.NoError(t, err)
+
+	tier := ownerImpliedTierFor(owner)
+	entry := tier[PermGroupsSpawn]
+	assert.True(t, entry.Degraded, "the unreadable group is recorded, not skipped")
+	assert.False(t, entry.confers(), "and it authorizes nothing")
+
+	// Listing == gate: the slug must NOT be reported effective.
+	effective, ownerAdded, _, _ := effectivePermsFor(permissionsState{}, owner, tier)
+	assert.NotContains(t, effective, PermGroupsSpawn)
+	assert.NotContains(t, ownerAdded, PermGroupsSpawn)
+	g, err := db.GetAgentGroupByName("degraded")
+	require.NoError(t, err)
+	assert.False(t, ownerOfGroupPermitting(g, owner, PermGroupsSpawn,
+		ActionContext{Group: "degraded", SpawnProfile: "p1"}), "and the gate refuses it too")
+
+	// Attenuation must read it as "confers nothing", NOT as unconstrained.
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	scopes, scoped := granterScopesForSlug(loadPermSources(owner), cfg, tier, PermGroupsSpawn)
+	require.True(t, scoped, "a tier the daemon failed to read is not an absence of constraint")
+	assert.Empty(t, scopes, "so the owner may confer nothing through it")
+}
+
+// A second, UNNARROWED owned group still carries the owner: a group that could
+// not be read must not suppress one that could.
+func TestOwnerTierDegradedGroupDoesNotSuppressAReadableOne(t *testing.T) {
+	setupTestDB(t)
+	const owner = "owner-degraded-conv-0002"
+	_, _, err := db.EnsureAgentForConv(owner, "spawn")
+	require.NoError(t, err)
+	for _, name := range []string{"deg-bad", "deg-good"} {
+		id, err := db.CreateAgentGroup(name, "")
+		require.NoError(t, err)
+		require.NoError(t, db.AddAgentGroupOwner(id, owner, "test"))
+	}
+	_, err = db.SetAgentGroupOwnerScopes("deg-bad", `{"groups.spawn":{"mystery":["x"]}}`)
+	require.NoError(t, err)
+
+	tier := ownerImpliedTierFor(owner)
+	entry := tier[PermGroupsSpawn]
+	assert.True(t, entry.Unrestricted, "the readable, unnarrowed group still confers")
+	assert.True(t, entry.confers())
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	_, scoped := granterScopesForSlug(loadPermSources(owner), cfg, tier, PermGroupsSpawn)
+	assert.False(t, scoped, "and an unrestricted tier stays unconstrained for delegation")
+}
+
+// The cross-agent bypass unions per candidate group: an owner of a narrowed g1
+// and an unnarrowed g2 that BOTH contain the target still passes through g2.
+// This is the multi-group rule at the one site that has no group in its
+// ActionContext at all.
+func TestOwnerOfGroupContainingPermittingUnionsCandidates(t *testing.T) {
+	setupTestDB(t)
+	const owner = "owner-xagent-conv-0001"
+	const target = "owner-xagent-target-0001"
+	for _, conv := range []string{owner, target} {
+		_, _, err := db.EnsureAgentForConv(conv, "spawn")
+		require.NoError(t, err)
+	}
+	var ids []int64
+	for _, name := range []string{"xa-narrow", "xa-wide"} {
+		id, err := db.CreateAgentGroup(name, "")
+		require.NoError(t, err)
+		require.NoError(t, db.AddAgentGroupOwner(id, owner, "test"))
+		require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: id, ConvID: target, Role: "worker"}))
+		ids = append(ids, id)
+	}
+	require.Len(t, ids, 2)
+	// xa-narrow pins agent.retire to descendants only; the caller did not spawn
+	// the target, so that arm can never match.
+	_, err := db.SetAgentGroupOwnerScopes("xa-narrow", `{"agent.retire":{"target_agent":["@descendants"]}}`)
+	require.NoError(t, err)
+
+	targetAgent, err := db.AgentIDForConv(target)
+	require.NoError(t, err)
+	actx := ActionContext{TargetAgent: targetAgent}
+	assert.True(t, ownerOfGroupContainingPermitting(owner, target, PermAgentRetire, actx),
+		"the unnarrowed candidate group still carries the bypass")
+
+	// Narrow the second group the same way and the bypass is gone: every
+	// candidate now refuses.
+	_, err = db.SetAgentGroupOwnerScopes("xa-wide", `{"agent.retire":{"target_agent":["@descendants"]}}`)
+	require.NoError(t, err)
+	assert.False(t, ownerOfGroupContainingPermitting(owner, target, PermAgentRetire, actx),
+		"with every candidate narrowed away, nothing carries it")
+}
