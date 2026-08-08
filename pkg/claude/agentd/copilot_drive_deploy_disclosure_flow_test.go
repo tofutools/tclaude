@@ -223,17 +223,20 @@ func TestTemplateDeploy_EveryEchoedFieldNamesATier(t *testing.T) {
 	require.Empty(t, res.Agents[0].Error)
 	require.NotNil(t, res.Agents[0].Resolved)
 
-	// Nobody chose this member's harness — not the template, not a profile. The
-	// spawn boundary sees a resolved harness arriving in the params and would
-	// call that "explicit", crediting an operator who typed nothing; the deploy
-	// says "harness default" because it knows its own tiers came up empty.
+	// Nobody chose this member's harness — not the template, not a profile, and
+	// (since TCL-1110) not the group's or the global default profile either,
+	// because `phoenix` here has neither. The spawn boundary sees a resolved
+	// harness arriving in the params and would call that "explicit", crediting an
+	// operator who typed nothing; the deploy says "harness default" because it
+	// knows its whole chain came up empty.
 	//
-	// This RECORDS today's answer, it does not bless it: a deploy also bypasses
-	// the group/global default profile's harness entirely (TCL-1110), so on a
-	// group whose default profile pins Codex this reads "harness default" while a
-	// direct spawn into the same group launches Codex. Fixing that changes which
-	// vendor a deploy produces and belongs to that ticket; when it lands, this
-	// expectation becomes the group tier.
+	// This assertion USED to record a defect: before TCL-1110 the deploy skipped
+	// the two ambient tiers outright, so it answered "harness default" even in a
+	// group whose default profile pinned Codex — while a direct spawn into that
+	// same group launched Codex. What keeps this arm honest is that the group has
+	// no default profile at all; the arm where one exists is
+	// TestTemplateDeploy_HarnessComesFromTheGroupDefaultProfile below, and the two
+	// have to be read together or this one looks like it is still blessing the bug.
 	assert.Equal(t, agent.ProvHarnessDefault, res.Agents[0].Resolved.Harness.Source,
 		"an attribution that names no tier the operator can change is worse than useless "+
 			"— it is a false statement about who decided")

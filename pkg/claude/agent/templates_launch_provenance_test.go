@@ -28,9 +28,8 @@ import (
 // operator's standing rule says can never be silent.
 //
 // The shape is one a deploy really produces: the harness is credited to the
-// template's REFERENCED profile (a deploy resolves its own harness chain and
-// never reaches the group tier for that field — TCL-1110), while the drive comes
-// from the group default the referenced profile left unset.
+// template's REFERENCED profile — the tier that outranks the group's — while the
+// drive comes from the group default the referenced profile left unset.
 const deployResponseWithAmbientDrive = `{
 	"group":"phoenix","template":"team","spawned":1,"failed":0,
 	"agents":[{"name":"worker","final_name":"phoenix-worker","conv_id":"c1",
@@ -95,6 +94,43 @@ func TestRunTaskForceDeploy_RendersAmbientLaunchProvenance(t *testing.T) {
 		nil, &stdout, &stderr)
 	require.Equal(t, rcOK, rc, "stderr=%q", stderr.String())
 	assertAmbientDriveRendered(t, stdout.String())
+}
+
+// TCL-1110's own arm on this surface. Until that ticket, a deploy could not
+// produce a group-tier harness at all — the deploy resolver never consulted the
+// group's or the workspace's default profile, so a member silently launched on
+// Claude in a group that defaults to Codex. Now that it can, the operator has to
+// be able to READ the vendor change off the deploy output, naming the profile
+// they can go and edit.
+//
+// One verb rather than three: what the three tests above cover is that the
+// per-agent block is duplicated by copy across the deploy verbs, and a new
+// SOURCE STRING on an already-rendered field does not re-open that risk. What is
+// new here is that the daemon now emits this shape, and that is guarded on the
+// daemon side by TestTemplateDeploy_HarnessComesFromTheGroupDefaultProfile.
+func TestRunTemplatesInstantiate_RendersAGroupTierVendorChange(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`{
+		"group":"phoenix","template":"team","spawned":1,"failed":0,
+		"agents":[{"name":"worker","final_name":"phoenix-worker","conv_id":"c1",
+			"resolved":{
+				"harness":{"value":"codex","source":"group default profile \"codex-high\""},
+				"model":{"value":"gpt-5-codex","source":"group default profile \"codex-high\""},
+				"effort":{"value":"","source":"harness default"},
+				"copilot_api":{"value":"","source":"harness default"},
+				"sandbox_implementation":{"value":"","source":"harness default"}
+			}}]}`))
+
+	var stdout, stderr bytes.Buffer
+	rc := runTemplatesInstantiate(&templatesInstantiateParams{Name: "team", Group: "phoenix"},
+		nil, &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%q", stderr.String())
+	assert.Contains(t, stdout.String(), `harness: codex (group default profile "codex-high")`,
+		"a deploy that puts a member on another VENDOR because of a tier nobody typed "+
+			"here must say so, and name the profile")
+	assert.Contains(t, stdout.String(), `model: gpt-5-codex (group default profile "codex-high")`,
+		"and the model that rode in with it — the same profile reaching the member is "+
+			"what the harness fix unblocks")
 }
 
 // The other arm. A roster that inherited nothing prints nothing extra: an echo
