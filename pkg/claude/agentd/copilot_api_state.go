@@ -269,7 +269,11 @@ func lookupCopilotAPIState(convID string) (copilotAPIStateReading, bool) {
 type copilotAPIStateConsumer struct {
 	convID    string
 	sessionID string
-	client    *copilotapi.Client
+	// handle is kept so each refresh can re-prove ownership through
+	// copilotAPIDrive before reading, and so a consumer can recognise that the
+	// conversation has been re-adopted by a newer launch than its own.
+	handle *copilotAPISession
+	client *copilotapi.Client
 
 	stop     chan struct{}
 	stopOnce sync.Once
@@ -300,6 +304,7 @@ func startCopilotAPIStateConsumer(handle *copilotAPISession) {
 	consumer := &copilotAPIStateConsumer{
 		convID:    handle.ConvID,
 		sessionID: handle.SessionID,
+		handle:    handle,
 		client:    handle.Client,
 		stop:      make(chan struct{}),
 		warnedAt:  map[string]time.Time{},
@@ -483,7 +488,36 @@ func (c *copilotAPIStateConsumer) marksDirty(notification copilotapi.Notificatio
 // the server had stopped recognising would take the meter and the
 // waiting-for-a-human state down together, and the second is the one an
 // operator needs most.
+//
+// # Every byte leaves through the same gate as every other verb
+//
+// Reading is not the harmless half of the ownership question. A refresh that
+// reached a listener the agent's pane no longer owns would copy a STRANGER's
+// occupancy into this conversation's row, and could put the row into
+// awaiting_permission because someone else's agent is waiting on a human. An
+// awaiting row holds message delivery, so that failure is a mute agent arrived
+// at purely by reading — which is why this re-proves through copilotAPIDrive
+// rather than trusting the proof the bootstrap made once.
+//
+// A refusal is ordinary and transient (a /proc walk racing a re-exec): read
+// nothing, try again on the next trigger. A refusal that persists ages the
+// reading out of copilotAPIStateFreshness and the pre-existing Copilot sources
+// resume, so losing this source degrades rather than freezes.
 func (c *copilotAPIStateConsumer) refresh() {
+	handle, err := copilotAPIDrive(c.convID)
+	if err != nil {
+		c.warn("ownership", "copilot-api-state: refusing to read", err)
+		return
+	}
+	if handle != c.handle {
+		// The conversation has been re-adopted by a newer launch, and the
+		// consumer for THAT handle is already running. Reading on someone
+		// else's handle would be this consumer reporting on a session it was
+		// not started for.
+		c.halt()
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), copilotAPIStateReadTimeout)
 	defer cancel()
 
@@ -492,18 +526,18 @@ func (c *copilotAPIStateConsumer) refresh() {
 	// failure, it is a consumer that is about to stop.
 	row := copilotAPIStateSessionRow(c.convID)
 
-	if pending, err := c.client.PendingPermissionRequests(ctx, c.sessionID); err != nil {
+	if pending, err := handle.Client.PendingPermissionRequests(ctx, c.sessionID); err != nil {
 		c.warn("permissions", "copilot-api-state: pending-permission read failed", err)
 	} else {
-		c.applyPermissions(ctx, row, len(pending) > 0)
+		c.applyPermissions(ctx, handle, row, len(pending) > 0)
 	}
 
-	info, err := c.client.ContextInfo(ctx, copilotapi.ContextInfoParams{SessionID: c.sessionID})
+	info, err := handle.Client.ContextInfo(ctx, copilotapi.ContextInfoParams{SessionID: c.sessionID})
 	if err != nil {
 		c.warn("context", "copilot-api-state: context read failed", err)
 		return
 	}
-	metrics, err := c.client.UsageMetrics(ctx, c.sessionID)
+	metrics, err := handle.Client.UsageMetrics(ctx, c.sessionID)
 	if err != nil {
 		c.warn("usage", "copilot-api-state: usage read failed", err)
 		return
@@ -685,7 +719,7 @@ func copilotAPIOutputTokens(metrics copilotapi.UsageMetrics) int64 {
 // It never touches an awaiting state it did not set — an awaiting_input from
 // elsewhere carries a different detail and is left exactly as found.
 func (c *copilotAPIStateConsumer) applyPermissions(
-	ctx context.Context, row *db.SessionRow, waiting bool,
+	ctx context.Context, handle *copilotAPISession, row *db.SessionRow, waiting bool,
 ) {
 	if row == nil {
 		return
@@ -728,7 +762,7 @@ func (c *copilotAPIStateConsumer) applyPermissions(
 	//
 	// A failure here leaves the row in the awaiting state AND leaves the marker
 	// on it, so the next refresh tries again rather than giving up.
-	processing, err := c.client.IsProcessing(ctx, c.sessionID)
+	processing, err := handle.Client.IsProcessing(ctx, c.sessionID)
 	if err != nil {
 		c.warn("processing", "copilot-api-state: busy read failed while clearing a permission prompt", err)
 		return

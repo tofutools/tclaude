@@ -52,7 +52,7 @@ func TestLiveCopilotAPIStateWritesWhatTheServerReports(t *testing.T) {
 	resetCopilotAPIStateForTest()
 	t.Cleanup(resetCopilotAPIStateForTest)
 
-	address, workdir := startLiveCopilotServer(t, binary, realHome)
+	address, workdir, serverPID := startLiveCopilotServer(t, binary, realHome)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -74,9 +74,17 @@ func TestLiveCopilotAPIStateWritesWhatTheServerReports(t *testing.T) {
 	}
 	require.NoError(t, db.SaveSession(row))
 
-	startCopilotAPIStateConsumer(&copilotAPISession{
+	// Adopted with the real port and the real copilot pid, because every
+	// refresh re-proves ownership before it reads. Here that proof runs against
+	// an actual copilot process holding an actual listener — the only place in
+	// the suite where the gate is exercised on exactly the shape production has.
+	handle := &copilotAPISession{
 		ConvID: convID, SessionID: info.SessionID, Client: client,
-	})
+		Port: portFromAddress(t, address), PanePID: serverPID,
+	}
+	copilotAPISessions.Adopt(handle)
+	t.Cleanup(func() { copilotAPISessions.Drop(convID) })
+	startCopilotAPIStateConsumer(handle)
 
 	// Before the first turn the server answers contextInfo with null, and
 	// nothing must be published or written. A zeroed reading here would render
@@ -149,9 +157,10 @@ func TestLiveCopilotAPIStateWritesWhatTheServerReports(t *testing.T) {
 }
 
 // startLiveCopilotServer launches copilot in TUI+server mode on a free port and
-// returns once it is listening. The PTY is not optional: without a terminal the
-// CLI takes a different startup branch and never starts the embedded server.
-func startLiveCopilotServer(t *testing.T, binary, realHome string) (string, string) {
+// returns once it is listening, with the address, the working directory, and the
+// pid holding the listener. The PTY is not optional: without a terminal the CLI
+// takes a different startup branch and never starts the embedded server.
+func startLiveCopilotServer(t *testing.T, binary, realHome string) (string, string, int) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -198,10 +207,20 @@ func startLiveCopilotServer(t *testing.T, binary, realHome string) (string, stri
 		conn, err := net.DialTimeout("tcp", address, time.Second)
 		if err == nil {
 			_ = conn.Close()
-			return address, workdir
+			return address, workdir, command.Process.Pid
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
 	t.Fatalf("copilot never listened on %s; logs in %s", address, logs)
-	return "", ""
+	return "", "", 0
+}
+
+// portFromAddress splits the port back out of a host:port the helper built.
+func portFromAddress(t *testing.T, address string) int {
+	t.Helper()
+	_, portText, err := net.SplitHostPort(address)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portText)
+	require.NoError(t, err)
+	return port
 }

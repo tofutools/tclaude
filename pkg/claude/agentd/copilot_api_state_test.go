@@ -2,6 +2,8 @@ package agentd
 
 import (
 	"encoding/json"
+	"os"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -78,14 +80,24 @@ func copilotAPIStateSession(t *testing.T, sessionID, convID, status string) *db.
 
 // startTestConsumer wires a consumer to a fake server answering the canned
 // payloads, and returns once its first refresh has landed.
+//
+// The handle is ADOPTED, and with a real port and pid, because every refresh
+// re-proves ownership through copilotAPIDrive before it reads. Registering a
+// handle whose ownership proof is genuine — this test process really does own
+// the loopback port the fake server is listening on — keeps that gate exercised
+// on the same terms production uses, rather than stubbed out of the way.
 func startTestConsumer(
 	t *testing.T, server *fakeCopilotServer, convID, sessionID string,
 ) *copilotAPIStateConsumer {
 	t.Helper()
 	client := dialFakeCopilot(t, server)
-	startCopilotAPIStateConsumer(&copilotAPISession{
+	handle := &copilotAPISession{
 		ConvID: convID, SessionID: sessionID, Client: client,
-	})
+		Port: server.port(), PanePID: os.Getpid(),
+	}
+	copilotAPISessions.Adopt(handle)
+	t.Cleanup(func() { copilotAPISessions.Drop(convID) })
+	startCopilotAPIStateConsumer(handle)
 	t.Cleanup(resetCopilotAPIStateForTest)
 	copilotAPIStateConsumers.Lock()
 	consumer := copilotAPIStateConsumers.running[convID]
@@ -671,4 +683,68 @@ func TestCopilotAPIEffectiveContextWindowPrefersAReportedLimit(t *testing.T) {
 		copilotAPIEffectiveContextWindow("conv-none",
 			copilotAPIStateReading{Model: "gpt-5-mini"}),
 		"with no reported limit the static table is still the fallback")
+}
+
+// ---------------------------------------------------------------------------
+// The ownership gate
+// ---------------------------------------------------------------------------
+
+// Reading is not the harmless half of the ownership question, and this is the
+// test that says so. TCL-1056's rule is that every byte reaching the endpoint
+// comes from a listener the agent's pane can still be shown to own; a consumer
+// that exempted itself because it "only reads" would copy a stranger's
+// occupancy into this conversation's row, and could put the row into
+// awaiting_permission because someone ELSE's agent is waiting on a human —
+// which holds this agent's message delivery. A mute agent, arrived at by
+// reading.
+func TestCopilotAPIStateStopsReadingWhenOwnershipCannotBeProved(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotAPIStateForTest()
+
+	copilotAPIStateSession(t, "s-unproved", "conv-unproved", session.StatusIdle)
+	server := newFakeCopilotServer(t)
+	server.answer(copilotapi.MethodSessionContextInfo, copilotAPITestContext)
+	server.answer(copilotapi.MethodSessionUsage, copilotAPITestUsage)
+	server.answer(copilotapi.MethodSessionPermissions, copilotAPITestPendingPermission)
+	startTestConsumer(t, server, "conv-unproved", "conv-unproved")
+
+	require.Eventually(t, func() bool {
+		_, ok := lookupCopilotAPIState("conv-unproved")
+		return ok
+	}, 5*time.Second, 20*time.Millisecond, "the consumer must work before it is broken")
+
+	// A live, non-ancestor pid whose subtree genuinely excludes the listener:
+	// the same way copilot_api_drive_test.go makes ownership unprovable, so the
+	// two paths are broken by the same fact rather than by two mocks.
+	stranger := exec.Command("sleep", "60")
+	require.NoError(t, stranger.Start())
+	t.Cleanup(func() {
+		_ = stranger.Process.Kill()
+		_ = stranger.Wait()
+	})
+	handle := copilotAPISessions.Handle("conv-unproved")
+	require.NotNil(t, handle)
+	handle.PanePID = stranger.Process.Pid
+
+	before := server.callCount(copilotapi.MethodSessionContextInfo)
+	for range 5 {
+		server.push(copilotapi.MethodSessionEvent, `{"sessionId":"conv-unproved",
+			"event":{"type":"assistant.turn_start","id":"e"}}`)
+	}
+	time.Sleep(3 * copilotAPIStateWindow)
+
+	assert.Equal(t, before, server.callCount(copilotapi.MethodSessionContextInfo),
+		"a consumer whose handle can no longer be shown to belong to the agent's "+
+			"pane must send nothing, however many events arrive")
+
+	// And the row is handed back rather than frozen: the published reading ages
+	// out, so the pre-existing Copilot sources resume instead of standing down
+	// behind a source that has stopped being allowed to read.
+	copilotAPIStates.Lock()
+	stale := copilotAPIStates.readings["conv-unproved"]
+	stale.ObservedAt = time.Now().Add(-2 * copilotAPIStateFreshness)
+	copilotAPIStates.readings["conv-unproved"] = stale
+	copilotAPIStates.Unlock()
+	_, ok := lookupCopilotAPIState("conv-unproved")
+	assert.False(t, ok, "a reading that can no longer be refreshed must stop counting as one")
 }
