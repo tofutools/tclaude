@@ -206,9 +206,12 @@ func (copilotLifecycle) FastModeCommand() string      { return "" }
 // "Operation cancelled by user" and returns the TUI to its input prompt, from
 // which /exit exits 0; with a permission dialog open C-c ABORTS the request
 // (the pending command never runs) rather than accepting its default entry;
-// on an idle pane it is a no-op, and on a pane holding a half-typed line it
-// clears the buffer — which incidentally removes the "<junk>/exit submitted as
-// one prompt" failure the soft-exit retry exists to recover from.
+// on a pane holding a half-typed line it clears the buffer — which
+// incidentally removes the "<junk>/exit submitted as one prompt" failure the
+// soft-exit retry exists to recover from. On an idle pane 1.0.77 treated it
+// as a no-op; 1.0.78 arms "ctrl+c again to exit" instead, which only helps —
+// the retry's own C-c four seconds later is never "again", and a same-window
+// double C-c would merely exit, which is what the whole sequence is for.
 //
 // Escape is deliberately NOT used: the CLI holds a lone ESC byte waiting for
 // the rest of a possible escape sequence, so a trailing Escape is never
