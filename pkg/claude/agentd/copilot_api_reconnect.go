@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -140,7 +141,10 @@ func recordReconcileAttempt(ctx context.Context, convID string, generation uint6
 	if !copilotAPISessions.NoteChannelFailed(convID, generation) {
 		return false
 	}
-	if err := shutdownCrashedCopilotAPIAgentFn(convID); err != nil {
+	if err := shutdownCrashedCopilotAPIAgentFn(convID, generation); err != nil {
+		if errors.Is(err, errCopilotAPILaunchSuperseded) {
+			return false
+		}
 		slog.Error("copilot API reconnect: failed to shut the unrecoverable agent down",
 			"conv_id", convID, "error", err)
 		return false
@@ -226,6 +230,15 @@ func reconnectCopilotAPISession(ctx context.Context, convID string) (*copilotAPI
 func recoverCopilotAPIChannelAfterTransportFailure(
 	convID string, failed *copilotAPISession,
 ) error {
+	recoveryLock := copilotAPIRecoveryLock(convID)
+	recoveryLock.Lock()
+	defer recoveryLock.Unlock()
+	if current := copilotAPISessions.Handle(convID); current != nil && current != failed {
+		return nil
+	}
+	if copilotAPISessions.ChannelFailed(convID) {
+		return fmt.Errorf("the Copilot API channel for %s is already failed", convID)
+	}
 	generation := copilotAPISessions.CurrentLaunch(convID)
 	if failed != nil && failed.Client != nil {
 		_ = failed.Client.Close()
@@ -254,20 +267,35 @@ func recoverCopilotAPIChannelAfterTransportFailure(
 	if !copilotAPISessions.NoteChannelFailed(convID, generation) {
 		return err
 	}
-	if shutdownErr := shutdownCrashedCopilotAPIAgentFn(convID); shutdownErr != nil {
+	if shutdownErr := shutdownCrashedCopilotAPIAgentFn(convID, generation); shutdownErr != nil {
+		if errors.Is(shutdownErr, errCopilotAPILaunchSuperseded) {
+			return err
+		}
 		return fmt.Errorf("%w; shutting the failed agent down as crashed: %v", err, shutdownErr)
 	}
 	return err
+}
+
+var copilotAPIRecoveryLocks sync.Map // map[convID]*sync.Mutex
+
+func copilotAPIRecoveryLock(convID string) *sync.Mutex {
+	lock, _ := copilotAPIRecoveryLocks.LoadOrStore(convID, &sync.Mutex{})
+	return lock.(*sync.Mutex)
 }
 
 // shutdownCrashedCopilotAPIAgent kills the current pane after a reconnect has
 // failed and records the explicit crash reason the dashboard understands.
 // The conversation launch lock keeps a concurrent relaunch from inheriting the
 // predecessor's kill or exit reason.
-func shutdownCrashedCopilotAPIAgent(convID string) error {
+var errCopilotAPILaunchSuperseded = errors.New("Copilot API launch was superseded")
+
+func shutdownCrashedCopilotAPIAgent(convID string, generation uint64) error {
 	launchLock := resumeLaunchLock(convID)
 	launchLock.Lock()
 	defer launchLock.Unlock()
+	if copilotAPISessions.CurrentLaunch(convID) != generation {
+		return errCopilotAPILaunchSuperseded
+	}
 
 	sess := pickAliveSession(convID)
 	if sess == nil {

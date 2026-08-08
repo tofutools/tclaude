@@ -67,7 +67,7 @@ func TestCopilotAPIBootstrapFailureIsObservedAgainstTheLaunchThatFailed(t *testi
 	copilotAPISessions.dropHandleForTest(fixture.convID)
 	crashed := make(chan string, 1)
 	previousShutdown := shutdownCrashedCopilotAPIAgentFn
-	shutdownCrashedCopilotAPIAgentFn = func(convID string) error {
+	shutdownCrashedCopilotAPIAgentFn = func(convID string, _ uint64) error {
 		crashed <- convID
 		return nil
 	}
@@ -287,7 +287,7 @@ func TestTheStartupSweepRecordsAFailedReconnect(t *testing.T) {
 	t.Cleanup(func() { reconnectCopilotAPISessionFn = original })
 	crashed := make(chan string, 1)
 	previousShutdown := shutdownCrashedCopilotAPIAgentFn
-	shutdownCrashedCopilotAPIAgentFn = func(convID string) error {
+	shutdownCrashedCopilotAPIAgentFn = func(convID string, _ uint64) error {
 		crashed <- convID
 		return nil
 	}

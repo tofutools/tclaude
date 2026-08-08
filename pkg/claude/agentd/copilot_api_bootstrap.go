@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -888,12 +889,15 @@ func runCopilotAPIBootstrap(
 			recorded := copilotAPISessions.NoteChannelFailed(convID, generation)
 			var shutdownErr error
 			if recorded {
-				shutdownErr = shutdownCrashedCopilotAPIAgentFn(convID)
+				shutdownErr = shutdownCrashedCopilotAPIAgentFn(convID, generation)
 			}
 			if shutdownErr == nil && recorded {
 				slog.Error("could not bring up the Copilot API session; this launch was shut "+
 					"down as crashed rather than left alive without its selected channel",
 					"conv_id", convID, "error", err, "observation_recorded", recorded)
+			} else if errors.Is(shutdownErr, errCopilotAPILaunchSuperseded) {
+				slog.Info("discarded a failed Copilot API bootstrap observation because a "+
+					"newer launch owns the conversation", "conv_id", convID, "error", err)
 			} else if shutdownErr != nil {
 				slog.Error("could not shut the failed Copilot API launch down",
 					"conv_id", convID, "error", shutdownErr)

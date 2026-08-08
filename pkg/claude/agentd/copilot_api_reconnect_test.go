@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -311,7 +312,7 @@ func TestCopilotAPISendTransportFailureThatCannotReconnectCrashesTheAgent(t *tes
 
 	crashed := make(chan string, 1)
 	originalShutdown := shutdownCrashedCopilotAPIAgentFn
-	shutdownCrashedCopilotAPIAgentFn = func(convID string) error {
+	shutdownCrashedCopilotAPIAgentFn = func(convID string, _ uint64) error {
 		crashed <- convID
 		return nil
 	}
@@ -328,6 +329,52 @@ func TestCopilotAPISendTransportFailureThatCannotReconnectCrashesTheAgent(t *tes
 		t.Fatal("the agent stayed alive after its dead channel could not be reconnected")
 	}
 	fixture.tmux.assertNoKeystrokes(t)
+}
+
+func TestConcurrentCopilotAPISendFailuresShareOneRecovery(t *testing.T) {
+	fixture := newCopilotAPIReconnectFixture(t)
+	failedClient := dialFakeCopilot(t, fixture.server)
+	failed := &copilotAPISession{
+		ConvID: fixture.convID, SessionID: fixture.convID,
+		Port: fixture.server.port(), PanePID: os.Getpid(), Client: failedClient,
+	}
+	copilotAPISessions.Adopt(failed)
+	copilotAPISessions.NoteLaunch(fixture.convID, true)
+	replacements := []*copilotAPISession{
+		{ConvID: fixture.convID, SessionID: fixture.convID, Port: fixture.server.port(),
+			PanePID: os.Getpid(), Client: dialFakeCopilot(t, fixture.server)},
+		{ConvID: fixture.convID, SessionID: fixture.convID, Port: fixture.server.port(),
+			PanePID: os.Getpid(), Client: dialFakeCopilot(t, fixture.server)},
+	}
+
+	var attempts atomic.Int64
+	originalReconnect := reconnectCopilotAPISessionFn
+	reconnectCopilotAPISessionFn = func(context.Context, string) (*copilotAPISession, error) {
+		n := attempts.Add(1)
+		if n == 1 {
+			time.Sleep(50 * time.Millisecond)
+			return replacements[0], nil
+		}
+		return replacements[1], errors.New("a duplicate recovery lost its race")
+	}
+	t.Cleanup(func() { reconnectCopilotAPISessionFn = originalReconnect })
+
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	for range 2 {
+		go func() {
+			<-start
+			errs <- recoverCopilotAPIChannelAfterTransportFailure(fixture.convID, failed)
+		}()
+	}
+	close(start)
+	require.NoError(t, <-errs)
+	require.NoError(t, <-errs)
+	assert.Equal(t, int64(1), attempts.Load(),
+		"concurrent failures on one dead handle must share one reconnect decision")
+	assert.Same(t, replacements[0], copilotAPISessions.Handle(fixture.convID),
+		"the waiter must stand down for the live replacement instead of condemning it")
+	assert.False(t, copilotAPISessions.ChannelFailed(fixture.convID))
 }
 
 func TestCopilotAPIFailedChannelShutdownPublishesACrash(t *testing.T) {
@@ -349,7 +396,8 @@ func TestCopilotAPIFailedChannelShutdownPublishesACrash(t *testing.T) {
 		Harness: harness.CopilotName, Status: session.StatusIdle, Cwd: t.TempDir(),
 	}))
 
-	require.NoError(t, shutdownCrashedCopilotAPIAgent(convID))
+	generation := copilotAPISessions.NoteLaunch(convID, true)
+	require.NoError(t, shutdownCrashedCopilotAPIAgent(convID, generation))
 	commands := tmux.snapshot()
 	assert.True(t, slices.ContainsFunc(commands, func(command []string) bool {
 		return len(command) > 0 && command[0] == "kill-pane"
@@ -363,6 +411,39 @@ func TestCopilotAPIFailedChannelShutdownPublishesACrash(t *testing.T) {
 	require.NotNil(t, row)
 	assert.Equal(t, session.StatusExited, row.Status,
 		"shutdown must publish the dead state instead of waiting for a later generic reap")
+}
+
+func TestCopilotAPIFailedChannelCannotCrashTheRelaunchThatSupersededIt(t *testing.T) {
+	setupTestDB(t)
+	const (
+		convID    = "ses_copilot_api_relaunched_channel"
+		sessionID = "spwn-copilot-api-relaunched-channel"
+	)
+	tmux := &crashRecordingTmux{sessionName: sessionID, panePID: os.Getpid()}
+	previous := clcommon.Default
+	clcommon.Default = tmux
+	t.Cleanup(func() { clcommon.Default = previous })
+	require.NoError(t, session.SaveSessionState(&session.SessionState{
+		ID: sessionID, TmuxSession: sessionID, ConvID: convID,
+		Harness: harness.CopilotName, Status: session.StatusIdle, Cwd: t.TempDir(),
+	}))
+
+	failed := copilotAPISessions.NoteLaunch(convID, true)
+	current := copilotAPISessions.NoteLaunch(convID, true)
+	require.NotEqual(t, failed, current)
+
+	err := shutdownCrashedCopilotAPIAgent(convID, failed)
+	require.ErrorIs(t, err, errCopilotAPILaunchSuperseded)
+	assert.False(t, slices.ContainsFunc(tmux.snapshot(), func(command []string) bool {
+		return len(command) > 0 && command[0] == "kill-pane"
+	}), "the failed predecessor must not kill the pane owned by its relaunch")
+	row, err := db.LoadSession(sessionID)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, session.StatusIdle, row.Status)
+	reason, err := db.GetSessionExitReason(sessionID)
+	require.NoError(t, err)
+	assert.Empty(t, reason)
 }
 
 // The reconnect's defining property. It rejoins a conversation it must not
