@@ -534,6 +534,18 @@ func ConversationResumeProfileRaw(convID string) (string, error) {
 //
 // updated_at is bumped so an operator's change is as visible to anything reading
 // recency as a launch's would be.
+//
+// # Why the seeding does not belong in here
+//
+// A caller that wants to PIN a drive onto a conversation that records none has to
+// bring the record into existence first. That step stays at the policy layer, and
+// the general statement of why is: A COMPARE-AND-SET ON A LEAF WHOSE PARENT MAY
+// NOT EXIST IS TWO OPERATIONS PRETENDING TO BE ONE. The guard here would silently
+// become a guard on nothing, and "created a record" is a different fact from
+// "edited a record" that an operator needs reported — an operator told CREATED
+// learns that nothing was recorded before, which is itself the diagnostic that a
+// lower resolution tier was speaking for this agent. A function that quietly did
+// both could not tell them apart.
 func CompareAndSetConversationCopilotAPI(
 	convID string, value bool, expected string,
 ) (bool, error) {
