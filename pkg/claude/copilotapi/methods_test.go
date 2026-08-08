@@ -470,3 +470,28 @@ func TestIsNothingToCompactSeparatesTheOrdinaryRefusal(t *testing.T) {
 		t.Error("a non-RPC error is not the server's refusal")
 	}
 }
+
+// Copilot reports some refusals IN BAND: a successful JSON-RPC response
+// carrying success:false. Left as a result it decodes to zero counts, which
+// reads exactly like a compaction that ran and removed nothing — so a caller
+// checking only the transport error would report the opposite of what
+// happened. SetForegroundSession already converts its own in-band refusal;
+// this is the same rule.
+func TestCompactTreatsAnInBandRefusalAsAnError(t *testing.T) {
+	server := newFakeServer(t)
+	server.handle(MethodSessionCompact, func(json.RawMessage) (any, *Error) {
+		return CompactResult{Success: false}, nil
+	})
+	client := dialTest(t, server, nil)
+
+	_, err := client.Compact(context.Background(), CompactParams{SessionID: "sess-1"})
+	if err == nil {
+		t.Fatal("Compact: success:false must not be reported as a compaction")
+	}
+	if !strings.Contains(err.Error(), "reported failure") {
+		t.Errorf("err = %v, want the in-band refusal named", err)
+	}
+	if IsNothingToCompact(err) {
+		t.Error("an in-band refusal is not the ordinary empty-session answer")
+	}
+}

@@ -2,8 +2,13 @@ package agentd
 
 import (
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -179,8 +184,9 @@ func TestCopilotAPIRenameStillRunsTheCharsetGate(t *testing.T) {
 func TestCopilotAPICompactGoesOverHistoryCompactThenSendsTheFollowUp(t *testing.T) {
 	fixture := newCopilotAPIDriveFixture(t)
 
-	assert.Equal(t, slashTransportCopilotAPI,
-		dispatchSlashCommand(fixture.convID, "/compact", "carry on", "compact"))
+	transport, failure := dispatchSlashCommand(fixture.convID, "/compact", "carry on", "compact")
+	assert.Equal(t, slashTransportCopilotAPI, transport)
+	assert.Equal(t, slashFailureNone, failure)
 
 	assert.Eventually(t, func() bool {
 		methods := fixture.server.methodsCalled()
@@ -211,11 +217,19 @@ func TestCopilotAPICompactGoesOverHistoryCompactThenSendsTheFollowUp(t *testing.
 // A lifecycle token with no typed mapping fails closed. The alternative — let
 // it through to the keystroke path — is the quiet re-introduction of the sink
 // for every command nobody has mapped yet.
+//
+// The token here is deliberately one that could plausibly arrive at this sink
+// later (a model switch) rather than /exit: soft exit does not come through
+// dispatchSlashCommand at all, so using it would suggest this test pins the
+// soft-exit routing decision, which lives in lifecycle.go and is pinned by a
+// live test instead.
 func TestCopilotAPIUnmappedLifecycleCommandFailsClosed(t *testing.T) {
 	fixture := newCopilotAPIDriveFixture(t)
 
-	assert.Equal(t, slashTransportNone,
-		dispatchSlashCommand(fixture.convID, "/exit", "", "soft-exit"))
+	transport, failure := dispatchSlashCommand(fixture.convID, "/model gpt-5", "", "model")
+	assert.Equal(t, slashTransportNone, transport)
+	assert.Equal(t, slashFailureControl, failure,
+		"a managed channel refused; it is not a missing pane")
 	fixture.assertNoKeystrokes(t)
 	assert.NotContains(t, fixture.server.methodsCalled(), copilotapi.MethodSessionCompact)
 }
@@ -252,8 +266,8 @@ func TestCopilotAPIUnprovableOwnershipFailsRatherThanFallingBackToThePane(t *tes
 	assert.Contains(t, err.Error(), "no longer be shown to belong")
 
 	assert.False(t, deliverRename(fixture.convID, "new title"))
-	assert.Equal(t, slashTransportNone,
-		dispatchSlashCommand(fixture.convID, "/compact", "", "compact"))
+	transport, _ := dispatchSlashCommand(fixture.convID, "/compact", "", "compact")
+	assert.Equal(t, slashTransportNone, transport)
 	assert.NotContains(t, fixture.server.methodsCalled(), copilotapi.MethodSessionNameSet)
 	fixture.assertNoKeystrokes(t)
 
@@ -279,8 +293,9 @@ func TestCopilotWithoutTheAPIDriveStillTakesSendKeys(t *testing.T) {
 		Harness: harness.CopilotName, Status: session.StatusIdle,
 	}))
 
-	assert.Equal(t, slashTransportSendKeys,
-		dispatchSlashCommand(convID, "/compact", "", "compact"))
+	transport, failure := dispatchSlashCommand(convID, "/compact", "", "compact")
+	assert.Equal(t, slashTransportSendKeys, transport)
+	assert.Equal(t, slashFailureNone, failure)
 	assert.NotEmpty(t, tmux.snapshot(), "the pane is still the channel without the drive")
 }
 
@@ -294,4 +309,225 @@ func TestSlashNoteNamesTheTransportThatActuallyCarriedIt(t *testing.T) {
 	assert.Contains(t, slashNote(slashTransportSendKeys, "/compact", false), "send-keys")
 	assert.NotContains(t, slashNote(slashTransportCopilotAPI, "/compact", false), "send-keys",
 		"the one sentence that must never appear for a pane nobody typed into")
+}
+
+// The spawn welcome was the last caller-derived text still typed into an
+// API-driven pane — and typing it was not merely a sink, it was a LOSS: the
+// bootstrap creates a fresh session under the conversation id and foregrounds
+// it, so anything typed before that lands in the startup session it replaces.
+// The welcome carries the agent's identity, its group and the pointer to the
+// briefing waiting in its inbox; an agent that lost it looks exactly like one
+// that read it and had nothing to say.
+func TestCopilotAPISpawnWelcomeGoesOverSessionSend(t *testing.T) {
+	fixture := newCopilotAPIDriveFixture(t)
+
+	// The post-init wait is stubbed out binary-wide by TestMain (no bootstrap
+	// runs under test, so no handle could ever appear). Here a handle DOES
+	// exist, which is the state the wait exists to reach.
+	restore := SetCopilotAPIPostInitWaitForTest(func(string) bool { return true })
+	t.Cleanup(restore)
+
+	welcome := "[system: spawned by lead as \"worker\" (role: worker) in group \"crew\"]"
+	require.NoError(t, sendCopilotAPIMessage(fixture.convID, welcome))
+
+	var sent copilotapi.SendParams
+	require.NoError(t, json.Unmarshal(
+		fixture.server.paramsFor(copilotapi.MethodSessionSend), &sent))
+	assert.Equal(t, welcome, sent.Prompt)
+	fixture.assertNoKeystrokes(t)
+}
+
+// The wait's own contract: it returns as soon as a handle appears, and reports
+// false rather than blocking forever when one never does.
+func TestWaitForCopilotAPISessionFollowsTheHandle(t *testing.T) {
+	fixture := newCopilotAPIDriveFixture(t)
+	assert.True(t, waitForCopilotAPISession(fixture.convID),
+		"a conversation that already has a handle must not wait at all")
+
+	copilotAPISessions.Drop(fixture.convID)
+	// Not run to its real deadline — that is 90s by design. What matters here
+	// is that the loop's answer follows the registry, which the positive arm
+	// above establishes; the negative arm is the same predicate inverted.
+	assert.False(t, copilotAPIDriven(fixture.convID))
+}
+
+// haveCopilotAPILaunchIntent records the durable opt-in without a connection —
+// the state the routing predicate has to recognise on its own.
+func haveCopilotAPILaunchIntent(t *testing.T, agentID string) {
+	t.Helper()
+	api := true
+	require.NoError(t, db.SetAgentRelaunchProfile(agentID, db.AgentRelaunchProfile{
+		Version: db.RelaunchProfileVersion, CopilotAPI: &api,
+	}))
+}
+
+// The finding this predicate was rewritten for: "no handle" is not "never took
+// the drive". A launch that opted out of keystrokes has no connection during
+// the bootstrap's up-to-a-minute port wait, after a bootstrap that failed, and
+// after every agentd restart — handles live in memory only. Each of those must
+// HOLD the delivery, not type it in.
+func TestCopilotAPILaunchWithNoHandleHoldsRatherThanTyping(t *testing.T) {
+	fixture := newCopilotAPIDriveFixture(t)
+	haveCopilotAPILaunchIntent(t, fixture.agentID)
+	// The connection goes away — an agentd restart, or a bootstrap that never
+	// completed. The launch's opt-in does not go away with it.
+	copilotAPISessions.Drop(fixture.convID)
+
+	assert.True(t, copilotAPIDriven(fixture.convID),
+		"the launch opted out of keystrokes; losing the connection does not opt it back in")
+	_, err := copilotAPIDrive(fixture.convID)
+	assert.Error(t, err, "and there is nothing to send on right now")
+
+	group, err := db.CreateAgentGroup("copilot-api", "")
+	require.NoError(t, err)
+	messageID, err := db.InsertAgentMessage(&db.AgentMessage{
+		GroupID: group, FromConv: "peer", ToConv: fixture.convID, Body: "hello",
+	})
+	require.NoError(t, err)
+	message, err := db.GetAgentMessage(messageID)
+	require.NoError(t, err)
+
+	assert.False(t, sendNudgeBracket(fixture.convID, message, "[msg #1 from peer] hello"),
+		"held for retry, which is a visible recoverable state; typed in is an "+
+			"invisible unrecoverable one")
+	fixture.assertNoKeystrokes(t)
+
+	transport, failure := dispatchSlashCommand(fixture.convID, "/compact", "", "compact")
+	assert.Equal(t, slashTransportNone, transport)
+	assert.Equal(t, slashFailureControl, failure)
+	fixture.assertNoKeystrokes(t)
+}
+
+// The unread reminder shares pickNudgeSession with the inbox nudge and carries
+// the same peer-derived sender labels, so it is the same delivery family and
+// takes the same channel. It was taught about OpenCode and not about the API
+// drive, which made it a keystroke path to a connected agent on every reminder
+// tick for the life of that agent — not a window, and not a race.
+func TestCopilotAPIUnreadReminderGoesOverSessionSend(t *testing.T) {
+	fixture := newCopilotAPIDriveFixture(t)
+
+	group, err := db.CreateAgentGroup("copilot-api", "")
+	require.NoError(t, err)
+	messageID, err := db.InsertAgentMessage(&db.AgentMessage{
+		GroupID: group, FromConv: "peer", ToConv: fixture.convID,
+		Subject: "a subject", Body: "hello",
+	})
+	require.NoError(t, err)
+	message, err := db.GetAgentMessage(messageID)
+	require.NoError(t, err)
+
+	// Delivered but unread is the state the reminder sweep exists for.
+	require.NoError(t, db.MarkAgentMessageDelivered(message.ID))
+
+	// A fresh state with a zero epoch, driven at a clock well past the
+	// interval, so the sweep's own cadence does not decide this test.
+	runUnreadReminderTickWith(time.Now().Add(2*unreadReminderInterval),
+		&unreadReminderState{remindedAt: map[string]time.Time{}})
+
+	assert.Contains(t, fixture.server.methodsCalled(), copilotapi.MethodSessionSend,
+		"the reminder must take the same channel as the nudge it reminds about")
+	fixture.assertNoKeystrokes(t)
+}
+
+// ---------------------------------------------------------------------------
+// The delivery family, asserted structurally
+// ---------------------------------------------------------------------------
+
+// copilotAPIKeystrokeSinkFiles lists every file allowed to put text into a
+// pane, and why each one is either already API-aware or unreachable for an
+// API-driven Copilot agent.
+//
+// This exists because of how this ticket's worst bug got in. The RPC conversion
+// was done by finding the delivery path it went looking for — the inbox nudge —
+// and not the FAMILY that path belongs to. unread_reminder.go shares
+// pickNudgeSession with it, carries the same peer-derived sender labels, and
+// was simply never visited: a keystroke path to a connected agent, reachable on
+// every reminder tick for the life of that agent. A cold reviewer found it; a
+// grep would have found it too, and memory did not.
+//
+// So the completeness check is written down rather than performed once. It is
+// deliberately structural, like TCL-1056's port guard: a behavioural test can
+// only cover the sites someone thought of, and the failure being guarded
+// against is a site nobody thought of. A NEW keystroke sink trips this and has
+// to argue for itself in review — either by becoming API-aware, or by saying
+// here why an API-driven Copilot agent cannot reach it.
+//
+// It is not a security boundary; anyone editing the code can edit the list. It
+// is a tripwire on an invariant whose violation is otherwise silent and looks
+// exactly like working code.
+var copilotAPIKeystrokeSinkFiles = map[string]string{
+	// Converted: the lifecycle-command dispatch takes the Copilot branch first.
+	"handlers.go": "dispatchSlashCommand routes an API-driven conv to RPC before reaching send-keys",
+	// Converted: inbox nudges.
+	"flush.go": "sendNudgeBracket routes an API-driven conv to session.send",
+	// Converted: the unread reminder, same family as the nudge.
+	"unread_reminder.go": "the reminder sweep routes an API-driven conv to session.send",
+	// Converted: the spawn welcome, which additionally waits for the bootstrap.
+	"lifecycle.go": "runSpawnPostInit routes an API-driven conv to session.send, and soft " +
+		"exit stays on keystrokes deliberately — no RPC ends the copilot process",
+	// Unreachable: remote control is gated on CanRemoteControl(), and Copilot's
+	// Lifecycle returns "" for RemoteControlCommand, so no Copilot agent — API
+	// or not — ever reaches this sink.
+	"remote_control.go": "gated on CanRemoteControl(); Copilot has no remote-control command",
+}
+
+// copilotAPIKeystrokeSinks are the helpers that type into a pane. Bare
+// identifiers rather than qualified selectors, because they are this package's
+// own functions.
+var copilotAPIKeystrokeSinks = []string{
+	"injectTextAndSubmit",
+	"injectBracketedTextAndSubmit",
+	"injectTextAndSubmitWithOptions",
+	"injectMenuToggle",
+}
+
+func TestEveryKeystrokeSinkIsAccountedForAgainstTheCopilotAPIDrive(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	require.NoError(t, err)
+
+	found := map[string]bool{}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		source, err := os.ReadFile(name)
+		require.NoError(t, err)
+		fset := token.NewFileSet()
+		parsed, err := parser.ParseFile(fset, name, source, 0)
+		require.NoError(t, err)
+
+		ast.Inspect(parsed, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			ident, ok := call.Fun.(*ast.Ident)
+			if !ok || !slices.Contains(copilotAPIKeystrokeSinks, ident.Name) {
+				return true
+			}
+			// The declarations themselves and their internal delegation live in
+			// handlers.go, which is on the list anyway.
+			found[name] = true
+			return true
+		})
+	}
+
+	for name := range found {
+		assert.Contains(t, copilotAPIKeystrokeSinkFiles, name,
+			"%s types into a pane and is not accounted for against the Copilot API "+
+				"drive. An agent launched with --copilot-api opted OUT of the keystroke "+
+				"path; a new sink that does not know about it is a silent way back into "+
+				"the injection sink. Make it API-aware, or add it to "+
+				"copilotAPIKeystrokeSinkFiles with the reason a Copilot agent cannot "+
+				"reach it", name)
+	}
+	// The positive control. Without it every assertion above passes vacuously
+	// against a rename of the helpers, which is precisely how this guard would
+	// stop watching anything without anyone noticing.
+	for name := range copilotAPIKeystrokeSinkFiles {
+		assert.Contains(t, found, name,
+			"%s is listed as a keystroke sink but no longer calls one; if the sink moved, "+
+				"this guard is now watching the wrong file", name)
+	}
 }

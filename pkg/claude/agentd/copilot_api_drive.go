@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/copilotapi"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // Driving an API-connected Copilot agent.
@@ -61,24 +62,59 @@ const copilotAPICompactTimeout = 5 * time.Minute
 const copilotAPINameMaxRunes = 100
 
 // copilotAPIDriven reports whether a conversation's deliveries BELONG to the
-// API channel. It is the routing question, and it is answered by the existence
-// of a live handle and by nothing else.
+// API channel. It is the routing question, and it is answered by the launch's
+// durable opt-in — NOT by whether a connection happens to exist right now.
 //
 // Keeping it separate from "may I send on it right now" is load-bearing, and
-// collapsing the two is the mistake this seam was first written with. A single
-// predicate that also re-proved ownership answers false in two completely
-// different situations — "this agent was never on the API drive" and "this
-// agent IS on the API drive and something about it cannot be verified" — and a
-// caller written as `if drivable { api } else { keystrokes }` then routes the
-// second case into the pane. That is not a graceful degradation; it is the
-// injection sink re-opening precisely for the agent whose channel just became
-// unverifiable, which is the worst possible moment for it.
+// collapsing the two is the mistake this seam has now been written with twice,
+// each time one level further out. A predicate that answers false because
+// something about the channel is wrong is indistinguishable, at the call site,
+// from one that answers false because the conversation never took the drive —
+// and a caller written as `if driven { api } else { keystrokes }` routes both
+// into the pane. That is not a graceful degradation; it is the injection sink
+// re-opening precisely for the agent whose channel is in trouble, which is the
+// worst possible moment for it.
 //
-// So: this decides WHICH channel, [copilotAPIDrive] decides whether that
-// channel can carry this call, and a no from the second is a failure the caller
-// reports or retries. Never a fallback.
+// The first version re-proved port ownership here, so a live-but-unprovable
+// handle fell through to keystrokes. The second answered "does a handle exist",
+// which fixed that case and left three more, all reachable and none of them
+// exotic:
+//
+//   - The bootstrap window. The bootstrap is a background goroutine whose first
+//     step waits up to a minute for the pane to bind its port. Every delivery in
+//     that minute predates the handle.
+//   - A bootstrap that failed. There is then no handle, ever, for the life of
+//     the launch.
+//   - An agentd restart. Handles live in memory only, so every
+//     already-running API-driven agent has none and cannot acquire one short of
+//     relaunching (see the registry's own note). That state is durable.
+//
+// In all three the launch DID opt out of keystrokes, so the honest answer is to
+// hold the delivery and report the channel unavailable — the caller retries, or
+// the operator sees a named failure — rather than quietly typing it in.
+//
+// # Why not the port record
+//
+// TCL-1054's rule is that nothing may reach the endpoint from a port the
+// verified accessor did not return, and TCL-1056's is that CONNECTEDNESS is
+// derived from the connection. Neither is violated here: this reads the
+// launch's recorded posture (the relaunch profile), not a port, and it is not
+// claiming anything about a connection. "Which channel does this belong to" and
+// "is that channel up" are the two questions, and this is the first one.
+//
+// # Cost
+//
+// Two small SQLite reads per delivery decision, on paths that are already doing
+// database work and a tmux probe. Deliberately NOT used by the dashboard's
+// snapshot tick, which has its own cheaper intent read.
 func copilotAPIDriven(convID string) bool {
-	return copilotAPISessions.Handle(convID) != nil
+	if copilotAPISessions.Handle(convID) != nil {
+		// The fast, unambiguous answer. A live handle exists only for a launch
+		// that took the drive, so this needs no database read.
+		return true
+	}
+	return harnessForConv(convID).Name == harness.CopilotName &&
+		copilotLaunchIntentForConv(convID).API
 }
 
 // copilotAPIDrive returns the handle to send on, or an error saying why not.
@@ -110,6 +146,62 @@ func copilotAPIDrive(convID string) (*copilotAPISession, error) {
 			handle.Port, convID)
 	}
 	return handle, nil
+}
+
+// awaitCopilotAPISession waits for an API-driven launch's channel to come up,
+// and reports whether it did.
+//
+// This exists for the spawn's post-init delivery, and the reason is a
+// correctness bug rather than a preference. An API-drive launch renders no
+// `-i`, and the bootstrap does not attach to the pane's startup session — it
+// CREATES a session under the conversation id and foregrounds it, which starts
+// the id fresh (measured in TCL-1056: `alreadyInUse:false`, an empty
+// getMessages). So anything typed into the pane between "the pane is alive" and
+// "the bootstrap has foregrounded our session" goes into a session that is
+// about to be replaced, and is simply lost. For a spawn that is the agent's
+// rename and its entire welcome — its identity, its group, and the pointer to
+// the briefing waiting in its inbox. An agent that lost that looks, on every
+// dashboard surface, exactly like one that read it and had nothing to say.
+//
+// The budget is the bootstrap's own whole budget: waiting longer than the
+// bootstrap can possibly take proves nothing, and waiting less would abandon a
+// healthy launch on a loaded host.
+//
+// Returns false when the channel never came up, which is a real state rather
+// than a timeout to retry — the bootstrap logs why. Its caller then falls back
+// to the pane, and that fallback is NOT the one copilotAPIDriven exists to
+// prevent: a bootstrap that never completed leaves the pane's own startup
+// session in the foreground, so the pane genuinely IS the agent's channel, and
+// the alternative is an agent that is never told who it is. That is the same
+// call the bootstrap already makes for itself — a failed channel is a loud log
+// line and an agent still usable through its pane, not a failed spawn.
+// Indirected through a variable for the same reason the bootstrap kick-off is:
+// flow tests install a no-op bootstrap binary-wide, so no handle can ever
+// appear, and a spawn that waited the full budget for one would spend a minute
+// and a half waiting for something the test itself disabled. See agentd's
+// TestMain.
+var awaitCopilotAPISession = waitForCopilotAPISession
+
+// SetCopilotAPIPostInitWaitForTest swaps the post-init wait and returns a
+// restore function. TestMain installs a binary-wide "it never came up", which
+// is the truthful answer when the bootstrap is stubbed out.
+func SetCopilotAPIPostInitWaitForTest(fn func(convID string) bool) func() {
+	previous := awaitCopilotAPISession
+	awaitCopilotAPISession = fn
+	return func() { awaitCopilotAPISession = previous }
+}
+
+func waitForCopilotAPISession(convID string) bool {
+	deadline := time.Now().Add(copilotAPIBootstrapTimeout)
+	for {
+		if copilotAPIDriven(convID) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(copilotAPIPollInterval)
+	}
 }
 
 // sendCopilotAPIMessage delivers one user message to an API-connected agent.
@@ -216,6 +308,15 @@ func renameCopilotAPISession(convID, title string) error {
 // submitted: the caller asked for it after compaction, not after a successful
 // compaction, and dropping it would leave an agent waiting for a prompt that
 // silently never came.
+//
+// # Concurrent compactions are not deduplicated
+//
+// Two overlapping requests start two goroutines, each running its own
+// summarization turn and each submitting its own follow-up. Stated rather than
+// fixed: send-keys had exactly the same shape (two `/compact` submissions), so
+// this is not a regression, and the server serialises the actual work. Worth
+// revisiting only alongside a general "one lifecycle operation in flight per
+// conversation" rule, which is not this ticket's to invent.
 func compactCopilotAPISession(convID, followUp string) error {
 	handle, err := copilotAPIDrive(convID)
 	if err != nil {

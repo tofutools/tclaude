@@ -363,9 +363,15 @@ func sendNudgeBracket(toConv string, m *db.AgentMessage, nudge string) bool {
 	// agent's subject line and body, which is the most caller-controlled text
 	// tclaude ever puts near a pane's input stream.
 	//
-	// The standing-order arm above still applies. Copilot's hooks fire for a
-	// turn started over RPC exactly as they do for one typed in, so the
-	// correlation the marker exists for is unaffected by the transport.
+	// The standing-order arm above still applies, and that rests on a
+	// measurement rather than an assumption: tclaude's hooks were observed
+	// firing for a session created and driven over RPC (UserPromptSubmit and
+	// Stop both arrived, carrying the conversation's own id) against Copilot
+	// CLI 1.0.78 — which follows from TCL-1056 pinning the RPC session to the
+	// conversation id. So the correlation the marker exists for is unaffected
+	// by the transport. If that ever stops holding, the symptom is silent: the
+	// origin markers armed above expire and standing-order attribution is lost
+	// without an error anywhere.
 	//
 	// Never a fallback pair with the keystrokes below: returning false leaves
 	// the durable inbox row for the queue to retry, which is the right outcome

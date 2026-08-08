@@ -145,10 +145,23 @@ func (c *Client) SetSessionName(ctx context.Context, sessionID, name string) err
 // an ordinary outcome for an agent that has barely started, so callers should
 // separate it from a real failure with [IsNothingToCompact] rather than
 // reporting it as a broken channel.
+//
+// A compaction the server declines IN-BAND — a successful JSON-RPC response
+// carrying `success: false` — is converted to an error here, the same way
+// [Client.SetForegroundSession] handles its own in-band refusal. Reporting it
+// as a result would hand the caller a struct whose zero counts read exactly
+// like a compaction that ran and removed nothing.
 func (c *Client) Compact(ctx context.Context, params CompactParams) (CompactResult, error) {
 	var result CompactResult
-	err := c.Call(ctx, MethodSessionCompact, params, &result)
-	return result, err
+	if err := c.Call(ctx, MethodSessionCompact, params, &result); err != nil {
+		return CompactResult{}, err
+	}
+	if !result.Success {
+		return result, fmt.Errorf(
+			"copilotapi: session.history.compact reported failure for session %s",
+			params.SessionID)
+	}
+	return result, nil
 }
 
 // ContextInfo reports the session's context-window token breakdown.
