@@ -283,7 +283,12 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 	// grant insertion key on the rotation-immune identity. The ensure keeps
 	// the endpoint compatible with a freshly discovered agent whose registry
 	// row has not been materialized yet.
-	agentID, _, _ := db.EnsureAgentForConv(p.ConvID, "grant")
+	agentID, _, err := db.EnsureAgentForConv(p.ConvID, "grant")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io",
+			"resolve caller agent: "+err.Error())
+		return
+	}
 	cfg, _ := config.Load()
 	policy := resolveSudoConfig(cfg, p.ConvID, agentID, title)
 
