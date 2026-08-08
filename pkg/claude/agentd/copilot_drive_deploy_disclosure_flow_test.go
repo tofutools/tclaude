@@ -227,6 +227,13 @@ func TestTemplateDeploy_EveryEchoedFieldNamesATier(t *testing.T) {
 	// spawn boundary sees a resolved harness arriving in the params and would
 	// call that "explicit", crediting an operator who typed nothing; the deploy
 	// says "harness default" because it knows its own tiers came up empty.
+	//
+	// This RECORDS today's answer, it does not bless it: a deploy also bypasses
+	// the group/global default profile's harness entirely (TCL-1110), so on a
+	// group whose default profile pins Codex this reads "harness default" while a
+	// direct spawn into the same group launches Codex. Fixing that changes which
+	// vendor a deploy produces and belongs to that ticket; when it lands, this
+	// expectation becomes the group tier.
 	assert.Equal(t, agent.ProvHarnessDefault, res.Agents[0].Resolved.Harness.Source,
 		"an attribution that names no tier the operator can change is worse than useless "+
 			"— it is a false statement about who decided")

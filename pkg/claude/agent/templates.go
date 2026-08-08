@@ -681,6 +681,15 @@ func printAgentLaunchProvenance(w io.Writer, resolved *ResolvedLaunch) {
 	for _, note := range resolved.Notes {
 		fmt.Fprintf(w, "      note: %s\n", note)
 	}
+	for _, info := range resolved.Info {
+		fmt.Fprintf(w, "      info: %s\n", info)
+	}
+	// Last, and under their own label, exactly as the direct spawn echo prints
+	// them: a warning is about what this agent can do to the machine, not about
+	// which tier won a field, and must not read as one more provenance footnote.
+	for _, warning := range resolved.Warnings {
+		fmt.Fprintf(w, "      warning: %s\n", warning)
+	}
 }
 
 type instantiateResponse struct {

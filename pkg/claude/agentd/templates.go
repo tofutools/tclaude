@@ -810,6 +810,12 @@ type templateAgentLaunch struct {
 	// instantiate result so template launches have the same least-surprise
 	// disclosure as direct spawns.
 	Notes []string
+	// Info / Warnings are the launch-posture channels of the same echo, kept
+	// apart from Notes for the reason the direct spawn path keeps them apart: a
+	// warning is about the agent's blast radius, not about which tier won a
+	// field, and a renderer must be able to label it as such.
+	Info     []string
+	Warnings []string
 	// ObservedNotChosen names the launch fields this member was OBSERVED to carry
 	// but that no operator chose — the harness default resolved them. The
 	// snapshot deliberately does not pin these (a template is a specification,
@@ -1267,12 +1273,17 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	}
 	// Same spawn-posture check the HTTP spawn boundary runs, at the equivalent
 	// point: both axes final. Covers the Claude TCL-586 pairing and OpenCode's
-	// look-like-a-sandbox access-control mode. A template deploy has no separate
-	// per-agent info/warnings channels, so both kinds ride Notes — which the
-	// deploy result and dashboard already surface per agent.
-	notes = append(notes, harness.SpawnSandboxInfo(h, sandbox)...)
-	notes = append(notes, harness.SpawnSandboxWarnings(h, approval, sandbox, cwd,
-		spawnUsesTclaudeLayer(sandboxImplementation))...)
+	// look-like-a-sandbox access-control mode.
+	//
+	// Kept in their OWN channels since TCL-1097: the deploy result now carries a
+	// full launch echo, which has the Info and Warnings lists the direct spawn
+	// path has always had. They used to be flattened into Notes because there was
+	// nowhere else to put them, and the renderer this ticket added would then have
+	// printed "unattended agent, no OS sandbox" under a `note:` label — a warning
+	// about the agent's blast radius, styled as one more provenance footnote.
+	info := harness.SpawnSandboxInfo(h, sandbox)
+	warnings := harness.SpawnSandboxWarnings(h, approval, sandbox, cwd,
+		spawnUsesTclaudeLayer(sandboxImplementation))
 	// Resolve the two *bool launch toggles against the chosen harness — the
 	// same gate handleGroupSpawn/applyDefaultProfile apply. nil (no profile
 	// spoke) collapses to false = off. ResolveTrustDir/ResolveAutoReview reject
@@ -1438,6 +1449,8 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		FastModeSet:                 fastModeSet,
 		SandboxImplementation:       sandboxImplementation,
 		Notes:                       notes,
+		Info:                        info,
+		Warnings:                    warnings,
 	}, nil
 }
 

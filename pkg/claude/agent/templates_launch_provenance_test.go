@@ -26,30 +26,42 @@ import (
 // deployResponseWithAmbientDrive is a daemon response for one member whose
 // Copilot drive came from the group's default profile — the acquisition the
 // operator's standing rule says can never be silent.
+//
+// The shape is one a deploy really produces: the harness is credited to the
+// template's REFERENCED profile (a deploy resolves its own harness chain and
+// never reaches the group tier for that field — TCL-1110), while the drive comes
+// from the group default the referenced profile left unset.
 const deployResponseWithAmbientDrive = `{
 	"group":"phoenix","template":"team","spawned":1,"failed":0,
 	"agents":[{"name":"worker","final_name":"phoenix-worker","conv_id":"c1",
 		"resolved":{
-			"harness":{"value":"copilot","source":"group default profile \"copilot-api-on\""},
+			"harness":{"value":"copilot","source":"profile \"copilot-kit\""},
 			"model":{"value":"","source":"harness default"},
 			"effort":{"value":"","source":"harness default"},
 			"context_window_max":{"value":"","source":"harness default"},
 			"copilot_api":{"value":"api","source":"group default profile \"copilot-api-on\""},
 			"fast_mode":{"value":"","source":"harness default"},
 			"sandbox_implementation":{"value":"","source":"harness default"},
-			"notes":["group default profile \"copilot-api-on\" model ignored (not valid for copilot)"]
+			"notes":["group default profile \"codex-kit\" model ignored (not valid for copilot)"],
+			"info":["the harness runs its own server confinement"],
+			"warnings":["this agent runs commands unattended with no OS sandbox"]
 		}}]}`
 
 // assertAmbientDriveRendered pins what a human has to be able to read off the
-// screen: the field, the value, and the tier they can go and change.
+// screen: the field, the value, and the tier they can go and change — and the
+// three disclosure channels under labels that do not disguise one as another.
 func assertAmbientDriveRendered(t *testing.T, out string) {
 	t.Helper()
 	assert.Contains(t, out, `copilot drive: api (group default profile "copilot-api-on")`,
 		"the operator must see WHICH tier put this member on the unverified API drive")
-	assert.Contains(t, out, `harness: copilot (group default profile "copilot-api-on")`,
+	assert.Contains(t, out, `harness: copilot (profile "copilot-kit")`,
 		"an inherited harness is the TCL-304 surprise the echo exists to prevent")
-	assert.Contains(t, out, `note: group default profile "copilot-api-on" model ignored`,
+	assert.Contains(t, out, `note: group default profile "codex-kit" model ignored`,
 		"resolution notes ride the same echo and must reach the screen with it")
+	assert.Contains(t, out, "info: the harness runs its own server confinement")
+	assert.Contains(t, out, "warning: this agent runs commands unattended with no OS sandbox",
+		"a blast-radius warning must not be rendered as one more provenance footnote")
+	assert.NotContains(t, out, "note: this agent runs commands unattended")
 }
 
 func TestRunTemplatesInstantiate_RendersAmbientLaunchProvenance(t *testing.T) {

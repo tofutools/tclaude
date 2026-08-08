@@ -4276,8 +4276,14 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// so this covers every echoed field: before TCL-1097 a late fill of the
 	// Copilot drive, the sandbox implementation, fast mode or the context cap
 	// changed the launch and left this response describing the snapshot.
-	// Both sides are built by resolveLaunchProvenance / handleGroupSpawn from the
-	// same value encodings, so a difference here is a real difference.
+	// The relabel prefers the tier the final resolution NAMES and falls back to
+	// the anonymous launch-default label. A difference is not always a race: for
+	// fast_mode an explicit "inherit" clears the Set bit, so the overlay re-reads
+	// the profile tiers the handler deliberately suppressed and a group default
+	// legitimately wins here (that override is TCL-1109 and is not this echo's
+	// doing). Whatever the cause, an operator needs the profile's NAME to go and
+	// change it — "default profile (applied at launch)" names no tier at all, and
+	// is kept only for a final source that names nothing usable either.
 	launched := outcome.Resolved
 	if launched == nil {
 		launched = &agent.ResolvedLaunch{}
@@ -4294,6 +4300,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		if field.Value != final.Value {
 			field.Value = final.Value
 			field.Source = agent.ProvLaunchDefault
+			if named := strings.TrimSpace(final.Source); named != "" && named != agent.ProvExplicit {
+				field.Source = final.Source
+			}
 		}
 	}
 	setAuditSpawnResolved(r, spawnAuditResolution(p, resolvedLaunch, namedProfileHandle, map[string]*db.SpawnProfile{
@@ -4567,6 +4576,16 @@ type spawnParams struct {
 	ContextWindowMaxSource      string
 	FastModeSource              string
 	SandboxImplementationSource string
+	// LaunchNotes are the disclosures applyDefaultProfile's own resolution
+	// produced — today, a default-profile value SKIPPED because it targets a
+	// different harness than the launch resolved to.
+	//
+	// They were discarded for as long as that function has existed, which meant
+	// the direct spawn path told an operator "your group default profile's model
+	// was ignored, and why" while every other caller said only "harness default",
+	// leaving them unable to tell a tier that never spoke from one that spoke and
+	// was rejected (found by cold review on TCL-1097). The echo carries them out.
+	LaunchNotes []string
 	// FastMode/FastModeSet preserve the nullable Codex service-tier choice:
 	// unset inherits config.toml, false forces standard, true forces fast.
 	FastMode    bool
@@ -4776,6 +4795,11 @@ func resolveLaunchProvenance(p spawnParams) *agent.ResolvedLaunch {
 		FastMode:         agent.ResolvedField{Value: fastMode, Source: p.FastModeSource},
 		SandboxImpl: agent.ResolvedField{
 			Value: p.SandboxImplementation, Source: p.SandboxImplementationSource},
+		// The disclosures the safety-net overlay produced. Without them the echo
+		// reports "harness default" for a field whose group default profile value
+		// was consulted and SKIPPED, and the operator cannot tell "no tier spoke"
+		// from "a tier spoke and was rejected for this harness".
+		Notes: append([]string(nil), p.LaunchNotes...),
 	}
 }
 
@@ -5438,66 +5462,86 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	// The `source` return of every resolve below used to be discarded here; it is
 	// now merged into the params so executeSpawn can echo WHICH TIER decided each
 	// field for callers that never saw the HTTP boundary (TCL-1097).
-	var fieldSource string
-	p.Model, fieldSource, _, fail = resolveStringLaunchField(modelField, p.Model, h.Name, tiers,
+	var fieldSource, fieldNote string
+	// Collected rather than discarded: see spawnParams.LaunchNotes. Every resolve
+	// below routes its note here, including the fields the echo does not render —
+	// a skipped approval or sandbox value is a disclosure whether or not that
+	// field has an echoed home of its own (the unrendered nine are TCL-1106).
+	noteLaunch := func() {
+		if strings.TrimSpace(fieldNote) != "" {
+			p.LaunchNotes = append(p.LaunchNotes, fieldNote)
+		}
+		fieldNote = ""
+	}
+	p.Model, fieldSource, fieldNote, fail = resolveStringLaunchField(modelField, p.Model, h.Name, tiers,
 		func(prof *db.SpawnProfile) string { return prof.Model }, h.Models.ValidateModel)
 	if fail != nil {
 		return fail
 	}
+	noteLaunch()
 	p.ModelSource = preferResolvedSource(p.ModelSource, fieldSource)
-	p.Effort, fieldSource, _, fail = resolveStringLaunchField(effortField, p.Effort, h.Name, tiers,
+	p.Effort, fieldSource, fieldNote, fail = resolveStringLaunchField(effortField, p.Effort, h.Name, tiers,
 		func(prof *db.SpawnProfile) string { return prof.Effort }, h.Models.ValidateEffort)
 	if fail != nil {
 		return fail
 	}
+	noteLaunch()
 	p.EffortSource = preferResolvedSource(p.EffortSource, fieldSource)
-	p.HarnessBuiltinMode, _, _, fail = resolveStringLaunchField("sandbox", p.HarnessBuiltinMode, h.Name, tiers,
+	p.HarnessBuiltinMode, _, fieldNote, fail = resolveStringLaunchField("sandbox", p.HarnessBuiltinMode, h.Name, tiers,
 		func(prof *db.SpawnProfile) string { return prof.Sandbox },
 		func(raw string) (string, error) { return harness.ValidateHarnessBuiltinMode(h, raw) })
 	if fail != nil {
 		return fail
 	}
-	p.ApprovalPolicy, _, _, fail = resolveStringLaunchField("approval", p.ApprovalPolicy, h.Name, tiers,
+	noteLaunch()
+	p.ApprovalPolicy, _, fieldNote, fail = resolveStringLaunchField("approval", p.ApprovalPolicy, h.Name, tiers,
 		func(prof *db.SpawnProfile) string { return prof.Approval },
 		func(raw string) (string, error) { return harness.ValidateApprovalPolicy(h, raw) })
 	if fail != nil {
 		return fail
 	}
-	p.ToolGovernance, _, _, fail = resolveStringLaunchField("tools", p.ToolGovernance, h.Name, tiers,
+	noteLaunch()
+	p.ToolGovernance, _, fieldNote, fail = resolveStringLaunchField("tools", p.ToolGovernance, h.Name, tiers,
 		func(prof *db.SpawnProfile) string { return prof.ToolGovernance },
 		func(raw string) (string, error) { return harness.ValidateToolGovernance(h, raw) })
 	if fail != nil {
 		return fail
 	}
-	p.AskUserQuestionTimeout, _, _, fail = resolveStringLaunchField("ask_user_question_timeout", p.AskUserQuestionTimeout, h.Name, tiers,
+	noteLaunch()
+	p.AskUserQuestionTimeout, _, fieldNote, fail = resolveStringLaunchField("ask_user_question_timeout", p.AskUserQuestionTimeout, h.Name, tiers,
 		func(prof *db.SpawnProfile) string { return prof.AskUserQuestionTimeout },
 		func(raw string) (string, error) { return harness.ResolveAskTimeoutMode(h, raw) })
 	if fail != nil {
 		return fail
 	}
-	p.AutoCompactWindow, _, _, fail = resolveStringLaunchField("auto_compact_window", p.AutoCompactWindow, h.Name, tiers,
+	noteLaunch()
+	p.AutoCompactWindow, _, fieldNote, fail = resolveStringLaunchField("auto_compact_window", p.AutoCompactWindow, h.Name, tiers,
 		func(prof *db.SpawnProfile) string { return prof.AutoCompactWindow },
 		func(raw string) (string, error) { return harness.ResolveAutoCompactWindow(h, raw) })
 	if fail != nil {
 		return fail
 	}
-	p.ContextWindowMax, fieldSource, _, fail = resolveIntLaunchField(contextWindowMaxField, p.ContextWindowMax, h.Name, tiers,
+	noteLaunch()
+	p.ContextWindowMax, fieldSource, fieldNote, fail = resolveIntLaunchField(contextWindowMaxField, p.ContextWindowMax, h.Name, tiers,
 		func(prof *db.SpawnProfile) int64 { return prof.ContextWindowMax },
 		func(raw int64) (int64, error) { return harness.ResolveCopilotContextWindow(h, raw) })
 	if fail != nil {
 		return fail
 	}
+	noteLaunch()
 	p.ContextWindowMaxSource = preferResolvedSource(p.ContextWindowMaxSource, fieldSource)
 	if strings.TrimSpace(p.ProfileContext) == "" {
-		p.ProfileContext, _ = resolveProfileStartupContext(h.Name, tiers)
+		p.ProfileContext, fieldNote = resolveProfileStartupContext(h.Name, tiers)
+		noteLaunch()
 	}
-	p.SandboxImplementation, fieldSource, _, fail = resolveStringLaunchField(
+	p.SandboxImplementation, fieldSource, fieldNote, fail = resolveStringLaunchField(
 		sandboxImplementationField, p.SandboxImplementation, h.Name, tiers,
 		func(prof *db.SpawnProfile) string { return prof.SandboxImplementation },
 		func(raw string) (string, error) { return validateSandboxImplementationForHarness(h, raw) })
 	if fail != nil {
 		return fail
 	}
+	noteLaunch()
 	p.SandboxImplementationSource = preferResolvedSource(p.SandboxImplementationSource, fieldSource)
 	// The host gate belongs here too, not only at the HTTP boundary. This
 	// function is the safety net every non-HTTP caller passes through — the
@@ -5511,27 +5555,30 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	if fail := sandboxImplementationPostureFailure(h.Name, p.SandboxImplementation); fail != nil {
 		return fail
 	}
-	p.AutoReview, p.AutoReviewSet, _, _, fail = resolveBoolLaunchField("auto_review", p.AutoReview,
+	p.AutoReview, p.AutoReviewSet, _, fieldNote, fail = resolveBoolLaunchField("auto_review", p.AutoReview,
 		p.AutoReviewSet || p.AutoReview, h.Name, tiers, func(prof *db.SpawnProfile) *bool { return prof.AutoReview },
 		func(v bool) (bool, error) { return harness.ResolveAutoReview(h, v) })
 	if fail != nil {
 		return fail
 	}
-	p.TrustDir, p.TrustDirSet, _, _, fail = resolveBoolLaunchField("trust_dir", p.TrustDir,
+	noteLaunch()
+	p.TrustDir, p.TrustDirSet, _, fieldNote, fail = resolveBoolLaunchField("trust_dir", p.TrustDir,
 		p.TrustDirSet || p.TrustDir, h.Name, tiers, func(prof *db.SpawnProfile) *bool { return prof.TrustDir },
 		func(v bool) (bool, error) { return harness.ResolveTrustDir(h, v) })
 	if fail != nil {
 		return fail
 	}
+	noteLaunch()
 	var copilotAPISource string
-	p.CopilotAPI, p.CopilotAPISet, copilotAPISource, _, fail = resolveBoolLaunchField("copilot_api", p.CopilotAPI,
+	p.CopilotAPI, p.CopilotAPISet, copilotAPISource, fieldNote, fail = resolveBoolLaunchField("copilot_api", p.CopilotAPI,
 		p.CopilotAPISet || p.CopilotAPI, h.Name, tiers, func(prof *db.SpawnProfile) *bool { return prof.CopilotAPI },
 		func(v bool) (bool, error) { return harness.ResolveCopilotAPI(h, &v) })
 	if fail != nil {
 		return fail
 	}
+	noteLaunch()
 	p.CopilotAPISource = preferResolvedSource(p.CopilotAPISource, copilotAPISource)
-	p.FastMode, p.FastModeSet, fieldSource, _, fail = resolveBoolLaunchField("fast_mode", p.FastMode,
+	p.FastMode, p.FastModeSet, fieldSource, fieldNote, fail = resolveBoolLaunchField("fast_mode", p.FastMode,
 		p.FastModeSet, h.Name, tiers, func(prof *db.SpawnProfile) *bool { return prof.FastMode },
 		func(v bool) (bool, error) {
 			_, err := harness.ResolveFastMode(h, &v)
@@ -5540,15 +5587,17 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	if fail != nil {
 		return fail
 	}
+	noteLaunch()
 	p.FastModeSource = preferResolvedSource(p.FastModeSource, fieldSource)
 	var sshWorkaroundSource string
-	p.SSHWorkaround, p.SSHWorkaroundSet, sshWorkaroundSource, _, fail = resolveBoolLaunchField(
+	p.SSHWorkaround, p.SSHWorkaroundSet, sshWorkaroundSource, fieldNote, fail = resolveBoolLaunchField(
 		"ssh_workaround", p.SSHWorkaround, p.SSHWorkaroundSet, h.Name, tiers,
 		func(prof *db.SpawnProfile) *bool { return prof.SSHWorkaround },
 		func(v bool) (bool, error) { return harness.ResolveSSHWorkaround(h, &v) })
 	if fail != nil {
 		return fail
 	}
+	noteLaunch()
 	p.SSHWorkaroundSource = preferResolvedSource(p.SSHWorkaroundSource, sshWorkaroundSource)
 	// NB: the block below force-sets SSHWorkaroundSet for the harness default, so
 	// that bit says "this launch has a posture" and not "someone chose one" — the
@@ -5635,11 +5684,18 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		if outcome == nil {
 			return
 		}
-		// ASSIGNED, not merged. The deferred-spawn path can return an inner
-		// executeSpawn's outcome pointer, whose own defer already stamped it —
-		// and both defers see the same params, so re-stamping says the same thing
-		// once instead of twice.
-		outcome.Resolved = resolveLaunchProvenance(p)
+		// An echo already on the outcome is LEFT ALONE. The deferred-spawn path
+		// returns an INNER executeSpawn's outcome pointer, and the inner call ran
+		// its own applyDefaultProfile — later, against whatever the default
+		// profiles said by then, which is the resolution the agent actually
+		// launched with. Re-stamping from this frame's older params would replace a
+		// truthful echo with a stale one whenever a profile changed inside the
+		// deferred window (found by cold review; the earlier version of this
+		// comment claimed both frames must agree, which holds only when nothing
+		// changed between them).
+		if outcome.Resolved == nil {
+			outcome.Resolved = resolveLaunchProvenance(p)
+		}
 		// And the Copilot drive is additionally LOGGED, because the echo above only
 		// reaches an operator on callers that render it. The template deploy does;
 		// the scribe summon does not (measured: its response is

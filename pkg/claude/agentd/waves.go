@@ -180,7 +180,7 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 		// spawn-tier one. A spawn FAILURE still reports them below, since a
 		// disclosure about the tiers that produced the attempted launch is exactly
 		// what explains a failure like "that profile's model is not valid here".
-		templateNotes := launch.Notes
+		templateNotes, templateInfo, templateWarnings := launch.Notes, launch.Info, launch.Warnings
 		// Fold the role brief ("## Role") + the template process ("## Process")
 		// into THIS agent's startup context — no-ops when absent.
 		agentContext := groupContext
@@ -269,9 +269,7 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 		if fail != nil {
 			res.ErrorKind = fail.Kind
 			res.Error = fail.Msg
-			if len(templateNotes) > 0 {
-				res.Resolved = &agent.ResolvedLaunch{Notes: templateNotes}
-			}
+			res.Resolved = templateEchoFallback(templateNotes, templateInfo, templateWarnings)
 			wr.Failed++
 			wr.Results = append(wr.Results, res)
 			continue
@@ -282,9 +280,15 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 		// object so one echo per agent tells the whole story.
 		res.Resolved = outcome.Resolved
 		if res.Resolved != nil {
-			res.Resolved.Notes = append(templateNotes, res.Resolved.Notes...)
-		} else if len(templateNotes) > 0 {
-			res.Resolved = &agent.ResolvedLaunch{Notes: templateNotes}
+			// Template tiers first, then the spawn's own: the reader gets them in
+			// resolution order. Copied rather than appended in place, because
+			// templateNotes is the slice inside launch and append could otherwise
+			// write through its spare capacity.
+			res.Resolved.Notes = append(append([]string(nil), templateNotes...), res.Resolved.Notes...)
+			res.Resolved.Info = append(append([]string(nil), templateInfo...), res.Resolved.Info...)
+			res.Resolved.Warnings = append(append([]string(nil), templateWarnings...), res.Resolved.Warnings...)
+		} else {
+			res.Resolved = templateEchoFallback(templateNotes, templateInfo, templateWarnings)
 		}
 		res.ConvID = outcome.ConvID
 		wr.Spawned++
@@ -336,6 +340,17 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 		wr.Results = append(wr.Results, res)
 	}
 	return wr
+}
+
+// templateEchoFallback carries the template-tier disclosures on their own when
+// there is no spawn echo to hang them on — a member whose spawn was REFUSED, or
+// (defensively) an outcome from a path that produced none. A refusal is exactly
+// when the tiers that produced the refused value are worth reading.
+func templateEchoFallback(notes, info, warnings []string) *agent.ResolvedLaunch {
+	if len(notes) == 0 && len(info) == 0 && len(warnings) == 0 {
+		return nil
+	}
+	return &agent.ResolvedLaunch{Notes: notes, Info: info, Warnings: warnings}
 }
 
 func preparePerAgentCwdWriteProof(token string, proofDirs []string, cwd string) (string, []string, func(), error) {
