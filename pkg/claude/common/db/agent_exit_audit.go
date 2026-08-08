@@ -108,6 +108,7 @@ type exitSessionMeta struct {
 	TmuxSession        string
 	ConvID             string
 	AgentID            string
+	TargetLabel        string
 	Status             string
 	CreatedAt          dbTimestamp
 	ExitReason         string
@@ -572,7 +573,7 @@ func recordAgentExitObservationTx(tx *sql.Tx, o AgentExitObservation, auth *Exit
 	entry := AuditLogEntry{
 		At: o.At, ActorKind: AuditActorSystem, ActorLabel: "tclaude",
 		Verb: AuditVerbAgentExit, TargetConv: meta.ConvID, TargetAgent: meta.AgentID,
-		TargetLabel: meta.ConvID, Status: 200, Source: exitAuditSource(o.Observer),
+		TargetLabel: meta.TargetLabel, Status: 200, Source: exitAuditSource(o.Observer),
 		EventID: eventID, RelatedEventID: o.RelatedEventID,
 		SessionID: o.SessionID, TmuxSession: o.TmuxSession, PaneID: o.PaneID,
 		Observer: o.Observer, CauseKind: o.CauseKind,
@@ -817,13 +818,19 @@ func retryableExitAuditConflict(err error) bool {
 func loadExitSessionMeta(tx *sql.Tx, sessionID string) (exitSessionMeta, error) {
 	var m exitSessionMeta
 	var exitReason sql.NullString
-	err := tx.QueryRow(`SELECT tmux_session, conv_id, agent_id, status, created_at,
-		exit_reason, exit_intent, exit_intent_event_id, exit_intent_generation, exit_intent_at,
-		exit_callback_generation, exit_callback_token_hash,
-		exit_callback_pane_id, exit_callback_used_at, exit_launch_gate_state,
-		harness, resume_provenance
-		FROM sessions WHERE id = ?`, sessionID).Scan(
-		&m.TmuxSession, &m.ConvID, &m.AgentID, &m.Status, &m.CreatedAt,
+	err := tx.QueryRow(`SELECT s.tmux_session, s.conv_id, s.agent_id,
+		COALESCE(NULLIF(ci.custom_title, ''), NULLIF(a.pending_name, ''),
+			NULLIF(ci.summary, ''), NULLIF(ci.first_prompt, ''), s.conv_id),
+		s.status, s.created_at,
+		s.exit_reason, s.exit_intent, s.exit_intent_event_id, s.exit_intent_generation, s.exit_intent_at,
+		s.exit_callback_generation, s.exit_callback_token_hash,
+		s.exit_callback_pane_id, s.exit_callback_used_at, s.exit_launch_gate_state,
+		s.harness, s.resume_provenance
+		FROM sessions s
+		LEFT JOIN agents a ON a.agent_id = s.agent_id
+		LEFT JOIN conv_index ci ON ci.conv_id = s.conv_id
+		WHERE s.id = ?`, sessionID).Scan(
+		&m.TmuxSession, &m.ConvID, &m.AgentID, &m.TargetLabel, &m.Status, &m.CreatedAt,
 		&exitReason, &m.Intent, &m.IntentEventID, &m.IntentGeneration, &m.IntentAt,
 		&m.CallbackGeneration, &m.CallbackTokenHash,
 		&m.CallbackPaneID, &m.CallbackUsedAt, &m.LaunchGateState,

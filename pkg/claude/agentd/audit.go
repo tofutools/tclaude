@@ -624,14 +624,19 @@ func auditActor(r *http.Request, source string) (kind, conv, label string) {
 // can't be resolved — e.g. a just-deleted conv whose index row is gone.
 func resolveAuditTarget(selector string) (conv, label string) {
 	if res, _, err := agent.ResolveSelector(selector); err == nil && res.ConvID != "" {
-		// ResolveSelector already returned the conv_index row — use it
-		// directly rather than re-resolving via auditConvLabel.
-		if res.Row != nil {
-			if t := agent.DisplayTitle(res.Row); t != "" {
-				return res.ConvID, t
-			}
+		// CachedTitle also consults the actor's spawn-time pending name. That
+		// fallback is the only human-readable identity available for harnesses
+		// whose native conversation title has not populated conv_index yet.
+		if t := agent.CachedTitle(res.ConvID); t != "" && t != agent.UnknownTitle {
+			return res.ConvID, t
 		}
 		return res.ConvID, short8(res.ConvID)
+	}
+	// A freshly launched actor may have no conv_index or group membership yet,
+	// so ResolveSelector cannot necessarily find its raw conv-id. The actor row
+	// is already durable at that point and carries the requested spawn name.
+	if t := agent.CachedTitle(selector); t != "" && t != agent.UnknownTitle {
+		return selector, t
 	}
 	return selector, selector
 }
