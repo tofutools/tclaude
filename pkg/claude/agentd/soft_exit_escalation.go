@@ -273,6 +273,9 @@ func reconcileStoppedLifecycleTarget(target *lifecycleTarget, lifecycleAction, r
 // was actually gone by the time it returned, so a synchronous stop can tell
 // "killed, and it is really down" from "nothing left to do".
 func escalateStuckSoftExitUnderLaunchLock(target *lifecycleTarget, lifecycleAction, relatedEventID, reason string) softExitOutcome {
+	if beforeSoftExitEscalationRevalidateForTest != nil {
+		beforeSoftExitEscalationRevalidateForTest()
+	}
 	probe, err := target.revalidate()
 	if err != nil {
 		// Died, or a successor now owns the name — either way the ladder has
@@ -373,6 +376,11 @@ func waitForPaneProcessGone(target *lifecycleTarget, pid int, grace time.Duratio
 // softExitEscalationPollForTest lets a flow test observe (and act between) the
 // watchdog's probes.
 var softExitEscalationPollForTest func()
+
+// beforeSoftExitEscalationRevalidateForTest lets a flow test act in the
+// deadline-to-revalidation window after the watchdog decided escalation was
+// needed but before the launch-locked identity check observes the target.
+var beforeSoftExitEscalationRevalidateForTest func()
 
 // stopIntendsPaneClosure reports whether a lifecycle stop of this shape means
 // "this pane must end", which is what entitles the daemon to escalate. Every

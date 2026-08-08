@@ -3,7 +3,6 @@ package agentd_test
 import (
 	"os"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"testing"
 
@@ -290,18 +289,16 @@ func TestSoftExitEscalation_ReconcilesExitBetweenDeadlineAndRevalidation(t *test
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc)
 	cc.OnInput("/exit", func(c *testharness.CCSim, _ string) bool { return true })
-	var revalidations atomic.Int32
-	cleanupAfterBackgroundDrain(t, agentd.SetBeforeSoftExitTargetRevalidateForTest(func() {
-		if revalidations.Add(1) == 2 {
-			cc.MarkDead()
-		}
+	var once sync.Once
+	cleanupAfterBackgroundDrain(t, agentd.SetBeforeSoftExitEscalationRevalidateForTest(func() {
+		once.Do(cc.MarkDead)
 	}))
 
 	f.AssertSoftStopped(f.AsHuman().Stop(conv, false))
 	agentd.WaitForBackgroundForTest()
-	require.GreaterOrEqual(t, revalidations.Load(), int32(2),
-		"the test must reach escalation revalidation after the deadline")
 	assert.False(t, f.World.Tmux.IsAlive(tmuxSes))
+	assert.Empty(t, killTargets(f),
+		"the pane closed before escalation revalidation, so no kill rung may run")
 	stored, err = db.LoadSession("spwn-escf")
 	require.NoError(t, err)
 	require.NotNil(t, stored)
