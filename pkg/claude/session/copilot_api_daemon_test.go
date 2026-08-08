@@ -1,6 +1,8 @@
 package session
 
 import (
+	"io"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -154,7 +156,14 @@ func TestResolveCopilotAPIDriveForLaunch(t *testing.T) {
 			// API-backed mode has already been refused upstream by
 			// harness.ResolveCopilotAPI, and refusing again here would name a reason
 			// that does not apply.
-			name:    "a non-Copilot harness is left alone",
+			//
+			// NOT a reachable runNew state, and the arm says so rather than implying a
+			// contract: runNew cannot deliver drive=true for Claude Code, because
+			// ResolveCopilotAPI errors first. What it pins is that the DEFENSIVE branch
+			// is a pass-through — if a future caller reaches this function some other
+			// way, it must not refuse a launch for a Copilot-only reason. Flagged by
+			// cold review as documenting an unreachable state; kept, with the reason.
+			name:    "a non-Copilot harness is left alone (defensive branch, unreachable from runNew)",
 			harness: harness.DefaultName, drive: true,
 			wantDrive: true, wantSilent: true,
 		},
@@ -169,7 +178,7 @@ func TestResolveCopilotAPIDriveForLaunch(t *testing.T) {
 			if tc.carried {
 				carriedFrom = driveLaunchConv
 			}
-			drive, notice, err := resolveCopilotAPIDriveForLaunch(copilotAPIDriveRequest{
+			decision, err := resolveCopilotAPIDriveForLaunch(copilotAPIDriveRequest{
 				Harness:         h,
 				Drive:           tc.drive,
 				CarriedFromConv: carriedFrom,
@@ -178,6 +187,7 @@ func TestResolveCopilotAPIDriveForLaunch(t *testing.T) {
 				SendKeys:        tc.sendKeys,
 			})
 
+			drive, notice := decision.Drive, decision.Notice
 			if len(tc.wantRefusal) > 0 {
 				require.Error(t, err, "this launch must be refused, not started")
 				for _, want := range tc.wantRefusal {
@@ -214,7 +224,7 @@ func TestResolveCopilotAPIDriveForLaunchRefusesOnAnUnreadableActorRow(t *testing
 	_, err = d.Exec(`DROP TABLE agent_conversations`)
 	require.NoError(t, err)
 
-	_, _, err = resolveCopilotAPIDriveForLaunch(copilotAPIDriveRequest{
+	_, err = resolveCopilotAPIDriveForLaunch(copilotAPIDriveRequest{
 		Harness:         copilotLaunchHarness(t),
 		Drive:           true,
 		CarriedFromConv: driveLaunchConv,
@@ -363,4 +373,152 @@ func TestCarryingTheDriveRecordsWhichConversationItCameFrom(t *testing.T) {
 				"a resume that carried no drive must not enter the carried-drive arm")
 		})
 	}
+}
+
+// The WIRING, driven behaviourally. This is the test whose absence let the cold
+// review land three separate beats: the decision table calls the gate directly, and
+// runNew launches panes so nothing exercised the path between them. Deleting
+// `params.copilotAPIDriveDropped = ...`, wrapping the gate in `if params.Resume !=
+// ""`, and discarding the refusal into a trailing blank each left the whole package
+// green. An AST guard asserting those lines exist would only have restated them;
+// what was missing was a function that takes params and can be called from a test.
+//
+// So the applier owns every consequence and this asserts all of them together:
+// the drive params runs with, the drop marker the posture write reads, the port, and
+// what the operator is told.
+func TestApplyCopilotAPIDriveDecisionWiresEveryConsequence(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		harness       string
+		drive         bool
+		carried       bool
+		managed       bool
+		managedLaunch bool
+		port          int
+		sendKeys      bool
+		resume        string
+		joinGroup     string
+		wantErr       string
+		wantDrive     bool
+		wantDropped   bool
+		wantPort      int
+		wantNotice    []string
+	}{
+		{
+			// The path that works, and the assertion that it is untouched.
+			name:    "agentd's launch keeps drive, port and silence",
+			harness: harness.CopilotName, drive: true, managedLaunch: true, port: 41234,
+			wantDrive: true, wantDropped: false, wantPort: 41234,
+		},
+		{
+			// The defect. Note wantDropped is false: a REFUSED launch never reaches the
+			// posture write, and marking it dropped would be a claim about a launch that
+			// did not happen.
+			name:    "a hand-typed drive is refused",
+			harness: harness.CopilotName, drive: true,
+			wantErr: "copilot_api_drive_needs_agentd", wantPort: 0,
+		},
+		{
+			// The consequence the review found: dropping the drive while leaving the
+			// port set manufactured a port-without-drive combination the operator never
+			// typed, so the launch died on an unrelated error one line later — AFTER
+			// being told it would proceed on send-keys.
+			name:    "a dropped carried drive clears the port it no longer needs",
+			harness: harness.CopilotName, drive: true, carried: true, port: 4599,
+			wantDrive: false, wantDropped: true, wantPort: 0,
+			wantNotice: []string{"send-keys", "left untouched"},
+		},
+		{
+			// The record half: dropped must be set, or copilotAPIPostureToRecord asserts
+			// false over the conversation's drive. This is the assignment whose deletion
+			// left the package green.
+			name:    "a dropped drive is marked so the posture write abstains",
+			harness: harness.CopilotName, drive: true, carried: true, managed: true, sendKeys: true,
+			wantDrive: false, wantDropped: true, wantPort: 0,
+			wantNotice: []string{"HOLD"},
+		},
+		{
+			// A launch that never asked for the drive must NOT be marked dropped: it has
+			// dropped nothing, and it must still be able to record its own false.
+			name:    "a send-keys launch is untouched and not marked dropped",
+			harness: harness.CopilotName, drive: false,
+			wantDrive: false, wantDropped: false, wantPort: 0,
+		},
+		{
+			// The resume arm's remedies, which used to be fresh-launch advice that fails
+			// twice over on this invocation.
+			name:    "an explicit drive on a resume names remedies that work from here",
+			harness: harness.CopilotName, drive: true, resume: driveLaunchConv,
+			wantErr: "tclaude agent resume " + driveLaunchConv,
+		},
+		{
+			// The join-group wording. This path starts NO local pane — RunJoinGroup POSTs
+			// to the daemon — so a refusal claiming "the pane would come up with the
+			// endpoint listening" would describe something that does not happen. The
+			// refusal stands (the request carries no drive field, so the flag is discarded
+			// in transit), but it has to say the true thing. Found by cold review.
+			name:    "a join-group refusal describes the handoff, not a pane",
+			harness: harness.CopilotName, drive: true, joinGroup: "reviewers",
+			wantErr: "discarded in transit",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			carryoverTestHome(t)
+			seedDriveLaunchConv(t, driveLaunchConv, tc.managed)
+			h, err := harness.Resolve(tc.harness)
+			require.NoError(t, err)
+
+			params := &NewParams{
+				CopilotAPI:     tc.drive,
+				CopilotAPIPort: tc.port,
+				ManagedLaunch:  tc.managedLaunch,
+				SendKeys:       tc.sendKeys,
+				Resume:         tc.resume,
+				JoinGroup:      tc.joinGroup,
+			}
+			if tc.carried {
+				params.copilotAPIDriveCarriedFrom = driveLaunchConv
+			}
+			var notices strings.Builder
+
+			err = applyCopilotAPIDriveDecision(params, h, &notices)
+
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+				assert.False(t, params.CopilotAPI,
+					"a refused launch must not be left holding the drive")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantDrive, params.CopilotAPI, "the drive params runs with")
+			assert.Equal(t, tc.wantDropped, params.copilotAPIDriveDropped,
+				"the marker copilotAPIPostureToRecord reads: wrong here and the "+
+					"conversation's recorded drive is authored over")
+			assert.Equal(t, tc.wantPort, params.CopilotAPIPort, "the port")
+			if len(tc.wantNotice) == 0 {
+				assert.Empty(t, notices.String(), "this launch must not be narrated")
+				return
+			}
+			for _, want := range tc.wantNotice {
+				assert.Contains(t, notices.String(), want)
+			}
+		})
+	}
+}
+
+// The two halves must agree end to end: the applier sets the marker, and the posture
+// helper turns it into an abstention. Asserted together because each was tested in
+// isolation while the line joining them was deletable without a failure.
+func TestADroppedDriveReachesThePostureWriteAsNil(t *testing.T) {
+	carryoverTestHome(t)
+	seedDriveLaunchConv(t, driveLaunchConv, false)
+	params := &NewParams{CopilotAPI: true}
+	params.copilotAPIDriveCarriedFrom = driveLaunchConv
+
+	require.NoError(t, applyCopilotAPIDriveDecision(params, copilotLaunchHarness(t), io.Discard))
+	require.True(t, params.copilotAPIDriveDropped, "precondition: the drive was dropped")
+	assert.Nil(t, copilotAPIPostureToRecord(params),
+		"a dropped drive must reach RecordLaunchPosture as nil, or the launch un-chooses "+
+			"the conversation's drive on the authority of having failed to provide it")
 }

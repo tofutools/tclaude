@@ -935,26 +935,14 @@ func runNew(params *NewParams) error {
 	// binding and closing 127.0.0.1:0 for a drive nobody is going to run is
 	// exactly the pointless exposure this gate exists to prevent (TCL-1084).
 	//
-	// A drop is recorded on params so the posture write can pass nil rather than
-	// false: this launch failed to honour the conversation's drive, which is not
-	// the same claim as the conversation no longer wanting it.
-	copilotAPIDrive, driveNotice, err := resolveCopilotAPIDriveForLaunch(copilotAPIDriveRequest{
-		Harness:         h,
-		Drive:           copilotAPI,
-		CarriedFromConv: params.copilotAPIDriveCarriedFrom,
-		ManagedLaunch:   params.ManagedLaunch,
-		Port:            params.CopilotAPIPort,
-		SendKeys:        params.SendKeys,
-	})
-	if err != nil {
+	// Every consequence of that decision — the drive params runs with, the drop
+	// marker the posture write reads, and clearing a port the drive no longer needs
+	// — lives inside the applier rather than here, so they are testable without a
+	// pane and cannot be separated from each other by a tidy-up.
+	if err := applyCopilotAPIDriveDecision(params, h, os.Stderr); err != nil {
 		return err
 	}
-	if driveNotice != "" {
-		fmt.Fprintln(os.Stderr, driveNotice)
-	}
-	params.copilotAPIDriveDropped = copilotAPI && !copilotAPIDrive
-	params.CopilotAPI = copilotAPIDrive
-	copilotAPIPort, err := ResolveCopilotAPIPort(copilotAPIDrive, params.CopilotAPIPort)
+	copilotAPIPort, err := ResolveCopilotAPIPort(params.CopilotAPI, params.CopilotAPIPort)
 	if err != nil {
 		return err
 	}

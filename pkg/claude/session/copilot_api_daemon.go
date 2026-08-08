@@ -2,7 +2,9 @@ package session
 
 import (
 	"fmt"
+	"io"
 	"slices"
+	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -116,6 +118,40 @@ type copilotAPIDriveRequest struct {
 	// as `tclaude conv resume --send-keys` (TCL-1076) so an operator who learns
 	// the escape on one surface is not walled out on the other.
 	SendKeys bool
+	// ResumeSelector is what the operator typed after -r, empty for a fresh
+	// launch. Only used to make a refusal actionable: an EXPLICIT --copilot-api on
+	// a resume takes the assert-and-refuse arm (the carryover never fires for a
+	// flag the caller supplied), and without this that arm would hand out
+	// fresh-launch advice — `tclaude agent spawn`, which creates a DIFFERENT agent,
+	// and "the same command without --copilot-api", which for a live managed agent
+	// is refused again by the carried arm. Found by cold review.
+	ResumeSelector string
+	// JoinGroup marks a launch that will hand off to the daemon's groups.spawn
+	// rather than starting a pane here. It changes only the wording: `RunJoinGroup`
+	// POSTs and never launches a local pane, so a refusal claiming "the pane would
+	// come up with that endpoint listening" would be describing something that does
+	// not happen on this path. Also found by cold review.
+	JoinGroup bool
+}
+
+// copilotAPIDriveDecision is what one launch may do with the drive.
+//
+// Dropped is carried here rather than assigned by the caller for a reason the cold
+// review demonstrated: it used to be a single line in runNew
+// (`params.copilotAPIDriveDropped = copilotAPI && !copilotAPIDrive`), nothing
+// guarded it, and DELETING IT left the entire package and the linter green while
+// restoring the TCL-1076 record erasure. A decision the record depends on must not
+// live in an assignment a tidy-up can remove without a single test noticing.
+type copilotAPIDriveDecision struct {
+	// Drive is what this launch actually runs with.
+	Drive bool
+	// Dropped marks a launch that RESOLVED the drive and could not honour it, which
+	// is what makes the posture write abstain rather than assert. Distinct from
+	// !Drive: a launch that never asked for the drive has not dropped anything and
+	// must still be able to record its false.
+	Dropped bool
+	// Notice is what the operator must be told, empty when nothing changed.
+	Notice string
 }
 
 // resolveCopilotAPIDriveForLaunch decides what a `tclaude session new` launch may
@@ -174,51 +210,49 @@ type copilotAPIDriveRequest struct {
 // Silent for every launch that did not ask for the drive, including every
 // non-Copilot harness: the recorded-drive read below is reached only when a
 // drive is actually on the table.
-func resolveCopilotAPIDriveForLaunch(req copilotAPIDriveRequest) (bool, string, error) {
+func resolveCopilotAPIDriveForLaunch(
+	req copilotAPIDriveRequest,
+) (copilotAPIDriveDecision, error) {
 	if !req.Drive {
-		return false, "", nil
+		return copilotAPIDriveDecision{}, nil
 	}
 	if req.Harness == nil || !req.Harness.SupportsCopilotAPI() {
 		// harness.ResolveCopilotAPI has already refused an explicit opt-in for a
 		// harness with no API mode, and a carry cannot survive one either. Being
 		// defensive here rather than assuming it, since a wrong answer would refuse
 		// a launch for a reason that does not apply to it.
-		return req.Drive, "", nil
+		return copilotAPIDriveDecision{Drive: req.Drive}, nil
 	}
 	if copilotAPIDriveIsDaemonOwned(req.ManagedLaunch, req.Port) {
-		return true, "", nil
+		return copilotAPIDriveDecision{Drive: true}, nil
 	}
+	dropped := copilotAPIDriveDecision{Dropped: true}
 	if req.CarriedFromConv == "" {
-		return false, "", fmt.Errorf(
-			"copilot_api_drive_needs_agentd: --copilot-api binds an unauthenticated " +
-				"loopback JSON-RPC endpoint, and only tclaude agentd allocates its port, " +
-				"creates the session and holds the connection. Launched from here the pane " +
-				"would come up with that endpoint listening and nothing driving it, which is " +
-				"strictly worse than the send-keys default.\n" +
-				"  drive it over the API: tclaude agent spawn ... --copilot-api\n" +
-				"  launch it from here:   the same command without --copilot-api")
+		return dropped, fmt.Errorf(
+			"copilot_api_drive_needs_agentd: --copilot-api needs the daemon that %s, and "+
+				"this launch is not agentd's. %s\n%s",
+			"allocates its port, creates the RPC session and holds the connection",
+			copilotAPIDriveHarm(req.JoinGroup),
+			copilotAPIDriveExplicitRemedies(req.ResumeSelector))
 	}
 	live, err := db.IsLiveAgentConv(req.CarriedFromConv)
 	if err != nil {
 		// Fail closed. An unreadable actor row is not evidence that nothing routes
 		// this conversation, and proceeding on that assumption is what produces the
 		// deaf agent.
-		return false, "", fmt.Errorf(
+		return dropped, fmt.Errorf(
 			"resolve whether conversation %s is a live managed agent: %w",
 			req.CarriedFromConv, err)
 	}
 	if live && !req.SendKeys {
-		return false, "", fmt.Errorf(
+		return dropped, fmt.Errorf(
 			"copilot_api_drive_needs_agentd: conversation %s chose the Copilot API drive "+
 				"and is a live managed agent, so agentd routes its messages over that "+
 				"channel. This launch cannot create the channel — only agentd can — and "+
 				"since TCL-1058 an API conversation with no provable channel HOLDS its mail "+
 				"rather than typing it into the pane, so the agent would come up looking "+
-				"healthy and hearing nothing.\n"+
-				"  relaunch it on its own drive:   tclaude agent resume %s\n"+
-				"  relaunch it on keystrokes anyway: add --send-keys (its mail keeps holding "+
-				"until it is relaunched through agentd)",
-			req.CarriedFromConv, req.CarriedFromConv)
+				"healthy and hearing nothing.\n%s",
+			req.CarriedFromConv, copilotAPIDriveCarriedRemedies(req.CarriedFromConv))
 	}
 	notice := fmt.Sprintf(
 		"Warning: conversation %s chose the Copilot API drive; this launch runs on tmux "+
@@ -231,5 +265,103 @@ func resolveCopilotAPIDriveForLaunch(req copilotAPIDriveRequest) (bool, string, 
 				"rather than being typed into the pane until it is relaunched with "+
 				"'tclaude agent resume %s'.", req.CarriedFromConv)
 	}
-	return false, notice, nil
+	dropped.Notice = notice
+	return dropped, nil
+}
+
+// copilotAPIDriveHarm states what going ahead would actually produce, which is not
+// the same sentence on every path.
+//
+// A --join-group launch starts NO local pane: agent.RunJoinGroup POSTs to
+// /v1/groups/<g>/spawn and the daemon spawns. So the ordinary "the pane would come
+// up with the endpoint listening and nothing driving it" would be describing
+// something that does not happen — the exact class of claim this series keeps
+// having to correct. What is true there is narrower and still worth refusing over:
+// the request carries no drive field at all, so the flag is discarded in transit.
+func copilotAPIDriveHarm(joinGroup bool) string {
+	if joinGroup {
+		return "A --join-group launch hands off to the daemon's group spawn, and that " +
+			"request has no drive field, so --copilot-api would be discarded in transit " +
+			"rather than honoured — you would get a send-keys agent and no indication of it."
+	}
+	return "The pane would come up with an unauthenticated loopback JSON-RPC endpoint " +
+		"listening and nothing driving it, which is strictly worse than the send-keys default."
+}
+
+// copilotAPIDriveExplicitRemedies names ways out that work FROM WHERE THE OPERATOR
+// IS STANDING.
+//
+// The resume case is why this is not one string. `session new -r <conv>
+// --copilot-api` takes this arm — the carryover never fires for a flag the caller
+// supplied — and the fresh-launch advice is wrong twice over there: `tclaude agent
+// spawn` creates a DIFFERENT agent, and "the same command without --copilot-api"
+// is refused again by the carried arm when the conversation is a live managed
+// agent. Naming a remedy that fails is worse than naming none, because it reads as
+// "you forgot this" when what is true is that the operator is on the wrong surface.
+func copilotAPIDriveExplicitRemedies(resumeSelector string) string {
+	if strings.TrimSpace(resumeSelector) != "" {
+		return "  relaunch it on its own drive:      tclaude agent resume " +
+			strings.TrimSpace(resumeSelector) + "\n" +
+			"  relaunch it here on keystrokes:    the same command with --send-keys and " +
+			"without --copilot-api"
+	}
+	return "  drive it over the API: tclaude agent spawn ... --copilot-api\n" +
+		"  launch it from here:   the same command without --copilot-api"
+}
+
+// copilotAPIDriveCarriedRemedies is the carried-drive pair, kept beside the
+// explicit one so the two cannot drift into describing different escapes.
+func copilotAPIDriveCarriedRemedies(convID string) string {
+	return "  relaunch it on its own drive:      tclaude agent resume " + convID + "\n" +
+		"  relaunch it on keystrokes anyway:  add --send-keys (its mail keeps holding " +
+		"until it is relaunched through agentd)"
+}
+
+// applyCopilotAPIDriveDecision is the ONE place a launch's drive decision reaches
+// params, and the reason it exists rather than being three lines in runNew.
+//
+// The cold review deleted `params.copilotAPIDriveDropped = ...` from runNew and the
+// entire package plus the linter stayed green while the TCL-1076 record erasure came
+// back. Nothing guarded that line and no test drove the wiring: the behavioural
+// table calls the gate directly, and runNew launches panes, so it is not
+// unit-testable. Collecting the consequences here makes them testable without a
+// pane, which is what closes that hole — a guard asserting the assignment exists
+// would only have restated it.
+//
+// Zeroing the port is part of the same fix, from the same review: dropping the drive
+// while leaving --copilot-api-port set manufactured a combination the operator never
+// typed, so a launch that had just been told "this runs on send-keys instead" then
+// died on "--copilot-api-port needs --copilot-api".
+func applyCopilotAPIDriveDecision(
+	params *NewParams, h *harness.Harness, notices io.Writer,
+) error {
+	decision, err := resolveCopilotAPIDriveForLaunch(copilotAPIDriveRequest{
+		Harness:         h,
+		Drive:           params.CopilotAPI,
+		CarriedFromConv: params.copilotAPIDriveCarriedFrom,
+		ManagedLaunch:   params.ManagedLaunch,
+		Port:            params.CopilotAPIPort,
+		SendKeys:        params.SendKeys,
+		ResumeSelector:  params.Resume,
+		JoinGroup:       strings.TrimSpace(params.JoinGroup) != "",
+	})
+	// Applied BEFORE the error check, so params describes the decision on every path
+	// rather than only the ones that continue. Today a refusal aborts runNew
+	// immediately and nothing downstream reads these fields, which is exactly why
+	// leaving them holding a drive the gate just refused is worth avoiding: the next
+	// caller to log, report or retry from params would be reading a state no launch
+	// is in. Cheap to define, and the alternative is a half-written struct whose
+	// harmlessness depends on a caller's control flow.
+	params.CopilotAPI = decision.Drive
+	params.copilotAPIDriveDropped = decision.Dropped
+	if !decision.Drive {
+		params.CopilotAPIPort = 0
+	}
+	if err != nil {
+		return err
+	}
+	if decision.Notice != "" && notices != nil {
+		fmt.Fprintln(notices, decision.Notice)
+	}
+	return nil
 }
