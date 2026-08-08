@@ -354,6 +354,13 @@ const (
 	// automatically an operator of the host's sandbox policy. Same reasoning as
 	// sandbox-profiles.manage below, which is likewise human-only.
 	PermAgentSandboxImplementation = "agent.sandbox-impl"
+	// Rewriting an EXISTING agent's durable Copilot drive — which channel its
+	// mail travels over at the next launch. One direction of it puts an agent
+	// onto the API drive, which the operator has NOT verified in real use, so
+	// group ownership does not confer it for the same reason it does not confer
+	// sandbox-impl: an owner of a group is not automatically the person who
+	// decides that an agent runs on an unverified mechanism.
+	PermAgentCopilotDrive = "agent.copilot-drive"
 	// Sandbox-profile policy can grant host filesystem access and inject launch
 	// environment. Keep it separate from profiles.manage: permission to edit a
 	// spawn-dialog preset must not imply permission to widen a sandbox.

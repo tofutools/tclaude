@@ -55,6 +55,7 @@ func Cmd() *cobra.Command {
 			profilesCmd(),
 			sandboxProfilesCmd(),
 			sandboxImplCmd(),
+			setDriveCmd(),
 			taskForceCmd(),
 			processCmd(),
 			processTemplatesCmd(),

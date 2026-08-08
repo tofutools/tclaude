@@ -975,6 +975,12 @@ var auditedAgentVerbs = map[string]bool{
 	// find, and the /v1 route reserves it to a non-owner-conferred slug for the
 	// same reason.
 	"sandbox-impl": true,
+	// A durable rewrite of which channel an agent's mail travels over, including
+	// onto the drive that is not yet verified in real use. Same reason as
+	// sandbox-impl beside it: an operator reconstructing "when did this agent
+	// change channels" needs to find it, and the slug is likewise not
+	// owner-conferred.
+	"copilot-drive": true,
 }
 
 func describeAgentVerb(c *auditCtx) {

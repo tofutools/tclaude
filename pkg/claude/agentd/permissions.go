@@ -326,6 +326,11 @@ var permissionRegistry = []PermSlug{
 			"Group owners can toggle members of groups they own without this slug.",
 	},
 	{
+		Slug: PermAgentCopilotDrive,
+		Description: "Set the durable Copilot drive an EXISTING agent relaunches on — tmux send-keys or the API drive (tclaude agent set-drive). " +
+			"One direction puts an agent onto a mechanism that is not yet verified in real use, so group ownership does NOT confer it and it is not default-granted (effectively human-only).",
+	},
+	{
 		Slug: PermAgentSandboxImplementation,
 		Description: "Assign the durable sandbox implementation an EXISTING offline agent relaunches under (tclaude agent sandbox-impl set). " +
 			"It can move an agent onto an implementation with no OS-level access confinement, so group ownership does NOT confer it and it is not default-granted (effectively human-only).",

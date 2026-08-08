@@ -81,6 +81,8 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 		handleAgentRemoteControl(w, r, convID)
 	case "sandbox-impl":
 		handleAgentSandboxImplementation(w, r, convID)
+	case "copilot-drive":
+		handleAgentCopilotDrive(w, r, convID)
 	case "clone":
 		handleAgentClone(w, r, convID)
 	case "stop":
