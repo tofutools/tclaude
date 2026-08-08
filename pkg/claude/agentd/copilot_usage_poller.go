@@ -668,6 +668,10 @@ func applyCopilotUsageCalls(sess *db.SessionRow, calls []harness.CopilotUsageCal
 	}
 	var nanoAIU int64
 	var sawNanoAIU bool
+	if next.TotalNanoAIU != nil {
+		nanoAIU = *next.TotalNanoAIU
+		sawNanoAIU = true
+	}
 	for _, call := range calls {
 		if call.EventID <= next.LastEventID {
 			// Defence in depth against a re-delivered row: the query already
@@ -685,12 +689,13 @@ func applyCopilotUsageCalls(sess *db.SessionRow, calls []harness.CopilotUsageCal
 		next.CacheReadTokens += call.CacheReadTokens
 		next.CacheWriteTokens += call.CacheWriteTokens
 		next.ReasoningTokens += call.ReasoningTokens
-		// total_nano_aiu is Copilot's own running total for the SESSION, not a
-		// per-call delta, so the newest row replaces rather than adds. Summing
-		// it would inflate the cost by roughly the number of calls. Nested
-		// calls carry the same running total, so they update it too.
+		// total_nano_aiu is the cost of THIS CALL. Both the pinned 1.0.77 and
+		// measured 1.0.78 schemas describe the matching assistant.usage value
+		// as "for this request"; 1.0.78 stores confirm that summing these rows
+		// exactly reaches the durable session checkpoint. Nested calls are real
+		// billed calls too, so they participate in the sum.
 		if call.HasNanoAIU {
-			nanoAIU = call.TotalNanoAIU
+			nanoAIU += call.TotalNanoAIU
 			sawNanoAIU = true
 		}
 

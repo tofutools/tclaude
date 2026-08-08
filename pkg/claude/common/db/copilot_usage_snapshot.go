@@ -48,7 +48,7 @@ type CopilotUsageSnapshot struct {
 	CacheWriteTokens int64
 	ReasoningTokens  int64
 
-	// TotalNanoAIU is Copilot's own cost unit, carried exactly as reported. Nil
+	// TotalNanoAIU is the exact sum of Copilot's reported per-call costs. Nil
 	// distinguishes "Copilot said nothing" from a legitimate zero (BYOK/mock
 	// providers bill zero), matching the durable follower's HasNanoAIU.
 	TotalNanoAIU      *int64
