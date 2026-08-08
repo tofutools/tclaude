@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 
@@ -75,6 +76,18 @@ func TestRetire_WithShutdownStopsRunningSession(t *testing.T) {
 	f.HaveEnrolledAgent(conv)
 	require.True(t, f.World.Tmux.IsAlive(tmuxSes), "pre: the agent's session is alive")
 
+	// Reproduce Copilot's stale-listing failure: its pane may disappear while
+	// the session row's recorded PID remains readable. The generic liveness
+	// refresh then keeps the old idle/running status forever, even though the
+	// tmux target is gone and attach cannot work. A managed retire has stronger
+	// evidence — it froze this pane and waited for it to disappear — and must
+	// publish exited before acknowledging the shutdown.
+	stored, err := db.LoadSession("spwn-rwsh")
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	stored.PID = os.Getpid()
+	require.NoError(t, db.SaveSession(stored))
+
 	code, resp := postRetire(t, mux, conv, "shutdown=1")
 	require.Equal(t, http.StatusOK, code)
 	require.NotNil(t, resp.Shutdown, "shutdown was requested — the response must report its outcome")
@@ -87,6 +100,11 @@ func TestRetire_WithShutdownStopsRunningSession(t *testing.T) {
 	require.NotNil(t, row, "the retired agent must appear in retired[]")
 	assert.False(t, row.Online, "retire-with-shutdown must leave the session stopped")
 	assert.False(t, f.World.Tmux.IsAlive(tmuxSes), "the tmux session must be gone")
+	stored, err = db.LoadSession("spwn-rwsh")
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.Equal(t, "exited", stored.Status,
+		"retire must not leave an unattachable live-PID row displayed as an ongoing session")
 }
 
 // Scenario: retire with shutdown OFF (the --no-shutdown / unticked

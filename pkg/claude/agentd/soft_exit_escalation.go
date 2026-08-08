@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -104,15 +105,24 @@ const (
 // that must not proceed until the process has actually stopped — a retire
 // about to delete the agent's directories, a bulk stop reporting what it
 // achieved — use awaitLifecycleTargetExit instead.
-func scheduleSoftExitEscalation(target *lifecycleTarget, lifecycleAction, relatedEventID, reason string) {
+func scheduleSoftExitEscalation(target *lifecycleTarget, lifecycleAction, relatedEventID, reason, fallbackExitReason string) {
 	if target == nil {
 		return
 	}
 	goBackground(func() {
 		if waitForLifecycleTargetGone(target, softExitEscalationDeadline) {
+			if err := reconcileStoppedLifecycleTarget(target, lifecycleAction, relatedEventID, fallbackExitReason); err != nil {
+				slog.Warn("soft-exit: recording verified pane exit failed",
+					"session", target.sessionID, "conv", short8(target.convID), "error", err)
+			}
 			return
 		}
-		escalateStuckSoftExit(target, lifecycleAction, relatedEventID, reason)
+		if escalateStuckSoftExit(target, lifecycleAction, relatedEventID, reason) == softExitEscalated {
+			if err := reconcileStoppedLifecycleTarget(target, lifecycleAction, relatedEventID, daemonEscalatedKillReason); err != nil {
+				slog.Warn("soft-exit: recording escalated pane exit failed",
+					"session", target.sessionID, "conv", short8(target.convID), "error", err)
+			}
+		}
 	})
 }
 
@@ -180,11 +190,77 @@ func waitForLifecycleTargetGone(target *lifecycleTarget, window time.Duration) b
 // a concurrent resume cannot relaunch the conv into the pane identity being
 // killed halfway through. The background scheduler's entry point; a caller
 // that already holds the lock uses escalateStuckSoftExitUnderLaunchLock.
-func escalateStuckSoftExit(target *lifecycleTarget, lifecycleAction, relatedEventID, reason string) {
+func escalateStuckSoftExit(target *lifecycleTarget, lifecycleAction, relatedEventID, reason string) softExitOutcome {
 	launchLock := resumeLaunchLock(target.convID)
 	launchLock.Lock()
 	defer launchLock.Unlock()
-	escalateStuckSoftExitUnderLaunchLock(target, lifecycleAction, relatedEventID, reason)
+	return escalateStuckSoftExitUnderLaunchLock(target, lifecycleAction, relatedEventID, reason)
+}
+
+// reconcileStoppedLifecycleTarget publishes the fact a managed stop already
+// proved: this launch's frozen tmux pane is gone. Leaving that fact to the
+// generic session reaper is both slower and weaker. RefreshSessionStatus falls
+// back to the session row's recorded PID after tmux disappears; for Copilot
+// that PID can remain readable after the pane has closed, leaving an
+// unattachable session displayed as idle indefinitely even though retire
+// correctly removed its tmux session.
+//
+// The status write is generation- and row-version-CASed. A concurrent callback
+// may win (already exited), and a resume may rotate the generation; neither can
+// be overwritten by this predecessor's stop. A bounded reload closes the
+// ordinary race with a last hook update emitted while the process was exiting.
+func reconcileStoppedLifecycleTarget(target *lifecycleTarget, lifecycleAction, relatedEventID, fallbackReason string) error {
+	if target == nil {
+		return nil
+	}
+	probe, probeErr := probeLifecyclePane(target.tmuxSession)
+	switch {
+	case probeErr == nil && probe.state == paneProbeDead:
+		// A retained dead pane is exact structural proof of exit.
+	case probeErr == nil && probe.state == paneProbeLive:
+		// The original pane is still live, or a successor now owns the name.
+		// Neither permits this predecessor to change the durable status.
+		return nil
+	default:
+		alive, known := lifecycleSessionAlive(target.tmuxSession)
+		if !known || alive {
+			return nil
+		}
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		row, err := db.LoadSession(target.sessionID)
+		if err != nil {
+			return err
+		}
+		if row == nil || row.Status == "exited" {
+			return nil
+		}
+		identity, err := db.GetSessionExitLaunchIdentity(target.sessionID)
+		if err != nil {
+			return err
+		}
+		if identity.Generation != target.generation {
+			return nil // a successor owns the durable row now
+		}
+		ok, _, err := db.MarkSessionExitedAndRecordObservationIfUnchanged(
+			target.sessionID, row.Status, row.UpdatedAt, fallbackReason,
+			db.AgentExitObservation{
+				At: time.Now(), SessionID: target.sessionID,
+				TmuxSession: target.tmuxSession, PaneID: target.paneID,
+				Observer:        db.AgentExitObserverReconcile,
+				CauseKind:       db.AgentExitCauseDisappeared,
+				LifecycleAction: lifecycleAction, RelatedEventID: relatedEventID,
+				ExpectedGeneration: target.generation,
+			},
+		)
+		if err != nil {
+			return err
+		}
+		if ok {
+			return nil
+		}
+	}
+	return fmt.Errorf("session row kept changing after the managed pane exited")
 }
 
 // escalateStuckSoftExitUnderLaunchLock is the ladder itself, after its caller

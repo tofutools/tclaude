@@ -334,6 +334,7 @@ func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, rela
 	h := harnessForConv(convID)
 	if h.SupportsSoftExit() {
 		exitCmd := h.Life.SoftExitCommand()
+		fallbackExitReason := ""
 		if h.Name == harness.OpenCodeName && openCodeControlInputBlocked(sess.Status) {
 			res.Action = "error"
 			res.Detail = "OpenCode TUI is " + sess.Status + "; retry soft stop when idle or force kill"
@@ -351,6 +352,7 @@ func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, rela
 			delivered = injectSoftExitTarget(target, exitCmd, h.Life.SoftExitPrefixKeys(), "soft-exit", intentSet)
 		}
 		if delivered {
+			fallbackExitReason = daemonSoftExitReason
 			if h.Name == harness.CodexName {
 				// Codex has no SessionEnd hook; record daemon-owned /quit
 				// separately from an unclassified user pane close.
@@ -378,7 +380,7 @@ func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, rela
 			if waitPolicy.wait {
 				return res, finishStopWait(target, waitPolicy, lifecycleAction, relatedEventID, "soft-exit", &res)
 			}
-			scheduleSoftExitEscalation(target, lifecycleAction, relatedEventID, "soft-exit")
+			scheduleSoftExitEscalation(target, lifecycleAction, relatedEventID, "soft-exit", fallbackExitReason)
 		} else if waitPolicy.wait {
 			// The caller asked to wait, but this action does not entitle us to
 			// kill (stopIntendsPaneClosure is what gates that). Wait for the pane
@@ -429,7 +431,20 @@ func finishStopWait(target *lifecycleTarget, waitPolicy stopWaitPolicy, lifecycl
 	}
 	outcome := awaitLifecycleTargetExit(target, deadline, lifecycleAction, relatedEventID, reason)
 	switch outcome {
+	case softExitClosed:
+		fallbackExitReason := daemonEscalatedKillReason
+		if reason == "soft-exit" && res.Action == "soft_stopped" {
+			fallbackExitReason = daemonSoftExitReason
+		}
+		if err := reconcileStoppedLifecycleTarget(target, lifecycleAction, relatedEventID, fallbackExitReason); err != nil {
+			res.Action = "error"
+			res.Detail = joinDetail(res.Detail, "session stopped but recording exited state failed: "+err.Error())
+		}
 	case softExitEscalated:
+		if err := reconcileStoppedLifecycleTarget(target, lifecycleAction, relatedEventID, daemonEscalatedKillReason); err != nil {
+			res.Action = "error"
+			res.Detail = joinDetail(res.Detail, "session stopped but recording exited state failed: "+err.Error())
+		}
 		if reason == "soft-exit" {
 			res.Detail = joinDetail(res.Detail, "pane did not exit; escalated to kill")
 		}
