@@ -240,11 +240,13 @@ func TestPermissionScope_RouteGateHonoursGroupScope(t *testing.T) {
 // created. Program authorizations remain an independent, in-run boundary.
 func TestPermissionScope_ProcessRunCreateIsBoundedByTemplateID(t *testing.T) {
 	f, root := processRuntimeFlow(t)
+	templateRefs := map[string]string{}
 	for _, id := range []string{"a", "b", "c"} {
-		putProcessRuntimeTemplate(t, root, processRuntimeTemplate(id, 1))
+		templateRefs[id] = putProcessRuntimeTemplate(t, root, processRuntimeTemplate(id, 1)).Ref
 	}
 
 	const worker = "scopegate-process-worker-0007"
+	f.HaveConvWithTitle(worker, "process worker")
 	f.HaveEnrolledAgent(worker)
 	grantScoped(t, f, worker, agentd.PermProcessRunsManage,
 		map[string]any{"process_template": []string{"a", "b"}})
@@ -264,6 +266,19 @@ func TestPermissionScope_ProcessRunCreateIsBoundedByTemplateID(t *testing.T) {
 	assert.Contains(t, refused.Body.String(), agentd.PermProcessRunsManage)
 	assert.NotContains(t, refused.Body.String(), "process_program_unauthorized",
 		"program authorizations are downstream of the template-scoped verb gate")
+
+	listed := processRuntimeRequest(t, f, http.MethodGet, "/v1/process/runs", nil)
+	require.Equal(t, http.StatusOK, listed.Code, listed.Body.String())
+	var page struct {
+		Runs []struct {
+			TemplateRef string `json:"templateRef"`
+		} `json:"runs"`
+	}
+	testharness.DecodeJSON(t, listed, &page)
+	require.Len(t, page.Runs, 2, "the refused template must not create a run")
+	for _, run := range page.Runs {
+		assert.NotEqual(t, templateRefs["c"], run.TemplateRef)
+	}
 }
 
 // Deny stays unscoped and terminal: it beats a scoped allow underneath it,
