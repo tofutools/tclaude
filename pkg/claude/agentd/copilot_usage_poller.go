@@ -595,11 +595,14 @@ func copilotUsageEntryFor(sess *db.SessionRow) (copilotUsageLiveEntry, *db.Copil
 	if err != nil {
 		slog.Warn("copilot-usage: failed to load snapshot cursor; restarting from the beginning",
 			"session_id", sess.ID, "error", err, "module", "agentd")
-	} else if stored != nil && stored.ConvID == sess.ConvID {
+	} else if stored != nil && stored.ConvID == sess.ConvID &&
+		stored.FoldVersion == db.CopilotUsageFoldVersion {
 		// A stored cursor whose conv id does NOT match belongs to a previous
 		// generation of this session id. Ignoring it restarts the fold, which
 		// is right: the new conversation's rows start at their own ids and the
-		// old cursor would skip them.
+		// old cursor would skip them. The fold version has the same fail-closed
+		// rule: an old writer may know this session but not the current per-call
+		// accounting semantics, so its cursor must never hide the prefix.
 		fresh.LastEventID = stored.LastEventID
 		fresh.ContextTokens = stored.LastCallInputTokens
 		fresh.OutputTokens = stored.OutputTokens

@@ -812,6 +812,33 @@ func TestCopilotUsageBackfillsStoredModelOnRestart(t *testing.T) {
 		"the restart backfill runs once, not on every tick")
 }
 
+// TestCopilotUsageRestartRejectsLegacyFoldVersion closes the old-daemon race
+// around v195. A v194 process that somehow left a last-row-wins snapshot must
+// not make its advanced cursor look reusable to the corrected poller; the
+// whole Copilot store prefix has to be replayed under the current semantics.
+func TestCopilotUsageRestartRejectsLegacyFoldVersion(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotUsageStateForTest()
+	t.Cleanup(resetCopilotUsageStateForTest)
+
+	sess := copilotUsageSession(t, "s-copilot", "conv-1")
+	saved, err := db.SaveCopilotUsageSnapshot(db.CopilotUsageSnapshot{
+		SessionID: sess.ID, ConvID: sess.ConvID, LastEventID: 7, Requests: 3,
+		Model: "gpt-5", LastCallInputTokens: 25114, OutputTokens: 300,
+	}, sess.CreatedAt)
+	require.NoError(t, err)
+	require.True(t, saved)
+	d, err := db.Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`UPDATE copilot_usage_snapshots SET fold_version = 0
+		WHERE session_id = ?`, sess.ID)
+	require.NoError(t, err)
+
+	entry, restored := copilotUsageEntryFor(sess)
+	assert.Zero(t, entry.LastEventID, "legacy semantics restart from event zero")
+	assert.Nil(t, restored, "legacy data must not be backfilled into session columns")
+}
+
 // TestCopilotUsageBackfillRespectsGenerationGuard keeps the restart path inside
 // the same discipline as the live fold: a snapshot belonging to a PREVIOUS
 // generation of this session id must not be restored onto the new

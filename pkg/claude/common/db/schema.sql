@@ -1231,7 +1231,7 @@ CREATE TABLE copilot_usage_snapshots (
 			last_inter_token_latency_ms INTEGER NOT NULL DEFAULT 0,
 			last_call_stamp_text TEXT NOT NULL DEFAULT '',
 			observed_at INTEGER NOT NULL
-		) STRICT;
+		, fold_version INTEGER NOT NULL) STRICT;
 
 CREATE INDEX idx_copilot_usage_snapshots_conv
 			ON copilot_usage_snapshots(conv_id);
