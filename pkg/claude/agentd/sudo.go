@@ -279,10 +279,11 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 	if row := agent.FreshConvRow(p.ConvID); row != nil {
 		title = agent.DisplayTitle(row)
 	}
-	// Resolve the caller's stable actor at the boundary so a config
-	// override can key on the rotation-immune `agt_` id. Best-effort:
-	// an error / unenrolled conv yields "" and falls back to conv/title.
-	agentID, _ := db.AgentIDForConv(p.ConvID)
+	// Resolve the caller's stable actor at the boundary so both policy and
+	// grant insertion key on the rotation-immune identity. The ensure keeps
+	// the endpoint compatible with a freshly discovered agent whose registry
+	// row has not been materialized yet.
+	agentID, _, _ := db.EnsureAgentForConv(p.ConvID, "grant")
 	cfg, _ := config.Load()
 	policy := resolveSudoConfig(cfg, p.ConvID, agentID, title)
 
@@ -333,7 +334,7 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 	// Re-snapshot the timestamps post-popup so the window is measured
 	// from approval time, not request time — fairer to the agent if
 	// the human took 30 seconds to click.
-	out, status := insertSudoBundle(p.ConvID, title, body.Slugs, dur, reason,
+	out, status := insertSudoBundle(agentID, p.ConvID, title, body.Slugs, dur, reason,
 		"human:popup-id="+req.id)
 	writeJSON(w, status, out)
 }
@@ -361,12 +362,20 @@ func handleSudoProactiveGrant(w http.ResponseWriter, p *peer, body sudoRequestBo
 		return
 	}
 	targetConv := res.ConvID
+	targetAgentID := res.AgentID
+	if targetAgentID == "" {
+		targetAgentID, _, err = db.EnsureAgentForConv(targetConv, "grant")
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", "resolve target agent: "+err.Error())
+			return
+		}
+	}
 	title := ""
 	if row := agent.FreshConvRowResolved(targetConv); row != nil {
 		title = agent.DisplayTitle(row)
 	}
 	cfg, _ := config.Load()
-	policy := resolveSudoConfig(cfg, targetConv, res.AgentID, title)
+	policy := resolveSudoConfig(cfg, targetConv, targetAgentID, title)
 
 	if blocked := blockedSlugs(body.Slugs, policy.Blocklist); len(blocked) > 0 {
 		writeError(w, http.StatusForbidden, "blocked",
@@ -378,7 +387,7 @@ func handleSudoProactiveGrant(w http.ResponseWriter, p *peer, body sudoRequestBo
 	if !ok {
 		return
 	}
-	out, status := insertSudoBundle(targetConv, title, body.Slugs, dur, strings.TrimSpace(body.Reason), granter)
+	out, status := insertSudoBundle(targetAgentID, targetConv, title, body.Slugs, dur, strings.TrimSpace(body.Reason), granter)
 	writeJSON(w, status, out)
 }
 
@@ -443,16 +452,17 @@ type sudoBundleResponse struct {
 // in audit views. Returns the response payload + HTTP status; per-row
 // insert failures are surfaced in the response (non-fatal — sibling
 // rows that landed are still valid).
-func insertSudoBundle(convID, title string, slugs []string, dur time.Duration, reason, granter string) (sudoBundleResponse, int) {
+func insertSudoBundle(agentID, convID, title string, slugs []string, dur time.Duration, reason, granter string) (sudoBundleResponse, int) {
 	now := time.Now()
 	expires := now.Add(dur)
 	out := sudoBundleResponse{
 		ExpiresAt: expires.Format(time.RFC3339Nano),
 		ConvID:    convID,
+		AgentID:   agentID,
 	}
 	for _, slug := range slugs {
-		id, err := db.InsertSudoGrant(&db.SudoGrant{
-			ConvID:    convID,
+		id, err := db.InsertSudoGrantForAgent(&db.SudoGrant{
+			AgentID:   agentID,
 			Slug:      slug,
 			GrantedAt: now,
 			ExpiresAt: expires,
@@ -468,6 +478,7 @@ func insertSudoBundle(convID, title string, slugs []string, dur time.Duration, r
 		}
 		out.Grants = append(out.Grants, sudoGrantJSON{
 			ID:               id,
+			AgentID:          agentID,
 			ConvID:           convID,
 			ConvTitle:        title,
 			Slug:             slug,
@@ -477,14 +488,6 @@ func insertSudoBundle(convID, title string, slugs []string, dur time.Duration, r
 			Reason:           reason,
 			RemainingSeconds: int64(dur.Seconds()),
 		})
-	}
-	// Project the stable actor so the confirmation leads with agent_id
-	// (display-only; grants are keyed on convID above). Resolved after the
-	// inserts because InsertSudoGrant mints the actor for a fresh conv —
-	// resolving earlier would see no agent_id yet. Empty when no grant
-	// landed (no actor); readers fall back to the conv prefix.
-	if agentID, err := db.AgentIDForConv(convID); err == nil {
-		out.AgentID = agentID
 	}
 	return out, http.StatusOK
 }

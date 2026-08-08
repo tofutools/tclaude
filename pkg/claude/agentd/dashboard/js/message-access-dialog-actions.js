@@ -88,14 +88,14 @@ export function createMessageAccessDialogActions({
     return response;
   }
 
-  async function grantSudo({ conv, slugs, duration, reason }) {
+  async function grantSudo({ agentID, slugs, duration, reason }) {
     const response = await requestJSON(fetchImpl, '/api/sudo', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ conv, slugs, duration, reason }),
+      body: JSON.stringify({ agent_id: agentID, slugs, duration, reason }),
     });
     const ok = (response.grants || []).filter((grant) => grant.id > 0).length;
     const failed = (response.grants || []).length - ok;
-    notify(`Granted ${ok} slug${ok === 1 ? '' : 's'} to ${(response.agent_id || response.conv_id || conv).slice(0, 12)}` +
+    notify(`Granted ${ok} slug${ok === 1 ? '' : 's'} to ${(response.agent_id || agentID).slice(0, 12)}` +
       (failed > 0 ? ` (${failed} failed)` : ''));
     // Match the legacy close-before-refresh behavior. Grant completion is
     // independent from the next dashboard snapshot arriving.

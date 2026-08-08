@@ -1848,7 +1848,7 @@ func dashboardRemoveOwner(w http.ResponseWriter, g *db.AgentGroup, convSelector 
 //	POST   /api/sudo                 → proactive grant (no popup —
 //	                                   the cookie IS the human consent)
 //	DELETE /api/sudo/{id}            → revoke one
-//	DELETE /api/sudo?conv=<selector> → revoke all for one conv
+//	DELETE /api/sudo?agent_id=<id>   → revoke all for one agent
 //	DELETE /api/sudo?all=1           → revoke every active grant
 //
 // Read paths (list / per-conv view) are not surfaced separately —
@@ -1887,7 +1887,7 @@ func handleDashboardSudoAPI(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"revoked": n, "id": id})
 		return
 	}
-	// Bulk revoke: /api/sudo?conv=… or /api/sudo?all=1.
+	// Bulk revoke: /api/sudo?agent_id=… or /api/sudo?all=1.
 	q := r.URL.Query()
 	if q.Get("all") == "1" || q.Get("all") == "true" {
 		n, err := db.RevokeAllActiveSudoGrants()
@@ -1898,25 +1898,29 @@ func handleDashboardSudoAPI(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"revoked": n, "scope": "all"})
 		return
 	}
-	convSel := strings.TrimSpace(q.Get("conv"))
-	if convSel == "" {
-		http.Error(w, "DELETE /api/sudo requires ?conv=<selector> or ?all=1", http.StatusBadRequest)
+	agentID := strings.TrimSpace(q.Get("agent_id"))
+	if agentID == "" {
+		http.Error(w, "DELETE /api/sudo requires ?agent_id=<id> or ?all=1", http.StatusBadRequest)
 		return
 	}
-	if u, err := url.QueryUnescape(convSel); err == nil {
-		convSel = u
+	if u, err := url.QueryUnescape(agentID); err == nil {
+		agentID = u
 	}
-	res, _, err := agent.ResolveSelector(convSel)
+	actor, err := db.GetAgent(agentID)
 	if err != nil {
-		http.Error(w, "resolve conv: "+err.Error(), http.StatusNotFound)
+		http.Error(w, "resolve agent: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	n, err := db.RevokeSudoGrantsByConv(res.ConvID)
+	if actor == nil {
+		http.Error(w, "agent not found", http.StatusNotFound)
+		return
+	}
+	n, err := db.RevokeSudoGrantsByAgent(actor.AgentID)
 	if err != nil {
-		http.Error(w, "revoke by conv: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "revoke by agent: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"revoked": n, "conv_id": res.ConvID})
+	writeJSON(w, http.StatusOK, map[string]any{"revoked": n, "agent_id": actor.AgentID})
 }
 
 // handleDashboardSudoGrant is the cookie-auth front for proactive
@@ -1936,7 +1940,7 @@ func handleDashboardSudoGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Conv     string   `json:"conv"`
+		AgentID  string   `json:"agent_id"`
 		Slugs    []string `json:"slugs"`
 		Duration string   `json:"duration"`
 		Reason   string   `json:"reason"`
@@ -1945,9 +1949,9 @@ func handleDashboardSudoGrant(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	body.Conv = strings.TrimSpace(body.Conv)
-	if body.Conv == "" {
-		http.Error(w, "missing conv (selector for the agent to elevate)",
+	body.AgentID = strings.TrimSpace(body.AgentID)
+	if body.AgentID == "" {
+		http.Error(w, "missing agent_id (stable id of the agent to elevate)",
 			http.StatusBadRequest)
 		return
 	}
@@ -1957,17 +1961,22 @@ func handleDashboardSudoGrant(w http.ResponseWriter, r *http.Request) {
 			http.StatusBadRequest)
 		return
 	}
-	res, _, err := agent.ResolveSelector(body.Conv)
+	actor, err := db.GetAgent(body.AgentID)
 	if err != nil {
-		http.Error(w, "resolve conv: "+err.Error(), http.StatusNotFound)
+		http.Error(w, "resolve agent: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if actor == nil || !actor.Active() {
+		http.Error(w, "active agent not found", http.StatusNotFound)
+		return
+	}
+	convID := actor.CurrentConvID
 	title := ""
-	if row := agent.FreshConvRowResolved(res.ConvID); row != nil {
+	if row := agent.FreshConvRowResolved(convID); row != nil {
 		title = agent.DisplayTitle(row)
 	}
 	cfg, _ := config.Load()
-	policy := resolveSudoConfig(cfg, res.ConvID, res.AgentID, title)
+	policy := resolveSudoConfig(cfg, convID, actor.AgentID, title)
 
 	if blocked := blockedSlugs(body.Slugs, policy.Blocklist); len(blocked) > 0 {
 		http.Error(w,
@@ -1980,7 +1989,7 @@ func handleDashboardSudoGrant(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	out, status := insertSudoBundle(res.ConvID, title, body.Slugs, dur,
+	out, status := insertSudoBundle(actor.AgentID, convID, title, body.Slugs, dur,
 		strings.TrimSpace(body.Reason), dashboardSudoGranter)
 	writeJSON(w, status, out)
 }

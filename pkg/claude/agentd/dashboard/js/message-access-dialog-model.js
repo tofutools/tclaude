@@ -51,11 +51,12 @@ export function groupsForPicker(snapshot, scopeGroup = '') {
   return (snapshot?.groups || []).map((group) => group.name).sort();
 }
 
-export function sudoByConv(snapshot) {
+export function sudoByAgent(snapshot) {
   const out = new Map();
   for (const grant of snapshot?.sudo || []) {
-    if (!out.has(grant.conv_id)) out.set(grant.conv_id, []);
-    out.get(grant.conv_id).push(grant);
+    const key = grant.agent_id || grant.conv_id;
+    if (!out.has(key)) out.set(key, []);
+    out.get(key).push(grant);
   }
   return out;
 }

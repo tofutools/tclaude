@@ -321,7 +321,7 @@ test('sudo selection excludes blocklisted slugs and preserves a failed draft for
   const harness = await createPreactHarness(t);
   const { createMessageAccessDialogState } = await harness.importDashboardModule('js/message-access-dialog-state.js');
   const state = createMessageAccessDialogState();
-  state.openSudoGrant({ conv: 'conv-s' });
+  state.openSudoGrant({ agentID: 'agt_s' });
   const payloads = [];
   const actions = {
     sendMessage: async () => {}, replyHuman: async () => {}, savePermissions: async () => {},
@@ -342,7 +342,7 @@ test('sudo selection excludes blocklisted slugs and preserves a failed draft for
   assert.equal(host.querySelector('#sudo-grant-error').textContent, 'denied once');
   assert.equal(host.querySelector('#sudo-grant-duration').value, '30m');
   await harness.act(async () => { host.querySelector('#sudo-grant-submit').click(); await Promise.resolve(); });
-  assert.deepEqual(payloads[1], { conv: 'conv-s', slugs: ['groups.spawn'], duration: '30m', reason: 'release' });
+  assert.deepEqual(payloads[1], { agentID: 'agt_s', slugs: ['groups.spawn'], duration: '30m', reason: 'release' });
   assert.equal(state.dialog.value, null);
   await mounted.unmount();
 });

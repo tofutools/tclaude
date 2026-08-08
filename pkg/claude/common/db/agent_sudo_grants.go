@@ -71,6 +71,37 @@ func InsertSudoGrant(g *SudoGrant) (int64, error) {
 	if agentID == "" {
 		return 0, fmt.Errorf("InsertSudoGrant: no actor for conv %s", g.ConvID)
 	}
+	return insertSudoGrantForAgent(d, g, agentID)
+}
+
+// InsertSudoGrantForAgent records an elevation directly against the stable
+// actor identity. Use this when the caller already selected an agent rather
+// than a conversation generation (for example, the dashboard grant dialog).
+func InsertSudoGrantForAgent(g *SudoGrant) (int64, error) {
+	if g == nil {
+		return 0, errors.New("InsertSudoGrantForAgent: nil grant")
+	}
+	agentID := strings.TrimSpace(g.AgentID)
+	if agentID == "" {
+		return 0, errors.New("InsertSudoGrantForAgent: agent_id required")
+	}
+	if strings.TrimSpace(g.Slug) == "" {
+		return 0, errors.New("InsertSudoGrantForAgent: slug required")
+	}
+	if g.ExpiresAt.IsZero() {
+		return 0, errors.New("InsertSudoGrantForAgent: expires_at required")
+	}
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	if g.GrantedAt.IsZero() {
+		g.GrantedAt = time.Now()
+	}
+	return insertSudoGrantForAgent(d, g, agentID)
+}
+
+func insertSudoGrantForAgent(d *sql.DB, g *SudoGrant, agentID string) (int64, error) {
 	res, err := d.Exec(`INSERT INTO agent_sudo_grants
 		(agent_id, slug, granted_at, expires_at, granted_by, reason, revoked_at)
 		SELECT ?, ?, ?, ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at IS NULL`,
@@ -182,16 +213,25 @@ func ListActiveSudoGrants(convID string) ([]*SudoGrant, error) {
 	if convID == "" {
 		return nil, nil
 	}
-	d, err := Open()
-	if err != nil {
-		return nil, err
-	}
 	agentID, err := AgentIDForConv(convID)
 	if err != nil {
 		return nil, err
 	}
 	if agentID == "" {
 		return nil, nil
+	}
+	return ListActiveSudoGrantsByAgent(agentID)
+}
+
+// ListActiveSudoGrantsByAgent returns every active grant for the stable actor.
+func ListActiveSudoGrantsByAgent(agentID string) ([]*SudoGrant, error) {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return nil, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
 	}
 	cutoff := dbTime(time.Now())
 	rows, err := d.Query(`SELECT s.id, s.agent_id, ag.current_conv_id, s.slug, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at
@@ -267,16 +307,25 @@ func RevokeSudoGrantsByConv(convID string) (int64, error) {
 	if convID == "" {
 		return 0, errors.New("RevokeSudoGrantsByConv: conv_id required")
 	}
-	d, err := Open()
-	if err != nil {
-		return 0, err
-	}
 	agentID, err := AgentIDForConv(convID)
 	if err != nil {
 		return 0, err
 	}
 	if agentID == "" {
 		return 0, nil
+	}
+	return RevokeSudoGrantsByAgent(agentID)
+}
+
+// RevokeSudoGrantsByAgent revokes every active grant for a stable actor.
+func RevokeSudoGrantsByAgent(agentID string) (int64, error) {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return 0, errors.New("RevokeSudoGrantsByAgent: agent_id required")
+	}
+	d, err := Open()
+	if err != nil {
+		return 0, err
 	}
 	now := dbTime(time.Now())
 	res, err := d.Exec(`UPDATE agent_sudo_grants SET revoked_at = ?

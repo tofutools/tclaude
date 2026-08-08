@@ -50,3 +50,27 @@ func TestSudoGrant_AgentIDPopulated(t *testing.T) {
 	assert.Equal(t, wantAgent, got.AgentID, "get should carry the stable agent_id")
 	assert.Equal(t, "worker", got.ConvID, "get should resolve the current conv")
 }
+
+func TestSudoGrant_AgentKeySurvivesConversationRotation(t *testing.T) {
+	setupTestDB(t)
+
+	agentID, err := AllocateAgent("generation-1", "test")
+	require.NoError(t, err)
+	now := time.Now()
+	_, err = InsertSudoGrantForAgent(&SudoGrant{
+		AgentID: agentID, Slug: "groups.spawn", GrantedAt: now,
+		ExpiresAt: now.Add(time.Hour), GrantedBy: "human-dashboard",
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, LinkConvToAgent("generation-2", agentID, ConvRoleGeneration, "reincarnate"))
+	moved, err := SetAgentCurrentConv(agentID, "generation-1", "generation-2")
+	require.NoError(t, err)
+	require.True(t, moved)
+
+	rows, err := ListActiveSudoGrantsByAgent(agentID)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "generation-2", rows[0].ConvID)
+	assert.Equal(t, agentID, rows[0].AgentID)
+}

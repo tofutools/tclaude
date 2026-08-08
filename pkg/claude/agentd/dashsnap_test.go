@@ -861,7 +861,7 @@ func baseStates() []dashsnap.State {
 			Caption: "TCL-454 busy-state visual gate: the Preact sudo surface keeps its selected catalog visible while the primary action is blocked and relabelled.",
 			JS: `return (async function(){
   var dialogs = await import('/static/js/message-access-dialog-controller.js');
-  dialogs.openSudoGrantModal('fe-dev-forms');
+  dialogs.openSudoGrantModal('agt_fe_dev_forms');
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
   document.querySelector('#sudo-grant-select-all').click();
   await new Promise(function(resolve){ requestAnimationFrame(resolve); });

@@ -31,8 +31,8 @@ export function openHumanReplyModal(context = {}) {
   return requireController().openHumanReply(context);
 }
 
-export function openSudoGrantModal(prefillConv = '') {
-  return requireController().openSudoGrant({ conv: prefillConv || '' });
+export function openSudoGrantModal(prefillAgentID = '') {
+  return requireController().openSudoGrant({ agentID: prefillAgentID || '' });
 }
 
 export function openPermEditModal(conv, label = '') {

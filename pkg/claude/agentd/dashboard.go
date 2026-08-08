@@ -3274,10 +3274,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		addAgent(convID)
 	}
 
-	// Bucket the active sudo grants (loaded up front) per conv-id so the
+	// Bucket the active sudo grants (loaded up front) per stable agent id so the
 	// per-agent Active rendering is O(1) inside the output loop. The same rows
 	// feed the top-level Sudo[] for the dedicated tab.
-	sudoByConv := map[string][]dashboardSudoEntry{}
+	sudoByAgent := map[string][]dashboardSudoEntry{}
 	out.Sudo = []dashboardSudoEntry{}
 	sudoNow := time.Now()
 	for _, g := range sudoGrants {
@@ -3314,7 +3314,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		rowEntry := topEntry
 		rowEntry.ConvID = ""
 		rowEntry.AgentID = "" // the agent row already identifies the holder
-		sudoByConv[g.ConvID] = append(sudoByConv[g.ConvID], rowEntry)
+		sudoByAgent[g.AgentID] = append(sudoByAgent[g.AgentID], rowEntry)
 	}
 	// All calls to rc.viewFor (group rows plus the grants/active-agent roster)
 	// have completed, so this nested metric is the request's total Codex
@@ -3349,7 +3349,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		a.Effective = merged
 		sort.Strings(a.Groups)
 		sort.Strings(a.OwnedGroups)
-		if rows := sudoByConv[a.ConvID]; len(rows) > 0 {
+		if rows := sudoByAgent[a.AgentID]; len(rows) > 0 {
 			a.ActiveSudo = rows
 		}
 		out.Agents = append(out.Agents, *a)

@@ -72,8 +72,8 @@ export function createMessageAccessDialogState({ canRestoreFocus = () => true } 
     openHumanReply(context = {}) {
       return open({ kind: 'human-reply', context: { ...context } });
     },
-    openSudoGrant({ conv = '' } = {}) {
-      return open({ kind: 'sudo-grant', conv: String(conv || '') });
+    openSudoGrant({ agentID = '' } = {}) {
+      return open({ kind: 'sudo-grant', agentID: String(agentID || '') });
     },
     openAgentPermissions({ conv, label = '' }) {
       return open({ kind: 'permissions', mode: 'agent', conv, label });

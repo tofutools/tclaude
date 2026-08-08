@@ -62,8 +62,7 @@ export async function handleRowAction(action) {
   // (JOH-322). The conv-keyed cases that legitimately target a specific
   // conversation generation (copy/delete-generation), a plain conversation
   // (promote), a conv-keyed mailbox folder (view-agent-messages) or the
-  // conv-keyed permissions/sudo snapshot (perm-edit / sudo-grant, D3) keep
-  // using `conv`.
+  // conv-keyed permissions snapshot (perm-edit, D3) keeps using `conv`.
   const agent = data.agent || conv;
   const label = data.label || conv;
   const harness = data.harness || '';
@@ -492,10 +491,10 @@ export async function handleRowAction(action) {
       }
       case 'sudo-grant': {
         // Per-row affordance: open the same modal the Sudo tab's
-        // "+ Grant sudo" button uses, pre-filled with this conv.
+        // "+ Grant sudo" button uses, pre-filled with this stable agent id.
         // Modal handles the rest (validation, POST /api/sudo,
         // refresh).
-        openSudoGrantModal(conv);
+        openSudoGrantModal(agent);
         return;
       }
       case 'perm-edit': {

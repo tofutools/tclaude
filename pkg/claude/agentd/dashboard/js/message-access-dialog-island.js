@@ -8,7 +8,7 @@ import {
 import { registerMessageAccessDialogController } from './message-access-dialog-controller.js';
 import {
   agentCandidates, groupMembers, groupsForPicker, permissionRows,
-  permissionSeed, senderOnline, sudoByConv, sudoSlugRows,
+  permissionSeed, senderOnline, sudoByAgent, sudoSlugRows,
 } from './message-access-dialog-model.js';
 import { idTooltip, shortAgentId } from './helpers.js';
 import { wizWord } from './slop.js';
@@ -223,7 +223,7 @@ function AgentPicker({ descriptor, state, snapshot, confirmDiscard }) {
   const searchRef = useRef(null);
   const highlightedRef = useRef(null);
   const candidates = agentCandidates(snapshot, { includeOffline, query });
-  const activeSudo = sudoByConv(snapshot);
+  const activeSudo = sudoByAgent(snapshot);
   const bounded = Math.max(0, Math.min(highlight, Math.max(0, candidates.length - 1)));
   const activeID = candidates[bounded] ? `cron-pick-target-option-${bounded}` : undefined;
   const activeKey = candidates[bounded]?.agent_id || candidates[bounded]?.conv_id || '';
@@ -256,8 +256,8 @@ function AgentPicker({ descriptor, state, snapshot, confirmDiscard }) {
           <span class=${agent.online ? 'online' : 'offline'} title=${agent.online ? 'online' : 'offline'}>${agent.online ? '●' : '○'}</span>
           <span class="rowname">${agent.title || '(unnamed)'}</span>
           <span class="id" title=${idTooltip(agent.agent_id, agent.conv_id)}>${shortAgentId(agent.agent_id, agent.conv_id)}</span>
-          ${descriptor.showSudo && activeSudo.get(agent.conv_id)?.length
-            ? html`<span class="sudo-badge" title=${`${activeSudo.get(agent.conv_id).length} active sudo grant(s)`}>🔓</span>` : null}
+          ${descriptor.showSudo && activeSudo.get(agent.agent_id || agent.conv_id)?.length
+            ? html`<span class="sudo-badge" title=${`${activeSudo.get(agent.agent_id || agent.conv_id).length} active sudo grant(s)`}>🔓</span>` : null}
           ${agent.memberships.length ? html`<span class="groups-tag">in: ${agent.memberships.map((item) => item.group).join(', ')}</span>` : null}
         </div>`)}
     </div>
@@ -436,7 +436,7 @@ function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard
 
 function SudoGrantDialog({ descriptor, state, actions, snapshot, confirmDiscard }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
-  const [conv, setConv] = useState(descriptor.conv || '');
+  const [agentID, setAgentID] = useState(descriptor.agentID || '');
   const [selected, setSelected] = useState(() => new Set());
   const [duration, setDuration] = useState('');
   const [reason, setReason] = useState('');
@@ -444,18 +444,18 @@ function SudoGrantDialog({ descriptor, state, actions, snapshot, confirmDiscard 
   const busyRef = useRef(false);
   const [error, setError] = useState('');
   const rows = sudoSlugRows(snapshot);
-  const dirty = conv !== (descriptor.conv || '') || selected.size > 0 || !!duration || !!reason;
+  const dirty = agentID !== (descriptor.agentID || '') || selected.size > 0 || !!duration || !!reason;
   const toggle = (slug, checked) => setSelected((current) => {
     const next = new Set(current); if (checked) next.add(slug); else next.delete(slug); return next;
   });
   const submit = async () => {
     if (busyRef.current) return;
     setError('');
-    if (!conv.trim()) { setError('Conv is required.'); return; }
+    if (!agentID.trim()) { setError('Agent ID is required.'); return; }
     if (!selected.size) { setError('Pick at least one slug.'); return; }
     busyRef.current = true;
     setBusy(true);
-    try { await actions.grantSudo({ conv: conv.trim(), slugs: [...selected], duration: duration.trim(), reason: reason.trim() }); state.close(); }
+    try { await actions.grantSudo({ agentID: agentID.trim(), slugs: [...selected], duration: duration.trim(), reason: reason.trim() }); state.close(); }
     catch (cause) { setError(errorText(cause)); }
     finally { busyRef.current = false; setBusy(false); }
   };
@@ -464,8 +464,8 @@ function SudoGrantDialog({ descriptor, state, actions, snapshot, confirmDiscard 
     registerClose=${registerClose}>
     <h3 id="sudo-grant-title">Grant sudo</h3><p class="sudo-grant-hint"><${Words}
       plain="Proactively elevate an agent for a bounded window." wizard="Bestow a bounded sudo boon on a familiar."/> Same blocklist + duration cap as the agent-initiated path; granted_by records <code>${'<human-dashboard>:proactive'}</code> on the audit row.</p>
-    <label class="sudo-grant-row"><span class="sudo-grant-label">Conv</span><input id="sudo-grant-conv" type="text" value=${conv}
-      placeholder="title / conv-id / 8+-char prefix" autocomplete="off" spellcheck="false" onInput=${(event) => setConv(event.currentTarget.value)} /></label>
+    <label class="sudo-grant-row"><span class="sudo-grant-label">Agent ID</span><input id="sudo-grant-agent-id" type="text" value=${agentID}
+      placeholder="agt_…" autocomplete="off" spellcheck="false" onInput=${(event) => setAgentID(event.currentTarget.value)} /></label>
     <label class="sudo-grant-row"><span class="sudo-grant-label">Slugs</span><div class="sudo-grant-slugs-wrap"><div class="sudo-grant-slugs-toolbar">
       <button type="button" id="sudo-grant-select-all" title="Select every slug except blocklisted ones" onClick=${() => setSelected(new Set(rows.filter((row) => !row.blocked).map((row) => row.slug)))}>all</button>
       <button type="button" id="sudo-grant-select-none" title="Clear the slug selection" onClick=${() => setSelected(new Set())}>none</button></div>
