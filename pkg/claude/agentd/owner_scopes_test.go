@@ -182,3 +182,42 @@ func TestGranterScopesForSlugPrefersExplicitGrantOverOwnerNarrowing(t *testing.T
 	assert.False(t, scoped,
 		"an unscoped explicit grant wins over a narrowed bypass, so delegation stays unconstrained")
 }
+
+// The group dimension is filled in by the site that KNOWS which group carries
+// the bypass. Otherwise the obvious narrowing — {"agent.retire": {"group":
+// ["g1"]}} on g1 — would refuse every time and read as a revoke rather than the
+// confinement the operator wrote. The cross-agent gate cannot fill it in: it
+// targets an agent, and which owned group carries the authority is only decided
+// while enumerating candidates.
+func TestOwnerBypassFillsTheGroupDimensionFromTheCarryingGroup(t *testing.T) {
+	setupTestDB(t)
+	const owner = "owner-groupdim-conv-0001"
+	const target = "owner-groupdim-target-0001"
+	for _, conv := range []string{owner, target} {
+		_, _, err := db.EnsureAgentForConv(conv, "spawn")
+		require.NoError(t, err)
+	}
+	id, err := db.CreateAgentGroup("groupdim", "")
+	require.NoError(t, err)
+	require.NoError(t, db.AddAgentGroupOwner(id, owner, "test"))
+	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: id, ConvID: target, Role: "worker"}))
+
+	_, err = db.SetAgentGroupOwnerScopes("groupdim", `{"agent.retire":{"group":["groupdim"]}}`)
+	require.NoError(t, err)
+	assert.True(t, ownerOfGroupContainingPermitting(owner, target, PermAgentRetire, ActionContext{}),
+		"the candidate group IS the group the bypass flows through")
+
+	// Naming a DIFFERENT group still refuses: filling the dimension states the
+	// truth, it does not wave the matcher through.
+	_, err = db.SetAgentGroupOwnerScopes("groupdim", `{"agent.retire":{"group":["elsewhere"]}}`)
+	require.NoError(t, err)
+	assert.False(t, ownerOfGroupContainingPermitting(owner, target, PermAgentRetire, ActionContext{}))
+
+	// And a group-scoped gate that passes no context at all still knows its own
+	// group — the same rule applied one site earlier.
+	_, err = db.SetAgentGroupOwnerScopes("groupdim", `{"groups.spawn":{"group":["groupdim"]}}`)
+	require.NoError(t, err)
+	g, err := db.GetAgentGroupByName("groupdim")
+	require.NoError(t, err)
+	assert.True(t, ownerOfGroupPermitting(g, owner, PermGroupsSpawn, ActionContext{}))
+}

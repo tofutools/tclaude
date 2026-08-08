@@ -199,6 +199,17 @@ func ownerBypassPermittedForGroupID(groupID int64, convID, slug string, actx Act
 // ownerOfGroupPermitting is the group-scoped bypass predicate: convID owns g
 // AND g's owner-scope map permits slug for this action. It replaces the bare
 // db.IsAgentGroupOwner test at every gate whose bypass reach is the group.
+//
+// It fills in the group dimension when the gate did not. Every caller is a gate
+// whose action's subject IS g — that is what makes owning g relevant at all —
+// so "which group does this act on" is known here even at the sites that pass
+// no context (the group-link gates). Without this, a map written as
+// {"groups.link.add": {"group": ["g1"]}} ON g1 would refuse every time instead
+// of confining the bypass to g1, which reads as a revoke rather than the
+// narrowing the operator wrote.
+//
+// Deliberately NOT done in ownsAnyGroupPermitting: there the owned group is not
+// the action's subject, and asserting it were would be fail-OPEN.
 func ownerOfGroupPermitting(g *db.AgentGroup, convID, slug string, actx ActionContext) bool {
 	if g == nil {
 		return false
@@ -206,6 +217,9 @@ func ownerOfGroupPermitting(g *db.AgentGroup, convID, slug string, actx ActionCo
 	owns, err := db.IsAgentGroupOwner(g.ID, convID)
 	if err != nil || !owns {
 		return false
+	}
+	if actx.Group == "" {
+		actx.Group = g.Name
 	}
 	return ownerBypassPermittedForGroup(g, convID, slug, actx)
 }
@@ -241,6 +255,17 @@ func ownsAnyGroupPermitting(convID, slug string, actx ActionContext) bool {
 // this action. Narrowing is evaluated per candidate group, so an owner of a
 // narrowed g1 and an unnarrowed g2 that both contain the target still passes
 // through g2 — the same union the plain multi-group rule gives.
+//
+// Each candidate is evaluated with the GROUP DIMENSION set to that candidate,
+// because the authority being exercised flows through exactly that group: it is
+// the group the caller owns and the group the target is a member of. The
+// cross-agent gate itself cannot fill this in — it targets an agent, and which
+// group carries the bypass is only decided here, one candidate at a time.
+//
+// It cannot widen anything: a map on g1 naming g2 still refuses, since only g1's
+// own map is consulted while g1 is the candidate. Without it, the obvious
+// narrowing {"agent.retire": {"group": ["g1"]}} on g1 would refuse every time
+// and read as a revoke rather than the confinement the operator wrote.
 func ownerOfGroupContainingPermitting(convID, targetConv, slug string, actx ActionContext) bool {
 	ids, err := db.ListOwnedGroupIDsContaining(convID, targetConv)
 	if err != nil {
@@ -249,7 +274,17 @@ func ownerOfGroupContainingPermitting(convID, targetConv, slug string, actx Acti
 		return false
 	}
 	for _, id := range ids {
-		if ownerBypassPermittedForGroupID(id, convID, slug, actx) {
+		g, err := db.GetAgentGroupByID(id)
+		if err != nil || g == nil {
+			slog.Warn("permissions: owner-scope group lookup failed (bypass fails closed)",
+				"group_id", id, "slug", slug, "error", err)
+			continue
+		}
+		candidate := actx
+		if candidate.Group == "" {
+			candidate.Group = g.Name
+		}
+		if ownerBypassPermittedForGroup(g, convID, slug, candidate) {
 			return true
 		}
 	}
