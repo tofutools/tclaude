@@ -2,6 +2,8 @@ package probehelper
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -222,16 +224,22 @@ func publishAt(rootFD int, name, value string, mode uint32) error {
 	if filepath.Base(name) != name || name == "." || strings.ContainsRune(name, filepath.Separator) {
 		return fmt.Errorf("invalid probe evidence name")
 	}
+	tempSuffix := make([]byte, 8)
+	if _, err := rand.Read(tempSuffix); err != nil {
+		return err
+	}
+	tempName := "." + name + ".tmp-" + hex.EncodeToString(tempSuffix)
 	fd, err := unix.Openat(
 		rootFD,
-		name,
+		tempName,
 		unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC,
 		mode,
 	)
 	if err != nil {
 		return err
 	}
-	file := os.NewFile(uintptr(fd), name)
+	defer func() { _ = unix.Unlinkat(rootFD, tempName, 0) }()
+	file := os.NewFile(uintptr(fd), tempName)
 	if file == nil {
 		_ = unix.Close(fd)
 		return fmt.Errorf("wrap probe evidence descriptor")
@@ -244,9 +252,12 @@ func publishAt(rootFD int, name, value string, mode uint32) error {
 		return writeErr
 	case syncErr != nil:
 		return syncErr
-	default:
+	case closeErr != nil:
 		return closeErr
 	}
+	// Linking publishes the completed inode atomically without replacing an
+	// existing evidence path. The deferred unlink then removes the temp name.
+	return unix.Linkat(rootFD, tempName, rootFD, name, 0)
 }
 
 func validSecret(secret string) bool {
