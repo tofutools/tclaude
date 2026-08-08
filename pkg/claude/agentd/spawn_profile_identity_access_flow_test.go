@@ -360,9 +360,19 @@ func TestSpawnProfileToggles_NamedProfileArmsRemoteControl(t *testing.T) {
 	})
 	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
 
+	// Both halves, as remote_control_spawn_flow_test.go asserts them: the row's
+	// best-known state is the production read the dashboard indicator and the
+	// toggle's direction logic go through, and the sim spawner's record is the
+	// only place that shows --remote-control actually reached the launch. A row
+	// tagged on without the flag threaded would be a lie the DB alone cannot
+	// catch.
+	rc, err := db.RemoteControlForConv(spawn.ConvID)
+	require.NoError(t, err)
+	assert.True(t, rc, "a named profile's remote_control must tag the new row armed")
+
 	got, ok := f.World.SpawnRemoteControl(spawn.ConvID)
 	require.True(t, ok, "the spawn should have been observed by the sim spawner")
-	assert.True(t, got, "a named profile's remote_control must arm the launch")
+	assert.True(t, got, "and must thread --remote-control through the spawn path")
 }
 
 // Scenario: the permission-override twin of the owner gate. A profile the
