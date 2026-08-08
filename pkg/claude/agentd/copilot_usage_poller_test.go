@@ -148,28 +148,37 @@ func TestCopilotUsagePersistsObservedModelAndEffort(t *testing.T) {
 	assert.Empty(t, snap.EffortLevel)
 }
 
-// TestApplyCopilotUsageCallsReplacesRunningCost covers the one field that is
-// already a session total in Copilot's own rows. Adding it up would inflate the
-// reported cost by roughly the number of calls.
-func TestApplyCopilotUsageCallsReplacesRunningCost(t *testing.T) {
+// TestApplyCopilotUsageCallsSumsPerCallCostToDurableCheckpoint pins the
+// identity measured on the real 1.0.78 store: each row is one call's cost and
+// their sum is the durable session.usage_checkpoint total. The eight values
+// below are an anonymized real multi-call session, not invented monotonic
+// running totals (the old assumption this test guards against).
+func TestApplyCopilotUsageCallsSumsPerCallCostToDurableCheckpoint(t *testing.T) {
 	setupTestDB(t)
 	resetCopilotUsageStateForTest()
 	t.Cleanup(resetCopilotUsageStateForTest)
 
 	sess := copilotUsageSession(t, "s-copilot", "conv-1")
-	first := copilotUsageCall(1, 100, 10)
-	first.TotalNanoAIU, first.HasNanoAIU = 1200, true
-	second := copilotUsageCall(2, 200, 20)
-	second.TotalNanoAIU, second.HasNanoAIU = 4000, true
+	perCall := []int64{
+		351_800_000, 121_180_000, 63_725_000, 131_300_000,
+		102_560_000, 83_820_000, 144_510_000, 123_210_000,
+	}
+	calls := make([]harness.CopilotUsageCall, 0, len(perCall))
+	for i, cost := range perCall {
+		call := copilotUsageCall(int64(i+1), int64(100+i), 10)
+		call.TotalNanoAIU, call.HasNanoAIU = cost, true
+		calls = append(calls, call)
+	}
 
-	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{first, second})
+	applyCopilotUsageCalls(sess, calls)
 
 	snapshot, err := db.LoadCopilotUsageSnapshot(sess.ID)
 	require.NoError(t, err)
 	require.NotNil(t, snapshot)
 	require.NotNil(t, snapshot.TotalNanoAIU)
-	assert.Equal(t, int64(4000), *snapshot.TotalNanoAIU,
-		"Copilot's total_nano_aiu is already cumulative; summing it double-counts")
+	const durableCheckpointNanoAIU = int64(1_122_105_000)
+	assert.Equal(t, durableCheckpointNanoAIU, *snapshot.TotalNanoAIU,
+		"per-call nano-AIU must reconcile to Copilot's durable session checkpoint")
 }
 
 // TestApplyCopilotUsageCallsIgnoresAlreadyConsumedRows is defence in depth: the
@@ -181,11 +190,15 @@ func TestApplyCopilotUsageCallsIgnoresAlreadyConsumedRows(t *testing.T) {
 	t.Cleanup(resetCopilotUsageStateForTest)
 
 	sess := copilotUsageSession(t, "s-copilot", "conv-1")
-	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{copilotUsageCall(1, 100, 10)})
+	first := copilotUsageCall(1, 100, 10)
+	first.TotalNanoAIU, first.HasNanoAIU = 360_725_000, true
+	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{first})
 	// The same row again, plus one genuinely new one.
+	second := copilotUsageCall(2, 200, 20)
+	second.TotalNanoAIU, second.HasNanoAIU = 61_905_000, true
 	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{
-		copilotUsageCall(1, 100, 10),
-		copilotUsageCall(2, 200, 20),
+		first,
+		second,
 	})
 
 	snapshot, err := db.LoadCopilotUsageSnapshot(sess.ID)
@@ -194,6 +207,9 @@ func TestApplyCopilotUsageCallsIgnoresAlreadyConsumedRows(t *testing.T) {
 	assert.Equal(t, int64(2), snapshot.Requests, "the replayed row must not be counted twice")
 	assert.Equal(t, int64(30), snapshot.OutputTokens)
 	assert.Equal(t, int64(300), snapshot.InputTokens)
+	require.NotNil(t, snapshot.TotalNanoAIU)
+	assert.Equal(t, int64(422_630_000), *snapshot.TotalNanoAIU,
+		"the replayed row must not be billed twice")
 }
 
 // TestApplyCopilotUsageCallsAccumulatesAcrossSweeps is the resume case: a
@@ -205,11 +221,15 @@ func TestApplyCopilotUsageCallsAccumulatesAcrossSweeps(t *testing.T) {
 	t.Cleanup(resetCopilotUsageStateForTest)
 
 	sess := copilotUsageSession(t, "s-copilot", "conv-1")
-	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{copilotUsageCall(1, 100, 10)})
+	first := copilotUsageCall(1, 100, 10)
+	first.TotalNanoAIU, first.HasNanoAIU = 360_725_000, true
+	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{first})
 
 	// A daemon restart loses the in-memory state but not the durable snapshot.
 	resetCopilotUsageStateForTest()
-	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{copilotUsageCall(2, 200, 20)})
+	second := copilotUsageCall(2, 200, 20)
+	second.TotalNanoAIU, second.HasNanoAIU = 61_905_000, true
+	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{second})
 
 	snapshot, err := db.LoadCopilotUsageSnapshot(sess.ID)
 	require.NoError(t, err)
@@ -217,6 +237,9 @@ func TestApplyCopilotUsageCallsAccumulatesAcrossSweeps(t *testing.T) {
 	assert.Equal(t, int64(2), snapshot.Requests, "the earlier sweep's rows survive a restart")
 	assert.Equal(t, int64(30), snapshot.OutputTokens)
 	assert.Equal(t, int64(2), snapshot.LastEventID)
+	require.NotNil(t, snapshot.TotalNanoAIU)
+	assert.Equal(t, int64(422_630_000), *snapshot.TotalNanoAIU,
+		"a later sweep adds to the persisted per-call total")
 }
 
 // TestCopilotUsageUsesObservedModelDefault covers the no-explicit-cap path.
@@ -787,6 +810,51 @@ func TestCopilotUsageBackfillsStoredModelOnRestart(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "set-by-someone-else", snap.Model,
 		"the restart backfill runs once, not on every tick")
+}
+
+// TestCopilotUsageRestartRejectsLegacyFoldVersion closes the old-daemon race
+// around v195. A v194 process that somehow left a last-row-wins snapshot must
+// not make its advanced cursor look reusable to the corrected poller; the
+// whole Copilot store prefix has to be replayed under the current semantics.
+func TestCopilotUsageRestartRejectsLegacyFoldVersion(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotUsageStateForTest()
+	t.Cleanup(resetCopilotUsageStateForTest)
+
+	sess := copilotUsageSession(t, "s-copilot", "conv-1")
+	saved, err := db.SaveCopilotUsageSnapshot(db.CopilotUsageSnapshot{
+		SessionID: sess.ID, ConvID: sess.ConvID, LastEventID: 7, Requests: 3,
+		Model: "gpt-5", LastCallInputTokens: 25114, OutputTokens: 300,
+	}, sess.CreatedAt)
+	require.NoError(t, err)
+	require.True(t, saved)
+	d, err := db.Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`UPDATE copilot_usage_snapshots SET fold_version = 0
+		WHERE session_id = ?`, sess.ID)
+	require.NoError(t, err)
+
+	entry, restored := copilotUsageEntryFor(sess)
+	assert.Zero(t, entry.LastEventID, "legacy semantics restart from event zero")
+	assert.Nil(t, restored, "legacy data must not be backfilled into session columns")
+
+	first := copilotUsageCall(1, 100, 10)
+	first.TotalNanoAIU, first.HasNanoAIU = 360_725_000, true
+	second := copilotUsageCall(2, 200, 20)
+	second.TotalNanoAIU, second.HasNanoAIU = 61_905_000, true
+	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{first, second})
+
+	rebuilt, err := db.LoadCopilotUsageSnapshot(sess.ID)
+	require.NoError(t, err)
+	require.NotNil(t, rebuilt)
+	assert.Equal(t, db.CopilotUsageFoldVersion, rebuilt.FoldVersion)
+	assert.Equal(t, int64(2), rebuilt.LastEventID,
+		"the legacy cursor is replaced by the replay's real high-water mark")
+	assert.Equal(t, int64(2), rebuilt.Requests,
+		"the replay starts from an empty accumulator, not the legacy snapshot")
+	require.NotNil(t, rebuilt.TotalNanoAIU)
+	assert.Equal(t, int64(422_630_000), *rebuilt.TotalNanoAIU,
+		"the complete per-call prefix replaces the legacy last-row total")
 }
 
 // TestCopilotUsageBackfillRespectsGenerationGuard keeps the restart path inside

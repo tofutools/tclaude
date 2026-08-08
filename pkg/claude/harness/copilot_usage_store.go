@@ -142,8 +142,11 @@ type CopilotUsageCall struct {
 	CacheWriteTokens int64
 	ReasoningTokens  int64
 
-	// TotalNanoAIU is Copilot's own cost unit, carried as the exact integer the
-	// store holds. No USD is derived from it here; see the file comment.
+	// TotalNanoAIU is this model call's cost in Copilot's own unit, carried as
+	// the exact integer the store holds. The CLI's shipped event schema calls
+	// the matching assistant.usage field "for this request"; the session-wide
+	// value is the sum across calls. No USD is derived from it here; see the
+	// file comment.
 	TotalNanoAIU      int64
 	HasNanoAIU        bool
 	RequestMultiplier float64

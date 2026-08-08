@@ -64,6 +64,7 @@ func TestCopilotUsageSnapshotRoundTrip(t *testing.T) {
 	require.NotNil(t, got)
 
 	assert.Equal(t, int64(12), got.LastEventID)
+	assert.Equal(t, CopilotUsageFoldVersion, got.FoldVersion)
 	assert.Equal(t, int64(3), got.LastTurnIndex)
 	assert.Equal(t, "gpt-5", got.Model)
 	assert.Equal(t, "medium", got.ReasoningEffort)

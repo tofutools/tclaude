@@ -169,13 +169,13 @@ func seedCopilotUsageFixture(t *testing.T, writer *sql.DB, calls ...copilotUsage
 func TestCopilotUsageStoreReadsFreshRowsAcrossSessions(t *testing.T) {
 	home := newCopilotUsageFixture(t, true,
 		copilotUsageFixtureCall{sessionID: "sess-a", turnIndex: 0, model: "gpt-5",
-			input: 25114, output: 300, cacheRead: 23040, nanoAIU: int64(1200),
+			input: 25114, output: 300, cacheRead: 23040, nanoAIU: int64(360_725_000),
 			multiplier: 1, durationMs: 900, effort: "medium", finishReason: "stop"},
 		copilotUsageFixtureCall{sessionID: "sess-b", turnIndex: 0, model: "claude",
 			input: 500, output: 40},
 		copilotUsageFixtureCall{sessionID: "sess-a", turnIndex: 1, model: "gpt-5",
 			input: 28725, output: 700, cacheRead: 25111, cacheWrite: 3611,
-			nanoAIU: int64(4000), finishReason: "tool_calls"},
+			nanoAIU: int64(61_905_000), finishReason: "tool_calls"},
 	)
 	store, err := OpenCopilotUsageStore(home)
 	require.NoError(t, err)
@@ -200,8 +200,10 @@ func TestCopilotUsageStoreReadsFreshRowsAcrossSessions(t *testing.T) {
 	assert.Equal(t, "medium", calls[0].ReasoningEffort)
 	assert.Equal(t, "stop", calls[0].FinishReason)
 	assert.Equal(t, int64(900), calls[0].DurationMs)
-	assert.Equal(t, int64(1200), calls[0].TotalNanoAIU)
+	assert.Equal(t, int64(360_725_000), calls[0].TotalNanoAIU)
 	assert.True(t, calls[0].HasNanoAIU)
+	assert.Equal(t, int64(61_905_000), calls[1].TotalNanoAIU,
+		"real per-call costs need not increase from one row to the next")
 	assert.Equal(t, "2026-08-04T12:00:00Z", calls[0].CreatedAt)
 
 	// A NULL total_nano_aiu must read as "Copilot said nothing", not as a

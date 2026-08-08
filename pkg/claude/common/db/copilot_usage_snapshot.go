@@ -31,6 +31,10 @@ import (
 type CopilotUsageSnapshot struct {
 	SessionID string
 	ConvID    string
+	// FoldVersion identifies the accounting semantics that produced this row.
+	// A mismatched version makes the cursor untrustworthy and must be replayed
+	// from zero. See migrate_v195 for the old-daemon race this closes.
+	FoldVersion int64
 
 	// LastEventID is the poller's checkpoint: the highest
 	// assistant_usage_events.id already folded into this row.
@@ -48,7 +52,7 @@ type CopilotUsageSnapshot struct {
 	CacheWriteTokens int64
 	ReasoningTokens  int64
 
-	// TotalNanoAIU is Copilot's own cost unit, carried exactly as reported. Nil
+	// TotalNanoAIU is the exact sum of Copilot's reported per-call costs. Nil
 	// distinguishes "Copilot said nothing" from a legitimate zero (BYOK/mock
 	// providers bill zero), matching the durable follower's HasNanoAIU.
 	TotalNanoAIU      *int64
@@ -70,6 +74,10 @@ type CopilotUsageSnapshot struct {
 	ObservedAt time.Time
 }
 
+// CopilotUsageFoldVersion is the snapshot contract written by this binary.
+// Version 1 sums assistant_usage_events.total_nano_aiu as per-call values.
+const CopilotUsageFoldVersion int64 = 1
+
 // SaveCopilotUsageSnapshot replaces one session's snapshot, but only while the
 // session row is still the generation the caller observed.
 //
@@ -87,6 +95,7 @@ func SaveCopilotUsageSnapshot(snapshot CopilotUsageSnapshot, createdAt time.Time
 	if snapshot.LastEventID < 0 {
 		return false, fmt.Errorf("copilot usage snapshot: negative cursor %d", snapshot.LastEventID)
 	}
+	snapshot.FoldVersion = CopilotUsageFoldVersion
 	d, err := Open()
 	if err != nil {
 		return false, err
@@ -96,7 +105,7 @@ func SaveCopilotUsageSnapshot(snapshot CopilotUsageSnapshot, createdAt time.Time
 		observedAt = time.Now()
 	}
 	result, err := d.Exec(`INSERT INTO copilot_usage_snapshots
-			(session_id, conv_id, last_event_id, last_turn_index, model,
+			(session_id, conv_id, fold_version, last_event_id, last_turn_index, model,
 			 reasoning_effort, finish_reason, requests,
 			 input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
 			 reasoning_tokens, total_nano_aiu, request_multiplier,
@@ -104,12 +113,13 @@ func SaveCopilotUsageSnapshot(snapshot CopilotUsageSnapshot, createdAt time.Time
 			 last_call_cache_read_tokens, last_call_cache_write_tokens,
 			 last_duration_ms, last_time_to_first_token_ms,
 			 last_inter_token_latency_ms, last_call_stamp_text, observed_at)
-		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 		WHERE EXISTS (
 			SELECT 1 FROM sessions WHERE id = ? AND conv_id = ? AND created_at = ?
 		)
 		ON CONFLICT(session_id) DO UPDATE SET
 			conv_id = excluded.conv_id,
+			fold_version = excluded.fold_version,
 			last_event_id = excluded.last_event_id,
 			last_turn_index = excluded.last_turn_index,
 			model = excluded.model,
@@ -132,7 +142,8 @@ func SaveCopilotUsageSnapshot(snapshot CopilotUsageSnapshot, createdAt time.Time
 			last_inter_token_latency_ms = excluded.last_inter_token_latency_ms,
 			last_call_stamp_text = excluded.last_call_stamp_text,
 			observed_at = excluded.observed_at`,
-		snapshot.SessionID, snapshot.ConvID, snapshot.LastEventID, snapshot.LastTurnIndex,
+		snapshot.SessionID, snapshot.ConvID, snapshot.FoldVersion,
+		snapshot.LastEventID, snapshot.LastTurnIndex,
 		snapshot.Model, snapshot.ReasoningEffort, snapshot.FinishReason, snapshot.Requests,
 		snapshot.InputTokens, snapshot.OutputTokens, snapshot.CacheReadTokens,
 		snapshot.CacheWriteTokens, snapshot.ReasoningTokens,
@@ -166,7 +177,7 @@ func LoadCopilotUsageSnapshot(sessionID string) (*CopilotUsageSnapshot, error) {
 		multiplier sql.NullFloat64
 		observedAt int64
 	)
-	err = d.QueryRow(`SELECT session_id, conv_id, last_event_id, last_turn_index, model,
+	err = d.QueryRow(`SELECT session_id, conv_id, fold_version, last_event_id, last_turn_index, model,
 			reasoning_effort, finish_reason, requests,
 			input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
 			reasoning_tokens, total_nano_aiu, request_multiplier,
@@ -175,7 +186,7 @@ func LoadCopilotUsageSnapshot(sessionID string) (*CopilotUsageSnapshot, error) {
 			last_duration_ms, last_time_to_first_token_ms,
 			last_inter_token_latency_ms, last_call_stamp_text, observed_at
 		FROM copilot_usage_snapshots WHERE session_id = ?`, sessionID).
-		Scan(&snapshot.SessionID, &snapshot.ConvID, &snapshot.LastEventID,
+		Scan(&snapshot.SessionID, &snapshot.ConvID, &snapshot.FoldVersion, &snapshot.LastEventID,
 			&snapshot.LastTurnIndex, &snapshot.Model, &snapshot.ReasoningEffort,
 			&snapshot.FinishReason, &snapshot.Requests,
 			&snapshot.InputTokens, &snapshot.OutputTokens, &snapshot.CacheReadTokens,

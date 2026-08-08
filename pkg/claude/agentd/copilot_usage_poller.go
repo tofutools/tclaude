@@ -595,11 +595,14 @@ func copilotUsageEntryFor(sess *db.SessionRow) (copilotUsageLiveEntry, *db.Copil
 	if err != nil {
 		slog.Warn("copilot-usage: failed to load snapshot cursor; restarting from the beginning",
 			"session_id", sess.ID, "error", err, "module", "agentd")
-	} else if stored != nil && stored.ConvID == sess.ConvID {
+	} else if stored != nil && stored.ConvID == sess.ConvID &&
+		stored.FoldVersion == db.CopilotUsageFoldVersion {
 		// A stored cursor whose conv id does NOT match belongs to a previous
 		// generation of this session id. Ignoring it restarts the fold, which
 		// is right: the new conversation's rows start at their own ids and the
-		// old cursor would skip them.
+		// old cursor would skip them. The fold version has the same fail-closed
+		// rule: an old writer may know this session but not the current per-call
+		// accounting semantics, so its cursor must never hide the prefix.
 		fresh.LastEventID = stored.LastEventID
 		fresh.ContextTokens = stored.LastCallInputTokens
 		fresh.OutputTokens = stored.OutputTokens
@@ -661,13 +664,18 @@ func applyCopilotUsageCalls(sess *db.SessionRow, calls []harness.CopilotUsageCal
 		return
 	}
 	next := db.CopilotUsageSnapshot{SessionID: sess.ID, ConvID: sess.ConvID}
-	if snapshot != nil && snapshot.ConvID == sess.ConvID {
+	if snapshot != nil && snapshot.ConvID == sess.ConvID &&
+		snapshot.FoldVersion == db.CopilotUsageFoldVersion {
 		next = *snapshot
 		next.SessionID = sess.ID
 		next.ConvID = sess.ConvID
 	}
 	var nanoAIU int64
 	var sawNanoAIU bool
+	if next.TotalNanoAIU != nil {
+		nanoAIU = *next.TotalNanoAIU
+		sawNanoAIU = true
+	}
 	for _, call := range calls {
 		if call.EventID <= next.LastEventID {
 			// Defence in depth against a re-delivered row: the query already
@@ -685,12 +693,13 @@ func applyCopilotUsageCalls(sess *db.SessionRow, calls []harness.CopilotUsageCal
 		next.CacheReadTokens += call.CacheReadTokens
 		next.CacheWriteTokens += call.CacheWriteTokens
 		next.ReasoningTokens += call.ReasoningTokens
-		// total_nano_aiu is Copilot's own running total for the SESSION, not a
-		// per-call delta, so the newest row replaces rather than adds. Summing
-		// it would inflate the cost by roughly the number of calls. Nested
-		// calls carry the same running total, so they update it too.
+		// total_nano_aiu is the cost of THIS CALL. Both the pinned 1.0.77 and
+		// measured 1.0.78 schemas describe the matching assistant.usage value
+		// as "for this request"; 1.0.78 stores confirm that summing these rows
+		// exactly reaches the durable session checkpoint. Nested calls are real
+		// billed calls too, so they participate in the sum.
 		if call.HasNanoAIU {
-			nanoAIU = call.TotalNanoAIU
+			nanoAIU += call.TotalNanoAIU
 			sawNanoAIU = true
 		}
 
