@@ -262,6 +262,29 @@ func TestGHProxy_DownloadExplainsAMissingArtifact(t *testing.T) {
 		assert.Len(t, ghArgvs(t, rec), 1)
 	})
 
+	// retention-days is per upload step, so "every artifact on page 1 expired"
+	// is not "every artifact in the run expired". Claiming the run — and that
+	// retrying cannot help — would stop an agent that could still name a live
+	// artifact from the pages this read never saw.
+	t.Run("an all-expired first page does not speak for the whole run", func(t *testing.T) {
+		f, rec := downloadingWorld(t, ghArtifactPage(400,
+			ghArtifact("shard-00", 4096, true),
+			ghArtifact("shard-01", 4096, true),
+		), nil)
+
+		res := gitProxyPost(t, f, "/v1/github/run/download",
+			map[string]any{"run_id": 18234567890})
+		require.Equal(t, http.StatusNotFound, res.Code, "body=%s", res.Body.String())
+		body := res.Body.String()
+		assert.Contains(t, body, "400", "the run's real size has to appear")
+		assert.Contains(t, body, "may still be live")
+		assert.NotContains(t, body, "all 2 of this run's artifacts",
+			"2 is what was inspected, not what the run holds")
+		assert.NotContains(t, body, "retrying will not bring them back",
+			"that verdict is only true when the whole run was seen")
+		assert.Len(t, ghArgvs(t, rec), 1)
+	})
+
 	t.Run("a run that uploaded nothing says so", func(t *testing.T) {
 		f, rec := downloadingWorld(t, ghArtifactManifestJSON(), nil)
 

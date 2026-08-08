@@ -679,6 +679,17 @@ func checkArtifactBudget(manifest ghArtifactManifest, name string) *proxyFault {
 					"retention period and kept the entry; retrying will not bring it back", name)
 		}
 		if expiredMatch > 0 {
+			// On a partial page this must NOT claim the run. retention-days is
+			// per upload step, so a run can hold short-retention artifacts
+			// beside long ones — and "all of them expired, retrying will not
+			// help" would stop an agent that could still take a live one from
+			// the artifacts this read never saw.
+			if partial {
+				return faultf(http.StatusNotFound, "artifact_expired",
+					"all %d of the first artifacts inspected have expired, and this run has %d in "+
+						"total — the rest were not inspected, so some may still be live; name one "+
+						"with `--name` to find out", expiredMatch, manifest.Total)
+			}
 			return faultf(http.StatusNotFound, "artifact_expired",
 				"all %d of this run's artifacts have expired — GitHub deleted the bytes after "+
 					"their retention period and kept the entries; retrying will not bring them back",

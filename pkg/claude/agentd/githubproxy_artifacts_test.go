@@ -1,10 +1,15 @@
 package agentd
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // humanBytes renders every size an agent reads in an artifact listing or a
@@ -41,6 +46,55 @@ func TestHumanBytes(t *testing.T) {
 // help text promises 512 MiB is only true if this holds.
 func TestArtifactBudgetRendersAsTheDocumentedFigure(t *testing.T) {
 	assert.Equal(t, "512.0 MiB", humanBytes(maxGHArtifactBytes))
+}
+
+// A walk that stops early must never be reported as a completed one. The
+// guard that matters most is the empty-tree branch: without it, a listing cut
+// off at the root entry tells an agent the artifact unpacked to nothing, about
+// an artifact that is sitting on disk full of files.
+func TestArtifactListingStoppedWalk(t *testing.T) {
+	dest := t.TempDir()
+	for _, name := range []string{"a.txt", "b.txt", "c.txt"} {
+		require.NoError(t, os.WriteFile(filepath.Join(dest, name), []byte("hello"), 0o644))
+	}
+
+	t.Run("a deadline that has already passed", func(t *testing.T) {
+		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+		defer cancel()
+		out := artifactListing(ctx, dest)
+
+		assert.NotContains(t, out, "unpacked to no files at all",
+			"a stopped walk counts zero files; calling that an empty artifact is a lie "+
+				"about a directory that is not empty")
+		assert.Contains(t, out, "at least", "a partial count must not read as a total")
+		assert.Contains(t, out, "ran out of time")
+		assert.Contains(t, out, "really are at the path above",
+			"the caller is still connected on a daemon-side deadline, and must be told the "+
+				"files landed rather than left to retry a download that would delete them")
+		assert.NotContains(t, out, "went away", "nothing was cancelled")
+		assert.Contains(t, out, dest)
+	})
+
+	t.Run("a cancelled request", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		out := artifactListing(ctx, dest)
+
+		assert.NotContains(t, out, "unpacked to no files at all")
+		assert.Contains(t, out, "at least")
+		assert.Contains(t, out, "went away")
+		assert.NotContains(t, out, "ran out of time")
+	})
+
+	// The ordinary path still reports exact figures — the hedging must not
+	// leak into a walk that finished.
+	t.Run("a walk that completes", func(t *testing.T) {
+		out := artifactListing(context.Background(), dest)
+		assert.Contains(t, out, "3 files")
+		assert.NotContains(t, out, "at least")
+		assert.NotContains(t, out, "stopped")
+		assert.NotContains(t, out, "ran out of time")
+	})
 }
 
 func TestValidateGHArtifactName(t *testing.T) {

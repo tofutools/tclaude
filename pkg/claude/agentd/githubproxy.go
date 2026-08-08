@@ -3,6 +3,7 @@ package agentd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -415,8 +416,14 @@ func (g *ghProxySession) artifactDest(runID string) (string, *proxyFault) {
 // REPORTED, not what is walked: `files` and `total` describe the whole tree, so
 // the walk visits every entry. An artifact well inside the 512 MiB zip cap can
 // unpack to millions of small files, and this runs on the request goroutine
-// after gh has returned — so a cancelled request stops the walk rather than
-// finishing it for nobody, and says the count it gives is a floor.
+// after gh has returned — so the walk is held under the download's own
+// deadline rather than being allowed to run past it unbounded.
+//
+// Not "so a disconnected client stops it": this route is a POST outside
+// bulkReadRoutes, so the idempotency middleware buffers and PERSISTS the
+// response either way, and a reconnecting client replays whatever this
+// produced for the full TTL. That is exactly why a stopped walk has to be
+// labelled honestly below — the degraded listing becomes the durable answer.
 func artifactListing(ctx context.Context, dest string) string {
 	type entry struct {
 		rel  string
@@ -430,13 +437,15 @@ func artifactListing(ctx context.Context, dest string) string {
 		listBytes int
 		walkErr   error
 	)
-	stopped := false
+	var stopErr error
 	walkErr = filepath.WalkDir(dest, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if ctx.Err() != nil {
-			stopped = true
+		// Which error it is decides what the caller should DO, so keep it
+		// rather than reducing it to a bool.
+		if e := ctx.Err(); e != nil {
+			stopErr = e
 			return fs.SkipAll
 		}
 		if d.IsDir() {
@@ -470,6 +479,8 @@ func artifactListing(ctx context.Context, dest string) string {
 		return nil
 	})
 
+	stopped := stopErr != nil
+
 	var b strings.Builder
 	fmt.Fprintf(&b, "downloaded to %s\n\n", dest)
 	// A walk error does NOT discard the entries already collected. One
@@ -479,7 +490,11 @@ func artifactListing(ctx context.Context, dest string) string {
 		fmt.Fprintf(&b, "%s\t%s\n", e.rel, e.size)
 	}
 	if files > len(entries) {
-		fmt.Fprintf(&b, "… and %d more\n", files-len(entries))
+		// "at least" here as well as in the footer: a stopped walk's `files` is
+		// itself only what was reached, so a bare remainder would be a definite
+		// number the code knows is a floor — and could understate by orders of
+		// magnitude on the very tree that stopped it.
+		fmt.Fprintf(&b, "… and %s%d more\n", atLeast(stopped), files-len(entries))
 	}
 	if files == 0 && walkErr == nil && !stopped {
 		// The preflight has already ruled out "no such artifact" and "expired",
@@ -494,8 +509,21 @@ func artifactListing(ctx context.Context, dest string) string {
 	}
 	b.WriteString(")\n")
 	if stopped {
-		b.WriteString("(the listing stopped early — the request was cancelled; " +
-			"the files are on disk regardless)\n")
+		// The two causes want OPPOSITE advice, and the daemon's 300s bound is
+		// SHORTER than the CLI's 330s — so the deadline case is one the caller
+		// is still connected to read. Telling it "cancelled" would be false,
+		// and the natural response to a truncated listing is to download again,
+		// which clears the destination first: the retry would delete the tree
+		// that just landed and re-download it against the same budget.
+		if errors.Is(stopErr, context.DeadlineExceeded) {
+			b.WriteString("(the listing ran out of time — but the DOWNLOAD finished, so the files " +
+				"really are at the path above. List them yourself rather than downloading " +
+				"again: a second download clears the directory first and would spend the same " +
+				"budget to arrive back here.)\n")
+		} else {
+			b.WriteString("(the listing stopped early — the request went away; " +
+				"the files are on disk regardless)\n")
+		}
 	}
 	if walkErr != nil {
 		fmt.Fprintf(&b, "(the listing is incomplete — the directory could not be fully read: %v)\n", walkErr)
