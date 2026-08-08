@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/worktree"
@@ -48,8 +49,11 @@ type instantiateResult struct {
 		WorktreePath   string   `json:"worktree_path"`
 		WorktreeBranch string   `json:"worktree_branch"`
 		Granted        []string `json:"granted"`
-		Notes          []string `json:"notes"`
-		Error          string   `json:"error"`
+		// Decoded through the PRODUCTION wire type, so a field the daemon renames
+		// or drops breaks the guards rather than silently decoding to a zero value
+		// — the failure mode that let a whole deploy disclosure reach no reader.
+		Resolved *agent.ResolvedLaunch `json:"resolved"`
+		Error    string                `json:"error"`
 	} `json:"agents"`
 }
 

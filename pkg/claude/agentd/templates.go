@@ -790,8 +790,21 @@ type templateAgentLaunch struct {
 	// (TCL-1090).
 	CopilotAPISource    string
 	SSHWorkaroundSource string
-	FastMode      bool
-	FastModeSet   bool
+	// HarnessSource / ModelSource / EffortSource / ContextWindowMaxSource /
+	// FastModeSource / SandboxImplementationSource are the attributions for the
+	// remaining fields the launch echo renders. This resolver has always computed
+	// them and thrown them away; the deploy result now carries an echo, and
+	// without these every template-pinned value would be re-resolved at the spawn
+	// boundary as ProvExplicit — telling an operator "explicit" for a model their
+	// ROLE PROFILE chose, which names no tier they can go and change (TCL-1097).
+	HarnessSource               string
+	ModelSource                 string
+	EffortSource                string
+	ContextWindowMaxSource      string
+	FastModeSource              string
+	SandboxImplementationSource string
+	FastMode                    bool
+	FastModeSet                 bool
 	// Notes disclose profile-tier fields that were skipped because they are not
 	// valid for the independently resolved harness. They ride the per-agent
 	// instantiate result so template launches have the same least-surprise
@@ -1111,18 +1124,36 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	// Resolve harness independently. Partial inline-profile/role tiers only pin
 	// a harness when they name one; registry profiles pin their default harness
 	// even when the stored value is blank, matching direct spawn.
+	// harnessSource tracks the tier alongside the walk rather than being
+	// reconstructed afterwards: the walk short-circuits, so after it runs the
+	// value alone can no longer say which tier produced it.
+	harnessSource := ""
 	harnessName := strings.TrimSpace(a.Harness)
+	if harnessName != "" {
+		harnessSource = agent.ProvExplicit
+	}
 	if harnessName == "" && inlineProfile != nil {
 		harnessName = strings.TrimSpace(inlineProfile.Harness)
+		if harnessName != "" {
+			harnessSource = tiers[0].source
+		}
 	}
 	if harnessName == "" && refProfile != nil {
 		harnessName = harnessOrDefault(refProfile.Harness)
+		harnessSource = tiers[1].source
 	}
 	if harnessName == "" && role != nil {
 		harnessName = strings.TrimSpace(role.Harness)
+		if harnessName != "" {
+			harnessSource = tiers[2].source
+		}
 	}
 	if harnessName == "" && roleProfile != nil {
 		harnessName = harnessOrDefault(roleProfile.Harness)
+		harnessSource = tiers[3].source
+	}
+	if harnessName == "" {
+		harnessSource = agent.ProvHarnessDefault
 	}
 
 	h, err := resolveSpawnHarness(harnessName)
@@ -1131,7 +1162,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	}
 	var fail *spawnFailure
 	var notes []string
-	model, _, note, fail := resolveStringLaunchField(modelField, a.Model, h.Name, tiers,
+	model, modelSource, note, fail := resolveStringLaunchField(modelField, a.Model, h.Name, tiers,
 		func(p *db.SpawnProfile) string { return p.Model }, h.Models.ValidateModel)
 	if fail != nil {
 		return templateAgentLaunch{}, fail
@@ -1139,7 +1170,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	if note != "" {
 		notes = append(notes, note)
 	}
-	effort, _, note, fail := resolveStringLaunchField(effortField, a.Effort, h.Name, tiers,
+	effort, effortSource, note, fail := resolveStringLaunchField(effortField, a.Effort, h.Name, tiers,
 		func(p *db.SpawnProfile) string { return p.Effort }, h.Models.ValidateEffort)
 	if fail != nil {
 		return templateAgentLaunch{}, fail
@@ -1189,7 +1220,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	if note != "" {
 		notes = append(notes, note)
 	}
-	contextWindowMax, _, note, fail := resolveIntLaunchField(contextWindowMaxField, 0, h.Name, tiers,
+	contextWindowMax, contextWindowMaxSource, note, fail := resolveIntLaunchField(contextWindowMaxField, 0, h.Name, tiers,
 		func(p *db.SpawnProfile) int64 { return p.ContextWindowMax },
 		func(raw int64) (int64, error) { return harness.ResolveCopilotContextWindow(h, raw) })
 	if fail != nil {
@@ -1201,7 +1232,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	// The sandbox IMPLEMENTATION rides the same tier stack. Only the harness gate
 	// runs here; the host-capability gate belongs to the launch, which the deploy
 	// reaches by handing this value to the spawn boundary as an explicit request.
-	sandboxImplementation, _, note, fail := resolveStringLaunchField(
+	sandboxImplementation, sandboxImplementationSource, note, fail := resolveStringLaunchField(
 		sandboxImplementationField, "", h.Name, tiers,
 		func(p *db.SpawnProfile) string { return p.SandboxImplementation },
 		func(raw string) (string, error) { return validateSandboxImplementationForHarness(h, raw) })
@@ -1305,7 +1336,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	if copilotAPINote != "" {
 		notes = append(notes, copilotAPINote)
 	}
-	fastMode, fastModeSet, _, fastModeNote, fail := resolveBoolLaunchField(
+	fastMode, fastModeSet, fastModeSource, fastModeNote, fail := resolveBoolLaunchField(
 		"fast_mode", false, false, h.Name, tiers,
 		func(p *db.SpawnProfile) *bool { return p.FastMode },
 		func(v bool) (bool, error) {
@@ -1392,10 +1423,21 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		CopilotAPISet:          copilotAPISet,
 		CopilotAPISource:       copilotAPISource,
 		SSHWorkaroundSource:    sshWorkaroundSource,
-		FastMode:               fastMode,
-		FastModeSet:            fastModeSet,
-		SandboxImplementation:  sandboxImplementation,
-		Notes:                  notes,
+		// The template tiers this resolver walked. The spawn boundary re-resolves
+		// these fields against the group/global defaults and keeps whichever
+		// attribution actually names a decider (preferResolvedSource), so seeding
+		// them here is what stops a template-pinned value being reported as
+		// "explicit" by the re-resolution that finds its Set bit already raised.
+		HarnessSource:               harnessSource,
+		ModelSource:                 modelSource,
+		EffortSource:                effortSource,
+		ContextWindowMaxSource:      contextWindowMaxSource,
+		FastModeSource:              fastModeSource,
+		SandboxImplementationSource: sandboxImplementationSource,
+		FastMode:                    fastMode,
+		FastModeSet:                 fastModeSet,
+		SandboxImplementation:       sandboxImplementation,
+		Notes:                       notes,
 	}, nil
 }
 
@@ -2453,9 +2495,19 @@ type instantiateAgentResult struct {
 	// Owner. Surfaced so the dashboard can tell the operator what was adjusted.
 	OwnerDropped bool     `json:"owner_dropped,omitempty"`
 	Granted      []string `json:"granted,omitempty"`
-	Notes        []string `json:"notes,omitempty"`
-	ErrorKind    string   `json:"error_kind,omitempty"`
-	Error        string   `json:"error,omitempty"`
+	// Resolved is this member's launch shape with per-field provenance — the same
+	// echo the direct spawn path returns, per deployed agent (TCL-1097). Its Notes
+	// carry the template-tier disclosures too, so there is ONE per-agent
+	// disclosure channel rather than a structured echo with a flat `notes` list
+	// beside it saying overlapping things.
+	//
+	// It REPLACES the copilot_api-only `notes` list TCL-1090 shipped as a stopgap:
+	// that disclosure is now the CopilotAPI field of this echo. Two disclosure
+	// mechanisms for one fact is the failure being avoided, so the old one is
+	// gone rather than deprecated.
+	Resolved  *agent.ResolvedLaunch `json:"resolved,omitempty"`
+	ErrorKind string                `json:"error_kind,omitempty"`
+	Error     string                `json:"error,omitempty"`
 }
 
 // handleTemplateInstantiate creates a fresh group from a template and
