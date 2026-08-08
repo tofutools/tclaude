@@ -273,6 +273,16 @@ type copilotAPIStateConsumer struct {
 	// copilotAPIDrive before reading, and so a consumer can recognise that the
 	// conversation has been re-adopted by a newer launch than its own.
 	handle *copilotAPISession
+	// client is held ONLY for Subscribe and Done, and that is the rule rather
+	// than a description of today's calls: both are non-transmitting — Subscribe
+	// allocates a channel and registers it under the client's mutex, Done hands
+	// back an already-closed channel — so neither sends a byte to an endpoint
+	// whose ownership nobody re-proved.
+	//
+	// That is WHY this field may exist outside the drive layer. Anything that
+	// transmits must go through copilotAPIDrive instead, which re-proves
+	// ownership first; adding a third method here would quietly convert a field
+	// that cannot reach the endpoint into one that can.
 	client *copilotapi.Client
 
 	stop     chan struct{}
