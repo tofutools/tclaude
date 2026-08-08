@@ -402,3 +402,71 @@ func TestNewSessionIDIsUnique(t *testing.T) {
 		seen[id] = true
 	}
 }
+
+func TestCompactSendsTheSessionAndTrigger(t *testing.T) {
+	server := newFakeServer(t)
+	var captured CompactParams
+	server.handle(MethodSessionCompact, func(params json.RawMessage) (any, *Error) {
+		if err := json.Unmarshal(params, &captured); err != nil {
+			return nil, &Error{Code: CodeInvalidParams, Message: err.Error()}
+		}
+		return CompactResult{
+			Success: true, TokensRemoved: -213, MessagesRemoved: 5,
+			SummaryContent: "<overview>…</overview>",
+			ContextWindow: &CompactContextWindow{
+				TokenLimit: 128000, CurrentTokens: 15584, SystemTokens: 6301,
+			},
+		}, nil
+	})
+	client := dialTest(t, server, nil)
+
+	result, err := client.Compact(context.Background(), CompactParams{
+		SessionID: "sess-1", Trigger: CompactTriggerManual,
+	})
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	if captured.SessionID != "sess-1" || captured.Trigger != CompactTriggerManual {
+		t.Errorf("params = %+v", captured)
+	}
+	if !result.Success || result.MessagesRemoved != 5 {
+		t.Errorf("result = %+v", result)
+	}
+	// Signed on purpose: a short session's generated summary can be larger than
+	// the history it replaced, which the live server really does report.
+	if result.TokensRemoved != -213 {
+		t.Errorf("TokensRemoved = %d, want the negative value verbatim", result.TokensRemoved)
+	}
+	if result.ContextWindow == nil || result.ContextWindow.TokenLimit != 128000 {
+		t.Errorf("ContextWindow = %+v", result.ContextWindow)
+	}
+}
+
+// "Nothing to compact" arrives as a generic InternalError and is the correct
+// answer for an agent that has barely started, not a broken channel. A caller
+// that cannot tell it apart reports a fault that does not exist.
+func TestIsNothingToCompactSeparatesTheOrdinaryRefusal(t *testing.T) {
+	server := newFakeServer(t)
+	server.handle(MethodSessionCompact, func(json.RawMessage) (any, *Error) {
+		return nil, &Error{
+			Code: CodeInternalError,
+			Message: "Request session.history.compact failed with message: " +
+				"Nothing to compact.",
+		}
+	})
+	client := dialTest(t, server, nil)
+
+	_, err := client.Compact(context.Background(), CompactParams{SessionID: "sess-1"})
+	if err == nil {
+		t.Fatal("Compact: want an error")
+	}
+	if !IsNothingToCompact(err) {
+		t.Errorf("IsNothingToCompact(%v) = false", err)
+	}
+	if IsSessionNotFound(err) {
+		t.Error("the two refusals must not both match the same message")
+	}
+	if IsNothingToCompact(errors.New("some transport failure")) {
+		t.Error("a non-RPC error is not the server's refusal")
+	}
+}

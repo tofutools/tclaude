@@ -1485,17 +1485,55 @@ func messageInlineText(m *db.AgentMessage) (string, bool) {
 // between them. That is consistent with the best-effort follow-up
 // ordering described above and is not a regression.
 func injectSlashCommand(convID, line, followUp, reason string) bool {
+	return dispatchSlashCommand(convID, line, followUp, reason) != slashTransportNone
+}
+
+// slashTransport names the channel a lifecycle command was ACTUALLY delivered
+// over, as reported by the branch that delivered it.
+//
+// It exists because the obvious alternative — deciding what to tell the caller
+// from the same condition that selected the branch — is the proxy-value mistake
+// this series keeps making: TCL-1053 shipped an echo that reported send-keys
+// while the pane was being driven over the API, derived from a value that was
+// correct about the launch and wrong about the delivery. A transport that comes
+// back FROM the delivery cannot disagree with it.
+type slashTransport string
+
+const (
+	// slashTransportNone means nothing was delivered.
+	slashTransportNone        slashTransport = ""
+	slashTransportSendKeys    slashTransport = "send-keys"
+	slashTransportOpenCodeAPI slashTransport = "opencode-api"
+	slashTransportCopilotAPI  slashTransport = "copilot-api"
+)
+
+// dispatchSlashCommand is injectSlashCommand's body, reporting which channel
+// carried the command rather than only whether one did.
+func dispatchSlashCommand(convID, line, followUp, reason string) slashTransport {
 	sess := aliveSessionForConv(convID)
 	if sess == nil {
-		return false
+		return slashTransportNone
 	}
 	if sess.Harness == harness.OpenCodeName {
-		return injectOpenCodeSlashCommand(sess, line, followUp, reason)
+		if injectOpenCodeSlashCommand(sess, line, followUp, reason) {
+			return slashTransportOpenCodeAPI
+		}
+		return slashTransportNone
+	}
+	// An API-connected Copilot agent takes the typed channel. Never a fallback
+	// pair with the keystrokes below: an agent that opted out of the injection
+	// sink must not be returned to it one failure at a time. See
+	// copilot_api_drive.go.
+	if copilotAPIDriven(convID) {
+		if dispatchCopilotAPISlashCommand(sess, line, followUp, reason) {
+			return slashTransportCopilotAPI
+		}
+		return slashTransportNone
 	}
 	target := sess.TmuxSession + ":0.0"
 	if err := injectTextAndSubmit(target, line); err != nil {
 		slog.Warn("slash-command inject failed", "error", err, "tmux", sess.TmuxSession, "line", line, "reason", reason)
-		return false
+		return slashTransportNone
 	}
 	slog.Info("slash-command injected via send-keys",
 		"conv_id", convID,
@@ -1507,9 +1545,54 @@ func injectSlashCommand(convID, line, followUp, reason string) bool {
 	if followUp != "" {
 		if err := injectTextAndSubmit(target, followUp); err != nil {
 			slog.Warn("slash-command follow-up failed", "error", err, "tmux", sess.TmuxSession)
-			return false
+			return slashTransportNone
 		}
 	}
+	return slashTransportSendKeys
+}
+
+// dispatchCopilotAPISlashCommand maps a Copilot lifecycle command onto its
+// typed RPC.
+//
+// The mapping is by lifecycle TOKEN, and the tokens are compile-time constants
+// from the harness lifecycle — never caller input — which is the property that
+// keeps this a fixed switch rather than a command interpreter. An unmapped
+// token fails closed exactly as OpenCode's does: no keystroke fallback, because
+// the whole point of an API-connected agent is that it does not have one.
+//
+// # /exit is deliberately absent
+//
+// It has plausible-looking RPCs — `session.shutdown` and `sessions.close` — and
+// they are the wrong tool, measured rather than assumed. Against Copilot CLI
+// 1.0.78 both succeed, and the copilot process is still running afterwards with
+// the session still foregrounded; `runtime.shutdown` refuses outright with
+// "Runtime shutdown is not available for this server". They shut a session
+// down, not the CLI, so routing soft-exit through them would report a delivered
+// exit for an agent that never dies — which every retire and shutdown surface
+// would then read as an agent that had finished. Soft exit stays on send-keys,
+// where the `/exit` token really does end the process.
+func dispatchCopilotAPISlashCommand(sess *db.SessionRow, line, followUp, reason string) bool {
+	if sess == nil {
+		return false
+	}
+	life := harnessForConv(sess.ConvID).Life
+	if life == nil {
+		return false
+	}
+	if line != life.CompactCommand() {
+		slog.Warn("copilot API: lifecycle command has no typed RPC mapping; refusing to "+
+			"fall back to keystrokes",
+			"conv_id", sess.ConvID, "line", line, "reason", reason)
+		return false
+	}
+	if err := compactCopilotAPISession(sess.ConvID, followUp); err != nil {
+		slog.Warn("copilot API: compaction dispatch failed",
+			"error", err, "conv_id", sess.ConvID, "line", line, "reason", reason)
+		return false
+	}
+	slog.Info("copilot API: lifecycle command dispatched over RPC",
+		"conv_id", sess.ConvID, "line", line, "reason", reason,
+		"tmux_session", sess.TmuxSession, "has_follow_up", followUp != "")
 	return true
 }
 
@@ -2063,24 +2146,30 @@ func runSlashOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 			"OpenCode cannot safely order a compact follow-up; compact without a follow-up, wait for idle, then send the next turn")
 		return
 	}
-	if !injectSlashCommand(target, slash, body.FollowUp, slashReason(label, caller, target)) {
-		if h.Name == harness.OpenCodeName {
+	// The transport comes back FROM the dispatch, so the note below describes
+	// the channel that carried the command rather than the one the caller's
+	// harness suggests it would have. TCL-1053 shipped the other version.
+	transport := dispatchSlashCommand(target, slash, body.FollowUp, slashReason(label, caller, target))
+	if transport == slashTransportNone {
+		switch {
+		case h.Name == harness.OpenCodeName:
 			writeError(w, http.StatusServiceUnavailable, "control_unavailable",
 				"target conv "+short8(target)+" could not dispatch "+slash+
 					" through its managed OpenCode TUI; retry when the session is idle")
-			return
+		case copilotAPIDriven(target):
+			writeError(w, http.StatusServiceUnavailable, "control_unavailable",
+				"target conv "+short8(target)+" is driven over the Copilot API and could not "+
+					"dispatch "+slash+" through it; it is deliberately not typed into the pane instead")
+		default:
+			writeError(w, http.StatusServiceUnavailable, "no_tmux",
+				"target conv "+short8(target)+" has no live tmux session to inject "+slash+" into")
 		}
-		writeError(w, http.StatusServiceUnavailable, "no_tmux",
-			"target conv "+short8(target)+" has no live tmux session to inject "+slash+" into")
 		return
 	}
 	resp := map[string]any{
 		"conv_id": target,
 		"action":  label,
-		"note":    slash + " submitted via tmux send-keys; CC will process it on its next turn",
-	}
-	if h.Name == harness.OpenCodeName {
-		resp["note"] = slash + " dispatched via the managed OpenCode TUI API"
+		"note":    slashNote(transport, slash, body.FollowUp != ""),
 	}
 	if caller != "" && caller != target {
 		resp["caller_conv"] = caller
@@ -2088,12 +2177,32 @@ func runSlashOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	}
 	if body.FollowUp != "" {
 		resp["follow_up"] = body.FollowUp
-		resp["note"] = slash + " + follow-up submitted via tmux send-keys; the follow-up bytes queue in the pty until CC resumes reading after " + slash + " settles"
-		if h.Name == harness.OpenCodeName {
-			resp["note"] = slash + " dispatched via the managed OpenCode TUI API; follow-up delivered via prompt_async"
-		}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// slashNote describes what actually happened, per transport. Each arm is
+// written from that channel's real ordering guarantee, because the three
+// differ and the difference is the whole reason a caller reads this field:
+// send-keys cannot order a follow-up behind the command, OpenCode refuses the
+// pair outright, and Copilot's compaction RPC resolves only when compaction is
+// done, so its follow-up is ordered by construction.
+func slashNote(transport slashTransport, slash string, hasFollowUp bool) string {
+	switch transport {
+	case slashTransportOpenCodeAPI:
+		return slash + " dispatched via the managed OpenCode TUI API"
+	case slashTransportCopilotAPI:
+		if hasFollowUp {
+			return slash + " requested over the Copilot API; the follow-up is submitted once " +
+				slash + " resolves, so the two are ordered"
+		}
+		return slash + " requested over the Copilot API; the outcome lands in the daemon log"
+	default:
+		if hasFollowUp {
+			return slash + " + follow-up submitted via tmux send-keys; the follow-up bytes queue in the pty until CC resumes reading after " + slash + " settles"
+		}
+		return slash + " submitted via tmux send-keys; CC will process it on its next turn"
+	}
 }
 
 // isValidFollowUp enforces follow-up prompt sanitization.

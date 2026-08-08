@@ -320,6 +320,17 @@ func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, rela
 	// away when it exits. The command is sourced from the harness's
 	// Lifecycle so a non-CC pane is never typed `/exit` if that's not its
 	// exit command.
+	//
+	// An API-connected Copilot agent stays on this path, unlike its rename,
+	// compaction and message delivery (TCL-1058). The RPCs that look like the
+	// answer are not one, measured against Copilot CLI 1.0.78: `session.
+	// shutdown` and `sessions.close` both succeed and leave the copilot process
+	// running with its session still foregrounded, and `runtime.shutdown`
+	// refuses with "Runtime shutdown is not available for this server". They end
+	// a session, not the CLI. Routing soft exit through them would report a
+	// delivered exit for a pane that never dies — which every stop, retire and
+	// dashboard surface then reads as an agent that finished its work. `/exit`
+	// through the pane really does end the process, so it stays.
 	h := harnessForConv(convID)
 	if h.SupportsSoftExit() {
 		exitCmd := h.Life.SoftExitCommand()

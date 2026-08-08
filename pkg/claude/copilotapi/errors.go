@@ -64,3 +64,19 @@ func IsSessionNotFound(err error) bool {
 	}
 	return strings.Contains(rpcErr.Message, "Session not found")
 }
+
+// IsNothingToCompact reports whether err is the server's refusal to compact a
+// session that has no history worth summarizing.
+//
+// Message matching for the same reason as [IsSessionNotFound]: the server
+// folds it into a generic InternalError. Worth separating because it is not a
+// failure of the channel or of the request — it is the correct answer for an
+// agent that has barely started, and reporting it as a broken compaction sends
+// an operator looking for a fault that does not exist.
+func IsNothingToCompact(err error) bool {
+	var rpcErr *Error
+	if !errors.As(err, &rpcErr) {
+		return false
+	}
+	return strings.Contains(rpcErr.Message, "Nothing to compact")
+}

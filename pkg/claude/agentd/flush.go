@@ -357,6 +357,33 @@ func sendNudgeBracket(toConv string, m *db.AgentMessage, nudge string) bool {
 			return false
 		}
 	}
+	// An API-connected Copilot agent receives the same text as one whole user
+	// turn over session.send instead of as keystrokes. This is the message
+	// half of the injection sink CLAUDE.md names: a nudge carries another
+	// agent's subject line and body, which is the most caller-controlled text
+	// tclaude ever puts near a pane's input stream.
+	//
+	// The standing-order arm above still applies. Copilot's hooks fire for a
+	// turn started over RPC exactly as they do for one typed in, so the
+	// correlation the marker exists for is unaffected by the transport.
+	//
+	// Never a fallback pair with the keystrokes below: returning false leaves
+	// the durable inbox row for the queue to retry, which is the right outcome
+	// for a channel that is temporarily unavailable, whereas typing the message
+	// in would hand an agent that opted out of the keystroke path exactly the
+	// delivery it opted out of.
+	if copilotAPIDriven(toConv) {
+		if err := sendCopilotAPIMessage(toConv, nudge); err != nil {
+			if standingOrderOrigin != nil {
+				_ = db.CancelPendingStandingOrderTurnOrigin(
+					m.ToAgent, toConv, m.ID, standingOrderOrigin.OpenCodeMessageID)
+			}
+			slog.Warn("copilot API nudge failed",
+				"error", err, "conv", toConv, "msg_id", m.ID, "tmux", sess.TmuxSession)
+			return false
+		}
+		return true
+	}
 	// This recheck belongs to the exact row selected for injection: the
 	// pre-claim gate may have observed a different live session, or this pane
 	// may have entered a human-input dialog meanwhile. A narrow TOCTOU window

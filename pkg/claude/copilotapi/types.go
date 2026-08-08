@@ -84,6 +84,29 @@ type SetForegroundResult struct {
 	Error   string `json:"error,omitempty"`
 }
 
+// Delivery modes for [SendParams.Mode].
+//
+// Measured against Copilot CLI 1.0.78, because the names alone suggest a
+// stronger difference than the one that exists:
+//
+//   - SendModeEnqueue (the default) appends to the session's queue. It shows up
+//     in `session.queue.pendingItems` under `items`, and runs after the turn in
+//     flight and after anything already queued — including what the human typed
+//     into the pane.
+//   - SendModeImmediate does NOT interrupt the running turn. It lands in the
+//     same snapshot's separate `steeringMessages` lane and runs before the
+//     queued items once the current turn unwinds, so it is a queue-jump rather
+//     than an interjection. Interrupting is `session.abort`'s job, not this
+//     one's.
+//
+// Agent-to-agent delivery therefore wants the default: a message that overtook
+// the human's own queued input would reorder a conversation nobody asked to
+// reorder.
+const (
+	SendModeEnqueue   = "enqueue"
+	SendModeImmediate = "immediate"
+)
+
 // SendParams are the arguments to `session.send`.
 type SendParams struct {
 	SessionID string `json:"sessionId"`
@@ -99,6 +122,48 @@ type SendParams struct {
 // SendResult is the `session.send` reply.
 type SendResult struct {
 	MessageID string `json:"messageId"`
+}
+
+// CompactTriggerManual attributes a compaction to an explicit request, which
+// is what every compaction tclaude drives is. The server records it on the
+// persisted `session.compaction_start` / `session.compaction_complete` events;
+// omitting it leaves the compaction attributed to nobody.
+const CompactTriggerManual = "manual"
+
+// CompactParams are the arguments to `session.history.compact`.
+type CompactParams struct {
+	SessionID string `json:"sessionId"`
+	// CustomInstructions focuses the summary. Capped at 4000 characters by the
+	// server.
+	CustomInstructions string `json:"customInstructions,omitempty"`
+	// Trigger is attribution metadata; see [CompactTriggerManual].
+	Trigger string `json:"trigger,omitempty"`
+}
+
+// CompactResult is the `session.history.compact` reply.
+type CompactResult struct {
+	Success bool `json:"success"`
+	// TokensRemoved is the net change and CAN BE NEGATIVE: compaction replaces
+	// history with a generated summary, and on a short session the summary is
+	// larger than what it replaced. Do not present it as an unsigned saving.
+	TokensRemoved   int `json:"tokensRemoved"`
+	MessagesRemoved int `json:"messagesRemoved"`
+	// SummaryContent is the generated summary that replaced the history. It can
+	// run to thousands of characters, so it is worth logging deliberately
+	// rather than by including the whole result.
+	SummaryContent string                `json:"summaryContent,omitempty"`
+	ContextWindow  *CompactContextWindow `json:"contextWindow,omitempty"`
+}
+
+// CompactContextWindow is the post-compaction context breakdown returned
+// alongside a compaction result.
+type CompactContextWindow struct {
+	TokenLimit           int `json:"tokenLimit"`
+	CurrentTokens        int `json:"currentTokens"`
+	MessagesLength       int `json:"messagesLength"`
+	SystemTokens         int `json:"systemTokens"`
+	ConversationTokens   int `json:"conversationTokens"`
+	ToolDefinitionTokens int `json:"toolDefinitionsTokens"`
 }
 
 // ContextInfoParams are the arguments to `session.metadata.contextInfo`.

@@ -267,6 +267,20 @@ func deliverRename(convID, title string) bool {
 				"conv", convID, "harness", h.Name)
 			return false
 		}
+		// An API-connected Copilot agent is renamed by a typed call instead.
+		// The gate above still ran, and deliberately: it belongs to the
+		// send-keys path, which is still Copilot's default, and a title that
+		// renders differently depending on which transport a conversation
+		// happens to hold would be its own bug. See copilot_api_drive.go.
+		if copilotAPIDriven(convID) {
+			if err := renameCopilotAPISession(convID, title); err != nil {
+				slog.Warn("rename: Copilot API rename failed",
+					"conv", convID, "error", err)
+				return false
+			}
+			cacheDeliveredRename(convID, title, h.Name)
+			return true
+		}
 		if !injectSlashCommand(convID, h.Life.RenameCommand()+" "+title, "", "rename") {
 			return false
 		}
