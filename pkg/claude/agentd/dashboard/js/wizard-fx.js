@@ -124,6 +124,11 @@ export function bindWizardCursorTrail() {
   document.addEventListener('mousemove', (e) => {
     if (!isWizardActive()) return;
     if (reducedMotion()) return;
+    // A held button means the pointer is manipulating UI (including dragging
+    // a native scrollbar thumb). Appending animated emoji nodes during that
+    // latency-sensitive gesture can turn compositor scrolling into visible
+    // stutter; the decorative trail is only for free cursor movement.
+    if (e.buttons) return;
     const now = performance.now();
     if (now - cursorTrailLast < CURSOR_TRAIL_THROTTLE_MS) return;
     cursorTrailLast = now;

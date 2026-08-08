@@ -16070,14 +16070,17 @@ body.wizard .process-node-readonly-badge { color: #d4af37; border-color: #d4af37
   margin: 0; color: #7d8590; font-size: 12px; line-height: 1.45;
 }
 /* Two harnesses fit without a horizontal scrollbar at the natural size. More
-   harnesses retain fixed, equal target columns and can use either the matrix's
-   own scrollbar or the dialog's persisted bottom-right resize grip. */
+   harnesses retain fixed, equal target columns. The card is only the native
+   resize frame; the matrix is its one flexible scroll surface. Its Preact
+   owner measures the rendered table and caps this frame where every current
+   row and column fits, so the grip cannot create empty width or height. */
 #spawn-harness-policy-modal .cron-create-modal {
   width: min(760px, calc(100vw - 32px));
-  resize: both; overflow: auto;
+  resize: both; overflow: hidden;
 }
 .spawn-harness-matrix-wrap {
-  overflow: auto; max-height: min(62vh, 620px);
+  flex: 1 1 auto; min-height: 0; overflow: auto;
+  contain: layout paint; will-change: scroll-position;
   border: 1px solid #2a3340; border-radius: 5px;
   scrollbar-width: thin; scrollbar-color: #3a4553 #0d1117;
 }

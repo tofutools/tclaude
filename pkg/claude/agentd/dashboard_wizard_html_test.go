@@ -50,6 +50,7 @@ func TestDashboardHTML_WizardTheme(t *testing.T) {
 	// Bootstrap wiring: dashboard.js must install the hotkey + the FX binders.
 	must("bindWizardHotkey();", "dashboard.js installs the wizard hotkey at bootstrap")
 	must("bindWizardCursorTrail();", "dashboard.js installs the wizard cursor trail")
+	must("if (e.buttons) return;", "the cursor trail stays out of scrollbar and drag gestures")
 	must("bindWizardCastFx();", "dashboard.js installs the wizard cast FX")
 	must("bindWizardStatusWatch();", "dashboard.js installs the wizard status watch")
 	must("bindWizardMarquee();", "dashboard.js installs the wizard marquee")
