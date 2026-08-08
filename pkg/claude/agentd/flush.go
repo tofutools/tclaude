@@ -254,7 +254,7 @@ func flushQueue(label string, list func() ([]*db.AgentMessage, error), canDelive
 		delivered++
 	}
 	if delivered > 0 {
-		slog.Info("flush: delivered queued nudges", "target", label, "count", delivered)
+		slog.Debug("flush: delivered queued nudges", "target", label, "count", delivered)
 	}
 	return delivered
 }
