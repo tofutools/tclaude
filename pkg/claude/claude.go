@@ -33,30 +33,39 @@ func Cmd() *cobra.Command {
 	// The terminal dashboard implementation lives with agentd's TUI model,
 	// but its operator-facing command belongs beside `agent dashboard`.
 	agentCmd.AddCommand(agentd.TUIDashboardCmd())
+	subCmds := []*cobra.Command{
+		conv.Cmd(),
+		session.Cmd(),
+		worktree.Cmd(),
+		stats.Cmd(),
+		usage.Cmd(),
+		setup.Cmd(),
+		statusbar.Cmd(),
+		selftest.Cmd(),
+		task.Cmd(),
+		agentCmd,
+	}
+	// The proxy lends the daemon's credentials to an agent, so keep the
+	// entire surface absent unless the operator has opted into it. Besides
+	// keeping help honest, omitting the command (rather than hiding only its
+	// leaves) makes an unconfigured `tclaude proxy ...` an unknown command.
+	if proxy.Configured() {
+		subCmds = append(subCmds, proxy.Cmd())
+	}
+	subCmds = append(subCmds,
+		agentd.Cmd(),
+		memoryfiles.Cmd(),
+		processcmd.Cmd(),
+		dbcmd.Cmd(),
+		ask.Cmd(),
+		remoteaccess.Cmd(),
+	)
 	cmd := boa.CmdT[session.NewParams]{
 		Use:         "claude",
 		Short:       "Coding-agent utilities",
 		Long:        "Coding-agent utilities.\n\nWhen run without a subcommand, starts a new coding session in the current directory.",
 		ParamEnrich: common.DefaultParamEnricher(),
-		SubCmds: []*cobra.Command{
-			conv.Cmd(),
-			session.Cmd(),
-			worktree.Cmd(),
-			stats.Cmd(),
-			usage.Cmd(),
-			setup.Cmd(),
-			statusbar.Cmd(),
-			selftest.Cmd(),
-			task.Cmd(),
-			agentCmd,
-			proxy.Cmd(),
-			agentd.Cmd(),
-			memoryfiles.Cmd(),
-			processcmd.Cmd(),
-			dbcmd.Cmd(),
-			ask.Cmd(),
-			remoteaccess.Cmd(),
-		},
+		SubCmds:     subCmds,
 		RunFunc: func(params *session.NewParams, cmd *cobra.Command, args []string) {
 			if err := session.RunNewFromCommand(params, cmd); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)

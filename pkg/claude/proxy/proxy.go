@@ -17,10 +17,15 @@ package proxy
 import (
 	"encoding/json"
 	"io"
+	"net/http"
+	"os"
+	"strings"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -32,6 +37,37 @@ const (
 	rcInvalidArg = agent.RCInvalidArg
 	rcIOFailure  = agent.RCIOFailure
 )
+
+// Configured reports whether the operator has opted into any semantic proxy
+// policy. A normal host CLI can answer from config directly. A managed agent
+// cannot read the private config tree, so it asks agentd for the same one-bit
+// capability projection; none of the allow-list or credential policy crosses
+// the sandbox boundary.
+func Configured() bool {
+	cfg, err := config.Load()
+	if err == nil && cfg.GitProxyEnabled() {
+		return true
+	}
+	// Do not turn every ordinary host-side command construction into a daemon
+	// round trip. Only managed agents need the projection because only their
+	// private config view is deliberately reduced to defaults.
+	managedAgent := os.Getenv(agentipc.SocketEnv) != "" ||
+		strings.HasPrefix(os.Getenv("CODEX_PERMISSION_PROFILE"), "tclaude-agent-")
+	if !managedAgent {
+		return false
+	}
+	if !agent.DaemonAvailable() {
+		return false
+	}
+	var info struct {
+		Proxy bool `json:"proxy"`
+	}
+	if err := agent.DaemonRequest(http.MethodGet, "/v1/info", nil, &info,
+		agent.DaemonOpts{RetryOutput: io.Discard}); err != nil {
+		return false
+	}
+	return info.Proxy
+}
 
 // writeJSONIndent renders a --json response. Indented, because these bodies are
 // read by an agent deciding what to do next as often as by a script.
