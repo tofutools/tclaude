@@ -199,16 +199,186 @@ func TestEveryCopilotAPIDiallerVerifiesItsPort(t *testing.T) {
 			})
 			require.NotNil(t, body, "%s must exist for this guard to mean anything", function)
 
-			text := string(source[fset.Position(body.Pos()).Offset:fset.Position(body.End()).Offset])
-			assert.Contains(t, text, "verifiedCopilotAPIPort(",
-				"a function that dials the endpoint must take its port from the accessor "+
-					"that proves the listener belongs to the agent's pane")
-			assert.Contains(t, text, "handle.StillOwned()",
-				"the connection must be re-proved after it is established: the pre-dial proof "+
-					"is one-shot and leaves a TOCTOU window that only a post-connect re-read "+
-					"closes")
+			assert.True(t, callAlwaysEvaluated(body.Body, "verifiedCopilotAPIPort"),
+				"%s must take its port from verifiedCopilotAPIPort, which proves the "+
+					"listener belongs to the agent's pane — and must do so where it "+
+					"always runs. A call parked on a branch, or a mention in a comment, "+
+					"is not a proof", function)
+			assert.True(t, callAlwaysEvaluated(body.Body, "handle.StillOwned"),
+				"%s must re-prove ownership on the live connection: the pre-dial proof "+
+					"is one-shot and leaves a TOCTOU window that only a post-connect "+
+					"re-read closes. Measured before this guard was rewritten: deleting "+
+					"this call entirely and leaving only a comment naming it kept the "+
+					"whole agentd package green", function)
 		})
 	}
+}
+
+// alwaysEvaluatedExpr reports whether a call to name sits inside node in a
+// position that is evaluated whenever node itself is.
+//
+// It is a DESCENT THAT REFUSES TO ENTER SKIPPABLE POSITIONS, not a subtree walk
+// that looks for a name and then reasons about where it landed. That difference
+// is the whole correctness argument, and it was bought twice: a walk can only
+// ever be as complete as its author's list of places to exclude, and both this
+// guard family's beats came from a position nobody had enumerated. A descent
+// that must justify every step cannot be beaten by a construction nobody thought
+// of, because the default is to refuse.
+//
+// The rule it implements:
+//
+//	A CALL IS UNCONDITIONALLY EVALUATED ONLY IF NO OPERATOR BETWEEN IT AND THE
+//	STATEMENT ROOT CAN SKIP IT.
+//
+// So it never enters a function literal — defining a body does not run it — and
+// for && and || it enters only the leftmost operand, since every other operand is
+// conditional on that one. Everything else (parens, unary, selectors, call
+// arguments, composite-literal elements) always evaluates, so it descends.
+//
+// Both refusals are measured rather than assumed. Against the version that used
+// ast.Inspect: `cb := func() { handle.StillOwned() }` with cb never invoked, and
+// `if x != nil && handle.StillOwned()`, were both reported as always evaluated.
+// The first is the same beat that defeated the revoke guard's FuncDecl-only walk
+// earlier in this ticket family — re-imported here because the earlier fix
+// patched one guard rather than changing how these walks are written.
+func alwaysEvaluatedExpr(node ast.Node, name string) bool {
+	if node == nil {
+		return false
+	}
+	switch typed := node.(type) {
+	case *ast.FuncLit:
+		return false
+	case *ast.BinaryExpr:
+		if typed.Op == token.LAND || typed.Op == token.LOR {
+			return alwaysEvaluatedExpr(typed.X, name)
+		}
+		return alwaysEvaluatedExpr(typed.X, name) || alwaysEvaluatedExpr(typed.Y, name)
+	case *ast.CallExpr:
+		if calleeName(typed) == name {
+			return true
+		}
+		if alwaysEvaluatedExpr(typed.Fun, name) {
+			return true
+		}
+		for _, argument := range typed.Args {
+			if alwaysEvaluatedExpr(argument, name) {
+				return true
+			}
+		}
+		return false
+	case *ast.ParenExpr:
+		return alwaysEvaluatedExpr(typed.X, name)
+	case *ast.UnaryExpr:
+		return alwaysEvaluatedExpr(typed.X, name)
+	case *ast.StarExpr:
+		return alwaysEvaluatedExpr(typed.X, name)
+	case *ast.SelectorExpr:
+		return alwaysEvaluatedExpr(typed.X, name)
+	case *ast.IndexExpr:
+		return alwaysEvaluatedExpr(typed.X, name) || alwaysEvaluatedExpr(typed.Index, name)
+	case *ast.TypeAssertExpr:
+		return alwaysEvaluatedExpr(typed.X, name)
+	case *ast.CompositeLit:
+		for _, element := range typed.Elts {
+			if alwaysEvaluatedExpr(element, name) {
+				return true
+			}
+		}
+		return false
+	case *ast.KeyValueExpr:
+		return alwaysEvaluatedExpr(typed.Value, name)
+	case *ast.ExprStmt:
+		return alwaysEvaluatedExpr(typed.X, name)
+	case *ast.AssignStmt:
+		for _, rhs := range typed.Rhs {
+			if alwaysEvaluatedExpr(rhs, name) {
+				return true
+			}
+		}
+		return false
+	case *ast.ReturnStmt:
+		for _, result := range typed.Results {
+			if alwaysEvaluatedExpr(result, name) {
+				return true
+			}
+		}
+		return false
+	}
+	return false
+}
+
+// calleeName is the called function's name, QUALIFIED by its receiver when the
+// receiver is a plain identifier.
+//
+// Qualified deliberately. Matching on the bare method name let a proof about an
+// unrelated value satisfy a guard about a specific one: under review,
+// `(&copilotAPISession{}).StillOwned()` — ownership re-proved on a zero-value
+// struct — passed the dialler guard and stood in for the endpoint's entire
+// access-control story. A name is only evidence when it is the name of the thing
+// being asserted about.
+func calleeName(call *ast.CallExpr) string {
+	switch callee := call.Fun.(type) {
+	case *ast.Ident:
+		return callee.Name
+	case *ast.SelectorExpr:
+		if receiver, ok := callee.X.(*ast.Ident); ok {
+			return receiver.Name + "." + callee.Sel.Name
+		}
+		return ""
+	}
+	return ""
+}
+
+// callAlwaysEvaluated reports whether a call to name runs whenever body runs.
+//
+// # Why position and not presence
+//
+// Because this guard used to match SOURCE TEXT — it sliced the function body's
+// bytes and asked whether the string appeared in them. That range includes
+// comments, so a comment naming the call satisfied it. Measured rather than
+// argued: deleting reconnectCopilotAPISession's post-connect StillOwned re-proof
+// outright and leaving behind only a comment that named it left the ENTIRE agentd
+// package green, with the TOCTOU window the check exists to close wide open.
+//
+// These are the ownership properties of an endpoint with NO authentication, so
+// presence is not a strong enough claim to make about them.
+//
+// # What it cannot see
+//
+// Reachability. An early return above the statement leaves the call correctly
+// positioned and never executed, and no static check of call shape sees that. It
+// is also conservative in the other direction: a call reached only through a
+// loop, a select, a defer or a go statement is refused even where it does in fact
+// run, because entering those would mean reasoning about control flow this does
+// not model. A guard that rejects correct code is a real cost — the next person
+// edits it out — so that conservatism is a bounded, deliberate one rather than an
+// oversight.
+func callAlwaysEvaluated(body *ast.BlockStmt, name string) bool {
+	if body == nil {
+		return false
+	}
+	for _, statement := range body.List {
+		if labeled, ok := statement.(*ast.LabeledStmt); ok {
+			statement = labeled.Stmt
+		}
+		switch typed := statement.(type) {
+		case *ast.ExprStmt, *ast.AssignStmt, *ast.ReturnStmt:
+			if alwaysEvaluatedExpr(typed, name) {
+				return true
+			}
+		case *ast.IfStmt:
+			if alwaysEvaluatedExpr(typed.Init, name) ||
+				alwaysEvaluatedExpr(typed.Cond, name) {
+				return true
+			}
+		case *ast.SwitchStmt:
+			if alwaysEvaluatedExpr(typed.Init, name) ||
+				alwaysEvaluatedExpr(typed.Tag, name) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // TestTheCopilotAPIReconnectIssuesNoMutatingCall is the reconnect's own
@@ -249,6 +419,40 @@ func TestTheCopilotAPIReconnectIssuesNoMutatingCall(t *testing.T) {
 	// So: any call whose receiver chain ENDS in an identifier named `client` or a
 	// field named `Client`. The positive control below is what keeps the matcher
 	// itself honest — if it stops matching, the test says so instead of passing.
+	// Aliases first. Keying on the receiver's SPELLING means one assignment
+	// escapes the whole guard: `conn := client` and then `conn.SetForeground...`
+	// was measured under review to leave this green with the reconnect issuing a
+	// mutating RPC. So any local that takes its value from a client-shaped
+	// expression becomes a client name too, transitively.
+	clientNames := map[string]bool{"client": true}
+	for changed := true; changed; {
+		changed = false
+		ast.Inspect(file, func(node ast.Node) bool {
+			assign, ok := node.(*ast.AssignStmt)
+			if !ok || len(assign.Lhs) != len(assign.Rhs) {
+				return true
+			}
+			for i, rhs := range assign.Rhs {
+				target, ok := assign.Lhs[i].(*ast.Ident)
+				if !ok || clientNames[target.Name] {
+					continue
+				}
+				var isClient bool
+				switch source := rhs.(type) {
+				case *ast.Ident:
+					isClient = clientNames[source.Name]
+				case *ast.SelectorExpr:
+					isClient = source.Sel.Name == "Client" || source.Sel.Name == "client"
+				}
+				if isClient {
+					clientNames[target.Name] = true
+					changed = true
+				}
+			}
+			return true
+		})
+	}
+
 	var onTheClient []string
 	ast.Inspect(file, func(node ast.Node) bool {
 		call, ok := node.(*ast.CallExpr)
@@ -260,8 +464,8 @@ func TestTheCopilotAPIReconnectIssuesNoMutatingCall(t *testing.T) {
 			return true
 		}
 		switch receiver := selector.X.(type) {
-		case *ast.Ident: // client.X(...)
-			if receiver.Name != "client" {
+		case *ast.Ident: // client.X(...), or any alias of it
+			if !clientNames[receiver.Name] {
 				return true
 			}
 		case *ast.SelectorExpr: // handle.Client.X(...), c.client.X(...)
