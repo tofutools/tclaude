@@ -728,6 +728,7 @@ func (claudeLifecycle) RenameCommand() string        { return "/rename" }
 func (claudeLifecycle) CompactCommand() string       { return "/compact" }
 func (claudeLifecycle) SoftExitCommand() string      { return "/exit" }
 func (claudeLifecycle) RemoteControlCommand() string { return "/remote-control" }
+func (claudeLifecycle) FastModeCommand() string      { return "" }
 
 // Claude Code accepts /exit from its prompt without a preparatory key.
 func (claudeLifecycle) SoftExitPrefixKeys() []string { return nil }

@@ -52,8 +52,18 @@ func TestCodexTelemetryFollower_IncrementalMatchesFullScan(t *testing.T) {
 	appendTokenCount(t, path, 1000, 100, 1100)
 
 	follower := &CodexTelemetryFollower{}
-	assertFollowerMatchesFull(t, follower, home, id, path)
+	initial := assertFollowerMatchesFull(t, follower, home, id, path)
+	assert.False(t, initial.HasFastMode, "no settings event remains unknown")
 	firstOffset := codexFollowerOffset(t, follower)
+
+	appendThreadSettingsApplied(t, path, "priority")
+	fast := assertFollowerMatchesFull(t, follower, home, id, path)
+	assert.True(t, fast.HasFastMode)
+	assert.True(t, fast.FastMode)
+	appendThreadSettingsApplied(t, path, "default")
+	standard := assertFollowerMatchesFull(t, follower, home, id, path)
+	assert.True(t, standard.HasFastMode)
+	assert.False(t, standard.FastMode, "latest authoritative settings event wins")
 
 	// The function call and its correlated activity deliberately land in
 	// separate reads. The pending call-id map must survive the boundary.
@@ -85,6 +95,7 @@ func TestCodexTelemetryFollower_CheckpointSurvivesRestartWithFoldState(t *testin
 	path := newFollowerTestRollout(t, home, id)
 	appendSubagentActivity(t, path, "child-a", "interrupted", "")
 	appendTokenCount(t, path, 1000, 100, 1100)
+	appendThreadSettingsApplied(t, path, "priority")
 	// The correlated activity lands after the simulated daemon restart. The
 	// pending call-id therefore proves the checkpoint carries parser state, not
 	// merely an offset that would be meaningless on its own.
@@ -95,16 +106,18 @@ func TestCodexTelemetryFollower_CheckpointSurvivesRestartWithFoldState(t *testin
 	beforeRestart := &CodexTelemetryFollower{}
 	first := assertFollowerMatchesFull(t, beforeRestart, home, id, path)
 	assert.Contains(t, first.InterruptedSubagents, "child-a")
+	assert.True(t, first.HasFastMode)
+	assert.True(t, first.FastMode)
 	checkpoint, ok, err := beforeRestart.Checkpoint()
 	require.NoError(t, err)
 	require.True(t, ok)
 	var legacy map[string]any
 	require.NoError(t, json.Unmarshal(checkpoint, &legacy))
-	legacy["version"] = float64(4)
+	legacy["version"] = float64(5)
 	legacyCheckpoint, err := json.Marshal(legacy)
 	require.NoError(t, err)
 	assert.Error(t, (&CodexTelemetryFollower{}).RestoreCheckpoint(legacyCheckpoint),
-		"v4 may contain interaction-only child edges and must rebuild once on upgrade")
+		"v5 lacks authoritative Fast state and must rebuild once on upgrade")
 	checkpointOffset := codexFollowerOffset(t, beforeRestart)
 
 	restored := &CodexTelemetryFollower{}
@@ -119,10 +132,13 @@ func TestCodexTelemetryFollower_CheckpointSurvivesRestartWithFoldState(t *testin
 		"agent_thread_id": "child-a", "kind": "interacted",
 	})
 	appendTokenCount(t, path, 9000, 900, 9900)
+	appendThreadSettingsApplied(t, path, "default")
 	got := assertFollowerMatchesFull(t, restored, home, id, path)
 	assert.NotContains(t, got.InterruptedSubagents, "child-a",
 		"followup call-id from before restart clears the interrupted child")
 	assert.Equal(t, int64(9000), got.Context.TokensInput)
+	assert.True(t, got.HasFastMode)
+	assert.False(t, got.FastMode, "post-restart append advances Fast state")
 	assert.Greater(t, codexFollowerOffset(t, restored), checkpointOffset)
 
 	nextCheckpoint, ok, err := restored.Checkpoint()
@@ -815,6 +831,14 @@ func assertFollowerMatchesFull(t *testing.T, follower *CodexTelemetryFollower, h
 func appendRolloutEnvelope(t *testing.T, path, typ string, payload any) {
 	t.Helper()
 	appendBytes(t, path, append(rolloutEnvelope(t, typ, payload), '\n'))
+}
+
+func appendThreadSettingsApplied(t *testing.T, path, serviceTier string) {
+	t.Helper()
+	appendRolloutEnvelope(t, path, "event_msg", map[string]any{
+		"type":            "thread_settings_applied",
+		"thread_settings": map[string]any{"service_tier": serviceTier},
+	})
 }
 
 func newFollowerTestRollout(t *testing.T, home, id string) string {

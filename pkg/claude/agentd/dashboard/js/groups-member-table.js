@@ -149,6 +149,7 @@ export function HarnessLine({ member, snapshot }) {
   // own line below, which cost a whole row of height to say what a padlock says.
   const sandbox = html`<${SandboxBadge} member=${member}
     showDetails=${!!snapshot?.recorded_sandbox_details_enabled} />`;
+  const fastMode = html`<${FastModeBadge} member=${member} />`;
   const remote = html`<${RemoteBadge} member=${member} />`;
   const refused = html`<${BrokerRefusalBadge} member=${member} />`;
   // Only the API drive is marked. send-keys is what every Copilot agent has
@@ -198,8 +199,25 @@ export function HarnessLine({ member, snapshot }) {
       ${effort ? html`<span class="harness-effort" title=${effort}>${shortEffort(effort)}</span>` : null}
       ${cost > 0 ? html`<span class="harness-cost">${cost >= 0.005 ? `$${cost.toFixed(2)}` : '<1¢'}</span>` : null}
       ${virtualCost > 0 ? html`<span class="harness-cost harness-cost-whatif" title="Estimated pay-per-token-equivalent cost this session — hypothetical, not a real charge (subscription)">${virtualCost >= 0.005 ? `≈$${virtualCost.toFixed(2)}` : '≈<1¢'}</span>` : null}
-    </span>${sandbox}${remote}${refused}
+    </span>${sandbox}${fastMode}${remote}${refused}
   </div>`;
+}
+
+// FastModeBadge is intentionally driven only by the rollout-derived live
+// boolean. Launch profiles and arguments never reach this branch; absent state
+// and known-off state both render nothing. Codex exposes /fast as a toggle, so
+// only the known-on state is actionable.
+export function FastModeBadge({ member }) {
+  if (member.state?.fast_mode !== true) return null;
+  const actionable = !!member.online;
+  const title = actionable
+    ? 'Codex Fast mode is ON — click to disable it for this agent'
+    : 'Codex Fast mode was ON when this agent was last live';
+  return html`<span class=${`fast-mode-badge${actionable ? ' fast-mode-action' : ' runtime-meta-offline'}`}
+    role=${actionable ? 'button' : 'note'} tabindex=${actionable ? '0' : null}
+    data-act=${actionable ? 'fast-mode-disable' : null}
+    ...${actionable ? memberAttrs(member) : {}}
+    aria-label=${title} title=${title}>⚡</span>`;
 }
 
 // osSandboxBadge reduces a recorded launch verdict to the glyph's safety

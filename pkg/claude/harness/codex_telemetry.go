@@ -51,9 +51,14 @@ type CodexRuntimeSnapshot struct {
 	HasContext bool
 	Effort     string
 	HasEffort  bool
-	Usage      *CodexUsage
-	Cost       CodexTokenCost
-	HasCost    bool
+	// FastMode is the latest effective Codex service-tier state. HasFastMode
+	// distinguishes an authoritative Fast-off snapshot from a rollout that has
+	// not reported thread settings yet.
+	FastMode    bool
+	HasFastMode bool
+	Usage       *CodexUsage
+	Cost        CodexTokenCost
+	HasCost     bool
 	// CostAuthoritative distinguishes a successfully folded rollout with no
 	// priceable records from a missing/unreadable rollout. CostHistory carries
 	// cumulative local-day prefixes so corrected pricing can replace, not MAX,
@@ -137,6 +142,18 @@ type codexSubagentActivityEvent struct {
 	EventID       string `json:"event_id"`
 	AgentThreadID string `json:"agent_thread_id"`
 	Kind          string `json:"kind"`
+}
+
+// codexThreadSettingsAppliedEvent is Codex's authoritative snapshot of the
+// settings currently applied to a live thread. Fast mode is represented on the
+// request wire as the "priority" service tier (older builds may spell it
+// "fast"). The event itself is the presence bit: a null or any other tier is a
+// known Fast-off state, while no event at all remains unknown.
+type codexThreadSettingsAppliedEvent struct {
+	Type           string `json:"type"`
+	ThreadSettings struct {
+		ServiceTier *string `json:"service_tier"`
+	} `json:"thread_settings"`
 }
 
 // codexFunctionCall identifies the collaboration tool call that produced a
@@ -228,6 +245,8 @@ type codexRuntimeScanState struct {
 	contextReset         bool
 	model                string
 	effort               string
+	fastMode             bool
+	hasFastMode          bool
 	usage                *CodexUsage
 	costUSD              float64
 	costPriced           bool
@@ -263,6 +282,8 @@ func (s codexRuntimeScanState) clone() codexRuntimeScanState {
 		contextReset:         s.contextReset,
 		model:                s.model,
 		effort:               s.effort,
+		fastMode:             s.fastMode,
+		hasFastMode:          s.hasFastMode,
 		usage:                s.usage,
 		costUSD:              s.costUSD,
 		costPriced:           s.costPriced,
@@ -345,6 +366,14 @@ func (s *codexRuntimeScanState) consumeLine(line []byte) bool {
 		return false
 	}
 	switch kind.Type {
+	case "thread_settings_applied":
+		var ev codexThreadSettingsAppliedEvent
+		if json.Unmarshal(env.Payload, &ev) != nil {
+			return false
+		}
+		s.hasFastMode = true
+		s.fastMode = ev.ThreadSettings.ServiceTier != nil &&
+			(*ev.ThreadSettings.ServiceTier == "priority" || *ev.ThreadSettings.ServiceTier == "fast")
 	case "token_count":
 		var ev codexTokenCountEvent
 		if json.Unmarshal(env.Payload, &ev) != nil {
@@ -503,6 +532,8 @@ func (s *codexRuntimeScanState) snapshot() CodexRuntimeSnapshot {
 		DiscoveredSubagents:  s.discoveredSubagents,
 		Effort:               s.effort,
 		HasEffort:            s.effort != "",
+		FastMode:             s.fastMode,
+		HasFastMode:          s.hasFastMode,
 		Usage:                s.usage,
 		CostAuthoritative:    s.costAuthoritative,
 		CostHistory:          append([]CodexTokenCostDailySnapshot(nil), s.costHistory...),

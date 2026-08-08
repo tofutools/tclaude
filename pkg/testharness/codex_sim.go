@@ -400,6 +400,20 @@ func (c *CodexSim) WriteSubagentActivity(agentThreadID, agentPath, kind string) 
 	})
 }
 
+// WriteThreadSettingsApplied writes Codex's authoritative effective-settings
+// event. serviceTier uses request-wire values: "priority" is Fast and
+// "default" is standard routing.
+func (c *CodexSim) WriteThreadSettingsApplied(serviceTier string) error {
+	return c.appendLine("event_msg", map[string]any{
+		"type": "thread_settings_applied",
+		"thread_settings": map[string]any{
+			"model":        c.Model,
+			"service_tier": serviceTier,
+			"cwd":          c.Cwd,
+		},
+	})
+}
+
 // WriteSubagentInteraction writes the collaboration function call plus its
 // linked interacted event. toolName distinguishes followup_task (triggers a
 // turn) from send_message (queue-only), matching Codex's real rollout shape.

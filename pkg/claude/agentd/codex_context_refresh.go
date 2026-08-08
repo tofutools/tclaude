@@ -46,6 +46,8 @@ type codexReadThroughSnapshot struct {
 	runtimeContext        harness.ContextTelemetry
 	runtimeHasContext     bool
 	runtimeReset          bool
+	runtimeFastMode       bool
+	runtimeHasFastMode    bool
 	persistedConvID       string
 	persistedCreatedAt    time.Time
 	persistedContext      harness.ContextTelemetry
@@ -62,6 +64,8 @@ type codexContextRefreshResult struct {
 	interruptedSubagents map[string]struct{}
 	context              *harness.ContextTelemetry
 	contextReset         bool
+	fastMode             bool
+	hasFastMode          bool
 }
 
 func codexCostHistoriesEqual(a, b []harness.CodexTokenCostDailySnapshot) bool {
@@ -87,6 +91,8 @@ func codexContextRefreshResultFromCache(
 		return result
 	}
 	result.contextReset = cached.runtimeReset
+	result.fastMode = cached.runtimeFastMode
+	result.hasFastMode = cached.runtimeHasFastMode
 	if cached.runtimeHasContext && !cached.runtimeReset {
 		context := cached.runtimeContext
 		result.context = &context
@@ -652,6 +658,8 @@ func refreshCodexContextSnapshotOnReadBatched(
 		snap.Context,
 		snap.HasContext,
 		snap.ContextReset,
+		snap.FastMode,
+		snap.HasFastMode,
 		contextPersistenceDeferred,
 		cachePersistedConvID,
 		cachePersistedCreatedAt,
@@ -668,6 +676,8 @@ func refreshCodexContextSnapshotOnReadBatched(
 	result := codexContextRefreshResult{
 		interruptedSubagents: snap.InterruptedSubagents,
 		contextReset:         snap.ContextReset,
+		fastMode:             snap.FastMode,
+		hasFastMode:          snap.HasFastMode,
 	}
 	if snap.HasContext && !snap.ContextReset {
 		ctx := snap.Context
@@ -869,6 +879,8 @@ func cacheCodexRuntimeRefresh(
 	runtimeContext harness.ContextTelemetry,
 	runtimeHasContext bool,
 	runtimeReset bool,
+	runtimeFastMode bool,
+	runtimeHasFastMode bool,
 	keepRefreshing bool,
 	persistedConvID string,
 	persistedCreatedAt time.Time,
@@ -898,6 +910,8 @@ func cacheCodexRuntimeRefresh(
 	prev.runtimeContext = runtimeContext
 	prev.runtimeHasContext = runtimeHasContext
 	prev.runtimeReset = runtimeReset
+	prev.runtimeFastMode = runtimeFastMode
+	prev.runtimeHasFastMode = runtimeHasFastMode
 	prev.persistedConvID = persistedConvID
 	prev.persistedCreatedAt = persistedCreatedAt
 	prev.persistedContext = persistedContext

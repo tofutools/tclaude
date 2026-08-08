@@ -334,6 +334,13 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 			}
 			dashboardSandboxRestartAgent(w, r, convSelector)
 			return
+		case "fast-mode/disable":
+			if r.Method != http.MethodPost {
+				http.Error(w, "POST only", http.StatusMethodNotAllowed)
+				return
+			}
+			dashboardDisableCodexFastModeAgent(w, r, convSelector)
+			return
 		case "sandbox-impl":
 			if r.Method != http.MethodGet && r.Method != http.MethodPost {
 				http.Error(w, "GET or POST only", http.StatusMethodNotAllowed)

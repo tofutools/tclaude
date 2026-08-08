@@ -1922,6 +1922,11 @@ type agentState struct {
 	// between stop and resume so the dashboard never mistakes an unlocked
 	// agent for one using its normal posture.
 	TemporaryHarnessBuiltinMode string `json:"temporary_sandbox_mode,omitempty"`
+	// FastMode is present only when a live Codex rollout has reported an
+	// authoritative thread_settings_applied snapshot. A false pointer means
+	// known standard routing; nil means unknown and must not be inferred from
+	// launch arguments or profiles.
+	FastMode *bool `json:"fast_mode,omitempty"`
 	// BgShellCount is how many background shell commands (Claude Code
 	// `Bash` with run_in_background) the agent still has running — the
 	// dashboard's "⚙+N" badge. Like SubagentCount it is only ever
@@ -2277,6 +2282,10 @@ func stateForConvInSessionsBatched(
 	// context window, so there is no batching or cost history to fold in.
 	refreshCopilotContextSnapshotOnRead(pick, alive)
 	codexInterruptedSubagents := codexRefresh.interruptedSubagents
+	if codexRefresh.hasFastMode {
+		fastMode := codexRefresh.fastMode
+		out.FastMode = &fastMode
+	}
 	// Sub-agents run INSIDE the harness process, so a dead session has
 	// none by definition — a stale count on an exited row must not render
 	// a "🤖+N" badge. For a live row, prefer the TTL-filtered ledger over

@@ -39,6 +39,7 @@ func (openCodeLifecycle) RenameCommand() string        { return "" }
 func (openCodeLifecycle) CompactCommand() string       { return "/compact" }
 func (openCodeLifecycle) SoftExitCommand() string      { return "/exit" }
 func (openCodeLifecycle) RemoteControlCommand() string { return "" }
+func (openCodeLifecycle) FastModeCommand() string      { return "" }
 
 // OpenCode never receives its soft exit as keystrokes — the daemon dispatches
 // app.exit through the managed TUI API — so a pane-input prefix has nothing to
