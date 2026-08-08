@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"time"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -74,40 +75,46 @@ func copilotAPILoopbackFailure(
 }
 
 // prepareCopilotAPIPort allocates this launch's Copilot API port and writes it
-// into args, returning the conversation the record will be keyed by.
+// into args.
 //
 // Called from the two spawn facades, which is the last point where BOTH the
 // number and the launch are in one place: below here the argv has been rendered
-// and forked, and above here there are four SpawnArgs construction sites that
+// and forked, and above there are several SpawnArgs construction sites that
 // would each have to remember to do this.
 //
-// A launch that asked for the API drive but has no conversation id is refused
-// rather than launched without a record. The pane would come up and listen, and
-// agentd would have no way to find the port again — an agent that looks healthy
-// and is unreachable, which is the failure this whole ticket exists to avoid.
+// Allocation is NOT conditional on knowing the conversation id, and the two
+// must not be coupled. The port has to be in the argv, so it has to be chosen
+// before the fork; the conv id does not, because most launches preset it but
+// some MINT it — an unenrolled clone or reincarnation lets the harness choose
+// the id and discovers it afterwards from the session row. Requiring the id
+// here would refuse those launches outright, which is a strictly worse outcome
+// than recording their port a moment later. See recordCopilotAPIPort.
 //
 // Nothing is written to the database here. The record is the caller's job and
 // belongs strictly after a successful hand-off; a port recorded before the
 // spawn outlives a spawn that failed.
-func prepareCopilotAPIPort(args *clcommon.SpawnArgs, convID string) (string, error) {
+func prepareCopilotAPIPort(args *clcommon.SpawnArgs) error {
 	if !args.CopilotAPI {
-		return "", nil
-	}
-	if convID == "" {
-		return "", fmt.Errorf(
-			"the API-backed Copilot drive needs the conversation id before launch, " +
-				"so the allocated port can be recorded against it")
+		return nil
 	}
 	port, err := allocateCopilotAPIPort()
 	if err != nil {
-		return "", err
+		return err
 	}
 	args.CopilotAPIPort = port
-	return convID, nil
+	return nil
 }
 
 // recordCopilotAPIPort persists the port a launch was handed, AFTER the launch
-// has been handed off.
+// has been handed off and once its conversation id is known.
+//
+// Two call moments, because launches learn their conv id at two different
+// times. A launch that PRESET the id (an enrolled spawn, a resume, a copy
+// clone) records straight after the fork, from the spawn facade. A launch that
+// let the harness MINT the id records at the point it discovers it — the poll
+// over the session row that clone and reincarnate already run to find out what
+// they launched. Both land well before anything can use the port, which is the
+// only ordering that matters.
 //
 // Best-effort by design. The pane is already starting by the time this runs, so
 // returning an error here would report a failed spawn for a launch that
@@ -127,15 +134,46 @@ func recordCopilotAPIPort(convID string, port int) {
 }
 
 // releaseCopilotAPIPortForExit drops the port claim of a Copilot conversation
-// whose pane is gone.
+// that no longer has a launch.
 //
-// Harness-gated so the reaper's hot loop does not query the database once per
-// non-Copilot agent per tick. A send-keys Copilot agent has no row either, and
-// deleting nothing is cheap, so the gate is on the harness rather than on the
-// drive — the drive is not on the state this loop reads, and fetching it would
-// cost more than the delete it would save.
-func releaseCopilotAPIPortForExit(harnessName, convID string) {
-	if harnessName != harness.CopilotName {
+// Driven by an EXITED session row, but deliberately not decided by one. Session
+// rows are per-launch and exited ones are retained; the port record is per
+// CONVERSATION and a relaunch reuses the conv id. So a relaunched agent has a
+// live row and its own predecessor's exited row under one id, and releasing on
+// the exited row alone would delete the successor's live record — on the next
+// tick, and on every tick after, because the predecessor is never cleaned up.
+// convsWithLiveLaunch is what makes the exited row's evidence conditional.
+//
+// The grace covers the other end of the same window. A launch records its port
+// immediately after the fork, while the new session row appears a moment later,
+// so a tick landing in between sees a conversation with no live launch and a
+// record that is nonetheless perfectly good. Refusing to release a record
+// younger than the reaper's own spawn grace closes that gap, using the same
+// window the reaper already trusts for "this row may just be mid-spawn".
+//
+// Harness-gated first so the reaper's hot loop does not touch the database once
+// per non-Copilot agent per tick.
+func releaseCopilotAPIPortForExit(
+	harnessName, convID string,
+	convsWithLiveLaunch map[string]bool,
+	grace time.Duration,
+) {
+	if harnessName != harness.CopilotName || convID == "" {
+		return
+	}
+	if convsWithLiveLaunch[convID] {
+		return
+	}
+	runtime, err := db.GetCopilotAPIRuntime(convID)
+	if err != nil {
+		slog.Warn("failed to read Copilot API port record before release",
+			"conv_id", convID, "error", err)
+		return
+	}
+	if runtime == nil {
+		return
+	}
+	if time.Since(runtime.UpdatedAt) < grace {
 		return
 	}
 	releaseCopilotAPIPort(convID)

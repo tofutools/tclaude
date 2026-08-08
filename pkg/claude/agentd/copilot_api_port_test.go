@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -13,6 +14,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // The refusal this ticket added: the API drive is a loopback TCP channel, and a
@@ -122,30 +124,26 @@ func TestAllocateCopilotAPIPortReturnsAFreePort(t *testing.T) {
 // A send-keys launch allocates nothing at all — no port, no record, no change.
 func TestPrepareCopilotAPIPortIsQuietWithoutTheDrive(t *testing.T) {
 	args := clcommon.SpawnArgs{SessionID: "conv-1"}
-	convID, err := prepareCopilotAPIPort(&args, args.SessionID)
-	require.NoError(t, err)
-	assert.Empty(t, convID)
+	require.NoError(t, prepareCopilotAPIPort(&args))
 	assert.Zero(t, args.CopilotAPIPort)
 }
 
-// An API launch with no conversation id is refused before it starts. Letting it
-// through would produce a pane that listens on a port agentd can never look up
-// again: healthy-looking and permanently unreachable.
-func TestPrepareCopilotAPIPortNeedsAConversation(t *testing.T) {
+// Allocation must NOT depend on knowing the conversation yet. The port has to
+// be in the argv, so it is chosen before the fork; the conv id does not, and an
+// unenrolled clone or reincarnation mints it afterwards. Coupling the two would
+// refuse those launches outright rather than record their port a moment later.
+func TestPrepareCopilotAPIPortAllocatesWithoutAConversation(t *testing.T) {
 	args := clcommon.SpawnArgs{CopilotAPI: true}
-	_, err := prepareCopilotAPIPort(&args, "")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "conversation id")
-	assert.Zero(t, args.CopilotAPIPort, "a refused launch must not carry a port")
+	require.NoError(t, prepareCopilotAPIPort(&args))
+	assert.Positive(t, args.CopilotAPIPort,
+		"a launch that mints its conv-id later still needs a port in its argv")
 }
 
 // The happy path: a port is chosen and written into the args the argv is built
 // from, so the number agentd holds is the number the pane is told to bind.
 func TestPrepareCopilotAPIPortAllocatesForTheDrive(t *testing.T) {
 	args := clcommon.SpawnArgs{CopilotAPI: true, SessionID: "conv-1"}
-	convID, err := prepareCopilotAPIPort(&args, args.SessionID)
-	require.NoError(t, err)
-	assert.Equal(t, "conv-1", convID)
+	require.NoError(t, prepareCopilotAPIPort(&args))
 	assert.Positive(t, args.CopilotAPIPort)
 }
 
@@ -211,4 +209,90 @@ func TestCopilotAPIUnverifiedErrorNamesTheFailure(t *testing.T) {
 	assert.Contains(t, foreign.Error(), "outside the agent's pane subtree")
 	assert.Contains(t, foreign.Error(), "no authentication",
 		"the refusal must say why an unverified listener cannot simply be used")
+}
+
+// Regression: a relaunched agent's port record must survive its own
+// predecessor.
+//
+// Session rows are per-launch and exited ones are retained, but the port record
+// is per conversation and a relaunch reuses the conv id. So the predecessor's
+// exited row and the successor's live row share an id, and releasing off the
+// exited row alone deleted the successor's record — on the next tick, and every
+// tick after, because nothing ever cleans the predecessor up.
+func TestReleaseCopilotAPIPortKeepsARelaunchedConversation(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	db.ResetForTest()
+
+	require.NoError(t, db.UpsertCopilotAPIRuntime(
+		db.CopilotAPIRuntime{ConvID: "conv-1", Port: 4599}))
+
+	// The predecessor's exited row is what drives the release, but the
+	// conversation still has a live launch.
+	releaseCopilotAPIPortForExit(
+		harness.CopilotName, "conv-1", map[string]bool{"conv-1": true}, 0)
+
+	got, err := db.GetCopilotAPIRuntime("conv-1")
+	require.NoError(t, err)
+	require.NotNil(t, got, "a conversation with a live launch must keep its port")
+	assert.Equal(t, 4599, got.Port)
+}
+
+// Regression: a record younger than the spawn grace must not be released.
+//
+// A launch records its port immediately after the fork; its session row appears
+// a moment later. A reaper tick landing in between sees a conversation with no
+// live launch and a record that is nonetheless perfectly good.
+func TestReleaseCopilotAPIPortSparesAFreshRecord(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	db.ResetForTest()
+
+	require.NoError(t, db.UpsertCopilotAPIRuntime(
+		db.CopilotAPIRuntime{ConvID: "conv-1", Port: 4599}))
+
+	releaseCopilotAPIPortForExit(
+		harness.CopilotName, "conv-1", map[string]bool{}, time.Hour)
+
+	got, err := db.GetCopilotAPIRuntime("conv-1")
+	require.NoError(t, err)
+	assert.NotNil(t, got, "a just-recorded port belongs to a launch still coming up")
+}
+
+// The case release exists for: the conversation has no live launch and its
+// record is old enough that no launch can still be starting.
+func TestReleaseCopilotAPIPortDropsADeadConversation(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	db.ResetForTest()
+
+	require.NoError(t, db.UpsertCopilotAPIRuntime(
+		db.CopilotAPIRuntime{ConvID: "conv-1", Port: 4599}))
+
+	releaseCopilotAPIPortForExit(harness.CopilotName, "conv-1", map[string]bool{}, 0)
+
+	got, err := db.GetCopilotAPIRuntime("conv-1")
+	require.NoError(t, err)
+	assert.Nil(t, got, "an exited agent must leave no port claim behind")
+}
+
+// A non-Copilot exit must not reach the database at all — the reaper walks
+// every session row on every tick.
+func TestReleaseCopilotAPIPortIgnoresOtherHarnesses(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	db.ResetForTest()
+
+	require.NoError(t, db.UpsertCopilotAPIRuntime(
+		db.CopilotAPIRuntime{ConvID: "conv-1", Port: 4599}))
+
+	releaseCopilotAPIPortForExit(harness.CodexName, "conv-1", map[string]bool{}, 0)
+
+	got, err := db.GetCopilotAPIRuntime("conv-1")
+	require.NoError(t, err)
+	assert.NotNil(t, got, "another harness's exit says nothing about a Copilot port")
 }

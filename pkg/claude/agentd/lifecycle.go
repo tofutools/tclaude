@@ -7320,14 +7320,17 @@ func reserveUniqueSpawnPrivateAttachmentRootWith(
 // setup; production keeps the LiveSpawner default. See clcommon.SpawnArgs
 // for the per-field semantics.
 func SpawnDetachedTclaudeNew(args clcommon.SpawnArgs) error {
-	convID, err := prepareCopilotAPIPort(&args, args.SessionID)
-	if err != nil {
+	if err := prepareCopilotAPIPort(&args); err != nil {
 		return err
 	}
 	if err := Spawn.SpawnNew(args); err != nil {
 		return err
 	}
-	recordCopilotAPIPort(convID, args.CopilotAPIPort)
+	// SessionID is the PRESET conv id, and is empty on a launch that lets the
+	// harness mint one. Those callers record the port themselves once their
+	// discovery poll resolves the id; recording nothing here is correct rather
+	// than a gap. See recordCopilotAPIPort.
+	recordCopilotAPIPort(args.SessionID, args.CopilotAPIPort)
 	return nil
 }
 
@@ -7344,14 +7347,15 @@ func SpawnDetachedTclaudeNew(args clcommon.SpawnArgs) error {
 // same way; relaunch never re-engages the experimental guardian, so resume
 // callers leave it false.
 func SpawnDetachedTclaudeResume(args clcommon.SpawnArgs) error {
-	convID, err := prepareCopilotAPIPort(&args, args.ConvID)
-	if err != nil {
+	if err := prepareCopilotAPIPort(&args); err != nil {
 		return err
 	}
 	if err := Spawn.SpawnResume(args); err != nil {
 		return err
 	}
-	recordCopilotAPIPort(convID, args.CopilotAPIPort)
+	// A resume always knows its conversation — that is what it is resuming — so
+	// unlike the fresh-spawn path this never defers the record.
+	recordCopilotAPIPort(args.ConvID, args.CopilotAPIPort)
 	return nil
 }
 

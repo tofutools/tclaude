@@ -434,6 +434,17 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
+	// The successor inherits the predecessor's drive, so it inherits the
+	// requirement that comes with it. Re-asked here rather than trusted from the
+	// spawn that admitted the predecessor: the profile can have been narrowed
+	// since, and a successor launched into a private network namespace would
+	// come back with a channel that can never connect.
+	if fail := copilotAPILoopbackFailure(
+		relaunch.CopilotAPI, effectiveSandbox, reincarnateSandboxImplementation,
+	); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
 	if _, fail := planSandboxProfileAccessForLaunch(
 		relaunch.Harness, reincarnateSandbox, effectiveSandbox,
 		reincarnateSandboxImplementation,
@@ -684,6 +695,11 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 				}
 			} else if s.ConvID != "" {
 				newConv = s.ConvID
+				// Without launch enrollment the harness minted this id, so this
+				// is the first moment the successor's already allocated Copilot
+				// API port has a conversation to be recorded against. No-ops
+				// unless this reincarnation took the API drive.
+				recordCopilotAPIPort(s.ConvID, spawnArgs.CopilotAPIPort)
 				break
 			}
 		}

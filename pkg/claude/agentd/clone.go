@@ -258,6 +258,18 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 			Status: fail.Status, Code: fail.Kind, Msg: fail.Msg,
 		}
 	}
+	// The clone inherits the source's drive, so it inherits the requirement that
+	// comes with it. Asked here for the same reason resume and reincarnate ask:
+	// the profile may have been narrowed since the source was admitted, and a
+	// clone launched into a private network namespace would come up with a
+	// channel that can never connect.
+	if fail := copilotAPILoopbackFailure(
+		relaunch.CopilotAPI, effectiveSandbox, relaunch.SandboxImplementation,
+	); fail != nil {
+		return cloneSpawnResult{}, &cloneSpawnError{
+			Status: fail.Status, Code: fail.Kind, Msg: fail.Msg,
+		}
+	}
 	if _, fail := planSandboxProfileAccessForLaunch(
 		srcHarness, cloneSandbox, effectiveSandbox, relaunch.SandboxImplementation,
 		session.ModelTransportLaunchContext{Model: model, Cwd: cwd},
@@ -539,6 +551,11 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 					if remoteControl {
 						armRemoteControlOnNewRow(label)
 					}
+					// This branch IS the discovery channel for a harness-minted
+					// conv-id, so it is also the first moment the clone's already
+					// allocated Copilot API port can be recorded against a
+					// conversation. No-ops unless this launch took the API drive.
+					recordCopilotAPIPort(s.ConvID, proofArgs.CopilotAPIPort)
 					res.NewConv, res.NewTmux, res.Label = s.ConvID, newTmux, label
 					commitRouteHelper()
 					return res, nil

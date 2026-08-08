@@ -103,18 +103,18 @@ func copilotAPIUnverifiedError(convID string, port int, sawPane, sawListener boo
 	switch {
 	case !sawPane:
 		return fmt.Errorf(
-			"Copilot API port %d for %s could not be verified: no live pane process was "+
+			"copilot API port %d for %s could not be verified: no live pane process was "+
 				"found for the conversation within %s, so the agent never started or has "+
 				"already exited", port, convID, copilotAPIStartupTimeout)
 	case !sawListener:
 		return fmt.Errorf(
-			"Copilot API port %d for %s could not be verified: the pane is running but "+
+			"copilot API port %d for %s could not be verified: the pane is running but "+
 				"nothing ever listened on the port within %s — check the pane for a Copilot "+
 				"startup prompt (folder trust blocks the TUI even though the port would "+
 				"otherwise be up) or a launch error", port, convID, copilotAPIStartupTimeout)
 	default:
 		return fmt.Errorf(
-			"Copilot API port %d for %s is held by a process outside the agent's pane "+
+			"copilot API port %d for %s is held by a process outside the agent's pane "+
 				"subtree: tclaude reserved the port and lost it before the pane could bind "+
 				"it. Refusing to talk to it — this endpoint has no authentication, so an "+
 				"unverified listener cannot be told apart from another agent's or an "+
