@@ -220,6 +220,20 @@ type fakeCopilotServer struct {
 	listener net.Listener
 	mu       sync.Mutex
 	conns    []net.Conn
+	// calls records every request the server was asked to answer, in order, so
+	// a test can assert WHICH typed call carried a delivery instead of only
+	// that some bytes moved.
+	calls []fakeCopilotCall
+	// failures maps a method to the error message it should fail with,
+	// letting a test drive the "the channel is there and the call failed"
+	// case, which is the one where a fallback to keystrokes would be tempting.
+	failures map[string]string
+}
+
+// fakeCopilotCall is one request the fake server answered.
+type fakeCopilotCall struct {
+	Method string
+	Params json.RawMessage
 }
 
 func newFakeCopilotServer(t *testing.T) *fakeCopilotServer {
@@ -272,22 +286,78 @@ func (s *fakeCopilotServer) serve(conn net.Conn) {
 		var request struct {
 			ID     json.RawMessage `json:"id"`
 			Method string          `json:"method"`
+			Params json.RawMessage `json:"params"`
 		}
 		if err := json.Unmarshal(payload, &request); err != nil || len(request.ID) == 0 {
 			continue
 		}
-		result := json.RawMessage(`{}`)
-		if request.Method == copilotapi.MethodConnect {
-			result = json.RawMessage(fmt.Sprintf(
+		s.mu.Lock()
+		s.calls = append(s.calls, fakeCopilotCall{Method: request.Method, Params: request.Params})
+		failure, failed := s.failures[request.Method]
+		s.mu.Unlock()
+
+		envelope := map[string]any{"jsonrpc": "2.0", "id": request.ID}
+		switch {
+		case failed:
+			envelope["error"] = map[string]any{
+				"code": copilotapi.CodeInternalError, "message": failure,
+			}
+		case request.Method == copilotapi.MethodConnect:
+			envelope["result"] = json.RawMessage(fmt.Sprintf(
 				`{"ok":true,"protocolVersion":%d,"version":"1.0.78"}`,
 				copilotapi.SupportedProtocolVersion))
+		case request.Method == copilotapi.MethodSessionSend:
+			envelope["result"] = json.RawMessage(`{"messageId":"msg-1"}`)
+		case request.Method == copilotapi.MethodSessionCompact:
+			// A REALISTIC success, not `{}`. The bare object decodes to
+			// success:false, and Compact now treats that as the in-band refusal
+			// it is — so a default of `{}` would have made every compaction test
+			// exercise the failure path while reading as the success one. The
+			// refusal itself is pinned where the conversion lives, in
+			// copilotapi's own tests.
+			envelope["result"] = json.RawMessage(
+				`{"success":true,"tokensRemoved":-213,"messagesRemoved":5}`)
+		default:
+			envelope["result"] = json.RawMessage(`{}`)
 		}
-		body, _ := json.Marshal(map[string]any{
-			"jsonrpc": "2.0", "id": request.ID, "result": result,
-		})
+		body, _ := json.Marshal(envelope)
 		_, _ = fmt.Fprintf(conn, "Content-Length: %d\r\n\r\n%s", len(body), body)
 	}
 }
+
+// methodsCalled returns the request methods the server has answered, in order.
+func (s *fakeCopilotServer) methodsCalled() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	methods := make([]string, 0, len(s.calls))
+	for _, call := range s.calls {
+		methods = append(methods, call.Method)
+	}
+	return methods
+}
+
+// paramsFor returns the params of the first call to method, or nil.
+func (s *fakeCopilotServer) paramsFor(method string) json.RawMessage {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, call := range s.calls {
+		if call.Method == method {
+			return call.Params
+		}
+	}
+	return nil
+}
+
+// failMethod makes the server answer method with a JSON-RPC error.
+func (s *fakeCopilotServer) failMethod(method, message string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failures == nil {
+		s.failures = map[string]string{}
+	}
+	s.failures[method] = message
+}
+
 
 func readFull(reader *bufio.Reader, buf []byte) (int, error) {
 	read := 0

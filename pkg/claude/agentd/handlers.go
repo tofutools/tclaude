@@ -1491,17 +1491,82 @@ func messageInlineText(m *db.AgentMessage) (string, bool) {
 // between them. That is consistent with the best-effort follow-up
 // ordering described above and is not a regression.
 func injectSlashCommand(convID, line, followUp, reason string) bool {
+	transport, _ := dispatchSlashCommand(convID, line, followUp, reason)
+	return transport != slashTransportNone
+}
+
+// slashTransport names the channel a lifecycle command was ACTUALLY delivered
+// over, as reported by the branch that delivered it.
+//
+// It exists because the obvious alternative — deciding what to tell the caller
+// from the same condition that selected the branch — is the proxy-value mistake
+// this series keeps making: TCL-1053 shipped an echo that reported send-keys
+// while the pane was being driven over the API, derived from a value that was
+// correct about the launch and wrong about the delivery. A transport that comes
+// back FROM the delivery cannot disagree with it.
+type slashTransport string
+
+const (
+	// slashTransportNone means nothing was delivered.
+	slashTransportNone        slashTransport = ""
+	slashTransportSendKeys    slashTransport = "send-keys"
+	slashTransportOpenCodeAPI slashTransport = "opencode-api"
+	slashTransportCopilotAPI  slashTransport = "copilot-api"
+)
+
+// slashFailure names WHY nothing was delivered, and — like slashTransport — it
+// is reported BY the branch that failed rather than re-derived afterwards.
+//
+// Splitting the failure out was the second half of the same fix. The first
+// version reported the transport honestly on success and then, on failure,
+// re-asked "is this conversation on the Copilot API drive?" to pick an error
+// code — after the dispatch, from a value that could disagree with what the
+// dispatch actually did. Both directions are reachable: a conversation with a
+// live handle whose PANE probe failed never enters the Copilot branch at all,
+// yet would be told its Copilot API dispatch failed; and a Copilot dispatch that
+// failed and then lost its connection would be told it has no tmux session. The
+// error code is what callers branch on, so this is not cosmetic.
+type slashFailure string
+
+const (
+	slashFailureNone slashFailure = ""
+	// slashFailureNoPane means no live pane was found for the conversation, so
+	// no channel was even selected.
+	slashFailureNoPane slashFailure = "no_tmux"
+	// slashFailureControl means a managed channel was selected and refused.
+	slashFailureControl slashFailure = "control_unavailable"
+)
+
+// dispatchSlashCommand is injectSlashCommand's body, reporting which channel
+// carried the command — or, when none did, which step said no.
+func dispatchSlashCommand(
+	convID, line, followUp, reason string,
+) (slashTransport, slashFailure) {
 	sess := aliveSessionForConv(convID)
 	if sess == nil {
-		return false
+		return slashTransportNone, slashFailureNoPane
 	}
 	if sess.Harness == harness.OpenCodeName {
-		return injectOpenCodeSlashCommand(sess, line, followUp, reason)
+		if injectOpenCodeSlashCommand(sess, line, followUp, reason) {
+			return slashTransportOpenCodeAPI, slashFailureNone
+		}
+		return slashTransportNone, slashFailureControl
+	}
+	// An API-driven Copilot agent takes the typed channel. Never a fallback
+	// pair with the keystrokes below: an agent that opted out of the injection
+	// sink must not be returned to it one failure at a time, and "the channel
+	// is not up" is a refusal rather than permission to type. See
+	// copilot_api_drive.go.
+	if copilotAPIDriven(convID) {
+		if dispatchCopilotAPISlashCommand(sess, line, followUp, reason) {
+			return slashTransportCopilotAPI, slashFailureNone
+		}
+		return slashTransportNone, slashFailureControl
 	}
 	target := sess.TmuxSession + ":0.0"
 	if err := injectTextAndSubmit(target, line); err != nil {
 		slog.Warn("slash-command inject failed", "error", err, "tmux", sess.TmuxSession, "line", line, "reason", reason)
-		return false
+		return slashTransportNone, slashFailureNoPane
 	}
 	slog.Info("slash-command injected via send-keys",
 		"conv_id", convID,
@@ -1513,9 +1578,50 @@ func injectSlashCommand(convID, line, followUp, reason string) bool {
 	if followUp != "" {
 		if err := injectTextAndSubmit(target, followUp); err != nil {
 			slog.Warn("slash-command follow-up failed", "error", err, "tmux", sess.TmuxSession)
-			return false
+			return slashTransportNone, slashFailureNoPane
 		}
 	}
+	return slashTransportSendKeys, slashFailureNone
+}
+
+// dispatchCopilotAPISlashCommand maps a Copilot lifecycle command onto its
+// typed RPC.
+//
+// The mapping is by lifecycle TOKEN, and the tokens are compile-time constants
+// from the harness lifecycle — never caller input — which is the property that
+// keeps this a fixed switch rather than a command interpreter. An unmapped
+// token fails closed exactly as OpenCode's does: no keystroke fallback, because
+// the whole point of an API-connected agent is that it does not have one.
+//
+// Compaction is the only token that reaches here today. That is not a claim
+// about which lifecycle commands exist — it is what this sink carries: rename
+// branches earlier, in deliverRename, and soft exit does not come through
+// dispatchSlashCommand at all (it goes through injectSoftExitTarget, which
+// needs the harness's prefix keys). The soft-exit decision and the measurements
+// behind it live where soft exit actually is, next to that branch in
+// lifecycle.go.
+func dispatchCopilotAPISlashCommand(sess *db.SessionRow, line, followUp, reason string) bool {
+	if sess == nil {
+		return false
+	}
+	life := harnessForConv(sess.ConvID).Life
+	if life == nil {
+		return false
+	}
+	if line != life.CompactCommand() {
+		slog.Warn("copilot API: lifecycle command has no typed RPC mapping; refusing to "+
+			"fall back to keystrokes",
+			"conv_id", sess.ConvID, "line", line, "reason", reason)
+		return false
+	}
+	if err := compactCopilotAPISession(sess.ConvID, followUp); err != nil {
+		slog.Warn("copilot API: compaction dispatch failed",
+			"error", err, "conv_id", sess.ConvID, "line", line, "reason", reason)
+		return false
+	}
+	slog.Info("copilot API: lifecycle command dispatched over RPC",
+		"conv_id", sess.ConvID, "line", line, "reason", reason,
+		"tmux_session", sess.TmuxSession, "has_follow_up", followUp != "")
 	return true
 }
 
@@ -2069,24 +2175,21 @@ func runSlashOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 			"OpenCode cannot safely order a compact follow-up; compact without a follow-up, wait for idle, then send the next turn")
 		return
 	}
-	if !injectSlashCommand(target, slash, body.FollowUp, slashReason(label, caller, target)) {
-		if h.Name == harness.OpenCodeName {
-			writeError(w, http.StatusServiceUnavailable, "control_unavailable",
-				"target conv "+short8(target)+" could not dispatch "+slash+
-					" through its managed OpenCode TUI; retry when the session is idle")
-			return
-		}
-		writeError(w, http.StatusServiceUnavailable, "no_tmux",
-			"target conv "+short8(target)+" has no live tmux session to inject "+slash+" into")
+	// BOTH halves come back FROM the dispatch — the transport that carried it
+	// and, on failure, the step that said no. Neither is re-derived afterwards
+	// from a condition that could have changed, or that the dispatch never
+	// reached. TCL-1053 shipped the other version.
+	transport, failure := dispatchSlashCommand(
+		target, slash, body.FollowUp, slashReason(label, caller, target))
+	if transport == slashTransportNone {
+		writeError(w, http.StatusServiceUnavailable, string(failure),
+			slashFailureDetail(failure, target, slash))
 		return
 	}
 	resp := map[string]any{
 		"conv_id": target,
 		"action":  label,
-		"note":    slash + " submitted via tmux send-keys; CC will process it on its next turn",
-	}
-	if h.Name == harness.OpenCodeName {
-		resp["note"] = slash + " dispatched via the managed OpenCode TUI API"
+		"note":    slashNote(transport, slash, body.FollowUp != ""),
 	}
 	if caller != "" && caller != target {
 		resp["caller_conv"] = caller
@@ -2094,12 +2197,56 @@ func runSlashOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	}
 	if body.FollowUp != "" {
 		resp["follow_up"] = body.FollowUp
-		resp["note"] = slash + " + follow-up submitted via tmux send-keys; the follow-up bytes queue in the pty until CC resumes reading after " + slash + " settles"
-		if h.Name == harness.OpenCodeName {
-			resp["note"] = slash + " dispatched via the managed OpenCode TUI API; follow-up delivered via prompt_async"
-		}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// slashFailureDetail renders the operator-facing sentence for a dispatch that
+// delivered nothing.
+//
+// Phrased from the step that failed, not from the harness: "no pane was found"
+// and "a managed channel refused" are different remedies, and the second is
+// deliberately worded so an operator does not go looking for the command in the
+// pane — for an API-driven agent it was never typed there, by design.
+func slashFailureDetail(failure slashFailure, target, slash string) string {
+	if failure == slashFailureControl {
+		return "target conv " + short8(target) + " could not dispatch " + slash +
+			" through its managed API channel; it is deliberately not typed into the " +
+			"pane instead. Retry when the session is idle and its channel is up"
+	}
+	return "target conv " + short8(target) + " has no live tmux session to inject " +
+		slash + " into"
+}
+
+// slashNote describes what actually happened, per transport. Each arm is
+// written from that channel's real ordering guarantee, because the three
+// differ and the difference is the whole reason a caller reads this field:
+// send-keys cannot order a follow-up behind the command, OpenCode refuses the
+// pair outright, and Copilot's compaction RPC resolves only when compaction is
+// done, so its follow-up is ordered by construction.
+func slashNote(transport slashTransport, slash string, hasFollowUp bool) string {
+	switch transport {
+	case slashTransportOpenCodeAPI:
+		return slash + " dispatched via the managed OpenCode TUI API"
+	case slashTransportCopilotAPI:
+		if hasFollowUp {
+			return slash + " requested over the Copilot API; the follow-up is submitted once " +
+				slash + " resolves, so the two are ordered"
+		}
+		return slash + " requested over the Copilot API; the outcome lands in the daemon log"
+	case slashTransportNone:
+		// Unreachable from the handler, which returns on a none transport before
+		// asking for a note. Spelled out anyway because a function whose ONLY
+		// job is to stop transport strings from being wrong must not have an arm
+		// that renders "submitted via tmux send-keys" for a delivery that did
+		// not happen.
+		return "nothing was delivered"
+	default:
+		if hasFollowUp {
+			return slash + " + follow-up submitted via tmux send-keys; the follow-up bytes queue in the pty until CC resumes reading after " + slash + " settles"
+		}
+		return slash + " submitted via tmux send-keys; CC will process it on its next turn"
+	}
 }
 
 // isValidFollowUp enforces follow-up prompt sanitization.

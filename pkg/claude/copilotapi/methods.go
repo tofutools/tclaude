@@ -18,6 +18,7 @@ const (
 	MethodSessionGetFg       = "session.getForeground"
 	MethodSessionSend        = "session.send"
 	MethodSessionNameSet     = "session.name.set"
+	MethodSessionCompact     = "session.history.compact"
 	MethodSessionContextInfo = "session.metadata.contextInfo"
 	MethodSessionUsage       = "session.usage.getMetrics"
 )
@@ -129,6 +130,38 @@ func (c *Client) Send(ctx context.Context, params SendParams) (string, error) {
 // title. The server requires 1–100 characters after trimming.
 func (c *Client) SetSessionName(ctx context.Context, sessionID, name string) error {
 	return c.Call(ctx, MethodSessionNameSet, SetNameParams{SessionID: sessionID, Name: name}, nil)
+}
+
+// Compact summarizes the session's history to reclaim context window, which is
+// what Copilot's own `/compact` command does.
+//
+// It is SYNCHRONOUS: the call runs a summarization turn on the model and only
+// returns once the new history is in place, so it takes as long as a short turn
+// rather than milliseconds. Callers on a request path must give it its own
+// budget and must not hold a client connection open waiting for it.
+//
+// A session with nothing worth summarizing is an ERROR, not an empty success —
+// the server answers "Nothing to compact" as a generic InternalError. That is
+// an ordinary outcome for an agent that has barely started, so callers should
+// separate it from a real failure with [IsNothingToCompact] rather than
+// reporting it as a broken channel.
+//
+// A compaction the server declines IN-BAND — a successful JSON-RPC response
+// carrying `success: false` — is converted to an error here, the same way
+// [Client.SetForegroundSession] handles its own in-band refusal. Reporting it
+// as a result would hand the caller a struct whose zero counts read exactly
+// like a compaction that ran and removed nothing.
+func (c *Client) Compact(ctx context.Context, params CompactParams) (CompactResult, error) {
+	var result CompactResult
+	if err := c.Call(ctx, MethodSessionCompact, params, &result); err != nil {
+		return CompactResult{}, err
+	}
+	if !result.Success {
+		return result, fmt.Errorf(
+			"copilotapi: session.history.compact reported failure for session %s",
+			params.SessionID)
+	}
+	return result, nil
 }
 
 // ContextInfo reports the session's context-window token breakdown.

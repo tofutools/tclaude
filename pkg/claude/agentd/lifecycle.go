@@ -320,6 +320,17 @@ func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, rela
 	// away when it exits. The command is sourced from the harness's
 	// Lifecycle so a non-CC pane is never typed `/exit` if that's not its
 	// exit command.
+	//
+	// An API-connected Copilot agent stays on this path, unlike its rename,
+	// compaction and message delivery (TCL-1058). The RPCs that look like the
+	// answer are not one, measured against Copilot CLI 1.0.78: `session.
+	// shutdown` and `sessions.close` both succeed and leave the copilot process
+	// running with its session still foregrounded, and `runtime.shutdown`
+	// refuses with "Runtime shutdown is not available for this server". They end
+	// a session, not the CLI. Routing soft exit through them would report a
+	// delivered exit for a pane that never dies — which every stop, retire and
+	// dashboard surface then reads as an agent that finished its work. `/exit`
+	// through the pane really does end the process, so it stays.
 	h := harnessForConv(convID)
 	if h.SupportsSoftExit() {
 		exitCmd := h.Life.SoftExitCommand()
@@ -6888,6 +6899,20 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 		return
 	}
 	target := sess.TmuxSession + ":0.0"
+	h := harnessForConv(convID)
+
+	// An API-driven Copilot launch is not ready for post-init the moment its
+	// pane is alive. Its bootstrap creates a session under the conversation id
+	// and foregrounds it, so everything below — the rename and the welcome —
+	// must wait for that, or it lands in the startup session the bootstrap is
+	// about to replace and is lost. See awaitCopilotAPISession, which also
+	// explains why a channel that never comes up falls through to the pane
+	// rather than abandoning the welcome.
+	if h.Name == harness.CopilotName && copilotLaunchIntentForConv(convID).API &&
+		!awaitCopilotAPISession(convID) {
+		slog.Warn("spawn: the Copilot API channel never came up; delivering post-init "+
+			"through the pane instead", "conv", convID)
+	}
 
 	// Apply the agent's name as the conversation title. The two harness
 	// rename styles bracket the welcome injection differently:
@@ -6903,7 +6928,6 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 	// Skipped when name is empty or not a valid rename title (some callers
 	// pass human-friendly names that don't fit the rename charset); the
 	// welcome below still materialises the conversation in that case.
-	h := harnessForConv(convID)
 	renameWanted := name != "" && isValidRenameTitle(name)
 	if name != "" && !renameWanted {
 		slog.Warn("spawn: name not a valid rename title; skipping rename",
@@ -6928,9 +6952,15 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 			spawnContextMsgID, hasInitialMessage, worktreePath, worktreeBranch,
 			resolveSpawnerTitle(spawnedByConv, spawnedByAgent))
 		var err error
-		if h.Name == harness.OpenCodeName {
+		switch {
+		case h.Name == harness.OpenCodeName:
 			err = sendOpenCodeNudge(convID, welcome)
-		} else {
+		case copilotAPIDriven(convID):
+			// The welcome is caller-derived text (name, role, descr, group, the
+			// spawner's title) and was the last piece of it still going into an
+			// API-driven pane as keystrokes.
+			err = sendCopilotAPIMessage(convID, welcome)
+		default:
 			err = injectTextAndSubmit(target, welcome)
 		}
 		if err != nil {

@@ -108,12 +108,21 @@ func TestMain(m *testing.M) {
 	// package agentd's internal tests share this binary and cannot reach
 	// newFlow. Tests that want to observe the kick-off swap their own.
 	restoreCopilotBootstrap := agentd.SetCopilotAPIBootstrapForTest(func(string, bool, string) {})
+	// And its consequence: with the bootstrap suppressed no handle can ever be
+	// adopted, so the spawn's post-init wait for one would burn its whole
+	// budget on every API-drive spawn before concluding what is already known
+	// here. "It never came up" is the truthful answer under that stub, and it
+	// is the arm that falls through to the pane — which is what these tests
+	// assert against.
+	restoreCopilotPostInitWait := agentd.SetCopilotAPIPostInitWaitForTest(
+		func(string) bool { return false })
 	restoreCodexProbe := session.SetCodexEffectiveConfigProbeForTest(
 		func(string, []sandboxpolicy.EnvironmentEntry, string) (json.RawMessage, error) {
 			return json.RawMessage(`{"config":{},"origins":{}}`), nil
 		})
 	code := m.Run()
 	restoreCodexProbe()
+	restoreCopilotPostInitWait()
 	restoreCopilotBootstrap()
 	restoreEscalationProcess()
 	// A real detached session would keep its server and panes alive after its

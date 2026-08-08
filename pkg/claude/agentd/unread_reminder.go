@@ -182,9 +182,18 @@ func runUnreadReminderTickWith(now time.Time, st *unreadReminderState) {
 		}
 		reminder := unreadReminderText(byConv[conv])
 		var err error
-		if sess.Harness == harness.OpenCodeName {
+		switch {
+		case sess.Harness == harness.OpenCodeName:
 			err = sendOpenCodeNudge(conv, reminder)
-		} else {
+		case copilotAPIDriven(conv):
+			// Same delivery family as sendNudgeBracket — it shares
+			// pickNudgeSession with it, and it carries peer-derived text (the
+			// sender labels in the reminder) — so it takes the same channel.
+			// This site was taught about OpenCode and would have been left on
+			// keystrokes for the API drive, which is not a window or a race: it
+			// is reachable on every reminder tick for the life of the agent.
+			err = sendCopilotAPIMessage(conv, reminder)
+		default:
 			err = injectTextAndSubmit(sess.TmuxSession+":0.0", reminder)
 		}
 		if err != nil {

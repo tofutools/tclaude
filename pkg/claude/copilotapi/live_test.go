@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -62,7 +63,7 @@ func freePort(t *testing.T) int {
 // The PTY is not optional. Without a terminal the CLI takes a different
 // startup branch and never mounts the TUI, so the embedded server never
 // starts; the process simply exits having logged nothing about a listener.
-func startLiveServer(t *testing.T) string {
+func startLiveServer(t *testing.T) (string, *exec.Cmd) {
 	t.Helper()
 	binary := requireLive(t)
 	port := freePort(t)
@@ -114,17 +115,25 @@ func startLiveServer(t *testing.T) string {
 		conn, err := net.DialTimeout("tcp", address, time.Second)
 		if err == nil {
 			_ = conn.Close()
-			return address
+			return address, command
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
 	t.Fatalf("copilot never listened on %s; logs in %s", address, logs)
-	return ""
+	return "", nil
 }
 
 func liveClient(t *testing.T) *Client {
 	t.Helper()
-	address := startLiveServer(t)
+	client, _ := liveClientAndProcess(t)
+	return client
+}
+
+// liveClientAndProcess is liveClient plus the copilot process itself, for the
+// one contract that is about whether the PROCESS is still there.
+func liveClientAndProcess(t *testing.T) (*Client, *exec.Cmd) {
+	t.Helper()
+	address, command := startLiveServer(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	client, err := DialRetry(ctx, address, &Options{SubscriptionBuffer: 1024})
@@ -132,7 +141,7 @@ func liveClient(t *testing.T) *Client {
 		t.Fatalf("connect to %s: %v", address, err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
-	return client
+	return client, command
 }
 
 func TestLiveHandshakeAndPing(t *testing.T) {
@@ -269,7 +278,7 @@ func TestLiveMultipleClientsShareOneServer(t *testing.T) {
 	// Consumers are expected to split roles across connections — one driving
 	// prompts, another consuming events — so this pins down that a second
 	// connection sees the first one's session and can drive it.
-	address := startLiveServer(t)
+	address, _ := startLiveServer(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
@@ -525,6 +534,239 @@ func TestLiveSend(t *testing.T) {
 			}
 		case <-deadline:
 			t.Fatal("turn never reached session.idle")
+		}
+	}
+}
+
+// liveDrivableSession is the bootstrap TestLiveSessionBootstrap pins, reduced
+// to the two calls every later contract needs in front of it.
+func liveDrivableSession(ctx context.Context, t *testing.T, client *Client) string {
+	t.Helper()
+	info, err := client.CreateSession(ctx, CreateSessionParams{
+		WorkingDirectory: t.TempDir(),
+		ClientName:       "tclaude-copilotapi-test",
+		Streaming:        true,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if err := client.SetForegroundSession(ctx, info.SessionID); err != nil {
+		t.Fatalf("SetForegroundSession: %v", err)
+	}
+	return info.SessionID
+}
+
+// TestLiveShutdownRPCsDoNotEndTheProcess is why tclaude's soft exit stays on
+// tmux send-keys for an API-driven Copilot agent (TCL-1058).
+//
+// `session.shutdown` and `sessions.close` read like the typed replacement for
+// `/exit`, and they are not: both succeed, and the copilot process is still
+// running afterwards with its session still foregrounded. They end a SESSION,
+// not the CLI. Routing soft exit through them would report a delivered exit for
+// a pane that never dies, which every stop, retire and dashboard surface then
+// reads as an agent that finished its work.
+//
+// `runtime.shutdown` — the one method that sounds like it would end the
+// process — refuses outright in this mode.
+//
+// If this test ever starts failing because the process DOES exit, the soft-exit
+// decision is worth revisiting; that is the entire reason it is written down
+// here rather than only in a comment.
+func TestLiveShutdownRPCsDoNotEndTheProcess(t *testing.T) {
+	client, command := liveClientAndProcess(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	sessionID := liveDrivableSession(ctx, t, client)
+
+	if !liveProcessAlive(command.Process.Pid) {
+		t.Fatal("precondition: the copilot process must be running")
+	}
+
+	if err := client.Call(ctx, "session.shutdown",
+		map[string]any{"sessionId": sessionID, "type": "routine"}, nil); err != nil {
+		t.Fatalf("session.shutdown: %v", err)
+	}
+	if !liveProcessAlive(command.Process.Pid) {
+		t.Fatal("session.shutdown ended the copilot process; soft exit could now use it")
+	}
+	// Still answering, which is the sharper half: the connection and the server
+	// both outlive the session's own shutdown.
+	if _, err := client.GetForegroundSession(ctx); err != nil {
+		t.Errorf("the server stopped answering after session.shutdown: %v", err)
+	}
+
+	if err := client.Call(ctx, "sessions.close",
+		map[string]any{"sessionId": sessionID}, nil); err != nil {
+		t.Fatalf("sessions.close: %v", err)
+	}
+	if !liveProcessAlive(command.Process.Pid) {
+		t.Fatal("sessions.close ended the copilot process; soft exit could now use it")
+	}
+
+	if err := client.Call(ctx, "runtime.shutdown", struct{}{}, nil); err == nil {
+		t.Fatal("runtime.shutdown succeeded; this mode used to refuse it outright")
+	}
+	if liveProcessAlive(command.Process.Pid) {
+		return
+	}
+	t.Fatal("runtime.shutdown ended the copilot process despite reporting a refusal")
+}
+
+// liveProcessAlive reads the kernel's own view rather than signalling, so a
+// child this test has not reaped is not mistaken for a live process.
+func liveProcessAlive(pid int) bool {
+	stat, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return false
+	}
+	fields := strings.Fields(string(stat))
+	// Field 3 is the state; Z is a zombie awaiting Wait().
+	return len(fields) >= 3 && fields[2] != "Z"
+}
+
+// A session with no history refuses compaction with an ERROR rather than an
+// empty success, and that refusal is the ordinary state of an agent that has
+// barely started. A caller that cannot separate it from a real failure reports
+// a broken channel that is not broken.
+func TestLiveCompactRefusesASessionWithNoHistory(t *testing.T) {
+	client := liveClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	sessionID := liveDrivableSession(ctx, t, client)
+
+	_, err := client.Compact(ctx, CompactParams{
+		SessionID: sessionID, Trigger: CompactTriggerManual,
+	})
+	if err == nil {
+		t.Fatal("compacting an empty session succeeded; IsNothingToCompact may be dead code now")
+	}
+	if !IsNothingToCompact(err) {
+		t.Fatalf("err = %v, want the server's nothing-to-compact refusal", err)
+	}
+}
+
+// queueSnapshot is the subset of session.queue.pendingItems the two send lanes
+// are distinguished by.
+type queueSnapshot struct {
+	Items []struct {
+		Kind        string `json:"kind"`
+		DisplayText string `json:"displayText"`
+	} `json:"items"`
+	SteeringMessages []string `json:"steeringMessages"`
+}
+
+// TestLiveSendModesUseSeparateLanes settles the open question TCL-1058 carried:
+// whether agent-to-agent delivery should use `immediate` or the default.
+//
+// The names oversell the difference. NEITHER mode interrupts the turn in
+// flight: `enqueue` appends to `items`, `immediate` lands in the separate
+// `steeringMessages` lane, and both run only once the current turn unwinds —
+// `immediate` simply runs first. So `immediate` buys no promptness at all and
+// costs the property that matters, which is that a message from another agent
+// does not overtake what the human queued into the pane.
+//
+// Hence the default. See copilotapi.SendModeEnqueue and agentd's
+// sendCopilotAPIMessage.
+func TestLiveSendModesUseSeparateLanes(t *testing.T) {
+	if os.Getenv("TCLAUDE_COPILOT_LIVE_SEND") != "1" {
+		t.Skip("set TCLAUDE_COPILOT_LIVE_SEND=1 to send a real prompt (consumes Copilot quota)")
+	}
+	client := liveClient(t)
+	subscription := client.Subscribe()
+	t.Cleanup(subscription.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
+	defer cancel()
+	sessionID := liveDrivableSession(ctx, t, client)
+
+	// A turn long enough that the next two sends land while it is running.
+	if _, err := client.Send(ctx, SendParams{
+		SessionID: sessionID,
+		Prompt: "Count slowly from 1 to 30, one number per line, with a short " +
+			"sentence about each number.",
+	}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	// Waited for rather than slept past. The whole claim below is about what
+	// happens to a message sent WHILE a turn is running, and a fixed sleep
+	// against an unauthenticated or instantly-failing turn would leave the two
+	// sends sitting in an idle session's queue — which looks identical and
+	// proves nothing.
+	awaitLiveTurnStart(ctx, t, subscription, sessionID)
+
+	const queued = "QUEUED-MESSAGE: say the word banana."
+	if _, err := client.Send(ctx, SendParams{
+		SessionID: sessionID, Prompt: queued,
+	}); err != nil {
+		t.Fatalf("Send enqueue: %v", err)
+	}
+	if _, err := client.Send(ctx, SendParams{
+		SessionID: sessionID,
+		Prompt:    "IMMEDIATE-MESSAGE: say the word papaya.",
+		Mode:      SendModeImmediate,
+	}); err != nil {
+		t.Fatalf("Send immediate: %v", err)
+	}
+
+	var snapshot queueSnapshot
+	if err := client.Call(ctx, "session.queue.pendingItems",
+		map[string]any{"sessionId": sessionID}, &snapshot); err != nil {
+		t.Fatalf("session.queue.pendingItems: %v", err)
+	}
+	t.Logf("queue: %+v", snapshot)
+
+	// Matched by kind and text rather than by position or count: the queue is
+	// not ours alone. Copilot enqueues its own entries — a fresh profile puts a
+	// `command` item (`/model auto`) in front of everything — so a consumer
+	// reasoning about "the first item" or "how many items" is reading a lane it
+	// only partly owns.
+	queuedMessages := 0
+	for _, item := range snapshot.Items {
+		if item.Kind == "message" && item.DisplayText == queued {
+			queuedMessages++
+		}
+	}
+	if queuedMessages != 1 {
+		t.Errorf("the default mode did not land in the queued lane as a message: %+v",
+			snapshot.Items)
+	}
+	// The half that makes the decision: neither send interrupted the turn that
+	// was proved to be in flight above. Both are still pending, `immediate`
+	// included — so it is a queue-jump into a separate lane, not an
+	// interjection, and choosing it for agent mail would buy nothing but a
+	// reordering of the human's own input.
+	if len(snapshot.SteeringMessages) != 1 {
+		t.Errorf("immediate did not land in the steering lane, alive and unconsumed: %+v",
+			snapshot.SteeringMessages)
+	}
+}
+
+// awaitLiveTurnStart blocks until the session reports a turn actually running.
+func awaitLiveTurnStart(
+	ctx context.Context, t *testing.T, subscription *Subscription, sessionID string,
+) {
+	t.Helper()
+	deadline := time.After(60 * time.Second)
+	for {
+		select {
+		case notification, ok := <-subscription.C():
+			if !ok {
+				t.Fatalf("subscription ended early: %v", subscription.Err())
+			}
+			if notification.Method != MethodSessionEvent {
+				continue
+			}
+			event, err := notification.SessionEvent()
+			if err != nil {
+				t.Fatalf("decode session event: %v", err)
+			}
+			if event.SessionID == sessionID && event.Event.Type == "assistant.turn_start" {
+				return
+			}
+		case <-deadline:
+			t.Fatal("no turn ever started; the send-lane contract cannot be measured " +
+				"against an idle session (is this Copilot authenticated?)")
+		case <-ctx.Done():
+			t.Fatalf("waiting for a turn to start: %v", ctx.Err())
 		}
 	}
 }
