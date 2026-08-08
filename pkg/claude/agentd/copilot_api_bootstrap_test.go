@@ -60,12 +60,15 @@ import (
 // that is two properties with very different natures:
 //
 //   - PROVENANCE — the client came from a verified dial. This is closed
-//     STRUCTURALLY rather than by any test: exactly three places in the package
-//     hold a client (copilotAPISession.Client, the state consumer's
-//     non-transmitting field, and the bootstrap's local), the registry is the
-//     only thing that populates the first, and it populates it from the two
-//     dialling sites these guards pin. A new file cannot reach an unproved
-//     endpoint because there is nothing for it to reach one WITH.
+//     STRUCTURALLY rather than by any test. A client exists in exactly four
+//     shapes: the registry's copilotAPISession.Client, the state consumer's
+//     non-transmitting field, and the two dialling sites' own locals (the
+//     bootstrap's, which it passes to openCopilotAPISession, and the
+//     reconnect's, which is pinned separately to issue no mutating call). The
+//     dialling sites construct the handle and the registry stores it, so every
+//     transmitting client in the daemon traces back to a dial these guards pin.
+//     A new file cannot reach an unproved endpoint because there is nothing for
+//     it to reach one WITH.
 //   - FRESHNESS — ownership was re-proved shortly BEFORE this particular send.
 //     This is temporal, and no syntax walk can assert it. It is enforced by
 //     routing every verb through copilotAPIDrive, which re-proves — by
@@ -825,11 +828,14 @@ func TestCopilotAPICompactionProvesOwnershipOnTheGoroutineThatSends(t *testing.T
 		_ = stranger.Wait()
 	})
 
+	// Neither arm canneds a reply. The fake's defaults for compact and send are
+	// already realistic, and a hand-written one here is how the success arm
+	// stops being one: a compact payload without "success":true decodes to an
+	// in-band refusal, so the arm would take the failure branch while reading as
+	// the success path. The fake documents that trap where its default lives.
 	t.Run("refuses when ownership can no longer be proved", func(t *testing.T) {
 		server := newFakeCopilotServer(t)
 		client := dialFakeCopilot(t, server)
-		server.answer("session.history.compact", `{"tokensRemoved":1,"messagesRemoved":1}`)
-		server.answer("session.send", `{"messageId":"m-1"}`)
 
 		require.False(t, portowner.ProcessOwnsLoopbackPort(stranger.Process.Pid, server.port()),
 			"precondition: the stranger must not own the listener")
@@ -854,8 +860,6 @@ func TestCopilotAPICompactionProvesOwnershipOnTheGoroutineThatSends(t *testing.T
 	t.Run("compacts and follows up when ownership holds", func(t *testing.T) {
 		server := newFakeCopilotServer(t)
 		client := dialFakeCopilot(t, server)
-		server.answer("session.history.compact", `{"tokensRemoved":1,"messagesRemoved":1}`)
-		server.answer("session.send", `{"messageId":"m-1"}`)
 
 		require.True(t, portowner.ProcessOwnsLoopbackPort(os.Getpid(), server.port()),
 			"precondition: this test process owns the fake server's listener")
