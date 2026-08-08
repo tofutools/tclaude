@@ -70,6 +70,32 @@ var copilotAPIPostureWriters = []struct {
 	// it can set a posture the same way SetAgentRelaunchProfile can.
 	{"copilot_drive_assign.go", "writeCopilotDrive", "SeedAgentRelaunchProfileIfEmpty"},
 	{"copilot_drive_assign.go", "writeCopilotDrive", "SetConversationCopilotAPI"},
+	// The two compare-and-set writers, watched for the reason stated just above
+	// and then not applied far enough. A targeted `json_set` of `$.copilot_api` is
+	// a posture write in every sense this guard cares about, and it is now THE
+	// SHORTEST WAY TO WRITE ONE — shorter than the whole-blob route the list
+	// already watched. A daemon-authored "the channel never came up, stop
+	// pretending" edit would be a single call to one of these in a bootstrap
+	// failure path, with CI green, because a writer this guard does not name is
+	// invisible to it. A guard that watches the long way into a sink and not the
+	// short way converts "nobody checked" into "something checked and was
+	// satisfied", which is worse than no guard.
+	//
+	// Found by a cold reviewer with a two-arm probe: a package-level reference to
+	// a WATCHED writer reddened and named its site, while the same reference to
+	// CompareAndSetAgentCopilotAPI passed silently.
+	//
+	// AND THE BLIND SPOT GREW WHEN THEY WERE ADDED. The vouch is keyed to
+	// {file, function, writer}, so the second CompareAndSetAgentCopilotAPI call
+	// site inside writeCopilotDrive is covered for free by the entry written for
+	// the first — and any future one would be too. That is the "cannot see what an
+	// allow-listed site DOES" limit below, now applied to two more writers inside
+	// the same function. There is no better option with a syntactic guard and the
+	// function is small, so this is a cost of the fix rather than an objection to
+	// it; it is written down so the next reader inherits the date rather than
+	// rediscovering the shape.
+	{"copilot_drive_assign.go", "writeCopilotDrive", "CompareAndSetAgentCopilotAPI"},
+	{"copilot_drive_assign.go", "writeCopilotDrive", "CompareAndSetConversationCopilotAPI"},
 }
 
 // TestNoAutomaticRevokeOfTheCopilotAPIPosture is the mechanical statement that
@@ -140,7 +166,12 @@ var copilotAPIPostureWriters = []struct {
 //   - It matches by NAME, resolved syntactically rather than by type. A new
 //     posture writer under a different name is invisible until it is added above.
 //     Resolving to types.Object via go/packages would fix this and the name
-//     collisions below; it was judged too heavy for what it buys here.
+//     collisions below; it was judged too heavy for what it buys here. THIS LIMIT
+//     HAS ALREADY BITTEN ONCE: the two compare-and-set writers were added to the
+//     package and referenced three times before anyone added them here, in the
+//     same change that wrote the paragraph above explaining why that must not
+//     happen. Treat "a new writer needs a new entry" as a step in adding one, not
+//     as advice.
 //   - It walks two directories, NOT two packages: `.` and `../session`, top level
 //     only. agentd's own subpackages (dashboard/, dashsnap/, jstest/, starters/)
 //     are not walked, and neither is any third package.
@@ -240,6 +271,26 @@ func TestNoAutomaticRevokeOfTheCopilotAPIPosture(t *testing.T) {
 			}
 		}
 		if homeMoved {
+			// REPORTED, not accused. The suppression above is per-WRITER, not
+			// per-SITE, so one renamed home silences every unvouched reference to
+			// that writer — including a genuine revoke sitting beside the rename.
+			// Measured by a cold reviewer: with a home unfindable AND an unvouched
+			// package-level reference present, the run produced exactly one red
+			// ("the list is stale") and no mention of the reference at all. Red
+			// count true, red-to-subject mapping wrong.
+			//
+			// Withholding the ACCUSATION is still right — calling a refactor a
+			// revoke is a false accusation — but withholding the FACT is not.
+			// Correct per-site scoping is TCL-1116; this is the half that removes
+			// the silence.
+			assert.Failf(t, "an unvouched reference this guard is not accusing",
+				"%s references %s in %s, and no allow-list entry covers it. The "+
+					"accusation is withheld because %s's vouched home is itself "+
+					"missing, which usually means a rename rather than a revoke — but "+
+					"NOT ALWAYS, and this guard cannot tell the two apart. Re-vouch the "+
+					"writer's new home, re-run, and read what this says then: if the "+
+					"reference is still here it is unexplained by any refactor",
+				site.function, site.writer, site.file, site.writer)
 			continue
 		}
 		assert.Failf(t, "an unvouched-for reference to a Copilot posture writer",
