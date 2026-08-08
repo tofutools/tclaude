@@ -154,10 +154,20 @@ export function HarnessLine({ member, snapshot }) {
   // Only the API drive is marked. send-keys is what every Copilot agent has
   // always been, so a chip for it would be noise on every row; the point of the
   // marker is telling the two apart while both drives are live.
+  //
+  // The chip marks LAUNCH INTENT; whether tclaude actually holds a connection
+  // is a separate fact and gets its own state, because the two disagree while
+  // an agent is starting up and stay disagreed forever if its channel never
+  // came up. A chip that read "api" off intent alone would say an agent is
+  // API-driven while nothing is on the other end of it.
   const drive = state.copilot_api
-    ? html`<span class="harness-drive" role="note"
-        title="Driven over Copilot's embedded JSON-RPC API (copilot --ui-server), not tmux send-keys"
-        aria-label="Copilot API drive">api</span>`
+    ? html`<span class=${'harness-drive' + (state.copilot_api_connected ? '' : ' harness-drive-pending')}
+        role="note"
+        title=${state.copilot_api_connected
+          ? "Driven over Copilot's embedded JSON-RPC API (copilot --ui-server), not tmux send-keys"
+          : "Launched for Copilot's embedded JSON-RPC API drive, but tclaude holds no connection to it yet — still starting up, or its channel failed to come up"}
+        aria-label=${state.copilot_api_connected ? 'Copilot API drive connected' : 'Copilot API drive not connected'}
+        >api</span>`
     : null;
   if (!model) {
     // A pre-tick row has no metadata text to trail, but an armed indicator is

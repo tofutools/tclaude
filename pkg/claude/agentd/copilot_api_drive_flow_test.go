@@ -10,6 +10,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
 // TCL-1053. tclaude is growing a SECOND way to drive a Copilot agent — over
@@ -29,6 +30,30 @@ import (
 
 // copilotAPIOn is the tri-state "true" a db.SpawnProfile carries.
 var copilotAPIOn = true
+
+// copilotAPIProfile is the spawn profile every API-drive scenario below spawns
+// through.
+//
+// It exists because TCL-1056 made the API drive REFUSE a launch into a
+// directory Copilot does not trust: the folder-trust modal does not block the
+// embedded server, so such a launch would come up drivable and invisible rather
+// than failing. Pre-trusting is deliberately never a default, so an API-drive
+// spawn has to carry the opt-in — and a profile is how a spawn made through the
+// `tclaude agent spawn` surface carries it, since that CLI has no --trust-dir
+// flag of its own.
+//
+// Every scenario here is about the DRIVE threading through, so the profile is
+// scaffolding rather than subject matter. The refusal itself is asserted in
+// TestCopilotDrive_UntrustedLaunchDirIsRefused.
+const copilotAPIProfile = "copilot-api-trusted"
+
+// haveCopilotAPIProfile creates the profile above in the flow's daemon.
+func haveCopilotAPIProfile(t *testing.T, f *testharness.Flow) {
+	t.Helper()
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": copilotAPIProfile, "harness": harness.CopilotName, "trust_dir": true,
+	}).Code)
+}
 
 // TestCopilotDrive_SpawnDefaultsToSendKeys is the headline acceptance bar: a
 // Copilot spawn nobody steered must be indistinguishable from one made before
@@ -54,9 +79,10 @@ func TestCopilotDrive_SpawnDefaultsToSendKeys(t *testing.T) {
 func TestCopilotDrive_ExplicitFlagThreadsThrough(t *testing.T) {
 	f := newCopilotFlow(t)
 	f.HaveGroup("crew")
+	haveCopilotAPIProfile(t, f)
 
 	resp, out := runSpawnCLI(t, f, &agent.SpawnParams{
-		Group: "crew", Name: "copilot-worker", Harness: harness.CopilotName, CopilotAPI: true,
+		Group: "crew", Name: "copilot-worker", Harness: harness.CopilotName, CopilotAPI: true, Profile: copilotAPIProfile,
 	})
 
 	got, ok := f.World.SpawnCopilotAPI(resp.ConvID)
@@ -75,7 +101,12 @@ func TestCopilotDrive_ProfileSelectsTheDrive(t *testing.T) {
 	f := newCopilotFlow(t)
 	f.HaveGroup("crew")
 	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
-		"name": "copilot-api", "harness": harness.CopilotName, "copilot_api": true,
+		// trust_dir rides along for the same reason copilotAPIProfile carries
+		// it: the API drive refuses an untrusted launch dir (TCL-1056), and this
+		// scenario is about the DRIVE arriving from a profile tier, not about
+		// trust.
+		"name": "copilot-api", "harness": harness.CopilotName,
+		"copilot_api": true, "trust_dir": true,
 	}).Code)
 
 	resp, _ := runSpawnCLI(t, f, &agent.SpawnParams{
@@ -97,7 +128,11 @@ func TestCopilotDrive_GlobalDefaultProfileSelectsTheDrive(t *testing.T) {
 	f := newCopilotFlow(t)
 	f.HaveGroup("crew")
 	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
-		"name": "copilot-global", "harness": harness.CopilotName, "copilot_api": true,
+		// trust_dir rides along for the same reason copilotAPIProfile carries
+		// it: the API drive refuses an untrusted launch dir (TCL-1056), and
+		// this scenario is about the DRIVE arriving from the global tier.
+		"name": "copilot-global", "harness": harness.CopilotName,
+		"copilot_api": true, "trust_dir": true,
 	}).Code)
 	require.Equal(t, http.StatusOK, setGlobalProfile(t, f, "copilot-global").Code)
 
@@ -108,6 +143,57 @@ func TestCopilotDrive_GlobalDefaultProfileSelectsTheDrive(t *testing.T) {
 	assert.True(t, got, "a global default Copilot profile must select the drive")
 	assert.Equal(t, agent.ProvGlobalProfileSource("copilot-global"),
 		resp.Resolved.CopilotAPI.Source)
+}
+
+// TestCopilotDrive_UntrustedLaunchDirIsRefused is TCL-1056's refusal, end to
+// end through the production spawn API.
+//
+// It exists because the failure it prevents does not look like a failure.
+// Copilot's folder-trust modal blocks the TUI but NOT the embedded server:
+// measured live, a pane parked on the dialog still accepted a connection,
+// created a session, foregrounded it and completed a full turn. So an
+// unattended API-drive spawn into an untrusted directory would come up working
+// and invisible — the human staring at a blocking dialog about an agent that is
+// answering prompts — and every surface a debugger would reach for would say
+// something true about the wrong thing.
+//
+// The refusal must name the directory and the remedy, or it converts a silent
+// bad state into a loud dead end.
+func TestCopilotDrive_UntrustedLaunchDirIsRefused(t *testing.T) {
+	f := newCopilotFlow(t)
+	f.HaveGroup("crew")
+
+	// An explicit cwd, because that is what the check can name. A request that
+	// names none is answered later, by the backstop inside session.New, against
+	// the directory resolveSessionDir picks — refusing here would mean guessing
+	// at a path nobody chose.
+	resp := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name": "copilot-worker", "harness": harness.CopilotName, "copilot_api": true,
+		"cwd": t.TempDir(),
+	})
+
+	require.Equal(t, http.StatusUnprocessableEntity, resp.Code,
+		"an API-drive spawn into an untrusted dir must be refused, not launched: body=%s",
+		resp.Raw)
+	assert.Contains(t, string(resp.Raw), "copilot_api_untrusted_launch_dir")
+	assert.Contains(t, string(resp.Raw), "pre-trust",
+		"the refusal must name a remedy the operator can actually reach")
+}
+
+// The refusal is about the CHANNEL, not about Copilot. A send-keys Copilot
+// spawn into the same untrusted directory has always been allowed to launch and
+// stop on the modal — a human clears it, and the dashboard focus button exists
+// for exactly that — so this must not have quietly become a trust requirement
+// for every Copilot agent.
+func TestCopilotDrive_SendKeysStillLaunchesInAnUntrustedDir(t *testing.T) {
+	f := newCopilotFlow(t)
+	f.HaveGroup("crew")
+
+	resp, _ := spawnCopilot(t, f, "crew", map[string]any{"name": "copilot-worker"})
+
+	got, ok := f.World.SpawnCopilotAPI(resp.ConvID)
+	require.True(t, ok)
+	assert.False(t, got)
 }
 
 // TestCopilotDrive_ForeignProfileNeverReachesAnotherHarness: the drive is
@@ -158,9 +244,10 @@ func TestCopilotDrive_RejectedForAHarnessWithoutOne(t *testing.T) {
 func TestCopilotDrive_SurvivesResume(t *testing.T) {
 	f := newCopilotFlow(t)
 	f.HaveGroup("crew")
+	haveCopilotAPIProfile(t, f)
 
 	resp, _ := runSpawnCLI(t, f, &agent.SpawnParams{
-		Group: "crew", Name: "copilot-worker", Harness: harness.CopilotName, CopilotAPI: true,
+		Group: "crew", Name: "copilot-worker", Harness: harness.CopilotName, CopilotAPI: true, Profile: copilotAPIProfile,
 	})
 	conv := resp.ConvID
 
@@ -211,7 +298,12 @@ func TestCopilotDrive_SendKeysSurvivesResume(t *testing.T) {
 	conv := resp.ConvID
 
 	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
-		"name": "copilot-api", "harness": harness.CopilotName, "copilot_api": true,
+		// trust_dir rides along for the same reason copilotAPIProfile carries
+		// it: the API drive refuses an untrusted launch dir (TCL-1056), and this
+		// scenario is about the DRIVE arriving from a profile tier, not about
+		// trust.
+		"name": "copilot-api", "harness": harness.CopilotName,
+		"copilot_api": true, "trust_dir": true,
 	}).Code)
 	require.Equal(t, http.StatusOK, setGlobalProfile(t, f, "copilot-api").Code)
 
@@ -238,9 +330,10 @@ func TestCopilotDrive_SendKeysSurvivesResume(t *testing.T) {
 func TestCopilotDrive_SurvivesReincarnateAndClone(t *testing.T) {
 	f := newCopilotFlow(t)
 	f.HaveGroup("crew")
+	haveCopilotAPIProfile(t, f)
 
 	resp, _ := runSpawnCLI(t, f, &agent.SpawnParams{
-		Group: "crew", Name: "copilot-worker", Harness: harness.CopilotName, CopilotAPI: true,
+		Group: "crew", Name: "copilot-worker", Harness: harness.CopilotName, CopilotAPI: true, Profile: copilotAPIProfile,
 	})
 
 	reincarnated := f.AsHuman().Reincarnate(resp.ConvID, "carry on")

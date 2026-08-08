@@ -1639,6 +1639,28 @@ func runNew(params *NewParams) error {
 	// rather than corrupt), the agent still launches and the operator can clear
 	// the trust dialog on the pending pane via the dashboard focus button
 	// (Part A). So warn and continue rather than fail the spawn.
+	// The API drive's own folder-trust gate, and the backstop for every launch
+	// path: agentd refuses earlier so the operator gets a named spawn failure,
+	// but relaunch, clone and the direct `tclaude session new --copilot-api`
+	// call all arrive here, so this is the one place the invariant is total.
+	//
+	// Placed immediately BEFORE the seeding block rather than after it, because
+	// the two answer the same question and the seed is what makes the check
+	// pass: a --trust-dir launch is admitted on its promise to seed, and the
+	// seed below is that promise being kept.
+	{
+		var launchEnvironment []sandboxpolicy.EnvironmentEntry
+		if launchSandbox != nil {
+			launchEnvironment = launchSandbox.Effective.Environment
+		}
+		if err := ValidateCopilotAPIFolderTrust(
+			h, params.CopilotAPI, params.TrustDir,
+			strings.TrimSpace(params.Resume) != "", cwd, launchEnvironment,
+		); err != nil {
+			return err
+		}
+	}
+
 	if params.TrustDir {
 		var launchEnvironment []sandboxpolicy.EnvironmentEntry
 		if launchSandbox != nil {

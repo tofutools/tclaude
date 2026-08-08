@@ -141,6 +141,66 @@ func ensureCopilotDirTrustedInHome(stateDir, projectDir string) error {
 	})
 }
 
+// CopilotDirTrustedForLaunch reports whether projectDir is ALREADY trusted in
+// the store the given launch will read — the read-only question that
+// EnsureCopilotDirTrustedForLaunch answers by writing.
+//
+// It exists for the callers that must know whether a launch will stop on the
+// modal BEFORE deciding to start it. It resolves COPILOT_HOME through the same
+// CopilotStateDirForLaunch the seeder uses, so the file inspected here is the
+// one the launch will open; asking the ambient home about a launch that
+// relocates it would produce a confident answer about a file nobody reads.
+//
+// True means only "this launch will not stop on the folder-trust modal". It is
+// deliberately not a claim about tool, path or URL approvals, which are
+// separate gates and stay enforced for a trusted folder.
+//
+// An absent or empty config file is "not trusted" rather than an error — that
+// is the ordinary state of a fresh COPILOT_HOME. A file whose shape the seeder
+// would refuse to edit is returned as an error, because answering "not trusted"
+// for it would send the caller into a seed that is going to fail anyway.
+func CopilotDirTrustedForLaunch(getenv func(string) string, home, projectDir string) (bool, error) {
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	if !filepath.IsAbs(projectDir) {
+		return false, fmt.Errorf("copilot dir-trust: project dir %q is not absolute", projectDir)
+	}
+	stateDir, err := CopilotStateDirForLaunch(getenv, home)
+	if err != nil {
+		return false, err
+	}
+	configData, err := os.ReadFile(filepath.Join(stateDir, CopilotConfigFileName))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("copilot dir-trust: read %s: %w", CopilotConfigFileName, err)
+	}
+	config, err := parseCopilotSettingsObject(configData, CopilotConfigFileName)
+	if err != nil {
+		return false, err
+	}
+	trusted, err := parseCopilotTrustedFolders(config[copilotTrustedFoldersKey])
+	if err != nil {
+		return false, err
+	}
+	existing := make([]string, 0, len(trusted))
+	for _, folder := range trusted {
+		existing = append(existing, filepath.Clean(strings.TrimSpace(folder)))
+	}
+	// ANY spelling counts. The seeder writes both the given and the
+	// symlink-resolved form because it cannot tell which side of the comparison
+	// Copilot reads; a reader that demanded both would call a directory
+	// untrusted that the CLI will happily accept.
+	for _, dir := range copilotTrustSpellings(projectDir) {
+		if slices.Contains(existing, dir) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // copilotTrustSpellings returns the path spellings to seed for one launch dir:
 // the cleaned absolute path, plus its symlink-resolved form when that differs.
 //

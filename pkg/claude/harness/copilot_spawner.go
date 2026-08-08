@@ -186,7 +186,23 @@ func (copilotSpawner) BuildCommand(spec SpawnSpec) string {
 	// while the session-state directory kept its original UUID. A fresh
 	// conversation would have sent [system, user]. So a relaunch briefing lands
 	// in the conversation it was written for and does not vanish silently.
-	if spec.InitialPrompt != "" {
+	//
+	// SUPPRESSED under the API drive, and this is load-bearing rather than
+	// tidiness. That drive creates its own RPC session under the SAME id this
+	// launch pins with `--session-id`, because the pane's startup session — the
+	// one `-i` runs in — is visible over RPC but not drivable: every `session.*`
+	// call against it fails "Session not found", so tclaude could never send it
+	// a second turn, read its usage, or compact it. Creating at the conv id is
+	// what keeps one conversation at one id, but it starts that id FRESH
+	// (measured: `alreadyInUse:false`, empty `getMessages`, and the model with no
+	// memory of the `-i` turn). So a prompt delivered by `-i` would run, render
+	// in the pane, and then be silently discarded moments later — the agent
+	// would come up having forgotten the briefing it visibly answered.
+	//
+	// The prompt is delivered over `session.send` after the session exists
+	// instead, which lands it in the conversation that survives. See
+	// agentd.bootstrapCopilotAPISession.
+	if spec.InitialPrompt != "" && spec.CopilotAPIPort == 0 {
 		cmd += " -i " + clcommon.ShellQuoteArg(spec.InitialPrompt)
 	}
 	return cmd
