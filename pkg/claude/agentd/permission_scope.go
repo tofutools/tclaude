@@ -170,6 +170,14 @@ func permissionScopeDisplay(scope PermissionScope) string {
 	return strings.Join(parts, " ")
 }
 
+func appendUnique(out []string, seen map[string]bool, s string) []string {
+	if s == "" || seen[s] {
+		return out
+	}
+	seen[s] = true
+	return append(out, s)
+}
+
 func permissionScopeFromJSON(raw string) PermissionScope {
 	if raw == "" {
 		return nil
@@ -192,14 +200,20 @@ func permissionProvenance(source permSource, rawScopes []string) string {
 	seen := map[string]bool{}
 	var rendered []string
 	for _, raw := range rawScopes {
-		if raw == "" {
+		scope, err := permissionScopeForEval(raw)
+		if err != nil {
+			// The gate refuses a row it cannot decode (evalPermissionScope).
+			// Rendering it as absence would show the grant as UNSCOPED —
+			// the widest possible reading of the one row that authorizes
+			// nothing. Say so instead, so the listing and the gate agree.
+			rendered = appendUnique(rendered, seen, "unreadable scope")
+			continue
+		}
+		if len(scope) == 0 {
+			// An unscoped row in the tier makes the whole tier unscoped.
 			return base
 		}
-		display := permissionScopeDisplay(permissionScopeFromJSON(raw))
-		if display != "" && !seen[display] {
-			rendered = append(rendered, display)
-			seen[display] = true
-		}
+		rendered = appendUnique(rendered, seen, permissionScopeDisplay(scope))
 	}
 	if len(rendered) == 0 {
 		return base
