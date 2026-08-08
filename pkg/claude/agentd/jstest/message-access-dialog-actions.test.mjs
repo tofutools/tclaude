@@ -147,3 +147,31 @@ test('permission actions use mode-specific payloads and buffered saves strip def
   assert.equal(notices[0], 'team: 1 party boon bound');
   assert.deepEqual(buffered, { 'groups.spawn': 'grant', 'agent.send': 'deny' });
 });
+
+test('group permission saves carry owner_scopes only when the editor touched it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createMessageAccessDialogActions } = await harness.importDashboardModule('js/message-access-dialog-actions.js');
+  const calls = [];
+  const actions = createMessageAccessDialogActions({
+    fetchImpl: async (url, options) => {
+      calls.push(JSON.parse(options.body));
+      return response(200, {});
+    },
+    notify: () => {},
+    words: (plain) => plain,
+  });
+  // Not edited: the field must be ABSENT, so the daemon leaves the stored
+  // narrowing alone. Sending the box's current value would clear a narrowing
+  // this build could not decode into it.
+  await actions.savePermissions({ mode: 'group', group: 'team' }, { 'groups.spawn': 'grant' }, null);
+  // Edited to a real map, and edited to {} — the deliberate clear. `{}` is
+  // meaningful, which is why the action tests against null and not truthiness.
+  const narrowing = { 'groups.spawn': { spawn_profile: ['reviewer'] } };
+  await actions.savePermissions({ mode: 'group', group: 'team' }, { 'groups.spawn': 'grant' }, narrowing);
+  await actions.savePermissions({ mode: 'group', group: 'team' }, { 'groups.spawn': 'grant' }, {});
+  assert.deepEqual(calls, [
+    { permissions: ['groups.spawn'] },
+    { permissions: ['groups.spawn'], owner_scopes: narrowing },
+    { permissions: ['groups.spawn'], owner_scopes: {} },
+  ]);
+});

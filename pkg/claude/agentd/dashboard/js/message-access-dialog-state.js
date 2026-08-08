@@ -80,8 +80,8 @@ export function createMessageAccessDialogState({ canRestoreFocus = () => true } 
     openAgentPermissions({ conv, label = '' }) {
       return open({ kind: 'permissions', mode: 'agent', conv, label });
     },
-    openGroupPermissions({ group, grants = [] }) {
-      return open({ kind: 'permissions', mode: 'group', group, grants: [...grants] });
+    openGroupPermissions({ group, grants = [], ownerScopes = {} }) {
+      return open({ kind: 'permissions', mode: 'group', group, grants: [...grants], ownerScopes: { ...ownerScopes } });
     },
     openBufferedPermissions(options = {}) {
       return open({ kind: 'permissions', ...options, mode: 'buffer', overrides: { ...(options.overrides || {}) } });

@@ -134,11 +134,21 @@ func permissionScopeCovers(granter, conferred PermissionScope) bool {
 //   - nothing grants the granter this slug, so there is no shape to attenuate
 //     against (see the "what this check is NOT" note above).
 //
-// It uses the plain resolver, NOT the group-owner bypass: owner-state confers
-// the group-lifecycle slugs structurally and carries no scope, so treating it
-// as a granting source here would read every group owner as an unscoped
-// granter of those slugs.
-func granterScopesForSlug(src permSources, cfg *config.Config, slug string) ([]PermissionScope, bool) {
+// EXPLICIT grants resolve through the plain resolver, NOT the group-owner
+// bypass. That ordering is the settled precedence: an operator narrowing a
+// group's owner bypass has said nothing about the grants that owner separately
+// holds, and those are individually controllable.
+//
+// ownerTier is consulted only where the plain resolver is UNDECIDED — the gap
+// the owner bypass fills at the gate. Before TCL-1071 that gap always meant
+// "unconstrained", because ownership conferred whole slugs and carried no
+// shape. A NARROWED owner bypass does carry one, and it must attenuate: an
+// owner whose spawn is pinned to one profile could otherwise mint a child an
+// unscoped groups.spawn and act through it — the exact escalation this rule
+// exists to stop, arriving through the bypass instead of a grant. An
+// unrestricted owner tier still reads as unconstrained, so no pre-Phase-6
+// delegation changes.
+func granterScopesForSlug(src permSources, cfg *config.Config, ownerTier ownerImpliedTier, slug string) ([]PermissionScope, bool) {
 	v := resolvePermissionVerdictFrom(src, slug, cfg.HasDefaultPermission(slug))
 	if v.Resolution == permDeny {
 		// A granter DENIED a slug may confer nothing through it. Reading a deny
@@ -150,6 +160,24 @@ func granterScopesForSlug(src permSources, cfg *config.Config, slug string) ([]P
 		// nothing legitimate — an agent conferring a capability it is itself
 		// forbidden is not a flow worth preserving.
 		return []PermissionScope{}, true
+	}
+	if v.Resolution == permUndecided {
+		// Nothing explicit speaks for the granter. Its structural owner
+		// bypass may — and if every owned group narrows the slug, that
+		// narrowing is the whole of the granter's authority for it.
+		entry, conferred := ownerTier[slug]
+		if !conferred || entry.Unrestricted {
+			return nil, false
+		}
+		// A DEGRADED entry reaches here with no usable scopes: the daemon
+		// could not read what one of the owner's groups narrows. That is a
+		// failure to answer, not an answer of "unconstrained" — the same
+		// fail-closed reading the all-rows-undecodable grant tier gets above.
+		// An empty scope set means the granter may confer nothing through it.
+		if len(entry.Scopes) == 0 {
+			return []PermissionScope{}, true
+		}
+		return entry.Scopes, true
 	}
 	if v.Resolution != permAllow || len(v.ScopeJSON) == 0 {
 		return nil, false
@@ -195,8 +223,11 @@ func checkGrantAttenuation(granterConvID string, grants []conferredGrant) error 
 	// for one unchanging caller state.
 	src := loadPermSources(granterConvID)
 	cfg, _ := config.Load()
+	// The owner tier is read once too, and only matters for a slug the
+	// granter holds through ownership alone (see granterScopesForSlug).
+	ownerTier := ownerImpliedTierFor(granterConvID)
 	for _, grant := range grants {
-		granterScopes, scoped := granterScopesForSlug(src, cfg, grant.Slug)
+		granterScopes, scoped := granterScopesForSlug(src, cfg, ownerTier, grant.Slug)
 		if !scoped {
 			continue
 		}

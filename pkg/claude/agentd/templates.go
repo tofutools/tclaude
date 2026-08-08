@@ -157,9 +157,16 @@ type templateJSON struct {
 	// WaveMaxWait caps (seconds) how long each staged-spawn wave waits for the
 	// prior wave to go idle before the next spawns anyway (JOH-244). 0 =
 	// built-in default.
-	WaveMaxWait int    `json:"wave_max_wait,omitempty"`
-	CreatedAt   string `json:"created_at,omitempty"`
-	UpdatedAt   string `json:"updated_at,omitempty"`
+	WaveMaxWait int `json:"wave_max_wait,omitempty"`
+	// OwnerScopes is the owner-scope map (TCL-1071) stamped onto the group
+	// this template instantiates: slug → the scope that slug's owner-implied
+	// bypass is confined to there. Empty/absent = the unrestricted bypass. It
+	// lets a blueprint declare "a lead of a force deployed from me may spawn
+	// only with the reviewer profile" once, instead of it being re-applied by
+	// hand after every deploy.
+	OwnerScopes map[string]PermissionScope `json:"owner_scopes,omitempty"`
+	CreatedAt   string                     `json:"created_at,omitempty"`
+	UpdatedAt   string                     `json:"updated_at,omitempty"`
 }
 
 // templateToJSON projects a db.GroupTemplate onto the wire shape, with
@@ -175,6 +182,7 @@ func templateToJSON(t *db.GroupTemplate) templateJSON {
 		Process:           []processPhaseJSON{},
 		Rhythms:           []rhythmJSON{},
 		WaveMaxWait:       t.WaveMaxWait,
+		OwnerScopes:       ownerScopesWireOmitEmpty(t.OwnerScopesJSON),
 	}
 	for _, e := range t.WorkPattern {
 		out.WorkPattern = append(out.WorkPattern, workPatternEntryJSON{SendTo: e.SendTo, Value: e.Value})
@@ -542,6 +550,22 @@ func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure)
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg", "wave_max_wait must be >= 0 (seconds)"}
 	}
 	t.WaveMaxWait = body.WaveMaxWait
+
+	// Owner scopes (TCL-1071): validated through the SAME boundary the group
+	// PATCH endpoint uses, so a template can never persist a narrowing the
+	// gate would refuse to read — which would fail the deployed group's owner
+	// bypass closed for every slug, long after the author left the editor.
+	if len(body.OwnerScopes) > 0 {
+		raw, err := json.Marshal(body.OwnerScopes)
+		if err != nil {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_owner_scopes", err.Error()}
+		}
+		canonical, err := canonicalOwnerScopes(string(raw))
+		if err != nil {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_owner_scopes", err.Error()}
+		}
+		t.OwnerScopesJSON = canonical
+	}
 
 	// Rhythms (JOH-244): recurring nudges materialized as group cron jobs at
 	// deploy. Validated to the same rules the cron add path enforces (name
@@ -1028,18 +1052,29 @@ func validateInlineProfileForHarness(agentName string, h *harness.Harness, p *db
 // priority first:
 //
 //	per-agent inline override → per-agent spawn profile →
-//	  role inline defaults → role's spawn profile → harness secure default
+//	  role inline defaults → role's spawn profile →
+//	  group default spawn profile → global default profile → harness secure default
 //
-// (The group-default-profile tier of the general model is empty here — a
-// freshly-instantiated group carries no default profile.) As with direct spawn,
-// the harness resolves through the complete chain first. Each remaining field
-// then resolves independently: inline agent values are explicit and fail
-// loudly, while profile-like tiers validate against the chosen harness and a
-// foreign invalid value is skipped with a disclosure note. role is the
-// resolved role the agent references (nil = none). caller is the spawning
+// The last two tiers were missing until TCL-1110, on the strength of a comment
+// here that said "a freshly-instantiated group carries no default profile". A
+// deploy into an EXISTING group is the ordinary case and that group can very
+// well have one, so the deploy launched on `claude` where a direct spawn into
+// the same group launched on the profile's harness. The two default tiers are
+// consulted HERE, for the harness only, because the harness gates every other
+// field's validation: applyDefaultProfile fills the rest afterwards from the
+// same two profiles, but by then the harness is already chosen and a value it
+// skipped as foreign cannot be reconsidered.
+//
+// As with direct spawn, the harness resolves through the complete chain first.
+// Each remaining field then resolves independently: inline agent values are
+// explicit and fail loudly, while profile-like tiers validate against the chosen
+// harness and a foreign invalid value is skipped with a disclosure note. g is
+// the group being deployed into (nil = none, e.g. a pure resolution test). role
+// is the resolved role the agent references (nil = none). caller is the spawning
 // agent's conv-id (empty for a human): it lets a genuinely defaulted approval
 // posture be narrowed without losing that provenance during template
-// resolution.
+// resolution, and it is the identity the two default profiles are gated
+// against.
 //
 // cwd is the resolved instantiation cwd; it drives the Codex sandbox cwd-safety
 // guard so a template can't spawn a workspace-write Codex agent at/above $HOME.
@@ -1048,7 +1083,7 @@ func validateInlineProfileForHarness(agentName string, h *harness.Harness, p *db
 // to the rest of the roster) if a referenced profile vanished or a resolved
 // value is invalid for the harness. The returned Harness is the resolved
 // canonical name (e.g. "claude"); SpawnProfile is left empty (already consumed).
-func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, caller string) (templateAgentLaunch, *spawnFailure) {
+func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, role *db.Role, cwd, caller string) (templateAgentLaunch, *spawnFailure) {
 	var refProfile *db.SpawnProfile
 	if ref := strings.TrimSpace(a.SpawnProfile); ref != "" || a.SpawnProfileID > 0 {
 		var prof *db.SpawnProfile
@@ -1119,6 +1154,42 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		{profile: roleProfile, source: roleProfileSource(role, roleProfile)},
 	}
 
+	// The two ambient tiers, in the same order and with the same wording the
+	// direct spawn boundary uses (TCL-1110). They are NOT appended to `tiers`
+	// above, because this ticket is the harness and only the harness: nothing
+	// downstream can undo a per-field validation run against the wrong one, so
+	// that field cannot wait for the spawn boundary the way others can.
+	//
+	// Do NOT read that as "the other fields are handled at the boundary". They are
+	// not, and this is measured rather than assumed (TCL-1107): a differential
+	// between one launch through handleGroupSpawn and one through the executeSpawn
+	// safety net — same group, same default profile, neither pinning anything —
+	// disagrees about SEVEN fields. applyDefaultProfile does not resolve
+	// remote_control, auto_memory or context_features at all, and for
+	// sandbox/approval this resolver has already applied the harness secure
+	// default further down, so the ambient tier is dead before the safety net
+	// looks. Closing those is TCL-1107; they change CONTAINMENT rather than
+	// vendor, so they want their own decision rather than a ride on this one.
+	//
+	// Gated up front on BOTH profiles rather than only the one that wins, so a
+	// deploy blocked by a profile the caller may not use fails with that reason
+	// instead of with whatever the other profile's harness happens to make
+	// invalid. applyDefaultProfile runs the same gate again later; this one only
+	// moves the message earlier.
+	groupProfile := groupDefaultProfile(g)
+	globalProfile := globalDefaultProfile()
+	for _, prof := range []*db.SpawnProfile{groupProfile, globalProfile} {
+		if fail := profileSpawnFailure(prof, caller); fail != nil {
+			return templateAgentLaunch{}, fail
+		}
+	}
+	defaultTiers := []launchProfileTier{
+		{profile: groupProfile, source: profileSource(groupProfile, agent.ProvGroupProfileSource),
+			defaultTier: true},
+		{profile: globalProfile, source: profileSource(globalProfile, agent.ProvGlobalProfileSource),
+			defaultTier: true},
+	}
+
 	// Resolve harness independently. Partial inline-profile/role tiers only pin
 	// a harness when they name one; registry profiles pin their default harness
 	// even when the stored value is blank, matching direct spawn.
@@ -1150,6 +1221,20 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		harnessName = harnessOrDefault(roleProfile.Harness)
 		harnessSource = tiers[3].source
 	}
+	// The ambient tiers, last. Like the registry-profile tiers above, a default
+	// profile pins its harness even when the stored value is blank — that is
+	// harnessOrDefault, and it is what makes "the group defaults to claude" a
+	// decision the group made rather than an absence.
+	for _, tier := range defaultTiers {
+		if harnessName != "" {
+			break
+		}
+		if tier.profile == nil {
+			continue
+		}
+		harnessName = harnessOrDefault(tier.profile.Harness)
+		harnessSource = tier.source
+	}
 	if harnessName == "" {
 		harnessSource = agent.ProvHarnessDefault
 	}
@@ -1160,10 +1245,30 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	}
 	var fail *spawnFailure
 	var notes []string
+	// From here on the harness is DECIDED, so every failure below is a failure
+	// judged against a harness that some tier chose — and after TCL-1110 that tier
+	// can be the group's or the workspace's default profile, which nobody typed at
+	// this deploy. `"opus" is a Claude Code model` is an unreadable complaint about
+	// a template whose author never mentioned Codex; the same sentence next to
+	// `harness: codex (group default profile "codex-high")` is a fixable one.
+	//
+	// So a failure raised past this point carries the harness attribution out with
+	// it instead of the zero launch, and the wave runner renders it (cold review of
+	// TCL-1110). Failures raised ABOVE — a profile that vanished, a profile the
+	// caller may not use — deliberately keep returning the zero value: no harness
+	// has been chosen yet there, and inventing one would name a tier that did not
+	// decide anything.
+	failed := func(f *spawnFailure) (templateAgentLaunch, *spawnFailure) {
+		return templateAgentLaunch{
+			Harness:       h.Name,
+			HarnessSource: harnessSource,
+			Notes:         append([]string(nil), notes...),
+		}, f
+	}
 	model, modelSource, note, fail := resolveStringLaunchField(modelField, a.Model, h.Name, tiers,
 		func(p *db.SpawnProfile) string { return p.Model }, h.Models.ValidateModel)
 	if fail != nil {
-		return templateAgentLaunch{}, fail
+		return failed(fail)
 	}
 	if note != "" {
 		notes = append(notes, note)
@@ -1171,7 +1276,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	effort, effortSource, note, fail := resolveStringLaunchField(effortField, a.Effort, h.Name, tiers,
 		func(p *db.SpawnProfile) string { return p.Effort }, h.Models.ValidateEffort)
 	if fail != nil {
-		return templateAgentLaunch{}, fail
+		return failed(fail)
 	}
 	if note != "" {
 		notes = append(notes, note)
@@ -1179,7 +1284,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	sandbox, sandboxSource, note, fail := resolveStringLaunchField("sandbox", a.Sandbox, h.Name, tiers,
 		func(p *db.SpawnProfile) string { return p.Sandbox }, func(raw string) (string, error) { return harness.ValidateHarnessBuiltinMode(h, raw) })
 	if fail != nil {
-		return templateAgentLaunch{}, fail
+		return failed(fail)
 	}
 	if note != "" {
 		notes = append(notes, note)
@@ -1187,7 +1292,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	approval, approvalSource, note, fail := resolveStringLaunchField("approval", a.Approval, h.Name, tiers,
 		func(p *db.SpawnProfile) string { return p.Approval }, func(raw string) (string, error) { return harness.ValidateApprovalPolicy(h, raw) })
 	if fail != nil {
-		return templateAgentLaunch{}, fail
+		return failed(fail)
 	}
 	if note != "" {
 		notes = append(notes, note)
@@ -1196,7 +1301,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		func(p *db.SpawnProfile) string { return p.ToolGovernance },
 		func(raw string) (string, error) { return harness.ValidateToolGovernance(h, raw) })
 	if fail != nil {
-		return templateAgentLaunch{}, fail
+		return failed(fail)
 	}
 	if note != "" {
 		notes = append(notes, note)
@@ -1204,7 +1309,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	askTimeout, _, note, fail := resolveStringLaunchField("ask_user_question_timeout", "", h.Name, tiers,
 		func(p *db.SpawnProfile) string { return p.AskUserQuestionTimeout }, func(raw string) (string, error) { return harness.ResolveAskTimeoutMode(h, raw) })
 	if fail != nil {
-		return templateAgentLaunch{}, fail
+		return failed(fail)
 	}
 	if note != "" {
 		notes = append(notes, note)
@@ -1213,7 +1318,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		func(p *db.SpawnProfile) string { return p.AutoCompactWindow },
 		func(raw string) (string, error) { return harness.ResolveAutoCompactWindow(h, raw) })
 	if fail != nil {
-		return templateAgentLaunch{}, fail
+		return failed(fail)
 	}
 	if note != "" {
 		notes = append(notes, note)
@@ -1222,7 +1327,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		func(p *db.SpawnProfile) int64 { return p.ContextWindowMax },
 		func(raw int64) (int64, error) { return harness.ResolveCopilotContextWindow(h, raw) })
 	if fail != nil {
-		return templateAgentLaunch{}, fail
+		return failed(fail)
 	}
 	if note != "" {
 		notes = append(notes, note)
@@ -1235,20 +1340,20 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		func(p *db.SpawnProfile) string { return p.SandboxImplementation },
 		func(raw string) (string, error) { return validateSandboxImplementationForHarness(h, raw) })
 	if fail != nil {
-		return templateAgentLaunch{}, fail
+		return failed(fail)
 	}
 	if note != "" {
 		notes = append(notes, note)
 	}
 
 	if sandbox, err = harness.ResolveHarnessBuiltinMode(h, sandbox); err != nil {
-		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_sandbox", err.Error()}
+		return failed(&spawnFailure{http.StatusBadRequest, "invalid_sandbox", err.Error()})
 	}
 	if approval, err = harness.ResolveApprovalPolicy(h, approval); err != nil {
-		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_approval", err.Error()}
+		return failed(&spawnFailure{http.StatusBadRequest, "invalid_approval", err.Error()})
 	}
 	if toolGovernance, err = harness.ResolveToolGovernance(h, toolGovernance); err != nil {
-		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_tools", err.Error()}
+		return failed(&spawnFailure{http.StatusBadRequest, "invalid_tools", err.Error()})
 	}
 	// Preserve the semantic difference between an omitted approval and a posture
 	// chosen by the template/profile chain. Before TCL-585 this resolver applied
@@ -1287,7 +1392,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	trustDir, trustDirSet, _, note, fail := resolveBoolLaunchField("trust_dir", false, false, h.Name, tiers,
 		func(p *db.SpawnProfile) *bool { return p.TrustDir }, func(v bool) (bool, error) { return harness.ResolveTrustDir(h, v) })
 	if fail != nil {
-		return templateAgentLaunch{}, fail
+		return failed(fail)
 	}
 	if note != "" {
 		notes = append(notes, note)
@@ -1295,7 +1400,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	autoReview, autoReviewSet, _, note, fail := resolveBoolLaunchField("auto_review", false, false, h.Name, tiers,
 		func(p *db.SpawnProfile) *bool { return p.AutoReview }, func(v bool) (bool, error) { return harness.ResolveAutoReview(h, v) })
 	if fail != nil {
-		return templateAgentLaunch{}, fail
+		return failed(fail)
 	}
 	if note != "" {
 		notes = append(notes, note)
@@ -1307,7 +1412,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	remoteControl, _, _, note, fail := resolveBoolLaunchField("remote_control", false, false, h.Name, tiers,
 		func(p *db.SpawnProfile) *bool { return p.RemoteControl }, func(v bool) (bool, error) { return harness.ResolveRemoteControl(h, v) })
 	if fail != nil {
-		return templateAgentLaunch{}, fail
+		return failed(fail)
 	}
 	if note != "" {
 		notes = append(notes, note)
@@ -1319,7 +1424,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		func(p *db.SpawnProfile) *bool { return p.AutoMemory },
 		func(v bool) (bool, error) { return harness.ResolveAutoMemory(h, &v) })
 	if fail != nil {
-		return templateAgentLaunch{}, fail
+		return failed(fail)
 	}
 	if memNote != "" {
 		notes = append(notes, memNote)
@@ -1334,7 +1439,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		func(p *db.SpawnProfile) *bool { return p.CopilotAPI },
 		func(v bool) (bool, error) { return harness.ResolveCopilotAPI(h, &v) })
 	if fail != nil {
-		return templateAgentLaunch{}, fail
+		return failed(fail)
 	}
 	if copilotAPINote != "" {
 		notes = append(notes, copilotAPINote)
@@ -1347,7 +1452,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 			return v, err
 		})
 	if fail != nil {
-		return templateAgentLaunch{}, fail
+		return failed(fail)
 	}
 	if fastModeNote != "" {
 		notes = append(notes, fastModeNote)
@@ -1357,7 +1462,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		func(p *db.SpawnProfile) *bool { return p.SSHWorkaround },
 		func(v bool) (bool, error) { return harness.ResolveSSHWorkaround(h, &v) })
 	if fail != nil {
-		return templateAgentLaunch{}, fail
+		return failed(fail)
 	}
 	if !sshWorkaroundSet {
 		sshWorkaround, _ = harness.ResolveSSHWorkaround(h, nil)
@@ -1383,7 +1488,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	// alone decide. Resolved whole rather than merged, like every other consumer.
 	contextFeatures, cfNote, fail := resolveContextFeaturesLaunchField(nil, false, h, tiers)
 	if fail != nil {
-		return templateAgentLaunch{}, fail
+		return failed(fail)
 	}
 	if cfNote != "" {
 		notes = append(notes, cfNote)
@@ -1396,9 +1501,9 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	// cwd subtree, so a cwd at/above $HOME would expose ~/.tclaude / ~/.codex /
 	// ~/.claude. Refuse per-agent here, mirroring handleGroupSpawn's guard.
 	if home, herr := os.UserHomeDir(); herr == nil && harness.CodexSandboxCwdConflict(sandbox, cwd, home) {
-		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_cwd", fmt.Sprintf(
+		return failed(&spawnFailure{http.StatusBadRequest, "invalid_cwd", fmt.Sprintf(
 			"refusing to spawn a %s agent in %q under sandbox %q: it would expose "+
-				"~/.tclaude / ~/.codex / ~/.claude to the agent's writes", h.Name, cwd, sandbox)}
+				"~/.tclaude / ~/.codex / ~/.claude to the agent's writes", h.Name, cwd, sandbox)})
 	}
 
 	return templateAgentLaunch{
@@ -3074,10 +3179,34 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 				slog.Warn("instantiate: set deploy meta failed", "group", spec.groupName, "error", err)
 			}
 		}
+		// Owner scopes (TCL-1071): the narrowing the blueprint declares for the
+		// force it deploys. Deliberately NOT best-effort like the writes above.
+		// Every other post-create field fails in a direction the operator can
+		// see and fix — a missing cwd, a blank context. This one fails by
+		// deploying a force whose owners hold MORE authority than the blueprint
+		// says, and nothing about the running group would ever reveal it. So the
+		// deploy is refused and the (still empty, still member-less) group is
+		// taken back down rather than handed over half-configured.
+		if tmpl.OwnerScopesJSON != "" {
+			if _, err := db.SetAgentGroupOwnerScopes(spec.groupName, tmpl.OwnerScopesJSON); err != nil {
+				slog.Error("instantiate: set owner scopes failed; refusing the deploy",
+					"group", spec.groupName, "error", err)
+				if delErr := db.DeleteAgentGroup(spec.groupName); delErr != nil {
+					slog.Error("instantiate: could not remove the half-configured group",
+						"group", spec.groupName, "error", delErr)
+				}
+				cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
+				writeError(w, http.StatusInternalServerError, "io",
+					"could not apply the template's owner-scope narrowing to the new group, so the "+
+						"deploy was refused rather than bringing up a force with a wider owner bypass "+
+						"than the template declares: "+err.Error())
+				return
+			}
+		}
 
 		g = &db.AgentGroup{
 			ID: gid, Name: spec.groupName, Descr: spec.descr, DefaultCwd: spec.cwd, DefaultContext: groupContext,
-			Mission: spec.mission, SourceTemplate: spec.sourceTemplate,
+			Mission: spec.mission, SourceTemplate: spec.sourceTemplate, OwnerScopesJSON: tmpl.OwnerScopesJSON,
 		}
 
 		// Advisory process runtime (JOH-242): if the template carries a process,
@@ -4355,6 +4484,11 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 		Descr:          g.Descr,
 		DefaultContext: g.DefaultContext,
 		Agents:         []db.GroupTemplateAgent{},
+		// The group's owner-scope narrowing travels with the snapshot for the
+		// same reason a member's grant scopes do (see addAgent below): a
+		// template that dropped it would deploy forces whose owners hold
+		// strictly MORE authority than the group it was traced from.
+		OwnerScopesJSON: g.OwnerScopesJSON,
 	}
 	existingNames := map[string]bool{}
 	if existing != nil {
