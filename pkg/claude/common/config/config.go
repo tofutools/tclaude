@@ -66,6 +66,10 @@ type Config struct {
 	// `tclaude conv ls -w` watch view. Absent → all defaults.
 	ConvWatch *ConvWatchConfig `json:"conv_watch,omitempty"`
 
+	// SessionWatch holds persisted UI preferences for the interactive
+	// `tclaude sessions` watch view. Absent → all defaults.
+	SessionWatch *SessionWatchConfig `json:"session_watch,omitempty"`
+
 	// Cost holds display-only cost adjustments — see CostConfig. Absent →
 	// no adjustment (the recorded figures are shown verbatim).
 	Cost *CostConfig `json:"cost,omitempty"`
@@ -999,6 +1003,14 @@ type ConvWatchConfig struct {
 	// HARNESS auto-shows only when a non-Claude conv is present); an absent
 	// key follows the auto rule. Written by the in-view column selector
 	// (the `c` overlay); unknown keys are ignored by readers.
+	Columns map[string]bool `json:"columns,omitempty"`
+}
+
+// SessionWatchConfig holds the live sessions view's persisted UI preferences.
+type SessionWatchConfig struct {
+	// Columns is the set of explicit column-visibility overrides. An absent
+	// key follows that column's default; unknown keys are ignored by readers.
+	// Written by the in-view `c` column selector.
 	Columns map[string]bool `json:"columns,omitempty"`
 }
 

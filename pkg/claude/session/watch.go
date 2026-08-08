@@ -2,6 +2,7 @@ package session
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
@@ -87,6 +88,9 @@ type model struct {
 	filterMenu        bool            // showing filter menu
 	filterCursor      int             // cursor position in filter menu
 	filterChecked     map[string]bool // checked items in filter menu
+	columnSelector    bool            // showing the column visibility menu
+	columnCursor      int             // cursor position in column visibility menu
+	colOverrides      map[string]bool // persisted explicit visibility overrides
 	helpView          bool            // showing help view
 	searchInput       textinput.Model // search query input
 	searchFocused     bool            // whether search box is focused
@@ -176,7 +180,22 @@ func initialModel(includeAll bool, statusFilter, hideFilter []string) model {
 		hideFilter:   hideFilter,
 		searchInput:  newSessionSearchInput(),
 		dirInput:     newDirInput(),
+		colOverrides: loadSessionColumnOverrides(),
 	}
+}
+
+// loadSessionColumnOverrides reads persisted column visibility preferences.
+// A missing block or unreadable config leaves every column at its default.
+func loadSessionColumnOverrides() map[string]bool {
+	overrides := map[string]bool{}
+	cfg, err := config.Load()
+	if err != nil || cfg.SessionWatch == nil {
+		return overrides
+	}
+	for key, visible := range cfg.SessionWatch.Columns {
+		overrides[key] = visible
+	}
+	return overrides
 }
 
 func (m model) Init() tea.Cmd {
@@ -284,6 +303,7 @@ func sessionMatchesSearch(s *SessionState, query string) bool {
 		strings.Contains(strings.ToLower(s.Cwd), query) ||
 		strings.Contains(strings.ToLower(s.Status), query) ||
 		strings.Contains(strings.ToLower(s.StatusDetail), query) ||
+		strings.Contains(strings.ToLower(sessionHarnessBadge(s.Harness)), query) ||
 		strings.Contains(strings.ToLower(s.ConvID), query)
 }
 
@@ -462,6 +482,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle help view
 		if m.helpView {
 			m.helpView = false
+			return m, nil
+		}
+
+		// Handle column selector overlay.
+		if m.columnSelector {
+			toggleable := m.toggleableColumns()
+			switch msg.String() {
+			case "up", "k":
+				if m.columnCursor > 0 {
+					m.columnCursor--
+				}
+			case "down", "j":
+				if m.columnCursor < len(toggleable)-1 {
+					m.columnCursor++
+				}
+			case " ", "space":
+				if m.columnCursor < len(toggleable) {
+					column := toggleable[m.columnCursor]
+					m.setColumnOverride(column.key, !column.visible)
+				}
+			case "r":
+				m.resetColumnOverrides()
+			case "enter", "c", "esc", "q", "ctrl+c":
+				m.columnSelector = false
+			}
 			return m, nil
 		}
 
@@ -700,6 +745,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.filterCursor = 0
 			m.filterMenu = true
+		case "c":
+			m.columnCursor = 0
+			m.columnSelector = true
 		case "h", "?":
 			m.helpView = true
 		case "r":
@@ -782,20 +830,147 @@ func applyTUIColorScheme(scheme string) {
 	filterBadge = lipgloss.NewStyle().Foreground(lipgloss.Color(p.Accent))
 }
 
-// columns returns the column definitions for the session table.
-// Used by both Update (for sort key handling) and View (for rendering).
+const (
+	sessionColHarness = "harness"
+	sessionColProject = "project"
+	sessionColStatus  = "status"
+	sessionColUpdated = "updated"
+)
+
+// sessionColDef keeps headers and row cells on one shared visibility path.
+// An empty key marks a structural column that cannot be hidden.
+type sessionColDef struct {
+	key     string
+	visible bool
+	col     table.Column
+	cell    func(*model, *SessionState) string
+}
+
+func (m model) orderedColumns() []sessionColDef {
+	return []sessionColDef{
+		{visible: true, col: table.Column{Header: "", Width: 2}, cell: func(_ *model, state *SessionState) string {
+			switch {
+			case state.TmuxSession == "" || !IsTmuxSessionAlive(state.TmuxSession):
+				return " ◉"
+			case state.Attached > 0:
+				return "⚡"
+			default:
+				return " ▷"
+			}
+		}},
+		{visible: true, col: table.Column{Header: "ID", MinWidth: 10, MaxWidth: 32, Weight: 0.12, Truncate: true, SortKey: "id"},
+			cell: func(_ *model, state *SessionState) string { return sessionHandle(state) }},
+		{key: sessionColHarness, visible: m.colVisible(sessionColHarness, m.hasNonDefaultHarness()),
+			col:  table.Column{Header: "HARNESS", Width: 8},
+			cell: func(_ *model, state *SessionState) string { return sessionHarnessBadge(state.Harness) }},
+		{key: sessionColProject, visible: m.colVisible(sessionColProject, true),
+			col:  table.Column{Header: "PROJECT", MinWidth: 15, Weight: 0.25, Truncate: true, TruncateMode: table.TruncateStart, SortKey: "project"},
+			cell: func(_ *model, state *SessionState) string { return state.Cwd }},
+		{visible: true, col: table.Column{Header: "TITLE/PROMPT", MinWidth: 20, Weight: 0.5, Truncate: true},
+			cell: func(m *model, state *SessionState) string {
+				title := convindex.GetConvTitleAndPromptWithFallback(state.ConvID, state.Cwd, m.pendingNames[state.ConvID])
+				if title == "" {
+					return "-"
+				}
+				return title
+			}},
+		{key: sessionColStatus, visible: m.colVisible(sessionColStatus, true),
+			col: table.Column{Header: "STATUS", MinWidth: 15, Weight: 0.25, Truncate: true, SortKey: "status"},
+			cell: func(_ *model, state *SessionState) string {
+				if state.StatusDetail != "" {
+					return state.Status + ": " + state.StatusDetail
+				}
+				return state.Status
+			}},
+		{key: sessionColUpdated, visible: m.colVisible(sessionColUpdated, true),
+			col:  table.Column{Header: "UPDATED", Width: 10, SortKey: "updated"},
+			cell: func(_ *model, state *SessionState) string { return FormatDuration(time.Since(state.Updated)) }},
+	}
+}
+
+// columns returns the currently visible table headers.
 func (m model) columns() []table.Column {
-	return []table.Column{
-		{Header: "", Width: 2}, // Attached indicator
-		// The ID column renders sessionHandle (the tmux name when set) — the
-		// same handle `session ls` prints and attach/kill accept. Flexible
-		// width because handles are no longer uniformly 8-10 chars: labels
-		// and dir-style names (session.tmux_name_style="dir") run up to 32.
-		{Header: "ID", MinWidth: 10, MaxWidth: 32, Weight: 0.12, Truncate: true, SortKey: "id"},
-		{Header: "PROJECT", MinWidth: 15, Weight: 0.25, Truncate: true, TruncateMode: table.TruncateStart, SortKey: "project"}, // Project
-		{Header: "TITLE/PROMPT", MinWidth: 20, Weight: 0.5, Truncate: true},                                                    // Title/prompt (not sortable)
-		{Header: "STATUS", MinWidth: 15, Weight: 0.25, Truncate: true, SortKey: "status"},                                      // Status
-		{Header: "UPDATED", Width: 10, SortKey: "updated"},                                                                     // Updated
+	var columns []table.Column
+	for _, definition := range m.orderedColumns() {
+		if definition.visible {
+			columns = append(columns, definition.col)
+		}
+	}
+	return columns
+}
+
+func (m model) colVisible(key string, defaultVisible bool) bool {
+	if visible, ok := m.colOverrides[key]; ok {
+		return visible
+	}
+	return defaultVisible
+}
+
+func (m model) hasNonDefaultHarness() bool {
+	for _, state := range m.allSessions {
+		if state.Harness != "" && state.Harness != harness.DefaultName {
+			return true
+		}
+	}
+	return false
+}
+
+func sessionHarnessBadge(name string) string {
+	if name == "" {
+		return harness.DefaultName
+	}
+	return name
+}
+
+type sessionToggleCol struct {
+	key     string
+	label   string
+	visible bool
+}
+
+func (m model) toggleableColumns() []sessionToggleCol {
+	var columns []sessionToggleCol
+	for _, definition := range m.orderedColumns() {
+		if definition.key != "" {
+			columns = append(columns, sessionToggleCol{
+				key: definition.key, label: definition.col.Header, visible: definition.visible,
+			})
+		}
+	}
+	return columns
+}
+
+func (m *model) setColumnOverride(key string, visible bool) {
+	if m.colOverrides == nil {
+		m.colOverrides = map[string]bool{}
+	}
+	m.colOverrides[key] = visible
+	m.persistColumnPrefs()
+}
+
+func (m *model) resetColumnOverrides() {
+	m.colOverrides = map[string]bool{}
+	m.persistColumnPrefs()
+}
+
+func (m *model) persistColumnPrefs() {
+	overrides := make(map[string]bool, len(m.colOverrides))
+	for key, visible := range m.colOverrides {
+		overrides[key] = visible
+	}
+	if _, err := config.Update(func(cfg *config.Config, _ error) error {
+		if cfg.SessionWatch == nil {
+			cfg.SessionWatch = &config.SessionWatchConfig{}
+		}
+		if len(overrides) == 0 {
+			cfg.SessionWatch.Columns = nil
+		} else {
+			cfg.SessionWatch.Columns = overrides
+		}
+		return nil
+	}); err != nil {
+		slog.Warn("sessions: failed to persist column preferences", "error", err)
+		m.notice = "Failed to save column prefs: " + err.Error()
 	}
 }
 
@@ -803,6 +978,10 @@ func (m model) View() tea.View {
 	// Help view overlay
 	if m.helpView {
 		return tea.View{Content: m.renderHelpView(), AltScreen: true}
+	}
+
+	if m.columnSelector {
+		return tea.View{Content: m.renderColumnSelector(), AltScreen: true}
 	}
 
 	// Filter menu overlay
@@ -857,14 +1036,20 @@ func (m model) View() tea.View {
 			b.WriteString("  No matches for \"" + m.searchInput.Value() + "\"\n")
 		}
 		b.WriteString("\n")
-		b.WriteString(helpStyle.Render("  n new • / search • f filter • r refresh • q quit"))
+		b.WriteString(helpStyle.Render("  n new • / search • f filter • c columns • r refresh • q quit"))
 		b.WriteString("\n")
 		return tea.View{Content: b.String(), AltScreen: true}
 	}
 
 	// Build table using shared column definitions
 	tableWidth := max(m.width-3, 60)
-	cols := m.columns()
+	definitions := m.orderedColumns()
+	cols := make([]table.Column, 0, len(definitions))
+	for _, definition := range definitions {
+		if definition.visible {
+			cols = append(cols, definition.col)
+		}
+	}
 	tbl := table.New(cols...)
 	tbl.Padding = 3
 	tbl.SetTerminalWidth(tableWidth)
@@ -877,37 +1062,14 @@ func (m model) View() tea.View {
 
 	// Add rows
 	for _, state := range m.sessions {
-		status := state.Status
-		if state.StatusDetail != "" {
-			status = status + ": " + state.StatusDetail
+		var cells []string
+		for _, definition := range definitions {
+			if definition.visible {
+				cells = append(cells, definition.cell(&m, state))
+			}
 		}
-
-		// Add attached/type indicator
-		var attachedMark string
-		tmuxAlive := state.TmuxSession != "" && IsTmuxSessionAlive(state.TmuxSession)
-		if !tmuxAlive {
-			attachedMark = " ◉" // Non-tmux or dead tmux (in-terminal, can't attach)
-		} else if state.Attached > 0 {
-			attachedMark = "⚡" // Tmux with attached clients
-		} else {
-			attachedMark = " ▷" // Tmux detached (can attach)
-		}
-
-		// Get project path (full path, table will truncate from start)
-		project := state.Cwd
-
-		// Get title/prompt from the conversation, falling back to the agent's
-		// spawn-time name until the harness-native title write lands.
-		title := convindex.GetConvTitleAndPromptWithFallback(
-			state.ConvID, state.Cwd, m.pendingNames[state.ConvID])
-		if title == "" {
-			title = "-"
-		}
-
-		updated := FormatDuration(time.Since(state.Updated))
-
 		tbl.AddRow(table.Row{
-			Cells: []string{attachedMark, sessionHandle(state), project, title, status, updated},
+			Cells: cells,
 			Style: getRowStyle(state.Status),
 		})
 	}
@@ -941,7 +1103,7 @@ func (m model) View() tea.View {
 			b.WriteString(confirmStyle.Render(fmt.Sprintf("  Session %s was started outside tclaude/tmux (◉) - already in its terminal. [press any key]", sessionHandle(m.confirmTarget))))
 		}
 	default:
-		b.WriteString(helpStyle.Render("  h help • n new • / search • ↑/↓ navigate • enter attach • esc/q quit"))
+		b.WriteString(helpStyle.Render("  h help • n new • / search • c columns • ↑/↓ navigate • enter attach • esc/q quit"))
 	}
 	b.WriteString("\n")
 
@@ -980,6 +1142,31 @@ func (m model) renderFilterMenu() string {
 
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("  ↑/↓ navigate • space toggle • enter apply • esc cancel"))
+	b.WriteString("\n")
+	return b.String()
+}
+
+func (m model) renderColumnSelector() string {
+	var b strings.Builder
+	b.WriteString("\n")
+	b.WriteString(menuStyle.Render("  Columns"))
+	b.WriteString("\n\n")
+
+	for i, column := range m.toggleableColumns() {
+		box := "[ ]"
+		if column.visible {
+			box = "[x]"
+		}
+		row := box + " " + column.label
+		if i == m.columnCursor {
+			b.WriteString("  " + selectedStyle.Render("▸ "+row) + "\n")
+		} else {
+			b.WriteString("    " + row + "\n")
+		}
+	}
+
+	b.WriteString("\n")
+	b.WriteString(helpStyle.Render("  ↑/↓ move • space toggle • r reset to defaults • enter/esc/c close"))
 	b.WriteString("\n")
 	return b.String()
 }
@@ -1060,6 +1247,7 @@ func (m model) renderHelpView() string {
 	b.WriteString(headerStyle.Render("  Filtering"))
 	b.WriteString("\n")
 	b.WriteString("    f         Open filter menu\n")
+	b.WriteString("    c         Choose visible columns (persisted)\n")
 	b.WriteString("\n")
 
 	b.WriteString(headerStyle.Render("  Sorting"))
