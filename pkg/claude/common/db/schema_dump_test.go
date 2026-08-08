@@ -163,7 +163,28 @@ func TestClassifyIdentityColumn(t *testing.T) {
 }
 
 // advanceThroughMigrations walks the REGISTRATION LIST, applying every step
-// above from, and returns the version it reached.
+// above from, and then asks THE FIXTURE what version it ended up at.
+//
+// # Why it reads the database rather than its own loop counter
+//
+// The first version of this helper tracked the last applied step's version in a
+// local and asserted THAT equalled currentVersion, under the message "the
+// fixture must reach the head the daemon migrates to". That value came entirely
+// from migrationSteps. It made a claim about a database it never queried, and
+// [TestMigrationStepsAreContiguous] already pins the list's own last version, so
+// it could not fail for any reason that test would not have caught first.
+//
+// A cold review measured the gap. A registered migration that creates its table
+// but omits its own `UPDATE schema_version` left the helper reporting v198 while
+// the fixture sat at v197, and BOTH parity tests passed. [SchemaSQL] reads only
+// sqlite_master DDL, so nothing downstream noticed either — and in production
+// that migration re-runs on every open, forever, because migrate() resumes from
+// the row rather than from where it got to last time.
+//
+// Each migration owns its own version bump (see the tail of any migrate_v*.go);
+// migrate() only tracks its position in memory. So the row IS the fixture's own
+// answer to "did the chain finish", and it is the only thing asserted here that
+// is not derived from the list being walked.
 //
 // # What it replaces, and why by-name chaining was the bug
 //
@@ -186,19 +207,63 @@ func TestClassifyIdentityColumn(t *testing.T) {
 // PRs each claimed v195 and the list carried ONE entry for two migrations, so one
 // schema change would never have run. The compile error from the duplicate
 // function name is the only reason anybody looked.
-func advanceThroughMigrations(t *testing.T, d *sql.DB, from int) int {
+//
+// # What this trade GIVES UP, stated because it is a real loss
+//
+// The comparison this feeds is upgraded-schema vs fresh-schema, and freshMigratedDB
+// builds the fresh side by calling migrate(), which walks migrationSteps. Advancing
+// the upgraded side from the same list CORRELATES BOTH SIDES: a migration dropped
+// from the list is now missing from fresh and upgraded alike, so the schemas still
+// match and the parity test passes. The hand-chain, being an independent
+// enumeration, went red on exactly that.
+//
+// That is a genuine detection lost, and it is not made up for here — it is made up
+// for by [TestEveryMigrationIsRegistered] and [TestMigrationStepsAreContiguous],
+// which own the "is every migration in the list" question and fail loudly on a
+// dropped entry. The trade is: the parity tests stop answering a question two other
+// tests answer better, and stop reporting a defect in one PR as a failure of
+// whichever PR happens to be in flight.
+//
+// The direction NOT traded away is the one the ticket was about: a migration that
+// exists and never reaches the list is still invisible here, and still invisible to
+// the daemon, which is what the registration guards are for.
+//
+// # Assumptions it rests on
+//
+// migrationSteps is in version order — pinned by [TestMigrationStepsAreContiguous],
+// which asserts migrationSteps[i].version == i+2. And this walk compares every step
+// to the fixed from, where production's loop advances its cursor as it goes; the two
+// agree for a contiguous list, which is the same test's job. So it walks the same
+// LIST as migrate(), not the same LOOP.
+func advanceThroughMigrations(t *testing.T, d *sql.DB, from int) {
 	t.Helper()
-	reached := from
+	var applied int
 	for _, step := range migrationSteps {
 		if step.version <= from {
 			continue
 		}
 		require.NoErrorf(t, step.apply(d),
 			"advancing the upgraded fixture through v%d", step.version)
-		reached = step.version
+		applied++
 	}
-	require.Equalf(t, currentVersion, reached,
-		"the fixture must reach the head the daemon migrates to; it stopped at v%d",
-		reached)
-	return reached
+
+	// The positive control. Without it a from at or above the head advances
+	// nothing and every assertion below still passes, against a fixture that was
+	// never migrated at all.
+	require.NotZerof(t, applied,
+		"advanceThroughMigrations applied no steps from v%d; the fixture was not "+
+			"advanced, so whatever this test compares next is comparing an unmigrated "+
+			"database against a fresh one", from)
+
+	var onDisk int
+	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&onDisk),
+		"reading the fixture's own schema_version after advancing it")
+	require.Equalf(t, currentVersion, onDisk, ""+
+		"the fixture reports schema_version %d after being advanced to the head at v%d. "+
+		"Every migration is responsible for its OWN `UPDATE schema_version`; migrate() "+
+		"only tracks its position in memory, so a step that changes the schema and "+
+		"forgets the bump leaves a real database at the old version and RE-RUNS THAT "+
+		"STEP ON EVERY OPEN, FOREVER. Nothing else here would see it: the parity "+
+		"comparison reads sqlite_master DDL, which the missing bump does not change",
+		onDisk, currentVersion)
 }

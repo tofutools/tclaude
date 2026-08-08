@@ -19,51 +19,67 @@ import (
 // for a schema migration: migrate_v<version>_<what_it_does>.go.
 var migrationFilePattern = regexp.MustCompile(`^migrate_v(\d+)_.*\.go$`)
 
-// TestEveryMigrationFileIsRegisteredExactlyOnce is the guard for the failure
-// that took main down on 2026-08-08, and for the quieter one underneath it.
+// TestEveryMigrationFileIsRegisteredExactlyOnce keeps migration FILE NAMES
+// honest, so that the version a PR appears to claim is the version it claims.
 //
-// # What happened
+// # Read this before trusting it: what it is NOT
 //
-// Two merged PRs each claimed migration v195, in files neither PR shared:
+// It is not the guard against a migration silently failing to run.
+// [TestEveryMigrationIsRegistered] is, and it got there first — it scans this
+// package for every migrateV{n-1}toV{n} DECLARATION and pins each to its own
+// registered version, which is the check that actually tracks runtime behaviour.
+// File names have no runtime effect whatsoever: chain position comes from
+// migrationSteps plus the function's own version, and nothing in SQLite has ever
+// read a Go file name.
+//
+// So this test can fail on a migration chain that is completely correct, and it
+// is MEANT to. A file named migrate_v197_*.go that declares migrateV197toV198,
+// registered at 198, runs perfectly and trips both guards here. That is the
+// intended behaviour and not a false positive: renumbering a migration means
+// renaming its file too, because the file name is what the next person reads.
+//
+// # What it is for
+//
+// On 2026-08-08 two merged PRs each claimed v195, in files neither PR shared:
 // migrate_v195_reset_copilot_usage_snapshots.go and
 // migrate_v195_permission_scopes.go. Git reported no conflict, because neither
-// branch touched the other's file. Both were green before either merged.
+// branch touched the other's file. Both were green before either merged, and
+// main stopped compiling on two functions named migrateV194toV195.
 //
-// The loud defect was a compile error from two functions named
-// migrateV194toV195, and it is the only reason anyone looked.
+// A compile error is the LOUDEST possible outcome and it is the only reason
+// anyone looked. The failure mode this guards is the same collision noticed
+// EARLIER and by a person: two files bearing the same version number is the
+// visible signature of the collision, readable in a PR's file list before any
+// of it is merged, and it survives the two branches having renamed their
+// functions apart. That is a reviewer-facing benefit, not a runtime one, and
+// stating it as a runtime one — which an earlier draft of this comment did —
+// misrepresents what a green run here proves.
 //
-// THE QUIET DEFECT IS THE ONE THIS TEST IS FOR. The registration list carried a
-// SINGLE {195, ...} entry for two migrations. Even with the name collision
-// resolved, one of the two schema changes would never have run — silently, on a
-// user's database, with no error anywhere. [TestMigrationStepsAreContiguous]
-// does not see it: the list is still dense, still strictly increasing, and still
-// ends at currentVersion, because the problem is not a gap in the list but a
-// migration that never reached it.
-//
-// # Why the file names are the subject
+// # Why the file set is the subject
 //
 // Because the list cannot be its own witness. Asking "is every entry in the list
-// present" is answered by the list. The population that must be accounted for
-// lives on disk — one file per version, by a convention this package has
-// followed for 124 versions — so the file set is the independent evidence, and
-// the question is whether the list covers it.
+// present" is answered by the list. The file set is evidence that exists
+// independently of it, so the question worth asking is whether the list covers
+// the files.
 //
 // # What it asserts
 //
-//   - NO TWO FILES CLAIM THE SAME VERSION. This is the incident, exactly. Two
-//     files numbered v195 means one of them is not in the chain, whatever the
-//     list looks like.
-//   - Every file's version is registered. Catches a migration added at a version
-//     the list has not been extended to — the forgotten-bump shape.
-//   - A file numbered N declares migrateV{N-1}toV{N}. Without this a file could
-//     claim a free number while its function implements another, and both checks
-//     above would pass while the migration ran at the wrong point in the chain.
+//   - NO TWO FILES CLAIM THE SAME VERSION — the readable signature of the
+//     2026-08-08 collision.
+//   - Every file's version appears exactly once in migrationSteps. Given
+//     contiguity this is largely subsumed by [TestEveryMigrationIsRegistered];
+//     it is kept as a cheap backstop, not because it is load-bearing.
 //
 // # What it cannot see
 //
-//   - A migration defined outside the naming convention. Versions below v73 pre-
-//     date it and several share files, so the file→list direction is the only one
-//     asserted; the reverse would fail on history rather than on a defect.
+//   - A migration outside the naming convention — and this is a FORWARD gap, not
+//     just a historical one. Nothing forces a new migration into the convention:
+//     a migrate_v199.go with no trailing section does not match the pattern at
+//     all, and two migrations declared in one conventionally-named file are
+//     invisible because the second version has no file of its own. The
+//     convention holds for 124 files spanning v73..v197, with v87 already an
+//     exception inside that range (migrateV86toV87 lives in migrate.go). Only
+//     the file→list direction is asserted; the reverse would fail on history.
 //   - Two PRs in flight. This catches the collision on whichever PR merges
 //     SECOND, and only if CI re-runs against the post-merge base. A check whose
 //     subject is the repository is invalidated by a merge into its base, and no
@@ -101,13 +117,21 @@ func TestEveryMigrationFileIsRegisteredExactlyOnce(t *testing.T) {
 
 	for version, files := range filesByVersion {
 		assert.Lenf(t, files, 1,
-			"v%d is claimed by %d files (%v). Two migrations at one version means "+
-				"the registration list can hold only one of them, so the other never "+
-				"runs — silently, on a real database. This is the 2026-08-08 incident "+
-				"exactly: git reports no conflict because neither branch touches the "+
-				"other's file. The later-merged change renumbers",
+			"v%d is claimed by %d files (%v). This is the readable signature of the "+
+				"2026-08-08 collision: git reports no conflict, because neither branch "+
+				"touches the other's file, so nothing before this says the two PRs picked "+
+				"the same number. FIX: the change that merged SECOND takes the next free "+
+				"version — rename its file to migrate_v<next>_<what_it_does>.go, rename "+
+				"its function to migrateV<next-1>toV<next>, move its migrationSteps entry "+
+				"to the end of the list, and bump currentVersion to match. Renaming the "+
+				"function alone leaves two files bearing one number, which is what the "+
+				"next person reading the PR has to go on",
 			version, len(files), files)
 
+		// Largely subsumed by TestEveryMigrationIsRegistered, which pins each
+		// migration FUNCTION to its registered version. Kept as a cheap backstop
+		// on a different population (files rather than declarations), not because
+		// it is the load-bearing check here.
 		assert.Equalf(t, 1, registered[version],
 			"v%d has a migration file (%v) but appears %d times in migrationSteps. A "+
 				"migration that is not registered exactly once does not run exactly "+
@@ -123,9 +147,16 @@ func TestEveryMigrationFileIsRegisteredExactlyOnce(t *testing.T) {
 //
 // Separate from the registration check because it answers a different question.
 // That one asks whether the chain covers every file; this asks whether a file is
-// what its name says. A file named v198 whose function is migrateV196toV197
-// would satisfy the first and still be wrong — it would run at the wrong point,
-// or twice, depending on what else moved.
+// what its name says.
+//
+// As with its sibling, the stake is READABILITY AND NOT RUNTIME. A file named
+// v198 whose function is migrateV196toV197 runs at whatever point the function's
+// own version puts it, correctly, because the file name is inert —
+// [TestEveryMigrationIsRegistered] already pins function name against registered
+// version, and that is the pairing SQLite ends up caring about. What breaks is
+// the reviewer: the file name is what a PR's file list shows, so a file whose
+// name and function disagree makes a version collision unreadable to the person
+// best placed to catch it before it merges.
 //
 // It cannot see a migration whose function name is right and whose BODY belongs
 // to another version. Nothing structural can; that is what the migration's own
