@@ -1102,3 +1102,69 @@ func TestCompareAndSetAgentCopilotAPIPinsADriveThatWasNeverRecorded(t *testing.T
 	require.NotNil(t, after.SSHWorkaround)
 	assert.False(t, *after.SSHWorkaround, "siblings still survive an append")
 }
+
+// TestSeedAgentRelaunchProfileIfEmptyRefusesANonEmptyProfile is the guard half,
+// and it exists because a mutation pass found the guard could be deleted with
+// every test still green.
+//
+// The seed is the one write in the drive switch that replaces a whole blob. Its
+// safety argument is "there was nothing to lose" — true when the blob was READ,
+// and not kept true by anything: projectSessionRelaunchProfilesTx runs inside
+// every SaveSession and populates an empty agent blob. So the guard is what
+// makes the argument hold at the moment of the write rather than at the moment
+// of the read.
+func TestSeedAgentRelaunchProfileIfEmptyRefusesANonEmptyProfile(t *testing.T) {
+	setupTestDB(t)
+	const convID = "seed-guard-conv"
+	agentID, _, err := EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+
+	// The state a status tick leaves behind between the seed's read and its
+	// write. SSHWorkaround is the field the whole-blob hazard is documented
+	// against, so it is the one asserted as surviving.
+	sshWorkaround := false
+	require.NoError(t, SetAgentRelaunchProfile(agentID, AgentRelaunchProfile{
+		Version: RelaunchProfileVersion, SSHWorkaround: &sshWorkaround,
+	}))
+
+	on := true
+	seeded, err := SeedAgentRelaunchProfileIfEmpty(agentID, AgentRelaunchProfile{
+		Version: RelaunchProfileVersion, CopilotAPI: &on,
+	})
+	require.NoError(t, err)
+	assert.False(t, seeded,
+		"a profile that grew between the read and the write must not be replaced; that is "+
+			"the lost-edit hazard the compare-and-set functions exist to prevent, and this "+
+			"is the one path allowed to write a whole blob")
+
+	after, err := AgentRelaunchProfileForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, after)
+	require.NotNil(t, after.SSHWorkaround,
+		"the refused seed must have left the existing profile untouched")
+	assert.False(t, *after.SSHWorkaround)
+	assert.Nil(t, after.CopilotAPI, "and must not have recorded its own value")
+}
+
+// TestSeedAgentRelaunchProfileIfEmptySeedsAnEmptyProfile is the positive
+// control: without it the test above passes for a function that never seeds
+// anything at all.
+func TestSeedAgentRelaunchProfileIfEmptySeedsAnEmptyProfile(t *testing.T) {
+	setupTestDB(t)
+	const convID = "seed-ok-conv"
+	agentID, _, err := EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+
+	off := false
+	seeded, err := SeedAgentRelaunchProfileIfEmpty(agentID, AgentRelaunchProfile{
+		Version: RelaunchProfileVersion, CopilotAPI: &off,
+	})
+	require.NoError(t, err)
+	require.True(t, seeded, "an empty blob is exactly what this may write")
+
+	after, err := AgentRelaunchProfileForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, after)
+	require.NotNil(t, after.CopilotAPI)
+	assert.False(t, *after.CopilotAPI)
+}
