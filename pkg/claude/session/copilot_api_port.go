@@ -1,9 +1,6 @@
 package session
 
-import (
-	"fmt"
-	"net"
-)
+import "fmt"
 
 // ResolveCopilotAPIPort settles which loopback port an API-backed Copilot pane
 // binds, and refuses the two combinations that cannot mean anything.
@@ -17,16 +14,22 @@ import (
 // allocated it before forking this process precisely so it holds the number
 // before the pane exists (TCL-1054). It is taken as given, only range-checked.
 //
-// The drive WITHOUT a port allocates one here. That is the direct
-// `tclaude session new --copilot-api` case, where there is no daemon waiting on
-// the answer — nothing outside this process needs to have known the number in
-// advance, so choosing it late costs nothing. It is NOT a fallback for a
-// daemon-driven launch: agentd always passes the port it allocated, and a
-// second allocation here would hand the pane a port the daemon is not watching.
+// The drive WITHOUT a port is refused, and this function used to ALLOCATE one
+// instead — the defect TCL-1084 fixed. The allocation was written for a direct
+// `tclaude session new --copilot-api`, on the reasoning that nothing outside this
+// process needed the number in advance. True, and beside the point: nothing
+// outside this process was going to DIAL it either. Only agentd creates the RPC
+// session and holds the connection, so a locally-chosen port produced a pane
+// with an unauthenticated loopback endpoint that nothing would ever drive.
 //
-// Allocation binds 127.0.0.1:0 and closes it, inheriting the same
-// bind-close-exec gap agentd's allocator has, for the same reason: copilot
-// cannot be given a pre-bound listener.
+// It is a backstop rather than the gate. resolveCopilotAPIDriveForLaunch decides
+// this earlier and with the reason attached, because it can tell an operator who
+// TYPED --copilot-api from a relaunch that inherited it, and it must run before
+// any port is chosen. Reaching this refusal means the drive survived that gate
+// without a port, which no path should manage; it stays because the alternative
+// to a refusal here is a silently useless listener, and because it makes
+// appendCopilotAPIPortFlag's contract in agentd true in both of its clauses
+// rather than one.
 func ResolveCopilotAPIPort(copilotAPI bool, requested int) (int, error) {
 	if !copilotAPI {
 		if requested != 0 {
@@ -36,20 +39,17 @@ func ResolveCopilotAPIPort(copilotAPI bool, requested int) (int, error) {
 		}
 		return 0, nil
 	}
-	if requested != 0 {
-		if requested < 1 || requested > 65535 {
-			return 0, fmt.Errorf(
-				"--copilot-api-port %d is not a usable TCP port (want 1-65535)", requested)
-		}
-		return requested, nil
+	if requested == 0 {
+		return 0, fmt.Errorf(
+			"--copilot-api needs the port tclaude agentd allocated for it: the embedded " +
+				"JSON-RPC server is only reachable by the daemon that created its session, so " +
+				"a port chosen here would bind an unauthenticated loopback endpoint with " +
+				"nothing driving it. Launch the agent through tclaude agentd, or launch it " +
+				"without --copilot-api")
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, fmt.Errorf("allocate a Copilot API port: %w", err)
+	if requested < 1 || requested > 65535 {
+		return 0, fmt.Errorf(
+			"--copilot-api-port %d is not a usable TCP port (want 1-65535)", requested)
 	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	if err := listener.Close(); err != nil {
-		return 0, fmt.Errorf("release allocated Copilot API port %d: %w", port, err)
-	}
-	return port, nil
+	return requested, nil
 }
