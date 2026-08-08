@@ -335,14 +335,88 @@ func AgentRelaunchProfileRaw(agentID string) (string, error) {
 // a silent overwrite of whatever the daemon just composed into a refusal the
 // caller can report and the operator can retry.
 //
+// # The shape guards, and what each one is for
+//
 // json_valid is required as well as the guard: the column defaults to the empty
-// string, and json_set against a non-JSON value raises rather than no-ops. An
-// agent with no profile yet is not a candidate for a targeted field edit — there
-// is nothing to edit inside — and is reported by the same false return.
-func CompareAndSetAgentCopilotAPI(agentID string, value bool, expected string) (bool, error) {
+// string, and json_set against a non-JSON value raises rather than no-ops.
+//
+// json_type = 'object' is required as well as json_valid, because json_valid
+// accepts scalars and arrays. json_set('$.copilot_api') against `123`, `[1,2]`
+// or `null` changes nothing AND STILL COUNTS AS A MODIFIED ROW, so without this
+// clause the function would return true for a write that provably did not
+// happen: the operator is told the drive was turned off, the record still says
+// nothing, and the next launch's tier stack turns it back on. Nothing in
+// production writes a non-object today and decodeAgentRelaunchProfile rejects
+// one a layer earlier — which is exactly why the clause belongs HERE. A guard
+// whose correctness depends on a check in a different function is not a guard.
+//
+// # Why the attribution is a PARAMETER rather than something the caller may skip
+//
+// CopilotAPISource names the tier that chose CopilotAPI, and its doc says it
+// travels WITH the value. An edit that moved the value and left the attribution
+// behind would produce a record naming a tier that chose the opposite posture —
+// a WRONG attribution, which is worse than a missing one because it survives
+// review by looking like work.
+//
+// It is not only rendered. `templateAgentLaunchFromConv` asks
+// `launchValueWasChosen(CopilotAPISource)` to decide whether a from-group
+// snapshot carries the drive as a SPEC LINE or demotes it to an observation. So
+// a stale attribution silently reclassifies the operator's deliberate pin: an
+// agent whose source still says "harness default" has its explicit pin dropped
+// from the snapshot as something nobody chose, and one whose source names a
+// group-default profile has a pin that CONTRADICTS that profile recorded as
+// having come from it.
+//
+// Taking it as a parameter is what makes the pairing structural: there is no way
+// to spell a value change here that does not also state who chose it. This
+// package cannot name the vocabulary itself — the provenance constants live in
+// `pkg/claude/agent`, which imports this one — so the caller supplies the term
+// and an empty one is refused rather than defaulted.
+//
+// # What this reports, and how the two failures differ
+//
+// An agent with no profile yet is not a candidate for a targeted field edit —
+// there is nothing to edit inside — and is reported as an ERROR, not as the
+// false return. The distinction is load-bearing at the call sites: `set-drive`
+// maps an error to an IO failure and maps `!ok` to "the profile changed while
+// the drive was being written, read it again and retry". A retry is the right
+// advice for a lost race and useless advice for a record that does not exist.
+//
+// Note that the emptiness check is on the CALLER'S `expected`, not on the stored
+// blob: it says "you did not read a profile", which is the only thing this
+// function can know before it runs the statement.
+//
+// A MISS IS CLASSIFIED rather than returned bare, for the same reason. `false,
+// nil` would conflate a lost race with two shapes that are not races at all — a
+// deleted agent, and a stored blob that is valid JSON but not an object — and
+// both of those retry forever under the caller's lost-race advice, the second
+// one with a message pointing away from its own cause. The classification costs
+// one SELECT and only on the failure path. `false, nil` now means exactly one
+// thing: the blob moved, so reading it again and retrying is real advice.
+//
+// # What the compare-and-set does NOT protect against
+//
+// It makes THIS writer safe against a concurrent whole-blob write; it does not
+// make every other writer safe against this one. `bindRelaunchProfile` in the
+// daemon reads with AgentRelaunchProfileForConv, composes, and calls
+// SetAgentRelaunchProfile in a separate statement, so a compare-and-set landing
+// between its read and its write is overwritten by the stale read, field by
+// field (TCL-1117). Every other read-modify-write of this column runs inside a
+// transaction; that one is the outlier.
+//
+// The concurrency claims here are argued from the single-statement form and the
+// DSN's `_txlock=immediate`, and exercised by tests that replay a stale blob
+// from one goroutine. No test runs two writers at once or two processes, which
+// is the hazard the paragraphs above are written about.
+func CompareAndSetAgentCopilotAPI(
+	agentID string, value bool, source string, expected string,
+) (bool, error) {
 	agentID = strings.TrimSpace(agentID)
 	if agentID == "" {
 		return false, errors.New("CompareAndSetAgentCopilotAPI: agent_id required")
+	}
+	if strings.TrimSpace(source) == "" {
+		return false, errors.New("CompareAndSetAgentCopilotAPI: source required")
 	}
 	if strings.TrimSpace(expected) == "" {
 		return false, fmt.Errorf(
@@ -360,11 +434,14 @@ func CompareAndSetAgentCopilotAPI(agentID string, value bool, expected string) (
 	}
 	res, err := d.Exec(`
 		UPDATE agents
-		   SET relaunch_profile = json_set(relaunch_profile, '$.copilot_api', json(?))
+		   SET relaunch_profile = json_set(relaunch_profile,
+		           '$.copilot_api', json(?),
+		           '$.copilot_api_source', ?)
 		 WHERE agent_id = ?
 		   AND relaunch_profile = ?
-		   AND json_valid(relaunch_profile) = 1`,
-		encoded, agentID, expected)
+		   AND json_valid(relaunch_profile) = 1
+		   AND json_type(relaunch_profile, '$') = 'object'`,
+		encoded, source, agentID, expected)
 	if err != nil {
 		return false, err
 	}
@@ -372,7 +449,44 @@ func CompareAndSetAgentCopilotAPI(agentID string, value bool, expected string) (
 	if err != nil {
 		return false, err
 	}
-	return n > 0, nil
+	if n > 0 {
+		return true, nil
+	}
+	// A miss reaches the operator as "the profile changed while the drive was
+	// being written, read it again and retry" — advice that is right for a lost
+	// race and USELESS for the two shapes that are not races at all. A deleted
+	// agent and a blob that is not an object both retry forever, and the second
+	// one retries with a message pointing away from its own cause.
+	//
+	// Classifying costs one SELECT on the failure path only, which is why it is
+	// done here rather than left to the caller: the caller cannot tell these apart
+	// from a bool, and the information exists for one query.
+	return false, classifyAgentCopilotAPIMiss(d, agentID, expected)
+}
+
+// classifyAgentCopilotAPIMiss turns a compare-and-set miss into either a genuine
+// lost race (nil, so the caller advises a retry) or the error that says why a
+// retry can never succeed.
+func classifyAgentCopilotAPIMiss(d *sql.DB, agentID, expected string) error {
+	var stored string
+	err := d.QueryRow(`SELECT relaunch_profile FROM agents WHERE agent_id = ?`,
+		agentID).Scan(&stored)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf(
+			"CompareAndSetAgentCopilotAPI: unknown agent %s; there is no relaunch "+
+				"profile to edit, so this will not succeed on a retry", agentID)
+	}
+	if err != nil {
+		return err
+	}
+	if stored != expected {
+		// The blob moved: a real lost race, and a retry is the right advice.
+		return nil
+	}
+	return fmt.Errorf(
+		"CompareAndSetAgentCopilotAPI: agent %s has a relaunch profile that is not a "+
+			"JSON object, so a targeted field edit cannot apply to it; retrying will "+
+			"not change that", agentID)
 }
 
 // CopilotDriveRecord names WHICH durable record currently answers "which drive
@@ -489,16 +603,31 @@ func CopilotDriveTargetForConv(convID string) (CopilotDriveTarget, error) {
 	if err != nil {
 		return CopilotDriveTarget{}, err
 	}
+	// Value and Raw come from ONE read of the blob, decoded here, rather than
+	// from a decoded read plus a separate raw read.
+	//
+	// The pair is not decoration: Raw becomes the compare-and-set guard and Value
+	// decides WHETHER THE CALLER WRITES AT ALL (`writeCopilotDrive` early-returns
+	// "already at the requested value" from it). Two statements could straddle a
+	// concurrent write and hand back a Value from before it with a Raw from after
+	// — and then the guard passes, because the guard is checking the blob the
+	// second read saw, while the decision not to write was taken from the first.
+	// A compare-and-set whose guard does not cover the decision it exists to
+	// protect is a mechanism truthful about the wrong subject.
+	//
+	// Decoding the raw blob closes it without a transaction, which is better than
+	// a transaction: there is no window to keep consistent because there is only
+	// one read.
 	if agentID != "" {
-		profile, err := AgentRelaunchProfileForConv(convID)
+		raw, err := AgentRelaunchProfileRaw(agentID)
+		if err != nil {
+			return CopilotDriveTarget{}, err
+		}
+		profile, err := decodeAgentRelaunchProfile(raw)
 		if err != nil {
 			return CopilotDriveTarget{}, err
 		}
 		if profile != nil && profile.CopilotAPI != nil {
-			raw, err := AgentRelaunchProfileRaw(agentID)
-			if err != nil {
-				return CopilotDriveTarget{}, err
-			}
 			return CopilotDriveTarget{
 				Record:  CopilotDriveRecordAgentProfile,
 				Value:   *profile.CopilotAPI,
@@ -507,16 +636,16 @@ func CopilotDriveTargetForConv(convID string) (CopilotDriveTarget, error) {
 			}, nil
 		}
 	}
-	conversation, err := ConversationResumeProfileForConv(convID)
+	raw, err := ConversationResumeProfileRaw(convID)
+	if err != nil {
+		return CopilotDriveTarget{}, err
+	}
+	conversation, err := decodeConversationResumeProfile(raw)
 	if err != nil {
 		return CopilotDriveTarget{}, err
 	}
 	if conversation != nil && conversation.FallbackRelaunch != nil &&
 		conversation.FallbackRelaunch.CopilotAPI != nil {
-		raw, err := ConversationResumeProfileRaw(convID)
-		if err != nil {
-			return CopilotDriveTarget{}, err
-		}
 		return CopilotDriveTarget{
 			Record:  CopilotDriveRecordConversationFallback,
 			Value:   *conversation.FallbackRelaunch.CopilotAPI,
@@ -599,11 +728,14 @@ func ConversationResumeProfileRaw(convID string) (string, error) {
 // lower resolution tier was speaking for this agent. A function that quietly did
 // both could not tell them apart.
 func CompareAndSetConversationCopilotAPI(
-	convID string, value bool, expected string,
+	convID string, value bool, source string, expected string,
 ) (bool, error) {
 	convID = strings.TrimSpace(convID)
 	if convID == "" {
 		return false, errors.New("CompareAndSetConversationCopilotAPI: conv_id required")
+	}
+	if strings.TrimSpace(source) == "" {
+		return false, errors.New("CompareAndSetConversationCopilotAPI: source required")
 	}
 	if strings.TrimSpace(expected) == "" {
 		return false, fmt.Errorf(
@@ -621,14 +753,15 @@ func CompareAndSetConversationCopilotAPI(
 	}
 	res, err := d.Exec(`
 		UPDATE conversation_resume_profiles
-		   SET profile_json = json_set(
-		           profile_json, '$.fallback_relaunch.copilot_api', json(?)),
+		   SET profile_json = json_set(profile_json,
+		           '$.fallback_relaunch.copilot_api', json(?),
+		           '$.fallback_relaunch.copilot_api_source', ?),
 		       updated_at = ?
 		 WHERE conv_id = ?
 		   AND profile_json = ?
 		   AND json_valid(profile_json) = 1
 		   AND json_type(profile_json, '$.fallback_relaunch') = 'object'`,
-		encoded, dbTime(time.Now().UTC()), convID, expected)
+		encoded, source, dbTime(time.Now().UTC()), convID, expected)
 	if err != nil {
 		return false, err
 	}
@@ -636,7 +769,32 @@ func CompareAndSetConversationCopilotAPI(
 	if err != nil {
 		return false, err
 	}
-	return n > 0, nil
+	if n > 0 {
+		return true, nil
+	}
+	// Same classification as the agent twin, and the same reason: the two shapes
+	// that are not races retry forever otherwise. The parent-object case is the
+	// conversation-specific one — a profile with no fallback_relaunch object is a
+	// miss rather than an error, because json_set edits a leaf and does not create
+	// intermediate objects.
+	var stored string
+	switch err := d.QueryRow(
+		`SELECT profile_json FROM conversation_resume_profiles WHERE conv_id = ?`,
+		convID).Scan(&stored); {
+	case errors.Is(err, sql.ErrNoRows):
+		return false, fmt.Errorf(
+			"CompareAndSetConversationCopilotAPI: conversation %s has no resume "+
+				"profile to edit; a retry will not create one", convID)
+	case err != nil:
+		return false, err
+	case stored != expected:
+		// The blob moved: a real lost race, and a retry is the right advice.
+		return false, nil
+	}
+	return false, fmt.Errorf(
+		"CompareAndSetConversationCopilotAPI: conversation %s has a resume profile "+
+			"with no fallback_relaunch object to edit inside, or one that is not a "+
+			"JSON object; retrying will not change that", convID)
 }
 
 // SetTemporaryHarnessBuiltinMode atomically sets or clears a stable agent's temporary
@@ -983,11 +1141,36 @@ func SetSessionFastMode(sessionID, mode string) error {
 // where a managed agent's mail goes" are different subjects, and this function
 // is the first one. Established while deriving TCL-1082; kept here rather than
 // in the ticket because the name is what misleads, and the name is here.
-func SetConversationCopilotAPI(convID, harnessName, cwd string, value bool) error {
+//
+// The attribution is written beside the value for the reason spelled out on
+// CompareAndSetAgentCopilotAPI: CopilotAPISource is documented as travelling
+// WITH CopilotAPI, and a record whose source names a tier that chose the
+// opposite posture is a wrong attribution rather than a missing one. The caller
+// supplies it because only the caller knows whether this is a launch recording
+// what it resolved or an operator stating a decision.
+// source is a POINTER because the two callers know different amounts. An
+// operator's pin can name itself, and must: a drive whose source still names the
+// tier that chose the opposite posture is a wrong attribution rather than a
+// missing one. A launch recording what it RESOLVED has no tier to name — it is
+// handed a frozen value, non-nil for every Copilot launch including false — and
+// nil there means "leave whatever is recorded alone" rather than claiming a
+// choice nobody made. Claiming one would let a from-group snapshot carry an
+// observed default as a curated spec line, which is the confusion TCL-1090
+// exists to prevent.
+func SetConversationCopilotAPI(
+	convID, harnessName, cwd string, value bool, source *string,
+) error {
+	if source != nil && strings.TrimSpace(*source) == "" {
+		return errors.New("SetConversationCopilotAPI: source must be absent or non-empty")
+	}
 	return updateConversationFallbackRelaunch(convID, harnessName, cwd,
 		func(fallback *AgentRelaunchProfile) {
 			api := value
 			fallback.CopilotAPI = &api
+			if source != nil {
+				attribution := *source
+				fallback.CopilotAPISource = &attribution
+			}
 		})
 }
 

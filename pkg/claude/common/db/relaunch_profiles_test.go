@@ -214,7 +214,7 @@ func TestSetConversationCopilotAPISeedsAConversationWithNoProfileYet(t *testing.
 	setupTestDB(t)
 	const convID = "copilot-seeded-conv"
 
-	require.NoError(t, SetConversationCopilotAPI(convID, "copilot", "/tmp/copilot-seeded", true))
+	require.NoError(t, SetConversationCopilotAPI(convID, "copilot", "/tmp/copilot-seeded", true, nil))
 
 	profile, err := ConversationResumeProfileForConv(convID)
 	require.NoError(t, err)
@@ -941,7 +941,7 @@ func TestCompareAndSetAgentCopilotAPIEditsOneFieldAndGuardsTheRest(t *testing.T)
 	require.NoError(t, err)
 	require.NotEmpty(t, raw, "the profile just written must be readable verbatim")
 
-	ok, err := CompareAndSetAgentCopilotAPI(agentID, false, raw)
+	ok, err := CompareAndSetAgentCopilotAPI(agentID, false, "explicit", raw)
 	require.NoError(t, err)
 	require.True(t, ok, "the guard must hold when nothing else has written")
 
@@ -968,7 +968,7 @@ func TestCompareAndSetAgentCopilotAPIEditsOneFieldAndGuardsTheRest(t *testing.T)
 	// holding after somebody else wrote. Refuses rather than overwriting, and says
 	// so through the bool rather than through an error, because "somebody else owns
 	// this record right now" is an outcome the caller reports, not a failure.
-	ok, err = CompareAndSetAgentCopilotAPI(agentID, true, raw)
+	ok, err = CompareAndSetAgentCopilotAPI(agentID, true, "explicit", raw)
 	require.NoError(t, err)
 	assert.False(t, ok, "a stale expected blob must not be allowed to write")
 
@@ -994,10 +994,102 @@ func TestCompareAndSetAgentCopilotAPIRefusesAnAgentWithNoProfile(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, raw, "a fresh agent row carries the column's empty-string default")
 
-	ok, err := CompareAndSetAgentCopilotAPI(agentID, false, raw)
+	ok, err := CompareAndSetAgentCopilotAPI(agentID, false, "explicit", raw)
 	require.Error(t, err, "an empty guard value must be refused, not attempted")
 	assert.False(t, ok)
 	assert.Contains(t, err.Error(), "no durable relaunch profile")
+}
+
+// TestCompareAndSetAgentCopilotAPIRefusesAValidNonObjectBlob pins the two shape
+// clauses in the agent compare-and-set, and pins them SEPARATELY because they
+// fail differently and only one of them was ever exercised.
+//
+// # Why a non-object is the dangerous case
+//
+// json_valid accepts scalars and arrays, not just objects. json_set of
+// '$.copilot_api' against `123`, `[1,2]`, `"x"` or `null` changes NOTHING and
+// still counts as a modified row, so RowsAffected()==1 and the function would
+// report true for a write that provably did not happen. That is worse than a
+// refusal by the exact standard this whole feature exists to meet: the operator
+// is told the drive was turned off, the record still says nothing, and the next
+// launch's tier stack turns it back on. A mechanism truthful about the wrong
+// subject.
+//
+// # Why this is tested even though production cannot reach it
+//
+// Every production writer emits an object and decodeAgentRelaunchProfile rejects
+// a scalar one layer earlier. That is the argument for testing it here rather
+// than against it: a guard whose correctness depends on a check in a DIFFERENT
+// function is not a guard, and the day someone relaxes the decoder this clause
+// is the only thing standing. A mutation pass found json_valid pinned by nothing
+// at all, which is how the missing json_type clause beside it came to light.
+func TestCompareAndSetAgentCopilotAPIRefusesAValidNonObjectBlob(t *testing.T) {
+	setupTestDB(t)
+	d, err := Open()
+	require.NoError(t, err)
+
+	// Each of these is valid JSON, so json_valid alone lets it through.
+	for _, blob := range []string{"123", "[1,2]", `"x"`, "null"} {
+		t.Run(blob, func(t *testing.T) {
+			agentID, _, err := EnsureAgentForConv("cas-nonobject-"+blob, "test")
+			require.NoError(t, err)
+			_, err = d.Exec(`UPDATE agents SET relaunch_profile = ? WHERE agent_id = ?`,
+				blob, agentID)
+			require.NoError(t, err)
+
+			ok, err := CompareAndSetAgentCopilotAPI(agentID, false, "explicit", blob)
+			require.Error(t, err,
+				"the guard blob MATCHED, so this is not a lost race and the lost-race "+
+					"retry advice would never succeed")
+			assert.Contains(t, err.Error(), "not a JSON object")
+			assert.False(t, ok,
+				"json_set cannot add a member to a non-object, so this write did not "+
+					"happen; reporting true would tell an operator their rollback landed "+
+					"when the record still says nothing")
+
+			after, err := AgentRelaunchProfileRaw(agentID)
+			require.NoError(t, err)
+			assert.Equal(t, blob, after,
+				"the blob must come back untouched — this is the positive control on "+
+					"the claim above, since a false return would look identical if the "+
+					"write had actually landed")
+		})
+	}
+}
+
+// TestCompareAndSetAgentCopilotAPIRefusesAMalformedBlob pins json_valid itself,
+// which a mutation pass showed was pinned by NOTHING: replacing the clause with
+// `1 = 1` left every test green.
+//
+// It is the sibling of the non-object case and fails in the opposite direction:
+// json_set against a non-JSON value RAISES rather than no-ops, so without the
+// clause an operator's rollback surfaces as a raw SQLite error rather than as a
+// refusal they can act on.
+func TestCompareAndSetAgentCopilotAPIRefusesAMalformedBlob(t *testing.T) {
+	setupTestDB(t)
+	agentID, _, err := EnsureAgentForConv("cas-malformed", "test")
+	require.NoError(t, err)
+	d, err := Open()
+	require.NoError(t, err)
+
+	const corrupt = "{not json"
+	_, err = d.Exec(`UPDATE agents SET relaunch_profile = ? WHERE agent_id = ?`,
+		corrupt, agentID)
+	require.NoError(t, err)
+
+	ok, err := CompareAndSetAgentCopilotAPI(agentID, false, "explicit", corrupt)
+	require.Error(t, err,
+		"a corrupt stored blob cannot be fixed by retrying, so it must be reported "+
+			"as its own condition rather than as the lost-race miss")
+	assert.Contains(t, err.Error(), "not a JSON object")
+	assert.False(t, ok)
+	assert.NotContains(t, err.Error(), "database is",
+		"the clause exists so json_set is never HANDED a value it would raise on; "+
+			"this must be our own diagnosis, not SQLite's")
+
+	after, err := AgentRelaunchProfileRaw(agentID)
+	require.NoError(t, err)
+	assert.Equal(t, corrupt, after, "a refused write must leave the blob alone")
 }
 
 // The conversation-fallback twin, and the empirical half of the claim its doc
@@ -1014,7 +1106,7 @@ func TestCompareAndSetConversationCopilotAPIGuardsTheWholeProfile(t *testing.T) 
 
 	// A conversation whose recorded drive is ON, which is the only shape this path
 	// targets: the object holding that value must exist for the value to exist.
-	require.NoError(t, SetConversationCopilotAPI(withDrive, "copilot", "/tmp/cas-conv", true))
+	require.NoError(t, SetConversationCopilotAPI(withDrive, "copilot", "/tmp/cas-conv", true, nil))
 	require.NoError(t, SetConversationResumeProfile(noParent, ConversationResumeProfile{
 		Version: RelaunchProfileVersion, Harness: "copilot", Cwd: "/tmp/cas-conv",
 	}))
@@ -1023,7 +1115,7 @@ func TestCompareAndSetConversationCopilotAPIGuardsTheWholeProfile(t *testing.T) 
 	require.NoError(t, err)
 	require.NotEmpty(t, raw)
 
-	ok, err := CompareAndSetConversationCopilotAPI(withDrive, false, raw)
+	ok, err := CompareAndSetConversationCopilotAPI(withDrive, false, "explicit", raw)
 	require.NoError(t, err)
 	require.True(t, ok, "the guard must hold when nothing else has written")
 
@@ -1040,7 +1132,7 @@ func TestCompareAndSetConversationCopilotAPIGuardsTheWholeProfile(t *testing.T) 
 	assert.Equal(t, RelaunchProfileVersion, after.Version)
 
 	// Stale guard: refused, and the refusal did not land.
-	ok, err = CompareAndSetConversationCopilotAPI(withDrive, true, raw)
+	ok, err = CompareAndSetConversationCopilotAPI(withDrive, true, "explicit", raw)
 	require.NoError(t, err)
 	assert.False(t, ok, "a stale expected blob must not be allowed to write")
 	unchanged, err := ConversationResumeProfileForConv(withDrive)
@@ -1048,13 +1140,25 @@ func TestCompareAndSetConversationCopilotAPIGuardsTheWholeProfile(t *testing.T) 
 	require.NotNil(t, unchanged.FallbackRelaunch.CopilotAPI)
 	assert.False(t, *unchanged.FallbackRelaunch.CopilotAPI)
 
-	// No fallback_relaunch object: a guard miss, NOT an error, and nothing invented.
+	// No fallback_relaunch object. json_set edits a leaf and does not create
+	// intermediate objects, so the write cannot apply — and since the guard blob
+	// MATCHED, this is not a lost race. It is now reported as an error rather than
+	// as the bare false it used to return.
+	//
+	// That is a deliberate change (TCL-1082). A bare false reaches the operator as
+	// "the profile changed while the drive was being written, read it again and
+	// retry" — correct advice for a race, and advice that can never succeed here,
+	// pointing away from the actual cause while it fails. Nothing is invented
+	// either way; the difference is only whether the operator is told why.
 	parentless, err := ConversationResumeProfileRaw(noParent)
 	require.NoError(t, err)
 	require.NotEmpty(t, parentless)
-	ok, err = CompareAndSetConversationCopilotAPI(noParent, false, parentless)
-	require.NoError(t, err, "a missing parent object must not raise")
-	assert.False(t, ok, "a missing parent object must read as a guard miss")
+	ok, err = CompareAndSetConversationCopilotAPI(noParent, false, "explicit", parentless)
+	require.Error(t, err,
+		"a miss that a retry cannot fix must say so, rather than borrowing the "+
+			"lost-race message and sending the operator round a loop that never ends")
+	assert.Contains(t, err.Error(), "fallback_relaunch")
+	assert.False(t, ok, "a missing parent object still must not write")
 	still, err := ConversationResumeProfileForConv(noParent)
 	require.NoError(t, err)
 	require.NotNil(t, still)
@@ -1090,7 +1194,7 @@ func TestCompareAndSetAgentCopilotAPIPinsADriveThatWasNeverRecorded(t *testing.T
 
 	raw, err := AgentRelaunchProfileRaw(agentID)
 	require.NoError(t, err)
-	ok, err := CompareAndSetAgentCopilotAPI(agentID, false, raw)
+	ok, err := CompareAndSetAgentCopilotAPI(agentID, false, "explicit", raw)
 	require.NoError(t, err)
 	require.True(t, ok, "json_set must APPEND a missing leaf, not refuse it")
 
