@@ -19,6 +19,7 @@ type SudoGrant struct {
 	AgentID   string
 	ConvID    string
 	Slug      string
+	ScopeJSON string
 	GrantedAt time.Time
 	ExpiresAt time.Time
 	GrantedBy string
@@ -72,13 +73,13 @@ func InsertSudoGrant(g *SudoGrant) (int64, error) {
 		return 0, fmt.Errorf("InsertSudoGrant: no actor for conv %s", g.ConvID)
 	}
 	res, err := d.Exec(`INSERT INTO agent_sudo_grants
-		(agent_id, slug, granted_at, expires_at, granted_by, reason, revoked_at)
-		SELECT ?, ?, ?, ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at IS NULL`,
+		(agent_id, slug, granted_at, expires_at, granted_by, reason, revoked_at, scope_json)
+		SELECT ?, ?, ?, ?, ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at IS NULL`,
 		agentID, g.Slug,
 		dbTime(g.GrantedAt),
 		dbTime(g.ExpiresAt),
 		g.GrantedBy, g.Reason,
-		formatTimeOrEmpty(g.RevokedAt), agentID)
+		formatTimeOrEmpty(g.RevokedAt), g.ScopeJSON, agentID)
 	if err != nil {
 		return 0, err
 	}
@@ -95,7 +96,7 @@ func GetSudoGrant(id int64) (*SudoGrant, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := d.QueryRow(`SELECT s.id, s.agent_id, ag.current_conv_id, s.slug, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at
+	row := d.QueryRow(`SELECT s.id, s.agent_id, ag.current_conv_id, s.slug, s.scope_json, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at
 		FROM agent_sudo_grants s JOIN agents ag ON ag.agent_id = s.agent_id
 		WHERE s.id = ?`, id)
 	g, err := scanSudoGrant(row)
@@ -194,7 +195,7 @@ func ListActiveSudoGrants(convID string) ([]*SudoGrant, error) {
 		return nil, nil
 	}
 	cutoff := dbTime(time.Now())
-	rows, err := d.Query(`SELECT s.id, s.agent_id, ag.current_conv_id, s.slug, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at
+	rows, err := d.Query(`SELECT s.id, s.agent_id, ag.current_conv_id, s.slug, s.scope_json, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at
 		FROM agent_sudo_grants s JOIN agents ag ON ag.agent_id = s.agent_id
 		WHERE s.agent_id = ? AND s.revoked_at IS NULL AND s.expires_at > ?
 		ORDER BY s.expires_at ASC`, agentID, cutoff)
@@ -223,7 +224,7 @@ func ListAllActiveSudoGrants() ([]*SudoGrant, error) {
 		return nil, err
 	}
 	cutoff := dbTime(time.Now())
-	rows, err := d.Query(`SELECT s.id, s.agent_id, ag.current_conv_id, s.slug, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at
+	rows, err := d.Query(`SELECT s.id, s.agent_id, ag.current_conv_id, s.slug, s.scope_json, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at
 		FROM agent_sudo_grants s JOIN agents ag ON ag.agent_id = s.agent_id
 		WHERE s.revoked_at IS NULL AND s.expires_at > ?
 		ORDER BY ag.current_conv_id ASC, s.expires_at ASC`, cutoff)
@@ -309,7 +310,7 @@ func RevokeAllActiveSudoGrants() (int64, error) {
 func scanSudoGrant(s rowScanner) (*SudoGrant, error) {
 	var g SudoGrant
 	var grantedAt, expiresAt, revokedAt dbTimestamp
-	if err := s.Scan(&g.ID, &g.AgentID, &g.ConvID, &g.Slug,
+	if err := s.Scan(&g.ID, &g.AgentID, &g.ConvID, &g.Slug, &g.ScopeJSON,
 		&grantedAt, &expiresAt, &g.GrantedBy, &g.Reason, &revokedAt); err != nil {
 		return nil, err
 	}

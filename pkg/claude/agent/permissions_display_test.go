@@ -157,3 +157,44 @@ func TestOwnerScopeCell(t *testing.T) {
 		})
 	}
 }
+
+func TestPermissionScopeFlagAndDisplay(t *testing.T) {
+	scope, err := parsePermissionScopeFlags([]string{
+		"spawn_profile=reviewer,locked",
+		"group=dev",
+		"spawn_profile=locked",
+	})
+	if err != nil {
+		t.Fatalf("parsePermissionScopeFlags: %v", err)
+	}
+	if got, want := renderPermissionScope(scope), "group=dev spawn_profile=locked,reviewer"; got != want {
+		t.Errorf("renderPermissionScope = %q, want %q", got, want)
+	}
+	if got, want := permSourceNote("override [group=dev spawn_profile=locked,reviewer]", false, nil),
+		"(via agent grant; scope: [group=dev spawn_profile=locked,reviewer])"; got != want {
+		t.Errorf("permSourceNote scoped = %q, want %q", got, want)
+	}
+
+	for _, bad := range []string{"group", "=dev", "group=", "group=dev,"} {
+		if _, err := parsePermissionScopeFlags([]string{bad}); err == nil {
+			t.Errorf("parsePermissionScopeFlags(%q) succeeded, want error", bad)
+		}
+	}
+}
+
+func TestRenderPermissionsStateShowsScopes(t *testing.T) {
+	const conv = "scope-1111-2222-3333"
+	state := permissionsState{
+		Overrides: map[string]map[string]string{conv: {"groups.spawn": "grant"}},
+		Scopes: map[string]map[string]permissionScope{conv: {
+			"groups.spawn": {"group": {"dev"}, "spawn_profile": {"locked"}},
+		}},
+	}
+	var out bytes.Buffer
+	if rc := renderPermissionsState(state, &out); rc != rcOK {
+		t.Fatalf("renderPermissionsState rc = %d", rc)
+	}
+	if want := "groups.spawn [group=dev spawn_profile=locked]"; !strings.Contains(out.String(), want) {
+		t.Errorf("scope missing from roster; want %q in:\n%s", want, out.String())
+	}
+}

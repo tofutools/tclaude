@@ -340,6 +340,7 @@ const (
 	PermGroupsLinkRm       = "groups.link.rm"
 	PermAgentPromote       = "agent.promote"
 	PermAgentRetire        = "agent.retire"
+	PermAgentStanddown     = "agent.standdown"
 	PermMessageDirect      = "message.direct"
 	PermGroupsExport       = "groups.export"
 	PermGroupsImport       = "groups.import"
@@ -484,6 +485,19 @@ type permVerdict struct {
 	Resolution  permResolution
 	Source      permSource
 	SudoGrantID int64
+	// ScopeJSON carries the winning tier's persisted scope rows for display
+	// only in Phase 1. Authorization deliberately ignores it until Phase 2.
+	ScopeJSON []string
+}
+
+type sudoPermSource struct {
+	ID        int64
+	ScopeJSON string
+}
+
+type overridePermSource struct {
+	Effect    string
+	ScopeJSON string
 }
 
 // permSources is one agent's standing permission state — every source
@@ -501,11 +515,11 @@ type permSources struct {
 	resolvable bool
 	// sudo maps slug → active grant id (soonest-expiring wins, matching
 	// db.LookupActiveSudoGrantID's ORDER BY).
-	sudo map[string]int64
+	sudo map[string]sudoPermSource
 	// override maps slug → "grant" | "deny" (the per-conv override rows).
-	override map[string]string
+	override map[string]overridePermSource
 	// group holds the slugs granted by the agent's active groups.
-	group map[string]bool
+	group map[string][]string
 }
 
 // loadPermSources reads every standing source for convID. Read errors
@@ -521,9 +535,9 @@ func loadPermSources(convID string) permSources {
 	}
 	out := permSources{
 		resolvable: true,
-		sudo:       map[string]int64{},
-		override:   map[string]string{},
-		group:      map[string]bool{},
+		sudo:       map[string]sudoPermSource{},
+		override:   map[string]overridePermSource{},
+		group:      map[string][]string{},
 	}
 	// ListActiveSudoGrants orders by expires_at ascending, so the first
 	// row for a slug is the one LookupActiveSudoGrantID would have picked.
@@ -533,16 +547,18 @@ func loadPermSources(convID string) permSources {
 				continue
 			}
 			if _, seen := out.sudo[g.Slug]; !seen {
-				out.sudo[g.Slug] = g.ID
+				out.sudo[g.Slug] = sudoPermSource{ID: g.ID, ScopeJSON: g.ScopeJSON}
 			}
 		}
 	}
-	if overrides, err := db.ListAgentPermissionOverridesForConv(convID); err == nil {
-		out.override = overrides
+	if overrides, err := db.ListAgentPermissionOverrideRowsForConv(convID); err == nil {
+		for _, row := range overrides {
+			out.override[row.Slug] = overridePermSource{Effect: row.Effect, ScopeJSON: row.ScopeJSON}
+		}
 	}
-	if slugs, err := db.ListAgentGroupPermissionSlugsForConv(convID); err == nil {
-		for _, s := range slugs {
-			out.group[s] = true
+	if grants, err := db.ListAgentGroupPermissionRowsForConv(convID); err == nil {
+		for _, grant := range grants {
+			out.group[grant.Slug] = append(out.group[grant.Slug], grant.ScopeJSON)
 		}
 	}
 	return out
@@ -568,17 +584,17 @@ func resolvePermissionVerdictFrom(src permSources, slug string, defaultAllowed b
 	if !src.resolvable {
 		return permVerdict{Resolution: permUndecided, Source: permSourceNone}
 	}
-	if grantID, ok := src.sudo[slug]; ok && grantID != 0 {
-		return permVerdict{Resolution: permAllow, Source: permSourceSudo, SudoGrantID: grantID}
+	if grant, ok := src.sudo[slug]; ok && grant.ID != 0 {
+		return permVerdict{Resolution: permAllow, Source: permSourceSudo, SudoGrantID: grant.ID, ScopeJSON: []string{grant.ScopeJSON}}
 	}
-	if effect, ok := src.override[slug]; ok {
-		if effect == db.PermEffectDeny {
+	if override, ok := src.override[slug]; ok {
+		if override.Effect == db.PermEffectDeny {
 			return permVerdict{Resolution: permDeny, Source: permSourceOverride}
 		}
-		return permVerdict{Resolution: permAllow, Source: permSourceOverride}
+		return permVerdict{Resolution: permAllow, Source: permSourceOverride, ScopeJSON: []string{override.ScopeJSON}}
 	}
-	if src.group[slug] {
-		return permVerdict{Resolution: permAllow, Source: permSourceGroup}
+	if scopes := src.group[slug]; len(scopes) != 0 {
+		return permVerdict{Resolution: permAllow, Source: permSourceGroup, ScopeJSON: scopes}
 	}
 	if defaultAllowed {
 		return permVerdict{Resolution: permAllow, Source: permSourceDefault}

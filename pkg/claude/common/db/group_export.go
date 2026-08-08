@@ -150,7 +150,7 @@ func CollectGroupExport(name string) (*groupexport.Export, error) {
 }
 
 func collectGroupPermissions(d *sql.DB, groupID int64) ([]groupexport.GroupPermission, error) {
-	rows, err := d.Query(`SELECT slug, granted_at, granted_by FROM agent_group_permissions WHERE group_id = ? ORDER BY slug`, groupID)
+	rows, err := d.Query(`SELECT slug, scope_json, granted_at, granted_by FROM agent_group_permissions WHERE group_id = ? ORDER BY slug`, groupID)
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +159,7 @@ func collectGroupPermissions(d *sql.DB, groupID int64) ([]groupexport.GroupPermi
 	for rows.Next() {
 		var p groupexport.GroupPermission
 		var grantedAt dbTimestamp
-		if err := rows.Scan(&p.Slug, &grantedAt, &p.GrantedBy); err != nil {
+		if err := rows.Scan(&p.Slug, &p.ScopeJSON, &grantedAt, &p.GrantedBy); err != nil {
 			return nil, err
 		}
 		p.GrantedAt = exportTimestamp(grantedAt)
@@ -344,7 +344,7 @@ func collectCronRuns(d *sql.DB, jobIDs []string) ([]groupexport.CronRun, error) 
 func collectPermissions(d *sql.DB, convIDs []string) ([]groupexport.Permission, error) {
 	clause, args := inClause(convIDs)
 	rows, err := d.Query(`
-		SELECT ag.current_conv_id, p.slug, p.effect, p.granted_at, p.granted_by
+		SELECT ag.current_conv_id, p.slug, p.effect, p.scope_json, p.granted_at, p.granted_by
 		FROM agent_permissions p JOIN agents ag ON ag.agent_id = p.agent_id
 		WHERE ag.current_conv_id `+clause+` ORDER BY ag.current_conv_id, p.slug`, args...)
 	if err != nil {
@@ -355,7 +355,7 @@ func collectPermissions(d *sql.DB, convIDs []string) ([]groupexport.Permission, 
 	for rows.Next() {
 		var p groupexport.Permission
 		var grantedAt dbTimestamp
-		if err := rows.Scan(&p.ConvID, &p.Slug, &p.Effect, &grantedAt, &p.GrantedBy); err != nil {
+		if err := rows.Scan(&p.ConvID, &p.Slug, &p.Effect, &p.ScopeJSON, &grantedAt, &p.GrantedBy); err != nil {
 			return nil, fmt.Errorf("scan permission: %w", err)
 		}
 		p.GrantedAt = exportTimestamp(grantedAt)
@@ -422,7 +422,7 @@ func collectWorkdirs(d *sql.DB, convIDs []string) ([]groupexport.Workdir, error)
 func collectSudoGrants(d *sql.DB, convIDs []string) ([]groupexport.SudoGrant, error) {
 	clause, args := inClause(convIDs)
 	rows, err := d.Query(`
-		SELECT ag.current_conv_id, s.slug, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at
+		SELECT ag.current_conv_id, s.slug, s.scope_json, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at
 		FROM agent_sudo_grants s JOIN agents ag ON ag.agent_id = s.agent_id
 		WHERE ag.current_conv_id `+clause+` ORDER BY s.id`, args...)
 	if err != nil {
@@ -433,7 +433,7 @@ func collectSudoGrants(d *sql.DB, convIDs []string) ([]groupexport.SudoGrant, er
 	for rows.Next() {
 		var s groupexport.SudoGrant
 		var grantedAt, expiresAt, revokedAt dbTimestamp
-		if err := rows.Scan(&s.ConvID, &s.Slug, &grantedAt, &expiresAt,
+		if err := rows.Scan(&s.ConvID, &s.Slug, &s.ScopeJSON, &grantedAt, &expiresAt,
 			&s.GrantedBy, &s.Reason, &revokedAt); err != nil {
 			return nil, fmt.Errorf("scan sudo grant: %w", err)
 		}
@@ -845,8 +845,8 @@ func (c *importCtx) group() error {
 			grantedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		}
 		if _, err := c.tx.Exec(`INSERT OR IGNORE INTO agent_group_permissions
-			(group_id, slug, granted_at, granted_by) VALUES (?, ?, ?, ?)`,
-			c.newGroupID, permission.Slug, requiredImportDBTime(grantedAt), permission.GrantedBy); err != nil {
+			(group_id, slug, granted_at, granted_by, scope_json) VALUES (?, ?, ?, ?, ?)`,
+			c.newGroupID, permission.Slug, requiredImportDBTime(grantedAt), permission.GrantedBy, permission.ScopeJSON); err != nil {
 			return fmt.Errorf("import: group permission %q: %w", permission.Slug, err)
 		}
 	}
@@ -950,15 +950,18 @@ func (c *importCtx) audit() error {
 
 func (c *importCtx) permissions() error {
 	for _, p := range c.exp.Permissions {
+		if p.Effect == PermEffectDeny && p.ScopeJSON != "" {
+			return fmt.Errorf("import: deny permission %s/%s cannot carry a scope", p.ConvID, p.Slug)
+		}
 		conv := c.rc(p.ConvID)
 		agentID, err := c.ensureActor(conv, "import")
 		if err != nil {
 			return fmt.Errorf("import: permission %s/%s actor: %w", p.ConvID, p.Slug, err)
 		}
 		if _, err := c.tx.Exec(`
-			INSERT INTO agent_permissions (agent_id, slug, effect, granted_at, granted_by)
-			VALUES (?, ?, ?, ?, ?)`,
-			agentID, p.Slug, p.Effect, requiredImportDBTime(p.GrantedAt), p.GrantedBy); err != nil {
+			INSERT INTO agent_permissions (agent_id, slug, effect, granted_at, granted_by, scope_json)
+			VALUES (?, ?, ?, ?, ?, ?)`,
+			agentID, p.Slug, p.Effect, requiredImportDBTime(p.GrantedAt), p.GrantedBy, p.ScopeJSON); err != nil {
 			return fmt.Errorf("import: permission %s/%s: %w", p.ConvID, p.Slug, err)
 		}
 	}
@@ -1039,10 +1042,10 @@ func (c *importCtx) sudoGrants() error {
 		}
 		if _, err := c.tx.Exec(`
 			INSERT INTO agent_sudo_grants
-				(agent_id, slug, granted_at, expires_at, granted_by, reason, revoked_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+				(agent_id, slug, granted_at, expires_at, granted_by, reason, revoked_at, scope_json)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 			agentID, s.Slug, requiredImportDBTime(s.GrantedAt), nullableDBTimeText(s.ExpiresAt), s.GrantedBy,
-			s.Reason, nullableDBTimeText(s.RevokedAt)); err != nil {
+			s.Reason, nullableDBTimeText(s.RevokedAt), s.ScopeJSON); err != nil {
 			return fmt.Errorf("import: sudo grant %s/%s: %w", s.ConvID, s.Slug, err)
 		}
 	}

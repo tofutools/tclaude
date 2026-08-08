@@ -60,6 +60,9 @@ import (
 type PermSlug struct {
 	Slug        string `json:"slug"`
 	Description string `json:"description"`
+	// ScopeDims declares the dimensions a grant for this slug may constrain.
+	// An empty list means the slug only supports today's unscoped grants.
+	ScopeDims []ScopeDim `json:"scope_dims,omitempty"`
 	// OwnerImplied is derived from OwnerScope by initPermissionRegistry —
 	// do not set it in a registry literal.
 	OwnerImplied  bool       `json:"owner_implied,omitempty"`
@@ -86,15 +89,38 @@ const (
 // can never disagree, and refuses an unknown scope at startup rather than
 // letting it read as "not owner-implied" in the UI.
 func initPermissionRegistry() {
-	for i := range permissionRegistry {
-		switch permissionRegistry[i].OwnerScope {
+	initPermissionRegistryEntries(permissionRegistry)
+}
+
+func initPermissionRegistryEntries(registry []PermSlug) {
+	seenSlugs := map[string]bool{}
+	for i := range registry {
+		p := &registry[i]
+		if p.Slug == "" {
+			panic("permission registry: empty slug")
+		}
+		if seenSlugs[p.Slug] {
+			panic(fmt.Sprintf("permission registry: duplicate slug %q", p.Slug))
+		}
+		seenSlugs[p.Slug] = true
+		seenDims := map[ScopeDim]bool{}
+		for _, dim := range p.ScopeDims {
+			if _, ok := permissionScopeSelectors[dim]; !ok {
+				panic(fmt.Sprintf("permission registry: slug %q declares unknown scope dimension %q", p.Slug, dim))
+			}
+			if seenDims[dim] {
+				panic(fmt.Sprintf("permission registry: slug %q declares scope dimension %q more than once", p.Slug, dim))
+			}
+			seenDims[dim] = true
+		}
+		switch p.OwnerScope {
 		case ownerScopeNone:
-			permissionRegistry[i].OwnerImplied = false
+			p.OwnerImplied = false
 		case ownerScopeGroup, ownerScopeMember, ownerScopeAny:
-			permissionRegistry[i].OwnerImplied = true
+			p.OwnerImplied = true
 		default:
 			panic(fmt.Sprintf("permission registry: slug %q has unknown owner scope %q",
-				permissionRegistry[i].Slug, permissionRegistry[i].OwnerScope))
+				p.Slug, p.OwnerScope))
 		}
 	}
 }
@@ -202,6 +228,7 @@ var permissionRegistry = []PermSlug{
 	{
 		Slug:        PermGroupsSpawn,
 		OwnerScope:  ownerScopeGroup,
+		ScopeDims:   []ScopeDim{ScopeDimGroup, ScopeDimSpawnProfile},
 		Description: "Spawn a fresh CC session and add it to a group (tclaude agent spawn). Group owners can spawn into groups they own without this slug (the spawn guardrails — member cap, rate limit — still apply).",
 	},
 	{
@@ -284,7 +311,13 @@ var permissionRegistry = []PermSlug{
 	{
 		Slug:        PermAgentRetire,
 		OwnerScope:  ownerScopeMember,
+		ScopeDims:   []ScopeDim{ScopeDimGroup, ScopeDimTargetAgent},
 		Description: "Retire (soft-delete) an agent: revokes its group memberships and permission grants so it stops being an agent, while leaving its conversation intact and reinstatable (tclaude agent retire). Group owners can retire members of groups they own without this slug.",
+	},
+	{
+		Slug:        PermAgentStanddown,
+		ScopeDims:   []ScopeDim{ScopeDimGroup, ScopeDimTargetAgent},
+		Description: "Stand down an agent from active work. Reserved for the scoped-permissions standdown flow.",
 	},
 	{
 		Slug:       PermAgentRemoteControl,
@@ -361,6 +394,7 @@ var permissionRegistry = []PermSlug{
 	},
 	{
 		Slug:        PermProcessRunsManage,
+		ScopeDims:   []ScopeDim{ScopeDimProcessTemplate},
 		Description: "Create, resume, and explicitly reconcile daemon-owned process runs, including executing the run's persisted authorized program profiles. Not default-granted; requires an explicit grant or one-shot human approval.",
 	},
 	{
@@ -380,10 +414,12 @@ var permissionRegistry = []PermSlug{
 	},
 	{
 		Slug:        PermRoutesPublish,
+		ScopeDims:   []ScopeDim{ScopeDimGroup},
 		Description: "Register and withdraw routes owned by the caller. Requires current membership in the explicitly selected target group; not globally default-granted.",
 	},
 	{
 		Slug:        PermRoutesConsume,
+		ScopeDims:   []ScopeDim{ScopeDimGroup},
 		Description: "Open/lease a published route and close the caller's own lease. Requires current membership in the explicitly selected target group; not globally default-granted.",
 	},
 	{
@@ -527,12 +563,14 @@ func AutoGrantableSlugs() []string {
 // was not: an agent could hold a slug through its group with nothing here
 // or in the effective listing saying so.
 type permissionsState struct {
-	Defaults    []string                     `json:"defaults"`
-	Grants      map[string][]string          `json:"grants"`
-	Overrides   map[string]map[string]string `json:"overrides"`
-	GroupGrants map[string][]string          `json:"group_grants"`
-	AgentIDs    map[string]string            `json:"agent_ids"`
-	Titles      map[string]string            `json:"titles"`
+	Defaults    []string                              `json:"defaults"`
+	Grants      map[string][]string                   `json:"grants"`
+	Overrides   map[string]map[string]string          `json:"overrides"`
+	Scopes      map[string]map[string]PermissionScope `json:"scopes,omitempty"`
+	GroupGrants map[string][]string                   `json:"group_grants"`
+	GroupScopes map[string]map[string]PermissionScope `json:"group_scopes,omitempty"`
+	AgentIDs    map[string]string                     `json:"agent_ids"`
+	Titles      map[string]string                     `json:"titles"`
 }
 
 // permissionsEffectiveResp is the daemon-resolved answer to
@@ -624,7 +662,9 @@ func snapshotPermissions() (permissionsState, error) {
 	out := permissionsState{
 		Grants:      map[string][]string{},
 		Overrides:   map[string]map[string]string{},
+		Scopes:      map[string]map[string]PermissionScope{},
 		GroupGrants: map[string][]string{},
+		GroupScopes: map[string]map[string]PermissionScope{},
 		AgentIDs:    map[string]string{},
 		Titles:      map[string]string{},
 	}
@@ -645,6 +685,22 @@ func snapshotPermissions() (permissionsState, error) {
 	if overrides != nil {
 		out.Overrides = overrides
 	}
+	scopes, err := db.ListAllAgentPermissionScopes()
+	if err != nil {
+		return out, err
+	}
+	for convID, bySlug := range scopes {
+		for slug, raw := range bySlug {
+			scope := permissionScopeFromJSON(raw)
+			if len(scope) == 0 {
+				continue
+			}
+			if out.Scopes[convID] == nil {
+				out.Scopes[convID] = map[string]PermissionScope{}
+			}
+			out.Scopes[convID][slug] = scope
+		}
+	}
 	// Group grants are a standing source in their own right — surface them
 	// so the roster shows every place a slug can come from. An unreadable
 	// group is skipped rather than failing the whole view.
@@ -662,12 +718,22 @@ func snapshotPermissions() (permissionsState, error) {
 		if g == nil || g.IsArchived() {
 			continue
 		}
-		slugs, err := db.ListAgentGroupPermissions(g.ID)
+		grants, err := db.ListAgentGroupPermissionRows(g.ID)
 		if err != nil {
 			slog.Warn("permissions: group grant read failed", "group", g.Name, "error", err)
 			continue
 		}
-		if len(slugs) > 0 {
+		if len(grants) > 0 {
+			slugs := make([]string, 0, len(grants))
+			for _, grant := range grants {
+				slugs = append(slugs, grant.Slug)
+				if scope := permissionScopeFromJSON(grant.ScopeJSON); len(scope) != 0 {
+					if out.GroupScopes[g.Name] == nil {
+						out.GroupScopes[g.Name] = map[string]PermissionScope{}
+					}
+					out.GroupScopes[g.Name][grant.Slug] = scope
+				}
+			}
 			sort.Strings(slugs)
 			out.GroupGrants[g.Name] = slugs
 		}
@@ -984,7 +1050,7 @@ func effectivePermsFor(state permissionsState, convID string, ownerImplied []str
 		switch v.Resolution {
 		case permAllow:
 			effective = append(effective, slug)
-			provenance[slug] = string(v.Source)
+			provenance[slug] = permissionProvenance(v.Source, v.ScopeJSON)
 			matched[v.Source] = true
 		case permUndecided:
 			// The owner bypass fills exactly this gap — see
@@ -1090,18 +1156,20 @@ func handlePermissionsSlugs(w http.ResponseWriter, r *http.Request) {
 }
 
 type permissionsMutateReq struct {
-	Target string `json:"target"`
-	Slug   string `json:"slug"`
+	Target string          `json:"target"`
+	Slug   string          `json:"slug"`
+	Scope  json.RawMessage `json:"scope,omitempty"`
 }
 
 type permissionsMutateResp struct {
-	Target    string   `json:"target"`
-	TargetKey string   `json:"target_key,omitempty"` // resolved conv-id when target != "default"
-	AgentID   string   `json:"agent_id,omitempty"`   // stable agent_id behind TargetKey, for leading the "who" (JOH-325)
-	Title     string   `json:"title,omitempty"`      // display title of the resolved conv, when known
-	Slug      string   `json:"slug"`
-	Effect    string   `json:"effect,omitempty"` // post-mutation override effect: "grant", "deny", or "default" (cleared)
-	Effective []string `json:"effective"`        // post-mutation GRANTED slug list for that target
+	Target    string          `json:"target"`
+	TargetKey string          `json:"target_key,omitempty"` // resolved conv-id when target != "default"
+	AgentID   string          `json:"agent_id,omitempty"`   // stable agent_id behind TargetKey, for leading the "who" (JOH-325)
+	Title     string          `json:"title,omitempty"`      // display title of the resolved conv, when known
+	Slug      string          `json:"slug"`
+	Effect    string          `json:"effect,omitempty"` // post-mutation override effect: "grant", "deny", or "default" (cleared)
+	Scope     PermissionScope `json:"scope,omitempty"`
+	Effective []string        `json:"effective"` // post-mutation GRANTED slug list for that target
 }
 
 func decodeMutateReq(w http.ResponseWriter, r *http.Request) (*permissionsMutateReq, bool) {
@@ -1208,13 +1276,26 @@ func handlePermissionsGrant(w http.ResponseWriter, r *http.Request) {
 				body.Slug, strings.Join(knownSlugs(), ", "), config.ConfigPath()))
 		return
 	}
+	scope, scopeJSON, err := parsePermissionScope(body.Scope)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_scope", err.Error())
+		return
+	}
+	if err := validatePermissionScopeForSlug(body.Slug, scope); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_scope", err.Error())
+		return
+	}
 	target, err := resolveTarget(body.Target)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
 		return
 	}
-	resp := permissionsMutateResp{Target: body.Target, Slug: body.Slug, Effect: db.PermEffectGrant}
+	resp := permissionsMutateResp{Target: body.Target, Slug: body.Slug, Effect: db.PermEffectGrant, Scope: scope}
 	if target.Sentinel {
+		if len(scope) != 0 {
+			writeError(w, http.StatusBadRequest, "invalid_scope", "scoped grants are not supported on the default-permissions list")
+			return
+		}
 		if err := addDefaultPermission(body.Slug); err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
@@ -1222,7 +1303,7 @@ func handlePermissionsGrant(w http.ResponseWriter, r *http.Request) {
 		state, _ := snapshotPermissions()
 		resp.Effective = append(resp.Effective, state.Defaults...)
 	} else {
-		if err := db.GrantAgentPermission(target.Key, body.Slug, granterLabel(granter)); err != nil {
+		if err := db.GrantAgentPermissionWithScope(target.Key, body.Slug, scopeJSON, granterLabel(granter)); err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
 		}
@@ -1256,6 +1337,13 @@ func handlePermissionsDeny(w http.ResponseWriter, r *http.Request) {
 	}
 	body, ok := decodeMutateReq(w, r)
 	if !ok {
+		return
+	}
+	if scope, _, err := parsePermissionScope(body.Scope); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_scope", err.Error())
+		return
+	} else if len(scope) != 0 {
+		writeError(w, http.StatusBadRequest, "invalid_scope", "deny overrides cannot carry a scope")
 		return
 	}
 	if !IsKnownPermSlug(body.Slug) {
@@ -1301,6 +1389,13 @@ func handlePermissionsRevoke(w http.ResponseWriter, r *http.Request) {
 	}
 	body, ok := decodeMutateReq(w, r)
 	if !ok {
+		return
+	}
+	if scope, _, err := parsePermissionScope(body.Scope); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_scope", err.Error())
+		return
+	} else if len(scope) != 0 {
+		writeError(w, http.StatusBadRequest, "invalid_scope", "revoke does not accept a scope")
 		return
 	}
 	target, err := resolveTarget(body.Target)

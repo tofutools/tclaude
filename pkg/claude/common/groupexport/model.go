@@ -114,6 +114,7 @@ type Group struct {
 // in Group; timestamps and attribution are preserved byte-for-byte.
 type GroupPermission struct {
 	Slug      string `json:"slug"`
+	ScopeJSON string `json:"scope_json,omitempty"`
 	GrantedAt string `json:"granted_at"`
 	GrantedBy string `json:"granted_by"`
 }
@@ -148,6 +149,7 @@ type Permission struct {
 	ConvID    string `json:"conv_id"`
 	Slug      string `json:"slug"`
 	Effect    string `json:"effect"`
+	ScopeJSON string `json:"scope_json,omitempty"`
 	GrantedAt string `json:"granted_at"`
 	GrantedBy string `json:"granted_by"`
 }
@@ -177,6 +179,7 @@ type Workdir struct {
 type SudoGrant struct {
 	ConvID    string `json:"conv_id"`
 	Slug      string `json:"slug"`
+	ScopeJSON string `json:"scope_json,omitempty"`
 	GrantedAt string `json:"granted_at"`
 	ExpiresAt string `json:"expires_at"`
 	GrantedBy string `json:"granted_by"`

@@ -93,6 +93,18 @@ type AgentPermission struct {
 	ConvID    string
 	Slug      string
 	Effect    string
+	ScopeJSON string
+	GrantedAt time.Time
+	GrantedBy string
+}
+
+// AgentGroupPermission is one live group grant. ScopeJSON is empty for an
+// unscoped grant; Phase 1 stores and displays it without enforcing it.
+type AgentGroupPermission struct {
+	GroupID   int64
+	GroupName string
+	Slug      string
+	ScopeJSON string
 	GrantedAt time.Time
 	GrantedBy string
 }
@@ -100,22 +112,40 @@ type AgentPermission struct {
 // ListAgentGroupPermissions returns the sorted additive grants attached to a
 // group. Group grants are live membership policy, not birth-time agent rows.
 func ListAgentGroupPermissions(groupID int64) ([]string, error) {
+	grants, err := ListAgentGroupPermissionRows(groupID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(grants))
+	for _, grant := range grants {
+		out = append(out, grant.Slug)
+	}
+	return out, nil
+}
+
+// ListAgentGroupPermissionRows returns the group's sorted grants including
+// their optional persisted scopes.
+func ListAgentGroupPermissionRows(groupID int64) ([]AgentGroupPermission, error) {
 	d, err := Open()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT slug FROM agent_group_permissions WHERE group_id = ? ORDER BY slug`, groupID)
+	rows, err := d.Query(`SELECT slug, scope_json, granted_at, granted_by
+		FROM agent_group_permissions WHERE group_id = ? ORDER BY slug`, groupID)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	out := []string{}
+	out := []AgentGroupPermission{}
 	for rows.Next() {
-		var slug string
-		if err := rows.Scan(&slug); err != nil {
+		var grant AgentGroupPermission
+		var grantedAt dbTimestamp
+		if err := rows.Scan(&grant.Slug, &grant.ScopeJSON, &grantedAt, &grant.GrantedBy); err != nil {
 			return nil, err
 		}
-		out = append(out, slug)
+		grant.GroupID = groupID
+		grant.GrantedAt = grantedAt.Time()
+		out = append(out, grant)
 	}
 	return out, rows.Err()
 }
@@ -142,6 +172,29 @@ func ReplaceAgentGroupPermissions(groupID int64, slugs []string, grantedBy strin
 	if err := tx.QueryRow(`SELECT COUNT(*) FROM agent_group_permissions WHERE group_id = ? AND slug IN ('routes.publish', 'routes.consume')`, groupID).Scan(&hadRouteCapability); err != nil {
 		return err
 	}
+	// The legacy editor replaces a group's slug set as a whole and has no
+	// scope controls yet. Preserve the stored scope of every slug that remains
+	// selected so an unrelated edit cannot silently widen it.
+	existingScopes := map[string]string{}
+	rows, err := tx.Query(`SELECT slug, scope_json FROM agent_group_permissions WHERE group_id = ?`, groupID)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var slug, scopeJSON string
+		if err := rows.Scan(&slug, &scopeJSON); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		existingScopes[slug] = scopeJSON
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM agent_group_permissions WHERE group_id = ?`, groupID); err != nil {
 		return err
 	}
@@ -152,7 +205,9 @@ func ReplaceAgentGroupPermissions(groupID int64, slugs []string, grantedBy strin
 			continue
 		}
 		seen[slug] = true
-		if _, err := tx.Exec(`INSERT INTO agent_group_permissions (group_id, slug, granted_at, granted_by) VALUES (?, ?, ?, ?)`, groupID, slug, now, grantedBy); err != nil {
+		if _, err := tx.Exec(`INSERT INTO agent_group_permissions
+			(group_id, slug, granted_at, granted_by, scope_json) VALUES (?, ?, ?, ?, ?)`,
+			groupID, slug, now, grantedBy, existingScopes[slug]); err != nil {
 			return err
 		}
 	}
@@ -221,6 +276,43 @@ func ListAgentGroupPermissionSlugsForConv(convID string) ([]string, error) {
 			return nil, err
 		}
 		out = append(out, slug)
+	}
+	return out, rows.Err()
+}
+
+// ListAgentGroupPermissionRowsForConv returns every active group grant for an
+// actor, preserving one row per group so a later resolver can union scopes
+// within the group tier. Phase 1 uses the rows only for provenance display.
+func ListAgentGroupPermissionRowsForConv(convID string) ([]AgentGroupPermission, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	agentID, err := AgentIDForConv(convID)
+	if err != nil || agentID == "" {
+		return nil, err
+	}
+	rows, err := d.Query(`
+		SELECT gp.group_id, g.name, gp.slug, gp.scope_json, gp.granted_at, gp.granted_by
+		FROM agent_group_permissions gp
+		JOIN agent_groups g ON g.id = gp.group_id AND g.archived_at IS NULL
+		JOIN agent_group_members gm ON gm.group_id = gp.group_id
+		JOIN agents a ON a.agent_id = gm.agent_id AND a.retired_at IS NULL
+		WHERE gm.agent_id = ?
+		ORDER BY gp.slug, gp.group_id`, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []AgentGroupPermission
+	for rows.Next() {
+		var grant AgentGroupPermission
+		var grantedAt dbTimestamp
+		if err := rows.Scan(&grant.GroupID, &grant.GroupName, &grant.Slug, &grant.ScopeJSON, &grantedAt, &grant.GrantedBy); err != nil {
+			return nil, err
+		}
+		grant.GrantedAt = grantedAt.Time()
+		out = append(out, grant)
 	}
 	return out, rows.Err()
 }
@@ -363,6 +455,20 @@ func ListAgentPermissionsForConv(convID string) ([]string, error) {
 // overrides return an empty (non-nil) map. Used by the dashboard's
 // permanent-permission editor to pre-populate the modal.
 func ListAgentPermissionOverridesForConv(convID string) (map[string]string, error) {
+	rows, err := ListAgentPermissionOverrideRowsForConv(convID)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for _, row := range rows {
+		out[row.Slug] = row.Effect
+	}
+	return out, nil
+}
+
+// ListAgentPermissionOverrideRowsForConv returns the full per-agent override
+// rows including optional scope storage.
+func ListAgentPermissionOverrideRowsForConv(convID string) ([]AgentPermission, error) {
 	db, err := Open()
 	if err != nil {
 		return nil, err
@@ -372,20 +478,24 @@ func ListAgentPermissionOverridesForConv(convID string) (map[string]string, erro
 		return nil, err
 	}
 	if agentID == "" {
-		return map[string]string{}, nil
+		return []AgentPermission{}, nil
 	}
-	rows, err := db.Query(`SELECT slug, effect FROM agent_permissions WHERE agent_id = ? ORDER BY slug`, agentID)
+	rows, err := db.Query(`SELECT slug, effect, scope_json, granted_at, granted_by
+		FROM agent_permissions WHERE agent_id = ? ORDER BY slug`, agentID)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	out := map[string]string{}
+	out := []AgentPermission{}
 	for rows.Next() {
-		var slug, effect string
-		if err := rows.Scan(&slug, &effect); err != nil {
+		var row AgentPermission
+		var grantedAt dbTimestamp
+		if err := rows.Scan(&row.Slug, &row.Effect, &row.ScopeJSON, &grantedAt, &row.GrantedBy); err != nil {
 			return nil, err
 		}
-		out[slug] = effect
+		row.ConvID = convID
+		row.GrantedAt = grantedAt.Time()
+		out = append(out, row)
 	}
 	return out, rows.Err()
 }
@@ -452,6 +562,35 @@ func ListAllAgentPermissionOverrides() (map[string]map[string]string, error) {
 	return out, rows.Err()
 }
 
+// ListAllAgentPermissionScopes returns only non-empty scopes, nested by the
+// actor's current conversation and slug. It is the display companion to the
+// back-compatible effect-only Overrides map.
+func ListAllAgentPermissionScopes() (map[string]map[string]string, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT ag.current_conv_id, p.slug, p.scope_json
+		FROM agent_permissions p JOIN agents ag ON ag.agent_id = p.agent_id
+		WHERE p.scope_json <> ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]map[string]string{}
+	for rows.Next() {
+		var convID, slug, scopeJSON string
+		if err := rows.Scan(&convID, &slug, &scopeJSON); err != nil {
+			return nil, err
+		}
+		if out[convID] == nil {
+			out[convID] = map[string]string{}
+		}
+		out[convID][slug] = scopeJSON
+	}
+	return out, rows.Err()
+}
+
 // GrantAgentPermission writes a grant-effect override for (convID, slug).
 // Idempotent, and an UPSERT — granting a slug that currently carries a
 // deny override flips it back to grant. grantedBy is informational
@@ -460,11 +599,23 @@ func GrantAgentPermission(convID, slug, grantedBy string) error {
 	return SetAgentPermissionOverride(convID, slug, PermEffectGrant, grantedBy)
 }
 
+// GrantAgentPermissionWithScope writes a grant-effect override with its
+// already-validated canonical scope JSON. Empty remains the unscoped form.
+func GrantAgentPermissionWithScope(convID, slug, scopeJSON, grantedBy string) error {
+	return SetAgentPermissionOverrideWithScope(convID, slug, PermEffectGrant, scopeJSON, grantedBy)
+}
+
 // SetAgentPermissionOverride writes the tri-state override row for
 // (convID, slug) with the given effect ("grant" or "deny"). UPSERT:
 // re-running with a different effect flips the row. To return the slug
 // to its default, use RevokeAgentPermission (which deletes the row).
 func SetAgentPermissionOverride(convID, slug, effect, grantedBy string) error {
+	return SetAgentPermissionOverrideWithScope(convID, slug, effect, "", grantedBy)
+}
+
+// SetAgentPermissionOverrideWithScope is the scoped storage twin. Callers are
+// responsible for validating and canonicalizing scopeJSON before this layer.
+func SetAgentPermissionOverrideWithScope(convID, slug, effect, scopeJSON, grantedBy string) error {
 	if effect != PermEffectGrant && effect != PermEffectDeny {
 		return fmt.Errorf("invalid permission effect %q (want %q or %q)", effect, PermEffectGrant, PermEffectDeny)
 	}
@@ -482,7 +633,7 @@ func SetAgentPermissionOverride(convID, slug, effect, grantedBy string) error {
 	if agentID == "" {
 		return fmt.Errorf("SetAgentPermissionOverride: no actor for conv %s", convID)
 	}
-	return SetAgentPermissionOverrideByAgentID(agentID, slug, effect, grantedBy)
+	return SetAgentPermissionOverrideByAgentIDWithScope(agentID, slug, effect, scopeJSON, grantedBy)
 }
 
 // SetAgentPermissionOverrideByAgentID writes a permission override directly
@@ -491,6 +642,10 @@ func SetAgentPermissionOverride(convID, slug, effect, grantedBy string) error {
 // an earlier security boundary use this form so a stale generation cannot be
 // resurrected as a different actor while a decision is pending.
 func SetAgentPermissionOverrideByAgentID(agentID, slug, effect, grantedBy string) error {
+	return SetAgentPermissionOverrideByAgentIDWithScope(agentID, slug, effect, "", grantedBy)
+}
+
+func SetAgentPermissionOverrideByAgentIDWithScope(agentID, slug, effect, scopeJSON, grantedBy string) error {
 	if effect != PermEffectGrant && effect != PermEffectDeny {
 		return fmt.Errorf("invalid permission effect %q (want %q or %q)", effect, PermEffectGrant, PermEffectDeny)
 	}
@@ -502,13 +657,14 @@ func SetAgentPermissionOverrideByAgentID(agentID, slug, effect, grantedBy string
 		return err
 	}
 	res, err := db.Exec(`INSERT INTO agent_permissions
-		(agent_id, slug, effect, granted_at, granted_by)
-		SELECT ?, ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at IS NULL
+		(agent_id, slug, effect, granted_at, granted_by, scope_json)
+		SELECT ?, ?, ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at IS NULL
 		ON CONFLICT(agent_id, slug) DO UPDATE SET
 			effect     = excluded.effect,
 			granted_at = excluded.granted_at,
-			granted_by = excluded.granted_by`,
-		agentID, slug, effect, dbTime(time.Now()), grantedBy, agentID)
+			granted_by = excluded.granted_by,
+			scope_json = excluded.scope_json`,
+		agentID, slug, effect, dbTime(time.Now()), grantedBy, scopeJSON, agentID)
 	if err != nil {
 		return err
 	}
@@ -596,18 +752,20 @@ func ApplyAgentPermissionOverrides(convID string, overrides map[string]string, g
 	}
 	now := dbTime(time.Now())
 	upsert := `INSERT INTO agent_permissions
-		(agent_id, slug, effect, granted_at, granted_by)
-		SELECT ?, ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at IS NULL
+		(agent_id, slug, effect, granted_at, granted_by, scope_json)
+		SELECT ?, ?, ?, ?, ?, '' FROM agents WHERE agent_id = ? AND retired_at IS NULL
 		ON CONFLICT(agent_id, slug) DO UPDATE SET
 			effect = excluded.effect,
 			granted_at = excluded.granted_at,
-			granted_by = excluded.granted_by`
+			granted_by = excluded.granted_by,
+			scope_json = ''`
 	if preserveSameEffectProvenance {
 		upsert = `INSERT INTO agent_permissions
-			(agent_id, slug, effect, granted_at, granted_by)
-			SELECT ?, ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at IS NULL
+			(agent_id, slug, effect, granted_at, granted_by, scope_json)
+			SELECT ?, ?, ?, ?, ?, '' FROM agents WHERE agent_id = ? AND retired_at IS NULL
 			ON CONFLICT(agent_id, slug) DO UPDATE SET
 				effect = excluded.effect,
+				scope_json = '',
 				granted_at = CASE
 					WHEN agent_permissions.effect = excluded.effect THEN agent_permissions.granted_at
 					ELSE excluded.granted_at
@@ -880,8 +1038,8 @@ func CreateAgentGroupFrom(name string, src AgentGroup) (int64, error) {
 	// them even when member agents are not cloned.
 	if src.ID > 0 {
 		if _, err := tx.Exec(`
-			INSERT INTO agent_group_permissions (group_id, slug, granted_at, granted_by)
-			SELECT ?, slug, ?, 'group-clone' FROM agent_group_permissions WHERE group_id = ?`,
+			INSERT INTO agent_group_permissions (group_id, slug, granted_at, granted_by, scope_json)
+			SELECT ?, slug, ?, 'group-clone', scope_json FROM agent_group_permissions WHERE group_id = ?`,
 			id, dbTime(time.Now()), src.ID); err != nil {
 			return 0, err
 		}
