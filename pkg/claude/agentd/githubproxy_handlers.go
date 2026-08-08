@@ -445,20 +445,34 @@ type ghProxyRunDownloadRequest struct {
 // A projection rather than the passthrough every other --json read uses, for
 // the same reason the review-comment one is: each raw entry embeds the complete
 // `workflow_run` object plus several API urls, which together dwarf the six
-// fields a caller acts on. `size` is rendered alongside the raw byte count
-// because the byte count is what maxGHArtifactBytes is spent against and the
-// human-readable form is what tells an agent whether asking is reasonable.
-const ghArtifactManifestProjection = `[.artifacts[] | ` +
-	`{id, name, size_in_bytes, expired, created_at, expires_at}]`
+// fields a caller acts on.
+//
+// `total` is the endpoint's own `total_count` and is NOT decoration. This reads
+// ONE page (ghArtifactsPerPage), so `total` above that many is how both the
+// daemon and the caller learn that the array is a page and not the run — and
+// for `run download`, which without a --name fetches every artifact in the run
+// rather than every artifact on the page, it is the difference between a real
+// size check and one made on a fraction of the bytes.
+const ghArtifactManifestProjection = `{total: .total_count, artifacts: ` +
+	`[.artifacts[] | {id, name, size_in_bytes, expired, created_at, expires_at}]}`
+
+// ghArtifactsPerPage is how many artifacts one manifest read covers. It is the
+// endpoint's own maximum; a run with more is reported honestly rather than
+// paginated, because concatenating pages under a --jq projection would produce
+// several JSON documents rather than one.
+const ghArtifactsPerPage = 100
 
 // ghArtifactManifest is the daemon's own view of that projection — the ONLY gh
 // response in this proxy the daemon models, because `run download` has to make
 // a decision from it rather than hand it on.
-type ghArtifactManifest []struct {
-	ID      int64  `json:"id"`
-	Name    string `json:"name"`
-	Size    int64  `json:"size_in_bytes"`
-	Expired bool   `json:"expired"`
+type ghArtifactManifest struct {
+	Total     int `json:"total"`
+	Artifacts []struct {
+		ID      int64  `json:"id"`
+		Name    string `json:"name"`
+		Size    int64  `json:"size_in_bytes"`
+		Expired bool   `json:"expired"`
+	} `json:"artifacts"`
 }
 
 // ghArtifactsPath is the manifest endpoint for one run. Built from the derived
@@ -466,7 +480,8 @@ type ghArtifactManifest []struct {
 // which gh would expand from the agent-writable .git/config this proxy runs in
 // a neutral directory to escape.
 func ghArtifactsPath(ownerRepo, runID string) string {
-	return fmt.Sprintf("repos/%s/actions/runs/%s/artifacts?per_page=100", ownerRepo, runID)
+	return fmt.Sprintf("repos/%s/actions/runs/%s/artifacts?per_page=%d",
+		ownerRepo, runID, ghArtifactsPerPage)
 }
 
 // handleGHProxyRunArtifacts serves POST /v1/github/run/artifacts — what a run
@@ -480,7 +495,9 @@ func ghArtifactsPath(ownerRepo, runID string) string {
 // gh has no `run artifacts` subcommand, so this goes through `gh api`. The
 // query string carries per_page because `gh api -f`/`-F` would flip the request
 // to POST — writing with a credential from a read verb. One page: a run with
-// more than 100 artifacts is not a case worth paginating a JSON projection for.
+// more than ghArtifactsPerPage artifacts reports its real `total` and a partial
+// array, because concatenating pages under a --jq projection would produce
+// several JSON documents rather than one.
 func handleGHProxyRunArtifacts(w http.ResponseWriter, r *http.Request) {
 	var body ghProxyRunRequest
 	g, ok := openGHProxy(w, r, PermGitHubRead, &body, func() string { return body.Remote })
@@ -492,9 +509,20 @@ func handleGHProxyRunArtifacts(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
-	res, err := g.gh(r.Context(), "api", ghArtifactsPath(g.ownerRepo, runID),
-		"--jq", ghArtifactManifestProjection)
+	res, err := g.ghManifest(r.Context(), runID)
 	g.respond(w, r, "run.artifacts", res, err)
+}
+
+// ghManifest runs the manifest read. It is NOT g.gh: the default output bound
+// is 16 KiB, sized for a diagnosis, and a full page of this projection exceeds
+// that once artifact names reach ordinary matrix lengths
+// ("coverage-ubuntu-latest-1.22"). Under g.gh the tail rule would then keep the
+// LAST 16 KiB — a fragment starting mid-object, which is not JSON, so a busy
+// run's manifest would fail to parse and `run download` would be impossible for
+// it at any --name. The bulk bound is what the projection was designed for.
+func (g *ghProxySession) ghManifest(ctx context.Context, runID string) (ProxyResult, error) {
+	return g.ghBulk(ctx, ghProxyTimeout, "api", ghArtifactsPath(g.ownerRepo, runID),
+		"--jq", ghArtifactManifestProjection)
 }
 
 // handleGHProxyRunDownload serves POST /v1/github/run/download — a run's
@@ -577,18 +605,26 @@ func handleGHProxyRunDownload(w http.ResponseWriter, r *http.Request) {
 func (g *ghProxySession) artifactManifest(ctx context.Context, runID string) (
 	ghArtifactManifest, ProxyResult, *proxyFault,
 ) {
-	res, err := g.gh(ctx, "api", ghArtifactsPath(g.ownerRepo, runID),
-		"--jq", ghArtifactManifestProjection)
+	var manifest ghArtifactManifest
+	res, err := g.ghManifest(ctx, runID)
 	if err != nil {
-		return nil, res, faultf(http.StatusBadGateway, "gh_failed",
+		return manifest, res, faultf(http.StatusBadGateway, "gh_failed",
 			"could not read the run's artifact list: %v", err)
 	}
 	if res.ExitCode != 0 {
-		return nil, res, nil
+		return manifest, res, nil
 	}
-	var manifest ghArtifactManifest
+	// Truncation is checked BEFORE parsing, and refused rather than reported.
+	// A tail-truncated JSON document usually fails to parse — but not always,
+	// and a manifest that parses after losing entries would have the download
+	// sized against a fraction of the bytes it is about to fetch.
+	if res.Truncated {
+		return manifest, res, faultf(http.StatusBadGateway, "gh_failed",
+			"the run's artifact list was too large to read in full, so its size cannot be "+
+				"checked; this run has an unusual number of artifacts")
+	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(res.Stdout)), &manifest); err != nil {
-		return nil, res, faultf(http.StatusBadGateway, "gh_failed",
+		return manifest, res, faultf(http.StatusBadGateway, "gh_failed",
 			"the run's artifact list could not be understood: %v", err)
 	}
 	return manifest, res, nil
@@ -599,32 +635,64 @@ func (g *ghProxySession) artifactManifest(ctx context.Context, runID string) (
 //
 // An empty name means every artifact, so the budget is the sum. Naming one
 // narrows the budget to that one, which is the point of naming it.
+//
+// The two cases differ in more than arithmetic. `--name X` makes gh fetch
+// exactly the artifact this function measured, so the check is exact even when
+// the manifest is only a page. Without a name gh fetches every artifact IN THE
+// RUN, which is not the same set as every artifact on the page — so a run with
+// more artifacts than one page holds is refused rather than sized against a
+// fraction of what it would pull.
 func checkArtifactBudget(manifest ghArtifactManifest, name string) *proxyFault {
 	var (
-		total   int64
-		matched int
-		names   []string
+		total        int64
+		matched      int
+		expiredMatch int
+		liveNames    []string
 	)
-	for _, a := range manifest {
-		names = append(names, a.Name)
+	for _, a := range manifest.Artifacts {
+		if !a.Expired {
+			liveNames = append(liveNames, a.Name)
+		}
 		if name != "" && a.Name != name {
 			continue
 		}
 		if a.Expired {
+			expiredMatch++
 			continue
 		}
 		matched++
 		total += a.Size
 	}
+	partial := manifest.Total > len(manifest.Artifacts)
+
 	if matched == 0 {
+		// Expired is a DIFFERENT answer from absent, and the one an agent is
+		// most likely to retry on if not told plainly. GitHub keeps the entry
+		// after the retention period takes the bytes.
+		if expiredMatch > 0 {
+			return faultf(http.StatusNotFound, "artifact_expired",
+				"the artifact %q exists but has expired — GitHub deleted the bytes after its "+
+					"retention period and kept the entry; retrying will not bring it back", name)
+		}
 		if name != "" {
+			hint := ""
+			if partial {
+				hint = fmt.Sprintf(" (this run has %d artifacts and only the first %d were "+
+					"inspected, so the name may be among the rest)", manifest.Total, len(manifest.Artifacts))
+			}
 			return faultf(http.StatusNotFound, "no_artifact",
-				"this run has no live artifact named %q; it has: %s",
-				name, artifactNameList(names))
+				"this run has no live artifact named %q; it has: %s%s",
+				name, artifactNameList(liveNames), hint)
 		}
 		return faultf(http.StatusNotFound, "no_artifact",
 			"this run has no live artifacts (they expire, and a run that failed early "+
 				"may never have uploaded any)")
+	}
+	if name == "" && partial {
+		return faultf(http.StatusRequestEntityTooLarge, "artifact_too_large",
+			"this run has %d artifacts, more than the %d the proxy inspects at once, so it "+
+				"cannot size a download of all of them; take one with `--name` (the first %d are: %s)",
+			manifest.Total, ghArtifactsPerPage, len(manifest.Artifacts), artifactNameList(liveNames))
 	}
 	if total > maxGHArtifactBytes {
 		return faultf(http.StatusRequestEntityTooLarge, "artifact_too_large",
@@ -635,9 +703,16 @@ func checkArtifactBudget(manifest ghArtifactManifest, name string) *proxyFault {
 	return nil
 }
 
+// artifactNameList renders the names a caller can choose from, bounded — a
+// full page of 255-character names is a 25 KB error message, and every other
+// payload in this file is bounded.
 func artifactNameList(names []string) string {
 	if len(names) == 0 {
 		return "(none)"
+	}
+	if len(names) > maxGHArtifactNamesReported {
+		return strings.Join(names[:maxGHArtifactNamesReported], ", ") +
+			fmt.Sprintf(", … and %d more", len(names)-maxGHArtifactNamesReported)
 	}
 	return strings.Join(names, ", ")
 }

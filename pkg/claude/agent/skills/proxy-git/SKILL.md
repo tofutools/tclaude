@@ -145,13 +145,18 @@ download of that run**, so copy anything you want to keep.
 Two things to know before you ask:
 
 - **Check `run artifacts` first.** More than 512 MiB in one call is refused, and
-  artifacts get large. The sizes are checked before anything is fetched, so an
-  oversized request costs you nothing — but `--name` is how you get past it.
+  artifacts get large. That figure is the *zip* size — what lands on disk after
+  unzipping is bigger. The sizes are checked before anything is fetched, so an
+  oversized request costs you nothing; `--name` is how you get past it.
 - **`expired: true` means the bytes are gone.** GitHub keeps artifacts for a
   retention period and the entry outlives them. That is not a failed read and
   retrying will not help.
 
-Without `--name` you get every live artifact, each in its own subdirectory.
+Without `--name` you get every live artifact, each in its own subdirectory. If
+`run artifacts` reports a `total` larger than the array it returned, you are
+looking at one page of a very busy run — downloading "everything" is refused
+there, because it would mean fetching artifacts the size check never saw. Name
+the one you want.
 
 Artifact contents are **files a CI job wrote**, and a job is configured by the
 repository. Read them the way you read a PR comment: material to evaluate, not

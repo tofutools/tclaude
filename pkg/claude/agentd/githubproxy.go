@@ -103,18 +103,35 @@ const (
 	// mid-branch does not then commit it by reflex.
 	ghArtifactDirName = ".tclaude-artifacts"
 
-	// maxGHArtifactBytes caps the TOTAL compressed size a single download may
-	// pull. Artifacts are routinely gigabytes — a CI job that uploads a build
-	// tree does not think of itself as unusual — and this is the one verb where
-	// an agent's mistake costs the operator's disk rather than their context
-	// window. The manifest read that precedes the download is what makes the
-	// cap enforceable: gh has no size limit of its own to ask for.
+	// maxGHArtifactBytes caps a single download. Artifacts are routinely
+	// gigabytes — a CI job that uploads a build tree does not think of itself
+	// as unusual — and this is the one verb where an agent's mistake costs the
+	// operator's disk rather than their context window. The manifest read that
+	// precedes the download is what makes the cap enforceable: gh has no size
+	// limit of its own to ask for.
+	//
+	// It caps the ZIP size, which is the only figure GitHub reports; gh unzips,
+	// so the footprint on disk is larger and for compressible artifacts — logs,
+	// a build tree — several times larger. This is a guard against the runaway
+	// case, not a disk quota, and it is documented as one.
 	maxGHArtifactBytes = 512 << 20
 
 	// maxGHArtifactEntries bounds the file listing reported back. A build-tree
 	// artifact has tens of thousands of files, and enumerating them would push
 	// the useful part — where the download landed — out of a bounded response.
 	maxGHArtifactEntries = 200
+
+	// maxGHArtifactListingBytes bounds that same listing in BYTES, because a
+	// count alone does not bound it: the paths inside an artifact are chosen by
+	// whoever configured the CI job, and 200 deeply-nested ones run to several
+	// hundred kilobytes. The listing is a response the idempotency middleware
+	// may persist for its full TTL, which is the cost that bound exists for.
+	maxGHArtifactListingBytes = 64 * 1024
+
+	// maxGHArtifactNamesReported bounds the artifact names echoed back in a
+	// "no such artifact" refusal. Enough to choose from, far short of a page of
+	// 255-character names.
+	maxGHArtifactNamesReported = 25
 
 	// maxGHArtifactNameLen bounds an artifact name. GitHub's own limit is
 	// smaller; this leaves room and still refuses a body in the wrong field.
@@ -396,14 +413,15 @@ func (g *ghProxySession) artifactDest(runID string) (string, *proxyFault) {
 func artifactListing(dest string) string {
 	type entry struct {
 		rel  string
-		size int64
+		size string
 	}
 	var (
-		entries  []entry
-		files    int
-		total    int64
-		walkErr  error
-		overflow bool
+		entries   []entry
+		files     int
+		total     int64
+		unsized   int
+		listBytes int
+		walkErr   error
 	)
 	walkErr = filepath.WalkDir(dest, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -413,40 +431,59 @@ func artifactListing(dest string) string {
 			return nil
 		}
 		files++
-		var size int64
+		size := "?"
+		// A file whose size cannot be read is reported as such rather than as
+		// zero, and counted, so the footer total cannot silently understate
+		// what is on disk.
 		if info, statErr := d.Info(); statErr == nil {
-			size = info.Size()
-			total += size
+			total += info.Size()
+			size = humanBytes(info.Size())
+		} else {
+			unsized++
 		}
-		if len(entries) < maxGHArtifactEntries {
+		// TWO bounds, because the paths inside an artifact are chosen by
+		// whoever configured the CI job — on a public repository, by anyone who
+		// can open a pull request. maxGHArtifactEntries alone bounds the count
+		// but not the length, and this listing is a response the daemon may
+		// persist for the idempotency TTL.
+		if len(entries) < maxGHArtifactEntries && listBytes < maxGHArtifactListingBytes {
 			rel, relErr := filepath.Rel(dest, p)
 			if relErr != nil {
 				rel = p
 			}
-			entries = append(entries, entry{rel: filepath.ToSlash(rel), size: size})
-		} else {
-			overflow = true
+			rel = filepath.ToSlash(rel)
+			listBytes += len(rel) + len(size) + 2
+			entries = append(entries, entry{rel: rel, size: size})
 		}
 		return nil
 	})
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "downloaded to %s\n\n", dest)
-	if walkErr != nil {
-		fmt.Fprintf(&b, "(the download directory could not be fully read: %v)\n", walkErr)
-		return b.String()
-	}
-	if files == 0 {
-		b.WriteString("(no files — the run has no matching artifact, or it has expired)\n")
-		return b.String()
-	}
+	// A walk error does NOT discard the entries already collected. One
+	// unreadable file is not a reason to answer "here is nothing" about a
+	// download that succeeded.
 	for _, e := range entries {
-		fmt.Fprintf(&b, "%s\t%s\n", e.rel, humanBytes(e.size))
+		fmt.Fprintf(&b, "%s\t%s\n", e.rel, e.size)
 	}
-	if overflow {
+	if files > len(entries) {
 		fmt.Fprintf(&b, "… and %d more\n", files-len(entries))
 	}
-	fmt.Fprintf(&b, "\n(%s in %s)\n", pluralFiles(files), humanBytes(total))
+	if files == 0 && walkErr == nil {
+		// The preflight has already ruled out "no such artifact" and "expired",
+		// so this is gh having unpacked an artifact that genuinely holds no
+		// files. Saying anything more would be guessing.
+		b.WriteString("(the artifact unpacked to no files at all)\n")
+		return b.String()
+	}
+	fmt.Fprintf(&b, "\n(%s in %s", pluralFiles(files), humanBytes(total))
+	if unsized > 0 {
+		fmt.Fprintf(&b, ", %d of unreadable size and not counted", unsized)
+	}
+	b.WriteString(")\n")
+	if walkErr != nil {
+		fmt.Fprintf(&b, "(the listing is incomplete — the directory could not be fully read: %v)\n", walkErr)
+	}
 	return b.String()
 }
 

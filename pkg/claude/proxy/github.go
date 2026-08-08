@@ -609,10 +609,12 @@ func githubRunArtifactsCmd() *cobra.Command {
 			"downloading anything. This is the command to run BEFORE `run download`.\n\n" +
 			"Sizes are the reason it exists. A CI job that uploads a build tree produces artifacts in " +
 			"the hundreds of megabytes, `run download` refuses more than 512 MiB at once, and this is " +
-			"how you find out which one you actually want.\n\n" +
+			"how you find out which one you actually want. The sizes are ZIP sizes, which is all " +
+			"GitHub reports; unpacked, they are larger.\n\n" +
 			"An artifact with `expired: true` is gone; GitHub keeps them for a limited retention period " +
 			"and the entry outlives the bytes.\n\n" +
-			"At most 100 artifacts are listed, which no ordinary run approaches.",
+			"The output is {total, artifacts}. At most 100 artifacts are listed, which no ordinary run " +
+			"approaches — a `total` larger than the array means you are seeing one page of them.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *githubRunParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)
@@ -653,8 +655,11 @@ func githubRunDownloadCmd() *cobra.Command {
 			"Without `--name` you get every live artifact, each in a subdirectory named after it. " +
 			"With `--name` that one artifact is unzipped directly into the destination.\n\n" +
 			"The proxy refuses more than 512 MiB in one call — it checks the sizes before fetching a " +
-			"byte, so an oversized request costs you nothing but the refusal. Run `run artifacts` " +
-			"first and take what you need by name.",
+			"byte, so an oversized request costs you nothing but the refusal. That figure is the ZIP " +
+			"size, the only one GitHub reports; what lands on disk after unzipping is larger. Run " +
+			"`run artifacts` first and take what you need by name.\n\n" +
+			"A run with more artifacts than one page holds cannot have an all-of-them download sized " +
+			"honestly, so that case is refused too — name the artifact you want.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *githubRunDownloadParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)

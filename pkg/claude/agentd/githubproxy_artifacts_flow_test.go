@@ -3,12 +3,14 @@ package agentd_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,9 +28,16 @@ import (
 // operator's disk cannot afford — plus the preflight that makes both decidable
 // before a byte is fetched.
 
-// ghArtifactManifestJSON renders the projection the daemon asks gh for.
+// ghArtifactManifestJSON renders the projection the daemon asks gh for: the
+// run's real artifact count, plus the page it got back.
 func ghArtifactManifestJSON(entries ...string) string {
-	return "[" + strings.Join(entries, ",") + "]"
+	return ghArtifactPage(len(entries), entries...)
+}
+
+// ghArtifactPage renders a manifest whose `total` may exceed the entries — the
+// shape a run with more artifacts than one page holds produces.
+func ghArtifactPage(total int, entries ...string) string {
+	return fmt.Sprintf(`{"total":%d,"artifacts":[%s]}`, total, strings.Join(entries, ","))
 }
 
 func ghArtifact(name string, size int64, expired bool) string {
@@ -216,18 +225,26 @@ func TestGHProxy_DownloadExplainsAMissingArtifact(t *testing.T) {
 		assert.Len(t, ghArgvs(t, rec), 1)
 	})
 
-	t.Run("an expired artifact is not a live one", func(t *testing.T) {
+	// "expired" and "no such name" are DIFFERENT answers, and conflating them
+	// produces a self-contradicting message — "no live artifact named
+	// "coverage"; it has: coverage" — that an agent will retry on.
+	t.Run("an expired artifact is named as expired, not as missing", func(t *testing.T) {
 		f, rec := downloadingWorld(t,
 			ghArtifactManifestJSON(ghArtifact("coverage", 4096, true)), nil)
 
 		res := gitProxyPost(t, f, "/v1/github/run/download",
 			map[string]any{"run_id": 18234567890, "name": "coverage"})
 		require.Equal(t, http.StatusNotFound, res.Code, "body=%s", res.Body.String())
+		assert.Contains(t, res.Body.String(), "expired")
+		assert.Contains(t, res.Body.String(), "retrying will not",
+			"an agent told only 'not found' will retry a retention lapse forever")
+		assert.NotContains(t, res.Body.String(), "it has: coverage",
+			"offering the expired artifact as an alternative to itself is nonsense")
 		assert.Len(t, ghArgvs(t, rec), 1)
 	})
 
 	t.Run("a run that uploaded nothing says so", func(t *testing.T) {
-		f, rec := downloadingWorld(t, "[]", nil)
+		f, rec := downloadingWorld(t, ghArtifactManifestJSON(), nil)
 
 		res := gitProxyPost(t, f, "/v1/github/run/download",
 			map[string]any{"run_id": 18234567890})
@@ -317,6 +334,179 @@ func TestGHProxy_DownloadRefusesToFollowASymlinkOutOfTheWorkTree(t *testing.T) {
 	assert.Empty(t, entries, "nothing may be written through the link")
 }
 
+// TestGHProxy_DownloadRefusesAnAllOfThemDownloadItCannotSize closes the gap
+// between what the preflight MEASURES and what gh then FETCHES.
+//
+// The manifest is one page. `gh run download` without --name fetches every
+// artifact in the RUN, which on a busy run is not the same set — so sizing the
+// download against the page would let several times the cap through while
+// reporting a number under it. Naming an artifact removes the gap, because then
+// gh fetches exactly what was measured.
+func TestGHProxy_DownloadRefusesAnAllOfThemDownloadItCannotSize(t *testing.T) {
+	page := make([]string, 0, 100)
+	for i := range 100 {
+		page = append(page, ghArtifact(fmt.Sprintf("shard-%02d", i), 4<<20, false))
+	}
+
+	t.Run("every artifact, on a run with more than a page of them", func(t *testing.T) {
+		f, rec := downloadingWorld(t, ghArtifactPage(400, page...), nil)
+
+		res := gitProxyPost(t, f, "/v1/github/run/download",
+			map[string]any{"run_id": 18234567890})
+		require.Equal(t, http.StatusRequestEntityTooLarge, res.Code, "body=%s", res.Body.String())
+		assert.Contains(t, res.Body.String(), "400 artifacts")
+		assert.Len(t, ghArgvs(t, rec), 1, "nothing may be fetched")
+	})
+
+	t.Run("one named artifact is measured exactly and allowed", func(t *testing.T) {
+		f, rec := downloadingWorld(t, ghArtifactPage(400, page...),
+			map[string]string{"shard.txt": "ok\n"})
+
+		res := gitProxyPost(t, f, "/v1/github/run/download",
+			map[string]any{"run_id": 18234567890, "name": "shard-07"})
+		require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+		assert.Len(t, ghArgvs(t, rec), 2)
+	})
+}
+
+// TestGHProxy_ManifestIsReadWithABulkBound is the regression for a download
+// that is impossible on exactly the runs it is most wanted for.
+//
+// The default output bound is 16 KiB, sized for a diagnosis, and it keeps the
+// TAIL. A full page of this projection passes 16 KiB once artifact names reach
+// ordinary matrix lengths, and a tail of a JSON document begins mid-object — so
+// under the default bound a busy run's manifest would fail to parse and no
+// --name could rescue it.
+func TestGHProxy_ManifestIsReadWithABulkBound(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	rec.gh = agentd.ProxyResult{Stdout: ghArtifactManifestJSON(ghArtifact("coverage", 4096, false))}
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+
+	res := gitProxyPost(t, f, "/v1/github/run/artifacts",
+		map[string]any{"run_id": 18234567890})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	call := ghCall(t, rec)
+	assert.Greater(t, call.MaxOutputBytes, 16*1024,
+		"a page of artifacts does not fit the diagnosis-sized default, and the tail of a "+
+			"truncated JSON document does not parse")
+}
+
+// TestGHProxy_DownloadRefusesATruncatedManifest — a manifest read that lost
+// entries cannot size a download, and a truncated JSON document does not always
+// fail to parse. Refuse rather than measure a fraction of the bytes.
+func TestGHProxy_DownloadRefusesATruncatedManifest(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	rec.gh = agentd.ProxyResult{
+		Stdout:    ghArtifactManifestJSON(ghArtifact("coverage", 4096, false)),
+		Truncated: true,
+	}
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+
+	res := gitProxyPost(t, f, "/v1/github/run/download",
+		map[string]any{"run_id": 18234567890})
+	require.Equal(t, http.StatusBadGateway, res.Code, "body=%s", res.Body.String())
+	assert.Equal(t, 1, ghCallCount(rec), "nothing may be fetched on an unsizeable manifest")
+}
+
+// TestGHProxy_DownloadSharesOneBudgetAcrossBothCalls — the CLI waits on a
+// single number, so the daemon's worst case has to be that number however the
+// work divides between the manifest read and the download.
+func TestGHProxy_DownloadSharesOneBudgetAcrossBothCalls(t *testing.T) {
+	f, rec := downloadingWorld(t,
+		ghArtifactManifestJSON(ghArtifact("coverage", 4096, false)),
+		map[string]string{"coverage.out": "mode: set\n"})
+
+	res := gitProxyPost(t, f, "/v1/github/run/download",
+		map[string]any{"run_id": 18234567890})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	_, budgets := ghCalls(t, rec)
+	require.Len(t, budgets, 2)
+	// The manifest read gets the ordinary per-call bound, and the download the
+	// long one — but both sit under the shared 300s ceiling, so the two
+	// together cannot outlast what the CLI is waiting on.
+	assert.LessOrEqual(t, budgets[0], 300*time.Second)
+	assert.Greater(t, budgets[1], 210*time.Second,
+		"the download itself must get the long bound, not the ordinary one")
+	assert.LessOrEqual(t, budgets[1], 300*time.Second)
+}
+
+// TestGHProxy_ListingIsBoundedInBytesNotJustEntries — the paths inside an
+// artifact are chosen by whoever configured the CI job, which on a public
+// repository is anyone who can open a pull request. A count bound alone does
+// not bound the listing, and this response can be persisted for the
+// idempotency TTL.
+func TestGHProxy_ListingIsBoundedInBytesNotJustEntries(t *testing.T) {
+	files := map[string]string{}
+	deep := strings.Repeat("a-long-directory-component/", 30)
+	for i := range 150 {
+		files[fmt.Sprintf("%s/file-%03d.txt", deep, i)] = "x"
+	}
+	f, _ := downloadingWorld(t,
+		ghArtifactManifestJSON(ghArtifact("logs", 4096, false)), files)
+
+	res := gitProxyPost(t, f, "/v1/github/run/download",
+		map[string]any{"run_id": 18234567890})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	stdout := ghOutcomeStdout(t, res.Body.Bytes())
+	assert.Less(t, len(stdout), 96*1024, "the listing must be bounded in bytes")
+	assert.Contains(t, stdout, "and", "and it must say that it stopped short")
+	assert.Contains(t, stdout, "150 files", "while still reporting the true total")
+}
+
+// TestGHProxy_DownloadRefusesADestinationThatIsNotADirectory — the agent owns
+// its work tree, so `.tclaude-artifacts` may be anything it likes by the time
+// the daemon looks.
+func TestGHProxy_DownloadRefusesADestinationThatIsNotADirectory(t *testing.T) {
+	t.Run("a regular file where the directory belongs", func(t *testing.T) {
+		f, rec := downloadingWorld(t,
+			ghArtifactManifestJSON(ghArtifact("coverage", 4096, false)), nil)
+		require.NoError(t, os.WriteFile(
+			filepath.Join(rec.repoRoot, ".tclaude-artifacts"), []byte("not a dir"), 0o644))
+
+		res := gitProxyPost(t, f, "/v1/github/run/download",
+			map[string]any{"run_id": 18234567890})
+		require.Equal(t, http.StatusConflict, res.Code, "body=%s", res.Body.String())
+		assert.Len(t, ghArgvs(t, rec), 1)
+	})
+
+	// The per-run directory is the one the daemon RemoveAlls before each
+	// download, so a symlink there aims a deletion rather than a write. It does
+	// not have to be refused — unlinking a symlink is not following it — but it
+	// must not reach through.
+	t.Run("the per-run directory symlinked out of the tree", func(t *testing.T) {
+		f, rec := downloadingWorld(t,
+			ghArtifactManifestJSON(ghArtifact("coverage", 4096, false)),
+			map[string]string{"coverage.out": "mode: set\n"})
+		base := filepath.Join(rec.repoRoot, ".tclaude-artifacts")
+		require.NoError(t, os.MkdirAll(base, 0o755))
+		outside := t.TempDir()
+		bystander := filepath.Join(outside, "someone-elses-file")
+		require.NoError(t, os.WriteFile(bystander, []byte("keep me"), 0o644))
+		require.NoError(t, os.Symlink(outside, filepath.Join(base, "run-18234567890")))
+
+		res := gitProxyPost(t, f, "/v1/github/run/download",
+			map[string]any{"run_id": 18234567890})
+		require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+		// The link was replaced by a real directory inside the work tree...
+		dest := filepath.Join(base, "run-18234567890")
+		fi, err := os.Lstat(dest)
+		require.NoError(t, err)
+		assert.True(t, fi.IsDir())
+		assert.Zero(t, fi.Mode()&os.ModeSymlink, "the symlink must not survive as the destination")
+		assert.FileExists(t, filepath.Join(dest, "coverage.out"))
+
+		// ...and the directory it pointed at was neither emptied nor written to.
+		assert.FileExists(t, bystander, "the clear-out must not reach through the link")
+		entries, err := os.ReadDir(outside)
+		require.NoError(t, err)
+		assert.Len(t, entries, 1, "and nothing was downloaded through it either")
+	})
+}
+
 // TestGHProxy_ArtifactsListIsARead — listing what a run produced spends the
 // operator's credential and returns nothing that could be written with it, so
 // it sits behind github.read beside the other reads.
@@ -346,6 +536,15 @@ func TestGHProxy_ArtifactsListIsARead(t *testing.T) {
 			call.Args[1], "the slug is derived; gh's {owner}/{repo} placeholders would come "+
 				"from the agent-writable .git/config instead")
 		assert.NotContains(t, strings.Join(call.Args, " "), "{owner}")
+		// The projection is what keeps this read small: each raw entry embeds a
+		// complete copy of the workflow-run object, and a page of those does
+		// not fit any bound this proxy would accept.
+		i := slices.Index(call.Args, "--jq")
+		require.GreaterOrEqual(t, i, 0, "the manifest must be projected, not passed through raw")
+		assert.Contains(t, call.Args[i+1], "total_count",
+			"total_count is how a partial page is detected at all")
+		assert.Contains(t, call.Args[i+1], "size_in_bytes")
+		assert.NotContains(t, call.Args[i+1], "workflow_run")
 		// -f/-F would flip gh to POST — writing with the operator's credential
 		// from a read verb.
 		assert.NotContains(t, call.Args, "-f")

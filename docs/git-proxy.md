@@ -274,15 +274,28 @@ Sizes are checked **before** anything is fetched, from the same manifest
 `run artifacts` returns, and a request totalling more than **512 MiB** is
 refused. Artifacts are routinely that large — a job that uploads a build tree
 does not think of itself as unusual — and this is the one verb where an agent's
-mistake costs disk rather than context. The preflight also distinguishes "no
-artifact by that name" (it lists the ones that exist), "it expired", and "this
-run uploaded nothing", which gh reports as one indistinguishable failure. Because
-it moves bulk bytes, `run download` gets the longest bound in the proxy: 300s.
+mistake costs disk rather than context.
 
-`run artifacts` lists at most 100 artifacts, which no ordinary run approaches,
-and is projected down to the fields that decide anything (`name`,
-`size_in_bytes`, `expired`, the timestamps) — the raw entries embed a complete
-copy of the workflow-run object each.
+That figure is the **zip size**, the only one GitHub reports. `gh` unzips, so
+the footprint on disk is larger, and for a compressible artifact — logs, a build
+tree — several times larger. Treat the cap as a guard against the runaway case,
+not as a disk quota.
+
+The preflight also tells apart three failures gh reports identically: "no
+artifact by that name" (it lists the live ones), "that artifact expired" (the
+entry outlives the bytes, and retrying will not help), and "this run uploaded
+nothing". Because it moves bulk bytes, `run download` gets the longest bound in
+the proxy: 300s, shared across the manifest read and the download.
+
+`run artifacts` returns `{"total": N, "artifacts": [...]}`, projected down to
+the fields that decide anything (`name`, `size_in_bytes`, `expired`, the
+timestamps) — the raw entries embed a complete copy of the workflow-run object
+each. At most 100 artifacts are listed, which no ordinary run approaches;
+`total` is the run's real count, so a larger `total` than array means you are
+looking at a page. A `run download` **without** `--name` fetches every artifact
+in the run rather than every artifact on that page, so in exactly that case it
+is refused rather than sized against a fraction of what it would pull — name the
+one you want.
 
 `git remotes` is the command to point an agent at when something is refused: it
 lists every remote with the allow-list verdict and the reason, so the agent can
