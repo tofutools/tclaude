@@ -785,6 +785,40 @@ distinguishes *asked for* from *actually driving*: solid amber means tclaude
 holds a connection, dimmed-and-dashed means the launch chose the API drive but
 no connection is up — still starting, or its channel never came up.
 
+##### Turning it off, durably
+
+The drive is not verified in real use, so it needs a rollback that works when
+things are going badly:
+
+```bash
+tclaude agent set-drive <agent> send-keys   # durable: every later launch is on keystrokes
+tclaude agent set-drive <agent> api         # the same switch, the other way
+```
+
+This is a **pin** as well as a rollback. Recording `send-keys` for an agent that
+never chose the drive still does something: an *unrecorded* posture leaves a
+group or global default profile free to turn the drive on at that agent's next
+launch, and the pin is what stops it. **It pins that one agent, not future
+members of its group — the group's default profile is the lever for those.**
+
+`send-keys` works with `agentd` down and writes the record directly; `api`
+requires the daemon, because only agentd creates the channel it claims. A
+rollback that needs the mechanism owner healthy is the rollback failing in the
+case it exists for, so the two directions are deliberately not symmetric.
+
+Two things the command tells you and that are worth knowing before you need
+them. It names **which record** it wrote (an agent's own relaunch profile, or a
+conversation's fallback) and whether it **created** that answer or edited an
+existing one — "created" means nothing recorded a drive before, which is itself
+the sign that a default profile had been answering for the agent. And a pin is
+durable immediately but does **not** redirect a channel that is already up:
+routing answers from the live connection first, so a running API-driven pane
+keeps using it until that channel ends. Relaunch the agent if you want the
+change to bite now.
+
+`tclaude conv resume <id> --send-keys` is a different thing and stays one: a
+per-launch override that deliberately touches no record.
+
 ##### What the API drive changes
 
 The launch itself is unchanged in shape: the pane still runs one `copilot`
