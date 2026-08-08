@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/copilotapi"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -235,6 +236,17 @@ func reconnectCopilotAPISession(ctx context.Context, convID string) (*copilotAPI
 // typed into its pane today, and it is the one a reconnect most needs to find.
 // A wasted wait is cheap; skipping a mute agent is not.
 //
+// That reasoning was written when a posture was either recorded ON or not
+// recorded at all, and it remains correct for both. It did not anticipate a
+// third state: a posture recorded as an explicit FALSE by an operator taking
+// the agent off the drive (TCL-1082). Adopting an UNRECORDED posture closes an
+// injection sink, because unrecorded routes to keystrokes; adopting an explicit
+// false overrides a person. Those are different acts, so an explicit false —
+// and only an explicit false, never a nil and never an unreadable record — now
+// stands the sweep down for that conversation. Without it a durable "off" holds
+// for launches and evaporates for the still-running pane at the next daemon
+// restart, which is a rollback the operator believes worked.
+//
 // # The reaper's release grace
 //
 // The port record is released by the reaper, but only for a conversation with
@@ -269,6 +281,19 @@ func reconcileCopilotAPISessions(ctx context.Context) {
 		}
 		live := session.LiveSessionForConv(convID)
 		if live == nil || live.Harness != harness.CopilotName {
+			continue
+		}
+		// An operator's explicit "off" stands the sweep down for this
+		// conversation. Scoped to a record that says false and nothing else: a
+		// read failure and an absent record both mean unknown, and both keep
+		// adopting exactly as before, or this would have widened from "respect a
+		// decision" into "stop closing the sink".
+		if target, err := db.CopilotDriveTargetForConv(convID); err == nil &&
+			target.Record != db.CopilotDriveRecordNone && !target.Value {
+			slog.Info("copilot API reconnect: skipping a conversation whose drive an "+
+				"operator turned off; its pane keeps running and its mail routes as "+
+				"keystrokes until it is relaunched",
+				"conv_id", convID, "record", string(target.Record))
 			continue
 		}
 		if !copilotAPIPostureRecorded(convID) {
