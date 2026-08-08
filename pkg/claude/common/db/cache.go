@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -310,6 +311,40 @@ func SaveGitCache(repoHash string, data json.RawMessage, fetchedAt time.Time) er
 		VALUES (?, ?, ?)`,
 		repoHash, string(data), dbTime(fetchedAt))
 	return err
+}
+
+// ListGitCacheByPrefixSince returns git_cache rows whose key starts with
+// prefix and were fetched at or after since, keyed by full repo hash. The
+// daemon-wide merged-PR poller uses it to enumerate recently refreshed
+// branch-link (`bl_`) resolutions without loading the whole table.
+func ListGitCacheByPrefixSince(prefix string, since time.Time) (map[string]*GitCacheRow, error) {
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	pattern := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(prefix) + "%"
+	rows, err := db.Query(`SELECT repo_hash, data, fetched_at FROM git_cache
+		WHERE repo_hash LIKE ? ESCAPE '\' AND fetched_at >= ?`,
+		pattern, dbTimeBoundary(since))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]*GitCacheRow{}
+	for rows.Next() {
+		var key, dataStr string
+		var fetchedAt dbTimestamp
+		if err := rows.Scan(&key, &dataStr, &fetchedAt); err != nil {
+			return nil, err
+		}
+		row := &GitCacheRow{Data: json.RawMessage(dataStr)}
+		row.FetchedAt = fetchedAt.Time()
+		out[key] = row
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // LoadGitCache returns cached git data for a repo, or nil if not found.

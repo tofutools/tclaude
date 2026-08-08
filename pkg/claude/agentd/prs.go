@@ -22,6 +22,7 @@ const (
 	maxAgentPRSummaryLen                     = 200
 	recentlyMergedPRPollInterval             = 10 * time.Second
 	recentlyMergedPRMaxBackoff               = 5 * time.Minute
+	recentlyMergedPRDashboardTargetWindow    = 10 * time.Minute
 	defaultRecentlyMergedPRSearchResultLimit = 20
 	maxRecentlyMergedPRSearchResultLimit     = 100
 	maxRecentlyMergedPRSearchQueryChars      = 200
@@ -347,12 +348,88 @@ func (r githubPRRef) key() string {
 	return strings.ToLower(r.repo) + "#" + strconv.Itoa(r.number)
 }
 
+// dashboardPRSearchTargets enumerates the PR URLs backing dashboard badges
+// that have no agent_prs row: branch/startup links from recently refreshed
+// bl_ git_cache entries, and statusbar-published agent_workspace snapshots.
+// Only non-terminal GitHub PRs qualify, and a URL whose durable ppr_
+// observation is already terminal is dropped — once a merge is detected, the
+// PR stops widening the search query even while its stale-open bl_ entry
+// waits out the branch-link TTL. Keyed by githubPRRef.key().
+func dashboardPRSearchTargets(now time.Time) map[string]dashboardPRTarget {
+	type candidate struct {
+		url   string
+		state string
+	}
+	var candidates []candidate
+	since := now.Add(-recentlyMergedPRDashboardTargetWindow)
+	blRows, err := db.ListGitCacheByPrefixSince("bl_", since)
+	if err != nil {
+		slog.Warn("presented-pr: failed to list branch-link cache for merged search",
+			"error", err, "module", "agentd")
+	}
+	for _, row := range blRows {
+		var info repoBranchInfo
+		if row == nil || json.Unmarshal(row.Data, &info) != nil {
+			continue
+		}
+		candidates = append(candidates, candidate{url: info.PRURL, state: info.PRState})
+	}
+	wsRows, err := db.ListAgentWorkspacePRsSince(since)
+	if err != nil {
+		slog.Warn("presented-pr: failed to list workspace PRs for merged search",
+			"error", err, "module", "agentd")
+	}
+	for _, w := range wsRows {
+		candidates = append(candidates, candidate{url: w.PRURL, state: w.PRState})
+	}
+
+	urls := make([]string, 0, len(candidates))
+	seen := make(map[string]bool)
+	for _, c := range candidates {
+		u := strings.TrimSpace(c.url)
+		if u == "" || seen[u] || isTerminalPresentedPRState(c.state) || !isGitHubPresentedPRURL(u) {
+			continue
+		}
+		seen[u] = true
+		urls = append(urls, u)
+	}
+	if len(urls) == 0 {
+		return nil
+	}
+	known := cachedPresentedPRStates(urls)
+	out := make(map[string]dashboardPRTarget)
+	for _, u := range urls {
+		if obs, ok := known[prStateKey(u)]; ok && isTerminalPresentedPRState(obs.state) {
+			continue
+		}
+		ref, ok := githubPRRefFromURL(u)
+		if !ok {
+			continue
+		}
+		t := out[ref.key()]
+		t.repo = ref.repo
+		t.urls = append(t.urls, u)
+		out[ref.key()] = t
+	}
+	return out
+}
+
+// dashboardPRTarget is one branch-detected PR the merged search should cover:
+// its repo qualifier plus every URL spelling observed for it, each of which
+// gets a ppr_ tombstone when the search reports the PR merged.
+type dashboardPRTarget struct {
+	repo string
+	urls []string
+}
+
 // pollRecentlyMergedPRs complements the individual gh-pr-view refresh path.
 // One bulk search catches the common case (a recently merged PR authored by
-// the authenticated gh user) within about ten seconds. Anything it cannot see
-// — another author's PR, an unmerged close, a result outside the bounded
-// 20–100 result page, or a failed search — remains covered by the existing
-// per-PR resolver.
+// the authenticated gh user) within about ten seconds. It covers every PR the
+// dashboard is showing as not-yet-terminal — explicitly presented agent_prs
+// rows and branch/startup badges alike. Anything it cannot see — another
+// author's PR, an unmerged close, a result outside the bounded 20–100 result
+// page, or a failed search — remains covered by the existing per-PR resolver
+// and the branch-link TTL refresh.
 func pollRecentlyMergedPRs() (bool, error) {
 	all, err := db.ListUnhandledAgentPRs()
 	if err != nil {
@@ -374,7 +451,15 @@ func pollRecentlyMergedPRs() (bool, error) {
 			reposByKey[strings.ToLower(ref.repo)] = ref.repo
 		}
 	}
-	if len(targets) == 0 {
+	urlTargets := dashboardPRSearchTargets(time.Now())
+	targetCount := len(targets)
+	for key, t := range urlTargets {
+		reposByKey[strings.ToLower(t.repo)] = t.repo
+		if _, dup := targets[key]; !dup {
+			targetCount++
+		}
+	}
+	if targetCount == 0 {
 		return false, nil
 	}
 
@@ -384,20 +469,29 @@ func pollRecentlyMergedPRs() (bool, error) {
 	}
 	sort.Strings(repos)
 
-	resultLimit := recentlyMergedPRResultLimit(len(targets))
+	resultLimit := recentlyMergedPRResultLimit(targetCount)
 	merged, err := recentlyMergedPRsResolver(repos, resultLimit)
 	if err != nil {
 		return true, fmt.Errorf("gh recently merged PR search: %w", err)
 	}
 	now := time.Now()
 	cached := make(map[string]bool)
+	cachePRState := func(rawURL string, info presentedPRInfo) {
+		key := presentedPRCacheKey(rawURL)
+		if cached[key] {
+			return
+		}
+		cached[key] = true
+		savePresentedPRCache(key, rawURL, info, now)
+	}
 	for _, info := range merged {
 		ref, valid := githubPRRefFromURL(info.URL)
 		if !valid {
 			continue
 		}
 		rows := targets[ref.key()]
-		if len(rows) == 0 {
+		urls := urlTargets[ref.key()].urls
+		if len(rows) == 0 && len(urls) == 0 {
 			continue
 		}
 		info.State = "merged"
@@ -407,10 +501,10 @@ func pollRecentlyMergedPRs() (bool, error) {
 				slog.Warn("presented-pr: failed to apply merged search result",
 					"error", err, "agent_id", row.AgentID, "url", row.PRURL, "module", "agentd")
 			}
-			if !cached[row.PRURL] {
-				savePresentedPRCache(presentedPRCacheKey(row.PRURL), row.PRURL, info, now)
-				cached[row.PRURL] = true
-			}
+			cachePRState(row.PRURL, info)
+		}
+		for _, u := range urls {
+			cachePRState(u, info)
 		}
 	}
 	return true, nil
