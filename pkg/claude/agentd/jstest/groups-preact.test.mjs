@@ -116,6 +116,26 @@ test('opaque slop host safely retakes nested-root ownership after an imperative 
   assertAbsent(mounted.container.querySelector('.slop-pull-reel'), 'unmount leaves no mutated pull DOM behind');
 });
 
+test('Copilot member harness line shows native credits with subscription value', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { HarnessLine } = await harness.importDashboardModule('js/groups-member-table.js');
+  const member = {
+    conv_id: 'conv-copilot', online: true,
+    state: {
+      harness: 'copilot', model: 'gpt-5', virtual_cost_usd: 0.43,
+      virtual_cost_credits: 43,
+    },
+  };
+  const mounted = await harness.mount(harness.html`<${HarnessLine} member=${member} snapshot=${{}} />`);
+  const line = mounted.container.querySelector('.agent-harness');
+  assert.ok(line.querySelector('.harness-mark[data-harness-mark="copilot"]'));
+  assert.match(line.textContent, /·gpt-5≈\$0\.43/);
+  assert.match(line.title, /WHAT-IF cost this session: 43 credits — \$0\.4300 subscription value/);
+  assert.match(line.querySelector('.harness-cost-whatif').title,
+    /43 credits — \$0\.4300 subscription value/);
+  await mounted.unmount();
+});
+
 test('stale jackpot hold cleanup cannot mark or overwrite a newer slop identity', async (t) => {
   const harness = await createPreactHarness(t);
   await harness.replaceDashboardModule('js/dashboard.js', `

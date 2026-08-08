@@ -2028,6 +2028,10 @@ type agentState struct {
 	// hypothetical — only when the WHAT-IF view is active
 	// (snapshot.cost_tab_whatif). Surfaced regardless of liveness, like CostUSD.
 	VirtualCostUSD float64 `json:"virtual_cost_usd,omitempty"`
+	// VirtualCostCredits is Copilot's native AI-credit equivalent of
+	// VirtualCostUSD. It is present only when the Copilot usage store reported a
+	// positive nano-AIU total; other harnesses keep this field absent.
+	VirtualCostCredits float64 `json:"virtual_cost_credits,omitempty"`
 	// BrokerRefusals is how many brokered hook/statusline requests the
 	// daemon has REFUSED while resolving them to THIS row, inside the
 	// recorder's window. Non-zero means an agent is losing telemetry:
@@ -2455,6 +2459,9 @@ func stateForConvInSessionsBatched(
 		out.EffortLevel = snap.EffortLevel
 		out.CostUSD = snap.CostUSD
 		out.VirtualCostUSD = snap.VirtualCostUSD
+		if pick.Harness == harness.CopilotName && snap.VirtualCostUSD > 0 {
+			out.VirtualCostCredits = harness.CopilotVirtualCreditsFromUSD(snap.VirtualCostUSD)
+		}
 	}
 	// No live tmux session — the agent's process is gone. Report it as
 	// exited rather than letting the frozen hook status (typically

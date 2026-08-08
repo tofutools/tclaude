@@ -213,6 +213,30 @@ func TestUpdateSessionVirtualCost_DenormalisesHarness(t *testing.T) {
 	assert.Equal(t, "codex", row.Harness, "harness denormalised onto virtual cost history")
 }
 
+func TestUpdateSessionVirtualCostForGenerationGuardsReplacement(t *testing.T) {
+	setupTestDB(t)
+	createdAt := time.Now().UTC()
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "vc-generation", TmuxSession: "tmux-vc-generation", ConvID: "conv-vc-generation",
+		Cwd: "/tmp/vc-generation", Status: "idle", Harness: "copilot", CreatedAt: createdAt,
+	}), "SaveSession")
+
+	saved, err := UpdateSessionVirtualCostForGeneration(
+		"vc-generation", "conv-vc-generation", createdAt, 0.43)
+	require.NoError(t, err)
+	assert.True(t, saved)
+
+	saved, err = UpdateSessionVirtualCostForGeneration(
+		"vc-generation", "conv-replaced", createdAt, 0.99)
+	require.NoError(t, err)
+	assert.False(t, saved, "a stale generation must not write the virtual cost")
+
+	snapshot, err := GetContextSnapshot("vc-generation")
+	require.NoError(t, err)
+	assert.InDelta(t, 0.43, snapshot.VirtualCostUSD, 1e-12)
+	assert.Zero(t, snapshot.CostUSD, "virtual cost must not populate real cost_usd")
+}
+
 func TestReplaceSessionVirtualCostHistoryRedistributesAndClearsProjection(t *testing.T) {
 	setupTestDB(t)
 	today := time.Now().Format(costDayFormat)

@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
-import { fmtAxisUSD, fmtUSD, isWeekendKey } from './costs-model.js';
+import { fmtAxisUSD, fmtCredits, fmtUSD, isWeekendKey } from './costs-model.js';
 
 const html = htm.bind(h);
 
@@ -19,7 +19,10 @@ function tooltipRows(day) {
     const row = element('div', 'cost-tip-row');
     row.append(element('span', `cost-tip-sw ${segment.className}`));
     row.append(element('span', 'cost-tip-name', segment.kind === 'what_if' ? `${segment.harness} · WHAT-IF` : segment.harness));
-    row.append(element('span', 'cost-tip-amt', `${segment.kind === 'what_if' ? '≈' : ''}${fmtUSD(segment.cost)}`));
+    const amount = segment.kind === 'what_if' && segment.credits > 0
+      ? `${fmtCredits(segment.credits)} — ${fmtUSD(segment.cost)} subscription value`
+      : `${segment.kind === 'what_if' ? '≈' : ''}${fmtUSD(segment.cost)}`;
+    row.append(element('span', 'cost-tip-amt', amount));
     fragment.append(row);
   }
   const total = element('div', 'cost-tip-total');

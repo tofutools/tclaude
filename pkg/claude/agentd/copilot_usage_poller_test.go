@@ -179,6 +179,32 @@ func TestApplyCopilotUsageCallsSumsPerCallCostToDurableCheckpoint(t *testing.T) 
 	const durableCheckpointNanoAIU = int64(1_122_105_000)
 	assert.Equal(t, durableCheckpointNanoAIU, *snapshot.TotalNanoAIU,
 		"per-call nano-AIU must reconcile to Copilot's durable session checkpoint")
+	context, err := db.GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	assert.InDelta(t, 0.01122105, context.VirtualCostUSD, 1e-12,
+		"the folded checkpoint must surface as gross subscription value")
+	assert.Zero(t, context.CostUSD,
+		"a Copilot what-if value must not become real cost")
+}
+
+func TestApplyCopilotUsageCallsLeavesVirtualCostAbsentWithoutPositiveNanoAIU(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotUsageStateForTest()
+	t.Cleanup(resetCopilotUsageStateForTest)
+
+	sess := copilotUsageSession(t, "s-copilot", "conv-1")
+	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{copilotUsageCall(1, 100, 10)})
+	context, err := db.GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	assert.Zero(t, context.VirtualCostUSD)
+
+	zero := copilotUsageCall(2, 200, 20)
+	zero.TotalNanoAIU, zero.HasNanoAIU = 0, true
+	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{zero})
+	context, err = db.GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	assert.Zero(t, context.VirtualCostUSD,
+		"reported zero is still absent from the what-if display")
 }
 
 // TestApplyCopilotUsageCallsIgnoresAlreadyConsumedRows is defence in depth: the

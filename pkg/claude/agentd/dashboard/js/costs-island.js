@@ -5,7 +5,7 @@ import { AsyncLoadState } from './async-load-state.js';
 import { CostsChart } from './costs-chart.js';
 import {
   COST_COLUMNS, COST_SPANS, fmtLastActivity, fmtUSD, harnessLabel,
-  harnessSegmentClass, monthProjectionLabel,
+  fmtCredits, harnessSegmentClass, monthProjectionLabel,
 } from './costs-model.js';
 import { idTooltip, isModifiedClick, shortAgentId } from './helpers.js';
 
@@ -169,12 +169,15 @@ const WHAT_IF_LABEL = 'About this WHAT-IF estimate';
 // names its two parts rather than calling the whole total an estimate.
 function amountTip(agent) {
   const exact = (value) => `$${(value || 0).toFixed(4)}`;
+  const virtual = (value) => agent.virtual_cost_credits > 0
+    ? `${fmtCredits(agent.virtual_cost_credits)} — ${exact(value)} subscription value`
+    : `${exact(value)} estimated (WHAT-IF)`;
   switch (agent.cost_kind) {
     case 'mixed':
       return `${exact(agent.cost_usd)} total — ${exact(agent.real_cost_usd)} real spend`
-        + ` + ${exact(agent.what_if_cost_usd)} estimated (WHAT-IF)`;
+        + ` + ${virtual(agent.what_if_cost_usd)}`;
     case 'what_if':
-      return `${exact(agent.cost_usd)} estimated (WHAT-IF)`;
+      return virtual(agent.cost_usd);
     default:
       return `${exact(agent.cost_usd)} real spend`;
   }
@@ -183,12 +186,15 @@ function amountTip(agent) {
 // Tooltip for a row's WHAT-IF marker. Mixed rows spell out the split the cell
 // no longer shows inline; pure WHAT-IF rows just qualify the amount.
 function whatIfRowTip(agent) {
+  const virtual = agent.virtual_cost_credits > 0
+    ? `${fmtCredits(agent.virtual_cost_credits)} — ${fmtUSD(agent.what_if_cost_usd || agent.cost_usd)} subscription value`
+    : `${fmtUSD(agent.what_if_cost_usd || agent.cost_usd)} WHAT-IF estimate`;
   if (agent.cost_kind === 'mixed') {
     return `${fmtUSD(agent.cost_usd)} total = ${fmtUSD(agent.real_cost_usd)} real`
-      + ` + ${fmtUSD(agent.what_if_cost_usd)} WHAT-IF estimate — the estimate is hypothetical,`
+      + ` + ${virtual} — the estimate is hypothetical,`
       + ' not a real charge. Click for details.';
   }
-  return `${fmtUSD(agent.cost_usd)} WHAT-IF estimate — hypothetical pay-per-token equivalent,`
+  return `${virtual} — hypothetical pay-per-token equivalent,`
     + ' not a real charge. Click for details.';
 }
 

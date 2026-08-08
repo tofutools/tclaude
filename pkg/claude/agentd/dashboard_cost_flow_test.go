@@ -8,6 +8,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // Scenario: an agent running on API/enterprise pricing accrues real
@@ -133,6 +134,55 @@ func TestDashboardSnapshot_VirtualCostSurfaced(t *testing.T) {
 	memberRow := findDashMember(snap, "squad", conv)
 	require.NotNil(t, memberRow, "agent %s missing from group squad members", conv)
 	assert.Equal(t, 2.50, memberRow.State.VirtualCostUSD, "Members[] virtual_cost_usd")
+}
+
+// Scenario: Copilot's read-only store has folded native nano-AIU into its
+// durable snapshot. The dashboard mux must carry both the generic virtual
+// dollars and the native credits through Agents[] and group Members[], while
+// leaving real spend untouched.
+func TestDashboardSnapshot_CopilotVirtualCreditsSurfaced(t *testing.T) {
+	const conv = "copilot-virt-1111-2222-3333-4444"
+	const label = "spwn-copilot-virt"
+
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	f.HaveGroup("squad")
+	f.HaveAliveSession(conv, label, "tmux-copilot-virt", f.TestCwd("copilot-virt"))
+	f.HaveMember("squad", conv)
+
+	rows, err := db.FindSessionsByConvID(conv)
+	require.NoError(t, err)
+	require.NotEmpty(t, rows)
+	sess := rows[0]
+	sess.Harness = harness.CopilotName
+	require.NoError(t, db.SaveSession(sess), "mark session as Copilot")
+
+	// Deliberately make the side-table total disagree with the persisted
+	// virtual dollars: the dashboard must use one snapshot source for both
+	// values rather than re-reading native credits beside the dollar snapshot.
+	totalNanoAIU := int64(99_000_000_000)
+	saved, err := db.SaveCopilotUsageSnapshot(db.CopilotUsageSnapshot{
+		SessionID: label, ConvID: conv, TotalNanoAIU: &totalNanoAIU,
+	}, sess.CreatedAt)
+	require.NoError(t, err)
+	require.True(t, saved)
+	saved, err = db.UpdateSessionVirtualCostForGeneration(label, conv, sess.CreatedAt, 0.43)
+	require.NoError(t, err)
+	require.True(t, saved)
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+
+	agentRow := findDashAgent(snap, conv)
+	require.NotNil(t, agentRow, "agent %s missing from snapshot Agents[]", conv)
+	assert.InDelta(t, 0.43, agentRow.State.VirtualCostUSD, 1e-12)
+	assert.InDelta(t, 43.0, agentRow.State.VirtualCostCredits, 1e-12)
+	assert.Zero(t, agentRow.State.CostUSD)
+
+	memberRow := findDashMember(snap, "squad", conv)
+	require.NotNil(t, memberRow, "agent %s missing from group squad members", conv)
+	assert.InDelta(t, 0.43, memberRow.State.VirtualCostUSD, 1e-12)
+	assert.InDelta(t, 43.0, memberRow.State.VirtualCostCredits, 1e-12)
 }
 
 // TestDashboardSnapshot_CostTabVisibilityRule pins the Costs-tab auto-hide /

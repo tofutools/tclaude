@@ -8,6 +8,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // costs.go — the /api/costs endpoint behind the dashboard's Costs tab,
@@ -34,19 +35,25 @@ type costDelta struct {
 	convID      string
 	sessionID   string
 	usd         float64
-	updatedAtNS int64  // Unix nanoseconds of the day's last spend; zero if unknown
-	model       string // model display name denormalised onto the row; "" if unknown
-	harness     string // harness denormalised onto the row; "" if unknown
-	kind        string // real | what_if
+	updatedAtNS int64   // Unix nanoseconds of the day's last spend; zero if unknown
+	model       string  // model display name denormalised onto the row; "" if unknown
+	harness     string  // harness denormalised onto the row; "" if unknown
+	kind        string  // real | what_if
+	credits     float64 // Copilot native credits for a virtual slice, else 0
 }
 
 func mixedCostDeltasFromRows(rows []db.CostDailyRow) []costDelta {
 	deltas := db.MixedCostDeltas(rows)
 	out := make([]costDelta, 0, len(deltas))
 	for _, d := range deltas {
+		credits := 0.0
+		if d.Kind == "what_if" && d.Harness == harness.CopilotName {
+			credits = harness.CopilotVirtualCreditsFromUSD(d.USD)
+		}
 		out = append(out, costDelta{
 			day: d.Day, convID: d.ConvID, sessionID: d.SessionID, usd: d.USD,
 			updatedAtNS: d.UpdatedAtNS, model: d.Model, harness: d.Harness, kind: d.Kind,
+			credits: credits,
 		})
 	}
 	return out
@@ -104,11 +111,12 @@ func firstCostDay(deltas []costDelta) string {
 // costDayPoint is one bar of the Costs tab chart: total spend across
 // all agents on one local day.
 type costDayPoint struct {
-	Day           string  `json:"day"`
-	CostUSD       float64 `json:"cost_usd"`
-	RealCostUSD   float64 `json:"real_cost_usd,omitempty"`
-	WhatIfCostUSD float64 `json:"what_if_cost_usd,omitempty"`
-	CostKind      string  `json:"cost_kind,omitempty"`
+	Day                string  `json:"day"`
+	CostUSD            float64 `json:"cost_usd"`
+	RealCostUSD        float64 `json:"real_cost_usd,omitempty"`
+	WhatIfCostUSD      float64 `json:"what_if_cost_usd,omitempty"`
+	VirtualCostCredits float64 `json:"virtual_cost_credits,omitempty"`
+	CostKind           string  `json:"cost_kind,omitempty"`
 }
 
 // costAgentRow is one row of the Costs tab's per-agent breakdown: spend
@@ -139,20 +147,21 @@ type costAgentRow struct {
 	// series (a generation's cost resets per /clear), and this is only an
 	// added attribution field, never a rekey. "" when the conv is not a
 	// known agent (e.g. a plain conversation's spend).
-	AgentID        string  `json:"agent_id,omitempty"`
-	ConvID         string  `json:"conv_id"`
-	Title          string  `json:"title"`
-	Day            string  `json:"day"`
-	CostUSD        float64 `json:"cost_usd"`
-	RealCostUSD    float64 `json:"real_cost_usd,omitempty"`
-	WhatIfCostUSD  float64 `json:"what_if_cost_usd,omitempty"`
-	CostKind       string  `json:"cost_kind"`
-	Continued      bool    `json:"continued,omitempty"`
-	LastDay        string  `json:"last_day"`
-	LastActivity   string  `json:"last_activity,omitempty"`
-	lastActivityNS int64   `json:"-"`
-	Model          string  `json:"model"`
-	Harness        string  `json:"harness"`
+	AgentID            string  `json:"agent_id,omitempty"`
+	ConvID             string  `json:"conv_id"`
+	Title              string  `json:"title"`
+	Day                string  `json:"day"`
+	CostUSD            float64 `json:"cost_usd"`
+	RealCostUSD        float64 `json:"real_cost_usd,omitempty"`
+	WhatIfCostUSD      float64 `json:"what_if_cost_usd,omitempty"`
+	VirtualCostCredits float64 `json:"virtual_cost_credits,omitempty"`
+	CostKind           string  `json:"cost_kind"`
+	Continued          bool    `json:"continued,omitempty"`
+	LastDay            string  `json:"last_day"`
+	LastActivity       string  `json:"last_activity,omitempty"`
+	lastActivityNS     int64   `json:"-"`
+	Model              string  `json:"model"`
+	Harness            string  `json:"harness"`
 }
 
 // costsResponse is the /api/costs wire shape. Days is zero-filled —
@@ -162,15 +171,16 @@ type costAgentRow struct {
 // just this span); the Costs tab's month projection uses it to decide
 // where the per-weekday average starts (see firstCostDay).
 type costsResponse struct {
-	From           string         `json:"from"`
-	To             string         `json:"to"`
-	FirstDay       string         `json:"first_day,omitempty"`
-	Days           []costDayPoint `json:"days"`
-	Agents         []costAgentRow `json:"agents"`
-	TotalUSD       float64        `json:"total_usd"`
-	RealTotalUSD   float64        `json:"real_total_usd,omitempty"`
-	WhatIfTotalUSD float64        `json:"what_if_total_usd,omitempty"`
-	CostKind       string         `json:"cost_kind,omitempty"`
+	From               string         `json:"from"`
+	To                 string         `json:"to"`
+	FirstDay           string         `json:"first_day,omitempty"`
+	Days               []costDayPoint `json:"days"`
+	Agents             []costAgentRow `json:"agents"`
+	TotalUSD           float64        `json:"total_usd"`
+	RealTotalUSD       float64        `json:"real_total_usd,omitempty"`
+	WhatIfTotalUSD     float64        `json:"what_if_total_usd,omitempty"`
+	VirtualCostCredits float64        `json:"virtual_cost_credits,omitempty"`
+	CostKind           string         `json:"cost_kind,omitempty"`
 }
 
 // maxCostSpanDays caps the requested span. The daily table is small,
@@ -223,12 +233,13 @@ func collectCosts(from, to time.Time, factor float64, includeWhatIf bool) (costs
 		return costsResponse{}, err
 	}
 
-	type kindTotals struct{ real, whatif float64 }
+	type kindTotals struct{ real, whatif, credits float64 }
 	byDay := map[string]kindTotals{}
 	type sliceAgg struct {
-		usd    float64
-		real   float64
-		whatif float64
+		usd     float64
+		real    float64
+		whatif  float64
+		credits float64
 		// lastActivityNS is the integer time of the slice's last spend —
 		// the finest-grained "last activity" the breakdown can show; a
 		// later same-day stamp raises it. Zero when no contributing row
@@ -251,7 +262,7 @@ func collectCosts(from, to time.Time, factor float64, includeWhatIf bool) (costs
 	// Latest in-span day each conv spent on — drives the Continued flag:
 	// every slice below a conv's latest day is an earlier continuation.
 	convMaxDay := map[string]string{}
-	total, realTotal, whatIfTotal := 0.0, 0.0, 0.0
+	total, realTotal, whatIfTotal, virtualCreditsTotal := 0.0, 0.0, 0.0, 0.0
 	for _, d := range deltas {
 		if d.day < fromKey || d.day > toKey {
 			continue
@@ -259,6 +270,7 @@ func collectCosts(from, to time.Time, factor float64, includeWhatIf bool) (costs
 		dayTotals := byDay[d.day]
 		if d.kind == "what_if" {
 			dayTotals.whatif += d.usd
+			dayTotals.credits += d.credits
 		} else {
 			dayTotals.real += d.usd
 		}
@@ -272,7 +284,9 @@ func collectCosts(from, to time.Time, factor float64, includeWhatIf bool) (costs
 		a.usd += d.usd
 		if d.kind == "what_if" {
 			a.whatif += d.usd
+			a.credits += d.credits
 			whatIfTotal += d.usd
+			virtualCreditsTotal += d.credits
 		} else {
 			a.real += d.usd
 			realTotal += d.usd
@@ -319,8 +333,9 @@ func collectCosts(from, to time.Time, factor float64, includeWhatIf bool) (costs
 	}
 
 	out := costsResponse{From: fromKey, To: toKey, FirstDay: firstCostDay(deltas), TotalUSD: total,
-		RealTotalUSD: realTotal, WhatIfTotalUSD: whatIfTotal, CostKind: costKind(realTotal, whatIfTotal),
-		Days: []costDayPoint{}, Agents: []costAgentRow{}}
+		RealTotalUSD: realTotal, WhatIfTotalUSD: whatIfTotal, VirtualCostCredits: virtualCreditsTotal,
+		CostKind: costKind(realTotal, whatIfTotal),
+		Days:     []costDayPoint{}, Agents: []costAgentRow{}}
 	for day := from; ; day = day.AddDate(0, 0, 1) {
 		key := day.Format(costDayKey)
 		if key > toKey {
@@ -330,25 +345,27 @@ func collectCosts(from, to time.Time, factor float64, includeWhatIf bool) (costs
 		out.Days = append(out.Days, costDayPoint{
 			Day: key, CostUSD: totals.real + totals.whatif,
 			RealCostUSD: totals.real, WhatIfCostUSD: totals.whatif,
-			CostKind: costKind(totals.real, totals.whatif),
+			VirtualCostCredits: totals.credits,
+			CostKind:           costKind(totals.real, totals.whatif),
 		})
 	}
 	for k, a := range bySlice {
 		out.Agents = append(out.Agents, costAgentRow{
-			AgentID:        peerAgentID(k.conv),
-			ConvID:         k.conv,
-			Title:          agent.CachedTitle(k.conv),
-			Day:            k.day,
-			CostUSD:        a.usd,
-			RealCostUSD:    a.real,
-			WhatIfCostUSD:  a.whatif,
-			CostKind:       costKind(a.real, a.whatif),
-			Continued:      k.day < convMaxDay[k.conv],
-			LastDay:        k.day,
-			LastActivity:   db.RFC3339NanoFromUnixNano(a.lastActivityNS),
-			lastActivityNS: a.lastActivityNS,
-			Model:          a.model,
-			Harness:        a.harness,
+			AgentID:            peerAgentID(k.conv),
+			ConvID:             k.conv,
+			Title:              agent.CachedTitle(k.conv),
+			Day:                k.day,
+			CostUSD:            a.usd,
+			RealCostUSD:        a.real,
+			WhatIfCostUSD:      a.whatif,
+			VirtualCostCredits: a.credits,
+			CostKind:           costKind(a.real, a.whatif),
+			Continued:          k.day < convMaxDay[k.conv],
+			LastDay:            k.day,
+			LastActivity:       db.RFC3339NanoFromUnixNano(a.lastActivityNS),
+			lastActivityNS:     a.lastActivityNS,
+			Model:              a.model,
+			Harness:            a.harness,
 		})
 	}
 	sortCostAgentRows(out.Agents)

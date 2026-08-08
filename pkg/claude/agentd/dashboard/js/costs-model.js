@@ -45,6 +45,17 @@ export function fmtUSD(value) {
   return value >= 0.005 ? '$' + value.toFixed(2) : '<1¢';
 }
 
+// Copilot's native credit figure is carried separately from dollars so a
+// tooltip can explain that the dollar amount is gross subscription value.
+export function fmtCredits(value) {
+  if (!(value > 0)) return '';
+  const roundedValue = Number(value.toFixed(2));
+  if (!(roundedValue > 0)) return '<0.01 credits';
+  const rounded = Math.abs(value - Math.round(value)) < 1e-9
+    ? String(Math.round(value)) : String(roundedValue);
+  return `${rounded} credits`;
+}
+
 export function fmtAxisUSD(value) {
   if (!(value > 0)) return '$0';
   if (value >= 1000) return '$' + +(value / 1000).toFixed(1) + 'k';
@@ -130,12 +141,14 @@ export function filterCostData(payload, selected) {
   let total = 0;
   let realTotal = 0;
   let whatIfTotal = 0;
+  let virtualCreditsTotal = 0;
   for (const agent of agents) {
     if (!selected.has(harnessLabel(agent.harness))) continue;
     totals[agent.day] = (totals[agent.day] || 0) + (agent.cost_usd || 0);
     total += agent.cost_usd || 0;
     realTotal += agent.real_cost_usd || 0;
     whatIfTotal += agent.what_if_cost_usd || 0;
+    virtualCreditsTotal += agent.virtual_cost_credits || 0;
   }
   return {
     ...payload,
@@ -143,15 +156,18 @@ export function filterCostData(payload, selected) {
       const matching = agents.filter((agent) => agent.day === day.day && selected.has(harnessLabel(agent.harness)));
       const real = matching.reduce((sum, agent) => sum + (agent.real_cost_usd || 0), 0);
       const whatIf = matching.reduce((sum, agent) => sum + (agent.what_if_cost_usd || 0), 0);
+      const credits = matching.reduce((sum, agent) => sum + (agent.virtual_cost_credits || 0), 0);
       return {
         day: day.day, cost_usd: totals[day.day] || 0,
         real_cost_usd: real, what_if_cost_usd: whatIf,
+        virtual_cost_credits: credits,
         cost_kind: real > 0 && whatIf > 0 ? 'mixed' : whatIf > 0 ? 'what_if' : real > 0 ? 'real' : '',
       };
     }),
     total_usd: total,
     real_total_usd: realTotal,
     what_if_total_usd: whatIfTotal,
+    virtual_cost_credits: virtualCreditsTotal,
     cost_kind: realTotal > 0 && whatIfTotal > 0 ? 'mixed' : whatIfTotal > 0 ? 'what_if' : realTotal > 0 ? 'real' : '',
   };
 }
@@ -178,6 +194,19 @@ export function dailyBreakdown(agents, selected) {
       const key = `${harness}\u0000what_if`;
       day[key] = (day[key] || 0) + whatIf;
     }
+  }
+  return result;
+}
+
+export function dailyCreditsBreakdown(agents, selected) {
+  const result = {};
+  for (const agent of agents || []) {
+    if (!selected.has(harnessLabel(agent.harness))) continue;
+    const credits = agent.virtual_cost_credits || 0;
+    if (!(credits > 0)) continue;
+    const day = result[agent.day] || (result[agent.day] = {});
+    const key = `${harnessLabel(agent.harness)}\u0000what_if`;
+    day[key] = (day[key] || 0) + credits;
   }
   return result;
 }
@@ -244,6 +273,7 @@ export function monthLabel(offset, now = new Date()) {
 
 export function buildCostChart(data, projection, agents, selected, harnesses) {
   const breakdown = dailyBreakdown(agents, selected);
+  const creditBreakdown = dailyCreditsBreakdown(agents, selected);
   const fill = projection?.fillEmpty ? projection.leadingFill : null;
   const actual = (data?.days || []).map((day) => {
     if (fill && fill[day.day] != null) {
@@ -254,6 +284,7 @@ export function buildCostChart(data, projection, agents, selected, harnesses) {
       const [harness, kind] = key.split('\u0000');
       return {
         harness, kind, cost,
+        credits: creditBreakdown[day.day]?.[key] || 0,
         className: `${harnessSegmentClass(harness, harnesses)}${kind === 'what_if' ? ' cost-seg-whatif' : ''}`,
       };
     }).filter((segment) => segment.cost > 0);
