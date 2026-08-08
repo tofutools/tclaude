@@ -3,6 +3,7 @@ package agentd
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -302,7 +303,8 @@ func escalateStuckSoftExitUnderLaunchLock(target *lifecycleTarget, lifecycleActi
 		"conv", short8(target.convID), "session", target.sessionID,
 		"tmux_session", target.tmuxSession, "pane_id", target.paneID,
 		"pane_pid", probe.panePID, "deadline", softExitEscalationDeadline,
-		"reason", reason)
+		"reason", reason,
+		"pane_screen", capturePaneScreenTail(target.paneID))
 
 	// Step 1: the identity-guarded tmux kill force-stop already uses.
 	if err := killLifecycleTarget(target); err != nil {
@@ -346,6 +348,44 @@ func escalateStuckSoftExitUnderLaunchLock(target *lifecycleTarget, lifecycleActi
 		"conv", short8(target.convID), "tmux_session", target.tmuxSession,
 		"pane_pid", pid, "reason", reason)
 	return softExitStuck
+}
+
+// paneScreenTailLines and paneScreenTailClip bound what a pre-kill screen
+// capture may add to one warn line.
+const (
+	paneScreenTailLines = 12
+	paneScreenTailClip  = 2000
+)
+
+// capturePaneScreenTail reads the stuck pane's visible screen so the
+// escalation warn can say WHAT the harness was showing when it ignored its
+// soft exit — a permission dialog, a modal, a wedged teardown. The soft-exit
+// deadline expiring is exactly the moment that state is still on screen and
+// about to be destroyed by the kill, and nothing else records it.
+//
+// Best-effort by design: the pane may die between the caller's revalidate and
+// this read, and a flow-test tmux sim may not implement capture-pane. Both
+// yield "", never an error that could block the ladder. Lines are joined with
+// " | " so the capture stays a single log line for line-based log tooling.
+func capturePaneScreenTail(paneID string) string {
+	out, err := tmuxOutputWithTimeout("capture-pane", "-p", "-J", "-t", paneID)
+	if err != nil {
+		return ""
+	}
+	return formatPaneScreenTail(string(out))
+}
+
+func formatPaneScreenTail(screen string) string {
+	var kept []string
+	for line := range strings.SplitSeq(screen, "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			kept = append(kept, trimmed)
+		}
+	}
+	if len(kept) > paneScreenTailLines {
+		kept = kept[len(kept)-paneScreenTailLines:]
+	}
+	return auditClip(strings.Join(kept, " | "), paneScreenTailClip)
 }
 
 // waitForPaneProcessGone polls the pane process until it is gone or the grace
