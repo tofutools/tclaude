@@ -22,6 +22,7 @@ import {
   groupHasContext,
   modelSelectValue,
   prepareSpawnDraft,
+  replaceSpawnProfile,
   selectedDefaultProfile,
   selectSpawnGroup,
   selectSpawnHarness,
@@ -97,6 +98,7 @@ const PROFILE_OWNED_FIELDS = [
   'contextFeatures', 'autoCompactWindow', 'contextWindowMax', 'copilotAPI', 'fastMode', 'sandboxImpl', 'sandboxImplCleared',
   'syncWorktree', 'autoFocus', 'includeGroupContext',
 ];
+const WORKTREE_SELECTION_FIELDS = ['worktree', 'worktreeBranch', 'worktreeBase'];
 
 function errorMessage(error) {
   return error?.message || String(error);
@@ -217,6 +219,11 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   const nameRef = useRef(null);
   const fileRef = useRef(null);
   const touched = useRef(new Set());
+  // Fields the operator explicitly changed in this open dialog remain
+  // per-spawn overrides when they switch profiles. This is separate from
+  // `touched`, which also guards derived changes against the initial async
+  // profile load (for example a group change recalculating remote control).
+  const profileOverrides = useRef(new Set());
   const submitLock = useRef(false);
   const busyRef = useRef(false);
   const profileRequest = useRef(0);
@@ -411,10 +418,14 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
 
   const update = (key, value) => {
     touched.current.add(key);
+    if (PROFILE_OWNED_FIELDS.includes(key) && key !== 'profile') {
+      profileOverrides.current.add(key);
+    }
     setDraft((before) => ({ ...before, [key]: value }));
   };
   const updateName = (value) => {
     touched.current.add('name');
+    profileOverrides.current.add('name');
     setDraft((before) => syncSpawnWorktree({ ...before, name: value }, worktrees.isRepo));
   };
   const changeGroup = (value) => {
@@ -426,8 +437,16 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   };
   const changeHarness = (value) => {
     touched.current.add('harness');
-    for (const key of ['model', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'tools', 'askTimeout', 'trustDir', 'remoteControl', 'autoMemory', 'sshWorkaround', 'copilotAPI', 'fastMode', 'contextFeatures']) {
+    profileOverrides.current.add('harness');
+    const harnessFields = [
+      'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer',
+      'tools', 'askTimeout', 'trustDir', 'trustDirSpecified', 'remoteControl',
+      'autoMemory', 'sshWorkaround', 'autoCompactWindow', 'contextWindowMax',
+      'copilotAPI', 'fastMode', 'sandboxImpl', 'sandboxImplCleared', 'contextFeatures',
+    ];
+    for (const key of harnessFields) {
       touched.current.add(key);
+      profileOverrides.current.add(key);
     }
     setDraft((before) => selectSpawnHarness(before, value, context, rememberedEffort));
   };
@@ -435,6 +454,8 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     if (value === MODEL_CUSTOM_VALUE) {
       touched.current.add('model');
       touched.current.add('customModel');
+      profileOverrides.current.add('model');
+      profileOverrides.current.add('customModel');
       setDraft((before) => ({
         ...before,
         model: before.model && !view.models.includes(before.model) ? before.model : '',
@@ -446,6 +467,9 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     touched.current.add('model');
     touched.current.add('customModel');
     touched.current.add('effort');
+    profileOverrides.current.add('model');
+    profileOverrides.current.add('customModel');
+    profileOverrides.current.add('effort');
     setDraft((before) => ({
       ...before, model: value, customModel: false, effort: rememberedEffort(value),
     }));
@@ -453,6 +477,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   const changeProfile = (handle) => {
     if (!handle) {
       for (const field of PROFILE_OWNED_FIELDS) touched.current.add(field);
+      profileOverrides.current.clear();
       setDraft((before) => clearSpawnProfileFields(before, context, {
         autoFocus: actions.autoFocusDefault(), rememberedEffort,
       }));
@@ -461,8 +486,17 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     touched.current.add('profile');
     const profile = findSpawnProfile(profiles, handle);
     if (profile) {
+      const preservedFields = new Set(profileOverrides.current);
+      for (const field of WORKTREE_SELECTION_FIELDS) {
+        if (touched.current.has(field)) preservedFields.add(field);
+      }
       setDraft((before) => ({
-        ...applySpawnProfile(before, profile, context, rememberedEffort, worktrees.isRepo),
+        ...replaceSpawnProfile(before, profile, context, {
+          autoFocus: actions.autoFocusDefault(),
+          rememberedEffort,
+          pickerUsable: worktrees.isRepo,
+          preservedFields,
+        }),
         profile: handle,
       }));
     }
@@ -598,6 +632,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       onSave: (kept) => {
         if (!state.isCurrent(generation)) return;
         touched.current.add('permissionOverrides');
+        profileOverrides.current.add('permissionOverrides');
         setDraft((before) => ({ ...before, permissionOverrides: { ...kept } }));
       },
     });
@@ -611,6 +646,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       onSave: (kept) => {
         if (!state.isCurrent(generation)) return;
         touched.current.add('contextFeatures');
+        profileOverrides.current.add('contextFeatures');
         setDraft((before) => ({ ...before, contextFeatures: { ...kept } }));
       },
     });
@@ -902,6 +938,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
           onInput=${(event) => {
             const value = event.currentTarget.value;
             touched.current.add('model'); touched.current.add('effort');
+            profileOverrides.current.add('model'); profileOverrides.current.add('effort');
             setDraft((before) => ({
               ...before, model: value, customModel: false, effort: rememberedEffort(value.trim()),
             }));
@@ -952,6 +989,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         onInput=${(event) => {
           const value = event.currentTarget.value;
           touched.current.add('model'); touched.current.add('effort');
+          profileOverrides.current.add('model'); profileOverrides.current.add('effort');
             setDraft((before) => ({
               ...before, model: value, customModel: true, effort: rememberedEffort(value.trim()),
             }));
@@ -968,6 +1006,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
             onChange=${(event) => {
     const value = event.currentTarget.value;
     touched.current.add('sandboxImpl');
+    profileOverrides.current.add('sandboxImpl');
     setDraft((before) => setSpawnSandboxImpl(before, value));
   }}>
             <option value="">${resolvedDefaultOption(resolvedSandboxImplLabel)}</option>
@@ -998,6 +1037,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       onChange=${(event) => {
         const value = event.currentTarget.value;
         touched.current.add('sandbox');
+        profileOverrides.current.add('sandbox');
         setDraft((before) => ({ ...before, sandbox: value }));
       }} help=${sandboxHelp} open=${helpOpen === 'agent-spawn-sandbox'} setOpen=${setHelpOpen}
       disabled=${!view.showHarnessBuiltinMode} busy=${busy} />
@@ -1093,6 +1133,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       <input id="agent-spawn-trust-dir" type="checkbox" checked=${draft.trustDir} disabled=${busy}
         onChange=${(event) => {
           touched.current.add('trustDir'); touched.current.add('trustDirSpecified');
+          profileOverrides.current.add('trustDir'); profileOverrides.current.add('trustDirSpecified');
           setDraft((before) => ({ ...before, trustDir: event.currentTarget.checked, trustDirSpecified: true }));
         }} /> ${`Pre-trust this directory — skip the trust-folder dialog (edits ${view.trustDirStore || "the harness's config"})`}
     </label>
@@ -1124,6 +1165,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       <select id="agent-spawn-worktree" value=${draft.worktree} disabled=${busy || !worktreeUsable}
         onChange=${(event) => {
           for (const key of ['worktree', 'worktreeBranch', 'syncWorktree']) touched.current.add(key);
+          profileOverrides.current.add('syncWorktree');
           setDraft((before) => selectSpawnWorktree(before, event.currentTarget.value));
         }}>
         <option value="">${worktreeEmptyLabel}</option>
@@ -1141,6 +1183,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       <input id="agent-spawn-wt-sync" type="checkbox" checked=${draft.syncWorktree} disabled=${busy || !worktreeUsable}
         onChange=${(event) => {
           for (const key of ['syncWorktree', 'worktree', 'worktreeBranch']) touched.current.add(key);
+          profileOverrides.current.add('syncWorktree');
           setDraft((before) => syncSpawnWorktree({ ...before, syncWorktree: event.currentTarget.checked }, worktreeUsable));
         }} />
       Sync worktree branch with name
@@ -1150,6 +1193,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       <input id="agent-spawn-wt-branch" type="text" value=${draft.worktreeBranch} disabled=${busy}
         onInput=${(event) => {
           touched.current.add('worktreeBranch'); touched.current.add('syncWorktree');
+          profileOverrides.current.add('syncWorktree');
           setDraft((before) => ({ ...before, worktreeBranch: event.currentTarget.value, syncWorktree: false }));
         }}
         placeholder="branch name for the new worktree" autocomplete="off" spellcheck="false" />

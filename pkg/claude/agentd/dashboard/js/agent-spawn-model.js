@@ -988,6 +988,30 @@ export function clearSpawnProfileFields(draft, context, {
   }, false);
 }
 
+// Selecting a spawn profile is replacement, not a sparse overlay on the
+// previously selected profile. Reset every field a profile can own first, then
+// apply the new profile and finally restore explicit per-spawn choices the
+// operator made in this open dialog. Location fields are deliberately outside
+// clearSpawnProfileFields and survive naturally; callers include explicitly
+// touched worktree-selection fields in preservedFields because reset-time sync
+// can otherwise clear a pending new-worktree selection.
+export function replaceSpawnProfile(draft, profile, context, {
+  autoFocus = true,
+  rememberedEffort = () => '',
+  pickerUsable = false,
+  preservedFields = [],
+} = {}) {
+  const reset = clearSpawnProfileFields(draft, context, { autoFocus, rememberedEffort });
+  const applied = applySpawnProfile(
+    reset, profile, context, rememberedEffort, pickerUsable,
+  );
+  const next = { ...applied };
+  for (const field of preservedFields) {
+    if (field !== 'profile' && Object.hasOwn(draft, field)) next[field] = draft[field];
+  }
+  return syncSpawnWorktree(next, pickerUsable);
+}
+
 export function setSpawnCwd(draft, cwd) {
   return {
     ...draft,
