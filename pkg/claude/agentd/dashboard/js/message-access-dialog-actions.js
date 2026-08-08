@@ -112,11 +112,15 @@ export function createMessageAccessDialogActions({
     return response;
   }
 
-  async function savePermissions(descriptor, selection) {
+  // scopes is slug → {dim: [matchers]} for the granted slugs the operator
+  // narrowed. It is sent only on the live per-agent path: group grants and the
+  // buffered pre-spawn editor have no scope storage behind them, and the
+  // dialog hides their scope controls for the same reason.
+  async function savePermissions(descriptor, selection, scopes = {}) {
     if (descriptor.mode === 'agent') {
       const response = await requestJSON(fetchImpl, '/api/permissions', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ conv: descriptor.conv, overrides: selection }),
+        body: JSON.stringify({ conv: descriptor.conv, overrides: selection, scopes }),
       });
       const changed = response.changed || 0;
       notify(`Permissions saved — ${changed} change${changed === 1 ? '' : 's'}`);

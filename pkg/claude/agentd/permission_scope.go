@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 // permissionScopeMaxJSONBytes is shared conceptually with the v195 column
@@ -191,6 +193,71 @@ func appendUnique(out []string, seen map[string]bool, s string) []string {
 	}
 	seen[s] = true
 	return append(out, s)
+}
+
+// scopeDimOptionsSnapshot builds the permission editor's dimension pickers.
+//
+// This is the ONE place per-dimension knowledge lives on the read path: the
+// dimension set itself comes from the registry, and each case only answers
+// "what are the choosable values". A dimension with no case still ships — with
+// its selectors and an empty value list — so the editor offers it as free
+// text rather than silently hiding a dimension the gate will happily enforce.
+//
+// Only catalogues the snapshot ALREADY loaded are used. process_template lives
+// in a filesystem store whose listing is deliberately kept off the 2s poll
+// (see handleProcessTemplates), and target_agent has no meaningful fixed list
+// at all; both are free text plus their selectors, which is exactly what the
+// CLI's --scope accepts.
+func scopeDimOptionsSnapshot(groups []*db.AgentGroup, profiles []spawnProfileJSON) map[ScopeDim]snapshotScopeDimOptions {
+	out := make(map[ScopeDim]snapshotScopeDimOptions, len(permissionScopeSelectors))
+	for _, dim := range permissionScopeDims() {
+		options := snapshotScopeDimOptions{Selectors: permissionScopeSelectorsFor(dim)}
+		switch dim {
+		case ScopeDimGroup:
+			for _, g := range groups {
+				// An archived group grants nothing, so offering it as a scope
+				// value would only invite an operator to write a dead grant.
+				if g == nil || g.IsArchived() {
+					continue
+				}
+				options.Values = append(options.Values, g.Name)
+			}
+		case ScopeDimSpawnProfile:
+			for _, p := range profiles {
+				options.Values = append(options.Values, p.Name)
+			}
+		}
+		sort.Strings(options.Values)
+		out[dim] = options
+	}
+	return out
+}
+
+// permissionScopeDims returns every dimension the daemon knows, sorted. It
+// reads the closed dimension registry rather than a second hand-kept list, so
+// a dimension added there is offered by the editor on the same commit.
+func permissionScopeDims() []ScopeDim {
+	dims := make([]ScopeDim, 0, len(permissionScopeSelectors))
+	for dim := range permissionScopeSelectors {
+		dims = append(dims, dim)
+	}
+	sort.Slice(dims, func(i, j int) bool { return dims[i] < dims[j] })
+	return dims
+}
+
+// permissionScopeSelectorsFor returns the sorted @selectors a dimension
+// accepts, or nil for a dimension with none.
+func permissionScopeSelectorsFor(dim ScopeDim) []string {
+	selectors := permissionScopeSelectors[dim]
+	if len(selectors) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(selectors))
+	for selector := range selectors {
+		out = append(out, selector)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func permissionScopeFromJSON(raw string) PermissionScope {

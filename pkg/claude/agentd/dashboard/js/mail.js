@@ -1146,6 +1146,9 @@ function accessOutcome(status) {
   switch (status) {
     case 'approved': return { cls: 'approved', txt: wz('✓ Approved', '✓ Granted') };
     case 'always': return { cls: 'always', txt: wz('★ Always allowed', '★ Granted ever after') };
+    // The scoped persist deliberately reads differently from the blanket one:
+    // the operator narrowed the grant, and the history card should say so.
+    case 'always (scoped)': return { cls: 'always', txt: wz('★ Always — this scope', '★ Granted ever after, thus bounded') };
     case 'declined': return { cls: 'declined', txt: wz('✕ Declined', '✕ Refused') };
     case 'timed out': return { cls: 'timedout', txt: wz('⏱ Timed out', '⏱ Sands ran out') };
     default: return { cls: 'declined', txt: String(status || '') };
@@ -1224,7 +1227,9 @@ async function decideAccess(id, decision) {
     if (lastSnapshot && Array.isArray(lastSnapshot.access_requests)) {
       const e = lastSnapshot.access_requests.find(x => x.id === id);
       if (e) {
-        e.status = decision === 'approve' ? 'approved' : decision === 'always' ? 'always' : 'declined';
+        e.status = decision === 'approve' ? 'approved'
+          : decision === 'always' ? 'always'
+            : decision === 'always_scoped' ? 'always (scoped)' : 'declined';
         e.decided_at = new Date().toISOString();
       }
       lastSnapshot.access_requests_pending = lastSnapshot.access_requests.filter(accessIsPending).length;

@@ -1569,6 +1569,34 @@ type snapshotPermissionsView struct {
 	// pre-populate its modal. Grants (above) is the grant-only
 	// projection, kept for the read-only Permissions tab.
 	Overrides map[string]map[string]string `json:"overrides"`
+	// Scopes carries the winning scope of each per-agent override that has
+	// one — conv-id → slug → {dim: [matchers]} — so the editor can render
+	// what a grant is narrowed to instead of showing it as unconditional.
+	// An unscoped override is simply absent here, which is how a reader
+	// tells "no constraint" from "constrained to nothing".
+	Scopes map[string]map[string]PermissionScope `json:"scopes,omitempty"`
+	// UnreadableScopes names the overrides whose stored scope this build
+	// cannot decode — conv-id → slugs. The gate refuses such a row, so the
+	// editor must NOT render it as unscoped: that is the widest possible
+	// reading of a grant that authorizes nothing, and one Save would make it
+	// true. The editor shows it as unreadable and leaves it alone; the write
+	// path refuses to overwrite it (see handleDashboardPermissionsAPI).
+	UnreadableScopes map[string][]string `json:"unreadable_scopes,omitempty"`
+	// ScopeDimOptions is the picker's catalogue: for each dimension the
+	// daemon knows, the concrete values an operator can choose and the
+	// relational @selectors that dimension accepts. The editor renders
+	// whatever arrives and falls back to free text, so a dimension added by
+	// a later phase needs no frontend change to become editable.
+	ScopeDimOptions map[ScopeDim]snapshotScopeDimOptions `json:"scope_dim_options,omitempty"`
+}
+
+// snapshotScopeDimOptions is one dimension's picker catalogue. Values may be
+// empty for a dimension whose catalogue is not cheap enough for a 2s poll (or
+// does not exist as a list at all) — the picker then takes free text, which is
+// the same thing the CLI's --scope accepts.
+type snapshotScopeDimOptions struct {
+	Values    []string `json:"values,omitempty"`
+	Selectors []string `json:"selectors,omitempty"`
 }
 
 type dashboardGroup struct {
@@ -2729,6 +2757,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		globalSandboxProfile *db.SandboxProfile
 		allGrants            map[string][]string
 		allOverrides         map[string]map[string]string
+		allOverrideScopes    map[string]map[string]string
 		cfg                  *config.Config
 		notifyPrefs          map[string]string
 		activeConvIDs        []string
@@ -2745,6 +2774,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		snapshotNamedLoad{"sandbox_profiles", func() { sandboxProfiles, _ = db.ListSandboxProfiles() }},
 		snapshotNamedLoad{"global_sandbox", func() { globalSandboxProfile, _ = db.GetGlobalSandboxProfile() }},
 		snapshotNamedLoad{"permission_overrides", func() { allOverrides, _ = db.ListAllAgentPermissionOverrides() }},
+		snapshotNamedLoad{"permission_scopes", func() { allOverrideScopes, _ = db.ListAllAgentPermissionScopes() }},
 		snapshotNamedLoad{"config", func() { cfg, _ = config.Load() }},
 		snapshotNamedLoad{"notify_prefs", func() { notifyPrefs, _ = db.ListConvNotifyPrefs() }},
 		snapshotNamedLoad{"agent_roster", func() {
@@ -3101,9 +3131,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		RecordedSandboxDetails:   cfg.RecordedSandboxDetailsEnabled(),
 		AgentRosterAuthoritative: agentRosterErr == nil,
 		Permissions: snapshotPermissionsView{
-			Defaults:  defaults,
-			Grants:    map[string][]string{},
-			Overrides: map[string]map[string]string{},
+			Defaults:         defaults,
+			Grants:           map[string][]string{},
+			Overrides:        map[string]map[string]string{},
+			UnreadableScopes: map[string][]string{},
 		},
 		Slugs: append([]PermSlug{}, permissionRegistry...),
 	}
@@ -3315,6 +3346,31 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		}
 		out.Permissions.Overrides[convID] = copyMap
 	}
+	// The scope each override carries, decoded. A row this build cannot decode
+	// is reported separately rather than as unscoped: the gate refuses such a
+	// row (evalPermissionScope), so showing it as unconditional would be the
+	// widest possible reading of a grant that authorizes nothing.
+	for convID, bySlug := range allOverrideScopes {
+		for slug, raw := range bySlug {
+			scope := permissionScopeFromJSON(raw)
+			if len(scope) == 0 {
+				if strings.TrimSpace(raw) != "" {
+					addAgent(convID)
+					out.Permissions.UnreadableScopes[convID] = append(
+						out.Permissions.UnreadableScopes[convID], slug)
+				}
+				continue
+			}
+			addAgent(convID)
+			if out.Permissions.Scopes == nil {
+				out.Permissions.Scopes = map[string]map[string]PermissionScope{}
+			}
+			if out.Permissions.Scopes[convID] == nil {
+				out.Permissions.Scopes[convID] = map[string]PermissionScope{}
+			}
+			out.Permissions.Scopes[convID][slug] = scope
+		}
+	}
 
 	// Register every active actor's current conv on the roster. The set was
 	// loaded up front (activeConvIDs) so its conv-ids could join the batch; here
@@ -3512,6 +3568,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.UsageTabVisible = usage.historyAvailable || openCodeActivity
 	out.Templates = templates
 	out.Profiles = profiles
+	out.Permissions.ScopeDimOptions = scopeDimOptionsSnapshot(groups, profiles)
 	if defaultProfile != nil {
 		out.SpawnProfileDefault = defaultProfile.Name
 	}
