@@ -6,7 +6,7 @@ import (
 )
 
 // TestDashboardHTML_HarnessLineWired guards the per-agent harness/model
-// line — "CC · O4.8 1M" under the row's dot/focus/cog cluster — plus
+// line — "[Claude mark] · O4.8 1M" under the row's dot/focus/cog cluster — plus
 // its appearance in the status-dot tooltip. The pieces span three files
 // (groups-member-table.js owns and wires it into the member
 // cell, dashboard.css styles it); a rename in one silently breaks the
@@ -32,11 +32,21 @@ func TestDashboardHTML_HarnessLineWired(t *testing.T) {
 	// dot/actions, NOT a new <td>.
 	must("<${HarnessLine} member=${member} snapshot=${snapshot} /></td>", "HarnessLine renders in the agent-ctl cell")
 
-	// The always-visible label is shortModel()-compressed; the FULL name
-	// stays in the tooltip (the title attr / the status-dot tip).
+	// The always-visible model is shortModel()-compressed; the harness uses a
+	// compact product mark while both FULL names stay in tooltips/accessibility
+	// labels (the title attrs / the status-dot tip).
 	must("function shortModel(", "shortModel compressor is defined")
 	must("${shortModel(model, harness)}", "the visible chip uses the harness-aware shortened model")
 	must("'Last used model' : 'Model'", "harnessLine's tooltip keeps the FULL model name and labels offline values as historical")
+	must("import { HarnessMark } from './harness-mark.js'", "the member table imports the shared harness-mark component")
+	must("<${HarnessMark} name=${harness} shortLabel=${labels.short} longLabel=${labels.long} />",
+		"the harness line renders the mark with full-name and fallback labels")
+	must("const PRODUCT_MARKS = new Set(['claude', 'codex', 'copilot', 'opencode'])",
+		"the known product-mark set is explicit")
+	must(`role="img" aria-label=${longLabel} title=${longLabel}`,
+		"each mark exposes its full harness name to assistive tech and ordinary hover")
+	must(`class="harness-name" title=${longLabel}>${shortLabel}</span>`,
+		"an unknown future harness keeps a visible text fallback and full-name tooltip")
 
 	// The reasoning-effort level (JOH-37) trails the model — "CC · O4.8 1M
 	// hi" — read off state.effort_level, with its own styled span and a
@@ -69,7 +79,7 @@ func TestDashboardHTML_HarnessLineWired(t *testing.T) {
 	must(`role="note" aria-label=${title}`, "last-used metadata is exposed without relying on pointer-only tooltips")
 
 	// The harness is now a per-agent value (state.harness), not a frontend
-	// constant: a label map keyed by the tag drives the chip, and the line
+	// constant: a label map keyed by the tag drives the mark/tooltips, and the line
 	// reads the tag off the agent's state (JOH-162).
 	must("const HARNESS_LABELS = {", "per-harness label map replaces the CC constant")
 	must("claude: { short: 'CC', long: 'Claude Code' }", "claude keeps its CC label")
@@ -78,6 +88,15 @@ func TestDashboardHTML_HarnessLineWired(t *testing.T) {
 	must("copilot: { short: 'COP', long: 'GitHub Copilot CLI' }", "Copilot uses the compact COP label")
 	must("if (harness === 'opencode')", "OpenCode model display removes its provider prefix")
 	must("state.harness", "HarnessLine reads the harness tag off the agent's state")
+
+	// The selected treatment gives every known mark the same fixed geometry and
+	// muted currentColor. No per-harness color rule should creep into the row.
+	must(".agent-harness .harness-mark {", "known harness marks have a shared style rule")
+	must("display: inline-flex; width: 14px; height: 14px;", "marks occupy one equal-width slot")
+	must("fill: currentColor", "all product silhouettes inherit the shared greyscale treatment")
+	if strings.Contains(dashboardAssets, ".harness-mark[data-harness-mark=") {
+		t.Error("harness marks must not regain per-product color overrides")
+	}
 }
 
 // TestDashboardHTML_HarnessBadgeAndSandboxWired guards the JOH-162 per-agent
