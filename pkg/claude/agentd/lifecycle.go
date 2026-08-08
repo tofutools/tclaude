@@ -5304,6 +5304,11 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		// default. The drive is unverified; "no agent acquires it silently" has to
 		// hold for every path through this function, not just the ones with a
 		// response body to put a note in.
+		//
+		// DO NOT "clean this up" by threading the note out to each caller instead:
+		// A SAFETY PROPERTY THAT DEPENDS ON EVERY FUTURE CALLER REMEMBERING IS NOT
+		// A SAFETY PROPERTY. One place that structurally cannot be missed beats
+		// four places that happen to be correct today.
 		for _, note := range notes {
 			slog.Warn("spawn: agent placed on the Copilot API drive by a non-explicit tier",
 				"conv", outcome.ConvID, "label", outcome.Label, "group", groupName,

@@ -138,6 +138,41 @@ func TestTraceMemberLaunchTreatsALegacyRecordWithNoAttributionAsChosen(t *testin
 	assert.NotContains(t, launch.ObservedNotChosen, "copilot_api")
 }
 
+// The EMPTY source is unknown too, and it is a distinct case from nil rather
+// than a restatement of it.
+//
+// relaunchProfileForSpawn always writes a NON-NIL pointer, so a launch path that
+// threads no attribution records `""`, never nil — meaning the live value on
+// several paths today is the one a guard written against nil would not touch.
+// And `HarnessBuiltinModeSource`, the field this mirrors, uses `""` to mean
+// "attribution erased", so the obvious future change ("clear the source when a
+// relaunch re-resolves with nothing to attribute") writes `""` by exact analogy.
+// Both spellings must stay conservative; a predicate that special-cases only nil
+// would silently flip those agents to unchosen.
+func TestTraceMemberLaunchTreatsAnEmptyAttributionAsChosen(t *testing.T) {
+	const convID = "ses_trace_prov_empty"
+	agentID := haveTracedCopilotMember(t, convID)
+
+	// Exactly what the freeze writes when no caller threaded a source: a pointer
+	// to "", not nil.
+	profile := relaunchProfileForSpawn(spawnParams{
+		Harness: harness.CopilotName, CopilotAPI: false, CopilotAPISource: "",
+	})
+	require.NotNil(t, profile.CopilotAPISource,
+		"the freeze writes a non-nil pointer even with no source — if this is nil the "+
+			"premise of this test has changed")
+	require.Equal(t, "", *profile.CopilotAPISource)
+	require.NoError(t, db.SetAgentRelaunchProfile(agentID, profile))
+
+	launch := traceMemberLaunch(convID)
+	require.True(t, launch.Traced)
+	assert.True(t, launch.CopilotAPISet,
+		"an empty attribution says nothing about who decided, which is not the same as "+
+			"saying the harness default decided; only a POSITIVE harness-default record "+
+			"may suppress the value")
+	assert.NotContains(t, launch.ObservedNotChosen, "copilot_api")
+}
+
 // The same contract for the sibling field, which shares the defect exactly:
 // relaunchProfileForSpawn freezes SSHWorkaround non-nil for EVERY launch, not
 // even harness-gated.
