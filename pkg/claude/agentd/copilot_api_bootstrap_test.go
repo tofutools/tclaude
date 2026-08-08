@@ -48,6 +48,41 @@ import (
 // They are not a security boundary — anyone editing the code can edit the test
 // — they are a tripwire on an invariant whose violation is otherwise silent and
 // looks like working code.
+//
+// # WHAT THESE GUARDS COVER: DIALLING, NOT DRIVING
+//
+// Read this before concluding they cover more, because everyone did (TCL-1075).
+//
+// They constrain who may OPEN a channel. They say nothing about what is done
+// with an already-established *copilotapi.Client — there is no guard on client
+// methods at all, and there deliberately is not one. The invariant people
+// believe these enforce is "every byte comes from a re-proved connection", and
+// that is two properties with very different natures:
+//
+//   - PROVENANCE — the client came from a verified dial. This is closed
+//     STRUCTURALLY rather than by any test. A client exists in exactly four
+//     shapes: the registry's copilotAPISession.Client, the state consumer's
+//     non-transmitting field, and the two dialling sites' own locals (the
+//     bootstrap's, which it passes to openCopilotAPISession, and the
+//     reconnect's, which is pinned separately to issue no mutating call). The
+//     dialling sites construct the handle and the registry stores it, so every
+//     transmitting client in the daemon traces back to a dial these guards pin.
+//     A new file cannot reach an unproved endpoint because there is nothing for
+//     it to reach one WITH.
+//   - FRESHNESS — ownership was re-proved shortly BEFORE this particular send.
+//     This is temporal, and no syntax walk can assert it. It is enforced by
+//     routing every verb through copilotAPIDrive, which re-proves — by
+//     convention and review, not structurally.
+//
+// So a guard on client methods would constrain WHERE the calls are, which is
+// already closed for a reason needing no test, while leaving untouched the thing
+// that would actually break. That is why widening was considered and declined.
+//
+// The cost of the belief was not hypothetical: the one send in the package whose
+// proof did not share a call stack with it — the compaction, which proved on one
+// goroutine and sent on another — sat there the whole time these guards were
+// read as covering it. It is fixed, and the test that pins it is behavioural,
+// because the property that would break is not expressible here.
 
 // copilotAPIGuardedSelector is one qualified name this package is allowed to
 // use only from named files. Qualified rather than bare, because "Dial" alone
@@ -765,4 +800,81 @@ func TestStartCopilotAPIBootstrapIsQuietWithoutADriveOrAConversation(t *testing.
 	default:
 	}
 	assert.Nil(t, copilotAPISessions.Handle("conv-1"))
+}
+
+// TestCopilotAPICompactionProvesOwnershipOnTheGoroutineThatSends is the
+// behavioural half of TCL-1075, and it exists because the structural guards
+// above cannot express it.
+//
+// The compaction used to prove ownership in compactCopilotAPISession and then
+// hand the handle to a goroutine that sent on it. A proof taken on one
+// goroutine says nothing about the moment a different one sends, so that was
+// the single send in the package reaching the endpoint on an unproved
+// connection — under guards everyone read as preventing exactly that.
+//
+// Asserted as opposite responses to opposite inputs, since "no compact was
+// sent" is satisfied just as well by a function that does nothing at all.
+func TestCopilotAPICompactionProvesOwnershipOnTheGoroutineThatSends(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotAPIStateForTest()
+	t.Cleanup(resetCopilotAPIStateForTest)
+
+	// A live pid whose subtree genuinely excludes the listener — the same
+	// non-ancestor requirement StillOwned's own test documents.
+	stranger := exec.Command("sleep", "60")
+	require.NoError(t, stranger.Start())
+	t.Cleanup(func() {
+		_ = stranger.Process.Kill()
+		_ = stranger.Wait()
+	})
+
+	// Neither arm canneds a reply. The fake's defaults for compact and send are
+	// already realistic, and a hand-written one here is how the success arm
+	// stops being one: a compact payload without "success":true decodes to an
+	// in-band refusal, so the arm would take the failure branch while reading as
+	// the success path. The fake documents that trap where its default lives.
+	t.Run("refuses when ownership can no longer be proved", func(t *testing.T) {
+		server := newFakeCopilotServer(t)
+		client := dialFakeCopilot(t, server)
+
+		require.False(t, portowner.ProcessOwnsLoopbackPort(stranger.Process.Pid, server.port()),
+			"precondition: the stranger must not own the listener")
+		copilotAPISessions.Adopt(&copilotAPISession{
+			ConvID: "conv-unproved", SessionID: "sess-1", Client: client,
+			Port: server.port(), PanePID: stranger.Process.Pid,
+		})
+		t.Cleanup(func() { copilotAPISessions.Drop("conv-unproved") })
+
+		// Called directly rather than through compactCopilotAPISession, because
+		// the property under test belongs to this function: it must refuse on its
+		// OWN account rather than trust a handle a caller proved earlier.
+		runCopilotAPICompaction("conv-unproved", "carry on")
+
+		assert.Zero(t, server.callCount("session.history.compact"),
+			"a compaction was sent to a port whose ownership could not be proved")
+		assert.Zero(t, server.callCount("session.send"),
+			"the follow-up must not be sent over a connection we just refused to "+
+				"compact on — it is different bytes to the same stranger")
+	})
+
+	t.Run("compacts and follows up when ownership holds", func(t *testing.T) {
+		server := newFakeCopilotServer(t)
+		client := dialFakeCopilot(t, server)
+
+		require.True(t, portowner.ProcessOwnsLoopbackPort(os.Getpid(), server.port()),
+			"precondition: this test process owns the fake server's listener")
+		copilotAPISessions.Adopt(&copilotAPISession{
+			ConvID: "conv-owned", SessionID: "sess-1", Client: client,
+			Port: server.port(), PanePID: os.Getpid(),
+		})
+		t.Cleanup(func() { copilotAPISessions.Drop("conv-owned") })
+
+		runCopilotAPICompaction("conv-owned", "carry on")
+
+		assert.Equal(t, 1, server.callCount("session.history.compact"),
+			"the refusal above must be the ownership check failing, not this "+
+				"function declining to do anything")
+		assert.Equal(t, 1, server.callCount("session.send"),
+			"the follow-up must still be submitted after a compaction")
+	})
 }

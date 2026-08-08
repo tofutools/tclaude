@@ -406,15 +406,43 @@ func renameCopilotAPISession(convID, title string) error {
 // revisiting only alongside a general "one lifecycle operation in flight per
 // conversation" rule, which is not this ticket's to invent.
 func compactCopilotAPISession(convID, followUp string) error {
-	handle, err := copilotAPIDrive(convID)
-	if err != nil {
+	// Proved here so the caller gets a synchronous error for a conversation that
+	// cannot be driven at all. This proof does NOT travel with the handle — see
+	// runCopilotAPICompaction, which proves again on the goroutine that sends.
+	if _, err := copilotAPIDrive(convID); err != nil {
 		return err
 	}
-	go runCopilotAPICompaction(handle, convID, followUp)
+	go runCopilotAPICompaction(convID, followUp)
 	return nil
 }
 
-func runCopilotAPICompaction(handle *copilotAPISession, convID, followUp string) {
+// runCopilotAPICompaction re-proves ownership and then compacts.
+//
+// It takes a conv id rather than the handle its caller already proved, and that
+// is the whole point. `--ui-server` has no authentication, so what stands in for
+// a credential is the proof that the listener still belongs to the agent's pane
+// subtree — and a proof taken on one goroutine says nothing about the moment a
+// different goroutine sends. This was the one send in the package whose proof
+// did not share a call stack with it (TCL-1075), which is exactly the gap the
+// dialling guard was widely believed to cover and never did.
+func runCopilotAPICompaction(convID, followUp string) {
+	handle, err := copilotAPIDrive(convID)
+	if err != nil {
+		// Refused rather than sent. The port may now belong to a different
+		// process, and this endpoint has no way to tell us apart from it.
+		slog.Warn("copilot API: refusing to compact on a connection whose ownership "+
+			"could no longer be proved", "conv_id", convID, "error", err)
+		// The follow-up still goes out, and it goes through sendCopilotAPIMessage
+		// rather than over a handle from here. DO NOT "simplify" this into a
+		// direct send using a handle captured above: the reason we are in this
+		// branch is that we would not send Compact to that port, and the
+		// follow-up is different bytes to the same stranger. sendCopilotAPIMessage
+		// re-asks on its own account, so it either reaches a port we can still
+		// prove is ours or refuses for the same reason this did.
+		deliverCopilotAPICompactionFollowUp(convID, "", followUp)
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), copilotAPICompactTimeout)
 	defer cancel()
 
@@ -441,11 +469,22 @@ func runCopilotAPICompaction(handle *copilotAPISession, convID, followUp string)
 			"messages_removed", result.MessagesRemoved)
 	}
 
+	deliverCopilotAPICompactionFollowUp(convID, handle.SessionID, followUp)
+}
+
+// deliverCopilotAPICompactionFollowUp submits the prompt the caller asked for
+// after compaction, whatever happened to the compaction itself — including the
+// case where it was refused because ownership could not be re-proved.
+//
+// sessionID is for the log line only and is empty when no handle was proved; the
+// delivery deliberately does not take one, because the follow-up must not ride a
+// handle this function was handed.
+func deliverCopilotAPICompactionFollowUp(convID, sessionID, followUp string) {
 	if followUp == "" {
 		return
 	}
 	if err := sendCopilotAPIMessage(convID, followUp); err != nil {
 		slog.Warn("copilot API: compaction follow-up failed",
-			"conv_id", convID, "session_id", handle.SessionID, "error", err)
+			"conv_id", convID, "session_id", sessionID, "error", err)
 	}
 }
