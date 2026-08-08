@@ -261,6 +261,39 @@ type TokenDetail struct {
 	TokenCount int `json:"tokenCount"`
 }
 
+// IsProcessingResult is the `session.metadata.isProcessing` reply.
+type IsProcessingResult struct {
+	// Processing covers an in-flight turn and any background continuation. It
+	// is false for a non-local session, which never runs an agentic loop here.
+	Processing bool `json:"processing"`
+}
+
+// SessionActivity is the `session.metadata.activity` reply.
+type SessionActivity struct {
+	// Abortable reports that an in-flight operation can be cancelled now.
+	Abortable bool `json:"abortable"`
+	// HasActiveWork covers running turns and tasks alike.
+	HasActiveWork bool `json:"hasActiveWork"`
+}
+
+// PendingPermissionRequestList is the `session.permissions.pendingRequests`
+// reply.
+type PendingPermissionRequestList struct {
+	Items []PendingPermissionRequest `json:"items"`
+}
+
+// PendingPermissionRequest is one permission prompt still waiting for a human.
+//
+// Request is left raw: it is a nine-way union (commands, write, read, mcp, url,
+// memory, custom-tool, path, hook) whose arms share almost nothing, and a
+// consumer that only needs to know a human is being waited on does not need to
+// decode any of them. The observed shape for a shell prompt is
+// `{kind, fullCommandText, intention, toolCallId, …}`.
+type PendingPermissionRequest struct {
+	RequestID string          `json:"requestId"`
+	Request   json.RawMessage `json:"request,omitempty"`
+}
+
 // SetNameParams are the arguments to `session.name.set`. Name must be 1–100
 // characters after trimming; the server rejects anything else.
 type SetNameParams struct {

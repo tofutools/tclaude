@@ -2421,11 +2421,23 @@ func stateForConvInSessionsBatched(
 			// observed model id; keeping these branches separate prevents a blank
 			// model from hiding an operator-supplied denominator.
 			out.ContextWindowMax = intent.ContextWindowMax
-			if out.ContextWindowMax > 0 {
+			switch reading, apiOwned := lookupCopilotAPIState(pick.ConvID); {
+			case out.ContextWindowMax > 0:
 				out.ContextWindowSource = "configured"
-			} else if model := strings.TrimSpace(snap.Model); model != "" {
-				if out.ContextWindowMax = harness.CopilotContextWindowDefault(model); out.ContextWindowMax > 0 {
-					out.ContextWindowSource = "assumed"
+			// A limit Copilot itself reported, which only the API drive can
+			// obtain. It sits ABOVE the static table for the same reason
+			// copilotAPIEffectiveContextWindow puts it there — a measurement
+			// beats an assumption — and the two must agree, or the tooltip's
+			// "x / y tokens" would describe a different ratio than the
+			// percentage beside it.
+			case apiOwned && reading.PromptTokenLimit > 0:
+				out.ContextWindowMax = reading.PromptTokenLimit
+				out.ContextWindowSource = "reported"
+			default:
+				if model := strings.TrimSpace(snap.Model); model != "" {
+					if out.ContextWindowMax = harness.CopilotContextWindowDefault(model); out.ContextWindowMax > 0 {
+						out.ContextWindowSource = "assumed"
+					}
 				}
 			}
 		}

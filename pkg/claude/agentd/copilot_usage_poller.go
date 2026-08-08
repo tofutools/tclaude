@@ -809,6 +809,23 @@ func persistCopilotUsageContext(sess *db.SessionRow, snapshot db.CopilotUsageSna
 	}
 	window := copilotEffectiveContextWindow(sess.ConvID, snapshot.Model, stored.ContextWindowSize)
 	pct := copilotContextPct(snapshot.LastCallInputTokens, window)
+	tokensInput := snapshot.LastCallInputTokens
+
+	// STAND DOWN on the context columns when the API state consumer has a live
+	// reading for this conversation. It reads the occupancy and the window from
+	// Copilot itself, where this sweep infers the first from the newest call's
+	// prompt and the second from a static per-model table.
+	//
+	// Standing down means carrying the STORED values through unchanged, not
+	// skipping the write: sessions.model and sessions.effort_level are still
+	// this sweep's to own on both drives — the API reading has no source for
+	// effort at all — and they are written by the same statement. Passing the
+	// stored context values keeps that statement from being a second writer of
+	// columns it no longer owns.
+	if _, owned := lookupCopilotAPIState(sess.ConvID); owned {
+		pct = stored.ContextPct
+		tokensInput = stored.TokensInput
+	}
 
 	// tokens_output may only ever ADVANCE, hence max() rather than the sweep's
 	// own figure. The two sources count different things and either may be
@@ -825,7 +842,7 @@ func persistCopilotUsageContext(sess *db.SessionRow, snapshot db.CopilotUsageSna
 	output := max(snapshot.OutputTokens, stored.TokensOutput)
 
 	if pct == stored.ContextPct &&
-		snapshot.LastCallInputTokens == stored.TokensInput &&
+		tokensInput == stored.TokensInput &&
 		output == stored.TokensOutput &&
 		snapshot.Model == stored.Model &&
 		snapshot.ReasoningEffort == stored.EffortLevel {
@@ -833,7 +850,7 @@ func persistCopilotUsageContext(sess *db.SessionRow, snapshot db.CopilotUsageSna
 	}
 	if _, err := db.UpdateContextSnapshotAndModelEffortForGeneration(
 		sess.ID, sess.ConvID, sess.CreatedAt,
-		pct, snapshot.LastCallInputTokens, output, stored.ContextWindowSize,
+		pct, tokensInput, output, stored.ContextWindowSize,
 		snapshot.Model, snapshot.ReasoningEffort,
 	); err != nil {
 		slog.Warn("copilot-usage: failed to persist context snapshot",
