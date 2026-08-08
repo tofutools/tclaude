@@ -182,6 +182,9 @@ type SpawnSpec struct {
 	// opt-in, so callers enable it explicitly. Gate via Harness.Approval /
 	// ResolveAutoReview before building the spec. See JOH-200 part 2.
 	AutoReview bool
+	// FastMode is Codex's per-launch service-tier override: "on" forces the
+	// fast tier, "off" forces the standard tier, and "" inherits config.toml.
+	FastMode string
 	// RemoteControl, when true, asks the harness to launch with its built-in
 	// Remote Access already ON — Claude Code's `--remote-control` flag, which
 	// exposes the session to claude.ai/code + the Claude mobile app from the

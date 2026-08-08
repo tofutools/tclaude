@@ -73,6 +73,9 @@ type profileJSON struct {
 	// this in client-side — the daemon resolves it down the full tier stack, so
 	// leaving it out here is what lets the group/global tiers speak too.
 	CopilotAPI *bool `json:"copilot_api,omitempty"`
+	// FastMode is Codex's nullable service-tier choice: nil inherits the global
+	// Codex config, true forces fast, false forces standard.
+	FastMode   *bool `json:"fast_mode,omitempty"`
 	AutoReview *bool `json:"auto_review,omitempty"`
 	TrustDir   *bool `json:"trust_dir,omitempty"`
 	// RemoteControl is the profile's "start with Remote Access on" default
@@ -749,6 +752,13 @@ func printProfileHuman(w io.Writer, p profileJSON) {
 			drive = "api"
 		}
 		launch = append(launch, "copilot_drive="+drive)
+	}
+	if p.FastMode != nil {
+		mode := "off"
+		if *p.FastMode {
+			mode = "on"
+		}
+		launch = append(launch, "fast_mode="+mode)
 	}
 	if len(launch) > 0 {
 		fmt.Fprintf(w, "  launch:  %s\n", strings.Join(launch, " · "))

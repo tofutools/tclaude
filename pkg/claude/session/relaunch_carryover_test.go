@@ -65,6 +65,7 @@ func fullClaudePosture() *db.AgentRelaunchProfile {
 		AutoCompactWindow:          ptr("450000"),
 		ConfiguredContextWindowMax: ptr(int64(100000)),
 		CopilotAPI:                 ptr(true),
+		FastMode:                   ptr(true),
 		ToolGovernance:             ptr("ask"),
 	}
 }
@@ -77,7 +78,7 @@ func carryoverHarness(t *testing.T, flag string) *harness.Harness {
 	switch flag {
 	case "tools":
 		name = harness.OpenCodeName
-	case "auto-review":
+	case "auto-review", "fast-mode":
 		name = harness.CodexName
 	case "context-window-max", "copilot-api":
 		name = harness.CopilotName
@@ -407,10 +408,14 @@ func TestLaunchCarryoverReportsAnAssertedEmptyAsADefault(t *testing.T) {
 	for _, field := range launchCarryoverFields {
 		t.Run(field.flag, func(t *testing.T) {
 			h := carryoverHarness(t, field.flag)
-			// The type's zero, plus whatever else this row declares unpinned.
-			zero := reflect.New(reflect.TypeOf(db.AgentRelaunchProfile{}).
-				Field(profileFieldIndex(t, field.recorded)).Type.Elem())
-			spellings := []reflect.Value{zero}
+			// The type's zero, unless this axis declares that zero is itself a
+			// pinned choice, plus whatever else this row declares unpinned.
+			spellings := []reflect.Value{}
+			if !field.zeroMeaningful {
+				zero := reflect.New(reflect.TypeOf(db.AgentRelaunchProfile{}).
+					Field(profileFieldIndex(t, field.recorded)).Type.Elem())
+				spellings = append(spellings, zero)
+			}
 			for _, sentinel := range field.unpinned {
 				spellings = append(spellings, reflect.ValueOf(&sentinel))
 			}

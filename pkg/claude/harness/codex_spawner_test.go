@@ -23,6 +23,21 @@ func TestCodexSpawnerPinsVerifiedExecutablePath(t *testing.T) {
 	}
 }
 
+func TestCodexSpawnerFastMode(t *testing.T) {
+	inherit := codexSpawner{}.BuildCommand(SpawnSpec{})
+	if strings.Contains(inherit, "service_tier") {
+		t.Fatalf("inherit unexpectedly overrides service tier: %s", inherit)
+	}
+	on := codexSpawner{}.BuildCommand(SpawnSpec{FastMode: FastModeOn})
+	if !strings.Contains(on, `'service_tier="fast"'`) {
+		t.Fatalf("fast command = %s", on)
+	}
+	off := codexSpawner{}.BuildCommand(SpawnSpec{FastMode: FastModeOff})
+	if !strings.Contains(off, `'service_tier="default"'`) {
+		t.Fatalf("standard command = %s", off)
+	}
+}
+
 // TestCodexSpawner_New covers a fresh Codex session: bare `codex`, with an
 // optional `--model`, env exports prepended, and the binary name.
 func TestCodexSpawner_New(t *testing.T) {

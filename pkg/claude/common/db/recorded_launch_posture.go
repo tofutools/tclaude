@@ -60,6 +60,9 @@ func ComposeAgentRelaunchProfile(base, overlay *AgentRelaunchProfile) *AgentRela
 	if overlay.CopilotAPI != nil {
 		merged.CopilotAPI = overlay.CopilotAPI
 	}
+	if overlay.FastMode != nil {
+		merged.FastMode = overlay.FastMode
+	}
 	if overlay.AskUserQuestionTimeout != nil {
 		merged.AskUserQuestionTimeout = overlay.AskUserQuestionTimeout
 	}

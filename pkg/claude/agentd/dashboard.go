@@ -1360,6 +1360,7 @@ type dashboardHarness struct {
 	// CanCopilotAPI is the Copilot-only API-backed-drive opt-in. The spawn
 	// dialog and profile editor gate their checkbox on it.
 	CanCopilotAPI bool `json:"can_copilot_api"`
+	CanFastMode   bool `json:"can_fast_mode"`
 	// CanTclaudeLayer reports whether the EXPERIMENTAL tclaude-layer sandbox
 	// implementation can confine this harness's authoritative tool executor.
 	// Read through the capability path (session.ValidateTclaudeLayerHarness),
@@ -1437,6 +1438,7 @@ func buildHarnessCatalog() []dashboardHarness {
 			CanAutoCompactWindow:       h.CanAutoCompactWindow(),
 			CanContextWindowMax:        h.Name == harness.CopilotName,
 			CanCopilotAPI:              h.CanCopilotAPI(),
+			CanFastMode:                h.CanFastMode(),
 			CanTclaudeLayer:            session.ValidateTclaudeLayerHarness(h.Name) == nil,
 			CanStacked:                 h.SupportsNestedSandbox(),
 			TclaudeLayerServerBoundary: session.TclaudeLayerUsesServerBoundary(h.Name),

@@ -1718,6 +1718,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		AutoCompactWindow:          launchConfig.AutoCompactWindow,
 		ContextWindowMax:           launchConfig.ContextWindowMax,
 		CopilotAPI:                 launchConfig.CopilotAPI,
+		FastMode:                   launchConfig.FastMode,
 	}); err != nil {
 		res.Action = "error"
 		res.Detail = "spawn: " + err.Error()
@@ -3335,6 +3336,36 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return
 	}
+	var fastMode, fastModeSet bool
+	var fastModeNote, fastModeSource string
+	requestedFastMode := strings.TrimSpace(body.FastMode)
+	if requestedFastMode != "" {
+		normalizedFastMode, fastErr := harness.ResolveFastModeFlag(h, requestedFastMode)
+		if fastErr != nil {
+			fieldFail = &spawnFailure{Status: http.StatusBadRequest, Kind: "invalid_request", Msg: fastErr.Error()}
+		} else {
+			requestedFastMode = normalizedFastMode
+			fastModeSource = "explicit"
+			switch requestedFastMode {
+			case harness.FastModeOn:
+				fastMode, fastModeSet = true, true
+			case harness.FastModeOff:
+				fastModeSet = true
+			}
+		}
+	} else {
+		fastMode, fastModeSet, fastModeSource, fastModeNote, fieldFail = resolveBoolLaunchField(
+			"fast_mode", false, false, h.Name, profileTiers,
+			func(p *db.SpawnProfile) *bool { return p.FastMode },
+			func(v bool) (bool, error) {
+				_, err := harness.ResolveFastMode(h, &v)
+				return v, err
+			})
+	}
+	if fieldFail != nil {
+		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+		return
+	}
 	body.Effort, effortSource, effortNote, fieldFail = resolveStringLaunchField(
 		effortField, body.Effort, h.Name, profileTiers, func(p *db.SpawnProfile) string { return p.Effort }, h.Models.ValidateEffort)
 	if fieldFail != nil {
@@ -3515,6 +3546,13 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if copilotAPI {
 		copilotAPIValue = "api"
 	}
+	fastModeValue := ""
+	if fastModeSet {
+		fastModeValue = harness.FastModeOff
+		if fastMode {
+			fastModeValue = harness.FastModeOn
+		}
+	}
 	resolvedLaunch := &agent.ResolvedLaunch{
 		Harness: agent.ResolvedField{Value: h.Name, Source: harnessSource},
 		Model:   agent.ResolvedField{Value: body.Model, Source: modelSource, Note: modelNote},
@@ -3525,6 +3563,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		// Named for what it selects, not for the flag that selects it: "api" reads
 		// correctly whether or not send-keys is still the other option.
 		CopilotAPI: agent.ResolvedField{Value: copilotAPIValue, Source: copilotAPISource},
+		FastMode:   agent.ResolvedField{Value: fastModeValue, Source: fastModeSource},
 	}
 	resolvedLaunch.SandboxImpl = agent.ResolvedField{
 		Value: body.SandboxImplementation, Source: sandboxImplSource, Note: sandboxImplNote}
@@ -3536,7 +3575,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if body.SandboxImplementation == "" && sandboxImplNote != "" {
 		resolvedLaunch.Notes = append(resolvedLaunch.Notes, sandboxImplNote)
 	}
-	for _, note := range []string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, contextWindowMaxNote, copilotAPINote, autoReviewNote, trustDirNote, autoMemoryNote, sshWorkaroundNote, contextFeaturesNote, profileContextNote} {
+	for _, note := range []string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, contextWindowMaxNote, copilotAPINote, fastModeNote, autoReviewNote, trustDirNote, autoMemoryNote, sshWorkaroundNote, contextFeaturesNote, profileContextNote} {
 		if note != "" {
 			resolvedLaunch.Notes = append(resolvedLaunch.Notes, note)
 		}
@@ -4009,11 +4048,13 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		ContextWindowMax:           body.ContextWindowMax,
 		CopilotAPI:                 copilotAPI,
 		CopilotAPISet:              copilotAPISet,
+		FastMode:                   fastMode,
+		FastModeSet:                fastModeSet,
 		ReplyToConv:                replyToConv,
 		SpawnedByConv:              spawnerConvID,
 		IsOwner:                    body.IsOwner,
 		PermissionOverrides:        permOverrides,
-		Timeout:             timeout,
+		Timeout:                    timeout,
 		// Verbatim snapshot of the spawn request, recorded onto the new actor's
 		// agents.initial_spawn_config in enrollSpawnedConv (a durable, agent-level
 		// "what was this spawned with" record). Marshalling the already-decoded
@@ -4302,6 +4343,10 @@ type spawnParams struct {
 	// dashboard sends exactly that explicit false on every Copilot spawn, so the
 	// gap is reachable from the most-used surface, not just a hand-built request.
 	CopilotAPISet bool
+	// FastMode/FastModeSet preserve the nullable Codex service-tier choice:
+	// unset inherits config.toml, false forces standard, true forces fast.
+	FastMode    bool
+	FastModeSet bool
 	// AskUserQuestionTimeout is the resolved per-session Claude Code
 	// AskUserQuestion idle-timeout override (never|60s|5m|10m), forwarding
 	// `--ask-user-question-timeout <v>` to `tclaude session new`; "" omits it.
@@ -5022,6 +5067,15 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	if fail != nil {
 		return fail
 	}
+	p.FastMode, p.FastModeSet, _, _, fail = resolveBoolLaunchField("fast_mode", p.FastMode,
+		p.FastModeSet, h.Name, tiers, func(prof *db.SpawnProfile) *bool { return prof.FastMode },
+		func(v bool) (bool, error) {
+			_, err := harness.ResolveFastMode(h, &v)
+			return v, err
+		})
+	if fail != nil {
+		return fail
+	}
 	p.SSHWorkaround, p.SSHWorkaroundSet, _, _, fail = resolveBoolLaunchField(
 		"ssh_workaround", p.SSHWorkaround, p.SSHWorkaroundSet, h.Name, tiers,
 		func(prof *db.SpawnProfile) *bool { return prof.SSHWorkaround },
@@ -5398,6 +5452,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		AutoCompactWindow:          p.AutoCompactWindow,
 		ContextWindowMax:           p.ContextWindowMax,
 		CopilotAPI:                 p.CopilotAPI,
+		FastMode:                   fastModeLaunchValue(p.FastMode, p.FastModeSet),
 	}
 	routeHelperConvID := ""
 	routeHelperGeneration := ""
@@ -7484,6 +7539,7 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	args = appendAutoCompactWindowFlag(args, a.AutoCompactWindow)
 	args = appendContextWindowMaxFlag(args, a.ContextWindowMax)
 	args = appendCopilotAPIFlag(args, a.CopilotAPI)
+	args = appendFastModeFlag(args, a.FastMode)
 	args = appendCopilotAPIPortFlag(args, a.CopilotAPIPort)
 	args = appendInitialPromptArg(args, a)
 	return args
@@ -7498,6 +7554,25 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 func appendCopilotAPIFlag(args []string, copilotAPI bool) []string {
 	if copilotAPI {
 		args = append(args, "--copilot-api")
+	}
+	return args
+}
+
+func fastModeLaunchValue(value, set bool) string {
+	if !set {
+		return harness.FastModeInherit
+	}
+	if value {
+		return harness.FastModeOn
+	}
+	return harness.FastModeOff
+}
+
+// appendFastModeFlag carries all three service-tier states into the forked
+// session launcher. Empty means inherit and is omitted; on/off are explicit.
+func appendFastModeFlag(args []string, mode string) []string {
+	if mode != "" {
+		args = append(args, "--fast-mode", mode)
 	}
 	return args
 }
@@ -7686,6 +7761,7 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	// Preserve the SOURCE conv's drive across the relaunch: an agent deliberately
 	// spawned onto the API must not come back on send-keys (or vice versa).
 	args = appendCopilotAPIFlag(args, a.CopilotAPI)
+	args = appendFastModeFlag(args, a.FastMode)
 	args = appendCopilotAPIPortFlag(args, a.CopilotAPIPort)
 	return args
 }

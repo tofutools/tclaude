@@ -94,6 +94,7 @@ type spawnProfileJSON struct {
 	// non-Copilot profile is a 400 (buildProfileFromJSON gates it on the
 	// profile's harness).
 	CopilotAPI    *bool `json:"copilot_api,omitempty"`
+	FastMode      *bool `json:"fast_mode,omitempty"`
 	AutoReview    *bool `json:"auto_review,omitempty"`
 	TrustDir      *bool `json:"trust_dir,omitempty"`
 	AutoMemory    *bool `json:"auto_memory,omitempty"`
@@ -154,6 +155,7 @@ func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 		AutoCompactWindow:          p.AutoCompactWindow,
 		ContextWindowMax:           p.ContextWindowMax,
 		CopilotAPI:                 p.CopilotAPI,
+		FastMode:                   p.FastMode,
 		AutoReview:                 p.AutoReview,
 		TrustDir:                   p.TrustDir,
 		AutoMemory:                 p.AutoMemory,
@@ -323,6 +325,11 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 			return nil, &spawnFailure{http.StatusBadRequest, "invalid_copilot_api", err.Error()}
 		}
 	}
+	if body.FastMode != nil {
+		if _, err := harness.ResolveFastMode(h, body.FastMode); err != nil {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_fast_mode", err.Error()}
+		}
+	}
 	if body.AutoReview != nil {
 		if _, err := harness.ResolveAutoReview(h, *body.AutoReview); err != nil {
 			return nil, &spawnFailure{http.StatusBadRequest, "invalid_auto_review", err.Error()}
@@ -428,6 +435,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		AutoCompactWindow:          autoCompactWindow,
 		ContextWindowMax:           contextWindowMax,
 		CopilotAPI:                 body.CopilotAPI,
+		FastMode:                   body.FastMode,
 		AutoReview:                 body.AutoReview,
 		TrustDir:                   body.TrustDir,
 		RemoteControl:              body.RemoteControl,

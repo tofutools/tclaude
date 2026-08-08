@@ -72,6 +72,9 @@ func RunJoinGroup(params *session.NewParams) error {
 		Harness:        h.Name,
 		TimeoutSeconds: 30,
 	}
+	if params.FastMode != "" {
+		req.FastMode = params.FastMode
+	}
 	var resp SpawnResponse
 	path := "/v1/groups/" + params.JoinGroup + "/spawn"
 	// Same transparent dir write-proof handling as `tclaude agent spawn` —

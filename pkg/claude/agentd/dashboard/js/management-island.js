@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { profileSummary, profileAliasesLabel, profileChoices, findProfileByHandle } from './profiles.js';
 import { roleSummary } from './roles.js';
-import { AUTO_MEMORY_TRI_OPTIONS, COPILOT_API_TRI_OPTIONS, dirtyDraft, harnessByName, harnessDefaults, profileDraft, profileHarnessDefaults, profilePayload, readTri, roleDraft, rolePayload, TRI_OPTIONS } from './management-model.js';
+import { AUTO_MEMORY_TRI_OPTIONS, COPILOT_API_TRI_OPTIONS, FAST_MODE_TRI_OPTIONS, dirtyDraft, harnessByName, harnessDefaults, profileDraft, profileHarnessDefaults, profilePayload, readTri, roleDraft, rolePayload, TRI_OPTIONS } from './management-model.js';
 import { registerManagementController } from './management-controller.js';
 import {
   sandboxAccessAxes,
@@ -1003,7 +1003,7 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
         : harnessDefaults(h);
       return {
         ...current, harness, model: '', effort: '', ...defaults,
-        trust_dir: '', remote_control: '', auto_memory: '', copilot_api: '',
+	        trust_dir: '', remote_control: '', auto_memory: '', copilot_api: '', fast_mode: '',
         ssh_workaround: !!h?.can_ssh_workaround,
         // Keep every explicit implementation visible across harness switches.
         // An incapable selection gets an inline refusal warning and the server
@@ -1251,6 +1251,7 @@ function ProfileEditor({ descriptor, state, actions, confirmDiscard, openProfile
     <${Row} label="Remote control" hidden=${hEntry && !hEntry.can_remote_control}><${Select} id="profile-editor-remote-control" value=${draft.remote_control} onChange=${(value) => change(setDraft, 'remote_control', value)} options=${TRI_OPTIONS}/></${Row}>
     <${Row} label="Auto memory" hidden=${hEntry && !hEntry.can_auto_memory} title="Claude Code's built-in auto memory. tclaude disables it by default: agents sharing a repo all read one per-project memory store and cross-pollute each other's notes. Does not affect CLAUDE.md."><${Select} id="profile-editor-auto-memory" value=${draft.auto_memory} onChange=${(value) => change(setDraft, 'auto_memory', value)} options=${AUTO_MEMORY_TRI_OPTIONS}/></${Row}>
     <${Row} label="Copilot drive" hidden=${hEntry && !hEntry.can_copilot_api} title="EXPERIMENTAL: drive the agent over Copilot's embedded JSON-RPC API (copilot --ui-server) instead of typing into its pane with tmux send-keys. Unset means send-keys — the two drives run side by side and agents move over one at a time."><${Select} id="profile-editor-copilot-api" value=${draft.copilot_api} onChange=${(value) => change(setDraft, 'copilot_api', value)} options=${COPILOT_API_TRI_OPTIONS}/></${Row}>
+    <${Row} label="Fast mode" hidden=${hEntry && !hEntry.can_fast_mode} title="Codex fast mode uses a higher-cost, lower-latency service tier. Harness default leaves the global Codex config in charge."><${Select} id="profile-editor-fast-mode" value=${draft.fast_mode} onChange=${(value) => change(setDraft, 'fast_mode', value)} options=${FAST_MODE_TRI_OPTIONS}/></${Row}>
     <${Row} label="SSH workaround" hidden=${!hEntry?.can_ssh_workaround} title=${sshWorkaroundAvailable ? "Use an agent-owned copy of the host SSH client config to avoid Codex sandbox ownership errors. This overrides Git core.sshCommand; uncheck it if the workaround conflicts with your setup." : "Available only for the Codex tclaude-agent managed sandbox."}><input id="profile-editor-ssh-workaround" type="checkbox" checked=${sshWorkaroundAvailable && draft.ssh_workaround} disabled=${!sshWorkaroundAvailable} onChange=${(event) => change(setDraft, 'ssh_workaround', event.currentTarget.checked)} /></${Row}>
     ${[['Agent name', 'agent_name', 'optional — names the spawned agent'], ['Role', 'role', 'optional — e.g. researcher, planner'], ['Descr', 'descr', 'optional — short one-line description']].map(([label, key, placeholder]) => html`<${Row} key=${key} label=${label} hidden=${local}><input value=${draft[key]} onInput=${(event) => change(setDraft, key, event.currentTarget.value)} placeholder=${placeholder} autocomplete="off" spellcheck="false"/></${Row}>`)}
     <${Row} label="Initial msg" hidden=${local}><textarea value=${draft.initial_message} onInput=${(event) => change(setDraft, 'initial_message', event.currentTarget.value)} rows="3" placeholder="optional — task brief pre-filled into the spawn dialog" spellcheck="false" /></${Row}>

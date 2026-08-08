@@ -50,6 +50,10 @@ type launchCarryoverField struct {
 	// that is what lets classify and its structural guard enumerate every
 	// spelling instead of depending on someone remembering a fourth one.
 	unpinned []string
+	// zeroMeaningful marks an axis where the pointed-to Go zero is still an
+	// explicit launch choice. FastMode=false pins the standard service tier; it
+	// is not equivalent to omitting --fast-mode and inheriting config.toml.
+	zeroMeaningful bool
 	// carry writes the recorded value onto params and reports the value it
 	// applied together with what happened. carryUnrecorded means the posture
 	// holds nothing for this field (nil = unknown, and unknown must stay
@@ -76,7 +80,7 @@ func (f launchCarryoverField) classify(applied any, outcome carryOutcome) carryO
 			return carryAppliedDefault
 		}
 	case bool:
-		if !v {
+		if !v && !f.zeroMeaningful {
 			return carryAppliedDefault
 		}
 	case int64:
@@ -376,6 +380,23 @@ var launchCarryoverFields = []launchCarryoverField{
 			return api, carryApplied
 		},
 	},
+	{
+		flag:           "fast-mode",
+		recorded:       "FastMode",
+		zeroMeaningful: true,
+		supplied:       func(p *NewParams) bool { return p.FastMode != "" },
+		carry: func(h *harness.Harness, rec *db.AgentRelaunchProfile, p *NewParams) (any, carryOutcome) {
+			if rec.FastMode == nil {
+				return nil, carryUnrecorded
+			}
+			mode, err := harness.ResolveFastMode(h, rec.FastMode)
+			if err != nil {
+				return nil, carryDropped
+			}
+			p.FastMode = mode
+			return mode, carryApplied
+		},
+	},
 }
 
 // applyRecordedLaunchPosture fills every launch flag the caller left out of a
@@ -481,6 +502,7 @@ type LaunchPosture struct {
 	AutoCompactWindow string
 	ContextWindowMax  int64
 	CopilotAPI        bool
+	FastMode          string
 	RemoteControl     bool
 }
 
@@ -533,6 +555,12 @@ func RecordLaunchPosture(sessionID string, h *harness.Harness, posture LaunchPos
 		if err := db.SetSessionCopilotAPI(sessionID, posture.CopilotAPI); err != nil {
 			slog.Warn("failed to record session Copilot API mode",
 				"session_id", sessionID, "copilot_api", posture.CopilotAPI, "error", err)
+		}
+	}
+	if h.CanFastMode() {
+		if err := db.SetSessionFastMode(sessionID, posture.FastMode); err != nil {
+			slog.Warn("failed to record session fast mode",
+				"session_id", sessionID, "fast_mode", posture.FastMode, "error", err)
 		}
 	}
 	// Remote Access is the one carried posture whose column no launch used to

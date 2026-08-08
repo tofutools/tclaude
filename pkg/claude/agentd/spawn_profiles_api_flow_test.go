@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -39,8 +40,62 @@ type wireProfile struct {
 	Approval       string   `json:"approval"`
 	Tools          string   `json:"tools"`
 	AutoReview     *bool    `json:"auto_review"`
+	FastMode       *bool    `json:"fast_mode"`
 	SyncWorktree   *bool    `json:"sync_worktree"`
 	StartupContext string   `json:"startup_context"`
+}
+
+func TestSpawnProfiles_CodexFastModeTriStateAndHarnessGate(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	for i, value := range []any{nil, true, false} {
+		name := fmt.Sprintf("codex-fast-%d", i)
+		body := map[string]any{"name": name, "harness": "codex"}
+		if value != nil {
+			body["fast_mode"] = value
+		}
+		rec := profileReq(t, f, http.MethodPost, "/v1/spawn-profiles", body)
+		require.Equalf(t, http.StatusCreated, rec.Code, "create body=%s", rec.Body.String())
+		rec = profileReq(t, f, http.MethodGet, "/v1/spawn-profiles/"+name, nil)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var got wireProfile
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+		if value == nil {
+			assert.Nil(t, got.FastMode)
+		} else {
+			require.NotNil(t, got.FastMode)
+			assert.Equal(t, value, *got.FastMode)
+		}
+	}
+	spawn := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name": "fast-worker", "profile": "codex-fast-1",
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	var spawnWire agent.SpawnResponse
+	require.NoError(t, json.Unmarshal(spawn.Raw, &spawnWire))
+	assert.Equal(t, "on", spawnWire.Resolved.FastMode.Value)
+	assert.Contains(t, spawnWire.Resolved.FastMode.Source, "codex-fast-1")
+
+	spawn = f.AsHuman().SpawnWith("crew", map[string]any{
+		"name": "standard-worker", "profile": "codex-fast-2",
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	require.NoError(t, json.Unmarshal(spawn.Raw, &spawnWire))
+	assert.Equal(t, "off", spawnWire.Resolved.FastMode.Value)
+
+	spawn = f.AsHuman().SpawnWith("crew", map[string]any{
+		"name": "inherit-worker", "profile": "codex-fast-1", "fast_mode": "inherit",
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	require.NoError(t, json.Unmarshal(spawn.Raw, &spawnWire))
+	assert.Empty(t, spawnWire.Resolved.FastMode.Value)
+	assert.Equal(t, "explicit", spawnWire.Resolved.FastMode.Source,
+		"explicit inherit must suppress a profile that pins fast mode")
+
+	rec := profileReq(t, f, http.MethodPost, "/v1/spawn-profiles", map[string]any{
+		"name": "claude-fast", "harness": "claude", "fast_mode": true,
+	})
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
 func TestSpawnProfiles_CodexApprovalPoliciesRoundTrip(t *testing.T) {

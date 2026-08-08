@@ -481,6 +481,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		proofArgs.AutoCompactWindow = autoCompactWindow
 		proofArgs.ContextWindowMax = relaunch.ContextWindowMax
 		proofArgs.CopilotAPI = relaunch.CopilotAPI
+		proofArgs.FastMode = relaunch.FastMode
 		// A no-copy clone inherits the source agent's recorded posture through a
 		// `session new` fork with no -r, so it is a continuation for launch
 		// requirements the host may not be able to meet (see SandboxContinuation).
@@ -648,6 +649,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	proofArgs.AutoCompactWindow = autoCompactWindow
 	proofArgs.ContextWindowMax = relaunch.ContextWindowMax
 	proofArgs.CopilotAPI = relaunch.CopilotAPI
+	proofArgs.FastMode = relaunch.FastMode
 	if routeErr := prepareRouteHelper(&proofArgs); routeErr != nil {
 		agentDirectoryCleanup()
 		return cloneSpawnResult{}, routeErr

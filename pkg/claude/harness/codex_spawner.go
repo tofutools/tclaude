@@ -103,6 +103,15 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 		// Experimental/undocumented upstream, hence opt-in (JOH-200 part 2).
 		cmd += " -c " + clcommon.ShellQuoteArg(codexApprovalsReviewerKey+`="`+codexApprovalsReviewerAuto+`"`)
 	}
+	if spec.FastMode != "" {
+		// service_tier is Codex's per-launch seam: "fast" opts in, while
+		// "default" explicitly opts out even when config.toml selects fast.
+		tier := "default"
+		if spec.FastMode == FastModeOn {
+			tier = "fast"
+		}
+		cmd += " -c " + clcommon.ShellQuoteArg(`service_tier="`+tier+`"`)
+	}
 	if len(spec.ShellEnvironment) > 0 {
 		// Codex may build tool-command environments from a saved user-shell
 		// snapshot. Pin sandbox-profile values in the documented "always wins"

@@ -782,6 +782,8 @@ type templateAgentLaunch struct {
 	// CopilotAPISet records that a tier actually spoke, mirroring AutoReviewSet.
 	CopilotAPI    bool
 	CopilotAPISet bool
+	FastMode      bool
+	FastModeSet   bool
 	// Notes disclose profile-tier fields that were skipped because they are not
 	// valid for the independently resolved harness. They ride the per-agent
 	// instantiate result so template launches have the same least-surprise
@@ -966,6 +968,11 @@ func validateInlineProfileForHarness(agentName string, h *harness.Harness, p *db
 	if p.CopilotAPI != nil {
 		if _, err := harness.ResolveCopilotAPI(h, p.CopilotAPI); err != nil {
 			return wrap(http.StatusBadRequest, "invalid_copilot_api", err.Error())
+		}
+	}
+	if p.FastMode != nil {
+		if _, err := harness.ResolveFastMode(h, p.FastMode); err != nil {
+			return wrap(http.StatusBadRequest, "invalid_fast_mode", err.Error())
 		}
 	}
 	if len(p.ContextFeatures) > 0 {
@@ -1269,6 +1276,19 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	if copilotAPINote != "" {
 		notes = append(notes, copilotAPINote)
 	}
+	fastMode, fastModeSet, _, fastModeNote, fail := resolveBoolLaunchField(
+		"fast_mode", false, false, h.Name, tiers,
+		func(p *db.SpawnProfile) *bool { return p.FastMode },
+		func(v bool) (bool, error) {
+			_, err := harness.ResolveFastMode(h, &v)
+			return v, err
+		})
+	if fail != nil {
+		return templateAgentLaunch{}, fail
+	}
+	if fastModeNote != "" {
+		notes = append(notes, fastModeNote)
+	}
 	sshWorkaround, sshWorkaroundSet, _, sshNote, fail := resolveBoolLaunchField(
 		"ssh_workaround", false, false, h.Name, tiers,
 		func(p *db.SpawnProfile) *bool { return p.SSHWorkaround },
@@ -1335,6 +1355,8 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		ContextWindowMax:       contextWindowMax,
 		CopilotAPI:             copilotAPI,
 		CopilotAPISet:          copilotAPISet,
+		FastMode:               fastMode,
+		FastModeSet:            fastModeSet,
 		SandboxImplementation:  sandboxImplementation,
 		Notes:                  notes,
 	}, nil
@@ -1363,6 +1385,14 @@ func copilotAPIPointer(launch templateAgentLaunch) *bool {
 		return nil
 	}
 	value := launch.CopilotAPI
+	return &value
+}
+
+func fastModePointer(launch templateAgentLaunch) *bool {
+	if !launch.FastModeSet {
+		return nil
+	}
+	value := launch.FastMode
 	return &value
 }
 
@@ -1455,6 +1485,12 @@ func traceMemberLaunch(convID string) templateAgentLaunch {
 			if value, err := harness.ResolveCopilotAPI(h, durable.CopilotAPI); err == nil {
 				out.CopilotAPI = value
 				out.CopilotAPISet = true
+			}
+		}
+		if durable.FastMode != nil {
+			if _, err := harness.ResolveFastMode(h, durable.FastMode); err == nil {
+				out.FastMode = *durable.FastMode
+				out.FastModeSet = true
 			}
 		}
 	}
@@ -3882,6 +3918,9 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile) *db.SpawnProfile 
 	if out.CopilotAPI == nil {
 		out.CopilotAPI = prev.CopilotAPI
 	}
+	if out.FastMode == nil {
+		out.FastMode = prev.FastMode
+	}
 	// ContextFeatures IS observable, so the traced value wins like harness/model —
 	// INCLUDING an observed "trims nothing", which must be able to CLEAR the
 	// template's previous trims. That is why the signal here is nil-vs-empty
@@ -3921,7 +3960,7 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile) *db.SpawnProfile 
 		out.StartupContext == "" &&
 		out.AutoCompactWindow == "" && out.SandboxImplementation == "" &&
 		out.AutoReview == nil && out.TrustDir == nil && out.RemoteControl == nil && out.AutoMemory == nil &&
-		out.SSHWorkaround == nil && out.CopilotAPI == nil &&
+		out.SSHWorkaround == nil && out.CopilotAPI == nil && out.FastMode == nil &&
 		len(out.ContextFeatures) == 0 &&
 		out.IsOwner == nil && len(out.PermissionOverrides) == 0 {
 		return nil
@@ -3976,7 +4015,7 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 		// starts life behind the read-only "legacy inline" notice.
 		launch := traceMemberLaunch(convID)
 		var inline *db.SpawnProfile
-		if launch.Harness != "" || launch.Model != "" || launch.Effort != "" || launch.Sandbox != "" || launch.Approval != "" || launch.AutoReviewSet || launch.SSHWorkaroundSet || len(launch.ContextFeatures) > 0 || launch.AutoCompactWindow != "" || launch.ContextWindowMax > 0 || launch.CopilotAPISet || launch.SandboxImplementation != "" || len(perms) > 0 {
+		if launch.Harness != "" || launch.Model != "" || launch.Effort != "" || launch.Sandbox != "" || launch.Approval != "" || launch.AutoReviewSet || launch.SSHWorkaroundSet || len(launch.ContextFeatures) > 0 || launch.AutoCompactWindow != "" || launch.ContextWindowMax > 0 || launch.CopilotAPISet || launch.FastModeSet || launch.SandboxImplementation != "" || len(perms) > 0 {
 			po := map[string]string{}
 			for _, s := range perms {
 				po[s] = db.PermEffectGrant
@@ -3991,6 +4030,7 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 				ContextWindowMax:      launch.ContextWindowMax,
 				SandboxImplementation: launch.SandboxImplementation,
 				CopilotAPI:            copilotAPIPointer(launch),
+				FastMode:              fastModePointer(launch),
 				PermissionOverrides:   po,
 				ContextFeatures:       launch.ContextFeatures,
 			}

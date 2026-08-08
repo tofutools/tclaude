@@ -55,6 +55,36 @@ func TestDurableRelaunchProfilesSurviveSessionDeletion(t *testing.T) {
 	assert.True(t, mustAutoMemoryForConv(t, convID))
 }
 
+func TestSessionProjectionPreservesExplicitFastMode(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mode string
+		want bool
+	}{{"fast", "on", true}, {"standard", "off", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupTestDB(t)
+			convID := "fast-mode-projection-" + tc.name
+			sessionID := "fast-mode-session-" + tc.name
+			require.NoError(t, SaveSession(&SessionRow{
+				ID: sessionID, ConvID: convID, Cwd: "/tmp/fast-mode-projection",
+				Harness: "codex", Status: "idle",
+			}))
+			require.NoError(t, SetSessionFastMode(sessionID, tc.mode))
+
+			// A later status projection rebuilds the conversation fallback from
+			// session columns. Fast mode has no session column, so the same
+			// generation must retain the explicit launch fact already recorded.
+			require.NoError(t, UpdateContextSnapshot(sessionID, 25, 10, 20, 200_000))
+			profile, err := ConversationResumeProfileForConv(convID)
+			require.NoError(t, err)
+			require.NotNil(t, profile)
+			require.NotNil(t, profile.FallbackRelaunch)
+			require.NotNil(t, profile.FallbackRelaunch.FastMode)
+			assert.Equal(t, tc.want, *profile.FallbackRelaunch.FastMode)
+		})
+	}
+}
+
 func TestContextSnapshotTokenOnlyFastPathPreservesProjection(t *testing.T) {
 	setupTestDB(t)
 	const (
