@@ -1256,3 +1256,12 @@ CREATE TABLE agent_cron_messages (
 CREATE INDEX idx_agent_cron_messages_job
 			ON agent_cron_messages(cron_job_id);
 
+CREATE TABLE agent_lineage (
+			child_agent_id  TEXT PRIMARY KEY,
+			parent_agent_id TEXT NOT NULL,
+			spawned_at      INTEGER NOT NULL
+		) STRICT;
+
+CREATE INDEX idx_agent_lineage_parent
+			ON agent_lineage(parent_agent_id, child_agent_id);
+

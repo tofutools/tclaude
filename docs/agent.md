@@ -2356,6 +2356,39 @@ and are not copied into the agent's own override rows. An explicit per-agent
 time-bounded exception above it. Membership in multiple groups unions their
 grants. Nested groups do not inherit membership or permissions.
 
+### Scoped grants
+
+A permanent allow grant may be narrowed with one or more `--scope
+dimension=matcher,...` flags. Dimensions on one grant AND together; matchers
+within one dimension OR together. An unscoped grant keeps its historical
+behavior, and scopes do not add permissions or change the default permission
+set.
+
+`agent.retire` and the reserved `agent.standdown` flow accept the
+`target_agent` dimension. Its relational matchers are evaluated from the
+calling agent's stable identity at authorization time:
+
+- `@self-spawned` matches direct children only.
+- `@descendants` matches children transitively, through at most 64 generations.
+
+For example, this opt-in grant lets a lead retire agents it spawned, including
+workers spawned by those children, without granting retire power over unrelated
+agents:
+
+```bash
+tclaude agent permissions grant <lead> agent.retire \
+  --scope target_agent=@descendants
+```
+
+Lineage records only real agent-initiated spawns. A reincarnation keeps the
+same stable agent identity and therefore keeps its descendants; a clone is a
+new fork and is not a child. Lineage rows survive retirement. Historical spawn
+snapshots do not identify their spawner (their `reply_to` is only the startup
+reply destination), so guessing ancestry from them could widen authorization.
+Consequently `@descendants` and `@self-spawned` cover agents spawned after the
+lineage table landed; pre-existing agents have no inferred ancestry and fail
+closed.
+
 ### Slugs
 
 Slugs are grouped by family. `self.*` acts on the calling agent;

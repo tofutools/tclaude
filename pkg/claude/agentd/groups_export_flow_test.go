@@ -424,6 +424,26 @@ func TestGroupImport_RejectsInvalidPermissionScopeBeforeFilesystem(t *testing.T)
 	assert.Nil(t, group)
 }
 
+func TestGroupImport_RejectsExactTargetAgentScopeWithoutActorMapping(t *testing.T) {
+	f := newFlow(t)
+	exp := &groupexport.Export{
+		FormatVersion: groupexport.FormatVersion,
+		SourceGroup:   "exact-target-scope",
+		Group: groupexport.Group{Permissions: []groupexport.GroupPermission{{
+			Slug: agentd.PermAgentRetire, ScopeJSON: `{"target_agent":["agt_original_actor"]}`,
+		}}},
+	}
+	archive, err := groupexport.Marshal(exp)
+	require.NoError(t, err)
+	targetCwd := filepath.Join(f.World.HomeDir, "exact-target-scope-target")
+
+	rec := importArchive(f, archive, targetCwd, "")
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "cannot be imported without a stable-actor mapping")
+	_, err = os.Stat(targetCwd)
+	assert.ErrorIs(t, err, os.ErrNotExist, "unsafe exact actor scope must be rejected before file placement")
+}
+
 func TestGroupImport_RejectsUnsafeAttachmentBeforeFilesystem(t *testing.T) {
 	f := newFlow(t)
 	exp := &groupexport.Export{
