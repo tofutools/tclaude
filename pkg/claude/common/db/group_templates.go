@@ -193,6 +193,7 @@ type templateInlineProfileJSON struct {
 	AutoCompactWindow      string            `json:"auto_compact_window,omitempty"`
 	ContextWindowMax       int64             `json:"context_window_max,omitempty"`
 	CopilotAPI             *bool             `json:"copilot_api,omitempty"`
+	FastMode               *bool             `json:"fast_mode,omitempty"`
 	AutoReview             *bool             `json:"auto_review,omitempty"`
 	TrustDir               *bool             `json:"trust_dir,omitempty"`
 	RemoteControl          *bool             `json:"remote_control,omitempty"`
@@ -223,6 +224,7 @@ func inlineProfileToJSON(p *SpawnProfile) string {
 		AutoCompactWindow:      p.AutoCompactWindow,
 		ContextWindowMax:       p.ContextWindowMax,
 		CopilotAPI:             p.CopilotAPI,
+		FastMode:               p.FastMode,
 		AutoReview:             p.AutoReview,
 		TrustDir:               p.TrustDir,
 		RemoteControl:          p.RemoteControl,
@@ -262,6 +264,7 @@ func inlineProfileFromJSON(s string) *SpawnProfile {
 		AutoCompactWindow:      j.AutoCompactWindow,
 		ContextWindowMax:       j.ContextWindowMax,
 		CopilotAPI:             j.CopilotAPI,
+		FastMode:               j.FastMode,
 		AutoReview:             j.AutoReview,
 		TrustDir:               j.TrustDir,
 		RemoteControl:          j.RemoteControl,

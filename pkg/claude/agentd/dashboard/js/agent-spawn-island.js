@@ -90,7 +90,7 @@ const PROFILE_OWNED_FIELDS = [
   'profile', 'name', 'role', 'descr', 'task', 'initialMessage',
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'tools', 'askTimeout',
   'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'sshWorkaround', 'owner', 'permissionOverrides',
-  'contextFeatures', 'autoCompactWindow', 'contextWindowMax', 'copilotAPI', 'sandboxImpl', 'sandboxImplCleared',
+  'contextFeatures', 'autoCompactWindow', 'contextWindowMax', 'copilotAPI', 'fastMode', 'sandboxImpl', 'sandboxImplCleared',
   'syncWorktree', 'autoFocus', 'includeGroupContext',
 ];
 
@@ -422,7 +422,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   };
   const changeHarness = (value) => {
     touched.current.add('harness');
-    for (const key of ['model', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'tools', 'askTimeout', 'trustDir', 'remoteControl', 'autoMemory', 'sshWorkaround', 'copilotAPI', 'contextFeatures']) {
+    for (const key of ['model', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'tools', 'askTimeout', 'trustDir', 'remoteControl', 'autoMemory', 'sshWorkaround', 'copilotAPI', 'fastMode', 'contextFeatures']) {
       touched.current.add(key);
     }
     setDraft((before) => selectSpawnHarness(before, value, context, rememberedEffort));
@@ -868,6 +868,16 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       <select id="agent-spawn-harness" value=${draft.harness} disabled=${busy}
         onChange=${(event) => changeHarness(event.currentTarget.value)}>
         ${context.harnesses.map((harness) => html`<option key=${harness.name} value=${harness.name}>${harness.display_name || harness.name}</option>`)}
+      </select>
+    </label>
+    <label class="cron-create-row" id="agent-spawn-fast-mode-row" hidden=${!view.showFastMode}
+      title="Codex fast mode uses a higher-cost, lower-latency service tier. Harness default leaves ~/.codex/config.toml in charge.">
+      <span class="cron-create-label">Fast mode</span>
+      <select id="agent-spawn-fast-mode" value=${draft.fastMode} disabled=${busy}
+        onChange=${(event) => update('fastMode', event.currentTarget.value)}>
+        <option value="">Harness default (config.toml)</option>
+        <option value="1">On</option>
+        <option value="0">Off</option>
       </select>
     </label>
     <div class="spawn-inline-fields">

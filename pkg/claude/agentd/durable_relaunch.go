@@ -44,6 +44,7 @@ type durableRelaunchConfig struct {
 	AutoCompactWindow           string
 	ContextWindowMax            int64
 	CopilotAPI                  bool
+	FastMode                    string
 }
 
 // activeSandboxImplementation returns the implementation for this process
@@ -119,6 +120,7 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 	autoCompactWindow := p.AutoCompactWindow
 	configuredContextWindowMax := (*int64)(nil)
 	copilotAPI := (*bool)(nil)
+	fastMode := (*bool)(nil)
 	if harnessOrDefault(p.Harness) == harness.CopilotName {
 		value := p.ContextWindowMax
 		configuredContextWindowMax = &value
@@ -127,6 +129,10 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 		// later profile edit could fill in differently.
 		api := p.CopilotAPI
 		copilotAPI = &api
+	}
+	if harnessOrDefault(p.Harness) == harness.CodexName && p.FastModeSet {
+		value := p.FastMode
+		fastMode = &value
 	}
 	return db.AgentRelaunchProfile{
 		Version:               db.RelaunchProfileVersion,
@@ -144,6 +150,7 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 		ContextWindowSize:          &contextWindowSize,
 		ConfiguredContextWindowMax: configuredContextWindowMax,
 		CopilotAPI:                 copilotAPI,
+		FastMode:                   fastMode,
 		AskUserQuestionTimeout:     &askTimeout,
 		RemoteControl:              &remoteControl,
 		AutoMemory:                 &autoMemory,
@@ -354,6 +361,12 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 			copilotAPI = resolved
 		}
 	}
+	fastMode := ""
+	if agentProfile.FastMode != nil {
+		if resolved, fastErr := harness.ResolveFastMode(h, agentProfile.FastMode); fastErr == nil {
+			fastMode = resolved
+		}
+	}
 
 	sshWorkaround, err := harness.ResolveSSHWorkaround(h, agentProfile.SSHWorkaround)
 	if err != nil {
@@ -388,5 +401,6 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 		AutoCompactWindow:           autoCompactWindow,
 		ContextWindowMax:            contextWindowMax,
 		CopilotAPI:                  copilotAPI,
+		FastMode:                    fastMode,
 	}, nil
 }

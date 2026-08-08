@@ -504,6 +504,11 @@ agent that resolves that profile. This is distinct from `initial_message`:
 actual task. The highest-precedence compatible profile with a non-empty value
 wins; profile contexts are not merged.
 
+Codex profiles may also carry `fast_mode` as a three-state launch choice:
+unset inherits the operator's `~/.codex/config.toml`, `true` forces the fast
+service tier, and `false` forces the standard tier. The choice is applied only
+to that agent; tclaude does not rewrite the global Codex configuration.
+
 A disabled profile remains listed, editable, exportable, and referenced by
 aliases, defaults, roles, templates, and process performers. Any spawn that
 would use it fails with `profile_disabled` and the stored reason; `tclaude ask`

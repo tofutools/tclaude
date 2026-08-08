@@ -274,6 +274,9 @@ type SpawnArgs struct {
 	// it as launch intent. false — the default, and what every harness other than
 	// Copilot resolves to — leaves the send-keys path untouched. See TCL-1053.
 	CopilotAPI bool
+	// FastMode is Codex's normalized launch choice: "" inherits config.toml,
+	// "on" forces fast, and "off" forces standard.
+	FastMode string
 
 	// CopilotAPIPort is the loopback TCP port the API-backed Copilot pane must
 	// bind, forwarded to `tclaude session new --copilot-api-port <n>` and from

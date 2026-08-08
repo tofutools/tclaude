@@ -376,6 +376,22 @@ var launchCarryoverFields = []launchCarryoverField{
 			return api, carryApplied
 		},
 	},
+	{
+		flag:     "fast-mode",
+		recorded: "FastMode",
+		supplied: func(p *NewParams) bool { return p.FastMode != "" },
+		carry: func(h *harness.Harness, rec *db.AgentRelaunchProfile, p *NewParams) (any, carryOutcome) {
+			if rec.FastMode == nil {
+				return nil, carryUnrecorded
+			}
+			mode, err := harness.ResolveFastMode(h, rec.FastMode)
+			if err != nil {
+				return nil, carryDropped
+			}
+			p.FastMode = mode
+			return mode, carryApplied
+		},
+	},
 }
 
 // applyRecordedLaunchPosture fills every launch flag the caller left out of a
@@ -481,6 +497,7 @@ type LaunchPosture struct {
 	AutoCompactWindow string
 	ContextWindowMax  int64
 	CopilotAPI        bool
+	FastMode          string
 	RemoteControl     bool
 }
 
@@ -533,6 +550,12 @@ func RecordLaunchPosture(sessionID string, h *harness.Harness, posture LaunchPos
 		if err := db.SetSessionCopilotAPI(sessionID, posture.CopilotAPI); err != nil {
 			slog.Warn("failed to record session Copilot API mode",
 				"session_id", sessionID, "copilot_api", posture.CopilotAPI, "error", err)
+		}
+	}
+	if h.CanFastMode() {
+		if err := db.SetSessionFastMode(sessionID, posture.FastMode); err != nil {
+			slog.Warn("failed to record session fast mode",
+				"session_id", sessionID, "fast_mode", posture.FastMode, "error", err)
 		}
 	}
 	// Remote Access is the one carried posture whose column no launch used to

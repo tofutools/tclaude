@@ -106,6 +106,7 @@ about on stderr rather than only logged.
 | `--resume <id>`    | Resume from the selected harness's conversation store     |
 | `--label <name>`   | Custom label for the session                             |
 | `--harness <name>` | Coding harness: `claude` \| `codex` \| `shell` (unset: global profile, then an installed harness; Claude preferred) |
+| `--fast-mode <mode>` | Codex speed tier: `inherit` \| `on` \| `off` |
 | `-s, --shell`      | Start a plain shell instead of a coding harness (shorthand for `--harness shell`) |
 
 Model, effort, sandbox, approval, and lifecycle options differ by harness. The

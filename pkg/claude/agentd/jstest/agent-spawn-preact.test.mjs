@@ -52,6 +52,7 @@ const harnesses = [{
   can_auto_review: true,
   can_ask_timeout: false, ask_timeout_modes: [], default_ask_timeout: '',
   can_remote_control: false, can_auto_memory: false, can_ssh_workaround: true,
+  can_fast_mode: true,
   can_dir_trust: true, dir_trust_store: '~/.codex/config.toml',
   can_context_features: false, context_features: [],
 }, {
@@ -355,6 +356,11 @@ test('agent-spawn model normalizes names and builds exact launch bodies', async 
   assert.equal('remote_control' in codexBody, false);
   assert.equal(codexBody.approval, 'on-request');
   assert.equal(codexBody.auto_review, true);
+  assert.equal(codexBody.fast_mode, undefined, 'default inherits Codex config.toml');
+  const fastBody = model.buildSpawnRequest({ ...codex, name: 'fast', fastMode: '1' }, context, null, []).body;
+  assert.equal(fastBody.fast_mode, true);
+  const standardBody = model.buildSpawnRequest({ ...codex, name: 'standard', fastMode: '0' }, context, null, []).body;
+  assert.equal(standardBody.fast_mode, false);
   const omittedBody = model.buildSpawnRequest({
     ...draft, name: 'worker', sandboxProfile: model.SANDBOX_PROFILE_NONE,
   }, context, { path: '', branch: '' }).body;

@@ -520,6 +520,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		AutoCompactWindow:      relaunch.AutoCompactWindow,
 		ContextWindowMax:       relaunch.ContextWindowMax,
 		CopilotAPI:             relaunch.CopilotAPI,
+		FastMode:               relaunch.FastMode,
 	}
 
 	// 2b. Compute the two generation titles (JOH-319). The living successor

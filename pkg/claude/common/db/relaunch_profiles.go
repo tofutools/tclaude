@@ -80,10 +80,13 @@ type AgentRelaunchProfile struct {
 	// rather than tmux send-keys" posture. nil means unknown/legacy, which
 	// resolves to the send-keys path — so an agent recorded before this field
 	// existed relaunches exactly as it did before. See TCL-1053.
-	CopilotAPI             *bool   `json:"copilot_api,omitempty"`
+	CopilotAPI *bool `json:"copilot_api,omitempty"`
+	// FastMode preserves an explicit Codex tier across relaunches. nil means
+	// inherit config.toml; true/false force fast/standard respectively.
+	FastMode               *bool   `json:"fast_mode,omitempty"`
 	AskUserQuestionTimeout *string `json:"ask_user_question_timeout,omitempty"`
-	RemoteControl              *bool   `json:"remote_control,omitempty"`
-	AutoMemory                 *bool   `json:"auto_memory,omitempty"`
+	RemoteControl          *bool   `json:"remote_control,omitempty"`
+	AutoMemory             *bool   `json:"auto_memory,omitempty"`
 	// SSHWorkaround is the durable Codex Git-over-SSH compatibility posture.
 	// nil means unknown/legacy; false is an explicit opt-out.
 	SSHWorkaround *bool `json:"ssh_workaround,omitempty"`
@@ -510,6 +513,23 @@ func SetSessionCopilotAPI(sessionID string, value bool) error {
 	})
 }
 
+// SetSessionFastMode records explicit Codex service-tier intent. An empty mode
+// clears the field back to inherit; on/off become true/false.
+func SetSessionFastMode(sessionID, mode string) error {
+	return updateSessionFallbackRelaunch(sessionID, func(fallback *AgentRelaunchProfile) {
+		switch strings.TrimSpace(mode) {
+		case "on":
+			value := true
+			fallback.FastMode = &value
+		case "off":
+			value := false
+			fallback.FastMode = &value
+		default:
+			fallback.FastMode = nil
+		}
+	})
+}
+
 // updateSessionFallbackRelaunch loads (or seeds) the conversation resume
 // profile owned by sessionID's conversation, lets apply mutate its fallback
 // relaunch facts, and writes it back. A session or conversation that does not
@@ -879,6 +899,9 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		}
 		if agent.CopilotAPI != nil {
 			merged.CopilotAPI = agent.CopilotAPI
+		}
+		if agent.FastMode != nil {
+			merged.FastMode = agent.FastMode
 		}
 		if agent.RemoteControl != nil {
 			merged.RemoteControl = agent.RemoteControl

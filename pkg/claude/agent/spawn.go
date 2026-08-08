@@ -73,6 +73,7 @@ type ResolvedLaunch struct {
 	// without reading the profile chain back by hand. Blank Value = the
 	// send-keys default, echoed like any unpinned field. See TCL-1053.
 	CopilotAPI ResolvedField `json:"copilot_api"`
+	FastMode   ResolvedField `json:"fast_mode"`
 	// SandboxImpl names WHO OWNS OS-level containment for this launch and which
 	// tier chose it. It is echoed rather than left to Notes because a spawn that
 	// silently inherited the experimental tclaude-layer from a group or global
@@ -427,6 +428,9 @@ type SpawnRequest struct {
 	// (Copilot); requesting it for Claude Code or Codex is a 400. Forwarded to
 	// `tclaude session new --copilot-api`. See TCL-1051 / TCL-1053.
 	CopilotAPI *bool `json:"copilot_api,omitempty"`
+	// FastMode is tri-state: nil inherits Codex config.toml, true forces fast,
+	// and false forces the standard service tier.
+	FastMode *bool `json:"fast_mode,omitempty"`
 
 	// WorktreePath / WorktreeBranch describe a git worktree the agent
 	// should do its code work in, when Cwd is a parent "monorepo"
@@ -693,6 +697,8 @@ type SpawnParams struct {
 	// &true and its absence leaves the pointer nil so a profile default can still
 	// speak (and, unset everywhere, resolve to the send-keys default).
 	CopilotAPI bool `long:"copilot-api" help:"EXPERIMENTAL: drive the new Copilot agent over its embedded JSON-RPC API instead of tmux send-keys. Off by default — the send-keys path is unchanged unless you pass this. Unset = filled by the profile chain, then off. Copilot only"`
+
+	FastMode string `long:"fast-mode" optional:"true" help:"Codex request speed: inherit (use config.toml) | on (fast, higher credit cost) | off (standard tier). Unset = filled by the profile chain, then inherit. Codex only"`
 
 	// SandboxImpl picks WHO OWNS OS-level containment for the new agent — an axis
 	// independent of --sandbox, which picks a mode WITHIN whatever sandbox is in
@@ -1152,6 +1158,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	remoteControl := p.RemoteControl
 	autoMemory := p.AutoMemory
 	copilotAPI := p.CopilotAPI
+	fastMode := strings.TrimSpace(p.FastMode)
 	// --context-features is tri-state on the wire: unset leaves the map nil so the
 	// daemon's profile tier stack still speaks, while an explicit `none` sends an
 	// empty (non-nil) map, which is how the CLI says "ignore the profile, trim
@@ -1299,6 +1306,10 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 			fmt.Fprintf(stderr, "Error: %v\n", err)
 			return nil, rcInvalidArg
 		}
+		if fastMode, err = harness.ResolveFastModeFlag(h, fastMode); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return nil, rcInvalidArg
+		}
 		// Gate --context-features the same way: unknown slugs, bad states, and
 		// trims asked of a harness with no steerable startup context all fail fast
 		// here with a clear message. The daemon re-gates server-side. When the flag
@@ -1380,6 +1391,10 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	if copilotAPI {
 		on := true
 		req.CopilotAPI = &on
+	}
+	if fastMode != "" {
+		on := fastMode == harness.FastModeOn
+		req.FastMode = &on
 	}
 	// Group context: --no-group-context forces exclude, else a --profile may set
 	// it; an omitted pointer means the daemon includes the group context by
@@ -1532,6 +1547,9 @@ func printResolvedLaunch(stdout io.Writer, rl *ResolvedLaunch) {
 	// noise rather than the debugging aid this echo exists to be.
 	if strings.TrimSpace(rl.CopilotAPI.Value) != "" {
 		fmt.Fprintf(stdout, "  Copilot drive: %s\n", formatResolvedField(rl.CopilotAPI))
+	}
+	if strings.TrimSpace(rl.FastMode.Value) != "" {
+		fmt.Fprintf(stdout, "  Fast mode: %s\n", formatResolvedField(rl.FastMode))
 	}
 	// Echoed only when something actually pinned it, so a default-off launch
 	// prints exactly the three lines it printed before this field existed.

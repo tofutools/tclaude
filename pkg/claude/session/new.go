@@ -239,6 +239,10 @@ type NewParams struct {
 	// the observed context_window_size snapshot.
 	ContextWindowMax int64 `long:"context-window-max" optional:"true" help:"Configured Copilot context cap in tokens for the context meter. Unset uses the observed model's static assumption. Copilot only; not a harness-reported value"`
 
+	// FastMode selects Codex's request service tier for this launch. "inherit"
+	// deliberately emits no override, preserving the operator's config.toml.
+	FastMode string `long:"fast-mode" optional:"true" help:"Codex request speed: inherit (use config.toml) | on (fast, higher credit cost) | off (standard tier). Codex only"`
+
 	// CopilotAPI selects the API-backed Copilot mode. Recorded as launch intent
 	// here; the runtime that acts on it is separate work (TCL-1056), so today
 	// this flag decides which mode the conversation is pinned to and, with
@@ -875,6 +879,11 @@ func runNew(params *NewParams) error {
 		return err
 	}
 	params.ContextWindowMax = contextWindowMax
+	fastMode, err := harness.ResolveFastModeFlag(h, params.FastMode)
+	if err != nil {
+		return err
+	}
+	params.FastMode = fastMode
 	// Opt-in only on this surface: the flag's absence leaves the posture false,
 	// so a launch that never asked for it keeps the send-keys path exactly as it
 	// was. A request for a harness with no API-backed mode is refused here.
@@ -1891,6 +1900,7 @@ func runNew(params *NewParams) error {
 		PermissionProfile:           launchPermissionProfile,
 		ApprovalPolicy:              approvalPolicy,
 		AutoReview:                  autoReview,
+		FastMode:                    params.FastMode,
 		RemoteControl:               remoteControl,
 		CopilotAPIPort:              params.CopilotAPIPort,
 		InitialPrompt:               params.InitialPrompt,
@@ -2222,6 +2232,7 @@ func runNew(params *NewParams) error {
 		AutoCompactWindow: autoCompactWindow,
 		ContextWindowMax:  params.ContextWindowMax,
 		CopilotAPI:        params.CopilotAPI,
+		FastMode:          params.FastMode,
 		RemoteControl:     remoteControl,
 	})
 	// Claude reports its live model and effort through the statusline hook.

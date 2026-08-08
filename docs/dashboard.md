@@ -993,6 +993,11 @@ context, dialog toggles, owner default, and per-slug permission
 overrides. It deliberately does **not** carry a working directory or worktree:
 those stay per-spawn.
 
+When Codex is selected, the spawn dialog and profile editor show a three-state
+**Fast mode** selector. **Harness default** leaves the global Codex config in
+charge; **On** selects the faster, higher-credit-cost service tier for that
+agent; **Off** forces the standard tier even if fast mode is globally enabled.
+
 **Profile context** is durable guidance for the kind of agent the profile
 launches—for example, model-specific working preferences. It is injected as
 its own startup-briefing section, alongside (and independently from) the
