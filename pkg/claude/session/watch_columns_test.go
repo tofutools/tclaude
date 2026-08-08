@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
 )
 
@@ -59,7 +60,11 @@ func TestSessionWatchColumns_SortKeysFollowVisibleColumns(t *testing.T) {
 	m.sort = table.SortState{}
 	m.colOverrides[sessionColProject] = false
 	require.True(t, m.sort.HandleSortKey(m.columns(), "f2"))
-	assert.Equal(t, "status", m.sort.Key, "hiding PROJECT shifts STATUS onto 2/F2")
+	assert.Equal(t, "title", m.sort.Key, "hiding PROJECT shifts TITLE/PROMPT onto 2/F2")
+
+	m.sort = table.SortState{}
+	require.True(t, m.sort.HandleSortKey(m.columns(), "f3"))
+	assert.Equal(t, "status", m.sort.Key, "hiding PROJECT shifts STATUS onto 3/F3")
 }
 
 func TestSessionWatchColumns_HarnessSortIndicatorFits(t *testing.T) {
@@ -89,6 +94,37 @@ func TestSortSessionsByKey_Harness(t *testing.T) {
 	SortSessionsByKey(sessions, "harness", table.SortDesc)
 	assert.Equal(t, []string{"opencode", "codex", "legacy", "claude"}, sessionIDs(sessions),
 		"equal displayed harnesses retain their relative order")
+}
+
+func TestSortSessionsByKey_Title(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+
+	const (
+		firstConv   = "11111111-1111-1111-1111-111111111111"
+		secondConv  = "22222222-2222-2222-2222-222222222222"
+		pendingConv = "33333333-3333-3333-3333-333333333333"
+	)
+	for _, row := range []*db.ConvIndexRow{
+		{ConvID: firstConv, CustomTitle: "Zebra", FirstPrompt: "first", ProjectPath: "/repo"},
+		{ConvID: secondConv, CustomTitle: "Alpha", FirstPrompt: "second", ProjectPath: "/repo"},
+	} {
+		require.NoError(t, db.UpsertConvIndex(row))
+	}
+
+	sessions := []*SessionState{
+		{ID: "first", ConvID: firstConv, Cwd: "/repo"},
+		{ID: "pending", ConvID: pendingConv, Cwd: "/repo"},
+		{ID: "second", ConvID: secondConv, Cwd: "/repo"},
+	}
+	pendingNames := map[string]string{pendingConv: "Middle"}
+
+	sortSessionsByKey(sessions, "title", table.SortAsc, pendingNames)
+	assert.Equal(t, []string{"second", "pending", "first"}, sessionIDs(sessions))
+
+	sortSessionsByKey(sessions, "title", table.SortDesc, pendingNames)
+	assert.Equal(t, []string{"first", "pending", "second"}, sessionIDs(sessions))
 }
 
 func sessionIDs(sessions []*SessionState) []string {
