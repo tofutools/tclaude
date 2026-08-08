@@ -228,11 +228,6 @@ type fakeCopilotServer struct {
 	// letting a test drive the "the channel is there and the call failed"
 	// case, which is the one where a fallback to keystrokes would be tempting.
 	failures map[string]string
-	// results overrides the raw result JSON for a method. Needed because
-	// Copilot reports some refusals IN BAND — a successful JSON-RPC response
-	// carrying success:false — which an error-shaped stub cannot reproduce and
-	// which is exactly the shape that reads as success to a careless caller.
-	results map[string]string
 }
 
 // fakeCopilotCall is one request the fake server answered.
@@ -299,7 +294,6 @@ func (s *fakeCopilotServer) serve(conn net.Conn) {
 		s.mu.Lock()
 		s.calls = append(s.calls, fakeCopilotCall{Method: request.Method, Params: request.Params})
 		failure, failed := s.failures[request.Method]
-		override, overridden := s.results[request.Method]
 		s.mu.Unlock()
 
 		envelope := map[string]any{"jsonrpc": "2.0", "id": request.ID}
@@ -308,8 +302,6 @@ func (s *fakeCopilotServer) serve(conn net.Conn) {
 			envelope["error"] = map[string]any{
 				"code": copilotapi.CodeInternalError, "message": failure,
 			}
-		case overridden:
-			envelope["result"] = json.RawMessage(override)
 		case request.Method == copilotapi.MethodConnect:
 			envelope["result"] = json.RawMessage(fmt.Sprintf(
 				`{"ok":true,"protocolVersion":%d,"version":"1.0.78"}`,
@@ -318,8 +310,11 @@ func (s *fakeCopilotServer) serve(conn net.Conn) {
 			envelope["result"] = json.RawMessage(`{"messageId":"msg-1"}`)
 		case request.Method == copilotapi.MethodSessionCompact:
 			// A REALISTIC success, not `{}`. The bare object decodes to
-			// success:false, so a default of `{}` would have let a test certify
-			// a compaction the server declined — which is worse than no test.
+			// success:false, and Compact now treats that as the in-band refusal
+			// it is — so a default of `{}` would have made every compaction test
+			// exercise the failure path while reading as the success one. The
+			// refusal itself is pinned where the conversion lives, in
+			// copilotapi's own tests.
 			envelope["result"] = json.RawMessage(
 				`{"success":true,"tokensRemoved":-213,"messagesRemoved":5}`)
 		default:
@@ -363,16 +358,6 @@ func (s *fakeCopilotServer) failMethod(method, message string) {
 	s.failures[method] = message
 }
 
-// resultFor makes the server answer method with raw result JSON — including an
-// in-band refusal, which is not expressible as an error.
-func (s *fakeCopilotServer) resultFor(method, raw string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.results == nil {
-		s.results = map[string]string{}
-	}
-	s.results[method] = raw
-}
 
 func readFull(reader *bufio.Reader, buf []byte) (int, error) {
 	read := 0
