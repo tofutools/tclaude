@@ -228,6 +228,12 @@ type fakeCopilotServer struct {
 	// letting a test drive the "the channel is there and the call failed"
 	// case, which is the one where a fallback to keystrokes would be tempting.
 	failures map[string]string
+	// results answers named methods with a canned payload. A method with no
+	// entry still gets an empty object, which is what the registry tests need
+	// and what a consumer decoding only fields it uses tolerates.
+	results map[string]string
+	// writeMu serialises frame writes across the serve loop and push.
+	writeMu sync.Mutex
 }
 
 // fakeCopilotCall is one request the fake server answered.
@@ -247,6 +253,52 @@ func newFakeCopilotServer(t *testing.T) *fakeCopilotServer {
 }
 
 func (s *fakeCopilotServer) port() int { return s.listener.Addr().(*net.TCPAddr).Port }
+
+// answer sets the raw JSON result for a method.
+func (s *fakeCopilotServer) answer(method, result string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.results == nil {
+		s.results = map[string]string{}
+	}
+	s.results[method] = result
+}
+
+// callCount reports how many times a method has been asked for.
+func (s *fakeCopilotServer) callCount(method string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	count := 0
+	for _, call := range s.calls {
+		if call.Method == method {
+			count++
+		}
+	}
+	return count
+}
+
+// push sends a notification to every connected client, standing in for the
+// server's own event stream.
+func (s *fakeCopilotServer) push(method, params string) {
+	body, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0", "method": method, "params": json.RawMessage(params),
+	})
+	s.mu.Lock()
+	conns := append([]net.Conn(nil), s.conns...)
+	s.mu.Unlock()
+	for _, conn := range conns {
+		s.writeFrame(conn, body)
+	}
+}
+
+// writeFrame serialises writes to one connection. The serve loop and push both
+// write frames, from different goroutines, and two interleaved writes would
+// corrupt the stream rather than merely reorder it.
+func (s *fakeCopilotServer) writeFrame(conn net.Conn, body []byte) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	_, _ = fmt.Fprintf(conn, "Content-Length: %d\r\n\r\n%s", len(body), body)
+}
 
 func (s *fakeCopilotServer) accept() {
 	for {
@@ -294,6 +346,7 @@ func (s *fakeCopilotServer) serve(conn net.Conn) {
 		s.mu.Lock()
 		s.calls = append(s.calls, fakeCopilotCall{Method: request.Method, Params: request.Params})
 		failure, failed := s.failures[request.Method]
+		canned, cannedOK := s.results[request.Method]
 		s.mu.Unlock()
 
 		envelope := map[string]any{"jsonrpc": "2.0", "id": request.ID}
@@ -306,6 +359,11 @@ func (s *fakeCopilotServer) serve(conn net.Conn) {
 			envelope["result"] = json.RawMessage(fmt.Sprintf(
 				`{"ok":true,"protocolVersion":%d,"version":"1.0.78"}`,
 				copilotapi.SupportedProtocolVersion))
+		case cannedOK:
+			// After the handshake and an explicit failure, so a test can canned
+			// a method the switch below also has a default for, but cannot
+			// accidentally break the connect the client needs to exist at all.
+			envelope["result"] = json.RawMessage(canned)
 		case request.Method == copilotapi.MethodSessionSend:
 			envelope["result"] = json.RawMessage(`{"messageId":"msg-1"}`)
 		case request.Method == copilotapi.MethodSessionCompact:
@@ -321,7 +379,7 @@ func (s *fakeCopilotServer) serve(conn net.Conn) {
 			envelope["result"] = json.RawMessage(`{}`)
 		}
 		body, _ := json.Marshal(envelope)
-		_, _ = fmt.Fprintf(conn, "Content-Length: %d\r\n\r\n%s", len(body), body)
+		s.writeFrame(conn, body)
 	}
 }
 
@@ -357,7 +415,6 @@ func (s *fakeCopilotServer) failMethod(method, message string) {
 	}
 	s.failures[method] = message
 }
-
 
 func readFull(reader *bufio.Reader, buf []byte) (int, error) {
 	read := 0

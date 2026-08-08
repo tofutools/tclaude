@@ -1544,6 +1544,59 @@ func UpdateContextSnapshotAndModelEffortForGeneration(
 	return true, nil
 }
 
+// UpdateModelEffortForGeneration persists just the observed model and effort,
+// leaving the context meter's own columns untouched.
+//
+// It exists for the case where the two halves of the pair above have DIFFERENT
+// owners: a Copilot agent driven over the API has its occupancy and window
+// written by the API state consumer, which reads them from Copilot itself,
+// while the model and effort still come from the usage sweep's read of
+// Copilot's store. Expressing that with the combined statement would mean the
+// sweep re-writing four columns it no longer owns with values it had read
+// moments earlier — a read-modify-write that silently reverts whatever the
+// other writer did in between. Not naming those columns at all removes the
+// window rather than narrowing it.
+//
+// Empty effort is meaningful for the same reason it is above: Copilot reports
+// null for models without reasoning support, and that must clear a value
+// observed on the preceding call.
+func UpdateModelEffortForGeneration(
+	sessionID, convID string,
+	createdAt time.Time,
+	model, effort string,
+) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.Exec(`UPDATE sessions
+		SET model = ?, effort_level = ?
+		WHERE id = ? AND conv_id = ? AND created_at = ?`,
+		model, effort, sessionID, convID, dbTime(createdAt))
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if affected == 0 {
+		return false, nil
+	}
+	if err := projectSessionRelaunchProfilesTx(tx, sessionID, relaunchProjectionOptions{}); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // UpdateContextSnapshotIfWindowUnchanged is the token-only fast path for a
 // caller that has already successfully projected this session generation and
 // context window. It intentionally does not touch durable relaunch profiles.

@@ -830,6 +830,7 @@ func runServe(p *serveParams) error {
 	stopCodexContextRefreshes()
 	stopCopilotContextRefreshes()
 	stopCopilotUsagePoller()
+	stopCopilotAPIStateConsumers()
 	if err := preserveDashboardSessionForRestart(); err != nil {
 		// The live daemon remains secure; the only loss is that browsers will
 		// need to sign in again after this restart.

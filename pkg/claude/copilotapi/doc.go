@@ -104,6 +104,36 @@
 // and Copilot extends it freely, so decoding only the types a consumer
 // handles keeps unknown ones from becoming errors.
 //
+// # State: read it, do not accumulate it
+//
+// The event stream is the right way to learn that something HAPPENED and the
+// wrong way to learn what is TRUE. Every question a consumer of this package
+// is likely to ask has a point-in-time read that answers it outright:
+//
+//   - "is the agent busy" — [Client.IsProcessing], [Client.Activity]
+//   - "is a human being waited on" — [Client.PendingPermissionRequests]
+//   - "how full is the context window" — [Client.ContextInfo]
+//   - "what has this session spent" — [Client.UsageMetrics]
+//
+// So the shape that works is: an event marks the session dirty, and a read
+// establishes what is true. Nothing displayed is ever derived from an event.
+//
+// That is not a stylistic preference, because the alternative does not survive
+// a reconnect. `session.idle` and `assistant.idle` are both EPHEMERAL, so they
+// never reach the persisted log and `session.eventLog.read` cannot replay them;
+// a consumer that had accumulated state from the stream would resume with a gap
+// it has no way to close. A consumer that reads instead has nothing to catch up
+// on: its first act on any connection, new or reconnected, is the same read it
+// always does.
+//
+// `session.eventLog.tail` and `session.eventLog.read` do exist, and are not
+// what their names suggest: `tail` returns ONLY a cursor and no events, while
+// `read` pages from a cursor with `direction`, `includeEphemeral` and
+// `agentScope` filters (`agentScope: "primary"` being a server-side answer to
+// the sub-agent question). They are the right tools for replaying a
+// TRANSCRIPT. They are the wrong tool for answering "what is true now", and
+// this package deliberately models neither.
+//
 // Reading usage back has two traps worth repeating from the type docs.
 // [UsageMetrics.ModelMetrics] nests token counts under
 // [ModelMetric.Usage] and request counts under [ModelMetric.Requests]; a
@@ -111,6 +141,19 @@
 // for everything. And [Client.ContextInfo] legitimately returns nil before a
 // session's first turn completes, which is a normal state rather than a
 // failure.
+//
+// Two more that live on [ContextInfo] itself. Its ModelName is NOT the model
+// the turn ran on: under auto mode it was measured reporting
+// `claude-sonnet-4.5` across two consecutive turns that both ran on
+// `gpt-5-mini`, while [UsageMetrics.CurrentModel] and the
+// `session.auto_mode_resolved` event's `chosenModel` both named the real one.
+// Read the model from usage; usage misattributed to a plausible model looks
+// entirely healthy. And its parts are not all additive —
+// [ContextInfo.MCPToolsTokens] is a SUBSET of
+// [ContextInfo.ToolDefinitionTokens] — so the identity that holds is
+// system + conversation + toolDefinitions = total, verified against a live
+// payload with a non-zero MCP figure (6911 + 144 + 9320 = 16375, with
+// mcpToolsTokens 1238 already inside the 9320).
 //
 // # Running a server to talk to
 //

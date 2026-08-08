@@ -264,6 +264,21 @@ func persistCopilotContextSnapshot(
 	// cap, else the observed model's static assumption, else the disclosed
 	// window), so the sweep and this refresh converge rather than flapping the
 	// row between two answers on alternating polls.
+	// PRECEDENCE, above everything below: the API state consumer. When an
+	// API-driven agent has a live reading, it is the sole writer of these
+	// columns — it reads the occupancy and the real token limit from Copilot,
+	// which is strictly more than either source here can know — so this refresh
+	// contributes nothing and must not write.
+	//
+	// Returning rather than merging, deliberately. Everything after this point
+	// exists to reconcile two weaker sources; adding a third to that
+	// reconciliation is how two writers end up disagreeing on alternating
+	// polls, which is exactly the TCL-1048 follow-up bug the precedence note
+	// below was written for.
+	if _, apiOwned := lookupCopilotAPIState(sess.ConvID); apiOwned {
+		return
+	}
+
 	live, hasLive := lookupCopilotLiveUsage(sess.ID, sess.ConvID, sess.CreatedAt)
 
 	if snap.Usage != nil {

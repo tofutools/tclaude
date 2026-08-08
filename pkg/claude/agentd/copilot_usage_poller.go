@@ -807,6 +807,32 @@ func persistCopilotUsageContext(sess *db.SessionRow, snapshot db.CopilotUsageSna
 			"session_id", sess.ID, "error", err, "module", "agentd")
 		return
 	}
+	// STAND DOWN on the context columns when the API state consumer has a live
+	// reading for this conversation. It reads the occupancy and the window from
+	// Copilot itself, where this sweep infers the first from the newest call's
+	// prompt and the second from a static per-model table.
+	//
+	// sessions.model and sessions.effort_level are still this sweep's to own on
+	// both drives — the API reading has no source for effort at all — so the
+	// write becomes the narrow one that names only those two columns. Passing
+	// the stored context values to the combined statement instead would look
+	// equivalent and is not: those values were read moments earlier, so
+	// re-writing them would silently revert whatever the API consumer wrote in
+	// between. Not naming the columns removes that window rather than narrowing
+	// it.
+	if _, owned := lookupCopilotAPIState(sess.ConvID); owned {
+		if snapshot.Model == stored.Model && snapshot.ReasoningEffort == stored.EffortLevel {
+			return
+		}
+		if _, err := db.UpdateModelEffortForGeneration(
+			sess.ID, sess.ConvID, sess.CreatedAt, snapshot.Model, snapshot.ReasoningEffort,
+		); err != nil {
+			slog.Warn("copilot-usage: failed to persist model and effort",
+				"session_id", sess.ID, "error", err, "module", "agentd")
+		}
+		return
+	}
+
 	window := copilotEffectiveContextWindow(sess.ConvID, snapshot.Model, stored.ContextWindowSize)
 	pct := copilotContextPct(snapshot.LastCallInputTokens, window)
 

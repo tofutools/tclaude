@@ -471,6 +471,12 @@ func runCopilotAPIBootstrap(convID string, copilotAPI bool, initialPrompt string
 			return
 		}
 		copilotAPISessions.Adopt(handle)
+		// The event consumer starts with the handle and dies with it. Started
+		// here rather than inside the bootstrap because the bootstrap's job
+		// ends at "the channel is open": a consumer attached to a handle that
+		// was never adopted would be reading for a conversation the registry
+		// says is not connected.
+		startCopilotAPIStateConsumer(handle)
 		slog.Info("Copilot API session established",
 			"conv_id", convID, "session_id", handle.SessionID, "port", handle.Port)
 	}()

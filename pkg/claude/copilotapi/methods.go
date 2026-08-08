@@ -21,6 +21,14 @@ const (
 	MethodSessionCompact     = "session.history.compact"
 	MethodSessionContextInfo = "session.metadata.contextInfo"
 	MethodSessionUsage       = "session.usage.getMetrics"
+
+	// The point-in-time state reads. Between them these answer every question
+	// a consumer would otherwise be tempted to reconstruct by accumulating
+	// events, which is why they are modelled together — see the "state" section
+	// of the package docs.
+	MethodSessionIsProcessing = "session.metadata.isProcessing"
+	MethodSessionActivity     = "session.metadata.activity"
+	MethodSessionPermissions  = "session.permissions.pendingRequests"
 )
 
 // NewSessionID returns a fresh session identifier. Copilot lets the client
@@ -183,4 +191,64 @@ func (c *Client) UsageMetrics(ctx context.Context, sessionID string) (UsageMetri
 	var metrics UsageMetrics
 	err := c.Call(ctx, MethodSessionUsage, map[string]string{"sessionId": sessionID}, &metrics)
 	return metrics, err
+}
+
+// IsProcessing reports whether the session is running a turn or a background
+// continuation right now.
+//
+// This is the authoritative answer to "is the agent busy", and it exists here
+// because the obvious alternative is wrong in a way that is hard to see. The
+// `session.idle` and `assistant.idle` events are both EPHEMERAL — verified
+// against a live 1.0.78 server — so they are absent from the persisted event
+// log and cannot be replayed after a reconnect. A consumer that inferred
+// idleness from the durable log would have to read it off `assistant.turn_end`,
+// which also fires mid-loop: one tool-using turn was measured producing three
+// turn_start/turn_end pairs and exactly one `session.idle`. This call answers
+// the question directly and at any moment, including on a connection that has
+// just been established.
+func (c *Client) IsProcessing(ctx context.Context, sessionID string) (bool, error) {
+	var result IsProcessingResult
+	if err := c.Call(ctx, MethodSessionIsProcessing,
+		map[string]string{"sessionId": sessionID}, &result); err != nil {
+		return false, err
+	}
+	return result.Processing, nil
+}
+
+// Activity reports the session's current activity flags.
+//
+// HasActiveWork was measured to track [Client.IsProcessing] exactly across a
+// turn; Abortable is the additional fact, and it is the one a caller needs
+// before deciding whether an interrupt has anything to interrupt.
+func (c *Client) Activity(ctx context.Context, sessionID string) (SessionActivity, error) {
+	var activity SessionActivity
+	err := c.Call(ctx, MethodSessionActivity, map[string]string{"sessionId": sessionID}, &activity)
+	return activity, err
+}
+
+// PendingPermissionRequests returns the permission prompts that are waiting for
+// a human decision.
+//
+// The server reconstructs these from the session's event history rather than
+// from a client's own bookkeeping, so a client that attached late — or
+// reconnected — sees prompts raised before it was listening. That is what makes
+// "a human must answer this" answerable without tracking
+// `permission.requested`/`permission.completed` pairs across a connection that
+// may have dropped between them.
+//
+// Measured: under `--allow-all-tools` this stays empty and no permission event
+// is emitted at all, so a consumer mapping it to a waiting-for-human state
+// cannot mislabel an unattended agent. Without that flag, a blocked tool call
+// appears here and the session stays processing indefinitely with no `Stop`
+// hook, which is precisely the state that is otherwise indistinguishable from
+// ordinary work.
+func (c *Client) PendingPermissionRequests(
+	ctx context.Context, sessionID string,
+) ([]PendingPermissionRequest, error) {
+	var result PendingPermissionRequestList
+	if err := c.Call(ctx, MethodSessionPermissions,
+		map[string]string{"sessionId": sessionID}, &result); err != nil {
+		return nil, err
+	}
+	return result.Items, nil
 }
