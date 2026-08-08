@@ -4521,6 +4521,35 @@ type spawnOutcome struct {
 	// focusSpawn closure; a deferred OpenCode response preserves the explicit
 	// browser intent before that closure can run.
 	FocusMode string
+	// Notes are per-agent launch disclosures for callers that do NOT render the
+	// resolved-field echo handleGroupSpawn builds. Today that is the template
+	// deploy path, which resolves the group/global default tiers inside
+	// executeSpawn and had no way to report what they decided.
+	//
+	// Narrow on purpose: this carries the Copilot drive only, because a silent
+	// acquisition of the unverified API drive is the case that cannot wait. The
+	// template result is missing provenance for EVERY field, which is TCL-1097 —
+	// and this stopgap should be SUBSUMED by that general channel rather than
+	// left sitting beside it.
+	Notes []string
+}
+
+// copilotDriveDisclosure reports the launch's Copilot drive when something other
+// than the caller chose it, naming the tier that did.
+//
+// It reads the SAME resolved source that relaunchProfileForSpawn freezes into
+// the durable record, rather than re-deriving the fact at the response-building
+// site. Two independent computations of one fact is how a disclosure goes
+// quietly stale while continuing to render.
+//
+// Only an acquisition is disclosed. A launch that stays on send-keys has nothing
+// to warn about: send-keys is the known-good path, and a note on every ordinary
+// spawn would train the operator to skip the one that matters.
+func copilotDriveDisclosure(p spawnParams) []string {
+	if !p.CopilotAPI || p.CopilotAPISource == agent.ProvExplicit || p.CopilotAPISource == "" {
+		return nil
+	}
+	return []string{fmt.Sprintf("copilot_api: api (%s)", p.CopilotAPISource)}
 }
 
 // spawnFailure is a typed failure from executeSpawn. The HTTP handler
@@ -5235,7 +5264,16 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 // — only log on failure); on
 // an Async PENDING success the outcome carries an empty conv-id and the agent
 // is enrolled later by the sweeper.
-func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure) {
+func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failure *spawnFailure) {
+	// Stamped here, once, rather than at each of the six spawnOutcome literals
+	// below: a disclosure that has to be repeated at every return is a disclosure
+	// that will be missing from the seventh, and missing silently. p is read at
+	// defer time, so this sees the value applyDefaultProfile resolved.
+	defer func() {
+		if outcome != nil {
+			outcome.Notes = append(outcome.Notes, copilotDriveDisclosure(p)...)
+		}
+	}()
 	groupName := spawnGroupName(g)
 	privateAttachmentCleanup := func() {}
 	if p.privateAttachmentRootCleanup != nil {

@@ -260,6 +260,10 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			wr.Results = append(wr.Results, res)
 			continue
 		}
+		// Launch disclosures resolved INSIDE the spawn — the group/global default
+		// tiers are applied there, so anything they decided is unknown to the
+		// template-tier notes appended above.
+		res.Notes = append(res.Notes, outcome.Notes...)
 		res.ConvID = outcome.ConvID
 		wr.Spawned++
 		wr.SpawnedConvs[a.Name] = outcome.ConvID
