@@ -649,8 +649,38 @@ type instantiateAgentResult struct {
 	Owner        bool     `json:"owner"`
 	OwnerDropped bool     `json:"owner_dropped"`
 	Granted      []string `json:"granted"`
-	ErrorKind    string   `json:"error_kind"`
-	Error        string   `json:"error"`
+	// Resolved is the member's launch shape with per-field provenance. Absent on
+	// a response from a daemon that predates it.
+	//
+	// Declaring it is not optional busywork: the daemon has returned per-agent
+	// launch disclosures since TCL-1090 and this struct never declared the field,
+	// so the JSON decoder dropped them and no human running a deploy ever saw one
+	// (TCL-1097). A disclosure the CLI does not declare is a disclosure that does
+	// not exist.
+	Resolved  *ResolvedLaunch `json:"resolved"`
+	ErrorKind string          `json:"error_kind"`
+	Error     string          `json:"error"`
+}
+
+// printAgentLaunchProvenance prints, indented under one deployed agent's line,
+// the launch values a tier NOBODY TYPED at this deploy decided, plus the
+// disclosures its resolution produced.
+//
+// Deliberately not the full seven-field echo `tclaude agent spawn` prints: that
+// reads well for one agent and buries the signal for a roster of six. What is
+// left in is what an operator has to be able to see without asking — a member
+// whose harness, model, containment or Copilot drive was chosen by a profile
+// rather than by them.
+func printAgentLaunchProvenance(w io.Writer, resolved *ResolvedLaunch) {
+	if resolved == nil {
+		return
+	}
+	for _, decision := range resolved.AmbientDecisions() {
+		fmt.Fprintf(w, "      %s\n", decision)
+	}
+	for _, note := range resolved.Notes {
+		fmt.Fprintf(w, "      note: %s\n", note)
+	}
 }
 
 type instantiateResponse struct {
@@ -752,6 +782,9 @@ func runTemplatesInstantiate(p *templatesInstantiateParams, stdin io.Reader, std
 	for _, a := range resp.Agents {
 		if a.Error != "" {
 			fmt.Fprintf(stdout, "  ✗ %-24s  %s\n", a.FinalName, a.Error)
+			// Printed for a FAILURE too: a launch that was refused because a
+			// profile tier's value is invalid here is explained by that tier.
+			printAgentLaunchProvenance(stdout, a.Resolved)
 			continue
 		}
 		tags := []string{"conv " + short(a.ConvID)}
@@ -762,6 +795,7 @@ func runTemplatesInstantiate(p *templatesInstantiateParams, stdin io.Reader, std
 			tags = append(tags, "granted: "+strings.Join(a.Granted, ","))
 		}
 		fmt.Fprintf(stdout, "  ✓ %-24s  %s\n", a.FinalName, strings.Join(tags, "  "))
+		printAgentLaunchProvenance(stdout, a.Resolved)
 	}
 	if resp.PatternDelivered > 0 {
 		fmt.Fprintf(stdout, "  work pattern: %d message%s delivered\n",
@@ -856,6 +890,9 @@ func runTemplatesReinforce(p *templatesReinforceParams, stdin io.Reader, stdout,
 	for _, a := range resp.Agents {
 		if a.Error != "" {
 			fmt.Fprintf(stdout, "  ✗ %-24s  %s\n", a.FinalName, a.Error)
+			// Printed for a FAILURE too: a launch that was refused because a
+			// profile tier's value is invalid here is explained by that tier.
+			printAgentLaunchProvenance(stdout, a.Resolved)
 			continue
 		}
 		tags := []string{"conv " + short(a.ConvID)}
@@ -866,6 +903,7 @@ func runTemplatesReinforce(p *templatesReinforceParams, stdin io.Reader, stdout,
 			tags = append(tags, "granted: "+strings.Join(a.Granted, ","))
 		}
 		fmt.Fprintf(stdout, "  ✓ %-24s  %s\n", a.FinalName, strings.Join(tags, "  "))
+		printAgentLaunchProvenance(stdout, a.Resolved)
 	}
 	if note := strings.TrimSpace(resp.OwnerNote); note != "" {
 		fmt.Fprintf(stdout, "  note: %s\n", note)
