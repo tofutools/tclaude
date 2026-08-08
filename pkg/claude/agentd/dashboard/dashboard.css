@@ -5189,6 +5189,19 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   padding: 7px 10px; margin-bottom: 8px;
 }
 .perm-edit-owner-note code { color: #f0c674; }
+/* Owner-bypass narrowing (TCL-1071): a small JSON document, so it reuses the
+   owner-note palette rather than inventing a control style of its own. */
+.perm-edit-owner-scopes { margin: 8px 0 4px; }
+.perm-edit-owner-scopes label {
+  display: block; font-size: 11px; color: #e3b341; line-height: 1.4; margin-bottom: 5px;
+}
+.perm-edit-owner-scopes code { color: #f0c674; }
+.perm-edit-owner-scopes textarea {
+  width: 100%; box-sizing: border-box; resize: vertical;
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
+  color: #c9d1d9; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px; line-height: 1.5; padding: 6px 8px;
+}
 .perm-tristate {
   flex: 0 0 auto; display: inline-flex;
   border: 1px solid #2a3340; border-radius: 4px; overflow: hidden;

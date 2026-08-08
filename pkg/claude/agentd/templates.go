@@ -157,9 +157,16 @@ type templateJSON struct {
 	// WaveMaxWait caps (seconds) how long each staged-spawn wave waits for the
 	// prior wave to go idle before the next spawns anyway (JOH-244). 0 =
 	// built-in default.
-	WaveMaxWait int    `json:"wave_max_wait,omitempty"`
-	CreatedAt   string `json:"created_at,omitempty"`
-	UpdatedAt   string `json:"updated_at,omitempty"`
+	WaveMaxWait int `json:"wave_max_wait,omitempty"`
+	// OwnerScopes is the owner-scope map (TCL-1071) stamped onto the group
+	// this template instantiates: slug → the scope that slug's owner-implied
+	// bypass is confined to there. Empty/absent = the unrestricted bypass. It
+	// lets a blueprint declare "a lead of a force deployed from me may spawn
+	// only with the reviewer profile" once, instead of it being re-applied by
+	// hand after every deploy.
+	OwnerScopes map[string]PermissionScope `json:"owner_scopes,omitempty"`
+	CreatedAt   string                     `json:"created_at,omitempty"`
+	UpdatedAt   string                     `json:"updated_at,omitempty"`
 }
 
 // templateToJSON projects a db.GroupTemplate onto the wire shape, with
@@ -175,6 +182,7 @@ func templateToJSON(t *db.GroupTemplate) templateJSON {
 		Process:           []processPhaseJSON{},
 		Rhythms:           []rhythmJSON{},
 		WaveMaxWait:       t.WaveMaxWait,
+		OwnerScopes:       ownerScopesWireOmitEmpty(t.OwnerScopesJSON),
 	}
 	for _, e := range t.WorkPattern {
 		out.WorkPattern = append(out.WorkPattern, workPatternEntryJSON{SendTo: e.SendTo, Value: e.Value})
@@ -542,6 +550,22 @@ func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure)
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg", "wave_max_wait must be >= 0 (seconds)"}
 	}
 	t.WaveMaxWait = body.WaveMaxWait
+
+	// Owner scopes (TCL-1071): validated through the SAME boundary the group
+	// PATCH endpoint uses, so a template can never persist a narrowing the
+	// gate would refuse to read — which would fail the deployed group's owner
+	// bypass closed for every slug, long after the author left the editor.
+	if len(body.OwnerScopes) > 0 {
+		raw, err := json.Marshal(body.OwnerScopes)
+		if err != nil {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_owner_scopes", err.Error()}
+		}
+		canonical, err := canonicalOwnerScopes(string(raw))
+		if err != nil {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_owner_scopes", err.Error()}
+		}
+		t.OwnerScopesJSON = canonical
+	}
 
 	// Rhythms (JOH-244): recurring nudges materialized as group cron jobs at
 	// deploy. Validated to the same rules the cron add path enforces (name
@@ -3074,10 +3098,21 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 				slog.Warn("instantiate: set deploy meta failed", "group", spec.groupName, "error", err)
 			}
 		}
+		// Owner scopes (TCL-1071): the narrowing the blueprint declares for
+		// the force it deploys. Best-effort like the writes above — but note
+		// the failure direction is SAFE only in the sense that the group comes
+		// up with the historical unrestricted bypass, which is why it is
+		// logged loudly rather than silently.
+		if tmpl.OwnerScopesJSON != "" {
+			if _, err := db.SetAgentGroupOwnerScopes(spec.groupName, tmpl.OwnerScopesJSON); err != nil {
+				slog.Warn("instantiate: set owner scopes failed — the deployed group keeps the "+
+					"unrestricted owner bypass", "group", spec.groupName, "error", err)
+			}
+		}
 
 		g = &db.AgentGroup{
 			ID: gid, Name: spec.groupName, Descr: spec.descr, DefaultCwd: spec.cwd, DefaultContext: groupContext,
-			Mission: spec.mission, SourceTemplate: spec.sourceTemplate,
+			Mission: spec.mission, SourceTemplate: spec.sourceTemplate, OwnerScopesJSON: tmpl.OwnerScopesJSON,
 		}
 
 		// Advisory process runtime (JOH-242): if the template carries a process,
@@ -4355,6 +4390,11 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 		Descr:          g.Descr,
 		DefaultContext: g.DefaultContext,
 		Agents:         []db.GroupTemplateAgent{},
+		// The group's owner-scope narrowing travels with the snapshot for the
+		// same reason a member's grant scopes do (see addAgent below): a
+		// template that dropped it would deploy forces whose owners hold
+		// strictly MORE authority than the group it was traced from.
+		OwnerScopesJSON: g.OwnerScopesJSON,
 	}
 	existingNames := map[string]bool{}
 	if existing != nil {

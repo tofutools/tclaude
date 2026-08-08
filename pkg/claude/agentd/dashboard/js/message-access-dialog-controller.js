@@ -39,8 +39,8 @@ export function openPermEditModal(conv, label = '') {
   return requireController().openAgentPermissions({ conv, label });
 }
 
-export function openGroupPermEditor(group, grants = []) {
-  return requireController().openGroupPermissions({ group, grants });
+export function openGroupPermEditor(group, grants = [], ownerScopes = {}) {
+  return requireController().openGroupPermissions({ group, grants, ownerScopes });
 }
 
 export function openSpawnPermEditor(options = {}) {

@@ -49,6 +49,14 @@ type AgentGroup struct {
 	// RouteGeneration advances on every membership mutation. Route records
 	// snapshot it so an offline roster change invalidates stale authority.
 	RouteGeneration int64
+	// OwnerScopesJSON narrows the STRUCTURAL owner-implied permission bypass
+	// for THIS group (TCL-1071): canonical JSON mapping a permission slug to
+	// the scope an owner's bypass is confined to, e.g.
+	// {"groups.spawn":{"spawn_profile":["p1"]}}. "" (the default) means the
+	// historical unrestricted bypass. It never touches an EXPLICIT grant the
+	// owner holds — those resolve first, under the ordinary precedence — only
+	// the gap-filling bypass that fires when nothing else decided.
+	OwnerScopesJSON string
 }
 
 // IsArchived reports whether the group has been soft-deleted via
@@ -1030,13 +1038,13 @@ func CreateAgentGroupFrom(name string, src AgentGroup) (int64, error) {
 			(name, descr, default_cwd, default_context, default_profile, default_profile_id,
 			 sandbox_profile, sandbox_profile_id, max_members, notify_enabled, remote_control,
 			 attachment_url, attachment_label, mission, source_template, source_template_id,
-			 parent_id, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 parent_id, created_at, owner_scopes_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		name, src.Descr, src.DefaultCwd, src.DefaultContext, src.DefaultProfile, defaultProfileID,
 		sandboxProfileName, sandboxProfileID, src.MaxMembers, src.NotifyEnabled, boolPtrToNull(src.RemoteControl),
 		src.AttachmentURL, src.AttachmentLabel, src.Mission, src.SourceTemplate, sourceTemplateID,
 		src.ParentGroupID,
-		dbTime(time.Now()))
+		dbTime(time.Now()), src.OwnerScopesJSON)
 	if err != nil {
 		return 0, err
 	}
@@ -1126,6 +1134,25 @@ func SetAgentGroupDefaultContext(name, context string) (int64, error) {
 		return 0, err
 	}
 	res, err := db.Exec(`UPDATE agent_groups SET default_context = ? WHERE name = ?`, context, name)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// SetAgentGroupOwnerScopes sets (or, with scopes == "", clears) the group's
+// owner-scope map — the narrowing applied to the structural owner-implied
+// permission bypass for THIS group. The value is stored verbatim; the caller
+// is responsible for validating and canonicalizing it (agentd does so at the
+// HTTP boundary, against the same registry that validates grant scopes).
+// Returns the number of rows affected — 0 means no group by that name, so the
+// caller can answer 404.
+func SetAgentGroupOwnerScopes(name, scopes string) (int64, error) {
+	db, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	res, err := db.Exec(`UPDATE agent_groups SET owner_scopes_json = ? WHERE name = ?`, scopes, name)
 	if err != nil {
 		return 0, err
 	}
@@ -1406,7 +1433,7 @@ const agentGroupSelect = `SELECT id, name, descr, default_cwd, default_context,
 	CASE WHEN source_template_id IS NULL THEN source_template
 	     ELSE COALESCE((SELECT name FROM group_templates WHERE id = source_template_id), source_template) END,
 	COALESCE(source_template_id, 0),
-	created_at, archived_at, parent_id, route_generation FROM agent_groups`
+	created_at, archived_at, parent_id, route_generation, owner_scopes_json FROM agent_groups`
 
 const agentGroupAliasedSelect = `SELECT g.id, g.name, g.descr, g.default_cwd, g.default_context,
 	CASE WHEN g.default_profile_id IS NULL THEN g.default_profile
@@ -1418,7 +1445,7 @@ const agentGroupAliasedSelect = `SELECT g.id, g.name, g.descr, g.default_cwd, g.
 	CASE WHEN g.source_template_id IS NULL THEN g.source_template
 	     ELSE COALESCE((SELECT name FROM group_templates WHERE id = g.source_template_id), g.source_template) END,
 	COALESCE(g.source_template_id, 0),
-	g.created_at, g.archived_at, g.parent_id, g.route_generation`
+	g.created_at, g.archived_at, g.parent_id, g.route_generation, g.owner_scopes_json`
 
 // GetAgentGroupByName returns the group with the given name, or nil if not
 // found.
@@ -2636,6 +2663,43 @@ func OwnerHasGroupContaining(ownerConv, targetConv string) (bool, error) {
 		LIMIT 1
 	)`, ownerConv, targetConv).Scan(&exists)
 	return exists != 0, err
+}
+
+// ListOwnedGroupIDsContaining returns the ids of the groups ownerConv owns
+// whose membership includes targetConv — the exact set OwnerHasGroupContaining
+// tests for existence, enumerated instead of collapsed to a boolean.
+//
+// The caller needs the identities because the owner-implied bypass is narrowed
+// PER GROUP (TCL-1071): "does some owned group contain the target" is no longer
+// the whole question, since each of those groups may confine the bypass
+// differently. Same stable-agent resolution on both ends as the boolean form.
+func ListOwnedGroupIDsContaining(ownerConv, targetConv string) ([]int64, error) {
+	if ownerConv == "" || targetConv == "" {
+		return nil, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT DISTINCT o.group_id
+		FROM agent_group_owners o
+		JOIN agent_group_members m ON m.group_id = o.group_id
+		WHERE o.agent_id = (SELECT agent_id FROM agent_conversations WHERE conv_id = ?)
+		  AND m.agent_id = (SELECT agent_id FROM agent_conversations WHERE conv_id = ?)`,
+		ownerConv, targetConv)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 // ListAgentGroupOwners returns every owner row for the given group,
@@ -4382,7 +4446,8 @@ func scanAgentGroup(s rowScanner) (*AgentGroup, error) {
 	if err := s.Scan(&g.ID, &g.Name, &g.Descr, &g.DefaultCwd, &g.DefaultContext,
 		&g.DefaultProfile, &g.SandboxProfile, &g.SandboxProfileID,
 		&g.MaxMembers, &g.NotifyEnabled, &remoteControl, &g.AttachmentURL, &g.AttachmentLabel, &g.Mission,
-		&g.SourceTemplate, &g.SourceTemplateID, &createdAt, &archivedAt, &parentID, &g.RouteGeneration); err != nil {
+		&g.SourceTemplate, &g.SourceTemplateID, &createdAt, &archivedAt, &parentID, &g.RouteGeneration,
+		&g.OwnerScopesJSON); err != nil {
 		return nil, err
 	}
 	g.RemoteControl = nullToBoolPtr(remoteControl)

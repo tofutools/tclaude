@@ -963,21 +963,14 @@ func writeEffectivePermissions(w http.ResponseWriter, r *http.Request, state per
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// ownerImpliedSlugsFor returns the owner-conferred slug set for convID —
+// ownerImpliedSlugsFor returns the owner-conferred tier for convID —
 // non-empty only when the conv owns at least one group. Ownership is a
 // structural bypass (PermSlug.OwnerImplied), so an owner effectively holds
-// these without an explicit grant. A DB error degrades to "not an owner":
-// owner perms go un-annotated rather than failing the whole listing.
-func ownerImpliedSlugsFor(convID string) []string {
-	owned, err := db.ListGroupsOwnedBy(convID)
-	if err != nil {
-		slog.Warn("permissions: owned-group lookup failed", "conv", convID, "error", err)
-		return nil
-	}
-	if len(owned) == 0 {
-		return nil
-	}
-	return OwnerImpliedSlugs()
+// these without an explicit grant, CONFINED by each owned group's own
+// owner-scope map (TCL-1071). A DB error degrades to "not an owner": owner
+// perms go un-annotated rather than failing the whole listing.
+func ownerImpliedSlugsFor(convID string) ownerImpliedTier {
+	return ownerImpliedTierFor(convID)
 }
 
 // ownedGroupNamesFor returns the names of the ACTIVE groups convID owns,
@@ -1002,20 +995,6 @@ func ownedGroupNamesFor(convID string) []string {
 	}
 	sort.Strings(names)
 	return names
-}
-
-// ownsAnyGroup reports whether convID owns at least one group. It backs the
-// owner bypasses that are NOT scoped to one group or one target member —
-// human.notify and process.runs.read — where owning anything at all marks
-// the caller as a coordinating role. A DB error degrades to "not an owner"
-// so the bypass fails closed onto the ordinary slug/popup path.
-func ownsAnyGroup(convID string) bool {
-	owned, err := db.ListGroupsOwnedBy(convID)
-	if err != nil {
-		slog.Warn("permissions: owned-group lookup failed", "conv", convID, "error", err)
-		return false
-	}
-	return len(owned) > 0
 }
 
 // effectivePermsFor answers "what would the gate decide for this agent",
@@ -1044,14 +1023,10 @@ func ownsAnyGroup(convID string) bool {
 // The returned label names the matched sources ("defaults",
 // "defaults+grants:<conv>", "+group", "+sudo", "+owner", with " −denies"
 // appended when any deny override applies).
-func effectivePermsFor(state permissionsState, convID string, ownerImplied []string) (effective, ownerAdded []string, provenance map[string]string, source string) {
+func effectivePermsFor(state permissionsState, convID string, ownerImplied ownerImpliedTier) (effective, ownerAdded []string, provenance map[string]string, source string) {
 	defaults := map[string]bool{}
 	for _, s := range state.Defaults {
 		defaults[s] = true
-	}
-	ownerSet := map[string]bool{}
-	for _, s := range ownerImplied {
-		ownerSet[s] = true
 	}
 	provenance = map[string]string{}
 	matched := map[permSource]bool{}
@@ -1072,14 +1047,15 @@ func effectivePermsFor(state permissionsState, convID string, ownerImplied []str
 			// The owner bypass fills exactly this gap — see
 			// requirePermissionEx, where it is consulted only for
 			// permUndecided so an explicit deny stays authoritative.
-			if ownerSet[slug] {
+			if entry, ok := ownerImplied[slug]; ok {
 				effective = append(effective, slug)
 				ownerAdded = append(ownerAdded, slug)
 				// Carry the SCOPE, not just "owner": a reader told only
 				// that ownership confers the slug will assume it reaches
 				// the whole fleet, when the gate confines most of these
-				// to owned groups or their members.
-				provenance[slug] = ownerProvenance(slug)
+				// to owned groups or their members — and, since TCL-1071,
+				// possibly to a narrowed slice of one owned group.
+				provenance[slug] = ownerProvenance(slug, entry)
 				matched[permSourceOwner] = true
 			}
 		case permDeny:
@@ -1110,11 +1086,18 @@ func effectivePermsFor(state permissionsState, convID string, ownerImplied []str
 // ("of: dev, qa" vs "members only" vs unscoped) without its own copy of
 // the registry. A slug with no registered scope degrades to plain
 // "owner", which older clients already render as "(via ownership)".
-func ownerProvenance(slug string) string {
+//
+// A per-group NARROWING (TCL-1071) is appended in the same bracketed form
+// grant scopes use — "owner:group [spawn_profile=p1]" — so the listing states
+// the reach the gate will actually allow instead of the unrestricted bypass
+// the bare source name implies. Unrestricted ownership renders exactly as
+// before, so no existing client output changes.
+func ownerProvenance(slug string, entry ownerTierEntry) string {
+	base := string(permSourceOwner)
 	if scope := OwnerScopeForSlug(slug); scope != "" {
-		return string(permSourceOwner) + ":" + scope
+		base += ":" + scope
 	}
-	return string(permSourceOwner)
+	return base + ownerScopeDisplay(entry)
 }
 
 // candidatePermissionSlugs enumerates every slug worth asking the
@@ -1122,7 +1105,7 @@ func ownerProvenance(slug string) string {
 // source mentions. The extra sources matter because the daemon stores
 // forward-compat slugs a given build's registry may not know yet, and a
 // slug that is genuinely in force must be listed even then.
-func candidatePermissionSlugs(state permissionsState, convID string, ownerImplied []string, src permSources) []string {
+func candidatePermissionSlugs(state permissionsState, convID string, ownerImplied ownerImpliedTier, src permSources) []string {
 	seen := map[string]bool{}
 	var out []string
 	add := func(slugs ...string) {
@@ -1141,7 +1124,7 @@ func candidatePermissionSlugs(state permissionsState, convID string, ownerImplie
 	for slug := range state.Overrides[convID] {
 		add(slug)
 	}
-	add(ownerImplied...)
+	add(ownerImplied.slugs()...)
 	// The agent's own sources, already read — these are what carry a slug
 	// this build's registry may not know.
 	for slug := range src.group {

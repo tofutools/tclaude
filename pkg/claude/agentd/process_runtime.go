@@ -781,7 +781,7 @@ func handleProcessRuns(w http.ResponseWriter, r *http.Request) {
 // only; every mutating run verb keeps its plain requirePermission gate on
 // process.runs.manage.
 func requireProcessRunReadPermission(w http.ResponseWriter, r *http.Request) (string, bool) {
-	return requirePermissionEx(w, r, PermProcessRunsRead, ownsAnyGroup)
+	return requirePermissionEx(w, r, PermProcessRunsRead, ownsAnyGroupPermitting)
 }
 
 func handleProcessRunList(w http.ResponseWriter, r *http.Request) {
