@@ -13,6 +13,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -511,7 +512,7 @@ type SpawnRequest struct {
 	// slug or bad effect is a 400. Like IsOwner it is gated to a human caller
 	// or an owner of the target group. Empty for a spawn that takes the
 	// group's default permissions.
-	PermissionOverrides map[string]string `json:"permission_overrides,omitempty"`
+	PermissionOverrides map[string]db.PermissionOverride `json:"permission_overrides,omitempty"`
 
 	// Presence bits preserve an explicit JSON false across profile overlays.
 	// They are populated by UnmarshalJSON and intentionally stay off the wire.
@@ -812,7 +813,7 @@ type resolvedSpawnFields struct {
 	AutoFocus  bool
 
 	IsOwner             bool
-	PermissionOverrides map[string]string
+	PermissionOverrides map[string]db.PermissionOverride
 	// Deliberately NO ContextFeatures here. The CLI does not fold a --profile's
 	// trims into the request: it sends its own map or nothing, and lets the
 	// daemon's tier stack resolve the named profile (the same reason

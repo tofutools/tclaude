@@ -171,10 +171,12 @@ func setSampleProfileField(t *testing.T, p *db.SpawnProfile, idx int) {
 		v := true
 		f.Set(reflect.ValueOf(&v))
 	case map[string]string:
-		// "off" is a real ContextFeatures value and, for PermissionOverrides, any
-		// effect other than a grant — which is the half of that map the merge
-		// carries forward.
+		// "off" is a real ContextFeatures value.
 		f.Set(reflect.ValueOf(map[string]string{"guard-sample": "off"}))
+	case map[string]db.PermissionOverride:
+		// Any effect other than a grant — that is the half of the override map
+		// mergeSnapshotInlineProfile carries forward.
+		f.Set(reflect.ValueOf(map[string]db.PermissionOverride{"guard-sample": db.Deny()}))
 	default:
 		t.Fatalf("db.SpawnProfile.%s is a %s, which this guard cannot populate: "+
 			"teach setSampleProfileField the new type so the field is actually covered",

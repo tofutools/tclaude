@@ -14,6 +14,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -274,19 +275,19 @@ func inlineProfileTag(raw json.RawMessage) string {
 		return ""
 	}
 	var p struct {
-		Harness             string            `json:"harness"`
-		Model               string            `json:"model"`
-		Effort              string            `json:"effort"`
-		Sandbox             string            `json:"sandbox"`
-		Approval            string            `json:"approval"`
-		Tools               string            `json:"tools"`
-		AskTimeout          string            `json:"ask_user_question_timeout"`
-		TrustDir            *bool             `json:"trust_dir"`
-		AutoReview          *bool             `json:"auto_review"`
-		RemoteControl       *bool             `json:"remote_control"`
-		AutoMemory          *bool             `json:"auto_memory"`
-		IsOwner             *bool             `json:"is_owner"`
-		PermissionOverrides map[string]string `json:"permission_overrides"`
+		Harness             string                           `json:"harness"`
+		Model               string                           `json:"model"`
+		Effort              string                           `json:"effort"`
+		Sandbox             string                           `json:"sandbox"`
+		Approval            string                           `json:"approval"`
+		Tools               string                           `json:"tools"`
+		AskTimeout          string                           `json:"ask_user_question_timeout"`
+		TrustDir            *bool                            `json:"trust_dir"`
+		AutoReview          *bool                            `json:"auto_review"`
+		RemoteControl       *bool                            `json:"remote_control"`
+		AutoMemory          *bool                            `json:"auto_memory"`
+		IsOwner             *bool                            `json:"is_owner"`
+		PermissionOverrides map[string]db.PermissionOverride `json:"permission_overrides"`
 	}
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return "custom-launch=(unparsable)"
@@ -317,7 +318,7 @@ func inlineProfileTag(raw json.RawMessage) string {
 	if len(p.PermissionOverrides) > 0 {
 		slugs := make([]string, 0, len(p.PermissionOverrides))
 		for s := range p.PermissionOverrides {
-			slugs = append(slugs, s+":"+p.PermissionOverrides[s])
+			slugs = append(slugs, s+":"+p.PermissionOverrides[s].Display())
 		}
 		sort.Strings(slugs)
 		parts = append(parts, "perms "+strings.Join(slugs, ","))

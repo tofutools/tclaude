@@ -12,6 +12,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -105,8 +106,8 @@ type profileJSON struct {
 	IncludeGroupDefaultContext *bool `json:"include_group_default_context,omitempty"`
 
 	// Birth-time access controls.
-	IsOwner             *bool             `json:"is_owner,omitempty"`
-	PermissionOverrides map[string]string `json:"permission_overrides,omitempty"`
+	IsOwner             *bool                            `json:"is_owner,omitempty"`
+	PermissionOverrides map[string]db.PermissionOverride `json:"permission_overrides,omitempty"`
 	// ContextFeatures is the profile's startup-context trim map (slug → "on" |
 	// "off"). Absent = the profile trims nothing. See harness/context_features.go.
 	ContextFeatures map[string]string `json:"context_features,omitempty"`
@@ -806,7 +807,7 @@ func printProfileHuman(w io.Writer, p profileJSON) {
 		sort.Strings(keys)
 		parts := make([]string, 0, len(keys))
 		for _, k := range keys {
-			parts = append(parts, k+"="+p.PermissionOverrides[k])
+			parts = append(parts, k+"="+p.PermissionOverrides[k].Display())
 		}
 		fmt.Fprintf(w, "  perms:   %s\n", strings.Join(parts, ", "))
 	}

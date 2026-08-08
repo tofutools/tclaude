@@ -197,10 +197,10 @@ func TestAgentPermissions_ApplyOverridesPreservesProvenanceAndClearsAtomically(t
 	require.NoError(t, SetAgentPermissionOverride(conv, "self.rename", PermEffectDeny, "<human>"))
 	require.NoError(t, SetAgentPermissionOverride(conv, "templates.manage", PermEffectGrant, "<scribe-summon>"))
 
-	require.NoError(t, ApplyAgentPermissionOverrides(conv, map[string]string{
+	require.NoError(t, ApplyAgentPermissionOverrides(conv, UnscopedOverrides(map[string]string{
 		"sandbox-profiles.draft": PermEffectGrant,
 		"human.notify":           PermEffectDeny,
-	}, "<scribe-summon>", true, true))
+	}), "<scribe-summon>", true, true))
 
 	overrides, err := ListAgentPermissionOverridesForConv(conv)
 	require.NoError(t, err)
@@ -218,7 +218,7 @@ func TestAgentPermissions_ApplyOverridesPreservesProvenanceAndClearsAtomically(t
 		WHERE a.current_conv_id = ? AND p.slug = ?`, conv, "self.rename").Scan(&grantedBy))
 	assert.Equal(t, "<human>", grantedBy, "same-effect apply must not relabel human provenance")
 
-	err = ApplyAgentPermissionOverrides(conv, map[string]string{"bad": "invalid"}, "<scribe-summon>", true, true)
+	err = ApplyAgentPermissionOverrides(conv, UnscopedOverrides(map[string]string{"bad": "invalid"}), "<scribe-summon>", true, true)
 	assert.Error(t, err)
 	overrides, err = ListAgentPermissionOverridesForConv(conv)
 	require.NoError(t, err)
@@ -260,7 +260,7 @@ func TestRetireAgentAuthorizationRejectsLateGrants(t *testing.T) {
 
 	err = GrantAgentPermission(conv, "groups.spawn", "late")
 	assert.ErrorContains(t, err, "is retired")
-	err = ApplyAgentPermissionOverrides(conv, map[string]string{"groups.spawn": PermEffectGrant}, "late", false, false)
+	err = ApplyAgentPermissionOverrides(conv, UnscopedOverrides(map[string]string{"groups.spawn": PermEffectGrant}), "late", false, false)
 	assert.ErrorContains(t, err, "is retired")
 	_, err = InsertSudoGrant(&SudoGrant{
 		ConvID: conv, Slug: "groups.spawn", GrantedAt: time.Now(),

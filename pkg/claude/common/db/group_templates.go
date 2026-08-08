@@ -199,10 +199,10 @@ type templateInlineProfileJSON struct {
 	RemoteControl          *bool             `json:"remote_control,omitempty"`
 	AutoMemory             *bool             `json:"auto_memory,omitempty"`
 	SSHWorkaround          *bool             `json:"ssh_workaround,omitempty"`
-	IsOwner                *bool             `json:"is_owner,omitempty"`
-	PermissionOverrides    map[string]string `json:"permission_overrides,omitempty"`
-	ContextFeatures        map[string]string `json:"context_features,omitempty"`
-	StartupContext         string            `json:"startup_context,omitempty"`
+	IsOwner                *bool                         `json:"is_owner,omitempty"`
+	PermissionOverrides    map[string]PermissionOverride `json:"permission_overrides,omitempty"`
+	ContextFeatures        map[string]string             `json:"context_features,omitempty"`
+	StartupContext         string                        `json:"startup_context,omitempty"`
 }
 
 // inlineProfileToJSON marshals a template-local profile for the
