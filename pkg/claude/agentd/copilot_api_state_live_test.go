@@ -172,7 +172,9 @@ func TestLiveCopilotAPIStateWritesWhatTheServerReports(t *testing.T) {
 // takes a different startup branch and never starts the embedded server.
 //
 // extra is appended to the argv, for the launch options a caller needs to state
-// rather than inherit — `--model` in particular, which production always passes.
+// rather than inherit — `--model` in particular, which production passes
+// whenever the spec names a model (copilot_spawner.go, copilot_asker.go) and
+// omits otherwise.
 func startLiveCopilotServer(t *testing.T, binary, realHome string, extra ...string) (string, string, int) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -283,10 +285,28 @@ func portFromAddress(t *testing.T, address string) int {
 // rate for the launch below, on 1.0.78 from an agent sandbox: 16 of 17 in one
 // batch, and 5 of 9 across four later runs of this test as written. The rate is
 // not stable — it is a property of a Copilot build racing a network fetch, not
-// of this code — so the loop is sized on the WORSE figure. At p=0.5, ten
-// attempts miss about once in a thousand runs; at p=0.94 the number stops
-// mattering. If it ever does fail, the likely reading is not bad luck but that
-// the precondition stopped being reproducible, which is what the message says.
+// of this code — so the loop is sized on the WORSE figure.
+//
+// Resist the obvious arithmetic. 1-p^10 would put ten attempts at p=0.5 around
+// one failure in a thousand runs, and that number assumes the attempts are
+// INDEPENDENT, which they are not: they race the same model-list fetch, and the
+// attempts of one run share whatever state the machine was in when it started.
+// The measured shape says so — five consecutive runs needed 4, 2, 1, 1 and 1
+// attempts, which is a warming curve rather than noise. So the honest statement
+// is not a probability but a direction: the loop is weakest on the FIRST run on
+// a cold machine, where a low per-attempt rate applies to all ten attempts at
+// once, and that is exactly when someone runs this for the first time.
+//
+// Which is also why there is no separate warm-up launch: attempt 1 already is
+// one. On a cold machine the early attempts do the warming and the loop absorbs
+// them; a dedicated warm-up would buy nothing extra and would cost every warm
+// run an additional launch.
+//
+// Read a failure accordingly. Ten misses most likely means the machine was
+// cold or the precondition stopped being reproducible — try again before
+// concluding anything. It does NOT mean the fix is broken; a broken fix fails
+// on the assertion below, with the sentinel in hand, which looks entirely
+// different.
 //
 // Nothing budgets for this in CI. The whole file is gated behind
 // TCLAUDE_COPILOT_LIVE=1, which CI does not set, so these runs are an
@@ -315,9 +335,21 @@ func TestLiveCopilotAPINeverPublishesTheAutoSentinel(t *testing.T) {
 		// A subtest per attempt, so the server, its PTY and its temporary
 		// COPILOT_HOME are torn down as the attempt ends rather than piling up
 		// ten live copilots until the parent finishes.
-		t.Run(fmt.Sprintf("launch-%d", attempt), func(t *testing.T) {
+		ok := t.Run(fmt.Sprintf("launch-%d", attempt), func(t *testing.T) {
 			metrics, reproduced = liveCopilotAutoSentinelAttempt(t, binary, realHome)
 		})
+		// An attempt that failed OUTRIGHT — copilot never opened the listener,
+		// the RPC never answered — says nothing about the sentinel, and retrying
+		// it nine more times says nothing nine more times. Worse, each retry
+		// costs that attempt's full timeout: ten launch timeouts is ten minutes,
+		// which outlasts `go test`'s own default and turns a legible failure
+		// into `panic: test timed out` with the diagnostic below never printed.
+		// The subtest has already failed the parent and said why, so stop here
+		// and let its message stand rather than overwriting it with one about
+		// automatic selection that would not be true.
+		if !ok {
+			return
+		}
 	}
 
 	if !reproduced {
@@ -329,10 +361,16 @@ func TestLiveCopilotAPINeverPublishesTheAutoSentinel(t *testing.T) {
 			"how Copilot records the startup model selection", attempts, metrics.CurrentModel)
 	}
 
-	// Part of the precondition rather than an aside. copilotAPIReadingModel also
-	// returns "" when modelMetrics holds anything other than exactly one key, so
-	// without this the assertion below could come back green off the wrong
-	// branch — passing for a reason that has nothing to do with the sentinel.
+	// Part of the precondition rather than an aside, and not redundant: DO NOT
+	// DELETE IT as an obvious-looking check on a value nobody reads.
+	//
+	// copilotAPIReadingModel returns "" for two unrelated reasons — the sentinel
+	// was suppressed, which is what this test is about, or modelMetrics held
+	// anything other than exactly one key, which is not. Without this guard a
+	// green run could come from the second: assertion satisfied, subject never
+	// exercised. That is the original bug's own failure mode — a plausible
+	// answer that is not the quantity it claims to be — reappearing inside the
+	// test written to prevent it.
 	require.Empty(t, metrics.ModelMetrics,
 		"the sentinel is present but a call has already been billed, so an empty reading "+
 			"model would no longer be evidence about the sentinel branch")
