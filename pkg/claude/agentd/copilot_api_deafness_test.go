@@ -149,6 +149,15 @@ func TestAFailedLaunchCannotSpeakForTheRelaunchThatReplacedIt(t *testing.T) {
 
 // A relaunch supersedes an observation even when it arrives after one has been
 // taken, which is the other order the same hazard can happen in.
+//
+// # What enforces this, which is NOT what it looks like
+//
+// The generation compare in ChannelFailed, not the delete in NoteLaunch. A
+// mutation pass removed that delete and this test stayed green, along with the
+// rest of the suite — so the delete is hygiene and the compare is the mechanism.
+// Recorded here rather than quietly fixed because the test's NAME points at the
+// delete, and the next person to read the two together would otherwise conclude
+// the compare was redundant and delete the wrong one.
 func TestARelaunchClearsAnEarlierLaunchsObservation(t *testing.T) {
 	fixture := newCopilotAPIDriveFixture(t)
 	copilotAPISessions.Drop(fixture.convID)
@@ -213,6 +222,53 @@ func TestOnlyAnExaminedReconcileCandidateIsObservedAsDeaf(t *testing.T) {
 		"POSITIVE CONTROL: the examined-and-failed outcome does record, so the two "+
 			"assertions above are about which outcome is entitled rather than about a "+
 			"recorder that is wired to nothing")
+}
+
+// The deliverable: the fact reaches the surface an operator actually looks at.
+//
+// Exercised through the real projection rather than by asserting the predicate
+// twice. The predicate having the right answer is worth nothing if the snapshot
+// never asks it, and "the dashboard renders deafness" is the entire read-only
+// half of this ticket — so it needs an assertion of its own rather than being
+// implied by the ones above.
+//
+// Asserted as a transition across the three states the chip distinguishes,
+// because the middle one is the reason the flag exists: an agent that is merely
+// starting up must NOT be reported as deaf, or the surface flags the fleet as
+// broken at exactly the moments it is working.
+func TestTheDashboardDistinguishesAStartingAgentFromADeafOne(t *testing.T) {
+	setupTestDB(t)
+	t.Cleanup(copilotAPISessions.ForgetLaunchesForTest)
+
+	sess := copilotUsageSession(t, "s-copilot-deaf", "conv-deaf")
+	agentID, _, err := db.EnsureAgentForConv(sess.ConvID, "spawn")
+	require.NoError(t, err)
+	haveCopilotAPILaunchIntent(t, agentID)
+
+	snapshot := func() agentState {
+		return stateForConvInSessionsBatched(
+			[]*db.SessionRow{sess}, map[string]struct{}{sess.TmuxSession: {}}, nil, nil, nil)
+	}
+
+	// Still starting: on the drive, no connection, nothing observed. This is the
+	// state the pair copilot_api && !connected cannot tell from deafness, and it
+	// is the common one.
+	starting := snapshot()
+	require.True(t, starting.CopilotAPI, "precondition: the launch took the drive")
+	require.False(t, starting.CopilotAPIConnected, "precondition: no handle yet")
+	assert.False(t, starting.CopilotAPIChannelFailed,
+		"an agent whose bootstrap is still running is not deaf, and reporting it as "+
+			"deaf would fire on every healthy API spawn for the length of its bootstrap")
+
+	generation := copilotAPISessions.NoteLaunch(sess.ConvID)
+	require.True(t, copilotAPISessions.NoteChannelFailed(sess.ConvID, generation))
+
+	deaf := snapshot()
+	assert.True(t, deaf.CopilotAPIChannelFailed,
+		"once the daemon has watched the channel fail, the surface has to say so — "+
+			"this is the only thing that distinguishes a deaf agent from a busy one")
+	assert.True(t, deaf.CopilotAPI,
+		"and it still reports the API drive, because the agent's choice has not changed")
 }
 
 // The reconcile latches its generation BEFORE it queues for a slot, so a launch

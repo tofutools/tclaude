@@ -438,10 +438,19 @@ var copilotAPISessions = &copilotAPISessionRegistry{}
 // deaf, so the window in which a dying goroutine could libel its own successor
 // is exactly the window in which someone is most likely to be relaunching.
 //
-// Recording a launch also CLEARS any earlier failure observation: the new launch
-// is the newer truth about the conversation, and it has its own bootstrap that
-// will answer the question again. Same rule, and the same reason, as
-// [copilotAPISessionRegistry.Adopt] replacing rather than refusing.
+// Recording a launch also drops any earlier failure observation, and it is worth
+// being exact about what that delete is and is not doing, because the obvious
+// reading is wrong. It is HYGIENE, not correctness: a superseded observation is
+// already unreadable, because [copilotAPISessionRegistry.ChannelFailed] compares
+// the stored generation against the current one and an old launch's entry can
+// never match. Deleting it keeps the map from holding statements about launches
+// nobody can ask after.
+//
+// Stated this way because a mutation pass found it: removing the delete left the
+// whole suite green, including the test named for a relaunch clearing the
+// observation. The generation compare is what enforces that property, and a
+// reader who takes this line for the mechanism would think the compare was
+// removable.
 func (r *copilotAPISessionRegistry) NoteLaunch(convID string) uint64 {
 	if convID == "" {
 		return 0
