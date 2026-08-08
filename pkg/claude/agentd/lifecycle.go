@@ -3161,40 +3161,23 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 
-	// Birth-time access controls: make the new agent a group owner
-	// and/or seed its permanent per-slug permission overrides, the same grants
-	// the Edit-agent modal applies to a live agent — but applied at enrollment
-	// so the agent's first turn already has them. Validate here, at the
-	// boundary, before any subprocess launches:
-	//   - every override slug must be registered and every effect in
-	//     {grant,deny} ("default"/"" carries no override and is dropped);
-	//   - the privilege is gated so a spawn confers no MORE authority than the
-	//     post-spawn path: a human (dashboard) caller always passes, and an
-	//     agent caller must hold the SAME slug the dedicated endpoints require —
-	//     groups.own to mint an owner (handleGroupOwnersAdd) and
-	//     permissions.grant to set per-slug overrides (handlePermissionsGrant).
-	//     Group ownership is deliberately NOT sufficient: owner-state confers
-	//     only the owner-implied lifecycle slugs (groups.spawn/stop/…), NOT
-	//     groups.own or permissions.grant — so keying on ownership would let an
-	//     owner mint a child holding permissions.grant and escalate globally.
-	//     resolvePermission (no owner bypass) is the same evaluation those
-	//     endpoints run.
+	// Birth-time access controls: make the new agent a group owner and/or seed
+	// its permanent per-slug permission overrides, the same grants the
+	// Edit-agent modal applies to a live agent — but applied at enrollment so
+	// the agent's first turn already has them. SHAPE is validated here, at the
+	// boundary, before any subprocess launches: every override slug must be
+	// registered and every effect in {grant,deny} ("default"/"" carries no
+	// override and is dropped).
+	//
+	// The PRIVILEGE gate runs further down instead, once the profile tier stack
+	// has had its say: a spawn that merely NAMES a profile inherits that
+	// profile's owner flag and overrides, so gating the raw request body would
+	// check a value the launch does not use. See the birth-time access block
+	// after the launch fields resolve.
 	permOverrides, povErr := normalizeSpawnPermissionOverrides(body.PermissionOverrides)
 	if povErr != "" {
 		writeError(w, http.StatusBadRequest, "invalid_permission_overrides", povErr)
 		return
-	}
-	if spawnerConvID != "" {
-		if body.IsOwner && resolvePermission(spawnerConvID, PermGroupsOwn) != permAllow {
-			writeError(w, http.StatusForbidden, "forbidden",
-				"making the spawned agent a group owner requires the "+PermGroupsOwn+" permission")
-			return
-		}
-		if len(permOverrides) > 0 && resolvePermission(spawnerConvID, PermPermissionsGrant) != permAllow {
-			writeError(w, http.StatusForbidden, "forbidden",
-				"setting the spawned agent's permission overrides requires the "+PermPermissionsGrant+" permission")
-			return
-		}
 	}
 
 	// Resolve the startup briefing's sender. Default: the spawn
@@ -3561,6 +3544,140 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		includeGroupContextNote = fmt.Sprintf("%s include_group_context = %v",
 			includeGroupContextSource, includeGroupContext)
 	}
+	// Identity, the auto-focus toggle and the birth-time access controls ride
+	// the same tier stack, and for the same reason group-context inclusion does:
+	// a caller that merely NAMES a profile must get what that profile says. The
+	// agentd TUI's spawn form is exactly such a caller — it has boxes for the
+	// name and the brief only, so role, descr, auto-focus, the owner flag and
+	// the permission overrides reached the daemon unspoken and were dropped.
+	//
+	// PRESENCE on the wire, not a non-empty value, is what counts as the caller
+	// speaking (see resolveIdentityLaunchField). That is what keeps a dashboard
+	// operator who clears a profile-prefilled Role from having it restored.
+	var identityNotes []string
+	var profileNameNote string
+	body.Name, _, profileNameNote = resolveIdentityLaunchField(
+		nameField, body.Name, body.NameSpecified(), profileTiers,
+		func(p *db.SpawnProfile) string { return p.AgentName },
+		func(raw string) (string, bool) {
+			// A profile's agent_name is held to looser rules than a spawn name
+			// (it may carry spaces and punctuation), so put it through the same
+			// normalize-then-validate an explicit name took at the boundary. One
+			// that still cannot be a spawn name is skipped and disclosed rather
+			// than failing a launch nobody typed it into.
+			if !isValidSpawnName(raw) {
+				if cfg, _ := config.Load(); cfg.SpawnNameNormalizeEnabled() {
+					raw = agent.NormalizeSpawnName(raw)
+				}
+			}
+			return raw, raw != "" && isValidSpawnName(raw)
+		})
+	if profileNameNote != "" {
+		identityNotes = append(identityNotes, profileNameNote)
+	}
+	body.Role, _, _ = resolveIdentityLaunchField(
+		roleField, body.Role, body.RoleSpecified(), profileTiers,
+		func(p *db.SpawnProfile) string { return p.Role }, nil)
+	body.Descr, _, _ = resolveIdentityLaunchField(
+		descrField, body.Descr, body.DescrSpecified(), profileTiers,
+		func(p *db.SpawnProfile) string { return p.Descr }, nil)
+	// A profile's initial_message is a replaceable task default: it fills the
+	// brief only when the caller sent none. Durable per-profile guidance is
+	// startup_context, resolved separately above and never overridden by a task.
+	body.InitialMessage, _, _ = resolveIdentityLaunchField(
+		initialMessageField, body.InitialMessage, body.InitialMessageSpecified(), profileTiers,
+		func(p *db.SpawnProfile) string { return p.InitialMessage }, nil)
+	// No disclosure note for auto_focus: the resolver's note channel only speaks
+	// on the harness mismatch this field skips, and a terminal window opening is
+	// its own announcement.
+	body.AutoFocus, _, _, _, fieldFail = resolveBoolLaunchField(
+		autoFocusField, body.AutoFocus, body.AutoFocusSpecified(), h.Name, profileTiers,
+		func(p *db.SpawnProfile) *bool { return p.AutoFocus },
+		func(v bool) (bool, error) { return v, nil })
+	if fieldFail != nil {
+		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+		return
+	}
+	isOwner, _, isOwnerSource, _, fieldFail := resolveBoolLaunchField(
+		isOwnerField, body.IsOwner, body.IsOwnerSpecified(), h.Name, profileTiers,
+		func(p *db.SpawnProfile) *bool { return p.IsOwner },
+		func(v bool) (bool, error) { return v, nil })
+	if fieldFail != nil {
+		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+		return
+	}
+	overridesSource := ""
+	permOverrides, overridesSource = resolveOverridesLaunchField(
+		permOverrides, body.PermissionOverridesSpecified(), profileTiers)
+	if overridesSource != "" && overridesSource != agent.ProvExplicit {
+		// The profile write path validated this map, but a slug can be retired
+		// between the write and the launch. Re-run the boundary check rather
+		// than trusting stored state, and drop-with-disclosure instead of
+		// failing a spawn over a profile field nobody typed here.
+		normalized, novErr := normalizeSpawnPermissionOverrides(permOverrides)
+		if novErr != "" {
+			identityNotes = append(identityNotes, fmt.Sprintf(
+				"%s %s ignored (%s)", overridesSource, permissionOverridesField, novErr))
+			permOverrides, overridesSource = nil, ""
+		} else {
+			permOverrides = normalized
+		}
+	}
+	// Birth-time access privilege gate, on the RESOLVED values. A human
+	// (dashboard) caller always passes; an agent caller must hold the SAME slug
+	// the dedicated post-spawn endpoints require — groups.own to mint an owner
+	// (handleGroupOwnersAdd) and permissions.grant to set per-slug overrides
+	// (handlePermissionsGrant). Group ownership is deliberately NOT sufficient:
+	// owner-state confers only the owner-implied lifecycle slugs
+	// (groups.spawn/stop/…), NOT groups.own or permissions.grant — so keying on
+	// ownership would let an owner mint a child holding permissions.grant and
+	// escalate globally. resolvePermission (no owner bypass) is the same
+	// evaluation those endpoints run.
+	//
+	// Direct intent — an explicit request field, or a profile the caller NAMED
+	// — is refused loudly, exactly as it was before the tier stack reached these
+	// two fields. A group or global DEFAULT profile is ambient configuration
+	// nobody typed at this launch, so an unauthorized caller has it skipped and
+	// disclosed instead: an operator's house default must not start refusing
+	// every spawn its own agents make.
+	if spawnerConvID != "" {
+		if isOwner && resolvePermission(spawnerConvID, PermGroupsOwn) != permAllow {
+			if !launchTierIsDefault(profileTiers, isOwnerSource) {
+				writeError(w, http.StatusForbidden, "forbidden",
+					"making the spawned agent a group owner requires the "+PermGroupsOwn+" permission")
+				return
+			}
+			identityNotes = append(identityNotes, fmt.Sprintf(
+				"%s is_owner ignored (caller lacks %s)", isOwnerSource, PermGroupsOwn))
+			isOwner, isOwnerSource = false, ""
+		}
+		if len(permOverrides) > 0 && resolvePermission(spawnerConvID, PermPermissionsGrant) != permAllow {
+			if !launchTierIsDefault(profileTiers, overridesSource) {
+				writeError(w, http.StatusForbidden, "forbidden",
+					"setting the spawned agent's permission overrides requires the "+PermPermissionsGrant+" permission")
+				return
+			}
+			identityNotes = append(identityNotes, fmt.Sprintf(
+				"%s %s ignored (caller lacks %s)", overridesSource, permissionOverridesField, PermPermissionsGrant))
+			permOverrides, overridesSource = nil, ""
+		}
+	}
+	// Disclose the two access decisions whenever a tier other than the request
+	// made them. An agent that silently comes up owning its group, or holding
+	// grants nobody asked for at this launch, is exactly the action-at-a-distance
+	// the launch echo exists to surface.
+	if isOwnerSource != "" && isOwnerSource != agent.ProvExplicit && isOwner {
+		identityNotes = append(identityNotes,
+			fmt.Sprintf("%s is_owner = true", isOwnerSource))
+	}
+	if overridesSource != "" && overridesSource != agent.ProvExplicit && len(permOverrides) > 0 {
+		identityNotes = append(identityNotes, fmt.Sprintf(
+			"%s %s (%d)", overridesSource, permissionOverridesField, len(permOverrides)))
+	}
+	// Fold both back onto the body so the durable "what was this agent spawned
+	// with" record (marshalSpawnConfig below) states what the launch actually
+	// used, the way it already does for every resolved launch field.
+	body.IsOwner, body.PermissionOverrides = isOwner, permOverrides
 	// Startup-context trims ride the tier stack whole rather than merging — see
 	// resolveContextFeaturesLaunchField. Unset everywhere means "trim nothing",
 	// so an agent's startup context only shrinks when someone asked for it.
@@ -3616,7 +3733,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if body.SandboxImplementation == "" && sandboxImplNote != "" {
 		resolvedLaunch.Notes = append(resolvedLaunch.Notes, sandboxImplNote)
 	}
-	for _, note := range []string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, contextWindowMaxNote, copilotAPINote, fastModeNote, autoReviewNote, trustDirNote, autoMemoryNote, sshWorkaroundNote, contextFeaturesNote, profileContextNote, includeGroupContextNote} {
+	for _, note := range append([]string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, contextWindowMaxNote, copilotAPINote, fastModeNote, autoReviewNote, trustDirNote, autoMemoryNote, sshWorkaroundNote, contextFeaturesNote, profileContextNote, includeGroupContextNote}, identityNotes...) {
 		if note != "" {
 			resolvedLaunch.Notes = append(resolvedLaunch.Notes, note)
 		}
@@ -3988,8 +4105,15 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// resolved harness. This gate applies even to false: unlike string catalogs,
 	// false validates everywhere and would otherwise shadow a matching lower
 	// tier's true.
+	//
+	// Every tier participates, the NAMED profile included. The CLI still does not
+	// fold remote_control in client-side — it cannot see the group's
+	// remote-control policy, which must win — but the daemon can and does, so a
+	// caller that merely names a profile gets its default under that policy
+	// rather than losing it. That is what makes the toggle real for the agentd
+	// TUI, which names a profile and sends no flag of its own.
 	var profileRemoteControl *bool
-	for _, tier := range profileTiers[1:] { // named --profile remote_control remains CLI-inapplicable by contract
+	for _, tier := range profileTiers {
 		prof := tier.profile
 		if prof == nil || prof.RemoteControl == nil {
 			continue
@@ -4095,7 +4219,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		FastModeSet:                fastModeSet,
 		ReplyToConv:                replyToConv,
 		SpawnedByConv:              spawnerConvID,
-		IsOwner:                    body.IsOwner,
+		IsOwner:                    isOwner,
 		PermissionOverrides:        permOverrides,
 		Timeout:                    timeout,
 		// Verbatim snapshot of the spawn request, recorded onto the new actor's
@@ -4490,12 +4614,14 @@ type spawnParams struct {
 	// validation failures; the launch-success flag preserves it after the pane
 	// exists, including later enrollment/claim failures.
 	privateAttachmentRootCleanup func()
-	// SpawnConfigJSON is the verbatim JSON of the agent.SpawnRequest this spawn
-	// came from, captured at the HTTP boundary (handleGroupSpawn). enrollSpawnedConv
-	// records it onto the new actor's agents.initial_spawn_config so there is a
-	// durable, agent-level "what was this spawned with" record. Empty on the
-	// paths that have no SpawnRequest to snapshot (the pending-spawn sweeper,
-	// the group-template instantiator), where the column simply stays "".
+	// SpawnConfigJSON is the JSON of the agent.SpawnRequest this spawn came
+	// from, captured at the HTTP boundary (handleGroupSpawn) AFTER its profile
+	// tier stack resolves — so it states what the launch actually used, not what
+	// the caller happened to type. enrollSpawnedConv records it onto the new
+	// actor's agents.initial_spawn_config so there is a durable, agent-level
+	// "what was this spawned with" record. Empty on the paths that have no
+	// SpawnRequest to snapshot (the pending-spawn sweeper, the group-template
+	// instantiator), where the column simply stays "".
 	SpawnConfigJSON string
 	// ProcessCommandID binds a process-owned spawn to its deterministic
 	// command. It is metadata only (never sent through pane injection) and is
@@ -4802,15 +4928,110 @@ const (
 	effortField              = "effort"
 	contextWindowMaxField    = "context_window_max"
 	includeGroupContextField = "include_group_context"
+	autoFocusField           = "auto_focus"
+	isOwnerField             = "is_owner"
+	permissionOverridesField = "permission_overrides"
+	nameField                = "name"
+	roleField                = "role"
+	descrField               = "descr"
+	initialMessageField      = "initial_message"
 )
 
 // harnessAgnosticLaunchField reports whether a profile field is policy about
-// what the new agent is TOLD rather than about how its harness runs. Those
-// fields are inherited from a profile whatever vendor it targets — the same
-// rule the CLI's profile merge applies to the harness-agnostic toggles. Keyed
-// on the field, inside the resolver, so no resolution path can forget it.
+// what the new agent is TOLD or WHO it is rather than about how its harness
+// runs. Those fields are inherited from a profile whatever vendor it targets —
+// the same rule the CLI's profile merge applies to the harness-agnostic
+// toggles. Keyed on the field, inside the resolver, so no resolution path can
+// forget it.
 func harnessAgnosticLaunchField(field string) bool {
-	return field == includeGroupContextField
+	switch field {
+	case includeGroupContextField, autoFocusField, isOwnerField:
+		return true
+	}
+	return false
+}
+
+// resolveIdentityLaunchField applies explicit > named profile > group default
+// profile > global default profile to one of the spawn dialog's identity fields
+// (name / role / descr / initial_message). Identity is harness-agnostic — it
+// decides who the new agent IS, not how its harness runs — so a profile
+// authored for another vendor still speaks, the same exemption
+// include_group_context has.
+//
+// Precedence is keyed on PRESENCE rather than emptiness. A caller whose form
+// HAS the field posts the key and is authoritative even when it posts "" — that
+// is what keeps a dashboard operator who clears a profile-prefilled Role from
+// having it silently restored. A caller whose form does NOT have the field
+// omits it: the agentd TUI has no box for role or descr, so it inherits the
+// profile's.
+//
+// normalize may reject a stored value, because a profile's agent_name is held
+// to looser rules than a spawn name. A tier that cannot supply a usable value is
+// skipped and disclosed rather than failing the launch — nobody typed it here.
+func resolveIdentityLaunchField(
+	field, explicitValue string, explicitSet bool,
+	tiers []launchProfileTier,
+	profileValue func(*db.SpawnProfile) string,
+	normalize func(string) (string, bool),
+) (value, source, note string) {
+	if explicitSet {
+		return strings.TrimSpace(explicitValue), agent.ProvExplicit, ""
+	}
+	var notes []string
+	for _, tier := range tiers {
+		if tier.profile == nil {
+			continue
+		}
+		raw := strings.TrimSpace(profileValue(tier.profile))
+		if raw == "" {
+			continue
+		}
+		if normalize != nil {
+			normalized, ok := normalize(raw)
+			if !ok {
+				notes = append(notes, fmt.Sprintf("%s %s ignored (not a usable %s)",
+					tier.source, field, field))
+				continue
+			}
+			raw = normalized
+		}
+		return raw, tier.source, strings.Join(notes, "; ")
+	}
+	return "", "", strings.Join(notes, "; ")
+}
+
+// resolveOverridesLaunchField is resolveIdentityLaunchField for the birth-time
+// permission-override map. The tiers do not merge: the winning profile's map is
+// taken whole, for the same reason resolveContextFeaturesLaunchField takes one
+// whole — an agent's permissions must be readable off one profile, not
+// assembled from its lineage.
+func resolveOverridesLaunchField(
+	explicitValue map[string]string, explicitSet bool,
+	tiers []launchProfileTier,
+) (value map[string]string, source string) {
+	if explicitSet {
+		return explicitValue, agent.ProvExplicit
+	}
+	for _, tier := range tiers {
+		if tier.profile == nil || len(tier.profile.PermissionOverrides) == 0 {
+			continue
+		}
+		return tier.profile.PermissionOverrides, tier.source
+	}
+	return nil, ""
+}
+
+// launchTierIsDefault reports whether the tier that produced source is one
+// nobody typed at this launch (the group's or the global default profile).
+// Ambient tiers are treated more gently than direct intent by the birth-time
+// access gates below: they fall through rather than refusing the spawn.
+func launchTierIsDefault(tiers []launchProfileTier, source string) bool {
+	for _, tier := range tiers {
+		if tier.profile != nil && tier.source == source {
+			return tier.defaultTier
+		}
+	}
+	return false
 }
 
 // harnessPinnedLaunchField reports whether a launch field names something that

@@ -529,6 +529,40 @@ Template and wave deploys are the exception: they compose each agent's startup
 context themselves from the template and the mission, so this toggle has no
 meaning there and is not part of a template-local inline profile.
 
+The profile's identity fields (`agent_name`, `role`, `descr`,
+`initial_message`), its `auto_focus` and `remote_control` toggles and its
+birth-time access controls (`is_owner`, `permission_overrides`) ride the same
+daemon-side tier stack, so naming a profile is enough to get them — the agentd
+TUI's spawn form, whose only text boxes are the name and the brief, spawns the
+agent the profile describes. What counts as the caller having spoken is the
+field being PRESENT in the request, not its being non-empty: a surface that
+shows the field posts it and stays authoritative (the dashboard sends an
+unticked "Group owner" as `is_owner: false` and a cleared permission editor as
+`{}`), while a surface without that field omits it and inherits the profile's.
+An `agent_name` that is not a safe spawn-name token is normalized the same way
+a typed name is, and skipped with a note if it still cannot be one.
+
+The birth-time access controls stay gated on the caller's own authority, now
+applied to the RESOLVED value. An agent caller still needs `groups.own` to mint
+an owner and `permissions.grant` to seed overrides. A profile the caller NAMED
+is direct intent, so an unauthorized caller is refused; a group or global
+DEFAULT profile is ambient configuration nobody typed at this launch, so it is
+skipped and disclosed in the `resolved` echo instead of failing the spawn.
+`tclaude agent spawn --no-owner` declines ownership a profile would otherwise
+confer, the same shape as `--no-group-context`.
+
+One limitation to know about: emptiness at a higher tier is silence, not "no".
+A profile carrying no `role` (or no `permission_overrides`) does not blank out a
+lower tier's — naming a deliberately sparse profile does not produce a sparse
+agent. `is_owner` is the exception, because it is tri-state and so can say no.
+To keep a group default profile's overrides off one agent, post an explicit
+empty map (the dashboard's cleared permission editor does exactly that).
+
+`sync_worktree` is the one profile field the daemon cannot resolve: a worktree
+is cut before the spawn request goes out. The dashboard's spawn modal and the
+agentd TUI's spawn form each apply it themselves, and it stays inert on the CLI,
+where worktrees are flag-driven (`--worktree <branch>`).
+
 Codex profiles may also carry `fast_mode` as a three-state launch choice:
 unset inherits the operator's `~/.codex/config.toml`, `true` forces the fast
 service tier, and `false` forces the standard tier. The choice is applied only

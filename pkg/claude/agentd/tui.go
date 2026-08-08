@@ -482,12 +482,39 @@ type tuiGroupRow struct {
 // from. Disabled comes along because a disabled profile is refused at spawn,
 // so offering one would only produce a rejection the operator cannot act on
 // from here.
+//
+// AgentName and SyncWorktree are the two profile fields this form has to apply
+// ITSELF. Every other one the daemon resolves down its own tier stack, so
+// naming the profile is enough — but a worktree is cut before the spawn request
+// goes out, from a branch typed into this form, so "name the agent's worktree
+// after the agent" has to happen here or not at all.
 type tuiProfileRow struct {
 	Name     string `json:"name"`
 	Disabled *bool  `json:"disabled,omitempty"`
+	// AgentName is the profile's display name for the agents it spawns. The
+	// daemon applies it to a request that omits `name`; the form prefills it so
+	// the operator can see (and extend) the name their worktree branch follows.
+	AgentName string `json:"agent_name,omitempty"`
+	// SyncWorktree is the profile's "give each agent its own worktree, named
+	// after it" toggle — tri-state, nil when the profile says nothing.
+	SyncWorktree *bool `json:"sync_worktree,omitempty"`
+	// InitialMessage is the profile's task-brief default. The form does not
+	// prefill it — a profile's brief may be many lines and the Brief field is a
+	// one-line input — so this is read only to SAY that an empty box will be
+	// filled by it, rather than leaving the operator to find out afterwards.
+	InitialMessage string `json:"initial_message,omitempty"`
 }
 
 func (p tuiProfileRow) disabled() bool { return p.Disabled != nil && *p.Disabled }
+
+// syncsWorktree reports whether this profile asks its agents to be spawned into
+// a worktree of their own. Unset is not "no": it leaves the picker alone.
+func (p tuiProfileRow) syncsWorktree() (bool, bool) {
+	if p.SyncWorktree == nil {
+		return false, false
+	}
+	return *p.SyncWorktree, true
+}
 
 // tuiRetireResult is the subset of the retire response the console reports:
 // what the demotion actually revoked, and what became of the agent's session.
@@ -747,6 +774,15 @@ type tuiSpawnForm struct {
 	// the operator has typed in, so changing the group can follow the first
 	// and must leave the second alone.
 	dirPrefill string
+	// namePrefill is the same idea one field up: the value applyProfile last
+	// wrote into name, which is the selected profile's agent_name. Changing the
+	// profile follows an untouched name field and leaves a typed one alone.
+	namePrefill string
+	// worktreeTouched records that the operator has cycled the worktree picker
+	// themselves. Until they do, a profile's sync_worktree toggle sets it; after
+	// they do, the picker is theirs — the same contract dirPrefill and
+	// namePrefill give the two text fields.
+	worktreeTouched bool
 	// dirSuggestions holds the ambiguous Tab-completion candidates for dir,
 	// listed under the field until the next keystroke.
 	dirSuggestions []string
@@ -1349,6 +1385,64 @@ func (m tuiModel) selectedProfile() string {
 	return ""
 }
 
+// selectedProfileRow is the listing row behind the profile picker's current
+// choice, absent for the "(default)" sentinel and for a name the last refresh
+// has since dropped.
+func (m tuiModel) selectedProfileRow() (tuiProfileRow, bool) {
+	name := m.selectedProfile()
+	if name == "" {
+		return tuiProfileRow{}, false
+	}
+	for _, p := range m.profiles {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return tuiProfileRow{}, false
+}
+
+// applyProfile pulls into the form the two spawn-profile fields this form has
+// to apply itself: the agent name, and whether the agent is spawned into a
+// worktree of its own. Everything else a profile carries — harness, model,
+// approval posture, role, descr, the brief, group context, the owner flag,
+// permission overrides — the daemon resolves from the profile NAME the request
+// posts, so the form neither reads nor shows it.
+//
+// Both follow the directory prefill's contract with the group picker: a field
+// the operator has already made theirs is left alone, and an untouched one
+// follows the profile.
+func (m tuiModel) applyProfile() tuiModel {
+	// "(default)" names no profile, so it takes back the name the last one
+	// prefilled rather than stranding it on a form that no longer explains it.
+	// The worktree picker is left where it is: naming no profile says nothing
+	// about worktrees, and silently disarming one would lose a branch the
+	// operator may already have typed.
+	prof, ok := m.selectedProfileRow()
+	if v := m.form.name.Value(); v == "" || v == m.form.namePrefill {
+		m.form.namePrefill = strings.TrimSpace(prof.AgentName)
+		m.form.name.SetValue(m.form.namePrefill)
+		m.form.name.CursorEnd()
+	}
+	if !ok {
+		return m.syncWorktreeBranch()
+	}
+	// The picker only exists for a console allowed to cut worktrees, so a
+	// profile cannot arm it on one that is not (see canCreateWorktree).
+	if sync, set := prof.syncsWorktree(); set && m.canCreateWorktree() && !m.form.worktreeTouched {
+		want := tuiWorktreeNone
+		if sync {
+			want = tuiWorktreeNew
+		}
+		for i, name := range m.form.worktreeNames {
+			if name == want {
+				m.form.worktreeIdx = i
+				break
+			}
+		}
+	}
+	return m.syncWorktreeBranch()
+}
+
 func (m tuiModel) selectedHarness() string {
 	if m.form.harnessIdx < 0 || m.form.harnessIdx >= len(m.form.harnessNames) {
 		return ""
@@ -1452,6 +1546,9 @@ func (m tuiModel) cycleChoice(delta int) tuiModel {
 	case tuiFieldProfile:
 		if n := len(m.form.profileNames); n > 0 {
 			m.form.profileIdx = ((m.form.profileIdx+delta)%n + n) % n
+			// The two profile fields this form has to apply itself follow the
+			// profile they came from, until the operator overrides them.
+			m = m.applyProfile()
 		}
 	case tuiFieldHarness:
 		if n := len(m.form.harnessNames); n > 0 {
@@ -1460,6 +1557,7 @@ func (m tuiModel) cycleChoice(delta int) tuiModel {
 	case tuiFieldWorktree:
 		if n := len(m.form.worktreeNames); n > 0 {
 			m.form.worktreeIdx = ((m.form.worktreeIdx+delta)%n + n) % n
+			m.form.worktreeTouched = true
 			// Turning the picker to "create new worktree" is what makes the
 			// branch field appear, so it arrives already carrying the name —
 			// the sync's whole point is that the operator names the agent once.
@@ -1589,12 +1687,21 @@ func (m tuiModel) submitSpawn() (tuiModel, tea.Cmd) {
 		return m, nil
 	}
 	req := agent.SpawnRequest{
-		Name:           strings.TrimSpace(m.form.name.Value()),
 		Cwd:            strings.TrimSpace(m.form.dir.Value()),
 		Profile:        m.selectedProfile(),
 		Harness:        m.selectedHarness(),
 		InitialMessage: strings.TrimSpace(m.form.brief.Value()),
 	}
+	// The name is STATED, not merely set: this form has a box for it and fills
+	// that box from the selected profile, so an emptied box is the operator
+	// saying "not that name" — not a silence for the profile to answer again.
+	//
+	// The brief is deliberately NOT stated. This form never prefills it (a
+	// profile's brief may be many lines, and this is a one-line input that would
+	// mangle them), so there is nothing here for the operator to have cleared:
+	// an empty box is a real silence, and the profile's brief fills it as the
+	// task default it is. briefHint says so on screen.
+	req.StateName(strings.TrimSpace(m.form.name.Value()))
 	m.spawnWorktree = tuiWorktreeResponse{}
 	if m.canCreateWorktree() && m.creatingWorktree() {
 		branch := strings.TrimSpace(m.form.branch.Value())
@@ -3226,7 +3333,7 @@ func (m tuiModel) renderSpawnForm() string {
 		tuiHint(harnessChoice == tuiHarnessDefault,
 			"  (the profile chain decides — "+harness.DefaultName+" if nothing pins one)"),
 		m.form.field == tuiFieldHarness))
-	b.WriteString(m.form.brief.View() + tuiHint(m.form.brief.Value() == "", "  (blank = no startup brief)"))
+	b.WriteString(m.form.brief.View() + m.briefHint())
 	b.WriteString("\n")
 
 	if m.notice != "" {
@@ -3432,6 +3539,20 @@ func tuiChoiceLine(label, value, hint string, focused bool) string {
 }
 
 // tuiHint appends an inline explanation to an empty field.
+// briefHint says what an empty Brief box actually produces. Usually nothing —
+// but a selected profile carrying a task-brief default fills it, and an agent
+// arriving with a brief the operator never typed, from a box that read "blank =
+// no startup brief", is exactly the surprise this line exists to prevent.
+func (m tuiModel) briefHint() string {
+	if m.form.brief.Value() != "" {
+		return ""
+	}
+	if prof, ok := m.selectedProfileRow(); ok && strings.TrimSpace(prof.InitialMessage) != "" {
+		return "  (blank = the profile's own brief)"
+	}
+	return "  (blank = no startup brief)"
+}
+
 func tuiHint(show bool, hint string) string {
 	if !show {
 		return ""
