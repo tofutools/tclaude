@@ -240,11 +240,13 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			AutoMemory:               launch.AutoMemory,
 			SSHWorkaround:            launch.SSHWorkaround,
 			SSHWorkaroundSet:         launch.SSHWorkaroundSet,
+			SSHWorkaroundSource:      launch.SSHWorkaroundSource,
 			ContextFeatures:          launch.ContextFeatures,
 			AutoCompactWindow:        launch.AutoCompactWindow,
 			ContextWindowMax:         launch.ContextWindowMax,
 			CopilotAPI:               launch.CopilotAPI,
 			CopilotAPISet:            launch.CopilotAPISet,
+			CopilotAPISource:         launch.CopilotAPISource,
 			FastMode:                 launch.FastMode,
 			FastModeSet:              launch.FastModeSet,
 			AskUserQuestionTimeout:   launch.AskUserQuestionTimeout,
@@ -260,6 +262,10 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			wr.Results = append(wr.Results, res)
 			continue
 		}
+		// Launch disclosures resolved INSIDE the spawn — the group/global default
+		// tiers are applied there, so anything they decided is unknown to the
+		// template-tier notes appended above.
+		res.Notes = append(res.Notes, outcome.Notes...)
 		res.ConvID = outcome.ConvID
 		wr.Spawned++
 		wr.SpawnedConvs[a.Name] = outcome.ConvID

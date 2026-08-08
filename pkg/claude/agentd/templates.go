@@ -782,6 +782,14 @@ type templateAgentLaunch struct {
 	// CopilotAPISet records that a tier actually spoke, mirroring AutoReviewSet.
 	CopilotAPI    bool
 	CopilotAPISet bool
+	// CopilotAPISource / SSHWorkaroundSource name the tier that CHOSE the value,
+	// threaded into spawnParams exactly like SandboxSource. Without them the
+	// deploy passes only the Set bit, the spawn boundary re-resolves an
+	// already-set field as ProvExplicit, and every template-deployed agent
+	// records a false "an operator chose this" for a value the resolver defaulted
+	// (TCL-1090).
+	CopilotAPISource    string
+	SSHWorkaroundSource string
 	FastMode      bool
 	FastModeSet   bool
 	// Notes disclose profile-tier fields that were skipped because they are not
@@ -789,6 +797,13 @@ type templateAgentLaunch struct {
 	// instantiate result so template launches have the same least-surprise
 	// disclosure as direct spawns.
 	Notes []string
+	// ObservedNotChosen names the launch fields this member was OBSERVED to carry
+	// but that no operator chose — the harness default resolved them. The
+	// snapshot deliberately does not pin these (a template is a specification,
+	// not a recording), so they are listed here to be disclosed per-agent instead
+	// of vanishing. Dropping them silently is the half of TCL-1090 that would
+	// have been easy to ship and impossible to notice.
+	ObservedNotChosen []string
 	// Traced records the bare fact that this member was observed at all — that
 	// traceMemberLaunch got past both of its early returns. It is NOT "traced and
 	// useful"; do not widen it to mean that.
@@ -1280,7 +1295,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	// unless a profile tier explicitly asked for the API. There is no
 	// template-LOCAL spelling — a template selects the drive by referencing a
 	// Copilot spawn profile that carries one. See TCL-1053.
-	copilotAPI, copilotAPISet, _, copilotAPINote, fail := resolveBoolLaunchField(
+	copilotAPI, copilotAPISet, copilotAPISource, copilotAPINote, fail := resolveBoolLaunchField(
 		"copilot_api", false, false, h.Name, tiers,
 		func(p *db.SpawnProfile) *bool { return p.CopilotAPI },
 		func(v bool) (bool, error) { return harness.ResolveCopilotAPI(h, &v) })
@@ -1303,7 +1318,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	if fastModeNote != "" {
 		notes = append(notes, fastModeNote)
 	}
-	sshWorkaround, sshWorkaroundSet, _, sshNote, fail := resolveBoolLaunchField(
+	sshWorkaround, sshWorkaroundSet, sshWorkaroundSource, sshNote, fail := resolveBoolLaunchField(
 		"ssh_workaround", false, false, h.Name, tiers,
 		func(p *db.SpawnProfile) *bool { return p.SSHWorkaround },
 		func(v bool) (bool, error) { return harness.ResolveSSHWorkaround(h, &v) })
@@ -1313,6 +1328,12 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	if !sshWorkaroundSet {
 		sshWorkaround, _ = harness.ResolveSSHWorkaround(h, nil)
 		sshWorkaroundSet = true
+		// The Set bit above now says "this launch has a posture"; the ATTRIBUTION
+		// has to keep saying who decided it, which was nobody. Leaving it blank
+		// would let the spawn boundary re-resolve it as "explicit" — the template
+		// path passes the Set bit through, and an already-set field reads as an
+		// explicit request — stamping a false decision onto a pure default.
+		sshWorkaroundSource = agent.ProvHarnessDefault
 	}
 	if sandbox != harness.SandboxManagedProfile {
 		if sshWorkaround {
@@ -1369,6 +1390,8 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		ContextWindowMax:       contextWindowMax,
 		CopilotAPI:             copilotAPI,
 		CopilotAPISet:          copilotAPISet,
+		CopilotAPISource:       copilotAPISource,
+		SSHWorkaroundSource:    sshWorkaroundSource,
 		FastMode:               fastMode,
 		FastModeSet:            fastModeSet,
 		SandboxImplementation:  sandboxImplementation,
@@ -1388,6 +1411,35 @@ func roleProfileSource(role *db.Role, profile *db.SpawnProfile) string {
 		return ""
 	}
 	return fmt.Sprintf(`role %q profile %q`, role.Name, profile.Name)
+}
+
+// launchValueWasChosen reports whether a durable launch value carries the mark
+// of a DECISION rather than of a resolver landing somewhere (TCL-1090).
+//
+// The rule is deliberately asymmetric: only a POSITIVE record that the harness
+// default decided the value counts as "nobody chose it". A nil source is a
+// legacy record written before the attribution existed, and it means unknown —
+// never "unchosen".
+//
+// Getting that direction wrong is not a wash. Reading unknown as unchosen would
+// drop a genuine, curated send-keys opt-out made before this field shipped, and
+// a group default saying true would then move that agent onto the API drive the
+// operator had deliberately kept it off. Reading it as chosen merely leaves the
+// pre-existing wart in place for old records. One of those errors is a silent
+// acquisition of an unverified drive; the other is the status quo.
+//
+// The EMPTY string is unknown too, and deliberately so — it is not the same as
+// ProvHarnessDefault. relaunchProfileForSpawn always writes a non-nil pointer, so
+// a launch path that never threaded a source records "" rather than nil; and
+// HarnessBuiltinModeSource, the field this one mirrors, uses "" to mean "erase
+// the previous attribution". Both spellings mean "nothing here says who decided",
+// which is exactly the case that must stay conservative. Only a POSITIVE
+// "the harness default decided this" suppresses the value.
+func launchValueWasChosen(source *string) bool {
+	if source == nil {
+		return true
+	}
+	return strings.TrimSpace(*source) != agent.ProvHarnessDefault
 }
 
 // copilotAPIPointer renders a traced launch's Copilot drive as the tri-state a
@@ -1488,8 +1540,12 @@ func traceMemberLaunch(convID string) templateAgentLaunch {
 	if durable, err := db.AgentRelaunchProfileForConv(convID); err == nil &&
 		durable != nil && durable.SSHWorkaround != nil {
 		if resolved, err := harness.ResolveSSHWorkaround(h, durable.SSHWorkaround); err == nil {
-			out.SSHWorkaround = resolved
-			out.SSHWorkaroundSet = true
+			if launchValueWasChosen(durable.SSHWorkaroundSource) {
+				out.SSHWorkaround = resolved
+				out.SSHWorkaroundSet = true
+			} else {
+				out.ObservedNotChosen = append(out.ObservedNotChosen, "ssh_workaround")
+			}
 		}
 	}
 	if durable, err := db.AgentRelaunchProfileForConv(convID); err == nil && durable != nil {
@@ -1500,8 +1556,18 @@ func traceMemberLaunch(convID string) templateAgentLaunch {
 		}
 		if durable.CopilotAPI != nil {
 			if value, err := harness.ResolveCopilotAPI(h, durable.CopilotAPI); err == nil {
-				out.CopilotAPI = value
-				out.CopilotAPISet = true
+				// A template is a SPECIFICATION for future launches, not a recording
+				// of history. An un-chosen value has no business becoming a spec
+				// line: it would assert a decision nobody made, durably and on every
+				// later deploy, and it outranks the group and global tiers when it
+				// does. The observation is still worth surfacing — as a disclosure,
+				// which is where facts go — rather than as a pin.
+				if launchValueWasChosen(durable.CopilotAPISource) {
+					out.CopilotAPI = value
+					out.CopilotAPISet = true
+				} else {
+					out.ObservedNotChosen = append(out.ObservedNotChosen, "copilot_api")
+				}
 			}
 		}
 		if durable.FastMode != nil {
@@ -3746,10 +3812,11 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 	// which only applies when re-snapshotting a stored template). Same response
 	// shape as a real create so the client reads it identically.
 	if body.Preview {
-		t, _ := snapshotGroupTemplate(body.TemplateName, g, members, ownerSet, nil)
+		t, _, observedNotChosen := snapshotGroupTemplate(body.TemplateName, g, members, ownerSet, nil)
 		writeJSON(w, http.StatusOK, fromGroupCreateJSON{
 			templateJSON: templateToJSON(t),
 			BlankBriefs:  countBlankBriefs(t),
+			Dropped:      observedNotChosen,
 		})
 		return
 	}
@@ -3774,7 +3841,7 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		t, tracedByName := snapshotGroupTemplate(body.TemplateName, g, members, ownerSet, existing)
+		t, tracedByName, observedNotChosen := snapshotGroupTemplate(body.TemplateName, g, members, ownerSet, existing)
 
 		if existing == nil {
 			id, err := db.CreateGroupTemplate(t)
@@ -3793,6 +3860,7 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusCreated, fromGroupCreateJSON{
 				templateJSON: templateToJSON(t),
 				BlankBriefs:  countBlankBriefs(t),
+				Dropped:      observedNotChosen,
 			})
 			return
 		}
@@ -3808,7 +3876,10 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 			prevOrder = append(prevOrder, a.Name)
 		}
 		briefsKept, added := []string{}, []string{}
-		dropped := []snapshotFieldDrop{}
+		// Seeded with the fields the TRACE declined to pin, so both kinds of
+		// non-carry reach the operator through one list rather than one of them
+		// having a channel and the other being silent.
+		dropped := append([]snapshotFieldDrop{}, observedNotChosen...)
 		newNames := map[string]bool{}
 		for i := range t.Agents {
 			newNames[t.Agents[i].Name] = true
@@ -4186,8 +4257,14 @@ func dropLaunchFieldsForeignToHarness(out *db.SpawnProfile) *snapshotFieldDrop {
 // and cannot recover it from the built template: an unobserved member and a
 // fully-default observed one both produce the same blanks, and both can produce
 // no inline profile at all.
-func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGroupMember, ownerSet map[string]bool, existing *db.GroupTemplate) (*db.GroupTemplate, map[string]bool) {
+//
+// The third return discloses, per agent, the launch fields this snapshot
+// OBSERVED but declined to pin because nobody chose them (TCL-1090). It cannot
+// be recovered from the built template either — the whole point is that those
+// fields are absent from it — so it travels out separately or not at all.
+func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGroupMember, ownerSet map[string]bool, existing *db.GroupTemplate) (*db.GroupTemplate, map[string]bool, []snapshotFieldDrop) {
 	tracedByName := map[string]bool{}
+	observedNotChosen := []snapshotFieldDrop{}
 	t := &db.GroupTemplate{
 		Name:           name,
 		Descr:          g.Descr,
@@ -4227,6 +4304,18 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 		// starts life behind the read-only "legacy inline" notice.
 		launch := traceMemberLaunch(convID)
 		tracedByName[name] = launch.Traced
+		if len(launch.ObservedNotChosen) > 0 {
+			// Reason names WHY the value does not speak for this member, not an
+			// event: nothing changed, and an operator sent hunting for a change
+			// that never happened is worse served than one told nothing.
+			observedNotChosen = append(observedNotChosen, snapshotFieldDrop{
+				Agent:  name,
+				Fields: append([]string(nil), launch.ObservedNotChosen...),
+				Reason: "observed on the live member but chosen by nobody (the harness default " +
+					"resolved it), so the template does not pin it and the group/global " +
+					"default profiles decide at deploy",
+			})
+		}
 		var inline *db.SpawnProfile
 		if launch.Harness != "" || launch.Model != "" || launch.Effort != "" || launch.Sandbox != "" || launch.Approval != "" || launch.AutoReviewSet || launch.SSHWorkaroundSet || len(launch.ContextFeatures) > 0 || launch.AutoCompactWindow != "" || launch.ContextWindowMax > 0 || launch.CopilotAPISet || launch.FastModeSet || launch.SandboxImplementation != "" || len(perms) > 0 {
 			po := map[string]string{}
@@ -4292,7 +4381,7 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 	for _, ownerConv := range pureOwners {
 		addAgent(ownerConv, "owner", "", true)
 	}
-	return t, tracedByName
+	return t, tracedByName, observedNotChosen
 }
 
 // fromGroupUpdateJSON is the update-mode from-group response: the fresh
@@ -4324,6 +4413,11 @@ type fromGroupUpdateJSON struct {
 type fromGroupCreateJSON struct {
 	templateJSON
 	BlankBriefs int `json:"blank_briefs"`
+	// Dropped carries the same per-agent disclosure as the update response. A
+	// CREATE has no curated fields to lose, but it can still decline to pin an
+	// OBSERVED-not-chosen value (TCL-1090), and that decision is invisible in the
+	// resulting template — which is exactly why it has to be said here.
+	Dropped []snapshotFieldDrop `json:"dropped,omitempty"`
 }
 
 // countBlankBriefs counts template agents whose per-agent brief

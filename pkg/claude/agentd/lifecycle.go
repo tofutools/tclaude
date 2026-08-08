@@ -3483,7 +3483,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return
 	}
-	sshWorkaround, sshWorkaroundSet, _, sshWorkaroundNote, fieldFail := resolveBoolLaunchField(
+	sshWorkaround, sshWorkaroundSet, sshWorkaroundSource, sshWorkaroundNote, fieldFail := resolveBoolLaunchField(
 		"ssh_workaround", body.SSHWorkaround != nil && *body.SSHWorkaround, body.SSHWorkaround != nil, h.Name, profileTiers,
 		func(p *db.SpawnProfile) *bool { return p.SSHWorkaround },
 		func(v bool) (bool, error) { return harness.ResolveSSHWorkaround(h, &v) })
@@ -4071,6 +4071,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		Harness:                    h.Name,
 		SSHWorkaround:              sshWorkaround,
 		SSHWorkaroundSet:           true,
+		SSHWorkaroundSource:        sshWorkaroundSource,
 		HarnessBuiltinMode:         harnessBuiltinMode,
 		HarnessBuiltinModeSource:   sandboxSource,
 		SandboxImplementation:      body.SandboxImplementation,
@@ -4089,6 +4090,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		ContextWindowMax:           body.ContextWindowMax,
 		CopilotAPI:                 copilotAPI,
 		CopilotAPISet:              copilotAPISet,
+		CopilotAPISource:           copilotAPISource,
 		FastMode:                   fastMode,
 		FastModeSet:                fastModeSet,
 		ReplyToConv:                replyToConv,
@@ -4384,6 +4386,18 @@ type spawnParams struct {
 	// dashboard sends exactly that explicit false on every Copilot spawn, so the
 	// gap is reachable from the most-used surface, not just a hand-built request.
 	CopilotAPISet bool
+	// CopilotAPISource / SSHWorkaroundSource name the tier that CHOSE the value
+	// beside them, or the harness default when nobody did. resolveBoolLaunchField
+	// has always computed this and every caller threw it away; these carry it as
+	// far as relaunchProfileForSpawn so it reaches the durable record.
+	//
+	// The Set bits above cannot serve this purpose. They are consumed and
+	// re-derived by executeSpawn's safety-net overlay, so by the time the launch
+	// is frozen they answer "does this value survive the overlay", not "did an
+	// operator decide it". A from-group snapshot asks the second question and
+	// used to read the first (TCL-1090).
+	CopilotAPISource    string
+	SSHWorkaroundSource string
 	// FastMode/FastModeSet preserve the nullable Codex service-tier choice:
 	// unset inherits config.toml, false forces standard, true forces fast.
 	FastMode    bool
@@ -4507,6 +4521,61 @@ type spawnOutcome struct {
 	// focusSpawn closure; a deferred OpenCode response preserves the explicit
 	// browser intent before that closure can run.
 	FocusMode string
+	// Notes are per-agent launch disclosures for callers that do NOT render the
+	// resolved-field echo handleGroupSpawn builds. Today that is the template
+	// deploy path, which resolves the group/global default tiers inside
+	// executeSpawn and had no way to report what they decided.
+	//
+	// Narrow on purpose: this carries the Copilot drive only, because a silent
+	// acquisition of the unverified API drive is the case that cannot wait. The
+	// template result is missing provenance for EVERY field, which is TCL-1097 —
+	// and this stopgap should be SUBSUMED by that general channel rather than
+	// left sitting beside it.
+	Notes []string
+}
+
+// preferResolvedSource combines the attribution an earlier stage produced with
+// the one this stage's re-resolution produced, keeping whichever actually names
+// a decider.
+//
+// It exists because executeSpawn's safety-net overlay re-resolves fields that a
+// caller has already resolved, and `resolveBoolLaunchField` reports ProvExplicit
+// for anything arriving with its Set bit raised. That answer is an ARTIFACT of
+// being asked a second time, not a finding: the template deploy path raises Set
+// bits for values it resolved from profile tiers — and, for ssh_workaround, even
+// for a pure harness default. Taking it would rewrite "group default profile X"
+// or "harness default" as "explicit", which is both false and useless: explicit
+// names no tier the operator can go and change.
+//
+// So a re-resolution wins only when it names a real tier. Otherwise the earlier
+// attribution stands — and when neither says anything, the artifact is still
+// better than nothing, because ProvHarnessDefault is itself a fact worth keeping.
+func preferResolvedSource(existing, resolved string) string {
+	if resolved != "" && resolved != agent.ProvExplicit {
+		return resolved
+	}
+	if existing != "" {
+		return existing
+	}
+	return resolved
+}
+
+// copilotDriveDisclosure reports the launch's Copilot drive when something other
+// than the caller chose it, naming the tier that did.
+//
+// It reads the SAME resolved source that relaunchProfileForSpawn freezes into
+// the durable record, rather than re-deriving the fact at the response-building
+// site. Two independent computations of one fact is how a disclosure goes
+// quietly stale while continuing to render.
+//
+// Only an acquisition is disclosed. A launch that stays on send-keys has nothing
+// to warn about: send-keys is the known-good path, and a note on every ordinary
+// spawn would train the operator to skip the one that matters.
+func copilotDriveDisclosure(p spawnParams) []string {
+	if !p.CopilotAPI || p.CopilotAPISource == agent.ProvExplicit || p.CopilotAPISource == "" {
+		return nil
+	}
+	return []string{fmt.Sprintf("copilot_api: api (%s)", p.CopilotAPISource)}
 }
 
 // spawnFailure is a typed failure from executeSpawn. The HTTP handler
@@ -5112,12 +5181,14 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	if fail != nil {
 		return fail
 	}
-	p.CopilotAPI, p.CopilotAPISet, _, _, fail = resolveBoolLaunchField("copilot_api", p.CopilotAPI,
+	var copilotAPISource string
+	p.CopilotAPI, p.CopilotAPISet, copilotAPISource, _, fail = resolveBoolLaunchField("copilot_api", p.CopilotAPI,
 		p.CopilotAPISet || p.CopilotAPI, h.Name, tiers, func(prof *db.SpawnProfile) *bool { return prof.CopilotAPI },
 		func(v bool) (bool, error) { return harness.ResolveCopilotAPI(h, &v) })
 	if fail != nil {
 		return fail
 	}
+	p.CopilotAPISource = preferResolvedSource(p.CopilotAPISource, copilotAPISource)
 	p.FastMode, p.FastModeSet, _, _, fail = resolveBoolLaunchField("fast_mode", p.FastMode,
 		p.FastModeSet, h.Name, tiers, func(prof *db.SpawnProfile) *bool { return prof.FastMode },
 		func(v bool) (bool, error) {
@@ -5127,13 +5198,19 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	if fail != nil {
 		return fail
 	}
-	p.SSHWorkaround, p.SSHWorkaroundSet, _, _, fail = resolveBoolLaunchField(
+	var sshWorkaroundSource string
+	p.SSHWorkaround, p.SSHWorkaroundSet, sshWorkaroundSource, _, fail = resolveBoolLaunchField(
 		"ssh_workaround", p.SSHWorkaround, p.SSHWorkaroundSet, h.Name, tiers,
 		func(prof *db.SpawnProfile) *bool { return prof.SSHWorkaround },
 		func(v bool) (bool, error) { return harness.ResolveSSHWorkaround(h, &v) })
 	if fail != nil {
 		return fail
 	}
+	p.SSHWorkaroundSource = preferResolvedSource(p.SSHWorkaroundSource, sshWorkaroundSource)
+	// NB: the block below force-sets SSHWorkaroundSet for the harness default, so
+	// that bit says "this launch has a posture" and not "someone chose one" — the
+	// same conflation this ticket is about. The attribution above is captured
+	// BEFORE it runs and is what the durable record keys on.
 	if !p.SSHWorkaroundSet {
 		p.SSHWorkaround, err = harness.ResolveSSHWorkaround(h, nil)
 		if err != nil {
@@ -5205,8 +5282,39 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 // — only log on failure); on
 // an Async PENDING success the outcome carries an empty conv-id and the agent
 // is enrolled later by the sweeper.
-func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure) {
+func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failure *spawnFailure) {
 	groupName := spawnGroupName(g)
+	// Stamped here, once, rather than at each of the six spawnOutcome literals
+	// below: a disclosure that has to be repeated at every return is a disclosure
+	// that will be missing from the seventh, and missing silently. p is read at
+	// defer time, so this sees the value applyDefaultProfile resolved.
+	defer func() {
+		if outcome == nil {
+			return
+		}
+		notes := copilotDriveDisclosure(p)
+		// ASSIGNED, not appended. The deferred-spawn path can return an inner
+		// executeSpawn's outcome pointer, whose own defer already stamped it —
+		// appending would render the same disclosure twice. Assignment is
+		// idempotent under that re-entrancy and says the same thing once.
+		outcome.Notes = notes
+		// And logged unconditionally, because Notes only reaches an operator on
+		// callers that render it. Today the wave/template path does and the
+		// scribe summon does not, and a caller added later inherits silence by
+		// default. The drive is unverified; "no agent acquires it silently" has to
+		// hold for every path through this function, not just the ones with a
+		// response body to put a note in.
+		//
+		// DO NOT "clean this up" by threading the note out to each caller instead:
+		// A SAFETY PROPERTY THAT DEPENDS ON EVERY FUTURE CALLER REMEMBERING IS NOT
+		// A SAFETY PROPERTY. One place that structurally cannot be missed beats
+		// four places that happen to be correct today.
+		for _, note := range notes {
+			slog.Warn("spawn: agent placed on the Copilot API drive by a non-explicit tier",
+				"conv", outcome.ConvID, "label", outcome.Label, "group", groupName,
+				"disclosure", note)
+		}
+	}()
 	privateAttachmentCleanup := func() {}
 	if p.privateAttachmentRootCleanup != nil {
 		privateAttachmentCleanup = p.privateAttachmentRootCleanup
