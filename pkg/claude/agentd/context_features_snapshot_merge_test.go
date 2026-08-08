@@ -71,6 +71,21 @@ func TestMergeSnapshotInlineProfile_PreservesStartupContext(t *testing.T) {
 	assert.Equal(t, "Keep the curated model guidance.", out.StartupContext)
 }
 
+// The Copilot context cap is observable, but 0 is ambiguous — a member pinning
+// no cap and an untraceable one both read 0 — so the merge splits it: a traced
+// cap wins, a traced zero falls back to the template's curated one. The fallback
+// half is pinned structurally by
+// TestMergeSnapshotInlineProfileCarriesEveryCuratedField; this is the half a
+// structural guard cannot see, because it is about which side wins rather than
+// about the field being handled at all.
+func TestMergeSnapshotInlineProfile_TracedContextWindowMaxWins(t *testing.T) {
+	prev := &db.SpawnProfile{ContextWindowMax: 100_000}
+	out := mergeSnapshotInlineProfile(prev, &db.SpawnProfile{ContextWindowMax: 272_000})
+	require.NotNil(t, out)
+	assert.Equal(t, int64(272_000), out.ContextWindowMax,
+		"a member relaunched with a different cap must re-snapshot with the live value")
+}
+
 func TestTraceMemberLaunchMarksAnObservedEmptyTrimSet(t *testing.T) {
 	// The Set bit is what lets the snapshot pass write a non-nil empty map. It is
 	// only meaningful alongside a real DB, so this asserts the zero value: an

@@ -3938,6 +3938,14 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile) *db.SpawnProfile 
 	if out.AutoCompactWindow == "" {
 		out.AutoCompactWindow = prev.AutoCompactWindow
 	}
+	// The Copilot context cap is observable (traceMemberLaunch reads it off the
+	// member's durable relaunch profile), but 0 is ambiguous exactly the way the
+	// window's "" is — a member that pins no cap and a member that could not be
+	// traced both read 0 — so a zero falls back to the template's previous value
+	// rather than silently clearing a curated cap (TCL-1062).
+	if out.ContextWindowMax == 0 {
+		out.ContextWindowMax = prev.ContextWindowMax
+	}
 	// The implementation is observable, but only a non-default one is traced (see
 	// traceMemberLaunch), so "" is ambiguous here the same way the window's is:
 	// a harness-builtin member and an untraceable one both read "". Fall back to
@@ -3959,6 +3967,7 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile) *db.SpawnProfile 
 		out.Approval == "" && out.ToolGovernance == "" && out.AskUserQuestionTimeout == "" &&
 		out.StartupContext == "" &&
 		out.AutoCompactWindow == "" && out.SandboxImplementation == "" &&
+		out.ContextWindowMax == 0 &&
 		out.AutoReview == nil && out.TrustDir == nil && out.RemoteControl == nil && out.AutoMemory == nil &&
 		out.SSHWorkaround == nil && out.CopilotAPI == nil && out.FastMode == nil &&
 		len(out.ContextFeatures) == 0 &&
