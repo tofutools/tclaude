@@ -81,6 +81,92 @@ func TestTemplateDeploy_GroupDefaultCopilotAPI_IsDisclosedAndNamesTheTier(t *tes
 			"happened leaves the operator with nowhere to go turn it off")
 }
 
+// A template that PINS the drive (via a referenced Copilot profile) must be
+// disclosed too, and must name that profile.
+//
+// Found by cold review, and it is the more dangerous half: the group-default
+// tier reaches the spawn boundary with its Set bit clear, so the boundary
+// resolves it and produces a real source. A template-tier pin arrives with the
+// Set bit already true, which the boundary reads as an EXPLICIT request — so
+// before this was fixed the durable record blamed "explicit" (a tier nobody can
+// go turn off) and the disclosure suppressed itself, because explicit means
+// "the caller asked for this and does not need telling".
+func TestTemplateDeploy_TemplatePinnedCopilotAPI_IsDisclosedAndNamesTheProfile(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("phoenix")
+
+	require.Equalf(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "copilot-api-pin", "harness": "copilot", "copilot_api": true,
+	}).Code, "create the profile the template references")
+
+	require.Equalf(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates",
+		map[string]any{
+			"name": "team",
+			"agents": []map[string]any{
+				{"name": "worker", "role": "dev", "spawn_profile": "copilot-api-pin"},
+			},
+		}).Code, "create template")
+
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/team/reinforce",
+		map[string]any{"group_name": "phoenix"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "reinforce: %s", rec.Body.String())
+
+	var res instantiateResult
+	testharness.DecodeJSON(t, rec, &res)
+	require.Len(t, res.Agents, 1)
+	got := res.Agents[0]
+	require.Empty(t, got.Error)
+
+	profile, err := db.AgentRelaunchProfileForConv(got.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, profile)
+	require.NotNil(t, profile.CopilotAPI)
+	require.True(t, *profile.CopilotAPI, "control: the member is on the API drive")
+	require.NotNil(t, profile.CopilotAPISource)
+	assert.Equal(t, `profile "copilot-api-pin"`, *profile.CopilotAPISource,
+		"the record must name the profile that chose the drive, not 'explicit' — an "+
+			"attribution nobody can act on is the same as no attribution")
+
+	assert.Contains(t, got.Notes, `copilot_api: api (profile "copilot-api-pin")`,
+		"a template-pinned drive is still an acquisition the deploying operator did not type")
+}
+
+// A template-deployed member whose ssh_workaround is purely the harness default
+// must not be recorded as having CHOSEN it.
+//
+// Also from cold review. resolveTemplateAgentLaunch force-sets the Set bit for
+// the harness default, and the spawn boundary reads an already-set field as an
+// explicit request — so without the attribution threaded alongside, every
+// template-deployed agent positively asserted a decision nobody made. That is
+// worse than the ambiguity this ticket set out to remove.
+func TestTemplateDeploy_DefaultedSSHWorkaroundIsNotRecordedAsChosen(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("phoenix")
+
+	require.Equalf(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates",
+		map[string]any{
+			"name":   "team",
+			"agents": []map[string]any{{"name": "worker", "role": "dev", "harness": "codex"}},
+		}).Code, "create template")
+
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/team/reinforce",
+		map[string]any{"group_name": "phoenix"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "reinforce: %s", rec.Body.String())
+
+	var res instantiateResult
+	testharness.DecodeJSON(t, rec, &res)
+	require.Len(t, res.Agents, 1)
+	require.Empty(t, res.Agents[0].Error)
+
+	profile, err := db.AgentRelaunchProfileForConv(res.Agents[0].ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, profile)
+	require.NotNil(t, profile.SSHWorkaroundSource)
+	assert.Equal(t, "harness default", *profile.SSHWorkaroundSource,
+		"nobody chose this member's ssh_workaround; recording 'explicit' would make a "+
+			"later from-group snapshot pin it as a curated decision")
+}
+
 // The other arm: an ordinary send-keys deploy says nothing. Without this, a note
 // emitted unconditionally would satisfy the test above while training the
 // operator to ignore the one that matters.

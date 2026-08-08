@@ -4534,6 +4534,32 @@ type spawnOutcome struct {
 	Notes []string
 }
 
+// preferResolvedSource combines the attribution an earlier stage produced with
+// the one this stage's re-resolution produced, keeping whichever actually names
+// a decider.
+//
+// It exists because executeSpawn's safety-net overlay re-resolves fields that a
+// caller has already resolved, and `resolveBoolLaunchField` reports ProvExplicit
+// for anything arriving with its Set bit raised. That answer is an ARTIFACT of
+// being asked a second time, not a finding: the template deploy path raises Set
+// bits for values it resolved from profile tiers — and, for ssh_workaround, even
+// for a pure harness default. Taking it would rewrite "group default profile X"
+// or "harness default" as "explicit", which is both false and useless: explicit
+// names no tier the operator can go and change.
+//
+// So a re-resolution wins only when it names a real tier. Otherwise the earlier
+// attribution stands — and when neither says anything, the artifact is still
+// better than nothing, because ProvHarnessDefault is itself a fact worth keeping.
+func preferResolvedSource(existing, resolved string) string {
+	if resolved != "" && resolved != agent.ProvExplicit {
+		return resolved
+	}
+	if existing != "" {
+		return existing
+	}
+	return resolved
+}
+
 // copilotDriveDisclosure reports the launch's Copilot drive when something other
 // than the caller chose it, naming the tier that did.
 //
@@ -5162,13 +5188,7 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	if fail != nil {
 		return fail
 	}
-	// Keep the ORIGINAL attribution when the spawn boundary already resolved this
-	// field. Re-resolving here reports ProvExplicit for anything already decided,
-	// which would rename a group-default profile's choice to "explicit" and lose
-	// the only tier name the operator could act on.
-	if p.CopilotAPISource == "" {
-		p.CopilotAPISource = copilotAPISource
-	}
+	p.CopilotAPISource = preferResolvedSource(p.CopilotAPISource, copilotAPISource)
 	p.FastMode, p.FastModeSet, _, _, fail = resolveBoolLaunchField("fast_mode", p.FastMode,
 		p.FastModeSet, h.Name, tiers, func(prof *db.SpawnProfile) *bool { return prof.FastMode },
 		func(v bool) (bool, error) {
@@ -5186,9 +5206,7 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	if fail != nil {
 		return fail
 	}
-	if p.SSHWorkaroundSource == "" {
-		p.SSHWorkaroundSource = sshWorkaroundSource
-	}
+	p.SSHWorkaroundSource = preferResolvedSource(p.SSHWorkaroundSource, sshWorkaroundSource)
 	// NB: the block below force-sets SSHWorkaroundSet for the harness default, so
 	// that bit says "this launch has a posture" and not "someone chose one" — the
 	// same conflation this ticket is about. The attribution above is captured
@@ -5265,16 +5283,33 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 // an Async PENDING success the outcome carries an empty conv-id and the agent
 // is enrolled later by the sweeper.
 func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failure *spawnFailure) {
+	groupName := spawnGroupName(g)
 	// Stamped here, once, rather than at each of the six spawnOutcome literals
 	// below: a disclosure that has to be repeated at every return is a disclosure
 	// that will be missing from the seventh, and missing silently. p is read at
 	// defer time, so this sees the value applyDefaultProfile resolved.
 	defer func() {
-		if outcome != nil {
-			outcome.Notes = append(outcome.Notes, copilotDriveDisclosure(p)...)
+		if outcome == nil {
+			return
+		}
+		notes := copilotDriveDisclosure(p)
+		// ASSIGNED, not appended. The deferred-spawn path can return an inner
+		// executeSpawn's outcome pointer, whose own defer already stamped it —
+		// appending would render the same disclosure twice. Assignment is
+		// idempotent under that re-entrancy and says the same thing once.
+		outcome.Notes = notes
+		// And logged unconditionally, because Notes only reaches an operator on
+		// callers that render it. Today the wave/template path does and the
+		// scribe summon does not, and a caller added later inherits silence by
+		// default. The drive is unverified; "no agent acquires it silently" has to
+		// hold for every path through this function, not just the ones with a
+		// response body to put a note in.
+		for _, note := range notes {
+			slog.Warn("spawn: agent placed on the Copilot API drive by a non-explicit tier",
+				"conv", outcome.ConvID, "label", outcome.Label, "group", groupName,
+				"disclosure", note)
 		}
 	}()
-	groupName := spawnGroupName(g)
 	privateAttachmentCleanup := func() {}
 	if p.privateAttachmentRootCleanup != nil {
 		privateAttachmentCleanup = p.privateAttachmentRootCleanup

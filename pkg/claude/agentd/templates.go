@@ -782,6 +782,14 @@ type templateAgentLaunch struct {
 	// CopilotAPISet records that a tier actually spoke, mirroring AutoReviewSet.
 	CopilotAPI    bool
 	CopilotAPISet bool
+	// CopilotAPISource / SSHWorkaroundSource name the tier that CHOSE the value,
+	// threaded into spawnParams exactly like SandboxSource. Without them the
+	// deploy passes only the Set bit, the spawn boundary re-resolves an
+	// already-set field as ProvExplicit, and every template-deployed agent
+	// records a false "an operator chose this" for a value the resolver defaulted
+	// (TCL-1090).
+	CopilotAPISource    string
+	SSHWorkaroundSource string
 	FastMode      bool
 	FastModeSet   bool
 	// Notes disclose profile-tier fields that were skipped because they are not
@@ -1287,7 +1295,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	// unless a profile tier explicitly asked for the API. There is no
 	// template-LOCAL spelling — a template selects the drive by referencing a
 	// Copilot spawn profile that carries one. See TCL-1053.
-	copilotAPI, copilotAPISet, _, copilotAPINote, fail := resolveBoolLaunchField(
+	copilotAPI, copilotAPISet, copilotAPISource, copilotAPINote, fail := resolveBoolLaunchField(
 		"copilot_api", false, false, h.Name, tiers,
 		func(p *db.SpawnProfile) *bool { return p.CopilotAPI },
 		func(v bool) (bool, error) { return harness.ResolveCopilotAPI(h, &v) })
@@ -1310,7 +1318,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	if fastModeNote != "" {
 		notes = append(notes, fastModeNote)
 	}
-	sshWorkaround, sshWorkaroundSet, _, sshNote, fail := resolveBoolLaunchField(
+	sshWorkaround, sshWorkaroundSet, sshWorkaroundSource, sshNote, fail := resolveBoolLaunchField(
 		"ssh_workaround", false, false, h.Name, tiers,
 		func(p *db.SpawnProfile) *bool { return p.SSHWorkaround },
 		func(v bool) (bool, error) { return harness.ResolveSSHWorkaround(h, &v) })
@@ -1320,6 +1328,12 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	if !sshWorkaroundSet {
 		sshWorkaround, _ = harness.ResolveSSHWorkaround(h, nil)
 		sshWorkaroundSet = true
+		// The Set bit above now says "this launch has a posture"; the ATTRIBUTION
+		// has to keep saying who decided it, which was nobody. Leaving it blank
+		// would let the spawn boundary re-resolve it as "explicit" — the template
+		// path passes the Set bit through, and an already-set field reads as an
+		// explicit request — stamping a false decision onto a pure default.
+		sshWorkaroundSource = agent.ProvHarnessDefault
 	}
 	if sandbox != harness.SandboxManagedProfile {
 		if sshWorkaround {
@@ -1376,6 +1390,8 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		ContextWindowMax:       contextWindowMax,
 		CopilotAPI:             copilotAPI,
 		CopilotAPISet:          copilotAPISet,
+		CopilotAPISource:       copilotAPISource,
+		SSHWorkaroundSource:    sshWorkaroundSource,
 		FastMode:               fastMode,
 		FastModeSet:            fastModeSet,
 		SandboxImplementation:  sandboxImplementation,
@@ -1411,8 +1427,19 @@ func roleProfileSource(role *db.Role, profile *db.SpawnProfile) string {
 // operator had deliberately kept it off. Reading it as chosen merely leaves the
 // pre-existing wart in place for old records. One of those errors is a silent
 // acquisition of an unverified drive; the other is the status quo.
+//
+// The EMPTY string is unknown too, and deliberately so — it is not the same as
+// ProvHarnessDefault. relaunchProfileForSpawn always writes a non-nil pointer, so
+// a launch path that never threaded a source records "" rather than nil; and
+// HarnessBuiltinModeSource, the field this one mirrors, uses "" to mean "erase
+// the previous attribution". Both spellings mean "nothing here says who decided",
+// which is exactly the case that must stay conservative. Only a POSITIVE
+// "the harness default decided this" suppresses the value.
 func launchValueWasChosen(source *string) bool {
-	return source == nil || strings.TrimSpace(*source) != agent.ProvHarnessDefault
+	if source == nil {
+		return true
+	}
+	return strings.TrimSpace(*source) != agent.ProvHarnessDefault
 }
 
 // copilotAPIPointer renders a traced launch's Copilot drive as the tri-state a
