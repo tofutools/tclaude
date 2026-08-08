@@ -78,6 +78,78 @@ export function permissionSeed(snapshot, descriptor) {
   return { ...(descriptor.overrides || {}) };
 }
 
+// permissionScopeSeed is the scope half of permissionSeed: slug → {dim:
+// [matchers]} for the agent's existing overrides. Only the live per-agent
+// editor reads persisted scopes; group grants and the buffered (pre-spawn)
+// editor have no scope storage behind them yet, so they seed empty and their
+// scope controls stay hidden rather than pretending to save something.
+export function permissionScopeSeed(snapshot, descriptor) {
+  if (descriptor.mode !== 'agent') return {};
+  const stored = (snapshot?.permissions?.scopes || {})[descriptor.conv] || {};
+  const out = {};
+  for (const [slug, scope] of Object.entries(stored)) {
+    out[slug] = Object.fromEntries(Object.entries(scope || {})
+      .map(([dim, values]) => [dim, [...(values || [])]]));
+  }
+  return out;
+}
+
+// unreadableScopeSlugs is the set of this agent's grants whose stored scope
+// the daemon could not decode. Such a grant authorizes NOTHING at the gate, so
+// the editor must say exactly that: rendering it as unscoped would be the
+// widest possible misreading, and saving the row would make the misreading
+// true. The daemon refuses that overwrite too — this is the half that stops an
+// operator walking into it.
+export function unreadableScopeSlugs(snapshot, descriptor) {
+  if (descriptor.mode !== 'agent') return new Set();
+  return new Set((snapshot?.permissions?.unreadable_scopes || {})[descriptor.conv] || []);
+}
+
+// scopeSupported reports whether this editor launch can persist scopes at all
+// — see permissionScopeSeed for why only the live per-agent editor can.
+export function scopeSupported(descriptor) {
+  return descriptor?.mode === 'agent';
+}
+
+// scopeDimOptions answers the picker's "what can I choose here" for ONE
+// dimension, from what the daemon advertised. A dimension the daemon knows but
+// has no catalogue for answers with its selectors and no values, which the
+// picker renders as free text — the same thing the CLI's --scope accepts. That
+// is what lets a dimension introduced by a later phase become editable with no
+// change here.
+export function scopeDimOptions(snapshot, dim) {
+  const advertised = (snapshot?.permissions?.scope_dim_options || {})[dim] || {};
+  return {
+    values: [...(advertised.values || [])],
+    selectors: [...(advertised.selectors || [])],
+  };
+}
+
+// scopeChips flattens a scope into the row's read-at-a-glance chips, in the
+// same dimension order the daemon's provenance line uses so the editor and
+// `permissions ls` never disagree about what a grant says.
+// scopeDimRows lists the dimensions the drawer must offer: the ones the slug
+// declares, PLUS any the stored scope already carries. The second half is not
+// decoration — a dimension a slug stopped declaring (a registry change under a
+// live grant) would otherwise be visible in the chips, uneditable in the
+// drawer, and rejected by the daemon on every save, leaving the operator with
+// a dialog they cannot save and no way to fix it from the dashboard.
+export function scopeDimRows(row, scope) {
+  const declared = [...(row?.scope_dims || [])];
+  const stored = Object.keys(scope || {}).filter((dim) => !declared.includes(dim)).sort();
+  return [
+    ...declared.map((dim) => ({ dim, declared: true })),
+    ...stored.map((dim) => ({ dim, declared: false })),
+  ];
+}
+
+export function scopeChips(scope) {
+  return Object.entries(scope || {})
+    .filter(([, values]) => (values || []).length)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([dim, values]) => ({ dim, values: [...values], label: `${dim}=${values.join(', ')}` }));
+}
+
 function membershipGroups(snapshot, descriptor) {
   if (descriptor.mode === 'agent') {
     const agent = (snapshot?.agents || []).find((item) => item.conv_id === descriptor.conv);

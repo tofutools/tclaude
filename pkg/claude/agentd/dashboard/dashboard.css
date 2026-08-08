@@ -282,6 +282,11 @@ nav [data-tab]:hover { color: #d4d4d4; }
 .access-btn.deny:hover { background: #4d2a2c; }
 .access-btn.always { background: #3a2f16; border-color: #d29922; color: #e6c07b; }
 .access-btn.always:hover { background: #4a3c1c; }
+/* The scoped twin sits next to the blanket button and must not read as the
+   same click. Cooler and quieter: it is the narrower, safer of the two, and
+   the amber "you are handing over every context" weight belongs to the other. */
+.access-btn.always.scoped { background: #12233a; border-color: #1f4b7a; color: #79c0ff; }
+.access-btn.always.scoped:hover { background: #17304f; }
 .access-btn.extend { font-weight: 500; color: #8b949e; }
 
 /* Recently-handled history: decided requests stay in the folder (dimmed) so the
@@ -5176,6 +5181,101 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
    editor's defaults give them. */
 #context-features-modal .perm-row-eff { flex: 0 0 108px; }
 #context-features-modal .perm-tristate { flex: 0 0 auto; }
+/* Scope chips + drawer (TCL-1072). The chips ride ON the tristate line, just
+   left of the buttons, so a row reads "slug — narrowed to this — granted".
+   The effective-source column moves into the drawer for scopable rows: the row
+   cannot carry both at this dialog's width without one of them truncating.
+   The drawer is full width because a dimension row needs room the tristate
+   line does not have. */
+.perm-scope-chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 2px; }
+/* In-row: no top margin (it is a row item, not a stacked one) and a hard cap
+   so a many-valued scope wraps to a second line instead of squeezing the slug
+   column or pushing the tristate buttons off the edge. */
+.perm-row > .perm-scope-chips {
+  /* min-width:0 matters: without it the block's automatic minimum is the
+     widest unbreakable chip, which pushes the tristate buttons out of line
+     with the rows above it. */
+  margin-top: 0; flex: 0 1 auto; min-width: 0; justify-content: flex-end; max-width: 46%;
+}
+/* A single over-long matcher ellipsizes (its title has the full text) instead
+   of forcing the chip block to its intrinsic width and eating the slug column. */
+.perm-row > .perm-scope-chips .perm-scope-chip {
+  display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+}
+/* And the slug column keeps a floor, so a busy scope wraps to a second chip
+   line rather than truncating the slug's description to two words. The small
+   flex-basis is what makes the chips win the space they actually need: the
+   description is the part that ellipsizes gracefully, the matcher values are
+   not. Scoped to the permission editor, since it is the only dialog on this
+   skeleton that renders chips. */
+#perm-edit-modal .perm-row-info { flex: 1 1 168px; min-width: 168px; }
+/* The permission editor's row grew a fourth column (the chips), so it gets a
+   wider cap than the other dialogs on this skeleton — otherwise every scope
+   longer than a short group name renders ellipsized. Only this dialog: the
+   startup-context editor still has three columns and does not need the width. */
+#perm-edit-modal .perm-edit-modal { max-width: 780px; }
+/* Below roughly the dialog's own minimum width there is no honest way to keep
+   the chips on the tristate line — they ellipsize down to "grou…", which tells
+   the operator nothing. So the row wraps and the chips take their own full
+   line under the slug: the in-row reading is the preferred one, not one worth
+   showing a lie for. */
+@media (max-width: 780px) {
+  #perm-edit-modal .perm-row { flex-wrap: wrap; }
+  #perm-edit-modal .perm-row > .perm-scope-chips {
+    order: 5; flex-basis: 100%; max-width: 100%;
+    justify-content: flex-start; padding-left: 22px;
+  }
+  #perm-edit-modal .perm-row > .perm-scope-chips .perm-scope-chip { display: inline-flex; }
+}
+.perm-scope-chip {
+  display: inline-flex; align-items: center; gap: 3px;
+  background: #12233a; border: 1px solid #1f4b7a; color: #79c0ff;
+  border-radius: 10px; padding: 0 6px; font-size: 10px; line-height: 16px; white-space: nowrap;
+}
+.perm-scope-chip .dim { color: #6e93b8; }
+.perm-scope-chip .x {
+  background: none; border: none; padding: 0; margin: 0;
+  color: #5e7387; cursor: pointer; font-size: 11px; font-family: inherit; line-height: 1;
+}
+.perm-scope-chip .x:hover { color: #f0f6fc; }
+/* Amber, not blue: an unscoped grant is the wide one, and the chip is there
+   to say so rather than to look like just another matcher. */
+.perm-scope-chip.unscoped { background: #1c1606; border-color: #4d3a17; color: #e3b341; }
+/* Red, because it is a broken grant rather than a wide one: it authorizes
+   nothing at the gate, and the editor cannot show what it says. */
+.perm-scope-chip.unreadable { background: #2d1416; border-color: #7a2a2a; color: #ff9492; }
+.perm-scope-stale { color: #e3b341; font-size: 9px; }
+/* The disclosure gutter is a fixed 12px for every row in a list that has any
+   scopable slug — including the inert placeholder — so slugs stay aligned
+   instead of stepping sideways as grants are toggled. */
+.perm-scope-twisty {
+  flex: 0 0 12px; display: inline-block; text-align: left;
+  background: none; border: none; padding: 0; margin: 0;
+  color: #7d8590; font-size: 10px; font-family: inherit; cursor: pointer;
+}
+.perm-scope-twisty.empty { cursor: default; }
+button.perm-scope-twisty:hover { color: #c9d1d9; }
+.perm-scope-drawer {
+  background: #0f151c; border-bottom: 1px solid #21262d;
+  padding: 7px 10px 8px 22px; display: flex; flex-direction: column; gap: 3px;
+}
+/* The drawer head carries the semantics hint and, at its right edge, the
+   effective-source line this row gave up to make space for its chips. */
+.perm-scope-drawer-head { display: flex; align-items: flex-start; gap: 10px; }
+.perm-scope-drawer-head .perm-row-eff { flex: 0 0 auto; padding-top: 1px; }
+.perm-scope-drawer-hint { flex: 1; min-width: 0; font-size: 10px; color: #7d8590; margin-bottom: 3px; }
+.perm-scope-drawer-hint b { color: #c9d1d9; }
+.perm-scope-dim { display: flex; align-items: flex-start; gap: 8px; padding: 2px 0; }
+.perm-scope-dim-label { flex: 0 0 118px; font-size: 10px; color: #8b949e; padding-top: 2px; }
+.perm-scope-dim-label code { color: #d2a8ff; }
+.perm-scope-dim-body { flex: 1; min-width: 0; }
+.perm-scope-hint { font-size: 9px; color: #5e7387; margin-top: 3px; }
+.perm-scope-add, .perm-scope-free {
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 3px; color: #c9d1d9;
+  font-size: 10px; font-family: inherit; padding: 2px 5px;
+}
+.perm-scope-free { width: 130px; }
+.perm-scope-free:focus, .perm-scope-add:focus { outline: none; border-color: #58a6ff; }
 .perm-row-eff { flex: 0 0 78px; font-size: 10px; text-align: right; }
 .perm-row-eff.granted { color: #3fb950; }
 .perm-row-eff.denied { color: #f85149; }

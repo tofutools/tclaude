@@ -32,6 +32,13 @@ ownership confers only the read-only `process.runs.read`, never template
 authoring. Do not request execution, group-template, or other
 permissions for authoring. A 403 names the missing slug; do not loop on it.
 
+A grant may also be **scoped**. `process.runs.manage` in particular can be
+narrowed to named templates (`--scope process_template=release-train`), so an
+agent that holds it for one template gets an ordinary 403 on another — the
+grant simply does not cover that action. `tclaude agent permissions ls` shows
+each grant's scope; when yours is narrower than the work, ask the human to
+widen it instead of retrying.
+
 ## Safe workflow
 
 ### Discover what exists

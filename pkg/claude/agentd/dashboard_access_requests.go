@@ -71,6 +71,13 @@ type dashboardAccessRequest struct {
 	// decision endpoint re-checks it server-side so a hand-crafted POST can't
 	// persist an ineligible slug.
 	AutoGrantable bool `json:"auto_grantable,omitempty"`
+	// ScopeDisplay is the human-readable scope of THIS action
+	// ("group=dev spawn_profile=p1"), present only when the gate site
+	// described the action in dimensions the slug can be scoped by. It both
+	// labels and gates the narrow "Always allow for this <scope>" button; the
+	// decision endpoint re-derives nothing from it, and re-checks the pending
+	// request's own scope server-side.
+	ScopeDisplay string `json:"scope_display,omitempty"`
 	// CreatedAt / Deadline drive the "waiting Xs / auto-declines in Ys"
 	// countdown. RFC3339.
 	CreatedAt string `json:"created_at"`
@@ -109,6 +116,7 @@ func toDashboardAccessRequest(req *approvalRequest) dashboardAccessRequest {
 		TargetConvID:    req.targetConvID,
 		TargetConvTitle: req.targetConvTitle,
 		AutoGrantable:   req.autoGrantable,
+		ScopeDisplay:    req.scopeDisplay,
 		CreatedAt:       req.createdAt.Format(time.RFC3339),
 		Deadline:        deadline.Format(time.RFC3339),
 	}
@@ -250,10 +258,14 @@ func registerDashboardAccessRequestRoutes(mux *http.ServeMux) {
 // other dashboard mutation rides; there is no per-approval popup token because
 // the operator is already an authenticated dashboard session.
 //
-// Body: {"decision":"approve|always|deny|extend","secs":<n>}. "always" is
-// gated server-side on the request's AutoGrantable flag so a hand-crafted POST
-// can't self-grant an ineligible slug even though the frontend hides the
-// button. The send onto req.decision is non-blocking (the channel is buffered
+// Body: {"decision":"approve|always|always_scoped|deny|extend","secs":<n>}.
+// "always" is gated server-side on the request's AutoGrantable flag so a
+// hand-crafted POST can't self-grant an ineligible slug even though the
+// frontend hides the button. "always_scoped" is the narrow twin — same
+// eligibility gate, plus the pending request must carry the scope its gate
+// site derived; the scope is read from the pending request, never from the
+// body, so this endpoint cannot be used to write a wider grant than the
+// action the human is looking at. The send onto req.decision is non-blocking (the channel is buffered
 // cap 1 and the waiter consumes exactly one); the waiter runs
 // applyApprovalOutcome so audit + always-allow persistence happen exactly once
 // for the decision that took effect.
@@ -301,6 +313,25 @@ func handleDashboardAccessRequestDecision(w http.ResponseWriter, r *http.Request
 		default:
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"decision": "always"})
+	case "always_scoped":
+		// Both gates are re-checked here, not trusted from the frontend: the
+		// slug must be eligible, AND the pending request must carry a scope
+		// the gate derived when it was raised. The scope itself is never taken
+		// from the request body — there is no body field for it — so a
+		// hand-crafted POST can widen nothing.
+		if !req.autoGrantable || !isScopedAutoGrantableSlug(req.perm) {
+			writeError(w, http.StatusForbidden, "not_grantable", "this permission is not eligible for \"always allow\"")
+			return
+		}
+		if req.scopeJSON == "" {
+			writeError(w, http.StatusBadRequest, "invalid_arg", errScopedAlwaysUnavailable.Error())
+			return
+		}
+		select {
+		case req.decision <- outcomeApproveAlwaysScoped:
+		default:
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"decision": "always_scoped", "scope": req.scopeDisplay})
 	case "deny":
 		select {
 		case req.decision <- outcomeDeny:
@@ -324,6 +355,6 @@ func handleDashboardAccessRequestDecision(w http.ResponseWriter, r *http.Request
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"decision": "extend", "extended_by_secs": int(extendBy / time.Second)})
 	default:
-		writeError(w, http.StatusBadRequest, "invalid_arg", "decision must be approve, always, deny, or extend")
+		writeError(w, http.StatusBadRequest, "invalid_arg", "decision must be approve, always, always_scoped, deny, or extend")
 	}
 }

@@ -2003,6 +2003,14 @@ func handleDashboardSudoGrant(w http.ResponseWriter, r *http.Request) {
 //	    "overrides": { "<slug>": "grant" | "deny" | "default" },
 //	    "scopes":    { "<slug>": { "<dim>": ["<matcher>", …] } } }
 //
+// A slug's scope narrows its GRANT to the actions matching it (dimensions
+// AND, matchers within a dimension OR). Sending {} for a slug writes it
+// unscoped — which is how the editor clears a scope — while OMITTING a slug
+// from scopes{} keeps whatever scope is stored. A scope on a slug not being
+// granted is a 400 rather than a silent drop, and a deny never carries one: a
+// deny is unconditional by design, so a scoped deny would be a hole, not a
+// narrowing.
+//
 // "grant" / "deny" write an agent_permissions row; "default" clears any
 // existing row so the slug falls back to the config defaults. Slugs
 // absent from the map are left untouched. These are PERMANENT
@@ -2038,9 +2046,13 @@ func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Conv      string                     `json:"conv"`
-		Overrides map[string]string          `json:"overrides"`
-		Scopes    map[string]json.RawMessage `json:"scopes"`
+		Conv      string            `json:"conv"`
+		Overrides map[string]string `json:"overrides"`
+		// Scopes narrows individual GRANT overrides — slug → {dim: [matchers]}
+		// — in the same request that sets the effects. A slug PRESENT with an
+		// empty object is written unscoped, which is how the editor clears a
+		// scope; a slug absent from this map keeps whatever scope is stored.
+		Scopes map[string]json.RawMessage `json:"scopes"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
@@ -2055,7 +2067,8 @@ func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "overrides{} is required (at least one slug → grant|deny|default)", http.StatusBadRequest)
 		return
 	}
-	// Validate the whole batch before touching the DB.
+	// Validate and canonicalize the whole batch before the first write, so a
+	// rejected scope cannot leave half of it applied.
 	scopeJSON := map[string]string{}
 	for slug, effect := range body.Overrides {
 		if !IsKnownPermSlug(slug) {
@@ -2074,6 +2087,9 @@ func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid scope for slug "+slug+": "+err.Error(), http.StatusBadRequest)
 			return
 		}
+		// A scope on a slug that is not being granted is refused rather than
+		// silently dropped: it means the caller and the daemon disagree about
+		// what is being written. A deny is unconditional by design.
 		if canonical != "" && effect != db.PermEffectGrant {
 			http.Error(w, "slug "+slug+" carries a scope but is not a grant; only a grant can be scoped",
 				http.StatusBadRequest)
@@ -2097,6 +2113,25 @@ func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "load current overrides: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+	// A stored scope this build cannot decode authorizes nothing at the gate.
+	// Overwriting it from here would turn a grant that permits NOTHING into one
+	// that permits everything, off an editor that could not even show what it
+	// was replacing — so refuse, unless the caller is deleting the row
+	// (default) or making it a deny, both of which only ever remove authority.
+	// Checked for the whole batch before the first write.
+	for slug, stored := range currentOverrides {
+		if stored.Scope == "" || permissionScopeFromJSON(stored.Scope) != nil {
+			continue
+		}
+		switch body.Overrides[slug] {
+		case "", "default", db.PermEffectDeny:
+		default:
+			http.Error(w, "refusing to overwrite "+slug+
+				": its stored scope cannot be read by this build (edit it with `tclaude agent permissions`, or set it back to Default first)",
+				http.StatusConflict)
+			return
+		}
 	}
 	changed := 0
 	for slug, effect := range body.Overrides {
@@ -2125,6 +2160,8 @@ func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 		if effect != db.PermEffectGrant {
 			desired = ""
 		}
+		// A scope change is a real change even when the effect is unchanged:
+		// narrowing an existing grant is the whole point of the scope pickers.
 		if held && stored.Effect == effect && stored.Scope == desired {
 			continue // already at the requested grant/deny with the same scope
 		}
@@ -2136,6 +2173,16 @@ func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	overrides, _ := db.ListAgentPermissionOverridesForConv(res.ConvID)
 	effective, _ := db.ListAgentPermissionsForConv(res.ConvID)
+	// The editor reseeds its chips from the response, so it has to carry what
+	// was actually stored rather than what was posted.
+	savedScopes := map[string]PermissionScope{}
+	if saved, err := agentPermissionOverrides(res.ConvID); err == nil {
+		for slug, row := range saved {
+			if scope := permissionScopeFromJSON(row.Scope); len(scope) > 0 {
+				savedScopes[slug] = scope
+			}
+		}
+	}
 	title := ""
 	if row := agent.FreshConvRowResolved(res.ConvID); row != nil {
 		title = agent.DisplayTitle(row)
@@ -2145,6 +2192,7 @@ func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 		"title":     title,
 		"changed":   changed,
 		"overrides": overrides,
+		"scopes":    savedScopes,
 		"effective": effective,
 	})
 }

@@ -424,6 +424,34 @@ func AgentPermissionOverride(convID, slug string) (effect string, ok bool, err e
 	return effect, true, nil
 }
 
+// AgentPermissionOverrideByAgentID returns the override row for
+// (agentID, slug) including its scope, or (nil, nil) when the agent has no
+// row for that slug. It reads the stable actor directly — no conv resolution,
+// no enrollment — for callers that captured identity at an earlier security
+// boundary and must not resurrect a stale generation.
+func AgentPermissionOverrideByAgentID(agentID, slug string) (*AgentPermission, error) {
+	if agentID == "" {
+		return nil, nil
+	}
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	row := AgentPermission{Slug: slug}
+	var grantedAt dbTimestamp
+	err = db.QueryRow(`SELECT effect, scope_json, granted_at, granted_by
+		FROM agent_permissions WHERE agent_id = ? AND slug = ?`, agentID, slug).
+		Scan(&row.Effect, &row.ScopeJSON, &grantedAt, &row.GrantedBy)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	row.GrantedAt = grantedAt.Time()
+	return &row, nil
+}
+
 // ListAgentPermissionsForConv returns every GRANTED slug for this conv,
 // alphabetised. Deny-effect rows are excluded — this preserves the
 // historical "additive grants" semantics the CLI / dashboard grants

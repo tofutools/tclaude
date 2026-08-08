@@ -8,7 +8,8 @@ import {
 import { registerMessageAccessDialogController } from './message-access-dialog-controller.js';
 import {
   agentCandidates, groupMembers, groupsForPicker, permissionRows,
-  permissionSeed, senderOnline, sudoByAgent, sudoSlugRows,
+  permissionScopeSeed, permissionSeed, scopeChips, scopeDimOptions, scopeDimRows,
+  scopeSupported, senderOnline, sudoByAgent, sudoSlugRows, unreadableScopeSlugs,
 } from './message-access-dialog-model.js';
 import { idTooltip, shortAgentId } from './helpers.js';
 import { wizWord } from './slop.js';
@@ -494,12 +495,113 @@ function SudoGrantDialog({ descriptor, state, actions, snapshot, confirmDiscard 
   </${Overlay}>`;
 }
 
+// ScopeSummary is the row's read-at-a-glance scope: one chip per constrained
+// dimension, or an explicit "unscoped" marker. Saying "unscoped" out loud
+// matters — a granted slug with no chips would otherwise read as "scope not
+// loaded" rather than "this grant applies everywhere".
+//
+// It rides ON the tristate line rather than under the slug, so a row reads
+// left-to-right as "this slug, narrowed to this, granted". The effective
+// source that used to sit at the right edge moves into the drawer: the row
+// cannot carry chips AND that column at this dialog's width without one of
+// them truncating, and the chips are the part that changes what the grant
+// actually does.
+function ScopeSummary({ scope }) {
+  const chips = scopeChips(scope);
+  return html`<span class="perm-scope-chips">
+    ${chips.length
+    // The title carries the full text: a long matcher (a git remote pattern,
+    // a long group name) is ellipsized in the row rather than allowed to
+    // squeeze the slug column, and hover has to still answer "narrowed to what?".
+    ? chips.map((chip) => html`<span key=${chip.dim} class="perm-scope-chip"
+      title=${`${chip.dim} = ${chip.values.join(', ')}`}><span class="dim">${chip.dim}=</span>${chip.values.join(', ')}</span>`)
+    : html`<span class="perm-scope-chip unscoped" title="This grant applies to every target — open ▸ to narrow it">unscoped</span>`}
+  </span>`;
+}
+
+// ScopeTwisty is the row's disclosure control. Every row in a dialog that has
+// any scopable slug gets the gutter so the list stays aligned; a row with
+// nothing to disclose gets an inert placeholder rather than a dead control.
+function ScopeTwisty({ scopable, open, toggle, slug }) {
+  if (!scopable) return html`<span class="perm-scope-twisty empty" aria-hidden="true"></span>`;
+  return html`<button type="button" class="perm-scope-twisty" aria-expanded=${open ? 'true' : 'false'}
+    aria-label=${`${open ? 'Hide' : 'Show'} the scope editor for ${slug}`}
+    title=${open ? 'Hide the scope editor' : 'Narrow this grant to particular targets'}
+    onClick=${toggle}>${open ? '▾' : '▸'}</button>`;
+}
+
+// ScopeDimEditor edits ONE dimension's matcher list. It is deliberately
+// ignorant of which dimension it is: the label, the suggestions and the
+// selectors all arrive from the daemon, so a dimension added by a later phase
+// is editable here the moment the daemon advertises it.
+function ScopeDimEditor({ dim, values, options, onChange, declared = true }) {
+  const [draft, setDraft] = useState('');
+  const remove = (value) => onChange(values.filter((item) => item !== value));
+  const add = (value) => {
+    const clean = String(value || '').trim();
+    if (!clean || values.includes(clean)) return;
+    onChange([...values, clean].sort());
+  };
+  const unused = [...options.values, ...options.selectors].filter((value) => !values.includes(value));
+  return html`<div class="perm-scope-dim" data-dim=${dim}>
+    <span class="perm-scope-dim-label"><code>${dim}</code>${declared ? null : html` <span class="perm-scope-stale"
+      title="This slug no longer accepts this dimension. Saving is refused until it is emptied.">⚠ not accepted</span>`}</span>
+    <div class="perm-scope-dim-body">
+      <span class="perm-scope-chips">
+        ${values.map((value) => html`<span key=${value} class="perm-scope-chip">${value}
+          <button type="button" class="x" aria-label=${`Remove ${dim}=${value}`} onClick=${() => remove(value)}>×</button></span>`)}
+        ${unused.length ? html`<select class="perm-scope-add" aria-label=${`Add a ${dim} value`}
+          onChange=${(event) => add(event.currentTarget.value)}>
+          <option value="" selected>+ add…</option>
+          ${unused.map((value) => html`<option key=${value} value=${value}>${value}</option>`)}
+        </select>` : null}
+        <input type="text" class="perm-scope-free" value=${draft} placeholder="or type a value"
+          autocomplete="off" spellcheck=${false} aria-label=${`Type a ${dim} value`}
+          onInput=${(event) => setDraft(event.currentTarget.value)}
+          onKeyDown=${(event) => {
+    if (event.key !== 'Enter' || event.isComposing) return;
+    event.preventDefault();
+    add(draft);
+    setDraft('');
+  }} />
+      </span>
+      ${values.length ? null : html`<div class="perm-scope-hint">empty — unconstrained on this dimension</div>`}
+    </div>
+  </div>`;
+}
+
+function ScopeDrawer({ row, scope, snapshot, onChange, effective }) {
+  const dims = scopeDimRows(row, scope);
+  const setDim = (dim, values) => {
+    const next = { ...scope };
+    // An empty dimension is an ABSENT one, never a stored empty list: the
+    // scope writer rejects a dimension with no matchers, and "unconstrained"
+    // is exactly what absence means at the gate.
+    if (values.length) next[dim] = values; else delete next[dim];
+    onChange(next);
+  };
+  return html`<div class="perm-scope-drawer" data-slug=${row.slug}>
+    <div class="perm-scope-drawer-head">
+      <span class="perm-scope-drawer-hint">Dimensions <b>AND</b> together; values within one dimension <b>OR</b>.
+        A dimension left empty is unconstrained, and a grant with no dimensions at all applies everywhere.</span>
+      ${effective ? html`<span class=${`perm-row-eff ${effective.granted ? 'granted' : 'denied'}`}>${effective.text}</span>` : null}
+    </div>
+    ${dims.map(({ dim, declared }) => html`<${ScopeDimEditor} key=${dim} dim=${dim} declared=${declared}
+      values=${scope[dim] || []} options=${scopeDimOptions(snapshot, dim)}
+      onChange=${(values) => setDim(dim, values)} />`)}
+  </div>`;
+}
+
 function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscard }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   // Seed and dirty comparison tuple are frozen for this keyed launch. Snapshot
   // updates may change rows/effective sources, never the draft baseline.
   const [baseline] = useState(() => permissionSeed(snapshot, descriptor));
   const [selection, setSelection] = useState(() => ({ ...baseline }));
+  const [scopeBaseline] = useState(() => permissionScopeSeed(snapshot, descriptor));
+  const [unreadable] = useState(() => unreadableScopeSlugs(snapshot, descriptor));
+  const [scopes, setScopes] = useState(() => ({ ...scopeBaseline }));
+  const [openScope, setOpenScope] = useState('');
   const [filter, setFilter] = useState('');
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
@@ -509,8 +611,16 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
     .some((value) => String(value || '').toLowerCase().includes(filter.trim().toLowerCase())));
   const currentEffect = (slug) => selection[slug] || 'default';
   const baselineEffect = (slug) => baseline[slug] || 'default';
+  const scopeOf = (slug) => scopes[slug] || {};
+  const scopeJSON = (scope) => JSON.stringify(scopeChips(scope));
   const rowsDirty = rows.some((row) => currentEffect(row.slug) !== baselineEffect(row.slug));
+  const scopesDirty = rows.some((row) => scopeJSON(scopeOf(row.slug)) !== scopeJSON(scopeBaseline[row.slug] || {}));
   const groupMode = descriptor.mode === 'group';
+  const scopesEditable = scopeSupported(descriptor);
+  // The twisty gutter is reserved for the whole visible list as soon as any
+  // slug in it can carry a scope, so rows stay left-aligned instead of
+  // jittering sideways as grants are toggled on and off.
+  const anyScopable = scopesEditable && visible.some((row) => !!row.scope_dims?.length);
   // Owner scopes (TCL-1071) are a small JSON document, not a per-slug
   // tri-state, so they get a textarea rather than a row control — deliberately
   // the least machinery that makes the field reachable from the dashboard.
@@ -521,8 +631,13 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
       ? JSON.stringify(descriptor.ownerScopes, null, 2) : ''));
   const [ownerScopesBaseline] = useState(() => ownerScopesText);
   const ownerScopesDirty = groupMode && ownerScopesText !== ownerScopesBaseline;
-  const dirty = rowsDirty || ownerScopesDirty;
+  const dirty = rowsDirty || scopesDirty || ownerScopesDirty;
   const setEffect = (slug, effect) => setSelection((current) => ({ ...current, [slug]: effect }));
+  const setScope = (slug, scope) => setScopes((current) => {
+    const next = { ...current };
+    if (Object.keys(scope).length) next[slug] = scope; else delete next[slug];
+    return next;
+  });
   const submit = async () => {
     if (busyRef.current) return;
     let ownerScopes = null;
@@ -541,11 +656,26 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
     busyRef.current = true;
     setBusy(true); setError('');
     const full = Object.fromEntries(rows.map((row) => [row.slug, currentEffect(row.slug)]));
+    // Only a granted slug carries a scope: a deny is unconditional by design,
+    // and a slug back at Default has no row to attach one to. Sending a scope
+    // for either is a 400 from the daemon, so drop them here where the user's
+    // intent ("I set this one back to Default") is still legible.
+    //
+    // Every granted, scopable slug is sent EXPLICITLY, including as {}: the
+    // daemon reads a missing key as "keep the stored scope" (so an unrelated
+    // save cannot strip a narrowing), which means clearing the last chip has
+    // to be said out loud to take effect.
+    const scoped = scopesEditable ? Object.fromEntries(rows
+      .filter((row) => currentEffect(row.slug) === 'grant'
+        && (!!row.scope_dims?.length || Object.keys(scopeOf(row.slug)).length)
+        && !unreadable.has(row.slug))
+      .map((row) => [row.slug, scopeOf(row.slug)])) : {};
     // Only send the map when the box was actually EDITED. A save that merely
     // flipped a grant must not carry owner_scopes at all: the daemon treats an
     // absent field as "unchanged", and sending the box's current value would
     // clear a stored narrowing this build could not decode into it.
-    try { await actions.savePermissions(descriptor, full, ownerScopesDirty ? ownerScopes : null); state.close(); }
+    const scopePayload = groupMode ? (ownerScopesDirty ? ownerScopes : null) : scoped;
+    try { await actions.savePermissions(descriptor, full, scopePayload); state.close(); }
     catch (cause) { setError(errorText(cause)); }
     finally { busyRef.current = false; setBusy(false); }
   };
@@ -571,17 +701,44 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
     <div class="perm-edit-toolbar"><input id="perm-edit-filter" type="text" value=${filter} placeholder="Filter slugs…" autocomplete="off" spellcheck="false"
       onInput=${(event) => setFilter(event.currentTarget.value)} /><button type="button" id="perm-edit-reset" title="Set every slug back to Default (inherit)"
       onClick=${() => setSelection(Object.fromEntries(rows.map((row) => [row.slug, 'default'])))}><span class="pe-btn-regular">${groupMode ? 'none granted' : 'all default'}</span><span class="pe-btn-wizard">unbind all</span></button></div>
-    <div id="perm-edit-list" class="perm-edit-list">${visible.length ? visible.map((row) => html`<div class="perm-row" key=${row.slug} data-slug=${row.slug}>
+    <div id="perm-edit-list" class="perm-edit-list">${visible.length ? visible.map((row) => {
+    // The scope controls appear only where they can mean something: a slug
+    // that declares dimensions, granted, in an editor whose save path can
+    // persist a scope. Everywhere else the row renders exactly as before.
+    // A grant whose stored scope the daemon could not decode is shown as
+    // exactly that and left alone: it authorizes nothing today, and the one
+    // thing the editor must not do is quietly rewrite it into a blanket grant.
+    const unreadableScope = unreadable.has(row.slug) && currentEffect(row.slug) === 'grant';
+    const scopable = !unreadableScope && scopesEditable && !!row.scope_dims?.length
+      && currentEffect(row.slug) === 'grant';
+    const effText = groupMode
+      ? html`<${Words} plain=${row.granted ? '✓ via group' : '— not via group'} wizard=${row.granted ? '✨ boon active' : '— no boon'}/>`
+      : currentEffect(row.slug) === 'deny' ? '✗ denied (explicit veto)'
+        : row.granted ? `✓ ${row.sources.join(' + ')}` : '✗ denied (no source)';
+    return html`<${Fragment} key=${row.slug}><div class="perm-row" data-slug=${row.slug}>
+      ${anyScopable && html`<${ScopeTwisty} scopable=${scopable} slug=${row.slug} open=${openScope === row.slug}
+        toggle=${() => setOpenScope(openScope === row.slug ? '' : row.slug)} />`}
       <div class="perm-row-info"><span class="perm-row-slug">${row.slug}${row.owner_implied ? html` <span class="owner-badge" title="Group ownership can confer this slug">👑 owner</span>` : null}</span>
         <span class="perm-row-desc" title=${row.description || row.descr || ''}>${row.description || row.descr || ''}</span></div>
+      ${scopable && html`<${ScopeSummary} scope=${scopeOf(row.slug)} />`}
+      ${unreadableScope && html`<span class="perm-scope-chips"><span class="perm-scope-chip unreadable"
+        title="This grant's stored scope cannot be read by this build, so it authorizes nothing at the gate. Saving will not overwrite it — edit it with the tclaude agent permissions CLI, or set the slug back to Default first.">unreadable scope</span></span>`}
       <div class="perm-tristate"><button type="button" data-effect="default" class=${currentEffect(row.slug) === 'default' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'default')}>${groupMode ? html`<${Words} plain="Not granted" wizard="Unbound"/>` : 'Default'}</button>
         <button type="button" data-effect="grant" class=${currentEffect(row.slug) === 'grant' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'grant')}>${groupMode ? html`<${Words} plain="Grant" wizard="Bestow"/>` : 'Grant'}</button>
         ${!groupMode && html`<button type="button" data-effect="deny" class=${currentEffect(row.slug) === 'deny' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'deny')}>Deny</button>`}</div>
-      <span class=${`perm-row-eff ${row.granted ? 'granted' : 'denied'}`}>${groupMode
-        ? html`<${Words} plain=${row.granted ? '✓ via group' : '— not via group'} wizard=${row.granted ? '✨ boon active' : '— no boon'}/>`
-        : currentEffect(row.slug) === 'deny' ? '✗ denied (explicit veto)'
-        : row.granted ? `✓ ${row.sources.join(' + ')}` : '✗ denied (no source)'}</span>
-    </div>`) : html`<div class="empty" style="padding:10px">${rows.length ? 'No matching permission slugs.' : 'No permission slugs registered.'}</div>`}</div>
+      ${scopable
+    // The column is kept but emptied rather than removed: dropping it would
+    // let a scopable row's tristate buttons sit further right than its
+    // neighbours', and a column of buttons that steps sideways row by row
+    // reads as a rendering bug. The text itself lives in the drawer.
+    ? html`<span class="perm-row-eff empty" aria-hidden="true"></span>`
+    : html`<span class=${`perm-row-eff ${row.granted ? 'granted' : 'denied'}`}>${effText}</span>`}
+    </div>
+    ${scopable && openScope === row.slug && html`<${ScopeDrawer} row=${row} scope=${scopeOf(row.slug)}
+      snapshot=${snapshot} onChange=${(scope) => setScope(row.slug, scope)}
+      effective=${{ granted: row.granted, text: effText }} />`}
+    </${Fragment}>`;
+  }) : html`<div class="empty" style="padding:10px">${rows.length ? 'No matching permission slugs.' : 'No permission slugs registered.'}</div>`}</div>
     ${groupMode && html`<div class="perm-edit-owner-scopes" id="perm-edit-owner-scopes">
       <label for="perm-edit-owner-scopes-input"><${Words}
         plain=${html`👑 <strong>Owner-bypass narrowing</strong> — confines what OWNING this group structurally confers, e.g. <code>{"groups.spawn": {"spawn_profile": ["reviewer"]}}</code>. Empty = unrestricted. Explicit grants an owner holds are unaffected.`}

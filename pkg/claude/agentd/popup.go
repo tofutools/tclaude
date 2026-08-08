@@ -132,6 +132,11 @@ const (
 	outcomeDeny          approvalOutcome = iota // deny this request
 	outcomeApprove                              // approve this one request only
 	outcomeApproveAlways                        // approve AND persist an allow override for the agent
+	// outcomeApproveAlwaysScoped is the narrow twin: approve AND persist an
+	// allow override carrying THIS action's scope, so the agent stops asking
+	// for this group/template/profile and nothing else. Offered only when the
+	// gate site described the action (see permission_scope_approval.go).
+	outcomeApproveAlwaysScoped
 )
 
 // approved reports whether the outcome lets the pending request proceed
@@ -157,10 +162,17 @@ type approvalRequest struct {
 	targetConvID    string // populated for actions on a specific other conv
 	targetConvTitle string // resolved display title for targetConvID
 	autoGrantable   bool   // slug is eligible for the "always allow" button (JOH-367)
-	createdAt       time.Time
-	timeout         time.Duration
-	decision        chan approvalOutcome // the human's choice: deny / approve / approve-always
-	extend          chan time.Duration   // +N seconds — bounded extension so an unattended popup still eventually times out
+	// scopeJSON / scopeDisplay describe THIS action in the typed scope
+	// vocabulary, derived from the ActionContext the gate site supplied.
+	// Empty when the site described nothing the slug can be scoped by, which
+	// is what suppresses the scoped "always allow" button. scopeJSON is the
+	// canonical, already-validated value the persist path writes verbatim.
+	scopeJSON    string
+	scopeDisplay string
+	createdAt    time.Time
+	timeout      time.Duration
+	decision     chan approvalOutcome // the human's choice: deny / approve / approve-always
+	extend       chan time.Duration   // +N seconds — bounded extension so an unattended popup still eventually times out
 
 	// mu guards the mutable field(s) below; the rest of approvalRequest is
 	// set once at construction and read lock-free.
@@ -211,6 +223,10 @@ func outcomeLabel(o approvalOutcome) string {
 		return "approved"
 	case outcomeApproveAlways:
 		return "always"
+	case outcomeApproveAlwaysScoped:
+		// Distinct from "always" on purpose: the history card should not
+		// read as a blanket grant when the operator deliberately narrowed it.
+		return "always (scoped)"
 	case outcomeDeny:
 		return "declined"
 	}
@@ -485,8 +501,14 @@ func newApprovalID() string {
 // so the stub exercises the same audit + persist path as production.
 func applyApprovalOutcome(req *approvalRequest, outcome approvalOutcome) bool {
 	recordApprovalDecision(req, outcome)
-	if outcome == outcomeApproveAlways {
-		persistAlwaysAllowGrant(req)
+	switch outcome {
+	case outcomeApproveAlways:
+		persistAlwaysAllowGrant(req, "")
+	case outcomeApproveAlwaysScoped:
+		// req.scopeJSON was derived from the gate's own ActionContext when the
+		// request was raised and validated then; it is not recomputed here, so
+		// nothing between the human's click and the write can widen it.
+		persistAlwaysAllowGrant(req, req.scopeJSON)
 	}
 	return outcome.approved()
 }
@@ -502,9 +524,20 @@ func applyApprovalOutcome(req *approvalRequest, outcome approvalOutcome) bool {
 // never persist an ineligible slug. Best-effort — a DB failure is logged
 // but does NOT fail the approval the human just granted (the one-off action
 // still proceeds; only the persistence was lost).
-func persistAlwaysAllowGrant(req *approvalRequest) {
+//
+// scopeJSON "" writes the historical unscoped grant. A non-empty value is
+// the canonical scope of the approved action (req.scopeJSON), which is
+// unioned with whatever scope the agent's existing grant row for this slug
+// already carries so an earlier "always allow for group a" is not silently
+// dropped when the human later allows group b.
+func persistAlwaysAllowGrant(req *approvalRequest, scopeJSON string) {
 	if !IsAutoGrantableSlug(req.perm) {
 		slog.Warn("popup: refusing to persist always-allow for ineligible slug",
+			"perm", req.perm, "conv", req.convID)
+		return
+	}
+	if scopeJSON != "" && !isScopedAutoGrantableSlug(req.perm) {
+		slog.Warn("popup: refusing to persist scoped always-allow for ineligible slug",
 			"perm", req.perm, "conv", req.convID)
 		return
 	}
@@ -513,29 +546,60 @@ func persistAlwaysAllowGrant(req *approvalRequest) {
 			"perm", req.perm, "conv", req.convID)
 		return
 	}
-	// "Always allow" persists an UNSCOPED grant, which for a scopeable slug
-	// would overwrite an operator's narrowing with the widest possible form —
-	// and the popup is exactly what fires when a scoped grant did NOT cover the
-	// action, so this is the moment that widening would happen.
-	//
-	// No auto-grantable slug declares scope dimensions today
-	// (TestPermissionRegistry_AutoGrantableSlugsAreNotScopeable pins that), so
-	// this is unreachable. It is here so that adding ScopeDims to an
-	// auto-grantable slug fails safe instead of quietly stripping scopes:
-	// whoever does it has to decide what "always" means for a scoped action
-	// (keep the narrowing? widen by the matched value?) rather than inherit
-	// "drop it". The one-off approval the human just gave still proceeds — only
-	// the persistence is skipped.
-	if len(permissionScopeDimsForSlug(req.perm)) > 0 {
-		slog.Warn("popup: refusing to persist always-allow for a scopeable slug; "+
+	if scopeJSON != "" {
+		existing, err := db.AgentPermissionOverrideByAgentID(req.agentID, req.perm)
+		if err != nil {
+			slog.Warn("popup: failed to read existing grant scope; writing this action's scope alone",
+				"perm", req.perm, "agent", req.agentID, "err", err)
+		} else if existing != nil && existing.Effect == db.PermEffectGrant {
+			merged, ok := mergeApprovalScope(req.perm, existing.ScopeJSON, scopeJSON)
+			if !ok {
+				// The two approvals cannot be expressed as one scope without
+				// inventing authority (see mergeApprovalScope). Leave the
+				// stored grant exactly as it is: the human's pending action is
+				// already approved, and they can still widen deliberately from
+				// the permission editor.
+				slog.Warn("popup: scoped always-allow not persisted; it does not union with the stored scope",
+					"perm", req.perm, "agent", req.agentID, "stored", existing.ScopeJSON, "approved", scopeJSON)
+				return
+			}
+			scopeJSON = merged
+		}
+	} else if len(permissionScopeDimsForSlug(req.perm)) > 0 {
+		// The BLANKET "always allow" persists an unscoped grant, which for a
+		// scopeable slug would overwrite an operator's narrowing with the widest
+		// possible form — and the popup is exactly what fires when a scoped grant
+		// did NOT cover the action, so this is the moment that widening would
+		// happen. Refuse it (guard from main), and note that the scoped variant
+		// above is the answer for this case: it persists only the dimension values
+		// the gate actually evaluated.
+		//
+		// No auto-grantable slug declares scope dimensions today
+		// (TestPermissionRegistry_AutoGrantableSlugsAreNotScopeable pins that), so
+		// this is unreachable. It is here so that adding ScopeDims to an
+		// auto-grantable slug fails safe instead of quietly stripping scopes. The
+		// one-off approval the human just gave still proceeds — only the
+		// persistence is skipped.
+		slog.Warn("popup: refusing to persist unscoped always-allow for a scopeable slug; "+
 			"it would replace any narrowing with an unscoped grant",
 			"perm", req.perm, "conv", req.convID)
 		return
 	}
-	if err := db.SetAgentPermissionOverrideByAgentID(req.agentID, req.perm, db.PermEffectGrant, "human:popup-always"); err != nil {
+	if err := db.SetAgentPermissionOverrideByAgentIDWithScope(
+		req.agentID, req.perm, db.PermEffectGrant, scopeJSON, popupAlwaysGranter(scopeJSON)); err != nil {
 		slog.Warn("popup: failed to persist always-allow grant",
-			"perm", req.perm, "agent", req.agentID, "conv", req.convID, "err", err)
+			"perm", req.perm, "agent", req.agentID, "conv", req.convID, "scope", scopeJSON, "err", err)
 	}
+}
+
+// popupAlwaysGranter distinguishes the two popup persists on the grant row's
+// provenance, so an operator reading agent_permissions.granted_by can tell a
+// blanket click from a narrowed one without decoding the scope column.
+func popupAlwaysGranter(scopeJSON string) string {
+	if scopeJSON != "" {
+		return "human:popup-always-scoped"
+	}
+	return "human:popup-always"
 }
 
 // recordApprovalRequest writes an audit row for the moment an agent RAISES

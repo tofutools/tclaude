@@ -112,11 +112,15 @@ export function createMessageAccessDialogActions({
     return response;
   }
 
-  async function savePermissions(descriptor, selection, ownerScopes = null) {
+  // The third argument is mode-specific: live agent saves send the per-slug
+  // grant scopes, while group saves send the owner-bypass scope map. Buffered
+  // pre-spawn permissions have no scope storage behind them.
+  async function savePermissions(descriptor, selection, scopePayload = null) {
     if (descriptor.mode === 'agent') {
+      const scopes = scopePayload || {};
       const response = await requestJSON(fetchImpl, '/api/permissions', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ conv: descriptor.conv, overrides: selection }),
+        body: JSON.stringify({ conv: descriptor.conv, overrides: selection, scopes }),
       });
       const changed = response.changed || 0;
       notify(`Permissions saved — ${changed} change${changed === 1 ? '' : 's'}`);
@@ -124,6 +128,7 @@ export function createMessageAccessDialogActions({
       return response;
     }
     if (descriptor.mode === 'group') {
+      const ownerScopes = scopePayload;
       const permissions = Object.keys(selection).filter((slug) => selection[slug] === 'grant');
       // owner_scopes rides the same PATCH as the grants: both are permission
       // administration on the group and the endpoint gates them on the same

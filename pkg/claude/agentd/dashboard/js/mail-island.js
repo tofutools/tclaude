@@ -429,6 +429,8 @@ function AccessReader({ request, controller }) {
       ${request.path && html`<div class="access-row"><span class="access-k">${wizard ? 'Rite' : 'Endpoint'}</span><span class="access-v mono">${request.path}</span></div>`}
       ${request.target_group && html`<div class="access-row"><span class="access-k">${wizard ? 'Party' : 'Group'}</span><span class="access-v">${request.target_group}</span></div>`}
       ${request.target_conv_id && html`<div class="access-row"><span class="access-k">${wizard ? 'Quarry' : 'Target'}</span><span class="access-v">${request.target_conv_title || request.target_conv_id}</span></div>`}
+      ${request.scope_display && html`<div class="access-row"><span class="access-k">${wizard ? 'Bounds' : 'Scope'}</span><span class="access-v mono"
+        title="What a scoped “always allow” would be limited to — the typed context this gate evaluates grants against">${request.scope_display}</span></div>`}
       ${request.body && html`<div class="access-row access-body-row"><span class="access-k">${request.body_label || 'Body'}</span><pre class="access-body">${request.body}</pre></div>`}
     </div></div>
     <div class="mail-reader-actions access-reader-actions">
@@ -436,8 +438,17 @@ function AccessReader({ request, controller }) {
         : html`<${Fragment}><span class="access-countdown" title="If you don't decide, this request is automatically declined.">${controller.accessCountdown(request.deadline)}</span>
           <span class="grow"></span><button class="access-btn extend" title="Push the auto-decline back 5 minutes"
             onClick=${() => controller.decideAccess(request.id, 'extend')}>+5m</button>
-          ${request.auto_grantable && html`<button class="access-btn always" title="Approve now AND remember this permission for this agent, so it won't ask again"
-            onClick=${() => controller.decideAccess(request.id, 'always')}>${wizard ? 'Grant ever after' : 'Always allow'}</button>`}
+          ${request.auto_grantable && request.scope_display && html`<button class="access-btn always scoped"
+            title=${`Approve now AND remember this permission for this agent, but only for ${request.scope_display} — it will still ask for anything else`}
+            onClick=${() => controller.decideAccess(request.id, 'always_scoped')}>${wizard
+    ? `Grant ever after — ${request.scope_display}`
+    : `Always allow — ${request.scope_display}`}</button>`}
+          ${request.auto_grantable && html`<button class="access-btn always" title=${request.scope_display
+    ? "Approve now AND remember this permission for this agent in EVERY context, not just this one"
+    : "Approve now AND remember this permission for this agent, so it won't ask again"}
+            onClick=${() => controller.decideAccess(request.id, 'always')}>${wizard
+    ? 'Grant ever after'
+    : request.scope_display ? 'Always allow — any scope' : 'Always allow'}</button>`}
           <button class="access-btn deny" onClick=${() => controller.decideAccess(request.id, 'deny')}>${wizard ? 'Refuse' : 'Decline'}</button>
           <button class="access-btn approve" onClick=${() => controller.decideAccess(request.id, 'approve')}>${wizard ? 'Grant' : 'Approve'}</button></${Fragment}>`}
     </div>
