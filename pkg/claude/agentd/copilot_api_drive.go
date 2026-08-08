@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -211,58 +212,18 @@ func copilotAPIConnected(convID string) bool {
 //
 // # Why it does not route, and why nothing revokes
 //
-// It has a read-only consumer and nothing else, and that is now a settled
-// decision rather than a deferral. THE DAEMON NEVER REVOKES A CONVERSATION'S API
-// POSTURE. No code path demotes an agent to send-keys because its channel failed;
+// THE DAEMON NEVER REVOKES A CONVERSATION'S API POSTURE. No code path demotes
+// an agent to send-keys because its channel failed;
 // [TestNoAutomaticRevokeOfTheCopilotAPIPosture] is what keeps that true.
 //
 // The reason is that the API drive is a CONSTRAINT, not an optimisation. An
 // operator who turns it on is saying "do not put bytes in this agent's pane", so
 // a revoke IS the injection sink re-opening, and a revoke the daemon performs by
 // itself withdraws the opt-out by weather rather than by the person who chose it.
-// The drive is also still unverified in real use, which sharpens it: a silent
-// demote would make the drive's failures unobservable at exactly the moment they
-// are most informative, destroying the evidence this phase exists to collect. A
-// held agent is a loud, cheap, recoverable failure; a demoted one looks healthy
-// while doing the thing its operator opted out of, and only the first kind gets
-// fixed.
-//
-// The remedy is the operator's, and it already exists: relaunch the agent
-// (POST /api/agents/{id}/restart, which the dashboard's own control posts to).
-// That retries the API drive, because the relaunch profile still says API — which
-// is the point. A demote would spend the agent's posture permanently to fix one
-// launch, trading a recoverable state for an unrecoverable one to avoid an action
-// the operator can already take.
-//
-// THAT REMEDY IS A DEPENDENCY OF THIS DECISION, not a convenience beside it. The
-// position is not "holding mail forever is acceptable"; it is "holding is
-// acceptable BECAUSE the operator can already fix it in one click". If restart
-// stops being reachable for an agent in this state, the decision has lost its
-// foundation and needs re-making rather than inheriting.
-//
-// AND IT IS ALREADY NOT REACHABLE FOR ONE OF THE THREE POPULATIONS. Restart
-// refuses with 409 agent_not_idle when the agent is busy or holds live subagents,
-// shells or monitors, and refuses outright when no live session is found — see
-// agentRestartIdleFailure. For a launch whose bootstrap failed that is harmless:
-// such an agent has received nothing and is idle almost by construction. But the
-// third case this observation covers is an AGENTD RESTART, where the sweep marks
-// channel-failed against agents that were already running and doing work. Those
-// can be busy, and for them the remedy this decision rests on is unavailable
-// exactly when it is needed.
-//
-// That is a known gap, recorded rather than quietly assumed away. It does not
-// change the call — a busy agent whose mail is held is still visibly stuck, and
-// still recoverable once it goes idle — but it does mean the "one click" story is
-// true for the bootstrap cases and only eventually true for the restart case.
-//
-// THIS CALL IS PHASE-DEPENDENT, AND A LATER READER SHOULD KNOW IT RATHER THAN
-// INFER IT. "Constraint, no automatic revoke" is right while the drive is
-// unverified. Once it is verified and in ordinary use the balance may genuinely
-// shift: a mature drive that occasionally fails to come up is much closer to an
-// optimisation, and holding mail forever is a harsher default then than it is
-// now. So this is a decision to REVISIT AT VERIFICATION, not a permanent property
-// of the design — a reader who finds an unexplained hold and "fixes" it would be
-// reasoning correctly from a premise that had expired.
+// A failed bootstrap, startup re-adoption, or send-triggered reconnect shuts
+// the launch down as crashed. The observation therefore informs the operator
+// while the durable posture remains unchanged for the next relaunch. It still
+// never authorizes a keystroke fallback.
 //
 // # The distinction whoever revisits it must inherit
 //
@@ -378,27 +339,11 @@ func copilotAPIDrive(convID string) (*copilotAPISession, error) {
 // because the reconcile takes its candidate list once at daemon start, over
 // conversations that already existed, so a spawn happening now cannot be in it.
 //
-// Returns false when the channel never came up, which is a real state rather
-// than a timeout to retry — the bootstrap logs why. Its caller then falls back
-// to the pane, and that fallback is NOT the one copilotAPIDriven exists to
-// prevent: a bootstrap that never completed leaves the pane's own startup
-// session in the foreground, so the pane genuinely IS the agent's channel, and
-// the alternative is an agent that is never told who it is. That is the same
-// call the bootstrap already makes for itself — a failed channel is a loud log
-// line and an agent still usable through its pane, not a failed spawn.
-//
-// The fallback is safe against the obvious race — falling back to the pane a
-// moment before the bootstrap foregrounds a fresh session over it — and safe by
-// construction rather than by margin. Both deadlines are
-// copilotAPIBootstrapTimeout(); the bootstrap's starts at
-// completeCopilotAPILaunch, inside the spawn facade, and this one starts later,
-// after runSpawnPostInit has waited for the pane to come alive. So when this
-// wait expires the bootstrap's own context is already cancelled and it can no
-// longer create or foreground anything.
-// [TestCopilotDrive_ThePostInitWaitStartsAfterTheBootstrapDoes] pins the start
-// order and [TestTheSpawnPostInitWaitGivesUpAtTheBootstrapsBudget] pins that
-// this wait uses that budget, since together they are what make the fallback a
-// decision rather than a gamble.
+// Returns false when the channel never came up. The bootstrap records that
+// failure and shuts the launch down as crashed; runSpawnPostInit abandons its
+// one-shot rename and welcome rather than typing either into an API-posture
+// pane. The matching deadlines keep the wait bounded while the bootstrap owns
+// the definitive failure observation.
 //
 // Indirected through a variable for the same reason the bootstrap kick-off is:
 // flow tests install a no-op bootstrap binary-wide, so no handle can ever
@@ -456,12 +401,40 @@ func sendCopilotAPIMessage(convID, text string) error {
 		SessionID: handle.SessionID, Prompt: text,
 	})
 	if err != nil {
+		if copilotAPISendTransportFailed(handle, err) {
+			reconnectErr := recoverCopilotAPIChannelAfterTransportFailure(convID, handle)
+			if reconnectErr != nil {
+				return fmt.Errorf("deliver a message to Copilot session %s for %s: %w; "+
+					"channel reconnect failed: %v", handle.SessionID, convID, err, reconnectErr)
+			}
+		}
 		return fmt.Errorf("deliver a message to Copilot session %s for %s: %w",
 			handle.SessionID, convID, err)
 	}
 	slog.Info("copilot API: message delivered over session.send",
 		"conv_id", convID, "session_id", handle.SessionID, "message_id", messageID)
 	return nil
+}
+
+// copilotAPISendTransportFailed separates a channel failure from a refusal the
+// server returned over a healthy channel. A JSON-RPC error is an application
+// answer and must not restart or kill anything. A closed client, or the
+// deadline on this local RPC expiring without an answer, means the transport
+// did not complete the call and earns one reconnect attempt.
+func copilotAPISendTransportFailed(handle *copilotAPISession, err error) bool {
+	if err == nil || handle == nil || handle.Client == nil {
+		return false
+	}
+	var rpcErr *copilotapi.Error
+	if errors.As(err, &rpcErr) {
+		return false
+	}
+	select {
+	case <-handle.Client.Done():
+		return true
+	default:
+		return errors.Is(err, context.DeadlineExceeded)
+	}
 }
 
 // renameCopilotAPISession renames an API-connected agent's session.

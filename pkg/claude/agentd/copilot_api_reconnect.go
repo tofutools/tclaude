@@ -2,12 +2,14 @@ package agentd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/copilotapi"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -126,17 +128,28 @@ const copilotAPIReconcileConcurrency = 4
 // The generation is still carried and still compared, inside the registry — it
 // covers launches arriving AFTER the latch, which is a different hazard from the
 // one above and is not fixed by comparing harder.
-func recordReconcileAttempt(ctx context.Context, convID string, generation uint64, attemptErr error) {
+func recordReconcileAttempt(ctx context.Context, convID string, generation uint64, attemptErr error) bool {
 	if attemptErr == nil {
-		return
+		return false
 	}
 	if ctx.Err() != nil {
-		return
+		return false
 	}
 	if copilotAPISessions.BootstrapInFlight(convID) {
-		return
+		return false
 	}
-	copilotAPISessions.NoteChannelFailed(convID, generation)
+	if !copilotAPISessions.NoteChannelFailed(convID, generation) {
+		return false
+	}
+	if err := shutdownCrashedCopilotAPIAgentFn(convID, generation); err != nil {
+		if errors.Is(err, errCopilotAPILaunchSuperseded) {
+			return false
+		}
+		slog.Error("copilot API reconnect: failed to shut the unrecoverable agent down",
+			"conv_id", convID, "error", err)
+		return false
+	}
+	return true
 }
 
 // reconnectCopilotAPISession re-establishes one conversation's channel.
@@ -204,6 +217,112 @@ func reconnectCopilotAPISession(ctx context.Context, convID string) (*copilotAPI
 	}
 	return handle, nil
 }
+
+// recoverCopilotAPIChannelAfterTransportFailure repairs a channel that was
+// live when a send started and then failed at the transport layer.
+//
+// The failed connection is closed before reconnecting so AdoptIfAbsent cannot
+// mistake a timed-out-but-open socket for a healthy incumbent. The ordinary
+// reconnect seam still owns the verified dial and the non-mutating drivability
+// probe; the ordinary adopt seam still arbitrates against a launch bootstrap or
+// another concurrent recovery. A successful reconnect does not retry the
+// prompt whose outcome may be ambiguous — the durable inbox remains its retry.
+func recoverCopilotAPIChannelAfterTransportFailure(
+	convID string, failed *copilotAPISession,
+) error {
+	recoveryLock := copilotAPIRecoveryLock(convID)
+	recoveryLock.Lock()
+	defer recoveryLock.Unlock()
+	if current := copilotAPISessions.Handle(convID); current != nil && current != failed {
+		return nil
+	}
+	if copilotAPISessions.ChannelFailed(convID) {
+		return fmt.Errorf("the Copilot API channel for %s is already failed", convID)
+	}
+	generation := copilotAPISessions.CurrentLaunch(convID)
+	if failed != nil && failed.Client != nil {
+		_ = failed.Client.Close()
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), copilotAPIDriveTimeout)
+	defer cancel()
+	handle, err := reconnectCopilotAPISessionFn(ctx, convID)
+	if err == nil {
+		if !copilotAPISessions.AdoptIfAbsent(handle) {
+			_ = handle.Client.Close()
+			return nil
+		}
+		startCopilotAPIStateConsumer(handle)
+		slog.Info("copilot API session re-established after a send transport failure",
+			"conv_id", convID, "session_id", handle.SessionID, "port", handle.Port)
+		return nil
+	}
+
+	// A concurrent recovery or relaunch may have installed a healthy handle
+	// while this attempt was failing. That newer truth wins; do not stamp or
+	// stop it on the evidence of this older attempt.
+	if copilotAPISessions.Handle(convID) != nil {
+		return nil
+	}
+	if !copilotAPISessions.NoteChannelFailed(convID, generation) {
+		return err
+	}
+	if shutdownErr := shutdownCrashedCopilotAPIAgentFn(convID, generation); shutdownErr != nil {
+		if errors.Is(shutdownErr, errCopilotAPILaunchSuperseded) {
+			return err
+		}
+		return fmt.Errorf("%w; shutting the failed agent down as crashed: %v", err, shutdownErr)
+	}
+	return err
+}
+
+var copilotAPIRecoveryLocks sync.Map // map[convID]*sync.Mutex
+
+func copilotAPIRecoveryLock(convID string) *sync.Mutex {
+	lock, _ := copilotAPIRecoveryLocks.LoadOrStore(convID, &sync.Mutex{})
+	return lock.(*sync.Mutex)
+}
+
+// shutdownCrashedCopilotAPIAgent kills the current pane after a reconnect has
+// failed and records the explicit crash reason the dashboard understands.
+// The conversation launch lock keeps a concurrent relaunch from inheriting the
+// predecessor's kill or exit reason.
+var errCopilotAPILaunchSuperseded = errors.New("copilot API launch was superseded")
+
+func shutdownCrashedCopilotAPIAgent(convID string, generation uint64) error {
+	launchLock := resumeLaunchLock(convID)
+	launchLock.Lock()
+	defer launchLock.Unlock()
+	if copilotAPISessions.CurrentLaunch(convID) != generation {
+		return errCopilotAPILaunchSuperseded
+	}
+
+	sess := pickAliveSession(convID)
+	if sess == nil {
+		return nil
+	}
+	target, err := captureLifecycleTarget(sess)
+	if err != nil {
+		return fmt.Errorf("capture failed Copilot launch: %w", err)
+	}
+	if err := killLifecycleTarget(target); err != nil {
+		return fmt.Errorf("kill failed Copilot launch: %w", err)
+	}
+	// Record after tmux accepted the identity-checked kill. This cannot libel a
+	// live successor, and SetSessionExitReason may still enrich a row the reaper
+	// won the race to mark exited.
+	if err := db.SetSessionExitReason(sess.ID, unexpectedExitReason); err != nil {
+		return fmt.Errorf("record failed Copilot launch as crashed: %w", err)
+	}
+	if err := reconcileStoppedLifecycleTarget(target, "", "", unexpectedExitReason); err != nil {
+		return fmt.Errorf("publish failed Copilot launch crash: %w", err)
+	}
+	slog.Error("copilot API channel reconnect failed; agent shut down as crashed",
+		"conv_id", convID, "session_id", sess.ID, "tmux_session", sess.TmuxSession)
+	return nil
+}
+
+var shutdownCrashedCopilotAPIAgentFn = shutdownCrashedCopilotAPIAgent
 
 // reconcileCopilotAPISessions re-establishes every channel this daemon should
 // have and does not.
@@ -331,21 +450,21 @@ func reconcileCopilotAPISessions(ctx context.Context) {
 
 			handle, err := reconnectCopilotAPISessionFn(ctx, convID)
 			if err != nil {
-				// Warn rather than error: an agent that cannot be rejoined is
-				// still fully usable through its pane, and the commonest cause
-				// on this path is the ordinary one — a conversation whose pane
-				// exited while the daemon was down.
-				//
 				// This is the sweep's version of the bootstrap's failure path, and
 				// it is the ONLY exit here that has run an attempt — which is why it
 				// is the only one that can call this at all. Whether the attempt was
 				// entitled to conclude anything is decided there, not here: it may
 				// have been cut short by the sweep's own deadline, or it may be
 				// racing a launch whose bootstrap owns this conversation.
-				recordReconcileAttempt(ctx, convID, generation, err)
-				slog.Warn("copilot API reconnect: could not re-establish the channel; the agent "+
-					"is still usable by typing into its pane, and its messages stay held rather "+
-					"than being typed in", "conv_id", convID, "error", err)
+				if recordReconcileAttempt(ctx, convID, generation, err) {
+					slog.Error("copilot API reconnect: could not re-establish the channel; the "+
+						"agent was shut down as crashed rather than left alive and deaf",
+						"conv_id", convID, "error", err)
+				} else {
+					slog.Warn("copilot API reconnect: the attempt failed but was not entitled "+
+						"to condemn this launch; it may have been cancelled, superseded, or racing "+
+						"the launch bootstrap", "conv_id", convID, "error", err)
+				}
 				return
 			}
 			// AdoptIfAbsent, not Adopt. The candidate check ran at the top of the

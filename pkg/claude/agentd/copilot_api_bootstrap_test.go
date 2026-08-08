@@ -598,6 +598,10 @@ type fakeCopilotServer struct {
 	// letting a test drive the "the channel is there and the call failed"
 	// case, which is the one where a fallback to keystrokes would be tempting.
 	failures map[string]string
+	// disconnects names methods whose next request should lose its connection
+	// before a reply. The listener stays up, so tests can distinguish a dead
+	// channel that reconnects from a dead server that cannot.
+	disconnects map[string]bool
 	// results answers named methods with a canned payload. A method with no
 	// entry still gets an empty object, which is what the registry tests need
 	// and what a consumer decoding only fields it uses tolerates.
@@ -716,8 +720,14 @@ func (s *fakeCopilotServer) serve(conn net.Conn) {
 		s.mu.Lock()
 		s.calls = append(s.calls, fakeCopilotCall{Method: request.Method, Params: request.Params})
 		failure, failed := s.failures[request.Method]
+		disconnect := s.disconnects[request.Method]
+		delete(s.disconnects, request.Method)
 		canned, cannedOK := s.results[request.Method]
 		s.mu.Unlock()
+		if disconnect {
+			_ = conn.Close()
+			return
+		}
 
 		envelope := map[string]any{"jsonrpc": "2.0", "id": request.ID}
 		switch {
@@ -784,6 +794,15 @@ func (s *fakeCopilotServer) failMethod(method, message string) {
 		s.failures = map[string]string{}
 	}
 	s.failures[method] = message
+}
+
+func (s *fakeCopilotServer) disconnectMethodOnce(method string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.disconnects == nil {
+		s.disconnects = map[string]bool{}
+	}
+	s.disconnects[method] = true
 }
 
 func readFull(reader *bufio.Reader, buf []byte) (int, error) {

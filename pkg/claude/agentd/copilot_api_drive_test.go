@@ -142,6 +142,10 @@ func TestCopilotAPINudgeFailureDoesNotFallBackToKeystrokes(t *testing.T) {
 
 	assert.False(t, sendNudgeBracket(fixture.convID, message, "[msg #1 from peer] hello"),
 		"a failed typed delivery is a retryable failure, not a reason to type it in")
+	assert.Equal(t, 1, fixture.server.callCount(copilotapi.MethodConnect),
+		"a JSON-RPC refusal is an application answer over a healthy channel, not a reconnect signal")
+	assert.False(t, copilotAPISessions.ChannelFailed(fixture.convID),
+		"an application-level refusal must not condemn the channel or its agent")
 	fixture.assertNoKeystrokes(t)
 }
 
@@ -433,11 +437,8 @@ func TestTheSpawnPostInitWaitGivesUpAtTheBootstrapsBudget(t *testing.T) {
 	// passes against a wait that uses any budget at all — including a hardcoded
 	// one unrelated to the bootstrap's — which would leave the property in this
 	// test's own name untested. That property is load-bearing rather than
-	// cosmetic: the pane fallback is safe because this wait outlives the
-	// bootstrap's context, and it only outlives it because the two budgets are
-	// the same expression. A wait that gave up early would put back exactly
-	// TCL-1080's failure, with the bootstrap foregrounding a fresh session over
-	// the pane the fallback just typed into.
+	// cosmetic: the post-init path must give the bootstrap its whole attempt
+	// before it abandons delivery and the bootstrap records the failed launch.
 	//
 	// The lower bound is the budget itself; the upper allows one poll interval
 	// plus loaded-host slack, and is deliberately tight enough that a budget an
@@ -811,10 +812,9 @@ func TestTheCopilotPaneOverrideIsThreadedAllTheWayToTheSink(t *testing.T) {
 		})
 	}
 
-	// The override constant's containment. Weaker than the threading above —
-	// the constant had exactly one call site the entire time the rename was
-	// being refused one hop deeper — but it is the property deliveryChannelPane's
-	// own comment claims, so it is asserted rather than claimed.
+	// The pane override is now test-only. An API-posture launch whose bootstrap
+	// fails is shut down as crashed, so production must never select the pane as
+	// a one-shot fallback for its rename or welcome.
 	var paneCallSites int
 	for name, fn := range paneConstantHolders {
 		if name == "deliverRenameOn" || name == "injectSlashCommandOn" ||
@@ -830,11 +830,9 @@ func TestTheCopilotPaneOverrideIsThreadedAllTheWayToTheSink(t *testing.T) {
 			return true
 		})
 	}
-	assert.Equal(t, 1, paneCallSites,
-		"deliveryChannelPane must have exactly one non-test call site. Its doc "+
-			"argues the entitlement for ONE caller — a one-shot delivery with no "+
-			"retry — and a second caller has to argue its own case rather than "+
-			"inheriting that one")
+	assert.Zero(t, paneCallSites,
+		"deliveryChannelPane must have no non-test call sites: failed API-posture "+
+			"launches crash instead of falling back to keystrokes")
 
 	// The last hop is the one that actually chooses, so its choice must READ
 	// the channel. Without this the chain could thread it perfectly and then
