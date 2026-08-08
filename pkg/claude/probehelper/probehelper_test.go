@@ -140,8 +140,8 @@ func TestServeStubBoundsRequestsAndRefusesEndpointSymlink(t *testing.T) {
 	}()
 	endpointPath := filepath.Join(root, EndpointFileName)
 	require.Eventually(t, func() bool {
-		_, err := os.Stat(endpointPath)
-		return err == nil
+		endpoint, err := os.ReadFile(endpointPath)
+		return err == nil && strings.HasPrefix(string(endpoint), "http://127.0.0.1:")
 	}, 3*time.Second, 10*time.Millisecond)
 	endpoint, err := os.ReadFile(endpointPath)
 	require.NoError(t, err)

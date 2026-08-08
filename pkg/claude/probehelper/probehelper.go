@@ -222,16 +222,18 @@ func publishAt(rootFD int, name, value string, mode uint32) error {
 	if filepath.Base(name) != name || name == "." || strings.ContainsRune(name, filepath.Separator) {
 		return fmt.Errorf("invalid probe evidence name")
 	}
+	tempName := "." + name + ".tmp"
 	fd, err := unix.Openat(
 		rootFD,
-		name,
+		tempName,
 		unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC,
 		mode,
 	)
 	if err != nil {
 		return err
 	}
-	file := os.NewFile(uintptr(fd), name)
+	defer func() { _ = unix.Unlinkat(rootFD, tempName, 0) }()
+	file := os.NewFile(uintptr(fd), tempName)
 	if file == nil {
 		_ = unix.Close(fd)
 		return fmt.Errorf("wrap probe evidence descriptor")
@@ -244,9 +246,16 @@ func publishAt(rootFD int, name, value string, mode uint32) error {
 		return writeErr
 	case syncErr != nil:
 		return syncErr
-	default:
+	case closeErr != nil:
 		return closeErr
 	}
+	var stat unix.Stat_t
+	if err := unix.Fstatat(rootFD, name, &stat, unix.AT_SYMLINK_NOFOLLOW); err == nil {
+		return unix.EEXIST
+	} else if !errors.Is(err, unix.ENOENT) {
+		return err
+	}
+	return unix.Renameat(rootFD, tempName, rootFD, name)
 }
 
 func validSecret(secret string) bool {
