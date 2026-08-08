@@ -341,3 +341,29 @@ func ResolveCopilotAPIPort(copilotAPI bool, requested int) (int, error) {
 		assert.Contains(t, strings.Join(calls, " "), "net.Listen")
 	})
 }
+
+// A CONSEQUENCE of the gate rather than a target of it, pinned so it is a decision
+// instead of a surprise: `session new --copilot-api --join-group <g>` is now
+// refused, where before it launched and silently ignored the flag.
+//
+// It is refused because the gate (new.go:941) precedes the --join-group handoff
+// (new.go:967), and a join-group launch is neither daemon-owned nor carrying. That
+// is the right answer for this surface: agent.RunJoinGroup builds its SpawnRequest
+// with Name/Role/Descr/Cwd/Effort/Model/Harness/TimeoutSeconds and then sets only
+// FastMode and WriteProofToken — CopilotAPI is never forwarded — so the flag could
+// not be honoured here even in principle. Refusing an assertion this surface
+// discards beats launching while ignoring it.
+//
+// The ordering is what makes it so, so the ordering is what this asserts.
+func TestTheDriveGatePrecedesTheJoinGroupHandoff(t *testing.T) {
+	fn := guardFunc(guardParse(t, "new.go", ""), "runNew")
+	require.NotNil(t, fn)
+	order := callOrder(fn, "resolveCopilotAPIDriveForLaunch", "JoinGroupHandler")
+	gate, gated := order["resolveCopilotAPIDriveForLaunch"]
+	join, handed := order["JoinGroupHandler"]
+	require.True(t, gated)
+	require.True(t, handed, "runNew must still hand off --join-group")
+	assert.Less(t, int(gate), int(join),
+		"the gate must precede the join-group handoff: that surface drops --copilot-api "+
+			"on the floor, so an explicit drive must be refused rather than ignored")
+}
