@@ -248,3 +248,38 @@ test('Costs banner shows for row kinds that carry no split fields', async (t) =>
     'so the banner it points at is shown');
   await mounted.unmount();
 });
+
+test('Copilot WHAT-IF tooltips identify native credits and subscription value', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createCostsState }, { CostsApp }] = await Promise.all([
+    harness.importDashboardModule('js/costs-state.js'), harness.importDashboardModule('js/costs-island.js'),
+  ]);
+  const copilot = payload();
+  copilot.total_usd = 0.43;
+  copilot.real_total_usd = 0;
+  copilot.what_if_total_usd = 0.43;
+  copilot.cost_kind = 'what_if';
+  copilot.days = [{ day: '2026-07-10', cost_usd: 0.43, what_if_cost_usd: 0.43,
+    virtual_cost_credits: 43, cost_kind: 'what_if' }];
+  copilot.agents = [{ agent_id: 'agt_copilot', conv_id: 'conv-copilot', day: '2026-07-10',
+    title: 'Copilot', harness: 'copilot', model: 'gpt-5', cost_usd: 0.43,
+    what_if_cost_usd: 0.43, virtual_cost_credits: 43, cost_kind: 'what_if' }];
+  const snapshot = harness.signals.signal({ cost_tab_visible: true, cost_tab_whatif: true });
+  const activeTab = harness.signals.signal('costs');
+  const state = createCostsState({ snapshot, activeTab, prefs: storage });
+  state.initialize();
+  state.beginRequest(1);
+  state.commitRequest(1, copilot);
+  const actions = { load: async () => {}, loadFactor: async () => {}, saveFactor: async () => {} };
+  const mounted = await harness.mount(harness.html`<${CostsApp} state=${state} actions=${actions} />`);
+  const cell = mounted.container.querySelector('tr[data-key="cost-conv-copilot-2026-07-10"] .cost-amt');
+  assert.equal(cell.title, '43 credits — $0.4300 subscription value');
+  assert.match(cell.querySelector('.cost-whatif-mark').title,
+    /43 credits — \$0\.43 subscription value/);
+
+  const chartColumn = mounted.container.querySelector('.cost-col[data-tip]');
+  await harness.act(() => harness.fireEvent(chartColumn, 'mousemove', { clientX: 20, clientY: 30 }));
+  assert.match(harness.document.body.querySelector('.cost-tip').textContent,
+    /43 credits — \$0\.43 subscription value/);
+  await mounted.unmount();
+});

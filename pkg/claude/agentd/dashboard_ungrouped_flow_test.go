@@ -204,6 +204,7 @@ type dashState struct {
 	EffortLevel              string  `json:"effort_level,omitempty"`
 	CostUSD                  float64 `json:"cost_usd,omitempty"`
 	VirtualCostUSD           float64 `json:"virtual_cost_usd,omitempty"`
+	VirtualCostCredits       float64 `json:"virtual_cost_credits,omitempty"`
 	ExitReason               string  `json:"exit_reason,omitempty"`
 	Harness                  string  `json:"harness,omitempty"`
 	FastMode                 *bool   `json:"fast_mode,omitempty"`

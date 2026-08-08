@@ -2274,6 +2274,69 @@ func UpdateSessionVirtualCost(sessionID string, costUSD float64) error {
 	return tx.Commit()
 }
 
+// UpdateSessionVirtualCostForGeneration is the generation-guarded sibling used
+// by pollers that derive a virtual cost from a read taken against a specific
+// session generation. A session id can be pruned and immediately reused; the
+// observed conv id and created-at timestamp keep an old Copilot fold from
+// writing its what-if value onto the replacement row. It also snapshots the
+// cumulative value onto today's history row, just like UpdateSessionVirtualCost.
+func UpdateSessionVirtualCostForGeneration(
+	sessionID, expectedConvID string,
+	expectedCreatedAt time.Time,
+	costUSD float64,
+) (bool, error) {
+	if costUSD <= 0 {
+		return false, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var convID string
+	err = tx.QueryRow(`UPDATE sessions SET virtual_cost_usd = ?
+		WHERE id = ? AND conv_id = ? AND created_at = ?
+		RETURNING conv_id`,
+		costUSD, sessionID, expectedConvID, dbTime(expectedCreatedAt)).Scan(&convID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	now := time.Now()
+	_, err = tx.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, virtual_cost_usd, updated_at, model, agent_id, harness)
+		SELECT id, ?, conv_id, ?, ?, model,
+		       COALESCE(NULLIF(sessions.agent_id, ''),
+		                (SELECT agent_id FROM agent_conversations WHERE conv_id = sessions.conv_id), ''),
+		       COALESCE(NULLIF(harness, ''), 'claude')
+		FROM sessions WHERE id = ?
+		ON CONFLICT(session_id, day) DO UPDATE SET
+			updated_at = CASE WHEN excluded.virtual_cost_usd > session_cost_daily.virtual_cost_usd
+			                  THEN excluded.updated_at ELSE session_cost_daily.updated_at END,
+			virtual_cost_usd = MAX(session_cost_daily.virtual_cost_usd, excluded.virtual_cost_usd),
+			conv_id  = CASE WHEN excluded.conv_id <> '' THEN excluded.conv_id
+			                ELSE session_cost_daily.conv_id END,
+			model    = CASE WHEN excluded.model <> '' THEN excluded.model
+			                ELSE session_cost_daily.model END,
+			agent_id = CASE WHEN excluded.agent_id <> '' THEN excluded.agent_id
+			                ELSE session_cost_daily.agent_id END,
+			harness  = CASE WHEN excluded.harness <> '' THEN excluded.harness
+			                ELSE session_cost_daily.harness END`,
+		now.Format(costDayFormat), costUSD, dbTime(now), sessionID)
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // VirtualCostDailySnapshot is an authoritative cumulative WHAT-IF prefix for
 // one local calendar day.
 type VirtualCostDailySnapshot struct {

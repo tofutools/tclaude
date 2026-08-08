@@ -17,36 +17,39 @@ import (
 // Wire-shape mirrors of agentd's /api/costs response — the Costs tab
 // renders straight from these fields.
 type costsResp struct {
-	From           string          `json:"from"`
-	To             string          `json:"to"`
-	FirstDay       string          `json:"first_day"`
-	Days           []costsRespDay  `json:"days"`
-	Agents         []costsRespConv `json:"agents"`
-	TotalUSD       float64         `json:"total_usd"`
-	RealTotalUSD   float64         `json:"real_total_usd"`
-	WhatIfTotalUSD float64         `json:"what_if_total_usd"`
-	CostKind       string          `json:"cost_kind"`
+	From               string          `json:"from"`
+	To                 string          `json:"to"`
+	FirstDay           string          `json:"first_day"`
+	Days               []costsRespDay  `json:"days"`
+	Agents             []costsRespConv `json:"agents"`
+	TotalUSD           float64         `json:"total_usd"`
+	RealTotalUSD       float64         `json:"real_total_usd"`
+	WhatIfTotalUSD     float64         `json:"what_if_total_usd"`
+	VirtualCostCredits float64         `json:"virtual_cost_credits"`
+	CostKind           string          `json:"cost_kind"`
 }
 type costsRespDay struct {
-	Day           string  `json:"day"`
-	CostUSD       float64 `json:"cost_usd"`
-	RealCostUSD   float64 `json:"real_cost_usd"`
-	WhatIfCostUSD float64 `json:"what_if_cost_usd"`
-	CostKind      string  `json:"cost_kind"`
+	Day                string  `json:"day"`
+	CostUSD            float64 `json:"cost_usd"`
+	RealCostUSD        float64 `json:"real_cost_usd"`
+	WhatIfCostUSD      float64 `json:"what_if_cost_usd"`
+	VirtualCostCredits float64 `json:"virtual_cost_credits"`
+	CostKind           string  `json:"cost_kind"`
 }
 type costsRespConv struct {
-	ConvID        string  `json:"conv_id"`
-	Title         string  `json:"title"`
-	Day           string  `json:"day"`
-	CostUSD       float64 `json:"cost_usd"`
-	RealCostUSD   float64 `json:"real_cost_usd"`
-	WhatIfCostUSD float64 `json:"what_if_cost_usd"`
-	CostKind      string  `json:"cost_kind"`
-	Continued     bool    `json:"continued"`
-	LastDay       string  `json:"last_day"`
-	LastActivity  string  `json:"last_activity"`
-	Model         string  `json:"model"`
-	Harness       string  `json:"harness"`
+	ConvID             string  `json:"conv_id"`
+	Title              string  `json:"title"`
+	Day                string  `json:"day"`
+	CostUSD            float64 `json:"cost_usd"`
+	RealCostUSD        float64 `json:"real_cost_usd"`
+	WhatIfCostUSD      float64 `json:"what_if_cost_usd"`
+	VirtualCostCredits float64 `json:"virtual_cost_credits"`
+	CostKind           string  `json:"cost_kind"`
+	Continued          bool    `json:"continued"`
+	LastDay            string  `json:"last_day"`
+	LastActivity       string  `json:"last_activity"`
+	Model              string  `json:"model"`
+	Harness            string  `json:"harness"`
 }
 
 func TestDashboardCosts_MixesRealAndWhatIfAcrossThreeHarnesses(t *testing.T) {
@@ -104,6 +107,30 @@ func TestDashboardCosts_MixesRealAndWhatIfAcrossThreeHarnesses(t *testing.T) {
 	assert.Equal(t, map[string]string{
 		"claude": "real", "codex": "what_if", "opencode": "what_if",
 	}, kinds, "harnesses remain dynamic while every row carries its own cost kind")
+}
+
+func TestDashboardCosts_CopilotCreditsSurfaced(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	newFlow(t)
+
+	const sessionID = "cost-copilot"
+	const convID = "conv-cost-copilot"
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: sessionID, TmuxSession: "tmux-" + sessionID, ConvID: convID,
+		Cwd: "/tmp/" + sessionID, Status: "idle", Harness: "copilot",
+	}))
+	require.NoError(t, db.UpdateSessionVirtualCost(sessionID, 0.43))
+	require.NoError(t, config.Save(&config.Config{
+		Cost: &config.CostConfig{ShowOnSubscription: true},
+	}), "enable subscription estimates")
+
+	from := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+	out := fetchCosts(t, agentd.BuildDashboardHandlerForTest(), "?from="+from)
+	assert.InDelta(t, 43.0, out.VirtualCostCredits, 1e-12)
+	require.Len(t, out.Agents, 1)
+	assert.Equal(t, convID, out.Agents[0].ConvID)
+	assert.InDelta(t, 43.0, out.Agents[0].VirtualCostCredits, 1e-12)
+	assert.InDelta(t, 43.0, out.Days[len(out.Days)-1].VirtualCostCredits, 1e-12)
 }
 
 func fetchCosts(t *testing.T, mux http.Handler, query string) costsResp {

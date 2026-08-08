@@ -43,3 +43,28 @@ test('Costs derivation projects months, filters harnesses, sorts, and builds cha
   assert.deepEqual(model.sortCostAgents(agents, { key: 'cost', dir: 'asc' }).map((row) => row.conv_id), ['b', 'a']);
   assert.equal(model.matchesCostAgent(agents[1], 'codex'), true);
 });
+
+test('Copilot cost segments retain native credits beside gross subscription dollars', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/costs-model.js');
+  const agents = [
+    { conv_id: 'copilot', day: '2026-07-10', title: 'Copilot', harness: 'copilot',
+      cost_usd: 0.43, what_if_cost_usd: 0.43, virtual_cost_credits: 43, cost_kind: 'what_if' },
+    { conv_id: 'claude', day: '2026-07-10', title: 'Claude', harness: 'claude',
+      cost_usd: 0.20, real_cost_usd: 0.20, cost_kind: 'real' },
+  ];
+  const payload = {
+    from: '2026-07-10', to: '2026-07-10', total_usd: 0.63,
+    days: [{ day: '2026-07-10', cost_usd: 0.63, cost_kind: 'mixed' }], agents,
+  };
+  const selected = new Set(['copilot']);
+  const filtered = model.filterCostData(payload, selected);
+  assert.equal(filtered.virtual_cost_credits, 43);
+  assert.equal(filtered.days[0].virtual_cost_credits, 43);
+  assert.equal(model.fmtCredits(43), '43 credits');
+
+  const chart = model.buildCostChart(filtered, null, agents, selected, model.costHarnesses(agents));
+  const copilotSegment = chart.days[0].segments.find((segment) => segment.harness === 'copilot');
+  assert.equal(copilotSegment.credits, 43);
+  assert.equal(copilotSegment.kind, 'what_if');
+});
