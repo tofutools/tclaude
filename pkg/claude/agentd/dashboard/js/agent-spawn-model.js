@@ -1256,10 +1256,14 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
   if (draft.allowUnenforcedSandbox) {
     body.allow_unenforced_sandbox = true;
   }
-  if (draft.owner) body.is_owner = true;
-  if (Object.keys(draft.permissionOverrides || {}).length) {
-    body.permission_overrides = { ...draft.permissionOverrides };
-  }
+  // Both are sent unconditionally — an unticked box as `false`, a cleared editor
+  // as `{}`. The daemon resolves each down its profile tier stack, and presence
+  // on the wire is what marks the caller as having spoken; omitting them would
+  // let a profile the operator is not looking at silently re-check a box they
+  // just unticked. Same rule as include_group_context and context_features:
+  // what this dialog shows is what the spawn gets.
+  body.is_owner = !!draft.owner;
+  body.permission_overrides = { ...(draft.permissionOverrides || {}) };
   // Sent whenever the harness can take it, INCLUDING as an empty object: the
   // form is the authoritative statement of what this agent loads, so an operator
   // who cleared a profile's trims must not silently get them back from the

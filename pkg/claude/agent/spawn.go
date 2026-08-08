@@ -486,8 +486,13 @@ type SpawnRequest struct {
 	// group (and thus holding its owner-conferred slugs). false (the default)
 	// spawns an ordinary member. Mirrors the group-template
 	// GroupTemplateAgent.IsOwner field; honoured only for a human (dashboard)
-	// caller or a caller that already owns the target group (the daemon
-	// rejects an escalation attempt by a non-owner agent).
+	// caller or a caller holding groups.own (the daemon rejects an escalation
+	// attempt by an unprivileged agent).
+	//
+	// OMITTING the key is not the same as sending false: the daemon resolves
+	// this down the profile tier stack, so an absent is_owner adopts the
+	// selected / group default / global default profile's toggle. A client whose
+	// dialog shows an owner checkbox should always post the key.
 	IsOwner bool `json:"is_owner,omitempty"`
 
 	// WriteProofToken answers a dir write-proof challenge (the daemon's 403
@@ -508,21 +513,36 @@ type SpawnRequest struct {
 	// "deny" (a slug left out, or mapped to "default"/"", carries no override
 	// and inherits the global default). The daemon validates every slug
 	// against the registry and every effect against {grant,deny}; an unknown
-	// slug or bad effect is a 400. Like IsOwner it is gated to a human caller
-	// or an owner of the target group. Empty for a spawn that takes the
-	// group's default permissions.
+	// slug or bad effect is a 400. Like IsOwner it is gated on the caller's own
+	// authority (permissions.grant), and like IsOwner an OMITTED key adopts the
+	// profile tier stack's map while an explicit empty object states "none" — so
+	// a client whose dialog has a permission editor should always post the key.
 	PermissionOverrides map[string]string `json:"permission_overrides,omitempty"`
 
 	// Presence bits preserve an explicit JSON false across profile overlays.
 	// They are populated by UnmarshalJSON and intentionally stay off the wire.
 	autoReviewSpecified bool
 	trustDirSpecified   bool
+	// Presence bits for the spawn dialog's identity and birth-time access
+	// fields. The daemon resolves each of them down the profile tier stack, so
+	// it has to tell "the caller left this to the profile" from "the caller
+	// said this, and said empty/false". A client whose form HAS the field posts
+	// the key (the dashboard always does); one whose form does not — the agentd
+	// TUI has no box for role, descr, owner or permission overrides — omits it
+	// and inherits the profile's value. Populated by UnmarshalJSON, off the wire.
+	nameSpecified                bool
+	roleSpecified                bool
+	descrSpecified               bool
+	initialMessageSpecified      bool
+	autoFocusSpecified           bool
+	isOwnerSpecified             bool
+	permissionOverridesSpecified bool
 }
 
-// UnmarshalJSON records whether the two plain-bool launch fields appeared on
-// the wire. Their values alone cannot distinguish omitted from explicit false,
-// but profile precedence must: an explicit false beats every profile, and a
-// higher-tier profile's false beats a lower-tier true.
+// UnmarshalJSON records which of the fields whose zero value is ambiguous
+// appeared on the wire. Their values alone cannot distinguish omitted from an
+// explicit false / empty string, but profile precedence must: an explicit
+// choice beats every profile, and a higher-tier profile beats a lower one.
 func (r *SpawnRequest) UnmarshalJSON(data []byte) error {
 	type alias SpawnRequest
 	var decoded alias
@@ -536,6 +556,13 @@ func (r *SpawnRequest) UnmarshalJSON(data []byte) error {
 	*r = SpawnRequest(decoded)
 	_, r.autoReviewSpecified = fields["auto_review"]
 	_, r.trustDirSpecified = fields["trust_dir"]
+	_, r.nameSpecified = fields["name"]
+	_, r.roleSpecified = fields["role"]
+	_, r.descrSpecified = fields["descr"]
+	_, r.initialMessageSpecified = fields["initial_message"]
+	_, r.autoFocusSpecified = fields["auto_focus"]
+	_, r.isOwnerSpecified = fields["is_owner"]
+	_, r.permissionOverridesSpecified = fields["permission_overrides"]
 	return nil
 }
 
@@ -574,6 +601,28 @@ func (r SpawnRequest) AutoReviewSpecified() bool { return r.autoReviewSpecified 
 
 // TrustDirSpecified reports whether trust_dir appeared in decoded JSON.
 func (r SpawnRequest) TrustDirSpecified() bool { return r.trustDirSpecified }
+
+// NameSpecified reports whether name appeared in decoded JSON.
+func (r SpawnRequest) NameSpecified() bool { return r.nameSpecified }
+
+// RoleSpecified reports whether role appeared in decoded JSON.
+func (r SpawnRequest) RoleSpecified() bool { return r.roleSpecified }
+
+// DescrSpecified reports whether descr appeared in decoded JSON.
+func (r SpawnRequest) DescrSpecified() bool { return r.descrSpecified }
+
+// InitialMessageSpecified reports whether initial_message appeared in decoded JSON.
+func (r SpawnRequest) InitialMessageSpecified() bool { return r.initialMessageSpecified }
+
+// AutoFocusSpecified reports whether auto_focus appeared in decoded JSON.
+func (r SpawnRequest) AutoFocusSpecified() bool { return r.autoFocusSpecified }
+
+// IsOwnerSpecified reports whether is_owner appeared in decoded JSON.
+func (r SpawnRequest) IsOwnerSpecified() bool { return r.isOwnerSpecified }
+
+// PermissionOverridesSpecified reports whether permission_overrides appeared in
+// decoded JSON.
+func (r SpawnRequest) PermissionOverridesSpecified() bool { return r.permissionOverridesSpecified }
 
 // SpawnParams drives `tclaude agent spawn <group>`. The daemon does
 // the actual spawn + group-join; this struct just shapes the request.
@@ -853,11 +902,19 @@ func harnessEquivalent(a, b string) bool {
 // agnostic toggles (auto_focus, include_group_context, is_owner,
 // permission_overrides) are inherited regardless of harness.
 //
+// Those last two groups are now belt AND braces: the daemon resolves identity,
+// auto_focus, is_owner and permission_overrides down the same tier stack, so a
+// caller that only names a profile gets them too. Merging them here still
+// matters, because it is what lets an explicit CLI flag outrank them — a field
+// this merge leaves blank is omitted from the request, and an omitted field is
+// exactly what invites the daemon's lower tiers to speak.
+//
 // Three profile fields are deliberately NOT applied here:
 //   - remote_control: the CLI can't see the group's remote-control policy, which
 //     must win over a profile default (JOH-262), and the wire carries
 //     RemoteControl as an authoritative *bool with no "soft default" channel.
-//     Use the explicit --remote-control flag to arm it.
+//     Leaving it nil is what lets the daemon resolve it under that policy; use
+//     the explicit --remote-control flag to arm it regardless.
 //   - auto_memory: likewise carried as an authoritative *bool. Leaving it nil
 //     here is what lets the daemon's profile tiers resolve it; the CLI's
 //     --auto-memory flag sets it explicitly when the caller wants to force it.

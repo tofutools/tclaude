@@ -79,9 +79,11 @@ type profileJSON struct {
 	AutoReview *bool `json:"auto_review,omitempty"`
 	TrustDir   *bool `json:"trust_dir,omitempty"`
 	// RemoteControl is the profile's "start with Remote Access on" default
-	// (tri-state). NOTE: `tclaude agent spawn --profile` does NOT inherit this —
-	// the CLI can't see the group's remote-control policy, which must win, so use
-	// the explicit --remote-control flag. It is still surfaced here for parity.
+	// (tri-state). NOTE: `tclaude agent spawn --profile` does not fold this in
+	// CLIENT-side — the CLI can't see the group's remote-control policy, which
+	// must win. It is not lost: the daemon resolves it down the full tier stack
+	// under that policy, so leaving it out here is what lets every tier speak.
+	// Use the explicit --remote-control flag to force it on regardless.
 	RemoteControl *bool `json:"remote_control,omitempty"`
 	// AutoMemory is the profile's "keep Claude Code's auto memory on" default
 	// (tri-state). Unset resolves to OFF at spawn — tclaude disables auto

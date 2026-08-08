@@ -37,10 +37,13 @@ func TestDashboardSpawnOwnerPermsUI_Wired(t *testing.T) {
 	present("openBufferedPermissions(options = {})", "the state owns a keyed buffered permission launch")
 	present("openSpawnPermEditor", "the spawn/profile dialogs invoke the buffer editor")
 
-	// The spawn body carries the birth-time access controls.
-	present("body.is_owner = true", "the spawn body sends is_owner when checked")
-	present("body.permission_overrides = { ...draft.permissionOverrides }",
-		"the spawn body sends the buffered overrides")
+	// The spawn body carries the birth-time access controls — unconditionally,
+	// because the daemon resolves both down its profile tier stack and reads
+	// presence on the wire as "this caller has spoken". An unticked box that
+	// omitted the key would let a profile silently re-check it.
+	present("body.is_owner = !!draft.owner", "the spawn body always states is_owner")
+	present("body.permission_overrides = { ...(draft.permissionOverrides || {}) }",
+		"the spawn body always states the buffered overrides")
 
 	// The profile payload carries them too (tri-state owner + overrides).
 	present("['include_group_default_context', draft.include_group_default_context], ['is_owner', draft.is_owner]", "the profile payload includes the tri-state owner")
