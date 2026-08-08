@@ -100,12 +100,21 @@ func TestMain(m *testing.M) {
 		func(int) bool { return false },
 		func(int, syscall.Signal) error { return nil },
 	)
+	// Flow tests spawn API-driven Copilot agents against a simulated tmux with
+	// no Copilot process anywhere, so the real bootstrap would spend its whole
+	// minute-long budget polling for a listener that cannot appear — and would
+	// still be running, against a torn-down database, after the test returned.
+	// Suppressed binary-wide for the same reason as the two defaults above:
+	// package agentd's internal tests share this binary and cannot reach
+	// newFlow. Tests that want to observe the kick-off swap their own.
+	restoreCopilotBootstrap := agentd.SetCopilotAPIBootstrapForTest(func(string, bool) {})
 	restoreCodexProbe := session.SetCodexEffectiveConfigProbeForTest(
 		func(string, []sandboxpolicy.EnvironmentEntry, string) (json.RawMessage, error) {
 			return json.RawMessage(`{"config":{},"origins":{}}`), nil
 		})
 	code := m.Run()
 	restoreCodexProbe()
+	restoreCopilotBootstrap()
 	restoreEscalationProcess()
 	// A real detached session would keep its server and panes alive after its
 	// socket is unlinked. Target the computed private socket explicitly rather

@@ -5205,6 +5205,14 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	if autoTrustSiblingWorktree {
 		p.TrustDir = true
 	}
+	// After the sibling-worktree auto-trust has had its say, because that is
+	// what makes p.TrustDir the value the launch will actually act on. Asking
+	// before it would refuse a worktree spawn that is about to be seeded
+	// anyway — a refusal derived from a value that had not finished being
+	// decided, which is the failure shape this series keeps producing.
+	if fail := copilotAPIFolderTrustFailure(p); fail != nil {
+		return nil, fail
+	}
 	if p.SpawnedByConv != "" && p.TrustDir && !autoTrustSiblingWorktree {
 		callerOwned, ownErr := callerOwnedDirTrustProved(
 			p.SpawnedByConv, p.Cwd, p.DirWriteProofToken, p.DirWriteProofDirs)
@@ -7331,6 +7339,7 @@ func SpawnDetachedTclaudeNew(args clcommon.SpawnArgs) error {
 	// discovery poll resolves the id; recording nothing here is correct rather
 	// than a gap. See recordCopilotAPIPort.
 	recordCopilotAPIPort(args.SessionID, args.CopilotAPIPort)
+	startCopilotAPIBootstrap(args.SessionID, args.CopilotAPI)
 	return nil
 }
 
@@ -7356,6 +7365,7 @@ func SpawnDetachedTclaudeResume(args clcommon.SpawnArgs) error {
 	// A resume always knows its conversation — that is what it is resuming — so
 	// unlike the fresh-spawn path this never defers the record.
 	recordCopilotAPIPort(args.ConvID, args.CopilotAPIPort)
+	startCopilotAPIBootstrap(args.ConvID, args.CopilotAPI)
 	return nil
 }
 

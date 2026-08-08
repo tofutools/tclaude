@@ -1956,12 +1956,33 @@ type agentState struct {
 	// observed context snapshot.
 	ContextWindowMax    int64  `json:"context_window_max,omitempty"`
 	ContextWindowSource string `json:"context_window_source,omitempty"`
-	// CopilotAPI reports that this agent is driven over Copilot's embedded
-	// JSON-RPC API rather than tmux send-keys. Omitted (false) for every
-	// send-keys agent and for every other harness, so the two drives are
-	// distinguishable at a glance while both are live. See TCL-1053.
-	CopilotAPI        bool  `json:"copilot_api,omitempty"`
-	AutoCompactWindow int64 `json:"auto_compact_window,omitempty"`
+	// CopilotAPI reports that this agent was LAUNCHED to be driven over
+	// Copilot's embedded JSON-RPC API rather than tmux send-keys. Omitted
+	// (false) for every send-keys agent and for every other harness, so the two
+	// drives are distinguishable at a glance while both are live. See TCL-1053.
+	//
+	// Launch intent, and durable: it stays true for an agent whose channel
+	// never came up. That is why it is not the whole answer — see
+	// CopilotAPIConnected.
+	CopilotAPI bool `json:"copilot_api,omitempty"`
+	// CopilotAPIConnected reports that tclaude holds a live, ownership-proved
+	// connection to this agent's embedded server RIGHT NOW.
+	//
+	// A separate field from CopilotAPI rather than a refinement of it, because
+	// they are answers to different questions and the difference is exactly
+	// where this series keeps producing bugs. "Launched with the API drive" is
+	// a durable fact about a launch; "is being driven over the API" is a fact
+	// about a connection, and the two disagree for the whole window between a
+	// pane starting and its bootstrap completing — and forever, for a bootstrap
+	// that failed. Collapsing them would give the dashboard a badge that says
+	// an agent is API-driven while nothing is on the other end.
+	//
+	// Derived from the live handle registry and never from the recorded port.
+	// The port record is a true statement about what a launch was told to bind;
+	// it says nothing about whether anything is listening, nor whose. See
+	// TCL-1054's carry-in note.
+	CopilotAPIConnected bool  `json:"copilot_api_connected,omitempty"`
+	AutoCompactWindow   int64 `json:"auto_compact_window,omitempty"`
 	// Model is the LLM model display name the agent is running on
 	// ("Opus 4.8", "Sonnet 4.6", …), recorded by the statusline hook.
 	// Empty until the statusbar has ticked at least once; the dashboard
@@ -2373,6 +2394,13 @@ func stateForConvInSessionsBatched(
 			// Copilot agent on every snapshot tick.
 			intent := copilotLaunchIntentForConv(pick.ConvID)
 			out.CopilotAPI = intent.API
+			// Asked of the connection registry, not of intent and not of the
+			// port record. Cheap — a map read plus a non-blocking channel
+			// check — and asked only for an agent that was launched on the API
+			// drive, since for anyone else the answer is a foregone false.
+			if intent.API {
+				out.CopilotAPIConnected = copilotAPISessions.Connected(pick.ConvID)
+			}
 			// A configured cap is launch intent and remains usable before Copilot
 			// has disclosed an observed model. Only the static fallback needs an
 			// observed model id; keeping these branches separate prevents a blank

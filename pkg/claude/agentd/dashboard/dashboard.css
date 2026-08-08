@@ -3304,6 +3304,13 @@ tr:hover .row-actions { opacity: 1; }
    presence alone is the signal. Amber, to read as "experimental path" rather
    than as one more piece of the harness/model text. */
 .agent-harness .harness-drive { color: #d29922; margin-left: 4px; }
+/* Launched for the API drive but not connected: same chip, dimmed and dashed,
+   so "asked for" and "actually driving" are distinguishable without adding a
+   second badge to a row that is already dense. */
+.agent-harness .harness-drive-pending {
+  color: #8b949e;
+  border-bottom: 1px dashed currentColor;
+}
 /* The reasoning-effort token trails the model after a small gap, a shade
    brighter than the surrounding harness text so the eye catches the
    current effort level. */

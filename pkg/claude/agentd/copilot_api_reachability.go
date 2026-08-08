@@ -51,16 +51,24 @@ const (
 // one sample would turn an ordinary startup race into a spurious hard failure.
 // The verdict is still hard — it is just taken at the deadline rather than at
 // the first glance — and the error says which of the two it was.
-func verifiedCopilotAPIPort(ctx context.Context, convID string) (int, error) {
+//
+// The pane pid the proof was taken AGAINST is returned alongside the port, so a
+// caller holding a long-lived connection can re-ask about the same subtree
+// rather than resolving one again later. Re-resolving would answer a subtly
+// different question — "which pane runs this conversation now" — and after a
+// relaunch that is a different pane, which would let a re-proof pass while the
+// connection was still attached to the predecessor. See
+// copilotAPISession.StillOwned.
+func verifiedCopilotAPIPort(ctx context.Context, convID string) (int, int, error) {
 	if convID == "" {
-		return 0, fmt.Errorf("verify Copilot API port: no conversation id")
+		return 0, 0, fmt.Errorf("verify Copilot API port: no conversation id")
 	}
 	runtime, err := db.GetCopilotAPIRuntime(convID)
 	if err != nil {
-		return 0, fmt.Errorf("read Copilot API port record for %s: %w", convID, err)
+		return 0, 0, fmt.Errorf("read Copilot API port record for %s: %w", convID, err)
 	}
 	if runtime == nil {
-		return 0, fmt.Errorf(
+		return 0, 0, fmt.Errorf(
 			"conversation %s has no recorded Copilot API port: it was not launched "+
 				"with the API drive, or its pane has already exited and released the record",
 			convID)
@@ -75,18 +83,18 @@ func verifiedCopilotAPIPort(ctx context.Context, convID string) (int, error) {
 		if panePID > 0 {
 			sawPane = true
 			if portowner.ProcessOwnsLoopbackPort(panePID, port) {
-				return port, nil
+				return port, panePID, nil
 			}
 		}
 		if portowner.HasLoopbackListener(port) {
 			sawListener = true
 		}
 		if time.Now().After(deadline) {
-			return 0, copilotAPIUnverifiedError(convID, port, sawPane, sawListener)
+			return 0, 0, copilotAPIUnverifiedError(convID, port, sawPane, sawListener)
 		}
 		select {
 		case <-ctx.Done():
-			return 0, fmt.Errorf(
+			return 0, 0, fmt.Errorf(
 				"gave up verifying Copilot API port %d for %s: %w", port, convID, ctx.Err())
 		case <-time.After(copilotAPIPollInterval):
 		}

@@ -189,6 +189,13 @@ func releaseCopilotAPIPort(convID string) {
 	if convID == "" {
 		return
 	}
+	// The live handle goes with the claim. This is housekeeping rather than a
+	// correctness mechanism: a handle to a pane that has exited is already dead
+	// on its own — its connection closed when the process did, and every read
+	// of it reports that — so nothing depends on this running. What it buys is
+	// that the registry does not accumulate one dead entry per retired
+	// conversation for the lifetime of the daemon.
+	copilotAPISessions.Drop(convID)
 	if err := db.DeleteCopilotAPIRuntime(convID); err != nil {
 		slog.Warn("failed to release Copilot API port record",
 			"conv_id", convID, "error", err)

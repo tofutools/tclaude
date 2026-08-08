@@ -186,7 +186,7 @@ func TestVerifiedCopilotAPIPortWithoutARecord(t *testing.T) {
 	t.Setenv("USERPROFILE", home)
 	db.ResetForTest()
 
-	_, err := verifiedCopilotAPIPort(context.Background(), "conv-unknown")
+	_, _, err := verifiedCopilotAPIPort(context.Background(), "conv-unknown")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no recorded Copilot API port")
 }
