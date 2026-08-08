@@ -354,14 +354,14 @@ func deliverRenameOn(convID, title string, channel deliveryChannel) bool {
 					"conv", convID, "error", err)
 				return false
 			}
-			cacheDeliveredRename(convID, title, h.Name)
+			cacheDeliveredTitle(convID, title, h.Name)
 			return true
 		}
 		if !injectSlashCommandOn(
 			convID, h.Life.RenameCommand()+" "+title, "", "rename", channel) {
 			return false
 		}
-		cacheDeliveredRename(convID, title, h.Name)
+		cacheDeliveredTitle(convID, title, h.Name)
 		return true
 	}
 
@@ -372,7 +372,7 @@ func deliverRenameOn(convID, title string, channel deliveryChannel) bool {
 				"conv", convID, "harness", h.Name, "error", err)
 			return false
 		}
-		cacheDeliveredRename(convID, title, h.Name)
+		cacheDeliveredTitle(convID, title, h.Name)
 		return true
 	}
 
@@ -381,13 +381,14 @@ func deliverRenameOn(convID, title string, channel deliveryChannel) bool {
 	return false
 }
 
-// cacheDeliveredRename records the accepted title before an in-pane harness
-// has emitted and agentd has followed its transcript sidecar. Besides making
-// cache-only UI reads immediate, this establishes the ordering needed by a
-// `/clear` that arrives inside the fsnotify debounce window: identity rotation
-// carries the just-delivered name without making the hook parse the transcript.
-// A later authoritative transcript/native-store scan can still replace it.
-func cacheDeliveredRename(convID, title, harnessName string) {
+// cacheDeliveredTitle records a title already delivered to the harness,
+// whether through a native rename or as a launch argument, before agentd has
+// followed the harness's durable conversation state. Besides making cache-only
+// UI reads immediate, this establishes the ordering needed by a `/clear` that
+// arrives inside the fsnotify debounce window: identity rotation carries the
+// delivered name without making the hook parse the transcript. A later
+// authoritative transcript/native-store scan can still replace it.
+func cacheDeliveredTitle(convID, title, harnessName string) {
 	if err := db.SetConvIndexCustomTitle(convID, title, harnessName); err != nil {
 		slog.Warn("rename: failed to refresh cached title after delivery",
 			"conv", convID, "harness", harnessName, "error", err)

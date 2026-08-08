@@ -207,6 +207,18 @@ func TestDescribeAgentVerb_DropsNonVerbSiblings(t *testing.T) {
 	}
 }
 
+func TestResolveAuditTarget_UsesActorPendingNameWithoutConversationIndex(t *testing.T) {
+	setupTestDB(t)
+	const convID = "11111111-2222-3333-4444-555555555555"
+	agentID, _, err := db.EnsureAgentForConv(convID, "spawn")
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentPendingName(agentID, "copilot-worker"))
+
+	conv, label := resolveAuditTarget(convID)
+	assert.Equal(t, convID, conv)
+	assert.Equal(t, "copilot-worker", label)
+}
+
 // describeWhoamiVerb mirrors describeAgentVerb but for the self-lifecycle
 // route: it must drop a POST to a read sibling (whoami/context) and keep a
 // real self-verb. A self-rename additionally lifts the new title into the

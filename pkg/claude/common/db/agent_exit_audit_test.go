@@ -80,6 +80,32 @@ func TestAgentExitAudit_DeduplicatesAndOnlyEnriches(t *testing.T) {
 	assert.Contains(t, rows[0].Detail, "signal=unavailable")
 }
 
+func TestAgentExitAudit_SnapshotsCanonicalAgentName(t *testing.T) {
+	setupTestDB(t)
+	const (
+		sessionID  = "spwn-copilot-exit"
+		convID     = "copilot-conv-without-index"
+		generation = "cccccccccccccccccccccccccccccccc"
+	)
+	agentID := seedExitAuditSession(t, sessionID, convID)
+	require.NoError(t, SetAgentPendingName(agentID, "pending-copilot-worker"))
+	require.NoError(t, SetConvIndexCustomTitle(convID, "copilot-worker", "copilot"))
+	require.NoError(t, SetSessionExitLaunchGeneration(sessionID, generation))
+
+	_, err := RecordAgentExitObservation(AgentExitObservation{
+		SessionID: sessionID, Observer: AgentExitObserverReconcile,
+		CauseKind: AgentExitCauseDisappeared, ObservedState: "exited",
+		ExpectedGeneration: generation,
+	})
+	require.NoError(t, err)
+
+	rows, err := ListAuditLog(AuditLogFilter{Verb: AuditVerbAgentExit})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, agentID, rows[0].TargetAgent)
+	assert.Equal(t, "copilot-worker", rows[0].TargetLabel)
+}
+
 func TestAgentExitAudit_CallbackBindingReplayAndRelaunch(t *testing.T) {
 	setupTestDB(t)
 	seedExitAuditSession(t, "spwn-callback", "conv-callback")
