@@ -192,9 +192,17 @@ export function mountTerminalWidget({
   }
 
   function sendResize() {
-    if (!disposed && ws && ws.readyState === WebSocketCtor.OPEN) {
-      ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-    }
+    if (disposed || !ws || ws.readyState !== WebSocketCtor.OPEN) return;
+    // A host with no layout — a display:none mount before the Terminals tab
+    // reveals, a pane mid-teardown — makes FitAddon propose garbage (a tiny
+    // grid measured from an unrendered box), and the PTY bridge adopts the
+    // FIRST reported size as the size the command is born at. Better to say
+    // nothing: the server falls back to 80x24 on its own, and every reveal
+    // path (setActive, the ResizeObserver, the post-open refit) re-fits and
+    // resends once the host has real geometry. Strictly-equal zero so a test
+    // DOM without layout (offsetWidth undefined) keeps its sends.
+    if (host.offsetWidth === 0 || host.offsetHeight === 0) return;
+    ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
   }
 
   function closeSocket() {

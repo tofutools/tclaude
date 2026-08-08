@@ -236,6 +236,52 @@ test('fast socket refits after xterm cell measurements become available', async 
   widget.dispose();
 });
 
+test('a host with no layout reports no size until it has real geometry', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { mountTerminalWidget } = await harness.importDashboardModule('js/terminals-core.js');
+  const fakes = widgetFakes(harness.document);
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  // A real browser reports offsetWidth/offsetHeight 0 for a display:none
+  // subtree — the state a terminal mounted before the Terminals tab reveal is
+  // in. FitAddon proposes garbage grids from that state, and the PTY bridge
+  // adopts the FIRST reported size as the command's starting size, so the
+  // widget must stay silent instead.
+  const layout = { width: 0, height: 0 };
+  Object.defineProperty(host, 'offsetWidth', { get: () => layout.width, configurable: true });
+  Object.defineProperty(host, 'offsetHeight', { get: () => layout.height, configurable: true });
+  const frames = [];
+  const widget = mountTerminalWidget({
+    host,
+    wsPath: '/api/term-ws/agt_hidden',
+    authenticate: false,
+    TerminalCtor: fakes.FakeTerminal,
+    FitAddonCtor: fakes.FakeFitAddon,
+    WebSocketCtor: fakes.FakeWebSocket,
+    ResizeObserverCtor: fakes.FakeResizeObserver,
+    requestAnimationFrameImpl: (callback) => { frames.push(callback); return frames.length; },
+    cancelAnimationFrameImpl: () => {},
+    locationRef: { protocol: 'http:', host: 'dashboard.test' },
+    documentRef: harness.document,
+    interactionsFactory: fakes.interactionsFactory,
+  });
+
+  await widget.connect();
+  const socket = fakes.sockets[0];
+  socket.open();
+  assert.equal(socket.sent.length, 0, 'no resize is reported from an unrendered host');
+  frames.shift()();
+  assert.equal(socket.sent.length, 0, 'the post-open refit declines an unrendered host too');
+
+  layout.width = 800;
+  layout.height = 600;
+  widget.setActive(true);
+  assert.deepEqual(JSON.parse(socket.sent.at(-1)), {
+    type: 'resize', cols: 80, rows: 24,
+  }, 'a reveal path resends once the host has real geometry');
+
+  widget.dispose();
+});
+
 test('dispose aborts auth and prevents a late preflight from creating a socket', async (t) => {
   const harness = await createPreactHarness(t);
   const { mountTerminalWidget } = await harness.importDashboardModule('js/terminals-core.js');
