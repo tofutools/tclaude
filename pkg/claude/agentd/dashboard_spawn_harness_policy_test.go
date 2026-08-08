@@ -63,6 +63,12 @@ func TestDashboardHTMLSpawnHarnessPolicyUI(t *testing.T) {
 		`<option value="inherit">${copy.inherit}</option>`:                 "theme-aware group inheritance choice",
 		`.spawn-harness-cell select,`:                                      "dark form control styling",
 		`resizeKey="tclaude.dash.modalSize.spawn-harness-policy"`:          "persisted dialog resize wiring",
+		`resize: both; overflow: hidden;`:                                  "single flexible matrix scroll surface",
+		`flex: 1 1 auto; min-height: 0; overflow: auto;`:                   "matrix owns scrolling",
+		`contain: layout paint; will-change: scroll-position;`:             "isolated compositor scrolling",
+		`function capDialogToContent()`:                                    "content-derived resize ceiling",
+		`modal.style.maxWidth =`:                                          "horizontal resize ceiling",
+		`modal.style.maxHeight =`:                                         "vertical resize ceiling",
 		`.spawn-harness-matrix col.spawn-harness-target { width: 220px; }`: "equal target-column sizing",
 		`body.wizard #spawn-harness-policy-modal .cron-create-modal {`:     "wizard dialog skin",
 	} {

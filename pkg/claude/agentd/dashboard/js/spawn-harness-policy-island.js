@@ -1,5 +1,5 @@
 import { h, render } from 'preact';
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
   ManagementOverlay as Overlay,
@@ -70,6 +70,39 @@ function useWizardTheme() {
   return wizard;
 }
 
+function capDialogToContent() {
+  const modal = document.querySelector('#spawn-harness-policy-modal .cron-create-modal');
+  const wrap = modal?.querySelector('.spawn-harness-matrix-wrap');
+  const table = wrap?.querySelector('.spawn-harness-matrix');
+  if (!modal || !wrap || !table) return;
+
+  // The resizable card may have restored a deliberately small/large persisted
+  // size. Derive its ceiling from the table's intrinsic box plus the card's
+  // non-matrix chrome, so resizing can reveal every column/row but can never
+  // grow into an empty panel beyond them.
+  const wrapStyle = getComputedStyle(wrap);
+  const wrapBorderX = parseFloat(wrapStyle.borderLeftWidth) + parseFloat(wrapStyle.borderRightWidth);
+  const wrapBorderY = parseFloat(wrapStyle.borderTopWidth) + parseFloat(wrapStyle.borderBottomWidth);
+  const frameWidth = modal.offsetWidth - wrap.offsetWidth;
+  const declaredTableWidth = Array.from(table.querySelectorAll('col')).reduce(
+    (sum, col) => sum + parseFloat(getComputedStyle(col).width),
+    0,
+  );
+  modal.style.maxWidth = `${Math.min(
+    Math.ceil((declaredTableWidth || table.scrollWidth) + wrapBorderX + frameWidth + 1),
+    window.innerWidth - 32,
+  )}px`;
+
+  // Width clamping can wrap the intro copy. Read height only after that
+  // synchronous layout so the vertical ceiling includes the wrapped lines.
+  const frameHeight = modal.offsetHeight - wrap.offsetHeight;
+  const tableHeight = table.getBoundingClientRect().height;
+  modal.style.maxHeight = `${Math.min(
+    Math.ceil(tableHeight + wrapBorderY + frameHeight),
+    window.innerHeight * 0.86,
+  )}px`;
+}
+
 function SpawnHarnessPolicyDialog({ descriptor, close, confirmDiscard, notify }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const wizard = useWizardTheme();
@@ -78,6 +111,13 @@ function SpawnHarnessPolicyDialog({ descriptor, close, confirmDiscard, notify })
   const [baseline, setBaseline] = useState('');
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState('');
+
+  useLayoutEffect(() => {
+    if (!view) return undefined;
+    capDialogToContent();
+    window.addEventListener('resize', capDialogToContent);
+    return () => window.removeEventListener('resize', capDialogToContent);
+  }, [view, draft, error, wizard]);
 
   useEffect(() => {
     let live = true;

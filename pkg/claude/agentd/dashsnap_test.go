@@ -1061,14 +1061,26 @@ func baseStates() []dashsnap.State {
   var targetHeaders = Array.from(document.querySelectorAll('#spawn-harness-policy-modal thead th')).slice(1);
   var targetWidths = targetHeaders.map(function(header){ return Math.round(header.getBoundingClientRect().width); });
   if (getComputedStyle(modal).resize !== 'both') throw new Error('spawn-harness-policy: dialog is not resizable');
-  if (matrixWrap.scrollWidth > matrixWrap.clientWidth + 1) throw new Error('spawn-harness-policy: two-harness matrix scrolls at its natural width');
+  if (getComputedStyle(modal).overflow !== 'hidden') throw new Error('spawn-harness-policy: dialog competes with matrix scrolling');
+  if (!getComputedStyle(matrixWrap).contain.includes('layout') || !getComputedStyle(matrixWrap).contain.includes('paint')) throw new Error('spawn-harness-policy: matrix lacks paint containment');
+  if (!getComputedStyle(matrixWrap).willChange.includes('scroll-position')) throw new Error('spawn-harness-policy: matrix lacks compositor scroll hint');
+  if (targetHeaders.length > 2 && matrixWrap.scrollWidth <= matrixWrap.clientWidth + 1) throw new Error('spawn-harness-policy: multi-harness matrix has no scrolling at its default width');
   if (new Set(targetWidths).size !== 1) throw new Error('spawn-harness-policy: target columns differ: ' + targetWidths.join(', '));
+  var maxWidth = parseFloat(getComputedStyle(modal).maxWidth);
+  var maxHeight = parseFloat(getComputedStyle(modal).maxHeight);
+  if (!(maxWidth > 0) || !(maxHeight > 0)) throw new Error('spawn-harness-policy: content resize ceiling is missing');
+  modal.style.width = (maxWidth + 100) + 'px';
+  modal.style.height = (maxHeight + 100) + 'px';
+  await new Promise(function(resolve){ requestAnimationFrame(resolve); });
+  var cappedBox = modal.getBoundingClientRect();
+  if (cappedBox.width > maxWidth + 1 || cappedBox.height > maxHeight + 1) throw new Error('spawn-harness-policy: dialog expands beyond its content ceiling');
+  if (matrixWrap.scrollWidth > matrixWrap.clientWidth + 1) throw new Error('spawn-harness-policy: content ceiling does not reveal the full matrix');
   var colgroup = document.querySelector('#spawn-harness-policy-modal colgroup');
   var fakeCol = document.createElement('col');
   fakeCol.className = 'spawn-harness-target';
   colgroup.appendChild(fakeCol);
   var fakeHeader = document.createElement('th');
-  fakeHeader.textContent = 'Third harness';
+  fakeHeader.textContent = 'Additional harness';
   document.querySelector('#spawn-harness-policy-modal thead tr').appendChild(fakeHeader);
   var fakeCells = [];
   document.querySelectorAll('#spawn-harness-policy-modal tbody tr').forEach(function(row){
@@ -1081,8 +1093,8 @@ func baseStates() []dashsnap.State {
   await new Promise(function(resolve){ requestAnimationFrame(resolve); });
   var manyWidths = Array.from(document.querySelectorAll('#spawn-harness-policy-modal thead th')).slice(1)
     .map(function(header){ return Math.round(header.getBoundingClientRect().width); });
-  if (new Set(manyWidths).size !== 1) throw new Error('spawn-harness-policy: 3-harness target columns differ: ' + manyWidths.join(', '));
-  if (matrixWrap.scrollWidth <= matrixWrap.clientWidth + 1) throw new Error('spawn-harness-policy: 3-harness matrix does not expose horizontal scrolling');
+  if (new Set(manyWidths).size !== 1) throw new Error('spawn-harness-policy: added-harness target columns differ: ' + manyWidths.join(', '));
+  if (matrixWrap.scrollWidth <= matrixWrap.clientWidth + 1) throw new Error('spawn-harness-policy: added harness does not expose horizontal scrolling');
   fakeCells.forEach(function(cell){ cell.remove(); });
   fakeHeader.remove();
   fakeCol.remove();
