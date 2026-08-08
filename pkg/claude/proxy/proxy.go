@@ -89,19 +89,21 @@ func Cmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:   "proxy",
 		Short: "Operations the daemon performs for you with credentials you do not hold",
-		Long: "Perform Git-remote and GitHub operations WITHOUT holding the credentials yourself.\n\n" +
-			"`tclaude agentd` runs git and gh on the host, where the SSH key and GitHub token live. " +
-			"Your sandbox can deny ~/.ssh and ~/.config/gh outright and you can still fetch, push, and " +
-			"open a pull request.\n\n" +
+		Long: "Perform Git-remote, GitHub and Linear operations WITHOUT holding the credentials yourself.\n\n" +
+			"`tclaude agentd` runs git and gh on the host, where the SSH key and GitHub token live, and " +
+			"calls Linear's API with the operator's key. Your sandbox can deny ~/.ssh and ~/.config/gh " +
+			"outright, and hold no Linear key at all, and you can still fetch, push, open a pull request, " +
+			"and update your ticket.\n\n" +
 			"You describe the operation (\"push my branch\"); the daemon builds the command. There is no " +
-			"passthrough flag and no way to influence the argv it runs.\n\n" +
+			"passthrough flag, no way to influence the argv it runs, and no raw-GraphQL escape hatch.\n\n" +
 			"Every verb needs a permission slug the operator grants: `git.read`, `git.push`, " +
-			"`github.read`, `github.write`. None is granted by default — ask the operator, or pass " +
-			"--ask-human for a one-off approval.",
+			"`github.read`, `github.write`, `linear.read`, `linear.write`. None is granted by default — " +
+			"ask the operator, or pass --ask-human for a one-off approval.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			gitCmd(),
 			githubCmd(),
+			linearCmd(),
 		},
 	}.ToCobra()
 }
