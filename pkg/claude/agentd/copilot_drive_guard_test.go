@@ -3,7 +3,6 @@ package agentd
 import (
 	"go/ast"
 	"go/parser"
-	"go/printer"
 	"go/token"
 	"strings"
 	"testing"
@@ -92,68 +91,3 @@ func TestTheDaemonDownFallbackNeverEscalates(t *testing.T) {
 			"it started writing some other way this guard cannot see")
 }
 
-// TestTheReconnectSweepSkipOnlyReadsAnExplicitFalse guards the condition added
-// for this ticket at its most dangerous edge.
-//
-// The sweep declines to adopt a channel when an operator recorded an explicit
-// off. Scoping that to a record that SAYS false is what keeps it from becoming
-// "stop closing the injection sink": an absent record and a read failure both
-// mean unknown, and both must keep adopting. A plausible simplification —
-// dropping the `Record != None` half, or inverting the error check — turns a
-// respect-the-operator condition into a silent refusal to reconnect legacy
-// conversations, whose only symptom is agents that stop receiving mail.
-//
-// # What this guard cannot see
-//
-// It pins the SHAPE of the condition, not its effect. The behavioural pair
-// (TestAPinnedDriveIsNotReacquiredByTheReconnectSweep and
-// TestAnUnrecordedDriveIsStillAdoptedAfterThePinCondition) is what proves the
-// two states actually diverge; this exists because those two cases are easy to
-// leave passing while the condition drifts to cover a third.
-func TestTheReconnectSweepSkipOnlyReadsAnExplicitFalse(t *testing.T) {
-	const path = "copilot_api_reconnect.go"
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
-	require.NoError(t, err, "parse %s", path)
-
-	var fn *ast.FuncDecl
-	ast.Inspect(file, func(n ast.Node) bool {
-		if decl, ok := n.(*ast.FuncDecl); ok && decl.Name.Name == "reconcileCopilotAPISessions" {
-			fn = decl
-		}
-		return true
-	})
-	require.NotNil(t, fn, "reconcileCopilotAPISessions not found")
-
-	found := false
-	ast.Inspect(fn.Body, func(n ast.Node) bool {
-		stmt, ok := n.(*ast.IfStmt)
-		if !ok || stmt.Init == nil {
-			return true
-		}
-		cond := exprText(fset, stmt.Cond)
-		if !strings.Contains(cond, "CopilotDriveRecordNone") {
-			return true
-		}
-		found = true
-		assert.Contains(t, cond, "err == nil",
-			"a read failure means UNKNOWN and must keep adopting; without this half a "+
-				"database hiccup would stand the sweep down and look like a decision")
-		assert.Contains(t, cond, "!target.Value",
-			"the skip must require a record that says FALSE, not merely a record")
-		return true
-	})
-	assert.True(t, found,
-		"the reconnect sweep no longer tests the recorded drive before adopting; an "+
-			"operator's durable off would be re-acquired at the next daemon restart, "+
-			"which is the defect this condition exists to prevent")
-}
-
-// exprText renders an expression back to source for a substring assertion.
-func exprText(fset *token.FileSet, e ast.Expr) string {
-	var b strings.Builder
-	if err := printer.Fprint(&b, fset, e); err != nil {
-		return ""
-	}
-	return b.String()
-}

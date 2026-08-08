@@ -55,16 +55,15 @@ func TestSetDriveDisclosure_SaysCreatedWhenNothingWasRecorded(t *testing.T) {
 		"the operator must learn that a default profile had been speaking for this agent")
 }
 
-// TestSetDriveDisclosure_LiveChannelNamesTheRestart is the sentence the cold
-// review found false, and the one a mutation could delete unnoticed.
+// TestSetDriveDisclosure_LiveChannelSurvivesARestart pins the sentence the whole
+// skip argument turned on.
 //
-// Routing answers from the live handle first, so a pin does not redirect a
-// running channel — but an agentd restart drops every handle and the reconnect
-// sweep now declines to re-acquire a drive an operator turned off. So the pin
-// starts biting at a restart, with no relaunch and no channel "ending" in any
-// sense the operator can observe. A disclosure that names only the channel
-// ending describes the wrong event.
-func TestSetDriveDisclosure_LiveChannelNamesTheRestart(t *testing.T) {
+// "Until that channel ends" is what made a daemon restart look like a channel
+// ending — it is not. The pane, the copilot process and the RPC listener all
+// survive a restart and the reconnect sweep re-adopts; only a relaunch ends the
+// channel. An operator told the wrong event waits for something that never
+// happens.
+func TestSetDriveDisclosure_LiveChannelSurvivesARestart(t *testing.T) {
 	stdout := new(bytes.Buffer)
 	rc := printSetDrive(&setDriveResp{
 		ConvID: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
@@ -74,10 +73,33 @@ func TestSetDriveDisclosure_LiveChannelNamesTheRestart(t *testing.T) {
 	require.Equal(t, rcOK, rc)
 	out := stdout.String()
 	assert.Contains(t, out, "durable now")
-	assert.Contains(t, out, "restart",
-		"the restart is the event that actually makes the pin bite for a running "+
-			"pane; omitting it tells the operator to wait for something that never happens")
-	assert.Contains(t, out, "relaunch it")
+	assert.Contains(t, out, "restart does not end it",
+		"a restart is agentd's amnesia, not the channel ending, and the operator has "+
+			"to be told which")
+	assert.Contains(t, out, "relaunch",
+		"the relaunch is the thing that actually makes the pin bite for a running pane")
+}
+
+// TestSetDriveDisclosure_RestartSentenceSurvivesAnUnknownChannel is the arm that
+// matters most and is easiest to miss.
+//
+// The daemon-down path cannot populate Live — there is no daemon to ask about
+// handles — and that is exactly the operator most likely to be mid-incident with
+// a pane still serving --ui-server. A sentence gated on Live would be silently
+// absent for them, and absent disclosure looks exactly like nothing to disclose.
+func TestSetDriveDisclosure_RestartSentenceSurvivesAnUnknownChannel(t *testing.T) {
+	stdout := new(bytes.Buffer)
+	rc := printSetDrive(&setDriveResp{
+		ConvID: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+		Drive:  setDriveSendKeys, Record: "agent profile", Changed: true,
+	}, false, stdout, new(bytes.Buffer))
+
+	require.Equal(t, rcOK, rc)
+	out := stdout.String()
+	assert.Contains(t, out, "survives an agentd restart",
+		"the path that cannot KNOW about a channel must say what it does not know, "+
+			"rather than say nothing")
+	assert.Contains(t, out, "only a relaunch ends it")
 }
 
 // TestSetDriveDisclosure_NoOpSaysUnchanged: a no-op reported as a change is a

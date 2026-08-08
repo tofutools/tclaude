@@ -813,8 +813,10 @@ existing one — "created" means nothing recorded a drive before, which is itsel
 the sign that a default profile had been answering for the agent. And a pin is
 durable immediately but does **not** redirect a channel that is already up:
 routing answers from the live connection first, so a running API-driven pane
-keeps using it until that channel ends. Relaunch the agent if you want the
-change to bite now.
+keeps using it. An `agentd` restart does not end that channel — the pane, the
+`copilot` process and its listener all survive one, and the daemon re-adopts —
+so **only a relaunch** makes the change bite on an agent that is already
+running.
 
 `tclaude conv resume <id> --send-keys` is a different thing and stays one: a
 per-launch override that deliberately touches no record.

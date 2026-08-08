@@ -17,8 +17,9 @@ import (
 //
 // A durable "off" introduces a state that rule was written before: a posture
 // recorded as an explicit FALSE, by an operator, for a pane that is still
-// running the channel it was launched with. This measures what the sweep does
-// with it, because the answer decides how long the rollback actually lasts.
+// running the channel it was launched with. The sweep treats it like any other
+// candidate, deliberately — see the decision on reconcileCopilotAPISessions —
+// and these arms hold that decision in place.
 
 // pinConversationDriveOff turns the drive off in the conversation fallback —
 // the record a clone-shaped or legacy conversation keeps its drive in, and the
@@ -36,52 +37,55 @@ func pinConversationDriveOff(t *testing.T, convID string) {
 		"precondition: with no handle, the pinned record must already route to send-keys")
 }
 
-// TestAPinnedDriveIsNotReacquiredByTheReconnectSweep is the lifetime of a
-// rollback performed against a still-running pane.
+// TestAPinnedDriveIsReacquiredByTheReconnectSweep records a DECISION, not an
+// observation, and that is why it survived being written twice.
 //
-// The state is the ordinary one after a durable "off": the operator pinned the
-// record, the pane kept running (a pin does not stop anything), and agentd was
-// later restarted. The sweep then finds a recorded port and a live Copilot pane
-// — its two candidate conditions.
+// It first went in measuring the sweep adopting a pinned conversation, labelled
+// current-behaviour-not-desired; it was then inverted to assert a skip; and it
+// is inverted back here because the skip was wrong in principle. What it now
+// pins is the reasoning that settled it:
 //
-// This assertion is INVERTED from the one first committed here, which measured
-// the sweep adopting and was labelled current-behaviour rather than desired. The
-// inversion belongs in the same change as the condition that causes it, so the
-// diff reads as a rule changing rather than as a test being relaxed. Without
-// that condition a durable off holds for launches and evaporates for the running
-// pane at the next daemon restart, which is a rollback the operator believes
-// worked.
-func TestAPinnedDriveIsNotReacquiredByTheReconnectSweep(t *testing.T) {
+// AN AGENTD RESTART IS NOT THE CHANNEL ENDING. The pane persists, the copilot
+// process persists, the RPC listener persists; only agentd's in-memory handle is
+// lost, and the sweep is the mechanism that remembers. A pin governs the next
+// LAUNCH — it does not evict a live channel, and a restart is not an eviction.
+//
+// The flip is asserted on BOTH sides on purpose, because the pair IS the
+// decision: with no handle the pinned record answers and the conversation routes
+// to send-keys; once the sweep re-adopts, the handle answers first and it is back
+// on its channel. Asserting only the adopt would record that something happened.
+// Asserting the flip records why it is allowed to.
+func TestAPinnedDriveIsReacquiredByTheReconnectSweep(t *testing.T) {
 	fixture := newCopilotAPIReconnectFixture(t)
+	// pinConversationDriveOff asserts the first half: no handle, so the pinned
+	// record decides and the conversation is on keystrokes.
 	pinConversationDriveOff(t, fixture.convID)
 
 	fixture.reconcile(t)
 
-	assert.False(t, copilotAPISessions.Connected(fixture.convID),
-		"an operator's explicit off must stand the sweep down; re-adopting it puts "+
-			"the conversation back on the drive it was taken off, with no disclosure "+
-			"anywhere")
-	assert.False(t, copilotAPIDriven(fixture.convID),
-		"and so the pinned conversation stays on the keystroke path its record asks for")
+	assert.True(t, copilotAPISessions.Connected(fixture.convID),
+		"a pin governs the next launch; it must not stand the sweep down for a pane "+
+			"whose channel never ended")
+	assert.True(t, copilotAPIDriven(fixture.convID),
+		"and with the handle back, the live channel answers before the record — the "+
+			"other half of the flip, and the reason the pin is not lost: it still "+
+			"decides the next launch")
 
 	target, err := db.CopilotDriveTargetForConv(fixture.convID)
 	require.NoError(t, err)
-	assert.False(t, target.Value, "the pin itself is untouched by the sweep")
+	assert.False(t, target.Value,
+		"the pin itself is untouched by the sweep, so the next LAUNCH still honours it")
 }
 
-// TestAnUnrecordedDriveIsStillAdoptedAfterThePinCondition is the other half of
-// the same condition, and the one that keeps it honest.
+// TestAnUnrecordedDriveIsStillAdoptedByTheSweep guards the sink-closing property
+// that made the sweep decline to filter on posture in the first place.
 //
-// The skip is scoped to an explicit false. A conversation whose posture was
-// never recorded means UNKNOWN, its mail routes to keystrokes, and adopting it
-// closes that sink — the reason the sweep declines to filter on posture in the
-// first place. If this arm ever goes red, the change stopped being "respect an
-// operator" and became "stop closing the sink".
-//
-// TestCopilotAPIReconnectStillAdoptsAConversationWithNoRecordedPosture asserts
-// the same property from the reconnect side; this one exists beside the pin so
-// the boundary is visible to whoever edits the condition.
-func TestAnUnrecordedDriveIsStillAdoptedAfterThePinCondition(t *testing.T) {
+// A conversation whose posture was never recorded means UNKNOWN, its mail routes
+// to keystrokes, and adopting it closes that sink rather than merely observing
+// the conversation. Kept beside the pin arm so the two states — "nobody said" and
+// "the operator said no" — stay visibly distinct to whoever edits this sweep,
+// even though neither now changes what it does.
+func TestAnUnrecordedDriveIsStillAdoptedByTheSweep(t *testing.T) {
 	fixture := newCopilotAPIReconnectFixtureWithPosture(t, false)
 	require.False(t, copilotAPIPostureRecorded(fixture.convID),
 		"precondition: nothing may answer which drive this launch took")
@@ -93,5 +97,5 @@ func TestAnUnrecordedDriveIsStillAdoptedAfterThePinCondition(t *testing.T) {
 	fixture.reconcile(t)
 
 	assert.True(t, copilotAPISessions.Connected(fixture.convID),
-		"an UNRECORDED posture is not an operator's off and must still be adopted")
+		"an UNRECORDED posture is the case this sweep exists for")
 }

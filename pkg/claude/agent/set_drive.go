@@ -287,17 +287,30 @@ func printSetDrive(resp *setDriveResp, asJSON bool, stdout, stderr io.Writer) in
 			"  this pins THIS agent, not future members of its group — a group default "+
 				"profile is the lever for those")
 	}
-	if resp.Live {
-		// Naming the restart is not a detail. Routing answers from the live handle
-		// first, so this pane keeps its channel — but an agentd restart drops every
-		// handle, and the reconnect sweep now declines to re-acquire a drive an
-		// operator turned off. So the pin starts biting at a restart, with no
-		// relaunch and no channel "ending" in any sense the operator can observe.
-		// Saying only "until that channel ends" would describe the wrong event.
-		fmt.Fprintln(stdout,
-			"  durable now; this conversation keeps its current API channel until that "+
-				"channel ends or agentd restarts (a restart does not re-acquire a drive "+
-				"you turned off), so relaunch it if you want the change to bite immediately")
+	// The live-channel sentence, and it is NOT gated on knowing there is one.
+	//
+	// "Until that channel ends" was the phrasing that made a daemon restart look
+	// like a channel ending — it is not: the pane, the copilot process and the RPC
+	// listener all survive a restart, and the reconnect sweep re-adopts. Only a
+	// relaunch ends the channel. So the sentence names the relaunch.
+	//
+	// Gating it on resp.Live would silently drop it on the two paths that cannot
+	// populate that field: the daemon-down write has no daemon to ask about
+	// handles, and that is precisely the operator most likely to be mid-incident
+	// with a pane still serving --ui-server. A disclosure conditioned on a field
+	// only one path can set is absent on the others, and absent disclosure looks
+	// exactly like nothing-to-disclose.
+	if resp.Changed && resp.Drive == setDriveSendKeys {
+		if resp.Live {
+			fmt.Fprintln(stdout,
+				"  durable now; this conversation is on a live API channel and keeps it — "+
+					"an agentd restart does not end it — so relaunch the agent if you want "+
+					"the change to bite immediately")
+		} else {
+			fmt.Fprintln(stdout,
+				"  durable now; if this agent's pane is still running on the API drive, that "+
+					"channel survives an agentd restart and only a relaunch ends it")
+		}
 	}
 	return rcOK
 }

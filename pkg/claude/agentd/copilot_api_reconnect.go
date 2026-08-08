@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/copilotapi"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -236,16 +235,30 @@ func reconnectCopilotAPISession(ctx context.Context, convID string) (*copilotAPI
 // typed into its pane today, and it is the one a reconnect most needs to find.
 // A wasted wait is cheap; skipping a mute agent is not.
 //
-// That reasoning was written when a posture was either recorded ON or not
-// recorded at all, and it remains correct for both. It did not anticipate a
-// third state: a posture recorded as an explicit FALSE by an operator taking
-// the agent off the drive (TCL-1082). Adopting an UNRECORDED posture closes an
-// injection sink, because unrecorded routes to keystrokes; adopting an explicit
-// false overrides a person. Those are different acts, so an explicit false —
-// and only an explicit false, never a nil and never an unreadable record — now
-// stands the sweep down for that conversation. Without it a durable "off" holds
-// for launches and evaporates for the still-running pane at the next daemon
-// restart, which is a rollback the operator believes worked.
+// A DURABLE PIN DOES NOT STAND THIS SWEEP DOWN EITHER, and that is a decision
+// rather than an oversight (TCL-1082). `tclaude agent set-drive <agent>
+// send-keys` records an operator's "take this agent off the API drive", and it
+// was briefly tempting to have this sweep honour it: without that, a pin appears
+// to evaporate for a still-running pane the next time agentd restarts.
+//
+// It only appears to. AN AGENTD RESTART IS NOT THE CHANNEL ENDING. The pane
+// persists, the copilot process persists, the RPC listener persists; the only
+// thing lost is agentd's in-memory handle, and this sweep is the mechanism that
+// remembers. A pin governs the next LAUNCH. It does not evict a live channel,
+// and a restart is not an eviction — so skipping here would turn the daemon's
+// own amnesia into a semantic event.
+//
+// The concrete cost of the skip settles it: `setForeground` was issued when the
+// channel came up and nothing revokes it (this sweep deliberately does not
+// re-issue it), so the pane's TUI is still showing the RPC session. Standing
+// down would leave a live listener that agentd has decided to ignore while
+// keystrokes go into the very session that listener drives — two doors into one
+// session. Adopting leaves one door.
+//
+// Note also that the case a skip was reaching for is already handled by
+// EVIDENCE: a channel that genuinely cannot be re-adopted fails the port wait or
+// the ownership proof, no handle is registered, and routing falls through to the
+// pinned record on its own.
 //
 // # The reaper's release grace
 //
@@ -281,37 +294,6 @@ func reconcileCopilotAPISessions(ctx context.Context) {
 		}
 		live := session.LiveSessionForConv(convID)
 		if live == nil || live.Harness != harness.CopilotName {
-			continue
-		}
-		// An operator's explicit "off" stands the sweep down for this
-		// conversation. Scoped to a record that says false and nothing else: a
-		// read failure and an absent record both mean unknown, and both keep
-		// adopting exactly as before, or this would have widened from "respect a
-		// decision" into "stop closing the sink".
-		//
-		// THE INVARIANT THIS RESTS ON, stated here because it is the thing that
-		// makes it safe rather than merely intentional: this is INTENT about the
-		// next launch overriding EVIDENCE about the pane in front of us — a
-		// recorded port, a live Copilot pane, a drivable session. That is only
-		// sound while no surface can produce a running `--ui-server` pane whose
-		// top-precedence record says false. It holds today because the only writer
-		// of a launch's posture writes the value that launch resolved. The day a
-		// per-launch "force the API on" override exists — the mirror of the
-		// `conv resume --send-keys` override that already does — an agent-profile
-		// false beside a real API pane becomes reachable, and this skip would leave
-		// that conversation's mail held forever with the one mechanism that would
-		// have fixed it declining to act. Whoever adds such an override changes
-		// this condition in the same commit.
-		//
-		// Logged at Warn rather than Info: the skip leaves a pane that was launched
-		// to be driven over RPC being typed into instead, which is an unusual
-		// steady state an operator should be able to find without knowing to look.
-		if target, err := db.CopilotDriveTargetForConv(convID); err == nil &&
-			target.Record != db.CopilotDriveRecordNone && !target.Value {
-			slog.Warn("copilot API reconnect: skipping a conversation whose drive an "+
-				"operator turned off; its pane keeps running and its mail routes as "+
-				"keystrokes until it is relaunched",
-				"conv_id", convID, "record", string(target.Record))
 			continue
 		}
 		if !copilotAPIPostureRecorded(convID) {
