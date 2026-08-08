@@ -111,6 +111,8 @@ export function mountTerminalWidget({
   autoReattach = true,
   setTimeoutImpl = globalThis.setTimeout,
   clearTimeoutImpl = globalThis.clearTimeout,
+  requestAnimationFrameImpl = globalThis.requestAnimationFrame,
+  cancelAnimationFrameImpl = globalThis.cancelAnimationFrame,
   now = () => Date.now(),
   fetchImpl = globalThis.fetch,
   TerminalCtor = globalThis.Terminal,
@@ -138,6 +140,7 @@ export function mountTerminalWidget({
   let reconnectAvailable = false;
   let retryIndex = 0;
   let retryTimer = null;
+  let postOpenFitFrame = null;
   // The daemon this socket is attached to, read when it opened, and the
   // outstanding "tell me if that changes" registration.
   let instanceBaseline = null;
@@ -215,6 +218,32 @@ export function mountTerminalWidget({
     if (retryTimer === null) return;
     clearTimeoutImpl(retryTimer);
     retryTimer = null;
+  }
+
+  function cancelPostOpenFit() {
+    if (postOpenFitFrame === null) return;
+    if (typeof cancelAnimationFrameImpl === 'function') {
+      cancelAnimationFrameImpl(postOpenFitFrame);
+    }
+    postOpenFitFrame = null;
+  }
+
+  // xterm may accept a very fast WebSocket before its first render has
+  // established cell dimensions. In that window FitAddon cannot calculate a
+  // grid, so the immediate resize below sends xterm's constructor default and
+  // no later ResizeObserver callback is guaranteed: the host itself may
+  // already be at its final size. Refit once on the next animation frame, when
+  // both layout and xterm's renderer have settled, and explicitly resend even
+  // if xterm decides the grid did not change.
+  function schedulePostOpenFit(mine, socket) {
+    cancelPostOpenFit();
+    if (typeof requestAnimationFrameImpl !== 'function') return;
+    postOpenFitFrame = requestAnimationFrameImpl(() => {
+      postOpenFitFrame = null;
+      if (disposed || mine !== generation || ws !== socket || !isActive) return;
+      fit();
+      sendResize();
+    });
   }
 
   function cancelRestartWatchIfAny() {
@@ -316,6 +345,7 @@ export function mountTerminalWidget({
     const mine = generation;
     abortAuth();
     closeSocket();
+    cancelPostOpenFit();
     // Dialing now, so any pending "tell me when the daemon is new" is moot.
     cancelRestartWatchIfAny();
     setReconnectAvailable(false);
@@ -361,6 +391,7 @@ export function mountTerminalWidget({
       setReconnectAvailable(false);
       if (isActive) fit();
       sendResize();
+      schedulePostOpenFit(mine, socket);
     };
     socket.onmessage = (event) => {
       if (disposed || mine !== generation || ws !== socket) return;
@@ -435,6 +466,7 @@ export function mountTerminalWidget({
       disposed = true;
       generation += 1;
       cancelRetry();
+      cancelPostOpenFit();
       cancelRestartWatchIfAny();
       abortAuth();
       closeSocket();

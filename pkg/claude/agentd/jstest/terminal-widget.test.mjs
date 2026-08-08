@@ -21,7 +21,11 @@ function widgetFakes(document) {
 
   class FakeFitAddon {
     constructor() { this.fitCount = 0; this.disposed = false; }
-    fit() { if (!this.disposed) this.fitCount += 1; }
+    fit() {
+      if (this.disposed) return;
+      this.fitCount += 1;
+      this.onFit?.();
+    }
     dispose() {
       if (this.disposed) return;
       this.disposed = true;
@@ -192,6 +196,44 @@ test('opaque widget owns one host and disposes every imperative edge exactly onc
   assert.equal(fakes.sockets[0].closeCount, 1);
   assert.deepEqual(added.map(([type]) => type).sort(), ['tclaude:terminal-palette', 'tclaude:wizard']);
   assert.deepEqual(removed, added, 'the exact document listeners are removed');
+});
+
+test('fast socket refits after xterm cell measurements become available', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { mountTerminalWidget } = await harness.importDashboardModule('js/terminals-core.js');
+  const fakes = widgetFakes(harness.document);
+  const frames = [];
+  const widget = mountTerminalWidget({
+    host: harness.document.body.appendChild(harness.document.createElement('div')),
+    wsPath: '/api/term-ws/agt_one',
+    authenticate: false,
+    TerminalCtor: fakes.FakeTerminal,
+    FitAddonCtor: fakes.FakeFitAddon,
+    WebSocketCtor: fakes.FakeWebSocket,
+    ResizeObserverCtor: fakes.FakeResizeObserver,
+    requestAnimationFrameImpl: (callback) => { frames.push(callback); return frames.length; },
+    cancelAnimationFrameImpl: () => {},
+    locationRef: { protocol: 'http:', host: 'dashboard.test' },
+    documentRef: harness.document,
+    interactionsFactory: fakes.interactionsFactory,
+  });
+
+  await widget.connect();
+  const socket = fakes.sockets[0];
+  socket.open();
+  assert.deepEqual(JSON.parse(socket.sent.at(-1)), {
+    type: 'resize', cols: 80, rows: 24,
+  }, 'the fast connection initially has only xterm defaults');
+  assert.equal(frames.length, 1, 'open schedules a post-layout fit');
+
+  const term = fakes.terminal();
+  term.addons[0].onFit = () => { term.cols = 172; term.rows = 46; };
+  frames.shift()();
+  assert.deepEqual(JSON.parse(socket.sent.at(-1)), {
+    type: 'resize', cols: 172, rows: 46,
+  }, 'the settled browser grid is propagated without a window resize');
+
+  widget.dispose();
 });
 
 test('dispose aborts auth and prevents a late preflight from creating a socket', async (t) => {
