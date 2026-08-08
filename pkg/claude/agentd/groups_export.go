@@ -469,7 +469,7 @@ func SetGroupImportAfterCollisionCheckForTest(fn func()) func() {
 func canonicalizeImportedPermissionScopes(exp *groupexport.Export) error {
 	for i := range exp.Group.Permissions {
 		permission := &exp.Group.Permissions[i]
-		canonical, err := canonicalPermissionScopeForSlug(permission.Slug, permission.ScopeJSON)
+		canonical, err := canonicalImportedPermissionScopeForSlug(permission.Slug, permission.ScopeJSON)
 		if err != nil {
 			return fmt.Errorf("group permission %q has invalid scope: %w", permission.Slug, err)
 		}
@@ -477,7 +477,7 @@ func canonicalizeImportedPermissionScopes(exp *groupexport.Export) error {
 	}
 	for i := range exp.Permissions {
 		permission := &exp.Permissions[i]
-		canonical, err := canonicalPermissionScopeForSlug(permission.Slug, permission.ScopeJSON)
+		canonical, err := canonicalImportedPermissionScopeForSlug(permission.Slug, permission.ScopeJSON)
 		if err != nil {
 			return fmt.Errorf("permission %s/%s has invalid scope: %w", permission.ConvID, permission.Slug, err)
 		}
@@ -488,13 +488,36 @@ func canonicalizeImportedPermissionScopes(exp *groupexport.Export) error {
 	}
 	for i := range exp.SudoGrants {
 		grant := &exp.SudoGrants[i]
-		canonical, err := canonicalPermissionScopeForSlug(grant.Slug, grant.ScopeJSON)
+		canonical, err := canonicalImportedPermissionScopeForSlug(grant.Slug, grant.ScopeJSON)
 		if err != nil {
 			return fmt.Errorf("sudo grant %s/%s has invalid scope: %w", grant.ConvID, grant.Slug, err)
 		}
 		grant.ScopeJSON = canonical
 	}
 	return nil
+}
+
+// canonicalImportedPermissionScopeForSlug rejects exact stable actor IDs.
+// Group archives currently carry conversation IDs but no stable-actor mapping,
+// so copying an exact target_agent matcher could accidentally authorize the
+// original actor still running on this daemon. Relational selectors remain
+// safe: an archive does not import lineage, so they naturally fail closed until
+// new post-import descendants are spawned.
+func canonicalImportedPermissionScopeForSlug(slug, raw string) (string, error) {
+	canonical, err := canonicalPermissionScopeForSlug(slug, raw)
+	if err != nil || canonical == "" {
+		return canonical, err
+	}
+	scope, _, err := parsePermissionScope(json.RawMessage(canonical))
+	if err != nil {
+		return "", err
+	}
+	for _, matcher := range scope[ScopeDimTargetAgent] {
+		if !strings.HasPrefix(matcher, "@") {
+			return "", fmt.Errorf("exact target_agent matcher %q cannot be imported without a stable-actor mapping", matcher)
+		}
+	}
+	return canonical, nil
 }
 
 func runGroupImport(archive []byte, into, asName, caller string) (*importResponse, int, error) {
@@ -686,7 +709,7 @@ func runGroupImport(archive []byte, into, asName, caller string) (*importRespons
 		ConvRemap:                   convRemap,
 		ClaimedConversationPaths:    claimedConversationPaths,
 		ByConv:                      caller,
-		CanonicalizePermissionScope: canonicalPermissionScopeForSlug,
+		CanonicalizePermissionScope: canonicalImportedPermissionScopeForSlug,
 	})
 	if err != nil {
 		cleanupPlaced()

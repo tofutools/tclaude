@@ -51,6 +51,26 @@ func RecordAgentLineage(childAgentID, parentAgentID string, spawnedAt time.Time)
 	return nil
 }
 
+// DeleteAgentLineageForChild removes a birth edge for an actor whose launch
+// enrollment is being rolled back before the harness ever starts. Ordinary
+// retirement and conversation rotation must not call this: ancestry belongs
+// to the stable actor for its full lifetime.
+func DeleteAgentLineageForChild(childAgentID string) (int64, error) {
+	childAgentID = strings.TrimSpace(childAgentID)
+	if childAgentID == "" {
+		return 0, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	res, err := d.Exec(`DELETE FROM agent_lineage WHERE child_agent_id = ?`, childAgentID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // IsDirectAgentChild reports whether target was spawned directly by parent.
 func IsDirectAgentChild(parentAgentID, targetAgentID string) (bool, error) {
 	parentAgentID = strings.TrimSpace(parentAgentID)
