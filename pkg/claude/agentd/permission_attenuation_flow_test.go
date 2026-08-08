@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -200,6 +201,122 @@ func TestAttenuation_PermissionsGrantEndpoint(t *testing.T) {
 	toDefaults := agentGrant(t, map[string]any{"target": "default", "slug": agentd.PermRoutesPublish})
 	assert.Equal(t, http.StatusForbidden, toDefaults.Code, toDefaults.Body,
 		"a scoped granter cannot launder its slug through the global defaults list")
+}
+
+// A selector names a set relative to the agent that receives it. Structural
+// equality is therefore sufficient only when the conferee is the granter or
+// already lies in the granter's tree: only then is the conferee's descendant
+// set guaranteed to be a subset of the granter's.
+func TestAttenuation_SelectorConferralRequiresConfereeInDescendants(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const lead = "atten-selector-lead-aaaa-bbbb-cccc-00000001"
+	const child = "atten-selector-child-aaaa-bbbb-cccc-0000001"
+	const unrelated = "atten-selector-peer-aaaa-bbbb-cccc-00000001"
+	f.HaveMember("alpha", lead)
+	f.HaveMember("alpha", child)
+	f.HaveMember("alpha", unrelated)
+
+	leadID, err := db.AgentIDForConv(lead)
+	require.NoError(t, err)
+	childID, err := db.AgentIDForConv(child)
+	require.NoError(t, err)
+	require.NoError(t, db.RecordAgentLineage(childID, leadID, time.Now()))
+
+	grantScoped(t, f, lead, agentd.PermPermissionsGrant, nil)
+	grantScoped(t, f, lead, agentd.PermAgentRetire,
+		map[string]any{"target_agent": []string{"@descendants"}})
+
+	agentGrant := func(target, selector string) *httpResult {
+		rec := agentReq(t, f, lead, http.MethodPost, "/v1/permissions/grant", map[string]any{
+			"target": target,
+			"slug":   agentd.PermAgentRetire,
+			"scope":  map[string]any{"target_agent": []string{selector}},
+		})
+		return &httpResult{Code: rec.Code, Body: rec.Body.String()}
+	}
+
+	descendant := agentGrant(child, "@descendants")
+	assert.Equal(t, http.StatusOK, descendant.Code, descendant.Body)
+
+	self := agentGrant(lead, "@descendants")
+	assert.Equal(t, http.StatusOK, self.Code, self.Body)
+
+	outside := agentGrant(unrelated, "@descendants")
+	require.Equal(t, http.StatusForbidden, outside.Code, outside.Body)
+	assert.Contains(t, outside.Body, "scope_not_attenuated")
+	assert.Contains(t, outside.Body, "outside", "the refusal names the lineage reason")
+
+	// @self-spawned has a smaller relative set but the same containment
+	// requirement when it is moved onto an out-of-tree conferee.
+	grantScoped(t, f, lead, agentd.PermAgentRetire,
+		map[string]any{"target_agent": []string{"@self-spawned"}})
+	selfSpawnedOutside := agentGrant(unrelated, "@self-spawned")
+	require.Equal(t, http.StatusForbidden, selfSpawnedOutside.Code, selfSpawnedOutside.Body)
+	assert.Contains(t, selfSpawnedOutside.Body, "scope_not_attenuated")
+
+	// An unscoped hold still covers every conferred shape, exactly as before.
+	grantScoped(t, f, lead, agentd.PermAgentRetire, nil)
+	unscoped := agentGrant(unrelated, "@descendants")
+	assert.Equal(t, http.StatusOK, unscoped.Code, unscoped.Body)
+
+	// The operator is not an attenuation subject and may place the selector on
+	// any agent directly.
+	human := humanReq(t, f, http.MethodPost, "/v1/permissions/grant", map[string]any{
+		"target": unrelated,
+		"slug":   agentd.PermAgentRetire,
+		"scope":  map[string]any{"target_agent": []string{"@self-spawned"}},
+	})
+	assert.Equal(t, http.StatusOK, human.Code, human.Body.String())
+}
+
+// Spawn attenuation runs before the child actor and lineage edge exist. The
+// path remains sound because enrollment writes that edge before applying the
+// authorized birth-time overrides and fails if it cannot do so.
+func TestAttenuation_SpawnConfersSelectorToDescendantByConstruction(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const lead = "atten-selector-spawn-lead-aaaa-bbbb-cccc-0001"
+	haveSpawnCapableMember(t, f, "alpha", lead)
+	grantScoped(t, f, lead, agentd.PermGroupsSpawn, nil)
+	grantScoped(t, f, lead, agentd.PermPermissionsGrant, nil)
+	grantScoped(t, f, lead, agentd.PermAgentRetire,
+		map[string]any{"target_agent": []string{"@descendants"}})
+
+	res := spawnConferring(t, f, lead, "alpha", "selector-worker", map[string]any{
+		agentd.PermAgentRetire: map[string]any{
+			"effect": db.PermEffectGrant,
+			"scope":  map[string]any{"target_agent": []string{"@descendants"}},
+		},
+	})
+	require.Equal(t, http.StatusOK, res.Code, res.Body)
+
+	leadID, err := db.AgentIDForConv(lead)
+	require.NoError(t, err)
+	var childConv string
+	for _, member := range f.ListGroupMembers("alpha") {
+		if member.Title == "selector-worker" {
+			childConv = member.ConvID
+			break
+		}
+	}
+	require.NotEmpty(t, childConv, "spawned child is enrolled")
+	childID, err := db.AgentIDForConv(childConv)
+	require.NoError(t, err)
+	descendant, err := db.IsAgentDescendant(leadID, childID)
+	require.NoError(t, err)
+	assert.True(t, descendant, "the promised lineage edge exists before the spawn completes")
+
+	rows, err := db.ListAgentPermissionOverrideRowsForConv(childConv)
+	require.NoError(t, err)
+	found := false
+	for _, row := range rows {
+		if row.Slug == agentd.PermAgentRetire {
+			found = true
+			assert.Equal(t, `{"target_agent":["@descendants"]}`, row.ScopeJSON)
+		}
+	}
+	assert.True(t, found, "the selector-bearing birth-time grant was applied")
 }
 
 // Capture-as-profile traces a live agent onto the spawn-profile wire shape.

@@ -81,10 +81,10 @@ func TestPermissionScopeCovers(t *testing.T) {
 // granter holds unscoped or does not hold at all — the check engages only on
 // the SHAPE of a scoped hold.
 func TestCheckGrantAttenuation_NoGranterScopeIsANoOp(t *testing.T) {
-	assert.NoError(t, checkGrantAttenuation("", []conferredGrant{
+	assert.NoError(t, checkGrantAttenuation("", grantConferee{}, []conferredGrant{
 		{Slug: PermGroupsSpawn, Scope: ""},
 	}), "the human operator confers freely")
-	assert.NoError(t, checkGrantAttenuation("some-conv", nil),
+	assert.NoError(t, checkGrantAttenuation("some-conv", grantConferee{}, nil),
 		"a request conferring nothing is never refused")
 }
 

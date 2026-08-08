@@ -56,6 +56,16 @@ type conferredGrant struct {
 	Scope string
 }
 
+// grantConferee carries the actor a grant will authorize. Birth-time grants
+// are checked before the child exists (and therefore before its lineage edge
+// can be written), so their descendant relationship is explicit rather than
+// inferred from a temporarily missing agent id. Enrollment later treats a
+// missing lineage edge as fatal; see recordSpawnLineage.
+type grantConferee struct {
+	agentID                  string
+	descendantByConstruction bool
+}
+
 // conferredGrantsFromOverrides projects a birth-time override map onto the
 // grants that actually confer authority. Denies are skipped: a deny only ever
 // REMOVES capability, so it can never be an escalation and needs no cover.
@@ -91,16 +101,9 @@ func conferredGrantsFromOverrides(overrides map[string]db.PermissionOverride) []
 // scope against a scoped granter fails the first rule, which is the case this
 // whole mechanism exists for.
 //
-// @selectors are compared STRUCTURALLY: "@descendants" covers "@descendants",
-// and nothing else covers or is covered by it. That is deliberate and
-// fail-closed in both directions — deciding whether a concrete agent id falls
-// inside "@descendants" needs the lineage walk that Phase 5 owns, and neither
-// unproven answer may be assumed. It does mean a granter holding
-// {target_agent:[@descendants]} may confer {target_agent:[@descendants]} to an
-// agent that is not its own descendant, whose descendant set is then not a
-// subset of the granter's. For the spawn path that cannot happen (the child IS
-// a descendant); for a cross-agent grant it is a known, disclosed
-// approximation that lineage evaluation can tighten later.
+// @selectors compare structurally here. checkGrantAttenuation adds the
+// lineage-dependent half: a structurally covered selector may only be
+// conferred to the granter itself or an actor in the granter's descendant set.
 func permissionScopeCovers(granter, conferred PermissionScope) bool {
 	if len(granter) == 0 {
 		return true
@@ -214,7 +217,7 @@ func granterScopesForSlug(src permSources, cfg *config.Config, ownerTier ownerIm
 // union semantics, and deliberately so — the union of two products is not a
 // product, so a "conferred ⊆ union" test would have to reason about shapes
 // that cannot be written as a single scope anyway.
-func checkGrantAttenuation(granterConvID string, grants []conferredGrant) error {
+func checkGrantAttenuation(granterConvID string, conferee grantConferee, grants []conferredGrant) error {
 	if granterConvID == "" || len(grants) == 0 {
 		return nil
 	}
@@ -226,6 +229,7 @@ func checkGrantAttenuation(granterConvID string, grants []conferredGrant) error 
 	// The owner tier is read once too, and only matters for a slug the
 	// granter holds through ownership alone (see granterScopesForSlug).
 	ownerTier := ownerImpliedTierFor(granterConvID)
+	var granterAgentID string
 	for _, grant := range grants {
 		granterScopes, scoped := granterScopesForSlug(src, cfg, ownerTier, grant.Slug)
 		if !scoped {
@@ -243,7 +247,34 @@ func checkGrantAttenuation(granterConvID string, grants []conferredGrant) error 
 			}
 		}
 		if covered {
-			continue
+			if !scopeContainsDescendantSelector(conferred) || conferee.descendantByConstruction {
+				continue
+			}
+			if granterAgentID == "" {
+				granterAgentID, err = db.AgentIDForConv(granterConvID)
+				if err != nil {
+					return fmt.Errorf("permission %q: could not resolve your stable agent identity to check selector attenuation: %w", grant.Slug, err)
+				}
+				if granterAgentID == "" {
+					return fmt.Errorf("permission %q: your stable agent identity is unavailable, so the conferee cannot be proven inside your descendant set", grant.Slug)
+				}
+			}
+			if conferee.agentID == granterAgentID {
+				continue
+			}
+			if conferee.agentID == "" {
+				return fmt.Errorf("permission %q: the conferee has no stable agent identity, so it cannot be proven inside your descendant set", grant.Slug)
+			}
+			descendant, descErr := db.IsAgentDescendant(granterAgentID, conferee.agentID)
+			if descErr != nil {
+				return fmt.Errorf("permission %q: could not check whether the conferee is inside your descendant set: %w", grant.Slug, descErr)
+			}
+			if descendant {
+				continue
+			}
+			return fmt.Errorf(
+				"permission %q: a target_agent selector using @descendants or @self-spawned may only be conferred to yourself or an agent inside your descendant set; the conferee is outside it",
+				grant.Slug)
 		}
 		return fmt.Errorf(
 			"permission %q: you may not grant more than you hold — your own %s is limited to %s, "+
@@ -251,6 +282,15 @@ func checkGrantAttenuation(granterConvID string, grants []conferredGrant) error 
 			grant.Slug, grant.Slug, renderGranterScopes(granterScopes), renderConferredScope(conferred))
 	}
 	return nil
+}
+
+func scopeContainsDescendantSelector(scope PermissionScope) bool {
+	for _, matcher := range scope[ScopeDimTargetAgent] {
+		if matcher == "@descendants" || matcher == "@self-spawned" {
+			return true
+		}
+	}
+	return false
 }
 
 // renderGranterScopes renders the granter's own scopes for the refusal
@@ -396,7 +436,7 @@ func checkTemplateDeployAttenuation(agents []db.GroupTemplateAgent, callerConvID
 			}
 			grants = append(grants, conferredGrant{Slug: ov.Slug, Scope: ov.Override.Scope})
 		}
-		if err := checkGrantAttenuation(callerConvID, grants); err != nil {
+		if err := checkGrantAttenuation(callerConvID, grantConferee{descendantByConstruction: true}, grants); err != nil {
 			return fmt.Errorf("template agent %q: %w", a.Name, err)
 		}
 	}

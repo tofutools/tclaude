@@ -193,7 +193,7 @@ func handleScribeSummon(w http.ResponseWriter, r *http.Request) {
 		// A summon's grants are unscoped by construction, so a caller whose
 		// own hold on one of these slugs is scoped is refused here rather than
 		// laundering it wide through a scribe.
-		if err := checkGrantAttenuation(spawnerConvID, conferredGrantsFromOverrides(overrides)); err != nil {
+		if err := checkGrantAttenuation(spawnerConvID, grantConferee{descendantByConstruction: true}, conferredGrantsFromOverrides(overrides)); err != nil {
 			writeError(w, http.StatusForbidden, "scope_not_attenuated", err.Error())
 			return
 		}

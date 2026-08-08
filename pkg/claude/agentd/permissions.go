@@ -1289,18 +1289,21 @@ func handlePermissionsGrant(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_scope", err.Error())
 		return
 	}
-	// Attenuation-only delegation: an AGENT granter may not hand out a scope
-	// wider than its own for this slug. granter is "" for the human operator,
-	// who is unconstrained. This also covers the sentinel "default" target
-	// below: adding a slug to the global defaults list confers it UNSCOPED to
-	// every agent, which a scoped granter can never cover.
-	if err := checkGrantAttenuation(granter, []conferredGrant{{Slug: body.Slug, Scope: scopeJSON}}); err != nil {
-		writeError(w, http.StatusForbidden, "scope_not_attenuated", err.Error())
-		return
-	}
 	target, err := resolveTarget(body.Target)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
+		return
+	}
+	// Attenuation-only delegation: an AGENT granter may not hand out a scope
+	// wider than its own for this slug. granter is "" for the human operator,
+	// who is unconstrained. Selector-bearing target_agent scopes additionally
+	// require this resolved conferee to be the granter or one of its
+	// descendants. This also covers the sentinel "default" target below:
+	// adding a slug there confers it UNSCOPED to every agent, which a scoped
+	// granter can never cover.
+	conferee := grantConferee{agentID: target.AgentID}
+	if err := checkGrantAttenuation(granter, conferee, []conferredGrant{{Slug: body.Slug, Scope: scopeJSON}}); err != nil {
+		writeError(w, http.StatusForbidden, "scope_not_attenuated", err.Error())
 		return
 	}
 	resp := permissionsMutateResp{Target: body.Target, Slug: body.Slug, Effect: db.PermEffectGrant, Scope: scope}
