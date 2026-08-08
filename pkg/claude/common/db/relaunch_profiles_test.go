@@ -906,3 +906,96 @@ func TestLaunchCanAssertNothingPinnedOverAnObservedWindow(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, window, "the launch path may assert nothing pinned")
 }
+
+// The two properties the targeted setter exists for, because the whole-blob
+// SetAgentRelaunchProfile cannot offer either once a second writer exists.
+//
+// Property one is the anti-clobber one: a field edit must leave every sibling
+// field alone, INCLUDING fields this process would not have written itself.
+// SSHWorkaround is the one agentd's own spawn-enrollment comment names as the
+// field a whole-profile replacement silently destroys (explicit opt-out becomes
+// unknown, then Codex's default-on again on the next clone), so it is the field
+// this test guards with.
+//
+// Property two is the compare-and-set: the fallback path that uses this runs
+// only when the daemon is unreachable, and a daemon can come up between that
+// probe and this write. A probe is a reading, not a fact that stays true.
+func TestCompareAndSetAgentCopilotAPIEditsOneFieldAndGuardsTheRest(t *testing.T) {
+	setupTestDB(t)
+	const convID = "cas-drive-conv"
+	agentID, _, err := EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+
+	// A profile shaped like a real Copilot agent's: the drive frozen ON at birth,
+	// plus an explicit SSHWorkaround opt-out and a pinned cap that nothing in this
+	// operation is allowed to touch.
+	require.NoError(t, SetAgentRelaunchProfile(agentID, AgentRelaunchProfile{
+		Version:                    RelaunchProfileVersion,
+		CopilotAPI:                 boolPtr(true),
+		SSHWorkaround:              boolPtr(false),
+		ConfiguredContextWindowMax: int64Ptr(128000),
+		ModelID:                    stringPtr("gpt-5.1-codex"),
+	}))
+
+	raw, err := AgentRelaunchProfileRaw(agentID)
+	require.NoError(t, err)
+	require.NotEmpty(t, raw, "the profile just written must be readable verbatim")
+
+	ok, err := CompareAndSetAgentCopilotAPI(agentID, false, raw)
+	require.NoError(t, err)
+	require.True(t, ok, "the guard must hold when nothing else has written")
+
+	after, err := AgentRelaunchProfileForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, after)
+	require.NotNil(t, after.CopilotAPI)
+	assert.False(t, *after.CopilotAPI, "the drive must now read as an explicit false")
+
+	// The anti-clobber half. A whole-blob read-modify-write by a process whose
+	// struct lacked any of these would have dropped them silently.
+	require.NotNil(t, after.SSHWorkaround)
+	assert.False(t, *after.SSHWorkaround,
+		"an explicit SSHWorkaround opt-out must survive: this is the field agentd's "+
+			"own enrollment comment says a whole-profile replacement destroys")
+	require.NotNil(t, after.ConfiguredContextWindowMax)
+	assert.Equal(t, int64(128000), *after.ConfiguredContextWindowMax)
+	require.NotNil(t, after.ModelID)
+	assert.Equal(t, "gpt-5.1-codex", *after.ModelID)
+	assert.Equal(t, RelaunchProfileVersion, after.Version,
+		"json_set must not disturb the version the decoder validates")
+
+	// The compare-and-set half, driven with the STALE blob a caller would still be
+	// holding after somebody else wrote. Refuses rather than overwriting, and says
+	// so through the bool rather than through an error, because "somebody else owns
+	// this record right now" is an outcome the caller reports, not a failure.
+	ok, err = CompareAndSetAgentCopilotAPI(agentID, true, raw)
+	require.NoError(t, err)
+	assert.False(t, ok, "a stale expected blob must not be allowed to write")
+
+	unchanged, err := AgentRelaunchProfileForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, unchanged)
+	require.NotNil(t, unchanged.CopilotAPI)
+	assert.False(t, *unchanged.CopilotAPI,
+		"the refused write must not have landed: this is the erased-rollback case")
+}
+
+// An agent with no profile yet is not a candidate for a targeted field edit.
+// Refused explicitly rather than allowed to become a silent no-op, because
+// json_set against the column's empty-string default raises rather than
+// returning NULL, and because "there is nothing to edit inside" is a real answer
+// an operator needs rather than a case to paper over.
+func TestCompareAndSetAgentCopilotAPIRefusesAnAgentWithNoProfile(t *testing.T) {
+	setupTestDB(t)
+	agentID, _, err := EnsureAgentForConv("cas-no-profile-conv", "test")
+	require.NoError(t, err)
+
+	raw, err := AgentRelaunchProfileRaw(agentID)
+	require.NoError(t, err)
+	require.Empty(t, raw, "a fresh agent row carries the column's empty-string default")
+
+	ok, err := CompareAndSetAgentCopilotAPI(agentID, false, raw)
+	require.Error(t, err, "an empty guard value must be refused, not attempted")
+	assert.False(t, ok)
+	assert.Contains(t, err.Error(), "no durable relaunch profile")
+}
