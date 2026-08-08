@@ -14,6 +14,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -60,12 +61,12 @@ func templatesCmd() *cobra.Command {
 // agentd/templates.go). create / edit accept this JSON via --file;
 // show --json emits it.
 type templateAgentJSON struct {
-	Name           string   `json:"name"`
-	Role           string   `json:"role,omitempty"`
-	Descr          string   `json:"descr,omitempty"`
-	InitialMessage string   `json:"initial_message,omitempty"`
-	IsOwner        bool     `json:"is_owner,omitempty"`
-	Permissions    []string `json:"permissions"`
+	Name           string               `json:"name"`
+	Role           string               `json:"role,omitempty"`
+	Descr          string               `json:"descr,omitempty"`
+	InitialMessage string               `json:"initial_message,omitempty"`
+	IsOwner        bool                 `json:"is_owner,omitempty"`
+	Permissions    []db.PermissionGrant `json:"permissions"`
 
 	// RoleRef references a role in the role library (JOH-240): the agent
 	// inherits that role's defaults beneath its own overrides. Empty = none.
@@ -274,19 +275,19 @@ func inlineProfileTag(raw json.RawMessage) string {
 		return ""
 	}
 	var p struct {
-		Harness             string            `json:"harness"`
-		Model               string            `json:"model"`
-		Effort              string            `json:"effort"`
-		Sandbox             string            `json:"sandbox"`
-		Approval            string            `json:"approval"`
-		Tools               string            `json:"tools"`
-		AskTimeout          string            `json:"ask_user_question_timeout"`
-		TrustDir            *bool             `json:"trust_dir"`
-		AutoReview          *bool             `json:"auto_review"`
-		RemoteControl       *bool             `json:"remote_control"`
-		AutoMemory          *bool             `json:"auto_memory"`
-		IsOwner             *bool             `json:"is_owner"`
-		PermissionOverrides map[string]string `json:"permission_overrides"`
+		Harness             string                           `json:"harness"`
+		Model               string                           `json:"model"`
+		Effort              string                           `json:"effort"`
+		Sandbox             string                           `json:"sandbox"`
+		Approval            string                           `json:"approval"`
+		Tools               string                           `json:"tools"`
+		AskTimeout          string                           `json:"ask_user_question_timeout"`
+		TrustDir            *bool                            `json:"trust_dir"`
+		AutoReview          *bool                            `json:"auto_review"`
+		RemoteControl       *bool                            `json:"remote_control"`
+		AutoMemory          *bool                            `json:"auto_memory"`
+		IsOwner             *bool                            `json:"is_owner"`
+		PermissionOverrides map[string]db.PermissionOverride `json:"permission_overrides"`
 	}
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return "custom-launch=(unparsable)"
@@ -317,7 +318,7 @@ func inlineProfileTag(raw json.RawMessage) string {
 	if len(p.PermissionOverrides) > 0 {
 		slugs := make([]string, 0, len(p.PermissionOverrides))
 		for s := range p.PermissionOverrides {
-			slugs = append(slugs, s+":"+p.PermissionOverrides[s])
+			slugs = append(slugs, s+":"+p.PermissionOverrides[s].Display())
 		}
 		sort.Strings(slugs)
 		parts = append(parts, "perms "+strings.Join(slugs, ","))
@@ -366,7 +367,7 @@ func renderTemplateHuman(stdout io.Writer, t templateJSON) {
 			tags = append(tags, "role_ref="+a.RoleRef)
 		}
 		if len(a.Permissions) > 0 {
-			tags = append(tags, "perms="+strings.Join(a.Permissions, ","))
+			tags = append(tags, "perms="+strings.Join(permissionGrantDisplays(a.Permissions), ","))
 		}
 		// Per-role launch profile (JOH-239): show the profile reference and any
 		// inline overrides so an edit loop sees what each role launches with.

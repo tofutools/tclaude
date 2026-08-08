@@ -62,13 +62,14 @@ type PendingSpawn struct {
 	WorktreeBranch string
 	// IsOwner / PermissionOverrides are the birth-time access controls the
 	// spawn dialog requested: make the agent a group owner, and/or
-	// seed its per-slug permission overrides (slug → "grant" | "deny"). The
-	// pending-spawn sweeper reconstructs them into spawnParams so enrollSpawnedConv
-	// applies the same owner/perm writes the inline paths do. PermissionOverrides
-	// is stored as a JSON object in the permission_overrides column (empty string
-	// = no overrides); nil/empty here means none.
+	// seed its per-slug permission overrides (slug → grant/deny + optional
+	// scope). The pending-spawn sweeper reconstructs them into spawnParams so
+	// enrollSpawnedConv applies the same owner/perm writes the inline paths do.
+	// PermissionOverrides is stored as a JSON object in the
+	// permission_overrides column (empty string = no overrides); nil/empty here
+	// means none.
 	IsOwner             bool
-	PermissionOverrides map[string]string
+	PermissionOverrides map[string]PermissionOverride
 	ProcessCommandID    string
 	// TaskURL / TaskLabel are the per-agent task-reference link the spawn
 	// requested (`agent spawn --task`, dashboard Task field). Persisted so a
@@ -120,13 +121,14 @@ func InsertPendingSpawn(p *PendingSpawn) error {
 	return err
 }
 
-// marshalPermissionOverrides encodes a birth-time override map for the
+// marshalPermissionOverrides encodes a birth-time override map for a
 // permission_overrides column: "" for nil/empty (the common case), else a
-// compact JSON object. A marshal failure (practically impossible for a
-// map[string]string) logs and stores "" rather than failing the whole pending
-// insert — the agent still enrolls, just without the overrides the sweeper
-// would have applied.
-func marshalPermissionOverrides(m map[string]string) string {
+// compact JSON object. Each value serializes through PermissionOverride's
+// union encoding, so an unscoped override is still the bare effect string
+// every pre-scope row already holds. A marshal failure logs and stores ""
+// rather than failing the whole insert — losing the overrides entirely is the
+// fail-closed outcome; writing them scope-stripped would not be.
+func marshalPermissionOverrides(m map[string]PermissionOverride) string {
 	if len(m) == 0 {
 		return ""
 	}
@@ -138,15 +140,16 @@ func marshalPermissionOverrides(m map[string]string) string {
 	return string(b)
 }
 
-// unmarshalPermissionOverrides decodes the permission_overrides column back
-// into a map. "" (the common case) yields nil; a malformed blob logs and yields
-// nil so a corrupt row still enrolls without overrides rather than wedging the
-// sweeper.
-func unmarshalPermissionOverrides(s string) map[string]string {
+// unmarshalPermissionOverrides decodes a permission_overrides column back into
+// a map. "" (the common case) yields nil; a malformed blob logs and yields nil
+// so a corrupt row still enrolls without overrides rather than wedging the
+// sweeper. Legacy rows holding bare effect strings decode as unscoped
+// overrides.
+func unmarshalPermissionOverrides(s string) map[string]PermissionOverride {
 	if s == "" {
 		return nil
 	}
-	var m map[string]string
+	var m map[string]PermissionOverride
 	if err := json.Unmarshal([]byte(s), &m); err != nil {
 		slog.Warn("pending-spawn: failed to unmarshal permission overrides; ignoring", "raw", s, "error", err)
 		return nil

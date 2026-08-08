@@ -197,10 +197,10 @@ func TestAgentPermissions_ApplyOverridesPreservesProvenanceAndClearsAtomically(t
 	require.NoError(t, SetAgentPermissionOverride(conv, "self.rename", PermEffectDeny, "<human>"))
 	require.NoError(t, SetAgentPermissionOverride(conv, "templates.manage", PermEffectGrant, "<scribe-summon>"))
 
-	require.NoError(t, ApplyAgentPermissionOverrides(conv, map[string]string{
+	require.NoError(t, ApplyAgentPermissionOverrides(conv, UnscopedOverrides(map[string]string{
 		"sandbox-profiles.draft": PermEffectGrant,
 		"human.notify":           PermEffectDeny,
-	}, "<scribe-summon>", true, true))
+	}), "<scribe-summon>", true, true))
 
 	overrides, err := ListAgentPermissionOverridesForConv(conv)
 	require.NoError(t, err)
@@ -218,7 +218,7 @@ func TestAgentPermissions_ApplyOverridesPreservesProvenanceAndClearsAtomically(t
 		WHERE a.current_conv_id = ? AND p.slug = ?`, conv, "self.rename").Scan(&grantedBy))
 	assert.Equal(t, "<human>", grantedBy, "same-effect apply must not relabel human provenance")
 
-	err = ApplyAgentPermissionOverrides(conv, map[string]string{"bad": "invalid"}, "<scribe-summon>", true, true)
+	err = ApplyAgentPermissionOverrides(conv, UnscopedOverrides(map[string]string{"bad": "invalid"}), "<scribe-summon>", true, true)
 	assert.Error(t, err)
 	overrides, err = ListAgentPermissionOverridesForConv(conv)
 	require.NoError(t, err)
@@ -260,7 +260,7 @@ func TestRetireAgentAuthorizationRejectsLateGrants(t *testing.T) {
 
 	err = GrantAgentPermission(conv, "groups.spawn", "late")
 	assert.ErrorContains(t, err, "is retired")
-	err = ApplyAgentPermissionOverrides(conv, map[string]string{"groups.spawn": PermEffectGrant}, "late", false, false)
+	err = ApplyAgentPermissionOverrides(conv, UnscopedOverrides(map[string]string{"groups.spawn": PermEffectGrant}), "late", false, false)
 	assert.ErrorContains(t, err, "is retired")
 	_, err = InsertSudoGrant(&SudoGrant{
 		ConvID: conv, Slug: "groups.spawn", GrantedAt: time.Now(),
@@ -1067,4 +1067,50 @@ func TestRederiveAgentMessageActorRefs_FillsCompanionAfterEnrollment(t *testing.
 	again, err := GetAgentMessage(id)
 	require.NoError(t, err)
 	assert.Equal(t, agentID, again.ToAgent, "re-run is a no-op")
+}
+
+// ApplyAgentPermissionOverrides used to hard-code scope_json = '' on BOTH
+// upsert conflict arms, so re-applying an existing scoped grant silently
+// widened it to unscoped — a permission write drifting in the one direction it
+// must never drift in. The scope now travels with the effect.
+func TestAgentPermissions_ApplyOverridesCarriesScope(t *testing.T) {
+	setupTestDB(t)
+
+	const conv = "abcd1234-0000-0000-0000-000000000009"
+	const scope = `{"group":["alpha"]}`
+	require.NoError(t, GrantAgentPermissionWithScope(conv, "routes.publish", scope, "<human>"))
+
+	readScope := func(t *testing.T, slug string) string {
+		t.Helper()
+		rows, err := ListAgentPermissionOverrideRowsForConv(conv)
+		require.NoError(t, err)
+		for _, row := range rows {
+			if row.Slug == slug {
+				return row.ScopeJSON
+			}
+		}
+		t.Fatalf("no override row for %s", slug)
+		return ""
+	}
+
+	// Re-applying the SAME scoped grant keeps the narrowing.
+	require.NoError(t, ApplyAgentPermissionOverrides(conv, map[string]PermissionOverride{
+		"routes.publish": {Effect: PermEffectGrant, Scope: scope},
+	}, "<generator>", false, true))
+	assert.Equal(t, scope, readScope(t, "routes.publish"), "re-apply must not widen a scoped grant")
+
+	// A deliberate re-scope narrows further and is written verbatim.
+	const narrower = `{"group":["alpha"],"target_agent":["agt_1"]}`
+	require.NoError(t, ApplyAgentPermissionOverrides(conv, map[string]PermissionOverride{
+		"routes.publish": {Effect: PermEffectGrant, Scope: narrower},
+	}, "<generator>", false, false))
+	assert.Equal(t, narrower, readScope(t, "routes.publish"))
+
+	// A deny can never carry one, and the whole batch is refused rather than
+	// half-applied.
+	err := ApplyAgentPermissionOverrides(conv, map[string]PermissionOverride{
+		"routes.publish": {Effect: PermEffectDeny, Scope: scope},
+	}, "<generator>", false, false)
+	assert.ErrorContains(t, err, "cannot carry a scope")
+	assert.Equal(t, narrower, readScope(t, "routes.publish"), "a refused batch changes nothing")
 }

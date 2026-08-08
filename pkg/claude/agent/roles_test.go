@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 // JOH-351: the `roles show` / `roles ls` renderers. Pure unit tests over the
@@ -48,7 +50,7 @@ func TestPrintRoleHuman_FullRole(t *testing.T) {
 		Sandbox:        "read-only",
 		Approval:       "on-request",
 		ToolGovernance: "deny",
-		Permissions:    []string{"human.notify", "agent.rename"},
+		Permissions:    db.UnscopedGrants([]string{"human.notify", "agent.rename"}),
 		Brief:          "You review with fresh eyes.\nBe skeptical.",
 	})
 	out := buf.String()

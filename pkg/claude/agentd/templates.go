@@ -49,12 +49,12 @@ import (
 // templateAgentJSON is the wire shape for one agent in a template —
 // used both in request bodies (the dashboard editor) and responses.
 type templateAgentJSON struct {
-	Name           string   `json:"name"`
-	Role           string   `json:"role,omitempty"`
-	Descr          string   `json:"descr,omitempty"`
-	InitialMessage string   `json:"initial_message,omitempty"`
-	IsOwner        bool     `json:"is_owner,omitempty"`
-	Permissions    []string `json:"permissions"`
+	Name           string               `json:"name"`
+	Role           string               `json:"role,omitempty"`
+	Descr          string               `json:"descr,omitempty"`
+	InitialMessage string               `json:"initial_message,omitempty"`
+	IsOwner        bool                 `json:"is_owner,omitempty"`
+	Permissions    []db.PermissionGrant `json:"permissions"`
 
 	// Role is a by-name reference to a role in the role library (JOH-240): the
 	// agent inherits that role's defaults (canonical role-brief, launch shape,
@@ -214,7 +214,7 @@ func templateToJSON(t *db.GroupTemplate) templateJSON {
 	for _, a := range t.Agents {
 		perms := a.Permissions
 		if perms == nil {
-			perms = []string{}
+			perms = []db.PermissionGrant{}
 		}
 		aj := templateAgentJSON{
 			Name:             a.Name,
@@ -403,18 +403,10 @@ func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure)
 					"are allowed but other control characters are not", an, agent.MaxInitialMessageBytes)}
 		}
 
-		perms := []string{}
-		for _, slug := range a.Permissions {
-			slug = strings.TrimSpace(slug)
-			if slug == "" {
-				continue
-			}
-			if !IsKnownPermSlug(slug) {
-				return nil, &spawnFailure{http.StatusBadRequest, "unknown_slug",
-					fmt.Sprintf("agent %q: unknown permission slug %q. Known slugs: %s.",
-						an, slug, strings.Join(knownSlugs(), ", "))}
-			}
-			perms = append(perms, slug)
+		perms, permFail := normalizeBlueprintGrants(a.Permissions)
+		if permFail != nil {
+			permFail.Msg = fmt.Sprintf("agent %q: %s", an, permFail.Msg)
+			return nil, permFail
 		}
 
 		// Template-local spawn profile: validated with the registry profiles'
@@ -1953,9 +1945,9 @@ func sanitizeImportedTemplate(body templateJSON) (templateJSON, []string) {
 			// A GetRole error is left for buildTemplateFromJSON to surface.
 		}
 		if len(a.Permissions) > 0 {
-			kept := make([]string, 0, len(a.Permissions))
-			for _, slug := range a.Permissions {
-				s := strings.TrimSpace(slug)
+			kept := make([]db.PermissionGrant, 0, len(a.Permissions))
+			for _, grant := range a.Permissions {
+				s := strings.TrimSpace(grant.Slug)
 				if s == "" {
 					continue
 				}
@@ -1964,7 +1956,8 @@ func sanitizeImportedTemplate(body templateJSON) (templateJSON, []string) {
 						"agent %q: unknown permission slug %q — dropped", label, s))
 					continue
 				}
-				kept = append(kept, s)
+				grant.Slug = s
+				kept = append(kept, grant)
 			}
 			a.Permissions = kept
 		}
@@ -1973,8 +1966,8 @@ func sanitizeImportedTemplate(body templateJSON) (templateJSON, []string) {
 		// newer tclaude) is dropped with a warning instead of 400ing the whole
 		// import in buildInlineProfileFromJSON's slug validation.
 		if a.ProfileInline != nil && len(a.ProfileInline.PermissionOverrides) > 0 {
-			kept := map[string]string{}
-			for slug, effect := range a.ProfileInline.PermissionOverrides {
+			kept := map[string]db.PermissionOverride{}
+			for slug, override := range a.ProfileInline.PermissionOverrides {
 				s := strings.TrimSpace(slug)
 				if s == "" {
 					continue
@@ -1984,7 +1977,7 @@ func sanitizeImportedTemplate(body templateJSON) (templateJSON, []string) {
 						"agent %q: unknown permission slug %q in its custom launch config — dropped", label, s))
 					continue
 				}
-				kept[s] = effect
+				kept[s] = override
 			}
 			pi := *a.ProfileInline
 			pi.PermissionOverrides = kept
@@ -2289,9 +2282,17 @@ func appendRoleBlock(groupContext, brief string) string {
 // permOverride is one resolved birth-time permission decision for an
 // instantiated template agent: a slug and its effect (grant | deny).
 type permOverride struct {
-	Slug   string
-	Effect string // db.PermEffectGrant | db.PermEffectDeny
+	Slug string
+	// Override carries the effect (db.PermEffectGrant | db.PermEffectDeny)
+	// plus the optional scope the winning tier authored. A tier that composes
+	// per-slug must carry the whole value: replacing a scoped grant's effect
+	// while dropping its scope would silently widen it.
+	Override db.PermissionOverride
 }
+
+// Effect is the bare effect, for the many readers (deploy reports, editor
+// previews) that only branch on grant vs deny.
+func (p permOverride) Effect() string { return p.Override.Effect }
 
 // effectiveTemplateAgentOwner computes the owner bit a deploy of this agent
 // would grant — resolveTemplateAgentAccess's owner tiers (referenced profile's
@@ -2350,8 +2351,8 @@ func effectiveTemplateAgentOwner(a db.GroupTemplateAgent, lookupProfile func(str
 // role silently deny/own through an indirection, which is deliberately not done.
 func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, []permOverride, *spawnFailure) {
 	order := []string{}
-	eff := map[string]string{}
-	set := func(slug, effect string) {
+	eff := map[string]db.PermissionOverride{}
+	set := func(slug string, override db.PermissionOverride) {
 		slug = strings.TrimSpace(slug)
 		if slug == "" {
 			return
@@ -2359,12 +2360,12 @@ func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, [
 		if _, ok := eff[slug]; !ok {
 			order = append(order, slug)
 		}
-		eff[slug] = effect
+		eff[slug] = override
 	}
 	// Tier 1: the referenced role's default grants.
 	if role != nil {
 		for _, s := range role.Permissions {
-			set(s, db.PermEffectGrant)
+			set(s.Slug, db.PermissionOverride{Effect: db.PermEffectGrant, Scope: s.Scope})
 		}
 	}
 	// Ownership composes tri-state up the tiers, most specific last: the
@@ -2399,12 +2400,7 @@ func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, [
 		if prof.IsOwner != nil {
 			owner = *prof.IsOwner
 		}
-		slugs := make([]string, 0, len(prof.PermissionOverrides))
-		for slug := range prof.PermissionOverrides {
-			slugs = append(slugs, slug)
-		}
-		sort.Strings(slugs)
-		for _, slug := range slugs {
+		for _, slug := range db.SortedOverrideSlugs(prof.PermissionOverrides) {
 			set(slug, prof.PermissionOverrides[slug])
 		}
 	}
@@ -2414,12 +2410,7 @@ func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, [
 		if p.IsOwner != nil {
 			owner = *p.IsOwner
 		}
-		slugs := make([]string, 0, len(p.PermissionOverrides))
-		for slug := range p.PermissionOverrides {
-			slugs = append(slugs, slug)
-		}
-		sort.Strings(slugs)
-		for _, slug := range slugs {
+		for _, slug := range db.SortedOverrideSlugs(p.PermissionOverrides) {
 			set(slug, p.PermissionOverrides[slug])
 		}
 	}
@@ -2429,12 +2420,12 @@ func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, [
 		owner = true
 	}
 	for _, s := range a.Permissions {
-		set(s, db.PermEffectGrant)
+		set(s.Slug, db.PermissionOverride{Effect: db.PermEffectGrant, Scope: s.Scope})
 	}
 
 	out := make([]permOverride, 0, len(order))
 	for _, s := range order {
-		out = append(out, permOverride{Slug: s, Effect: eff[s]})
+		out = append(out, permOverride{Slug: s, Override: eff[s]})
 	}
 	return owner, out, nil
 }
@@ -2852,6 +2843,19 @@ func templateRosterExplicitlyDisablesSandboxProfiles(agents []db.GroupTemplateAg
 func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 	tmpl := spec.tmpl
 	reinforce := spec.intoExisting != nil
+
+	// Attenuation-only delegation, checked BEFORE anything is created or
+	// spawned. A deploy is a minting surface like any other: its roster confers
+	// birth-time grants composed from role defaults, the referenced profile and
+	// the template-local one. Without this an agent whose own grant is narrowly
+	// scoped could deploy a template that hands a worker the same slug unscoped
+	// and act through the worker — the bypass the spawn-boundary check exists to
+	// close. Up front, because refusing mid-roster would strand agents that
+	// already spawned. See permission_attenuation.go.
+	if err := checkTemplateDeployAttenuation(tmpl.Agents, spec.caller); err != nil {
+		writeError(w, http.StatusForbidden, "scope_not_attenuated", err.Error())
+		return
+	}
 
 	// The base context + the process rendered into each new agent's briefing
 	// differ by mode:
@@ -4071,13 +4075,13 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile, observed bool) (*
 	if out.SandboxImplementation == "" {
 		out.SandboxImplementation = prev.SandboxImplementation
 	}
-	for slug, effect := range prev.PermissionOverrides {
-		if effect != db.PermEffectGrant {
+	for slug, override := range prev.PermissionOverrides {
+		if override.Effect != db.PermEffectGrant {
 			if out.PermissionOverrides == nil {
-				out.PermissionOverrides = map[string]string{}
+				out.PermissionOverrides = map[string]db.PermissionOverride{}
 			}
 			if _, ok := out.PermissionOverrides[slug]; !ok {
-				out.PermissionOverrides[slug] = effect
+				out.PermissionOverrides[slug] = override
 			}
 		}
 	}
@@ -4291,7 +4295,11 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 		if name == "" {
 			name = deriveTemplateAgentName(convID, role, len(t.Agents)+1, usedNames)
 		}
-		perms, _ := db.ListAgentPermissionsForConv(convID)
+		// Snapshot the member's grants WITH their scopes: reading only the
+		// slug list would bake a narrowly scoped live grant into the template
+		// as an unscoped one, so every deploy of the snapshot would hand out
+		// strictly more authority than the group it was traced from.
+		perms := grantedOverridesForConv(convID)
 		// Re-trace the member's OBSERVABLE launch fields (JOH-239) so a round-trip
 		// preserves each role's launch shape. The spawn-profile REFERENCE is
 		// blueprint curation, not observable — it is preserved by name-match in the
@@ -4318,9 +4326,9 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 		}
 		var inline *db.SpawnProfile
 		if launch.Harness != "" || launch.Model != "" || launch.Effort != "" || launch.Sandbox != "" || launch.Approval != "" || launch.AutoReviewSet || launch.SSHWorkaroundSet || len(launch.ContextFeatures) > 0 || launch.AutoCompactWindow != "" || launch.ContextWindowMax > 0 || launch.CopilotAPISet || launch.FastModeSet || launch.SandboxImplementation != "" || len(perms) > 0 {
-			po := map[string]string{}
-			for _, s := range perms {
-				po[s] = db.PermEffectGrant
+			po := make(map[string]db.PermissionOverride, len(perms))
+			for slug, override := range perms {
+				po[slug] = override
 			}
 			inline = &db.SpawnProfile{
 				Harness:               launch.Harness,
@@ -4359,7 +4367,7 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 			Role:          role,
 			Descr:         descr,
 			IsOwner:       owner,
-			Permissions:   []string{},
+			Permissions:   []db.PermissionGrant{},
 			ProfileInline: inline,
 		})
 	}

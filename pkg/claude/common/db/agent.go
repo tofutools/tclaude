@@ -722,10 +722,13 @@ func RevokeAgentPermission(convID, slug string) (int64, error) {
 // same deny; preserving the original granted_by also ensures a later
 // generator-scoped cleanup cannot erase operator policy. Fresh-agent callers
 // can pass false to replace birth-time provenance with their own audit label.
-func ApplyAgentPermissionOverrides(convID string, overrides map[string]string, grantedBy string, clearGranterDenies, preserveSameEffectProvenance bool) error {
-	for slug, effect := range overrides {
-		if effect != PermEffectGrant && effect != PermEffectDeny {
-			return fmt.Errorf("invalid permission effect %q for %s (want %q or %q)", effect, slug, PermEffectGrant, PermEffectDeny)
+func ApplyAgentPermissionOverrides(convID string, overrides map[string]PermissionOverride, grantedBy string, clearGranterDenies, preserveSameEffectProvenance bool) error {
+	for slug, override := range overrides {
+		if override.Effect != PermEffectGrant && override.Effect != PermEffectDeny {
+			return fmt.Errorf("invalid permission effect %q for %s (want %q or %q)", override.Effect, slug, PermEffectGrant, PermEffectDeny)
+		}
+		if override.Effect == PermEffectDeny && override.Scope != "" {
+			return fmt.Errorf("deny permission override %q cannot carry a scope", slug)
 		}
 	}
 	d, err := Open()
@@ -754,21 +757,25 @@ func ApplyAgentPermissionOverrides(convID string, overrides map[string]string, g
 		}
 	}
 	now := dbTime(time.Now())
+	// scope_json travels with the effect on both arms. Hard-coding '' here
+	// (as this did before scopes existed) silently WIDENED a re-applied
+	// scoped grant to an unscoped one — the exact direction a permission
+	// write must never drift in.
 	upsert := `INSERT INTO agent_permissions
 		(agent_id, slug, effect, granted_at, granted_by, scope_json)
-		SELECT ?, ?, ?, ?, ?, '' FROM agents WHERE agent_id = ? AND retired_at IS NULL
+		SELECT ?, ?, ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at IS NULL
 		ON CONFLICT(agent_id, slug) DO UPDATE SET
 			effect = excluded.effect,
 			granted_at = excluded.granted_at,
 			granted_by = excluded.granted_by,
-			scope_json = ''`
+			scope_json = excluded.scope_json`
 	if preserveSameEffectProvenance {
 		upsert = `INSERT INTO agent_permissions
 			(agent_id, slug, effect, granted_at, granted_by, scope_json)
-			SELECT ?, ?, ?, ?, ?, '' FROM agents WHERE agent_id = ? AND retired_at IS NULL
+			SELECT ?, ?, ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at IS NULL
 			ON CONFLICT(agent_id, slug) DO UPDATE SET
 				effect = excluded.effect,
-				scope_json = '',
+				scope_json = excluded.scope_json,
 				granted_at = CASE
 					WHEN agent_permissions.effect = excluded.effect THEN agent_permissions.granted_at
 					ELSE excluded.granted_at
@@ -778,8 +785,8 @@ func ApplyAgentPermissionOverrides(convID string, overrides map[string]string, g
 					ELSE excluded.granted_by
 				END`
 	}
-	for slug, effect := range overrides {
-		res, err := tx.Exec(upsert, agentID, slug, effect, now, grantedBy, agentID)
+	for slug, override := range overrides {
+		res, err := tx.Exec(upsert, agentID, slug, override.Effect, now, grantedBy, override.Scope, agentID)
 		if err != nil {
 			return err
 		}

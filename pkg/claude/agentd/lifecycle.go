@@ -1,12 +1,14 @@
 package agentd
 
 import (
+	"bytes"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -2878,24 +2880,31 @@ func armRemoteControlAfterResume(convID string) {
 //     via the post-spawn /rename injection.
 //
 // normalizeSpawnPermissionOverrides validates the birth-time permission
-// overrides off a SpawnRequest and returns the canonical slug→effect map to
+// overrides off a SpawnRequest and returns the canonical slug→override map to
 // apply at enrollment. Each slug must be registered and each effect
 // must be "grant" or "deny"; a "default"/"" effect is a no-op and is dropped
 // (the agent inherits the global default for that slug), so an editor that
 // posts every slug — most at Default — collapses to just the real overrides.
 // An unknown slug or an unrecognised effect returns a non-empty human-readable
 // error string (the caller maps it to a 400); the map is nil for no overrides.
-func normalizeSpawnPermissionOverrides(in map[string]string) (map[string]string, string) {
+//
+// This is also the scope boundary for every birth-time grant: an optional
+// scope is parsed, checked against the dimensions its slug declares, and
+// stored CANONICALIZED, so nothing below this line has to re-validate a scope
+// and the stored bytes compare equal to a gate-side canonical form. A deny
+// carries no scope by design (a deny is unconditional).
+func normalizeSpawnPermissionOverrides(in map[string]db.PermissionOverride) (map[string]db.PermissionOverride, string) {
 	if len(in) == 0 {
 		return nil, ""
 	}
-	out := make(map[string]string, len(in))
-	for slug, effect := range in {
+	out := make(map[string]db.PermissionOverride, len(in))
+	for slug, override := range in {
 		slug = strings.TrimSpace(slug)
 		if slug == "" {
 			continue
 		}
-		switch strings.TrimSpace(effect) {
+		effect := strings.TrimSpace(override.Effect)
+		switch effect {
 		case "", "default":
 			continue // no override — inherits the global default
 		case db.PermEffectGrant, db.PermEffectDeny:
@@ -2903,11 +2912,19 @@ func normalizeSpawnPermissionOverrides(in map[string]string) (map[string]string,
 				return nil, fmt.Sprintf("unknown permission slug %q. Known slugs: %s.",
 					slug, strings.Join(knownSlugs(), ", "))
 			}
-			out[slug] = strings.TrimSpace(effect)
 		default:
 			return nil, fmt.Sprintf("permission override for %q must be \"grant\", \"deny\", or \"default\"; got %q",
-				slug, effect)
+				slug, override.Effect)
 		}
+		scope := strings.TrimSpace(override.Scope)
+		if scope != "" && effect == db.PermEffectDeny {
+			return nil, fmt.Sprintf("permission override for %q is a deny and cannot carry a scope", slug)
+		}
+		canonical, err := canonicalPermissionScopeForSlug(slug, scope)
+		if err != nil {
+			return nil, fmt.Sprintf("permission override for %q: %v", slug, err)
+		}
+		out[slug] = db.PermissionOverride{Effect: effect, Scope: canonical}
 	}
 	if len(out) == 0 {
 		return nil, ""
@@ -2982,9 +2999,11 @@ func spawnAuditProfileSnapshot(p *db.SpawnProfile) any {
 }
 
 func spawnAuditResolution(p spawnParams, launch *agent.ResolvedLaunch, requestedProfile string, profiles map[string]*db.SpawnProfile) map[string]any {
-	permissions := make(map[string]string, len(p.PermissionOverrides))
-	for slug, effect := range p.PermissionOverrides {
-		permissions[slug] = effect
+	// The audit row records the override's full shape, scope included: an
+	// unscoped one still renders as the bare "grant"/"deny" it always did.
+	permissions := make(map[string]db.PermissionOverride, len(p.PermissionOverrides))
+	for slug, override := range p.PermissionOverrides {
+		permissions[slug] = override
 	}
 	features := make(map[string]string, len(p.ContextFeatures))
 	for feature, state := range p.ContextFeatures {
@@ -3040,6 +3059,60 @@ func spawnAuditResolution(p spawnParams, launch *agent.ResolvedLaunch, requested
 	}
 }
 
+// decodeSpawnBody decodes the spawn request and puts the raw bytes BACK on
+// r.Body, so a later ask-human popup still previews the request the agent
+// actually sent (snapshotRequestBody has the same restore contract, for the
+// same reason). Decoding has to happen before the permission gate — the gate
+// needs the request's profile — and the gate is what may open the popup, so
+// the body cannot simply be consumed here.
+//
+// On a malformed body it writes the 400 and returns false. That 400 now
+// precedes the groups.spawn refusal for an unauthorized caller; it discloses
+// nothing beyond "your JSON did not parse".
+func decodeSpawnBody(w http.ResponseWriter, r *http.Request, body *agent.SpawnRequest) bool {
+	if r.ContentLength <= 0 {
+		return true
+	}
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "json", err.Error())
+		return false
+	}
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+	if err := json.Unmarshal(raw, body); err != nil {
+		writeError(w, http.StatusBadRequest, "json", err.Error())
+		return false
+	}
+	return true
+}
+
+// resolvedSpawnProfileNameForScope answers "which named spawn profile will
+// this request launch with", for the spawn_profile scope dimension only. It
+// mirrors the profile precedence the full resolution below applies —
+// request profile → group default → global default — and returns the profile's
+// CANONICAL name, so a grant scoped to a profile still matches a request that
+// reached it through an alias.
+//
+// It returns "" whenever no named profile resolves, including for a request
+// naming one that does not exist. A scoped grant then finds the dimension
+// undescribed and fails closed; the request still reaches the ordinary
+// invalid_profile 400 further down, which is where a bad name belongs.
+func resolvedSpawnProfileNameForScope(g *db.AgentGroup, requested string) string {
+	if name := strings.TrimSpace(requested); name != "" {
+		prof, err := db.ResolveSpawnProfile(name)
+		if err != nil || prof == nil {
+			return ""
+		}
+		return prof.Name
+	}
+	for _, prof := range []*db.SpawnProfile{groupDefaultProfile(g), globalDefaultProfile()} {
+		if prof != nil {
+			return prof.Name
+		}
+	}
+	return ""
+}
+
 func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	// requireGroupPermission also hands back the caller's conv-id: a real
 	// agent (e.g. a PO orchestrating workers) resolves to its conv-id,
@@ -3048,7 +3121,30 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// without an explicit groups.spawn grant (owner-state default); the
 	// spawn guardrails below still bind them (member cap, rate limit) and
 	// already treat an owner as allowed for the group restriction.
-	spawnerConvID, ok := requireGroupPermission(w, r, PermGroupsSpawn, g)
+	//
+	// agent.SpawnRequest is the single shared request shape — the same
+	// type `tclaude agent spawn`, `tclaude --join-group`, and the
+	// dashboard's spawn modal marshal — so the wire contract can't drift
+	// between the CLI and the dashboard. See its doc comment for the
+	// per-field semantics.
+	//
+	// It is decoded BEFORE the gate because groups.spawn may be scoped by
+	// spawn_profile, and the gate can only evaluate that against the profile
+	// this spawn will actually launch with. decodeSpawnBody restores r.Body so
+	// the ask-human popup still previews the full request.
+	var body agent.SpawnRequest
+	if !decodeSpawnBody(w, r, &body) {
+		return
+	}
+	// The spawn_profile the gate judges is the RESOLVED one — request profile,
+	// else the group default, else the global default — never the raw request
+	// field. "" (no profile resolves, or a named one that does not exist)
+	// leaves the dimension undescribed, which a scoped grant cannot satisfy:
+	// an inline launch shape is not a named profile and must not pass a
+	// profile-pinned grant. An unscoped grant is unaffected, so this reaches
+	// the existing 400 for a bad profile name exactly as before.
+	spawnerConvID, ok := requireGroupPermission(w, r, PermGroupsSpawn, g,
+		ActionContext{Group: g.Name, SpawnProfile: resolvedSpawnProfileNameForScope(g, body.Profile)})
 	if !ok {
 		return
 	}
@@ -3057,18 +3153,6 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	}
 	if !routeMembershipMutationAllowed(w, g) {
 		return
-	}
-	// agent.SpawnRequest is the single shared request shape — the same
-	// type `tclaude agent spawn`, `tclaude --join-group`, and the
-	// dashboard's spawn modal marshal — so the wire contract can't drift
-	// between the CLI and the dashboard. See its doc comment for the
-	// per-field semantics.
-	var body agent.SpawnRequest
-	if r.ContentLength > 0 {
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeError(w, http.StatusBadRequest, "json", err.Error())
-			return
-		}
 	}
 	if body.AllowUnenforcedSandbox && !isDashboardSpawnPeer(r) {
 		writeError(w, http.StatusForbidden, "unenforced_sandbox_override_restricted",
@@ -3193,6 +3277,15 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		if len(permOverrides) > 0 && resolvePermission(spawnerConvID, PermPermissionsGrant) != permAllow {
 			writeError(w, http.StatusForbidden, "forbidden",
 				"setting the spawned agent's permission overrides requires the "+PermPermissionsGrant+" permission")
+			return
+		}
+		// Attenuation-only delegation: holding permissions.grant lets the
+		// spawner mint overrides, but never WIDER ones than it holds itself.
+		// Without this, an agent whose own grant is pinned to one profile or
+		// one group could mint a child holding the same slug unscoped and act
+		// through it. See permission_attenuation.go.
+		if err := checkGrantAttenuation(spawnerConvID, conferredGrantsFromOverrides(permOverrides)); err != nil {
+			writeError(w, http.StatusForbidden, "scope_not_attenuated", err.Error())
 			return
 		}
 	}
@@ -4445,12 +4538,14 @@ type spawnParams struct {
 	// agent comes up already owning the group. false = ordinary member.
 	IsOwner bool
 	// PermissionOverrides is the new agent's permanent per-slug override set
-	// to apply at birth: slug → "grant" | "deny". enrollSpawnedConv
-	// writes each via db.SetAgentPermissionOverride after the membership add,
-	// best-effort alongside IsOwner. Validated at the spawn boundary
-	// (handleGroupSpawn) — every slug registered, every effect in {grant,deny}.
-	// nil/empty = inherit the group's default permissions.
-	PermissionOverrides map[string]string
+	// to apply at birth: slug → grant/deny plus an optional canonical scope.
+	// enrollSpawnedConv writes each via db.SetAgentPermissionOverrideWithScope
+	// after the membership add, best-effort alongside IsOwner. Validated at the
+	// spawn boundary (handleGroupSpawn) — every slug registered, every effect
+	// in {grant,deny}, every scope canonical and within the granter's own
+	// (§ checkGrantAttenuation). nil/empty = inherit the group's default
+	// permissions.
+	PermissionOverrides map[string]db.PermissionOverride
 	// PermissionGranter overrides the ordinary spawn-actor audit label for
 	// birth-time permission rows. It is reserved for trusted server-minted
 	// correlation such as scribe summon approvals; ordinary spawn requests
@@ -6884,10 +6979,11 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 	if permissionGranter == "" {
 		permissionGranter = granter
 	}
-	for slug, effect := range p.PermissionOverrides {
-		if err := db.SetAgentPermissionOverride(convID, slug, effect, permissionGranter); err != nil {
+	for _, slug := range db.SortedOverrideSlugs(p.PermissionOverrides) {
+		override := p.PermissionOverrides[slug]
+		if err := db.SetAgentPermissionOverrideWithScope(convID, slug, override.Effect, override.Scope, permissionGranter); err != nil {
 			slog.Warn("spawn: failed to apply birth permission override",
-				"conv", convID, "slug", slug, "effect", effect, "error", err)
+				"conv", convID, "slug", slug, "effect", override.Effect, "scope", override.Scope, "error", err)
 		}
 	}
 
