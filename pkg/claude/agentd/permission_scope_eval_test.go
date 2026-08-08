@@ -3,6 +3,7 @@ package agentd
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -88,7 +89,7 @@ func TestEvalPermissionScope(t *testing.T) {
 		{name: "undecodable row does not shadow a satisfiable sibling",
 			verdict: allow(`{"mystery":["x"]}`, `{"group":["dev"]}`), actx: ActionContext{Group: "dev"},
 			wantSatisfied: true, wantMatched: "group=dev"},
-		{name: "selector fails closed until phase 5",
+		{name: "selector with unknown caller fails closed",
 			verdict: allow(`{"target_agent":["@descendants"]}`), actx: ActionContext{TargetAgent: "agt_1"}},
 		{name: "exact matcher beside a selector still matches",
 			verdict: allow(`{"target_agent":["@descendants","agt_1"]}`), actx: ActionContext{TargetAgent: "agt_1"},
@@ -123,6 +124,52 @@ func TestEvalPermissionScope(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEvalPermissionScopeLineageSelectors(t *testing.T) {
+	setupTestDB(t)
+	caller, _, err := db.EnsureAgentForConv("selector-caller-old", "spawn")
+	require.NoError(t, err)
+	direct, _, err := db.EnsureAgentForConv("selector-direct", "spawn")
+	require.NoError(t, err)
+	grandchild, _, err := db.EnsureAgentForConv("selector-grandchild", "spawn")
+	require.NoError(t, err)
+	unrelated, _, err := db.EnsureAgentForConv("selector-unrelated", "spawn")
+	require.NoError(t, err)
+	require.NoError(t, db.RecordAgentLineage(direct, caller, time.Now()))
+	require.NoError(t, db.RecordAgentLineage(grandchild, direct, time.Now()))
+
+	allow := func(selector string) permVerdict {
+		return permVerdict{Resolution: permAllow, Source: permSourceOverride,
+			ScopeJSON: []string{`{"target_agent":["` + selector + `"]}`}}
+	}
+	for _, tc := range []struct {
+		name     string
+		selector string
+		target   string
+		want     bool
+	}{
+		{"self-spawned direct", "@self-spawned", direct, true},
+		{"self-spawned excludes grandchild", "@self-spawned", grandchild, false},
+		{"descendants direct", "@descendants", direct, true},
+		{"descendants transitive", "@descendants", grandchild, true},
+		{"descendants excludes unrelated", "@descendants", unrelated, false},
+		{"descendants excludes self", "@descendants", caller, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := evalPermissionScope(allow(tc.selector), "selector-caller-old",
+				ActionContext{TargetAgent: tc.target})
+			assert.Equal(t, tc.want, got.Satisfied)
+		})
+	}
+
+	_, _, err = db.EnsureAgentForConv("selector-caller-new", "session-start")
+	require.NoError(t, err)
+	_, err = db.RotateAgentConv("selector-caller-old", "selector-caller-new", "reincarnate")
+	require.NoError(t, err)
+	got := evalPermissionScope(allow("@descendants"), "selector-caller-new",
+		ActionContext{TargetAgent: grandchild})
+	assert.True(t, got.Satisfied, "the successor resolves to the same stable parent actor")
 }
 
 // The matched scope lands on an audit row, so a tier where several scopes
@@ -254,7 +301,7 @@ func TestContextFreeResolutionFailsClosedOnScopedAllow(t *testing.T) {
 // bespoke, scope-blind gate for the better part of a phase.
 var scopedSlugEnforcementPaths = map[string]string{
 	PermGroupsSpawn:       "requireGroupPermission — fills ActionContext{Group}",
-	PermAgentRetire:       "requireCrossAgentPermission — target_agent awaits Phase 5, so a target_agent scope fails closed",
+	PermAgentRetire:       "requireCrossAgentPermission — derives stable target_agent and evaluates lineage selectors",
 	PermAgentStanddown:    "requireCrossAgentPermission — same as agent.retire",
 	PermProcessRunsManage: "requirePermission — run create supplies ActionContext{ProcessTemplate}",
 	PermRoutesPublish:     "requireRoutePermissionForIdentity — central resolver plus ActionContext{Group}",

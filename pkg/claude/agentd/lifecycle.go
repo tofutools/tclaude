@@ -7079,6 +7079,33 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 		}
 	}
 
+	// Durable spawn lineage is an authorization fact: @self-spawned and
+	// @descendants grants range over this edge. Resolve the stable parent from
+	// the pending-spawn companion when available, otherwise from the synchronous
+	// caller conv. An agent-initiated spawn must not silently land without its
+	// edge; failing enrollment is the safe direction because a missing edge
+	// would make a deliberately delegated capability unexpectedly unusable.
+	// Human-initiated spawns have no parent and therefore write no row. Clone is
+	// a separate lifecycle path and deliberately never calls this writer.
+	parentAgentID := strings.TrimSpace(p.SpawnedByAgent)
+	if parentAgentID == "" && p.SpawnedByConv != "" {
+		parentAgentID, err = db.AgentIDForConv(p.SpawnedByConv)
+		if err != nil {
+			return 0, actorCreated, &spawnFailure{http.StatusInternalServerError, "identity",
+				"failed to resolve spawning agent lineage: " + err.Error()}
+		}
+		if parentAgentID == "" {
+			return 0, actorCreated, &spawnFailure{http.StatusInternalServerError, "identity",
+				"failed to resolve spawning agent lineage for " + p.SpawnedByConv}
+		}
+	}
+	if agentID != "" && parentAgentID != "" {
+		if err := db.RecordAgentLineage(agentID, parentAgentID, time.Now().UTC()); err != nil {
+			return 0, actorCreated, &spawnFailure{http.StatusInternalServerError, "io",
+				"failed to record spawning agent lineage: " + err.Error()}
+		}
+	}
+
 	// Birth-time access controls: make the new agent a group owner
 	// and/or apply its requested per-slug permission overrides, the same writes
 	// the group-template instantiator performs after executeSpawn — but folded

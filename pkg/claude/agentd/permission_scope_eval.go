@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 // ActionContext describes WHAT a gated request is about, in the typed
@@ -182,17 +184,39 @@ func permissionScopeLiteralMatches(dim ScopeDim, matcher, value string) bool {
 // permissionScopeSelectorMatches evaluates a relational @selector matcher
 // (@descendants / @self-spawned) for callerConvID against a concrete value.
 //
-// This is the Phase 5 seam. The selectors are parseable and persistable since
-// Phase 1, but the parent→child spawn edges they range over do not exist in
-// the schema yet, so every selector answers "no match" here. That direction is
-// the only safe one: treating an unevaluable relational matcher as a match
-// would turn a deliberately narrow grant into a wildcard.
-//
-// Phase 5 replaces this body with the bounded lineage walk and keeps the
-// signature: dim identifies which dimension the selector was written on,
-// value is the ActionContext projection being tested.
+// Only target_agent has relational selectors. The caller conv resolves to its
+// stable actor at check time, so reincarnation keeps the same ancestry while a
+// clone (a new actor with no spawn edge) does not inherit it. Any lookup error
+// fails closed: a deliberately narrow grant must never become a wildcard.
 func permissionScopeSelectorMatches(callerConvID string, dim ScopeDim, selector, value string) bool {
-	return false
+	if dim != ScopeDimTargetAgent || callerConvID == "" || value == "" {
+		return false
+	}
+	callerAgentID, err := db.AgentIDForConv(callerConvID)
+	if err != nil {
+		slog.Warn("permissions: selector caller lookup failed (fails closed)",
+			"selector", selector, "caller_conv", callerConvID, "error", err)
+		return false
+	}
+	if callerAgentID == "" {
+		return false
+	}
+	var matched bool
+	switch selector {
+	case "@self-spawned":
+		matched, err = db.IsDirectAgentChild(callerAgentID, value)
+	case "@descendants":
+		matched, err = db.IsAgentDescendant(callerAgentID, value)
+	default:
+		return false
+	}
+	if err != nil {
+		slog.Warn("permissions: selector lineage lookup failed (fails closed)",
+			"selector", selector, "caller_agent", callerAgentID,
+			"target_agent", value, "error", err)
+		return false
+	}
+	return matched
 }
 
 // permissionScopeForEval decodes a persisted scope row for AUTHORIZATION.

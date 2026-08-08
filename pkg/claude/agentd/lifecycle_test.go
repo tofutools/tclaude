@@ -82,6 +82,41 @@ func TestEnrollSpawnedConv_PointerBriefingBornUnread(t *testing.T) {
 	assert.Equal(t, msgID, queued[0].ID)
 }
 
+func TestEnrollSpawnedConv_RecordsStableSpawnerLineage(t *testing.T) {
+	setupTestDB(t)
+	parentID, _, err := db.EnsureAgentForConv("lineage-spawner-old", "spawn")
+	require.NoError(t, err)
+
+	// Exercise the synchronous path, which carries the caller conv rather than
+	// the pending-spawn row's stable companion.
+	_, _, fail := enrollSpawnedConv(nil, spawnParams{
+		SpawnedByConv: "lineage-spawner-old",
+	}, "lineage-child-direct", false)
+	require.Nil(t, fail)
+	childID, err := db.AgentIDForConv("lineage-child-direct")
+	require.NoError(t, err)
+	direct, err := db.IsDirectAgentChild(parentID, childID)
+	require.NoError(t, err)
+	assert.True(t, direct)
+
+	// The delayed pending-spawn path carries SpawnedByAgent precisely because
+	// the recorded conv may have reincarnated before enrollment completes.
+	_, _, err = db.EnsureAgentForConv("lineage-spawner-new", "session-start")
+	require.NoError(t, err)
+	_, err = db.RotateAgentConv("lineage-spawner-old", "lineage-spawner-new", "reincarnate")
+	require.NoError(t, err)
+	_, _, fail = enrollSpawnedConv(nil, spawnParams{
+		SpawnedByConv:  "lineage-spawner-old",
+		SpawnedByAgent: parentID,
+	}, "lineage-child-delayed", false)
+	require.Nil(t, fail)
+	delayedID, err := db.AgentIDForConv("lineage-child-delayed")
+	require.NoError(t, err)
+	direct, err = db.IsDirectAgentChild(parentID, delayedID)
+	require.NoError(t, err)
+	assert.True(t, direct, "delayed enrollment follows the stable spawner actor")
+}
+
 func TestEnrollSpawnedConv_PersistsResolvedRelaunchProfile(t *testing.T) {
 	setupTestDB(t)
 
