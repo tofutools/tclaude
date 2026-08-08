@@ -65,15 +65,22 @@ import (
 // here reports what it did to the human and nothing to the durable record. The
 // drive stays owned by the surface that authored it.
 //
-// # The gap this gate does NOT close
+// # The sibling door, now closed elsewhere
 //
-// `tclaude session new -r <conv>` is also typed by humans, also resumes, and
-// does the opposite: it CARRIES the recorded drive onto the launch and allocates
-// its own port, so it renders `--ui-server` with no daemon to bootstrap or own
-// it. That is the same broken end state reached by honouring rather than by
-// dropping, it lives in pkg/claude/session where this gate cannot see it, and it
-// is tracked as TCL-1084. Stated here rather than left implicit, because a gate
-// that quietly covers one of two doors reads as if it covered the doorway.
+// `tclaude session new -r <conv>` is also typed by humans, also resumes, and used
+// to do the opposite: it CARRIED the recorded drive onto the launch and allocated
+// its own port, so it rendered `--ui-server` with no daemon to bootstrap or own
+// it — the same broken end state reached by honouring rather than by dropping.
+// TCL-1084 closed it in pkg/claude/session, where this gate cannot see it, with
+// the mirror-image policy: an EXPLICIT --copilot-api is refused, and a CARRIED one
+// is refused for a live managed agent and disclosed-then-dropped otherwise. Same
+// `--send-keys` spelling as here, deliberately, so an operator who learns the
+// escape on one surface is not walled out on the other.
+//
+// Kept in this comment rather than deleted, because "which doors are covered" is
+// the question a reader of a gate actually has, and a gate that silently covers
+// one of two reads as if it covered the doorway. If a third launch surface
+// appears, it belongs in this list.
 
 // The two spellings of "how you get past this refusal", one per surface. See the
 // overrideHint parameter below for why they cannot be one string.

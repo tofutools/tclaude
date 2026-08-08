@@ -7728,6 +7728,17 @@ func appendFastModeFlag(args []string, mode string) []string {
 // answer different questions — which drive, and which port — and the forked
 // `session new` validates them together: a port without the drive, or the
 // drive without a port, is refused there rather than half-applied here.
+//
+// That second clause was false until TCL-1084: `ResolveCopilotAPIPort` allocated
+// a port for a drive that arrived without one instead of refusing it, which is
+// how a hand-typed `session new --copilot-api` ended up binding an endpoint
+// nothing would ever dial. It survived because THIS caller always allocates
+// first (prepareCopilotAPIPort), so agentd never emits the drive without a port
+// and the observable behaviour on the only exercised path matched the sentence.
+// A comment describing a callee from the caller's vantage cannot be falsified by
+// the path that exercises it — the reason claims like this belong next to the
+// refusal or next to a test that proves it, and the reason the refusal now
+// exists.
 func appendCopilotAPIPortFlag(args []string, port int) []string {
 	if port > 0 {
 		args = append(args, "--copilot-api-port", strconv.Itoa(port))

@@ -1,8 +1,6 @@
 package session
 
 import (
-	"net"
-	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -20,19 +18,23 @@ func TestResolveCopilotAPIPort_KeepsTheSuppliedPort(t *testing.T) {
 			"would hand the pane a port nobody is watching")
 }
 
-// The direct `tclaude session new --copilot-api` case: no daemon is waiting on
-// the number, so choosing it here is safe and the pane still gets a server.
-func TestResolveCopilotAPIPort_AllocatesWhenUnset(t *testing.T) {
-	port, err := ResolveCopilotAPIPort(true, 0)
-	require.NoError(t, err)
-	assert.Positive(t, port, "the API drive without a port must allocate one")
-	assert.LessOrEqual(t, port, 65535)
-
-	// It must be a port that can actually be bound — the allocator releases it
-	// again, which is the bind-close-exec gap this design accepts knowingly.
-	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
-	require.NoError(t, err, "the allocated port must be free after allocation")
-	require.NoError(t, listener.Close())
+// The INVERSION of this file's previous TestResolveCopilotAPIPort_AllocatesWhenUnset,
+// which asserted that the drive without a port allocated one here so that "the
+// pane still gets a server". The pane did get a server. Nothing got a drive: only
+// agentd creates the RPC session and holds the connection, so a locally chosen
+// port bound an unauthenticated loopback endpoint nothing would ever dial
+// (TCL-1084).
+//
+// The old test is the reason this one names the whole reasoning rather than just
+// asserting an error: an assertion that a port is allocated looks exactly as
+// reasonable as an assertion that it is refused, and what decides between them is
+// who is on the other end.
+func TestResolveCopilotAPIPort_RefusesTheDriveWithoutAPort(t *testing.T) {
+	_, err := ResolveCopilotAPIPort(true, 0)
+	require.Error(t, err,
+		"the drive with no daemon-allocated port must be refused, not allocated around")
+	assert.Contains(t, err.Error(), "tclaude agentd",
+		"the refusal must name what is actually missing — the daemon, not the number")
 }
 
 // A port without the drive is refused rather than dropped. Silently ignoring it

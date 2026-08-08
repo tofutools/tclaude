@@ -475,6 +475,7 @@ func applyRecordedLaunchPosture(params *NewParams, explicit explicitLaunchFields
 		case carryUnrecorded, carryAppliedDefault:
 		}
 	}
+	noteCarriedCopilotDrive(params, carried, convID)
 	// Tell the operator what this resume is reproducing — but only the postures
 	// that make this launch differ from a fresh one. Carrying a launch posture
 	// they did not type is the correct behaviour, and it must not be invisible:

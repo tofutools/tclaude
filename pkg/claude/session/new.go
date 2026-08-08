@@ -128,6 +128,19 @@ type NewParams struct {
 	// applyRecordedLaunchPosture fills an omitted --sandbox-impl on resume.
 	// It is internal state, not a CLI parameter.
 	sandboxImplExplicit bool
+	// copilotAPIDriveCarriedFrom names the conversation an omitted --copilot-api
+	// was filled from by applyRecordedLaunchPosture, and is empty when this launch
+	// asked for the drive itself. Internal state, not a CLI parameter.
+	//
+	// It exists because the two cases get different answers — an asserted drive is
+	// refused, an inferred one is disclosed and dropped — and by the time runNew
+	// reads CopilotAPI they are the same bool. Same reason as sandboxImplExplicit
+	// above: the carryover is the only place the distinction still exists.
+	copilotAPIDriveCarriedFrom string
+	// copilotAPIDriveDropped marks a launch that resolved the drive and then could
+	// not honour it, so the posture write asserts nil instead of false and the
+	// conversation's recorded choice survives. Internal state, not a CLI parameter.
+	copilotAPIDriveDropped bool
 
 	// AskUserQuestionTimeout is the per-session Claude Code AskUserQuestion
 	// idle-timeout override (never|60s|5m|10m), delivered via `--settings`
@@ -245,19 +258,36 @@ type NewParams struct {
 
 	// CopilotAPI selects the API-backed Copilot mode. Here it pins which mode
 	// the conversation takes and, with CopilotAPIPort, makes the pane bind the
-	// embedded server. The channel itself is established by agentd, for launches
-	// agentd started — a direct `session new --copilot-api` gets the bound pane
-	// without a daemon-held connection to it.
+	// embedded server.
+	//
+	// The channel itself is established by agentd, for launches agentd started, so
+	// this flag is only serviceable on an agentd-resolved launch. A direct
+	// `session new --copilot-api` used to get the bound pane WITHOUT a daemon-held
+	// connection to it — an unauthenticated loopback endpoint nothing would dial,
+	// which is strictly worse than the send-keys default. It is now refused;
+	// resolveCopilotAPIDriveForLaunch owns that decision and the reasoning.
 	CopilotAPI bool `long:"copilot-api" help:"EXPERIMENTAL: launch this Copilot agent with its embedded JSON-RPC server (copilot --ui-server) so tclaude agentd can drive it over typed calls instead of tmux send-keys. Refuses unless the launch dir is already trusted (or --trust-dir). The endpoint is unauthenticated and loopback-bound. Off by default. Copilot only"`
 
 	// CopilotAPIPort is the loopback port the embedded JSON-RPC server binds.
 	//
-	// Normally supplied by agentd, which allocates it so the consumer holds the
-	// number before the process exists (TCL-1054). Unset on a direct
-	// `session new --copilot-api` allocates one here instead, so a launch driven
-	// from a terminal still gets a working pane; nothing in agentd is waiting on
-	// that number, because nothing in agentd started that launch.
-	CopilotAPIPort int `long:"copilot-api-port" optional:"true" help:"Loopback port for the API-backed Copilot agent's embedded JSON-RPC server. Normally chosen by tclaude agentd; unset allocates a free port. Requires --copilot-api"`
+	// Supplied by agentd, which allocates it so the consumer holds the number
+	// before the process exists (TCL-1054). Its presence together with
+	// --managed-launch is what tells this process that the daemon which will
+	// actually drive the endpoint is on the other end; see
+	// copilotAPIDriveIsDaemonOwned.
+	//
+	// Unset with --copilot-api used to allocate one here, so that a launch driven
+	// from a terminal "still got a working pane". The pane worked and the drive did
+	// not: nothing in agentd was waiting on that number, because nothing in agentd
+	// started the launch. That allocation is gone (TCL-1084).
+	CopilotAPIPort int `long:"copilot-api-port" optional:"true" help:"Loopback port for the API-backed Copilot agent's embedded JSON-RPC server. Chosen by tclaude agentd, which allocates it before forking this process; a launch that is not agentd's cannot get the drive at all, so there is nothing for it to pass here. Requires --copilot-api"`
+
+	// SendKeys is the deliberate override for the Copilot API drive refusal,
+	// spelled exactly as `tclaude conv resume --send-keys` (TCL-1076) so an
+	// operator who learns the escape on one surface is not walled out on the
+	// other. It suppresses only the refusal for a CARRIED drive on a live managed
+	// agent; the launch is on send-keys either way.
+	SendKeys bool `long:"send-keys" help:"Relaunch a conversation that chose the Copilot API drive on tmux send-keys instead of being refused. The API channel exists only under tclaude agentd, so this launch is on send-keys with or without the flag; without it, a relaunch of a LIVE MANAGED agent is refused rather than started, because its mail holds rather than falling back to keystrokes"`
 
 	// --join-group makes the new session auto-join an existing agent group
 	// the moment its conv-id materialises. Routed through the daemon's
@@ -899,7 +929,20 @@ func runNew(params *NewParams) error {
 		return err
 	}
 	params.CopilotAPI = copilotAPI
-	copilotAPIPort, err := ResolveCopilotAPIPort(copilotAPI, params.CopilotAPIPort)
+	// Whether anything can actually PROVIDE the drive this launch resolved. Placed
+	// before the port resolution rather than after it, because a launch that is
+	// about to be refused or dropped must not allocate a loopback port first —
+	// binding and closing 127.0.0.1:0 for a drive nobody is going to run is
+	// exactly the pointless exposure this gate exists to prevent (TCL-1084).
+	//
+	// Every consequence of that decision — the drive params runs with, the drop
+	// marker the posture write reads, and clearing a port the drive no longer needs
+	// — lives inside the applier rather than here, so they are testable without a
+	// pane and cannot be separated from each other by a tidy-up.
+	if err := applyCopilotAPIDriveDecision(params, h, os.Stderr); err != nil {
+		return err
+	}
+	copilotAPIPort, err := ResolveCopilotAPIPort(params.CopilotAPI, params.CopilotAPIPort)
 	if err != nil {
 		return err
 	}
@@ -2233,20 +2276,23 @@ func runNew(params *NewParams) error {
 	// columns. On a --resume the values came from the conversation's own record
 	// via applyRecordedLaunchPosture, so this write keeps them alive rather than
 	// overwriting them. See RecordLaunchPosture.
+	// The authoring surface for both pointer fields, and the only one: this launch
+	// resolved --context-window-max and --copilot-api (an explicit flag, the
+	// profile chain, or the conversation's own record via
+	// applyRecordedLaunchPosture) and rendered the launch from them, so it may
+	// assert either value including a zero. A surface that cannot resolve them
+	// passes nil instead — see LaunchPosture.
+	//
+	// The one exception is copilotAPIPostureToRecord's, and it is a launch that DID
+	// resolve the drive.
 	RecordLaunchPosture(sessionID, h, LaunchPosture{
 		AutoMemory:        autoMemory,
 		ContextFeatures:   contextFeatures,
 		AutoCompactWindow: autoCompactWindow,
 		RemoteControl:     remoteControl,
 		FastMode:          params.FastMode,
-		// The authoring surface for both pointer fields, and the only one: this
-		// launch resolved --context-window-max and --copilot-api (an explicit
-		// flag, the profile chain, or the conversation's own record via
-		// applyRecordedLaunchPosture) and rendered the launch from them, so it may
-		// assert either value including a zero. A surface that cannot resolve them
-		// passes nil instead — see LaunchPosture.
-		ContextWindowMax: &params.ContextWindowMax,
-		CopilotAPI:       &params.CopilotAPI,
+		ContextWindowMax:  &params.ContextWindowMax,
+		CopilotAPI:        copilotAPIPostureToRecord(params),
 	})
 	// Claude reports its live model and effort through the statusline hook.
 	// Codex and OpenCode have no equivalent startup callback, so seed the
