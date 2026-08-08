@@ -373,7 +373,7 @@ func CurrentConvID() (string, error) {
 // show (`conv ls`, the dashboard's plain-conversation list), use
 // FreshConvTitle instead.
 func DisplayTitle(r *db.ConvIndexRow) string {
-	return displayTitle(r)
+	return db.AgentDisplayTitle(r, "")
 }
 
 // FreshConvRow refreshes a single conv's index row before returning it.
@@ -460,19 +460,8 @@ const UnknownTitle = "(unknown)"
 // so every surface picks up source changes uniformly.
 func FreshTitle(convID string) string {
 	row := FreshConvRowResolved(convID)
-	if row != nil && row.CustomTitle != "" {
-		return row.CustomTitle
-	}
-	// No custom title yet. Fall back to the pending name the spawn
-	// recorded. Pure fallback: the moment a custom title lands the
-	// branch above supersedes it — no flicker, nothing to clear.
-	if pn := pendingName(convID); pn != "" {
-		return pn
-	}
-	if row != nil {
-		if t := displayTitle(row); t != "" {
-			return t
-		}
+	if title := db.AgentDisplayTitle(row, pendingName(convID)); title != "" {
+		return title
 	}
 	return UnknownTitle
 }
@@ -516,16 +505,7 @@ func CachedTitleFromParts(row *db.ConvIndexRow, pendingName string) string {
 // decorations use the empty result to mean "no name", while CachedTitle adds
 // UnknownTitle for listing surfaces.
 func displayTitleFromParts(row *db.ConvIndexRow, pendingName string) string {
-	if row != nil && row.CustomTitle != "" {
-		return row.CustomTitle
-	}
-	if pendingName != "" {
-		return pendingName
-	}
-	if row != nil {
-		return displayTitle(row)
-	}
-	return ""
+	return db.AgentDisplayTitle(row, pendingName)
 }
 
 // CachedCreated returns convID's conversation creation timestamp
@@ -638,13 +618,7 @@ func TitleFor(convID string) string {
 // displayTitle returns the title we treat as the agent's name: custom title
 // if set, else summary, else first prompt.
 func displayTitle(r *db.ConvIndexRow) string {
-	if r.CustomTitle != "" {
-		return r.CustomTitle
-	}
-	if r.Summary != "" {
-		return r.Summary
-	}
-	return r.FirstPrompt
+	return db.AgentDisplayTitle(r, "")
 }
 
 // freshConvRow returns the conv_index row for convID, rescanning the

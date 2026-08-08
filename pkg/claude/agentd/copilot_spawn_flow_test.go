@@ -97,6 +97,10 @@ func TestCopilotSpawn_LaunchEnrollmentIdentity(t *testing.T) {
 	require.NotNil(t, row)
 	assert.Equal(t, resp.ConvID, row.ConvID)
 	assert.Equal(t, harness.CopilotName, row.Harness)
+	indexed, err := db.GetConvIndex(resp.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, indexed, "launch-time Copilot identity must populate the shared conversation index")
+	assert.Equal(t, "copilot-worker", indexed.CustomTitle)
 
 	launch := copilotLaunchOf(t, f, resp.ConvID)
 	assert.Equal(t, resp.ConvID, launch.SessionID,
@@ -123,6 +127,12 @@ func TestCopilotSpawn_LaunchEnrollmentIdentity(t *testing.T) {
 	// text with no error anywhere.
 	assert.Empty(t, f.World.Tmux.Sent(),
 		"a launch-enrolled Copilot spawn must not send-keys")
+
+	retired := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(
+		t, http.MethodPost, "/v1/agent/"+resp.ConvID+"/retire?shutdown=0&delete_worktree=0", nil)))
+	require.Equal(t, http.StatusOK, retired.Code, "retire body=%s", retired.Body.String())
+	assert.Equal(t, "copilot-worker", auditRowByVerb(t, "retire").TargetLabel,
+		"the audit target must use the propagated conversation identity")
 }
 
 // TestCopilotSpawn_UntrustedFolderParksThePaneSilently is the negative half of

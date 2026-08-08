@@ -109,6 +109,10 @@ type exitSessionMeta struct {
 	ConvID             string
 	AgentID            string
 	TargetLabel        string
+	PendingName        string
+	CustomTitle        string
+	Summary            string
+	FirstPrompt        string
 	Status             string
 	CreatedAt          dbTimestamp
 	ExitReason         string
@@ -819,8 +823,8 @@ func loadExitSessionMeta(tx *sql.Tx, sessionID string) (exitSessionMeta, error) 
 	var m exitSessionMeta
 	var exitReason sql.NullString
 	err := tx.QueryRow(`SELECT s.tmux_session, s.conv_id, s.agent_id,
-		COALESCE(NULLIF(ci.custom_title, ''), NULLIF(a.pending_name, ''),
-			NULLIF(ci.summary, ''), NULLIF(ci.first_prompt, ''), s.conv_id),
+		COALESCE(a.pending_name, ''), COALESCE(ci.custom_title, ''),
+		COALESCE(ci.summary, ''), COALESCE(ci.first_prompt, ''),
 		s.status, s.created_at,
 		s.exit_reason, s.exit_intent, s.exit_intent_event_id, s.exit_intent_generation, s.exit_intent_at,
 		s.exit_callback_generation, s.exit_callback_token_hash,
@@ -830,13 +834,23 @@ func loadExitSessionMeta(tx *sql.Tx, sessionID string) (exitSessionMeta, error) 
 		LEFT JOIN agents a ON a.agent_id = s.agent_id
 		LEFT JOIN conv_index ci ON ci.conv_id = s.conv_id
 		WHERE s.id = ?`, sessionID).Scan(
-		&m.TmuxSession, &m.ConvID, &m.AgentID, &m.TargetLabel, &m.Status, &m.CreatedAt,
+		&m.TmuxSession, &m.ConvID, &m.AgentID,
+		&m.PendingName, &m.CustomTitle, &m.Summary, &m.FirstPrompt,
+		&m.Status, &m.CreatedAt,
 		&exitReason, &m.Intent, &m.IntentEventID, &m.IntentGeneration, &m.IntentAt,
 		&m.CallbackGeneration, &m.CallbackTokenHash,
 		&m.CallbackPaneID, &m.CallbackUsedAt, &m.LaunchGateState,
 		&m.Harness, &m.ResumeProvenance)
 	if err != nil {
 		return m, err
+	}
+	m.TargetLabel = AgentDisplayTitle(&ConvIndexRow{
+		CustomTitle: m.CustomTitle,
+		Summary:     m.Summary,
+		FirstPrompt: m.FirstPrompt,
+	}, m.PendingName)
+	if m.TargetLabel == "" {
+		m.TargetLabel = m.ConvID
 	}
 	m.ExitReason = exitReason.String
 	return m, nil

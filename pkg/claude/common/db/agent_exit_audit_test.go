@@ -80,7 +80,7 @@ func TestAgentExitAudit_DeduplicatesAndOnlyEnriches(t *testing.T) {
 	assert.Contains(t, rows[0].Detail, "signal=unavailable")
 }
 
-func TestAgentExitAudit_SnapshotsActorPendingName(t *testing.T) {
+func TestAgentExitAudit_SnapshotsCanonicalAgentName(t *testing.T) {
 	setupTestDB(t)
 	const (
 		sessionID  = "spwn-copilot-exit"
@@ -88,7 +88,8 @@ func TestAgentExitAudit_SnapshotsActorPendingName(t *testing.T) {
 		generation = "cccccccccccccccccccccccccccccccc"
 	)
 	agentID := seedExitAuditSession(t, sessionID, convID)
-	require.NoError(t, SetAgentPendingName(agentID, "copilot-worker"))
+	require.NoError(t, SetAgentPendingName(agentID, "pending-copilot-worker"))
+	require.NoError(t, SetConvIndexCustomTitle(convID, "copilot-worker", "copilot"))
 	require.NoError(t, SetSessionExitLaunchGeneration(sessionID, generation))
 
 	_, err := RecordAgentExitObservation(AgentExitObservation{
