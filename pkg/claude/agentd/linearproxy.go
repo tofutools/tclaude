@@ -48,10 +48,23 @@ const (
 	// operator's credential is spent.
 	linearEndpoint = "https://api.linear.app/graphql"
 
-	// linearProxyTimeout bounds one GraphQL call. Linear is an API, not a
+	// linearProxyTimeout bounds ONE GraphQL call. Linear is an API, not a
 	// transport, so this is generous; a call that takes longer is Linear
 	// being slow or rate-limiting.
 	linearProxyTimeout = 45 * time.Second
+
+	// linearProxyBudget bounds a whole REQUEST, however many calls the verb
+	// makes. Several verbs make more than one — `issue update --state` makes
+	// three (confirm the issue, resolve the team's states, mutate) — and a
+	// per-call bound alone would let the daemon run to 3x45s while the CLI
+	// gave up at 75s. That failure mode is the bad one: the agent cannot tell
+	// whether the mutation landed, and a retry double-posts under the
+	// operator's name.
+	//
+	// Same reasoning as ghProxyCommentsTimeout, which is one budget across
+	// both of `pr comments`' gh calls. The budget stays inside the bound the
+	// CLI waits on however the work divides between the calls.
+	linearProxyBudget = 60 * time.Second
 
 	// maxLinearResponseBytes bounds what the daemon will read from Linear.
 	// Every list verb is bounded by `first:` as well, so this is a backstop
@@ -63,11 +76,28 @@ const (
 	// writing into a ticket and is enforced before the request is built.
 	maxLinearBodyBytes = 256 * 1024
 
+	// maxLinearRequestBytes bounds a request body before decoding. It is
+	// deliberately NOT the git proxy's 16 KiB: that bound is documented as
+	// "a handful of short scalars", which is true there and false here — this
+	// proxy advertises --body-file for exactly the multi-kilobyte markdown a
+	// progress report is made of. A reader below maxLinearBodyBytes would
+	// reject such a body with a raw transport error before validateLinearBody
+	// could name the real limit or the offending field.
+	//
+	// The headroom over maxLinearBodyBytes covers JSON escaping and the other
+	// scalars riding alongside the body.
+	maxLinearRequestBytes = maxLinearBodyBytes + 64*1024
+
 	// maxLinearTitleLen bounds an issue title, in runes.
 	maxLinearTitleLen = 256
 
 	// maxLinearQueryLen bounds a search term.
 	maxLinearQueryLen = 256
+
+	// maxLinearStateNameLen bounds a workflow-state name. Linear's own state
+	// names are short labels ("In Review", "Ready to Deploy"); this is far
+	// past any real one.
+	maxLinearStateNameLen = 128
 
 	// maxLinearLimit / defaultLinearLimit bound a list request. Linear's own
 	// default page size is 50.
@@ -220,6 +250,10 @@ func doLinearRequest(ctx context.Context, key string, req linearRequest) (linear
 type linearProxySession struct {
 	policy config.LinearProxyConfig
 	key    string
+	// deadline is the wall-clock end of this request's whole budget, shared
+	// by every call the verb makes. Zero means "unbounded", which only
+	// happens in a unit test that built a session directly.
+	deadline time.Time
 }
 
 // newLinearProxySession runs the operator-policy gates and resolves the key.
@@ -246,7 +280,11 @@ func newLinearProxySession() (*linearProxySession, *proxyFault) {
 	if fault != nil {
 		return nil, fault
 	}
-	return &linearProxySession{policy: policy, key: key}, nil
+	return &linearProxySession{
+		policy:   policy,
+		key:      key,
+		deadline: time.Now().Add(linearProxyBudget),
+	}, nil
 }
 
 // linearAPIKey resolves the operator's Linear personal API key: the configured
@@ -300,7 +338,11 @@ func (s *linearProxySession) requireWrite() *proxyFault {
 // exactly why every caller builds vars from values that have passed a
 // validateLinear* gate.
 func (s *linearProxySession) exec(ctx context.Context, doc string, vars map[string]any, out any) *proxyFault {
-	runCtx, cancel := context.WithTimeout(ctx, linearProxyTimeout)
+	// The tighter of the per-call bound and what is left of the whole
+	// request's budget. The budget is what keeps a multi-call verb inside the
+	// window the CLI is waiting on; the per-call bound is what stops any one
+	// hung call consuming all of it.
+	runCtx, cancel := s.callContext(ctx)
 	defer cancel()
 
 	res, err := linearDo(runCtx, s.key, linearRequest{Query: doc, Variables: vars})
@@ -339,6 +381,19 @@ func (s *linearProxySession) exec(ctx context.Context, doc string, vars map[stri
 	return nil
 }
 
+// callContext derives the context for one call: the per-call bound, clamped to
+// whatever remains of the request's shared budget.
+func (s *linearProxySession) callContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if s.deadline.IsZero() {
+		return context.WithTimeout(ctx, linearProxyTimeout)
+	}
+	perCall := time.Now().Add(linearProxyTimeout)
+	if s.deadline.Before(perCall) {
+		return context.WithDeadline(ctx, s.deadline)
+	}
+	return context.WithDeadline(ctx, perCall)
+}
+
 // linearGraphQLFault turns Linear's error array into one fault. The first
 // error's text leads, because Linear puts the actionable one first, and the
 // authentication and complexity cases get their own codes so an operator
@@ -368,7 +423,29 @@ func linearGraphQLFault(status int, errs []linearError) *proxyFault {
 	case "RATELIMITED":
 		return faultf(http.StatusTooManyRequests, "linear_rate_limited", "%s", joined)
 	}
+	// A missing issue must not read as a daemon failure. Query.issue is
+	// declared `Issue!` in Linear's schema, so a bad identifier cannot come
+	// back as `data.issue: null` — it comes back as an ERROR, which would
+	// otherwise be classified as linear_failed. That matters because 502 is
+	// documented as "a tclaude bug, do not retry" or "could not reach Linear",
+	// and neither is true of a typo'd issue number.
+	//
+	// Matched on the message text because Linear does not give this case a
+	// distinct extensions.code. A heuristic, deliberately: if Linear rewords
+	// it the classification degrades to the generic fault below, which is
+	// where it is today — no worse than before, and right in the common case.
+	if isLinearEntityNotFound(joined) {
+		return faultf(http.StatusNotFound, "not_found", "%s", joined)
+	}
 	return faultf(http.StatusBadGateway, "linear_failed", "%s", joined)
+}
+
+// isLinearEntityNotFound reports whether Linear's error text is its
+// "no such record" answer. See the caller for why this is matched on text.
+func isLinearEntityNotFound(msg string) bool {
+	lower := strings.ToLower(msg)
+	return strings.Contains(lower, "entity not found") ||
+		strings.Contains(lower, "could not find referenced")
 }
 
 // linearRateLimitFault converts an HTTP 429 into a fault carrying the reset
@@ -581,6 +658,32 @@ func validateLinearSearchTerm(term string) (string, *proxyFault) {
 		}
 	}
 	return term, nil
+}
+
+// validateLinearStateName bounds a workflow-state name used as a FILTER.
+//
+// Distinct from validateLinearBody, which the list handler used to borrow: a
+// state name is a short label, not prose, and giving it the body validator's
+// 256 KiB-and-any-character latitude was a slip rather than a decision. It
+// only ever reaches a GraphQL variable, so nothing was exploitable — but a
+// bound that does not describe what it is bounding invites the next caller to
+// reuse it somewhere that is.
+func validateLinearStateName(name string) (string, *proxyFault) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", nil
+	}
+	if utf8.RuneCountInString(name) > maxLinearStateNameLen {
+		return "", faultf(http.StatusBadRequest, "invalid_arg",
+			"a workflow-state name longer than %d characters is not one", maxLinearStateNameLen)
+	}
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f {
+			return "", faultf(http.StatusBadRequest, "invalid_arg",
+				"the workflow-state name contains a control character")
+		}
+	}
+	return name, nil
 }
 
 // validateLinearLimit bounds a list request.

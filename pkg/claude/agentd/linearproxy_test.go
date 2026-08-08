@@ -255,10 +255,29 @@ func TestRenderLinearCommentsKeepsTheTail(t *testing.T) {
 		assert.Contains(t, out, "(no comments)")
 	})
 
-	t.Run("oldest first, newest kept when bounded", func(t *testing.T) {
+	// The input is deliberately NEWEST-FIRST, which is the order Linear
+	// actually returns. A test that hand-built its slice oldest-first would
+	// assert a property of the renderer that its real caller never supplies —
+	// and would keep passing if the ordering broke.
+	t.Run("sorts to oldest-first whatever order it is given", func(t *testing.T) {
+		out := renderLinearComments("TCL-1", "t", "u", []linearComment{
+			{Body: "THIRD", CreatedAt: "2026-08-03T00:00:00Z"},
+			{Body: "SECOND", CreatedAt: "2026-08-02T00:00:00Z"},
+			{Body: "FIRST", CreatedAt: "2026-08-01T00:00:00Z"},
+		})
+		first, second, third := strings.Index(out, "FIRST"), strings.Index(out, "SECOND"), strings.Index(out, "THIRD")
+		require.NotEqual(t, -1, first)
+		assert.Less(t, first, second)
+		assert.Less(t, second, third)
+	})
+
+	t.Run("the kept tail is the newest end", func(t *testing.T) {
 		comments := []linearComment{
-			{Body: strings.Repeat("old ", maxLinearCommentsTextBytes/4), CreatedAt: "2026-01-01"},
-			{Body: "THE-NEWEST-COMMENT", CreatedAt: "2026-08-08"},
+			// Newest first, as Linear sends it. The huge one is the OLDEST, so
+			// a renderer that both sorts and keeps the tail must drop it and
+			// retain the short newest comment.
+			{Body: "THE-NEWEST-COMMENT", CreatedAt: "2026-08-08T00:00:00Z"},
+			{Body: strings.Repeat("old ", maxLinearCommentsTextBytes/4), CreatedAt: "2026-01-01T00:00:00Z"},
 		}
 		out := renderLinearComments("TCL-1", "A thing", "https://linear.app/x", comments)
 		assert.LessOrEqual(t, len(out), maxLinearCommentsTextBytes+len("(earlier comments truncated)\n"))

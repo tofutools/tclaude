@@ -134,9 +134,18 @@ func linearPost(t *testing.T, f *testharness.Flow, path string, body any) *httpt
 }
 
 // issueJSON builds a scripted `issue` response for a given identifier/team.
+// It carries an `id` because the real linearQueryIssue selects one — the write
+// verbs mutate by that UUID rather than by the identifier.
 func issueJSON(identifier, teamKey string) string {
-	return `{"data":{"issue":{"identifier":"` + identifier + `","title":"A thing",` +
-		`"url":"https://linear.app/acme/issue/` + identifier + `","team":{"key":"` + teamKey + `","name":"Team"}}}}`
+	return `{"data":{"issue":{"id":"` + issueUUIDFor(identifier) + `","identifier":"` + identifier +
+		`","title":"A thing","url":"https://linear.app/acme/issue/` + identifier +
+		`","team":{"key":"` + teamKey + `","name":"Team"}}}}`
+}
+
+// issueUUIDFor is a stable fake UUID per identifier, so a test can assert that
+// the mutation carried the UUID and not the identifier.
+func issueUUIDFor(identifier string) string {
+	return "uuid-of-" + strings.ToLower(identifier)
 }
 
 // --- fail-closed configuration ---
@@ -431,6 +440,135 @@ func TestLinearProxy_UpdateResolvesStateCaseInsensitively(t *testing.T) {
 	input, ok := last.Variables["input"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "s2", input["stateId"], "the state name must have been resolved to its UUID")
+
+	// issueUpdate is the one write path Linear does not document as accepting
+	// an identifier, so the mutation must carry the UUID the confirming read
+	// returned rather than "TCL-1".
+	assert.Equal(t, issueUUIDFor("TCL-1"), last.Variables["id"],
+		"issue update must mutate by the issue's UUID, not by its identifier")
+}
+
+// TestLinearProxy_LargeBodyIsAccepted — the skill tells agents to use
+// --body-file "for anything multi-line", and a progress report is routinely
+// several kilobytes. A transport-level cap below the validator's own limit
+// would reject those with a raw "request body too large" that names neither
+// the real limit nor the field.
+func TestLinearProxy_LargeBodyIsAccepted(t *testing.T) {
+	f, rec := linearWorld(t, []string{"TCL"}, func(c *config.LinearProxyConfig) { c.AllowWrite = true })
+	require.NoError(t, db.GrantAgentPermission(linearProxyTestConv, agentd.PermLinearWrite, "test"))
+	rec.response = func(call linearCall) (int, string) {
+		if strings.Contains(call.Query, "query IssueView") {
+			return http.StatusOK, issueJSON("TCL-1", "TCL")
+		}
+		return http.StatusOK, `{"data":{"commentCreate":{"success":true,"comment":{"url":"u","createdAt":"t"}}}}`
+	}
+
+	body := strings.Repeat("progress report line\n", 3000) // ~60 KB
+	res := linearPost(t, f, "/v1/linear/issue/comment",
+		map[string]any{"identifier": "TCL-1", "body": body})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	calls := rec.snapshot()
+	input := calls[len(calls)-1].Variables["input"].(map[string]any)
+	assert.Equal(t, body, input["body"], "the body must arrive intact")
+}
+
+// TestLinearProxy_OversizeBodyIsRefusedByName — past the real limit the
+// refusal must be the validator's, which names the limit, not the transport's.
+func TestLinearProxy_OversizeBodyIsRefusedByName(t *testing.T) {
+	f, _ := linearWorld(t, []string{"TCL"}, func(c *config.LinearProxyConfig) { c.AllowWrite = true })
+	require.NoError(t, db.GrantAgentPermission(linearProxyTestConv, agentd.PermLinearWrite, "test"))
+
+	res := linearPost(t, f, "/v1/linear/issue/comment", map[string]any{
+		"identifier": "TCL-1",
+		"body":       strings.Repeat("x", 300*1024),
+	})
+	assert.Equal(t, http.StatusBadRequest, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), "maximum",
+		"the refusal should state the limit rather than report a transport failure")
+}
+
+// TestLinearProxy_CommentsAreRenderedOldestFirst — Linear's connections return
+// the newest first (there is no direction control on `first:`), which is the
+// right SET but the wrong ORDER to read a discussion in. Reversing the meaning
+// of a "then we decided…" exchange is a silent failure, so the ordering is
+// pinned here against a response in the order Linear really sends.
+func TestLinearProxy_CommentsAreRenderedOldestFirst(t *testing.T) {
+	f, rec := linearWorld(t, []string{"TCL"})
+	require.NoError(t, db.GrantAgentPermission(linearProxyTestConv, agentd.PermLinearRead, "test"))
+	rec.response = func(linearCall) (int, string) {
+		// Newest first, as Linear sends it.
+		return http.StatusOK, `{"data":{"issue":{"identifier":"TCL-1","title":"t","url":"u",
+			"team":{"key":"TCL"},"comments":{"nodes":[
+				{"body":"THIRD","createdAt":"2026-08-03T00:00:00Z"},
+				{"body":"SECOND","createdAt":"2026-08-02T00:00:00Z"},
+				{"body":"FIRST","createdAt":"2026-08-01T00:00:00Z"}
+			]}}}}`
+	}
+
+	res := linearPost(t, f, "/v1/linear/issue/comments", map[string]any{"identifier": "TCL-1"})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	out := res.Body.String()
+	first, second, third := strings.Index(out, "FIRST"), strings.Index(out, "SECOND"), strings.Index(out, "THIRD")
+	require.NotEqual(t, -1, first)
+	assert.Less(t, first, second, "the oldest comment must be rendered first")
+	assert.Less(t, second, third, "the thread must read in chronological order")
+}
+
+// TestLinearProxy_MissingIssueIsNotFoundNotABug — 502 is documented as "a
+// tclaude bug, do not retry" or "could not reach Linear". A typo'd issue
+// number is neither, and telling an agent to escalate one wastes a human.
+func TestLinearProxy_MissingIssueIsNotFoundNotABug(t *testing.T) {
+	f, rec := linearWorld(t, []string{"TCL"})
+	require.NoError(t, db.GrantAgentPermission(linearProxyTestConv, agentd.PermLinearRead, "test"))
+	rec.response = func(linearCall) (int, string) {
+		return http.StatusBadRequest, `{"errors":[{"message":"Entity not found: Issue - Could not find referenced Issue.",
+			"extensions":{"type":"invalid input","code":"INVALID_INPUT"}}]}`
+	}
+
+	res := linearPost(t, f, "/v1/linear/issue/view", map[string]any{"identifier": "TCL-99999"})
+	assert.Equal(t, http.StatusNotFound, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), "not_found")
+	assert.NotContains(t, res.Body.String(), "linear_schema_drift")
+}
+
+// TestLinearProxy_WriteVerbsConfirmTheTeamBeforeWriting generalises the
+// comment-path test to the other two write verbs, which run the same
+// read-then-refuse sequence and had no coverage of their own.
+func TestLinearProxy_WriteVerbsConfirmTheTeamBeforeWriting(t *testing.T) {
+	for _, tc := range []struct {
+		name, path, mutation string
+		body                 map[string]any
+	}{
+		{
+			name: "update", path: "/v1/linear/issue/update", mutation: "mutation IssueUpdate",
+			body: map[string]any{"identifier": "TCL-1", "title": "Renamed"},
+		},
+		{
+			name: "link", path: "/v1/linear/issue/link", mutation: "mutation AttachmentLink",
+			body: map[string]any{"identifier": "TCL-1", "url": "https://example.com/pr/1"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, rec := linearWorld(t, []string{"TCL"}, func(c *config.LinearProxyConfig) { c.AllowWrite = true })
+			require.NoError(t, db.GrantAgentPermission(linearProxyTestConv, agentd.PermLinearWrite, "test"))
+			rec.response = func(call linearCall) (int, string) {
+				if strings.Contains(call.Query, "query IssueView") {
+					// The identifier says TCL; Linear says otherwise.
+					return http.StatusOK, issueJSON("SECRET-9", "SECRET")
+				}
+				return http.StatusOK, `{"data":{}}`
+			}
+
+			res := linearPost(t, f, tc.path, tc.body)
+			assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+			for _, call := range rec.snapshot() {
+				assert.NotContains(t, call.Query, tc.mutation,
+					"a refused write must not have run the mutation")
+			}
+		})
+	}
 }
 
 // TestLinearProxy_LinkRefusesNonHTTPURLs — an attachment renders as a

@@ -147,7 +147,9 @@ tclaude proxy linear issue link TCL-568 --url https://github.com/acme/repo/pull/
 
 `whoami` is the command to point an agent at when something is refused: it lists
 every team the key can see with the allow-list verdict beside it, so the agent
-can tell you exactly which key to add instead of guessing from a 403.
+can tell you exactly which key to add instead of guessing from a 403. Past 100
+teams the answer says `teams_truncated` rather than presenting a partial list as
+the whole workspace.
 
 ### Closing the loop with the GitHub proxy
 
@@ -184,6 +186,14 @@ Only the title, state and priority — the same deliberate narrowness as the
 GitHub half's `pr edit`. Moving an issue between teams would take it out of the
 allow-list, and assignment is a workspace decision rather than a coding one.
 There is no delete, no archive, and no raw-GraphQL escape hatch.
+
+### Comment threads read chronologically
+
+Linear's API returns the newest comments first, and offers no way to ask for the
+other direction — `first: 25` means "the 25 most recent". That is the right set
+and the wrong order to read a discussion in, so the daemon sorts them
+chronologically before rendering. If the thread is longer than the limit, the
+output says so: what is missing is the *start* of the discussion, not the end.
 
 > **`issue comments` carries third-party prose into an agent's context.** A
 > Linear comment can be written by anyone with access to the workspace. Every
@@ -272,9 +282,11 @@ the workspace.
 | `403 team_not_allowed` | The team is not on `allowed_teams`. Run `tclaude proxy linear whoami` to see the exact key to add. |
 | `400` on an identifier | Only `TEAM-123` form is accepted; a UUID is refused on purpose. |
 | `400 unknown_state` | The state name is not one of the team's; the message lists the real ones. |
+| `404 not_found` | No such issue or team, or the operator's key cannot see it. Usually a typo'd issue number — not something to escalate. |
 | `429 linear_rate_limited` | Linear's budget is spent (2,500 requests/hour per key). The message carries the reset time. |
 | `502 linear_schema_drift` | tclaude's query no longer matches Linear's schema. A tclaude bug — do not retry; run the schema-drift test above. |
 | `502 linear_unreachable` | The daemon could not reach `api.linear.app`. |
+| A write times out client-side | Every verb is bounded by one 60s budget across all the calls it makes, inside the CLI's 75s wait, so a slow Linear surfaces the daemon's answer rather than an ambiguous hang-up. If you see a client-side timeout anyway, the daemon is wedged — do not retry a write blindly. |
 
 ## See also
 

@@ -31,6 +31,17 @@ import (
 // asserts exactly that, and would fail loudly if Linear ever changed the
 // ordering.
 //
+// WHAT IT DOES NOT COVER, which matters as much as what it does: Linear
+// validates the DOCUMENT before authenticating, but not the VARIABLE VALUES.
+// Verified directly — an `issues` query whose $filter names a field that does
+// not exist on IssueFilter comes back AUTHENTICATION_ERROR, indistinguishable
+// from a correct one. So the filter maps built in linearproxy_handlers.go, and
+// the input objects the mutations send, are NOT checked here. Drift in those
+// surfaces at execution time as a Linear input error (reported as
+// linear_failed), not as a silent wrong answer — but it will not be caught
+// before it ships. Changing a filter's shape means re-reading Linear's schema
+// by hand.
+//
 // Opt-in and network-dependent, like the dashsnap harness: it is not wired
 // into CI. Run it with
 //

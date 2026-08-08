@@ -78,7 +78,7 @@ tclaude proxy linear issue view TCL-568          # description, state, assignee,
 tclaude proxy linear issue ls --team TCL --state "In Progress"
 tclaude proxy linear issue ls --assigned-me --limit 10
 tclaude proxy linear issue search "flaky dashsnap"
-tclaude proxy linear issue comments TCL-568      # the discussion, as text
+tclaude proxy linear issue comments TCL-568      # the discussion, oldest first
 ```
 
 `--assigned-me` means the **operator's** Linear user, not you. You have no
@@ -125,6 +125,9 @@ Read them and retry.
 **`issue update` changes only title, state and priority.** Reassigning a team or
 an owner is not something the proxy will do for you. Neither is deleting or
 archiving anything.
+
+**`404 not_found` usually means you typo'd the issue number.** Check it against
+`issue ls` rather than escalating.
 
 **`502 linear_schema_drift` is a tclaude bug, not your mistake.** It means
 tclaude's own query no longer matches Linear's schema. Do not retry — report it.

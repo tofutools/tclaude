@@ -2,8 +2,12 @@ package agentd
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"sort"
 	"strings"
 )
 
@@ -34,6 +38,11 @@ import (
 // as the GitHub half's maxGHProxyTextBytes: enough for a real discussion, and
 // the tail is the useful end because comments render oldest-first.
 const maxLinearCommentsTextBytes = 256 * 1024
+
+// whoamiTeamPageSize bounds the team listing in `whoami`. Past it the response
+// says so explicitly (TeamsTruncated) rather than presenting a partial list as
+// the whole workspace.
+const whoamiTeamPageSize = 100
 
 type linearIssueRequest struct {
 	Identifier string `json:"identifier"`
@@ -96,7 +105,7 @@ func openLinearProxy(w http.ResponseWriter, r *http.Request, perm string, body a
 	if _, ok := requirePermission(w, r, perm); !ok {
 		return nil, false
 	}
-	if body != nil && !decodeGitProxyBody(w, r, body) {
+	if body != nil && !decodeLinearProxyBody(w, r, body) {
 		return nil, false
 	}
 	s, fault := newLinearProxySession()
@@ -111,6 +120,24 @@ func openLinearProxy(w http.ResponseWriter, r *http.Request, perm string, body a
 		}
 	}
 	return s, true
+}
+
+// decodeLinearProxyBody reads a bounded JSON body.
+//
+// It exists rather than reusing decodeGitProxyBody because that one's 16 KiB
+// bound is documented as "a handful of short scalars" — true of a git request,
+// false of a Linear one, which carries the markdown of a comment or an issue
+// description. Behind the smaller reader a 20 KB progress report died with
+// "http: request body too large" before validateLinearBody could say what the
+// real limit was, or which field had exceeded it.
+func decodeLinearProxyBody(w http.ResponseWriter, r *http.Request, out any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxLinearRequestBytes)
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(out); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return false
+	}
+	return true
 }
 
 // linearTeamClause builds the team half of an issue filter.
@@ -223,7 +250,8 @@ func handleLinearProxyWhoami(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var data linearViewerData
-	if fault := s.exec(r.Context(), linearQueryViewer, map[string]any{"first": 100}, &data); fault != nil {
+	if fault := s.exec(r.Context(), linearQueryViewer,
+		map[string]any{"first": whoamiTeamPageSize}, &data); fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
@@ -239,8 +267,20 @@ func handleLinearProxyWhoami(w http.ResponseWriter, r *http.Request) {
 	s.respond(w, r, "whoami", struct {
 		Viewer       linearUserRef `json:"viewer"`
 		Teams        []teamView    `json:"teams"`
+		AllowedTeams []string      `json:"allowed_teams"`
 		WriteAllowed bool          `json:"write_allowed"`
-	}{Viewer: data.Viewer, Teams: teams, WriteAllowed: s.policy.AllowWrite}, "")
+		// TeamsTruncated says the listing hit the page size, so a team the
+		// caller is looking for may exist and not be shown. A silent cap here
+		// would be the worst place for one: this is the verb an agent runs to
+		// find out which team to ask the operator to allow-list.
+		TeamsTruncated bool `json:"teams_truncated,omitempty"`
+	}{
+		Viewer:         data.Viewer,
+		Teams:          teams,
+		AllowedTeams:   s.policy.AllowedTeams,
+		WriteAllowed:   s.policy.AllowWrite,
+		TeamsTruncated: len(data.Teams.Nodes) >= whoamiTeamPageSize,
+	}, "")
 }
 
 // handleLinearProxyIssueView serves POST /v1/linear/issue/view.
@@ -288,12 +328,10 @@ func handleLinearProxyIssueList(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
-	state := strings.TrimSpace(body.State)
-	if state != "" {
-		if fault := validateLinearBody(state, false); fault != nil {
-			writeProxyFault(w, fault)
-			return
-		}
+	state, fault := validateLinearStateName(body.State)
+	if fault != nil {
+		writeProxyFault(w, fault)
+		return
 	}
 	var data linearIssuesData
 	if fault := s.exec(r.Context(), linearQueryIssues, map[string]any{
@@ -385,14 +423,32 @@ func handleLinearProxyIssueComments(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
-	s.respond(w, r, "issue.comments",
-		renderLinearComments(data.Issue.Identifier, data.Issue.Title, data.Issue.URL, data.Issue.Comments.Nodes),
+	text := renderLinearComments(data.Issue.Identifier, data.Issue.Title, data.Issue.URL,
+		data.Issue.Comments.Nodes)
+	// A full page means there may be older comments this read did not fetch.
+	// Say so rather than let a bounded answer read as a complete one — the
+	// page holds the NEWEST comments, so what is missing is the start of the
+	// discussion.
+	if len(data.Issue.Comments.Nodes) >= limit {
+		text += fmt.Sprintf("\n(showing the %d most recent comments; there may be older ones — "+
+			"raise --limit to see further back)\n", limit)
+	}
+	s.respond(w, r, "issue.comments", text,
 		fmt.Sprintf("issue=%s rows=%d", data.Issue.Identifier, len(data.Issue.Comments.Nodes)))
 }
 
 // renderLinearComments formats a comment thread, oldest first, bounded at
 // maxLinearCommentsTextBytes. When it overflows the TAIL is kept — the newest
 // comments, which are the ones a caller is usually here for.
+//
+// It SORTS rather than trusting the order Linear returned. Linear's
+// connections expose no direction control — `orderBy` picks the field
+// (createdAt / updatedAt), not the direction — and the API returns the newest
+// first, which is the right SET for `first: N` (the N most recent comments)
+// and the wrong ORDER to read a discussion in. Sorting here makes the
+// rendering independent of that, so both promises this function makes —
+// "oldest first" and "the tail is the newest" — hold whatever Linear does,
+// rather than only while its default direction stays what it is today.
 func renderLinearComments(identifier, title, url string, comments []linearComment) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s  %s\n%s\n\n", identifier, title, url)
@@ -400,7 +456,13 @@ func renderLinearComments(identifier, title, url string, comments []linearCommen
 		b.WriteString("(no comments)\n")
 		return b.String()
 	}
-	for _, c := range comments {
+	// RFC 3339 timestamps sort correctly as strings, and SliceStable keeps
+	// Linear's own relative order for any two that compare equal.
+	ordered := append([]linearComment(nil), comments...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		return ordered[i].CreatedAt < ordered[j].CreatedAt
+	})
+	for _, c := range ordered {
 		author := "(unknown)"
 		if c.User != nil && strings.TrimSpace(c.User.DisplayName) != "" {
 			author = c.User.DisplayName
@@ -599,9 +661,19 @@ func handleLinearProxyIssueUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		input["stateId"] = stateID
 	}
+	// Mutate by the UUID the confirming read returned, not by the identifier.
+	// Linear documents commentCreate and attachmentLinkURL as accepting an
+	// identifier; issueUpdate carries no such promise, and the read that has
+	// already happened makes relying on one unnecessary.
+	target := strings.TrimSpace(issue.Issue.ID)
+	if target == "" {
+		writeProxyFault(w, faultf(http.StatusBadGateway, "linear_failed",
+			"the Linear response carried no issue id; refusing to guess one for a write"))
+		return
+	}
 	var data linearIssueUpdateData
 	if fault := s.exec(r.Context(), linearMutationIssueUpdate, map[string]any{
-		"id": id, "input": input,
+		"id": target, "input": input,
 	}, &data); fault != nil {
 		writeProxyFault(w, fault)
 		return
@@ -609,6 +681,14 @@ func handleLinearProxyIssueUpdate(w http.ResponseWriter, r *http.Request) {
 	if !data.IssueUpdate.Success || data.IssueUpdate.Issue == nil {
 		writeProxyFault(w, faultf(http.StatusBadGateway, "linear_failed",
 			"Linear reported the issue was not updated"))
+		return
+	}
+	// Check the mutation's own answer too, as `issue create` does. The
+	// pre-write read already established the team, so this is belt and
+	// braces — but an asymmetry here is the kind that survives a refactor of
+	// the read and quietly stops being covered.
+	if fault := s.enforceIssueTeam(data.IssueUpdate.Issue); fault != nil {
+		writeProxyFault(w, fault)
 		return
 	}
 	s.respond(w, r, "issue.update", data.IssueUpdate.Issue, "issue="+id)

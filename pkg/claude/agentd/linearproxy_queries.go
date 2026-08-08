@@ -73,17 +73,25 @@ fragment SearchResultFields on IssueSearchResult {` + linearIssueSelection + `}`
 // team_not_allowed refusal.
 const linearQueryViewer = `
 query Whoami($first: Int!) {
-  viewer { name displayName email }
+  viewer { name displayName }
   teams(first: $first) { nodes { key name } }
 }`
 
 // linearQueryIssue backs `issue view`. The description is included here and
 // nowhere else: it is the body of the ticket, which is the point of viewing
 // one, but it would dominate a list response.
+//
+// It also selects the issue's UUID, which is what `issue update` mutates by.
+// Linear documents CommentCreateInput.issueId and attachmentLinkURL.issueId as
+// accepting an identifier ("LIN-123") but says no such thing about
+// issueUpdate.id — so rather than rely on an undocumented behaviour, the
+// confirming read every write verb already performs hands over the UUID and
+// the mutation uses that.
 const linearQueryIssue = linearIssueFields + `
 query IssueView($id: String!) {
   issue(id: $id) {
     ...IssueFields
+    id
     description
     estimate
     dueDate
@@ -144,9 +152,14 @@ query IssueComments($id: String!, $first: Int!) {
 // are UUIDs, while an agent naturally says "TCL" and "In Review", so this is
 // the translation step — and it is also a second, independent confirmation
 // that the team exists and is visible to the operator's key.
+//
+// eqIgnoreCase, matching linearTeamClause. `eq` would make `issue create
+// --team foo` fail with "team does not exist" on a workspace whose key is not
+// upper-case, while `issue ls --team foo` succeeded — two paths disagreeing
+// about the same allow-listed team.
 const linearQueryTeamMeta = `
 query TeamMeta($key: String!) {
-  teams(filter: { key: { eq: $key } }, first: 1) {
+  teams(filter: { key: { eqIgnoreCase: $key } }, first: 1) {
     nodes {
       id
       key
@@ -253,6 +266,11 @@ type linearProjectRef struct {
 // linearIssue is the shared issue shape. Every field is optional on the wire
 // except identifier and team, which every selection asks for.
 type linearIssue struct {
+	// ID is Linear's UUID. Selected only by linearQueryIssue — the confirming
+	// read every write verb performs — because issueUpdate is not documented
+	// to accept an identifier the way commentCreate and attachmentLinkURL are.
+	// List and search rows have no use for it and do not ask for it.
+	ID            string            `json:"id,omitempty"`
 	Identifier    string            `json:"identifier"`
 	Title         string            `json:"title,omitempty"`
 	URL           string            `json:"url,omitempty"`

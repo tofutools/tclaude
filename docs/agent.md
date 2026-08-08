@@ -1854,27 +1854,31 @@ the policy per member: online members still receive a tick when other members
 are offline. `cron logs` records `skipped_offline` when all eligible recipients
 were offline and `partial_offline` for a mixed group delivery.
 
-### Git and GitHub — see `tclaude proxy`
+### Git, GitHub and Linear — see `tclaude proxy`
 
-Git-remote and GitHub operations performed by the **daemon**, with the daemon's
-own SSH key and GitHub token, on behalf of an agent sandboxed away from them,
-live under a sibling top-level command:
+Git-remote, GitHub and Linear operations performed by the **daemon**, with the
+daemon's own SSH key, GitHub token and Linear API key, on behalf of an agent
+sandboxed away from them, live under a sibling top-level command:
 
 ```bash
-tclaude proxy git remotes      # also: ls-remote, fetch, pull, push
-tclaude proxy github pr ls     # also: create, view, checks, comment, ready
-tclaude proxy github issue ls  # also: view, comment
+tclaude proxy git remotes          # also: ls-remote, fetch, pull, push
+tclaude proxy github pr ls         # also: create, view, checks, comment, ready
+tclaude proxy github issue ls      # also: view, comment
+tclaude proxy linear whoami        # also: issue view/ls/search/comments
+tclaude proxy linear issue comment # also: create, update, link
 ```
 
 They are not `tclaude agent` subcommands because they are not coordination:
 `agent` is about who else exists and how to reach them, `proxy` is about
 performing an operation with a credential the agent deliberately does not hold.
-The permission slugs (`git.read`, `git.push`, `github.read`, `github.write`) are
-still ordinary agent permissions, granted and audited like any other.
+The permission slugs (`git.read`, `git.push`, `github.read`, `github.write`,
+`linear.read`, `linear.write`) are still ordinary agent permissions, granted and
+audited like any other.
 
 See **[Git & GitHub proxy](git-proxy.md)** for the whole picture: the allow-list
 grammar, the slugs, the full hardening table, and why `pull` is split across the
-boundary.
+boundary. See **[Linear proxy](linear-proxy.md)** for the Linear half, whose
+scope gate is a team allow-list rather than a repository.
 
 ### permissions / sudo
 
@@ -2326,6 +2330,7 @@ gate group, messaging, template, and permission administration.
 | `human.*`     | `human.notify`, `human.clipboard` |
 | `git.*`       | `git.read`, `git.push` |
 | `github.*`    | `github.read`, `github.write` |
+| `linear.*`    | `linear.read`, `linear.write` |
 
 Run `tclaude agent permissions slugs` for the live registry with
 descriptions — it is the source of truth; this table can drift.
@@ -2442,6 +2447,9 @@ for Claude Code, plus both `~/.agents/skills/` and `$CODEX_HOME/skills`
   their review comments and CI failure logs through `tclaude proxy git` /
   `tclaude proxy github` when the agent's own sandbox holds no credentials.
   See [Git & GitHub proxy](git-proxy.md).
+- **`proxy-linear`** — read and update the Linear issue an agent is working
+  on through `tclaude proxy linear` when the agent holds no Linear API key.
+  See [Linear proxy](linear-proxy.md).
 
 Re-run `tclaude setup --install-agent-skills` after `go install
 …@latest` to refresh the on-disk copies with whatever the new binary
