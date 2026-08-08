@@ -3,6 +3,12 @@ package agentd
 import (
 	"context"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -58,14 +64,14 @@ func awaitChannelFailed(t *testing.T, convID string) bool {
 // would leave the dashboard's third state resting on nothing.
 func TestCopilotAPIBootstrapFailureIsObservedAgainstTheLaunchThatFailed(t *testing.T) {
 	fixture := newCopilotAPIDriveFixture(t)
-	copilotAPISessions.Drop(fixture.convID)
+	copilotAPISessions.dropHandleForTest(fixture.convID)
 
 	require.False(t, copilotAPISessions.ChannelFailed(fixture.convID),
 		"nothing has been observed yet, and 'nothing observed' must not read as 'failed' — "+
 			"that is the whole bootstrap window and every agent awaiting a reconcile")
 
 	called := failingBootstrap(t)
-	generation := copilotAPISessions.NoteLaunch(fixture.convID)
+	generation := copilotAPISessions.NoteLaunch(fixture.convID, true)
 	runCopilotAPIBootstrap(fixture.convID, true, copilotAPILaunchFresh, "", generation)
 	<-called
 
@@ -90,10 +96,10 @@ func TestCopilotAPIBootstrapFailureIsObservedAgainstTheLaunchThatFailed(t *testi
 func TestAFailedBootstrapLeavesTheAgentsRecordedDriveAlone(t *testing.T) {
 	fixture := newCopilotAPIDriveFixture(t)
 	haveCopilotAPILaunchIntent(t, fixture.agentID)
-	copilotAPISessions.Drop(fixture.convID)
+	copilotAPISessions.dropHandleForTest(fixture.convID)
 
 	called := failingBootstrap(t)
-	generation := copilotAPISessions.NoteLaunch(fixture.convID)
+	generation := copilotAPISessions.NoteLaunch(fixture.convID, true)
 	runCopilotAPIBootstrap(fixture.convID, true, copilotAPILaunchFresh, "", generation)
 	<-called
 	require.True(t, awaitChannelFailed(t, fixture.convID), "precondition: the failure was observed")
@@ -126,12 +132,12 @@ func TestAFailedBootstrapLeavesTheAgentsRecordedDriveAlone(t *testing.T) {
 // against a registry that records nothing at all.
 func TestAFailedLaunchCannotSpeakForTheRelaunchThatReplacedIt(t *testing.T) {
 	fixture := newCopilotAPIDriveFixture(t)
-	copilotAPISessions.Drop(fixture.convID)
+	copilotAPISessions.dropHandleForTest(fixture.convID)
 
-	failed := copilotAPISessions.NoteLaunch(fixture.convID)
+	failed := copilotAPISessions.NoteLaunch(fixture.convID, true)
 	// The operator sees a deaf agent and relaunches it. The first launch's
 	// bootstrap goroutine is still alive, still inside its budget.
-	current := copilotAPISessions.NoteLaunch(fixture.convID)
+	current := copilotAPISessions.NoteLaunch(fixture.convID, true)
 	require.NotEqual(t, failed, current, "a relaunch is a new launch generation")
 
 	assert.False(t, copilotAPISessions.NoteChannelFailed(fixture.convID, failed),
@@ -160,13 +166,13 @@ func TestAFailedLaunchCannotSpeakForTheRelaunchThatReplacedIt(t *testing.T) {
 // the compare was redundant and delete the wrong one.
 func TestARelaunchClearsAnEarlierLaunchsObservation(t *testing.T) {
 	fixture := newCopilotAPIDriveFixture(t)
-	copilotAPISessions.Drop(fixture.convID)
+	copilotAPISessions.dropHandleForTest(fixture.convID)
 
-	generation := copilotAPISessions.NoteLaunch(fixture.convID)
+	generation := copilotAPISessions.NoteLaunch(fixture.convID, true)
 	require.True(t, copilotAPISessions.NoteChannelFailed(fixture.convID, generation))
 	require.True(t, copilotAPISessions.ChannelFailed(fixture.convID), "precondition: deaf")
 
-	copilotAPISessions.NoteLaunch(fixture.convID)
+	copilotAPISessions.NoteLaunch(fixture.convID, true)
 
 	assert.False(t, copilotAPISessions.ChannelFailed(fixture.convID),
 		"the relaunch has its own bootstrap and will answer the question again; leaving "+
@@ -182,46 +188,17 @@ func TestARelaunchClearsAnEarlierLaunchsObservation(t *testing.T) {
 func TestALiveHandleOutranksAFailureObservation(t *testing.T) {
 	fixture := newCopilotAPIDriveFixture(t)
 	// The fixture adopts a live handle; take the observation anyway.
-	generation := copilotAPISessions.NoteLaunch(fixture.convID)
+	generation := copilotAPISessions.NoteLaunch(fixture.convID, true)
 	require.True(t, copilotAPISessions.NoteChannelFailed(fixture.convID, generation))
 
 	assert.False(t, copilotAPISessions.ChannelFailed(fixture.convID),
 		"a conversation with a live handle is not deaf, whatever was observed earlier")
 
-	copilotAPISessions.Drop(fixture.convID)
+	copilotAPISessions.dropHandleForTest(fixture.convID)
 	assert.True(t, copilotAPISessions.ChannelFailed(fixture.convID),
 		"POSITIVE CONTROL: and the observation is still there once the handle is gone, "+
 			"so the assertion above is about the handle outranking it rather than about "+
 			"the observation having been lost")
-}
-
-// The reconcile's two non-adopting exits mean opposite things, and only one of
-// them is entitled to record.
-//
-// A candidate whose bounded attempt RAN and failed is known to have no channel
-// coming. A candidate that never got a slot was never looked at — reporting it
-// as deaf would be reporting an agent's state on the evidence that the sweep ran
-// out of time examining it. The natural phrasing at the call site, "this
-// candidate did not end up connected", is true of both, which is why the outcome
-// is a named value rather than a boolean.
-func TestOnlyAnExaminedReconcileCandidateIsObservedAsDeaf(t *testing.T) {
-	fixture := newCopilotAPIDriveFixture(t)
-	copilotAPISessions.Drop(fixture.convID)
-	generation := copilotAPISessions.NoteLaunch(fixture.convID)
-
-	reconcileOutcome(fixture.convID, generation, copilotAPIReconcileUnexamined)
-	assert.False(t, copilotAPISessions.ChannelFailed(fixture.convID),
-		"un-examined is an absence of evidence, not evidence of absence")
-
-	reconcileOutcome(fixture.convID, generation, copilotAPIReconcileReconnected)
-	assert.False(t, copilotAPISessions.ChannelFailed(fixture.convID),
-		"and a conversation that got its channel back has nothing to observe")
-
-	reconcileOutcome(fixture.convID, generation, copilotAPIReconcileChannelUnavailable)
-	assert.True(t, copilotAPISessions.ChannelFailed(fixture.convID),
-		"POSITIVE CONTROL: the examined-and-failed outcome does record, so the two "+
-			"assertions above are about which outcome is entitled rather than about a "+
-			"recorder that is wired to nothing")
 }
 
 // The deliverable: the fact reaches the surface an operator actually looks at.
@@ -260,7 +237,7 @@ func TestTheDashboardDistinguishesAStartingAgentFromADeafOne(t *testing.T) {
 		"an agent whose bootstrap is still running is not deaf, and reporting it as "+
 			"deaf would fire on every healthy API spawn for the length of its bootstrap")
 
-	generation := copilotAPISessions.NoteLaunch(sess.ConvID)
+	generation := copilotAPISessions.NoteLaunch(sess.ConvID, true)
 	require.True(t, copilotAPISessions.NoteChannelFailed(sess.ConvID, generation))
 
 	deaf := snapshot()
@@ -271,23 +248,224 @@ func TestTheDashboardDistinguishesAStartingAgentFromADeafOne(t *testing.T) {
 		"and it still reports the API drive, because the agent's choice has not changed")
 }
 
-// The reconcile latches its generation BEFORE it queues for a slot, so a launch
-// arriving mid-sweep takes the conversation off it — the same rule AdoptIfAbsent
-// already applies to the handle, applied to the observation.
-func TestALaunchArrivingMidSweepTakesTheConversationOffTheReconcile(t *testing.T) {
-	fixture := newCopilotAPIDriveFixture(t)
-	copilotAPISessions.Drop(fixture.convID)
 
-	// Post-restart shape: the registry knows of no launch for this conversation,
-	// so the sweep latches zero. That is a usable identity rather than a missing
-	// one, and this is the test that says so.
-	latched := copilotAPISessions.CurrentLaunch(fixture.convID)
-	require.Equal(t, uint64(0), latched, "an agentd restart empties the registry")
+// ---------------------------------------------------------------------------
+// The PATHS, not the helpers
+// ---------------------------------------------------------------------------
+//
+// A cold review deleted the sweep's recording call and rewrote the bootstrap's
+// generation to be read at failure time — reintroducing the exact race this
+// change is named for — and the WHOLE agentd package stayed green. Every test
+// above drives the registry or the recorder directly, so each asserts about a
+// helper and none about a path.
+//
+// That is this series' own vacuously-green shape, and the fix is not more
+// assertions on the helpers. It is to run the thing.
 
-	copilotAPISessions.NoteLaunch(fixture.convID)
-	reconcileOutcome(fixture.convID, latched, copilotAPIReconcileChannelUnavailable)
+// The sweep records. Mutation-proven: deleting recordReconcileAttempt from the
+// sweep's error exit turns this red.
+func TestTheStartupSweepRecordsAFailedReconnect(t *testing.T) {
+	fixture := newCopilotAPIReconnectFixture(t)
+	t.Cleanup(copilotAPISessions.ForgetLaunchesForTest)
+
+	original := reconnectCopilotAPISessionFn
+	reconnectCopilotAPISessionFn = func(context.Context, string) (*copilotAPISession, error) {
+		return nil, errors.New("the server has no drivable session under that id")
+	}
+	t.Cleanup(func() { reconnectCopilotAPISessionFn = original })
+
+	require.False(t, copilotAPISessions.ChannelFailed(fixture.convID),
+		"precondition: nothing observed before the sweep")
+
+	fixture.reconcile(t)
+
+	assert.True(t, copilotAPISessions.ChannelFailed(fixture.convID),
+		"a candidate whose bounded attempt ran and failed is deaf for this daemon's "+
+			"life, and the sweep is the only thing that will ever know it — nothing "+
+			"re-runs it, and the launch that would have is long gone")
+}
+
+// The sweep stands down for a conversation whose own bootstrap is in flight.
+//
+// This is the state at daemon startup, not a corner: a conversation is a
+// candidate precisely because it has no handle, which is what a healthy launch
+// looks like for the whole length of its bootstrap. Recording here shows the
+// operator a red "relaunch it" chip for an agent whose channel is seconds away,
+// and following that advice kills the working bootstrap.
+func TestTheStartupSweepDoesNotLibelALaunchThatIsStillBootstrapping(t *testing.T) {
+	fixture := newCopilotAPIReconnectFixture(t)
+	t.Cleanup(copilotAPISessions.ForgetLaunchesForTest)
+
+	original := reconnectCopilotAPISessionFn
+	reconnectCopilotAPISessionFn = func(context.Context, string) (*copilotAPISession, error) {
+		// What a reconnect against a still-starting pane really answers: the
+		// launch has not created its session yet, so there is nothing drivable.
+		return nil, errors.New("the server has no drivable session under that id")
+	}
+	t.Cleanup(func() { reconnectCopilotAPISessionFn = original })
+
+	// The launch arrived BEFORE the sweep latched, which is why a generation
+	// comparison cannot catch this: the sweep and the launch hold the same one.
+	copilotAPISessions.NoteLaunch(fixture.convID, true)
+
+	fixture.reconcile(t)
 
 	assert.False(t, copilotAPISessions.ChannelFailed(fixture.convID),
-		"the sweep's conclusion is about the state it found at the top; a launch that "+
-			"has since started owns the conversation and its own bootstrap answers")
+		"the launch owns this conversation and its own bootstrap will answer, exactly, "+
+			"on its own failure path; the sweep's fast failure against a half-started "+
+			"pane means nothing")
+
+	// POSITIVE CONTROL: the same sweep, the same stubbed failure, once the
+	// bootstrap is no longer in flight. Without this the assertion above is
+	// satisfied by a sweep that records nothing ever.
+	copilotAPISessions.BootstrapFinished(fixture.convID,
+		copilotAPISessions.CurrentLaunch(fixture.convID))
+	fixture.reconcile(t)
+	assert.True(t, copilotAPISessions.ChannelFailed(fixture.convID),
+		"POSITIVE CONTROL: with no bootstrap in flight the same sweep does record")
+}
+
+// A sweep that was cut short did not examine anything, and must not say it did.
+//
+// Two shapes reach the error arm with a dead context: the sweep's deadline
+// firing mid-attempt, and Go's select picking the slot arm when the slot and a
+// cancelled context are both ready — a coin flip, not a rare interleaving. Both
+// were reproduced by review, and before the ctx check they recorded identical
+// agents as deaf or un-examined depending on queue position and a random pick.
+//
+// Asserted over repetitions on purpose: a single run passes ~50% of the time
+// against the defect, which is worse than no test.
+func TestACutShortSweepReportsNothingRatherThanGuessing(t *testing.T) {
+	fixture := newCopilotAPIReconnectFixture(t)
+	t.Cleanup(copilotAPISessions.ForgetLaunchesForTest)
+
+	var attempts atomic.Int64
+	original := reconnectCopilotAPISessionFn
+	reconnectCopilotAPISessionFn = func(ctx context.Context, _ string) (*copilotAPISession, error) {
+		attempts.Add(1)
+		return nil, ctx.Err()
+	}
+	t.Cleanup(func() { reconnectCopilotAPISessionFn = original })
+
+	for range 40 {
+		copilotAPISessions.ForgetLaunchesForTest()
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		reconcileCopilotAPISessions(ctx)
+		require.False(t, copilotAPISessions.ChannelFailed(fixture.convID),
+			"a sweep that ran out of time did not examine this agent; reporting it as "+
+				"deaf reports an agent's state on the evidence that we stopped looking")
+	}
+	// The runs where the select DID take the slot are the ones that matter — a
+	// loop that never entered the attempt would pass against the defect too.
+	assert.Positive(t, attempts.Load(),
+		"POSITIVE CONTROL: at least one cancelled run must have reached the attempt, "+
+			"or this loop proves nothing about the arm it is written for")
+}
+
+// The generation must TRAVEL with the launch, not be re-read when the bootstrap
+// fails.
+//
+// Mutation-proven: replacing runCopilotAPIBootstrap's `generation` parameter
+// with a CurrentLaunch(convID) read at failure time — the tidier-looking
+// refactor the doc comments warn against — turns this red. Nothing else in the
+// package notices, because every other test holds the generation itself.
+func TestALateFailingBootstrapCannotStampTheRelaunchThatReplacedIt(t *testing.T) {
+	fixture := newCopilotAPIDriveFixture(t)
+	copilotAPISessions.dropHandleForTest(fixture.convID)
+
+	release := make(chan struct{})
+	entered := make(chan struct{})
+	previous := bootstrapCopilotAPISessionFn
+	bootstrapCopilotAPISessionFn = func(
+		context.Context, string, copilotAPILaunchKind, string,
+	) (*copilotAPISession, error) {
+		close(entered)
+		<-release
+		return nil, errors.New("the pane never bound its port")
+	}
+	t.Cleanup(func() { bootstrapCopilotAPISessionFn = previous })
+
+	doomed := copilotAPISessions.NoteLaunch(fixture.convID, true)
+	runCopilotAPIBootstrap(fixture.convID, true, copilotAPILaunchFresh, "", doomed)
+	<-entered
+
+	// The operator sees a deaf agent and relaunches it, while the first launch's
+	// bootstrap is still inside its budget. This is the ordinary recovery action,
+	// which is what makes the window worth defending.
+	current := copilotAPISessions.NoteLaunch(fixture.convID, true)
+	require.NotEqual(t, doomed, current)
+
+	close(release)
+
+	assert.False(t, awaitChannelFailed(t, fixture.convID),
+		"the dying launch must not stamp its healthy successor; the operator's own "+
+			"recovery would appear to work and then the agent would read as deaf again")
+}
+
+// The blind spot a cold review demonstrated: a NEW recording site at an exit
+// where no attempt ran.
+//
+// The first version of this seam used a named outcome, on the argument that
+// "the candidate did not end up connected" was then not sayable at the call
+// site. A reviewer beat it in minutes with a change nobody would blink at — a
+// liveness re-check after acquiring a slot, reporting the existing
+// "channel unavailable" name — and every check stayed green. The guard bounded
+// how many NAMES existed, not which exits were entitled to use them.
+//
+// Taking the attempt's own error as a parameter makes that misuse visible
+// rather than impossible: a caller with no attempt has no error to pass, and
+// fabricating one is something a reader sees. This guard is the other half, and
+// it is deliberately the containment one — the demonstrated failure was an
+// extra call site, so containment is the property that actually broke rather
+// than the one that was easy to express.
+//
+// # What this does NOT cover, stated so it is not mistaken for a certificate
+//
+// It cannot tell whether the single permitted call site is still in the right
+// place. Moving it above the attempt, or into the slot-starvation arm, keeps
+// the count at one and this guard green. The ctx and bootstrap-in-flight checks
+// inside recordReconcileAttempt are what defend that, and they have their own
+// tests.
+func TestOnlyTheSweepsAttemptExitMayRecordAnObservation(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	require.NoError(t, err)
+
+	callers := map[string]int{}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		source, err := os.ReadFile(name)
+		require.NoError(t, err)
+		fset := token.NewFileSet()
+		parsed, err := parser.ParseFile(fset, name, source, 0)
+		require.NoError(t, err)
+
+		ast.Inspect(parsed, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			if ident, ok := call.Fun.(*ast.Ident); ok &&
+				ident.Name == "recordReconcileAttempt" {
+				callers[name]++
+			}
+			return true
+		})
+	}
+
+	// The positive control. Without it a rename of the function leaves every
+	// assertion below trivially satisfied, which is how a guard becomes a
+	// certificate.
+	require.Equal(t, 1, callers["copilot_api_reconnect.go"],
+		"recordReconcileAttempt must be called exactly once, from the sweep's attempt "+
+			"exit in copilot_api_reconnect.go. If it moved, this guard is now watching "+
+			"nothing")
+	assert.Len(t, callers, 1,
+		"a second call site means a new place that can declare an agent deaf. If the "+
+			"new site genuinely ran a bounded attempt, widen this guard deliberately "+
+			"and say why; if it did not, it is reporting an agent's state on the "+
+			"evidence that we stopped looking. Callers found: %v", callers)
 }

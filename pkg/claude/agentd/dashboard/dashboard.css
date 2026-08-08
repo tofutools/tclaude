@@ -3325,8 +3325,8 @@ tr:hover .row-actions { opacity: 1; }
    the one that matters — dashed means "wait", this means "act". Still the same
    chip: a deaf agent is a state of the drive, not a second thing about the row.
 
-   Only ever rendered where the daemon actually watched an attempt fail, so its
-   absence is not an all-clear. See CopilotAPIChannelFailed. */
+   Not exhaustive; see CopilotAPIChannelFailed for what its absence does and
+   does not mean. */
 .agent-harness .harness-drive-failed {
   color: #f85149;
   border-bottom: 1px solid currentColor;

@@ -421,9 +421,27 @@ type copilotAPISessionRegistry struct {
 	launches map[string]uint64
 	// failed holds, per conversation, the launch generation whose channel was
 	// observed not to be coming up. Stale entries are inert rather than wrong —
-	// a reader compares against launches — but they are also cleared on the next
-	// launch so the map does not grow a row per dead launch.
+	// a reader compares against launches.
 	failed map[string]uint64
+	// bootstrapping holds the generation of a launch whose bootstrap goroutine is
+	// still running, and it is what stops the startup sweep libelling a healthy
+	// agent.
+	//
+	// The sweep's candidates are conversations with no handle, which is exactly
+	// what a conversation looks like WHILE its own bootstrap is in flight — and
+	// at daemon startup that overlap is the common case rather than a corner.
+	// Without this the sweep's own attempt (which fails fast, because the new
+	// pane has not bound its port or has not created its session yet) is recorded
+	// against the live launch's generation, and the operator is shown a red
+	// "relaunch it" chip for an agent whose channel is seconds from coming up.
+	// Following that advice would kill the working bootstrap.
+	//
+	// So the launch's own bootstrap outranks the sweep, and the sweep stands
+	// down — the same precedence [copilotAPISessionRegistry.AdoptIfAbsent]
+	// already applies to handles, applied to the observation. The launch's
+	// bootstrap will answer this question itself, on its own failure path, where
+	// the answer is exact.
+	bootstrapping map[string]uint64
 }
 
 // copilotAPISessions is the process-wide registry.
@@ -438,20 +456,28 @@ var copilotAPISessions = &copilotAPISessionRegistry{}
 // deaf, so the window in which a dying goroutine could libel its own successor
 // is exactly the window in which someone is most likely to be relaunching.
 //
-// Recording a launch also drops any earlier failure observation, and it is worth
-// being exact about what that delete is and is not doing, because the obvious
-// reading is wrong. It is HYGIENE, not correctness: a superseded observation is
-// already unreadable, because [copilotAPISessionRegistry.ChannelFailed] compares
-// the stored generation against the current one and an old launch's entry can
-// never match. Deleting it keeps the map from holding statements about launches
-// nobody can ask after.
+// Recording a launch also drops any earlier failure observation. That delete is
+// HYGIENE, not correctness: a superseded observation is already unreadable,
+// because [copilotAPISessionRegistry.ChannelFailed] compares the stored
+// generation against the current one and an old launch's entry can never match.
+// The generation compare is the mechanism; a reader who took this line for it
+// would think the compare was removable.
 //
-// Stated this way because a mutation pass found it: removing the delete left the
-// whole suite green, including the test named for a relaunch clearing the
-// observation. The generation compare is what enforces that property, and a
-// reader who takes this line for the mechanism would think the compare was
-// removable.
-func (r *copilotAPISessionRegistry) NoteLaunch(convID string) uint64 {
+// # bootstrapWillRun
+//
+// True only when this launch is actually going to start a bootstrap — an
+// API-driven Copilot launch. It marks the conversation as having a launch whose
+// own bootstrap will answer the channel question, which is what makes the
+// startup sweep stand down rather than reporting a still-booting agent as deaf.
+// Passing it in rather than deriving it here keeps the fact with the caller that
+// knows it: completeCopilotAPILaunch holds the launch's own CopilotAPI flag, and
+// anything computed here would be a proxy for it.
+//
+// A send-keys launch answers false and is counted anyway, because the
+// GENERATION is about "a new launch owns this conversation now", which is just
+// as true of a relaunch onto send-keys and is what supersedes an earlier
+// launch's observation.
+func (r *copilotAPISessionRegistry) NoteLaunch(convID string, bootstrapWillRun bool) uint64 {
 	if convID == "" {
 		return 0
 	}
@@ -462,6 +488,14 @@ func (r *copilotAPISessionRegistry) NoteLaunch(convID string) uint64 {
 	}
 	r.launches[convID]++
 	delete(r.failed, convID)
+	if bootstrapWillRun {
+		if r.bootstrapping == nil {
+			r.bootstrapping = map[string]uint64{}
+		}
+		r.bootstrapping[convID] = r.launches[convID]
+	} else {
+		delete(r.bootstrapping, convID)
+	}
 	return r.launches[convID]
 }
 
@@ -475,6 +509,18 @@ func (r *copilotAPISessionRegistry) NoteLaunch(convID string) uint64 {
 // dropped. That is [copilotAPISessionRegistry.AdoptIfAbsent]'s rule — the launch
 // is the newer truth, the older thing stands down — applied to the observation
 // instead of to the handle.
+//
+// # What this does NOT protect against, and where that is handled
+//
+// Only launches arriving AFTER the latch. A launch that arrived BEFORE it and
+// has not adopted yet has the same generation the sweep is holding, so the
+// comparison passes and the sweep would speak for a launch that is still
+// perfectly well bootstrapping — which at daemon startup is the common shape,
+// because a conversation is a candidate precisely while it has no handle. That
+// case is not a generation problem and cannot be fixed by comparing harder; it
+// is handled by [copilotAPISessionRegistry.BootstrapInFlight], and this comment
+// says so because the obvious reading of the paragraph above is that the
+// generation covers both.
 func (r *copilotAPISessionRegistry) CurrentLaunch(convID string) uint64 {
 	if convID == "" {
 		return 0
@@ -482,6 +528,46 @@ func (r *copilotAPISessionRegistry) CurrentLaunch(convID string) uint64 {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.launches[convID]
+}
+
+// BootstrapInFlight reports whether a launch's own bootstrap goroutine is still
+// running for this conversation.
+//
+// It exists for exactly one caller — the startup sweep's recorder — and for one
+// reason: the sweep and a live launch disagree about a conversation with no
+// handle, and the launch is right. Its bootstrap is going to answer the channel
+// question on its own failure path, where the answer is exact; the sweep's
+// attempt against a pane that has not finished starting fails fast and means
+// nothing.
+//
+// Nothing may ROUTE on this, and it is not a health signal. False covers both
+// "the bootstrap finished" and "this process never saw a launch for this
+// conversation", which are entirely different situations.
+func (r *copilotAPISessionRegistry) BootstrapInFlight(convID string) bool {
+	if convID == "" {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, running := r.bootstrapping[convID]
+	return running
+}
+
+// BootstrapFinished clears the in-flight mark for a launch that has stopped
+// bootstrapping, whether it succeeded or failed.
+//
+// Generation-checked for the same reason the observation is: a slow bootstrap
+// finishing after a relaunch has started must not clear the SUCCESSOR's mark and
+// hand the sweep permission to speak for it.
+func (r *copilotAPISessionRegistry) BootstrapFinished(convID string, generation uint64) {
+	if convID == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.bootstrapping[convID] == generation {
+		delete(r.bootstrapping, convID)
+	}
 }
 
 // NoteChannelFailed records that the launch identified by generation will not be
@@ -520,6 +606,14 @@ func (r *copilotAPISessionRegistry) NoteChannelFailed(convID string, generation 
 // matters for the case an error return does not distinguish: a bootstrap that
 // died at setForeground or at the launch prompt had already created the session,
 // so a later daemon's reconcile can legitimately adopt it.
+//
+// Unlike its sibling NoteChannelFailed, this is deliberately NOT one critical
+// section — Handle takes and releases the lock, then this re-takes it. That is
+// fine and the difference is worth naming, because the sibling's doc makes
+// single-critical-section the load-bearing claim and a reader may carry it over.
+// A write needs atomicity against a concurrent relaunch; a read that straddles
+// one merely answers about an instant slightly before or after it, and both
+// answers are true statements about a moment. Nothing acts on this — it renders.
 func (r *copilotAPISessionRegistry) ChannelFailed(convID string) bool {
 	if convID == "" {
 		return false
@@ -533,14 +627,33 @@ func (r *copilotAPISessionRegistry) ChannelFailed(convID string) bool {
 	return observed && generation == r.launches[convID]
 }
 
-// ForgetLaunchesForTest clears the launch and failure bookkeeping. Tests share
-// a process-wide registry, so one test's launch generation would otherwise be
-// the next one's starting point.
+// dropHandleForTest forgets only the CONNECTION, leaving the launch bookkeeping
+// in place.
+//
+// That is the state an agentd restart or a dropped socket produces, and [Drop]
+// deliberately does not model it: Drop retires the whole conversation, which is
+// a different event with a different meaning for the maps. Tests that want "the
+// handle went away and the launch did not" need this one; a test using Drop for
+// it would be asserting about a conversation the registry has forgotten.
+func (r *copilotAPISessionRegistry) dropHandleForTest(convID string) {
+	r.mu.Lock()
+	handle := r.sessions[convID]
+	delete(r.sessions, convID)
+	r.mu.Unlock()
+	if handle != nil && handle.Client != nil {
+		_ = handle.Client.Close()
+	}
+}
+
+// ForgetLaunchesForTest clears the launch bookkeeping. Tests share a
+// process-wide registry, so one test's launch generation would otherwise be the
+// next one's starting point.
 func (r *copilotAPISessionRegistry) ForgetLaunchesForTest() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	clear(r.launches)
 	clear(r.failed)
+	clear(r.bootstrapping)
 }
 
 // Adopt records a handle, closing and replacing any earlier one for the same
@@ -652,7 +765,20 @@ func (r *copilotAPISessionRegistry) Connected(convID string) bool {
 	return r.Handle(convID) != nil
 }
 
-// Drop closes and forgets a conversation's handle.
+// Drop closes and forgets a conversation's handle, and forgets its launch
+// bookkeeping with it.
+//
+// The launch maps are dropped here rather than left to be superseded by a future
+// launch, because a retired conversation has no future launch — that is what
+// retiring it means. releaseCopilotAPIPortForExit calls this exactly so the
+// registry does not accumulate a row per dead conversation for the lifetime of
+// the daemon, and bookkeeping that survived the drop would reintroduce the
+// accumulation that call site exists to prevent.
+//
+// Safe against a bootstrap still running for the conversation: its
+// NoteChannelFailed and BootstrapFinished are both generation-checked, and after
+// a drop the generation is gone, so both become no-ops rather than resurrecting
+// an entry for a conversation nobody is asking after.
 func (r *copilotAPISessionRegistry) Drop(convID string) {
 	if convID == "" {
 		return
@@ -660,6 +786,9 @@ func (r *copilotAPISessionRegistry) Drop(convID string) {
 	r.mu.Lock()
 	handle := r.sessions[convID]
 	delete(r.sessions, convID)
+	delete(r.launches, convID)
+	delete(r.failed, convID)
+	delete(r.bootstrapping, convID)
 	r.mu.Unlock()
 	if handle != nil && handle.Client != nil {
 		_ = handle.Client.Close()
@@ -732,6 +861,13 @@ func runCopilotAPIBootstrap(
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), copilotAPIBootstrapTimeout())
 		defer cancel()
+		// Cleared however this goroutine leaves, and deferred rather than written
+		// at each exit so a future early return cannot leave the mark set. A stuck
+		// mark is not harmless: it is a standing instruction to the startup sweep
+		// to stay quiet about this conversation, so the agent would go deaf with
+		// nothing reporting it — the exact state this ticket exists to end.
+		defer copilotAPISessions.BootstrapFinished(convID, generation)
+
 		handle, err := bootstrapCopilotAPISessionFn(ctx, convID, kind, initialPrompt)
 		if err != nil {
 			// This is where the fact is known, and it is known here without any

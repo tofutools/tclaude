@@ -85,52 +85,58 @@ import (
 // the process table rather than about CPU.
 const copilotAPIReconcileConcurrency = 4
 
-// copilotAPIReconcileOutcome names how the sweep finished with one candidate.
+// recordReconcileAttempt records that a candidate's reconnect attempt found no
+// channel — but only when the attempt is entitled to say so.
 //
-// It exists so that "this candidate did not end up connected" is not something
-// the call site can say. That phrasing is the natural one, and it is wrong,
-// because it is true of two exits that mean opposite things: a candidate whose
-// bounded attempt RAN and failed is known to have no channel coming, while a
-// candidate that never got a slot was never looked at. Recording an observation
-// for the second reports an agent as deaf on the evidence that the sweep ran out
-// of time — a confident wrong diagnosis, on the surface an operator reaches for
-// when debugging, which is the pairing this series keeps producing.
+// # Why it takes the attempt's own error rather than an outcome name
 //
-// A comment asking the next author not to do that would be prose binding a call
-// site, which does not hold. Every exit therefore names itself and one function
-// decides what the name entitles.
-type copilotAPIReconcileOutcome int
-
-const (
-	// copilotAPIReconcileUnexamined: the candidate never got a slot. Nothing was
-	// attempted and nothing is known about it.
-	copilotAPIReconcileUnexamined copilotAPIReconcileOutcome = iota
-	// copilotAPIReconcileChannelUnavailable: the attempt ran and could not
-	// re-establish the channel. Bounded, over, and not retried in this daemon's
-	// life — the same structural property the bootstrap's failure path has.
-	copilotAPIReconcileChannelUnavailable
-	// copilotAPIReconcileReconnected: a handle was adopted, or a launch's
-	// bootstrap got there first. Either way the conversation has a channel and
-	// there is nothing to observe.
-	copilotAPIReconcileReconnected
-)
-
-// reconcileOutcome records what the sweep learned about one candidate, if
-// anything.
+// Because a name can be picked by a caller that has no attempt behind it, and
+// an error cannot. An earlier version took a named outcome on the theory that
+// "this candidate did not end up connected" was then unsayable; it was not — a
+// new exit reporting the existing "channel unavailable" name is a brand-new
+// recording site, and a guard over the set of names cannot see it. attemptErr
+// is what [reconnectCopilotAPISession] returned, so a caller that has not run
+// an attempt has nothing to pass. That is visibility rather than impossibility:
+// fabricating an error to reach this function is something a reader sees.
+// TestOnlyTheSweepsAttemptExitMayRecordAnObservation is the other half.
 //
-// The only outcome that yields an observation is
-// [copilotAPIReconcileChannelUnavailable]. Keeping that decision here rather
-// than at the exits means adding a new exit does not silently add a new
-// recording site — a new outcome has to be named and answered in this switch.
-func reconcileOutcome(convID string, generation uint64, outcome copilotAPIReconcileOutcome) {
-	switch outcome {
-	case copilotAPIReconcileChannelUnavailable:
-		copilotAPISessions.NoteChannelFailed(convID, generation)
-	case copilotAPIReconcileUnexamined, copilotAPIReconcileReconnected:
-		// Nothing. Un-examined is an absence of evidence rather than evidence of
-		// absence, and a reconnected conversation has a live handle, which
-		// outranks any observation anyway.
+// # The three things that disqualify an attempt
+//
+//   - It succeeded. Nothing to observe.
+//   - The sweep's context is done. Then the attempt did not run to its own
+//     bound, it was CUT SHORT — and the entitlement this whole seam rests on is
+//     "a bounded attempt ran and is over", which is exactly what an interrupted
+//     attempt is not. Two shapes reach here: the sweep's deadline firing
+//     mid-attempt, and Go's select choosing the slot arm when the slot and a
+//     cancelled context are ready together, which is a coin flip rather than a
+//     rare interleaving. Both were reproduced by review; before this check they
+//     recorded identical agents as deaf or un-examined depending on queue
+//     position and on a random pick.
+//   - A launch's own bootstrap is in flight. Then the sweep is racing the
+//     launch for a conversation the launch owns, and the launch is right: it
+//     will answer this question on its own failure path, where the answer is
+//     exact. A candidate is a candidate precisely because it has no handle,
+//     which is what a healthy launch looks like for its whole bootstrap — so at
+//     daemon startup this is the common overlap, not a corner. Without the
+//     check the sweep's fast failure against a pane that has not bound its port
+//     yet is recorded against the live launch's generation, and the operator is
+//     shown "channel failed, relaunch it" for an agent whose channel is seconds
+//     away. Following that advice would kill the working bootstrap.
+//
+// The generation is still carried and still compared, inside the registry — it
+// covers launches arriving AFTER the latch, which is a different hazard from the
+// one above and is not fixed by comparing harder.
+func recordReconcileAttempt(ctx context.Context, convID string, generation uint64, attemptErr error) {
+	if attemptErr == nil {
+		return
 	}
+	if ctx.Err() != nil {
+		return
+	}
+	if copilotAPISessions.BootstrapInFlight(convID) {
+		return
+	}
+	copilotAPISessions.NoteChannelFailed(convID, generation)
 }
 
 // reconnectCopilotAPISession re-establishes one conversation's channel.
@@ -312,12 +318,9 @@ func reconcileCopilotAPISessions(ctx context.Context) {
 				// from a conversation that was never a candidate.
 				//
 				// And note what this exit is NOT: it is UNEXAMINED, not known-deaf.
-				// Nothing was attempted, so there is no observation to record, and
-				// recording one here would report an agent as deaf on the evidence
-				// that we ran out of time looking at it. That is why the outcome is
-				// a named value below rather than "did not end up connected" — the
-				// phrasing that collapses these two is the natural one to write.
-				reconcileOutcome(convID, generation, copilotAPIReconcileUnexamined)
+				// Nothing was attempted, so there is nothing to record — and there
+				// is no attempt error here to record it WITH, which is the point of
+				// recordReconcileAttempt taking one.
 				slog.Warn("copilot API reconnect: gave up before this conversation got a turn; "+
 					"it stays held rather than being typed into, and a daemon restart is the "+
 					"next thing that would retry it",
@@ -334,10 +337,12 @@ func reconcileCopilotAPISessions(ctx context.Context) {
 				// exited while the daemon was down.
 				//
 				// This is the sweep's version of the bootstrap's failure path, and
-				// it carries the same structural property: a bounded attempt ran and
-				// is over, and nothing re-runs it in this daemon's life. That is
-				// what entitles it to record the observation.
-				reconcileOutcome(convID, generation, copilotAPIReconcileChannelUnavailable)
+				// it is the ONLY exit here that has run an attempt — which is why it
+				// is the only one that can call this at all. Whether the attempt was
+				// entitled to conclude anything is decided there, not here: it may
+				// have been cut short by the sweep's own deadline, or it may be
+				// racing a launch whose bootstrap owns this conversation.
+				recordReconcileAttempt(ctx, convID, generation, err)
 				slog.Warn("copilot API reconnect: could not re-establish the channel; the agent "+
 					"is still usable by typing into its pane, and its messages stay held rather "+
 					"than being typed in", "conv_id", convID, "error", err)
@@ -352,7 +357,6 @@ func reconcileCopilotAPISessions(ctx context.Context) {
 			// catching up on the older one, so the reconnect stands down.
 			if !copilotAPISessions.AdoptIfAbsent(handle) {
 				_ = handle.Client.Close()
-				reconcileOutcome(convID, generation, copilotAPIReconcileReconnected)
 				slog.Info("copilot API reconnect: a launch established this conversation's "+
 					"channel first; leaving it alone", "conv_id", convID)
 				return
@@ -363,7 +367,6 @@ func reconcileCopilotAPISessions(ctx context.Context) {
 			// else from this path — its first act on any connection is a full
 			// authoritative read, so there is no gap to reason about.
 			startCopilotAPIStateConsumer(handle)
-			reconcileOutcome(convID, generation, copilotAPIReconcileReconnected)
 			slog.Info("copilot API session re-established after an agentd restart",
 				"conv_id", convID, "session_id", handle.SessionID, "port", handle.Port)
 		})

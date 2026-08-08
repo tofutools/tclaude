@@ -84,7 +84,7 @@ const (
 // what supersedes an earlier launch's observation, and is just as true when the
 // relaunch is on send-keys.
 func completeCopilotAPILaunch(convID string, kind copilotAPILaunchKind, args clcommon.SpawnArgs) {
-	generation := copilotAPISessions.NoteLaunch(convID)
+	generation := copilotAPISessions.NoteLaunch(convID, args.CopilotAPI)
 	recordCopilotAPIPosture(convID, args)
 	recordCopilotAPIPort(convID, args.CopilotAPIPort)
 	startCopilotAPIBootstrap(convID, args.CopilotAPI, kind, args.InitialPrompt, generation)

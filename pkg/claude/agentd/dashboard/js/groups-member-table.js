@@ -172,10 +172,10 @@ export function HarnessLine({ member, snapshot }) {
   // relaunch will clear it, and until this state existed it looked identical to
   // an agent that was merely still starting.
   //
-  // The failed state is only set where an attempt was actually observed to fail,
-  // so its ABSENCE is not an all-clear — a pending chip may be a deaf agent
-  // nobody has examined. The wording below says "not connected" rather than
-  // anything reassuring for that reason.
+  // Absence of the failed state is not an all-clear — a pending chip may be a
+  // deaf agent nobody has examined yet. That is why the pending wording below
+  // says "not connected" rather than anything reassuring. The full account of
+  // what this flag does and does not cover is on CopilotAPIChannelFailed.
   const driveFailed = state.copilot_api && state.copilot_api_channel_failed;
   const driveState = driveFailed
     ? ' harness-drive-failed'
