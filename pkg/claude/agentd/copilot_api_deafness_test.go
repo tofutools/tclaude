@@ -65,6 +65,13 @@ func awaitChannelFailed(t *testing.T, convID string) bool {
 func TestCopilotAPIBootstrapFailureIsObservedAgainstTheLaunchThatFailed(t *testing.T) {
 	fixture := newCopilotAPIDriveFixture(t)
 	copilotAPISessions.dropHandleForTest(fixture.convID)
+	crashed := make(chan string, 1)
+	previousShutdown := shutdownCrashedCopilotAPIAgentFn
+	shutdownCrashedCopilotAPIAgentFn = func(convID string) error {
+		crashed <- convID
+		return nil
+	}
+	t.Cleanup(func() { shutdownCrashedCopilotAPIAgentFn = previousShutdown })
 
 	require.False(t, copilotAPISessions.ChannelFailed(fixture.convID),
 		"nothing has been observed yet, and 'nothing observed' must not read as 'failed' — "+
@@ -78,6 +85,12 @@ func TestCopilotAPIBootstrapFailureIsObservedAgainstTheLaunchThatFailed(t *testi
 	assert.True(t, awaitChannelFailed(t, fixture.convID),
 		"a bootstrap that returned an error has finished its whole bounded attempt and "+
 			"nothing re-runs it, so this launch is deaf for good and something has to say so")
+	select {
+	case got := <-crashed:
+		assert.Equal(t, fixture.convID, got)
+	default:
+		t.Fatal("the failed bootstrap was observed but the launch was left alive and deaf")
+	}
 }
 
 // The property a future author is most likely to break while "finishing" this
@@ -248,7 +261,6 @@ func TestTheDashboardDistinguishesAStartingAgentFromADeafOne(t *testing.T) {
 		"and it still reports the API drive, because the agent's choice has not changed")
 }
 
-
 // ---------------------------------------------------------------------------
 // The PATHS, not the helpers
 // ---------------------------------------------------------------------------
@@ -273,6 +285,13 @@ func TestTheStartupSweepRecordsAFailedReconnect(t *testing.T) {
 		return nil, errors.New("the server has no drivable session under that id")
 	}
 	t.Cleanup(func() { reconnectCopilotAPISessionFn = original })
+	crashed := make(chan string, 1)
+	previousShutdown := shutdownCrashedCopilotAPIAgentFn
+	shutdownCrashedCopilotAPIAgentFn = func(convID string) error {
+		crashed <- convID
+		return nil
+	}
+	t.Cleanup(func() { shutdownCrashedCopilotAPIAgentFn = previousShutdown })
 
 	require.False(t, copilotAPISessions.ChannelFailed(fixture.convID),
 		"precondition: nothing observed before the sweep")
@@ -283,6 +302,12 @@ func TestTheStartupSweepRecordsAFailedReconnect(t *testing.T) {
 		"a candidate whose bounded attempt ran and failed is deaf for this daemon's "+
 			"life, and the sweep is the only thing that will ever know it — nothing "+
 			"re-runs it, and the launch that would have is long gone")
+	select {
+	case got := <-crashed:
+		assert.Equal(t, fixture.convID, got)
+	default:
+		t.Fatal("the failed startup reconnect was observed but the agent stayed alive and deaf")
+	}
 }
 
 // The sweep stands down for a conversation whose own bootstrap is in flight.
@@ -471,8 +496,8 @@ func TestOnlyTheSweepsAttemptExitMayRecordAnObservation(t *testing.T) {
 
 	// And the primitive itself, which is what the sentence above was claiming.
 	//
-	// Counting recordReconcileAttempt alone was never the invariant: it is one of
-	// TWO ways to record, and the other is calling NoteChannelFailed directly.
+	// Counting recordReconcileAttempt alone was never the invariant: callers may
+	// also use NoteChannelFailed directly after their own bounded attempt.
 	// Measured under review — adding it to the sweep's slot-starvation arm, the
 	// exact "un-examined reported as deaf" failure this guard's message names,
 	// left the guard green. Matched as REFERENCES rather than calls for the same
@@ -484,6 +509,9 @@ func TestOnlyTheSweepsAttemptExitMayRecordAnObservation(t *testing.T) {
 		{"copilot_api_bootstrap.go", "runCopilotAPIBootstrap"}: true,
 		// The sweep, through the entitlement check.
 		{"copilot_api_reconnect.go", "recordReconcileAttempt"}: true,
+		// A live handle failed a send at the transport layer and the existing
+		// verified reconnect attempt then failed too.
+		{"copilot_api_reconnect.go", "recoverCopilotAPIChannelAfterTransportFailure"}: true,
 	}
 	var recorders []site
 	for _, entry := range entries {
@@ -512,9 +540,9 @@ func TestOnlyTheSweepsAttemptExitMayRecordAnObservation(t *testing.T) {
 	}
 	for _, found := range recorders {
 		assert.Truef(t, allowed[found],
-			"%s references NoteChannelFailed in %s, which is a THIRD way to declare "+
-				"an agent deaf. The two allowed sites each ran a bounded attempt and "+
-				"are entitled to say what it found; a new one has to make that "+
+			"%s references NoteChannelFailed in %s, which is a new way to declare "+
+				"an agent deaf. The allowed sites each ran a bounded attempt and "+
+				"are entitled to say what it found; another one has to make that "+
 				"argument rather than inherit it",
 			found.function, found.file)
 	}

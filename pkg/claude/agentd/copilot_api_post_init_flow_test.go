@@ -61,15 +61,11 @@ func countingPostInitWait(t *testing.T, came bool) *atomic.Int64 {
 	return &calls
 }
 
-// The headline: a channel that never comes up must still leave the agent named
-// and pointed at its briefing.
-//
-// Every assertion here is a POSITIVE fact — a keystroke that was sent — which
-// is deliberate. The obvious way to write this test is "no RPC was attempted",
-// and that is an absence: it is satisfied just as well by a post-init that did
-// nothing at all, which is the defect. What separates the fix from the defect
-// is that text ARRIVED.
-func TestCopilotDrive_APISpawnWhoseChannelNeverCameUpIsStillNamedAndBriefed(t *testing.T) {
+// A channel that never comes up is now a failed launch, never an entitlement to
+// type the one-shot post-init text into an API-posture pane. The wait count is
+// the positive control proving post-init reached the channel decision before
+// the keystroke absence was observed.
+func TestCopilotDrive_APISpawnWhoseChannelNeverCameUpGetsNoPaneFallback(t *testing.T) {
 	f := newCopilotFlow(t)
 	haveLegacySpawnInjection(t)
 	f.HaveGroup("crew")
@@ -83,28 +79,15 @@ func TestCopilotDrive_APISpawnWhoseChannelNeverCameUpIsStillNamedAndBriefed(t *t
 	})
 	require.Equalf(t, http.StatusOK, spawn.Code, "copilot spawn body=%s", spawn.Raw)
 
-	target := spawn.TmuxTarget()
-	msg := soleInboxMessage(t, spawn.ConvID)
-
-	// The rename. Before the fix this was refused twice over: deliverRename
-	// routed it to the API channel because the launch posture says API, and —
-	// once that was corrected only at the top — dispatchSlashCommand refused it
-	// again with "lifecycle command has no typed RPC mapping".
-	f.AssertSentContains(target, "/rename copilot-worker", 10*time.Second)
-	// The welcome, which is the whole point: it names the inbox message the
-	// briefing is sitting in. Without it the agent never learns the briefing
-	// exists.
-	f.AssertSentContains(target, fmt.Sprintf("inbox read %d", msg.ID), 10*time.Second)
-
-	assert.Equal(t, int64(1), waitCalls.Load(),
+	require.Eventually(t, func() bool { return waitCalls.Load() == 1 },
+		10*time.Second, 20*time.Millisecond,
 		"post-init must ASK whether the channel came up; a spawn that never asks "+
 			"is the state this ticket is about, and it looks identical from here "+
 			"unless the count is checked")
+	assertNoKeystrokesTo(t, f, spawn.TmuxTarget())
 }
 
-// The mirror, and the arm that keeps the fallback from becoming the rule: when
-// the channel DID come up, nothing is typed. The pane exemption is for a
-// channel that never arrived, not for an API-driven agent in general.
+// The mirror: when the channel DID come up, nothing is typed either.
 //
 // # What this covers, and what it does not
 //

@@ -142,6 +142,10 @@ func TestCopilotAPINudgeFailureDoesNotFallBackToKeystrokes(t *testing.T) {
 
 	assert.False(t, sendNudgeBracket(fixture.convID, message, "[msg #1 from peer] hello"),
 		"a failed typed delivery is a retryable failure, not a reason to type it in")
+	assert.Equal(t, 1, fixture.server.callCount(copilotapi.MethodConnect),
+		"a JSON-RPC refusal is an application answer over a healthy channel, not a reconnect signal")
+	assert.False(t, copilotAPISessions.ChannelFailed(fixture.convID),
+		"an application-level refusal must not condemn the channel or its agent")
 	fixture.assertNoKeystrokes(t)
 }
 
@@ -433,11 +437,8 @@ func TestTheSpawnPostInitWaitGivesUpAtTheBootstrapsBudget(t *testing.T) {
 	// passes against a wait that uses any budget at all — including a hardcoded
 	// one unrelated to the bootstrap's — which would leave the property in this
 	// test's own name untested. That property is load-bearing rather than
-	// cosmetic: the pane fallback is safe because this wait outlives the
-	// bootstrap's context, and it only outlives it because the two budgets are
-	// the same expression. A wait that gave up early would put back exactly
-	// TCL-1080's failure, with the bootstrap foregrounding a fresh session over
-	// the pane the fallback just typed into.
+	// cosmetic: the post-init path must give the bootstrap its whole attempt
+	// before it abandons delivery and the bootstrap records the failed launch.
 	//
 	// The lower bound is the budget itself; the upper allows one poll interval
 	// plus loaded-host slack, and is deliberately tight enough that a budget an

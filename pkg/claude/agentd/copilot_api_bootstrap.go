@@ -886,10 +886,21 @@ func runCopilotAPIBootstrap(
 			// likely to exist — and the registry drops the observation rather than
 			// letting it speak for that successor.
 			recorded := copilotAPISessions.NoteChannelFailed(convID, generation)
-			slog.Error("could not bring up the Copilot API session; this launch will not get "+
-				"one, and until the agent is relaunched its mail is held rather than "+
-				"delivered. It is still usable by typing into its pane",
-				"conv_id", convID, "error", err, "observation_recorded", recorded)
+			var shutdownErr error
+			if recorded {
+				shutdownErr = shutdownCrashedCopilotAPIAgentFn(convID)
+			}
+			if shutdownErr == nil && recorded {
+				slog.Error("could not bring up the Copilot API session; this launch was shut "+
+					"down as crashed rather than left alive without its selected channel",
+					"conv_id", convID, "error", err, "observation_recorded", recorded)
+			} else if shutdownErr != nil {
+				slog.Error("could not shut the failed Copilot API launch down",
+					"conv_id", convID, "error", shutdownErr)
+			} else {
+				slog.Info("discarded a failed Copilot API bootstrap observation because a "+
+					"newer launch owns the conversation", "conv_id", convID, "error", err)
+			}
 			return
 		}
 		copilotAPISessions.Adopt(handle)
