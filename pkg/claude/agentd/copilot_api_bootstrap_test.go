@@ -232,6 +232,8 @@ type fakeCopilotServer struct {
 	// entry still gets an empty object, which is what the registry tests need
 	// and what a consumer decoding only fields it uses tolerates.
 	results map[string]string
+	// writeMu serialises frame writes across the serve loop and push.
+	writeMu sync.Mutex
 }
 
 // fakeCopilotCall is one request the fake server answered.
@@ -285,8 +287,17 @@ func (s *fakeCopilotServer) push(method, params string) {
 	conns := append([]net.Conn(nil), s.conns...)
 	s.mu.Unlock()
 	for _, conn := range conns {
-		_, _ = fmt.Fprintf(conn, "Content-Length: %d\r\n\r\n%s", len(body), body)
+		s.writeFrame(conn, body)
 	}
+}
+
+// writeFrame serialises writes to one connection. The serve loop and push both
+// write frames, from different goroutines, and two interleaved writes would
+// corrupt the stream rather than merely reorder it.
+func (s *fakeCopilotServer) writeFrame(conn net.Conn, body []byte) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	_, _ = fmt.Fprintf(conn, "Content-Length: %d\r\n\r\n%s", len(body), body)
 }
 
 func (s *fakeCopilotServer) accept() {
@@ -368,7 +379,7 @@ func (s *fakeCopilotServer) serve(conn net.Conn) {
 			envelope["result"] = json.RawMessage(`{}`)
 		}
 		body, _ := json.Marshal(envelope)
-		_, _ = fmt.Fprintf(conn, "Content-Length: %d\r\n\r\n%s", len(body), body)
+		s.writeFrame(conn, body)
 	}
 }
 

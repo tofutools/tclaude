@@ -101,6 +101,24 @@ const (
 	// rather than seconds, because it is a safety net and not the mechanism.
 	copilotAPIStateBackstop = 30 * time.Second
 
+	// copilotAPIStateFreshness is how long a published reading may go without
+	// being re-established before it stops counting as one.
+	//
+	// The stand-down has to be "a reading that is CURRENT", not "a reading
+	// exists", and the difference is a real failure rather than a hypothetical.
+	// A connection can stay perfectly open while the reads on it start failing
+	// — a session id the server no longer knows, a method a future release
+	// renames — and in that state nothing ends the consumer, so a reading with
+	// no expiry would sit in the registry for the lifetime of the connection
+	// with both fallback writers standing down behind it. The row would freeze
+	// at its last good numbers with no writer left, which is precisely the
+	// stale-but-plausible reading this whole design exists to avoid.
+	//
+	// Three backstop intervals: long enough that an ordinary failed refresh or
+	// two changes nothing, short enough that a persistent failure hands the row
+	// back within a minute and a half.
+	copilotAPIStateFreshness = 3 * copilotAPIStateBackstop
+
 	// copilotAPIStateReadTimeout bounds one refresh's calls. Generous against
 	// the sub-millisecond these answer in locally, because the cost of timing
 	// out early is a blank meter and the cost of waiting is one goroutine.
@@ -115,6 +133,11 @@ const (
 	// the awaiting-permission status, so the dashboard can say WHICH harness
 	// surface is waiting rather than just that something is.
 	copilotAPIStatePermissionDetail = "copilot permission"
+
+	// copilotAPIAutoModel is Copilot's automatic-selection sentinel, which
+	// UsageMetrics.CurrentModel reports verbatim for a session in auto mode
+	// until a call has resolved one. It is a mode, not a model.
+	copilotAPIAutoModel = "auto"
 )
 
 // copilotAPIStateNoisyEvents are the event types that never change any answer
@@ -200,13 +223,35 @@ func dropCopilotAPIState(convID string) {
 	delete(copilotAPIStates.readings, convID)
 }
 
+// retireCopilotAPIStateConsumer removes a consumer and, only if it was still
+// the registered one, the reading it published.
+//
+// The conditional drop matters on a RELAUNCH. Adopt closes the predecessor's
+// client and the successor registers immediately, but the predecessor's
+// goroutine may still be parked in a read with a ten-second timeout — so it
+// unwinds and runs this AFTER the successor has already published. An
+// unconditional drop would delete the successor's reading, handing the row back
+// to the weaker writers until the successor's next trigger.
+func retireCopilotAPIStateConsumer(consumer *copilotAPIStateConsumer) {
+	copilotAPIStateConsumers.Lock()
+	current := copilotAPIStateConsumers.running[consumer.convID] == consumer
+	if current {
+		delete(copilotAPIStateConsumers.running, consumer.convID)
+	}
+	copilotAPIStateConsumers.Unlock()
+	if current {
+		dropCopilotAPIState(consumer.convID)
+	}
+}
+
 // lookupCopilotAPIState returns the live reading for a conversation.
 //
 // False is the ordinary state for every send-keys agent, for an API agent whose
-// connection has ended, and for one whose session has not run a turn yet —
-// `session.metadata.contextInfo` legitimately answers null until then. All
-// three mean the same thing to a caller: this source has nothing to say, use
-// the ones that did.
+// connection has ended, for one whose session has not run a turn yet —
+// `session.metadata.contextInfo` legitimately answers null until then — and for
+// one whose reads have stopped succeeding for copilotAPIStateFreshness. All of
+// them mean the same thing to a caller: this source has nothing to say now, use
+// the ones that do.
 func lookupCopilotAPIState(convID string) (copilotAPIStateReading, bool) {
 	if convID == "" {
 		return copilotAPIStateReading{}, false
@@ -214,7 +259,10 @@ func lookupCopilotAPIState(convID string) (copilotAPIStateReading, bool) {
 	copilotAPIStates.Lock()
 	defer copilotAPIStates.Unlock()
 	reading, found := copilotAPIStates.readings[convID]
-	return reading, found
+	if !found || time.Since(reading.ObservedAt) > copilotAPIStateFreshness {
+		return copilotAPIStateReading{}, false
+	}
+	return reading, true
 }
 
 // copilotAPIStateConsumer is one conversation's event-triggered reader.
@@ -225,12 +273,6 @@ type copilotAPIStateConsumer struct {
 
 	stop     chan struct{}
 	stopOnce sync.Once
-
-	// awaiting records that THIS consumer put the row into the
-	// awaiting-permission state, so it only ever clears a state it set. A
-	// consumer that cleared any awaiting state it happened to find would
-	// stomp on awaiting_input, which comes from somewhere else entirely.
-	awaiting bool
 
 	// warnedAt rate-limits the refresh-failure line, keyed by reason so a new
 	// failure mode stays audible while an old one is suppressed.
@@ -301,10 +343,22 @@ func (c *copilotAPIStateConsumer) halt() {
 // during that read is not lost between the two — it finds the subscription
 // already in place and marks the session dirty for the next window.
 func (c *copilotAPIStateConsumer) run() {
-	defer c.retire()
+	defer retireCopilotAPIStateConsumer(c)
 
 	subscription := c.client.Subscribe()
-	defer subscription.Close()
+	// Wrapped in a closure rather than `defer subscription.Close()`, which would
+	// bind the subscription this consumer STARTED with. The overrun path
+	// replaces it, and the replacement is the one that needs closing.
+	defer func() { subscription.Close() }()
+
+	// A consumer halted between being registered and reaching this line has
+	// nothing to say, and a daemon shutting down does not need three RPCs and a
+	// row write on the way out.
+	select {
+	case <-c.stop:
+		return
+	default:
+	}
 
 	// The connection is new (or newly re-established). Establish truth before
 	// waiting for anything to happen on it: an agent that is mid-turn when the
@@ -322,6 +376,20 @@ func (c *copilotAPIStateConsumer) run() {
 	}
 	defer settle.Stop()
 	owed := false
+	// Every path that refreshes for a reason OTHER than the settle timer goes
+	// through this, so an owed trailing refresh is cancelled rather than firing
+	// again a fraction of a second later against a session nothing has happened
+	// to in between.
+	refreshNow := func() {
+		if owed {
+			owed = false
+			if !settle.Stop() {
+				<-settle.C
+			}
+		}
+		c.refresh()
+		lastRefresh = time.Now()
+	}
 
 	for {
 		select {
@@ -342,9 +410,7 @@ func (c *copilotAPIStateConsumer) run() {
 					"conv_id", c.convID, "module", "agentd")
 				subscription.Close()
 				subscription = c.client.Subscribe()
-				c.refresh()
-				lastRefresh = time.Now()
-				owed = false
+				refreshNow()
 				continue
 			}
 			if !c.marksDirty(notification) {
@@ -358,28 +424,17 @@ func (c *copilotAPIStateConsumer) run() {
 				settle.Reset(remaining)
 				continue
 			}
-			c.refresh()
-			lastRefresh = time.Now()
+			refreshNow()
 		case <-settle.C:
+			// The timer has already fired, so the channel is drained and owed
+			// must be cleared WITHOUT trying to stop it.
 			owed = false
 			c.refresh()
 			lastRefresh = time.Now()
 		case <-backstop.C:
-			c.refresh()
-			lastRefresh = time.Now()
+			refreshNow()
 		}
 	}
-}
-
-// retire tears down everything this consumer published, so a dead connection
-// stops being a source the rest of the daemon defers to.
-func (c *copilotAPIStateConsumer) retire() {
-	dropCopilotAPIState(c.convID)
-	copilotAPIStateConsumers.Lock()
-	if copilotAPIStateConsumers.running[c.convID] == c {
-		delete(copilotAPIStateConsumers.running, c.convID)
-	}
-	copilotAPIStateConsumers.Unlock()
 }
 
 // marksDirty decides whether a notification means anything might have changed.
@@ -421,9 +476,27 @@ func (c *copilotAPIStateConsumer) marksDirty(notification copilotapi.Notificatio
 }
 
 // refresh does the reads and applies them.
+//
+// The permission projection runs FIRST and independently of the two number
+// reads. It used to sit below them, which quietly made "a human is waiting"
+// conditional on the context and usage reads both succeeding — so a session id
+// the server had stopped recognising would take the meter and the
+// waiting-for-a-human state down together, and the second is the one an
+// operator needs most.
 func (c *copilotAPIStateConsumer) refresh() {
 	ctx, cancel := context.WithTimeout(context.Background(), copilotAPIStateReadTimeout)
 	defer cancel()
+
+	// One row read serves both projections, and both are guarded against it
+	// being nil — an agent whose row has gone (retired, pruned) is not a
+	// failure, it is a consumer that is about to stop.
+	row := copilotAPIStateSessionRow(c.convID)
+
+	if pending, err := c.client.PendingPermissionRequests(ctx, c.sessionID); err != nil {
+		c.warn("permissions", "copilot-api-state: pending-permission read failed", err)
+	} else {
+		c.applyPermissions(ctx, row, len(pending) > 0)
+	}
 
 	info, err := c.client.ContextInfo(ctx, copilotapi.ContextInfoParams{SessionID: c.sessionID})
 	if err != nil {
@@ -435,23 +508,6 @@ func (c *copilotAPIStateConsumer) refresh() {
 		c.warn("usage", "copilot-api-state: usage read failed", err)
 		return
 	}
-	pending, err := c.client.PendingPermissionRequests(ctx, c.sessionID)
-	pendingRead := err == nil
-	if err != nil {
-		// Not fatal to the refresh: the numbers above are already in hand and
-		// are the more important half. Only the permission projection is lost,
-		// and the next refresh retries it.
-		c.warn("permissions", "copilot-api-state: pending-permission read failed", err)
-	}
-
-	// One row read serves both projections below, and both are guarded against
-	// it being nil — an agent whose row has gone (retired, pruned) is not a
-	// failure, it is a consumer that is about to stop.
-	row := copilotAPIStateSessionRow(c.convID)
-	if pendingRead {
-		c.applyPermissions(ctx, row, len(pending) > 0)
-	}
-
 	if info == nil {
 		// Normal before the first turn completes: the session has not cached a
 		// system prompt or tool metadata yet. Publishing nothing leaves the
@@ -465,7 +521,7 @@ func (c *copilotAPIStateConsumer) refresh() {
 		TotalTokens:      int64(info.TotalTokens),
 		PromptTokenLimit: int64(info.PromptTokenLimit),
 		OutputTokens:     copilotAPIOutputTokens(metrics),
-		Model:            metrics.CurrentModel,
+		Model:            copilotAPIReadingModel(metrics),
 	}
 	// Published BEFORE the write, because publishing is what makes the other
 	// two Copilot context writers stand down. In the other order a sweep tick
@@ -486,10 +542,12 @@ func (c *copilotAPIStateConsumer) refresh() {
 // row is how the TCL-1048 follow-up bug happened, and the cheapest way not to
 // have it again is not to have two writers.
 //
-// Only sessions.model and sessions.effort_level are left alone. They stay owned
-// by the usage sweep, which reads them out of Copilot's own store for both
-// drives; taking them here would mean owning `effort_level`, which this reading
-// has no source for at all.
+// sessions.model and sessions.effort_level are left alone. They stay owned by
+// the usage sweep, which reads them out of Copilot's own store for both drives;
+// taking them here would mean owning `effort_level`, which this reading has no
+// source for at all. tokens_output is shared rather than owned: both writers
+// only ever advance it, so whichever has seen more of the session wins and they
+// cannot disagree.
 func persistCopilotAPIContext(row *db.SessionRow, reading copilotAPIStateReading) {
 	if row == nil {
 		return
@@ -502,6 +560,16 @@ func persistCopilotAPIContext(row *db.SessionRow, reading copilotAPIStateReading
 	}
 	window := copilotAPIEffectiveContextWindow(row.ConvID, reading)
 	pct := copilotContextPct(reading.TotalTokens, window)
+	// A reply that carried no limit CARRIES THE STORED ONE FORWARD rather than
+	// writing zero. UpdateContextSnapshotForGeneration writes all four columns
+	// together, so passing the raw figure would erase a real window an earlier
+	// reply (or a compaction the durable follower saw) had disclosed — and once
+	// this consumer is publishing, the follower has stood down and cannot put
+	// it back. Same rule the durable follower states for the same columns.
+	observedWindow := reading.PromptTokenLimit
+	if observedWindow <= 0 {
+		observedWindow = stored.ContextWindowSize
+	}
 	// tokens_output may only ever ADVANCE, matching the discipline the other
 	// two writers already follow. The sources count different things and either
 	// may legitimately be ahead — this one counts the session Copilot is
@@ -512,7 +580,7 @@ func persistCopilotAPIContext(row *db.SessionRow, reading copilotAPIStateReading
 	output := max(reading.OutputTokens, stored.TokensOutput)
 
 	if pct == stored.ContextPct && reading.TotalTokens == stored.TokensInput &&
-		output == stored.TokensOutput && reading.PromptTokenLimit == stored.ContextWindowSize {
+		output == stored.TokensOutput && observedWindow == stored.ContextWindowSize {
 		return
 	}
 	// Generation-guarded for the same reason every other writer of these
@@ -521,7 +589,7 @@ func persistCopilotAPIContext(row *db.SessionRow, reading copilotAPIStateReading
 	// inherit it.
 	if _, err := db.UpdateContextSnapshotForGeneration(
 		row.ID, row.ConvID, row.CreatedAt,
-		pct, reading.TotalTokens, output, reading.PromptTokenLimit,
+		pct, reading.TotalTokens, output, observedWindow,
 	); err != nil {
 		slog.Warn("copilot-api-state: failed to persist context snapshot",
 			"session_id", row.ID, "error", err, "module", "agentd")
@@ -548,6 +616,38 @@ func copilotAPIEffectiveContextWindow(convID string, reading copilotAPIStateRead
 	return harness.CopilotContextWindowDefault(strings.TrimSpace(reading.Model))
 }
 
+// copilotAPIReadingModel resolves the model a session's spend is attributed to,
+// or "" when nothing has resolved one yet.
+//
+// UsageMetrics.CurrentModel is the SELECTED model, and under auto mode that is
+// the literal string "auto" until a call has resolved one — measured against a
+// live server, mid-turn. "auto" is not a model, and publishing it as one is not
+// harmless: harness.CopilotContextWindowDefault answers any non-empty unknown
+// model with a generic 200k, so a session actually running a 128k model would
+// be metered against a window it does not have. That figure would look
+// completely ordinary on the dashboard, which is what makes it worth spending a
+// function on.
+//
+// ModelMetrics is keyed by the REAL model ids Copilot billed, so a session that
+// has completed a call names its model there. One key is the ordinary case;
+// with several — a model change part way through a session — there is no
+// "current" among them, so none is claimed. Empty means unknown here exactly as
+// it does everywhere else in this file, and the caller falls back to the
+// reported limit rather than to a guess.
+func copilotAPIReadingModel(metrics copilotapi.UsageMetrics) string {
+	if model := strings.TrimSpace(metrics.CurrentModel); model != "" &&
+		model != copilotAPIAutoModel {
+		return model
+	}
+	if len(metrics.ModelMetrics) != 1 {
+		return ""
+	}
+	for model := range metrics.ModelMetrics {
+		return strings.TrimSpace(model)
+	}
+	return ""
+}
+
 // copilotAPIOutputTokens sums the session's output across every model it used.
 //
 // Summed across models rather than taken from a session-level field because
@@ -569,23 +669,36 @@ func copilotAPIOutputTokens(metrics copilotapi.UsageMetrics) int64 {
 // own background reconcile uses. That is what keeps this from racing the hook
 // path that owns busy/idle on both Copilot drives.
 //
-// Only transitions this consumer is entitled to make are made. It enters the
-// awaiting state from working/idle, and it leaves only a state it entered
-// itself, so an awaiting_input coming from elsewhere is never cleared here.
+// Ownership of the awaiting state is read off the ROW, not remembered in the
+// consumer: the pair (status = awaiting_permission, detail =
+// copilotAPIStatePermissionDetail) is the marker, and only a row carrying it is
+// ever cleared. An in-memory flag was the obvious alternative and is worse in
+// both directions. It cannot clear a state a PREDECESSOR set — after an agentd
+// restart nothing would ever take the row out of awaiting_permission, and that
+// is not a cosmetic wrong label: message delivery is held for an agent in an
+// awaiting state, so the agent would silently stop receiving mail. And a flag
+// dropped before a clear that then failed would strand the row the same way for
+// the lifetime of the process. Reading the marker back makes both cases
+// self-correcting on the next refresh, which happens at least every
+// copilotAPIStateBackstop.
+//
+// It never touches an awaiting state it did not set — an awaiting_input from
+// elsewhere carries a different detail and is left exactly as found.
 func (c *copilotAPIStateConsumer) applyPermissions(
 	ctx context.Context, row *db.SessionRow, waiting bool,
 ) {
-	if !waiting && !c.awaiting {
-		return
-	}
 	if row == nil {
 		return
 	}
+	ours := row.Status == session.StatusAwaitingPermission &&
+		row.StatusDetail == copilotAPIStatePermissionDetail
+
 	if waiting {
-		if row.Status == session.StatusAwaitingPermission {
-			c.awaiting = true
+		if ours {
 			return
 		}
+		// Entered only from the states the hook path leaves behind. Anything
+		// else — exited, error, another awaiting — belongs to someone else.
 		if row.Status != session.StatusWorking && row.Status != session.StatusIdle &&
 			row.Status != session.StatusMainAgentIdle {
 			return
@@ -597,24 +710,24 @@ func (c *copilotAPIStateConsumer) applyPermissions(
 			return
 		}
 		if set {
-			c.awaiting = true
 			slog.Debug("copilot-api-state: agent is waiting on a permission prompt",
 				"conv_id", c.convID, "session_id", row.ID, "module", "agentd")
 		}
 		return
 	}
 
+	if !ours {
+		// Nothing of this consumer's to clear. The common case by far, and the
+		// reason the read below is not made on every refresh.
+		return
+	}
 	// The prompt is resolved. What follows it is not knowable from its absence
 	// — the human may have approved it, in which case the turn is running
 	// again, or declined it, in which case the turn is over — so the successor
 	// state is READ rather than assumed.
-	c.awaiting = false
-	if row.Status != session.StatusAwaitingPermission ||
-		row.StatusDetail != copilotAPIStatePermissionDetail {
-		// A hook has already moved the row on, which is the common case: the
-		// approved tool call fires PostToolUse a moment later. Nothing to undo.
-		return
-	}
+	//
+	// A failure here leaves the row in the awaiting state AND leaves the marker
+	// on it, so the next refresh tries again rather than giving up.
 	processing, err := c.client.IsProcessing(ctx, c.sessionID)
 	if err != nil {
 		c.warn("processing", "copilot-api-state: busy read failed while clearing a permission prompt", err)

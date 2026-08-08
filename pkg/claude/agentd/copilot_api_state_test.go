@@ -162,6 +162,34 @@ func TestCopilotAPIStateTakesTheModelFromUsageNotContext(t *testing.T) {
 		"the context breakdown's model name is not the model the turn ran on")
 }
 
+// "auto" is a MODE, not a model, and usage reports it verbatim until a call has
+// resolved one — observed mid-turn against a live server. Publishing it would
+// not fail loudly: harness.CopilotContextWindowDefault answers any non-empty
+// unknown model with a generic 200000, so a session actually running a 128000
+// model would be metered against a window it does not have, and the meter would
+// look entirely ordinary while doing it.
+func TestCopilotAPIReadingModelRejectsTheAutoSentinel(t *testing.T) {
+	// The value the bug would have produced, so the regression is stated rather
+	// than implied.
+	assert.Equal(t, int64(200000), harness.CopilotContextWindowDefault("auto"),
+		"this test exists because the static table answers 'auto' with a real-looking number")
+
+	assert.Equal(t, "gpt-5-mini", copilotAPIReadingModel(copilotapi.UsageMetrics{
+		CurrentModel: "gpt-5-mini",
+	}))
+	assert.Equal(t, "gpt-5-mini", copilotAPIReadingModel(copilotapi.UsageMetrics{
+		CurrentModel: "auto",
+		ModelMetrics: map[string]copilotapi.ModelMetric{"gpt-5-mini": {}},
+	}), "auto mode that has billed one model has named it")
+	assert.Empty(t, copilotAPIReadingModel(copilotapi.UsageMetrics{CurrentModel: "auto"}),
+		"auto mode before any call has resolved nothing, and unknown must read as unknown")
+	assert.Empty(t, copilotAPIReadingModel(copilotapi.UsageMetrics{
+		CurrentModel: "auto",
+		ModelMetrics: map[string]copilotapi.ModelMetric{"gpt-5-mini": {}, "claude-haiku-4.5": {}},
+	}), "with several billed models there is no current one, and picking arbitrarily "+
+		"would attribute the window of one to the usage of another")
+}
+
 // A session that has not run a turn reports a null contextInfo. Publishing a
 // zeroed reading for it would be worse than publishing nothing twice over: it
 // would render "not measured yet" as a measured 0%, AND it would make the other
@@ -289,6 +317,86 @@ func TestCopilotAPIStateDropsItsReadingWhenTheConnectionEnds(t *testing.T) {
 		"a reading is a statement about a connection, and must not outlive it")
 }
 
+// The stand-down predicate has to be "a reading that is CURRENT", not "a
+// reading exists". A connection can stay open while the reads on it start
+// failing — a session the server no longer knows, a renamed method — and in
+// that state nothing ends the consumer. A reading with no expiry would sit in
+// the registry with both fallback writers standing down behind it, freezing the
+// row at its last good numbers with no writer left at all.
+func TestCopilotAPIStateReadingExpires(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotAPIStateForTest()
+	t.Cleanup(resetCopilotAPIStateForTest)
+
+	publishCopilotAPIState("conv-stale", copilotAPIStateReading{
+		ObservedAt: time.Now(), TotalTokens: 16830, PromptTokenLimit: 128000,
+	})
+	_, ok := lookupCopilotAPIState("conv-stale")
+	assert.True(t, ok, "a reading taken now is current")
+
+	publishCopilotAPIState("conv-stale", copilotAPIStateReading{
+		ObservedAt:  time.Now().Add(-copilotAPIStateFreshness - time.Second),
+		TotalTokens: 16830, PromptTokenLimit: 128000,
+	})
+	_, ok = lookupCopilotAPIState("conv-stale")
+	assert.False(t, ok,
+		"a reading that has not been re-established must hand the row back to the "+
+			"writers that can still speak for it")
+}
+
+// A relaunch replaces the consumer while the predecessor may still be parked in
+// a read with a ten-second timeout. When it finally unwinds it must not delete
+// the SUCCESSOR's reading, which would hand the row back to the weaker writers
+// until the successor's next trigger.
+func TestCopilotAPIStateRetirementSparesASuccessorsReading(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotAPIStateForTest()
+	t.Cleanup(resetCopilotAPIStateForTest)
+
+	predecessor := &copilotAPIStateConsumer{convID: "conv-relaunch", stop: make(chan struct{})}
+	successor := &copilotAPIStateConsumer{convID: "conv-relaunch", stop: make(chan struct{})}
+	copilotAPIStateConsumers.Lock()
+	copilotAPIStateConsumers.running = map[string]*copilotAPIStateConsumer{
+		"conv-relaunch": successor,
+	}
+	copilotAPIStateConsumers.Unlock()
+	publishCopilotAPIState("conv-relaunch", copilotAPIStateReading{
+		ObservedAt: time.Now(), TotalTokens: 16830, PromptTokenLimit: 128000,
+	})
+
+	retireCopilotAPIStateConsumer(predecessor)
+
+	_, ok := lookupCopilotAPIState("conv-relaunch")
+	assert.True(t, ok, "the predecessor must not drop the successor's reading")
+
+	retireCopilotAPIStateConsumer(successor)
+	_, ok = lookupCopilotAPIState("conv-relaunch")
+	assert.False(t, ok, "the registered consumer retiring does drop it")
+}
+
+// A reply with no promptTokenLimit must not erase a window an earlier reply (or
+// a compaction the durable follower saw) already disclosed. The four columns
+// are written together, and once this consumer is publishing the follower has
+// stood down and cannot put it back.
+func TestCopilotAPIStateKeepsAKnownWindowWhenTheReplyOmitsOne(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotAPIStateForTest()
+
+	row := copilotAPIStateSession(t, "s-window", "conv-window", session.StatusIdle)
+	require.NoError(t, db.UpdateContextSnapshot(row.ID, 13.15, 16830, 311, 128000))
+
+	persistCopilotAPIContext(row, copilotAPIStateReading{
+		ObservedAt: time.Now(), TotalTokens: 17000, PromptTokenLimit: 0,
+		OutputTokens: 311, Model: "gpt-5-mini",
+	})
+
+	snapshot, err := db.GetContextSnapshot(row.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(128000), snapshot.ContextWindowSize,
+		"a missing limit carries the known one forward rather than writing zero")
+	assert.Equal(t, int64(17000), snapshot.TokensInput)
+}
+
 // ---------------------------------------------------------------------------
 // Permission
 // ---------------------------------------------------------------------------
@@ -360,6 +468,85 @@ func TestCopilotAPIStateClearsAResolvedPromptFromTheServersAnswer(t *testing.T) 
 			}, 5*time.Second, 20*time.Millisecond)
 		})
 	}
+}
+
+// Ownership of the awaiting state lives on the ROW, not in the consumer, and
+// this is the case that decides it: a row left in awaiting_permission by a
+// PREVIOUS consumer — an agentd restart is the reachable one — must still be
+// cleared once the prompt is gone. An in-memory flag would start false and
+// never clear it, and that is not a cosmetic wrong label: message delivery is
+// held for an agent in an awaiting state, so it would silently stop receiving
+// mail.
+func TestCopilotAPIStateClearsAStrandedAwaitingRowFromAPreviousConsumer(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotAPIStateForTest()
+
+	row := copilotAPIStateSession(t, "s-strand", "conv-strand", session.StatusWorking)
+	// The state a predecessor left behind, marker and all.
+	set, err := db.SetSessionStatusIfUnchanged(row.ID, row.Status, row.UpdatedAt,
+		session.StatusAwaitingPermission, copilotAPIStatePermissionDetail, time.Now())
+	require.NoError(t, err)
+	require.True(t, set)
+
+	server := newFakeCopilotServer(t)
+	server.answer(copilotapi.MethodSessionContextInfo, copilotAPITestContext)
+	server.answer(copilotapi.MethodSessionUsage, copilotAPITestUsage)
+	server.answer(copilotapi.MethodSessionPermissions, copilotAPITestNoPermissions)
+	server.answer(copilotapi.MethodSessionIsProcessing, `{"processing":false}`)
+	startTestConsumer(t, server, "conv-strand", "conv-strand")
+
+	assert.Eventually(t, func() bool {
+		stored, err := db.LoadSession(row.ID)
+		return err == nil && stored != nil && stored.Status == session.StatusIdle
+	}, 5*time.Second, 20*time.Millisecond,
+		"a fresh consumer must be able to clear a state it did not itself set")
+}
+
+// A failed clear must leave the marker in place so the next refresh retries.
+// Dropping an in-memory flag before the clear succeeded would strand the row
+// for the lifetime of the process.
+func TestCopilotAPIStateRetriesAFailedClear(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotAPIStateForTest()
+
+	row := copilotAPIStateSession(t, "s-retry", "conv-retry", session.StatusWorking)
+	server := newFakeCopilotServer(t)
+	server.answer(copilotapi.MethodSessionContextInfo, copilotAPITestContext)
+	server.answer(copilotapi.MethodSessionUsage, copilotAPITestUsage)
+	server.answer(copilotapi.MethodSessionPermissions, copilotAPITestPendingPermission)
+	// The busy read the clear depends on answers with a shape that cannot be
+	// decoded, standing in for any transient failure of it.
+	server.answer(copilotapi.MethodSessionIsProcessing, `"not an object"`)
+	startTestConsumer(t, server, "conv-retry", "conv-retry")
+
+	require.Eventually(t, func() bool {
+		stored, err := db.LoadSession(row.ID)
+		return err == nil && stored != nil &&
+			stored.Status == session.StatusAwaitingPermission
+	}, 5*time.Second, 20*time.Millisecond)
+
+	// The prompt resolves, but the clear cannot complete yet.
+	server.answer(copilotapi.MethodSessionPermissions, copilotAPITestNoPermissions)
+	server.push(copilotapi.MethodSessionEvent, `{"sessionId":"conv-retry",
+		"event":{"type":"permission.completed","id":"e1"}}`)
+	require.Eventually(t, func() bool {
+		return server.callCount(copilotapi.MethodSessionIsProcessing) > 0
+	}, 5*time.Second, 20*time.Millisecond)
+
+	stored, err := db.LoadSession(row.ID)
+	require.NoError(t, err)
+	require.Equal(t, session.StatusAwaitingPermission, stored.Status,
+		"a failed clear leaves the row as it was")
+
+	// The read recovers, and the next refresh finishes the job.
+	server.answer(copilotapi.MethodSessionIsProcessing, `{"processing":true}`)
+	server.push(copilotapi.MethodSessionEvent, `{"sessionId":"conv-retry",
+		"event":{"type":"assistant.turn_start","id":"e2"}}`)
+	assert.Eventually(t, func() bool {
+		stored, err := db.LoadSession(row.ID)
+		return err == nil && stored != nil && stored.Status == session.StatusWorking
+	}, 5*time.Second, 20*time.Millisecond,
+		"the marker must survive a failed clear so the next refresh retries")
 }
 
 // The consumer only ever clears a state it set itself. An awaiting_input coming
