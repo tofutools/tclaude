@@ -13,6 +13,7 @@ import {
   shellToast as toast,
   shellConfirm as confirmModal,
 } from './shell-state.js';
+import { reportBulkPowerFailures } from './bulk-power-report.js';
 import {
   buildCleanupDescriptor, buildWindowSelectionDescriptor, openCleanupDialog,
   openDeleteRetiredPreviewDialog,
@@ -93,6 +94,7 @@ export async function shutdownScope(scope, groupName) {
   if (out.failed) parts.push(`${out.failed} failed`);
   toast(`shutdown (${out.targeted} targeted): ${parts.join(', ')}`, out.failed > 0);
   refresh();
+  await reportBulkPowerFailures('Shutdown', out);
 }
 
 // powerOnScope is the inverse of shutdownScope — it drives the
@@ -161,6 +163,7 @@ export async function powerOnScope(scope, groupName) {
   if (out.failed) parts.push(`${out.failed} failed`);
   toast(`power on (${out.targeted} targeted): ${parts.join(', ')}`, out.failed > 0);
   refresh();
+  await reportBulkPowerFailures('Power on', out);
 }
 
 // RETIRE_STATUS_LABELS maps a bulk-retire status token to the word used
