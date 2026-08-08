@@ -924,6 +924,33 @@ func copilotLaunchIntentForConv(convID string) copilotLaunchIntent {
 	return out
 }
 
+// copilotAPIPostureRecorded reports whether ANY record answers "which drive did
+// this conversation's launch take".
+//
+// It exists because [copilotLaunchIntentForConv] deliberately cannot answer it:
+// its API field is false both for a launch that chose send-keys and for a launch
+// that recorded nothing, and collapsing those is safe for ROUTING (both mean
+// "do not assume the API channel") but useless as a signal. A conversation with
+// no record at all is a different thing entirely — since TCL-1059 closed every
+// path that mints a conv id, it means either a genuinely legacy conversation or
+// a NEW launch path nobody has taught to record the posture, and the second is
+// a regression that is otherwise completely silent.
+//
+// Kept beside the intent read, and reading the same two records in the same
+// precedence, so a future change to that precedence cannot leave this one
+// answering about a record set the router no longer consults.
+//
+// Nothing may ROUTE on this. It is an observation for logs.
+func copilotAPIPostureRecorded(convID string) bool {
+	if profile, err := db.AgentRelaunchProfileForConv(convID); err == nil &&
+		profile != nil && profile.CopilotAPI != nil {
+		return true
+	}
+	conversation, err := db.ConversationResumeProfileForConv(convID)
+	return err == nil && conversation != nil && conversation.FallbackRelaunch != nil &&
+		conversation.FallbackRelaunch.CopilotAPI != nil
+}
+
 // copilotConfiguredContextWindowMax returns only the configured cap, for the
 // usage paths that have no use for the drive.
 func copilotConfiguredContextWindowMax(convID string) int64 {

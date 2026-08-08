@@ -10,20 +10,25 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
-const (
-	// copilotAPIStartupTimeout bounds the wait for a freshly launched pane's
-	// embedded server. Measured behaviour, not a guess: the listener comes up a
-	// few seconds after exec, behind auth and workspace initialisation, and
-	// TCL-1052's live harness settled on the same 60s ceiling for the same
-	// reason. Generous on purpose — the cost of waiting too long is a slow
-	// error, and the cost of waiting too little is a working agent declared
-	// broken on a loaded host.
-	copilotAPIStartupTimeout = 60 * time.Second
-	// copilotAPIPollInterval paces the /proc reads. Each poll is two small
-	// filesystem walks, so this is cheap enough to keep tight and slow enough
-	// not to spin.
-	copilotAPIPollInterval = 200 * time.Millisecond
-)
+// copilotAPIStartupTimeout bounds the wait for a freshly launched pane's
+// embedded server. Measured behaviour, not a guess: the listener comes up a few
+// seconds after exec, behind auth and workspace initialisation, and TCL-1052's
+// live harness settled on the same 60s ceiling for the same reason. Generous on
+// purpose — the cost of waiting too long is a slow error, and the cost of
+// waiting too little is a working agent declared broken on a loaded host.
+//
+// A var rather than a const so a test can assert on the verdict this wait
+// REACHES rather than on a context that expired before it got there. That is
+// not a convenience: with a 60s budget the only way to keep a test fast is to
+// give it a shorter context, and then every run dies on ctx.Done() and the
+// named failure the test claims to be about is never produced. See
+// setCopilotAPIStartupTimeoutForTest.
+var copilotAPIStartupTimeout = 60 * time.Second
+
+// copilotAPIPollInterval paces the /proc reads. Each poll is two small
+// filesystem walks, so this is cheap enough to keep tight and slow enough not
+// to spin.
+const copilotAPIPollInterval = 200 * time.Millisecond
 
 // verifiedCopilotAPIPort returns the loopback port of an API-driven Copilot
 // agent, and returns it ONLY once the listening socket has been positively
@@ -99,6 +104,28 @@ func verifiedCopilotAPIPort(ctx context.Context, convID string) (int, int, error
 		case <-time.After(copilotAPIPollInterval):
 		}
 	}
+}
+
+// copilotAPIConversationsWithARecordedPort lists the conversations that once
+// had an endpoint, WITHOUT handing back any of their ports.
+//
+// It lives here, beside the verified accessor, because it is the only way to
+// discover that a conversation has an endpoint at all — and the rule this file
+// exists to hold is that everything about the endpoint goes through the proof.
+// A caller that enumerated the records somewhere else would be one field away
+// from dialling one, and the AST guard names this function's underlying db call
+// for that reason.
+//
+// Conv ids only, so a caller learns which conversations to ASK about and
+// nothing it could act on directly. The answer is a list of conversations that
+// were given a number, not a list of live endpoints: a row here survives the
+// pane that owned it until the reaper releases it.
+func copilotAPIConversationsWithARecordedPort() ([]string, error) {
+	convIDs, err := db.ListCopilotAPIRuntimeConvIDs()
+	if err != nil {
+		return nil, fmt.Errorf("list conversations with a recorded Copilot API port: %w", err)
+	}
+	return convIDs, nil
 }
 
 // copilotAPIUnverifiedError names WHICH of the failures happened, because the

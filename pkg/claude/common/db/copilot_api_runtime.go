@@ -79,6 +79,43 @@ func GetCopilotAPIRuntime(convID string) (*CopilotAPIRuntime, error) {
 	return runtime, err
 }
 
+// ListCopilotAPIRuntimeConvIDs returns the conversations that hold a port
+// record, and deliberately NOT their ports.
+//
+// It exists for the daemon's startup reconcile, which needs to know WHICH
+// conversations once had an endpoint so it can re-establish their channels. It
+// does not need — and must not be given — the numbers: a reconcile that carried
+// a port would be a second path to the endpoint that never passed the ownership
+// proof, which is the one thing the whole access-control story rests on
+// (`--ui-server` has no authentication). Handing back conv ids makes the caller
+// go through the verified accessor to learn anything it could dial.
+//
+// A row here says only that a launch was once given a number for this
+// conversation. It says nothing about whether the pane is still running, whether
+// anything is listening, or whose the listener is.
+func ListCopilotAPIRuntimeConvIDs() ([]string, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT conv_id FROM copilot_api_runtimes ORDER BY conv_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var convIDs []string
+	for rows.Next() {
+		var convID string
+		if err := rows.Scan(&convID); err != nil {
+			return nil, err
+		}
+		if convID != "" {
+			convIDs = append(convIDs, convID)
+		}
+	}
+	return convIDs, rows.Err()
+}
+
 // DeleteCopilotAPIRuntime drops the record for a conversation.
 //
 // This is the release step, and it matters more than a freed port would suggest
