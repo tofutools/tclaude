@@ -247,8 +247,10 @@ func TestTemplateDeploy_GroupTierVendorIsSubjectToTheHarnessPolicy(t *testing.T)
 	// "no recorded launch approval posture" — so a bare Failed==1 would go red
 	// under the mutation while proving nothing about the policy. The typed kind is
 	// what makes the red mean what this test says it means.
-	assert.Equal(t, "cross_harness_spawn_denied", res.Agents[0].ErrorKind,
-		"error=%q", res.Agents[0].Error)
+	assert.Equalf(t, "cross_harness_spawn_denied", res.Agents[0].ErrorKind,
+		"the refusal has to be the POLICY's: once the vendor stops crossing this member "+
+			"still fails, on something else entirely, so a red here that does not name the "+
+			"kind is a red about the wrong refusal (error=%q)", res.Agents[0].Error)
 	assert.Contains(t, res.Agents[0].Error, "claude → codex",
 		"the refusal has to name the edge the policy denied, or the operator cannot tell "+
 			"WHICH vendor the group tier was trying to reach")
