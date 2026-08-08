@@ -117,9 +117,14 @@ func scheduleSoftExitEscalation(target *lifecycleTarget, lifecycleAction, relate
 			}
 			return
 		}
-		if escalateStuckSoftExit(target, lifecycleAction, relatedEventID, reason) == softExitEscalated {
-			if err := reconcileStoppedLifecycleTarget(target, lifecycleAction, relatedEventID, daemonEscalatedKillReason); err != nil {
-				slog.Warn("soft-exit: recording escalated pane exit failed",
+		outcome := escalateStuckSoftExit(target, lifecycleAction, relatedEventID, reason)
+		if outcome == softExitClosed || outcome == softExitEscalated {
+			reconcileReason := fallbackExitReason
+			if outcome == softExitEscalated {
+				reconcileReason = daemonEscalatedKillReason
+			}
+			if err := reconcileStoppedLifecycleTarget(target, lifecycleAction, relatedEventID, reconcileReason); err != nil {
+				slog.Warn("soft-exit: recording verified pane exit after escalation check failed",
 					"session", target.sessionID, "conv", short8(target.convID), "error", err)
 			}
 		}

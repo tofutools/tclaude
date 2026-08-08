@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"os"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 
@@ -267,4 +268,43 @@ func TestSoftExitEscalation_StandsDownForASuccessorPane(t *testing.T) {
 	require.NotNil(t, stored)
 	assert.NotEqual(t, "exited", stored.Status,
 		"a replacement pane under the same name must not be published as the predecessor's exit")
+}
+
+// Scenario: the deadline probe sees the pane alive, but it exits before the
+// escalation goroutine revalidates under the launch lock. That is a genuine
+// closed outcome, not an escalation, and it still has to publish exited; the
+// recorded live PID below makes the generic reaper unable to repair the row.
+func TestSoftExitEscalation_ReconcilesExitBetweenDeadlineAndRevalidation(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "escf-1111-2222-3333-4444"
+	const tmuxSes = "tmux-escf"
+	f.HaveConvWithTitle(conv, "deadline-race-worker")
+	f.HaveAliveSession(conv, "spwn-escf", tmuxSes, f.TestCwd("escf"))
+	stored, err := db.LoadSession("spwn-escf")
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	stored.PID = os.Getpid()
+	require.NoError(t, db.SaveSession(stored))
+
+	cc := f.World.CCs.GetByConvID(conv)
+	require.NotNil(t, cc)
+	cc.OnInput("/exit", func(c *testharness.CCSim, _ string) bool { return true })
+	var revalidations atomic.Int32
+	cleanupAfterBackgroundDrain(t, agentd.SetBeforeSoftExitTargetRevalidateForTest(func() {
+		if revalidations.Add(1) == 2 {
+			cc.MarkDead()
+		}
+	}))
+
+	f.AssertSoftStopped(f.AsHuman().Stop(conv, false))
+	agentd.WaitForBackgroundForTest()
+	require.GreaterOrEqual(t, revalidations.Load(), int32(2),
+		"the test must reach escalation revalidation after the deadline")
+	assert.False(t, f.World.Tmux.IsAlive(tmuxSes))
+	stored, err = db.LoadSession("spwn-escf")
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.Equal(t, "exited", stored.Status,
+		"a natural exit in the deadline/revalidation window must be reconciled")
 }
