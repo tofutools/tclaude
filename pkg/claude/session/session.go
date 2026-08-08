@@ -20,6 +20,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -130,12 +131,24 @@ func SortSessionsByKey(sessions []*SessionState, key string, dir table.SortDirec
 	if key == "" || len(sessions) < 2 {
 		return
 	}
-	sort.Slice(sessions, func(i, j int) bool {
+	sort.SliceStable(sessions, func(i, j int) bool {
 		a, b := sessions[i], sessions[j]
+		if dir == table.SortDesc {
+			a, b = b, a
+		}
 		var less bool
 		switch key {
 		case "id":
 			less = a.ID < b.ID
+		case "harness":
+			aHarness, bHarness := a.Harness, b.Harness
+			if aHarness == "" {
+				aHarness = harness.DefaultName
+			}
+			if bHarness == "" {
+				bHarness = harness.DefaultName
+			}
+			less = aHarness < bHarness
 		case "project":
 			less = a.Cwd < b.Cwd
 		case "status":
@@ -144,9 +157,6 @@ func SortSessionsByKey(sessions []*SessionState, key string, dir table.SortDirec
 			less = a.Updated.Before(b.Updated)
 		default:
 			return false
-		}
-		if dir == table.SortDesc {
-			return !less
 		}
 		return less
 	})
