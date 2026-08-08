@@ -167,3 +167,62 @@ func TestDashboardBranchLinks_DuplicateUsesFreshestPresentedState(t *testing.T) 
 	assert.Equal(t, "merged", row.BranchPRState,
 		"durable merged tombstone survives presented badge expiry")
 }
+
+// A branch-discovered PR that was never explicitly presented must still be a
+// target of the 10-second merged-PR poll. Before this, only agent_prs rows fed
+// the bulk search, so an un-presented branch badge waited out the 90-second
+// branch-link TTL for every state change — the dashboard's most common PR
+// badge was excluded from the fast path entirely.
+func TestDashboardBranchLinks_BranchOnlyPRCoveredByMergedPoll(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	const (
+		conv   = "blonly00-0000-0000-0000-000000000001"
+		prURL  = "https://github.com/acme/app/pull/1717"
+		branch = "feature-branch-only"
+	)
+
+	t.Cleanup(agentd.SetGitInfoResolverForTest(
+		func(string, string) (string, string, int, string, string, bool) {
+			return "https://github.com/acme/app", "main", 1717, prURL, "open", true
+		}))
+
+	f := newFlow(t)
+	f.HaveGroup("squad")
+	f.HaveAliveSessionOnBranch(conv, "spwn-blonly", "tmux-blonly", f.TestCwd("wt/blonly"), branch)
+	f.HaveMember("squad", conv)
+	require.NotNil(t, agent.FreshConvRowResolved(conv), "conv_index scan")
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	_ = fetchDashSnapshot(t, mux)
+	agentd.WaitForBackgroundForTest()
+	snap := fetchDashSnapshot(t, mux)
+	row := findAgent(snap.Agents, conv)
+	require.NotNil(t, row)
+	require.Equal(t, "open", row.BranchPRState, "automatic branch cache starts open")
+
+	// No UpsertAgentPR: the PR exists only as a branch link. The poll must
+	// still search its repo and stamp the merged tombstone.
+	var searchedRepos []string
+	t.Cleanup(agentd.SetRecentlyMergedPRsResolverForTest(
+		func(repos []string, _ int) ([]string, bool) {
+			searchedRepos = repos
+			return []string{prURL}, true
+		}))
+	agentd.PollRecentlyMergedPRsForTest()
+	assert.Contains(t, searchedRepos, "acme/app",
+		"branch-detected PR widens the bulk search's repo qualifiers")
+
+	snap = fetchDashSnapshot(t, mux)
+	row = findAgent(snap.Agents, conv)
+	require.NotNil(t, row)
+	assert.Equal(t, "merged", row.BranchPRState,
+		"branch-only badge picks up the 10-second poll's merged observation")
+
+	// Once detected, the PR must drop out of the poll's target set even while
+	// the stale-open bl_ entry lives out its TTL — otherwise every merged PR
+	// keeps widening the search query for the whole target window.
+	searchedRepos = nil
+	agentd.PollRecentlyMergedPRsForTest()
+	assert.Empty(t, searchedRepos,
+		"terminal ppr_ tombstone removes the last target so no search runs")
+}

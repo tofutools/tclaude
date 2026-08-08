@@ -98,6 +98,39 @@ func GetAgentWorkspace(convID string) (AgentWorkspace, error) {
 	return w, nil
 }
 
+// ListAgentWorkspacePRsSince returns the agent_workspace rows that carry a PR
+// link and were refreshed at or after since. The daemon-wide merged-PR poller
+// uses it to pick up statusbar-published PRs that have no bl_ cache entry yet.
+func ListAgentWorkspacePRsSince(since time.Time) ([]AgentWorkspace, error) {
+	conn, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := conn.Query(`SELECT conv_id, cwd, branch, repo_url, default_branch,
+			pr_number, pr_url, pr_state, updated_at
+		FROM agent_workspace WHERE pr_url != '' AND updated_at >= ?`,
+		dbTimeBoundary(since))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []AgentWorkspace
+	for rows.Next() {
+		var w AgentWorkspace
+		var updatedAt dbTimestamp
+		if err := rows.Scan(&w.ConvID, &w.Cwd, &w.Branch, &w.RepoURL, &w.DefaultBranch,
+			&w.PRNumber, &w.PRURL, &w.PRState, &updatedAt); err != nil {
+			return nil, err
+		}
+		w.UpdatedAt = updatedAt.Time()
+		out = append(out, w)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // DeleteAgentWorkspace drops the row for convID. Used when a
 // conversation is wiped so the table doesn't accumulate dangling rows.
 func DeleteAgentWorkspace(convID string) error {
