@@ -3297,7 +3297,15 @@ tr:hover .row-actions { opacity: 1; }
   margin-top: 3px; font-size: 10px; line-height: 1.2;
   white-space: nowrap; cursor: default; color: #8b949e;
 }
-.agent-harness .harness-name { color: #6e7681; }
+.agent-harness .harness-name,
+.agent-harness .harness-mark { color: #6e7681; }
+.agent-harness .harness-mark {
+  display: inline-flex; width: 14px; height: 14px;
+  align-items: center; justify-content: center; vertical-align: -3px;
+}
+.agent-harness .harness-mark svg {
+  display: block; width: 14px; height: 14px; fill: currentColor;
+}
 .agent-harness .harness-sep { color: #484f58; margin: 0 3px; }
 /* Copilot drive marker ("CP api · GPT-5.6"): rendered only for an agent driven
    over Copilot's embedded JSON-RPC API, never for the send-keys default, so its
@@ -3372,6 +3380,7 @@ tr:hover .agent-harness { color: #c9d1d9; }
    and dim them without dropping the already-small text below readable contrast. */
 .runtime-meta-offline { opacity: 0.85; font-style: italic; }
 .agent-harness .runtime-meta-offline .harness-name,
+.agent-harness .runtime-meta-offline .harness-mark,
 .agent-harness .runtime-meta-offline .harness-sep { color: #9aa4af; }
 .agent-harness .runtime-meta-offline .harness-cost-whatif { color: #969c79; }
 /* Per-agent "remote on" indicator — a bare 📱 glyph trailing the harness

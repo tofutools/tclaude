@@ -14,6 +14,7 @@ import {
   openHumanNotificationReader,
 } from './human-notification-attention.js';
 import { bodilessNotice } from './human-attachments.js';
+import { HarnessMark } from './harness-mark.js';
 
 const html = htm.bind(h);
 
@@ -185,7 +186,7 @@ export function HarnessLine({ member, snapshot }) {
       return indicated ? html`<div class="agent-harness">${sandbox}${remote}${refused}</div>` : null;
     }
     const title = `${offline ? 'Last used harness' : 'Harness'}: ${labels.long}`;
-    return html`<div class="agent-harness" title=${title}><span class=${metadataClass} role="note" aria-label=${title}><span class="harness-name">${labels.short}</span>${drive}</span>${sandbox}${remote}${refused}</div>`;
+    return html`<div class="agent-harness" title=${title}><span class=${metadataClass} role="note" aria-label=${title}><${HarnessMark} name=${harness} shortLabel=${labels.short} longLabel=${labels.long} />${drive}</span>${sandbox}${remote}${refused}</div>`;
   }
   const effort = state.effort_level || '';
   const cost = Number(state.cost_usd || 0);
@@ -195,7 +196,7 @@ export function HarnessLine({ member, snapshot }) {
   if (cost > 0) title += ` — API cost this session: $${cost.toFixed(4)} (API/enterprise pricing — no subscription limits)`;
   if (virtualCost > 0) title += ` — WHAT-IF cost this session: $${virtualCost.toFixed(4)} (estimated if billed pay-per-token — you're on a subscription, so this is hypothetical, not a real charge)`;
   return html`<div class="agent-harness" title=${title}>
-    <span class=${metadataClass} role="note" aria-label=${title}><span class="harness-name">${labels.short}</span>${drive}<span class="harness-sep">·</span><span class="harness-model">${shortModel(model, harness)}</span>
+    <span class=${metadataClass} role="note" aria-label=${title}><${HarnessMark} name=${harness} shortLabel=${labels.short} longLabel=${labels.long} />${drive}<span class="harness-sep">·</span><span class="harness-model">${shortModel(model, harness)}</span>
       ${effort ? html`<span class="harness-effort" title=${effort}>${shortEffort(effort)}</span>` : null}
       ${cost > 0 ? html`<span class="harness-cost">${cost >= 0.005 ? `$${cost.toFixed(2)}` : '<1¢'}</span>` : null}
       ${virtualCost > 0 ? html`<span class="harness-cost harness-cost-whatif" title="Estimated pay-per-token-equivalent cost this session — hypothetical, not a real charge (subscription)">${virtualCost >= 0.005 ? `≈$${virtualCost.toFixed(2)}` : '≈<1¢'}</span>` : null}

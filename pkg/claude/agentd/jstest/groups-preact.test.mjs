@@ -941,7 +941,11 @@ test('native member rows preserve the legacy field, capability and selector matr
   // With the recorded-details opt-in, the sandbox group and remote indicator
   // are the tail of this one line — glyph, adjacent details chevron, then
   // remote — not a second line under the control cell.
-  assert.match(harnessLine.textContent, /CC·O4\.8 1Mhi<1¢≈\$0\.42🔒›📱/);
+  const harnessMark = harnessLine.querySelector('.harness-mark[data-harness-mark="claude"]');
+  assert.ok(harnessMark, 'the runtime line starts with the Claude Code product mark');
+  assert.equal(harnessMark.title, 'Claude Code');
+  assert.equal(harnessMark.getAttribute('aria-label'), 'Claude Code');
+  assert.match(harnessLine.textContent, /·O4\.8 1Mhi<1¢≈\$0\.42🔒›📱/);
   assert.equal(harnessLine.querySelector('.harness-effort').textContent, 'hi');
   assert.equal(harnessLine.querySelector('.harness-effort').title, 'high');
   assert.match(harnessLine.title, /WHAT-IF cost this session/);
