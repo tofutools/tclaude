@@ -2,6 +2,7 @@ package db
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,6 +26,14 @@ func TestMigrateV191ToV192CreatesCronMessageOrigins(t *testing.T) {
 		Subject: "[cron:legacy-job] status", Body: "report status",
 	})
 	require.NoError(t, err)
+	claimedID, err := InsertAgentMessage(&AgentMessage{
+		FromConv: target, ToConv: target,
+		Subject: "[cron:legacy-job] status", Body: "report status",
+	})
+	require.NoError(t, err)
+	_, claimed, err := ClaimAgentMessageNudge(claimedID, time.Now())
+	require.NoError(t, err)
+	require.True(t, claimed)
 	latestID, err := InsertAgentMessage(&AgentMessage{
 		FromConv: target, ToConv: target,
 		Subject: "[cron:legacy-job] status", Body: "report status",
@@ -51,7 +60,7 @@ func TestMigrateV191ToV192CreatesCronMessageOrigins(t *testing.T) {
 	old, err := GetAgentMessage(oldID)
 	require.NoError(t, err)
 	assert.Nil(t, old, "upgrade removes the older legacy buffered tick")
-	for _, id := range []int64{latestID, unrelatedID} {
+	for _, id := range []int64{claimedID, latestID, unrelatedID} {
 		message, getErr := GetAgentMessage(id)
 		require.NoError(t, getErr)
 		assert.NotNil(t, message)
@@ -59,4 +68,13 @@ func TestMigrateV191ToV192CreatesCronMessageOrigins(t *testing.T) {
 	origin, err := AgentMessageCronJobID(latestID)
 	require.NoError(t, err)
 	assert.Equal(t, jobID, origin)
+	claimedOrigin, err := AgentMessageCronJobID(claimedID)
+	require.NoError(t, err)
+	assert.Equal(t, jobID, claimedOrigin, "migration tags a stale claimed tick before startup releases it")
+	released, err := ReleaseAllAgentMessageNudgeClaims()
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, released)
+	claimedMessage, err := GetAgentMessage(claimedID)
+	require.NoError(t, err)
+	assert.Nil(t, claimedMessage, "startup claim release removes the now-unclaimed superseded tick")
 }

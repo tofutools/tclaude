@@ -15,7 +15,19 @@ func migrateV191toV192(d *sql.DB) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.Exec(`
+	// Several migration heal tests intentionally carry only the table a much
+	// older migration repairs. A real v191 database has both tables, but this
+	// head migration must still advance those partial fixtures without trying
+	// to query absent history.
+	var haveMessages, haveJobs int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'agent_messages'`).Scan(&haveMessages); err != nil {
+		return fmt.Errorf("migrate v191→v192 (cron message origins): probe messages: %w", err)
+	}
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'agent_cron_jobs'`).Scan(&haveJobs); err != nil {
+		return fmt.Errorf("migrate v191→v192 (cron message origins): probe jobs: %w", err)
+	}
+	if haveMessages > 0 && haveJobs > 0 {
+		if _, err := tx.Exec(`
 		CREATE TABLE IF NOT EXISTS agent_cron_messages (
 			message_id INTEGER PRIMARY KEY
 			           REFERENCES agent_messages(id) ON DELETE CASCADE,
@@ -49,7 +61,7 @@ func migrateV191toV192(d *sql.DB) error {
 		)
 		FROM agent_messages am
 		WHERE am.delivered_at IS NULL AND am.read_at IS NULL
-		  AND am.nudge_claimed_at IS NULL AND am.nudge_cancelled_at IS NULL
+		  AND am.nudge_cancelled_at IS NULL
 		  AND EXISTS (
 			SELECT 1
 			FROM agent_cron_jobs j
@@ -66,15 +78,16 @@ func migrateV191toV192(d *sql.DB) error {
 			  )
 		  );
 
-		-- Keep the newest buffered row for each recovered job/recipient. Rows
-		-- already delivered, claimed, or cancelled were not recovered above and
-		-- therefore remain untouched.
+		-- Keep the newest currently-unclaimed buffered row for each recovered
+		-- job/recipient. Claimed rows retain provenance but remain in place until
+		-- startup releases their stale lease, at which point release-all applies
+		-- the same superseded-row cleanup atomically.
 		DELETE FROM agent_messages
 		WHERE id IN (
 			SELECT older.message_id
 			FROM agent_cron_messages older
 			JOIN agent_messages older_message ON older_message.id = older.message_id
-			WHERE EXISTS (
+			WHERE older_message.nudge_claimed_at IS NULL AND EXISTS (
 				SELECT 1
 				FROM agent_cron_messages newer
 				JOIN agent_messages newer_message ON newer_message.id = newer.message_id
@@ -89,9 +102,12 @@ func migrateV191toV192(d *sql.DB) error {
 				  )
 			)
 		);
-		UPDATE schema_version SET version = 192;
 	`); err != nil {
-		return fmt.Errorf("migrate v191→v192 (cron message origins): apply: %w", err)
+			return fmt.Errorf("migrate v191→v192 (cron message origins): apply: %w", err)
+		}
+	}
+	if _, err := tx.Exec(`UPDATE schema_version SET version = 192`); err != nil {
+		return fmt.Errorf("migrate v191→v192 (cron message origins): version: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("migrate v191→v192 (cron message origins): commit: %w", err)
