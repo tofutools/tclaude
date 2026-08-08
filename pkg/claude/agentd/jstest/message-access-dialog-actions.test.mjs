@@ -79,18 +79,24 @@ test('accepted reply and sudo mutations do not await snapshot refresh before com
   const harness = await createPreactHarness(t);
   const { createMessageAccessDialogActions } = await harness.importDashboardModule('js/message-access-dialog-actions.js');
   let refreshes = 0;
+  let sudoBody = null;
   const actions = createMessageAccessDialogActions({
-    fetchImpl: async (url) => response(200, url === '/api/sudo'
-      ? { agent_id: 'agt_worker', grants: [{ id: 1 }] }
-      : { queued: true }),
+    fetchImpl: async (url, options) => {
+      if (url === '/api/sudo') {
+        sudoBody = JSON.parse(options.body);
+        return response(200, { agent_id: 'agt_worker', grants: [{ id: 1 }] });
+      }
+      return response(200, { queued: true });
+    },
     refresh: () => {
       refreshes++;
       return { then() { throw new Error('accepted mutation awaited snapshot refresh'); } };
     },
   });
   await actions.replyHuman({ id: 1, body: 'answer', label: 'worker' });
-  await actions.grantSudo({ conv: 'conv-worker', slugs: ['self.rename'], duration: '5m', reason: '' });
+  await actions.grantSudo({ agentID: 'agt_worker', slugs: ['self.rename'], duration: '5m', reason: '' });
   assert.equal(refreshes, 2);
+  assert.deepEqual(sudoBody, { agent_id: 'agt_worker', slugs: ['self.rename'], duration: '5m', reason: '' });
 });
 
 test('permission actions use mode-specific payloads and buffered saves strip defaults', async (t) => {

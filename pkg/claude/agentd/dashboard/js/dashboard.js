@@ -174,11 +174,11 @@ async function settleInitialLayout() {
       confirm: confirmModal,
       notify: toast,
       openGrant: async () => {
-        const convID = await pickAgent({
-          title: 'Grant sudo to', identity: 'conv', showSudo: true,
+        const agentID = await pickAgent({
+          title: 'Grant sudo to', identity: 'agent', showSudo: true,
           includeOfflineHint: 'Include offline / archived agents (the daemon will still grant; the agent sees the slug on next wake)',
         });
-        if (convID) openSudoGrantModal(convID);
+        if (agentID) openSudoGrantModal(agentID);
       },
     }),
     () => mountLogsFeature(),

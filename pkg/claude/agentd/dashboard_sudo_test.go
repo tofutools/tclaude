@@ -50,11 +50,11 @@ func TestDashboardSudo_RevokeByID(t *testing.T) {
 	}
 }
 
-// TestDashboardSudo_RevokeByConv kills every active grant for one
-// conv selector. Pins the bulk-per-conv path: targeted incident
+// TestDashboardSudo_RevokeByAgent kills every active grant for one
+// stable actor. Pins the bulk-per-agent path: targeted incident
 // response (a single agent went off the rails, kill ALL its
 // elevations).
-func TestDashboardSudo_RevokeByConv(t *testing.T) {
+func TestDashboardSudo_RevokeByAgent(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)
 
@@ -83,11 +83,12 @@ func TestDashboardSudo_RevokeByConv(t *testing.T) {
 		GrantedBy: "human:popup-id=test",
 	})
 	require.NoError(t, err, "seed bob grant")
+	aliceAgentID, err := db.AgentIDForConv(aliceConv)
+	require.NoError(t, err)
+	require.NotEmpty(t, aliceAgentID)
 
 	w := httptest.NewRecorder()
-	// Use the alice conv-id directly as the selector. ResolveSelector
-	// matches a full UUID-shape on conv-id.
-	r := dashboardRequest(http.MethodDelete, "/api/sudo?conv="+aliceConv, "")
+	r := dashboardRequest(http.MethodDelete, "/api/sudo?agent_id="+aliceAgentID, "")
 	handleDashboardSudoAPI(w, r)
 	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 
@@ -123,7 +124,7 @@ func TestDashboardSudo_RevokeAll(t *testing.T) {
 }
 
 // TestDashboardSudo_BadRequest_NoSelector pins the validation: a
-// bare DELETE /api/sudo (no id, no ?conv=, no ?all=1) should fail
+// bare DELETE /api/sudo (no id, no ?agent_id=, no ?all=1) should fail
 // before any DB writes — otherwise a copy-paste typo in the JS
 // could become an accidental nuke.
 func TestDashboardSudo_BadRequest_NoSelector(t *testing.T) {
@@ -241,8 +242,10 @@ func TestDashboardSudo_GrantProactive(t *testing.T) {
 	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
 		ConvID: conv, CustomTitle: "alice", IndexedAt: time.Now(),
 	}), "seed conv_index")
+	agentID, _, err := db.EnsureAgentForConv(conv, "test")
+	require.NoError(t, err)
 
-	body := `{"conv":"` + conv + `","slugs":["groups.spawn"],"duration":"5m","reason":"bootstrap"}`
+	body := `{"agent_id":"` + agentID + `","slugs":["groups.spawn"],"duration":"5m","reason":"bootstrap"}`
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPost, "/api/sudo", body)
 	handleDashboardSudoAPI(w, r)
@@ -274,8 +277,10 @@ func TestDashboardSudo_GrantBlocklist(t *testing.T) {
 	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
 		ConvID: conv, CustomTitle: "alice", IndexedAt: time.Now(),
 	}), "seed conv_index")
+	agentID, _, err := db.EnsureAgentForConv(conv, "test")
+	require.NoError(t, err)
 
-	body := `{"conv":"` + conv + `","slugs":["groups.spawn","permissions.grant"],"duration":"5m"}`
+	body := `{"agent_id":"` + agentID + `","slugs":["groups.spawn","permissions.grant"],"duration":"5m"}`
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPost, "/api/sudo", body)
 	handleDashboardSudoAPI(w, r)
@@ -299,8 +304,10 @@ func TestDashboardSudo_GrantDurationCap(t *testing.T) {
 	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
 		ConvID: conv, CustomTitle: "alice", IndexedAt: time.Now(),
 	}), "seed conv_index")
+	agentID, _, err := db.EnsureAgentForConv(conv, "test")
+	require.NoError(t, err)
 
-	body := `{"conv":"` + conv + `","slugs":["groups.spawn"],"duration":"24h"}`
+	body := `{"agent_id":"` + agentID + `","slugs":["groups.spawn"],"duration":"24h"}`
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPost, "/api/sudo", body)
 	handleDashboardSudoAPI(w, r)
@@ -321,8 +328,10 @@ func TestDashboardSudo_GrantAuthRequired(t *testing.T) {
 	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
 		ConvID: conv, CustomTitle: "alice", IndexedAt: time.Now(),
 	}), "seed conv_index")
+	agentID, _, err := db.EnsureAgentForConv(conv, "test")
+	require.NoError(t, err)
 
-	body := `{"conv":"` + conv + `","slugs":["groups.spawn"],"duration":"5m"}`
+	body := `{"agent_id":"` + agentID + `","slugs":["groups.spawn"],"duration":"5m"}`
 	w := httptest.NewRecorder()
 	// Request without cookie / Origin.
 	r := httptest.NewRequest(http.MethodPost, "/api/sudo", strings.NewReader(body))
