@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -425,6 +426,220 @@ func handleGHProxyRunLogFailed(w http.ResponseWriter, r *http.Request) {
 	res, err := g.ghBulk(r.Context(), ghProxyLogTimeout,
 		"run", "view", runID, "--repo", g.ownerRepo, "--log-failed")
 	g.respond(w, r, "run.log-failed", res, err)
+}
+
+// ghProxyRunDownloadRequest names one run's artifacts to fetch.
+//
+// There is deliberately no destination field — see artifactDest for why a
+// caller-supplied path is the one parameter this proxy cannot accept.
+type ghProxyRunDownloadRequest struct {
+	Remote string `json:"remote,omitempty"`
+	RunID  int64  `json:"run_id"`
+	Name   string `json:"name,omitempty"`
+}
+
+// ghArtifactManifestProjection reduces the artifacts endpoint to the fields
+// that decide anything: what an artifact is called, how big it is, and whether
+// it is still there.
+//
+// A projection rather than the passthrough every other --json read uses, for
+// the same reason the review-comment one is: each raw entry embeds the complete
+// `workflow_run` object plus several API urls, which together dwarf the six
+// fields a caller acts on. `size` is rendered alongside the raw byte count
+// because the byte count is what maxGHArtifactBytes is spent against and the
+// human-readable form is what tells an agent whether asking is reasonable.
+const ghArtifactManifestProjection = `[.artifacts[] | ` +
+	`{id, name, size_in_bytes, expired, created_at, expires_at}]`
+
+// ghArtifactManifest is the daemon's own view of that projection — the ONLY gh
+// response in this proxy the daemon models, because `run download` has to make
+// a decision from it rather than hand it on.
+type ghArtifactManifest []struct {
+	ID      int64  `json:"id"`
+	Name    string `json:"name"`
+	Size    int64  `json:"size_in_bytes"`
+	Expired bool   `json:"expired"`
+}
+
+// ghArtifactsPath is the manifest endpoint for one run. Built from the derived
+// slug and a re-formatted integer, never gh's `{owner}/{repo}` placeholders,
+// which gh would expand from the agent-writable .git/config this proxy runs in
+// a neutral directory to escape.
+func ghArtifactsPath(ownerRepo, runID string) string {
+	return fmt.Sprintf("repos/%s/actions/runs/%s/artifacts?per_page=100", ownerRepo, runID)
+}
+
+// handleGHProxyRunArtifacts serves POST /v1/github/run/artifacts — what a run
+// produced, before deciding whether to pull it.
+//
+// It is a separate verb rather than an implementation detail of `run download`
+// because the sizes are the whole point: an artifact is routinely hundreds of
+// megabytes, `run download` refuses past maxGHArtifactBytes, and "list, then
+// choose" is how a caller avoids finding that out the slow way.
+//
+// gh has no `run artifacts` subcommand, so this goes through `gh api`. The
+// query string carries per_page because `gh api -f`/`-F` would flip the request
+// to POST — writing with a credential from a read verb. One page: a run with
+// more than 100 artifacts is not a case worth paginating a JSON projection for.
+func handleGHProxyRunArtifacts(w http.ResponseWriter, r *http.Request) {
+	var body ghProxyRunRequest
+	g, ok := openGHProxy(w, r, PermGitHubRead, &body, func() string { return body.Remote })
+	if !ok {
+		return
+	}
+	runID, fault := validateGHRunID(body.RunID)
+	if fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	res, err := g.gh(r.Context(), "api", ghArtifactsPath(g.ownerRepo, runID),
+		"--jq", ghArtifactManifestProjection)
+	g.respond(w, r, "run.artifacts", res, err)
+}
+
+// handleGHProxyRunDownload serves POST /v1/github/run/download — a run's
+// artifacts, on disk, in the agent's own work tree.
+//
+// This is the one verb whose effect is a filesystem write rather than a
+// response, which shapes everything about it:
+//
+//   - The destination is computed, never named (artifactDest). A caller who
+//     could name it could aim the unsandboxed daemon at any path it can reach.
+//   - The manifest is read FIRST, and the download is refused if the total
+//     exceeds maxGHArtifactBytes. gh offers no size limit of its own, so
+//     without this preflight the only bound on what lands in the operator's
+//     disk is what CI happened to upload.
+//   - The preflight also answers "no artifact by that name" and "it expired"
+//     precisely, where gh reports both as one unhelpful failure.
+//
+// Both calls share one budget, so the daemon's worst case stays the number the
+// CLI is waiting on however the work divides between them.
+func handleGHProxyRunDownload(w http.ResponseWriter, r *http.Request) {
+	var body ghProxyRunDownloadRequest
+	g, ok := openGHProxy(w, r, PermGitHubRead, &body, func() string { return body.Remote })
+	if !ok {
+		return
+	}
+	runID, fault := validateGHRunID(body.RunID)
+	if fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	name, fault := validateGHArtifactName(body.Name)
+	if fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), ghProxyDownloadTimeout)
+	defer cancel()
+
+	manifest, res, fault := g.artifactManifest(ctx, runID)
+	if fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	if res.ExitCode != 0 {
+		// gh could not read the run at all — no such run, no access, no
+		// network. Downloading would fail identically and say it twice.
+		g.respond(w, r, "run.download", res, nil)
+		return
+	}
+	if fault := checkArtifactBudget(manifest, name); fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+
+	dest, fault := g.artifactDest(runID)
+	if fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	args := []string{"run", "download", runID, "--repo", g.ownerRepo, "--dir", dest}
+	if name != "" {
+		args = append(args, "--name", name)
+	}
+	dl, err := g.ghBounded(ctx, ghProxyDownloadTimeout, 0, args...)
+	if err != nil || dl.ExitCode != 0 {
+		g.respond(w, r, "run.download", dl, err)
+		return
+	}
+	// gh prints nothing on success, so the daemon says what happened: where
+	// the files are, and what they are.
+	dl.Stdout = artifactListing(dest)
+	g.respond(w, r, "run.download", dl, nil)
+}
+
+// artifactManifest reads and decodes one run's artifact list. A gh outcome that
+// is merely non-zero comes back as a result for the caller to report; only a
+// response that ran successfully and still could not be understood is a fault,
+// because that means the daemon cannot make the size decision it is here to
+// make and must not proceed as though it had.
+func (g *ghProxySession) artifactManifest(ctx context.Context, runID string) (
+	ghArtifactManifest, ProxyResult, *proxyFault,
+) {
+	res, err := g.gh(ctx, "api", ghArtifactsPath(g.ownerRepo, runID),
+		"--jq", ghArtifactManifestProjection)
+	if err != nil {
+		return nil, res, faultf(http.StatusBadGateway, "gh_failed",
+			"could not read the run's artifact list: %v", err)
+	}
+	if res.ExitCode != 0 {
+		return nil, res, nil
+	}
+	var manifest ghArtifactManifest
+	if err := json.Unmarshal([]byte(strings.TrimSpace(res.Stdout)), &manifest); err != nil {
+		return nil, res, faultf(http.StatusBadGateway, "gh_failed",
+			"the run's artifact list could not be understood: %v", err)
+	}
+	return manifest, res, nil
+}
+
+// checkArtifactBudget decides whether a download may proceed, from the
+// manifest alone — before a byte is fetched.
+//
+// An empty name means every artifact, so the budget is the sum. Naming one
+// narrows the budget to that one, which is the point of naming it.
+func checkArtifactBudget(manifest ghArtifactManifest, name string) *proxyFault {
+	var (
+		total   int64
+		matched int
+		names   []string
+	)
+	for _, a := range manifest {
+		names = append(names, a.Name)
+		if name != "" && a.Name != name {
+			continue
+		}
+		if a.Expired {
+			continue
+		}
+		matched++
+		total += a.Size
+	}
+	if matched == 0 {
+		if name != "" {
+			return faultf(http.StatusNotFound, "no_artifact",
+				"this run has no live artifact named %q; it has: %s",
+				name, artifactNameList(names))
+		}
+		return faultf(http.StatusNotFound, "no_artifact",
+			"this run has no live artifacts (they expire, and a run that failed early "+
+				"may never have uploaded any)")
+	}
+	if total > maxGHArtifactBytes {
+		return faultf(http.StatusRequestEntityTooLarge, "artifact_too_large",
+			"that is %s of artifacts and the proxy will not download more than %s at once; "+
+				"use `run artifacts` to see the sizes and `--name` to take one",
+			humanBytes(total), humanBytes(maxGHArtifactBytes))
+	}
+	return nil
+}
+
+func artifactNameList(names []string) string {
+	if len(names) == 0 {
+		return "(none)"
+	}
+	return strings.Join(names, ", ")
 }
 
 // ghProxyPREditRequest edits an existing pull request's title and/or body.

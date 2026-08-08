@@ -340,6 +340,8 @@ var (
 		"issue.comment":  true,
 		"run.list":       true,
 		"run.log-failed": true,
+		"run.artifacts":  true,
+		"run.download":   true,
 	}
 	// auditedLinearProxyVerbs must name EVERY /v1/linear/… route the mux
 	// registers, for exactly the reason auditedGitHubProxyVerbs must: a route

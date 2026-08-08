@@ -41,6 +41,14 @@ const ghProxyTimeout = 90 * time.Second
 // daemon's own bound is what actually ends a slow call.
 const ghProxyBulkTimeout = 210 * time.Second
 
+// ghProxyDownloadTimeout is the bound for `run download`, whose daemon-side
+// budget is 300s — it reads the run's artifact manifest and then pulls up to
+// 512 MiB over a link neither end controls. Same reasoning as the constant
+// above: a client cap under the daemon's would turn a download that succeeded
+// into a hang-up reporting nothing, and here that leaves files on disk the
+// agent has not been told about.
+const ghProxyDownloadTimeout = 330 * time.Second
+
 func githubCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:     "github",
@@ -490,6 +498,8 @@ func githubRunCmd() *cobra.Command {
 		SubCmds: []*cobra.Command{
 			githubRunListCmd(),
 			githubRunLogFailedCmd(),
+			githubRunArtifactsCmd(),
+			githubRunDownloadCmd(),
 		},
 	}.ToCobra()
 }
@@ -586,6 +596,76 @@ func githubRunLogFailedCmd() *cobra.Command {
 				"remote": strings.TrimSpace(p.Remote),
 				"run_id": p.RunID,
 			}, p.AskHuman, "run log-failed", ghProxyBulkTimeout, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func githubRunArtifactsCmd() *cobra.Command {
+	return boa.CmdT[githubRunParams]{
+		Use:     "artifacts",
+		Aliases: []string{"artifact-ls"},
+		Short:   "List the artifacts a workflow run produced",
+		Long: "Lists what a run uploaded — name, size in bytes, and whether it has expired — without " +
+			"downloading anything. This is the command to run BEFORE `run download`.\n\n" +
+			"Sizes are the reason it exists. A CI job that uploads a build tree produces artifacts in " +
+			"the hundreds of megabytes, `run download` refuses more than 512 MiB at once, and this is " +
+			"how you find out which one you actually want.\n\n" +
+			"An artifact with `expired: true` is gone; GitHub keeps them for a limited retention period " +
+			"and the entry outlives the bytes.\n\n" +
+			"At most 100 artifacts are listed, which no ordinary run approaches.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *githubRunParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *githubRunParams, _ *cobra.Command, _ []string) {
+			os.Exit(ghProxyCall("/v1/github/run/artifacts", map[string]any{
+				"remote": strings.TrimSpace(p.Remote),
+				"run_id": p.RunID,
+			}, p.AskHuman, "run artifacts", os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+type githubRunDownloadParams struct {
+	RunID    int64  `pos:"true" name:"run-id" help:"Workflow-run id (the number in an Actions URL, .../actions/runs/<run-id>)."`
+	Name     string `long:"name" short:"n" optional:"true" help:"Download only the artifact with this exact name, as reported by 'run artifacts'. Omit to take every live artifact."`
+	Remote   string `long:"remote" optional:"true" help:"Remote naming the repository to act on (default: origin)."`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout. Capped at 300s. Timeout = deny."`
+}
+
+func githubRunDownloadCmd() *cobra.Command {
+	return boa.CmdT[githubRunDownloadParams]{
+		Use:     "download",
+		Aliases: []string{"dl"},
+		Short:   "Download a workflow run's artifacts into your work tree",
+		Long: "Downloads and unzips a run's artifacts, then prints where they landed and what is in " +
+			"them. This is the verb for a CI job that uploads what you need to see — a coverage " +
+			"profile, a failing test's output, a built binary — rather than printing it into the log " +
+			"`run log-failed` returns.\n\n" +
+			"YOU DO NOT CHOOSE THE DESTINATION, and there is no flag for it. Everything lands in " +
+			"`.tclaude-artifacts/run-<run-id>/` at the root of your own work tree. The daemon runs " +
+			"unsandboxed, so a path it took from you would be a path it would write to as itself; the " +
+			"same rule that stops you naming the repository stops you naming the directory. The " +
+			"directory ignores itself in git, so a download does not turn up in `git status`.\n\n" +
+			"It is emptied first, so the listing you get back is this run's artifacts and not a mix " +
+			"with an earlier download's. Copy anything you want to keep somewhere else.\n\n" +
+			"Without `--name` you get every live artifact, each in a subdirectory named after it. " +
+			"With `--name` that one artifact is unzipped directly into the destination.\n\n" +
+			"The proxy refuses more than 512 MiB in one call — it checks the sizes before fetching a " +
+			"byte, so an oversized request costs you nothing but the refusal. Run `run artifacts` " +
+			"first and take what you need by name.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *githubRunDownloadParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *githubRunDownloadParams, _ *cobra.Command, _ []string) {
+			os.Exit(ghProxyCallTimeout("/v1/github/run/download", map[string]any{
+				"remote": strings.TrimSpace(p.Remote),
+				"run_id": p.RunID,
+				"name":   strings.TrimSpace(p.Name),
+			}, p.AskHuman, "run download", ghProxyDownloadTimeout, os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
 }

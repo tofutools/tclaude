@@ -114,7 +114,7 @@ Four slugs, none granted by default and none conferred by group ownership:
 |---|---|
 | `git.read` | `git remotes`, `git ls-remote`, `git fetch` |
 | `git.push` | `git push` |
-| `github.read` | `github pr ls/view/checks/comments`, `github issue ls/view`, `github run ls/log-failed` |
+| `github.read` | `github pr ls/view/checks/comments`, `github issue ls/view`, `github run ls/log-failed/artifacts/download` |
 | `github.write` | `github pr create/edit/comment/ready`, `github issue comment` |
 
 ```bash
@@ -171,6 +171,8 @@ tclaude proxy github issue view 7
 tclaude proxy github issue comment 7 --body-file note.md
 tclaude proxy github run ls --branch feat/x --status failure
 tclaude proxy github run log-failed 18234567890   # why that check went red
+tclaude proxy github run artifacts 18234567890    # what it uploaded, and how big
+tclaude proxy github run download 18234567890 --name coverage
 ```
 
 ### Reading review feedback and CI failures
@@ -239,6 +241,48 @@ under a context budget. The projection is a single jq constant in
 > gh JSON; these return free text that an agent will read as part of its
 > instructions unless it has been told otherwise. The bundled `proxy-git` skill
 > says so; keep it in mind if you write your own guidance.
+
+### Downloading a run's artifacts
+
+Some CI jobs put what you need in an artifact rather than in the log: a coverage
+profile, a JUnit report, a failing test's captured output, a built binary.
+`run log-failed` cannot reach any of it.
+
+```bash
+tclaude proxy github run artifacts 18234567890            # names, sizes, expiry
+tclaude proxy github run download 18234567890 --name coverage
+```
+
+**The destination is not a parameter, and there is no flag for it.** Everything
+lands in `.tclaude-artifacts/run-<run-id>/` at the root of the agent's own work
+tree, and the command prints that path plus a listing of what arrived —
+`gh run download` itself prints nothing at all on success. This is the same rule
+as the repository: agentd runs unsandboxed, so a path it accepted from an agent
+would be a path it would write to *as the operator*, which is precisely the
+reach the proxy exists not to lend.
+
+The directory is emptied before each download of the same run, so a listing is
+never a mix of two downloads. It also contains a `.gitignore` of `*`, which
+makes it invisible to `git status` — an agent that pulls an artifact mid-branch
+does not then commit it by reflex, and you do not have to edit `.gitignore`.
+
+Without `--name` every live artifact is fetched, each into a subdirectory named
+after it; with `--name` that one artifact is unzipped directly into the
+destination.
+
+Sizes are checked **before** anything is fetched, from the same manifest
+`run artifacts` returns, and a request totalling more than **512 MiB** is
+refused. Artifacts are routinely that large — a job that uploads a build tree
+does not think of itself as unusual — and this is the one verb where an agent's
+mistake costs disk rather than context. The preflight also distinguishes "no
+artifact by that name" (it lists the ones that exist), "it expired", and "this
+run uploaded nothing", which gh reports as one indistinguishable failure. Because
+it moves bulk bytes, `run download` gets the longest bound in the proxy: 300s.
+
+`run artifacts` lists at most 100 artifacts, which no ordinary run approaches,
+and is projected down to the fields that decide anything (`name`,
+`size_in_bytes`, `expired`, the timestamps) — the raw entries embed a complete
+copy of the workflow-run object each.
 
 `git remotes` is the command to point an agent at when something is refused: it
 lists every remote with the allow-list verdict and the reason, so the agent can

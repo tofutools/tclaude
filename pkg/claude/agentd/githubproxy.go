@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
+	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -59,6 +62,13 @@ const (
 	// verb happens to do next.
 	ghProxyCommentsTimeout = 90 * time.Second
 
+	// ghProxyDownloadTimeout is the TOTAL budget for `run download`: the
+	// artifact manifest read, then gh's own download and unzip. It is the
+	// longest bound in this file because it is the only verb that moves bulk
+	// bytes onto disk rather than into a response — maxGHArtifactBytes of
+	// them, over a link the daemon does not control.
+	ghProxyDownloadTimeout = 300 * time.Second
+
 	// maxGHProxyTextBytes is the tail kept from a verb whose output IS the
 	// payload — a comment thread, a failed job's log — rather than a
 	// diagnosis. The default 16 KiB is right for "what went wrong with this
@@ -80,6 +90,35 @@ const (
 	// maxGHProxyLimit bounds a list request.
 	maxGHProxyLimit     = 100
 	defaultGHProxyLimit = 20
+
+	// ghArtifactDirName is the ONE directory a download may land in, relative
+	// to the agent's own work-tree root. It is a constant rather than a
+	// parameter on purpose: every other verb in this proxy lends the operator's
+	// credential without lending filesystem reach, and a caller-supplied
+	// destination is exactly the parameter that would break that (see
+	// artifactDest for how the path is realized).
+	//
+	// The leading dot and the self-ignoring .gitignore artifactDest writes keep
+	// a download out of `git status`, so an agent that downloads an artifact
+	// mid-branch does not then commit it by reflex.
+	ghArtifactDirName = ".tclaude-artifacts"
+
+	// maxGHArtifactBytes caps the TOTAL compressed size a single download may
+	// pull. Artifacts are routinely gigabytes — a CI job that uploads a build
+	// tree does not think of itself as unusual — and this is the one verb where
+	// an agent's mistake costs the operator's disk rather than their context
+	// window. The manifest read that precedes the download is what makes the
+	// cap enforceable: gh has no size limit of its own to ask for.
+	maxGHArtifactBytes = 512 << 20
+
+	// maxGHArtifactEntries bounds the file listing reported back. A build-tree
+	// artifact has tens of thousands of files, and enumerating them would push
+	// the useful part — where the download landed — out of a bounded response.
+	maxGHArtifactEntries = 200
+
+	// maxGHArtifactNameLen bounds an artifact name. GitHub's own limit is
+	// smaller; this leaves room and still refuses a body in the wrong field.
+	maxGHArtifactNameLen = 200
 )
 
 // ghProxySession is a gh invocation context: the repo slug the agent's own
@@ -95,6 +134,10 @@ type ghProxySession struct {
 	// from the local repository, and this proxy deliberately runs gh in a
 	// neutral directory where there is none.
 	branch string
+	// repoRoot is the agent's own work-tree root, already symlink-resolved and
+	// gated by resolveProxyRepo. Only `run download` uses it, and only as the
+	// root it is not allowed to write outside of — gh still RUNS in neutral.
+	repoRoot string
 }
 
 // newGHProxySession runs every gate and resolves the GitHub repository from
@@ -154,7 +197,8 @@ func newGHProxySession(ctx context.Context, convID, requestedRemote string, remo
 		env:       env,
 		// Read while the git session is still open — the gh half has no
 		// repository of its own to ask.
-		branch: s.currentBranch(ctx),
+		branch:   s.currentBranch(ctx),
+		repoRoot: s.repoRoot,
 		// A neutral working directory is a security control, not tidiness:
 		// running gh inside the agent's repository would let .git/config
 		// re-aim it despite the explicit --repo.
@@ -275,8 +319,196 @@ func (g *ghProxySession) bodyFile(body string) (string, func(), *proxyFault) {
 }
 
 // ---------------------------------------------------------------------------
+// Artifact destination
+// ---------------------------------------------------------------------------
+
+// artifactDest prepares, and returns the absolute path of, the directory a
+// download for runID lands in: <work-tree root>/.tclaude-artifacts/run-<id>/.
+//
+// The destination is COMPUTED, never supplied. That is the same rule as the
+// repository slug, for the same reason: agentd runs unsandboxed and a caller
+// who can name the directory can have the daemon write wherever the daemon can
+// reach, which is the one thing "lends credentials, not filesystem reach" is
+// meant to rule out. There is no path parameter to validate because there is
+// no path parameter.
+//
+// Every step goes through os.Root rather than plain os calls. A Root refuses
+// any traversal that leaves the work tree, so a `.tclaude-artifacts` the agent
+// has replaced with a symlink to ~/.ssh fails here instead of being followed —
+// which plain MkdirAll would do, and which os.Lstat could only detect in a
+// window the agent gets to race.
+//
+// What remains is gh's own write: it receives an ordinary path string and
+// resolves it itself, so an agent that swaps a component AFTER this returns can
+// still redirect the extraction. That race is real, bounded by the same-uid
+// reality the whole proxy sits inside (docs/git-proxy.md), and deliberately not
+// papered over here.
+func (g *ghProxySession) artifactDest(runID string) (string, *proxyFault) {
+	if g.repoRoot == "" {
+		return "", faultf(http.StatusConflict, "repo_unresolved",
+			"the daemon could not resolve your work tree, so there is nowhere to put a download")
+	}
+	root, err := os.OpenRoot(g.repoRoot)
+	if err != nil {
+		return "", faultf(http.StatusConflict, "repo_unresolved",
+			"your work tree %s is not reachable: %v", g.repoRoot, err)
+	}
+	defer func() { _ = root.Close() }()
+
+	if err := root.MkdirAll(ghArtifactDirName, 0o755); err != nil {
+		return "", faultf(http.StatusConflict, "artifact_dir",
+			"could not prepare %s in your work tree: %v", ghArtifactDirName, err)
+	}
+	// A directory whose contents are all ignored does not show up as untracked
+	// at all, so this keeps downloads out of `git status` without the operator
+	// having to edit .gitignore. Written every time: the agent may have deleted
+	// it, and rewriting three bytes is cheaper than deciding whether to.
+	ignore := path.Join(ghArtifactDirName, ".gitignore")
+	if err := root.WriteFile(ignore, []byte("*\n"), 0o644); err != nil {
+		return "", faultf(http.StatusConflict, "artifact_dir",
+			"could not write %s: %v", ignore, err)
+	}
+
+	rel := path.Join(ghArtifactDirName, "run-"+runID)
+	// Fresh every time. Left in place, an earlier download's files would be
+	// listed back as part of this one — and a caller reading that listing has
+	// no way to tell which run a file came from.
+	if err := root.RemoveAll(rel); err != nil {
+		return "", faultf(http.StatusConflict, "artifact_dir",
+			"could not clear a previous download at %s: %v", rel, err)
+	}
+	if err := root.Mkdir(rel, 0o755); err != nil {
+		return "", faultf(http.StatusConflict, "artifact_dir",
+			"could not create %s: %v", rel, err)
+	}
+	return filepath.Join(g.repoRoot, filepath.FromSlash(rel)), nil
+}
+
+// artifactListing walks a completed download and renders what landed: the
+// destination, then one line per file, then a total.
+//
+// It is the daemon's own text rather than gh's — `gh run download` prints
+// nothing at all on success, which for a verb whose whole effect is on disk
+// tells the caller neither where to look nor whether anything arrived.
+//
+// filepath.WalkDir lstats, so a symlink inside an extracted artifact is
+// reported as an entry and never followed.
+func artifactListing(dest string) string {
+	type entry struct {
+		rel  string
+		size int64
+	}
+	var (
+		entries  []entry
+		files    int
+		total    int64
+		walkErr  error
+		overflow bool
+	)
+	walkErr = filepath.WalkDir(dest, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		files++
+		var size int64
+		if info, statErr := d.Info(); statErr == nil {
+			size = info.Size()
+			total += size
+		}
+		if len(entries) < maxGHArtifactEntries {
+			rel, relErr := filepath.Rel(dest, p)
+			if relErr != nil {
+				rel = p
+			}
+			entries = append(entries, entry{rel: filepath.ToSlash(rel), size: size})
+		} else {
+			overflow = true
+		}
+		return nil
+	})
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "downloaded to %s\n\n", dest)
+	if walkErr != nil {
+		fmt.Fprintf(&b, "(the download directory could not be fully read: %v)\n", walkErr)
+		return b.String()
+	}
+	if files == 0 {
+		b.WriteString("(no files — the run has no matching artifact, or it has expired)\n")
+		return b.String()
+	}
+	for _, e := range entries {
+		fmt.Fprintf(&b, "%s\t%s\n", e.rel, humanBytes(e.size))
+	}
+	if overflow {
+		fmt.Fprintf(&b, "… and %d more\n", files-len(entries))
+	}
+	fmt.Fprintf(&b, "\n(%s in %s)\n", pluralFiles(files), humanBytes(total))
+	return b.String()
+}
+
+func pluralFiles(n int) string {
+	if n == 1 {
+		return "1 file"
+	}
+	return fmt.Sprintf("%d files", n)
+}
+
+// humanBytes renders a size the way a human reads one. Sizes appear in a
+// listing an agent reads as prose, where "1.2 MiB" carries the judgement
+// "1258291" does not.
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for v := n / unit; v >= unit && exp < 3; v /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGT"[exp])
+}
+
+// ---------------------------------------------------------------------------
 // Parameter validation
 // ---------------------------------------------------------------------------
+
+// validateGHArtifactName bounds an artifact name. It reaches argv as `gh run
+// download -n <name>`, so it is charset-checked like a title rather than passed
+// through like a body: a leading "-" would be read as a flag, and a path
+// separator would be an attempt to steer where gh writes.
+//
+// GitHub itself refuses `" : < > | * ? \ /` and control characters in an
+// artifact name, so nothing legal is lost by refusing them here too.
+func validateGHArtifactName(name string) (string, *proxyFault) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", nil
+	}
+	if utf8.RuneCountInString(name) > maxGHArtifactNameLen {
+		return "", faultf(http.StatusBadRequest, "invalid_arg",
+			"the artifact name is longer than %d characters", maxGHArtifactNameLen)
+	}
+	if strings.HasPrefix(name, "-") {
+		return "", faultf(http.StatusBadRequest, "invalid_arg",
+			"an artifact name may not begin with '-'")
+	}
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f {
+			return "", faultf(http.StatusBadRequest, "invalid_arg",
+				"the artifact name contains a control character")
+		}
+		if strings.ContainsRune(`/\:<>|*?"`, r) {
+			return "", faultf(http.StatusBadRequest, "invalid_arg",
+				"the artifact name contains %q, which GitHub does not allow in one", r)
+		}
+	}
+	return name, nil
+}
 
 // validateGHNumber bounds a PR/issue number. It is rendered back into argv as
 // a decimal string, so parsing it into an int and re-formatting it is what
