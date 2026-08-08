@@ -1325,7 +1325,7 @@ func logRequest(h http.Handler) http.Handler {
 		rec := &statusRec{ResponseWriter: w, code: 200}
 		h.ServeHTTP(rec, r)
 		p := peerFromContext(r.Context())
-		slog.Info("http",
+		slog.Debug("http",
 			"method", r.Method,
 			"path", safeHTTPLogPath(r.URL.Path),
 			"status", rec.code,
