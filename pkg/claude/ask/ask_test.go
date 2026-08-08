@@ -334,8 +334,9 @@ func TestAsk_SelfHealsCodexBuiltinDefaults(t *testing.T) {
 
 	assert.False(t, argvHas(f.last().Argv, "--resume"), "stale mapping starts fresh")
 	assert.False(t, argvHas(f.last().Argv, "--model"), "Codex does not receive Claude's built-in model")
-	assert.False(t, argvHas(f.last().Argv, "model_reasoning_effort"),
-		"Codex does not receive Claude's built-in effort")
+	assert.False(t, slices.ContainsFunc(f.last().Argv, func(arg string) bool {
+		return strings.HasPrefix(arg, "model_reasoning_effort=")
+	}), "Codex does not receive Claude's built-in effort")
 }
 
 // TestAsk_CapturedModeFoldsStdin covers the `git diff | ai "safe?"` shape:
