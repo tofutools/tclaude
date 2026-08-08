@@ -704,7 +704,7 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 	}
 
 	// Log hook event
-	slog.Info("hook received",
+	slog.Debug("hook received",
 		"event", input.HookEventName,
 		"conv_id", input.ConvID,
 		"notification_type", input.NotificationType,
@@ -719,7 +719,7 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 	if err != nil || state == nil {
 		return err
 	}
-	slog.Info("session found", "session_id", state.ID, "status", state.Status, "subagent_count", state.SubagentCount, "module", "hooks")
+	slog.Debug("session found", "session_id", state.ID, "status", state.Status, "subagent_count", state.SubagentCount, "module", "hooks")
 
 	// A shell row never has a ConvID, so the foreign-process guard below
 	// (keyed off state.ConvID != "") can never engage for one. runNewShell
@@ -1524,7 +1524,7 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 	}
 
 	// Save updated state
-	slog.Info("updating session", "session_id", state.ID, "status", state.Status, "subagent_count", state.SubagentCount, "module", "hooks")
+	slog.Debug("updating session", "session_id", state.ID, "status", state.Status, "subagent_count", state.SubagentCount, "module", "hooks")
 	if err := SaveSessionState(state); err != nil {
 		return err
 	}
