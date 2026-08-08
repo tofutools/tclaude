@@ -45,10 +45,11 @@ type Role struct {
 	Approval       string
 	ToolGovernance string
 
-	// Permissions is the role's default permission-slug set, merged beneath a
+	// Permissions is the role's default permission set, merged beneath a
 	// referencing agent's own permission grants at instantiate (union, agent
-	// extends, deduped). Stored as a JSON list like group_template_agents.
-	Permissions []string
+	// extends, deduped). Each entry is a slug plus an optional scope. Stored as
+	// a JSON list like group_template_agents; a bare slug is unscoped.
+	Permissions []PermissionGrant
 
 	CreatedAt time.Time
 	UpdatedAt time.Time

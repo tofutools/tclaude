@@ -49,12 +49,12 @@ import (
 // templateAgentJSON is the wire shape for one agent in a template —
 // used both in request bodies (the dashboard editor) and responses.
 type templateAgentJSON struct {
-	Name           string   `json:"name"`
-	Role           string   `json:"role,omitempty"`
-	Descr          string   `json:"descr,omitempty"`
-	InitialMessage string   `json:"initial_message,omitempty"`
-	IsOwner        bool     `json:"is_owner,omitempty"`
-	Permissions    []string `json:"permissions"`
+	Name           string               `json:"name"`
+	Role           string               `json:"role,omitempty"`
+	Descr          string               `json:"descr,omitempty"`
+	InitialMessage string               `json:"initial_message,omitempty"`
+	IsOwner        bool                 `json:"is_owner,omitempty"`
+	Permissions    []db.PermissionGrant `json:"permissions"`
 
 	// Role is a by-name reference to a role in the role library (JOH-240): the
 	// agent inherits that role's defaults (canonical role-brief, launch shape,
@@ -214,7 +214,7 @@ func templateToJSON(t *db.GroupTemplate) templateJSON {
 	for _, a := range t.Agents {
 		perms := a.Permissions
 		if perms == nil {
-			perms = []string{}
+			perms = []db.PermissionGrant{}
 		}
 		aj := templateAgentJSON{
 			Name:             a.Name,
@@ -403,18 +403,10 @@ func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure)
 					"are allowed but other control characters are not", an, agent.MaxInitialMessageBytes)}
 		}
 
-		perms := []string{}
-		for _, slug := range a.Permissions {
-			slug = strings.TrimSpace(slug)
-			if slug == "" {
-				continue
-			}
-			if !IsKnownPermSlug(slug) {
-				return nil, &spawnFailure{http.StatusBadRequest, "unknown_slug",
-					fmt.Sprintf("agent %q: unknown permission slug %q. Known slugs: %s.",
-						an, slug, strings.Join(knownSlugs(), ", "))}
-			}
-			perms = append(perms, slug)
+		perms, permFail := normalizeBlueprintGrants(a.Permissions)
+		if permFail != nil {
+			permFail.Msg = fmt.Sprintf("agent %q: %s", an, permFail.Msg)
+			return nil, permFail
 		}
 
 		// Template-local spawn profile: validated with the registry profiles'
@@ -2008,9 +2000,9 @@ func sanitizeImportedTemplate(body templateJSON) (templateJSON, []string) {
 			// A GetRole error is left for buildTemplateFromJSON to surface.
 		}
 		if len(a.Permissions) > 0 {
-			kept := make([]string, 0, len(a.Permissions))
-			for _, slug := range a.Permissions {
-				s := strings.TrimSpace(slug)
+			kept := make([]db.PermissionGrant, 0, len(a.Permissions))
+			for _, grant := range a.Permissions {
+				s := strings.TrimSpace(grant.Slug)
 				if s == "" {
 					continue
 				}
@@ -2019,7 +2011,8 @@ func sanitizeImportedTemplate(body templateJSON) (templateJSON, []string) {
 						"agent %q: unknown permission slug %q — dropped", label, s))
 					continue
 				}
-				kept = append(kept, s)
+				grant.Slug = s
+				kept = append(kept, grant)
 			}
 			a.Permissions = kept
 		}
@@ -2427,7 +2420,7 @@ func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, [
 	// Tier 1: the referenced role's default grants.
 	if role != nil {
 		for _, s := range role.Permissions {
-			set(s, db.Grant())
+			set(s.Slug, db.PermissionOverride{Effect: db.PermEffectGrant, Scope: s.Scope})
 		}
 	}
 	// Ownership composes tri-state up the tiers, most specific last: the
@@ -2482,7 +2475,7 @@ func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, [
 		owner = true
 	}
 	for _, s := range a.Permissions {
-		set(s, db.Grant())
+		set(s.Slug, db.PermissionOverride{Effect: db.PermEffectGrant, Scope: s.Scope})
 	}
 
 	out := make([]permOverride, 0, len(order))
@@ -2915,6 +2908,19 @@ func templateRosterExplicitlyDisablesSandboxProfiles(agents []db.GroupTemplateAg
 func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 	tmpl := spec.tmpl
 	reinforce := spec.intoExisting != nil
+
+	// Attenuation-only delegation, checked BEFORE anything is created or
+	// spawned. A deploy is a minting surface like any other: its roster confers
+	// birth-time grants composed from role defaults, the referenced profile and
+	// the template-local one. Without this an agent whose own grant is narrowly
+	// scoped could deploy a template that hands a worker the same slug unscoped
+	// and act through the worker — the bypass the spawn-boundary check exists to
+	// close. Up front, because refusing mid-roster would strand agents that
+	// already spawned. See permission_attenuation.go.
+	if err := checkTemplateDeployAttenuation(tmpl.Agents, spec.caller); err != nil {
+		writeError(w, http.StatusForbidden, "scope_not_attenuated", err.Error())
+		return
+	}
 
 	// The base context + the process rendered into each new agent's briefing
 	// differ by mode:
@@ -4426,7 +4432,7 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 			Role:          role,
 			Descr:         descr,
 			IsOwner:       owner,
-			Permissions:   []string{},
+			Permissions:   []db.PermissionGrant{},
 			ProfileInline: inline,
 		})
 	}

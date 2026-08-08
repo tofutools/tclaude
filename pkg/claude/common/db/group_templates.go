@@ -124,9 +124,10 @@ type GroupTemplateAgent struct {
 	// group. A group can have several owners, so a template may mark
 	// several; each IsOwner agent is granted ownership after it spawns.
 	IsOwner bool
-	// Permissions is the list of permission slugs granted to the agent
-	// (per-conv grant overrides) right after it spawns.
-	Permissions []string
+	// Permissions is the list of permissions granted to the agent (per-conv
+	// grant overrides) right after it spawns. Each entry is a slug plus an
+	// optional scope; a bare slug in the stored JSON is an unscoped grant.
+	Permissions []PermissionGrant
 
 	// RoleRef is a by-name reference to a roles row (JOH-240): the agent
 	// inherits that role's defaults (canonical role-brief, launch shape,
@@ -277,11 +278,12 @@ func inlineProfileFromJSON(s string) *SpawnProfile {
 	}
 }
 
-// permsToJSON marshals a permission-slug list for the
+// permsToJSON marshals a permission-grant list for the
 // group_template_agents.permissions TEXT column. An empty list stores
 // as "[]" so the column is never NULL and a reader can json.Unmarshal
-// it unconditionally.
-func permsToJSON(perms []string) string {
+// it unconditionally. An unscoped grant still stores as the bare slug string
+// every pre-scope row holds, so the column shape is unchanged for them.
+func permsToJSON(perms []PermissionGrant) string {
 	if len(perms) == 0 {
 		return "[]"
 	}
@@ -293,14 +295,15 @@ func permsToJSON(perms []string) string {
 }
 
 // permsFromJSON parses the permissions TEXT column back into a slice.
-// A blank or malformed value yields an empty (non-nil) slice.
-func permsFromJSON(s string) []string {
-	out := []string{}
+// A blank or malformed value yields an empty (non-nil) slice. Legacy rows
+// holding bare slug strings decode as unscoped grants.
+func permsFromJSON(s string) []PermissionGrant {
+	out := []PermissionGrant{}
 	if s == "" {
 		return out
 	}
 	if err := json.Unmarshal([]byte(s), &out); err != nil {
-		return []string{}
+		return []PermissionGrant{}
 	}
 	return out
 }
