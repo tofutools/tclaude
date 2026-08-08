@@ -1110,6 +1110,14 @@ func SetAfterSoftExitTargetSendForTest(fn func()) func() {
 	return func() { afterSoftExitTargetSendForTest = prev }
 }
 
+// SetAfterResolveCodexFastModeForTest installs a deterministic race hook
+// between selector resolution and launch-lock acquisition.
+func SetAfterResolveCodexFastModeForTest(fn func()) func() {
+	prev := afterResolveCodexFastModeForTest
+	afterResolveCodexFastModeForTest = fn
+	return func() { afterResolveCodexFastModeForTest = prev }
+}
+
 func SetBeforeSoftExitTargetRetryProbeForTest(fn func(int)) func() {
 	prev := beforeSoftExitTargetRetryProbeForTest
 	beforeSoftExitTargetRetryProbeForTest = fn

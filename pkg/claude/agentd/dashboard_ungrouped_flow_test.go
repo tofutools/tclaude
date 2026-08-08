@@ -206,6 +206,7 @@ type dashState struct {
 	VirtualCostUSD           float64 `json:"virtual_cost_usd,omitempty"`
 	ExitReason               string  `json:"exit_reason,omitempty"`
 	Harness                  string  `json:"harness,omitempty"`
+	FastMode                 *bool   `json:"fast_mode,omitempty"`
 	HarnessBuiltinMode       string  `json:"sandbox_mode,omitempty"`
 	SandboxImplementation    string  `json:"sandbox_implementation,omitempty"`
 	HarnessBuiltinModeSource string  `json:"sandbox_mode_source,omitempty"`

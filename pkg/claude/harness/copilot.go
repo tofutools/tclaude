@@ -195,6 +195,7 @@ func (copilotLifecycle) SoftExitCommand() string { return "/exit" }
 // query and then report a state change that never happened, so remote control
 // stays unsupported until the lifecycle contract itself grows a direction.
 func (copilotLifecycle) RemoteControlCommand() string { return "" }
+func (copilotLifecycle) FastModeCommand() string      { return "" }
 
 // Copilot's TUI only accepts a slash command when it is not mid-turn, so the
 // soft exit is preceded by a cancel. Measured against 1.0.77 in a real tmux

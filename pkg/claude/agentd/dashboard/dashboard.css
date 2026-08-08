@@ -3361,6 +3361,12 @@ tr:hover .agent-harness { color: #c9d1d9; }
    padlock for ⚠ — amber where the glyph renders as text rather than emoji, so
    an unconfined agent stands apart from a confined one either way. */
 .sandbox-badge.sandbox-danger { color: #f0883e; }
+/* Rollout-authoritative Codex Fast mode. It trails the sandbox glyph as a
+   similarly compact, unframed indicator and is shown only while Fast is on. */
+.fast-mode-badge { margin-left: 5px; color: #d29922; }
+.fast-mode-badge.fast-mode-action { cursor: pointer; }
+.fast-mode-badge.fast-mode-action:hover,
+.fast-mode-badge.fast-mode-action:focus-visible { filter: brightness(1.3); }
 /* Runtime/launch metadata remains useful after the pane exits, but it is no
    longer a statement about a live process. Keep the last-used values visible
    and dim them without dropping the already-small text below readable contrast. */

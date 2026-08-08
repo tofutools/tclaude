@@ -260,6 +260,30 @@ export async function handleRowAction(action) {
         refresh();
         return;
       }
+      case 'fast-mode-disable': {
+        const confirmed = await confirmModal({
+          title: `Disable Fast mode for ${label}?`,
+          body: 'This sends Codex’s /fast toggle after the server re-checks that Fast mode is still on. The agent stays running and subsequent turns use standard routing.',
+          okLabel: 'Disable Fast mode',
+        });
+        if (!confirmed) return;
+        const r = await fetch(`/api/agents/${encodeURIComponent(agent)}/fast-mode/disable`, {
+          method: 'POST', credentials: 'same-origin',
+        });
+        if (!r.ok) {
+          let detail = await r.text();
+          try {
+            const parsed = JSON.parse(detail);
+            detail = parsed.error || parsed.message || detail;
+          } catch (_) { /* plain error */ }
+          toast(`Fast mode disable failed: ${detail}`, true);
+          refresh();
+          return;
+        }
+        toast(`${label}: Fast mode disable requested`);
+        refresh();
+        return;
+      }
       case 'sandbox-details': {
         await confirmModal({
           title: `Recorded sandbox details — ${label}`,

@@ -33,6 +33,11 @@ type Lifecycle interface {
 	// drive it must track the intended direction themselves (the harness
 	// exposes no programmatic readback of the current state). See JOH-254.
 	RemoteControlCommand() string
+	// FastModeCommand is the no-argument command that toggles Fast mode for
+	// the active thread. It is deliberately a compile-time harness token:
+	// callers may inject it only after authoritative live state says Fast is
+	// currently on. "" = unsupported.
+	FastModeCommand() string
 	// SoftExitPrefixKeys are tmux key names sent into the pane, in order,
 	// immediately BEFORE the soft-exit command text (with the usual settle
 	// gap after them). nil = send the command text alone, which is what

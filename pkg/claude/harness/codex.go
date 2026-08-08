@@ -90,6 +90,7 @@ func (codexLifecycle) RenameCommand() string        { return "" }
 func (codexLifecycle) CompactCommand() string       { return "/compact" }
 func (codexLifecycle) SoftExitCommand() string      { return "/quit" }
 func (codexLifecycle) RemoteControlCommand() string { return "" }
+func (codexLifecycle) FastModeCommand() string      { return "/fast" }
 
 // Codex accepts /quit from its prompt without a preparatory key.
 func (codexLifecycle) SoftExitPrefixKeys() []string { return nil }
