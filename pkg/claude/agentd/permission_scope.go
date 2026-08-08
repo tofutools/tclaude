@@ -22,6 +22,7 @@ const (
 	ScopeDimGroup           ScopeDim = "group"
 	ScopeDimSpawnProfile    ScopeDim = "spawn_profile"
 	ScopeDimProcessTemplate ScopeDim = "process_template"
+	ScopeDimRemote          ScopeDim = "remote"
 	ScopeDimTargetAgent     ScopeDim = "target_agent"
 )
 
@@ -30,17 +31,31 @@ const (
 // this value but deliberately does not evaluate it at authorization gates.
 type PermissionScope map[ScopeDim][]string
 
-// permissionScopeSelectors is also the closed dimension registry. Exact
-// values are always accepted; strings beginning with @ must occur in the
-// selector set for that dimension.
-var permissionScopeSelectors = map[ScopeDim]map[string]struct{}{
+type permissionScopeMatcherKind uint8
+
+const (
+	permissionScopeMatchExact permissionScopeMatcherKind = iota
+	permissionScopeMatchRemotePattern
+)
+
+type permissionScopeDimension struct {
+	selectors map[string]struct{}
+	matcher   permissionScopeMatcherKind
+}
+
+// permissionScopeDimensions is the closed dimension registry. Besides the
+// selectors accepted by a dimension, it declares how literal matchers are
+// evaluated. Most dimensions are exact; remote deliberately reuses the git
+// proxy's slash-segmented pattern language.
+var permissionScopeDimensions = map[ScopeDim]permissionScopeDimension{
 	ScopeDimGroup:           {},
 	ScopeDimSpawnProfile:    {},
 	ScopeDimProcessTemplate: {},
-	ScopeDimTargetAgent: {
+	ScopeDimRemote:          {matcher: permissionScopeMatchRemotePattern},
+	ScopeDimTargetAgent: {selectors: map[string]struct{}{
 		"@descendants":  {},
 		"@self-spawned": {},
-	},
+	}},
 }
 
 // parsePermissionScope parses, validates and canonicalizes the optional wire
@@ -73,7 +88,7 @@ func parsePermissionScope(raw json.RawMessage) (PermissionScope, string, error) 
 		if string(dim) != rawDim {
 			return nil, "", fmt.Errorf("permission scope dimension %q must not contain surrounding whitespace", rawDim)
 		}
-		selectors, knownDim := permissionScopeSelectors[dim]
+		dimension, knownDim := permissionScopeDimensions[dim]
 		if !knownDim {
 			return nil, "", fmt.Errorf("unknown permission scope dimension %q", rawDim)
 		}
@@ -89,7 +104,7 @@ func parsePermissionScope(raw json.RawMessage) (PermissionScope, string, error) 
 				return nil, "", fmt.Errorf("permission scope dimension %q contains a matcher with control characters", dim)
 			}
 			if strings.HasPrefix(matcher, "@") {
-				if _, ok := selectors[matcher]; !ok {
+				if _, ok := dimension.selectors[matcher]; !ok {
 					return nil, "", fmt.Errorf("unknown selector %q for permission scope dimension %q", matcher, dim)
 				}
 			}

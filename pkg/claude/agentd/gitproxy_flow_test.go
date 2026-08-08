@@ -439,6 +439,84 @@ func TestGitProxy_PushRequiresItsOwnSlug(t *testing.T) {
 	})
 }
 
+func TestGitProxy_RemoteScopedPush(t *testing.T) {
+	t.Run("matching remote pattern passes", func(t *testing.T) {
+		f, rec := gitProxyWorld(t, []string{"github.com"})
+		require.NoError(t, db.GrantAgentPermissionWithScope(gitProxyTestConv, agentd.PermGitPush,
+			`{"remote":["github.com/tofutools/*"]}`, "test"))
+
+		res := gitProxyPost(t, f, "/v1/git/push", map[string]any{})
+		require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+		require.Len(t, rec.networkCalls(), 1)
+	})
+
+	t.Run("scoped grant succeeds after legacy allow-list is emptied", func(t *testing.T) {
+		f, rec := gitProxyWorld(t, []string{})
+		require.NoError(t, db.GrantAgentPermissionWithScope(gitProxyTestConv, agentd.PermGitPush,
+			`{"remote":["github.com/tofutools/*"]}`, "test"))
+
+		res := gitProxyPost(t, f, "/v1/git/push", map[string]any{})
+		require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+		require.Len(t, rec.networkCalls(), 1)
+	})
+
+	t.Run("another globally allowed remote is refused by scope", func(t *testing.T) {
+		f, rec := gitProxyWorld(t, []string{"github.com"})
+		rec.remotes["origin"] = "git@github.com:other/repo.git"
+		require.NoError(t, db.GrantAgentPermissionWithScope(gitProxyTestConv, agentd.PermGitPush,
+			`{"remote":["github.com/tofutools/*"]}`, "test"))
+
+		res := gitProxyPost(t, f, "/v1/git/push", map[string]any{})
+		assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+		assert.Empty(t, rec.networkCalls(), "scope refusal must precede the credentialed push")
+	})
+
+	t.Run("global allow-list still refuses what scope permits", func(t *testing.T) {
+		f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+		rec.remotes["origin"] = "git@github.com:other/repo.git"
+		require.NoError(t, db.GrantAgentPermissionWithScope(gitProxyTestConv, agentd.PermGitPush,
+			`{"remote":["github.com/other/*"]}`, "test"))
+
+		res := gitProxyPost(t, f, "/v1/git/push", map[string]any{})
+		assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+		assert.Contains(t, res.Body.String(), "operator's allow-list")
+		assert.Empty(t, rec.networkCalls(), "global refusal must precede the credentialed push")
+	})
+}
+
+func TestGitProxy_RemotesCombinesGlobalAndGrantScope(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com"})
+	rec.remotes["other"] = "https://github.com/other/repo.git"
+	require.NoError(t, db.GrantAgentPermissionWithScope(gitProxyTestConv, agentd.PermGitRead,
+		`{"remote":["github.com/tofutools/*"]}`, "test"))
+
+	res := serveAsProxyAgent(t, f, http.MethodGet, "/v1/git/remotes", nil)
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+	var body gitProxyRemotesResponseForTest
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &body))
+	byName := map[string]struct {
+		Allowed    bool
+		RefusedFor string
+	}{}
+	for _, remote := range body.Remotes {
+		byName[remote.Name] = struct {
+			Allowed    bool
+			RefusedFor string
+		}{remote.Allowed, remote.RefusedFor}
+	}
+	assert.True(t, byName["origin"].Allowed)
+	assert.False(t, byName["other"].Allowed)
+	assert.Contains(t, byName["other"].RefusedFor, "git.read remote scope")
+}
+
+type gitProxyRemotesResponseForTest struct {
+	Remotes []struct {
+		Name       string `json:"name"`
+		Allowed    bool   `json:"allowed"`
+		RefusedFor string `json:"refused_for"`
+	} `json:"remotes"`
+}
+
 // TestGitProxy_DisabledWithoutAllowList pins the fail-closed default: an
 // operator who has configured nothing gets a proxy that does nothing, with a
 // message naming the config to add.

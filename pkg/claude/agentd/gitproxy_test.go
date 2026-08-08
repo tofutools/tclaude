@@ -39,6 +39,14 @@ func TestInfoProjectsGitProxyEnabled(t *testing.T) {
 		}}))
 		assert.True(t, readProjection(t))
 	})
+
+	t.Run("configured for scoped grants", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{
+			GitProxy: &config.GitProxyConfig{},
+		}}))
+		assert.True(t, readProjection(t))
+	})
 }
 
 // gitproxy_test.go pins the REFUSALS. Every case here is a way a repository an
@@ -121,6 +129,15 @@ func TestRemoteRef_OwnerRepo(t *testing.T) {
 	nested, err := parseRemoteURL("https://gitlab.com/group/sub/proj.git")
 	require.NoError(t, err)
 	assert.Equal(t, "group/proj", nested.OwnerRepo())
+}
+
+func TestRemoteRefKeyNormalizesSSHAndHTTPS(t *testing.T) {
+	ssh, err := parseRemoteURL("git@GitHub.com:tofutools/tclaude.git")
+	require.NoError(t, err)
+	https, err := parseRemoteURL("https://github.com/tofutools/tclaude.git")
+	require.NoError(t, err)
+	assert.Equal(t, "github.com/tofutools/tclaude", ssh.Key())
+	assert.Equal(t, ssh.Key(), https.Key(), "remote scopes must not depend on transport")
 }
 
 // TestRemoteAllowed pins the allow-list semantics an operator relies on: a

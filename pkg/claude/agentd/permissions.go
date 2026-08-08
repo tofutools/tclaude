@@ -105,7 +105,7 @@ func initPermissionRegistryEntries(registry []PermSlug) {
 		seenSlugs[p.Slug] = true
 		seenDims := map[ScopeDim]bool{}
 		for _, dim := range p.ScopeDims {
-			if _, ok := permissionScopeSelectors[dim]; !ok {
+			if _, ok := permissionScopeDimensions[dim]; !ok {
 				panic(fmt.Sprintf("permission registry: slug %q declares unknown scope dimension %q", p.Slug, dim))
 			}
 			if seenDims[dim] {
@@ -423,28 +423,32 @@ var permissionRegistry = []PermSlug{
 		Description: "Open/lease a published route and close the caller's own lease. Requires current membership in the explicitly selected target group; not globally default-granted.",
 	},
 	{
-		Slug: PermGitRead,
+		Slug:      PermGitRead,
+		ScopeDims: []ScopeDim{ScopeDimRemote},
 		Description: "Read from a Git remote through the daemon — list remotes, ls-remote, fetch (tclaude proxy git). " +
 			"agentd runs git on the host with ITS OWN credentials, so a sandboxed agent that cannot read ~/.ssh can still " +
 			"sync with the remote. Bounded by the operator's agent.git_proxy.allowed_remotes list and by the agent's own " +
 			"recorded launch repository. Not default-granted and not owner-implied: it spends the operator's credential.",
 	},
 	{
-		Slug: PermGitPush,
+		Slug:      PermGitPush,
+		ScopeDims: []ScopeDim{ScopeDimRemote},
 		Description: "Push to a Git remote through the daemon (tclaude proxy git push). Strictly more powerful than git.read — " +
 			"it writes to the forge as the operator. Refuses operator-protected branches (agent.git_proxy.protected_refs) " +
 			"outright, and force-with-lease only when agent.git_proxy.allow_force_push is on. Not default-granted and not " +
 			"owner-implied.",
 	},
 	{
-		Slug: PermGitHubRead,
+		Slug:      PermGitHubRead,
+		ScopeDims: []ScopeDim{ScopeDimRemote},
 		Description: "Read GitHub pull requests, issues and CI results through the daemon's gh credentials (tclaude proxy github " +
 			"pr ls/view/checks/comments, issue ls/view, run ls/log-failed). Restricted to the repository the agent's own remote " +
 			"resolves to, and only when that remote is on the operator's allow-list. Not default-granted: it reads private " +
 			"repository data as the operator.",
 	},
 	{
-		Slug: PermGitHubWrite,
+		Slug:      PermGitHubWrite,
+		ScopeDims: []ScopeDim{ScopeDimRemote},
 		Description: "Create and comment on GitHub pull requests and issues through the daemon's gh credentials " +
 			"(tclaude proxy github pr create/comment/ready, issue comment). Everything it writes is attributed to the operator's " +
 			"GitHub account, so it is not default-granted and not owner-implied.",

@@ -19,8 +19,9 @@ func TestActionContextCoversEveryScopeDimension(t *testing.T) {
 		TargetAgent:     "a",
 		SpawnProfile:    "p",
 		ProcessTemplate: "t",
+		Remote:          "github.com/acme/repo",
 	}
-	for dim := range permissionScopeSelectors {
+	for dim := range permissionScopeDimensions {
 		if full.value(dim) == "" {
 			t.Errorf("ActionContext.value(%q) = \"\": add a field for this dimension", dim)
 		}
@@ -92,6 +93,14 @@ func TestEvalPermissionScope(t *testing.T) {
 		{name: "exact matcher beside a selector still matches",
 			verdict: allow(`{"target_agent":["@descendants","agt_1"]}`), actx: ActionContext{TargetAgent: "agt_1"},
 			wantSatisfied: true, wantMatched: "target_agent=@descendants,agt_1"},
+		{name: "remote matcher uses slash-segmented wildcard",
+			verdict: allow(`{"remote":["github.com/tofutools/*"]}`), actx: ActionContext{Remote: "github.com/tofutools/tclaude"},
+			wantSatisfied: true, wantMatched: "remote=github.com/tofutools/*"},
+		{name: "remote matcher shorter pattern is a prefix",
+			verdict: allow(`{"remote":["github.com/tofutools"]}`), actx: ActionContext{Remote: "github.com/tofutools/tclaude"},
+			wantSatisfied: true, wantMatched: "remote=github.com/tofutools"},
+		{name: "remote matcher is segment-wise",
+			verdict: allow(`{"remote":["github.com/tofu"]}`), actx: ActionContext{Remote: "github.com/tofutools/tclaude"}},
 		{name: "deny carries no scope and is never evaluated as one",
 			verdict:      permVerdict{Resolution: permDeny, Source: permSourceOverride},
 			wantUnscoped: true, wantSatisfied: true},
@@ -245,6 +254,10 @@ var scopedSlugEnforcementPaths = map[string]string{
 	PermProcessRunsManage: "requirePermission — run create supplies ActionContext{ProcessTemplate}",
 	PermRoutesPublish:     "requireRoutePermissionForIdentity — central resolver plus ActionContext{Group}",
 	PermRoutesConsume:     "requireRoutePermissionForIdentity — central resolver plus ActionContext{Group}",
+	PermGitRead:           "git proxy handlers — resolved fetch remote in ActionContext{Remote}",
+	PermGitPush:           "git proxy handler — resolved push remote in ActionContext{Remote}",
+	PermGitHubRead:        "GitHub proxy handlers — derived repository remote in ActionContext{Remote}",
+	PermGitHubWrite:       "GitHub proxy handlers — derived repository remote in ActionContext{Remote}",
 }
 
 func TestEveryScopedSlugDeclaresAnEnforcementPath(t *testing.T) {

@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 // gitproxy_handlers.go holds the HTTP surface of `tclaude proxy git`. The
@@ -17,13 +19,14 @@ import (
 //
 // Every gate runs in the same order, and the order matters:
 //
-//  1. permission slug — before anything is read from the request body, so an
-//     ungated caller cannot even probe for the existence of a repository;
+//  1. permission preflight — an unscoped grant is decided immediately; a
+//     scoped grant is deferred until the normalized remote is known;
 //  2. operator policy — the proxy is off unless remotes are allow-listed;
 //  3. the repo gate — daemon-recorded launch directory, no request parameter;
 //  4. parameter validation — charset, length, no leading "-";
 //  5. the remote gate — URL parse, allow-list, insteadOf fixed point;
-//  6. only then, the subprocess.
+//  6. the scoped permission decision against that exact normalized remote;
+//  7. only then, a credentialed/network subprocess.
 //
 // Why the network reads are POST
 //
@@ -127,6 +130,40 @@ func decodeGitProxyBody(w http.ResponseWriter, r *http.Request, out any) bool {
 	return true
 }
 
+// preflightProxyPermission preserves the cheap refusal for ungranted callers
+// while allowing a scoped grant to wait for the local remote resolution that
+// gives it meaning. The caller MUST finish a deferred decision with
+// requirePermission and ActionContext{Remote: ...} before any network touch or
+// side effect.
+func preflightProxyPermission(w http.ResponseWriter, r *http.Request, perm string) (convID string, deferred, ok bool) {
+	p := peerFromContext(r.Context())
+	if classify(p) == classAgent {
+		v := resolvePermissionVerdictForRequest(r, p.ConvID, perm)
+		if v.Resolution == permAllow && !evalPermissionScope(v, p.ConvID, ActionContext{}).Unscoped {
+			state, err := db.AgentState(p.ConvID)
+			if err != nil {
+				writeError(w, http.StatusForbidden, "auth", "could not verify caller agent state")
+				return "", false, false
+			}
+			if state == db.AgentStateRetired {
+				writeError(w, http.StatusForbidden, "auth", "caller is a retired agent")
+				return "", false, false
+			}
+			return p.ConvID, true, true
+		}
+	}
+	convID, ok = requirePermission(w, r, perm)
+	return convID, false, ok
+}
+
+func finishProxyPermission(w http.ResponseWriter, r *http.Request, convID, perm, remote string, deferred bool) bool {
+	if !deferred {
+		return true
+	}
+	authorizedConvID, ok := requirePermission(w, r, perm, ActionContext{Remote: remote})
+	return ok && authorizedConvID == convID
+}
+
 // handleGitProxyRemotes serves GET /v1/git/remotes — the "what can I reach
 // from here" question an agent should ask before anything else.
 //
@@ -139,12 +176,12 @@ func handleGitProxyRemotes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET only")
 		return
 	}
-	convID, ok := requirePermission(w, r, PermGitRead)
+	convID, deferred, ok := preflightProxyPermission(w, r, PermGitRead)
 	if !ok {
 		return
 	}
 	ctx := r.Context()
-	s, fault := newGitProxySession(ctx, convID)
+	s, fault := newGitProxySession(ctx, convID, deferred)
 	if fault != nil {
 		writeProxyFault(w, fault)
 		return
@@ -160,11 +197,16 @@ func handleGitProxyRemotes(w http.ResponseWriter, r *http.Request) {
 	if s.policy.ProtectedRefs != nil {
 		resp.ProtectedRefs = *s.policy.ProtectedRefs
 	}
+	var scopedVerdict *permVerdict
+	if deferred {
+		v := resolvePermissionVerdictForRequest(r, convID, PermGitRead)
+		scopedVerdict = &v
+	}
 	for i, name := range splitNonEmptyLines(s.gitProbe(ctx, "remote")) {
 		if i >= maxGitProxyRemotes {
 			break
 		}
-		resp.Remotes = append(resp.Remotes, describeProxyRemote(ctx, s, name))
+		resp.Remotes = append(resp.Remotes, describeProxyRemote(ctx, s, name, convID, scopedVerdict))
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -182,7 +224,7 @@ func handleGitProxyRemotes(w http.ResponseWriter, r *http.Request) {
 // can still be refused by an actual fetch or push, and the refusal will say
 // why. The listing answers "is this remote on the allow-list", not "is this
 // repository in a state the proxy will act on".
-func describeProxyRemote(ctx context.Context, s *gitProxySession, name string) gitProxyRemoteView {
+func describeProxyRemote(ctx context.Context, s *gitProxySession, name, convID string, scoped *permVerdict) gitProxyRemoteView {
 	view := gitProxyRemoteView{Name: name}
 	if validateRemoteName(name) != nil {
 		// A remote whose own name we would refuse is reported rather than
@@ -224,6 +266,12 @@ func describeProxyRemote(ctx context.Context, s *gitProxySession, name string) g
 			view.RemoteRef = ref.Key()
 		}
 	}
+	if scoped != nil {
+		if !evalPermissionScope(*scoped, convID, ActionContext{Remote: view.RemoteRef}).Satisfied {
+			view.RefusedFor = fmt.Sprintf("%s is outside this caller's git.read remote scope", view.RemoteRef)
+			return view
+		}
+	}
 	view.Allowed = true
 	return view
 }
@@ -236,7 +284,7 @@ func handleGitProxyLsRemote(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
 		return
 	}
-	convID, ok := requirePermission(w, r, PermGitRead)
+	convID, deferred, ok := preflightProxyPermission(w, r, PermGitRead)
 	if !ok {
 		return
 	}
@@ -245,9 +293,12 @@ func handleGitProxyLsRemote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	s, resolved, fault := openProxyRemote(ctx, convID, body.Remote)
+	s, resolved, fault := openProxyRemote(ctx, convID, body.Remote, deferred)
 	if fault != nil {
 		writeProxyFault(w, fault)
+		return
+	}
+	if !finishProxyPermission(w, r, convID, PermGitRead, resolved.FetchRef.Key(), deferred) {
 		return
 	}
 	args := []string{"ls-remote", gitProxyUploadPack}
@@ -278,7 +329,7 @@ func handleGitProxyFetch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
 		return
 	}
-	convID, ok := requirePermission(w, r, PermGitRead)
+	convID, deferred, ok := preflightProxyPermission(w, r, PermGitRead)
 	if !ok {
 		return
 	}
@@ -287,9 +338,12 @@ func handleGitProxyFetch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	s, resolved, fault := openProxyRemote(ctx, convID, body.Remote)
+	s, resolved, fault := openProxyRemote(ctx, convID, body.Remote, deferred)
 	if fault != nil {
 		writeProxyFault(w, fault)
+		return
+	}
+	if !finishProxyPermission(w, r, convID, PermGitRead, resolved.FetchRef.Key(), deferred) {
 		return
 	}
 	args := []string{"fetch", gitProxyUploadPack, "--no-recurse-submodules"}
@@ -321,7 +375,7 @@ func handleGitProxyPush(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
 		return
 	}
-	convID, ok := requirePermission(w, r, PermGitPush)
+	convID, deferred, ok := preflightProxyPermission(w, r, PermGitPush)
 	if !ok {
 		return
 	}
@@ -330,9 +384,12 @@ func handleGitProxyPush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	s, resolved, fault := openProxyRemote(ctx, convID, body.Remote)
+	s, resolved, fault := openProxyRemote(ctx, convID, body.Remote, deferred)
 	if fault != nil {
 		writeProxyFault(w, fault)
+		return
+	}
+	if !finishProxyPermission(w, r, convID, PermGitPush, resolved.PushRef.Key(), deferred) {
 		return
 	}
 
@@ -409,11 +466,11 @@ func handleGitProxyPush(w http.ResponseWriter, r *http.Request) {
 }
 
 // openProxyRemote runs gates 2, 3 and 5 for the routes that name a remote.
-func openProxyRemote(ctx context.Context, convID, requestedRemote string) (
+func openProxyRemote(ctx context.Context, convID, requestedRemote string, remoteScoped bool) (
 	*gitProxySession, resolvedRemote, *proxyFault,
 ) {
 	name := remoteOrDefault(requestedRemote)
-	s, fault := newGitProxySession(ctx, convID)
+	s, fault := newGitProxySession(ctx, convID, remoteScoped)
 	if fault != nil {
 		return nil, resolvedRemote{}, fault
 	}

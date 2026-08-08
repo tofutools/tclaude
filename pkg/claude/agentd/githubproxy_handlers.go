@@ -55,8 +55,9 @@ type ghProxyCommentRequest struct {
 	Body   string `json:"body"`
 }
 
-// openGHProxy is the shared prologue: method check, permission gate, bounded
-// body decode, then every git-side gate plus the GitHub repo derivation.
+// openGHProxy is the shared prologue: method check, permission preflight,
+// bounded body decode, every git-side gate plus repository derivation, then
+// the final remote-scoped permission decision before gh can run.
 func openGHProxy(w http.ResponseWriter, r *http.Request, perm string, body any, remoteOf func() string) (
 	*ghProxySession, bool,
 ) {
@@ -64,16 +65,19 @@ func openGHProxy(w http.ResponseWriter, r *http.Request, perm string, body any, 
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
 		return nil, false
 	}
-	convID, ok := requirePermission(w, r, perm)
+	convID, deferred, ok := preflightProxyPermission(w, r, perm)
 	if !ok {
 		return nil, false
 	}
 	if body != nil && !decodeGitProxyBody(w, r, body) {
 		return nil, false
 	}
-	g, fault := newGHProxySession(r.Context(), convID, remoteOf())
+	g, fault := newGHProxySession(r.Context(), convID, remoteOf(), deferred)
 	if fault != nil {
 		writeProxyFault(w, fault)
+		return nil, false
+	}
+	if !finishProxyPermission(w, r, convID, perm, g.remoteKey, deferred) {
 		return nil, false
 	}
 	return g, true
