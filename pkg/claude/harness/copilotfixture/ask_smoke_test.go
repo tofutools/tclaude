@@ -31,8 +31,12 @@ import (
 // scrubs it (TestCopilotAskAmbientPromoterIsWhyAskScrubsTheEnvironment).
 
 // askDeadline bounds one ask scenario. A healthy headless turn against the mock
-// takes ~2s; the tool-posture arms add one provider round trip.
-const askDeadline = 30 * time.Second
+// takes ~2s; the tool-posture arms add one provider round trip. Startup is
+// normally most of the run, however, and reached 18.6s on a loaded host where a
+// still-working turn finished at 29s. Sixty seconds leaves load margin without
+// adding wall clock to successful runs; a progress-relative deadline would
+// require changing the shared argv runner for a suite-local timing problem.
+const askDeadline = 60 * time.Second
 
 // askArgv is the production ask argv, with the binary left as-is.
 func askArgv(t *testing.T, spec harness.AskSpec) []string {
