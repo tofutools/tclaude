@@ -311,6 +311,33 @@ func TestAsk_SelfHealsGhostConversation(t *testing.T) {
 	assert.False(t, argvHas(f.last().Argv, "--resume"), "does not resume the ghost")
 }
 
+// TestAsk_SelfHealsCodexBuiltinDefaults omits Claude-shaped built-ins even
+// when a stale Codex mapping flips the turn to fresh after harness selection.
+// The stale mapping still carries the recorded Codex harness in h, so the
+// omission must be keyed on that resolved harness rather than fresh alone.
+func TestAsk_SelfHealsCodexBuiltinDefaults(t *testing.T) {
+	setupAskTestDB(t)
+	forceConvExists(t, false)
+	stubFreshConvResolver(t, "")
+	f := &fakeRun{answer: "ok\n", started: true}
+	f.install(t)
+	require.NoError(t, db.SetAskThread("term-GX", "/repo/x", "gone-codex", harness.CodexName))
+
+	in := ttyInput("term-GX", "/repo/x", "second")
+	in.Harness = harness.DefaultName // fresh config is Claude-shaped
+	in.Model = config.DefaultAskModel
+	in.Effort = config.DefaultAskEffort
+	in.ModelBuiltin = true
+	in.EffortBuiltin = true
+	aio, _, _ := io2buf()
+	require.NoError(t, runAsk(in, aio))
+
+	assert.False(t, argvHas(f.last().Argv, "--resume"), "stale mapping starts fresh")
+	assert.False(t, argvHas(f.last().Argv, "--model"), "Codex does not receive Claude's built-in model")
+	assert.False(t, argvHas(f.last().Argv, "model_reasoning_effort"),
+		"Codex does not receive Claude's built-in effort")
+}
+
 // TestAsk_CapturedModeFoldsStdin covers the `git diff | ai "safe?"` shape:
 // piped stdin forces -p capture mode, the payload is folded into the prompt
 // under a labelled fence, and no interactive stdin is wired to the child.

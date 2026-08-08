@@ -270,6 +270,8 @@ func printWhere(cwd string, w io.Writer) error {
 // The returned values are raw strings still validated against the resolved
 // harness's catalog by runAsk. db.ResolveSpawnProfile is the only I/O; a load
 // error degrades to the no-profile path rather than failing the ask.
+// This compact wrapper is retained for the package's existing resolution tests;
+// runFromCLI uses resolveAskTargetDetails to carry source markers into runAsk.
 func resolveAskTarget(flagModel, flagEffort string, cfg *config.Config) (harnessName, model, effort string, resolveErr error) {
 	target, err := resolveAskTargetDetails(flagModel, flagEffort, cfg)
 	if err != nil {
@@ -420,7 +422,7 @@ func runAsk(in askInput, aio askIO) error {
 	// configured ask defaults are intentionally unaffected.
 	model := in.Model
 	effort := in.Effort
-	if !fresh && h.Name != harness.DefaultName {
+	if h.Name != harness.DefaultName {
 		if in.ModelBuiltin {
 			model = ""
 		}
