@@ -19,7 +19,7 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strings"
+	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
@@ -52,21 +52,25 @@ func Configured() bool {
 	// round trip. Only managed agents need the projection because only their
 	// private config view is deliberately reduced to defaults.
 	managedAgent := os.Getenv(agentipc.SocketEnv) != "" ||
-		strings.HasPrefix(os.Getenv("CODEX_PERMISSION_PROFILE"), "tclaude-agent-")
+		os.Getenv("CODEX_PERMISSION_PROFILE") == "tclaude-agent"
 	if !managedAgent {
 		return false
 	}
-	if !agent.DaemonAvailable() {
-		return false
-	}
 	var info struct {
-		Proxy bool `json:"proxy"`
+		Proxy *bool `json:"proxy"`
 	}
 	if err := agent.DaemonRequest(http.MethodGet, "/v1/info", nil, &info,
-		agent.DaemonOpts{RetryOutput: io.Discard}); err != nil {
+		agent.DaemonOpts{
+			Timeout:     250 * time.Millisecond,
+			RetryOutput: io.Discard,
+			NoRetry:     true,
+		}); err != nil {
 		return false
 	}
-	return info.Proxy
+	// Daemons predating the capability projection omit the field. Preserve
+	// their historical always-visible command tree until they are restarted
+	// on a version that can report the operator's effective policy.
+	return info.Proxy == nil || *info.Proxy
 }
 
 // writeJSONIndent renders a --json response. Indented, because these bodies are

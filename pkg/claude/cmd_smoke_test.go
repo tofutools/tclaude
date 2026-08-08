@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
-	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
@@ -38,9 +37,8 @@ func TestCommandTreeConstructs(t *testing.T) {
 }
 
 func TestProxyTreeRequiresSemanticProxyConfig(t *testing.T) {
-	previousAvailable := agent.DaemonAvailableImpl
-	agent.DaemonAvailableImpl = func() bool { return false }
-	t.Cleanup(func() { agent.DaemonAvailableImpl = previousAvailable })
+	t.Setenv("TCLAUDE_AGENTD_SOCKET", "")
+	t.Setenv("CODEX_PERMISSION_PROFILE", "")
 
 	hasProxy := func(root *cobra.Command) bool {
 		for _, child := range root.Commands() {
