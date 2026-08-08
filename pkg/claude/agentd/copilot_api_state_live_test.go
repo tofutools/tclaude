@@ -24,6 +24,16 @@ import (
 //
 //	TCLAUDE_COPILOT_LIVE=1 go test ./pkg/claude/agentd/ -run TestLiveCopilotAPIState -v
 //
+// IT CANNOT PASS FROM INSIDE AN AGENT SANDBOX ON A LINUX HOST, regardless of
+// whether Copilot is logged in. Copilot resolves its GitHub credentials through
+// the OS keyring, and a sandboxed agent has no DBUS_SESSION_BUS_ADDRESS, no
+// XDG_RUNTIME_DIR and no keyring socket, so the CLI comes up, serves RPC,
+// accepts the prompt, and answers with
+// `session.error → {"errorType":"authentication"}`. That is a containment
+// artifact and not a broken login: the same login works on the host. An agent
+// that hits it should ask the operator to run the command outside the sandbox
+// rather than trying to re-authenticate.
+//
 // It is opt-in because it needs Copilot installed and authenticated and spends
 // the operator's quota, and it exists because the unit tests above cannot catch
 // the class of bug this whole series keeps producing: a number that decodes
@@ -223,4 +233,71 @@ func portFromAddress(t *testing.T, address string) int {
 	port, err := strconv.Atoi(portText)
 	require.NoError(t, err)
 	return port
+}
+
+// TestLiveCopilotAPINeverPublishesTheAutoSentinel is the live check for the
+// auto-model fix SPECIFICALLY, and it exists because the broader live test
+// above does not reliably cover it.
+//
+// That test does assert the sentinel is never published — but only after
+// waiting for a reading with a model and a non-zero output count, by which
+// point a completed call has usually resolved a real model and the assertion
+// passes without the fix having done anything. It caught the bug originally by
+// timing accident, not by design. A green from it is therefore not evidence
+// about this fix, which is worse than no evidence.
+//
+// This one reads usage BEFORE any prompt is sent, when no call has resolved a
+// model, so the sentinel is present by construction rather than by luck. It
+// spends no quota: no turn is run.
+//
+// It FAILS rather than skips when the session is not in automatic selection,
+// because the whole point is that it must never report success without having
+// verified the thing it is named after.
+func TestLiveCopilotAPINeverPublishesTheAutoSentinel(t *testing.T) {
+	if os.Getenv("TCLAUDE_COPILOT_LIVE") != "1" {
+		t.Skip("set TCLAUDE_COPILOT_LIVE=1 to run against a real copilot --ui-server")
+	}
+	binary, err := exec.LookPath("copilot")
+	if err != nil {
+		t.Skipf("copilot not on PATH: %v", err)
+	}
+	realHome := os.Getenv("HOME")
+	address, workdir, _ := startLiveCopilotServer(t, binary, realHome)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	client, err := copilotapi.DialRetry(ctx, address, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+
+	info, err := client.CreateSession(ctx, copilotapi.CreateSessionParams{
+		SessionID: copilotapi.NewSessionID(), WorkingDirectory: workdir,
+		ClientName: "tclaude", Streaming: true,
+	})
+	require.NoError(t, err)
+
+	metrics, err := client.UsageMetrics(ctx, info.SessionID)
+	require.NoError(t, err)
+	t.Logf("pre-turn usage: currentModel=%q modelMetrics=%d",
+		metrics.CurrentModel, len(metrics.ModelMetrics))
+
+	if metrics.CurrentModel != copilotAPIAutoModel {
+		t.Fatalf("this run did NOT reproduce automatic model selection: usage reports "+
+			"currentModel=%q before any call. The auto-model fix is therefore NOT "+
+			"verified by this run — do not read this failure as a defect in the fix. "+
+			"Re-run with Copilot's model set to automatic selection, or report that "+
+			"this host cannot reproduce it", metrics.CurrentModel)
+	}
+
+	// The fix, applied to the real payload the server just produced.
+	assert.Empty(t, copilotAPIReadingModel(metrics),
+		"with the sentinel present and no resolved model in modelMetrics, the reading "+
+			"must carry NO model rather than the sentinel")
+
+	// And what publishing it would have cost, stated as a number rather than as
+	// a worry: the static table answers the sentinel with a generic window, so a
+	// 128000-token session would have been metered against 200000.
+	assert.Equal(t, int64(200000), harness.CopilotContextWindowDefault(copilotAPIAutoModel),
+		"if this stops being a plausible-looking wrong answer, the trap this test "+
+			"guards has changed shape and the reasoning above needs rereading")
 }
