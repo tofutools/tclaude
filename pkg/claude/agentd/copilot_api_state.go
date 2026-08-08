@@ -278,6 +278,11 @@ type copilotAPIStateConsumer struct {
 	stop     chan struct{}
 	stopOnce sync.Once
 
+	// lastPermissionRead is when the pending-permission set was last read
+	// successfully. It bounds how long this consumer's awaiting marker may
+	// outlive its ability to clear it; see releaseStrandedPermission.
+	lastPermissionRead time.Time
+
 	// warnedAt rate-limits the refresh-failure line, keyed by reason so a new
 	// failure mode stays audible while an old one is suppressed.
 	warnedAt map[string]time.Time
@@ -308,6 +313,10 @@ func startCopilotAPIStateConsumer(handle *copilotAPISession) {
 		client:    handle.Client,
 		stop:      make(chan struct{}),
 		warnedAt:  map[string]time.Time{},
+		// Counts from birth, so a consumer that never manages a single
+		// permission read still releases a marker inherited from a predecessor
+		// rather than sitting behind it forever.
+		lastPermissionRead: time.Now(),
 	}
 	copilotAPIStateConsumers.Lock()
 	if copilotAPIStateConsumers.stopping {
@@ -507,6 +516,9 @@ func (c *copilotAPIStateConsumer) refresh() {
 	handle, err := copilotAPIDrive(c.convID)
 	if err != nil {
 		c.warn("ownership", "copilot-api-state: refusing to read", err)
+		// Refusing to read must not also mean refusing to let go. This is the
+		// one thing the gate would otherwise freeze; see the function below.
+		c.releaseStrandedPermission(nil)
 		return
 	}
 	if handle != c.handle {
@@ -528,7 +540,9 @@ func (c *copilotAPIStateConsumer) refresh() {
 
 	if pending, err := handle.Client.PendingPermissionRequests(ctx, c.sessionID); err != nil {
 		c.warn("permissions", "copilot-api-state: pending-permission read failed", err)
+		c.releaseStrandedPermission(row)
 	} else {
+		c.lastPermissionRead = time.Now()
 		c.applyPermissions(ctx, handle, row, len(pending) > 0)
 	}
 
@@ -774,6 +788,63 @@ func (c *copilotAPIStateConsumer) applyPermissions(
 	if _, err := db.SetSessionStatusIfUnchanged(row.ID, row.Status, row.UpdatedAt,
 		next, "", time.Now()); err != nil {
 		c.warn("status", "copilot-api-state: failed to clear a resolved permission prompt", err)
+	}
+}
+
+// releaseStrandedPermission takes this consumer's awaiting marker off the row
+// once it can no longer be shown to be true.
+//
+// The awaiting projection is the one thing this consumer owns that does NOT
+// self-correct when its reads stop working, and the asymmetry is easy to miss.
+// A context reading ages out of copilotAPIStateFreshness and the pre-existing
+// Copilot sources resume, so the meter degrades to stale-and-labelled. The
+// awaiting marker has no such expiry: by design the only thing that removes it
+// is a later successful refresh BY THIS CONSUMER, so a consumer that has
+// stopped being able to read — an ownership proof that keeps failing, a session
+// id the server no longer knows — leaves the row in awaiting_permission with
+// nothing left that will ever clear it.
+//
+// That is not a wrong label. An awaiting row HOLDS message delivery, so the
+// agent goes mute. It is the same end state the ownership gate exists to
+// prevent, reached from the opposite direction: not a stranger's prompt copied
+// in, but this agent's own resolved prompt that can no longer be cleared.
+//
+// Released to working rather than idle. The successor state is genuinely
+// unknown here — that is the whole problem — and of the two, idle is the
+// dangerous guess: it says the agent is available. Working holds no delivery
+// and is repainted by the hook path that owns busy/idle at the next turn end,
+// so this hands the row back rather than asserting anything about it. No RPC is
+// involved, which matters because the usual reason to be here is that RPC is
+// exactly what has stopped working.
+func (c *copilotAPIStateConsumer) releaseStrandedPermission(row *db.SessionRow) {
+	if time.Since(c.lastPermissionRead) <= copilotAPIStateFreshness {
+		// Ordinary transient failure. Leaving the marker is right: the next
+		// refresh clears it properly, from a read rather than from a guess.
+		return
+	}
+	if row == nil {
+		row = copilotAPIStateSessionRow(c.convID)
+	}
+	if row == nil {
+		return
+	}
+	// Only ever this consumer's own marker, on exactly the terms applyPermissions
+	// uses. An awaiting_input from elsewhere carries a different detail.
+	if row.Status != session.StatusAwaitingPermission ||
+		row.StatusDetail != copilotAPIStatePermissionDetail {
+		return
+	}
+	set, err := db.SetSessionStatusIfUnchanged(row.ID, row.Status, row.UpdatedAt,
+		session.StatusWorking, "", time.Now())
+	if err != nil {
+		c.warn("release", "copilot-api-state: failed to release a permission marker "+
+			"this consumer can no longer clear", err)
+		return
+	}
+	if set {
+		slog.Warn("copilot-api-state: released a permission marker after reads stopped "+
+			"succeeding; message delivery for this agent was being held",
+			"conv_id", c.convID, "session_id", row.ID, "module", "agentd")
 	}
 }
 

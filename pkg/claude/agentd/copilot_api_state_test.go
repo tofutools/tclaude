@@ -90,10 +90,25 @@ func startTestConsumer(
 	t *testing.T, server *fakeCopilotServer, convID, sessionID string,
 ) *copilotAPIStateConsumer {
 	t.Helper()
+	consumer, _ := startTestConsumerAs(t, server, convID, sessionID, os.Getpid())
+	return consumer
+}
+
+// startTestConsumerAs is startTestConsumer with the pane pid chosen, for the
+// tests about what happens when the ownership proof does not hold.
+//
+// The pid is fixed BEFORE the consumer exists and never written afterwards. A
+// test that flipped it on a live handle would be writing a field the consumer
+// goroutine reads inside StillOwned, through a pointer the registry hands out —
+// an actual data race, and one the race detector does catch.
+func startTestConsumerAs(
+	t *testing.T, server *fakeCopilotServer, convID, sessionID string, panePID int,
+) (*copilotAPIStateConsumer, *copilotAPISession) {
+	t.Helper()
 	client := dialFakeCopilot(t, server)
 	handle := &copilotAPISession{
 		ConvID: convID, SessionID: sessionID, Client: client,
-		Port: server.port(), PanePID: os.Getpid(),
+		Port: server.port(), PanePID: panePID,
 	}
 	copilotAPISessions.Adopt(handle)
 	t.Cleanup(func() { copilotAPISessions.Drop(convID) })
@@ -103,7 +118,7 @@ func startTestConsumer(
 	consumer := copilotAPIStateConsumers.running[convID]
 	copilotAPIStateConsumers.Unlock()
 	require.NotNil(t, consumer)
-	return consumer
+	return consumer, handle
 }
 
 // ---------------------------------------------------------------------------
@@ -706,12 +721,6 @@ func TestCopilotAPIStateStopsReadingWhenOwnershipCannotBeProved(t *testing.T) {
 	server.answer(copilotapi.MethodSessionContextInfo, copilotAPITestContext)
 	server.answer(copilotapi.MethodSessionUsage, copilotAPITestUsage)
 	server.answer(copilotapi.MethodSessionPermissions, copilotAPITestPendingPermission)
-	startTestConsumer(t, server, "conv-unproved", "conv-unproved")
-
-	require.Eventually(t, func() bool {
-		_, ok := lookupCopilotAPIState("conv-unproved")
-		return ok
-	}, 5*time.Second, 20*time.Millisecond, "the consumer must work before it is broken")
 
 	// A live, non-ancestor pid whose subtree genuinely excludes the listener:
 	// the same way copilot_api_drive_test.go makes ownership unprovable, so the
@@ -722,29 +731,186 @@ func TestCopilotAPIStateStopsReadingWhenOwnershipCannotBeProved(t *testing.T) {
 		_ = stranger.Process.Kill()
 		_ = stranger.Wait()
 	})
-	handle := copilotAPISessions.Handle("conv-unproved")
-	require.NotNil(t, handle)
-	handle.PanePID = stranger.Process.Pid
+	startTestConsumerAs(t, server, "conv-unproved", "conv-unproved", stranger.Process.Pid)
 
-	before := server.callCount(copilotapi.MethodSessionContextInfo)
 	for range 5 {
 		server.push(copilotapi.MethodSessionEvent, `{"sessionId":"conv-unproved",
 			"event":{"type":"assistant.turn_start","id":"e"}}`)
 	}
 	time.Sleep(3 * copilotAPIStateWindow)
 
-	assert.Equal(t, before, server.callCount(copilotapi.MethodSessionContextInfo),
-		"a consumer whose handle can no longer be shown to belong to the agent's "+
-			"pane must send nothing, however many events arrive")
+	// The connection is fine and the conversation still BELONGS to the API
+	// channel — that is not what became unverifiable — so a consumer that reads
+	// anyway would look entirely healthy doing it.
+	assert.True(t, copilotAPIDriven("conv-unproved"))
+	assert.Zero(t, server.callCount(copilotapi.MethodSessionContextInfo),
+		"a consumer whose handle cannot be shown to belong to the agent's pane "+
+			"must send NOTHING, however many events arrive")
+	assert.Zero(t, server.callCount(copilotapi.MethodSessionPermissions),
+		"the permission read is the dangerous one: a stranger's pending prompt "+
+			"would mute this agent")
 
-	// And the row is handed back rather than frozen: the published reading ages
-	// out, so the pre-existing Copilot sources resume instead of standing down
-	// behind a source that has stopped being allowed to read.
+	_, published := lookupCopilotAPIState("conv-unproved")
+	assert.False(t, published, "nothing may be published from reads that never happened")
+}
+
+// The other half of the same branch, and it is not decoration: without it the
+// test above passes identically for a consumer that refuses ONCE AND DIES.
+// Verified by mutation — adding a halt to the refusal path leaves every other
+// Copilot state test green.
+//
+// The two ways to fail the gate want opposite responses. A /proc walk racing a
+// re-exec is transient and must recover; a genuinely foreign listener must
+// never be read. This asserts the recovery, using the registry (whose accesses
+// are mutex-guarded) as the switch rather than writing a field on a live handle.
+func TestCopilotAPIStateResumesReadingWhenOwnershipCanBeProvedAgain(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotAPIStateForTest()
+
+	copilotAPIStateSession(t, "s-transient", "conv-transient", session.StatusIdle)
+	server := newFakeCopilotServer(t)
+	server.answer(copilotapi.MethodSessionContextInfo, copilotAPITestContext)
+	server.answer(copilotapi.MethodSessionUsage, copilotAPITestUsage)
+	server.answer(copilotapi.MethodSessionPermissions, copilotAPITestNoPermissions)
+	_, handle := startTestConsumerAs(t, server, "conv-transient", "conv-transient", os.Getpid())
+
+	require.Eventually(t, func() bool {
+		_, ok := lookupCopilotAPIState("conv-transient")
+		return ok
+	}, 5*time.Second, 20*time.Millisecond, "the consumer must work before it is broken")
+
+	// Unregistered WITHOUT Drop, which closes the client: closing would end the
+	// consumer through its own Done channel and prove nothing about the gate.
+	// This leaves the connection healthy and only makes the gate unable to say
+	// yes — the same response path a failing StillOwned takes, without a write
+	// to a field the consumer goroutine is reading.
+	copilotAPISessions.mu.Lock()
+	delete(copilotAPISessions.sessions, "conv-transient")
+	copilotAPISessions.mu.Unlock()
+
+	frozen := server.callCount(copilotapi.MethodSessionContextInfo)
+	for range 5 {
+		server.push(copilotapi.MethodSessionEvent, `{"sessionId":"conv-transient",
+			"event":{"type":"assistant.turn_start","id":"e"}}`)
+	}
+	time.Sleep(3 * copilotAPIStateWindow)
+	assert.Equal(t, frozen, server.callCount(copilotapi.MethodSessionContextInfo),
+		"with no handle the gate refuses and nothing is sent")
+
+	// The SAME handle back, so the consumer is not superseded — this is the
+	// transient failure clearing, not a relaunch.
+	copilotAPISessions.Adopt(handle)
+	server.push(copilotapi.MethodSessionEvent, `{"sessionId":"conv-transient",
+		"event":{"type":"assistant.turn_start","id":"e"}}`)
+	assert.Eventually(t, func() bool {
+		return server.callCount(copilotapi.MethodSessionContextInfo) > frozen
+	}, 5*time.Second, 20*time.Millisecond,
+		"a refusal is transient: once the gate passes again the consumer must "+
+			"resume reading rather than having quietly died")
+}
+
+// A reading that can no longer be refreshed must stop counting as one, or both
+// fallback writers stand down behind a source with nothing to say and the row
+// freezes at its last good numbers.
+func TestCopilotAPIStateReadingExpiresWhenItCannotBeRefreshed(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotAPIStateForTest()
+
+	copilotAPIStateSession(t, "s-expire", "conv-expire", session.StatusIdle)
+	server := newFakeCopilotServer(t)
+	server.answer(copilotapi.MethodSessionContextInfo, copilotAPITestContext)
+	server.answer(copilotapi.MethodSessionUsage, copilotAPITestUsage)
+	server.answer(copilotapi.MethodSessionPermissions, copilotAPITestNoPermissions)
+	startTestConsumer(t, server, "conv-expire", "conv-expire")
+
+	require.Eventually(t, func() bool {
+		_, ok := lookupCopilotAPIState("conv-expire")
+		return ok
+	}, 5*time.Second, 20*time.Millisecond)
+
 	copilotAPIStates.Lock()
-	stale := copilotAPIStates.readings["conv-unproved"]
+	stale := copilotAPIStates.readings["conv-expire"]
 	stale.ObservedAt = time.Now().Add(-2 * copilotAPIStateFreshness)
-	copilotAPIStates.readings["conv-unproved"] = stale
+	copilotAPIStates.readings["conv-expire"] = stale
 	copilotAPIStates.Unlock()
-	_, ok := lookupCopilotAPIState("conv-unproved")
-	assert.False(t, ok, "a reading that can no longer be refreshed must stop counting as one")
+
+	_, ok := lookupCopilotAPIState("conv-expire")
+	assert.False(t, ok, "a reading that has aged out must hand the row back")
+}
+
+// ---------------------------------------------------------------------------
+// Releasing a marker that can no longer be cleared
+// ---------------------------------------------------------------------------
+
+// The awaiting projection is the one thing this consumer owns that does not
+// self-correct when its reads stop working, and that asymmetry is the whole
+// reason releaseStrandedPermission exists.
+//
+// A context reading ages out and the pre-existing Copilot sources resume. The
+// awaiting marker has no such expiry: only a later successful refresh by this
+// consumer removes it. So a consumer that has permanently stopped being able to
+// read leaves the row in awaiting_permission with nothing left that will ever
+// clear it — and an awaiting row HOLDS message delivery, so the agent goes
+// mute. Tested directly rather than through the run loop, because the property
+// is about a decision, not about timing.
+func TestCopilotAPIStateReleasesAPermissionMarkerItCanNoLongerClear(t *testing.T) {
+	setupTestDB(t)
+
+	stale := func(sessionID, convID, status, detail string) *copilotAPIStateConsumer {
+		row := copilotAPIStateSession(t, sessionID, convID, status)
+		if detail != "" {
+			_, err := db.SetSessionStatusIfUnchanged(row.ID, row.Status, row.UpdatedAt,
+				status, detail, time.Now())
+			require.NoError(t, err)
+		}
+		return &copilotAPIStateConsumer{
+			convID: convID, sessionID: convID,
+			warnedAt: map[string]time.Time{},
+			// Long past the point where a later refresh could still be expected
+			// to clear the marker properly.
+			lastPermissionRead: time.Now().Add(-2 * copilotAPIStateFreshness),
+		}
+	}
+
+	t.Run("its own stranded marker is released to working", func(t *testing.T) {
+		consumer := stale("s-strand2", "conv-strand2",
+			session.StatusAwaitingPermission, copilotAPIStatePermissionDetail)
+		consumer.releaseStrandedPermission(nil)
+
+		row, err := db.LoadSession("s-strand2")
+		require.NoError(t, err)
+		require.NotNil(t, row)
+		assert.Equal(t, session.StatusWorking, row.Status,
+			"released to working, not idle: the successor state is unknown and idle "+
+				"is the guess that says the agent is available")
+		assert.Empty(t, row.StatusDetail)
+		assert.False(t, isAwaitingHumanInput(row.Status),
+			"the point of the release is that delivery stops being held")
+	})
+
+	t.Run("an awaiting state from elsewhere is left alone", func(t *testing.T) {
+		consumer := stale("s-foreign2", "conv-foreign2",
+			session.StatusAwaitingPermission, "some other harness surface")
+		consumer.releaseStrandedPermission(nil)
+
+		row, err := db.LoadSession("s-foreign2")
+		require.NoError(t, err)
+		require.NotNil(t, row)
+		assert.Equal(t, session.StatusAwaitingPermission, row.Status,
+			"a marker this consumer did not set is not its to release")
+	})
+
+	t.Run("a recent read leaves the marker for a proper clear", func(t *testing.T) {
+		consumer := stale("s-recent", "conv-recent",
+			session.StatusAwaitingPermission, copilotAPIStatePermissionDetail)
+		consumer.lastPermissionRead = time.Now()
+		consumer.releaseStrandedPermission(nil)
+
+		row, err := db.LoadSession("s-recent")
+		require.NoError(t, err)
+		require.NotNil(t, row)
+		assert.Equal(t, session.StatusAwaitingPermission, row.Status,
+			"an ordinary transient failure must not release: the next refresh clears "+
+				"it from a read rather than from a guess")
+	})
 }

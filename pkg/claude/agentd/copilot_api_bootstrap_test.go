@@ -416,7 +416,6 @@ func (s *fakeCopilotServer) failMethod(method, message string) {
 	s.failures[method] = message
 }
 
-
 func readFull(reader *bufio.Reader, buf []byte) (int, error) {
 	read := 0
 	for read < len(buf) {
