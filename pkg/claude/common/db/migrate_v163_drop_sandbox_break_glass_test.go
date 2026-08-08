@@ -202,5 +202,5 @@ func TestMigrateV163SurvivesUnreadableBreakGlassJSON(t *testing.T) {
 
 	require.NoError(t, migrateV162toV163(d))
 	assert.False(t, hasColumn(t, d, "sandbox_profiles", "break_glass_filesystem_json"))
-	assert.Equal(t, 191, currentVersion, "tripwire: bump this with the next migration")
+	assert.Equal(t, 192, currentVersion, "tripwire: bump this with the next migration")
 }

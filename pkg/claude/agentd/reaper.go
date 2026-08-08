@@ -313,6 +313,19 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 		return 0
 	}
 	reapOrphanedOpenCodeRuntimes(states)
+	// Which CONVERSATIONS still have a launch, computed once for the whole tick.
+	//
+	// Session rows are per-launch and exited ones are retained, but a Copilot API
+	// port is recorded per conversation — so a relaunched agent has a live row and
+	// its own predecessor's exited row under one conv id. Releasing off the exited
+	// row alone would delete the successor's live port record on the next tick,
+	// and every tick after that, because the predecessor never goes away.
+	convsWithLiveLaunch := make(map[string]bool, len(states))
+	for _, st := range states {
+		if st.ConvID != "" && st.Status != session.StatusExited {
+			convsWithLiveLaunch[st.ConvID] = true
+		}
+	}
 	aliveNow := make(map[string]bool, len(states))
 	for _, st := range states {
 		if st.Status == session.StatusExited {
@@ -323,6 +336,7 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 						"session", st.ID, "error", err)
 				}
 			}
+			releaseCopilotAPIPortForExit(st.Harness, st.ConvID, convsWithLiveLaunch, r.grace)
 			// SessionEnd may win the status race before pane-died records its richer
 			// structural evidence. Enrich the launch-scoped audit event before
 			// removing the retained pane, preserving evidence for bounded retries
@@ -456,6 +470,7 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 					"session", st.ID, "error", err)
 			}
 		}
+		releaseCopilotAPIPortForExit(st.Harness, st.ConvID, convsWithLiveLaunch, r.grace)
 		cause := db.AgentExitCauseDisappeared
 		var exitCode *int
 		signal := ""

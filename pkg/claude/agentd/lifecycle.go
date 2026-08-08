@@ -1528,6 +1528,19 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		res.Detail = "sandbox_profile_changed: " + fail.Msg
 		return res
 	}
+	// Re-asked on every relaunch rather than trusted from the spawn that
+	// admitted it. The recorded drive is durable but the PROFILE is not: an
+	// operator can close network access between two launches, and resuming an
+	// API-driven agent into a private network namespace would bring back a pane
+	// whose channel can never connect. Refusing names the reason while the agent
+	// is still recoverable by widening the profile or dropping the drive.
+	if fail := copilotAPILoopbackFailure(
+		launchConfig.CopilotAPI, effectiveSandbox, relaunchSandboxImplementation,
+	); fail != nil {
+		res.Action = "error"
+		res.Detail = "sandbox_profile_changed: " + fail.Msg
+		return res
+	}
 	if _, fail := planSandboxProfileAccessForLaunch(
 		harnessName, relaunchSandbox, effectiveSandbox, relaunchSandboxImplementation,
 		session.ModelTransportLaunchContext{
@@ -3682,6 +3695,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
+	if fail := copilotAPILoopbackFailure(
+		copilotAPI, &effectiveSandbox, body.SandboxImplementation); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
 	if _, fail := planSandboxProfileAccessForLaunch(
 		h.Name, harnessBuiltinMode, &effectiveSandbox, body.SandboxImplementation,
 		session.ModelTransportLaunchContext{
@@ -5160,6 +5178,10 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	}
 	if fail := sandboxProfileCapabilityFailure(
 		p.Harness, p.HarnessBuiltinMode, p.EffectiveSandbox, p.SandboxImplementation); fail != nil {
+		return nil, fail
+	}
+	if fail := copilotAPILoopbackFailure(
+		p.CopilotAPI, p.EffectiveSandbox, p.SandboxImplementation); fail != nil {
 		return nil, fail
 	}
 	if _, fail := planSandboxProfileAccessForLaunch(
@@ -7298,7 +7320,18 @@ func reserveUniqueSpawnPrivateAttachmentRootWith(
 // setup; production keeps the LiveSpawner default. See clcommon.SpawnArgs
 // for the per-field semantics.
 func SpawnDetachedTclaudeNew(args clcommon.SpawnArgs) error {
-	return Spawn.SpawnNew(args)
+	if err := prepareCopilotAPIPort(&args); err != nil {
+		return err
+	}
+	if err := Spawn.SpawnNew(args); err != nil {
+		return err
+	}
+	// SessionID is the PRESET conv id, and is empty on a launch that lets the
+	// harness mint one. Those callers record the port themselves once their
+	// discovery poll resolves the id; recording nothing here is correct rather
+	// than a gap. See recordCopilotAPIPort.
+	recordCopilotAPIPort(args.SessionID, args.CopilotAPIPort)
+	return nil
 }
 
 // SpawnDetachedTclaudeResume is a thin facade over Spawn.SpawnResume.
@@ -7314,7 +7347,16 @@ func SpawnDetachedTclaudeNew(args clcommon.SpawnArgs) error {
 // same way; relaunch never re-engages the experimental guardian, so resume
 // callers leave it false.
 func SpawnDetachedTclaudeResume(args clcommon.SpawnArgs) error {
-	return Spawn.SpawnResume(args)
+	if err := prepareCopilotAPIPort(&args); err != nil {
+		return err
+	}
+	if err := Spawn.SpawnResume(args); err != nil {
+		return err
+	}
+	// A resume always knows its conversation — that is what it is resuming — so
+	// unlike the fresh-spawn path this never defers the record.
+	recordCopilotAPIPort(args.ConvID, args.CopilotAPIPort)
+	return nil
 }
 
 // sessionNewArgs builds the argv for the detached `tclaude session new`
@@ -7402,6 +7444,7 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	args = appendAutoCompactWindowFlag(args, a.AutoCompactWindow)
 	args = appendContextWindowMaxFlag(args, a.ContextWindowMax)
 	args = appendCopilotAPIFlag(args, a.CopilotAPI)
+	args = appendCopilotAPIPortFlag(args, a.CopilotAPIPort)
 	args = appendInitialPromptArg(args, a)
 	return args
 }
@@ -7415,6 +7458,21 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 func appendCopilotAPIFlag(args []string, copilotAPI bool) []string {
 	if copilotAPI {
 		args = append(args, "--copilot-api")
+	}
+	return args
+}
+
+// appendCopilotAPIPortFlag adds `--copilot-api-port <n>` for a launch whose
+// port agentd already allocated. 0 omits it, which is every send-keys launch
+// and every other harness.
+//
+// Emitted next to `--copilot-api` rather than folded into it because they
+// answer different questions — which drive, and which port — and the forked
+// `session new` validates them together: a port without the drive, or the
+// drive without a port, is refused there rather than half-applied here.
+func appendCopilotAPIPortFlag(args []string, port int) []string {
+	if port > 0 {
+		args = append(args, "--copilot-api-port", strconv.Itoa(port))
 	}
 	return args
 }
@@ -7588,6 +7646,7 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	// Preserve the SOURCE conv's drive across the relaunch: an agent deliberately
 	// spawned onto the API must not come back on send-keys (or vice versa).
 	args = appendCopilotAPIFlag(args, a.CopilotAPI)
+	args = appendCopilotAPIPortFlag(args, a.CopilotAPIPort)
 	return args
 }
 

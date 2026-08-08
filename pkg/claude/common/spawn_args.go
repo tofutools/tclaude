@@ -274,4 +274,21 @@ type SpawnArgs struct {
 	// it as launch intent. false — the default, and what every harness other than
 	// Copilot resolves to — leaves the send-keys path untouched. See TCL-1053.
 	CopilotAPI bool
+
+	// CopilotAPIPort is the loopback TCP port the API-backed Copilot pane must
+	// bind, forwarded to `tclaude session new --copilot-api-port <n>` and from
+	// there onto `copilot --ui-server --port <n>`.
+	//
+	// agentd CHOOSES this rather than discovering it, because agentd is what
+	// needs the number and it needs it before the process exists. It does not
+	// launch copilot itself — it forks `tclaude session new`, which builds the
+	// copilot argv — so a port learned from the launched process would have to
+	// travel back up, behind a poll and a timeout, with a "never appeared"
+	// failure mode. Choosing it removes all three. See TCL-1054.
+	//
+	// 0 means "not allocated", which is the value on every send-keys launch and
+	// every non-Copilot harness. A launch with CopilotAPI set and no port is a
+	// programming error rather than a fallback: the alternative to a chosen port
+	// is a port nobody knows.
+	CopilotAPIPort int
 }
