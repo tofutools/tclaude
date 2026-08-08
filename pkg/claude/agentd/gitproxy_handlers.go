@@ -256,7 +256,7 @@ func describeProxyRemote(ctx context.Context, s *gitProxySession, name, convID s
 			view.RefusedFor = err.Error()
 			return view
 		}
-		if !remoteAllowed(ref, s.policy.AllowedRemotes) {
+		if len(s.policy.AllowedRemotes) > 0 && !remoteAllowed(ref, s.policy.AllowedRemotes) {
 			view.RefusedFor = fmt.Sprintf(
 				"%s is not on the operator's allow-list (allowed: %s)",
 				ref.Key(), strings.Join(s.policy.AllowedRemotes, ", "))

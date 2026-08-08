@@ -509,6 +509,20 @@ func TestGitProxy_RemotesCombinesGlobalAndGrantScope(t *testing.T) {
 	assert.Contains(t, byName["other"].RefusedFor, "git.read remote scope")
 }
 
+func TestGitProxy_RemotesAllowsScopedOnlyPolicy(t *testing.T) {
+	f, _ := gitProxyWorld(t, []string{})
+	require.NoError(t, db.GrantAgentPermissionWithScope(gitProxyTestConv, agentd.PermGitRead,
+		`{"remote":["github.com/tofutools/*"]}`, "test"))
+
+	res := serveAsProxyAgent(t, f, http.MethodGet, "/v1/git/remotes", nil)
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+	var body gitProxyRemotesResponseForTest
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &body))
+	require.Len(t, body.Remotes, 1)
+	assert.Equal(t, "origin", body.Remotes[0].Name)
+	assert.True(t, body.Remotes[0].Allowed, "body=%s", res.Body.String())
+}
+
 type gitProxyRemotesResponseForTest struct {
 	Remotes []struct {
 		Name       string `json:"name"`
