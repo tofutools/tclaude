@@ -597,12 +597,14 @@ func TestOnlyTheSweepsAttemptExitMayRecordAnObservation(t *testing.T) {
 // copilotAPIObservationReaders names every place allowed to read the
 // channel-failed observation, and the reader it is allowed to use.
 //
-// Two entries. The accessor itself, which only delegates to the registry, and
-// the dashboard state builder, which renders it. Nothing that ROUTES is here,
-// and that is the entire content of the list.
+// Three entries. The accessor delegates, the dashboard renders, and the
+// serialized send recovery suppresses a duplicate reconnect after the first
+// recovery already condemned and stopped the launch. Nothing that ROUTES a
+// delivery is here.
 var copilotAPIObservationReaders = []struct{ file, function, reader string }{
 	{"copilot_api_drive.go", "copilotAPIChannelFailed", "ChannelFailed"},
 	{"dashboard.go", "stateForConvInSessionsBatched", "copilotAPIChannelFailed"},
+	{"copilot_api_reconnect.go", "recoverCopilotAPIChannelAfterTransportFailure", "ChannelFailed"},
 }
 
 // TestTheChannelFailedObservationNeverReachesARoutingDecision is the
@@ -636,7 +638,8 @@ var copilotAPIObservationReaders = []struct{ file, function, reader string }{
 //   - A new predicate that reads the registry's failure state by some other
 //     route, or a copy of the observation kept elsewhere. The list is by name.
 //   - Whether an allow-listed reader ROUTES on what it read. The dashboard entry
-//     is trusted to render rather than decide, and nothing here enforces that.
+//     is trusted to render and the recovery entry to suppress repeated recovery,
+//     rather than to choose a delivery channel; nothing here enforces that.
 //   - Anything outside agentd's top-level directory.
 func TestTheChannelFailedObservationNeverReachesARoutingDecision(t *testing.T) {
 	watched := map[string]bool{}
