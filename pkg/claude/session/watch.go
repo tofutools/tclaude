@@ -13,7 +13,6 @@ import (
 	"charm.land/lipgloss/v2"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
-	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/claude/common/tuistyle"
@@ -231,12 +230,13 @@ func (m model) refreshSessions() model {
 		filtered = append(filtered, state)
 	}
 
-	// Apply sorting
-	SortSessionsByKey(filtered, m.sort.Key, m.sort.Direction)
-	m.allSessions = filtered
 	if pending, err := db.PendingNamesByConv(); err == nil {
 		m.pendingNames = pending
 	}
+
+	// Apply sorting
+	sortSessionsByKey(filtered, m.sort.Key, m.sort.Direction, m.pendingNames)
+	m.allSessions = filtered
 
 	// Apply search filter
 	m = m.applySearchFilter()
@@ -866,13 +866,9 @@ func (m model) orderedColumns() []sessionColDef {
 		{key: sessionColProject, visible: m.colVisible(sessionColProject, true),
 			col:  table.Column{Header: "PROJECT", MinWidth: 15, Weight: 0.25, Truncate: true, TruncateMode: table.TruncateStart, SortKey: "project"},
 			cell: func(_ *model, state *SessionState) string { return state.Cwd }},
-		{visible: true, col: table.Column{Header: "TITLE/PROMPT", MinWidth: 20, Weight: 0.5, Truncate: true},
+		{visible: true, col: table.Column{Header: "TITLE/PROMPT", MinWidth: 20, Weight: 0.5, Truncate: true, SortKey: "title"},
 			cell: func(m *model, state *SessionState) string {
-				title := convindex.GetConvTitleAndPromptWithFallback(state.ConvID, state.Cwd, m.pendingNames[state.ConvID])
-				if title == "" {
-					return "-"
-				}
-				return title
+				return sessionTitle(state, m.pendingNames)
 			}},
 		{key: sessionColStatus, visible: m.colVisible(sessionColStatus, true),
 			col: table.Column{Header: "STATUS", MinWidth: 15, Weight: 0.25, Truncate: true, SortKey: "status"},

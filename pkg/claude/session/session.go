@@ -16,6 +16,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -128,9 +129,28 @@ const (
 
 // SortSessionsByKey sorts sessions by the given sort key and direction.
 func SortSessionsByKey(sessions []*SessionState, key string, dir table.SortDirection) {
+	sortSessionsByKey(sessions, key, dir, nil)
+}
+
+// sortSessionsByKey is the implementation used by both the plain session
+// listing and the sessions TUI. pendingNames supplies the same fallback used
+// by the TITLE/PROMPT cell for a freshly spawned agent whose conversation has
+// not been indexed yet.
+func sortSessionsByKey(sessions []*SessionState, key string, dir table.SortDirection, pendingNames map[string]string) {
 	if key == "" || len(sessions) < 2 {
 		return
 	}
+
+	// Resolve titles once per row rather than performing a DB/filesystem lookup
+	// for every comparison. This also keeps the comparator consistent if a
+	// conversation is indexed while the sort is in progress.
+	titles := make(map[*SessionState]string)
+	if key == "title" {
+		for _, state := range sessions {
+			titles[state] = strings.ToLower(sessionTitle(state, pendingNames))
+		}
+	}
+
 	sort.SliceStable(sessions, func(i, j int) bool {
 		a, b := sessions[i], sessions[j]
 		if dir == table.SortDesc {
@@ -151,6 +171,8 @@ func SortSessionsByKey(sessions []*SessionState, key string, dir table.SortDirec
 			less = aHarness < bHarness
 		case "project":
 			less = a.Cwd < b.Cwd
+		case "title":
+			less = titles[a] < titles[b]
 		case "status":
 			less = statusPriority(a.Status) < statusPriority(b.Status)
 		case "updated":
@@ -160,6 +182,16 @@ func SortSessionsByKey(sessions []*SessionState, key string, dir table.SortDirec
 		}
 		return less
 	})
+}
+
+// sessionTitle returns the exact text displayed in the TITLE/PROMPT column,
+// including its empty-value placeholder.
+func sessionTitle(state *SessionState, pendingNames map[string]string) string {
+	title := convindex.GetConvTitleAndPromptWithFallback(state.ConvID, state.Cwd, pendingNames[state.ConvID])
+	if title == "" {
+		return "-"
+	}
+	return title
 }
 
 // statusPriority returns sort priority for status (lower = shown first when ascending)
