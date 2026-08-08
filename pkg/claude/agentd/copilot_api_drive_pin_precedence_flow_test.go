@@ -129,7 +129,8 @@ func TestCopilotDrivePin_SurvivesAGroupDefaultAtEveryRelaunch(t *testing.T) {
 	resp, _ := spawnCopilot(t, f, "crew", map[string]any{"name": "copilot-worker"})
 	conv := resp.ConvID
 	born, ok := f.World.SpawnCopilotAPI(conv)
-	require.True(t, ok)
+	require.Truef(t, ok, "no spawn recorded for conv %s, so there is no launch to read a "+
+		"drive off and every assertion below would be about an absent scenario", conv)
 	require.True(t, born, "the scenario needs an agent the group default actually put on the drive")
 
 	pinDriveOff(t, conv)
@@ -264,7 +265,8 @@ func TestCopilotDrivePin_UnrecordedDriveAtRelaunchWithAGlobalDefault(t *testing.
 	resp, _ := spawnCopilot(t, f, "crew", map[string]any{"name": "copilot-worker"})
 	conv := resp.ConvID
 	born, ok := f.World.SpawnCopilotAPI(conv)
-	require.True(t, ok)
+	require.Truef(t, ok, "no spawn recorded for conv %s, so there is no launch to read a "+
+		"drive off and every assertion below would be about an absent scenario", conv)
 	require.False(t, born, "the arm needs an agent that was NOT born on the drive")
 
 	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{

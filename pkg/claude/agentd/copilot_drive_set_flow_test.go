@@ -61,10 +61,14 @@ func TestSetDrive_TakesAnAgentOffTheAPIDriveDurably(t *testing.T) {
 
 	target, err := db.CopilotDriveTargetForConv(conv)
 	require.NoError(t, err)
-	assert.Equal(t, db.CopilotDriveRecordAgentProfile, target.Record)
+	assert.Equal(t, db.CopilotDriveRecordAgentProfile, target.Record,
+		"the pin must land in the record a LAUNCH consults first; writing it anywhere "+
+			"else reports success while changing nothing that routes")
 	assert.False(t, target.Value, "the drive must be recorded off")
 
-	assert.Contains(t, stdout, "send-keys")
+	assert.Contains(t, stdout, "send-keys",
+		"the report has to name the drive the agent is now on, not merely that "+
+			"something was written")
 	assert.Contains(t, stdout, string(db.CopilotDriveRecordAgentProfile),
 		"the report must name WHICH record it wrote; two shapes of durably-off look "+
 			"identical otherwise")
@@ -117,8 +121,12 @@ func TestSetDrive_PinningAnUnrecordedDriveSaysItCreatedTheRecord(t *testing.T) {
 	assert.Equal(t, db.CopilotDriveRecordAgentProfile, after.Record,
 		"the pin must land in the record the ROUTER consults first, or it would report "+
 			"success while changing nothing that routes")
-	assert.False(t, after.Value)
-	assert.Contains(t, stdout, "CREATED")
+	assert.False(t, after.Value,
+		"a created record must carry the posture the operator asked for; a record that "+
+			"exists and says nothing leaves the lower tier answering")
+	assert.Contains(t, stdout, "CREATED",
+		"creating a record is the operator's evidence that a DEFAULT PROFILE had been "+
+			"answering for this agent until now")
 	assert.Contains(t, stdout, "free to answer for it",
 		"the operator needs to learn that a default profile had been speaking")
 }
@@ -243,14 +251,18 @@ func TestSetDrive_SeedsTheConversationFallbackForAnAgentlessConversation(t *test
 	require.Equal(t, db.CopilotDriveRecordConversationFallback, target.Record,
 		"precondition: a clone's drive must live in the conversation fallback, or this "+
 			"measures the agent branch")
-	require.True(t, target.Value)
+	require.True(t, target.Value,
+		"precondition: the clone must start ON the drive, or the rollback below has "+
+			"nothing to roll back and would pass against an agent that was never on it")
 
 	stdout, stderr, rc := runSetDriveCLI(t, f, cloned.NewConv, "send-keys")
 	require.Equalf(t, 0, rc, "set-drive on a clone failed: %s", stderr)
 
 	after, err := db.CopilotDriveTargetForConv(cloned.NewConv)
 	require.NoError(t, err)
-	assert.Equal(t, db.CopilotDriveRecordConversationFallback, after.Record)
+	assert.Equal(t, db.CopilotDriveRecordConversationFallback, after.Record,
+		"a clone has no agent row, so the conversation fallback is the SOLE holder "+
+			"here; moving the write to the agent branch would silently drop it")
 	assert.False(t, after.Value, "the clone must be off the drive durably")
 	assert.Contains(t, stdout, string(db.CopilotDriveRecordConversationFallback),
 		"the operator must be told it is the CONVERSATION record that answers here — "+

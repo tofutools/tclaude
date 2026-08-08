@@ -105,11 +105,15 @@ func TestSeedingTheDriveLeavesTheAgentRelaunchable(t *testing.T) {
 
 	target, err := db.CopilotDriveTargetForConv(convID)
 	require.NoError(t, err)
-	require.Equal(t, db.CopilotDriveRecordNone, target.Record)
+	require.Equal(t, db.CopilotDriveRecordNone, target.Record,
+		"precondition: nothing may answer for the drive yet, or this measures an edit "+
+			"rather than the creation the seed exists for")
 	created, record, err := writeCopilotDrive(convID, target, false)
 	require.NoError(t, err)
 	require.True(t, created, "nothing was recorded before, so this is a creation")
-	require.Equal(t, db.CopilotDriveRecordAgentProfile, record)
+	require.Equal(t, db.CopilotDriveRecordAgentProfile, record,
+		"the write must report the record it actually used, since that is the fact the "+
+			"operator's disclosure is built from")
 
 	// WHICH ARM, again, and this time it is the answer that surprised: the write
 	// above resolves the relaunch first, and that resolve BACKFILLS a profile from
@@ -133,7 +137,8 @@ func TestSeedingTheDriveLeavesTheAgentRelaunchable(t *testing.T) {
 	// targeted write exists to avoid, arriving through the one path allowed to
 	// write a whole blob.
 	assert.False(t, after.CopilotAPI, "the pin must be what a relaunch reads")
-	assert.Equal(t, before.Harness, after.Harness)
+	assert.Equal(t, before.Harness, after.Harness,
+		"seeding a drive must not change the harness the agent relaunches under")
 	assert.Equal(t, before.Approval, after.Approval,
 		"seeding a drive must not change the approval policy the agent relaunches under")
 	assert.Equal(t, before.Sandbox, after.Sandbox,

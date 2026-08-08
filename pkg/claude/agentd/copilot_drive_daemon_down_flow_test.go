@@ -60,8 +60,12 @@ func TestSetDriveDaemonDown_DeEscalationStillWorks(t *testing.T) {
 	after, err := db.CopilotDriveTargetForConv(conv)
 	require.NoError(t, err)
 	assert.False(t, after.Value, "the record must be off after a daemon-down rollback")
-	assert.Equal(t, db.CopilotDriveRecordAgentProfile, after.Record)
-	assert.Contains(t, stdout, "send-keys")
+	assert.Equal(t, db.CopilotDriveRecordAgentProfile, after.Record,
+		"the daemon-down path must edit the SAME record the daemon path does, or a "+
+			"rollback taken during an outage would be outvoted once the daemon returns")
+	assert.Contains(t, stdout, "send-keys",
+		"an operator working without the daemon still has to be told which drive the "+
+			"agent ended up on")
 	assert.Contains(t, stdout, string(db.CopilotDriveRecordAgentProfile),
 		"the daemon-down path owes the operator the same facts the daemon path does")
 }
@@ -117,7 +121,10 @@ func TestSetDriveDaemonDown_RefusesToInventARecord(t *testing.T) {
 	require.NoError(t, err)
 
 	_, stderr, rc := runSetDriveCLIDirect(t, conv, "send-keys")
-	assert.NotEqual(t, 0, rc)
+	assert.NotEqual(t, 0, rc,
+		"with no record to edit, the daemon-down path must REFUSE rather than invent "+
+			"one: a fabricated record would outvote whatever tier is currently "+
+			"answering, pinning a posture nobody chose")
 	assert.Contains(t, stderr, "nothing records a Copilot drive")
 	assert.Contains(t, stderr, "PIN",
 		"the operator wanted a pin; the refusal must say where to get one rather than "+
