@@ -21,7 +21,7 @@ import (
 //
 //  1. permission preflight — an unscoped grant is decided immediately; a
 //     scoped grant is deferred until the normalized remote is known;
-//  2. operator policy — the proxy is off unless remotes are allow-listed;
+//  2. legacy operator-global policy, when configured;
 //  3. the repo gate — daemon-recorded launch directory, no request parameter;
 //  4. parameter validation — charset, length, no leading "-";
 //  5. the remote gate — URL parse, allow-list, insteadOf fixed point;
