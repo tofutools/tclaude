@@ -68,6 +68,22 @@ type codexContextRefreshResult struct {
 	hasFastMode          bool
 }
 
+// codexFastModeForSession accepts only a settings event written during this
+// process generation. Codex resumes the same conversation into the same
+// rollout, so the follower correctly retains the prior file prefix while the
+// dashboard must treat its last Fast snapshot as unknown until the resumed
+// process appends a fresh thread_settings_applied event.
+func codexFastModeForSession(
+	snap harness.CodexRuntimeSnapshot,
+	sess *db.SessionRow,
+) (fast, known bool) {
+	if sess == nil || !snap.HasFastMode || snap.FastModeObserved.IsZero() ||
+		snap.FastModeObserved.Before(sess.CreatedAt) {
+		return false, false
+	}
+	return snap.FastMode, true
+}
+
 func codexCostHistoriesEqual(a, b []harness.CodexTokenCostDailySnapshot) bool {
 	if len(a) != len(b) {
 		return false
@@ -396,6 +412,7 @@ func refreshCodexContextSnapshotOnReadBatched(
 		timing.checkpointWrite = time.Since(checkpointWriteStarted)
 		return codexContextRefreshResultFromCache(sess, cached)
 	}
+	runtimeFastMode, runtimeHasFastMode := codexFastModeForSession(snap, sess)
 	checkpointData := cached.checkpointData
 	checkpointFailures := cached.checkpointFailures
 	checkpointPersistedAt := cached.checkpointPersistedAt
@@ -658,8 +675,8 @@ func refreshCodexContextSnapshotOnReadBatched(
 		snap.Context,
 		snap.HasContext,
 		snap.ContextReset,
-		snap.FastMode,
-		snap.HasFastMode,
+		runtimeFastMode,
+		runtimeHasFastMode,
 		contextPersistenceDeferred,
 		cachePersistedConvID,
 		cachePersistedCreatedAt,
@@ -676,8 +693,8 @@ func refreshCodexContextSnapshotOnReadBatched(
 	result := codexContextRefreshResult{
 		interruptedSubagents: snap.InterruptedSubagents,
 		contextReset:         snap.ContextReset,
-		fastMode:             snap.FastMode,
-		hasFastMode:          snap.HasFastMode,
+		fastMode:             runtimeFastMode,
+		hasFastMode:          runtimeHasFastMode,
 	}
 	if snap.HasContext && !snap.ContextReset {
 		ctx := snap.Context

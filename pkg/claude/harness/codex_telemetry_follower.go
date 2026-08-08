@@ -86,6 +86,7 @@ type codexTelemetryCheckpoint struct {
 	Effort               string                        `json:"effort,omitempty"`
 	FastMode             bool                          `json:"fast_mode,omitempty"`
 	HasFastMode          bool                          `json:"has_fast_mode,omitempty"`
+	FastModeObserved     string                        `json:"fast_mode_observed,omitempty"`
 	Usage                *CodexUsage                   `json:"usage,omitempty"`
 	CostUSD              float64                       `json:"cost_usd,omitempty"`
 	CostPriced           bool                          `json:"cost_priced,omitempty"`
@@ -133,6 +134,7 @@ func (f *CodexTelemetryFollower) RestoreCheckpoint(data []byte) error {
 	state.effort = cp.Effort
 	state.fastMode = cp.FastMode
 	state.hasFastMode = cp.HasFastMode
+	state.fastModeObserved = cp.FastModeObserved
 	state.usage = cp.Usage
 	state.costUSD = cp.CostUSD
 	state.costPriced = cp.CostPriced
@@ -215,6 +217,7 @@ func (f *CodexTelemetryFollower) Checkpoint() ([]byte, bool, error) {
 		Effort:               f.state.effort,
 		FastMode:             f.state.fastMode,
 		HasFastMode:          f.state.hasFastMode,
+		FastModeObserved:     f.state.fastModeObserved,
 		Usage:                f.state.usage,
 		CostUSD:              f.state.costUSD,
 		CostPriced:           f.state.costPriced,

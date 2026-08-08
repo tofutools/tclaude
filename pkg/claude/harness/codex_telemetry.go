@@ -56,9 +56,13 @@ type CodexRuntimeSnapshot struct {
 	// not reported thread settings yet.
 	FastMode    bool
 	HasFastMode bool
-	Usage       *CodexUsage
-	Cost        CodexTokenCost
-	HasCost     bool
+	// FastModeObserved is the rollout timestamp of the settings snapshot.
+	// Callers use it to reject state inherited from an earlier process
+	// generation that resumed the same conversation and rollout.
+	FastModeObserved time.Time
+	Usage            *CodexUsage
+	Cost             CodexTokenCost
+	HasCost          bool
 	// CostAuthoritative distinguishes a successfully folded rollout with no
 	// priceable records from a missing/unreadable rollout. CostHistory carries
 	// cumulative local-day prefixes so corrected pricing can replace, not MAX,
@@ -247,6 +251,7 @@ type codexRuntimeScanState struct {
 	effort               string
 	fastMode             bool
 	hasFastMode          bool
+	fastModeObserved     string
 	usage                *CodexUsage
 	costUSD              float64
 	costPriced           bool
@@ -284,6 +289,7 @@ func (s codexRuntimeScanState) clone() codexRuntimeScanState {
 		effort:               s.effort,
 		fastMode:             s.fastMode,
 		hasFastMode:          s.hasFastMode,
+		fastModeObserved:     s.fastModeObserved,
 		usage:                s.usage,
 		costUSD:              s.costUSD,
 		costPriced:           s.costPriced,
@@ -374,6 +380,7 @@ func (s *codexRuntimeScanState) consumeLine(line []byte) bool {
 		s.hasFastMode = true
 		s.fastMode = ev.ThreadSettings.ServiceTier != nil &&
 			(*ev.ThreadSettings.ServiceTier == "priority" || *ev.ThreadSettings.ServiceTier == "fast")
+		s.fastModeObserved = env.Timestamp
 	case "token_count":
 		var ev codexTokenCountEvent
 		if json.Unmarshal(env.Payload, &ev) != nil {
@@ -534,6 +541,7 @@ func (s *codexRuntimeScanState) snapshot() CodexRuntimeSnapshot {
 		HasEffort:            s.effort != "",
 		FastMode:             s.fastMode,
 		HasFastMode:          s.hasFastMode,
+		FastModeObserved:     parseCodexEventTime(s.fastModeObserved),
 		Usage:                s.usage,
 		CostAuthoritative:    s.costAuthoritative,
 		CostHistory:          append([]CodexTokenCostDailySnapshot(nil), s.costHistory...),

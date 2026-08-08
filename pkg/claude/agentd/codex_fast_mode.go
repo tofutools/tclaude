@@ -39,6 +39,7 @@ func codexFastModeFromFollowerNow(sess *db.SessionRow) (fast, known bool, err er
 	if err != nil {
 		return false, false, err
 	}
+	fast, known = codexFastModeForSession(snap, sess)
 
 	// Keep the ordinary snapshot read-through cache coherent, but do not move
 	// its refresh timestamp: this focused proof does not perform the context,
@@ -48,12 +49,12 @@ func codexFastModeFromFollowerNow(sess *db.SessionRow) (fast, known bool, err er
 	if cached.follower == follower {
 		cached.sessionConvID = sess.ConvID
 		cached.sessionCreatedAt = sess.CreatedAt
-		cached.runtimeFastMode = snap.FastMode
-		cached.runtimeHasFastMode = snap.HasFastMode
+		cached.runtimeFastMode = fast
+		cached.runtimeHasFastMode = known
 		codexContextRefreshMu.last[sess.ID] = cached
 	}
 	codexContextRefreshMu.Unlock()
-	return snap.FastMode, snap.HasFastMode, nil
+	return fast, known, nil
 }
 
 // dashboardDisableCodexFastModeAgent re-proves live Fast state immediately
@@ -67,9 +68,18 @@ func dashboardDisableCodexFastModeAgent(w http.ResponseWriter, _ *http.Request, 
 		writeError(w, http.StatusNotFound, "not_found", "resolve agent: "+err.Error())
 		return
 	}
+	if afterResolveCodexFastModeForTest != nil {
+		afterResolveCodexFastModeForTest()
+	}
 	launchLock := resumeLaunchLock(resolved.ConvID)
 	launchLock.Lock()
 	defer launchLock.Unlock()
+	if resolved.AgentID != "" {
+		if err := requireCurrentAgentGeneration(resolved.AgentID, resolved.ConvID); err != nil {
+			writeError(w, http.StatusConflict, "stale_generation", err.Error())
+			return
+		}
+	}
 	sess := aliveSessionForConv(resolved.ConvID)
 	if sess == nil {
 		writeError(w, http.StatusConflict, "offline", "agent has no live tmux session")
@@ -111,3 +121,7 @@ func dashboardDisableCodexFastModeAgent(w http.ResponseWriter, _ *http.Request, 
 		"requested": "fast_off",
 	})
 }
+
+// afterResolveCodexFastModeForTest is a deterministic seam for proving that
+// stable-agent generation changes are rejected after selector resolution.
+var afterResolveCodexFastModeForTest func()
