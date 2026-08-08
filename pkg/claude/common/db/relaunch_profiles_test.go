@@ -1061,3 +1061,44 @@ func TestCompareAndSetConversationCopilotAPIGuardsTheWholeProfile(t *testing.T) 
 	assert.Nil(t, still.FallbackRelaunch,
 		"this function must not materialise a fallback object it has no business inventing")
 }
+
+// Whether a targeted set can PIN a drive that was never recorded, as opposed to
+// only rolling back one that was, decides how much seeding the layer above needs.
+// json_set appends a missing leaf when its PARENT exists, and '$' always exists —
+// so an agent with a profile blob that simply lacks copilot_api is editable, while
+// only an EMPTY blob (no profile at all) is not.
+//
+// Asserted rather than reasoned, for the same reason as the missing-parent arm: a
+// claim about a dependency's behaviour is evidence only once it has run here.
+func TestCompareAndSetAgentCopilotAPIPinsADriveThatWasNeverRecorded(t *testing.T) {
+	setupTestDB(t)
+	const convID = "cas-pin-conv"
+	agentID, _, err := EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+
+	// A profile with no copilot_api member at all — a legacy agent, or one spawned
+	// before the drive was selectable.
+	require.NoError(t, SetAgentRelaunchProfile(agentID, AgentRelaunchProfile{
+		Version:       RelaunchProfileVersion,
+		SSHWorkaround: boolPtr(false),
+		ModelID:       stringPtr("gpt-5.1-codex"),
+	}))
+	before, err := AgentRelaunchProfileForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, before)
+	require.Nil(t, before.CopilotAPI, "precondition: the field must be absent, not false")
+
+	raw, err := AgentRelaunchProfileRaw(agentID)
+	require.NoError(t, err)
+	ok, err := CompareAndSetAgentCopilotAPI(agentID, false, raw)
+	require.NoError(t, err)
+	require.True(t, ok, "json_set must APPEND a missing leaf, not refuse it")
+
+	after, err := AgentRelaunchProfileForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, after.CopilotAPI)
+	assert.False(t, *after.CopilotAPI,
+		"an explicit pinned false is what stops a lower tier speaking for this agent")
+	require.NotNil(t, after.SSHWorkaround)
+	assert.False(t, *after.SSHWorkaround, "siblings still survive an append")
+}
