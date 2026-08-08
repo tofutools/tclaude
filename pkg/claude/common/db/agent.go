@@ -3002,20 +3002,59 @@ func CompleteAgentMessageNudgeState(id int64, token AgentMessageNudgeClaim, now 
 	return n == 1, nil
 }
 
+const deleteSupersededCronMessagesSQL = `DELETE FROM agent_messages
+	WHERE id IN (
+		SELECT older.message_id
+		FROM agent_cron_messages older
+		JOIN agent_messages older_message ON older_message.id = older.message_id
+		WHERE older_message.delivered_at IS NULL AND older_message.read_at IS NULL
+		  AND older_message.nudge_claimed_at IS NULL AND older_message.nudge_cancelled_at IS NULL
+		  AND EXISTS (
+			SELECT 1
+			FROM agent_cron_messages newer
+			JOIN agent_messages newer_message ON newer_message.id = newer.message_id
+			WHERE newer.cron_job_id = older.cron_job_id
+			  AND newer.message_id > older.message_id
+			  AND (
+				(older_message.to_agent != '' AND older_message.pin_gen = 0
+				 AND newer_message.to_agent = older_message.to_agent AND newer_message.pin_gen = 0)
+				OR
+				(older_message.to_agent = '' AND newer_message.to_agent = ''
+				 AND newer_message.to_conv = older_message.to_conv)
+			  )
+		  )
+	)`
+
 // ReleaseAgentMessageNudge releases token's lease after a failed send while
-// preserving its durable attempt count/time for retry backoff.
+// preserving its durable attempt count/time for retry backoff. If a newer tick
+// from the same cron job arrived while this row was in flight, the released
+// stale row is removed in the same transaction instead of retrying after the
+// newer tick.
 func ReleaseAgentMessageNudge(id int64, token AgentMessageNudgeClaim) (bool, error) {
 	d, err := Open()
 	if err != nil {
 		return false, err
 	}
-	res, err := d.Exec(`UPDATE agent_messages SET nudge_claimed_at = NULL
+	tx, err := d.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.Exec(`UPDATE agent_messages SET nudge_claimed_at = NULL
 		WHERE id = ? AND delivered_at IS NULL AND nudge_claimed_at = ? AND nudge_attempts = ?`,
 		id, token.ClaimedAt, token.Attempt)
 	if err != nil {
 		return false, err
 	}
 	n, _ := res.RowsAffected()
+	if n == 1 {
+		if _, err := tx.Exec(deleteSupersededCronMessagesSQL); err != nil {
+			return false, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
 	return n == 1, nil
 }
 
@@ -3027,12 +3066,27 @@ func ReleaseAllAgentMessageNudgeClaims() (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	res, err := d.Exec(`UPDATE agent_messages SET nudge_claimed_at = NULL
+	tx, err := d.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.Exec(`UPDATE agent_messages SET nudge_claimed_at = NULL
 		WHERE delivered_at IS NULL AND nudge_claimed_at IS NOT NULL`)
 	if err != nil {
 		return 0, err
 	}
-	return res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(deleteSupersededCronMessagesSQL); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // SuppressOfflineRegularNudgesForAgent discards only the tmux notification

@@ -56,7 +56,7 @@ func TestInsertLatestCronAgentMessageLeavesClaimedTickInFlight(t *testing.T) {
 	claimedID, _, err := InsertLatestCronAgentMessage(
 		&AgentMessage{ToConv: target, Body: "already in flight"}, 33)
 	require.NoError(t, err)
-	_, claimed, err := ClaimAgentMessageNudge(claimedID, time.Now())
+	token, claimed, err := ClaimAgentMessageNudge(claimedID, time.Now())
 	require.NoError(t, err)
 	require.True(t, claimed)
 
@@ -70,4 +70,14 @@ func TestInsertLatestCronAgentMessageLeavesClaimedTickInFlight(t *testing.T) {
 		require.NoError(t, getErr)
 		assert.NotNil(t, message)
 	}
+
+	released, err := ReleaseAgentMessageNudge(claimedID, token)
+	require.NoError(t, err)
+	require.True(t, released)
+	claimedMessage, err := GetAgentMessage(claimedID)
+	require.NoError(t, err)
+	assert.Nil(t, claimedMessage, "a failed old delivery is discarded once a newer tick exists")
+	latestMessage, err := GetAgentMessage(latestID)
+	require.NoError(t, err)
+	assert.NotNil(t, latestMessage)
 }

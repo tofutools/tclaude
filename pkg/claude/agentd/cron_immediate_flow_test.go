@@ -92,7 +92,10 @@ func TestCronCreate_RunImmediatelyOnceThenKeepsCadence(t *testing.T) {
 		agentd.RunCronTickForTest(job.LastRunAt.Add(20 * time.Second))
 		assert.Equal(t, 1, msgRowCount(t, target), "no early cadence fire")
 		agentd.RunCronTickForTest(job.LastRunAt.Add(31 * time.Second))
-		assert.Equal(t, 2, msgRowCount(t, target), "normal interval follows immediate fire")
+		assert.Equal(t, 1, msgRowCount(t, target), "the due tick replaces the still-buffered immediate tick")
+		runs, err := db.ListAgentCronRunsForJob(job.ID, 0)
+		require.NoError(t, err)
+		assert.Len(t, runs, 2, "normal interval follows immediate fire")
 	})
 
 	t.Run("expression", func(t *testing.T) {
@@ -111,9 +114,12 @@ func TestCronCreate_RunImmediatelyOnceThenKeepsCadence(t *testing.T) {
 		agentd.RunCronTickForTest(firstDue.Add(-time.Nanosecond))
 		assert.Equal(t, 1, msgRowCount(t, target), "expression does not fire before its first due time")
 		agentd.RunCronTickForTest(firstDue)
-		assert.Equal(t, 2, msgRowCount(t, target), "expression fires once at its first due time")
+		assert.Equal(t, 1, msgRowCount(t, target), "the due tick replaces the still-buffered immediate tick")
 		agentd.RunCronTickForTest(firstDue.Add(time.Second))
-		assert.Equal(t, 2, msgRowCount(t, target), "adjacent ticks do not replay the first due time")
+		assert.Equal(t, 1, msgRowCount(t, target), "adjacent ticks do not replay the first due time")
+		runs, err := db.ListAgentCronRunsForJob(job.ID, 0)
+		require.NoError(t, err)
+		assert.Len(t, runs, 2, "immediate fire plus the first expression match")
 	})
 }
 
@@ -132,7 +138,7 @@ func TestCronPatch_RunImmediatelyIsEdgeTriggered(t *testing.T) {
 	patchCronAsHuman(t, f, job.ID, map[string]any{"run_immediately": false})
 	assert.Equal(t, 1, msgRowCount(t, target), "true→false is inert")
 	patchCronAsHuman(t, f, job.ID, map[string]any{"run_immediately": true})
-	assert.Equal(t, 2, msgRowCount(t, target), "a later false→true transition fires once")
+	assert.Equal(t, 1, msgRowCount(t, target), "a later edge replaces the still-buffered first tick")
 
 	runs, err := db.ListAgentCronRunsForJob(job.ID, 0)
 	require.NoError(t, err)

@@ -148,6 +148,7 @@ func TestCronGroupMulticast_MembershipResolvedAtFireTime(t *testing.T) {
 	assert.Equal(t, 1, msgRowCount(t, w1), "w1 after fire #1")
 	assert.Equal(t, 1, msgRowCount(t, w2), "w2 after fire #1")
 	assert.Equal(t, 0, msgRowCount(t, w3), "w3 not a member yet")
+	w1First := findCronMsg(t, w1, "tick").ID
 
 	// Roster changes BETWEEN fires: w3 joins, w2 leaves.
 	f.HaveMember("team", w3)
@@ -155,7 +156,9 @@ func TestCronGroupMulticast_MembershipResolvedAtFireTime(t *testing.T) {
 
 	// Fire #2 — roster is now {po, w1, w3}; the fan-out must track it.
 	require.Equal(t, "ok", fireCronNow(t, f, id), "fire #2 status")
-	assert.Equal(t, 2, msgRowCount(t, w1), "w1 still a member — got fire #2 too")
+	assert.Equal(t, 1, msgRowCount(t, w1), "w1's still-buffered first tick is replaced")
+	assert.Greater(t, findCronMsg(t, w1, "tick").ID, w1First,
+		"w1 still a member — its latest tick was appended")
 	assert.Equal(t, 1, msgRowCount(t, w2),
 		"w2 left before fire #2 — no new row, membership resolved at fire time")
 	assert.Equal(t, 1, msgRowCount(t, w3),

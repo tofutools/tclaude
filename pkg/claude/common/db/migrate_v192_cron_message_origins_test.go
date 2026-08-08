@@ -11,6 +11,30 @@ func TestMigrateV191ToV192CreatesCronMessageOrigins(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()
 	require.NoError(t, err)
+	const target = "legacy-cron-buffer-target"
+	_, _, err = EnsureAgentForConv(target, "test")
+	require.NoError(t, err)
+	jobID, err := InsertAgentCronJob(&AgentCronJob{
+		Name: "legacy-job", OwnerConv: target,
+		TargetKind: CronTargetConv, TargetConv: target,
+		IntervalSeconds: 600, Subject: "status", Body: "report status", Enabled: true,
+	})
+	require.NoError(t, err)
+	oldID, err := InsertAgentMessage(&AgentMessage{
+		FromConv: target, ToConv: target,
+		Subject: "[cron:legacy-job] status", Body: "report status",
+	})
+	require.NoError(t, err)
+	latestID, err := InsertAgentMessage(&AgentMessage{
+		FromConv: target, ToConv: target,
+		Subject: "[cron:legacy-job] status", Body: "report status",
+	})
+	require.NoError(t, err)
+	unrelatedID, err := InsertAgentMessage(&AgentMessage{
+		FromConv: target, ToConv: target,
+		Subject: "not cron", Body: "report status",
+	})
+	require.NoError(t, err)
 
 	_, err = d.Exec(`DROP TABLE agent_cron_messages; UPDATE schema_version SET version = 191`)
 	require.NoError(t, err)
@@ -23,4 +47,16 @@ func TestMigrateV191ToV192CreatesCronMessageOrigins(t *testing.T) {
 		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'agent_cron_messages'`,
 	).Scan(&have))
 	assert.Equal(t, 1, have)
+
+	old, err := GetAgentMessage(oldID)
+	require.NoError(t, err)
+	assert.Nil(t, old, "upgrade removes the older legacy buffered tick")
+	for _, id := range []int64{latestID, unrelatedID} {
+		message, getErr := GetAgentMessage(id)
+		require.NoError(t, getErr)
+		assert.NotNil(t, message)
+	}
+	origin, err := AgentMessageCronJobID(latestID)
+	require.NoError(t, err)
+	assert.Equal(t, jobID, origin)
 }
