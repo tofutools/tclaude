@@ -141,8 +141,7 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			path, err := worktree.AddWorktreeIn(perAgentWorktrees.Repo, branch, perAgentWorktrees.FromBranch, "")
 			if err != nil {
 				res.Error = "create worktree: " + err.Error()
-				wr.Failed++
-				wr.Results = append(wr.Results, res)
+				wr.failMember(res)
 				continue
 			}
 			agentWorktreePath = path
@@ -171,8 +170,15 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 		if lfail != nil {
 			res.ErrorKind = lfail.Kind
 			res.Error = lfail.Msg
-			wr.Failed++
-			wr.Results = append(wr.Results, res)
+			// The failure is the case that MOST needs the attribution, and it was the
+			// one case that had none: this branch used to record the message alone.
+			// Since TCL-1110 the harness a member is judged against can come from the
+			// group's or the workspace's default profile, so `"opus" is a Claude Code
+			// model` can be the whole explanation an operator gets for a template that
+			// says nothing about Codex. The echo carries the tier that chose the
+			// harness, which is the sentence that makes the other one actionable.
+			res.Resolved = templateResolverFailureEcho(launch)
+			wr.failMember(res)
 			continue
 		}
 		// Held until the spawn returns its echo, which is where they belong: one
@@ -197,8 +203,7 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			resolvedAgentCwd, proofDirsWithAgentCwd, cleanup, err := preparePerAgentCwdWriteProof(proofToken, proofDirs, agentCwd)
 			if err != nil {
 				res.Error = "prepare cwd write-proof: " + err.Error()
-				wr.Failed++
-				wr.Results = append(wr.Results, res)
+				wr.failMember(res)
 				continue
 			}
 			agentCwd = resolvedAgentCwd
@@ -270,8 +275,7 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			res.ErrorKind = fail.Kind
 			res.Error = fail.Msg
 			res.Resolved = templateEchoFallback(templateNotes, templateInfo, templateWarnings)
-			wr.Failed++
-			wr.Results = append(wr.Results, res)
+			wr.failMember(res)
 			continue
 		}
 		// The launch echo is built INSIDE the spawn, because the group/global
@@ -346,6 +350,48 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 // there is no spawn echo to hang them on — a member whose spawn was REFUSED, or
 // (defensively) an outcome from a path that produced none. A refusal is exactly
 // when the tiers that produced the refused value are worth reading.
+// failMember records a member that did NOT spawn, and blanks its worktree fields
+// on the way out. A per-agent worktree is created before the launch is resolved
+// and before the spawn is attempted, so a failed member can genuinely have one —
+// but nothing is attached to it, and a response naming a path for an agent that
+// does not exist asserts a relationship that was never formed. The operator then
+// goes looking for an agent in that directory.
+//
+// The worktree and its branch are NOT removed here: that is a real leak, made
+// much more reachable by TCL-1110 (a configuration fault fails EVERY member of a
+// roster rather than one by accident), and it is tracked as TCL-1115 rather than
+// fixed inside a launch-resolution change. This function fixes the lie, not the
+// leak — and the two are different bugs even though they share a line.
+func (wr *waveSpawnResult) failMember(res instantiateAgentResult) {
+	res.WorktreePath = ""
+	res.WorktreeBranch = ""
+	wr.Failed++
+	wr.Results = append(wr.Results, res)
+}
+
+// templateResolverFailureEcho builds the echo for a member the RESOLVER
+// refused, from the partial launch it carried out with the failure. Only the
+// harness is populated: it is the one field decided before any field-level
+// validation can fail, and it is the one an operator cannot otherwise infer —
+// the rest were never resolved, and inventing values for them would describe a
+// launch that does not exist.
+//
+// Returns nil when the resolver failed before choosing a harness (a profile that
+// vanished, a profile the caller may not use). Those failures name their own
+// cause already, and an echo attributing a harness nobody had chosen yet would
+// be worse than none.
+func templateResolverFailureEcho(partial templateAgentLaunch) *agent.ResolvedLaunch {
+	if strings.TrimSpace(partial.Harness) == "" {
+		return templateEchoFallback(partial.Notes, partial.Info, partial.Warnings)
+	}
+	return &agent.ResolvedLaunch{
+		Harness: agent.ResolvedField{
+			Value: partial.Harness, Source: partial.HarnessSource,
+		},
+		Notes: partial.Notes, Info: partial.Info, Warnings: partial.Warnings,
+	}
+}
+
 func templateEchoFallback(notes, info, warnings []string) *agent.ResolvedLaunch {
 	if len(notes) == 0 && len(info) == 0 && len(warnings) == 0 {
 		return nil

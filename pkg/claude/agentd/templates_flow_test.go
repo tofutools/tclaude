@@ -59,6 +59,10 @@ type instantiateMemb struct {
 	// — the failure mode that let a whole deploy disclosure reach no reader.
 	Resolved *agent.ResolvedLaunch `json:"resolved"`
 	Error    string                `json:"error"`
+	// Decoded so a failed member's typed kind can be asserted rather than
+	// matched out of the prose: a refusal an operator has to grep for is a
+	// refusal no caller can branch on.
+	ErrorKind string `json:"error_kind"`
 }
 
 // Scenario: a human defines a 3-agent template — a PO marked owner and

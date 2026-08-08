@@ -83,8 +83,12 @@ func TestTemplateDeploy_HarnessComesFromTheGroupDefaultProfile(t *testing.T) {
 	}, got.Resolved.Harness,
 		"the tier that chose the vendor is the one the operator can go and edit; "+
 			"'harness default' names nobody")
-	assert.Equal(t, "gpt-5-codex", got.Resolved.Model.Value)
-	assert.Equal(t, `group default profile "codex-high"`, got.Resolved.Model.Source)
+	assert.Equal(t, "gpt-5-codex", got.Resolved.Model.Value,
+		"the harness fix is what unblocks the same profile's MODEL: a codex member with "+
+			"no model is the bug half-fixed, and it would look like a pass")
+	assert.Equal(t, `group default profile "codex-high"`, got.Resolved.Model.Source,
+		"and the model must be credited to the tier that supplied it, not to the "+
+			"re-resolution that found it already set")
 
 	// The disclosure condition on this change: a deploy that quietly moves a
 	// member to another vendor has to say so on the surfaces an operator reads,
@@ -113,6 +117,20 @@ func TestTemplateDeploy_HarnessAgreesWithDirectSpawnIntoTheSameGroup(t *testing.
 
 	// The same group, the same absence of any harness request, the other surface.
 	spawned, _ := runSpawnCLI(t, f, &agent.SpawnParams{Group: "phoenix", Name: "directly"})
+
+	// The equality needs a floor under it. If the group tier ever stops reaching
+	// BOTH surfaces, both echoes read claude/harness-default, the equality still
+	// holds, and this arm goes on passing while demonstrating no parity at all —
+	// the same vacuous pass a seed bug once produced in
+	// TestComposeAgentRelaunchProfileCoversEveryField. So pin that the shared
+	// answer is not the fallback before comparing the two. (Cold review of
+	// TCL-1110, finding 4.)
+	require.Equal(t, "codex", spawned.Resolved.Harness.Value,
+		"control: the shared answer must be the group tier's, not the fallback both "+
+			"surfaces would agree on if the tier reached neither")
+	require.NotEqual(t, agent.ProvHarnessDefault, spawned.Resolved.Harness.Source,
+		"and it must be credited to a tier, since 'harness default' on both sides is "+
+			"exactly the agreement this equality would report while proving nothing")
 
 	assert.Equal(t, spawned.Resolved.Harness.Value, deployed.Resolved.Harness.Value,
 		"a group whose members' vendor depends on which surface created them is the defect; "+
@@ -144,9 +162,14 @@ func TestTemplateDeploy_HarnessComesFromTheGlobalDefaultProfile(t *testing.T) {
 
 	assert.Equal(t, agent.ResolvedField{
 		Value: "codex", Source: `global default profile "codex-global"`,
-	}, got.Resolved.Harness)
+	}, got.Resolved.Harness,
+		"the GLOBAL tier is a separate lookup from the group's: a fix wiring up only the "+
+			"group tier passes every group arm in this file and leaves this one dead")
 	assert.Contains(t, got.Resolved.AmbientDecisions(),
-		`harness: codex (global default profile "codex-global")`)
+		`harness: codex (global default profile "codex-global")`,
+		"and a workspace-wide default deciding a member's vendor must reach the rendered "+
+			"surfaces exactly as a group-wide one does — an arm that exists to catch a "+
+			"PARTIAL fix has to say which half is missing")
 }
 
 // The consequence worth writing down rather than discovering. executeSpawn has
@@ -217,10 +240,20 @@ func TestTemplateDeploy_GroupTierVendorIsSubjectToTheHarnessPolicy(t *testing.T)
 	testharness.DecodeJSON(t, rec, &res)
 	require.Len(t, res.Agents, 1)
 	assert.Equal(t, 1, res.Failed, "the member must be refused, not quietly launched on Claude")
+	// WHICH refusal, not merely that one happened. Measured, not assumed: with the
+	// ambient harness walk mutated out, this member still fails — on an unrelated
+	// "no recorded launch approval posture" — so a bare Failed==1 would go red
+	// under the mutation while proving nothing about the policy. The typed kind is
+	// what makes the red mean what this test says it means.
+	assert.Equal(t, "cross_harness_spawn_denied", res.Agents[0].ErrorKind,
+		"error=%q", res.Agents[0].Error)
 	assert.Contains(t, res.Agents[0].Error, "claude → codex",
 		"the refusal has to name the edge the policy denied, or the operator cannot tell "+
 			"WHICH vendor the group tier was trying to reach")
-	assert.Contains(t, res.Agents[0].Error, "profile may not cross the vendor boundary")
+	assert.Contains(t, res.Agents[0].Error, "profile may not cross the vendor boundary",
+		"the operator's OWN denial reason must reach the member that was refused, not "+
+			"only the edge that refused it: a refusal quoting the policy back is one an "+
+			"operator can act on, and an anonymous one sends them reading source")
 }
 
 // The other direction, which is what keeps this fix from being an override. A
@@ -251,4 +284,145 @@ func TestTemplateDeploy_TemplatePinnedHarnessOutranksTheGroupDefaultProfile(t *t
 			"an ambient tier below it may not overturn it, and may not be credited for it")
 	assert.NotContains(t, got.Resolved.AmbientDecisions(), "harness: claude",
 		"and it is not an ambient decision, so it must not be announced as one")
+}
+
+// The failure this change makes reachable, and the disclosure it needs.
+//
+// Cold review of TCL-1110 reproduced it: a stored template that pins an inline
+// Claude-only value — model, effort, sandbox mode, approval mode — no longer
+// merely changes vendor in a Codex-defaulting group. It fails. Inline values go
+// through resolveStringLaunchField's EXPLICIT branch, which is a hard 400 rather
+// than the polite skip-with-note a referenced or role profile tier gets, so the
+// roster loses that member outright. On the human path too.
+//
+// The message an operator got was `"opus" is a Claude Code model` about a
+// template whose author never mentioned Codex, with nothing pointing at the
+// group's default profile — because the resolver-failure branch recorded the
+// message and no echo at all. That is this PR's own subject matter failing on
+// the one path it did not cover: produced everywhere, rendered nowhere.
+//
+// Driven through the real endpoint rather than by handing a spawnFailure to the
+// renderer. A test of the renderer alone would never execute the branch in
+// waves.go that has to attach the echo, and would pass while the fix did nothing.
+func TestTemplateDeploy_ResolverFailureNamesTheTierThatChoseTheHarness(t *testing.T) {
+	f := newFlow(t)
+	require.Equalf(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "codex-high", "harness": "codex", "model": "gpt-5-codex",
+	}).Code, "create the profile the group will default to")
+	f.HaveGroup("phoenix")
+	require.Equalf(t, http.StatusOK, setGroupProfile(t, f, "phoenix", "codex-high").Code, "set group profile")
+
+	// Pins a Claude model and NO harness: valid in this template until the group
+	// tier started deciding the vendor.
+	require.Equalf(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates",
+		map[string]any{
+			"name":   "team",
+			"agents": []map[string]any{{"name": "worker", "role": "dev", "model": "opus"}},
+		}).Code, "create template")
+
+	// A worktree is configured deliberately. Without one, res.WorktreePath is
+	// blank whatever the code does, and the assertion at the bottom of this test
+	// would pass while the line it guards was deleted — measured, not assumed: a
+	// mutation removing that line left this test green before the worktree was
+	// added here.
+	sharedWorktree := t.TempDir()
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/team/reinforce",
+		map[string]any{"group_name": "phoenix", "worktree_path": sharedWorktree})
+	require.Equalf(t, http.StatusCreated, rec.Code, "reinforce: %s", rec.Body.String())
+
+	var res instantiateResult
+	testharness.DecodeJSON(t, rec, &res)
+	require.Len(t, res.Agents, 1)
+
+	// POSITIVE CONTROL: the member really was refused, and refused for the reason
+	// this test is about. Without it the echo assertions below could be describing
+	// a member that spawned fine.
+	require.Equal(t, 0, res.Spawned,
+		"the inline Claude model must be REFUSED against the ambient tier's codex, not "+
+			"quietly accepted — this arm is about a member the roster loses")
+	require.Equal(t, 1, res.Failed,
+		"and the loss must be reported per member rather than swallowed")
+	got := res.Agents[0]
+	require.Equal(t, "invalid_model", got.ErrorKind, "error=%q", got.Error)
+	require.Contains(t, got.Error, "opus",
+		"the refusal must quote the value it refused, or the operator cannot tell which "+
+			"of a roster's pins is the one Codex will not take")
+
+	require.NotNil(t, got.Resolved,
+		"a member REFUSED because of an ambient tier is the case that most needs the "+
+			"attribution, and it was the one case that had none")
+	assert.Equal(t, agent.ResolvedField{
+		Value: "codex", Source: `group default profile "codex-high"`,
+	}, got.Resolved.Harness,
+		"the failure says the model is wrong for codex; only the echo can say WHY this "+
+			"deploy is on codex, and without it the operator is looking at a template that "+
+			"never mentions Codex at all")
+	assert.Contains(t, got.Resolved.AmbientDecisions(),
+		`harness: codex (group default profile "codex-high")`,
+		"and it must survive onto the rendered surfaces, or the explanation is on the "+
+			"wire and on no screen")
+
+	// A member that never spawned must not be described as owning a worktree.
+	assert.Empty(t, got.WorktreePath,
+		"a failed member has no agent, so a path attributed to it asserts a relationship "+
+			"that was never formed — and %q was configured for this deploy, so a blank here "+
+			"is the code choosing not to claim it rather than there being nothing to claim "+
+			"(the worktree LEAK itself is TCL-1115)", sharedWorktree)
+	assert.Empty(t, got.WorktreeBranch)
+}
+
+// The other thing this change newly opens, and the operator's standing rule
+// says it can never be silent: an ambient profile can now put template-deployed
+// members on the UNVERIFIED Copilot API drive.
+//
+// Before TCL-1110 the deploy resolved claude regardless, so a `harness: copilot`
+// group default profile was a foreign default tier and its copilot_api was
+// skipped. Now the harness comes from that tier and the drive follows from the
+// same profile. The existing TCL-1090 guard pins `harness: copilot` in the
+// TEMPLATE, so it does not cover this combination — the template here pins
+// NOTHING, which is the whole point: the drive has to arrive because the AMBIENT
+// tier named copilot.
+//
+// Durable record FIRST, echo second, deliberately. An echo crediting a tier that
+// never reached the launch is worse than a missing one: a wrong attribution is a
+// fabricated fact that survives review by looking like work. Echo-first would
+// certify the disclosure rather than the thing disclosed.
+func TestTemplateDeploy_AmbientTierCanAcquireTheCopilotAPIDrive(t *testing.T) {
+	f := newFlow(t)
+	require.Equalf(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "copilot-api-on", "harness": "copilot", "copilot_api": true,
+	}).Code, "create the profile the group will default to")
+	f.HaveGroup("phoenix")
+	require.Equalf(t, http.StatusOK, setGroupProfile(t, f, "phoenix", "copilot-api-on").Code,
+		"set group profile")
+
+	got := deployOneMember(t, f, "phoenix", map[string]any{"name": "worker", "role": "dev"})
+
+	profile, err := db.AgentRelaunchProfileForConv(got.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, profile, "no durable launch record for the deployed member at all")
+	require.NotNil(t, profile.CopilotAPI,
+		"the drive must be RECORDED as a decision: an unrecorded drive is one no relaunch "+
+			"can reproduce and no snapshot can carry")
+	require.True(t, *profile.CopilotAPI,
+		"control: the member must actually be ON the unverified API drive — a disclosure "+
+			"about an acquisition that did not happen certifies nothing")
+	require.NotNil(t, profile.CopilotAPISource,
+		"and recorded WITH its attribution, or the record says the drive was chosen and "+
+			"cannot say by whom")
+	assert.Equal(t, `group default profile "copilot-api-on"`, *profile.CopilotAPISource,
+		"and the DURABLE record must name the tier that opened the door, since that record "+
+			"is what a later snapshot and every relaunch read — an attribution wrong here "+
+			"outlives the launch that made it")
+
+	assert.Equal(t, agent.ResolvedField{
+		Value: "copilot", Source: `group default profile "copilot-api-on"`,
+	}, got.Resolved.Harness, "the ambient tier chose the vendor")
+	assert.Equal(t, agent.ResolvedField{
+		Value: "api", Source: `group default profile "copilot-api-on"`,
+	}, got.Resolved.CopilotAPI,
+		"and the drive rode in with it; no agent acquires the unverified drive silently, "+
+			"whichever tier opened the door")
+	assert.Contains(t, got.Resolved.AmbientDecisions(),
+		`copilot drive: api (group default profile "copilot-api-on")`)
 }
