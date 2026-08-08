@@ -52,11 +52,18 @@ func resumeHop(t *testing.T, convID, cwd string, hop int) *NewParams {
 		ApprovalPolicy:         harness.ClaudePermissionInherit,
 		CreatedAt:              created, UpdatedAt: created,
 	}))
+	// `session new -r` RESOLVES both pointer fields — the carryover above put the
+	// recorded values on params — so it asserts them, zeros included. That is the
+	// half of the contract this helper simulates; the surfaces that cannot
+	// resolve them pass nil (see conv.resumeLaunchPosture).
 	RecordLaunchPosture(convID, h, LaunchPosture{
 		AutoMemory:        autoMemory,
 		ContextFeatures:   contextFeatures,
 		AutoCompactWindow: autoCompactWindow,
 		RemoteControl:     remoteControl,
+		FastMode:          params.FastMode,
+		ContextWindowMax:  &params.ContextWindowMax,
+		CopilotAPI:        &params.CopilotAPI,
 	})
 	return params
 }

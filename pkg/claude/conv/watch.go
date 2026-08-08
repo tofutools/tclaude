@@ -3034,6 +3034,57 @@ func resumeContextPosture(convID string) (autoMemory bool, contextFeatures map[s
 	return autoMemory, contextFeatures, autoCompactWindow, nil
 }
 
+// resumeLaunchPosture is the record a plain-CLI resume writes onto the fresh
+// session row it just created — ONE literal shared by `tclaude conv resume` and
+// the watch-mode resume, because the interesting part of it is a decision about
+// what this surface may claim, and two copies of that decision is one copy too
+// many.
+//
+// The four carried fields are read from the conversation's own record and
+// applied to this launch (see resumeContextPosture / resumeRemoteControl), so
+// re-recording them keeps them alive for the next hop instead of letting the
+// fresh row report "nothing recorded" (TCL-730).
+//
+// The two nil fields are the ones this surface does not resolve, and they are
+// nil rather than absent so the choice is visible at the only place it can be
+// reviewed. An omitted field in a composite literal is its zero, and a zero here
+// is an ASSERTION: before TCL-1076 these paths wrote copilot_api=false over a
+// conversation that had chosen the Copilot API drive — the record that decides
+// whether agentd's messages travel over RPC or are typed into the pane — and
+// context_window_max=0 over a configured meter denominator. Both were true
+// statements about this pane and false statements about the conversation. nil
+// skips the write, and skipping is what preserves the value: neither field has a
+// session column, so projectSessionRelaunchProfilesTx carries the existing
+// conversation record forward untouched.
+//
+// FastMode is the one that does NOT work that way, and it is passed as "" here
+// exactly as it always has been. Its carry-forward is gated on the source
+// generation, so a resume mints a row that drops it whatever this write says: a
+// nil would be a silent loss dressed as preservation. Keeping it honest takes a
+// carry — a read before the write, plus a launch that renders --fast-mode, which
+// this surface does not — so it stays a known gap with its own ticket rather
+// than a nil that reads as fixed.
+func resumeLaunchPosture(
+	autoMemory bool,
+	contextFeatures map[string]string,
+	autoCompactWindow string,
+	remoteControl bool,
+) session.LaunchPosture {
+	return session.LaunchPosture{
+		AutoMemory:        autoMemory,
+		ContextFeatures:   contextFeatures,
+		AutoCompactWindow: autoCompactWindow,
+		RemoteControl:     remoteControl,
+		// Unresolved and therefore unasserted here: this resume renders no
+		// --ui-server (the API channel exists only inside agentd — see
+		// copilot_drive.go) and chooses no Copilot meter cap.
+		ContextWindowMax: nil,
+		CopilotAPI:       nil,
+		// Asserted, and known-lossy for a pinned Codex tier; see above.
+		FastMode: "",
+	}
+}
+
 // resumeRemoteControl carries the recorded Remote Access posture onto the
 // relaunch, so an agent that was reachable from claude.ai / the Claude app
 // before the resume is reachable after it. The daemon's own resume path already
@@ -3261,6 +3312,19 @@ func createSessionForConv(conv *SessionEntry) error {
 	if stackedProof != nil {
 		defer stackedProof.Cleanup()
 	}
+	// The same gate `tclaude conv resume` applies, for the same reason: this
+	// launch cannot produce the Copilot API channel either. There is no flag
+	// surface in the watch TUI, so the refusal names the CLI command that
+	// carries the override rather than offering one here. Inert for every
+	// conversation that did not choose the drive. See copilot_drive.go.
+	driveNotice, err := resumeCopilotDriveGate(
+		h, conv.SessionID, false, resumeOverrideHintWatch(conv.SessionID))
+	if err != nil {
+		return err
+	}
+	if driveNotice != "" {
+		fmt.Println(driveNotice)
+	}
 	approvalState, err := resumeApprovalState(h, conv.SessionID)
 	if err != nil {
 		return err
@@ -3362,13 +3426,10 @@ func createSessionForConv(conv *SessionEntry) error {
 	}
 	// resumeLaunchCmd already applied these to the pane's environment; this
 	// write is what keeps them alive for the NEXT resume, since the fresh row
-	// otherwise reports "nothing recorded".
-	session.RecordLaunchPosture(sessionID, h, session.LaunchPosture{
-		AutoMemory:        autoMemory,
-		ContextFeatures:   contextFeatures,
-		AutoCompactWindow: autoCompactWindow,
-		RemoteControl:     remoteControl,
-	})
+	// otherwise reports "nothing recorded". What this surface may and may not
+	// assert lives in resumeLaunchPosture, shared with `tclaude conv resume`.
+	session.RecordLaunchPosture(sessionID, h,
+		resumeLaunchPosture(autoMemory, contextFeatures, autoCompactWindow, remoteControl))
 
 	fmt.Printf("Created session %s\n", tmuxSession)
 	fmt.Println("Attaching... (Ctrl+B D to detach)")

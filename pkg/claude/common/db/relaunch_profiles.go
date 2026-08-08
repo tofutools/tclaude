@@ -909,20 +909,21 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 	// STABLE AGENT's relaunch_profile below, where these two fields are frozen
 	// at birth by relaunchProfileForSpawn and nothing else may write them. The
 	// conversation fallback, by contrast, is written by any launch on the
-	// conversation — including `tclaude conv resume`, which knows about neither
-	// field and truthfully records both zero values for its own send-keys
-	// launch. Letting that flow upward would let one plain-CLI resume
-	// permanently un-choose a managed agent's drive, inverting the precedence
-	// composeAgentRelaunchProfile is built on.
+	// conversation — including the plain-CLI resumes in `pkg/claude/conv`, which
+	// cannot produce the API channel at all. Letting that flow upward would let
+	// one such resume permanently un-choose a managed agent's drive, inverting
+	// the precedence composeAgentRelaunchProfile is built on.
 	//
 	// Carried unconditionally rather than gated on sameSourceGeneration,
 	// because a resume mints a new session row whose FIRST SaveSession projects
 	// before session.RecordLaunchPosture re-asserts the posture — a generation
 	// gate would leave the record missing across exactly that window, and that
-	// window is now a routing decision. It cannot pin a stale value: every
-	// launch path re-asserts both immediately afterwards including their zero
-	// values, so a relaunch that genuinely turned the drive off writes false
-	// over this a moment later.
+	// window is now a routing decision. It cannot pin a stale value either: a
+	// launch that RESOLVED these fields re-asserts them immediately afterwards
+	// including their zeros, so a relaunch that genuinely turned the drive off
+	// writes false over this a moment later. Since TCL-1076 a launch that could
+	// NOT resolve them passes nil to RecordLaunchPosture instead of a zero, and
+	// this carry-forward is precisely what preserves the record for it.
 	conversationFallback := agent
 	if existingConversation != nil && existingConversation.FallbackRelaunch != nil {
 		if conversationFallback.CopilotAPI == nil {
