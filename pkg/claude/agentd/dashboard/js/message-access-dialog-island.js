@@ -495,20 +495,39 @@ function SudoGrantDialog({ descriptor, state, actions, snapshot, confirmDiscard 
   </${Overlay}>`;
 }
 
-// ScopeSummary is the row's read-at-a-glance line: one chip per constrained
+// ScopeSummary is the row's read-at-a-glance scope: one chip per constrained
 // dimension, or an explicit "unscoped" marker. Saying "unscoped" out loud
 // matters — a granted slug with no chips would otherwise read as "scope not
 // loaded" rather than "this grant applies everywhere".
-function ScopeSummary({ scope, open, toggle }) {
+//
+// It rides ON the tristate line rather than under the slug, so a row reads
+// left-to-right as "this slug, narrowed to this, granted". The effective
+// source that used to sit at the right edge moves into the drawer: the row
+// cannot carry chips AND that column at this dialog's width without one of
+// them truncating, and the chips are the part that changes what the grant
+// actually does.
+function ScopeSummary({ scope }) {
   const chips = scopeChips(scope);
   return html`<span class="perm-scope-chips">
-    <button type="button" class="perm-scope-toggle" aria-expanded=${open ? 'true' : 'false'}
-      title=${open ? 'Hide the scope editor' : 'Narrow this grant to particular targets'}
-      onClick=${toggle}>${open ? '▾' : '▸'} scope</button>
     ${chips.length
-    ? chips.map((chip) => html`<span key=${chip.dim} class="perm-scope-chip"><span class="dim">${chip.dim}=</span>${chip.values.join(', ')}</span>`)
-    : html`<span class="perm-scope-chip unscoped" title="This grant applies to every target — narrow it with “scope”">unscoped</span>`}
+    // The title carries the full text: a long matcher (a git remote pattern,
+    // a long group name) is ellipsized in the row rather than allowed to
+    // squeeze the slug column, and hover has to still answer "narrowed to what?".
+    ? chips.map((chip) => html`<span key=${chip.dim} class="perm-scope-chip"
+      title=${`${chip.dim} = ${chip.values.join(', ')}`}><span class="dim">${chip.dim}=</span>${chip.values.join(', ')}</span>`)
+    : html`<span class="perm-scope-chip unscoped" title="This grant applies to every target — open ▸ to narrow it">unscoped</span>`}
   </span>`;
+}
+
+// ScopeTwisty is the row's disclosure control. Every row in a dialog that has
+// any scopable slug gets the gutter so the list stays aligned; a row with
+// nothing to disclose gets an inert placeholder rather than a dead control.
+function ScopeTwisty({ scopable, open, toggle, slug }) {
+  if (!scopable) return html`<span class="perm-scope-twisty empty" aria-hidden="true"></span>`;
+  return html`<button type="button" class="perm-scope-twisty" aria-expanded=${open ? 'true' : 'false'}
+    aria-label=${`${open ? 'Hide' : 'Show'} the scope editor for ${slug}`}
+    title=${open ? 'Hide the scope editor' : 'Narrow this grant to particular targets'}
+    onClick=${toggle}>${open ? '▾' : '▸'}</button>`;
 }
 
 // ScopeDimEditor edits ONE dimension's matcher list. It is deliberately
@@ -551,7 +570,7 @@ function ScopeDimEditor({ dim, values, options, onChange, declared = true }) {
   </div>`;
 }
 
-function ScopeDrawer({ row, scope, snapshot, onChange }) {
+function ScopeDrawer({ row, scope, snapshot, onChange, effective }) {
   const dims = scopeDimRows(row, scope);
   const setDim = (dim, values) => {
     const next = { ...scope };
@@ -562,8 +581,11 @@ function ScopeDrawer({ row, scope, snapshot, onChange }) {
     onChange(next);
   };
   return html`<div class="perm-scope-drawer" data-slug=${row.slug}>
-    <div class="perm-scope-drawer-hint">Dimensions <b>AND</b> together; values within one dimension <b>OR</b>.
-      A dimension left empty is unconstrained, and a grant with no dimensions at all applies everywhere.</div>
+    <div class="perm-scope-drawer-head">
+      <span class="perm-scope-drawer-hint">Dimensions <b>AND</b> together; values within one dimension <b>OR</b>.
+        A dimension left empty is unconstrained, and a grant with no dimensions at all applies everywhere.</span>
+      ${effective ? html`<span class=${`perm-row-eff ${effective.granted ? 'granted' : 'denied'}`}>${effective.text}</span>` : null}
+    </div>
     ${dims.map(({ dim, declared }) => html`<${ScopeDimEditor} key=${dim} dim=${dim} declared=${declared}
       values=${scope[dim] || []} options=${scopeDimOptions(snapshot, dim)}
       onChange=${(values) => setDim(dim, values)} />`)}
@@ -595,6 +617,10 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
     || rows.some((row) => scopeJSON(scopeOf(row.slug)) !== scopeJSON(scopeBaseline[row.slug] || {}));
   const groupMode = descriptor.mode === 'group';
   const scopesEditable = scopeSupported(descriptor);
+  // The twisty gutter is reserved for the whole visible list as soon as any
+  // slug in it can carry a scope, so rows stay left-aligned instead of
+  // jittering sideways as grants are toggled on and off.
+  const anyScopable = scopesEditable && visible.some((row) => !!row.scope_dims?.length);
   const setEffect = (slug, effect) => setSelection((current) => ({ ...current, [slug]: effect }));
   const setScope = (slug, scope) => setScopes((current) => {
     const next = { ...current };
@@ -649,23 +675,32 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
     const unreadableScope = unreadable.has(row.slug) && currentEffect(row.slug) === 'grant';
     const scopable = !unreadableScope && scopesEditable && !!row.scope_dims?.length
       && currentEffect(row.slug) === 'grant';
+    const effText = groupMode
+      ? html`<${Words} plain=${row.granted ? '✓ via group' : '— not via group'} wizard=${row.granted ? '✨ boon active' : '— no boon'}/>`
+      : currentEffect(row.slug) === 'deny' ? '✗ denied (explicit veto)'
+        : row.granted ? `✓ ${row.sources.join(' + ')}` : '✗ denied (no source)';
     return html`<${Fragment} key=${row.slug}><div class="perm-row" data-slug=${row.slug}>
+      ${anyScopable && html`<${ScopeTwisty} scopable=${scopable} slug=${row.slug} open=${openScope === row.slug}
+        toggle=${() => setOpenScope(openScope === row.slug ? '' : row.slug)} />`}
       <div class="perm-row-info"><span class="perm-row-slug">${row.slug}${row.owner_implied ? html` <span class="owner-badge" title="Group ownership can confer this slug">👑 owner</span>` : null}</span>
-        <span class="perm-row-desc" title=${row.description || row.descr || ''}>${row.description || row.descr || ''}</span>
-        ${scopable && html`<${ScopeSummary} scope=${scopeOf(row.slug)} open=${openScope === row.slug}
-          toggle=${() => setOpenScope(openScope === row.slug ? '' : row.slug)} />`}
-        ${unreadableScope && html`<span class="perm-scope-chips"><span class="perm-scope-chip unreadable"
-          title="This grant's stored scope cannot be read by this build, so it authorizes nothing at the gate. Saving will not overwrite it — edit it with the tclaude agent permissions CLI, or set the slug back to Default first.">unreadable scope</span></span>`}</div>
+        <span class="perm-row-desc" title=${row.description || row.descr || ''}>${row.description || row.descr || ''}</span></div>
+      ${scopable && html`<${ScopeSummary} scope=${scopeOf(row.slug)} />`}
+      ${unreadableScope && html`<span class="perm-scope-chips"><span class="perm-scope-chip unreadable"
+        title="This grant's stored scope cannot be read by this build, so it authorizes nothing at the gate. Saving will not overwrite it — edit it with the tclaude agent permissions CLI, or set the slug back to Default first.">unreadable scope</span></span>`}
       <div class="perm-tristate"><button type="button" data-effect="default" class=${currentEffect(row.slug) === 'default' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'default')}>${groupMode ? html`<${Words} plain="Not granted" wizard="Unbound"/>` : 'Default'}</button>
         <button type="button" data-effect="grant" class=${currentEffect(row.slug) === 'grant' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'grant')}>${groupMode ? html`<${Words} plain="Grant" wizard="Bestow"/>` : 'Grant'}</button>
         ${!groupMode && html`<button type="button" data-effect="deny" class=${currentEffect(row.slug) === 'deny' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'deny')}>Deny</button>`}</div>
-      <span class=${`perm-row-eff ${row.granted ? 'granted' : 'denied'}`}>${groupMode
-        ? html`<${Words} plain=${row.granted ? '✓ via group' : '— not via group'} wizard=${row.granted ? '✨ boon active' : '— no boon'}/>`
-        : currentEffect(row.slug) === 'deny' ? '✗ denied (explicit veto)'
-        : row.granted ? `✓ ${row.sources.join(' + ')}` : '✗ denied (no source)'}</span>
+      ${scopable
+    // The column is kept but emptied rather than removed: dropping it would
+    // let a scopable row's tristate buttons sit further right than its
+    // neighbours', and a column of buttons that steps sideways row by row
+    // reads as a rendering bug. The text itself lives in the drawer.
+    ? html`<span class="perm-row-eff empty" aria-hidden="true"></span>`
+    : html`<span class=${`perm-row-eff ${row.granted ? 'granted' : 'denied'}`}>${effText}</span>`}
     </div>
     ${scopable && openScope === row.slug && html`<${ScopeDrawer} row=${row} scope=${scopeOf(row.slug)}
-      snapshot=${snapshot} onChange=${(scope) => setScope(row.slug, scope)} />`}
+      snapshot=${snapshot} onChange=${(scope) => setScope(row.slug, scope)}
+      effective=${{ granted: row.granted, text: effText }} />`}
     </${Fragment}>`;
   }) : html`<div class="empty" style="padding:10px">${rows.length ? 'No matching permission slugs.' : 'No permission slugs registered.'}</div>`}</div>
     <${ErrorLine} id="perm-edit-error" className="sudo-grant-error" value=${error}/><div class="modal-buttons">

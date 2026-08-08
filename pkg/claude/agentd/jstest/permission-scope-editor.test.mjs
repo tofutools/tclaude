@@ -82,6 +82,48 @@ test('an unscoped grant is labelled unscoped rather than left blank', async (t) 
   await mounted.unmount();
 });
 
+// The human picked layout "variant C proper": chips ride on the tristate line
+// as a direct row child, and the effective-source line moves into the drawer
+// because the row cannot carry both at this dialog's width. Pinning the shape
+// keeps a later tidy-up from quietly reinstating the two-column row that
+// truncated one of them.
+test('a scopable row puts its chips in-row and its effective source in the drawer', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { host, mounted } = await openEditor(harness, scopeSnapshot({
+    slugs: [SPAWN],
+    scopes: { 'groups.spawn': { group: ['alpha'] } },
+  }), noopActions);
+
+  const row = host.querySelector('.perm-row[data-slug="groups.spawn"]');
+  assert.equal(row.querySelector(':scope > .perm-scope-chips .perm-scope-chip').textContent.replace(/\s+/g, ''),
+    'group=alpha', 'the chips are a row item, not stacked under the slug');
+  // The column is emptied, not removed: it still reserves its width so the
+  // tristate buttons line up with the rows that have no scope.
+  assert.equal(row.querySelector('.perm-row-eff').textContent, '');
+  assert.ok(row.querySelector('.perm-row-eff.empty'));
+
+  await harness.act(() => { row.querySelector('button.perm-scope-twisty').click(); });
+  const eff = host.querySelector('.perm-scope-drawer[data-slug="groups.spawn"] .perm-row-eff');
+  assert.ok(eff, 'the effective source is still reachable — it moved, it was not dropped');
+  assert.match(eff.textContent, /✓/);
+  await mounted.unmount();
+});
+
+// A row that cannot be scoped keeps the effective-source column, and still
+// gets the (inert) gutter so the list stays aligned.
+test('a non-scopable row keeps its effective source and an inert gutter', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { host, mounted } = await openEditor(harness, scopeSnapshot({
+    slugs: [SPAWN, { slug: 'human.notify', description: 'notify' }],
+  }), noopActions);
+
+  const row = host.querySelector('.perm-row[data-slug="human.notify"]');
+  assert.ok(row.querySelector('.perm-row-eff'), 'nothing displaced it, so it stays');
+  assertAbsent(row.querySelector('button.perm-scope-twisty'));
+  assert.ok(row.querySelector('span.perm-scope-twisty.empty'), 'but the gutter is reserved');
+  await mounted.unmount();
+});
+
 test('the drawer offers one editor per advertised dimension and saves what was picked', async (t) => {
   const harness = await createPreactHarness(t);
   const saved = [];
@@ -93,7 +135,7 @@ test('the drawer offers one editor per advertised dimension and saves what was p
     },
   }), { ...noopActions, savePermissions: async (descriptor, selection, scopes) => { saved.push({ selection, scopes }); } });
 
-  await harness.act(() => { host.querySelector('[data-slug="groups.spawn"] .perm-scope-toggle').click(); });
+  await harness.act(() => { host.querySelector('[data-slug="groups.spawn"] button.perm-scope-twisty').click(); });
   const drawer = host.querySelector('.perm-scope-drawer[data-slug="groups.spawn"]');
   assert.ok(drawer);
   assert.deepEqual(
@@ -124,7 +166,7 @@ test('a value can be typed for a dimension the daemon has no catalogue for', asy
     dimOptions: { process_template: {} },
   }), { ...noopActions, savePermissions: async (descriptor, selection, scopes) => { saved.push(scopes); } });
 
-  await harness.act(() => { host.querySelector('[data-slug="process.runs.manage"] .perm-scope-toggle').click(); });
+  await harness.act(() => { host.querySelector('[data-slug="process.runs.manage"] button.perm-scope-twisty').click(); });
   // No catalogue means no picker to offer — free text is the whole control,
   // and it is the same input the CLI's --scope takes.
   assertAbsent(host.querySelector('.perm-scope-dim[data-dim="process_template"] .perm-scope-add'));
@@ -147,7 +189,7 @@ test('removing the last value of a dimension returns the grant to unscoped', asy
     scopes: { 'process.runs.manage': { process_template: ['release-train'] } },
   }), { ...noopActions, savePermissions: async (descriptor, selection, scopes) => { saved.push(scopes); } });
 
-  await harness.act(() => { host.querySelector('[data-slug="process.runs.manage"] .perm-scope-toggle').click(); });
+  await harness.act(() => { host.querySelector('[data-slug="process.runs.manage"] button.perm-scope-twisty').click(); });
   await harness.act(() => { host.querySelector('.perm-scope-dim[data-dim="process_template"] .perm-scope-chip .x').click(); });
   assert.ok(host.querySelector('[data-slug="process.runs.manage"] .perm-scope-chip.unscoped'),
     'an emptied dimension is absent, not an empty list the daemon would reject');
@@ -167,7 +209,7 @@ test('a dimension this build has never heard of is still editable', async (t) =>
     dimOptions: { git_remote: { values: ['origin'], selectors: ['@launch-repo'] } },
   }), { ...noopActions, savePermissions: async (descriptor, selection, scopes) => { saved.push(scopes); } });
 
-  await harness.act(() => { host.querySelector('[data-slug="git.push"] .perm-scope-toggle').click(); });
+  await harness.act(() => { host.querySelector('[data-slug="git.push"] button.perm-scope-twisty').click(); });
   const select = host.querySelector('.perm-scope-dim[data-dim="git_remote"] .perm-scope-add');
   assert.deepEqual(Array.from(select.options).map((option) => option.value), ['', 'origin', '@launch-repo'],
     'advertised values and selectors are both offered, with no frontend knowledge of the dimension');
@@ -209,7 +251,7 @@ test('a grant whose stored scope cannot be decoded is never shown as unscoped', 
     'a grant that authorizes nothing must never read as one that authorizes everything');
   // No editor either: the operator cannot narrow what the build cannot show,
   // and the daemon refuses to overwrite the row from here.
-  assertAbsent(host.querySelector('[data-slug="groups.spawn"] .perm-scope-toggle'));
+  assertAbsent(host.querySelector('[data-slug="groups.spawn"] button.perm-scope-twisty'));
   await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
   assert.deepEqual(saved[0], {}, 'saving sends no scope for it, and the daemon keeps the stored one');
   await mounted.unmount();
@@ -226,7 +268,7 @@ test('a stored dimension the slug no longer accepts can still be removed', async
     scopes: { 'groups.spawn': { group: ['alpha'], legacy_dim: ['x'] } },
   }), { ...noopActions, savePermissions: async (descriptor, selection, scopes) => { saved.push(scopes); } });
 
-  await harness.act(() => { host.querySelector('[data-slug="groups.spawn"] .perm-scope-toggle').click(); });
+  await harness.act(() => { host.querySelector('[data-slug="groups.spawn"] button.perm-scope-twisty').click(); });
   const stale = host.querySelector('.perm-scope-dim[data-dim="legacy_dim"]');
   assert.ok(stale, 'a stored dimension gets an editor even when the slug stopped declaring it');
   assert.ok(stale.querySelector('.perm-scope-stale'), 'and is flagged as no longer accepted');
