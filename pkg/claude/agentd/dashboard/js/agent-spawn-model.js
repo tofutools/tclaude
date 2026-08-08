@@ -920,6 +920,14 @@ export function applySpawnProfile(
   if (profile.initial_message) next.initialMessage = text(profile.initial_message);
   if (profile.auto_focus != null) next.autoFocus = !!profile.auto_focus;
   if (profile.sync_worktree != null) next.syncWorktree = !!profile.sync_worktree;
+  // Only the SELECTED profile pre-fills the checkbox. The daemon resolves this
+  // toggle down the whole tier stack (named > group default > global default),
+  // but the form always posts an explicit include_group_context, and explicit
+  // outranks every tier — so on this surface a group/global default profile's
+  // toggle stays inert by construction. That asymmetry with the CLI and the
+  // agentd TUI is deliberate: the checkbox is on screen, so what the operator
+  // sees is what the spawn gets, rather than a visible box a profile silently
+  // overrides.
   if (profile.include_group_default_context != null) {
     next.includeGroupContext = !!profile.include_group_default_context;
   }
