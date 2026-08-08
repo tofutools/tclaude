@@ -38,14 +38,33 @@ func TestMigrateV194toV195ResetsDerivedCopilotUsageFold(t *testing.T) {
 	assert.Nil(t, defaultValue, "no default makes a still-running v194 writer fail closed")
 
 	// This is v194's essential INSERT...ON CONFLICT shape after a new daemon
-	// has migrated the database. Omitting fold_version must fail even when the
-	// session key already exists, or the old daemon could recreate a bad cursor
-	// after the one-time DELETE and make it look current forever.
+	// has migrated the database. Omitting fold_version must fail when recreating
+	// the deleted row, or the old daemon could make a bad cursor look current.
 	_, err = d.Exec(`INSERT INTO copilot_usage_snapshots
 		(session_id, conv_id, last_event_id, observed_at)
 		VALUES ('s-copilot', 'conv-1', 99, 1)
 		ON CONFLICT(session_id) DO UPDATE SET last_event_id = excluded.last_event_id`)
 	require.ErrorContains(t, err, "fold_version")
+
+	// It must also fail against a trusted row written by v195. SQLite checks
+	// the omitted NOT NULL column before entering the conflict-update arm, so
+	// the old writer cannot overwrite the new fold while leaving its marker at
+	// version 1.
+	trusted := sampleCopilotUsageSnapshot("s-copilot", "conv-1")
+	trusted.LastEventID = 2
+	saved, err = SaveCopilotUsageSnapshot(trusted, createdAt)
+	require.NoError(t, err)
+	require.True(t, saved)
+	_, err = d.Exec(`INSERT INTO copilot_usage_snapshots
+		(session_id, conv_id, last_event_id, observed_at)
+		VALUES ('s-copilot', 'conv-1', 99, 1)
+		ON CONFLICT(session_id) DO UPDATE SET last_event_id = excluded.last_event_id`)
+	require.ErrorContains(t, err, "fold_version")
+	unchanged, err := LoadCopilotUsageSnapshot("s-copilot")
+	require.NoError(t, err)
+	require.NotNil(t, unchanged)
+	assert.Equal(t, int64(2), unchanged.LastEventID)
+	assert.Equal(t, CopilotUsageFoldVersion, unchanged.FoldVersion)
 	assert.Equal(t, 195, schemaVersion(d))
 	require.NoError(t, migrateV194toV195(d), "a partially applied reset converges")
 }

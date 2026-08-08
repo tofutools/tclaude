@@ -837,6 +837,24 @@ func TestCopilotUsageRestartRejectsLegacyFoldVersion(t *testing.T) {
 	entry, restored := copilotUsageEntryFor(sess)
 	assert.Zero(t, entry.LastEventID, "legacy semantics restart from event zero")
 	assert.Nil(t, restored, "legacy data must not be backfilled into session columns")
+
+	first := copilotUsageCall(1, 100, 10)
+	first.TotalNanoAIU, first.HasNanoAIU = 360_725_000, true
+	second := copilotUsageCall(2, 200, 20)
+	second.TotalNanoAIU, second.HasNanoAIU = 61_905_000, true
+	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{first, second})
+
+	rebuilt, err := db.LoadCopilotUsageSnapshot(sess.ID)
+	require.NoError(t, err)
+	require.NotNil(t, rebuilt)
+	assert.Equal(t, db.CopilotUsageFoldVersion, rebuilt.FoldVersion)
+	assert.Equal(t, int64(2), rebuilt.LastEventID,
+		"the legacy cursor is replaced by the replay's real high-water mark")
+	assert.Equal(t, int64(2), rebuilt.Requests,
+		"the replay starts from an empty accumulator, not the legacy snapshot")
+	require.NotNil(t, rebuilt.TotalNanoAIU)
+	assert.Equal(t, int64(422_630_000), *rebuilt.TotalNanoAIU,
+		"the complete per-call prefix replaces the legacy last-row total")
 }
 
 // TestCopilotUsageBackfillRespectsGenerationGuard keeps the restart path inside

@@ -664,7 +664,8 @@ func applyCopilotUsageCalls(sess *db.SessionRow, calls []harness.CopilotUsageCal
 		return
 	}
 	next := db.CopilotUsageSnapshot{SessionID: sess.ID, ConvID: sess.ConvID}
-	if snapshot != nil && snapshot.ConvID == sess.ConvID {
+	if snapshot != nil && snapshot.ConvID == sess.ConvID &&
+		snapshot.FoldVersion == db.CopilotUsageFoldVersion {
 		next = *snapshot
 		next.SessionID = sess.ID
 		next.ConvID = sess.ConvID
