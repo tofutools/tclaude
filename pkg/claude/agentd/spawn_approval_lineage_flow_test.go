@@ -335,7 +335,8 @@ func TestSpawnApprovalLineage_TemplateBareApprovalNarrowsToCaller(t *testing.T) 
 	assert.Equal(t, 1, res.Spawned)
 	assert.Equal(t, 0, res.Failed)
 	require.Len(t, res.Agents, 1)
-	assert.Contains(t, res.Agents[0].Notes,
+	require.NotNil(t, res.Agents[0].Resolved)
+	assert.Contains(t, res.Agents[0].Resolved.Notes,
 		"approval inherit (harness default auto, narrowed to caller posture)")
 	approval, ok := f.World.SpawnApproval(res.Agents[0].ConvID)
 	require.True(t, ok)

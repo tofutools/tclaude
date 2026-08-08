@@ -354,7 +354,19 @@ func TestSpawnResolvedEcho_TracksValueAppliedAtLaunch(t *testing.T) {
 	t.Cleanup(restore)
 
 	resp, _ := runSpawnCLI(t, f, &agent.SpawnParams{Group: "alpha", Name: "worker"})
-	assert.Equal(t, agent.ResolvedField{Value: "sonnet", Source: agent.ProvLaunchDefault}, resp.Resolved.Model)
+	// TCL-1097 split what this used to assert across the two fields built to
+	// carry it. The late fill still has to be disclosed — that is this test's
+	// subject and it is unchanged — but the disclosure now NAMES the tier, so an
+	// operator surprised by "sonnet" can go and edit the profile that supplied
+	// it. `default profile (applied at launch)` said only that something happened
+	// at launch, which is the half they cannot act on. Cold review on TCL-1097
+	// caught the same anonymity on the fast_mode path.
+	assert.Equal(t, agent.ResolvedField{
+		Value:  "sonnet",
+		Source: agent.ProvGlobalProfileSource("late"),
+		Note:   agent.ProvLaunchFillNote,
+	}, resp.Resolved.Model,
+		"a late fill must name the tier AND say it landed after the request resolved")
 	launched, ok := f.World.SpawnModel(resp.ConvID)
 	require.True(t, ok)
 	assert.Equal(t, "sonnet", launched)

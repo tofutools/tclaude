@@ -24,6 +24,46 @@ export const FAST_MODE_TRI_OPTIONS = [
   ['', 'Harness default (config.toml)'], ['1', 'on'], ['0', 'off'],
 ];
 
+// The two provenance tiers that need no announcement: an explicit request was
+// typed by whoever is reading the result, and a harness default names no tier
+// anyone can go and change. Everything else is a profile deciding something on
+// the operator's behalf. Kept byte-identical to agent.ProvExplicit /
+// agent.ProvHarnessDefault — they arrive on the wire as these exact strings.
+const PROV_EXPLICIT = 'explicit';
+const PROV_HARNESS_DEFAULT = 'harness default';
+
+// The echoed launch fields, in the order they read best to a human.
+const RESOLVED_LAUNCH_FIELDS = [
+  ['harness', 'harness'],
+  ['model', 'model'],
+  ['effort', 'effort'],
+  ['context_window_max', 'context_window_max'],
+  ['copilot_api', 'copilot drive'],
+  ['fast_mode', 'fast_mode'],
+  ['sandbox_implementation', 'sandbox_implementation'],
+];
+
+// ambientLaunchDecisions is the browser twin of ResolvedLaunch.AmbientDecisions
+// in pkg/claude/agent: the launch values a tier NOBODY TYPED decided, as
+// "field: value (tier)" strings.
+//
+// It is a presentation filter over a wire shape the daemon already computed,
+// not a second opinion about provenance — the daemon decides WHICH tier chose a
+// value, this decides only whether that is worth a line on screen.
+export function ambientLaunchDecisions(resolved) {
+  if (!resolved) return [];
+  const out = [];
+  for (const [key, label] of RESOLVED_LAUNCH_FIELDS) {
+    const field = resolved[key];
+    const value = (field?.value ?? '').trim();
+    const source = (field?.source ?? '').trim();
+    if (!value) continue;
+    if (!source || source === PROV_EXPLICIT || source === PROV_HARNESS_DEFAULT) continue;
+    out.push(`${label}: ${value} (${source})`);
+  }
+  return out;
+}
+
 export function triValue(value) {
   return value == null ? '' : value ? '1' : '0';
 }

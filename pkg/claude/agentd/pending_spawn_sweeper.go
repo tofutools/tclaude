@@ -180,10 +180,12 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 		return
 	} else if m != nil {
 		// A prior attempt got past the membership write but may have failed
-		// before the task-ref write — repair the link before dropping the row
-		// so the requested binding isn't lost with it. The claimed row is the
-		// only durable copy of the intent: a failed repair requeues it for the
-		// next tick instead of dropping the link silently.
+		// before the authorization lineage or task-ref write. Repair both before
+		// dropping the row: it is the only durable copy of this spawn intent.
+		if !ensurePendingSpawnLineageBound(convID, ps) {
+			requeuePendingSpawn(ps.Label, ps)
+			return
+		}
 		if !ensurePendingTaskRefBound(convID, ps) {
 			requeuePendingSpawn(ps.Label, ps)
 			return
@@ -247,6 +249,25 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 	}
 	slog.Info("pending-spawn sweeper: enrolled pending spawn",
 		"label", ps.Label, "conv", convID, "group", g.Name)
+}
+
+// ensurePendingSpawnLineageBound repairs the authorization edge on an
+// already-enrolled retry. RecordAgentLineage is idempotent, so this also
+// safely verifies an edge written by the first attempt. A failure retains the
+// pending row for another sweep instead of silently losing ancestry.
+func ensurePendingSpawnLineageBound(convID string, ps *db.PendingSpawn) bool {
+	childAgentID, err := db.AgentIDForConv(convID)
+	if err != nil {
+		slog.Warn("pending-spawn sweeper: cannot repair lineage (no child actor)",
+			"label", ps.Label, "conv", convID, "error", err)
+		return false
+	}
+	if err := recordSpawnLineage(childAgentID, ps.SpawnedByAgent, ps.SpawnedByConv); err != nil {
+		slog.Warn("pending-spawn sweeper: lineage repair failed",
+			"label", ps.Label, "conv", convID, "error", err)
+		return false
+	}
+	return true
 }
 
 // sweeperTaskRefURL returns a pending row's task-reference URL, re-applying

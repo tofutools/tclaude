@@ -322,6 +322,8 @@ func completePermissionSlugs(_ *cobra.Command, _ []string, toComplete string) []
 			{"git.push", "Push to a Git remote through the daemon's credentials"},
 			{"github.read", "Read GitHub PRs/issues through the daemon's gh credentials"},
 			{"github.write", "Create/comment on GitHub PRs/issues as the operator"},
+			{"linear.read", "Read Linear issues/comments through the daemon's Linear key"},
+			{"linear.write", "Create/update/comment on and link Linear issues as the operator"},
 		}
 	}
 	out := []string{}

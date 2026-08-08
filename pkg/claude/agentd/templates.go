@@ -49,12 +49,12 @@ import (
 // templateAgentJSON is the wire shape for one agent in a template —
 // used both in request bodies (the dashboard editor) and responses.
 type templateAgentJSON struct {
-	Name           string   `json:"name"`
-	Role           string   `json:"role,omitempty"`
-	Descr          string   `json:"descr,omitempty"`
-	InitialMessage string   `json:"initial_message,omitempty"`
-	IsOwner        bool     `json:"is_owner,omitempty"`
-	Permissions    []string `json:"permissions"`
+	Name           string               `json:"name"`
+	Role           string               `json:"role,omitempty"`
+	Descr          string               `json:"descr,omitempty"`
+	InitialMessage string               `json:"initial_message,omitempty"`
+	IsOwner        bool                 `json:"is_owner,omitempty"`
+	Permissions    []db.PermissionGrant `json:"permissions"`
 
 	// Role is a by-name reference to a role in the role library (JOH-240): the
 	// agent inherits that role's defaults (canonical role-brief, launch shape,
@@ -214,7 +214,7 @@ func templateToJSON(t *db.GroupTemplate) templateJSON {
 	for _, a := range t.Agents {
 		perms := a.Permissions
 		if perms == nil {
-			perms = []string{}
+			perms = []db.PermissionGrant{}
 		}
 		aj := templateAgentJSON{
 			Name:             a.Name,
@@ -403,18 +403,10 @@ func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure)
 					"are allowed but other control characters are not", an, agent.MaxInitialMessageBytes)}
 		}
 
-		perms := []string{}
-		for _, slug := range a.Permissions {
-			slug = strings.TrimSpace(slug)
-			if slug == "" {
-				continue
-			}
-			if !IsKnownPermSlug(slug) {
-				return nil, &spawnFailure{http.StatusBadRequest, "unknown_slug",
-					fmt.Sprintf("agent %q: unknown permission slug %q. Known slugs: %s.",
-						an, slug, strings.Join(knownSlugs(), ", "))}
-			}
-			perms = append(perms, slug)
+		perms, permFail := normalizeBlueprintGrants(a.Permissions)
+		if permFail != nil {
+			permFail.Msg = fmt.Sprintf("agent %q: %s", an, permFail.Msg)
+			return nil, permFail
 		}
 
 		// Template-local spawn profile: validated with the registry profiles'
@@ -790,13 +782,32 @@ type templateAgentLaunch struct {
 	// (TCL-1090).
 	CopilotAPISource    string
 	SSHWorkaroundSource string
-	FastMode      bool
-	FastModeSet   bool
+	// HarnessSource / ModelSource / EffortSource / ContextWindowMaxSource /
+	// FastModeSource / SandboxImplementationSource are the attributions for the
+	// remaining fields the launch echo renders. This resolver has always computed
+	// them and thrown them away; the deploy result now carries an echo, and
+	// without these every template-pinned value would be re-resolved at the spawn
+	// boundary as ProvExplicit — telling an operator "explicit" for a model their
+	// ROLE PROFILE chose, which names no tier they can go and change (TCL-1097).
+	HarnessSource               string
+	ModelSource                 string
+	EffortSource                string
+	ContextWindowMaxSource      string
+	FastModeSource              string
+	SandboxImplementationSource string
+	FastMode                    bool
+	FastModeSet                 bool
 	// Notes disclose profile-tier fields that were skipped because they are not
 	// valid for the independently resolved harness. They ride the per-agent
 	// instantiate result so template launches have the same least-surprise
 	// disclosure as direct spawns.
 	Notes []string
+	// Info / Warnings are the launch-posture channels of the same echo, kept
+	// apart from Notes for the reason the direct spawn path keeps them apart: a
+	// warning is about the agent's blast radius, not about which tier won a
+	// field, and a renderer must be able to label it as such.
+	Info     []string
+	Warnings []string
 	// ObservedNotChosen names the launch fields this member was OBSERVED to carry
 	// but that no operator chose — the harness default resolved them. The
 	// snapshot deliberately does not pin these (a template is a specification,
@@ -1111,18 +1122,36 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	// Resolve harness independently. Partial inline-profile/role tiers only pin
 	// a harness when they name one; registry profiles pin their default harness
 	// even when the stored value is blank, matching direct spawn.
+	// harnessSource tracks the tier alongside the walk rather than being
+	// reconstructed afterwards: the walk short-circuits, so after it runs the
+	// value alone can no longer say which tier produced it.
+	harnessSource := ""
 	harnessName := strings.TrimSpace(a.Harness)
+	if harnessName != "" {
+		harnessSource = agent.ProvExplicit
+	}
 	if harnessName == "" && inlineProfile != nil {
 		harnessName = strings.TrimSpace(inlineProfile.Harness)
+		if harnessName != "" {
+			harnessSource = tiers[0].source
+		}
 	}
 	if harnessName == "" && refProfile != nil {
 		harnessName = harnessOrDefault(refProfile.Harness)
+		harnessSource = tiers[1].source
 	}
 	if harnessName == "" && role != nil {
 		harnessName = strings.TrimSpace(role.Harness)
+		if harnessName != "" {
+			harnessSource = tiers[2].source
+		}
 	}
 	if harnessName == "" && roleProfile != nil {
 		harnessName = harnessOrDefault(roleProfile.Harness)
+		harnessSource = tiers[3].source
+	}
+	if harnessName == "" {
+		harnessSource = agent.ProvHarnessDefault
 	}
 
 	h, err := resolveSpawnHarness(harnessName)
@@ -1131,7 +1160,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	}
 	var fail *spawnFailure
 	var notes []string
-	model, _, note, fail := resolveStringLaunchField(modelField, a.Model, h.Name, tiers,
+	model, modelSource, note, fail := resolveStringLaunchField(modelField, a.Model, h.Name, tiers,
 		func(p *db.SpawnProfile) string { return p.Model }, h.Models.ValidateModel)
 	if fail != nil {
 		return templateAgentLaunch{}, fail
@@ -1139,7 +1168,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	if note != "" {
 		notes = append(notes, note)
 	}
-	effort, _, note, fail := resolveStringLaunchField(effortField, a.Effort, h.Name, tiers,
+	effort, effortSource, note, fail := resolveStringLaunchField(effortField, a.Effort, h.Name, tiers,
 		func(p *db.SpawnProfile) string { return p.Effort }, h.Models.ValidateEffort)
 	if fail != nil {
 		return templateAgentLaunch{}, fail
@@ -1189,7 +1218,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	if note != "" {
 		notes = append(notes, note)
 	}
-	contextWindowMax, _, note, fail := resolveIntLaunchField(contextWindowMaxField, 0, h.Name, tiers,
+	contextWindowMax, contextWindowMaxSource, note, fail := resolveIntLaunchField(contextWindowMaxField, 0, h.Name, tiers,
 		func(p *db.SpawnProfile) int64 { return p.ContextWindowMax },
 		func(raw int64) (int64, error) { return harness.ResolveCopilotContextWindow(h, raw) })
 	if fail != nil {
@@ -1201,7 +1230,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	// The sandbox IMPLEMENTATION rides the same tier stack. Only the harness gate
 	// runs here; the host-capability gate belongs to the launch, which the deploy
 	// reaches by handing this value to the spawn boundary as an explicit request.
-	sandboxImplementation, _, note, fail := resolveStringLaunchField(
+	sandboxImplementation, sandboxImplementationSource, note, fail := resolveStringLaunchField(
 		sandboxImplementationField, "", h.Name, tiers,
 		func(p *db.SpawnProfile) string { return p.SandboxImplementation },
 		func(raw string) (string, error) { return validateSandboxImplementationForHarness(h, raw) })
@@ -1236,12 +1265,17 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	}
 	// Same spawn-posture check the HTTP spawn boundary runs, at the equivalent
 	// point: both axes final. Covers the Claude TCL-586 pairing and OpenCode's
-	// look-like-a-sandbox access-control mode. A template deploy has no separate
-	// per-agent info/warnings channels, so both kinds ride Notes — which the
-	// deploy result and dashboard already surface per agent.
-	notes = append(notes, harness.SpawnSandboxInfo(h, sandbox)...)
-	notes = append(notes, harness.SpawnSandboxWarnings(h, approval, sandbox, cwd,
-		spawnUsesTclaudeLayer(sandboxImplementation))...)
+	// look-like-a-sandbox access-control mode.
+	//
+	// Kept in their OWN channels since TCL-1097: the deploy result now carries a
+	// full launch echo, which has the Info and Warnings lists the direct spawn
+	// path has always had. They used to be flattened into Notes because there was
+	// nowhere else to put them, and the renderer this ticket added would then have
+	// printed "unattended agent, no OS sandbox" under a `note:` label — a warning
+	// about the agent's blast radius, styled as one more provenance footnote.
+	info := harness.SpawnSandboxInfo(h, sandbox)
+	warnings := harness.SpawnSandboxWarnings(h, approval, sandbox, cwd,
+		spawnUsesTclaudeLayer(sandboxImplementation))
 	// Resolve the two *bool launch toggles against the chosen harness — the
 	// same gate handleGroupSpawn/applyDefaultProfile apply. nil (no profile
 	// spoke) collapses to false = off. ResolveTrustDir/ResolveAutoReview reject
@@ -1305,7 +1339,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	if copilotAPINote != "" {
 		notes = append(notes, copilotAPINote)
 	}
-	fastMode, fastModeSet, _, fastModeNote, fail := resolveBoolLaunchField(
+	fastMode, fastModeSet, fastModeSource, fastModeNote, fail := resolveBoolLaunchField(
 		"fast_mode", false, false, h.Name, tiers,
 		func(p *db.SpawnProfile) *bool { return p.FastMode },
 		func(v bool) (bool, error) {
@@ -1392,10 +1426,23 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		CopilotAPISet:          copilotAPISet,
 		CopilotAPISource:       copilotAPISource,
 		SSHWorkaroundSource:    sshWorkaroundSource,
-		FastMode:               fastMode,
-		FastModeSet:            fastModeSet,
-		SandboxImplementation:  sandboxImplementation,
-		Notes:                  notes,
+		// The template tiers this resolver walked. The spawn boundary re-resolves
+		// these fields against the group/global defaults and keeps whichever
+		// attribution actually names a decider (preferResolvedSource), so seeding
+		// them here is what stops a template-pinned value being reported as
+		// "explicit" by the re-resolution that finds its Set bit already raised.
+		HarnessSource:               harnessSource,
+		ModelSource:                 modelSource,
+		EffortSource:                effortSource,
+		ContextWindowMaxSource:      contextWindowMaxSource,
+		FastModeSource:              fastModeSource,
+		SandboxImplementationSource: sandboxImplementationSource,
+		FastMode:                    fastMode,
+		FastModeSet:                 fastModeSet,
+		SandboxImplementation:       sandboxImplementation,
+		Notes:                       notes,
+		Info:                        info,
+		Warnings:                    warnings,
 	}, nil
 }
 
@@ -1953,9 +2000,9 @@ func sanitizeImportedTemplate(body templateJSON) (templateJSON, []string) {
 			// A GetRole error is left for buildTemplateFromJSON to surface.
 		}
 		if len(a.Permissions) > 0 {
-			kept := make([]string, 0, len(a.Permissions))
-			for _, slug := range a.Permissions {
-				s := strings.TrimSpace(slug)
+			kept := make([]db.PermissionGrant, 0, len(a.Permissions))
+			for _, grant := range a.Permissions {
+				s := strings.TrimSpace(grant.Slug)
 				if s == "" {
 					continue
 				}
@@ -1964,7 +2011,20 @@ func sanitizeImportedTemplate(body templateJSON) (templateJSON, []string) {
 						"agent %q: unknown permission slug %q — dropped", label, s))
 					continue
 				}
-				kept = append(kept, s)
+				// A scope this build cannot make sense of degrades the same way
+				// an unknown slug does — the whole grant is DROPPED with a
+				// warning, never kept unscoped. Keeping it would import a
+				// deliberately narrow grant as a wildcard; 400ing the import
+				// would break the forward-compat contract the slug arm states
+				// one line up.
+				if _, err := canonicalPermissionScopeForSlug(s, strings.TrimSpace(grant.Scope)); err != nil {
+					warnings = append(warnings, fmt.Sprintf(
+						"agent %q: permission %q carries a scope this build cannot read (%v) — "+
+							"the whole grant was dropped rather than imported unscoped", label, s, err))
+					continue
+				}
+				grant.Slug = s
+				kept = append(kept, grant)
 			}
 			a.Permissions = kept
 		}
@@ -1973,8 +2033,8 @@ func sanitizeImportedTemplate(body templateJSON) (templateJSON, []string) {
 		// newer tclaude) is dropped with a warning instead of 400ing the whole
 		// import in buildInlineProfileFromJSON's slug validation.
 		if a.ProfileInline != nil && len(a.ProfileInline.PermissionOverrides) > 0 {
-			kept := map[string]string{}
-			for slug, effect := range a.ProfileInline.PermissionOverrides {
+			kept := map[string]db.PermissionOverride{}
+			for slug, override := range a.ProfileInline.PermissionOverrides {
 				s := strings.TrimSpace(slug)
 				if s == "" {
 					continue
@@ -1984,7 +2044,7 @@ func sanitizeImportedTemplate(body templateJSON) (templateJSON, []string) {
 						"agent %q: unknown permission slug %q in its custom launch config — dropped", label, s))
 					continue
 				}
-				kept[s] = effect
+				kept[s] = override
 			}
 			pi := *a.ProfileInline
 			pi.PermissionOverrides = kept
@@ -2289,8 +2349,12 @@ func appendRoleBlock(groupContext, brief string) string {
 // permOverride is one resolved birth-time permission decision for an
 // instantiated template agent: a slug and its effect (grant | deny).
 type permOverride struct {
-	Slug   string
-	Effect string // db.PermEffectGrant | db.PermEffectDeny
+	Slug string
+	// Override carries the effect (db.PermEffectGrant | db.PermEffectDeny)
+	// plus the optional scope the winning tier authored. A tier that composes
+	// per-slug must carry the whole value: replacing a scoped grant's effect
+	// while dropping its scope would silently widen it.
+	Override db.PermissionOverride
 }
 
 // effectiveTemplateAgentOwner computes the owner bit a deploy of this agent
@@ -2350,8 +2414,8 @@ func effectiveTemplateAgentOwner(a db.GroupTemplateAgent, lookupProfile func(str
 // role silently deny/own through an indirection, which is deliberately not done.
 func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, []permOverride, *spawnFailure) {
 	order := []string{}
-	eff := map[string]string{}
-	set := func(slug, effect string) {
+	eff := map[string]db.PermissionOverride{}
+	set := func(slug string, override db.PermissionOverride) {
 		slug = strings.TrimSpace(slug)
 		if slug == "" {
 			return
@@ -2359,12 +2423,12 @@ func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, [
 		if _, ok := eff[slug]; !ok {
 			order = append(order, slug)
 		}
-		eff[slug] = effect
+		eff[slug] = override
 	}
 	// Tier 1: the referenced role's default grants.
 	if role != nil {
 		for _, s := range role.Permissions {
-			set(s, db.PermEffectGrant)
+			set(s.Slug, db.PermissionOverride{Effect: db.PermEffectGrant, Scope: s.Scope})
 		}
 	}
 	// Ownership composes tri-state up the tiers, most specific last: the
@@ -2399,12 +2463,7 @@ func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, [
 		if prof.IsOwner != nil {
 			owner = *prof.IsOwner
 		}
-		slugs := make([]string, 0, len(prof.PermissionOverrides))
-		for slug := range prof.PermissionOverrides {
-			slugs = append(slugs, slug)
-		}
-		sort.Strings(slugs)
-		for _, slug := range slugs {
+		for _, slug := range db.SortedOverrideSlugs(prof.PermissionOverrides) {
 			set(slug, prof.PermissionOverrides[slug])
 		}
 	}
@@ -2414,12 +2473,7 @@ func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, [
 		if p.IsOwner != nil {
 			owner = *p.IsOwner
 		}
-		slugs := make([]string, 0, len(p.PermissionOverrides))
-		for slug := range p.PermissionOverrides {
-			slugs = append(slugs, slug)
-		}
-		sort.Strings(slugs)
-		for _, slug := range slugs {
+		for _, slug := range db.SortedOverrideSlugs(p.PermissionOverrides) {
 			set(slug, p.PermissionOverrides[slug])
 		}
 	}
@@ -2429,12 +2483,12 @@ func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, [
 		owner = true
 	}
 	for _, s := range a.Permissions {
-		set(s, db.PermEffectGrant)
+		set(s.Slug, db.PermissionOverride{Effect: db.PermEffectGrant, Scope: s.Scope})
 	}
 
 	out := make([]permOverride, 0, len(order))
 	for _, s := range order {
-		out = append(out, permOverride{Slug: s, Effect: eff[s]})
+		out = append(out, permOverride{Slug: s, Override: eff[s]})
 	}
 	return owner, out, nil
 }
@@ -2453,9 +2507,19 @@ type instantiateAgentResult struct {
 	// Owner. Surfaced so the dashboard can tell the operator what was adjusted.
 	OwnerDropped bool     `json:"owner_dropped,omitempty"`
 	Granted      []string `json:"granted,omitempty"`
-	Notes        []string `json:"notes,omitempty"`
-	ErrorKind    string   `json:"error_kind,omitempty"`
-	Error        string   `json:"error,omitempty"`
+	// Resolved is this member's launch shape with per-field provenance — the same
+	// echo the direct spawn path returns, per deployed agent (TCL-1097). Its Notes
+	// carry the template-tier disclosures too, so there is ONE per-agent
+	// disclosure channel rather than a structured echo with a flat `notes` list
+	// beside it saying overlapping things.
+	//
+	// It REPLACES the copilot_api-only `notes` list TCL-1090 shipped as a stopgap:
+	// that disclosure is now the CopilotAPI field of this echo. Two disclosure
+	// mechanisms for one fact is the failure being avoided, so the old one is
+	// gone rather than deprecated.
+	Resolved  *agent.ResolvedLaunch `json:"resolved,omitempty"`
+	ErrorKind string                `json:"error_kind,omitempty"`
+	Error     string                `json:"error,omitempty"`
 }
 
 // handleTemplateInstantiate creates a fresh group from a template and
@@ -2890,6 +2954,27 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 	// policy: they can select danger-full-access for otherwise-unconfigured
 	// members and therefore decide whether any policy tier applies at all.
 	roster := applyAgentProfileOverrides(tmpl.Agents, spec.agentProfiles)
+
+	// Attenuation-only delegation, checked BEFORE anything is created or
+	// spawned. A deploy is a minting surface like any other: its roster confers
+	// birth-time grants composed from role defaults, the referenced profile and
+	// the template-local one. Without this an agent whose own grant is narrowly
+	// scoped could deploy a template that hands a worker the same slug unscoped
+	// and act through the worker — the bypass the spawn-boundary check exists to
+	// close. Up front, because refusing mid-roster would strand agents that
+	// already spawned.
+	//
+	// It judges ROSTER, not tmpl.Agents: agent_profiles is a caller-supplied
+	// request field that pins a registry profile onto any member with no launch
+	// config of its own, and that profile's permission_overrides confer grants
+	// the stored template never mentioned. Checking the template alone would
+	// leave the widest tier of the composition unexamined. See
+	// permission_attenuation.go.
+	if err := checkTemplateDeployAttenuation(roster, spec.caller); err != nil {
+		cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
+		writeError(w, http.StatusForbidden, "scope_not_attenuated", err.Error())
+		return
+	}
 
 	// Freeze the target policy once for the whole template run. A create-new
 	// group has no group assignment yet, so it composes the global tier only;
@@ -4071,13 +4156,13 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile, observed bool) (*
 	if out.SandboxImplementation == "" {
 		out.SandboxImplementation = prev.SandboxImplementation
 	}
-	for slug, effect := range prev.PermissionOverrides {
-		if effect != db.PermEffectGrant {
+	for slug, override := range prev.PermissionOverrides {
+		if override.Effect != db.PermEffectGrant {
 			if out.PermissionOverrides == nil {
-				out.PermissionOverrides = map[string]string{}
+				out.PermissionOverrides = map[string]db.PermissionOverride{}
 			}
 			if _, ok := out.PermissionOverrides[slug]; !ok {
-				out.PermissionOverrides[slug] = effect
+				out.PermissionOverrides[slug] = override
 			}
 		}
 	}
@@ -4291,7 +4376,11 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 		if name == "" {
 			name = deriveTemplateAgentName(convID, role, len(t.Agents)+1, usedNames)
 		}
-		perms, _ := db.ListAgentPermissionsForConv(convID)
+		// Snapshot the member's grants WITH their scopes: reading only the
+		// slug list would bake a narrowly scoped live grant into the template
+		// as an unscoped one, so every deploy of the snapshot would hand out
+		// strictly more authority than the group it was traced from.
+		perms := grantedOverridesForConv(convID)
 		// Re-trace the member's OBSERVABLE launch fields (JOH-239) so a round-trip
 		// preserves each role's launch shape. The spawn-profile REFERENCE is
 		// blueprint curation, not observable — it is preserved by name-match in the
@@ -4318,9 +4407,9 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 		}
 		var inline *db.SpawnProfile
 		if launch.Harness != "" || launch.Model != "" || launch.Effort != "" || launch.Sandbox != "" || launch.Approval != "" || launch.AutoReviewSet || launch.SSHWorkaroundSet || len(launch.ContextFeatures) > 0 || launch.AutoCompactWindow != "" || launch.ContextWindowMax > 0 || launch.CopilotAPISet || launch.FastModeSet || launch.SandboxImplementation != "" || len(perms) > 0 {
-			po := map[string]string{}
-			for _, s := range perms {
-				po[s] = db.PermEffectGrant
+			po := make(map[string]db.PermissionOverride, len(perms))
+			for slug, override := range perms {
+				po[slug] = override
 			}
 			inline = &db.SpawnProfile{
 				Harness:               launch.Harness,
@@ -4359,7 +4448,7 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 			Role:          role,
 			Descr:         descr,
 			IsOwner:       owner,
-			Permissions:   []string{},
+			Permissions:   []db.PermissionGrant{},
 			ProfileInline: inline,
 		})
 	}

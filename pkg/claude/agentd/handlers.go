@@ -3720,6 +3720,21 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 			}
 		}
 		sort.Strings(normalizedPermissions)
+		// A group grant is conferred on every current AND future member, and it
+		// is written UNSCOPED — the widest form there is. So it is a minting
+		// surface, and an agent caller must clear the same attenuation bar the
+		// spawn boundary and /v1/permissions/grant set. Without this an agent
+		// whose own hold on a slug is scoped could add that slug to a group it
+		// belongs to and, on the very next request, resolve unscoped: the group
+		// tier unions its rows, and one unscoped row absorbs the tier.
+		conferred := make([]conferredGrant, 0, len(normalizedPermissions))
+		for _, slug := range normalizedPermissions {
+			conferred = append(conferred, conferredGrant{Slug: slug})
+		}
+		if err := checkGrantAttenuation(caller, conferred); err != nil {
+			writeError(w, http.StatusForbidden, "scope_not_attenuated", err.Error())
+			return
+		}
 	}
 	if body.Descr == nil && body.DefaultCwd == nil && body.DefaultContext == nil && body.DefaultProfile == nil && body.MaxMembers == nil && body.NotifyEnabled == nil && body.RemoteControlPolicy == nil && body.Permissions == nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg",

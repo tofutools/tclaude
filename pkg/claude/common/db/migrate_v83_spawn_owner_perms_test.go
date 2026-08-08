@@ -82,7 +82,7 @@ func TestSpawnProfileOwnerPermsRoundTrip(t *testing.T) {
 		Name:                "owns",
 		Role:                "lead",
 		IsOwner:             &owner,
-		PermissionOverrides: map[string]string{"groups.spawn": "grant"},
+		PermissionOverrides: UnscopedOverrides(map[string]string{"groups.spawn": "grant"}),
 	})
 	require.NoError(t, err)
 
@@ -91,7 +91,7 @@ func TestSpawnProfileOwnerPermsRoundTrip(t *testing.T) {
 	require.NotNil(t, got)
 	require.NotNil(t, got.IsOwner)
 	assert.True(t, *got.IsOwner, "owner flag round-trips")
-	assert.Equal(t, map[string]string{"groups.spawn": "grant"}, got.PermissionOverrides)
+	assert.Equal(t, UnscopedOverrides(map[string]string{"groups.spawn": "grant"}), got.PermissionOverrides)
 
 	// Update clearing the overrides + owner → reads back nil/empty.
 	require.NoError(t, UpdateSpawnProfile(&SpawnProfile{ID: id, Name: "owns", Role: "lead"}))
@@ -113,7 +113,7 @@ func TestPendingSpawnOwnerPermsRoundTrip(t *testing.T) {
 		GroupID:             1,
 		Role:                "researcher",
 		IsOwner:             true,
-		PermissionOverrides: map[string]string{"groups.spawn": "grant", "self.rename": "deny"},
+		PermissionOverrides: UnscopedOverrides(map[string]string{"groups.spawn": "grant", "self.rename": "deny"}),
 	}
 	require.NoError(t, InsertPendingSpawn(in))
 
@@ -121,7 +121,7 @@ func TestPendingSpawnOwnerPermsRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.True(t, got.IsOwner, "owner flag round-trips")
-	assert.Equal(t, map[string]string{"groups.spawn": "grant", "self.rename": "deny"},
+	assert.Equal(t, UnscopedOverrides(map[string]string{"groups.spawn": "grant", "self.rename": "deny"}),
 		got.PermissionOverrides, "override map round-trips")
 
 	// A spawn with no birth-time controls stores "" and reads back nil/false.

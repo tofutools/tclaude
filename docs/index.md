@@ -251,6 +251,9 @@ focus on workflows and the behavior that is easy to miss from help text.
 - [Git & GitHub proxy](git-proxy.md) — `tclaude proxy git` / `tclaude proxy
   github`: let a credential-less agent fetch, push, and open pull requests
   through the daemon, bounded by an operator allow-list.
+- [Linear proxy](linear-proxy.md) — `tclaude proxy linear`: let a credential-less
+  agent read and update the Linear issue it is working on, bounded by an operator
+  team allow-list.
 - [Processes](processes.md) — opt-in process templates, runs, evidence, and
   performers.
 

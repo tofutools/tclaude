@@ -254,7 +254,7 @@ func TestTemplateExportImport_EmbedsAndMaterializesProfile(t *testing.T) {
 	assert.True(t, got.Disabled, "materialized profile remains disabled")
 	assert.Equal(t, "provider maintenance", got.DisabledReason,
 		"materialized profile remains disabled")
-	assert.Equal(t, "grant", got.PermissionOverrides[agentd.PermGroupsSpawn], "materialized profile keeps its overrides")
+	assert.Equal(t, db.Grant(), got.PermissionOverrides[agentd.PermGroupsSpawn], "materialized profile keeps its overrides")
 
 	// The imported template's agent still references the materialized profile by
 	// name. Its disabled state intentionally blocks instantiation until enabled.

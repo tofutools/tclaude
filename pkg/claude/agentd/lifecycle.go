@@ -1,12 +1,14 @@
 package agentd
 
 import (
+	"bytes"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -2878,24 +2880,31 @@ func armRemoteControlAfterResume(convID string) {
 //     via the post-spawn /rename injection.
 //
 // normalizeSpawnPermissionOverrides validates the birth-time permission
-// overrides off a SpawnRequest and returns the canonical slug→effect map to
+// overrides off a SpawnRequest and returns the canonical slug→override map to
 // apply at enrollment. Each slug must be registered and each effect
 // must be "grant" or "deny"; a "default"/"" effect is a no-op and is dropped
 // (the agent inherits the global default for that slug), so an editor that
 // posts every slug — most at Default — collapses to just the real overrides.
 // An unknown slug or an unrecognised effect returns a non-empty human-readable
 // error string (the caller maps it to a 400); the map is nil for no overrides.
-func normalizeSpawnPermissionOverrides(in map[string]string) (map[string]string, string) {
+//
+// This is also the scope boundary for every birth-time grant: an optional
+// scope is parsed, checked against the dimensions its slug declares, and
+// stored CANONICALIZED, so nothing below this line has to re-validate a scope
+// and the stored bytes compare equal to a gate-side canonical form. A deny
+// carries no scope by design (a deny is unconditional).
+func normalizeSpawnPermissionOverrides(in map[string]db.PermissionOverride) (map[string]db.PermissionOverride, string) {
 	if len(in) == 0 {
 		return nil, ""
 	}
-	out := make(map[string]string, len(in))
-	for slug, effect := range in {
+	out := make(map[string]db.PermissionOverride, len(in))
+	for slug, override := range in {
 		slug = strings.TrimSpace(slug)
 		if slug == "" {
 			continue
 		}
-		switch strings.TrimSpace(effect) {
+		effect := strings.TrimSpace(override.Effect)
+		switch effect {
 		case "", "default":
 			continue // no override — inherits the global default
 		case db.PermEffectGrant, db.PermEffectDeny:
@@ -2903,11 +2912,19 @@ func normalizeSpawnPermissionOverrides(in map[string]string) (map[string]string,
 				return nil, fmt.Sprintf("unknown permission slug %q. Known slugs: %s.",
 					slug, strings.Join(knownSlugs(), ", "))
 			}
-			out[slug] = strings.TrimSpace(effect)
 		default:
 			return nil, fmt.Sprintf("permission override for %q must be \"grant\", \"deny\", or \"default\"; got %q",
-				slug, effect)
+				slug, override.Effect)
 		}
+		scope := strings.TrimSpace(override.Scope)
+		if scope != "" && effect == db.PermEffectDeny {
+			return nil, fmt.Sprintf("permission override for %q is a deny and cannot carry a scope", slug)
+		}
+		canonical, err := canonicalPermissionScopeForSlug(slug, scope)
+		if err != nil {
+			return nil, fmt.Sprintf("permission override for %q: %v", slug, err)
+		}
+		out[slug] = db.PermissionOverride{Effect: effect, Scope: canonical}
 	}
 	if len(out) == 0 {
 		return nil, ""
@@ -2982,9 +2999,11 @@ func spawnAuditProfileSnapshot(p *db.SpawnProfile) any {
 }
 
 func spawnAuditResolution(p spawnParams, launch *agent.ResolvedLaunch, requestedProfile string, profiles map[string]*db.SpawnProfile) map[string]any {
-	permissions := make(map[string]string, len(p.PermissionOverrides))
-	for slug, effect := range p.PermissionOverrides {
-		permissions[slug] = effect
+	// The audit row records the override's full shape, scope included: an
+	// unscoped one still renders as the bare "grant"/"deny" it always did.
+	permissions := make(map[string]db.PermissionOverride, len(p.PermissionOverrides))
+	for slug, override := range p.PermissionOverrides {
+		permissions[slug] = override
 	}
 	features := make(map[string]string, len(p.ContextFeatures))
 	for feature, state := range p.ContextFeatures {
@@ -3040,6 +3059,77 @@ func spawnAuditResolution(p spawnParams, launch *agent.ResolvedLaunch, requested
 	}
 }
 
+// decodeSpawnBody decodes the spawn request and puts the raw bytes BACK on
+// r.Body, so a later ask-human popup still previews the request the agent
+// actually sent (snapshotRequestBody has the same restore contract, for the
+// same reason). Decoding has to happen before the permission gate — the gate
+// needs the request's profile — and the gate is what may open the popup, so
+// the body cannot simply be consumed here.
+//
+// On a malformed body it writes the 400 and returns false. That 400 now
+// precedes the groups.spawn refusal for an unauthorized caller; it discloses
+// nothing beyond "your JSON did not parse".
+//
+// "Was there a body" is decided from the bytes actually READ, not from
+// ContentLength. A chunked request carries ContentLength -1, so testing it for
+// <= 0 would hand the handler a zero-valued SpawnRequest and spawn with
+// defaults — silently dropping the caller's name, profile and permission
+// overrides, and leaving the spawn_profile gate to judge a profile the request
+// never got to state. Only ContentLength == 0 is a declared empty body, and
+// even that falls through to the same trimmed-length test.
+func decodeSpawnBody(w http.ResponseWriter, r *http.Request, body *agent.SpawnRequest) bool {
+	if r.Body == nil {
+		return true
+	}
+	// The popup's restore bound is the sibling limit and the natural ceiling: a
+	// body this path cannot buffer is one snapshotRequestBody could not preview
+	// either. Without it, ReadAll on an unbounded chunked stream is a trivial
+	// pre-authorization memory sink — this runs BEFORE the groups.spawn gate.
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxApprovalRestoreBody))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "json", err.Error())
+		return false
+	}
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return true
+	}
+	if err := json.Unmarshal(raw, body); err != nil {
+		writeError(w, http.StatusBadRequest, "json", err.Error())
+		return false
+	}
+	return true
+}
+
+// resolvedSpawnProfileNameForScope answers "which named spawn profile will
+// this request launch with", for the spawn_profile scope dimension only. It
+// mirrors the profile precedence the full resolution below applies —
+// request profile → group default → global default — and returns the profile's
+// CANONICAL name, so a grant scoped to a profile still matches a request that
+// reached it through an alias.
+//
+// It returns "" whenever no named profile resolves, including for a request
+// naming one that does not exist. A scoped grant then finds the dimension
+// undescribed and fails closed, so a scoped caller sees 403 rather than the
+// ordinary invalid_profile 400 the unscoped caller still gets further down.
+// That ordering is deliberate: the gate must not leak which profile names
+// exist to a caller that is not allowed to spawn with them anyway.
+func resolvedSpawnProfileNameForScope(g *db.AgentGroup, requested string) string {
+	if name := strings.TrimSpace(requested); name != "" {
+		prof, err := db.ResolveSpawnProfile(name)
+		if err != nil || prof == nil {
+			return ""
+		}
+		return prof.Name
+	}
+	for _, prof := range []*db.SpawnProfile{groupDefaultProfile(g), globalDefaultProfile()} {
+		if prof != nil {
+			return prof.Name
+		}
+	}
+	return ""
+}
+
 func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	// requireGroupPermission also hands back the caller's conv-id: a real
 	// agent (e.g. a PO orchestrating workers) resolves to its conv-id,
@@ -3048,7 +3138,30 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// without an explicit groups.spawn grant (owner-state default); the
 	// spawn guardrails below still bind them (member cap, rate limit) and
 	// already treat an owner as allowed for the group restriction.
-	spawnerConvID, ok := requireGroupPermission(w, r, PermGroupsSpawn, g)
+	//
+	// agent.SpawnRequest is the single shared request shape — the same
+	// type `tclaude agent spawn`, `tclaude --join-group`, and the
+	// dashboard's spawn modal marshal — so the wire contract can't drift
+	// between the CLI and the dashboard. See its doc comment for the
+	// per-field semantics.
+	//
+	// It is decoded BEFORE the gate because groups.spawn may be scoped by
+	// spawn_profile, and the gate can only evaluate that against the profile
+	// this spawn will actually launch with. decodeSpawnBody restores r.Body so
+	// the ask-human popup still previews the full request.
+	var body agent.SpawnRequest
+	if !decodeSpawnBody(w, r, &body) {
+		return
+	}
+	// The spawn_profile the gate judges is the RESOLVED one — request profile,
+	// else the group default, else the global default — never the raw request
+	// field. "" (no profile resolves, or a named one that does not exist)
+	// leaves the dimension undescribed, which a scoped grant cannot satisfy:
+	// an inline launch shape is not a named profile and must not pass a
+	// profile-pinned grant. An unscoped grant is unaffected, so this reaches
+	// the existing 400 for a bad profile name exactly as before.
+	spawnerConvID, ok := requireGroupPermission(w, r, PermGroupsSpawn, g,
+		ActionContext{Group: g.Name, SpawnProfile: resolvedSpawnProfileNameForScope(g, body.Profile)})
 	if !ok {
 		return
 	}
@@ -3057,18 +3170,6 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	}
 	if !routeMembershipMutationAllowed(w, g) {
 		return
-	}
-	// agent.SpawnRequest is the single shared request shape — the same
-	// type `tclaude agent spawn`, `tclaude --join-group`, and the
-	// dashboard's spawn modal marshal — so the wire contract can't drift
-	// between the CLI and the dashboard. See its doc comment for the
-	// per-field semantics.
-	var body agent.SpawnRequest
-	if r.ContentLength > 0 {
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeError(w, http.StatusBadRequest, "json", err.Error())
-			return
-		}
 	}
 	if body.AllowUnenforcedSandbox && !isDashboardSpawnPeer(r) {
 		writeError(w, http.StatusForbidden, "unenforced_sandbox_override_restricted",
@@ -3661,6 +3762,28 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 				"%s %s ignored (caller lacks %s)", overridesSource, permissionOverridesField, PermPermissionsGrant))
 			permOverrides, overridesSource = nil, ""
 		}
+		// Attenuation-only delegation: holding permissions.grant lets the
+		// spawner mint overrides, but never WIDER ones than it holds itself.
+		// Without this an agent whose own grant is pinned to one profile or one
+		// group could mint a child holding the same slug unscoped and act
+		// through it. On the RESOLVED map, so a profile tier cannot smuggle in
+		// a grant the request never named. See permission_attenuation.go.
+		//
+		// Same direct-intent split the gate above draws: an explicit request
+		// field or a profile the caller NAMED is refused loudly, while an
+		// operator's house DEFAULT profile is skipped and disclosed. Dropping
+		// the overrides only ever NARROWS what the child is born with, and a
+		// default nobody typed at this launch must not start refusing every
+		// spawn a scoped agent makes.
+		if err := checkGrantAttenuation(spawnerConvID, conferredGrantsFromOverrides(permOverrides)); err != nil {
+			if !launchTierIsDefault(profileTiers, overridesSource) {
+				writeError(w, http.StatusForbidden, "scope_not_attenuated", err.Error())
+				return
+			}
+			identityNotes = append(identityNotes, fmt.Sprintf(
+				"%s %s ignored (%v)", overridesSource, permissionOverridesField, err))
+			permOverrides, overridesSource = nil, ""
+		}
 	}
 	// Disclose the two access decisions whenever a tier other than the request
 	// made them. An agent that silently comes up owning its group, or holding
@@ -4193,35 +4316,45 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		Effort:                     effort,
 		Model:                      model,
 		Harness:                    h.Name,
-		SSHWorkaround:              sshWorkaround,
-		SSHWorkaroundSet:           true,
-		SSHWorkaroundSource:        sshWorkaroundSource,
-		HarnessBuiltinMode:         harnessBuiltinMode,
-		HarnessBuiltinModeSource:   sandboxSource,
-		SandboxImplementation:      body.SandboxImplementation,
-		AllowUnenforcedSandbox:     body.AllowUnenforcedSandbox,
-		AskUserQuestionTimeout:     askTimeout,
-		ApprovalPolicy:             approvalPolicy,
-		ToolGovernance:             toolGovernance,
-		AutoReview:                 autoReview,
-		AutoReviewSet:              autoReviewSet,
-		TrustDir:                   trustDir,
-		TrustDirSet:                trustDirSet,
-		RemoteControl:              remoteControl,
-		AutoMemory:                 autoMemory,
-		ContextFeatures:            contextFeatures,
-		AutoCompactWindow:          autoCompactWindow,
-		ContextWindowMax:           body.ContextWindowMax,
-		CopilotAPI:                 copilotAPI,
-		CopilotAPISet:              copilotAPISet,
-		CopilotAPISource:           copilotAPISource,
-		FastMode:                   fastMode,
-		FastModeSet:                fastModeSet,
-		ReplyToConv:                replyToConv,
-		SpawnedByConv:              spawnerConvID,
-		IsOwner:                    isOwner,
-		PermissionOverrides:        permOverrides,
-		Timeout:                    timeout,
+		// This boundary resolves a tier applyDefaultProfile cannot see — the CLI's
+		// named --profile — so seeding its attributions is what keeps the launch's
+		// own echo (and the drive-acquisition log built from it) naming `profile
+		// "x"` rather than the "explicit" artifact a re-resolution would produce.
+		HarnessSource:               harnessSource,
+		ModelSource:                 modelSource,
+		EffortSource:                effortSource,
+		ContextWindowMaxSource:      contextWindowMaxSource,
+		FastModeSource:              fastModeSource,
+		SandboxImplementationSource: sandboxImplSource,
+		SSHWorkaround:               sshWorkaround,
+		SSHWorkaroundSet:            true,
+		SSHWorkaroundSource:         sshWorkaroundSource,
+		HarnessBuiltinMode:          harnessBuiltinMode,
+		HarnessBuiltinModeSource:    sandboxSource,
+		SandboxImplementation:       body.SandboxImplementation,
+		AllowUnenforcedSandbox:      body.AllowUnenforcedSandbox,
+		AskUserQuestionTimeout:      askTimeout,
+		ApprovalPolicy:              approvalPolicy,
+		ToolGovernance:              toolGovernance,
+		AutoReview:                  autoReview,
+		AutoReviewSet:               autoReviewSet,
+		TrustDir:                    trustDir,
+		TrustDirSet:                 trustDirSet,
+		RemoteControl:               remoteControl,
+		AutoMemory:                  autoMemory,
+		ContextFeatures:             contextFeatures,
+		AutoCompactWindow:           autoCompactWindow,
+		ContextWindowMax:            body.ContextWindowMax,
+		CopilotAPI:                  copilotAPI,
+		CopilotAPISet:               copilotAPISet,
+		CopilotAPISource:            copilotAPISource,
+		FastMode:                    fastMode,
+		FastModeSet:                 fastModeSet,
+		ReplyToConv:                 replyToConv,
+		SpawnedByConv:               spawnerConvID,
+		IsOwner:                     isOwner,
+		PermissionOverrides:         permOverrides,
+		Timeout:                     timeout,
 		// Verbatim snapshot of the spawn request, recorded onto the new actor's
 		// agents.initial_spawn_config in enrollSpawnedConv (a durable, agent-level
 		// "what was this spawned with" record). Marshalling the already-decoded
@@ -4261,14 +4394,43 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// executeSpawn intentionally re-reads default profiles as a safety net for
 	// non-HTTP callers. If state changed after the handler snapshot, report the
 	// values that actually reached the spawner and label the late fill honestly.
-	for field, launched := range map[*agent.ResolvedField]string{
-		&resolvedLaunch.Harness: outcome.Harness,
-		&resolvedLaunch.Model:   outcome.Model,
-		&resolvedLaunch.Effort:  outcome.Effort,
+	//
+	// Compared against executeSpawn's OWN echo rather than three loose strings,
+	// so this covers every echoed field: before TCL-1097 a late fill of the
+	// Copilot drive, the sandbox implementation, fast mode or the context cap
+	// changed the launch and left this response describing the snapshot.
+	// The relabel prefers the tier the final resolution NAMES and falls back to
+	// the anonymous launch-default label. A difference is not always a race: for
+	// fast_mode an explicit "inherit" clears the Set bit, so the overlay re-reads
+	// the profile tiers the handler deliberately suppressed and a group default
+	// legitimately wins here (that override is TCL-1109 and is not this echo's
+	// doing). Whatever the cause, an operator needs the profile's NAME to go and
+	// change it — "default profile (applied at launch)" names no tier at all, and
+	// is kept only for a final source that names nothing usable either.
+	launched := outcome.Resolved
+	if launched == nil {
+		launched = &agent.ResolvedLaunch{}
+	}
+	for field, final := range map[*agent.ResolvedField]agent.ResolvedField{
+		&resolvedLaunch.Harness:          launched.Harness,
+		&resolvedLaunch.Model:            launched.Model,
+		&resolvedLaunch.Effort:           launched.Effort,
+		&resolvedLaunch.ContextWindowMax: launched.ContextWindowMax,
+		&resolvedLaunch.CopilotAPI:       launched.CopilotAPI,
+		&resolvedLaunch.FastMode:         launched.FastMode,
+		&resolvedLaunch.SandboxImpl:      launched.SandboxImpl,
 	} {
-		if field.Value != launched {
-			field.Value = launched
+		if field.Value != final.Value {
+			field.Value = final.Value
 			field.Source = agent.ProvLaunchDefault
+			if named := strings.TrimSpace(final.Source); named != "" && named != agent.ProvExplicit {
+				// Both halves, in the two places built to carry them: the tier goes in
+				// Source because that is what an operator acts on, and the fact that it
+				// landed late goes in Note because that is what explains the response
+				// differing from what the request looked like it would produce.
+				field.Source = final.Source
+				field.Note = agent.ProvLaunchFillNote
+			}
 		}
 	}
 	setAuditSpawnResolved(r, spawnAuditResolution(p, resolvedLaunch, namedProfileHandle, map[string]*db.SpawnProfile{
@@ -4522,6 +4684,36 @@ type spawnParams struct {
 	// used to read the first (TCL-1090).
 	CopilotAPISource    string
 	SSHWorkaroundSource string
+	// HarnessSource / ModelSource / EffortSource / ContextWindowMaxSource /
+	// FastModeSource / SandboxImplementationSource complete the set of
+	// attributions the resolved-launch echo renders, alongside CopilotAPISource
+	// and HarnessBuiltinModeSource above. Together they are what lets
+	// resolveLaunchProvenance build that echo from the params ALONE, inside
+	// executeSpawn, for every caller — including the ones that never reach the
+	// HTTP boundary where the echo used to be assembled by hand (TCL-1097).
+	//
+	// A caller that resolved earlier tiers of its own (the template deploy walks
+	// the template/role/profile tiers before it ever calls executeSpawn) seeds
+	// them here; applyDefaultProfile merges its own answer over the top with
+	// preferResolvedSource. A caller that seeds nothing still gets the default
+	// tiers named correctly — which is the point: provenance by existing, not by
+	// remembering.
+	HarnessSource               string
+	ModelSource                 string
+	EffortSource                string
+	ContextWindowMaxSource      string
+	FastModeSource              string
+	SandboxImplementationSource string
+	// LaunchNotes are the disclosures applyDefaultProfile's own resolution
+	// produced — today, a default-profile value SKIPPED because it targets a
+	// different harness than the launch resolved to.
+	//
+	// They were discarded for as long as that function has existed, which meant
+	// the direct spawn path told an operator "your group default profile's model
+	// was ignored, and why" while every other caller said only "harness default",
+	// leaving them unable to tell a tier that never spoke from one that spoke and
+	// was rejected (found by cold review on TCL-1097). The echo carries them out.
+	LaunchNotes []string
 	// FastMode/FastModeSet preserve the nullable Codex service-tier choice:
 	// unset inherits config.toml, false forces standard, true forces fast.
 	FastMode    bool
@@ -4569,12 +4761,14 @@ type spawnParams struct {
 	// agent comes up already owning the group. false = ordinary member.
 	IsOwner bool
 	// PermissionOverrides is the new agent's permanent per-slug override set
-	// to apply at birth: slug → "grant" | "deny". enrollSpawnedConv
-	// writes each via db.SetAgentPermissionOverride after the membership add,
-	// best-effort alongside IsOwner. Validated at the spawn boundary
-	// (handleGroupSpawn) — every slug registered, every effect in {grant,deny}.
-	// nil/empty = inherit the group's default permissions.
-	PermissionOverrides map[string]string
+	// to apply at birth: slug → grant/deny plus an optional canonical scope.
+	// enrollSpawnedConv writes each via db.SetAgentPermissionOverrideWithScope
+	// after the membership add, best-effort alongside IsOwner. Validated at the
+	// spawn boundary (handleGroupSpawn) — every slug registered, every effect
+	// in {grant,deny}, every scope canonical and within the granter's own
+	// (§ checkGrantAttenuation). nil/empty = inherit the group's default
+	// permissions.
+	PermissionOverrides map[string]db.PermissionOverride
 	// PermissionGranter overrides the ordinary spawn-actor audit label for
 	// birth-time permission rows. It is reserved for trusted server-minted
 	// correlation such as scribe summon approvals; ordinary spawn requests
@@ -4647,17 +4841,16 @@ type spawnOutcome struct {
 	// focusSpawn closure; a deferred OpenCode response preserves the explicit
 	// browser intent before that closure can run.
 	FocusMode string
-	// Notes are per-agent launch disclosures for callers that do NOT render the
-	// resolved-field echo handleGroupSpawn builds. Today that is the template
-	// deploy path, which resolves the group/global default tiers inside
-	// executeSpawn and had no way to report what they decided.
+	// Resolved is the launch shape that actually took effect, per field, with the
+	// tier that chose it — the same echo handleGroupSpawn renders on the direct
+	// spawn path, built here so EVERY caller has one.
 	//
-	// Narrow on purpose: this carries the Copilot drive only, because a silent
-	// acquisition of the unverified API drive is the case that cannot wait. The
-	// template result is missing provenance for EVERY field, which is TCL-1097 —
-	// and this stopgap should be SUBSUMED by that general channel rather than
-	// left sitting beside it.
-	Notes []string
+	// Hung on the outcome rather than threaded out to the callers that want it:
+	// a caller written next year gets provenance by existing rather than by
+	// remembering to ask, which is the only version of this property that stays
+	// true. It replaces the narrow copilot_api-only Notes channel TCL-1090 landed
+	// as a stopgap; that field's one disclosure is now the CopilotAPI field here.
+	Resolved *agent.ResolvedLaunch
 }
 
 // preferResolvedSource combines the attribution an earlier stage produced with
@@ -4686,22 +4879,77 @@ func preferResolvedSource(existing, resolved string) string {
 	return resolved
 }
 
-// copilotDriveDisclosure reports the launch's Copilot drive when something other
-// than the caller chose it, naming the tier that did.
+// resolveLaunchProvenance builds the resolved-launch echo from the FINAL spawn
+// params — the values that actually reached the spawner, each tagged with the
+// tier that chose it.
 //
-// It reads the SAME resolved source that relaunchProfileForSpawn freezes into
-// the durable record, rather than re-deriving the fact at the response-building
-// site. Two independent computations of one fact is how a disclosure goes
-// quietly stale while continuing to render.
+// It is deliberately a function of spawnParams alone, so executeSpawn can call
+// it in one place for every caller instead of each caller assembling an echo of
+// its own. handleGroupSpawn built one by hand before this existed, which is why
+// the template deploy, the wave runner, the process performers and the scribe
+// summon reported no provenance at all: not because anyone decided they
+// shouldn't, but because none of them was the HTTP boundary (TCL-1097).
 //
-// Only an acquisition is disclosed. A launch that stays on send-keys has nothing
-// to warn about: send-keys is the known-good path, and a note on every ordinary
-// spawn would train the operator to skip the one that matters.
-func copilotDriveDisclosure(p spawnParams) []string {
-	if !p.CopilotAPI || p.CopilotAPISource == agent.ProvExplicit || p.CopilotAPISource == "" {
-		return nil
+// The field set matches the direct spawn echo exactly. A deploy echo richer than
+// the spawn echo would be a second shape by another name — and the fields the
+// echo does NOT cover are a hole in BOTH paths, tracked as TCL-1106 rather than
+// papered over on one of them.
+func resolveLaunchProvenance(p spawnParams) *agent.ResolvedLaunch {
+	contextWindowMax := ""
+	if p.ContextWindowMax > 0 {
+		contextWindowMax = strconv.FormatInt(p.ContextWindowMax, 10)
 	}
-	return []string{fmt.Sprintf("copilot_api: api (%s)", p.CopilotAPISource)}
+	// Named for what it selects, not for the flag that selects it, matching
+	// handleGroupSpawn: "api" reads correctly whether or not send-keys is still
+	// the other option.
+	copilotAPI := ""
+	if p.CopilotAPI {
+		copilotAPI = "api"
+	}
+	fastMode := ""
+	if p.FastModeSet {
+		fastMode = harness.FastModeOff
+		if p.FastMode {
+			fastMode = harness.FastModeOn
+		}
+	}
+	return &agent.ResolvedLaunch{
+		// harnessOrDefault, not p.Harness: a launch that named no harness reaches
+		// the spawner on the default one, and echoing "" would report a blank for a
+		// field that always has an answer.
+		Harness:          agent.ResolvedField{Value: harnessOrDefault(p.Harness), Source: p.HarnessSource},
+		Model:            agent.ResolvedField{Value: p.Model, Source: p.ModelSource},
+		Effort:           agent.ResolvedField{Value: p.Effort, Source: p.EffortSource},
+		ContextWindowMax: agent.ResolvedField{Value: contextWindowMax, Source: p.ContextWindowMaxSource},
+		CopilotAPI:       agent.ResolvedField{Value: copilotAPI, Source: p.CopilotAPISource},
+		FastMode:         agent.ResolvedField{Value: fastMode, Source: p.FastModeSource},
+		SandboxImpl: agent.ResolvedField{
+			Value: p.SandboxImplementation, Source: p.SandboxImplementationSource},
+		// The disclosures the safety-net overlay produced. Without them the echo
+		// reports "harness default" for a field whose group default profile value
+		// was consulted and SKIPPED, and the operator cannot tell "no tier spoke"
+		// from "a tier spoke and was rejected for this harness".
+		Notes: append([]string(nil), p.LaunchNotes...),
+	}
+}
+
+// copilotDriveAcquisitionLog reports the launch's Copilot drive when something
+// other than the caller chose it, naming the tier that did — the one disclosure
+// that is logged rather than only rendered.
+//
+// It reads the echo built above rather than re-deriving the fact, so the log and
+// the rendered field cannot drift: two independent computations of one fact is
+// how a disclosure goes quietly stale while continuing to render.
+//
+// Only an acquisition is reported. A launch that stays on send-keys has nothing
+// to warn about: send-keys is the known-good path, and a line on every ordinary
+// spawn would train the operator to skip the one that matters.
+func copilotDriveAcquisitionLog(rl *agent.ResolvedLaunch) string {
+	if rl == nil || rl.CopilotAPI.Value == "" ||
+		rl.CopilotAPI.Source == agent.ProvExplicit || rl.CopilotAPI.Source == "" {
+		return ""
+	}
+	return fmt.Sprintf("copilot_api: %s (%s)", rl.CopilotAPI.Value, rl.CopilotAPI.Source)
 }
 
 // spawnFailure is a typed failure from executeSpawn. The HTTP handler
@@ -5006,9 +5254,9 @@ func resolveIdentityLaunchField(
 // whole — an agent's permissions must be readable off one profile, not
 // assembled from its lineage.
 func resolveOverridesLaunchField(
-	explicitValue map[string]string, explicitSet bool,
+	explicitValue map[string]db.PermissionOverride, explicitSet bool,
 	tiers []launchProfileTier,
-) (value map[string]string, source string) {
+) (value map[string]db.PermissionOverride, source string) {
 	if explicitSet {
 		return explicitValue, agent.ProvExplicit
 	}
@@ -5296,6 +5544,9 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 		{groupDefaultProfile(g), agent.ProvGroupProfileSource},
 		{globalDefaultProfile(), agent.ProvGlobalProfileSource},
 	}
+	// Captured BEFORE the tier loop can fill it: afterwards there is no way to
+	// tell a harness the caller pinned from one a default profile supplied.
+	harnessWasPinned := strings.TrimSpace(p.Harness) != ""
 	tiers := make([]launchProfileTier, 0, len(profiles))
 	for _, tier := range profiles {
 		prof := tier.profile
@@ -5303,10 +5554,15 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 			if fail := profileSpawnFailure(prof, p.SpawnedByConv); fail != nil {
 				return fail
 			}
+			tierSource := profileSource(prof, tier.source)
 			tiers = append(tiers, launchProfileTier{
-				profile: prof, source: profileSource(prof, tier.source), defaultTier: true})
+				profile: prof, source: tierSource, defaultTier: true})
 			if strings.TrimSpace(p.Harness) == "" {
 				p.Harness = harnessOrDefault(prof.Harness)
+				// Attributed where it is decided. The harness does not go through
+				// resolveStringLaunchField (it is resolved first, to gate every other
+				// field), so this is the only place that knows which tier supplied it.
+				p.HarnessSource = tierSource
 			}
 		}
 	}
@@ -5317,67 +5573,106 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	// resolved); the load-bearing case is any other caller that reaches
 	// executeSpawn, where this keeps a Codex spawn sandboxed and gives lineage
 	// authorization concrete defaults even when no profile participates.
+	// Fill the harness attribution only when nothing above spoke: a caller that
+	// seeded one (the template deploy names its own tier) keeps it, a caller that
+	// merely passed a harness in its params gets the honest "explicit", and a
+	// launch nobody steered gets the harness default — never a blank, which reads
+	// as "unknown" on a field that is always decided by somebody.
+	if strings.TrimSpace(p.HarnessSource) == "" {
+		p.HarnessSource = agent.ProvHarnessDefault
+		if harnessWasPinned {
+			p.HarnessSource = agent.ProvExplicit
+		}
+	}
 	h, err := resolveSpawnHarness(p.Harness)
 	if err != nil {
 		return &spawnFailure{http.StatusBadRequest, "invalid_harness", err.Error()}
 	}
 	var fail *spawnFailure
-	p.Model, _, _, fail = resolveStringLaunchField(modelField, p.Model, h.Name, tiers,
+	// The `source` return of every resolve below used to be discarded here; it is
+	// now merged into the params so executeSpawn can echo WHICH TIER decided each
+	// field for callers that never saw the HTTP boundary (TCL-1097).
+	var fieldSource, fieldNote string
+	// Collected rather than discarded: see spawnParams.LaunchNotes. Every resolve
+	// below routes its note here, including the fields the echo does not render —
+	// a skipped approval or sandbox value is a disclosure whether or not that
+	// field has an echoed home of its own (the unrendered nine are TCL-1106).
+	noteLaunch := func() {
+		if strings.TrimSpace(fieldNote) != "" {
+			p.LaunchNotes = append(p.LaunchNotes, fieldNote)
+		}
+		fieldNote = ""
+	}
+	p.Model, fieldSource, fieldNote, fail = resolveStringLaunchField(modelField, p.Model, h.Name, tiers,
 		func(prof *db.SpawnProfile) string { return prof.Model }, h.Models.ValidateModel)
 	if fail != nil {
 		return fail
 	}
-	p.Effort, _, _, fail = resolveStringLaunchField(effortField, p.Effort, h.Name, tiers,
+	noteLaunch()
+	p.ModelSource = preferResolvedSource(p.ModelSource, fieldSource)
+	p.Effort, fieldSource, fieldNote, fail = resolveStringLaunchField(effortField, p.Effort, h.Name, tiers,
 		func(prof *db.SpawnProfile) string { return prof.Effort }, h.Models.ValidateEffort)
 	if fail != nil {
 		return fail
 	}
-	p.HarnessBuiltinMode, _, _, fail = resolveStringLaunchField("sandbox", p.HarnessBuiltinMode, h.Name, tiers,
+	noteLaunch()
+	p.EffortSource = preferResolvedSource(p.EffortSource, fieldSource)
+	p.HarnessBuiltinMode, _, fieldNote, fail = resolveStringLaunchField("sandbox", p.HarnessBuiltinMode, h.Name, tiers,
 		func(prof *db.SpawnProfile) string { return prof.Sandbox },
 		func(raw string) (string, error) { return harness.ValidateHarnessBuiltinMode(h, raw) })
 	if fail != nil {
 		return fail
 	}
-	p.ApprovalPolicy, _, _, fail = resolveStringLaunchField("approval", p.ApprovalPolicy, h.Name, tiers,
+	noteLaunch()
+	p.ApprovalPolicy, _, fieldNote, fail = resolveStringLaunchField("approval", p.ApprovalPolicy, h.Name, tiers,
 		func(prof *db.SpawnProfile) string { return prof.Approval },
 		func(raw string) (string, error) { return harness.ValidateApprovalPolicy(h, raw) })
 	if fail != nil {
 		return fail
 	}
-	p.ToolGovernance, _, _, fail = resolveStringLaunchField("tools", p.ToolGovernance, h.Name, tiers,
+	noteLaunch()
+	p.ToolGovernance, _, fieldNote, fail = resolveStringLaunchField("tools", p.ToolGovernance, h.Name, tiers,
 		func(prof *db.SpawnProfile) string { return prof.ToolGovernance },
 		func(raw string) (string, error) { return harness.ValidateToolGovernance(h, raw) })
 	if fail != nil {
 		return fail
 	}
-	p.AskUserQuestionTimeout, _, _, fail = resolveStringLaunchField("ask_user_question_timeout", p.AskUserQuestionTimeout, h.Name, tiers,
+	noteLaunch()
+	p.AskUserQuestionTimeout, _, fieldNote, fail = resolveStringLaunchField("ask_user_question_timeout", p.AskUserQuestionTimeout, h.Name, tiers,
 		func(prof *db.SpawnProfile) string { return prof.AskUserQuestionTimeout },
 		func(raw string) (string, error) { return harness.ResolveAskTimeoutMode(h, raw) })
 	if fail != nil {
 		return fail
 	}
-	p.AutoCompactWindow, _, _, fail = resolveStringLaunchField("auto_compact_window", p.AutoCompactWindow, h.Name, tiers,
+	noteLaunch()
+	p.AutoCompactWindow, _, fieldNote, fail = resolveStringLaunchField("auto_compact_window", p.AutoCompactWindow, h.Name, tiers,
 		func(prof *db.SpawnProfile) string { return prof.AutoCompactWindow },
 		func(raw string) (string, error) { return harness.ResolveAutoCompactWindow(h, raw) })
 	if fail != nil {
 		return fail
 	}
-	p.ContextWindowMax, _, _, fail = resolveIntLaunchField(contextWindowMaxField, p.ContextWindowMax, h.Name, tiers,
+	noteLaunch()
+	p.ContextWindowMax, fieldSource, fieldNote, fail = resolveIntLaunchField(contextWindowMaxField, p.ContextWindowMax, h.Name, tiers,
 		func(prof *db.SpawnProfile) int64 { return prof.ContextWindowMax },
 		func(raw int64) (int64, error) { return harness.ResolveCopilotContextWindow(h, raw) })
 	if fail != nil {
 		return fail
 	}
+	noteLaunch()
+	p.ContextWindowMaxSource = preferResolvedSource(p.ContextWindowMaxSource, fieldSource)
 	if strings.TrimSpace(p.ProfileContext) == "" {
-		p.ProfileContext, _ = resolveProfileStartupContext(h.Name, tiers)
+		p.ProfileContext, fieldNote = resolveProfileStartupContext(h.Name, tiers)
+		noteLaunch()
 	}
-	p.SandboxImplementation, _, _, fail = resolveStringLaunchField(
+	p.SandboxImplementation, fieldSource, fieldNote, fail = resolveStringLaunchField(
 		sandboxImplementationField, p.SandboxImplementation, h.Name, tiers,
 		func(prof *db.SpawnProfile) string { return prof.SandboxImplementation },
 		func(raw string) (string, error) { return validateSandboxImplementationForHarness(h, raw) })
 	if fail != nil {
 		return fail
 	}
+	noteLaunch()
+	p.SandboxImplementationSource = preferResolvedSource(p.SandboxImplementationSource, fieldSource)
 	// The host gate belongs here too, not only at the HTTP boundary. This
 	// function is the safety net every non-HTTP caller passes through — the
 	// template deploy path builds spawnParams directly — so a group or global
@@ -5390,27 +5685,30 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	if fail := sandboxImplementationPostureFailure(h.Name, p.SandboxImplementation); fail != nil {
 		return fail
 	}
-	p.AutoReview, p.AutoReviewSet, _, _, fail = resolveBoolLaunchField("auto_review", p.AutoReview,
+	p.AutoReview, p.AutoReviewSet, _, fieldNote, fail = resolveBoolLaunchField("auto_review", p.AutoReview,
 		p.AutoReviewSet || p.AutoReview, h.Name, tiers, func(prof *db.SpawnProfile) *bool { return prof.AutoReview },
 		func(v bool) (bool, error) { return harness.ResolveAutoReview(h, v) })
 	if fail != nil {
 		return fail
 	}
-	p.TrustDir, p.TrustDirSet, _, _, fail = resolveBoolLaunchField("trust_dir", p.TrustDir,
+	noteLaunch()
+	p.TrustDir, p.TrustDirSet, _, fieldNote, fail = resolveBoolLaunchField("trust_dir", p.TrustDir,
 		p.TrustDirSet || p.TrustDir, h.Name, tiers, func(prof *db.SpawnProfile) *bool { return prof.TrustDir },
 		func(v bool) (bool, error) { return harness.ResolveTrustDir(h, v) })
 	if fail != nil {
 		return fail
 	}
+	noteLaunch()
 	var copilotAPISource string
-	p.CopilotAPI, p.CopilotAPISet, copilotAPISource, _, fail = resolveBoolLaunchField("copilot_api", p.CopilotAPI,
+	p.CopilotAPI, p.CopilotAPISet, copilotAPISource, fieldNote, fail = resolveBoolLaunchField("copilot_api", p.CopilotAPI,
 		p.CopilotAPISet || p.CopilotAPI, h.Name, tiers, func(prof *db.SpawnProfile) *bool { return prof.CopilotAPI },
 		func(v bool) (bool, error) { return harness.ResolveCopilotAPI(h, &v) })
 	if fail != nil {
 		return fail
 	}
+	noteLaunch()
 	p.CopilotAPISource = preferResolvedSource(p.CopilotAPISource, copilotAPISource)
-	p.FastMode, p.FastModeSet, _, _, fail = resolveBoolLaunchField("fast_mode", p.FastMode,
+	p.FastMode, p.FastModeSet, fieldSource, fieldNote, fail = resolveBoolLaunchField("fast_mode", p.FastMode,
 		p.FastModeSet, h.Name, tiers, func(prof *db.SpawnProfile) *bool { return prof.FastMode },
 		func(v bool) (bool, error) {
 			_, err := harness.ResolveFastMode(h, &v)
@@ -5419,14 +5717,17 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	if fail != nil {
 		return fail
 	}
+	noteLaunch()
+	p.FastModeSource = preferResolvedSource(p.FastModeSource, fieldSource)
 	var sshWorkaroundSource string
-	p.SSHWorkaround, p.SSHWorkaroundSet, sshWorkaroundSource, _, fail = resolveBoolLaunchField(
+	p.SSHWorkaround, p.SSHWorkaroundSet, sshWorkaroundSource, fieldNote, fail = resolveBoolLaunchField(
 		"ssh_workaround", p.SSHWorkaround, p.SSHWorkaroundSet, h.Name, tiers,
 		func(prof *db.SpawnProfile) *bool { return prof.SSHWorkaround },
 		func(v bool) (bool, error) { return harness.ResolveSSHWorkaround(h, &v) })
 	if fail != nil {
 		return fail
 	}
+	noteLaunch()
 	p.SSHWorkaroundSource = preferResolvedSource(p.SSHWorkaroundSource, sshWorkaroundSource)
 	// NB: the block below force-sets SSHWorkaroundSet for the harness default, so
 	// that bit says "this launch has a posture" and not "someone chose one" — the
@@ -5506,34 +5807,47 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failure *spawnFailure) {
 	groupName := spawnGroupName(g)
 	// Stamped here, once, rather than at each of the six spawnOutcome literals
-	// below: a disclosure that has to be repeated at every return is a disclosure
-	// that will be missing from the seventh, and missing silently. p is read at
-	// defer time, so this sees the value applyDefaultProfile resolved.
+	// below: an echo that has to be repeated at every return is an echo that will
+	// be missing from the seventh, and missing silently. p is read at defer time,
+	// so this sees the values applyDefaultProfile resolved.
 	defer func() {
 		if outcome == nil {
 			return
 		}
-		notes := copilotDriveDisclosure(p)
-		// ASSIGNED, not appended. The deferred-spawn path can return an inner
-		// executeSpawn's outcome pointer, whose own defer already stamped it —
-		// appending would render the same disclosure twice. Assignment is
-		// idempotent under that re-entrancy and says the same thing once.
-		outcome.Notes = notes
-		// And logged unconditionally, because Notes only reaches an operator on
-		// callers that render it. Today the wave/template path does and the
-		// scribe summon does not, and a caller added later inherits silence by
-		// default. The drive is unverified; "no agent acquires it silently" has to
-		// hold for every path through this function, not just the ones with a
-		// response body to put a note in.
+		// An echo already on the outcome is LEFT ALONE. The deferred-spawn path
+		// returns an INNER executeSpawn's outcome pointer, and the inner call ran
+		// its own applyDefaultProfile — later, against whatever the default
+		// profiles said by then, which is the resolution the agent actually
+		// launched with. Re-stamping from this frame's older params would replace a
+		// truthful echo with a stale one whenever a profile changed inside the
+		// deferred window (found by cold review; the earlier version of this
+		// comment claimed both frames must agree, which holds only when nothing
+		// changed between them).
+		if outcome.Resolved == nil {
+			outcome.Resolved = resolveLaunchProvenance(p)
+		}
+		// And the Copilot drive is additionally LOGGED, because the echo above only
+		// reaches an operator on callers that render it. The template deploy does;
+		// the scribe summon does not (measured: its response is
+		// {agent_id, conv_id, focus_mode, focus_ws, name, reused} and nothing more —
+		// TCL-1104), and a caller added later inherits silence by default. The
+		// drive is unverified; "no agent acquires it silently" has to hold for
+		// every path through this function, not just the ones whose result some
+		// human actually reads.
 		//
-		// DO NOT "clean this up" by threading the note out to each caller instead:
-		// A SAFETY PROPERTY THAT DEPENDS ON EVERY FUTURE CALLER REMEMBERING IS NOT
-		// A SAFETY PROPERTY. One place that structurally cannot be missed beats
-		// four places that happen to be correct today.
-		for _, note := range notes {
+		// DO NOT "clean this up" as redundant with the echo now that one exists.
+		// It is redundant only for the surfaces that RENDER the echo, and the
+		// point of it is the surfaces that do not. It becomes removable when
+		// TCL-1104 lands and every caller renders — and that is a decision to make
+		// then, naming the surfaces, not a tidy-up to make in passing.
+		//
+		// DO NOT "clean this up" by threading the disclosure out to each caller
+		// either: A SAFETY PROPERTY THAT DEPENDS ON EVERY FUTURE CALLER
+		// REMEMBERING IS NOT A SAFETY PROPERTY.
+		if disclosure := copilotDriveAcquisitionLog(outcome.Resolved); disclosure != "" {
 			slog.Warn("spawn: agent placed on the Copilot API drive by a non-explicit tier",
 				"conv", outcome.ConvID, "label", outcome.Label, "group", groupName,
-				"disclosure", note)
+				"disclosure", disclosure)
 		}
 	}()
 	privateAttachmentCleanup := func() {}
@@ -6798,10 +7112,13 @@ func completePendingSpawnBackfill(g *db.AgentGroup, p spawnParams, label, convID
 		requeuePendingSpawn(label, ps)
 		return
 	} else if m != nil {
-		// Same repair the sweeper's already-enrolled path performs: a prior
-		// attempt may have committed the membership but lost the task-ref
-		// write, and the claimed row is the only durable copy of the intent —
-		// requeue it on a failed repair so the sweeper retries.
+		// Same repairs the sweeper's already-enrolled path performs: a prior
+		// attempt may have committed membership but lost authorization lineage
+		// or the task-ref write. Requeue the only durable intent on failure.
+		if !ensurePendingSpawnLineageBound(convID, ps) {
+			requeuePendingSpawn(label, ps)
+			return
+		}
 		if !ensurePendingTaskRefBound(convID, ps) {
 			requeuePendingSpawn(label, ps)
 		}
@@ -7079,6 +7396,19 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 		}
 	}
 
+	// Durable spawn lineage is an authorization fact: @self-spawned and
+	// @descendants grants range over this edge. Resolve the stable parent from
+	// the pending-spawn companion when available, otherwise from the synchronous
+	// caller conv. An agent-initiated spawn must not silently land without its
+	// edge; failing enrollment is the safe direction because a missing edge
+	// would make a deliberately delegated capability unexpectedly unusable.
+	// Human-initiated spawns have no parent and therefore write no row. Clone is
+	// a separate lifecycle path and deliberately never calls this writer.
+	if err := recordSpawnLineage(agentID, p.SpawnedByAgent, p.SpawnedByConv); err != nil {
+		return 0, actorCreated, &spawnFailure{http.StatusInternalServerError, "identity",
+			"failed to record spawning agent lineage: " + err.Error()}
+	}
+
 	// Birth-time access controls: make the new agent a group owner
 	// and/or apply its requested per-slug permission overrides, the same writes
 	// the group-template instantiator performs after executeSpawn — but folded
@@ -7105,10 +7435,11 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 	if permissionGranter == "" {
 		permissionGranter = granter
 	}
-	for slug, effect := range p.PermissionOverrides {
-		if err := db.SetAgentPermissionOverride(convID, slug, effect, permissionGranter); err != nil {
+	for _, slug := range db.SortedOverrideSlugs(p.PermissionOverrides) {
+		override := p.PermissionOverrides[slug]
+		if err := db.SetAgentPermissionOverrideWithScope(convID, slug, override.Effect, override.Scope, permissionGranter); err != nil {
 			slog.Warn("spawn: failed to apply birth permission override",
-				"conv", convID, "slug", slug, "effect", effect, "error", err)
+				"conv", convID, "slug", slug, "effect", override.Effect, "scope", override.Scope, "error", err)
 		}
 	}
 
@@ -7177,6 +7508,32 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 	return spawnContextMsgID, actorCreated, nil
 }
 
+// recordSpawnLineage resolves an agent-initiated spawn's stable parent and
+// records the immutable child edge. A human spawn has neither parent field and
+// is a no-op. Once a parent is present, an unresolved child identity is an
+// error: lineage is authorization state and must never be skipped silently.
+func recordSpawnLineage(childAgentID, spawnedByAgent, spawnedByConv string) error {
+	parentAgentID := strings.TrimSpace(spawnedByAgent)
+	if parentAgentID == "" && spawnedByConv != "" {
+		var err error
+		parentAgentID, err = db.AgentIDForConv(spawnedByConv)
+		if err != nil {
+			return fmt.Errorf("resolve spawning agent %s: %w", spawnedByConv, err)
+		}
+		if parentAgentID == "" {
+			return fmt.Errorf("resolve spawning agent %s: no stable actor", spawnedByConv)
+		}
+	}
+	if parentAgentID == "" {
+		return nil
+	}
+	childAgentID = strings.TrimSpace(childAgentID)
+	if childAgentID == "" {
+		return fmt.Errorf("resolve spawned child actor: no stable actor")
+	}
+	return db.RecordAgentLineage(childAgentID, parentAgentID, time.Now().UTC())
+}
+
 // rollbackSpawnEnrollment undoes enrollSpawnedConv when a launch-enrollment
 // spawn's fork itself fails to start (the `tclaude session new` subprocess
 // never even launches — e.g. the binary is missing from PATH). The enrollment
@@ -7234,6 +7591,16 @@ func rollbackSpawnEnrollment(g *db.AgentGroup, convID string, msgID int64, actor
 		slog.Warn("spawn: rollback failed to clear process command metadata", "conv", convID, "error", err)
 	}
 	if actorCreated {
+		agentID, err := db.AgentIDForConv(convID)
+		if err != nil {
+			slog.Warn("spawn: rollback failed to resolve stranded actor lineage",
+				"conv", convID, "error", err)
+		} else if agentID != "" {
+			if _, err := db.DeleteAgentLineageForChild(agentID); err != nil {
+				slog.Warn("spawn: rollback failed to delete stranded actor lineage",
+					"conv", convID, "agent", agentID, "error", err)
+			}
+		}
 		if _, err := db.DeleteAgentByConvID(convID); err != nil {
 			slog.Warn("spawn: rollback failed to delete stranded actor",
 				"conv", convID, "error", err)

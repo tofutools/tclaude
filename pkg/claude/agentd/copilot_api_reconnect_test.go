@@ -468,7 +468,37 @@ func TestCopilotAPIReconnectStandsDownForALaunchThatWonTheRace(t *testing.T) {
 // this feature: there is no drop to observe and no other path establishes a
 // handle for an already-running agent, so a reconcile nobody calls is a
 // perfectly healthy-looking package that fixes nothing.
+//
+// # Why it is not enough for the call to EXIST
+//
+// The first version of this guard walked the whole file for a call by that name
+// and passed if it found one. That certified presence and claimed execution, and
+// it was beaten in one line under review:
+//
+//	if os.Getenv("TCLAUDE_NEVER_SET_XYZ") == "1" {
+//	    startCopilotAPIReconnect(cronStop)
+//	}
+//
+// Guard green, every API-driven Copilot agent mute after every restart. A
+// whole-file walk is worse still: the satisfying call need not be in the startup
+// path at all, so a dead helper elsewhere in serve.go would have kept it happy.
+//
+// So this locates runServe and requires the call at the TOP LEVEL of its body —
+// not nested in any if, loop, select or closure. Top level is what "runs" means
+// for a statement list.
+//
+// # What it still cannot see
+//
+// Reachability. An early return above the call leaves it correctly positioned
+// and unreachable, and no static check of call shape sees that. Stated so the
+// next reader treats this as a bounded claim rather than a total one — it is the
+// same residue every guard of this family carries.
 func TestTheDaemonStartupCallsTheCopilotAPIReconcile(t *testing.T) {
+	const (
+		starter = "startCopilotAPIReconnect"
+		caller  = "runServe"
+	)
+
 	source, err := os.ReadFile("serve.go")
 	require.NoError(t, err)
 
@@ -476,23 +506,32 @@ func TestTheDaemonStartupCallsTheCopilotAPIReconcile(t *testing.T) {
 	file, err := parser.ParseFile(fset, "serve.go", source, 0)
 	require.NoError(t, err)
 
-	called := false
-	ast.Inspect(file, func(node ast.Node) bool {
-		call, ok := node.(*ast.CallExpr)
-		if !ok {
-			return true
+	var body *ast.BlockStmt
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == caller {
+			body = fn.Body
 		}
-		if name, ok := call.Fun.(*ast.Ident); ok && name.Name == "startCopilotAPIReconnect" {
-			called = true
-		}
-		return true
-	})
-	assert.True(t, called,
-		"serve.go must call startCopilotAPIReconnect. An agentd restart is the ONLY "+
-			"trigger for re-establishing an already-running agent's channel — nothing else "+
-			"in the daemon does it — so a reconcile that is never called leaves every "+
-			"API-driven Copilot agent mute until it is relaunched, which is the exact "+
-			"failure this path exists to remove")
+	}
+	require.NotNilf(t, body, "%s must exist in serve.go for this guard to mean "+
+		"anything; if the daemon's startup moved, this guard has to move with it",
+		caller)
+
+	// The same corrected descent the dialler guard uses: it refuses to enter a
+	// function literal or the skippable operand of && / ||, so a call parked in a
+	// closure that nobody invokes does not count. That exact shape beat the first
+	// version of this guard under review.
+	unconditional := callAlwaysEvaluated(body, starter)
+
+	assert.True(t, unconditional,
+		"%s must call %s UNCONDITIONALLY, at the top level of its body. An agentd "+
+			"restart is the ONLY trigger for re-establishing an already-running "+
+			"agent's channel — nothing else in the daemon does it — so a reconcile "+
+			"that does not run leaves every API-driven Copilot agent mute until it "+
+			"is relaunched. A call that merely EXISTS somewhere in serve.go does not "+
+			"establish this: wrapping it in a conditional no daemon start takes, or "+
+			"parking it in a helper nobody invokes, satisfies presence while "+
+			"destroying the behaviour",
+		caller, starter)
 }
 
 // The reaper releases a port record on a grace timer, and this sweep reads the

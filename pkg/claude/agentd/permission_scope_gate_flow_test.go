@@ -103,9 +103,12 @@ func TestPermissionScope_GroupScopedGrantGatesSpawnPerGroup(t *testing.T) {
 		"a scoped authorization must be recorded on the audit row")
 }
 
-// A dimension the call site does not describe fails CLOSED. groups.spawn also
-// declares spawn_profile, but no production handler passes it until Phase 4 —
-// so a profile-scoped grant authorizes nothing yet rather than everything.
+// A dimension the call site does not describe fails CLOSED. handleGroupSpawn
+// describes spawn_profile only when a NAMED profile resolves, so a spawn with
+// no profile (and no group/global default to fall back to) leaves it
+// undescribed — and a profile-scoped grant authorizes nothing rather than
+// everything. See TestAttenuation_SpawnProfileScopedGrantGatesPerProfile for
+// the satisfied half.
 func TestPermissionScope_UndescribedDimensionFailsClosed(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
@@ -138,11 +141,10 @@ func TestPermissionScope_UnscopedGrantIsUnaffected(t *testing.T) {
 	}
 }
 
-// An @selector is parseable and persistable since Phase 1, but the spawn
-// lineage it ranges over arrives in Phase 5. Until then it must authorize
-// nothing — the fail-closed direction, since the alternative turns a
-// deliberately narrow grant into a wildcard.
-func TestPermissionScope_SelectorFailsClosedUntilLineage(t *testing.T) {
+// A target that has no recorded lineage remains outside @descendants. This is
+// especially important for pre-migration agents, whose SpawnRequest snapshot
+// does not identify their spawner and therefore cannot be safely backfilled.
+func TestPermissionScope_SelectorRefusesUnrelatedTarget(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
 	const caller = "scopegate-caller-aaaa-bbbb-cccc-00000000004"
@@ -165,6 +167,85 @@ func TestPermissionScope_SelectorFailsClosedUntilLineage(t *testing.T) {
 	rec = agentReq(t, f, caller, http.MethodPost,
 		"/v1/agent/"+target+"/retire?shutdown=0&delete_worktree=0", nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+}
+
+func TestPermissionScope_LineageSelectorsGateRetire(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f.HaveGroup("alpha")
+	const parent = "scope-lineage-parent-aaaa-bbbb-cccc-00000001"
+	haveSpawnCapableMember(t, f, "alpha", parent)
+	require.NoError(t, db.GrantAgentPermission(parent, agentd.PermGroupsSpawn, "test"))
+
+	child := f.AsAgent(parent).SpawnWith("alpha", map[string]any{"name": "lineage-child"})
+	require.Equalf(t, http.StatusOK, child.Code, "child spawn: %s", child.Raw)
+	require.NotEmpty(t, child.ConvID)
+	require.NoError(t, db.GrantAgentPermission(child.ConvID, agentd.PermGroupsSpawn, "test"))
+	grandchild := f.AsAgent(child.ConvID).SpawnWith("alpha", map[string]any{"name": "lineage-grandchild"})
+	require.Equalf(t, http.StatusOK, grandchild.Code, "grandchild spawn: %s", grandchild.Raw)
+	require.NotEmpty(t, grandchild.ConvID)
+
+	const unrelated = "scope-lineage-unrelated-aaaa-bbbb-cccc-00001"
+	f.HaveMember("alpha", unrelated)
+
+	grantScoped(t, f, parent, agentd.PermAgentRetire,
+		map[string]any{"target_agent": []string{"@self-spawned"}})
+	refusedGrandchild := agentReq(t, f, parent, http.MethodPost,
+		"/v1/agent/"+grandchild.ConvID+"/retire?shutdown=0&delete_worktree=0", nil)
+	require.Equal(t, http.StatusForbidden, refusedGrandchild.Code, refusedGrandchild.Body.String())
+	allowedChild := agentReq(t, f, parent, http.MethodPost,
+		"/v1/agent/"+child.ConvID+"/retire?shutdown=0&delete_worktree=0", nil)
+	require.Equal(t, http.StatusOK, allowedChild.Code, allowedChild.Body.String())
+
+	grantScoped(t, f, parent, agentd.PermAgentRetire,
+		map[string]any{"target_agent": []string{"@descendants"}})
+	refusedUnrelated := agentReq(t, f, parent, http.MethodPost,
+		"/v1/agent/"+unrelated+"/retire?shutdown=0&delete_worktree=0", nil)
+	require.Equal(t, http.StatusForbidden, refusedUnrelated.Code, refusedUnrelated.Body.String())
+	allowedGrandchild := agentReq(t, f, parent, http.MethodPost,
+		"/v1/agent/"+grandchild.ConvID+"/retire?shutdown=0&delete_worktree=0", nil)
+	require.Equal(t, http.StatusOK, allowedGrandchild.Code, allowedGrandchild.Body.String())
+
+	parentID, err := db.AgentIDForConv(parent)
+	require.NoError(t, err)
+	childID, err := db.AgentIDForConv(child.ConvID)
+	require.NoError(t, err)
+	grandchildID, err := db.AgentIDForConv(grandchild.ConvID)
+	require.NoError(t, err)
+	direct, err := db.IsDirectAgentChild(parentID, childID)
+	require.NoError(t, err)
+	assert.True(t, direct, "retiring a direct child preserves its lineage row")
+	descendant, err := db.IsAgentDescendant(parentID, grandchildID)
+	require.NoError(t, err)
+	assert.True(t, descendant, "retiring both descendants preserves the transitive facts")
+}
+
+func TestPermissionScope_CloneDoesNotBecomeDescendant(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	const source = "scope-clone-source-aaaa-bbbb-cccc-000000001"
+	f.HaveConvWithTitle(source, "clone-source")
+	f.HaveAliveSession(source, "spwn-clone-source", "tmux-clone-source", f.World.HomeDir)
+	f.HaveGroup("alpha")
+	f.HaveMember("alpha", source)
+	require.NoError(t, db.GrantAgentPermission(source, agentd.PermAgentClone, "test"))
+
+	clone := f.AsAgent(source).CloneFresh(source)
+	require.Equalf(t, http.StatusOK, clone.Code, "clone: %s", clone.Raw)
+	require.NotEmpty(t, clone.NewConv)
+	grantScoped(t, f, source, agentd.PermAgentRetire,
+		map[string]any{"target_agent": []string{"@descendants"}})
+	rec := agentReq(t, f, source, http.MethodPost,
+		"/v1/agent/"+clone.NewConv+"/retire?shutdown=0&delete_worktree=0", nil)
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+
+	sourceID, err := db.AgentIDForConv(source)
+	require.NoError(t, err)
+	cloneID, err := db.AgentIDForConv(clone.NewConv)
+	require.NoError(t, err)
+	matched, err := db.IsAgentDescendant(sourceID, cloneID)
+	require.NoError(t, err)
+	assert.False(t, matched, "clone is a fork, not a spawned child")
 }
 
 // setGroupGrantScope attaches a scope to an existing group grant. Phase 1

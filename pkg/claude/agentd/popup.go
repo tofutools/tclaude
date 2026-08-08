@@ -565,6 +565,25 @@ func persistAlwaysAllowGrant(req *approvalRequest, scopeJSON string) {
 			}
 			scopeJSON = merged
 		}
+	} else if len(permissionScopeDimsForSlug(req.perm)) > 0 {
+		// The BLANKET "always allow" persists an unscoped grant, which for a
+		// scopeable slug would overwrite an operator's narrowing with the widest
+		// possible form — and the popup is exactly what fires when a scoped grant
+		// did NOT cover the action, so this is the moment that widening would
+		// happen. Refuse it (guard from main), and note that the scoped variant
+		// above is the answer for this case: it persists only the dimension values
+		// the gate actually evaluated.
+		//
+		// No auto-grantable slug declares scope dimensions today
+		// (TestPermissionRegistry_AutoGrantableSlugsAreNotScopeable pins that), so
+		// this is unreachable. It is here so that adding ScopeDims to an
+		// auto-grantable slug fails safe instead of quietly stripping scopes. The
+		// one-off approval the human just gave still proceeds — only the
+		// persistence is skipped.
+		slog.Warn("popup: refusing to persist unscoped always-allow for a scopeable slug; "+
+			"it would replace any narrowing with an unscoped grant",
+			"perm", req.perm, "conv", req.convID)
+		return
 	}
 	if err := db.SetAgentPermissionOverrideByAgentIDWithScope(
 		req.agentID, req.perm, db.PermEffectGrant, scopeJSON, popupAlwaysGranter(scopeJSON)); err != nil {

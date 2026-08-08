@@ -23,7 +23,7 @@ func TestMigrateV90toV91_FreshSchema(t *testing.T) {
 // TestMigrateV90toV91_AddsRolesAndRoleRef drives the real v90→v91 migration
 // over a v90-pinned DB: it asserts the roles table appears, the role_ref
 // column is added to group_template_agents, a pre-existing template agent
-// reads role_ref back as '', the version advances, and a re-run is a clean
+// reads role_ref back as ”, the version advances, and a re-run is a clean
 // no-op.
 func TestMigrateV90toV91_AddsRolesAndRoleRef(t *testing.T) {
 	setupTestDB(t)
@@ -81,7 +81,7 @@ func TestRole_RoundTrip(t *testing.T) {
 
 	id, err := CreateRole(&Role{
 		Name: "auditor", Descr: "d", Brief: "You audit.",
-		Harness: "claude", Model: "opus", Permissions: []string{"human.notify"},
+		Harness: "claude", Model: "opus", Permissions: UnscopedGrants([]string{"human.notify"}),
 	})
 	require.NoError(t, err)
 	require.NotZero(t, id)
@@ -93,7 +93,7 @@ func TestRole_RoundTrip(t *testing.T) {
 	assert.Equal(t, "You audit.", rl.Brief)
 	assert.Equal(t, "claude", rl.Harness)
 	assert.Equal(t, "opus", rl.Model)
-	assert.Equal(t, []string{"human.notify"}, rl.Permissions)
+	assert.Equal(t, UnscopedGrants([]string{"human.notify"}), rl.Permissions)
 
 	// A duplicate name surfaces as ErrRoleNameTaken.
 	_, err = CreateRole(&Role{Name: "auditor"})

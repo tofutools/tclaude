@@ -453,6 +453,18 @@ var permissionRegistry = []PermSlug{
 			"(tclaude proxy github pr create/comment/ready, issue comment). Everything it writes is attributed to the operator's " +
 			"GitHub account, so it is not default-granted and not owner-implied.",
 	},
+	{
+		Slug: PermLinearRead,
+		Description: "Read Linear issues and comments through the daemon's Linear API key (tclaude proxy linear whoami, " +
+			"issue view/ls/comments/search). Restricted to the teams on the operator's agent.linear_proxy.allowed_teams list. " +
+			"Not default-granted: it reads private workspace data as the operator.",
+	},
+	{
+		Slug: PermLinearWrite,
+		Description: "Create and update Linear issues, comment on them, and attach links, through the daemon's Linear API key " +
+			"(tclaude proxy linear issue create/comment/update/link). Everything it writes is attributed to the operator's Linear " +
+			"account, and it additionally requires agent.linear_proxy.allow_write. Not default-granted and not owner-implied.",
+	},
 }
 
 // Permission slugs for the permissions-management endpoints themselves.
@@ -1289,6 +1301,15 @@ func handlePermissionsGrant(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_scope", err.Error())
 		return
 	}
+	// Attenuation-only delegation: an AGENT granter may not hand out a scope
+	// wider than its own for this slug. granter is "" for the human operator,
+	// who is unconstrained. This also covers the sentinel "default" target
+	// below: adding a slug to the global defaults list confers it UNSCOPED to
+	// every agent, which a scoped granter can never cover.
+	if err := checkGrantAttenuation(granter, []conferredGrant{{Slug: body.Slug, Scope: scopeJSON}}); err != nil {
+		writeError(w, http.StatusForbidden, "scope_not_attenuated", err.Error())
+		return
+	}
 	target, err := resolveTarget(body.Target)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
@@ -1388,7 +1409,8 @@ func handlePermissionsDeny(w http.ResponseWriter, r *http.Request) {
 // per-conv target it clears whichever override (grant or deny) is
 // present, returning the slug to its inherited default. Idempotent.
 func handlePermissionsRevoke(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requirePermission(w, r, PermPermissionsRevoke); !ok {
+	caller, ok := requirePermission(w, r, PermPermissionsRevoke)
+	if !ok {
 		return
 	}
 	body, ok := decodeMutateReq(w, r)
@@ -1405,6 +1427,9 @@ func handlePermissionsRevoke(w http.ResponseWriter, r *http.Request) {
 	target, err := resolveTarget(body.Target)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
+		return
+	}
+	if selfScopeShedRefused(w, caller, target, body.Slug) {
 		return
 	}
 	resp := permissionsMutateResp{Target: body.Target, Slug: body.Slug, Effect: "default"}

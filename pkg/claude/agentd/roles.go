@@ -37,19 +37,19 @@ import (
 // response-only (ignored on input). Permissions is non-omitempty so a consumer
 // can range over it safely.
 type roleJSON struct {
-	Name           string   `json:"name"`
-	Descr          string   `json:"descr,omitempty"`
-	Brief          string   `json:"brief,omitempty"`
-	SpawnProfile   string   `json:"spawn_profile,omitempty"`
-	Harness        string   `json:"harness,omitempty"`
-	Model          string   `json:"model,omitempty"`
-	Effort         string   `json:"effort,omitempty"`
-	Sandbox        string   `json:"sandbox,omitempty"`
-	Approval       string   `json:"approval,omitempty"`
-	ToolGovernance string   `json:"tools,omitempty"`
-	Permissions    []string `json:"permissions"`
-	CreatedAt      string   `json:"created_at,omitempty"`
-	UpdatedAt      string   `json:"updated_at,omitempty"`
+	Name           string               `json:"name"`
+	Descr          string               `json:"descr,omitempty"`
+	Brief          string               `json:"brief,omitempty"`
+	SpawnProfile   string               `json:"spawn_profile,omitempty"`
+	Harness        string               `json:"harness,omitempty"`
+	Model          string               `json:"model,omitempty"`
+	Effort         string               `json:"effort,omitempty"`
+	Sandbox        string               `json:"sandbox,omitempty"`
+	Approval       string               `json:"approval,omitempty"`
+	ToolGovernance string               `json:"tools,omitempty"`
+	Permissions    []db.PermissionGrant `json:"permissions"`
+	CreatedAt      string               `json:"created_at,omitempty"`
+	UpdatedAt      string               `json:"updated_at,omitempty"`
 }
 
 // roleToJSON projects a db.Role onto the wire shape, with a non-nil
@@ -57,7 +57,7 @@ type roleJSON struct {
 func roleToJSON(rl *db.Role) roleJSON {
 	perms := rl.Permissions
 	if perms == nil {
-		perms = []string{}
+		perms = []db.PermissionGrant{}
 	}
 	out := roleJSON{
 		Name:           rl.Name,
@@ -153,17 +153,9 @@ func buildRoleFromJSON(body roleJSON) (*db.Role, *spawnFailure) {
 		profRef = p.Name
 	}
 
-	perms := []string{}
-	for _, slug := range body.Permissions {
-		slug = strings.TrimSpace(slug)
-		if slug == "" {
-			continue
-		}
-		if !IsKnownPermSlug(slug) {
-			return nil, &spawnFailure{http.StatusBadRequest, "unknown_slug",
-				fmt.Sprintf("unknown permission slug %q. Known slugs: %s.", slug, strings.Join(knownSlugs(), ", "))}
-		}
-		perms = append(perms, slug)
+	perms, permFail := normalizeBlueprintGrants(body.Permissions)
+	if permFail != nil {
+		return nil, permFail
 	}
 
 	return &db.Role{

@@ -636,8 +636,15 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
     // and a slug back at Default has no row to attach one to. Sending a scope
     // for either is a 400 from the daemon, so drop them here where the user's
     // intent ("I set this one back to Default") is still legible.
+    //
+    // Every granted, scopable slug is sent EXPLICITLY, including as {}: the
+    // daemon reads a missing key as "keep the stored scope" (so an unrelated
+    // save cannot strip a narrowing), which means clearing the last chip has
+    // to be said out loud to take effect.
     const scoped = scopesEditable ? Object.fromEntries(rows
-      .filter((row) => currentEffect(row.slug) === 'grant' && Object.keys(scopeOf(row.slug)).length)
+      .filter((row) => currentEffect(row.slug) === 'grant'
+        && (!!row.scope_dims?.length || Object.keys(scopeOf(row.slug)).length)
+        && !unreadable.has(row.slug))
       .map((row) => [row.slug, scopeOf(row.slug)])) : {};
     try { await actions.savePermissions(descriptor, full, scoped); state.close(); }
     catch (cause) { setError(errorText(cause)); }

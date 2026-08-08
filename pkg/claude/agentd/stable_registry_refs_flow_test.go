@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -122,8 +123,8 @@ func TestStableRegistryRefs_TemplateLaunchResolutionAndNotesSurviveProfileRename
 		Spawned int `json:"spawned"`
 		Failed  int `json:"failed"`
 		Agents  []struct {
-			ConvID string   `json:"conv_id"`
-			Notes  []string `json:"notes"`
+			ConvID   string                `json:"conv_id"`
+			Resolved *agent.ResolvedLaunch `json:"resolved"`
 		} `json:"agents"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &result))
@@ -137,6 +138,7 @@ func TestStableRegistryRefs_TemplateLaunchResolutionAndNotesSurviveProfileRename
 	spawnEffort, ok := f.World.SpawnEffort(result.Agents[0].ConvID)
 	require.True(t, ok)
 	assert.Equal(t, "high", spawnEffort)
-	assert.Contains(t, result.Agents[0].Notes,
+	require.NotNil(t, result.Agents[0].Resolved)
+	assert.Contains(t, result.Agents[0].Resolved.Notes,
 		`profile "after" model ignored (not valid for claude)`)
 }

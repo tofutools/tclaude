@@ -82,6 +82,93 @@ func TestEnrollSpawnedConv_PointerBriefingBornUnread(t *testing.T) {
 	assert.Equal(t, msgID, queued[0].ID)
 }
 
+func TestEnrollSpawnedConv_RecordsStableSpawnerLineage(t *testing.T) {
+	setupTestDB(t)
+	parentID, _, err := db.EnsureAgentForConv("lineage-spawner-old", "spawn")
+	require.NoError(t, err)
+
+	// Exercise the synchronous path, which carries the caller conv rather than
+	// the pending-spawn row's stable companion.
+	_, _, fail := enrollSpawnedConv(nil, spawnParams{
+		SpawnedByConv: "lineage-spawner-old",
+	}, "lineage-child-direct", false)
+	require.Nil(t, fail)
+	childID, err := db.AgentIDForConv("lineage-child-direct")
+	require.NoError(t, err)
+	direct, err := db.IsDirectAgentChild(parentID, childID)
+	require.NoError(t, err)
+	assert.True(t, direct)
+
+	// The delayed pending-spawn path carries SpawnedByAgent precisely because
+	// the recorded conv may have reincarnated before enrollment completes.
+	_, _, err = db.EnsureAgentForConv("lineage-spawner-new", "session-start")
+	require.NoError(t, err)
+	_, err = db.RotateAgentConv("lineage-spawner-old", "lineage-spawner-new", "reincarnate")
+	require.NoError(t, err)
+	_, _, fail = enrollSpawnedConv(nil, spawnParams{
+		SpawnedByConv:  "lineage-spawner-old",
+		SpawnedByAgent: parentID,
+	}, "lineage-child-delayed", false)
+	require.Nil(t, fail)
+	delayedID, err := db.AgentIDForConv("lineage-child-delayed")
+	require.NoError(t, err)
+	direct, err = db.IsDirectAgentChild(parentID, delayedID)
+	require.NoError(t, err)
+	assert.True(t, direct, "delayed enrollment follows the stable spawner actor")
+}
+
+func TestRecordSpawnLineage_RequiresChildIdentityForAgentSpawn(t *testing.T) {
+	setupTestDB(t)
+	parentID, _, err := db.EnsureAgentForConv("lineage-required-parent", "spawn")
+	require.NoError(t, err)
+
+	err = recordSpawnLineage("", parentID, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no stable actor")
+}
+
+func TestRollbackSpawnEnrollment_RemovesUnlaunchedLineageEdge(t *testing.T) {
+	setupTestDB(t)
+	parentID, _, err := db.EnsureAgentForConv("lineage-rollback-parent", "spawn")
+	require.NoError(t, err)
+
+	_, actorCreated, fail := enrollSpawnedConv(nil, spawnParams{
+		SpawnedByAgent: parentID,
+	}, "lineage-rollback-child", false)
+	require.Nil(t, fail)
+	require.True(t, actorCreated)
+	childID, err := db.AgentIDForConv("lineage-rollback-child")
+	require.NoError(t, err)
+	direct, err := db.IsDirectAgentChild(parentID, childID)
+	require.NoError(t, err)
+	require.True(t, direct)
+
+	rollbackSpawnEnrollment(nil, "lineage-rollback-child", 0, true)
+	direct, err = db.IsDirectAgentChild(parentID, childID)
+	require.NoError(t, err)
+	assert.False(t, direct, "a launch that never started must not retain authorization ancestry")
+	got, err := db.AgentIDForConv("lineage-rollback-child")
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+func TestEnsurePendingSpawnLineageBound_RepairsAlreadyEnrolledEdge(t *testing.T) {
+	setupTestDB(t)
+	parentID, _, err := db.EnsureAgentForConv("lineage-repair-parent", "spawn")
+	require.NoError(t, err)
+	childID, _, err := db.EnsureAgentForConv("lineage-repair-child", "spawn")
+	require.NoError(t, err)
+
+	settled := ensurePendingSpawnLineageBound("lineage-repair-child", &db.PendingSpawn{
+		Label:          "lineage-repair-pending",
+		SpawnedByAgent: parentID,
+	})
+	require.True(t, settled)
+	direct, err := db.IsDirectAgentChild(parentID, childID)
+	require.NoError(t, err)
+	assert.True(t, direct)
+}
+
 func TestEnrollSpawnedConv_PersistsResolvedRelaunchProfile(t *testing.T) {
 	setupTestDB(t)
 

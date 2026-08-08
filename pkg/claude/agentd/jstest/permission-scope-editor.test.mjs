@@ -194,7 +194,9 @@ test('removing the last value of a dimension returns the grant to unscoped', asy
   assert.ok(host.querySelector('[data-slug="process.runs.manage"] .perm-scope-chip.unscoped'),
     'an emptied dimension is absent, not an empty list the daemon would reject');
   await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
-  assert.deepEqual(saved[0], {});
+  // Sent EXPLICITLY as {}, not omitted: the daemon reads a missing key as
+  // "keep the stored scope", so an omission here would silently fail to clear.
+  assert.deepEqual(saved[0], { 'process.runs.manage': {} });
   await mounted.unmount();
 });
 

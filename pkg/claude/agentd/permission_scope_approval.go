@@ -70,17 +70,6 @@ func approvalScopeForSlug(slug string, actx ActionContext) (scopeJSON, display s
 	return canonical, permissionScopeDisplay(scope)
 }
 
-// permissionScopeDimsForSlug returns the dimensions a slug declares, or nil
-// for an unknown slug or one that only supports unscoped grants.
-func permissionScopeDimsForSlug(slug string) []ScopeDim {
-	for _, p := range permissionRegistry {
-		if p.Slug == slug {
-			return p.ScopeDims
-		}
-	}
-	return nil
-}
-
 // isScopedAutoGrantableSlug gates the scoped "always allow" button and its
 // server-side persist.
 //

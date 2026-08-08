@@ -169,9 +169,16 @@ func callIsBareStatement(fn *ast.FuncDecl, callee string) bool {
 // behavioural test through runNew would catch that, and runNew needs tmux and a
 // session row before it reaches this line.
 func callIsUnconditional(fn *ast.FuncDecl, callee string) bool {
+	// Refuses to descend into a function literal. Defining a body does not run
+	// it, so a call parked in a closure that nobody invokes is not a call the
+	// gate makes — measured on this guard's sibling in agentd, where exactly that
+	// shape left the guard green with the gate never running.
 	callsCallee := func(n ast.Node) bool {
 		found := false
 		ast.Inspect(n, func(inner ast.Node) bool {
+			if _, isLiteral := inner.(*ast.FuncLit); isLiteral {
+				return false
+			}
 			if call, ok := inner.(*ast.CallExpr); ok && calleeIdent(call) == callee {
 				found = true
 			}

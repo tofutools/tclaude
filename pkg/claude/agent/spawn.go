@@ -13,6 +13,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -152,6 +153,18 @@ const (
 	ProvHarnessDefault = "harness default"
 	ProvLaunchDefault  = "default profile (applied at launch)"
 )
+
+// ProvLaunchFillNote qualifies a field the launch-time safety-net overlay
+// resolved differently from the request's own resolution.
+//
+// It rides Note rather than Source because the two say different things and an
+// operator needs both: Source names the TIER they can go and edit, while this
+// says the value was decided after their request was resolved — which is why the
+// echo can differ from what the request looked like it would produce. Before
+// TCL-1097 the anonymous ProvLaunchDefault occupied Source and carried only the
+// second half, leaving the operator told that "a default profile" did it and
+// unable to find out which.
+const ProvLaunchFillNote = "filled by the launch-time overlay, after this request was resolved"
 
 // ProvGroupProfileSource / ProvGlobalProfileSource / ProvCLIProfileSource format
 // the three name-bearing provenance tiers. Exported so the daemon (which fills
@@ -517,7 +530,7 @@ type SpawnRequest struct {
 	// authority (permissions.grant), and like IsOwner an OMITTED key adopts the
 	// profile tier stack's map while an explicit empty object states "none" — so
 	// a client whose dialog has a permission editor should always post the key.
-	PermissionOverrides map[string]string `json:"permission_overrides,omitempty"`
+	PermissionOverrides map[string]db.PermissionOverride `json:"permission_overrides,omitempty"`
 
 	// Presence bits preserve an explicit JSON false across profile overlays.
 	// They are populated by UnmarshalJSON and intentionally stay off the wire.
@@ -607,7 +620,7 @@ func (r SpawnRequest) MarshalJSON() ([]byte, error) {
 		// daemon's presence check; an explicit "no overrides" has to be {}.
 		overrides := r.PermissionOverrides
 		if overrides == nil {
-			overrides = map[string]string{}
+			overrides = map[string]db.PermissionOverride{}
 		}
 		stated["permission_overrides"] = overrides
 	}
@@ -918,7 +931,7 @@ type resolvedSpawnFields struct {
 	AutoFocus  bool
 
 	IsOwner             bool
-	PermissionOverrides map[string]string
+	PermissionOverrides map[string]db.PermissionOverride
 	// Deliberately NO ContextFeatures here. The CLI does not fold a --profile's
 	// trims into the request: it sends its own map or nothing, and lets the
 	// daemon's tier stack resolve the named profile (the same reason
@@ -1712,6 +1725,53 @@ func printResolvedLaunch(stdout io.Writer, rl *ResolvedLaunch) {
 	for _, warning := range rl.Warnings {
 		fmt.Fprintf(stdout, "  Warning: %s\n", warning)
 	}
+}
+
+// AmbientDecisions reports the echoed fields that a tier NOBODY TYPED at this
+// launch decided, as "field: value (tier)" lines — the subset of the echo a
+// reader has to see, as opposed to the whole shape a single-agent spawn can
+// afford to print in full.
+//
+// It exists for the multi-agent surfaces: a template deploy that printed all
+// seven fields for each of six members would bury the one line that matters
+// (say, a member put on the unverified Copilot API drive by a group default
+// profile) under forty that do not. An explicit request needs no announcement —
+// the caller typed it — and a harness default names no tier anyone can go and
+// change, so both are left out and a launch nobody steered prints nothing.
+//
+// Notes/Info/Warnings are deliberately NOT folded in: those are their own
+// channels with their own labels, and a caller that renders them keeps that
+// distinction.
+func (rl *ResolvedLaunch) AmbientDecisions() []string {
+	if rl == nil {
+		return nil
+	}
+	var out []string
+	for _, field := range []struct {
+		label string
+		value ResolvedField
+	}{
+		{"harness", rl.Harness},
+		{"model", rl.Model},
+		{"effort", rl.Effort},
+		{"context_window_max", rl.ContextWindowMax},
+		{"copilot drive", rl.CopilotAPI},
+		{"fast_mode", rl.FastMode},
+		{"sandbox_implementation", rl.SandboxImpl},
+	} {
+		// A blank value means nothing pinned the field; its source is then the
+		// harness default and there is no tier to announce.
+		if strings.TrimSpace(field.value.Value) == "" {
+			continue
+		}
+		switch strings.TrimSpace(field.value.Source) {
+		case "", ProvExplicit, ProvHarnessDefault:
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s: %s (%s)",
+			field.label, field.value.Value, field.value.Source))
+	}
+	return out
 }
 
 // formatResolvedField renders one resolved field as "value (source)", or just

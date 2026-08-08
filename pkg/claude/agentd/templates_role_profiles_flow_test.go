@@ -202,7 +202,8 @@ func TestGroupTemplate_LaunchResolution_ForeignProfileValidateOrSkip(t *testing.
 	effort, ok := f.World.SpawnEffort(conv)
 	require.True(t, ok)
 	assert.Equal(t, "high", effort, "foreign-tier effort is valid for Claude and must participate")
-	assert.Contains(t, res.Agents[0].Notes,
+	require.NotNil(t, res.Agents[0].Resolved)
+	assert.Contains(t, res.Agents[0].Resolved.Notes,
 		`profile "codex-kit" model ignored (not valid for claude)`,
 		"the instantiate response discloses the skipped foreign-tier field")
 }

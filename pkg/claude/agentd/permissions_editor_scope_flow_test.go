@@ -83,18 +83,40 @@ func TestPermEditorScope_RoundTripsThroughSnapshot(t *testing.T) {
 	assert.Contains(t, view.Permissions.DimOpts["target_agent"].Selectors, "@descendants",
 		"a dimension's relational selectors are advertised, not hardcoded in the frontend")
 
-	// Clearing the scope is the same POST with no scopes entry — the editor's
-	// "remove the last chip" path — and must widen the grant back, not leave a
-	// stale narrowing behind.
+	// Clearing the scope is the same POST with an EXPLICIT empty scope — the
+	// editor's "remove the last chip" path — and must widen the grant back, not
+	// leave a stale narrowing behind. (Omitting the slug means "keep whatever is
+	// stored", so that an unrelated save cannot strip a narrowing; the case
+	// below pins that.)
 	code, body = postScopedPerms(t, mux, map[string]any{
 		"conv":      conv,
 		"overrides": map[string]string{agentd.PermGroupsSpawn: "grant"},
+		"scopes":    map[string]any{agentd.PermGroupsSpawn: map[string][]string{}},
 	})
 	require.Equal(t, http.StatusOK, code, body)
 	view = fetchScopeView(t, mux)
 	assert.Empty(t, view.Permissions.Scopes[conv][agentd.PermGroupsSpawn],
 		"an unscoped grant carries no scope at all")
 	assert.Equal(t, "grant", view.Permissions.Overrides[conv][agentd.PermGroupsSpawn])
+
+	// And the mirror: a save that does not mention the slug in scopes{} leaves
+	// the stored narrowing alone. The editor posts every displayed slug at its
+	// current effect, so the other reading would strip a scope off every save.
+	code, body = postScopedPerms(t, mux, map[string]any{
+		"conv":      conv,
+		"overrides": map[string]string{agentd.PermGroupsSpawn: "grant"},
+		"scopes":    map[string]any{agentd.PermGroupsSpawn: map[string][]string{"group": {"alpha"}}},
+	})
+	require.Equal(t, http.StatusOK, code, body)
+	code, body = postScopedPerms(t, mux, map[string]any{
+		"conv":      conv,
+		"overrides": map[string]string{agentd.PermGroupsSpawn: "grant"},
+	})
+	require.Equal(t, http.StatusOK, code, body)
+	view = fetchScopeView(t, mux)
+	assert.Equal(t, map[string][]string{"group": {"alpha"}},
+		view.Permissions.Scopes[conv][agentd.PermGroupsSpawn],
+		"a slug the batch does not mention keeps its stored scope")
 }
 
 // Scenario: an agent holds a grant whose stored scope this build cannot
@@ -172,7 +194,7 @@ func TestPermEditorScope_RefusesScopesTheGateCouldNotHonour(t *testing.T) {
 		"scopes":    map[string]any{agentd.PermGroupsSpawn: map[string][]string{"group": {"alpha"}}},
 	})
 	assert.Equal(t, http.StatusBadRequest, code, body)
-	assert.Contains(t, body, "requires effect grant")
+	assert.Contains(t, body, "only a grant can be scoped")
 
 	view := fetchScopeView(t, mux)
 	assert.Empty(t, view.Permissions.Overrides[conv],

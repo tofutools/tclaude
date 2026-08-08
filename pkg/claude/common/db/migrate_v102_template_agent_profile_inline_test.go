@@ -84,7 +84,7 @@ func TestGroupTemplateAgent_ProfileInlineRoundTrip(t *testing.T) {
 		TrustDir:               &tr,
 		StartupContext:         "Use the profile-specific workflow.",
 		IsOwner:                &tr,
-		PermissionOverrides:    map[string]string{"templates.manage": "grant", "human.notify": "deny"},
+		PermissionOverrides:    UnscopedOverrides(map[string]string{"templates.manage": "grant", "human.notify": "deny"}),
 	}
 	id, err := CreateGroupTemplate(&GroupTemplate{
 		Name: "crew",
@@ -113,7 +113,7 @@ func TestGroupTemplateAgent_ProfileInlineRoundTrip(t *testing.T) {
 	assert.True(t, *lead.ProfileInline.TrustDir)
 	require.NotNil(t, lead.ProfileInline.IsOwner)
 	assert.True(t, *lead.ProfileInline.IsOwner)
-	assert.Equal(t, map[string]string{"templates.manage": "grant", "human.notify": "deny"},
+	assert.Equal(t, UnscopedOverrides(map[string]string{"templates.manage": "grant", "human.notify": "deny"}),
 		lead.ProfileInline.PermissionOverrides)
 	assert.Nil(t, got.Agents[1].ProfileInline, "agent without inline profile stays nil")
 

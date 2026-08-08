@@ -175,7 +175,12 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			wr.Results = append(wr.Results, res)
 			continue
 		}
-		res.Notes = append(res.Notes, launch.Notes...)
+		// Held until the spawn returns its echo, which is where they belong: one
+		// per-agent disclosure channel, not a template-tier list beside a
+		// spawn-tier one. A spawn FAILURE still reports them below, since a
+		// disclosure about the tiers that produced the attempted launch is exactly
+		// what explains a failure like "that profile's model is not valid here".
+		templateNotes, templateInfo, templateWarnings := launch.Notes, launch.Info, launch.Warnings
 		// Fold the role brief ("## Role") + the template process ("## Process")
 		// into THIS agent's startup context — no-ops when absent.
 		agentContext := groupContext
@@ -210,62 +215,81 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			spawnCodexGitCommonDir = codexGitCommonDir
 		}
 		outcome, fail := executeSpawn(g, spawnParams{
-			EffectiveSandbox:         effectiveSandbox,
-			Name:                     finalName,
-			Role:                     a.Role,
-			Descr:                    a.Descr,
-			InitialMessage:           a.InitialMessage,
-			ProfileContext:           launch.StartupContext,
-			Cwd:                      agentCwd,
-			WorktreePath:             agentWorktreePath,
-			WorktreeBranch:           agentWorktreeBranch,
-			DirWriteProofDirs:        spawnProofDirs,
-			DirWriteProofToken:       proofToken,
-			CwdWriteProofToken:       cwdProofToken,
-			CodexGitCommonDir:        spawnCodexGitCommonDir,
-			CodexGitCommonDirPinned:  spawnCodexGitCommonDirPinned,
-			Harness:                  launch.Harness,
-			Model:                    launch.Model,
-			Effort:                   launch.Effort,
-			HarnessBuiltinMode:       launch.Sandbox,
-			HarnessBuiltinModeSource: launch.SandboxSource,
-			SandboxImplementation:    launch.SandboxImplementation,
-			ApprovalPolicy:           launch.Approval,
-			ToolGovernance:           launch.ToolGovernance,
-			TrustDir:                 launch.TrustDir,
-			TrustDirSet:              launch.TrustDirSet,
-			AutoReview:               launch.AutoReview,
-			AutoReviewSet:            launch.AutoReviewSet,
-			RemoteControl:            launch.RemoteControl,
-			AutoMemory:               launch.AutoMemory,
-			SSHWorkaround:            launch.SSHWorkaround,
-			SSHWorkaroundSet:         launch.SSHWorkaroundSet,
-			SSHWorkaroundSource:      launch.SSHWorkaroundSource,
-			ContextFeatures:          launch.ContextFeatures,
-			AutoCompactWindow:        launch.AutoCompactWindow,
-			ContextWindowMax:         launch.ContextWindowMax,
-			CopilotAPI:               launch.CopilotAPI,
-			CopilotAPISet:            launch.CopilotAPISet,
-			CopilotAPISource:         launch.CopilotAPISource,
-			FastMode:                 launch.FastMode,
-			FastModeSet:              launch.FastModeSet,
-			AskUserQuestionTimeout:   launch.AskUserQuestionTimeout,
-			GroupContext:             agentContext,
-			ReplyToConv:              caller,
-			SpawnedByConv:            caller,
+			EffectiveSandbox:            effectiveSandbox,
+			Name:                        finalName,
+			Role:                        a.Role,
+			Descr:                       a.Descr,
+			InitialMessage:              a.InitialMessage,
+			ProfileContext:              launch.StartupContext,
+			Cwd:                         agentCwd,
+			WorktreePath:                agentWorktreePath,
+			WorktreeBranch:              agentWorktreeBranch,
+			DirWriteProofDirs:           spawnProofDirs,
+			DirWriteProofToken:          proofToken,
+			CwdWriteProofToken:          cwdProofToken,
+			CodexGitCommonDir:           spawnCodexGitCommonDir,
+			CodexGitCommonDirPinned:     spawnCodexGitCommonDirPinned,
+			Harness:                     launch.Harness,
+			HarnessSource:               launch.HarnessSource,
+			Model:                       launch.Model,
+			ModelSource:                 launch.ModelSource,
+			Effort:                      launch.Effort,
+			EffortSource:                launch.EffortSource,
+			HarnessBuiltinMode:          launch.Sandbox,
+			HarnessBuiltinModeSource:    launch.SandboxSource,
+			SandboxImplementation:       launch.SandboxImplementation,
+			SandboxImplementationSource: launch.SandboxImplementationSource,
+			ApprovalPolicy:              launch.Approval,
+			ToolGovernance:              launch.ToolGovernance,
+			TrustDir:                    launch.TrustDir,
+			TrustDirSet:                 launch.TrustDirSet,
+			AutoReview:                  launch.AutoReview,
+			AutoReviewSet:               launch.AutoReviewSet,
+			RemoteControl:               launch.RemoteControl,
+			AutoMemory:                  launch.AutoMemory,
+			SSHWorkaround:               launch.SSHWorkaround,
+			SSHWorkaroundSet:            launch.SSHWorkaroundSet,
+			SSHWorkaroundSource:         launch.SSHWorkaroundSource,
+			ContextFeatures:             launch.ContextFeatures,
+			AutoCompactWindow:           launch.AutoCompactWindow,
+			ContextWindowMax:            launch.ContextWindowMax,
+			ContextWindowMaxSource:      launch.ContextWindowMaxSource,
+			CopilotAPI:                  launch.CopilotAPI,
+			CopilotAPISet:               launch.CopilotAPISet,
+			CopilotAPISource:            launch.CopilotAPISource,
+			FastMode:                    launch.FastMode,
+			FastModeSet:                 launch.FastModeSet,
+			FastModeSource:              launch.FastModeSource,
+			AskUserQuestionTimeout:      launch.AskUserQuestionTimeout,
+			GroupContext:                agentContext,
+			ReplyToConv:                 caller,
+			SpawnedByConv:               caller,
 		})
 		cleanupCwdProof()
 		if fail != nil {
 			res.ErrorKind = fail.Kind
 			res.Error = fail.Msg
+			res.Resolved = templateEchoFallback(templateNotes, templateInfo, templateWarnings)
 			wr.Failed++
 			wr.Results = append(wr.Results, res)
 			continue
 		}
-		// Launch disclosures resolved INSIDE the spawn — the group/global default
-		// tiers are applied there, so anything they decided is unknown to the
-		// template-tier notes appended above.
-		res.Notes = append(res.Notes, outcome.Notes...)
+		// The launch echo is built INSIDE the spawn, because the group/global
+		// default tiers are applied there: anything they decided is invisible to
+		// the template-tier resolution above. The template-tier notes ride the same
+		// object so one echo per agent tells the whole story.
+		res.Resolved = outcome.Resolved
+		if res.Resolved != nil {
+			// Template tiers first, then the spawn's own: the reader gets them in
+			// resolution order. Copied rather than appended in place, because
+			// templateNotes is the slice inside launch and append could otherwise
+			// write through its spare capacity.
+			res.Resolved.Notes = append(append([]string(nil), templateNotes...), res.Resolved.Notes...)
+			res.Resolved.Info = append(append([]string(nil), templateInfo...), res.Resolved.Info...)
+			res.Resolved.Warnings = append(append([]string(nil), templateWarnings...), res.Resolved.Warnings...)
+		} else {
+			res.Resolved = templateEchoFallback(templateNotes, templateInfo, templateWarnings)
+		}
 		res.ConvID = outcome.ConvID
 		wr.Spawned++
 		wr.SpawnedConvs[a.Name] = outcome.ConvID
@@ -304,18 +328,31 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			}
 		}
 		for _, ov := range overrides {
-			if err := db.SetAgentPermissionOverride(outcome.ConvID, ov.Slug, ov.Effect, granter); err != nil {
+			if err := db.SetAgentPermissionOverrideWithScope(outcome.ConvID, ov.Slug,
+				ov.Override.Effect, ov.Override.Scope, granter); err != nil {
 				slog.Warn("wave spawn: apply permission override failed",
-					"conv", outcome.ConvID, "slug", ov.Slug, "effect", ov.Effect, "error", err)
+					"conv", outcome.ConvID, "slug", ov.Slug, "effect", ov.Override.Effect,
+					"scope", ov.Override.Scope, "error", err)
 				continue
 			}
-			if ov.Effect == db.PermEffectGrant {
+			if ov.Override.Effect == db.PermEffectGrant {
 				res.Granted = append(res.Granted, ov.Slug)
 			}
 		}
 		wr.Results = append(wr.Results, res)
 	}
 	return wr
+}
+
+// templateEchoFallback carries the template-tier disclosures on their own when
+// there is no spawn echo to hang them on — a member whose spawn was REFUSED, or
+// (defensively) an outcome from a path that produced none. A refusal is exactly
+// when the tiers that produced the refused value are worth reading.
+func templateEchoFallback(notes, info, warnings []string) *agent.ResolvedLaunch {
+	if len(notes) == 0 && len(info) == 0 && len(warnings) == 0 {
+		return nil
+	}
+	return &agent.ResolvedLaunch{Notes: notes, Info: info, Warnings: warnings}
 }
 
 func preparePerAgentCwdWriteProof(token string, proofDirs []string, cwd string) (string, []string, func(), error) {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	commonTable "github.com/tofutools/tclaude/pkg/claude/common/table"
 )
 
@@ -351,7 +352,7 @@ func TestMergeProfileIntoSpawn_ProfileFillsBlanks(t *testing.T) {
 		InitialMessage:      "profile brief",
 		AutoFocus:           boolPtr(true),
 		IsOwner:             boolPtr(true),
-		PermissionOverrides: map[string]string{"human.notify": "grant"},
+		PermissionOverrides: db.UnscopedOverrides(map[string]string{"human.notify": "grant"}),
 	}
 	got := mergeProfileIntoSpawn(&SpawnParams{}, "", prof)
 
@@ -368,7 +369,7 @@ func TestMergeProfileIntoSpawn_ProfileFillsBlanks(t *testing.T) {
 	assert.Equal(t, "profile brief", got.InitialMessage)
 	assert.True(t, got.AutoFocus)
 	assert.True(t, got.IsOwner)
-	assert.Equal(t, map[string]string{"human.notify": "grant"}, got.PermissionOverrides)
+	assert.Equal(t, db.UnscopedOverrides(map[string]string{"human.notify": "grant"}), got.PermissionOverrides)
 }
 
 // Explicit flags override the profile — the core precedence the operator wants.
@@ -422,7 +423,7 @@ func TestMergeProfileIntoSpawn_HarnessMismatchSkipsLaunch(t *testing.T) {
 		Role:                "qa",
 		AutoFocus:           boolPtr(true),
 		IsOwner:             boolPtr(true),
-		PermissionOverrides: map[string]string{"human.notify": "grant"},
+		PermissionOverrides: db.UnscopedOverrides(map[string]string{"human.notify": "grant"}),
 	}
 	// Pin claude explicitly — a different harness than the codex profile.
 	p := &SpawnParams{Harness: "claude"}
@@ -441,7 +442,7 @@ func TestMergeProfileIntoSpawn_HarnessMismatchSkipsLaunch(t *testing.T) {
 	assert.Equal(t, "qa", got.Role)
 	assert.True(t, got.AutoFocus, "auto_focus is harness-agnostic")
 	assert.True(t, got.IsOwner, "is_owner inherited regardless of harness")
-	assert.Equal(t, map[string]string{"human.notify": "grant"}, got.PermissionOverrides,
+	assert.Equal(t, db.UnscopedOverrides(map[string]string{"human.notify": "grant"}), got.PermissionOverrides,
 		"permission_overrides inherited regardless of harness")
 }
 
@@ -512,7 +513,7 @@ func TestPrintProfileHuman(t *testing.T) {
 		AgentName:           "reviewer",
 		Role:                "qa",
 		IsOwner:             boolPtr(true),
-		PermissionOverrides: map[string]string{"human.notify": "grant"},
+		PermissionOverrides: db.UnscopedOverrides(map[string]string{"human.notify": "grant"}),
 		InitialMessage:      "line one\nline two",
 	})
 	out := buf.String()
@@ -578,7 +579,7 @@ func TestLoadProfileFile_RoundTrip(t *testing.T) {
 	if assert.NotNil(t, prof.IsOwner) {
 		assert.True(t, *prof.IsOwner)
 	}
-	assert.Equal(t, map[string]string{"human.notify": "grant"}, prof.PermissionOverrides)
+	assert.Equal(t, db.UnscopedOverrides(map[string]string{"human.notify": "grant"}), prof.PermissionOverrides)
 }
 
 // "-" reads the profile JSON from stdin (sidesteps shell quoting for long bodies).
