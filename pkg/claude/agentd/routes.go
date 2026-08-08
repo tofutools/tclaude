@@ -14,7 +14,6 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -268,10 +267,10 @@ func requireRouteMembership(w http.ResponseWriter, r *http.Request, g *db.AgentG
 	return convID, agentID, true
 }
 
-// requireRouteCapability is deliberately separate from requirePermission:
-// requirePermission sees group grants as a union. This check accepts a group
-// grant only when it belongs to this exact target group, while preserving the
-// established explicit per-agent/default/sudo and deny precedence.
+// requireRouteCapability keeps route membership as a structural prerequisite,
+// then delegates permission precedence and scope evaluation to the central
+// resolver. Group-tier grants are restricted to this exact target group by
+// resolveGroupBoundPermissionVerdictForRequest.
 func requireRouteCapability(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, slug string) (string, string, bool) {
 	convID, agentID, ok := requireRouteMembership(w, r, g)
 	if !ok {
@@ -282,119 +281,17 @@ func requireRouteCapability(w http.ResponseWriter, r *http.Request, g *db.AgentG
 }
 
 func requireRoutePermissionForIdentity(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, convID, agentID, slug string) (string, string, bool) {
-	// routes.publish / routes.consume both declare the `group` scope
-	// dimension, and this gate already knows the target group — so it must
-	// honour a scoped grant exactly as requireGroupPermission does. Without
-	// this, a grant that reads as narrow in `permissions ls` ("override
-	// [group=dev]") would be a wildcard on the route surface. Phase 3 folds
-	// this duplicated precedence onto resolvePermissionVerdictFrom outright;
-	// until then the tiers below evaluate the scope in place.
-	//
-	// A tier whose scope excludes this group DECIDES — the same "winning tier
-	// decides" rule the central resolver applies — so it refuses rather than
-	// falling through to a broader tier underneath.
 	actx := ActionContext{Group: g.Name}
-	// Match the central permission resolver: a live, matching sudo grant is
-	// authoritative over a permanent deny. Ordinary group grants remain
-	// target-group scoped below rather than using the union resolver.
-	if scopeJSON, ok, err := activeSudoGrantScope(convID, slug); err == nil && ok {
-		if !routeScopeAllows(convID, scopeJSON, actx) {
-			writeRoutePermissionRefusal(w, g, slug)
-			return "", "", false
+	verdict := resolveGroupBoundPermissionVerdictForRequest(r, convID, slug, g.ID)
+	if verdict.Resolution == permAllow {
+		eval := evalPermissionScope(verdict, convID, actx)
+		if eval.Satisfied {
+			recordAuditPermissionScope(r, slug, eval.Matched)
+			return convID, agentID, true
 		}
-		return convID, agentID, true
-	}
-	if effect, scopeJSON, exists, err := agentPermissionOverrideWithScope(convID, slug); err != nil {
-		writeRouteError(w, http.StatusInternalServerError, "route_authority", "could not resolve permission")
-		return "", "", false
-	} else if exists {
-		if effect == db.PermEffectDeny || !routeScopeAllows(convID, scopeJSON, actx) {
-			writeRoutePermissionRefusal(w, g, slug)
-			return "", "", false
-		}
-		return convID, agentID, true
-	}
-	if granted, err := db.HasAgentGroupPermissionForAgent(agentID, g.ID, slug); err != nil {
-		writeRouteError(w, http.StatusInternalServerError, "route_authority", "could not resolve target-group permission")
-		return "", "", false
-	} else if granted {
-		scopeJSON, err := targetGroupGrantScope(g.ID, slug)
-		if err != nil {
-			writeRouteError(w, http.StatusInternalServerError, "route_authority", "could not resolve target-group permission")
-			return "", "", false
-		}
-		if !routeScopeAllows(convID, scopeJSON, actx) {
-			writeRoutePermissionRefusal(w, g, slug)
-			return "", "", false
-		}
-		return convID, agentID, true
-	}
-	defaultAllowed := false
-	if defaults, ok := r.Context().Value(permissionDefaultsKey{}).(map[string]bool); ok {
-		defaultAllowed = defaults[slug]
-	} else if cfg, _ := config.Load(); cfg != nil {
-		defaultAllowed = cfg.HasDefaultPermission(slug)
-	}
-	if defaultAllowed {
-		return convID, agentID, true
 	}
 	writeRoutePermissionRefusal(w, g, slug)
 	return "", "", false
-}
-
-// routeScopeAllows evaluates one persisted scope row through the central
-// evaluator, so the route gate can never drift from what requirePermissionEx
-// would have decided for the same grant.
-func routeScopeAllows(callerConvID, scopeJSON string, actx ActionContext) bool {
-	return evalPermissionScope(
-		permVerdict{Resolution: permAllow, ScopeJSON: []string{scopeJSON}},
-		callerConvID, actx).Satisfied
-}
-
-// activeSudoGrantScope answers the same question as LookupActiveSudoGrantID
-// (is there a live sudo grant for this slug) while carrying the grant's
-// scope out. ListActiveSudoGrants shares that lookup's expires_at ordering,
-// so the row picked here is the row the lookup would have picked.
-func activeSudoGrantScope(convID, slug string) (string, bool, error) {
-	grants, err := db.ListActiveSudoGrants(convID)
-	if err != nil {
-		return "", false, err
-	}
-	for _, g := range grants {
-		if g != nil && g.Slug == slug {
-			return g.ScopeJSON, true, nil
-		}
-	}
-	return "", false, nil
-}
-
-// agentPermissionOverrideWithScope is db.AgentPermissionOverride plus the
-// row's scope.
-func agentPermissionOverrideWithScope(convID, slug string) (effect, scopeJSON string, ok bool, err error) {
-	rows, err := db.ListAgentPermissionOverrideRowsForConv(convID)
-	if err != nil {
-		return "", "", false, err
-	}
-	for _, row := range rows {
-		if row.Slug == slug {
-			return row.Effect, row.ScopeJSON, true, nil
-		}
-	}
-	return "", "", false, nil
-}
-
-// targetGroupGrantScope reads the scope of THIS group's grant for slug.
-func targetGroupGrantScope(groupID int64, slug string) (string, error) {
-	rows, err := db.ListAgentGroupPermissionRows(groupID)
-	if err != nil {
-		return "", err
-	}
-	for _, row := range rows {
-		if row.Slug == slug {
-			return row.ScopeJSON, nil
-		}
-	}
-	return "", nil
 }
 
 func writeRoutePermissionRefusal(w http.ResponseWriter, g *db.AgentGroup, slug string) {
