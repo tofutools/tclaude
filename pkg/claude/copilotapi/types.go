@@ -67,7 +67,35 @@ type CreateSessionParams struct {
 	Model string `json:"model,omitempty"`
 }
 
-// SessionInfo is returned by both `session.create` and
+// ResumeSessionParams are the arguments to `session.resume`.
+//
+// Deliberately the same shape as [CreateSessionParams] rather than a type
+// alias. The two methods take the same argument set on the wire, but they are
+// not the same request and a caller must not be able to pass one where it meant
+// the other: `session.create` at an id that already has history starts it
+// FRESH, so a create sent where a resume was meant silently discards the
+// conversation. A distinct type makes that a compile error rather than a
+// judgement call at every call site.
+type ResumeSessionParams struct {
+	// SessionID names the session to reload. The server resolves it as a
+	// PREFIX (it calls findSessionByPrefix), so a caller holding a full id
+	// should compare the echoed SessionID against what it asked for rather
+	// than assume the two agree.
+	SessionID string `json:"sessionId"`
+	// WorkingDirectory overrides the session's recorded cwd. Empty leaves the
+	// persisted one in place, which is what a relaunch in the same directory
+	// wants; supplying it takes working-directory authority on the server.
+	WorkingDirectory string `json:"workingDirectory,omitempty"`
+	// ClientName identifies the driving client in Copilot's own telemetry.
+	ClientName string `json:"clientName,omitempty"`
+	// Streaming enables incremental assistant deltas on the event stream.
+	Streaming bool `json:"streaming,omitempty"`
+	// Model selects a model; empty keeps the session's own selection, which is
+	// what a resume normally wants.
+	Model string `json:"model,omitempty"`
+}
+
+// SessionInfo is returned by `session.create`, `session.resume` and
 // `session.getForeground`.
 type SessionInfo struct {
 	SessionID     string          `json:"sessionId"`

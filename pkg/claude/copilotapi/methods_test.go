@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -101,6 +102,90 @@ func TestCreateSessionRejectsMissingID(t *testing.T) {
 
 	if _, err := client.CreateSession(context.Background(), CreateSessionParams{SessionID: "ours"}); err == nil {
 		t.Fatal("CreateSession accepted a reply with no sessionId")
+	}
+}
+
+func TestResumeSessionSendsTheFieldsTheServerNeeds(t *testing.T) {
+	server := newFakeServer(t)
+	var captured ResumeSessionParams
+	server.handle(MethodSessionResume, func(params json.RawMessage) (any, *Error) {
+		if err := json.Unmarshal(params, &captured); err != nil {
+			return nil, &Error{Code: CodeInvalidParams, Message: err.Error()}
+		}
+		return SessionInfo{
+			SessionID:     captured.SessionID,
+			WorkspacePath: "/state/" + captured.SessionID,
+		}, nil
+	})
+	client := dialTest(t, server, nil)
+
+	info, err := client.ResumeSession(context.Background(), ResumeSessionParams{
+		SessionID:        "ours",
+		WorkingDirectory: "/work",
+		ClientName:       "tclaude",
+		Streaming:        true,
+	})
+	if err != nil {
+		t.Fatalf("ResumeSession: %v", err)
+	}
+	if info.SessionID != "ours" {
+		t.Errorf("SessionID = %q, want %q", info.SessionID, "ours")
+	}
+	if captured.WorkingDirectory != "/work" || captured.ClientName != "tclaude" || !captured.Streaming {
+		t.Errorf("params = %+v", captured)
+	}
+}
+
+// Unlike CreateSession there is nothing sensible to generate: a resume with no
+// id names no conversation, and letting one through would resolve as a prefix
+// match against whatever the server felt like.
+func TestResumeSessionRefusesWithoutASessionID(t *testing.T) {
+	server := newFakeServer(t)
+	client := dialTest(t, server, nil)
+
+	if _, err := client.ResumeSession(context.Background(), ResumeSessionParams{}); err == nil {
+		t.Fatal("ResumeSession accepted an empty session id")
+	}
+	if slices.Contains(server.methodsSeen(), MethodSessionResume) {
+		t.Error("a resume with no id must be refused locally, not sent")
+	}
+}
+
+// The server resolves sessionId as a PREFIX, so a reply naming a different
+// session is a real possibility rather than a paranoid check — and continuing
+// would drive a conversation other than the one this launch belongs to.
+func TestResumeSessionRejectsMismatchedID(t *testing.T) {
+	server := newFakeServer(t)
+	server.handle(MethodSessionResume, func(json.RawMessage) (any, *Error) {
+		return SessionInfo{SessionID: "somebody-elses-session"}, nil
+	})
+	client := dialTest(t, server, nil)
+
+	_, err := client.ResumeSession(context.Background(), ResumeSessionParams{SessionID: "ours"})
+	if err == nil {
+		t.Fatal("ResumeSession accepted a session ID it did not ask for")
+	}
+	if !strings.Contains(err.Error(), "somebody-elses-session") || !strings.Contains(err.Error(), "ours") {
+		t.Errorf("error %q does not name both session IDs", err)
+	}
+}
+
+// A session the server cannot find is reported as an error it can be told apart
+// by. The caller must be able to distinguish it, because the tempting recovery
+// — create one instead — replaces the history a resume exists to preserve.
+func TestResumeSessionSurfacesSessionNotFound(t *testing.T) {
+	server := newFakeServer(t)
+	server.handle(MethodSessionResume, func(json.RawMessage) (any, *Error) {
+		return nil, &Error{Code: CodeInternalError, Message: "Session not found: ours"}
+	})
+	client := dialTest(t, server, nil)
+
+	_, err := client.ResumeSession(context.Background(), ResumeSessionParams{SessionID: "ours"})
+	if err == nil {
+		t.Fatal("ResumeSession reported success for a session the server could not find")
+	}
+	if !IsSessionNotFound(err) {
+		t.Errorf("error %q is not recognisable as the server's session-not-found failure", err)
 	}
 }
 

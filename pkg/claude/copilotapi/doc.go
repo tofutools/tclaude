@@ -73,6 +73,25 @@
 // call, far from the `sessions.open` that caused it. Use `session.create`,
 // which is the only path to a session this client can actually drive.
 //
+// `session.create` is a trap of its own once a caller has a session id that
+// already means something. It does not attach to an existing id — it starts
+// that id FRESH, and the loss is total and silent: `alreadyInUse:false`, an
+// empty `session.getMessages`, the pane's timeline emptied, and a model with no
+// memory of its own previous turn. There is no error and no field in the reply
+// that distinguishes "created the session you named" from "replaced the
+// conversation you named". [Client.ResumeSession] is the call for an id with
+// history behind it, and the choice between the two belongs to whoever knows
+// whether this launch was fresh or a resume — which is never this package.
+//
+// `session.resume` is absent from `schemas/api.schema.json` for the same reason
+// `session.create` is: both live in the SDK's own method table (the server's
+// `SESSION_CREATE` / `SESSION_RESUME` seam handlers) rather than in the
+// documented `session` section. It takes the same argument set as
+// `session.create`, answers with the same session-info shape, and reports a
+// session it cannot find as a plain "Session not found" error rather than
+// creating one — so the two outcomes are distinguishable, which is what lets a
+// caller refuse to recover by creating.
+//
 // # Driving a session
 //
 // The bootstrap sequence, verified end to end:

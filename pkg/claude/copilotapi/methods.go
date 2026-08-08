@@ -14,6 +14,7 @@ const (
 	MethodConnect            = "connect"
 	MethodPing               = "ping"
 	MethodSessionCreate      = "session.create"
+	MethodSessionResume      = "session.resume"
 	MethodSessionSetFg       = "session.setForeground"
 	MethodSessionGetFg       = "session.getForeground"
 	MethodSessionSend        = "session.send"
@@ -78,6 +79,55 @@ func (c *Client) CreateSession(ctx context.Context, params CreateSessionParams) 
 		// The SDK treats this as fatal too. Continuing would leave us driving
 		// a different session than the one we recorded.
 		return SessionInfo{}, fmt.Errorf("copilotapi: session.create returned session %s but %s was requested",
+			info.SessionID, params.SessionID)
+	}
+	return info, nil
+}
+
+// ResumeSession reloads an EXISTING session's history and returns a session
+// this client can drive.
+//
+// # Why this is not [Client.CreateSession] with a different name
+//
+// `session.create` at an id that already has history does not attach to it: it
+// starts that id FRESH (measured on 1.0.78 — `alreadyInUse:false`, an empty
+// `session.getMessages`, and a model with no memory of the previous turn). So
+// the difference between the two methods is not convenience, it is whether the
+// conversation survives. A caller that means "resume" and sends create silently
+// destroys exactly the history it was trying to keep, and the launch still looks
+// entirely healthy.
+//
+// This method's own shape mirrors CreateSession's — same params, same
+// [SessionInfo] back — which is what makes the confusion easy and is the reason
+// [ResumeSessionParams] is a separate type rather than an alias.
+//
+// # Failure is not "then create one"
+//
+// The server answers a session it cannot find with a plain "Session not found"
+// error ([IsSessionNotFound]) rather than creating anything, so the two outcomes
+// are distinguishable. They must stay that way at the call site too: recovering
+// from a failed resume by creating would turn "I could not reach the history"
+// into "I replaced the history", which is the worse of the two by a wide margin.
+//
+// # The echoed id
+//
+// The server resolves sessionId as a prefix, so the session it resumes need not
+// be the one that was named. The check below refuses a reply that disagrees for
+// the same reason CreateSession does: continuing would drive a different
+// session than the one the caller recorded.
+func (c *Client) ResumeSession(ctx context.Context, params ResumeSessionParams) (SessionInfo, error) {
+	if params.SessionID == "" {
+		return SessionInfo{}, errors.New("copilotapi: session.resume needs a session id to resume")
+	}
+	var info SessionInfo
+	if err := c.Call(ctx, MethodSessionResume, params, &info); err != nil {
+		return SessionInfo{}, err
+	}
+	if info.SessionID == "" {
+		return SessionInfo{}, errors.New("copilotapi: session.resume returned no sessionId")
+	}
+	if info.SessionID != params.SessionID {
+		return SessionInfo{}, fmt.Errorf("copilotapi: session.resume returned session %s but %s was requested",
 			info.SessionID, params.SessionID)
 	}
 	return info, nil

@@ -697,20 +697,22 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 			} else if s.ConvID != "" {
 				newConv = s.ConvID
 				// Without launch enrollment the harness minted this id, so this
-				// is the first moment the successor's already allocated Copilot
-				// API port has a conversation to be recorded against. No-ops
-				// unless this reincarnation took the API drive.
-				recordCopilotAPIPort(s.ConvID, spawnArgs.CopilotAPIPort)
-				// And the same for the drive's connection. SpawnDetachedTclaudeNew
-				// already tried, but on this branch it was handed no id to try
-				// with, so its attempt was a no-op. Unreachable today — Copilot is
-				// the only harness with the API drive and it supports launch
-				// enrollment, so a Copilot reincarnation always takes the branch
-				// above — but a bootstrap that is skipped on a path that records a
-				// port is exactly the silent half-launch this drive must not have,
-				// and pairing them here means the omission cannot be introduced by
-				// a later harness arriving without one.
-				startCopilotAPIBootstrap(s.ConvID, spawnArgs.CopilotAPI, spawnArgs.InitialPrompt)
+				// is the first moment the successor's launch facts — its recorded
+				// drive, its already allocated Copilot API port, and the channel
+				// itself — have a conversation to be recorded against.
+				// SpawnDetachedTclaudeNew already tried, but on this branch it was
+				// handed no id to try with, so its attempt was a no-op.
+				//
+				// Unreachable today: Copilot is the only harness with the API drive
+				// and it supports launch enrollment, so a Copilot reincarnation
+				// always takes the branch above. Kept because a path that records
+				// half of a launch is exactly the silent half-launch this drive must
+				// not have, and going through the one seam means a later harness
+				// arriving without launch enrollment cannot reintroduce it.
+				//
+				// Fresh: a successor is a new conversation, not a continuation of
+				// the predecessor's.
+				completeCopilotAPILaunch(s.ConvID, copilotAPILaunchFresh, spawnArgs)
 				break
 			}
 		}

@@ -530,6 +530,74 @@ func SetSessionFastMode(sessionID, mode string) error {
 	})
 }
 
+// SetConversationCopilotAPI records a conversation's Copilot drive from the
+// daemon, at the moment its conversation id first becomes real.
+//
+// # Why this exists next to SetSessionCopilotAPI
+//
+// SetSessionCopilotAPI is written by the LAUNCHED PROCESS, keyed by a session
+// row, and only after that row and the pane exist. That was adequate while the
+// posture drove a dashboard badge. It stopped being adequate when TCL-1058 made
+// the same record decide whether a message travels over RPC or is TYPED into
+// the pane, because it leaves two holes a routing decision cannot have:
+//
+//   - a WINDOW. Between the pane coming up and the child's write there is a live,
+//     addressable conversation with no recorded posture, and "no record" is
+//     indistinguishable from "this agent chose keystrokes".
+//   - a PERMANENT LOSS. That write is best-effort by design (it must never fail a
+//     healthy launch), and for a conversation with no stable agent profile of its
+//     own — every clone, and every direct `session new --copilot-api` — it is the
+//     ONLY writer. One lost write leaves the conversation reading as send-keys
+//     for the rest of its life.
+//
+// This is keyed by conv id precisely because it runs before any session row is
+// guaranteed to exist. harnessName and cwd seed a conversation profile that has
+// none yet; they are ignored when one already does, since the launch's own
+// projection owns those fields.
+//
+// Recorded for a Copilot launch even when false, which is the same rule
+// relaunchProfileForSpawn follows and for the same reason: a KNOWN "this agent
+// is on send-keys" is a different fact from an unknown one, and only the first
+// may be acted on.
+func SetConversationCopilotAPI(convID, harnessName, cwd string, value bool) error {
+	return updateConversationFallbackRelaunch(convID, harnessName, cwd,
+		func(fallback *AgentRelaunchProfile) {
+			api := value
+			fallback.CopilotAPI = &api
+		})
+}
+
+// updateConversationFallbackRelaunch is the conv-keyed twin of
+// updateSessionFallbackRelaunch. A conversation with no profile yet is SEEDED
+// from harnessName/cwd rather than skipped: the callers that need this run
+// before the launch's own projection, so "no row yet" is the ordinary case
+// rather than the missing-conversation case updateSessionFallbackRelaunch
+// treats as a no-op.
+func updateConversationFallbackRelaunch(
+	convID, harnessName, cwd string, apply func(*AgentRelaunchProfile),
+) error {
+	convID = strings.TrimSpace(convID)
+	if convID == "" {
+		return errors.New("updateConversationFallbackRelaunch: conv_id required")
+	}
+	conversation, err := ConversationResumeProfileForConv(convID)
+	if err != nil {
+		return err
+	}
+	if conversation == nil {
+		conversation = &ConversationResumeProfile{
+			Version: RelaunchProfileVersion,
+			Harness: strings.TrimSpace(harnessName),
+			Cwd:     strings.TrimSpace(cwd),
+		}
+	}
+	if conversation.FallbackRelaunch == nil {
+		conversation.FallbackRelaunch = &AgentRelaunchProfile{Version: RelaunchProfileVersion}
+	}
+	apply(conversation.FallbackRelaunch)
+	return SetConversationResumeProfile(convID, *conversation)
+}
+
 // updateSessionFallbackRelaunch loads (or seeds) the conversation resume
 // profile owned by sessionID's conversation, lets apply mutate its fallback
 // relaunch facts, and writes it back. A session or conversation that does not
@@ -822,7 +890,50 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 			agent.FastMode = previous.FastMode
 		}
 	}
-	conversation.FallbackRelaunch = &agent
+	// The two Copilot launch facts carry into the CONVERSATION fallback only,
+	// which is why they are applied to a copy here rather than to `agent` in the
+	// block above. Both records are written from that one struct, and the
+	// direction matters in a way none of the other carries have to think about.
+	//
+	// Why they must carry at all: neither has a session column, so this
+	// projection has nothing to say about them and must not be able to erase
+	// them. It did — deterministically, on the first status tick after a launch
+	// recorded them — and since TCL-1058 an erased drive is not a lost badge:
+	// copilotAPIDriven reads this record to decide whether a message goes over
+	// RPC or gets TYPED into the pane, and a missing record is
+	// indistinguishable from "this agent chose keystrokes". For a conversation
+	// with no stable agent posture of its own — every clone — this fallback is
+	// the only holder, so the erasure was permanent.
+	//
+	// Why they must NOT reach `agent`: that struct is also merged into the
+	// STABLE AGENT's relaunch_profile below, where these two fields are frozen
+	// at birth by relaunchProfileForSpawn and nothing else may write them. The
+	// conversation fallback, by contrast, is written by any launch on the
+	// conversation — including `tclaude conv resume`, which knows about neither
+	// field and truthfully records both zero values for its own send-keys
+	// launch. Letting that flow upward would let one plain-CLI resume
+	// permanently un-choose a managed agent's drive, inverting the precedence
+	// composeAgentRelaunchProfile is built on.
+	//
+	// Carried unconditionally rather than gated on sameSourceGeneration,
+	// because a resume mints a new session row whose FIRST SaveSession projects
+	// before session.RecordLaunchPosture re-asserts the posture — a generation
+	// gate would leave the record missing across exactly that window, and that
+	// window is now a routing decision. It cannot pin a stale value: every
+	// launch path re-asserts both immediately afterwards including their zero
+	// values, so a relaunch that genuinely turned the drive off writes false
+	// over this a moment later.
+	conversationFallback := agent
+	if existingConversation != nil && existingConversation.FallbackRelaunch != nil {
+		if conversationFallback.CopilotAPI == nil {
+			conversationFallback.CopilotAPI = existingConversation.FallbackRelaunch.CopilotAPI
+		}
+		if conversationFallback.ConfiguredContextWindowMax == nil {
+			conversationFallback.ConfiguredContextWindowMax =
+				existingConversation.FallbackRelaunch.ConfiguredContextWindowMax
+		}
+	}
+	conversation.FallbackRelaunch = &conversationFallback
 	conversationRaw, err := encodeRelaunchProfile(conversation)
 	if err != nil {
 		return err

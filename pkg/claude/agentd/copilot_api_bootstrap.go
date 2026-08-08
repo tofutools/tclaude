@@ -168,6 +168,28 @@ func (s *copilotAPISession) StillOwned() bool {
 // and a session created against the wrong directory resolves the wrong
 // workspace and repository context while looking entirely healthy.
 //
+// # Creating and resuming are not the same call
+//
+// `session.create` at an id that already has history starts that id FRESH
+// rather than attaching to it (measured in TCL-1056: `alreadyInUse:false`, an
+// empty `getMessages`, the pane's timeline emptied, a model with no memory of
+// its own last turn). That is exactly what a fresh launch wants and exactly what
+// a RESUME must never do — a resumed pane is started `copilot --resume=<convID>`
+// precisely because that conversation has history, and creating over it destroys
+// the thing the resume existed to preserve while looking like a healthy launch.
+//
+// So the two are separate calls, chosen by [copilotAPILaunchKind], which is a
+// fact the spawn facade knows for certain rather than something inferred here.
+// This function did only the create for as long as every launch it saw was
+// fresh — it was written before resume reached the drive — and it is worth
+// naming that the code did not become wrong by changing, but by the set of
+// situations it was called in widening underneath it.
+//
+// A failed resume is a HARD failure and never falls back to creating. The
+// caller's degradation (the pane) is a pane still showing the fully resumed
+// conversation, so what a failure costs is the channel; a fallback would cost
+// the conversation.
+//
 // # One conversation, one id
 //
 // The session is created under the CONVERSATION's own id, not a fresh one, and
@@ -211,7 +233,7 @@ func (s *copilotAPISession) StillOwned() bool {
 // buffer, overruns and closes — so opening one on the caller's behalf would
 // hand the event consumer (TCL-1057) a dead stream that looks like a live one.
 func bootstrapCopilotAPISession(
-	ctx context.Context, convID, initialPrompt string,
+	ctx context.Context, convID string, kind copilotAPILaunchKind, initialPrompt string,
 ) (*copilotAPISession, error) {
 	port, panePID, err := verifiedCopilotAPIPort(ctx, convID)
 	if err != nil {
@@ -250,15 +272,9 @@ func bootstrapCopilotAPISession(
 				"allocate a new port", port, convID))
 	}
 
-	info, err := client.CreateSession(ctx, copilotapi.CreateSessionParams{
-		SessionID:        convID,
-		WorkingDirectory: workingDir,
-		ClientName:       copilotAPIClientName,
-		Streaming:        true,
-	})
+	info, err := openCopilotAPISession(ctx, client, convID, kind, workingDir)
 	if err != nil {
-		return closeOnFailure(fmt.Errorf(
-			"create a Copilot session for %s in %s: %w", convID, workingDir, err))
+		return closeOnFailure(err)
 	}
 	handle.SessionID = info.SessionID
 
@@ -289,6 +305,56 @@ func bootstrapCopilotAPISession(
 		}
 	}
 	return handle, nil
+}
+
+// openCopilotAPISession creates or resumes the session, according to what the
+// launch actually was.
+//
+// The working directory is supplied on BOTH paths, and on the resume path it is
+// the one deliberate difference from letting Copilot use its own persisted
+// value. The server treats a supplied directory as authoritative, and the
+// directory read here comes from the agent's LIVE session row — so an agent
+// relaunched somewhere else resumes its conversation against where it is now
+// rather than where it used to be, which is the same reason the create path
+// reads it from the row.
+func openCopilotAPISession(
+	ctx context.Context,
+	client *copilotapi.Client,
+	convID string,
+	kind copilotAPILaunchKind,
+	workingDir string,
+) (copilotapi.SessionInfo, error) {
+	if kind == copilotAPILaunchResume {
+		info, err := client.ResumeSession(ctx, copilotapi.ResumeSessionParams{
+			SessionID:        convID,
+			WorkingDirectory: workingDir,
+			ClientName:       copilotAPIClientName,
+			Streaming:        true,
+		})
+		if err != nil {
+			// Named as the step it is, so the log distinguishes "the resume could
+			// not be reached" from "the conversation was replaced" — which is what
+			// falling back to a create would have produced, silently.
+			return copilotapi.SessionInfo{}, fmt.Errorf(
+				"resume the Copilot session for %s in %s: %w. Refusing to create a session "+
+					"at that id instead: `session.create` starts an id FRESH, so it would "+
+					"discard the history this resume exists to keep. The pane's own resumed "+
+					"conversation is unaffected and still usable",
+				convID, workingDir, err)
+		}
+		return info, nil
+	}
+	info, err := client.CreateSession(ctx, copilotapi.CreateSessionParams{
+		SessionID:        convID,
+		WorkingDirectory: workingDir,
+		ClientName:       copilotAPIClientName,
+		Streaming:        true,
+	})
+	if err != nil {
+		return copilotapi.SessionInfo{}, fmt.Errorf(
+			"create a Copilot session for %s in %s: %w", convID, workingDir, err)
+	}
+	return info, nil
 }
 
 // copilotAPIWorkingDir resolves the directory the agent is running in, from its
@@ -441,9 +507,21 @@ var startCopilotAPIBootstrap = runCopilotAPIBootstrap
 // SetCopilotAPIBootstrapForTest swaps the bootstrap kick-off and returns a
 // restore function. TestMain installs a binary-wide no-op; a test that wants to
 // observe the call swaps its own.
-func SetCopilotAPIBootstrapForTest(fn func(convID string, copilotAPI bool, initialPrompt string)) func() {
+//
+// The launch kind reaches the callback as a plain `resume` bool because this
+// seam crosses the package boundary and [copilotAPILaunchKind] deliberately does
+// not — exporting an internal enum so a no-op stub can name it would be a worse
+// trade. In-package tests that care about the kind itself assign
+// startCopilotAPIBootstrap directly.
+func SetCopilotAPIBootstrapForTest(
+	fn func(convID string, copilotAPI bool, resume bool, initialPrompt string),
+) func() {
 	previous := startCopilotAPIBootstrap
-	startCopilotAPIBootstrap = fn
+	startCopilotAPIBootstrap = func(
+		convID string, copilotAPI bool, kind copilotAPILaunchKind, initialPrompt string,
+	) {
+		fn(convID, copilotAPI, kind == copilotAPILaunchResume, initialPrompt)
+	}
 	return func() { startCopilotAPIBootstrap = previous }
 }
 
@@ -456,14 +534,16 @@ func SetCopilotAPIBootstrapForTest(fn func(convID string, copilotAPI bool, initi
 // was adopted", which stays true with both guards deleted.
 var bootstrapCopilotAPISessionFn = bootstrapCopilotAPISession
 
-func runCopilotAPIBootstrap(convID string, copilotAPI bool, initialPrompt string) {
+func runCopilotAPIBootstrap(
+	convID string, copilotAPI bool, kind copilotAPILaunchKind, initialPrompt string,
+) {
 	if !copilotAPI || convID == "" {
 		return
 	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), copilotAPIBootstrapTimeout)
 		defer cancel()
-		handle, err := bootstrapCopilotAPISessionFn(ctx, convID, initialPrompt)
+		handle, err := bootstrapCopilotAPISessionFn(ctx, convID, kind, initialPrompt)
 		if err != nil {
 			slog.Error("could not bring up the Copilot API session; the agent is still "+
 				"usable through its pane",

@@ -398,6 +398,57 @@ func TestCopilotAPILaunchWithNoHandleHoldsRatherThanTyping(t *testing.T) {
 	fixture.assertNoKeystrokes(t)
 }
 
+// haveCopilotAPIConversationFallbackIntent records the durable opt-in in the
+// CONVERSATION fallback and nowhere else — the shape a clone is actually in.
+func haveCopilotAPIConversationFallbackIntent(t *testing.T, convID, cwd string) {
+	t.Helper()
+	require.NoError(t, db.SetConversationCopilotAPI(convID, harness.CopilotName, cwd, true))
+}
+
+// The same rule as the test above, for the record a CLONE actually has.
+//
+// TCL-1058's version records the opt-in on the stable agent's relaunch profile,
+// which is where a spawned agent's posture is frozen. A clone has no such
+// profile: it is a new agent, and nothing on the clone path ever writes one, so
+// its drive lives only in the conversation fallback. That is the arm where a
+// dropped record turns an API-driven agent into a typed-into one, and it needs
+// its own assertion because the two records are read by different halves of
+// copilotLaunchIntentForConv.
+func TestACopilotCloneShapedRecordAlsoHoldsRatherThanTyping(t *testing.T) {
+	fixture := newCopilotAPIDriveFixture(t)
+	haveCopilotAPIConversationFallbackIntent(t, fixture.convID, t.TempDir())
+	// The agent profile exists — the launch projection writes one — but it
+	// records NO drive, which is exactly a clone's shape: nothing on the clone
+	// path ever freezes that field. So the conversation fallback is what has to
+	// answer, and this pins that the test is really exercising it.
+	agentProfile, err := db.AgentRelaunchProfileForConv(fixture.convID)
+	require.NoError(t, err)
+	require.NotNil(t, agentProfile)
+	require.Nil(t, agentProfile.CopilotAPI,
+		"with a drive recorded here the agent profile would answer first and the "+
+			"conversation fallback this test is about would never be consulted")
+
+	copilotAPISessions.Drop(fixture.convID)
+
+	assert.True(t, copilotAPIDriven(fixture.convID),
+		"a clone that took the drive opted out of keystrokes just as much as a spawn did")
+	_, err = copilotAPIDrive(fixture.convID)
+	assert.Error(t, err, "and there is nothing to send on right now")
+
+	group, err := db.CreateAgentGroup("copilot-api-clone", "")
+	require.NoError(t, err)
+	messageID, err := db.InsertAgentMessage(&db.AgentMessage{
+		GroupID: group, FromConv: "peer", ToConv: fixture.convID, Body: "hello",
+	})
+	require.NoError(t, err)
+	message, err := db.GetAgentMessage(messageID)
+	require.NoError(t, err)
+
+	assert.False(t, sendNudgeBracket(fixture.convID, message, "[msg #1 from peer] hello"),
+		"held for retry rather than typed into the pane")
+	fixture.assertNoKeystrokes(t)
+}
+
 // The unread reminder shares pickNudgeSession with the inbox nudge and carries
 // the same peer-derived sender labels, so it is the same delivery family and
 // takes the same channel. It was taught about OpenCode and not about the API

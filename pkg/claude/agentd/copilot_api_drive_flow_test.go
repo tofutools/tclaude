@@ -347,6 +347,52 @@ func TestCopilotDrive_SurvivesReincarnateAndClone(t *testing.T) {
 	got, ok = f.World.SpawnCopilotAPI(cloned.NewConv)
 	require.True(t, ok, "no spawn recorded for clone conv %s", cloned.NewConv)
 	assert.True(t, got, "a clone must inherit the API drive")
+
+	// Threading the flag onto the launch is only half of it, and the half that
+	// was already true. The other half is that the NEW conversation id carries
+	// the posture DURABLY, because since TCL-1058 that record is what decides
+	// whether the successor's and the sibling's mail travels over RPC or is
+	// typed into their panes. A successor launched with --copilot-api whose
+	// record says nothing is an API-driven agent routed onto keystrokes, and it
+	// looks entirely healthy from every surface.
+	//
+	// The clone is the arm that could not survive on the old writers at all: it
+	// is a NEW agent, nothing on the clone path freezes an agent-level posture,
+	// and the launched process's own record is best-effort and lands late.
+	for _, minted := range []struct {
+		verb   string
+		convID string
+	}{
+		{"reincarnate", reincarnated.NewConv},
+		{"clone", cloned.NewConv},
+	} {
+		assert.Truef(t, copilotDriveIsRecordedFor(t, minted.convID),
+			"%s minted conv %s with no recorded Copilot drive; its messages would "+
+				"route as send-keys", minted.verb, minted.convID)
+	}
+}
+
+// copilotDriveIsRecordedFor answers the question the daemon's routing predicate
+// asks: does anything DURABLE say this conversation took the API drive?
+//
+// Both records are consulted, in the same order copilotLaunchIntentForConv uses
+// — the stable agent's frozen posture first, then the conversation fallback —
+// because reincarnate and clone leave the answer in different places. A
+// successor inherits its predecessor's agent row; a clone is a new agent with
+// no frozen posture at all, so only the fallback can speak for it.
+func copilotDriveIsRecordedFor(t *testing.T, convID string) bool {
+	t.Helper()
+	if profile, err := db.AgentRelaunchProfileForConv(convID); err == nil &&
+		profile != nil && profile.CopilotAPI != nil {
+		return *profile.CopilotAPI
+	}
+	conversation, err := db.ConversationResumeProfileForConv(convID)
+	require.NoError(t, err)
+	if conversation == nil || conversation.FallbackRelaunch == nil ||
+		conversation.FallbackRelaunch.CopilotAPI == nil {
+		return false
+	}
+	return *conversation.FallbackRelaunch.CopilotAPI
 }
 
 // TestCopilotDrive_ExplicitOffBeatsAnAmbientProfile is the regression guard for

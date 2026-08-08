@@ -116,6 +116,12 @@ func prepareCopilotAPIPort(args *clcommon.SpawnArgs) error {
 // they launched. Both land well before anything can use the port, which is the
 // only ordering that matters.
 //
+// Called ONLY from completeCopilotAPILaunch, which is what makes those two
+// moments two call sites rather than four, and what makes it impossible to
+// record a port for a conversation without also recording the drive it belongs
+// to. That is enforced rather than asked for — see
+// TestCopilotLaunchesRecordPortAndPostureTogether.
+//
 // Best-effort by design. The pane is already starting by the time this runs, so
 // returning an error here would report a failed spawn for a launch that
 // succeeded — a worse lie than the missing row, and one that would send a

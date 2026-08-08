@@ -490,7 +490,8 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		// handoff can ride the same argv, exactly as reincarnate's successor
 		// does. Without enrollment the id is whatever the harness mints, and the
 		// poll below discovers it.
-		if launchEnroll || len(p.RouteHelperGroupIDs) > 0 {
+		presetConv := launchEnroll || len(p.RouteHelperGroupIDs) > 0
+		if presetConv {
 			newConv = convops.GenerateUUID()
 			proofArgs.SessionID = newConv
 		}
@@ -553,11 +554,25 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 						armRemoteControlOnNewRow(label)
 					}
 					// This branch IS the discovery channel for a harness-minted
-					// conv-id, so it is also the first moment the clone's already
-					// allocated Copilot API port can be recorded against a
-					// conversation. No-ops unless this launch took the API drive.
-					recordCopilotAPIPort(s.ConvID, proofArgs.CopilotAPIPort)
-					startCopilotAPIBootstrap(s.ConvID, proofArgs.CopilotAPI, proofArgs.InitialPrompt)
+					// conv-id, so it is also the first moment this clone's launch
+					// facts — the drive it took and the port it was handed — have a
+					// conversation to be recorded against. No-ops for a non-Copilot
+					// clone. Fresh: a no-copy clone starts its sibling on an empty
+					// conversation by definition.
+					//
+					// Guarded on the id NOT having been preset, because this branch
+					// is reachable with one that was: the preset condition includes
+					// route helpers while the branch condition above does not, so a
+					// route-helper clone without launch enrollment arrives here
+					// having already completed its launch from the spawn facade.
+					// Completing it twice would run two bootstraps against the same
+					// id, and the second `session.create` would empty what the first
+					// had just set up. Inert today (route helpers are refused for
+					// every harness but Claude Code), and the seam is documented as
+					// one moment per launch, so it should be one.
+					if !presetConv {
+						completeCopilotAPILaunch(s.ConvID, copilotAPILaunchFresh, proofArgs)
+					}
 					res.NewConv, res.NewTmux, res.Label = s.ConvID, newTmux, label
 					commitRouteHelper()
 					return res, nil
@@ -657,7 +672,10 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	// The forked jsonl already fixes the clone's conv-id, so the copy path needs
 	// no --session-id: the name and handoff ride the resume argv directly.
 	enrollLaunch(&proofArgs, newConv)
-	if err := SpawnDetachedTclaudeResume(proofArgs); err != nil {
+	// A resume in argv shape, a FRESH conversation in fact: the id was minted
+	// above by forking a conversation file, so no harness has ever seen it. See
+	// spawnDetachedTclaudeResumeAs.
+	if err := spawnDetachedTclaudeResumeAs(proofArgs, copilotAPILaunchFresh); err != nil {
 		agentDirectoryCleanup()
 		rollbackHandoff()
 		return cloneSpawnResult{}, &cloneSpawnError{
