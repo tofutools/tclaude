@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/groupexport"
 )
 
 func TestPermissionRegistryScopeDeclarations(t *testing.T) {
@@ -66,6 +68,7 @@ func TestPermissionScopeParseAndValidate(t *testing.T) {
 		{"dimension whitespace", `{" group":["dev"]}`, PermGroupsSpawn, "", "surrounding whitespace"},
 		{"unknown selector", `{"target_agent":["@parent"]}`, PermAgentRetire, "", "unknown selector"},
 		{"selector on wrong dimension", `{"group":["@descendants"]}`, PermGroupsSpawn, "", "unknown selector"},
+		{"control character", `{"group":["dev\nadmin"]}`, PermGroupsSpawn, "", "control characters"},
 		{"empty matcher list", `{"group":[]}`, PermGroupsSpawn, "", "at least one matcher"},
 		{"empty matcher", `{"group":[""]}`, PermGroupsSpawn, "", "empty matcher"},
 		{"not an object", `[]`, PermGroupsSpawn, "", "must be a JSON object"},
@@ -88,6 +91,34 @@ func TestPermissionScopeParseAndValidate(t *testing.T) {
 				t.Errorf("canonical = %q, want %q", canonical, tc.want)
 			}
 		})
+	}
+}
+
+func TestCanonicalizeImportedPermissionScopesCoversAllGrantTables(t *testing.T) {
+	const raw = `{"group":["ops","dev","dev"]}`
+	const want = `{"group":["dev","ops"]}`
+	exp := &groupexport.Export{
+		Group: groupexport.Group{Permissions: []groupexport.GroupPermission{{
+			Slug: PermGroupsSpawn, ScopeJSON: raw,
+		}}},
+		Permissions: []groupexport.Permission{{
+			ConvID: "conv", Slug: PermGroupsSpawn, Effect: "grant", ScopeJSON: raw,
+		}},
+		SudoGrants: []groupexport.SudoGrant{{
+			ConvID: "conv", Slug: PermGroupsSpawn, ScopeJSON: raw,
+		}},
+	}
+	if err := canonicalizeImportedPermissionScopes(exp); err != nil {
+		t.Fatalf("canonicalizeImportedPermissionScopes: %v", err)
+	}
+	if got := exp.Group.Permissions[0].ScopeJSON; got != want {
+		t.Errorf("group permission scope = %s, want %s", got, want)
+	}
+	if got := exp.Permissions[0].ScopeJSON; got != want {
+		t.Errorf("permanent permission scope = %s, want %s", got, want)
+	}
+	if got := exp.SudoGrants[0].ScopeJSON; got != want {
+		t.Errorf("sudo grant scope = %s, want %s", got, want)
 	}
 }
 

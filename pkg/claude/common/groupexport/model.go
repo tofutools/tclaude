@@ -22,6 +22,10 @@ package groupexport
 // to the Export shape; the export format is meant to live in source
 // control, so forward-incompatible changes must be detectable.
 //
+// v4 adds scope_json to group, permanent, and sudo permission grants. Older
+// readers must reject v4 rather than silently dropping a scope and widening
+// the imported authority.
+//
 // v3 adds Group.permissions as structured live membership grants. Older
 // readers must reject v3 rather than silently importing the group without its
 // authorization policy.
@@ -32,7 +36,7 @@ package groupexport
 // still does imports fine — the importer reads its legacy default_model and
 // synthesizes a default spawn profile from it (see db.ImportGroup), so the
 // older export's effective spawn default does not silently regress.
-const FormatVersion = 3
+const FormatVersion = 4
 
 // Export is the complete, format-agnostic, in-memory representation of
 // one per-group export.

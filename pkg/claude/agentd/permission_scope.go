@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 // permissionScopeMaxJSONBytes is shared conceptually with the v195 column
@@ -84,6 +85,9 @@ func parsePermissionScope(raw json.RawMessage) (PermissionScope, string, error) 
 			if strings.TrimSpace(matcher) == "" {
 				return nil, "", fmt.Errorf("permission scope dimension %q contains an empty matcher", dim)
 			}
+			if strings.IndexFunc(matcher, unicode.IsControl) >= 0 {
+				return nil, "", fmt.Errorf("permission scope dimension %q contains a matcher with control characters", dim)
+			}
 			if strings.HasPrefix(matcher, "@") {
 				if _, ok := selectors[matcher]; !ok {
 					return nil, "", fmt.Errorf("unknown selector %q for permission scope dimension %q", matcher, dim)
@@ -107,6 +111,17 @@ func parsePermissionScope(raw json.RawMessage) (PermissionScope, string, error) 
 		return nil, "", fmt.Errorf("permission scope exceeds %d bytes", permissionScopeMaxJSONBytes)
 	}
 	return scope, string(canonical), nil
+}
+
+func canonicalPermissionScopeForSlug(slug, raw string) (string, error) {
+	scope, canonical, err := parsePermissionScope(json.RawMessage(raw))
+	if err != nil {
+		return "", err
+	}
+	if err := validatePermissionScopeForSlug(slug, scope); err != nil {
+		return "", err
+	}
+	return canonical, nil
 }
 
 // validatePermissionScopeForSlug rejects dimensions that are meaningful in

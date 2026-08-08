@@ -136,6 +136,61 @@ func TestGroupExport_GroupPermissionsRoundTrip(t *testing.T) {
 	assert.Equal(t, exp.Group.Permissions[0].GrantedBy, grantedBy, "attribution preserved")
 }
 
+func TestImportGroup_RequiresAndAppliesPermissionScopeCanonicalizer(t *testing.T) {
+	setupTestDB(t)
+
+	scopedGroup := groupexport.Group{
+		Permissions: []groupexport.GroupPermission{{
+			Slug: "groups.spawn", ScopeJSON: `{"group":["dev","dev"]}`,
+		}},
+	}
+	_, err := ImportGroup(minimalImportPlan("missing-validator", scopedGroup))
+	require.ErrorContains(t, err, "permission scope validation is required")
+	group, getErr := GetAgentGroupByName("missing-validator")
+	require.NoError(t, getErr)
+	assert.Nil(t, group, "a missing validator rolls the import back")
+
+	const conv = "scope-import-conv"
+	exp := &groupexport.Export{
+		FormatVersion: groupexport.FormatVersion,
+		SourceGroup:   "scoped",
+		Group:         scopedGroup,
+		Permissions: []groupexport.Permission{{
+			ConvID: conv, Slug: "groups.spawn", Effect: PermEffectGrant,
+			ScopeJSON: `{"group":["dev","dev"]}`,
+		}},
+		SudoGrants: []groupexport.SudoGrant{{
+			ConvID: conv, Slug: "groups.spawn", ScopeJSON: `{"group":["dev","dev"]}`,
+			ExpiresAt: "2099-01-01T00:00:00Z",
+		}},
+	}
+	var validated int
+	_, err = ImportGroup(GroupImportPlan{
+		Export: exp, TargetName: "canonicalized", TargetCwd: "/tmp/import-target",
+		ConvRemap: map[string]string{},
+		CanonicalizePermissionScope: func(slug, raw string) (string, error) {
+			validated++
+			assert.Equal(t, "groups.spawn", slug)
+			assert.Equal(t, `{"group":["dev","dev"]}`, raw)
+			return `{"group":["dev"]}`, nil
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 3, validated, "all three authority tables validate scopes")
+
+	d, err := Open()
+	require.NoError(t, err)
+	for _, query := range []string{
+		`SELECT scope_json FROM agent_group_permissions WHERE group_id = (SELECT id FROM agent_groups WHERE name = 'canonicalized')`,
+		`SELECT p.scope_json FROM agent_permissions p JOIN agent_conversations c ON c.agent_id = p.agent_id WHERE c.conv_id = 'scope-import-conv'`,
+		`SELECT s.scope_json FROM agent_sudo_grants s JOIN agent_conversations c ON c.agent_id = s.agent_id WHERE c.conv_id = 'scope-import-conv'`,
+	} {
+		var scopeJSON string
+		require.NoError(t, d.QueryRow(query).Scan(&scopeJSON))
+		assert.Equal(t, `{"group":["dev"]}`, scopeJSON)
+	}
+}
+
 func TestGroupExport_AttachmentRoundTrip(t *testing.T) {
 	setupTestDB(t)
 

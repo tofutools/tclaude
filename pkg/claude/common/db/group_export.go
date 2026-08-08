@@ -580,6 +580,10 @@ type GroupImportPlan struct {
 	// indexed such a path already; no other indexed path is accepted.
 	ClaimedConversationPaths map[string]string // final conv-id → exact O_EXCL-created destination path
 	ByConv                   string            // caller conv-id for the audit log ("" = human)
+	// CanonicalizePermissionScope is supplied by the daemon, which owns the
+	// permission registry. ImportGroup requires it for every non-empty archived
+	// scope so direct DB callers cannot bypass registry and selector validation.
+	CanonicalizePermissionScope func(slug, raw string) (string, error)
 }
 
 // GroupImportResult summarises a completed import.
@@ -658,6 +662,20 @@ type importCtx struct {
 	// closes the check/import TOCTOU window where a conv could appear locally
 	// between the daemon's pre-flight scan and this transaction.
 	createdActors map[string]bool
+}
+
+func (c *importCtx) permissionScope(slug, raw string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+	if c.plan.CanonicalizePermissionScope == nil {
+		return "", errors.New("permission scope validation is required")
+	}
+	canonical, err := c.plan.CanonicalizePermissionScope(slug, raw)
+	if err != nil {
+		return "", err
+	}
+	return canonical, nil
 }
 
 // ensureActor resolves (allocating when absent) the actor owning conv, recording
@@ -840,13 +858,17 @@ func (c *importCtx) group() error {
 		return fmt.Errorf("import: group id: %w", err)
 	}
 	for _, permission := range g.Permissions {
+		scopeJSON, err := c.permissionScope(permission.Slug, permission.ScopeJSON)
+		if err != nil {
+			return fmt.Errorf("import: group permission %q scope: %w", permission.Slug, err)
+		}
 		grantedAt := permission.GrantedAt
 		if grantedAt == "" {
 			grantedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		}
 		if _, err := c.tx.Exec(`INSERT OR IGNORE INTO agent_group_permissions
 			(group_id, slug, granted_at, granted_by, scope_json) VALUES (?, ?, ?, ?, ?)`,
-			c.newGroupID, permission.Slug, requiredImportDBTime(grantedAt), permission.GrantedBy, permission.ScopeJSON); err != nil {
+			c.newGroupID, permission.Slug, requiredImportDBTime(grantedAt), permission.GrantedBy, scopeJSON); err != nil {
 			return fmt.Errorf("import: group permission %q: %w", permission.Slug, err)
 		}
 	}
@@ -950,7 +972,11 @@ func (c *importCtx) audit() error {
 
 func (c *importCtx) permissions() error {
 	for _, p := range c.exp.Permissions {
-		if p.Effect == PermEffectDeny && p.ScopeJSON != "" {
+		scopeJSON, err := c.permissionScope(p.Slug, p.ScopeJSON)
+		if err != nil {
+			return fmt.Errorf("import: permission %s/%s scope: %w", p.ConvID, p.Slug, err)
+		}
+		if p.Effect == PermEffectDeny && scopeJSON != "" {
 			return fmt.Errorf("import: deny permission %s/%s cannot carry a scope", p.ConvID, p.Slug)
 		}
 		conv := c.rc(p.ConvID)
@@ -961,7 +987,7 @@ func (c *importCtx) permissions() error {
 		if _, err := c.tx.Exec(`
 			INSERT INTO agent_permissions (agent_id, slug, effect, granted_at, granted_by, scope_json)
 			VALUES (?, ?, ?, ?, ?, ?)`,
-			agentID, p.Slug, p.Effect, requiredImportDBTime(p.GrantedAt), p.GrantedBy, p.ScopeJSON); err != nil {
+			agentID, p.Slug, p.Effect, requiredImportDBTime(p.GrantedAt), p.GrantedBy, scopeJSON); err != nil {
 			return fmt.Errorf("import: permission %s/%s: %w", p.ConvID, p.Slug, err)
 		}
 	}
@@ -1035,6 +1061,10 @@ func (c *importCtx) workdirs() error {
 
 func (c *importCtx) sudoGrants() error {
 	for _, s := range c.exp.SudoGrants {
+		scopeJSON, err := c.permissionScope(s.Slug, s.ScopeJSON)
+		if err != nil {
+			return fmt.Errorf("import: sudo grant %s/%s scope: %w", s.ConvID, s.Slug, err)
+		}
 		conv := c.rc(s.ConvID)
 		agentID, err := c.ensureActor(conv, "import")
 		if err != nil {
@@ -1045,7 +1075,7 @@ func (c *importCtx) sudoGrants() error {
 				(agent_id, slug, granted_at, expires_at, granted_by, reason, revoked_at, scope_json)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 			agentID, s.Slug, requiredImportDBTime(s.GrantedAt), nullableDBTimeText(s.ExpiresAt), s.GrantedBy,
-			s.Reason, nullableDBTimeText(s.RevokedAt), s.ScopeJSON); err != nil {
+			s.Reason, nullableDBTimeText(s.RevokedAt), scopeJSON); err != nil {
 			return fmt.Errorf("import: sudo grant %s/%s: %w", s.ConvID, s.Slug, err)
 		}
 	}

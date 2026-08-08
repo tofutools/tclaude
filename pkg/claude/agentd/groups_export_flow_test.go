@@ -401,6 +401,29 @@ func TestGroupImport_RejectsUnsupportedVersion(t *testing.T) {
 		"a too-new format version must be refused: body=%s", rec.Body.String())
 }
 
+func TestGroupImport_RejectsInvalidPermissionScopeBeforeFilesystem(t *testing.T) {
+	f := newFlow(t)
+	exp := &groupexport.Export{
+		FormatVersion: groupexport.FormatVersion,
+		SourceGroup:   "invalid-scope",
+		Group: groupexport.Group{Permissions: []groupexport.GroupPermission{{
+			Slug: agentd.PermGroupsSpawn, ScopeJSON: `{"remote":["origin"]}`,
+		}}},
+	}
+	archive, err := groupexport.Marshal(exp)
+	require.NoError(t, err)
+	targetCwd := filepath.Join(f.World.HomeDir, "invalid-scope-target")
+
+	rec := importArchive(f, archive, targetCwd, "")
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "unknown permission scope dimension")
+	_, err = os.Stat(targetCwd)
+	assert.ErrorIs(t, err, os.ErrNotExist, "invalid scope must be rejected before file placement")
+	group, err := db.GetAgentGroupByName("invalid-scope")
+	require.NoError(t, err)
+	assert.Nil(t, group)
+}
+
 func TestGroupImport_RejectsUnsafeAttachmentBeforeFilesystem(t *testing.T) {
 	f := newFlow(t)
 	exp := &groupexport.Export{
