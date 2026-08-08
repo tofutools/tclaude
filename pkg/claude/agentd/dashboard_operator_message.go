@@ -42,6 +42,7 @@ func handleDashboardOperatorMessage(w http.ResponseWriter, r *http.Request) {
 		Subject         string `json:"subject"`
 		Body            string `json:"body"`
 		AttachmentToken string `json:"attachment_token"`
+		AllLive         bool   `json:"all_live"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid message: "+err.Error())
@@ -49,12 +50,28 @@ func handleDashboardOperatorMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	req.To = strings.TrimSpace(req.To)
 	req.Subject = strings.TrimSpace(req.Subject)
-	if req.To == "" {
+	if req.To == "" && !req.AllLive {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "to is required")
 		return
 	}
 	if len([]rune(req.Subject)) > operatorMessageMaxSubject || len([]byte(req.Body)) > operatorMessageMaxBody {
 		writeError(w, http.StatusBadRequest, "too_large", "subject or body is too long")
+		return
+	}
+	if req.AllLive {
+		if req.To != "" {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "to must be empty for an all-live announcement")
+			return
+		}
+		if req.AttachmentToken != "" {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "attachments are not supported for all-live announcements")
+			return
+		}
+		if strings.TrimSpace(req.Body) == "" {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "message body is required")
+			return
+		}
+		handleDashboardLiveAnnouncement(w, r, req.Subject, req.Body)
 		return
 	}
 	target, matches, err := agent.ResolveSelector(req.To)
@@ -105,6 +122,67 @@ func handleDashboardOperatorMessage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"id": id, "queued": true, "pending": pending,
 		"to": target.ConvID, "attachments": attachments,
+	})
+}
+
+// handleDashboardLiveAnnouncement fans one human-authored message out to each
+// active agent with a live tmux session at submit time. The roster and tmux
+// snapshot are both read here, rather than trusted from the browser's latest
+// dashboard poll, so an agent that stopped while the composer was open is not
+// accidentally queued and an agent that just came online is included.
+//
+// This is deliberately actor-level (ListActiveAgents), not group-level: an
+// agent in several groups receives one copy, and an ungrouped live agent is
+// still part of the dashboard-wide announcement.
+func handleDashboardLiveAnnouncement(w http.ResponseWriter, r *http.Request, subject, body string) {
+	agents, err := db.ListActiveAgents()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "list active agents: "+err.Error())
+		return
+	}
+	alive, err := cachedLiveTmuxSessions()
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "tmux", "list live agents: "+err.Error())
+		return
+	}
+
+	recipients := make([]recipient, 0, len(agents))
+	for _, active := range agents {
+		if active == nil || active.CurrentConvID == "" || !isConvOnlineIn(active.CurrentConvID, alive) {
+			continue
+		}
+		convID := active.CurrentConvID
+		id, pending, queueErr := queueRegularAgentMessage(&db.AgentMessage{
+			FromConv:         "",
+			ToConv:           convID,
+			Subject:          subject,
+			Body:             body,
+			ToRecipients:     []string{convID},
+			OperatorAuthored: true,
+		})
+		row := recipient{
+			ConvID: convID, AgentID: active.AgentID, Title: agent.TitleFor(convID),
+		}
+		if queueErr != nil {
+			if full, ok := agentMessageQueueFull(queueErr); ok {
+				row.Pending = full.Pending
+				row.QueueFull = true
+				row.Limit = full.Limit
+				row.Error = queueFullHint(full.Pending, full.Limit)
+			} else {
+				row.Error = "failed to queue message: " + queueErr.Error()
+			}
+		} else {
+			row.MessageID = id
+			row.Queued = true
+			row.Pending = pending
+		}
+		recipients = append(recipients, row)
+	}
+	setAuditTargetLabel(r, "all live agents")
+	writeJSON(w, http.StatusOK, map[string]any{
+		"all_live":   true,
+		"recipients": recipients,
 	})
 }
 

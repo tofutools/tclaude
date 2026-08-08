@@ -38,12 +38,21 @@ export function createMessageAccessDialogActions({
     }
     return requestJSON(fetchImpl, '/api/operator-message', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        to: draft.to,
-        subject: draft.subject,
-        body: draft.body,
+      body: JSON.stringify(draft.allLive ? {
+        to: '', subject: draft.subject, body: draft.body, all_live: true,
+      } : {
+        to: draft.to, subject: draft.subject, body: draft.body,
         attachment_token: attachmentToken,
       }),
+    }).then((response) => {
+      if (!draft.allLive) return response;
+      const recipients = response.recipients || [];
+      const queued = recipients.filter((item) => item.queued).length;
+      const rejected = recipients.length - queued;
+      notify(recipients.length
+        ? `announcement saved for ${queued} live agent${queued === 1 ? '' : 's'}${rejected ? `; ${rejected} not queued` : ''}`
+        : 'no live agents — nothing announced');
+      return response;
     });
   }
 

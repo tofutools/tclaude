@@ -461,6 +461,27 @@ test('operator composer keeps target and attachment snapshot atomic with single-
   await mounted.unmount();
 });
 
+test('all-live announcement composer has broadcast copy and freezes the explicit fan-out mode', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createMessageAccessDialogState } = await harness.importDashboardModule('js/message-access-dialog-state.js');
+  const state = createMessageAccessDialogState();
+  state.openOperatorMessage({ allLive: true, label: 'all live agents (currently 3)' });
+  const drafts = [];
+  const actions = { sendOperatorMessage: async (draft) => { drafts.push(draft); } };
+  const { host, mounted } = await mountDialogs(harness, state, actions, snapshot({ groups: [] }));
+  assert.equal(host.querySelector('#operator-message-title').textContent.includes('Announce to all live agents'), true);
+  assert.equal(host.querySelector('#operator-message-to').textContent, 'all live agents (currently 3)');
+  assert.equal(host.querySelector('#operator-message-attach-input'), null);
+  await harness.input(host.querySelector('#operator-message-body'), 'attention everyone');
+  await harness.act(async () => { host.querySelector('#operator-message-submit').click(); await Promise.resolve(); });
+  assert.deepEqual(drafts, [{
+    to: '', subject: '', body: 'attention everyone', files: [], allLive: true,
+  }]);
+  assert.equal(Object.isFrozen(drafts[0]), true);
+  assert.equal(state.dialog.value, null);
+  await mounted.unmount();
+});
+
 test('operator Cancel uses dirty confirmation and deferred focus restore yields to a newer dialog', async (t) => {
   const harness = await createPreactHarness(t);
   const { createMessageAccessDialogState } = await harness.importDashboardModule('js/message-access-dialog-state.js');

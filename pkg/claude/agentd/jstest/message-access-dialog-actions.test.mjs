@@ -75,6 +75,28 @@ test('operator message uploads its frozen attachment batch before posting the ta
   });
 });
 
+test('all-live announcement skips attachments and reports partial fan-out', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createMessageAccessDialogActions } = await harness.importDashboardModule('js/message-access-dialog-actions.js');
+  const calls = [];
+  const notices = [];
+  const actions = createMessageAccessDialogActions({
+    fetchImpl: async (url, options) => {
+      calls.push({ url, body: JSON.parse(options.body) });
+      return response(200, { recipients: [{ queued: true }, { queued: false, queue_full: true }] });
+    },
+    notify: (message) => notices.push(message),
+  });
+  await actions.sendOperatorMessage(Object.freeze({
+    to: '', subject: 'heads up', body: 'deploy now', files: Object.freeze([]), allLive: true,
+  }));
+  assert.deepEqual(calls, [{
+    url: '/api/operator-message',
+    body: { to: '', subject: 'heads up', body: 'deploy now', all_live: true },
+  }]);
+  assert.deepEqual(notices, ['announcement saved for 1 live agent; 1 not queued']);
+});
+
 test('accepted reply and sudo mutations do not await snapshot refresh before completion', async (t) => {
   const harness = await createPreactHarness(t);
   const { createMessageAccessDialogActions } = await harness.importDashboardModule('js/message-access-dialog-actions.js');

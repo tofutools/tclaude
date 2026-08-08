@@ -200,6 +200,12 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	must("shutdownScope('all', null)", "global shutdown reuses shutdownScope")
 	must("wiz('Power on all agents', 'Awaken all familiars')", "the palette offers a global power-on (plain + arcane label)")
 	must("powerOnScope('all', null)", "global power-on reuses powerOnScope")
+	must("wiz('Announce to all live agents…', 'Proclaim to all channeling familiars…')",
+		"the palette offers a dashboard-wide live-agent announcement")
+	must("openOperatorMessageDialog({",
+		"the announcement command reuses the guarded human-to-agent composer")
+	must("allLive: true",
+		"the announcement composer requests the explicit all-live backend mode")
 	// Per-group batch.
 	must("wiz(`Shut down group: ${g.name}`, `Slumber party: ${g.name}`)", "the palette offers a per-group shutdown (plain + arcane label)")
 	must("shutdownScope('group', g.name)", "per-group shutdown reuses shutdownScope")
