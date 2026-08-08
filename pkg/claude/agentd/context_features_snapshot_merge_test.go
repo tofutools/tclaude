@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // mergeSnapshotInlineProfile splits a template agent's template-local profile
@@ -69,6 +70,54 @@ func TestMergeSnapshotInlineProfile_PreservesStartupContext(t *testing.T) {
 	out := mergeSnapshotInlineProfile(prev, &db.SpawnProfile{Model: "sonnet"})
 	require.NotNil(t, out)
 	assert.Equal(t, "Keep the curated model guidance.", out.StartupContext)
+}
+
+// The Copilot context cap is observable, but 0 is ambiguous — a member pinning
+// no cap and an untraceable one both read 0 — so the merge splits it: a traced
+// cap wins, a traced zero falls back to the template's curated one. The fallback
+// half is pinned structurally by
+// TestMergeSnapshotInlineProfileCarriesEveryCuratedField; this is the half a
+// structural guard cannot see, because it is about which side wins rather than
+// about the field being handled at all.
+func TestMergeSnapshotInlineProfile_TracedContextWindowMaxWins(t *testing.T) {
+	prev := &db.SpawnProfile{ContextWindowMax: 100_000}
+	out := mergeSnapshotInlineProfile(prev, &db.SpawnProfile{ContextWindowMax: 272_000})
+	require.NotNil(t, out)
+	assert.Equal(t, int64(272_000), out.ContextWindowMax,
+		"a member relaunched with a different cap must re-snapshot with the live value")
+}
+
+// The ticket's own case: a member still traced as Copilot that does not
+// currently pin a cap must not cost the template its curated one.
+func TestMergeSnapshotInlineProfile_ContextWindowMaxCarriesForACopilotMember(t *testing.T) {
+	prev := &db.SpawnProfile{Harness: harness.CopilotName, ContextWindowMax: 272_000}
+	out := mergeSnapshotInlineProfile(prev, &db.SpawnProfile{Harness: harness.CopilotName, Model: "gpt-5"})
+	require.NotNil(t, out, "a profile pinning only a Copilot cap must survive the merge")
+	assert.Equal(t, int64(272_000), out.ContextWindowMax)
+}
+
+// ...but the cap travels with its harness. Harness is traced-wins, so an
+// untraceable member (a pruned session row) merges to a BLANK harness, which
+// resolves to Claude — and resolveIntLaunchField treats a blank-harness inline
+// profile as a matching tier, so a cap riding across would 400 the whole agent at
+// deploy with invalid_context_window_max rather than being ignored.
+//
+// This is a deliberately chosen residual, not an oversight: an untraceable
+// Copilot member still loses its curated cap, which is the original TCL-1062
+// defect in the population that motivated the gate. Losing a meter denominator
+// is preferred to emitting a template-local profile that cannot deploy at all.
+func TestMergeSnapshotInlineProfile_ContextWindowMaxDoesNotOutliveItsHarness(t *testing.T) {
+	prev := &db.SpawnProfile{
+		Harness:          harness.CopilotName,
+		ContextWindowMax: 272_000,
+		StartupContext:   "curated guidance",
+	}
+	out := mergeSnapshotInlineProfile(prev, &db.SpawnProfile{})
+	require.NotNil(t, out)
+	assert.Zero(t, out.ContextWindowMax,
+		"a Copilot cap must not ride across onto a profile whose harness pin was just dropped")
+	assert.Equal(t, "curated guidance", out.StartupContext,
+		"the gate is specific to the cap — harness-agnostic curated fields still carry")
 }
 
 func TestTraceMemberLaunchMarksAnObservedEmptyTrimSet(t *testing.T) {
