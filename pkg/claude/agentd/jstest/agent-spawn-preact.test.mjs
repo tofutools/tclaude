@@ -874,6 +874,38 @@ test('Preact agent-spawn Clear wins a race with the initial default-profile load
   }
 });
 
+test('Preact agent-spawn replaces sparse profile fields but keeps manual overrides', async (t) => {
+  const mounted = await mountSpawn(t);
+  const { harness, host, state } = mounted;
+  try {
+    state.open({ groupName: 'alpha' });
+    await flush(harness);
+
+    assert.equal(selectedValue(host.querySelector('#agent-spawn-load-profile')), 'group-default');
+    assert.equal(host.querySelector('#agent-spawn-owner').hasAttribute('checked'), true);
+    assert.equal(host.querySelector('#agent-spawn-role').value, 'reviewer');
+    assert.match(host.querySelector('#agent-spawn-perms-indicator').textContent, /1 grant/);
+
+    const role = host.querySelector('#agent-spawn-role');
+    setValue(role, 'manual-role');
+    await harness.act(() => harness.fireEvent(role, 'input'));
+
+    const picker = host.querySelector('#agent-spawn-load-profile');
+    setValue(picker, 'codex-profile');
+    await harness.act(() => harness.fireEvent(picker, 'change'));
+    await flush(harness);
+
+    assert.equal(host.querySelector('#agent-spawn-owner').hasAttribute('checked'), false,
+      'an owner opt-in from the previous profile must not leak into a sparse profile');
+    assert.equal(host.querySelector('#agent-spawn-perms-indicator').hidden, true,
+      'permission overrides from the previous profile must be cleared');
+    assert.equal(host.querySelector('#agent-spawn-role').value, 'manual-role',
+      'a field directly edited by the operator remains a per-spawn override');
+  } finally {
+    mounted.cleanup();
+  }
+});
+
 test('Preact agent-spawn does not apply a stale group default after an early group switch', async (t) => {
   const pending = deferred();
   const mounted = await mountSpawn(t, { loadProfiles: () => pending.promise });
