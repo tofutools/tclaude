@@ -444,6 +444,44 @@ func TestCopilotAPIFailedChannelCannotCrashTheRelaunchThatSupersededIt(t *testin
 	reason, err := db.GetSessionExitReason(sessionID)
 	require.NoError(t, err)
 	assert.Empty(t, reason)
+
+	// The behavioural arm above catches removing the generation check. Pin its
+	// position too: moving it above Lock recreates the check-then-wait window in
+	// which the successor can land after the check and before the kill.
+	source, err := os.ReadFile("copilot_api_reconnect.go")
+	require.NoError(t, err)
+	parsed, err := parser.ParseFile(token.NewFileSet(), "copilot_api_reconnect.go", source, 0)
+	require.NoError(t, err)
+	var lockAt, generationAt token.Pos
+	for _, decl := range parsed.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != "shutdownCrashedCopilotAPIAgent" {
+			continue
+		}
+		ast.Inspect(fn.Body, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			selector, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			switch selector.Sel.Name {
+			case "Lock":
+				if lockAt == token.NoPos {
+					lockAt = call.Pos()
+				}
+			case "CurrentLaunch":
+				generationAt = call.Pos()
+			}
+			return true
+		})
+	}
+	require.NotEqual(t, token.NoPos, lockAt, "shutdown no longer acquires the launch lock")
+	require.NotEqual(t, token.NoPos, generationAt, "shutdown no longer rechecks the launch generation")
+	assert.Less(t, lockAt, generationAt,
+		"the launch generation must be rechecked after acquiring the launch lock")
 }
 
 // The reconnect's defining property. It rejoins a conversation it must not
