@@ -80,17 +80,24 @@ be launched and resumed, but nothing else. Here is what each nil field costs:
 | `ToolGovernance` | No uniform built-in-tool allow/ask/deny axis (`SupportsToolGovernance` false). |
 
 **`copilot` (`copilot.go`, `copilot_spawner.go`, `copilot_models.go`) is the
-worked example of exactly that minimum**, and of why you might deliberately stop
-there. It was written from GitHub's published CLI documentation with no Copilot
-binary available to record fixtures, so it claims `Spawn`, `Models` and `Life`
-— contracts a documented flag list actually proves — and leaves every other
-optional capability contract unset. (It does set the `LaunchEnrollment`
-capability flag, because `copilot --session-id <uuid>` proves the conv-id is
-knowable before the pane starts; the flags are a separate axis from the
-contracts.) Resist the temptation to fill the rest in from plausible inference: a
-caller can detect an absent contract through the `Supports*` helpers and degrade,
-but it cannot detect one that is present and wrong. Ship the minimum bar, then
-add each further contract in its own fixture-backed slice.
+worked example of how to start at exactly that minimum**, and of why you might
+deliberately stop there for a while. Its first wave was written from GitHub's
+published CLI documentation with no Copilot binary available to record fixtures,
+so it claimed `Spawn`, `Models` and `Life` — contracts a documented flag list
+actually proves — and left every other optional capability contract unset. (It
+also set the `LaunchEnrollment` capability flag, because `copilot --session-id
+<uuid>` proves the conv-id is knowable before the pane starts; the flags are a
+separate axis from the contracts.) Resist the temptation to fill the rest in from
+plausible inference: a caller can detect an absent contract through the
+`Supports*` helpers and degrade, but it cannot detect one that is present and
+wrong. Ship the minimum bar, then add each further contract in its own
+fixture-backed slice — which is what happened here. `copilot.go` has since grown
+`Ask`, `Convs`, `Hooks`, `Sandbox`, `Approval`, `ModelTransport` and `DirTrust`,
+plus `TclaudeLayerMode`, `BuiltinOSSandboxAbsenceReason` and several capability
+flags, each added once the fixture lab described in
+[harnesses.md](harnesses.md#compatibility-fixtures) could prove it against a real
+binary. Read the first wave as the starting point; `copilot.go` itself is the
+current state.
 
 `Sandbox` and `BuiltinOSSandbox` answer different questions. A harness can
 offer meaningful sandbox-mode choices without owning an OS boundary: OpenCode
@@ -110,6 +117,49 @@ filter; Copilot's says its built-in file edits are checked in-process rather
 than by the OS (see [harnesses.md](harnesses.md#copilots-own-command-sandboxing)
 for the measurements). Leave it empty for a harness with nothing of the kind.
 
+**A harness can be API-backed and still own exactly one pane process.** It is
+easy to read OpenCode's integration as the shape an API-backed harness has to
+take — a managed server supervised separately from the attached TUI, with its own
+lifecycle, handshake and endpoint discovery — because for a while it was the only
+example. Copilot is the second, and it has the opposite topology: `copilot
+--ui-server` runs the interactive TUI *and* an embedded JSON-RPC server in one
+process, so there is no side process to supervise, and tclaude's existing
+"harness process under the pane" liveness anchoring, reaper and stop-escalation
+ladder all keep working unchanged.
+
+The practical consequences for a new harness in that shape are worth naming,
+because they are what the two topologies do *not* share:
+
+- **The `Spawner` contract is enough — but the launch's first turn leaves the
+  argv.** The server itself is just a flag on the same command line
+  (`harness/copilot_spawner.go` renders `--ui-server --host 127.0.0.1 --port
+  <n>`), so nothing needs a launch-and-supervise seam, and `SpawnSpec` only had
+  to grow the port. What is easy to miss is that the same spawner must then
+  **suppress `-i`**: the drive opens its own session under the conversation id
+  after launch, so a prompt delivered on the command line would run visibly in
+  the pane and then be discarded. If your harness's API opens the session, the
+  launch prompt belongs to the API too.
+- **Whoever consumes the API must hold the endpoint before the process exists.**
+  agentd allocates the port and passes it down, rather than discovering it after
+  the fact — Copilot publishes its chosen port only to a log line.
+- **Connectedness is not a launch record.** "This launch chose the API" is
+  durable and decides routing; "a connection exists right now" is derived from
+  the live handle. Collapsing the two is how a channel that is merely starting up
+  gets treated as a channel that was never asked for.
+- **No silent keystroke fallback.** A harness driven over an API opted *out* of
+  the pane-injection sink. When the channel is down, hold and retry the delivery;
+  typing it in returns the agent to the sink at the worst possible moment. Both
+  API-backed harnesses follow this rule.
+
+`SupportsCopilotAPI` is deliberately named for its harness rather than
+generalised into an "API-backed" capability. Two examples with genuinely
+different process shapes are not yet enough to know which abstraction is worth
+having; a third may settle it. See
+[harnesses.md](harnesses.md#copilot-drive-send-keys-vs-api) for the user-facing
+contract, and note that a drive can be partial on purpose — Copilot's soft exit
+stays on keystrokes because its shutdown RPCs end a session without ending the
+process.
+
 `TclaudeLayerMode` is the separate opt-in for the single-wall
 `sandbox_implementation=tclaude-layer` topology. Set it to the reviewed
 harness-native launch posture that must be recorded inside the outer wall
@@ -124,8 +174,10 @@ Implement as many as your harness needs; leave the rest `nil`. Claude Code
 (`claude.go`), Codex (`codex.go`, `codex_*.go`) and OpenCode (`opencode.go`,
 `opencode_*.go`) are the worked examples — read them alongside this list. Between
 them they cover every contract below at least once, so for each one there is a
-concrete implementation to copy. Copilot (`copilot*.go`) is the minimal
-counter-example: only `Spawner`, `ModelCatalog` and `Lifecycle`.
+concrete implementation to copy. Copilot (`copilot*.go`) shipped as the minimal
+counter-example — `Spawner`, `ModelCatalog` and `Lifecycle` alone — and has since
+grown most of the optional contracts one fixture-backed slice at a time; read
+`copilot.go` for the current set rather than trusting a list here.
 
 ### `Spawner` — launch & resume *(required to spawn)*
 
@@ -246,6 +298,17 @@ dispatches the equivalent managed command (`session.compact` / `app.exit`)
 through the authenticated server API instead of `send-keys`. The token strings
 therefore double as the switch key for that translation, so they must stay
 constant and in sync with the dispatch mapping.
+
+The same is true **per launch** rather than per harness for Copilot's opt-in API
+drive: an agent launched with `--copilot-api` has its compaction dispatched as
+`session.history.compact` keyed off the same `CompactCommand()` token, while an
+agent on the default send-keys drive is typed the literal `/compact`. Two
+properties follow, and both are load-bearing. The dispatch is a fixed switch on
+compile-time tokens, never a command interpreter — an unmapped token fails closed
+rather than reaching for keystrokes. And soft exit stays on keystrokes for that
+harness even when the channel is up, because Copilot's shutdown RPCs end a
+session without ending the process; a partial drive is a legitimate outcome, so
+do not assume every token your harness names has to move at once.
 
 ### `ConvStore` — conversation metadata
 
@@ -442,5 +505,7 @@ not smuggled into a feature change.
 - **[Harnesses](harnesses.md)** — the user-facing overview + capability matrix.
 - The `tclaude-harness-independence` Linear project — the design intent and
   research pool (coupling inventory, Codex CLI facts, sandbox/approval analysis).
-- `pkg/claude/harness/` — the contracts and the `claude` / `codex` / `opencode`
-  implementations.
+- `pkg/claude/harness/` — the contracts and the `claude` / `codex` / `opencode` /
+  `copilot` implementations.
+- `pkg/claude/copilotapi/` — the JSON-RPC client for Copilot's embedded server,
+  if you are adding a harness with a similar single-process API shape.

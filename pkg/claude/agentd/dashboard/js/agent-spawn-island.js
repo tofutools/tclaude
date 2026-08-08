@@ -70,8 +70,12 @@ const AUTO_COMPACT_WINDOW_TITLE = 'Context capacity in tokens for Claude Code\'s
 const CONTEXT_WINDOW_MAX_TITLE = 'Configured/assumed context cap for the Copilot context meter. '
   + 'Copilot does not report its context limit; a blank value uses the observed model\'s static assumption.';
 const COPILOT_API_TITLE = 'EXPERIMENTAL: drive this Copilot agent over its embedded JSON-RPC API '
-  + '(copilot --ui-server) instead of typing into its pane with tmux send-keys. Off by default — the '
-  + 'two drives run side by side and agents move over one at a time. Copilot only.';
+  + '(copilot --ui-server) instead of typing into its pane with tmux send-keys. Messages, rename and '
+  + 'compaction become typed calls, context is read live, and an agent blocked on a permission prompt '
+  + 'becomes visible; soft exit still uses keystrokes. The spawn is REFUSED unless the launch directory is already trusted '
+  + '(or Pre-trust is checked) and the pane shares host loopback. The endpoint is unauthenticated and '
+  + 'loopback-bound. Off by default — the two drives run side by side and agents move over one at a '
+  + 'time. Copilot only.';
 // Names WHO enforces the wall, which the Sandbox row above does not: that row
 // picks a mode within whatever sandbox is in force, this one picks which
 // sandbox that is. The experimental caveat and the platform requirement are

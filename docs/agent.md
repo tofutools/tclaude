@@ -375,6 +375,16 @@ so multi-command tmux sequences cannot interleave.
 Startup greetings and briefings are the intentional exception: the harness
 launch prompt owns their first delivery.
 
+An agent whose harness is driven over an API rather than the pane is notified
+over that channel instead, and there is **no keystroke fallback** — an agent that
+opted out of pane injection is never handed back to it because one call failed.
+When the channel is down the notification fails and the durable inbox row stays
+for the queue to retry. For a Copilot agent on the opt-in
+[API drive](harnesses.md#copilot-drive-send-keys-vs-api) that means the window
+before its channel comes up, and any period after one that never did — an
+agentd restart itself is not such a window, because agentd reconciles an
+established channel back on startup.
+
 User-initiated one-shot sends are backpressured at 10 unprocessed regular
 messages per target. A full target rejects a direct send or reply with
 `queue_full` and does not write or discard a message; retry after the target
@@ -1692,7 +1702,7 @@ justify reincarnating either harness.
 tclaude agent clone [follow-up]              # fork a sibling; the original keeps running
 tclaude agent clone --no-copy-conv           # clone with a blank context instead of the copied jsonl
 tclaude agent reincarnate "<follow-up>"      # replace self with a fresh successor (follow-up REQUIRED)
-tclaude agent compact [follow-up]            # inject /compact into the pane
+tclaude agent compact [follow-up]            # inject /compact into the pane (typed RPC on an API-driven harness)
 tclaude agent context-info                   # show this conversation's context-window state (read-only)
 tclaude agent context-info --target <sel>    # read ANOTHER agent's context (gated: agent.context-info or group-owner)
 tclaude agent context-info --group <name|id> # one table of every group member's context % (gated likewise)
@@ -1922,7 +1932,13 @@ tclaude agent alias ls / get / rm
 (another). The title charset is strict
 (`[A-Za-z0-9_\-\[\]{}() ]`, single ASCII spaces, max 64 chars) — a
 hard security gate, because the title becomes literal keystroke
-input.
+input. Harnesses that are not driven by keystrokes take their own
+path — Codex writes its title store, OpenCode calls its managed
+server, and a Copilot agent on the opt-in
+[API drive](harnesses.md#copilot-drive-send-keys-vs-api) is renamed
+with a typed RPC — but the charset gate runs for all of them, so a
+title never renders differently depending on which transport a
+conversation happens to hold.
 
 An agent has exactly one name: its conversation title, set with
 `rename`. That title is what selectors resolve and what `ls` /

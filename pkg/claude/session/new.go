@@ -243,11 +243,12 @@ type NewParams struct {
 	// deliberately emits no override, preserving the operator's config.toml.
 	FastMode string `long:"fast-mode" optional:"true" help:"Codex request speed: inherit (use config.toml) | on (fast, higher credit cost) | off (standard tier). Codex only"`
 
-	// CopilotAPI selects the API-backed Copilot mode. Recorded as launch intent
-	// here; the runtime that acts on it is separate work (TCL-1056), so today
-	// this flag decides which mode the conversation is pinned to and, with
-	// CopilotAPIPort, makes the pane bind the embedded server.
-	CopilotAPI bool `long:"copilot-api" help:"EXPERIMENTAL: drive this Copilot agent over its embedded JSON-RPC API instead of tmux send-keys. Off by default. Copilot only"`
+	// CopilotAPI selects the API-backed Copilot mode. Here it pins which mode
+	// the conversation takes and, with CopilotAPIPort, makes the pane bind the
+	// embedded server. The channel itself is established by agentd, for launches
+	// agentd started — a direct `session new --copilot-api` gets the bound pane
+	// without a daemon-held connection to it.
+	CopilotAPI bool `long:"copilot-api" help:"EXPERIMENTAL: launch this Copilot agent with its embedded JSON-RPC server (copilot --ui-server) so tclaude agentd can drive it over typed calls instead of tmux send-keys. Refuses unless the launch dir is already trusted (or --trust-dir). The endpoint is unauthenticated and loopback-bound. Off by default. Copilot only"`
 
 	// CopilotAPIPort is the loopback port the embedded JSON-RPC server binds.
 	//
