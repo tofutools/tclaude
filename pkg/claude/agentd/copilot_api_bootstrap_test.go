@@ -11,6 +11,7 @@ import (
 	"go/token"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -420,11 +421,27 @@ func TestCopilotAPISessionStillOwnedNeedsBothHalves(t *testing.T) {
 		"precondition: this test process owns the fake server's listener")
 	assert.True(t, owned.StillOwned())
 
-	// A real, live pid that is NOT the listener's owner — this test binary's own
-	// parent. pid 1 would be rejected by portowner before it ever compared an
-	// inode, so the arm would pass without exercising the comparison it names.
+	// A real, live pid whose subtree genuinely excludes the listener: a child we
+	// spawn here, which owns nothing.
+	//
+	// Both obvious shortcuts are wrong, in opposite directions. pid 1 is
+	// rejected by portowner before it ever compares an inode, so the arm would
+	// pass without exercising the comparison it names. os.Getppid() is worse: an
+	// ANCESTOR's subtree contains this test binary, so the listener really does
+	// belong to it and StillOwned answers true — correctly. The pid has to be a
+	// non-ancestor.
+	stranger := exec.Command("sleep", "60")
+	require.NoError(t, stranger.Start())
+	t.Cleanup(func() {
+		_ = stranger.Process.Kill()
+		_ = stranger.Wait()
+	})
+	require.False(t, portowner.ProcessOwnsLoopbackPort(stranger.Process.Pid, server.port()),
+		"precondition: the stranger must not own the listener, or the arm below "+
+			"proves nothing")
+
 	foreign := &copilotAPISession{
-		ConvID: "conv-1", Port: server.port(), PanePID: os.Getppid(), Client: client,
+		ConvID: "conv-1", Port: server.port(), PanePID: stranger.Process.Pid, Client: client,
 	}
 	assert.False(t, foreign.StillOwned(),
 		"a live connection to a listener owned by someone else is exactly the case "+
