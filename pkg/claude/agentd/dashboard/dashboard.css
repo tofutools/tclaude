@@ -282,6 +282,11 @@ nav [data-tab]:hover { color: #d4d4d4; }
 .access-btn.deny:hover { background: #4d2a2c; }
 .access-btn.always { background: #3a2f16; border-color: #d29922; color: #e6c07b; }
 .access-btn.always:hover { background: #4a3c1c; }
+/* The scoped twin sits next to the blanket button and must not read as the
+   same click. Cooler and quieter: it is the narrower, safer of the two, and
+   the amber "you are handing over every context" weight belongs to the other. */
+.access-btn.always.scoped { background: #12233a; border-color: #1f4b7a; color: #79c0ff; }
+.access-btn.always.scoped:hover { background: #17304f; }
 .access-btn.extend { font-weight: 500; color: #8b949e; }
 
 /* Recently-handled history: decided requests stay in the folder (dimmed) so the

@@ -841,6 +841,13 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ow
 				bodyPreview = raw
 				bodyLabel = "Clipboard content"
 			}
+			// The scope the popup's scoped "always allow" may persist is
+			// derived from the SAME context this gate evaluates grants
+			// against — never re-parsed from the URL or body — so a scope the
+			// human accepts is guaranteed to satisfy the next check rather
+			// than leaving them clicking the same popup forever. A site that
+			// describes nothing offers only the blanket button.
+			scopeJSON, scopeDisplay := approvalScopeForSlug(perm, actionContextOf(actx))
 			observabilityPath, sensitivePath := projectSafeHTTPLogPath(r.URL.Path)
 			observabilityQuery := r.URL.RawQuery
 			if sensitivePath {
@@ -860,6 +867,8 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ow
 				targetConvID:    targetConvID,
 				targetConvTitle: targetConvTitle,
 				autoGrantable:   IsAutoGrantableSlug(perm),
+				scopeJSON:       scopeJSON,
+				scopeDisplay:    scopeDisplay,
 				createdAt:       time.Now(),
 				timeout:         timeout,
 				decision:        make(chan approvalOutcome, 1),

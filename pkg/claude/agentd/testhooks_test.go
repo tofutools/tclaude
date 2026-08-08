@@ -734,6 +734,40 @@ func StubAlwaysAllowApprovalForTest() func() {
 	return func() { RequestHumanApprovalImpl = prev }
 }
 
+// StubScopedAlwaysAllowApprovalForTest is the narrow twin of
+// StubAlwaysAllowApprovalForTest: it drives the "Always allow — <scope>"
+// outcome through the REAL applyApprovalOutcome, so the persisted override
+// carries exactly the scope the gate derived for the pending request.
+// Returns a restore function for t.Cleanup.
+func StubScopedAlwaysAllowApprovalForTest() func() {
+	prev := RequestHumanApprovalImpl
+	RequestHumanApprovalImpl = func(req *approvalRequest, _ string) bool {
+		return applyApprovalOutcome(req, outcomeApproveAlwaysScoped)
+	}
+	return func() { RequestHumanApprovalImpl = prev }
+}
+
+// SetAutoGrantableForTest temporarily flags a registry slug as eligible for
+// the popup's always-allow buttons.
+//
+// It exists because the two policy sets do not yet overlap: every slug that
+// is auto-grantable today (human.clipboard, human.notify) declares no scope
+// dimensions, and every slug that declares dimensions is not auto-grantable.
+// The scoped-persist MACHINERY is nonetheless live and must be pinned now, so
+// a test borrows a dimensioned slug rather than the production policy being
+// widened to suit a test. Returns a restore function for t.Cleanup.
+func SetAutoGrantableForTest(slug string) func() {
+	for i := range permissionRegistry {
+		if permissionRegistry[i].Slug != slug {
+			continue
+		}
+		prev := permissionRegistry[i].AutoGrantable
+		permissionRegistry[i].AutoGrantable = true
+		return func() { permissionRegistry[i].AutoGrantable = prev }
+	}
+	panic("SetAutoGrantableForTest: unknown slug " + slug)
+}
+
 // BuildDashboardHandlerForTest exposes the dashboard mux (the
 // dashboard-listener mux that hosts `/`, `/api/snapshot`,
 // `/api/groups/...` mutation endpoints, and the access-request decision

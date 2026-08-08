@@ -55,7 +55,7 @@ func TestPersistAlwaysAllowGrant_RefusesIneligible(t *testing.T) {
 
 	const conv = "aaaa-1111-2222-3333-4444"
 	req := &approvalRequest{perm: PermAgentDelete, convID: conv}
-	persistAlwaysAllowGrant(req)
+	persistAlwaysAllowGrant(req, "")
 
 	effect, ok, err := db.AgentPermissionOverride(conv, PermAgentDelete)
 	assert.NoError(t, err)
@@ -71,7 +71,7 @@ func TestPersistAlwaysAllowGrant_WritesEligible(t *testing.T) {
 	agentID, _, err := db.EnsureAgentForConv(conv, "test")
 	require.NoError(t, err)
 	req := &approvalRequest{perm: PermHumanClipboard, convID: conv, agentID: agentID}
-	persistAlwaysAllowGrant(req)
+	persistAlwaysAllowGrant(req, "")
 
 	effect, ok, err := db.AgentPermissionOverride(conv, PermHumanClipboard)
 	assert.NoError(t, err)
@@ -83,7 +83,7 @@ func TestPersistAlwaysAllowGrant_MissingStableIdentityDoesNotEnrollConv(t *testi
 	resetTestDB(t)
 
 	const conv = "cccc-1111-2222-3333-4444"
-	persistAlwaysAllowGrant(&approvalRequest{perm: PermHumanClipboard, convID: conv})
+	persistAlwaysAllowGrant(&approvalRequest{perm: PermHumanClipboard, convID: conv}, "")
 
 	agentID, err := db.AgentIDForConv(conv)
 	require.NoError(t, err)
