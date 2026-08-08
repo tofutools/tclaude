@@ -249,13 +249,9 @@ func publishAt(rootFD int, name, value string, mode uint32) error {
 	case closeErr != nil:
 		return closeErr
 	}
-	var stat unix.Stat_t
-	if err := unix.Fstatat(rootFD, name, &stat, unix.AT_SYMLINK_NOFOLLOW); err == nil {
-		return unix.EEXIST
-	} else if !errors.Is(err, unix.ENOENT) {
-		return err
-	}
-	return unix.Renameat(rootFD, tempName, rootFD, name)
+	// Linking publishes the completed inode atomically without replacing an
+	// existing evidence path. The deferred unlink then removes the temp name.
+	return unix.Linkat(rootFD, tempName, rootFD, name, 0)
 }
 
 func validSecret(secret string) bool {
