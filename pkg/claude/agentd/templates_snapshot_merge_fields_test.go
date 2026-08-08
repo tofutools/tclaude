@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // The two guards in this file are STRUCTURAL, not value tests. They are the
@@ -59,6 +60,20 @@ var snapshotMergeTracedWinsFields = map[string]bool{
 	// Ownership is observable too, and rides the template agent's own is_owner
 	// flag rather than its profile — the merge drops prev's on purpose.
 	"IsOwner": true,
+}
+
+// snapshotMergeTracedBase overrides the traced profile a field's carry-forward is
+// checked against. The default is an ordinary observed member that carries
+// nothing but a model. A field whose carry-forward is deliberately GATED on the
+// harness the field belongs to names a traced member of that harness here, so
+// the guard still demands a carry-forward rather than being switched off for
+// that field.
+var snapshotMergeTracedBase = map[string]db.SpawnProfile{
+	// A Copilot cap is invalid on any other harness, and Harness is traced-wins,
+	// so the merge only carries the cap onto a profile that still resolves to
+	// Copilot — see the gate in mergeSnapshotInlineProfile (TCL-1062). Check the
+	// carry-forward against a member that is still Copilot.
+	"ContextWindowMax": {Harness: harness.CopilotName},
 }
 
 // setSampleProfileField writes a distinctive non-zero value into field idx of p.
@@ -134,9 +149,13 @@ func TestMergeSnapshotInlineProfileCarriesEveryCuratedField(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			prev := &db.SpawnProfile{}
 			setSampleProfileField(t, prev, i)
+			traced := db.SpawnProfile{Model: "sonnet"}
+			if base, ok := snapshotMergeTracedBase[name]; ok {
+				traced = base
+			}
 
-			out := mergeSnapshotInlineProfile(prev, &db.SpawnProfile{Model: "sonnet"})
-			require.NotNil(t, out, "a traced member with a model can never merge to an empty profile")
+			out := mergeSnapshotInlineProfile(prev, &traced)
+			require.NotNil(t, out, "a traced member that carries something can never merge to an empty profile")
 			assert.Equalf(t, reflect.ValueOf(*prev).Field(i).Interface(), reflect.ValueOf(*out).Field(i).Interface(),
 				"the template's curated db.SpawnProfile.%s did not survive a re-snapshot of a member "+
 					"that carries nothing for it: mergeSnapshotInlineProfile has no carry-forward for "+

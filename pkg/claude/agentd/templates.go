@@ -3943,7 +3943,15 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile) *db.SpawnProfile 
 	// window's "" is — a member that pins no cap and a member that could not be
 	// traced both read 0 — so a zero falls back to the template's previous value
 	// rather than silently clearing a curated cap (TCL-1062).
-	if out.ContextWindowMax == 0 {
+	//
+	// Gated on the MERGED profile still resolving to Copilot, because unlike the
+	// window a cap is invalid on any other harness. Harness is a traced-wins
+	// field, so an untraceable member (a pruned session row) leaves out.Harness
+	// blank — which resolves to Claude — and an inline profile pinning a cap under
+	// Claude is not merely useless: resolveIntLaunchField fails it as a matching
+	// tier and 400s the agent at deploy. The cap travels with its harness or not
+	// at all; losing it beats writing a template-local profile that cannot deploy.
+	if out.ContextWindowMax == 0 && harnessOrDefault(out.Harness) == harness.CopilotName {
 		out.ContextWindowMax = prev.ContextWindowMax
 	}
 	// The implementation is observable, but only a non-default one is traced (see
