@@ -75,10 +75,16 @@ func TestTheDaemonDownFallbackNeverEscalates(t *testing.T) {
 			return true
 		}
 		calls++
-		// The value argument is the one before the guard blob in both
-		// compare-and-set signatures.
-		require.GreaterOrEqual(t, len(call.Args), 2, "%s call shape changed", sel.Sel.Name)
-		value := call.Args[len(call.Args)-2]
+		// The value is the SECOND argument in both compare-and-set signatures:
+		// (id, value, source, expected). Anchored by position from the front
+		// rather than from the back, which is what this guard did until the
+		// attribution parameter was added between the value and the guard blob
+		// and "the one before the blob" silently became the source.
+		require.GreaterOrEqualf(t, len(call.Args), 4,
+			"%s call shape changed: this guard reads the value positionally and has to "+
+				"be re-derived rather than left pointing at whatever now sits there",
+			sel.Sel.Name)
+		value := call.Args[1]
 		ident, ok := value.(*ast.Ident)
 		assert.Truef(t, ok && ident.Name == "false",
 			"%s in the daemon-down path must pass a literal false; the fallback may "+
