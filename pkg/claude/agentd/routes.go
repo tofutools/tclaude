@@ -282,17 +282,33 @@ func requireRouteCapability(w http.ResponseWriter, r *http.Request, g *db.AgentG
 }
 
 func requireRoutePermissionForIdentity(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, convID, agentID, slug string) (string, string, bool) {
+	// routes.publish / routes.consume both declare the `group` scope
+	// dimension, and this gate already knows the target group — so it must
+	// honour a scoped grant exactly as requireGroupPermission does. Without
+	// this, a grant that reads as narrow in `permissions ls` ("override
+	// [group=dev]") would be a wildcard on the route surface. Phase 3 folds
+	// this duplicated precedence onto resolvePermissionVerdictFrom outright;
+	// until then the tiers below evaluate the scope in place.
+	//
+	// A tier whose scope excludes this group DECIDES — the same "winning tier
+	// decides" rule the central resolver applies — so it refuses rather than
+	// falling through to a broader tier underneath.
+	actx := ActionContext{Group: g.Name}
 	// Match the central permission resolver: a live, matching sudo grant is
 	// authoritative over a permanent deny. Ordinary group grants remain
 	// target-group scoped below rather than using the union resolver.
-	if grantID, err := db.LookupActiveSudoGrantID(convID, slug); err == nil && grantID != 0 {
+	if scopeJSON, ok, err := activeSudoGrantScope(convID, slug); err == nil && ok {
+		if !routeScopeAllows(convID, scopeJSON, actx) {
+			writeRoutePermissionRefusal(w, g, slug)
+			return "", "", false
+		}
 		return convID, agentID, true
 	}
-	if effect, exists, err := db.AgentPermissionOverride(convID, slug); err != nil {
+	if effect, scopeJSON, exists, err := agentPermissionOverrideWithScope(convID, slug); err != nil {
 		writeRouteError(w, http.StatusInternalServerError, "route_authority", "could not resolve permission")
 		return "", "", false
 	} else if exists {
-		if effect == db.PermEffectDeny {
+		if effect == db.PermEffectDeny || !routeScopeAllows(convID, scopeJSON, actx) {
 			writeRoutePermissionRefusal(w, g, slug)
 			return "", "", false
 		}
@@ -302,6 +318,15 @@ func requireRoutePermissionForIdentity(w http.ResponseWriter, r *http.Request, g
 		writeRouteError(w, http.StatusInternalServerError, "route_authority", "could not resolve target-group permission")
 		return "", "", false
 	} else if granted {
+		scopeJSON, err := targetGroupGrantScope(g.ID, slug)
+		if err != nil {
+			writeRouteError(w, http.StatusInternalServerError, "route_authority", "could not resolve target-group permission")
+			return "", "", false
+		}
+		if !routeScopeAllows(convID, scopeJSON, actx) {
+			writeRoutePermissionRefusal(w, g, slug)
+			return "", "", false
+		}
 		return convID, agentID, true
 	}
 	defaultAllowed := false
@@ -315,6 +340,61 @@ func requireRoutePermissionForIdentity(w http.ResponseWriter, r *http.Request, g
 	}
 	writeRoutePermissionRefusal(w, g, slug)
 	return "", "", false
+}
+
+// routeScopeAllows evaluates one persisted scope row through the central
+// evaluator, so the route gate can never drift from what requirePermissionEx
+// would have decided for the same grant.
+func routeScopeAllows(callerConvID, scopeJSON string, actx ActionContext) bool {
+	return evalPermissionScope(
+		permVerdict{Resolution: permAllow, ScopeJSON: []string{scopeJSON}},
+		callerConvID, actx).Satisfied
+}
+
+// activeSudoGrantScope answers the same question as LookupActiveSudoGrantID
+// (is there a live sudo grant for this slug) while carrying the grant's
+// scope out. ListActiveSudoGrants shares that lookup's expires_at ordering,
+// so the row picked here is the row the lookup would have picked.
+func activeSudoGrantScope(convID, slug string) (string, bool, error) {
+	grants, err := db.ListActiveSudoGrants(convID)
+	if err != nil {
+		return "", false, err
+	}
+	for _, g := range grants {
+		if g != nil && g.Slug == slug {
+			return g.ScopeJSON, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+// agentPermissionOverrideWithScope is db.AgentPermissionOverride plus the
+// row's scope.
+func agentPermissionOverrideWithScope(convID, slug string) (effect, scopeJSON string, ok bool, err error) {
+	rows, err := db.ListAgentPermissionOverrideRowsForConv(convID)
+	if err != nil {
+		return "", "", false, err
+	}
+	for _, row := range rows {
+		if row.Slug == slug {
+			return row.Effect, row.ScopeJSON, true, nil
+		}
+	}
+	return "", "", false, nil
+}
+
+// targetGroupGrantScope reads the scope of THIS group's grant for slug.
+func targetGroupGrantScope(groupID int64, slug string) (string, error) {
+	rows, err := db.ListAgentGroupPermissionRows(groupID)
+	if err != nil {
+		return "", err
+	}
+	for _, row := range rows {
+		if row.Slug == slug {
+			return row.ScopeJSON, nil
+		}
+	}
+	return "", nil
 }
 
 func writeRoutePermissionRefusal(w http.ResponseWriter, g *db.AgentGroup, slug string) {

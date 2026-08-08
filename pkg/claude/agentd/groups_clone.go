@@ -285,11 +285,14 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 		}
 		// Per-conv perms — grant AND deny overrides, best-effort, mirror
 		// runCloneOrchestration.
-		if perms, err := db.ListAgentPermissionOverridesForConv(m.ConvID); err == nil {
-			for slug, effect := range perms {
-				if err := db.SetAgentPermissionOverride(newConv, slug, effect, granter); err != nil {
+		// Scopes ride along: a cloned member must not come out holding a
+		// wider grant than the member it was cloned from.
+		if perms, err := db.ListAgentPermissionOverrideRowsForConv(m.ConvID); err == nil {
+			for _, perm := range perms {
+				if err := db.SetAgentPermissionOverrideWithScope(
+					newConv, perm.Slug, perm.Effect, perm.ScopeJSON, granter); err != nil {
 					slog.Warn("groups clone: copy perm failed",
-						"group", newName, "conv", newConv, "slug", slug, "effect", effect, "error", err)
+						"group", newName, "conv", newConv, "slug", perm.Slug, "effect", perm.Effect, "error", err)
 				}
 			}
 		}

@@ -801,11 +801,21 @@ func auditClip(s string, max int) string {
 
 // joinAuditDetail appends a second clause to a detail string, keeping the
 // whole thing inside the same 240-char bound setAuditDetail enforces.
+//
+// The clip protects the APPENDED clause: it is the authorization fact, and a
+// describer that already filled the budget with a message preview must not be
+// able to push it off the end. The descriptive half gives up the room.
 func joinAuditDetail(detail, extra string) string {
+	extra = auditClip(extra, 240)
 	if detail == "" {
-		return auditClip(extra, 240)
+		return extra
 	}
-	return auditClip(detail+"; "+extra, 240)
+	// Leave room for the separator and for auditClip's own ellipsis.
+	room := 240 - len(extra) - len("; ") - len("…")
+	if room <= 0 {
+		return extra
+	}
+	return auditClip(detail, room) + "; " + extra
 }
 
 // --- describers --------------------------------------------------------

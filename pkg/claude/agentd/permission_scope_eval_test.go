@@ -1,8 +1,11 @@
 package agentd
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -223,4 +226,91 @@ func TestContextFreeResolutionFailsClosedOnScopedAllow(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Enforcement checklist. Every slug that declares ScopeDims must have a
+// named authorization path that actually evaluates the scope — otherwise an
+// operator can write a grant that reads as narrow in `permissions ls` and is
+// a wildcard at the gate. This map is that checklist, and adding ScopeDims to
+// a slug fails the test until its gate is listed here (which is the moment to
+// check the gate really does evaluate).
+//
+// It is a review prompt, not a proof: it cannot verify the named gate. The
+// gap it closes is the one that shipped routes.publish/routes.consume with a
+// bespoke, scope-blind gate for the better part of a phase.
+var scopedSlugEnforcementPaths = map[string]string{
+	PermGroupsSpawn:       "requireGroupPermission — fills ActionContext{Group}",
+	PermAgentRetire:       "requireCrossAgentPermission — target_agent awaits Phase 5, so a target_agent scope fails closed",
+	PermAgentStanddown:    "requireCrossAgentPermission — same as agent.retire",
+	PermProcessRunsManage: "requirePermission — process_template supplied by the Phase 3 consumer; fails closed until then",
+	PermRoutesPublish:     "requireRoutePermissionForIdentity — evaluates the group scope per tier",
+	PermRoutesConsume:     "requireRoutePermissionForIdentity — evaluates the group scope per tier",
+}
+
+func TestEveryScopedSlugDeclaresAnEnforcementPath(t *testing.T) {
+	declared := map[string]bool{}
+	for _, entry := range permissionRegistry {
+		if len(entry.ScopeDims) == 0 {
+			continue
+		}
+		declared[entry.Slug] = true
+		if scopedSlugEnforcementPaths[entry.Slug] == "" {
+			t.Errorf("slug %q declares scope dimensions %v but no enforcement path is recorded; "+
+				"confirm its gate evaluates the scope and add it to scopedSlugEnforcementPaths",
+				entry.Slug, entry.ScopeDims)
+		}
+	}
+	for slug := range scopedSlugEnforcementPaths {
+		if !declared[slug] {
+			t.Errorf("scopedSlugEnforcementPaths lists %q, which no longer declares scope dimensions", slug)
+		}
+	}
+}
+
+// A cloned agent must not come out holding a wider grant than its source:
+// self.clone is default-granted, so a scope-erasing copy would let any agent
+// mint an unscoped duplicate of a grant an operator deliberately narrowed.
+func TestApplyClonedIdentityPreservesGrantScopes(t *testing.T) {
+	setupTestDB(t)
+	const src = "clone-scope-src-0001"
+	const dst = "clone-scope-dst-0001"
+	require.NoError(t, db.GrantAgentPermissionWithScope(src, PermGroupsSpawn, `{"group":["alpha"]}`, "test"))
+	require.NoError(t, db.SetAgentPermissionOverride(src, PermHumanClipboard, db.PermEffectDeny, "test"))
+
+	perms, err := db.ListAgentPermissionOverrideRowsForConv(src)
+	require.NoError(t, err)
+	applyClonedIdentity(dst, "test", nil, perms, nil)
+
+	rows, err := db.ListAgentPermissionOverrideRowsForConv(dst)
+	require.NoError(t, err)
+	got := map[string]db.AgentPermission{}
+	for _, row := range rows {
+		got[row.Slug] = row
+	}
+	require.Contains(t, got, PermGroupsSpawn)
+	assert.Equal(t, `{"group":["alpha"]}`, got[PermGroupsSpawn].ScopeJSON,
+		"the clone must inherit the source's scope, not a wildcard")
+	assert.Equal(t, db.PermEffectGrant, got[PermGroupsSpawn].Effect)
+	require.Contains(t, got, PermHumanClipboard)
+	assert.Equal(t, db.PermEffectDeny, got[PermHumanClipboard].Effect, "denies still ride along")
+}
+
+// A tier this build cannot decode authorizes nothing at the gate, so the
+// listing must not render it as an unscoped (i.e. unlimited) grant.
+func TestPermissionProvenanceMarksUndecodableScopes(t *testing.T) {
+	assert.Equal(t, "override [unreadable scope]",
+		permissionProvenance(permSourceOverride, []string{`{"mystery":["x"]}`}))
+	assert.Equal(t, "group", permissionProvenance(permSourceGroup, []string{"", `{"group":["dev"]}`}),
+		"an unscoped row still makes the whole tier unscoped")
+	assert.Equal(t, "group [group=dev]",
+		permissionProvenance(permSourceGroup, []string{`{"group":["dev"]}`}))
+}
+
+// The scope clause is the authorization fact on an audit row; a describer
+// that already filled the detail budget must not be able to push it off.
+func TestJoinAuditDetailKeepsTheAppendedClause(t *testing.T) {
+	long := strings.Repeat("x", 400)
+	got := joinAuditDetail(long, "scope: groups.spawn [group=alpha]")
+	assert.Contains(t, got, "scope: groups.spawn [group=alpha]")
+	assert.LessOrEqual(t, len(got), 240)
 }

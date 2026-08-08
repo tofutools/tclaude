@@ -398,7 +398,7 @@ func exportCloneTitle(originalConv string) string {
 // slice for that facet rather than failing the export (the background goroutine
 // has no HTTP response to fail to). The clone handler does the equivalent
 // snapshot inline with fatal HTTP errors; the export path is best-effort.
-func snapshotConvIdentity(convID string) (members []*db.AgentGroupMember, perms map[string]string) {
+func snapshotConvIdentity(convID string) (members []*db.AgentGroupMember, perms []db.AgentPermission) {
 	groups, err := db.ListGroupsForConv(convID)
 	if err != nil {
 		slog.Warn("export clone: snapshot groups failed", "conv", convID, "error", err)
@@ -413,7 +413,10 @@ func snapshotConvIdentity(convID string) (members []*db.AgentGroupMember, perms 
 			members = append(members, m)
 		}
 	}
-	if perms, err = db.ListAgentPermissionOverridesForConv(convID); err != nil {
+	// Rows, not slug→effect: the export clone must inherit the original's
+	// grant SCOPES too, or a throwaway would hold wider authority than the
+	// agent it was cloned from.
+	if perms, err = db.ListAgentPermissionOverrideRowsForConv(convID); err != nil {
 		slog.Warn("export clone: snapshot perms failed", "conv", convID, "error", err)
 	}
 	return members, perms

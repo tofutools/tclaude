@@ -165,3 +165,94 @@ func TestPermissionScope_SelectorFailsClosedUntilLineage(t *testing.T) {
 		"/v1/agent/"+target+"/retire?shutdown=0&delete_worktree=0", nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }
+
+// setGroupGrantScope attaches a scope to an existing group grant. Phase 1
+// made group-grant scopes storable and importable but gave the permissions
+// endpoint no group target, so a test writes the column directly.
+func setGroupGrantScope(t *testing.T, groupID int64, slug, scopeJSON string) {
+	t.Helper()
+	d, err := db.Open()
+	require.NoError(t, err)
+	res, err := d.Exec(`UPDATE agent_group_permissions SET scope_json = ? WHERE group_id = ? AND slug = ?`,
+		scopeJSON, groupID, slug)
+	require.NoError(t, err)
+	n, err := res.RowsAffected()
+	require.NoError(t, err)
+	require.EqualValues(t, 1, n, "expected exactly one group grant row to scope")
+}
+
+// The route surface has its own gate (requireRoutePermissionForIdentity):
+// routes.publish / routes.consume are group-scoped by construction, so it
+// re-implements the precedence rather than unioning every group. It must
+// still honour a grant's scope — otherwise a grant that reads as narrow in
+// `permissions ls` is a wildcard here.
+//
+// Both tiers a scope can ride on are covered: the per-agent override and the
+// target group's own grant.
+func TestPermissionScope_RouteGateHonoursGroupScope(t *testing.T) {
+	skipDarwinRouteAuthorityFlow(t)
+	f := newFlow(t)
+	const publisher = "scopegate-publisher-0005"
+	f.HaveConvWithTitle(publisher, "publisher")
+	f.HaveGroup("alpha")
+	f.HaveGroup("beta")
+	f.HaveMember("alpha", publisher)
+	f.HaveMember("beta", publisher)
+
+	// Per-agent tier: scoped to alpha, so beta must refuse.
+	grantScoped(t, f, publisher, agentd.PermRoutesPublish, map[string]any{"group": []string{"alpha"}})
+	rec, _ := serveRouteAgent(t, f, http.MethodPost, "/v1/routes/publish", publisher, map[string]any{
+		"group": "alpha", "name": "in-scope", "target": "tcp://127.0.0.1:43227",
+	})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	rec, body := serveRouteAgent(t, f, http.MethodPost, "/v1/routes/publish", publisher, map[string]any{
+		"group": "beta", "name": "out-of-scope", "target": "tcp://127.0.0.1:43228",
+	})
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	assert.Equal(t, "route_permission", body["code"])
+
+	// Group tier: clear the per-agent override and let beta grant the slug
+	// itself, scoped to a group it is not. The grant belongs to beta but
+	// speaks only for alpha, so it must not authorize a beta publish.
+	_, err := db.RevokeAgentPermission(publisher, agentd.PermRoutesPublish)
+	require.NoError(t, err)
+	beta, err := db.GetAgentGroupByName("beta")
+	require.NoError(t, err)
+	require.NoError(t, db.ReplaceAgentGroupPermissions(beta.ID, []string{agentd.PermRoutesPublish}, "test"))
+	setGroupGrantScope(t, beta.ID, agentd.PermRoutesPublish, `{"group":["alpha"]}`)
+	rec, body = serveRouteAgent(t, f, http.MethodPost, "/v1/routes/publish", publisher, map[string]any{
+		"group": "beta", "name": "group-scoped-elsewhere", "target": "tcp://127.0.0.1:43229",
+	})
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	assert.Equal(t, "route_permission", body["code"])
+
+	// Re-scope beta's own grant to beta and the same publish succeeds.
+	setGroupGrantScope(t, beta.ID, agentd.PermRoutesPublish, `{"group":["beta"]}`)
+	rec, _ = serveRouteAgent(t, f, http.MethodPost, "/v1/routes/publish", publisher, map[string]any{
+		"group": "beta", "name": "group-scoped-here", "target": "tcp://127.0.0.1:43230",
+	})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+}
+
+// Deny stays unscoped and terminal: it beats a scoped allow underneath it,
+// and it is not weakened by the action falling inside that allow's scope.
+func TestPermissionScope_DenyBeatsScopedAllowAtTheGate(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const lead = "scopegate-lead-aaaa-bbbb-cccc-000000000006"
+	haveSpawnCapableMember(t, f, "alpha", lead)
+
+	alpha, err := db.GetAgentGroupByName("alpha")
+	require.NoError(t, err)
+	require.NoError(t, db.ReplaceAgentGroupPermissions(alpha.ID, []string{agentd.PermGroupsSpawn}, "test"))
+	setGroupGrantScope(t, alpha.ID, agentd.PermGroupsSpawn, `{"group":["alpha"]}`)
+
+	// The group grant alone admits the spawn — the scope matches the target.
+	allowed := spawnAttempt(t, f, lead, "alpha", "group-scoped-worker")
+	require.Equal(t, http.StatusOK, allowed.Code, allowed.Body)
+
+	// A per-agent deny above it is authoritative all the same.
+	require.NoError(t, db.SetAgentPermissionOverride(lead, agentd.PermGroupsSpawn, db.PermEffectDeny, "test"))
+	refused := spawnAttempt(t, f, lead, "alpha", "denied-worker")
+	assert.Equal(t, http.StatusForbidden, refused.Code, refused.Body)
+}
