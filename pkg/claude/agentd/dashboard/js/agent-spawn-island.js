@@ -437,7 +437,13 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   const changeHarness = (value) => {
     touched.current.add('harness');
     profileOverrides.current.add('harness');
-    for (const key of ['model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'tools', 'askTimeout', 'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'sshWorkaround', 'copilotAPI', 'fastMode', 'contextFeatures']) {
+    const harnessFields = [
+      'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer',
+      'tools', 'askTimeout', 'trustDir', 'trustDirSpecified', 'remoteControl',
+      'autoMemory', 'sshWorkaround', 'autoCompactWindow', 'contextWindowMax',
+      'copilotAPI', 'fastMode', 'sandboxImpl', 'sandboxImplCleared', 'contextFeatures',
+    ];
+    for (const key of harnessFields) {
       touched.current.add(key);
       profileOverrides.current.add(key);
     }
