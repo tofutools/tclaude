@@ -204,10 +204,10 @@ export function HarnessLine({ member, snapshot }) {
   </div>`;
 }
 
-// FastModeBadge is intentionally driven only by the rollout-derived live
-// boolean. Launch profiles and arguments never reach this branch; absent state
-// and known-off state both render nothing. Codex exposes /fast as a toggle, so
-// only the known-on state is actionable.
+// FastModeBadge follows the server's best-known state: a live rollout event
+// when available, otherwise an explicit tclaude launch choice. Inherited or
+// absent state and known-off state render nothing. Codex exposes /fast as a
+// toggle, so only the known-on state is actionable.
 export function FastModeBadge({ member }) {
   if (member.state?.fast_mode !== true) return null;
   const actionable = !!member.online;

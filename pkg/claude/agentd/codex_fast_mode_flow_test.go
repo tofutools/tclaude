@@ -69,6 +69,44 @@ func TestDashboardCodexFastMode_LiveIndicatorAndDisable(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "already_off")
 }
 
+func TestDashboardCodexFastMode_ExplicitLaunchSeedsIndicatorUntilRuntimeEvent(t *testing.T) {
+	const conv = "019ec064-4250-79b1-9ade-ebaea4170644"
+	agentd.ResetCodexContextRefreshForTest()
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	f.HaveGroup("fast-squad")
+	cx := f.HaveAliveCodexSession(conv, "spwn-fast-launch", "tmux-fast-launch", f.TestCwd("fast-launch"))
+	f.HaveMember("fast-squad", conv)
+	agentID, err := db.AgentIDForConv(conv)
+	require.NoError(t, err)
+	fast := true
+	require.NoError(t, db.SetAgentRelaunchProfile(agentID, db.AgentRelaunchProfile{
+		Version: db.RelaunchProfileVersion, FastMode: &fast,
+	}))
+
+	handler := agentd.BuildDashboardHandlerForTest()
+	snap := fetchDashSnapshot(t, handler)
+	row := findDashAgent(snap, conv)
+	require.NotNil(t, row)
+	require.NotNil(t, row.State.FastMode, "explicit launch state seeds the indicator")
+	assert.True(t, *row.State.FastMode)
+
+	// The first live settings event supersedes the provisional launch state.
+	cx.OnInput("/fast", func(c *testharness.CodexSim, _ string) bool {
+		require.NoError(t, c.WriteThreadSettingsApplied("default"))
+		return true
+	})
+	rec := postDashboardFastDisable(t, handler, conv)
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	f.AssertSentContains("tmux-fast-launch:0.0", "/fast", 10*time.Second)
+
+	snap = fetchDashSnapshot(t, handler)
+	row = findDashAgent(snap, conv)
+	require.NotNil(t, row)
+	require.NotNil(t, row.State.FastMode)
+	assert.False(t, *row.State.FastMode, "live standard-tier event overrides launch Fast")
+}
+
 func TestDashboardCodexFastMode_UnknownRefusesWithoutInference(t *testing.T) {
 	const conv = "019ec064-4250-79b1-9ade-ebaea4170641"
 	agentd.ResetCodexContextRefreshForTest()
@@ -82,7 +120,7 @@ func TestDashboardCodexFastMode_UnknownRefusesWithoutInference(t *testing.T) {
 	snap := fetchDashSnapshot(t, handler)
 	row := findDashAgent(snap, conv)
 	require.NotNil(t, row)
-	assert.Nil(t, row.State.FastMode, "launch posture must not fabricate live state")
+	assert.Nil(t, row.State.FastMode, "an inherited launch remains unknown without a live event")
 
 	rec := postDashboardFastDisable(t, handler, conv)
 	assert.Equal(t, http.StatusConflict, rec.Code, "body=%s", rec.Body.String())

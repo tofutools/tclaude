@@ -54,6 +54,15 @@ func codexFastModeFromFollowerNow(sess *db.SessionRow) (fast, known bool, err er
 		codexContextRefreshMu.last[sess.ID] = cached
 	}
 	codexContextRefreshMu.Unlock()
+	if !known {
+		profile, profileErr := db.AgentRelaunchProfileForConv(sess.ConvID)
+		if profileErr != nil {
+			return false, false, profileErr
+		}
+		if profile != nil && profile.FastMode != nil {
+			return *profile.FastMode, true, nil
+		}
+	}
 	return fast, known, nil
 }
 
@@ -96,7 +105,7 @@ func dashboardDisableCodexFastModeAgent(w http.ResponseWriter, _ *http.Request, 
 		return
 	}
 	if !known {
-		writeError(w, http.StatusConflict, "unknown", "Codex has not reported authoritative live Fast mode state")
+		writeError(w, http.StatusConflict, "unknown", "Codex has not reported live Fast mode state and the agent has no explicit tclaude launch setting")
 		return
 	}
 	if !fast {

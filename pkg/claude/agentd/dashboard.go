@@ -1922,10 +1922,11 @@ type agentState struct {
 	// between stop and resume so the dashboard never mistakes an unlocked
 	// agent for one using its normal posture.
 	TemporaryHarnessBuiltinMode string `json:"temporary_sandbox_mode,omitempty"`
-	// FastMode is present only when a live Codex rollout has reported an
-	// authoritative thread_settings_applied snapshot. A false pointer means
-	// known standard routing; nil means unknown and must not be inferred from
-	// launch arguments or profiles.
+	// FastMode is present when a live Codex rollout has reported an authoritative
+	// thread_settings_applied snapshot, or provisionally when tclaude explicitly
+	// selected the tier for this live agent's launch and Codex has not emitted a
+	// settings event yet. A false pointer means known standard routing; nil means
+	// inherit/unknown.
 	FastMode *bool `json:"fast_mode,omitempty"`
 	// BgShellCount is how many background shell commands (Claude Code
 	// `Bash` with run_in_background) the agent still has running — the

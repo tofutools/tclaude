@@ -75,6 +75,21 @@ func TestAgentsByConvCarriesActorLifecycleState(t *testing.T) {
 	assert.True(t, rows["current-conv"].Retired)
 }
 
+func TestAgentsByConvCarriesExplicitFastModeLaunchIntent(t *testing.T) {
+	setupTestDB(t)
+	agentID, err := AllocateAgent("fast-conv", "spawn")
+	require.NoError(t, err)
+	fast := true
+	require.NoError(t, SetAgentRelaunchProfile(agentID, AgentRelaunchProfile{
+		Version: RelaunchProfileVersion, FastMode: &fast,
+	}))
+
+	rows, err := AgentsByConv([]string{"fast-conv"})
+	require.NoError(t, err)
+	require.NotNil(t, rows["fast-conv"].FastMode)
+	assert.True(t, *rows["fast-conv"].FastMode)
+}
+
 func TestAgentsByIDUsesStableActorKey(t *testing.T) {
 	setupTestDB(t)
 	agentID, err := AllocateAgent("old-conv", "spawn")
