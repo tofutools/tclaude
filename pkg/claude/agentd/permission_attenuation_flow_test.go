@@ -254,6 +254,17 @@ func TestAttenuation_SelectorConferralRequiresConfereeInDescendants(t *testing.T
 	selfSpawnedOutside := agentGrant(unrelated, "@self-spawned")
 	require.Equal(t, http.StatusForbidden, selfSpawnedOutside.Code, selfSpawnedOutside.Body)
 	assert.Contains(t, selfSpawnedOutside.Body, "scope_not_attenuated")
+	selfSpawnedToChild := agentGrant(child, "@self-spawned")
+	require.Equal(t, http.StatusForbidden, selfSpawnedToChild.Code, selfSpawnedToChild.Body)
+	assert.Contains(t, selfSpawnedToChild.Body, "scope_not_attenuated",
+		"a direct-child selector does not cover the child's own direct children")
+
+	// A's @descendants does cover B's @self-spawned when B is in A's tree:
+	// B's direct children are a strict subset of A's descendants.
+	grantScoped(t, f, lead, agentd.PermAgentRetire,
+		map[string]any{"target_agent": []string{"@descendants"}})
+	descendantsToSelfSpawned := agentGrant(child, "@self-spawned")
+	assert.Equal(t, http.StatusOK, descendantsToSelfSpawned.Code, descendantsToSelfSpawned.Body)
 
 	// An unscoped hold still covers every conferred shape, exactly as before.
 	grantScoped(t, f, lead, agentd.PermAgentRetire, nil)
@@ -280,6 +291,17 @@ func TestAttenuation_SpawnConfersSelectorToDescendantByConstruction(t *testing.T
 	haveSpawnCapableMember(t, f, "alpha", lead)
 	grantScoped(t, f, lead, agentd.PermGroupsSpawn, nil)
 	grantScoped(t, f, lead, agentd.PermPermissionsGrant, nil)
+	grantScoped(t, f, lead, agentd.PermAgentRetire,
+		map[string]any{"target_agent": []string{"@self-spawned"}})
+	unsafe := spawnConferring(t, f, lead, "alpha", "unsafe-selector-worker", map[string]any{
+		agentd.PermAgentRetire: map[string]any{
+			"effect": db.PermEffectGrant,
+			"scope":  map[string]any{"target_agent": []string{"@self-spawned"}},
+		},
+	})
+	require.Equal(t, http.StatusForbidden, unsafe.Code, unsafe.Body)
+	assert.Contains(t, unsafe.Body, "scope_not_attenuated")
+
 	grantScoped(t, f, lead, agentd.PermAgentRetire,
 		map[string]any{"target_agent": []string{"@descendants"}})
 

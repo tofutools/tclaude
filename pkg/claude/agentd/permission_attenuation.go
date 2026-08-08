@@ -239,17 +239,10 @@ func checkGrantAttenuation(granterConvID string, conferee grantConferee, grants 
 		if err != nil {
 			return fmt.Errorf("permission %q: conferred scope is unreadable", grant.Slug)
 		}
-		covered := false
-		for _, granterScope := range granterScopes {
-			if permissionScopeCovers(granterScope, conferred) {
-				covered = true
-				break
-			}
-		}
-		if covered {
-			if !scopeContainsDescendantSelector(conferred) || conferee.descendantByConstruction {
-				continue
-			}
+		hasRelativeSelector := scopeContainsDescendantSelector(conferred)
+		confereeIsSelf := false
+		confereeIsDescendant := conferee.descendantByConstruction
+		if hasRelativeSelector && !confereeIsDescendant {
 			if granterAgentID == "" {
 				granterAgentID, err = db.AgentIDForConv(granterConvID)
 				if err != nil {
@@ -259,17 +252,30 @@ func checkGrantAttenuation(granterConvID string, conferee grantConferee, grants 
 					return fmt.Errorf("permission %q: your stable agent identity is unavailable, so the conferee cannot be proven inside your descendant set", grant.Slug)
 				}
 			}
-			if conferee.agentID == granterAgentID {
-				continue
+			confereeIsSelf = conferee.agentID == granterAgentID
+			if !confereeIsSelf {
+				if conferee.agentID == "" {
+					return fmt.Errorf("permission %q: the conferee has no stable agent identity, so it cannot be proven inside your descendant set", grant.Slug)
+				}
+				confereeIsDescendant, err = db.IsAgentDescendant(granterAgentID, conferee.agentID)
+				if err != nil {
+					return fmt.Errorf("permission %q: could not check whether the conferee is inside your descendant set: %w", grant.Slug, err)
+				}
 			}
-			if conferee.agentID == "" {
-				return fmt.Errorf("permission %q: the conferee has no stable agent identity, so it cannot be proven inside your descendant set", grant.Slug)
+		}
+		covered := false
+		for _, granterScope := range granterScopes {
+			covers := permissionScopeCovers(granterScope, conferred)
+			if hasRelativeSelector && confereeIsDescendant {
+				covers = permissionScopeCoversForDescendantConferee(granterScope, conferred)
 			}
-			descendant, descErr := db.IsAgentDescendant(granterAgentID, conferee.agentID)
-			if descErr != nil {
-				return fmt.Errorf("permission %q: could not check whether the conferee is inside your descendant set: %w", grant.Slug, descErr)
+			if covers {
+				covered = true
+				break
 			}
-			if descendant {
+		}
+		if covered {
+			if !hasRelativeSelector || confereeIsSelf || confereeIsDescendant {
 				continue
 			}
 			return fmt.Errorf(
@@ -282,6 +288,45 @@ func checkGrantAttenuation(granterConvID string, conferee grantConferee, grants 
 			grant.Slug, grant.Slug, renderGranterScopes(granterScopes), renderConferredScope(conferred))
 	}
 	return nil
+}
+
+// permissionScopeCoversForDescendantConferee is the relational-selector arm
+// of cover. @descendants remains covariant down a realistic lineage tree. A
+// descendant's @self-spawned set, however, consists of the granter's deeper
+// descendants, not its direct children, so an identical @self-spawned matcher
+// is not enough: the particular covering row must include @descendants.
+//
+// Accepted residual: lineage evaluation has a 64-edge safety horizon. At a
+// 65+-level spawn chain, shifting that relative horizon down one edge can admit
+// a leaf the granter's own @descendants evaluation no longer reaches. That
+// extreme chain-plus-delegation case remains bounded by the shared evaluator
+// limit rather than making cover depth-aware here.
+func permissionScopeCoversForDescendantConferee(granter, conferred PermissionScope) bool {
+	if len(granter) == 0 {
+		return true
+	}
+	for dim, granterMatchers := range granter {
+		conferredMatchers, ok := conferred[dim]
+		if !ok || len(conferredMatchers) == 0 {
+			return false
+		}
+		allowed := make(map[string]bool, len(granterMatchers))
+		for _, matcher := range granterMatchers {
+			allowed[matcher] = true
+		}
+		for _, matcher := range conferredMatchers {
+			if dim == ScopeDimTargetAgent && matcher == "@self-spawned" {
+				if !allowed["@descendants"] {
+					return false
+				}
+				continue
+			}
+			if !allowed[matcher] {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func scopeContainsDescendantSelector(scope PermissionScope) bool {
