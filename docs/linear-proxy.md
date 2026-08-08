@@ -11,8 +11,11 @@ acceptance criteria, the discussion, and the reason the work exists — and all 
 it is behind a credential the agent should not have.
 
 The usual escape is to give the agent a Linear key, or point its harness at
-Linear's MCP server. Both work, and both mean the agent holds a credential to
-your whole workspace.
+Linear's MCP server. Both work, and both mean the agent holds a credential.
+How much that credential reaches is up to you — Linear's own keys can be
+restricted to read-only and to specific teams, and its MCP access can be
+read-only too — but the agent holds it either way, and what bounds it lives in
+Linear's settings rather than anywhere tclaude can see or audit.
 
 `tclaude agentd` already runs unsandboxed on the host. So it calls Linear on the
 agent's behalf: the agent issues a *semantic* request — "show me TCL-568",

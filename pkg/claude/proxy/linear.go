@@ -67,7 +67,14 @@ type linearProxyOutcome struct {
 
 func (o *linearProxyOutcome) render(stdout, stderr io.Writer) int {
 	if o.Text != "" {
-		fmt.Fprintln(stdout, strings.TrimRight(o.Text, "\n"))
+		// The write is checked for the same reason the JSON branch below
+		// checks its own: a closed pipe would otherwise discard a comment
+		// thread while the command reported success, and an agent would read
+		// the empty output as "no comments".
+		if _, err := fmt.Fprintln(stdout, strings.TrimRight(o.Text, "\n")); err != nil {
+			fmt.Fprintln(stderr, "Error: could not write the Linear response")
+			return rcIOFailure
+		}
 		return rcOK
 	}
 	if len(o.JSON) == 0 {
