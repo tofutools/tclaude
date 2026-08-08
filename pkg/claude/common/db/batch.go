@@ -387,6 +387,11 @@ type ConvAgent struct {
 	AgentID       string
 	CurrentConvID string
 	PendingName   string
+	// FastMode is the explicit Codex service tier recorded for this agent's
+	// launch. nil means inherit/unknown; false is an explicit standard-tier
+	// launch. The dashboard uses it only until a live rollout event supersedes
+	// the launch observation.
+	FastMode *bool
 	// TemporaryHarnessBuiltinMode is the active reversible relaunch override. Empty
 	// means normal posture. It rides this existing dashboard batch so the
 	// two-second snapshot poll does not add a per-agent JSON query.
@@ -580,9 +585,11 @@ func AgentsByConv(convIDs []string) (map[string]ConvAgent, error) {
 				_ = rows.Close()
 				return nil, err
 			}
-			if profile, decodeErr := decodeAgentRelaunchProfile(relaunchRaw); decodeErr == nil &&
-				profile != nil && profile.TemporaryHarnessBuiltinMode != nil {
-				ca.TemporaryHarnessBuiltinMode = strings.TrimSpace(*profile.TemporaryHarnessBuiltinMode)
+			if profile, decodeErr := decodeAgentRelaunchProfile(relaunchRaw); decodeErr == nil && profile != nil {
+				if profile.TemporaryHarnessBuiltinMode != nil {
+					ca.TemporaryHarnessBuiltinMode = strings.TrimSpace(*profile.TemporaryHarnessBuiltinMode)
+				}
+				ca.FastMode = profile.FastMode
 			}
 			ca.Retired = retiredAt.valid
 			// Canonicalise to UTC RFC3339Nano (keeping full sub-second precision)

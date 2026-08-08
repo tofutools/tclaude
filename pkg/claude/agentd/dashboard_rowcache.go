@@ -7,6 +7,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // snapshotRowCache batches every per-conv read the dashboard snapshot needs
@@ -241,6 +242,17 @@ func (rc *snapshotRowCache) viewFor(convID string) *convRowBundle {
 		}, rc.addRowWork),
 	}
 	b.State.TemporaryHarnessBuiltinMode = rc.agents[convID].TemporaryHarnessBuiltinMode
+	// Codex does not currently append thread_settings_applied merely because an
+	// explicit service tier was selected at launch. Until the follower sees a
+	// current-generation settings event, expose tclaude's recorded launch
+	// choice as the best-known state. A later /fast event always wins because
+	// stateForConvInSessionsBatched fills State.FastMode first.
+	if b.Online && b.State.Harness == harness.CodexName && b.State.FastMode == nil {
+		if launched := rc.agents[convID].FastMode; launched != nil {
+			value := *launched
+			b.State.FastMode = &value
+		}
+	}
 	rc.memo[convID] = b
 	return b
 }
