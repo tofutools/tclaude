@@ -153,6 +153,18 @@ const (
 	ProvLaunchDefault  = "default profile (applied at launch)"
 )
 
+// ProvLaunchFillNote qualifies a field the launch-time safety-net overlay
+// resolved differently from the request's own resolution.
+//
+// It rides Note rather than Source because the two say different things and an
+// operator needs both: Source names the TIER they can go and edit, while this
+// says the value was decided after their request was resolved — which is why the
+// echo can differ from what the request looked like it would produce. Before
+// TCL-1097 the anonymous ProvLaunchDefault occupied Source and carried only the
+// second half, leaving the operator told that "a default profile" did it and
+// unable to find out which.
+const ProvLaunchFillNote = "filled by the launch-time overlay, after this request was resolved"
+
 // ProvGroupProfileSource / ProvGlobalProfileSource / ProvCLIProfileSource format
 // the three name-bearing provenance tiers. Exported so the daemon (which fills
 // the group/global tiers) and the CLI relabel path (which fills the --profile

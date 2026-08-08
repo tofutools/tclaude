@@ -4301,7 +4301,12 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			field.Value = final.Value
 			field.Source = agent.ProvLaunchDefault
 			if named := strings.TrimSpace(final.Source); named != "" && named != agent.ProvExplicit {
+				// Both halves, in the two places built to carry them: the tier goes in
+				// Source because that is what an operator acts on, and the fact that it
+				// landed late goes in Note because that is what explains the response
+				// differing from what the request looked like it would produce.
 				field.Source = final.Source
+				field.Note = agent.ProvLaunchFillNote
 			}
 		}
 	}
