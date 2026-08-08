@@ -63,6 +63,7 @@ func TestPermissionScopeParseAndValidate(t *testing.T) {
 		{"reserved selector", `{"target_agent":["@descendants","@self-spawned"]}`, PermAgentRetire, `{"target_agent":["@descendants","@self-spawned"]}`, ""},
 		{"undeclared dimension", `{"group":["dev"]}`, PermProcessRunsManage, "", "does not declare"},
 		{"unknown dimension", `{"remote":["origin"]}`, PermGroupsSpawn, "", "unknown permission scope dimension"},
+		{"dimension whitespace", `{" group":["dev"]}`, PermGroupsSpawn, "", "surrounding whitespace"},
 		{"unknown selector", `{"target_agent":["@parent"]}`, PermAgentRetire, "", "unknown selector"},
 		{"selector on wrong dimension", `{"group":["@descendants"]}`, PermGroupsSpawn, "", "unknown selector"},
 		{"empty matcher list", `{"group":[]}`, PermGroupsSpawn, "", "at least one matcher"},

@@ -649,6 +649,9 @@ func SetAgentPermissionOverrideByAgentIDWithScope(agentID, slug, effect, scopeJS
 	if effect != PermEffectGrant && effect != PermEffectDeny {
 		return fmt.Errorf("invalid permission effect %q (want %q or %q)", effect, PermEffectGrant, PermEffectDeny)
 	}
+	if effect == PermEffectDeny && scopeJSON != "" {
+		return fmt.Errorf("deny permission override %q cannot carry a scope", slug)
+	}
 	if agentID == "" {
 		return fmt.Errorf("SetAgentPermissionOverrideByAgentID: agentID is required")
 	}

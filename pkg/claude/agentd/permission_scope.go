@@ -69,6 +69,9 @@ func parsePermissionScope(raw json.RawMessage) (PermissionScope, string, error) 
 		if dim == "" {
 			return nil, "", fmt.Errorf("permission scope dimension must not be empty")
 		}
+		if string(dim) != rawDim {
+			return nil, "", fmt.Errorf("permission scope dimension %q must not contain surrounding whitespace", rawDim)
+		}
 		selectors, knownDim := permissionScopeSelectors[dim]
 		if !knownDim {
 			return nil, "", fmt.Errorf("unknown permission scope dimension %q", rawDim)
