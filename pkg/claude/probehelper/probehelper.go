@@ -2,6 +2,8 @@ package probehelper
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -222,7 +224,11 @@ func publishAt(rootFD int, name, value string, mode uint32) error {
 	if filepath.Base(name) != name || name == "." || strings.ContainsRune(name, filepath.Separator) {
 		return fmt.Errorf("invalid probe evidence name")
 	}
-	tempName := "." + name + ".tmp"
+	tempSuffix := make([]byte, 8)
+	if _, err := rand.Read(tempSuffix); err != nil {
+		return err
+	}
+	tempName := "." + name + ".tmp-" + hex.EncodeToString(tempSuffix)
 	fd, err := unix.Openat(
 		rootFD,
 		tempName,
