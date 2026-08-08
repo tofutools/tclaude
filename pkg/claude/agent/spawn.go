@@ -808,7 +808,7 @@ type SpawnParams struct {
 	// only on the CLI, like --auto-memory and --remote-control: the flag sends
 	// &true and its absence leaves the pointer nil so a profile default can still
 	// speak (and, unset everywhere, resolve to the send-keys default).
-	CopilotAPI bool `long:"copilot-api" help:"EXPERIMENTAL: drive the new Copilot agent over its embedded JSON-RPC API (copilot --ui-server) instead of tmux send-keys — messages, rename and compaction become typed calls, context is read live, and an agent blocked on a permission prompt becomes visible; soft exit still uses keystrokes. Refuses unless the launch dir is already trusted (or --trust-dir) and the pane shares host loopback. The endpoint is unauthenticated and loopback-bound. Off by default; unset = filled by the profile chain, then off. Copilot only"`
+	CopilotAPI bool `long:"copilot-api" help:"EXPERIMENTAL: drive the new Copilot agent over its embedded JSON-RPC API (copilot --ui-server) instead of tmux send-keys — messages, rename and compaction become typed calls, context is read live, and an agent blocked on a permission prompt becomes visible; soft exit uses keystrokes because the API cannot exit the CLI. Refuses unless the launch dir is already trusted (or --trust-dir) and the pane shares host loopback. The endpoint is unauthenticated and loopback-bound. Off by default; unset = filled by the profile chain, then off. Copilot only"`
 
 	FastMode string `long:"fast-mode" optional:"true" help:"Codex request speed: inherit (use config.toml) | on (fast, higher credit cost) | off (standard tier). Unset = filled by the profile chain, then inherit. Codex only"`
 

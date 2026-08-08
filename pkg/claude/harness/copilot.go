@@ -185,8 +185,11 @@ func (copilotLifecycle) RenameCommand() string { return "/rename" }
 func (copilotLifecycle) CompactCommand() string { return "/compact" }
 
 // `/exit` closes the current session; with only tclaude's single session open
-// it quits the CLI. Callers keep their hard-kill fallback for a pane that does
-// not exit on its own.
+// it quits the CLI. Copilot CLI 1.0.78 exposes no equivalent process-exit RPC:
+// session.shutdown and sessions.close successfully end a session without
+// killing the pane, while runtime.shutdown returns -32603, "Runtime shutdown
+// is not available for this server". Callers therefore keep this keystroke
+// path and their hard-kill fallback for a pane that does not exit on its own.
 func (copilotLifecycle) SoftExitCommand() string { return "/exit" }
 
 // Copilot's remote access is `/remote [on|off]` — a DIRECTIONAL command, while
