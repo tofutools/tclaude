@@ -878,14 +878,44 @@ discovering one, and positively observes that the listening socket belongs to th
 agent's own pane subtree before every drive call — a handle that cannot be
 re-proved refuses rather than sends.
 
-##### Known limitation: nothing works on an agent whose channel is down
+##### What survives an agentd restart, and what does not
 
-API connections live in the daemon's memory only. After an agentd restart, an
-already-running API-driven agent has no connection and cannot acquire one short
-of relaunching. The same is true during the bootstrap window at launch, and
-permanently for a bootstrap that failed outright.
+API connections live in the daemon's memory, so a restart begins with none. What
+brings them back is a **one-shot reconcile at startup**: for every conversation
+that has a recorded port and a live pane, agentd re-verifies that the listening
+socket still belongs to that pane's subtree, dials it, re-proves ownership on the
+live connection, and adopts the handle. The state consumer restarts alongside it,
+so status, context and the permission projection re-establish themselves too. If
+a fresh launch got there first, the reconnect stands down rather than replacing
+the newer channel.
 
-Everything routed over the channel is affected, not just mail:
+The reconnect issues **no mutating calls** — no `session.create`, no
+`session.resume`, no `setForeground`. It re-joins the conversation without
+changing it, which is possible because Copilot's session registry is
+process-global rather than per-connection: a second connection drives a session
+the first one opened, and closing the first disposes nothing (measured on 1.0.78
+with a turn in flight, which survived the disconnect and finished).
+
+Read that as **an already-established channel survives a restart**, not as
+"agentd keeps the channel up". It is a startup reconcile, not a watchdog: nothing
+continuously re-establishes a channel that drops mid-life.
+
+The sweep does not filter on the recorded drive, deliberately. A live Copilot
+pane with a port record but no recorded drive posture is reconnected like any
+other — that is the case that most needs it, since a missing posture is exactly
+what routes a conversation's mail back into its pane as keystrokes.
+
+**Not recovered.** Two cases, worth telling apart because they share one symptom:
+
+- **A launch whose bootstrap never completed.** No session was ever created over
+  RPC, so the probe answers `Session not found` and the reconcile refuses rather
+  than creating one.
+- **A pane that exited while agentd was down.** Fails with a named error naming
+  the pane.
+
+While a channel is down — during the bootstrap window at launch, after a failed
+bootstrap, or in either case above — everything routed over it is affected, not
+just mail:
 
 - **Agent messages** are **held and retried** — the durable inbox row stays, and
   the delivery is not typed into the pane instead.
@@ -902,8 +932,7 @@ the channel.
 The holding is the deliberate consequence of having no keystroke fallback:
 quietly typing the message in would reopen the injection sink for exactly the
 agent whose channel is in trouble. It is still a surprise if you meet it without
-warning. Reconnecting to an existing session after a daemon restart is tracked
-as TCL-1074.
+warning.
 
 One case worth knowing about because it looks like the same symptom and is not:
 the daemon establishes the channel only for launches **it** started. A pane you

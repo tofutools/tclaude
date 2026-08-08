@@ -380,9 +380,10 @@ over that channel instead, and there is **no keystroke fallback** — an agent t
 opted out of pane injection is never handed back to it because one call failed.
 When the channel is down the notification fails and the durable inbox row stays
 for the queue to retry. For a Copilot agent on the opt-in
-[API drive](harnesses.md#copilot-drive-send-keys-vs-api) that includes the window
-after a daemon restart: connections live in agentd's memory, so an
-already-running API-driven agent holds its mail until it relaunches.
+[API drive](harnesses.md#copilot-drive-send-keys-vs-api) that means the window
+before its channel comes up, and any period after one that never did — an
+agentd restart itself is not such a window, because agentd reconciles an
+established channel back on startup.
 
 User-initiated one-shot sends are backpressured at 10 unprocessed regular
 messages per target. A full target rejects a direct send or reply with
