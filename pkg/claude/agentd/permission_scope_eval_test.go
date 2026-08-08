@@ -242,9 +242,9 @@ var scopedSlugEnforcementPaths = map[string]string{
 	PermGroupsSpawn:       "requireGroupPermission — fills ActionContext{Group}",
 	PermAgentRetire:       "requireCrossAgentPermission — target_agent awaits Phase 5, so a target_agent scope fails closed",
 	PermAgentStanddown:    "requireCrossAgentPermission — same as agent.retire",
-	PermProcessRunsManage: "requirePermission — process_template supplied by the Phase 3 consumer; fails closed until then",
-	PermRoutesPublish:     "requireRoutePermissionForIdentity — evaluates the group scope per tier",
-	PermRoutesConsume:     "requireRoutePermissionForIdentity — evaluates the group scope per tier",
+	PermProcessRunsManage: "requirePermission — run create supplies ActionContext{ProcessTemplate}",
+	PermRoutesPublish:     "requireRoutePermissionForIdentity — central resolver plus ActionContext{Group}",
+	PermRoutesConsume:     "requireRoutePermissionForIdentity — central resolver plus ActionContext{Group}",
 }
 
 func TestEveryScopedSlugDeclaresAnEnforcementPath(t *testing.T) {

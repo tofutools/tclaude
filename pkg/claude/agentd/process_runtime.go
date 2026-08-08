@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -818,13 +819,18 @@ func handleProcessRunList(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleProcessRunCreate(w http.ResponseWriter, r *http.Request) {
-	caller, ok := requirePermission(w, r, PermProcessRunsManage)
-	if !ok {
-		return
-	}
 	var request processRunCreateRequest
 	if err := decodeProcessRuntimeRequest(w, r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, "process_run_request", err.Error())
+		return
+	}
+	// process_template scopes match the stable user-authored template id from
+	// templateId, not the current immutable version ref. This keeps grants
+	// expressible through the same identifier operators use to create runs and
+	// lets them survive routine template version updates.
+	templateID := strings.TrimSpace(request.TemplateID)
+	caller, ok := requirePermission(w, r, PermProcessRunsManage, ActionContext{ProcessTemplate: templateID})
+	if !ok {
 		return
 	}
 	setAuditDetail(r, processRunCreateAuditDetail(request))
@@ -1466,6 +1472,11 @@ func decodeProcessRuntimeRequest(w http.ResponseWriter, r *http.Request, dst any
 	if err != nil {
 		return err
 	}
+	// Run creation must decode templateId before its scoped permission gate.
+	// Restore the bytes so an --ask-human popup can still preview the exact
+	// request after decoding; restoring is harmless for the other runtime
+	// handlers, which consume their request only once.
+	r.Body = io.NopCloser(bytes.NewReader(data))
 	if err := strictjson.Decode(data, dst); err != nil {
 		return err
 	}

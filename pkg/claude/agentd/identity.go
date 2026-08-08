@@ -548,24 +548,45 @@ type permSources struct {
 	override map[string]overridePermSource
 	// group holds the slugs granted by the agent's active groups.
 	group map[string][]string
+	// groupRows retains each grant's group identity for consumers whose
+	// authorization is structurally tied to one target group (routes). The
+	// ordinary resolver still unions group scopes through group above.
+	groupRows map[string][]db.AgentGroupPermission
 }
 
 // loadPermSources reads every standing source for convID. Read errors
 // degrade to "this source said nothing", exactly as the per-slug queries
 // did — except an unresolvable agent, which stays fail-closed.
 func loadPermSources(convID string) permSources {
+	src, _ := loadPermSourcesWithReadPolicy(convID, false)
+	return src
+}
+
+// loadPermSourcesWithReadPolicy carries the route gate's stricter historical
+// read-error contract without duplicating permission precedence. Central
+// callers preserve the ordinary best-effort source reads; a group-bound route
+// gate asks to fail closed if the override or group tier cannot be read, since
+// treating either as absent could expose a lower group/default allow.
+func loadPermSourcesWithReadPolicy(convID string, failOnTierReadError bool) (permSources, error) {
 	if convID == "" {
-		return permSources{}
+		return permSources{}, nil
 	}
 	state, err := db.AgentState(convID)
-	if err != nil || state == db.AgentStateRetired {
-		return permSources{}
+	if err != nil {
+		if failOnTierReadError {
+			return permSources{}, fmt.Errorf("read agent state: %w", err)
+		}
+		return permSources{}, nil
+	}
+	if state == db.AgentStateRetired {
+		return permSources{}, nil
 	}
 	out := permSources{
 		resolvable: true,
 		sudo:       map[string]sudoPermSource{},
 		override:   map[string]overridePermSource{},
 		group:      map[string][]string{},
+		groupRows:  map[string][]db.AgentGroupPermission{},
 	}
 	// ListActiveSudoGrants orders by expires_at ascending, so the first
 	// row for a slug is the one LookupActiveSudoGrantID would have picked.
@@ -583,13 +604,48 @@ func loadPermSources(convID string) permSources {
 		for _, row := range overrides {
 			out.override[row.Slug] = overridePermSource{Effect: row.Effect, ScopeJSON: row.ScopeJSON}
 		}
+	} else if failOnTierReadError {
+		return permSources{}, fmt.Errorf("read permission overrides: %w", err)
 	}
 	if grants, err := db.ListAgentGroupPermissionRowsForConv(convID); err == nil {
 		for _, grant := range grants {
 			out.group[grant.Slug] = append(out.group[grant.Slug], grant.ScopeJSON)
+			out.groupRows[grant.Slug] = append(out.groupRows[grant.Slug], grant)
+		}
+	} else if failOnTierReadError {
+		return permSources{}, fmt.Errorf("read group permission grants: %w", err)
+	}
+	return out, nil
+}
+
+// resolveGroupBoundPermissionVerdictForRequest resolves a permission through
+// the same precedence as every central gate, while admitting group-tier rows
+// only from targetGroupID. Routes are structurally group-bound: membership in
+// and a grant from alpha must never authorize the same verb in beta. Sudo,
+// per-agent overrides and defaults remain actor-wide and are unchanged.
+func resolveGroupBoundPermissionVerdictForRequest(r *http.Request, convID, slug string, targetGroupID int64) (permVerdict, error) {
+	src, err := loadPermSourcesWithReadPolicy(convID, true)
+	if err != nil {
+		return permVerdict{}, err
+	}
+	var targetScopes []string
+	for _, grant := range src.groupRows[slug] {
+		if grant.GroupID == targetGroupID {
+			targetScopes = append(targetScopes, grant.ScopeJSON)
 		}
 	}
-	return out
+	if len(targetScopes) == 0 {
+		delete(src.group, slug)
+	} else {
+		src.group[slug] = targetScopes
+	}
+	defaultAllowed := false
+	if defaults, ok := r.Context().Value(permissionDefaultsKey{}).(map[string]bool); ok {
+		defaultAllowed = defaults[slug]
+	} else if cfg, _ := config.Load(); cfg != nil {
+		defaultAllowed = cfg.HasDefaultPermission(slug)
+	}
+	return resolvePermissionVerdictFrom(src, slug, defaultAllowed), nil
 }
 
 // resolvePermissionVerdict is THE non-interactive permission resolver:

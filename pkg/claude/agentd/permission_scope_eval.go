@@ -32,8 +32,9 @@ type ActionContext struct {
 	// profile actually used after request/group-default resolution, never
 	// the raw request field. Wired up in Phase 4.
 	SpawnProfile string
-	// ProcessTemplate is the process template name for a run. Wired up in
-	// Phase 3 (the first consumer).
+	// ProcessTemplate is the stable, user-authored template id supplied as
+	// templateId when creating a run. It deliberately is not a version ref:
+	// grants remain useful when a template gets a new stored version.
 	ProcessTemplate string
 }
 

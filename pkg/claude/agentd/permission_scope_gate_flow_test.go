@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -181,11 +182,10 @@ func setGroupGrantScope(t *testing.T, groupID int64, slug, scopeJSON string) {
 	require.EqualValues(t, 1, n, "expected exactly one group grant row to scope")
 }
 
-// The route surface has its own gate (requireRoutePermissionForIdentity):
-// routes.publish / routes.consume are group-scoped by construction, so it
-// re-implements the precedence rather than unioning every group. It must
-// still honour a grant's scope — otherwise a grant that reads as narrow in
-// `permissions ls` is a wildcard here.
+// The route surface retains membership plus exact-target-group provenance,
+// then uses the central resolver and evaluator. It must still honour a grant's
+// scope — otherwise a grant that reads as narrow in `permissions ls` is a
+// wildcard here.
 //
 // Both tiers a scope can ride on are covered: the per-agent override and the
 // target group's own grant.
@@ -232,6 +232,80 @@ func TestPermissionScope_RouteGateHonoursGroupScope(t *testing.T) {
 		"group": "beta", "name": "group-scoped-here", "target": "tcp://127.0.0.1:43230",
 	})
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+}
+
+// The central source loader is normally best-effort, but routes historically
+// failed closed when a higher-precedence tier could not be read. Preserve that
+// contract across the fold: an unreadable override tier must not disappear and
+// expose the target group's lower-precedence allow.
+func TestPermissionScope_RouteGateFailsClosedOnPermissionTierReadError(t *testing.T) {
+	skipDarwinRouteAuthorityFlow(t)
+	f := newFlow(t)
+	const publisher = "scopegate-read-error-publisher-0008"
+	f.HaveConvWithTitle(publisher, "publisher")
+	f.HaveGroup("alpha")
+	f.HaveMember("alpha", publisher)
+	alpha, err := db.GetAgentGroupByName("alpha")
+	require.NoError(t, err)
+	require.NoError(t, db.ReplaceAgentGroupPermissions(alpha.ID, []string{agentd.PermRoutesPublish}, "test"))
+
+	database, err := db.Open()
+	require.NoError(t, err)
+	_, err = database.Exec(`DROP TABLE agent_permissions`)
+	require.NoError(t, err)
+
+	rec, body := serveRouteAgent(t, f, http.MethodPost, "/v1/routes/publish", publisher, map[string]any{
+		"group": "alpha", "name": "must-not-open", "target": "tcp://127.0.0.1:43231",
+	})
+	assert.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
+	assert.Equal(t, "route_authority", body["code"])
+}
+
+// A process_template scope speaks in the same stable template ids accepted by
+// POST /v1/process/runs. One grant may name several ids; a different template
+// falls through to the ordinary popup-or-403 permission path before any run is
+// created. Program authorizations remain an independent, in-run boundary.
+func TestPermissionScope_ProcessRunCreateIsBoundedByTemplateID(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	templateRefs := map[string]string{}
+	for _, id := range []string{"a", "b", "c"} {
+		templateRefs[id] = putProcessRuntimeTemplate(t, root, processRuntimeTemplate(id, 1)).Ref
+	}
+
+	const worker = "scopegate-process-worker-0007"
+	f.HaveConvWithTitle(worker, "process worker")
+	f.HaveEnrolledAgent(worker)
+	grantScoped(t, f, worker, agentd.PermProcessRunsManage,
+		map[string]any{"process_template": []string{"a", "b"}})
+
+	create := func(templateID string) *httptest.ResponseRecorder {
+		return agentReq(t, f, worker, http.MethodPost, "/v1/process/runs", map[string]any{
+			"templateId": templateID, "authorizeProgramProfiles": []string{"safe"},
+		})
+	}
+	for _, templateID := range []string{"a", "b"} {
+		created := create(templateID)
+		require.Equalf(t, http.StatusCreated, created.Code, "template %s: %s", templateID, created.Body.String())
+	}
+
+	refused := create("c")
+	assert.Equal(t, http.StatusForbidden, refused.Code, refused.Body.String())
+	assert.Contains(t, refused.Body.String(), agentd.PermProcessRunsManage)
+	assert.NotContains(t, refused.Body.String(), "process_program_unauthorized",
+		"program authorizations are downstream of the template-scoped verb gate")
+
+	listed := processRuntimeRequest(t, f, http.MethodGet, "/v1/process/runs", nil)
+	require.Equal(t, http.StatusOK, listed.Code, listed.Body.String())
+	var page struct {
+		Runs []struct {
+			TemplateRef string `json:"templateRef"`
+		} `json:"runs"`
+	}
+	testharness.DecodeJSON(t, listed, &page)
+	require.Len(t, page.Runs, 2, "the refused template must not create a run")
+	for _, run := range page.Runs {
+		assert.NotEqual(t, templateRefs["c"], run.TemplateRef)
+	}
 }
 
 // Deny stays unscoped and terminal: it beats a scoped allow underneath it,
