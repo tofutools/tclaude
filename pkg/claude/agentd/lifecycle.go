@@ -3483,7 +3483,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return
 	}
-	sshWorkaround, sshWorkaroundSet, _, sshWorkaroundNote, fieldFail := resolveBoolLaunchField(
+	sshWorkaround, sshWorkaroundSet, sshWorkaroundSource, sshWorkaroundNote, fieldFail := resolveBoolLaunchField(
 		"ssh_workaround", body.SSHWorkaround != nil && *body.SSHWorkaround, body.SSHWorkaround != nil, h.Name, profileTiers,
 		func(p *db.SpawnProfile) *bool { return p.SSHWorkaround },
 		func(v bool) (bool, error) { return harness.ResolveSSHWorkaround(h, &v) })
@@ -4071,6 +4071,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		Harness:                    h.Name,
 		SSHWorkaround:              sshWorkaround,
 		SSHWorkaroundSet:           true,
+		SSHWorkaroundSource:        sshWorkaroundSource,
 		HarnessBuiltinMode:         harnessBuiltinMode,
 		HarnessBuiltinModeSource:   sandboxSource,
 		SandboxImplementation:      body.SandboxImplementation,
@@ -4089,6 +4090,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		ContextWindowMax:           body.ContextWindowMax,
 		CopilotAPI:                 copilotAPI,
 		CopilotAPISet:              copilotAPISet,
+		CopilotAPISource:           copilotAPISource,
 		FastMode:                   fastMode,
 		FastModeSet:                fastModeSet,
 		ReplyToConv:                replyToConv,
@@ -4384,6 +4386,18 @@ type spawnParams struct {
 	// dashboard sends exactly that explicit false on every Copilot spawn, so the
 	// gap is reachable from the most-used surface, not just a hand-built request.
 	CopilotAPISet bool
+	// CopilotAPISource / SSHWorkaroundSource name the tier that CHOSE the value
+	// beside them, or the harness default when nobody did. resolveBoolLaunchField
+	// has always computed this and every caller threw it away; these carry it as
+	// far as relaunchProfileForSpawn so it reaches the durable record.
+	//
+	// The Set bits above cannot serve this purpose. They are consumed and
+	// re-derived by executeSpawn's safety-net overlay, so by the time the launch
+	// is frozen they answer "does this value survive the overlay", not "did an
+	// operator decide it". A from-group snapshot asks the second question and
+	// used to read the first (TCL-1090).
+	CopilotAPISource    string
+	SSHWorkaroundSource string
 	// FastMode/FastModeSet preserve the nullable Codex service-tier choice:
 	// unset inherits config.toml, false forces standard, true forces fast.
 	FastMode    bool
@@ -5112,11 +5126,19 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	if fail != nil {
 		return fail
 	}
-	p.CopilotAPI, p.CopilotAPISet, _, _, fail = resolveBoolLaunchField("copilot_api", p.CopilotAPI,
+	var copilotAPISource string
+	p.CopilotAPI, p.CopilotAPISet, copilotAPISource, _, fail = resolveBoolLaunchField("copilot_api", p.CopilotAPI,
 		p.CopilotAPISet || p.CopilotAPI, h.Name, tiers, func(prof *db.SpawnProfile) *bool { return prof.CopilotAPI },
 		func(v bool) (bool, error) { return harness.ResolveCopilotAPI(h, &v) })
 	if fail != nil {
 		return fail
+	}
+	// Keep the ORIGINAL attribution when the spawn boundary already resolved this
+	// field. Re-resolving here reports ProvExplicit for anything already decided,
+	// which would rename a group-default profile's choice to "explicit" and lose
+	// the only tier name the operator could act on.
+	if p.CopilotAPISource == "" {
+		p.CopilotAPISource = copilotAPISource
 	}
 	p.FastMode, p.FastModeSet, _, _, fail = resolveBoolLaunchField("fast_mode", p.FastMode,
 		p.FastModeSet, h.Name, tiers, func(prof *db.SpawnProfile) *bool { return prof.FastMode },
@@ -5127,13 +5149,21 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	if fail != nil {
 		return fail
 	}
-	p.SSHWorkaround, p.SSHWorkaroundSet, _, _, fail = resolveBoolLaunchField(
+	var sshWorkaroundSource string
+	p.SSHWorkaround, p.SSHWorkaroundSet, sshWorkaroundSource, _, fail = resolveBoolLaunchField(
 		"ssh_workaround", p.SSHWorkaround, p.SSHWorkaroundSet, h.Name, tiers,
 		func(prof *db.SpawnProfile) *bool { return prof.SSHWorkaround },
 		func(v bool) (bool, error) { return harness.ResolveSSHWorkaround(h, &v) })
 	if fail != nil {
 		return fail
 	}
+	if p.SSHWorkaroundSource == "" {
+		p.SSHWorkaroundSource = sshWorkaroundSource
+	}
+	// NB: the block below force-sets SSHWorkaroundSet for the harness default, so
+	// that bit says "this launch has a posture" and not "someone chose one" — the
+	// same conflation this ticket is about. The attribution above is captured
+	// BEFORE it runs and is what the durable record keys on.
 	if !p.SSHWorkaroundSet {
 		p.SSHWorkaround, err = harness.ResolveSSHWorkaround(h, nil)
 		if err != nil {

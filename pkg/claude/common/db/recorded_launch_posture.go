@@ -60,6 +60,9 @@ func ComposeAgentRelaunchProfile(base, overlay *AgentRelaunchProfile) *AgentRela
 	if overlay.CopilotAPI != nil {
 		merged.CopilotAPI = overlay.CopilotAPI
 	}
+	if overlay.CopilotAPISource != nil {
+		merged.CopilotAPISource = overlay.CopilotAPISource
+	}
 	if overlay.FastMode != nil {
 		merged.FastMode = overlay.FastMode
 	}
@@ -74,6 +77,9 @@ func ComposeAgentRelaunchProfile(base, overlay *AgentRelaunchProfile) *AgentRela
 	}
 	if overlay.SSHWorkaround != nil {
 		merged.SSHWorkaround = overlay.SSHWorkaround
+	}
+	if overlay.SSHWorkaroundSource != nil {
+		merged.SSHWorkaroundSource = overlay.SSHWorkaroundSource
 	}
 	if overlay.AutoCompactWindow != nil {
 		merged.AutoCompactWindow = overlay.AutoCompactWindow

@@ -81,6 +81,28 @@ type AgentRelaunchProfile struct {
 	// resolves to the send-keys path — so an agent recorded before this field
 	// existed relaunches exactly as it did before. See TCL-1053.
 	CopilotAPI *bool `json:"copilot_api,omitempty"`
+	// CopilotAPISource names the resolution tier that CHOSE CopilotAPI — an
+	// explicit request, or the named/group-default/global-default spawn profile
+	// that carried it — or the harness default when NOBODY chose and the value
+	// above is merely what the resolver landed on.
+	//
+	// It exists because CopilotAPI alone cannot answer "did anyone choose this".
+	// relaunchProfileForSpawn freezes the field NON-NIL for every Copilot launch
+	// on purpose, so a relaunch replays "this agent is on send-keys" as a known
+	// posture rather than an unknown one a later profile edit could fill in
+	// differently. That makes non-nil mean "this launch had a posture", which is
+	// a different question from "an operator decided this" — and a from-group
+	// snapshot asks the second one. Reading the second off the first records an
+	// observed default as a curated decision, which then speaks for its tier at
+	// the next deploy and suppresses a group default (TCL-1090).
+	//
+	// Provenance travels BESIDE the value rather than being encoded in nil-ness
+	// precisely because nil-ness is already load-bearing for the freeze above.
+	// Making nil mean "unset" here would re-open the field to the tier stack at
+	// relaunch and let a later group-default edit move an agent onto the
+	// API drive it never chose. nil = unknown (legacy record, or a launch that
+	// recorded none). Mirrors HarnessBuiltinModeSource.
+	CopilotAPISource *string `json:"copilot_api_source,omitempty"`
 	// FastMode preserves an explicit Codex tier across relaunches. nil means
 	// inherit config.toml; true/false force fast/standard respectively.
 	FastMode               *bool   `json:"fast_mode,omitempty"`
@@ -90,6 +112,12 @@ type AgentRelaunchProfile struct {
 	// SSHWorkaround is the durable Codex Git-over-SSH compatibility posture.
 	// nil means unknown/legacy; false is an explicit opt-out.
 	SSHWorkaround *bool `json:"ssh_workaround,omitempty"`
+	// SSHWorkaroundSource is SSHWorkaround's attribution, for the same reason and
+	// with the same contract as CopilotAPISource above: relaunchProfileForSpawn
+	// freezes SSHWorkaround non-nil for EVERY launch (not even harness-gated), so
+	// non-nil cannot distinguish a curated opt-out from the resolver's default.
+	// nil = unknown (legacy record, or a launch that recorded none).
+	SSHWorkaroundSource *string `json:"ssh_workaround_source,omitempty"`
 	// AutoCompactWindow is the durable CLAUDE_CODE_AUTO_COMPACT_WINDOW token
 	// count ("" = known intent to pin nothing; nil = unknown/legacy). Distinct
 	// from ContextWindowSize above, which is an OBSERVED statusline value used to
@@ -880,6 +908,12 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		if agent.SSHWorkaround == nil {
 			agent.SSHWorkaround = previous.SSHWorkaround
 		}
+		// Carried with the value it explains, never independently: an attribution
+		// that outlived its value would name a tier for a posture this record no
+		// longer holds.
+		if agent.SSHWorkaroundSource == nil {
+			agent.SSHWorkaroundSource = previous.SSHWorkaroundSource
+		}
 		if sameSourceGeneration && agent.ContextFeatures == nil {
 			agent.ContextFeatures = previous.ContextFeatures
 		}
@@ -928,6 +962,14 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 	if existingConversation != nil && existingConversation.FallbackRelaunch != nil {
 		if conversationFallback.CopilotAPI == nil {
 			conversationFallback.CopilotAPI = existingConversation.FallbackRelaunch.CopilotAPI
+		}
+		// CopilotAPI's attribution rides with CopilotAPI, into the same record and
+		// no other. Putting it on `agent` instead would flow a conversation-lifetime
+		// fact upward into the stable agent's birth-frozen posture — the exact
+		// inversion the block comment above exists to prevent (TCL-1059).
+		if conversationFallback.CopilotAPISource == nil {
+			conversationFallback.CopilotAPISource =
+				existingConversation.FallbackRelaunch.CopilotAPISource
 		}
 		if conversationFallback.ConfiguredContextWindowMax == nil {
 			conversationFallback.ConfiguredContextWindowMax =

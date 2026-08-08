@@ -107,6 +107,10 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 	remoteControl := p.RemoteControl
 	autoMemory := p.AutoMemory
 	sshWorkaround := p.SSHWorkaround
+	// Frozen unconditionally like the value it explains — SSHWorkaround is not
+	// even harness-gated here — so a snapshot can tell a curated opt-out from the
+	// resolver's default instead of reading both off the same non-nil pointer.
+	sshWorkaroundSource := p.SSHWorkaroundSource
 	// Freeze the trim map as KNOWN intent even when it is empty: an agent
 	// deliberately spawned untrimmed should stay untrimmed, and a nil here would
 	// instead read as "unknown" and let a later profile edit change it.
@@ -120,6 +124,7 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 	autoCompactWindow := p.AutoCompactWindow
 	configuredContextWindowMax := (*int64)(nil)
 	copilotAPI := (*bool)(nil)
+	copilotAPISource := (*string)(nil)
 	fastMode := (*bool)(nil)
 	if harnessOrDefault(p.Harness) == harness.CopilotName {
 		value := p.ContextWindowMax
@@ -129,6 +134,14 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 		// later profile edit could fill in differently.
 		api := p.CopilotAPI
 		copilotAPI = &api
+		// ...and the attribution beside it, because the freeze above is exactly
+		// what makes the VALUE unable to say whether anyone chose it. Without this
+		// the only reader that needs the difference — a from-group snapshot — has
+		// to infer it from non-nil-ness, which is true for every Copilot launch
+		// (TCL-1090). Recorded even when nothing spoke: "the harness default
+		// decided this" is itself the fact worth keeping.
+		source := p.CopilotAPISource
+		copilotAPISource = &source
 	}
 	if harnessOrDefault(p.Harness) == harness.CodexName && p.FastModeSet {
 		value := p.FastMode
@@ -150,11 +163,13 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 		ContextWindowSize:          &contextWindowSize,
 		ConfiguredContextWindowMax: configuredContextWindowMax,
 		CopilotAPI:                 copilotAPI,
+		CopilotAPISource:           copilotAPISource,
 		FastMode:                   fastMode,
 		AskUserQuestionTimeout:     &askTimeout,
 		RemoteControl:              &remoteControl,
 		AutoMemory:                 &autoMemory,
 		SSHWorkaround:              &sshWorkaround,
+		SSHWorkaroundSource:        &sshWorkaroundSource,
 		ContextFeatures:            &contextFeatures,
 		AutoCompactWindow:          &autoCompactWindow,
 	}
