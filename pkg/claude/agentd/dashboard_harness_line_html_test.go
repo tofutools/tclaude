@@ -99,6 +99,21 @@ func TestDashboardHTML_HarnessLineWired(t *testing.T) {
 	}
 }
 
+func TestDashboardHarnessMarkNoticesEmbedded(t *testing.T) {
+	tests := map[string]string{
+		"vendor/harness-marks/README.md":                 "@lobehub/icons-static-svg",
+		"vendor/harness-marks/LICENSE-LobeHub.txt":      "Copyright (c) 2023 LobeHub",
+		"vendor/harness-marks/LICENSE-GitHub-Primer.txt": "Copyright (c) 2026 GitHub Inc.",
+		"vendor/harness-marks/LICENSE-OpenCode.txt":      "Copyright (c) 2025 opencode",
+	}
+	for path, notice := range tests {
+		body := string(mustReadFS(dashboardAssetsFS, path))
+		if !strings.Contains(body, notice) {
+			t.Errorf("embedded harness-mark notice %s missing %q", path, notice)
+		}
+	}
+}
+
 // TestDashboardHTML_HarnessBadgeAndSandboxWired guards the JOH-162 per-agent
 // surfaces: a non-default harness (Codex) is badged even before a model is
 // known, the launch-sandbox chip renders from state.sandbox_mode, and the

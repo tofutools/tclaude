@@ -6,9 +6,8 @@ const PRODUCT_MARKS = new Set(['claude', 'codex', 'copilot', 'opencode']);
 
 // These deliberately retain the products' recognizable silhouettes while the
 // surrounding CSS gives every mark the same quiet, monochrome treatment.
-// Claude Code: LobeHub Icons (MIT), claudecode.svg.
-// Codex: OpenAI Blossom. Copilot: Simple Icons GitHub Copilot mark (CC0).
-// OpenCode: Simple Icons OpenCode mark (CC0).
+// Source and license details live beside the embedded dashboard assets in
+// vendor/harness-marks/README.md. Keep those notices with any future updates.
 function ProductMark({ name }) {
   switch (name) {
     case 'claude':
