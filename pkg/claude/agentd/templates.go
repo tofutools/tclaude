@@ -789,6 +789,20 @@ type templateAgentLaunch struct {
 	// instantiate result so template launches have the same least-surprise
 	// disclosure as direct spawns.
 	Notes []string
+	// Traced records the bare fact that this member was observed at all — that
+	// traceMemberLaunch got past both of its early returns. It is NOT "traced and
+	// useful"; do not widen it to mean that.
+	//
+	// The re-snapshot merge needs it because a blank Harness is ambiguous in the
+	// worst possible way: THE CORRECT OBSERVATION IS SPELLED EXACTLY LIKE THE
+	// ABSENCE OF ONE. A genuinely-traced Claude member yields a blank harness by
+	// design (see below — the default is deliberately not stamped), and so does a
+	// member that could not be observed at all. Keying the merge's carry-forward
+	// on "the traced harness is blank" would therefore preserve a stale harness
+	// pin for an agent an operator had genuinely moved to Claude, and drag that
+	// harness's fields along behind it. Mirrors ContextFeaturesSet / AutoReviewSet
+	// / CopilotAPISet, which exist for exactly this ambiguity (TCL-1083).
+	Traced bool
 }
 
 // validateTemplateAgentLaunch validates one template agent's per-role launch
@@ -1414,7 +1428,10 @@ func traceMemberLaunch(convID string) templateAgentLaunch {
 	if err != nil {
 		return templateAgentLaunch{}
 	}
-	out := templateAgentLaunch{}
+	// Past both early returns: this member WAS observed. Everything below may
+	// still come back blank — that is a finding about the member, not a failure
+	// to look, and Traced is what lets the re-snapshot merge tell those apart.
+	out := templateAgentLaunch{Traced: true}
 	// Store the harness only when it differs from the default, so a plain Claude
 	// member round-trips to a blank (inherit) harness rather than a noisy
 	// explicit "claude" on every agent.
@@ -3729,7 +3746,7 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 	// which only applies when re-snapshotting a stored template). Same response
 	// shape as a real create so the client reads it identically.
 	if body.Preview {
-		t := snapshotGroupTemplate(body.TemplateName, g, members, ownerSet, nil)
+		t, _ := snapshotGroupTemplate(body.TemplateName, g, members, ownerSet, nil)
 		writeJSON(w, http.StatusOK, fromGroupCreateJSON{
 			templateJSON: templateToJSON(t),
 			BlankBriefs:  countBlankBriefs(t),
@@ -3757,7 +3774,7 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		t := snapshotGroupTemplate(body.TemplateName, g, members, ownerSet, existing)
+		t, tracedByName := snapshotGroupTemplate(body.TemplateName, g, members, ownerSet, existing)
 
 		if existing == nil {
 			id, err := db.CreateGroupTemplate(t)
@@ -3791,6 +3808,7 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 			prevOrder = append(prevOrder, a.Name)
 		}
 		briefsKept, added := []string{}, []string{}
+		dropped := []snapshotFieldDrop{}
 		newNames := map[string]bool{}
 		for i := range t.Agents {
 			newNames[t.Agents[i].Name] = true
@@ -3825,7 +3843,13 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 			// inline overrides used to be), while its NON-observable fields
 			// (approval, ask-timeout, the launch toggles, deny overrides) are
 			// blueprint curation and carry forward on name-match.
-			t.Agents[i].ProfileInline = mergeSnapshotInlineProfile(prev.ProfileInline, t.Agents[i].ProfileInline)
+			inline, drop := mergeSnapshotInlineProfile(
+				prev.ProfileInline, t.Agents[i].ProfileInline, tracedByName[t.Agents[i].Name])
+			t.Agents[i].ProfileInline = inline
+			if drop != nil {
+				drop.Agent = t.Agents[i].Name
+				dropped = append(dropped, *drop)
+			}
 		}
 		removed := []string{}
 		for _, n := range prevOrder {
@@ -3867,6 +3891,7 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 			Added:        added,
 			Removed:      removed,
 			BlankBriefs:  countBlankBriefs(t),
+			Dropped:      dropped,
 		})
 		return
 	}
@@ -3883,14 +3908,31 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 // prev's is_owner is deliberately dropped — ownership IS observable and rides
 // the agent row's own owner flag. Returns nil when neither side carries
 // anything.
-func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile) *db.SpawnProfile {
+func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile, observed bool) (*db.SpawnProfile, *snapshotFieldDrop) {
 	if prev == nil {
-		return traced
+		return traced, nil
 	}
 	out := &db.SpawnProfile{}
 	if traced != nil {
 		cp := *traced
 		out = &cp
+	}
+	// ROOT FIX (TCL-1083): "traced-wins" means the trace wins WHEN THERE IS ONE.
+	// An unobserved member is an absence of information, and blanking the
+	// observable fields out of it asserts something false — "this member pins no
+	// harness" — when the truth is "we learned nothing about this member". Every
+	// invalid combination in the harness-only field family is manufactured by
+	// that one step: the pin goes, harnessOrDefault("") answers "claude", and the
+	// stored Copilot/Codex-only fields are suddenly sitting on a Claude profile.
+	//
+	// Keyed on `observed`, never on "the traced harness came back blank" — those
+	// are different questions with the same spelling, and the second one is wrong
+	// for a genuinely-traced Claude member. Live permission grants are read
+	// independently of the launch trace, so they are NOT restored here: an
+	// unobserved member can still have observable grants.
+	if !observed {
+		out.Harness, out.Model = prev.Harness, prev.Model
+		out.Effort, out.Sandbox = prev.Effort, prev.Sandbox
 	}
 	if out.Approval == "" {
 		out.Approval = prev.Approval
@@ -3944,14 +3986,11 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile) *db.SpawnProfile 
 	// traced both read 0 — so a zero falls back to the template's previous value
 	// rather than silently clearing a curated cap (TCL-1062).
 	//
-	// Gated on the MERGED profile still resolving to Copilot, because unlike the
-	// window a cap is invalid on any other harness. Harness is a traced-wins
-	// field, so an untraceable member (a pruned session row) leaves out.Harness
-	// blank — which resolves to Claude — and an inline profile pinning a cap under
-	// Claude is not merely useless: resolveIntLaunchField fails it as a matching
-	// tier and 400s the agent at deploy. The cap travels with its harness or not
-	// at all; losing it beats writing a template-local profile that cannot deploy.
-	if out.ContextWindowMax == 0 && harnessOrDefault(out.Harness) == harness.CopilotName {
+	// TCL-1062 gated this one field on the merged profile resolving to Copilot,
+	// because a cap on any other harness 400s the agent at deploy. That gate is
+	// now the general one below, which covers the whole family and — the part
+	// TCL-1062 could not do — DISCLOSES what it took.
+	if out.ContextWindowMax == 0 {
 		out.ContextWindowMax = prev.ContextWindowMax
 	}
 	// The implementation is observable, but only a non-default one is traced (see
@@ -3971,6 +4010,10 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile) *db.SpawnProfile 
 			}
 		}
 	}
+	// Gate LAST, so it judges the finished profile — and before the emptiness
+	// check, because dropping the only field a profile carried has to be able to
+	// empty it.
+	drop := dropLaunchFieldsForeignToHarness(out)
 	if out.Harness == "" && out.Model == "" && out.Effort == "" && out.Sandbox == "" &&
 		out.Approval == "" && out.ToolGovernance == "" && out.AskUserQuestionTimeout == "" &&
 		out.StartupContext == "" &&
@@ -3980,9 +4023,149 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile) *db.SpawnProfile 
 		out.SSHWorkaround == nil && out.CopilotAPI == nil && out.FastMode == nil &&
 		len(out.ContextFeatures) == 0 &&
 		out.IsOwner == nil && len(out.PermissionOverrides) == 0 {
+		return nil, drop
+	}
+	return out, drop
+}
+
+// snapshotFieldDrop is one agent's disclosure that a re-snapshot refused to
+// carry launch fields forward. A drop is silent otherwise: the merge would
+// simply return a smaller profile, the template would save with a 200, and the
+// operator would find out at deploy or never. Rendered per agent by the CLI and
+// the dashboard, as a sibling of the blank_briefs warning on the same response
+// (JOH-344), which solves the same problem — a snapshot-time loss nobody can
+// see — for a different field.
+type snapshotFieldDrop struct {
+	Agent  string   `json:"agent"`
+	Fields []string `json:"fields"`
+	// Reason is written for an operator deciding whether to act, not for someone
+	// debugging the merge. See dropLaunchFieldsForeignToHarness for why it names
+	// the harness rather than the event.
+	Reason string `json:"reason"`
+}
+
+// dropLaunchFieldsForeignToHarness zeroes every carried launch field the merged
+// profile's harness cannot accept, and reports what it took. Without it, a
+// harness-only field carried onto a profile of another harness is not merely
+// useless: resolveInt/Bool/StringLaunchField treat a profile whose harness
+// matches the resolved launch as a self-consistent tier and fail it, so the
+// member 400s at deploy and never spawns (TCL-1083).
+//
+// The validators are the harness package's own — the same ones the deploy path
+// runs — rather than a hand-written list of which field belongs to which
+// harness. A second list would drift from the first, and drift here is invisible
+// until a deploy fails.
+//
+// Model and Effort are deliberately absent: they are never carried across a
+// harness by this merge. Either the trace supplied both harness and model
+// together, or the member was unobserved and both came from the stored profile
+// together; neither path can pair one harness's model with another's name.
+//
+// NOT covered, deliberately: a carried tri-state FALSE. Several validators guard
+// on `*requested && !h.Can…()`, so a `false` is accepted on any harness, keeps
+// its tier, and suppresses a lower one that says true. That is a different bug —
+// an observed default recorded as though it were a decision — tracked as
+// TCL-1090. A green version of this function does not close it.
+func dropLaunchFieldsForeignToHarness(out *db.SpawnProfile) *snapshotFieldDrop {
+	name := harnessOrDefault(out.Harness)
+	h, err := harness.ResolveSpawnable(name)
+	if err != nil {
+		// An unresolvable harness is not a judgement this function is entitled to
+		// make: it would drop every gated field on the strength of a name it does
+		// not understand. Leave the profile alone and let the deploy path speak.
 		return nil
 	}
-	return out
+	dropped := []string{}
+	if out.ContextWindowMax != 0 {
+		if _, err := harness.ResolveCopilotContextWindow(h, out.ContextWindowMax); err != nil {
+			out.ContextWindowMax = 0
+			dropped = append(dropped, "context_window_max")
+		}
+	}
+	if out.CopilotAPI != nil {
+		if _, err := harness.ResolveCopilotAPI(h, out.CopilotAPI); err != nil {
+			out.CopilotAPI = nil
+			dropped = append(dropped, "copilot_api")
+		}
+	}
+	if out.FastMode != nil {
+		if _, err := harness.ResolveFastMode(h, out.FastMode); err != nil {
+			out.FastMode = nil
+			dropped = append(dropped, "fast_mode")
+		}
+	}
+	if out.SSHWorkaround != nil {
+		if _, err := harness.ResolveSSHWorkaround(h, out.SSHWorkaround); err != nil {
+			out.SSHWorkaround = nil
+			dropped = append(dropped, "ssh_workaround")
+		}
+	}
+	if out.AutoMemory != nil {
+		if _, err := harness.ResolveAutoMemory(h, out.AutoMemory); err != nil {
+			out.AutoMemory = nil
+			dropped = append(dropped, "auto_memory")
+		}
+	}
+	if out.RemoteControl != nil {
+		if _, err := harness.ResolveRemoteControl(h, *out.RemoteControl); err != nil {
+			out.RemoteControl = nil
+			dropped = append(dropped, "remote_control")
+		}
+	}
+	if out.AutoReview != nil {
+		if _, err := harness.ResolveAutoReview(h, *out.AutoReview); err != nil {
+			out.AutoReview = nil
+			dropped = append(dropped, "auto_review")
+		}
+	}
+	if out.TrustDir != nil {
+		if _, err := harness.ResolveTrustDir(h, *out.TrustDir); err != nil {
+			out.TrustDir = nil
+			dropped = append(dropped, "trust_dir")
+		}
+	}
+	if out.ToolGovernance != "" {
+		if _, err := harness.ValidateToolGovernance(h, out.ToolGovernance); err != nil {
+			out.ToolGovernance = ""
+			dropped = append(dropped, "tool_governance")
+		}
+	}
+	if out.AskUserQuestionTimeout != "" {
+		if _, err := harness.ResolveAskTimeoutMode(h, out.AskUserQuestionTimeout); err != nil {
+			out.AskUserQuestionTimeout = ""
+			dropped = append(dropped, "ask_user_question_timeout")
+		}
+	}
+	if out.AutoCompactWindow != "" {
+		if _, err := harness.ResolveAutoCompactWindow(h, out.AutoCompactWindow); err != nil {
+			out.AutoCompactWindow = ""
+			dropped = append(dropped, "auto_compact_window")
+		}
+	}
+	if out.SandboxImplementation != "" {
+		if _, err := validateSandboxImplementationForHarness(h, out.SandboxImplementation); err != nil {
+			out.SandboxImplementation = ""
+			dropped = append(dropped, "sandbox_implementation")
+		}
+	}
+	if out.Approval != "" {
+		if _, err := harness.ValidateApprovalPolicy(h, out.Approval); err != nil {
+			out.Approval = ""
+			dropped = append(dropped, "approval")
+		}
+	}
+	if len(dropped) == 0 {
+		return nil
+	}
+	// The reason names the harness the fields were judged against, NOT the event
+	// that produced it. "harness changed to claude" would be false for a profile
+	// whose harness was never changed by anyone — it would send an operator
+	// hunting for a change nobody made. What is always true, and always
+	// actionable, is which harness the profile now resolves to.
+	return &snapshotFieldDrop{
+		Fields: dropped,
+		Reason: fmt.Sprintf("template-local profile resolves to harness %q, which does not accept them", name),
+	}
 }
 
 // snapshotGroupTemplate builds the template a from-group snapshot of
@@ -3992,7 +4175,13 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile) *db.SpawnProfile 
 // update mode (existing != nil) member names are recovered against the
 // existing template via recoverTemplateAgentName so the re-snapshot
 // round-trips.
-func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGroupMember, ownerSet map[string]bool, existing *db.GroupTemplate) *db.GroupTemplate {
+// The second return maps each snapshotted agent NAME to whether its member was
+// observed at all (templateAgentLaunch.Traced). The update-mode merge needs it
+// and cannot recover it from the built template: an unobserved member and a
+// fully-default observed one both produce the same blanks, and both can produce
+// no inline profile at all.
+func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGroupMember, ownerSet map[string]bool, existing *db.GroupTemplate) (*db.GroupTemplate, map[string]bool) {
+	tracedByName := map[string]bool{}
 	t := &db.GroupTemplate{
 		Name:           name,
 		Descr:          g.Descr,
@@ -4031,6 +4220,7 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 		// in the editor (viewable, editable, removable), so a fresh snapshot never
 		// starts life behind the read-only "legacy inline" notice.
 		launch := traceMemberLaunch(convID)
+		tracedByName[name] = launch.Traced
 		var inline *db.SpawnProfile
 		if launch.Harness != "" || launch.Model != "" || launch.Effort != "" || launch.Sandbox != "" || launch.Approval != "" || launch.AutoReviewSet || launch.SSHWorkaroundSet || len(launch.ContextFeatures) > 0 || launch.AutoCompactWindow != "" || launch.ContextWindowMax > 0 || launch.CopilotAPISet || launch.FastModeSet || launch.SandboxImplementation != "" || len(perms) > 0 {
 			po := map[string]string{}
@@ -4096,7 +4286,7 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 	for _, ownerConv := range pureOwners {
 		addAgent(ownerConv, "owner", "", true)
 	}
-	return t
+	return t, tracedByName
 }
 
 // fromGroupUpdateJSON is the update-mode from-group response: the fresh
@@ -4112,6 +4302,11 @@ type fromGroupUpdateJSON struct {
 	// BlankBriefs counts agents still left with a blank per-agent brief after
 	// the snapshot — see countBlankBriefs (JOH-344).
 	BlankBriefs int `json:"blank_briefs"`
+	// Dropped discloses launch fields the merge refused to carry forward, per
+	// agent. Empty on the overwhelmingly common path; when it is not, it is the
+	// only place the operator learns a curated field went away, so it is rendered
+	// by both the CLI and the dashboard like blank_briefs.
+	Dropped []snapshotFieldDrop `json:"dropped,omitempty"`
 }
 
 // fromGroupCreateJSON is the create-mode from-group response: the fresh

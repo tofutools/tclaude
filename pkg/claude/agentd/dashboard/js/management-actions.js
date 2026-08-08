@@ -589,9 +589,15 @@ export function createManagementActions({
     const blankNote = blank
       ? ` — ⚠ ${blank} agent brief(s) blank; edit the template before deploying`
       : '';
+    // Launch fields the re-snapshot refused to carry forward (TCL-1083). Nothing
+    // else tells the operator: the template saves cleanly and the loss would
+    // otherwise surface as a failed deploy, or never.
+    const droppedNote = (result.dropped || [])
+      .map((d) => ` — ⚠ ${d.agent}: dropped ${(d.fields || []).join(', ')} (${d.reason})`)
+      .join('');
     if (result.updated)
       notify(
-        `template updated from ${group}: ${name} (briefs kept: ${(result.briefs_kept || []).length}, added: ${(result.added || []).length}, removed: ${(result.removed || []).length})${blankNote}`,
+        `template updated from ${group}: ${name} (briefs kept: ${(result.briefs_kept || []).length}, added: ${(result.added || []).length}, removed: ${(result.removed || []).length})${blankNote}${droppedNote}`,
       );
     else notify(`template created from ${group}: ${name}${blankNote}`);
     await refresh();

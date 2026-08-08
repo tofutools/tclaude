@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -74,6 +75,31 @@ var snapshotMergeTracedBase = map[string]db.SpawnProfile{
 	// Copilot — see the gate in mergeSnapshotInlineProfile (TCL-1062). Check the
 	// carry-forward against a member that is still Copilot.
 	"ContextWindowMax": {Harness: harness.CopilotName},
+	"CopilotAPI":       {Harness: harness.CopilotName},
+	// Codex-only toggles. Without a Codex base these would be judged against
+	// Claude, refused, and fall through to the disclosure escape below — which
+	// passes, but proves much less than checking them where they are legal.
+	"FastMode":      {Harness: harness.CodexName},
+	"SSHWorkaround": {Harness: harness.CodexName},
+	"AutoReview":    {Harness: harness.CodexName},
+}
+
+// disclosureNamesField reports whether a drop disclosure announces the Go field
+// `name` under the wire spelling an operator would recognise. Matching is done by
+// squashing case and underscores rather than by generating snake_case, because
+// generating it gets acronyms wrong in exactly the fields that matter here:
+// CopilotAPI is `copilot_api`, not `copilot_a_p_i`, and SSHWorkaround is
+// `ssh_workaround`.
+func disclosureNamesField(fields []string, name string) bool {
+	squash := func(s string) string {
+		return strings.ToLower(strings.ReplaceAll(s, "_", ""))
+	}
+	for _, f := range fields {
+		if squash(f) == squash(name) {
+			return true
+		}
+	}
+	return false
 }
 
 // setSampleProfileField writes a distinctive non-zero value into field idx of p.
@@ -116,11 +142,24 @@ func TestMergeSnapshotInlineProfileCountsEveryStoredField(t *testing.T) {
 			continue
 		}
 		t.Run(name, func(t *testing.T) {
+			// Judge each field against a harness that accepts it, where one is
+			// named — otherwise a harness-only field is refused by the gate for a
+			// reason that has nothing to do with the counting this guard is testing.
+			base := snapshotMergeTracedBase[name]
 			prev, traced := &db.SpawnProfile{}, &db.SpawnProfile{}
+			*prev, *traced = base, base
 			setSampleProfileField(t, prev, i)
 			setSampleProfileField(t, traced, i)
 
-			out := mergeSnapshotInlineProfile(prev, traced)
+			out, drop := mergeSnapshotInlineProfile(prev, traced, true)
+			if out == nil && drop != nil && disclosureNamesField(drop.Fields, name) {
+				// Legitimately refused rather than miscounted: the sample value is
+				// foreign to the harness it was judged against, the gate took it, and
+				// the operator is told. Emptying the profile afterwards is then correct.
+				// This escape is why the bases above matter — without them every
+				// harness-only field would land here and the count would go untested.
+				return
+			}
 			require.NotNilf(t, out,
 				"a template-local profile carrying only db.SpawnProfile.%s collapsed to nil: "+
 					"mergeSnapshotInlineProfile's trailing \"is this empty\" condition does not "+
@@ -136,9 +175,16 @@ func TestMergeSnapshotInlineProfileCountsEveryStoredField(t *testing.T) {
 
 // TestMergeSnapshotInlineProfileCarriesEveryCuratedField pins the other half:
 // for every field the live group does NOT own, a stored template value must
-// survive a re-snapshot of a member that carries nothing for it. Traced is a
-// real profile (a member that WAS observed) so this is the ordinary case, not
-// the untraceable-member edge.
+// either SURVIVE a re-snapshot of a member that carries nothing for it, or be
+// dropped WITH A DISCLOSURE naming it. Traced is a real profile (a member that
+// WAS observed) so this is the ordinary case, not the unobserved-member edge.
+//
+// The "or disclosed" half is the property that actually matters and it was not
+// in the guard's first version (TCL-1062), which only demanded that a field
+// carry. That was the easy property: it could not distinguish a field nobody had
+// thought about from one deliberately dropped, so a future field could be added,
+// gated, and silently lost while this test stayed green. Asserting "carried, or
+// its loss is announced" closes that.
 func TestMergeSnapshotInlineProfileCarriesEveryCuratedField(t *testing.T) {
 	profile := reflect.TypeOf(db.SpawnProfile{})
 	for i := range profile.NumField() {
@@ -154,13 +200,26 @@ func TestMergeSnapshotInlineProfileCarriesEveryCuratedField(t *testing.T) {
 				traced = base
 			}
 
-			out := mergeSnapshotInlineProfile(prev, &traced)
+			out, drop := mergeSnapshotInlineProfile(prev, &traced, true)
 			require.NotNil(t, out, "a traced member that carries something can never merge to an empty profile")
-			assert.Equalf(t, reflect.ValueOf(*prev).Field(i).Interface(), reflect.ValueOf(*out).Field(i).Interface(),
+			if reflect.DeepEqual(reflect.ValueOf(*prev).Field(i).Interface(), reflect.ValueOf(*out).Field(i).Interface()) {
+				return // carried forward intact
+			}
+			// Not carried. The ONLY acceptable alternative is that the merge took it
+			// deliberately and said so: a field that vanishes without a word is the
+			// exact defect this guard exists to prevent, one level up from the
+			// fields it was originally written for.
+			require.NotNilf(t, drop,
 				"the template's curated db.SpawnProfile.%s did not survive a re-snapshot of a member "+
-					"that carries nothing for it: mergeSnapshotInlineProfile has no carry-forward for "+
-					"%s. Add one, or add %s to snapshotMergeTracedWinsFields with a reason why the "+
-					"live group is allowed to clear it.", name, name, name)
+					"that carries nothing for it, AND nothing was disclosed: mergeSnapshotInlineProfile "+
+					"drops %s silently. Either carry it forward, or drop it through "+
+					"dropLaunchFieldsForeignToHarness so the operator is told, or add %s to "+
+					"snapshotMergeTracedWinsFields with a reason why the live group may clear it.",
+				name, name, name)
+			assert.Truef(t, disclosureNamesField(drop.Fields, name),
+				"db.SpawnProfile.%s was dropped but the disclosure names %v instead — an operator "+
+					"reading it would be told the wrong field went away.", name, drop.Fields)
+			assert.NotEmptyf(t, drop.Reason, "the disclosure for %s carries no reason, so it is not actionable", name)
 		})
 	}
 }

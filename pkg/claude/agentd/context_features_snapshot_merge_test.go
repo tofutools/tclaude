@@ -30,7 +30,7 @@ func TestMergeSnapshotInlineProfile_ObservedEmptyTrimsClearsStoredTrims(t *testi
 	// Traced, and the live member trims nothing — a non-nil empty map.
 	traced := &db.SpawnProfile{Model: "sonnet", ContextFeatures: map[string]string{}}
 
-	out := mergeSnapshotInlineProfile(prev, traced)
+	out, _ := mergeSnapshotInlineProfile(prev, traced, true)
 	if assert.NotNil(t, out) {
 		assert.Empty(t, out.ContextFeatures,
 			"un-trimming the live roster and re-snapshotting must clear the template's trims")
@@ -47,7 +47,7 @@ func TestMergeSnapshotInlineProfile_UnobservedTrimsKeepStoredTrims(t *testing.T)
 	// curated template value must survive rather than being silently widened.
 	traced := &db.SpawnProfile{Model: "sonnet"}
 
-	out := mergeSnapshotInlineProfile(prev, traced)
+	out, _ := mergeSnapshotInlineProfile(prev, traced, true)
 	if assert.NotNil(t, out) {
 		assert.Equal(t, map[string]string{"bundled-skills": "off"}, out.ContextFeatures,
 			"an unobservable member must not drop the template's curated trims")
@@ -58,7 +58,7 @@ func TestMergeSnapshotInlineProfile_ObservedTrimsWin(t *testing.T) {
 	prev := &db.SpawnProfile{ContextFeatures: map[string]string{"bundled-skills": "off"}}
 	traced := &db.SpawnProfile{ContextFeatures: map[string]string{"artifact": "off"}}
 
-	out := mergeSnapshotInlineProfile(prev, traced)
+	out, _ := mergeSnapshotInlineProfile(prev, traced, true)
 	if assert.NotNil(t, out) {
 		assert.Equal(t, map[string]string{"artifact": "off"}, out.ContextFeatures,
 			"the live member's trims replace the template's — no union of the two")
@@ -67,7 +67,7 @@ func TestMergeSnapshotInlineProfile_ObservedTrimsWin(t *testing.T) {
 
 func TestMergeSnapshotInlineProfile_PreservesStartupContext(t *testing.T) {
 	prev := &db.SpawnProfile{StartupContext: "Keep the curated model guidance."}
-	out := mergeSnapshotInlineProfile(prev, &db.SpawnProfile{Model: "sonnet"})
+	out, _ := mergeSnapshotInlineProfile(prev, &db.SpawnProfile{Model: "sonnet"}, true)
 	require.NotNil(t, out)
 	assert.Equal(t, "Keep the curated model guidance.", out.StartupContext)
 }
@@ -80,8 +80,12 @@ func TestMergeSnapshotInlineProfile_PreservesStartupContext(t *testing.T) {
 // structural guard cannot see, because it is about which side wins rather than
 // about the field being handled at all.
 func TestMergeSnapshotInlineProfile_TracedContextWindowMaxWins(t *testing.T) {
-	prev := &db.SpawnProfile{ContextWindowMax: 100_000}
-	out := mergeSnapshotInlineProfile(prev, &db.SpawnProfile{ContextWindowMax: 272_000})
+	// Both sides Copilot: the cap is only legal there, and since TCL-1083 the
+	// merge takes a foreign one away rather than storing a profile that cannot
+	// deploy. Which side WINS is what this pins, so keep the gate out of it.
+	prev := &db.SpawnProfile{Harness: harness.CopilotName, ContextWindowMax: 100_000}
+	out, _ := mergeSnapshotInlineProfile(prev,
+		&db.SpawnProfile{Harness: harness.CopilotName, ContextWindowMax: 272_000}, true)
 	require.NotNil(t, out)
 	assert.Equal(t, int64(272_000), out.ContextWindowMax,
 		"a member relaunched with a different cap must re-snapshot with the live value")
@@ -91,33 +95,72 @@ func TestMergeSnapshotInlineProfile_TracedContextWindowMaxWins(t *testing.T) {
 // currently pin a cap must not cost the template its curated one.
 func TestMergeSnapshotInlineProfile_ContextWindowMaxCarriesForACopilotMember(t *testing.T) {
 	prev := &db.SpawnProfile{Harness: harness.CopilotName, ContextWindowMax: 272_000}
-	out := mergeSnapshotInlineProfile(prev, &db.SpawnProfile{Harness: harness.CopilotName, Model: "gpt-5"})
+	out, _ := mergeSnapshotInlineProfile(prev, &db.SpawnProfile{Harness: harness.CopilotName, Model: "gpt-5"}, true)
 	require.NotNil(t, out, "a profile pinning only a Copilot cap must survive the merge")
 	assert.Equal(t, int64(272_000), out.ContextWindowMax)
 }
 
-// ...but the cap travels with its harness. Harness is traced-wins, so an
-// untraceable member (a pruned session row) merges to a BLANK harness, which
-// resolves to Claude — and resolveIntLaunchField treats a blank-harness inline
-// profile as a matching tier, so a cap riding across would 400 the whole agent at
-// deploy with invalid_context_window_max rather than being ignored.
+// TCL-1062 shipped a RESIDUAL here, and TCL-1083's root fix retires it. Both
+// halves are pinned below, because the residual is the more interesting history.
 //
-// This is a deliberately chosen residual, not an oversight: an untraceable
-// Copilot member still loses its curated cap, which is the original TCL-1062
-// defect in the population that motivated the gate. Losing a meter denominator
-// is preferred to emitting a template-local profile that cannot deploy at all.
-func TestMergeSnapshotInlineProfile_ContextWindowMaxDoesNotOutliveItsHarness(t *testing.T) {
+// TCL-1062 gated the cap's carry-forward on the merged profile resolving to
+// Copilot. An untraceable member (a pruned session row) merged to a BLANK
+// harness, which resolves to Claude, so the gate dropped the cap — deliberately,
+// because a cap riding onto a Claude-resolving profile does not merely sit there
+// unused: resolveIntLaunchField treats a blank-harness inline profile as a
+// MATCHING tier and fails it, so the member 400s at deploy and never spawns.
+// Losing a meter denominator beat emitting a profile that cannot deploy. It was
+// a chosen loss, but still a loss, and still silent.
+//
+// The root fix removes the choice rather than disclosing it: an unobserved
+// member no longer has its harness pin blanked, because "we learned nothing"
+// must not be written down as "this member pins no harness". The profile stays
+// Copilot, so the cap is not foreign, so nothing is dropped. The residual is
+// gone rather than merely visible.
+func TestMergeSnapshotInlineProfile_UnobservedMemberKeepsItsHarnessAndCap(t *testing.T) {
+	prev := &db.SpawnProfile{
+		Harness:          harness.CopilotName,
+		Model:            "gpt-5",
+		ContextWindowMax: 272_000,
+		StartupContext:   "curated guidance",
+	}
+	// Not observed: traceMemberLaunch got nothing, so every observable field it
+	// would have filled is blank. That is an absence, not a finding.
+	out, drop := mergeSnapshotInlineProfile(prev, &db.SpawnProfile{}, false)
+	require.NotNil(t, out)
+	assert.Equal(t, harness.CopilotName, out.Harness,
+		"an unobserved member must not have its stored harness pin blanked — that writes an assertion out of an absence")
+	assert.Equal(t, int64(272_000), out.ContextWindowMax,
+		"with the harness preserved the cap is not foreign, so the TCL-1062 residual no longer arises")
+	assert.Equal(t, "gpt-5", out.Model, "the same reasoning covers every observable field, not just the harness")
+	assert.Nil(t, drop, "nothing was dropped, so there is nothing to disclose")
+}
+
+// The mirror direction, which the root fix does NOT cover and the gate does: the
+// member was genuinely observed and is genuinely no longer Copilot. There is no
+// absence to preserve here — the operator really did move this agent — so the
+// Copilot-only fields go, and the point of TCL-1083 is that the operator is TOLD.
+func TestMergeSnapshotInlineProfile_ReTracedHarnessDropsForeignFieldsAndDiscloses(t *testing.T) {
 	prev := &db.SpawnProfile{
 		Harness:          harness.CopilotName,
 		ContextWindowMax: 272_000,
 		StartupContext:   "curated guidance",
 	}
-	out := mergeSnapshotInlineProfile(prev, &db.SpawnProfile{})
+	// Observed, and this member is Claude now. A blank Harness is how a Claude
+	// member is spelled (the default is deliberately not stamped), which is
+	// exactly why `observed` has to be passed rather than inferred from the blank.
+	out, drop := mergeSnapshotInlineProfile(prev, &db.SpawnProfile{Model: "opus"}, true)
 	require.NotNil(t, out)
 	assert.Zero(t, out.ContextWindowMax,
-		"a Copilot cap must not ride across onto a profile whose harness pin was just dropped")
+		"a Copilot cap must not ride onto a member that is now Claude — it would 400 the agent at deploy")
 	assert.Equal(t, "curated guidance", out.StartupContext,
-		"the gate is specific to the cap — harness-agnostic curated fields still carry")
+		"the gate takes only what the harness cannot accept; harness-agnostic curation still carries")
+	require.NotNil(t, drop, "a drop the operator cannot see is the bug this ticket exists to fix")
+	assert.Equal(t, []string{"context_window_max"}, drop.Fields)
+	assert.Contains(t, drop.Reason, harness.DefaultName,
+		"the reason must name the harness the fields were judged against, so the operator can act on it")
+	assert.NotContains(t, drop.Reason, "changed",
+		"the reason must not assert an event nobody performed — see dropLaunchFieldsForeignToHarness")
 }
 
 func TestTraceMemberLaunchMarksAnObservedEmptyTrimSet(t *testing.T) {
