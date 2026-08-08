@@ -47,8 +47,10 @@ would therefore be agent-influenced.
 
 ## Enabling it
 
-The proxy is **off** until you allow-list at least one remote. There is no
-"allow everything" setting and no default that turns it on.
+The proxy becomes available to an agent when it has a remote-scoped grant or
+when the legacy operator-global `allowed_remotes` list is configured. Remote
+access is authorized by the grant scope, the legacy list, or both. There is no
+"allow everything" setting.
 
 Add an `agent.git_proxy` block to `~/.tclaude/data/config.json`:
 
@@ -68,7 +70,7 @@ Add an `agent.git_proxy` block to `~/.tclaude/data/config.json`:
 
 | Field | Meaning |
 |---|---|
-| `allowed_remotes` | Remotes the proxy may talk to, as `host/owner/repo` patterns. **Empty or absent disables the proxy entirely.** |
+| `allowed_remotes` | **Legacy global policy.** Remotes the proxy may talk to, as `host/owner/repo` patterns. An unscoped grant still requires a non-empty list. A remote-scoped grant can operate with this empty; when both are configured, both must match. |
 | `protected_refs` | Branches the proxy refuses to push to at all. Absent → `["main", "master"]`; an explicit `[]` turns the protection off. |
 | `allow_force_push` | Permits `--force-with-lease` on non-protected refs. Default off. Plain `--force` is never available. |
 | `ssh_key` | Pins one private key (`ssh -i … -o IdentitiesOnly=yes`). Empty uses the daemon's ambient SSH setup — normally an ssh-agent, which is the better posture. |
@@ -79,11 +81,12 @@ account under which `agentd` runs — that account must be able to read the file
 Shell variables are **not** expanded — a config file is not a shell, so
 `"${HOME}/token.txt"` is taken literally. Use `~/` or an absolute path.
 
-### Allow-list patterns
+### Remote patterns
 
-Patterns are slash-separated and matched case-insensitively against the
-remote's resolved `host/owner/repo`. `*` matches exactly one segment, and a
-pattern with fewer segments matches as a prefix:
+The legacy allow-list and the `remote` grant scope use the same
+case-insensitive, slash-segmented matcher against the remote's normalized
+`host/owner/repo`. `*` matches exactly one segment, and a pattern with fewer
+segments matches as a prefix:
 
 | Pattern | Matches |
 |---|---|
@@ -95,6 +98,13 @@ pattern with fewer segments matches as a prefix:
 Matching is **segment-wise**, so `github.com/tofu` does not authorize
 `github.com/tofutools-evil`, and `github.com` does not authorize
 `github.com.attacker.net`.
+
+The normalized key lower-cases the complete host/owner/repository key and
+strips the URL scheme, credentials and a trailing `.git`.
+SSH and HTTPS URLs for the same repository therefore produce the same key:
+`git@github.com:your-org/repo.git` and
+`https://github.com/your-org/repo.git` both become
+`github.com/your-org/repo`.
 
 ### Granting the permissions
 
@@ -110,7 +120,23 @@ Four slugs, none granted by default and none conferred by group ownership:
 ```bash
 tclaude agent permissions grant <agent> git.read
 tclaude agent permissions grant <agent> git.push
+
+# Preferred: constrain each credential grant to the remotes it needs.
+tclaude agent permissions grant <agent> git.read \
+  --scope 'remote=github.com/your-org/*'
+tclaude agent permissions grant <agent> git.push \
+  --scope 'remote=github.com/your-org/*'
 ```
+
+A scoped grant is opt-in: existing unscoped grants behave as before. When a
+global `allowed_remotes` list is also present, authorization is the
+intersection — a scoped grant cannot widen beyond the global list.
+
+To migrate from the legacy global policy, copy its patterns into the relevant
+per-agent or group grants as `remote` scopes. After verifying those grants,
+empty `allowed_remotes` on the operator's schedule. Keep the `agent.git_proxy`
+block only if it still carries credential or protected-ref policy. No automatic
+migration or runtime warning is emitted.
 
 An agent without a grant can still ask for a one-off with `--ask-human 60s`,
 which raises the ordinary [approval popup](agent.md#ad-hoc-human-approval-ask-human).
@@ -118,7 +144,8 @@ which raises the ordinary [approval popup](agent.md#ad-hoc-human-approval-ask-hu
 ## What an agent can do
 
 ```bash
-# Discovery — no network, no credential. Run this first.
+# Discovery — no network, no credential. Run this first. With a scoped
+# git.read grant, each remote's verdict combines the global list and its scope.
 tclaude proxy git remotes
 
 # Reads (git.read)
@@ -297,6 +324,13 @@ remains racy in the same way push used to be: an agent rewriting `.git/config`
 in the window can redirect it, and the credential is offered to whatever host it
 lands on. `git.read` gates the ability to try.
 
+Remote-scoped permissions inherit that distinction. `push`, `ls-remote`, and
+GitHub operations authorize the explicit resolved destination they later use,
+so their scope check is exact. `fetch` evaluates its `remote` scope against the
+normalized destination resolved before the command, but the existing config
+rewrite race remains; a scoped `git.read` grant is therefore best-effort for
+fetch, not a hard remote boundary. Full fetch isolation is tracked separately.
+
 ## What this is not
 
 `agentd`'s permission layer is a coordination guardrail, not a security
@@ -333,7 +367,7 @@ tclaude proxy github pr create # → audit verb "github.pr.create"
 
 | Symptom | Cause / fix |
 |---|---|
-| `503 git_proxy_disabled` | No `allowed_remotes` configured. Add the block above. |
+| `503 git_proxy_disabled` | An unscoped grant has no legacy `allowed_remotes` policy. Add a `remote` scope to the grant (preferred), or configure the legacy list. |
 | `403` naming a slug | The agent lacks `git.read` / `git.push` / `github.read` / `github.write`. Grant it, or the agent can retry with `--ask-human`. |
 | `remote … is not on the operator's allow-list` | Run `tclaude proxy git remotes` to see the resolved `host/owner/repo`, then add a matching pattern. |
 | `protected_ref` | The branch is in `protected_refs`. Push a feature branch and open a PR. |

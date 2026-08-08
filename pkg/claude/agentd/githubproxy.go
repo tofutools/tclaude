@@ -87,6 +87,7 @@ const (
 type ghProxySession struct {
 	ghPath    string
 	ownerRepo string
+	remoteKey string
 	env       []string
 	neutral   string
 	// branch is the agent's current branch, resolved daemon-side while the git
@@ -103,8 +104,8 @@ type ghProxySession struct {
 // github.read still cannot reach a repository whose remote is not on the
 // operator's allow-list, because the allow-list check happens before the repo
 // slug is even derived.
-func newGHProxySession(ctx context.Context, convID, requestedRemote string) (*ghProxySession, *proxyFault) {
-	s, resolved, fault := openProxyRemote(ctx, convID, requestedRemote)
+func newGHProxySession(ctx context.Context, convID, requestedRemote string, remoteScoped bool) (*ghProxySession, *proxyFault) {
+	s, resolved, fault := openProxyRemote(ctx, convID, requestedRemote, remoteScoped)
 	if fault != nil {
 		return nil, fault
 	}
@@ -149,6 +150,7 @@ func newGHProxySession(ctx context.Context, convID, requestedRemote string) (*gh
 	return &ghProxySession{
 		ghPath:    ghPath,
 		ownerRepo: ownerRepo,
+		remoteKey: resolved.FetchRef.Key(),
 		env:       env,
 		// Read while the git session is still open — the gh half has no
 		// repository of its own to ask.

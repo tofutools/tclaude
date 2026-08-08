@@ -1853,9 +1853,9 @@ type GitProxyConfig struct {
 	// the target matches as a prefix, so "github.com" covers everything on
 	// that host.
 	//
-	// EMPTY OR ABSENT DISABLES THE PROXY ENTIRELY. That is deliberate and
-	// fail-closed: "no allow-list" must mean "nothing is allowed", never
-	// "everything is allowed".
+	// EMPTY OR ABSENT disables unscoped proxy grants. A grant carrying the
+	// remote scope can authorize its own remote patterns instead; when both
+	// mechanisms are present they are enforced together.
 	AllowedRemotes []string `json:"allowed_remotes,omitempty"`
 
 	// ProtectedRefs are branch names the proxy refuses to push to at all,

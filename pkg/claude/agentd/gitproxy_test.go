@@ -11,13 +11,18 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 func TestInfoProjectsGitProxyEnabled(t *testing.T) {
-	readProjection := func(t *testing.T) bool {
+	readProjection := func(t *testing.T, convID ...string) bool {
 		t.Helper()
 		recorder := httptest.NewRecorder()
-		handleInfo(recorder, httptest.NewRequest(http.MethodGet, "/v1/info", nil))
+		req := httptest.NewRequest(http.MethodGet, "/v1/info", nil)
+		if len(convID) > 0 {
+			req = AsAgentPeer(req, convID[0])
+		}
+		handleInfo(recorder, req)
 		require.Equal(t, http.StatusOK, recorder.Code)
 		var info struct {
 			Proxy *bool `json:"proxy"`
@@ -38,6 +43,17 @@ func TestInfoProjectsGitProxyEnabled(t *testing.T) {
 			GitProxy: &config.GitProxyConfig{AllowedRemotes: []string{"github.com/acme"}},
 		}}))
 		assert.True(t, readProjection(t))
+	})
+
+	t.Run("enabled by a scoped grant without global config", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		setupTestDB(t)
+		const convID = "proxy-scope-info-0001"
+		_, _, err := db.EnsureAgentForConv(convID, "test")
+		require.NoError(t, err)
+		require.NoError(t, db.GrantAgentPermissionWithScope(convID, PermGitRead,
+			`{"remote":["github.com/acme/*"]}`, "test"))
+		assert.True(t, readProjection(t, convID))
 	})
 }
 
@@ -121,6 +137,15 @@ func TestRemoteRef_OwnerRepo(t *testing.T) {
 	nested, err := parseRemoteURL("https://gitlab.com/group/sub/proj.git")
 	require.NoError(t, err)
 	assert.Equal(t, "group/proj", nested.OwnerRepo())
+}
+
+func TestRemoteRefKeyNormalizesSSHAndHTTPS(t *testing.T) {
+	ssh, err := parseRemoteURL("git@GitHub.com:tofutools/tclaude.git")
+	require.NoError(t, err)
+	https, err := parseRemoteURL("https://github.com/tofutools/tclaude.git")
+	require.NoError(t, err)
+	assert.Equal(t, "github.com/tofutools/tclaude", ssh.Key())
+	assert.Equal(t, ssh.Key(), https.Key(), "remote scopes must not depend on transport")
 }
 
 // TestRemoteAllowed pins the allow-list semantics an operator relies on: a
