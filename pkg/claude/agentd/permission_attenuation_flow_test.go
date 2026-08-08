@@ -476,3 +476,65 @@ func TestAttenuation_TemplateDeployChecksDeployTimeProfileOverrides(t *testing.T
 	require.NoError(t, err)
 	assert.Nil(t, g, "a refused deploy must not create its group")
 }
+
+// Scenario: birth-time overrides now ride the profile tier stack, so a profile
+// the caller never mentioned can confer grants. Attenuation runs on the
+// RESOLVED map, and splits the same way the permissions.grant gate beside it
+// does: direct intent is refused loudly, an ambient DEFAULT profile is dropped
+// and disclosed.
+//
+// The asymmetry is the point. Refusing on a group default would mean an
+// operator's house profile silently breaks every spawn its scoped agents make,
+// for a conferral nobody typed at that launch. Dropping it only ever narrows
+// what the child is born with, so the fail-closed direction is preserved.
+func TestAttenuation_SpawnProfileTierConferralIsAttenuated(t *testing.T) {
+	f := newFlow(t)
+	g := f.HaveGroup("alpha")
+	const lead = "atten-lead-aaaa-bbbb-cccc-000000000009"
+	haveSpawnCapableMember(t, f, "alpha", lead)
+	grantScoped(t, f, lead, agentd.PermGroupsSpawn, nil)
+	grantScoped(t, f, lead, agentd.PermPermissionsGrant, nil)
+	// Held narrowly; every profile below tries to confer it UNSCOPED.
+	grantScoped(t, f, lead, agentd.PermRoutesPublish, map[string]any{"group": []string{"alpha"}})
+
+	wide := map[string]db.PermissionOverride{agentd.PermRoutesPublish: db.Grant()}
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "wide-named", PermissionOverrides: wide})
+	require.NoError(t, err)
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "wide-default", PermissionOverrides: wide})
+	require.NoError(t, err)
+
+	// A profile the caller NAMES is direct intent, exactly like an explicit
+	// permission_overrides field, and is refused.
+	t.Run("a named profile that over-confers is refused", func(t *testing.T) {
+		rec := agentReq(t, f, lead, http.MethodPost, "/v1/groups/alpha/spawn",
+			map[string]any{"name": "named-worker", "profile": "wide-named"})
+		require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+		assert.Contains(t, rec.Body.String(), "scope_not_attenuated")
+	})
+
+	// The same profile as the group's default is ambient configuration. The
+	// spawn proceeds; the over-wide conferral is what gets dropped.
+	t.Run("a group default that over-confers is dropped, not refused", func(t *testing.T) {
+		require.Equalf(t, http.StatusOK, setGroupProfile(t, f, "alpha", "wide-default").Code,
+			"set default_profile")
+		rec := agentReq(t, f, lead, http.MethodPost, "/v1/groups/alpha/spawn",
+			map[string]any{"name": "default-worker"})
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+		// The child exists and did NOT come up holding the unscoped grant.
+		var child string
+		for _, m := range f.ListGroupMembers(g.Name) {
+			if m.Title == "default-worker" {
+				child = m.ConvID
+			}
+		}
+		require.NotEmpty(t, child, "the spawn produced a member")
+		rows, err := db.ListAgentPermissionOverrideRowsForConv(child)
+		require.NoError(t, err)
+		for _, row := range rows {
+			assert.NotEqualf(t, agentd.PermRoutesPublish, row.Slug,
+				"the default profile's unscoped %s must not have been conferred",
+				agentd.PermRoutesPublish)
+		}
+	})
+}
