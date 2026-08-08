@@ -938,6 +938,14 @@ func runTemplatesFromGroup(p *templatesFromGroupParams, stdout, stderr io.Writer
 		// BlankBriefs: agents still left with a blank per-agent brief after the
 		// snapshot — a from-group snapshot can't recover briefs (JOH-344).
 		BlankBriefs int `json:"blank_briefs"`
+		// Dropped: launch fields the re-snapshot refused to carry forward because
+		// the agent's template-local profile no longer resolves to a harness that
+		// accepts them (TCL-1083). Nothing else tells the operator this happened.
+		Dropped []struct {
+			Agent  string   `json:"agent"`
+			Fields []string `json:"fields"`
+			Reason string   `json:"reason"`
+		} `json:"dropped"`
 	}
 	if err := DaemonRequest(http.MethodPost, "/v1/templates/from-group", body, &t, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -949,6 +957,9 @@ func runTemplatesFromGroup(p *templatesFromGroupParams, stdout, stderr io.Writer
 		fmt.Fprintf(stdout, "  briefs kept: %s; added: %s; removed: %s\n",
 			orNone(t.BriefsKept), orNone(t.Added), orNone(t.Removed))
 		printBlankBriefWarning(stdout, t.BlankBriefs, t.Name)
+		for _, d := range t.Dropped {
+			fmt.Fprintf(stdout, "  ⚠ %s: dropped %s — %s\n", d.Agent, strings.Join(d.Fields, ", "), d.Reason)
+		}
 		return rcOK
 	}
 	fmt.Fprintf(stdout, "Created template %q from group %q with %d agent%s\n",

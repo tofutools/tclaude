@@ -567,3 +567,42 @@ func TestTemplates_OwnerDisplayUsesEffectiveOwnership(t *testing.T) {
 	assert.Contains(t, out, "owner(via profile)", "profile-granted owner tagged with its source")
 	assert.Contains(t, out, "[owner]", "legacy-flag owner keeps the plain tag")
 }
+
+// TCL-1083: an update re-snapshot that refused to carry launch fields forward
+// tells the operator which agent lost what, and why. Deliberately the sibling of
+// TestRunTemplatesFromGroup_WarnsOnBlankBriefs above — same layer, same stub
+// shape, same assertion style — because both surface the same kind of thing: a
+// snapshot-time loss that is otherwise invisible until a deploy fails.
+func TestRunTemplatesFromGroup_DisclosesDroppedLaunchFields(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`{"name":"src-tmpl","agents":[
+		{"name":"worker","permissions":[]}],
+		"updated":true,"briefs_kept":["worker"],"added":[],"removed":[],"blank_briefs":0,
+		"dropped":[{"agent":"worker","fields":["context_window_max","copilot_api"],
+		"reason":"template-local profile resolves to harness \"claude\", which does not accept them"}]}`))
+
+	var stdout, stderr bytes.Buffer
+	rc := runTemplatesFromGroup(&templatesFromGroupParams{
+		Group: "src", TemplateName: "src-tmpl", Update: true,
+	}, &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%q", stderr.String())
+	out := stdout.String()
+	assert.Contains(t, out, "worker", "the operator has to know WHICH agent lost something")
+	assert.Contains(t, out, "context_window_max, copilot_api", "and exactly which fields")
+	assert.Contains(t, out, "does not accept them", "and why, so the message is actionable")
+}
+
+// The overwhelmingly common path: nothing was dropped, so nothing is said.
+func TestRunTemplatesFromGroup_SilentWhenNothingDropped(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`{"name":"src-tmpl","agents":[
+		{"name":"worker","permissions":[]}],
+		"updated":true,"briefs_kept":["worker"],"added":[],"removed":[],"blank_briefs":0}`))
+
+	var stdout, stderr bytes.Buffer
+	rc := runTemplatesFromGroup(&templatesFromGroupParams{
+		Group: "src", TemplateName: "src-tmpl", Update: true,
+	}, &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%q", stderr.String())
+	assert.NotContains(t, stdout.String(), "dropped")
+}
