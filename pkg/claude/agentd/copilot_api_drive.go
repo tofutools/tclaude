@@ -192,7 +192,7 @@ func SetCopilotAPIPostInitWaitForTest(fn func(convID string) bool) func() {
 }
 
 func waitForCopilotAPISession(convID string) bool {
-	deadline := time.Now().Add(copilotAPIBootstrapTimeout)
+	deadline := time.Now().Add(copilotAPIBootstrapTimeout())
 	for {
 		if copilotAPIDriven(convID) {
 			return true

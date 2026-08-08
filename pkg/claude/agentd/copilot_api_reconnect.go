@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/copilotapi"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -73,14 +74,15 @@ import (
 // this daemon has never owned and it belongs to its own ticket rather than
 // riding along here.
 
-// copilotAPIReconcileConcurrency bounds how many conversations are
+// copilotAPIReconcileConcurrency bounds how many conversations are being
 // re-established at once.
 //
-// Each one can spend up to the port wait's full ceiling polling /proc, and a
-// host with many retired-but-recorded conversations would otherwise start a
-// goroutine per row at the exact moment the daemon is busiest. The work is
-// almost entirely waiting, so this is about not stampeding the process table
-// rather than about CPU.
+// It bounds the WORK, not the goroutines — one goroutine per candidate is
+// launched immediately and then queues for a slot. What it is protecting
+// against is a burst of concurrent /proc walks at the moment the daemon is
+// busiest, since each candidate can spend up to the port wait's whole ceiling
+// polling. The work is almost entirely waiting, so this is about not stampeding
+// the process table rather than about CPU.
 const copilotAPIReconcileConcurrency = 4
 
 // reconnectCopilotAPISession re-establishes one conversation's channel.
@@ -152,27 +154,47 @@ func reconnectCopilotAPISession(ctx context.Context, convID string) (*copilotAPI
 // reconcileCopilotAPISessions re-establishes every channel this daemon should
 // have and does not.
 //
-// Candidates are conversations with a port record AND a live session row. Both
-// halves are load-bearing and neither is the same question: the record says a
-// launch was once given an endpoint for this conversation, and the row says
-// something is running under it now. Without the row, a retired conversation
-// whose record has not yet been released would cost a full port wait to
-// discover it is dead — see the reaper's grace note below.
+// Candidates are conversations with a port record AND a live Copilot session
+// row. The three halves answer different questions: the record says a launch
+// was once given an endpoint here, the row says something is running under the
+// conversation NOW, and the harness says the thing running is a Copilot pane
+// rather than a successor launched on another harness over the same
+// conversation.
+//
+// The liveness half is stricter than it looks, and it is what keeps this sweep
+// cheap. [session.LiveSessionForConv] requires the row's tmux session to be
+// alive, so a conversation whose pane exited is not a candidate at all — it
+// never reaches the port wait, and the reaper's release grace is therefore not a
+// cost this sweep pays. See the grace note below for what the two sweeps CAN
+// disagree about.
 //
 // Conversations this daemon already holds a handle for are skipped, so running
 // this twice costs one map lookup per candidate rather than a second connection.
+//
+// # What is deliberately NOT filtered
+//
+// The launch's recorded API posture. A conversation relaunched on send-keys
+// keeps its predecessor's port record and stays a candidate, costing one bounded
+// port wait per restart. Filtering on the posture would remove that, and would
+// also remove the one case worth most: a conversation genuinely running the API
+// drive whose posture was never recorded is exactly the one whose mail is being
+// typed into its pane today, and it is the one a reconnect most needs to find.
+// A wasted wait is cheap; skipping a mute agent is not.
 //
 // # The reaper's release grace
 //
 // The port record is released by the reaper, but only for a conversation with
 // no live launch AND a record older than the reaper's spawn grace. The two
-// sweeps therefore disagree only in one direction and only briefly:
+// sweeps therefore disagree only in narrow ways:
 //
 //   - A record already released before this runs simply is not a candidate.
 //     Nothing to reconcile, which is correct — its pane is gone.
 //   - A record still inside the grace window for a pane that has already exited
-//     IS a candidate, and it fails at the port wait with "no live pane process
-//     was found". Bounded, named, and self-correcting on the reaper's next tick.
+//     is likewise not a candidate: the liveness filter above drops it before the
+//     port wait, so the grace costs this sweep nothing.
+//   - A pane that exits BETWEEN the liveness filter and the port wait is a
+//     candidate, and it fails at the wait with "no live pane process was found".
+//     Bounded and named.
 //   - A reaper release racing a reconnect that has already read the port cannot
 //     produce an unsafe send: ownership is proved against the PANE, not against
 //     the record, so a released record cannot make a foreign listener look like
@@ -191,7 +213,8 @@ func reconcileCopilotAPISessions(ctx context.Context) {
 		if copilotAPISessions.Handle(convID) != nil {
 			continue
 		}
-		if session.LiveSessionForConv(convID) == nil {
+		live := session.LiveSessionForConv(convID)
+		if live == nil || live.Harness != harness.CopilotName {
 			continue
 		}
 		candidates = append(candidates, convID)
@@ -209,6 +232,14 @@ func reconcileCopilotAPISessions(ctx context.Context) {
 			select {
 			case slots <- struct{}{}:
 			case <-ctx.Done():
+				// Never silently. A candidate that never got a slot is an agent
+				// that is still mute, and the operator's only other evidence is
+				// the absence of a success line for it — which is indistinguishable
+				// from a conversation that was never a candidate.
+				slog.Warn("copilot API reconnect: gave up before this conversation got a turn; "+
+					"it stays held rather than being typed into, and a daemon restart is the "+
+					"next thing that would retry it",
+					"conv_id", convID, "error", ctx.Err())
 				return
 			}
 			defer func() { <-slots }()
@@ -224,7 +255,19 @@ func reconcileCopilotAPISessions(ctx context.Context) {
 					"being typed in", "conv_id", convID, "error", err)
 				return
 			}
-			copilotAPISessions.Adopt(handle)
+			// AdoptIfAbsent, not Adopt. The candidate check ran at the top of the
+			// sweep and this can land a port wait's whole budget later, with the
+			// daemon serving spawns throughout — so a launch's bootstrap may have
+			// established the channel in the meantime, and a replace would close
+			// its connection while it is still running its remaining hard steps.
+			// The launch is the newer truth about the conversation; a reconnect is
+			// catching up on the older one, so the reconnect stands down.
+			if !copilotAPISessions.AdoptIfAbsent(handle) {
+				_ = handle.Client.Close()
+				slog.Info("copilot API reconnect: a launch established this conversation's "+
+					"channel first; leaving it alone", "conv_id", convID)
+				return
+			}
 			// Same order as the bootstrap, and for the same reason: a consumer
 			// attached to a handle that was never adopted would be reading for a
 			// conversation the registry says is not connected. It needs nothing
@@ -251,9 +294,13 @@ var reconnectCopilotAPISessionFn = reconnectCopilotAPISession
 //
 // Background because a reconcile can spend up to the port wait's ceiling per
 // conversation and the daemon must be answering requests long before that.
-// Bounded by its own context rather than the daemon's stop channel alone: this
-// is a one-shot sweep, and one that outlived its usefulness would be holding
-// connections open for launches that have moved on.
+//
+// Bounded by BOTH a deadline and the daemon's stop channel, and both are needed.
+// The deadline stops a sweep that has outlived its usefulness from holding
+// connections open for launches that have moved on; the stop channel is what
+// keeps a shutdown from racing an in-flight reconnect into adopting a handle
+// whose state consumer is then refused for stopping — an open connection with
+// nobody reading it, for as long as the process lives.
 //
 // Indirected through a variable so tests can silence it, exactly as the
 // bootstrap kick-off is. Flow tests run against a simulated tmux with no Copilot
@@ -264,17 +311,24 @@ var startCopilotAPIReconnect = runCopilotAPIReconnect
 
 // SetCopilotAPIReconnectForTest swaps the startup reconcile and returns a
 // restore function. TestMain installs a binary-wide no-op.
-func SetCopilotAPIReconnectForTest(fn func()) func() {
+func SetCopilotAPIReconnectForTest(fn func(stop <-chan struct{})) func() {
 	previous := startCopilotAPIReconnect
 	startCopilotAPIReconnect = fn
 	return func() { startCopilotAPIReconnect = previous }
 }
 
-func runCopilotAPIReconnect() {
+func runCopilotAPIReconnect(stop <-chan struct{}) {
 	go func() {
 		ctx, cancel := context.WithTimeout(
-			context.Background(), copilotAPIBootstrapTimeout+5*time.Minute)
+			context.Background(), copilotAPIBootstrapTimeout()+5*time.Minute)
 		defer cancel()
+		go func() {
+			select {
+			case <-stop:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
 		reconcileCopilotAPISessions(ctx)
 	}()
 }

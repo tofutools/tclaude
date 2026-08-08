@@ -682,7 +682,7 @@ func runServe(p *serveParams) error {
 	// to keystrokes, so without this they stay mute until somebody relaunches
 	// them. One-shot rather than a sweep: there is no drop to observe, only
 	// state that does not exist yet. See copilot_api_reconnect.go.
-	startCopilotAPIReconnect()
+	startCopilotAPIReconnect(cronStop)
 
 	// Live conv_index monitor. One fsnotify watcher over
 	// ~/.claude/projects/ keeps the conv_index SQLite cache fresh as

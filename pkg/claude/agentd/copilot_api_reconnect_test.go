@@ -10,7 +10,6 @@ import (
 	"go/token"
 	"os"
 	"os/exec"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -195,12 +194,22 @@ func TestCopilotAPIReconnectReEstablishesTheChannelAfterARestart(t *testing.T) {
 // the call is spelled; the structural guard beside it in
 // copilot_api_bootstrap_test.go covers the calls a fake server would never be
 // asked to answer.
+// Driven through reconnectCopilotAPISession rather than the reconcile, and that
+// is not a shortcut. The reconcile ALSO starts TCL-1057's state consumer, whose
+// first act is three more reads on the same connection — so an exact-wire
+// assertion taken after a reconcile is racing a goroutine and would be asserting
+// something the reconcile does not promise. What is being pinned here is the
+// reconnect's own traffic, which is where the property lives.
 func TestCopilotAPIReconnectSendsNothingThatCouldChangeTheConversation(t *testing.T) {
 	fixture := newCopilotAPIReconnectFixture(t)
-	fixture.reconcile(t)
-	require.True(t, copilotAPISessions.Connected(fixture.convID),
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	handle, err := reconnectCopilotAPISession(ctx, fixture.convID)
+	require.NoError(t, err,
 		"precondition: the reconnect must have succeeded, or 'it sent nothing' is "+
 			"trivially true of a path that did nothing")
+	t.Cleanup(func() { _ = handle.Client.Close() })
 
 	called := fixture.server.methodsCalled()
 	assert.Equal(t,
@@ -226,9 +235,23 @@ func TestCopilotAPIReconnectRefusesRatherThanOpeningASession(t *testing.T) {
 
 	fixture.reconcile(t)
 
+	// The positive control, and without it this whole test is vacuous: every
+	// assertion below — nothing connected, no forbidden method on the wire, the
+	// conversation still held, no keystrokes — is satisfied just as well by a
+	// reconcile that never ran at all. Proven, not assumed: with
+	// reconcileCopilotAPISessions stubbed to return immediately, this test passed
+	// and the other three in this file failed.
+	called := fixture.server.methodsCalled()
+	require.Contains(t, called, copilotapi.MethodConnect,
+		"the reconnect must have got as far as connecting, or the refusal being "+
+			"asserted below never happened")
+	require.Contains(t, called, copilotapi.MethodSessionIsProcessing,
+		"and as far as the drivability probe, which is the call whose failure IS the "+
+			"refusal under test")
+
 	assert.False(t, copilotAPISessions.Connected(fixture.convID),
 		"a session the server does not hold is not a channel")
-	for _, method := range fixture.server.methodsCalled() {
+	for _, method := range called {
 		assert.NotContains(t,
 			[]string{
 				copilotapi.MethodSessionCreate,
@@ -265,8 +288,13 @@ func TestCopilotAPIReconcileSkipsWhatItMustNotTouch(t *testing.T) {
 	// held: a conversation this daemon already has a live handle for. A second
 	// connection would be waste, and Adopt would close the working one.
 	// gone: a port record whose pane is no longer running.
+	// other-harness: a conversation whose record outlived the Copilot launch
+	//   that made it, and which is now running something else. The record cannot
+	//   be released while the conversation has a live launch, so without the
+	//   harness gate this one is a candidate on EVERY restart, for a full port
+	//   wait each time.
 	// fresh: the one that must be reconnected.
-	for _, convID := range []string{"conv-held", "conv-gone", "conv-fresh"} {
+	for _, convID := range []string{"conv-held", "conv-gone", "conv-other-harness", "conv-fresh"} {
 		require.NoError(t, db.UpsertCopilotAPIRuntime(db.CopilotAPIRuntime{
 			ConvID: convID, Port: server.port(),
 		}))
@@ -277,13 +305,20 @@ func TestCopilotAPIReconcileSkipsWhatItMustNotTouch(t *testing.T) {
 			Harness: harness.CopilotName, Status: session.StatusIdle, Cwd: t.TempDir(),
 		}))
 	}
+	require.NoError(t, session.SaveSessionState(&session.SessionState{
+		ID: "spwn-conv-other-harness", TmuxSession: "spwn-conv-other-harness",
+		ConvID: "conv-other-harness", Harness: harness.CodexName,
+		Status: session.StatusIdle, Cwd: t.TempDir(),
+	}))
 	existing := dialFakeCopilot(t, server)
 	copilotAPISessions.Adopt(&copilotAPISession{
 		ConvID: "conv-held", SessionID: "conv-held",
 		Port: server.port(), PanePID: os.Getpid(), Client: existing,
 	})
 	t.Cleanup(func() {
-		for _, convID := range []string{"conv-held", "conv-gone", "conv-fresh"} {
+		for _, convID := range []string{
+			"conv-held", "conv-gone", "conv-other-harness", "conv-fresh",
+		} {
 			copilotAPISessions.Drop(convID)
 		}
 	})
@@ -308,12 +343,76 @@ func TestCopilotAPIReconcileSkipsWhatItMustNotTouch(t *testing.T) {
 		tried = append(tried, convID)
 	}
 	assert.Equal(t, []string{"conv-fresh"}, tried,
-		"a conversation with a live handle needs no second connection, and one with no "+
-			"live session row has nothing to reconnect to — but the one that is running "+
-			"and unconnected is the whole reason this sweep exists")
+		"a conversation with a live handle needs no second connection, one with no live "+
+			"session row has nothing to reconnect to, and one now running a DIFFERENT "+
+			"harness has no Copilot endpoint however good its record looks — but the one "+
+			"that is running Copilot and unconnected is the whole reason this sweep exists")
 
 	assert.NotNil(t, copilotAPISessions.Handle("conv-held"),
 		"the handle this daemon already had must survive the sweep, not be replaced by it")
+}
+
+// A launch that establishes the channel while the sweep is still working must
+// WIN, and the reconnect must stand down rather than replace it.
+//
+// The window is real rather than theoretical: the candidate check runs once at
+// the top of the sweep and the adopt can land a port wait's whole budget later,
+// with the daemon serving spawns throughout. A replace in that window closes the
+// bootstrap's connection while it is still running its remaining hard steps —
+// foregrounding, and delivering the launch prompt — so those fail, and the
+// registry still looks healthy because the reconnect's own handle is in it. The
+// visible result is an agent that was never given its briefing, which looks
+// exactly like an agent that finished its work.
+func TestCopilotAPIReconnectStandsDownForALaunchThatWonTheRace(t *testing.T) {
+	setupTestDB(t)
+	server := newFakeCopilotServer(t)
+	launched := dialFakeCopilot(t, server)
+	reconnected := dialFakeCopilot(t, server)
+
+	const convID = "conv-race"
+	t.Cleanup(func() { copilotAPISessions.Drop(convID) })
+
+	// The bootstrap got there first.
+	copilotAPISessions.Adopt(&copilotAPISession{
+		ConvID: convID, SessionID: convID,
+		Port: server.port(), PanePID: os.Getpid(), Client: launched,
+	})
+
+	took := copilotAPISessions.AdoptIfAbsent(&copilotAPISession{
+		ConvID: convID, SessionID: convID,
+		Port: server.port(), PanePID: os.Getpid(), Client: reconnected,
+	})
+	assert.False(t, took, "the launch was already there; the reconnect must stand down")
+
+	handle := copilotAPISessions.Handle(convID)
+	require.NotNil(t, handle)
+	assert.Same(t, launched, handle.Client,
+		"the LAUNCH's connection must survive — it is the one with hard steps still "+
+			"to run, and closing it strands the agent un-briefed")
+	select {
+	case <-launched.Done():
+		t.Fatal("the launch's connection was closed by a reconnect that should have stood down")
+	default:
+	}
+
+	// The positive control: with the slot free, the same call must take it.
+	// Without this the assertion above passes against an AdoptIfAbsent that
+	// always refuses, which would break the reconnect entirely.
+	copilotAPISessions.Drop(convID)
+	third := dialFakeCopilot(t, server)
+	assert.True(t, copilotAPISessions.AdoptIfAbsent(&copilotAPISession{
+		ConvID: convID, SessionID: convID,
+		Port: server.port(), PanePID: os.Getpid(), Client: third,
+	}), "an unheld conversation is exactly what the reconnect exists to adopt")
+
+	// And a DEAD incumbent is not a claim worth deferring to: refusing in favour
+	// of a closed socket would leave the agent mute for the life of the daemon.
+	require.NoError(t, third.Close())
+	fourth := dialFakeCopilot(t, server)
+	assert.True(t, copilotAPISessions.AdoptIfAbsent(&copilotAPISession{
+		ConvID: convID, SessionID: convID,
+		Port: server.port(), PanePID: os.Getpid(), Client: fourth,
+	}), "a dead incumbent must not block a live reconnect")
 }
 
 // The reconcile is only worth anything if it FIRES, and the one thing no test
@@ -375,16 +474,26 @@ func TestCopilotAPIReconnectFailsNamedForAConversationWhosePaneIsGone(t *testing
 	}))
 	t.Cleanup(func() { copilotAPISessions.Drop(convID) })
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	// The port wait's real ceiling is 60s, and the branch under test is the one
+	// it takes AT THE DEADLINE. A short context would not shorten the test — it
+	// would make every run die on ctx.Done() instead, producing the generic
+	// "gave up verifying" and never reaching the named verdict this test exists
+	// for. So the WAIT is shortened and the context is left long enough to lose
+	// the race to it.
+	previousWait := copilotAPIStartupTimeout
+	copilotAPIStartupTimeout = 1500 * time.Millisecond
+	t.Cleanup(func() { copilotAPIStartupTimeout = previousWait })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	_, err := reconnectCopilotAPISession(ctx, convID)
 
 	require.Error(t, err)
-	assert.True(t,
-		strings.Contains(err.Error(), "no live pane process was found") ||
-			strings.Contains(err.Error(), "gave up verifying"),
+	assert.Contains(t, err.Error(), "no live pane process was found",
 		"the failure must name the pane rather than reporting some generic connection "+
-			"problem, because the two have completely different remedies: %v", err)
+			"or timeout problem, because the three port-wait verdicts have completely "+
+			"different remedies and an operator sent to the wrong one loses the time this "+
+			"message exists to save: %v", err)
 	assert.False(t, copilotAPISessions.Connected(convID))
 	assert.NotContains(t, fmt.Sprint(server.methodsCalled()), copilotapi.MethodConnect,
 		"nothing may be sent to a port whose listener was never shown to belong to the "+

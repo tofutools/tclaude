@@ -48,24 +48,27 @@ func copilotAPIFolderTrustFailure(p spawnParams) *spawnFailure {
 	return nil
 }
 
-const (
-	// copilotAPIBootstrapTimeout bounds the WHOLE bootstrap: waiting for a
-	// verified port, connecting, creating the session and foregrounding it. It
-	// is sized as the port wait's own ceiling plus a margin for the four RPCs,
-	// which each answer in milliseconds against a server that is by then up.
-	//
-	// One budget rather than one per step, because the steps are not
-	// independent: a launch that spends 55s reaching a verified listener is a
-	// loaded host, and giving it another full minute to finish four instant
-	// calls would only delay the report. The failure it produces still names
-	// the step it died on.
-	copilotAPIBootstrapTimeout = copilotAPIStartupTimeout + 30*time.Second
+// copilotAPIBootstrapTimeout bounds the WHOLE bootstrap: waiting for a verified
+// port, connecting, creating the session and foregrounding it. It is sized as
+// the port wait's own ceiling plus a margin for the four RPCs, which each answer
+// in milliseconds against a server that is by then up.
+//
+// One budget rather than one per step, because the steps are not independent: a
+// launch that spends 55s reaching a verified listener is a loaded host, and
+// giving it another full minute to finish four instant calls would only delay
+// the report. The failure it produces still names the step it died on.
+//
+// Derived at each use rather than fixed at init, so it stays the port wait's
+// ceiling plus a margin even when a test shortens that ceiling — a budget frozen
+// at 90s around a 2s wait would silently stop being "the wait plus a margin".
+func copilotAPIBootstrapTimeout() time.Duration {
+	return copilotAPIStartupTimeout + 30*time.Second
+}
 
-	// copilotAPIClientName identifies tclaude in Copilot's own telemetry and in
-	// `sessions.list` output, where it is the only thing distinguishing a
-	// session tclaude created from one the human started in the TUI.
-	copilotAPIClientName = "tclaude"
-)
+// copilotAPIClientName identifies tclaude in Copilot's own telemetry and in
+// `sessions.list` output, where it is the only thing distinguishing a session
+// tclaude created from one the human started in the TUI.
+const copilotAPIClientName = "tclaude"
 
 // copilotAPISession is a live, tclaude-owned Copilot session: a connection that
 // has been proved to belong to the agent's pane, and a session on it that the
@@ -427,6 +430,51 @@ func (r *copilotAPISessionRegistry) Adopt(handle *copilotAPISession) {
 	r.sessions[handle.ConvID] = handle
 }
 
+// AdoptIfAbsent records a handle only when the conversation has none, and
+// reports whether it did.
+//
+// The difference from [copilotAPISessionRegistry.Adopt] is who is entitled to
+// win, and it is not a detail. Adopt REPLACES, which is right for a launch: the
+// launch is the new truth about the conversation and the predecessor's
+// connection is to a pane that no longer exists. A reconnect is the opposite —
+// it is catching up on state that already existed — so if a launch's bootstrap
+// has adopted in the meantime, the launch wins and the reconnect stands down.
+//
+// Without this the reconcile can close a bootstrap's connection out from under
+// it. The reconnect's candidate check happens once, at the top of the sweep,
+// and its Adopt can land up to the port wait's whole budget later; the daemon
+// is serving spawns throughout. A replace in that window leaves the bootstrap
+// running its remaining HARD steps — setForeground, and the initial prompt —
+// on a closed connection, so they fail, and the registry still looks healthy
+// because the reconnect's own handle is in it. The visible result is an agent
+// that was never given its briefing, which on every dashboard surface looks
+// exactly like an agent that finished its work.
+//
+// The loser closes its own connection; this never closes a handle it did not
+// take.
+func (r *copilotAPISessionRegistry) AdoptIfAbsent(handle *copilotAPISession) bool {
+	if handle == nil || handle.ConvID == "" {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.sessions == nil {
+		r.sessions = map[string]*copilotAPISession{}
+	}
+	if existing, found := r.sessions[handle.ConvID]; found && existing != nil &&
+		existing.Client != nil && existing != handle {
+		select {
+		case <-existing.Client.Done():
+			// Dead, so it is not a claim anybody is relying on. Fall through and
+			// take the slot rather than refusing in favour of a closed socket.
+		default:
+			return false
+		}
+	}
+	r.sessions[handle.ConvID] = handle
+	return true
+}
+
 // Handle returns the live handle for a conversation, or nil.
 //
 // Nil for a handle whose connection has ended, and the dead entry is dropped on
@@ -541,7 +589,7 @@ func runCopilotAPIBootstrap(
 		return
 	}
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), copilotAPIBootstrapTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), copilotAPIBootstrapTimeout())
 		defer cancel()
 		handle, err := bootstrapCopilotAPISessionFn(ctx, convID, kind, initialPrompt)
 		if err != nil {

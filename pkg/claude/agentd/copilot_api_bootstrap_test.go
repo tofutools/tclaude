@@ -200,6 +200,20 @@ func TestTheCopilotAPIReconnectIssuesNoMutatingCall(t *testing.T) {
 	// Every method called on the connection, by name. Comments are excluded by
 	// construction — the walk sees expressions, not prose — which matters here
 	// because the file's own docs discuss the forbidden calls at length.
+	//
+	// BOTH spellings are matched, and the second is the one that matters. A
+	// syntax-only walk cannot see that a receiver is a *copilotapi.Client, so
+	// this keys on how the receiver is WRITTEN — and an earlier version keyed
+	// only on a local named `client`, which is not how this package usually
+	// reaches a connection at all. `handle.Client.Send(...)` is the idiom in
+	// copilot_api_drive.go and copilot_api_state.go, i.e. exactly the spelling a
+	// future mutating call would arrive in. A guard that reports clean over the
+	// calls it cannot see is worse than no guard, because it still reads as
+	// protection.
+	//
+	// So: any call whose receiver chain ENDS in an identifier named `client` or a
+	// field named `Client`. The positive control below is what keeps the matcher
+	// itself honest — if it stops matching, the test says so instead of passing.
 	var onTheClient []string
 	ast.Inspect(file, func(node ast.Node) bool {
 		call, ok := node.(*ast.CallExpr)
@@ -210,8 +224,16 @@ func TestTheCopilotAPIReconnectIssuesNoMutatingCall(t *testing.T) {
 		if !ok {
 			return true
 		}
-		receiver, ok := selector.X.(*ast.Ident)
-		if !ok || receiver.Name != "client" {
+		switch receiver := selector.X.(type) {
+		case *ast.Ident: // client.X(...)
+			if receiver.Name != "client" {
+				return true
+			}
+		case *ast.SelectorExpr: // handle.Client.X(...), c.client.X(...)
+			if receiver.Sel.Name != "Client" && receiver.Sel.Name != "client" {
+				return true
+			}
+		default:
 			return true
 		}
 		onTheClient = append(onTheClient, selector.Sel.Name)

@@ -121,7 +121,7 @@ func TestMain(m *testing.M) {
 	// shared database for port records and spend a port wait per row against a
 	// tmux that has no Copilot process behind it. Tests that want to observe the
 	// reconcile drive it directly rather than through a daemon start.
-	restoreCopilotReconnect := agentd.SetCopilotAPIReconnectForTest(func() {})
+	restoreCopilotReconnect := agentd.SetCopilotAPIReconnectForTest(func(<-chan struct{}) {})
 	restoreCodexProbe := session.SetCodexEffectiveConfigProbeForTest(
 		func(string, []sandboxpolicy.EnvironmentEntry, string) (json.RawMessage, error) {
 			return json.RawMessage(`{"config":{},"origins":{}}`), nil
