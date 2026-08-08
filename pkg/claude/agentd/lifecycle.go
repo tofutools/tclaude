@@ -6033,13 +6033,15 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 			return launchFailed(werr)
 		default:
 		}
-		// Launch enrollment delivers the validated name as a native launch
-		// argument rather than through deliverRename. Mirror that accepted title
-		// into the shared conversation index now, just as the rename path does;
-		// Copilot's cold ConvStore sync is demand-driven, so without this write a
-		// long-lived named agent can retain an empty custom_title until somebody
-		// happens to run a conversation listing.
-		if spawnArgs.Name != "" {
+		// Copilot launch enrollment delivers the validated name as a native
+		// launch argument rather than through deliverRename. Mirror that accepted
+		// title into the shared conversation index now, just as its rename path
+		// does. Copilot's cold ConvStore sync is demand-driven, so without this
+		// write a long-lived named agent can retain an empty custom_title until
+		// somebody happens to run a conversation listing. Claude Code is excluded:
+		// its transcript follower owns this cache, and a speculative stamp can
+		// mask a subsequent authoritative rename until another filesystem refresh.
+		if spawnHarness.Name == harness.CopilotName && spawnArgs.Name != "" {
 			cacheDeliveredTitle(preConvID, spawnArgs.Name, spawnHarness.Name)
 		}
 		focusSpawn()
