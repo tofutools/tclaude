@@ -62,6 +62,19 @@ func TestSessionWatchColumns_SortKeysFollowVisibleColumns(t *testing.T) {
 	assert.Equal(t, "status", m.sort.Key, "hiding PROJECT shifts STATUS onto 2/F2")
 }
 
+func TestSessionWatchColumns_HarnessSortIndicatorFits(t *testing.T) {
+	m := model{allSessions: []*SessionState{{Harness: "codex"}}}
+	columns := m.columns()
+	tbl := table.New(columns...)
+	tbl.SetTerminalWidth(160)
+	m.sort = table.SortState{Key: "harness", Direction: table.SortAsc}
+	tbl.Sort = m.sort.ToConfig(columns)
+
+	header := tbl.RenderHeader()
+	assert.Contains(t, header, "HARNESS ▲")
+	assert.NotContains(t, header, "HARNESS…")
+}
+
 func TestSortSessionsByKey_Harness(t *testing.T) {
 	sessions := []*SessionState{
 		{ID: "opencode", Harness: "opencode"},
