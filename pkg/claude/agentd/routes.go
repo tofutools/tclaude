@@ -282,7 +282,11 @@ func requireRouteCapability(w http.ResponseWriter, r *http.Request, g *db.AgentG
 
 func requireRoutePermissionForIdentity(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, convID, agentID, slug string) (string, string, bool) {
 	actx := ActionContext{Group: g.Name}
-	verdict := resolveGroupBoundPermissionVerdictForRequest(r, convID, slug, g.ID)
+	verdict, err := resolveGroupBoundPermissionVerdictForRequest(r, convID, slug, g.ID)
+	if err != nil {
+		writeRouteError(w, http.StatusInternalServerError, "route_authority", "could not resolve permission")
+		return "", "", false
+	}
 	if verdict.Resolution == permAllow {
 		eval := evalPermissionScope(verdict, convID, actx)
 		if eval.Satisfied {

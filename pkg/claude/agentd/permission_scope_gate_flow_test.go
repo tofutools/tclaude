@@ -234,6 +234,33 @@ func TestPermissionScope_RouteGateHonoursGroupScope(t *testing.T) {
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 }
 
+// The central source loader is normally best-effort, but routes historically
+// failed closed when a higher-precedence tier could not be read. Preserve that
+// contract across the fold: an unreadable override tier must not disappear and
+// expose the target group's lower-precedence allow.
+func TestPermissionScope_RouteGateFailsClosedOnPermissionTierReadError(t *testing.T) {
+	skipDarwinRouteAuthorityFlow(t)
+	f := newFlow(t)
+	const publisher = "scopegate-read-error-publisher-0008"
+	f.HaveConvWithTitle(publisher, "publisher")
+	f.HaveGroup("alpha")
+	f.HaveMember("alpha", publisher)
+	alpha, err := db.GetAgentGroupByName("alpha")
+	require.NoError(t, err)
+	require.NoError(t, db.ReplaceAgentGroupPermissions(alpha.ID, []string{agentd.PermRoutesPublish}, "test"))
+
+	database, err := db.Open()
+	require.NoError(t, err)
+	_, err = database.Exec(`DROP TABLE agent_permissions`)
+	require.NoError(t, err)
+
+	rec, body := serveRouteAgent(t, f, http.MethodPost, "/v1/routes/publish", publisher, map[string]any{
+		"group": "alpha", "name": "must-not-open", "target": "tcp://127.0.0.1:43231",
+	})
+	assert.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
+	assert.Equal(t, "route_authority", body["code"])
+}
+
 // A process_template scope speaks in the same stable template ids accepted by
 // POST /v1/process/runs. One grant may name several ids; a different template
 // falls through to the ordinary popup-or-403 permission path before any run is
