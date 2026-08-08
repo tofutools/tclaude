@@ -353,6 +353,11 @@ func calleeName(call *ast.CallExpr) string {
 // not model. A guard that rejects correct code is a real cost — the next person
 // edits it out — so that conservatism is a bounded, deliberate one rather than an
 // oversight.
+//
+// IF YOU HIT THAT LEGITIMATELY, FILE IT RATHER THAN LOOSENING THIS. A guard
+// quietly relaxed at the point of pain stops defending anything, and the person
+// relaxing it is by construction the person least able to tell a real exception
+// from a convenient one.
 func callAlwaysEvaluated(body *ast.BlockStmt, name string) bool {
 	if body == nil {
 		return false
