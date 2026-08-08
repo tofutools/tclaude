@@ -147,6 +147,53 @@ func callIsBareStatement(fn *ast.FuncDecl, callee string) bool {
 	return checked
 }
 
+// callIsUnconditional reports whether callee is invoked from the TOP LEVEL of fn's
+// body, rather than from inside an if/for/switch that may not be entered.
+//
+// This is the half of the ordering guard that source position cannot express, and
+// the mutation pass is what showed it was still missing after the cold review.
+// `callOrder` walks the whole subtree, so it is satisfied by a call the function may
+// never reach. The review's beat 4 was exactly that shape: wrapping the gate in
+// `if strings.TrimSpace(params.Resume) != ""` — which reads like a plausible "only
+// relaunches need the carryover check" — left the entire package and golangci-lint
+// green while `session new --copilot-api --copilot-api-port N` rendered
+// `--ui-server` at a port no daemon waits on. The behavioural wiring test cannot see
+// it either, because it calls the applier directly; that test proves the applier
+// wires every consequence, not that runNew always asks.
+//
+// The `if err := f(x); err != nil` shape counts, because an if's Init always runs. A
+// call in the Cond or the Body does not.
+//
+// What this still does NOT cover: an early `return` placed above the gate leaves it
+// unconditional AND correctly ordered while making it unreachable. Only a
+// behavioural test through runNew would catch that, and runNew needs tmux and a
+// session row before it reaches this line.
+func callIsUnconditional(fn *ast.FuncDecl, callee string) bool {
+	callsCallee := func(n ast.Node) bool {
+		found := false
+		ast.Inspect(n, func(inner ast.Node) bool {
+			if call, ok := inner.(*ast.CallExpr); ok && calleeIdent(call) == callee {
+				found = true
+			}
+			return !found
+		})
+		return found
+	}
+	for _, stmt := range fn.Body.List {
+		switch s := stmt.(type) {
+		case *ast.IfStmt:
+			if s.Init != nil && callsCallee(s.Init) {
+				return true
+			}
+		case *ast.ExprStmt, *ast.AssignStmt:
+			if callsCallee(s) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // The headline wiring fact: the drive gate runs, its error is bound, and it runs
 // BEFORE any port is resolved. The ordering is not cosmetic — a launch that is
 // about to be refused must not bind and release a loopback port on the way, which
@@ -172,6 +219,11 @@ func TestRunNewGatesTheDriveBeforeResolvingAPort(t *testing.T) {
 		"the refusal must be CHECKED, not discarded: a discarded error turns every "+
 			"refusal into a silent send-keys downgrade, and errcheck does not catch a "+
 			"blank assignment (check-blank is off)")
+	assert.True(t, callIsUnconditional(fn, "applyCopilotAPIDriveDecision"),
+		"the gate must run on EVERY launch, not just the ones some branch selects: "+
+			"the cold review wrapped it in `if params.Resume != \"\"` and a hand-typed "+
+			"--copilot-api --copilot-api-port N rendered --ui-server again, with the "+
+			"whole package and lint green")
 }
 
 // The carryover must record which conversation an inferred drive came from, or the
@@ -403,6 +455,35 @@ func runNew(params *NewParams) error {
 		order := callOrder(guardFunc(file, "runNew"), "resolveCopilotAPIDriveForLaunch")
 		_, gated := order["resolveCopilotAPIDriveForLaunch"]
 		assert.False(t, gated, "an ungated launcher must be reported")
+	})
+
+	// Verbatim the cold review's beat 4, which the first round of fixes did NOT close
+	// and the mutation pass caught: correctly ordered, error bound, and still skipped
+	// on the launch shape that reproduces the defect.
+	t.Run("a gate reachable only on a resume is reported", func(t *testing.T) {
+		file := guardParse(t, "probe.go", `package session
+func runNew(params *NewParams) error {
+	if strings.TrimSpace(params.Resume) != "" {
+		if err := applyCopilotAPIDriveDecision(params, h, os.Stderr); err != nil {
+			return err
+		}
+	}
+	port, err := ResolveCopilotAPIPort(params.CopilotAPI, params.CopilotAPIPort)
+	_ = port
+	return err
+}`)
+		fn := guardFunc(file, "runNew")
+		require.NotNil(t, fn)
+		// The two checks that pass anyway are asserted here on purpose: they are why
+		// this beat survived a guard that looked like it covered the wiring.
+		assert.True(t, callIsBareStatement(fn, "applyCopilotAPIDriveDecision"),
+			"the refusal really is bound in this shape")
+		order := callOrder(fn, "applyCopilotAPIDriveDecision", "ResolveCopilotAPIPort")
+		assert.Less(t, int(order["applyCopilotAPIDriveDecision"]),
+			int(order["ResolveCopilotAPIPort"]), "the order really is right in this shape")
+		assert.False(t, callIsUnconditional(fn, "applyCopilotAPIDriveDecision"),
+			"a gate nested in a branch must be reported, or the ordering guard certifies "+
+				"a launch shape that never reaches it")
 	})
 
 	t.Run("a carryover that stops noting the origin is reported", func(t *testing.T) {
