@@ -467,7 +467,7 @@ test('the sandbox glyph rides the harness line, left of the remote indicator', a
     }
   });
 
-  await t.test('OpenCode uses OC and hides only the visible provider prefix', async () => {
+  await t.test('OpenCode uses its product mark and hides only the visible provider prefix', async () => {
     const mounted = await mount({
       conv_id: 'opencode-meta', online: true,
       state: {
@@ -476,7 +476,10 @@ test('the sandbox glyph rides the harness line, left of the remote indicator', a
     });
     try {
       const line = mounted.container.querySelector('.agent-harness');
-      assert.equal(line.querySelector('.harness-name').textContent, 'OC');
+      const mark = line.querySelector('.harness-mark[data-harness-mark="opencode"]');
+      assert.ok(mark, 'OpenCode uses its fixed-width product mark');
+      assert.equal(mark.title, 'OpenCode');
+      assert.equal(mark.getAttribute('aria-label'), 'OpenCode');
       assert.equal(line.querySelector('.harness-model').textContent, 'gpt-5.6-sol');
       assert.equal(line.querySelector('.harness-effort').textContent, 'hi');
       assert.match(line.title, /Model: openai\/gpt-5\.6-sol/,
@@ -521,10 +524,16 @@ test('the sandbox glyph rides the harness line, left of the remote indicator', a
     const state = { harness: 'codex', sandbox_mode: 'danger-full-access' };
     const mounted = await mount({ conv_id: 'c1', online: true, state });
     try {
-      const el = mounted.container.querySelector('.agent-harness .sandbox-badge');
+      const line = mounted.container.querySelector('.agent-harness');
+      const mark = line.querySelector('.harness-mark[data-harness-mark="codex"]');
+      assert.ok(mark, 'expected the Codex product mark on a pre-tick row');
+      assert.equal(mark.title, 'Codex CLI');
+      const el = line.querySelector('.sandbox-badge');
       assert.ok(el, 'expected the unconfined warning on a pre-tick Codex row');
       assert.equal(el.textContent.trim(), '⚠');
-      assert.match(mounted.container.querySelector('.agent-harness').textContent, /Codex\s*⚠/);
+      assert.deepEqual([...line.querySelectorAll('.harness-mark, .sandbox-badge')]
+        .map((node) => node.className.split(' ')[0]), ['harness-mark', 'sandbox-badge'],
+      'the warning trails the product mark');
     } finally {
       await mounted.unmount();
     }
