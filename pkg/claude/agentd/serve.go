@@ -675,6 +675,15 @@ func runServe(p *serveParams) error {
 	// daemon. Shares the daemon-wide stop channel.
 	startCopilotUsagePoller(cronStop)
 
+	// Copilot API reconnect. Handles live in process memory, so this daemon
+	// starts with none while every `copilot --ui-server` pane from before the
+	// restart is still running and still holding its conversation. Since
+	// TCL-1058 those conversations HOLD their messages rather than falling back
+	// to keystrokes, so without this they stay mute until somebody relaunches
+	// them. One-shot rather than a sweep: there is no drop to observe, only
+	// state that does not exist yet. See copilot_api_reconnect.go.
+	startCopilotAPIReconnect()
+
 	// Live conv_index monitor. One fsnotify watcher over
 	// ~/.claude/projects/ keeps the conv_index SQLite cache fresh as
 	// conversation .jsonl files change, so the dashboard (and any other

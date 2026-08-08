@@ -101,6 +101,28 @@ func verifiedCopilotAPIPort(ctx context.Context, convID string) (int, int, error
 	}
 }
 
+// copilotAPIConversationsWithARecordedPort lists the conversations that once
+// had an endpoint, WITHOUT handing back any of their ports.
+//
+// It lives here, beside the verified accessor, because it is the only way to
+// discover that a conversation has an endpoint at all — and the rule this file
+// exists to hold is that everything about the endpoint goes through the proof.
+// A caller that enumerated the records somewhere else would be one field away
+// from dialling one, and the AST guard names this function's underlying db call
+// for that reason.
+//
+// Conv ids only, so a caller learns which conversations to ASK about and
+// nothing it could act on directly. The answer is a list of conversations that
+// were given a number, not a list of live endpoints: a row here survives the
+// pane that owned it until the reaper releases it.
+func copilotAPIConversationsWithARecordedPort() ([]string, error) {
+	convIDs, err := db.ListCopilotAPIRuntimeConvIDs()
+	if err != nil {
+		return nil, fmt.Errorf("list conversations with a recorded Copilot API port: %w", err)
+	}
+	return convIDs, nil
+}
+
 // copilotAPIUnverifiedError names WHICH of the failures happened, because the
 // three have completely different remedies and a single "port not reachable"
 // would send an operator looking in the wrong place.

@@ -1,0 +1,393 @@
+package agentd
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"os/exec"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/copilotapi"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
+)
+
+// The reconnect is the answer to a durable, user-visible failure: an agentd
+// restart leaves every already-running API-driven Copilot agent with no handle,
+// and since TCL-1058 those agents HOLD their mail rather than having it typed
+// into the pane. Holding is right; staying mute until a relaunch is not.
+//
+// Every test here is written against the pane as well as the registry, because
+// the two failures this path could introduce are opposite: re-establishing
+// nothing (the agent stays mute) and re-establishing by opening a session (the
+// agent's conversation is destroyed while the daemon reports success).
+
+// paneReportingTmux answers tmux's pane-pid query with a pid of the test's
+// choosing, and records everything else the way commandRecordingTmux does.
+//
+// livePanePID shells out to `tmux display-message`, and the ownership proof is
+// taken against whatever it returns — so a stub that answered nothing would
+// make every reconnect fail at the port wait for a reason unrelated to what
+// these tests are about.
+type paneReportingTmux struct {
+	panePID  int
+	mu       sync.Mutex
+	commands [][]string
+}
+
+func (r *paneReportingTmux) Command(args ...string) *exec.Cmd {
+	r.mu.Lock()
+	r.commands = append(r.commands, append([]string(nil), args...))
+	r.mu.Unlock()
+	if len(args) > 0 && args[0] == "display-message" {
+		return exec.Command("printf", fmt.Sprintf("0|%d", r.panePID))
+	}
+	return exec.Command("true")
+}
+
+func (r *paneReportingTmux) ListSessions() (map[string]struct{}, error) {
+	return map[string]struct{}{}, nil
+}
+
+func (r *paneReportingTmux) snapshot() [][]string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([][]string, len(r.commands))
+	for i := range r.commands {
+		out[i] = append([]string(nil), r.commands[i]...)
+	}
+	return out
+}
+
+func (r *paneReportingTmux) assertNoKeystrokes(t *testing.T) {
+	t.Helper()
+	for _, command := range r.snapshot() {
+		require.NotEmpty(t, command)
+		assert.NotContains(t, []string{"send-keys", "set-buffer", "paste-buffer"}, command[0],
+			"an API-driven agent must not be typed into: %v", command)
+	}
+}
+
+// copilotAPIReconnectFixture is a daemon that has just restarted: a Copilot
+// conversation whose launch took the API drive, whose port record survived,
+// whose pane is still alive with its server still listening — and an EMPTY
+// handle registry, which is the whole of what a restart destroys.
+type copilotAPIReconnectFixture struct {
+	convID string
+	server *fakeCopilotServer
+	tmux   *paneReportingTmux
+}
+
+func newCopilotAPIReconnectFixture(t *testing.T) *copilotAPIReconnectFixture {
+	t.Helper()
+	setupTestDB(t)
+	t.Cleanup(SetInjectSettleDelayForTest(0))
+
+	server := newFakeCopilotServer(t)
+	// The pane pid has to be a process that genuinely owns the listener, so the
+	// ownership proof passes for real rather than being stubbed: this test
+	// binary does.
+	tmux := &paneReportingTmux{panePID: os.Getpid()}
+	previous := clcommon.Default
+	clcommon.Default = tmux
+	t.Cleanup(func() { clcommon.Default = previous })
+
+	const (
+		convID    = "ses_copilot_api_reconnect"
+		sessionID = "spwn-copilot-api-reconnect"
+	)
+	cwd := t.TempDir()
+	_, _, err := db.EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	require.NoError(t, session.SaveSessionState(&session.SessionState{
+		ID: sessionID, TmuxSession: sessionID, ConvID: convID,
+		Harness: harness.CopilotName, Status: session.StatusIdle,
+		Cwd: cwd,
+	}))
+	// The durable posture the launch recorded. This is what makes the
+	// conversation's mail HOLD rather than route to keystrokes while it has no
+	// handle, so it is the state a restarted daemon actually finds.
+	require.NoError(t, db.SetConversationCopilotAPI(convID, harness.CopilotName, cwd, true))
+	require.NoError(t, db.UpsertCopilotAPIRuntime(db.CopilotAPIRuntime{
+		ConvID: convID, Port: server.port(),
+	}))
+	t.Cleanup(func() { copilotAPISessions.Drop(convID) })
+
+	return &copilotAPIReconnectFixture{convID: convID, server: server, tmux: tmux}
+}
+
+func (f *copilotAPIReconnectFixture) reconcile(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	reconcileCopilotAPISessions(ctx)
+}
+
+// The headline property, asserted end to end: a conversation that was mute
+// after the restart can be spoken to again, over RPC, without a keystroke.
+//
+// Asserting Connected alone would not be enough. "The registry has an entry"
+// is satisfied by a handle to anything at all; what the agent needs is a
+// channel that carries a message, so the delivery is the assertion and the
+// registry is the mechanism.
+func TestCopilotAPIReconnectReEstablishesTheChannelAfterARestart(t *testing.T) {
+	fixture := newCopilotAPIReconnectFixture(t)
+
+	require.False(t, copilotAPISessions.Connected(fixture.convID),
+		"precondition: a restarted daemon holds no handles, which is the state this fixes")
+	require.True(t, copilotAPIDriven(fixture.convID),
+		"precondition: the conversation still BELONGS to the API channel — that is why "+
+			"its mail is held rather than typed in")
+	_, err := copilotAPIDrive(fixture.convID)
+	require.Error(t, err, "precondition: and the channel is unavailable, so it holds")
+
+	fixture.reconcile(t)
+
+	assert.True(t, copilotAPISessions.Connected(fixture.convID),
+		"the whole point: an already-running agent is reachable again without relaunching")
+
+	group, err := db.CreateAgentGroup("copilot-api-reconnect", "")
+	require.NoError(t, err)
+	messageID, err := db.InsertAgentMessage(&db.AgentMessage{
+		GroupID: group, FromConv: "peer", ToConv: fixture.convID, Body: "after the restart",
+	})
+	require.NoError(t, err)
+	message, err := db.GetAgentMessage(messageID)
+	require.NoError(t, err)
+
+	const nudge = "[msg #1 from peer] after the restart"
+	require.True(t, sendNudgeBracket(fixture.convID, message, nudge))
+
+	assert.Contains(t, fixture.server.methodsCalled(), copilotapi.MethodSessionSend)
+	var sent copilotapi.SendParams
+	require.NoError(t, json.Unmarshal(
+		fixture.server.paramsFor(copilotapi.MethodSessionSend), &sent))
+	assert.Equal(t, nudge, sent.Prompt)
+	assert.Equal(t, fixture.convID, sent.SessionID,
+		"the session a reconnect drives is the CONVERSATION's own id — the id the "+
+			"bootstrap opened its session under and the id everything else resolves")
+	fixture.tmux.assertNoKeystrokes(t)
+}
+
+// The reconnect's defining property. It rejoins a conversation it must not
+// change, and each of the calls that would open one is unsafe in at least one
+// case it cannot tell apart in advance:
+//
+//   - session.create at a COLD id starts it FRESH, discarding the history.
+//   - session.resume appends an event and re-applies options (measured: it
+//     reloads MCP servers and re-emits the system prompt).
+//   - session.setForeground moves what the human is looking at.
+//
+// Asserted against the WIRE rather than against the source, so it holds however
+// the call is spelled; the structural guard beside it in
+// copilot_api_bootstrap_test.go covers the calls a fake server would never be
+// asked to answer.
+func TestCopilotAPIReconnectSendsNothingThatCouldChangeTheConversation(t *testing.T) {
+	fixture := newCopilotAPIReconnectFixture(t)
+	fixture.reconcile(t)
+	require.True(t, copilotAPISessions.Connected(fixture.convID),
+		"precondition: the reconnect must have succeeded, or 'it sent nothing' is "+
+			"trivially true of a path that did nothing")
+
+	called := fixture.server.methodsCalled()
+	assert.Equal(t,
+		[]string{copilotapi.MethodConnect, copilotapi.MethodSessionIsProcessing},
+		called,
+		"a reconnect is a handshake and ONE read. Anything else on this list is a call "+
+			"whose safety depends on which case the reconnect is in, which is exactly what "+
+			"it cannot know")
+}
+
+// The two failure arms of a refusal want OPPOSITE responses, and one assertion
+// cannot separate them:
+//
+//   - refuse and leave the conversation held — correct, and
+//   - refuse and then open a session anyway — the failure that destroys a
+//     conversation while reporting a healthy reconnect.
+//
+// "No handle was adopted" is true of both. So the wire is asserted too.
+func TestCopilotAPIReconnectRefusesRatherThanOpeningASession(t *testing.T) {
+	fixture := newCopilotAPIReconnectFixture(t)
+	fixture.server.failMethod(copilotapi.MethodSessionIsProcessing,
+		"Session not found: "+fixture.convID)
+
+	fixture.reconcile(t)
+
+	assert.False(t, copilotAPISessions.Connected(fixture.convID),
+		"a session the server does not hold is not a channel")
+	for _, method := range fixture.server.methodsCalled() {
+		assert.NotContains(t,
+			[]string{
+				copilotapi.MethodSessionCreate,
+				copilotapi.MethodSessionResume,
+				copilotapi.MethodSessionSetFg,
+			},
+			method,
+			"the reconnect answered a missing session by calling %s. `session.create` at an "+
+				"id whose history is only on disk starts it FRESH, so recovering this way "+
+				"would turn 'I could not rejoin the conversation' into 'I replaced it' — and "+
+				"the launch would still look healthy", method)
+	}
+
+	// And the conversation is held rather than typed into, which is the
+	// behaviour the refusal has to preserve.
+	require.True(t, copilotAPIDriven(fixture.convID))
+	_, err := copilotAPIDrive(fixture.convID)
+	assert.Error(t, err)
+	fixture.tmux.assertNoKeystrokes(t)
+}
+
+// The guard clauses, with a positive control. Without the control both
+// negatives would pass just as well against a reconcile that never reaches the
+// seam at all — the exact shape of vacuously-green test this series keeps
+// finding.
+func TestCopilotAPIReconcileSkipsWhatItMustNotTouch(t *testing.T) {
+	setupTestDB(t)
+	server := newFakeCopilotServer(t)
+	tmux := &paneReportingTmux{panePID: os.Getpid()}
+	previous := clcommon.Default
+	clcommon.Default = tmux
+	t.Cleanup(func() { clcommon.Default = previous })
+
+	// held: a conversation this daemon already has a live handle for. A second
+	// connection would be waste, and Adopt would close the working one.
+	// gone: a port record whose pane is no longer running.
+	// fresh: the one that must be reconnected.
+	for _, convID := range []string{"conv-held", "conv-gone", "conv-fresh"} {
+		require.NoError(t, db.UpsertCopilotAPIRuntime(db.CopilotAPIRuntime{
+			ConvID: convID, Port: server.port(),
+		}))
+	}
+	for _, convID := range []string{"conv-held", "conv-fresh"} {
+		require.NoError(t, session.SaveSessionState(&session.SessionState{
+			ID: "spwn-" + convID, TmuxSession: "spwn-" + convID, ConvID: convID,
+			Harness: harness.CopilotName, Status: session.StatusIdle, Cwd: t.TempDir(),
+		}))
+	}
+	existing := dialFakeCopilot(t, server)
+	copilotAPISessions.Adopt(&copilotAPISession{
+		ConvID: "conv-held", SessionID: "conv-held",
+		Port: server.port(), PanePID: os.Getpid(), Client: existing,
+	})
+	t.Cleanup(func() {
+		for _, convID := range []string{"conv-held", "conv-gone", "conv-fresh"} {
+			copilotAPISessions.Drop(convID)
+		}
+	})
+
+	attempted := make(chan string, 8)
+	original := reconnectCopilotAPISessionFn
+	reconnectCopilotAPISessionFn = func(
+		_ context.Context, convID string,
+	) (*copilotAPISession, error) {
+		attempted <- convID
+		return nil, errors.New("not reached in this test")
+	}
+	t.Cleanup(func() { reconnectCopilotAPISessionFn = original })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	reconcileCopilotAPISessions(ctx)
+
+	close(attempted)
+	var tried []string
+	for convID := range attempted {
+		tried = append(tried, convID)
+	}
+	assert.Equal(t, []string{"conv-fresh"}, tried,
+		"a conversation with a live handle needs no second connection, and one with no "+
+			"live session row has nothing to reconnect to — but the one that is running "+
+			"and unconnected is the whole reason this sweep exists")
+
+	assert.NotNil(t, copilotAPISessions.Handle("conv-held"),
+		"the handle this daemon already had must survive the sweep, not be replaced by it")
+}
+
+// The reconcile is only worth anything if it FIRES, and the one thing no test
+// above can see is the daemon's own startup wiring — every flow test stubs the
+// kick-off out binary-wide, precisely so it does not run.
+//
+// So the trigger is asserted structurally. A restart is the entire trigger for
+// this feature: there is no drop to observe and no other path establishes a
+// handle for an already-running agent, so a reconcile nobody calls is a
+// perfectly healthy-looking package that fixes nothing.
+func TestTheDaemonStartupCallsTheCopilotAPIReconcile(t *testing.T) {
+	source, err := os.ReadFile("serve.go")
+	require.NoError(t, err)
+
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "serve.go", source, 0)
+	require.NoError(t, err)
+
+	called := false
+	ast.Inspect(file, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if name, ok := call.Fun.(*ast.Ident); ok && name.Name == "startCopilotAPIReconnect" {
+			called = true
+		}
+		return true
+	})
+	assert.True(t, called,
+		"serve.go must call startCopilotAPIReconnect. An agentd restart is the ONLY "+
+			"trigger for re-establishing an already-running agent's channel — nothing else "+
+			"in the daemon does it — so a reconcile that is never called leaves every "+
+			"API-driven Copilot agent mute until it is relaunched, which is the exact "+
+			"failure this path exists to remove")
+}
+
+// The reaper releases a port record on a grace timer, and this sweep reads the
+// same records. A record for a pane that is already gone must cost a bounded,
+// NAMED failure rather than a hang or a connection to whatever now holds the
+// number.
+func TestCopilotAPIReconnectFailsNamedForAConversationWhosePaneIsGone(t *testing.T) {
+	setupTestDB(t)
+	server := newFakeCopilotServer(t)
+	// A pane pid tmux reports as dead: livePanePID answers 0, which is the same
+	// thing the reconcile sees for a pane that exited while agentd was down.
+	tmux := &paneReportingTmux{panePID: 0}
+	previous := clcommon.Default
+	clcommon.Default = tmux
+	t.Cleanup(func() { clcommon.Default = previous })
+
+	const convID = "conv-pane-gone"
+	require.NoError(t, db.UpsertCopilotAPIRuntime(db.CopilotAPIRuntime{
+		ConvID: convID, Port: server.port(),
+	}))
+	require.NoError(t, session.SaveSessionState(&session.SessionState{
+		ID: "spwn-" + convID, TmuxSession: "spwn-" + convID, ConvID: convID,
+		Harness: harness.CopilotName, Status: session.StatusIdle, Cwd: t.TempDir(),
+	}))
+	t.Cleanup(func() { copilotAPISessions.Drop(convID) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, err := reconnectCopilotAPISession(ctx, convID)
+
+	require.Error(t, err)
+	assert.True(t,
+		strings.Contains(err.Error(), "no live pane process was found") ||
+			strings.Contains(err.Error(), "gave up verifying"),
+		"the failure must name the pane rather than reporting some generic connection "+
+			"problem, because the two have completely different remedies: %v", err)
+	assert.False(t, copilotAPISessions.Connected(convID))
+	assert.NotContains(t, fmt.Sprint(server.methodsCalled()), copilotapi.MethodConnect,
+		"nothing may be sent to a port whose listener was never shown to belong to the "+
+			"agent's pane — this endpoint has no authentication, so an unverified listener "+
+			"cannot be told apart from another agent's")
+}

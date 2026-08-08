@@ -116,12 +116,19 @@ func TestMain(m *testing.M) {
 	// assert against.
 	restoreCopilotPostInitWait := agentd.SetCopilotAPIPostInitWaitForTest(
 		func(string) bool { return false })
+	// The daemon's startup reconcile, suppressed for the same reason as the
+	// bootstrap: a flow test that starts a daemon would otherwise sweep the
+	// shared database for port records and spend a port wait per row against a
+	// tmux that has no Copilot process behind it. Tests that want to observe the
+	// reconcile drive it directly rather than through a daemon start.
+	restoreCopilotReconnect := agentd.SetCopilotAPIReconnectForTest(func() {})
 	restoreCodexProbe := session.SetCodexEffectiveConfigProbeForTest(
 		func(string, []sandboxpolicy.EnvironmentEntry, string) (json.RawMessage, error) {
 			return json.RawMessage(`{"config":{},"origins":{}}`), nil
 		})
 	code := m.Run()
 	restoreCodexProbe()
+	restoreCopilotReconnect()
 	restoreCopilotPostInitWait()
 	restoreCopilotBootstrap()
 	restoreEscalationProcess()

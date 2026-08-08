@@ -65,10 +65,35 @@ var copilotAPIGuardedFiles = map[copilotAPIGuardedSelector][]string{
 	{pkg: "db", symbol: "GetCopilotAPIRuntime"}: {
 		"copilot_api_reachability.go", "copilot_api_port.go",
 	},
-	// Dialling the endpoint is the bootstrap's job alone, and the bootstrap's
-	// address comes from verifiedCopilotAPIPort.
-	{pkg: "copilotapi", symbol: "Dial"}:      {"copilot_api_bootstrap.go"},
-	{pkg: "copilotapi", symbol: "DialRetry"}: {"copilot_api_bootstrap.go"},
+	// Enumerating the records is the same rule one step earlier: it is how a
+	// caller learns an endpoint exists at all. It is listed even though it
+	// returns conv ids rather than ports, because the reason to keep it beside
+	// the verified accessor is that a caller holding the record set is one field
+	// away from holding the numbers.
+	{pkg: "db", symbol: "ListCopilotAPIRuntimeConvIDs"}: {
+		"copilot_api_reachability.go",
+	},
+	// Dialling the endpoint.
+	//
+	// TCL-1056 wrote this rule with ONE entitled file, and with the rule that a
+	// second one must argue for itself in review rather than appear. TCL-1074 is
+	// that argument, made deliberately:
+	//
+	// copilot_api_reconnect.go re-establishes a channel that an agentd restart
+	// lost, for a pane that never stopped running. It cannot go through the
+	// bootstrap, because a bootstrap OPENS a session and this must not: the
+	// session already exists, and every call that would open one is destructive
+	// or disturbing in at least one of the cases a reconnect cannot tell apart in
+	// advance (see that file's header). What it inherits unchanged is the part
+	// the guard is about — its address comes from verifiedCopilotAPIPort, and it
+	// re-proves ownership on the live connection before it reads anything.
+	//
+	// Both entitled files are pinned individually below, so an entry that stopped
+	// verifying could not hide behind the other one's compliance.
+	{pkg: "copilotapi", symbol: "Dial"}: {"copilot_api_bootstrap.go"},
+	{pkg: "copilotapi", symbol: "DialRetry"}: {
+		"copilot_api_bootstrap.go", "copilot_api_reconnect.go",
+	},
 }
 
 // TestNothingReachesTheCopilotAPIPortOutsideTheVerifiedAccessor is the explicit
@@ -76,13 +101,18 @@ var copilotAPIGuardedFiles = map[copilotAPIGuardedSelector][]string{
 func TestNothingReachesTheCopilotAPIPortOutsideTheVerifiedAccessor(t *testing.T) {
 	// Not every guarded name is in use today — copilotapi.Dial is listed so a
 	// future non-retrying dial is caught the moment it appears, not after it
-	// ships. What must be in use is the one call that IS the channel, and its
+	// ships. What must be in use are the calls that ARE the channel, and their
 	// absence would mean this whole guard had quietly stopped watching anything.
-	assert.Equal(t,
-		[]string{"copilot_api_bootstrap.go"},
+	//
+	// Asserted as the exact set rather than as membership: a file dropping out is
+	// as much a break as one appearing. The reconnect losing its dial would mean
+	// an agentd restart silently stopped re-establishing channels, which is a
+	// working-looking daemon and mute agents.
+	assert.ElementsMatch(t,
+		[]string{"copilot_api_bootstrap.go", "copilot_api_reconnect.go"},
 		copilotAPISymbolFiles(t, copilotAPIGuardedSelector{pkg: "copilotapi", symbol: "DialRetry"}),
-		"the bootstrap is the one place that opens the channel; if it no longer "+
-			"dials, this guard is protecting nothing")
+		"the bootstrap opens the channel and the reconnect re-opens it after an agentd "+
+			"restart; if either no longer dials, this guard is protecting less than it says")
 
 	for guarded, allowed := range copilotAPIGuardedFiles {
 		found := copilotAPISymbolFiles(t, guarded)
@@ -98,33 +128,112 @@ func TestNothingReachesTheCopilotAPIPortOutsideTheVerifiedAccessor(t *testing.T)
 	}
 }
 
-// TestTheCopilotAPIBootstrapDialsOnlyAVerifiedPort pins the one dialling site
-// to the accessor, so the allow-list above cannot be satisfied by a bootstrap
+// TestEveryCopilotAPIDiallerVerifiesItsPort pins EACH dialling site to the
+// accessor, so the allow-list above cannot be satisfied by an entitled file
 // that quietly stopped verifying.
-func TestTheCopilotAPIBootstrapDialsOnlyAVerifiedPort(t *testing.T) {
-	source, err := os.ReadFile(filepath.Join(".", "copilot_api_bootstrap.go"))
+//
+// Per-function rather than per-file, and each entry named individually: two
+// entitled files means the guard must not be satisfiable by one of them
+// complying on the other's behalf. Both must take their address from
+// verifiedCopilotAPIPort and both must re-prove ownership on the live
+// connection, because the reasons are the same for both — the endpoint has no
+// authentication, and the pre-dial proof is one-shot.
+func TestEveryCopilotAPIDiallerVerifiesItsPort(t *testing.T) {
+	diallers := map[string]string{
+		"copilot_api_bootstrap.go": "bootstrapCopilotAPISession",
+		// A restart is the moment a recorded port is MOST likely to have been
+		// reused by something else, so the reconnect needs this at least as much
+		// as the bootstrap does.
+		"copilot_api_reconnect.go": "reconnectCopilotAPISession",
+	}
+	for filename, function := range diallers {
+		t.Run(function, func(t *testing.T) {
+			source, err := os.ReadFile(filepath.Join(".", filename))
+			require.NoError(t, err)
+
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, filename, source, 0)
+			require.NoError(t, err)
+
+			var body *ast.FuncDecl
+			ast.Inspect(file, func(node ast.Node) bool {
+				if decl, ok := node.(*ast.FuncDecl); ok && decl.Name.Name == function {
+					body = decl
+				}
+				return true
+			})
+			require.NotNil(t, body, "%s must exist for this guard to mean anything", function)
+
+			text := string(source[fset.Position(body.Pos()).Offset:fset.Position(body.End()).Offset])
+			assert.Contains(t, text, "verifiedCopilotAPIPort(",
+				"a function that dials the endpoint must take its port from the accessor "+
+					"that proves the listener belongs to the agent's pane")
+			assert.Contains(t, text, "handle.StillOwned()",
+				"the connection must be re-proved after it is established: the pre-dial proof "+
+					"is one-shot and leaves a TOCTOU window that only a post-connect re-read "+
+					"closes")
+		})
+	}
+}
+
+// TestTheCopilotAPIReconnectIssuesNoMutatingCall is the reconnect's own
+// invariant, and it is the reason that path is allowed to exist at all.
+//
+// A reconnect rejoins a conversation it must not change. `session.create` at a
+// COLD id starts it fresh and would discard the agent's history; `session.
+// resume` appends an event and re-applies options; `session.setForeground`
+// moves what the human is looking at. None of the three is safe in every case a
+// reconnect cannot tell apart in advance, so the path issues exactly one read
+// and nothing else.
+//
+// Structural rather than behavioural for the usual reason: the failure being
+// guarded against is a call nobody thought about. A behavioural test would need
+// to already know which call was added.
+func TestTheCopilotAPIReconnectIssuesNoMutatingCall(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join(".", "copilot_api_reconnect.go"))
 	require.NoError(t, err)
 
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "copilot_api_bootstrap.go", source, 0)
+	file, err := parser.ParseFile(fset, "copilot_api_reconnect.go", source, 0)
 	require.NoError(t, err)
 
-	var body *ast.FuncDecl
+	// Every method called on the connection, by name. Comments are excluded by
+	// construction — the walk sees expressions, not prose — which matters here
+	// because the file's own docs discuss the forbidden calls at length.
+	var onTheClient []string
 	ast.Inspect(file, func(node ast.Node) bool {
-		if decl, ok := node.(*ast.FuncDecl); ok && decl.Name.Name == "bootstrapCopilotAPISession" {
-			body = decl
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
 		}
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		receiver, ok := selector.X.(*ast.Ident)
+		if !ok || receiver.Name != "client" {
+			return true
+		}
+		onTheClient = append(onTheClient, selector.Sel.Name)
 		return true
 	})
-	require.NotNil(t, body, "bootstrapCopilotAPISession must exist for this guard to mean anything")
 
-	text := string(source[fset.Position(body.Pos()).Offset:fset.Position(body.End()).Offset])
-	assert.Contains(t, text, "verifiedCopilotAPIPort(",
-		"the only function that dials the endpoint must take its port from the accessor "+
-			"that proves the listener belongs to the agent's pane")
-	assert.Contains(t, text, "handle.StillOwned()",
-		"the connection must be re-proved after it is established: the pre-dial proof is "+
-			"one-shot and leaves a TOCTOU window that only a post-connect re-read closes")
+	// The positive control. Without it every assertion below would pass just as
+	// well against a file that had stopped calling the client entirely — which is
+	// exactly the shape of vacuously-green test this series keeps finding.
+	assert.Contains(t, onTheClient, "IsProcessing",
+		"the drivability probe is the one call this path makes; if it is gone, this "+
+			"test is asserting the absence of calls in a file that makes none")
+
+	allowed := []string{"IsProcessing", "Close"}
+	for _, method := range onTheClient {
+		assert.Contains(t, allowed, method,
+			"copilot_api_reconnect.go calls Client.%s. A reconnect must issue NO mutating "+
+				"RPC: it rejoins a live conversation and cannot tell in advance whether the "+
+				"session is one the server still holds or one that only exists on disk, where "+
+				"`session.create` starts it FRESH. If a second call is genuinely needed, argue "+
+				"the zero-mutating-RPC property again before widening this list", method)
+	}
 }
 
 // copilotAPISymbolFiles returns the non-test files in this package that name
