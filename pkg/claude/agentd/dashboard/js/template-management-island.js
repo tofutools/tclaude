@@ -5,6 +5,7 @@ import { profileSummary, getDashDefaultProfile, findProfileByHandle, profileChoi
 import { pickDirectory } from './helpers.js';
 import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
 import { wizWord } from './slop.js';
+import { grantScopeLabel, grantSlug, grantToOverride } from './permission-grant-list.js';
 import {
   agentHasLegacyLaunch,
   agentInheritsDeployDefault,
@@ -152,7 +153,7 @@ function TemplateCard({ template, groups, profiles, actions }) {
       ${agents.map((agent, index) => {
         const inline = agent.profile_inline?.permission_overrides || {};
         const slugs = new Set([
-          ...(agent.permissions || []),
+          ...(agent.permissions || []).map(grantSlug),
           ...Object.keys(inline),
         ]);
         return html`<span key=${`${agent.name}:${index}`} class="tc-agent"
@@ -2052,12 +2053,17 @@ function RoleInspect({ roleName, roles }) {
     <div class="role-inspect-row">
       <span class="role-inspect-key">grants</span>${role.permissions?.length
         ? html`<span class="role-inspect-vals"
-            >${role.permissions.map(
-              (slug) =>
-                html`<span key=${slug} class="role-inspect-slug"
-                  >${slug}</span
-                >`,
-            )}</span
+            >${role.permissions.map((entry) => {
+              // A grant may be narrowed; the inspector shows what it is
+              // narrowed TO rather than the bare slug, which would read as
+              // the wider grant the role does not confer.
+              const scope = grantScopeLabel(entry);
+              return html`<span key=${grantSlug(entry)} class="role-inspect-slug"
+                  >${grantSlug(entry)}${scope
+                ? html` <span class="perm-scope-chip">${scope}</span>`
+                : null}</span
+                >`;
+            })}</span
           >`
         : html`<span class="role-inspect-muted">none</span>`}
     </div>
@@ -2198,8 +2204,12 @@ function AgentRow({
       });
   };
   const extract = () => {
+    // Extracting to a profile must carry a narrowed grant across as narrowed:
+    // the override union has a scoped arm, so there is no reason to widen one
+    // here, and widening is the one direction a permission move must not go.
     const permission_overrides = Object.fromEntries(
-      (agent.permissions || []).filter(Boolean).map((slug) => [slug, 'grant']),
+      (agent.permissions || []).filter(Boolean)
+        .map((entry) => [grantSlug(entry), grantToOverride(entry)]),
     );
     actions.openProfileEditor(
       {
