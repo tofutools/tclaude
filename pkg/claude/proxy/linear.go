@@ -370,9 +370,14 @@ func runLinearIssueCreate(p *linearCreateParams, stdin io.Reader, stdout, stderr
 	}, p.AskHuman, stdout, stderr)
 }
 
-// linearPriorityAlternatives is Linear's fixed priority scale, for shell
-// completion. The daemon validates independently — this is a convenience, not
-// a gate.
+// linearPriorityAlternatives is Linear's fixed priority scale: 0 none,
+// 1 urgent, 2 high, 3 normal, 4 low.
+//
+// boa ENFORCES this list rather than merely offering it for completion — a
+// value outside it is refused before the request is built — so a stale entry
+// here costs a refusal, the same trade the GitHub half's run-status list
+// makes. The daemon validates independently regardless, because a check made
+// in this process is a check the caller could have skipped.
 var linearPriorityAlternatives = []string{"0", "1", "2", "3", "4"}
 
 type linearUpdateParams struct {
