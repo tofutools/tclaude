@@ -593,7 +593,7 @@ func handleGHProxyRunDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	// gh prints nothing on success, so the daemon says what happened: where
 	// the files are, and what they are.
-	dl.Stdout = artifactListing(dest)
+	dl.Stdout = artifactListing(ctx, dest)
 	g.respond(w, r, "run.download", dl, nil)
 }
 
@@ -669,10 +669,20 @@ func checkArtifactBudget(manifest ghArtifactManifest, name string) *proxyFault {
 		// Expired is a DIFFERENT answer from absent, and the one an agent is
 		// most likely to retry on if not told plainly. GitHub keeps the entry
 		// after the retention period takes the bytes.
-		if expiredMatch > 0 {
+		//
+		// Both spellings are needed: without a name, EVERY artifact matched and
+		// every one of them expired, which is a whole-run answer rather than a
+		// statement about an artifact the caller never named.
+		if expiredMatch > 0 && name != "" {
 			return faultf(http.StatusNotFound, "artifact_expired",
 				"the artifact %q exists but has expired — GitHub deleted the bytes after its "+
 					"retention period and kept the entry; retrying will not bring it back", name)
+		}
+		if expiredMatch > 0 {
+			return faultf(http.StatusNotFound, "artifact_expired",
+				"all %d of this run's artifacts have expired — GitHub deleted the bytes after "+
+					"their retention period and kept the entries; retrying will not bring them back",
+				expiredMatch)
 		}
 		if name != "" {
 			hint := ""

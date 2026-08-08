@@ -410,7 +410,14 @@ func (g *ghProxySession) artifactDest(runID string) (string, *proxyFault) {
 //
 // filepath.WalkDir lstats, so a symlink inside an extracted artifact is
 // reported as an entry and never followed.
-func artifactListing(dest string) string {
+//
+// It takes the request's ctx because the two listing bounds cap what is
+// REPORTED, not what is walked: `files` and `total` describe the whole tree, so
+// the walk visits every entry. An artifact well inside the 512 MiB zip cap can
+// unpack to millions of small files, and this runs on the request goroutine
+// after gh has returned — so a cancelled request stops the walk rather than
+// finishing it for nobody, and says the count it gives is a floor.
+func artifactListing(ctx context.Context, dest string) string {
 	type entry struct {
 		rel  string
 		size string
@@ -423,9 +430,14 @@ func artifactListing(dest string) string {
 		listBytes int
 		walkErr   error
 	)
+	stopped := false
 	walkErr = filepath.WalkDir(dest, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		if ctx.Err() != nil {
+			stopped = true
+			return fs.SkipAll
 		}
 		if d.IsDir() {
 			return nil
@@ -469,22 +481,36 @@ func artifactListing(dest string) string {
 	if files > len(entries) {
 		fmt.Fprintf(&b, "… and %d more\n", files-len(entries))
 	}
-	if files == 0 && walkErr == nil {
+	if files == 0 && walkErr == nil && !stopped {
 		// The preflight has already ruled out "no such artifact" and "expired",
 		// so this is gh having unpacked an artifact that genuinely holds no
 		// files. Saying anything more would be guessing.
 		b.WriteString("(the artifact unpacked to no files at all)\n")
 		return b.String()
 	}
-	fmt.Fprintf(&b, "\n(%s in %s", pluralFiles(files), humanBytes(total))
+	fmt.Fprintf(&b, "\n(%s%s in %s", atLeast(stopped), pluralFiles(files), humanBytes(total))
 	if unsized > 0 {
 		fmt.Fprintf(&b, ", %d of unreadable size and not counted", unsized)
 	}
 	b.WriteString(")\n")
+	if stopped {
+		b.WriteString("(the listing stopped early — the request was cancelled; " +
+			"the files are on disk regardless)\n")
+	}
 	if walkErr != nil {
 		fmt.Fprintf(&b, "(the listing is incomplete — the directory could not be fully read: %v)\n", walkErr)
 	}
 	return b.String()
+}
+
+// atLeast marks a count the walk did not finish gathering, so "3 files" cannot
+// be read as the whole of what is on disk when it is only what was counted
+// before the request went away.
+func atLeast(stopped bool) string {
+	if stopped {
+		return "at least "
+	}
+	return ""
 }
 
 func pluralFiles(n int) string {

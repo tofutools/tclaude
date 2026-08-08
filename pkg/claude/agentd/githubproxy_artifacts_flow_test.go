@@ -243,6 +243,25 @@ func TestGHProxy_DownloadExplainsAMissingArtifact(t *testing.T) {
 		assert.Len(t, ghArgvs(t, rec), 1)
 	})
 
+	// Without a --name every artifact matches, so an all-expired run reaches
+	// the expired branch with no name to put in the message. It must read as a
+	// statement about the run, not about an artifact nobody asked for.
+	t.Run("a run whose every artifact expired says that, without naming one", func(t *testing.T) {
+		f, rec := downloadingWorld(t, ghArtifactManifestJSON(
+			ghArtifact("coverage", 4096, true),
+			ghArtifact("test-results", 4096, true),
+		), nil)
+
+		res := gitProxyPost(t, f, "/v1/github/run/download",
+			map[string]any{"run_id": 18234567890})
+		require.Equal(t, http.StatusNotFound, res.Code, "body=%s", res.Body.String())
+		assert.Contains(t, res.Body.String(), "expired")
+		assert.Contains(t, res.Body.String(), "all 2 of this run's artifacts")
+		assert.NotContains(t, res.Body.String(), `the artifact "" `,
+			"an empty name in the message means the named branch was reached without a name")
+		assert.Len(t, ghArgvs(t, rec), 1)
+	})
+
 	t.Run("a run that uploaded nothing says so", func(t *testing.T) {
 		f, rec := downloadingWorld(t, ghArtifactManifestJSON(), nil)
 
@@ -452,7 +471,9 @@ func TestGHProxy_ListingIsBoundedInBytesNotJustEntries(t *testing.T) {
 
 	stdout := ghOutcomeStdout(t, res.Body.Bytes())
 	assert.Less(t, len(stdout), 96*1024, "the listing must be bounded in bytes")
-	assert.Contains(t, stdout, "and", "and it must say that it stopped short")
+	// The footer itself, not a bare "and" that any file path would satisfy: a
+	// bounded listing that does not SAY it is bounded reads as the whole tree.
+	assert.Regexp(t, `… and \d+ more`, stdout, "and it must say that it stopped short")
 	assert.Contains(t, stdout, "150 files", "while still reporting the true total")
 }
 
