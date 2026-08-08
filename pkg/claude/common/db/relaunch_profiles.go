@@ -375,6 +375,106 @@ func CompareAndSetAgentCopilotAPI(agentID string, value bool, expected string) (
 	return n > 0, nil
 }
 
+// CopilotDriveRecord names WHICH durable record currently answers "which drive
+// does this conversation run on".
+type CopilotDriveRecord string
+
+const (
+	// CopilotDriveRecordAgentProfile is the stable agent's relaunch profile, which
+	// wins field by field. Every Copilot agent born since the drive became
+	// selectable has a non-nil value here, including an explicit false.
+	CopilotDriveRecordAgentProfile CopilotDriveRecord = "agent profile"
+	// CopilotDriveRecordConversationFallback is the conversation's own record. It
+	// answers for legacy Copilot agents born before the field existed, and for
+	// every conversation with no agent row at all — clones, and a direct
+	// `session new`.
+	CopilotDriveRecordConversationFallback CopilotDriveRecord = "conversation fallback"
+	// CopilotDriveRecordNone means nothing records a drive for this conversation.
+	// Routing reads that as send-keys, so there is nothing for a durable "off" to
+	// turn off, and a caller should say so rather than writing a record to assert
+	// a posture nobody chose.
+	CopilotDriveRecordNone CopilotDriveRecord = "none"
+)
+
+// CopilotDriveTarget is where a durable drive change for one conversation must
+// land, and what is currently recorded there.
+type CopilotDriveTarget struct {
+	Record  CopilotDriveRecord
+	Value   bool
+	AgentID string
+	// Raw is the stored blob of the record named above, for the compare-and-set.
+	Raw string
+}
+
+// CopilotDriveTargetForConv resolves which record a durable drive change must
+// write, in the SAME precedence routing uses.
+//
+// That sentence is the whole contract and it is the reason this function may not
+// be "simplified" later. agentd.copilotLaunchIntentForConv applies the agent
+// relaunch profile field by field FIRST and lets the conversation fallback fill
+// only what the agent profile left nil. A writer that picked a different record
+// than the router reads would report success while changing nothing that routes —
+// which is the exact failure this Copilot series keeps producing, a mechanism
+// truthful about the wrong subject. Same precedence, same source, or the
+// operation is theatre. If the router's precedence changes, the router changes
+// first and this follows.
+//
+// It deliberately does NOT resolve the drive's effective boolean the way the
+// router does. The router collapses "recorded false" and "recorded nothing" into
+// the same routing answer, correctly, because both mean do not assume the API
+// channel. A writer cannot collapse them: one is a record to edit and the other
+// is a record that does not exist, and telling an operator "turned off" when
+// nothing was recorded would be a claim about a write that did not happen.
+//
+// A read failure is returned rather than swallowed. Guessing the record for a
+// write is how an operator's rollback lands somewhere nobody reads.
+func CopilotDriveTargetForConv(convID string) (CopilotDriveTarget, error) {
+	convID = strings.TrimSpace(convID)
+	if convID == "" {
+		return CopilotDriveTarget{}, errors.New("CopilotDriveTargetForConv: conv_id required")
+	}
+	agentID, err := AgentIDForConv(convID)
+	if err != nil {
+		return CopilotDriveTarget{}, err
+	}
+	if agentID != "" {
+		profile, err := AgentRelaunchProfileForConv(convID)
+		if err != nil {
+			return CopilotDriveTarget{}, err
+		}
+		if profile != nil && profile.CopilotAPI != nil {
+			raw, err := AgentRelaunchProfileRaw(agentID)
+			if err != nil {
+				return CopilotDriveTarget{}, err
+			}
+			return CopilotDriveTarget{
+				Record:  CopilotDriveRecordAgentProfile,
+				Value:   *profile.CopilotAPI,
+				AgentID: agentID,
+				Raw:     raw,
+			}, nil
+		}
+	}
+	conversation, err := ConversationResumeProfileForConv(convID)
+	if err != nil {
+		return CopilotDriveTarget{}, err
+	}
+	if conversation != nil && conversation.FallbackRelaunch != nil &&
+		conversation.FallbackRelaunch.CopilotAPI != nil {
+		raw, err := ConversationResumeProfileRaw(convID)
+		if err != nil {
+			return CopilotDriveTarget{}, err
+		}
+		return CopilotDriveTarget{
+			Record:  CopilotDriveRecordConversationFallback,
+			Value:   *conversation.FallbackRelaunch.CopilotAPI,
+			AgentID: agentID,
+			Raw:     raw,
+		}, nil
+	}
+	return CopilotDriveTarget{Record: CopilotDriveRecordNone, AgentID: agentID}, nil
+}
+
 // ConversationResumeProfileRaw returns the stored conversation profile blob
 // verbatim, for a caller that intends to compare-and-set it. Verbatim for the
 // same reason AgentRelaunchProfileRaw is: a guard on bytes cannot be built out of
