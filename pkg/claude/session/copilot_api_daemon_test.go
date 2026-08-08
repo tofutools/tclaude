@@ -283,7 +283,7 @@ func TestSessionNewLeavesACarriedCopilotDriveAloneWhenItCannotHonourIt(t *testin
 			h := copilotLaunchHarness(t)
 			seedDriveLaunchConv(t, driveLaunchConv, false)
 			require.NoError(t, db.SetConversationCopilotAPI(
-				driveLaunchConv, harness.CopilotName, t.TempDir(), true))
+				driveLaunchConv, harness.CopilotName, t.TempDir(), true, nil))
 
 			api, err := db.CopilotAPIForConv(driveLaunchConv)
 			require.NoError(t, err)

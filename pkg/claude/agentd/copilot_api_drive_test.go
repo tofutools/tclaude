@@ -546,7 +546,7 @@ func TestCopilotAPILaunchWithNoHandleHoldsRatherThanTyping(t *testing.T) {
 // CONVERSATION fallback and nowhere else — the shape a clone is actually in.
 func haveCopilotAPIConversationFallbackIntent(t *testing.T, convID, cwd string) {
 	t.Helper()
-	require.NoError(t, db.SetConversationCopilotAPI(convID, harness.CopilotName, cwd, true))
+	require.NoError(t, db.SetConversationCopilotAPI(convID, harness.CopilotName, cwd, true, nil))
 }
 
 // The same rule as the test above, for the record a CLONE actually has.

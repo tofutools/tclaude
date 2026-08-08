@@ -80,7 +80,7 @@ func pinDriveOff(t *testing.T, convID string) {
 	require.NoError(t, err)
 	require.Equal(t, db.CopilotDriveRecordAgentProfile, target.Record,
 		"a spawned Copilot agent's drive must live in the agent profile")
-	ok, err := db.CompareAndSetAgentCopilotAPI(target.AgentID, false, target.Raw)
+	ok, err := db.CompareAndSetAgentCopilotAPI(target.AgentID, false, "explicit", target.Raw)
 	require.NoError(t, err)
 	require.True(t, ok, "the pin's compare-and-set must hold")
 

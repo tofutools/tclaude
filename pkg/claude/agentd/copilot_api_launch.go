@@ -110,8 +110,14 @@ func recordCopilotAPIPosture(convID string, args clcommon.SpawnArgs) {
 	if convID == "" || harnessOrDefault(args.Harness) != harness.CopilotName {
 		return
 	}
+	// nil attribution: this records what the launch RESOLVED, which is not the
+	// same as someone having chosen it — args.CopilotAPI is frozen non-nil for
+	// every Copilot launch including false, and SpawnArgs carries no tier to name.
+	// Claiming an explicit choice here would let a from-group snapshot carry an
+	// observed default as a curated spec line (TCL-1090). Leaving the attribution
+	// alone keeps this write saying only what it can support.
 	if err := db.SetConversationCopilotAPI(
-		convID, harness.CopilotName, args.Cwd, args.CopilotAPI,
+		convID, harness.CopilotName, args.Cwd, args.CopilotAPI, nil,
 	); err != nil {
 		slog.Error("failed to record the Copilot drive this launch took; until the "+
 			"launched process records it, messages to this conversation route as send-keys",

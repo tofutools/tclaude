@@ -42,7 +42,7 @@ func pinDriveOffFor(t *testing.T, convID string) {
 	require.NoError(t, err)
 	require.Equal(t, db.CopilotDriveRecordAgentProfile, target.Record)
 	require.True(t, target.Value, "the scenario needs a drive that was recorded ON")
-	ok, err := db.CompareAndSetAgentCopilotAPI(target.AgentID, false, target.Raw)
+	ok, err := db.CompareAndSetAgentCopilotAPI(target.AgentID, false, "explicit", target.Raw)
 	require.NoError(t, err)
 	require.True(t, ok, "the pin's compare-and-set must hold")
 }

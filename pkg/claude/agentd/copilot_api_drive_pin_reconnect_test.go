@@ -30,7 +30,7 @@ func pinConversationDriveOff(t *testing.T, convID string) {
 	require.NoError(t, err)
 	require.Equal(t, db.CopilotDriveRecordConversationFallback, target.Record)
 	require.True(t, target.Value, "the scenario needs a drive recorded ON")
-	ok, err := db.CompareAndSetConversationCopilotAPI(convID, false, target.Raw)
+	ok, err := db.CompareAndSetConversationCopilotAPI(convID, false, "explicit", target.Raw)
 	require.NoError(t, err)
 	require.True(t, ok, "the pin's compare-and-set must hold")
 	require.False(t, copilotAPIDriven(convID),

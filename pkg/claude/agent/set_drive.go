@@ -195,9 +195,9 @@ func runSetDriveDirect(target string, asJSON bool, stdout, stderr io.Writer) int
 	var ok bool
 	switch drive.Record {
 	case db.CopilotDriveRecordAgentProfile:
-		ok, err = db.CompareAndSetAgentCopilotAPI(drive.AgentID, false, drive.Raw)
+		ok, err = db.CompareAndSetAgentCopilotAPI(drive.AgentID, false, ProvExplicit, drive.Raw)
 	case db.CopilotDriveRecordConversationFallback:
-		ok, err = db.CompareAndSetConversationCopilotAPI(convID, false, drive.Raw)
+		ok, err = db.CompareAndSetConversationCopilotAPI(convID, false, ProvExplicit, drive.Raw)
 	}
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)

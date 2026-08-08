@@ -37,7 +37,7 @@ func seedDriveConv(t *testing.T, convID string, api bool, managed bool) {
 		ApprovalPolicy: harness.CopilotApprovalInherit,
 	}))
 	require.NoError(t, db.SetConversationCopilotAPI(
-		convID, harness.CopilotName, t.TempDir(), api))
+		convID, harness.CopilotName, t.TempDir(), api, nil))
 	if managed {
 		_, _, err := db.EnsureAgentForConv(convID, "test")
 		require.NoError(t, err)
@@ -277,7 +277,7 @@ func TestPlainCLIResumeLeavesTheRecordedCopilotDriveAlone(t *testing.T) {
 		ID: driveConv, ConvID: driveConv, Cwd: cwd, Harness: harness.CopilotName,
 		ApprovalPolicy: harness.CopilotApprovalInherit,
 	}))
-	require.NoError(t, db.SetConversationCopilotAPI(driveConv, harness.CopilotName, cwd, true))
+	require.NoError(t, db.SetConversationCopilotAPI(driveConv, harness.CopilotName, cwd, true, nil))
 	require.NoError(t, db.SetSessionConfiguredContextWindowMax(driveConv, 128000))
 
 	before, err := db.CopilotAPIForConv(driveConv)
@@ -371,7 +371,7 @@ func TestARecordedFalseStillOverwritesTheDrive(t *testing.T) {
 		ID: driveConv, ConvID: driveConv, Cwd: cwd, Harness: harness.CopilotName,
 		ApprovalPolicy: harness.CopilotApprovalInherit,
 	}))
-	require.NoError(t, db.SetConversationCopilotAPI(driveConv, harness.CopilotName, cwd, true))
+	require.NoError(t, db.SetConversationCopilotAPI(driveConv, harness.CopilotName, cwd, true, nil))
 
 	off := false
 	zero := int64(0)

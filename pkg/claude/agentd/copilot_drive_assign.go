@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
@@ -229,7 +230,8 @@ func writeCopilotDrive(
 ) (created bool, record db.CopilotDriveRecord, err error) {
 	switch target.Record {
 	case db.CopilotDriveRecordAgentProfile:
-		ok, err := db.CompareAndSetAgentCopilotAPI(target.AgentID, wantAPI, target.Raw)
+		ok, err := db.CompareAndSetAgentCopilotAPI(
+			target.AgentID, wantAPI, agent.ProvExplicit, target.Raw)
 		if err != nil {
 			return false, "", err
 		}
@@ -239,7 +241,8 @@ func writeCopilotDrive(
 		}
 		return false, db.CopilotDriveRecordAgentProfile, nil
 	case db.CopilotDriveRecordConversationFallback:
-		ok, err := db.CompareAndSetConversationCopilotAPI(convID, wantAPI, target.Raw)
+		ok, err := db.CompareAndSetConversationCopilotAPI(
+			convID, wantAPI, agent.ProvExplicit, target.Raw)
 		if err != nil {
 			return false, "", err
 		}
@@ -278,7 +281,8 @@ func writeCopilotDrive(
 		if strings.TrimSpace(raw) != "" {
 			// A profile exists and simply never recorded a drive: json_set appends
 			// the leaf, so this is the ordinary compare-and-set rather than a seed.
-			ok, casErr := db.CompareAndSetAgentCopilotAPI(target.AgentID, wantAPI, raw)
+			ok, casErr := db.CompareAndSetAgentCopilotAPI(
+				target.AgentID, wantAPI, agent.ProvExplicit, raw)
 			if casErr != nil {
 				return false, "", casErr
 			}
@@ -301,8 +305,13 @@ func writeCopilotDrive(
 		// was already proved resolvable, so a minimal profile cannot wedge it: the
 		// conversation fallback answers for every field left nil.
 		value := wantAPI
+		// The attribution travels with the value here for the same reason the
+		// compare-and-set takes it as a parameter: a drive with no source reads as
+		// un-chosen, and a from-group snapshot would demote this operator's pin to
+		// an observation it declines to carry.
+		source := agent.ProvExplicit
 		seeded, err := db.SeedAgentRelaunchProfileIfEmpty(target.AgentID, db.AgentRelaunchProfile{
-			Version: db.RelaunchProfileVersion, CopilotAPI: &value,
+			Version: db.RelaunchProfileVersion, CopilotAPI: &value, CopilotAPISource: &source,
 		})
 		if err != nil {
 			return false, "", err
@@ -322,8 +331,9 @@ func writeCopilotDrive(
 	if err != nil {
 		return false, "", err
 	}
+	pinnedByOperator := agent.ProvExplicit
 	if err := db.SetConversationCopilotAPI(
-		convID, config.Harness, config.Cwd, wantAPI); err != nil {
+		convID, config.Harness, config.Cwd, wantAPI, &pinnedByOperator); err != nil {
 		return false, "", err
 	}
 	return true, db.CopilotDriveRecordConversationFallback, nil

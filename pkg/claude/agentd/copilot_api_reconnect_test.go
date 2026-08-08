@@ -133,7 +133,7 @@ func newCopilotAPIReconnectFixtureWithPosture(
 	// conversation's mail HOLD rather than route to keystrokes while it has no
 	// handle, so it is the state a restarted daemon actually finds.
 	if recordPosture {
-		require.NoError(t, db.SetConversationCopilotAPI(convID, harness.CopilotName, cwd, true))
+		require.NoError(t, db.SetConversationCopilotAPI(convID, harness.CopilotName, cwd, true, nil))
 	}
 	require.NoError(t, db.UpsertCopilotAPIRuntime(db.CopilotAPIRuntime{
 		ConvID: convID, Port: server.port(),
