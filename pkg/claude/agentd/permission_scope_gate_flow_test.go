@@ -103,9 +103,12 @@ func TestPermissionScope_GroupScopedGrantGatesSpawnPerGroup(t *testing.T) {
 		"a scoped authorization must be recorded on the audit row")
 }
 
-// A dimension the call site does not describe fails CLOSED. groups.spawn also
-// declares spawn_profile, but no production handler passes it until Phase 4 —
-// so a profile-scoped grant authorizes nothing yet rather than everything.
+// A dimension the call site does not describe fails CLOSED. handleGroupSpawn
+// describes spawn_profile only when a NAMED profile resolves, so a spawn with
+// no profile (and no group/global default to fall back to) leaves it
+// undescribed — and a profile-scoped grant authorizes nothing rather than
+// everything. See TestAttenuation_SpawnProfileScopedGrantGatesPerProfile for
+// the satisfied half.
 func TestPermissionScope_UndescribedDimensionFailsClosed(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")

@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 
@@ -217,6 +218,72 @@ func renderConferredScope(scope PermissionScope) string {
 		return "an UNSCOPED grant"
 	}
 	return "[" + permissionScopeDisplay(scope) + "]"
+}
+
+// normalizeBlueprintGrants validates a default-grant list authored on a role
+// or a template agent, and returns it canonicalized. It is the list twin of
+// normalizeSpawnPermissionOverrides and the same boundary: every slug must be
+// registered, and every scope must parse, name only dimensions its slug
+// declares, and be stored in canonical form.
+//
+// A blank slug is dropped rather than refused, keeping the pre-scope leniency
+// for an editor that posts an empty row.
+func normalizeBlueprintGrants(in []db.PermissionGrant) ([]db.PermissionGrant, *spawnFailure) {
+	out := []db.PermissionGrant{}
+	for _, grant := range in {
+		slug := strings.TrimSpace(grant.Slug)
+		if slug == "" {
+			continue
+		}
+		if !IsKnownPermSlug(slug) {
+			return nil, &spawnFailure{http.StatusBadRequest, "unknown_slug",
+				fmt.Sprintf("unknown permission slug %q. Known slugs: %s.", slug, strings.Join(knownSlugs(), ", "))}
+		}
+		canonical, err := canonicalPermissionScopeForSlug(slug, strings.TrimSpace(grant.Scope))
+		if err != nil {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_scope",
+				fmt.Sprintf("permission %q: %v", slug, err)}
+		}
+		out = append(out, db.PermissionGrant{Slug: slug, Scope: canonical})
+	}
+	return out, nil
+}
+
+// checkTemplateDeployAttenuation applies the same rule to a template roster,
+// over EVERY wave rather than just the first: a later wave's grants are minted
+// by the same deploy request and must clear the same bar, and the background
+// wave runner is far too late to refuse.
+//
+// An agent whose access does not resolve (vanished or disabled profile) is
+// skipped: it will never spawn, so it confers nothing, and reporting that here
+// would pre-empt the per-agent error the deploy already gives it.
+func checkTemplateDeployAttenuation(agents []db.GroupTemplateAgent, callerConvID string) error {
+	if callerConvID == "" || len(agents) == 0 {
+		return nil
+	}
+	for _, a := range agents {
+		var role *db.Role
+		if ref := strings.TrimSpace(a.RoleRef); ref != "" {
+			if rl, err := db.GetRole(ref); err == nil {
+				role = rl
+			}
+		}
+		_, overrides, fail := resolveTemplateAgentAccess(a, role)
+		if fail != nil {
+			continue
+		}
+		grants := make([]conferredGrant, 0, len(overrides))
+		for _, ov := range overrides {
+			if ov.Override.Effect != db.PermEffectGrant {
+				continue
+			}
+			grants = append(grants, conferredGrant{Slug: ov.Slug, Scope: ov.Override.Scope})
+		}
+		if err := checkGrantAttenuation(callerConvID, grants); err != nil {
+			return fmt.Errorf("template agent %q: %w", a.Name, err)
+		}
+	}
+	return nil
 }
 
 // agentPermissionOverrides reads a live agent's complete per-slug override set

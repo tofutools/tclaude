@@ -120,6 +120,100 @@ func (o PermissionOverride) Display() string {
 	return o.Effect + "[" + strings.Join(parts, " ") + "]"
 }
 
+// PermissionGrant is a slug plus an optional scope — the LIST form of the same
+// idea, used where a blueprint carries default grants rather than tri-state
+// overrides (a role's default permission set, a template agent's legacy inline
+// grants). Only grants live in these lists, so there is no effect to carry.
+//
+// Its JSON is the same union, and its unscoped arm is the bare slug string
+// every stored list already holds:
+//
+//	"human.notify"                                    // unscoped
+//	{"slug":"routes.publish","scope":{"group":["a"]}} // scoped
+type PermissionGrant struct {
+	Slug string
+	// Scope is the canonical permission-scope JSON, "" for unscoped. Same
+	// contract as PermissionOverride.Scope: validated at the wire boundary,
+	// stored verbatim here.
+	Scope string
+}
+
+// UnscopedGrants lifts a bare slug list into the scoped shape.
+func UnscopedGrants(slugs []string) []PermissionGrant {
+	if slugs == nil {
+		return nil
+	}
+	out := make([]PermissionGrant, 0, len(slugs))
+	for _, slug := range slugs {
+		out = append(out, PermissionGrant{Slug: slug})
+	}
+	return out
+}
+
+// GrantSlugs projects the list back down to bare slugs, for readers that only
+// need to know WHICH permissions a blueprint mentions (counts, one-line
+// summaries, membership checks). Never use it on a WRITE path: it discards
+// scopes.
+func GrantSlugs(grants []PermissionGrant) []string {
+	out := make([]string, 0, len(grants))
+	for _, grant := range grants {
+		out = append(out, grant.Slug)
+	}
+	return out
+}
+
+// Display renders one grant for a human-facing summary: the bare slug when
+// unscoped, "slug[group=a,b]" when scoped.
+func (g PermissionGrant) Display() string {
+	if g.Scope == "" {
+		return g.Slug
+	}
+	return g.Slug + PermissionOverride{Effect: "", Scope: g.Scope}.Display()
+}
+
+type permissionGrantJSON struct {
+	Slug  string          `json:"slug"`
+	Scope json.RawMessage `json:"scope,omitempty"`
+}
+
+func (g PermissionGrant) MarshalJSON() ([]byte, error) {
+	if g.Scope == "" {
+		return json.Marshal(g.Slug)
+	}
+	if !json.Valid([]byte(g.Scope)) {
+		// Same fail-closed reasoning as PermissionOverride: emitting the bare
+		// slug would publish the grant as unscoped, silently widening it.
+		return nil, fmt.Errorf("permission grant %q carries invalid scope JSON", g.Slug)
+	}
+	return json.Marshal(permissionGrantJSON{Slug: g.Slug, Scope: json.RawMessage(g.Scope)})
+}
+
+func (g *PermissionGrant) UnmarshalJSON(b []byte) error {
+	trimmed := strings.TrimSpace(string(b))
+	if trimmed == "" || trimmed == "null" {
+		*g = PermissionGrant{}
+		return nil
+	}
+	if trimmed[0] == '"' {
+		var slug string
+		if err := json.Unmarshal(b, &slug); err != nil {
+			return err
+		}
+		*g = PermissionGrant{Slug: slug}
+		return nil
+	}
+	var wire permissionGrantJSON
+	if err := json.Unmarshal(b, &wire); err != nil {
+		return err
+	}
+	scope := strings.TrimSpace(string(wire.Scope))
+	if scope == "null" || scope == "{}" {
+		scope = ""
+	}
+	*g = PermissionGrant{Slug: wire.Slug, Scope: scope}
+	return nil
+}
+
 // permissionOverrideJSON is the object arm of the union.
 type permissionOverrideJSON struct {
 	Effect string          `json:"effect"`
