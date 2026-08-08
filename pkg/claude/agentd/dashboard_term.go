@@ -355,6 +355,41 @@ type termResizeMsg struct {
 	Rows int    `json:"rows"`
 }
 
+// parseTermResize classifies one WebSocket frame for the PTY bridge. isResize
+// is true for any {"type":"resize",...} text frame — those are consumed by the
+// bridge and never written to the PTY, valid or not, matching the pre-existing
+// behaviour. size is non-nil only when the dimensions are usable (positive and
+// within the uint16 range a PTY winsize can carry).
+func parseTermResize(messageType int, data []byte) (size *pty.Winsize, isResize bool) {
+	if messageType != websocket.TextMessage {
+		return nil, false
+	}
+	var msg termResizeMsg
+	if json.Unmarshal(data, &msg) != nil || msg.Type != "resize" {
+		return nil, false
+	}
+	if msg.Cols <= 0 || msg.Rows <= 0 || msg.Cols > 0xffff || msg.Rows > 0xffff {
+		return nil, true
+	}
+	return &pty.Winsize{Cols: uint16(msg.Cols), Rows: uint16(msg.Rows)}, true
+}
+
+// initialResizeWait bounds how long runPTYOverWS holds the command back
+// waiting for the client's opening resize message. Every client of these
+// routes (the dashboard widget, the standalone terminal page, the remote TUI)
+// sends its size immediately on open, so in practice this wait is a few
+// milliseconds plus one network round trip; the timeout only covers a client
+// that dies mid-handshake or predates the resize protocol. Var, not const, so
+// tests can shrink it.
+var initialResizeWait = 1 * time.Second
+
+// defaultPTYWinsize is the fallback size for a PTY whose client never said how
+// big it is. 80x24 is the least-wrong guess; what must never happen is
+// starting the command on a 0x0 PTY — a tmux client that reads that before the
+// first real resize lands renders a minimal-width window, and if it also
+// misses the resize's SIGWINCH (see winchProcessGroup) it stays that way.
+var defaultPTYWinsize = pty.Winsize{Cols: 80, Rows: 24}
+
 // detachTmuxSession asks the tmux server to detach every client attached to
 // tmuxSession; the clients drop their view and the session keeps running,
 // detached. This is the reliable way to make closing the web window/term modal
@@ -404,6 +439,27 @@ func hangupProcessGroup(proc *os.Process) {
 	}
 	if err := syscall.Kill(-proc.Pid, syscall.SIGHUP); err != nil {
 		_ = proc.Signal(syscall.SIGHUP)
+	}
+}
+
+// winchProcessGroup delivers SIGWINCH to the PTY's whole process group after a
+// resize was applied. The kernel raises SIGWINCH only when TIOCSWINSZ actually
+// CHANGES the size, which leaves one stuck state: a tmux client that read the
+// pre-resize tty size and missed the change's signal while it was still
+// starting up (its handler not yet installed) keeps rendering the old size,
+// and a client re-sending the same size to repair exactly that — as the
+// dashboard's post-open refit does — never generates another signal. The
+// explicit group signal makes every resize message a full re-sync regardless
+// of whether the kernel considered it a change. Group not pid for the same
+// reason as hangupProcessGroup: the tmux client may be a forked child of the
+// wrapper. SIGWINCH's default action is to be ignored, so over-delivery to the
+// wrapper is harmless, and the same negative-pid safety argument applies.
+func winchProcessGroup(proc *os.Process) {
+	if proc == nil {
+		return
+	}
+	if err := syscall.Kill(-proc.Pid, syscall.SIGWINCH); err != nil {
+		_ = proc.Signal(syscall.SIGWINCH)
 	}
 }
 
@@ -460,16 +516,86 @@ func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand, tmuxSess
 	}
 	defer func() { _ = conn.Close() }()
 
+	// One goroutine owns conn reads for the whole connection so frames can be
+	// consumed both before the PTY exists (the initial-size wait below) and
+	// after, in order. It exits when the connection errors (any teardown path
+	// closes conn) or when runPTYOverWS returns (readerDone, for early-exit
+	// paths where nothing is draining frames).
+	type wsFrame struct {
+		messageType int
+		data        []byte
+	}
+	frames := make(chan wsFrame)
+	readerDone := make(chan struct{})
+	defer close(readerDone)
+	go func() {
+		defer close(frames)
+		for {
+			messageType, data, readErr := conn.ReadMessage()
+			if readErr != nil {
+				return
+			}
+			select {
+			case frames <- wsFrame{messageType, data}:
+			case <-readerDone:
+				return
+			}
+		}
+	}()
+
+	// Hold the command back (briefly) until the client has said how big its
+	// terminal is, so the PTY is born at the right size instead of 0x0. The
+	// kernel raises SIGWINCH only on an actual size CHANGE, so a tmux client
+	// starting on a 0x0 PTY could read that size and — if the real resize
+	// landed while its signal handling was still being installed — keep it,
+	// rendering a minimal-width window until the next genuine resize. Starting
+	// at the final size removes that race entirely. Input frames arriving
+	// before the size are rare (the resize is the first thing every client
+	// sends) but preserved in order.
+	var initial *pty.Winsize
+	var pending []wsFrame
+	waitTimer := time.NewTimer(initialResizeWait)
+	defer waitTimer.Stop()
+initialSize:
+	for {
+		select {
+		case frame, ok := <-frames:
+			if !ok {
+				return // client went away before the command ever started
+			}
+			size, isResize := parseTermResize(frame.messageType, frame.data)
+			if isResize {
+				if size != nil {
+					initial = size
+					break initialSize
+				}
+				continue
+			}
+			pending = append(pending, frame)
+		case <-waitTimer.C:
+			break initialSize
+		}
+	}
+
 	cmd := exec.Command("sh", "-c", shellCommand)
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 
-	ptmx, err := pty.Start(cmd)
+	startSize := defaultPTYWinsize
+	if initial != nil {
+		startSize = *initial
+	}
+	ptmx, err := pty.StartWithSize(cmd, &startSize)
 	if err != nil {
 		_ = conn.WriteMessage(websocket.TextMessage, fmt.Appendf(nil, "Error: %v\r\n", err))
 		return
 	}
 	if hook != nil && hook.OnStart != nil {
 		hook.OnStart(cmd.Process)
+	}
+	// The initial size was applied (by StartWithSize) exactly like a resize
+	// message's Setsize, so the smoke's applied-resize observer sees it too.
+	if hook != nil && hook.OnResize != nil && initial != nil {
+		hook.OnResize(int(startSize.Cols), int(startSize.Rows))
 	}
 	defer func() {
 		// Reliable detach first: tell the tmux server to drop the session's
@@ -484,11 +610,12 @@ func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand, tmuxSess
 		}
 	}()
 
-	// Closing ptmx unblocks the PTY->WS reader; closing conn unblocks the
-	// WS->PTY reader. Whichever pump exits first runs this once, so the
+	// Closing ptmx unblocks the PTY->WS pump; closing conn unblocks the
+	// connection-reader goroutine, whose channel close in turn ends the
+	// WS->PTY pump. Whichever pump exits first runs this once, so the
 	// other side can never stay blocked and wg.Wait() always completes —
-	// e.g. when the PTY EOFs (shell/tmux exited) the WS->PTY goroutine
-	// would otherwise stay parked in conn.ReadMessage() forever. The
+	// e.g. when the PTY EOFs (shell/tmux exited) the reader would
+	// otherwise stay parked in conn.ReadMessage() forever. The
 	// outer defers (conn.Close, then detachTmuxSession + ptmx.Close + a
 	// process-group SIGHUP + cmd.Wait) still run afterwards; the double
 	// close is a harmless no-op. The underlying tmux session lives on —
@@ -500,6 +627,11 @@ func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand, tmuxSess
 			_ = ptmx.Close()
 			_ = conn.Close()
 		})
+	}
+
+	// Input that arrived while the command was being sized and started.
+	for _, frame := range pending {
+		_, _ = ptmx.Write(frame.data)
 	}
 
 	var wg sync.WaitGroup
@@ -521,31 +653,29 @@ func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand, tmuxSess
 		}
 	}()
 
-	// WebSocket -> PTY (input + resize)
+	// WebSocket -> PTY (input + resize). Runs until the reader goroutine
+	// closes frames (which it does once the connection errors — every
+	// teardown path closes conn), so the reader can never stay blocked on a
+	// frame nobody is receiving.
 	go func() {
 		defer wg.Done()
 		defer closeBoth()
-		for {
-			msgType, data, err := conn.ReadMessage()
-			if err != nil {
-				return
-			}
-			if msgType == websocket.TextMessage {
-				var msg termResizeMsg
-				if json.Unmarshal(data, &msg) == nil && msg.Type == "resize" {
-					if msg.Cols > 0 && msg.Rows > 0 {
-						// Best-effort as before (a failed resize never kills the
-						// stream); the hook fires only for APPLIED resizes.
-						if err := pty.Setsize(ptmx, &pty.Winsize{Cols: uint16(msg.Cols), Rows: uint16(msg.Rows)}); err == nil {
-							if hook != nil && hook.OnResize != nil {
-								hook.OnResize(msg.Cols, msg.Rows)
-							}
+		for frame := range frames {
+			size, isResize := parseTermResize(frame.messageType, frame.data)
+			if isResize {
+				if size != nil {
+					// Best-effort as before (a failed resize never kills the
+					// stream); the hook fires only for APPLIED resizes.
+					if err := pty.Setsize(ptmx, size); err == nil {
+						winchProcessGroup(cmd.Process)
+						if hook != nil && hook.OnResize != nil {
+							hook.OnResize(int(size.Cols), int(size.Rows))
 						}
 					}
-					continue
 				}
+				continue
 			}
-			_, _ = ptmx.Write(data)
+			_, _ = ptmx.Write(frame.data)
 		}
 	}()
 
