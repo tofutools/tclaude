@@ -161,6 +161,51 @@ func TestALaterLaunchCanTurnTheRecordedCopilotDriveOff(t *testing.T) {
 			"carrying it across projections cannot make it permanent")
 }
 
+// The direction of the carry above, which is the half that is easy to get
+// wrong: it must reach the CONVERSATION fallback and must not reach the stable
+// agent's frozen posture.
+//
+// Those two records answer different questions. The agent's is what the agent
+// CHOSE, frozen at birth and replayed by every daemon relaunch; the
+// conversation's is what the last launch on this conversation actually did. A
+// carry that flowed upward would let the second overwrite the first — and the
+// launch that would do it is not exotic: `tclaude conv resume` threads no
+// Copilot drive at all, so it records a truthful `false` for its own send-keys
+// launch, and one such resume would permanently un-choose a managed agent's
+// drive and drop its configured meter denominator.
+func TestTheCopilotCarryDoesNotOverwriteTheAgentsFrozenPosture(t *testing.T) {
+	setupTestDB(t)
+	const convID = "copilot-frozen-posture-conv"
+	agentID, _, err := EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+
+	api, max := true, int64(128_000)
+	require.NoError(t, SetAgentRelaunchProfile(agentID, AgentRelaunchProfile{
+		Version: RelaunchProfileVersion, CopilotAPI: &api, ConfiguredContextWindowMax: &max,
+	}))
+
+	// A plain-CLI resume: a new session row, then the zero values that path
+	// records because it never carried either field.
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "copilot-frozen-posture-1", ConvID: convID,
+		Cwd: "/tmp/copilot-frozen-posture", Harness: "copilot", Status: "idle",
+	}))
+	require.NoError(t, SetSessionCopilotAPI("copilot-frozen-posture-1", false))
+	require.NoError(t, SetSessionConfiguredContextWindowMax("copilot-frozen-posture-1", 0))
+	// And any later projection tick, which is what would carry it upward.
+	require.NoError(t, UpdateContextSnapshot("copilot-frozen-posture-1", 25, 10, 20, 128_000))
+
+	profile, err := AgentRelaunchProfileForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, profile)
+	require.NotNil(t, profile.CopilotAPI)
+	assert.True(t, *profile.CopilotAPI,
+		"the agent's frozen drive is written once, at birth; a launch on its "+
+			"conversation must not be able to overwrite it")
+	require.NotNil(t, profile.ConfiguredContextWindowMax)
+	assert.Equal(t, int64(128_000), *profile.ConfiguredContextWindowMax)
+}
+
 // The daemon-side writer, which exists because the launched process's own write
 // is best-effort and lands too late to decide routing for the window before it.
 // It has to work with nothing else in the database — that is the state a freshly

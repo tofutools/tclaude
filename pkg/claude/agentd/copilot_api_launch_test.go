@@ -235,14 +235,35 @@ func TestCopilotAPILaunchRecordsNothingForAnotherHarness(t *testing.T) {
 // them was the point — and when the durable posture arrived later, and mattered
 // more, it was added at none of them. Anything that can be forgotten at four
 // sites will be forgotten at the fifth.
-var copilotAPILaunchRecorders = []string{
+// The bootstrap entry points are listed too, and not only the indirection
+// variable. Naming just `startCopilotAPIBootstrap` would leave a new site free
+// to call `runCopilotAPIBootstrap` or `bootstrapCopilotAPISessionFn` directly
+// and bypass the pairing entirely — a guard with a way around it watches
+// nothing in particular. Those two are additionally allowed inside the
+// bootstrap's own file, where the variable is defined in terms of them.
+var copilotAPILaunchRecorders = map[string][]string{
+	"recordCopilotAPIPosture":      {copilotAPILaunchSeam},
+	"recordCopilotAPIPort":         {copilotAPILaunchSeam},
+	"startCopilotAPIBootstrap":     {copilotAPILaunchSeam, copilotAPIBootstrapFile},
+	"runCopilotAPIBootstrap":       {copilotAPILaunchSeam, copilotAPIBootstrapFile},
+	"bootstrapCopilotAPISessionFn": {copilotAPILaunchSeam, copilotAPIBootstrapFile},
+}
+
+// copilotAPILaunchSeam is the only non-test file allowed to call the per-launch
+// recorders; copilotAPIBootstrapFile additionally owns the bootstrap's own
+// indirection.
+const (
+	copilotAPILaunchSeam    = "copilot_api_launch.go"
+	copilotAPIBootstrapFile = "copilot_api_bootstrap.go"
+)
+
+// copilotAPILaunchSeamOnly are the recorders that must be reachable from the
+// seam and from nowhere else — the positive control's subject.
+var copilotAPILaunchSeamOnly = []string{
 	"recordCopilotAPIPosture",
 	"recordCopilotAPIPort",
 	"startCopilotAPIBootstrap",
 }
-
-// copilotAPILaunchSeam is the only non-test file allowed to call them.
-const copilotAPILaunchSeam = "copilot_api_launch.go"
 
 // TestCopilotLaunchesRecordPortAndPostureTogether makes the pairing structural.
 //
@@ -273,7 +294,10 @@ func TestCopilotLaunchesRecordPortAndPostureTogether(t *testing.T) {
 				return true
 			}
 			ident, ok := call.Fun.(*ast.Ident)
-			if !ok || !slices.Contains(copilotAPILaunchRecorders, ident.Name) {
+			if !ok {
+				return true
+			}
+			if _, watched := copilotAPILaunchRecorders[ident.Name]; !watched {
 				return true
 			}
 			if !slices.Contains(callers[ident.Name], name) {
@@ -287,7 +311,7 @@ func TestCopilotLaunchesRecordPortAndPostureTogether(t *testing.T) {
 	// the test: without it every assertion below is satisfied by a seam that
 	// calls none of these — which is exactly what a rename, or a refactor that
 	// moved the pairing elsewhere, would produce.
-	for _, recorder := range copilotAPILaunchRecorders {
+	for _, recorder := range copilotAPILaunchSeamOnly {
 		assert.Contains(t, callers[recorder], copilotAPILaunchSeam,
 			"%s is no longer called from %s. Either it moved, in which case this guard "+
 				"is now watching the wrong file, or the pairing has been taken apart",
@@ -295,15 +319,16 @@ func TestCopilotLaunchesRecordPortAndPostureTogether(t *testing.T) {
 	}
 
 	for recorder, files := range callers {
+		allowed := copilotAPILaunchRecorders[recorder]
 		for _, file := range files {
-			assert.Equal(t, copilotAPILaunchSeam, file,
-				"%s is called from %s. Every per-launch record has to be written at the "+
-					"ONE moment a launch and its conversation id are both in hand, and "+
-					"completeCopilotAPILaunch in %s is that moment. A site that records a "+
-					"port or starts a channel without also recording the drive leaves a "+
-					"conversation that routes its messages as keystrokes for the rest of "+
-					"its life. Call completeCopilotAPILaunch instead",
-				recorder, file, copilotAPILaunchSeam)
+			assert.Containsf(t, allowed, file,
+				"%s is called from %s, which is not one of %v. Every per-launch record has "+
+					"to be written at the ONE moment a launch and its conversation id are "+
+					"both in hand, and completeCopilotAPILaunch in %s is that moment. A site "+
+					"that records a port or starts a channel without also recording the "+
+					"drive leaves a conversation that routes its messages as keystrokes for "+
+					"the rest of its life. Call completeCopilotAPILaunch instead",
+				recorder, file, allowed, copilotAPILaunchSeam)
 		}
 	}
 }

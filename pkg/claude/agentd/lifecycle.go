@@ -7443,6 +7443,26 @@ func SpawnDetachedTclaudeNew(args clcommon.SpawnArgs) error {
 // same way; relaunch never re-engages the experimental guardian, so resume
 // callers leave it false.
 func SpawnDetachedTclaudeResume(args clcommon.SpawnArgs) error {
+	return spawnDetachedTclaudeResumeAs(args, copilotAPILaunchResume)
+}
+
+// spawnDetachedTclaudeResumeAs is SpawnDetachedTclaudeResume with the launch
+// kind stated rather than assumed.
+//
+// It exists for one caller: the COPY clone. That path also forks `session new
+// -r`, but the id it resumes was minted seconds earlier by forking a
+// conversation file, so the harness has never seen it — the launch is a resume
+// in argv shape and a fresh conversation in fact. Under the Copilot API drive
+// those two want opposite calls, and a resume of a session that does not exist
+// is refused rather than created, so a clone that inherited the assumption
+// would come up with no channel and no briefing at all.
+//
+// Unreachable today, because convops.CopyConversationToPath reads Claude Code's
+// own project tree and so a Copilot clone cannot take the copy branch. Stated
+// here anyway: the whole point of threading the kind is that it is a fact the
+// caller knows and the callee cannot recover, and a caller passing the wrong one
+// by inheritance is the same bug one level up.
+func spawnDetachedTclaudeResumeAs(args clcommon.SpawnArgs, kind copilotAPILaunchKind) error {
 	if err := prepareCopilotAPIPort(&args); err != nil {
 		return err
 	}
@@ -7452,12 +7472,12 @@ func SpawnDetachedTclaudeResume(args clcommon.SpawnArgs) error {
 	// A resume always knows its conversation — that is what it is resuming — so
 	// unlike the fresh-spawn path this never defers the record.
 	//
-	// And it is a RESUME, which for the Copilot API drive is not a label but the
-	// difference between reloading the conversation and replacing it: the pane
-	// was started `copilot --resume=<convID>`, so its conversation has history,
-	// and a bootstrap that created a session at that id would discard it. See
-	// bootstrapCopilotAPISession.
-	completeCopilotAPILaunch(args.ConvID, copilotAPILaunchResume, args)
+	// For an ordinary resume the kind is a RESUME, which under the Copilot API
+	// drive is not a label but the difference between reloading the conversation
+	// and replacing it: the pane was started `copilot --resume=<convID>`, so its
+	// conversation has history, and a bootstrap that created a session at that
+	// id would discard it. See bootstrapCopilotAPISession.
+	completeCopilotAPILaunch(args.ConvID, kind, args)
 	return nil
 }
 

@@ -880,31 +880,6 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		if agent.SSHWorkaround == nil {
 			agent.SSHWorkaround = previous.SSHWorkaround
 		}
-		// The two Copilot launch facts carry UNCONDITIONALLY — not gated on
-		// sameSourceGeneration like the block below — and the difference is
-		// load-bearing rather than an oversight in either direction.
-		//
-		// Neither has a session column, so this projection has nothing to say
-		// about them and must not be able to erase them. Under a generation gate
-		// it would: a resume mints a new session row whose FIRST SaveSession
-		// projects before session.RecordLaunchPosture re-asserts the posture, so
-		// there is a window in which the conversation's recorded drive is gone.
-		// Since TCL-1058 that window is not cosmetic — copilotAPIDriven reads this
-		// record to decide whether a message goes over RPC or gets TYPED into the
-		// pane, and a missing record is indistinguishable from "this agent chose
-		// keystrokes". An erasure therefore re-opens the injection sink for
-		// exactly the agent that opted out of it.
-		//
-		// Carrying unconditionally cannot pin a stale posture, because every
-		// launch path re-asserts both values immediately afterwards INCLUDING
-		// their zero values (see RecordLaunchPosture): a relaunch that genuinely
-		// turned the drive off writes false over this a moment later.
-		if agent.CopilotAPI == nil {
-			agent.CopilotAPI = previous.CopilotAPI
-		}
-		if agent.ConfiguredContextWindowMax == nil {
-			agent.ConfiguredContextWindowMax = previous.ConfiguredContextWindowMax
-		}
 		if sameSourceGeneration && agent.ContextFeatures == nil {
 			agent.ContextFeatures = previous.ContextFeatures
 		}
@@ -915,7 +890,50 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 			agent.FastMode = previous.FastMode
 		}
 	}
-	conversation.FallbackRelaunch = &agent
+	// The two Copilot launch facts carry into the CONVERSATION fallback only,
+	// which is why they are applied to a copy here rather than to `agent` in the
+	// block above. Both records are written from that one struct, and the
+	// direction matters in a way none of the other carries have to think about.
+	//
+	// Why they must carry at all: neither has a session column, so this
+	// projection has nothing to say about them and must not be able to erase
+	// them. It did — deterministically, on the first status tick after a launch
+	// recorded them — and since TCL-1058 an erased drive is not a lost badge:
+	// copilotAPIDriven reads this record to decide whether a message goes over
+	// RPC or gets TYPED into the pane, and a missing record is
+	// indistinguishable from "this agent chose keystrokes". For a conversation
+	// with no stable agent posture of its own — every clone — this fallback is
+	// the only holder, so the erasure was permanent.
+	//
+	// Why they must NOT reach `agent`: that struct is also merged into the
+	// STABLE AGENT's relaunch_profile below, where these two fields are frozen
+	// at birth by relaunchProfileForSpawn and nothing else may write them. The
+	// conversation fallback, by contrast, is written by any launch on the
+	// conversation — including `tclaude conv resume`, which knows about neither
+	// field and truthfully records both zero values for its own send-keys
+	// launch. Letting that flow upward would let one plain-CLI resume
+	// permanently un-choose a managed agent's drive, inverting the precedence
+	// composeAgentRelaunchProfile is built on.
+	//
+	// Carried unconditionally rather than gated on sameSourceGeneration,
+	// because a resume mints a new session row whose FIRST SaveSession projects
+	// before session.RecordLaunchPosture re-asserts the posture — a generation
+	// gate would leave the record missing across exactly that window, and that
+	// window is now a routing decision. It cannot pin a stale value: every
+	// launch path re-asserts both immediately afterwards including their zero
+	// values, so a relaunch that genuinely turned the drive off writes false
+	// over this a moment later.
+	conversationFallback := agent
+	if existingConversation != nil && existingConversation.FallbackRelaunch != nil {
+		if conversationFallback.CopilotAPI == nil {
+			conversationFallback.CopilotAPI = existingConversation.FallbackRelaunch.CopilotAPI
+		}
+		if conversationFallback.ConfiguredContextWindowMax == nil {
+			conversationFallback.ConfiguredContextWindowMax =
+				existingConversation.FallbackRelaunch.ConfiguredContextWindowMax
+		}
+	}
+	conversation.FallbackRelaunch = &conversationFallback
 	conversationRaw, err := encodeRelaunchProfile(conversation)
 	if err != nil {
 		return err
