@@ -504,6 +504,16 @@ agent that resolves that profile. This is distinct from `initial_message`:
 actual task. The highest-precedence compatible profile with a non-empty value
 wins; profile contexts are not merged.
 
+A profile's `include_group_default_context` toggle decides whether agents that
+resolve it receive the group's shared startup context. It is resolved by the
+daemon down the usual tier stack — an explicit per-spawn choice (the dashboard
+checkbox, `--no-group-context`) first, then the named profile, then the group's
+default profile, then the global one — so it applies to every spawn surface,
+including ones that only name a profile. Unlike a model or effort, it is not
+gated on the harness: it decides what the agent is told, not how its harness
+runs, so a profile authored for another vendor still speaks. Unset everywhere
+means the context is delivered.
+
 Codex profiles may also carry `fast_mode` as a three-state launch choice:
 unset inherits the operator's `~/.codex/config.toml`, `true` forces the fast
 service tier, and `false` forces the standard tier. The choice is applied only

@@ -3520,6 +3520,25 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return
 	}
+	// Group-context inclusion rides the same tier stack, minus the harness gate:
+	// it decides what the new agent is TOLD, not how its harness runs, so a
+	// profile authored for another vendor still speaks (harnessAgnosticLaunchField).
+	// Resolving it here rather than only client-side is what lets a caller that
+	// merely NAMES a profile honour its toggle — the agentd TUI does exactly that,
+	// while `tclaude agent spawn` and the dashboard both send an explicit flag.
+	// Unset at every tier keeps the long-standing default: include.
+	includeGroupContext, includeGroupContextSet, _, includeGroupContextNote, fieldFail := resolveBoolLaunchField(
+		includeGroupContextField, body.IncludeGroupContext != nil && *body.IncludeGroupContext,
+		body.IncludeGroupContext != nil, h.Name, profileTiers,
+		func(p *db.SpawnProfile) *bool { return p.IncludeGroupDefaultContext },
+		func(v bool) (bool, error) { return v, nil })
+	if fieldFail != nil {
+		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+		return
+	}
+	if !includeGroupContextSet {
+		includeGroupContext = true
+	}
 	// Startup-context trims ride the tier stack whole rather than merging — see
 	// resolveContextFeaturesLaunchField. Unset everywhere means "trim nothing",
 	// so an agent's startup context only shrinks when someone asked for it.
@@ -3575,7 +3594,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if body.SandboxImplementation == "" && sandboxImplNote != "" {
 		resolvedLaunch.Notes = append(resolvedLaunch.Notes, sandboxImplNote)
 	}
-	for _, note := range []string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, contextWindowMaxNote, copilotAPINote, fastModeNote, autoReviewNote, trustDirNote, autoMemoryNote, sshWorkaroundNote, contextFeaturesNote, profileContextNote} {
+	for _, note := range []string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, contextWindowMaxNote, copilotAPINote, fastModeNote, autoReviewNote, trustDirNote, autoMemoryNote, sshWorkaroundNote, contextFeaturesNote, profileContextNote, includeGroupContextNote} {
 		if note != "" {
 			resolvedLaunch.Notes = append(resolvedLaunch.Notes, note)
 		}
@@ -4072,8 +4091,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// An omitted include_group_context flag means opt-in — every spawn
 	// path inherits the group context by default, the same way it
 	// inherits default_cwd; the dashboard sends false explicitly to opt
-	// out.
-	if body.IncludeGroupContext == nil || *body.IncludeGroupContext {
+	// out, and a profile's toggle spoke for it above.
+	if includeGroupContext {
 		p.GroupContext = g.DefaultContext
 	}
 	setAuditSpawnResolved(r, spawnAuditResolution(p, resolvedLaunch, namedProfileHandle, map[string]*db.SpawnProfile{
@@ -4688,10 +4707,20 @@ func resolveProfileStartupContext(harnessName string, tiers []launchProfileTier)
 }
 
 const (
-	modelField            = "model"
-	effortField           = "effort"
-	contextWindowMaxField = "context_window_max"
+	modelField               = "model"
+	effortField              = "effort"
+	contextWindowMaxField    = "context_window_max"
+	includeGroupContextField = "include_group_context"
 )
+
+// harnessAgnosticLaunchField reports whether a profile field is policy about
+// what the new agent is TOLD rather than about how its harness runs. Those
+// fields are inherited from a profile whatever vendor it targets — the same
+// rule the CLI's profile merge applies to the harness-agnostic toggles. Keyed
+// on the field, inside the resolver, so no resolution path can forget it.
+func harnessAgnosticLaunchField(field string) bool {
+	return field == includeGroupContextField
+}
 
 // harnessPinnedLaunchField reports whether a launch field names something that
 // belongs to ONE vendor's catalog rather than being a generic launch posture.
@@ -4852,7 +4881,7 @@ func resolveBoolLaunchField(
 		if tier.profile == nil || profileValue(tier.profile) == nil {
 			continue
 		}
-		if !profileMatchesHarness(tier.profile, harnessName) {
+		if !harnessAgnosticLaunchField(field) && !profileMatchesHarness(tier.profile, harnessName) {
 			if note == "" {
 				note = fmt.Sprintf("%s %s ignored (not valid for %s)", tier.source, field, harnessName)
 			} else {
