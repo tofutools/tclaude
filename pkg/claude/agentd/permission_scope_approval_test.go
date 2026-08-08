@@ -42,22 +42,49 @@ func TestApprovalScopeForSlug_EmptyWhenNothingToNarrowTo(t *testing.T) {
 }
 
 func TestMergeApprovalScope(t *testing.T) {
-	// The union is what makes a second narrow approval additive.
-	assert.JSONEq(t, `{"group":["alpha","beta"]}`,
-		mergeApprovalScope(PermGroupsSpawn, `{"group":["alpha"]}`, `{"group":["beta"]}`))
+	merged := func(existing, added string) (string, bool) {
+		return mergeApprovalScope(PermGroupsSpawn, existing, added)
+	}
+
+	// One dimension widening is a true union, and is what makes a second
+	// narrow approval additive rather than a replacement.
+	scope, ok := merged(`{"group":["alpha"]}`, `{"group":["beta"]}`)
+	assert.True(t, ok)
+	assert.JSONEq(t, `{"group":["alpha","beta"]}`, scope)
+
 	// Re-approving the same context changes nothing.
-	assert.JSONEq(t, `{"group":["alpha"]}`,
-		mergeApprovalScope(PermGroupsSpawn, `{"group":["alpha"]}`, `{"group":["alpha"]}`))
-	// A dimension present in only one side stays a constraint. Dropping it
-	// would widen the grant to every value of that dimension.
-	assert.JSONEq(t, `{"group":["alpha"],"spawn_profile":["p1"]}`,
-		mergeApprovalScope(PermGroupsSpawn, `{"spawn_profile":["p1"]}`, `{"group":["alpha"]}`))
+	scope, ok = merged(`{"group":["alpha"]}`, `{"group":["alpha"]}`)
+	assert.True(t, ok)
+	assert.JSONEq(t, `{"group":["alpha"]}`, scope)
+
+	// Widening one dimension of a two-dimension scope is still a union: the
+	// other dimension is identical on both sides, so no unapproved
+	// combination can appear.
+	scope, ok = merged(`{"group":["alpha"],"spawn_profile":["p1"]}`, `{"group":["beta"],"spawn_profile":["p1"]}`)
+	assert.True(t, ok)
+	assert.JSONEq(t, `{"group":["alpha","beta"],"spawn_profile":["p1"]}`, scope)
+
+	// Two dimensions differing at once is the CROSS PRODUCT, not the union:
+	// merging would admit {beta, p1} and {alpha, p2}, which nobody approved.
+	_, ok = merged(`{"group":["alpha"],"spawn_profile":["p1"]}`, `{"group":["beta"],"spawn_profile":["p2"]}`)
+	assert.False(t, ok, "a two-dimension divergence must not be folded into one scope")
+
+	// Different dimension SETS cannot be folded either: adding a dimension
+	// constrains one that was unconstrained, revoking part of the stored
+	// grant; dropping one widens it.
+	_, ok = merged(`{"group":["alpha"]}`, `{"group":["alpha"],"spawn_profile":["p1"]}`)
+	assert.False(t, ok)
+	_, ok = merged(`{"spawn_profile":["p1"]}`, `{"group":["alpha"]}`)
+	assert.False(t, ok)
+
 	// An unreadable or absent stored scope is never treated as unscoped: the
 	// new narrow scope stands alone rather than the merge silently widening.
-	assert.JSONEq(t, `{"group":["beta"]}`,
-		mergeApprovalScope(PermGroupsSpawn, "not json", `{"group":["beta"]}`))
-	assert.JSONEq(t, `{"group":["beta"]}`,
-		mergeApprovalScope(PermGroupsSpawn, "", `{"group":["beta"]}`))
+	scope, ok = merged("not json", `{"group":["beta"]}`)
+	assert.True(t, ok)
+	assert.JSONEq(t, `{"group":["beta"]}`, scope)
+	scope, ok = merged("", `{"group":["beta"]}`)
+	assert.True(t, ok)
+	assert.JSONEq(t, `{"group":["beta"]}`, scope)
 }
 
 // isScopedAutoGrantableSlug must never admit a slug the blanket button

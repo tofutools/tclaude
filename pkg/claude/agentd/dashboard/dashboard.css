@@ -5200,6 +5200,10 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 /* Amber, not blue: an unscoped grant is the wide one, and the chip is there
    to say so rather than to look like just another matcher. */
 .perm-scope-chip.unscoped { background: #1c1606; border-color: #4d3a17; color: #e3b341; }
+/* Red, because it is a broken grant rather than a wide one: it authorizes
+   nothing at the gate, and the editor cannot show what it says. */
+.perm-scope-chip.unreadable { background: #2d1416; border-color: #7a2a2a; color: #ff9492; }
+.perm-scope-stale { color: #e3b341; font-size: 9px; }
 .perm-scope-toggle {
   background: none; border: none; padding: 0 2px 0 0; margin: 0;
   color: #7d8590; font-size: 10px; font-family: inherit; cursor: pointer;

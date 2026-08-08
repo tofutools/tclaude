@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -17,9 +18,10 @@ import (
 // may offer.
 type scopeSnapshotView struct {
 	Permissions struct {
-		Overrides map[string]map[string]string              `json:"overrides"`
-		Scopes    map[string]map[string]map[string][]string `json:"scopes"`
-		DimOpts   map[string]struct {
+		Overrides  map[string]map[string]string              `json:"overrides"`
+		Scopes     map[string]map[string]map[string][]string `json:"scopes"`
+		Unreadable map[string][]string                       `json:"unreadable_scopes"`
+		DimOpts    map[string]struct {
 			Values    []string `json:"values"`
 			Selectors []string `json:"selectors"`
 		} `json:"scope_dim_options"`
@@ -93,6 +95,54 @@ func TestPermEditorScope_RoundTripsThroughSnapshot(t *testing.T) {
 	assert.Empty(t, view.Permissions.Scopes[conv][agentd.PermGroupsSpawn],
 		"an unscoped grant carries no scope at all")
 	assert.Equal(t, "grant", view.Permissions.Overrides[conv][agentd.PermGroupsSpawn])
+}
+
+// Scenario: an agent holds a grant whose stored scope this build cannot
+// decode — the shape a downgrade or a parallel-phase daemon leaves behind.
+// Such a row authorizes NOTHING at the gate, so the editor must never rewrite
+// it into a blanket grant: the snapshot reports it as unreadable rather than
+// as unscoped, and a save that would overwrite it is refused.
+func TestPermEditorScope_RefusesToWidenAnUnreadableScope(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	const conv = "permscope-dddd-eeee-ffff-0003"
+	f.HaveConvWithTitle(conv, "agent-scope")
+	f.HaveEnrolledAgent(conv)
+	// Written past the HTTP validators, exactly as a newer daemon would have.
+	require.NoError(t, db.SetAgentPermissionOverrideWithScope(
+		conv, agentd.PermGroupsSpawn, db.PermEffectGrant, `{"dimension_from_the_future":["x"]}`, "test"))
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	view := fetchScopeView(t, mux)
+	assert.Empty(t, view.Permissions.Scopes[conv][agentd.PermGroupsSpawn],
+		"an undecodable scope must not be reported as a readable one")
+	assert.Contains(t, view.Permissions.Unreadable[conv], agentd.PermGroupsSpawn,
+		"it must be reported as unreadable, so the editor cannot render it as unscoped")
+
+	code, body := postScopedPerms(t, mux, map[string]any{
+		"conv":      conv,
+		"overrides": map[string]string{agentd.PermGroupsSpawn: "grant"},
+	})
+	assert.Equal(t, http.StatusConflict, code, body)
+
+	rows, err := db.ListAgentPermissionOverrideRowsForConv(conv)
+	require.NoError(t, err)
+	for _, row := range rows {
+		if row.Slug == agentd.PermGroupsSpawn {
+			assert.Equal(t, `{"dimension_from_the_future":["x"]}`, row.ScopeJSON,
+				"the refused save must leave the narrow (if unreadable) grant exactly as it was")
+		}
+	}
+
+	// Removing the row entirely is still allowed: it only ever takes authority
+	// away, so the operator is never stuck with a grant they cannot clear.
+	code, body = postScopedPerms(t, mux, map[string]any{
+		"conv":      conv,
+		"overrides": map[string]string{agentd.PermGroupsSpawn: "default"},
+	})
+	require.Equal(t, http.StatusOK, code, body)
+	assert.Empty(t, fetchScopeView(t, mux).Permissions.Overrides[conv][agentd.PermGroupsSpawn])
 }
 
 // Scenario: the write path refuses the two ways a scope could mean something

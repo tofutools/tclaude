@@ -11,7 +11,7 @@ import { createPreactHarness } from './preact-harness.mjs';
 // dimension added by a later phase become editable with no change here; the
 // "unknown dimension" case below is the standing proof of that.
 
-function scopeSnapshot({ slugs = [], scopes = {}, dimOptions = {} } = {}) {
+function scopeSnapshot({ slugs = [], scopes = {}, dimOptions = {}, unreadable = [] } = {}) {
   return {
     agents: [{ agent_id: 'agt_sender', conv_id: 'conv-s', title: 'sender', online: true, groups: [] }],
     groups: [],
@@ -20,6 +20,7 @@ function scopeSnapshot({ slugs = [], scopes = {}, dimOptions = {} } = {}) {
       overrides: { 'conv-s': Object.fromEntries(slugs.map((slug) => [slug.slug, 'grant'])) },
       scopes: { 'conv-s': scopes },
       scope_dim_options: dimOptions,
+      unreadable_scopes: { 'conv-s': unreadable },
     },
     slugs,
     sudo: [],
@@ -190,6 +191,48 @@ test('scopes are dropped for a slug moved off Grant', async (t) => {
   await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
   assert.deepEqual(saved[0].selection, { 'groups.spawn': 'deny' });
   assert.deepEqual(saved[0].scopes, {}, 'no scope rides a deny — the daemon would refuse it');
+  await mounted.unmount();
+});
+
+test('a grant whose stored scope cannot be decoded is never shown as unscoped', async (t) => {
+  const harness = await createPreactHarness(t);
+  const saved = [];
+  const { host, mounted } = await openEditor(harness, scopeSnapshot({
+    slugs: [SPAWN],
+    unreadable: ['groups.spawn'],
+  }), { ...noopActions, savePermissions: async (descriptor, selection, scopes) => { saved.push(scopes); } });
+
+  const chip = host.querySelector('[data-slug="groups.spawn"] .perm-scope-chip');
+  assert.ok(chip, 'the row must say something about the scope it cannot read');
+  assert.match(chip.textContent, /unreadable scope/);
+  assert.equal(chip.classList.contains('unscoped'), false,
+    'a grant that authorizes nothing must never read as one that authorizes everything');
+  // No editor either: the operator cannot narrow what the build cannot show,
+  // and the daemon refuses to overwrite the row from here.
+  assertAbsent(host.querySelector('[data-slug="groups.spawn"] .perm-scope-toggle'));
+  await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.deepEqual(saved[0], {}, 'saving sends no scope for it, and the daemon keeps the stored one');
+  await mounted.unmount();
+});
+
+test('a stored dimension the slug no longer accepts can still be removed', async (t) => {
+  const harness = await createPreactHarness(t);
+  const saved = [];
+  // groups.spawn declares group + spawn_profile; the stored scope also carries
+  // a dimension a past build allowed. Without an editor for it, every save
+  // would be refused by the daemon and the operator could not fix it here.
+  const { host, mounted } = await openEditor(harness, scopeSnapshot({
+    slugs: [SPAWN],
+    scopes: { 'groups.spawn': { group: ['alpha'], legacy_dim: ['x'] } },
+  }), { ...noopActions, savePermissions: async (descriptor, selection, scopes) => { saved.push(scopes); } });
+
+  await harness.act(() => { host.querySelector('[data-slug="groups.spawn"] .perm-scope-toggle').click(); });
+  const stale = host.querySelector('.perm-scope-dim[data-dim="legacy_dim"]');
+  assert.ok(stale, 'a stored dimension gets an editor even when the slug stopped declaring it');
+  assert.ok(stale.querySelector('.perm-scope-stale'), 'and is flagged as no longer accepted');
+  await harness.act(() => { stale.querySelector('.perm-scope-chip .x').click(); });
+  await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.deepEqual(saved[0], { 'groups.spawn': { group: ['alpha'] } });
   await mounted.unmount();
 });
 

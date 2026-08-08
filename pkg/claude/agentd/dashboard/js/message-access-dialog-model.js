@@ -94,6 +94,17 @@ export function permissionScopeSeed(snapshot, descriptor) {
   return out;
 }
 
+// unreadableScopeSlugs is the set of this agent's grants whose stored scope
+// the daemon could not decode. Such a grant authorizes NOTHING at the gate, so
+// the editor must say exactly that: rendering it as unscoped would be the
+// widest possible misreading, and saving the row would make the misreading
+// true. The daemon refuses that overwrite too — this is the half that stops an
+// operator walking into it.
+export function unreadableScopeSlugs(snapshot, descriptor) {
+  if (descriptor.mode !== 'agent') return new Set();
+  return new Set((snapshot?.permissions?.unreadable_scopes || {})[descriptor.conv] || []);
+}
+
 // scopeSupported reports whether this editor launch can persist scopes at all
 // — see permissionScopeSeed for why only the live per-agent editor can.
 export function scopeSupported(descriptor) {
@@ -117,6 +128,21 @@ export function scopeDimOptions(snapshot, dim) {
 // scopeChips flattens a scope into the row's read-at-a-glance chips, in the
 // same dimension order the daemon's provenance line uses so the editor and
 // `permissions ls` never disagree about what a grant says.
+// scopeDimRows lists the dimensions the drawer must offer: the ones the slug
+// declares, PLUS any the stored scope already carries. The second half is not
+// decoration — a dimension a slug stopped declaring (a registry change under a
+// live grant) would otherwise be visible in the chips, uneditable in the
+// drawer, and rejected by the daemon on every save, leaving the operator with
+// a dialog they cannot save and no way to fix it from the dashboard.
+export function scopeDimRows(row, scope) {
+  const declared = [...(row?.scope_dims || [])];
+  const stored = Object.keys(scope || {}).filter((dim) => !declared.includes(dim)).sort();
+  return [
+    ...declared.map((dim) => ({ dim, declared: true })),
+    ...stored.map((dim) => ({ dim, declared: false })),
+  ];
+}
+
 export function scopeChips(scope) {
   return Object.entries(scope || {})
     .filter(([, values]) => (values || []).length)

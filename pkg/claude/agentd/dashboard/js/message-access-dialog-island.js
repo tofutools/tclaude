@@ -8,8 +8,8 @@ import {
 import { registerMessageAccessDialogController } from './message-access-dialog-controller.js';
 import {
   agentCandidates, groupMembers, groupsForPicker, permissionRows,
-  permissionScopeSeed, permissionSeed, scopeChips, scopeDimOptions, scopeSupported,
-  senderOnline, sudoByAgent, sudoSlugRows,
+  permissionScopeSeed, permissionSeed, scopeChips, scopeDimOptions, scopeDimRows,
+  scopeSupported, senderOnline, sudoByAgent, sudoSlugRows, unreadableScopeSlugs,
 } from './message-access-dialog-model.js';
 import { idTooltip, shortAgentId } from './helpers.js';
 import { wizWord } from './slop.js';
@@ -515,7 +515,7 @@ function ScopeSummary({ scope, open, toggle }) {
 // ignorant of which dimension it is: the label, the suggestions and the
 // selectors all arrive from the daemon, so a dimension added by a later phase
 // is editable here the moment the daemon advertises it.
-function ScopeDimEditor({ dim, values, options, onChange }) {
+function ScopeDimEditor({ dim, values, options, onChange, declared = true }) {
   const [draft, setDraft] = useState('');
   const remove = (value) => onChange(values.filter((item) => item !== value));
   const add = (value) => {
@@ -525,7 +525,8 @@ function ScopeDimEditor({ dim, values, options, onChange }) {
   };
   const unused = [...options.values, ...options.selectors].filter((value) => !values.includes(value));
   return html`<div class="perm-scope-dim" data-dim=${dim}>
-    <span class="perm-scope-dim-label"><code>${dim}</code></span>
+    <span class="perm-scope-dim-label"><code>${dim}</code>${declared ? null : html` <span class="perm-scope-stale"
+      title="This slug no longer accepts this dimension. Saving is refused until it is emptied.">⚠ not accepted</span>`}</span>
     <div class="perm-scope-dim-body">
       <span class="perm-scope-chips">
         ${values.map((value) => html`<span key=${value} class="perm-scope-chip">${value}
@@ -551,6 +552,7 @@ function ScopeDimEditor({ dim, values, options, onChange }) {
 }
 
 function ScopeDrawer({ row, scope, snapshot, onChange }) {
+  const dims = scopeDimRows(row, scope);
   const setDim = (dim, values) => {
     const next = { ...scope };
     // An empty dimension is an ABSENT one, never a stored empty list: the
@@ -562,7 +564,7 @@ function ScopeDrawer({ row, scope, snapshot, onChange }) {
   return html`<div class="perm-scope-drawer" data-slug=${row.slug}>
     <div class="perm-scope-drawer-hint">Dimensions <b>AND</b> together; values within one dimension <b>OR</b>.
       A dimension left empty is unconstrained, and a grant with no dimensions at all applies everywhere.</div>
-    ${row.scope_dims.map((dim) => html`<${ScopeDimEditor} key=${dim} dim=${dim}
+    ${dims.map(({ dim, declared }) => html`<${ScopeDimEditor} key=${dim} dim=${dim} declared=${declared}
       values=${scope[dim] || []} options=${scopeDimOptions(snapshot, dim)}
       onChange=${(values) => setDim(dim, values)} />`)}
   </div>`;
@@ -575,6 +577,7 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
   const [baseline] = useState(() => permissionSeed(snapshot, descriptor));
   const [selection, setSelection] = useState(() => ({ ...baseline }));
   const [scopeBaseline] = useState(() => permissionScopeSeed(snapshot, descriptor));
+  const [unreadable] = useState(() => unreadableScopeSlugs(snapshot, descriptor));
   const [scopes, setScopes] = useState(() => ({ ...scopeBaseline }));
   const [openScope, setOpenScope] = useState('');
   const [filter, setFilter] = useState('');
@@ -640,12 +643,19 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
     // The scope controls appear only where they can mean something: a slug
     // that declares dimensions, granted, in an editor whose save path can
     // persist a scope. Everywhere else the row renders exactly as before.
-    const scopable = scopesEditable && !!row.scope_dims?.length && currentEffect(row.slug) === 'grant';
+    // A grant whose stored scope the daemon could not decode is shown as
+    // exactly that and left alone: it authorizes nothing today, and the one
+    // thing the editor must not do is quietly rewrite it into a blanket grant.
+    const unreadableScope = unreadable.has(row.slug) && currentEffect(row.slug) === 'grant';
+    const scopable = !unreadableScope && scopesEditable && !!row.scope_dims?.length
+      && currentEffect(row.slug) === 'grant';
     return html`<${Fragment} key=${row.slug}><div class="perm-row" data-slug=${row.slug}>
       <div class="perm-row-info"><span class="perm-row-slug">${row.slug}${row.owner_implied ? html` <span class="owner-badge" title="Group ownership can confer this slug">👑 owner</span>` : null}</span>
         <span class="perm-row-desc" title=${row.description || row.descr || ''}>${row.description || row.descr || ''}</span>
         ${scopable && html`<${ScopeSummary} scope=${scopeOf(row.slug)} open=${openScope === row.slug}
-          toggle=${() => setOpenScope(openScope === row.slug ? '' : row.slug)} />`}</div>
+          toggle=${() => setOpenScope(openScope === row.slug ? '' : row.slug)} />`}
+        ${unreadableScope && html`<span class="perm-scope-chips"><span class="perm-scope-chip unreadable"
+          title="This grant's stored scope cannot be read by this build, so it authorizes nothing at the gate. Saving will not overwrite it — edit it with the tclaude agent permissions CLI, or set the slug back to Default first.">unreadable scope</span></span>`}</div>
       <div class="perm-tristate"><button type="button" data-effect="default" class=${currentEffect(row.slug) === 'default' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'default')}>${groupMode ? html`<${Words} plain="Not granted" wizard="Unbound"/>` : 'Default'}</button>
         <button type="button" data-effect="grant" class=${currentEffect(row.slug) === 'grant' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'grant')}>${groupMode ? html`<${Words} plain="Grant" wizard="Bestow"/>` : 'Grant'}</button>
         ${!groupMode && html`<button type="button" data-effect="deny" class=${currentEffect(row.slug) === 'deny' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'deny')}>Deny</button>`}</div>

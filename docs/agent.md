@@ -2463,7 +2463,13 @@ It persists the same allow override carrying exactly that scope, so the
 agent stops asking for this group / template / profile and keeps asking for
 anything else; the blanket button is still there, relabelled *any scope*, for
 when that is what you mean. Approving a second scope later **adds** to the
-grant rather than replacing it. The scope offered is the one the gate itself
+grant rather than replacing it, as long as the two are genuinely one scope
+apart (they constrain the same dimensions and differ in one of them —
+`group=dev` then `group=ops`). When they are not, folding them into a single
+stored scope would either invent combinations you never approved or drop one
+you already gave, so the stored grant is left untouched instead: the pending
+action is still approved, and widening deliberately stays a permission-editor
+decision. The scope offered is the one the gate itself
 derived for the pending request — the same value it will evaluate the stored
 grant against — so a scope you accept is guaranteed to stop the popup rather
 than leaving you clicking it forever; a gate site that describes nothing
@@ -2471,6 +2477,12 @@ offers only the blanket button. Eligibility is the same allowlist (a scoped
 grant is strictly narrower than the blanket one), the decision endpoint
 re-checks both server-side, and the history card records it as
 *Always — this scope* with granted-by `human:popup-always-scoped`.
+
+Note that the two sets do not yet overlap: today's eligible slugs
+(`human.clipboard`, `human.notify`) declare no dimensions, so the narrow
+button does not appear in practice until an eligible slug gains one — or a
+dimensioned slug is made eligible, which is a deliberate policy decision, not
+a consequence of this button existing.
 
 For a *bundle* of slugs over a *window* of time rather than one
 command, use [`sudo`](#permissions-sudo) instead.

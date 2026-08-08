@@ -1575,6 +1575,13 @@ type snapshotPermissionsView struct {
 	// An unscoped override is simply absent here, which is how a reader
 	// tells "no constraint" from "constrained to nothing".
 	Scopes map[string]map[string]PermissionScope `json:"scopes,omitempty"`
+	// UnreadableScopes names the overrides whose stored scope this build
+	// cannot decode — conv-id → slugs. The gate refuses such a row, so the
+	// editor must NOT render it as unscoped: that is the widest possible
+	// reading of a grant that authorizes nothing, and one Save would make it
+	// true. The editor shows it as unreadable and leaves it alone; the write
+	// path refuses to overwrite it (see handleDashboardPermissionsAPI).
+	UnreadableScopes map[string][]string `json:"unreadable_scopes,omitempty"`
 	// ScopeDimOptions is the picker's catalogue: for each dimension the
 	// daemon knows, the concrete values an operator can choose and the
 	// relational @selectors that dimension accepts. The editor renders
@@ -3124,9 +3131,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		RecordedSandboxDetails:   cfg.RecordedSandboxDetailsEnabled(),
 		AgentRosterAuthoritative: agentRosterErr == nil,
 		Permissions: snapshotPermissionsView{
-			Defaults:  defaults,
-			Grants:    map[string][]string{},
-			Overrides: map[string]map[string]string{},
+			Defaults:         defaults,
+			Grants:           map[string][]string{},
+			Overrides:        map[string]map[string]string{},
+			UnreadableScopes: map[string][]string{},
 		},
 		Slugs: append([]PermSlug{}, permissionRegistry...),
 	}
@@ -3339,13 +3347,18 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		out.Permissions.Overrides[convID] = copyMap
 	}
 	// The scope each override carries, decoded. A row this build cannot decode
-	// is omitted rather than rendered as unscoped: the gate refuses such a row
-	// (evalPermissionScope), so showing it as unconditional would be the widest
-	// possible reading of a grant that authorizes nothing.
+	// is reported separately rather than as unscoped: the gate refuses such a
+	// row (evalPermissionScope), so showing it as unconditional would be the
+	// widest possible reading of a grant that authorizes nothing.
 	for convID, bySlug := range allOverrideScopes {
 		for slug, raw := range bySlug {
 			scope := permissionScopeFromJSON(raw)
 			if len(scope) == 0 {
+				if strings.TrimSpace(raw) != "" {
+					addAgent(convID)
+					out.Permissions.UnreadableScopes[convID] = append(
+						out.Permissions.UnreadableScopes[convID], slug)
+				}
 				continue
 			}
 			addAgent(convID)

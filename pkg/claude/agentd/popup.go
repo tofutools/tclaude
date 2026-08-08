@@ -169,10 +169,10 @@ type approvalRequest struct {
 	// canonical, already-validated value the persist path writes verbatim.
 	scopeJSON    string
 	scopeDisplay string
-	createdAt       time.Time
-	timeout         time.Duration
-	decision        chan approvalOutcome // the human's choice: deny / approve / approve-always
-	extend          chan time.Duration   // +N seconds — bounded extension so an unattended popup still eventually times out
+	createdAt    time.Time
+	timeout      time.Duration
+	decision     chan approvalOutcome // the human's choice: deny / approve / approve-always
+	extend       chan time.Duration   // +N seconds — bounded extension so an unattended popup still eventually times out
 
 	// mu guards the mutable field(s) below; the rest of approvalRequest is
 	// set once at construction and read lock-free.
@@ -552,7 +552,18 @@ func persistAlwaysAllowGrant(req *approvalRequest, scopeJSON string) {
 			slog.Warn("popup: failed to read existing grant scope; writing this action's scope alone",
 				"perm", req.perm, "agent", req.agentID, "err", err)
 		} else if existing != nil && existing.Effect == db.PermEffectGrant {
-			scopeJSON = mergeApprovalScope(req.perm, existing.ScopeJSON, scopeJSON)
+			merged, ok := mergeApprovalScope(req.perm, existing.ScopeJSON, scopeJSON)
+			if !ok {
+				// The two approvals cannot be expressed as one scope without
+				// inventing authority (see mergeApprovalScope). Leave the
+				// stored grant exactly as it is: the human's pending action is
+				// already approved, and they can still widen deliberately from
+				// the permission editor.
+				slog.Warn("popup: scoped always-allow not persisted; it does not union with the stored scope",
+					"perm", req.perm, "agent", req.agentID, "stored", existing.ScopeJSON, "approved", scopeJSON)
+				return
+			}
+			scopeJSON = merged
 		}
 	}
 	if err := db.SetAgentPermissionOverrideByAgentIDWithScope(

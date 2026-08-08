@@ -95,59 +95,91 @@ func isScopedAutoGrantableSlug(slug string) bool {
 	return IsAutoGrantableSlug(slug)
 }
 
-// mergeApprovalScope unions a newly-approved scope into the scope already
-// stored on an agent's grant row for the same slug.
+// mergeApprovalScope folds a newly-approved scope into the scope already
+// stored on an agent's grant row for the same slug, and reports whether the
+// result may be written.
 //
-// Without this, a second scoped always-allow would REPLACE the first: an
-// agent already allowed for group "a" that gets approved for group "b" would
+// Without it, a second scoped always-allow would REPLACE the first: an agent
+// already allowed for group "a" that gets approved for group "b" would
 // silently lose "a", and the human — who only ever added permission — would
-// have taken some away. Union is also what the gate reads: matchers within a
-// dimension OR together.
+// have taken some away.
 //
-// existingJSON is merged only when it decodes and the union still validates
-// for the slug; anything else falls back to the new scope alone, which is the
-// narrow reading. Returns canonical JSON.
-func mergeApprovalScope(slug, existingJSON, newJSON string) string {
+// But one stored scope is a CONJUNCTION of dimensions, and the union of two
+// conjunctions is not one. Widening each dimension independently would author
+// combinations nobody approved: {group=alpha, profile=read-only} merged with
+// {group=beta, profile=full} would admit beta WITH full — the cross product,
+// not the two approvals. It can also narrow: folding {profile=p1} into
+// {group=alpha} constrains a previously unconstrained dimension, silently
+// dropping an approval the human already gave.
+//
+// So the fold is allowed only where it is exactly a union: the two scopes
+// constrain the SAME dimensions and differ in at most one of them. Anything
+// else answers ok=false, and the caller keeps the stored scope untouched —
+// the pending action is still approved, only the "stop asking me" part is
+// declined, which is the sole direction that cannot invent authority.
+func mergeApprovalScope(slug, existingJSON, newJSON string) (string, bool) {
 	existing, err := permissionScopeForEval(existingJSON)
 	if err != nil || len(existing) == 0 {
-		return newJSON
+		return newJSON, true
 	}
 	added, err := permissionScopeForEval(newJSON)
 	if err != nil || len(added) == 0 {
-		return newJSON
+		return newJSON, true
 	}
-	// A dimension present in only ONE of the two scopes must stay a
-	// constraint, not vanish: dropping it would widen the grant to every
-	// value of that dimension, which is the opposite of what a union of two
-	// narrow approvals means.
+	if len(existing) != len(added) {
+		return "", false
+	}
+	differing := 0
+	for dim, values := range added {
+		stored, ok := existing[dim]
+		if !ok {
+			return "", false
+		}
+		if !sameMatchers(stored, values) {
+			differing++
+		}
+	}
+	if differing > 1 {
+		return "", false
+	}
 	union := PermissionScope{}
 	for dim, values := range existing {
-		union[dim] = append([]string(nil), values...)
-	}
-	for dim, values := range added {
+		merged := append([]string(nil), values...)
 		seen := map[string]bool{}
-		for _, v := range union[dim] {
+		for _, v := range merged {
 			seen[v] = true
 		}
-		for _, v := range values {
+		for _, v := range added[dim] {
 			if !seen[v] {
-				union[dim] = append(union[dim], v)
+				merged = append(merged, v)
 				seen[v] = true
 			}
 		}
-	}
-	for dim := range union {
-		sort.Strings(union[dim])
+		sort.Strings(merged)
+		union[dim] = merged
 	}
 	raw, err := json.Marshal(union)
 	if err != nil {
-		return newJSON
+		return "", false
 	}
 	canonical, err := canonicalPermissionScopeForSlug(slug, string(raw))
 	if err != nil {
-		return newJSON
+		return "", false
 	}
-	return canonical
+	return canonical, true
+}
+
+// sameMatchers compares two canonical (sorted, deduped) matcher lists.
+func sameMatchers(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // errScopedAlwaysUnavailable is returned to a decision POST that asks for the

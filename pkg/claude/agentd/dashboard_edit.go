@@ -2106,6 +2106,24 @@ func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, row := range rows {
 		currentScopes[row.Slug] = row.ScopeJSON
+		// A stored scope this build cannot decode authorizes nothing at the
+		// gate. Overwriting it from here would turn a grant that permits
+		// NOTHING into one that permits everything, off an editor that could
+		// not even show what it was replacing — so refuse, unless the caller
+		// is deleting the row (default) or making it a deny, both of which
+		// only ever remove authority. The whole batch is refused before the
+		// first write, so nothing is half-applied.
+		if row.ScopeJSON == "" || permissionScopeFromJSON(row.ScopeJSON) != nil {
+			continue
+		}
+		switch body.Overrides[row.Slug] {
+		case "", "default", db.PermEffectDeny:
+		default:
+			http.Error(w, "refusing to overwrite "+row.Slug+
+				": its stored scope cannot be read by this build (edit it with `tclaude agent permissions`, or set it back to Default first)",
+				http.StatusConflict)
+			return
+		}
 	}
 	changed := 0
 	for slug, effect := range body.Overrides {
