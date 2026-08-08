@@ -283,29 +283,36 @@ func portFromAddress(t *testing.T, address string) int {
 // A retry-until-reproduced test has a false-failure rate by construction, so
 // here is the measurement it rests on rather than an assurance. Per-attempt hit
 // rate for the launch below, on 1.0.78 from an agent sandbox: 16 of 17 in one
-// batch, and 5 of 9 across four later runs of this test as written. The rate is
-// not stable — it is a property of a Copilot build racing a network fetch, not
-// of this code — so the loop is sized on the WORSE figure.
+// back-to-back batch, and 8 of 14 across eight separate runs of this test as
+// written — attempt counts of 4, 2, 1, 1, 1, 2, 2, 1. The rate is not stable;
+// it is a property of a Copilot build racing a network fetch, not of this code.
+// The loop is sized on the WORSE figure.
 //
-// Resist the obvious arithmetic. 1-p^10 would put ten attempts at p=0.5 around
-// one failure in a thousand runs, and that number assumes the attempts are
-// INDEPENDENT, which they are not: they race the same model-list fetch, and the
-// attempts of one run share whatever state the machine was in when it started.
-// The measured shape says so — five consecutive runs needed 4, 2, 1, 1 and 1
-// attempts, which is a warming curve rather than noise. So the honest statement
-// is not a probability but a direction: the loop is weakest on the FIRST run on
-// a cold machine, where a low per-attempt rate applies to all ten attempts at
-// once, and that is exactly when someone runs this for the first time.
+// Resist the obvious arithmetic. 1-p^10 would put ten attempts at p≈0.57 near
+// one failure in ten thousand runs, and that number assumes the attempts are
+// INDEPENDENT. They may well not be: they race the same model-list fetch, so
+// the attempts of one run plausibly share whatever state the machine was in
+// when it started. That is a HYPOTHESIS and the evidence for it is weak. The
+// first run ever measured needed 4 attempts and later ones needed 1, which
+// looks like a warming curve; but a deliberate test — ten minutes idle, then
+// two runs — produced 2 attempts and then 1, which is the same direction and
+// nowhere near the same size. n is small and the mechanism is inferred, so
+// treat the 4 as unexplained rather than as evidence of warming.
 //
-// Which is also why there is no separate warm-up launch: attempt 1 already is
-// one. On a cold machine the early attempts do the warming and the loop absorbs
-// them; a dedicated warm-up would buy nothing extra and would cost every warm
-// run an additional launch.
+// So do not read a probability off this. What survives the weak evidence is a
+// direction worth knowing: if the attempts are correlated at all, the loop is
+// weakest on a first run against a cold machine, because a low per-attempt rate
+// then applies to all ten attempts at once instead of to each independently.
 //
-// Read a failure accordingly. Ten misses most likely means the machine was
-// cold or the precondition stopped being reproducible — try again before
-// concluding anything. It does NOT mean the fix is broken; a broken fix fails
-// on the assertion below, with the sentinel in hand, which looks entirely
+// It is also why there is no separate warm-up launch. If warming is real,
+// attempt 1 already is one and the loop absorbs it; if it is not, a warm-up
+// buys nothing by construction. Either way it would cost every run an extra
+// launch to insure against a mechanism nobody has established.
+//
+// Read a failure accordingly. Ten misses most likely means the precondition
+// stopped being reproducible on this host or this Copilot build — try again
+// before concluding anything. It does NOT mean the fix is broken; a broken fix
+// fails on the assertion below, with the sentinel in hand, which looks entirely
 // different.
 //
 // Nothing budgets for this in CI. The whole file is gated behind
