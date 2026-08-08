@@ -3764,7 +3764,7 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		for _, slug := range normalizedPermissions {
 			conferred = append(conferred, conferredGrant{Slug: slug})
 		}
-		if err := checkGrantAttenuation(caller, conferred); err != nil {
+		if err := checkGrantAttenuation(caller, grantConferee{}, conferred); err != nil {
 			writeError(w, http.StatusForbidden, "scope_not_attenuated", err.Error())
 			return
 		}

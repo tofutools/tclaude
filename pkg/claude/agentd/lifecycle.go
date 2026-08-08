@@ -3775,7 +3775,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		// the overrides only ever NARROWS what the child is born with, and a
 		// default nobody typed at this launch must not start refusing every
 		// spawn a scoped agent makes.
-		if err := checkGrantAttenuation(spawnerConvID, conferredGrantsFromOverrides(permOverrides)); err != nil {
+		// The child has no stable id yet. Its lineage edge is mandatory during
+		// enrollment, before these overrides are written, so it is a descendant
+		// by construction rather than by a lookup that cannot succeed yet.
+		conferee := grantConferee{descendantByConstruction: true}
+		if err := checkGrantAttenuation(spawnerConvID, conferee, conferredGrantsFromOverrides(permOverrides)); err != nil {
 			if !launchTierIsDefault(profileTiers, overridesSource) {
 				writeError(w, http.StatusForbidden, "scope_not_attenuated", err.Error())
 				return
