@@ -198,3 +198,32 @@ func TestSpawnProfileGroupContext_SilentProfileKeepsDefault(t *testing.T) {
 	msg := soleInboxMessage(t, spawn.ConvID)
 	assert.Contains(t, msg.Body, "Project Phoenix", "a silent profile leaves the default alone")
 }
+
+// Scenario: the last tier of the stack. Only the GLOBAL default profile says
+// anything — no flag on the request, no named profile, no group default — so
+// the house-wide setting is what decides. This is the tier furthest from the
+// spawn, which is exactly why the echo has to name it.
+func TestSpawnProfileGroupContext_GlobalDefaultProfileOptsOut(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	setGroupContext(t, f, "alpha", "GROUP GUIDANCE MUST BE OMITTED")
+
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "house-solo", "include_group_default_context": false,
+	}).Code)
+	require.Equalf(t, http.StatusOK, profileReq(t, f, http.MethodPut,
+		"/v1/spawn-profile-default", map[string]any{"name": "house-solo"}).Code,
+		"set global default profile")
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+		"name": "worker", "initial_message": "Implement the requested change.",
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+
+	msg := soleInboxMessage(t, spawn.ConvID)
+	assert.Contains(t, msg.Body, "Implement the requested change", "the task brief still rides")
+	assert.NotContains(t, msg.Body, "GROUP GUIDANCE MUST BE OMITTED")
+	assert.Contains(t, string(spawn.Raw),
+		`global default profile \"house-solo\" include_group_context = false`,
+		"resolved echo discloses which tier decided")
+}
