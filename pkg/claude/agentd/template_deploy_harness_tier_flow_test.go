@@ -31,7 +31,9 @@ func deployOneMember(t *testing.T, f *testharness.Flow, group string, spec map[s
 	var res instantiateResult
 	testharness.DecodeJSON(t, rec, &res)
 	require.Len(t, res.Agents, 1)
-	require.Empty(t, res.Agents[0].Error)
+	require.Emptyf(t, res.Agents[0].Error,
+		"this helper is for arms about a member that LAUNCHES; a refusal here means the "+
+			"scenario never reached the thing under test (kind=%q)", res.Agents[0].ErrorKind)
 	require.NotNil(t, res.Agents[0].Resolved, "the deploy result must carry a launch echo at all")
 	return res.Agents[0]
 }
