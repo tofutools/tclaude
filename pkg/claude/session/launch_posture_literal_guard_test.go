@@ -42,18 +42,42 @@ import (
 // forcing exhaustiveness on fixtures would buy noise instead of protection. Said
 // out loud because an unexplained exclusion in a structural guard is precisely
 // what a review should distrust.
+//
+// # What it catches, and what it does not
+//
+// A cold review probed this guard with the idioms a future change would plausibly
+// use. It catches the keyed literal in every spelling that matters — bare
+// `LaunchPosture{…}`, qualified `session.LaunchPosture{…}`, `&session.LaunchPosture{…}`
+// — in every package under the module root, and it catches a positional literal.
+// Two further shapes are caught by the extra checks below rather than by the
+// literal walk: an uninitialised `var p session.LaunchPosture` (which asserts
+// every zero and names nothing), and a type alias or defined type over
+// LaunchPosture (which would otherwise let a literal dodge the type match).
+//
+// It does NOT catch two shapes, and saying so is the point of this paragraph — an
+// unstated gap is how a guard becomes a certificate:
+//
+//   - copy-then-modify: `p := somePosture; p.CopilotAPI = nil`. Nothing here can
+//     tell that from any other struct copy without type information.
+//   - construction by conversion from another struct type.
+//
+// Both would need a types-based pass (go/packages), which costs a full build per
+// run. The behavioural tests in pkg/claude/conv are what cover the semantics for
+// the surfaces that exist; this guard covers the shape of new ones.
 func TestEveryLaunchPostureLiteralNamesEveryField(t *testing.T) {
 	root := repoRootForLiteralGuard(t)
 	want := launchPostureFieldNames()
 	require.NotEmpty(t, want)
 
 	type foundLiteral struct {
-		file    string
-		line    int
-		missing []string
-		unkeyed bool
+		file     string
+		line     int
+		missing  []string
+		unkeyed  bool
+		declared bool // an uninitialised `var p LaunchPosture` rather than a literal
 	}
 	var literals []foundLiteral
+	var aliases []string
 
 	require.NoError(t, filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -84,24 +108,49 @@ func TestEveryLaunchPostureLiteralNamesEveryField(t *testing.T) {
 			return err
 		}
 		ast.Inspect(parsed, func(node ast.Node) bool {
-			lit, ok := node.(*ast.CompositeLit)
-			if !ok || !isLaunchPostureType(lit.Type) {
-				return true
-			}
-			named, unkeyed := launchPostureLiteralFields(lit)
-			var missing []string
-			for _, field := range want {
-				if !slices.Contains(named, field) {
-					missing = append(missing, field)
+			switch typed := node.(type) {
+			case *ast.CompositeLit:
+				if !isLaunchPostureType(typed.Type) {
+					return true
+				}
+				named, unkeyed := launchPostureLiteralFields(typed)
+				var missing []string
+				for _, field := range want {
+					if !slices.Contains(named, field) {
+						missing = append(missing, field)
+					}
+				}
+				literals = append(literals, foundLiteral{
+					file: rel, line: fset.Position(typed.Lbrace).Line,
+					missing: missing, unkeyed: unkeyed,
+				})
+			case *ast.ValueSpec:
+				// `var p session.LaunchPosture` with no value asserts every zero and
+				// names nothing — the same bug as an incomplete literal, wearing a
+				// different syntax, and the shape a surface reaches for when it wants
+				// to fill in a few fields later. Reported as a literal missing
+				// everything, which is exactly what it is.
+				if len(typed.Values) > 0 || !isLaunchPostureType(typed.Type) {
+					return true
+				}
+				literals = append(literals, foundLiteral{
+					file: rel, line: fset.Position(typed.Pos()).Line, missing: want, declared: true,
+				})
+			case *ast.TypeSpec:
+				// An alias or defined type over LaunchPosture would let a literal of
+				// the new name slip past isLaunchPostureType entirely.
+				if isLaunchPostureType(typed.Type) {
+					aliases = append(aliases, rel+":"+typed.Name.Name)
 				}
 			}
-			literals = append(literals, foundLiteral{
-				file: rel, line: fset.Position(lit.Lbrace).Line, missing: missing, unkeyed: unkeyed,
-			})
 			return true
 		})
 		return nil
 	}))
+
+	assert.Emptyf(t, aliases, "LaunchPosture is aliased or redefined at %v. A literal of the new "+
+		"name is invisible to this guard, so the alias has to go or this guard has to learn "+
+		"about it", aliases)
 
 	// The positive control, and it has to be here: every assertion below is
 	// satisfied by finding NOTHING — which is what a renamed type, a moved
@@ -125,6 +174,13 @@ func TestEveryLaunchPostureLiteralNamesEveryField(t *testing.T) {
 		assert.Falsef(t, lit.unkeyed,
 			"%s:%d builds a LaunchPosture positionally. Field order is not a decision anyone "+
 				"reviews; name the fields", lit.file, lit.line)
+		assert.Falsef(t, lit.declared,
+			"%s:%d declares an uninitialised LaunchPosture. Every field is then its zero, "+
+				"asserted onto the conversation's durable record, with nothing at the site "+
+				"saying so. Build it as a keyed literal", lit.file, lit.line)
+		if lit.declared {
+			continue
+		}
 		assert.Emptyf(t, lit.missing,
 			"%s:%d omits LaunchPosture field(s) %v. An omitted field is not an abstention: it "+
 				"is this launch ASSERTING that field's zero onto the conversation's durable "+
@@ -186,6 +242,58 @@ func f() LaunchPosture {
 
 	_, unkeyed = checkLaunchPostureSource(t, positional)
 	assert.True(t, unkeyed, "a positional literal must be reported: it names no decision at all")
+}
+
+// The two shapes the literal walk alone would miss, each driven through the same
+// matchers the scan uses. Both were found by probing the guard rather than by
+// reading it, which is the only way this kind of blind spot surfaces.
+func TestLaunchPostureGuardCatchesTheNonLiteralShapes(t *testing.T) {
+	t.Run("an uninitialised declaration asserts every zero", func(t *testing.T) {
+		const source = `package p
+
+import "github.com/tofutools/tclaude/pkg/claude/session"
+
+func f() session.LaunchPosture {
+	var p session.LaunchPosture
+	return p
+}
+`
+		fset := token.NewFileSet()
+		parsed, err := parser.ParseFile(fset, "probe.go", source, 0)
+		require.NoError(t, err)
+		found := false
+		ast.Inspect(parsed, func(node ast.Node) bool {
+			spec, ok := node.(*ast.ValueSpec)
+			if !ok || len(spec.Values) > 0 || !isLaunchPostureType(spec.Type) {
+				return true
+			}
+			found = true
+			return true
+		})
+		assert.True(t, found,
+			"`var p session.LaunchPosture` must be reported: every field is its zero and the "+
+				"site names none of them")
+	})
+
+	t.Run("an alias would hide a literal from the type match", func(t *testing.T) {
+		for _, source := range []string{
+			"package p\n\ntype posture = LaunchPosture\n",
+			"package p\n\ntype posture LaunchPosture\n",
+		} {
+			fset := token.NewFileSet()
+			parsed, err := parser.ParseFile(fset, "probe.go", source, 0)
+			require.NoError(t, err)
+			found := false
+			ast.Inspect(parsed, func(node ast.Node) bool {
+				spec, ok := node.(*ast.TypeSpec)
+				if ok && isLaunchPostureType(spec.Type) {
+					found = true
+				}
+				return true
+			})
+			assert.True(t, found, "an alias/defined type over LaunchPosture must be reported")
+		}
+	})
 }
 
 // checkLaunchPostureSource runs the same two checks the walk above runs, over

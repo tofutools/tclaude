@@ -3317,7 +3317,8 @@ func createSessionForConv(conv *SessionEntry) error {
 	// surface in the watch TUI, so the refusal names the CLI command that
 	// carries the override rather than offering one here. Inert for every
 	// conversation that did not choose the drive. See copilot_drive.go.
-	driveNotice, err := resumeCopilotDriveGate(h, conv.SessionID, false)
+	driveNotice, err := resumeCopilotDriveGate(
+		h, conv.SessionID, false, resumeOverrideHintWatch(conv.SessionID))
 	if err != nil {
 		return err
 	}

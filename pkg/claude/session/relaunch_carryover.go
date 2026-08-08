@@ -496,9 +496,6 @@ func applyRecordedLaunchPosture(params *NewParams, explicit explicitLaunchFields
 // LaunchPosture is what a launch actually resolved to. It is the WRITE side of
 // the relaunch contract; db.AgentRelaunchProfile is the read side, and every
 // field here must have a counterpart there or the value cannot survive a hop.
-// LaunchPosture is what a launch actually resolved to. It is the WRITE side of
-// the relaunch contract; db.AgentRelaunchProfile is the read side, and every
-// field here must have a counterpart there or the value cannot survive a hop.
 //
 // # Why two fields are pointers and the rest are not
 //

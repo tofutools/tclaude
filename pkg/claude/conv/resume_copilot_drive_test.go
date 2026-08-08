@@ -70,7 +70,7 @@ func TestResumeCopilotDriveGate(t *testing.T) {
 			wantRefusal: []string{
 				"copilot_api_drive_unavailable_outside_agentd",
 				"tclaude agent resume " + driveConv,
-				"tclaude conv resume " + driveConv + " --send-keys",
+				resumeOverrideHintCLI,
 			},
 		},
 		{
@@ -125,7 +125,7 @@ func TestResumeCopilotDriveGate(t *testing.T) {
 			h, err := harness.Resolve(tc.harness)
 			require.NoError(t, err)
 
-			notice, err := resumeCopilotDriveGate(h, driveConv, tc.sendKeys)
+			notice, err := resumeCopilotDriveGate(h, driveConv, tc.sendKeys, resumeOverrideHintCLI)
 
 			if len(tc.wantRefusal) > 0 {
 				require.Error(t, err, "a managed API conversation must not launch on send-keys by default")
@@ -149,6 +149,99 @@ func TestResumeCopilotDriveGate(t *testing.T) {
 	}
 }
 
+// "Managed" must mean what ROUTING means by it, not merely "an actor row
+// exists". Both shapes here were reproduced by a cold review against the first
+// version of this gate, which used db.GetAgentByConv:
+//
+//   - a SUPERSEDED generation — the conv an agent had before reincarnating —
+//     still resolves to its actor through agent_conversations, but nothing
+//     delivers to it;
+//   - a RETIRED actor likewise.
+//
+// Refusing either was wrong twice over: the refusal asserts "agentd routes its
+// messages over that channel", which is false for both, and it points the human
+// at `tclaude agent resume <thatConv>`, which redirects forward to the chain head
+// — so following the advice would resume a DIFFERENT conversation while the one
+// they asked for stays unresumable without --send-keys.
+//
+// The notice arm is right for both, by this gate's own stated rule: nothing
+// routes them, so their recorded drive buys them nothing.
+func TestResumeCopilotDriveGateDiscloseRatherThanRefuseWhenNothingRoutes(t *testing.T) {
+	const successor = "7a1e5c40-4444-4555-8666-777788889999"
+
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T) string // returns the conv to resume
+	}{
+		{
+			name: "a superseded generation is not the live agent",
+			setup: func(t *testing.T) string {
+				seedDriveConv(t, driveConv, true, true)
+				agentID, err := db.AgentIDForConv(driveConv)
+				require.NoError(t, err)
+				require.NotEmpty(t, agentID)
+				require.NoError(t, db.SaveSession(&db.SessionRow{
+					ID: successor, ConvID: successor, Harness: harness.CopilotName,
+					ApprovalPolicy: harness.CopilotApprovalInherit,
+				}))
+				require.NoError(t, db.LinkConvToAgent(successor, agentID, "", "test"))
+				_, err = db.SetAgentCurrentConv(agentID, driveConv, successor)
+				require.NoError(t, err)
+				return driveConv
+			},
+		},
+		{
+			name: "a retired actor routes nothing",
+			setup: func(t *testing.T) string {
+				seedDriveConv(t, driveConv, true, true)
+				agentID, err := db.AgentIDForConv(driveConv)
+				require.NoError(t, err)
+				_, err = db.RetireAgentByID(agentID, "test", "cold-review probe")
+				require.NoError(t, err)
+				return driveConv
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupTestDB(t)
+			convID := tc.setup(t)
+
+			// Positive control for the seeding, not decoration: if the drive were not
+			// recorded on this conversation the gate would be silent for a reason that
+			// has nothing to do with liveness, and the assertions below would pass
+			// over a test that exercised nothing.
+			api, err := db.CopilotAPIForConv(convID)
+			require.NoError(t, err)
+			require.True(t, api, "the conversation under test must still read as API-driven")
+
+			notice, err := resumeCopilotDriveGate(
+				copilotHarness(t), convID, false, resumeOverrideHintCLI)
+			require.NoError(t, err,
+				"nothing routes this conversation, so refusing protects nothing and blocks a human")
+			assert.Contains(t, notice, "chose the Copilot API drive",
+				"the downgrade must still be disclosed")
+			assert.NotContains(t, notice, "HOLD",
+				"promising held mail for a conversation nothing delivers to is a false statement")
+		})
+	}
+}
+
+// And the live case still refuses, in the same file, so the fix above cannot be
+// mistaken for "the gate stopped refusing". A live managed agent — current
+// generation, not retired — is the one shape that must not launch here.
+func TestResumeCopilotDriveGateStillRefusesTheLiveGeneration(t *testing.T) {
+	setupTestDB(t)
+	seedDriveConv(t, driveConv, true, true)
+
+	live, err := db.IsLiveAgentConv(driveConv)
+	require.NoError(t, err)
+	require.True(t, live, "positive control: this conv must be the actor's live generation")
+
+	_, err = resumeCopilotDriveGate(copilotHarness(t), driveConv, false, resumeOverrideHintCLI)
+	require.Error(t, err, "a live managed API agent must still be refused")
+	assert.Contains(t, err.Error(), "copilot_api_drive_unavailable_outside_agentd")
+}
+
 // A read failure must refuse rather than fall through to a silent send-keys
 // launch: an unreadable record is not evidence that the conversation chose
 // keystrokes. Reproduced by making the actor lookup fail — the discriminator
@@ -161,7 +254,7 @@ func TestResumeCopilotDriveGateRefusesOnAnUnreadableRecord(t *testing.T) {
 	_, err = d.Exec(`DROP TABLE agent_conversations`)
 	require.NoError(t, err)
 
-	notice, err := resumeCopilotDriveGate(copilotHarness(t), driveConv, false)
+	notice, err := resumeCopilotDriveGate(copilotHarness(t), driveConv, false, resumeOverrideHintCLI)
 	require.Error(t, err, "an unreadable managed-agent lookup must refuse, not guess unmanaged")
 	assert.Contains(t, err.Error(), driveConv)
 	assert.Empty(t, notice)
@@ -216,8 +309,14 @@ func TestPlainCLIResumeLeavesTheRecordedCopilotDriveAlone(t *testing.T) {
 	assert.Equal(t, int64(128000), *posture.ConfiguredContextWindowMax)
 }
 
-// The Codex service tier rides the same literal and is NOT fixed here, and this
-// test exists so that stays a measured statement rather than an impression.
+// THIS TEST PINS CURRENT BEHAVIOUR, AND THE BEHAVIOUR IS WRONG. TCL-1085 fixes
+// it; invert the assertion then and delete this header. Said in capitals because
+// a test that pins a known defect is only safe while it says so — otherwise the
+// next reader takes it for a specification and defends the bug.
+//
+// The Codex service tier rides the same literal as the two fields TCL-1076 fixed
+// and is NOT fixed here, and this test exists so that stays a measured statement
+// rather than an impression.
 //
 // A plain-CLI resume still loses a pinned tier, and the mechanism is not the one
 // TCL-1076 fixed: FastMode's carry-forward in projectSessionRelaunchProfilesTx
@@ -256,8 +355,9 @@ func TestPlainCLIResumeStillLosesAPinnedCodexTier(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, after)
 	assert.Nil(t, after.FastMode,
-		"documented gap, not a fix: the pinned Codex tier is still lost by a plain-CLI "+
-			"resume, through the generation-gated projection rather than the posture write")
+		"documented gap, not a fix (TCL-1085): the pinned Codex tier is still lost by a "+
+			"plain-CLI resume, through the generation-gated projection rather than the "+
+			"posture write. If this now fails, the fix has landed — assert preservation")
 }
 
 // The other direction, and the reason RecordLaunchPosture's skip is keyed on nil

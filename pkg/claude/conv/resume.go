@@ -24,7 +24,7 @@ type ResumeParams struct {
 	// running daemon, so without this a refusal would wall a human out of a pane
 	// at exactly the moment agentd is the thing that is broken. See
 	// resumeCopilotDriveGate.
-	SendKeys bool `long:"send-keys" help:"Resume on tmux send-keys even if this conversation chose the Copilot API drive. The API channel exists only under tclaude agentd, so a managed agent resumed this way keeps holding its mail until it is relaunched with 'tclaude agent resume'"`
+	SendKeys bool `long:"send-keys" help:"Proceed even though this conversation chose the Copilot API drive: this resume is on tmux send-keys either way, and without the flag a live managed agent is refused rather than launched. The API channel exists only under tclaude agentd, so an agent resumed this way keeps holding its mail until it is relaunched with 'tclaude agent resume'"`
 }
 
 func ResumeCmd() *cobra.Command {
@@ -218,7 +218,7 @@ func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stder
 	// drive cannot get it from here, so this either refuses with the daemon
 	// command that can, or discloses the downgrade. Inert — "" and no error —
 	// for every conversation that did not choose it. See copilot_drive.go.
-	driveNotice, err := resumeCopilotDriveGate(h, rc.ConvID, sendKeys)
+	driveNotice, err := resumeCopilotDriveGate(h, rc.ConvID, sendKeys, resumeOverrideHintCLI)
 	if err != nil {
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1
