@@ -239,6 +239,114 @@ func SetAgentRelaunchProfile(agentID string, profile AgentRelaunchProfile) error
 	return nil
 }
 
+// AgentRelaunchProfileRaw returns the stored profile blob verbatim, for a caller
+// that intends to compare-and-set it.
+//
+// Verbatim rather than decoded, because a decode-then-re-encode round trip is
+// exactly what a compare-and-set must NOT do: the value being guarded is the
+// bytes another writer would overwrite, and any normalisation on the way through
+// makes the comparison a comparison of two normalisations instead. An empty
+// string means the agent exists with no profile yet (the column is
+// `TEXT NOT NULL DEFAULT ”`), which is a different case from an unknown agent
+// and is reported as such.
+func AgentRelaunchProfileRaw(agentID string) (string, error) {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return "", errors.New("AgentRelaunchProfileRaw: agent_id required")
+	}
+	d, err := Open()
+	if err != nil {
+		return "", err
+	}
+	var raw string
+	err = d.QueryRow(`SELECT relaunch_profile FROM agents WHERE agent_id = ?`,
+		agentID).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("AgentRelaunchProfileRaw: unknown agent %s", agentID)
+	}
+	if err != nil {
+		return "", err
+	}
+	return raw, nil
+}
+
+// CompareAndSetAgentCopilotAPI flips ONE field of a stable agent's durable
+// relaunch profile, atomically, and only while the stored blob is still exactly
+// what the caller read.
+//
+// Reports false with no error when the guard did not hold, which the caller must
+// treat as "somebody else owns this record right now" rather than as success.
+//
+// # Why this is not SetAgentRelaunchProfile
+//
+// SetAgentRelaunchProfile replaces the WHOLE BLOB, so every caller of it does
+// read-modify-write. That is safe today only because there is exactly one
+// writer: agentd. The comment above agentd's own spawn-enrollment write says
+// what the hazard is in its own words — replacing the whole profile would turn
+// an explicit SSHWorkaround opt-out into unknown, and then back into Codex's
+// default-on posture on the next clone or reincarnation.
+//
+// A second writer in a second process would make that hazard live. Two
+// read-modify-writes with no lock between them silently lose one side's edit,
+// and the side more likely to be lost is the rarer one — an operator's
+// deliberate change, erased by the busier automated writer, with nothing logged
+// on either side. A durable posture change that does not stick is worse than one
+// that refuses.
+//
+// So this does not read-modify-write at all. `json_set` edits the one member
+// inside SQLite, in a single statement, preserving every other field including
+// the ones no Go struct in this process knows about. There is no window between
+// a read and a write to lose an edit in, because there is no read.
+//
+// # Why there is a compare-and-set on top of that
+//
+// Atomicity of one statement does not make the DECISION to write it current.
+// The caller of this is the daemon-unreachable fallback path, and a daemon can
+// come up between the reachability probe and this write — a probe is a reading,
+// not a fact that stays true. The `relaunch_profile = ?` guard turns that from
+// a silent overwrite of whatever the daemon just composed into a refusal the
+// caller can report and the operator can retry.
+//
+// json_valid is required as well as the guard: the column defaults to the empty
+// string, and json_set against a non-JSON value raises rather than no-ops. An
+// agent with no profile yet is not a candidate for a targeted field edit — there
+// is nothing to edit inside — and is reported by the same false return.
+func CompareAndSetAgentCopilotAPI(agentID string, value bool, expected string) (bool, error) {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return false, errors.New("CompareAndSetAgentCopilotAPI: agent_id required")
+	}
+	if strings.TrimSpace(expected) == "" {
+		return false, fmt.Errorf(
+			"CompareAndSetAgentCopilotAPI: agent %s has no durable relaunch profile to "+
+				"edit; a targeted field update needs an existing profile to edit inside",
+			agentID)
+	}
+	encoded := "false"
+	if value {
+		encoded = "true"
+	}
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := d.Exec(`
+		UPDATE agents
+		   SET relaunch_profile = json_set(relaunch_profile, '$.copilot_api', json(?))
+		 WHERE agent_id = ?
+		   AND relaunch_profile = ?
+		   AND json_valid(relaunch_profile) = 1`,
+		encoded, agentID, expected)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 // SetTemporaryHarnessBuiltinMode atomically sets or clears a stable agent's temporary
 // sandbox override. When enabling it, normalMode/normalImplementation/
 // normalSource freeze the already-resolved normal launch posture if the
@@ -559,6 +667,30 @@ func SetSessionFastMode(sessionID, mode string) error {
 // relaunchProfileForSpawn follows and for the same reason: a KNOWN "this agent
 // is on send-keys" is a different fact from an unknown one, and only the first
 // may be acted on.
+//
+// # This CANNOT change routing for a managed Copilot agent, despite its name
+//
+// It writes the CONVERSATION FALLBACK. Routing reads
+// agentd.copilotLaunchIntentForConv, which applies the stable AGENT relaunch
+// profile field by field FIRST and lets the fallback fill only what the agent
+// profile left nil. And for Copilot the agent profile is never nil here:
+// relaunchProfileForSpawn freezes CopilotAPI for every Copilot launch INCLUDING
+// FALSE, deliberately, so a relaunch replays a known posture rather than an
+// unknown one.
+//
+// So for any managed Copilot agent the agent profile always answers, this
+// record is never consulted for that field, and a caller who reaches for the
+// obviously-named function to move an agent OFF the API drive changes nothing
+// that routes. The lever for that is the agent profile
+// (SetAgentRelaunchProfile and the targeted setter beside it).
+//
+// The window and permanent-loss reasons above are still why this exists and is
+// still correct for what it does — it answers for conversations with no agent
+// profile, which is every clone and every direct `session new`. The point of
+// this section is only that "records the conversation's drive" and "decides
+// where a managed agent's mail goes" are different subjects, and this function
+// is the first one. Established while deriving TCL-1082; kept here rather than
+// in the ticket because the name is what misleads, and the name is here.
 func SetConversationCopilotAPI(convID, harnessName, cwd string, value bool) error {
 	return updateConversationFallbackRelaunch(convID, harnessName, cwd,
 		func(fallback *AgentRelaunchProfile) {
