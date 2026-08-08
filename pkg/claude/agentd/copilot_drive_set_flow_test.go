@@ -137,8 +137,12 @@ func TestSetDrive_RefusesANonCopilotAgent(t *testing.T) {
 	// act on, so that is asserted on its output. Asserting the code against the
 	// human text would only pin that the two happen to share a spelling.
 	rec := setDriveRequest(t, f, spawn.ConvID, "send-keys")
-	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
-	assert.Contains(t, rec.Body.String(), "copilot_drive_wrong_harness")
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code,
+		"a non-Copilot agent has no drive to set, and the endpoint must refuse rather "+
+			"than write a field no launch of this harness would ever read")
+	assert.Contains(t, rec.Body.String(), "copilot_drive_wrong_harness",
+		"the refusal needs its own stable code, or a caller can only distinguish it "+
+			"from other 422s by matching on prose")
 
 	_, stderr, rc := runSetDriveCLI(t, f, spawn.ConvID, "send-keys")
 	assert.NotEqual(t, 0, rc, "a non-Copilot agent must be refused")
@@ -163,8 +167,12 @@ func TestSetDrive_RefusesEscalationWhileTheAgentIsRunning(t *testing.T) {
 	resp, _ := spawnCopilot(t, f, "crew", map[string]any{"name": "copilot-worker"})
 
 	rec := setDriveRequest(t, f, resp.ConvID, "api")
-	require.Equal(t, http.StatusConflict, rec.Code)
-	assert.Contains(t, rec.Body.String(), "copilot_drive_needs_relaunch")
+	require.Equal(t, http.StatusConflict, rec.Code,
+		"a running pane that came up without --ui-server has no server to route into, "+
+			"so recording 'api' for it would mute the agent rather than move it")
+	assert.Contains(t, rec.Body.String(), "copilot_drive_needs_relaunch",
+		"the code has to name the RELAUNCH, because that is the only thing that makes "+
+			"an escalation take effect")
 
 	_, stderr, rc := runSetDriveCLI(t, f, resp.ConvID, "api")
 	assert.NotEqual(t, 0, rc, "escalating a running agent must be refused")
@@ -199,11 +207,14 @@ func TestSetDrive_ReportsANoOpAsUnchanged(t *testing.T) {
 	require.Equalf(t, 0, rc, "first run failed: %s", stderr)
 	require.Contains(t, stdout, "→ send-keys",
 		"the first run must be a real CHANGE, or the second proves nothing")
-	require.NotContains(t, stdout, "unchanged")
+	require.NotContains(t, stdout, "unchanged",
+		"a run that really moved the record must not also claim it changed nothing")
 
 	stdout, stderr, rc = runSetDriveCLI(t, f, resp.ConvID, "send-keys")
 	require.Equalf(t, 0, rc, "second run failed: %s", stderr)
-	assert.Contains(t, stdout, "unchanged")
+	assert.Contains(t, stdout, "unchanged",
+		"the second run moves nothing, and reporting it as a change teaches the "+
+			"operator that a pin they never made had just taken effect")
 }
 
 // TestSetDrive_SeedsTheConversationFallbackForAnAgentlessConversation covers the
