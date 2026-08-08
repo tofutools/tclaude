@@ -192,7 +192,7 @@ func checkGrantAttenuation(granterConvID string, grants []conferredGrant) error 
 		}
 		return fmt.Errorf(
 			"permission %q: you may not grant more than you hold — your own %s is limited to %s, "+
-				"but this would confer %s. Re-issue it within your own scope, or ask the operator to grant it.",
+				"but this would confer %s; re-issue it within your own scope, or ask the operator to widen your grant",
 			grant.Slug, grant.Slug, renderGranterScopes(granterScopes), renderConferredScope(conferred))
 	}
 	return nil
