@@ -1029,7 +1029,7 @@ export function GroupContextDialog({
     html`<h3 id="group-context-title">
         <${Words}
           plain="Group startup context"
-          wizard="📜 The party's standing orders"
+          wizard="📜 The party's lore"
         />
       </h3>
       <div class="modal-meta" id="group-context-meta">

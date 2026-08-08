@@ -12916,9 +12916,12 @@ body.wizard #role-editor-modal #role-editor-submit:hover:not(:disabled) {
 }
 body.wizard #role-editor-modal #role-editor-submit:disabled { opacity: 0.7; }
 
-/* ─── Wizard standing-orders dialog — "📜 The party's standing orders" ──
+/* ─── Wizard party-lore dialog — "📜 The party's lore" ─────────────────
    The group startup-context editor: the shared guidance every familiar
-   summoned into the party receives. Scoped to #group-context-modal. */
+   summoned into the party receives. Named "lore" (not "standing orders")
+   so it stays distinct from the separate standing-orders feature, and to
+   match the "Party lore" label the circle editor already uses. Scoped to
+   #group-context-modal. */
 body.wizard #group-context-modal .cron-create-modal {
   background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
   border: 1px solid #7a5db0;
@@ -12949,7 +12952,7 @@ body.wizard #group-context-modal button:not(#group-context-submit) {
 }
 body.wizard #group-context-modal button:not(#group-context-submit):hover { background: #3a2a63; }
 body.wizard #group-context-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
-/* Save = 📜 Decree it! — gilded lever; the brief disabled in-flight beat
+/* Save = 📜 Inscribe it! — gilded lever; the brief disabled in-flight beat
    reads "📜 Inscribing…". */
 body.wizard #group-context-modal #group-context-submit {
   font-size: 0;
@@ -12965,7 +12968,7 @@ body.wizard #group-context-modal #group-context-submit {
   transition: transform 0.08s ease;
 }
 body.wizard #group-context-modal #group-context-submit::before {
-  content: "📜 Decree it!";
+  content: "📜 Inscribe it!";
   font-size: 14px;
   letter-spacing: 1px;
 }
