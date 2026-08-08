@@ -98,6 +98,7 @@ const PROFILE_OWNED_FIELDS = [
   'contextFeatures', 'autoCompactWindow', 'contextWindowMax', 'copilotAPI', 'fastMode', 'sandboxImpl', 'sandboxImplCleared',
   'syncWorktree', 'autoFocus', 'includeGroupContext',
 ];
+const WORKTREE_SELECTION_FIELDS = ['worktree', 'worktreeBranch', 'worktreeBase'];
 
 function errorMessage(error) {
   return error?.message || String(error);
@@ -485,12 +486,16 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     touched.current.add('profile');
     const profile = findSpawnProfile(profiles, handle);
     if (profile) {
+      const preservedFields = new Set(profileOverrides.current);
+      for (const field of WORKTREE_SELECTION_FIELDS) {
+        if (touched.current.has(field)) preservedFields.add(field);
+      }
       setDraft((before) => ({
         ...replaceSpawnProfile(before, profile, context, {
           autoFocus: actions.autoFocusDefault(),
           rememberedEffort,
           pickerUsable: worktrees.isRepo,
-          preservedFields: profileOverrides.current,
+          preservedFields,
         }),
         profile: handle,
       }));

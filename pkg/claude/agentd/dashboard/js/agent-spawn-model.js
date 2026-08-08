@@ -991,9 +991,10 @@ export function clearSpawnProfileFields(draft, context, {
 // Selecting a spawn profile is replacement, not a sparse overlay on the
 // previously selected profile. Reset every field a profile can own first, then
 // apply the new profile and finally restore explicit per-spawn choices the
-// operator made in this open dialog. Location and worktree-selection fields are
-// deliberately outside clearSpawnProfileFields and survive without appearing
-// in preservedFields.
+// operator made in this open dialog. Location fields are deliberately outside
+// clearSpawnProfileFields and survive naturally; callers include explicitly
+// touched worktree-selection fields in preservedFields because reset-time sync
+// can otherwise clear a pending new-worktree selection.
 export function replaceSpawnProfile(draft, profile, context, {
   autoFocus = true,
   rememberedEffort = () => '',

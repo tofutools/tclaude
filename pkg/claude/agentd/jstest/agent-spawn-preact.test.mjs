@@ -880,6 +880,7 @@ test('Preact agent-spawn replaces sparse profile fields but keeps manual overrid
   try {
     state.open({ groupName: 'alpha' });
     await flush(harness);
+    await flush(harness);
 
     assert.equal(selectedValue(host.querySelector('#agent-spawn-load-profile')), 'group-default');
     assert.equal(host.querySelector('#agent-spawn-owner').hasAttribute('checked'), true);
@@ -889,6 +890,15 @@ test('Preact agent-spawn replaces sparse profile fields but keeps manual overrid
     const role = host.querySelector('#agent-spawn-role');
     setValue(role, 'manual-role');
     await harness.act(() => harness.fireEvent(role, 'input'));
+
+    const worktree = host.querySelector('#agent-spawn-worktree');
+    setValue(worktree, '__new__');
+    await harness.act(() => harness.fireEvent(worktree, 'change'));
+    const branch = host.querySelector('#agent-spawn-wt-branch');
+    setValue(branch, 'manual-branch');
+    await harness.act(() => harness.fireEvent(branch, 'input'));
+    assert.equal(host.querySelector('#agent-spawn-wt-new-row').hidden, false);
+    assert.equal(host.querySelector('#agent-spawn-wt-branch').value, 'manual-branch');
 
     const picker = host.querySelector('#agent-spawn-load-profile');
     setValue(picker, 'codex-profile');
@@ -901,6 +911,9 @@ test('Preact agent-spawn replaces sparse profile fields but keeps manual overrid
       'permission overrides from the previous profile must be cleared');
     assert.equal(host.querySelector('#agent-spawn-role').value, 'manual-role',
       'a field directly edited by the operator remains a per-spawn override');
+    assert.equal(host.querySelector('#agent-spawn-wt-new-row').hidden, false);
+    assert.equal(host.querySelector('#agent-spawn-wt-branch').value, 'manual-branch',
+      'an explicitly chosen new worktree and custom branch survive profile replacement');
   } finally {
     mounted.cleanup();
   }
