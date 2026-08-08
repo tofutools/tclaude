@@ -328,12 +328,14 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			}
 		}
 		for _, ov := range overrides {
-			if err := db.SetAgentPermissionOverride(outcome.ConvID, ov.Slug, ov.Effect, granter); err != nil {
+			if err := db.SetAgentPermissionOverrideWithScope(outcome.ConvID, ov.Slug,
+				ov.Override.Effect, ov.Override.Scope, granter); err != nil {
 				slog.Warn("wave spawn: apply permission override failed",
-					"conv", outcome.ConvID, "slug", ov.Slug, "effect", ov.Effect, "error", err)
+					"conv", outcome.ConvID, "slug", ov.Slug, "effect", ov.Override.Effect,
+					"scope", ov.Override.Scope, "error", err)
 				continue
 			}
-			if ov.Effect == db.PermEffectGrant {
+			if ov.Override.Effect == db.PermEffectGrant {
 				res.Granted = append(res.Granted, ov.Slug)
 			}
 		}

@@ -127,11 +127,11 @@ type SpawnProfile struct {
 	// Birth-time access controls the spawn dialog can pre-fill from a profile
 	//. IsOwner is tri-state (nil = unset → leave the dialog's own
 	// default): when set it pre-checks "Group owner". PermissionOverrides is the
-	// saved per-slug override map (slug → "grant" | "deny"), stored as a JSON
-	// object in the permission_overrides column ("" = none) and pre-loaded into
-	// the dialog's buffered editor.
+	// saved per-slug override map (slug → grant/deny plus an optional scope),
+	// stored as a JSON object in the permission_overrides column ("" = none)
+	// and pre-loaded into the dialog's buffered editor.
 	IsOwner             *bool
-	PermissionOverrides map[string]string
+	PermissionOverrides map[string]PermissionOverride
 
 	CreatedAt time.Time
 	UpdatedAt time.Time

@@ -11,6 +11,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -28,19 +29,19 @@ import (
 // roleJSON mirrors the daemon's wire shape (see agentd/roles.go). create /
 // edit accept this JSON via --file; show --json emits it.
 type roleJSON struct {
-	Name           string   `json:"name"`
-	Descr          string   `json:"descr,omitempty"`
-	Brief          string   `json:"brief,omitempty"`
-	SpawnProfile   string   `json:"spawn_profile,omitempty"`
-	Harness        string   `json:"harness,omitempty"`
-	Model          string   `json:"model,omitempty"`
-	Effort         string   `json:"effort,omitempty"`
-	Sandbox        string   `json:"sandbox,omitempty"`
-	Approval       string   `json:"approval,omitempty"`
-	ToolGovernance string   `json:"tools,omitempty"`
-	Permissions    []string `json:"permissions"`
-	CreatedAt      string   `json:"created_at,omitempty"`
-	UpdatedAt      string   `json:"updated_at,omitempty"`
+	Name           string               `json:"name"`
+	Descr          string               `json:"descr,omitempty"`
+	Brief          string               `json:"brief,omitempty"`
+	SpawnProfile   string               `json:"spawn_profile,omitempty"`
+	Harness        string               `json:"harness,omitempty"`
+	Model          string               `json:"model,omitempty"`
+	Effort         string               `json:"effort,omitempty"`
+	Sandbox        string               `json:"sandbox,omitempty"`
+	Approval       string               `json:"approval,omitempty"`
+	ToolGovernance string               `json:"tools,omitempty"`
+	Permissions    []db.PermissionGrant `json:"permissions"`
+	CreatedAt      string               `json:"created_at,omitempty"`
+	UpdatedAt      string               `json:"updated_at,omitempty"`
 }
 
 func rolesCmd() *cobra.Command {
@@ -193,7 +194,7 @@ func printRoleHuman(w io.Writer, rl roleJSON) {
 		fmt.Fprintf(w, "  launch:  %s\n", strings.Join(launch, " · "))
 	}
 	if len(rl.Permissions) > 0 {
-		fmt.Fprintf(w, "  perms:   %s\n", strings.Join(rl.Permissions, ", "))
+		fmt.Fprintf(w, "  perms:   %s\n", strings.Join(permissionGrantDisplays(rl.Permissions), ", "))
 	}
 	if brief := strings.TrimSpace(rl.Brief); brief != "" {
 		fmt.Fprintln(w, "  brief:")
@@ -354,4 +355,15 @@ func runRolesRm(p *rolesRmParams, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "Deleted role %q\n", name)
 	return rcOK
+}
+
+// permissionGrantDisplays renders a blueprint's default-grant list for a CLI
+// summary. A scoped grant shows its narrowing inline — a reader must never be
+// told an agent will be granted a slug without being told where.
+func permissionGrantDisplays(grants []db.PermissionGrant) []string {
+	out := make([]string, 0, len(grants))
+	for _, grant := range grants {
+		out = append(out, grant.Display())
+	}
+	return out
 }
