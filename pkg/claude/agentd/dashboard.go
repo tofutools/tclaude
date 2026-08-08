@@ -1999,8 +1999,42 @@ type agentState struct {
 	// The port record is a true statement about what a launch was told to bind;
 	// it says nothing about whether anything is listening, nor whose. See
 	// TCL-1054's carry-in note.
-	CopilotAPIConnected bool  `json:"copilot_api_connected,omitempty"`
-	AutoCompactWindow   int64 `json:"auto_compact_window,omitempty"`
+	CopilotAPIConnected bool `json:"copilot_api_connected,omitempty"`
+	// CopilotAPIChannelFailed reports that this agent's CURRENT launch has been
+	// OBSERVED not to be getting an API channel — so its mail is being held and
+	// will go on being held until somebody relaunches it.
+	//
+	// This is the field that makes a deaf agent visible. Without it the pair
+	// above is ambiguous in the worst direction: `copilot_api && !connected` is
+	// equally true of an agent whose bootstrap is still running, of every
+	// already-running agent between an agentd restart and the reconcile sweep
+	// reaching it, and of an agent that will never be reachable again. Rendering
+	// that pair as trouble would flag the fleet as broken at exactly the moments
+	// it is working normally.
+	//
+	// # It is deliberately not exhaustive, and the UI must not imply otherwise
+	//
+	// This says AGENTS KNOWN TO BE DEAF, not all deaf agents. An observation
+	// exists only where the daemon watched an attempt fail — a launch's bootstrap
+	// (copilot_api_bootstrap.go) or the startup reconcile's per-candidate attempt
+	// (copilot_api_reconnect.go). A candidate the sweep ran out of time to
+	// examine is un-examined rather than healthy, and reports nothing here while
+	// saying so in the log.
+	//
+	// So a false is "nothing observed", never "fine". A UI that renders the
+	// absence of this flag as an all-clear has converted a partial signal into a
+	// claim about the whole fleet, which is how absence starts reading as health.
+	//
+	// # Not durable, and not the agent's drive
+	//
+	// The observation lives in process memory and is dropped by an agentd
+	// restart, which is correct: at startup nobody yet knows which channels are
+	// adoptable, and the reconcile is what finds out. It is also NOT a statement
+	// that the agent is on send-keys — CopilotAPI above still answers that, and
+	// still says API, because the agent chose the API drive and a failed
+	// bootstrap has not un-chosen it. See copilotAPIChannelFailed.
+	CopilotAPIChannelFailed bool  `json:"copilot_api_channel_failed,omitempty"`
+	AutoCompactWindow       int64 `json:"auto_compact_window,omitempty"`
 	// Model is the LLM model display name the agent is running on
 	// ("Opus 4.8", "Sonnet 4.6", …), recorded by the statusline hook.
 	// Empty until the statusbar has ticked at least once; the dashboard
@@ -2429,6 +2463,14 @@ func stateForConvInSessionsBatched(
 			// foregone false.
 			if intent.API {
 				out.CopilotAPIConnected = copilotAPISessions.Connected(pick.ConvID)
+				// Same shape and the same cost — a map read under the registry's
+				// lock — and asked only when the agent is on the drive, since an
+				// observation about a channel is meaningless for an agent that
+				// never had one. Read at snapshot time from state rather than
+				// latched when something happened: an agent that went deaf through
+				// a path nobody instrumented still reads correctly here, and a
+				// relaunch clears it without anything having to remember to.
+				out.CopilotAPIChannelFailed = copilotAPIChannelFailed(pick.ConvID)
 			}
 			// A configured cap is launch intent and remains usable before Copilot
 			// has disclosed an observed model. Only the static fallback needs an

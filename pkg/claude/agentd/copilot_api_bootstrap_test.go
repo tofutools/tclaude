@@ -777,13 +777,13 @@ func TestStartCopilotAPIBootstrapIsQuietWithoutADriveOrAConversation(t *testing.
 	}
 	t.Cleanup(func() { bootstrapCopilotAPISessionFn = original })
 
-	runCopilotAPIBootstrap("conv-1", false, copilotAPILaunchFresh, "")
-	runCopilotAPIBootstrap("", true, copilotAPILaunchFresh, "")
+	runCopilotAPIBootstrap("conv-1", false, copilotAPILaunchFresh, "", 1)
+	runCopilotAPIBootstrap("", true, copilotAPILaunchFresh, "", 1)
 
 	// The positive control. Without it the two negatives above would pass just
 	// as well against a function that never calls the seam at all, which is the
 	// exact failure this test was written to stop being.
-	runCopilotAPIBootstrap("conv-2", true, copilotAPILaunchFresh, "")
+	runCopilotAPIBootstrap("conv-2", true, copilotAPILaunchFresh, "", 1)
 	select {
 	case got := <-called:
 		assert.Equal(t, "conv-2", got,

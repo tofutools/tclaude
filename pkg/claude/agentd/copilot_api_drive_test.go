@@ -70,6 +70,11 @@ func newCopilotAPIDriveFixture(t *testing.T) *copilotAPIDriveFixture {
 		Port: server.port(), PanePID: os.Getpid(), Client: client,
 	})
 	t.Cleanup(func() { copilotAPISessions.Drop(convID) })
+	// Launch generations and failure observations are process-wide too, and
+	// unlike handles nothing else drops them — so one test's generation would be
+	// the next one's starting point, and a failure observed here would stay
+	// readable by a test that never launched anything.
+	t.Cleanup(copilotAPISessions.ForgetLaunchesForTest)
 
 	return &copilotAPIDriveFixture{
 		convID: convID, server: server, tmux: tmux, agentID: agentID,

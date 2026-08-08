@@ -64,10 +64,30 @@ const (
 // A no-op for every non-Copilot harness, and for a conv id that is not known
 // yet — the callers that mint their id late call this again from the point they
 // discover it.
+//
+// # The launch generation
+//
+// Taken FIRST, before anything else, and handed to the bootstrap rather than
+// looked up by it. It is this launch's identity, and the reason it is a
+// parameter rather than something the bootstrap reads for itself is that the
+// bootstrap needs it at the moment it FAILS — which may be its whole budget
+// later, by which time a relaunch may own the conversation. A value read at the
+// failure path would be the successor's.
+//
+// It is also deliberately not derived from the port: a bootstrap that dies
+// inside verifiedCopilotAPIPort never held one, so an identity taken from the
+// verified port would be missing in exactly the case that needs it most. Passing
+// it in leaves the tidier-looking refactor with nothing to take.
+//
+// Counted for every launch this function completes, not only API-driven ones,
+// because what it marks is "a new launch owns this conversation now" — which is
+// what supersedes an earlier launch's observation, and is just as true when the
+// relaunch is on send-keys.
 func completeCopilotAPILaunch(convID string, kind copilotAPILaunchKind, args clcommon.SpawnArgs) {
+	generation := copilotAPISessions.NoteLaunch(convID, args.CopilotAPI)
 	recordCopilotAPIPosture(convID, args)
 	recordCopilotAPIPort(convID, args.CopilotAPIPort)
-	startCopilotAPIBootstrap(convID, args.CopilotAPI, kind, args.InitialPrompt)
+	startCopilotAPIBootstrap(convID, args.CopilotAPI, kind, args.InitialPrompt, generation)
 }
 
 // recordCopilotAPIPosture freezes which drive this launch took, against the

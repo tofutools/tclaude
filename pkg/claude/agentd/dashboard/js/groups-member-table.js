@@ -163,13 +163,38 @@ export function HarnessLine({ member, snapshot }) {
   // an agent is starting up and stay disagreed forever if its channel never
   // came up. A chip that read "api" off intent alone would say an agent is
   // API-driven while nothing is on the other end of it.
+  //
+  // Not-connected splits in two, and the split is the whole point of the third
+  // state. "No connection" is the normal condition of an agent that is starting
+  // up and of every agent between an agentd restart and the reconcile sweep
+  // reaching it, so on its own it is not news. What IS news is a channel the
+  // daemon watched fail: that agent's mail is being held and nothing but a
+  // relaunch will clear it, and until this state existed it looked identical to
+  // an agent that was merely still starting.
+  //
+  // Absence of the failed state is not an all-clear — a pending chip may be a
+  // deaf agent nobody has examined yet. That is why the pending wording below
+  // says "not connected" rather than anything reassuring. The full account of
+  // what this flag does and does not cover is on CopilotAPIChannelFailed.
+  const driveFailed = state.copilot_api && state.copilot_api_channel_failed;
+  const driveState = driveFailed
+    ? ' harness-drive-failed'
+    : state.copilot_api_connected
+      ? ''
+      : ' harness-drive-pending';
   const drive = state.copilot_api
-    ? html`<span class=${'harness-drive' + (state.copilot_api_connected ? '' : ' harness-drive-pending')}
+    ? html`<span class=${'harness-drive' + driveState}
         role="note"
-        title=${state.copilot_api_connected
-          ? "Driven over Copilot's embedded JSON-RPC API (copilot --ui-server), not tmux send-keys"
-          : "Launched for Copilot's embedded JSON-RPC API drive, but tclaude holds no connection to it yet — still starting up, or its channel failed to come up"}
-        aria-label=${state.copilot_api_connected ? 'Copilot API drive connected' : 'Copilot API drive not connected'}
+        title=${driveFailed
+          ? "Launched for Copilot's embedded JSON-RPC API drive, and its channel failed to come up — this agent's messages are being HELD, not delivered, and will be until it is relaunched. Its pane still works if you type into it"
+          : state.copilot_api_connected
+            ? "Driven over Copilot's embedded JSON-RPC API (copilot --ui-server), not tmux send-keys"
+            : "Launched for Copilot's embedded JSON-RPC API drive, but tclaude holds no connection to it yet — still starting up, or its channel failed to come up"}
+        aria-label=${driveFailed
+          ? 'Copilot API drive failed, messages held'
+          : state.copilot_api_connected
+            ? 'Copilot API drive connected'
+            : 'Copilot API drive not connected'}
         >api</span>`
     : null;
   if (!model) {
