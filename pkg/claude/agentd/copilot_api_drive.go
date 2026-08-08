@@ -168,6 +168,57 @@ func copilotAPIConnected(convID string) bool {
 	return copilotAPISessions.Connected(convID)
 }
 
+// copilotAPIChannelFailed reports whether this conversation's CURRENT launch has
+// been observed not to be getting an API channel at all.
+//
+// # It is an OBSERVATION, and that is the whole of its meaning
+//
+// Every other entry in this vocabulary READS a fact somebody else wrote. This
+// one is written by the daemon, from something it watched happen, and it is the
+// first thing in this seam that bears on routing without being a record of
+// anybody's intent. So be exact about what it states:
+//
+//   - It says THIS LAUNCH's channel is not coming up. It does NOT say the agent
+//     is on send-keys, and it must never be stored, displayed or reasoned about
+//     as the agent's drive. The agent chose the API drive and still has; a
+//     bootstrap that lost a race with a loaded host has not un-chosen anything,
+//     and the next relaunch must try the API drive again. Writing this fact into
+//     the agent's relaunch profile would turn a per-agent operator toggle into
+//     one decided by weather. TCL-1082's manual un-choose is a DECISION, with the
+//     opposite lifetime and the opposite behaviour on relaunch and on reconnect;
+//     it is a different record and the two must not be merged.
+//   - It is keyed to a launch generation, not to a conversation. A bootstrap can
+//     fail up to its whole budget after it started, and relaunching is what an
+//     operator does about a deaf agent — so an observation that spoke for the
+//     conversation would libel the healthy launch that replaced it. The
+//     comparison lives inside the registry's lock; see NoteChannelFailed.
+//   - It is in memory, and it must stay there. Persisting it would assert at
+//     daemon startup a fact that is not yet in evidence: at that moment nobody
+//     knows which channels are adoptable, and reconcileCopilotAPISessions is
+//     what finds out. A durable "failed" would route to send-keys an agent that
+//     the sweep is seconds away from reconnecting — the silent degradation the
+//     hold rule exists to prevent, reintroduced by the fix for it.
+//
+// # What a FALSE does not mean
+//
+// Not "the channel is fine". The ordinary false is "nothing has been observed
+// about this conversation yet", which covers the whole bootstrap window, every
+// already-running agent between an agentd restart and the sweep reaching it, and
+// every candidate the sweep ran out of time to examine. A caller that reads a
+// false as health has read an absent measurement as a good one. Callers wanting
+// "is it up" want [copilotAPIConnected]; callers wanting "which channel does
+// this belong to" want [copilotAPIDriven].
+//
+// # Why it does not route, yet
+//
+// It arrives with a read-only consumer and nothing else. Routing on it changes
+// how mail is delivered for a drive the operator has not verified in use, so it
+// lands as its own change with its own argument rather than riding in on a
+// surface.
+func copilotAPIChannelFailed(convID string) bool {
+	return copilotAPISessions.ChannelFailed(convID)
+}
+
 // copilotAPIDrive returns the handle to send on, or an error saying why not.
 //
 // The ownership re-proof is the point of routing every verb through here.

@@ -3319,6 +3319,18 @@ tr:hover .row-actions { opacity: 1; }
   color: #8b949e;
   border-bottom: 1px dashed currentColor;
 }
+/* Observed not to be coming up: this launch's channel failed, so the agent's
+   mail is being HELD and a relaunch is the only thing that clears it. Red and
+   solid rather than dimmed and dashed, because the distinction from -pending is
+   the one that matters — dashed means "wait", this means "act". Still the same
+   chip: a deaf agent is a state of the drive, not a second thing about the row.
+
+   Only ever rendered where the daemon actually watched an attempt fail, so its
+   absence is not an all-clear. See CopilotAPIChannelFailed. */
+.agent-harness .harness-drive-failed {
+  color: #f85149;
+  border-bottom: 1px solid currentColor;
+}
 /* The reasoning-effort token trails the model after a small gap, a shade
    brighter than the surrounding harness text so the eye catches the
    current effort level. */

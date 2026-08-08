@@ -140,7 +140,7 @@ func TestSpawnFacadesThreadTheLaunchKindToTheBootstrap(t *testing.T) {
 	var seen []kicked
 	previousBootstrap := startCopilotAPIBootstrap
 	startCopilotAPIBootstrap = func(
-		convID string, copilotAPI bool, kind copilotAPILaunchKind, _ string,
+		convID string, copilotAPI bool, kind copilotAPILaunchKind, _ string, _ uint64,
 	) {
 		if copilotAPI {
 			seen = append(seen, kicked{convID: convID, kind: kind})

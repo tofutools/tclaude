@@ -399,13 +399,140 @@ func copilotAPIWorkingDir(convID string) (string, error) {
 // bounded wait of up to a minute, which is not something a dashboard snapshot
 // tick may block on. Reconnection belongs with the component that owns the
 // long-lived connection (TCL-1057) and is called out there.
+// It also holds the OBSERVATION that a conversation's channel is not coming up
+// (TCL-1089), which is a different kind of thing from a handle and is kept here
+// deliberately. Its lifetime is the launch, and this registry is the only place
+// in the daemon whose contents already have that lifetime: a launch supersedes
+// it, a successful adopt outranks it, and a process restart drops it — which is
+// correct rather than lossy, because at boot nobody yet knows whether a channel
+// is adoptable and reconcileCopilotAPISessions is what finds out. Persisting it
+// would assert at startup a fact that is not in evidence until the sweep reaches
+// that conversation, and would route to send-keys an agent about to be
+// reconnected. See copilotAPIChannelFailed for what may and may not be read
+// from it.
 type copilotAPISessionRegistry struct {
 	mu       sync.Mutex
 	sessions map[string]*copilotAPISession
+	// launches counts launches per conversation, and is the identity a failure
+	// observation is keyed to. Monotonic within the process, which is complete
+	// rather than approximate: the goroutines that record an observation die
+	// with the process, so there is no observer from an earlier daemon whose
+	// count this would have to agree with.
+	launches map[string]uint64
+	// failed holds, per conversation, the launch generation whose channel was
+	// observed not to be coming up. Stale entries are inert rather than wrong —
+	// a reader compares against launches — but they are also cleared on the next
+	// launch so the map does not grow a row per dead launch.
+	failed map[string]uint64
 }
 
 // copilotAPISessions is the process-wide registry.
 var copilotAPISessions = &copilotAPISessionRegistry{}
+
+// NoteLaunch records that a new launch has begun for a conversation and returns
+// the generation it owns.
+//
+// The returned value is the caller's launch identity, and it exists so a
+// bootstrap that fails LATE cannot speak for a launch that has since replaced
+// it. Relaunching is the operator's recovery action for an agent that has gone
+// deaf, so the window in which a dying goroutine could libel its own successor
+// is exactly the window in which someone is most likely to be relaunching.
+//
+// Recording a launch also CLEARS any earlier failure observation: the new launch
+// is the newer truth about the conversation, and it has its own bootstrap that
+// will answer the question again. Same rule, and the same reason, as
+// [copilotAPISessionRegistry.Adopt] replacing rather than refusing.
+func (r *copilotAPISessionRegistry) NoteLaunch(convID string) uint64 {
+	if convID == "" {
+		return 0
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.launches == nil {
+		r.launches = map[string]uint64{}
+	}
+	r.launches[convID]++
+	delete(r.failed, convID)
+	return r.launches[convID]
+}
+
+// CurrentLaunch returns the generation a conversation's latest known launch
+// owns, or zero when this process has not seen one.
+//
+// Zero is the ordinary answer after an agentd restart for every agent that was
+// already running, and it is a usable identity rather than a missing one: the
+// reconcile latches it before it starts work and presents it back, so a launch
+// arriving mid-sweep moves the generation and the reconcile's observation is
+// dropped. That is [copilotAPISessionRegistry.AdoptIfAbsent]'s rule — the launch
+// is the newer truth, the older thing stands down — applied to the observation
+// instead of to the handle.
+func (r *copilotAPISessionRegistry) CurrentLaunch(convID string) uint64 {
+	if convID == "" {
+		return 0
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.launches[convID]
+}
+
+// NoteChannelFailed records that the launch identified by generation will not be
+// getting an API channel, and reports whether the observation was taken.
+//
+// The comparison and the write are ONE critical section, which is what makes the
+// relaunch race impossible rather than unlikely. A caller that read the current
+// generation, compared it itself and then called a plain setter would leave a
+// window between the two in which a relaunch lands — small, real, and precisely
+// the shape of race this seam has been bitten by before.
+//
+// A false is not a failure to report. It means a newer launch owns this
+// conversation now, so the caller's observation is about a launch nobody is
+// asking after any more.
+func (r *copilotAPISessionRegistry) NoteChannelFailed(convID string, generation uint64) bool {
+	if convID == "" {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.launches[convID] != generation {
+		return false
+	}
+	if r.failed == nil {
+		r.failed = map[string]uint64{}
+	}
+	r.failed[convID] = generation
+	return true
+}
+
+// ChannelFailed reports whether the conversation's CURRENT launch has been
+// observed not to be getting a channel.
+//
+// A live handle answers false regardless of what was recorded, so an adopt
+// self-corrects the observation without anything having to clear it. That
+// matters for the case an error return does not distinguish: a bootstrap that
+// died at setForeground or at the launch prompt had already created the session,
+// so a later daemon's reconcile can legitimately adopt it.
+func (r *copilotAPISessionRegistry) ChannelFailed(convID string) bool {
+	if convID == "" {
+		return false
+	}
+	if r.Handle(convID) != nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	generation, observed := r.failed[convID]
+	return observed && generation == r.launches[convID]
+}
+
+// ForgetLaunchesForTest clears the launch and failure bookkeeping. Tests share
+// a process-wide registry, so one test's launch generation would otherwise be
+// the next one's starting point.
+func (r *copilotAPISessionRegistry) ForgetLaunchesForTest() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	clear(r.launches)
+	clear(r.failed)
+}
 
 // Adopt records a handle, closing and replacing any earlier one for the same
 // conversation.
@@ -561,12 +688,16 @@ var startCopilotAPIBootstrap = runCopilotAPIBootstrap
 // not — exporting an internal enum so a no-op stub can name it would be a worse
 // trade. In-package tests that care about the kind itself assign
 // startCopilotAPIBootstrap directly.
+// The launch generation is likewise not surfaced to the callback: it is an
+// identity for the compare-and-set inside the registry, and a stub that never
+// records an observation has nothing to do with it.
 func SetCopilotAPIBootstrapForTest(
 	fn func(convID string, copilotAPI bool, resume bool, initialPrompt string),
 ) func() {
 	previous := startCopilotAPIBootstrap
 	startCopilotAPIBootstrap = func(
 		convID string, copilotAPI bool, kind copilotAPILaunchKind, initialPrompt string,
+		_ uint64,
 	) {
 		fn(convID, copilotAPI, kind == copilotAPILaunchResume, initialPrompt)
 	}
@@ -584,6 +715,7 @@ var bootstrapCopilotAPISessionFn = bootstrapCopilotAPISession
 
 func runCopilotAPIBootstrap(
 	convID string, copilotAPI bool, kind copilotAPILaunchKind, initialPrompt string,
+	generation uint64,
 ) {
 	if !copilotAPI || convID == "" {
 		return
@@ -593,9 +725,26 @@ func runCopilotAPIBootstrap(
 		defer cancel()
 		handle, err := bootstrapCopilotAPISessionFn(ctx, convID, kind, initialPrompt)
 		if err != nil {
-			slog.Error("could not bring up the Copilot API session; the agent is still "+
-				"usable through its pane",
-				"conv_id", convID, "error", err)
+			// This is where the fact is known, and it is known here without any
+			// timing judgement left in it. The whole bootstrap ran under one
+			// budget — the port wait's ceiling plus a margin — so "slow" has
+			// already been absorbed INSIDE the call that just returned. An error
+			// out of it means this launch's bounded attempt is over, and nothing
+			// re-runs it: startCopilotAPIBootstrap is called only from
+			// completeCopilotAPILaunch, and reconcileCopilotAPISessions runs once,
+			// at daemon startup. An observer outside this function would be
+			// re-deriving, from a clock, a fact the failing call already held.
+			//
+			// Recorded against THIS launch's generation. A relaunch is what an
+			// operator does about an agent that has gone deaf, so the window this
+			// return sits at the end of is the window in which a successor is most
+			// likely to exist — and the registry drops the observation rather than
+			// letting it speak for that successor.
+			recorded := copilotAPISessions.NoteChannelFailed(convID, generation)
+			slog.Error("could not bring up the Copilot API session; this launch will not get "+
+				"one, and until the agent is relaunched its mail is held rather than "+
+				"delivered. It is still usable by typing into its pane",
+				"conv_id", convID, "error", err, "observation_recorded", recorded)
 			return
 		}
 		copilotAPISessions.Adopt(handle)
