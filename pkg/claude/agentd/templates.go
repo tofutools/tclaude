@@ -4154,6 +4154,12 @@ func dropLaunchFieldsForeignToHarness(out *db.SpawnProfile) *snapshotFieldDrop {
 			dropped = append(dropped, "approval")
 		}
 	}
+	if len(out.ContextFeatures) > 0 {
+		if _, err := harness.ResolveContextFeatures(h, out.ContextFeatures); err != nil {
+			out.ContextFeatures = nil
+			dropped = append(dropped, "context_features")
+		}
+	}
 	if len(dropped) == 0 {
 		return nil
 	}
