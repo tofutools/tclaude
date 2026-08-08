@@ -39,6 +39,53 @@ func TestSessionWatchColumns_OverrideShadowsDefaults(t *testing.T) {
 	assert.False(t, sessionHasHeader(m.columns(), "STATUS"))
 }
 
+// The shared table sorter maps number/F-keys over the currently visible
+// sortable columns. HARNESS participates in that mapping, and hiding it must
+// automatically shift the later keys without a sessions-specific key map.
+func TestSessionWatchColumns_SortKeysFollowVisibleColumns(t *testing.T) {
+	m := model{
+		allSessions:  []*SessionState{{Harness: "claude"}, {Harness: "codex"}},
+		colOverrides: map[string]bool{},
+	}
+
+	require.True(t, m.sort.HandleSortKey(m.columns(), "f2"))
+	assert.Equal(t, "harness", m.sort.Key, "HARNESS is the second visible sortable column")
+
+	m.sort = table.SortState{}
+	m.colOverrides[sessionColHarness] = false
+	require.True(t, m.sort.HandleSortKey(m.columns(), "2"))
+	assert.Equal(t, "project", m.sort.Key, "hiding HARNESS shifts PROJECT onto 2/F2")
+
+	m.sort = table.SortState{}
+	m.colOverrides[sessionColProject] = false
+	require.True(t, m.sort.HandleSortKey(m.columns(), "f2"))
+	assert.Equal(t, "status", m.sort.Key, "hiding PROJECT shifts STATUS onto 2/F2")
+}
+
+func TestSortSessionsByKey_Harness(t *testing.T) {
+	sessions := []*SessionState{
+		{ID: "opencode", Harness: "opencode"},
+		{ID: "legacy", Harness: ""},
+		{ID: "claude", Harness: "claude"},
+		{ID: "codex", Harness: "codex"},
+	}
+
+	SortSessionsByKey(sessions, "harness", table.SortAsc)
+	assert.Equal(t, []string{"legacy", "claude", "codex", "opencode"}, sessionIDs(sessions))
+
+	SortSessionsByKey(sessions, "harness", table.SortDesc)
+	assert.Equal(t, []string{"opencode", "codex", "legacy", "claude"}, sessionIDs(sessions),
+		"equal displayed harnesses retain their relative order")
+}
+
+func sessionIDs(sessions []*SessionState) []string {
+	ids := make([]string, len(sessions))
+	for i, session := range sessions {
+		ids[i] = session.ID
+	}
+	return ids
+}
+
 func TestSessionWatchColumns_HeaderCellLockstep(t *testing.T) {
 	state := &SessionState{
 		ID: "session-1", Harness: "codex", Cwd: "/repo", Status: StatusIdle,

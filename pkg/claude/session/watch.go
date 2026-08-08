@@ -861,7 +861,7 @@ func (m model) orderedColumns() []sessionColDef {
 		{visible: true, col: table.Column{Header: "ID", MinWidth: 10, MaxWidth: 32, Weight: 0.12, Truncate: true, SortKey: "id"},
 			cell: func(_ *model, state *SessionState) string { return sessionHandle(state) }},
 		{key: sessionColHarness, visible: m.colVisible(sessionColHarness, m.hasNonDefaultHarness()),
-			col:  table.Column{Header: "HARNESS", Width: 8},
+			col:  table.Column{Header: "HARNESS", Width: 8, SortKey: "harness"},
 			cell: func(_ *model, state *SessionState) string { return sessionHarnessBadge(state.Harness) }},
 		{key: sessionColProject, visible: m.colVisible(sessionColProject, true),
 			col:  table.Column{Header: "PROJECT", MinWidth: 15, Weight: 0.25, Truncate: true, TruncateMode: table.TruncateStart, SortKey: "project"},
