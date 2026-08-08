@@ -50,6 +50,13 @@ existing role/profile by name needs neither — just `templates.manage`). Grant
 it is strictly more powerful (a whole team at once) and is usually left to the
 human.
 
+A grant may also be **scoped** — narrowed to particular groups, spawn
+profiles, or other typed targets. A scoped grant that does not cover what you
+are acting on decides nothing, so you get the same 403 as an agent holding no
+slug at all. `tclaude agent permissions ls` shows the scope alongside each
+grant (`group:dev [group=dev]`); if yours is narrower than the work, say so
+when you ask the human rather than re-trying the same call.
+
 If a mutation is refused you'll get a 403 naming the missing slug — ask the
 human to grant it (`tclaude agent permissions grant <conv> templates.manage`,
 itself human-only), then retry. Don't loop on a refusal. (The template verbs

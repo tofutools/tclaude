@@ -2322,6 +2322,74 @@ and are not copied into the agent's own override rows. An explicit per-agent
 time-bounded exception above it. Membership in multiple groups unions their
 grants. Nested groups do not inherit membership or permissions.
 
+Any allow in that union may additionally carry a **scope** narrowing which
+actions it covers — see [Scoped grants](#scoped-grants). Denies never do.
+
+### Scoped grants
+
+A grant can carry a **scope**: a constraint on *which* actions it
+authorizes, rather than only *whether* the agent holds the slug at all. A
+scope is a map of typed dimensions to matchers:
+
+```bash
+# spawn into "dev" and nowhere else
+tclaude agent permissions grant p7-worker groups.spawn --scope group=dev
+
+# start runs of either release process, no others
+tclaude agent permissions grant lead process.runs.manage \
+  --scope process_template=release-train,hotfix
+```
+
+The dashboard's permission editor edits the same thing: a granted slug that
+declares dimensions shows a chip per constrained dimension, or an explicit
+**unscoped** chip when it has none, and a drawer with one picker per
+dimension. Which dimensions a slug accepts is per-slug and advertised by the
+registry — `tclaude agent permissions slugs` lists them in its scope-dims
+column. A slug that declares none only supports today's unscoped grants.
+
+**How a scope is evaluated.** Each gate site describes the action it is about
+in the same typed vocabulary (the group, the process template, …). Against
+that description:
+
+- Matchers **within one dimension OR**: `group=dev,ops` means either group.
+- Dimensions **AND**: `group=dev spawn_profile=p1` means both must match.
+- A dimension the scope does not mention is **unconstrained**.
+- Only the **winning tier** is consulted (per-agent override, else group
+  grants, else defaults). A per-agent grant scoped to `dev` applies `dev`
+  even when a group grant underneath is broader — that is what lets an
+  operator narrow one agent without touching its group.
+- Scopes **union within a tier**: an agent in two groups that both grant the
+  slug may act within either scope. One **unscoped row absorbs the tier** —
+  union with unscoped is unscoped — no matter where it sorts.
+
+**Denies are never scoped.** A deny is unconditional and terminal: it beats
+defaults, group grants, and scoped allows alike. A scoped deny would be a
+hole rather than a narrowing, so the CLI, the API and the editor all refuse
+to write one.
+
+**A scope that does not match decides nothing** — it does not deny. The
+allow simply stops applying to this action, leaving the same gap an agent
+with no grant leaves: the structural owner bypass may still fill it, then
+`--ask-human` may, and otherwise the call is a 403. This matters at gate
+sites that have not been taught to describe their action yet: a dimension
+the site did not describe **fails closed**, so a scoped grant there degrades
+to "not decided here", never to a silent allow. The same rule covers a scope
+row this build cannot decode — it authorizes nothing, and `permissions ls`
+renders it as `unreadable scope` rather than as an unconstrained grant, so
+the listing and the gate never disagree.
+
+Provenance shows what actually applied: `permissions ls` renders the winning
+source with its scope, e.g. `group:dev [group=dev]`, and an audit row records
+the scope that authorized the action.
+
+*Upcoming, in flight as separate changes:* a **cover rule** (an agent
+handing a grant on — spawning with a profile, granting to another agent —
+may not exceed the scope it holds itself); **owner-scope narrowing** (the
+group-owner bypass constrained the same way); relational **lineage
+selectors** (`target_agent=@descendants` / `@self-spawned`, which parse and
+persist today but match nothing until the spawn-edge table exists); and a
+**git remote** dimension for `git.*`. Nothing below depends on them.
+
 ### Slugs
 
 Slugs are grouped by family. `self.*` acts on the calling agent;
@@ -2387,6 +2455,22 @@ the [dashboard](dashboard.md) permission editor as a normal allow override
 still beats it — deny is always authoritative. The button is rendered (and
 its action accepted) **only** for eligible slugs; destructive or
 fleet-affecting slugs (e.g. `agent.delete`, `groups.rm`) never offer it.
+
+**Always allow — this scope.** When the gated action is one the gate
+describes in [scope](#scoped-grants) dimensions, the card offers a second,
+narrower button labelled with that scope (e.g. *Always allow — group=dev*).
+It persists the same allow override carrying exactly that scope, so the
+agent stops asking for this group / template / profile and keeps asking for
+anything else; the blanket button is still there, relabelled *any scope*, for
+when that is what you mean. Approving a second scope later **adds** to the
+grant rather than replacing it. The scope offered is the one the gate itself
+derived for the pending request — the same value it will evaluate the stored
+grant against — so a scope you accept is guaranteed to stop the popup rather
+than leaving you clicking it forever; a gate site that describes nothing
+offers only the blanket button. Eligibility is the same allowlist (a scoped
+grant is strictly narrower than the blanket one), the decision endpoint
+re-checks both server-side, and the history card records it as
+*Always — this scope* with granted-by `human:popup-always-scoped`.
 
 For a *bundle* of slugs over a *window* of time rather than one
 command, use [`sudo`](#permissions-sudo) instead.
