@@ -428,9 +428,10 @@ type SpawnRequest struct {
 	// (Copilot); requesting it for Claude Code or Codex is a 400. Forwarded to
 	// `tclaude session new --copilot-api`. See TCL-1051 / TCL-1053.
 	CopilotAPI *bool `json:"copilot_api,omitempty"`
-	// FastMode is tri-state: nil inherits Codex config.toml, true forces fast,
-	// and false forces the standard service tier.
-	FastMode *bool `json:"fast_mode,omitempty"`
+	// FastMode is omitted when profile tiers may fill it, or one of inherit/on/off
+	// when this request authoritatively chooses the Codex service tier. Keeping
+	// explicit inherit on the wire lets a launch override a profile that pins on.
+	FastMode string `json:"fast_mode,omitempty"`
 
 	// WorktreePath / WorktreeBranch describe a git worktree the agent
 	// should do its code work in, when Cwd is a parent "monorepo"
@@ -1392,9 +1393,8 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		on := true
 		req.CopilotAPI = &on
 	}
-	if fastMode != "" {
-		on := fastMode == harness.FastModeOn
-		req.FastMode = &on
+	if strings.TrimSpace(p.FastMode) != "" {
+		req.FastMode = fastMode
 	}
 	// Group context: --no-group-context forces exclude, else a --profile may set
 	// it; an omitted pointer means the daemon includes the group context by

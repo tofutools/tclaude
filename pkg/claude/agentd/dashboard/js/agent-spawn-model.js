@@ -1221,7 +1221,9 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
   // modal is authoritative, so an unchecked box overrides a profile's opt-in.
   // Omitted entirely for every other harness, leaving the pointer nil.
   if (view.showCopilotAPI) body.copilot_api = !!draft.copilotAPI;
-  if (view.showFastMode && draft.fastMode !== '') body.fast_mode = draft.fastMode === '1';
+  if (view.showFastMode) {
+    body.fast_mode = draft.fastMode === '1' ? 'on' : draft.fastMode === '0' ? 'off' : 'inherit';
+  }
   if (view.showSSHWorkaround) {
     body.ssh_workaround = !!(view.sshWorkaroundAvailable && draft.sshWorkaround);
   }

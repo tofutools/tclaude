@@ -50,6 +50,10 @@ type launchCarryoverField struct {
 	// that is what lets classify and its structural guard enumerate every
 	// spelling instead of depending on someone remembering a fourth one.
 	unpinned []string
+	// zeroMeaningful marks an axis where the pointed-to Go zero is still an
+	// explicit launch choice. FastMode=false pins the standard service tier; it
+	// is not equivalent to omitting --fast-mode and inheriting config.toml.
+	zeroMeaningful bool
 	// carry writes the recorded value onto params and reports the value it
 	// applied together with what happened. carryUnrecorded means the posture
 	// holds nothing for this field (nil = unknown, and unknown must stay
@@ -76,7 +80,7 @@ func (f launchCarryoverField) classify(applied any, outcome carryOutcome) carryO
 			return carryAppliedDefault
 		}
 	case bool:
-		if !v {
+		if !v && !f.zeroMeaningful {
 			return carryAppliedDefault
 		}
 	case int64:
@@ -377,9 +381,10 @@ var launchCarryoverFields = []launchCarryoverField{
 		},
 	},
 	{
-		flag:     "fast-mode",
-		recorded: "FastMode",
-		supplied: func(p *NewParams) bool { return p.FastMode != "" },
+		flag:           "fast-mode",
+		recorded:       "FastMode",
+		zeroMeaningful: true,
+		supplied:       func(p *NewParams) bool { return p.FastMode != "" },
 		carry: func(h *harness.Harness, rec *db.AgentRelaunchProfile, p *NewParams) (any, carryOutcome) {
 			if rec.FastMode == nil {
 				return nil, carryUnrecorded

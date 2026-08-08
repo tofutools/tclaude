@@ -818,6 +818,9 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		if sameSourceGeneration && agent.AutoCompactWindow == nil {
 			agent.AutoCompactWindow = previous.AutoCompactWindow
 		}
+		if sameSourceGeneration && agent.FastMode == nil {
+			agent.FastMode = previous.FastMode
+		}
 	}
 	conversation.FallbackRelaunch = &agent
 	conversationRaw, err := encodeRelaunchProfile(conversation)

@@ -3327,13 +3327,30 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	}
 	var fastMode, fastModeSet bool
 	var fastModeNote, fastModeSource string
-	fastMode, fastModeSet, fastModeSource, fastModeNote, fieldFail = resolveBoolLaunchField(
-		"fast_mode", body.FastMode != nil && *body.FastMode, body.FastMode != nil, h.Name, profileTiers,
-		func(p *db.SpawnProfile) *bool { return p.FastMode },
-		func(v bool) (bool, error) {
-			_, err := harness.ResolveFastMode(h, &v)
-			return v, err
-		})
+	requestedFastMode := strings.TrimSpace(body.FastMode)
+	if requestedFastMode != "" {
+		normalizedFastMode, fastErr := harness.ResolveFastModeFlag(h, requestedFastMode)
+		if fastErr != nil {
+			fieldFail = &spawnFailure{Status: http.StatusBadRequest, Kind: "invalid_request", Msg: fastErr.Error()}
+		} else {
+			requestedFastMode = normalizedFastMode
+			fastModeSource = "explicit"
+			switch requestedFastMode {
+			case harness.FastModeOn:
+				fastMode, fastModeSet = true, true
+			case harness.FastModeOff:
+				fastModeSet = true
+			}
+		}
+	} else {
+		fastMode, fastModeSet, fastModeSource, fastModeNote, fieldFail = resolveBoolLaunchField(
+			"fast_mode", false, false, h.Name, profileTiers,
+			func(p *db.SpawnProfile) *bool { return p.FastMode },
+			func(v bool) (bool, error) {
+				_, err := harness.ResolveFastMode(h, &v)
+				return v, err
+			})
+	}
 	if fieldFail != nil {
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return

@@ -83,6 +83,15 @@ func TestSpawnProfiles_CodexFastModeTriStateAndHarnessGate(t *testing.T) {
 	require.NoError(t, json.Unmarshal(spawn.Raw, &spawnWire))
 	assert.Equal(t, "off", spawnWire.Resolved.FastMode.Value)
 
+	spawn = f.AsHuman().SpawnWith("crew", map[string]any{
+		"name": "inherit-worker", "profile": "codex-fast-1", "fast_mode": "inherit",
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	require.NoError(t, json.Unmarshal(spawn.Raw, &spawnWire))
+	assert.Empty(t, spawnWire.Resolved.FastMode.Value)
+	assert.Equal(t, "explicit", spawnWire.Resolved.FastMode.Source,
+		"explicit inherit must suppress a profile that pins fast mode")
+
 	rec := profileReq(t, f, http.MethodPost, "/v1/spawn-profiles", map[string]any{
 		"name": "claude-fast", "harness": "claude", "fast_mode": true,
 	})

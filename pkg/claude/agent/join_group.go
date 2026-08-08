@@ -73,8 +73,7 @@ func RunJoinGroup(params *session.NewParams) error {
 		TimeoutSeconds: 30,
 	}
 	if params.FastMode != "" {
-		on := params.FastMode == harness.FastModeOn
-		req.FastMode = &on
+		req.FastMode = params.FastMode
 	}
 	var resp SpawnResponse
 	path := "/v1/groups/" + params.JoinGroup + "/spawn"

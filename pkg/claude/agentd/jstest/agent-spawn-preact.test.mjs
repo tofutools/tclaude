@@ -356,11 +356,11 @@ test('agent-spawn model normalizes names and builds exact launch bodies', async 
   assert.equal('remote_control' in codexBody, false);
   assert.equal(codexBody.approval, 'on-request');
   assert.equal(codexBody.auto_review, true);
-  assert.equal(codexBody.fast_mode, undefined, 'default inherits Codex config.toml');
+  assert.equal(codexBody.fast_mode, 'inherit', 'dialog default explicitly selects Codex config.toml');
   const fastBody = model.buildSpawnRequest({ ...codex, name: 'fast', fastMode: '1' }, context, null, []).body;
-  assert.equal(fastBody.fast_mode, true);
+  assert.equal(fastBody.fast_mode, 'on');
   const standardBody = model.buildSpawnRequest({ ...codex, name: 'standard', fastMode: '0' }, context, null, []).body;
-  assert.equal(standardBody.fast_mode, false);
+  assert.equal(standardBody.fast_mode, 'off');
   const omittedBody = model.buildSpawnRequest({
     ...draft, name: 'worker', sandboxProfile: model.SANDBOX_PROFILE_NONE,
   }, context, { path: '', branch: '' }).body;
