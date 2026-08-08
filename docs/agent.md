@@ -538,6 +538,15 @@ an owner and `permissions.grant` to seed overrides. A profile the caller NAMED
 is direct intent, so an unauthorized caller is refused; a group or global
 DEFAULT profile is ambient configuration nobody typed at this launch, so it is
 skipped and disclosed in the `resolved` echo instead of failing the spawn.
+`tclaude agent spawn --no-owner` declines ownership a profile would otherwise
+confer, the same shape as `--no-group-context`.
+
+One limitation to know about: emptiness at a higher tier is silence, not "no".
+A profile carrying no `role` (or no `permission_overrides`) does not blank out a
+lower tier's — naming a deliberately sparse profile does not produce a sparse
+agent. `is_owner` is the exception, because it is tri-state and so can say no.
+To keep a group default profile's overrides off one agent, post an explicit
+empty map (the dashboard's cleared permission editor does exactly that).
 
 `sync_worktree` is the one profile field the daemon cannot resolve: a worktree
 is cut before the spawn request goes out. The dashboard's spawn modal and the

@@ -4589,12 +4589,14 @@ type spawnParams struct {
 	// validation failures; the launch-success flag preserves it after the pane
 	// exists, including later enrollment/claim failures.
 	privateAttachmentRootCleanup func()
-	// SpawnConfigJSON is the verbatim JSON of the agent.SpawnRequest this spawn
-	// came from, captured at the HTTP boundary (handleGroupSpawn). enrollSpawnedConv
-	// records it onto the new actor's agents.initial_spawn_config so there is a
-	// durable, agent-level "what was this spawned with" record. Empty on the
-	// paths that have no SpawnRequest to snapshot (the pending-spawn sweeper,
-	// the group-template instantiator), where the column simply stays "".
+	// SpawnConfigJSON is the JSON of the agent.SpawnRequest this spawn came
+	// from, captured at the HTTP boundary (handleGroupSpawn) AFTER its profile
+	// tier stack resolves — so it states what the launch actually used, not what
+	// the caller happened to type. enrollSpawnedConv records it onto the new
+	// actor's agents.initial_spawn_config so there is a durable, agent-level
+	// "what was this spawned with" record. Empty on the paths that have no
+	// SpawnRequest to snapshot (the pending-spawn sweeper, the group-template
+	// instantiator), where the column simply stays "".
 	SpawnConfigJSON string
 	// ProcessCommandID binds a process-owned spawn to its deterministic
 	// command. It is metadata only (never sent through pane injection) and is

@@ -1,10 +1,14 @@
 package agentd
 
 import (
+	"encoding/json"
+	"io"
+	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 )
 
 // The console posts a profile NAME and lets the daemon resolve what that
@@ -120,4 +124,59 @@ func TestTUISpawnDefaultProfileTakesBackThePrefilledName(t *testing.T) {
 	m = m.cycleChoice(1)
 	require.Empty(t, m.selectedProfile(), "back on the (default) sentinel")
 	assert.Empty(t, m.form.name.Value(), "the prefilled name goes with the profile that supplied it")
+}
+
+// The reviewer's scenario, pinned: an operator who deletes a name the profile
+// prefilled must get the auto-generated label they asked for, not the profile's
+// name back. The form HAS a Name box, so an emptied box is an answer — the
+// request states it rather than omitting it and inviting the daemon's profile
+// tiers to answer again.
+func TestTUISpawnEmptiedNameBoxIsStatedNotSilent(t *testing.T) {
+	var gotFields map[string]json.RawMessage
+	api := stubTUIAPI(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal(body, &gotFields))
+		writeJSON(w, http.StatusOK, agent.SpawnResponse{Group: "dev", AgentID: "agt_1"})
+	})
+
+	m := newTUIModel(api)
+	m.groups = []tuiGroupRow{{Name: "dev"}}
+	m.profiles = []tuiProfileRow{{Name: "reviewer-kit", AgentName: "reviewer"}}
+	m = m.openSpawnForm()
+	m = m.focusSpawnField(tuiFieldProfile).cycleChoice(1)
+	require.Equal(t, "reviewer", m.form.name.Value())
+
+	// Clear the box the way the operator's backspace does.
+	m = m.focusSpawnField(tuiFieldName)
+	m.form.name.SetValue("")
+
+	_, cmd := m.submitSpawn()
+	require.NotNil(t, cmd)
+	msg, ok := cmd().(tuiSpawnedMsg)
+	require.True(t, ok)
+	require.NoError(t, msg.err)
+
+	require.Contains(t, gotFields, "name", "an emptied Name box must reach the wire as a stated blank")
+	assert.Equal(t, json.RawMessage(`""`), gotFields["name"])
+}
+
+// The brief is the other way round: this form never prefills it, so an empty
+// box is a real silence the profile's own brief may fill. The form says so
+// rather than leaving the operator to find out from the agent's inbox.
+func TestTUISpawnBriefHintNamesTheProfilesOwnBrief(t *testing.T) {
+	m := newTUIModel(nil)
+	m.groups = []tuiGroupRow{{Name: "dev"}}
+	m.profiles = []tuiProfileRow{
+		{Name: "plain-kit"},
+		{Name: "briefed-kit", InitialMessage: "Review the open PR queue."},
+	}
+	m = m.openSpawnForm()
+	assert.Contains(t, m.renderSpawnForm(), "blank = no startup brief")
+
+	m = m.focusSpawnField(tuiFieldProfile).cycleChoice(2)
+	require.Equal(t, "briefed-kit", m.selectedProfile())
+	view := m.renderSpawnForm()
+	assert.Contains(t, view, "blank = the profile's own brief")
+	assert.NotContains(t, view, "blank = no startup brief")
 }

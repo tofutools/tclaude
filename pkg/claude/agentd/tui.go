@@ -498,6 +498,11 @@ type tuiProfileRow struct {
 	// SyncWorktree is the profile's "give each agent its own worktree, named
 	// after it" toggle — tri-state, nil when the profile says nothing.
 	SyncWorktree *bool `json:"sync_worktree,omitempty"`
+	// InitialMessage is the profile's task-brief default. The form does not
+	// prefill it — a profile's brief may be many lines and the Brief field is a
+	// one-line input — so this is read only to SAY that an empty box will be
+	// filled by it, rather than leaving the operator to find out afterwards.
+	InitialMessage string `json:"initial_message,omitempty"`
 }
 
 func (p tuiProfileRow) disabled() bool { return p.Disabled != nil && *p.Disabled }
@@ -1682,12 +1687,21 @@ func (m tuiModel) submitSpawn() (tuiModel, tea.Cmd) {
 		return m, nil
 	}
 	req := agent.SpawnRequest{
-		Name:           strings.TrimSpace(m.form.name.Value()),
 		Cwd:            strings.TrimSpace(m.form.dir.Value()),
 		Profile:        m.selectedProfile(),
 		Harness:        m.selectedHarness(),
 		InitialMessage: strings.TrimSpace(m.form.brief.Value()),
 	}
+	// The name is STATED, not merely set: this form has a box for it and fills
+	// that box from the selected profile, so an emptied box is the operator
+	// saying "not that name" — not a silence for the profile to answer again.
+	//
+	// The brief is deliberately NOT stated. This form never prefills it (a
+	// profile's brief may be many lines, and this is a one-line input that would
+	// mangle them), so there is nothing here for the operator to have cleared:
+	// an empty box is a real silence, and the profile's brief fills it as the
+	// task default it is. briefLine says so on screen.
+	req.StateName(strings.TrimSpace(m.form.name.Value()))
 	m.spawnWorktree = tuiWorktreeResponse{}
 	if m.canCreateWorktree() && m.creatingWorktree() {
 		branch := strings.TrimSpace(m.form.branch.Value())
@@ -3319,7 +3333,7 @@ func (m tuiModel) renderSpawnForm() string {
 		tuiHint(harnessChoice == tuiHarnessDefault,
 			"  (the profile chain decides — "+harness.DefaultName+" if nothing pins one)"),
 		m.form.field == tuiFieldHarness))
-	b.WriteString(m.form.brief.View() + tuiHint(m.form.brief.Value() == "", "  (blank = no startup brief)"))
+	b.WriteString(m.form.brief.View() + m.briefHint())
 	b.WriteString("\n")
 
 	if m.notice != "" {
@@ -3525,6 +3539,20 @@ func tuiChoiceLine(label, value, hint string, focused bool) string {
 }
 
 // tuiHint appends an inline explanation to an empty field.
+// briefHint says what an empty Brief box actually produces. Usually nothing —
+// but a selected profile carrying a task-brief default fills it, and an agent
+// arriving with a brief the operator never typed, from a box that read "blank =
+// no startup brief", is exactly the surprise this line exists to prevent.
+func (m tuiModel) briefHint() string {
+	if m.form.brief.Value() != "" {
+		return ""
+	}
+	if prof, ok := m.selectedProfileRow(); ok && strings.TrimSpace(prof.InitialMessage) != "" {
+		return "  (blank = the profile's own brief)"
+	}
+	return "  (blank = no startup brief)"
+}
+
 func tuiHint(show bool, hint string) string {
 	if !show {
 		return ""

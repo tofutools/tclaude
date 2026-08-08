@@ -279,3 +279,41 @@ func TestJoinGroupCLI_DefaultsCwdToCallersCwd(t *testing.T) {
 	got := resolveSym(t, rows[0].Cwd)
 	assert.Equal(t, callerCwd, got, "SessionRow.Cwd (caller's cwd)")
 }
+
+// Scenario: a group's DEFAULT spawn profile turns "Group owner" on, and the
+// operator wants ONE ordinary member out of it. The daemon resolves is_owner
+// down the whole tier stack, so an omitted key would let the default profile
+// answer — `--no-owner` is the CLI's way to say no, the same shape
+// `--no-group-context` has for the group's shared briefing.
+func TestSpawnCLI_NoOwnerDeclinesADefaultProfilesOwnership(t *testing.T) {
+	f := newFlow(t)
+	g := f.HaveGroup("alpha")
+	bridgeAgentClientToMux(t, f.Mux)
+	chdirTo(t, resolveSym(t, t.TempDir()))
+
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "team-default", "is_owner": true,
+	}).Code)
+	require.Equal(t, http.StatusOK, setGroupProfile(t, f, "alpha", "team-default").Code)
+
+	// Without the flag the ambient default decides, which is the whole point of
+	// having one.
+	stderr := new(bytes.Buffer)
+	inherited, rc := agent.RunSpawn(
+		&agent.SpawnParams{Group: "alpha", Name: "lead"},
+		new(bytes.Buffer), stderr, new(bytes.Buffer),
+	)
+	require.Equal(t, 0, rc, "RunSpawn rc, stderr=%s", stderr.String())
+	require.NotNil(t, inherited)
+	assert.True(t, ownsGroup(t, g.ID, inherited.ConvID), "the group default profile decides by default")
+
+	stderr = new(bytes.Buffer)
+	declined, rc := agent.RunSpawn(
+		&agent.SpawnParams{Group: "alpha", Name: "worker", NoOwner: true},
+		new(bytes.Buffer), stderr, new(bytes.Buffer),
+	)
+	require.Equal(t, 0, rc, "RunSpawn rc, stderr=%s", stderr.String())
+	require.NotNil(t, declined)
+	assert.False(t, ownsGroup(t, g.ID, declined.ConvID),
+		"--no-owner must outrank the group default profile's is_owner")
+}

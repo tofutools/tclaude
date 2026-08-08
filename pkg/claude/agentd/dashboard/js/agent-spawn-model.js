@@ -931,10 +931,15 @@ export function applySpawnProfile(
   if (profile.include_group_default_context != null) {
     next.includeGroupContext = !!profile.include_group_default_context;
   }
-  if (profile.is_owner != null) next.owner = !!profile.is_owner;
-  if (profile.permission_overrides) {
-    next.permissionOverrides = { ...profile.permission_overrides };
-  }
+  // Same clear-on-sparse rule as auto_memory / sandboxImpl / contextFeatures
+  // below: a profile that says nothing about birth-time access takes back what
+  // the previously selected profile put here, rather than letting an owner flag
+  // or a set of grants ride along onto a profile that never asked for them.
+  // These two decide the new agent's AUTHORITY, so a stale carry-over is the
+  // one worth least benefit of the doubt.
+  next.owner = profile.is_owner != null ? !!profile.is_owner : false;
+  next.permissionOverrides = profile.permission_overrides
+    ? { ...profile.permission_overrides } : {};
   // The profile's trims REPLACE the form's rather than merging, matching the
   // daemon's whole-tier resolution: one profile always tells the whole story of
   // what its agents load. A profile that trims nothing clears the form.

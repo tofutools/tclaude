@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -246,12 +247,17 @@ func TestSpawnProfileIdentity_ExplicitBlankKeepsFieldBlank(t *testing.T) {
 	})
 	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
 
+	var found bool
 	for _, m := range f.ListGroupMembers("alpha") {
 		if m.ConvID == spawn.ConvID {
+			found = true
 			assert.Empty(t, m.Role, "a posted empty role stays empty")
 			assert.Empty(t, m.Descr, "a posted empty descr stays empty")
 		}
 	}
+	// Without this the loop asserts nothing the day the member stops being
+	// listed, and it is the only test pinning this direction of the rule.
+	require.True(t, found, "the spawned agent is listed in the group")
 }
 
 // Scenario: a profile's agent_name names the agent when the caller sends none —
@@ -357,4 +363,98 @@ func TestSpawnProfileToggles_NamedProfileArmsRemoteControl(t *testing.T) {
 	got, ok := f.World.SpawnRemoteControl(spawn.ConvID)
 	require.True(t, ok, "the spawn should have been observed by the sim spawner")
 	assert.True(t, got, "a named profile's remote_control must arm the launch")
+}
+
+// Scenario: the permission-override twin of the owner gate. A profile the
+// caller NAMED is direct intent, so an agent without permissions.grant is
+// refused loudly rather than quietly getting an unprivileged child.
+func TestSpawnProfileAccess_NamedProfileOverridesStillGated(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name":                 "granting",
+		"permission_overrides": map[string]any{agentd.PermGroupsSpawn: "grant"},
+	}).Code)
+
+	const spawner = "spwn-3333-4444-5555-6666"
+	f.HaveMember("alpha", spawner)
+	require.NoError(t, db.GrantAgentPermission(spawner, agentd.PermGroupsSpawn, "test"))
+
+	spawn := f.AsAgent(spawner).SpawnWith("alpha", map[string]any{
+		"name": "henchman", "profile": "granting",
+	})
+	assert.Equalf(t, http.StatusForbidden, spawn.Code,
+		"a NAMED profile's overrides are direct intent and must 403 without %s; body=%s",
+		agentd.PermPermissionsGrant, spawn.Raw)
+}
+
+// Scenario: the same overrides one tier down are ambient configuration, so an
+// unprivileged caller has them skipped and disclosed rather than the spawn
+// failing — the twin of the is_owner fall-through.
+func TestSpawnProfileAccess_DefaultTierOverridesFallThroughForUnprivilegedAgent(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name":                 "team-default",
+		"permission_overrides": map[string]any{agentd.PermGroupsSpawn: "grant"},
+	}).Code)
+	require.Equal(t, http.StatusOK, setGroupProfile(t, f, "alpha", "team-default").Code)
+
+	const spawner = "spwn-4444-5555-6666-7777"
+	f.HaveMember("alpha", spawner)
+	require.NoError(t, db.GrantAgentPermission(spawner, agentd.PermGroupsSpawn, "test"))
+
+	spawn := f.AsAgent(spawner).SpawnWith("alpha", map[string]any{"name": "worker"})
+	require.Equalf(t, http.StatusOK, spawn.Code,
+		"an ambient default profile must not fail the spawn; body=%s", spawn.Raw)
+
+	overrides, err := db.ListAgentPermissionOverridesForConv(spawn.ConvID)
+	require.NoError(t, err)
+	assert.Empty(t, overrides, "the unauthorized grants were skipped")
+	assert.Contains(t, string(spawn.Raw),
+		`permission_overrides ignored (caller lacks `+agentd.PermPermissionsGrant,
+		"the skip is disclosed rather than silent")
+}
+
+// Scenario: an agent_name that cannot become a spawn name even after
+// normalization (nothing in the safe charset survives) does not fail the launch
+// — the tier is skipped and disclosed, and the agent gets its auto-generated
+// label. Nobody typed this name at this launch.
+func TestSpawnProfileIdentity_UnusableProfileNameSkippedNotFatal(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "emoji-profile", "agent_name": "🎉🎉",
+	}).Code)
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"profile": "emoji-profile"})
+	require.Equalf(t, http.StatusOK, spawn.Code,
+		"an unusable profile agent_name must not fail the spawn; body=%s", spawn.Raw)
+	assert.Contains(t, string(spawn.Raw), `name ignored (not a usable name)`,
+		"the skip is disclosed rather than silent")
+}
+
+// Scenario: the same profile with auto-normalization turned OFF. The strict
+// path rejects "code reviewer" for a typed name, so the profile tier that
+// carries it is skipped here too rather than 400ing a launch nobody typed it
+// into — an operator's house default must not start refusing spawns.
+func TestSpawnProfileIdentity_ProfileNameSkippedWhenNormalizeOff(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "spacey", "agent_name": "code reviewer",
+	}).Code)
+
+	off := false
+	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{SpawnNameNormalize: &off}}))
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"profile": "spacey"})
+	require.Equalf(t, http.StatusOK, spawn.Code,
+		"a profile name the strict gate refuses must not fail the spawn; body=%s", spawn.Raw)
+	assert.Contains(t, string(spawn.Raw), `name ignored (not a usable name)`,
+		"the skip is disclosed rather than silent")
 }
