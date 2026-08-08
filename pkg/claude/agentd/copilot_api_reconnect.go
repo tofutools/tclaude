@@ -287,7 +287,7 @@ func copilotAPIRecoveryLock(convID string) *sync.Mutex {
 // failed and records the explicit crash reason the dashboard understands.
 // The conversation launch lock keeps a concurrent relaunch from inheriting the
 // predecessor's kill or exit reason.
-var errCopilotAPILaunchSuperseded = errors.New("Copilot API launch was superseded")
+var errCopilotAPILaunchSuperseded = errors.New("copilot API launch was superseded")
 
 func shutdownCrashedCopilotAPIAgent(convID string, generation uint64) error {
 	launchLock := resumeLaunchLock(convID)
