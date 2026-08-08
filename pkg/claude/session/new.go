@@ -879,11 +879,17 @@ func runNew(params *NewParams) error {
 		return err
 	}
 	params.ContextWindowMax = contextWindowMax
+	fastModeWasSpecified := strings.TrimSpace(params.FastMode) != ""
 	fastMode, err := harness.ResolveFastModeFlag(h, params.FastMode)
 	if err != nil {
 		return err
 	}
 	params.FastMode = fastMode
+	if params.JoinGroup != "" && fastModeWasSpecified && params.FastMode == harness.FastModeInherit {
+		// RunJoinGroup must distinguish explicit inherit from an omitted flag so
+		// it can suppress group/global/profile fast-mode defaults on the wire.
+		params.FastMode = "inherit"
+	}
 	// Opt-in only on this surface: the flag's absence leaves the posture false,
 	// so a launch that never asked for it keeps the send-keys path exactly as it
 	// was. A request for a harness with no API-backed mode is refused here.

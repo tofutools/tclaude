@@ -38,6 +38,26 @@ func TestRunSpawn_AskHumanDoesNotClaimPendingPopupBeforeLineageDenial(t *testing
 	assert.Contains(t, stderr.String(), "approval lineage")
 }
 
+func TestRunSpawn_ExplicitFastModeInheritStaysOnWire(t *testing.T) {
+	prevAvail, prevReq := DaemonAvailableImpl, DaemonRequestImpl
+	t.Cleanup(func() { DaemonAvailableImpl, DaemonRequestImpl = prevAvail, prevReq })
+	DaemonAvailableImpl = func() bool { return true }
+	var captured SpawnRequest
+	DaemonRequestImpl = func(_, _ string, body, out any, _ DaemonOpts) error {
+		captured = body.(SpawnRequest)
+		*out.(*SpawnResponse) = SpawnResponse{Group: "alpha", ConvID: "conv-fast-inherit"}
+		return nil
+	}
+
+	resp, rc := RunSpawn(&SpawnParams{
+		Group: "alpha", Name: "worker", Harness: harness.CodexName, FastMode: "inherit",
+	}, new(bytes.Buffer), new(bytes.Buffer), new(bytes.Buffer))
+	require.Equal(t, rcOK, rc)
+	require.NotNil(t, resp)
+	assert.Equal(t, "inherit", captured.FastMode,
+		"explicit inherit must not serialize like an omitted --fast-mode")
+}
+
 // A --file brief over the 16384-byte cap is rejected with the same
 // error as an oversize --initial-message: the file-input path enforces
 // the cap, it is not a way to smuggle a larger brief past it. The

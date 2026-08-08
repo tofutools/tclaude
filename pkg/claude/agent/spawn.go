@@ -1395,6 +1395,12 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	}
 	if strings.TrimSpace(p.FastMode) != "" {
 		req.FastMode = fastMode
+		if req.FastMode == harness.FastModeInherit {
+			// ResolveFastModeFlag normalizes inherit to the launch-layer empty
+			// sentinel. The daemon wire must retain the literal so an explicit
+			// CLI choice suppresses profile tiers rather than looking omitted.
+			req.FastMode = "inherit"
+		}
 	}
 	// Group context: --no-group-context forces exclude, else a --profile may set
 	// it; an omitted pointer means the daemon includes the group context by
