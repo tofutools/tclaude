@@ -6999,12 +6999,10 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 		return
 	}
 
-	sess := pickAliveSession(convID)
-	if sess == nil {
+	if pickAliveSession(convID) == nil {
 		slog.Warn("spawn: no alive tmux session for post-init injection", "conv", convID)
 		return
 	}
-	target := sess.TmuxSession + ":0.0"
 	h := harnessForConv(convID)
 
 	// An API-driven Copilot launch is not ready for post-init the moment its
@@ -7028,15 +7026,43 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 	if copilotPaneFallback {
 		// Error rather than Warn, and deliberately the second one: the bootstrap
 		// logs its own failure at Error too. The API drive is opt-in and not yet
-		// proven in the field, so an operator whose launch quietly ran on
-		// send-keys instead has to be able to find that out from the log rather
-		// than by noticing an agent behaving like a Copilot agent always did.
+		// proven in the field, so an operator whose launch did not get the
+		// channel it asked for has to be able to find that out from the log
+		// rather than by noticing an agent that never says anything.
+		//
+		// The wording is careful about what this fallback does and does not
+		// change, because the tempting sentence — "this agent is running on
+		// send-keys" — is FALSE. The conversation's routing posture is durable
+		// and still says API, so `copilotAPIDriven` stays true and every LATER
+		// delivery still routes to the channel and holds: peer nudges
+		// (flush.go), the unread reminder, and any lifecycle command. Only
+		// post-init is exempt, and only because it is one-shot. An operator
+		// reading "running on send-keys" would conclude the launch degraded
+		// gracefully to the legacy path; what actually happens is that the agent
+		// is named and briefed and then receives no further mail at all.
 		slog.Error("spawn: the Copilot API channel never came up within the bootstrap "+
-			"budget; this launch asked for the API drive and did not get one. The rename "+
-			"and the welcome are going through the pane instead, and this agent is "+
-			"running on send-keys",
+			"budget; this launch asked for the API drive and did not get one. Its rename "+
+			"and welcome are going through the pane so the agent at least knows who it "+
+			"is, but the conversation still routes to the API channel: later agent "+
+			"messages and lifecycle commands will HOLD, not fall back. Relaunch the "+
+			"agent to get a channel",
 			"conv", convID, "budget", copilotAPIBootstrapTimeout())
 	}
+
+	// Re-resolved AFTER the wait, not before it. The liveness check above is
+	// the precondition for waiting at all; the tmux target is an address the
+	// deliveries below use, and the wait can now spend the bootstrap's whole
+	// budget between the two. (It could not before TCL-1080 — the wait returned
+	// immediately, so a target read above it was always fresh. That is the kind
+	// of assumption a fix silently invalidates.) The rename path re-resolves on
+	// its own through aliveSessionForConv; this is the welcome's copy.
+	sess := pickAliveSession(convID)
+	if sess == nil {
+		slog.Warn("spawn: the pane went away while waiting for the Copilot API "+
+			"channel; post-init injection abandoned", "conv", convID)
+		return
+	}
+	target := sess.TmuxSession + ":0.0"
 
 	// Apply the agent's name as the conversation title. The two harness
 	// rename styles bracket the welcome injection differently:

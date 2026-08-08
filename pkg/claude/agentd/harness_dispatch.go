@@ -287,9 +287,12 @@ const (
 	// conversation whose deliveries belong to the API channel.
 	//
 	// This is the ONLY sanctioned override and it has exactly one non-test call
-	// site (runSpawnPostInit), which
-	// [TestTheCopilotPaneOverrideHasExactlyOneCallSite] pins structurally rather
-	// than leaving to this comment.
+	// site (runSpawnPostInit). Both halves of that — the single call site, and
+	// that the override survives the whole way to the sink — are pinned by
+	// [TestTheCopilotPaneOverrideIsThreadedAllTheWayToTheSink] rather than left
+	// to this comment. The second half is the one that matters: the constant had
+	// exactly one call site the entire time an earlier version of this change
+	// was silently refusing the rename one hop deeper.
 	//
 	// # What entitles it, stated so it cannot be stretched
 	//

@@ -227,10 +227,19 @@ func copilotAPIDrive(convID string) (*copilotAPISession, error) {
 // TCL-1080, and it cost every API-drive spawn its rename and its welcome.
 //
 // Connectedness is also the STRONGER of the two in exactly the way this caller
-// needs: the registry gets its handle only from runCopilotAPIBootstrap, after
-// the whole bootstrap succeeded — session created, foregrounded, and the launch
-// prompt delivered. So a true here is not "a port answered" but "the session
-// the post-init delivery is about to land in is the one the pane is showing".
+// needs. For a launch — the only situation this wait runs in — the handle comes
+// from runCopilotAPIBootstrap, and only after the whole bootstrap succeeded:
+// session created, foregrounded, and the launch prompt delivered. So a true
+// here is not "a port answered" but "the session the post-init delivery is
+// about to land in is the one the pane is showing".
+//
+// Be precise about the scope of that, because it is a property of THIS caller's
+// situation and not of the registry. reconcileCopilotAPISessions (TCL-1074)
+// also adopts, through AdoptIfAbsent, and it deliberately does NOT foreground —
+// it reconnects to a session that is already the pane's. Nobody should derive a
+// general "connected implies foregrounded" from this paragraph. It holds here
+// because the reconcile takes its candidate list once at daemon start, over
+// conversations that already existed, so a spawn happening now cannot be in it.
 //
 // Returns false when the channel never came up, which is a real state rather
 // than a timeout to retry — the bootstrap logs why. Its caller then falls back
@@ -248,9 +257,11 @@ func copilotAPIDrive(convID string) (*copilotAPISession, error) {
 // completeCopilotAPILaunch, inside the spawn facade, and this one starts later,
 // after runSpawnPostInit has waited for the pane to come alive. So when this
 // wait expires the bootstrap's own context is already cancelled and it can no
-// longer create or foreground anything. [TestTheSpawnPostInitWaitOutlivesTheBootstrapsOwnDeadline]
-// pins the ordering, since it is what makes the fallback a decision rather than
-// a gamble.
+// longer create or foreground anything.
+// [TestCopilotDrive_ThePostInitWaitStartsAfterTheBootstrapDoes] pins the start
+// order and [TestTheSpawnPostInitWaitGivesUpAtTheBootstrapsBudget] pins that
+// this wait uses that budget, since together they are what make the fallback a
+// decision rather than a gamble.
 //
 // Indirected through a variable for the same reason the bootstrap kick-off is:
 // flow tests install a no-op bootstrap binary-wide, so no handle can ever

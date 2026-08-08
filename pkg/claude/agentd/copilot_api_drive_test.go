@@ -422,8 +422,27 @@ func TestTheSpawnPostInitWaitGivesUpAtTheBootstrapsBudget(t *testing.T) {
 	started := time.Now()
 	assert.False(t, waitForCopilotAPISession(fixture.convID),
 		"a channel that never came up is a real answer, not a timeout to retry")
-	assert.Less(t, time.Since(started), 10*time.Second,
-		"the wait must be bounded by the budget it was given, not by the default")
+	elapsed := time.Since(started)
+
+	// BRACKETED, not merely bounded above. A one-sided "it finished within 10s"
+	// passes against a wait that uses any budget at all — including a hardcoded
+	// one unrelated to the bootstrap's — which would leave the property in this
+	// test's own name untested. That property is load-bearing rather than
+	// cosmetic: the pane fallback is safe because this wait outlives the
+	// bootstrap's context, and it only outlives it because the two budgets are
+	// the same expression. A wait that gave up early would put back exactly
+	// TCL-1080's failure, with the bootstrap foregrounding a fresh session over
+	// the pane the fallback just typed into.
+	//
+	// The lower bound is the budget itself; the upper allows one poll interval
+	// plus loaded-host slack, and is deliberately tight enough that a budget an
+	// order of magnitude larger fails.
+	assert.GreaterOrEqual(t, elapsed, copilotAPIBootstrapTimeout(),
+		"the wait gave up BEFORE the bootstrap's budget, so it is no longer "+
+			"guaranteed to outlive the bootstrap's context")
+	assert.Less(t, elapsed, copilotAPIBootstrapTimeout()+copilotAPIPollInterval+2*time.Second,
+		"the wait outlasted the bootstrap's budget by more than a poll, so it is "+
+			"not using that budget")
 }
 
 // The override, at the seam, against a channel that is genuinely up.
@@ -713,6 +732,59 @@ func TestTheCopilotPaneOverrideIsThreadedAllTheWayToTheSink(t *testing.T) {
 				"channel, or defaults it, is the override quietly ending here",
 			hop.from, hop.to)
 	}
+
+	// A hop may not REASSIGN the channel it was handed. Threading it perfectly
+	// and then overwriting it mid-chain —
+	//
+	//	if copilotAPIDriven(convID) { channel = deliveryChannelRouted }
+	//
+	// — destroys the override in transit while every assertion above still
+	// passes, because the identifier is still declared and still passed on.
+	// That spelling is a plausible "normalize the channel" edit, which is
+	// exactly the kind this package has had a guard sail past before.
+	for _, hop := range copilotAPIChannelChain {
+		ast.Inspect(functions[hop.from].Body, func(node ast.Node) bool {
+			assign, ok := node.(*ast.AssignStmt)
+			if !ok {
+				return true
+			}
+			for _, target := range assign.Lhs {
+				if ident, ok := target.(*ast.Ident); ok && ident.Name == "channel" {
+					assert.Failf(t, "the channel is reassigned mid-chain",
+						"%s assigns to its own `channel` parameter. The caller's "+
+							"override then ends here, and it ends silently: the "+
+							"identifier is still threaded onward, so every other check "+
+							"in this guard still passes", hop.from)
+				}
+			}
+			return true
+		})
+	}
+
+	// The override constant's containment. Weaker than the threading above —
+	// the constant had exactly one call site the entire time the rename was
+	// being refused one hop deeper — but it is the property deliveryChannelPane's
+	// own comment claims, so it is asserted rather than claimed.
+	var paneCallSites int
+	for name, fn := range functions {
+		if name == "deliverRenameOn" || name == "injectSlashCommandOn" ||
+			name == "dispatchSlashCommandOn" {
+			// The chain itself compares against the routed constant; only uses
+			// that SELECT the pane are call sites in the sense meant here.
+			continue
+		}
+		ast.Inspect(fn.Body, func(node ast.Node) bool {
+			if ident, ok := node.(*ast.Ident); ok && ident.Name == "deliveryChannelPane" {
+				paneCallSites++
+			}
+			return true
+		})
+	}
+	assert.Equal(t, 1, paneCallSites,
+		"deliveryChannelPane must have exactly one non-test call site. Its doc "+
+			"argues the entitlement for ONE caller — a one-shot delivery with no "+
+			"retry — and a second caller has to argue its own case rather than "+
+			"inheriting that one")
 
 	// The last hop is the one that actually chooses, so its choice must READ
 	// the channel. Without this the chain could thread it perfectly and then
