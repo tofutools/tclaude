@@ -2416,13 +2416,17 @@ Provenance shows what actually applied: `permissions ls` renders the winning
 source with its scope, e.g. `group:dev [group=dev]`, and an audit row records
 the scope that authorized the action.
 
+One dimension is not a plain string match: `remote` (on `git.read` /
+`git.push`) reuses the git proxy's slash-segmented pattern language, so a
+matcher can cover a whole host or org rather than one URL.
+
 *Upcoming, in flight as separate changes:* a **cover rule** (an agent
 handing a grant on — spawning with a profile, granting to another agent —
 may not exceed the scope it holds itself); **owner-scope narrowing** (the
-group-owner bypass constrained the same way); relational **lineage
+group-owner bypass constrained the same way); and relational **lineage
 selectors** (`target_agent=@descendants` / `@self-spawned`, which parse and
-persist today but match nothing until the spawn-edge table exists); and a
-**git remote** dimension for `git.*`. Nothing below depends on them.
+persist today but match nothing until the spawn-edge table exists). Nothing
+below depends on them.
 
 ### Slugs
 

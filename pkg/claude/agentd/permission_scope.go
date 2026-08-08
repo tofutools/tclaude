@@ -209,7 +209,7 @@ func appendUnique(out []string, seen map[string]bool, s string) []string {
 // at all; both are free text plus their selectors, which is exactly what the
 // CLI's --scope accepts.
 func scopeDimOptionsSnapshot(groups []*db.AgentGroup, profiles []spawnProfileJSON) map[ScopeDim]snapshotScopeDimOptions {
-	out := make(map[ScopeDim]snapshotScopeDimOptions, len(permissionScopeSelectors))
+	out := make(map[ScopeDim]snapshotScopeDimOptions, len(permissionScopeDimensions))
 	for _, dim := range permissionScopeDims() {
 		options := snapshotScopeDimOptions{Selectors: permissionScopeSelectorsFor(dim)}
 		switch dim {
@@ -237,8 +237,8 @@ func scopeDimOptionsSnapshot(groups []*db.AgentGroup, profiles []spawnProfileJSO
 // reads the closed dimension registry rather than a second hand-kept list, so
 // a dimension added there is offered by the editor on the same commit.
 func permissionScopeDims() []ScopeDim {
-	dims := make([]ScopeDim, 0, len(permissionScopeSelectors))
-	for dim := range permissionScopeSelectors {
+	dims := make([]ScopeDim, 0, len(permissionScopeDimensions))
+	for dim := range permissionScopeDimensions {
 		dims = append(dims, dim)
 	}
 	sort.Slice(dims, func(i, j int) bool { return dims[i] < dims[j] })
@@ -248,7 +248,7 @@ func permissionScopeDims() []ScopeDim {
 // permissionScopeSelectorsFor returns the sorted @selectors a dimension
 // accepts, or nil for a dimension with none.
 func permissionScopeSelectorsFor(dim ScopeDim) []string {
-	selectors := permissionScopeSelectors[dim]
+	selectors := permissionScopeDimensions[dim].selectors
 	if len(selectors) == 0 {
 		return nil
 	}
