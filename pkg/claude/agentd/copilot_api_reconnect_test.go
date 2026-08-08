@@ -516,36 +516,11 @@ func TestTheDaemonStartupCallsTheCopilotAPIReconcile(t *testing.T) {
 		"anything; if the daemon's startup moved, this guard has to move with it",
 		caller)
 
-	// Top level of the function body only. An ExprStmt directly in the list, or
-	// the Init of an error check (`if err := start(...); err != nil`), since an
-	// Init always runs when the statement is reached.
-	callsStarter := func(node ast.Node) bool {
-		found := false
-		ast.Inspect(node, func(n ast.Node) bool {
-			if call, ok := n.(*ast.CallExpr); ok {
-				if name, ok := call.Fun.(*ast.Ident); ok && name.Name == starter {
-					found = true
-				}
-			}
-			return true
-		})
-		return found
-	}
-
-	var unconditional bool
-	for _, statement := range body.List {
-		switch typed := statement.(type) {
-		case *ast.ExprStmt, *ast.AssignStmt:
-			if callsStarter(typed) {
-				unconditional = true
-			}
-		case *ast.IfStmt:
-			// Only the Init counts — the condition and the branches do not.
-			if typed.Init != nil && callsStarter(typed.Init) {
-				unconditional = true
-			}
-		}
-	}
+	// The same corrected descent the dialler guard uses: it refuses to enter a
+	// function literal or the skippable operand of && / ||, so a call parked in a
+	// closure that nobody invokes does not count. That exact shape beat the first
+	// version of this guard under review.
+	unconditional := callAlwaysEvaluated(body, starter)
 
 	assert.True(t, unconditional,
 		"%s must call %s UNCONDITIONALLY, at the top level of its body. An agentd "+

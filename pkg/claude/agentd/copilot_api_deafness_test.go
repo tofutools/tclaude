@@ -468,6 +468,102 @@ func TestOnlyTheSweepsAttemptExitMayRecordAnObservation(t *testing.T) {
 			"new site genuinely ran a bounded attempt, widen this guard deliberately "+
 			"and say why; if it did not, it is reporting an agent's state on the "+
 			"evidence that we stopped looking. Callers found: %v", callers)
+
+	// And the primitive itself, which is what the sentence above was claiming.
+	//
+	// Counting recordReconcileAttempt alone was never the invariant: it is one of
+	// TWO ways to record, and the other is calling NoteChannelFailed directly.
+	// Measured under review — adding it to the sweep's slot-starvation arm, the
+	// exact "un-examined reported as deaf" failure this guard's message names,
+	// left the guard green. Matched as REFERENCES rather than calls for the same
+	// reason the revoke guard is: taking the method as a value is not something
+	// anyone does innocently.
+	type site struct{ file, function string }
+	allowed := map[site]bool{
+		// The launch's own bootstrap, on its failure path, where the answer is exact.
+		{"copilot_api_bootstrap.go", "runCopilotAPIBootstrap"}: true,
+		// The sweep, through the entitlement check.
+		{"copilot_api_reconnect.go", "recordReconcileAttempt"}: true,
+	}
+	var recorders []site
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		source, err := os.ReadFile(name)
+		require.NoError(t, err)
+		parsed, err := parser.ParseFile(token.NewFileSet(), name, source, 0)
+		require.NoError(t, err)
+		for _, decl := range parsed.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			ast.Inspect(fn.Body, func(node ast.Node) bool {
+				if selector, ok := node.(*ast.SelectorExpr); ok &&
+					selector.Sel.Name == "NoteChannelFailed" {
+					recorders = append(recorders, site{name, fn.Name.Name})
+					return false
+				}
+				return true
+			})
+		}
+	}
+	for _, found := range recorders {
+		assert.Truef(t, allowed[found],
+			"%s references NoteChannelFailed in %s, which is a THIRD way to declare "+
+				"an agent deaf. The two allowed sites each ran a bounded attempt and "+
+				"are entitled to say what it found; a new one has to make that "+
+				"argument rather than inherit it",
+			found.function, found.file)
+	}
+	for want := range allowed {
+		assert.Containsf(t, recorders, want,
+			"%s no longer records in %s; this guard is watching nothing",
+			want.function, want.file)
+	}
+
+	// A call-site allow-list cannot see what an allow-listed site DOES, and for
+	// recordReconcileAttempt that is the whole invariant: its three disqualifying
+	// checks each return early, so the record is legitimate only as the function's
+	// final UNCONDITIONAL statement. A record placed inside one of those early-exit
+	// branches — the slot-starvation arm, say — is the exact "un-examined reported
+	// as deaf" failure this guard is named for, and it is allow-listed by file and
+	// function. Measured: the allow-list alone stayed green on it.
+	//
+	// So the shape is pinned as well as the site. Exactly one reference, and it
+	// must be unconditional.
+	source, err := os.ReadFile("copilot_api_reconnect.go")
+	require.NoError(t, err)
+	parsed, err := parser.ParseFile(token.NewFileSet(), "copilot_api_reconnect.go", source, 0)
+	require.NoError(t, err)
+	for _, decl := range parsed.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil || fn.Name.Name != "recordReconcileAttempt" {
+			continue
+		}
+		var references int
+		ast.Inspect(fn.Body, func(node ast.Node) bool {
+			if selector, ok := node.(*ast.SelectorExpr); ok &&
+				selector.Sel.Name == "NoteChannelFailed" {
+				references++
+				return false
+			}
+			return true
+		})
+		assert.Equal(t, 1, references,
+			"recordReconcileAttempt must record in exactly one place. A second "+
+				"record inside one of its early-exit branches declares an agent deaf "+
+				"on an attempt that was disqualified — cancelled, cut short, or racing "+
+				"the launch's own bootstrap — which is precisely what those branches "+
+				"exist to refuse")
+		assert.True(t,
+			callAlwaysEvaluated(fn.Body, "copilotAPISessions.NoteChannelFailed"),
+			"recordReconcileAttempt's record must be UNCONDITIONAL — the last thing "+
+				"it does once every disqualifier has returned. Inside a branch it is "+
+				"reporting an agent's state on the evidence that we stopped looking")
+	}
 }
 
 // copilotAPIObservationReaders names every place allowed to read the
@@ -536,25 +632,39 @@ func TestTheChannelFailedObservationNeverReachesARoutingDecision(t *testing.T) {
 		parsed, err := parser.ParseFile(token.NewFileSet(), name, source, 0)
 		require.NoError(t, err)
 
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				continue
-			}
-			ast.Inspect(fn.Body, func(node ast.Node) bool {
-				switch typed := node.(type) {
+		record := func(function string, node ast.Node) {
+			ast.Inspect(node, func(n ast.Node) bool {
+				switch typed := n.(type) {
 				case *ast.SelectorExpr:
 					if watched[typed.Sel.Name] {
-						found = append(found, reference{name, fn.Name.Name, typed.Sel.Name})
+						found = append(found, reference{name, function, typed.Sel.Name})
 						return false
 					}
 				case *ast.Ident:
 					if watched[typed.Name] {
-						found = append(found, reference{name, fn.Name.Name, typed.Name})
+						found = append(found, reference{name, function, typed.Name})
 					}
 				}
 				return true
 			})
+		}
+		for _, decl := range parsed.Decls {
+			switch typed := decl.(type) {
+			case *ast.FuncDecl:
+				if typed.Body != nil {
+					record(typed.Name.Name, typed.Body)
+				}
+			case *ast.GenDecl:
+				// Package-level vars and consts. Omitting these is how the
+				// write-side revoke guard was beaten, and this guard — written as
+				// its counterpart — re-imported the same hole. Measured under
+				// review: a package-level `var copilotAPIDrivenNow = func(...)
+				// { return copilotAPIDriven(c) && !copilotAPIChannelFailed(c) }`
+				// with a caller routed onto it left this guard green, the
+				// write-side guard green, and the whole behavioural set green —
+				// which is the declined design shipping undetected.
+				record(packageLevel, typed)
+			}
 		}
 	}
 

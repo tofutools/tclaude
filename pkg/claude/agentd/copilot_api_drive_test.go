@@ -677,6 +677,7 @@ var copilotAPIChannelLessVariants = []string{
 // catch it, by asserting the keystroke rather than the shape.
 func TestTheCopilotPaneOverrideIsThreadedAllTheWayToTheSink(t *testing.T) {
 	functions := map[string]*ast.FuncDecl{}
+	paneConstantHolders := map[string]*ast.FuncDecl{}
 	entries, err := os.ReadDir(".")
 	require.NoError(t, err)
 	for _, entry := range entries {
@@ -689,9 +690,25 @@ func TestTheCopilotPaneOverrideIsThreadedAllTheWayToTheSink(t *testing.T) {
 		parsed, err := parser.ParseFile(token.NewFileSet(), name, source, 0)
 		require.NoError(t, err)
 		for _, decl := range parsed.Decls {
-			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Recv == nil && fn.Body != nil {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			if fn.Recv == nil {
+				// The chain's own hops, which are all plain functions. Keyed by
+				// bare name; a same-named function in a build-tagged file would
+				// collide, which is a known limit rather than a covered case.
 				functions[fn.Name.Name] = fn
 			}
+			// Everything that can HOLD the override constant, methods included.
+			// The containment count below used to skip methods entirely, so a
+			// method returning deliveryChannelPane was a second call site the
+			// count could not see — measured under review.
+			key := fn.Name.Name
+			if fn.Recv != nil {
+				key = "(method) " + key
+			}
+			paneConstantHolders[key] = fn
 		}
 	}
 
@@ -764,13 +781,26 @@ func TestTheCopilotPaneOverrideIsThreadedAllTheWayToTheSink(t *testing.T) {
 	// exactly the kind this package has had a guard sail past before.
 	for _, hop := range copilotAPIChannelChain {
 		ast.Inspect(functions[hop.from].Body, func(node ast.Node) bool {
-			assign, ok := node.(*ast.AssignStmt)
-			if !ok {
+			// AssignStmt is not the only way to replace the value. A range
+			// variable named `channel`, or a var declaration shadowing it, both
+			// substitute a different value while every other check here still
+			// passes — measured under review with a RangeStmt.
+			var targets []ast.Expr
+			switch typed := node.(type) {
+			case *ast.AssignStmt:
+				targets = typed.Lhs
+			case *ast.RangeStmt:
+				targets = []ast.Expr{typed.Key, typed.Value}
+			case *ast.ValueSpec:
+				for _, ident := range typed.Names {
+					targets = append(targets, ident)
+				}
+			default:
 				return true
 			}
-			for _, target := range assign.Lhs {
+			for _, target := range targets {
 				if ident, ok := target.(*ast.Ident); ok && ident.Name == "channel" {
-					assert.Failf(t, "the channel is reassigned mid-chain",
+					assert.Failf(t, "the channel is reassigned or shadowed mid-chain",
 						"%s assigns to its own `channel` parameter. The caller's "+
 							"override then ends here, and it ends silently: the "+
 							"identifier is still threaded onward, so every other check "+
@@ -786,7 +816,7 @@ func TestTheCopilotPaneOverrideIsThreadedAllTheWayToTheSink(t *testing.T) {
 	// being refused one hop deeper — but it is the property deliveryChannelPane's
 	// own comment claims, so it is asserted rather than claimed.
 	var paneCallSites int
-	for name, fn := range functions {
+	for name, fn := range paneConstantHolders {
 		if name == "deliverRenameOn" || name == "injectSlashCommandOn" ||
 			name == "dispatchSlashCommandOn" {
 			// The chain itself compares against the routed constant; only uses
@@ -829,27 +859,39 @@ func TestTheCopilotPaneOverrideIsThreadedAllTheWayToTheSink(t *testing.T) {
 		if !ok {
 			return true
 		}
-		var mentionsChannel bool
-		var inside []*ast.CallExpr
-		ast.Inspect(binary, func(inner ast.Node) bool {
-			switch typed := inner.(type) {
-			case *ast.Ident:
-				if typed.Name == "channel" {
-					mentionsChannel = true
-				}
-			case *ast.CallExpr:
-				if callee, ok := typed.Fun.(*ast.Ident); ok &&
+		// Proximity is not guarding. An enclosing BinaryExpr that merely MENTIONS
+		// channel marks nothing: only an && whose LEFT operand tests the channel
+		// actually gates what is on its right. Measured under review, all three
+		// counted as guarded by the proximity version:
+		//
+		//	channel == deliveryChannelRouted && copilotAPIDriven(c)  // guarded
+		//	channel == deliveryChannelRouted || copilotAPIDriven(c)  // decides alone
+		//	copilotAPIDriven(c) && channel != deliveryChannelRouted  // runs first
+		//
+		// The second widens the condition while reading like a narrowing, and the
+		// third is an INVERTED guard that the behavioural tests also miss.
+		if binary.Op != token.LAND {
+			return true
+		}
+		var gatesOnChannel bool
+		ast.Inspect(binary.X, func(inner ast.Node) bool {
+			if ident, ok := inner.(*ast.Ident); ok && ident.Name == "channel" {
+				gatesOnChannel = true
+			}
+			return true
+		})
+		if !gatesOnChannel {
+			return true
+		}
+		ast.Inspect(binary.Y, func(inner ast.Node) bool {
+			if call, ok := inner.(*ast.CallExpr); ok {
+				if callee, ok := call.Fun.(*ast.Ident); ok &&
 					callee.Name == "copilotAPIDriven" {
-					inside = append(inside, typed)
+					guarded[call] = true
 				}
 			}
 			return true
 		})
-		if mentionsChannel {
-			for _, call := range inside {
-				guarded[call] = true
-			}
-		}
 		return true
 	})
 
@@ -858,7 +900,7 @@ func TestTheCopilotPaneOverrideIsThreadedAllTheWayToTheSink(t *testing.T) {
 			"guard is watching nothing")
 	for _, call := range driven {
 		assert.Truef(t, guarded[call],
-			"dispatchSlashCommandOn tests copilotAPIDriven at line %d without the "+
+			"dispatchSlashCommandOn tests copilotAPIDriven at offset %d without the "+
 				"caller's channel in the same condition. Unguarded, it re-decides "+
 				"the routing the caller already decided — which is the bug this "+
 				"whole chain exists to close. EVERY such test must be guarded, not "+
@@ -931,6 +973,11 @@ var copilotAPIKeystrokeSinks = []string{
 	"injectBracketedTextAndSubmit",
 	"injectTextAndSubmitWithOptions",
 	"injectMenuToggle",
+	// Found by cold review: it delegates to injectTextAndSubmitWithOptions and
+	// lives in handlers.go, so it was a real sink in an already-watched file that
+	// this list simply did not name. A guard whose header promises that a NEW
+	// sink trips it has to actually enumerate the existing ones.
+	"injectSoftExitTextSerializedBy",
 }
 
 func TestEveryKeystrokeSinkIsAccountedForAgainstTheCopilotAPIDrive(t *testing.T) {
