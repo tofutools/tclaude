@@ -599,7 +599,11 @@ export function createManagementActions({
       notify(
         `template updated from ${group}: ${name} (briefs kept: ${(result.briefs_kept || []).length}, added: ${(result.added || []).length}, removed: ${(result.removed || []).length})${blankNote}${droppedNote}`,
       );
-    else notify(`template created from ${group}: ${name}${blankNote}`);
+    // A create drops things too — not curated fields (it has none to lose) but
+    // values observed rather than chosen, which it declines to pin (TCL-1090).
+    // That is invisible in the template it just opened, so it is appended here
+    // as well; this used to hang off the `updated` branch only.
+    else notify(`template created from ${group}: ${name}${blankNote}${droppedNote}`);
     await refresh();
     if (result.name || result.agents) openTemplateEditor(result);
     return result;

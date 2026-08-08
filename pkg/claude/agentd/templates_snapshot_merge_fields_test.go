@@ -12,10 +12,18 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
-// The two guards in this file are STRUCTURAL, not value tests. They are the
+// The four guards in this file are STRUCTURAL, not value tests. They are the
 // sibling of db.TestInlineProfileJSONCoversEveryLaunchField, one layer up: that
 // one pins the STORAGE of a template-local spawn profile, these pin the
 // update-mode re-snapshot MERGE of one.
+//
+// What they CANNOT see, by construction: every one of them hand-builds the
+// traced db.SpawnProfile and takes it as ground truth, so none can catch a value
+// that was already wrong when the merge received it. TCL-1090 was exactly that —
+// an observed default recorded as a curated decision — and all four passed
+// throughout. Its guards therefore live at the durable-record → traced-launch
+// boundary instead, in templates_trace_member_provenance_test.go. A fifth test
+// here would have joined the blind spot rather than closed it.
 //
 // mergeSnapshotInlineProfile hand-enumerates db.SpawnProfile twice — once to
 // carry a curated field forward from the stored template, and once again in the

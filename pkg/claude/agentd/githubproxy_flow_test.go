@@ -76,6 +76,30 @@ func TestGHProxy_WriteRequiresItsOwnSlug(t *testing.T) {
 	})
 }
 
+func TestGHProxy_RemoteScopedRead(t *testing.T) {
+	t.Run("matching remote passes", func(t *testing.T) {
+		f, rec := gitProxyWorld(t, []string{"github.com"})
+		rec.gh = agentd.ProxyResult{Stdout: "[]"}
+		require.NoError(t, db.GrantAgentPermissionWithScope(gitProxyTestConv, agentd.PermGitHubRead,
+			`{"remote":["github.com/tofutools/*"]}`, "test"))
+
+		res := gitProxyPost(t, f, "/v1/github/pr/list", map[string]any{})
+		require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+		assert.Equal(t, 1, ghCallCount(rec))
+	})
+
+	t.Run("another allow-listed repository is refused", func(t *testing.T) {
+		f, rec := gitProxyWorld(t, []string{"github.com"})
+		rec.remotes["origin"] = "https://github.com/other/repo.git"
+		require.NoError(t, db.GrantAgentPermissionWithScope(gitProxyTestConv, agentd.PermGitHubRead,
+			`{"remote":["github.com/tofutools/*"]}`, "test"))
+
+		res := gitProxyPost(t, f, "/v1/github/pr/list", map[string]any{})
+		assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+		assert.Equal(t, 0, ghCallCount(rec), "scope refusal must precede gh")
+	})
+}
+
 // TestGHProxy_RepositoryIsDerivedNotNamed is the invariant that stops an agent
 // opening a pull request against somebody else's repository: there is no
 // --repo parameter, and the slug the daemon passes to gh comes from the

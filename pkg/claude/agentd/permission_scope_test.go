@@ -16,6 +16,10 @@ func TestPermissionRegistryScopeDeclarations(t *testing.T) {
 		PermAgentStanddown:    {ScopeDimGroup, ScopeDimTargetAgent},
 		PermRoutesPublish:     {ScopeDimGroup},
 		PermRoutesConsume:     {ScopeDimGroup},
+		PermGitRead:           {ScopeDimRemote},
+		PermGitPush:           {ScopeDimRemote},
+		PermGitHubRead:        {ScopeDimRemote},
+		PermGitHubWrite:       {ScopeDimRemote},
 	}
 	for _, entry := range permissionRegistry {
 		if dims, ok := want[entry.Slug]; ok {
@@ -64,7 +68,8 @@ func TestPermissionScopeParseAndValidate(t *testing.T) {
 		{"exact and canonical", `{"spawn_profile":["p2","p1","p1"],"group":["dev"]}`, PermGroupsSpawn, `{"group":["dev"],"spawn_profile":["p1","p2"]}`, ""},
 		{"reserved selector", `{"target_agent":["@descendants","@self-spawned"]}`, PermAgentRetire, `{"target_agent":["@descendants","@self-spawned"]}`, ""},
 		{"undeclared dimension", `{"group":["dev"]}`, PermProcessRunsManage, "", "does not declare"},
-		{"unknown dimension", `{"remote":["origin"]}`, PermGroupsSpawn, "", "unknown permission scope dimension"},
+		{"remote pattern", `{"remote":["github.com/tofutools/*"]}`, PermGitPush, `{"remote":["github.com/tofutools/*"]}`, ""},
+		{"undeclared remote dimension", `{"remote":["origin"]}`, PermGroupsSpawn, "", "does not declare"},
 		{"dimension whitespace", `{" group":["dev"]}`, PermGroupsSpawn, "", "surrounding whitespace"},
 		{"unknown selector", `{"target_agent":["@parent"]}`, PermAgentRetire, "", "unknown selector"},
 		{"selector on wrong dimension", `{"group":["@descendants"]}`, PermGroupsSpawn, "", "unknown selector"},

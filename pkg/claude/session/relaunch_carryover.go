@@ -134,6 +134,11 @@ var launchCarryoverExcused = map[string]string{
 		"a decision",
 	"SSHWorkaround": "agentd materializes this internal Codex sandbox capability from " +
 		"the effective sandbox snapshot; it is not a session-new launch flag",
+	"CopilotAPISource": "not a launch parameter of its own — it is the attribution for " +
+		"CopilotAPI, carried by that field's own record, so a separate entry here would " +
+		"be a second, desynchronizable copy of the same decision",
+	"SSHWorkaroundSource": "not a launch parameter of its own — it is the attribution for " +
+		"SSHWorkaround, which is itself excused above",
 }
 
 // launchCarryoverFields is the relaunch contract for `session new -r`: the

@@ -965,6 +965,14 @@ func runTemplatesFromGroup(p *templatesFromGroupParams, stdout, stderr io.Writer
 	fmt.Fprintf(stdout, "Created template %q from group %q with %d agent%s\n",
 		t.Name, group, len(t.Agents), plural(len(t.Agents)))
 	printBlankBriefWarning(stdout, t.BlankBriefs, t.Name)
+	// A CREATE drops things too. It has no curated fields to lose, but it can
+	// decline to pin a value that was observed rather than chosen (TCL-1090) —
+	// and that decision is invisible in the template it just printed, which is
+	// the whole reason it has to be said here. This loop sat under `if t.Updated`
+	// and the create branch rendered nothing.
+	for _, d := range t.Dropped {
+		fmt.Fprintf(stdout, "  ⚠ %s: dropped %s — %s\n", d.Agent, strings.Join(d.Fields, ", "), d.Reason)
+	}
 	return rcOK
 }
 

@@ -37,10 +37,24 @@ func TestDashboardSpawnOwnerPermsUI_Wired(t *testing.T) {
 	present("openBufferedPermissions(options = {})", "the state owns a keyed buffered permission launch")
 	present("openSpawnPermEditor", "the spawn/profile dialogs invoke the buffer editor")
 
-	// The spawn body carries the birth-time access controls.
-	present("body.is_owner = true", "the spawn body sends is_owner when checked")
-	present("body.permission_overrides = { ...draft.permissionOverrides }",
-		"the spawn body sends the buffered overrides")
+	// The spawn body carries the birth-time access controls — unconditionally,
+	// because the daemon resolves both down its profile tier stack and reads
+	// presence on the wire as "this caller has spoken". An unticked box that
+	// omitted the key would let a profile silently re-check it.
+	present("body.is_owner = !!draft.owner", "the spawn body always states is_owner")
+	present("body.permission_overrides = { ...(draft.permissionOverrides || {}) }",
+		"the spawn body always states the buffered overrides")
+
+	// Selecting a profile that says nothing about birth-time access CLEARS what
+	// the previously selected one put there, the same rule auto_memory /
+	// sandboxImpl / contextFeatures follow. These two decide the new agent's
+	// authority, so a stale carry-over is the one worth least benefit of the
+	// doubt — and the dialog now posts both unconditionally, which would pin a
+	// carried-over value against the daemon's profile tier stack.
+	present("next.owner = profile.is_owner != null ? !!profile.is_owner : false",
+		"a sparse profile clears a carried-over owner flag")
+	present("next.permissionOverrides = profile.permission_overrides",
+		"a sparse profile clears carried-over overrides")
 
 	// The profile payload carries them too (tri-state owner + overrides).
 	present("['include_group_default_context', draft.include_group_default_context], ['is_owner', draft.is_owner]", "the profile payload includes the tri-state owner")

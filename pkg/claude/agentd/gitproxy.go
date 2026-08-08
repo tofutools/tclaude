@@ -130,21 +130,32 @@ const (
 	maxGitProxyRemotes = 50
 )
 
-// gitProxyDisabledCode is the stable machine-readable code returned on every
-// proxy route while the operator has configured no allow-list. It is 503
-// rather than 404: the route exists, the capability is simply not turned on,
-// and the agent should tell its human rather than retry.
+// gitProxyDisabledCode is the stable machine-readable code returned when an
+// unscoped grant has no legacy operator-global allow-list. A remote-scoped
+// grant supplies its own patterns and does not take this path.
 const gitProxyDisabledCode = "git_proxy_disabled"
 
-func gitProxyRoutesEnabled() bool {
+func gitProxyRoutesEnabled(r *http.Request) bool {
 	cfg, err := config.Load()
-	return err == nil && cfg.GitProxyEnabled()
+	if err == nil && cfg.GitProxyEnabled() {
+		return true
+	}
+	p := peerFromContext(r.Context())
+	if classify(p) != classAgent {
+		return false
+	}
+	for _, slug := range []string{PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite} {
+		v := resolvePermissionVerdictForRequest(r, p.ConvID, slug)
+		if v.Resolution == permAllow && !evalPermissionScope(v, p.ConvID, ActionContext{}).Unscoped {
+			return true
+		}
+	}
+	return false
 }
 
-// gitProxyDisabledMessage is written to be actionable for an agent that has
-// just been refused — it names the exact config the operator must add.
-const gitProxyDisabledMessage = "the git/github proxy is not enabled: no remotes are allow-listed. " +
-	"Ask the operator to set agent.git_proxy.allowed_remotes in ~/.tclaude/data/config.json " +
+// gitProxyDisabledMessage is written to be actionable for an unscoped grant.
+const gitProxyDisabledMessage = "the git/github proxy has no remote policy for this unscoped grant. " +
+	"Ask the operator to scope the grant by remote, or set legacy agent.git_proxy.allowed_remotes in ~/.tclaude/data/config.json " +
 	`(e.g. {"agent":{"git_proxy":{"allowed_remotes":["github.com/your-org"]}}}).`
 
 // ---------------------------------------------------------------------------
@@ -639,13 +650,13 @@ type gitProxySession struct {
 // newGitProxySession resolves the operator policy, the agent's repository and
 // the hardened argv prefix for one request. remoteName may be empty for
 // operations that name no remote.
-func newGitProxySession(ctx context.Context, convID string) (*gitProxySession, *proxyFault) {
+func newGitProxySession(ctx context.Context, convID string, remoteScoped bool) (*gitProxySession, *proxyFault) {
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, faultf(500, "config", "could not read the daemon configuration: %v", err)
 	}
 	policy := cfg.ResolvedGitProxy()
-	if len(policy.AllowedRemotes) == 0 {
+	if len(policy.AllowedRemotes) == 0 && !remoteScoped {
 		return nil, &proxyFault{Status: 503, Code: gitProxyDisabledCode, Msg: gitProxyDisabledMessage}
 	}
 	gitPath, err := proxyBinary("git")
@@ -1434,7 +1445,7 @@ func resolveProxyRemote(ctx context.Context, s *gitProxySession, name string) (r
 				return resolvedRemote{}, faultf(403, "remote_refused",
 					"remote %q %s URL: %v", name, check.label, err)
 			}
-			if !remoteAllowed(ref, s.policy.AllowedRemotes) {
+			if len(s.policy.AllowedRemotes) > 0 && !remoteAllowed(ref, s.policy.AllowedRemotes) {
 				return resolvedRemote{}, faultf(403, "remote_not_allowed",
 					"remote %q (%s %s) is not on the operator's allow-list; allowed: %s",
 					name, check.label, ref.Key(), strings.Join(s.policy.AllowedRemotes, ", "))

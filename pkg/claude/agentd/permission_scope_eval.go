@@ -36,6 +36,9 @@ type ActionContext struct {
 	// templateId when creating a run. It deliberately is not a version ref:
 	// grants remain useful when a template gets a new stored version.
 	ProcessTemplate string
+	// Remote is the normalized host/owner/repo key the proxy will contact.
+	// URL scheme, credentials, port spelling and a trailing .git are absent.
+	Remote string
 }
 
 // value projects the context onto one scope dimension. An unknown dimension
@@ -51,6 +54,8 @@ func (a ActionContext) value(dim ScopeDim) string {
 		return a.SpawnProfile
 	case ScopeDimProcessTemplate:
 		return a.ProcessTemplate
+	case ScopeDimRemote:
+		return a.Remote
 	}
 	return ""
 }
@@ -145,7 +150,7 @@ func permissionScopeSatisfied(callerConvID string, scope PermissionScope, actx A
 				}
 				continue
 			}
-			if matcher == value {
+			if permissionScopeLiteralMatches(dim, matcher, value) {
 				matched = true
 				break
 			}
@@ -155,6 +160,23 @@ func permissionScopeSatisfied(callerConvID string, scope PermissionScope, actx A
 		}
 	}
 	return true
+}
+
+func permissionScopeLiteralMatches(dim ScopeDim, matcher, value string) bool {
+	spec, ok := permissionScopeDimensions[dim]
+	if !ok {
+		return false
+	}
+	switch spec.matcher {
+	case permissionScopeMatchExact:
+		return matcher == value
+	case permissionScopeMatchRemotePattern:
+		pattern := strings.Split(strings.ToLower(strings.Trim(matcher, "/")), "/")
+		target := strings.Split(strings.ToLower(strings.Trim(value, "/")), "/")
+		return matchRemotePattern(pattern, target)
+	default:
+		return false
+	}
 }
 
 // permissionScopeSelectorMatches evaluates a relational @selector matcher

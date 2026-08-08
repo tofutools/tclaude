@@ -416,7 +416,7 @@ func TestGroupImport_RejectsInvalidPermissionScopeBeforeFilesystem(t *testing.T)
 
 	rec := importArchive(f, archive, targetCwd, "")
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
-	assert.Contains(t, rec.Body.String(), "unknown permission scope dimension")
+	assert.Contains(t, rec.Body.String(), "does not declare scope dimension")
 	_, err = os.Stat(targetCwd)
 	assert.ErrorIs(t, err, os.ErrNotExist, "invalid scope must be rejected before file placement")
 	group, err := db.GetAgentGroupByName("invalid-scope")
