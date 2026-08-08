@@ -11,13 +11,18 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 func TestInfoProjectsGitProxyEnabled(t *testing.T) {
-	readProjection := func(t *testing.T) bool {
+	readProjection := func(t *testing.T, convID ...string) bool {
 		t.Helper()
 		recorder := httptest.NewRecorder()
-		handleInfo(recorder, httptest.NewRequest(http.MethodGet, "/v1/info", nil))
+		req := httptest.NewRequest(http.MethodGet, "/v1/info", nil)
+		if len(convID) > 0 {
+			req = AsAgentPeer(req, convID[0])
+		}
+		handleInfo(recorder, req)
 		require.Equal(t, http.StatusOK, recorder.Code)
 		var info struct {
 			Proxy *bool `json:"proxy"`
@@ -40,12 +45,15 @@ func TestInfoProjectsGitProxyEnabled(t *testing.T) {
 		assert.True(t, readProjection(t))
 	})
 
-	t.Run("configured for scoped grants", func(t *testing.T) {
+	t.Run("enabled by a scoped grant without global config", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
-		require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{
-			GitProxy: &config.GitProxyConfig{},
-		}}))
-		assert.True(t, readProjection(t))
+		setupTestDB(t)
+		const convID = "proxy-scope-info-0001"
+		_, _, err := db.EnsureAgentForConv(convID, "test")
+		require.NoError(t, err)
+		require.NoError(t, db.GrantAgentPermissionWithScope(convID, PermGitRead,
+			`{"remote":["github.com/acme/*"]}`, "test"))
+		assert.True(t, readProjection(t, convID))
 	})
 }
 

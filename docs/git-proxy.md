@@ -47,9 +47,10 @@ would therefore be agent-influenced.
 
 ## Enabling it
 
-The proxy is **off** until an `agent.git_proxy` block exists. Remote access is
-then authorized by a grant's `remote` scope, the legacy operator-global
-`allowed_remotes` list, or both. There is no "allow everything" setting.
+The proxy becomes available to an agent when it has a remote-scoped grant or
+when the legacy operator-global `allowed_remotes` list is configured. Remote
+access is authorized by the grant scope, the legacy list, or both. There is no
+"allow everything" setting.
 
 Add an `agent.git_proxy` block to `~/.tclaude/data/config.json`:
 
@@ -134,8 +135,8 @@ intersection — a scoped grant cannot widen beyond the global list.
 To migrate from the legacy global policy, copy its patterns into the relevant
 per-agent or group grants as `remote` scopes. After verifying those grants,
 empty `allowed_remotes` on the operator's schedule. Keep the `agent.git_proxy`
-block for credential and protected-ref policy. No automatic migration or
-runtime warning is emitted.
+block only if it still carries credential or protected-ref policy. No automatic
+migration or runtime warning is emitted.
 
 An agent without a grant can still ask for a one-off with `--ask-human 60s`,
 which raises the ordinary [approval popup](agent.md#ad-hoc-human-approval-ask-human).

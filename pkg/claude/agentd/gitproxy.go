@@ -135,9 +135,22 @@ const (
 // grant supplies its own patterns and does not take this path.
 const gitProxyDisabledCode = "git_proxy_disabled"
 
-func gitProxyRoutesEnabled() bool {
+func gitProxyRoutesEnabled(r *http.Request) bool {
 	cfg, err := config.Load()
-	return err == nil && cfg != nil && cfg.Agent != nil && cfg.Agent.GitProxy != nil
+	if err == nil && cfg.GitProxyEnabled() {
+		return true
+	}
+	p := peerFromContext(r.Context())
+	if classify(p) != classAgent {
+		return false
+	}
+	for _, slug := range []string{PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite} {
+		v := resolvePermissionVerdictForRequest(r, p.ConvID, slug)
+		if v.Resolution == permAllow && !evalPermissionScope(v, p.ConvID, ActionContext{}).Unscoped {
+			return true
+		}
+	}
+	return false
 }
 
 // gitProxyDisabledMessage is written to be actionable for an unscoped grant.
