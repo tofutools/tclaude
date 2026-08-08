@@ -2280,6 +2280,9 @@ func UpdateSessionVirtualCost(sessionID string, costUSD float64) error {
 // observed conv id and created-at timestamp keep an old Copilot fold from
 // writing its what-if value onto the replacement row. It also snapshots the
 // cumulative value onto today's history row, just like UpdateSessionVirtualCost.
+// A false result with nil error means either that costUSD was non-positive and
+// no write was requested, or that the observed generation no longer exists;
+// current callers gate on a positive cost before interpreting false as stale.
 func UpdateSessionVirtualCostForGeneration(
 	sessionID, expectedConvID string,
 	expectedCreatedAt time.Time,

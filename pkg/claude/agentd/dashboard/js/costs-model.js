@@ -49,8 +49,10 @@ export function fmtUSD(value) {
 // tooltip can explain that the dollar amount is gross subscription value.
 export function fmtCredits(value) {
   if (!(value > 0)) return '';
+  const roundedValue = Number(value.toFixed(2));
+  if (!(roundedValue > 0)) return '<0.01 credits';
   const rounded = Math.abs(value - Math.round(value)) < 1e-9
-    ? String(Math.round(value)) : String(Number(value.toFixed(2)));
+    ? String(Math.round(value)) : String(roundedValue);
   return `${rounded} credits`;
 }
 

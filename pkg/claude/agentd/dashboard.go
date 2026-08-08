@@ -2460,11 +2460,7 @@ func stateForConvInSessionsBatched(
 		out.CostUSD = snap.CostUSD
 		out.VirtualCostUSD = snap.VirtualCostUSD
 		if pick.Harness == harness.CopilotName && snap.VirtualCostUSD > 0 {
-			if usage, err := db.LoadCopilotUsageSnapshot(pick.ID); err == nil && usage != nil {
-				if virtual, ok := harness.CopilotVirtualCostFromNanoAIU(usage.TotalNanoAIU); ok {
-					out.VirtualCostCredits = virtual.Credits
-				}
-			}
+			out.VirtualCostCredits = harness.CopilotVirtualCreditsFromUSD(snap.VirtualCostUSD)
 		}
 	}
 	// No live tmux session — the agent's process is gone. Report it as

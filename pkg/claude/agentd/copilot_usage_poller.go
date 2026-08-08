@@ -664,11 +664,13 @@ func applyCopilotUsageCalls(sess *db.SessionRow, calls []harness.CopilotUsageCal
 		return
 	}
 	next := db.CopilotUsageSnapshot{SessionID: sess.ID, ConvID: sess.ConvID}
+	var priorTotalNanoAIU *int64
 	if snapshot != nil && snapshot.ConvID == sess.ConvID &&
 		snapshot.FoldVersion == db.CopilotUsageFoldVersion {
 		next = *snapshot
 		next.SessionID = sess.ID
 		next.ConvID = sess.ConvID
+		priorTotalNanoAIU = snapshot.TotalNanoAIU
 	}
 	var nanoAIU int64
 	var sawNanoAIU bool
@@ -760,7 +762,8 @@ func applyCopilotUsageCalls(sess *db.SessionRow, calls []harness.CopilotUsageCal
 	// the snapshot: an old fold must not put its virtual dollars on a reused
 	// session id. Nil/zero nano-AIU deliberately leaves virtual_cost_usd
 	// untouched at zero, so an unmeasured call never renders as $0.00.
-	if virtual, ok := harness.CopilotVirtualCostFromNanoAIU(next.TotalNanoAIU); ok {
+	if virtual, ok := harness.CopilotVirtualCostFromNanoAIU(next.TotalNanoAIU); ok &&
+		(priorTotalNanoAIU == nil || *priorTotalNanoAIU != *next.TotalNanoAIU) {
 		persisted, err := db.UpdateSessionVirtualCostForGeneration(
 			sess.ID, sess.ConvID, sess.CreatedAt, virtual.USD)
 		if err != nil {
@@ -790,9 +793,9 @@ func publishCopilotUsage(sess *db.SessionRow, snapshot db.CopilotUsageSnapshot) 
 		CreatedAt:     sess.CreatedAt,
 		ContextTokens: snapshot.LastCallInputTokens,
 		OutputTokens:  snapshot.OutputTokens,
-		Model:       snapshot.Model,
-		LastEventID: snapshot.LastEventID,
-		loaded:      true,
+		Model:         snapshot.Model,
+		LastEventID:   snapshot.LastEventID,
+		loaded:        true,
 	}
 }
 

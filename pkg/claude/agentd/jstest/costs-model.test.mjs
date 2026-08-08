@@ -62,6 +62,7 @@ test('Copilot cost segments retain native credits beside gross subscription doll
   assert.equal(filtered.virtual_cost_credits, 43);
   assert.equal(filtered.days[0].virtual_cost_credits, 43);
   assert.equal(model.fmtCredits(43), '43 credits');
+  assert.equal(model.fmtCredits(0.004), '<0.01 credits');
 
   const chart = model.buildCostChart(filtered, null, agents, selected, model.costHarnesses(agents));
   const copilotSegment = chart.days[0].segments.find((segment) => segment.harness === 'copilot');

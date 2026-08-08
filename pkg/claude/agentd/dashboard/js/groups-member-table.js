@@ -15,6 +15,7 @@ import {
 } from './human-notification-attention.js';
 import { bodilessNotice } from './human-attachments.js';
 import { HarnessMark } from './harness-mark.js';
+import { fmtCredits } from './costs-model.js';
 
 const html = htm.bind(h);
 
@@ -110,13 +111,6 @@ function shortEffort(effort) {
   return EFFORT_LABELS[effort] || effort;
 }
 
-function virtualCreditsLabel(value) {
-  if (!(value > 0)) return '';
-  const rounded = Math.abs(value - Math.round(value)) < 1e-9
-    ? String(Math.round(value)) : String(Number(value.toFixed(2)));
-  return `${rounded} credits`;
-}
-
 function RemoteBadge({ member }) {
   if (!member.online || !member.state?.remote_control) return null;
   const title = 'Remote Access is ON — this agent is reachable from the Claude app/phone. Click to open its live session (Claude Code TUI) in a web terminal; Ctrl/Cmd-click opens it without leaving this tab. Best-known state (the harness has no readback); toggle it from the row’s ⚙ menu.';
@@ -205,11 +199,11 @@ export function HarnessLine({ member, snapshot }) {
   if (cost > 0) title += ` — API cost this session: $${cost.toFixed(4)} (API/enterprise pricing — no subscription limits)`;
   if (virtualCost > 0) {
     title += copilotCredits
-      ? ` — WHAT-IF cost this session: ${virtualCreditsLabel(virtualCredits)} — $${virtualCost.toFixed(4)} subscription value (estimated if billed pay-per-token — you're on a subscription, so this is hypothetical, not a real charge)`
+      ? ` — WHAT-IF cost this session: ${fmtCredits(virtualCredits)} — $${virtualCost.toFixed(4)} subscription value (estimated if billed pay-per-token — you're on a subscription, so this is hypothetical, not a real charge)`
       : ` — WHAT-IF cost this session: $${virtualCost.toFixed(4)} (estimated if billed pay-per-token — you're on a subscription, so this is hypothetical, not a real charge)`;
   }
   const virtualTitle = copilotCredits
-    ? `${virtualCreditsLabel(virtualCredits)} — $${virtualCost.toFixed(4)} subscription value — estimated pay-per-token-equivalent cost this session; hypothetical, not a real charge (subscription)`
+    ? `${fmtCredits(virtualCredits)} — $${virtualCost.toFixed(4)} subscription value — estimated pay-per-token-equivalent cost this session; hypothetical, not a real charge (subscription)`
     : 'Estimated pay-per-token-equivalent cost this session — hypothetical, not a real charge (subscription)';
   return html`<div class="agent-harness" title=${title}>
     <span class=${metadataClass} role="note" aria-label=${title}><${HarnessMark} name=${harness} shortLabel=${labels.short} longLabel=${labels.long} />${drive}<span class="harness-sep">·</span><span class="harness-model">${shortModel(model, harness)}</span>

@@ -158,7 +158,10 @@ func TestDashboardSnapshot_CopilotVirtualCreditsSurfaced(t *testing.T) {
 	sess.Harness = harness.CopilotName
 	require.NoError(t, db.SaveSession(sess), "mark session as Copilot")
 
-	totalNanoAIU := int64(43_000_000_000)
+	// Deliberately make the side-table total disagree with the persisted
+	// virtual dollars: the dashboard must use one snapshot source for both
+	// values rather than re-reading native credits beside the dollar snapshot.
+	totalNanoAIU := int64(99_000_000_000)
 	saved, err := db.SaveCopilotUsageSnapshot(db.CopilotUsageSnapshot{
 		SessionID: label, ConvID: conv, TotalNanoAIU: &totalNanoAIU,
 	}, sess.CreatedAt)
