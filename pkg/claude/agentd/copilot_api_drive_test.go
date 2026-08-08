@@ -709,7 +709,13 @@ func TestTheCopilotPaneOverrideIsThreadedAllTheWayToTheSink(t *testing.T) {
 		assert.Truef(t, declaresChannelParam(fn), "%s must take the caller's "+
 			"deliveryChannel as a parameter named `channel`", hop.from)
 
-		var passedOn bool
+		// EVERY call to the next hop, not merely some call. The existential
+		// version of this check — set a flag when a good call is seen — passed
+		// with a bad call sitting beside it, which is how this guard was beaten
+		// twice under review: once by putting the good call on a branch nothing
+		// takes, and once by dropping the override only for deliveries carrying
+		// a follow-up, which the behavioural tests do not walk.
+		var callsToNextHop int
 		ast.Inspect(fn.Body, func(node ast.Node) bool {
 			call, ok := node.(*ast.CallExpr)
 			if !ok {
@@ -723,19 +729,28 @@ func TestTheCopilotPaneOverrideIsThreadedAllTheWayToTheSink(t *testing.T) {
 				"%s calls %s, the routed-default wrapper. That silently drops the "+
 					"caller's channel, and the only symptom is a delivery refused in a "+
 					"log line", hop.from, callee.Name)
-			if callee.Name == hop.to {
-				for _, argument := range call.Args {
-					if ident, ok := argument.(*ast.Ident); ok && ident.Name == "channel" {
-						passedOn = true
-					}
+			if callee.Name != hop.to {
+				return true
+			}
+			callsToNextHop++
+			var passesChannel bool
+			for _, argument := range call.Args {
+				if ident, ok := argument.(*ast.Ident); ok && ident.Name == "channel" {
+					passesChannel = true
 				}
 			}
+			assert.Truef(t, passesChannel,
+				"%s calls %s WITHOUT passing its own `channel`. Every call on this "+
+					"hop must carry it, not merely one of them: a second call that "+
+					"defaults or re-derives the channel ends the caller's override "+
+					"silently, and does so while a correctly-threaded call sits beside "+
+					"it keeping this guard green",
+				hop.from, hop.to)
 			return true
 		})
-		assert.Truef(t, passedOn,
-			"%s must pass its own `channel` to %s; a hop that re-derives the "+
-				"channel, or defaults it, is the override quietly ending here",
-			hop.from, hop.to)
+		assert.Positivef(t, callsToNextHop,
+			"%s no longer calls %s at all; the chain is broken, or this guard is "+
+				"watching the wrong pair", hop.from, hop.to)
 	}
 
 	// A hop may not REASSIGN the channel it was handed. Threading it perfectly
@@ -794,14 +809,28 @@ func TestTheCopilotPaneOverrideIsThreadedAllTheWayToTheSink(t *testing.T) {
 	// The last hop is the one that actually chooses, so its choice must READ
 	// the channel. Without this the chain could thread it perfectly and then
 	// ignore it.
+	// EVERY copilotAPIDriven test in the sink, not merely one of them. This
+	// check had the same existential shape as the threading check above, and
+	// the same beat: a second, unguarded copilotAPIDriven(convID) elsewhere in
+	// the sink would decide routing on its own account with the guard green,
+	// because the first one still satisfied it.
 	sink := functions["dispatchSlashCommandOn"]
-	var guarded bool
+	guarded := map[*ast.CallExpr]bool{}
+	var driven []*ast.CallExpr
 	ast.Inspect(sink.Body, func(node ast.Node) bool {
+		if call, ok := node.(*ast.CallExpr); ok {
+			if callee, ok := call.Fun.(*ast.Ident); ok &&
+				callee.Name == "copilotAPIDriven" {
+				driven = append(driven, call)
+			}
+			return true
+		}
 		binary, ok := node.(*ast.BinaryExpr)
 		if !ok {
 			return true
 		}
-		var mentionsChannel, testsDriven bool
+		var mentionsChannel bool
+		var inside []*ast.CallExpr
 		ast.Inspect(binary, func(inner ast.Node) bool {
 			switch typed := inner.(type) {
 			case *ast.Ident:
@@ -811,20 +840,31 @@ func TestTheCopilotPaneOverrideIsThreadedAllTheWayToTheSink(t *testing.T) {
 			case *ast.CallExpr:
 				if callee, ok := typed.Fun.(*ast.Ident); ok &&
 					callee.Name == "copilotAPIDriven" {
-					testsDriven = true
+					inside = append(inside, typed)
 				}
 			}
 			return true
 		})
-		if mentionsChannel && testsDriven {
-			guarded = true
+		if mentionsChannel {
+			for _, call := range inside {
+				guarded[call] = true
+			}
 		}
 		return true
 	})
-	assert.True(t, guarded,
-		"dispatchSlashCommandOn's copilotAPIDriven test must be guarded by the "+
-			"caller's channel. Unguarded, it re-decides the routing the caller "+
-			"already decided — which is the bug this whole chain exists to close")
+
+	assert.NotEmpty(t, driven,
+		"dispatchSlashCommandOn no longer tests copilotAPIDriven at all; this "+
+			"guard is watching nothing")
+	for _, call := range driven {
+		assert.Truef(t, guarded[call],
+			"dispatchSlashCommandOn tests copilotAPIDriven at line %d without the "+
+				"caller's channel in the same condition. Unguarded, it re-decides "+
+				"the routing the caller already decided — which is the bug this "+
+				"whole chain exists to close. EVERY such test must be guarded, not "+
+				"just the first one a walk happens to find",
+			call.Pos())
+	}
 }
 
 func declaresChannelParam(fn *ast.FuncDecl) bool {

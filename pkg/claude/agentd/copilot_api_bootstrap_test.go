@@ -199,16 +199,92 @@ func TestEveryCopilotAPIDiallerVerifiesItsPort(t *testing.T) {
 			})
 			require.NotNil(t, body, "%s must exist for this guard to mean anything", function)
 
-			text := string(source[fset.Position(body.Pos()).Offset:fset.Position(body.End()).Offset])
-			assert.Contains(t, text, "verifiedCopilotAPIPort(",
-				"a function that dials the endpoint must take its port from the accessor "+
-					"that proves the listener belongs to the agent's pane")
-			assert.Contains(t, text, "handle.StillOwned()",
-				"the connection must be re-proved after it is established: the pre-dial proof "+
-					"is one-shot and leaves a TOCTOU window that only a post-connect re-read "+
-					"closes")
+			assert.True(t, callAlwaysEvaluated(body.Body, "verifiedCopilotAPIPort"),
+				"%s must take its port from verifiedCopilotAPIPort, which proves the "+
+					"listener belongs to the agent's pane — and must do so where it "+
+					"always runs. A call parked on a branch, or a mention in a comment, "+
+					"is not a proof", function)
+			assert.True(t, callAlwaysEvaluated(body.Body, "StillOwned"),
+				"%s must re-prove ownership on the live connection: the pre-dial proof "+
+					"is one-shot and leaves a TOCTOU window that only a post-connect "+
+					"re-read closes. Measured before this guard was rewritten: deleting "+
+					"this call entirely and leaving only a comment naming it kept the "+
+					"whole agentd package green", function)
 		})
 	}
+}
+
+// callAlwaysEvaluated reports whether a call to name appears at the top level of
+// body in a position that is evaluated whenever control reaches it.
+//
+// # Why position and not presence
+//
+// Because this guard used to match SOURCE TEXT — it sliced the function body's
+// bytes and asked whether the string appeared in them. That range includes
+// comments, so a comment naming the call satisfied it, and so did a dead branch
+// or a string literal. Measured rather than argued: deleting
+// reconnectCopilotAPISession's post-connect StillOwned re-proof outright and
+// leaving behind only a comment that named it left the ENTIRE agentd package
+// green, with the TOCTOU window the check exists to close wide open.
+//
+// These are the ownership properties of an endpoint with no authentication, so
+// presence is not a strong enough claim to make about them.
+//
+// # What counts as always evaluated
+//
+// A statement, an assignment, or the Init or Cond of a top-level `if` — an Init
+// always runs when the statement is reached, and a Cond is always evaluated to
+// decide the branch. What does NOT count is a call inside a branch body, a loop
+// body, a nested block, or a closure, since reaching those is conditional on
+// something this guard cannot evaluate.
+//
+// # What it still cannot see
+//
+// Reachability: an early return above the statement leaves the call correctly
+// positioned and never executed. Same residue as every guard of this family, and
+// stated for the same reason — a guard's limits belong in its comment rather
+// than in the next reader's assumptions.
+func callAlwaysEvaluated(body *ast.BlockStmt, name string) bool {
+	if body == nil {
+		return false
+	}
+	mentions := func(node ast.Node) bool {
+		if node == nil {
+			return false
+		}
+		found := false
+		ast.Inspect(node, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			switch callee := call.Fun.(type) {
+			case *ast.Ident:
+				if callee.Name == name {
+					found = true
+				}
+			case *ast.SelectorExpr:
+				if callee.Sel.Name == name {
+					found = true
+				}
+			}
+			return true
+		})
+		return found
+	}
+	for _, statement := range body.List {
+		switch typed := statement.(type) {
+		case *ast.ExprStmt, *ast.AssignStmt, *ast.ReturnStmt:
+			if mentions(typed) {
+				return true
+			}
+		case *ast.IfStmt:
+			if mentions(typed.Init) || mentions(typed.Cond) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // TestTheCopilotAPIReconnectIssuesNoMutatingCall is the reconnect's own
