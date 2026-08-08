@@ -234,6 +234,15 @@ func copilotAPIConnected(convID string) bool {
 // launch, trading a recoverable state for an unrecoverable one to avoid an action
 // the operator can already take.
 //
+// THAT REMEDY IS A DEPENDENCY OF THIS DECISION, not a convenience beside it. The
+// position is not "holding mail forever is acceptable"; it is "holding is
+// acceptable BECAUSE the operator can already fix it in one click". The restart
+// control requires the agent to be idle, which does not bite for a deaf agent —
+// it has received nothing, so it is idle almost by construction. If that ever
+// changes, or restart otherwise stops being reachable for an agent in this state,
+// this decision has lost its foundation and needs re-making rather than
+// inheriting.
+//
 // THIS CALL IS PHASE-DEPENDENT, AND A LATER READER SHOULD KNOW IT RATHER THAN
 // INFER IT. "Constraint, no automatic revoke" is right while the drive is
 // unverified. Once it is verified and in ordinary use the balance may genuinely
