@@ -1700,7 +1700,7 @@ func (m tuiModel) submitSpawn() (tuiModel, tea.Cmd) {
 	// profile's brief may be many lines, and this is a one-line input that would
 	// mangle them), so there is nothing here for the operator to have cleared:
 	// an empty box is a real silence, and the profile's brief fills it as the
-	// task default it is. briefLine says so on screen.
+	// task default it is. briefHint says so on screen.
 	req.StateName(strings.TrimSpace(m.form.name.Value()))
 	m.spawnWorktree = tuiWorktreeResponse{}
 	if m.canCreateWorktree() && m.creatingWorktree() {
