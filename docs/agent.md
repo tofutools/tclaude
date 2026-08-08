@@ -2339,7 +2339,8 @@ has [classified the caller](#identity), it decides:
    Ownership confers no *mutation* authority it does not already imply:
    in particular it never grants `process.runs.manage` or
    `process.templates.manage`, which stay on an explicit grant or a
-   one-shot `--ask-human` approval.
+   one-shot `--ask-human` approval. A group may also *narrow* what owning
+   it confers — see [Owner-bypass narrowing](#owner-bypass-narrowing).
 3. **Neither?** Refused fail-closed — see [Identity](#identity).
 
 ### Storage split
@@ -2392,6 +2393,45 @@ reply destination), so guessing ancestry from them could widen authorization.
 Consequently `@descendants` and `@self-spawned` cover agents spawned after the
 lineage table landed; pre-existing agents have no inferred ancestry and fail
 closed.
+
+### Owner-bypass narrowing
+
+Owning a group confers the slugs above *structurally*, without a grant. A group
+may confine that bypass — and only that bypass — with an owner-scope map from
+slug to the same scope shape a grant takes:
+
+```bash
+tclaude agent groups set-owner-scopes reviewers \
+  '{"groups.spawn": {"spawn_profile": ["reviewer"]}}'
+```
+
+An owner of `reviewers` that holds no `groups.spawn` grant of its own may now
+spawn into it with the `reviewer` profile, and is refused (popup, then 403)
+with any other profile or with an inline launch shape that names none. Omit the
+map (or pass `{}`) to clear the narrowing. The dashboard writes the same field
+from Groups tab → group ⚙ → **group permissions…**, and a group template can
+declare it so every force deployed from the template is born with it.
+
+Four properties are worth stating plainly:
+
+- **Bypass only.** An *explicit* grant the owner separately holds resolves
+  first, under the ordinary precedence, and is untouched. Narrow that with
+  `permissions grant --scope`.
+- **Per group.** An owner of a narrowed group and an unnarrowed one is confined
+  only when acting on the narrowed one.
+- **Fail-closed where the target group is unknown.** A few endpoints take the
+  bypass on "owns *any* group" and describe no group at all (`human.notify`,
+  `process.runs.read`, worktree prepare/discard). A narrowed group contributes
+  nothing there, so an owner whose *only* group narrows the slug is refused;
+  owning one unnarrowed group is enough to pass.
+- **It only takes reach away.** A deny still suppresses the bypass entirely,
+  and a narrowed owner cannot confer a *wider* grant than its narrowing
+  through the spawn / grant / template-deploy minting surfaces.
+
+Every slug in the map must be one ownership actually confers, and every
+dimension must be one that slug declares — the same validation a grant scope
+gets. `permissions ls` renders the result, e.g.
+`groups.spawn … owner:group [spawn_profile=reviewer]`.
 
 ### Slugs
 

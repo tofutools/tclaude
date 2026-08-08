@@ -1561,6 +1561,14 @@ separate from spawn-profile permissions, which are birth-time agent overrides.
 Group policy is allow-only so membership in several groups composes as a union;
 an explicit Deny on an individual agent still wins.
 
+The same dialog carries the group's **owner-bypass narrowing** as a small JSON
+box: `{"groups.spawn": {"spawn_profile": ["reviewer"]}}` confines what OWNING
+this group confers by itself, without touching any explicit grant an owner
+holds. Empty means the unrestricted bypass. Saving sends it on the same PATCH
+as the grants above, and the daemon rejects a map naming an unknown slug or a
+dimension that slug does not declare. See
+[Owner-bypass narrowing](agent.md#owner-bypass-narrowing).
+
 ### Messages
 
 Notifications agents have sent the human via `tclaude agent notify-human`
