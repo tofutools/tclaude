@@ -236,12 +236,24 @@ func copilotAPIConnected(convID string) bool {
 //
 // THAT REMEDY IS A DEPENDENCY OF THIS DECISION, not a convenience beside it. The
 // position is not "holding mail forever is acceptable"; it is "holding is
-// acceptable BECAUSE the operator can already fix it in one click". The restart
-// control requires the agent to be idle, which does not bite for a deaf agent —
-// it has received nothing, so it is idle almost by construction. If that ever
-// changes, or restart otherwise stops being reachable for an agent in this state,
-// this decision has lost its foundation and needs re-making rather than
-// inheriting.
+// acceptable BECAUSE the operator can already fix it in one click". If restart
+// stops being reachable for an agent in this state, the decision has lost its
+// foundation and needs re-making rather than inheriting.
+//
+// AND IT IS ALREADY NOT REACHABLE FOR ONE OF THE THREE POPULATIONS. Restart
+// refuses with 409 agent_not_idle when the agent is busy or holds live subagents,
+// shells or monitors, and refuses outright when no live session is found — see
+// agentRestartIdleFailure. For a launch whose bootstrap failed that is harmless:
+// such an agent has received nothing and is idle almost by construction. But the
+// third case this observation covers is an AGENTD RESTART, where the sweep marks
+// channel-failed against agents that were already running and doing work. Those
+// can be busy, and for them the remedy this decision rests on is unavailable
+// exactly when it is needed.
+//
+// That is a known gap, recorded rather than quietly assumed away. It does not
+// change the call — a busy agent whose mail is held is still visibly stuck, and
+// still recoverable once it goes idle — but it does mean the "one click" story is
+// true for the bootstrap cases and only eventually true for the restart case.
 //
 // THIS CALL IS PHASE-DEPENDENT, AND A LATER READER SHOULD KNOW IT RATHER THAN
 // INFER IT. "Constraint, no automatic revoke" is right while the drive is
@@ -260,13 +272,35 @@ func copilotAPIConnected(convID string) bool {
 //   - Route THIS LAUNCH's mail to keystrokes. Lifetime: the launch.
 //   - This AGENT is no longer an API agent. Lifetime: the agent.
 //
-// The second is the only one the database can express, and the first is the only
-// one this observation's evidence supports. A conversation-scoped write does not
-// bridge them: [copilotLaunchIntentForConv] reads the agent relaunch profile
-// first and consults the conversation fallback only for fields the profile left
-// nil, and relaunchProfileForSpawn freezes CopilotAPI non-nil for every Copilot
-// launch — so a revoke written to the conversation fallback is INERT for every
-// spawned agent, which is precisely the population that has this problem.
+// The second is the only one that reliably ROUTES, and the first is the only one
+// this observation's evidence supports. The tempting move — write the revoke to
+// the conversation fallback, where it looks conveniently launch-shaped — does not
+// bridge that gap. It does three DIFFERENT things depending on who the agent is,
+// and none of them is "revoke this launch":
+//
+//   - For a SPAWNED agent it is inert. [copilotLaunchIntentForConv] reads the
+//     agent relaunch profile first and consults the fallback only for fields the
+//     profile left nil, and relaunchProfileForSpawn freezes CopilotAPI non-nil
+//     for every Copilot launch. The write lands and changes nothing.
+//   - For a CLONE, or a direct `session new --copilot-api`, it is fully live: no
+//     stable agent profile exists, so the fallback is the only holder. See
+//     SetConversationCopilotAPI's own comment, which says so.
+//   - And for a spawned agent it can later become AGENT-lifetime without anyone
+//     intending it. enrollSpawnedConv composes the conversation fallback over the
+//     spawn profile as the OVERLAY (ComposeAgentRelaunchProfile lets a non-nil
+//     overlay field win, CopilotAPI included) and writes the result to the agent
+//     profile. A false parked in the fallback is promoted at the next enrollment
+//     that reaches that path.
+//
+// So the conversation fallback is not the safely-scoped record it resembles. It
+// is inert where you would want it to work, live where you did not ask, and a
+// slow path from launch lifetime to agent lifetime. Whoever revisits the durable
+// revoke should reach for the agent profile deliberately, or not at all, rather
+// than through the record that looks less consequential.
+//
+// (The projection path deliberately does NOT propagate upward — see
+// projectSessionRelaunchProfilesTx — so this is specific to enrollment, not a
+// general property of the fallback.)
 func copilotAPIChannelFailed(convID string) bool {
 	return copilotAPISessions.ChannelFailed(convID)
 }
