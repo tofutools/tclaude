@@ -3160,6 +3160,12 @@ type groupSummary struct {
 	// hand-built group carries neither, and plain `groups ls` ignores them.
 	Mission        string `json:"mission,omitempty"`
 	SourceTemplate string `json:"source_template,omitempty"`
+	// OwnerScopes narrows the group's STRUCTURAL owner-implied permission
+	// bypass (TCL-1071): slug → the scope an owner's bypass is confined to
+	// here. omitempty — the overwhelming majority of groups impose no
+	// narrowing, and an absent field reads as the historical unrestricted
+	// bypass exactly as an older daemon's response did.
+	OwnerScopes map[string]PermissionScope `json:"owner_scopes,omitempty"`
 }
 
 // isConvOnline reports whether any tmux session registered for this conv-id
@@ -3271,6 +3277,7 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 				Archived:                g.IsArchived(),
 				NotifyMuted:             !g.NotifyEnabled,
 				RemoteControlPolicy:     remoteControlPolicyToWire(g.RemoteControl),
+				OwnerScopes:             ownerScopesWireOmitEmpty(g.OwnerScopesJSON),
 				Mission:                 g.Mission,
 				SourceTemplate:          g.SourceTemplate,
 			})
@@ -3642,6 +3649,10 @@ func normalizeGroupDescr(s string) string {
 //   - permissions — live additive grants held by every current member. These
 //     are membership policy, not spawn defaults, and are never copied into
 //     agent_permissions.
+//   - owner_scopes — the narrowing applied to this group's STRUCTURAL
+//     owner-implied permission bypass (TCL-1071), as a slug → scope map.
+//     {} / null clears it, restoring the unrestricted bypass. It never
+//     touches an explicit grant an owner holds.
 //
 // Partial-update contract, matching handleGroupMembersUpdate: only
 // fields present (non-nil) in the body are touched. descr / default_cwd
@@ -3656,6 +3667,11 @@ func normalizeGroupDescr(s string) string {
 // UI prefill / spawn-time injection / spawn refusal, strictly lower
 // than a rename), so it rides the existing slug rather than minting a
 // new one. Default human-only.
+//
+// permissions AND owner_scopes are permission administration and additionally
+// require permissions.grant + permissions.revoke — the same pair, because both
+// fields can widen (clearing a narrowing) and narrow (adding one) in a single
+// write.
 func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	caller, ok := requirePermission(w, r, PermGroupsRename)
 	if !ok {
@@ -3688,13 +3704,19 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		// Permissions is a complete replacement allowlist. Pointer distinguishes
 		// omitted (unchanged) from [] (clear every group grant).
 		Permissions *[]string `json:"permissions,omitempty"`
+		// OwnerScopes is a complete replacement owner-scope map for this group
+		// (TCL-1071): slug → the scope that slug's owner-implied bypass is
+		// confined to here. Raw so {} and null both reach the parser and both
+		// mean "no narrowing"; the pointer distinguishes omitted (unchanged)
+		// from an explicit clear.
+		OwnerScopes *json.RawMessage `json:"owner_scopes,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "json", err.Error())
 		return
 	}
-	if body.Permissions != nil {
-		// Authorize the higher-impact field before applying ANY part of a mixed
+	if body.Permissions != nil || body.OwnerScopes != nil {
+		// Authorize the higher-impact fields before applying ANY part of a mixed
 		// PATCH, so a caller cannot get a partial settings update followed by a
 		// permission-administration 403.
 		if _, ok := requirePermission(w, r, PermPermissionsGrant); !ok {
@@ -3703,6 +3725,17 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		if _, ok := requirePermission(w, r, PermPermissionsRevoke); !ok {
 			return
 		}
+	}
+	// Validate + canonicalize the owner-scope map before any write lands, for
+	// the same reason: a rejected map must not follow a committed descr.
+	ownerScopes := ""
+	if body.OwnerScopes != nil {
+		canonical, err := canonicalOwnerScopes(string(*body.OwnerScopes))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_owner_scopes", err.Error())
+			return
+		}
+		ownerScopes = canonical
 	}
 	var normalizedPermissions []string
 	if body.Permissions != nil {
@@ -3736,9 +3769,9 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 			return
 		}
 	}
-	if body.Descr == nil && body.DefaultCwd == nil && body.DefaultContext == nil && body.DefaultProfile == nil && body.MaxMembers == nil && body.NotifyEnabled == nil && body.RemoteControlPolicy == nil && body.Permissions == nil {
+	if body.Descr == nil && body.DefaultCwd == nil && body.DefaultContext == nil && body.DefaultProfile == nil && body.MaxMembers == nil && body.NotifyEnabled == nil && body.RemoteControlPolicy == nil && body.Permissions == nil && body.OwnerScopes == nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
-			"nothing to update (expected descr, default_cwd, default_context, default_profile, max_members, notify_enabled, remote_control_policy and/or permissions)")
+			"nothing to update (expected descr, default_cwd, default_context, default_profile, max_members, notify_enabled, remote_control_policy, permissions and/or owner_scopes)")
 		return
 	}
 	resp := map[string]any{"group": g.Name}
@@ -3897,7 +3930,59 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		resp["permissions"] = normalizedPermissions
 	}
 
+	if body.OwnerScopes != nil {
+		// Same class as the allowlist above, and gated on the same pair. The
+		// canonical form was computed before any write landed, so this cannot
+		// fail on validation here.
+		n, err := db.SetAgentGroupOwnerScopes(g.Name, ownerScopes)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		if n == 0 {
+			writeError(w, http.StatusNotFound, "not_found", "no such group")
+			return
+		}
+		resp["owner_scopes"] = ownerScopesWire(ownerScopes)
+	}
+
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// ownerScopesWireOmitEmpty is ownerScopesWire for a field tagged omitempty: it
+// answers nil rather than an empty map so an unnarrowed group serializes with
+// no owner_scopes key at all.
+func ownerScopesWireOmitEmpty(raw string) map[string]PermissionScope {
+	out := ownerScopesWire(raw)
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// ownerScopesWire renders a stored owner-scope map for a JSON response: the
+// decoded object, or an empty object when the group imposes no narrowing. A
+// raw string would force every client to double-decode, and json.RawMessage
+// of "" is not valid JSON.
+//
+// A stored map this build cannot decode also renders empty — there is nothing
+// typed to show — so it is LOGGED here rather than passing silently. The
+// display is lossy in that case, but it cannot destroy the stored value: an
+// editor sends owner_scopes only when its box was edited, and an omitted field
+// leaves the row untouched.
+func ownerScopesWire(raw string) map[string]PermissionScope {
+	out := map[string]PermissionScope{}
+	scopes, err := ownerScopesForEval(raw)
+	if err != nil {
+		slog.Warn("permissions: stored owner scopes do not decode on this build; "+
+			"rendering them as absent (the gate still fails their bypass closed)",
+			"error", err)
+		return out
+	}
+	for slug, scope := range scopes {
+		out[slug] = scope
+	}
+	return out
 }
 
 // parseRemoteControlPolicy maps a group remote-control policy wire token to the
@@ -4181,8 +4266,11 @@ func requireGroupContextAccess(w http.ResponseWriter, r *http.Request, g *db.Age
 	case permAllow:
 		return p.ConvID, true
 	case permUndecided:
-		// No grant/deny source — the owner bypass applies.
-		if owns, err := db.IsAgentGroupOwner(g.ID, p.ConvID); err == nil && owns {
+		// No grant/deny source — the owner bypass applies, narrowed by g's
+		// own owner-scope map (TCL-1071). The group is the whole subject of
+		// this endpoint, so the context names it and no other group's map
+		// can be consulted by mistake.
+		if ownerOfGroupPermitting(g, p.ConvID, PermAgentContextInfo, ActionContext{Group: g.Name}) {
 			return p.ConvID, true
 		}
 	case permDeny:

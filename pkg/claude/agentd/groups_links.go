@@ -425,9 +425,8 @@ func requireGroupLinkAuthority(w http.ResponseWriter, r *http.Request, g *db.Age
 	// The owner-of-g structural bypass applies only to a confirmed agent
 	// (it needs a conv-id). The human, and every fail-closed class, are
 	// handled uniformly by requirePermissionEx.
-	return requirePermissionEx(w, r, perm, func(convID string) bool {
-		owns, err := db.IsAgentGroupOwner(g.ID, convID)
-		return err == nil && owns
+	return requirePermissionEx(w, r, perm, func(convID, slug string, actx ActionContext) bool {
+		return ownerOfGroupPermitting(g, convID, slug, actx)
 	})
 }
 
@@ -443,12 +442,11 @@ func requireScopedLinkAuthority(w http.ResponseWriter, r *http.Request, g *db.Ag
 	// Owner-of-g bypass: confirmed agent only, and only when g is the
 	// FROM side of the link. The human and every fail-closed class are
 	// handled uniformly by requirePermissionEx.
-	return requirePermissionEx(w, r, perm, func(convID string) bool {
+	return requirePermissionEx(w, r, perm, func(convID, slug string, actx ActionContext) bool {
 		if link == nil || link.FromGroupID != g.ID {
 			return false
 		}
-		owns, err := db.IsAgentGroupOwner(g.ID, convID)
-		return err == nil && owns
+		return ownerOfGroupPermitting(g, convID, slug, actx)
 	})
 }
 

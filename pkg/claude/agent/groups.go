@@ -57,6 +57,7 @@ func groupsCmd() *cobra.Command {
 			groupsSetDefaultDirCmd(),
 			groupsSetDefaultProfileCmd(),
 			groupsSetRemoteControlCmd(),
+			groupsSetOwnerScopesCmd(),
 			groupsSetContextCmd(),
 			groupsSetMaxMembersCmd(),
 			groupsSetNotificationsCmd(),
@@ -1649,6 +1650,96 @@ func runGroupsSetRemoteControl(p *groupsSetRemoteControlParams, stdout, stderr i
 		return MapDaemonErrorToRC(err)
 	}
 	fmt.Fprintf(stdout, "%s: remote-control policy set to %s\n", resp.Group, resp.RemoteControlPolicy)
+	return rcOK
+}
+
+// --- groups set-owner-scopes ---
+
+type groupsSetOwnerScopesParams struct {
+	Group    string `pos:"true" help:"Group to configure"`
+	Scopes   string `pos:"true" optional:"true" help:"Owner-scope map as JSON: a permission slug mapped to the scope its owner-implied bypass is confined to, e.g. '{\"groups.spawn\": {\"spawn_profile\": [\"reviewer\"]}}'. Omit (and omit --file) to clear every narrowing."`
+	File     string `long:"file" short:"f" optional:"true" help:"Read the JSON map from this file instead of the positional argument ('-' reads stdin). Mutually exclusive with the positional argument."`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+}
+
+func groupsSetOwnerScopesCmd() *cobra.Command {
+	return boa.CmdT[groupsSetOwnerScopesParams]{
+		Use:   "set-owner-scopes",
+		Short: "Narrow (or clear) what OWNING this group structurally confers",
+		Long: "Owning a group structurally confers a set of permissions without an explicit grant — " +
+			"the owner-implied bypass. This command CONFINES that bypass for one group, as a JSON map " +
+			"from permission slug to scope: '{\"groups.spawn\": {\"spawn_profile\": [\"reviewer\"]}}' " +
+			"means an owner of this group with no grant of its own may spawn into it only with the " +
+			"reviewer profile, and is refused otherwise.\n\n" +
+			"It narrows ONLY the bypass. An explicit grant the owner separately holds resolves first and " +
+			"is untouched — narrow that with `permissions grant --scope`. It is also per-group: an owner " +
+			"of this group and another is confined only when acting on this one. Omit <scopes> (and " +
+			"--file) to clear the narrowing and restore the unrestricted bypass. " +
+			"Gated on `groups.rename` plus `permissions.grant` and `permissions.revoke` " +
+			"(default human-only), because a write can both add and remove a narrowing.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsSetOwnerScopesParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *groupsSetOwnerScopesParams, _ *cobra.Command, _ []string) {
+			os.Exit(runGroupsSetOwnerScopes(p, os.Stdin, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runGroupsSetOwnerScopes(p *groupsSetOwnerScopesParams, stdin io.Reader, stdout, stderr io.Writer) int {
+	if p.Group == "" {
+		fmt.Fprintf(stderr, "Error: group name is required\n")
+		return rcInvalidArg
+	}
+	source, rc := resolveBodyInput(p.Scopes, p.File, "the scopes argument", stdin, stderr)
+	if rc != rcOK {
+		return rc
+	}
+	raw := strings.TrimSpace(source)
+	// An omitted map clears the narrowing. "{}" is the same statement written
+	// out, and the daemon canonicalizes both to "no narrowing".
+	if raw == "" {
+		raw = "{}"
+	}
+	var scopes map[string]any
+	if err := json.Unmarshal([]byte(raw), &scopes); err != nil {
+		fmt.Fprintf(stderr, "Error: owner scopes must be a JSON object mapping a permission slug to a scope: %v\n", err)
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	if ask > 0 {
+		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	}
+	var resp struct {
+		Group       string         `json:"group"`
+		OwnerScopes map[string]any `json:"owner_scopes"`
+	}
+	body := map[string]any{"owner_scopes": scopes}
+	path := "/v1/groups/" + url.PathEscape(p.Group)
+	if err := DaemonRequest(http.MethodPatch, path, body, &resp, DaemonOpts{AskHuman: ask}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	if len(resp.OwnerScopes) == 0 {
+		fmt.Fprintf(stdout, "%s: owner-bypass narrowing cleared (owners hold the full owner-implied set here)\n", resp.Group)
+		return rcOK
+	}
+	rendered, err := json.Marshal(resp.OwnerScopes)
+	if err != nil {
+		fmt.Fprintf(stdout, "%s: owner-bypass narrowing set for %d slug(s)\n", resp.Group, len(resp.OwnerScopes))
+		return rcOK
+	}
+	fmt.Fprintf(stdout, "%s: owner-bypass narrowing set to %s\n", resp.Group, rendered)
 	return rcOK
 }
 

@@ -112,7 +112,7 @@ export function createMessageAccessDialogActions({
     return response;
   }
 
-  async function savePermissions(descriptor, selection) {
+  async function savePermissions(descriptor, selection, ownerScopes = null) {
     if (descriptor.mode === 'agent') {
       const response = await requestJSON(fetchImpl, '/api/permissions', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -125,9 +125,19 @@ export function createMessageAccessDialogActions({
     }
     if (descriptor.mode === 'group') {
       const permissions = Object.keys(selection).filter((slug) => selection[slug] === 'grant');
+      // owner_scopes rides the same PATCH as the grants: both are permission
+      // administration on the group and the endpoint gates them on the same
+      // grant+revoke pair, so splitting them into two requests would only
+      // create a window where one landed and the other did not. The caller
+      // passes null when the box was not edited, and an omitted field means
+      // "unchanged" — so a save that only flipped a grant can never clear a
+      // narrowing. Note `{}` IS a meaningful value here (clear it), which is
+      // why the test is against null rather than truthiness.
+      const body = { permissions };
+      if (ownerScopes !== null && ownerScopes !== undefined) body.owner_scopes = ownerScopes;
       const response = await requestJSON(fetchImpl, `/api/groups/${encodeURIComponent(descriptor.group)}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ permissions }),
+        body: JSON.stringify(body),
       });
       notify(words(
         `${descriptor.group}: ${permissions.length} group permission grant${permissions.length === 1 ? '' : 's'} saved`,

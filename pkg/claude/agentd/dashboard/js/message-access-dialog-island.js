@@ -509,15 +509,43 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
     .some((value) => String(value || '').toLowerCase().includes(filter.trim().toLowerCase())));
   const currentEffect = (slug) => selection[slug] || 'default';
   const baselineEffect = (slug) => baseline[slug] || 'default';
-  const dirty = rows.some((row) => currentEffect(row.slug) !== baselineEffect(row.slug));
+  const rowsDirty = rows.some((row) => currentEffect(row.slug) !== baselineEffect(row.slug));
   const groupMode = descriptor.mode === 'group';
+  // Owner scopes (TCL-1071) are a small JSON document, not a per-slug
+  // tri-state, so they get a textarea rather than a row control — deliberately
+  // the least machinery that makes the field reachable from the dashboard.
+  // An empty box means "no narrowing"; the daemon validates the map and
+  // rejects the whole PATCH with a readable message if it is wrong.
+  const [ownerScopesText, setOwnerScopesText] = useState(
+    () => (Object.keys(descriptor.ownerScopes || {}).length
+      ? JSON.stringify(descriptor.ownerScopes, null, 2) : ''));
+  const [ownerScopesBaseline] = useState(() => ownerScopesText);
+  const ownerScopesDirty = groupMode && ownerScopesText !== ownerScopesBaseline;
+  const dirty = rowsDirty || ownerScopesDirty;
   const setEffect = (slug, effect) => setSelection((current) => ({ ...current, [slug]: effect }));
   const submit = async () => {
     if (busyRef.current) return;
+    let ownerScopes = null;
+    if (groupMode) {
+      const raw = ownerScopesText.trim();
+      if (raw === '') ownerScopes = {};
+      else {
+        try { ownerScopes = JSON.parse(raw); }
+        catch (cause) { setError(`Owner scopes: not valid JSON — ${cause.message}`); return; }
+        if (!ownerScopes || typeof ownerScopes !== 'object' || Array.isArray(ownerScopes)) {
+          setError('Owner scopes: expected a JSON object mapping a permission slug to a scope.');
+          return;
+        }
+      }
+    }
     busyRef.current = true;
     setBusy(true); setError('');
     const full = Object.fromEntries(rows.map((row) => [row.slug, currentEffect(row.slug)]));
-    try { await actions.savePermissions(descriptor, full); state.close(); }
+    // Only send the map when the box was actually EDITED. A save that merely
+    // flipped a grant must not carry owner_scopes at all: the daemon treats an
+    // absent field as "unchanged", and sending the box's current value would
+    // clear a stored narrowing this build could not decode into it.
+    try { await actions.savePermissions(descriptor, full, ownerScopesDirty ? ownerScopes : null); state.close(); }
     catch (cause) { setError(errorText(cause)); }
     finally { busyRef.current = false; setBusy(false); }
   };
@@ -554,6 +582,14 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
         : currentEffect(row.slug) === 'deny' ? '✗ denied (explicit veto)'
         : row.granted ? `✓ ${row.sources.join(' + ')}` : '✗ denied (no source)'}</span>
     </div>`) : html`<div class="empty" style="padding:10px">${rows.length ? 'No matching permission slugs.' : 'No permission slugs registered.'}</div>`}</div>
+    ${groupMode && html`<div class="perm-edit-owner-scopes" id="perm-edit-owner-scopes">
+      <label for="perm-edit-owner-scopes-input"><${Words}
+        plain=${html`👑 <strong>Owner-bypass narrowing</strong> — confines what OWNING this group structurally confers, e.g. <code>{"groups.spawn": {"spawn_profile": ["reviewer"]}}</code>. Empty = unrestricted. Explicit grants an owner holds are unaffected.`}
+        wizard=${html`👑 <strong>Bind the crown</strong> — confines what wearing this party's crown grants by itself, e.g. <code>{"groups.spawn": {"spawn_profile": ["reviewer"]}}</code>. Empty = unbound. Boons bestowed directly are untouched.`}/></label>
+      <textarea id="perm-edit-owner-scopes-input" rows="4" spellcheck="false" autocomplete="off"
+        placeholder=${'{\n  "groups.spawn": { "spawn_profile": ["reviewer"] }\n}'}
+        value=${ownerScopesText} onInput=${(event) => setOwnerScopesText(event.currentTarget.value)}></textarea>
+    </div>`}
     <${ErrorLine} id="perm-edit-error" className="sudo-grant-error" value=${error}/><div class="modal-buttons">
       <button id="perm-edit-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><span class="pe-btn-regular">Cancel</span><span class="pe-btn-wizard">Dispel</span></button>
       <button id="perm-edit-submit" class="primary" type="button" disabled=${busy} onClick=${submit}>${busy ? 'Saving…' : 'Save'}</button>

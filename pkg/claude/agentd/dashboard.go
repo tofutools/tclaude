@@ -1582,6 +1582,11 @@ type dashboardGroup struct {
 	DefaultProfile          string   `json:"default_profile"` // spawn profile whose launch fields fill blank spawn fields for this group's agents; "" = none (the spawn default's single source — the vestigial default_model was dropped, JOH-220)
 	SandboxProfile          string   `json:"sandbox_profile"` // filesystem/environment profile assigned to this group; "" = inherit global
 	Permissions             []string `json:"permissions"`     // live additive grants held by current group members
+	// OwnerScopes narrows this group's STRUCTURAL owner-implied permission
+	// bypass (TCL-1071): slug → the scope an owner's bypass is confined to
+	// here. Always serialized (possibly {}) so the group-permissions editor can
+	// round-trip it without distinguishing "absent" from "no narrowing".
+	OwnerScopes map[string]PermissionScope `json:"owner_scopes"`
 	MaxMembers              int      `json:"max_members"`     // hard member cap; 0 = unlimited. A spawn that would exceed it is refused.
 	NotifyEnabled           bool     `json:"notify_enabled"`  // group OS-notification switch; false mutes every member (per-agent 'on' still overrides)
 	// RemoteControlPolicy is the group's remote-control policy that overrides a
@@ -3166,7 +3171,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		var groupPermissions []string
 		gt.track(&gt.perms, func() { groupPermissions, _ = db.ListAgentGroupPermissions(g.ID) })
 		attachment := groupAttachmentViewFor(g)
-		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, AttachmentURL: attachment.URL, AttachmentLabel: attachment.Label, AttachmentLabelOverride: attachment.LabelOverride, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, DefaultProfile: g.DefaultProfile, SandboxProfile: g.SandboxProfile, Permissions: groupPermissions, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Scribe: isScribeGroup(g), RouteGeneration: g.RouteGeneration, Members: []dashboardMember{}}
+		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, AttachmentURL: attachment.URL, AttachmentLabel: attachment.Label, AttachmentLabelOverride: attachment.LabelOverride, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, DefaultProfile: g.DefaultProfile, SandboxProfile: g.SandboxProfile, Permissions: groupPermissions, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), OwnerScopes: ownerScopesWire(g.OwnerScopesJSON), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Scribe: isScribeGroup(g), RouteGeneration: g.RouteGeneration, Members: []dashboardMember{}}
 		if g.ParentGroupID != nil {
 			dg.Parent = groupNameByID[*g.ParentGroupID]
 		}

@@ -172,7 +172,7 @@ func purgeExpiredPreparedWorktreesLocked() {
 // group-scoped spawn gate still binds the spawn itself; this endpoint
 // creates a directory, not an agent.
 func handleWorktreePrepare(w http.ResponseWriter, r *http.Request) {
-	caller, ok := requirePermissionEx(w, r, PermGroupsSpawn, ownsAnyGroup)
+	caller, ok := requirePermissionEx(w, r, PermGroupsSpawn, ownsAnyGroupPermitting)
 	if !ok {
 		return
 	}
@@ -309,7 +309,7 @@ func handleWorktreePrepare(w http.ResponseWriter, r *http.Request) {
 // the endpoint removes a directory, so it deliberately cannot be pointed
 // at an arbitrary path.
 func handleWorktreeDiscard(w http.ResponseWriter, r *http.Request) {
-	caller, ok := requirePermissionEx(w, r, PermGroupsSpawn, ownsAnyGroup)
+	caller, ok := requirePermissionEx(w, r, PermGroupsSpawn, ownsAnyGroupPermitting)
 	if !ok {
 		return
 	}

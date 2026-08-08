@@ -723,14 +723,17 @@ func requirePermission(w http.ResponseWriter, r *http.Request, perm string, actx
 // {"group": [...]} is evaluated here rather than waiting for a per-handler
 // migration. Any caller-supplied context wins, so a handler that also knows
 // the profile or template can pass a fuller one.
+// The bypass is narrowed by g's OWN owner-scope map (TCL-1071): this gate
+// knows exactly which group is being acted on, so it consults that group's map
+// and no other. An owner of a narrowed g1 and an unnarrowed g2 acting on g2 is
+// therefore unaffected.
 func requireGroupPermission(w http.ResponseWriter, r *http.Request, perm string, g *db.AgentGroup, actx ...ActionContext) (string, bool) {
 	ctx := actionContextOf(actx)
 	if ctx.Group == "" {
 		ctx.Group = g.Name
 	}
-	return requirePermissionEx(w, r, perm, func(convID string) bool {
-		owns, err := db.IsAgentGroupOwner(g.ID, convID)
-		return err == nil && owns
+	return requirePermissionEx(w, r, perm, func(convID, slug string, bypassCtx ActionContext) bool {
+		return ownerOfGroupPermitting(g, convID, slug, bypassCtx)
 	}, ctx)
 }
 
@@ -755,7 +758,12 @@ func requireGroupPermission(w http.ResponseWriter, r *http.Request, perm string,
 //     site did not describe → the grant does not decide this action: the
 //     structural owner bypass may still fill the gap, then the ask-human
 //     popup, then 403. Never a silent allow.
-func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ownerBypass func(convID string) bool, actx ...ActionContext) (string, bool) {
+//
+// The bypass receives the slug and the SAME ActionContext, because the
+// owner-implied bypass is itself scopeable per group (TCL-1071): a bypass that
+// could not see what the action targets could not tell a permitted spawn from
+// a refused one.
+func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ownerBypass ownerBypassFunc, actx ...ActionContext) (string, bool) {
 	p := peerFromContext(r.Context())
 	switch classify(p) {
 	case classUnidentified:
@@ -804,19 +812,20 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ow
 		allowed = true
 	} else {
 		v := resolvePermissionVerdictForRequest(r, p.ConvID, perm)
+		bypassCtx := actionContextOf(actx)
 		switch v.Resolution {
 		case permAllow:
-			eval := evalPermissionScope(v, p.ConvID, actionContextOf(actx))
+			eval := evalPermissionScope(v, p.ConvID, bypassCtx)
 			if eval.Satisfied {
 				allowed = true
 				recordAuditPermissionScope(r, perm, eval.Matched)
 			} else {
 				// The grant is scoped away from this action, so it decides
 				// nothing here — the same gap permUndecided leaves.
-				allowed = ownerBypass != nil && ownerBypass(p.ConvID)
+				allowed = ownerBypass != nil && ownerBypass(p.ConvID, perm, bypassCtx)
 			}
 		case permUndecided:
-			allowed = ownerBypass != nil && ownerBypass(p.ConvID)
+			allowed = ownerBypass != nil && ownerBypass(p.ConvID, perm, bypassCtx)
 		case permDeny:
 			// Authoritative deny — suppresses the owner bypass.
 		}
