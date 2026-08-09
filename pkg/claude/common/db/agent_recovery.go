@@ -333,10 +333,23 @@ func CancelAgentRecoveryForConv(convID, reason string, now time.Time) (bool, err
 	if err != nil {
 		return false, err
 	}
+	// A suppressed observation increments the streak when it is recorded even
+	// though no retry launches. If stop wins that interleaving, roll back only
+	// that episode's increment. The status predicate makes the decrement a
+	// one-shot CAS, and the > 0 guards make underflow impossible.
 	res, err := d.Exec(`UPDATE agent_recovery SET status = ?, reason_code = ?,
+		consecutive_crashes = CASE
+			WHEN status = ? AND consecutive_crashes > 0 THEN consecutive_crashes - 1
+			ELSE consecutive_crashes END,
+		backoff_step = CASE
+			WHEN status = ? AND consecutive_crashes > 1 THEN consecutive_crashes - 2
+			ELSE 0 END,
+		backoff_seconds = CASE WHEN status = ? THEN 0 ELSE backoff_seconds END,
 		next_attempt_at = NULL, lease_token = '', lease_expires_at = NULL, updated_at = ?
 		WHERE agent_id = (`+agentForConvExpr+`) AND status IN (?, ?, ?, ?)`,
-		AgentRecoveryStatusCancelled, boundedRecoveryReason(reason), recoveryTime(now), convID,
+		AgentRecoveryStatusCancelled, boundedRecoveryReason(reason),
+		AgentRecoveryStatusSuppressed, AgentRecoveryStatusSuppressed, AgentRecoveryStatusSuppressed,
+		recoveryTime(now), convID,
 		AgentRecoveryStatusCrashed, AgentRecoveryStatusBackoff, AgentRecoveryStatusRestarting,
 		AgentRecoveryStatusSuppressed)
 	if err != nil {

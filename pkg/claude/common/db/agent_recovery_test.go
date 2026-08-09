@@ -264,6 +264,23 @@ func TestAgentRecovery_IntentionalStopCancelsRacingSuppressedEpisode(t *testing.
 	require.NotNil(t, r)
 	assert.Equal(t, AgentRecoveryStatusCancelled, r.Status)
 	assert.Equal(t, AgentExitActionStop, r.ReasonCode)
+	assert.Zero(t, r.ConsecutiveCrashes, "stop rolls back only the racing suppressed episode's artificial count")
+	secondCancel, err := CancelAgentRecoveryForConv(r.ConvID, AgentExitActionStop, now.Add(2500*time.Millisecond))
+	require.NoError(t, err)
+	assert.False(t, secondCancel, "the status CAS makes suppressed-count rollback idempotent")
+
+	manual, err := BeginManualAgentRecovery(r.ConvID, now.Add(3*time.Second))
+	require.NoError(t, err)
+	require.NotNil(t, manual)
+	seedRecoverableCodexExit(t, "recover-after-manual-resume", r.ConvID,
+		"56565656565656565656565656565656", now.Add(4*time.Second), 1)
+	r, err = AgentRecoveryForAgent(agentID)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Equal(t, AgentRecoveryStatusCrashed, r.Status,
+		"the first genuine crash after manual resume starts at the first bounded retry")
+	assert.Equal(t, 1, r.ConsecutiveCrashes)
+	assert.Equal(t, AgentRecoveryBackoff(1), time.Duration(r.BackoffSeconds)*time.Second)
 }
 
 func TestAgentRecovery_RepeatedLaunchFailuresPersistExactCappedSchedule(t *testing.T) {
