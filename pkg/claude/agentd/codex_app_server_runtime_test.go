@@ -311,6 +311,43 @@ func TestCodexAppServerExistingThreadResumeBindsWithoutTUIHook(t *testing.T) {
 	handle.mutations.Unlock()
 }
 
+func TestCodexAppServerResumeWaitStopsWhenRecoveryClaimsGeneration(t *testing.T) {
+	resetTestDB(t)
+	runtime := db.CodexAppServerRuntime{
+		Generation: "resume-claim-generation", LaunchID: "resume-thread", AgentID: "agent",
+		ConvID: "resume-thread", SocketPath: filepath.Join(t.TempDir(), "app.sock"),
+		State: db.CodexAppServerWarming,
+	}
+	require.NoError(t, db.UpsertCodexAppServerRuntime(runtime))
+
+	previousResumeProof := codexAppServerResumedTUIAlive
+	proofCalls := 0
+	codexAppServerResumedTUIAlive = func(db.CodexAppServerRuntime, string) bool {
+		proofCalls++
+		claimed, err := db.ClaimCodexAppServerRuntimeRecovery(
+			runtime.Generation, "sweeper", time.Now().UTC(), time.Minute)
+		require.NoError(t, err)
+		require.True(t, claimed)
+		return false
+	}
+	t.Cleanup(func() { codexAppServerResumedTUIAlive = previousResumeProof })
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err := waitForCodexAppServerResumedTUI(ctx, runtime, runtime.ConvID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no longer owns the warming generation")
+	assert.Equal(t, 1, proofCalls, "a lost bootstrap claim must stop argv polling immediately")
+
+	failed, failErr := db.FailCodexAppServerRuntimeBootstrap(runtime.Generation, "late bootstrap failure")
+	require.NoError(t, failErr)
+	assert.False(t, failed)
+	stored, getErr := db.GetCodexAppServerRuntime(runtime.Generation)
+	require.NoError(t, getErr)
+	assert.Equal(t, db.CodexAppServerRecovering, stored.State)
+	assert.Equal(t, "sweeper", stored.Detail)
+}
+
 func TestCodexAppServerDaemonRestartReadoptsExactLiveThread(t *testing.T) {
 	resetTestDB(t)
 	installCodexAppServerGenerationProofForTest(t, true)

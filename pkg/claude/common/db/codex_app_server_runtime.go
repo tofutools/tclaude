@@ -167,6 +167,49 @@ func CompleteCodexAppServerRuntimeRecovery(runtime CodexAppServerRuntime, owner 
 	return changed == 1, err
 }
 
+// CompleteCodexAppServerRuntimeBootstrap is the startup-side CAS paired with
+// recovery's claim transition. A bootstrap may publish ready only while it
+// still owns the original warming state; a recovery sweep that already moved
+// the generation to recovering or terminal must win permanently.
+func CompleteCodexAppServerRuntimeBootstrap(runtime CodexAppServerRuntime) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	result, err := d.Exec(`UPDATE codex_app_server_runtimes
+		SET conv_id = ?, thread_id = ?, server_pid = ?, codex_version = ?,
+		    state = ?, detail = '', updated_at = ?
+		WHERE generation = ? AND state = ?`,
+		runtime.ConvID, runtime.ThreadID, runtime.ServerPID, runtime.CodexVersion,
+		CodexAppServerReady, dbTime(time.Now().UTC()), runtime.Generation,
+		CodexAppServerWarming)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	return changed == 1, err
+}
+
+// FailCodexAppServerRuntimeBootstrap records a startup failure only while the
+// bootstrap still owns the warming state. It cannot overwrite a recovery
+// claim or a terminal decision made concurrently by the sweeper.
+func FailCodexAppServerRuntimeBootstrap(generation, detail string) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	result, err := d.Exec(`UPDATE codex_app_server_runtimes
+		SET state = ?, detail = ?, updated_at = ?
+		WHERE generation = ? AND state = ?`,
+		CodexAppServerUnavailable, detail, dbTime(time.Now().UTC()), generation,
+		CodexAppServerWarming)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	return changed == 1, err
+}
+
 func FailCodexAppServerRuntimeRecovery(generation, owner, detail string) (bool, error) {
 	d, err := Open()
 	if err != nil {

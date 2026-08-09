@@ -146,9 +146,10 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 		return
 	}
 	fail := func(cause error) {
-		runtime.State = db.CodexAppServerUnavailable
-		runtime.Detail = cause.Error()
-		_ = db.UpsertCodexAppServerRuntime(*runtime)
+		if _, updateErr := db.FailCodexAppServerRuntimeBootstrap(runtime.Generation, cause.Error()); updateErr != nil {
+			slog.Warn("record Codex app-server bootstrap failure",
+				"generation", runtime.Generation, "error", updateErr)
+		}
 		slog.Error("Codex app-server control unavailable; refusing send-keys fallback",
 			"generation", runtime.Generation, "error", cause)
 	}
@@ -223,9 +224,16 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 	}
 	runtime.State = db.CodexAppServerReady
 	runtime.Detail = ""
-	if err := db.UpsertCodexAppServerRuntime(*runtime); err != nil {
+	completed, err := db.CompleteCodexAppServerRuntimeBootstrap(*runtime)
+	if err != nil {
 		_ = client.Close()
 		fail(fmt.Errorf("persist verified thread binding: %w", err))
+		return
+	}
+	if !completed {
+		_ = client.Close()
+		slog.Debug("Codex app-server bootstrap lost its warming claim before ready",
+			"generation", runtime.Generation)
 		return
 	}
 	handle := registerCodexAppServerHandle(*runtime, client)
@@ -573,6 +581,13 @@ func waitForCodexAppServerResumedTUI(
 	ctx context.Context, runtime db.CodexAppServerRuntime, expectedThread string,
 ) error {
 	for {
+		current, err := db.GetCodexAppServerRuntime(runtime.Generation)
+		if err != nil {
+			return fmt.Errorf("read Codex app-server bootstrap claim: %w", err)
+		}
+		if current == nil || current.State != db.CodexAppServerWarming {
+			return errors.New("codex app-server bootstrap no longer owns the warming generation")
+		}
 		if codexAppServerResumedTUIAlive(runtime, expectedThread) {
 			return nil
 		}

@@ -91,6 +91,35 @@ func TestCodexAppServerRecoveryClaimIsLeasedAndCASProtected(t *testing.T) {
 	assert.True(t, claimed, "an abandoned claim becomes recoverable after its lease")
 }
 
+func TestCodexAppServerBootstrapCannotOverwriteRecoveryDecision(t *testing.T) {
+	setupTestDB(t)
+	runtime := CodexAppServerRuntime{
+		Generation: "bootstrap-generation", LaunchID: "launch", AgentID: "agent",
+		ConvID: "thread", SocketPath: "/tmp/bootstrap.sock", CodexVersion: "0.147.0",
+		State: CodexAppServerWarming,
+	}
+	require.NoError(t, UpsertCodexAppServerRuntime(runtime))
+	claimed, err := ClaimCodexAppServerRuntimeRecovery(
+		runtime.Generation, "recovery-owner", time.Now().UTC(), time.Minute)
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	runtime.ThreadID = runtime.ConvID
+	runtime.ServerPID = 42
+	completed, err := CompleteCodexAppServerRuntimeBootstrap(runtime)
+	require.NoError(t, err)
+	assert.False(t, completed, "bootstrap must not resurrect a recovery-owned generation")
+	failed, err := FailCodexAppServerRuntimeBootstrap(runtime.Generation, "late bootstrap failure")
+	require.NoError(t, err)
+	assert.False(t, failed, "bootstrap failure must not overwrite the recovery owner token")
+
+	stored, err := GetCodexAppServerRuntime(runtime.Generation)
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.Equal(t, CodexAppServerRecovering, stored.State)
+	assert.Equal(t, "recovery-owner", stored.Detail)
+}
+
 func TestRecoverableCodexAppServerRuntimesSelectNewestGeneration(t *testing.T) {
 	setupTestDB(t)
 	now := time.Now().UTC()
