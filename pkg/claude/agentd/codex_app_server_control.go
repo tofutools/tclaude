@@ -33,6 +33,14 @@ type codexThreadStatus struct {
 	ActiveFlags []string `json:"activeFlags"`
 }
 
+type codexCompactionStage struct {
+	followUp         string
+	followUpClientID string
+	beforeCount      int
+	started          bool
+	committed        bool
+}
+
 func (h *codexAppServerHandle) readThread(ctx context.Context) (codexappserver.Thread, codexThreadStatus, error) {
 	thread, err := h.client.ReadThread(ctx, codexappserver.ThreadReadParams{
 		ThreadID: h.runtime.ThreadID, IncludeTurns: true,
@@ -97,7 +105,12 @@ func codexAppServerMessageID(messageID int64) string {
 
 func readyCodexAppServerHandle(convID string) (*codexAppServerHandle, error) {
 	handle := codexAppServerHandleForConv(convID)
-	runtime, _ := dbCodexRuntime(convID)
+	var runtime *db.CodexAppServerRuntime
+	if handle != nil {
+		runtime, _ = db.GetCodexAppServerRuntime(handle.runtime.Generation)
+	} else {
+		runtime, _ = dbCodexRuntime(convID)
+	}
 	if handle != nil && runtime != nil && runtime.State == db.CodexAppServerReady &&
 		runtime.Generation == handle.runtime.Generation && runtime.ThreadID == handle.runtime.ThreadID {
 		return handle, nil
@@ -228,42 +241,68 @@ func compactCodexAppServerThread(convID, followUp string) error {
 	defer cancel()
 	handle.mutations.Lock()
 	defer handle.mutations.Unlock()
-	before, status, err := handle.readThread(ctx)
-	if err != nil {
-		return err
+	stage := handle.compact
+	if stage != nil && stage.followUp != followUp {
+		return fmt.Errorf("%w: a prior compaction has a pending follow-up", errCodexControlBusy)
 	}
-	if status.Type != "idle" {
-		return errCodexControlBusy
-	}
-	beforeCount := codexCompactionCount(before)
-	callCtx, cancelCall := context.WithTimeout(ctx, codexAppServerCallTimeout)
-	compactErr := handle.client.StartCompaction(callCtx, handle.runtime.ThreadID)
-	cancelCall()
-	if err := compactErr; err != nil {
-		if !codexCallAmbiguous(err) {
+	if stage == nil {
+		before, status, err := handle.readThread(ctx)
+		if err != nil {
 			return err
 		}
-		// Compaction has no idempotency key. From here on we only observe; a
-		// blind retry could compact twice.
-	}
-	for {
-		thread, current, readErr := handle.readThread(ctx)
-		if readErr != nil {
-			return fmt.Errorf("%w: compact reconciliation: %v", errCodexControlAmbiguous, readErr)
+		if status.Type != "idle" {
+			return errCodexControlBusy
 		}
-		if current.Type == "idle" && codexCompactionCount(thread) > beforeCount {
-			if followUp == "" {
-				return nil
+		handle.nextOpID++
+		stage = &codexCompactionStage{
+			followUp: followUp, beforeCount: codexCompactionCount(before),
+			followUpClientID: "tclaude-compact-follow-up-" + handle.runtime.Generation + "-" +
+				strconv.FormatUint(handle.nextOpID, 10),
+		}
+		handle.compact = stage
+	}
+	if !stage.started {
+		// Set before the call: either a response or an ambiguous write means this
+		// stage may have started and must only be observed from now on.
+		stage.started = true
+		callCtx, cancelCall := context.WithTimeout(ctx, codexAppServerCallTimeout)
+		compactErr := handle.client.StartCompaction(callCtx, handle.runtime.ThreadID)
+		cancelCall()
+		if compactErr != nil && !codexCallAmbiguous(compactErr) {
+			handle.compact = nil // the server definitively rejected before effect
+			return compactErr
+		}
+		// Compaction has no idempotency key. An ambiguous call is never replayed;
+		// the durable thread snapshot below is its only reconciliation path.
+	}
+	if !stage.committed {
+		for {
+			thread, current, readErr := handle.readThread(ctx)
+			if readErr != nil {
+				return fmt.Errorf("%w: compact reconciliation: %v", errCodexControlAmbiguous, readErr)
 			}
-			followID := "tclaude-compact-follow-up-" + strconv.FormatInt(time.Now().UnixNano(), 10)
-			return handle.sendMessageLocked(ctx, followID, followUp, true)
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("%w: compaction did not settle before deadline", errCodexControlAmbiguous)
-		case <-time.After(codexAppServerPollInterval):
+			if current.Type == "idle" && codexCompactionCount(thread) > stage.beforeCount {
+				stage.committed = true
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("%w: compaction did not settle before deadline", errCodexControlAmbiguous)
+			case <-time.After(codexAppServerPollInterval):
+			}
 		}
 	}
+	if stage.followUp == "" {
+		handle.compact = nil
+		return nil
+	}
+	if err := handle.sendMessageLocked(ctx, stage.followUpClientID, stage.followUp, true); err != nil {
+		// Compaction is committed. Retain the exact follow-up identity so a
+		// retry resumes this stage and cannot compact or submit twice.
+		return fmt.Errorf("compaction committed; follow-up pending: %w", err)
+	}
+	handle.compact = nil
+	return nil
 }
 
 func codexCompactionCount(thread codexappserver.Thread) int {

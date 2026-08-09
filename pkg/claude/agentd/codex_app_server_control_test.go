@@ -25,10 +25,12 @@ type codexControlFixture struct {
 	sim    *testharness.CodexAppServerSim
 	tmux   *commandRecordingTmux
 
-	mu      sync.Mutex
-	thread  codexappserver.Thread
-	methods []string
-	drop    map[string]bool
+	mu        sync.Mutex
+	thread    codexappserver.Thread
+	methods   []string
+	drop      map[string]bool
+	fail      map[string]bool
+	clientIDs []string
 }
 
 func newCodexControlFixture(t *testing.T) *codexControlFixture {
@@ -45,6 +47,8 @@ func newCodexControlFixture(t *testing.T) *codexControlFixture {
 		ID: "codex-control-session", TmuxSession: "codex-control-pane", ConvID: convID,
 		Harness: harness.CodexName, Status: session.StatusIdle, Cwd: t.TempDir(),
 	}))
+	require.NoError(t, db.SetConversationCodexAppServer(
+		convID, harness.CodexName, t.TempDir(), true))
 	dir, err := os.MkdirTemp("/tmp", "tcl1131-control-")
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, os.RemoveAll(dir)) })
@@ -79,7 +83,7 @@ func newCodexControlFixture(t *testing.T) *codexControlFixture {
 	})
 
 	f := &codexControlFixture{
-		convID: convID, sim: sim, tmux: tmux, drop: map[string]bool{},
+		convID: convID, sim: sim, tmux: tmux, drop: map[string]bool{}, fail: map[string]bool{},
 		thread: codexappserver.Thread{
 			ID: convID, Status: json.RawMessage(`{"type":"idle"}`), Turns: []codexappserver.Turn{},
 		},
@@ -93,6 +97,7 @@ func (f *codexControlFixture) serve() {
 		f.mu.Lock()
 		f.methods = append(f.methods, message.Method)
 		drop := f.drop[message.Method]
+		fail := f.fail[message.Method]
 		thread := f.thread
 		f.mu.Unlock()
 		switch message.Method {
@@ -107,6 +112,13 @@ func (f *codexControlFixture) serve() {
 			clientID := ""
 			if params.ClientUserMessageID != nil {
 				clientID = *params.ClientUserMessageID
+			}
+			f.mu.Lock()
+			f.clientIDs = append(f.clientIDs, clientID)
+			f.mu.Unlock()
+			if fail {
+				_ = f.sim.ReplyError(message.ID, codexappserver.RPCError{Code: -32000, Message: "test refusal"})
+				continue
 			}
 			item, _ := json.Marshal(map[string]any{
 				"id": "item-" + clientID, "type": "userMessage", "clientId": clientID,
@@ -178,6 +190,12 @@ func (f *codexControlFixture) methodCount(method string) int {
 		}
 	}
 	return count
+}
+
+func (f *codexControlFixture) submittedClientIDs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.clientIDs...)
 }
 
 func (f *codexControlFixture) assertNoPaneInput(t *testing.T) {
@@ -317,4 +335,45 @@ func TestCodexAppServerUnavailableMessageNeverFallsBackToPane(t *testing.T) {
 
 	assert.False(t, sendNudgeBracket(f.convID, &db.AgentMessage{ID: 60, ToConv: f.convID}, "[msg #60] hold"))
 	f.assertNoPaneInput(t)
+}
+
+func TestCodexAppServerExplicitFalseRestoresOrdinaryPaneRouting(t *testing.T) {
+	f := newCodexControlFixture(t)
+	require.NoError(t, db.SetConversationCodexAppServer(
+		f.convID, harness.CodexName, t.TempDir(), false))
+	assert.False(t, codexAppServerSelected(f.convID),
+		"current explicit false must outrank the historical ready runtime")
+	require.True(t, sendNudgeBracket(f.convID,
+		&db.AgentMessage{ID: 61, ToConv: f.convID}, "[msg #61] ordinary"))
+	assert.Zero(t, f.methodCount(codexappserver.MethodTurnStart))
+	foundPaneInput := false
+	for _, command := range f.tmux.snapshot() {
+		if len(command) > 0 && (command[0] == "set-buffer" || command[0] == "send-keys") {
+			foundPaneInput = true
+		}
+	}
+	assert.True(t, foundPaneInput, "ordinary Codex routing should be restored")
+}
+
+func TestCodexAppServerCompactionRetryResumesStableFollowUpStage(t *testing.T) {
+	f := newCodexControlFixture(t)
+	f.mu.Lock()
+	f.fail[codexappserver.MethodTurnStart] = true
+	f.mu.Unlock()
+
+	err := compactCodexAppServerThread(f.convID, "continue after compact")
+	require.ErrorContains(t, err, "compaction committed; follow-up pending")
+	assert.Equal(t, 1, f.methodCount(codexappserver.MethodThreadCompactStart))
+	firstIDs := f.submittedClientIDs()
+	require.Len(t, firstIDs, 1)
+
+	f.mu.Lock()
+	f.fail[codexappserver.MethodTurnStart] = false
+	f.mu.Unlock()
+	require.NoError(t, compactCodexAppServerThread(f.convID, "continue after compact"))
+	assert.Equal(t, 1, f.methodCount(codexappserver.MethodThreadCompactStart),
+		"retry after a follow-up failure must not compact again")
+	ids := f.submittedClientIDs()
+	require.Len(t, ids, 2)
+	assert.Equal(t, ids[0], ids[1], "the retried follow-up keeps one stable identity")
 }

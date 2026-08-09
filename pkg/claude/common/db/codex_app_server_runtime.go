@@ -143,6 +143,34 @@ func MarkCodexAppServerRuntimeUnavailable(generation, detail string) error {
 	return err
 }
 
+// MarkCodexAppServerRuntimeTerminalIfUnreplaced records a terminal observation
+// only while no newer generation for the same conversation is already ready.
+// A late watcher from an obsolete connection must not become the newest
+// durable row and obscure its live replacement.
+func MarkCodexAppServerRuntimeTerminalIfUnreplaced(generation, state, detail string) (bool, error) {
+	if state != CodexAppServerUnavailable && state != CodexAppServerDead {
+		return false, fmt.Errorf("codex app-server terminal state must be unavailable or dead, got %q", state)
+	}
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	result, err := d.Exec(`UPDATE codex_app_server_runtimes
+		SET state = ?, detail = ?, updated_at = ?
+		WHERE generation = ? AND NOT EXISTS (
+			SELECT 1 FROM codex_app_server_runtimes replacement
+			WHERE replacement.conv_id = codex_app_server_runtimes.conv_id
+			  AND replacement.generation <> codex_app_server_runtimes.generation
+			  AND replacement.state = ?
+			  AND replacement.created_at > codex_app_server_runtimes.created_at
+		)`, state, detail, dbTime(time.Now().UTC()), generation, CodexAppServerReady)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	return changed == 1, err
+}
+
 // InvalidateCodexAppServerRuntimesAfterRestart makes the durable state match
 // the empty in-process handle registry before the daemon starts serving.
 func InvalidateCodexAppServerRuntimesAfterRestart() error {

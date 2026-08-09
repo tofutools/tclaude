@@ -32,6 +32,8 @@ type codexAppServerHandle struct {
 	// policy needs the thread/read snapshot and the following mutation to be
 	// one ordered decision.
 	mutations sync.Mutex
+	compact   *codexCompactionStage
+	nextOpID  uint64
 }
 
 var codexAppServerHandles = struct {
@@ -314,7 +316,13 @@ func watchCodexAppServerHandle(handle *codexAppServerHandle) {
 		handle.runtime.State = db.CodexAppServerDead
 		handle.runtime.Detail = fmt.Sprint(handle.client.Err())
 	}
-	_ = db.UpsertCodexAppServerRuntime(handle.runtime)
+	if changed, err := db.MarkCodexAppServerRuntimeTerminalIfUnreplaced(
+		handle.runtime.Generation, handle.runtime.State, handle.runtime.Detail); err != nil {
+		slog.Warn("record Codex app-server terminal state", "generation", handle.runtime.Generation, "error", err)
+	} else if !changed {
+		slog.Debug("ignored obsolete Codex app-server watcher after replacement became ready",
+			"generation", handle.runtime.Generation, "conv", handle.runtime.ConvID)
+	}
 	codexAppServerHandles.Lock()
 	if codexAppServerHandles.byConv[handle.runtime.ConvID] == handle {
 		delete(codexAppServerHandles.byConv, handle.runtime.ConvID)
@@ -400,18 +408,13 @@ func codexAppServerHandleForConv(convID string) *codexAppServerHandle {
 // control states remain on that drive and must never reopen the pane-input
 // fallback.
 func codexAppServerSelected(convID string) bool {
-	if runtime, err := db.GetCodexAppServerRuntimeByConvID(convID); err == nil && runtime != nil {
-		return true
+	if profile, err := db.RecordedLaunchPostureForConv(convID); err == nil &&
+		profile != nil && profile.CodexAppServer != nil {
+		return *profile.CodexAppServer
 	}
-	if profile, err := db.AgentRelaunchProfileForConv(convID); err == nil &&
-		profile != nil && profile.CodexAppServer != nil && *profile.CodexAppServer {
-		return true
-	}
-	if profile, err := db.ConversationResumeProfileForConv(convID); err == nil &&
-		profile != nil && profile.FallbackRelaunch != nil &&
-		profile.FallbackRelaunch.CodexAppServer != nil {
-		return *profile.FallbackRelaunch.CodexAppServer
-	}
+	// Runtime rows describe generations; they do not select the current drive.
+	// In particular, a historical row must never override a later explicit
+	// --codex-app-server=false posture.
 	return false
 }
 

@@ -3,6 +3,7 @@ package db
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -35,4 +36,30 @@ func TestInvalidateCodexAppServerRuntimesAfterRestartClearsLiveClaims(t *testing
 	require.NoError(t, err)
 	require.NotNil(t, dead)
 	assert.Equal(t, CodexAppServerDead, dead.State)
+}
+
+func TestObsoleteCodexAppServerWatcherCannotSupersedeReadyReplacement(t *testing.T) {
+	setupTestDB(t)
+	now := time.Now().UTC()
+	old := CodexAppServerRuntime{
+		Generation: "old-generation", LaunchID: "old-launch", AgentID: "agent-1",
+		ConvID: "thread-1", ThreadID: "thread-1", SocketPath: "/tmp/old.sock",
+		State: CodexAppServerReady, CreatedAt: now.Add(-time.Minute),
+	}
+	replacement := CodexAppServerRuntime{
+		Generation: "new-generation", LaunchID: "new-launch", AgentID: "agent-1",
+		ConvID: "thread-1", ThreadID: "thread-1", SocketPath: "/tmp/new.sock",
+		State: CodexAppServerReady, CreatedAt: now,
+	}
+	require.NoError(t, UpsertCodexAppServerRuntime(old))
+	require.NoError(t, UpsertCodexAppServerRuntime(replacement))
+
+	changed, err := MarkCodexAppServerRuntimeTerminalIfUnreplaced(
+		old.Generation, CodexAppServerDead, "late watcher")
+	require.NoError(t, err)
+	assert.False(t, changed)
+	latest, err := GetCodexAppServerRuntimeByConvID("thread-1")
+	require.NoError(t, err)
+	require.NotNil(t, latest)
+	assert.Equal(t, replacement.Generation, latest.Generation)
 }
