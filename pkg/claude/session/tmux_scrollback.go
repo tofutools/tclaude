@@ -34,20 +34,26 @@ func ConfigureTmuxScrollback(tmuxSession string, h *harness.Harness) {
 // wants it — a bare shell has no self-managed scrollback of its own, so
 // without tmux mouse mode the wheel does nothing in the pane.
 func enableTmuxMouseScrollback(tmuxSession string) {
-	target := clcommon.ExactTarget(tmuxSession) + ":"
-	_ = clcommon.TmuxCommand("set-option", "-t", target, "mouse", "on").Run()
+	sessionTarget := clcommon.ExactTarget(tmuxSession) + ":"
+	paneTarget := clcommon.ExactTarget(tmuxSession) + ":0.0"
+	_ = clcommon.TmuxCommand("set-option", "-t", sessionTarget, "mouse", "on").Run()
 
 	// Mouse-wheel scrolling leaves the pane in tmux copy mode. If the client
 	// then detaches while reading history, copy mode remains active on the pane
 	// and later send-keys input is consumed by copy mode instead of reaching the
-	// harness. Cancel copy mode on every client detach; cancel also returns the
-	// pane to its live bottom. A session hook covers native terminals, browser
-	// terminals, and clients attached directly with tmux, including detach paths
-	// that the attaching tclaude process cannot observe.
+	// harness. Once the last client detaches, use tmux's pane_in_mode format to
+	// detect that state and cancel it; cancel also returns the pane to its live
+	// bottom. The explicit :0.0 target is the managed harness pane and remains
+	// correct if the user created a split and left another pane active. A session
+	// hook covers native terminals, browser terminals, and clients attached
+	// directly with tmux, including detach paths that the attaching tclaude
+	// process cannot observe.
 	//
 	// Use a dedicated hook-array slot so this does not replace another
 	// client-detached hook. Setting the same indexed slot is also idempotent if
 	// scrollback configuration is applied again.
-	hook := "send-keys -X -t " + target + " cancel"
-	_ = clcommon.TmuxCommand("set-hook", "-t", target, "client-detached[100]", hook).Run()
+	hook := "if-shell -F -t " + paneTarget +
+		" '#{&&:#{==:#{session_attached},0},#{pane_in_mode}}'" +
+		" 'send-keys -X -t " + paneTarget + " cancel'"
+	_ = clcommon.TmuxCommand("set-hook", "-t", sessionTarget, "client-detached[100]", hook).Run()
 }
