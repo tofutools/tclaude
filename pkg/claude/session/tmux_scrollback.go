@@ -1,8 +1,19 @@
 package session
 
 import (
+	"strings"
+
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+)
+
+const (
+	tmuxNativeScrollbackOption = "@tclaude_native_scrollback"
+	// This option name also makes the hook discoverable in show-hooks output,
+	// allowing independent session-launch processes to install it idempotently.
+	tmuxScrollDetachHookMarker = tmuxNativeScrollbackOption
+	tmuxScrollDetachHook       = "if-shell -F '#{&&:#{==:#{" + tmuxNativeScrollbackOption + "},on},#{==:#{session_attached},0}}'" +
+		" 'run-shell -C \"send-keys -X -t =#{session_name}:0.0 cancel\"'"
 )
 
 // ConfigureTmuxScrollback enables tmux mouse mode for a single session when
@@ -35,25 +46,28 @@ func ConfigureTmuxScrollback(tmuxSession string, h *harness.Harness) {
 // without tmux mouse mode the wheel does nothing in the pane.
 func enableTmuxMouseScrollback(tmuxSession string) {
 	sessionTarget := clcommon.ExactTarget(tmuxSession) + ":"
-	paneTarget := clcommon.ExactTarget(tmuxSession) + ":0.0"
 	_ = clcommon.TmuxCommand("set-option", "-t", sessionTarget, "mouse", "on").Run()
+	_ = clcommon.TmuxCommand("set-option", "-t", sessionTarget, tmuxNativeScrollbackOption, "on").Run()
 
 	// Mouse-wheel scrolling leaves the pane in tmux copy mode. If the client
 	// then detaches while reading history, copy mode remains active on the pane
 	// and later send-keys input is consumed by copy mode instead of reaching the
-	// harness. Once the last client detaches, use tmux's pane_in_mode format to
-	// detect that state and cancel it; cancel also returns the pane to its live
-	// bottom. The explicit :0.0 target is the managed harness pane and remains
-	// correct if the user created a split and left another pane active. A session
-	// hook covers native terminals, browser terminals, and clients attached
-	// directly with tmux, including detach paths that the attaching tclaude
-	// process cannot observe.
+	// harness. Once the last client detaches, cancel any active mode on the
+	// managed :0.0 harness pane; cancel also returns it to its live bottom. A
+	// server hook covers native terminals, browser terminals, and clients
+	// attached directly with tmux, including detach paths that the attaching
+	// tclaude process cannot observe.
 	//
-	// Use a dedicated hook-array slot so this does not replace another
-	// client-detached hook. Setting the same indexed slot is also idempotent if
-	// scrollback configuration is applied again.
-	hook := "if-shell -F -t " + paneTarget +
-		" '#{&&:#{==:#{session_attached},0},#{pane_in_mode}}'" +
-		" 'send-keys -X -t " + paneTarget + " cancel'"
-	_ = clcommon.TmuxCommand("set-hook", "-t", sessionTarget, "client-detached[100]", hook).Run()
+	// This must remain global and append-only. Creating a session-local hook
+	// array would shadow every inherited client-detached hook configured by the
+	// operator. The per-session user option above is the opt-in gate.
+	ensureTmuxScrollDetachHook()
+}
+
+func ensureTmuxScrollDetachHook() {
+	if out, err := clcommon.TmuxCommand("show-hooks", "-g", "client-detached").Output(); err == nil &&
+		strings.Contains(string(out), tmuxScrollDetachHookMarker) {
+		return
+	}
+	_ = clcommon.TmuxCommand("set-hook", "-ag", "client-detached", tmuxScrollDetachHook).Run()
 }
