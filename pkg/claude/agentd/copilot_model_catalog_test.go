@@ -1,11 +1,15 @@
 package agentd
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -69,6 +73,13 @@ func TestRefreshCopilotModelCatalogMirrorsAuthenticatedResponse(t *testing.T) {
 				Body:       io.NopCloser(strings.NewReader(`{"data":[{"id":"claude-haiku-4.5","capabilities":{"limits":{"max_context_window_tokens":144000,"max_prompt_tokens":128000,"max_output_tokens":32000}}}]}`)),
 			}, nil
 		},
+		fetchEnriched: func(context.Context, string, string) ([]json.RawMessage, error) {
+			return []json.RawMessage{json.RawMessage(`{
+				"id":"claude-haiku-4.5",
+				"capabilities":{"limits":{"max_prompt_tokens":128000}},
+				"billing":{"tokenPrices":{"maxPromptTokens":128000,
+					"longContext":{"maxPromptTokens":512000}}}}`)}, nil
+		},
 		now: func() time.Time { return fetchedAt },
 	}
 
@@ -78,6 +89,8 @@ func TestRefreshCopilotModelCatalogMirrorsAuthenticatedResponse(t *testing.T) {
 	assert.Equal(t, "installed", outcome.GHCLI)
 	assert.Equal(t, "installed", outcome.CopilotCLI)
 	assert.Equal(t, "authenticated", outcome.GHAuth)
+	assert.Equal(t, "ok", outcome.EnrichedStatus)
+	assert.Equal(t, 1, outcome.EnrichedModels)
 	require.NotNil(t, request)
 	assert.Equal(t, "https://api.individual.githubcopilot.com/models", request.URL.String())
 	assert.Equal(t, "Bearer secret-token", request.Header.Get("Authorization"))
@@ -87,6 +100,45 @@ func TestRefreshCopilotModelCatalogMirrorsAuthenticatedResponse(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, fresh)
 	assert.Equal(t, int64(128_000), limit)
+	limit, fresh, err = db.FreshCopilotModelPromptLimitForTier(
+		"claude-haiku-4.5", "long_context", fetchedAt.Add(time.Hour), copilotModelCatalogMaxAge)
+	require.NoError(t, err)
+	assert.True(t, fresh)
+	assert.Equal(t, int64(512_000), limit)
+}
+
+func TestMergeCopilotModelCatalogCombinesCoverageAndPrefersTierMetadata(t *testing.T) {
+	entries, err := mergeCopilotModelCatalog(
+		[]json.RawMessage{json.RawMessage(`{"id":"remote-only","capabilities":{"limits":{"max_prompt_tokens":100}}}`)},
+		[]json.RawMessage{
+			json.RawMessage(`{"id":"remote-only","billing":{"tokenPrices":{"maxPromptTokens":110,"longContext":{"maxPromptTokens":900}}}}`),
+			json.RawMessage(`{"id":"enriched-only","capabilities":{"limits":{"max_prompt_tokens":200}}}`),
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+	assert.Equal(t, "remote-only", entries[0].ModelID)
+	assert.Equal(t, int64(110), entries[0].MaxPromptTokens)
+	assert.Equal(t, int64(900), entries[0].LongContextMaxPromptTokens)
+	assert.NotEmpty(t, entries[0].RawJSON)
+	assert.NotEmpty(t, entries[0].EnrichedJSON)
+	assert.Equal(t, "enriched-only", entries[1].ModelID)
+	assert.Equal(t, int64(200), entries[1].MaxPromptTokens)
+}
+
+func TestCallCopilotStdioRPCFramesRequestAndDecodesResult(t *testing.T) {
+	response := []byte(`{"jsonrpc":"2.0","id":2,"result":{"models":[{"id":"auto"}]}}`)
+	reader := bufio.NewReader(bytes.NewReader([]byte(
+		"Content-Length: " + strconv.Itoa(len(response)) + "\r\n\r\n" + string(response))))
+	var writer bytes.Buffer
+	var result struct {
+		Models []json.RawMessage `json:"models"`
+	}
+	require.NoError(t, callCopilotStdioRPC(reader, &writer, 2, "models.list",
+		map[string]string{"gitHubToken": "test-token"}, &result))
+	require.Len(t, result.Models, 1)
+	assert.Contains(t, writer.String(), `"method":"models.list"`)
+	assert.Contains(t, writer.String(), `"gitHubToken":"test-token"`)
 }
 
 func TestRefreshCopilotModelCatalogFailurePreservesLastGoodMirror(t *testing.T) {

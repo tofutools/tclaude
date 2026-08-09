@@ -657,7 +657,7 @@ func persistCopilotAPIContext(row *db.SessionRow, reading copilotAPIStateReading
 // copilotAPIEffectiveContextWindow resolves the denominator for an API-driven
 // agent.
 //
-// It differs from copilotEffectiveContextWindow in exactly one place, and the
+// It differs from copilotEffectiveContextWindowForTier in exactly one place, and the
 // difference is the point of this drive: a limit COPILOT REPORTED outranks the
 // static per-model assumption tclaude keeps for the drives that cannot ask.
 // The operator's own configured cap still wins outright, because that is
@@ -671,7 +671,7 @@ func copilotAPIEffectiveContextWindow(convID string, reading copilotAPIStateRead
 	if reading.PromptTokenLimit > 0 {
 		return reading.PromptTokenLimit
 	}
-	if window := copilotCatalogContextWindow(reading.Model); window > 0 {
+	if window := copilotCatalogContextWindow(reading.Model, ""); window > 0 {
 		return window
 	}
 	return harness.CopilotContextWindowDefault(strings.TrimSpace(reading.Model))

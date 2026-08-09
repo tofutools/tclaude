@@ -243,7 +243,7 @@ type copilotTelemetryEvent struct {
 		// session.start / session.resume
 		SelectedModel  string          `json:"selectedModel"`
 		CopilotVersion string          `json:"copilotVersion"`
-		ContextTier    *string         `json:"contextTier"`
+		ContextTier    json.RawMessage `json:"contextTier"`
 		ReasoningEfrt  json.RawMessage `json:"reasoningEffort"`
 
 		// session.model_change
@@ -505,11 +505,19 @@ func (s *copilotRuntimeScanState) applyEffort(raw json.RawMessage) {
 
 // applyContextTier mirrors applyEffort: Copilot writes an explicit null for a
 // non-tiered model, and that is information, not absence.
-func (s *copilotRuntimeScanState) applyContextTier(tier *string) {
-	if tier == nil {
+func (s *copilotRuntimeScanState) applyContextTier(raw json.RawMessage) {
+	if len(raw) == 0 {
 		return
 	}
-	s.contextTier = strings.TrimSpace(*tier)
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		s.contextTier = ""
+		return
+	}
+	var tier string
+	if json.Unmarshal(raw, &tier) != nil {
+		return
+	}
+	s.contextTier = strings.TrimSpace(tier)
 }
 
 func (s *copilotRuntimeScanState) applyCost(nanoAIU, premium *float64) {

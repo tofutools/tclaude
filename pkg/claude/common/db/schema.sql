@@ -1274,5 +1274,5 @@ CREATE TABLE copilot_model_catalog (
 			max_output_tokens         INTEGER NOT NULL DEFAULT 0 CHECK (max_output_tokens >= 0),
 			fetched_at                INTEGER NOT NULL,
 			raw_json                  TEXT NOT NULL DEFAULT ''
-		) STRICT;
+		, long_context_max_prompt_tokens INTEGER NOT NULL DEFAULT 0 CHECK (long_context_max_prompt_tokens >= 0), enriched_json TEXT NOT NULL DEFAULT '') STRICT;
 

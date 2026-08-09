@@ -53,6 +53,28 @@ func TestCopilotModelCatalogFallsBackToContextWindowLimit(t *testing.T) {
 	assert.Equal(t, int64(144_000), limit)
 }
 
+func TestCopilotModelCatalogLongContextTierIsIndependent(t *testing.T) {
+	setupTestDB(t)
+	now := time.Now().UTC()
+	require.NoError(t, ReplaceCopilotModelCatalog([]CopilotModelCatalogEntry{
+		{ModelID: "claude-opus-5", MaxPromptTokens: 200_000,
+			LongContextMaxPromptTokens: 936_000},
+		{ModelID: "claude-opus-4.8", MaxPromptTokens: 200_000},
+	}, now))
+
+	limit, fresh, err := FreshCopilotModelPromptLimitForTier(
+		"claude-opus-5", "long_context", now.Add(time.Hour), 24*time.Hour)
+	require.NoError(t, err)
+	assert.True(t, fresh)
+	assert.Equal(t, int64(936_000), limit)
+
+	limit, fresh, err = FreshCopilotModelPromptLimitForTier(
+		"claude-opus-4.8", "long_context", now.Add(time.Hour), 24*time.Hour)
+	require.NoError(t, err)
+	assert.False(t, fresh, "missing long tier must not masquerade as the default tier")
+	assert.Zero(t, limit)
+}
+
 func TestCopilotModelCatalogRejectsEmptyReplacementWithoutClearing(t *testing.T) {
 	setupTestDB(t)
 	now := time.Now().UTC()

@@ -863,7 +863,8 @@ func persistCopilotUsageContext(sess *db.SessionRow, snapshot db.CopilotUsageSna
 		return
 	}
 
-	window := copilotEffectiveContextWindow(sess.ConvID, snapshot.Model, stored.ContextWindowSize)
+	window := copilotEffectiveContextWindowForTier(
+		sess.ConvID, snapshot.Model, copilotContextTierForSession(sess), stored.ContextWindowSize)
 	pct := copilotContextPct(snapshot.LastCallInputTokens, window)
 
 	// tokens_output may only ever ADVANCE, hence max() rather than the sweep's
@@ -987,7 +988,7 @@ func copilotConfiguredContextWindowMax(convID string) int64 {
 	return copilotLaunchIntentForConv(convID).ContextWindowMax
 }
 
-// copilotEffectiveContextWindow is the ONE place the meter's effective
+// copilotEffectiveContextWindowForTier is the ONE place the meter's effective
 // denominator is resolved, shared by the sweep and the read-through follower
 // so the two writers converge on the same percentage instead of flapping the
 // row (the follower once recomputed against only the observed column, which
@@ -1001,12 +1002,12 @@ func copilotConfiguredContextWindowMax(convID string) int64 {
 // when tclaude knows nothing better. This matches the dashboard tooltip's own
 // fallback (configured/catalog/assumed max, else the observed window), so the
 // percentage and the "x / y tokens" beside it always describe the same ratio.
-func copilotEffectiveContextWindow(convID, model string, observed int64) int64 {
+func copilotEffectiveContextWindowForTier(convID, model, contextTier string, observed int64) int64 {
 	if window := copilotConfiguredContextWindowMax(convID); window > 0 {
 		return window
 	}
 	if trimmed := strings.TrimSpace(model); trimmed != "" {
-		if window := copilotCatalogContextWindow(trimmed); window > 0 {
+		if window := copilotCatalogContextWindow(trimmed, contextTier); window > 0 {
 			return window
 		}
 		if window := harness.CopilotContextWindowDefault(trimmed); window > 0 {

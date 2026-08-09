@@ -155,6 +155,33 @@ func TestCopilotTelemetryFollowerAppendsIncrementally(t *testing.T) {
 	assert.Equal(t, full, second, "incremental and full scans must agree")
 }
 
+func TestCopilotTelemetryContextTierDistinguishesAbsentAndNull(t *testing.T) {
+	home, convID := copilotTelemetryHome(t, []string{
+		`{"type":"session.start","data":{"selectedModel":"claude-opus-5","contextTier":"long_context"}}`,
+	})
+	path := copilotLogPath(home, convID)
+	follower := &CopilotTelemetryFollower{}
+
+	snap, ok, err := follower.RuntimeTelemetry(home, convID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, "long_context", snap.ContextTier)
+
+	appendCopilotLog(t, path,
+		`{"type":"session.model_change","data":{"newModel":"claude-opus-4.8"}}`+"\n")
+	snap, _, err = follower.RuntimeTelemetry(home, convID)
+	require.NoError(t, err)
+	assert.Equal(t, "long_context", snap.ContextTier,
+		"an absent tier leaves the previous explicit selection in force")
+
+	appendCopilotLog(t, path,
+		`{"type":"session.model_change","data":{"newModel":"gpt-5.4","contextTier":null}}`+"\n")
+	snap, _, err = follower.RuntimeTelemetry(home, convID)
+	require.NoError(t, err)
+	assert.Empty(t, snap.ContextTier,
+		"an explicit null clears the tier when the new model has no tier")
+}
+
 // TestCopilotTelemetryFollowerIgnoresPartialFinalRecord covers the live-writer
 // case: Copilot is between write(2)s, so the file ends mid-record.
 func TestCopilotTelemetryFollowerIgnoresPartialFinalRecord(t *testing.T) {

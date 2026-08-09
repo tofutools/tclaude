@@ -12,11 +12,13 @@ import (
 // model catalog. MaxPromptTokens is the effective input/context-meter cap;
 // MaxContextWindowTokens also includes capacity reserved for model output.
 type CopilotModelCatalogEntry struct {
-	ModelID                string
-	MaxContextWindowTokens int64
-	MaxPromptTokens        int64
-	MaxOutputTokens        int64
-	RawJSON                string
+	ModelID                    string
+	MaxContextWindowTokens     int64
+	MaxPromptTokens            int64
+	LongContextMaxPromptTokens int64
+	MaxOutputTokens            int64
+	RawJSON                    string
+	EnrichedJSON               string
 }
 
 // ReplaceCopilotModelCatalog atomically replaces the previous mirror. A failed
@@ -45,8 +47,8 @@ func ReplaceCopilotModelCatalog(entries []CopilotModelCatalogEntry, fetchedAt ti
 	}
 	stmt, err := tx.Prepare(`INSERT INTO copilot_model_catalog
 		(model_id, max_context_window_tokens, max_prompt_tokens,
-		 max_output_tokens, fetched_at, raw_json)
-		VALUES (?, ?, ?, ?, ?, ?)`)
+		 long_context_max_prompt_tokens, max_output_tokens, fetched_at, raw_json, enriched_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return fmt.Errorf("replace Copilot model catalog: prepare: %w", err)
 	}
@@ -61,11 +63,13 @@ func ReplaceCopilotModelCatalog(entries []CopilotModelCatalogEntry, fetchedAt ti
 			return fmt.Errorf("replace Copilot model catalog: duplicate model id %q", entry.ModelID)
 		}
 		seen[entry.ModelID] = struct{}{}
-		if entry.MaxContextWindowTokens < 0 || entry.MaxPromptTokens < 0 || entry.MaxOutputTokens < 0 {
+		if entry.MaxContextWindowTokens < 0 || entry.MaxPromptTokens < 0 ||
+			entry.LongContextMaxPromptTokens < 0 || entry.MaxOutputTokens < 0 {
 			return fmt.Errorf("replace Copilot model catalog: negative token limit for %q", entry.ModelID)
 		}
 		if _, err := stmt.Exec(entry.ModelID, entry.MaxContextWindowTokens,
-			entry.MaxPromptTokens, entry.MaxOutputTokens, dbTime(fetchedAt), entry.RawJSON); err != nil {
+			entry.MaxPromptTokens, entry.LongContextMaxPromptTokens, entry.MaxOutputTokens,
+			dbTime(fetchedAt), entry.RawJSON, entry.EnrichedJSON); err != nil {
 			return fmt.Errorf("replace Copilot model catalog model %q: %w", entry.ModelID, err)
 		}
 	}
@@ -80,6 +84,14 @@ func ReplaceCopilotModelCatalog(entries []CopilotModelCatalogEntry, fetchedAt ti
 // as optional and falls back to max_context_window_tokens when it is absent;
 // mirror that behavior before sending callers to their static fallback.
 func FreshCopilotModelPromptLimit(modelID string, now time.Time, maxAge time.Duration) (int64, bool, error) {
+	return FreshCopilotModelPromptLimitForTier(modelID, "", now, maxAge)
+}
+
+// FreshCopilotModelPromptLimitForTier returns the prompt-token budget for the
+// requested Copilot context tier. A long-context lookup does not silently use
+// the default tier: absence is meaningful and lets callers use their existing
+// static fallback instead of understating a long-context session.
+func FreshCopilotModelPromptLimitForTier(modelID, contextTier string, now time.Time, maxAge time.Duration) (int64, bool, error) {
 	modelID = strings.TrimSpace(modelID)
 	if modelID == "" || maxAge <= 0 {
 		return 0, false, nil
@@ -89,9 +101,12 @@ func FreshCopilotModelPromptLimit(modelID string, now time.Time, maxAge time.Dur
 		return 0, false, err
 	}
 	var limit, fetchedAt int64
-	err = d.QueryRow(`SELECT
-		CASE WHEN max_prompt_tokens > 0 THEN max_prompt_tokens
-		     ELSE max_context_window_tokens END,
+	limitExpr := `CASE WHEN max_prompt_tokens > 0 THEN max_prompt_tokens
+		     ELSE max_context_window_tokens END`
+	if strings.TrimSpace(contextTier) == "long_context" {
+		limitExpr = `long_context_max_prompt_tokens`
+	}
+	err = d.QueryRow(`SELECT `+limitExpr+`,
 		fetched_at
 		FROM copilot_model_catalog WHERE model_id = ?`, modelID).Scan(&limit, &fetchedAt)
 	if errors.Is(err, sql.ErrNoRows) {

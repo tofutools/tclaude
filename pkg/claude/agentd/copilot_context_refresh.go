@@ -75,6 +75,11 @@ type copilotContextRefreshState struct {
 	persistedInput  int64
 	persistedWindow int64
 	persistedPct    float64
+
+	// contextTier is the latest durable session.start/model_change tier. It is
+	// read by the independent Copilot usage-store poller, so access stays under
+	// copilotContextRefreshMu even while the rest of this state is claimed.
+	contextTier string
 }
 
 var copilotContextRefreshMu struct {
@@ -124,6 +129,7 @@ func refreshCopilotContextSnapshotOnRead(sess *db.SessionRow, alive bool) {
 		// yet, and writing zeros would blank a genuine earlier reading.
 		return
 	}
+	setCopilotContextTier(state, snap.ContextTier)
 
 	persistCopilotContextSnapshot(sess, state, snap)
 	persistCopilotCheckpoint(sess, state)
@@ -164,6 +170,25 @@ func releaseCopilotContextRefresh(state *copilotContextRefreshState) {
 	copilotContextRefreshMu.Lock()
 	defer copilotContextRefreshMu.Unlock()
 	state.refreshing = false
+}
+
+func setCopilotContextTier(state *copilotContextRefreshState, tier string) {
+	copilotContextRefreshMu.Lock()
+	defer copilotContextRefreshMu.Unlock()
+	state.contextTier = tier
+}
+
+func copilotContextTierForSession(sess *db.SessionRow) string {
+	if sess == nil {
+		return ""
+	}
+	copilotContextRefreshMu.Lock()
+	defer copilotContextRefreshMu.Unlock()
+	state := copilotContextRefreshMu.states[sess.ID]
+	if state == nil || state.convID != sess.ConvID || !state.createdAt.Equal(sess.CreatedAt) {
+		return ""
+	}
+	return state.contextTier
 }
 
 // loadCopilotCheckpoint primes the follower from its durable checkpoint once
@@ -339,7 +364,7 @@ func persistCopilotContextSnapshot(
 		// whichever is ahead is the one that has seen more of the session.
 		output = max(output, live.OutputTokens)
 		pct = copilotContextPct(input,
-			copilotEffectiveContextWindow(sess.ConvID, live.Model, window))
+			copilotEffectiveContextWindowForTier(sess.ConvID, live.Model, snap.ContextTier, window))
 	}
 
 	if output == state.persistedOutput && input == state.persistedInput &&
