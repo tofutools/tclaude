@@ -524,7 +524,7 @@ CREATE TABLE "spawn_profiles" (
 			include_group_default_context INTEGER,
 			created_at                    INTEGER NOT NULL,
 			updated_at                    INTEGER NOT NULL
-		, remote_control INTEGER, is_owner INTEGER, permission_overrides TEXT NOT NULL DEFAULT '', ask_user_question_timeout TEXT NOT NULL DEFAULT '', disabled_reason TEXT NOT NULL DEFAULT '', disabled INTEGER NOT NULL DEFAULT 0, auto_memory INTEGER, tools TEXT NOT NULL DEFAULT '', context_features TEXT NOT NULL DEFAULT '', auto_compact_window TEXT NOT NULL DEFAULT '', ssh_workaround INTEGER, sandbox_implementation TEXT NOT NULL DEFAULT '', operator_only INTEGER NOT NULL DEFAULT 0, startup_context TEXT NOT NULL DEFAULT '', context_window_max INTEGER NOT NULL DEFAULT 0, copilot_api INTEGER, fast_mode INTEGER) STRICT;
+		, remote_control INTEGER, is_owner INTEGER, permission_overrides TEXT NOT NULL DEFAULT '', ask_user_question_timeout TEXT NOT NULL DEFAULT '', disabled_reason TEXT NOT NULL DEFAULT '', disabled INTEGER NOT NULL DEFAULT 0, auto_memory INTEGER, tools TEXT NOT NULL DEFAULT '', context_features TEXT NOT NULL DEFAULT '', auto_compact_window TEXT NOT NULL DEFAULT '', ssh_workaround INTEGER, sandbox_implementation TEXT NOT NULL DEFAULT '', operator_only INTEGER NOT NULL DEFAULT 0, startup_context TEXT NOT NULL DEFAULT '', context_window_max INTEGER NOT NULL DEFAULT 0, copilot_api INTEGER, fast_mode INTEGER, codex_app_server INTEGER) STRICT;
 
 CREATE TRIGGER spawn_profile_name_not_alias_insert
 		BEFORE INSERT ON spawn_profiles
@@ -1275,4 +1275,25 @@ CREATE TABLE copilot_model_catalog (
 			fetched_at                INTEGER NOT NULL,
 			raw_json                  TEXT NOT NULL DEFAULT ''
 		, long_context_max_prompt_tokens INTEGER NOT NULL DEFAULT 0 CHECK (long_context_max_prompt_tokens >= 0), enriched_json TEXT NOT NULL DEFAULT '') STRICT;
+
+CREATE TABLE codex_app_server_runtimes (
+			generation TEXT PRIMARY KEY,
+			launch_id TEXT NOT NULL,
+			agent_id TEXT NOT NULL,
+			conv_id TEXT NOT NULL DEFAULT '',
+			thread_id TEXT NOT NULL DEFAULT '',
+			socket_path TEXT NOT NULL UNIQUE,
+			server_pid INTEGER NOT NULL DEFAULT 0,
+			codex_version TEXT NOT NULL DEFAULT '',
+			state TEXT NOT NULL,
+			detail TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		) STRICT;
+
+CREATE INDEX idx_codex_app_server_runtime_conv
+			ON codex_app_server_runtimes(conv_id);
+
+CREATE INDEX idx_codex_app_server_runtime_agent
+			ON codex_app_server_runtimes(agent_id);
 

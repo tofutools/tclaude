@@ -209,6 +209,7 @@ func f() session.LaunchPosture {
 		RemoteControl:     false,
 		ContextWindowMax:  nil,
 		CopilotAPI:        nil,
+		CodexAppServer:    nil,
 	}
 }
 `
@@ -223,7 +224,7 @@ func f() session.LaunchPosture {
 	const positional = `package p
 
 func f() LaunchPosture {
-	return LaunchPosture{true, nil, "", "", false, nil, nil}
+	return LaunchPosture{true, nil, "", "", false, nil, nil, nil}
 }
 `
 	want := launchPostureFieldNames()

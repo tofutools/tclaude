@@ -3045,7 +3045,7 @@ func resumeContextPosture(convID string) (autoMemory bool, contextFeatures map[s
 // re-recording them keeps them alive for the next hop instead of letting the
 // fresh row report "nothing recorded" (TCL-730).
 //
-// The two nil fields are the ones this surface does not resolve, and they are
+// The nil fields are the ones this surface does not resolve, and they are
 // nil rather than absent so the choice is visible at the only place it can be
 // reviewed. An omitted field in a composite literal is its zero, and a zero here
 // is an ASSERTION: before TCL-1076 these paths wrote copilot_api=false over a
@@ -3080,6 +3080,7 @@ func resumeLaunchPosture(
 		// copilot_drive.go) and chooses no Copilot meter cap.
 		ContextWindowMax: nil,
 		CopilotAPI:       nil,
+		CodexAppServer:   nil,
 		// Asserted, and known-lossy for a pinned Codex tier; see above.
 		FastMode: "",
 	}
