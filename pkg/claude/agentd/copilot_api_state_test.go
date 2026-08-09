@@ -682,22 +682,33 @@ func TestCopilotAPIStateCoalescesABurst(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // The precedence, and the one place it differs from the send-keys drive's:
-// a limit Copilot REPORTED outranks tclaude's static per-model table. The
-// operator's configured cap still wins outright, because that is intent rather
-// than an estimate.
+// a limit Copilot REPORTED locally outranks the remote catalog. The operator's
+// configured cap still wins outright, because that is intent rather than an
+// estimate.
 func TestCopilotAPIEffectiveContextWindowPrefersAReportedLimit(t *testing.T) {
 	setupTestDB(t)
+	now := time.Now().UTC()
+	require.NoError(t, db.ReplaceCopilotModelCatalog([]db.CopilotModelCatalogEntry{
+		{ModelID: "gpt-5-mini", MaxPromptTokens: 144_000},
+	}, now))
 
 	reading := copilotAPIStateReading{PromptTokenLimit: 128000, Model: "gpt-5-mini"}
 	assert.Equal(t, int64(128000), copilotAPIEffectiveContextWindow("conv-none", reading),
 		"a reported limit beats the static assumption for the same model")
 
-	assumed := harness.CopilotContextWindowDefault("gpt-5-mini")
-	require.Positive(t, assumed, "this test needs a model the static table knows")
-	assert.Equal(t, assumed,
+	assert.Equal(t, int64(144_000),
 		copilotAPIEffectiveContextWindow("conv-none",
 			copilotAPIStateReading{Model: "gpt-5-mini"}),
-		"with no reported limit the static table is still the fallback")
+		"with no local reported limit a fresh catalog entry is the fallback")
+
+	require.NoError(t, db.ReplaceCopilotModelCatalog([]db.CopilotModelCatalogEntry{
+		{ModelID: "gpt-5-mini", MaxPromptTokens: 144_000},
+	}, now.Add(-25*time.Hour)))
+	assumed := harness.CopilotContextWindowDefault("gpt-5-mini")
+	require.Positive(t, assumed, "this test needs a model the static table knows")
+	assert.Equal(t, assumed, copilotAPIEffectiveContextWindow("conv-none",
+		copilotAPIStateReading{Model: "gpt-5-mini"}),
+		"a stale catalog entry falls back to the static table")
 }
 
 // ---------------------------------------------------------------------------

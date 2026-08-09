@@ -675,6 +675,13 @@ func runServe(p *serveParams) error {
 	// daemon. Shares the daemon-wide stop channel.
 	startCopilotUsagePoller(cronStop)
 
+	// Copilot model-catalog mirror. The send-keys drive cannot ask its pane for
+	// model capabilities, so this refreshes Copilot's authenticated remote
+	// catalog once at startup and hourly, keeping a 24-hour last-known-good
+	// snapshot in tclaude's SQLite database. Missing optional CLIs are an info-
+	// only no-op; installed but unauthenticated/broken tooling logs as an error.
+	startCopilotModelCatalogMirror(cronStop)
+
 	// Copilot API reconnect. Handles live in process memory, so this daemon
 	// starts with none while every `copilot --ui-server` pane from before the
 	// restart is still running and still holding its conversation. Since

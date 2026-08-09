@@ -996,16 +996,19 @@ func copilotConfiguredContextWindowMax(convID string) int64 {
 //
 // The order is the settled TCL-1048 precedence, then the observed disclosure
 // as the last resort: an explicit configured cap is operator intent and wins
-// outright; the observed model's static assumption fills in when there is no
-// cap; a window Copilot itself disclosed in the durable log is used only when
-// tclaude knows nothing better. This matches the dashboard tooltip's own
-// fallback (configured/assumed max, else the observed window), so the
+// outright; a fresh remote catalog entry outranks the static per-model
+// fallback; a window Copilot itself disclosed in the durable log is used only
+// when tclaude knows nothing better. This matches the dashboard tooltip's own
+// fallback (configured/catalog/assumed max, else the observed window), so the
 // percentage and the "x / y tokens" beside it always describe the same ratio.
 func copilotEffectiveContextWindow(convID, model string, observed int64) int64 {
 	if window := copilotConfiguredContextWindowMax(convID); window > 0 {
 		return window
 	}
 	if trimmed := strings.TrimSpace(model); trimmed != "" {
+		if window := copilotCatalogContextWindow(trimmed); window > 0 {
+			return window
+		}
 		if window := harness.CopilotContextWindowDefault(trimmed); window > 0 {
 			return window
 		}

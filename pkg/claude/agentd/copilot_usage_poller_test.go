@@ -288,6 +288,29 @@ func TestCopilotUsageUsesObservedModelDefault(t *testing.T) {
 	assert.Zero(t, snap.ContextWindowSize)
 }
 
+func TestCopilotUsageUsesFreshModelCatalog(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotUsageStateForTest()
+	t.Cleanup(resetCopilotUsageStateForTest)
+	require.NoError(t, db.ReplaceCopilotModelCatalog([]db.CopilotModelCatalogEntry{
+		{ModelID: "gpt-5-mini", MaxPromptTokens: 128_000},
+	}, time.Now().UTC()))
+
+	sess := copilotUsageSession(t, "s-copilot", "conv-1")
+	call := copilotUsageCall(1, 64_000, 300)
+	call.Model = "gpt-5-mini"
+	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{call})
+
+	snap, err := db.GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	assert.InDelta(t, 50.0, snap.ContextPct, 0.001)
+
+	state := stateForConvInSessionsBatched(
+		[]*db.SessionRow{sess}, map[string]struct{}{sess.TmuxSession: {}}, nil, nil, nil)
+	assert.Equal(t, int64(128_000), state.ContextWindowMax)
+	assert.Equal(t, "catalog", state.ContextWindowSource)
+}
+
 // TestCopilotUsagePreservesObservedWindow is the field-separation rule: the
 // configured/assumed cap drives the percentage, while the durable follower's
 // observed snapshot remains in context_window_size.
@@ -537,8 +560,8 @@ func TestStopCopilotUsagePollerRefusesFurtherWork(t *testing.T) {
 // row must end up with the durable WINDOW in the observed column, the sweep's
 // NUMERATOR, and a percentage computed against the EFFECTIVE denominator —
 // the observed model's static band, per the settled TCL-1048 precedence
-// (configured cap, else static assumption, else the disclosed window as last
-// resort). Measuring against the static band even when a disclosure exists is
+// (configured cap, else fresh catalog, else static assumption, else the
+// disclosed window as last resort). Measuring against the static band even when a disclosure exists is
 // deliberate: the dashboard's displayed denominator resolves the same way, so
 // the percentage and the "x / y" beside it describe the same ratio. (Whether
 // a disclosed window should outrank the static assumption is an open operator
