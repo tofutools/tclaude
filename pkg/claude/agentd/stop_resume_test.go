@@ -143,6 +143,38 @@ func TestResumeOneConv_CodexAppServerRequiresVerifiedReadiness(t *testing.T) {
 	assert.True(t, rec.codexAppServer)
 }
 
+func TestHandleAgentResumeExplicitSendKeysPersistsCodexRollback(t *testing.T) {
+	setupTestDB(t)
+	rec := installRecordingResumeSpawner(t)
+	const convID = "codex-appserver-rollback-12345678"
+	row := saveResumeSession(t, convID, t.TempDir(), harness.CodexName)
+	require.NoError(t, db.SetSessionCodexAppServer(row.ID, true))
+	agentID, _, err := db.EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	profile, err := db.RecordedLaunchPostureForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, profile)
+	profile.Version = db.RelaunchProfileVersion
+	selected := true
+	profile.CodexAppServer = &selected
+	fast := true
+	profile.FastMode = &fast
+	require.NoError(t, db.SetAgentRelaunchProfile(agentID, *profile))
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/v1/agent/"+convID+"/resume?send_keys=1", nil)
+	r = r.WithContext(context.WithValue(r.Context(), peerKey{}, &peer{PID: 1, HumanTokenValid: true}))
+	handleAgentResume(w, r, convID)
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	assert.False(t, rec.codexAppServer)
+	recorded, err := db.RecordedLaunchPostureForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, recorded.CodexAppServer)
+	assert.False(t, *recorded.CodexAppServer)
+	require.NotNil(t, recorded.FastMode)
+	assert.True(t, *recorded.FastMode, "compatibility rollback must preserve unrelated relaunch intent")
+}
+
 func TestHandleAgentResume_GroupOwnershipAuthority(t *testing.T) {
 	const (
 		target = "worker-conv-id-12345678"

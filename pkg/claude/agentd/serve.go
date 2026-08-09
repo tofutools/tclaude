@@ -675,13 +675,12 @@ func runServe(p *serveParams) error {
 	// daemon. Shares the daemon-wide stop channel.
 	startCopilotUsagePoller(cronStop)
 
-	// Codex app-server handles are process-local. A restarted daemon has no
-	// verified client even when the pane-owned server survived, so clear every
-	// persisted warming/ready claim before the dashboard or future control path
-	// can mistake durable metadata for a live handle.
-	if err := db.InvalidateCodexAppServerRuntimesAfterRestart(); err != nil {
-		return fmt.Errorf("invalidate Codex app-server runtimes after agentd restart: %w", err)
-	}
+	// Codex app-server processes belong to their panes, not to agentd. Re-adopt
+	// surviving generations by proving their pid/socket/version/exact thread;
+	// the durable CAS in that sweep prevents concurrent daemon starts from both
+	// registering one generation. Until proof completes the selected drive
+	// remains fail-closed and holds mail.
+	startCodexAppServerRecovery(cronStop)
 
 	// Copilot model-catalog mirror. The send-keys drive cannot ask its pane for
 	// model capabilities, so this refreshes Copilot's authenticated remote

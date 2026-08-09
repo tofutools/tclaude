@@ -143,6 +143,20 @@ func TestM1MethodsUseStableWireShapes(t *testing.T) {
 	}})
 	require.NoError(t, <-readDone)
 
+	forkDone := make(chan error, 1)
+	go func() {
+		cwd, last := "/tmp/fork", "turn-1"
+		_, err := client.ForkThread(context.Background(), codexappserver.ThreadForkParams{
+			ThreadID: "thread-1", Cwd: &cwd, LastTurnID: &last,
+		})
+		forkDone <- err
+	}()
+	fork := replyNext(codexappserver.MethodThreadFork, map[string]any{"thread": map[string]any{
+		"id": "thread-2", "status": map[string]any{"type": "idle"}, "turns": []any{},
+	}})
+	assert.JSONEq(t, `{"threadId":"thread-1","cwd":"/tmp/fork","lastTurnId":"turn-1"}`, string(fork.Params))
+	require.NoError(t, <-forkDone)
+
 	startDone := make(chan error, 1)
 	go func() {
 		_, err := client.StartTurn(context.Background(), codexappserver.TurnStartParams{

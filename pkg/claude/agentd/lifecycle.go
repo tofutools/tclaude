@@ -2872,6 +2872,17 @@ func handleAgentResume(w http.ResponseWriter, r *http.Request, targetConv string
 		return
 	}
 	trustRoot := caller == "" || hasHumanApprovalContinuation(r, PermAgentResume, targetConv)
+	sendKeys := r.URL.Query().Get("send_keys") == "1"
+	if sendKeys && !trustRoot {
+		if parseAskHumanHeader(r) <= 0 || !requestResumeRecoveryApproval(w, r, PermAgentResume, targetConv, targetConv) {
+			if parseAskHumanHeader(r) <= 0 {
+				writeError(w, http.StatusForbidden, "codex_drive_change_restricted",
+					"moving a Codex agent from its selected app-server drive to send-keys requires a direct human resume or actual --ask-human approval")
+			}
+			return
+		}
+		trustRoot = true
+	}
 	// Recreating a missing path is a daemon-side mkdir with the human's
 	// filesystem authority. Keep that opt-in human-only; an agent cannot prove
 	// write access inside a directory that does not exist.
@@ -2890,6 +2901,14 @@ func handleAgentResume(w http.ResponseWriter, r *http.Request, targetConv string
 	// relaunch (the CLI's `--recreate-dir`, the dashboard's confirm-and-retry).
 	// Absent it, a vanished cwd comes back as `error:missing_cwd` so the caller
 	// can decide.
+	if sendKeys {
+		source := "explicit --send-keys compatibility rollback"
+		if err := db.SetAgentCodexAppServerSelectionForConv(targetConv, false, source); err != nil {
+			writeError(w, http.StatusInternalServerError, "io", "persist Codex compatibility rollback: "+err.Error())
+			return
+		}
+		stopCodexAppServerRuntimeForConv(targetConv)
+	}
 	res := resumeOneConvLocked(targetConv, recreate, trustRoot)
 	if res.Action == "error:resume_provenance" && !trustRoot && parseAskHumanHeader(r) > 0 {
 		if !requestResumeRecoveryApproval(w, r, PermAgentResume, targetConv, targetConv) {

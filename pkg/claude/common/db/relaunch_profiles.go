@@ -271,6 +271,56 @@ func SetAgentRelaunchProfile(agentID string, profile AgentRelaunchProfile) error
 	return nil
 }
 
+// SetAgentCodexAppServerSelectionForConv records an operator's explicit drive
+// choice without exposing the whole relaunch-profile writer to lifecycle
+// callers. The read/modify/write is transactional so unrelated durable launch
+// intent is preserved.
+func SetAgentCodexAppServerSelectionForConv(convID string, selected bool, source string) error {
+	convID = strings.TrimSpace(convID)
+	source = strings.TrimSpace(source)
+	if convID == "" || source == "" {
+		return errors.New("SetAgentCodexAppServerSelectionForConv: conversation and source required")
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var agentID, raw string
+	err = tx.QueryRow(`SELECT a.agent_id, a.relaunch_profile
+		FROM agent_conversations ac
+		JOIN agents a ON a.agent_id = ac.agent_id
+		WHERE ac.conv_id = ?`, convID).Scan(&agentID, &raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("SetAgentCodexAppServerSelectionForConv: conversation %s is not an agent", convID)
+	}
+	if err != nil {
+		return err
+	}
+	profile, err := decodeAgentRelaunchProfile(raw)
+	if err != nil {
+		return err
+	}
+	if profile == nil {
+		profile = &AgentRelaunchProfile{Version: RelaunchProfileVersion}
+	}
+	profile.CodexAppServer = boolPtr(selected)
+	profile.CodexAppServerSource = stringPtr(source)
+	encoded, err := encodeRelaunchProfile(*profile)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE agents SET relaunch_profile = ? WHERE agent_id = ?`, encoded, agentID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // SetTemporaryHarnessBuiltinMode atomically sets or clears a stable agent's temporary
 // sandbox override. When enabling it, normalMode/normalImplementation/
 // normalSource freeze the already-resolved normal launch posture if the
