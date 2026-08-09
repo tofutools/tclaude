@@ -323,9 +323,11 @@ func ConfirmAgentRecovery(r AgentRecovery, successorSession, successorGeneration
 	return n == 1, nil
 }
 
-// CancelAgentRecoveryForConv makes a pending automatic attempt permanently
-// ineligible for its predecessor generation. A later genuine crash writes a
-// new generation and may create a fresh episode.
+// CancelAgentRecoveryForConv makes an automatic recovery episode permanently
+// ineligible for its predecessor generation. Suppressed episodes are included:
+// an intentional stop racing a fail-closed exit observation must clear its
+// operational warning just like it clears a pending attempt. A later genuine
+// crash writes a new generation and may create a fresh episode.
 func CancelAgentRecoveryForConv(convID, reason string, now time.Time) (bool, error) {
 	d, err := Open()
 	if err != nil {
@@ -333,9 +335,10 @@ func CancelAgentRecoveryForConv(convID, reason string, now time.Time) (bool, err
 	}
 	res, err := d.Exec(`UPDATE agent_recovery SET status = ?, reason_code = ?,
 		next_attempt_at = NULL, lease_token = '', lease_expires_at = NULL, updated_at = ?
-		WHERE agent_id = (`+agentForConvExpr+`) AND status IN (?, ?, ?)`,
+		WHERE agent_id = (`+agentForConvExpr+`) AND status IN (?, ?, ?, ?)`,
 		AgentRecoveryStatusCancelled, boundedRecoveryReason(reason), recoveryTime(now), convID,
-		AgentRecoveryStatusCrashed, AgentRecoveryStatusBackoff, AgentRecoveryStatusRestarting)
+		AgentRecoveryStatusCrashed, AgentRecoveryStatusBackoff, AgentRecoveryStatusRestarting,
+		AgentRecoveryStatusSuppressed)
 	if err != nil {
 		return false, err
 	}
@@ -494,6 +497,15 @@ func RecordAgentRecoveryAudit(r AgentRecovery, verb, reason string, now time.Tim
 // has been merged, so richer callback evidence can promote an earlier unknown
 // reconciliation observation without the callback launching anything.
 func reconcileAgentRecoveryCandidateTx(tx *sql.Tx, meta exitSessionMeta, e AuditLogEntry, now time.Time) error {
+	// Lifecycle-attributed exits are terminal until an operator explicitly
+	// resumes the agent. They are not failed recovery candidates: persisting a
+	// suppressed row here would still advance consecutive_crashes and surface a
+	// recovery warning for an intentional stop. This matters especially for
+	// Codex app-server launches, whose pane often disappears without a numeric
+	// exit code when the pane-owned server and relay shut down.
+	if e.LifecycleAction != "" {
+		return nil
+	}
 	if e.ExitCode != nil && *e.ExitCode == 0 {
 		return nil
 	}
@@ -512,9 +524,6 @@ func reconcileAgentRecoveryCandidateTx(tx *sql.Tx, meta exitSessionMeta, e Audit
 	}
 	if e.LaunchPhase != AgentExitLaunchPhaseRuntime {
 		reason = "launch_not_runtime"
-	}
-	if e.LifecycleAction != "" {
-		reason = "lifecycle_intent"
 	}
 	if meta.CallbackGeneration == "" {
 		reason = "unknown_launch_generation"

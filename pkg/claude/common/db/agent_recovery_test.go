@@ -215,7 +215,7 @@ func TestAgentRecovery_BackoffScheduleIsExactAndUnbounded(t *testing.T) {
 	}
 }
 
-func TestAgentRecovery_CleanExitAndLifecycleIntentFailClosed(t *testing.T) {
+func TestAgentRecovery_CleanExitAndLifecycleIntentAreNotCandidates(t *testing.T) {
 	setupTestDB(t)
 	now := time.Now().UTC()
 	agentID := seedRecoverableCodexExit(t, "recover-clean", "conv-recover-clean",
@@ -238,9 +238,32 @@ func TestAgentRecovery_CleanExitAndLifecycleIntentFailClosed(t *testing.T) {
 	require.NoError(t, err)
 	r, err = AgentRecoveryForAgent(agentID)
 	require.NoError(t, err)
+	assert.Nil(t, r, "an intentional lifecycle exit must not create a suppressed recovery row")
+}
+
+func TestAgentRecovery_IntentionalStopCancelsRacingSuppressedEpisode(t *testing.T) {
+	setupTestDB(t)
+	now := time.Now().UTC()
+	agentID := seedRecoverableCodexExit(t, "recover-stop-race", "conv-recover-stop-race",
+		"45454545454545454545454545454545", now, 1)
+	r, err := AgentRecoveryForAgent(agentID)
+	require.NoError(t, err)
 	require.NotNil(t, r)
-	assert.Equal(t, AgentRecoveryStatusSuppressed, r.Status)
-	assert.Equal(t, "lifecycle_intent", r.ReasonCode)
+	claim, err := ClaimAgentRecovery(agentID, r.PredecessorGeneration, r.NextAttemptAt)
+	require.NoError(t, err)
+	require.NotNil(t, claim)
+	changed, err := SuppressAgentRecovery(*claim, now.Add(time.Second), "observer_race")
+	require.NoError(t, err)
+	require.True(t, changed)
+
+	cancelled, err := CancelAgentRecoveryForConv(r.ConvID, AgentExitActionStop, now.Add(2*time.Second))
+	require.NoError(t, err)
+	require.True(t, cancelled)
+	r, err = AgentRecoveryForAgent(agentID)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Equal(t, AgentRecoveryStatusCancelled, r.Status)
+	assert.Equal(t, AgentExitActionStop, r.ReasonCode)
 }
 
 func TestAgentRecovery_RepeatedLaunchFailuresPersistExactCappedSchedule(t *testing.T) {
