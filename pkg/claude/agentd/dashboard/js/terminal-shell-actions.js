@@ -2,6 +2,7 @@ import { setArcanePaletteEnabled } from './terminal-theme.js';
 import { encodeTerminalOpenHash } from './terminal-handoff.js';
 import { shellToast } from './shell-state.js';
 import { detachWindowFeatures } from './terminal-drag-out.js';
+import { terminalAttachConfig } from './terminal-attach-config.js';
 
 export function createTerminalShellActions({
   state,
@@ -200,6 +201,7 @@ export function createTerminalShellActions({
       harness: pane.seed.harness,
       initialRetry: true,
       wizard: documentRef.body.classList.contains('wizard'),
+      terminalAttach: terminalAttachConfig(),
     };
     await closePane(key);
     try { target.location.replace(`/terminals?solo=1${encodeTerminalOpenHash(seed)}`); }

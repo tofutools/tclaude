@@ -37,6 +37,7 @@ import {
   shellConfirmDiscard as confirmDiscard,
 } from './shell-state.js';
 import { disclosurePreference } from './group-tree-activity.js';
+import { setTerminalAttachConfig } from './terminal-attach-config.js';
 
 // groupsTabActive reports whether the Groups tab is the visible one — used to
 // skip the (default-hidden, expensive) conversations/replaced sub-fetches when
@@ -238,6 +239,7 @@ export async function refresh(options) {
     // Horizontal-scroll chrome-bar mode (config dashboard.hscroll_follow,
     // default follow) — replaces the old per-browser header toggle button.
     setHScrollFollow(data.hscroll_follow !== false);
+    setTerminalAttachConfig(data.terminal_attach);
     // Group quick-options fold mode (config dashboard.group_quick_options,
     // default "hover"). body.group-quick-fold drives the CSS horizontal
     // accordion: the editable chips in each group <summary> collapse to

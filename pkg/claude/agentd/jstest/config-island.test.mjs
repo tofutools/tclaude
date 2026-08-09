@@ -265,6 +265,40 @@ test('Config keeps group attachments default-off and saves float/fixed modes', a
   await mounted.unmount();
 });
 
+test('Config round-trips all web terminal attach resize strategies and timings', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'),
+    harness.importDashboardModule('js/config-island.js'),
+    harness.importDashboardModule('js/config-form-adapter.js'),
+  ]);
+  let raw = '{}';
+  const state = createConfigState({ activeTab: harness.signals.signal('groups') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} dependencies=${{
+    fetchImpl: async () => ({ ok: true, json: async () => ({ raw }) }),
+  }} />`);
+
+  await adapter.loadConfigTab();
+  assert.equal(adapter.assembleConfig().dashboard?.terminal_attach, undefined,
+    'the historical repair defaults remain sparse');
+
+  raw = JSON.stringify({ dashboard: { terminal_attach: {
+    mode: 'pre_attach', initial_resize_delay_ms: 30,
+    repair_delay_ms: 400, pre_attach_delay_ms: 175,
+  } } });
+  await adapter.loadConfigTab();
+  const mode = mounted.container.querySelector('#cfg-terminal-attach-mode');
+  assert.equal(mode.querySelector('option[value="pre_attach"]').selected, true);
+  assert.equal(mounted.container.querySelector('#cfg-terminal-attach-initial-delay').value, '30');
+  assert.equal(mounted.container.querySelector('#cfg-terminal-attach-repair-delay').value, '400');
+  assert.equal(mounted.container.querySelector('#cfg-terminal-attach-pre-delay').value, '175');
+  assert.deepEqual(adapter.assembleConfig().dashboard.terminal_attach, {
+    mode: 'pre_attach', initial_resize_delay_ms: 30,
+    repair_delay_ms: 400, pre_attach_delay_ms: 175,
+  });
+  await mounted.unmount();
+});
+
 test('Config saves live wizard and slop activity-bot selections over their loaded defaults', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([

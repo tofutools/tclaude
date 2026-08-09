@@ -291,6 +291,75 @@ test('first terminal output schedules a delayed one-row nudge and grid restore',
   widget.dispose();
 });
 
+test('initial-only mode waits before its one resize and skips repair', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { mountTerminalWidget } = await harness.importDashboardModule('js/terminals-core.js');
+  const fakes = widgetFakes(harness.document);
+  const timers = [];
+  const widget = mountTerminalWidget({
+    host: harness.document.body.appendChild(harness.document.createElement('div')),
+    wsPath: '/api/open-window-ws/agt_initial',
+    authenticate: false,
+    attachResizeMode: 'initial',
+    initialResizeDelayMs: 80,
+    setTimeoutImpl(handler, delay) {
+      const timer = { handler, delay, cleared: false };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeoutImpl(timer) { timer.cleared = true; },
+    TerminalCtor: fakes.FakeTerminal,
+    FitAddonCtor: fakes.FakeFitAddon,
+    WebSocketCtor: fakes.FakeWebSocket,
+    ResizeObserverCtor: fakes.FakeResizeObserver,
+    locationRef: { protocol: 'http:', host: 'dashboard.test' },
+    documentRef: harness.document,
+    interactionsFactory: fakes.interactionsFactory,
+  });
+
+  await widget.connect();
+  const socket = fakes.sockets[0];
+  socket.open();
+  assert.deepEqual(JSON.parse(socket.sent[0]), { type: 'resize_wait', delay_ms: 80 });
+  assert.equal(timers[0].delay, 80);
+  socket.onmessage({ data: 'screen arrived before resize' });
+  assert.equal(timers.length, 1, 'initial-only mode never arms a repair');
+  timers[0].handler();
+  assert.deepEqual(JSON.parse(socket.sent[1]), { type: 'resize', cols: 80, rows: 24 });
+  assert.equal(timers.length, 1, 'initial resize remains the only timer');
+  widget.dispose();
+});
+
+test('pre-attach mode carries the server-side attach delay on the opening resize', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { mountTerminalWidget } = await harness.importDashboardModule('js/terminals-core.js');
+  const fakes = widgetFakes(harness.document);
+  const widget = mountTerminalWidget({
+    host: harness.document.body.appendChild(harness.document.createElement('div')),
+    wsPath: '/api/open-window-ws/agt_pre',
+    authenticate: false,
+    attachResizeMode: 'pre_attach',
+    preAttachDelayMs: 325,
+    TerminalCtor: fakes.FakeTerminal,
+    FitAddonCtor: fakes.FakeFitAddon,
+    WebSocketCtor: fakes.FakeWebSocket,
+    ResizeObserverCtor: fakes.FakeResizeObserver,
+    locationRef: { protocol: 'http:', host: 'dashboard.test' },
+    documentRef: harness.document,
+    interactionsFactory: fakes.interactionsFactory,
+  });
+
+  await widget.connect();
+  const socket = fakes.sockets[0];
+  socket.open();
+  assert.deepEqual(JSON.parse(socket.sent[0]), {
+    type: 'resize', cols: 80, rows: 24, attach_delay_ms: 325,
+  });
+  socket.onmessage({ data: 'attached screen' });
+  assert.equal(socket.sent.length, 1, 'pre-attach mode does not run the post-attach repair');
+  widget.dispose();
+});
+
 test('reconnect and dispose cancel a stale delayed resize', async (t) => {
   const harness = await createPreactHarness(t);
   const { mountTerminalWidget } = await harness.importDashboardModule('js/terminals-core.js');

@@ -1032,6 +1032,33 @@ func TestDefaultTerminal(t *testing.T) {
 	assert.Equal(t, DefaultTerminalWeb, loaded.DefaultTerminal(), "web survives round-trip")
 }
 
+func TestResolvedTerminalAttach(t *testing.T) {
+	mode, initial, repair, preAttach := (*Config)(nil).ResolvedTerminalAttach()
+	assert.Equal(t, TerminalAttachResizeRepair, mode)
+	assert.Equal(t, 0, initial)
+	assert.Equal(t, DefaultTerminalAttachRepairDelayMS, repair)
+	assert.Equal(t, DefaultTerminalAttachPreAttachDelayMS, preAttach)
+
+	i, r, p := 40, 375, 125
+	cfg := &Config{Dashboard: &DashboardConfig{TerminalAttach: &TerminalAttachConfig{
+		Mode: TerminalAttachResizePreAttach, InitialResizeDelayMS: &i,
+		RepairDelayMS: &r, PreAttachDelayMS: &p,
+	}}}
+	mode, initial, repair, preAttach = cfg.ResolvedTerminalAttach()
+	assert.Equal(t, TerminalAttachResizePreAttach, mode)
+	assert.Equal(t, 40, initial)
+	assert.Equal(t, 375, repair)
+	assert.Equal(t, 125, preAttach)
+	assert.Empty(t, Validate(cfg))
+
+	bad := -1
+	cfg.Dashboard.TerminalAttach.Mode = "wat"
+	cfg.Dashboard.TerminalAttach.InitialResizeDelayMS = &bad
+	errs := strings.Join(Validate(cfg), "\n")
+	assert.Contains(t, errs, "dashboard.terminal_attach.mode")
+	assert.Contains(t, errs, "dashboard.terminal_attach.initial_resize_delay_ms")
+}
+
 func TestDefaultDirectoryPicker(t *testing.T) {
 	assert.Equal(t, DefaultDirectoryPickerNative, (*Config)(nil).DefaultDirectoryPicker())
 	assert.Equal(t, DefaultDirectoryPickerNative, (&Config{}).DefaultDirectoryPicker())

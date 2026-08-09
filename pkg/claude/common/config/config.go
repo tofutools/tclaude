@@ -428,6 +428,12 @@ const (
 
 // DashboardConfig holds display toggles for the agentd web dashboard.
 type DashboardConfig struct {
+	// TerminalAttach tunes the browser terminal's resize handshake when it
+	// attaches to a tmux client. Absent keeps the historical repair sequence:
+	// send the fitted size, then nudge the terminal by one row and restore it
+	// after the first screen arrives. See TerminalAttachConfig and
+	// (*Config).ResolvedTerminalAttach.
+	TerminalAttach *TerminalAttachConfig `json:"terminal_attach,omitempty"`
 	// ActivityBots selects the style of the per-group + global "activity
 	// bot" indicator — the deduped row of robot icons that rides in each
 	// group <summary> header (visible even when the group is folded) and in
@@ -516,6 +522,64 @@ type DashboardConfig struct {
 	// snapshot each poll and toggles body.hide-debug. See
 	// (*Config).ShowDebugTab.
 	ShowDebugTab bool `json:"show_debug_tab,omitempty"`
+}
+
+// Browser-terminal attach resize modes — config dashboard.terminal_attach.mode.
+const (
+	TerminalAttachResizeRepair    = "repair"
+	TerminalAttachResizeInitial   = "initial"
+	TerminalAttachResizePreAttach = "pre_attach"
+
+	DefaultTerminalAttachRepairDelayMS    = 250
+	DefaultTerminalAttachPreAttachDelayMS = 250
+	MaxTerminalAttachDelayMS              = 10000
+)
+
+// TerminalAttachConfig controls how an xterm-backed terminal establishes and
+// repairs its initial geometry. All delays are milliseconds and pointers so an
+// explicit zero remains distinct from an absent value.
+//
+// Modes:
+//   - repair (default): initial resize, then the historical one-row nudge and
+//     restore after RepairDelayMS.
+//   - initial: initial resize only.
+//   - pre_attach: send the initial size before the PTY command starts, wait
+//     PreAttachDelayMS, then start the attachment; no post-attach nudge.
+type TerminalAttachConfig struct {
+	Mode                 string `json:"mode,omitempty"`
+	InitialResizeDelayMS *int   `json:"initial_resize_delay_ms,omitempty"`
+	RepairDelayMS        *int   `json:"repair_delay_ms,omitempty"`
+	PreAttachDelayMS     *int   `json:"pre_attach_delay_ms,omitempty"`
+}
+
+// ResolvedTerminalAttach returns the effective browser-terminal attach mode
+// and delays. Unknown modes degrade to the historical repair behavior while
+// Validate reports the bad value to the Config tab. Invalid hand-edited delays
+// are clamped so the live dashboard remains usable while validation reports
+// them.
+func (c *Config) ResolvedTerminalAttach() (mode string, initialDelayMS, repairDelayMS, preAttachDelayMS int) {
+	mode = TerminalAttachResizeRepair
+	repairDelayMS = DefaultTerminalAttachRepairDelayMS
+	preAttachDelayMS = DefaultTerminalAttachPreAttachDelayMS
+	if c == nil || c.Dashboard == nil || c.Dashboard.TerminalAttach == nil {
+		return
+	}
+	t := c.Dashboard.TerminalAttach
+	switch t.Mode {
+	case "", TerminalAttachResizeRepair:
+	case TerminalAttachResizeInitial, TerminalAttachResizePreAttach:
+		mode = t.Mode
+	}
+	resolve := func(value *int, fallback int) int {
+		if value == nil {
+			return fallback
+		}
+		return min(MaxTerminalAttachDelayMS, max(0, *value))
+	}
+	initialDelayMS = resolve(t.InitialResizeDelayMS, 0)
+	repairDelayMS = resolve(t.RepairDelayMS, DefaultTerminalAttachRepairDelayMS)
+	preAttachDelayMS = resolve(t.PreAttachDelayMS, DefaultTerminalAttachPreAttachDelayMS)
+	return
 }
 
 // ActivityBotsConfig picks the activity-bot visual independently per mode,
@@ -3069,6 +3133,28 @@ func Validate(c *Config) []string {
 		}
 		if t.Margin != nil && (*t.Margin < 0 || *t.Margin > maxTilePixels) {
 			errs = append(errs, fmt.Sprintf("focus.tile.margin %d is out of range (0–%d pixels)", *t.Margin, maxTilePixels))
+		}
+	}
+
+	if c.Dashboard != nil && c.Dashboard.TerminalAttach != nil {
+		t := c.Dashboard.TerminalAttach
+		switch t.Mode {
+		case "", TerminalAttachResizeRepair, TerminalAttachResizeInitial, TerminalAttachResizePreAttach:
+		default:
+			errs = append(errs, fmt.Sprintf(
+				"dashboard.terminal_attach.mode %q is not one of %s, %s, %s",
+				t.Mode, TerminalAttachResizeRepair, TerminalAttachResizeInitial, TerminalAttachResizePreAttach))
+		}
+		for name, value := range map[string]*int{
+			"initial_resize_delay_ms": t.InitialResizeDelayMS,
+			"repair_delay_ms":         t.RepairDelayMS,
+			"pre_attach_delay_ms":     t.PreAttachDelayMS,
+		} {
+			if value != nil && (*value < 0 || *value > MaxTerminalAttachDelayMS) {
+				errs = append(errs, fmt.Sprintf(
+					"dashboard.terminal_attach.%s %d is out of range (0–%d milliseconds)",
+					name, *value, MaxTerminalAttachDelayMS))
+			}
 		}
 	}
 

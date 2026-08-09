@@ -11,6 +11,7 @@ import { loadXtermRuntime } from './xterm-loader.js';
 import { bindTerminalHandoffReceiver } from './terminal-handoff.js';
 import { dragLeftRegion, dragScreenPoint } from './terminal-drag-out.js';
 import { MAX_TERMINAL_GROUP_NAME_LENGTH } from './terminal-shell-state.js';
+import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 import {
   memberHumanMessages, openHumanNotificationReader,
 } from './human-notification-attention.js';
@@ -139,6 +140,7 @@ function OpaqueTerminalHost({
   const widgetRef = useRef(null);
   useLayoutEffect(() => {
     const widget = widgetFactory({
+      ...terminalAttachWidgetOptions(descriptor.seed.terminalAttach),
       host: hostRef.current,
       wsPath: descriptor.seed.ws,
       authenticate,
