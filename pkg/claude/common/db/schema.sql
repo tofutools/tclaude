@@ -1297,3 +1297,17 @@ CREATE INDEX idx_codex_app_server_runtime_conv
 CREATE INDEX idx_codex_app_server_runtime_agent
 			ON codex_app_server_runtimes(agent_id);
 
+CREATE TRIGGER codex_app_server_capability_terminal_cleanup
+		AFTER UPDATE OF state ON codex_app_server_runtimes
+		WHEN NEW.state IN ('unavailable', 'dead')
+		BEGIN
+			DELETE FROM codex_app_server_capabilities WHERE generation = NEW.generation;
+		END;
+
+CREATE TABLE codex_app_server_capabilities (
+			generation TEXT PRIMARY KEY,
+			capability TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			FOREIGN KEY (generation) REFERENCES codex_app_server_runtimes(generation) ON DELETE CASCADE
+		) STRICT;
+

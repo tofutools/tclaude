@@ -130,11 +130,14 @@ type SpawnArgs struct {
 	// CodexAppServer selects the explicit app-server-backed Codex drive. The
 	// socket/pid/log paths are daemon-minted internal handoff values; callers
 	// set only the posture and agentd fills the rest before forking session new.
-	CodexAppServer           bool
-	CodexAppServerSocket     string
-	CodexAppServerPIDFile    string
-	CodexAppServerLogFile    string
-	CodexAppServerGeneration string
+	CodexAppServer             bool
+	CodexAppServerSocket       string
+	CodexAppServerURL          string
+	CodexAppServerTokenSHA256  string
+	CodexAppServerTokenHandoff string
+	CodexAppServerPIDFile      string
+	CodexAppServerLogFile      string
+	CodexAppServerGeneration   string
 	// CodexAppServerExistingThread is an in-process bootstrap fact: SpawnResume
 	// sets it only when ConvID names a conversation the harness already owns.
 	// It is never serialized into the session-wrapper argv.

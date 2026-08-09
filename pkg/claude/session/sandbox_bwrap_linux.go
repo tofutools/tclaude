@@ -220,6 +220,21 @@ func tclaudeLayerCommand(
 	return relay + engine + " -- " + command, nil
 }
 
+func tclaudeLayerCommandWithLoopbackBind(
+	binary string,
+	phase0WriteDirs []string,
+	privateWriteDirs []TclaudeLayerPrivateWriteDir,
+	finalHideDirs []string,
+	readOnlyBinds []TclaudeLayerReadOnlyBind,
+	socketPaths []string,
+	plan sandboxpolicy.MountPlan,
+	_ int,
+	harnessCommand string,
+) (string, error) {
+	return tclaudeLayerCommand(binary, phase0WriteDirs, privateWriteDirs,
+		finalHideDirs, readOnlyBinds, socketPaths, plan, harnessCommand)
+}
+
 func tclaudeLayerCommandWithRouteSlots(
 	binary string,
 	phase0WriteDirs []string,
@@ -239,6 +254,25 @@ func tclaudeLayerCommandWithRouteSlots(
 	return tclaudeLayerCommand(
 		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
 		readOnlyBinds, socketPaths, plan, harnessCommand)
+}
+
+func tclaudeLayerCommandWithRouteSlotsAndLoopbackBind(
+	binary string,
+	phase0WriteDirs []string,
+	privateWriteDirs []TclaudeLayerPrivateWriteDir,
+	finalHideDirs []string,
+	readOnlyBinds []TclaudeLayerReadOnlyBind,
+	socketPaths []string,
+	plan sandboxpolicy.MountPlan,
+	routeSlots []int,
+	preReservation *DarwinRouteSlotReservation,
+	routeHelper *TclaudeLayerRouteHelper,
+	_ int,
+	harnessCommand string,
+) (string, error) {
+	return tclaudeLayerCommandWithRouteSlots(binary, phase0WriteDirs, privateWriteDirs,
+		finalHideDirs, readOnlyBinds, socketPaths, plan, routeSlots,
+		preReservation, routeHelper, harnessCommand)
 }
 
 func tclaudeLayerCommandWithRouteHelper(

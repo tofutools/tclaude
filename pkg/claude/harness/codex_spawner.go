@@ -2,6 +2,7 @@ package harness
 
 import (
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -150,7 +151,12 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 		cmd += " " + strings.Join(quoted, " ")
 	}
 	if spec.CodexAppServerSocket != "" {
-		cmd += " --remote " + clcommon.ShellQuoteArg("unix://"+spec.CodexAppServerSocket)
+		cmd += " --remote " + clcommon.ShellQuoteArg(spec.CodexAppServerURL) +
+			" --remote-auth-token-env TCLAUDE_CODEX_APP_SERVER_TOKEN"
+		// The TUI needs the capability for its own WebSocket upgrade, but model
+		// tool shells must never inherit it.
+		cmd += " -c " + clcommon.ShellQuoteArg(
+			`shell_environment_policy.exclude=["TCLAUDE_CODEX_APP_SERVER_TOKEN"]`)
 	}
 	// `codex [OPTIONS] [PROMPT]` — a trailing positional the interactive TUI
 	// submits itself at launch (verified against codex-cli 0.139.0:
@@ -175,18 +181,38 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 	// EXIT trap makes the server a resource of this pane generation rather than
 	// a machine-global daemon. Paths are daemon-minted but still shell-quoted.
 	server := binary + " app-server --listen " +
-		clcommon.ShellQuoteArg("unix://"+spec.CodexAppServerSocket)
+		clcommon.ShellQuoteArg(spec.CodexAppServerURL) +
+		" --ws-auth capability-token --ws-token-sha256 " +
+		clcommon.ShellQuoteArg(spec.CodexAppServerTokenSHA256)
+	relay := clcommon.ShellQuoteArg(spec.TclaudeExecutable) +
+		" session codex-app-server-relay --socket " +
+		clcommon.ShellQuoteArg(spec.CodexAppServerSocket) + " --upstream " +
+		clcommon.ShellQuoteArg(strings.TrimPrefix(spec.CodexAppServerURL, "ws://"))
 	pidFile := clcommon.ShellQuoteArg(spec.CodexAppServerPIDFile)
+	relayPIDFile := clcommon.ShellQuoteArg(spec.CodexAppServerPIDFile + ".relay")
 	logFile := clcommon.ShellQuoteArg(spec.CodexAppServerLogFile)
-	return prefix + "umask 077; " + server + " >" + logFile + " 2>&1 & " +
+	proofFile := clcommon.ShellQuoteArg(filepath.Join(filepath.Dir(spec.CodexAppServerSocket), "server.proved"))
+	return prefix + "umask 077; " +
+		server + " >" + logFile + " 2>&1 & " +
 		"tclaude_codex_server_pid=$!; " +
 		"echo \"$tclaude_codex_server_pid\" >" + pidFile + "; " +
-		"trap 'kill \"$tclaude_codex_server_pid\" 2>/dev/null; wait \"$tclaude_codex_server_pid\" 2>/dev/null' EXIT HUP INT TERM; " +
+		relay + " >>" + logFile + " 2>&1 & tclaude_codex_relay_pid=$!; " +
+		"echo \"$tclaude_codex_relay_pid\" >" + relayPIDFile + "; " +
+		"trap 'kill \"$tclaude_codex_relay_pid\" \"$tclaude_codex_server_pid\" 2>/dev/null; wait \"$tclaude_codex_relay_pid\" \"$tclaude_codex_server_pid\" 2>/dev/null' EXIT HUP INT TERM; " +
 		"tclaude_codex_wait=0; while [ ! -S " + clcommon.ShellQuoteArg(spec.CodexAppServerSocket) +
 		" ] && kill -0 \"$tclaude_codex_server_pid\" 2>/dev/null && [ \"$tclaude_codex_wait\" -lt 150 ]; do " +
 		"sleep 0.1; tclaude_codex_wait=$((tclaude_codex_wait + 1)); done; " +
 		"[ -S " + clcommon.ShellQuoteArg(spec.CodexAppServerSocket) + " ] || exit 70; " +
-		"chmod 600 " + clcommon.ShellQuoteArg(spec.CodexAppServerSocket) + " || exit 71; " + cmd
+		"chmod 600 " + clcommon.ShellQuoteArg(spec.CodexAppServerSocket) + " || exit 71; " +
+		"tclaude_codex_wait=0; while [ ! -f " + proofFile +
+		" ] && kill -0 \"$tclaude_codex_server_pid\" 2>/dev/null && [ \"$tclaude_codex_wait\" -lt 150 ]; do " +
+		"sleep 0.1; tclaude_codex_wait=$((tclaude_codex_wait + 1)); done; " +
+		"[ -f " + proofFile + " ] && kill -0 \"$tclaude_codex_server_pid\" 2>/dev/null || exit 74; " +
+		"tclaude_codex_capability=$(" + clcommon.ShellQuoteArg(spec.TclaudeExecutable) +
+		" session codex-app-server-token-consume --path " +
+		clcommon.ShellQuoteArg(spec.CodexAppServerTokenHandoff) + ") || exit 72; " +
+		"[ -n \"$tclaude_codex_capability\" ] || exit 73; " +
+		"TCLAUDE_CODEX_APP_SERVER_TOKEN=\"$tclaude_codex_capability\" " + cmd
 }
 
 // codexTOMLString renders an arbitrary validated sandbox-profile environment

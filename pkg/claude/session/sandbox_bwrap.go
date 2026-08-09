@@ -1067,6 +1067,21 @@ func WrapTclaudeLayerSpec(
 	spec TclaudeLayerLaunchSpec,
 	harnessCommand string,
 ) (string, error) {
+	return WrapTclaudeLayerSpecWithLoopbackBind(binary, spec, 0, harnessCommand)
+}
+
+// WrapTclaudeLayerSpecWithLoopbackBind renders a pane boundary that permits
+// one daemon-minted loopback listener. Darwin Seatbelt needs the explicit bind
+// slot; Linux's private network namespace permits loopback binds intrinsically.
+func WrapTclaudeLayerSpecWithLoopbackBind(
+	binary string,
+	spec TclaudeLayerLaunchSpec,
+	loopbackBindPort int,
+	harnessCommand string,
+) (string, error) {
+	if loopbackBindPort < 0 || loopbackBindPort > 65535 {
+		return "", fmt.Errorf("invalid tclaude-layer loopback bind port %d", loopbackBindPort)
+	}
 	if err := validateTclaudeLayerRouteHelper(spec.Effective, spec.Contract.RouteHelper); err != nil {
 		return "", err
 	}
@@ -1079,7 +1094,7 @@ func WrapTclaudeLayerSpec(
 		if runtime.GOOS != "darwin" {
 			return "", fmt.Errorf("darwin route slots are unsupported on %s", runtime.GOOS)
 		}
-		return tclaudeLayerCommandWithRouteSlots(
+		return tclaudeLayerCommandWithRouteSlotsAndLoopbackBind(
 			binary,
 			phase0WriteDirs,
 			privateWriteDirs,
@@ -1090,6 +1105,7 @@ func WrapTclaudeLayerSpec(
 			spec.Contract.DarwinRouteSlots,
 			spec.Contract.DarwinRouteReservation,
 			spec.Contract.RouteHelper,
+			loopbackBindPort,
 			harnessCommand,
 		)
 	}
@@ -1099,7 +1115,7 @@ func WrapTclaudeLayerSpec(
 			readOnlyBinds, socketPaths, plan, *spec.Contract.RouteHelper,
 			harnessCommand)
 	}
-	return tclaudeLayerCommand(
+	return tclaudeLayerCommandWithLoopbackBind(
 		binary,
 		phase0WriteDirs,
 		privateWriteDirs,
@@ -1107,6 +1123,7 @@ func WrapTclaudeLayerSpec(
 		readOnlyBinds,
 		socketPaths,
 		plan,
+		loopbackBindPort,
 		harnessCommand,
 	)
 }

@@ -2,11 +2,14 @@ package agentd
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -34,11 +37,26 @@ func installCodexAppServerGenerationProofForTest(t *testing.T, launchAlive bool)
 	t.Helper()
 	previousIdentity := codexAppServerProcessIdentity
 	previousLaunch := codexAppServerLaunchAlive
+	previousCapability := codexAppServerCapability
+	previousEndpoint := codexAppServerEndpoint
+	previousEndpointOwner := codexAppServerProcessOwnsEndpoint
+	previousRelayPID := codexAppServerRelayPID
+	previousServerPID := codexAppServerServerPID
 	codexAppServerProcessIdentity = func(int, string) (string, error) { return "test-process-generation", nil }
 	codexAppServerLaunchAlive = func(db.CodexAppServerRuntime) bool { return launchAlive }
+	codexAppServerCapability = func(string) (string, error) { return "test-capability", nil }
+	codexAppServerEndpoint = func(string) (string, error) { return "ws://127.0.0.1:43210", nil }
+	codexAppServerProcessOwnsEndpoint = func(int, string) bool { return true }
+	codexAppServerRelayPID = func(context.Context, string) (int, error) { return os.Getpid(), nil }
+	codexAppServerServerPID = func(context.Context, string, string) (int, error) { return os.Getpid(), nil }
 	t.Cleanup(func() {
 		codexAppServerProcessIdentity = previousIdentity
 		codexAppServerLaunchAlive = previousLaunch
+		codexAppServerCapability = previousCapability
+		codexAppServerEndpoint = previousEndpoint
+		codexAppServerProcessOwnsEndpoint = previousEndpointOwner
+		codexAppServerRelayPID = previousRelayPID
+		codexAppServerServerPID = previousServerPID
 	})
 }
 
@@ -62,6 +80,19 @@ func TestPrepareCodexAppServerRuntimeIsolatesAgents(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, os.FileMode(0o700), info.Mode().Perm())
 	}
+	firstToken, err := db.GetCodexAppServerCapability(first.CodexAppServerGeneration)
+	require.NoError(t, err)
+	secondToken, err := db.GetCodexAppServerCapability(second.CodexAppServerGeneration)
+	require.NoError(t, err)
+	assert.NotEqual(t, firstToken, secondToken, "every generation needs a fresh capability")
+	firstDigest := sha256.Sum256([]byte(firstToken))
+	assert.Equal(t, hex.EncodeToString(firstDigest[:]), first.CodexAppServerTokenSHA256)
+	handoffInfo, err := os.Stat(first.CodexAppServerTokenHandoff)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), handoffInfo.Mode().Perm())
+	removeCodexAppServerGeneration(first.CodexAppServerSocket)
+	_, err = db.GetCodexAppServerCapability(first.CodexAppServerGeneration)
+	assert.ErrorContains(t, err, "unavailable", "generation cleanup must erase the durable restart credential")
 }
 
 func TestSessionArgsCarryPrivateCodexAppServerGeneration(t *testing.T) {
@@ -69,13 +100,17 @@ func TestSessionArgsCarryPrivateCodexAppServerGeneration(t *testing.T) {
 		"new": sessionNewArgs(clcommon.SpawnArgs{
 			Label: "worker", Cwd: "/tmp/work", CodexAppServer: true,
 			CodexAppServerGeneration: "generation-1",
-			CodexAppServerSocket:     "/tmp/app.sock", CodexAppServerPIDFile: "/tmp/app.pid",
+			CodexAppServerSocket:     "/tmp/app.sock", CodexAppServerURL: "ws://127.0.0.1:43210",
+			CodexAppServerTokenSHA256: "digest", CodexAppServerTokenHandoff: "/tmp/handoff",
+			CodexAppServerPIDFile: "/tmp/app.pid",
 			CodexAppServerLogFile: "/tmp/app.log",
 		}),
 		"resume": sessionResumeArgs(clcommon.SpawnArgs{
 			ConvID: "thread-1", Cwd: "/tmp/work", CodexAppServer: true,
 			CodexAppServerGeneration: "generation-1",
-			CodexAppServerSocket:     "/tmp/app.sock", CodexAppServerPIDFile: "/tmp/app.pid",
+			CodexAppServerSocket:     "/tmp/app.sock", CodexAppServerURL: "ws://127.0.0.1:43210",
+			CodexAppServerTokenSHA256: "digest", CodexAppServerTokenHandoff: "/tmp/handoff",
+			CodexAppServerPIDFile: "/tmp/app.pid",
 			CodexAppServerLogFile: "/tmp/app.log",
 		}),
 	} {
@@ -85,6 +120,9 @@ func TestSessionArgsCarryPrivateCodexAppServerGeneration(t *testing.T) {
 			assert.True(t, slices.Contains(args, "/tmp/app.sock"))
 			assert.True(t, slices.Contains(args, "/tmp/app.pid"))
 			assert.True(t, slices.Contains(args, "/tmp/app.log"))
+			assert.True(t, slices.Contains(args, "ws://127.0.0.1:43210"))
+			assert.True(t, slices.Contains(args, "digest"))
+			assert.True(t, slices.Contains(args, "/tmp/handoff"))
 		})
 	}
 	plain := sessionNewArgs(clcommon.SpawnArgs{Label: "worker", Cwd: "/tmp/work"})
@@ -108,6 +146,30 @@ func TestExistingThreadBootstrapFactIsLimitedToOrdinaryResume(t *testing.T) {
 	assert.True(t, recorded[0].CodexAppServerExistingThread)
 	assert.False(t, recorded[1].CodexAppServerExistingThread,
 		"a resume-shaped clone names a fresh fork and must retain the TUI-hook birth gate")
+}
+
+func TestUnboundRecoveryRecreatesListenerProofBeforeTUIConsumesToken(t *testing.T) {
+	resetTestDB(t)
+	installCodexAppServerGenerationProofForTest(t, true)
+	dir, err := os.MkdirTemp("/tmp", "tcl-codex-recovery-proof-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(dir)) })
+	sim, err := testharness.StartCodexAppServerSim(filepath.Join(dir, "app.sock"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sim.Close() })
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "server.pid"),
+		[]byte(strconv.Itoa(os.Getpid())+"\n"), 0o600))
+
+	runtime := db.CodexAppServerRuntime{
+		Generation: "restart-before-tui", LaunchID: "launch", AgentID: "agent",
+		SocketPath: sim.SocketPath(), CodexVersion: "0.147.0", State: db.CodexAppServerWarming,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	require.NoError(t, recoverUnboundCodexAppServerLaunch(ctx, runtime))
+	proof, err := os.ReadFile(filepath.Join(dir, codexAppServerProofFile))
+	require.NoError(t, err)
+	assert.Equal(t, "proved", strings.TrimSpace(string(proof)))
 }
 
 func TestExactCodexResumeCommandLineRequiresHarnessArgvNotWrapperText(t *testing.T) {

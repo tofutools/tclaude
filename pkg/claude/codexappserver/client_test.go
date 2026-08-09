@@ -330,6 +330,33 @@ func TestVersionCompatibilityRange(t *testing.T) {
 	}
 }
 
+func TestDialRequiresConfiguredBearerWhenEndpointIsKnown(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "codexappserver-auth-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sim, err := testharness.StartAuthenticatedCodexAppServerSim(filepath.Join(dir, "app.sock"), "generation-secret")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sim.Close() })
+
+	for _, token := range []string{"", "wrong-generation-secret"} {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		client, dialErr := codexappserver.Dial(ctx, sim.SocketPath(), &codexappserver.Options{
+			CodexVersion: "0.147.0", BearerToken: token,
+		})
+		cancel()
+		assert.Error(t, dialErr)
+		assert.Nil(t, client)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	client, err := codexappserver.Dial(ctx, sim.SocketPath(), &codexappserver.Options{
+		CodexVersion: "0.147.0", BearerToken: "generation-secret",
+	})
+	require.NoError(t, err)
+	require.NoError(t, client.Close())
+}
+
 func TestDialRejectsUnverifiedOrMismatchedServerVersion(t *testing.T) {
 	for _, test := range []struct {
 		name         string

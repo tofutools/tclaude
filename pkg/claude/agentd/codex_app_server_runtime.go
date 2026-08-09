@@ -4,13 +4,14 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -26,6 +27,9 @@ import (
 
 const codexAppServerStartupTimeout = 15 * time.Second
 const codexAppServerIdentityFile = "server.identity"
+const codexAppServerTokenHandoffFile = "tui-capability.handoff"
+const codexAppServerEndpointFile = "server.endpoint"
+const codexAppServerProofFile = "server.proved"
 
 var codexAppServerRecoveryOwner = func() string {
 	var token [16]byte
@@ -97,16 +101,106 @@ func prepareCodexAppServerRuntime(args *clcommon.SpawnArgs) error {
 	args.CodexAppServerSocket = filepath.Join(generationDir, "app.sock")
 	args.CodexAppServerPIDFile = filepath.Join(generationDir, "server.pid")
 	args.CodexAppServerLogFile = filepath.Join(generationDir, "server.log")
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		_ = os.Remove(generationDir)
+		return fmt.Errorf("allocate Codex app-server loopback endpoint: %w", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	if err := listener.Close(); err != nil {
+		_ = os.Remove(generationDir)
+		return fmt.Errorf("release Codex app-server loopback endpoint: %w", err)
+	}
+	var secret [32]byte
+	if _, err := rand.Read(secret[:]); err != nil {
+		_ = os.Remove(generationDir)
+		return fmt.Errorf("mint Codex app-server capability: %w", err)
+	}
+	token := base64.RawURLEncoding.EncodeToString(secret[:])
+	tokenDigest := sha256.Sum256([]byte(token))
+	args.CodexAppServerURL = fmt.Sprintf("ws://127.0.0.1:%d", port)
+	args.CodexAppServerTokenSHA256 = hex.EncodeToString(tokenDigest[:])
+	args.CodexAppServerTokenHandoff = filepath.Join(generationDir, codexAppServerTokenHandoffFile)
+	if err := writeExclusiveSecret(filepath.Join(generationDir, codexAppServerEndpointFile), args.CodexAppServerURL); err != nil {
+		_ = os.RemoveAll(generationDir)
+		return fmt.Errorf("record Codex app-server loopback endpoint: %w", err)
+	}
+	if err := writeExclusiveSecret(args.CodexAppServerTokenHandoff, token); err != nil {
+		_ = os.Remove(generationDir)
+		return fmt.Errorf("write one-shot Codex TUI capability handoff: %w", err)
+	}
 	runtime := db.CodexAppServerRuntime{
 		Generation: generation, LaunchID: firstNonEmpty(args.Label, args.ConvID),
 		AgentID: owner, ConvID: args.ConvID, SocketPath: args.CodexAppServerSocket,
 		State: db.CodexAppServerWarming,
 	}
-	if err := db.UpsertCodexAppServerRuntime(runtime); err != nil {
-		_ = os.Remove(generationDir)
-		return fmt.Errorf("persist warming Codex app-server runtime: %w", err)
+	if err := db.InsertCodexAppServerRuntimeWithCapability(runtime, token); err != nil {
+		_ = os.RemoveAll(generationDir)
+		return fmt.Errorf("persist warming Codex app-server runtime and capability: %w", err)
 	}
 	return nil
+}
+
+func writeExclusiveSecret(path, token string) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := file.WriteString(token + "\n"); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return err
+	}
+	return nil
+}
+
+var codexAppServerCapability = db.GetCodexAppServerCapability
+var codexAppServerProcessOwnsEndpoint = processOwnsCodexAppServerEndpoint
+var codexAppServerServerPID = discoverCodexAppServerPID
+
+var codexAppServerRelayPID = discoverCodexAppServerRelayPID
+
+func readCodexAppServerEndpoint(socketPath string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(socketPath), codexAppServerEndpointFile))
+	if err != nil {
+		return "", err
+	}
+	endpoint := strings.TrimSpace(string(data))
+	if !strings.HasPrefix(endpoint, "ws://127.0.0.1:") {
+		return "", errors.New("recorded Codex app-server endpoint is not IPv4 loopback")
+	}
+	return endpoint, nil
+}
+
+var codexAppServerEndpoint = readCodexAppServerEndpoint
+
+func waitForCodexAppServerEndpointOwner(ctx context.Context, pid int, socketPath string) error {
+	endpoint, err := codexAppServerEndpoint(socketPath)
+	if err != nil {
+		return err
+	}
+	for {
+		if codexAppServerProcessOwnsEndpoint(pid, endpoint) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("prove Codex app-server loopback listener owner: %w", ctx.Err())
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+}
+
+func codexAppServerClientOptions(runtime db.CodexAppServerRuntime) (*codexappserver.Options, error) {
+	token, err := codexAppServerCapability(runtime.Generation)
+	if err != nil {
+		return nil, err
+	}
+	return &codexappserver.Options{CodexVersion: runtime.CodexVersion, BearerToken: token}, nil
 }
 
 func firstNonEmpty(values ...string) string {
@@ -160,18 +254,34 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 	}
 	runtime.CodexVersion = version
 
-	pid, err := waitForCodexAppServerPID(ctx, args.CodexAppServerPIDFile)
+	pid, err := codexAppServerServerPID(ctx, runtime.SocketPath, args.CodexAppServerPIDFile)
 	if err != nil {
 		fail(err)
 		return
 	}
 	runtime.ServerPID = pid
-	if err := waitForOwnedCodexSocket(ctx, runtime.SocketPath, pid); err != nil {
+	relayPID, err := codexAppServerRelayPID(ctx, runtime.SocketPath)
+	if err != nil {
 		fail(err)
 		return
 	}
-	if err := recordCodexAppServerProcessIdentity(runtime.SocketPath, pid); err != nil {
+	if err := waitForOwnedCodexSocket(ctx, runtime.SocketPath, relayPID); err != nil {
 		fail(err)
+		return
+	}
+	if err := waitForCodexAppServerEndpointOwner(ctx, pid, runtime.SocketPath); err != nil {
+		fail(err)
+		return
+	}
+	if err := recordCodexAppServerProcessIdentity(runtime.SocketPath, relayPID); err != nil {
+		fail(err)
+		return
+	}
+	// Release the TUI only after agentd has proved both process identities and
+	// the exact native listener owner. Until then the one-shot capability stays
+	// unopened, so an endpoint-allocation race cannot harvest it.
+	if err := recordCodexAppServerProof(runtime.SocketPath); err != nil {
+		fail(fmt.Errorf("record Codex app-server listener proof: %w", err))
 		return
 	}
 	// Do not dial before the TUI hook has proved that a FRESH thread exists and is
@@ -196,8 +306,12 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 			return
 		}
 	}
-	client, err := codexappserver.Dial(ctx, runtime.SocketPath,
-		&codexappserver.Options{CodexVersion: runtime.CodexVersion})
+	clientOptions, err := codexAppServerClientOptions(*runtime)
+	if err != nil {
+		fail(err)
+		return
+	}
+	client, err := codexappserver.Dial(ctx, runtime.SocketPath, clientOptions)
 	if err != nil {
 		fail(err)
 		return
@@ -268,30 +382,42 @@ func runCodexAppServerRecoverySweep() {
 	}
 	for i := range runtimes {
 		runtime := runtimes[i]
-		if runtime.ThreadID == "" || runtime.ConvID == "" || runtime.CodexVersion == "" {
-			// A pre-bind launch may still receive its validated TUI hook after the
-			// daemon restart. Leave it warming for the ordinary startup window so
-			// that hook can bind it; after that, fail visibly instead of retaining
-			// a permanently ambiguous generation.
-			if runtime.State == db.CodexAppServerWarming &&
-				time.Since(runtime.CreatedAt) >= codexAppServerStartupTimeout {
-				claimed, claimErr := db.ClaimExpiredUnboundCodexAppServerRuntimeRecovery(
-					runtime.Generation, codexAppServerRecoveryOwner, time.Now().UTC(), codexAppServerStartupTimeout)
-				if claimErr != nil {
-					slog.Warn("claim unbound Codex app-server recovery", "generation", runtime.Generation, "error", claimErr)
-					continue
-				}
-				if claimed {
-					detail := "daemon restart recovery did not receive a validated Codex TUI binding before the startup deadline"
-					changed, failErr := db.FailCodexAppServerRuntimeRecovery(
-						runtime.Generation, codexAppServerRecoveryOwner, detail)
-					if failErr != nil {
-						slog.Warn("expire unbound Codex app-server recovery", "generation", runtime.Generation, "error", failErr)
-					} else if changed {
-						stopCodexAppServerPaneAfterControlFailure(runtime, detail)
-					}
+		incomplete := runtime.ThreadID == "" || runtime.ConvID == "" || runtime.CodexVersion == ""
+		if incomplete && runtime.State == db.CodexAppServerWarming &&
+			time.Since(runtime.CreatedAt) >= codexAppServerStartupTimeout {
+			claimed, claimErr := db.ClaimExpiredUnboundCodexAppServerRuntimeRecovery(
+				runtime.Generation, codexAppServerRecoveryOwner, time.Now().UTC(), codexAppServerStartupTimeout)
+			if claimErr != nil {
+				slog.Warn("claim unbound Codex app-server recovery", "generation", runtime.Generation, "error", claimErr)
+				continue
+			}
+			if claimed {
+				detail := "daemon restart recovery did not receive a validated Codex TUI binding before the startup deadline"
+				changed, failErr := db.FailCodexAppServerRuntimeRecovery(
+					runtime.Generation, codexAppServerRecoveryOwner, detail)
+				if failErr != nil {
+					slog.Warn("expire unbound Codex app-server recovery", "generation", runtime.Generation, "error", failErr)
+				} else if changed {
+					stopCodexAppServerPaneAfterControlFailure(runtime, detail)
 				}
 			}
+			continue
+		}
+		if runtime.CodexVersion != "" && (runtime.ThreadID == "" || runtime.ConvID == "") {
+			// A restart may land after the pane has started the native server and
+			// relay but before the original daemon released the TUI. Re-prove the
+			// launch and create the same non-secret barrier; the eventual validated
+			// TUI hook then binds the warming row normally.
+			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+			recoveryErr := recoverUnboundCodexAppServerLaunch(ctx, runtime)
+			cancel()
+			if recoveryErr != nil {
+				slog.Debug("Codex app-server pre-bind recovery proof not ready",
+					"generation", runtime.Generation, "error", recoveryErr)
+			}
+			continue
+		}
+		if incomplete {
 			continue
 		}
 		if codexAppServerReady(runtime.ConvID) {
@@ -307,6 +433,45 @@ func runCodexAppServerRecoverySweep() {
 			go recoverCodexAppServerRuntime(runtime, codexAppServerRecoveryOwner)
 		}
 	}
+}
+
+func recoverUnboundCodexAppServerLaunch(ctx context.Context, runtime db.CodexAppServerRuntime) error {
+	if err := codexappserver.CheckVersion(runtime.CodexVersion); err != nil {
+		return err
+	}
+	pid, err := codexAppServerServerPID(ctx, runtime.SocketPath,
+		filepath.Join(filepath.Dir(runtime.SocketPath), "server.pid"))
+	if err != nil {
+		return err
+	}
+	relayPID, err := codexAppServerRelayPID(ctx, runtime.SocketPath)
+	if err != nil {
+		return err
+	}
+	if err := waitForOwnedCodexSocket(ctx, runtime.SocketPath, relayPID); err != nil {
+		return err
+	}
+	if err := waitForCodexAppServerEndpointOwner(ctx, pid, runtime.SocketPath); err != nil {
+		return err
+	}
+	if err := verifyCodexAppServerProcessIdentity(runtime.SocketPath, relayPID); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err := recordCodexAppServerProcessIdentity(runtime.SocketPath, relayPID); err != nil {
+			return err
+		}
+	}
+	return recordCodexAppServerProof(runtime.SocketPath)
+}
+
+func recordCodexAppServerProof(socketPath string) error {
+	path := filepath.Join(filepath.Dir(socketPath), codexAppServerProofFile)
+	err := writeExclusiveSecret(path, "proved")
+	if os.IsExist(err) {
+		return nil
+	}
+	return err
 }
 
 func recoverCodexAppServerRuntime(runtime db.CodexAppServerRuntime, owner string) {
@@ -328,17 +493,27 @@ func recoverCodexAppServerRuntime(runtime db.CodexAppServerRuntime, owner string
 	pid := runtime.ServerPID
 	if pid <= 1 {
 		var err error
-		pid, err = waitForCodexAppServerPID(ctx, filepath.Join(filepath.Dir(runtime.SocketPath), "server.pid"))
+		pid, err = codexAppServerServerPID(ctx, runtime.SocketPath,
+			filepath.Join(filepath.Dir(runtime.SocketPath), "server.pid"))
 		if err != nil {
 			fail(err)
 			return
 		}
 	}
-	if err := waitForOwnedCodexSocket(ctx, runtime.SocketPath, pid); err != nil {
+	relayPID, err := codexAppServerRelayPID(ctx, runtime.SocketPath)
+	if err != nil {
 		fail(err)
 		return
 	}
-	if err := verifyCodexAppServerProcessIdentity(runtime.SocketPath, pid); err != nil {
+	if err := waitForOwnedCodexSocket(ctx, runtime.SocketPath, relayPID); err != nil {
+		fail(err)
+		return
+	}
+	if err := waitForCodexAppServerEndpointOwner(ctx, pid, runtime.SocketPath); err != nil {
+		fail(err)
+		return
+	}
+	if err := verifyCodexAppServerProcessIdentity(runtime.SocketPath, relayPID); err != nil {
 		fail(fmt.Errorf("re-prove Codex app-server process generation: %w", err))
 		return
 	}
@@ -347,8 +522,12 @@ func recoverCodexAppServerRuntime(runtime db.CodexAppServerRuntime, owner string
 		fail(errors.New("recorded Codex TUI launch/pane is no longer alive"))
 		return
 	}
-	client, err := codexappserver.Dial(ctx, runtime.SocketPath,
-		&codexappserver.Options{CodexVersion: runtime.CodexVersion})
+	clientOptions, err := codexAppServerClientOptions(runtime)
+	if err != nil {
+		fail(err)
+		return
+	}
+	client, err := codexappserver.Dial(ctx, runtime.SocketPath, clientOptions)
 	if err != nil {
 		fail(fmt.Errorf("reconnect Codex app-server: %w", err))
 		return
@@ -434,27 +613,6 @@ func waitForCodexAppServerVersion(ctx context.Context, generation string) (strin
 		select {
 		case <-ctx.Done():
 			return "", fmt.Errorf("wait for exact Codex version proof: %w", ctx.Err())
-		case <-time.After(25 * time.Millisecond):
-		}
-	}
-}
-
-func waitForCodexAppServerPID(ctx context.Context, path string) (int, error) {
-	for {
-		data, err := os.ReadFile(path)
-		if err == nil {
-			pid, parseErr := strconv.Atoi(strings.TrimSpace(string(data)))
-			if parseErr == nil && pid > 1 {
-				return pid, nil
-			}
-			return 0, fmt.Errorf("invalid Codex app-server pid file %s", path)
-		}
-		if !os.IsNotExist(err) {
-			return 0, err
-		}
-		select {
-		case <-ctx.Done():
-			return 0, fmt.Errorf("wait for Codex app-server pid: %w", ctx.Err())
 		case <-time.After(25 * time.Millisecond):
 		}
 	}
@@ -548,6 +706,23 @@ func verifyCodexAppServerProcessIdentity(socketPath string, pid int) error {
 		return errors.New("codex app-server PID/start/argv identity no longer matches its recorded generation")
 	}
 	return nil
+}
+
+func verifyCodexAppServerRuntimeProcesses(runtime db.CodexAppServerRuntime) (int, error) {
+	endpoint, err := codexAppServerEndpoint(runtime.SocketPath)
+	if err != nil || !codexAppServerProcessOwnsEndpoint(runtime.ServerPID, endpoint) {
+		return 0, errors.New("codex app-server PID does not own its recorded loopback listener")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	relayPID, err := codexAppServerRelayPID(ctx, runtime.SocketPath)
+	if err != nil {
+		return 0, err
+	}
+	if err := verifyCodexAppServerProcessIdentity(runtime.SocketPath, relayPID); err != nil {
+		return 0, err
+	}
+	return relayPID, nil
 }
 
 func liveCodexAppServerLaunch(runtime db.CodexAppServerRuntime) bool {
@@ -686,11 +861,11 @@ func reconnectCodexAppServerHandle(handle *codexAppServerHandle) bool {
 			return false
 		}
 		proofCtx, cancelProof := context.WithTimeout(context.Background(), 500*time.Millisecond)
-		proofErr := waitForOwnedCodexSocket(proofCtx, runtime.SocketPath, runtime.ServerPID)
-		cancelProof()
+		relayPID, proofErr := verifyCodexAppServerRuntimeProcesses(*runtime)
 		if proofErr == nil {
-			proofErr = verifyCodexAppServerProcessIdentity(runtime.SocketPath, runtime.ServerPID)
+			proofErr = waitForOwnedCodexSocket(proofCtx, runtime.SocketPath, relayPID)
 		}
+		cancelProof()
 		if proofErr == nil && !codexAppServerLaunchAlive(*runtime) {
 			proofErr = errors.New("recorded Codex TUI launch/pane is no longer alive")
 		}
@@ -698,9 +873,13 @@ func reconnectCodexAppServerHandle(handle *codexAppServerHandle) bool {
 			handle.mutations.Unlock()
 			return false
 		}
+		clientOptions, optionsErr := codexAppServerClientOptions(*runtime)
+		if optionsErr != nil {
+			handle.mutations.Unlock()
+			return false
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), codexAppServerCallTimeout)
-		client, dialErr := codexappserver.Dial(ctx, runtime.SocketPath,
-			&codexappserver.Options{CodexVersion: runtime.CodexVersion})
+		client, dialErr := codexappserver.Dial(ctx, runtime.SocketPath, clientOptions)
 		if dialErr == nil {
 			var thread codexappserver.Thread
 			thread, dialErr = client.ReadThread(ctx, codexappserver.ThreadReadParams{ThreadID: runtime.ThreadID})
@@ -769,9 +948,11 @@ func stopCodexAppServerRuntime(convID, launchID string) {
 	// signal that value: after process exit it may have been recycled. A live
 	// claim is signalled only when its recorded OS start/argv identity still
 	// proves this exact generation and socket.
-	if liveClaim && runtime.ServerPID > 1 &&
-		verifyCodexAppServerProcessIdentity(runtime.SocketPath, runtime.ServerPID) == nil {
-		_ = signalCodexAppServerProcess(runtime.ServerPID, syscall.SIGTERM)
+	if liveClaim && runtime.ServerPID > 1 {
+		_, proofErr := verifyCodexAppServerRuntimeProcesses(*runtime)
+		if proofErr == nil {
+			_ = signalCodexAppServerProcess(runtime.ServerPID, syscall.SIGTERM)
+		}
 	}
 	runtime.State = db.CodexAppServerDead
 	runtime.Detail = "launch exited"
@@ -791,11 +972,16 @@ func stopFailedCodexAppServerLaunch(convID, launchID, tmuxSession string) {
 
 func removeCodexAppServerGeneration(socketPath string) {
 	dir := filepath.Dir(socketPath)
+	generation := filepath.Base(dir)
 	if filepath.Base(socketPath) != "app.sock" || filepath.Base(filepath.Dir(filepath.Dir(dir))) != "codex" {
 		return
 	}
 	_ = os.Remove(socketPath)
 	_ = os.Remove(filepath.Join(dir, "server.pid"))
+	_ = os.Remove(filepath.Join(dir, "server.pid.relay"))
+	_ = os.Remove(filepath.Join(dir, codexAppServerEndpointFile))
+	_ = os.Remove(filepath.Join(dir, codexAppServerTokenHandoffFile))
+	_ = os.Remove(filepath.Join(dir, codexAppServerProofFile))
 	_ = os.Remove(filepath.Join(dir, codexAppServerIdentityFile))
 	// Keep a non-empty server.log for diagnostics; remove an empty one so the
 	// generation can disappear cleanly.
@@ -803,6 +989,7 @@ func removeCodexAppServerGeneration(socketPath string) {
 		_ = os.Remove(filepath.Join(dir, "server.log"))
 	}
 	_ = os.Remove(dir)
+	_ = db.DeleteCodexAppServerCapability(generation)
 }
 
 func codexAppServerReady(convID string) bool {

@@ -278,7 +278,7 @@ func TestSeatbeltProxyFloorCanCarveOneManagedServerBind(t *testing.T) {
 		"the carveout must narrow the existing deny, not add a competing rule")
 }
 
-func TestSeatbeltLoopbackBindRequiresProxyFloor(t *testing.T) {
+func TestSeatbeltLoopbackBindRequiresRestrictedFloor(t *testing.T) {
 	_, _, err := renderSeatbeltProfileWithLoopbackBind(
 		nil,
 		nil,
@@ -292,7 +292,33 @@ func TestSeatbeltLoopbackBindRequiresProxyFloor(t *testing.T) {
 		43210,
 	)
 	require.ErrorContains(t, err,
-		"seatbelt loopback bind exception requires the filtering proxy floor")
+		"seatbelt loopback bind exception requires an isolated or filtered network floor")
+}
+
+func TestSeatbeltIsolatedFloorCarvesAppServerBindAndConnect(t *testing.T) {
+	const appServerPort = 43210
+	profile, _, err := renderSeatbeltProfileWithLoopbackBind(
+		nil,
+		[]string{proxyFloorAgentdSocket},
+		sandboxpolicy.MountPlan{
+			NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd,
+			Entries: []sandboxpolicy.MountEntry{
+				{Path: proxyFloorAgentdSocket, Mode: sandboxpolicy.MountRO},
+			},
+		},
+		netip.AddrPort{},
+		[]string{"/Users/dev/.tclaude/data"},
+		"/private/tmp/tmux-501",
+		"/private/var/folders/ab/runtime/T",
+		nil,
+		nil,
+		appServerPort,
+	)
+	require.NoError(t, err)
+	assert.Contains(t, profile,
+		`(deny network-bind (require-not (local tcp "localhost:43210")))`)
+	assert.Contains(t, profile,
+		`(require-not (remote tcp "localhost:43210"))`)
 }
 
 // seatbeltRuleLinesAdded reports the rule lines present in got and absent from

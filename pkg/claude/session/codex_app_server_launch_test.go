@@ -3,6 +3,7 @@ package session
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -84,14 +85,19 @@ func TestCodexAppServerGenerationJoinsTclaudeLayerPrivateWriteContract(t *testin
 	require.NoError(t, os.Chmod(generation, 0o700))
 	params := &NewParams{
 		CodexAppServer: true, CodexAppServerGeneration: filepath.Base(generation),
-		CodexAppServerSocket:  filepath.Join(generation, "app.sock"),
-		CodexAppServerPIDFile: filepath.Join(generation, "server.pid"),
-		CodexAppServerLogFile: filepath.Join(generation, "server.log"),
+		CodexAppServerSocket:       filepath.Join(generation, "app.sock"),
+		CodexAppServerURL:          "ws://127.0.0.1:43210",
+		CodexAppServerTokenSHA256:  strings.Repeat("ab", 32),
+		CodexAppServerTokenHandoff: filepath.Join(generation, "tui-capability.handoff"),
+		CodexAppServerPIDFile:      filepath.Join(generation, "server.pid"),
+		CodexAppServerLogFile:      filepath.Join(generation, "server.log"),
 	}
 	privateDir, err := codexAppServerPrivateWriteDir(params)
 	require.NoError(t, err)
 	require.NotNil(t, privateDir)
 	assert.Equal(t, TclaudeLayerPrivateWriteDir{Parent: owner, Current: generation}, *privateDir)
+	assert.Equal(t, 43210, codexAppServerLoopbackPort(params),
+		"the daemon-minted listener must be threaded into the Darwin Seatbelt wrapper")
 
 	workspace := filepath.Join(home, "work")
 	stateRoot := filepath.Join(home, ".codex")
