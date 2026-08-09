@@ -110,9 +110,19 @@ func loadConvEntries(projectPath string) []ConvEntry {
 
 // ExtractIDFromCompletion extracts just the ID from autocomplete format
 // e.g., "0459cd73_[title]_prompt..." -> "0459cd73"
+//
+// IDs are not universally underscore-free: OpenCode conversation ids are
+// "ses_<token>", and a resumed OpenCode session row carries that id as its PK.
+// The split has to skip that prefix, or an attach/focus/kill handed a full
+// OpenCode id would resolve the meaningless prefix "ses" — ambiguous the
+// moment two OpenCode conversations exist.
 func ExtractIDFromCompletion(s string) string {
-	if idx := strings.Index(s, "_"); idx > 0 {
-		return s[:idx]
+	prefixEnd := 0
+	if strings.HasPrefix(s, "ses_") {
+		prefixEnd = len("ses_")
+	}
+	if idx := strings.Index(s[prefixEnd:], "_"); idx > 0 {
+		return s[:prefixEnd+idx]
 	}
 	return s
 }
