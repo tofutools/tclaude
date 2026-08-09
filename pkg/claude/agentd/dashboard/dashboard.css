@@ -1009,7 +1009,12 @@ a.branch-link:hover { color: #58a6ff; text-decoration: underline; }
    component. Absolute positioning hung the panel off a table row, so opening
    a tooltip on a row near the bottom stretched the dashboard's scroll area;
    fixed takes it out of the document's overflow entirely. The component also
-   flips it above the badge when there is more room up there. */
+   flips it above the badge when there is more room up there.
+
+   NOTE: `fixed` here depends on no ancestor of the Groups member table
+   creating a containing block — a `transform`, `filter`, `perspective` or
+   `contain: paint` on any wrapper silently turns this back into `absolute`
+   and reinstates the scroll-area growth this rule exists to fix. */
 .ci-panel {
   display: block; position: fixed; z-index: 30;
   width: min(360px, calc(100vw - 32px)); max-height: min(52vh, 320px);
@@ -1022,17 +1027,13 @@ a.branch-link:hover { color: #58a6ff; text-decoration: underline; }
 /* The 7px between badge and panel belongs to neither, so a pointer travelling
    toward the list would leave the hover root and close the panel mid-motion
    (this component unmounts the panel on close, so that would also abort its
-   in-flight poll). Bridge the gap with a transparent strip on the root — it
-   exists only while the panel is open, so it never becomes an invisible hover
-   target under a closed badge, and it follows the panel when placement flips.
-   It cannot live on .ci-panel: that box is overflow:auto and would clip
-   anything outside its padding box. */
-.ci-hover.is-open::after {
-  content: ""; position: absolute; left: 0;
-  width: min(360px, calc(100vw - 32px)); height: 9px;
-}
-.ci-hover.ci-place-below::after { top: 100%; }
-.ci-hover.ci-place-above::after { bottom: 100%; }
+   in-flight poll). .ci-bridge is a transparent strip spanning that gap: a DOM
+   child of the hover root, so the pointer stays "inside" it, but positioned
+   against the viewport like the panel, so it adds nothing to the document's
+   scroll area and can span both boxes however the placement lands. It exists
+   only while the panel is open. It cannot live on .ci-panel: that box is
+   overflow:auto and would clip anything outside its padding box. */
+.ci-bridge { position: fixed; z-index: 29; }
 .ci-panel-heading { color: #f0f6fc; font-size: 12px; font-weight: 700; letter-spacing: 0.2px; }
 .ci-panel-summary { margin: 2px 0 8px; color: #8b949e; font-size: 11px; }
 .ci-checks { margin: 0; padding: 0; list-style: none; }

@@ -795,7 +795,10 @@ time, plus a link to the PR's checks page on GitHub; the panel stays open while
 the pointer is over it. It is positioned against the viewport rather than the
 table row, so opening it never extends the page's scroll area, and it flips
 above the badge when a low row leaves more room up there — defaulting to below,
-where the eye expects it.
+where the eye expects it. The side is chosen once, from the panel's maximum
+height, so it never moves when the checks finish loading; the panel is kept
+clear of the footer bar and the agent dock, and capped to the height actually
+available so a long list scrolls inside it.
 
 The check data costs nothing on the 2-second snapshot: it rides along on the
 `gh pr view` calls the branch-link and presented-PR refreshes already make, and

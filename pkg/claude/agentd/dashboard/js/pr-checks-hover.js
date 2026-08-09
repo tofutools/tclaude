@@ -21,83 +21,186 @@ const html = htm.bind(h);
 // scroll it never closes it.
 
 const PR_CHECKS_POLL_MS = 6000;
-// Gap between badge and panel, and the margin the panel keeps from the
-// viewport edges. PANEL_MAX_H matches the CSS cap; placement narrows it
-// further when the chosen side has less room than that.
+// Gap between badge and panel, and the margin the panel keeps from the edges
+// of the usable area. PANEL_MAX_H mirrors the 320px arm of the CSS cap; the
+// 52vh arm is applied in JS too, because the inline max-height this code
+// writes overrides the whole CSS declaration.
 const PANEL_GAP = 7;
 const PANEL_MARGIN = 8;
 const PANEL_MAX_H = 320;
+const PANEL_MIN_H = 120;
 
-// placePRChecksPanel decides where the panel goes, given the badge's rect and
-// the panel's natural size. Two things drive it:
+// placePRChecksPanel decides where the panel goes, given the badge's rect, the
+// panel's width and the usable area (the viewport minus whatever fixed chrome
+// owns its edges). Three rules:
 //
 //   - The panel is positioned relative to the VIEWPORT (fixed), not the row.
 //     An absolutely-positioned panel hanging off a row near the bottom of a
 //     long table stretches the document's scroll area, so merely opening a
 //     tooltip made the whole dashboard scrollable further down.
-//   - Below is the default because that is where the eye expects it, but a
-//     badge low on the screen gets it above instead — and only when there is
-//     genuinely more room up there, so a badge in the middle of a tall
-//     viewport keeps the familiar downward placement.
+//   - Below by default — that is where the eye expects it — flipping above
+//     only when the panel cannot fit below AND there is genuinely more room
+//     above, so a badge mid-screen keeps the familiar downward placement.
+//   - The side is decided against the panel's MAXIMUM height, never its
+//     current content height. When the fetch resolves, an empty "Fetching
+//     checks…" panel becomes a full list; sizing the decision on what is
+//     rendered right now would flip the panel to the other side mid-hover,
+//     yanking it out from under a pointer already travelling toward it (and
+//     unmounting it, which aborts the poll). Worst-case sizing means the
+//     answer at open is the answer for the whole hover.
 //
-// Whatever side wins, the panel is clamped into the viewport and told how
-// tall it may be, so it scrolls internally rather than running off-screen.
-export function placePRChecksPanel({ anchor, panel, viewport }) {
-  const spaceBelow = viewport.height - anchor.bottom - PANEL_GAP - PANEL_MARGIN;
-  const spaceAbove = anchor.top - PANEL_GAP - PANEL_MARGIN;
-  const wanted = Math.min(panel.height || PANEL_MAX_H, PANEL_MAX_H);
-  const above = wanted > spaceBelow && spaceAbove > spaceBelow;
-  const room = Math.max(80, above ? spaceAbove : spaceBelow);
-  const maxHeight = Math.min(wanted, room);
-  const left = Math.max(
-    PANEL_MARGIN,
-    Math.min(anchor.left, viewport.width - panel.width - PANEL_MARGIN),
+// Whatever side wins, the result is clamped into the usable area and capped
+// to the height actually available, so a long list scrolls inside the panel
+// instead of running off-screen or under the footer.
+export function placePRChecksPanel({ anchor, panel, area }) {
+  const cap = Math.max(PANEL_MIN_H, Math.min(PANEL_MAX_H, Math.round(area.height * 0.52)));
+  const spaceBelow = area.bottom - anchor.bottom - PANEL_GAP - PANEL_MARGIN;
+  const spaceAbove = anchor.top - area.top - PANEL_GAP - PANEL_MARGIN;
+  const above = cap > spaceBelow && spaceAbove > spaceBelow;
+  const room = above ? spaceAbove : spaceBelow;
+  const maxHeight = Math.max(PANEL_MIN_H, Math.min(cap, room));
+  const left = clamp(anchor.left, area.left + PANEL_MARGIN, area.right - panel.width - PANEL_MARGIN);
+  // The min-height floor above can exceed the room on a very short viewport,
+  // so the final position is clamped rather than trusted: off-screen and
+  // behind the footer are both worse than overlapping the badge.
+  const top = clamp(
+    above ? anchor.top - PANEL_GAP - maxHeight : anchor.bottom + PANEL_GAP,
+    area.top + PANEL_MARGIN,
+    Math.max(area.top + PANEL_MARGIN, area.bottom - PANEL_MARGIN - maxHeight),
   );
-  const top = above
-    ? Math.max(PANEL_MARGIN, anchor.top - PANEL_GAP - maxHeight)
-    : anchor.bottom + PANEL_GAP;
-  return { top, left, maxHeight, placement: above ? 'above' : 'below' };
+  // The bridge is the transparent strip that keeps the pointer "inside" the
+  // hover root while it crosses the gap. It spans both boxes horizontally,
+  // because a clamped panel can sit well to the side of its badge and a
+  // diagonal travel would otherwise fall outside both.
+  const bridge = {
+    left: Math.min(left, anchor.left),
+    width: Math.max(left + panel.width, anchor.right) - Math.min(left, anchor.left),
+    top: above ? top + maxHeight : anchor.bottom,
+    height: Math.max(0, above ? anchor.top - (top + maxHeight) : top - anchor.bottom),
+  };
+  return { top, left, maxHeight, bridge, placement: above ? 'above' : 'below' };
 }
 
-// usePanelPlacement measures the badge and panel and keeps the placement
-// current while the panel is open. Scroll/resize listeners exist only for
-// that window — a closed badge costs nothing.
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(value, max));
+}
+
+function samePlacement(a, b) {
+  if (!a || !b) return a === b;
+  return a.top === b.top && a.left === b.left && a.maxHeight === b.maxHeight
+    && a.placement === b.placement && a.hidden === b.hidden
+    && a.bridge.left === b.bridge.left && a.bridge.width === b.bridge.width
+    && a.bridge.top === b.bridge.top && a.bridge.height === b.bridge.height;
+}
+
+// usableArea is the viewport minus the fixed chrome that owns its edges: the
+// footer bar along the bottom and, on the Groups tab, the agent dock down the
+// right. Both paint above the panel (higher z-index), so a panel merely
+// "inside the viewport" can still have its last rows and its GitHub link
+// hidden behind them. Measured from the elements themselves rather than their
+// CSS variables, so a hidden or collapsed dock costs nothing.
+//
+// clientWidth/clientHeight rather than innerWidth/innerHeight: this dashboard
+// always reserves a document scrollbar, and innerWidth counts it.
+function usableArea() {
+  const root = document.documentElement;
+  const area = {
+    top: 0,
+    left: 0,
+    right: root?.clientWidth || 0,
+    bottom: root?.clientHeight || 0,
+  };
+  const footer = document.querySelector('footer');
+  if (footer) {
+    const rect = footer.getBoundingClientRect();
+    if (rect.height > 0 && rect.top < area.bottom) area.bottom = Math.max(0, rect.top);
+  }
+  const dock = document.getElementById('agent-dock');
+  if (dock) {
+    const rect = dock.getBoundingClientRect();
+    if (rect.width > 0 && rect.left < area.right) area.right = Math.max(0, rect.left);
+  }
+  area.height = Math.max(0, area.bottom - area.top);
+  area.width = Math.max(0, area.right - area.left);
+  return area;
+}
+
+// usePanelPlacement measures the badge and keeps the placement current while
+// the panel is open: on scroll (the page and any inner pane), on resize, and
+// on every render, since the Groups table re-renders every snapshot and a row
+// inserted above the badge would otherwise leave the panel behind.
+//
+// Measurements are coalesced into an animation frame and compared field-wise
+// before publishing, so a wheel gesture costs one layout read per frame and
+// re-renders the check list only when the panel actually moves.
 function usePanelPlacement(rootRef, panelRef, open) {
   const [placement, setPlacement] = useState(null);
+  const frame = useRef(0);
 
-  const measure = useCallback(() => {
+  const measureNow = useCallback(() => {
+    frame.current = 0;
     const root = rootRef.current;
     const panel = panelRef.current;
     if (!root || !panel || typeof root.getBoundingClientRect !== 'function') return;
     const anchor = root.getBoundingClientRect();
     const box = panel.getBoundingClientRect();
-    setPlacement(placePRChecksPanel({
+    const area = usableArea();
+    const next = placePRChecksPanel({
       anchor,
-      panel: { width: box.width || 360, height: panel.scrollHeight || box.height || 0 },
-      viewport: { width: window.innerWidth || 0, height: window.innerHeight || 0 },
-    }));
+      panel: { width: box.width || 360 },
+      area,
+    });
+    // A badge scrolled out of the usable area takes its panel with it. With
+    // the old absolute positioning the panel left with its row; a fixed one
+    // would otherwise hang around over unrelated content.
+    next.hidden = anchor.bottom < area.top || anchor.top > area.bottom;
+    setPlacement((current) => (samePlacement(current, next) ? current : next));
   }, [rootRef, panelRef]);
 
-  // Layout effect: place before paint so the panel never shows up in the
-  // wrong spot and jump.
+  const measure = useCallback(() => {
+    if (frame.current) return;
+    if (typeof requestAnimationFrame !== 'function') {
+      measureNow();
+      return;
+    }
+    frame.current = requestAnimationFrame(measureNow);
+  }, [measureNow]);
+
+  // Layout effect: place before paint, so the panel never appears in the
+  // wrong spot and then jumps.
   useLayoutEffect(() => {
     if (!open) {
       setPlacement(null);
       return undefined;
     }
-    measure();
+    measureNow();
     // Capture phase: the dashboard scrolls inner panes as well as the page,
-    // and a panel pinned to the viewport has to follow either one.
-    const onViewportChange = () => measure();
-    window.addEventListener('scroll', onViewportChange, { passive: true, capture: true });
-    window.addEventListener('resize', onViewportChange, { passive: true });
-    return () => {
-      window.removeEventListener('scroll', onViewportChange, { capture: true });
-      window.removeEventListener('resize', onViewportChange);
+    // and a panel pinned to the viewport has to follow either one. Scrolling
+    // the panel's OWN list moves nothing, so that one is ignored.
+    const onScroll = (event) => {
+      if (panelRef.current?.contains(event.target)) return;
+      measure();
     };
-  }, [open, measure]);
+    const onResize = () => measure();
+    window.addEventListener('scroll', onScroll, { passive: true, capture: true });
+    window.addEventListener('resize', onResize, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', onScroll, { capture: true });
+      window.removeEventListener('resize', onResize);
+      if (frame.current && typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(frame.current);
+      }
+      frame.current = 0;
+    };
+  }, [open, measure, measureNow, panelRef]);
 
-  return { placement, measure };
+  // Every render while open: the snapshot repaints the table on its own
+  // cadence, and the badge can move without any scroll or resize event.
+  useLayoutEffect(() => {
+    if (open) measure();
+  });
+
+  return { placement };
 }
 
 async function fetchPRChecks(url, signal) {
@@ -237,18 +340,16 @@ function CheckRow({ check, now }) {
   `;
 }
 
-function PRChecksPanel({ url, prNumber, summary, panelID, headingID, state, panelRef, placement, onContentChange }) {
+function PRChecksPanel({ url, prNumber, summary, panelID, headingID, state, panelRef, placement }) {
   const { data, error, loading } = state;
   const live = data?.summary && (data.summary.total || 0) > 0 ? data.summary : summary;
   const checks = data?.checks || [];
   const now = Date.now();
-  // A poll that adds rows changes how tall the panel wants to be, which can
-  // change which side it belongs on. Re-measure when the content does.
-  useLayoutEffect(() => { onContentChange(); }, [checks.length, error, loading]);
   // Until the first measurement lands the panel is hidden rather than drawn
   // at a guessed position and moved: a tooltip that jumps on open reads as a
   // glitch. It is one layout effect away, so nothing perceptible is lost.
-  const style = placement
+  // The same applies once the badge scrolls out of the usable area.
+  const style = placement && !placement.hidden
     ? `top:${placement.top}px;left:${placement.left}px;max-height:${placement.maxHeight}px`
     : 'visibility:hidden';
   return html`
@@ -296,7 +397,7 @@ export function PRChecksBadge({ url, prNumber, summary }) {
   const open = hovered || focused || pinned;
   const state = usePRChecks(open ? url : '', open);
   const panelRef = useRef(null);
-  const { placement, measure } = usePanelPlacement(rootRef, panelRef, open);
+  const { placement } = usePanelPlacement(rootRef, panelRef, open);
 
   const close = () => { setPinned(false); setHovered(false); setFocused(false); };
 
@@ -346,7 +447,13 @@ export function PRChecksBadge({ url, prNumber, summary }) {
       ${open ? html`
         <${PRChecksPanel} url=${url} prNumber=${prNumber} summary=${summary}
           panelID=${panelID} headingID=${headingID} state=${state}
-          panelRef=${panelRef} placement=${placement} onContentChange=${measure} />
+          panelRef=${panelRef} placement=${placement} />
+        ${placement && !placement.hidden ? html`
+          <span class="ci-bridge" aria-hidden="true" style=${
+            `top:${placement.bridge.top}px;left:${placement.bridge.left}px;` +
+            `width:${placement.bridge.width}px;height:${placement.bridge.height}px`
+          }></span>
+        ` : null}
       ` : null}
     </span>
   `;
