@@ -2130,8 +2130,12 @@ func runNew(params *NewParams) error {
 			var cleanup func()
 			var resourceErr error
 			if strings.TrimSpace(params.ResourceCgroupDir) != "" {
+				// A daemon-prepared dir means a managed server owns this boundary
+				// and is already running inside it; the pane merely joins for
+				// accounting. Shared: the wrapper must not reap or remove the
+				// boundary when the attach client exits.
 				wrapped = wrapPreparedResourceCgroupCommand(
-					sessionID, params.ResourceCgroupDir, harnessCmd, params.AllowUnenforcedSandbox)
+					sessionID, params.ResourceCgroupDir, harnessCmd, params.AllowUnenforcedSandbox, true)
 				cleanup = func() {}
 			} else {
 				wrapped, cleanup, resourceErr = wrapResourceLimitedCommand(
