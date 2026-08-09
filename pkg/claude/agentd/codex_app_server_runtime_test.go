@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"syscall"
 	"testing"
 	"time"
 
@@ -15,8 +16,22 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/codexappserver"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
+
+func installCodexAppServerGenerationProofForTest(t *testing.T, launchAlive bool) {
+	t.Helper()
+	previousIdentity := codexAppServerProcessIdentity
+	previousLaunch := codexAppServerLaunchAlive
+	codexAppServerProcessIdentity = func(int, string) (string, error) { return "test-process-generation", nil }
+	codexAppServerLaunchAlive = func(db.CodexAppServerRuntime) bool { return launchAlive }
+	t.Cleanup(func() {
+		codexAppServerProcessIdentity = previousIdentity
+		codexAppServerLaunchAlive = previousLaunch
+	})
+}
 
 func TestPrepareCodexAppServerRuntimeIsolatesAgents(t *testing.T) {
 	resetTestDB(t)
@@ -87,6 +102,7 @@ func TestAwaitCodexAppServerLaunchFailsFastBeforeConversationBind(t *testing.T) 
 
 func TestCodexAppServerBootstrapBindsTUIThreadWithoutReplay(t *testing.T) {
 	resetTestDB(t)
+	installCodexAppServerGenerationProofForTest(t, true)
 	dir, err := os.MkdirTemp("/tmp", "tcl-codex-runtime-")
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, os.RemoveAll(dir)) })
@@ -169,6 +185,7 @@ func TestCodexAppServerBootstrapBindsTUIThreadWithoutReplay(t *testing.T) {
 
 func TestCodexAppServerDaemonRestartReadoptsExactLiveThread(t *testing.T) {
 	resetTestDB(t)
+	installCodexAppServerGenerationProofForTest(t, true)
 	dir, err := os.MkdirTemp("/tmp", "tcl-codex-readopt-")
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, os.RemoveAll(dir)) })
@@ -181,14 +198,11 @@ func TestCodexAppServerDaemonRestartReadoptsExactLiveThread(t *testing.T) {
 		ServerPID: os.Getpid(), CodexVersion: "0.147.0", State: db.CodexAppServerReady,
 	}
 	require.NoError(t, db.UpsertCodexAppServerRuntime(runtime))
+	require.NoError(t, recordCodexAppServerProcessIdentity(runtime.SocketPath, runtime.ServerPID))
 	claimed, err := db.ClaimCodexAppServerRuntimeRecovery(
 		runtime.Generation, "test-daemon", time.Now().UTC(), time.Minute)
 	require.NoError(t, err)
 	require.True(t, claimed)
-	previousAlive := codexAppServerConvAlive
-	codexAppServerConvAlive = func(string) bool { return true }
-	t.Cleanup(func() { codexAppServerConvAlive = previousAlive })
-
 	done := make(chan struct{})
 	go func() {
 		recoverCodexAppServerRuntime(runtime, "test-daemon")
@@ -248,6 +262,7 @@ func TestCodexAppServerDaemonRestartReadoptsExactLiveThread(t *testing.T) {
 
 func TestCodexAppServerDaemonRestartRejectsWrongThreadIdentity(t *testing.T) {
 	resetTestDB(t)
+	installCodexAppServerGenerationProofForTest(t, true)
 	dir, err := os.MkdirTemp("/tmp", "tcl-codex-wrong-thread-")
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, os.RemoveAll(dir)) })
@@ -260,12 +275,10 @@ func TestCodexAppServerDaemonRestartRejectsWrongThreadIdentity(t *testing.T) {
 		ServerPID: os.Getpid(), CodexVersion: "0.147.0", State: db.CodexAppServerReady,
 	}
 	require.NoError(t, db.UpsertCodexAppServerRuntime(runtime))
+	require.NoError(t, recordCodexAppServerProcessIdentity(runtime.SocketPath, runtime.ServerPID))
 	claimed, err := db.ClaimCodexAppServerRuntimeRecovery(runtime.Generation, "test-daemon", time.Now().UTC(), time.Minute)
 	require.NoError(t, err)
 	require.True(t, claimed)
-	previousAlive := codexAppServerConvAlive
-	codexAppServerConvAlive = func(string) bool { return true }
-	t.Cleanup(func() { codexAppServerConvAlive = previousAlive })
 	previousTmux := clcommon.Default
 	clcommon.Default = &commandRecordingTmux{}
 	t.Cleanup(func() { clcommon.Default = previousTmux })
@@ -293,18 +306,108 @@ func TestCodexAppServerDaemonRestartRejectsWrongThreadIdentity(t *testing.T) {
 	assert.Nil(t, codexAppServerHandleForConv(runtime.ConvID))
 }
 
+func TestCodexAppServerDaemonRestartRejectsChangedProcessGeneration(t *testing.T) {
+	resetTestDB(t)
+	installCodexAppServerGenerationProofForTest(t, true)
+	dir, err := os.MkdirTemp("/tmp", "tcl-codex-process-proof-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(dir)) })
+	sim, err := testharness.StartCodexAppServerSim(filepath.Join(dir, "app.sock"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sim.Close() })
+	runtime := db.CodexAppServerRuntime{
+		Generation: "changed-process-generation", LaunchID: "changed-process-launch", AgentID: "agent",
+		ConvID: "changed-process-thread", ThreadID: "changed-process-thread", SocketPath: sim.SocketPath(),
+		ServerPID: os.Getpid(), CodexVersion: "0.147.0", State: db.CodexAppServerReady,
+	}
+	require.NoError(t, db.UpsertCodexAppServerRuntime(runtime))
+	require.NoError(t, recordCodexAppServerProcessIdentity(runtime.SocketPath, runtime.ServerPID))
+	codexAppServerProcessIdentity = func(int, string) (string, error) { return "recycled-process-generation", nil }
+	claimed, err := db.ClaimCodexAppServerRuntimeRecovery(runtime.Generation, "test-daemon", time.Now(), time.Minute)
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	recoverCodexAppServerRuntime(runtime, "test-daemon")
+	stored, err := db.GetCodexAppServerRuntime(runtime.Generation)
+	require.NoError(t, err)
+	assert.Equal(t, db.CodexAppServerUnavailable, stored.State)
+	assert.Contains(t, stored.Detail, "no longer matches")
+	select {
+	case message := <-sim.Messages():
+		t.Fatalf("identity mismatch must fail before app-server dial, got %s", message.Method)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestCodexAppServerDaemonRestartRejectsDifferentLiveLaunch(t *testing.T) {
+	resetTestDB(t)
+	installCodexAppServerGenerationProofForTest(t, true)
+	dir, err := os.MkdirTemp("/tmp", "tcl-codex-launch-proof-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(dir)) })
+	sim, err := testharness.StartCodexAppServerSim(filepath.Join(dir, "app.sock"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sim.Close() })
+	runtime := db.CodexAppServerRuntime{
+		Generation: "wrong-launch-generation", LaunchID: "stopped-launch", AgentID: "agent",
+		ConvID: "shared-thread", ThreadID: "shared-thread", SocketPath: sim.SocketPath(),
+		ServerPID: os.Getpid(), CodexVersion: "0.147.0", State: db.CodexAppServerReady,
+	}
+	require.NoError(t, db.UpsertCodexAppServerRuntime(runtime))
+	require.NoError(t, recordCodexAppServerProcessIdentity(runtime.SocketPath, runtime.ServerPID))
+	codexAppServerLaunchAlive = func(db.CodexAppServerRuntime) bool { return false }
+	previousSignal := signalCodexAppServerProcess
+	signals := 0
+	signalCodexAppServerProcess = func(int, syscall.Signal) error { signals++; return nil }
+	t.Cleanup(func() { signalCodexAppServerProcess = previousSignal })
+	claimed, err := db.ClaimCodexAppServerRuntimeRecovery(runtime.Generation, "test-daemon", time.Now(), time.Minute)
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	recoverCodexAppServerRuntime(runtime, "test-daemon")
+	stored, err := db.GetCodexAppServerRuntime(runtime.Generation)
+	require.NoError(t, err)
+	assert.Equal(t, db.CodexAppServerUnavailable, stored.State)
+	assert.Contains(t, stored.Detail, "launch/pane")
+	assert.Equal(t, 1, signals, "the still-matching server process may be reaped safely")
+	select {
+	case message := <-sim.Messages():
+		t.Fatalf("wrong launch must fail before app-server dial, got %s", message.Method)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestLiveCodexAppServerLaunchRequiresExactSessionRow(t *testing.T) {
+	resetTestDB(t)
+	tmux := &commandRecordingTmux{}
+	previousTmux := clcommon.Default
+	clcommon.Default = tmux
+	t.Cleanup(func() { clcommon.Default = previousTmux })
+	created := time.Now().UTC()
+	runtime := db.CodexAppServerRuntime{
+		Generation: "exact-launch-generation", LaunchID: "exact-launch", AgentID: "agent",
+		ConvID: "exact-thread", ThreadID: "exact-thread", CreatedAt: created,
+	}
+	require.NoError(t, session.SaveSessionState(&session.SessionState{
+		ID: runtime.LaunchID, TmuxSession: "exact-pane", ConvID: runtime.ConvID,
+		Harness: harness.CodexName, Status: session.StatusIdle, Created: created.Add(time.Second),
+		Updated: created.Add(time.Second), Cwd: t.TempDir(),
+	}))
+	assert.True(t, liveCodexAppServerLaunch(runtime))
+	runtime.LaunchID = "different-launch"
+	assert.False(t, liveCodexAppServerLaunch(runtime),
+		"another live row for the same conversation must not prove this generation")
+}
+
 func TestCodexAppServerDaemonRestartExpiresUnboundGeneration(t *testing.T) {
 	resetTestDB(t)
+	installCodexAppServerGenerationProofForTest(t, false)
 	runtime := db.CodexAppServerRuntime{
 		Generation: "unbound-generation", LaunchID: "unbound-launch", AgentID: "unbound-agent",
 		ConvID: "unbound-thread", SocketPath: filepath.Join(t.TempDir(), "app.sock"),
 		State: db.CodexAppServerWarming, CreatedAt: time.Now().Add(-time.Minute),
 	}
 	require.NoError(t, db.UpsertCodexAppServerRuntime(runtime))
-	previousAlive := codexAppServerConvAlive
-	codexAppServerConvAlive = func(string) bool { return false }
-	t.Cleanup(func() { codexAppServerConvAlive = previousAlive })
-
 	runCodexAppServerRecoverySweep()
 	stored, err := db.GetCodexAppServerRuntime(runtime.Generation)
 	require.NoError(t, err)
@@ -315,6 +418,7 @@ func TestCodexAppServerDaemonRestartExpiresUnboundGeneration(t *testing.T) {
 
 func TestCodexAppServerClientFailureReconnectsSameGeneration(t *testing.T) {
 	resetTestDB(t)
+	installCodexAppServerGenerationProofForTest(t, true)
 	dir, err := os.MkdirTemp("/tmp", "tcl-codex-reconnect-")
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, os.RemoveAll(dir)) })
@@ -332,6 +436,7 @@ func TestCodexAppServerClientFailureReconnectsSameGeneration(t *testing.T) {
 		ServerPID: os.Getpid(), CodexVersion: "0.147.0", State: db.CodexAppServerReady,
 	}
 	require.NoError(t, db.UpsertCodexAppServerRuntime(runtime))
+	require.NoError(t, recordCodexAppServerProcessIdentity(runtime.SocketPath, runtime.ServerPID))
 	handle := registerCodexAppServerHandle(runtime, client)
 	go watchCodexAppServerHandle(handle)
 	firstRate := nextCodexAppServerMessage(t, sim)
@@ -339,6 +444,19 @@ func TestCodexAppServerClientFailureReconnectsSameGeneration(t *testing.T) {
 	require.NoError(t, sim.Reply(firstRate.ID, codexappserver.AccountRateLimitsReadResult{}))
 
 	require.NoError(t, sim.CloseClient())
+	stopReadyReads := make(chan struct{})
+	readyReadsDone := make(chan struct{})
+	go func() {
+		defer close(readyReadsDone)
+		for {
+			select {
+			case <-stopReadyReads:
+				return
+			default:
+				_, _ = readyCodexAppServerHandle(runtime.ConvID)
+			}
+		}
+	}()
 	require.Equal(t, codexappserver.MethodInitialize, nextCodexAppServerMessage(t, sim).Method)
 	require.Equal(t, codexappserver.MethodInitialized, nextCodexAppServerMessage(t, sim).Method)
 	read := nextCodexAppServerMessage(t, sim)
@@ -349,6 +467,8 @@ func TestCodexAppServerClientFailureReconnectsSameGeneration(t *testing.T) {
 	secondRate := nextCodexAppServerMessage(t, sim)
 	require.Equal(t, codexappserver.MethodAccountRateLimitsRead, secondRate.Method)
 	require.NoError(t, sim.Reply(secondRate.ID, codexappserver.AccountRateLimitsReadResult{}))
+	close(stopReadyReads)
+	<-readyReadsDone
 	assert.Same(t, handle, codexAppServerHandleForConv(runtime.ConvID))
 	stored, err := db.GetCodexAppServerRuntime(runtime.Generation)
 	require.NoError(t, err)
@@ -373,6 +493,7 @@ func TestCodexAppServerBootstrapNeverJoinsFreshThreadSubscriberSet(t *testing.T)
 		} {
 			t.Run(ordering.name+"/"+requestMethod, func(t *testing.T) {
 				resetTestDB(t)
+				installCodexAppServerGenerationProofForTest(t, true)
 				dir, err := os.MkdirTemp("/tmp", "tcl-codex-order-")
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, os.RemoveAll(dir)) })

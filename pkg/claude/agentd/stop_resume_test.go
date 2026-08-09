@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/resumeprovenance"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -160,6 +162,12 @@ func TestHandleAgentResumeExplicitSendKeysPersistsCodexRollback(t *testing.T) {
 	fast := true
 	profile.FastMode = &fast
 	require.NoError(t, db.SetAgentRelaunchProfile(agentID, *profile))
+	require.NoError(t, db.UpsertCodexAppServerRuntime(db.CodexAppServerRuntime{
+		Generation: "rollback-generation", LaunchID: row.ID, AgentID: agentID,
+		ConvID: convID, ThreadID: convID, SocketPath: filepath.Join(t.TempDir(), "app.sock"),
+		ServerPID: os.Getpid(), CodexVersion: "0.147.0", State: db.CodexAppServerDead,
+		CreatedAt: row.CreatedAt.Add(-time.Second),
+	}))
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/v1/agent/"+convID+"/resume?send_keys=1", nil)
@@ -173,6 +181,99 @@ func TestHandleAgentResumeExplicitSendKeysPersistsCodexRollback(t *testing.T) {
 	assert.False(t, *recorded.CodexAppServer)
 	require.NotNil(t, recorded.FastMode)
 	assert.True(t, *recorded.FastMode, "compatibility rollback must preserve unrelated relaunch intent")
+}
+
+func TestHandleAgentResumeExplicitSendKeysDoesNotChangeOnlineTarget(t *testing.T) {
+	setupTestDB(t)
+	rec := installRecordingResumeSpawner(t)
+	const convID = "codex-online-rollback-12345678"
+	row := saveResumeSession(t, convID, t.TempDir(), harness.CodexName)
+	row.Status = session.StatusIdle
+	row.TmuxSession = "codex-online-pane"
+	require.NoError(t, db.SaveSession(row))
+	agentID, _, err := db.EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	profile, err := db.RecordedLaunchPostureForConv(convID)
+	require.NoError(t, err)
+	selected := true
+	profile.CodexAppServer = &selected
+	require.NoError(t, db.SetAgentRelaunchProfile(agentID, *profile))
+	require.NoError(t, db.UpsertCodexAppServerRuntime(db.CodexAppServerRuntime{
+		Generation: "online-rollback-generation", LaunchID: row.ID, AgentID: agentID,
+		ConvID: convID, ThreadID: convID, SocketPath: filepath.Join(t.TempDir(), "app.sock"),
+		State: db.CodexAppServerDead, CreatedAt: row.CreatedAt.Add(-time.Second),
+	}))
+	tmux := &commandRecordingTmux{}
+	previousTmux := clcommon.Default
+	clcommon.Default = tmux
+	t.Cleanup(func() { clcommon.Default = previousTmux })
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/v1/agent/"+convID+"/resume?send_keys=1", nil)
+	r = r.WithContext(context.WithValue(r.Context(), peerKey{}, &peer{PID: 1, HumanTokenValid: true}))
+	handleAgentResume(w, r, convID)
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	recorded, err := db.RecordedLaunchPostureForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, recorded.CodexAppServer)
+	assert.True(t, *recorded.CodexAppServer, "online target posture must remain unchanged")
+	assert.Zero(t, rec.resumeCalls)
+	for _, command := range tmux.snapshot() {
+		assert.NotEqual(t, "kill-session", command[0], "rollback eligibility must not tear down an online pane")
+	}
+}
+
+func TestStopCodexAppServerTerminalRuntimeNeverSignalsRetainedPID(t *testing.T) {
+	setupTestDB(t)
+	const convID = "terminal-runtime-12345678"
+	runtime := db.CodexAppServerRuntime{
+		Generation: "terminal-generation", LaunchID: "terminal-launch", AgentID: "agent",
+		ConvID: convID, ThreadID: convID, SocketPath: filepath.Join(t.TempDir(), "app.sock"),
+		ServerPID: 424242, State: db.CodexAppServerDead,
+	}
+	require.NoError(t, db.UpsertCodexAppServerRuntime(runtime))
+	previousSignal := signalCodexAppServerProcess
+	signals := 0
+	signalCodexAppServerProcess = func(int, syscall.Signal) error { signals++; return nil }
+	t.Cleanup(func() { signalCodexAppServerProcess = previousSignal })
+
+	stopCodexAppServerRuntimeForConv(convID)
+	assert.Zero(t, signals, "a terminal row's retained PID may have been recycled")
+}
+
+func TestCodexDriveRollbackApprovalDescribesDurableDriveChange(t *testing.T) {
+	setupTestDB(t)
+	t.Cleanup(SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	const (
+		target = "rollback-approval-target-12345678"
+		caller = "rollback-approval-caller-12345678"
+	)
+	_, _, err := db.EnsureAgentForConv(target, "target")
+	require.NoError(t, err)
+	_, _, err = db.EnsureAgentForConv(caller, "caller")
+	require.NoError(t, err)
+	require.NoError(t, db.GrantAgentPermission(caller, PermAgentResume, "test"))
+	previousApproval := RequestHumanApprovalImpl
+	var captured *approvalRequest
+	RequestHumanApprovalImpl = func(req *approvalRequest, _ string) bool {
+		captured = req
+		return false
+	}
+	t.Cleanup(func() { RequestHumanApprovalImpl = previousApproval })
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/v1/agent/"+target+"/resume?send_keys=1", nil)
+	r.Header.Set("X-Tclaude-Ask-Human", "5s")
+	r = r.WithContext(context.WithValue(r.Context(), peerKey{}, &peer{
+		PID: 1, HasClaudeAncestor: true, ConvID: caller,
+	}))
+	handleAgentResume(w, r, target)
+	require.Equal(t, http.StatusForbidden, w.Code, "body=%s", w.Body.String())
+	require.NotNil(t, captured)
+	assert.Contains(t, captured.bodyLabel, "app-server → send-keys")
+	assert.Contains(t, captured.bodyPreview, "Durably change")
+	assert.Contains(t, captured.bodyPreview, "tear down")
+	assert.NotContains(t, captured.bodyPreview, "working-directory")
 }
 
 func TestHandleAgentResume_GroupOwnershipAuthority(t *testing.T) {

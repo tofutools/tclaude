@@ -19,10 +19,13 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/codexappserver"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
 
 const codexAppServerStartupTimeout = 15 * time.Second
+const codexAppServerIdentityFile = "server.identity"
 
 var codexAppServerRecoveryOwner = func() string {
 	var token [16]byte
@@ -33,6 +36,9 @@ var codexAppServerRecoveryOwner = func() string {
 }()
 
 type codexAppServerHandle struct {
+	// runtime is immutable generation identity after registration. Reconnects
+	// replace only client while holding mutations, which every control caller
+	// also holds; the observer that owned the old client has already returned.
 	runtime     db.CodexAppServerRuntime
 	client      *codexappserver.Client
 	observation codexAppServerObservation
@@ -163,6 +169,10 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 		fail(err)
 		return
 	}
+	if err := recordCodexAppServerProcessIdentity(runtime.SocketPath, pid); err != nil {
+		fail(err)
+		return
+	}
 	// Do not dial before the TUI hook has proved that its thread exists and is
 	// bound. In Codex 0.147 a fresh thread auto-subscribes every connection that
 	// is already initialized, even if it never calls thread/resume. Waiting
@@ -189,6 +199,11 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 	}
 	runtime.ConvID = threadID
 	runtime.ThreadID = threadID
+	if !codexAppServerLaunchAlive(*runtime) {
+		_ = client.Close()
+		fail(errors.New("validated Codex TUI hook does not belong to the recorded live launch/pane"))
+		return
+	}
 	runtime.State = db.CodexAppServerReady
 	runtime.Detail = ""
 	if err := db.UpsertCodexAppServerRuntime(*runtime); err != nil {
@@ -248,7 +263,7 @@ func runCodexAppServerRecoverySweep() {
 					if failErr != nil {
 						slog.Warn("expire unbound Codex app-server recovery", "generation", runtime.Generation, "error", failErr)
 					} else if changed {
-						stopCodexAppServerPaneAfterControlFailure(runtime.ConvID, detail)
+						stopCodexAppServerPaneAfterControlFailure(runtime, detail)
 					}
 				}
 			}
@@ -278,7 +293,7 @@ func recoverCodexAppServerRuntime(runtime db.CodexAppServerRuntime, owner string
 			slog.Warn("record Codex app-server recovery failure", "generation", runtime.Generation, "error", err)
 		}
 		if changed {
-			stopCodexAppServerPaneAfterControlFailure(runtime.ConvID, cause.Error())
+			stopCodexAppServerPaneAfterControlFailure(runtime, cause.Error())
 		}
 	}
 	if err := codexappserver.CheckVersion(runtime.CodexVersion); err != nil {
@@ -298,6 +313,15 @@ func recoverCodexAppServerRuntime(runtime db.CodexAppServerRuntime, owner string
 		fail(err)
 		return
 	}
+	if err := verifyCodexAppServerProcessIdentity(runtime.SocketPath, pid); err != nil {
+		fail(fmt.Errorf("re-prove Codex app-server process generation: %w", err))
+		return
+	}
+	if !codexAppServerLaunchAlive(runtime) {
+		_ = signalCodexAppServerProcess(pid, syscall.SIGTERM)
+		fail(errors.New("recorded Codex TUI launch/pane is no longer alive"))
+		return
+	}
 	client, err := codexappserver.Dial(ctx, runtime.SocketPath,
 		&codexappserver.Options{CodexVersion: runtime.CodexVersion})
 	if err != nil {
@@ -311,14 +335,6 @@ func recoverCodexAppServerRuntime(runtime db.CodexAppServerRuntime, owner string
 			err = fmt.Errorf("thread/read returned %q, want %q", thread.ID, runtime.ThreadID)
 		}
 		fail(fmt.Errorf("re-prove Codex thread identity: %w", err))
-		return
-	}
-	if !codexAppServerConvAlive(runtime.ConvID) {
-		_ = client.Close()
-		if process, findErr := os.FindProcess(pid); findErr == nil {
-			_ = process.Signal(syscall.SIGTERM)
-		}
-		fail(errors.New("recorded Codex TUI pane is no longer alive"))
 		return
 	}
 	runtime.ServerPID = pid
@@ -449,6 +465,78 @@ func waitForOwnedCodexSocket(ctx context.Context, path string, pid int) error {
 	}
 }
 
+// codexAppServerProcessIdentity is platform-specific OS evidence containing
+// the process start identity and argv. Its implementation also requires argv
+// to name this exact generation's Unix socket.
+var codexAppServerProcessIdentity = readCodexAppServerProcessIdentity
+var signalCodexAppServerProcess = func(pid int, signal syscall.Signal) error {
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	return process.Signal(signal)
+}
+
+func recordCodexAppServerProcessIdentity(socketPath string, pid int) error {
+	identity, err := codexAppServerProcessIdentity(pid, socketPath)
+	if err != nil {
+		return fmt.Errorf("prove Codex app-server process generation: %w", err)
+	}
+	path := filepath.Join(filepath.Dir(socketPath), codexAppServerIdentityFile)
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		return verifyCodexAppServerProcessIdentity(socketPath, pid)
+	}
+	if err != nil {
+		return fmt.Errorf("create Codex app-server process identity: %w", err)
+	}
+	if _, err = file.WriteString(identity + "\n"); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("write Codex app-server process identity: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close Codex app-server process identity: %w", err)
+	}
+	return nil
+}
+
+func verifyCodexAppServerProcessIdentity(socketPath string, pid int) error {
+	path := filepath.Join(filepath.Dir(socketPath), codexAppServerIdentityFile)
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("read recorded Codex app-server process identity: %w", err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() ||
+		info.Mode().Perm() != 0o600 || int(stat.Uid) != os.Getuid() {
+		return errors.New("recorded Codex app-server process identity is not an owned plain 0600 file")
+	}
+	recorded, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	current, err := codexAppServerProcessIdentity(pid, socketPath)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(recorded)) != current {
+		return errors.New("codex app-server PID/start/argv identity no longer matches its recorded generation")
+	}
+	return nil
+}
+
+func liveCodexAppServerLaunch(runtime db.CodexAppServerRuntime) bool {
+	row, err := db.LoadSession(runtime.LaunchID)
+	if err != nil || row == nil || row.ID != runtime.LaunchID || row.ConvID != runtime.ConvID ||
+		row.Harness != harness.CodexName || strings.TrimSpace(row.TmuxSession) == "" ||
+		row.CreatedAt.Before(runtime.CreatedAt) {
+		return false
+	}
+	return session.IsTmuxSessionAlive(row.TmuxSession)
+}
+
+var codexAppServerLaunchAlive = liveCodexAppServerLaunch
+
 func processAlive(pid int) error {
 	process, err := os.FindProcess(pid)
 	if err != nil {
@@ -463,9 +551,8 @@ func watchCodexAppServerHandle(handle *codexAppServerHandle) {
 		go watchCodexAppServerHandle(handle)
 		return
 	}
-	handle.runtime.State, handle.runtime.Detail = state, detail
 	if changed, err := db.MarkCodexAppServerRuntimeTerminalIfUnreplaced(
-		handle.runtime.Generation, handle.runtime.State, handle.runtime.Detail); err != nil {
+		handle.runtime.Generation, state, detail); err != nil {
 		slog.Warn("record Codex app-server terminal state", "generation", handle.runtime.Generation, "error", err)
 	} else if !changed {
 		slog.Debug("ignored obsolete Codex app-server watcher after replacement became ready",
@@ -487,7 +574,7 @@ func watchCodexAppServerHandle(handle *codexAppServerHandle) {
 	// the human. Transport death or a bounded snapshot hang makes the shared
 	// pane unusable and is the deterministic-relaunch case.
 	if !closing && (state == db.CodexAppServerDead || strings.Contains(detail, "stopped answering")) {
-		stopCodexAppServerPaneAfterControlFailure(handle.runtime.ConvID, detail)
+		stopCodexAppServerPaneAfterControlFailure(handle.runtime, detail)
 	}
 }
 
@@ -505,13 +592,20 @@ func reconnectCodexAppServerHandle(handle *codexAppServerHandle) bool {
 		}
 		runtime, err := db.GetCodexAppServerRuntime(handle.runtime.Generation)
 		if err != nil || runtime == nil || runtime.State != db.CodexAppServerReady ||
-			runtime.ConvID != handle.runtime.ConvID || runtime.ThreadID != handle.runtime.ThreadID {
+			runtime.ConvID != handle.runtime.ConvID || runtime.ThreadID != handle.runtime.ThreadID ||
+			runtime.ServerPID != handle.runtime.ServerPID {
 			handle.mutations.Unlock()
 			return false
 		}
 		proofCtx, cancelProof := context.WithTimeout(context.Background(), 500*time.Millisecond)
 		proofErr := waitForOwnedCodexSocket(proofCtx, runtime.SocketPath, runtime.ServerPID)
 		cancelProof()
+		if proofErr == nil {
+			proofErr = verifyCodexAppServerProcessIdentity(runtime.SocketPath, runtime.ServerPID)
+		}
+		if proofErr == nil && !codexAppServerLaunchAlive(*runtime) {
+			proofErr = errors.New("recorded Codex TUI launch/pane is no longer alive")
+		}
 		if proofErr != nil {
 			handle.mutations.Unlock()
 			return false
@@ -524,7 +618,6 @@ func reconnectCodexAppServerHandle(handle *codexAppServerHandle) bool {
 			thread, dialErr = client.ReadThread(ctx, codexappserver.ThreadReadParams{ThreadID: runtime.ThreadID})
 			if dialErr == nil && thread.ID == runtime.ThreadID {
 				handle.client = client
-				handle.runtime = *runtime
 				handle.mutations.Unlock()
 				cancel()
 				projectCodexAppServerRawStatus(handle, thread.Status, time.Now().UTC(), "app-server reconnect")
@@ -539,20 +632,18 @@ func reconnectCodexAppServerHandle(handle *codexAppServerHandle) bool {
 	return false
 }
 
-var codexAppServerConvAlive = isConvOnline
-
-func stopCodexAppServerPaneAfterControlFailure(convID, detail string) {
-	if !codexAppServerConvAlive(convID) {
+func stopCodexAppServerPaneAfterControlFailure(runtime db.CodexAppServerRuntime, detail string) {
+	if !codexAppServerLaunchAlive(runtime) {
 		return
 	}
-	row := pickAliveSession(convID)
-	if row == nil || strings.TrimSpace(row.TmuxSession) == "" {
+	row, err := db.LoadSession(runtime.LaunchID)
+	if err != nil || row == nil || row.ConvID != runtime.ConvID || strings.TrimSpace(row.TmuxSession) == "" {
 		return
 	}
 	slog.Error("Codex app-server control could not be recovered; stopping unusable pane for durable relaunch",
-		"conv", convID, "tmux", row.TmuxSession, "detail", detail)
+		"conv", runtime.ConvID, "launch", runtime.LaunchID, "tmux", row.TmuxSession, "detail", detail)
 	if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(row.TmuxSession)).Run(); err != nil {
-		slog.Warn("stop unrecoverable Codex app-server pane", "conv", convID, "error", err)
+		slog.Warn("stop unrecoverable Codex app-server pane", "conv", runtime.ConvID, "error", err)
 	}
 }
 
@@ -581,10 +672,15 @@ func stopCodexAppServerRuntime(convID, launchID string) {
 		_ = handle.client.Close()
 		handle.mutations.Unlock()
 	}
-	if runtime.ServerPID > 1 {
-		if process, findErr := os.FindProcess(runtime.ServerPID); findErr == nil {
-			_ = process.Signal(syscall.SIGTERM)
-		}
+	liveClaim := runtime.State == db.CodexAppServerWarming || runtime.State == db.CodexAppServerRecovering ||
+		runtime.State == db.CodexAppServerReady
+	// Terminal rows retain diagnostics, including the old numeric PID. Never
+	// signal that value: after process exit it may have been recycled. A live
+	// claim is signalled only when its recorded OS start/argv identity still
+	// proves this exact generation and socket.
+	if liveClaim && runtime.ServerPID > 1 &&
+		verifyCodexAppServerProcessIdentity(runtime.SocketPath, runtime.ServerPID) == nil {
+		_ = signalCodexAppServerProcess(runtime.ServerPID, syscall.SIGTERM)
 	}
 	runtime.State = db.CodexAppServerDead
 	runtime.Detail = "launch exited"
@@ -609,6 +705,7 @@ func removeCodexAppServerGeneration(socketPath string) {
 	}
 	_ = os.Remove(socketPath)
 	_ = os.Remove(filepath.Join(dir, "server.pid"))
+	_ = os.Remove(filepath.Join(dir, codexAppServerIdentityFile))
 	// Keep a non-empty server.log for diagnostics; remove an empty one so the
 	// generation can disappear cleanly.
 	if info, err := os.Stat(filepath.Join(dir, "server.log")); err == nil && info.Size() == 0 {
