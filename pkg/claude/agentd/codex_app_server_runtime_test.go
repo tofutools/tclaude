@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -141,9 +142,12 @@ func TestCodexAppServerBootstrapBindsTUIThreadWithoutReplay(t *testing.T) {
 	assert.Equal(t, "thread-from-tui", runtime.ConvID)
 	assert.Equal(t, "thread-from-tui", runtime.ThreadID)
 
+	// The observer may immediately issue the stable account snapshot read, but
+	// it must never subscribe or replay the TUI-owned birth prompt.
 	select {
 	case message := <-sim.Messages():
-		t.Fatalf("bootstrap must bind without replay; unexpected RPC %q", message.Method)
+		assert.Equal(t, codexappserver.MethodAccountRateLimitsRead, message.Method)
+		require.NoError(t, sim.Reply(message.ID, codexappserver.AccountRateLimitsReadResult{}))
 	case <-time.After(100 * time.Millisecond):
 	}
 
@@ -154,6 +158,55 @@ func TestCodexAppServerBootstrapBindsTUIThreadWithoutReplay(t *testing.T) {
 	codexAppServerHandles.Unlock()
 	if handle != nil {
 		_ = handle.client.Close()
+	}
+}
+
+func TestCodexAppServerObserverQuarantinesUnexpectedRequestWithVisibleMethod(t *testing.T) {
+	resetTestDB(t)
+	dir, err := os.MkdirTemp("/tmp", "tcl-codex-observer-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(dir)) })
+	sim, err := testharness.StartCodexAppServerSim(filepath.Join(dir, "app.sock"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sim.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	client, err := codexappserver.Dial(ctx, sim.SocketPath(), nil)
+	require.NoError(t, err)
+	initialize := nextCodexAppServerMessage(t, sim)
+	require.Equal(t, codexappserver.MethodInitialize, initialize.Method)
+	initialized := nextCodexAppServerMessage(t, sim)
+	require.Equal(t, codexappserver.MethodInitialized, initialized.Method)
+
+	runtime := db.CodexAppServerRuntime{
+		Generation: "request-generation", LaunchID: "request-launch", AgentID: "request-agent",
+		ConvID: "request-thread", ThreadID: "request-thread", SocketPath: sim.SocketPath(),
+		State: db.CodexAppServerReady,
+	}
+	require.NoError(t, db.UpsertCodexAppServerRuntime(runtime))
+	handle := &codexAppServerHandle{runtime: runtime, client: client}
+	go watchCodexAppServerHandle(handle)
+	rateRead := nextCodexAppServerMessage(t, sim)
+	require.Equal(t, codexappserver.MethodAccountRateLimitsRead, rateRead.Method,
+		"the observer must use a non-subscribing snapshot")
+	require.NoError(t, sim.Reply(rateRead.ID, codexappserver.AccountRateLimitsReadResult{}))
+
+	_, err = sim.SendRequest(codexappserver.MethodPermissionsApproval,
+		map[string]string{"threadId": runtime.ThreadID})
+	require.NoError(t, err)
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		stored, getErr := db.GetCodexAppServerRuntime(runtime.Generation)
+		require.NoError(t, getErr)
+		if stored != nil && stored.State == db.CodexAppServerUnavailable {
+			assert.Contains(t, stored.Detail, codexappserver.MethodPermissionsApproval)
+			assert.Contains(t, stored.Detail, "non-subscribing observer")
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("observer did not quarantine the unexpected request")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

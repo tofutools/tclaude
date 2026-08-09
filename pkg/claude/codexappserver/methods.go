@@ -98,3 +98,11 @@ func (c *Client) InterruptTurn(ctx context.Context, threadID, turnID string) err
 	}
 	return c.Call(ctx, MethodTurnInterrupt, TurnInterruptParams{ThreadID: threadID, TurnID: turnID}, nil)
 }
+
+func (c *Client) ReadAccountRateLimits(ctx context.Context) (AccountRateLimitsReadResult, error) {
+	var result AccountRateLimitsReadResult
+	if err := c.Call(ctx, MethodAccountRateLimitsRead, struct{}{}, &result); err != nil {
+		return AccountRateLimitsReadResult{}, err
+	}
+	return result, nil
+}

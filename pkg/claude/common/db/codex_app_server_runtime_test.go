@@ -72,3 +72,61 @@ func TestObsoleteCodexAppServerWatcherCannotSupersedeReadyReplacement(t *testing
 	require.NotNil(t, current)
 	assert.Equal(t, CodexAppServerDead, current.State)
 }
+
+func TestCodexAppServerObserverWritesRequireCurrentRuntimeAndSessionGeneration(t *testing.T) {
+	setupTestDB(t)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	session := &SessionRow{
+		ID: "session-1", ConvID: "thread-1", TmuxSession: "tmux-1", Cwd: t.TempDir(),
+		Status: "idle", Harness: "codex", CreatedAt: now, UpdatedAt: now,
+	}
+	require.NoError(t, SaveSession(session))
+	old := CodexAppServerRuntime{
+		Generation: "old-generation", LaunchID: "old-launch", AgentID: "agent-1",
+		ConvID: session.ConvID, ThreadID: session.ConvID, SocketPath: "/tmp/old.sock",
+		State: CodexAppServerReady, CreatedAt: now.Add(-time.Minute),
+	}
+	current := CodexAppServerRuntime{
+		Generation: "current-generation", LaunchID: "current-launch", AgentID: "agent-1",
+		ConvID: session.ConvID, ThreadID: session.ConvID, SocketPath: "/tmp/current.sock",
+		State: CodexAppServerReady, CreatedAt: now,
+	}
+	require.NoError(t, UpsertCodexAppServerRuntime(old))
+	require.NoError(t, UpsertCodexAppServerRuntime(current))
+
+	changed, err := SetSessionStatusForCodexAppServerGeneration(
+		session.ID, session.ConvID, session.CreatedAt, old.Generation,
+		session.Status, session.UpdatedAt, "working", "obsolete", now.Add(time.Second))
+	require.NoError(t, err)
+	assert.False(t, changed)
+	changed, err = UpdateContextSnapshotForCodexAppServerGeneration(
+		session.ID, session.ConvID, session.CreatedAt, old.Generation, 80, 80, 8, 100)
+	require.NoError(t, err)
+	assert.False(t, changed)
+
+	changed, err = SetSessionStatusForCodexAppServerGeneration(
+		session.ID, session.ConvID, session.CreatedAt, current.Generation,
+		session.Status, session.UpdatedAt, "working", "app-server snapshot", now.Add(time.Second))
+	require.NoError(t, err)
+	assert.True(t, changed)
+	changed, err = UpdateContextSnapshotForCodexAppServerGeneration(
+		session.ID, session.ConvID, session.CreatedAt, current.Generation, 50, 45, 5, 100)
+	require.NoError(t, err)
+	assert.True(t, changed)
+
+	got, err := FindSessionByConvID(session.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "working", got.Status)
+	assert.Equal(t, "app-server snapshot", got.StatusDetail)
+	snapshot, err := GetContextSnapshot(session.ID)
+	require.NoError(t, err)
+	assert.Equal(t, 50.0, snapshot.ContextPct)
+	assert.Equal(t, int64(100), snapshot.ContextWindowSize)
+
+	changed, err = UpdateContextSnapshotForCodexAppServerGeneration(
+		session.ID, session.ConvID, session.CreatedAt.Add(time.Second), current.Generation,
+		99, 99, 99, 100)
+	require.NoError(t, err)
+	assert.False(t, changed, "a recreated session generation must reject the old observer")
+}

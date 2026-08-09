@@ -249,6 +249,63 @@ never falls back to pane input when control is starting, busy, disconnected,
 unsupported, or failed. Legacy Codex sessions retain their existing send-keys
 behavior.
 
+Live state uses the same ownership rule. Agentd consumes notifications that
+app-server naturally sends to its initialized control connection, but it does
+not call `thread/resume` to obtain the full stream. A bounded `thread/read`
+poll repairs working/idle/approval/input gaps, token notifications update the
+existing context snapshot while fresh, and the rollout follower resumes as the
+reconciliation source when those notifications go quiet. Subscription usage
+comes from the stable, non-subscribing `account/rateLimits/read` snapshot (the
+`codex` bucket); sparse update notifications trigger a full reread. Every
+projection is guarded by the app-server generation and session generation.
+The dashboard's app-drive tooltip discloses this non-subscribing observer and
+its last observation time. An unexpected server request remains terminal for
+the agentd handle and its method is shown in the failed-drive tooltip.
+
+#### Codex 0.147.0 approval-routing proof
+
+The non-subscribing rule is backed by a real two-client proof performed on
+2026-08-09 with `codex-cli 0.147.0`. One private app-server and a real remote
+TUI used a disposable writable `CODEX_HOME`; a second WebSocket-over-Unix
+client completed `initialize` / `initialized`, called `thread/resume` for the
+TUI thread, and submitted turns. Four turns forced these server-request
+methods:
+
+- `item/commandExecution/requestApproval`
+- `item/fileChange/requestApproval`
+- `item/permissions/requestApproval` (with Codex's
+  `request_permissions_tool` feature and granular request-permission approval)
+- `item/tool/requestUserInput` (Plan mode)
+
+In all four cases app-server delivered the request to both subscribed clients,
+and the real TUI simultaneously rendered the human decision UI. The proof
+client sent no response and closed on receipt; the TUI remained able to answer
+or deny the request. Therefore request delivery is broadcast, not exclusive
+TUI routing, and an agentd subscriber would become a second approval/input
+owner even if it intended to observe only.
+
+The reproducible launch shape is:
+
+```bash
+CODEX_HOME="$PROOF_HOME" codex app-server --listen unix://"$PROOF_SOCKET"
+CODEX_HOME="$PROOF_HOME" codex --ask-for-approval untrusted \
+  --remote unix://"$PROOF_SOCKET"
+```
+
+For the permissions case, restart both server and TUI with
+`--enable request_permissions_tool`, and launch the TUI with a granular
+approval policy whose `request_permissions` member is true. Generate the
+version-matched wire truth with:
+
+```bash
+codex app-server generate-json-schema --experimental --out "$SCHEMA_DIR"
+```
+
+The proof client's critical sequence is `initialize`, `initialized`,
+`thread/resume`, then `turn/start`; logging request method names (without
+answering them) is sufficient to reproduce the routing result. This sequence
+is intentionally proof-only and is not used by agentd production code.
+
 ### Group-route activation matrix
 
 Group routes are a tclaude platform capability shared by harnesses; the harness

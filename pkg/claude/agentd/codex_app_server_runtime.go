@@ -25,8 +25,9 @@ import (
 const codexAppServerStartupTimeout = 15 * time.Second
 
 type codexAppServerHandle struct {
-	runtime db.CodexAppServerRuntime
-	client  *codexappserver.Client
+	runtime     db.CodexAppServerRuntime
+	client      *codexappserver.Client
+	observation codexAppServerObservation
 	// mutations serializes every tclaude-originated write to this thread. The
 	// app-server connection itself supports concurrent calls, but the control
 	// policy needs the thread/read snapshot and the following mutation to be
@@ -221,6 +222,7 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 	codexAppServerHandles.byConv[threadID] = handle
 	codexAppServerHandles.byGeneration[runtime.Generation] = handle
 	codexAppServerHandles.Unlock()
+	projectCodexAppServerRawStatus(handle, thread.Status, time.Now().UTC(), "app-server snapshot")
 	go watchCodexAppServerHandle(handle)
 }
 
@@ -307,15 +309,7 @@ func processAlive(pid int) error {
 }
 
 func watchCodexAppServerHandle(handle *codexAppServerHandle) {
-	select {
-	case request := <-handle.client.ServerRequests():
-		_ = handle.client.Close()
-		handle.runtime.State = db.CodexAppServerUnavailable
-		handle.runtime.Detail = "unexpected server request: " + request.Method
-	case <-handle.client.Done():
-		handle.runtime.State = db.CodexAppServerDead
-		handle.runtime.Detail = fmt.Sprint(handle.client.Err())
-	}
+	handle.runtime.State, handle.runtime.Detail = runCodexAppServerObserver(handle)
 	if changed, err := db.MarkCodexAppServerRuntimeTerminalIfUnreplaced(
 		handle.runtime.Generation, handle.runtime.State, handle.runtime.Detail); err != nil {
 		slog.Warn("record Codex app-server terminal state", "generation", handle.runtime.Generation, "error", err)

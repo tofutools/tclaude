@@ -171,6 +171,101 @@ func MarkCodexAppServerRuntimeTerminalIfUnreplaced(generation, state, detail str
 	return changed == 1, err
 }
 
+// SetSessionStatusForCodexAppServerGeneration projects one app-server status
+// observation only while both the session row and the verified runtime
+// generation are still current. A late notification from a replaced socket
+// therefore cannot overwrite the successor's hook or observer state.
+func SetSessionStatusForCodexAppServerGeneration(
+	sessionID, convID string,
+	sessionCreatedAt time.Time,
+	generation, observedStatus string,
+	observedUpdatedAt time.Time,
+	status, detail string,
+	at time.Time,
+) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	result, err := d.Exec(`UPDATE sessions
+		SET status = ?, status_detail = ?, updated_at = ?
+		WHERE id = ? AND conv_id = ? AND created_at = ?
+		  AND status = ? AND updated_at = ?
+		  AND EXISTS (
+			SELECT 1 FROM codex_app_server_runtimes runtime
+			WHERE runtime.generation = ? AND runtime.conv_id = ? AND runtime.state = ?
+			  AND NOT EXISTS (
+				SELECT 1 FROM codex_app_server_runtimes replacement
+				WHERE replacement.conv_id = runtime.conv_id
+				  AND replacement.generation <> runtime.generation
+				  AND replacement.state = ?
+				  AND replacement.created_at > runtime.created_at
+			  )
+		  )`, status, detail, dbTime(at), sessionID, convID, dbTime(sessionCreatedAt),
+		observedStatus, dbTime(observedUpdatedAt), generation, convID,
+		CodexAppServerReady, CodexAppServerReady)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	return changed == 1, err
+}
+
+// UpdateContextSnapshotForCodexAppServerGeneration is the app-server twin of
+// UpdateContextSnapshotForGeneration with an additional runtime-generation
+// predicate. It also updates the durable relaunch projection in the same
+// transaction, matching the existing context writer contract.
+func UpdateContextSnapshotForCodexAppServerGeneration(
+	sessionID, convID string,
+	sessionCreatedAt time.Time,
+	generation string,
+	pct float64,
+	tokensInput, tokensOutput, windowSize int64,
+) (bool, error) {
+	if pct == 0 && tokensInput == 0 && tokensOutput == 0 && windowSize == 0 {
+		return false, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.Exec(`UPDATE sessions
+		SET context_pct = ?, tokens_input = ?, tokens_output = ?, context_window_size = ?
+		WHERE id = ? AND conv_id = ? AND created_at = ?
+		  AND EXISTS (
+			SELECT 1 FROM codex_app_server_runtimes runtime
+			WHERE runtime.generation = ? AND runtime.conv_id = ? AND runtime.state = ?
+			  AND NOT EXISTS (
+				SELECT 1 FROM codex_app_server_runtimes replacement
+				WHERE replacement.conv_id = runtime.conv_id
+				  AND replacement.generation <> runtime.generation
+				  AND replacement.state = ?
+				  AND replacement.created_at > runtime.created_at
+			  )
+		  )`, pct, tokensInput, tokensOutput, windowSize,
+		sessionID, convID, dbTime(sessionCreatedAt), generation, convID,
+		CodexAppServerReady, CodexAppServerReady)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil || changed == 0 {
+		return false, err
+	}
+	if err := projectSessionRelaunchProfilesTx(tx, sessionID, relaunchProjectionOptions{}); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // InvalidateCodexAppServerRuntimesAfterRestart makes the durable state match
 // the empty in-process handle registry before the daemon starts serving.
 func InvalidateCodexAppServerRuntimesAfterRestart() error {

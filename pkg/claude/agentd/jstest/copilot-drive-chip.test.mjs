@@ -102,3 +102,46 @@ test('the Copilot drive chip tells a starting agent from a deaf one', async (t) 
     }
   });
 });
+
+test('the Codex app-server chip discloses safe observer ownership and quarantine detail', async (t) => {
+  const { harness, mod } = await memberTable(t);
+  const { HarnessLine } = mod;
+  const mount = async (state) =>
+    harness.mount(harness.html`
+      <${HarnessLine} member=${{ conv_id: 'codex-1', online: true, state }} />`);
+  const base = { harness: 'codex', model: 'gpt-5.6-sol', codex_app_server: true };
+
+  await t.test('ready names the non-subscribing observer and freshness', async () => {
+    const mounted = await mount({
+      ...base,
+      codex_app_server_state: 'ready',
+      codex_app_server_version: '0.147.0',
+      codex_observer_updated: '2026-08-09T12:34:56Z',
+    });
+    try {
+      const el = mounted.container.querySelector('.agent-harness .harness-drive');
+      assert.equal(el.textContent.trim(), 'app');
+      assert.match(el.title, /TUI owns approvals/);
+      assert.match(el.title, /non-subscribing/);
+      assert.match(el.title, /2026-08-09T12:34:56Z/);
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  await t.test('quarantine shows the unexpected request method', async () => {
+    const mounted = await mount({
+      ...base,
+      codex_app_server_state: 'unavailable',
+      codex_app_server_detail: 'unexpected server request delivered to non-subscribing observer: item/permissions/requestApproval',
+    });
+    try {
+      const el = mounted.container.querySelector('.agent-harness .harness-drive');
+      assert.ok(el.classList.contains('harness-drive-failed'));
+      assert.match(el.title, /item\/permissions\/requestApproval/);
+      assert.match(el.title, /did not fall back to send-keys/);
+    } finally {
+      await mounted.unmount();
+    }
+  });
+});
