@@ -67,7 +67,7 @@ type Params struct {
 	// The --install-* flags add optional extras on top of the baseline
 	// setup (which always runs). They do not replace or gate the baseline.
 	InstallAll               bool `long:"install-all" help:"Install all standard extras on top of the baseline setup. Proxy skills remain opt-in via --install-proxy-skills."`
-	InstallAgentSkills       bool `long:"install-agent-skills" help:"Also install (or refresh) the bundled coordination skills (agent-*, human-*, and process-templates) into Claude Code and Codex CLI user skill directories, including CODEX_HOME/skills. Removes proxy skills bundled by older releases unless --install-proxy-skills is also passed. Idempotent; overwrites existing if present."`
+	InstallAgentSkills       bool `long:"install-agent-skills" help:"Also install (or refresh) the bundled coordination skills (agent-*, human-*, and process-templates) into Claude Code and Codex CLI user skill directories, including CODEX_HOME/skills. Idempotent; overwrites existing if present."`
 	InstallProxySkills       bool `long:"install-proxy-skills" help:"Also install (or refresh) the optional proxy-git and proxy-linear skills into Claude Code and Codex CLI user skill directories, including CODEX_HOME/skills. Not included by --install-all."`
 	InstallDefaultAgentPerms bool `long:"install-default-agent-permissions" help:"Also grant the low-risk permission slugs the bundled agent-* skills exercise as agent defaults in ~/.tclaude/config.json. Idempotent; only adds missing slugs."`
 	InstallSandboxHardening  bool `long:"install-sandbox-hardening" help:"Also add the agent-sandbox hardening entries (sandbox.* and permissions.deny) to ~/.claude/settings.json, as described in docs/sandbox-hardening.md. Append-only and idempotent; never removes or overwrites existing values."`
@@ -689,21 +689,6 @@ func checkHooksForHarness(h *harness.Harness, expectTrust bool) {
 // The CLI prints each destination so the user knows where to look if
 // they want to inspect or edit them locally.
 func installAgentSkills() error {
-	// Proxy skills used to belong to the ordinary bundle. Retire those legacy
-	// installs on refresh so upgrading users get the same explicit-opt-in
-	// behavior as fresh installations. When --install-proxy-skills is present,
-	// installExtras deliberately reinstalls them in the following section.
-	claudeRemoved, err := agent.RemoveProxySkills()
-	if err != nil {
-		return fmt.Errorf("remove legacy Claude Code proxy skills: %w", err)
-	}
-	codexRemoved, err := agent.RemoveCodexProxySkills()
-	if err != nil {
-		return fmt.Errorf("remove legacy Codex CLI proxy skills: %w", err)
-	}
-	for _, path := range append(claudeRemoved, codexRemoved...) {
-		fmt.Printf("✓ Removed legacy proxy skill at %s (reinstall with --install-proxy-skills)\n", path)
-	}
 	installed, err := agent.InstallSkills(true)
 	if err != nil {
 		return fmt.Errorf("install Claude Code agent skills: %w", err)

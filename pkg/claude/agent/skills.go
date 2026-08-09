@@ -90,35 +90,6 @@ func InstallCodexProxySkills(force bool) ([]InstalledSkill, error) {
 	return installCodexSkills(force, bundledProxySkills)
 }
 
-// RemoveProxySkills removes proxy skills previously installed in Claude
-// Code's user skill root. This migrates installations from releases where the
-// proxy skills were part of the ordinary bundle.
-func RemoveProxySkills() ([]string, error) {
-	root, err := skillroots.Claude()
-	if err != nil {
-		return nil, err
-	}
-	return removeSkillsInRoot(root, bundledProxySkills)
-}
-
-// RemoveCodexProxySkills removes proxy skills previously installed in both
-// Codex user skill roots.
-func RemoveCodexProxySkills() ([]string, error) {
-	roots, err := codexSkillRoots()
-	if err != nil {
-		return nil, err
-	}
-	var removed []string
-	for _, root := range roots {
-		got, err := removeSkillsInRoot(root, bundledProxySkills)
-		removed = append(removed, got...)
-		if err != nil {
-			return removed, err
-		}
-	}
-	return removed, nil
-}
-
 func installCodexSkills(force bool, skills []string) ([]InstalledSkill, error) {
 	roots, err := codexSkillRoots()
 	if err != nil {
@@ -169,23 +140,6 @@ func installSkillsInRoot(root string, force bool, skills []string) ([]InstalledS
 		return installed, firstExistsErr
 	}
 	return installed, nil
-}
-
-func removeSkillsInRoot(root string, skills []string) ([]string, error) {
-	var removed []string
-	for _, name := range skills {
-		dst := filepath.Join(root, name)
-		if _, err := os.Lstat(dst); errors.Is(err, os.ErrNotExist) {
-			continue
-		} else if err != nil {
-			return removed, fmt.Errorf("inspect skill %s: %w", dst, err)
-		}
-		if err := os.RemoveAll(dst); err != nil {
-			return removed, fmt.Errorf("remove skill %s: %w", dst, err)
-		}
-		removed = append(removed, dst)
-	}
-	return removed, nil
 }
 
 func codexSkillRoots() ([]string, error) {

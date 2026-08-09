@@ -143,44 +143,6 @@ func TestInstallExtras_SkillsOnly(t *testing.T) {
 	assertBundledPermsNotGranted(t)
 }
 
-func TestInstallExtras_SkillsOnly_RemovesLegacyProxySkills(t *testing.T) {
-	home := tempHome(t)
-	for _, root := range []string{
-		filepath.Join(home, ".claude", "skills"),
-		filepath.Join(home, ".agents", "skills"),
-		filepath.Join(home, ".codex", "skills"),
-	} {
-		for _, name := range []string{"proxy-git", "proxy-linear"} {
-			dir := filepath.Join(root, name)
-			require.NoError(t, os.MkdirAll(dir, 0o755))
-			require.NoError(t, os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("legacy"), 0o644))
-		}
-	}
-
-	require.NoError(t, installExtras(&Params{InstallAgentSkills: true}))
-
-	assertSkillsInstalled(t, home)
-}
-
-func TestInstallExtras_AgentAndProxySkills_ReinstallsProxySkills(t *testing.T) {
-	home := tempHome(t)
-
-	require.NoError(t, installExtras(&Params{
-		InstallAgentSkills: true,
-		InstallProxySkills: true,
-	}))
-
-	for _, root := range []string{
-		filepath.Join(home, ".claude", "skills"),
-		filepath.Join(home, ".agents", "skills"),
-		filepath.Join(home, ".codex", "skills"),
-	} {
-		assert.DirExists(t, filepath.Join(root, "agent-coord"))
-		assert.DirExists(t, filepath.Join(root, "proxy-git"))
-		assert.DirExists(t, filepath.Join(root, "proxy-linear"))
-	}
-}
-
 // Proxy skills require their own explicit opt-in and do not bring along the
 // ordinary coordination bundle.
 func TestInstallExtras_ProxySkillsOnly(t *testing.T) {
