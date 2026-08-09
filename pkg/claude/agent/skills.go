@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"embed"
 	"errors"
 	"fmt"
@@ -46,6 +47,8 @@ var bundledProxySkills = []string{
 	"proxy-linear",
 }
 
+const proxyOptInMarkerName = ".tclaude-explicit-proxy-opt-in"
+
 // InstalledSkill describes a skill that was written to disk.
 type InstalledSkill struct {
 	Name string // skill name (also the install directory basename)
@@ -81,42 +84,51 @@ func InstallProxySkills(force bool) ([]InstalledSkill, error) {
 	if err != nil {
 		return nil, err
 	}
-	return installSkillsInRoot(root, force, bundledProxySkills)
+	installed, err := installSkillsInRoot(root, force, bundledProxySkills)
+	if err != nil {
+		return installed, err
+	}
+	return installed, markProxySkillsOptedIn(installed)
 }
 
 // InstallCodexProxySkills writes the optional proxy skills into Codex's
 // user-scope skill directories.
 func InstallCodexProxySkills(force bool) ([]InstalledSkill, error) {
-	return installCodexSkills(force, bundledProxySkills)
+	installed, err := installCodexSkills(force, bundledProxySkills)
+	if err != nil {
+		return installed, err
+	}
+	return installed, markProxySkillsOptedIn(installed)
 }
 
-// RemoveProxySkills removes proxy skills previously installed in Claude
-// Code's user skill root. This migrates installations from releases where the
-// proxy skills were part of the ordinary bundle.
-func RemoveProxySkills() ([]string, error) {
+// RetireLegacyProxySkills disables proxy skills installed in Claude Code's
+// user skill root by releases where they belonged to the ordinary bundle.
+// Only an unmarked manifest that exactly matches the embedded copy is moved;
+// explicit opt-ins and locally modified skills are preserved.
+func RetireLegacyProxySkills() ([]InstalledSkill, error) {
 	root, err := skillroots.Claude()
 	if err != nil {
 		return nil, err
 	}
-	return removeSkillsInRoot(root, bundledProxySkills)
+	return retireLegacyProxySkillsInRoot(root)
 }
 
-// RemoveCodexProxySkills removes proxy skills previously installed in both
+// RetireLegacyCodexProxySkills disables legacy bundled proxy skills in both
 // Codex user skill roots.
-func RemoveCodexProxySkills() ([]string, error) {
+func RetireLegacyCodexProxySkills() ([]InstalledSkill, error) {
 	roots, err := codexSkillRoots()
 	if err != nil {
 		return nil, err
 	}
-	var removed []string
+	var retired []InstalledSkill
 	for _, root := range roots {
-		got, err := removeSkillsInRoot(root, bundledProxySkills)
-		removed = append(removed, got...)
+		got, err := retireLegacyProxySkillsInRoot(root)
+		retired = append(retired, got...)
 		if err != nil {
-			return removed, err
+			return retired, err
 		}
 	}
-	return removed, nil
+	return retired, nil
 }
 
 func installCodexSkills(force bool, skills []string) ([]InstalledSkill, error) {
@@ -171,21 +183,57 @@ func installSkillsInRoot(root string, force bool, skills []string) ([]InstalledS
 	return installed, nil
 }
 
-func removeSkillsInRoot(root string, skills []string) ([]string, error) {
-	var removed []string
-	for _, name := range skills {
-		dst := filepath.Join(root, name)
-		if _, err := os.Lstat(dst); errors.Is(err, os.ErrNotExist) {
-			continue
-		} else if err != nil {
-			return removed, fmt.Errorf("inspect skill %s: %w", dst, err)
+func markProxySkillsOptedIn(installed []InstalledSkill) error {
+	for _, skill := range installed {
+		marker := filepath.Join(skill.Path, proxyOptInMarkerName)
+		if err := os.WriteFile(marker, []byte("installed by tclaude setup --install-proxy-skills\n"), 0o644); err != nil {
+			return fmt.Errorf("mark proxy skill %s explicitly opted in: %w", skill.Path, err)
 		}
-		if err := os.RemoveAll(dst); err != nil {
-			return removed, fmt.Errorf("remove skill %s: %w", dst, err)
-		}
-		removed = append(removed, dst)
 	}
-	return removed, nil
+	return nil
+}
+
+func retireLegacyProxySkillsInRoot(root string) ([]InstalledSkill, error) {
+	var retired []InstalledSkill
+	for _, name := range bundledProxySkills {
+		dir := filepath.Join(root, name)
+		if _, err := os.Stat(filepath.Join(dir, proxyOptInMarkerName)); err == nil {
+			continue
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return retired, fmt.Errorf("inspect proxy opt-in marker in %s: %w", dir, err)
+		}
+
+		manifest := filepath.Join(dir, "SKILL.md")
+		got, err := os.ReadFile(manifest)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return retired, fmt.Errorf("read legacy proxy skill %s: %w", manifest, err)
+		}
+		want, err := skillsFS.ReadFile("skills/" + name + "/SKILL.md")
+		if err != nil {
+			return retired, fmt.Errorf("read embedded proxy skill %s: %w", name, err)
+		}
+		if !bytes.Equal(got, want) {
+			continue
+		}
+
+		backup := manifest + ".disabled-by-tclaude"
+		for suffix := 2; ; suffix++ {
+			if _, err := os.Lstat(backup); errors.Is(err, os.ErrNotExist) {
+				break
+			} else if err != nil {
+				return retired, fmt.Errorf("inspect retired proxy skill path %s: %w", backup, err)
+			}
+			backup = fmt.Sprintf("%s.disabled-by-tclaude.%d", manifest, suffix)
+		}
+		if err := os.Rename(manifest, backup); err != nil {
+			return retired, fmt.Errorf("retire legacy proxy skill %s: %w", manifest, err)
+		}
+		retired = append(retired, InstalledSkill{Name: name, Path: backup})
+	}
+	return retired, nil
 }
 
 func codexSkillRoots() ([]string, error) {

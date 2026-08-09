@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/wsl"
@@ -66,8 +67,8 @@ func assertSkillsInstalled(t *testing.T, home string) {
 		filepath.Join(home, ".codex", "skills"),
 	} {
 		assert.DirExists(t, filepath.Join(root, "agent-coord"))
-		assert.NoDirExists(t, filepath.Join(root, "proxy-git"))
-		assert.NoDirExists(t, filepath.Join(root, "proxy-linear"))
+		assert.NoFileExists(t, filepath.Join(root, "proxy-git", "SKILL.md"))
+		assert.NoFileExists(t, filepath.Join(root, "proxy-linear", "SKILL.md"))
 	}
 }
 
@@ -143,23 +144,48 @@ func TestInstallExtras_SkillsOnly(t *testing.T) {
 	assertBundledPermsNotGranted(t)
 }
 
-func TestInstallExtras_SkillsOnly_RemovesLegacyProxySkills(t *testing.T) {
+func TestInstallExtras_SkillsOnly_RetiresLegacyProxySkills(t *testing.T) {
 	home := tempHome(t)
+	_, err := agent.InstallProxySkills(true)
+	require.NoError(t, err)
+	_, err = agent.InstallCodexProxySkills(true)
+	require.NoError(t, err)
 	for _, root := range []string{
 		filepath.Join(home, ".claude", "skills"),
 		filepath.Join(home, ".agents", "skills"),
 		filepath.Join(home, ".codex", "skills"),
 	} {
 		for _, name := range []string{"proxy-git", "proxy-linear"} {
-			dir := filepath.Join(root, name)
-			require.NoError(t, os.MkdirAll(dir, 0o755))
-			require.NoError(t, os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("legacy"), 0o644))
+			require.NoError(t, os.Remove(filepath.Join(root, name, ".tclaude-explicit-proxy-opt-in")))
 		}
 	}
 
 	require.NoError(t, installExtras(&Params{InstallAgentSkills: true}))
 
 	assertSkillsInstalled(t, home)
+	for _, root := range []string{
+		filepath.Join(home, ".claude", "skills"),
+		filepath.Join(home, ".agents", "skills"),
+		filepath.Join(home, ".codex", "skills"),
+	} {
+		for _, name := range []string{"proxy-git", "proxy-linear"} {
+			assert.FileExists(t, filepath.Join(root, name, "SKILL.md.disabled-by-tclaude"))
+		}
+	}
+}
+
+func TestInstallExtras_SkillsOnly_PreservesModifiedProxySkills(t *testing.T) {
+	home := tempHome(t)
+	manifest := filepath.Join(home, ".claude", "skills", "proxy-git", "SKILL.md")
+	require.NoError(t, os.MkdirAll(filepath.Dir(manifest), 0o755))
+	require.NoError(t, os.WriteFile(manifest, []byte("custom proxy skill"), 0o644))
+
+	require.NoError(t, installExtras(&Params{InstallAgentSkills: true}))
+
+	assert.FileExists(t, manifest)
+	got, err := os.ReadFile(manifest)
+	require.NoError(t, err)
+	assert.Equal(t, "custom proxy skill", string(got))
 }
 
 func TestInstallExtras_AgentAndProxySkills_ReinstallsProxySkills(t *testing.T) {
@@ -178,6 +204,8 @@ func TestInstallExtras_AgentAndProxySkills_ReinstallsProxySkills(t *testing.T) {
 		assert.DirExists(t, filepath.Join(root, "agent-coord"))
 		assert.DirExists(t, filepath.Join(root, "proxy-git"))
 		assert.DirExists(t, filepath.Join(root, "proxy-linear"))
+		assert.FileExists(t, filepath.Join(root, "proxy-git", ".tclaude-explicit-proxy-opt-in"))
+		assert.FileExists(t, filepath.Join(root, "proxy-linear", ".tclaude-explicit-proxy-opt-in"))
 	}
 }
 
