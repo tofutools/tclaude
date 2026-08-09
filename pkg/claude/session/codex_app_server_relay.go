@@ -110,6 +110,18 @@ func RunCodexAppServerRelay(ctx context.Context, socketPath, upstream string) er
 	return runCodexAppServerRelay(ctx, socketPath, upstream, "")
 }
 
+// RunCodexAppServerProfileRelay exposes the enforcing relay for the opt-in
+// real-Codex compatibility test. Production supplies the same profile through
+// the hidden subprocess command.
+func RunCodexAppServerProfileRelay(
+	ctx context.Context,
+	socketPath string,
+	upstream string,
+	permissionProfile string,
+) error {
+	return runCodexAppServerRelay(ctx, socketPath, upstream, permissionProfile)
+}
+
 func runCodexAppServerRelay(
 	ctx context.Context,
 	socketPath string,
@@ -180,7 +192,7 @@ func serveCodexAppServerProfileRelay(
 		_ = server.Close()
 	}()
 	err := server.Serve(listener)
-	if errors.Is(err, http.ErrServerClosed) && ctx.Err() != nil {
+	if ctx.Err() != nil {
 		return nil
 	}
 	return err
@@ -202,13 +214,18 @@ func relayCodexAppServerWebSocket(
 	dialer.Subprotocols = websocket.Subprotocols(r)
 	server, response, err := dialer.Dial("ws://"+upstream+r.URL.RequestURI(), upstreamHeaders)
 	if err != nil {
+		status := http.StatusBadGateway
 		if response != nil && response.Body != nil {
+			status = response.StatusCode
 			_ = response.Body.Close()
 		}
-		http.Error(w, "Codex app-server upstream unavailable", http.StatusBadGateway)
+		// The native app-server remains the authentication authority. Preserve
+		// its rejection status without reflecting an upstream body that may
+		// disclose implementation details.
+		http.Error(w, http.StatusText(status), status)
 		return
 	}
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(*http.Request) bool { return true },
@@ -220,7 +237,7 @@ func relayCodexAppServerWebSocket(
 	if err != nil {
 		return
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	client.SetReadLimit(codexAppServerRelayMaxMessageBytes)
 	server.SetReadLimit(codexAppServerRelayMaxMessageBytes)
 
@@ -267,11 +284,11 @@ func relayCodexAppServerWebSocket(
 // read-only/workspace-write sandbox value instead. App-server treats that
 // value as a thread override, discarding the startup default_permissions table
 // (including the single agentd Unix-socket allow entry). Translate only the
-// permission-bearing fields. Codex 0.147 reconstructs the model-tool sandbox
-// at turn/start, so the managed profile must be restated there even when the
-// typed agentd request carries no legacy sandboxPolicy field; otherwise the
-// server falls back to its restricted network floor and drops the Unix-socket
-// allowlist.
+// permission-bearing fields. A turn with no permissions field inherits the
+// corrected thread profile and must pass through unchanged: tclaude's typed
+// app-server client intentionally does not opt into experimentalApi, so adding
+// the experimental turn/start.permissions field to that connection would make
+// Codex reject an otherwise stable request.
 func rewriteCodexAppServerClientMessage(payload []byte, permissionProfile string) ([]byte, error) {
 	var request struct {
 		Method string          `json:"method"`
@@ -280,30 +297,40 @@ func rewriteCodexAppServerClientMessage(payload []byte, permissionProfile string
 	if err := json.Unmarshal(payload, &request); err != nil || request.Method == "" {
 		return payload, nil
 	}
-	var legacyField string
 	switch request.Method {
 	case "thread/start", "thread/resume":
-		legacyField = "sandbox"
 	case "turn/start", "thread/settings/update":
-		legacyField = "sandboxPolicy"
 	default:
 		return payload, nil
 	}
 
+	if len(request.Params) == 0 || string(request.Params) == "null" {
+		return nil, fmt.Errorf("decode Codex app-server %s params: object required", request.Method)
+	}
 	var params map[string]json.RawMessage
 	if err := json.Unmarshal(request.Params, &params); err != nil {
 		return nil, fmt.Errorf("decode Codex app-server %s params: %w", request.Method, err)
 	}
-	_, hasLegacy := params[legacyField]
+	if params == nil {
+		return nil, fmt.Errorf("decode Codex app-server %s params: object required", request.Method)
+	}
+	_, hasSandbox := params["sandbox"]
+	_, hasSandboxPolicy := params["sandboxPolicy"]
 	_, hasPermissions := params["permissions"]
-	if request.Method == "thread/settings/update" && !hasLegacy && !hasPermissions {
+	if (request.Method == "turn/start" || request.Method == "thread/settings/update") &&
+		!hasSandbox && !hasSandboxPolicy && !hasPermissions {
 		return payload, nil
 	}
 	profileJSON, err := json.Marshal(permissionProfile)
 	if err != nil {
 		return nil, err
 	}
-	delete(params, legacyField)
+	// Strip every legacy spelling on every permission-bearing method. This is
+	// deliberately broader than the fields Codex 0.147's typed clients emit:
+	// retaining an unexpected legacy spelling alongside the named profile
+	// would leave precedence to the upstream decoder.
+	delete(params, "sandbox")
+	delete(params, "sandboxPolicy")
 	params["permissions"] = profileJSON
 	paramsJSON, err := json.Marshal(params)
 	if err != nil {

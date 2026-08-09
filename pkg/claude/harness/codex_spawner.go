@@ -82,7 +82,7 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 		cmd += " " + strings.Join(quoted, " ")
 	}
 	if spec.CodexAppServerSocket != "" {
-		cmd += " --remote " + clcommon.ShellQuoteArg(spec.CodexAppServerURL) +
+		cmd += " --remote " + clcommon.ShellQuoteArg("unix://"+spec.CodexAppServerSocket) +
 			" --remote-auth-token-env TCLAUDE_CODEX_APP_SERVER_TOKEN"
 		// The TUI needs the capability for its own WebSocket upgrade, but model
 		// tool shells must never inherit it.
@@ -126,6 +126,9 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 		" session codex-app-server-relay --socket " +
 		clcommon.ShellQuoteArg(spec.CodexAppServerSocket) + " --upstream " +
 		clcommon.ShellQuoteArg(strings.TrimPrefix(spec.CodexAppServerURL, "ws://"))
+	if spec.PermissionProfile != "" {
+		relay += " --permission-profile " + clcommon.ShellQuoteArg(spec.PermissionProfile)
+	}
 	pidFile := clcommon.ShellQuoteArg(spec.CodexAppServerPIDFile)
 	relayPIDFile := clcommon.ShellQuoteArg(spec.CodexAppServerPIDFile + ".relay")
 	logFile := clcommon.ShellQuoteArg(spec.CodexAppServerLogFile)
