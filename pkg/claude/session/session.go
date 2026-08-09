@@ -462,6 +462,7 @@ func DetachSessionClients(sessionName string) (int, error) {
 		_ = clcommon.TmuxCommand("detach-client", "-t", client).Run()
 		detached++
 	}
+	NormalizeTmuxPaneAfterDetach(sessionName)
 	return detached, nil
 }
 

@@ -74,9 +74,11 @@ func runAttach(params *AttachParams) error {
 // AttachToTmuxSession attaches to a tmux session, replacing the current process
 // Returns exit code (0 = success) for use by other packages
 func AttachToTmuxSession(tmuxSession string) int {
+	ConfigureTmuxDetachNormalization(tmuxSession)
 	if err := attachToSession(tmuxSession); err != nil {
 		return 1
 	}
+	NormalizeTmuxPaneAfterDetach(tmuxSession)
 	return 0
 }
 
@@ -94,6 +96,7 @@ func AttachToSession(sessionID, tmuxSession string, forceAttach bool) error {
 	if windowTitleEnabledFn() {
 		setTerminalTitle(fmt.Sprintf("tclaude:%s", sessionID))
 	}
+	ConfigureTmuxDetachNormalization(tmuxSession)
 
 	// Resolve the persisted harness before blocking in tmux. The row can change
 	// while the client is attached, but this attachment belongs to the launch
@@ -109,6 +112,7 @@ func AttachToSession(sessionID, tmuxSession string, forceAttach bool) error {
 	// so native-scrollback harnesses must leave it here before another client
 	// attaches or agentd injects input.
 	CancelTmuxScrollback(tmuxSession, h)
+	NormalizeTmuxPaneAfterDetach(tmuxSession)
 	return nil
 }
 
