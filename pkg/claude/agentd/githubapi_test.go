@@ -1,0 +1,403 @@
+package agentd
+
+import (
+	"archive/zip"
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// githubapi_test.go covers the pieces of the direct GitHub client that have no
+// HTTP round trip in them — URL construction, error rendering, pagination
+// parsing, credential discovery and archive extraction. Each is a place where
+// a mistake is invisible from the outside until it matters.
+
+// TestGHRequestURL_RefusesAnythingOffHost is the load-bearing one.
+//
+// A pagination `next` link is GITHUB-SUPPLIED DATA that this client follows
+// with the operator's token attached. Go strips a sensitive header across a
+// REDIRECT to another host, but a Link header is not a redirect — it is a URL
+// handed straight to Do — so nothing in net/http would stop a token going
+// somewhere it was never meant to.
+func TestGHRequestURL_RefusesAnythingOffHost(t *testing.T) {
+	t.Run("a relative path resolves under the API root", func(t *testing.T) {
+		got, err := ghRequestURL(ghAPIRequest{Path: "repos/o/r/pulls"})
+		require.NoError(t, err)
+		assert.Equal(t, "https://api.github.com/repos/o/r/pulls", got)
+	})
+
+	t.Run("a leading slash is not a second root", func(t *testing.T) {
+		got, err := ghRequestURL(ghAPIRequest{Path: "/repos/o/r"})
+		require.NoError(t, err)
+		assert.Equal(t, "https://api.github.com/repos/o/r", got)
+	})
+
+	t.Run("query values are escaped rather than concatenated", func(t *testing.T) {
+		got, err := ghRequestURL(ghAPIRequest{
+			Path:  "repos/o/r/actions/runs",
+			Query: url.Values{"branch": []string{"feat/a b&c"}},
+		})
+		require.NoError(t, err)
+		assert.Contains(t, got, "branch=feat%2Fa+b%26c")
+	})
+
+	t.Run("an absolute api.github.com link is followed", func(t *testing.T) {
+		got, err := ghRequestURL(ghAPIRequest{
+			Path: "https://api.github.com/repositories/1/issues/2/comments?page=3",
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "https://api.github.com/repositories/1/issues/2/comments?page=3", got)
+	})
+
+	for _, bad := range []string{
+		"https://api.github.com.attacker.net/repos/o/r",
+		"https://attacker.net/repos/o/r",
+		"http://api.github.com/repos/o/r",
+	} {
+		t.Run("refused: "+bad, func(t *testing.T) {
+			_, err := ghRequestURL(ghAPIRequest{Path: bad})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "outside api.github.com")
+		})
+	}
+}
+
+// TestGHNextLink parses the pagination cursor GitHub actually sends. Parsing it
+// rather than incrementing a page counter is what makes a walk terminate on
+// GitHub's terms.
+func TestGHNextLink(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		header string
+		want   string
+	}{
+		{"next then last", `<https://api.github.com/x?page=2>; rel="next", <https://api.github.com/x?page=9>; rel="last"`,
+			"https://api.github.com/x?page=2"},
+		{"prev then next", `<https://api.github.com/x?page=1>; rel="prev", <https://api.github.com/x?page=3>; rel="next"`,
+			"https://api.github.com/x?page=3"},
+		{"the last page offers no next", `<https://api.github.com/x?page=1>; rel="first", <https://api.github.com/x?page=8>; rel="prev"`, ""},
+		{"absent", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := http.Header{}
+			if tc.header != "" {
+				h.Set("Link", tc.header)
+			}
+			assert.Equal(t, tc.want, ghNextLink(h))
+		})
+	}
+}
+
+// TestGHTailText keeps the END, because that is where a failing step's error
+// and a thread's newest comment are — and it starts at a line boundary, so a
+// truncated log does not open on a fragment that reads like corruption.
+func TestGHTailText(t *testing.T) {
+	t.Run("under the bound is untouched", func(t *testing.T) {
+		got, truncated := ghTailText("short\n", 100)
+		assert.Equal(t, "short\n", got)
+		assert.False(t, truncated)
+	})
+
+	t.Run("over the bound keeps the tail, aligned to a line", func(t *testing.T) {
+		text := "aaaa\nbbbb\ncccc\ndddd\n"
+		got, truncated := ghTailText(text, 12)
+		assert.True(t, truncated)
+		assert.Equal(t, "cccc\ndddd\n", got)
+		assert.False(t, strings.HasPrefix(got, "b"), "a mid-line start reads as corrupted output")
+	})
+}
+
+// TestGHErrorText renders GitHub's own words, which are the actionable part of
+// every failure this proxy reports.
+func TestGHErrorText(t *testing.T) {
+	t.Run("a REST error carries its field detail", func(t *testing.T) {
+		got := ghErrorText(ghAPIResult{Status: 422, Body: []byte(`{
+			"message":"Validation Failed",
+			"errors":[{"resource":"PullRequest","field":"base","code":"invalid",
+			           "message":"No commits between main and feat/x"}]}`)})
+		assert.Contains(t, got, "Validation Failed")
+		assert.Contains(t, got, "No commits between main and feat/x")
+	})
+
+	t.Run("a field error with no message still says which field", func(t *testing.T) {
+		got := ghErrorText(ghAPIResult{Status: 422, Body: []byte(
+			`{"message":"Validation Failed","errors":[{"resource":"Issue","field":"title","code":"missing_field"}]}`)})
+		assert.Contains(t, got, "Issue.title: missing_field")
+	})
+
+	t.Run("a GraphQL error document is recognised too", func(t *testing.T) {
+		got := ghErrorText(ghAPIResult{Status: 200, Body: []byte(
+			`{"errors":[{"type":"FORBIDDEN","message":"Resource not accessible"}]}`)})
+		assert.Contains(t, got, "FORBIDDEN")
+		assert.Contains(t, got, "Resource not accessible")
+	})
+
+	// A bare 404 is the single most common failure here — a private repository
+	// the token cannot see looks exactly like one that does not exist — and an
+	// empty body would otherwise produce an empty diagnosis.
+	t.Run("an empty 404 says what it probably means", func(t *testing.T) {
+		got := ghErrorText(ghAPIResult{Status: 404})
+		assert.Contains(t, got, "not visible to the token")
+	})
+
+	t.Run("anything else names the status", func(t *testing.T) {
+		assert.Contains(t, ghErrorText(ghAPIResult{Status: 502, Body: []byte("<html>")}), "HTTP 502")
+	})
+}
+
+// TestValidateGHTokenShape — a stray newline in a token file is an ordinary
+// editor accident, and net/http rejects the resulting header with a message
+// that names the header rather than the cause.
+func TestValidateGHTokenShape(t *testing.T) {
+	assert.Nil(t, validateGHTokenShape("ghp_ordinary_token", "test"))
+
+	for _, bad := range []string{"ghp_a\nghp_b", "ghp_a\ttab", "ghp_a\rcr"} {
+		fault := validateGHTokenShape(bad, "test")
+		require.NotNil(t, fault, "token %q must be refused", bad)
+		assert.Contains(t, fault.Msg, "control character")
+	}
+}
+
+// TestReadGHHostsToken reads the gh CLI's own config without running it.
+func TestReadGHHostsToken(t *testing.T) {
+	t.Run("GH_CONFIG_DIR wins", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("GH_CONFIG_DIR", dir)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "hosts.yml"),
+			[]byte("github.com:\n    user: mikes\n    oauth_token: gho_x\n"), 0o600))
+
+		user, token := readGHHostsToken()
+		assert.Equal(t, "mikes", user)
+		assert.Equal(t, "gho_x", token)
+	})
+
+	// A host using secure storage has an entry with a user and NO token. The
+	// user is still wanted — it is the keyring lookup's second key — so this
+	// must not be reported as "gh is not configured here".
+	t.Run("secure storage leaves a user but no token", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("GH_CONFIG_DIR", dir)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "hosts.yml"),
+			[]byte("github.com:\n    user: mikes\n    git_protocol: ssh\n"), 0o600))
+
+		user, token := readGHHostsToken()
+		assert.Equal(t, "mikes", user)
+		assert.Empty(t, token)
+	})
+
+	// Every failure here means "gh is not the credential source", which is an
+	// ordinary situation. Refusing the request over it would blame the wrong
+	// thing; the caller falls through and the final diagnosis names every
+	// option.
+	t.Run("absent or malformed is silent", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("GH_CONFIG_DIR", dir)
+		user, token := readGHHostsToken()
+		assert.Empty(t, user)
+		assert.Empty(t, token)
+
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "hosts.yml"),
+			[]byte("this: is: not: yaml\n"), 0o600))
+		user, token = readGHHostsToken()
+		assert.Empty(t, user)
+		assert.Empty(t, token)
+	})
+}
+
+// TestReadGHKeyringToken reads under gh's own service name, trying the active
+// entry before the per-account one.
+func TestReadGHKeyringToken(t *testing.T) {
+	t.Run("the active entry is preferred", func(t *testing.T) {
+		defer SetGHKeyringForTest(func(service, user string) (string, error) {
+			assert.Equal(t, "gh:github.com", service)
+			if user == "" {
+				return "gho_active", nil
+			}
+			return "gho_named", nil
+		})()
+		assert.Equal(t, "gho_active", readGHKeyringToken("mikes"))
+	})
+
+	t.Run("the per-account entry is the fallback", func(t *testing.T) {
+		defer SetGHKeyringForTest(func(_, user string) (string, error) {
+			if user == "mikes" {
+				return "gho_named", nil
+			}
+			return "", assert.AnError
+		})()
+		assert.Equal(t, "gho_named", readGHKeyringToken("mikes"))
+		assert.Empty(t, readGHKeyringToken(""), "with no account there is nothing else to try")
+	})
+}
+
+// TestGHPathf escapes every argument as a path segment, so a value that got
+// past a gate cannot become extra path.
+func TestGHPathf(t *testing.T) {
+	assert.Equal(t, "repos/o/r/pulls/7", ghPathf("repos/%s/%s/pulls/%s", "o", "r", 7))
+	assert.Equal(t, "repos/o%2F..%2Fx/r/pulls",
+		ghPathf("repos/%s/%s/pulls", "o/../x", "r"),
+		"a slash in an argument must not become a path separator")
+}
+
+// TestGHArtifactSubdir sanitizes a name that came from GITHUB rather than from
+// the caller — on a public repository, from whoever opened the pull request
+// whose job uploaded it.
+func TestGHArtifactSubdir(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"coverage", "coverage"},
+		{"coverage (ubuntu/latest)", "coverage (ubuntu_latest)"},
+		{"..", "artifact"},
+		{"", "artifact"},
+		{"a\x00b", "a_b"},
+		{`we:i<r>d|na*me?"`, "we_i_r_d_na_me__"},
+	} {
+		assert.Equal(t, tc.want, ghArtifactSubdir(tc.in), "input %q", tc.in)
+	}
+}
+
+// TestExtractZip is the untrusted-input boundary: an artifact archive is
+// written by CI, and on a public repository by anyone who can open a pull
+// request. The daemon unpacks it as the operator.
+func TestExtractZip(t *testing.T) {
+	build := func(t *testing.T, files map[string]string) string {
+		t.Helper()
+		var buf bytes.Buffer
+		w := zip.NewWriter(&buf)
+		for name, content := range files {
+			f, err := w.Create(name)
+			require.NoError(t, err)
+			_, err = f.Write([]byte(content))
+			require.NoError(t, err)
+		}
+		require.NoError(t, w.Close())
+		path := filepath.Join(t.TempDir(), "a.zip")
+		require.NoError(t, os.WriteFile(path, buf.Bytes(), 0o600))
+		return path
+	}
+
+	t.Run("ordinary entries land where they say", func(t *testing.T) {
+		root := t.TempDir()
+		archive := build(t, map[string]string{"a/b.txt": "hello", "c.txt": "hi"})
+		n, err := extractZip(archive, root, "", 1<<20)
+		require.NoError(t, err)
+		assert.EqualValues(t, 7, n)
+		assert.FileExists(t, filepath.Join(root, "a", "b.txt"))
+		assert.FileExists(t, filepath.Join(root, "c.txt"))
+	})
+
+	t.Run("a subdirectory keeps two artifacts apart", func(t *testing.T) {
+		root := t.TempDir()
+		archive := build(t, map[string]string{"report.txt": "x"})
+		_, err := extractZip(archive, root, "coverage", 1<<20)
+		require.NoError(t, err)
+		assert.FileExists(t, filepath.Join(root, "coverage", "report.txt"))
+	})
+
+	// The one that matters. An absolute or traversing entry name has to land
+	// inside the destination rather than escaping it.
+	t.Run("a traversing entry cannot escape", func(t *testing.T) {
+		root := t.TempDir()
+		outside := filepath.Join(t.TempDir(), "victim")
+		archive := build(t, map[string]string{
+			"../../../../../../../../etc/passwd": "pwned",
+			"/absolute/path.txt":                 "pwned",
+		})
+		_, err := extractZip(archive, root, "", 1<<20)
+		require.NoError(t, err)
+		assert.NoFileExists(t, outside)
+		assert.FileExists(t, filepath.Join(root, "etc", "passwd"))
+		assert.FileExists(t, filepath.Join(root, "absolute", "path.txt"))
+	})
+
+	// The budget is checked AS BYTES ARE WRITTEN. A declared uncompressed size
+	// in a zip header is attacker-controlled, and measuring afterwards means
+	// the disk is already full.
+	t.Run("the budget stops an oversized unpack", func(t *testing.T) {
+		root := t.TempDir()
+		archive := build(t, map[string]string{"big.bin": strings.Repeat("x", 4096)})
+		_, err := extractZip(archive, root, "", 1024)
+		require.ErrorIs(t, err, errArtifactUnpackTooLarge)
+	})
+}
+
+// TestProjectAuthor renders the four keys this proxy has always answered with,
+// and labels a bot as one — "was this reviewed by a human?" is a question an
+// agent acts on.
+func TestProjectAuthor(t *testing.T) {
+	t.Run("a user", func(t *testing.T) {
+		got := (&ghGQLAuthor{TypeName: "User", Login: "mikes", ID: "U_1", Name: "Mikael"}).project()
+		doc, err := json.Marshal(got)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"id":"U_1","is_bot":false,"login":"mikes","name":"Mikael"}`, string(doc))
+	})
+
+	t.Run("a bot", func(t *testing.T) {
+		got := (&ghGQLAuthor{TypeName: "Bot", Login: "coderabbitai"}).project()
+		doc, err := json.Marshal(got)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"id":"","is_bot":true,"login":"app/coderabbitai","name":""}`, string(doc))
+	})
+
+	// GitHub returns a null author for content whose account was deleted. A
+	// zero-valued author would read as a real one with an empty login.
+	t.Run("a deleted account", func(t *testing.T) {
+		var absent *ghGQLAuthor
+		assert.Nil(t, absent.project())
+		assert.Nil(t, (&ghGQLAuthor{}).project())
+	})
+}
+
+// TestGHLogArchiveFind resolves a step's log entry despite GitHub renaming both
+// halves of the path on its way into the archive.
+func TestGHLogArchiveFind(t *testing.T) {
+	archiveWith := func(names ...string) *ghLogArchive {
+		a := &ghLogArchive{files: map[string]*zip.File{}}
+		for _, n := range names {
+			a.files[n] = &zip.File{FileHeader: zip.FileHeader{Name: n}}
+		}
+		return a
+	}
+
+	t.Run("the literal name", func(t *testing.T) {
+		a := archiveWith("build/3_Run tests.txt")
+		require.NotNil(t, a.find("build", 3))
+	})
+
+	t.Run("a job name GitHub had to sanitize", func(t *testing.T) {
+		a := archiveWith("test (ubuntu_latest)/2_Build.txt")
+		require.NotNil(t, a.find("test (ubuntu/latest)", 2))
+	})
+
+	// In a matrix build several jobs have a step 3, so an entry with the right
+	// step number under the WRONG job is not the answer.
+	t.Run("another job's step of the same number is not it", func(t *testing.T) {
+		a := archiveWith("other-job/3_Run tests.txt")
+		assert.Nil(t, a.find("build", 3))
+	})
+
+	t.Run("a missing step is a normal nil, not a panic", func(t *testing.T) {
+		var absent *ghLogArchive
+		assert.Nil(t, absent.find("build", 1))
+		assert.Nil(t, archiveWith().find("build", 1))
+	})
+}
+
+// TestGHIsFailure decides which conclusions earn a log read. A cancelled or
+// timed-out job leaves one that says why, and a timeout in particular is the
+// case where the log is the entire diagnosis.
+func TestGHIsFailure(t *testing.T) {
+	for _, yes := range []string{"failure", "FAILURE", "timed_out", "cancelled", "startup_failure"} {
+		assert.True(t, ghIsFailure(yes), "conclusion %q", yes)
+	}
+	for _, no := range []string{"success", "skipped", "neutral", ""} {
+		assert.False(t, ghIsFailure(no), "conclusion %q", no)
+	}
+}

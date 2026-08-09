@@ -200,65 +200,52 @@ const gitProxyDisabledMessage = "the git/github proxy has no remote policy for t
 // Binary resolution
 // ---------------------------------------------------------------------------
 
-// proxyBinaries caches the absolute paths of git and gh, resolved once.
+// proxyBinaries caches git's absolute path, resolved once.
 //
 // Resolving once and invoking the ABSOLUTE path matters: exec.Command resolves
 // a bare name against the DAEMON's PATH at call time, not against the
 // constructed child environment, so a PATH entry that appears later in the
 // daemon's lifetime would silently select a different binary.
+//
+// git is the only binary either proxy runs. The GitHub half calls the API
+// directly (githubapi.go), so `gh` is no longer a requirement on the host —
+// its absence costs nothing unless the operator relies on it as a credential
+// source of last resort.
 var proxyBinaries struct {
 	once sync.Once
 	git  string
-	gh   string
-	errs map[string]error
+	err  error
 }
 
 func proxyBinary(name string) (string, error) {
-	proxyBinaries.once.Do(func() {
-		proxyBinaries.errs = map[string]error{}
-		for _, n := range []string{"git", "gh"} {
-			path, err := exec.LookPath(n)
-			if err != nil {
-				proxyBinaries.errs[n] = fmt.Errorf("%s is not installed on the host running agentd (%w)", n, err)
-				continue
-			}
-			if abs, err := filepath.Abs(path); err == nil {
-				path = abs
-			}
-			switch n {
-			case "git":
-				proxyBinaries.git = path
-			case "gh":
-				proxyBinaries.gh = path
-			}
-		}
-	})
-	switch name {
-	case "git":
-		if proxyBinaries.git == "" {
-			return "", proxyBinaries.errs["git"]
-		}
-		return proxyBinaries.git, nil
-	case "gh":
-		if proxyBinaries.gh == "" {
-			return "", proxyBinaries.errs["gh"]
-		}
-		return proxyBinaries.gh, nil
+	if name != "git" {
+		return "", fmt.Errorf("unknown proxy binary %q", name)
 	}
-	return "", fmt.Errorf("unknown proxy binary %q", name)
+	proxyBinaries.once.Do(func() {
+		path, err := exec.LookPath("git")
+		if err != nil {
+			proxyBinaries.err = fmt.Errorf("git is not installed on the host running agentd (%w)", err)
+			return
+		}
+		if abs, err := filepath.Abs(path); err == nil {
+			path = abs
+		}
+		proxyBinaries.git = path
+	})
+	if proxyBinaries.git == "" {
+		return "", proxyBinaries.err
+	}
+	return proxyBinaries.git, nil
 }
 
-// SetProxyBinariesForTest pins the git/gh paths so a flow test never depends on
-// what is installed on the runner. Returns a restore func for t.Cleanup.
-func SetProxyBinariesForTest(gitPath, ghPath string) func() {
-	proxyBinaries.once.Do(func() { proxyBinaries.errs = map[string]error{} })
-	prevGit, prevGH := proxyBinaries.git, proxyBinaries.gh
-	prevErrs := proxyBinaries.errs
-	proxyBinaries.git, proxyBinaries.gh = gitPath, ghPath
-	proxyBinaries.errs = map[string]error{}
+// SetProxyBinariesForTest pins git's path so a flow test never depends on what
+// is installed on the runner. Returns a restore func for t.Cleanup.
+func SetProxyBinariesForTest(gitPath string) func() {
+	proxyBinaries.once.Do(func() {})
+	prevGit, prevErr := proxyBinaries.git, proxyBinaries.err
+	proxyBinaries.git, proxyBinaries.err = gitPath, nil
 	return func() {
-		proxyBinaries.git, proxyBinaries.gh = prevGit, prevGH
-		proxyBinaries.errs = prevErrs
+		proxyBinaries.git, proxyBinaries.err = prevGit, prevErr
 	}
 }
 

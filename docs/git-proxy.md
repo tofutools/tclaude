@@ -74,12 +74,34 @@ Add an `agent.git_proxy` block to `~/.tclaude/data/config.json`:
 | `protected_refs` | Branches the proxy refuses to push to at all. Absent → `["main", "master"]`; an explicit `[]` turns the protection off. |
 | `allow_force_push` | Permits `--force-with-lease` on non-protected refs. Default off. Plain `--force` is never available. |
 | `ssh_key` | Pins one private key (`ssh -i … -o IdentitiesOnly=yes`). Empty uses the daemon's ambient SSH setup — normally an ssh-agent, which is the better posture. |
-| `github_token_file` | A file whose contents become `GH_TOKEN` for `gh`. Empty lets `gh` use the daemon's own authenticated configuration. Note this feeds the **GitHub** half only; `git` itself authenticates over SSH or through the operator's own credential helper. |
+| `github_token_file` | A file whose contents are the GitHub token the daemon sends. Empty falls back through `GH_TOKEN`/`GITHUB_TOKEN` in agentd's environment, then the `gh` CLI's own stored credential — see [Where the GitHub token comes from](#where-the-github-token-comes-from). This feeds the **GitHub** half only; `git` itself authenticates over SSH or through the operator's own credential helper. |
 
 Both path fields accept `~/…`, which expands to the home directory of the user
 account under which `agentd` runs — that account must be able to read the file.
 Shell variables are **not** expanded — a config file is not a shell, so
 `"${HOME}/token.txt"` is taken literally. Use `~/` or an absolute path.
+
+### Where the GitHub token comes from
+
+The daemon calls GitHub's API directly; it does not run the `gh` CLI. So it has
+to find a token itself, and it looks in the places one already is, in this
+order:
+
+| Source | Notes |
+|---|---|
+| `agent.git_proxy.github_token_file` | Your explicit choice, and it wins. If the file cannot be read, is empty, or contains a control character, the request is **refused** rather than falling through — a configured identity must not be silently swapped for another one. |
+| `GH_TOKEN` / `GITHUB_TOKEN` in agentd's environment | The documented way to run unattended. |
+| `~/.config/gh/hosts.yml` | The `gh` CLI's config, read directly. `GH_CONFIG_DIR` and `XDG_CONFIG_HOME` are honoured the same way `gh` honours them. |
+| The OS keyring | Where `gh auth login` puts a token when the host has a usable secret store, which since gh 2.28 is the default. Read under gh's own service name, with the same library gh uses. |
+| `gh auth token` | Last resort, and the only place this feature still executes `gh`. It covers the host where gh can open a keyring the daemon cannot. A host with no `gh` installed simply skips it. |
+
+**`gh` is no longer required on the host.** An operator who authenticated once
+with `gh auth login` keeps working with no change; an operator who would rather
+not install it at all can set `github_token_file` or export `GH_TOKEN`.
+
+The token is sent as an `Authorization` header and never enters a child
+process, so unlike the `GH_TOKEN` this proxy used to hand `gh` there is no
+window in which `/proc/<pid>/environ` exposes it to a same-uid process.
 
 ### Remote patterns
 
@@ -206,39 +228,38 @@ offers.
 
 `pr comments` returns everything said on the pull request, in two sections:
 the **conversation** (issue comments and the body of each review submission,
-what `gh pr view --comments` shows) and the **inline review comments** (the
-line-level notes inside each review's diff threads, with file, line and
-permalink). Both are needed for a review bot: CodeRabbit posts its summary as a
-review body and every actionable finding as an inline comment, so the
-conversation alone tells you the PR was reviewed and not what the review said.
+interleaved oldest-first) and the **inline review comments** (the line-level
+notes inside each review's diff threads, with file, line and permalink). Both
+are needed for a review bot: CodeRabbit posts its summary as a review body and
+every actionable finding as an inline comment, so the conversation alone tells
+you the PR was reviewed and not what the review said.
 
 `pr comments` and `run log-failed` are the only verbs that return **text rather
-than JSON** — every other read, `pr checks` included, is `gh --json` passed
-through unmodelled and bounded at 16 KiB. These two are different because their
-output is the payload rather than a diagnosis: each section keeps a 256 KiB
-tail, so a long conversation cannot squeeze out the inline findings, and
-`run log-failed` is allowed 180s because gh downloads the run's whole log
+than JSON** — every other read, `pr checks` included, answers with a JSON
+document in the field vocabulary `gh --json` used. These two are different
+because their output is the payload rather than a diagnosis: each section keeps
+a 256 KiB tail, so a long conversation cannot squeeze out the inline findings,
+and `run log-failed` is allowed 180s because it downloads the run's whole log
 archive rather than calling one endpoint. Only the *failed* steps are ever
-available; there is no `--log` equivalent, because the full log of a green
+available; there is no whole-run equivalent, because the full log of a green
 matrix build is megabytes that say nothing the check rollup did not.
 
 Two answers that look like nothing going wrong, and are not:
 
 - `run log-failed` on a run with **no failed steps** prints nothing and exits 0.
   Silence means the run is green, not that the read failed.
-- `run log-failed` on a run **still in progress** exits non-zero; gh's message
-  says so. Wait and retry rather than treating it as a broken command.
+- `run log-failed` on a run **still in progress** exits non-zero and says so.
+  Wait and retry rather than treating it as a broken command.
 
 The inline section is a projection rather than raw passthrough — GitHub returns
 a `diff_hunk` per comment that repeats the surrounding diff and is routinely
 larger than the comments themselves, which is a poor trade for an agent reading
-under a context budget. The projection is a single jq constant in
-`githubproxy_handlers.go`.
+under a context budget. The projection lives in `githubproxy_handlers.go`.
 
 > **These two verbs carry third-party prose into an agent's context.** A PR
 > comment can be written by anyone who can comment on the repository, and a CI
 > log echoes branch and PR titles. Every other proxy read returns structured
-> gh JSON; these return free text that an agent will read as part of its
+> JSON; these return free text that an agent will read as part of its
 > instructions unless it has been told otherwise. The bundled `proxy-git` skill
 > says so; keep it in mind if you write your own guidance.
 
@@ -255,11 +276,10 @@ tclaude proxy github run download 18234567890 --name coverage
 
 **The destination is not a parameter, and there is no flag for it.** Everything
 lands in `.tclaude-artifacts/run-<run-id>/` at the root of the agent's own work
-tree, and the command prints that path plus a listing of what arrived —
-`gh run download` itself prints nothing at all on success. This is the same rule
-as the repository: agentd runs unsandboxed, so a path it accepted from an agent
-would be a path it would write to *as the operator*, which is precisely the
-reach the proxy exists not to lend.
+tree, and the command prints that path plus a listing of what arrived. This is
+the same rule as the repository: agentd runs unsandboxed, so a path it accepted
+from an agent would be a path it would write to *as the operator*, which is
+precisely the reach the proxy exists not to lend.
 
 The directory is emptied before each download of the same run, so a listing is
 never a mix of two downloads — and so repeated downloads cannot pile up. It also
@@ -292,20 +312,22 @@ because each download clears its own directory before it starts — which is als
 why a failed or timed-out download is cleaned up rather than left as a partial
 tree.
 
-One thing these do **not** cover: the transient peak *during* extraction. `gh`
-offers no way to bound an unpack in progress, so a zip bomb is fetched and
-expanded before it is measured and deleted. Only pruning is unaffected — it runs
-first. If you are handing this slug to an agent working on a public repository
-where anyone can open a PR that uploads artifacts, that is the residual risk to
-weigh, and it is the same class as the rest of the proxy's posture: a
-same-uid agent can already write to its own work tree, so this is hygiene and
-blast-radius limiting, not a security boundary.
+The unpacked cap is enforced **while the archive expands**, not afterwards: the
+daemon unzips the download itself and stops the moment the budget is spent, so a
+zip bomb never reaches the disk it was meant to fill. What is still fetched is
+the compressed archive, bounded by the 512 MiB zip cap.
 
-The preflight also tells apart three failures gh reports identically: "no
-artifact by that name" (it lists the live ones), "that artifact expired" (the
-entry outlives the bytes, and retrying will not help), and "this run uploaded
-nothing". Because it moves bulk bytes, `run download` gets the longest bound in
-the proxy: 300s, shared across the manifest read and the download.
+A zip entry naming `../../../.ssh/authorized_keys` is a real thing an untrusted
+CI job can upload, and the daemon unpacks as the operator. Every entry is
+written through an `os.Root` anchored at the download directory, so a traversing
+name lands inside it rather than escaping.
+
+The preflight also tells apart three failures that look identical from the
+outside: "no artifact by that name" (it lists the live ones), "that artifact
+expired" (the entry outlives the bytes, and retrying will not help), and "this
+run uploaded nothing". Because it moves bulk bytes, `run download` gets the
+longest bound in the proxy: 300s, shared across the manifest read and the
+transfers.
 
 `run artifacts` returns `{"total": N, "artifacts": [...]}`, projected down to
 the fields that decide anything (`name`, `size_in_bytes`, `expired`, the
@@ -368,9 +390,9 @@ the load-bearing measures do not depend on it.
 | A **forged linked-worktree** link | verify | Linked worktrees are supported (`tclaude worktree` makes them), and their git dir legitimately sits outside the work tree. Git does *not* validate the link: point a hand-written `.git` file at another repository's `.git/worktrees/<name>` and git reports **your** directory as the work tree while handing over **their** remotes and objects. So the proxy checks the back-pointer — `<common>/worktrees/<name>/gitdir` must name this work tree's own `.git`. Writing that needs write access to the main repository's admin directory, which already implies being able to rewrite its config. |
 | A work tree at or above `$HOME` | refuse | Stops an agent launched outside a repository from having git walk up into the operator's home. |
 | A repo-local `credential.*` key (the program git runs to obtain a credential) | refuse + pin | Any `credential.*` key in the **local** or **worktree** scope is refused. On top of that the helper list is reset and repopulated from **global/system** configuration only, so your real helper keeps working. |
-| Argument injection | validate | Every parameter is charset-validated and refused if it begins with `-`. No passthrough flag, no `--` escape. |
+| Argument injection | validate | Every parameter is charset-validated and refused if it begins with `-`. No passthrough flag, no `--` escape. The GitHub half has no argv at all: values reach a query parameter, a JSON body, or a typed GraphQL variable, never a command line or a document body. |
 | A hung transport | bound | Every call is time-bounded and runs in a private process group that is killed **on cancellation**, so an `ssh` child cannot outlive a timed-out request. (The kill is deliberately not issued after `Wait`: the leader's pid is reaped by then and could already belong to a stranger's process group.) |
-| Secrets in `/proc` | design | Tokens travel in the child's environment or a `0600` file, never in argv. PR bodies and comments go through `--body-file`. |
+| Secrets in `/proc` | design | The GitHub token is sent as an `Authorization` header from daemon memory and never enters a child process at all. PR bodies and comments travel in a JSON request body — no argv, and no temporary file. |
 
 Nothing here ever runs a shell. A configuration probe that cannot be *run* is
 treated as a refusal, not as "nothing configured" — a gate that reads a failed
@@ -446,7 +468,8 @@ Two consequences worth stating plainly:
 - **Prefer SSH remotes.** With an ssh-agent, no secret enters the proxied child
   process at all. An HTTPS remote with a token puts that token in the child's
   environment, readable through `/proc/<pid>/environ` by any same-uid process
-  for the life of the call.
+  for the life of the call. (This is about `git` only. The GitHub half runs no
+  child process, so its token never appears in `/proc` at all.)
 - **Everything the GitHub half writes is attributed to your GitHub account.** A
   PR the agent opens is a PR you opened.
 
@@ -468,6 +491,8 @@ tclaude proxy github pr create # → audit verb "github.pr.create"
 |---|---|
 | `503 git_proxy_disabled` | An unscoped grant has no legacy `allowed_remotes` policy. Add a `remote` scope to the grant (preferred), or configure the legacy list. |
 | `403` naming a slug | The agent lacks `git.read` / `git.push` / `github.read` / `github.write`. Grant it, or the agent can retry with `--ask-human`. |
+| `token_missing` | The daemon found no GitHub token anywhere. See [Where the GitHub token comes from](#where-the-github-token-comes-from). |
+| `token_unreadable` | The configured `github_token_file` could not be read, is empty, or contains a control character (usually a stray newline mid-value). A configured file is never silently skipped in favour of another source. |
 | `remote … is not on the operator's allow-list` | Run `tclaude proxy git remotes` to see the resolved `host/owner/repo`, then add a matching pattern. |
 | `protected_ref` | The branch is in `protected_refs`. Push a feature branch and open a PR. |
 | `force_push_disabled` | Set `allow_force_push: true` if you want it. |
@@ -481,7 +506,7 @@ tclaude proxy github pr create # → audit verb "github.pr.create"
 | `could not inspect this repository's configuration` | A config probe failed to run. The proxy refuses rather than assuming the repository is safe; check that `git` works in that directory. |
 | `cannot lock ref … but expected …` after a fetch | The fetch landed its objects, but a remote-tracking ref moved while it was running (usually a second fetch). Nothing was written; run the fetch again. |
 | `too_many_refs` | A fetch will not mirror a `refs/remotes/<remote>/…` or `refs/tags/…` namespace with more than 20,000 refs, because it cannot act on a partial view of one. Local branches are not subject to this. |
-| `tool_missing` | `git` or `gh` is not installed on the host running agentd. |
+| `tool_missing` | `git` is not installed on the host running agentd. |
 | A push hangs then times out | Usually a passphrase-protected key that is not loaded into an ssh-agent. The proxy runs `ssh -o BatchMode=yes`, so it fails rather than prompting — load the key with `ssh-add`, or set `ssh_key`. |
 | `Host key verification failed` | The account agentd runs as has no `known_hosts` entry for the forge, and `BatchMode=yes` cannot prompt to accept one. Run `ssh -T git@github.com` once as that account, or add the host key with `ssh-keyscan`. |
 | `Permission denied (publickey)` | The key agentd offered is not one the forge accepts. **Setting `ssh_key` narrows this**: it adds `-o IdentitiesOnly=yes`, so ssh offers *only* that key — an agent key or a default `~/.ssh/id_*` that would otherwise have worked is not tried. Reproduce exactly what the daemon does with `ssh -v -o BatchMode=yes -o IdentitiesOnly=yes -i <key> -T git@github.com`; a passphrase-protected key with no agent fails this way too. Clearing `ssh_key` falls back to the ambient SSH setup, which is the better posture unless you specifically want one identity. |

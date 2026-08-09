@@ -33,9 +33,22 @@ func TestGHProxy_ReadsLandInTheAuditTrail(t *testing.T) {
 		{"github.run.log-failed", "/v1/github/run/log-failed", map[string]any{"run_id": 18234567890}},
 	} {
 		t.Run(tc.verb, func(t *testing.T) {
-			f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+			f, _, gh := ghWorld(t, []string{"github.com/tofutools"})
 			const secret = "PRIVATE-REPO-CONTENT-SHOULD-NOT-BE-AUDITED"
-			rec.gh = agentd.ProxyResult{Stdout: secret}
+			// Every read in this table answers with the secret somewhere in
+			// its payload, whichever shape that read's response takes.
+			gh.route = func(req agentd.GitHubRequestForTest) (ghCanned, bool) {
+				switch {
+				case strings.HasSuffix(req.Path, "/actions/runs/18234567890"):
+					return ghCanned{Status: 200, Body: `{"status":"completed","conclusion":"failure"}`}, true
+				case strings.HasSuffix(req.Path, "/jobs"):
+					return ghCanned{Status: 200, Body: `{"jobs":[]}`}, true
+				case strings.HasSuffix(req.Path, "/actions/runs"):
+					return ghCanned{Status: 200, Body: `{"workflow_runs":[{"id":1,"display_title":"` + secret + `"}]}`}, true
+				}
+				return ghCanned{Status: 200,
+					Body: `[{"user":{"login":"someone"},"body":"` + secret + `"}]`}, true
+			}
 			require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
 
 			res := gitProxyPost(t, f, tc.path, tc.body)

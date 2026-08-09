@@ -6,69 +6,69 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
-
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
 // githubproxy.go is the daemon half of `tclaude proxy github` — pull-request
-// and issue operations performed with agentd's own `gh` credentials on behalf
+// and issue operations performed with agentd's own GitHub credentials on behalf
 // of an agent that has been sandboxed away from ~/.config/gh.
 //
 // It reuses the git proxy's gates wholesale: the repository still comes from
 // the agent's daemon-recorded launch directory, and the GitHub repo it acts on
 // is DERIVED from that repository's validated, allow-listed remote. There is
-// no --repo parameter, and there is no `gh` passthrough. An agent can only
-// reach the forge repository its own checkout already points at.
+// no --repo parameter and no passthrough of any kind. An agent can only reach
+// the forge repository its own checkout already points at.
 //
-// Three things are specific to `gh` and worth stating:
+// The daemon calls GitHub's API directly (see githubapi.go); it does not run
+// the `gh` CLI. Three consequences are worth stating:
 //
-//  1. `gh` is run in a NEUTRAL directory, never the agent's repository, and
-//     always with an explicit `--repo <owner>/<repo>`. `gh` would otherwise
-//     discover the repository by reading .git/config — a file the agent can
-//     write — which would defeat the remote allow-list entirely.
-//  2. Free text (a PR title, a comment body) is passed through a 0600 file in
-//     the daemon's private tree via `--body-file`, never through argv. argv is
-//     world-readable for the life of the process through /proc/<pid>/cmdline,
-//     and a PR body can legitimately contain anything.
-//  3. Output is requested as JSON (`--json`) wherever gh supports it, so the
-//     CLI renders structured data rather than reformatting human text.
+//  1. There is no working directory and no repository discovery. The old proxy
+//     ran gh in a NEUTRAL directory precisely so the agent's .git/config could
+//     not re-aim it despite an explicit --repo; an HTTP call to a URL built
+//     from the derived slug has nothing to re-aim.
+//  2. Free text (a PR title, a comment body) travels in a JSON request body,
+//     straight from daemon memory into a TLS connection. It reaches neither
+//     argv, which /proc exposes for the life of a process, nor a temporary
+//     file, which the old proxy needed only because a child had to read it.
+//  3. Reads answer with JSON assembled here from a fixed field selection, in
+//     the field vocabulary `gh --json` used, so the CLI renders structured data
+//     and an agent's existing expectations still hold.
 
 const (
-	// ghProxyTimeout bounds a gh call. gh is an API client, not a transport,
-	// so it should be quicker than git's network operations; a slow one is
-	// GitHub being slow or rate-limiting.
+	// ghProxyTimeout bounds one GitHub API call. This is an API client, not a
+	// transport, so it should be quicker than git's network operations; a slow
+	// one is GitHub being slow or rate-limiting.
 	ghProxyTimeout = 60 * time.Second
 
-	// ghProxyLogTimeout bounds a CI-log read. `gh run view --log-failed` does
-	// not call one endpoint: it downloads the run's whole log archive (and,
-	// when GitHub cannot associate jobs with it, falls back to fetching each
-	// job's log individually). A large matrix build legitimately needs longer
-	// than an API call, so it gets its own bound rather than making every
-	// other verb wait three minutes for a hung one.
+	// ghProxyLogTimeout bounds a CI-log read. It does not call one endpoint:
+	// it lists the run's jobs and then downloads the run's whole log archive
+	// (falling back to per-job logs when the archive has no entry for a job).
+	// A large matrix build legitimately needs longer than an API call, so it
+	// gets its own bound rather than making every other verb wait three
+	// minutes for a hung one.
 	ghProxyLogTimeout = 180 * time.Second
 
 	// ghProxyCommentsTimeout is the TOTAL budget for `pr comments`, which is
-	// two gh calls (the conversation, then the inline review threads). A
-	// budget rather than two independent bounds, so the daemon's worst case
-	// stays a number the CLI can wait on rather than the sum of whatever the
-	// verb happens to do next.
+	// several calls (the conversation, then the paginated inline review
+	// threads). A budget rather than independent per-call bounds, so the
+	// daemon's worst case stays a number the CLI can wait on rather than the
+	// sum of whatever the verb happens to do next.
 	ghProxyCommentsTimeout = 90 * time.Second
 
 	// ghProxyDownloadTimeout is the TOTAL budget for `run download`: the
-	// artifact manifest read, then gh's own download and unzip. It is the
-	// longest bound in this file because it is the only verb that moves bulk
-	// bytes onto disk rather than into a response — maxGHArtifactBytes of
-	// them, over a link the daemon does not control.
+	// artifact manifest read, then the transfer and unzip. It is the longest
+	// bound in this file because it is the only verb that moves bulk bytes
+	// onto disk rather than into a response — maxGHArtifactBytes of them, over
+	// a link the daemon does not control.
 	ghProxyDownloadTimeout = 300 * time.Second
 
 	// maxGHProxyTextBytes is the tail kept from a verb whose output IS the
@@ -109,12 +109,12 @@ const (
 	// gigabytes — a CI job that uploads a build tree does not think of itself
 	// as unusual — and this is the one verb where an agent's mistake costs the
 	// operator's disk rather than their context window. The manifest read that
-	// precedes the download is what makes the cap enforceable: gh has no size
-	// limit of its own to ask for.
+	// precedes the download is what makes the cap enforceable: GitHub offers no
+	// size limit of its own to ask for.
 	//
-	// It caps the ZIP size, which is the only figure GitHub reports. gh unzips,
-	// so it does NOT bound the footprint on disk — see
-	// maxGHArtifactUnpackedBytes, which does.
+	// It caps the ZIP size, which is the only figure GitHub reports, so it does
+	// NOT bound the footprint on disk — see maxGHArtifactUnpackedBytes, which
+	// does.
 	maxGHArtifactBytes = 512 << 20
 
 	// maxGHArtifactRuns caps how many run directories are KEPT. Without it the
@@ -157,10 +157,10 @@ const (
 // than any disk holds — and on a public repository a fork's pull request can
 // upload one, which `run download` will happily fetch.
 //
-// It is enforced after extraction, from the walk the listing does anyway: gh
-// offers no way to bound the unpack itself, so the transient peak during
-// extraction is not covered. What is covered is that nothing oversized is left
-// behind, which is what a repeated-download disk attack needs.
+// It is enforced AS BYTES ARE WRITTEN, inside extractZip: the daemon unpacks
+// the archive itself, so it can stop the moment the budget is spent rather than
+// measuring the wreckage afterwards. That is the one thing the `gh run
+// download` subprocess this replaced could not do.
 //
 // A var rather than a const only so a test can prove the refusal without
 // materializing two gigabytes on the runner's disk.
@@ -174,22 +174,25 @@ func SetMaxArtifactUnpackedBytesForTest(n int64) func() {
 	return func() { maxGHArtifactUnpackedBytes = prev }
 }
 
-// ghProxySession is a gh invocation context: the repo slug the agent's own
-// remote resolved to, plus the resolved credentials.
+// ghProxySession is one GitHub invocation context: the repo slug the agent's
+// own remote resolved to, plus the resolved credential.
 type ghProxySession struct {
-	ghPath    string
+	owner     string
+	repo      string
 	ownerRepo string
 	remoteKey string
-	env       []string
-	neutral   string
+	// token is the operator's GitHub credential, held for the life of one
+	// request and sent only as an Authorization header. It is never logged,
+	// never audited, and never rendered into a response.
+	token string
 	// branch is the agent's current branch, resolved daemon-side while the git
-	// session is still open. `pr create` needs it: gh derives the head branch
-	// from the local repository, and this proxy deliberately runs gh in a
-	// neutral directory where there is none.
+	// session is still open. `pr create` needs it: the head branch is a
+	// property of the agent's checkout, and this proxy has no checkout of its
+	// own to read it from.
 	branch string
 	// repoRoot is the agent's own work-tree root, already symlink-resolved and
 	// gated by resolveProxyRepo. Only `run download` uses it, and only as the
-	// root it is not allowed to write outside of — gh still RUNS in neutral.
+	// root it is not allowed to write outside of.
 	repoRoot string
 }
 
@@ -235,141 +238,24 @@ func newGHProxySession(ctx context.Context, convID, requestedRemote string, remo
 		return nil, faultf(http.StatusConflict, "not_github",
 			"remote %q does not resolve to a valid github owner/repo pair", resolved.Name)
 	}
-	ghPath, err := proxyBinary("gh")
-	if err != nil {
-		return nil, faultf(http.StatusServiceUnavailable, "tool_missing", "%v", err)
-	}
-	env, fault := ghProxyEnv(s.policy)
+	token, source, fault := githubToken(ctx, s.policy)
 	if fault != nil {
 		return nil, fault
 	}
+	slog.Debug("github proxy resolved a token", "repo", ownerRepo, "source", string(source))
 	return &ghProxySession{
-		ghPath:    ghPath,
+		owner:     owner,
+		repo:      repo,
 		ownerRepo: ownerRepo,
 		remoteKey: resolved.FetchRef.Key(),
-		env:       env,
-		// Read while the git session is still open — the gh half has no
+		token:     token,
+		// Read while the git session is still open — the GitHub half has no
 		// repository of its own to ask.
 		branch:   s.currentBranch(ctx),
 		repoRoot: s.repoRoot,
-		// A neutral working directory is a security control, not tidiness:
-		// running gh inside the agent's repository would let .git/config
-		// re-aim it despite the explicit --repo.
-		neutral: os.TempDir(),
 	}, nil
 }
 
-// ghProxyEnv builds gh's environment from scratch, for the same reason
-// gitProxyEnv does: an allow-list cannot drift, a deny-list can.
-//
-// GH_TOKEN is set only when the operator configured a token file. Otherwise gh
-// authenticates from its own configuration under the daemon's HOME, which is
-// the ordinary posture and keeps the secret out of the child's environment.
-func ghProxyEnv(policy config.GitProxyConfig) ([]string, *proxyFault) {
-	env := []string{
-		"LC_ALL=C",
-		// gh opens a browser and prompts when it thinks it is interactive.
-		// The daemon has no one to prompt.
-		"GH_PROMPT_DISABLED=1",
-		"GH_NO_UPDATE_NOTIFIER=1",
-		"NO_COLOR=1",
-	}
-	for _, name := range []string{"PATH", "HOME", "TMPDIR", "XDG_CONFIG_HOME"} {
-		if v, ok := os.LookupEnv(name); ok && v != "" {
-			env = append(env, name+"="+v)
-		}
-	}
-	configured := strings.TrimSpace(policy.GitHubTokenFile)
-	if configured == "" {
-		return env, nil
-	}
-	// "~/github-token.txt" is how an operator naturally writes this in a JSON
-	// config file, and the same expandTilde every other human-typed path in the
-	// daemon goes through applies here.
-	tokenFile := expandTilde(configured)
-	raw, err := os.ReadFile(tokenFile)
-	if err != nil {
-		return nil, faultf(http.StatusServiceUnavailable, "token_unreadable",
-			"the configured agent.git_proxy.github_token_file could not be read: %v%s",
-			err, shellVarHint(configured))
-	}
-	token := strings.TrimSpace(string(raw))
-	if token == "" {
-		return nil, faultf(http.StatusServiceUnavailable, "token_unreadable",
-			"the configured agent.git_proxy.github_token_file is empty")
-	}
-	// Environment, never argv: /proc/<pid>/cmdline is readable by any
-	// same-uid process for the life of the child.
-	return append(env, "GH_TOKEN="+token), nil
-}
-
-// gh runs a gh subcommand. args must already be fully validated — nothing in
-// this function inspects them, which is why every caller builds its argv from
-// fixed literals plus values that have passed a validateGH* gate.
-//
-// Each caller supplies its own `--repo g.ownerRepo`. It is a per-subcommand
-// flag in gh, so it cannot be prepended here; the neutral working directory is
-// what makes forgetting it fail loudly (gh reports "none of the git remotes
-// configured for this repository point to a known GitHub host") rather than
-// silently acting on whatever repository happened to be in scope.
-func (g *ghProxySession) gh(ctx context.Context, args ...string) (ProxyResult, error) {
-	return g.ghBounded(ctx, ghProxyTimeout, 0, args...)
-}
-
-// ghBulk runs a gh subcommand whose output is the payload rather than a
-// diagnosis, so it keeps a much larger tail. Same argv contract as gh: every
-// value has already passed a validateGH* gate.
-func (g *ghProxySession) ghBulk(ctx context.Context, timeout time.Duration, args ...string) (ProxyResult, error) {
-	return g.ghBounded(ctx, timeout, maxGHProxyTextBytes, args...)
-}
-
-// ghBounded is the shared body. maxOutput of 0 takes the daemon-wide default.
-func (g *ghProxySession) ghBounded(ctx context.Context, timeout time.Duration, maxOutput int, args ...string) (ProxyResult, error) {
-	runCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	return proxyExec(runCtx, ProxyCommand{
-		Tool:           "gh",
-		Path:           g.ghPath,
-		Args:           append([]string(nil), args...),
-		Dir:            g.neutral,
-		Env:            g.env,
-		MaxOutputBytes: maxOutput,
-	})
-}
-
-// bodyFile writes free text to a 0600 file under TMPDIR and returns its path
-// plus a cleanup func. The file is how a PR body reaches gh without ever
-// appearing in argv, where /proc would expose it for the life of the process.
-//
-// The mode, not the location, is what protects it: this is an ordinary temp
-// file, removed as soon as gh has run.
-func (g *ghProxySession) bodyFile(body string) (string, func(), *proxyFault) {
-	f, err := os.CreateTemp("", "tclaude-ghproxy-*.md")
-	if err != nil {
-		return "", func() {}, faultf(http.StatusInternalServerError, "io",
-			"could not stage the message body: %v", err)
-	}
-	cleanup := func() {
-		_ = f.Close()
-		_ = os.Remove(f.Name())
-	}
-	if err := f.Chmod(0o600); err != nil {
-		cleanup()
-		return "", func() {}, faultf(http.StatusInternalServerError, "io",
-			"could not secure the staged message body: %v", err)
-	}
-	if _, err := f.WriteString(body); err != nil {
-		cleanup()
-		return "", func() {}, faultf(http.StatusInternalServerError, "io",
-			"could not write the staged message body: %v", err)
-	}
-	if err := f.Close(); err != nil {
-		cleanup()
-		return "", func() {}, faultf(http.StatusInternalServerError, "io",
-			"could not finish the staged message body: %v", err)
-	}
-	return f.Name(), func() { _ = os.Remove(f.Name()) }, nil
-}
 
 // ---------------------------------------------------------------------------
 // Artifact destination
@@ -519,9 +405,8 @@ func isArtifactRunDir(name string) bool {
 // artifactListing walks a completed download and renders what landed: the
 // destination, then one line per file, then a total.
 //
-// It is the daemon's own text rather than gh's — `gh run download` prints
-// nothing at all on success, which for a verb whose whole effect is on disk
-// tells the caller neither where to look nor whether anything arrived.
+// A verb whose whole effect is on disk has to say where to look and whether
+// anything arrived; the transfer itself produces no output to relay.
 //
 // filepath.WalkDir lstats, so a symlink inside an extracted artifact is
 // reported as an entry and never followed.
@@ -530,8 +415,8 @@ func isArtifactRunDir(name string) bool {
 // REPORTED, not what is walked: `files` and `total` describe the whole tree, so
 // the walk visits every entry. An artifact well inside the 512 MiB zip cap can
 // unpack to millions of small files, and this runs on the request goroutine
-// after gh has returned — so the walk is held under the download's own
-// deadline rather than being allowed to run past it unbounded.
+// after the transfer — so the walk is held under the download's own deadline
+// rather than being allowed to run past it unbounded.
 //
 // Not "so a disconnected client stops it": this route is a POST outside
 // bulkReadRoutes, so the idempotency middleware buffers and PERSISTS the
@@ -618,7 +503,7 @@ func artifactListing(ctx context.Context, dest string) (string, artifactWalk) {
 	}
 	if files == 0 && walkErr == nil && !stopped {
 		// The preflight has already ruled out "no such artifact" and "expired",
-		// so this is gh having unpacked an artifact that genuinely holds no
+		// so this is an artifact that genuinely holds no
 		// files. Saying anything more would be guessing.
 		b.WriteString("(the artifact unpacked to no files at all)\n")
 		return b.String(), walk
@@ -702,13 +587,16 @@ func humanBytes(n int64) string {
 // Parameter validation
 // ---------------------------------------------------------------------------
 
-// validateGHArtifactName bounds an artifact name. It reaches argv as `gh run
-// download -n <name>`, so it is charset-checked like a title rather than passed
-// through like a body: a leading "-" would be read as a flag, and a path
-// separator would be an attempt to steer where gh writes.
+// validateGHArtifactName bounds an artifact name. It is matched against the
+// manifest and, on a whole-run download, becomes a directory name — so it is
+// charset-checked like a title rather than passed through like a body: a path
+// separator in it would be an attempt to steer where the daemon writes.
 //
-// GitHub itself refuses `" : < > | * ? \ /` and control characters in an
-// artifact name, so nothing legal is lost by refusing them here too.
+// The leading "-" refusal is inherited rather than load-bearing: there is no
+// argv here for a value to be read as a flag in. It stays because GitHub itself
+// refuses `" : < > | * ? \ /` and control characters in an artifact name, so
+// nothing legal is lost, and because a name that looks like a flag is far more
+// likely to be a caller's mistake than a real artifact.
 func validateGHArtifactName(name string) (string, *proxyFault) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -735,38 +623,39 @@ func validateGHArtifactName(name string) (string, *proxyFault) {
 	return name, nil
 }
 
-// validateGHNumber bounds a PR/issue number. It is rendered back into argv as
-// a decimal string, so parsing it into an int and re-formatting it is what
-// guarantees no other character can survive.
-func validateGHNumber(n int) (string, *proxyFault) {
+// validateGHNumberInt bounds a PR/issue number. It reaches a URL path and a
+// GraphQL variable, both of which are typed, so the gate is a range check
+// rather than a charset one — but it is still a gate, because a number outside
+// the range is a caller mistake worth naming rather than a 404 to puzzle over.
+func validateGHNumberInt(n int) (int, *proxyFault) {
 	if n <= 0 || n > 100_000_000 {
-		return "", faultf(http.StatusBadRequest, "invalid_arg",
+		return 0, faultf(http.StatusBadRequest, "invalid_arg",
 			"a positive pull-request/issue number is required")
 	}
-	return strconv.Itoa(n), nil
+	return n, nil
 }
 
 // validateGHRunID bounds a GitHub Actions workflow-run id. It gets its own
-// validator rather than reusing validateGHNumber because the two live in
+// validator rather than reusing validateGHNumberInt because the two live in
 // different number spaces: PR numbers are per-repository and small, while run
-// ids are global database ids already past 10^10 — validateGHNumber's ceiling
-// would refuse every real one.
+// ids are global database ids already past 10^10 — validateGHNumberInt's
+// ceiling would refuse every real one.
 //
 // The upper bound is 2^53, the largest integer a JSON number carries exactly.
 // Anything above it did not survive the wire intact, so refusing it is honest
-// rather than restrictive. Like validateGHNumber, the value that reaches argv
-// is re-formatted from the parsed integer, never the caller's string.
-func validateGHRunID(id int64) (string, *proxyFault) {
+// rather than restrictive.
+func validateGHRunID(id int64) (int64, *proxyFault) {
 	if id <= 0 || id > 1<<53 {
-		return "", faultf(http.StatusBadRequest, "invalid_arg",
+		return 0, faultf(http.StatusBadRequest, "invalid_arg",
 			"a positive workflow-run id is required")
 	}
-	return strconv.FormatInt(id, 10), nil
+	return id, nil
 }
 
 // validateGHBody bounds free text. Unlike every other parameter here the body
 // is deliberately unrestricted in charset — it is prose that will be published
-// — which is exactly why it travels by file rather than by argv.
+// — which is exactly why it travels in a JSON request body rather than
+// anywhere a shape could matter.
 func validateGHBody(body string, required bool) *proxyFault {
 	if strings.TrimSpace(body) == "" {
 		if required {
@@ -781,9 +670,10 @@ func validateGHBody(body string, required bool) *proxyFault {
 	return nil
 }
 
-// validateGHTitle bounds a PR title. A title DOES reach argv (gh has no
-// --title-file), so it is charset-checked: control characters are refused and
-// a leading "-" would be read as a flag.
+// validateGHTitle bounds a PR title. Unlike a body it is a single line
+// PUBLISHED UNDER THE OPERATOR'S NAME, so it is charset-checked: control
+// characters are refused, and so is a leading "-", which is a caller mistake
+// far more often than a real title.
 func validateGHTitle(title string) *proxyFault {
 	title = strings.TrimSpace(title)
 	if title == "" {
@@ -820,8 +710,8 @@ func validateGHTitle(title string) *proxyFault {
 }
 
 // validateGHState bounds a list filter to gh's own vocabulary. An allow-list
-// of literals, so the value that reaches argv is one of these constants and
-// never the caller's string.
+// of literals, so the value that reaches the request is one of these constants
+// and never the caller's string.
 func validateGHState(state string, allowed ...string) (string, *proxyFault) {
 	state = strings.ToLower(strings.TrimSpace(state))
 	if state == "" {
@@ -836,9 +726,10 @@ func validateGHState(state string, allowed ...string) (string, *proxyFault) {
 		"state %q is not one of: %s", state, strings.Join(allowed, ", "))
 }
 
-// ghRunStatuses is gh's own `run list --status` vocabulary, verbatim (gh 2.97).
-// An allow-list of literals, so the value that reaches argv is one of these
-// constants and never the caller's string.
+// ghRunStatuses is the `run list --status` vocabulary: GitHub's own check
+// status and conclusion values, which its runs endpoint accepts in one
+// parameter. An allow-list of literals, so the value that reaches the query
+// string is one of these constants and never the caller's string.
 //
 // This is the AUTHORITY. The CLI keeps its own copy for shell completion
 // because it must not import the daemon; TestGHRunStatusCompletionMatchesTheGate
@@ -873,28 +764,28 @@ func validateGHRunStatus(status string) (string, *proxyFault) {
 // copy can be pinned against it.
 func GHRunStatusesForTest() []string { return append([]string(nil), ghRunStatuses...) }
 
-func validateGHLimit(limit int) (string, *proxyFault) {
+func validateGHLimitInt(limit int) (int, *proxyFault) {
 	if limit == 0 {
 		limit = defaultGHProxyLimit
 	}
 	if limit < 1 || limit > maxGHProxyLimit {
-		return "", faultf(http.StatusBadRequest, "invalid_arg",
+		return 0, faultf(http.StatusBadRequest, "invalid_arg",
 			"limit must be between 1 and %d", maxGHProxyLimit)
 	}
-	return strconv.Itoa(limit), nil
+	return limit, nil
 }
 
 // ---------------------------------------------------------------------------
 // Response shape
 // ---------------------------------------------------------------------------
 
-// ghProxyOutcome mirrors gitProxyOutcome: HTTP 200 means the daemon ran gh,
-// not that gh succeeded. ExitCode carries gh's verdict.
+// ghProxyOutcome mirrors gitProxyOutcome: HTTP 200 means the daemon REACHED
+// GitHub, not that GitHub agreed. ExitCode carries GitHub's verdict.
 //
-// Stdout is passed through as a raw JSON message when gh produced JSON, so the
-// CLI can render it without the daemon having to model every gh schema. That
-// is deliberate: modelling them here would mean a daemon release every time
-// GitHub adds a field.
+// The shape is unchanged from when a `gh` subprocess produced it, and
+// deliberately so: an agent that has learned "exit_code 0 means it worked,
+// stderr says why it did not" should not have to learn something else because
+// the daemon stopped forking.
 type ghProxyOutcome struct {
 	Repo      string          `json:"repo"`
 	ExitCode  int             `json:"exit_code"`
@@ -905,28 +796,59 @@ type ghProxyOutcome struct {
 	TimedOut  bool            `json:"timed_out,omitempty"`
 }
 
-// respond renders a gh result. When gh emitted JSON it rides in the JSON
-// field; otherwise the raw text does. gh's own error text always reaches the
-// agent verbatim, because "GraphQL: Resource not accessible by integration" is
-// the actionable part of a failure.
+// respond renders a text result. GitHub's own error text always reaches the
+// agent verbatim, because "Resource not accessible by integration" is the
+// actionable part of a failure.
 func (g *ghProxySession) respond(w http.ResponseWriter, r *http.Request, verb string, res ProxyResult, err error) {
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "gh_failed", err.Error())
 		return
 	}
-	out := ghProxyOutcome{
+	g.writeOutcome(w, r, verb, ghProxyOutcome{
 		Repo:      g.ownerRepo,
 		ExitCode:  res.ExitCode,
+		Stdout:    res.Stdout,
 		Stderr:    res.Stderr,
 		Truncated: res.Truncated,
 		TimedOut:  res.TimedOut,
+	})
+}
+
+// respondJSON renders a document in the JSON field, where the CLI pretty-prints
+// it without reparsing.
+//
+// Explicit rather than sniffed. The old renderer guessed — if stdout parsed as
+// JSON it became the JSON field — which was the only thing available when the
+// payload was a subprocess's bytes, and which would now misfile a CI log that
+// happened to begin and end with braces.
+func (g *ghProxySession) respondJSON(w http.ResponseWriter, r *http.Request, verb string, payload any) {
+	doc, err := ghMarshal(payload)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "gh_failed", err.Error())
+		return
 	}
-	trimmed := strings.TrimSpace(res.Stdout)
-	if res.ExitCode == 0 && !res.Truncated && json.Valid([]byte(trimmed)) && trimmed != "" {
-		out.JSON = json.RawMessage(trimmed)
-	} else {
-		out.Stdout = res.Stdout
+	g.writeOutcome(w, r, verb, ghProxyOutcome{Repo: g.ownerRepo, JSON: doc})
+}
+
+// respondOrFail is the shared tail of every verb: GitHub refused (failure), the
+// daemon could not reach it (err), or neither, in which case the caller should
+// not have called this.
+func (g *ghProxySession) respondOrFail(w http.ResponseWriter, r *http.Request, verb string, failure *ProxyResult, err error) {
+	if err != nil {
+		g.respond(w, r, verb, ProxyResult{}, err)
+		return
 	}
-	setAuditDetail(r, fmt.Sprintf("repo=%s op=%s exit=%d", g.ownerRepo, verb, res.ExitCode))
+	if failure != nil {
+		g.respond(w, r, verb, *failure, nil)
+		return
+	}
+	// Not reachable from a correct caller, and a silent 200 with an empty body
+	// would be the worst way to find out otherwise.
+	writeError(w, http.StatusInternalServerError, "gh_failed",
+		"the daemon produced no result for this request; this is a tclaude bug")
+}
+
+func (g *ghProxySession) writeOutcome(w http.ResponseWriter, r *http.Request, verb string, out ghProxyOutcome) {
+	setAuditDetail(r, fmt.Sprintf("repo=%s op=%s exit=%d", g.ownerRepo, verb, out.ExitCode))
 	writeJSON(w, http.StatusOK, out)
 }
