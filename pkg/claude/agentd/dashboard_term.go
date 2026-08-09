@@ -485,7 +485,10 @@ func webTerminalTmuxFlags() string {
 }
 
 // webTerminalAttachCmd carries the same OSC 8 opt-in across the one process hop
-// `tclaude session attach` adds, by exporting it for exactly that command.
+// `tclaude session attach` adds, by exporting it for exactly that command. It
+// also asks the wrapper not to print its pre-tmux banner/title: the browser
+// widget treats its first output as proof tmux has attached and drawn a screen
+// before arming the delayed harness resize nudge.
 //
 // The assignment is a prefix on the command rather than an entry in the PTY's
 // own environment on purpose. A browser terminal is an interactive shell the
@@ -495,7 +498,8 @@ func webTerminalTmuxFlags() string {
 // know nothing about. Scoping it to the exec'd command keeps the claim attached
 // to the client it is true of. `VAR=value exec cmd` exports VAR to cmd.
 func webTerminalAttachCmd(attachCommand string) string {
-	return clcommon.TmuxClientFeaturesEnv + "=" + clcommon.TmuxHyperlinksFeature + " " + attachCommand
+	return clcommon.TmuxClientFeaturesEnv + "=" + clcommon.TmuxHyperlinksFeature + " " +
+		session.WebTerminalAttachEnv + "=1 " + attachCommand
 }
 
 // runPTYOverWS upgrades the request to a WebSocket and pumps a PTY
