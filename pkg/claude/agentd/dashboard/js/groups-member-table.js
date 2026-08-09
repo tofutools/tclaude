@@ -17,6 +17,7 @@ import { bodilessNotice } from './human-attachments.js';
 import { HarnessMark } from './harness-mark.js';
 import { fmtCredits } from './costs-model.js';
 import { isPendingWake, clearPendingWake } from './waking-state.js';
+import { PRChecksBadge } from './pr-checks-hover.js';
 
 const html = htm.bind(h);
 
@@ -974,17 +975,17 @@ function CwdCell({ member }) {
 }
 
 function BranchCell({ member }) {
-  const branch = (name, url, prNumber, prURL, prState) => {
+  const branch = (name, url, prNumber, prURL, prState, checks) => {
     if (!name) return html`<span class="muted">—</span>`;
     const branchNode = url
       ? html`<a class="branch branch-link" href=${url} target="_blank" rel="noopener noreferrer" draggable=${false} title=${`Open branch on GitHub — ${name}`}>⎇ ${name}</a>`
       : html`<span class="branch" title=${`git branch: ${name}`}>⎇ ${name}</span>`;
     const stateClass = ['open', 'merged', 'closed'].includes(prState) ? `pr-state-${prState}` : 'pr-state-unknown';
     const stateLabel = prState ? prState[0].toUpperCase() + prState.slice(1) : 'Pull request';
-    return html`${branchNode}${prNumber && prURL ? html` <a class=${`pr-link ${stateClass}`} href=${prURL} target="_blank" rel="noopener noreferrer" draggable=${false} title=${`${stateLabel} pull request #${prNumber}`}>#${prNumber}</a>` : null}`;
+    return html`${branchNode}${prNumber && prURL ? html` <a class=${`pr-link ${stateClass}`} href=${prURL} target="_blank" rel="noopener noreferrer" draggable=${false} title=${`${stateLabel} pull request #${prNumber}`}>#${prNumber}</a><${PRChecksBadge} url=${prURL} prNumber=${prNumber} summary=${checks} />` : null}`;
   };
-  const start = branch(member.startup_branch || '', member.startup_branch_url || '', member.startup_pr_number || 0, member.startup_pr_url || '', member.startup_pr_state || '');
-  const current = branch(member.branch || '', member.branch_url || '', member.branch_pr_number || 0, member.branch_pr_url || '', member.branch_pr_state || '');
+  const start = branch(member.startup_branch || '', member.startup_branch_url || '', member.startup_pr_number || 0, member.startup_pr_url || '', member.startup_pr_state || '', member.startup_checks);
+  const current = branch(member.branch || '', member.branch_url || '', member.branch_pr_number || 0, member.branch_pr_url || '', member.branch_pr_state || '', member.branch_checks);
   const seen = new Set([member.startup_pr_url, member.branch_pr_url].filter(Boolean));
   const presented = (member.presented_prs || []).filter((pr) => {
     const url = String(pr.url || '').trim();
@@ -993,7 +994,7 @@ function BranchCell({ member }) {
   });
   return html`<${StackedLocation} start=${start} current=${current} differ=${(member.startup_branch || '') !== (member.branch || '')} />${presented.length ? html` <span class="presented-prs">${presented.map((pr) => {
     const stateClass = ['open', 'merged', 'closed'].includes(pr.state) ? `pr-state-${pr.state}` : 'pr-state-unknown';
-    return html`<a key=${pr.url} class=${`pr-link ${stateClass}`} href=${pr.url} target="_blank" rel="noopener noreferrer" draggable=${false} title=${pr.summary ? `${pr.summary} — ${pr.url}` : `Presented pull request — ${pr.url}`}>${pr.number ? `#${pr.number}` : pr.summary || 'PR'}</a>`;
+    return html`<span key=${pr.url} class="presented-pr"><a class=${`pr-link ${stateClass}`} href=${pr.url} target="_blank" rel="noopener noreferrer" draggable=${false} title=${pr.summary ? `${pr.summary} — ${pr.url}` : `Presented pull request — ${pr.url}`}>${pr.number ? `#${pr.number}` : pr.summary || 'PR'}</a><${PRChecksBadge} url=${pr.url} prNumber=${pr.number} summary=${pr.checks} /></span>`;
   })}</span>` : null}`;
 }
 

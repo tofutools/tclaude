@@ -63,6 +63,12 @@ type repoLinksView struct {
 	StartupPRURL     string            `json:"startup_pr_url,omitempty"`     // web link to that PR
 	StartupPRState   string            `json:"startup_pr_state,omitempty"`   // open|merged|closed for the startup branch's PR
 	PresentedPRs     []presentedPRView `json:"presented_prs,omitempty"`      // agent-authored PRs shown alongside branch PRs
+	// CI check summaries for the branch/startup PR badges. Counts only —
+	// the per-check list is served on demand by /api/pr-checks so the 2s
+	// snapshot never carries it. nil when the PR's checks are unresolved
+	// (or the PR has none), which renders as no indicator at all.
+	BranchChecks     *prChecksSummary `json:"branch_checks,omitempty"`
+	StartupChecks    *prChecksSummary `json:"startup_checks,omitempty"`
 	branchPRUpdated  time.Time
 	startupPRUpdated time.Time
 }
@@ -80,6 +86,12 @@ type repoBranchInfo struct {
 	PRURL         string    `json:"pr_url"`         // web link to that PR
 	PRState       string    `json:"pr_state"`       // open|merged|closed; "" = no PR
 	FetchedAt     time.Time `json:"fetched_at"`     // resolution time — drives the TTL check
+	// Checks rides the same `gh pr view` call the PR fields come from, but
+	// is deliberately NOT persisted here: check state is cached per PR
+	// identity (prc_ keys, see prchecks.go) so branch, startup and presented
+	// badges for one PR share a single answer. This field is only the
+	// resolver's out-channel to refreshBranchLink.
+	Checks *prChecksInfo `json:"-"`
 }
 
 // gitInfoResolver is the subprocess boundary for branch-link
@@ -364,6 +376,16 @@ func refreshBranchLink(repoDir, branch, key string) {
 		info = repoBranchInfo{Branch: branch}
 	}
 	info.FetchedAt = time.Now()
+	// The check rollup travels with the PR fields but is cached per PR
+	// identity, so every badge for this PR (branch, startup, presented,
+	// on any agent row) reads one answer.
+	if info.PRURL != "" && info.Checks != nil {
+		checks := *info.Checks
+		checks.PRState = info.PRState
+		checks.FetchedAt = info.FetchedAt
+		checks.Summary = summarizePRChecks(checks.Checks, checks.FetchedAt)
+		savePRChecks(info.PRURL, checks)
+	}
 	data, err := json.Marshal(info)
 	if err != nil {
 		return
@@ -456,7 +478,7 @@ func liveGitInfoResolver(repoDir, branch string) (repoBranchInfo, bool) {
 	// skips the slowest call (`gh` hits the network) for the common
 	// case of an agent sitting on main.
 	if info.DefaultBranch == "" || branch != info.DefaultBranch {
-		info.PRNumber, info.PRURL, info.PRState = ghPRForBranch(repoDir, branch)
+		info.PRNumber, info.PRURL, info.PRState, info.Checks = ghPRForBranch(repoDir, branch)
 	}
 	return info, true
 }
@@ -523,14 +545,45 @@ func gitDefaultBranch(dir string) string {
 	return ""
 }
 
-// ghPRForBranch returns the number, URL and state of the pull request
-// whose head is branch, via `gh pr view`. The state is lower-cased to
-// open|merged|closed. Returns (0, "", "") when there's no PR, gh isn't
-// installed, or gh isn't authenticated — all best-effort.
-func ghPRForBranch(dir, branch string) (number int, url, state string) {
+// ghPRForBranch returns the number, URL, state and CI check rollup of the
+// pull request whose head is branch, via `gh pr view`. The state is
+// lower-cased to open|merged|closed. Returns zero values when there's no
+// PR, gh isn't installed, or gh isn't authenticated — all best-effort.
+//
+// statusCheckRollup rides this existing call rather than getting one of
+// its own: the dashboard already pays for a `gh pr view` per branch PR per
+// branchLinkTTL, and asking for one more JSON field is free next to a
+// second network round-trip per PR.
+func ghPRForBranch(dir, branch string) (number int, url, state string, checks *prChecksInfo) {
+	out := runInDir(dir, "gh", "pr", "view", branch, "--json", "number,url,state,statusCheckRollup")
+	if out == "" {
+		// The CI rollup is an enhancement; the PR link is not. A `gh` that
+		// rejects the field (old version, or a host that doesn't serve it)
+		// must not take the branch's PR number/URL/state down with it, so
+		// retry once for the fields that predate this feature.
+		return ghPRForBranchWithoutChecks(dir, branch)
+	}
+	var pr struct {
+		Number            int             `json:"number"`
+		URL               string          `json:"url"`
+		State             string          `json:"state"`
+		StatusCheckRollup json.RawMessage `json:"statusCheckRollup"`
+	}
+	if json.Unmarshal([]byte(out), &pr) != nil {
+		return 0, "", "", nil
+	}
+	resolved := parseStatusCheckRollup(pr.StatusCheckRollup, time.Now())
+	return pr.Number, pr.URL, strings.ToLower(pr.State), &resolved
+}
+
+// ghPRForBranchWithoutChecks is ghPRForBranch's fallback: the pre-CI-badge
+// query. Reached only when the richer one failed, which is also the case
+// where a real "no PR here" answer is indistinguishable from a broken `gh`
+// — so a failure here stays silent exactly as it did before.
+func ghPRForBranchWithoutChecks(dir, branch string) (int, string, string, *prChecksInfo) {
 	out := runInDir(dir, "gh", "pr", "view", branch, "--json", "number,url,state")
 	if out == "" {
-		return 0, "", ""
+		return 0, "", "", nil
 	}
 	var pr struct {
 		Number int    `json:"number"`
@@ -538,9 +591,11 @@ func ghPRForBranch(dir, branch string) (number int, url, state string) {
 		State  string `json:"state"`
 	}
 	if json.Unmarshal([]byte(out), &pr) != nil {
-		return 0, "", ""
+		return 0, "", "", nil
 	}
-	return pr.Number, pr.URL, strings.ToLower(pr.State)
+	slog.Debug("branchlinks: resolved PR without the CI rollup",
+		"repo", dir, "branch", branch, "pr", pr.Number, "module", "agentd")
+	return pr.Number, pr.URL, strings.ToLower(pr.State), nil
 }
 
 // repoHTTPSFromRemote normalises a git remote URL to its GitHub web

@@ -3073,6 +3073,19 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			freshPRStates.add(row.PRURL, row.State, row.UpdatedAt)
 		}
 	}
+	// CI check summaries for every PR badge this snapshot will draw, in one
+	// batched cache read. Nothing here shells out: the blobs are written by
+	// the branch-link / presented-PR refreshes that already run `gh`, and by
+	// the hover endpoint. Presented PR URLs join the branch/startup ones so a
+	// presented badge gets the same indicator as an automatic one.
+	checkURLs := make([]string, 0, len(branchPRCacheURLs)+len(presentedPRs))
+	checkURLs = append(checkURLs, branchPRCacheURLs...)
+	for _, rows := range presentedPRs {
+		for _, row := range rows {
+			checkURLs = append(checkURLs, row.PRURL)
+		}
+	}
+	prChecks := prChecksIndexFor(checkURLs)
 	// Same preload discipline as taskRefs: one ListAllAgentTags per snapshot,
 	// keyed by agent_id, looked up per row (not a query per member/agent in
 	// this 2s-polled path). The stored set is already sorted alphabetically.
@@ -3108,7 +3121,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		}
 		b := rc.viewFor(convID)
 		links := b.Links.withPresentedPRs(presentedPRsFor(b.AgentID)).
-			withFreshestPRStates(freshPRStates)
+			withFreshestPRStates(freshPRStates).
+			withPRChecks(prChecks)
 		a := &dashboardAgent{
 			AgentID:           b.AgentID,
 			ConvID:            convID,
@@ -3328,7 +3342,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				routeHealth = dashboardRouteHealth(g, groupPermissions, b, darwinLaunchesByGroup[g.ID])
 			}
 			links := b.Links.withPresentedPRs(presentedPRsFor(b.AgentID)).
-				withFreshestPRStates(freshPRStates)
+				withFreshestPRStates(freshPRStates).
+				withPRChecks(prChecks)
 			dg.Members = append(dg.Members, dashboardMember{
 				AgentID:           b.AgentID,
 				ConvID:            m.ConvID,
@@ -3376,7 +3391,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				routeHealth = dashboardRouteHealth(g, groupPermissions, b, darwinLaunchesByGroup[g.ID])
 			}
 			ownerLinks := b.Links.withPresentedPRs(presentedPRsFor(b.AgentID)).
-				withFreshestPRStates(freshPRStates)
+				withFreshestPRStates(freshPRStates).
+				withPRChecks(prChecks)
 			dg.Members = append(dg.Members, dashboardMember{
 				AgentID:           b.AgentID,
 				ConvID:            ownerConv,

@@ -987,6 +987,142 @@ a.branch-link:hover { color: #58a6ff; text-decoration: underline; }
 .pr-link.pr-state-merged  { color: #a371f7; }
 .pr-link.pr-state-closed  { color: #f85149; }
 .pr-link.pr-state-unknown { color: #8b949e; }
+/* ─── CI check indicator + hover panel ────────────────────────────────
+   The n/m pill trailing a PR badge, and the panel listing each check.
+   Panel and trigger share one hover root (.ci-hover), so moving the
+   pointer onto the panel to read or scroll it keeps the panel open —
+   the same arrangement .activity-hover uses in the header. */
+.ci-hover { position: relative; display: inline-block; }
+.presented-pr { display: inline-block; }
+.ci-badge {
+  appearance: none; display: inline-flex; align-items: center; gap: 3px;
+  margin-left: 5px; padding: 2px 5px; vertical-align: 1px;
+  border: 1px solid #30363d; border-radius: 9px; background: #1b222c;
+  color: #8b949e; font-family: ui-monospace, monospace; font-size: 10px;
+  line-height: 1; cursor: pointer;
+}
+.ci-badge:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; }
+.ci-badge.ci-passing { color: #3fb950; border-color: rgba(63, 185, 80, 0.35); }
+.ci-badge.ci-failing { color: #f85149; border-color: rgba(248, 81, 73, 0.4); }
+.ci-badge.ci-pending { color: #d29922; border-color: rgba(210, 153, 34, 0.4); }
+.ci-panel {
+  display: block; position: absolute; z-index: 30; top: calc(100% + 7px); left: 0;
+  width: min(360px, calc(100vw - 32px)); max-height: min(52vh, 320px);
+  overflow: auto; padding: 10px 12px;
+  border: 1px solid #3b4654; border-radius: 8px;
+  background: linear-gradient(180deg, #1c232d 0%, #161b22 100%);
+  color: #c9d1d9; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+  font-size: 12px; line-height: 1.35; text-align: left; white-space: normal;
+}
+/* The 7px between badge and panel belongs to neither, so a pointer travelling
+   down to scroll the list would leave the hover root and close the panel
+   mid-motion (this component unmounts the panel on close, so that would also
+   abort its in-flight poll). Bridge the gap with a transparent strip on the
+   root itself — it exists only while the panel is open, so it never becomes
+   an invisible hover target under a closed badge. It cannot live on .ci-panel:
+   that box is overflow:auto and would clip anything above its padding box. */
+.ci-hover.is-open::after {
+  content: ""; position: absolute; left: 0; top: 100%;
+  width: min(360px, calc(100vw - 32px)); height: 9px;
+}
+.ci-panel-heading { color: #f0f6fc; font-size: 12px; font-weight: 700; letter-spacing: 0.2px; }
+.ci-panel-summary { margin: 2px 0 8px; color: #8b949e; font-size: 11px; }
+.ci-checks { margin: 0; padding: 0; list-style: none; }
+.ci-checks li { display: flex; gap: 7px; align-items: baseline; padding: 3px 0; }
+.ci-checks li + li { border-top: 1px solid #21262d; }
+.ci-check-icon { flex: 0 0 auto; width: 12px; text-align: center; font-size: 11px; }
+.ci-check-body { flex: 1 1 auto; min-width: 0; display: block; }
+.ci-check-link { flex: 1 1 auto; min-width: 0; text-decoration: none; }
+.ci-check-link:hover .ci-check-name { text-decoration: underline; }
+.ci-check-name { display: block; color: #e6edf3; overflow-wrap: anywhere; }
+.ci-check-meta {
+  display: block; color: #8b949e; font-size: 10.5px;
+  font-family: ui-monospace, monospace;
+}
+.ci-check-time {
+  flex: 0 0 auto; color: #6e7681; font-size: 10.5px;
+  font-family: ui-monospace, monospace;
+}
+.ci-icon-pass { color: #3fb950; }
+.ci-icon-fail { color: #f85149; }
+.ci-icon-pending { color: #d29922; }
+.ci-icon-skipped { color: #6e7681; }
+.ci-panel-empty { margin: 4px 0 0; color: #8b949e; font-size: 11px; }
+.ci-panel-note {
+  margin: 9px 0 0; padding-top: 8px; border-top: 1px solid #30363d;
+  color: #8b949e; font-size: 11px;
+}
+.ci-panel-note a { color: #58a6ff; text-decoration: none; }
+.ci-panel-note a:hover { text-decoration: underline; }
+/* Panel scrollbar — dashboard furniture like the mail panes, so it gets the
+   same treatment: the richer ::-webkit- surface everywhere it exists, and
+   Firefox's standardized fallback kept OUT of WebKit/Blink (a non-auto
+   scrollbar-color there suppresses the ::-webkit- rules). */
+@supports not selector(::-webkit-scrollbar) {
+  .ci-panel { scrollbar-width: thin; scrollbar-color: #6e7681 #0d1117; }
+  body.wizard .ci-panel { scrollbar-color: #7a5db0 #140f28; }
+  body.slop .ci-panel { scrollbar-color: #9e7a00 #210808; }
+}
+.ci-panel::-webkit-scrollbar { width: 10px; height: 10px; }
+.ci-panel::-webkit-scrollbar-track { background: #0d1117; }
+.ci-panel::-webkit-scrollbar-thumb {
+  background: #6e7681; border-radius: 6px; border: 2px solid #161b22;
+}
+.ci-panel::-webkit-scrollbar-thumb:hover { background: #8b949e; }
+.ci-panel::-webkit-scrollbar-thumb:active { background: #b1bac4; }
+body.wizard .ci-badge { background: #241b3d; border-color: #3a2a63; color: #9a86c4; }
+body.wizard .ci-badge.ci-passing { color: #7ee08a; border-color: rgba(126, 224, 138, 0.35); }
+body.wizard .ci-badge.ci-failing { color: #ff8a8a; border-color: rgba(255, 138, 138, 0.4); }
+body.wizard .ci-badge.ci-pending { color: #e8c15a; border-color: rgba(232, 193, 90, 0.45); }
+body.wizard .ci-panel {
+  border-color: #7a5db0; background: linear-gradient(180deg, #241b3d 0%, #140f28 100%);
+  color: #e7d9f5; box-shadow: 0 0 24px rgba(122, 93, 176, 0.35);
+}
+body.wizard .ci-panel-heading {
+  color: #f3e6c0; font-family: Papyrus, Luminari, 'Palatino Linotype', Palatino, serif;
+  letter-spacing: 0.5px;
+}
+body.wizard .ci-panel-summary,
+body.wizard .ci-check-meta,
+body.wizard .ci-check-time,
+body.wizard .ci-panel-empty,
+body.wizard .ci-panel-note { color: #9a86c4; }
+body.wizard .ci-check-name { color: #f3e6c0; }
+body.wizard .ci-checks li + li { border-top-color: rgba(122, 93, 176, 0.35); }
+body.wizard .ci-panel-note { border-top-color: rgba(122, 93, 176, 0.5); }
+body.wizard .ci-icon-pass { color: #7ee08a; }
+body.wizard .ci-icon-fail { color: #ff8a8a; }
+body.wizard .ci-icon-pending { color: #e8c15a; }
+body.wizard .ci-icon-skipped { color: #6f5f96; }
+body.wizard .ci-panel::-webkit-scrollbar-track { background: #140f28; }
+body.wizard .ci-panel::-webkit-scrollbar-thumb {
+  background: #7a5db0; border-color: #241b3d;
+}
+body.wizard .ci-panel::-webkit-scrollbar-thumb:hover { background: #9a7fd0; }
+body.slop .ci-badge { background: #210808; border-color: #684500; color: #d8b95e; }
+body.slop .ci-panel {
+  border-color: #9e7a00; background: linear-gradient(180deg, #351010 0%, #210808 100%);
+  color: #ffe88c; box-shadow: 0 0 18px rgba(255, 215, 0, 0.25);
+}
+body.slop .ci-panel-heading { color: #ffe88c; }
+body.slop .ci-panel-summary,
+body.slop .ci-check-meta,
+body.slop .ci-check-time,
+body.slop .ci-panel-empty,
+body.slop .ci-panel-note { color: #d8b95e; }
+body.slop .ci-check-name { color: #fff4bd; }
+body.slop .ci-checks li + li,
+body.slop .ci-panel-note { border-color: #684500; }
+body.slop .ci-panel::-webkit-scrollbar-track { background: #210808; }
+body.slop .ci-panel::-webkit-scrollbar-thumb {
+  background: #9e7a00; border-color: #351010;
+}
+body.slop .ci-panel::-webkit-scrollbar-thumb:hover { background: #d8b95e; }
+/* On a narrow viewport a left-anchored panel runs off the right edge, so
+   hang it from the badge's right edge instead and narrow it. */
+@media (max-width: 640px) {
+  .ci-panel { left: auto; right: 0; width: min(320px, calc(100vw - 24px)); }
+}
 /* Task column: an existing label remains a conventional link; its pencil
    opens the URL + display-name editor. Empty cells offer ＋ attach. */
 .task-cell { white-space: nowrap; }
