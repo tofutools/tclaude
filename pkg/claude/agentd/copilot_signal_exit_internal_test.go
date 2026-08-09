@@ -27,6 +27,9 @@ func TestCopilotExitCmdUnconsumed(t *testing.T) {
 		{"typed but unsubmitted", typedUnsubmitted, false},
 		// Failed or non-Copilot captures must never arm the fallback.
 		{"empty capture", "", false},
+		// A ❯ quoted inside transcript text (not at a line start) is not an
+		// input prompt; a teardown card below such text must stay untapped.
+		{"transcript-quoted prompt char", `the shell showed ❯ before failing | ╰─╯╰─╯ AI Credits 0.51`, false},
 	}
 	for _, tc := range cases {
 		if got := copilotExitCmdUnconsumed(tc.screen, "/exit"); got != tc.want {

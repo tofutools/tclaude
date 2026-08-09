@@ -1868,26 +1868,44 @@ const copilotSignalExitTapGap = 800 * time.Millisecond
 // injection lock as one sequence: another injector's keystroke landing
 // between the two would disarm the "again" state the first press exists to
 // establish.
-func injectCopilotSignalExitSerializedBy(lockTarget, tmuxTarget string) error {
+//
+// stillStuck is consulted before EACH press, with the lock already held. The
+// caller's arming capture races a healthy pane's teardown redraw (a
+// submitted exit clears the input box a beat before the exit card appears),
+// and a ctrl-c pressed into that pane lands as SIGINT while Copilot writes
+// its durable shutdown state — so any press whose precondition no longer
+// holds is skipped. Returns whether the first press was actually sent.
+func injectCopilotSignalExitSerializedBy(lockTarget, tmuxTarget string, stillStuck func() bool) (tapped bool, err error) {
 	mu := paneInjectLock(injectLockKey(lockTarget))
 	if err := acquirePaneInjectLock(mu); err != nil {
-		return err
+		return false, err
 	}
 	defer mu.Unlock()
-	return paneinput.WithLock(tmuxTarget, paneinput.Options{
+	err = paneinput.WithLock(tmuxTarget, paneinput.Options{
 		Run:         runTmuxCommand,
 		LockTimeout: paneInjectLockTimeout,
 		LockID:      lockTarget,
 	}, func(run paneinput.Runner, target string) error {
+		if !stillStuck() {
+			return nil
+		}
 		if err := run("send-keys", "-t", target, "C-c"); err != nil {
 			return fmt.Errorf("send-keys first ctrl-c: %w", err)
 		}
+		tapped = true
 		time.Sleep(copilotSignalExitTapGap)
+		if !stillStuck() {
+			// The pane reached teardown between the presses (it was slow, not
+			// wedged); the armed "again" state dies with the TUI, so leaving
+			// the sequence half-done is safe.
+			return nil
+		}
 		if err := run("send-keys", "-t", target, "C-c"); err != nil {
 			return fmt.Errorf("send-keys second ctrl-c: %w", err)
 		}
 		return nil
 	})
+	return tapped, err
 }
 
 func injectTextAndSubmitWithOptions(lockTarget, tmuxTarget, text string, forceBracketedPaste bool, prefixKeys ...string) error {

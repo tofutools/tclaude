@@ -798,11 +798,24 @@ func logSoftExitPaneState(target *lifecycleTarget, reason, phase string, attempt
 // popup) consumed the send; its problem, if any, is submission, which the
 // bounded re-injections already cover. Either miss degrades to the
 // escalation ladder, never to a false kill.
+//
+// The prompt prong is anchored to a LINE START, not a bare Contains: the
+// capture is the last 12 visible lines (formatPaneScreenTail trims each and
+// joins with " | "), and a ❯ quoted inside transcript text still on screen
+// above a teardown card must not read as a live input prompt.
 func copilotExitCmdUnconsumed(screen, exitCmd string) bool {
 	if screen == "" || exitCmd == "" {
 		return false
 	}
-	return strings.Contains(screen, "❯") && !strings.Contains(screen, exitCmd)
+	if strings.Contains(screen, exitCmd) {
+		return false
+	}
+	for _, line := range strings.Split(screen, " | ") {
+		if strings.HasPrefix(line, "❯") {
+			return true
+		}
+	}
+	return false
 }
 
 // maybeCopilotSignalExitFallback fires Copilot's own double-ctrl-c quit when
@@ -825,10 +838,26 @@ func maybeCopilotSignalExitFallback(target *lifecycleTarget, exitCmd, reason str
 		"session", target.sessionID, "conv", short8(target.convID),
 		"tmux_session", target.tmuxSession, "pane_id", target.paneID,
 		"attempt", attempt, "reason", reason)
-	if err := injectCopilotSignalExitSerializedBy(target.tmuxSession+":0.0", target.paneID); err != nil {
+	// The post-send capture that armed this fallback races a healthy pane's
+	// teardown redraw: a submitted /exit clears the input box a beat before
+	// the exit card replaces the prompt, and a capture in that beat carries
+	// the same signature as a wedged reader. Re-reading the screen is
+	// therefore repeated inside the tap sequence — under the injection lock
+	// before the first press, and again before the second — so a pane that
+	// was merely slow to redraw is stood down on, not SIGINTed mid-write.
+	stillStuck := func() bool {
+		return copilotExitCmdUnconsumed(capturePaneScreenTail(target.paneID), exitCmd)
+	}
+	tapped, err := injectCopilotSignalExitSerializedBy(target.tmuxSession+":0.0", target.paneID, stillStuck)
+	switch {
+	case err != nil:
 		slog.Warn("soft-exit: Copilot signal-exit fallback send failed",
 			"session", target.sessionID, "conv", short8(target.convID),
 			"pane_id", target.paneID, "attempt", attempt, "error", err)
+	case !tapped:
+		slog.Info("soft-exit: Copilot signal-exit fallback stood down; pane no longer shows the stdin-dead signature",
+			"session", target.sessionID, "conv", short8(target.convID),
+			"pane_id", target.paneID, "attempt", attempt, "reason", reason)
 	}
 }
 
