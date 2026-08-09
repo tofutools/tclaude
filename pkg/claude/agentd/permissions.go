@@ -485,6 +485,33 @@ var permissionRegistry = []PermSlug{
 	},
 }
 
+// visiblePermissionRegistry returns the permission catalog exposed to humans
+// and agents. Proxy permissions are useful only when the semantic proxy is
+// available; advertising them otherwise makes agents mistake an unavailable
+// optional feature for missing authority to use their environment's normal
+// Git, GitHub, or Linear tooling. Keep the full registry above for validation
+// and stored-grant resolution so disabling the proxy never destroys policy.
+func visiblePermissionRegistry(proxyEnabled bool) []PermSlug {
+	out := make([]PermSlug, 0, len(permissionRegistry))
+	for _, p := range permissionRegistry {
+		if !proxyEnabled && isSemanticProxyPermission(p.Slug) {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+func isSemanticProxyPermission(slug string) bool {
+	switch slug {
+	case PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite,
+		PermLinearRead, PermLinearWrite:
+		return true
+	default:
+		return false
+	}
+}
+
 // Permission slugs for the permissions-management endpoints themselves.
 // Recursive: an agent that holds permissions.grant can hand out more
 // permissions to itself or others. By default no agent holds these, so
@@ -1171,8 +1198,7 @@ func handlePermissionsSlugs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET only")
 		return
 	}
-	out := make([]PermSlug, len(permissionRegistry))
-	copy(out, permissionRegistry)
+	out := visiblePermissionRegistry(gitProxyRoutesEnabled(r))
 	sort.Slice(out, func(i, j int) bool { return out[i].Slug < out[j].Slug })
 	writeJSON(w, http.StatusOK, out)
 }
