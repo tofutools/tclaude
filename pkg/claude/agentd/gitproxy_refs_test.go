@@ -32,7 +32,9 @@ func TestParseGitRefLines_DropsWhatMustNotReachATransaction(t *testing.T) {
 			sha + " refs/heads/has..dots\n" +
 			sha + " refs/heads/tilde~1\n" +
 			sha + " refs/heads/x.lock\n" +
+			sha + " refs/heads/a.lock/b\n" + // .lock on a MIDDLE component
 			sha + " refs/heads/-dashy\n" + // fine as a ref, and never a flag: it is not argv-leading
+			sha + " refs/heads/mid./end\n" + // legal: only a LEADING dot is barred per component
 			sha + " refs/heads/deep/name\n"))
 
 	names := make([]string, 0, len(refs))
@@ -40,7 +42,9 @@ func TestParseGitRefLines_DropsWhatMustNotReachATransaction(t *testing.T) {
 		names = append(names, ref.Name)
 		assert.Equal(t, sha, ref.OID)
 	}
-	assert.Equal(t, []string{"refs/heads/keep", "refs/heads/-dashy", "refs/heads/deep/name"}, names)
+	assert.Equal(t, []string{
+		"refs/heads/keep", "refs/heads/-dashy", "refs/heads/mid./end", "refs/heads/deep/name",
+	}, names)
 }
 
 // TestValidImportableRefName_RejectsTheShapesGitWouldRefuse pins the rules that
@@ -50,6 +54,10 @@ func TestValidImportableRefName_RejectsTheShapesGitWouldRefuse(t *testing.T) {
 		"refs/heads/main",
 		"refs/remotes/origin/feat/thing",
 		"refs/tags/v1.2.3",
+		// Legal, and it must stay legal: git lists and accepts a component that
+		// ENDS in a dot, so refusing it would silently drop the ref from the
+		// mirror rather than protect anything.
+		"refs/heads/mid./end",
 	} {
 		assert.Truef(t, validImportableRefName(name), "%q must be importable", name)
 	}
@@ -59,6 +67,8 @@ func TestValidImportableRefName_RejectsTheShapesGitWouldRefuse(t *testing.T) {
 		"heads/main",              // not fully qualified
 		"refs/heads/main/",        // trailing slash
 		"refs/heads/main.lock",    // git's own lock suffix
+		"refs/heads/a.lock/b",     // ...on a middle component, which git also refuses
+		"refs/heads/x/.hidden",    // a component starting with a dot, at any depth
 		"refs/heads/a..b",         // revision range syntax
 		"refs/heads/a@{0}",        // reflog syntax
 		"refs/heads/a//b",         // empty segment

@@ -181,19 +181,37 @@ func validGitObjectID(s string) bool {
 }
 
 // validImportableRefName applies git's check-ref-format rules to a full ref
-// name. It is deliberately stricter than git: only `refs/…` names are accepted,
-// so nothing this file writes can land on HEAD or on a bare name.
+// name. It is deliberately stricter than git in one direction — only `refs/…`
+// names are accepted, so nothing this file writes can land on HEAD or on a bare
+// name — and deliberately no stricter anywhere else, because a name this drops
+// is a ref the mirror silently skips.
+//
+// The per-COMPONENT rules are applied per component rather than to the whole
+// string. git's own ref-store reader already refuses to list a name like
+// `refs/heads/a.lock/b` ("ignoring ref with broken name"), so on git 2.43
+// nothing of that shape reaches here even though `.git/packed-refs` is
+// agent-writable. Not relying on that is the same call the rest of this proxy
+// makes about git behaviour that varies per version: if such a name ever did
+// arrive, update-ref would refuse it and take the whole atomic import down
+// with it.
 func validImportableRefName(name string) bool {
 	if !strings.HasPrefix(name, "refs/") || len(name) > maxGitProxyRefLen*4 {
 		return false
 	}
+	// Whole-name rules: a ref may not end with "/" or ".", contain two
+	// consecutive dots, or contain the reflog syntax "@{".
 	if strings.HasSuffix(name, "/") || strings.HasSuffix(name, ".") ||
-		strings.HasSuffix(name, ".lock") {
+		strings.Contains(name, "..") || strings.Contains(name, "@{") {
 		return false
 	}
-	if strings.Contains(name, "//") || strings.Contains(name, "..") ||
-		strings.Contains(name, "@{") || strings.Contains(name, "/.") {
-		return false
+	// Per-component rules. Note that a component ENDING in a dot is legal —
+	// `refs/heads/mid./end` is a name git both lists and accepts — so only the
+	// two rules git actually states are applied here.
+	for _, component := range strings.Split(strings.TrimPrefix(name, "refs/"), "/") {
+		if component == "" || strings.HasPrefix(component, ".") ||
+			strings.HasSuffix(component, ".lock") {
+			return false
+		}
 	}
 	for _, r := range name {
 		if r <= 0x20 || r == 0x7f {
