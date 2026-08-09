@@ -282,7 +282,7 @@ export function mountTerminalWidget({
   // One animation frame is enough for xterm's cell metrics, but not
   // necessarily for the tmux client and harness behind the PTY to finish
   // attaching. This later nudge deliberately fits first: if surrounding
-  // dashboard chrome also settled during that second, the re-sync starts from
+  // dashboard chrome also settled during that wait, the re-sync starts from
   // the newest grid. The original size is restored after a short interval so
   // tmux observes a real geometry transition and relays SIGWINCH into its pane.
   // It is one-shot and connection-scoped, never a resize loop.
