@@ -125,8 +125,143 @@ function activityMembersForVisibility(members, visible) {
   return visible ? list : list.filter((member) => member?.online);
 }
 
+// Activity detail is deliberately a separate, richer view model from the
+// glanceable bot summary. The summary collapses awaiting_permission/input into
+// one bot and suppresses clean-offline bots while anything live is present;
+// the hover panel must retain the exact state and every visible member so an
+// operator can find the worker behind each count.
+const ACTIVITY_TITLE_RE = /^[A-Za-z0-9_\-[\]{}() ]+$/;
+const ACTIVITY_DETAIL_STATE_ORDER = [
+  'recovery-backoff', 'recovery-suppressed', 'recovery-restarting', 'recovery-recovered',
+  'error', 'awaiting_permission', 'awaiting_input', 'working', 'main_agent_idle',
+  'idle', 'recovery-crashed', 'crashed', 'waking', 'offline', 'unknown',
+];
+const ACTIVITY_DETAIL_STATES = Object.freeze({
+  'recovery-backoff': { label: 'Crash loop / backoff', wizardLabel: 'Crash loop / backoff' },
+  'recovery-suppressed': { label: 'Recovery suppressed', wizardLabel: 'Recovery suppressed' },
+  'recovery-restarting': { label: 'Restarting', wizardLabel: 'Restarting' },
+  'recovery-recovered': { label: 'Recovered automatically', wizardLabel: 'Recovered automatically' },
+  error: { label: 'Error / stuck', wizardLabel: 'Spell backfired / stuck' },
+  awaiting_permission: { label: 'Awaiting permission', wizardLabel: 'Awaiting a decree' },
+  awaiting_input: { label: 'Awaiting input', wizardLabel: 'Awaiting a key' },
+  working: { label: 'Working', wizardLabel: 'Channeling' },
+  main_agent_idle: { label: 'Idle + background work', wizardLabel: 'Meditating + work' },
+  idle: { label: 'Idle', wizardLabel: 'Meditating' },
+  'recovery-crashed': { label: 'Crashed — recovery pending', wizardLabel: 'Slain — recovery pending' },
+  crashed: { label: 'Crashed', wizardLabel: 'Slain by a grue' },
+  waking: { label: 'Starting up', wizardLabel: 'Awakening' },
+  offline: { label: 'Offline', wizardLabel: 'Departed' },
+  unknown: { label: 'Online', wizardLabel: 'Channeling' },
+});
+
+function activityText(value, max = 160) {
+  return String(value || '')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max);
+}
+
+// Titles are persisted operator/agent input. Keep the same 1–64 character
+// boundary and charset as member-editor-island.js before letting a title cross
+// into the detail model. Every eventual render is still a Preact text child;
+// this gate is an additional bound on model size and display noise.
+export function activityMemberTitle(member) {
+  const candidates = [member?.title, member?.agent_id, member?.conv_id];
+  for (const candidate of candidates) {
+    // Apply the same raw-value gate as validMemberTitle; normalising first
+    // would accidentally turn a tab/newline into an accepted single space.
+    const value = String(candidate || '').trim();
+    if (value && value.length <= 64 && !value.includes('  ') && ACTIVITY_TITLE_RE.test(value)) return value;
+  }
+  return 'unnamed worker';
+}
+
+function activityDetailState(member) {
+  const state = member?.state || {};
+  const recovery = String(state.recovery_status || '').trim();
+  if (recovery === 'backoff') return 'recovery-backoff';
+  if (recovery === 'suppressed') return 'recovery-suppressed';
+  if (recovery === 'restarting') return 'recovery-restarting';
+  if (recovery === 'recovered') return 'recovery-recovered';
+  if (recovery === 'crashed') return 'recovery-crashed';
+  if (!member?.online) {
+    if (state.exit_reason === 'unexpected') return 'crashed';
+    return member?.waking ? 'waking' : 'offline';
+  }
+  const status = String(state.status || '').trim();
+  return ACTIVITY_DETAIL_STATES[status] ? status : status ? 'unknown' : 'idle';
+}
+
+function activityDetailEntry(member, key) {
+  const state = member?.state || {};
+  const stateKey = activityDetailState(member);
+  const vocabulary = ACTIVITY_DETAIL_STATES[stateKey] || ACTIVITY_DETAIL_STATES.unknown;
+  const detail = activityText(state.status_detail);
+  return {
+    key,
+    name: activityMemberTitle(member),
+    state: stateKey,
+    label: vocabulary.label,
+    wizardLabel: vocabulary.wizardLabel,
+    detail,
+  };
+}
+
+// Build a first-seen, conv_id-deduplicated roster. An agent can be listed in
+// several groups, just as aggregateActivity sees it; assigning the first copy
+// to its first group keeps the panel's names/counts one-to-one. Legacy rows
+// without conv_id remain distinct, matching aggregateActivity's contract.
+function activityDetailView(lists, groupNames, summary) {
+  const seen = new Set();
+  const groups = [];
+  let total = 0;
+  for (const [groupIndex, list] of (lists || []).entries()) {
+    const stateGroups = new Map();
+    for (const [memberIndex, member] of (list || []).entries()) {
+      // Keep this identity check byte-for-byte aligned with aggregateActivity:
+      // it dedups truthy conv_id values without trimming or coercing them.
+      const convID = member?.conv_id;
+      if (convID && seen.has(convID)) continue;
+      if (convID) seen.add(convID);
+      const stateKey = activityDetailState(member);
+      const key = convID || `${groupIndex}:${memberIndex}:${total}`;
+      const entry = activityDetailEntry(member, key);
+      let state = stateGroups.get(stateKey);
+      if (!state) {
+        const vocabulary = ACTIVITY_DETAIL_STATES[stateKey] || ACTIVITY_DETAIL_STATES.unknown;
+        state = { key: stateKey, label: vocabulary.label, wizardLabel: vocabulary.wizardLabel, members: [] };
+        stateGroups.set(stateKey, state);
+      }
+      state.members.push(entry);
+      total++;
+    }
+    if (!stateGroups.size) continue;
+    const states = [...stateGroups.values()].sort((left, right) => {
+      const a = ACTIVITY_DETAIL_STATE_ORDER.indexOf(left.key);
+      const b = ACTIVITY_DETAIL_STATE_ORDER.indexOf(right.key);
+      return (a < 0 ? ACTIVITY_DETAIL_STATE_ORDER.length : a)
+        - (b < 0 ? ACTIVITY_DETAIL_STATE_ORDER.length : b);
+    });
+    groups.push({
+      key: String(groupNames?.[groupIndex] || `group-${groupIndex}`),
+      name: String(groupNames?.[groupIndex] || 'Unnamed group'),
+      states,
+    });
+  }
+  return {
+    total,
+    groups,
+    // A clean-offline count is still in `summary.counts` even when its bot is
+    // suppressed beside live work. Keep the fact explicit so the panel never
+    // appears to disagree with the pulse row.
+    suppressedOffline: summary?.counts?.offline > 0 && !summary.present.includes('offline')
+      ? summary.counts.offline : 0,
+  };
+}
+
 export function globalActivityView(snapshot, wizard = false, visibility = {}) {
-  if (!snapshot) return { modes: [], title: '', animationKey: '' };
+  if (!snapshot) return { modes: [], title: '', animationKey: '', details: { total: 0, groups: [], suppressedOffline: 0 } };
   const groups = snapshot.groups || [];
   const showOfflineScribes = visibility.scribe ?? false;
   const showUngrouped = visibility.ungrouped ?? true;
@@ -137,7 +272,8 @@ export function globalActivityView(snapshot, wizard = false, visibility = {}) {
   lists.push(activityMembersForVisibility(snapshot.ungrouped, showUngrouped));
   const summary = aggregateActivity(lists);
   const modes = activityModeViews(summary, snapshot.activity_bots);
-  if (!modes.length) return { modes: [], title: '', animationKey: '' };
+  const details = activityDetailView(lists, [...groups.map((group) => group.name), 'Ungrouped'], summary);
+  if (!modes.length) return { modes: [], title: '', animationKey: '', details };
 
   const theme = wizard ? 'wizard' : '';
   const lines = [];
@@ -156,5 +292,6 @@ export function globalActivityView(snapshot, wizard = false, visibility = {}) {
     animationKey: modes.map((mode) => `${mode.key}:${mode.style}:${mode.bots.map((bot) => `${bot.key}:${bot.count}`).join(',')}`).join('|'),
     title: `Activity across all groups — ${themedSummaryText(summary, theme)}`
       + (lines.length ? `\n${lines.join('\n')}` : ''),
+    details,
   };
 }

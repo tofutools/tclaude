@@ -2313,17 +2313,120 @@ body.wizard .ga-wizard { display: inline-flex; }
 .ga-wizard .actbot-crashed .actbot-face { transform: none; }
 
 /* Top-bar global indicator — same bot row(s), aggregated across every group
-   + the ungrouped bucket. Collapses out of the flex header when empty
-   (renderGlobalActivity clears innerHTML when there's no live membership). */
+   + the ungrouped bucket. The trigger stays compact in the header; its
+   keyboard/focus/click/hover panel is positioned from this wrapper. */
 .global-activity {
   position: relative; display: inline-flex; align-items: center; margin-left: 6px;
   vertical-align: middle; cursor: default;
 }
-.global-activity:empty { display: none; }
 .global-activity .actbot { font-size: 15px; }
 .global-activity .human-notification-hint {
   left: -8px; top: -8px;
   box-shadow: 0 1px 5px rgba(0, 0, 0, 0.55), 0 0 0 2px #0d1117;
+}
+
+/* The activity trigger is a semantic button, but visually remains the same
+   inline bot row that preceded the panel. Keep this rule more specific than
+   the broad slop/wizard `header button` skins below. */
+.activity-hover-trigger {
+  appearance: none; display: inline-flex; align-items: center;
+  margin: 0; padding: 0; border: 0; border-radius: 4px;
+  background: transparent; color: inherit; font: inherit; line-height: 1;
+  cursor: pointer;
+}
+.activity-hover-trigger:hover { background: transparent; }
+.activity-hover-trigger:focus-visible {
+  outline: 2px solid #58a6ff; outline-offset: 3px;
+}
+/* The cosmetic skins apply a broad `body.<theme> header button` rule. Keep
+   this trigger's compact bot-row geometry in both themes. */
+body.slop header .activity-hover-trigger,
+body.wizard header .activity-hover-trigger {
+  background: transparent; border: 0; color: inherit; padding: 0;
+}
+body.slop header .activity-hover-trigger:hover,
+body.wizard header .activity-hover-trigger:hover { background: transparent; }
+.activity-hover-trigger-visual { display: inline-flex; align-items: center; }
+.activity-hover-panel {
+  display: none; position: absolute; z-index: 30;
+  top: calc(100% + 9px); left: 0;
+  width: min(420px, calc(100vw - 32px)); max-height: min(68vh, 560px);
+  overflow: auto; padding: 12px 14px;
+  border: 1px solid #3b4654; border-radius: 8px;
+  background: linear-gradient(180deg, #1c232d 0%, #161b22 100%);
+  color: #c9d1d9; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+  font-size: 12px; line-height: 1.35; text-align: left;
+}
+.activity-hover.is-open .activity-hover-panel { display: block; }
+.activity-hover-panel-heading {
+  color: #f0f6fc; font-size: 13px; font-weight: 700; letter-spacing: 0.2px;
+}
+.activity-hover-panel-summary {
+  margin: 2px 0 10px; color: #8b949e; font-size: 11px;
+}
+.activity-hover-group + .activity-hover-group {
+  margin-top: 12px; padding-top: 10px; border-top: 1px solid #30363d;
+}
+.activity-hover-group h3 {
+  margin: 0 0 6px; overflow: hidden; color: #79c0ff;
+  font-size: 12px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap;
+}
+.activity-hover-state + .activity-hover-state { margin-top: 7px; }
+.activity-hover-state-heading { display: flex; align-items: baseline; gap: 7px; }
+.activity-hover-state-label { color: #c9d1d9; font-weight: 600; }
+.activity-hover-state-count {
+  min-width: 1.4em; padding: 0 4px; border-radius: 8px;
+  background: #30363d; color: #8b949e; font-size: 10px; text-align: center;
+}
+.activity-hover-workers {
+  margin: 2px 0 0 13px; padding: 0; color: #8b949e; list-style: none;
+}
+.activity-hover-workers li { overflow-wrap: anywhere; }
+.activity-hover-worker-name { color: #e6edf3; }
+.activity-hover-worker-detail { color: #8b949e; }
+.activity-hover-state-error .activity-hover-state-label,
+.activity-hover-state-recovery-backoff .activity-hover-state-label,
+.activity-hover-state-recovery-suppressed .activity-hover-state-label { color: #ff7b72; }
+.activity-hover-state-awaiting_permission .activity-hover-state-label,
+.activity-hover-state-awaiting_input .activity-hover-state-label { color: #79c0ff; }
+.activity-hover-state-working .activity-hover-state-label,
+.activity-hover-state-main_agent_idle .activity-hover-state-label { color: #56d364; }
+.activity-hover-state-crashed .activity-hover-state-label { color: #d29922; }
+.activity-hover-state-offline .activity-hover-state-label { color: #8b949e; }
+.activity-hover-note {
+  margin: 11px 0 0; padding-top: 9px; border-top: 1px solid #30363d;
+  color: #8b949e; font-size: 11px;
+}
+body.slop .activity-hover-panel {
+  border-color: #9e7a00; background: linear-gradient(180deg, #351010 0%, #210808 100%);
+  color: #ffe88c; box-shadow: 0 0 18px rgba(255, 215, 0, 0.25);
+}
+body.slop .activity-hover-panel-heading { color: #ffe88c; }
+body.slop .activity-hover-panel-summary,
+body.slop .activity-hover-worker-detail,
+body.slop .activity-hover-note { color: #d8b95e; }
+body.slop .activity-hover-group + .activity-hover-group,
+body.slop .activity-hover-note { border-color: #684500; }
+body.slop .activity-hover-group h3 { color: #ffd700; }
+body.slop .activity-hover-worker-name { color: #fff4bd; }
+body.wizard .activity-hover-panel {
+  border-color: #7a5db0; background: linear-gradient(180deg, #241b3d 0%, #140f28 100%);
+  color: #e7d9f5; box-shadow: 0 0 24px rgba(122, 93, 176, 0.35);
+}
+body.wizard .activity-hover-panel-heading {
+  color: #f3e6c0; font-family: Papyrus, Luminari, 'Palatino Linotype', Palatino, serif;
+  letter-spacing: 0.5px;
+}
+body.wizard .activity-hover-panel-summary,
+body.wizard .activity-hover-worker-detail,
+body.wizard .activity-hover-note { color: #9a86c4; }
+body.wizard .activity-hover-group + .activity-hover-group,
+body.wizard .activity-hover-note { border-color: rgba(122, 93, 176, 0.5); }
+body.wizard .activity-hover-group h3 { color: #d9b45a; }
+body.wizard .activity-hover-worker-name { color: #f3e6c0; }
+body.wizard .activity-hover-state-count { background: #3a2a63; color: #b39ddb; }
+@media (max-width: 560px) {
+  .activity-hover-panel { left: -12px; width: min(360px, calc(100vw - 24px)); }
 }
 
 /* ── Sprite (pixel-art) bots — the slop-mode default ──────────────────

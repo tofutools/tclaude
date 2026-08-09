@@ -44,6 +44,86 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
   assert.deepEqual(activity.modes.map((mode) => mode.key), ['regular', 'wizard']);
   assert.equal(activity.modes[0].className, 'ga-regular');
   assert.equal(activity.modes[0].bots[0].key, 'working');
+  assert.equal(activity.details.total, 1);
+  assert.equal(activity.details.groups[0].name, 'alpha');
+  assert.equal(activity.details.groups[0].states[0].members[0].name, 'same');
+});
+
+test('global activity details preserve exact states, dedup shared members, and include suppressed offline workers', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { globalActivityView, activityMemberTitle } = await harness.importDashboardModule('js/shell-model.js');
+  const shared = { conv_id: 'shared', title: 'Shared Worker', online: true, state: { status: 'working' } };
+  const activity = globalActivityView({
+    groups: [
+      {
+        name: 'builders',
+        members: [
+          shared,
+          { conv_id: 'ask', title: 'Needs Access', online: true, state: { status: 'awaiting_permission' } },
+          { conv_id: 'sleep', title: 'Sleeping Worker', online: false, state: { status: 'idle' } },
+        ],
+      },
+      {
+        name: 'reviewers',
+        members: [
+          shared,
+          { conv_id: 'stuck', title: 'Stuck Worker', online: true, state: { status: 'error', status_detail: 'tool failed' } },
+        ],
+      },
+    ],
+    ungrouped: [
+      { conv_id: 'background', title: 'Background Worker', online: true, state: { status: 'main_agent_idle' } },
+    ],
+    activity_bots: { regular: 'emoji', slop: 'off', wizard: 'off' },
+  });
+
+  assert.equal(activity.details.total, 5, 'the shared conv_id is listed once');
+  assert.equal(activity.details.suppressedOffline, 1, 'offline is explicit when its bot is suppressed');
+  assert.deepEqual(activity.details.groups.map((group) => group.name), ['builders', 'reviewers', 'Ungrouped']);
+  const builders = activity.details.groups[0];
+  assert.deepEqual(builders.states.map((state) => state.key), [
+    'awaiting_permission', 'working', 'offline',
+  ]);
+  assert.equal(builders.states[0].label, 'Awaiting permission');
+  assert.equal(builders.states[0].members[0].name, 'Needs Access');
+  assert.equal(builders.states[2].members[0].name, 'Sleeping Worker');
+  assert.equal(activity.details.groups[1].states[0].label, 'Error / stuck');
+  assert.equal(activity.details.groups[2].states[0].label, 'Idle + background work');
+
+  assert.equal(activityMemberTitle({ title: '<img src=x>', agent_id: 'agt_safe' }), 'agt_safe');
+  assert.equal(activityMemberTitle({ title: 'a'.repeat(65), conv_id: 'conv_safe' }), 'conv_safe');
+  assert.equal(activityMemberTitle({ title: 'line\tbreak', conv_id: 'conv_tab' }), 'conv_tab');
+});
+
+test('activity hover opens a text-only worker panel without changing the shared bot renderer', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { ActivityHover } = await harness.importDashboardModule('js/activity-hover.js');
+  const details = {
+    total: 2,
+    suppressedOffline: 1,
+    groups: [{
+      key: 'build', name: 'build', states: [
+        { key: 'working', label: 'Working', wizardLabel: 'Channeling', members: [{ key: 'a', name: 'Alice', detail: '' }] },
+        { key: 'offline', label: 'Offline', wizardLabel: 'Departed', members: [{ key: 'b', name: 'Bob', detail: '' }] },
+      ],
+    }],
+  };
+  const mounted = await harness.mount(harness.html`
+    <${ActivityHover} id="global-activity" className="global-activity"
+      label="Activity" title="Activity" details=${details}>
+      <span>bot</span>
+    </${ActivityHover}>
+  `);
+  const root = mounted.container.querySelector('.activity-hover');
+  const trigger = mounted.container.querySelector('button');
+  assert.equal(root.classList.contains('is-open'), false);
+  await harness.act(() => harness.fireEvent(trigger, 'click'));
+  assert.equal(root.classList.contains('is-open'), true);
+  assert.match(root.textContent, /Alice/);
+  assert.match(root.textContent, /Bob/);
+  await harness.act(() => harness.fireEvent(trigger, 'keydown', { key: 'Escape' }));
+  assert.equal(root.classList.contains('is-open'), false);
+  await mounted.unmount();
 });
 
 test('global activity omits offline agents only when their group view is hidden', async (t) => {

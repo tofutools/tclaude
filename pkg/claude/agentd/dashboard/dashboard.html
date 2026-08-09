@@ -181,9 +181,10 @@
        across every group + the ungrouped bucket by the Preact shell's
        accepted-snapshot view. One glance answers
        "is anything working / does anything need me?" without scanning
-       the list; the title attribute breaks it down per group. Collapses
-       (CSS :empty) when there are zero members, or when both modes'
-       styles are "off". -->
+       the list; hover, focus, or click opens the worker-by-state breakdown.
+       The trigger keeps its title/aria-label text equivalent for assistive
+       technology and text-only interaction. Collapses when there are zero
+       members, or when all configured bot styles are "off". -->
   <span class="shell-contents-root" id="shell-activity-root"></span>
   <!-- The base URL + last-refresh heartbeat (#meta) used to sit here, but it
        crowded the title row's prime space; it now lives in the bottom footer

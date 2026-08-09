@@ -4,6 +4,7 @@ import htm from 'htm';
 import { syncBotAnimations } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 import { ActivityModes } from './activity-bots.js';
+import { ActivityHover } from './activity-hover.js';
 import {
   footerMetaView,
   globalActivityView,
@@ -79,15 +80,24 @@ function GlobalActivity({ state, groupsState }) {
     return () => document.removeEventListener('tclaude:wizard', update);
   }, []);
   useLayoutEffect(() => syncBotAnimations(), [view.animationKey]);
+  if (!view.modes.length) return null;
+  const hasNotifications = hasUnreadHumanNotifications(snapshot);
+  const label = hasNotifications
+    ? 'Activity across all groups · one or more agents have unread notifications'
+    : 'Activity across all groups';
   return html`
-    <span class="global-activity" id="global-activity"
-      aria-label=${hasUnreadHumanNotifications(snapshot)
-        ? 'Activity across all groups · one or more agents have unread notifications'
-        : 'Activity across all groups'} title=${view.title || null}>
-      ${hasUnreadHumanNotifications(snapshot) ? html`<span class="human-notification-hint"
+    <${ActivityHover}
+      id="global-activity"
+      className="global-activity"
+      label=${label}
+      title=${view.title || null}
+      details=${view.details}
+      wizard=${wizard}
+    >
+      ${hasNotifications ? html`<span class="human-notification-hint"
         aria-hidden="true" title="One or more agents have unread notifications">!</span>` : null}
       <${ActivityModes} modes=${view.modes} />
-    </span>
+    </${ActivityHover}>
   `;
 }
 
