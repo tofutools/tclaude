@@ -105,6 +105,61 @@ test('the CI badge summarizes checks and opens a panel on hover', async (t) => {
   });
 });
 
+test('the panel is placed against the viewport, flipping above when that is where the room is', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { placePRChecksPanel } = await harness.importDashboardModule('js/pr-checks-hover.js');
+  const viewport = { width: 1200, height: 800 };
+  const panel = { width: 360, height: 320 };
+  const anchorAt = (top) => ({ top, bottom: top + 16, left: 400 });
+
+  await t.test('below by default, even with plenty of room above', () => {
+    // A badge halfway down a tall viewport has room both ways; downward is
+    // where the eye expects the panel, so it must not flip opportunistically.
+    const placed = placePRChecksPanel({ anchor: anchorAt(300), panel, viewport });
+    assert.equal(placed.placement, 'below');
+    assert.equal(placed.top, 323, 'hangs just under the badge');
+    assert.equal(placed.maxHeight, 320);
+  });
+
+  await t.test('above when the badge sits low and there is more room up there', () => {
+    // This is the reported case: a row near the bottom of a long table. The
+    // panel used to hang below and stretch the page instead.
+    const placed = placePRChecksPanel({ anchor: anchorAt(700), panel, viewport });
+    assert.equal(placed.placement, 'above');
+    assert.ok(placed.top >= 8, 'stays inside the viewport');
+    assert.ok(placed.top + placed.maxHeight <= 700 - 7, 'clears the badge');
+  });
+
+  await t.test('a short panel still fits below a low badge', () => {
+    const placed = placePRChecksPanel({
+      anchor: anchorAt(700), panel: { width: 360, height: 60 }, viewport,
+    });
+    assert.equal(placed.placement, 'below', 'no need to flip what already fits');
+    assert.equal(placed.maxHeight, 60);
+  });
+
+  await t.test('a cramped side gets a scrollable panel, not an off-screen one', () => {
+    // Short viewport: neither side fits 320px, so it takes the roomier side
+    // and is capped to what is actually there.
+    const short = { width: 1200, height: 400 };
+    const placed = placePRChecksPanel({ anchor: anchorAt(330), panel, viewport: short });
+    assert.equal(placed.placement, 'above');
+    assert.ok(placed.maxHeight <= 330 - 7 - 8, `maxHeight ${placed.maxHeight} must fit above`);
+    assert.ok(placed.maxHeight > 0);
+  });
+
+  await t.test('horizontal placement is clamped into the viewport', () => {
+    const right = placePRChecksPanel({
+      anchor: { top: 100, bottom: 116, left: 1150 }, panel, viewport,
+    });
+    assert.equal(right.left, 1200 - 360 - 8, 'a badge near the right edge pulls the panel back');
+    const left = placePRChecksPanel({
+      anchor: { top: 100, bottom: 116, left: -40 }, panel, viewport,
+    });
+    assert.equal(left.left, 8, 'and never goes off the left edge');
+  });
+});
+
 test('the panel fetches only while it is open', async (t) => {
   const harness = await createPreactHarness(t);
   const { PRChecksBadge } = await harness.importDashboardModule('js/pr-checks-hover.js');

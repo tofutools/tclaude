@@ -1,5 +1,5 @@
 import { h } from 'preact';
-import { useEffect, useId, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 
 const html = htm.bind(h);
@@ -21,6 +21,84 @@ const html = htm.bind(h);
 // scroll it never closes it.
 
 const PR_CHECKS_POLL_MS = 6000;
+// Gap between badge and panel, and the margin the panel keeps from the
+// viewport edges. PANEL_MAX_H matches the CSS cap; placement narrows it
+// further when the chosen side has less room than that.
+const PANEL_GAP = 7;
+const PANEL_MARGIN = 8;
+const PANEL_MAX_H = 320;
+
+// placePRChecksPanel decides where the panel goes, given the badge's rect and
+// the panel's natural size. Two things drive it:
+//
+//   - The panel is positioned relative to the VIEWPORT (fixed), not the row.
+//     An absolutely-positioned panel hanging off a row near the bottom of a
+//     long table stretches the document's scroll area, so merely opening a
+//     tooltip made the whole dashboard scrollable further down.
+//   - Below is the default because that is where the eye expects it, but a
+//     badge low on the screen gets it above instead — and only when there is
+//     genuinely more room up there, so a badge in the middle of a tall
+//     viewport keeps the familiar downward placement.
+//
+// Whatever side wins, the panel is clamped into the viewport and told how
+// tall it may be, so it scrolls internally rather than running off-screen.
+export function placePRChecksPanel({ anchor, panel, viewport }) {
+  const spaceBelow = viewport.height - anchor.bottom - PANEL_GAP - PANEL_MARGIN;
+  const spaceAbove = anchor.top - PANEL_GAP - PANEL_MARGIN;
+  const wanted = Math.min(panel.height || PANEL_MAX_H, PANEL_MAX_H);
+  const above = wanted > spaceBelow && spaceAbove > spaceBelow;
+  const room = Math.max(80, above ? spaceAbove : spaceBelow);
+  const maxHeight = Math.min(wanted, room);
+  const left = Math.max(
+    PANEL_MARGIN,
+    Math.min(anchor.left, viewport.width - panel.width - PANEL_MARGIN),
+  );
+  const top = above
+    ? Math.max(PANEL_MARGIN, anchor.top - PANEL_GAP - maxHeight)
+    : anchor.bottom + PANEL_GAP;
+  return { top, left, maxHeight, placement: above ? 'above' : 'below' };
+}
+
+// usePanelPlacement measures the badge and panel and keeps the placement
+// current while the panel is open. Scroll/resize listeners exist only for
+// that window — a closed badge costs nothing.
+function usePanelPlacement(rootRef, panelRef, open) {
+  const [placement, setPlacement] = useState(null);
+
+  const measure = useCallback(() => {
+    const root = rootRef.current;
+    const panel = panelRef.current;
+    if (!root || !panel || typeof root.getBoundingClientRect !== 'function') return;
+    const anchor = root.getBoundingClientRect();
+    const box = panel.getBoundingClientRect();
+    setPlacement(placePRChecksPanel({
+      anchor,
+      panel: { width: box.width || 360, height: panel.scrollHeight || box.height || 0 },
+      viewport: { width: window.innerWidth || 0, height: window.innerHeight || 0 },
+    }));
+  }, [rootRef, panelRef]);
+
+  // Layout effect: place before paint so the panel never shows up in the
+  // wrong spot and jump.
+  useLayoutEffect(() => {
+    if (!open) {
+      setPlacement(null);
+      return undefined;
+    }
+    measure();
+    // Capture phase: the dashboard scrolls inner panes as well as the page,
+    // and a panel pinned to the viewport has to follow either one.
+    const onViewportChange = () => measure();
+    window.addEventListener('scroll', onViewportChange, { passive: true, capture: true });
+    window.addEventListener('resize', onViewportChange, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', onViewportChange, { capture: true });
+      window.removeEventListener('resize', onViewportChange);
+    };
+  }, [open, measure]);
+
+  return { placement, measure };
+}
 
 async function fetchPRChecks(url, signal) {
   const response = await fetch(`/api/pr-checks?url=${encodeURIComponent(url)}`, {
@@ -159,13 +237,23 @@ function CheckRow({ check, now }) {
   `;
 }
 
-function PRChecksPanel({ url, prNumber, summary, panelID, headingID, state }) {
+function PRChecksPanel({ url, prNumber, summary, panelID, headingID, state, panelRef, placement, onContentChange }) {
   const { data, error, loading } = state;
   const live = data?.summary && (data.summary.total || 0) > 0 ? data.summary : summary;
   const checks = data?.checks || [];
   const now = Date.now();
+  // A poll that adds rows changes how tall the panel wants to be, which can
+  // change which side it belongs on. Re-measure when the content does.
+  useLayoutEffect(() => { onContentChange(); }, [checks.length, error, loading]);
+  // Until the first measurement lands the panel is hidden rather than drawn
+  // at a guessed position and moved: a tooltip that jumps on open reads as a
+  // glitch. It is one layout effect away, so nothing perceptible is lost.
+  const style = placement
+    ? `top:${placement.top}px;left:${placement.left}px;max-height:${placement.maxHeight}px`
+    : 'visibility:hidden';
   return html`
-    <div class="ci-panel" id=${panelID} role="dialog" aria-labelledby=${headingID}>
+    <div ref=${panelRef} class="ci-panel" style=${style}
+      id=${panelID} role="dialog" aria-labelledby=${headingID}>
       <div class="ci-panel-heading" id=${headingID}>
         <span class="theme-copy-regular">${prNumber ? `#${prNumber} · checks` : 'Pull request checks'}</span>
         <span class="theme-copy-wizard">${prNumber ? `#${prNumber} · omens of the rite` : 'Omens of the rite'}</span>
@@ -207,6 +295,8 @@ export function PRChecksBadge({ url, prNumber, summary }) {
   const [pinned, setPinned] = useState(false);
   const open = hovered || focused || pinned;
   const state = usePRChecks(open ? url : '', open);
+  const panelRef = useRef(null);
+  const { placement, measure } = usePanelPlacement(rootRef, panelRef, open);
 
   const close = () => { setPinned(false); setHovered(false); setFocused(false); };
 
@@ -228,7 +318,7 @@ export function PRChecksBadge({ url, prNumber, summary }) {
   return html`
     <span
       ref=${rootRef}
-      class=${`ci-hover${open ? ' is-open' : ''}`}
+      class=${`ci-hover${open ? ' is-open' : ''}${placement ? ` ci-place-${placement.placement}` : ''}`}
       onMouseEnter=${() => setHovered(true)}
       onMouseLeave=${() => setHovered(false)}
       onFocusIn=${() => setFocused(true)}
@@ -255,7 +345,8 @@ export function PRChecksBadge({ url, prNumber, summary }) {
       </button>
       ${open ? html`
         <${PRChecksPanel} url=${url} prNumber=${prNumber} summary=${summary}
-          panelID=${panelID} headingID=${headingID} state=${state} />
+          panelID=${panelID} headingID=${headingID} state=${state}
+          panelRef=${panelRef} placement=${placement} onContentChange=${measure} />
       ` : null}
     </span>
   `;

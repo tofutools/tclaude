@@ -792,7 +792,10 @@ excluded from the denominator, so `12/14` means twelve of the fourteen checks
 that actually had to run. Hovering (or focusing) the pill opens a scrollable
 panel listing every check with its status, workflow, conclusion and elapsed
 time, plus a link to the PR's checks page on GitHub; the panel stays open while
-the pointer is over it.
+the pointer is over it. It is positioned against the viewport rather than the
+table row, so opening it never extends the page's scroll area, and it flips
+above the badge when a low row leaves more room up there — defaulting to below,
+where the eye expects it.
 
 The check data costs nothing on the 2-second snapshot: it rides along on the
 `gh pr view` calls the branch-link and presented-PR refreshes already make, and
