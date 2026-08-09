@@ -229,12 +229,13 @@ function TerminalPane({
     setDragging(false);
     if (dragLeftRegion(event, headerRef.current)) void actions.reattachPane(pane.key);
   };
+  const snapshotReady = Boolean(snapshot?.value);
   useEffect(() => {
     if (active && manageTitle) {
-      const prefix = snapshot?.value ? `${agentStatus.symbol} ` : '';
+      const prefix = snapshotReady ? `${agentStatus.symbol} ` : '';
       document.title = `${prefix}${pane.label ? `${pane.label} — ` : ''}tclaude terminals`;
     }
-  }, [active, agentStatus?.symbol, manageTitle, pane.label, snapshot?.value]);
+  }, [active, agentStatus?.symbol, manageTitle, pane.label, snapshotReady]);
   return html`
     <div
       class=${`mux-pane${active ? ' active' : ''}${theme.wizard && theme.palette ? ' arcane-palette' : ''}`}

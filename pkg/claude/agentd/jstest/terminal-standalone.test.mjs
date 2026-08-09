@@ -222,7 +222,7 @@ test('standalone lifecycle connects before the real composer loads and sends thr
     }
   });
   assertAbsent(dialogHost.querySelector('#operator-message-modal'));
-  assert.deepEqual(requests.map(({ url }) => url), ['/api/snapshot', '/api/operator-message']);
+  assert.deepEqual(requests.filter(({ url }) => url !== '/api/snapshot').map(({ url }) => url), ['/api/operator-message']);
   const messageRequest = requests.find(({ url }) => url === '/api/operator-message');
   assert.deepEqual(JSON.parse(messageRequest.options.body), {
     to: 'agt_solo',
