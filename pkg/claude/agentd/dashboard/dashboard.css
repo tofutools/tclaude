@@ -2385,13 +2385,9 @@ body.wizard header .activity-hover-trigger:hover { background: transparent; }
 .activity-hover-worker-name { color: #e6edf3; }
 .activity-hover-worker-detail,
 .activity-hover-worker-annotation { color: #8b949e; }
-.activity-hover-state-error .activity-hover-state-label,
-.activity-hover-state-recovery-backoff .activity-hover-state-label,
-.activity-hover-state-recovery-suppressed .activity-hover-state-label { color: #ff7b72; }
-.activity-hover-state-awaiting_permission .activity-hover-state-label,
-.activity-hover-state-awaiting_input .activity-hover-state-label { color: #79c0ff; }
-.activity-hover-state-working .activity-hover-state-label,
-.activity-hover-state-main_agent_idle .activity-hover-state-label { color: #56d364; }
+.activity-hover-state-error .activity-hover-state-label { color: #ff7b72; }
+.activity-hover-state-asking .activity-hover-state-label { color: #79c0ff; }
+.activity-hover-state-working .activity-hover-state-label { color: #56d364; }
 .activity-hover-state-crashed .activity-hover-state-label { color: #d29922; }
 .activity-hover-state-offline .activity-hover-state-label { color: #8b949e; }
 .activity-hover-note {

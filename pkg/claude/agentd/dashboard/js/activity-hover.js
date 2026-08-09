@@ -78,10 +78,16 @@ export function ActivityHover({
   const headingID = `${panelID}-heading`;
   const open = hovered || focused || pinned;
 
+  const close = () => {
+    setPinned(false);
+    setHovered(false);
+    setFocused(false);
+  };
+
   useEffect(() => {
     if (!pinned) return undefined;
     const onPointerDown = (event) => {
-      if (!rootRef.current?.contains(event.target)) setPinned(false);
+      if (!rootRef.current?.contains(event.target)) close();
     };
     document.addEventListener('pointerdown', onPointerDown);
     return () => document.removeEventListener('pointerdown', onPointerDown);
@@ -94,9 +100,11 @@ export function ActivityHover({
     if (event.key !== 'Escape') return;
     event.preventDefault();
     event.stopPropagation();
-    setPinned(false);
-    setHovered(false);
-    setFocused(false);
+    close();
+  };
+  const onTriggerClick = () => {
+    if (pinned) close();
+    else setPinned(true);
   };
 
   return html`
@@ -117,7 +125,7 @@ export function ActivityHover({
         aria-controls=${panelID}
         aria-label=${label}
         title=${title || null}
-        onClick=${() => setPinned((value) => !value)}
+        onClick=${onTriggerClick}
         onKeyDown=${onKeyDown}
       >
         <span class="activity-hover-trigger-visual" aria-hidden="true">${children}</span>

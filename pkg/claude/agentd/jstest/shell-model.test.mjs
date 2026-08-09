@@ -175,6 +175,24 @@ test('activity hover opens a text-only worker panel without changing the shared 
   await harness.act(() => harness.fireEvent(trigger, 'keydown', { key: 'Escape' }));
   assert.equal(root.classList.contains('is-open'), false);
 
+  // A pinned panel must close on a second click even though the pointer is
+  // still over the trigger; otherwise hovered would immediately reopen it.
+  await harness.act(() => harness.fireEvent(trigger, 'mouseenter'));
+  await harness.act(() => harness.fireEvent(trigger, 'click'));
+  assert.equal(root.classList.contains('is-open'), true);
+  assert.equal(trigger.getAttribute('aria-expanded'), 'true');
+  await harness.act(() => harness.fireEvent(trigger, 'click'));
+  assert.equal(root.classList.contains('is-open'), false);
+  assert.equal(trigger.getAttribute('aria-expanded'), 'false');
+
+  // Outside pointerdown also clears focus, not only the pin, so a focused
+  // trigger cannot keep the panel open after an outside dismissal.
+  await harness.act(() => harness.fireEvent(trigger, 'focusin'));
+  await harness.act(() => harness.fireEvent(trigger, 'click'));
+  await harness.act(() => harness.fireEvent(harness.document.body, 'pointerdown'));
+  assert.equal(root.classList.contains('is-open'), false);
+  assert.equal(trigger.getAttribute('aria-expanded'), 'false');
+
   // The trigger is the focus target, while the panel is a sibling inside the
   // wrapper. Test the browser's focusin/focusout path used by the Preact
   // onFocusIn/onFocusOut handlers rather than relying on click coverage.
