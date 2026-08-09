@@ -94,8 +94,6 @@ func TestArtifactListingStoppedWalk(t *testing.T) {
 		assert.NotContains(t, out, "at least")
 		assert.NotContains(t, out, "stopped")
 		assert.NotContains(t, out, "ran out of time")
-		// Only a complete walk may be measured against the unpacked-size cap;
-		// a floor would refuse honest downloads and pass oversized ones.
 		assert.True(t, walk.Complete)
 		assert.Equal(t, 3, walk.Files)
 		assert.Equal(t, int64(15), walk.Bytes)
@@ -106,7 +104,7 @@ func TestArtifactListingStoppedWalk(t *testing.T) {
 		cancel()
 		_, walk := artifactListing(ctx, dest)
 		assert.False(t, walk.Complete,
-			"an incomplete byte total must not be handed to the size cap as if it were one")
+			"an incomplete byte total must never be reported as a measurement")
 	})
 }
 

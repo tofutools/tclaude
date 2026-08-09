@@ -4,9 +4,10 @@ description: >-
   Fetch, push, open GitHub pull requests, and read back their review comments,
   CI failure logs and build artifacts through `tclaude proxy git` and `tclaude
   proxy github` when your own sandbox has no credentials — the `tclaude agentd`
-  daemon runs git and gh on the host with ITS SSH key and GitHub token, so you
-  never hold them. Use when a plain `git push`, `git fetch`, `gh pr create`, `gh
-  pr view --comments`, `gh run view --log-failed`, or `gh run download` fails
+  daemon runs git on the host with ITS SSH key and calls GitHub with ITS token,
+  so you never hold either. Use when a plain `git push`, `git fetch`, `gh pr
+  create`, `gh pr view --comments`, `gh run view --log-failed`, or `gh run
+  download` fails
   with a permission, authentication, or network error, or when you have been
   told the daemon holds the credentials. Gated on the `proxy.git.read` / `proxy.git.push` / `proxy.github.read` /
   `proxy.github.write` slugs, none of which is granted by default, and bounded by an
@@ -25,8 +26,8 @@ tclaude proxy github pr create --title "Add the thing" --body-file pr.md
 ```
 
 `tclaude agentd` runs on the host, where the credentials live. You describe the
-operation; it builds the command. You never see a key or a token, and there is
-no way to pass it a command line of your own.
+operation; it performs it. You never see a key or a token, and there is no way
+to pass it a command line or a URL of your own.
 
 ## Start with `git remotes`
 
@@ -120,8 +121,8 @@ Two `run log-failed` results that are easy to misread:
 
 - **No output at all, exit 0** — the run has no failed steps. That is a green
   run, not a failed read. Do not retry it looking for text.
-- **Non-zero exit** — usually the run is still in progress. gh's message says
-  which. Wait, then ask again.
+- **Non-zero exit** — usually the run is still in progress, and the message
+  says so. Wait, then ask again.
 
 ## When the answer is in an artifact, not the log
 
@@ -230,7 +231,7 @@ PR you open is a PR they opened. Write accordingly.
 
 ## Reading the result
 
-These commands report git's and gh's own verdict rather than swallowing it. A
+These commands report git's and GitHub's own verdict rather than swallowing it. A
 non-zero exit with `! [rejected] … (non-fast-forward)` means exactly what it
 means with plain git: fetch and rebase, then push again.
 

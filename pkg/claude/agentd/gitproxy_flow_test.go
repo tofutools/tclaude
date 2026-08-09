@@ -107,19 +107,6 @@ type gitProxyRecorder struct {
 	// configProbeFails models a config probe that could not run — the gate
 	// must refuse rather than read that as "nothing configured".
 	configProbeFails bool
-	// gh is the canned result for a `gh` invocation.
-	gh agentd.ProxyResult
-	// ghSeq, when non-empty, answers successive gh calls in order and falls
-	// back to gh once exhausted. Needed by the verbs that make more than one
-	// gh call, where "the first succeeded and the second did not" is a
-	// distinct outcome the handler has to render honestly.
-	ghSeq []agentd.ProxyResult
-	// ghErrAfter, when > 0, makes gh calls beyond that count return a
-	// TRANSPORT error (gh could not be run) rather than a non-zero exit. The
-	// two are different outcomes and handlers that make several gh calls have
-	// to render both honestly.
-	ghErrAfter int
-	ghCalls    int
 }
 
 func newGitProxyRecorder(repoRoot string) *gitProxyRecorder {
@@ -307,20 +294,6 @@ func (r *gitProxyRecorder) exec(ctx context.Context, cmd agentd.ProxyCommand) (a
 	r.budgets = append(r.budgets, budget)
 	r.mu.Unlock()
 
-	if cmd.Tool == "gh" {
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		r.ghCalls++
-		if r.ghErrAfter > 0 && r.ghCalls > r.ghErrAfter {
-			return agentd.ProxyResult{}, errors.New("run gh: gh exploded")
-		}
-		if len(r.ghSeq) > 0 {
-			next := r.ghSeq[0]
-			r.ghSeq = r.ghSeq[1:]
-			return next, nil
-		}
-		return r.gh, nil
-	}
 	sub := subcommand(cmd.Args)
 	if len(sub) == 0 {
 		return agentd.ProxyResult{}, nil
@@ -618,7 +591,7 @@ func gitProxyWorld(t *testing.T, allowed []string) (*testharness.Flow, *gitProxy
 
 	rec := newGitProxyRecorder(resolvedRoot)
 	t.Cleanup(agentd.SetProxyExecForTest(rec.exec))
-	t.Cleanup(agentd.SetProxyBinariesForTest("/usr/bin/git", "/usr/bin/gh"))
+	t.Cleanup(agentd.SetProxyBinariesForTest("/usr/bin/git"))
 	return f, rec
 }
 

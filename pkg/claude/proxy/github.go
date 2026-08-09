@@ -17,16 +17,16 @@ import (
 )
 
 // github.go is `tclaude proxy github {pr,issue} …` — GitHub pull-request and
-// issue operations performed by `tclaude agentd` with ITS `gh` credentials, so
-// a sandboxed agent that cannot read ~/.config/gh can still open a PR and
+// issue operations performed by `tclaude agentd` with ITS GitHub credentials,
+// so a sandboxed agent that cannot read ~/.config/gh can still open a PR and
 // answer review comments.
 //
 // The repository is never named by the agent. The daemon derives it from the
 // agent's own remote, after that remote has passed the operator's allow-list.
-// There is no `gh` passthrough: each verb below is a fixed argv the daemon
-// builds from validated scalars.
+// There is no passthrough of any kind: each verb below is a fixed API call the
+// daemon builds from validated scalars.
 
-// ghProxyTimeout is the client-side bound on a proxied gh call. It exceeds the
+// ghProxyTimeout is the client-side bound on a proxied GitHub call. It exceeds the
 // daemon's own 60s so a slow GitHub surfaces the daemon's answer rather than a
 // client hang-up that leaves the agent unsure whether a PR was created.
 const ghProxyTimeout = 90 * time.Second
@@ -55,7 +55,7 @@ func githubCmd() *cobra.Command {
 		Aliases: []string{"gh"},
 		Short:   "GitHub pull-request and issue operations performed by the daemon",
 		Long: "Open and manage pull requests and issues WITHOUT holding a GitHub token yourself.\n\n" +
-			"`tclaude agentd` runs `gh` on the host with its own credentials. Everything you create is " +
+			"`tclaude agentd` calls GitHub on the host with its own credentials. Everything you create is " +
 			"attributed to the operator's GitHub account, so treat it as writing under their name.\n\n" +
 			"The repository is not something you choose: the daemon derives it from your own repository's " +
 			"remote, and only after that remote passes the operator's allow-list " +
@@ -72,11 +72,10 @@ func githubCmd() *cobra.Command {
 }
 
 // ghProxyOutcome mirrors the daemon's wire shape. As with the git proxy, an
-// HTTP success means the daemon RAN gh; ExitCode is gh's verdict.
+// HTTP success means the daemon REACHED GitHub; ExitCode is GitHub's verdict.
 //
-// JSON is passed through unmodelled — the daemon does not model gh's schemas
-// either, so a new GitHub field reaches the agent without a release on either
-// side.
+// JSON is passed through unmodelled: the daemon decides which fields a verb
+// answers with, and the CLI only pretty-prints them.
 type ghProxyOutcome struct {
 	Repo      string          `json:"repo"`
 	ExitCode  int             `json:"exit_code"`
@@ -89,7 +88,7 @@ type ghProxyOutcome struct {
 
 func (o *ghProxyOutcome) render(stdout, stderr io.Writer, what string) int {
 	if len(o.JSON) > 0 {
-		// json.Indent, NOT unmarshal-into-any-then-re-marshal. Decoding gh's
+		// json.Indent, NOT unmarshal-into-any-then-re-marshal. Decoding the
 		// response into `any` would turn every JSON number into a float64, so a
 		// value past 2^53 comes back out changed — and it would also re-order
 		// object keys alphabetically, because that is what Marshal does with a
@@ -115,11 +114,11 @@ func (o *ghProxyOutcome) render(stdout, stderr io.Writer, what string) int {
 		fmt.Fprintln(stderr, "(output truncated by the daemon; the tail is shown)")
 	}
 	if o.TimedOut {
-		fmt.Fprintf(stderr, "Error: gh %s timed out in the daemon; it may or may not have taken effect.\n", what)
+		fmt.Fprintf(stderr, "Error: github %s timed out in the daemon; it may or may not have taken effect.\n", what)
 		return rcIOFailure
 	}
 	if o.ExitCode != 0 {
-		fmt.Fprintf(stderr, "Error: gh %s failed (exit %d) against %s.\n", what, o.ExitCode, o.Repo)
+		fmt.Fprintf(stderr, "Error: github %s failed (exit %d) against %s.\n", what, o.ExitCode, o.Repo)
 		return rcIOFailure
 	}
 	return rcOK
@@ -143,7 +142,7 @@ func ghProxyCallTimeout(path string, body map[string]any, askHuman, what string,
 	}
 	// Same as gitProxyCall: --ask-human arms a fallback for the denied case, it
 	// does not mean this call waits. It matters a little more here — these
-	// verbs render gh's JSON on stdout, and a banner ahead of it would break a
+	// verbs render the daemon's JSON on stdout, and a banner ahead of it would break a
 	// caller that pipes the output into a parser.
 	var resp ghProxyOutcome
 	if err := agent.DaemonRequest(http.MethodPost, path, body, &resp,
@@ -304,8 +303,7 @@ func githubPRCommentsCmd() *cobra.Command {
 		Short:   "Read all review feedback on a pull request",
 		Long: "Prints everything said on a pull request, in two sections. This is the READ; `pr comment` " +
 			"is the write.\n\n" +
-			"  1. the conversation — issue comments and the body of each review submission, oldest first " +
-			"(what `gh pr view N --comments` shows)\n" +
+			"  1. the conversation — issue comments and the body of each review submission, oldest first\n" +
 			"  2. the inline review comments — the line-level notes inside each review's diff threads, each " +
 			"with its file, line and permalink\n\n" +
 			"Both sections matter for a review bot: CodeRabbit posts its summary as a review body, but " +
@@ -546,7 +544,7 @@ func githubRunListCmd() *cobra.Command {
 	}.ToCobra()
 }
 
-// ghRunStatusAlternatives mirrors gh's `run list --status` vocabulary for shell
+// ghRunStatusAlternatives mirrors the daemon's `run list --status` vocabulary for shell
 // completion. The daemon validates independently — this is a convenience, not
 // a gate, and a stale entry here costs a refusal rather than a bad argv.
 //
@@ -577,9 +575,8 @@ func githubRunLogFailedCmd() *cobra.Command {
 		Use:     "log-failed",
 		Aliases: []string{"failed-log"},
 		Short:   "Show the log of the failed steps in a workflow run",
-		Long: "Prints the log of whatever steps failed in a GitHub Actions run — the same thing " +
-			"`gh run view <run-id> --log-failed` shows. This is the follow-up to `pr checks`: checks tells " +
-			"you which job went red, this tells you why.\n\n" +
+		Long: "Prints the log of whatever steps failed in a GitHub Actions run. This is the follow-up " +
+			"to `pr checks`: checks tells you which job went red, this tells you why.\n\n" +
 			"Get the run id from the `detailsUrl` of a failed check in `pr checks` output; it is the number " +
 			"in `…/actions/runs/<run-id>/job/<job-id>`.\n\n" +
 			"Only the failed steps are available — never the full log of a run, which for a green matrix " +
