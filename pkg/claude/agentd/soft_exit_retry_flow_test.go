@@ -150,7 +150,7 @@ func TestSoftExit_NoRetryWhenFirstExitSucceeds(t *testing.T) {
 // escalation watchdog. In production the two are close: the ladder's attempts
 // land at ~softExitRetryDelay × softExitMaxAttempts (plus, since TCL-1137, each
 // signal-exit attempt's own lock-held key spacing — Claude Code's four-key
-// [Escape, C-c, C-c, C-c] adds 3×injectSettleDelay ≈ 1.5 s per attempt), and
+// [Escape, C-c, C-c, C-c] adds 3×signalExitKeyGap ≈ 1 s per attempt), and
 // the watchdog's deadline is 10 s. The final retry can therefore land at or
 // just past the deadline, which is benign: a pane responsive enough to honour a
 // ctrl-c quits on the FIRST attempt (a signal is handled even when the keypress

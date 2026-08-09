@@ -347,9 +347,14 @@ func SetReincarnateSpawnTimeoutForTest(timeout time.Duration) func() {
 // ~1 s of it. Flow setup calls this so the whole suite stops sleeping.
 // Returns a restore closure for t.Cleanup.
 func SetInjectSettleDelayForTest(d time.Duration) func() {
-	prev := injectSettleDelay
+	prevSettle := injectSettleDelay
+	prevGap := signalExitKeyGap
 	injectSettleDelay = d
-	return func() { injectSettleDelay = prev }
+	signalExitKeyGap = d
+	return func() {
+		injectSettleDelay = prevSettle
+		signalExitKeyGap = prevGap
+	}
 }
 
 // SetTmuxCommandTimeoutForTest shrinks the nudge-path subprocess deadline so

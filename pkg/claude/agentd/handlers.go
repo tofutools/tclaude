@@ -1893,9 +1893,15 @@ func injectSoftExitTextSerializedBy(lockTarget, tmuxTarget, text string, prefixK
 // each Lifecycle.SignalExitKeys): Copilot and Codex send three C-c; Claude Code
 // prefixes an Escape to clear a permission dialog or half-typed line first.
 //
-// The gap reuses injectSettleDelay: production's 500 ms sits inside every
-// harness's measured re-press window (Copilot 1.2–1.5 s, Claude Code ~0.8 s,
-// Codex unbounded), and the flow-test override keeps simulated stops fast.
+// The gap is signalExitKeyGap (330 ms), deliberately tighter than the typed
+// path's injectSettleDelay: the presses must land inside the harness's
+// re-press window, and Claude Code's — bracketed at ~0.8 s on an idle pane —
+// leaves 500 ms too little margin when scheduling delay or pane load pushes a
+// press late (observed post-TCL-1137-deploy as first attempts that armed but
+// never quit). 330 ms sits inside every measured window (Copilot 1.2–1.5 s,
+// Claude Code ~0.8 s, Codex unbounded) with room to spare, and key names
+// carry no paste-coalescing concern, which is what injectSettleDelay's 500 ms
+// exists for. The flow-test override keeps simulated stops fast.
 // Only the FIRST key's failure is an error — a pane commonly dies on a later
 // press, making a subsequent "can't find pane" the success case.
 //
@@ -1918,7 +1924,7 @@ func injectSignalExitSerializedBy(lockTarget, tmuxTarget string, keys []string) 
 	}, func(run paneinput.Runner, target string) error {
 		for i, key := range keys {
 			if i > 0 {
-				time.Sleep(injectSettleDelay)
+				time.Sleep(signalExitKeyGap)
 			}
 			if err := run("send-keys", "-t", target, key); err != nil {
 				if i == 0 {
@@ -2021,6 +2027,12 @@ func injectMenuToggle(tmuxTarget, toggle string, menuKeys []string, confirmDelay
 // sleeps. Overridden via SetInjectSettleDelayForTest in the flow
 // harness setup; production keeps the 500 ms safety margin.
 var injectSettleDelay = 500 * time.Millisecond
+
+// signalExitKeyGap is the gap injectSignalExitSerializedBy leaves between
+// signal-exit key presses — see that function for why it is tighter than
+// injectSettleDelay. A package var for the same flow-test reason; shrunk
+// alongside injectSettleDelay by SetInjectSettleDelayForTest.
+var signalExitKeyGap = 330 * time.Millisecond
 
 // handleWhoamiRename injects `/rename <title>` into the caller's own CC
 // pane. Permission-gated on `self.rename`.
