@@ -7866,7 +7866,11 @@ body.wizard .directory-picker-modal .modal-buttons { border-top-color: rgba(122,
   .cfg-terminal-attach-field > .cfg-label { flex-basis: 100%; }
   .cfg-terminal-attach-field > select { width: 100%; }
   .cfg-terminal-attach-timings { flex-basis: 100%; margin-left: 0; width: 100%; }
-  .cfg-terminal-attach-hint { padding-left: 0; }
+  .cfg-terminal-attach-timings > label {
+    grid-template-columns: minmax(0, 1fr) 72px 20px; gap: 6px;
+  }
+  .cfg-terminal-attach-timings input[type=number] { width: 72px; }
+  .cfg-field .cfg-terminal-attach-hint { padding-left: 0; }
 }
 /* The "Notify me when an agent…" per-type checklist — a column of inline
    checkbox labels under the field label. */
