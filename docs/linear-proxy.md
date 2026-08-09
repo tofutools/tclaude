@@ -64,6 +64,16 @@ cross-team listing.
 
 ## Enabling it
 
+Install the agent-facing proxy skills explicitly:
+
+```bash
+tclaude setup --install-proxy-skills
+```
+
+They are not installed by `--install-agent-skills` or `--install-all`, because
+operators who have not configured a credential proxy should not expose those
+capabilities to their agents.
+
 The proxy is **off** until at least one team is reachable — either from the
 operator-global `allowed_teams` below, or from a per-agent
 [team-scoped grant](#restricting-an-agent-to-certain-teams). There is no "allow

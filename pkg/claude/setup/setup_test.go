@@ -60,9 +60,28 @@ func seedSupportedCodexOnPath(t *testing.T) {
 
 func assertSkillsInstalled(t *testing.T, home string) {
 	t.Helper()
-	assert.DirExists(t, filepath.Join(home, ".claude", "skills", "agent-coord"))
-	assert.DirExists(t, filepath.Join(home, ".agents", "skills", "agent-coord"))
-	assert.DirExists(t, filepath.Join(home, ".codex", "skills", "agent-coord"))
+	for _, root := range []string{
+		filepath.Join(home, ".claude", "skills"),
+		filepath.Join(home, ".agents", "skills"),
+		filepath.Join(home, ".codex", "skills"),
+	} {
+		assert.DirExists(t, filepath.Join(root, "agent-coord"))
+		assert.NoDirExists(t, filepath.Join(root, "proxy-git"))
+		assert.NoDirExists(t, filepath.Join(root, "proxy-linear"))
+	}
+}
+
+func assertProxySkillsInstalled(t *testing.T, home string) {
+	t.Helper()
+	for _, root := range []string{
+		filepath.Join(home, ".claude", "skills"),
+		filepath.Join(home, ".agents", "skills"),
+		filepath.Join(home, ".codex", "skills"),
+	} {
+		assert.DirExists(t, filepath.Join(root, "proxy-git"))
+		assert.DirExists(t, filepath.Join(root, "proxy-linear"))
+		assert.NoDirExists(t, filepath.Join(root, "agent-coord"))
+	}
 }
 
 func assertNoSkills(t *testing.T, home string) {
@@ -124,6 +143,17 @@ func TestInstallExtras_SkillsOnly(t *testing.T) {
 	assertBundledPermsNotGranted(t)
 }
 
+// Proxy skills require their own explicit opt-in and do not bring along the
+// ordinary coordination bundle.
+func TestInstallExtras_ProxySkillsOnly(t *testing.T) {
+	home := tempHome(t)
+
+	require.NoError(t, installExtras(&Params{InstallProxySkills: true}))
+
+	assertProxySkillsInstalled(t, home)
+	assertBundledPermsNotGranted(t)
+}
+
 // --install-default-agent-permissions grants permissions only — it does
 // not install skills.
 func TestInstallExtras_PermsOnly(t *testing.T) {
@@ -151,7 +181,8 @@ func TestBundledPermissionDefaultsGrantProcessTemplateReadOnly(t *testing.T) {
 	}
 }
 
-// --install-all installs every optional extra.
+// --install-all installs every standard optional extra, but proxy skills stay
+// explicit opt-in because they require separately configured services.
 func TestInstallExtras_All(t *testing.T) {
 	home := tempHome(t)
 
@@ -161,8 +192,8 @@ func TestInstallExtras_All(t *testing.T) {
 	assertBundledPermsGranted(t)
 }
 
-// --install-all must be equivalent to passing every individual
-// --install-* flag.
+// --install-all must be equivalent to passing the standard individual flags;
+// the separately opt-in proxy flag is intentionally excluded.
 func TestInstallExtras_AllEqualsBothFlags(t *testing.T) {
 	t.Run("install-all", func(t *testing.T) {
 		home := tempHome(t)
