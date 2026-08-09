@@ -78,6 +78,19 @@ func sendResize(t *testing.T, conn *websocket.Conn, cols, rows int) {
 	}
 }
 
+func sendResizeWithAttachDelay(t *testing.T, conn *websocket.Conn, cols, rows, delayMS int) {
+	t.Helper()
+	raw, err := json.Marshal(termResizeMsg{
+		Type: "resize", Cols: cols, Rows: rows, AttachDelayMS: &delayMS,
+	})
+	if err != nil {
+		t.Fatalf("marshal resize: %v", err)
+	}
+	if err := conn.WriteMessage(websocket.TextMessage, raw); err != nil {
+		t.Fatalf("send resize: %v", err)
+	}
+}
+
 // collectUntil reads terminal output until want appears (returning everything
 // read) or the deadline passes (failing with what WAS read).
 func collectUntil(t *testing.T, conn *websocket.Conn, want string, timeout time.Duration) string {
@@ -105,6 +118,34 @@ func collectUntil(t *testing.T, conn *websocket.Conn, want string, timeout time.
 // thing — as a starting tmux client does — must never see 0x0 or a default.
 func TestTermWS_CommandStartsAtTheClientsInitialSize(t *testing.T) {
 	conn := dialPTYWS(t, "stty size")
+	sendResize(t, conn, 101, 31)
+	collectUntil(t, conn, "31 101", 5*time.Second)
+}
+
+func TestTermWS_PreAttachResizeDelayHoldsBackCommand(t *testing.T) {
+	conn := dialPTYWS(t, "stty size")
+	started := time.Now()
+	sendResizeWithAttachDelay(t, conn, 101, 31, 100)
+	collectUntil(t, conn, "31 101", 5*time.Second)
+	if elapsed := time.Since(started); elapsed < 75*time.Millisecond {
+		t.Fatalf("attachment started before configured resize-to-attach delay: %v", elapsed)
+	}
+}
+
+func TestTermWS_IntentionalInitialResizeWaitExtendsFallback(t *testing.T) {
+	restore := initialResizeWait
+	initialResizeWait = 20 * time.Millisecond
+	t.Cleanup(func() { initialResizeWait = restore })
+
+	conn := dialPTYWS(t, "stty size")
+	wait, err := json.Marshal(map[string]any{"type": "resize_wait", "delay_ms": 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.WriteMessage(websocket.TextMessage, wait); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond) // past the ordinary fallback, within extension
 	sendResize(t, conn, 101, 31)
 	collectUntil(t, conn, "31 101", 5*time.Second)
 }

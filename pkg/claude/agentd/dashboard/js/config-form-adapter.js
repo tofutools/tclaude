@@ -485,6 +485,15 @@ function populateConfigForm(cfg) {
   // explicit dashboard.default_terminal:"web" checks it.
   $('#cfg-dashboard-default-web-terminal').checked = !!(cfg.dashboard && cfg.dashboard.default_terminal === 'web');
 
+  const terminalAttach = (cfg.dashboard && cfg.dashboard.terminal_attach) || {};
+  setSelectValue($('#cfg-terminal-attach-mode'), terminalAttach.mode || 'repair');
+  $('#cfg-terminal-attach-initial-delay').value = terminalAttach.initial_resize_delay_ms != null
+    ? terminalAttach.initial_resize_delay_ms : '';
+  $('#cfg-terminal-attach-repair-delay').value = terminalAttach.repair_delay_ms != null
+    ? terminalAttach.repair_delay_ms : '';
+  $('#cfg-terminal-attach-pre-delay').value = terminalAttach.pre_attach_delay_ms != null
+    ? terminalAttach.pre_attach_delay_ms : '';
+
   // Local dashboards keep the native chooser by default; checked forces the
   // Preact web picker locally too. Remote origins use it regardless.
   $('#cfg-dashboard-default-web-directory-picker').checked = !!(cfg.dashboard && cfg.dashboard.default_directory_picker === 'web');
@@ -784,6 +793,22 @@ function assembleConfig() {
   // "web" and drop the key otherwise — mirrors the Go omitempty + default-
   // native resolver.
   if ($('#cfg-dashboard-default-web-terminal').checked) dashboard.default_terminal = 'web'; else delete dashboard.default_terminal;
+  const terminalAttach = (dashboard.terminal_attach && typeof dashboard.terminal_attach === 'object')
+    ? dashboard.terminal_attach : {};
+  const terminalAttachMode = controlValue($('#cfg-terminal-attach-mode'));
+  if (terminalAttachMode && terminalAttachMode !== 'repair') terminalAttach.mode = terminalAttachMode;
+  else delete terminalAttach.mode;
+  for (const [id, key] of [
+    ['cfg-terminal-attach-initial-delay', 'initial_resize_delay_ms'],
+    ['cfg-terminal-attach-repair-delay', 'repair_delay_ms'],
+    ['cfg-terminal-attach-pre-delay', 'pre_attach_delay_ms'],
+  ]) {
+    const raw = $('#' + id).value.trim();
+    if (raw !== '' && Number.isFinite(parseInt(raw, 10))) terminalAttach[key] = parseInt(raw, 10);
+    else delete terminalAttach[key];
+  }
+  if (Object.keys(terminalAttach).length) dashboard.terminal_attach = terminalAttach;
+  else delete dashboard.terminal_attach;
   // Remote dashboards always route to the web picker; this persisted opt-in
   // chooses the same UI on localhost instead of the native OS dialog.
   if ($('#cfg-dashboard-default-web-directory-picker').checked) dashboard.default_directory_picker = 'web'; else delete dashboard.default_directory_picker;

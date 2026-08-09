@@ -19,6 +19,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -357,9 +358,10 @@ var termWSTestHook *termWSHook
 // termResizeMsg is sent from the browser when the xterm instance
 // resizes. Mirrors the former standalone `tclaude web` resize payload.
 type termResizeMsg struct {
-	Type string `json:"type"`
-	Cols int    `json:"cols"`
-	Rows int    `json:"rows"`
+	Type          string `json:"type"`
+	Cols          int    `json:"cols"`
+	Rows          int    `json:"rows"`
+	AttachDelayMS *int   `json:"attach_delay_ms,omitempty"`
 }
 
 // parseTermResize classifies one WebSocket frame for the PTY bridge. isResize
@@ -576,7 +578,9 @@ func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand, detachSe
 	// before the size are rare (the resize is the first thing every client
 	// sends) but preserved in order.
 	var initial *pty.Winsize
+	var preAttachDelay time.Duration
 	var pending []wsFrame
+	waitExtended := false
 	waitTimer := time.NewTimer(initialResizeWait)
 	defer waitTimer.Stop()
 initialSize:
@@ -586,10 +590,37 @@ initialSize:
 			if !ok {
 				return // client went away before the command ever started
 			}
+			// A configured client-side delay can intentionally postpone the first
+			// resize beyond the ordinary one-second dead-client fallback. Accept one
+			// bounded extension control frame; consume it here so its JSON can never
+			// become terminal input after the PTY starts.
+			if !waitExtended && frame.messageType == websocket.TextMessage {
+				var wait struct {
+					Type    string `json:"type"`
+					DelayMS int    `json:"delay_ms"`
+				}
+				if json.Unmarshal(frame.data, &wait) == nil && wait.Type == "resize_wait" {
+					waitExtended = true
+					delayMS := min(config.MaxTerminalAttachDelayMS, max(0, wait.DelayMS))
+					if !waitTimer.Stop() {
+						select {
+						case <-waitTimer.C:
+						default:
+						}
+					}
+					waitTimer.Reset(time.Duration(delayMS+1000) * time.Millisecond)
+					continue
+				}
+			}
 			size, isResize := parseTermResize(frame.messageType, frame.data)
 			if isResize {
 				if size != nil {
 					initial = size
+					var resize termResizeMsg
+					if json.Unmarshal(frame.data, &resize) == nil && resize.AttachDelayMS != nil {
+						delayMS := min(config.MaxTerminalAttachDelayMS, max(0, *resize.AttachDelayMS))
+						preAttachDelay = time.Duration(delayMS) * time.Millisecond
+					}
 					break initialSize
 				}
 				continue
@@ -597,6 +628,33 @@ initialSize:
 			pending = append(pending, frame)
 		case <-waitTimer.C:
 			break initialSize
+		}
+	}
+
+	// pre_attach mode deliberately leaves a quiet gap between learning the
+	// browser's size and starting the tmux attachment command. Keep draining the
+	// socket during that gap so disconnects abort promptly and newer resizes
+	// replace the starting grid rather than queueing a stale resize behind it.
+	if preAttachDelay > 0 {
+		delayTimer := time.NewTimer(preAttachDelay)
+		defer delayTimer.Stop()
+	preAttach:
+		for {
+			select {
+			case frame, ok := <-frames:
+				if !ok {
+					return
+				}
+				if size, isResize := parseTermResize(frame.messageType, frame.data); isResize {
+					if size != nil {
+						initial = size
+					}
+					continue
+				}
+				pending = append(pending, frame)
+			case <-delayTimer.C:
+				break preAttach
+			}
 		}
 	}
 

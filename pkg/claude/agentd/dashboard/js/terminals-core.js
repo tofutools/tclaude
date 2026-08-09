@@ -113,7 +113,10 @@ export function mountTerminalWidget({
   initialRetry = false,
   initialRetryDelays = INITIAL_RETRY_DELAYS_MS,
   initialRetryStabilityMs = INITIAL_RETRY_STABILITY_MS,
+  attachResizeMode = 'repair',
+  initialResizeDelayMs = 0,
   postAttachResizeDelayMs = POST_ATTACH_RESIZE_DELAY_MS,
+  preAttachDelayMs = POST_ATTACH_RESIZE_DELAY_MS,
   postAttachResizeNudgeMs = POST_ATTACH_RESIZE_NUDGE_MS,
   restartWatcher = sharedRestartWatcher,
   // Off for a surface that answers its own disconnect. The modal terminal
@@ -152,6 +155,9 @@ export function mountTerminalWidget({
   let reconnectAvailable = false;
   let retryIndex = 0;
   let retryTimer = null;
+  let initialResizeTimer = null;
+  let initialResizeReady = false;
+  let firstOutputSeen = false;
   let postOpenFitFrame = null;
   let postAttachResizeTimer = null;
   let postAttachResizeScheduled = false;
@@ -205,8 +211,8 @@ export function mountTerminalWidget({
     if (!disposed) term.focus();
   }
 
-  function sendDimensions(cols, rows, requireLayout = true) {
-    if (disposed || !ws || ws.readyState !== WebSocketCtor.OPEN) return;
+  function sendDimensions(cols, rows, requireLayout = true, extra = null) {
+    if (disposed || !initialResizeReady || !ws || ws.readyState !== WebSocketCtor.OPEN) return;
     // A host with no layout — a display:none mount before the Terminals tab
     // reveals, a pane mid-teardown — makes FitAddon propose garbage (a tiny
     // grid measured from an unrendered box), and the PTY bridge adopts the
@@ -216,7 +222,7 @@ export function mountTerminalWidget({
     // resends once the host has real geometry. Strictly-equal zero so a test
     // DOM without layout (offsetWidth undefined) keeps its sends.
     if (requireLayout && (host.offsetWidth === 0 || host.offsetHeight === 0)) return false;
-    ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+    ws.send(JSON.stringify({ type: 'resize', cols, rows, ...(extra || {}) }));
     return true;
   }
 
@@ -245,6 +251,12 @@ export function mountTerminalWidget({
     if (retryTimer === null) return;
     clearTimeoutImpl(retryTimer);
     retryTimer = null;
+  }
+
+  function cancelInitialResize() {
+    if (initialResizeTimer === null) return;
+    clearTimeoutImpl(initialResizeTimer);
+    initialResizeTimer = null;
   }
 
   function cancelPostOpenFit() {
@@ -288,6 +300,7 @@ export function mountTerminalWidget({
   // It is one-shot and connection-scoped, never a resize loop.
   function schedulePostAttachResize(mine, socket) {
     cancelPostAttachResize();
+    if (attachResizeMode !== 'repair') return;
     const delay = Number(postAttachResizeDelayMs);
     if (!Number.isFinite(delay) || delay < 0) return;
     postAttachResizeTimer = setTimeoutImpl(() => {
@@ -310,6 +323,44 @@ export function mountTerminalWidget({
         sendDimensions(term.cols, term.rows, false);
       }, nudgeDelay);
     }, delay);
+  }
+
+  function scheduleRepairAfterOutput(mine, socket) {
+    if (!firstOutputSeen || !initialResizeReady || postAttachResizeScheduled) return;
+    postAttachResizeScheduled = true;
+    schedulePostAttachResize(mine, socket);
+  }
+
+  // Delay the opening handshake when requested, then send the fitted grid. In
+  // pre_attach mode this first resize also tells the PTY bridge how long to
+  // hold the already-sized PTY before starting the tmux attachment command.
+  function scheduleInitialResize(mine, socket) {
+    cancelInitialResize();
+    initialResizeReady = false;
+    const delay = Math.max(0, Number(initialResizeDelayMs) || 0);
+    const run = () => {
+      initialResizeTimer = null;
+      if (disposed || mine !== generation || ws !== socket) return;
+      initialResizeReady = true;
+      if (isActive) fit();
+      const extra = attachResizeMode === 'pre_attach'
+        ? { attach_delay_ms: Math.max(0, Number(preAttachDelayMs) || 0) }
+        : null;
+      sendDimensions(term.cols, term.rows, true, extra);
+      schedulePostOpenFit(mine, socket);
+      scheduleRepairAfterOutput(mine, socket);
+    };
+    if (delay === 0) run();
+    else {
+      // Tell the bridge this intentional silence is not a dead/pre-protocol
+      // client. It extends only this connection's bounded opening-size wait;
+      // without it a configured delay above the ordinary one-second fallback
+      // would start the PTY at 80x24 before the real grid arrived.
+      if (socket.readyState === WebSocketCtor.OPEN) {
+        socket.send(JSON.stringify({ type: 'resize_wait', delay_ms: delay }));
+      }
+      initialResizeTimer = setTimeoutImpl(run, delay);
+    }
   }
 
   function cancelRestartWatchIfAny() {
@@ -410,9 +461,12 @@ export function mountTerminalWidget({
     generation += 1;
     const mine = generation;
     postAttachResizeScheduled = false;
+    firstOutputSeen = false;
+    initialResizeReady = false;
     abortAuth();
     closeSocket();
     cancelPostOpenFit();
+    cancelInitialResize();
     cancelPostAttachResize();
     // Dialing now, so any pending "tell me when the daemon is new" is moot.
     cancelRestartWatchIfAny();
@@ -457,9 +511,7 @@ export function mountTerminalWidget({
       captureInstanceBaseline(mine);
       setStatus('connected');
       setReconnectAvailable(false);
-      if (isActive) fit();
-      sendResize();
-      schedulePostOpenFit(mine, socket);
+      scheduleInitialResize(mine, socket);
     };
     socket.onmessage = (event) => {
       if (disposed || mine !== generation || ws !== socket) return;
@@ -468,14 +520,13 @@ export function mountTerminalWidget({
       // the browser's earliest proof that the command/tmux attach is actually
       // producing a screen, so anchor the delayed harness reflow here instead
       // of to a fixed interval from socket open. Only the first frame arms it.
-      if (!postAttachResizeScheduled) {
-        postAttachResizeScheduled = true;
-        schedulePostAttachResize(mine, socket);
-      }
+      firstOutputSeen = true;
+      scheduleRepairAfterOutput(mine, socket);
     };
     socket.onclose = () => {
       if (disposed || mine !== generation || ws !== socket) return;
       cancelPostAttachResize();
+      cancelInitialResize();
       const unstable = openedAt === null || now() - openedAt < initialRetryStabilityMs;
       if (unstable && scheduleInitialRetry()) return;
       setStatus('disconnected');
@@ -544,6 +595,7 @@ export function mountTerminalWidget({
       generation += 1;
       cancelRetry();
       cancelPostOpenFit();
+      cancelInitialResize();
       cancelPostAttachResize();
       cancelRestartWatchIfAny();
       abortAuth();

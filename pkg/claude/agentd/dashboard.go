@@ -1108,6 +1108,10 @@ type snapshotPayload struct {
 	// The browser reads this off each poll to route those actions; the dedicated
 	// "web term" / "web window" buttons ignore it (always web).
 	DefaultTerminal string `json:"default_terminal"`
+	// TerminalAttach carries the resolved browser-terminal resize strategy.
+	// The frontend applies it to newly opened terminal widgets; existing
+	// attachments keep the strategy they started with.
+	TerminalAttach dashboardTerminalAttach `json:"terminal_attach"`
 	// DefaultDirectoryPicker mirrors dashboard.default_directory_picker for
 	// local connections. The client additionally forces web mode whenever its
 	// hostname is not loopback.
@@ -1170,6 +1174,13 @@ type snapshotPayload struct {
 	// the saved intent; this carries the live reality so the UI can flag a
 	// "no material yet" foot-gun and a "restart agentd to apply" pending state.
 	RemoteAccess dashboardRemoteAccess `json:"remote_access"`
+}
+
+type dashboardTerminalAttach struct {
+	Mode                 string `json:"mode"`
+	InitialResizeDelayMS int    `json:"initial_resize_delay_ms"`
+	RepairDelayMS        int    `json:"repair_delay_ms"`
+	PreAttachDelayMS     int    `json:"pre_attach_delay_ms"`
 }
 
 type dashboardAuthSession struct {
@@ -3165,6 +3176,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		raRunning, raBind = remoteListenerStatus()
 		raMaterial = remoteaccess.Exists()
 	})
+	terminalAttachMode, terminalInitialDelay, terminalRepairDelay, terminalPreAttachDelay := cfg.ResolvedTerminalAttach()
 	out := snapshotPayload{
 		GeneratedAt:          time.Now().Format(time.RFC3339),
 		Version:              buildversion.AppVersion(),
@@ -3182,9 +3194,15 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			Slop:    cfg.ActivityBotsSlop(),
 			Wizard:  cfg.ActivityBotsWizard(),
 		},
-		HScrollFollow:            cfg.HScrollFollow(),
-		GroupQuickOptions:        cfg.GroupQuickOptions(),
-		DefaultTerminal:          cfg.DefaultTerminal(),
+		HScrollFollow:     cfg.HScrollFollow(),
+		GroupQuickOptions: cfg.GroupQuickOptions(),
+		DefaultTerminal:   cfg.DefaultTerminal(),
+		TerminalAttach: dashboardTerminalAttach{
+			Mode:                 terminalAttachMode,
+			InitialResizeDelayMS: terminalInitialDelay,
+			RepairDelayMS:        terminalRepairDelay,
+			PreAttachDelayMS:     terminalPreAttachDelay,
+		},
 		DefaultDirectoryPicker:   cfg.DefaultDirectoryPicker(),
 		ShowAgentHideButton:      cfg.ShowAgentHideButton(),
 		ShowGroupDescription:     cfg.ShowGroupDescription(),
