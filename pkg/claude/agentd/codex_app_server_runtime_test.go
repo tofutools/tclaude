@@ -227,7 +227,10 @@ func TestCodexAppServerExistingThreadResumeBindsWithoutTUIHook(t *testing.T) {
 	proofCalls := 0
 	codexAppServerResumedTUIAlive = func(runtime db.CodexAppServerRuntime, threadID string) bool {
 		proofCalls++
-		return runtime.Generation == "resume-generation" && runtime.LaunchID == "resume-thread" &&
+		// The production shell starts the app-server and publishes its socket
+		// before execing the resumed TUI. Reproduce that gap: the exact proof is
+		// initially absent, then appears without any identity becoming weaker.
+		return proofCalls > 1 && runtime.Generation == "resume-generation" && runtime.LaunchID == "resume-thread" &&
 			runtime.SocketPath != "" && threadID == "resume-thread"
 	}
 	t.Cleanup(func() { codexAppServerResumedTUIAlive = previousResumeProof })
@@ -268,7 +271,8 @@ func TestCodexAppServerExistingThreadResumeBindsWithoutTUIHook(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("hookless existing-thread bootstrap did not finish")
 	}
-	require.Equal(t, 2, proofCalls, "resume argv proof is revalidated after thread/read")
+	require.Equal(t, 3, proofCalls,
+		"resume argv proof waits through server-before-TUI launch ordering and is revalidated after thread/read")
 	stored, err := db.GetCodexAppServerRuntime(runtime.Generation)
 	require.NoError(t, err)
 	require.Equal(t, db.CodexAppServerReady, stored.State)
@@ -305,6 +309,43 @@ func TestCodexAppServerExistingThreadResumeBindsWithoutTUIHook(t *testing.T) {
 	handle.closing = true
 	_ = handle.client.Close()
 	handle.mutations.Unlock()
+}
+
+func TestCodexAppServerResumeWaitStopsWhenRecoveryClaimsGeneration(t *testing.T) {
+	resetTestDB(t)
+	runtime := db.CodexAppServerRuntime{
+		Generation: "resume-claim-generation", LaunchID: "resume-thread", AgentID: "agent",
+		ConvID: "resume-thread", SocketPath: filepath.Join(t.TempDir(), "app.sock"),
+		State: db.CodexAppServerWarming,
+	}
+	require.NoError(t, db.UpsertCodexAppServerRuntime(runtime))
+
+	previousResumeProof := codexAppServerResumedTUIAlive
+	proofCalls := 0
+	codexAppServerResumedTUIAlive = func(db.CodexAppServerRuntime, string) bool {
+		proofCalls++
+		claimed, err := db.ClaimCodexAppServerRuntimeRecovery(
+			runtime.Generation, "sweeper", time.Now().UTC(), time.Minute)
+		require.NoError(t, err)
+		require.True(t, claimed)
+		return false
+	}
+	t.Cleanup(func() { codexAppServerResumedTUIAlive = previousResumeProof })
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err := waitForCodexAppServerResumedTUI(ctx, runtime, runtime.ConvID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no longer owns the warming generation")
+	assert.Equal(t, 1, proofCalls, "a lost bootstrap claim must stop argv polling immediately")
+
+	failed, failErr := db.FailCodexAppServerRuntimeBootstrap(runtime.Generation, "late bootstrap failure")
+	require.NoError(t, failErr)
+	assert.False(t, failed)
+	stored, getErr := db.GetCodexAppServerRuntime(runtime.Generation)
+	require.NoError(t, getErr)
+	assert.Equal(t, db.CodexAppServerRecovering, stored.State)
+	assert.Equal(t, "sweeper", stored.Detail)
 }
 
 func TestCodexAppServerDaemonRestartReadoptsExactLiveThread(t *testing.T) {

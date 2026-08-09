@@ -146,9 +146,10 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 		return
 	}
 	fail := func(cause error) {
-		runtime.State = db.CodexAppServerUnavailable
-		runtime.Detail = cause.Error()
-		_ = db.UpsertCodexAppServerRuntime(*runtime)
+		if _, updateErr := db.FailCodexAppServerRuntimeBootstrap(runtime.Generation, cause.Error()); updateErr != nil {
+			slog.Warn("record Codex app-server bootstrap failure",
+				"generation", runtime.Generation, "error", updateErr)
+		}
 		slog.Error("Codex app-server control unavailable; refusing send-keys fallback",
 			"generation", runtime.Generation, "error", cause)
 	}
@@ -180,8 +181,11 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 	threadID := ""
 	if args.CodexAppServerExistingThread {
 		threadID = strings.TrimSpace(args.ConvID)
-		if threadID == "" || runtime.ConvID != threadID ||
-			!codexAppServerResumedTUIAlive(*runtime, threadID) {
+		if threadID == "" || runtime.ConvID != threadID {
+			fail(errors.New("could not prove the exact existing-thread Codex resume launch/pane/argv"))
+			return
+		}
+		if err := waitForCodexAppServerResumedTUI(ctx, *runtime, threadID); err != nil {
 			fail(errors.New("could not prove the exact existing-thread Codex resume launch/pane/argv"))
 			return
 		}
@@ -220,9 +224,16 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 	}
 	runtime.State = db.CodexAppServerReady
 	runtime.Detail = ""
-	if err := db.UpsertCodexAppServerRuntime(*runtime); err != nil {
+	completed, err := db.CompleteCodexAppServerRuntimeBootstrap(*runtime)
+	if err != nil {
 		_ = client.Close()
 		fail(fmt.Errorf("persist verified thread binding: %w", err))
+		return
+	}
+	if !completed {
+		_ = client.Close()
+		slog.Debug("Codex app-server bootstrap lost its warming claim before ready",
+			"generation", runtime.Generation)
 		return
 	}
 	handle := registerCodexAppServerHandle(*runtime, client)
@@ -264,7 +275,7 @@ func runCodexAppServerRecoverySweep() {
 			// a permanently ambiguous generation.
 			if runtime.State == db.CodexAppServerWarming &&
 				time.Since(runtime.CreatedAt) >= codexAppServerStartupTimeout {
-				claimed, claimErr := db.ClaimCodexAppServerRuntimeRecovery(
+				claimed, claimErr := db.ClaimExpiredUnboundCodexAppServerRuntimeRecovery(
 					runtime.Generation, codexAppServerRecoveryOwner, time.Now().UTC(), codexAppServerStartupTimeout)
 				if claimErr != nil {
 					slog.Warn("claim unbound Codex app-server recovery", "generation", runtime.Generation, "error", claimErr)
@@ -558,6 +569,35 @@ var codexAppServerLaunchAlive = liveCodexAppServerLaunch
 // Dial. Fresh launches never use this path because an early Dial would join
 // Codex's fresh-thread subscriber set and steal TUI-only requests.
 var codexAppServerResumedTUIAlive = liveCodexAppServerResumedTUI
+
+// waitForCodexAppServerResumedTUI bridges the deliberate ordering gap in the
+// pane launch: its private app-server is started first, and only after that
+// socket becomes ready does the shell exec `codex resume ... --remote ...`.
+// Socket/PID readiness therefore cannot imply that the TUI process is already
+// visible below the pane. Keep polling the same exact launch/pane/argv proof;
+// the shared bootstrap deadline remains the bound and no weaker identity is
+// accepted while the TUI is coming up.
+func waitForCodexAppServerResumedTUI(
+	ctx context.Context, runtime db.CodexAppServerRuntime, expectedThread string,
+) error {
+	for {
+		current, err := db.GetCodexAppServerRuntime(runtime.Generation)
+		if err != nil {
+			return fmt.Errorf("read Codex app-server bootstrap claim: %w", err)
+		}
+		if current == nil || current.State != db.CodexAppServerWarming {
+			return errors.New("codex app-server bootstrap no longer owns the warming generation")
+		}
+		if codexAppServerResumedTUIAlive(runtime, expectedThread) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+}
 
 func liveCodexAppServerResumedTUI(runtime db.CodexAppServerRuntime, expectedThread string) bool {
 	if !liveCodexAppServerLaunch(runtime) || runtime.ConvID != expectedThread {

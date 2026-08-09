@@ -91,6 +91,93 @@ func TestCodexAppServerRecoveryClaimIsLeasedAndCASProtected(t *testing.T) {
 	assert.True(t, claimed, "an abandoned claim becomes recoverable after its lease")
 }
 
+func TestCodexAppServerBootstrapCannotOverwriteRecoveryDecision(t *testing.T) {
+	setupTestDB(t)
+	runtime := CodexAppServerRuntime{
+		Generation: "bootstrap-generation", LaunchID: "launch", AgentID: "agent",
+		ConvID: "thread", SocketPath: "/tmp/bootstrap.sock", CodexVersion: "0.147.0",
+		State: CodexAppServerWarming,
+	}
+	require.NoError(t, UpsertCodexAppServerRuntime(runtime))
+	claimed, err := ClaimCodexAppServerRuntimeRecovery(
+		runtime.Generation, "recovery-owner", time.Now().UTC(), time.Minute)
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	runtime.ThreadID = runtime.ConvID
+	runtime.ServerPID = 42
+	completed, err := CompleteCodexAppServerRuntimeBootstrap(runtime)
+	require.NoError(t, err)
+	assert.False(t, completed, "bootstrap must not resurrect a recovery-owned generation")
+	failed, err := FailCodexAppServerRuntimeBootstrap(runtime.Generation, "late bootstrap failure")
+	require.NoError(t, err)
+	assert.False(t, failed, "bootstrap failure must not overwrite the recovery owner token")
+
+	stored, err := GetCodexAppServerRuntime(runtime.Generation)
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.Equal(t, CodexAppServerRecovering, stored.State)
+	assert.Equal(t, "recovery-owner", stored.Detail)
+}
+
+func TestExpiredUnboundCodexAppServerClaimCannotCaptureBootstrapReady(t *testing.T) {
+	setupTestDB(t)
+	now := time.Now().UTC()
+	runtime := CodexAppServerRuntime{
+		Generation: "stale-unbound-snapshot", LaunchID: "launch", AgentID: "agent",
+		ConvID: "thread", SocketPath: "/tmp/stale-unbound.sock", CodexVersion: "0.147.0",
+		State: CodexAppServerWarming, CreatedAt: now.Add(-time.Minute),
+	}
+	require.NoError(t, UpsertCodexAppServerRuntime(runtime))
+
+	// The sweeper has already selected the unbound warming snapshot. Before it
+	// claims, bootstrap proves the TUI and atomically publishes ready.
+	runtime.ThreadID = runtime.ConvID
+	runtime.ServerPID = 42
+	completed, err := CompleteCodexAppServerRuntimeBootstrap(runtime)
+	require.NoError(t, err)
+	require.True(t, completed)
+
+	claimed, err := ClaimExpiredUnboundCodexAppServerRuntimeRecovery(
+		runtime.Generation, "sweeper", now, 15*time.Second)
+	require.NoError(t, err)
+	assert.False(t, claimed, "a stale unbound snapshot must not capture a newly-ready generation")
+	stored, err := GetCodexAppServerRuntime(runtime.Generation)
+	require.NoError(t, err)
+	assert.Equal(t, CodexAppServerReady, stored.State)
+	assert.Equal(t, runtime.ConvID, stored.ThreadID)
+}
+
+func TestExpiredUnboundCodexAppServerClaimRequiresAgeAndMissingBinding(t *testing.T) {
+	setupTestDB(t)
+	now := time.Now().UTC()
+	for _, runtime := range []CodexAppServerRuntime{
+		{Generation: "young-unbound", LaunchID: "young", AgentID: "agent", ConvID: "thread",
+			SocketPath: "/tmp/young.sock", State: CodexAppServerWarming, CreatedAt: now},
+		{Generation: "old-bound", LaunchID: "bound", AgentID: "agent", ConvID: "thread",
+			ThreadID: "thread", SocketPath: "/tmp/bound.sock", CodexVersion: "0.147.0",
+			State: CodexAppServerWarming, CreatedAt: now.Add(-time.Minute)},
+		{Generation: "old-unbound", LaunchID: "unbound", AgentID: "agent", ConvID: "thread",
+			SocketPath: "/tmp/unbound.sock", CodexVersion: "0.147.0",
+			State: CodexAppServerWarming, CreatedAt: now.Add(-time.Minute)},
+	} {
+		require.NoError(t, UpsertCodexAppServerRuntime(runtime))
+	}
+	for _, tc := range []struct {
+		generation string
+		want       bool
+	}{
+		{generation: "young-unbound", want: false},
+		{generation: "old-bound", want: false},
+		{generation: "old-unbound", want: true},
+	} {
+		claimed, err := ClaimExpiredUnboundCodexAppServerRuntimeRecovery(
+			tc.generation, "sweeper", now, 15*time.Second)
+		require.NoError(t, err)
+		assert.Equal(t, tc.want, claimed, tc.generation)
+	}
+}
+
 func TestRecoverableCodexAppServerRuntimesSelectNewestGeneration(t *testing.T) {
 	setupTestDB(t)
 	now := time.Now().UTC()
