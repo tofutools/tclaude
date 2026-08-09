@@ -30,6 +30,10 @@ func ValidatePreparedResourceCgroup(string, sandboxpolicy.ResourceLimits) error 
 	return fmt.Errorf("resource limits are Linux only")
 }
 
+// KillResourceCgroupMembers is a no-op off Linux: no prepared cgroup can exist
+// there, so teardown has nothing to reap.
+func KillResourceCgroupMembers(string) error { return nil }
+
 func ValidateResourceDelegationDir(string) (string, error) {
 	return "", fmt.Errorf("external resource delegation is Linux only")
 }

@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -192,6 +193,78 @@ func resourceDelegationDeniedHint(delegation string) string {
 		root, os.Geteuid(), resourceSupervisorCgroup)
 }
 
+// resourceCgroupKillWait bounds how long a reclaim waits for the kernel to
+// finish killing a cgroup's members; resourceCgroupKillPoll is how often the
+// populated state is re-read while waiting. Both are variables so tests can
+// exercise the timeout without the production wait.
+var resourceCgroupKillWait = 5 * time.Second
+var resourceCgroupKillPoll = 20 * time.Millisecond
+
+// requestResourceCgroupKill asks the kernel to SIGKILL every process in the
+// cgroup at dir, including any nested descendants. A seam so tests on a fake
+// cgroup filesystem can simulate the member deaths the real write causes.
+var requestResourceCgroupKill = func(dir string) error {
+	return os.WriteFile(filepath.Join(dir, "cgroup.kill"), []byte("1"), 0o644)
+}
+
+// resourceCgroupPopulated reports whether the cgroup at dir still holds any
+// live process, per the "populated" key of its cgroup.events. A dir whose
+// events file cannot be read reports unpopulated: it is either already removed
+// or inaccessible, and waiting helps neither.
+func resourceCgroupPopulated(dir string) bool {
+	raw, err := os.ReadFile(filepath.Join(dir, "cgroup.events"))
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[0] == "populated" {
+			return fields[1] != "0"
+		}
+	}
+	return false
+}
+
+// staleResourceCgroupHint tells an operator how to clear a stuck boundary by
+// hand. `rm -rf` can never do it — cgroup interface files are virtual and
+// return EPERM on unlink even for root — so name the only sequence that works.
+func staleResourceCgroupHint(dir string) string {
+	return fmt.Sprintf("processes from this session's previous launch are still inside; a cgroup cannot be deleted with rm — kill the members with `echo 1 | sudo tee %s` and then `sudo rmdir %s`",
+		filepath.Join(dir, "cgroup.kill"), dir)
+}
+
+// reclaimBusyResourceCgroup kills whatever still lives in the cgroup at dir
+// and waits for the kernel to report it empty. Callers own the safety
+// argument: dir must be a boundary this launch is entitled to clear, which
+// per-session naming provides — the only processes that can ever be inside are
+// ones a launch of that same session placed there, and cgroup membership is
+// inherited and inescapable, so this reaps exactly the session's strays.
+func reclaimBusyResourceCgroup(dir string) error {
+	if err := requestResourceCgroupKill(dir); err != nil {
+		return fmt.Errorf("kill remaining cgroup processes: %w", err)
+	}
+	deadline := time.Now().Add(resourceCgroupKillWait)
+	for resourceCgroupPopulated(dir) {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("processes remain after cgroup.kill")
+		}
+		time.Sleep(resourceCgroupKillPoll)
+	}
+	return nil
+}
+
+// KillResourceCgroupMembers reaps every process still inside a prepared
+// per-session cgroup, leaving the (durable, relaunch-reused) directory itself
+// in place. Managed-server teardown calls this after its polite process-tree
+// kills: a double-forked server descendant survives those but can never leave
+// the session's cgroup. A missing or already-empty boundary is success.
+func KillResourceCgroupMembers(dir string) error {
+	if dir == "" || !resourceCgroupPopulated(dir) {
+		return nil
+	}
+	return reclaimBusyResourceCgroup(dir)
+}
+
 func wrapResourceLimitedCommand(
 	sessionID string,
 	limits sandboxpolicy.ResourceLimits,
@@ -304,10 +377,20 @@ func PrepareResourceCgroup(sessionID string, limits sandboxpolicy.ResourceLimits
 			return "", func() {}, fmt.Errorf("create resource cgroup for session %q: %w", sessionID, err)
 		}
 		// A deterministic same-session cgroup can survive a daemon crash. Only
-		// reclaim that exact empty target; never sweep other launches, whose
-		// newly prepared cgroups are also briefly empty before pane attachment.
+		// reclaim that exact target; never sweep other launches, whose newly
+		// prepared cgroups are also briefly empty before pane attachment.
 		if removeErr := os.Remove(dir); removeErr != nil {
-			return "", func() {}, fmt.Errorf("resource cgroup for session %q already exists and is active or not reclaimable: %w", sessionID, removeErr)
+			// EBUSY here means processes still live inside. A launch for this
+			// session is only prepared once its prior life is stopped, so what
+			// remains is a stray of that life — typically a server descendant
+			// that outlived the pane or process-tree kill. Reap it and retry;
+			// per-session naming makes that safe (see reclaimBusyResourceCgroup).
+			if killErr := reclaimBusyResourceCgroup(dir); killErr != nil {
+				return "", func() {}, fmt.Errorf("resource cgroup for session %q already exists and is active or not reclaimable: %w (%v; %s)", sessionID, removeErr, killErr, staleResourceCgroupHint(dir))
+			}
+			if removeErr := os.Remove(dir); removeErr != nil {
+				return "", func() {}, fmt.Errorf("resource cgroup for session %q already exists and is active or not reclaimable: %w (%s)", sessionID, removeErr, staleResourceCgroupHint(dir))
+			}
 		}
 		if err := os.Mkdir(dir, 0o755); err != nil {
 			return "", func() {}, fmt.Errorf("recreate stale resource cgroup for session %q: %w", sessionID, err)
