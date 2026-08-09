@@ -85,6 +85,21 @@ func TestSoftExit_SignalExitClearsJunkBufferOnFirstAttempt(t *testing.T) {
 	// attempt, unlike the typed /exit that used to be scrambled by it.
 	assert.Equal(t, 1, countSoftExitAttempts(f, target),
 		"the signal exit clears buffer junk in a single first attempt — no re-injection")
+	// Pin Escape's role specifically: it must be sent, and BEFORE the first
+	// C-c, so the buffer is cleared before the ctrl-c presses arm and quit.
+	var idxEscape, idxFirstCC = -1, -1
+	for i, sk := range f.World.Tmux.Sent() {
+		if sk.Text == "Escape" && idxEscape == -1 {
+			idxEscape = i
+		}
+		if sk.Text == "C-c" && idxFirstCC == -1 {
+			idxFirstCC = i
+		}
+	}
+	require.NotEqual(t, -1, idxEscape, "the signal exit must send an Escape")
+	require.NotEqual(t, -1, idxFirstCC, "the signal exit must send a C-c")
+	assert.Less(t, idxEscape, idxFirstCC,
+		"Escape must precede the first C-c so buffer junk is cleared before the quit presses")
 }
 
 // Scenario: a pane with an empty input buffer honours the very first
@@ -123,9 +138,16 @@ func TestSoftExit_NoRetryWhenFirstExitSucceeds(t *testing.T) {
 // THEM. Every scenario below has to reckon with that.
 //
 // A soft stop starts the bounded re-injection ladder AND, since TCL-1001, an
-// escalation watchdog. In production the two are separated by seconds: the
-// ladder's attempts land at softExitRetryDelay × softExitMaxAttempts ≈ 8 s,
-// the watchdog's deadline is 10 s. The flow fixture shrinks both — 1 ms
+// escalation watchdog. In production the two are close: the ladder's attempts
+// land at ~softExitRetryDelay × softExitMaxAttempts (plus, since TCL-1137, each
+// signal-exit attempt's own lock-held key spacing — Claude Code's four-key
+// [Escape, C-c, C-c, C-c] adds 3×injectSettleDelay ≈ 1.5 s per attempt), and
+// the watchdog's deadline is 10 s. The final retry can therefore land at or
+// just past the deadline, which is benign: a pane responsive enough to honour a
+// ctrl-c quits on the FIRST attempt (a signal is handled even when the keypress
+// reader is wedged — the whole premise of the signal exit), so the escalation
+// only ever preempts a truly wedged pane, whose kill is the correct outcome.
+// The flow fixture shrinks both — 1 ms
 // retries against a 20 ms deadline — which keeps the RATIO but throws away
 // the absolute headroom. Scheduler jitter is absolute: a goroutine that loses
 // its P for 20 ms on a loaded runner reorders these two in a way it can never

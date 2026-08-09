@@ -369,11 +369,14 @@ func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, rela
 		} else {
 			clearFailedExitIntent(intentSet)
 			res.Action = "error"
-			switch h.Name {
-			case harness.OpenCodeName:
+			switch {
+			case h.Name == harness.OpenCodeName:
 				res.Detail = "managed OpenCode TUI exit dispatch failed"
-			case harness.CopilotName:
-				res.Detail = "managed Copilot signal exit dispatch failed"
+			case len(h.SignalExitKeys()) > 0:
+				// Every keystroke-free harness (Copilot, Claude Code, Codex)
+				// reports the signal path it actually took, not a typed
+				// exitCmd it never sent.
+				res.Detail = "managed " + h.Name + " signal exit dispatch failed"
 			default:
 				res.Detail = "send-keys " + exitCmd + " failed"
 			}
