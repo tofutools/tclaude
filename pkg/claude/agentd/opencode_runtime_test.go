@@ -741,6 +741,22 @@ func TestStopUnixRuntimeRetainsAuthorityWhileRecordedProcessLives(t *testing.T) 
 		"a live recovered process must never lose its durable cleanup authority")
 }
 
+func TestStopLoopbackRuntimeRetainsAuthorityWhileRecordedProcessLives(t *testing.T) {
+	setupTestDB(t)
+	runtime := db.OpenCodeRuntime{
+		SessionID: "spwn-loopback-still-live", PID: os.Getpid(),
+		ServerURL: "http://127.0.0.1:43210", Cwd: t.TempDir(),
+		Transport: db.OpenCodeTransportLoopbackTCP,
+	}
+	require.NoError(t, db.UpsertOpenCodeRuntime(runtime))
+	require.ErrorContains(t, stopOpenCodeRuntime(runtime.SessionID),
+		"retaining runtime authority")
+	persisted, err := db.GetOpenCodeRuntime(runtime.SessionID)
+	require.NoError(t, err)
+	require.NotNil(t, persisted,
+		"a live loopback process must retain the claim that protects its worktree")
+}
+
 func TestRandomOpenCodePassword(t *testing.T) {
 	first, err := randomOpenCodePassword()
 	require.NoError(t, err)
