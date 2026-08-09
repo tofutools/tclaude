@@ -287,21 +287,83 @@ test('a typed matcher survives the + button, a blur, and a straight Save', async
   await opened.mounted.unmount();
 });
 
-// Collapsing the drawer takes the free-text box off screen; what was in it is
-// gone visually, so it must not reappear at Save either.
-test('an abandoned typed matcher is not resurrected by Save', async (t) => {
+// A box that leaves the screen WITHOUT committing withdraws its draft, so what
+// Save writes is what the dialog was showing. In a browser a pointer gesture
+// blurs the box first and the value commits as a chip on the way out — these
+// cover the paths where no blur happens (keyboard, programmatic re-render, and
+// the browsers that do not move focus on mousedown), which is where an armed
+// draft would otherwise be resurrected by a later Save.
+//
+// Each case takes the box off screen a different way: the twisty, the slug
+// leaving Grant, and the stale dimension the draft belongs to being removed.
+test('a typed matcher withdrawn from the screen is not resurrected by Save', async (t) => {
   const harness = await createPreactHarness(t);
   const saved = [];
+  const actions = { ...noopActions, savePermissions: async (descriptor, selection, scopes) => { saved.push(scopes); } };
+  const snapshot = scopeSnapshot({ slugs: [TEMPLATES], dimOptions: { process_template: {} } });
+  const typeInto = async (host, dim, value) => harness.input(
+    host.querySelector(`.perm-scope-dim[data-dim="${dim}"] .perm-scope-free`), value);
+
+  let opened = await openEditor(harness, snapshot, actions);
+  let twisty = opened.host.querySelector('[data-slug="process.runs.manage"] button.perm-scope-twisty');
+  await harness.act(() => { twisty.click(); });
+  await typeInto(opened.host, 'process_template', 'oops');
+  await harness.act(() => { twisty.click(); });
+  await harness.act(async () => { opened.host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.deepEqual(saved.at(-1), { 'process.runs.manage': {} }, 'collapsing the drawer withdraws the draft');
+  await opened.mounted.unmount();
+
+  // Deny unmounts the drawer (a deny is unconditional, so it carries no
+  // scope). Coming back to Grant must not resurrect what was typed.
+  opened = await openEditor(harness, snapshot, actions);
+  await harness.act(() => { opened.host.querySelector('[data-slug="process.runs.manage"] button.perm-scope-twisty').click(); });
+  await typeInto(opened.host, 'process_template', 'ghost');
+  await harness.act(() => { opened.host.querySelector('[data-slug="process.runs.manage"] [data-effect="deny"]').click(); });
+  await harness.act(() => { opened.host.querySelector('[data-slug="process.runs.manage"] [data-effect="grant"]').click(); });
+  assert.ok(opened.host.querySelector('[data-slug="process.runs.manage"] .perm-scope-chip.unscoped'),
+    'the row is back to unscoped, and that is what Save must write');
+  await harness.act(async () => { opened.host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.deepEqual(saved.at(-1), { 'process.runs.manage': {} });
+  await opened.mounted.unmount();
+
+  // A dimension the slug no longer accepts is offered only while the stored
+  // scope still carries it. Emptying it removes the editor; a draft typed into
+  // that editor must go with it, or Save posts a dimension the daemon rejects
+  // and the operator can no longer see to fix.
+  opened = await openEditor(harness, scopeSnapshot({
+    slugs: [SPAWN], dimOptions: { group: { values: ['alpha'] } },
+    scopes: { 'groups.spawn': { group: ['alpha'], legacy_dim: ['x'] } },
+  }), actions);
+  await harness.act(() => { opened.host.querySelector('[data-slug="groups.spawn"] button.perm-scope-twisty').click(); });
+  await typeInto(opened.host, 'legacy_dim', 'y');
+  await harness.act(() => {
+    opened.host.querySelector('.perm-scope-dim[data-dim="legacy_dim"] .perm-scope-chip .x').click();
+  });
+  assertAbsent(opened.host.querySelector('.perm-scope-dim[data-dim="legacy_dim"]'));
+  await harness.act(async () => { opened.host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.deepEqual(saved.at(-1), { 'groups.spawn': { group: ['alpha'] } },
+    'the removed dimension stays removed');
+  await opened.mounted.unmount();
+});
+
+// A rejected save leaves the dialog open. The flushed value must be a chip and
+// nothing else — the box still holding the same text reads as a second matcher
+// waiting to be added.
+test('a flushed matcher clears the box it was typed into', async (t) => {
+  const harness = await createPreactHarness(t);
   const { host, mounted } = await openEditor(harness, scopeSnapshot({
     slugs: [TEMPLATES], dimOptions: { process_template: {} },
-  }), { ...noopActions, savePermissions: async (descriptor, selection, scopes) => { saved.push(scopes); } });
+  }), { ...noopActions, savePermissions: async () => { throw new Error('daemon said no'); } });
 
-  const twisty = host.querySelector('[data-slug="process.runs.manage"] button.perm-scope-twisty');
-  await harness.act(() => { twisty.click(); });
-  await harness.input(host.querySelector('.perm-scope-dim[data-dim="process_template"] .perm-scope-free'), 'oops');
-  await harness.act(() => { twisty.click(); });
+  await harness.act(() => { host.querySelector('[data-slug="process.runs.manage"] button.perm-scope-twisty').click(); });
+  await harness.input(host.querySelector('.perm-scope-dim[data-dim="process_template"] .perm-scope-free'), 'release-train');
   await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
-  assert.deepEqual(saved[0], { 'process.runs.manage': {} });
+
+  assert.match(host.querySelector('[data-slug="process.runs.manage"] .perm-scope-chip').textContent,
+    /process_template=release-train/);
+  assert.equal(host.querySelector('.perm-scope-dim[data-dim="process_template"] .perm-scope-free').value, '',
+    'the box is empty; the value lives in the chip now');
+  assert.match(host.querySelector('#perm-edit-error').textContent, /daemon said no/);
   await mounted.unmount();
 });
 

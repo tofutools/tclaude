@@ -530,6 +530,16 @@ function ScopeTwisty({ scopable, open, toggle, slug }) {
     onClick=${toggle}>${open ? '▾' : '▸'}</button>`;
 }
 
+// holdFocus keeps the focused element focused through a mousedown on a
+// control that acts on it. The + beside a scope dimension's free-text box is
+// the case: browsers that focus a button on mousedown would blur the box
+// first, commit there, and then never dispatch the click to the (now inert)
+// button, while browsers that leave focus alone commit on the click — same
+// outcome, but only ever one of the two paths per browser, and the button
+// visibly goes inert under the cursor mid-click. Suppressing the focus move
+// makes the click the one gesture that commits, everywhere.
+const holdFocus = (event) => event.preventDefault();
+
 // ScopeDimEditor edits ONE dimension's matcher list. It is deliberately
 // ignorant of which dimension it is: the label, the suggestions and the
 // selectors all arrive from the daemon, so a dimension added by a later phase
@@ -537,9 +547,12 @@ function ScopeTwisty({ scopable, open, toggle, slug }) {
 //
 // The free-text field is the ONLY way to narrow a dimension the daemon has no
 // catalogue for (remote, process_template, target_agent), so a value typed
-// there must not depend on the operator knowing to press Enter: it commits on
-// Enter, on the explicit + button, and on blur, and onDraft reports whatever is
-// still uncommitted so Save can flush it rather than silently discard it.
+// there must not depend on the operator knowing to press Enter. The rule is:
+// a typed value commits whenever the box is left (Enter, the + button, blur),
+// and onDraft reports whatever is still uncommitted so Save can flush it
+// instead of silently discarding it. A box that leaves the screen without
+// committing withdraws its draft (the unmount cleanup below), so what Save
+// writes is always what the dialog was showing.
 function ScopeDimEditor({ dim, values, options, onChange, declared = true, onDraft }) {
   const [draft, setDraft] = useState('');
   const remove = (value) => onChange(values.filter((item) => item !== value));
@@ -548,6 +561,10 @@ function ScopeDimEditor({ dim, values, options, onChange, declared = true, onDra
     if (!clean || values.includes(clean)) return;
     onChange([...values, clean].sort());
   };
+  // onDraft is a fresh closure every render, so the unmount cleanup reads it
+  // through a ref rather than capturing the one from the first render.
+  const onDraftRef = useRef(onDraft);
+  onDraftRef.current = onDraft;
   const editDraft = (value) => {
     setDraft(value);
     onDraft?.(dim, value);
@@ -557,6 +574,12 @@ function ScopeDimEditor({ dim, values, options, onChange, declared = true, onDra
     add(draft);
     editDraft('');
   };
+  // Every way this editor can vanish other than the twisty — the slug moved
+  // off Grant, a stale dimension emptied out of scopeDimRows, the drawer
+  // switching slugs — takes the box off screen with its draft still armed.
+  // Withdraw it here, at the one point common to all of them, so Save cannot
+  // write a matcher the operator abandoned and can no longer see.
+  useEffect(() => () => onDraftRef.current?.(dim, ''), [dim]);
   const unused = [...options.values, ...options.selectors].filter((value) => !values.includes(value));
   return html`<div class="perm-scope-dim" data-dim=${dim}>
     <span class="perm-scope-dim-label"><code>${dim}</code>${declared ? null : html` <span class="perm-scope-stale"
@@ -580,9 +603,9 @@ function ScopeDimEditor({ dim, values, options, onChange, declared = true, onDra
     event.preventDefault();
     commitDraft();
   }} />
-        <button type="button" class="perm-scope-free-add" disabled=${!draft.trim()}
+        <button type="button" class="perm-scope-free-add" aria-disabled=${draft.trim() ? 'false' : 'true'}
           aria-label=${`Add the typed ${dim} value`} title="Add the typed value"
-          onClick=${commitDraft}>+</button>
+          onMouseDown=${holdFocus} onClick=${commitDraft}>+</button>
       </span>
       ${values.length ? null : html`<div class="perm-scope-hint">empty — unconstrained on this dimension</div>`}
     </div>
@@ -621,6 +644,9 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
   const [unreadable] = useState(() => unreadableScopeSlugs(snapshot, descriptor));
   const [scopes, setScopes] = useState(() => ({ ...scopeBaseline }));
   const [openScope, setOpenScope] = useState('');
+  // Bumped when Save folds an uncommitted free-text draft into the scopes, to
+  // remount the drawer's boxes empty (see submit).
+  const [draftEpoch, setDraftEpoch] = useState(0);
   const [filter, setFilter] = useState('');
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
@@ -667,7 +693,13 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
   const pendingScopeRef = useRef({ slug: '', dims: {} });
   const noteScopeDraft = (slug, dim, value) => {
     const pending = pendingScopeRef.current;
-    if (pending.slug !== slug) pendingScopeRef.current = { slug, dims: {} };
+    if (pending.slug !== slug) {
+      // A withdrawal arriving from an editor that has already been replaced
+      // (its unmount cleanup runs after the new drawer has mounted) must not
+      // adopt the old slug and wipe what is on screen now.
+      if (!String(value || '').trim()) return;
+      pendingScopeRef.current = { slug, dims: {} };
+    }
     pendingScopeRef.current.dims[dim] = value;
   };
   const flushScopeDrafts = (current) => {
@@ -681,7 +713,7 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
       if (!values.includes(clean)) merged[dim] = [...values, clean].sort();
     }
     pendingScopeRef.current = { slug, dims: {} };
-    return Object.keys(merged).length ? { ...current, [slug]: merged } : current;
+    return { ...current, [slug]: merged };
   };
   const submit = async () => {
     if (busyRef.current) return;
@@ -711,7 +743,15 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
     // open, and the chip has to be there rather than the text the operator
     // typed having vanished.
     const effectiveScopes = flushScopeDrafts(scopes);
-    if (effectiveScopes !== scopes) setScopes(effectiveScopes);
+    if (effectiveScopes !== scopes) {
+      setScopes(effectiveScopes);
+      // Remount the drawer so the boxes come back empty. Without this a
+      // rejected save leaves the value on screen twice — once as the chip the
+      // flush just made, once as the text still sitting in the box — and
+      // correcting the leftover text would add a second matcher rather than
+      // replace the first.
+      setDraftEpoch((epoch) => epoch + 1);
+    }
     const scopeAt = (slug) => effectiveScopes[slug] || {};
     const full = Object.fromEntries(rows.map((row) => [row.slug, currentEffect(row.slug)]));
     // Only a granted slug carries a scope: a deny is unconditional by design,
@@ -775,15 +815,7 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
         : row.granted ? `✓ ${row.sources.join(' + ')}` : '✗ denied (no source)';
     return html`<${Fragment} key=${row.slug}><div class="perm-row" data-slug=${row.slug}>
       ${anyScopable && html`<${ScopeTwisty} scopable=${scopable} slug=${row.slug} open=${openScope === row.slug}
-        toggle=${() => {
-    // Collapsing the drawer hides the free-text box, so anything still
-    // uncommitted in it is gone from the screen; drop it here too rather than
-    // resurrecting it at Save. Committed chips are unaffected — and a real
-    // browser blurs the box before this click, so a typed value normally
-    // becomes a chip on the way out.
-    pendingScopeRef.current = { slug: '', dims: {} };
-    setOpenScope(openScope === row.slug ? '' : row.slug);
-  }} />`}
+        toggle=${() => setOpenScope(openScope === row.slug ? '' : row.slug)} />`}
       <div class="perm-row-info"><span class="perm-row-slug">${row.slug}${row.owner_implied ? html` <span class="owner-badge" title="Group ownership can confer this slug">👑 owner</span>` : null}</span>
         <span class="perm-row-desc" title=${row.description || row.descr || ''}>${row.description || row.descr || ''}</span></div>
       ${scopable && html`<${ScopeSummary} scope=${scopeOf(row.slug)} />`}
@@ -800,7 +832,8 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
     ? html`<span class="perm-row-eff empty" aria-hidden="true"></span>`
     : html`<span class=${`perm-row-eff ${row.granted ? 'granted' : 'denied'}`}>${effText}</span>`}
     </div>
-    ${scopable && openScope === row.slug && html`<${ScopeDrawer} row=${row} scope=${scopeOf(row.slug)}
+    ${scopable && openScope === row.slug && html`<${ScopeDrawer} key=${`${row.slug}:${draftEpoch}`}
+      row=${row} scope=${scopeOf(row.slug)}
       snapshot=${snapshot} onChange=${(scope) => setScope(row.slug, scope)}
       onDraft=${(dim, value) => noteScopeDraft(row.slug, dim, value)}
       effective=${{ granted: row.granted, text: effText }} />`}
