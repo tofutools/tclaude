@@ -84,6 +84,13 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 	if spec.CodexAppServerSocket != "" {
 		cmd += " --remote " + clcommon.ShellQuoteArg(spec.CodexAppServerURL) +
 			" --remote-auth-token-env TCLAUDE_CODEX_APP_SERVER_TOKEN"
+		if spec.PermissionProfile != "" {
+			// Codex 0.147 requires an explicit allowlist for remote-TUI
+			// permission profiles; without it thread/start falls back to the
+			// legacy sandbox projection before the relay can enforce turns.
+			cmd += " -c " + clcommon.ShellQuoteArg(
+				"allowed_permission_profiles=[\""+spec.PermissionProfile+"\"]")
+		}
 		// The TUI needs the capability for its own WebSocket upgrade, but model
 		// tool shells must never inherit it.
 		cmd += " -c " + clcommon.ShellQuoteArg(
@@ -126,6 +133,13 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 		" session codex-app-server-relay --socket " +
 		clcommon.ShellQuoteArg(spec.CodexAppServerSocket) + " --upstream " +
 		clcommon.ShellQuoteArg(strings.TrimPrefix(spec.CodexAppServerURL, "ws://"))
+	if spec.PermissionProfile != "" {
+		// Codex 0.147's remote TUI projects a named profile back to the legacy
+		// sandbox field on thread/start. The private relay restores the exact
+		// daemon-minted profile before app-server constructs the model tool
+		// sandbox, preserving path denies and the agentd socket exception.
+		relay += " --permission-profile " + clcommon.ShellQuoteArg(spec.PermissionProfile)
+	}
 	pidFile := clcommon.ShellQuoteArg(spec.CodexAppServerPIDFile)
 	relayPIDFile := clcommon.ShellQuoteArg(spec.CodexAppServerPIDFile + ".relay")
 	logFile := clcommon.ShellQuoteArg(spec.CodexAppServerLogFile)
