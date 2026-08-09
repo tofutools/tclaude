@@ -120,6 +120,64 @@ func TestCodexAppServerBootstrapCannotOverwriteRecoveryDecision(t *testing.T) {
 	assert.Equal(t, "recovery-owner", stored.Detail)
 }
 
+func TestExpiredUnboundCodexAppServerClaimCannotCaptureBootstrapReady(t *testing.T) {
+	setupTestDB(t)
+	now := time.Now().UTC()
+	runtime := CodexAppServerRuntime{
+		Generation: "stale-unbound-snapshot", LaunchID: "launch", AgentID: "agent",
+		ConvID: "thread", SocketPath: "/tmp/stale-unbound.sock", CodexVersion: "0.147.0",
+		State: CodexAppServerWarming, CreatedAt: now.Add(-time.Minute),
+	}
+	require.NoError(t, UpsertCodexAppServerRuntime(runtime))
+
+	// The sweeper has already selected the unbound warming snapshot. Before it
+	// claims, bootstrap proves the TUI and atomically publishes ready.
+	runtime.ThreadID = runtime.ConvID
+	runtime.ServerPID = 42
+	completed, err := CompleteCodexAppServerRuntimeBootstrap(runtime)
+	require.NoError(t, err)
+	require.True(t, completed)
+
+	claimed, err := ClaimExpiredUnboundCodexAppServerRuntimeRecovery(
+		runtime.Generation, "sweeper", now, 15*time.Second)
+	require.NoError(t, err)
+	assert.False(t, claimed, "a stale unbound snapshot must not capture a newly-ready generation")
+	stored, err := GetCodexAppServerRuntime(runtime.Generation)
+	require.NoError(t, err)
+	assert.Equal(t, CodexAppServerReady, stored.State)
+	assert.Equal(t, runtime.ConvID, stored.ThreadID)
+}
+
+func TestExpiredUnboundCodexAppServerClaimRequiresAgeAndMissingBinding(t *testing.T) {
+	setupTestDB(t)
+	now := time.Now().UTC()
+	for _, runtime := range []CodexAppServerRuntime{
+		{Generation: "young-unbound", LaunchID: "young", AgentID: "agent", ConvID: "thread",
+			SocketPath: "/tmp/young.sock", State: CodexAppServerWarming, CreatedAt: now},
+		{Generation: "old-bound", LaunchID: "bound", AgentID: "agent", ConvID: "thread",
+			ThreadID: "thread", SocketPath: "/tmp/bound.sock", CodexVersion: "0.147.0",
+			State: CodexAppServerWarming, CreatedAt: now.Add(-time.Minute)},
+		{Generation: "old-unbound", LaunchID: "unbound", AgentID: "agent", ConvID: "thread",
+			SocketPath: "/tmp/unbound.sock", CodexVersion: "0.147.0",
+			State: CodexAppServerWarming, CreatedAt: now.Add(-time.Minute)},
+	} {
+		require.NoError(t, UpsertCodexAppServerRuntime(runtime))
+	}
+	for _, tc := range []struct {
+		generation string
+		want       bool
+	}{
+		{generation: "young-unbound", want: false},
+		{generation: "old-bound", want: false},
+		{generation: "old-unbound", want: true},
+	} {
+		claimed, err := ClaimExpiredUnboundCodexAppServerRuntimeRecovery(
+			tc.generation, "sweeper", now, 15*time.Second)
+		require.NoError(t, err)
+		assert.Equal(t, tc.want, claimed, tc.generation)
+	}
+}
+
 func TestRecoverableCodexAppServerRuntimesSelectNewestGeneration(t *testing.T) {
 	setupTestDB(t)
 	now := time.Now().UTC()

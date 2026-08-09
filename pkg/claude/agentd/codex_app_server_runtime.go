@@ -275,7 +275,7 @@ func runCodexAppServerRecoverySweep() {
 			// a permanently ambiguous generation.
 			if runtime.State == db.CodexAppServerWarming &&
 				time.Since(runtime.CreatedAt) >= codexAppServerStartupTimeout {
-				claimed, claimErr := db.ClaimCodexAppServerRuntimeRecovery(
+				claimed, claimErr := db.ClaimExpiredUnboundCodexAppServerRuntimeRecovery(
 					runtime.Generation, codexAppServerRecoveryOwner, time.Now().UTC(), codexAppServerStartupTimeout)
 				if claimErr != nil {
 					slog.Warn("claim unbound Codex app-server recovery", "generation", runtime.Generation, "error", claimErr)

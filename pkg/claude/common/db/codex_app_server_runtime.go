@@ -148,6 +148,33 @@ func ClaimCodexAppServerRuntimeRecovery(generation, owner string, now time.Time,
 	return changed == 1, err
 }
 
+// ClaimExpiredUnboundCodexAppServerRuntimeRecovery is the startup-expiry CAS.
+// Unlike the general recovery claim it must never adopt a ready generation: an
+// unbound row snapshot can go stale while bootstrap publishes ready. Recheck
+// warming, age, and the missing binding fields atomically before taking it.
+func ClaimExpiredUnboundCodexAppServerRuntimeRecovery(
+	generation, owner string, now time.Time, startupTimeout time.Duration,
+) (bool, error) {
+	if strings.TrimSpace(generation) == "" || strings.TrimSpace(owner) == "" || startupTimeout <= 0 {
+		return false, errors.New("codex app-server unbound recovery claim needs generation, owner, and startup timeout")
+	}
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	result, err := d.Exec(`UPDATE codex_app_server_runtimes
+		SET state = ?, detail = ?, updated_at = ?
+		WHERE generation = ? AND state = ? AND created_at <= ?
+		  AND (conv_id = '' OR thread_id = '' OR codex_version = '')`,
+		CodexAppServerRecovering, owner, dbTime(now), generation,
+		CodexAppServerWarming, dbTime(now.Add(-startupTimeout)))
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	return changed == 1, err
+}
+
 func CompleteCodexAppServerRuntimeRecovery(runtime CodexAppServerRuntime, owner string) (bool, error) {
 	d, err := Open()
 	if err != nil {
