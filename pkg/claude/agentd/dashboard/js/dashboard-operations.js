@@ -8,6 +8,7 @@
 import { fetchListFull } from './list-paging.js';
 import { lastSnapshot, webTerminalDefault } from './dashboard.js';
 import { refresh } from './refresh.js';
+import { markPendingWake, clearPendingWake } from './waking-state.js';
 import { wizWord } from './slop.js';
 import {
   shellToast as toast,
@@ -442,47 +443,6 @@ export async function openCleanupModal(options = {}) {
   return openCleanupDialog(buildCleanupDescriptor(snapshot, options, completeLists));
 }
 
-// markRowsWaking flips every rendered row of one conversation into the
-// waking presentation, client-side and immediately. The same conv can render
-// in several places (its group's member table, the Agents tab), so this walks
-// all of them. Deliberately class/text surgery rather than state: the tables
-// re-render wholesale from the next snapshot, whose server-authoritative
-// `waking` flag then takes over.
-function markRowsWaking(conv) {
-  for (const dot of document.querySelectorAll(
-    `button[data-act="dot-toggle"][data-conv="${CSS.escape(conv)}"][data-online="0"]`)) {
-    dot.dataset.wakingPrevGlyph = dot.textContent;
-    dot.classList.remove('status-dot-offline');
-    dot.classList.add('status-dot-waking');
-    dot.textContent = '●';
-    dot.title = 'waking — starting up';
-    const pill = dot.closest('tr')?.querySelector('.state-pill');
-    if (pill) {
-      pill.dataset.wakingPrevClass = pill.className;
-      pill.dataset.wakingPrevText = pill.textContent;
-      pill.className = 'state-pill state-waking';
-      pill.textContent = 'waking…';
-    }
-  }
-}
-
-// clearRowsWaking reverts markRowsWaking's surgery after a wake that failed
-// before the daemon ever flagged the conversation as waking — the rows return
-// to exactly what the last render painted, with no refresh implied.
-function clearRowsWaking(conv) {
-  for (const dot of document.querySelectorAll(
-    `button[data-act="dot-toggle"][data-conv="${CSS.escape(conv)}"].status-dot-waking`)) {
-    dot.classList.remove('status-dot-waking');
-    dot.classList.add('status-dot-offline');
-    dot.textContent = dot.dataset.wakingPrevGlyph || '○';
-    const pill = dot.closest('tr')?.querySelector('.state-pill');
-    if (pill && pill.dataset.wakingPrevClass) {
-      pill.className = pill.dataset.wakingPrevClass;
-      pill.textContent = pill.dataset.wakingPrevText || '';
-    }
-  }
-}
-
 // resumeAgentReq POSTs the resume endpoint, toasts the per-conv
 // outcome, and refreshes on success. Driven by the offline status-dot
 // click. Returns true on success.
@@ -494,13 +454,15 @@ function clearRowsWaking(conv) {
 // the recreate opt-in is never automatic. The internal `recreate` flag is
 // set only on that second call.
 export async function resumeAgentReq(conv, label, recreate) {
-  // Optimistic waking indicator: flip this conv's offline dots and state
-  // pills to the pulsing waking style the moment the wake is requested,
-  // before the first snapshot carrying the server-authoritative `waking`
-  // flag can land. Pure DOM class surgery on the rendered rows — any
-  // re-render repaints from snapshot truth, which by then reports the same
-  // state (or the outcome).
-  markRowsWaking(conv);
+  // Optimistic waking indicator: record the pending wake (keyed by the same
+  // agent_id-or-conv_id handle the dot's data-agent carries, which is what
+  // arrives here) and repaint. The render path folds this set into the row's
+  // waking presentation, so the state is vdom truth rather than DOM surgery —
+  // the 2-second snapshot poll keeps repainting it, the row is seen online
+  // clears it, failure paths below clear it, and a wake that wedges before
+  // ever coming online stops pulsing when the entry's TTL lapses.
+  markPendingWake(conv);
+  refresh();
   let r;
   const q = recreate ? '?recreate=1' : '';
   try {
@@ -509,12 +471,12 @@ export async function resumeAgentReq(conv, label, recreate) {
     });
   } catch (e) {
     toast(`wake failed: ${e && e.message || e}`, true);
-    clearRowsWaking(conv);
+    clearPendingWake(conv);
     return false;
   }
   if (!r.ok) {
     toast(`wake failed: ${await r.text()}`, true);
-    clearRowsWaking(conv);
+    clearPendingWake(conv);
     return false;
   }
   // Surface the daemon's per-conv result so an "already-online" no-op
@@ -533,7 +495,7 @@ export async function resumeAgentReq(conv, label, recreate) {
     });
     if (!confirmed) {
       toast(`wake ${label}: cancelled — launch dir missing`);
-      clearRowsWaking(conv);
+      clearPendingWake(conv);
       return false;
     }
     return resumeAgentReq(conv, label, true);
@@ -542,7 +504,7 @@ export async function resumeAgentReq(conv, label, recreate) {
   if (action === 'error' || action.startsWith('error:')) {
     const detail = out.detail ? ` — ${out.detail}` : '';
     toast(`wake ${label}: ${action}${detail}`, true);
-    clearRowsWaking(conv);
+    clearPendingWake(conv);
     return false;
   }
   toast(`wake ${label}: ${action || 'ok'}`);
