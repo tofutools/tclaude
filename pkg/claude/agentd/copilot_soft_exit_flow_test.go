@@ -10,26 +10,28 @@ import (
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
-// Flow coverage for Copilot's soft-exit submit contract (TCL-1001 part A).
+// Flow coverage for Copilot's soft-exit contract (TCL-1001 part A, revised
+// after the 2026-08-09 stdin-wedge incident).
 //
-// Measured against the pinned 1.0.77 CLI in a real tmux pane: typing "/exit"
-// and pressing Enter is NOT enough. Whenever the TUI is not sitting idle at its
-// input prompt it refuses the command — mid-turn it renders the typed text and
-// then silently discards it on Enter (no exit, no queued message, no line in
-// the transcript, which is exactly the "no visible attempt" the operator
-// reported after reattaching), and with a permission dialog open that Enter
-// lands on the DIALOG, accepting its default entry and approving the pending
-// command instead of exiting.
+// Typing "/exit" is not a reliable exit. Measured against the pinned 1.0.77
+// CLI, the TUI silently discards a typed slash command whenever it is not
+// sitting idle at its prompt; and observed live on 1.0.78, a wedged keypress
+// reader drops typed text outright for tens of seconds while the pane keeps
+// rendering — three /exit injections ignored until the escalation ladder
+// SIGKILLed the pane, costing the session its durable session.shutdown state.
+// Throughout both failure modes ctrl-c handling demonstrably keeps working.
 //
-// So the harness contributes a cancel keystroke ahead of the command
-// (harness.Lifecycle.SoftExitPrefixKeys). These scenarios pin that the daemon
-// actually sends it, in the right order, and that it is what makes the exit
-// land on a pane that would otherwise swallow it.
+// So the managed stop types nothing: it sends three C-c presses. The first is
+// spent cancelling whatever is in flight (a running turn, a permission
+// dialog, a half-typed line) or, on an idle pane, arms 1.0.78's "ctrl+c again
+// to exit"; the press after the arming one exits the CLI cleanly (status 0)
+// through its designed quit path. These scenarios pin that the daemon sends
+// exactly that sequence and that it closes the pane without the kill ladder.
 
-// Scenario: an ordinary idle Copilot pane. The cancel keystroke precedes the
-// exit command — on an idle pane it is a measured no-op, so it costs the
-// graceful path nothing and the pane still exits on its own without any kill.
-func TestCopilotSoftExit_SendsCancelBeforeExitCommand(t *testing.T) {
+// Scenario: an ordinary idle Copilot pane. No text is typed at all — the
+// first press arms, the second exits, and the third lands on a dead pane
+// (tolerated). The pane closes on its own without any kill.
+func TestCopilotSoftExit_SignalExitClosesAnIdlePane(t *testing.T) {
 	f := newCopilotFlow(t)
 	f.HaveGroup("crew")
 
@@ -42,31 +44,22 @@ func TestCopilotSoftExit_SendsCancelBeforeExitCommand(t *testing.T) {
 	agentd.WaitForBackgroundForTest()
 
 	texts := sentTexts(f.World.Tmux.Sent())
-	cancelAt, exitAt := -1, -1
-	for i, text := range texts {
-		if text == "C-c" && cancelAt < 0 {
-			cancelAt = i
-		}
-		if text == "/exit" && exitAt < 0 {
-			exitAt = i
-		}
+	for _, text := range texts {
+		require.NotEqual(t, "/exit", text,
+			"the Copilot soft exit must not type a slash command; a wedged keypress reader drops it silently; sent=%v", texts)
 	}
-	require.GreaterOrEqual(t, cancelAt, 0, "the Copilot soft exit must send a cancel; sent=%v", texts)
-	require.GreaterOrEqual(t, exitAt, 0, "the Copilot soft exit must send /exit; sent=%v", texts)
-	assert.Less(t, cancelAt, exitAt,
-		"the cancel must precede the command it exists to make acceptable; sent=%v", texts)
 
-	assert.Equal(t, 1, sim.Cancels(), "an idle pane needs exactly one cancel, not a burst")
-	assert.False(t, sim.IsAlive(), "the exit still lands: a cancel on an idle pane is a no-op")
+	assert.GreaterOrEqual(t, sim.Cancels(), 2,
+		"the signal exit needs the arming press and the exiting press to reach the pane")
+	assert.False(t, sim.IsAlive(), "the second consecutive C-c on an idle pane exits the CLI")
 	assert.Empty(t, killTargets(f), "a graceful Copilot exit is never escalated to a kill")
 }
 
-// Scenario: the failure that motivated the contract. The pane is parked on a
-// permission dialog, where a bare "/exit" + Enter is swallowed by the dialog.
-// The cancel aborts the dialog first — refusing the pending command rather
-// than approving it — so the exit reaches the input prompt and the pane closes
-// gracefully, with no kill needed.
-func TestCopilotSoftExit_CancelUnparksAPaneHeldByAPermissionDialog(t *testing.T) {
+// Scenario: the pane is parked on a permission dialog, which owns the
+// keyboard. The first press ABORTS the dialog — refusing the pending command
+// rather than approving it — the second arms, and the third exits. Three
+// presses is exactly enough; no kill is needed.
+func TestCopilotSoftExit_SignalExitClosesAPaneHeldByAPermissionDialog(t *testing.T) {
 	f := newCopilotFlow(t)
 	f.HaveGroup("crew")
 
@@ -78,7 +71,7 @@ func TestCopilotSoftExit_CancelUnparksAPaneHeldByAPermissionDialog(t *testing.T)
 	})
 
 	// Park the pane on a permission dialog: the turn can never end and the
-	// pane owns the keyboard, which is where a bare /exit disappears.
+	// pane owns the keyboard, which is where typed text disappears.
 	require.Equal(t, testharness.CopilotToolBlocked,
 		sim.RequestTool(testharness.CopilotToolCall{
 			Kind: testharness.CopilotToolShell, Command: "rm -rf ./build"}))
@@ -89,8 +82,8 @@ func TestCopilotSoftExit_CancelUnparksAPaneHeldByAPermissionDialog(t *testing.T)
 	agentd.WaitForBackgroundForTest()
 
 	assert.False(t, sim.IsAlive(),
-		"the cancel must unpark the dialog so the exit command lands")
+		"press one aborts the dialog, press two arms, press three exits")
 	assert.False(t, f.World.Tmux.IsAlive(resp.TmuxSession))
 	assert.Empty(t, killTargets(f),
-		"unparking is what the cancel is for — the ladder should not have been needed")
+		"the dialog abort is what the first press is for — the ladder should not have been needed")
 }

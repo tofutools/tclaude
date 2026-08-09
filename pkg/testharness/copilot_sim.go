@@ -132,6 +132,14 @@ type CopilotSim struct {
 	blockedBy string
 	// cancels counts C-c keystrokes the pane received.
 	cancels int
+	// ccArmed models 1.0.78's "ctrl+c again to exit": a C-c that reached an
+	// idle, unparked pane with nothing to cancel arms it, and the next C-c
+	// while armed exits the CLI cleanly (measured: status 0, window ~1.2 s).
+	// The simulator is untimed, so the armed state persists until the next
+	// keystroke instead of expiring — consecutive C-c is what production's
+	// signal exit sends, and any other input disarms exactly like the real
+	// TUI's.
+	ccArmed bool
 
 	// inPaneAllowAll records that /allow-all was accepted in the pane. It
 	// widens nothing that a launch-time deny covers; see RequestTool.
@@ -817,12 +825,16 @@ func (c *CopilotSim) Blocked() (bool, string) {
 }
 
 // Receive is the tmux send-keys entry point. Text accumulates; "Enter"
-// submits.
+// submits. Any non-C-c key disarms a pending "ctrl+c again to exit", exactly
+// as typing does on the real TUI.
 func (c *CopilotSim) Receive(text string) {
 	if text == copilotCancelKey {
 		c.cancel()
 		return
 	}
+	c.mu.Lock()
+	c.ccArmed = false
+	c.mu.Unlock()
 	if text == "Enter" {
 		c.mu.Lock()
 		line := strings.TrimSpace(c.buf.String())
@@ -842,24 +854,50 @@ func (c *CopilotSim) Receive(text string) {
 // ahead of Copilot's soft exit (harness.copilotLifecycle.SoftExitPrefixKeys).
 const copilotCancelKey = "C-c"
 
-// cancel models what 1.0.77 was measured to do with C-c: the pending input
-// line is dropped, a running turn is cancelled ("Operation cancelled by user"),
-// and a permission dialog is ABORTED — the request is refused, the pane
-// returns to its input prompt, and the command it was asking about never runs.
+// cancel models what the pinned CLIs were measured to do with C-c: the
+// pending input line is dropped, a running turn is cancelled ("Operation
+// cancelled by user"), and a permission dialog is ABORTED — the request is
+// refused, the pane returns to its input prompt, and the command it was
+// asking about never runs. A C-c that reached an idle pane with nothing to
+// cancel arms 1.0.78's "ctrl+c again to exit" instead, and the next C-c
+// while armed exits the CLI — the pair production's signal exit
+// (agentd.injectCopilotSignalExitSerializedBy) is built on.
 //
-// The trust prompt is deliberately NOT cleared. It gates the whole launch
-// rather than one request, and no measurement claims C-c dismisses it; a
-// simulator that unblocked it here would let a launch posture that really does
+// The trust prompt is deliberately NOT cleared, and a trust-parked pane
+// never arms: the prompt gates the whole launch rather than one request, no
+// measurement claims C-c dismisses it (or exits through it), and a simulator
+// that unblocked or exited here would let a launch posture that really does
 // deadlock the pane pass its test.
 func (c *CopilotSim) cancel() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.buf.Reset()
 	c.cancels++
-	if c.blocked && c.blockedBy != copilotfixture.TrustPromptMarker {
-		c.blocked = false
-		c.blockedBy = ""
+	if c.blocked {
+		c.ccArmed = false
+		if c.blockedBy != copilotfixture.TrustPromptMarker {
+			c.blocked = false
+			c.blockedBy = ""
+		}
+		c.buf.Reset()
+		c.mu.Unlock()
+		return
 	}
+	if c.buf.Len() > 0 || c.turnOpen {
+		// The press was spent clearing the half-typed line or cancelling the
+		// running turn ("Operation cancelled by user"); it does not arm.
+		c.buf.Reset()
+		c.turnOpen = false
+		c.ccArmed = false
+		c.mu.Unlock()
+		return
+	}
+	if c.ccArmed {
+		c.ccArmed = false
+		c.mu.Unlock()
+		c.exit()
+		return
+	}
+	c.ccArmed = true
+	c.mu.Unlock()
 }
 
 // Cancels reports how many cancel keystrokes the pane has received.

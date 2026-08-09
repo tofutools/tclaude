@@ -1852,60 +1852,54 @@ func injectSoftExitTextSerializedBy(lockTarget, tmuxTarget, text string, prefixK
 	return injectTextAndSubmitWithOptions(lockTarget, tmuxTarget, text, false, prefixKeys...)
 }
 
-// copilotSignalExitTapGap is the pause between the two ctrl-c presses of
-// Copilot's signal exit. The second press must land while the first press's
-// "ctrl+c again to exit" state is still armed; measured against 1.0.78 in a
-// real tmux pane, that window closes between 1.2 s and 1.5 s, and presses
-// 0.5–1.2 s apart all exit cleanly (status 0). 800 ms sits mid-window with
-// margin on both sides — far enough from the first press to be a distinct
-// keypress under load, well inside the window even if the TUI is slow to arm.
-const copilotSignalExitTapGap = 800 * time.Millisecond
+// copilotSignalExitPresses is how many ctrl-c presses Copilot's signal exit
+// sends. The first may be spent cancelling an in-flight operation (or
+// aborting a permission dialog); the next press arms "ctrl+c again to exit";
+// the press after that lands inside the armed window and exits the CLI. On a
+// pane that had nothing to cancel the exit already fires one press earlier
+// and the surplus press lands on a dead pane, which is tolerated below.
+const copilotSignalExitPresses = 3
 
-// injectCopilotSignalExitSerializedBy sends Copilot's double-ctrl-c quit —
-// the exit path that works even when the TUI's keypress reader has wedged and
-// typed text is silently dropped (its ctrl-c handling demonstrably survives
-// that state). Both presses and the gap between them run under the pane's
-// injection lock as one sequence: another injector's keystroke landing
-// between the two would disarm the "again" state the first press exists to
-// establish.
+// injectCopilotSignalExitSerializedBy is Copilot's soft exit: three ctrl-c
+// presses, one settle apart, as one lock-held sequence. Keystroke-free on
+// purpose — typed slash commands are silently dropped both mid-turn (the
+// measured 1.0.77 behaviour that used to motivate a cancel-then-/exit
+// sequence) and whenever the TUI's keypress reader wedges outright (the
+// 2026-08-09 incident: three /exit injections ignored for the full 10 s
+// escalation deadline while ctrl-c handling demonstrably kept working).
+// Copilot's double-ctrl-c quit rides that surviving path: measured against
+// 1.0.78, the "again to exit" window closes between 1.2 s and 1.5 s, and
+// second presses 0.5–1.2 s after the first all exit cleanly (status 0)
+// through the CLI's designed quit path.
 //
-// stillStuck is consulted before EACH press, with the lock already held. The
-// caller's arming capture races a healthy pane's teardown redraw (a
-// submitted exit clears the input box a beat before the exit card appears),
-// and a ctrl-c pressed into that pane lands as SIGINT while Copilot writes
-// its durable shutdown state — so any press whose precondition no longer
-// holds is skipped. Returns whether the first press was actually sent.
-func injectCopilotSignalExitSerializedBy(lockTarget, tmuxTarget string, stillStuck func() bool) (tapped bool, err error) {
+// The gap reuses injectSettleDelay: production's 500 ms sits inside the
+// measured window, and the flow-test override keeps simulated stops fast.
+// Only the FIRST press's failure is an error — a pane commonly dies on the
+// second press, making a later "can't find pane" the success case.
+func injectCopilotSignalExitSerializedBy(lockTarget, tmuxTarget string) error {
 	mu := paneInjectLock(injectLockKey(lockTarget))
 	if err := acquirePaneInjectLock(mu); err != nil {
-		return false, err
+		return err
 	}
 	defer mu.Unlock()
-	err = paneinput.WithLock(tmuxTarget, paneinput.Options{
+	return paneinput.WithLock(tmuxTarget, paneinput.Options{
 		Run:         runTmuxCommand,
 		LockTimeout: paneInjectLockTimeout,
 		LockID:      lockTarget,
 	}, func(run paneinput.Runner, target string) error {
-		if !stillStuck() {
-			return nil
-		}
-		if err := run("send-keys", "-t", target, "C-c"); err != nil {
-			return fmt.Errorf("send-keys first ctrl-c: %w", err)
-		}
-		tapped = true
-		time.Sleep(copilotSignalExitTapGap)
-		if !stillStuck() {
-			// The pane reached teardown between the presses (it was slow, not
-			// wedged); the armed "again" state dies with the TUI, so leaving
-			// the sequence half-done is safe.
-			return nil
-		}
-		if err := run("send-keys", "-t", target, "C-c"); err != nil {
-			return fmt.Errorf("send-keys second ctrl-c: %w", err)
+		for press := range copilotSignalExitPresses {
+			if press > 0 {
+				time.Sleep(injectSettleDelay)
+			}
+			if err := run("send-keys", "-t", target, "C-c"); err != nil {
+				if press == 0 {
+					return fmt.Errorf("send-keys ctrl-c: %w", err)
+				}
+				return nil
+			}
 		}
 		return nil
 	})
-	return tapped, err
 }
 
 func injectTextAndSubmitWithOptions(lockTarget, tmuxTarget, text string, forceBracketedPaste bool, prefixKeys ...string) error {
