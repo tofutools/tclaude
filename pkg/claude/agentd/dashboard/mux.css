@@ -48,6 +48,7 @@
 .mux-tab-status-waking,
 .mux-tab-status-restarting { animation: mux-tab-status-pulse 1.2s ease-in-out infinite; }
 .mux-tab.active .mux-tab-status-working { color: #56d364; }
+.mux-pane-agent-status { margin-left: 2px; }
 @keyframes mux-tab-status-pulse {
   0%, 100% { opacity: 0.58; transform: scale(0.9); }
   50% { opacity: 1; transform: scale(1.08); }

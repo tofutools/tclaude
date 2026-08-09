@@ -2358,6 +2358,29 @@ body.wizard header .activity-hover-trigger:hover { background: transparent; }
   font-size: 12px; line-height: 1.35; text-align: left;
 }
 .activity-hover.is-open .activity-hover-panel { display: block; }
+/* Keep the wrapper hovered while the pointer crosses the visual gap between
+   the compact bot trigger and its scrollable panel. Without this transparent
+   bridge, mouseleave closes the panel before its scrollbar can be reached. */
+.activity-hover.is-open::after {
+  content: ""; position: absolute; z-index: 29;
+  top: 100%; left: 0; width: min(420px, calc(100vw - 32px)); height: 9px;
+}
+/* Match the dashboard's standard dark scroll surfaces, including Firefox's
+   standardized fallback and the richer Chromium/WebKit hover states. */
+@supports not selector(::-webkit-scrollbar) {
+  .activity-hover-panel {
+    scrollbar-width: thin; scrollbar-color: #6e7681 #0d1117;
+  }
+  body.wizard .activity-hover-panel { scrollbar-color: #7a5db0 #140f28; }
+}
+.activity-hover-panel::-webkit-scrollbar { width: 10px; height: 10px; }
+.activity-hover-panel::-webkit-scrollbar-track,
+.activity-hover-panel::-webkit-scrollbar-corner { background: #0d1117; }
+.activity-hover-panel::-webkit-scrollbar-thumb {
+  background: #6e7681; border: 2px solid #0d1117; border-radius: 6px;
+}
+.activity-hover-panel::-webkit-scrollbar-thumb:hover { background: #8b949e; }
+.activity-hover-panel::-webkit-scrollbar-thumb:active { background: #b1bac4; }
 .activity-hover-panel-heading {
   color: #f0f6fc; font-size: 13px; font-weight: 700; letter-spacing: 0.2px;
 }
@@ -2415,6 +2438,13 @@ body.wizard .activity-hover-panel {
   border-color: #7a5db0; background: linear-gradient(180deg, #241b3d 0%, #140f28 100%);
   color: #e7d9f5; box-shadow: 0 0 24px rgba(122, 93, 176, 0.35);
 }
+body.wizard .activity-hover-panel::-webkit-scrollbar-track,
+body.wizard .activity-hover-panel::-webkit-scrollbar-corner { background: #140f28; }
+body.wizard .activity-hover-panel::-webkit-scrollbar-thumb {
+  background: #7a5db0; border-color: #140f28;
+}
+body.wizard .activity-hover-panel::-webkit-scrollbar-thumb:hover { background: #a97bd6; }
+body.wizard .activity-hover-panel::-webkit-scrollbar-thumb:active { background: #c9a6f0; }
 body.wizard .activity-hover-panel-heading {
   color: #f3e6c0; font-family: Papyrus, Luminari, 'Palatino Linotype', Palatino, serif;
   letter-spacing: 0.5px;

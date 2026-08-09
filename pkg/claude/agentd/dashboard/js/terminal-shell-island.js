@@ -244,6 +244,14 @@ function TerminalPane({
     >
       <div ref=${headerRef} class=${`mux-pane-header${reattachArmed ? ' drag-out-armed' : ''}`}>
         ${solo ? html`
+          ${snapshotReady ? html`
+            <span
+              class=${`mux-tab-status mux-pane-agent-status mux-tab-status-${agentStatus.className}`}
+              role="img"
+              aria-label=${agentStatus.ariaLabel}
+              title=${agentStatus.title}
+            >${agentStatus.symbol}</span>
+          ` : null}
           <span
             class=${`mux-pane-title mux-pane-title-drag${dragging ? ' dragging' : ''}`}
             draggable="true"
@@ -435,7 +443,11 @@ function PaneTab({
       onDragLeave=${(event) => onDragLeave(event, pane.key)}
       onDrop=${(event) => onDrop(event, pane.key)}
     >
-      <span class=${`mux-tab-status mux-tab-status-${agentStatus.className}`} aria-hidden="true">${agentStatus.symbol}</span>
+      <span
+        class=${`mux-tab-status mux-tab-status-${agentStatus.className}`}
+        aria-hidden="true"
+        title=${agentStatus.title}
+      >${agentStatus.symbol}</span>
       <${TabAttention} pane=${pane} snapshot=${snapshot} messages=${unreadMessages} />
       <span class="mux-tab-label">${pane.label}</span>
       <button

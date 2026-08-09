@@ -480,12 +480,19 @@ test('standalone Preact shell renders solo chrome around an opaque active widget
   });
   const composed = [];
   const composeMessageReady = harness.signals.signal(false);
+  const snapshot = harness.signals.signal({
+    agents: [{
+      agent_id: 'agt_solo', conv_id: 'conv-solo', online: true,
+      state: { status: 'idle' },
+    }],
+  });
   let dialogKind = '';
   const cleanup = mountStandaloneTerminalShell({
     host, state, actions, widgetFactory: fake.factory,
     onComposeMessage: (seed) => composed.push(seed),
     composeMessageReady,
     composeMessageDialogKind: () => dialogKind,
+    snapshot,
   });
   await harness.act(() => {});
   assert.ok(host.querySelector('#mux-empty'));
@@ -506,7 +513,11 @@ test('standalone Preact shell renders solo chrome around an opaque active widget
     'standalone xterm uses the same inner fit host inside the padded visual shell');
   assert.equal(fake.widgets[0].activeEdges.at(-1), true);
   assert.equal(fake.widgets[0].connectCount, 1);
-  assert.equal(harness.document.title, 'solo terminal — tclaude terminals');
+  assert.equal(harness.document.title, '○ solo terminal — tclaude terminals');
+  const agentStatus = host.querySelector('.mux-pane-agent-status');
+  assert.equal(agentStatus?.textContent, '○');
+  assert.equal(agentStatus?.getAttribute('aria-label'), 'solo terminal: idle');
+  assert.equal(agentStatus?.getAttribute('title'), 'solo terminal — idle');
 
   assertAbsent(host.querySelector('[title*="queued message"]'), 'the composer control stays absent until its optional island is ready');
   const unavailableChord = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
