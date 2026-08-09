@@ -763,16 +763,73 @@ func clearFailedExitIntent(intentRef *db.SessionExitIntentRef) {
 // softExitPaneScreenTail): the intermittent ignored-exit failure is a Copilot
 // TUI behaviour, and other harnesses should not pay the capture nor leak
 // their screens into logs for a bug they do not have.
-func logSoftExitPaneState(target *lifecycleTarget, reason, phase string, attempt int) {
+//
+// Returns the captured screen ("" for non-Copilot panes and failed captures)
+// so a post-send caller can reuse the very capture it logged — the
+// stdin-dead detection (copilotExitCmdUnconsumed) must judge the same bytes
+// the log line shows, or the two could disagree about what the pane held.
+func logSoftExitPaneState(target *lifecycleTarget, reason, phase string, attempt int) string {
 	if harnessForConv(target.convID).Name != harness.CopilotName {
-		return
+		return ""
 	}
+	screen := capturePaneScreenTail(target.paneID)
 	slog.Info("soft-exit: pane state",
 		"phase", phase, "attempt", attempt,
 		"session", target.sessionID, "conv", short8(target.convID),
 		"tmux_session", target.tmuxSession, "pane_id", target.paneID,
 		"reason", reason,
-		"pane_screen", capturePaneScreenTail(target.paneID))
+		"pane_screen", screen)
+	return screen
+}
+
+// copilotExitCmdUnconsumed reports whether a post-send screen carries the
+// stdin-dead signature: Copilot's input prompt is still on screen but the
+// exit command typed moments earlier is nowhere in it. A wedged Copilot
+// keypress reader keeps rendering and keeps reacting to ctrl-c (the "ctrl+c
+// again to exit" hint arms and expires) while silently dropping every typed
+// byte — measured against 1.0.78, where that state ignored three /exit
+// injections for the full 10 s escalation deadline.
+//
+// Both prongs matter. A pane already tearing down shows the exit summary
+// card, which has no input prompt — poking that pane with the signal-exit
+// taps would land a SIGINT in the middle of Copilot writing its durable
+// session.shutdown state, so "no prompt" must read as healthy. And a pane
+// whose exit command IS visible (sitting in the input box, or echoed in the
+// popup) consumed the send; its problem, if any, is submission, which the
+// bounded re-injections already cover. Either miss degrades to the
+// escalation ladder, never to a false kill.
+func copilotExitCmdUnconsumed(screen, exitCmd string) bool {
+	if screen == "" || exitCmd == "" {
+		return false
+	}
+	return strings.Contains(screen, "❯") && !strings.Contains(screen, exitCmd)
+}
+
+// maybeCopilotSignalExitFallback fires Copilot's own double-ctrl-c quit when
+// the post-send screen says the typed exit command was never consumed. The
+// signal path stays alive in the stdin-dead state (each attempt's prefix C-c
+// visibly arms the "again to exit" hint), so two C-c inside Copilot's ~1.2 s
+// "again" window exit the CLI cleanly — status 0, through its designed quit
+// path — where re-typing /exit provably changes nothing. Fired immediately
+// per attempt rather than waiting on the retry cadence: a stuck pane then
+// ends at ~t+3 s instead of surviving to the t+10 s SIGKILL that costs the
+// session its durable shutdown state.
+//
+// postScreen is "" for non-Copilot panes (logSoftExitPaneState), which makes
+// this a no-op for every other harness.
+func maybeCopilotSignalExitFallback(target *lifecycleTarget, exitCmd, reason string, attempt int, postScreen string) {
+	if !copilotExitCmdUnconsumed(postScreen, exitCmd) {
+		return
+	}
+	slog.Warn("soft-exit: typed exit command not consumed; falling back to Copilot double ctrl-c signal exit",
+		"session", target.sessionID, "conv", short8(target.convID),
+		"tmux_session", target.tmuxSession, "pane_id", target.paneID,
+		"attempt", attempt, "reason", reason)
+	if err := injectCopilotSignalExitSerializedBy(target.tmuxSession+":0.0", target.paneID); err != nil {
+		slog.Warn("soft-exit: Copilot signal-exit fallback send failed",
+			"session", target.sessionID, "conv", short8(target.convID),
+			"pane_id", target.paneID, "attempt", attempt, "error", err)
+	}
 }
 
 // softExitPaneScreenTail is capturePaneScreenTail gated to Copilot panes —
@@ -803,7 +860,8 @@ func injectSoftExitTarget(target *lifecycleTarget, exitCmd string, prefixKeys []
 		logLifecycleStopFailure("send", target.paneID, target.sessionID, err)
 		return false
 	}
-	logSoftExitPaneState(target, reason, "post-send", 1)
+	postScreen := logSoftExitPaneState(target, reason, "post-send", 1)
+	maybeCopilotSignalExitFallback(target, exitCmd, reason, 1, postScreen)
 	if afterSoftExitTargetSendForTest != nil {
 		afterSoftExitTargetSendForTest()
 	}
@@ -965,7 +1023,8 @@ func scheduleSoftExitRetryTarget(target *lifecycleTarget, exitCmd string, prefix
 				scheduleUnknownIntentCleanup(target, intentRef)
 				return
 			}
-			logSoftExitPaneState(target, reason, "post-send", attempt)
+			postScreen := logSoftExitPaneState(target, reason, "post-send", attempt)
+			maybeCopilotSignalExitFallback(target, exitCmd, reason, attempt, postScreen)
 			if attempt == softExitMaxAttempts {
 				// Delivery succeeded; retain attribution through the observer window.
 				scheduleUnknownIntentCleanup(target, intentRef)

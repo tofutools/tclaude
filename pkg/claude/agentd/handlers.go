@@ -1852,6 +1852,44 @@ func injectSoftExitTextSerializedBy(lockTarget, tmuxTarget, text string, prefixK
 	return injectTextAndSubmitWithOptions(lockTarget, tmuxTarget, text, false, prefixKeys...)
 }
 
+// copilotSignalExitTapGap is the pause between the two ctrl-c presses of
+// Copilot's signal exit. The second press must land while the first press's
+// "ctrl+c again to exit" state is still armed; measured against 1.0.78 in a
+// real tmux pane, that window closes between 1.2 s and 1.5 s, and presses
+// 0.5–1.2 s apart all exit cleanly (status 0). 800 ms sits mid-window with
+// margin on both sides — far enough from the first press to be a distinct
+// keypress under load, well inside the window even if the TUI is slow to arm.
+const copilotSignalExitTapGap = 800 * time.Millisecond
+
+// injectCopilotSignalExitSerializedBy sends Copilot's double-ctrl-c quit —
+// the exit path that works even when the TUI's keypress reader has wedged and
+// typed text is silently dropped (its ctrl-c handling demonstrably survives
+// that state). Both presses and the gap between them run under the pane's
+// injection lock as one sequence: another injector's keystroke landing
+// between the two would disarm the "again" state the first press exists to
+// establish.
+func injectCopilotSignalExitSerializedBy(lockTarget, tmuxTarget string) error {
+	mu := paneInjectLock(injectLockKey(lockTarget))
+	if err := acquirePaneInjectLock(mu); err != nil {
+		return err
+	}
+	defer mu.Unlock()
+	return paneinput.WithLock(tmuxTarget, paneinput.Options{
+		Run:         runTmuxCommand,
+		LockTimeout: paneInjectLockTimeout,
+		LockID:      lockTarget,
+	}, func(run paneinput.Runner, target string) error {
+		if err := run("send-keys", "-t", target, "C-c"); err != nil {
+			return fmt.Errorf("send-keys first ctrl-c: %w", err)
+		}
+		time.Sleep(copilotSignalExitTapGap)
+		if err := run("send-keys", "-t", target, "C-c"); err != nil {
+			return fmt.Errorf("send-keys second ctrl-c: %w", err)
+		}
+		return nil
+	})
+}
+
 func injectTextAndSubmitWithOptions(lockTarget, tmuxTarget, text string, forceBracketedPaste bool, prefixKeys ...string) error {
 	mu := paneInjectLock(injectLockKey(lockTarget))
 	if err := acquirePaneInjectLock(mu); err != nil {
