@@ -442,7 +442,7 @@ var permissionRegistry = []PermSlug{
 	{
 		Slug:      PermGitPush,
 		ScopeDims: []ScopeDim{ScopeDimRemote},
-		Description: "Push to a Git remote through the daemon (tclaude proxy git push). Strictly more powerful than git.read — " +
+		Description: "Push to a Git remote through the daemon (tclaude proxy git push). Strictly more powerful than proxy.git.read — " +
 			"it writes to the forge as the operator. Refuses operator-protected branches (agent.git_proxy.protected_refs) " +
 			"outright, and force-with-lease only when agent.git_proxy.allow_force_push is on. Not default-granted and not " +
 			"owner-implied.",
@@ -480,7 +480,7 @@ var permissionRegistry = []PermSlug{
 		Description: "Create and update Linear issues, comment on them, and attach links, through the daemon's Linear API key " +
 			"(tclaude proxy linear issue create/comment/update/link). Everything it writes is attributed to the operator's Linear " +
 			"account, and it additionally requires agent.linear_proxy.allow_write. Narrowable per agent with " +
-			"--scope linear_team=TCL, on the same terms as linear.read and independently of it, so read and write reach can " +
+			"--scope linear_team=TCL, on the same terms as proxy.linear.read and independently of it, so read and write reach can " +
 			"differ. Not default-granted and not owner-implied.",
 	},
 }

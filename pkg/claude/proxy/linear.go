@@ -24,7 +24,7 @@ import (
 // from: Linear has no filesystem artifact that ties a conversation to an issue.
 // A team set is the whole scope gate: the operator's
 // agent.linear_proxy.allowed_teams and any `linear_team` scope on the caller's
-// own linear.read / linear.write grant, intersected where both are configured
+// own proxy.linear.read / proxy.linear.write grant, intersected where both are configured
 // and standing alone where only the grant scope is. It lives entirely in the
 // daemon — a check made in this process is a check the caller could have
 // skipped.
@@ -49,7 +49,7 @@ func linearCmd() *cobra.Command {
 			"exist you may act only where they agree, and where only the grant scope does it is the whole " +
 			"policy. Run `tclaude proxy linear whoami` to see what that leaves you, beside the teams the " +
 			"key can actually see.\n\n" +
-			"Reads need `linear.read`; writing needs `linear.write` AND the operator's " +
+			"Reads need `proxy.linear.read`; writing needs `proxy.linear.write` AND the operator's " +
 			"agent.linear_proxy.allow_write. Neither slug is granted by default.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{

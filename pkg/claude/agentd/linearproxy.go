@@ -46,7 +46,7 @@ import (
 //
 //     That set has two independent sources, and a request may only act within
 //     BOTH: the operator's agent.linear_proxy.allowed_teams (the ceiling for
-//     every agent) and, when the caller's linear.read / linear.write grant
+//     every agent) and, when the caller's proxy.linear.read / proxy.linear.write grant
 //     carries a `linear_team` scope, the teams that grant names. Resolving the
 //     two into one effective set once, in newLinearProxySession, is what keeps
 //     the identifier gate, the listing filter and the row-level drop from ever
@@ -138,7 +138,7 @@ const (
 	linearProxyDisabledMessage = "the Linear proxy has no team policy for this unscoped grant: the operator has not set " +
 		"agent.linear_proxy.allowed_teams in ~/.tclaude/data/config.json, and an empty allow-list means " +
 		"no team is reachable. Ask the operator to allow-list the team, or to scope the grant by team " +
-		"(tclaude agent permissions grant <agent> linear.read --scope linear_team=TCL)."
+		"(tclaude agent permissions grant <agent> proxy.linear.read --scope linear_team=TCL)."
 
 	// linearTeamOutOfScopeCode is the refusal for a team the OPERATOR allows but
 	// this caller's grant does not. Distinct from team_not_allowed so an agent
@@ -312,7 +312,7 @@ type linearProxySession struct {
 // effective team set, and resolves the key.
 //
 // Ordering matches the git proxy's: the fail-closed policy check comes before
-// anything that could touch the network, so a caller holding linear.read
+// anything that could touch the network, so a caller holding proxy.linear.read
 // against an unconfigured daemon gets "not configured" rather than an
 // authentication error from Linear.
 //
@@ -500,7 +500,7 @@ func linearAPIKey(policy config.LinearProxyConfig) (string, *proxyFault) {
 }
 
 // requireWrite gates the mutating verbs on the operator's own ceiling. The
-// linear.write slug says THIS AGENT may write; allow_write says the operator
+// proxy.linear.write slug says THIS AGENT may write; allow_write says the operator
 // wants any agent to be able to. Both must hold.
 func (s *linearProxySession) requireWrite() *proxyFault {
 	if s.policy.AllowWrite {

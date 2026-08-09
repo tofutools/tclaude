@@ -410,6 +410,36 @@ func TestSave_AtomicAndRepeatable(t *testing.T) {
 	assert.Equal(t, "warn", got.LogLevel)
 }
 
+func TestMigrateSemanticProxyPermissions(t *testing.T) {
+	isolateConfigHome(t)
+	require.NoError(t, os.MkdirAll(filepath.Dir(ConfigPath()), 0o700))
+	require.NoError(t, os.WriteFile(ConfigPath(), []byte(`{
+  "agent": {
+    "default_permissions": ["git.read", "proxy.git.read", "linear.write"],
+    "sudo": {
+      "blocklist": ["github.write"],
+      "overrides": {"worker": {"blocklist": ["linear.read"]}}
+    }
+  }
+}`), 0o600))
+
+	require.NoError(t, MigrateSemanticProxyPermissions())
+	raw, err := os.ReadFile(ConfigPath())
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), `"git.read"`)
+	assert.NotContains(t, string(raw), `"linear.write"`)
+	assert.NotContains(t, string(raw), `"github.write"`)
+	assert.NotContains(t, string(raw), `"linear.read"`)
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"proxy.git.read", "proxy.linear.write"}, cfg.Agent.DefaultPermissions,
+		"an already-canonical entry wins a collision without duplication")
+	assert.Equal(t, []string{"proxy.github.write"}, *cfg.Agent.Sudo.Blocklist)
+	assert.Equal(t, []string{"proxy.linear.read"}, *cfg.Agent.Sudo.Overrides["worker"].Blocklist)
+	require.NoError(t, MigrateSemanticProxyPermissions(), "migration is idempotent")
+}
+
 // A config with no log_rotation block — or a nil config — resolves to
 // the built-in defaults (10 MiB, keep 5), so a hand-written config that
 // predates the feature keeps working unchanged.

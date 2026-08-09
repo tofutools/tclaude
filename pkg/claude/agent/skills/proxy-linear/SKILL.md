@@ -7,7 +7,7 @@ description: >-
   need to read the ticket you were spawned against, check its acceptance
   criteria or discussion, report progress on it, move it to another workflow
   state, attach the pull request you opened, or file a new issue. Gated on the
-  `linear.read` / `linear.write` slugs, neither granted by default, and bounded
+  `proxy.linear.read` / `proxy.linear.write` slugs, neither granted by default, and bounded
   by an operator allow-list of Linear teams, a `linear_team` scope on your own
   grant, or both.
 ---
@@ -46,8 +46,8 @@ need different fixes:
 - `operator_teams` — `agent.linear_proxy.allowed_teams`, the ceiling for every
   agent on this host. Absent means the operator configured no global list, and
   your grant's scope is the whole policy.
-- `grant_teams` — the `linear_team` scope on **your own** `linear.read` /
-  `linear.write` grant, when it has one. Absent means your grant is unscoped and
+- `grant_teams` — the `linear_team` scope on **your own** `proxy.linear.read` /
+  `proxy.linear.write` grant, when it has one. Absent means your grant is unscoped and
   the operator's list alone bounds you.
 
 `allowed_teams` is what the list or lists that ARE present leave you: what you
@@ -71,12 +71,12 @@ means they have not. Quote this to them:
 } } }
 ```
 
-**You need the slug.** `403` naming `linear.read` or `linear.write` means the
+**You need the slug.** `403` naming `proxy.linear.read` or `proxy.linear.write` means the
 human has not granted it:
 
 ```bash
-tclaude agent permissions grant <you> linear.read
-tclaude agent permissions grant <you> linear.write
+tclaude agent permissions grant <you> proxy.linear.read
+tclaude agent permissions grant <you> proxy.linear.write
 ```
 
 Or retry the one call with `--ask-human 60s` for a one-off popup approval.
@@ -139,9 +139,9 @@ Three refusals mean three different fixes, so read the code before escalating:
   `agent.linear_proxy.allowed_teams`. Ask them to add it.
 - `403 team_out_of_scope` — **your** grant's team scope excludes it. Ask the
   human to widen your grant, quoting **the slug the refusal names** — read and
-  write carry independent scopes, so a `linear.write` denial is not fixed by
-  widening `linear.read`:
-  `tclaude agent permissions grant <you> linear.write --scope linear_team=TCL,JOH`
+  write carry independent scopes, so a `proxy.linear.write` denial is not fixed by
+  widening `proxy.linear.read`:
+  `tclaude agent permissions grant <you> proxy.linear.write --scope linear_team=TCL,JOH`
   (a `--scope` replaces the previous one, so name every team you need).
 - `403 team_scope_empty` — your team scope authorizes nothing at all: it
   overlaps a configured operator list nowhere, or it constrains something a
