@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 )
 
@@ -587,14 +588,50 @@ func handleGHProxyRunDownload(w http.ResponseWriter, r *http.Request) {
 		args = append(args, "--name", name)
 	}
 	dl, err := g.ghBounded(ctx, ghProxyDownloadTimeout, 0, args...)
-	if err != nil || dl.ExitCode != 0 {
+	if err != nil || dl.ExitCode != 0 || dl.TimedOut {
+		// A download that failed part-way has still written whatever it got
+		// there, and on a timeout that can be most of an archive. Nothing will
+		// read it and nothing else will remove it until this run is downloaded
+		// again, so it goes now rather than sitting on the operator's disk.
+		discardArtifactDest(dest)
 		g.respond(w, r, "run.download", dl, err)
 		return
 	}
 	// gh prints nothing on success, so the daemon says what happened: where
 	// the files are, and what they are.
-	dl.Stdout = artifactListing(ctx, dest)
+	listing, walk := artifactListing(ctx, dest)
+
+	// The zip cap could not see this coming: GitHub reports compressed sizes,
+	// and an artifact far under 512 MiB can unpack to far more than a disk
+	// holds. Only a COMPLETE walk can judge it — a floor would refuse honest
+	// downloads and let oversized ones through whenever the walk stopped early.
+	if walk.Complete && walk.Bytes > maxGHArtifactUnpackedBytes {
+		discardArtifactDest(dest)
+		writeProxyFault(w, faultf(http.StatusRequestEntityTooLarge, "artifact_too_large",
+			"that artifact was under the %s download limit compressed but unpacked to %s, over "+
+				"the %s the proxy will leave on disk, so it has been deleted; a small archive "+
+				"that expands like this is usually machine-generated data rather than something "+
+				"to read — take a narrower artifact with `--name`",
+			humanBytes(maxGHArtifactBytes), humanBytes(walk.Bytes),
+			humanBytes(maxGHArtifactUnpackedBytes)))
+		return
+	}
+	dl.Stdout = listing
 	g.respond(w, r, "run.download", dl, nil)
+}
+
+// discardArtifactDest removes a download that must not be kept. Best effort by
+// design: the caller is already reporting a failure, and a cleanup that could
+// not run is not a second one worth reporting on top of it.
+//
+// It is safe as a plain RemoveAll despite the os.Root care taken to CREATE the
+// path, because dest is the value artifactDest returned — built from the
+// validated work-tree root and a re-formatted integer — rather than anything
+// resolved again here.
+func discardArtifactDest(dest string) {
+	if dest != "" {
+		_ = os.RemoveAll(dest)
+	}
 }
 
 // artifactManifest reads and decodes one run's artifact list. A gh outcome that

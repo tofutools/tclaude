@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -111,11 +112,34 @@ const (
 	// precedes the download is what makes the cap enforceable: gh has no size
 	// limit of its own to ask for.
 	//
-	// It caps the ZIP size, which is the only figure GitHub reports; gh unzips,
-	// so the footprint on disk is larger and for compressible artifacts — logs,
-	// a build tree — several times larger. This is a guard against the runaway
-	// case, not a disk quota, and it is documented as one.
+	// It caps the ZIP size, which is the only figure GitHub reports. gh unzips,
+	// so it does NOT bound the footprint on disk — see
+	// maxGHArtifactUnpackedBytes, which does.
 	maxGHArtifactBytes = 512 << 20
+
+	// maxGHArtifactUnpackedBytes caps what ONE download may leave on disk, and
+	// it exists because maxGHArtifactBytes cannot do that job: GitHub reports
+	// the compressed size, and deflate on repetitive content runs to ratios in
+	// the hundreds. An artifact well under the zip cap can therefore unpack to
+	// far more than any disk holds — and on a public repository a fork's pull
+	// request can upload one, which `run download` will happily fetch.
+	//
+	// It is enforced after extraction, from the walk the listing does anyway:
+	// gh offers no way to bound the unpack itself, so the transient peak during
+	// extraction is not covered. What is covered is that nothing oversized is
+	// left behind, which is what a repeated-download disk attack needs.
+	maxGHArtifactUnpackedBytes = 2 << 30
+
+	// maxGHArtifactRuns caps how many run directories are KEPT. Without it the
+	// per-download bounds mean nothing in aggregate: each run id gets its own
+	// directory, nothing ever removed one, and a caller with an endless supply
+	// of run ids could fill a disk one bounded download at a time.
+	//
+	// Three rather than one so that comparing a red run against a green one
+	// still works, which is a real thing to want. The least recently touched
+	// are pruned first; with maxGHArtifactUnpackedBytes this bounds the whole
+	// store at three times that figure.
+	maxGHArtifactRuns = 3
 
 	// maxGHArtifactEntries bounds the file listing reported back. A build-tree
 	// artifact has tens of thousands of files, and enumerating them would push
@@ -391,15 +415,80 @@ func (g *ghProxySession) artifactDest(runID string) (string, *proxyFault) {
 	// Fresh every time. Left in place, an earlier download's files would be
 	// listed back as part of this one — and a caller reading that listing has
 	// no way to tell which run a file came from.
+	//
+	// This is also why downloading the SAME run repeatedly cannot accumulate:
+	// each attempt starts by removing what the last one left.
 	if err := root.RemoveAll(rel); err != nil {
 		return "", faultf(http.StatusConflict, "artifact_dir",
 			"could not clear a previous download at %s: %v", rel, err)
+	}
+	// DIFFERENT runs are the case that does accumulate, and the one that has
+	// to be pruned: every run id gets its own directory, so without this a
+	// caller could fill a disk one individually-bounded download at a time.
+	if fault := pruneArtifactRuns(root, runID); fault != nil {
+		return "", fault
 	}
 	if err := root.Mkdir(rel, 0o755); err != nil {
 		return "", faultf(http.StatusConflict, "artifact_dir",
 			"could not create %s: %v", rel, err)
 	}
 	return filepath.Join(g.repoRoot, filepath.FromSlash(rel)), nil
+}
+
+// pruneArtifactRuns removes the least recently touched run directories until
+// at most maxGHArtifactRuns-1 remain besides the one about to be created.
+//
+// Everything goes through the same os.Root as the rest of artifactDest, so a
+// pruned entry can only ever be inside the work tree, and only ever one whose
+// name this proxy generates: `run-<digits>`, matched strictly. A directory the
+// agent dropped in beside them under any other name is not this proxy's to
+// delete, and is left alone.
+//
+// Failure to prune does not fail the download. The bound is a hygiene measure
+// against accumulation, and refusing a legitimate download because a stale
+// directory could not be removed would trade a real capability for a
+// housekeeping problem.
+func pruneArtifactRuns(root *os.Root, keepRunID string) *proxyFault {
+	entries, err := fs.ReadDir(root.FS(), ghArtifactDirName)
+	if err != nil {
+		return faultf(http.StatusConflict, "artifact_dir",
+			"could not inspect %s: %v", ghArtifactDirName, err)
+	}
+	type runDir struct {
+		name string
+		mod  time.Time
+	}
+	var runs []runDir
+	keep := "run-" + keepRunID
+	for _, e := range entries {
+		if !e.IsDir() || e.Name() == keep || !isArtifactRunDir(e.Name()) {
+			continue
+		}
+		mod := time.Time{}
+		if info, statErr := e.Info(); statErr == nil {
+			mod = info.ModTime()
+		}
+		runs = append(runs, runDir{name: e.Name(), mod: mod})
+	}
+	if len(runs) < maxGHArtifactRuns {
+		return nil
+	}
+	// Oldest first, so the ones that go are the ones least recently wanted.
+	slices.SortFunc(runs, func(a, b runDir) int { return a.mod.Compare(b.mod) })
+	for _, r := range runs[:len(runs)-(maxGHArtifactRuns-1)] {
+		_ = root.RemoveAll(path.Join(ghArtifactDirName, r.name))
+	}
+	return nil
+}
+
+// isArtifactRunDir matches only the names artifactDest generates. Anything
+// else in the artifacts directory belongs to whoever put it there.
+func isArtifactRunDir(name string) bool {
+	digits, ok := strings.CutPrefix(name, "run-")
+	if !ok || digits == "" {
+		return false
+	}
+	return strings.IndexFunc(digits, func(r rune) bool { return r < '0' || r > '9' }) < 0
 }
 
 // artifactListing walks a completed download and renders what landed: the
@@ -424,7 +513,10 @@ func (g *ghProxySession) artifactDest(runID string) (string, *proxyFault) {
 // response either way, and a reconnecting client replays whatever this
 // produced for the full TTL. That is exactly why a stopped walk has to be
 // labelled honestly below — the degraded listing becomes the durable answer.
-func artifactListing(ctx context.Context, dest string) string {
+// It returns the walk as well as the text, because the byte total is what
+// maxGHArtifactUnpackedBytes is enforced against and the walk is where it is
+// already known.
+func artifactListing(ctx context.Context, dest string) (string, artifactWalk) {
 	type entry struct {
 		rel  string
 		size string
@@ -480,6 +572,9 @@ func artifactListing(ctx context.Context, dest string) string {
 	})
 
 	stopped := stopErr != nil
+	// A stopped walk's total is a floor, so it must NOT be presented as a
+	// figure the size cap can be judged against — see artifactWalk.Complete.
+	walk := artifactWalk{Bytes: total, Files: files, Complete: !stopped && walkErr == nil}
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "downloaded to %s\n\n", dest)
@@ -501,7 +596,7 @@ func artifactListing(ctx context.Context, dest string) string {
 		// so this is gh having unpacked an artifact that genuinely holds no
 		// files. Saying anything more would be guessing.
 		b.WriteString("(the artifact unpacked to no files at all)\n")
-		return b.String()
+		return b.String(), walk
 	}
 	fmt.Fprintf(&b, "\n(%s%s in %s", atLeast(stopped), pluralFiles(files), humanBytes(total))
 	if unsized > 0 {
@@ -528,7 +623,21 @@ func artifactListing(ctx context.Context, dest string) string {
 	if walkErr != nil {
 		fmt.Fprintf(&b, "(the listing is incomplete — the directory could not be fully read: %v)\n", walkErr)
 	}
-	return b.String()
+	return b.String(), walk
+}
+
+// artifactWalk is what the listing walk learned about the tree on disk, as
+// opposed to what it printed.
+//
+// Complete is the field that matters: a walk stopped by the deadline, or cut
+// short by an unreadable directory, has a Bytes that is a FLOOR. Enforcing a
+// size cap against a floor would refuse downloads at random and, worse, pass
+// oversized ones whose walk happened to stop early — so the cap is only
+// applied when this is true.
+type artifactWalk struct {
+	Bytes    int64
+	Files    int
+	Complete bool
 }
 
 // atLeast marks a count the walk did not finish gathering, so "3 files" cannot

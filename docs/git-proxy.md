@@ -262,9 +262,11 @@ would be a path it would write to *as the operator*, which is precisely the
 reach the proxy exists not to lend.
 
 The directory is emptied before each download of the same run, so a listing is
-never a mix of two downloads. It also contains a `.gitignore` of `*`, which
-makes it invisible to `git status` — an agent that pulls an artifact mid-branch
-does not then commit it by reflex, and you do not have to edit `.gitignore`.
+never a mix of two downloads — and so repeated downloads cannot pile up. It also
+contains a `.gitignore` of `*`, which makes it invisible to `git status` — an
+agent that pulls an artifact mid-branch does not then commit it by reflex, and
+you do not have to edit `.gitignore`. Older runs are pruned; see the limits
+below.
 
 Without `--name` every live artifact is fetched, each into a subdirectory named
 after it; with `--name` that one artifact is unzipped directly into the
@@ -276,10 +278,28 @@ refused. Artifacts are routinely that large — a job that uploads a build tree
 does not think of itself as unusual — and this is the one verb where an agent's
 mistake costs disk rather than context.
 
-That figure is the **zip size**, the only one GitHub reports. `gh` unzips, so
-the footprint on disk is larger, and for a compressible artifact — logs, a build
-tree — several times larger. Treat the cap as a guard against the runaway case,
-not as a disk quota.
+That figure is the **zip size**, the only one GitHub reports, so it is not by
+itself a bound on disk. Two further limits make it one:
+
+| Limit | Value | Why |
+|---|---|---|
+| Unpacked size, per download | 2 GiB | Deflate on repetitive content reaches ratios in the hundreds, so an artifact far under the zip cap can unpack to far more than a disk holds. On a public repository a fork's pull request can upload exactly that. Checked after extraction, from the walk the listing does anyway; over it, the download is **deleted** and refused. |
+| Run directories kept | 3 | Each run id gets its own directory. Without a cap, per-download limits bound nothing in aggregate — a caller with an endless supply of run ids fills a disk one legal download at a time. Least recently touched are pruned first; three so that comparing a red run against a green one still works. |
+
+So the proxy never leaves more than **3 × 2 GiB** behind, however many times it
+is asked. Downloading the *same* run repeatedly cannot accumulate at all,
+because each download clears its own directory before it starts — which is also
+why a failed or timed-out download is cleaned up rather than left as a partial
+tree.
+
+One thing these do **not** cover: the transient peak *during* extraction. `gh`
+offers no way to bound an unpack in progress, so a zip bomb is fetched and
+expanded before it is measured and deleted. Only pruning is unaffected — it runs
+first. If you are handing this slug to an agent working on a public repository
+where anyone can open a PR that uploads artifacts, that is the residual risk to
+weigh, and it is the same class as the rest of the proxy's posture: a
+same-uid agent can already write to its own work tree, so this is hygiene and
+blast-radius limiting, not a security boundary.
 
 The preflight also tells apart three failures gh reports identically: "no
 artifact by that name" (it lists the live ones), "that artifact expired" (the

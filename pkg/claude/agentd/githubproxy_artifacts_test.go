@@ -61,7 +61,7 @@ func TestArtifactListingStoppedWalk(t *testing.T) {
 	t.Run("a deadline that has already passed", func(t *testing.T) {
 		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 		defer cancel()
-		out := artifactListing(ctx, dest)
+		out, _ := artifactListing(ctx, dest)
 
 		assert.NotContains(t, out, "unpacked to no files at all",
 			"a stopped walk counts zero files; calling that an empty artifact is a lie "+
@@ -78,7 +78,7 @@ func TestArtifactListingStoppedWalk(t *testing.T) {
 	t.Run("a cancelled request", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		out := artifactListing(ctx, dest)
+		out, _ := artifactListing(ctx, dest)
 
 		assert.NotContains(t, out, "unpacked to no files at all")
 		assert.Contains(t, out, "at least")
@@ -89,11 +89,24 @@ func TestArtifactListingStoppedWalk(t *testing.T) {
 	// The ordinary path still reports exact figures — the hedging must not
 	// leak into a walk that finished.
 	t.Run("a walk that completes", func(t *testing.T) {
-		out := artifactListing(context.Background(), dest)
+		out, walk := artifactListing(context.Background(), dest)
 		assert.Contains(t, out, "3 files")
 		assert.NotContains(t, out, "at least")
 		assert.NotContains(t, out, "stopped")
 		assert.NotContains(t, out, "ran out of time")
+		// Only a complete walk may be measured against the unpacked-size cap;
+		// a floor would refuse honest downloads and pass oversized ones.
+		assert.True(t, walk.Complete)
+		assert.Equal(t, 3, walk.Files)
+		assert.Equal(t, int64(15), walk.Bytes)
+	})
+
+	t.Run("a stopped walk is never reported as measurable", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, walk := artifactListing(ctx, dest)
+		assert.False(t, walk.Complete,
+			"an incomplete byte total must not be handed to the size cap as if it were one")
 	})
 }
 

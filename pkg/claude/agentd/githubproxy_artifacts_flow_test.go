@@ -335,6 +335,149 @@ func TestGHProxy_DownloadStartsFromAnEmptyDirectory(t *testing.T) {
 	assert.Contains(t, stdout, "coverage.out")
 }
 
+// artifactRunDirs lists the run directories currently on disk.
+func artifactRunDirs(t *testing.T, repoRoot string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(repoRoot, ".tclaude-artifacts"))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	require.NoError(t, err)
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() && strings.HasPrefix(e.Name(), "run-") {
+			out = append(out, e.Name())
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// TestGHProxy_DownloadsCannotAccumulateOnDisk is the disk-exhaustion bound.
+//
+// Every other limit here is PER DOWNLOAD, and per-download limits say nothing
+// about a caller who simply asks again. Two shapes of "ask again" matter, and
+// they are bounded differently:
+//
+//   - the SAME run, repeatedly — bounded because each download clears its own
+//     directory first, so the footprint is one run's worth however many times
+//     it is asked for;
+//   - DIFFERENT runs — each gets its own directory, so without pruning a
+//     caller with an endless supply of run ids fills a disk one perfectly
+//     legal download at a time. That is what maxGHArtifactRuns bounds.
+func TestGHProxy_DownloadsCannotAccumulateOnDisk(t *testing.T) {
+	t.Run("the same run again replaces rather than accumulates", func(t *testing.T) {
+		f, rec := downloadingWorld(t,
+			ghArtifactManifestJSON(ghArtifact("logs", 4096, false)),
+			map[string]string{"a.txt": "aaaa"})
+
+		for range 5 {
+			res := gitProxyPost(t, f, "/v1/github/run/download",
+				map[string]any{"run_id": 18234567890})
+			require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+		}
+		assert.Equal(t, []string{"run-18234567890"}, artifactRunDirs(t, rec.repoRoot))
+
+		// One copy of the file, not five appended into the same tree.
+		entries, err := os.ReadDir(filepath.Join(rec.repoRoot, ".tclaude-artifacts", "run-18234567890"))
+		require.NoError(t, err)
+		assert.Len(t, entries, 1)
+	})
+
+	t.Run("many different runs are pruned to a bounded set", func(t *testing.T) {
+		f, rec := downloadingWorld(t,
+			ghArtifactManifestJSON(ghArtifact("logs", 4096, false)),
+			map[string]string{"a.txt": "aaaa"})
+
+		for i := range 12 {
+			res := gitProxyPost(t, f, "/v1/github/run/download",
+				map[string]any{"run_id": 18234567890 + i})
+			require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+		}
+		dirs := artifactRunDirs(t, rec.repoRoot)
+		assert.LessOrEqual(t, len(dirs), 3,
+			"twelve downloads must not leave twelve directories: %v", dirs)
+		assert.Contains(t, dirs, "run-18234567901", "the most recent one has to survive")
+	})
+
+	// Pruning deletes, so it must only ever delete what this proxy created.
+	t.Run("a directory the proxy did not create is left alone", func(t *testing.T) {
+		f, rec := downloadingWorld(t,
+			ghArtifactManifestJSON(ghArtifact("logs", 4096, false)),
+			map[string]string{"a.txt": "aaaa"})
+
+		base := filepath.Join(rec.repoRoot, ".tclaude-artifacts")
+		require.NoError(t, os.MkdirAll(filepath.Join(base, "my-own-notes"), 0o755))
+		keep := filepath.Join(base, "my-own-notes", "keep.txt")
+		require.NoError(t, os.WriteFile(keep, []byte("mine"), 0o644))
+
+		for i := range 6 {
+			res := gitProxyPost(t, f, "/v1/github/run/download",
+				map[string]any{"run_id": 18234567890 + i})
+			require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+		}
+		assert.FileExists(t, keep, "only `run-<digits>` directories are the proxy's to prune")
+	})
+}
+
+// TestGHProxy_DownloadRefusesAnArtifactThatUnpacksTooLarge — the 512 MiB gate
+// reads GitHub's COMPRESSED size, so it cannot see a zip bomb coming. On a
+// public repository a fork's pull request can upload one, and `run download`
+// would fetch it. What must not happen is that it stays on disk.
+func TestGHProxy_DownloadRefusesAnArtifactThatUnpacksTooLarge(t *testing.T) {
+	// A tiny "compressed" size, unpacking to more than the on-disk cap.
+	big := strings.Repeat("x", 1<<20)
+	files := map[string]string{}
+	for i := range 2049 {
+		files[fmt.Sprintf("bomb/%04d.bin", i)] = big
+	}
+	f, rec := downloadingWorld(t,
+		ghArtifactManifestJSON(ghArtifact("innocent-looking", 64<<10, false)), files)
+
+	res := gitProxyPost(t, f, "/v1/github/run/download",
+		map[string]any{"run_id": 18234567890})
+	require.Equal(t, http.StatusRequestEntityTooLarge, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), "unpacked to")
+
+	assert.NoDirExists(t, filepath.Join(rec.repoRoot, ".tclaude-artifacts", "run-18234567890"),
+		"an artifact refused for its unpacked size must not be left on the disk it would fill")
+}
+
+// TestGHProxy_FailedDownloadDoesNotLeaveAPartialTree — a download killed
+// part-way has still written whatever it got, and nothing else would remove it
+// until that same run is downloaded again.
+func TestGHProxy_FailedDownloadDoesNotLeaveAPartialTree(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+
+	inner := rec.exec
+	t.Cleanup(agentd.SetProxyExecForTest(func(ctx context.Context, cmd agentd.ProxyCommand) (agentd.ProxyResult, error) {
+		if cmd.Tool == "gh" && len(cmd.Args) >= 2 {
+			if cmd.Args[0] == "api" {
+				return agentd.ProxyResult{
+					Stdout: ghArtifactManifestJSON(ghArtifact("logs", 4096, false)),
+				}, nil
+			}
+			if cmd.Args[0] == "run" && cmd.Args[1] == "download" {
+				// Half an archive on disk, then the transfer dies.
+				dir := cmd.Args[slices.Index(cmd.Args, "--dir")+1]
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "partial.bin"),
+					[]byte(strings.Repeat("x", 4096)), 0o644))
+				return agentd.ProxyResult{ExitCode: 1, Stderr: "connection reset", TimedOut: true}, nil
+			}
+		}
+		return inner(ctx, cmd)
+	}))
+
+	res := gitProxyPost(t, f, "/v1/github/run/download",
+		map[string]any{"run_id": 18234567890})
+	require.Equal(t, http.StatusOK, res.Code, "the daemon ran gh; gh's verdict rides in the body")
+	assert.Contains(t, res.Body.String(), "connection reset")
+
+	assert.NoDirExists(t, filepath.Join(rec.repoRoot, ".tclaude-artifacts", "run-18234567890"),
+		"a failed download's partial tree must not be left behind")
+}
+
 // TestGHProxy_DownloadDirectoryIgnoresItself — an agent that downloads an
 // artifact mid-branch should not then commit it by reflex, and the operator
 // should not have to edit .gitignore to prevent that. A directory whose

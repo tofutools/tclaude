@@ -139,8 +139,14 @@ goes to `.tclaude-artifacts/run-<run-id>/` at the root of your work tree, and
 the command prints that path and lists what arrived. The daemon runs
 unsandboxed, so the same rule that stops you naming the repository stops you
 naming the directory. The directory ignores itself in git, so nothing you
-download turns up in `git status` — but it is also **emptied on the next
-download of that run**, so copy anything you want to keep.
+download turns up in `git status`.
+
+**Downloads do not pile up, so copy out anything you need to keep.** A second
+download of the same run empties its directory first, and only the three most
+recently used run directories are kept — a fourth run prunes the least recently
+touched. This is deliberate: without it, downloading run after run would fill
+the operator's disk. Move what matters somewhere else in the work tree before
+you fetch the next one.
 
 Two things to know before you ask:
 
@@ -148,6 +154,9 @@ Two things to know before you ask:
   artifacts get large. That figure is the *zip* size — what lands on disk after
   unzipping is bigger. The sizes are checked before anything is fetched, so an
   oversized request costs you nothing; `--name` is how you get past it.
+- **An artifact that unpacks to more than 2 GiB is deleted, not kept.** You will
+  be told so. A small archive that expands that far is machine-generated data
+  rather than something to read; take a narrower artifact by name.
 - **`expired: true` means the bytes are gone.** GitHub keeps artifacts for a
   retention period and the entry outlives them. That is not a failed read and
   retrying will not help.

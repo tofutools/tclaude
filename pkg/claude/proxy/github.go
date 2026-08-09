@@ -651,13 +651,16 @@ func githubRunDownloadCmd() *cobra.Command {
 			"same rule that stops you naming the repository stops you naming the directory. The " +
 			"directory ignores itself in git, so a download does not turn up in `git status`.\n\n" +
 			"It is emptied first, so the listing you get back is this run's artifacts and not a mix " +
-			"with an earlier download's. Copy anything you want to keep somewhere else.\n\n" +
+			"with an earlier download's — which is also why asking twice cannot pile up on disk. " +
+			"Only the three most recently used run directories are kept; a fourth run prunes the " +
+			"least recently touched one. COPY ANYTHING YOU WANT TO KEEP somewhere else.\n\n" +
 			"Without `--name` you get every live artifact, each in a subdirectory named after it. " +
 			"With `--name` that one artifact is unzipped directly into the destination.\n\n" +
 			"The proxy refuses more than 512 MiB in one call — it checks the sizes before fetching a " +
 			"byte, so an oversized request costs you nothing but the refusal. That figure is the ZIP " +
-			"size, the only one GitHub reports; what lands on disk after unzipping is larger. Run " +
-			"`run artifacts` first and take what you need by name.\n\n" +
+			"size, the only one GitHub reports; what lands on disk after unzipping is larger, and an " +
+			"artifact that unpacks past 2 GiB is deleted rather than kept. Run `run artifacts` " +
+			"first and take what you need by name.\n\n" +
 			"A run with more artifacts than one page holds cannot have an all-of-them download sized " +
 			"honestly, so that case is refused too — name the artifact you want.",
 		ParamEnrich: common.DefaultParamEnricher(),
