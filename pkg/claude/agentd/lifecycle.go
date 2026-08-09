@@ -331,8 +331,10 @@ func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, rela
 	// refuses with "Runtime shutdown is not available for this server". They end
 	// a session, not the CLI. Routing soft exit through them would report a
 	// delivered exit for a pane that never dies — which every stop, retire and
-	// dashboard surface then reads as an agent that finished its work. `/exit`
-	// through the pane really does end the process, so it stays.
+	// dashboard surface then reads as an agent that finished its work. Ending
+	// the CLI through the pane really does work, so the pane path stays —
+	// though for Copilot the pane input is ctrl-c presses rather than a typed
+	// /exit (see sendSoftExitToTarget).
 	h := harnessForConv(convID)
 	if h.SupportsSoftExit() {
 		exitCmd := h.Life.SoftExitCommand()
@@ -367,9 +369,12 @@ func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, rela
 		} else {
 			clearFailedExitIntent(intentSet)
 			res.Action = "error"
-			if h.Name == harness.OpenCodeName {
+			switch h.Name {
+			case harness.OpenCodeName:
 				res.Detail = "managed OpenCode TUI exit dispatch failed"
-			} else {
+			case harness.CopilotName:
+				res.Detail = "managed Copilot signal exit dispatch failed"
+			default:
 				res.Detail = "send-keys " + exitCmd + " failed"
 			}
 		}
@@ -763,6 +768,7 @@ func clearFailedExitIntent(intentRef *db.SessionExitIntentRef) {
 // softExitPaneScreenTail): the intermittent ignored-exit failure is a Copilot
 // TUI behaviour, and other harnesses should not pay the capture nor leak
 // their screens into logs for a bug they do not have.
+//
 func logSoftExitPaneState(target *lifecycleTarget, reason, phase string, attempt int) {
 	if harnessForConv(target.convID).Name != harness.CopilotName {
 		return
@@ -773,6 +779,25 @@ func logSoftExitPaneState(target *lifecycleTarget, reason, phase string, attempt
 		"tmux_session", target.tmuxSession, "pane_id", target.paneID,
 		"reason", reason,
 		"pane_screen", capturePaneScreenTail(target.paneID))
+}
+
+// sendSoftExitToTarget delivers one soft-exit attempt to the pane. A Copilot
+// pane gets its keystroke-free signal exit (see
+// injectCopilotSignalExitSerializedBy — its TUI silently drops typed slash
+// commands both mid-turn and whenever its keypress reader wedges, while
+// ctrl-c handling survives both states); every other harness gets its exit
+// command typed and submitted.
+//
+// copilot is resolved ONCE per stop by the caller and threaded through, like
+// exitCmd and prefixKeys already are: re-resolving per attempt would let a
+// conv whose rows vanish mid-stop fall back to the default harness on a
+// retry and type "/exit" into the very pane this branch exists to never type
+// into.
+func sendSoftExitToTarget(target *lifecycleTarget, copilot bool, exitCmd string, prefixKeys []string) error {
+	if copilot {
+		return injectCopilotSignalExitSerializedBy(target.tmuxSession+":0.0", target.paneID)
+	}
+	return injectSoftExitTextSerializedBy(target.tmuxSession+":0.0", target.paneID, exitCmd, prefixKeys)
 }
 
 // softExitPaneScreenTail is capturePaneScreenTail gated to Copilot panes —
@@ -798,8 +823,11 @@ func injectSoftExitTarget(target *lifecycleTarget, exitCmd string, prefixKeys []
 		clearFailedExitIntentTarget(intentRef, target.tmuxSession)
 		return false
 	}
+	// Resolved once for the whole stop, retries included — see
+	// sendSoftExitToTarget for why per-attempt re-resolution is unsafe.
+	copilot := harnessForConv(target.convID).Name == harness.CopilotName
 	logSoftExitPaneState(target, reason, "pre-send", 1)
-	if err := injectSoftExitTextSerializedBy(target.tmuxSession+":0.0", target.paneID, exitCmd, prefixKeys); err != nil {
+	if err := sendSoftExitToTarget(target, copilot, exitCmd, prefixKeys); err != nil {
 		logLifecycleStopFailure("send", target.paneID, target.sessionID, err)
 		return false
 	}
@@ -824,7 +852,7 @@ func injectSoftExitTarget(target *lifecycleTarget, exitCmd string, prefixKeys []
 		// attribution and never retry against a successor.
 		return true
 	}
-	scheduleSoftExitRetryTarget(target, exitCmd, prefixKeys, reason, intentRef)
+	scheduleSoftExitRetryTarget(target, copilot, exitCmd, prefixKeys, reason, intentRef)
 	return true
 }
 
@@ -884,13 +912,14 @@ func clearFailedExitIntentTarget(ref *db.SessionExitIntentRef, tmuxSession strin
 	}
 }
 
-func scheduleSoftExitRetryTarget(target *lifecycleTarget, exitCmd string, prefixKeys []string, reason string, intentRef *db.SessionExitIntentRef) {
+func scheduleSoftExitRetryTarget(target *lifecycleTarget, copilot bool, exitCmd string, prefixKeys []string, reason string, intentRef *db.SessionExitIntentRef) {
 	goBackground(func() {
 		// Attempt-timeline logging is Copilot-only, like the screen captures
 		// (logSoftExitPaneState): the ignored-soft-exit forensics they exist
 		// for is a Copilot failure mode, and every other harness would just
-		// log more for nothing.
-		logAttempts := harnessForConv(target.convID).Name == harness.CopilotName
+		// log more for nothing. The same caller-resolved harness decision
+		// picks the send path (sendSoftExitToTarget).
+		logAttempts := copilot
 		for attempt := 2; attempt <= softExitMaxAttempts; attempt++ {
 			select {
 			case <-target.softExitSettled:
@@ -950,7 +979,7 @@ func scheduleSoftExitRetryTarget(target *lifecycleTarget, exitCmd string, prefix
 				return
 			}
 			logSoftExitPaneState(target, reason, "pre-send", attempt)
-			if err := injectSoftExitTextSerializedBy(target.tmuxSession+":0.0", target.paneID, exitCmd, prefixKeys); err != nil {
+			if err := sendSoftExitToTarget(target, copilot, exitCmd, prefixKeys); err != nil {
 				logLifecycleStopFailure("send", target.paneID, target.sessionID, err)
 				// The first /exit was already delivered; a failed RE-send must
 				// not erase that delivery's attribution. Mirror the unknown

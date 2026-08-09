@@ -1852,6 +1852,56 @@ func injectSoftExitTextSerializedBy(lockTarget, tmuxTarget, text string, prefixK
 	return injectTextAndSubmitWithOptions(lockTarget, tmuxTarget, text, false, prefixKeys...)
 }
 
+// copilotSignalExitPresses is how many ctrl-c presses Copilot's signal exit
+// sends. The first may be spent cancelling an in-flight operation (or
+// aborting a permission dialog); the next press arms "ctrl+c again to exit";
+// the press after that lands inside the armed window and exits the CLI. On a
+// pane that had nothing to cancel the exit already fires one press earlier
+// and the surplus press lands on a dead pane, which is tolerated below.
+const copilotSignalExitPresses = 3
+
+// injectCopilotSignalExitSerializedBy is Copilot's soft exit: three ctrl-c
+// presses, one settle apart, as one lock-held sequence. Keystroke-free on
+// purpose — typed slash commands are silently dropped both mid-turn (the
+// measured 1.0.77 behaviour that used to motivate a cancel-then-/exit
+// sequence) and whenever the TUI's keypress reader wedges outright (the
+// 2026-08-09 incident: three /exit injections ignored for the full 10 s
+// escalation deadline while ctrl-c handling demonstrably kept working).
+// Copilot's double-ctrl-c quit rides that surviving path: measured against
+// 1.0.78, the "again to exit" window closes between 1.2 s and 1.5 s, and
+// second presses 0.5–1.2 s after the first all exit cleanly (status 0)
+// through the CLI's designed quit path.
+//
+// The gap reuses injectSettleDelay: production's 500 ms sits inside the
+// measured window, and the flow-test override keeps simulated stops fast.
+// Only the FIRST press's failure is an error — a pane commonly dies on the
+// second press, making a later "can't find pane" the success case.
+func injectCopilotSignalExitSerializedBy(lockTarget, tmuxTarget string) error {
+	mu := paneInjectLock(injectLockKey(lockTarget))
+	if err := acquirePaneInjectLock(mu); err != nil {
+		return err
+	}
+	defer mu.Unlock()
+	return paneinput.WithLock(tmuxTarget, paneinput.Options{
+		Run:         runTmuxCommand,
+		LockTimeout: paneInjectLockTimeout,
+		LockID:      lockTarget,
+	}, func(run paneinput.Runner, target string) error {
+		for press := range copilotSignalExitPresses {
+			if press > 0 {
+				time.Sleep(injectSettleDelay)
+			}
+			if err := run("send-keys", "-t", target, "C-c"); err != nil {
+				if press == 0 {
+					return fmt.Errorf("send-keys ctrl-c: %w", err)
+				}
+				return nil
+			}
+		}
+		return nil
+	})
+}
+
 func injectTextAndSubmitWithOptions(lockTarget, tmuxTarget, text string, forceBracketedPaste bool, prefixKeys ...string) error {
 	mu := paneInjectLock(injectLockKey(lockTarget))
 	if err := acquirePaneInjectLock(mu); err != nil {

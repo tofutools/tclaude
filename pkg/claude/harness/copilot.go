@@ -188,8 +188,16 @@ func (copilotLifecycle) CompactCommand() string { return "/compact" }
 // it quits the CLI. Copilot CLI 1.0.78 exposes no equivalent process-exit RPC:
 // session.shutdown and sessions.close successfully end a session without
 // killing the pane, while runtime.shutdown returns -32603, "Runtime shutdown
-// is not available for this server". Callers therefore keep this keystroke
-// path and their hard-kill fallback for a pane that does not exit on its own.
+// is not available for this server".
+//
+// A non-empty command here is what marks the harness soft-exit capable
+// (SupportsSoftExit), but agentd's managed stop does NOT type it: Copilot's
+// TUI silently drops typed slash commands both mid-turn and whenever its
+// keypress reader wedges outright (observed 2026-08-09: three /exit
+// injections ignored for a full 10 s while ctrl-c handling kept working), so
+// the stop path sends the CLI's own double-ctrl-c quit instead — see
+// agentd's sendSoftExitToTarget. The typed command remains for paths that
+// still spell exits as keystroke text (reincarnate's pid-keyed injector).
 func (copilotLifecycle) SoftExitCommand() string { return "/exit" }
 
 // Copilot's remote access is `/remote [on|off]` — a DIRECTIONAL command, while
@@ -200,18 +208,19 @@ func (copilotLifecycle) SoftExitCommand() string { return "/exit" }
 func (copilotLifecycle) RemoteControlCommand() string { return "" }
 func (copilotLifecycle) FastModeCommand() string      { return "" }
 
-// Copilot's TUI only accepts a slash command when it is not mid-turn, so the
-// soft exit is preceded by a cancel. Measured against 1.0.77 in a real tmux
-// pane (see copilotfixture): mid-turn or while a tool runs, C-c reports
-// "Operation cancelled by user" and returns the TUI to its input prompt, from
-// which /exit exits 0; with a permission dialog open C-c ABORTS the request
-// (the pending command never runs) rather than accepting its default entry;
-// on a pane holding a half-typed line it clears the buffer — which
-// incidentally removes the "<junk>/exit submitted as one prompt" failure the
-// soft-exit retry exists to recover from. On an idle pane 1.0.77 treated it
-// as a no-op; 1.0.78 arms "ctrl+c again to exit" instead, which only helps —
-// the retry's own C-c four seconds later is never "again", and a same-window
-// double C-c would merely exit, which is what the whole sequence is for.
+// Copilot's TUI only accepts a slash command when it is not mid-turn, so a
+// TYPED soft exit must be preceded by a cancel. Measured against 1.0.77 in a
+// real tmux pane (see copilotfixture): mid-turn or while a tool runs, C-c
+// reports "Operation cancelled by user" and returns the TUI to its input
+// prompt, from which /exit exits 0; with a permission dialog open C-c ABORTS
+// the request (the pending command never runs) rather than accepting its
+// default entry; on a pane holding a half-typed line it clears the buffer.
+// On an idle pane 1.0.77 treated it as a no-op; 1.0.78 arms "ctrl+c again to
+// exit" for a window measured to close between 1.2 s and 1.5 s, and a
+// same-window second press exits the CLI cleanly (status 0) — the behaviour
+// agentd's managed stop now uses directly instead of typing the command at
+// all (see SoftExitCommand). These prefix keys therefore only shape the
+// remaining typed-exit paths, such as reincarnate's.
 //
 // Escape is deliberately NOT used: the CLI holds a lone ESC byte waiting for
 // the rest of a possible escape sequence, so a trailing Escape is never
