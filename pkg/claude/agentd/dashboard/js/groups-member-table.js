@@ -40,6 +40,15 @@ function AgentStatusDot({ member }) {
   const state = member.state || {};
   const label = member.title || member.conv_id;
   const online = !!member.online;
+  // A resume is in flight: seconds of managed-server boot + sandbox + pane
+  // fork during which the row is neither offline nor online. Render a pulsing
+  // dot and make it inert — a second click would just queue behind the
+  // in-flight wake's launch lock.
+  if (!online && member.waking) {
+    const wakingTitle = `waking — ${label} is starting up`;
+    return html`<span class="status-dot status-dot-waking" ...${memberAttrs(member)}
+      title=${wakingTitle} aria-label=${wakingTitle} role="status">●</span>`;
+  }
   const errored = online && state.status === 'error';
   const detail = errored ? (state.status_detail || 'error') : '';
   const recovery = state.recovery_status || '';
@@ -488,7 +497,13 @@ function statusInfo(state, online) {
   return { status: status || 'online', detail, title: status && detail ? `${status}: ${detail}` : status || 'online' };
 }
 
-function StatePill({ state, online, conv }) {
+function StatePill({ state, online, conv, waking }) {
+  if (!online && waking) {
+    const title = 'resume in flight — server and pane are starting';
+    return html`<span class="state-pill-wrap" tabindex=${'0'} title=${title} aria-label=${title}>
+      <span class="state-pill state-waking" aria-hidden="true">waking…</span>
+    </span>`;
+  }
   const info = statusInfo(state, online);
   let className = online ? 'state-idle' : 'state-offline';
   if (info.status === 'crashed') className = 'state-crashed';
@@ -642,7 +657,7 @@ function ActivityBadges({ state }) {
 function StateCell({ member }) {
   const state = member.state || {};
   return html`<td class="state-cell"><${ContextMeter} state=${state} /><${StatePill}
-    state=${state} online=${member.online} conv=${member.conv_id} />${member.online
+    state=${state} online=${member.online} conv=${member.conv_id} waking=${member.waking} />${member.online
     ? html`<${ActivityBadges} state=${state} />` : null}</td>`;
 }
 
