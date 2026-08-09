@@ -32,10 +32,6 @@ import (
 // project path matches. A missing rollout tree yields no entries (not an
 // error); an unreadable threads DB degrades to rollout-only assembly with
 // a warning rather than failing the whole listing.
-func scanCodexEntries(home, cwd string) ([]convops.SessionEntry, error) {
-	return scanCodexEntriesAt(filepath.Join(home, ".codex"), cwd)
-}
-
 func scanCodexEntriesAt(configDir, cwd string) ([]convops.SessionEntry, error) {
 	paths, err := scanCodexRolloutsAt(configDir)
 	if err != nil {
@@ -223,10 +219,6 @@ func codexArchivedAt(t codexThread) string {
 // the ConvStore contract exactly: (nil, nil) for no match, (nil, err) for
 // a scan failure OR an ambiguous prefix, and an exact id always wins over
 // prefix matches. cwd scopes the search to one project unless global.
-func resolveCodex(home, idPrefix, cwd string, global bool) (*ConvRef, error) {
-	return resolveCodexAt(filepath.Join(home, ".codex"), idPrefix, cwd, global)
-}
-
 func resolveCodexAt(configDir, idPrefix, cwd string, global bool) (*ConvRef, error) {
 	if idPrefix == "" {
 		return nil, nil
@@ -269,10 +261,6 @@ func resolveCodexAt(configDir, idPrefix, cwd string, global bool) (*ConvRef, err
 // (threads.first_user_message, or the rollout's first user message when
 // there's no row). An unknown conv yields ("", nil). Mirrors a
 // SessionEntry's DisplayTitle for the same conv so list and title agree.
-func codexTitle(home, convID string) (string, error) {
-	return codexTitleAt(filepath.Join(home, ".codex"), convID)
-}
-
 func codexTitleAt(configDir, convID string) (string, error) {
 	threads, err := loadCodexThreadsAt(configDir)
 	if err != nil {

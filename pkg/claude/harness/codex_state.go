@@ -40,10 +40,6 @@ type codexThread struct {
 // codexThreadRolloutPath reads only threads.rollout_path for one conversation.
 // Runtime telemetry needs no other thread metadata, so this avoids loading the
 // full registry merely to bypass a date-tree walk.
-func codexThreadRolloutPath(home, convID string) (string, error) {
-	return codexThreadRolloutPathAt(filepath.Join(home, ".codex"), convID)
-}
-
 func codexThreadRolloutPathAt(configDir, convID string) (string, error) {
 	path := codexStateDBPathAt(configDir)
 	if _, err := os.Stat(path); err != nil {
