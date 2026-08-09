@@ -1849,8 +1849,8 @@ func harnessUsesSlashContextControls(name string) bool {
 }
 
 // persistHookWorkspaceSnapshot replaces Claude Code's command-backed
-// statusline workspace write for harnesses without that surface. Codex and
-// Copilot both carry the session cwd on every hook, so resolve git there at
+// statusline workspace write for harnesses without that surface. Codex,
+// Copilot, and OpenCode all carry the session cwd on every hook, so resolve git there at
 // hook time and publish the same agent_workspace row the dashboard already
 // reads. The first branch observed also seeds conv_index.git_branch_startup;
 // later observations update only the current branch so the UI can keep showing
@@ -1858,7 +1858,8 @@ func harnessUsesSlashContextControls(name string) bool {
 // asynchronous git/gh enrichment supplies its compare and pull-request links.
 func persistHookWorkspaceSnapshot(state *SessionState, input HookCallbackInput) {
 	if state == nil || state.ConvID == "" ||
-		(state.Harness != harness.CodexName && state.Harness != harness.CopilotName) {
+		(state.Harness != harness.CodexName && state.Harness != harness.CopilotName &&
+			state.Harness != harness.OpenCodeName) {
 		return
 	}
 	if input.ConvID != "" && input.ConvID != state.ConvID {

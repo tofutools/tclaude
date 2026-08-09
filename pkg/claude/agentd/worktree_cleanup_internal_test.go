@@ -23,6 +23,37 @@ func TestAgentWorktreeClaimSnapshotIncompleteFailsClosed(t *testing.T) {
 	assert.False(t, got.Removable(), "an unknown claimant set must fail closed")
 }
 
+func TestRetireExcludesOnlyTargetsManagedOpenCodeRuntime(t *testing.T) {
+	const conv = "ses_target"
+	const other = "ses_other"
+	path := "/tmp/opencode-worktree"
+	snap := agentWorktreeClaimSnapshot{
+		views: map[string]agentWorktreeView{
+			conv: {Path: path, Branch: "feature", Kind: "linked"},
+		},
+		dirClaims: map[string]map[string]bool{
+			path: {openCodeRuntimeClaimant(conv): true},
+		},
+		complete: true,
+	}
+
+	generic := snap.resolve(conv, map[string]bool{conv: true})
+	assert.True(t, generic.Shared, "ordinary deletion must protect a live managed server")
+	assert.Equal(t, openCodeRuntimeSharedNote, generic.SharedNote)
+
+	retire := snap.resolve(conv, map[string]bool{
+		conv: true, openCodeRuntimeClaimant(conv): true,
+	})
+	assert.True(t, retire.Removable(),
+		"retirement can offer cleanup because it stops its own runtime before removal")
+
+	snap.dirClaims[path][openCodeRuntimeClaimant(other)] = true
+	retire = snap.resolve(conv, map[string]bool{
+		conv: true, openCodeRuntimeClaimant(conv): true,
+	})
+	assert.False(t, retire.Removable(), "another agent's OpenCode runtime remains a blocker")
+}
+
 func TestDirContains(t *testing.T) {
 	assert.True(t, dirContains("/tmp/agent-root", "/tmp/agent-root"))
 	assert.True(t, dirContains("/tmp/agent-root", "/tmp/agent-root/pkg"))

@@ -2525,6 +2525,14 @@ func openCodeRuntimeSafeToReplace(runtime db.OpenCodeRuntime) bool {
 }
 
 func stopOpenCodeRuntime(sessionID string) error {
+	// Serialize teardown with reconcileOpenCodeRuntime. Without the shared lock,
+	// reconcile could restart the server after stopOpenCodeProcess returned but
+	// before this function checked liveness and deleted the durable claim.
+	value, _ := openCodeReconcileLocks.LoadOrStore(sessionID, &sync.Mutex{})
+	reconcileMu := value.(*sync.Mutex)
+	reconcileMu.Lock()
+	defer reconcileMu.Unlock()
+
 	runtime, err := db.GetOpenCodeRuntime(sessionID)
 	if err != nil {
 		return err
@@ -2533,11 +2541,15 @@ func stopOpenCodeRuntime(sessionID string) error {
 		return nil
 	}
 	stopOpenCodeProcess(*runtime, nil)
-	if runtime.Transport == db.OpenCodeTransportUnixRelay {
-		if session.IsProcessAlive(runtime.PID) {
+	if session.IsProcessAlive(runtime.PID) {
+		if runtime.Transport == db.OpenCodeTransportUnixRelay {
 			return fmt.Errorf(
 				"OpenCode recovered process remains alive; retaining Unix replay authority")
 		}
+		return fmt.Errorf(
+			"OpenCode recovered process remains alive; retaining runtime authority")
+	}
+	if runtime.Transport == db.OpenCodeTransportUnixRelay {
 		if err := opencodeapi.RemoveUnixSocket(*runtime); err != nil {
 			return fmt.Errorf("finish OpenCode Unix control cleanup: %w", err)
 		}

@@ -267,6 +267,44 @@ func TestApplyHook_CopilotPublishesWorkspaceBranch(t *testing.T) {
 		"dashboard resolver keeps Copilot's init branch stable")
 }
 
+func TestApplyHook_OpenCodePublishesWorkspaceBranch(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+
+	repo := filepath.Join(home, "repo")
+	require.NoError(t, os.MkdirAll(repo, 0o755))
+	runGit(t, repo, "init", "-b", "feature-opencode")
+	runGit(t, repo, "config", "user.email", "tclaude-test@example.invalid")
+	runGit(t, repo, "config", "user.name", "tclaude test")
+	runGit(t, repo, "commit", "--allow-empty", "-m", "init")
+
+	const convID = "ses_opencode_branch"
+	const sessionID = "agent-opencode-branch"
+	require.NoError(t, session.SaveSessionState(&session.SessionState{
+		ID: sessionID, ConvID: convID, Status: session.StatusIdle,
+		Harness: "opencode", Cwd: repo,
+	}))
+
+	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
+		HookEventName: "SessionStart", ConvID: convID, Cwd: repo,
+	}, sessionID))
+
+	ws, err := db.GetAgentWorkspace(convID)
+	require.NoError(t, err)
+	assert.Equal(t, "feature-opencode", ws.Branch)
+	row, err := db.GetConvIndex(convID)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, "opencode", row.Harness)
+	assert.Equal(t, "feature-opencode", row.GitBranch)
+	assert.Equal(t, "feature-opencode", row.GitBranchStartup)
+	assert.Equal(t, "feature-opencode", agent.ResolveLocation(convID).CurrentBranch,
+		"dashboard resolver sees OpenCode's managed-runtime cwd branch")
+}
+
 func TestApplyHook_CodexDoesNotReadRolloutCost(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
