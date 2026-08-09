@@ -24,10 +24,13 @@ func TestCodexAppServerProfileOverridesCarriesCompleteManagedPosture(t *testing.
 	socketDir, err := os.MkdirTemp("/tmp", "tcl1151-sock-")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
-	materialized := []string{filepath.Join(socketDir, "service.sock")}
-	listener, err := net.Listen("unix", materialized[0])
+	socketPath := filepath.Join(socketDir, "service.sock")
+	listener, err := net.Listen("unix", socketPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = listener.Close() })
+	canonicalSocket, err := filepath.EvalSymlinks(socketPath)
+	require.NoError(t, err)
+	materialized := []string{canonicalSocket}
 	name, path, err := EnsureCodexAgentLaunchProfileForRules(CodexSandboxRules{
 		ReadDirs:  []string{filepath.Join(home, "read")},
 		WriteDirs: []string{filepath.Join(home, "repo", ".git")},
