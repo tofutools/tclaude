@@ -144,12 +144,12 @@ func TestAudit_FailedStopRecordsFailureAndBoundedDiagnostic(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(stopped.Body.Bytes(), &body))
 	assert.Equal(t, "error", body.Action)
-	assert.Equal(t, "stop failed: send-keys /exit failed", body.Error)
+	assert.Equal(t, "stop failed: managed claude signal exit dispatch failed", body.Error)
 	assert.Equal(t, "stop_failed", body.Code)
 
 	row := auditRowByVerb(t, "stop")
 	assert.Equal(t, http.StatusInternalServerError, row.Status)
-	assert.Equal(t, "send-keys /exit failed", row.Detail)
+	assert.Equal(t, "managed claude signal exit dispatch failed", row.Detail)
 	assert.LessOrEqual(t, len(row.Detail), 240)
 }
 
@@ -182,13 +182,13 @@ func TestAudit_DashboardFailedStopRecordsFailureAndEnvelope(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(stopped.Body.Bytes(), &body))
 	assert.Equal(t, "error", body.Action)
-	assert.Equal(t, "send-keys /exit failed", body.Detail)
-	assert.Equal(t, "stop failed: send-keys /exit failed", body.Error)
+	assert.Equal(t, "managed claude signal exit dispatch failed", body.Detail)
+	assert.Equal(t, "stop failed: managed claude signal exit dispatch failed", body.Error)
 	assert.Equal(t, "stop_failed", body.Code)
 
 	row := auditRowByVerb(t, "stop")
 	assert.Equal(t, http.StatusInternalServerError, row.Status)
-	assert.Equal(t, "send-keys /exit failed", row.Detail)
+	assert.Equal(t, "managed claude signal exit dispatch failed", row.Detail)
 	assert.Equal(t, db.AuditSourceDashboard, row.Source)
 }
 
