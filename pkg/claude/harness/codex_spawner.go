@@ -116,7 +116,8 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 	// managed profile (or raw sandbox), stacked-backend pin, approval posture,
 	// service tier, and authoritative tool environment. Codex accepts these
 	// global options before the app-server subcommand.
-	server := binary + bypassHookTrustArg + codexAppServerSandboxArgs(spec) + approvalArgs + fastModeArgs + shellEnvironmentArgs
+	server := binary + codexAppServerHookTrustArgs(spec) + codexAppServerSandboxArgs(spec) +
+		codexAppServerApprovalArgs(spec) + fastModeArgs + shellEnvironmentArgs
 	server += " app-server --listen " +
 		clcommon.ShellQuoteArg(spec.CodexAppServerURL) +
 		" --ws-auth capability-token --ws-token-sha256 " +
@@ -169,6 +170,30 @@ func codexSandboxArgs(spec SpawnSpec) string {
 	return args
 }
 
+func codexAppServerApprovalArgs(spec SpawnSpec) string {
+	args := ""
+	if spec.ApprovalPolicy != "" {
+		// Like --sandbox, the root approval flag parses before app-server but is
+		// ignored by that branch in 0.147. Use its effective-config key.
+		args += " -c " + clcommon.ShellQuoteArg(
+			"approval_policy="+codexTOMLString(spec.ApprovalPolicy))
+	}
+	if spec.AutoReview {
+		args += " -c " + clcommon.ShellQuoteArg(
+			codexApprovalsReviewerKey+`="`+codexApprovalsReviewerAuto+`"`)
+	}
+	return args
+}
+
+func codexAppServerHookTrustArgs(spec SpawnSpec) string {
+	if !spec.BypassHookTrust {
+		return ""
+	}
+	// App-server exposes this launch extension as a config boolean; the TUI's
+	// root flag is not forwarded into the server branch's effective config.
+	return " -c " + clcommon.ShellQuoteArg("bypass_hook_trust=true")
+}
+
 func codexAppServerSandboxArgs(spec SpawnSpec) string {
 	args := ""
 	if spec.PermissionProfile != "" {
@@ -184,7 +209,11 @@ func codexAppServerSandboxArgs(spec SpawnSpec) string {
 			args += " -c " + clcommon.ShellQuoteArg(override)
 		}
 	} else if spec.HarnessBuiltinMode != "" {
-		args += " --sandbox " + clcommon.ShellQuoteArg(spec.HarnessBuiltinMode)
+		// Codex 0.147 accepts the root --sandbox flag before app-server but
+		// ignores it when building the server's effective config. The app-server
+		// supported -c seam is semantic: config/read and model tools see it.
+		args += " -c " + clcommon.ShellQuoteArg(
+			"sandbox_mode="+codexTOMLString(spec.HarnessBuiltinMode))
 	}
 	if spec.StrongNestedSandbox {
 		args += " -c " + clcommon.ShellQuoteArg("features.use_legacy_landlock=false")

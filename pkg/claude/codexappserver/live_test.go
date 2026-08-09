@@ -44,7 +44,12 @@ func TestLiveCodexAppServerHandshake(t *testing.T) {
 
 	processCtx, stopProcess := context.WithCancel(context.Background())
 	var output bytes.Buffer
-	command := exec.CommandContext(processCtx, "codex", "app-server",
+	command := exec.CommandContext(processCtx, "codex",
+		"-c", `sandbox_mode="read-only"`,
+		"-c", `approval_policy="never"`,
+		"-c", `bypass_hook_trust=true`,
+		"-c", `shell_environment_policy.set.TCLAUDE_APPSERVER_PROBE="present"`,
+		"app-server",
 		"--listen", "ws://"+upstream,
 		"--ws-auth", "capability-token",
 		"--ws-token-sha256", hex.EncodeToString(digest[:]))
@@ -99,4 +104,23 @@ func TestLiveCodexAppServerHandshake(t *testing.T) {
 	defer client.Close()
 	_, err = client.ListLoadedThreads(ctx, codexappserver.ThreadLoadedListParams{})
 	require.NoError(t, err)
+	var effective struct {
+		Config map[string]any `json:"config"`
+	}
+	require.NoError(t, client.Call(ctx, "config/read", map[string]any{
+		"cwd": runtimeDir, "includeLayers": false,
+	}, &effective))
+	require.Equal(t, "read-only", effective.Config["sandbox_mode"],
+		"the app-server must apply the sandbox posture through its config seam")
+	require.Equal(t, "never", effective.Config["approval_policy"],
+		"the app-server must apply the approval posture through its config seam")
+	// bypass_hook_trust is a launch extension rather than a persisted config
+	// field, so config/read intentionally does not project it. Successful server
+	// startup still exercises 0.147's typed boolean override parser; Codex emits
+	// a hard error for a missing/non-boolean value.
+	shellPolicy, ok := effective.Config["shell_environment_policy"].(map[string]any)
+	require.True(t, ok, "config/read omitted shell_environment_policy: %#v", effective.Config)
+	set, ok := shellPolicy["set"].(map[string]any)
+	require.True(t, ok, "config/read omitted shell_environment_policy.set: %#v", shellPolicy)
+	require.Equal(t, "present", set["TCLAUDE_APPSERVER_PROBE"])
 }

@@ -87,16 +87,18 @@ func TestCodexSpawnerAppServerMirrorsExecutionPosture(t *testing.T) {
 	got := codexSpawner{}.BuildCommand(spec)
 	server := strings.Split(got, " app-server --listen")[0]
 	for _, want := range []string{
-		`--dangerously-bypass-hook-trust`,
+		`bypass_hook_trust=true`,
 		`default_permissions="tclaude-agent-1234567890abcdef"`,
 		`features.use_legacy_landlock=false`,
-		`--ask-for-approval never`,
+		`approval_policy="never"`,
 		`service_tier="fast"`,
 		`shell_environment_policy.set.GOBIN="/tmp/go bin"`,
 	} {
 		assert.Contains(t, server, want)
 	}
 	assert.NotContains(t, server, " -p ")
+	assert.NotContains(t, server, " --sandbox ")
+	assert.NotContains(t, server, " --ask-for-approval ")
 	assert.Contains(t, got, "-p tclaude-agent-1234567890abcdef")
 }
 
