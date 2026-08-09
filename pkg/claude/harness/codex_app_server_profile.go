@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
@@ -68,7 +69,7 @@ func CodexAppServerProfileOverrides(path string) ([]string, error) {
 		table.WriteString(codexTOMLString(access))
 	}
 	table.WriteString(`},network={enabled=`)
-	table.WriteString(fmt.Sprintf("%t", profile.Network.Enabled))
+	table.WriteString(strconv.FormatBool(profile.Network.Enabled))
 	table.WriteString(`,unix_sockets={`)
 	paths = sortedMapKeys(profile.Network.UnixSockets)
 	for i, path := range paths {
