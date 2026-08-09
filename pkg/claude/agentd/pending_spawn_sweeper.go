@@ -203,6 +203,7 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 	sshWorkaround := codexSSHWorkaroundEnabledInSnapshot(ps.EffectiveSandbox)
 	p := spawnParams{
 		AgentID:          ps.AgentID,
+		Harness:          sess.Harness,
 		EffectiveSandbox: ps.EffectiveSandbox,
 		SSHWorkaround:    sshWorkaround,
 		SSHWorkaroundSet: true,
@@ -236,6 +237,13 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 		IsOwner:             ps.IsOwner,
 		PermissionOverrides: ps.PermissionOverrides,
 		ProcessCommandID:    ps.ProcessCommandID,
+	}
+	if ps.CodexAppServer != nil {
+		p.CodexAppServer = *ps.CodexAppServer
+		p.CodexAppServerSet = true
+		p.CodexAppServerSource = ps.CodexAppServerSource
+		p.CodexStateRoot = ps.CodexStateRoot
+		p.CodexStateRootSource = ps.CodexStateRootSource
 	}
 	if fail := finishSpawnEnrollment(g, p, convID); fail != nil {
 		if err := db.InsertPendingSpawn(ps); err != nil {

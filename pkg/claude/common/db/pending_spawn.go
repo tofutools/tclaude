@@ -79,6 +79,14 @@ type PendingSpawn struct {
 	// http(s) at the spawn boundary before the row is written; "" = no link.
 	TaskURL   string
 	TaskLabel string
+	// CodexAppServer is the resolved launch drive, including an authoritative
+	// false. It stays nil only for legacy/non-Codex pending rows. Source is
+	// frozen beside it so delayed enrollment reports the same provenance as the
+	// spawn response instead of re-resolving mutable profiles minutes later.
+	CodexAppServer       *bool
+	CodexAppServerSource string
+	CodexStateRoot       string
+	CodexStateRootSource string
 	// EffectiveSandbox is the exact value snapshot authorized for the launch.
 	// A nil value is reserved for legacy rows created before snapshot support;
 	// recovery paths must not re-resolve mutable registry assignments for it.
@@ -111,12 +119,13 @@ func InsertPendingSpawn(p *PendingSpawn) error {
 			(label, agent_id, launching, group_id, role, descr, name, initial_message, group_context, profile_context,
 			 reply_to_conv, spawned_by_conv, reply_to_agent, spawned_by_agent,
 			 worktree_path, worktree_branch, is_owner, permission_overrides, process_command_id,
-			 task_url, task_label, effective_sandbox_config, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`, `+agentForConvExpr+`, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 task_url, task_label, codex_app_server, codex_app_server_source, codex_state_root, codex_state_root_source,
+			 effective_sandbox_config, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`, `+agentForConvExpr+`, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.Label, p.AgentID, boolToInt(p.Launching), p.GroupID, p.Role, p.Descr, p.Name, p.InitialMessage, p.GroupContext, p.ProfileContext,
 		p.ReplyToConv, p.SpawnedByConv, p.ReplyToConv, p.SpawnedByConv,
 		p.WorktreePath, p.WorktreeBranch, boolToInt(p.IsOwner), marshalPermissionOverrides(p.PermissionOverrides), p.ProcessCommandID,
-		p.TaskURL, p.TaskLabel, effectiveSandbox,
+		p.TaskURL, p.TaskLabel, boolPtrToNull(p.CodexAppServer), p.CodexAppServerSource, p.CodexStateRoot, p.CodexStateRootSource, effectiveSandbox,
 		dbTime(time.Now()))
 	return err
 }
@@ -169,7 +178,8 @@ func GetPendingSpawn(label string) (*PendingSpawn, error) {
 		SELECT label, agent_id, launching, group_id, role, descr, name, initial_message, group_context, profile_context,
 			reply_to_conv, spawned_by_conv, reply_to_agent, spawned_by_agent,
 			worktree_path, worktree_branch, is_owner, permission_overrides, process_command_id,
-			task_url, task_label, effective_sandbox_config, created_at
+			task_url, task_label, codex_app_server, codex_app_server_source, codex_state_root, codex_state_root_source,
+			effective_sandbox_config, created_at
 		FROM pending_spawns WHERE label = ?`, label)
 	p, err := scanPendingSpawn(row)
 	if err == sql.ErrNoRows {
@@ -189,7 +199,8 @@ func ListPendingSpawns() ([]*PendingSpawn, error) {
 		SELECT label, agent_id, launching, group_id, role, descr, name, initial_message, group_context, profile_context,
 			reply_to_conv, spawned_by_conv, reply_to_agent, spawned_by_agent,
 			worktree_path, worktree_branch, is_owner, permission_overrides, process_command_id,
-			task_url, task_label, effective_sandbox_config, created_at
+			task_url, task_label, codex_app_server, codex_app_server_source, codex_state_root, codex_state_root_source,
+			effective_sandbox_config, created_at
 		FROM pending_spawns ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, err
@@ -350,19 +361,25 @@ func scanPendingSpawn(s rowScanner) (*PendingSpawn, error) {
 	var launching int
 	var isOwner int
 	var permOverrides string
+	var codexAppServer sql.NullInt64
 	var effectiveSandbox string
 	var createdAt dbTimestamp
 	if err := s.Scan(&p.Label, &p.AgentID, &launching, &p.GroupID, &p.Role, &p.Descr, &p.Name,
 		&p.InitialMessage, &p.GroupContext, &p.ProfileContext, &p.ReplyToConv, &p.SpawnedByConv,
 		&p.ReplyToAgent, &p.SpawnedByAgent,
 		&p.WorktreePath, &p.WorktreeBranch, &isOwner, &permOverrides, &p.ProcessCommandID,
-		&p.TaskURL, &p.TaskLabel, &effectiveSandbox, &createdAt); err != nil {
+		&p.TaskURL, &p.TaskLabel, &codexAppServer, &p.CodexAppServerSource, &p.CodexStateRoot, &p.CodexStateRootSource,
+		&effectiveSandbox, &createdAt); err != nil {
 		return nil, err
 	}
 	p.Launching = launching != 0
 	p.CreatedAt = exportTimestamp(createdAt)
 	p.IsOwner = isOwner != 0
 	p.PermissionOverrides = unmarshalPermissionOverrides(permOverrides)
+	if codexAppServer.Valid {
+		selected := codexAppServer.Int64 != 0
+		p.CodexAppServer = &selected
+	}
 	var err error
 	p.EffectiveSandbox, err = unmarshalEffectiveSandboxSnapshot(effectiveSandbox)
 	if err != nil {

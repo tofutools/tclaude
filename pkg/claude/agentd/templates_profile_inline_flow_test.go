@@ -156,7 +156,8 @@ func TestGroupTemplate_ProfileInline_WireRoundTrip(t *testing.T) {
 		"name": "crew",
 		"agents": []map[string]any{
 			{"name": "lead", "profile_inline": map[string]any{
-				"model": "haiku", "effort": "low", "remote_control": false,
+				"harness": "codex", "model": "gpt-5", "effort": "low", "remote_control": false,
+				"codex_app_server":     true,
 				"permission_overrides": map[string]any{agentd.PermGroupsSpawn: "grant"},
 			}},
 		},
@@ -168,9 +169,11 @@ func TestGroupTemplate_ProfileInline_WireRoundTrip(t *testing.T) {
 		Agents []struct {
 			Name          string `json:"name"`
 			ProfileInline *struct {
+				Harness             string            `json:"harness"`
 				Model               string            `json:"model"`
 				Effort              string            `json:"effort"`
 				RemoteControl       *bool             `json:"remote_control"`
+				CodexAppServer      *bool             `json:"codex_app_server"`
 				PermissionOverrides map[string]string `json:"permission_overrides"`
 			} `json:"profile_inline"`
 		} `json:"agents"`
@@ -179,10 +182,13 @@ func TestGroupTemplate_ProfileInline_WireRoundTrip(t *testing.T) {
 	require.Len(t, got.Agents, 1)
 	p := got.Agents[0].ProfileInline
 	require.NotNil(t, p, "profile_inline round-trips")
-	assert.Equal(t, "haiku", p.Model)
+	assert.Equal(t, "codex", p.Harness)
+	assert.Equal(t, "gpt-5", p.Model)
 	assert.Equal(t, "low", p.Effort)
 	require.NotNil(t, p.RemoteControl, "an explicit false round-trips as false, not unset")
 	assert.False(t, *p.RemoteControl)
+	require.NotNil(t, p.CodexAppServer)
+	assert.True(t, *p.CodexAppServer)
 	assert.Equal(t, map[string]string{agentd.PermGroupsSpawn: "grant"}, p.PermissionOverrides)
 }
 
@@ -211,6 +217,15 @@ func TestGroupTemplate_ProfileInline_HarnessMismatchWithRefRejectedAtSave(t *tes
 	require.Equalf(t, http.StatusBadRequest, rec.Code,
 		"blank-harness inline Claude model over a codex ref must fail at save, not deploy: %s", rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "profile_inline", "error names the offending tier")
+
+	rec = humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+		"name": "wrong-drive",
+		"agents": []map[string]any{{"name": "a", "profile_inline": map[string]any{
+			"harness": "claude", "codex_app_server": true,
+		}}},
+	})
+	require.Equalf(t, http.StatusBadRequest, rec.Code,
+		"Codex app-server must be rejected outside a Codex-capable template surface: %s", rec.Body.String())
 
 	// A semantically impossible implementation is a typed 422 at template
 	// authoring, before the invalid pair can become durable template state.

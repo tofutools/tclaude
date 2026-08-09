@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	_ "modernc.org/sqlite" // pure-Go sqlite driver, registered as "sqlite"
 )
@@ -35,11 +36,11 @@ func (codexConvStore) SetTitle(convID, title string) error {
 		// already rejects empty titles, so this is defence in depth.
 		return fmt.Errorf("codex SetTitle: refusing to write an empty title for %s", convID)
 	}
-	home, err := os.UserHomeDir()
+	configDir, err := codexConfigDir()
 	if err != nil {
 		return err
 	}
-	return setCodexTitle(home, convID, title)
+	return setCodexTitleAt(configDir, convID, title)
 }
 
 // setCodexTitle performs the threads.title UPDATE against the state DB
@@ -47,7 +48,11 @@ func (codexConvStore) SetTitle(convID, title string) error {
 // HOME (the methods resolve home via os.UserHomeDir; the helpers take it
 // explicitly — same split as the read side in codex_convstore.go).
 func setCodexTitle(home, convID, title string) error {
-	path := codexStateDBPath(home)
+	return setCodexTitleAt(filepath.Join(home, ".codex"), convID, title)
+}
+
+func setCodexTitleAt(configDir, convID, title string) error {
+	path := codexStateDBPathAt(configDir)
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
 			return fmt.Errorf("codex SetTitle: no state DB at %s (conversation not renameable)", path)

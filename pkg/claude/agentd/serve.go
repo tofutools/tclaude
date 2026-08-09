@@ -1163,6 +1163,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/whoami/reincarnate", handleWhoamiReincarnate)
 	mux.HandleFunc("/v1/whoami/clone", handleWhoamiClone)
 	mux.HandleFunc("/v1/whoami/context", handleWhoamiContext)
+	mux.HandleFunc("/v1/whoami/codex-app-server", handleWhoamiCodexAppServerStatus)
 	mux.HandleFunc("/v1/whoami/seance", handleWhoamiSeance)
 	mux.HandleFunc("/v1/whoami/seance/run", handleWhoamiSeanceRun)
 	mux.HandleFunc("/v1/whoami/hook", handleWhoamiHook)

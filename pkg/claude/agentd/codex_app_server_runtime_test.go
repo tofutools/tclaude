@@ -21,6 +21,15 @@ import (
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
+type codexResumeRecordingSpawner struct {
+	resume func(clcommon.SpawnArgs) error
+}
+
+func (s *codexResumeRecordingSpawner) SpawnNew(clcommon.SpawnArgs) error { return nil }
+func (s *codexResumeRecordingSpawner) SpawnResume(args clcommon.SpawnArgs) error {
+	return s.resume(args)
+}
+
 func installCodexAppServerGenerationProofForTest(t *testing.T, launchAlive bool) {
 	t.Helper()
 	previousIdentity := codexAppServerProcessIdentity
@@ -80,6 +89,34 @@ func TestSessionArgsCarryPrivateCodexAppServerGeneration(t *testing.T) {
 	}
 	plain := sessionNewArgs(clcommon.SpawnArgs{Label: "worker", Cwd: "/tmp/work"})
 	assert.False(t, slices.Contains(plain, "--codex-app-server"))
+}
+
+func TestExistingThreadBootstrapFactIsLimitedToOrdinaryResume(t *testing.T) {
+	previous := Spawn
+	recorded := make([]clcommon.SpawnArgs, 0, 2)
+	Spawn = &codexResumeRecordingSpawner{resume: func(args clcommon.SpawnArgs) error {
+		recorded = append(recorded, args)
+		return nil
+	}}
+	t.Cleanup(func() { Spawn = previous })
+
+	require.NoError(t, spawnDetachedTclaudeResumeAs(
+		clcommon.SpawnArgs{ConvID: "existing"}, copilotAPILaunchResume))
+	require.NoError(t, spawnDetachedTclaudeResumeAs(
+		clcommon.SpawnArgs{ConvID: "forked-copy"}, copilotAPILaunchFresh))
+	require.Len(t, recorded, 2)
+	assert.True(t, recorded[0].CodexAppServerExistingThread)
+	assert.False(t, recorded[1].CodexAppServerExistingThread,
+		"a resume-shaped clone names a fresh fork and must retain the TUI-hook birth gate")
+}
+
+func TestExactCodexResumeCommandLineRequiresHarnessArgvNotWrapperText(t *testing.T) {
+	const thread = "019fe75d-982e-77f0-b88f-c445689afcfa"
+	assert.True(t, exactCodexResumeCommandLine("/opt/codex resume "+thread+" --model gpt-5", thread))
+	assert.False(t, exactCodexResumeCommandLine("codex resume another-thread", thread))
+	assert.False(t, exactCodexResumeCommandLine("sh -c codex resume "+thread, thread),
+		"a wrapper containing the words is not proof that the TUI argv is running")
+	assert.False(t, exactCodexResumeCommandLine("bwrap -- codex resume "+thread, thread))
 }
 
 func TestAwaitCodexAppServerLaunchFailsFastBeforeConversationBind(t *testing.T) {
@@ -181,6 +218,93 @@ func TestCodexAppServerBootstrapBindsTUIThreadWithoutReplay(t *testing.T) {
 	if handle != nil {
 		_ = handle.client.Close()
 	}
+}
+
+func TestCodexAppServerExistingThreadResumeBindsWithoutTUIHook(t *testing.T) {
+	resetTestDB(t)
+	installCodexAppServerGenerationProofForTest(t, true)
+	previousResumeProof := codexAppServerResumedTUIAlive
+	proofCalls := 0
+	codexAppServerResumedTUIAlive = func(runtime db.CodexAppServerRuntime, threadID string) bool {
+		proofCalls++
+		return runtime.Generation == "resume-generation" && runtime.LaunchID == "resume-thread" &&
+			runtime.SocketPath != "" && threadID == "resume-thread"
+	}
+	t.Cleanup(func() { codexAppServerResumedTUIAlive = previousResumeProof })
+
+	dir, err := os.MkdirTemp("/tmp", "tcl-codex-resume-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(dir)) })
+	sim, err := testharness.StartCodexAppServerSim(filepath.Join(dir, "app.sock"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sim.Close() })
+	pidFile := filepath.Join(dir, "server.pid")
+	require.NoError(t, os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600))
+	runtime := db.CodexAppServerRuntime{
+		Generation: "resume-generation", LaunchID: "resume-thread", AgentID: "agent",
+		ConvID: "resume-thread", SocketPath: sim.SocketPath(), CodexVersion: "0.147.0",
+		State: db.CodexAppServerWarming,
+	}
+	require.NoError(t, db.UpsertCodexAppServerRuntime(runtime))
+
+	done := make(chan struct{})
+	go func() {
+		runCodexAppServerBootstrap(clcommon.SpawnArgs{
+			CodexAppServer: true, CodexAppServerGeneration: runtime.Generation,
+			CodexAppServerPIDFile: pidFile, CodexAppServerExistingThread: true,
+			ConvID: runtime.ConvID,
+		})
+		close(done)
+	}()
+	require.Equal(t, codexappserver.MethodInitialize, nextCodexAppServerMessage(t, sim).Method)
+	require.Equal(t, codexappserver.MethodInitialized, nextCodexAppServerMessage(t, sim).Method)
+	read := nextCodexAppServerMessage(t, sim)
+	require.Equal(t, codexappserver.MethodThreadRead, read.Method)
+	require.NoError(t, sim.Reply(read.ID, codexappserver.ThreadReadResult{Thread: codexappserver.Thread{
+		ID: runtime.ConvID, Status: json.RawMessage(`{"type":"idle"}`), Turns: []codexappserver.Turn{},
+	}}))
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("hookless existing-thread bootstrap did not finish")
+	}
+	require.Equal(t, 2, proofCalls, "resume argv proof is revalidated after thread/read")
+	stored, err := db.GetCodexAppServerRuntime(runtime.Generation)
+	require.NoError(t, err)
+	require.Equal(t, db.CodexAppServerReady, stored.State)
+	require.Equal(t, runtime.ConvID, stored.ThreadID)
+
+	rateRead := nextCodexAppServerMessage(t, sim)
+	require.Equal(t, codexappserver.MethodAccountRateLimitsRead, rateRead.Method)
+	require.NoError(t, sim.Reply(rateRead.ID, codexappserver.AccountRateLimitsReadResult{}))
+	deliveryDone := make(chan error, 1)
+	go func() { deliveryDone <- sendCodexAppServerMessage(runtime.ConvID, 88, "resume once") }()
+	reconcile := nextCodexAppServerMessage(t, sim)
+	require.Equal(t, codexappserver.MethodThreadRead, reconcile.Method)
+	require.NoError(t, sim.Reply(reconcile.ID, codexappserver.ThreadReadResult{Thread: codexappserver.Thread{
+		ID: runtime.ConvID, Status: json.RawMessage(`{"type":"idle"}`), Turns: []codexappserver.Turn{},
+	}}))
+	turn := nextCodexAppServerMessage(t, sim)
+	require.Equal(t, codexappserver.MethodTurnStart, turn.Method)
+	require.NoError(t, sim.Reply(turn.ID, codexappserver.TurnStartResult{Turn: codexappserver.Turn{
+		ID: "turn-88", Status: "inProgress", Items: []json.RawMessage{},
+	}}))
+	require.NoError(t, <-deliveryDone)
+	select {
+	case duplicate := <-sim.Messages():
+		require.NotEqual(t, codexappserver.MethodTurnStart, duplicate.Method)
+	case <-time.After(100 * time.Millisecond):
+	}
+	recipients, err := sim.SendRequestToSubscribers(codexappserver.MethodCommandApproval, map[string]string{"threadId": runtime.ConvID})
+	require.NoError(t, err)
+	require.Empty(t, recipients, "control connection must not own TUI-only server requests")
+
+	handle := codexAppServerHandleForConv(runtime.ConvID)
+	require.NotNil(t, handle)
+	handle.mutations.Lock()
+	handle.closing = true
+	_ = handle.client.Close()
+	handle.mutations.Unlock()
 }
 
 func TestCodexAppServerDaemonRestartReadoptsExactLiveThread(t *testing.T) {

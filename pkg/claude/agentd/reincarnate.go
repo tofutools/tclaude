@@ -522,6 +522,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		ContextWindowMax:       relaunch.ContextWindowMax,
 		CopilotAPI:             relaunch.CopilotAPI,
 		CodexAppServer:         relaunch.CodexAppServer,
+		CodexStateRoot:         relaunch.CodexStateRoot,
 		FastMode:               relaunch.FastMode,
 	}
 

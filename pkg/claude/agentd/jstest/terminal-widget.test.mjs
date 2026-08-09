@@ -236,6 +236,103 @@ test('fast socket refits after xterm cell measurements become available', async 
   widget.dispose();
 });
 
+test('first terminal output schedules a delayed one-row nudge and grid restore', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { mountTerminalWidget } = await harness.importDashboardModule('js/terminals-core.js');
+  const fakes = widgetFakes(harness.document);
+  const timers = [];
+  const widget = mountTerminalWidget({
+    host: harness.document.body.appendChild(harness.document.createElement('div')),
+    wsPath: '/api/open-window-ws/agt_codex',
+    authenticate: false,
+    postAttachResizeNudgeMs: 100,
+    setTimeoutImpl(handler, delay) {
+      const timer = { handler, delay, cleared: false };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeoutImpl(timer) { timer.cleared = true; },
+    TerminalCtor: fakes.FakeTerminal,
+    FitAddonCtor: fakes.FakeFitAddon,
+    WebSocketCtor: fakes.FakeWebSocket,
+    ResizeObserverCtor: fakes.FakeResizeObserver,
+    locationRef: { protocol: 'http:', host: 'dashboard.test' },
+    documentRef: harness.document,
+    interactionsFactory: fakes.interactionsFactory,
+  });
+
+  await widget.connect();
+  const socket = fakes.sockets[0];
+  socket.open();
+  assert.equal(timers.length, 0, 'WebSocket open alone does not prove tmux attached');
+  socket.onmessage({ data: 'first attached screen' });
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].delay, 500, 'the re-sync waits briefly after attach output starts');
+  socket.onmessage({ data: 'more screen output' });
+  assert.equal(timers.length, 1, 'only the first output frame arms the one-shot re-sync');
+  const sendsAfterOpen = socket.sent.length;
+  const fitsAfterOpen = fakes.terminal().addons[0].fitCount;
+
+  timers[0].handler();
+  assert.equal(fakes.terminal().addons[0].fitCount, fitsAfterOpen + 1);
+  assert.equal(socket.sent.length, sendsAfterOpen + 1, 'the PTY receives a real one-row geometry change');
+  assert.deepEqual(JSON.parse(socket.sent.at(-1)), {
+    type: 'resize', cols: 80, rows: 23,
+  });
+  assert.equal(timers.length, 2);
+  assert.equal(timers[1].delay, 100, 'the nudge is brief but gives tmux time to observe it');
+
+  timers[1].handler();
+  assert.equal(socket.sent.length, sendsAfterOpen + 2);
+  assert.deepEqual(JSON.parse(socket.sent.at(-1)), {
+    type: 'resize', cols: 80, rows: 24,
+  }, 'the settled xterm grid is restored');
+
+  widget.dispose();
+});
+
+test('reconnect and dispose cancel a stale delayed resize', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { mountTerminalWidget } = await harness.importDashboardModule('js/terminals-core.js');
+  const fakes = widgetFakes(harness.document);
+  const timers = [];
+  const widget = mountTerminalWidget({
+    host: harness.document.body.appendChild(harness.document.createElement('div')),
+    wsPath: '/api/open-window-ws/agt_codex',
+    authenticate: false,
+    setTimeoutImpl(handler, delay) {
+      const timer = { handler, delay, cleared: false };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeoutImpl(timer) { timer.cleared = true; },
+    TerminalCtor: fakes.FakeTerminal,
+    FitAddonCtor: fakes.FakeFitAddon,
+    WebSocketCtor: fakes.FakeWebSocket,
+    ResizeObserverCtor: fakes.FakeResizeObserver,
+    locationRef: { protocol: 'http:', host: 'dashboard.test' },
+    documentRef: harness.document,
+    interactionsFactory: fakes.interactionsFactory,
+  });
+
+  await widget.connect();
+  fakes.sockets[0].open();
+  fakes.sockets[0].onmessage({ data: 'attached screen' });
+  assert.equal(timers.length, 1);
+
+  timers[0].handler();
+  assert.equal(timers.length, 2, 'the delayed nudge schedules its restore');
+
+  await widget.connect();
+  assert.equal(timers[1].cleared, true, 'reconnect cancels the old connection restore');
+  fakes.sockets[1].open();
+  fakes.sockets[1].onmessage({ data: 'reattached screen' });
+  assert.equal(timers.length, 3);
+
+  widget.dispose();
+  assert.equal(timers[2].cleared, true, 'dispose cancels the current connection re-sync');
+});
+
 test('a host with no layout reports no size until it has real geometry', async (t) => {
   const harness = await createPreactHarness(t);
   const { mountTerminalWidget } = await harness.importDashboardModule('js/terminals-core.js');
@@ -361,6 +458,7 @@ test('initial retry covers failed and briefly unstable sockets, then yields to m
     initialRetry: true,
     initialRetryDelays: [10, 20],
     initialRetryStabilityMs: 100,
+    postAttachResizeDelayMs: -1,
     setTimeoutImpl(handler, delay) {
       const timer = { handler, delay, cleared: false };
       timers.push(timer);

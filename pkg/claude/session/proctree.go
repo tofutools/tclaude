@@ -49,6 +49,29 @@ type procTable struct {
 	cmdline func(pid int) string
 }
 
+// ProcessTreeCommandLines returns the root process argv followed by every
+// visible descendant argv. Security-sensitive callers use this when the tmux
+// pane may have exec'd the harness directly, making the harness the root rather
+// than a descendant. ok=false means the process tree could not be proved.
+func ProcessTreeCommandLines(rootPID int) ([]string, bool) {
+	if rootPID <= 0 || !IsProcessAlive(rootPID) {
+		return nil, false
+	}
+	table, ok := readProcTable()
+	if !ok {
+		return nil, false
+	}
+	root := table.cmdline(rootPID)
+	if root == "" {
+		return nil, false
+	}
+	descendants, ok := DescendantCommandLines(rootPID)
+	if !ok {
+		return nil, false
+	}
+	return append([]string{root}, descendants...), true
+}
+
 // DescendantCommandLines returns the full argv of every process running
 // below rootPID — recursively, excluding rootPID itself.
 //

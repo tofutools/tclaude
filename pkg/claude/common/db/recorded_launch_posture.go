@@ -69,6 +69,12 @@ func ComposeAgentRelaunchProfile(base, overlay *AgentRelaunchProfile) *AgentRela
 	if overlay.CodexAppServerSource != nil {
 		merged.CodexAppServerSource = overlay.CodexAppServerSource
 	}
+	if overlay.CodexStateRoot != nil {
+		merged.CodexStateRoot = overlay.CodexStateRoot
+	}
+	if overlay.CodexStateRootSource != nil {
+		merged.CodexStateRootSource = overlay.CodexStateRootSource
+	}
 	if overlay.FastMode != nil {
 		merged.FastMode = overlay.FastMode
 	}

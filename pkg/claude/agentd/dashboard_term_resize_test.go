@@ -2,14 +2,47 @@ package agentd
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+// A same-size resize signals the direct PTY process (the tmux client) but tmux
+// does not relay unchanged geometry into its pane. Prove the browser's delayed
+// one-row nudge does reach the harness process behind tmux; restoring the real
+// size then gives it a second SIGWINCH at the final geometry.
+func TestTermWS_ChangedSizeResizeReachesProcessInsideTmux(t *testing.T) {
+	tmux, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux unavailable")
+	}
+	socket := fmt.Sprintf("/tmp/tclaude-resize-probe-%d.sock", os.Getpid())
+	t.Cleanup(func() { _ = os.Remove(socket) })
+	// Install the trap only after attach so an attach-time notification cannot
+	// satisfy the assertion intended for the explicit same-size resend.
+	inner := `echo INNER_READY; read _; trap 'echo INNER_WINCHED' WINCH; echo INNER_ARMED; while :; do sleep 0.1; done`
+	create := exec.Command(tmux, "-S", socket, "new-session", "-d", "-x", "101", "-y", "31", "-s", "resize-probe", "sh", "-c", inner)
+	if out, err := create.CombinedOutput(); err != nil {
+		t.Fatalf("create tmux: %v: %s", err, out)
+	}
+	t.Cleanup(func() { _ = exec.Command(tmux, "-S", socket, "kill-server").Run() })
+	conn := dialPTYWS(t, fmt.Sprintf("exec %s -S %s attach-session -t resize-probe", shellSingleQuote(tmux), shellSingleQuote(socket)))
+	sendResize(t, conn, 101, 31)
+	collectUntil(t, conn, "INNER_READY", 5*time.Second)
+	if err := conn.WriteMessage(websocket.BinaryMessage, []byte("arm\n")); err != nil {
+		t.Fatalf("arm inner resize trap: %v", err)
+	}
+	collectUntil(t, conn, "INNER_ARMED", 5*time.Second)
+	sendResize(t, conn, 101, 30)
+	collectUntil(t, conn, "INNER_WINCHED", 5*time.Second)
+}
 
 // These tests exercise runPTYOverWS against a real PTY and a real WebSocket,
 // with `sh` scripts that report what size their tty actually had. They guard

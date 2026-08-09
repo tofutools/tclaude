@@ -107,6 +107,11 @@ type AgentRelaunchProfile struct {
 	// nil means legacy/unknown and resolves to send-keys.
 	CodexAppServer       *bool   `json:"codex_app_server,omitempty"`
 	CodexAppServerSource *string `json:"codex_app_server_source,omitempty"`
+	// CodexStateRoot is the exact host-side state directory used by the launch
+	// wrapper. Source records whether CODEX_HOME or HOME selected it. Both are
+	// durable so recovery does not accidentally consult the daemon's own home.
+	CodexStateRoot       *string `json:"codex_state_root,omitempty"`
+	CodexStateRootSource *string `json:"codex_state_root_source,omitempty"`
 	// FastMode preserves an explicit Codex tier across relaunches. nil means
 	// inherit config.toml; true/false force fast/standard respectively.
 	FastMode               *bool   `json:"fast_mode,omitempty"`
@@ -664,6 +669,21 @@ func SetConversationCopilotAPI(convID, harnessName, cwd string, value bool) erro
 		})
 }
 
+// SetConversationCodexStateRoot records the wrapper-visible Codex store for a
+// conversation whose stable clone actor may not exist yet. Managed agents also
+// freeze the same values in AgentRelaunchProfile at birth.
+func SetConversationCodexStateRoot(convID, harnessName, cwd, root, source string) error {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return errors.New("SetConversationCodexStateRoot: root required")
+	}
+	return updateConversationFallbackRelaunch(convID, harnessName, cwd,
+		func(fallback *AgentRelaunchProfile) {
+			fallback.CodexStateRoot = stringPtr(root)
+			fallback.CodexStateRootSource = stringPtr(strings.TrimSpace(source))
+		})
+}
+
 // updateConversationFallbackRelaunch is the conv-keyed twin of
 // updateSessionFallbackRelaunch. A conversation with no profile yet is SEEDED
 // from harnessName/cwd rather than skipped: the callers that need this run
@@ -1045,6 +1065,12 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		}
 		if conversationFallback.CodexAppServerSource == nil {
 			conversationFallback.CodexAppServerSource = existingConversation.FallbackRelaunch.CodexAppServerSource
+		}
+		if conversationFallback.CodexStateRoot == nil {
+			conversationFallback.CodexStateRoot = existingConversation.FallbackRelaunch.CodexStateRoot
+		}
+		if conversationFallback.CodexStateRootSource == nil {
+			conversationFallback.CodexStateRootSource = existingConversation.FallbackRelaunch.CodexStateRootSource
 		}
 		if conversationFallback.ConfiguredContextWindowMax == nil {
 			conversationFallback.ConfiguredContextWindowMax =

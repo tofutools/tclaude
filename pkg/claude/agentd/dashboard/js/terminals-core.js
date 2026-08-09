@@ -22,6 +22,16 @@ import { terminalThemeFor } from './terminal-theme.js';
 // the explicit Reconnect control instead of creating a permanent retry loop.
 export const INITIAL_RETRY_DELAYS_MS = Object.freeze([200, 500, 1000]);
 export const INITIAL_RETRY_STABILITY_MS = 1000;
+// The opening resize is also the PTY startup handshake, so even the next-frame
+// refit can reach tmux before the attached harness has installed its resize
+// handling. Codex is particularly visible when that happens: tmux's status bar
+// moves to the right place, but the TUI keeps its old layout until the browser
+// changes size again. After the first terminal output proves the attach is
+// producing a screen, briefly nudge the PTY by one row, then put it back. A
+// same-size resend is insufficient here: it signals the tmux client, but tmux
+// does not relay unchanged geometry to the process inside its pane.
+export const POST_ATTACH_RESIZE_DELAY_MS = 500;
+export const POST_ATTACH_RESIZE_NUDGE_MS = 100;
 
 // Losing agentd is the one disconnect a terminal may repair on its own, because
 // it is the one it can PROVE. Every other reason a socket closes — the session
@@ -103,6 +113,8 @@ export function mountTerminalWidget({
   initialRetry = false,
   initialRetryDelays = INITIAL_RETRY_DELAYS_MS,
   initialRetryStabilityMs = INITIAL_RETRY_STABILITY_MS,
+  postAttachResizeDelayMs = POST_ATTACH_RESIZE_DELAY_MS,
+  postAttachResizeNudgeMs = POST_ATTACH_RESIZE_NUDGE_MS,
   restartWatcher = sharedRestartWatcher,
   // Off for a surface that answers its own disconnect. The modal terminal
   // raises a blocking "reconnect or close?" dialog, and a reattach landing
@@ -141,6 +153,8 @@ export function mountTerminalWidget({
   let retryIndex = 0;
   let retryTimer = null;
   let postOpenFitFrame = null;
+  let postAttachResizeTimer = null;
+  let postAttachResizeScheduled = false;
   // The daemon this socket is attached to, read when it opened, and the
   // outstanding "tell me if that changes" registration.
   let instanceBaseline = null;
@@ -191,7 +205,7 @@ export function mountTerminalWidget({
     if (!disposed) term.focus();
   }
 
-  function sendResize() {
+  function sendDimensions(cols, rows, requireLayout = true) {
     if (disposed || !ws || ws.readyState !== WebSocketCtor.OPEN) return;
     // A host with no layout — a display:none mount before the Terminals tab
     // reveals, a pane mid-teardown — makes FitAddon propose garbage (a tiny
@@ -201,8 +215,13 @@ export function mountTerminalWidget({
     // path (setActive, the ResizeObserver, the post-open refit) re-fits and
     // resends once the host has real geometry. Strictly-equal zero so a test
     // DOM without layout (offsetWidth undefined) keeps its sends.
-    if (host.offsetWidth === 0 || host.offsetHeight === 0) return;
-    ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+    if (requireLayout && (host.offsetWidth === 0 || host.offsetHeight === 0)) return false;
+    ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+    return true;
+  }
+
+  function sendResize() {
+    return sendDimensions(term.cols, term.rows);
   }
 
   function closeSocket() {
@@ -236,6 +255,12 @@ export function mountTerminalWidget({
     postOpenFitFrame = null;
   }
 
+  function cancelPostAttachResize() {
+    if (postAttachResizeTimer === null) return;
+    clearTimeoutImpl(postAttachResizeTimer);
+    postAttachResizeTimer = null;
+  }
+
   // xterm may accept a very fast WebSocket before its first render has
   // established cell dimensions. In that window FitAddon cannot calculate a
   // grid, so the immediate resize below sends xterm's constructor default and
@@ -252,6 +277,39 @@ export function mountTerminalWidget({
       fit();
       sendResize();
     });
+  }
+
+  // One animation frame is enough for xterm's cell metrics, but not
+  // necessarily for the tmux client and harness behind the PTY to finish
+  // attaching. This later nudge deliberately fits first: if surrounding
+  // dashboard chrome also settled during that wait, the re-sync starts from
+  // the newest grid. The original size is restored after a short interval so
+  // tmux observes a real geometry transition and relays SIGWINCH into its pane.
+  // It is one-shot and connection-scoped, never a resize loop.
+  function schedulePostAttachResize(mine, socket) {
+    cancelPostAttachResize();
+    const delay = Number(postAttachResizeDelayMs);
+    if (!Number.isFinite(delay) || delay < 0) return;
+    postAttachResizeTimer = setTimeoutImpl(() => {
+      postAttachResizeTimer = null;
+      if (disposed || mine !== generation || ws !== socket || !isActive) return;
+      fit();
+      const cols = term.cols;
+      const rows = term.rows;
+      const nudgedRows = rows > 1 ? rows - 1 : rows + 1;
+      if (!sendDimensions(cols, nudgedRows)) return;
+
+      const nudgeDelay = Math.max(0, Number(postAttachResizeNudgeMs) || 0);
+      postAttachResizeTimer = setTimeoutImpl(() => {
+        postAttachResizeTimer = null;
+        if (disposed || mine !== generation || ws !== socket) return;
+        // Fit again in case a genuine browser resize landed during the nudge.
+        // Restore even if the pane just became inactive: leaving the backing
+        // PTY one row short is worse than sending the last xterm grid.
+        if (isActive) fit();
+        sendDimensions(term.cols, term.rows, false);
+      }, nudgeDelay);
+    }, delay);
   }
 
   function cancelRestartWatchIfAny() {
@@ -351,9 +409,11 @@ export function mountTerminalWidget({
     if (disposed) return false;
     generation += 1;
     const mine = generation;
+    postAttachResizeScheduled = false;
     abortAuth();
     closeSocket();
     cancelPostOpenFit();
+    cancelPostAttachResize();
     // Dialing now, so any pending "tell me when the daemon is new" is moot.
     cancelRestartWatchIfAny();
     setReconnectAvailable(false);
@@ -404,9 +464,18 @@ export function mountTerminalWidget({
     socket.onmessage = (event) => {
       if (disposed || mine !== generation || ws !== socket) return;
       term.write(event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data);
+      // WebSocket open precedes PTY creation on the server. The first output is
+      // the browser's earliest proof that the command/tmux attach is actually
+      // producing a screen, so anchor the delayed harness reflow here instead
+      // of to a fixed interval from socket open. Only the first frame arms it.
+      if (!postAttachResizeScheduled) {
+        postAttachResizeScheduled = true;
+        schedulePostAttachResize(mine, socket);
+      }
     };
     socket.onclose = () => {
       if (disposed || mine !== generation || ws !== socket) return;
+      cancelPostAttachResize();
       const unstable = openedAt === null || now() - openedAt < initialRetryStabilityMs;
       if (unstable && scheduleInitialRetry()) return;
       setStatus('disconnected');
@@ -475,6 +544,7 @@ export function mountTerminalWidget({
       generation += 1;
       cancelRetry();
       cancelPostOpenFit();
+      cancelPostAttachResize();
       cancelRestartWatchIfAny();
       abortAuth();
       closeSocket();

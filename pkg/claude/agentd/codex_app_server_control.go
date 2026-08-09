@@ -129,6 +129,15 @@ func readyCodexAppServerHandle(convID string) (*codexAppServerHandle, error) {
 }
 
 func sendCodexAppServerMessage(convID string, messageID int64, text string) error {
+	return sendCodexAppServerText(convID, codexAppServerMessageID(messageID), text)
+}
+
+func sendCodexAppServerUnreadReminder(convID string, at time.Time, text string) error {
+	return sendCodexAppServerText(convID,
+		"tclaude-unread-reminder-"+strconv.FormatInt(at.UnixNano(), 10), text)
+}
+
+func sendCodexAppServerText(convID, clientID, text string) error {
 	handle, err := readyCodexAppServerHandle(convID)
 	if err != nil {
 		return err
@@ -137,7 +146,7 @@ func sendCodexAppServerMessage(convID string, messageID int64, text string) erro
 	defer cancel()
 	handle.mutations.Lock()
 	defer handle.mutations.Unlock()
-	return handle.sendMessageLocked(ctx, codexAppServerMessageID(messageID), text, true)
+	return handle.sendMessageLocked(ctx, clientID, text, true)
 }
 
 // dbCodexRuntime is a tiny seam kept here to make route-state classification

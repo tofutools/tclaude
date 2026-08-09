@@ -498,7 +498,7 @@ CREATE TABLE "pending_spawns" (
 			worktree_path   TEXT NOT NULL DEFAULT '',
 			worktree_branch TEXT NOT NULL DEFAULT '',
 			created_at      INTEGER NOT NULL
-		, reply_to_agent TEXT NOT NULL DEFAULT '', spawned_by_agent TEXT NOT NULL DEFAULT '', is_owner INTEGER NOT NULL DEFAULT 0, permission_overrides TEXT NOT NULL DEFAULT '', process_command_id TEXT NOT NULL DEFAULT '', effective_sandbox_config TEXT NOT NULL DEFAULT '', agent_id TEXT NOT NULL DEFAULT '', launching INTEGER NOT NULL DEFAULT 0, task_url TEXT NOT NULL DEFAULT '', task_label TEXT NOT NULL DEFAULT '', profile_context TEXT NOT NULL DEFAULT '') STRICT;
+		, reply_to_agent TEXT NOT NULL DEFAULT '', spawned_by_agent TEXT NOT NULL DEFAULT '', is_owner INTEGER NOT NULL DEFAULT 0, permission_overrides TEXT NOT NULL DEFAULT '', process_command_id TEXT NOT NULL DEFAULT '', effective_sandbox_config TEXT NOT NULL DEFAULT '', agent_id TEXT NOT NULL DEFAULT '', launching INTEGER NOT NULL DEFAULT 0, task_url TEXT NOT NULL DEFAULT '', task_label TEXT NOT NULL DEFAULT '', profile_context TEXT NOT NULL DEFAULT '', codex_app_server INTEGER, codex_app_server_source TEXT NOT NULL DEFAULT '', codex_state_root TEXT NOT NULL DEFAULT '', codex_state_root_source TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE UNIQUE INDEX idx_pending_spawns_process_command ON pending_spawns(process_command_id) WHERE process_command_id <> '';
 

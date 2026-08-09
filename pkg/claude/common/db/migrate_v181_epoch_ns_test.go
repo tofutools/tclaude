@@ -115,6 +115,8 @@ func TestMigrateV180toV181_ConvertsEveryTimestampAndPreservesSchemaGraph(t *test
 	require.NoError(t, migrateV198toV199(d), "advance upgraded fixture to current schema")
 	require.NoError(t, migrateV199toV200(d), "advance upgraded fixture to current schema")
 	require.NoError(t, migrateV200toV201(d), "advance upgraded fixture to current schema")
+	require.NoError(t, migrateV201toV202(d), "advance upgraded fixture to current schema")
+	require.NoError(t, migrateV202toV203(d), "advance upgraded fixture to current schema")
 	upgradedSchema, err := SchemaSQL(d)
 	require.NoError(t, err)
 	freshSchema, err := SchemaSQL(fresh)

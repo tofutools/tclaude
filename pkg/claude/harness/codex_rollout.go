@@ -321,7 +321,11 @@ func (z *zstdReadCloser) Close() error {
 // walk errors are tolerated so one unreadable date dir doesn't hide the
 // rest.
 func scanCodexRollouts(home string) ([]string, error) {
-	root := codexSessionsDir(home)
+	return scanCodexRolloutsAt(filepath.Join(home, ".codex"))
+}
+
+func scanCodexRolloutsAt(configDir string) ([]string, error) {
+	root := codexSessionsDirAt(configDir)
 	if _, err := os.Stat(root); err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -356,10 +360,14 @@ func scanCodexRollouts(home string) ([]string, error) {
 // session is mid-compression (both .jsonl and .jsonl.zst on disk) it
 // returns the preferred (uncompressed) one.
 func findCodexRollout(home, convID string) (string, error) {
+	return findCodexRolloutAt(filepath.Join(home, ".codex"), convID)
+}
+
+func findCodexRolloutAt(configDir, convID string) (string, error) {
 	// Codex already records the exact path on threads.rollout_path. Prefer
 	// that point lookup over walking the date tree; the walk remains the
 	// compatibility fallback for old/missing state DBs and stale rows.
-	if p, err := codexThreadRolloutPath(home, convID); err == nil {
+	if p, err := codexThreadRolloutPathAt(configDir, convID); err == nil {
 		if codexIDFromRolloutName(filepath.Base(p)) == convID {
 			if strings.HasSuffix(p, ".zst") {
 				// During archival Codex writes the compressed sibling before
@@ -376,7 +384,7 @@ func findCodexRollout(home, convID string) (string, error) {
 			}
 		}
 	}
-	paths, err := scanCodexRollouts(home)
+	paths, err := scanCodexRolloutsAt(configDir)
 	if err != nil {
 		return "", err
 	}
@@ -428,8 +436,10 @@ func preferCodexRollout(a, b string) string {
 
 // codexSessionsDir is the root of Codex's date-indexed rollout tree.
 func codexSessionsDir(home string) string {
-	return filepath.Join(home, ".codex", "sessions")
+	return codexSessionsDirAt(filepath.Join(home, ".codex"))
 }
+
+func codexSessionsDirAt(configDir string) string { return filepath.Join(configDir, "sessions") }
 
 // IsCodexRolloutPath reports whether path's FILENAME matches a Codex rollout
 // (`rollout-<ts>-<uuid>.jsonl[.zst]`). It lets a caller holding a candidate
