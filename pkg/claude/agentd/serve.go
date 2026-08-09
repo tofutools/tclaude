@@ -1336,11 +1336,7 @@ func logRequest(h http.Handler) http.Handler {
 		rec := &statusRec{ResponseWriter: w, code: 200}
 		h.ServeHTTP(rec, r)
 		p := peerFromContext(r.Context())
-		level := slog.LevelInfo
-		if rec.code >= http.StatusOK && rec.code < http.StatusMultipleChoices {
-			level = slog.LevelDebug
-		}
-		slog.Log(r.Context(), level, "http",
+		slog.DebugContext(r.Context(), "http",
 			"method", r.Method,
 			"path", safeHTTPLogPath(r.URL.Path),
 			"status", rec.code,
