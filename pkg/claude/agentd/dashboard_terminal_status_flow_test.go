@@ -27,8 +27,9 @@ func TestDashboardTerminalStatus_ReturnsCompactLiveAgentProjection(t *testing.T)
 		StatusDetail: "needs a decision", LastHook: time.Now(),
 	}))
 
-	rec := testharness.Serve(agentd.BuildDashboardHandlerForTest(),
-		testharness.JSONRequest(t, http.MethodGet, "/api/agents/"+agentID+"/status", nil))
+	req := testharness.JSONRequest(t, http.MethodGet, "/api/agents/"+agentID+"/status", nil)
+	req.Header.Set("Origin", "http://127.0.0.1")
+	rec := testharness.Serve(agentd.BuildDashboardHandlerForTest(), req)
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	assert.Equal(t, "no-store", rec.Header().Get("Cache-Control"))
 
