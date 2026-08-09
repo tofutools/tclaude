@@ -247,3 +247,51 @@ func TestDotToggle_IdempotentBothDirections(t *testing.T) {
 	assert.Equal(t, "skipped:already_offline", resp.Action,
 		"stopping an offline agent must be a reported no-op")
 }
+
+// Scenario: the shutdown dialog sends {"wait":true} so its spinner spans the
+// REAL stop — the response must not land until the pane process is gone. The
+// simulated pane dies on the injected exit, so the waiting stop still answers
+// soft_stopped with the session verified dead, and the snapshot agrees.
+func TestDotToggle_WaitingStopAnswersAfterThePaneIsGone(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	const conv = "dtwa-1111-2222-3333-444444444444"
+	const tmuxSes = "tmux-dtwa"
+	f.HaveConvWithTitle(conv, "waiting-worker")
+	f.HaveAliveSession(conv, "spwn-dtwa", tmuxSes, f.TestCwd("dtwa"))
+	f.HaveEnrolledAgent(conv)
+	require.True(t, f.World.Tmux.IsAlive(tmuxSes), "pre: the agent's session is alive")
+
+	code, resp := postDotVerb(t, mux, conv, "stop", `{"force":false,"wait":true}`)
+	require.Equal(t, http.StatusOK, code)
+	assert.Equal(t, "soft_stopped", resp.Action,
+		"a waiting soft stop still reports the soft outcome; detail=%s", resp.Detail)
+	assert.False(t, f.World.Tmux.IsAlive(tmuxSes),
+		"a waiting stop must not answer while the tmux session lives")
+
+	snap := fetchDashSnapshot(t, mux)
+	a := findDashAgent(snap, conv)
+	require.NotNil(t, a)
+	assert.False(t, a.Online, "the row is already offline when the dialog closes")
+}
+
+// The waiting force-kill contract: {"force":true,"wait":true} kills and only
+// answers once the process is verified gone.
+func TestDotToggle_WaitingForceKillAnswersAfterThePaneIsGone(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	const conv = "dtwf-1111-2222-3333-444444444444"
+	const tmuxSes = "tmux-dtwf"
+	f.HaveConvWithTitle(conv, "waiting-kill-worker")
+	f.HaveAliveSession(conv, "spwn-dtwf", tmuxSes, f.TestCwd("dtwf"))
+	f.HaveEnrolledAgent(conv)
+
+	code, resp := postDotVerb(t, mux, conv, "stop", `{"force":true,"wait":true}`)
+	require.Equal(t, http.StatusOK, code)
+	assert.Equal(t, "killed", resp.Action, "detail=%s", resp.Detail)
+	assert.False(t, f.World.Tmux.IsAlive(tmuxSes))
+}
