@@ -140,6 +140,11 @@ var launchCarryoverExcused = map[string]string{
 	"CodexAppServerSource": "not a launch parameter of its own — it is the attribution for " +
 		"CodexAppServer, carried by that field's own record, so a separate entry here would " +
 		"be a second, desynchronizable copy of the same decision",
+	"CodexStateRoot": "environment-only pre-resolution input: a managed relaunch restores " +
+		"CODEX_HOME on the session wrapper before this posture can be loaded; it is never a " +
+		"session-new flag and carrying it here would be too late to locate the conversation",
+	"CodexStateRootSource": "attribution for the environment-only CodexStateRoot, not an " +
+		"independent session-new launch parameter",
 	"SSHWorkaroundSource": "not a launch parameter of its own — it is the attribution for " +
 		"SSHWorkaround, which is itself excused above",
 }
