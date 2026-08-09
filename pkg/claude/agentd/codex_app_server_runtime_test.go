@@ -17,6 +17,31 @@ import (
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
+func TestPrepareCodexAppServerRuntimeIsolatesAgents(t *testing.T) {
+	resetTestDB(t)
+	originalProbe := codexAppServerVersionOutput
+	codexAppServerVersionOutput = func() ([]byte, error) { return []byte("codex-cli 0.147.2\n"), nil }
+	t.Cleanup(func() { codexAppServerVersionOutput = originalProbe })
+
+	first := clcommon.SpawnArgs{CodexAppServer: true, AgentID: "agent-one", Label: "one"}
+	second := clcommon.SpawnArgs{CodexAppServer: true, AgentID: "agent-two", Label: "two"}
+	require.NoError(t, prepareCodexAppServerRuntime(&first))
+	require.NoError(t, prepareCodexAppServerRuntime(&second))
+	t.Cleanup(func() {
+		removeCodexAppServerGeneration(first.CodexAppServerSocket)
+		removeCodexAppServerGeneration(second.CodexAppServerSocket)
+	})
+
+	assert.NotEqual(t, first.CodexAppServerGeneration, second.CodexAppServerGeneration)
+	assert.NotEqual(t, filepath.Dir(filepath.Dir(first.CodexAppServerSocket)),
+		filepath.Dir(filepath.Dir(second.CodexAppServerSocket)), "agents need distinct owner directories")
+	for _, socket := range []string{first.CodexAppServerSocket, second.CodexAppServerSocket} {
+		info, err := os.Stat(filepath.Dir(socket))
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o700), info.Mode().Perm())
+	}
+}
+
 func TestSessionArgsCarryPrivateCodexAppServerGeneration(t *testing.T) {
 	for name, args := range map[string][]string{
 		"new": sessionNewArgs(clcommon.SpawnArgs{

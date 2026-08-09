@@ -36,6 +36,10 @@ var codexAppServerHandles = struct {
 	byGeneration map[string]*codexAppServerHandle
 }{byConv: map[string]*codexAppServerHandle{}, byGeneration: map[string]*codexAppServerHandle{}}
 
+var codexAppServerVersionOutput = func() ([]byte, error) {
+	return exec.Command("codex", "--version").CombinedOutput()
+}
+
 // prepareCodexAppServerRuntime performs every check that can be proved before
 // the pane exists, allocates an exclusive private generation, and records its
 // warming state. A selected drive never falls back to the old pane channel.
@@ -43,7 +47,7 @@ func prepareCodexAppServerRuntime(args *clcommon.SpawnArgs) error {
 	if args == nil || !args.CodexAppServer {
 		return nil
 	}
-	versionOutput, err := exec.Command("codex", "--version").CombinedOutput()
+	versionOutput, err := codexAppServerVersionOutput()
 	if err != nil {
 		return fmt.Errorf("codex app-server preflight: codex --version: %w", err)
 	}
