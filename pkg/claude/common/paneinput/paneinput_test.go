@@ -1,6 +1,7 @@
 package paneinput
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -70,6 +71,25 @@ func TestInjectTextAndSubmitUsesLiteralModeForSingleLineText(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, []string{"send-keys", "-l", "-t", "=pane-literal:0.0", "Enter"}, commands[0])
+}
+
+func TestInjectTextAndSubmitCancelsTmuxModeBeforeInput(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	var commands [][]string
+	err := InjectTextAndSubmit("pane-copy-mode:0.0", "message", Options{
+		Run: func(args ...string) error {
+			commands = append(commands, append([]string(nil), args...))
+			if len(args) > 1 && args[1] == "-X" {
+				return errors.New("not in a mode")
+			}
+			return nil
+		},
+		SettleDelay: 0, SettleDelaySet: true,
+		CancelMode: true,
+	})
+	require.NoError(t, err, "an inactive-mode cancel error must be harmless")
+	require.Equal(t, []string{"send-keys", "-X", "-t", "=pane-copy-mode:0.0", "cancel"}, commands[0])
+	require.Equal(t, []string{"send-keys", "-l", "-t", "=pane-copy-mode:0.0", "message"}, commands[1])
 }
 
 func TestInjectTextAndSubmitCanForceBracketedPasteForSingleLineText(t *testing.T) {

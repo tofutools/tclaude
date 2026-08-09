@@ -1916,6 +1916,7 @@ func injectCopilotSignalExitSerializedBy(lockTarget, tmuxTarget string) error {
 		Run:         runTmuxCommand,
 		LockTimeout: paneInjectLockTimeout,
 		LockID:      lockTarget,
+		CancelMode:  true,
 	}, func(run paneinput.Runner, target string) error {
 		for press := range copilotSignalExitPresses {
 			if press > 0 {
@@ -1946,6 +1947,7 @@ func injectTextAndSubmitWithOptions(lockTarget, tmuxTarget, text string, forceBr
 		LockID:              lockTarget,
 		ForceBracketedPaste: forceBracketedPaste,
 		PrefixKeys:          prefixKeys,
+		CancelMode:          true,
 	})
 }
 
@@ -1991,6 +1993,7 @@ func injectMenuToggle(tmuxTarget, toggle string, menuKeys []string, confirmDelay
 	return paneinput.WithLock(tmuxTarget, paneinput.Options{
 		Run:         runTmuxCommand,
 		LockTimeout: paneInjectLockTimeout,
+		CancelMode:  true,
 	}, func(run paneinput.Runner, target string) error {
 		if err := run("send-keys", "-t", target, toggle); err != nil {
 			return fmt.Errorf("send-keys toggle: %w", err)
