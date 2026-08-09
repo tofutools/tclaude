@@ -239,6 +239,11 @@ the listener through a generation-owned Unix byte relay; Codex still performs
 the bearer check after the relay. The capability is excluded from tool-shell
 environments and kept only in daemon-private state needed for restart recovery.
 Knowing the relay path is therefore insufficient to attach or drive a thread.
+The separately launched app-server owns model tool execution, so it receives
+the same per-launch managed permission profile as a complete config overlay
+(`app-server` does not accept the TUI's runtime-only `-p` selector). That
+preserves filesystem, network and Unix-socket posture—including the agentd
+socket floor, private-state denial, and tmux denial—on both execution owners.
 
 This boundary protects managed Linux and macOS agents whose sandbox keeps
 `~/.tclaude/data` private. It does not claim isolation from an intentionally

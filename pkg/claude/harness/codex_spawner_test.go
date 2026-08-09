@@ -171,10 +171,24 @@ func TestCodexSpawner_AppServerKeepsTUIAsSoleBirthWriter(t *testing.T) {
 		TclaudeExecutable:          "/opt/tclaude bin/tclaude",
 		CodexAppServerPIDFile:      "/tmp/private agent/server.pid",
 		CodexAppServerLogFile:      "/tmp/private agent/server.log",
+		PermissionProfile:          "tclaude-agent-launch",
+		CodexAppServerProfileOverrides: []string{
+			`default_permissions="tclaude-agent-launch"`,
+			`permissions.tclaude-agent-launch={extends=":workspace",filesystem={"/tmp/read"="read"},network={enabled=true,unix_sockets={"/tmp/agentd.sock"="allow"}}}`,
+		},
 	})
 
 	if strings.Count(got, "app-server --listen") != 1 {
 		t.Fatalf("launch must own exactly one app-server, got %q", got)
+	}
+	if !strings.Contains(got, `' -c 'default_permissions="tclaude-agent-launch"' -c 'permissions.tclaude-agent-launch=`) {
+		t.Fatalf("the tool-executing app-server must load the managed permission overlay, got %q", got)
+	}
+	if strings.Count(got, "-p tclaude-agent-launch") != 1 {
+		t.Fatalf("only the remote TUI may use runtime-only -p, got %q", got)
+	}
+	if strings.Contains(strings.Split(got, " app-server --listen")[0], " -p ") {
+		t.Fatalf("Codex 0.147 rejects -p on app-server, got %q", got)
 	}
 	if !strings.Contains(got, "--remote ws://127.0.0.1:45678 --remote-auth-token-env TCLAUDE_CODEX_APP_SERVER_TOKEN") {
 		t.Fatalf("the normal TUI must attach to the private server, got %q", got)
@@ -200,6 +214,34 @@ func TestCodexSpawner_AppServerKeepsTUIAsSoleBirthWriter(t *testing.T) {
 	}
 	if strings.Contains(got, "turn/start") {
 		t.Fatalf("the launch envelope must not replay the birth prompt through RPC, got %q", got)
+	}
+}
+
+func TestCodexSpawner_AppServerResumeKeepsManagedProfileOnToolServer(t *testing.T) {
+	got := codexSpawner{}.BuildCommand(SpawnSpec{
+		ResumeID:                   "thread-existing",
+		PermissionProfile:          "tclaude-agent-resume",
+		CodexAppServerSocket:       "/tmp/private/app.sock",
+		CodexAppServerURL:          "ws://127.0.0.1:45678",
+		CodexAppServerTokenSHA256:  strings.Repeat("ab", 32),
+		CodexAppServerTokenHandoff: "/tmp/private/tui-capability.handoff",
+		TclaudeExecutable:          "/opt/tclaude",
+		CodexAppServerPIDFile:      "/tmp/private/server.pid",
+		CodexAppServerLogFile:      "/tmp/private/server.log",
+		CodexAppServerProfileOverrides: []string{
+			`default_permissions="tclaude-agent-resume"`,
+			`permissions.tclaude-agent-resume={extends=":workspace",filesystem={},network={enabled=false,unix_sockets={}}}`,
+		},
+	})
+
+	if !strings.Contains(got, `codex -c 'default_permissions="tclaude-agent-resume"' -c 'permissions.tclaude-agent-resume=`) {
+		t.Fatalf("a resumed launch's tool server must reload the managed overlay, got %q", got)
+	}
+	if strings.Count(got, "-p tclaude-agent-resume") != 1 {
+		t.Fatalf("only the resumed TUI may use runtime-only -p, got %q", got)
+	}
+	if !strings.Contains(got, "codex resume thread-existing -p tclaude-agent-resume") {
+		t.Fatalf("the resumed TUI must retain its managed profile, got %q", got)
 	}
 }
 

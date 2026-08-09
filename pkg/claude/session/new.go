@@ -1214,6 +1214,7 @@ func runNew(params *NewParams) error {
 	}
 	launchPermissionProfile := params.PermissionProfile
 	launchProfilePath := ""
+	var codexAppServerProfileOverrides []string
 	var launchCodexSplitCapability *harness.CodexSplitPolicyCapability
 	launchProfileOwnedByPane := false
 	defer func() {
@@ -1708,6 +1709,12 @@ func runNew(params *NewParams) error {
 		launchPermissionProfile = profileName
 		launchProfilePath = profilePath
 		launchCodexSplitCapability = splitCapability
+		if params.CodexAppServerSocket != "" {
+			codexAppServerProfileOverrides, err = harness.CodexAppServerProfileOverrides(profilePath)
+			if err != nil {
+				return fmt.Errorf("prepare managed Codex app-server profile: %w", err)
+			}
+		}
 	}
 
 	// Pre-trust the launch dir when the operator opted in (--trust-dir), BEFORE
@@ -1967,43 +1974,44 @@ func runNew(params *NewParams) error {
 		return err
 	}
 	spawnSpec := harness.SpawnSpec{
-		ExecutablePath:              executablePath,
-		CodexAppServerSocket:        params.CodexAppServerSocket,
-		CodexAppServerURL:           params.CodexAppServerURL,
-		CodexAppServerTokenSHA256:   params.CodexAppServerTokenSHA256,
-		CodexAppServerTokenHandoff:  params.CodexAppServerTokenHandoff,
-		TclaudeExecutable:           clcommon.SelfTclaudePath(),
-		CodexAppServerPIDFile:       params.CodexAppServerPIDFile,
-		CodexAppServerLogFile:       params.CodexAppServerLogFile,
-		Cwd:                         cwd,
-		ServerURL:                   openCodeServerURL,
-		OpenCodeTransport:           openCodeTransport,
-		OpenCodeControlSocketPath:   openCodeControlSocketPath,
-		OpenCodeControlSocketDevice: openCodeControlSocketDevice,
-		OpenCodeControlSocketInode:  openCodeControlSocketInode,
-		OpenCodeServerPID:           openCodeServerPID,
-		EnvExports:                  envExports,
-		PreLaunchScript:             preLaunchScript,
-		ShellEnvironment:            sandboxSnapshotEnvironment(effectiveSandbox),
-		ResumeID:                    fullConvID,
-		SessionID:                   params.SessionID,
-		Name:                        params.Name,
-		Effort:                      effort,
-		Model:                       model,
-		ExtraArgs:                   extraArgs,
-		HarnessBuiltinMode:          harnessBuiltinMode,
-		SandboxWriteDirs:            launchWriteDirs,
-		SandboxReadDirs:             launchReadDirs,
-		SandboxDenyDirs:             launchDenyDirs,
-		AskUserQuestionTimeout:      askTimeout,
-		ContextFeatures:             contextFeatures,
-		PermissionProfile:           launchPermissionProfile,
-		ApprovalPolicy:              approvalPolicy,
-		AutoReview:                  autoReview,
-		FastMode:                    params.FastMode,
-		RemoteControl:               remoteControl,
-		CopilotAPIPort:              params.CopilotAPIPort,
-		InitialPrompt:               params.InitialPrompt,
+		ExecutablePath:                 executablePath,
+		CodexAppServerSocket:           params.CodexAppServerSocket,
+		CodexAppServerURL:              params.CodexAppServerURL,
+		CodexAppServerTokenSHA256:      params.CodexAppServerTokenSHA256,
+		CodexAppServerTokenHandoff:     params.CodexAppServerTokenHandoff,
+		TclaudeExecutable:              clcommon.SelfTclaudePath(),
+		CodexAppServerPIDFile:          params.CodexAppServerPIDFile,
+		CodexAppServerLogFile:          params.CodexAppServerLogFile,
+		CodexAppServerProfileOverrides: codexAppServerProfileOverrides,
+		Cwd:                            cwd,
+		ServerURL:                      openCodeServerURL,
+		OpenCodeTransport:              openCodeTransport,
+		OpenCodeControlSocketPath:      openCodeControlSocketPath,
+		OpenCodeControlSocketDevice:    openCodeControlSocketDevice,
+		OpenCodeControlSocketInode:     openCodeControlSocketInode,
+		OpenCodeServerPID:              openCodeServerPID,
+		EnvExports:                     envExports,
+		PreLaunchScript:                preLaunchScript,
+		ShellEnvironment:               sandboxSnapshotEnvironment(effectiveSandbox),
+		ResumeID:                       fullConvID,
+		SessionID:                      params.SessionID,
+		Name:                           params.Name,
+		Effort:                         effort,
+		Model:                          model,
+		ExtraArgs:                      extraArgs,
+		HarnessBuiltinMode:             harnessBuiltinMode,
+		SandboxWriteDirs:               launchWriteDirs,
+		SandboxReadDirs:                launchReadDirs,
+		SandboxDenyDirs:                launchDenyDirs,
+		AskUserQuestionTimeout:         askTimeout,
+		ContextFeatures:                contextFeatures,
+		PermissionProfile:              launchPermissionProfile,
+		ApprovalPolicy:                 approvalPolicy,
+		AutoReview:                     autoReview,
+		FastMode:                       params.FastMode,
+		RemoteControl:                  remoteControl,
+		CopilotAPIPort:                 params.CopilotAPIPort,
+		InitialPrompt:                  params.InitialPrompt,
 	}
 	if stacked {
 		spawnSpec = h.NestedSandbox.PrepareLaunch(spawnSpec)

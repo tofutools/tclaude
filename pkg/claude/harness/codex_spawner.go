@@ -38,97 +38,28 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 	if spec.ExecutablePath != "" {
 		binary = clcommon.ShellQuoteArg(spec.ExecutablePath)
 	}
+	bypassHookTrustArg := ""
+	if spec.BypassHookTrust {
+		bypassHookTrustArg = " --dangerously-bypass-hook-trust"
+	}
+	sandboxArgs := codexSandboxArgs(spec)
+	approvalArgs := codexApprovalArgs(spec)
+	fastModeArgs := codexFastModeArgs(spec)
+	shellEnvironmentArgs := codexShellEnvironmentArgs(spec.ShellEnvironment)
 	cmd := binary
 	if spec.ResumeID != "" {
 		// `codex resume <id>` — resume is a subcommand; the id is a
 		// positional. Quoted defensively even though it's a UUID.
 		cmd += " resume " + clcommon.ShellQuoteArg(spec.ResumeID)
 	}
-	if spec.BypassHookTrust {
+	if bypassHookTrustArg != "" {
 		// Run configured hooks without persisted hook trust for this
 		// invocation — a headless escape hatch (default off). Accepted
 		// both on a fresh `codex` and on `codex resume <id>`, like
 		// `--model`. No value, so nothing to quote.
-		cmd += " --dangerously-bypass-hook-trust"
+		cmd += bypassHookTrustArg
 	}
-	if spec.PermissionProfile != "" {
-		// `-p <name>` layers $CODEX_HOME/<name>.config.toml, whose
-		// default_permissions activates a permissions profile for THIS spawn
-		// only (the TUI/exec have no `-P` flag; selection is via
-		// default_permissions). tclaude uses this INSTEAD of `--sandbox` for a
-		// daemon-spawned agent that must reach the agentd socket: Codex ignores
-		// permission profiles whenever a `--sandbox`/sandbox_mode is present,
-		// and only the profile model can allowlist that one Unix socket
-		// (JOH-207). Mutually exclusive with HarnessBuiltinMode (the spec builder sets
-		// one or the other) — emitting both would let `--sandbox` silently void
-		// the profile, so the profile wins and `--sandbox` is omitted. Accepted
-		// on both a fresh `codex` and `codex resume <id>` (shared option,
-		// verified against codex-cli 0.139.0). The value is a validated profile
-		// name, never free text, but quoted defensively.
-		cmd += " -p " + clcommon.ShellQuoteArg(spec.PermissionProfile)
-	} else if spec.HarnessBuiltinMode != "" {
-		// `--sandbox {read-only|workspace-write|danger-full-access}` selects
-		// Codex's OS-native sandbox for THIS invocation only — a per-spawn
-		// flag, so the user's config.toml sandbox_mode/profiles are left
-		// untouched. Accepted on both a fresh `codex` and `codex resume
-		// <id>` (shared option). The value is a validated enum
-		// (codexSandbox.ValidateMode), never free text, but quoted defensively.
-		cmd += " --sandbox " + clcommon.ShellQuoteArg(spec.HarnessBuiltinMode)
-	}
-	if spec.StrongNestedSandbox {
-		// Verified against codex-cli 0.145.0: false selects the current
-		// bwrap/seccomp backend that the stacked capability probe exercises.
-		cmd += " -c " + clcommon.ShellQuoteArg("features.use_legacy_landlock=false")
-	}
-	if spec.ApprovalPolicy != "" {
-		// `--ask-for-approval {untrusted|on-failure|on-request|never}` (the
-		// short is `-a`) selects Codex's approval policy for THIS invocation
-		// only — a per-spawn flag, so the user's config.toml/profiles stay
-		// untouched. Accepted on both a fresh `codex` and `codex resume <id>`
-		// (resume flattens the same TuiCli, verified against
-		// rust-v0.139.0). The daemon resolves this to `never` for an
-		// unattended pane so it never blocks on a prompt no human can answer
-		// (JOH-200). The value is a validated enum (codexApproval.ValidatePolicy),
-		// never free text, but quoted defensively.
-		cmd += " --ask-for-approval " + clcommon.ShellQuoteArg(spec.ApprovalPolicy)
-	}
-	if spec.AutoReview {
-		// `-c approvals_reviewer="auto_review"` routes approval prompts to
-		// Codex's guardian subagent (auto-decides in the human's place)
-		// instead of the human (`user`, the default) — the orthogonal "who
-		// answers" axis to --ask-for-approval's "when to ask". A per-spawn
-		// `-c` config override, so the user's config.toml stays untouched.
-		// Accepted on both a fresh `codex` and `codex resume <id>`. The value
-		// is a TOML-quoted string (matching Codex's own `-c model="o3"`
-		// convention) and the whole `key="value"` is shell-quoted as one arg.
-		// Experimental/undocumented upstream, hence opt-in (JOH-200 part 2).
-		cmd += " -c " + clcommon.ShellQuoteArg(codexApprovalsReviewerKey+`="`+codexApprovalsReviewerAuto+`"`)
-	}
-	if spec.FastMode != "" {
-		// service_tier is Codex's per-launch seam: "fast" opts in, while
-		// "default" explicitly opts out even when config.toml selects fast.
-		tier := "default"
-		if spec.FastMode == FastModeOn {
-			tier = "fast"
-		}
-		cmd += " -c " + clcommon.ShellQuoteArg(`service_tier="`+tier+`"`)
-	}
-	if len(spec.ShellEnvironment) > 0 {
-		// Codex may build tool-command environments from a saved user-shell
-		// snapshot. Pin sandbox-profile values in the documented "always wins"
-		// layer as well as exporting them into the Codex process, otherwise a
-		// profile assignment such as GOBIN can replace an agent-owned binding.
-		// Sort the map so launch commands and their tests stay deterministic.
-		names := make([]string, 0, len(spec.ShellEnvironment))
-		for name := range spec.ShellEnvironment {
-			names = append(names, name)
-		}
-		slices.Sort(names)
-		for _, name := range names {
-			override := "shell_environment_policy.set." + name + "=" + codexTOMLString(spec.ShellEnvironment[name])
-			cmd += " -c " + clcommon.ShellQuoteArg(override)
-		}
-	}
+	cmd += sandboxArgs + approvalArgs + fastModeArgs + shellEnvironmentArgs
 	if spec.Model != "" {
 		// `--model` is accepted both on a fresh `codex` and on
 		// `codex resume <id>` (shared option).
@@ -180,7 +111,14 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 	// the same cwd, environment, cgroup and optional outer sandbox wrapper. The
 	// EXIT trap makes the server a resource of this pane generation rather than
 	// a machine-global daemon. Paths are daemon-minted but still shell-quoted.
-	server := binary + " app-server --listen " +
+	// The app-server, not the remote TUI, owns model tool execution. Give it
+	// every execution-posture argument the ordinary TUI receives: the complete
+	// managed profile (or raw sandbox), stacked-backend pin, approval posture,
+	// service tier, and authoritative tool environment. Codex accepts these
+	// global options before the app-server subcommand.
+	server := binary + codexAppServerHookTrustArgs(spec) + codexAppServerSandboxArgs(spec) +
+		codexAppServerApprovalArgs(spec) + fastModeArgs + shellEnvironmentArgs
+	server += " app-server --listen " +
 		clcommon.ShellQuoteArg(spec.CodexAppServerURL) +
 		" --ws-auth capability-token --ws-token-sha256 " +
 		clcommon.ShellQuoteArg(spec.CodexAppServerTokenSHA256)
@@ -213,6 +151,117 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 		clcommon.ShellQuoteArg(spec.CodexAppServerTokenHandoff) + ") || exit 72; " +
 		"[ -n \"$tclaude_codex_capability\" ] || exit 73; " +
 		"TCLAUDE_CODEX_APP_SERVER_TOKEN=\"$tclaude_codex_capability\" " + cmd
+}
+
+func codexSandboxArgs(spec SpawnSpec) string {
+	args := ""
+	if spec.PermissionProfile != "" {
+		// `-p` layers the launch-unique managed profile containing the complete
+		// filesystem, network, Unix-socket, Git, and protected-path posture.
+		args += " -p " + clcommon.ShellQuoteArg(spec.PermissionProfile)
+	} else if spec.HarnessBuiltinMode != "" {
+		args += " --sandbox " + clcommon.ShellQuoteArg(spec.HarnessBuiltinMode)
+	}
+	if spec.StrongNestedSandbox {
+		// Verified against codex-cli 0.145.0: false selects the bwrap/seccomp
+		// backend exercised by the stacked capability probe.
+		args += " -c " + clcommon.ShellQuoteArg("features.use_legacy_landlock=false")
+	}
+	return args
+}
+
+func codexAppServerApprovalArgs(spec SpawnSpec) string {
+	args := ""
+	if spec.ApprovalPolicy != "" {
+		// Like --sandbox, the root approval flag parses before app-server but is
+		// ignored by that branch in 0.147. Use its effective-config key.
+		args += " -c " + clcommon.ShellQuoteArg(
+			"approval_policy="+codexTOMLString(spec.ApprovalPolicy))
+	}
+	if spec.AutoReview {
+		args += " -c " + clcommon.ShellQuoteArg(
+			codexApprovalsReviewerKey+`="`+codexApprovalsReviewerAuto+`"`)
+	}
+	return args
+}
+
+func codexAppServerHookTrustArgs(spec SpawnSpec) string {
+	if !spec.BypassHookTrust {
+		return ""
+	}
+	// App-server exposes this launch extension as a config boolean; the TUI's
+	// root flag is not forwarded into the server branch's effective config.
+	return " -c " + clcommon.ShellQuoteArg("bypass_hook_trust=true")
+}
+
+func codexAppServerSandboxArgs(spec SpawnSpec) string {
+	args := ""
+	if spec.PermissionProfile != "" {
+		overrides := spec.CodexAppServerProfileOverrides
+		if len(overrides) == 0 {
+			// Fail closed if a caller selects a managed profile without carrying
+			// its app-server representation. A nonexistent default_permissions
+			// table makes Codex reject startup instead of falling back to user
+			// config and silently widening or narrowing tool execution.
+			overrides = []string{`default_permissions="__tclaude_missing_app_server_profile__"`}
+		}
+		for _, override := range overrides {
+			args += " -c " + clcommon.ShellQuoteArg(override)
+		}
+	} else if spec.HarnessBuiltinMode != "" {
+		// Codex 0.147 accepts the root --sandbox flag before app-server but
+		// ignores it when building the server's effective config. The app-server
+		// supported -c seam is semantic: config/read and model tools see it.
+		args += " -c " + clcommon.ShellQuoteArg(
+			"sandbox_mode="+codexTOMLString(spec.HarnessBuiltinMode))
+	}
+	if spec.StrongNestedSandbox {
+		args += " -c " + clcommon.ShellQuoteArg("features.use_legacy_landlock=false")
+	}
+	return args
+}
+
+func codexApprovalArgs(spec SpawnSpec) string {
+	args := ""
+	if spec.ApprovalPolicy != "" {
+		args += " --ask-for-approval " + clcommon.ShellQuoteArg(spec.ApprovalPolicy)
+	}
+	if spec.AutoReview {
+		args += " -c " + clcommon.ShellQuoteArg(
+			codexApprovalsReviewerKey+`="`+codexApprovalsReviewerAuto+`"`)
+	}
+	return args
+}
+
+func codexFastModeArgs(spec SpawnSpec) string {
+	if spec.FastMode == "" {
+		return ""
+	}
+	tier := "default"
+	if spec.FastMode == FastModeOn {
+		tier = "fast"
+	}
+	return " -c " + clcommon.ShellQuoteArg(`service_tier="`+tier+`"`)
+}
+
+func codexShellEnvironmentArgs(environment map[string]string) string {
+	if len(environment) == 0 {
+		return ""
+	}
+	// Codex may build tool environments from a saved user-shell snapshot. Pin
+	// profile values in the documented always-wins layer on both execution
+	// owners so that snapshot cannot replace an agent-owned binding.
+	names := make([]string, 0, len(environment))
+	for name := range environment {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	args := ""
+	for _, name := range names {
+		override := "shell_environment_policy.set." + name + "=" + codexTOMLString(environment[name])
+		args += " -c " + clcommon.ShellQuoteArg(override)
+	}
+	return args
 }
 
 // codexTOMLString renders an arbitrary validated sandbox-profile environment
