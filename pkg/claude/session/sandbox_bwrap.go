@@ -1079,8 +1079,28 @@ func WrapTclaudeLayerSpecWithLoopbackBind(
 	loopbackBindPort int,
 	harnessCommand string,
 ) (string, error) {
-	if loopbackBindPort < 0 || loopbackBindPort > 65535 {
-		return "", fmt.Errorf("invalid tclaude-layer loopback bind port %d", loopbackBindPort)
+	return WrapTclaudeLayerSpecWithLoopbackBinds(
+		binary, spec, []int{loopbackBindPort}, harnessCommand)
+}
+
+// WrapTclaudeLayerSpecWithLoopbackBinds permits a bounded set of
+// daemon-minted loopback listeners. Linux's private network namespace admits
+// them intrinsically; Darwin threads every additional port through the same
+// exact Seatbelt bind/outbound slot machinery as the primary listener.
+func WrapTclaudeLayerSpecWithLoopbackBinds(
+	binary string,
+	spec TclaudeLayerLaunchSpec,
+	loopbackBindPorts []int,
+	harnessCommand string,
+) (string, error) {
+	for _, port := range loopbackBindPorts {
+		if port < 0 || port > 65535 {
+			return "", fmt.Errorf("invalid tclaude-layer loopback bind port %d", port)
+		}
+	}
+	loopbackBindPort := 0
+	if len(loopbackBindPorts) > 0 {
+		loopbackBindPort = loopbackBindPorts[0]
 	}
 	if err := validateTclaudeLayerRouteHelper(spec.Effective, spec.Contract.RouteHelper); err != nil {
 		return "", err
@@ -1090,7 +1110,11 @@ func WrapTclaudeLayerSpecWithLoopbackBind(
 	if err != nil {
 		return "", err
 	}
-	if len(spec.Contract.DarwinRouteSlots) > 0 {
+	routeSlots := append([]int(nil), spec.Contract.DarwinRouteSlots...)
+	if runtime.GOOS == "darwin" && len(loopbackBindPorts) > 1 {
+		routeSlots = append(routeSlots, loopbackBindPorts[1:]...)
+	}
+	if len(routeSlots) > 0 {
 		if runtime.GOOS != "darwin" {
 			return "", fmt.Errorf("darwin route slots are unsupported on %s", runtime.GOOS)
 		}
@@ -1102,7 +1126,7 @@ func WrapTclaudeLayerSpecWithLoopbackBind(
 			readOnlyBinds,
 			socketPaths,
 			plan,
-			spec.Contract.DarwinRouteSlots,
+			routeSlots,
 			spec.Contract.DarwinRouteReservation,
 			spec.Contract.RouteHelper,
 			loopbackBindPort,

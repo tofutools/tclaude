@@ -87,6 +87,7 @@ func TestCodexAppServerGenerationJoinsTclaudeLayerPrivateWriteContract(t *testin
 		CodexAppServer: true, CodexAppServerGeneration: filepath.Base(generation),
 		CodexAppServerSocket:       filepath.Join(generation, "app.sock"),
 		CodexAppServerURL:          "ws://127.0.0.1:43210",
+		CodexAppServerRelayURL:     "ws://127.0.0.1:43211",
 		CodexAppServerTokenSHA256:  strings.Repeat("ab", 32),
 		CodexAppServerTokenHandoff: filepath.Join(generation, "tui-capability.handoff"),
 		CodexAppServerPIDFile:      filepath.Join(generation, "server.pid"),
@@ -98,6 +99,8 @@ func TestCodexAppServerGenerationJoinsTclaudeLayerPrivateWriteContract(t *testin
 	assert.Equal(t, TclaudeLayerPrivateWriteDir{Parent: owner, Current: generation}, *privateDir)
 	assert.Equal(t, 43210, codexAppServerLoopbackPort(params),
 		"the daemon-minted listener must be threaded into the Darwin Seatbelt wrapper")
+	assert.Equal(t, []int{43210, 43211}, codexAppServerLoopbackPorts(params),
+		"both native server and TUI relay listeners must be admitted by the outer boundary")
 
 	workspace := filepath.Join(home, "work")
 	stateRoot := filepath.Join(home, ".codex")

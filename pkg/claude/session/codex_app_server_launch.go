@@ -53,14 +53,16 @@ func codexAppServerPrivateWriteDir(params *NewParams) (*TclaudeLayerPrivateWrite
 			return nil, fmt.Errorf("invalid codex app-server runtime path %q", path)
 		}
 	}
-	endpoint, err := url.Parse(params.CodexAppServerURL)
-	if err != nil || endpoint.Scheme != "ws" || endpoint.Hostname() != "127.0.0.1" ||
-		endpoint.User != nil || endpoint.Path != "" || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+	serverPort, err := codexAppServerEndpointPort(params.CodexAppServerURL)
+	if err != nil {
 		return nil, fmt.Errorf("invalid codex app-server authenticated loopback endpoint")
 	}
-	port, err := strconv.Atoi(endpoint.Port())
-	if err != nil || port < 1 || port > 65535 {
-		return nil, fmt.Errorf("invalid codex app-server authenticated loopback port")
+	relayPort, err := codexAppServerEndpointPort(params.CodexAppServerRelayURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid codex TUI relay authenticated loopback endpoint")
+	}
+	if serverPort == relayPort {
+		return nil, fmt.Errorf("codex app-server and TUI relay loopback endpoints must be distinct")
 	}
 	digest, err := hex.DecodeString(params.CodexAppServerTokenSHA256)
 	if err != nil || len(digest) != 32 {
@@ -79,15 +81,36 @@ func codexAppServerPrivateWriteDir(params *NewParams) (*TclaudeLayerPrivateWrite
 }
 
 func codexAppServerLoopbackPort(params *NewParams) int {
+	ports := codexAppServerLoopbackPorts(params)
+	if len(ports) == 0 {
+		return 0
+	}
+	return ports[0]
+}
+
+func codexAppServerLoopbackPorts(params *NewParams) []int {
 	if params == nil || !params.CodexAppServer {
-		return 0
+		return nil
 	}
-	endpoint, err := url.Parse(params.CodexAppServerURL)
-	if err != nil {
-		return 0
+	serverPort, serverErr := codexAppServerEndpointPort(params.CodexAppServerURL)
+	relayPort, relayErr := codexAppServerEndpointPort(params.CodexAppServerRelayURL)
+	if serverErr != nil || relayErr != nil {
+		return nil
 	}
-	port, _ := strconv.Atoi(endpoint.Port())
-	return port
+	return []int{serverPort, relayPort}
+}
+
+func codexAppServerEndpointPort(rawURL string) (int, error) {
+	endpoint, err := url.Parse(rawURL)
+	if err != nil || endpoint.Scheme != "ws" || endpoint.Hostname() != "127.0.0.1" ||
+		endpoint.User != nil || endpoint.Path != "" || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+		return 0, fmt.Errorf("invalid numeric loopback WebSocket endpoint")
+	}
+	port, err := strconv.Atoi(endpoint.Port())
+	if err != nil || port < 1 || port > 65535 {
+		return 0, fmt.Errorf("invalid numeric loopback WebSocket port")
+	}
+	return port, nil
 }
 
 func hexComponent(value string) bool {

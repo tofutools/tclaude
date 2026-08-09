@@ -40,6 +40,8 @@ func installCodexAppServerGenerationProofForTest(t *testing.T, launchAlive bool)
 	previousCapability := codexAppServerCapability
 	previousEndpoint := codexAppServerEndpoint
 	previousEndpointOwner := codexAppServerProcessOwnsEndpoint
+	previousRelayEndpoint := codexAppServerRelayEndpoint
+	previousRelayEndpointOwner := codexAppServerRelayOwnsEndpoint
 	previousRelayPID := codexAppServerRelayPID
 	previousServerPID := codexAppServerServerPID
 	codexAppServerProcessIdentity = func(int, string) (string, error) { return "test-process-generation", nil }
@@ -47,6 +49,8 @@ func installCodexAppServerGenerationProofForTest(t *testing.T, launchAlive bool)
 	codexAppServerCapability = func(string) (string, error) { return "test-capability", nil }
 	codexAppServerEndpoint = func(string) (string, error) { return "ws://127.0.0.1:43210", nil }
 	codexAppServerProcessOwnsEndpoint = func(int, string) bool { return true }
+	codexAppServerRelayEndpoint = func(string) (string, error) { return "ws://127.0.0.1:43211", nil }
+	codexAppServerRelayOwnsEndpoint = func(int, string, string) bool { return true }
 	codexAppServerRelayPID = func(context.Context, string) (int, error) { return os.Getpid(), nil }
 	codexAppServerServerPID = func(context.Context, string, string) (int, error) { return os.Getpid(), nil }
 	t.Cleanup(func() {
@@ -55,6 +59,8 @@ func installCodexAppServerGenerationProofForTest(t *testing.T, launchAlive bool)
 		codexAppServerCapability = previousCapability
 		codexAppServerEndpoint = previousEndpoint
 		codexAppServerProcessOwnsEndpoint = previousEndpointOwner
+		codexAppServerRelayEndpoint = previousRelayEndpoint
+		codexAppServerRelayOwnsEndpoint = previousRelayEndpointOwner
 		codexAppServerRelayPID = previousRelayPID
 		codexAppServerServerPID = previousServerPID
 	})
@@ -73,6 +79,10 @@ func TestPrepareCodexAppServerRuntimeIsolatesAgents(t *testing.T) {
 	})
 
 	assert.NotEqual(t, first.CodexAppServerGeneration, second.CodexAppServerGeneration)
+	assert.NotEqual(t, first.CodexAppServerURL, first.CodexAppServerRelayURL,
+		"native server and authenticated TUI relay must reserve distinct listeners")
+	assert.NotEqual(t, first.CodexAppServerRelayURL, second.CodexAppServerRelayURL,
+		"relay endpoints are generation-private")
 	assert.NotEqual(t, filepath.Dir(filepath.Dir(first.CodexAppServerSocket)),
 		filepath.Dir(filepath.Dir(second.CodexAppServerSocket)), "agents need distinct owner directories")
 	for _, socket := range []string{first.CodexAppServerSocket, second.CodexAppServerSocket} {
@@ -101,6 +111,7 @@ func TestSessionArgsCarryPrivateCodexAppServerGeneration(t *testing.T) {
 			Label: "worker", Cwd: "/tmp/work", CodexAppServer: true,
 			CodexAppServerGeneration: "generation-1",
 			CodexAppServerSocket:     "/tmp/app.sock", CodexAppServerURL: "ws://127.0.0.1:43210",
+			CodexAppServerRelayURL:    "ws://127.0.0.1:43211",
 			CodexAppServerTokenSHA256: "digest", CodexAppServerTokenHandoff: "/tmp/handoff",
 			CodexAppServerPIDFile: "/tmp/app.pid",
 			CodexAppServerLogFile: "/tmp/app.log",
@@ -109,6 +120,7 @@ func TestSessionArgsCarryPrivateCodexAppServerGeneration(t *testing.T) {
 			ConvID: "thread-1", Cwd: "/tmp/work", CodexAppServer: true,
 			CodexAppServerGeneration: "generation-1",
 			CodexAppServerSocket:     "/tmp/app.sock", CodexAppServerURL: "ws://127.0.0.1:43210",
+			CodexAppServerRelayURL:    "ws://127.0.0.1:43211",
 			CodexAppServerTokenSHA256: "digest", CodexAppServerTokenHandoff: "/tmp/handoff",
 			CodexAppServerPIDFile: "/tmp/app.pid",
 			CodexAppServerLogFile: "/tmp/app.log",
@@ -121,6 +133,7 @@ func TestSessionArgsCarryPrivateCodexAppServerGeneration(t *testing.T) {
 			assert.True(t, slices.Contains(args, "/tmp/app.pid"))
 			assert.True(t, slices.Contains(args, "/tmp/app.log"))
 			assert.True(t, slices.Contains(args, "ws://127.0.0.1:43210"))
+			assert.True(t, slices.Contains(args, "ws://127.0.0.1:43211"))
 			assert.True(t, slices.Contains(args, "digest"))
 			assert.True(t, slices.Contains(args, "/tmp/handoff"))
 		})

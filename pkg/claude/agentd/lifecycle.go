@@ -8790,6 +8790,7 @@ func appendCodexAppServerArgs(args []string, a clcommon.SpawnArgs) []string {
 		"--codex-app-server-generation", a.CodexAppServerGeneration,
 		"--codex-app-server-socket", a.CodexAppServerSocket,
 		"--codex-app-server-url", a.CodexAppServerURL,
+		"--codex-app-server-relay-url", a.CodexAppServerRelayURL,
 		"--codex-app-server-token-sha256", a.CodexAppServerTokenSHA256,
 		"--codex-app-server-token-handoff", a.CodexAppServerTokenHandoff,
 		"--codex-app-server-pid-file", a.CodexAppServerPIDFile,

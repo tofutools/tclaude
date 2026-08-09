@@ -288,6 +288,7 @@ type NewParams struct {
 	CodexAppServer             bool   `long:"codex-app-server" help:"EXPERIMENTAL: launch Codex against a private tclaude-owned app-server and bind agentd to the TUI-created thread. Off by default; Codex 0.147.x only"`
 	CodexAppServerSocket       string `long:"codex-app-server-socket" optional:"true" help:"Internal: agentd-minted private Codex app-server Unix socket"`
 	CodexAppServerURL          string `long:"codex-app-server-url" optional:"true" help:"Internal: agentd-minted authenticated Codex app-server loopback endpoint"`
+	CodexAppServerRelayURL     string `long:"codex-app-server-relay-url" optional:"true" help:"Internal: agentd-minted authenticated Codex TUI relay endpoint"`
 	CodexAppServerTokenSHA256  string `long:"codex-app-server-token-sha256" optional:"true" help:"Internal: digest of the per-generation Codex app-server capability"`
 	CodexAppServerTokenHandoff string `long:"codex-app-server-token-handoff" optional:"true" help:"Internal: one-shot private Codex TUI capability handoff"`
 	CodexAppServerPIDFile      string `long:"codex-app-server-pid-file" optional:"true" help:"Internal: agentd-minted Codex app-server pid file"`
@@ -967,6 +968,7 @@ func runNew(params *NewParams) error {
 	if params.CodexAppServer {
 		if !params.ManagedLaunch || strings.TrimSpace(params.CodexAppServerSocket) == "" ||
 			strings.TrimSpace(params.CodexAppServerURL) == "" ||
+			strings.TrimSpace(params.CodexAppServerRelayURL) == "" ||
 			strings.TrimSpace(params.CodexAppServerTokenSHA256) == "" ||
 			strings.TrimSpace(params.CodexAppServerTokenHandoff) == "" ||
 			strings.TrimSpace(params.CodexAppServerPIDFile) == "" ||
@@ -975,7 +977,8 @@ func runNew(params *NewParams) error {
 			return fmt.Errorf("--codex-app-server requires an agentd-managed launch with private runtime paths")
 		}
 	} else if params.CodexAppServerSocket != "" || params.CodexAppServerPIDFile != "" ||
-		params.CodexAppServerURL != "" || params.CodexAppServerTokenSHA256 != "" ||
+		params.CodexAppServerURL != "" || params.CodexAppServerRelayURL != "" ||
+		params.CodexAppServerTokenSHA256 != "" ||
 		params.CodexAppServerTokenHandoff != "" ||
 		params.CodexAppServerLogFile != "" || params.CodexAppServerGeneration != "" {
 		return fmt.Errorf("codex app-server runtime paths require --codex-app-server")
@@ -1977,6 +1980,7 @@ func runNew(params *NewParams) error {
 		ExecutablePath:                 executablePath,
 		CodexAppServerSocket:           params.CodexAppServerSocket,
 		CodexAppServerURL:              params.CodexAppServerURL,
+		CodexAppServerRelayURL:         params.CodexAppServerRelayURL,
 		CodexAppServerTokenSHA256:      params.CodexAppServerTokenSHA256,
 		CodexAppServerTokenHandoff:     params.CodexAppServerTokenHandoff,
 		TclaudeExecutable:              clcommon.SelfTclaudePath(),
@@ -2105,8 +2109,8 @@ func runNew(params *NewParams) error {
 				harnessCmd,
 			)
 		} else {
-			harnessCmd, err = WrapTclaudeLayerSpecWithLoopbackBind(
-				bwrapBinary, layerSpec, codexAppServerLoopbackPort(params), harnessCmd)
+			harnessCmd, err = WrapTclaudeLayerSpecWithLoopbackBinds(
+				bwrapBinary, layerSpec, codexAppServerLoopbackPorts(params), harnessCmd)
 		}
 		if err != nil {
 			return fmt.Errorf("wrap harness with tclaude-layer: %w", err)

@@ -150,9 +150,13 @@ func TestCodexAppServerProfileRelayPreservesNativeAuthAndEnforcesEveryWriter(t *
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, os.RemoveAll(relayDir)) })
 	socketPath := filepath.Join(relayDir, "app.sock")
+	relayReservation, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	relayURL := "ws://" + relayReservation.Addr().String()
+	require.NoError(t, relayReservation.Close())
 	go func() {
 		relayDone <- runCodexAppServerRelay(
-			relayContext, socketPath, upstreamListener.Addr().String(), profile)
+			relayContext, socketPath, relayURL, upstreamListener.Addr().String(), profile)
 	}()
 	t.Cleanup(func() {
 		stopRelay()
@@ -163,7 +167,16 @@ func TestCodexAppServerProfileRelayPreservesNativeAuthAndEnforcesEveryWriter(t *
 		return statErr == nil && info.Mode()&os.ModeSocket != 0
 	}, 5*time.Second, 10*time.Millisecond)
 
-	dial := func(t *testing.T, bearer string) (*websocket.Conn, *http.Response, error) {
+	dialTUI := func(t *testing.T, bearer string) (*websocket.Conn, *http.Response, error) {
+		t.Helper()
+		headers := http.Header{}
+		if bearer != "" {
+			headers.Set("Authorization", "Bearer "+bearer)
+		}
+		conn, response, dialErr := websocket.DefaultDialer.Dial(relayURL, headers)
+		return conn, response, dialErr
+	}
+	dialAgentd := func(t *testing.T, bearer string) (*websocket.Conn, *http.Response, error) {
 		t.Helper()
 		dialer := websocket.Dialer{NetDialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
@@ -177,7 +190,7 @@ func TestCodexAppServerProfileRelayPreservesNativeAuthAndEnforcesEveryWriter(t *
 	}
 
 	for _, bearer := range []string{"", "wrong-capability"} {
-		conn, response, dialErr := dial(t, bearer)
+		conn, response, dialErr := dialTUI(t, bearer)
 		require.Error(t, dialErr)
 		assert.Nil(t, conn)
 		require.NotNil(t, response)
@@ -186,7 +199,7 @@ func TestCodexAppServerProfileRelayPreservesNativeAuthAndEnforcesEveryWriter(t *
 		require.NoError(t, response.Body.Close())
 	}
 
-	conn, response, err := dial(t, token)
+	conn, response, err := dialTUI(t, token)
 	require.NoError(t, err)
 	require.NotNil(t, response)
 	assert.Equal(t, http.StatusSwitchingProtocols, response.StatusCode)
@@ -222,6 +235,24 @@ func TestCodexAppServerProfileRelayPreservesNativeAuthAndEnforcesEveryWriter(t *
 		assert.NotContains(t, got.Params, "sandboxPolicy")
 	}
 
+	agentdConn, response, err := dialAgentd(t, token)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	defer agentdConn.Close()
+	_, _, err = agentdConn.ReadMessage() // identical upstream approval request
+	require.NoError(t, err)
+	crossClient := []byte(`{"id":41,"method":"turn/start","params":{"threadId":"thread","input":[],"sandboxPolicy":{"type":"readOnly"}}}`)
+	require.NoError(t, agentdConn.WriteMessage(websocket.TextMessage, crossClient))
+	_, payload, err = agentdConn.ReadMessage()
+	require.NoError(t, err)
+	var agentdRequest struct {
+		Params map[string]json.RawMessage `json:"params"`
+	}
+	require.NoError(t, json.Unmarshal(payload, &agentdRequest))
+	assert.JSONEq(t, `"`+profile+`"`, string(agentdRequest.Params["permissions"]),
+		"Unix and loopback clients must cross the identical policy handler")
+	assert.NotContains(t, agentdRequest.Params, "sandboxPolicy")
+
 	unrelated := []byte(`{"id":81,"result":{"decision":"acceptForSession","sandboxPolicy":{"opaque":true}}}`)
 	require.NoError(t, conn.WriteMessage(websocket.TextMessage, unrelated))
 	_, payload, err = conn.ReadMessage()
@@ -234,7 +265,7 @@ func TestCodexAppServerProfileRelayPreservesNativeAuthAndEnforcesEveryWriter(t *
 	assert.Equal(t, websocket.BinaryMessage, messageType)
 	assert.Equal(t, binary, payload)
 
-	malformed, response, err := dial(t, token)
+	malformed, response, err := dialTUI(t, token)
 	require.NoError(t, err)
 	require.NotNil(t, response)
 	assert.Equal(t, http.StatusSwitchingProtocols, response.StatusCode)
@@ -247,6 +278,25 @@ func TestCodexAppServerProfileRelayPreservesNativeAuthAndEnforcesEveryWriter(t *
 	_ = malformed.SetReadDeadline(time.Now().Add(2 * time.Second))
 	_, _, err = malformed.ReadMessage()
 	assert.Error(t, err, "a relevant malformed request must be dropped with its connection")
+}
+
+func TestCodexAppServerRelayFailsClosedWhenTUIEndpointIsAlreadyOwned(t *testing.T) {
+	occupied, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer occupied.Close()
+	upstream, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer upstream.Close()
+	dir, err := os.MkdirTemp("/tmp", "tclaude-relay-collision-")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+	socketPath := filepath.Join(dir, "app.sock")
+	err = runCodexAppServerRelay(context.Background(), socketPath,
+		"ws://"+occupied.Addr().String(), upstream.Addr().String(), "tclaude-agent-profile")
+	require.ErrorContains(t, err, "listen on Codex TUI relay endpoint")
+	_, statErr := os.Lstat(socketPath)
+	assert.ErrorIs(t, statErr, os.ErrNotExist,
+		"a partial Unix listener must be cleaned up when the authenticated TUI bind loses its race")
 }
 
 func TestConsumeCodexAppServerTokenIsOneShotAndRejectsUnsafeFiles(t *testing.T) {

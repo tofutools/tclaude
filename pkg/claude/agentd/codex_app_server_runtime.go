@@ -29,6 +29,7 @@ const codexAppServerStartupTimeout = 15 * time.Second
 const codexAppServerIdentityFile = "server.identity"
 const codexAppServerTokenHandoffFile = "tui-capability.handoff"
 const codexAppServerEndpointFile = "server.endpoint"
+const codexAppServerRelayEndpointFile = "relay.endpoint"
 const codexAppServerProofFile = "server.proved"
 
 var codexAppServerRecoveryOwner = func() string {
@@ -101,13 +102,25 @@ func prepareCodexAppServerRuntime(args *clcommon.SpawnArgs) error {
 	args.CodexAppServerSocket = filepath.Join(generationDir, "app.sock")
 	args.CodexAppServerPIDFile = filepath.Join(generationDir, "server.pid")
 	args.CodexAppServerLogFile = filepath.Join(generationDir, "server.log")
-	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	serverListener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		_ = os.Remove(generationDir)
 		return fmt.Errorf("allocate Codex app-server loopback endpoint: %w", err)
 	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	if err := listener.Close(); err != nil {
+	relayListener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		_ = serverListener.Close()
+		_ = os.Remove(generationDir)
+		return fmt.Errorf("allocate Codex TUI relay loopback endpoint: %w", err)
+	}
+	serverPort := serverListener.Addr().(*net.TCPAddr).Port
+	relayPort := relayListener.Addr().(*net.TCPAddr).Port
+	if err := relayListener.Close(); err != nil {
+		_ = serverListener.Close()
+		_ = os.Remove(generationDir)
+		return fmt.Errorf("release Codex TUI relay loopback endpoint: %w", err)
+	}
+	if err := serverListener.Close(); err != nil {
 		_ = os.Remove(generationDir)
 		return fmt.Errorf("release Codex app-server loopback endpoint: %w", err)
 	}
@@ -118,12 +131,17 @@ func prepareCodexAppServerRuntime(args *clcommon.SpawnArgs) error {
 	}
 	token := base64.RawURLEncoding.EncodeToString(secret[:])
 	tokenDigest := sha256.Sum256([]byte(token))
-	args.CodexAppServerURL = fmt.Sprintf("ws://127.0.0.1:%d", port)
+	args.CodexAppServerURL = fmt.Sprintf("ws://127.0.0.1:%d", serverPort)
+	args.CodexAppServerRelayURL = fmt.Sprintf("ws://127.0.0.1:%d", relayPort)
 	args.CodexAppServerTokenSHA256 = hex.EncodeToString(tokenDigest[:])
 	args.CodexAppServerTokenHandoff = filepath.Join(generationDir, codexAppServerTokenHandoffFile)
 	if err := writeExclusiveSecret(filepath.Join(generationDir, codexAppServerEndpointFile), args.CodexAppServerURL); err != nil {
 		_ = os.RemoveAll(generationDir)
 		return fmt.Errorf("record Codex app-server loopback endpoint: %w", err)
+	}
+	if err := writeExclusiveSecret(filepath.Join(generationDir, codexAppServerRelayEndpointFile), args.CodexAppServerRelayURL); err != nil {
+		_ = os.RemoveAll(generationDir)
+		return fmt.Errorf("record Codex TUI relay loopback endpoint: %w", err)
 	}
 	if err := writeExclusiveSecret(args.CodexAppServerTokenHandoff, token); err != nil {
 		_ = os.Remove(generationDir)
@@ -160,12 +178,21 @@ func writeExclusiveSecret(path, token string) error {
 
 var codexAppServerCapability = db.GetCodexAppServerCapability
 var codexAppServerProcessOwnsEndpoint = processOwnsCodexAppServerEndpoint
+var codexAppServerRelayOwnsEndpoint = processOwnsCodexAppServerRelayEndpoint
 var codexAppServerServerPID = discoverCodexAppServerPID
 
 var codexAppServerRelayPID = discoverCodexAppServerRelayPID
 
 func readCodexAppServerEndpoint(socketPath string) (string, error) {
-	data, err := os.ReadFile(filepath.Join(filepath.Dir(socketPath), codexAppServerEndpointFile))
+	return readCodexLoopbackEndpoint(socketPath, codexAppServerEndpointFile)
+}
+
+func readCodexAppServerRelayEndpoint(socketPath string) (string, error) {
+	return readCodexLoopbackEndpoint(socketPath, codexAppServerRelayEndpointFile)
+}
+
+func readCodexLoopbackEndpoint(socketPath, basename string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(socketPath), basename))
 	if err != nil {
 		return "", err
 	}
@@ -177,6 +204,7 @@ func readCodexAppServerEndpoint(socketPath string) (string, error) {
 }
 
 var codexAppServerEndpoint = readCodexAppServerEndpoint
+var codexAppServerRelayEndpoint = readCodexAppServerRelayEndpoint
 
 func waitForCodexAppServerEndpointOwner(ctx context.Context, pid int, socketPath string) error {
 	endpoint, err := codexAppServerEndpoint(socketPath)
@@ -190,6 +218,23 @@ func waitForCodexAppServerEndpointOwner(ctx context.Context, pid int, socketPath
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("prove Codex app-server loopback listener owner: %w", ctx.Err())
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+}
+
+func waitForCodexAppServerRelayEndpointOwner(ctx context.Context, pid int, socketPath string) error {
+	endpoint, err := codexAppServerRelayEndpoint(socketPath)
+	if err != nil {
+		return err
+	}
+	for {
+		if codexAppServerRelayOwnsEndpoint(pid, socketPath, endpoint) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("prove Codex TUI relay loopback listener owner: %w", ctx.Err())
 		case <-time.After(25 * time.Millisecond):
 		}
 	}
@@ -266,6 +311,10 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 		return
 	}
 	if err := waitForOwnedCodexSocket(ctx, runtime.SocketPath, relayPID); err != nil {
+		fail(err)
+		return
+	}
+	if err := waitForCodexAppServerRelayEndpointOwner(ctx, relayPID, runtime.SocketPath); err != nil {
 		fail(err)
 		return
 	}
@@ -451,6 +500,9 @@ func recoverUnboundCodexAppServerLaunch(ctx context.Context, runtime db.CodexApp
 	if err := waitForOwnedCodexSocket(ctx, runtime.SocketPath, relayPID); err != nil {
 		return err
 	}
+	if err := waitForCodexAppServerRelayEndpointOwner(ctx, relayPID, runtime.SocketPath); err != nil {
+		return err
+	}
 	if err := waitForCodexAppServerEndpointOwner(ctx, pid, runtime.SocketPath); err != nil {
 		return err
 	}
@@ -506,6 +558,10 @@ func recoverCodexAppServerRuntime(runtime db.CodexAppServerRuntime, owner string
 		return
 	}
 	if err := waitForOwnedCodexSocket(ctx, runtime.SocketPath, relayPID); err != nil {
+		fail(err)
+		return
+	}
+	if err := waitForCodexAppServerRelayEndpointOwner(ctx, relayPID, runtime.SocketPath); err != nil {
 		fail(err)
 		return
 	}
@@ -718,6 +774,10 @@ func verifyCodexAppServerRuntimeProcesses(runtime db.CodexAppServerRuntime) (int
 	relayPID, err := codexAppServerRelayPID(ctx, runtime.SocketPath)
 	if err != nil {
 		return 0, err
+	}
+	if endpoint, endpointErr := codexAppServerRelayEndpoint(runtime.SocketPath); endpointErr != nil ||
+		!codexAppServerRelayOwnsEndpoint(relayPID, runtime.SocketPath, endpoint) {
+		return 0, errors.New("codex app-server relay PID does not own its recorded loopback listener")
 	}
 	if err := verifyCodexAppServerProcessIdentity(runtime.SocketPath, relayPID); err != nil {
 		return 0, err

@@ -152,6 +152,10 @@ func TestLiveCodexAppServerManagedPermissionOverlay(t *testing.T) {
 	denyPath := filepath.Join(runtimeDir, "deny")
 	agentdSocket := filepath.Join(runtimeDir, "agentd.sock")
 	relaySocket := filepath.Join(runtimeDir, "app.sock")
+	relayReservation, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	relayURL := "ws://" + relayReservation.Addr().String()
+	require.NoError(t, relayReservation.Close())
 	for _, path := range []string{readPath, writePath, denyPath} {
 		require.NoError(t, os.Mkdir(path, 0o700))
 	}
@@ -183,7 +187,7 @@ func TestLiveCodexAppServerManagedPermissionOverlay(t *testing.T) {
 	relayDone := make(chan error, 1)
 	go func() {
 		relayDone <- session.RunCodexAppServerProfileRelay(
-			relayCtx, relaySocket, upstream, profileName)
+			relayCtx, relaySocket, relayURL, upstream, profileName)
 	}()
 	t.Cleanup(func() {
 		stopRelay()
@@ -226,7 +230,7 @@ func TestLiveCodexAppServerManagedPermissionOverlay(t *testing.T) {
 	// replaces that managed profile before any model tool runs. Exercise the
 	// actual remote thread seam through tclaude's enforcing relay and assert the
 	// effective thread profile retains the named socket-aware policy.
-	experimental := dialLiveCodexAppServer(t, ctx, relaySocket, token)
+	experimental := dialLiveCodexAppServerTCP(t, ctx, relayURL, token)
 	defer experimental.Close()
 	var initialized map[string]any
 	liveCodexAppServerCall(t, experimental, 1, "initialize", map[string]any{
@@ -270,19 +274,16 @@ func TestLiveCodexAppServerManagedPermissionOverlay(t *testing.T) {
 	require.NotEmpty(t, stableTurn.Turn.ID)
 }
 
-func dialLiveCodexAppServer(
+func dialLiveCodexAppServerTCP(
 	t *testing.T,
 	ctx context.Context,
-	socketPath string,
+	relayURL string,
 	token string,
 ) *websocket.Conn {
 	t.Helper()
-	dialer := websocket.Dialer{NetDialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
-	}}
 	header := http.Header{}
 	header.Set("Authorization", "Bearer "+token)
-	conn, response, err := dialer.DialContext(ctx, "ws://localhost/", header)
+	conn, response, err := websocket.DefaultDialer.DialContext(ctx, relayURL, header)
 	if response != nil && response.Body != nil {
 		require.NoError(t, response.Body.Close())
 	}

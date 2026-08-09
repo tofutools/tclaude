@@ -54,6 +54,48 @@ func TestCodexServerArgsTargetExactAuthenticatedEndpoint(t *testing.T) {
 	assert.Error(t, err, "the native server process must never satisfy the relay identity proof")
 }
 
+func TestCodexRelayOwnsExactAuthenticatedTUIEndpoint(t *testing.T) {
+	if os.Getenv("TCLAUDE_CODEX_RELAY_ARGV_HELPER") == "1" {
+		tcpListener, err := net.Listen("tcp4", strings.TrimPrefix(
+			os.Getenv("TCLAUDE_CODEX_RELAY_ENDPOINT"), "ws://"))
+		require.NoError(t, err)
+		defer tcpListener.Close()
+		require.NoError(t, os.WriteFile(os.Getenv("TCLAUDE_CODEX_RELAY_READY"), []byte("ready"), 0o600))
+		select {}
+	}
+	dir := t.TempDir()
+	socketPath := filepath.Join(dir, "app.sock")
+	readyPath := filepath.Join(dir, "ready")
+	reservation, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	endpoint := "ws://" + reservation.Addr().String()
+	require.NoError(t, reservation.Close())
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := exec.CommandContext(ctx, os.Args[0],
+		"-test.run=^TestCodexRelayOwnsExactAuthenticatedTUIEndpoint$", "--",
+		"codex-app-server-relay", "--socket", socketPath, "--listen", endpoint)
+	cmd.Env = append(os.Environ(),
+		"TCLAUDE_CODEX_RELAY_ARGV_HELPER=1",
+		"TCLAUDE_CODEX_RELAY_SOCKET="+socketPath,
+		"TCLAUDE_CODEX_RELAY_ENDPOINT="+endpoint,
+		"TCLAUDE_CODEX_RELAY_READY="+readyPath)
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() {
+		cancel()
+		_ = cmd.Wait()
+	})
+	require.Eventually(t, func() bool {
+		_, statErr := os.Stat(readyPath)
+		return statErr == nil
+	}, 5*time.Second, 10*time.Millisecond)
+	assert.True(t, processOwnsCodexAppServerRelayEndpoint(
+		cmd.Process.Pid, socketPath, endpoint))
+	assert.False(t, processOwnsCodexAppServerRelayEndpoint(
+		cmd.Process.Pid, socketPath, "ws://127.0.0.1:1"))
+	assert.False(t, processOwnsCodexAppServerEndpoint(cmd.Process.Pid, endpoint),
+		"the relay listener must never satisfy the native app-server ownership proof")
+}
+
 func TestCodexAppServerDiscoversHostPIDsAcrossBwrapPIDAndNetworkNamespaces(t *testing.T) {
 	if os.Getenv("TCLAUDE_CODEX_NAMESPACE_HELPER") == "1" {
 		socketPath := os.Getenv("TCLAUDE_CODEX_NAMESPACE_SOCKET")

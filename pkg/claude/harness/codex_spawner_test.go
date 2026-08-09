@@ -166,6 +166,7 @@ func TestCodexSpawner_AppServerKeepsTUIAsSoleBirthWriter(t *testing.T) {
 		InitialPrompt:              "take the first turn",
 		CodexAppServerSocket:       "/tmp/private agent/app.sock",
 		CodexAppServerURL:          "ws://127.0.0.1:45678",
+		CodexAppServerRelayURL:     "ws://127.0.0.1:45679",
 		CodexAppServerTokenSHA256:  strings.Repeat("ab", 32),
 		CodexAppServerTokenHandoff: "/tmp/private agent/tui-capability.handoff",
 		TclaudeExecutable:          "/opt/tclaude bin/tclaude",
@@ -190,11 +191,11 @@ func TestCodexSpawner_AppServerKeepsTUIAsSoleBirthWriter(t *testing.T) {
 	if strings.Contains(strings.Split(got, " app-server --listen")[0], " -p ") {
 		t.Fatalf("Codex 0.147 rejects -p on app-server, got %q", got)
 	}
-	if !strings.Contains(got, "--remote 'unix:///tmp/private agent/app.sock' --remote-auth-token-env TCLAUDE_CODEX_APP_SERVER_TOKEN") {
+	if !strings.Contains(got, "--remote ws://127.0.0.1:45679 --remote-auth-token-env TCLAUDE_CODEX_APP_SERVER_TOKEN") {
 		t.Fatalf("the normal TUI must attach through the enforcing private relay, got %q", got)
 	}
 	if !strings.Contains(got,
-		"codex-app-server-relay --socket '/tmp/private agent/app.sock' --upstream 127.0.0.1:45678 --permission-profile tclaude-agent-launch") {
+		"codex-app-server-relay --socket '/tmp/private agent/app.sock' --listen ws://127.0.0.1:45679 --upstream 127.0.0.1:45678 --permission-profile tclaude-agent-launch") {
 		t.Fatalf("the private relay must preserve the managed profile across remote thread settings, got %q", got)
 	}
 	if !strings.Contains(got, "--ws-auth capability-token --ws-token-sha256") ||
@@ -227,6 +228,7 @@ func TestCodexSpawner_AppServerResumeKeepsManagedProfileOnToolServer(t *testing.
 		PermissionProfile:          "tclaude-agent-resume",
 		CodexAppServerSocket:       "/tmp/private/app.sock",
 		CodexAppServerURL:          "ws://127.0.0.1:45678",
+		CodexAppServerRelayURL:     "ws://127.0.0.1:45679",
 		CodexAppServerTokenSHA256:  strings.Repeat("ab", 32),
 		CodexAppServerTokenHandoff: "/tmp/private/tui-capability.handoff",
 		TclaudeExecutable:          "/opt/tclaude",
@@ -247,7 +249,7 @@ func TestCodexSpawner_AppServerResumeKeepsManagedProfileOnToolServer(t *testing.
 	if !strings.Contains(got, "codex resume thread-existing -p tclaude-agent-resume") {
 		t.Fatalf("the resumed TUI must retain its managed profile, got %q", got)
 	}
-	if !strings.Contains(got, "--remote unix:///tmp/private/app.sock --remote-auth-token-env TCLAUDE_CODEX_APP_SERVER_TOKEN") {
+	if !strings.Contains(got, "--remote ws://127.0.0.1:45679 --remote-auth-token-env TCLAUDE_CODEX_APP_SERVER_TOKEN") {
 		t.Fatalf("the resumed TUI must attach through the enforcing private relay, got %q", got)
 	}
 	if !strings.Contains(got, "--permission-profile tclaude-agent-resume") {

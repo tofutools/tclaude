@@ -8,8 +8,10 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -21,22 +23,24 @@ import (
 
 const codexAppServerRelayMaxMessageBytes = 16 << 20
 
-// codexAppServerRelayCmd exposes Codex's authenticated loopback WebSocket over
-// the generation-private Unix socket. Managed-profile launches also repair the
+// codexAppServerRelayCmd exposes one shared policy/auth forwarding boundary on
+// a generation-private Unix socket for agentd and a daemon-minted numeric
+// loopback WebSocket for the TUI. Managed-profile launches also repair the
 // remote TUI's lossy legacy sandbox projection at this protocol boundary; see
 // rewriteCodexAppServerClientMessage.
 func codexAppServerRelayCmd() *cobra.Command {
-	var socketPath, upstream, permissionProfile string
+	var socketPath, listenURL, upstream, permissionProfile string
 	cmd := &cobra.Command{
 		Use:    "codex-app-server-relay",
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runCodexAppServerRelay(
-				context.Background(), socketPath, upstream, permissionProfile)
+				context.Background(), socketPath, listenURL, upstream, permissionProfile)
 		},
 	}
 	cmd.Flags().StringVar(&socketPath, "socket", "", "Unix listener path")
+	cmd.Flags().StringVar(&listenURL, "listen", "", "numeric loopback WebSocket listener for the remote TUI")
 	cmd.Flags().StringVar(&upstream, "upstream", "", "loopback TCP upstream")
 	cmd.Flags().StringVar(&permissionProfile, "permission-profile", "",
 		"managed permission profile enforced for remote thread settings")
@@ -107,7 +111,7 @@ func consumeCodexAppServerToken(path string) (string, error) {
 // RunCodexAppServerRelay exposes the relay for the real-Codex compatibility
 // test. Production calls it only through the hidden subprocess command.
 func RunCodexAppServerRelay(ctx context.Context, socketPath, upstream string) error {
-	return runCodexAppServerRelay(ctx, socketPath, upstream, "")
+	return runCodexAppServerRelay(ctx, socketPath, "", upstream, "")
 }
 
 // RunCodexAppServerProfileRelay exposes the enforcing relay for the opt-in
@@ -116,15 +120,17 @@ func RunCodexAppServerRelay(ctx context.Context, socketPath, upstream string) er
 func RunCodexAppServerProfileRelay(
 	ctx context.Context,
 	socketPath string,
+	listenURL string,
 	upstream string,
 	permissionProfile string,
 ) error {
-	return runCodexAppServerRelay(ctx, socketPath, upstream, permissionProfile)
+	return runCodexAppServerRelay(ctx, socketPath, listenURL, upstream, permissionProfile)
 }
 
 func runCodexAppServerRelay(
 	ctx context.Context,
 	socketPath string,
+	listenURL string,
 	upstream string,
 	permissionProfile string,
 ) error {
@@ -146,40 +152,49 @@ func runCodexAppServerRelay(
 	if err := os.Remove(socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove stale Codex app-server relay socket: %w", err)
 	}
-	listener, err := net.Listen("unix", socketPath)
+	unixListener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		return fmt.Errorf("listen on Codex app-server relay socket: %w", err)
 	}
 	defer func() {
-		_ = listener.Close()
+		_ = unixListener.Close()
 		_ = os.Remove(socketPath)
-	}()
-	go func() {
-		<-ctx.Done()
-		_ = listener.Close()
 	}()
 	if err := os.Chmod(socketPath, 0o600); err != nil {
 		return fmt.Errorf("secure Codex app-server relay socket: %w", err)
 	}
-	if permissionProfile != "" {
-		return serveCodexAppServerProfileRelay(
-			ctx, listener, upstream, permissionProfile)
-	}
-	for {
-		client, acceptErr := listener.Accept()
-		if acceptErr != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			return acceptErr
+	listeners := []net.Listener{unixListener}
+	if strings.TrimSpace(listenURL) != "" {
+		listenAddress, err := codexAppServerRelayListenAddress(listenURL)
+		if err != nil {
+			return err
 		}
-		go relayCodexAppServerConnection(client, upstream)
+		tuiListener, err := net.Listen("tcp4", listenAddress)
+		if err != nil {
+			return fmt.Errorf("listen on Codex TUI relay endpoint: %w", err)
+		}
+		defer tuiListener.Close()
+		listeners = append(listeners, tuiListener)
 	}
+	return serveCodexAppServerRelay(ctx, listeners, upstream, permissionProfile)
 }
 
-func serveCodexAppServerProfileRelay(
+func codexAppServerRelayListenAddress(listenURL string) (string, error) {
+	endpoint, err := url.Parse(listenURL)
+	if err != nil || endpoint.Scheme != "ws" || endpoint.Hostname() != "127.0.0.1" ||
+		endpoint.User != nil || endpoint.Path != "" || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+		return "", errors.New("codex TUI relay listener must be numeric IPv4 loopback WebSocket")
+	}
+	port, err := strconv.Atoi(endpoint.Port())
+	if err != nil || port < 1 || port > 65535 {
+		return "", errors.New("codex TUI relay listener must have a valid port")
+	}
+	return net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), nil
+}
+
+func serveCodexAppServerRelay(
 	ctx context.Context,
-	listener net.Listener,
+	listeners []net.Listener,
 	upstream string,
 	permissionProfile string,
 ) error {
@@ -187,15 +202,31 @@ func serveCodexAppServerProfileRelay(
 		relayCodexAppServerWebSocket(w, r, upstream, permissionProfile)
 	})
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: 15 * time.Second}
+	shutdownDone := make(chan struct{})
+	defer close(shutdownDone)
 	go func() {
-		<-ctx.Done()
-		_ = server.Close()
+		select {
+		case <-ctx.Done():
+			_ = server.Close()
+		case <-shutdownDone:
+		}
 	}()
-	err := server.Serve(listener)
+	results := make(chan error, len(listeners))
+	for _, listener := range listeners {
+		go func() { results <- server.Serve(listener) }()
+	}
+	var firstErr error
+	for range listeners {
+		err := <-results
+		if ctx.Err() == nil && !errors.Is(err, http.ErrServerClosed) && firstErr == nil {
+			firstErr = err
+			_ = server.Close()
+		}
+	}
 	if ctx.Err() != nil {
 		return nil
 	}
-	return err
+	return firstErr
 }
 
 func relayCodexAppServerWebSocket(
@@ -249,7 +280,7 @@ func relayCodexAppServerWebSocket(
 			if readErr != nil {
 				return
 			}
-			if messageType == websocket.TextMessage {
+			if messageType == websocket.TextMessage && permissionProfile != "" {
 				payload, readErr = rewriteCodexAppServerClientMessage(payload, permissionProfile)
 				if readErr != nil {
 					return
@@ -347,26 +378,4 @@ func rewriteCodexAppServerClientMessage(payload []byte, permissionProfile string
 		return nil, fmt.Errorf("encode Codex app-server %s request: %w", request.Method, err)
 	}
 	return rewritten, nil
-}
-
-func relayCodexAppServerConnection(client net.Conn, upstream string) {
-	defer client.Close()
-	server, err := net.Dial("tcp", upstream)
-	if err != nil {
-		return
-	}
-	defer server.Close()
-	done := make(chan struct{}, 2)
-	go func() {
-		_, _ = io.Copy(server, client)
-		done <- struct{}{}
-	}()
-	go func() {
-		_, _ = io.Copy(client, server)
-		done <- struct{}{}
-	}()
-	<-done
-	_ = client.Close()
-	_ = server.Close()
-	<-done
 }

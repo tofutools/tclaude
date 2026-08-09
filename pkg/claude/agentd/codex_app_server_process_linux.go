@@ -111,6 +111,15 @@ func processOwnsCodexAppServerEndpoint(pid int, endpoint string) bool {
 	return err == nil && processHoldsSocket(pid, inode)
 }
 
+func processOwnsCodexAppServerRelayEndpoint(pid int, socketPath, endpoint string) bool {
+	port, err := codexEndpointPort(endpoint)
+	if err != nil || !codexRelayArgsTargetEndpoint(pid, socketPath, endpoint) {
+		return false
+	}
+	inode, err := findTCPListenerInode(filepath.Join("/proc", strconv.Itoa(pid), "net", "tcp"), port)
+	return err == nil && processHoldsSocket(pid, inode)
+}
+
 func codexEndpointPort(endpoint string) (int, error) {
 	parsed, err := url.Parse(endpoint)
 	if err != nil || parsed.Scheme != "ws" || parsed.Hostname() != "127.0.0.1" {
@@ -131,6 +140,23 @@ func codexServerArgsTargetEndpoint(pid int, endpoint string) bool {
 	args := bytes.Split(bytes.TrimSuffix(cmdline, []byte{0}), []byte{0})
 	for i := 0; i+2 < len(args); i++ {
 		if string(args[i]) == "app-server" && string(args[i+1]) == "--listen" && string(args[i+2]) == endpoint {
+			return true
+		}
+	}
+	return false
+}
+
+func codexRelayArgsTargetEndpoint(pid int, socketPath, endpoint string) bool {
+	cmdline, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline"))
+	if err != nil {
+		return false
+	}
+	args := bytes.Split(bytes.TrimSuffix(cmdline, []byte{0}), []byte{0})
+	if !codexAppServerArgsTargetSocket(args, socketPath) {
+		return false
+	}
+	for i := 0; i+1 < len(args); i++ {
+		if string(args[i]) == "--listen" && string(args[i+1]) == endpoint {
 			return true
 		}
 	}

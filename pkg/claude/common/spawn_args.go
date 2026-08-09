@@ -133,6 +133,7 @@ type SpawnArgs struct {
 	CodexAppServer             bool
 	CodexAppServerSocket       string
 	CodexAppServerURL          string
+	CodexAppServerRelayURL     string
 	CodexAppServerTokenSHA256  string
 	CodexAppServerTokenHandoff string
 	CodexAppServerPIDFile      string

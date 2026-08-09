@@ -13,10 +13,12 @@ type SpawnSpec struct {
 	// behavior and identity were probed, preventing a later PATH substitution.
 	ExecutablePath string
 	// CodexAppServerSocket selects the opt-in Codex app-server drive. The
-	// adapter starts a private app-server in the same launch envelope, points
-	// the normal TUI at it with --remote, and records the server pid for agentd.
+	// adapter starts a private app-server and one enforcing relay in the same
+	// launch envelope. Agentd uses the relay's Unix socket; the normal TUI uses
+	// its authenticated numeric-loopback endpoint.
 	CodexAppServerSocket       string
 	CodexAppServerURL          string
+	CodexAppServerRelayURL     string
 	CodexAppServerTokenSHA256  string
 	CodexAppServerTokenHandoff string
 	TclaudeExecutable          string

@@ -81,6 +81,7 @@ func TestCodexSpawnerAppServerMirrorsExecutionPosture(t *testing.T) {
 		ShellEnvironment:           map[string]string{"GOBIN": "/tmp/go bin"},
 		CodexAppServerSocket:       "/tmp/app.sock",
 		CodexAppServerURL:          "ws://127.0.0.1:45678",
+		CodexAppServerRelayURL:     "ws://127.0.0.1:45679",
 		CodexAppServerTokenSHA256:  strings.Repeat("ab", 32),
 		CodexAppServerTokenHandoff: "/tmp/token",
 		TclaudeExecutable:          "/opt/tclaude",

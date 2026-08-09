@@ -85,3 +85,17 @@ func processOwnsCodexAppServerEndpoint(pid int, endpoint string) bool {
 	return strings.Contains(command, " app-server ") &&
 		strings.Contains(command, "--listen "+endpoint)
 }
+
+func processOwnsCodexAppServerRelayEndpoint(pid int, socketPath, endpoint string) bool {
+	if !opencodeapi.ProcessOwnsEndpoint(pid, endpoint) {
+		return false
+	}
+	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=").Output()
+	if err != nil {
+		return false
+	}
+	command := string(out)
+	return strings.Contains(command, " codex-app-server-relay ") &&
+		strings.Contains(command, "--socket "+socketPath) &&
+		strings.Contains(command, "--listen "+endpoint)
+}
