@@ -2,6 +2,7 @@ package session
 
 import (
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,13 +23,22 @@ func TestConfigureTmuxScrollback_RealTmuxHookCancelsInactiveHarnessPane(t *testi
 	require.NoError(t, tmux.Command("set-hook", "-g", "client-detached[0]", "display-message global-zero").Run())
 	require.NoError(t, tmux.Command("set-hook", "-g", "client-detached[100]", "display-message global-hundred").Run())
 
+	var installers sync.WaitGroup
+	for range 40 {
+		installers.Add(1)
+		go func() {
+			defer installers.Done()
+			ensureTmuxScrollDetachHook()
+		}()
+	}
+	installers.Wait()
 	enableTmuxMouseScrollback("scroll-hook")
 	enableTmuxMouseScrollback("scroll-hook") // repeat configuration must not append the hook again
 	hooks, err := tmux.Command("show-hooks", "-g", "client-detached").Output()
 	require.NoError(t, err)
 	require.Contains(t, string(hooks), "client-detached[0] display-message global-zero")
 	require.Contains(t, string(hooks), "client-detached[100] display-message global-hundred")
-	require.Equal(t, 1, strings.Count(string(hooks), tmuxScrollDetachHookMarker))
+	require.Equal(t, 1, strings.Count(string(hooks), tmuxNativeScrollbackOption))
 
 	attach := tmux.Command("attach-session", "-t", "=scroll-hook")
 	terminal, err := pty.Start(attach)

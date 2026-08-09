@@ -1,19 +1,17 @@
 package session
 
 import (
-	"strings"
-
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 const (
-	tmuxNativeScrollbackOption = "@tclaude_native_scrollback"
-	// This option name also makes the hook discoverable in show-hooks output,
-	// allowing independent session-launch processes to install it idempotently.
-	tmuxScrollDetachHookMarker = tmuxNativeScrollbackOption
-	tmuxScrollDetachHook       = "if-shell -F '#{&&:#{==:#{" + tmuxNativeScrollbackOption + "},on},#{==:#{session_attached},0}}'" +
+	tmuxNativeScrollbackOption          = "@tclaude_native_scrollback"
+	tmuxScrollDetachHookInstalledOption = "@tclaude_scroll_detach_hook_installed"
+	tmuxScrollDetachHook                = "if-shell -F '#{&&:#{==:#{" + tmuxNativeScrollbackOption + "},on},#{==:#{session_attached},0}}'" +
 		" 'run-shell -C \"send-keys -X -t =#{session_name}:0.0 cancel\"'"
+	tmuxScrollDetachHookInstall = "set-hook -ag client-detached { " + tmuxScrollDetachHook + " } ; " +
+		"set-option -g " + tmuxScrollDetachHookInstalledOption + " on"
 )
 
 // ConfigureTmuxScrollback enables tmux mouse mode for a single session when
@@ -65,9 +63,11 @@ func enableTmuxMouseScrollback(tmuxSession string) {
 }
 
 func ensureTmuxScrollDetachHook() {
-	if out, err := clcommon.TmuxCommand("show-hooks", "-g", "client-detached").Output(); err == nil &&
-		strings.Contains(string(out), tmuxScrollDetachHookMarker) {
-		return
-	}
-	_ = clcommon.TmuxCommand("set-hook", "-ag", "client-detached", tmuxScrollDetachHook).Run()
+	// Keep the check, append, and marker update in one tmux command queue. A
+	// read followed by a separate set-hook races when a group launches several
+	// native-scrollback agents concurrently, appending the same global hook for
+	// each winner. Tmux serializes these non-blocking command queues, so only the
+	// first observes an unset server marker and executes the install list.
+	condition := "#{!=:#{" + tmuxScrollDetachHookInstalledOption + "},on}"
+	_ = clcommon.TmuxCommand("if-shell", "-F", condition, tmuxScrollDetachHookInstall).Run()
 }
