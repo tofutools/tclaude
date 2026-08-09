@@ -247,6 +247,64 @@ test('a value can be typed for a dimension the daemon has no catalogue for', asy
   await mounted.unmount();
 });
 
+// A dimension with no catalogue is typed into and nothing else, so the three
+// gestures an operator actually makes after typing — Enter (above), the +
+// button, blur, or straight to Save — must all keep the value. Dropping it
+// posts the grant back as {}, which is not "no change" but an explicit
+// widening to unscoped: the exact way a narrowing appears to have "no effect".
+test('a typed matcher survives the + button, a blur, and a straight Save', async (t) => {
+  const harness = await createPreactHarness(t);
+  const saved = [];
+  const actions = { ...noopActions, savePermissions: async (descriptor, selection, scopes) => { saved.push(scopes); } };
+  const snapshot = scopeSnapshot({ slugs: [TEMPLATES], dimOptions: { process_template: {} } });
+
+  let opened = await openEditor(harness, snapshot, actions);
+  await harness.act(() => { opened.host.querySelector('[data-slug="process.runs.manage"] button.perm-scope-twisty').click(); });
+  let free = opened.host.querySelector('.perm-scope-dim[data-dim="process_template"] .perm-scope-free');
+  await harness.input(free, 'release-train');
+  await harness.act(() => { opened.host.querySelector('.perm-scope-dim[data-dim="process_template"] .perm-scope-free-add').click(); });
+  assert.match(opened.host.querySelector('[data-slug="process.runs.manage"] .perm-scope-chip').textContent,
+    /process_template=release-train/, '+ commits the typed value');
+  await opened.mounted.unmount();
+
+  opened = await openEditor(harness, snapshot, actions);
+  await harness.act(() => { opened.host.querySelector('[data-slug="process.runs.manage"] button.perm-scope-twisty').click(); });
+  free = opened.host.querySelector('.perm-scope-dim[data-dim="process_template"] .perm-scope-free');
+  await harness.input(free, 'release-train');
+  await harness.act(() => harness.fireEvent(free, 'blur'));
+  assert.match(opened.host.querySelector('[data-slug="process.runs.manage"] .perm-scope-chip').textContent,
+    /process_template=release-train/, 'leaving the box commits what is in it');
+  await opened.mounted.unmount();
+
+  // The unforgiving one: type, then click Save without ever leaving the box.
+  opened = await openEditor(harness, snapshot, actions);
+  await harness.act(() => { opened.host.querySelector('[data-slug="process.runs.manage"] button.perm-scope-twisty').click(); });
+  free = opened.host.querySelector('.perm-scope-dim[data-dim="process_template"] .perm-scope-free');
+  await harness.input(free, 'release-train');
+  await harness.act(async () => { opened.host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.deepEqual(saved.at(-1), { 'process.runs.manage': { process_template: ['release-train'] } },
+    'Save must flush the typed matcher, never post the grant back as unscoped');
+  await opened.mounted.unmount();
+});
+
+// Collapsing the drawer takes the free-text box off screen; what was in it is
+// gone visually, so it must not reappear at Save either.
+test('an abandoned typed matcher is not resurrected by Save', async (t) => {
+  const harness = await createPreactHarness(t);
+  const saved = [];
+  const { host, mounted } = await openEditor(harness, scopeSnapshot({
+    slugs: [TEMPLATES], dimOptions: { process_template: {} },
+  }), { ...noopActions, savePermissions: async (descriptor, selection, scopes) => { saved.push(scopes); } });
+
+  const twisty = host.querySelector('[data-slug="process.runs.manage"] button.perm-scope-twisty');
+  await harness.act(() => { twisty.click(); });
+  await harness.input(host.querySelector('.perm-scope-dim[data-dim="process_template"] .perm-scope-free'), 'oops');
+  await harness.act(() => { twisty.click(); });
+  await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.deepEqual(saved[0], { 'process.runs.manage': {} });
+  await mounted.unmount();
+});
+
 test('removing the last value of a dimension returns the grant to unscoped', async (t) => {
   const harness = await createPreactHarness(t);
   const saved = [];

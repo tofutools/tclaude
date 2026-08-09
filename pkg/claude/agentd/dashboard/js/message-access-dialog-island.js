@@ -534,13 +534,28 @@ function ScopeTwisty({ scopable, open, toggle, slug }) {
 // ignorant of which dimension it is: the label, the suggestions and the
 // selectors all arrive from the daemon, so a dimension added by a later phase
 // is editable here the moment the daemon advertises it.
-function ScopeDimEditor({ dim, values, options, onChange, declared = true }) {
+//
+// The free-text field is the ONLY way to narrow a dimension the daemon has no
+// catalogue for (remote, process_template, target_agent), so a value typed
+// there must not depend on the operator knowing to press Enter: it commits on
+// Enter, on the explicit + button, and on blur, and onDraft reports whatever is
+// still uncommitted so Save can flush it rather than silently discard it.
+function ScopeDimEditor({ dim, values, options, onChange, declared = true, onDraft }) {
   const [draft, setDraft] = useState('');
   const remove = (value) => onChange(values.filter((item) => item !== value));
   const add = (value) => {
     const clean = String(value || '').trim();
     if (!clean || values.includes(clean)) return;
     onChange([...values, clean].sort());
+  };
+  const editDraft = (value) => {
+    setDraft(value);
+    onDraft?.(dim, value);
+  };
+  const commitDraft = () => {
+    if (!draft.trim()) return;
+    add(draft);
+    editDraft('');
   };
   const unused = [...options.values, ...options.selectors].filter((value) => !values.includes(value));
   return html`<div class="perm-scope-dim" data-dim=${dim}>
@@ -555,22 +570,26 @@ function ScopeDimEditor({ dim, values, options, onChange, declared = true }) {
           <option value="" selected>+ add…</option>
           ${unused.map((value) => html`<option key=${value} value=${value}>${value}</option>`)}
         </select>` : null}
-        <input type="text" class="perm-scope-free" value=${draft} placeholder="or type a value"
+        <input type="text" class="perm-scope-free" value=${draft}
+          placeholder=${unused.length ? 'or type a value' : 'type a value'}
           autocomplete="off" spellcheck=${false} aria-label=${`Type a ${dim} value`}
-          onInput=${(event) => setDraft(event.currentTarget.value)}
+          onInput=${(event) => editDraft(event.currentTarget.value)}
+          onBlur=${commitDraft}
           onKeyDown=${(event) => {
     if (event.key !== 'Enter' || event.isComposing) return;
     event.preventDefault();
-    add(draft);
-    setDraft('');
+    commitDraft();
   }} />
+        <button type="button" class="perm-scope-free-add" disabled=${!draft.trim()}
+          aria-label=${`Add the typed ${dim} value`} title="Add the typed value"
+          onClick=${commitDraft}>+</button>
       </span>
       ${values.length ? null : html`<div class="perm-scope-hint">empty — unconstrained on this dimension</div>`}
     </div>
   </div>`;
 }
 
-function ScopeDrawer({ row, scope, snapshot, onChange, effective }) {
+function ScopeDrawer({ row, scope, snapshot, onChange, effective, onDraft }) {
   const dims = scopeDimRows(row, scope);
   const setDim = (dim, values) => {
     const next = { ...scope };
@@ -588,7 +607,7 @@ function ScopeDrawer({ row, scope, snapshot, onChange, effective }) {
     </div>
     ${dims.map(({ dim, declared }) => html`<${ScopeDimEditor} key=${dim} dim=${dim} declared=${declared}
       values=${scope[dim] || []} options=${scopeDimOptions(snapshot, dim)}
-      onChange=${(values) => setDim(dim, values)} />`)}
+      onDraft=${onDraft} onChange=${(values) => setDim(dim, values)} />`)}
   </div>`;
 }
 
@@ -638,6 +657,32 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
     if (Object.keys(scope).length) next[slug] = scope; else delete next[slug];
     return next;
   });
+  // A matcher still sitting in a dimension's free-text box when Save is
+  // pressed. The box commits on Enter, on + and on blur, but Save must not
+  // depend on any of those having happened: a dimension with no catalogue
+  // (remote) is typed into and nothing else, and silently dropping the typed
+  // value writes the grant back UNSCOPED — the widest possible reading of what
+  // the operator just narrowed. Only one drawer is open at a time, so this is
+  // one slug's dimensions.
+  const pendingScopeRef = useRef({ slug: '', dims: {} });
+  const noteScopeDraft = (slug, dim, value) => {
+    const pending = pendingScopeRef.current;
+    if (pending.slug !== slug) pendingScopeRef.current = { slug, dims: {} };
+    pendingScopeRef.current.dims[dim] = value;
+  };
+  const flushScopeDrafts = (current) => {
+    const { slug, dims } = pendingScopeRef.current;
+    const typed = Object.entries(dims).filter(([, value]) => String(value || '').trim());
+    if (!slug || !typed.length) return current;
+    const merged = { ...(current[slug] || {}) };
+    for (const [dim, value] of typed) {
+      const clean = String(value).trim();
+      const values = merged[dim] || [];
+      if (!values.includes(clean)) merged[dim] = [...values, clean].sort();
+    }
+    pendingScopeRef.current = { slug, dims: {} };
+    return Object.keys(merged).length ? { ...current, [slug]: merged } : current;
+  };
   const submit = async () => {
     if (busyRef.current) return;
     const unreadableGroupGrants = groupMode
@@ -661,6 +706,13 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
     }
     busyRef.current = true;
     setBusy(true); setError('');
+    // Fold an uncommitted free-text matcher in before anything reads the
+    // scopes, and put it back into state too: a failed save leaves the dialog
+    // open, and the chip has to be there rather than the text the operator
+    // typed having vanished.
+    const effectiveScopes = flushScopeDrafts(scopes);
+    if (effectiveScopes !== scopes) setScopes(effectiveScopes);
+    const scopeAt = (slug) => effectiveScopes[slug] || {};
     const full = Object.fromEntries(rows.map((row) => [row.slug, currentEffect(row.slug)]));
     // Only a granted slug carries a scope: a deny is unconditional by design,
     // and a slug back at Default has no row to attach one to. Sending a scope
@@ -673,9 +725,9 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
     // to be said out loud to take effect.
     const scoped = scopesEditable ? Object.fromEntries(rows
       .filter((row) => currentEffect(row.slug) === 'grant'
-        && (!!row.scope_dims?.length || Object.keys(scopeOf(row.slug)).length)
+        && (!!row.scope_dims?.length || Object.keys(scopeAt(row.slug)).length)
         && !unreadable.has(row.slug))
-      .map((row) => [row.slug, scopeOf(row.slug)])) : {};
+      .map((row) => [row.slug, scopeAt(row.slug)])) : {};
     // Only send the map when the box was actually EDITED. A save that merely
     // flipped a grant must not carry owner_scopes at all: the daemon treats an
     // absent field as "unchanged", and sending the box's current value would
@@ -723,7 +775,15 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
         : row.granted ? `✓ ${row.sources.join(' + ')}` : '✗ denied (no source)';
     return html`<${Fragment} key=${row.slug}><div class="perm-row" data-slug=${row.slug}>
       ${anyScopable && html`<${ScopeTwisty} scopable=${scopable} slug=${row.slug} open=${openScope === row.slug}
-        toggle=${() => setOpenScope(openScope === row.slug ? '' : row.slug)} />`}
+        toggle=${() => {
+    // Collapsing the drawer hides the free-text box, so anything still
+    // uncommitted in it is gone from the screen; drop it here too rather than
+    // resurrecting it at Save. Committed chips are unaffected — and a real
+    // browser blurs the box before this click, so a typed value normally
+    // becomes a chip on the way out.
+    pendingScopeRef.current = { slug: '', dims: {} };
+    setOpenScope(openScope === row.slug ? '' : row.slug);
+  }} />`}
       <div class="perm-row-info"><span class="perm-row-slug">${row.slug}${row.owner_implied ? html` <span class="owner-badge" title="Group ownership can confer this slug">👑 owner</span>` : null}</span>
         <span class="perm-row-desc" title=${row.description || row.descr || ''}>${row.description || row.descr || ''}</span></div>
       ${scopable && html`<${ScopeSummary} scope=${scopeOf(row.slug)} />`}
@@ -742,6 +802,7 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
     </div>
     ${scopable && openScope === row.slug && html`<${ScopeDrawer} row=${row} scope=${scopeOf(row.slug)}
       snapshot=${snapshot} onChange=${(scope) => setScope(row.slug, scope)}
+      onDraft=${(dim, value) => noteScopeDraft(row.slug, dim, value)}
       effective=${{ granted: row.granted, text: effText }} />`}
     </${Fragment}>`;
   }) : html`<div class="empty" style="padding:10px">${rows.length ? 'No matching permission slugs.' : 'No permission slugs registered.'}</div>`}</div>

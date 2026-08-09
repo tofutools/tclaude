@@ -5276,6 +5276,16 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
 }
 .perm-scope-free { width: 130px; }
 .perm-scope-free:focus, .perm-scope-add:focus { outline: none; border-color: #58a6ff; }
+/* The dimensions with no catalogue (remote, process_template, target_agent)
+   have only the free-text box, so the commit gesture needs to be visible
+   rather than a remembered Enter. Disabled until something is typed, so an
+   empty box never looks like it has an action pending. */
+.perm-scope-free-add {
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 3px; color: #c9d1d9;
+  font-size: 10px; font-family: inherit; line-height: 1; padding: 3px 6px; cursor: pointer;
+}
+.perm-scope-free-add:hover:not(:disabled) { border-color: #58a6ff; color: #f0f6fc; }
+.perm-scope-free-add:disabled { opacity: 0.4; cursor: default; }
 .perm-row-eff { flex: 0 0 78px; font-size: 10px; text-align: right; }
 .perm-row-eff.granted { color: #3fb950; }
 .perm-row-eff.denied { color: #f85149; }
