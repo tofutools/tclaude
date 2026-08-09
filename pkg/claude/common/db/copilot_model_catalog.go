@@ -76,8 +76,9 @@ func ReplaceCopilotModelCatalog(entries []CopilotModelCatalogEntry, fetchedAt ti
 }
 
 // FreshCopilotModelPromptLimit returns a model's mirrored prompt limit only
-// while that exact row is younger than maxAge. Missing, stale, and zero-limit
-// entries all produce (0, false), which sends callers to their static fallback.
+// while that exact row is younger than maxAge. Copilot treats its prompt limit
+// as optional and falls back to max_context_window_tokens when it is absent;
+// mirror that behavior before sending callers to their static fallback.
 func FreshCopilotModelPromptLimit(modelID string, now time.Time, maxAge time.Duration) (int64, bool, error) {
 	modelID = strings.TrimSpace(modelID)
 	if modelID == "" || maxAge <= 0 {
@@ -88,7 +89,10 @@ func FreshCopilotModelPromptLimit(modelID string, now time.Time, maxAge time.Dur
 		return 0, false, err
 	}
 	var limit, fetchedAt int64
-	err = d.QueryRow(`SELECT max_prompt_tokens, fetched_at
+	err = d.QueryRow(`SELECT
+		CASE WHEN max_prompt_tokens > 0 THEN max_prompt_tokens
+		     ELSE max_context_window_tokens END,
+		fetched_at
 		FROM copilot_model_catalog WHERE model_id = ?`, modelID).Scan(&limit, &fetchedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil

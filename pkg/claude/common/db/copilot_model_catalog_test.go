@@ -39,6 +39,20 @@ func TestCopilotModelCatalogReplaceAndFreshLookup(t *testing.T) {
 	assert.False(t, fresh, "atomic replacement removes models absent from the new catalog")
 }
 
+func TestCopilotModelCatalogFallsBackToContextWindowLimit(t *testing.T) {
+	setupTestDB(t)
+	now := time.Now().UTC()
+	require.NoError(t, ReplaceCopilotModelCatalog([]CopilotModelCatalogEntry{
+		{ModelID: "model-without-prompt-limit", MaxContextWindowTokens: 144_000},
+	}, now))
+
+	limit, fresh, err := FreshCopilotModelPromptLimit(
+		"model-without-prompt-limit", now.Add(time.Hour), 24*time.Hour)
+	require.NoError(t, err)
+	assert.True(t, fresh)
+	assert.Equal(t, int64(144_000), limit)
+}
+
 func TestCopilotModelCatalogRejectsEmptyReplacementWithoutClearing(t *testing.T) {
 	setupTestDB(t)
 	now := time.Now().UTC()
