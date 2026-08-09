@@ -1895,6 +1895,7 @@ func (m tuiModel) attachCmd(agentName, convID, tmuxSession string) tea.Cmd {
 //     the terminal, tmux owns it until the operator detaches, and the console
 //     repaints itself afterwards.
 func realTUIAttachToPane(agentName, tmuxSession string, inTmux bool) tea.Cmd {
+	session.ConfigureTmuxDetachNormalization(tmuxSession)
 	target := clcommon.ExactTarget(tmuxSession)
 	if inTmux {
 		return func() tea.Msg {

@@ -1,68 +1,62 @@
 package session
 
 import (
+	"fmt"
 	"log/slog"
-	"strconv"
-	"strings"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 )
 
+const tmuxDetachNormalizeOption = "@tclaude_detach_normalize"
+
+// ConfigureTmuxDetachNormalization opts one managed session into the shared
+// client-detached hook. A global append-only hook is necessary for detach
+// paths with no returning tclaude caller, notably switch-client from an
+// agentd TUI and clients attached directly with tmux. The per-session option
+// keeps unrelated sessions on the shared tclaude tmux server untouched.
+func ConfigureTmuxDetachNormalization(tmuxSession string) {
+	if tmuxSession == "" {
+		return
+	}
+	target := clcommon.ExactTarget(tmuxSession) + ":"
+	_ = clcommon.TmuxCommand("set-option", "-t", target,
+		tmuxDetachNormalizeOption, "on").Run()
+	ensureTmuxDetachNormalizeHook()
+}
+
+func ensureTmuxDetachNormalizeHook() {
+	// The check and append share one tmux command queue. This avoids duplicate
+	// hooks when several attaches begin concurrently and self-repairs if an
+	// operator later replaces the global hook array.
+	condition := "#{==:#{m:*" + tmuxDetachNormalizeOption + "*,#{client-detached}},0}"
+	hook := "if-shell -F '#{&&:#{==:#{" + tmuxDetachNormalizeOption +
+		"},on},#{==:#{session_attached},0}}' '" +
+		"run-shell -C \"" + tmuxDetachNormalizeCommand("=#{session_name}:") + "\"'"
+	install := "set-hook -ag client-detached { " + hook + " }"
+	_ = clcommon.TmuxCommand("if-shell", "-F", condition, install).Run()
+}
+
 // NormalizeTmuxPaneAfterDetach restores a managed window to the canonical
-// detached size as soon as its last client leaves. The session-attached check
-// matters when several clients are watching the same pane: one viewer leaving
-// must not resize the window underneath the viewers that remain.
+// detached size if its last client has left. The predicate and mutation run in
+// one server-side tmux command queue, so a concurrent attach cannot slip
+// between a client-count subprocess and resize the new viewer's live window.
 //
-// Best-effort by design. The daemon's periodic pane-size reconciliation is the
-// recovery path for a transient tmux failure or an attachment path that exits
-// without reaching its normal cleanup.
+// Best-effort by design. The client-detached hook handles paths without a
+// returning caller, and agentd's periodic pane-size reconciliation remains the
+// recovery path for a transient tmux failure or a replaced hook.
 func NormalizeTmuxPaneAfterDetach(tmuxSession string) {
 	if tmuxSession == "" {
 		return
 	}
 	target := clcommon.ExactTarget(tmuxSession) + ":"
-	out, err := clcommon.TmuxCommand("display-message", "-p", "-t", target,
-		"#{session_attached}\t#{window_width}\t#{window_height}\t#{window-size}").Output()
-	if err != nil {
-		return
-	}
-	fields := strings.Split(strings.TrimSpace(string(out)), "\t")
-	if len(fields) != 4 || fields[0] != "0" {
-		return
-	}
-	w, werr := strconv.Atoi(fields[1])
-	h, herr := strconv.Atoi(fields[2])
-	if werr != nil || herr != nil {
-		return
-	}
-	needResize := w != clcommon.CanonicalAgentPaneWidth || h != clcommon.CanonicalAgentPaneHeight
-	if !needResize && fields[3] != "manual" {
-		return
-	}
-	if needResize {
-		if err := clcommon.TmuxCommand("resize-window", "-t", target,
-			"-x", strconv.Itoa(clcommon.CanonicalAgentPaneWidth),
-			"-y", strconv.Itoa(clcommon.CanonicalAgentPaneHeight)).Run(); err != nil {
-			slog.Warn("pane size normalize after detach: resize-window failed",
-				"tmux_session", tmuxSession, "error", err)
-			return
-		}
-	}
-	// resize-window selects manual sizing. Restore latest even when the window
-	// was already canonical but stuck in manual mode, so the next client fits.
-	if err := clcommon.TmuxCommand("set-option", "-w", "-t", target,
-		"window-size", "latest").Run(); err != nil {
-		slog.Warn("pane size normalize after detach: restoring window-size latest failed",
+	if err := clcommon.TmuxCommand("if-shell", "-F", "-t", target,
+		"#{==:#{session_attached},0}", tmuxDetachNormalizeCommand(target)).Run(); err != nil {
+		slog.Warn("pane size normalize after detach failed",
 			"tmux_session", tmuxSession, "error", err)
-		return
 	}
-	if needResize {
-		slog.Info("pane size normalized immediately after detach",
-			"tmux_session", tmuxSession,
-			"from", strconv.Itoa(w)+"x"+strconv.Itoa(h),
-			"to", strconv.Itoa(clcommon.CanonicalAgentPaneWidth)+"x"+strconv.Itoa(clcommon.CanonicalAgentPaneHeight))
-	} else {
-		slog.Info("pane size normalize after detach: repaired manual window sizing",
-			"tmux_session", tmuxSession)
-	}
+}
+
+func tmuxDetachNormalizeCommand(target string) string {
+	return fmt.Sprintf("resize-window -t %s -x %d -y %d ; set-option -w -t %s window-size latest",
+		target, clcommon.CanonicalAgentPaneWidth, clcommon.CanonicalAgentPaneHeight, target)
 }

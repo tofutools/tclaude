@@ -513,6 +513,7 @@ func webTerminalAttachCmd(attachCommand string) string {
 // exits. Keeping them separate lets the standalone TUI clean up its own detach
 // without evicting other viewers. Ad hoc terminals pass no cleanup harness.
 func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand, detachSession, cleanupSession string, cleanupHarness *harness.Harness) {
+	session.ConfigureTmuxDetachNormalization(cleanupSession)
 	hook := termWSTestHook
 	if hook != nil && hook.RewriteCommand != nil {
 		shellCommand, detachSession = hook.RewriteCommand(shellCommand, detachSession)
