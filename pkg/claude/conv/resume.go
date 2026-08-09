@@ -373,7 +373,10 @@ func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stder
 
 	if attach {
 		fmt.Fprintf(stdout, "\nAttaching... (Ctrl+B D to detach)\n")
-		return session.AttachToTmuxSession(tmuxSession)
+		if err := session.AttachToSession(sessionID, tmuxSession, false); err != nil {
+			return 1
+		}
+		return 0
 	}
 
 	fmt.Fprintf(stdout, "\nAttach with: tclaude session attach %s\n", tmuxSession)

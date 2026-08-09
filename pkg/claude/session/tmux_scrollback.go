@@ -28,6 +28,19 @@ func ConfigureTmuxScrollback(tmuxSession string, h *harness.Harness) {
 	enableTmuxMouseScrollback(tmuxSession)
 }
 
+// CancelTmuxScrollback exits tmux copy mode on a managed pane when its
+// native-scrollback client detaches. Copy mode belongs to the pane, not the
+// client, so leaving it active would make the next attachment open in history
+// and consume automated send-keys. The command is naturally best-effort: tmux
+// returns an error when no mode is active, which is the desired no-op.
+func CancelTmuxScrollback(tmuxSession string, h *harness.Harness) {
+	if tmuxSession == "" || !h.WantsTmuxScrollback() {
+		return
+	}
+	_ = clcommon.TmuxCommand("send-keys", "-X", "-t",
+		clcommon.ExactTarget(tmuxSession)+":0.0", "cancel").Run()
+}
+
 // enableTmuxMouseScrollback is the underlying per-session mouse-mode toggle
 // shared by ConfigureTmuxScrollback (gated on a harness's
 // WantsTmuxScrollback) and a plain shell session (runNewShell), which always

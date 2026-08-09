@@ -127,9 +127,6 @@ func TestAudit_FailedStopRecordsFailureAndBoundedDiagnostic(t *testing.T) {
 	)
 	f.HaveConvWithTitle(conv, "failed-stop-worker")
 	f.HaveAliveSession(conv, "spwn-failed-stop", tmux, f.TestCwd("failed-stop"))
-	// Agentd first issues a best-effort tmux-mode cancel, then sends /exit.
-	// Fail both calls so the delivery failure remains the behavior under test.
-	f.World.Tmux.FailNextCommand("send-keys")
 	f.World.Tmux.FailNextCommand("send-keys")
 
 	stopped := testharness.Serve(f.Mux, agentd.AsHumanPeer(
@@ -170,9 +167,6 @@ func TestAudit_DashboardFailedStopRecordsFailureAndEnvelope(t *testing.T) {
 	)
 	f.HaveConvWithTitle(conv, "failed-dstop-worker")
 	f.HaveAliveSession(conv, "spwn-failed-dstop", tmux, f.TestCwd("failed-dstop"))
-	// Agentd first issues a best-effort tmux-mode cancel, then sends /exit.
-	// Fail both calls so the delivery failure remains the behavior under test.
-	f.World.Tmux.FailNextCommand("send-keys")
 	f.World.Tmux.FailNextCommand("send-keys")
 
 	dash := agentd.BuildDashboardHandlerForTest()
