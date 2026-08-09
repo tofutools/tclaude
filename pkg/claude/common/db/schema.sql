@@ -1267,3 +1267,12 @@ CREATE TABLE agent_lineage (
 CREATE INDEX idx_agent_lineage_parent
 			ON agent_lineage(parent_agent_id, child_agent_id);
 
+CREATE TABLE copilot_model_catalog (
+			model_id                  TEXT PRIMARY KEY,
+			max_context_window_tokens INTEGER NOT NULL DEFAULT 0 CHECK (max_context_window_tokens >= 0),
+			max_prompt_tokens         INTEGER NOT NULL DEFAULT 0 CHECK (max_prompt_tokens >= 0),
+			max_output_tokens         INTEGER NOT NULL DEFAULT 0 CHECK (max_output_tokens >= 0),
+			fetched_at                INTEGER NOT NULL,
+			raw_json                  TEXT NOT NULL DEFAULT ''
+		) STRICT;
+
