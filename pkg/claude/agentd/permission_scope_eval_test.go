@@ -21,6 +21,7 @@ func TestActionContextCoversEveryScopeDimension(t *testing.T) {
 		SpawnProfile:    "p",
 		ProcessTemplate: "t",
 		Remote:          "github.com/acme/repo",
+		LinearTeam:      "TCL",
 	}
 	for dim := range permissionScopeDimensions {
 		if full.value(dim) == "" {
@@ -107,6 +108,16 @@ func TestEvalPermissionScope(t *testing.T) {
 			verdict: allow(`{"remote":["github.com/tofu"]}`), actx: ActionContext{Remote: "github.com/tofutools/tclaude"}},
 		{name: "remote matcher fails closed without Remote context",
 			verdict: allow(`{"remote":["github.com/tofutools/*"]}`)},
+		{name: "linear_team matcher is case insensitive",
+			verdict: allow(`{"linear_team":["tcl"]}`), actx: ActionContext{LinearTeam: "TCL"},
+			wantSatisfied: true, wantMatched: "linear_team=tcl"},
+		{name: "linear_team matchers within the dimension OR",
+			verdict: allow(`{"linear_team":["TCL","JOH"]}`), actx: ActionContext{LinearTeam: "joh"},
+			wantSatisfied: true, wantMatched: "linear_team=JOH,TCL"},
+		{name: "linear_team matcher is whole-key, never a prefix",
+			verdict: allow(`{"linear_team":["TCL"]}`), actx: ActionContext{LinearTeam: "TCLX"}},
+		{name: "linear_team matcher fails closed without LinearTeam context",
+			verdict: allow(`{"linear_team":["TCL"]}`)},
 		{name: "deny carries no scope and is never evaluated as one",
 			verdict:      permVerdict{Resolution: permDeny, Source: permSourceOverride},
 			wantUnscoped: true, wantSatisfied: true},
@@ -122,6 +133,47 @@ func TestEvalPermissionScope(t *testing.T) {
 			if got.Matched != tc.wantMatched {
 				t.Errorf("Matched = %q, want %q", got.Matched, tc.wantMatched)
 			}
+		})
+	}
+}
+
+// permissionScopeEnumerate is the one read path that answers with what a grant
+// SAYS rather than with a decision, so its fail-closed edges matter as much as
+// its happy path: every "false" here is a case where reading the list anyway
+// would hand a caller authority the grant does not carry.
+func TestPermissionScopeEnumerate(t *testing.T) {
+	allow := func(scopes ...string) permVerdict {
+		return permVerdict{Resolution: permAllow, Source: permSourceGroup, ScopeJSON: scopes}
+	}
+	for _, tc := range []struct {
+		name           string
+		verdict        permVerdict
+		dim            ScopeDim
+		want           []string
+		wantEnumerated bool
+	}{
+		{name: "single row", verdict: allow(`{"linear_team":["TCL"]}`),
+			dim: ScopeDimLinearTeam, want: []string{"TCL"}, wantEnumerated: true},
+		{name: "rows union and sort", verdict: allow(`{"linear_team":["JOH"]}`, `{"linear_team":["TCL","JOH"]}`),
+			dim: ScopeDimLinearTeam, want: []string{"JOH", "TCL"}, wantEnumerated: true},
+		{name: "a scope with no such dimension enumerates empty",
+			verdict: allow(`{"group":["dev"]}`), dim: ScopeDimLinearTeam, wantEnumerated: true},
+		{name: "an unscoped row makes the answer meaningless",
+			verdict: allow(`{"linear_team":["TCL"]}`, ""), dim: ScopeDimLinearTeam},
+		{name: "no rows at all is unscoped, not an empty set",
+			verdict: allow(), dim: ScopeDimLinearTeam},
+		{name: "an undecodable row contributes nothing",
+			verdict: allow(`{`, `{"linear_team":["TCL"]}`),
+			dim:     ScopeDimLinearTeam, want: []string{"TCL"}, wantEnumerated: true},
+		{name: "a non-enumerable dimension refuses outright",
+			verdict: allow(`{"remote":["github.com/acme/*"]}`), dim: ScopeDimRemote},
+		{name: "a selector cannot be enumerated",
+			verdict: allow(`{"target_agent":["@descendants"]}`), dim: ScopeDimTargetAgent},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, enumerated := permissionScopeEnumerate(tc.verdict, tc.dim)
+			assert.Equal(t, tc.wantEnumerated, enumerated)
+			assert.Equal(t, tc.want, got)
 		})
 	}
 }
@@ -310,6 +362,9 @@ var scopedSlugEnforcementPaths = map[string]string{
 	PermGitPush:           "git proxy handler — resolved push remote in ActionContext{Remote}",
 	PermGitHubRead:        "GitHub proxy handlers — derived repository remote in ActionContext{Remote}",
 	PermGitHubWrite:       "GitHub proxy handlers — derived repository remote in ActionContext{Remote}",
+	PermLinearRead: "Linear proxy — linearEffectiveTeams evaluates ActionContext{LinearTeam} per candidate team " +
+		"into the session's effective set, which every team check reads",
+	PermLinearWrite: "Linear proxy — same effective-set resolution as linear.read",
 }
 
 func TestEveryScopedSlugDeclaresAnEnforcementPath(t *testing.T) {

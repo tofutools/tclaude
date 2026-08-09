@@ -23,7 +23,8 @@ import (
 //
 //  1. permission slug — before the body is read, so an ungated caller cannot
 //     probe for the existence of a team;
-//  2. operator policy — the proxy is off unless teams are allow-listed, and
+//  2. operator policy and grant scope, resolved together into this caller's
+//     effective team set — the proxy is off unless SOME team is reachable, and
 //     writes are off unless allow_write is set;
 //  3. parameter validation — identifier shape, charset, length;
 //  4. the team gate on the caller's identifier;
@@ -32,6 +33,10 @@ import (
 //
 // Step 6 is not belt-and-braces. Step 4 checks a string the caller supplied;
 // step 6 checks the thing actually reached.
+//
+// Steps 4 and 6 read the same effective set, and so do the listing verbs' filter
+// and row-level drop, so no combination of operator list and grant scope can be
+// enforced one way in one verb and another way in the next.
 
 // maxLinearCommentsTextBytes is the tail kept from `issue comments`, whose
 // output IS the payload rather than a diagnosis. Same reasoning and same size
@@ -95,23 +100,41 @@ type linearLinkRequest struct {
 }
 
 // openLinearProxy is the shared prologue: method check, permission gate,
-// bounded body decode, operator policy. Write verbs additionally clear
+// bounded body decode, team-set resolution. Write verbs additionally clear
 // allow_write here, so no handler can forget it.
+//
+// The permission gate goes through preflightProxyPermission, the same helper the
+// git proxy uses, for the same reason: an ungranted caller must still be refused
+// cheaply, while a TEAM-SCOPED grant cannot be decided against an empty
+// ActionContext and would otherwise fall through to an ask-human popup on every
+// single call. Where git then finishes the decision against one resolved remote,
+// the Linear proxy resolves the scope into the session's effective team set (see
+// newLinearProxySession) — its verbs can span several teams at once, so a set is
+// the only form the decision can take.
 func openLinearProxy(w http.ResponseWriter, r *http.Request, perm string, body any) (*linearProxySession, bool) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
 		return nil, false
 	}
-	if _, ok := requirePermission(w, r, perm); !ok {
+	convID, teamScoped, ok := preflightProxyPermission(w, r, perm)
+	if !ok {
 		return nil, false
 	}
 	if body != nil && !decodeLinearProxyBody(w, r, body) {
 		return nil, false
 	}
-	s, fault := newLinearProxySession()
+	s, fault := newLinearProxySession(r, convID, perm, teamScoped)
 	if fault != nil {
 		writeProxyFault(w, fault)
 		return nil, false
+	}
+	if teamScoped {
+		// The scoped grant really did decide this request, so the audit row must
+		// say so. In the git proxy this happens inside finishProxyPermission's
+		// requirePermission call; here the decision is the set resolution above,
+		// so the record is written explicitly.
+		recordAuditPermissionScope(r, perm, permissionScopeDisplay(
+			PermissionScope{ScopeDimLinearTeam: s.teams}))
 	}
 	if perm == PermLinearWrite {
 		if fault := s.requireWrite(); fault != nil {
@@ -144,18 +167,20 @@ func decodeLinearProxyBody(w http.ResponseWriter, r *http.Request, out any) bool
 //
 // It is the ONLY place a team constraint is constructed, and every list-shaped
 // verb goes through it, so an unfiltered listing is not something a handler can
-// produce by omission. When the caller named a team it has already been
-// allow-list-checked; when it did not, the clause is the whole allow-list.
+// produce by omission. When the caller named a team it has already been gated;
+// when it did not, the clause is the caller's whole effective team set — which
+// is exactly why that set has to be resolved before any verb runs, rather than
+// one team at a time as a request arrives.
 //
 // eqIgnoreCase rather than `in`: Linear's StringComparator has no
-// case-insensitive list form, and the allow-list is stored lower-cased while
+// case-insensitive list form, and the effective set is stored lower-cased while
 // Linear's team keys are upper-case.
 func (s *linearProxySession) linearTeamClause(team string) map[string]any {
 	if team != "" {
 		return map[string]any{"team": map[string]any{"key": map[string]any{"eqIgnoreCase": team}}}
 	}
-	alternatives := make([]any, 0, len(s.policy.AllowedTeams))
-	for _, key := range s.policy.AllowedTeams {
+	alternatives := make([]any, 0, len(s.teams))
+	for _, key := range s.teams {
 		alternatives = append(alternatives,
 			map[string]any{"team": map[string]any{"key": map[string]any{"eqIgnoreCase": key}}})
 	}
@@ -183,14 +208,14 @@ func (s *linearProxySession) linearIssueFilter(team, state string, assignedMe bo
 //
 // The filter above should already have made this a no-op. It runs anyway: the
 // filter is a request Linear honours, while this is a check the daemon makes,
-// and only the second one is a gate. A row from outside the allow-list is
+// and only the second one is a gate. A row from outside the effective set is
 // dropped rather than refused — one unexpected row must not deny the agent the
 // rest of a legitimate listing — and dropping is safe because the rows are
 // data, not an operation.
 func (s *linearProxySession) enforceIssueList(issues []linearIssue) []linearIssue {
 	kept := make([]linearIssue, 0, len(issues))
 	for _, issue := range issues {
-		if s.policy.LinearTeamAllowed(issue.Team.Key) {
+		if s.teamAllowed(issue.Team.Key) {
 			kept = append(kept, issue)
 		}
 	}
@@ -262,13 +287,22 @@ func handleLinearProxyWhoami(w http.ResponseWriter, r *http.Request) {
 	}
 	teams := make([]teamView, 0, len(data.Teams.Nodes))
 	for _, t := range data.Teams.Nodes {
-		teams = append(teams, teamView{Key: t.Key, Name: t.Name, Allowed: s.policy.LinearTeamAllowed(t.Key)})
+		teams = append(teams, teamView{Key: t.Key, Name: t.Name, Allowed: s.teamAllowed(t.Key)})
 	}
 	s.respond(w, r, "whoami", struct {
-		Viewer       linearUserRef `json:"viewer"`
-		Teams        []teamView    `json:"teams"`
-		AllowedTeams []string      `json:"allowed_teams"`
-		WriteAllowed bool          `json:"write_allowed"`
+		Viewer linearUserRef `json:"viewer"`
+		Teams  []teamView    `json:"teams"`
+		// AllowedTeams is what THIS caller may reach: the operator's list
+		// narrowed by its own grant scope.
+		AllowedTeams []string `json:"allowed_teams"`
+		// OperatorTeams and GrantTeams break that down when the two differ, so
+		// the agent can tell its human which of the two lists to widen rather
+		// than reporting a refusal it cannot explain. GrantTeams is absent for
+		// an unscoped grant, and OperatorTeams is absent when the operator has
+		// configured no list at all (a scope-only posture).
+		OperatorTeams []string `json:"operator_teams,omitempty"`
+		GrantTeams    []string `json:"grant_teams,omitempty"`
+		WriteAllowed  bool     `json:"write_allowed"`
 		// TeamsTruncated says the listing hit the page size, so a team the
 		// caller is looking for may exist and not be shown. A silent cap here
 		// would be the worst place for one: this is the verb an agent runs to
@@ -277,7 +311,9 @@ func handleLinearProxyWhoami(w http.ResponseWriter, r *http.Request) {
 	}{
 		Viewer:         data.Viewer,
 		Teams:          teams,
-		AllowedTeams:   s.policy.AllowedTeams,
+		AllowedTeams:   s.teams,
+		OperatorTeams:  s.policy.AllowedTeams,
+		GrantTeams:     s.scopeTeams,
 		WriteAllowed:   s.policy.AllowWrite,
 		TeamsTruncated: len(data.Teams.Nodes) >= whoamiTeamPageSize,
 	}, "")

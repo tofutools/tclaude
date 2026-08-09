@@ -457,16 +457,20 @@ var permissionRegistry = []PermSlug{
 			"GitHub account, so it is not default-granted and not owner-implied.",
 	},
 	{
-		Slug: PermLinearRead,
+		Slug:      PermLinearRead,
+		ScopeDims: []ScopeDim{ScopeDimLinearTeam},
 		Description: "Read Linear issues and comments through the daemon's Linear API key (tclaude proxy linear whoami, " +
-			"issue view/ls/comments/search). Restricted to the teams on the operator's agent.linear_proxy.allowed_teams list. " +
-			"Not default-granted: it reads private workspace data as the operator.",
+			"issue view/ls/comments/search). Restricted to the teams on the operator's agent.linear_proxy.allowed_teams list, " +
+			"and narrowable per agent with --scope linear_team=TCL. Not default-granted: it reads private workspace data as " +
+			"the operator.",
 	},
 	{
-		Slug: PermLinearWrite,
+		Slug:      PermLinearWrite,
+		ScopeDims: []ScopeDim{ScopeDimLinearTeam},
 		Description: "Create and update Linear issues, comment on them, and attach links, through the daemon's Linear API key " +
 			"(tclaude proxy linear issue create/comment/update/link). Everything it writes is attributed to the operator's Linear " +
-			"account, and it additionally requires agent.linear_proxy.allow_write. Not default-granted and not owner-implied.",
+			"account, and it additionally requires agent.linear_proxy.allow_write. Narrowable per agent with " +
+			"--scope linear_team=TCL. Not default-granted and not owner-implied.",
 	},
 }
 

@@ -8,7 +8,7 @@ description: >-
   criteria or discussion, report progress on it, move it to another workflow
   state, attach the pull request you opened, or file a new issue. Gated on the
   `linear.read` / `linear.write` slugs, neither granted by default, and bounded
-  by an operator allow-list of Linear teams.
+  by an operator allow-list of Linear teams plus any team scope on your own grant.
 ---
 
 # Linear without holding the credential
@@ -34,10 +34,22 @@ Before anything else, run:
 tclaude proxy linear whoami
 ```
 
-It tells you three things you would otherwise have to discover from a 403: who
-the daemon's key authenticates as, every team that key can see, and which of
-those teams the operator has allow-listed for you. When something is refused,
-this is the command whose output tells the operator exactly what to add.
+It tells you what you would otherwise have to discover from a 403: who the
+daemon's key authenticates as, every team that key can see, and which of those
+teams **you** may reach. When something is refused, this is the command whose
+output tells the operator exactly what to add.
+
+Two independent lists bound you, and `whoami` reports both, because they need
+different fixes:
+
+- `operator_teams` — `agent.linear_proxy.allowed_teams`, the ceiling for every
+  agent on this host.
+- `grant_teams` — the `linear_team` scope on **your own** `linear.read` /
+  `linear.write` grant, when it has one. Absent means your grant is unscoped and
+  the operator's list alone bounds you.
+
+`allowed_teams` is the intersection: what you can actually reach. Every other
+verb echoes the same set as `teams`, so you rarely need to re-run `whoami`.
 
 ## Prerequisites
 
@@ -116,7 +128,20 @@ tclaude proxy linear issue update TCL-568 --state "In Review"
 carries no team key, so there would be nothing to check the allow-list against.
 
 **Team keys match exactly.** `TCL` does not authorize `TCLX`, and there is no
-wildcard. `403 team_not_allowed` names the allow-list — pass that to the human.
+wildcard.
+
+Two refusals mean two different fixes, so read the code before escalating:
+
+- `403 team_not_allowed` — the team is not on the operator's
+  `agent.linear_proxy.allowed_teams`. Ask them to add it.
+- `403 team_out_of_scope` — the operator allows the team, but **your** grant is
+  scoped to others. Ask them to widen your grant:
+  `tclaude agent permissions grant <you> linear.read --scope linear_team=TCL,JOH`
+  (a `--scope` replaces the previous one, so name every team you need).
+- `403 team_scope_empty` — your grant is team-scoped and overlaps the operator's
+  list nowhere, so it authorizes nothing at all. One of the two has to change.
+
+Both messages name the list that excluded you; pass that verbatim to the human.
 
 **State names must be exact** (case-insensitive). `--state "In Revue"` is
 refused rather than guessed at, and the refusal lists the team's real states.

@@ -22,9 +22,10 @@ import (
 //
 // Unlike the git and GitHub halves there is no repository to derive a scope
 // from: Linear has no filesystem artifact that ties a conversation to an issue.
-// The operator's team allow-list (agent.linear_proxy.allowed_teams) is the
-// whole scope gate, and it lives entirely in the daemon — a check made in this
-// process is a check the caller could have skipped.
+// A team set is the whole scope gate — the operator's
+// agent.linear_proxy.allowed_teams narrowed by any `linear_team` scope on the
+// caller's own linear.read / linear.write grant — and it lives entirely in the
+// daemon: a check made in this process is a check the caller could have skipped.
 
 // linearProxyTimeout is the client-side bound on a proxied Linear call. It
 // exceeds the daemon's own 45s so a slow Linear surfaces the daemon's answer
@@ -41,9 +42,10 @@ func linearCmd() *cobra.Command {
 			"`tclaude agentd` calls Linear's GraphQL API on the host with the operator's key. Everything " +
 			"you write is attributed to the operator's Linear account, so treat it as writing under their " +
 			"name.\n\n" +
-			"Which teams you can reach is not something you choose: the operator allow-lists them in " +
-			"agent.linear_proxy.allowed_teams, and an empty list means the proxy is off entirely. Run " +
-			"`tclaude proxy linear whoami` to see the allow-list beside the teams the key can actually see.\n\n" +
+			"Which teams you can reach is not something you choose. The operator allow-lists them in " +
+			"agent.linear_proxy.allowed_teams, and your own grant may narrow that further with a " +
+			"linear_team scope; you may act only where the two agree. Run `tclaude proxy linear whoami` " +
+			"to see what that leaves you, beside the teams the key can actually see.\n\n" +
 			"Reads need `linear.read`; writing needs `linear.write` AND the operator's " +
 			"agent.linear_proxy.allow_write. Neither slug is granted by default.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -60,6 +62,9 @@ func linearCmd() *cobra.Command {
 // runs, so there is no second verdict to report. A 2xx means the operation
 // happened; anything else arrives as an error with a code and a message.
 type linearProxyOutcome struct {
+	// Teams is the caller's EFFECTIVE team set, echoed on every response —
+	// already narrowed by the caller's own grant scope, so it is what this
+	// agent may reach rather than what the operator allows in general.
 	Teams []string        `json:"teams"`
 	JSON  json.RawMessage `json:"json"`
 	Text  string          `json:"text"`
@@ -129,9 +134,12 @@ func linearWhoamiCmd() *cobra.Command {
 		Use:   "whoami",
 		Short: "Show who the daemon's Linear key is, and which teams you may reach",
 		Long: "Reports the Linear user the operator's key authenticates as, every team that key can see, " +
-			"and whether each one is on the operator's allow-list.\n\n" +
+			"and whether YOU may reach each one.\n\n" +
+			"Two lists bound you and the answer breaks out both, because they need different fixes: " +
+			"operator_teams is agent.linear_proxy.allowed_teams, grant_teams is the linear_team scope on " +
+			"your own grant (absent when it is unscoped), and allowed_teams is the intersection.\n\n" +
 			"This is the command to run FIRST, and the command to run when something is refused: it tells " +
-			"you the exact team key to ask the operator to add to agent.linear_proxy.allowed_teams, rather " +
+			"you the exact team key — and which of the two lists — to ask the operator to widen, rather " +
 			"than leaving you to guess from a refusal.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *linearWhoamiParams, _ *cobra.Command) error {
@@ -167,7 +175,7 @@ func linearIssueCmd() *cobra.Command {
 }
 
 type linearIssueParams struct {
-	Identifier string `pos:"true" help:"Issue identifier, e.g. TCL-568. A raw UUID is not accepted — the team key is what the allow-list is checked against."`
+	Identifier string `pos:"true" help:"Issue identifier, e.g. TCL-568. A raw UUID is not accepted — the team key is what the team gate is checked against."`
 	AskHuman   string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout. Capped at 300s. Timeout = deny."`
 }
 
@@ -190,7 +198,7 @@ func linearIssueViewCmd() *cobra.Command {
 }
 
 type linearListParams struct {
-	Team       string `long:"team" short:"t" optional:"true" help:"Only issues in this team (default: every allow-listed team)."`
+	Team       string `long:"team" short:"t" optional:"true" help:"Only issues in this team (default: every team you may reach)."`
 	State      string `long:"state" short:"s" optional:"true" help:"Only issues in this workflow state, matched by name, case-insensitively (e.g. 'In Progress')."`
 	AssignedMe bool   `long:"assigned-me" optional:"true" help:"Only issues assigned to the Linear user the daemon's key belongs to — the OPERATOR, not you."`
 	Limit      int    `long:"limit" optional:"true" help:"Maximum rows (1-100, default 25)."`
@@ -202,7 +210,7 @@ func linearIssueListCmd() *cobra.Command {
 		Use:     "ls",
 		Aliases: []string{"list"},
 		Short:   "List issues, most recently updated first",
-		Long: "Lists issues across the teams the operator allow-listed, or one of them with --team.\n\n" +
+		Long: "Lists issues across every team you may reach, or one of them with --team.\n\n" +
 			"Note that --assigned-me means the OPERATOR's Linear user: the daemon holds their key, and " +
 			"agents have no Linear identity of their own.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -223,7 +231,7 @@ func linearIssueListCmd() *cobra.Command {
 
 type linearSearchParams struct {
 	Term     string `pos:"true" help:"Text to search for."`
-	Team     string `long:"team" short:"t" optional:"true" help:"Only issues in this team (default: every allow-listed team)."`
+	Team     string `long:"team" short:"t" optional:"true" help:"Only issues in this team (default: every team you may reach)."`
 	Limit    int    `long:"limit" optional:"true" help:"Maximum rows (1-100, default 25)."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout. Capped at 300s. Timeout = deny."`
 }
@@ -232,7 +240,7 @@ func linearIssueSearchCmd() *cobra.Command {
 	return boa.CmdT[linearSearchParams]{
 		Use:         "search",
 		Short:       "Full-text search across issues",
-		Long:        "Searches issue titles and descriptions. The team allow-list applies, so a search cannot reach outside it.",
+		Long:        "Searches issue titles and descriptions. The team gate applies, so a search cannot reach outside it.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *linearSearchParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)
@@ -319,7 +327,7 @@ func runLinearIssueComment(p *linearCommentParams, stdin io.Reader, stdout, stde
 }
 
 type linearCreateParams struct {
-	Team            string `long:"team" short:"t" help:"Team key to create the issue in, e.g. TCL. Must be on the operator's allow-list."`
+	Team            string `long:"team" short:"t" help:"Team key to create the issue in, e.g. TCL. Must be a team you may reach."`
 	Title           string `long:"title" help:"Issue title."`
 	Description     string `long:"description" optional:"true" help:"Issue description. Prefer --description-file for anything multi-line."`
 	DescriptionFile string `long:"description-file" short:"F" optional:"true" help:"Read the description from this file ('-' reads stdin)."`
@@ -332,7 +340,7 @@ func linearIssueCreateCmd() *cobra.Command {
 	return boa.CmdT[linearCreateParams]{
 		Use:   "create",
 		Short: "Create an issue",
-		Long: "Creates an issue in an allow-listed team.\n\n" +
+		Long: "Creates an issue in a team you may reach.\n\n" +
 			"The issue is created by the OPERATOR's Linear account, and it is visible to everyone in the " +
 			"workspace — so it is a real ticket in their tracker, not a scratch note. Prefer commenting on " +
 			"an existing issue when that says the same thing.",
@@ -395,7 +403,7 @@ func linearIssueUpdateCmd() *cobra.Command {
 		Long: "Changes the title, workflow state and/or priority of an existing issue. Whichever you omit " +
 			"is left alone.\n\n" +
 			"Only these three can be changed. Moving an issue between teams would take it out of the " +
-			"operator's allow-list, and assignment is a workspace decision rather than a coding one — " +
+			"team gate, and assignment is a workspace decision rather than a coding one — " +
 			"neither is something the proxy will do on your behalf.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *linearUpdateParams, cmd *cobra.Command) error {

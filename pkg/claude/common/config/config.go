@@ -1844,15 +1844,23 @@ type AgentConfig struct {
 //
 // Linear has no filesystem artifact that could anchor an agent the way a git
 // work tree anchors the git proxy — no `.git/config` equivalent ties a
-// conversation to an issue. The team allow-list is therefore the ONLY scope
+// conversation to an issue. A team allow-list is therefore the whole scope
 // gate, which is why it is mandatory and fail-closed.
+//
+// This block is the OPERATOR-GLOBAL half of that gate. The per-agent half is a
+// `linear_team` scope on the agent's own linear.read / linear.write grant
+// (`tclaude agent permissions grant <agent> linear.read --scope
+// linear_team=TCL`), which narrows what that one agent may reach. The two are
+// enforced together and neither can widen the other.
 type LinearProxyConfig struct {
 	// AllowedTeams is the allow-list of Linear team keys the proxy may act
 	// on — the short prefix in an issue identifier, so "TCL" authorizes
 	// TCL-1, TCL-568 and so on. Compared case-insensitively.
 	//
-	// EMPTY OR ABSENT DISABLES THE PROXY ENTIRELY, exactly as an empty
-	// AllowedRemotes disables the git proxy. There is deliberately no
+	// EMPTY OR ABSENT DISABLES UNSCOPED GRANTS, exactly as an empty
+	// AllowedRemotes disables unscoped git-proxy grants: an agent whose grant
+	// carries a `linear_team` scope supplies its own teams instead, and when
+	// both exist a request must satisfy both. There is deliberately no
 	// wildcard and no "allow every team" setting: team keys are a flat
 	// namespace with no hierarchy to match a prefix against, so a wildcard
 	// would only ever mean "all of them" — which is the setting an operator
@@ -1998,8 +2006,10 @@ func (c *Config) ResolvedLinearProxy() LinearProxyConfig {
 }
 
 // LinearProxyEnabled reports whether the operator has opted into the Linear
-// proxy at all. A daemon with no linear_proxy block never spends a Linear
-// credential on an agent's behalf.
+// proxy OPERATOR-GLOBALLY. It answers a question about this config block alone,
+// so it is not the whole enablement rule: an agent whose grant carries a
+// `linear_team` scope is reachable with no allowed_teams list at all. The
+// daemon's own gate is agentd.linearEffectiveTeams, which consults both.
 func (c *Config) LinearProxyEnabled() bool {
 	return len(c.ResolvedLinearProxy().AllowedTeams) > 0
 }
@@ -2007,7 +2017,11 @@ func (c *Config) LinearProxyEnabled() bool {
 // LinearTeamAllowed reports whether key names a team the operator allow-listed.
 // Exact, case-insensitive match on the whole key — there is no prefix or
 // wildcard rule here, unlike the remote matcher, because team keys are a flat
-// namespace: a prefix match would let "TCL" authorize "TCLX".
+// namespace: a prefix match would let "TCL" authorize "TCLX". The `linear_team`
+// permission-scope matcher deliberately uses the same rule.
+//
+// This is the operator half of the gate only. A request is authorized by
+// agentd's effective team set, which also folds in the caller's grant scope.
 func (p LinearProxyConfig) LinearTeamAllowed(key string) bool {
 	key = strings.ToLower(strings.TrimSpace(key))
 	if key == "" {

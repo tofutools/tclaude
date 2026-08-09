@@ -3604,7 +3604,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.UsageTabVisible = usage.historyAvailable || openCodeActivity
 	out.Templates = templates
 	out.Profiles = profiles
-	out.Permissions.ScopeDimOptions = scopeDimOptionsSnapshot(groups, profiles)
+	out.Permissions.ScopeDimOptions = scopeDimOptionsSnapshot(
+		groups, profiles, cfg.ResolvedLinearProxy().AllowedTeams)
 	if defaultProfile != nil {
 		out.SpawnProfileDefault = defaultProfile.Name
 	}
