@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -160,7 +161,7 @@ func summarizePRChecks(checks []prCheckRun, fetchedAt time.Time) prChecksSummary
 	default:
 		s.State = "passing"
 	}
-	s.RunURL = leadingRunURL(checks)
+	s.RunURL = leadingRunURL(checks, s.State)
 	if !fetchedAt.IsZero() {
 		s.FetchedAt = fetchedAt.Format(time.RFC3339)
 	}
@@ -172,16 +173,23 @@ func summarizePRChecks(checks []prCheckRun, fetchedAt time.Time) prChecksSummary
 // the failing build, an amber one to the run still going, a green one to the
 // most recent finished run. A PR usually triggers several workflow runs, so
 // "the" run is a choice, not a lookup — this is the one that answers the
-// question the badge just raised. Empty when nothing offered a run URL (a PR
-// checked only by non-Actions apps), and the frontend then links to the PR's
-// own checks page instead.
-func leadingRunURL(checks []prCheckRun) string {
-	for _, want := range []string{"fail", "pending"} {
+// question the badge just raised.
+//
+// It follows the aggregate state rather than trying each bucket in turn: when
+// the failing check is a non-Actions status with no run page, the honest
+// answer is "no run to show" (the frontend then falls back to the PR's checks
+// tab, which does list it) — NOT the unrelated run of some check that happens
+// to still be going. A red pill must never open a build that is merely
+// pending.
+func leadingRunURL(checks []prCheckRun, state string) string {
+	bucket := map[string]string{"failing": "fail", "pending": "pending"}[state]
+	if bucket != "" {
 		for _, c := range checks {
-			if c.Bucket == want && c.RunURL != "" {
+			if c.Bucket == bucket && c.RunURL != "" {
 				return c.RunURL
 			}
 		}
+		return ""
 	}
 	newest, newestAt := "", ""
 	for _, c := range checks {
@@ -200,27 +208,33 @@ func leadingRunURL(checks []prCheckRun) string {
 //
 //	https://github.com/o/r/actions/runs/123/job/456 -> .../actions/runs/123
 //
-// Returns "" for anything that isn't such a URL — an external CI app's link
-// has no run page to derive, and guessing one would send the operator
-// somewhere that doesn't exist.
+// The result becomes the badge's click target — the most prominent control in
+// the row — and detailsUrl is set by whichever app reported the check, so this
+// rebuilds the URL from validated parts instead of trimming the input string:
+// host must be github.com and the path must be exactly
+// /{owner}/{repo}/actions/runs/{digits}[/...]. Substring matching would have
+// accepted https://evil.example/actions/runs/1/job/2 (and the same marker
+// hidden in a fragment), pointing a red pill labelled "open the build" at an
+// attacker's page.
+//
+// Returns "" for anything else — an external CI app's link has no run page to
+// derive, and guessing one would send the operator somewhere that doesn't
+// exist.
 func githubRunSummaryURL(detailsURL string) string {
 	detailsURL = safePRCheckURL(detailsURL)
 	if detailsURL == "" {
 		return ""
 	}
-	base, _, _ := strings.Cut(detailsURL, "?")
-	base = strings.TrimSuffix(base, "/")
-	marker := "/actions/runs/"
-	i := strings.Index(base, marker)
-	if i < 0 {
+	u, err := url.Parse(detailsURL)
+	if err != nil || !strings.EqualFold(u.Host, "github.com") {
 		return ""
 	}
-	rest := base[i+len(marker):]
-	runID, _, _ := strings.Cut(rest, "/")
-	if runID == "" || !isAllDigits(runID) {
+	segs := pathSegments(u.Path)
+	if len(segs) < 5 || segs[2] != "actions" || segs[3] != "runs" ||
+		!isAllDigits(segs[4]) || !isGitHubOwnerSlug(segs[0]) || !isGitHubRepoSlug(segs[1]) {
 		return ""
 	}
-	return base[:i+len(marker)] + runID
+	return "https://github.com/" + segs[0] + "/" + segs[1] + "/actions/runs/" + segs[4]
 }
 
 // statusCheckRollupNode is the union `gh pr view --json statusCheckRollup`
@@ -452,6 +466,15 @@ func prChecksIndexFor(rawURLs []string) map[string]*prChecksSummary {
 			continue
 		}
 		summary := info.Summary
+		if summary.RunURL == "" && len(info.Checks) > 0 {
+			// A blob written before the badge became clickable has no run
+			// URL. Re-derive it from the checks the blob already holds rather
+			// than making every such PR wait out a refresh with a badge that
+			// silently falls back to the PR's checks tab.
+			fetchedAt := summary.FetchedAt
+			summary = summarizePRChecks(info.Checks, info.FetchedAt)
+			summary.FetchedAt = fetchedAt
+		}
 		out[urlByKey[cacheKey]] = &summary
 	}
 	return out

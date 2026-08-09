@@ -73,6 +73,9 @@ test('the CI badge summarizes checks and opens a panel on hover', async (t) => {
     assert.equal(badgeHref({ state: 'passing' }, PR), `${PR}/checks`);
     assert.equal(badgeHref({ run_url: 'javascript:alert(1)' }, PR), `${PR}/checks`,
       'a hostile run_url must not become the click target');
+    // The fallback branch is guarded too, so neither path can produce a
+    // scheme the dashboard would execute.
+    assert.equal(badgeHref({}, 'javascript:alert(1)'), '');
   });
 
   await t.test('the summary line names what is outstanding', () => {
@@ -112,6 +115,10 @@ test('the CI badge summarizes checks and opens a panel on hover', async (t) => {
       assert.ok(badge.className.includes('ci-failing'), `badge class = ${badge.className}`);
       assert.equal(badge.querySelector('.ci-count').textContent, '12/14');
       assert.match(badge.getAttribute('aria-label'), /12 passed · 1 failed · 1 running/);
+      assert.match(badge.getAttribute('aria-label'), /Opens the build/,
+        'the label must say where activating the link goes');
+      assert.equal(badge.getAttribute('aria-haspopup'), null,
+        'pressing the link navigates, so it must not promise a popup');
       // The native title tooltip would fire on the same hover that opens the
       // panel and land on top of it; aria-label carries the text instead.
       assert.equal(badge.getAttribute('title'), null);

@@ -87,22 +87,39 @@ export function summaryLine(summary) {
   return parts.join(' · ') || 'no checks';
 }
 
+// The label has to carry both jobs this control does: report the counts, and
+// say where activating it goes. aria-haspopup is deliberately absent — the
+// panel opens on hover/focus, so promising a popup on activation would be a
+// lie to anyone who presses Enter and lands on GitHub instead.
 function badgeTitle(summary, prNumber) {
   const who = prNumber ? `#${prNumber}` : 'this pull request';
-  return `CI checks for ${who} — ${summaryLine(summary)} (click to open the build)`;
+  return `CI checks for ${who} — ${summaryLine(summary)}. Opens the build on GitHub.`;
 }
 
 // prChecksPageURL is the fallback click target: the PR's own checks tab. Used
 // when no check offered a workflow run to jump to — a PR checked only by
-// external apps, say — so the badge is always clickable, never a dead pill.
+// external apps, say — so the badge is still useful, never a dead pill. The
+// PR URL is server-validated as a GitHub PR before it ever reaches a badge,
+// but it is guarded here too: this function feeds an href, and a guard that
+// covers one branch of badgeHref and not the other is the asymmetry that rots.
 export function prChecksPageURL(prURL) {
-  return `${String(prURL || '').replace(/\/+$/, '')}/checks`;
+  const safe = safeCheckURL(prURL);
+  return safe ? `${safe.replace(/\/+$/, '')}/checks` : '';
 }
 
 // badgeHref: the run that explains the badge's state when the server could
 // name one (red -> the failing build), else the PR's checks page.
 export function badgeHref(summary, prURL) {
   return safeCheckURL(summary?.run_url) || prChecksPageURL(prURL);
+}
+
+// touchOnly reports a device with no hover — a phone or tablet. There, the
+// pointer never rests on the badge, so nothing would ever open the panel and
+// a tap would just leave the dashboard. Such a tap opens the panel instead;
+// its rows and footer link are then ordinary tappable links.
+function touchOnly() {
+  return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    && window.matchMedia('(hover: none)').matches;
 }
 
 // usePRChecks owns the poll lifecycle: it fetches on open, re-polls while the
@@ -217,10 +234,22 @@ export function PRChecksBadge({ url, prNumber, summary }) {
   const instanceID = useId();
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
-  const open = hovered || focused;
+  // tapped exists only for hoverless devices, where a tap opens the panel
+  // instead of navigating. On a pointer device it is never set.
+  const [tapped, setTapped] = useState(false);
+  const open = hovered || focused || tapped;
   const state = usePRChecks(open ? url : '', open);
 
-  const close = () => { setHovered(false); setFocused(false); };
+  const close = () => { setHovered(false); setFocused(false); setTapped(false); };
+
+  useEffect(() => {
+    if (!tapped) return undefined;
+    const onPointerDown = (event) => {
+      if (!rootRef.current?.contains(event.target)) close();
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [tapped]);
 
   if (!url || !summary || !(summary.total > 0)) return null;
   const denominator = checkDenominator(summary);
@@ -243,10 +272,14 @@ export function PRChecksBadge({ url, prNumber, summary }) {
         target="_blank"
         rel="noopener noreferrer"
         draggable=${false}
-        aria-haspopup="dialog"
         aria-expanded=${open ? 'true' : 'false'}
         aria-controls=${panelID}
         aria-label=${badgeTitle(summary, prNumber)}
+        onClick=${(event) => {
+          if (!touchOnly()) return; // pointer devices: let the link navigate
+          event.preventDefault();
+          if (tapped) close(); else setTapped(true);
+        }}
         onKeyDown=${(event) => {
           if (event.key !== 'Escape') return;
           event.preventDefault();
