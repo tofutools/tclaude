@@ -267,7 +267,7 @@ test('first terminal output schedules a delayed one-row nudge and grid restore',
   assert.equal(timers.length, 0, 'WebSocket open alone does not prove tmux attached');
   socket.onmessage({ data: 'first attached screen' });
   assert.equal(timers.length, 1);
-  assert.equal(timers[0].delay, 500, 'the re-sync waits briefly after attach output starts');
+  assert.equal(timers[0].delay, 250, 'the re-sync waits briefly after attach output starts');
   socket.onmessage({ data: 'more screen output' });
   assert.equal(timers.length, 1, 'only the first output frame arms the one-shot re-sync');
   const sendsAfterOpen = socket.sent.length;
