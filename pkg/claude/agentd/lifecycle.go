@@ -768,7 +768,6 @@ func clearFailedExitIntent(intentRef *db.SessionExitIntentRef) {
 // softExitPaneScreenTail): the intermittent ignored-exit failure is a Copilot
 // TUI behaviour, and other harnesses should not pay the capture nor leak
 // their screens into logs for a bug they do not have.
-//
 func logSoftExitPaneState(target *lifecycleTarget, reason, phase string, attempt int) {
 	if harnessForConv(target.convID).Name != harness.CopilotName {
 		return
@@ -7946,6 +7945,11 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 			"conv", convID, "budget", copilotAPIBootstrapTimeout())
 		return
 	}
+	if codexAppServerSelected(convID) && !awaitCodexAppServerReady(convID) {
+		slog.Error("spawn: the Codex app-server channel never became ready; post-init delivery is abandoned without pane fallback",
+			"conv", convID, "budget", codexAppServerStartupTimeout)
+		return
+	}
 
 	// Re-resolved AFTER the wait, not before it. The liveness check above is
 	// the precondition for waiting at all; the tmux target is an address the
@@ -8009,6 +8013,8 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 			// API-driven pane as keystrokes.
 			//
 			err = sendCopilotAPIMessage(convID, welcome)
+		case codexAppServerSelected(convID):
+			err = sendCodexAppServerMessage(convID, spawnContextMsgID, welcome)
 		default:
 			err = injectTextAndSubmit(target, welcome)
 		}
@@ -8024,7 +8030,16 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 	// created the conversation's row (JOH-216). Runs in its own goroutine so
 	// the bounded retry never delays the rest of post-init.
 	if renameWanted && !h.SupportsRename() && h.SupportsConvs() {
-		goBackground(func() { persistSpawnTitle(convID, name) })
+		if codexAppServerSelected(convID) {
+			if err := renameCodexAppServerThread(convID, name); err != nil {
+				slog.Warn("spawn: Codex app-server rename failed without title-store fallback",
+					"conv", convID, "name", name, "error", err)
+			} else {
+				cacheDeliveredTitle(convID, name, h.Name)
+			}
+		} else {
+			goBackground(func() { persistSpawnTitle(convID, name) })
+		}
 	}
 
 	// The startup briefing (group context + task brief) already sits in

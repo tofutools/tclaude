@@ -332,6 +332,15 @@ const (
 
 func deliverRenameOn(convID, title string, channel deliveryChannel) bool {
 	h := harnessForConv(convID)
+	if codexAppServerSelected(convID) {
+		if err := renameCodexAppServerThread(convID, title); err != nil {
+			slog.Warn("rename: Codex app-server rename failed; refusing title-store fallback",
+				"conv", convID, "error", err)
+			return false
+		}
+		cacheDeliveredTitle(convID, title, h.Name)
+		return true
+	}
 
 	// Slash-injection rename (Claude Code): type `<rename-cmd> <title>`
 	// into the live pane. RenameCommand is a compile-time constant, never

@@ -15,8 +15,8 @@ import (
 // handleAgentByConv dispatches POST /v1/agent/{selector}/{verb} to a
 // per-verb handler. The {selector} is resolved via agent.ResolveSelector
 // (title, full conv-id, or 8+-char prefix); the {verb} routes to one
-// of the cross-agent operations (today: reincarnate; clone, compact,
-// rename are future work).
+// of the cross-agent operations (rename, compact, interrupt, lifecycle,
+// scheduling, and metadata verbs).
 //
 // Self-targeted variants (e.g. /v1/whoami/reincarnate) keep their
 // existing self.<verb> auth and are NOT routed here.
@@ -75,6 +75,8 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 		handleAgentReincarnate(w, r, convID)
 	case "compact":
 		handleAgentCompact(w, r, convID)
+	case "interrupt":
+		handleAgentInterrupt(w, r, convID)
 	case "rename":
 		handleAgentRename(w, r, convID)
 	case "remote-control":

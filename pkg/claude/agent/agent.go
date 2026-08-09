@@ -23,6 +23,7 @@ func Cmd() *cobra.Command {
 			presentPRCmd(),
 			tagsCmd(),
 			compactCmd(),
+			interruptCmd(),
 			remoteControlCmd(),
 			reincarnateCmd(),
 			cloneCmd(),
