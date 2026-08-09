@@ -668,7 +668,7 @@ export function contextWindowMaxHintFor(draft, view) {
   if (!Number.isSafeInteger(value) || (min && value < min) || (max && value > max)) {
     return { warn: true, text: `${formatTokenWindow(value)} is outside the accepted range (${formatTokenWindow(min)}–${formatTokenWindow(max)}).` };
   }
-  return { warn: false, text: 'Used as a configured cap when set; otherwise the observed model gets a static assumed cap.' };
+  return { warn: false, text: 'Used as a configured cap when set; otherwise tclaude uses a fresh Copilot model-catalog cap, then its static fallback.' };
 }
 
 // formatTokenWindow renders a token count the way an operator writes one.

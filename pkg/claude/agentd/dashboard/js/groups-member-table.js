@@ -594,13 +594,13 @@ function ContextMeter({ state }) {
   // The window here is already the effective one and context_pct is measured
   // against it, so the regular usage figures are sufficient on their own.
   const win = configuredMax > 0 ? configuredMax : Number(state?.context_window_size || 0);
-  // 'reported' is a limit the harness itself disclosed, which only Copilot's
-  // API drive can obtain; 'assumed' is tclaude's static per-model guess. Naming
-  // them differently is the whole point — a meter measured against a real limit
-  // and one measured against a guess look identical otherwise.
+  // 'reported' is a limit the local harness disclosed; 'catalog' came from
+  // Copilot's authenticated remote model catalog; 'assumed' is tclaude's
+  // static per-model fallback.
   const source = state?.context_window_source === 'configured' ? ' (configured cap)'
     : state?.context_window_source === 'reported' ? ' (reported cap)'
-      : state?.context_window_source === 'assumed' ? ' (assumed cap)' : '';
+      : state?.context_window_source === 'catalog' ? ' (catalog cap)'
+        : state?.context_window_source === 'assumed' ? ' (assumed cap)' : '';
   const regularTitle = !known ? 'context window: usage not reported yet'
     : win > 0 && total > 0 ? `context: ${fmtTokens(total)} / ${fmtTokens(win)} tokens${source} — ${Math.round(pct)}%`
       : `context: ${Math.round(pct)}% full`;

@@ -85,6 +85,8 @@ func CopilotContextWindowDefault(model string) int64 {
 	switch {
 	case strings.HasPrefix(model, "gpt-5.6"):
 		return CopilotContextWindow
+	case strings.HasPrefix(model, "claude-haiku"):
+		return 200_000
 	case strings.HasPrefix(model, "claude-"):
 		return 1_000_000
 	case model != "":

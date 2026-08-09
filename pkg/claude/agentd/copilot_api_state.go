@@ -662,14 +662,17 @@ func persistCopilotAPIContext(row *db.SessionRow, reading copilotAPIStateReading
 // static per-model assumption tclaude keeps for the drives that cannot ask.
 // The operator's own configured cap still wins outright, because that is
 // intent rather than an estimate — the settled TCL-1048 precedence — and the
-// static table remains as the last resort for a session whose reply carried no
-// limit.
+// fresh remote catalog and static table remain the fallback chain for a
+// session whose reply carried no limit.
 func copilotAPIEffectiveContextWindow(convID string, reading copilotAPIStateReading) int64 {
 	if window := copilotConfiguredContextWindowMax(convID); window > 0 {
 		return window
 	}
 	if reading.PromptTokenLimit > 0 {
 		return reading.PromptTokenLimit
+	}
+	if window := copilotCatalogContextWindow(reading.Model); window > 0 {
+		return window
 	}
 	return harness.CopilotContextWindowDefault(strings.TrimSpace(reading.Model))
 }

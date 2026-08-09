@@ -1614,9 +1614,9 @@ type dashboardGroup struct {
 	// bypass (TCL-1071): slug → the scope an owner's bypass is confined to
 	// here. Always serialized (possibly {}) so the group-permissions editor can
 	// round-trip it without distinguishing "absent" from "no narrowing".
-	OwnerScopes map[string]PermissionScope `json:"owner_scopes"`
-	MaxMembers              int      `json:"max_members"`     // hard member cap; 0 = unlimited. A spawn that would exceed it is refused.
-	NotifyEnabled           bool     `json:"notify_enabled"`  // group OS-notification switch; false mutes every member (per-agent 'on' still overrides)
+	OwnerScopes   map[string]PermissionScope `json:"owner_scopes"`
+	MaxMembers    int                        `json:"max_members"`    // hard member cap; 0 = unlimited. A spawn that would exceed it is refused.
+	NotifyEnabled bool                       `json:"notify_enabled"` // group OS-notification switch; false mutes every member (per-agent 'on' still overrides)
 	// RemoteControlPolicy is the group's remote-control policy that overrides a
 	// spawn profile's remote-control default (JOH-262): "inherit" (defer to the
 	// profile), "optin" (force Remote Access on) or "deny" (force it off).
@@ -1992,7 +1992,7 @@ type agentState struct {
 	// itself (0 = none), so the UI can say WHY the window is smaller than the
 	// model's.
 	ContextWindowSize int64 `json:"context_window_size,omitempty"`
-	// ContextWindowMax is tclaude's configured or observed-model-assumed cap.
+	// ContextWindowMax is tclaude's configured, catalog, or assumed model cap.
 	// It is intentionally distinct from ContextWindowSize, which remains the
 	// observed context snapshot.
 	ContextWindowMax    int64  `json:"context_window_max,omitempty"`
@@ -2524,7 +2524,9 @@ func stateForConvInSessionsBatched(
 				out.ContextWindowSource = "reported"
 			default:
 				if model := strings.TrimSpace(snap.Model); model != "" {
-					if out.ContextWindowMax = harness.CopilotContextWindowDefault(model); out.ContextWindowMax > 0 {
+					if out.ContextWindowMax = copilotCatalogContextWindow(model); out.ContextWindowMax > 0 {
+						out.ContextWindowSource = "catalog"
+					} else if out.ContextWindowMax = harness.CopilotContextWindowDefault(model); out.ContextWindowMax > 0 {
 						out.ContextWindowSource = "assumed"
 					}
 				}

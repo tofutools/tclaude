@@ -261,8 +261,8 @@ func persistCopilotContextSnapshot(
 	//
 	// Both writers reaching the same values matters as much as which wins. They
 	// share copilotContextPct AND copilotEffectiveContextWindow (configured
-	// cap, else the observed model's static assumption, else the disclosed
-	// window), so the sweep and this refresh converge rather than flapping the
+	// cap, else fresh catalog, else the observed model's static assumption,
+	// else the disclosed window), so the sweep and this refresh converge rather than flapping the
 	// row between two answers on alternating polls.
 	// PRECEDENCE, above everything below: the API state consumer. When an
 	// API-driven agent has a live reading, it is the sole writer of these

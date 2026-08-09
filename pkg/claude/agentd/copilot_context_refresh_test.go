@@ -428,8 +428,8 @@ func TestCopilotContextRefreshRefusesAStaleGeneration(t *testing.T) {
 // tokens (assumed cap) — 0%".
 //
 // The sweep and this follower are two writers of the same row. The sweep
-// resolves the effective denominator (configured cap, else the observed
-// model's static assumption) and wrote a real percentage; the follower then
+// resolves the effective denominator (configured cap, else fresh catalog,
+// else the observed model's static assumption) and wrote a real percentage; the follower then
 // recomputed against only the durable log's disclosed window — which Copilot
 // rarely provides — and overwrote that percentage with 0 on every token
 // advance, while the token counts kept landing. Both writers must resolve the
