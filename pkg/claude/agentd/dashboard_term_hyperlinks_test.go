@@ -26,7 +26,7 @@ import (
 func TestWebTerminalAttachCmdScopesFeatureRequestToTheCommand(t *testing.T) {
 	got := webTerminalAttachCmd("exec tclaude session attach 'worker'")
 	want := clcommon.TmuxClientFeaturesEnv + "=" + clcommon.TmuxHyperlinksFeature +
-		" exec tclaude session attach 'worker'"
+		" " + session.WebTerminalAttachEnv + "=1 exec tclaude session attach 'worker'"
 	if got != want {
 		t.Fatalf("webTerminalAttachCmd()\n got: %s\nwant: %s", got, want)
 	}

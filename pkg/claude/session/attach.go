@@ -17,6 +17,17 @@ type AttachParams struct {
 	Force bool   `short:"f" long:"force" help:"Attach even if session already has clients attached"`
 }
 
+// WebTerminalAttachEnv marks a session attach whose terminal is rendered by
+// the dashboard PTY bridge. That bridge uses the first terminal output as its
+// attach-ready observation, so the CLI wrapper must not emit its ordinary
+// banner or OSC title before tmux has attached and drawn a screen. The env var
+// is scoped to the one exec'd attach command; it never changes native attaches.
+const WebTerminalAttachEnv = "TCLAUDE_WEB_TERMINAL_ATTACH"
+
+func isWebTerminalAttach() bool {
+	return os.Getenv(WebTerminalAttachEnv) == "1"
+}
+
 func AttachCmd() *cobra.Command {
 	return boa.CmdT[AttachParams]{
 		Use:         "attach <id>",
@@ -67,7 +78,9 @@ func runAttach(params *AttachParams) error {
 		return nil
 	}
 
-	fmt.Printf("Attaching to session %s... (Ctrl+B D to detach)\n", sessionHandle(state))
+	if !isWebTerminalAttach() {
+		fmt.Printf("Attaching to session %s... (Ctrl+B D to detach)\n", sessionHandle(state))
+	}
 	return AttachToSession(state.ID, state.TmuxSession, params.Force)
 }
 
@@ -93,7 +106,7 @@ func AttachToSession(sessionID, tmuxSession string, forceAttach bool) error {
 	// WSL/Windows). Gated on config focus.window_title (default on): an
 	// explicit false leaves the terminal's own title alone. TCLAUDE_SESSION_ID
 	// is still exported above so anything that does key off it keeps working.
-	if windowTitleEnabledFn() {
+	if windowTitleEnabledFn() && !isWebTerminalAttach() {
 		setTerminalTitle(fmt.Sprintf("tclaude:%s", sessionID))
 	}
 	ConfigureTmuxDetachNormalization(tmuxSession)
