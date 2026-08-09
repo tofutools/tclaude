@@ -2042,6 +2042,9 @@ type agentState struct {
 	CodexAppServer        bool   `json:"codex_app_server,omitempty"`
 	CodexAppServerState   string `json:"codex_app_server_state,omitempty"`
 	CodexAppServerVersion string `json:"codex_app_server_version,omitempty"`
+	CodexAppServerDetail  string `json:"codex_app_server_detail,omitempty"`
+	CodexObserverMode     string `json:"codex_observer_mode,omitempty"`
+	CodexObserverUpdated  string `json:"codex_observer_updated,omitempty"`
 	// CopilotAPIChannelFailed reports that this agent's CURRENT launch has been
 	// OBSERVED not to be getting an API channel — so its mail is being held and
 	// will go on being held until somebody relaunches it.
@@ -2547,6 +2550,17 @@ func stateForConvInSessionsBatched(
 				out.CodexAppServer = true
 				out.CodexAppServerState = runtime.State
 				out.CodexAppServerVersion = runtime.CodexVersion
+				out.CodexAppServerDetail = runtime.Detail
+				out.CodexObserverMode = "post-bind non-subscribing snapshots; context from rollout"
+				if observation, ok := codexAppServerObservationForConv(pick.ConvID); ok {
+					updated := observation.StatusAt
+					if observation.UsageAt.After(updated) {
+						updated = observation.UsageAt
+					}
+					if !updated.IsZero() {
+						out.CodexObserverUpdated = updated.Format(time.RFC3339)
+					}
+				}
 			}
 		}
 		out.Model = snap.Model

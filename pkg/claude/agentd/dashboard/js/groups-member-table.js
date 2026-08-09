@@ -189,11 +189,11 @@ export function HarnessLine({ member, snapshot }) {
     ? html`<span class=${'harness-drive' + driveState}
         role="note"
         title=${driveFailed
-          ? (codexDrive ? `Codex app-server control is ${codexDriveState}; the explicit API drive did not fall back to send-keys` : "Launched for Copilot's embedded JSON-RPC API drive, and its channel failed to come up — this agent's messages are being HELD, not delivered, and will be until it is relaunched. Its pane still works if you type into it")
+          ? (codexDrive ? `Codex app-server control is ${codexDriveState}; the explicit API drive did not fall back to send-keys${state.codex_app_server_detail ? `: ${state.codex_app_server_detail}` : ''}` : "Launched for Copilot's embedded JSON-RPC API drive, and its channel failed to come up — this agent's messages are being HELD, not delivered, and will be until it is relaunched. Its pane still works if you type into it")
           : state.copilot_api_connected
             ? "Driven over Copilot's embedded JSON-RPC API (copilot --ui-server), not tmux send-keys"
             : codexDrive && codexDriveState === 'ready'
-              ? `Codex app-server ready${state.codex_app_server_version ? ` (${state.codex_app_server_version})` : ''}; TUI and agentd share the verified thread`
+              ? `Codex app-server ready${state.codex_app_server_version ? ` (${state.codex_app_server_version})` : ''}; TUI owns approvals; agentd connects only after TUI thread binding and uses non-subscribing snapshots (context remains rollout-derived)${state.codex_observer_updated ? `; last observation ${state.codex_observer_updated}` : ''}`
               : codexDrive ? 'Codex app-server is warming; send-keys fallback is disabled' : "Launched for Copilot's embedded JSON-RPC API drive, but tclaude holds no connection to it yet — still starting up, or its channel failed to come up"}
         aria-label=${driveFailed
           ? (codexDrive ? 'Codex app-server drive unavailable' : 'Copilot API drive failed, messages held')

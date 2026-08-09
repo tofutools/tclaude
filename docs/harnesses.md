@@ -196,7 +196,7 @@ instead of slash-command injection).
 | **Hooks / live status** | ✅ `~/.claude/settings.json` | ✅ `~/.codex/hooks.json` (+ setup-managed trust) | ⚠️ managed liveness; full SSE mapping pending |
 | **Built-in OS sandbox** (`SupportsBuiltinOSSandbox`) | ✅ SRT | ✅ native `--sandbox` | ❌ none; `access-control` is a command filter, not confinement |
 | **OS sandbox at spawn** | ✅ implementation selector: built-in, tclaude-layer, stacked, or off; built-in mode offers `inherit`/`on` | ✅ implementation selector: built-in, tclaude-layer, stacked, or off; built-in mode offers managed profile (default) or raw confined modes | ⚠️ tclaude-layer confines the agentd-owned tool executor with documented caveats; off is explicit; `stacked` refuses; built-in `access-control` is a command filter, not confinement |
-| **Filtered network under `tclaude-layer`** ([contract](sandboxing.md#isolated-with-agentd-network-posture)) | ⚠️ Linux CIDR/ports plus DNS-to-IP host/domain leases; Linux denies active (DNS-name deny is Partial under Allow all); macOS native loopback-only lists; mixed macOS lists are NotEnforced/open; exact provider context and explicit model endpoint coverage required; the inspected set includes the cached remote managed settings, whose live fetch and hourly in-process poll can still re-route a running session | ⚠️ same Linux allow/deny gateway and native-loopback boundary; DNS-name deny is Partial under Allow all; provider route resolved from Codex's own effective config via app-server `config/read`, so enterprise/MDM layers are included, and ChatGPT sign-in resolves to `chatgpt_base_url` plus `auth.openai.com` | ⚠️ Linux allow-list packet floor plus active denies (DNS-name deny is Partial under Allow all) for explicit-provider configs only; opaque/default/dynamic routes refuse, and the local convenience presets remain launch-refused — denies included — because they name no explicit provider endpoint |
+| **Filtered network under `tclaude-layer`** ([contract](sandboxing.md#isolated-with-agentd-network-posture)) | ⚠️ Linux CIDR/ports plus DNS-to-IP host/domain leases; Linux denies active (DNS-name deny is Partial under Allow all); macOS native loopback-only lists; mixed macOS lists are NotEnforced/open; exact provider context and explicit model endpoint coverage required; the inspected set includes the cached remote managed settings, whose live fetch and hourly in-process poll can still re-route a running session | ⚠️ same Linux allow/deny gateway and native-loopback boundary; DNS-name deny is Partial under Allow all; provider route resolved from Codex's own effective configuration, so enterprise/MDM layers are included, and ChatGPT sign-in resolves to `chatgpt_base_url` plus `auth.openai.com` | ⚠️ Linux allow-list packet floor plus active denies (DNS-name deny is Partial under Allow all) for explicit-provider configs only; opaque/default/dynamic routes refuse, and the local convenience presets remain launch-refused — denies included — because they name no explicit provider endpoint |
 | **Approval posture at spawn** | ✅ per-session `--permission-mode` (inherit + Claude's modes); `auto` (default) runs the supervisor classifier, non-blocking for detached agents; `inherit` keeps `settings.json` + the agentd approval popup | ✅ `--ask-for-approval` flag, non-blocking default for agents | ✅ per-session `deny` (default), `ask`, or `allow-tools`; access-control keeps the tool baseline enabled, while `off` never auto-approves bash |
 | **Built-in tool governance at spawn** | ➖ not a separate axis | ➖ not a separate axis | ✅ `--tools allow|ask|deny` applies uniformly to bash, glob, grep, LSP, task, and skill in `access-control`; `allow` is the backward-compatible default |
 | **AskUserQuestion timeout at spawn** | ✅ per-session `inherit`/`never`/`60s`/`5m`/`10m` (delivered as a `--settings` override); `inherit` (default) keeps your `settings.json` value — set an interval per-agent / by profile so an unattended agent auto-continues instead of stalling on a question | ➖ no AskUserQuestion dialog | ❌ adapter pending |
@@ -219,35 +219,28 @@ implements only a few of these rows. See below.
 
 ### Codex drive: send-keys vs app-server
 
-Codex agents use the established pane/send-keys path by default. An
-experimental opt-in instead starts one private `codex app-server` for the
-agent generation and attaches the normal Codex TUI to its Unix socket with
-`--remote`. Select it with `tclaude agent spawn --codex-app-server`, the
-tri-state `codex_app_server` spawn-profile field, or the Codex drive control in
-the dashboard. The selection follows the normal profile precedence chain and
-is frozen for resume, reincarnate, and clone; explicit `false` keeps send-keys
-available for A/B testing.
+Codex agents use the established pane/send-keys drive by default. The
+experimental app-server drive requires Codex CLI 0.147.x and is opt-in through
+`tclaude agent spawn --codex-app-server`, the `codex_app_server` spawn-profile
+field, or the dashboard's Codex drive control. Set the profile field or control
+explicitly to false to keep the default drive. The selected drive carries over
+to resume, reincarnate, and clone.
 
-This runtime milestone requires Codex CLI 0.147.x. The TUI's positional prompt
-remains the sole writer of the birth turn. Agentd waits for exactly one loaded
-thread, verifies it with `thread/read`, and binds without replaying the prompt.
-Each generation owns a private 0600 socket and server process, and publishes a
-`warming`, `ready`, `unavailable`, or `dead` state in the dashboard. An
-explicitly selected app-server launch fails closed on an incompatible binary,
-an unsafe or unavailable socket, an ambiguous thread, or a failed control
-connection; it never silently switches that launch back to send-keys.
+The app-server drive supports durable human and peer messages, rename,
+compaction, and `tclaude agent interrupt`. Messages wait while Codex needs an
+approval or user answer. Those questions appear only in the Codex TUI: the TUI
+is the sole place to approve, deny, or answer them.
 
-On the app-server drive, durable human/peer messages use `turn/start` while
-idle and `turn/steer` against the verified active turn otherwise. Rename uses
-`thread/name/set`, compaction uses `thread/compact/start`, and
-`tclaude agent interrupt` uses `turn/interrupt`. Agentd serializes mutations
-per thread and snapshots with `thread/read`; approval or user-input waits hold
-messages, and ambiguous message delivery is reconciled by its stable inbox id
-before any retry. Agentd never resumes merely to subscribe and never answers a
-server request, so the TUI remains the sole approval owner. A selected drive
-never falls back to pane input when control is starting, busy, disconnected,
-unsupported, or failed. Legacy Codex sessions retain their existing send-keys
-behavior.
+The dashboard reports the drive as `warming`, `ready`, `unavailable`, or
+`dead`. A ready drive also shows when its status or subscription-usage snapshot
+was last refreshed. Context and token counts continue to come from Codex's
+durable rollout data, so their freshness can differ from the app-server status
+snapshot. Legacy and explicitly opted-out sessions continue to use send-keys.
+
+An explicitly selected app-server drive fails closed if Codex is incompatible,
+the connection cannot be established safely, or control later fails. Messages
+are held and the dashboard shows the failure detail; tclaude never silently
+falls back to send-keys for that launch.
 
 ### Group-route activation matrix
 

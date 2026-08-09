@@ -99,6 +99,37 @@ func GetCodexAppServerRuntime(generation string) (*CodexAppServerRuntime, error)
 		` WHERE generation = ?`, generation))
 }
 
+// BindWarmingCodexAppServerRuntimeFromTUI records the thread identity carried
+// by a validated hook from the TUI process. Codex 0.147 automatically
+// subscribes every connection that is already initialized when a fresh thread
+// is created, so agentd must not initialize its control connection until this
+// post-creation signal exists. Only the newest warming generation for the
+// launch may be bound, and a resume's predeclared conversation must match.
+func BindWarmingCodexAppServerRuntimeFromTUI(launchID, threadID string) (bool, error) {
+	launchID = strings.TrimSpace(launchID)
+	threadID = strings.TrimSpace(threadID)
+	if launchID == "" || threadID == "" {
+		return false, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	now := time.Now().UTC()
+	result, err := d.Exec(`UPDATE codex_app_server_runtimes
+		SET conv_id = ?, thread_id = ?, updated_at = ?
+		WHERE generation = (
+			SELECT generation FROM codex_app_server_runtimes
+			WHERE launch_id = ? AND state = ?
+			ORDER BY created_at DESC LIMIT 1
+		) AND (conv_id = '' OR conv_id = ?)`, threadID, threadID, dbTime(now), launchID, CodexAppServerWarming, threadID)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	return changed > 0, err
+}
+
 func DeleteCodexAppServerRuntime(generation string) error {
 	d, err := Open()
 	if err != nil {
@@ -164,6 +195,46 @@ func MarkCodexAppServerRuntimeTerminalIfUnreplaced(generation, state, detail str
 			  AND replacement.state = ?
 			  AND replacement.created_at > codex_app_server_runtimes.created_at
 		)`, state, detail, dbTime(time.Now().UTC()), generation, CodexAppServerReady)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	return changed == 1, err
+}
+
+// SetSessionStatusForCodexAppServerGeneration projects one app-server status
+// observation only while both the session row and the verified runtime
+// generation are still current. A late notification from a replaced socket
+// therefore cannot overwrite the successor's hook or observer state.
+func SetSessionStatusForCodexAppServerGeneration(
+	sessionID, convID string,
+	sessionCreatedAt time.Time,
+	generation, observedStatus string,
+	observedUpdatedAt time.Time,
+	status, detail string,
+	at time.Time,
+) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	result, err := d.Exec(`UPDATE sessions
+		SET status = ?, status_detail = ?, updated_at = ?
+		WHERE id = ? AND conv_id = ? AND created_at = ?
+		  AND status = ? AND updated_at = ?
+		  AND EXISTS (
+			SELECT 1 FROM codex_app_server_runtimes runtime
+			WHERE runtime.generation = ? AND runtime.conv_id = ? AND runtime.state = ?
+			  AND NOT EXISTS (
+				SELECT 1 FROM codex_app_server_runtimes replacement
+				WHERE replacement.conv_id = runtime.conv_id
+				  AND replacement.generation <> runtime.generation
+				  AND replacement.state = ?
+				  AND replacement.created_at > runtime.created_at
+			  )
+		  )`, status, detail, dbTime(at), sessionID, convID, dbTime(sessionCreatedAt),
+		observedStatus, dbTime(observedUpdatedAt), generation, convID,
+		CodexAppServerReady, CodexAppServerReady)
 	if err != nil {
 		return false, err
 	}

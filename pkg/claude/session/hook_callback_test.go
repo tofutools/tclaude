@@ -1053,6 +1053,32 @@ func TestRunHookCallback_SessionStartEnrollsLaunchedConv(t *testing.T) {
 	assert.True(t, IsFreeFloatingAgentName(actor.PendingName))
 }
 
+func TestRunHookCallback_CodexSessionStartBindsWarmingAppServerAfterTUI(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID: "codex-launch", ConvID: "thread-1", Status: StatusIdle, Harness: harness.CodexName,
+	}))
+	require.NoError(t, db.UpsertCodexAppServerRuntime(db.CodexAppServerRuntime{
+		Generation: "generation-1", LaunchID: "codex-launch", AgentID: "agent-1",
+		ConvID: "thread-1", SocketPath: "/tmp/app.sock", State: db.CodexAppServerWarming,
+	}))
+
+	feedHook(t, "codex-launch", map[string]any{
+		"session_id": "thread-1", "hook_event_name": "SessionStart",
+		"source": "startup", "cwd": dir,
+	})
+
+	runtime, err := db.GetCodexAppServerRuntime("generation-1")
+	require.NoError(t, err)
+	require.NotNil(t, runtime)
+	assert.Equal(t, "thread-1", runtime.ThreadID,
+		"the validated TUI hook is the pre-dial app-server binding barrier")
+}
+
 func TestRunHookCallback_SessionStartNamesActorPreEnrolledByReconcile(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)

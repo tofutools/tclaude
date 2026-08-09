@@ -25,8 +25,9 @@ import (
 const codexAppServerStartupTimeout = 15 * time.Second
 
 type codexAppServerHandle struct {
-	runtime db.CodexAppServerRuntime
-	client  *codexappserver.Client
+	runtime     db.CodexAppServerRuntime
+	client      *codexappserver.Client
+	observation codexAppServerObservation
 	// mutations serializes every tclaude-originated write to this thread. The
 	// app-server connection itself supports concurrent calls, but the control
 	// policy needs the thread/read snapshot and the following mutation to be
@@ -153,52 +154,22 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 		fail(err)
 		return
 	}
+	// Do not dial before the TUI hook has proved that its thread exists and is
+	// bound. In Codex 0.147 a fresh thread auto-subscribes every connection that
+	// is already initialized, even if it never calls thread/resume. Waiting
+	// before Dial makes approval ownership independent of goroutine birth order.
+	threadID, err := waitForCodexAppServerTUIBinding(ctx, runtime.Generation)
+	if err != nil {
+		fail(err)
+		return
+	}
 	client, err := codexappserver.Dial(ctx, runtime.SocketPath,
 		&codexappserver.Options{CodexVersion: runtime.CodexVersion})
 	if err != nil {
 		fail(err)
 		return
 	}
-
-	expected := strings.TrimSpace(args.ConvID)
-	var threadID string
-	for threadID == "" {
-		loaded, listErr := client.ListLoadedThreads(ctx, codexappserver.ThreadLoadedListParams{})
-		if listErr != nil {
-			_ = client.Close()
-			fail(listErr)
-			return
-		}
-		if expected != "" {
-			for _, candidate := range loaded.Data {
-				if candidate == expected {
-					threadID = candidate
-					break
-				}
-			}
-			if len(loaded.Data) > 1 {
-				_ = client.Close()
-				fail(fmt.Errorf("ambiguous resume binding: loaded threads %v", loaded.Data))
-				return
-			}
-		} else if len(loaded.Data) == 1 {
-			threadID = loaded.Data[0]
-		} else if len(loaded.Data) > 1 {
-			_ = client.Close()
-			fail(fmt.Errorf("ambiguous birth binding: loaded threads %v", loaded.Data))
-			return
-		}
-		if threadID == "" {
-			select {
-			case <-ctx.Done():
-				_ = client.Close()
-				fail(fmt.Errorf("bind TUI-created thread: %w", ctx.Err()))
-				return
-			case <-time.After(50 * time.Millisecond):
-			}
-		}
-	}
-	thread, err := client.ReadThread(ctx, codexappserver.ThreadReadParams{ThreadID: threadID, IncludeTurns: true})
+	thread, err := client.ReadThread(ctx, codexappserver.ThreadReadParams{ThreadID: threadID})
 	if err != nil || thread.ID != threadID {
 		_ = client.Close()
 		if err == nil {
@@ -221,7 +192,31 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 	codexAppServerHandles.byConv[threadID] = handle
 	codexAppServerHandles.byGeneration[runtime.Generation] = handle
 	codexAppServerHandles.Unlock()
+	projectCodexAppServerRawStatus(handle, thread.Status, time.Now().UTC(), "app-server snapshot")
 	go watchCodexAppServerHandle(handle)
+}
+
+func waitForCodexAppServerTUIBinding(ctx context.Context, generation string) (string, error) {
+	for {
+		runtime, err := db.GetCodexAppServerRuntime(generation)
+		if err != nil {
+			return "", err
+		}
+		if runtime == nil {
+			return "", fmt.Errorf("codex app-server runtime %q disappeared", generation)
+		}
+		if runtime.State == db.CodexAppServerUnavailable || runtime.State == db.CodexAppServerDead {
+			return "", fmt.Errorf("codex app-server TUI binding failed: %s", runtime.Detail)
+		}
+		if strings.TrimSpace(runtime.ThreadID) != "" {
+			return runtime.ThreadID, nil
+		}
+		select {
+		case <-ctx.Done():
+			return "", fmt.Errorf("wait for TUI-created thread binding: %w", ctx.Err())
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
 }
 
 func waitForCodexAppServerVersion(ctx context.Context, generation string) (string, error) {
@@ -307,15 +302,7 @@ func processAlive(pid int) error {
 }
 
 func watchCodexAppServerHandle(handle *codexAppServerHandle) {
-	select {
-	case request := <-handle.client.ServerRequests():
-		_ = handle.client.Close()
-		handle.runtime.State = db.CodexAppServerUnavailable
-		handle.runtime.Detail = "unexpected server request: " + request.Method
-	case <-handle.client.Done():
-		handle.runtime.State = db.CodexAppServerDead
-		handle.runtime.Detail = fmt.Sprint(handle.client.Err())
-	}
+	handle.runtime.State, handle.runtime.Detail = runCodexAppServerObserver(handle)
 	if changed, err := db.MarkCodexAppServerRuntimeTerminalIfUnreplaced(
 		handle.runtime.Generation, handle.runtime.State, handle.runtime.Detail); err != nil {
 		slog.Warn("record Codex app-server terminal state", "generation", handle.runtime.Generation, "error", err)
