@@ -2,6 +2,7 @@ import {
   activitySummary,
   activityModeViews,
   aggregateActivity,
+  memberVariant,
   themedSummaryText,
 } from './group-activity.js';
 import { scribeGroupVisible } from './scribe-groups.js';
@@ -126,33 +127,27 @@ function activityMembersForVisibility(members, visible) {
 }
 
 // Activity detail is deliberately a separate, richer view model from the
-// glanceable bot summary. The summary collapses awaiting_permission/input into
-// one bot and suppresses clean-offline bots while anything live is present;
-// the hover panel must retain the exact state and every visible member so an
-// operator can find the worker behind each count.
+// glanceable bot summary. Its top-level buckets intentionally mirror
+// memberVariant/activitySummary exactly: the hover panel must never disagree
+// with the six counts shown by the pulse. Finer states and recovery lifecycle
+// information stay as bounded, fixed-vocabulary member annotations.
+// The summary suppresses clean-offline bots while anything live is present;
+// the hover panel includes those members and calls out the suppression
+// explicitly.
 const ACTIVITY_TITLE_RE = /^[A-Za-z0-9_\-[\]{}() ]+$/;
-const ACTIVITY_DETAIL_STATE_ORDER = [
-  'recovery-backoff', 'recovery-suppressed', 'recovery-restarting', 'recovery-recovered',
-  'error', 'awaiting_permission', 'awaiting_input', 'working', 'main_agent_idle',
-  'idle', 'recovery-crashed', 'crashed', 'waking', 'offline', 'unknown',
-];
-const ACTIVITY_DETAIL_STATES = Object.freeze({
-  'recovery-backoff': { label: 'Crash loop / backoff', wizardLabel: 'Crash loop / backoff' },
-  'recovery-suppressed': { label: 'Recovery suppressed', wizardLabel: 'Recovery suppressed' },
-  'recovery-restarting': { label: 'Restarting', wizardLabel: 'Restarting' },
-  'recovery-recovered': { label: 'Recovered automatically', wizardLabel: 'Recovered automatically' },
+const ACTIVITY_DETAIL_STATE_ORDER = ['error', 'asking', 'working', 'idle', 'crashed', 'offline'];
+const ACTIVITY_DETAIL_STATES = Object.freeze(Object.assign(Object.create(null), {
   error: { label: 'Error / stuck', wizardLabel: 'Spell backfired / stuck' },
-  awaiting_permission: { label: 'Awaiting permission', wizardLabel: 'Awaiting a decree' },
-  awaiting_input: { label: 'Awaiting input', wizardLabel: 'Awaiting a key' },
+  asking: { label: 'Awaiting permission or input', wizardLabel: 'Awaiting a decree or key' },
   working: { label: 'Working', wizardLabel: 'Channeling' },
-  main_agent_idle: { label: 'Idle + background work', wizardLabel: 'Meditating + work' },
   idle: { label: 'Idle', wizardLabel: 'Meditating' },
-  'recovery-crashed': { label: 'Crashed — recovery pending', wizardLabel: 'Slain — recovery pending' },
   crashed: { label: 'Crashed', wizardLabel: 'Slain by a grue' },
-  waking: { label: 'Starting up', wizardLabel: 'Awakening' },
   offline: { label: 'Offline', wizardLabel: 'Departed' },
-  unknown: { label: 'Online', wizardLabel: 'Channeling' },
-});
+}));
+const ACTIVITY_KNOWN_STATUSES = new Set([
+  'error', 'awaiting_permission', 'awaiting_input', 'working',
+  'main_agent_idle', 'idle', 'exited',
+]);
 
 function activityText(value, max = 160) {
   return String(value || '')
@@ -171,33 +166,56 @@ export function activityMemberTitle(member) {
   for (const candidate of candidates) {
     // Apply the same raw-value gate as validMemberTitle; normalising first
     // would accidentally turn a tab/newline into an accepted single space.
-    const value = String(candidate || '').trim();
+    const value = String(candidate || '');
     if (value && value.length <= 64 && !value.includes('  ') && ACTIVITY_TITLE_RE.test(value)) return value;
   }
   return 'unnamed worker';
 }
 
 function activityDetailState(member) {
-  const state = member?.state || {};
-  const recovery = String(state.recovery_status || '').trim();
-  if (recovery === 'backoff') return 'recovery-backoff';
-  if (recovery === 'suppressed') return 'recovery-suppressed';
-  if (recovery === 'restarting') return 'recovery-restarting';
-  if (recovery === 'recovered') return 'recovery-recovered';
-  if (recovery === 'crashed') return 'recovery-crashed';
-  if (!member?.online) {
-    if (state.exit_reason === 'unexpected') return 'crashed';
-    return member?.waking ? 'waking' : 'offline';
+  // Keep the panel's sections aligned with the native pulse. dashboard.go can
+  // leave `recovered` on a live member while its status is still working or
+  // awaiting permission, so recovery belongs below as an annotation.
+  return memberVariant(member);
+}
+
+function activityRecoveryAnnotation(member) {
+  const recovery = String(member?.state?.recovery_status || '').trim();
+  switch (recovery) {
+    case 'recovered': return 'recovered';
+    case 'restarting': return 'restarting';
+    case 'backoff': return 'crash loop-backoff';
+    case 'suppressed': return 'recovery suppressed';
+    case 'crashed': return 'crashed-recovery-pending';
+    default: return '';
   }
-  const status = String(state.status || '').trim();
-  return ACTIVITY_DETAIL_STATES[status] ? status : status ? 'unknown' : 'idle';
+}
+
+function activityMemberAnnotation(member, stateKey) {
+  const state = member?.state || {};
+  const annotations = [];
+  if (stateKey === 'working' && state.status === 'main_agent_idle') {
+    annotations.push('background activity still running');
+  } else if (stateKey === 'idle' && state.status === 'exited') {
+    annotations.push('exited');
+  } else if (member?.online && !ACTIVITY_KNOWN_STATUSES.has(state.status || '')) {
+    annotations.push('status unavailable');
+  }
+  // group-activity's offline-first classifier deliberately does not make
+  // waking a new bucket. Keep the annotation so a waking offline member is
+  // discoverable while counts and suppression remain those of its pulse bot.
+  if (!member?.online && member?.waking) annotations.push('starting up');
+  const recovery = activityRecoveryAnnotation(member);
+  if (recovery) annotations.push(recovery);
+  return annotations.join(' · ');
 }
 
 function activityDetailEntry(member, key) {
-  const state = member?.state || {};
   const stateKey = activityDetailState(member);
-  const vocabulary = ACTIVITY_DETAIL_STATES[stateKey] || ACTIVITY_DETAIL_STATES.unknown;
-  const detail = activityText(state.status_detail);
+  const vocabulary = Object.hasOwn(ACTIVITY_DETAIL_STATES, stateKey)
+    ? ACTIVITY_DETAIL_STATES[stateKey] : ACTIVITY_DETAIL_STATES.idle;
+  const detail = stateKey === 'error' || stateKey === 'asking'
+    ? activityText(member?.state?.status_detail) : '';
   return {
     key,
     name: activityMemberTitle(member),
@@ -205,6 +223,7 @@ function activityDetailEntry(member, key) {
     label: vocabulary.label,
     wizardLabel: vocabulary.wizardLabel,
     detail,
+    annotation: activityMemberAnnotation(member, stateKey),
   };
 }
 
@@ -229,7 +248,8 @@ function activityDetailView(lists, groupNames, summary) {
       const entry = activityDetailEntry(member, key);
       let state = stateGroups.get(stateKey);
       if (!state) {
-        const vocabulary = ACTIVITY_DETAIL_STATES[stateKey] || ACTIVITY_DETAIL_STATES.unknown;
+        const vocabulary = Object.hasOwn(ACTIVITY_DETAIL_STATES, stateKey)
+          ? ACTIVITY_DETAIL_STATES[stateKey] : ACTIVITY_DETAIL_STATES.idle;
         state = { key: stateKey, label: vocabulary.label, wizardLabel: vocabulary.wizardLabel, members: [] };
         stateGroups.set(stateKey, state);
       }
@@ -255,7 +275,7 @@ function activityDetailView(lists, groupNames, summary) {
     // A clean-offline count is still in `summary.counts` even when its bot is
     // suppressed beside live work. Keep the fact explicit so the panel never
     // appears to disagree with the pulse row.
-    suppressedOffline: summary?.counts?.offline > 0 && !summary.present.includes('offline')
+    suppressedOffline: summary?.counts?.offline > 0 && !summary?.present?.includes('offline')
       ? summary.counts.offline : 0,
   };
 }

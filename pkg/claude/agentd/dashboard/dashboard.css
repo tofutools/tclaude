@@ -2383,7 +2383,8 @@ body.wizard header .activity-hover-trigger:hover { background: transparent; }
 }
 .activity-hover-workers li { overflow-wrap: anywhere; }
 .activity-hover-worker-name { color: #e6edf3; }
-.activity-hover-worker-detail { color: #8b949e; }
+.activity-hover-worker-detail,
+.activity-hover-worker-annotation { color: #8b949e; }
 .activity-hover-state-error .activity-hover-state-label,
 .activity-hover-state-recovery-backoff .activity-hover-state-label,
 .activity-hover-state-recovery-suppressed .activity-hover-state-label { color: #ff7b72; }
@@ -2404,6 +2405,7 @@ body.slop .activity-hover-panel {
 body.slop .activity-hover-panel-heading { color: #ffe88c; }
 body.slop .activity-hover-panel-summary,
 body.slop .activity-hover-worker-detail,
+body.slop .activity-hover-worker-annotation,
 body.slop .activity-hover-note { color: #d8b95e; }
 body.slop .activity-hover-group + .activity-hover-group,
 body.slop .activity-hover-note { border-color: #684500; }
@@ -2419,6 +2421,7 @@ body.wizard .activity-hover-panel-heading {
 }
 body.wizard .activity-hover-panel-summary,
 body.wizard .activity-hover-worker-detail,
+body.wizard .activity-hover-worker-annotation,
 body.wizard .activity-hover-note { color: #9a86c4; }
 body.wizard .activity-hover-group + .activity-hover-group,
 body.wizard .activity-hover-note { border-color: rgba(122, 93, 176, 0.5); }

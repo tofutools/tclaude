@@ -49,7 +49,7 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
   assert.equal(activity.details.groups[0].states[0].members[0].name, 'same');
 });
 
-test('global activity details preserve exact states, dedup shared members, and include suppressed offline workers', async (t) => {
+test('global activity details mirror pulse buckets, dedup members, and annotate finer states', async (t) => {
   const harness = await createPreactHarness(t);
   const { globalActivityView, activityMemberTitle } = await harness.importDashboardModule('js/shell-model.js');
   const shared = { conv_id: 'shared', title: 'Shared Worker', online: true, state: { status: 'working' } };
@@ -82,13 +82,60 @@ test('global activity details preserve exact states, dedup shared members, and i
   assert.deepEqual(activity.details.groups.map((group) => group.name), ['builders', 'reviewers', 'Ungrouped']);
   const builders = activity.details.groups[0];
   assert.deepEqual(builders.states.map((state) => state.key), [
-    'awaiting_permission', 'working', 'offline',
+    'asking', 'working', 'offline',
   ]);
-  assert.equal(builders.states[0].label, 'Awaiting permission');
+  assert.equal(builders.states[0].label, 'Awaiting permission or input');
   assert.equal(builders.states[0].members[0].name, 'Needs Access');
   assert.equal(builders.states[2].members[0].name, 'Sleeping Worker');
   assert.equal(activity.details.groups[1].states[0].label, 'Error / stuck');
-  assert.equal(activity.details.groups[2].states[0].label, 'Idle + background work');
+  assert.equal(activity.details.groups[2].states[0].label, 'Working');
+  assert.equal(activity.details.groups[2].states[0].members[0].annotation, 'background activity still running');
+  assert.equal(builders.states[0].members[0].detail, '');
+  assert.equal(activity.details.groups[1].states[0].members[0].detail, 'tool failed');
+
+  const lifecycle = globalActivityView({
+    groups: [{
+      name: 'lifecycle',
+      members: [
+        { conv_id: 'recovered-ask', title: 'Recovered Ask', online: true,
+          state: { status: 'awaiting_permission', recovery_status: 'recovered' } },
+        { conv_id: 'backoff-work', title: 'Backoff Work', online: true,
+          state: { status: 'working', recovery_status: 'backoff' } },
+        { conv_id: 'restarting', title: 'Restarting Worker', online: true,
+          state: { status: 'working', recovery_status: 'restarting' } },
+        { conv_id: 'suppressed', title: 'Suppressed Worker', online: true,
+          state: { status: 'idle', recovery_status: 'suppressed' } },
+        { conv_id: 'crashed-pending', title: 'Pending Crash', online: false,
+          state: { status: 'working', recovery_status: 'crashed' } },
+        { conv_id: 'exited', title: 'Exited Worker', online: true,
+          state: { status: 'exited' } },
+        { conv_id: 'unknown', title: 'Unknown Worker', online: true,
+          state: { status: 'mystery' } },
+        { conv_id: 'waking', title: 'Waking Worker', online: false, waking: true,
+          state: { status: 'working' } },
+      ],
+    }],
+    ungrouped: [],
+    activity_bots: { regular: 'emoji', slop: 'off', wizard: 'off' },
+  });
+  const lifecycleStates = lifecycle.details.groups[0].states;
+  assert.deepEqual(lifecycleStates.map((state) => state.key), ['asking', 'working', 'idle', 'offline']);
+  const membersByName = new Map(lifecycleStates.flatMap((state) => state.members.map((member) => [member.name, member])));
+  assert.equal(membersByName.get('Recovered Ask').state, 'asking');
+  assert.match(membersByName.get('Recovered Ask').annotation, /recovered/);
+  assert.equal(membersByName.get('Backoff Work').state, 'working');
+  assert.match(membersByName.get('Backoff Work').annotation, /crash loop-backoff/);
+  assert.equal(membersByName.get('Restarting Worker').state, 'working');
+  assert.equal(membersByName.get('Restarting Worker').annotation, 'restarting');
+  assert.equal(membersByName.get('Suppressed Worker').state, 'idle');
+  assert.equal(membersByName.get('Suppressed Worker').annotation, 'recovery suppressed');
+  assert.equal(membersByName.get('Pending Crash').state, 'offline');
+  assert.equal(membersByName.get('Pending Crash').annotation, 'crashed-recovery-pending');
+  assert.equal(membersByName.get('Exited Worker').annotation, 'exited');
+  assert.equal(membersByName.get('Unknown Worker').annotation, 'status unavailable');
+  assert.equal(membersByName.get('Waking Worker').state, 'offline');
+  assert.equal(membersByName.get('Waking Worker').annotation, 'starting up');
+  assert.equal(lifecycle.details.suppressedOffline, 2);
 
   assert.equal(activityMemberTitle({ title: '<img src=x>', agent_id: 'agt_safe' }), 'agt_safe');
   assert.equal(activityMemberTitle({ title: 'a'.repeat(65), conv_id: 'conv_safe' }), 'conv_safe');
@@ -122,6 +169,14 @@ test('activity hover opens a text-only worker panel without changing the shared 
   assert.match(root.textContent, /Alice/);
   assert.match(root.textContent, /Bob/);
   await harness.act(() => harness.fireEvent(trigger, 'keydown', { key: 'Escape' }));
+  assert.equal(root.classList.contains('is-open'), false);
+
+  // The trigger is the focus target, while the panel is a sibling inside the
+  // wrapper. Test the browser's focusin/focusout path used by the Preact
+  // onFocusIn/onFocusOut handlers rather than relying on click coverage.
+  await harness.act(() => harness.fireEvent(trigger, 'focusin'));
+  assert.equal(root.classList.contains('is-open'), true);
+  await harness.act(() => harness.fireEvent(trigger, 'focusout', { relatedTarget: harness.document.body }));
   assert.equal(root.classList.contains('is-open'), false);
   await mounted.unmount();
 });

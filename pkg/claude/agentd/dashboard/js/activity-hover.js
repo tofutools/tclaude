@@ -20,6 +20,7 @@ function ActivityState({ state, wizard }) {
         ${state.members.map((member) => html`
           <li key=${member.key}>
             <span class="activity-hover-worker-name">${member.name}</span>
+            ${member.annotation ? html`<span class="activity-hover-worker-annotation"> — ${member.annotation}</span>` : null}
             ${member.detail ? html`<span class="activity-hover-worker-detail"> — ${member.detail}</span>` : null}
           </li>
         `)}
@@ -104,8 +105,8 @@ export function ActivityHover({
       class=${`activity-hover${className ? ` ${className}` : ''}${open ? ' is-open' : ''}`}
       onMouseEnter=${() => setHovered(true)}
       onMouseLeave=${() => setHovered(false)}
-      onFocus=${() => setFocused(true)}
-      onBlur=${onBlur}
+      onFocusIn=${() => setFocused(true)}
+      onFocusOut=${onBlur}
     >
       <button
         id=${id}
