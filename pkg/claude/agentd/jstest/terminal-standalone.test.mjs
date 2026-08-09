@@ -414,6 +414,52 @@ test('standalone status polling aborts on auth expiry and does not leave a timer
   page.dispose();
 });
 
+test('standalone status polling follows a replacement solo selector', async (t) => {
+  const harness = await createPreactHarness(t);
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const firstSeed = {
+    ws: '/api/term-ws/agt_one', label: 'one', key: 'one', agent: 'agt_one',
+  };
+  const secondSeed = {
+    ws: '/api/term-ws/agt_two', label: 'two', key: 'two', agent: 'agt_two',
+  };
+  const locationRef = {
+    pathname: '/terminals', search: '?solo=1', hash: encodedSeed(firstSeed),
+  };
+  const requests = [];
+  const fetchImpl = (url, options) => {
+    if (!url.endsWith('/status')) return Promise.resolve({ ok: true });
+    return new Promise((resolve) => { requests.push({ url, options, resolve }); });
+  };
+  const { createStandaloneTerminalsPage } =
+    await harness.importDashboardModule('js/terminal-standalone.js');
+  const page = createStandaloneTerminalsPage({
+    host,
+    initPrefs: async () => {},
+    initThemeSync: () => {},
+    mountShell: () => () => {},
+    mountMessageDialogs: async () => () => {},
+    fetchImpl,
+    windowRef: harness.window,
+    documentRef: harness.document,
+    locationRef,
+    historyRef: { replaceState: () => { locationRef.hash = ''; } },
+    navigatorRef: { sendBeacon: () => true },
+  });
+  await page.start();
+  for (let i = 0; i < 5 && requests.length < 1; i++) await Promise.resolve();
+  assert.equal(requests[0]?.url, '/api/agents/agt_one/status');
+
+  locationRef.hash = encodedSeed(secondSeed);
+  harness.window.dispatchEvent(new harness.window.Event('hashchange'));
+  for (let i = 0; i < 5 && requests.length < 2; i++) await Promise.resolve();
+  assert.equal(requests[0].options.signal.aborted, true, 'the old selector request is aborted');
+  assert.equal(requests[1]?.url, '/api/agents/agt_two/status');
+
+  page.dispose();
+  assert.equal(requests[1].options.signal.aborted, true, 'cleanup aborts the replacement request');
+});
+
 test('standalone Preact shell renders solo chrome around an opaque active widget', async (t) => {
   const harness = await createPreactHarness(t);
   const host = harness.document.body.appendChild(harness.document.createElement('div'));

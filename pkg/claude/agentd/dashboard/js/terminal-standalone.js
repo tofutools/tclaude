@@ -144,17 +144,22 @@ export function createStandaloneTerminalsPage({
   let authExpired = false;
   const snapshot = signal(null);
   let stopStatusPoll = null;
+  let statusPollSelector = null;
 
   function ensureStatusPoll() {
-    if (stopStatusPoll || disposed || authExpired || !(soloSeed?.agent || soloSeed?.hideConv)) return;
+    const selector = soloSeed?.agent || soloSeed?.hideConv;
+    if (disposed || authExpired || !selector || statusPollSelector === selector) return;
+    stopStatusPolling();
+    statusPollSelector = selector;
     stopStatusPoll = startStandaloneStatusPoll({
-      selector: soloSeed.agent || soloSeed.hideConv, snapshot, fetchImpl, documentRef,
+      selector, snapshot, fetchImpl, documentRef,
     });
   }
 
   function stopStatusPolling() {
     stopStatusPoll?.();
     stopStatusPoll = null;
+    statusPollSelector = null;
   }
 
   async function reattachPane(pane) {
