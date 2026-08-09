@@ -968,7 +968,7 @@ func runNew(params *NewParams) error {
 		}
 	} else if params.CodexAppServerSocket != "" || params.CodexAppServerPIDFile != "" ||
 		params.CodexAppServerLogFile != "" {
-		return fmt.Errorf("Codex app-server runtime paths require --codex-app-server")
+		return fmt.Errorf("codex app-server runtime paths require --codex-app-server")
 	}
 
 	if params.JoinGroup != "" {

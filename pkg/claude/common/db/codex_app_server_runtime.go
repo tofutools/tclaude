@@ -33,7 +33,7 @@ type CodexAppServerRuntime struct {
 func UpsertCodexAppServerRuntime(runtime CodexAppServerRuntime) error {
 	if strings.TrimSpace(runtime.Generation) == "" || strings.TrimSpace(runtime.LaunchID) == "" ||
 		strings.TrimSpace(runtime.AgentID) == "" || strings.TrimSpace(runtime.SocketPath) == "" {
-		return errors.New("Codex app-server runtime needs generation, launch id, agent id, and socket path")
+		return errors.New("codex app-server runtime needs generation, launch id, agent id, and socket path")
 	}
 	switch runtime.State {
 	case CodexAppServerWarming, CodexAppServerReady, CodexAppServerUnavailable, CodexAppServerDead:

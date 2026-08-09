@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -15,6 +16,30 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
+
+func TestSessionArgsCarryPrivateCodexAppServerGeneration(t *testing.T) {
+	for name, args := range map[string][]string{
+		"new": sessionNewArgs(clcommon.SpawnArgs{
+			Label: "worker", Cwd: "/tmp/work", CodexAppServer: true,
+			CodexAppServerSocket: "/tmp/app.sock", CodexAppServerPIDFile: "/tmp/app.pid",
+			CodexAppServerLogFile: "/tmp/app.log",
+		}),
+		"resume": sessionResumeArgs(clcommon.SpawnArgs{
+			ConvID: "thread-1", Cwd: "/tmp/work", CodexAppServer: true,
+			CodexAppServerSocket: "/tmp/app.sock", CodexAppServerPIDFile: "/tmp/app.pid",
+			CodexAppServerLogFile: "/tmp/app.log",
+		}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.True(t, slices.Contains(args, "--codex-app-server"))
+			assert.True(t, slices.Contains(args, "/tmp/app.sock"))
+			assert.True(t, slices.Contains(args, "/tmp/app.pid"))
+			assert.True(t, slices.Contains(args, "/tmp/app.log"))
+		})
+	}
+	plain := sessionNewArgs(clcommon.SpawnArgs{Label: "worker", Cwd: "/tmp/work"})
+	assert.False(t, slices.Contains(plain, "--codex-app-server"))
+}
 
 func TestCodexAppServerBootstrapBindsTUIThreadWithoutReplay(t *testing.T) {
 	resetTestDB(t)

@@ -45,11 +45,11 @@ func prepareCodexAppServerRuntime(args *clcommon.SpawnArgs) error {
 	}
 	versionOutput, err := exec.Command("codex", "--version").CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("Codex app-server preflight: codex --version: %w", err)
+		return fmt.Errorf("codex app-server preflight: codex --version: %w", err)
 	}
 	version := strings.TrimSpace(string(versionOutput))
 	if err := codexappserver.CheckVersion(version); err != nil {
-		return fmt.Errorf("Codex app-server preflight: %w", err)
+		return fmt.Errorf("codex app-server preflight: %w", err)
 	}
 	version = strings.TrimSpace(strings.TrimPrefix(version, "codex-cli "))
 
@@ -61,7 +61,7 @@ func prepareCodexAppServerRuntime(args *clcommon.SpawnArgs) error {
 		owner = strings.TrimSpace(args.Label)
 	}
 	if owner == "" {
-		return errors.New("Codex app-server launch needs an agent, conversation, or launch identity")
+		return errors.New("codex app-server launch needs an agent, conversation, or launch identity")
 	}
 	digest := sha256.Sum256([]byte(owner))
 	ownerDir := hex.EncodeToString(digest[:8])
@@ -249,17 +249,17 @@ func waitForOwnedCodexSocket(ctx context.Context, path string, pid int) error {
 		info, err := os.Lstat(path)
 		if err == nil {
 			if info.Mode()&os.ModeSymlink != 0 || info.Mode()&os.ModeSocket == 0 {
-				return fmt.Errorf("Codex app-server endpoint is not a plain Unix socket: %s", path)
+				return fmt.Errorf("codex app-server endpoint is not a plain Unix socket: %s", path)
 			}
 			stat, ok := info.Sys().(*syscall.Stat_t)
 			if !ok || int(stat.Uid) != os.Getuid() {
-				return fmt.Errorf("Codex app-server socket has wrong owner")
+				return fmt.Errorf("codex app-server socket has wrong owner")
 			}
 			if info.Mode().Perm() != 0o600 {
-				return fmt.Errorf("Codex app-server socket mode is %04o, want 0600", info.Mode().Perm())
+				return fmt.Errorf("codex app-server socket mode is %04o, want 0600", info.Mode().Perm())
 			}
 			if err := processAlive(pid); err != nil {
-				return fmt.Errorf("Codex app-server process is not alive: %w", err)
+				return fmt.Errorf("codex app-server process is not alive: %w", err)
 			}
 			return nil
 		}
