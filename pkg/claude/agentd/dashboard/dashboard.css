@@ -994,13 +994,18 @@ a.branch-link:hover { color: #58a6ff; text-decoration: underline; }
    the same arrangement .activity-hover uses in the header. */
 .ci-hover { position: relative; display: inline-block; }
 .presented-pr { display: inline-block; }
+/* The badge is a link, not a button: clicking it opens the build it is
+   reporting on (the workflow run behind its current state, or the PR's checks
+   page when no run could be named). Hovering it — not clicking — is what
+   opens the panel, so the click is free to navigate. */
 .ci-badge {
   appearance: none; display: inline-flex; align-items: center; gap: 3px;
   margin-left: 5px; padding: 2px 5px; vertical-align: 1px;
   border: 1px solid #30363d; border-radius: 9px; background: #1b222c;
   color: #8b949e; font-family: ui-monospace, monospace; font-size: 10px;
-  line-height: 1; cursor: pointer;
+  line-height: 1; cursor: pointer; text-decoration: none;
 }
+.ci-badge:hover { border-color: currentColor; }
 .ci-badge:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; }
 .ci-badge.ci-passing { color: #3fb950; border-color: rgba(63, 185, 80, 0.35); }
 .ci-badge.ci-failing { color: #f85149; border-color: rgba(248, 81, 73, 0.4); }

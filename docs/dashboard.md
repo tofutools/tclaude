@@ -794,6 +794,13 @@ panel listing every check with its status, workflow, conclusion and elapsed
 time, plus a link to the PR's checks page on GitHub; the panel stays open while
 the pointer is over it.
 
+Clicking the pill opens the build behind it: the workflow run for whichever
+check explains the badge's current state — a red badge goes straight to the
+failing run, an amber one to the run still going, a green one to the most
+recent finished run. When no run can be named (a PR checked only by external
+CI apps) it falls back to the PR's own checks tab, so the pill is never a dead
+control. Individual rows in the panel link to their own job.
+
 The check data costs nothing on the 2-second snapshot: it rides along on the
 `gh pr view` calls the branch-link and presented-PR refreshes already make, and
 the snapshot only reads the resulting cache. A dedicated refresh happens only

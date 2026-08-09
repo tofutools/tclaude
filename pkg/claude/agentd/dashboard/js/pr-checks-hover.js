@@ -89,7 +89,20 @@ export function summaryLine(summary) {
 
 function badgeTitle(summary, prNumber) {
   const who = prNumber ? `#${prNumber}` : 'this pull request';
-  return `CI checks for ${who} — ${summaryLine(summary)}`;
+  return `CI checks for ${who} — ${summaryLine(summary)} (click to open the build)`;
+}
+
+// prChecksPageURL is the fallback click target: the PR's own checks tab. Used
+// when no check offered a workflow run to jump to — a PR checked only by
+// external apps, say — so the badge is always clickable, never a dead pill.
+export function prChecksPageURL(prURL) {
+  return `${String(prURL || '').replace(/\/+$/, '')}/checks`;
+}
+
+// badgeHref: the run that explains the badge's state when the server could
+// name one (red -> the failing build), else the PR's checks page.
+export function badgeHref(summary, prURL) {
+  return safeCheckURL(summary?.run_url) || prChecksPageURL(prURL);
 }
 
 // usePRChecks owns the poll lifecycle: it fetches on open, re-polls while the
@@ -186,7 +199,7 @@ function PRChecksPanel({ url, prNumber, summary, panelID, headingID, state }) {
       `}
       ${checks.length && error ? html`<p class="ci-panel-empty">Refresh failed — ${error}</p>` : null}
       <p class="ci-panel-note">
-        <a href=${`${url.replace(/\/+$/, '')}/checks`} target="_blank" rel="noopener noreferrer">
+        <a href=${prChecksPageURL(url)} target="_blank" rel="noopener noreferrer">
           <span class="theme-copy-regular">Open checks on GitHub ↗</span>
           <span class="theme-copy-wizard">Read the full omens ↗</span>
         </a>
@@ -204,20 +217,10 @@ export function PRChecksBadge({ url, prNumber, summary }) {
   const instanceID = useId();
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
-  const [pinned, setPinned] = useState(false);
-  const open = hovered || focused || pinned;
+  const open = hovered || focused;
   const state = usePRChecks(open ? url : '', open);
 
-  const close = () => { setPinned(false); setHovered(false); setFocused(false); };
-
-  useEffect(() => {
-    if (!pinned) return undefined;
-    const onPointerDown = (event) => {
-      if (!rootRef.current?.contains(event.target)) close();
-    };
-    document.addEventListener('pointerdown', onPointerDown);
-    return () => document.removeEventListener('pointerdown', onPointerDown);
-  }, [pinned]);
+  const close = () => { setHovered(false); setFocused(false); };
 
   if (!url || !summary || !(summary.total > 0)) return null;
   const denominator = checkDenominator(summary);
@@ -234,15 +237,16 @@ export function PRChecksBadge({ url, prNumber, summary }) {
       onFocusIn=${() => setFocused(true)}
       onFocusOut=${(event) => { if (!rootRef.current?.contains(event.relatedTarget)) setFocused(false); }}
     >
-      <button
-        type="button"
+      <a
         class=${`ci-badge ci-${stateName}`}
+        href=${badgeHref(summary, url)}
+        target="_blank"
+        rel="noopener noreferrer"
+        draggable=${false}
         aria-haspopup="dialog"
         aria-expanded=${open ? 'true' : 'false'}
         aria-controls=${panelID}
         aria-label=${badgeTitle(summary, prNumber)}
-        title=${badgeTitle(summary, prNumber)}
-        onClick=${() => (pinned ? close() : setPinned(true))}
         onKeyDown=${(event) => {
           if (event.key !== 'Escape') return;
           event.preventDefault();
@@ -252,7 +256,7 @@ export function PRChecksBadge({ url, prNumber, summary }) {
       >
         <span class="ci-glyph" aria-hidden="true">${checkStateGlyph(stateName)}</span>
         <span class="ci-count">${summary.passed}/${denominator}</span>
-      </button>
+      </a>
       ${open ? html`
         <${PRChecksPanel} url=${url} prNumber=${prNumber} summary=${summary}
           panelID=${panelID} headingID=${headingID} state=${state} />

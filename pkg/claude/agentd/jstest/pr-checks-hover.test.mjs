@@ -63,6 +63,18 @@ test('the CI badge summarizes checks and opens a panel on hover', async (t) => {
     assert.equal(safeCheckURL('https://github.com/o/r/runs/1'), 'https://github.com/o/r/runs/1');
   });
 
+  await t.test('the badge links to the build behind its state', () => {
+    const { badgeHref } = mod;
+    const run = 'https://github.com/o/r/actions/runs/31333654230';
+    assert.equal(badgeHref({ state: 'failing', run_url: run }, PR), run,
+      'a red badge goes straight to the failing build');
+    // No run could be named (external CI app only) — the PR's checks tab is
+    // still a useful landing place, so the badge is never a dead pill.
+    assert.equal(badgeHref({ state: 'passing' }, PR), `${PR}/checks`);
+    assert.equal(badgeHref({ run_url: 'javascript:alert(1)' }, PR), `${PR}/checks`,
+      'a hostile run_url must not become the click target');
+  });
+
   await t.test('the summary line names what is outstanding', () => {
     assert.equal(
       summaryLine({ total: 14, passed: 12, failed: 1, pending: 1 }),
@@ -89,14 +101,20 @@ test('the CI badge summarizes checks and opens a panel on hover', async (t) => {
     stubFetch(t, () => ({ summary: {}, checks: [], resolved: false }));
     const mounted = await harness.mount(harness.html`
       <${PRChecksBadge} url=${PR} prNumber=${2143}
-        summary=${{ total: 14, passed: 12, failed: 1, pending: 1, skipped: 0, state: 'failing' }} />
+        summary=${{ total: 14, passed: 12, failed: 1, pending: 1, skipped: 0, state: 'failing',
+                    run_url: 'https://github.com/o/r/actions/runs/9' }} />
     `);
     try {
-      const badge = mounted.container.querySelector('.ci-badge');
-      assert.ok(badge, 'expected a badge');
+      const badge = mounted.container.querySelector('a.ci-badge');
+      assert.ok(badge, 'the badge must be a link so clicking it opens the build');
+      assert.equal(badge.getAttribute('href'), 'https://github.com/o/r/actions/runs/9');
+      assert.equal(badge.getAttribute('target'), '_blank');
       assert.ok(badge.className.includes('ci-failing'), `badge class = ${badge.className}`);
       assert.equal(badge.querySelector('.ci-count').textContent, '12/14');
-      assert.match(badge.getAttribute('title'), /12 passed · 1 failed · 1 running/);
+      assert.match(badge.getAttribute('aria-label'), /12 passed · 1 failed · 1 running/);
+      // The native title tooltip would fire on the same hover that opens the
+      // panel and land on top of it; aria-label carries the text instead.
+      assert.equal(badge.getAttribute('title'), null);
       assert.equal(mounted.container.querySelector('.ci-panel'), null,
         'the panel stays closed until the operator hovers or focuses it');
     } finally {
