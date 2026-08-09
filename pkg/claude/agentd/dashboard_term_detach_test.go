@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // detachRecTmux records the tmux argv it is asked to run and returns a harmless
@@ -34,14 +35,19 @@ func TestDetachTmuxSession_IssuesDetachClient(t *testing.T) {
 	clcommon.Default = rec
 	t.Cleanup(func() { clcommon.Default = prev })
 
-	detachTmuxSession("spwn-32d8e2")
-
-	if len(rec.calls) != 1 {
-		t.Fatalf("want exactly 1 tmux call, got %d: %v", len(rec.calls), rec.calls)
+	codex, ok := harness.Get(harness.CodexName)
+	if !ok {
+		t.Fatal("codex harness not registered")
 	}
-	want := []string{"detach-client", "-s", "=spwn-32d8e2"}
-	if !slices.Equal(rec.calls[0], want) {
-		t.Errorf("detach argv = %v, want %v", rec.calls[0], want)
+	detachTmuxSession("spwn-32d8e2", codex)
+
+	if len(rec.calls) != 2 {
+		t.Fatalf("want detach and copy-mode cancel calls, got %d: %v", len(rec.calls), rec.calls)
+	}
+	wantDetach := []string{"detach-client", "-s", "=spwn-32d8e2"}
+	wantCancel := []string{"send-keys", "-X", "-t", "=spwn-32d8e2:0.0", "cancel"}
+	if !slices.Equal(rec.calls[0], wantDetach) || !slices.Equal(rec.calls[1], wantCancel) {
+		t.Errorf("detach cleanup calls = %v, want %v then %v", rec.calls, wantDetach, wantCancel)
 	}
 }
 
@@ -54,9 +60,23 @@ func TestDetachTmuxSession_EmptyIsNoop(t *testing.T) {
 	clcommon.Default = rec
 	t.Cleanup(func() { clcommon.Default = prev })
 
-	detachTmuxSession("")
+	detachTmuxSession("", harness.Default())
 
 	if len(rec.calls) != 0 {
 		t.Errorf("empty session must issue no tmux command, got %v", rec.calls)
+	}
+}
+
+func TestDetachTmuxSession_ClaudeDoesNotCancelMode(t *testing.T) {
+	rec := &detachRecTmux{}
+	prev := clcommon.Default
+	clcommon.Default = rec
+	t.Cleanup(func() { clcommon.Default = prev })
+
+	detachTmuxSession("spwn-claude", harness.Default())
+
+	want := []string{"detach-client", "-s", "=spwn-claude"}
+	if len(rec.calls) != 1 || !slices.Equal(rec.calls[0], want) {
+		t.Fatalf("claude detach must not inject copy-mode cancel: got %v, want %v", rec.calls, want)
 	}
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -115,7 +116,7 @@ func handleDashboardTermWS(w http.ResponseWriter, r *http.Request) {
 	clientFlags := strings.TrimSpace(webTerminalTmuxFlags() + " " + session.ExternalTmuxNoStartFlag())
 	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s",
 		clcommon.TmuxSocketName, clientFlags, shellSingleQuote(name), shellSingleQuote(dir))
-	runPTYOverWS(w, r, cmd, name)
+	runPTYOverWS(w, r, cmd, name, nil)
 }
 
 // groupTermSessionName builds the tmux session name backing an ad hoc
@@ -186,7 +187,7 @@ func handleDashboardGroupTermWS(w http.ResponseWriter, r *http.Request) {
 	clientFlags := strings.TrimSpace(webTerminalTmuxFlags() + " " + session.ExternalTmuxNoStartFlag())
 	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s",
 		clcommon.TmuxSocketName, clientFlags, shellSingleQuote(sessName), shellSingleQuote(dir))
-	runPTYOverWS(w, r, cmd, sessName)
+	runPTYOverWS(w, r, cmd, sessName, nil)
 }
 
 // handleDashboardOpenWindowWS is the in-browser fallback for "open
@@ -247,7 +248,8 @@ func handleDashboardOpenWindowWS(w http.ResponseWriter, r *http.Request) {
 	// (#{client_tty}) teardown detachTmuxSession already flags as future work;
 	// until then this is still strictly better than the pre-fix behaviour and
 	// correct for the common native-terminal case.
-	runPTYOverWS(w, r, webTerminalAttachCmd(openAttachCmdForce(sess.ID)), sess.TmuxSession)
+	h, _ := harness.Get(sess.Harness)
+	runPTYOverWS(w, r, webTerminalAttachCmd(openAttachCmdForce(sess.ID)), sess.TmuxSession, h)
 }
 
 // spawnFocusWSPath builds the /api/spawn-focus-ws/{label} path the
@@ -290,7 +292,8 @@ func handleDashboardSpawnFocusWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no tmux pane for "+label, http.StatusNotFound)
 		return
 	}
-	runPTYOverWS(w, r, webTerminalAttachCmd(openAttachCmd(label)), sess.TmuxSession)
+	h, _ := harness.Get(sess.Harness)
+	runPTYOverWS(w, r, webTerminalAttachCmd(openAttachCmd(label)), sess.TmuxSession, h)
 }
 
 // waitForDashboardSpawnFocusSession bridges the one spawn shape where the
@@ -404,11 +407,12 @@ var defaultPTYWinsize = pty.Winsize{Cols: 80, Rows: 24}
 // terminal window attached, closing the web view detaches that too. That's an
 // accepted simplification for now; detaching only our own client (by its PTY
 // tty, which tmux exposes as #{client_tty}) is a deliberate future refinement.
-func detachTmuxSession(tmuxSession string) {
+func detachTmuxSession(tmuxSession string, h *harness.Harness) {
 	if tmuxSession == "" {
 		return
 	}
 	_ = clcommon.TmuxCommand("detach-client", "-s", clcommon.ExactTarget(tmuxSession)).Run()
+	session.CancelTmuxScrollback(tmuxSession, h)
 }
 
 // hangupProcessGroup sends SIGHUP to the whole process group led by proc, not
@@ -504,9 +508,11 @@ func webTerminalAttachCmd(attachCommand string) string {
 // tmuxSession is the tmux session this PTY attaches to (the agent's
 // `spwn-…` / ad hoc `tclaude-term-…` session, on the `-L tclaude` server).
 // On teardown it is handed to detachTmuxSession so closing the modal actually
-// detaches on the tmux level. Pass "" when there is no associated session
-// (then teardown falls back to the process-group SIGHUP alone).
-func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand, tmuxSession string) {
+// detaches on the tmux level. tmuxHarness identifies a managed agent whose
+// harness uses native tmux scrollback; ad hoc terminals pass nil. Pass "" when
+// there is no associated session (then teardown falls back to the process-group
+// SIGHUP alone).
+func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand, tmuxSession string, tmuxHarness *harness.Harness) {
 	hook := termWSTestHook
 	if hook != nil && hook.RewriteCommand != nil {
 		shellCommand, tmuxSession = hook.RewriteCommand(shellCommand, tmuxSession)
@@ -612,7 +618,7 @@ initialSize:
 		// Reliable detach first: tell the tmux server to drop the session's
 		// clients. Then tear down the PTY/process tree (the SIGHUP is a
 		// backstop — see hangupProcessGroup).
-		detachTmuxSession(tmuxSession)
+		detachTmuxSession(tmuxSession, tmuxHarness)
 		_ = ptmx.Close()
 		hangupProcessGroup(cmd.Process)
 		_ = cmd.Wait()

@@ -39,11 +39,6 @@ type Options struct {
 	SettleDelaySet bool
 	LockTimeout    time.Duration
 	LockRetry      time.Duration
-	// CancelMode exits any tmux pane mode before programmatic input. Tmux
-	// copy mode otherwise consumes send-keys instead of forwarding them to the
-	// harness. The cancel is best-effort: tmux returns an error when no mode is
-	// active, which is the desired harmless no-op.
-	CancelMode bool
 	// ForceBracketedPaste keeps even single-line text in one terminal paste
 	// event. This is useful when the foreground application must distinguish
 	// programmatic injection from ordinary key presses.
@@ -125,9 +120,6 @@ func WithLock(tmuxTarget string, opts Options, fn func(run Runner, exactTarget s
 		return fmt.Errorf("%w after %s", ErrLockTimeout, opts.LockTimeout)
 	}
 	defer func() { _ = fileLock.Unlock() }()
-	if opts.CancelMode {
-		_ = opts.Run("send-keys", "-X", "-t", exactTarget, "cancel")
-	}
 	return fn(opts.Run, exactTarget)
 }
 

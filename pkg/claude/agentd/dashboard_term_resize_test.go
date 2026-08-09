@@ -23,7 +23,7 @@ import (
 func dialPTYWS(t *testing.T, script string) *websocket.Conn {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		runPTYOverWS(w, r, script, "")
+		runPTYOverWS(w, r, script, "", nil)
 	}))
 	t.Cleanup(server.Close)
 	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
