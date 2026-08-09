@@ -723,9 +723,11 @@ func startOpenCodeProcess(
 		}
 		process.finish(err)
 		finishOpenCodeProcessExit(process, runtime.SessionID, cmd.Process.Pid, err, stderr)
-		if runtime.ResourceCgroupDir != "" {
-			_ = os.Remove(runtime.ResourceCgroupDir)
-		}
+		// The durable boundary dir is deliberately NOT removed here. Removing it
+		// raced relaunch reuse: stopOpenCodeProcess returns on process.done, which
+		// fires before this goroutine runs, so a restart could reuse the recorded
+		// dir just as this deleted it. An empty leftover dir costs nothing and the
+		// next PrepareResourceCgroup for the session reclaims it.
 	}()
 	runtime.PID = cmd.Process.Pid
 	if unixHandshake != nil {
@@ -2545,6 +2547,19 @@ func stopOpenCodeRuntime(sessionID string) error {
 }
 
 func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
+	if runtime.ResourceCgroupDir != "" {
+		// The tmux and process-tree kills below are best-effort: a server
+		// descendant that double-forked or outlived the stop wait survives
+		// them, but it can never leave the session's resource cgroup. Reap
+		// whatever remains there so the durable boundary is empty for the
+		// next relaunch and reclaimable at the next wake.
+		defer func() {
+			if err := session.KillResourceCgroupMembers(runtime.ResourceCgroupDir); err != nil {
+				slog.Warn("OpenCode resource cgroup still holds processes after stop",
+					"session", runtime.SessionID, "dir", runtime.ResourceCgroupDir, "error", err)
+			}
+		}()
+	}
 	removeControlSocket := true
 	defer func() {
 		if !removeControlSocket {
