@@ -30,17 +30,29 @@ func migrateV201toV202(d *sql.DB) error {
 	// already authored the new spelling, keep that row authoritative and remove
 	// the legacy collision before renaming the remaining rows.
 	for _, spec := range []struct {
-		table string
-		owner string
+		table       string
+		owner       string
+		parentTable string
 	}{
-		{"agent_permissions", "agent_id"},
-		{"agent_group_permissions", "group_id"},
+		{"agent_permissions", "agent_id", "agents"},
+		{"agent_group_permissions", "group_id", "agent_groups"},
 	} {
 		exists, probeErr := txTableExists(tx, spec.table)
 		if probeErr != nil {
 			return fmt.Errorf("migrate v201→v202 (inspect %s): %w", spec.table, probeErr)
 		}
 		if !exists {
+			continue
+		}
+		// Historical half-schema heal fixtures can contain a child table whose
+		// declared FK parent is absent. SQLite rejects DML against that child
+		// even when it is empty, so leave the orphan alone; a real v201 database
+		// always has both sides.
+		parentExists, probeErr := txTableExists(tx, spec.parentTable)
+		if probeErr != nil {
+			return fmt.Errorf("migrate v201→v202 (inspect %s): %w", spec.parentTable, probeErr)
+		}
+		if !parentExists {
 			continue
 		}
 		for oldSlug, newSlug := range semanticProxyPermissionRenames {

@@ -16,6 +16,8 @@ func TestMigrateV202RenamesEveryStoredSemanticProxyPermission(t *testing.T) {
 	mustExec(t, d, `
 		CREATE TABLE schema_version (version INTEGER NOT NULL);
 		INSERT INTO schema_version VALUES (201);
+		CREATE TABLE agents (agent_id TEXT PRIMARY KEY);
+		CREATE TABLE agent_groups (id INTEGER PRIMARY KEY, owner_scopes_json TEXT);
 		CREATE TABLE agent_permissions (agent_id TEXT, slug TEXT, effect TEXT, PRIMARY KEY(agent_id, slug));
 		CREATE TABLE agent_group_permissions (group_id INTEGER, slug TEXT, PRIMARY KEY(group_id, slug));
 		CREATE TABLE agent_sudo_grants (id INTEGER PRIMARY KEY, slug TEXT);
@@ -24,8 +26,8 @@ func TestMigrateV202RenamesEveryStoredSemanticProxyPermission(t *testing.T) {
 		CREATE TABLE group_template_agents (id INTEGER PRIMARY KEY, permissions TEXT, profile_inline TEXT);
 		CREATE TABLE pending_spawns (id INTEGER PRIMARY KEY, permission_overrides TEXT);
 		CREATE TABLE spawn_profiles (id INTEGER PRIMARY KEY, permission_overrides TEXT);
-		CREATE TABLE agent_groups (id INTEGER PRIMARY KEY, owner_scopes_json TEXT);
 		CREATE TABLE group_templates (id INTEGER PRIMARY KEY, owner_scopes_json TEXT);
+		INSERT INTO agents VALUES ('a');
 		INSERT INTO agent_permissions VALUES ('a', 'git.read', 'grant');
 		INSERT INTO agent_permissions VALUES ('a', 'proxy.git.read', 'deny');
 		INSERT INTO agent_group_permissions VALUES (1, 'github.write');
@@ -61,6 +63,23 @@ func TestMigrateV202RenamesEveryStoredSemanticProxyPermission(t *testing.T) {
 		`{"proxy.git.read":{"git_remote":["example.com/org/repo"]}}`)
 	assertRowValue(t, d, `SELECT owner_scopes_json FROM group_templates`,
 		`{"proxy.linear.write":{"linear_team":["TCL"]}}`)
+}
+
+func TestMigrateV202ToleratesOrphanedHealTables(t *testing.T) {
+	d, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "v201-partial.sqlite")+"?_pragma=foreign_keys(1)")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+	mustExec(t, d, `
+		CREATE TABLE schema_version (version INTEGER NOT NULL);
+		INSERT INTO schema_version VALUES (201);
+		CREATE TABLE agent_group_permissions (
+			group_id INTEGER REFERENCES agent_groups(id),
+			slug TEXT,
+			PRIMARY KEY(group_id, slug)
+		);
+	`)
+	require.NoError(t, migrateV201toV202(d))
+	assert.Equal(t, 202, schemaVersion(d))
 }
 
 func assertRowValue(t *testing.T, d *sql.DB, query, want string) {
