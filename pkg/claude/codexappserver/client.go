@@ -85,12 +85,12 @@ type Client struct {
 	socketPath   string
 	writeTimeout time.Duration
 
-	writeMu  sync.Mutex
-	mu       sync.Mutex
-	nextID   int64
-	pending  map[string]chan *wireMessage
-	closed   bool
-	closeErr error
+	writeGate chan struct{}
+	mu        sync.Mutex
+	nextID    int64
+	pending   map[string]chan *wireMessage
+	closed    bool
+	closeErr  error
 
 	done           chan struct{}
 	notifications  chan Notification
@@ -107,8 +107,14 @@ func Dial(ctx context.Context, socketPath string, opts *Options) (*Client, error
 		return nil, errors.New("codexappserver: Unix socket path is empty")
 	}
 	options := opts.normalized()
+	canonicalVersion := ""
 	if options.CodexVersion != "" {
-		if err := CheckVersion(options.CodexVersion); err != nil {
+		var err error
+		canonicalVersion, err = normalizeCodexVersion(options.CodexVersion)
+		if err != nil {
+			return nil, err
+		}
+		if err := CheckVersion(canonicalVersion); err != nil {
 			return nil, err
 		}
 	}
@@ -133,7 +139,8 @@ func Dial(ctx context.Context, socketPath string, opts *Options) (*Client, error
 	conn.SetReadLimit(options.MaxMessageBytes)
 	c := &Client{
 		conn: conn, socketPath: socketPath, writeTimeout: options.WriteTimeout,
-		pending: make(map[string]chan *wireMessage), done: make(chan struct{}),
+		writeGate: make(chan struct{}, 1),
+		pending:   make(map[string]chan *wireMessage), done: make(chan struct{}),
 		notifications:  make(chan Notification, options.NotificationBuffer),
 		serverRequests: make(chan ServerRequest, options.ServerRequestBuffer),
 	}
@@ -153,7 +160,7 @@ func Dial(ctx context.Context, socketPath string, opts *Options) (*Client, error
 		return nil, err
 	}
 	reportedVersion, found := versionFromUserAgent(initialized.UserAgent)
-	version := options.CodexVersion
+	version := canonicalVersion
 	if version == "" {
 		if !found {
 			err := fmt.Errorf("%w: initialize userAgent %q does not identify the Codex version",
@@ -199,25 +206,37 @@ func versionFromUserAgent(userAgent string) (string, bool) {
 
 // CheckVersion fails closed outside the schema-validated M1 range.
 func CheckVersion(version string) error {
-	parts := strings.Split(strings.TrimSpace(strings.TrimPrefix(version, "codex-cli ")), ".")
-	if len(parts) != 3 {
-		return fmt.Errorf("%w: %q (need >=%s,<%s)", ErrUnsupportedVersion,
-			version, MinimumCodexVersion, MaximumCodexVersion)
+	canonical, err := normalizeCodexVersion(version)
+	if err != nil {
+		return err
 	}
-	values := make([]int, 3)
-	for i, part := range parts {
-		value, err := strconv.Atoi(part)
-		if err != nil || value < 0 {
-			return fmt.Errorf("%w: %q (need >=%s,<%s)", ErrUnsupportedVersion,
-				version, MinimumCodexVersion, MaximumCodexVersion)
-		}
-		values[i] = value
-	}
-	if values[0] != 0 || values[1] != 147 {
+	parts := strings.Split(canonical, ".")
+	major, _ := strconv.Atoi(parts[0])
+	minor, _ := strconv.Atoi(parts[1])
+	if major != 0 || minor != 147 {
 		return fmt.Errorf("%w: %s (need >=%s,<%s)", ErrUnsupportedVersion,
 			version, MinimumCodexVersion, MaximumCodexVersion)
 	}
 	return nil
+}
+
+func normalizeCodexVersion(version string) (string, error) {
+	trimmed := strings.TrimSpace(version)
+	trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "codex-cli "))
+	parts := strings.Split(trimmed, ".")
+	if len(parts) != 3 {
+		return "", fmt.Errorf("%w: %q (need >=%s,<%s)", ErrUnsupportedVersion,
+			version, MinimumCodexVersion, MaximumCodexVersion)
+	}
+	for i, part := range parts {
+		value, err := strconv.Atoi(part)
+		if err != nil || value < 0 {
+			return "", fmt.Errorf("%w: %q (need >=%s,<%s)", ErrUnsupportedVersion,
+				version, MinimumCodexVersion, MaximumCodexVersion)
+		}
+		parts[i] = strconv.Itoa(value)
+	}
+	return strings.Join(parts, "."), nil
 }
 
 func (c *Client) SocketPath() string                   { return c.socketPath }
@@ -235,11 +254,9 @@ func (c *Client) Err() error {
 
 // Close sends a normal WebSocket close control frame and terminates all calls.
 func (c *Client) Close() error {
-	c.writeMu.Lock()
 	_ = c.conn.WriteControl(websocket.CloseMessage,
 		websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
 		time.Now().Add(time.Second))
-	c.writeMu.Unlock()
 	c.shutdown(ErrClosed)
 	return nil
 }
@@ -362,9 +379,10 @@ func (c *Client) Call(ctx context.Context, method string, params, result any) er
 		c.abandon(key)
 		return &CallError{Method: method, Cause: fmt.Errorf("encode request: %w", err)}
 	}
-	if err := c.writeRaw(encoded); err != nil {
+	attempted, err := c.writeRaw(ctx, encoded)
+	if err != nil {
 		c.abandon(key)
-		return &CallError{Method: method, Cause: err, Ambiguous: true}
+		return &CallError{Method: method, Cause: err, Ambiguous: attempted}
 	}
 
 	select {
@@ -414,7 +432,7 @@ func (c *Client) Notify(method string, params any) error {
 	if err != nil {
 		return fmt.Errorf("codexappserver: encode notification %s: %w", method, err)
 	}
-	if err := c.writeRaw(encoded); err != nil {
+	if _, err := c.writeRaw(context.Background(), encoded); err != nil {
 		return fmt.Errorf("codexappserver: send notification %s: %w", method, err)
 	}
 	return nil
@@ -428,22 +446,54 @@ func (c *Client) abandon(key string) {
 	c.mu.Unlock()
 }
 
-func (c *Client) writeRaw(data []byte) error {
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
+func (c *Client) writeRaw(ctx context.Context, data []byte) (bool, error) {
+	select {
+	case c.writeGate <- struct{}{}:
+		defer func() { <-c.writeGate }()
+	case <-ctx.Done():
+		return false, ctx.Err()
+	case <-c.done:
+		return false, c.Err()
+	}
+	// Cancellation and the gate can become ready together. Recheck after
+	// serialization so cancellation known before the write always wins.
+	select {
+	case <-ctx.Done():
+		return false, ctx.Err()
+	default:
+	}
+
 	c.mu.Lock()
 	closed := c.closed
 	c.mu.Unlock()
 	if closed {
-		return ErrClosed
+		return false, ErrClosed
 	}
-	if err := c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout)); err != nil {
-		return err
+	deadline := time.Now().Add(c.writeTimeout)
+	if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(deadline) {
+		deadline = contextDeadline
 	}
+	if err := c.conn.SetWriteDeadline(deadline); err != nil {
+		return false, err
+	}
+	// Cancellation during a write makes its outcome ambiguous. Advance the
+	// connection deadline to abort a wedged write, then wait for the callback
+	// before clearing it so a late callback cannot poison the next writer.
+	cancelApplied := make(chan struct{})
+	stopCancel := context.AfterFunc(ctx, func() {
+		_ = c.conn.SetWriteDeadline(time.Now())
+		close(cancelApplied)
+	})
 	if err := c.conn.WriteMessage(websocket.TextMessage, data); err != nil {
+		if !stopCancel() {
+			<-cancelApplied
+		}
 		c.shutdown(fmt.Errorf("codexappserver: WebSocket write: %w", err))
-		return err
+		return true, err
+	}
+	if !stopCancel() {
+		<-cancelApplied
 	}
 	_ = c.conn.SetWriteDeadline(time.Time{})
-	return nil
+	return true, nil
 }

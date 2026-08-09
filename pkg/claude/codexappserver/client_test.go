@@ -55,7 +55,7 @@ func drainHandshake(t *testing.T, sim *testharness.CodexAppServerSim) (testharne
 }
 
 func TestDialUsesTruthfulStableHandshake(t *testing.T) {
-	client, sim := startClient(t, &codexappserver.Options{ClientVersion: "v-test", CodexVersion: "0.147.0"})
+	client, sim := startClient(t, &codexappserver.Options{ClientVersion: "v-test", CodexVersion: "codex-cli 0.147.0"})
 	initialize, initialized := drainHandshake(t, sim)
 
 	var params map[string]any
@@ -241,6 +241,23 @@ func TestTimeoutAfterWriteIsExplicitlyAmbiguous(t *testing.T) {
 	require.ErrorAs(t, err, &callErr)
 	assert.True(t, callErr.Ambiguous)
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestPreCanceledCallIsNotTransmitted(t *testing.T) {
+	client, sim := startClient(t, nil)
+	drainHandshake(t, sim)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := client.SetThreadName(ctx, "thread-1", "must-not-send")
+	var callErr *codexappserver.CallError
+	require.ErrorAs(t, err, &callErr)
+	assert.False(t, callErr.Ambiguous)
+	assert.ErrorIs(t, err, context.Canceled)
+	select {
+	case message := <-sim.Messages():
+		t.Fatalf("pre-canceled call was transmitted as %s", message.Method)
+	case <-time.After(100 * time.Millisecond):
+	}
 }
 
 func TestDisconnectFailsInflightAndFutureCalls(t *testing.T) {
