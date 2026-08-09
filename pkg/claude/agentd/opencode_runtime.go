@@ -1049,7 +1049,8 @@ func startOpenCodeProcessThroughTmux(runtime *db.OpenCodeRuntime, command string
 		return nil, err
 	}
 	tmuxArgs := []string{"new-session", "-d", "-s", tmuxSession, "-c", runtime.Cwd,
-		"-x", "80", "-y", "24"}
+		"-x", strconv.Itoa(clcommon.CanonicalAgentPaneWidth),
+		"-y", strconv.Itoa(clcommon.CanonicalAgentPaneHeight)}
 	launchArgs, cleanupScript, err := openCodeTmuxLaunchArgs(
 		*runtime, command, args, serverEnvironment, handshake)
 	if err != nil {

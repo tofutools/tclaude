@@ -142,7 +142,7 @@ func parseNewSession(t *testing.T, argv []string) recordedNewSession {
 		case "-d":
 			parsed.opts[flag] = ""
 			rest = rest[1:]
-		case "-s", "-c":
+		case "-s", "-c", "-x", "-y":
 			require.GreaterOrEqual(t, len(rest), 2, "new-session %s is missing its value", flag)
 			parsed.opts[flag] = rest[1]
 			rest = rest[2:]
@@ -150,7 +150,10 @@ func parseNewSession(t *testing.T, argv []string) recordedNewSession {
 			t.Fatalf("unrecognized new-session option %q — teach parseNewSession about it", flag)
 		}
 	}
-	for _, flag := range []string{"-d", "-s", "-c"} {
+	// -x/-y required since TCL-1136: a launch that omits them falls back to
+	// tmux's default-size, which the operator's tmux.conf controls — the very
+	// per-host size variation the canonical size exists to remove.
+	for _, flag := range []string{"-d", "-s", "-c", "-x", "-y"} {
 		require.Contains(t, parsed.opts, flag, "new-session must pass %s", flag)
 	}
 	parsed.pane = rest

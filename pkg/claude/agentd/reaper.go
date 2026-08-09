@@ -540,6 +540,13 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 	}
 	r.aliveLastTick = aliveNow
 	r.seeded = true
+	// AFTER the reap loop on purpose: a pane whose harness died since the
+	// last tick still carries its final screen, and the loop above is what
+	// reads it (InspectDeadTmuxSessionPane, exit enrichment). Normalizing
+	// first would reflow that evidence at canonical width before it was
+	// captured. The states slice's persisted statuses are one loop staler
+	// here, which only delays a divergent pane's normalization by a tick.
+	normalizeUnattachedPaneSizes(states)
 	return reaped
 }
 

@@ -3117,8 +3117,12 @@ func launchDetachedTmuxSession(tmuxSession, cwd, cmd string, markerArgs ...strin
 		return err
 	}
 	// Multi-word command → tmux execvp's it directly (spawn.c), no extra
-	// shell join/quoting layer.
-	args := append([]string{"new-session", "-d", "-s", tmuxSession, "-c", cwd}, clcommon.BootstrapShellArgv()...)
+	// shell join/quoting layer. The explicit -x/-y pin the pane to the
+	// canonical size (TCL-1136) instead of tmux's default-size, which the
+	// operator's tmux.conf can change out from under every harness.
+	args := append([]string{"new-session", "-d", "-s", tmuxSession, "-c", cwd,
+		"-x", strconv.Itoa(clcommon.CanonicalAgentPaneWidth),
+		"-y", strconv.Itoa(clcommon.CanonicalAgentPaneHeight)}, clcommon.BootstrapShellArgv()...)
 	args = append(args, scriptPath)
 	args = append(args, markerArgs...)
 	args = ExternalTmuxNoStartArgs(args...)
