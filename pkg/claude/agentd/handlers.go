@@ -1898,10 +1898,14 @@ func injectSoftExitTextSerializedBy(lockTarget, tmuxTarget, text string, prefixK
 // re-press window, and Claude Code's — bracketed at ~0.8 s on an idle pane —
 // leaves 500 ms too little margin when scheduling delay or pane load pushes a
 // press late (observed post-TCL-1137-deploy as first attempts that armed but
-// never quit). 330 ms sits inside every measured window (Copilot 1.2–1.5 s,
-// Claude Code ~0.8 s, Codex unbounded) with room to spare, and key names
-// carry no paste-coalescing concern, which is what injectSettleDelay's 500 ms
-// exists for. The flow-test override keeps simulated stops fast.
+// never quit). 330 ms sits inside every measured re-press window (Copilot
+// 1.2–1.5 s, Claude Code ~0.8 s, Codex unbounded) with room to spare. One
+// honest caveat: Copilot's fast side was only verified down to 0.5 s between
+// presses, so 330 ms is below its tested lower bracket — mitigated because
+// the sequence's third press lands at +660 ms, inside the verified band, even
+// if a too-quick second press were swallowed. Key names carry no
+// paste-coalescing concern, which is what injectSettleDelay's 500 ms exists
+// for. The flow-test override keeps simulated stops fast.
 // Only the FIRST key's failure is an error — a pane commonly dies on a later
 // press, making a subsequent "can't find pane" the success case.
 //
