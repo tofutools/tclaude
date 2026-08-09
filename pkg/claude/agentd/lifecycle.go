@@ -784,7 +784,7 @@ func logSoftExitPaneState(target *lifecycleTarget, reason, phase string, attempt
 }
 
 // sendSoftExitToTarget delivers one soft-exit attempt to the pane. A harness
-// with a keystroke-free signal exit (harness.Lifecycle.SignalExitKeys non-nil:
+// with a keystroke-free signal exit (harness.Lifecycle.SignalExitKeys non-empty:
 // Copilot, Claude Code, Codex) gets those keys sent as signals — a typed slash
 // command is silently dropped both mid-turn and whenever a TUI's keypress
 // reader wedges, while ctrl-c handling survives both states; every other

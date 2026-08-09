@@ -100,6 +100,15 @@ func TestSoftExit_SignalExitClearsJunkBufferOnFirstAttempt(t *testing.T) {
 	require.NotEqual(t, -1, idxFirstCC, "the signal exit must send a C-c")
 	assert.Less(t, idxEscape, idxFirstCC,
 		"Escape must precede the first C-c so buffer junk is cleared before the quit presses")
+	// Pin the FULL dispatched sequence, not just its shape. The simulated pane
+	// (like the real CLI) dies on the second armed C-c, but the daemon must
+	// still dispatch all three presses from claudeLifecycle.SignalExitKeys —
+	// the third covers the mid-turn state where the first press is spent
+	// interrupting the turn. TmuxSim logs sends to a dead pane too, so a
+	// regression that drops the surplus press is caught here even though the
+	// pane never needed it.
+	assert.Equal(t, 3, countKeySends(f, target, "C-c"),
+		"one signal-exit attempt must dispatch every C-c in SignalExitKeys, dead pane or not")
 }
 
 // Scenario: a pane with an empty input buffer honours the very first

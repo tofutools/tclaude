@@ -1870,7 +1870,8 @@ func injectSoftExitTextSerializedBy(lockTarget, tmuxTarget, text string, prefixK
 // press, making a subsequent "can't find pane" the success case.
 //
 // keys must be non-empty; callers select this path precisely when
-// SignalExitKeys is non-nil (see sendSoftExitToTarget).
+// SignalExitKeys is non-empty (see sendSoftExitToTarget), so the empty-list
+// error below is a belt-and-braces guard, not a reachable production path.
 func injectSignalExitSerializedBy(lockTarget, tmuxTarget string, keys []string) error {
 	if len(keys) == 0 {
 		return fmt.Errorf("signal exit: no keys for %s", tmuxTarget)

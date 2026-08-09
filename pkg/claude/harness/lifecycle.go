@@ -55,8 +55,9 @@ type Lifecycle interface {
 	SoftExitPrefixKeys() []string
 	// SignalExitKeys are tmux key names sent into the pane, in order, one
 	// settle gap apart, as a KEYSTROKE-FREE soft exit — no typed slash command
-	// at all. Non-nil selects this path over SoftExitCommand in agentd's
-	// managed stop (agentd.sendSoftExitToTarget); nil keeps the typed command.
+	// at all. Non-empty selects this path over SoftExitCommand in agentd's
+	// managed stop (agentd.sendSoftExitToTarget); nil (or empty) keeps the
+	// typed command.
 	//
 	// It exists because a typed slash command shares a structural weakness
 	// across every TUI: it depends on the input box being empty, on the TUI
