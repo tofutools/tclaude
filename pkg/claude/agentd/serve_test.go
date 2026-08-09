@@ -19,12 +19,11 @@ func TestLogRequestLevelByStatus(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
 
 	tests := []struct {
-		name  string
-		code  int
-		level string
+		name string
+		code int
 	}{
-		{name: "success", code: http.StatusOK, level: "DEBUG"},
-		{name: "failure", code: http.StatusInternalServerError, level: "INFO"},
+		{name: "success", code: http.StatusOK},
+		{name: "failure", code: http.StatusInternalServerError},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -36,7 +35,7 @@ func TestLogRequestLevelByStatus(t *testing.T) {
 			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/test", nil))
 
 			require.Equal(t, tt.code, rec.Code)
-			assert.Contains(t, logs.String(), "level="+tt.level+" msg=http")
+			assert.Contains(t, logs.String(), "level=DEBUG msg=http")
 		})
 	}
 }

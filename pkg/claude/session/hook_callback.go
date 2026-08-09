@@ -1283,7 +1283,7 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 			if err := db.ResetCompact(envSessionID); err != nil {
 				slog.Warn("failed to reset compact state", "error", err, "module", "hooks")
 			} else {
-				slog.Info("post-compact state reset", "session_id", envSessionID, "module", "hooks")
+				slog.Debug("post-compact state reset", "session_id", envSessionID, "module", "hooks")
 			}
 		}
 		// Auto-compaction happens inside an active turn, so the eager
