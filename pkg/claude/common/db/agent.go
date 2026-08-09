@@ -164,9 +164,9 @@ func ReplaceAgentGroupPermissions(groupID int64, slugs []string, grantedBy strin
 }
 
 // ReplaceAgentGroupPermissionGrants atomically replaces a group's additive
-// grants, including their scopes. Unlike the legacy bare-slug replacement
-// above, every supplied scope is authoritative: an empty scope deliberately
-// clears an existing narrowing.
+// grants, including their scopes. A structured grant's supplied scope is
+// authoritative; a legacy bare slug preserves an existing narrowing, while
+// an explicitly supplied empty scope deliberately clears it.
 func ReplaceAgentGroupPermissionGrants(groupID int64, grants []PermissionGrant, grantedBy string) error {
 	return replaceAgentGroupPermissionGrants(groupID, grants, grantedBy, false)
 }
@@ -196,7 +196,14 @@ func replaceAgentGroupPermissionGrants(groupID int64, grants []PermissionGrant, 
 	// those legacy callers so an unrelated edit cannot silently widen it. The
 	// scoped replacement path below supplies authoritative scopes instead.
 	existingScopes := map[string]string{}
-	if preserveScopes {
+	needsExistingScopes := preserveScopes
+	for _, grant := range grants {
+		if grant.Scope == "" && !grant.ScopeSpecified {
+			needsExistingScopes = true
+			break
+		}
+	}
+	if needsExistingScopes {
 		rows, err := tx.Query(`SELECT slug, scope_json FROM agent_group_permissions WHERE group_id = ?`, groupID)
 		if err != nil {
 			return err
@@ -229,7 +236,7 @@ func replaceAgentGroupPermissionGrants(groupID int64, grants []PermissionGrant, 
 		}
 		seen[slug] = true
 		scopeJSON := grant.Scope
-		if preserveScopes {
+		if preserveScopes || (grant.Scope == "" && !grant.ScopeSpecified) {
 			scopeJSON = existingScopes[slug]
 		}
 		if _, err := tx.Exec(`INSERT INTO agent_group_permissions

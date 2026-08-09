@@ -1600,17 +1600,18 @@ type snapshotScopeDimOptions struct {
 }
 
 type dashboardGroup struct {
-	Name                    string                     `json:"name"`
-	Descr                   string                     `json:"descr"`
-	AttachmentURL           string                     `json:"attachment_url,omitempty"`
-	AttachmentLabel         string                     `json:"attachment_label,omitempty"`
-	AttachmentLabelOverride string                     `json:"attachment_label_override,omitempty"`
-	DefaultCwd              string                     `json:"default_cwd"`     // pre-fills the spawn form's cwd; "" = none
-	DefaultContext          string                     `json:"default_context"` // shared startup context injected into spawned agents; "" = none
-	DefaultProfile          string                     `json:"default_profile"` // spawn profile whose launch fields fill blank spawn fields for this group's agents; "" = none (the spawn default's single source — the vestigial default_model was dropped, JOH-220)
-	SandboxProfile          string                     `json:"sandbox_profile"` // filesystem/environment profile assigned to this group; "" = inherit global
-	Permissions             []string                   `json:"permissions"`     // live additive grants held by current group members
-	PermissionScopes        map[string]PermissionScope `json:"permission_scopes,omitempty"`
+	Name                       string                     `json:"name"`
+	Descr                      string                     `json:"descr"`
+	AttachmentURL              string                     `json:"attachment_url,omitempty"`
+	AttachmentLabel            string                     `json:"attachment_label,omitempty"`
+	AttachmentLabelOverride    string                     `json:"attachment_label_override,omitempty"`
+	DefaultCwd                 string                     `json:"default_cwd"`     // pre-fills the spawn form's cwd; "" = none
+	DefaultContext             string                     `json:"default_context"` // shared startup context injected into spawned agents; "" = none
+	DefaultProfile             string                     `json:"default_profile"` // spawn profile whose launch fields fill blank spawn fields for this group's agents; "" = none (the spawn default's single source — the vestigial default_model was dropped, JOH-220)
+	SandboxProfile             string                     `json:"sandbox_profile"` // filesystem/environment profile assigned to this group; "" = inherit global
+	Permissions                []string                   `json:"permissions"`     // live additive grants held by current group members
+	PermissionScopes           map[string]PermissionScope `json:"permission_scopes,omitempty"`
+	UnreadablePermissionScopes []string                   `json:"unreadable_permission_scopes,omitempty"`
 	// OwnerScopes narrows this group's STRUCTURAL owner-implied permission
 	// bypass (TCL-1071): slug → the scope an owner's bypass is confined to
 	// here. Always serialized (possibly {}) so the group-permissions editor can
@@ -3202,17 +3203,20 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		groupMark := gt.begin()
 		groupPermissions := []string{}
 		groupPermissionScopes := map[string]PermissionScope{}
+		groupUnreadablePermissionScopes := []string{}
 		gt.track(&gt.perms, func() {
 			rows, _ := db.ListAgentGroupPermissionRows(g.ID)
 			for _, row := range rows {
 				groupPermissions = append(groupPermissions, row.Slug)
 				if scope := permissionScopeFromJSON(row.ScopeJSON); len(scope) > 0 {
 					groupPermissionScopes[row.Slug] = scope
+				} else if row.ScopeJSON != "" {
+					groupUnreadablePermissionScopes = append(groupUnreadablePermissionScopes, row.Slug)
 				}
 			}
 		})
 		attachment := groupAttachmentViewFor(g)
-		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, AttachmentURL: attachment.URL, AttachmentLabel: attachment.Label, AttachmentLabelOverride: attachment.LabelOverride, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, DefaultProfile: g.DefaultProfile, SandboxProfile: g.SandboxProfile, Permissions: groupPermissions, PermissionScopes: groupPermissionScopes, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), OwnerScopes: ownerScopesWire(g.OwnerScopesJSON), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Scribe: isScribeGroup(g), RouteGeneration: g.RouteGeneration, Members: []dashboardMember{}}
+		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, AttachmentURL: attachment.URL, AttachmentLabel: attachment.Label, AttachmentLabelOverride: attachment.LabelOverride, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, DefaultProfile: g.DefaultProfile, SandboxProfile: g.SandboxProfile, Permissions: groupPermissions, PermissionScopes: groupPermissionScopes, UnreadablePermissionScopes: groupUnreadablePermissionScopes, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), OwnerScopes: ownerScopesWire(g.OwnerScopesJSON), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Scribe: isScribeGroup(g), RouteGeneration: g.RouteGeneration, Members: []dashboardMember{}}
 		if g.ParentGroupID != nil {
 			dg.Parent = groupNameByID[*g.ParentGroupID]
 		}

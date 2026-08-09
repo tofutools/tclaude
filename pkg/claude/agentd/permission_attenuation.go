@@ -437,7 +437,9 @@ func normalizeBlueprintGrants(in []db.PermissionGrant) ([]db.PermissionGrant, *s
 			return nil, &spawnFailure{http.StatusBadRequest, "invalid_scope",
 				fmt.Sprintf("permission %q: %v", slug, err)}
 		}
-		out = append(out, db.PermissionGrant{Slug: slug, Scope: canonical})
+		out = append(out, db.PermissionGrant{
+			Slug: slug, Scope: canonical, ScopeSpecified: grant.ScopeSpecified,
+		})
 	}
 	return out, nil
 }

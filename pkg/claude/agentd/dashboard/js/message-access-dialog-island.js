@@ -640,6 +640,12 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
   });
   const submit = async () => {
     if (busyRef.current) return;
+    const unreadableGroupGrants = groupMode
+      ? [...unreadable].filter((slug) => currentEffect(slug) === 'grant') : [];
+    if (unreadableGroupGrants.length) {
+      setError(`Cannot save while these group grants have unreadable scopes: ${unreadableGroupGrants.join(', ')}. Remove them first or edit them with a newer tclaude build.`);
+      return;
+    }
     let ownerScopes = null;
     if (groupMode) {
       const raw = ownerScopesText.trim();

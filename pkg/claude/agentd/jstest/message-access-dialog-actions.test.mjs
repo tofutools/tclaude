@@ -176,9 +176,13 @@ test('group permission saves carry owner_scopes only when the editor touched it'
   const narrowing = { 'groups.spawn': { spawn_profile: ['reviewer'] } };
   await actions.savePermissions({ mode: 'group', group: 'team' }, { 'groups.spawn': 'grant' }, {}, narrowing);
   await actions.savePermissions({ mode: 'group', group: 'team' }, { 'groups.spawn': 'grant' }, {}, {});
+  // A present-but-empty per-grant scope is the explicit clear arm. Omitting
+  // the slug from the scopes map is the legacy "leave its scope alone" arm.
+  await actions.savePermissions({ mode: 'group', group: 'team' }, { 'groups.spawn': 'grant' }, { 'groups.spawn': {} }, null);
   assert.deepEqual(calls, [
     { permissions: ['groups.spawn'] },
     { permissions: ['groups.spawn'], owner_scopes: narrowing },
     { permissions: ['groups.spawn'], owner_scopes: {} },
+    { permissions: [{ slug: 'groups.spawn', scope: {} }] },
   ]);
 });

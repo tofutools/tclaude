@@ -312,8 +312,12 @@ function profileDetailChips(p) {
   toggle('focus', p.auto_focus);
   toggle('group-ctx', p.include_group_default_context);
   toggle('owner', p.is_owner);
-  for (const [slug, effect] of Object.entries(p.permission_overrides || {}).sort(([a], [b]) => a.localeCompare(b))) {
-    parts.push(`perm ${slug} ${effect}`);
+  for (const [slug, override] of Object.entries(p.permission_overrides || {}).sort(([a], [b]) => a.localeCompare(b))) {
+    const effect = typeof override === 'string' ? override : override?.effect || 'default';
+    const scope = typeof override === 'object' && override?.scope
+      ? Object.entries(override.scope).sort(([a], [b]) => a.localeCompare(b))
+        .map(([dim, values]) => `${dim}=${(values || []).join(',')}`).join(' ') : '';
+    parts.push(`perm ${slug} ${effect}${scope ? `[${scope}]` : ''}`);
   }
   for (const [slug, state] of Object.entries(p.context_features || {}).sort(([a], [b]) => a.localeCompare(b))) {
     parts.push(`context ${slug} ${state}`);

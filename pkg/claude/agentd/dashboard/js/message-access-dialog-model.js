@@ -125,6 +125,7 @@ export function permissionScopeSeed(snapshot, descriptor) {
 // true. The daemon refuses that overwrite too — this is the half that stops an
 // operator walking into it.
 export function unreadableScopeSlugs(snapshot, descriptor) {
+  if (descriptor.mode === 'group') return new Set(descriptor.unreadable || []);
   if (descriptor.mode !== 'agent') return new Set();
   return new Set((snapshot?.permissions?.unreadable_scopes || {})[descriptor.conv] || []);
 }

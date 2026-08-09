@@ -554,14 +554,17 @@ test('profile choices expose aliases as distinct handles tied to one profile', a
     auto_memory: true,
     agent_name: 'worker', role: 'reviewer', descr: 'cold\nreview', initial_message: 'check this',
     sync_worktree: true, auto_focus: false, include_group_default_context: true, is_owner: false,
-    permission_overrides: { 'human.notify': 'grant', 'groups.spawn': 'deny' },
+    permission_overrides: {
+      'human.notify': 'grant', 'groups.spawn': 'deny',
+      'routes.publish': { effect: 'grant', scope: { group: ['tofutools'] } },
+    },
   }), [
 		'last disable reason · previous outage',
     'harness claude', 'model sonnet', 'effort high', 'sandbox Claude settings decide (inherit)', 'approval plan',
     'ask-timeout 5m', 'auto-review off', 'trust-dir on', 'remote-control off', 'auto-memory on',
     'name worker', 'role reviewer', 'descr cold review', 'initial message · 10 chars',
     'sync-wt on', 'focus off', 'group-ctx on', 'owner off',
-    'perm groups.spawn deny', 'perm human.notify grant',
+    'perm groups.spawn deny', 'perm human.notify grant', 'perm routes.publish grant[group=tofutools]',
   ]);
 });
 

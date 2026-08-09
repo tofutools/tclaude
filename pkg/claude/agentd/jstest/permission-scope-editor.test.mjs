@@ -100,6 +100,28 @@ test('group and buffered profile editors use the same scoped permission controls
   await opened.mounted.unmount();
 });
 
+test('an unreadable group scope cannot be widened by saving the editor', async (t) => {
+  const harness = await createPreactHarness(t);
+  const saved = [];
+  const { host, mounted } = await openEditor(harness, scopeSnapshot({ slugs: [SPAWN] }), {
+    ...noopActions,
+    savePermissions: async (...args) => saved.push(args),
+  }, {
+    mode: 'group', group: 'alpha', grants: ['groups.spawn'], unreadable: ['groups.spawn'],
+  });
+
+  assert.match(host.querySelector('[data-slug="groups.spawn"] .perm-scope-chip').textContent,
+    /unreadable scope/);
+  await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.equal(saved.length, 0, 'saving must not rewrite the fail-closed scope as an unscoped grant');
+  assert.match(host.querySelector('#perm-edit-error').textContent, /Cannot save.*unreadable scopes/);
+
+  await harness.act(() => host.querySelector('[data-slug="groups.spawn"] [data-effect="default"]').click());
+  await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.equal(saved.length, 1, 'removing the unreadable grant remains an explicit safe escape hatch');
+  await mounted.unmount();
+});
+
 test('a scoped grant renders its chips and an unscoped one says so', async (t) => {
   const harness = await createPreactHarness(t);
   const { host, mounted } = await openEditor(harness, scopeSnapshot({
