@@ -34,5 +34,20 @@ func ConfigureTmuxScrollback(tmuxSession string, h *harness.Harness) {
 // wants it — a bare shell has no self-managed scrollback of its own, so
 // without tmux mouse mode the wheel does nothing in the pane.
 func enableTmuxMouseScrollback(tmuxSession string) {
-	_ = clcommon.TmuxCommand("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":", "mouse", "on").Run()
+	target := clcommon.ExactTarget(tmuxSession) + ":"
+	_ = clcommon.TmuxCommand("set-option", "-t", target, "mouse", "on").Run()
+
+	// Mouse-wheel scrolling leaves the pane in tmux copy mode. If the client
+	// then detaches while reading history, copy mode remains active on the pane
+	// and later send-keys input is consumed by copy mode instead of reaching the
+	// harness. Cancel copy mode on every client detach; cancel also returns the
+	// pane to its live bottom. A session hook covers native terminals, browser
+	// terminals, and clients attached directly with tmux, including detach paths
+	// that the attaching tclaude process cannot observe.
+	//
+	// Use a dedicated hook-array slot so this does not replace another
+	// client-detached hook. Setting the same indexed slot is also idempotent if
+	// scrollback configuration is applied again.
+	hook := "send-keys -X -t " + target + " cancel"
+	_ = clcommon.TmuxCommand("set-hook", "-t", target, "client-detached[100]", hook).Run()
 }
