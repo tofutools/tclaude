@@ -41,17 +41,25 @@ func TestCopilotSoftExit_SignalExitClosesAnIdlePane(t *testing.T) {
 	})
 
 	f.AssertSoftStopped(f.AsHuman().Stop(resp.ConvID, false))
-	agentd.WaitForBackgroundForTest()
 
-	texts := sentTexts(f.World.Tmux.Sent())
-	for _, text := range texts {
-		require.NotEqual(t, "/exit", text,
-			"the Copilot soft exit must not type a slash command; a wedged keypress reader drops it silently; sent=%v", texts)
+	// Assert on the SYNCHRONOUS attempt alone, before the background retry
+	// watchdog can add its own presses: the contract is that one attempt is a
+	// burst of C-c presses and nothing else. The pane dies on the second
+	// press, so the third lands on a dead pane and may not be recorded.
+	attemptTexts := sentTexts(f.World.Tmux.Sent())
+	ccSent := 0
+	for _, text := range attemptTexts {
+		require.Equal(t, "C-c", text,
+			"the Copilot soft exit must send only C-c presses — no typed command, no Enter; sent=%v", attemptTexts)
+		ccSent++
 	}
-
+	assert.GreaterOrEqual(t, ccSent, 2,
+		"one attempt needs at least the arming press and the exiting press; sent=%v", attemptTexts)
 	assert.GreaterOrEqual(t, sim.Cancels(), 2,
-		"the signal exit needs the arming press and the exiting press to reach the pane")
+		"an idle pane exits on the second consecutive press (the surplus third may still be swallowed by the dead pane)")
 	assert.False(t, sim.IsAlive(), "the second consecutive C-c on an idle pane exits the CLI")
+
+	agentd.WaitForBackgroundForTest()
 	assert.Empty(t, killTargets(f), "a graceful Copilot exit is never escalated to a kill")
 }
 
@@ -79,10 +87,13 @@ func TestCopilotSoftExit_SignalExitClosesAPaneHeldByAPermissionDialog(t *testing
 	require.True(t, blocked, "the pane must actually be parked for this scenario to mean anything")
 
 	f.AssertSoftStopped(f.AsHuman().Stop(resp.ConvID, false))
-	agentd.WaitForBackgroundForTest()
 
+	assert.Equal(t, 3, sim.Cancels(),
+		"press one aborts the dialog and ends its turn, press two arms, press three exits — one attempt is exactly enough")
 	assert.False(t, sim.IsAlive(),
 		"press one aborts the dialog, press two arms, press three exits")
+
+	agentd.WaitForBackgroundForTest()
 	assert.False(t, f.World.Tmux.IsAlive(resp.TmuxSession))
 	assert.Empty(t, killTargets(f),
 		"the dialog abort is what the first press is for — the ladder should not have been needed")

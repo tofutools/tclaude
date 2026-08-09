@@ -874,8 +874,12 @@ func (c *CopilotSim) cancel() {
 	if c.blocked {
 		c.ccArmed = false
 		if c.blockedBy != copilotfixture.TrustPromptMarker {
+			// The measured abort "returns the TUI to its input prompt": the
+			// request is refused AND the turn it belonged to is over, so the
+			// next press arms rather than being spent on a ghost turn.
 			c.blocked = false
 			c.blockedBy = ""
+			c.turnOpen = false
 		}
 		c.buf.Reset()
 		c.mu.Unlock()
