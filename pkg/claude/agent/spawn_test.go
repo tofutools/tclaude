@@ -80,6 +80,59 @@ func TestRunSpawn_ExplicitCodexSendKeysStaysOnWire(t *testing.T) {
 		"--codex-app-server=false must override an opted-in profile instead of serializing as unset")
 }
 
+func TestSpawnCommandRecordsCodexAppServerFlagPresenceAfterParsing(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		wantValue bool
+		wantSet   bool
+	}{
+		{name: "unset"},
+		{name: "true", args: []string{"--codex-app-server=true"}, wantValue: true, wantSet: true},
+		{name: "false", args: []string{"--codex-app-server=false"}, wantSet: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := spawnCmd()
+			require.NoError(t, cmd.ParseFlags(tc.args))
+			var p SpawnParams
+			value, err := cmd.Flags().GetBool("codex-app-server")
+			require.NoError(t, err)
+			p.CodexAppServer = value
+			recordSpawnFlagPresence(&p, cmd)
+			assert.Equal(t, tc.wantValue, p.CodexAppServer)
+			assert.Equal(t, tc.wantSet, p.codexAppServerSpecified)
+		})
+	}
+}
+
+func TestRunSpawn_ExplicitFalseOverridesOptedInNamedProfile(t *testing.T) {
+	prevAvail, prevReq := DaemonAvailableImpl, DaemonRequestImpl
+	t.Cleanup(func() { DaemonAvailableImpl, DaemonRequestImpl = prevAvail, prevReq })
+	DaemonAvailableImpl = func() bool { return true }
+	var captured SpawnRequest
+	DaemonRequestImpl = func(method, path string, body, out any, _ DaemonOpts) error {
+		if method == http.MethodGet {
+			profile := out.(*profileJSON)
+			selected := true
+			*profile = profileJSON{Name: "ab-opted-in", Harness: harness.CodexName, CodexAppServer: &selected}
+			return nil
+		}
+		captured = body.(SpawnRequest)
+		*out.(*SpawnResponse) = SpawnResponse{Group: "alpha", ConvID: "conv-sendkeys-profile"}
+		return nil
+	}
+
+	resp, rc := RunSpawn(&SpawnParams{
+		Group: "alpha", Name: "worker", Profile: "ab-opted-in",
+		codexAppServerSpecified: true, CodexAppServer: false,
+	}, new(bytes.Buffer), new(bytes.Buffer), new(bytes.Buffer))
+	require.Equal(t, rcOK, rc)
+	require.NotNil(t, resp)
+	require.NotNil(t, captured.CodexAppServer)
+	assert.False(t, *captured.CodexAppServer)
+	assert.Equal(t, "ab-opted-in", captured.Profile)
+}
+
 // A --file brief over the 16384-byte cap is rejected with the same
 // error as an oversize --initial-message: the file-input path enforces
 // the cap, it is not a way to smuggle a larger brief past it. The

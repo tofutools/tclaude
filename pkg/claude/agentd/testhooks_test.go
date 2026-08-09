@@ -1178,6 +1178,15 @@ func SetBeforeSoftExitTargetRetryProbeForTest(fn func(int)) func() {
 // sweeper's goroutine or waiting its interval.
 func RunPendingSpawnSweepForTest() { sweepPendingSpawns() }
 
+// SetAwaitCodexAppServerReadyForTest replaces the post-enrollment readiness
+// wait. Pending-spawn flow tests use it to exercise durable drive binding
+// without standing up a second app-server protocol fixture.
+func SetAwaitCodexAppServerReadyForTest(fn func(string) bool) func() {
+	previous := awaitCodexAppServerReady
+	awaitCodexAppServerReady = fn
+	return func() { awaitCodexAppServerReady = previous }
+}
+
 // SessionReaperHandle wraps a sessionReaper so flow tests can drive
 // ticks deterministically without starting its goroutine.
 type SessionReaperHandle struct{ r *sessionReaper }

@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -45,6 +46,8 @@ type durableRelaunchConfig struct {
 	ContextWindowMax            int64
 	CopilotAPI                  bool
 	CodexAppServer              bool
+	CodexStateRoot              string
+	CodexStateRootSource        string
 	FastMode                    string
 }
 
@@ -128,6 +131,8 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 	copilotAPISource := (*string)(nil)
 	codexAppServer := (*bool)(nil)
 	codexAppServerSource := (*string)(nil)
+	codexStateRoot := (*string)(nil)
+	codexStateRootSource := (*string)(nil)
 	fastMode := (*bool)(nil)
 	if harnessOrDefault(p.Harness) == harness.CopilotName {
 		value := p.ContextWindowMax
@@ -155,6 +160,10 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 		codexAppServer = &value
 		source := p.CodexAppServerSource
 		codexAppServerSource = &source
+		root := p.CodexStateRoot
+		codexStateRoot = &root
+		rootSource := p.CodexStateRootSource
+		codexStateRootSource = &rootSource
 	}
 	return db.AgentRelaunchProfile{
 		Version:               db.RelaunchProfileVersion,
@@ -175,6 +184,8 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 		CopilotAPISource:           copilotAPISource,
 		CodexAppServer:             codexAppServer,
 		CodexAppServerSource:       codexAppServerSource,
+		CodexStateRoot:             codexStateRoot,
+		CodexStateRootSource:       codexStateRootSource,
 		FastMode:                   fastMode,
 		AskUserQuestionTimeout:     &askTimeout,
 		RemoteControl:              &remoteControl,
@@ -395,6 +406,27 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 		}
 		codexAppServer = resolved
 	}
+	codexStateRoot := ""
+	codexStateRootSource := ""
+	if h.Name == harness.CodexName {
+		if agentProfile.CodexStateRoot == nil || strings.TrimSpace(*agentProfile.CodexStateRoot) == "" {
+			// Legacy profiles predate root persistence. Preserve their historical
+			// ambient behavior; every new managed launch freezes a non-empty root.
+			codexStateRoot, err = harness.CodexConfigDir()
+			if err != nil {
+				return nil, fmt.Errorf("resolve legacy Codex state root: %w", err)
+			}
+			codexStateRootSource = "legacy ambient environment"
+		} else {
+			codexStateRoot = filepath.Clean(*agentProfile.CodexStateRoot)
+			if agentProfile.CodexStateRootSource != nil {
+				codexStateRootSource = strings.TrimSpace(*agentProfile.CodexStateRootSource)
+			}
+		}
+		if !filepath.IsAbs(codexStateRoot) {
+			return nil, fmt.Errorf("durable Codex state root is not absolute")
+		}
+	}
 	fastMode := ""
 	if agentProfile.FastMode != nil {
 		if resolved, fastErr := harness.ResolveFastMode(h, agentProfile.FastMode); fastErr == nil {
@@ -436,6 +468,8 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 		ContextWindowMax:            contextWindowMax,
 		CopilotAPI:                  copilotAPI,
 		CodexAppServer:              codexAppServer,
+		CodexStateRoot:              codexStateRoot,
+		CodexStateRootSource:        codexStateRootSource,
 		FastMode:                    fastMode,
 	}, nil
 }

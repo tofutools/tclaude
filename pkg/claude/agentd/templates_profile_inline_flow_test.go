@@ -169,6 +169,7 @@ func TestGroupTemplate_ProfileInline_WireRoundTrip(t *testing.T) {
 		Agents []struct {
 			Name          string `json:"name"`
 			ProfileInline *struct {
+				Harness             string            `json:"harness"`
 				Model               string            `json:"model"`
 				Effort              string            `json:"effort"`
 				RemoteControl       *bool             `json:"remote_control"`
@@ -181,6 +182,7 @@ func TestGroupTemplate_ProfileInline_WireRoundTrip(t *testing.T) {
 	require.Len(t, got.Agents, 1)
 	p := got.Agents[0].ProfileInline
 	require.NotNil(t, p, "profile_inline round-trips")
+	assert.Equal(t, "codex", p.Harness)
 	assert.Equal(t, "gpt-5", p.Model)
 	assert.Equal(t, "low", p.Effort)
 	require.NotNil(t, p.RemoteControl, "an explicit false round-trips as false, not unset")

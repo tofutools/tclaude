@@ -1950,6 +1950,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		ContextWindowMax:           launchConfig.ContextWindowMax,
 		CopilotAPI:                 launchConfig.CopilotAPI,
 		CodexAppServer:             launchConfig.CodexAppServer,
+		CodexStateRoot:             launchConfig.CodexStateRoot,
 		FastMode:                   launchConfig.FastMode,
 	}); err != nil {
 		res.Action = "error"
@@ -5011,6 +5012,8 @@ type spawnParams struct {
 	CodexAppServer       bool
 	CodexAppServerSet    bool
 	CodexAppServerSource string
+	CodexStateRoot       string
+	CodexStateRootSource string
 	SSHWorkaroundSource  string
 	// HarnessSource / ModelSource / EffortSource / ContextWindowMaxSource /
 	// FastModeSource / SandboxImplementationSource complete the set of
@@ -6465,6 +6468,11 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	if p.CodexAppServer && p.AgentID == "" {
 		p.AgentID = db.NewAgentID()
 	}
+	stateRoot, stateRootSource, stateRootErr := codexStateRootForLaunch(p.Harness, p.EffectiveSandbox)
+	if stateRootErr != nil {
+		return nil, &spawnFailure{http.StatusUnprocessableEntity, "codex_state_root", stateRootErr.Error()}
+	}
+	p.CodexStateRoot, p.CodexStateRootSource = stateRoot, stateRootSource
 
 	spawnArgs := clcommon.SpawnArgs{
 		EffectiveSandbox:           p.EffectiveSandbox,
@@ -6497,6 +6505,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		ContextWindowMax:           p.ContextWindowMax,
 		CopilotAPI:                 p.CopilotAPI,
 		CodexAppServer:             p.CodexAppServer,
+		CodexStateRoot:             p.CodexStateRoot,
 		FastMode:                   fastModeLaunchValue(p.FastMode, p.FastModeSet),
 	}
 	routeHelperConvID := ""
@@ -7356,7 +7365,7 @@ func spawnGroupID(g *db.AgentGroup) int64 {
 }
 
 func pendingSpawnFromParams(g *db.AgentGroup, p spawnParams, label string) *db.PendingSpawn {
-	return &db.PendingSpawn{
+	pending := &db.PendingSpawn{
 		Label:               label,
 		AgentID:             p.AgentID,
 		Launching:           true,
@@ -7378,6 +7387,14 @@ func pendingSpawnFromParams(g *db.AgentGroup, p spawnParams, label string) *db.P
 		TaskLabel:           p.TaskLabel,
 		EffectiveSandbox:    p.EffectiveSandbox,
 	}
+	if harnessOrDefault(p.Harness) == harness.CodexName {
+		selected := p.CodexAppServer
+		pending.CodexAppServer = &selected
+		pending.CodexAppServerSource = p.CodexAppServerSource
+		pending.CodexStateRoot = p.CodexStateRoot
+		pending.CodexStateRootSource = p.CodexStateRootSource
+	}
+	return pending
 }
 
 // backfillPendingSpawnInline continues the old short Codex conv-id discovery
@@ -9266,7 +9283,7 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 	stderr := newSpawnStderrCapture()
 	cmd.Stderr = stderr
 	// Spawned agents must not inherit the human's operator token.
-	cmd.Env = spawnEnvWithoutOperatorToken()
+	cmd.Env = environmentWithCodexStateRoot(spawnEnvWithoutOperatorToken(), a.CodexStateRoot)
 	if len(a.OpenCodeEnvironment) > 0 {
 		cmd.Env = openCodeAttachProcessEnvironment(cmd.Env)
 	}
@@ -9493,7 +9510,7 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 	stderr := newSpawnStderrCapture()
 	cmd.Stderr = stderr
 	// Spawned agents must not inherit the human's operator token.
-	cmd.Env = spawnEnvWithoutOperatorToken()
+	cmd.Env = environmentWithCodexStateRoot(spawnEnvWithoutOperatorToken(), a.CodexStateRoot)
 	if len(a.OpenCodeEnvironment) > 0 {
 		cmd.Env = openCodeAttachProcessEnvironment(cmd.Env)
 	}

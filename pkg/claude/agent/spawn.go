@@ -897,18 +897,28 @@ func spawnCmd() *cobra.Command {
 			"\n\n" +
 			"Requires the `groups.spawn` permission (default: human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
-		InitFuncCtx: func(ctx *boa.HookContext, p *SpawnParams, cmd *cobra.Command) error {
+		InitFuncCtx: func(ctx *boa.HookContext, p *SpawnParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
 			boa.GetParamT(ctx, &p.Profile).SetAlternativesFunc(completeSpawnProfileNames)
-			p.codexAppServerSpecified = cmd.Flags().Changed("codex-app-server")
 			return nil
 		},
-		RunFunc: func(p *SpawnParams, _ *cobra.Command, _ []string) {
+		RunFunc: func(p *SpawnParams, cmd *cobra.Command, _ []string) {
+			// Boa initializes parameters before Cobra finishes parsing flags.
+			// Presence must therefore be sampled here, after parsing, so an
+			// explicit false remains distinguishable from omission.
+			recordSpawnFlagPresence(p, cmd)
 			_, rc := RunSpawn(p, os.Stdout, os.Stderr, os.Stdin)
 			os.Exit(rc)
 		},
 	}.ToCobra()
+}
+
+func recordSpawnFlagPresence(p *SpawnParams, cmd *cobra.Command) {
+	if p == nil || cmd == nil {
+		return
+	}
+	p.codexAppServerSpecified = cmd.Flags().Changed("codex-app-server")
 }
 
 // resolvedSpawnFields holds the per-field spawn values after a --profile has

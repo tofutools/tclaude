@@ -104,7 +104,8 @@ func codexAppServerDiagnosticForConv(convID string, now time.Time) (codexAppServ
 	if sessionRow != nil {
 		d.Harness = sessionRow.Harness
 	}
-	if d.Harness != harness.CodexName {
+	descriptor, resolveErr := harness.Resolve(d.Harness)
+	if resolveErr != nil || !descriptor.CanCodexAppServer() {
 		d.Drive = "unsupported"
 		d.DriveSource = "harness capability"
 		d.Health = "not-applicable"
@@ -208,6 +209,10 @@ func codexAppServerDiagnosticForConv(convID string, now time.Time) (codexAppServ
 		d.ClientConnection = "closed"
 		d.MessageDelivery = "held until resume; no send-keys fallback"
 		d.Recovery = "resume to start a new app-server generation, or use the explicit rollback command"
+	default:
+		d.Health = "degraded"
+		d.MessageDelivery = "held because the recorded runtime state is unknown; no send-keys fallback"
+		d.Recovery = "stop and resume the app-server drive, or use the explicit rollback command"
 	}
 	return d, nil
 }

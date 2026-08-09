@@ -42,7 +42,24 @@ func codexTestHome(t *testing.T) string {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
+	t.Setenv("CODEX_HOME", "")
 	return dir
+}
+
+func TestCodexConvStore_ResolveUsesEffectiveCodexHome(t *testing.T) {
+	home := codexTestHome(t)
+	stateParent := t.TempDir()
+	stateRoot := filepath.Join(stateParent, ".codex")
+	t.Setenv("CODEX_HOME", stateRoot)
+	const id = "019fe740-43a4-7023-b8ae-1ee64459f2a1"
+	cwd := filepath.Join(home, "project")
+	startCodexSim(t, stateParent, id, cwd, "persisted history", "ack")
+
+	ref, err := codexConvs(t).Resolve(id, cwd, false)
+	require.NoError(t, err)
+	require.NotNil(t, ref, "resolver must consult CODEX_HOME, not HOME/.codex")
+	assert.Equal(t, id, ref.ConvID)
+	assert.NoDirExists(t, filepath.Join(home, ".codex", "sessions"))
 }
 
 // codexThreadSeed is a test-side view of the `threads` columns the read

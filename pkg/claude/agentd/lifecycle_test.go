@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 func TestEnrollSpawnedConv_InlinedBriefingBornConsumed(t *testing.T) {
@@ -293,6 +294,17 @@ func TestRelaunchProfileForSpawn_FreezesToolGovernance(t *testing.T) {
 	})
 	require.NotNil(t, profile.ToolGovernance)
 	assert.Equal(t, "ask", *profile.ToolGovernance)
+}
+
+func TestRelaunchProfileForSpawn_FreezesCodexStateRoot(t *testing.T) {
+	profile := relaunchProfileForSpawn(spawnParams{
+		Harness: harness.CodexName, CodexStateRoot: "/host/codex-state",
+		CodexStateRootSource: codexStateRootSourceCodexHome,
+	})
+	require.NotNil(t, profile.CodexStateRoot)
+	assert.Equal(t, "/host/codex-state", *profile.CodexStateRoot)
+	require.NotNil(t, profile.CodexStateRootSource)
+	assert.Equal(t, codexStateRootSourceCodexHome, *profile.CodexStateRootSource)
 }
 
 func TestRelaunchProfileForSpawn_FreezesSandboxImplementation(t *testing.T) {

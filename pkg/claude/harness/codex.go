@@ -1,8 +1,6 @@
 package harness
 
 import (
-	"os"
-
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
@@ -120,7 +118,7 @@ func (codexLifecycle) SignalExitKeys() []string {
 }
 
 // codexConvStore assembles conversations from Codex's split storage model.
-// The methods are thin wrappers that resolve HOME and delegate to the
+// The methods are thin wrappers that resolve Codex's effective state root and delegate to the
 // interface-free helpers in codex_convstore.go (which take an explicit
 // home so they unit-test against a temp HOME).
 type codexConvStore struct{}
@@ -131,32 +129,32 @@ var _ ConvStore = codexConvStore{}
 // empty sentinel — every Codex conversation across all working
 // directories.
 func (codexConvStore) ListConvs(cwd string) ([]convops.SessionEntry, error) {
-	home, err := os.UserHomeDir()
+	configDir, err := codexConfigDir()
 	if err != nil {
 		return nil, err
 	}
-	return scanCodexEntries(home, cwd)
+	return scanCodexEntriesAt(configDir, cwd)
 }
 
 // Resolve maps an id prefix to a Codex conversation, distinguishing
 // no-match / unreadable-store / ambiguous-prefix per the ConvStore
 // contract.
 func (codexConvStore) Resolve(idPrefix, cwd string, global bool) (*ConvRef, error) {
-	home, err := os.UserHomeDir()
+	configDir, err := codexConfigDir()
 	if err != nil {
 		return nil, err
 	}
-	return resolveCodex(home, idPrefix, cwd, global)
+	return resolveCodexAt(configDir, idPrefix, cwd, global)
 }
 
 // Title returns a Codex conversation's display title, or ("", nil) for an
 // unknown conv.
 func (codexConvStore) Title(convID string) (string, error) {
-	home, err := os.UserHomeDir()
+	configDir, err := codexConfigDir()
 	if err != nil {
 		return "", err
 	}
-	return codexTitle(home, convID)
+	return codexTitleAt(configDir, convID)
 }
 
 // Exists reports whether convID still has a rollout file under
@@ -170,11 +168,11 @@ func (codexConvStore) Exists(convID, _ string) (bool, error) {
 	if convID == "" {
 		return false, nil
 	}
-	home, err := os.UserHomeDir()
+	configDir, err := codexConfigDir()
 	if err != nil {
 		return false, err
 	}
-	path, err := findCodexRollout(home, convID)
+	path, err := findCodexRolloutAt(configDir, convID)
 	if err != nil {
 		return false, err
 	}

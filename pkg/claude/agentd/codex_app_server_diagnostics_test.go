@@ -106,6 +106,27 @@ func TestCodexAppServerDiagnosticReadyAndStaleHealth(t *testing.T) {
 	assert.Contains(t, got.Detail, "stale")
 }
 
+func TestCodexAppServerDiagnosticUnknownRuntimeStateFailsClosed(t *testing.T) {
+	resetTestDB(t)
+	const convID = "codex-future-state"
+	seedCodexDiagnosticAgent(t, convID, true)
+	require.NoError(t, db.UpsertCodexAppServerRuntime(db.CodexAppServerRuntime{
+		Generation: "generation-future", LaunchID: "launch-future", AgentID: "agent-future",
+		ConvID: convID, ThreadID: convID, SocketPath: "/tmp/private/future.sock",
+		CodexVersion: "0.147.0", State: db.CodexAppServerReady,
+	}))
+	database, err := db.Open()
+	require.NoError(t, err)
+	_, err = database.Exec(`UPDATE codex_app_server_runtimes SET state = 'future-state' WHERE generation = 'generation-future'`)
+	require.NoError(t, err)
+
+	got, err := codexAppServerDiagnosticForConv(convID, time.Now().UTC())
+	require.NoError(t, err)
+	assert.Equal(t, "degraded", got.Health)
+	assert.Contains(t, got.MessageDelivery, "held")
+	assert.Contains(t, got.MessageDelivery, "no send-keys fallback")
+}
+
 func TestDashboardCodexDriveUsesCurrentPostureNotHistoricalRuntime(t *testing.T) {
 	resetTestDB(t)
 	const convID = "codex-rolled-back"

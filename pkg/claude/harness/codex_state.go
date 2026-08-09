@@ -41,7 +41,11 @@ type codexThread struct {
 // Runtime telemetry needs no other thread metadata, so this avoids loading the
 // full registry merely to bypass a date-tree walk.
 func codexThreadRolloutPath(home, convID string) (string, error) {
-	path := codexStateDBPath(home)
+	return codexThreadRolloutPathAt(filepath.Join(home, ".codex"), convID)
+}
+
+func codexThreadRolloutPathAt(configDir, convID string) (string, error) {
+	path := codexStateDBPathAt(configDir)
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
 			return "", nil
@@ -82,7 +86,14 @@ func codexThreadRolloutPath(home, convID string) (string, error) {
 // intermittent "database is locked" flake; the timeout makes the read retry
 // for up to 5s rather than fail the whole enrichment.
 func loadCodexThreads(home string) (map[string]codexThread, error) {
-	path := codexStateDBPath(home)
+	return loadCodexThreadsAt(filepath.Join(home, ".codex"))
+}
+
+// loadCodexThreadsAt is the state-root-aware form used by the live ConvStore.
+// CODEX_HOME names this directory directly; the home-taking wrapper above is
+// retained for the explicit-temp-HOME parser tests.
+func loadCodexThreadsAt(configDir string) (map[string]codexThread, error) {
+	path := codexStateDBPathAt(configDir)
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
 			return map[string]codexThread{}, nil
@@ -151,5 +162,9 @@ func loadCodexThreads(home string) (map[string]codexThread, error) {
 
 // codexStateDBPath is the sidecar threads database.
 func codexStateDBPath(home string) string {
-	return filepath.Join(home, ".codex", "state_5.sqlite")
+	return codexStateDBPathAt(filepath.Join(home, ".codex"))
+}
+
+func codexStateDBPathAt(configDir string) string {
+	return filepath.Join(configDir, "state_5.sqlite")
 }

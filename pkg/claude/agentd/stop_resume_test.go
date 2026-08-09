@@ -622,11 +622,11 @@ func TestHandleAgentResume_AgentCannotRecreateMissingDir(t *testing.T) {
 
 type recordingResumeSpawner struct {
 	convID, cwd, cwdWriteProof, effort, model, harness, sandbox, sandboxImplementation, approval,
-	askUserQuestionTimeout, codexGitCommonDir string
+	askUserQuestionTimeout, codexGitCommonDir, codexStateRoot string
 	autoReview, remoteControl, autoMemory, codexGitCommonDirPinned, codexAppServer bool
 	effectiveSandbox                                                               *sandboxpolicy.Snapshot
 	spawnErr                                                                       error
-	resumeCalls                                                                    int
+	resumeCalls, newCalls                                                          int
 }
 
 func installRecordingResumeSpawner(t *testing.T) *recordingResumeSpawner {
@@ -639,6 +639,7 @@ func installRecordingResumeSpawner(t *testing.T) *recordingResumeSpawner {
 }
 
 func (s *recordingResumeSpawner) SpawnNew(args clcommon.SpawnArgs) error {
+	s.newCalls++
 	return nil
 }
 
@@ -660,8 +661,40 @@ func (s *recordingResumeSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	s.codexGitCommonDir = args.CodexGitCommonDir
 	s.codexGitCommonDirPinned = args.CodexGitCommonDirPinned
 	s.codexAppServer = args.CodexAppServer
+	s.codexStateRoot = args.CodexStateRoot
 	s.effectiveSandbox = args.EffectiveSandbox
 	return s.spawnErr
+}
+
+func TestResumeOneConv_CodexCrashRecoveryKeepsPersistedStateRootAndThread(t *testing.T) {
+	setupTestDB(t)
+	rec := installRecordingResumeSpawner(t)
+	home := t.TempDir()
+	stateRoot := filepath.Join(t.TempDir(), "codex-state")
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(t.TempDir(), "daemon-wrong-state"))
+	const convID = "019fe740-43a4-7023-b8ae-1ee64459f2a1"
+	row := saveResumeSession(t, convID, t.TempDir(), harness.CodexName)
+	row.Status = session.StatusExited
+	require.NoError(t, db.SaveSession(row))
+
+	agentID, _, err := db.EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	profile, err := db.RecordedLaunchPostureForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, profile)
+	profile.Version = db.RelaunchProfileVersion
+	source := codexStateRootSourceCodexHome
+	profile.CodexStateRoot = &stateRoot
+	profile.CodexStateRootSource = &source
+	require.NoError(t, db.SetAgentRelaunchProfile(agentID, *profile))
+
+	res := resumeOneConv(convID)
+	require.Equal(t, "resumed", res.Action, "detail=%s", res.Detail)
+	assert.Equal(t, convID, rec.convID, "recovery must resume the original thread id")
+	assert.Equal(t, stateRoot, rec.codexStateRoot, "wrapper must use the original Codex store")
+	assert.Equal(t, 1, rec.resumeCalls)
+	assert.Zero(t, rec.newCalls, "recovery must not create an empty replacement generation")
 }
 
 func TestResumeOneConv_SessionProvenanceUsesClaudeHarness(t *testing.T) {

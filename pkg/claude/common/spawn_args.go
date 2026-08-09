@@ -135,6 +135,12 @@ type SpawnArgs struct {
 	CodexAppServerPIDFile    string
 	CodexAppServerLogFile    string
 	CodexAppServerGeneration string
+	// CodexStateRoot is the host-side Codex state directory used by the
+	// short-lived tclaude wrapper to resolve/list/resume the same thread store
+	// as the original launch. It is environment-only and never serialized into
+	// argv. A sandbox snapshot may independently remap CODEX_HOME for the Codex
+	// process itself.
+	CodexStateRoot string
 
 	// OpenCodeServerURL / OpenCodeServerPassword are the private handoff from
 	// agentd's per-session server owner to the short-lived `session new`

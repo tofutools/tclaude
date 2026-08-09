@@ -78,6 +78,16 @@ func TestSpawnProfiles_CodexAppServerTriStateAndHarnessGate(t *testing.T) {
 	assert.Equal(t, "send-keys", spawnWire.Resolved.CodexAppServer.Value)
 	assert.Contains(t, spawnWire.Resolved.CodexAppServer.Source, "codex-drive-2")
 
+	spawn = f.AsHuman().SpawnWith("crew", map[string]any{
+		"name": "explicit-sendkeys-worker", "profile": "codex-drive-1",
+		"codex_app_server": false,
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "explicit false spawn body=%s", spawn.Raw)
+	require.NoError(t, json.Unmarshal(spawn.Raw, &spawnWire))
+	assert.Equal(t, "send-keys", spawnWire.Resolved.CodexAppServer.Value)
+	assert.Equal(t, agent.ProvExplicit, spawnWire.Resolved.CodexAppServer.Source,
+		"an explicit false must outrank an opted-in named profile")
+
 	rec := profileReq(t, f, http.MethodPost, "/v1/spawn-profiles", map[string]any{
 		"name": "claude-app-server", "harness": "claude", "codex_app_server": true,
 	})
