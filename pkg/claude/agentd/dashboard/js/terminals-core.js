@@ -30,7 +30,7 @@ export const INITIAL_RETRY_STABILITY_MS = 1000;
 // producing a screen, briefly nudge the PTY by one row, then put it back. A
 // same-size resend is insufficient here: it signals the tmux client, but tmux
 // does not relay unchanged geometry to the process inside its pane.
-export const POST_ATTACH_RESIZE_DELAY_MS = 1000;
+export const POST_ATTACH_RESIZE_DELAY_MS = 500;
 export const POST_ATTACH_RESIZE_NUDGE_MS = 100;
 
 // Losing agentd is the one disconnect a terminal may repair on its own, because
