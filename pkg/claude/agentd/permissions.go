@@ -442,9 +442,12 @@ var permissionRegistry = []PermSlug{
 		Slug:      PermGitHubRead,
 		ScopeDims: []ScopeDim{ScopeDimRemote},
 		Description: "Read GitHub pull requests, issues and CI results through the daemon's gh credentials (tclaude proxy github " +
-			"pr ls/view/checks/comments, issue ls/view, run ls/log-failed). Restricted to the repository the agent's own remote " +
-			"resolves to, and only when that remote is on the operator's allow-list. Not default-granted: it reads private " +
-			"repository data as the operator.",
+			"pr ls/view/checks/comments, issue ls/view, run ls/log-failed/artifacts/download). Restricted to the repository the " +
+			"agent's own remote resolves to, and only when that remote is on the operator's allow-list. Not default-granted: it " +
+			"reads private repository data as the operator. Note that run download also WRITES: it unpacks a run's artifacts " +
+			"into .tclaude-artifacts/ in the agent's own work tree. It cannot write anywhere else — the destination is " +
+			"computed, never requested — and it cannot accumulate: 512 MiB compressed and 2 GiB unpacked per download, at " +
+			"most 3 run directories kept, each run's directory emptied before it is refilled.",
 	},
 	{
 		Slug:      PermGitHubWrite,
