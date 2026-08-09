@@ -28,8 +28,10 @@ import (
 // no --repo parameter and no passthrough of any kind. An agent can only reach
 // the forge repository its own checkout already points at.
 //
-// The daemon calls GitHub's API directly (see githubapi.go); it does not run
-// the `gh` CLI. Three consequences are worth stating:
+// The daemon calls GitHub's API directly (see githubapi.go). It runs the `gh`
+// CLI for one thing only — asking it for a token, when the operator has not
+// configured a token file — and never to perform an operation. Three
+// consequences are worth stating:
 //
 //  1. There is no working directory and no repository discovery. The old proxy
 //     ran gh in a NEUTRAL directory precisely so the agent's .git/config could

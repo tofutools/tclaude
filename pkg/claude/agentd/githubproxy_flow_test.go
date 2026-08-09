@@ -204,29 +204,22 @@ func jsonBody(t *testing.T, req agentd.GitHubRequestForTest) map[string]any {
 // ghWorld is gitProxyWorld plus a stubbed GitHub transport and a token for the
 // daemon to spend.
 //
-// The token comes from the environment rather than from a config file so that
-// the tests which DO configure a file exercise the precedence rule as well as
-// the file itself.
+// The token comes from `gh auth token` rather than from a config file, because
+// that is the path an operator who configured nothing takes — and it leaves the
+// file free for the tests that exercise precedence.
 func ghWorld(t *testing.T, allowed []string) (*testharness.Flow, *gitProxyRecorder, *ghRecorder) {
 	t.Helper()
 	f, git := gitProxyWorld(t, allowed)
 	gh := newGHRecorder()
-	t.Setenv("GH_TOKEN", ghTestToken)
 	t.Cleanup(agentd.SetGitHubTransportForTestJSON(gh.do))
 	t.Cleanup(agentd.SetGitHubStreamForTestBytes(gh.stream))
-	// A keyring the daemon must never need to consult once a token is already
-	// resolvable. Failing loudly if it does is how a precedence regression is
-	// caught rather than silently tolerated.
-	t.Cleanup(agentd.SetGHKeyringForTest(func(string, string) (string, error) {
-		return "", errors.New("the keyring must not be consulted when a token is already available")
-	}))
 	t.Cleanup(agentd.SetGHTokenCommandForTest(func(context.Context) (string, error) {
-		return "", errors.New("`gh auth token` must not be run when a token is already available")
+		return ghTestToken + "\n", nil
 	}))
 	return f, git, gh
 }
 
-const ghTestToken = "ghp_test_token_from_the_environment"
+const ghTestToken = "ghp_test_token_from_gh_auth_token"
 
 // ---------------------------------------------------------------------------
 // Permission gating
@@ -379,9 +372,9 @@ func TestGHProxy_RefusesToDeriveARepoFromADeeperPath(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestGHProxy_TokenTravelsInAHeaderAndNowhereElse — the whole reason this proxy
-// stopped shelling out. A token in a child's environment is readable through
-// /proc/<pid>/environ by any same-uid process for the life of the call; a token
-// handed to the transport never leaves daemon memory.
+// stopped shelling out for its API calls. A token in a child's environment is
+// readable through /proc/<pid>/environ by any same-uid process for the life of
+// the call; a token handed to the transport never leaves daemon memory.
 func TestGHProxy_TokenTravelsInAHeaderAndNowhereElse(t *testing.T) {
 	f, git, gh := ghWorld(t, []string{"github.com/tofutools"})
 	gh.def = ghCanned{Status: 200, Body: `{"data":{"repository":{"pullRequests":{"nodes":[]}}}}`}
@@ -401,7 +394,7 @@ func TestGHProxy_TokenTravelsInAHeaderAndNowhereElse(t *testing.T) {
 	gh.mu.Unlock()
 	require.Len(t, tokens, 1)
 	assert.Equal(t, "ghp_supersecret", tokens[0],
-		"a configured token file outranks the ambient GH_TOKEN")
+		"a configured token file is an explicit choice of identity and wins")
 
 	call := gh.only(t)
 	assert.NotContains(t, call.Path, "ghp_supersecret")
@@ -418,6 +411,27 @@ func TestGHProxy_TokenTravelsInAHeaderAndNowhereElse(t *testing.T) {
 		assert.NotContains(t, strings.Join(cmd.Args, " "), "ghp_supersecret")
 		assert.NotContains(t, strings.Join(cmd.Env, " "), "ghp_supersecret")
 	}
+}
+
+// TestGHProxy_TokenFileSkipsGHEntirely — configuring a token file is how an
+// operator runs this proxy on a host with no `gh` installed, so a configured
+// file must not merely WIN over gh: gh must not be consulted at all.
+func TestGHProxy_TokenFileSkipsGHEntirely(t *testing.T) {
+	f, _, gh := ghWorld(t, []string{"github.com/tofutools"})
+	gh.def = ghCanned{Status: 200, Body: `{"data":{"repository":{"pullRequests":{"nodes":[]}}}}`}
+	t.Cleanup(agentd.SetGHTokenCommandForTest(func(context.Context) (string, error) {
+		return "", errors.New("gh must not be run when a token file is configured")
+	}))
+
+	tokenPath := filepath.Join(t.TempDir(), "token")
+	require.NoError(t, os.WriteFile(tokenPath, []byte("ghp_from_the_file\n"), 0o600))
+	writeGitProxyConfig(t, []string{"github.com/tofutools"}, func(c *gitProxyConfigPatch) {
+		c.GitHubTokenFile = tokenPath
+	})
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+
+	res := gitProxyPost(t, f, "/v1/github/pr/list", map[string]any{})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
 }
 
 // TestGHProxy_TokenFileAcceptsATildePath — "~/github-token.txt" is how an
@@ -452,11 +466,14 @@ func TestGHProxy_TokenFileAcceptsATildePath(t *testing.T) {
 // the daemon deliberately does not expand, so the refusal has to say so rather
 // than reporting a missing file whose path reads as correct.
 //
-// It must also NOT fall through to the ambient GH_TOKEN. A configured file is
-// an explicit choice of identity, and quietly spending a different credential
-// because the configured one could not be read is the worst of both answers.
+// It must also NOT fall through to gh. A configured file is an explicit choice
+// of identity, and quietly spending a different credential because the
+// configured one could not be read is the worst of both answers.
 func TestGHProxy_TokenFileExplainsAnUnexpandedShellVariable(t *testing.T) {
 	f, _, gh := ghWorld(t, []string{"github.com/tofutools"})
+	t.Cleanup(agentd.SetGHTokenCommandForTest(func(context.Context) (string, error) {
+		return "ghp_a_different_identity", nil
+	}))
 	writeGitProxyConfig(t, []string{"github.com/tofutools"}, func(c *gitProxyConfigPatch) {
 		c.GitHubTokenFile = "${HOME}/github-token.txt"
 	})
@@ -469,103 +486,57 @@ func TestGHProxy_TokenFileExplainsAnUnexpandedShellVariable(t *testing.T) {
 	assert.Equal(t, 0, gh.count())
 }
 
-// TestGHProxy_FallsBackThroughGHsOwnCredentialStores is the compatibility
-// contract of dropping the CLI: an operator who authenticated once with
-// `gh auth login` and configured nothing must keep working.
-//
-// gh keeps a token in one of two places depending on whether the host has a
-// usable secret store, and the daemon reads both — hosts.yml directly, and the
-// keyring under the service name gh uses. `gh auth token` remains as a last
-// resort for a host where gh can open a keyring the daemon cannot.
-func TestGHProxy_FallsBackThroughGHsOwnCredentialStores(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		setup func(t *testing.T, ghConfigDir string)
-		want  string
-	}{
-		{
-			name: "hosts.yml in the clear",
-			setup: func(t *testing.T, ghConfigDir string) {
-				require.NoError(t, os.WriteFile(filepath.Join(ghConfigDir, "hosts.yml"),
-					[]byte("github.com:\n    user: mikes\n    oauth_token: gho_from_hosts_yml\n"), 0o600))
-			},
-			want: "gho_from_hosts_yml",
-		},
-		{
-			name: "the OS keyring gh stores tokens in",
-			setup: func(t *testing.T, _ string) {
-				t.Cleanup(agentd.SetGHKeyringForTest(func(service, user string) (string, error) {
-					if service == "gh:github.com" && user == "" {
-						return "gho_from_the_keyring", nil
-					}
-					return "", errors.New("not found")
-				}))
-			},
-			want: "gho_from_the_keyring",
-		},
-		{
-			name: "gh auth token as the last resort",
-			setup: func(t *testing.T, _ string) {
-				t.Cleanup(agentd.SetGHTokenCommandForTest(func(context.Context) (string, error) {
-					return "gho_from_gh_auth_token\n", nil
-				}))
-			},
-			want: "gho_from_gh_auth_token",
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f, _, gh := ghWorld(t, []string{"github.com/tofutools"})
-			gh.def = ghCanned{Status: 200, Body: `{"data":{"repository":{"pullRequests":{"nodes":[]}}}}`}
-			// Neither the operator's config nor the environment offers one, so
-			// the fallback chain is the only thing that can answer. gh's config
-			// directory is redirected rather than HOME, which the daemon's own
-			// configuration and database live under.
-			ghConfig := t.TempDir()
-			t.Setenv("GH_CONFIG_DIR", ghConfig)
-			t.Setenv("GH_TOKEN", "")
-			t.Setenv("GITHUB_TOKEN", "")
-			// Default to "nothing here" for the stores this case is not about.
-			t.Cleanup(agentd.SetGHKeyringForTest(func(string, string) (string, error) {
-				return "", errors.New("not found")
-			}))
-			t.Cleanup(agentd.SetGHTokenCommandForTest(func(context.Context) (string, error) {
-				return "", errors.New("gh is not installed")
-			}))
-			tc.setup(t, ghConfig)
-			require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
-
-			res := gitProxyPost(t, f, "/v1/github/pr/list", map[string]any{})
-			require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
-
-			gh.mu.Lock()
-			defer gh.mu.Unlock()
-			require.Len(t, gh.tokens, 1)
-			assert.Equal(t, tc.want, gh.tokens[0])
-		})
-	}
-}
-
-// TestGHProxy_NoTokenIsAnOperatorProblemNotAnAgentOne — every store came up
-// empty. The agent cannot fix that, so the refusal names what the OPERATOR has
-// to do and does not read as a permission denial.
-func TestGHProxy_NoTokenIsAnOperatorProblemNotAnAgentOne(t *testing.T) {
+// TestGHProxy_DelegatesToGHWhenNoTokenFileIsConfigured — the ordinary posture.
+// An operator who has run `gh auth login` and configured nothing keeps working,
+// and the daemon asks gh rather than reimplementing its lookup.
+func TestGHProxy_DelegatesToGHWhenNoTokenFileIsConfigured(t *testing.T) {
 	f, _, gh := ghWorld(t, []string{"github.com/tofutools"})
-	t.Setenv("GH_CONFIG_DIR", t.TempDir())
-	t.Setenv("GH_TOKEN", "")
-	t.Setenv("GITHUB_TOKEN", "")
-	t.Cleanup(agentd.SetGHKeyringForTest(func(string, string) (string, error) {
-		return "", errors.New("not found")
-	}))
-	t.Cleanup(agentd.SetGHTokenCommandForTest(func(context.Context) (string, error) {
-		return "", errors.New("gh is not installed")
-	}))
+	gh.def = ghCanned{Status: 200, Body: `{"data":{"repository":{"pullRequests":{"nodes":[]}}}}`}
 	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
 
 	res := gitProxyPost(t, f, "/v1/github/pr/list", map[string]any{})
-	assert.Equal(t, http.StatusServiceUnavailable, res.Code, "body=%s", res.Body.String())
-	assert.Contains(t, res.Body.String(), "github_token_file")
-	assert.Contains(t, res.Body.String(), "gh auth login")
-	assert.Equal(t, 0, gh.count())
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	gh.mu.Lock()
+	defer gh.mu.Unlock()
+	require.Len(t, gh.tokens, 1)
+	assert.Equal(t, ghTestToken, gh.tokens[0])
+}
+
+// TestGHProxy_UnauthenticatedGHIsAnOperatorProblemNotAnAgentOne — the agent
+// cannot fix this, so the refusal names what the OPERATOR has to do, carries
+// gh's own diagnosis, and does not read as a permission denial.
+func TestGHProxy_UnauthenticatedGHIsAnOperatorProblemNotAnAgentOne(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		token string
+		err   error
+		want  string
+	}{
+		{"gh is not installed", "",
+			errors.New("gh is not installed on the host running agentd: exec: \"gh\": executable file not found in $PATH"),
+			"executable file not found"},
+		{"gh is installed but not logged in", "",
+			errors.New("exit status 1: gh: You are not logged into any GitHub hosts. To log in, run: gh auth login"),
+			"not logged into any GitHub hosts"},
+		{"gh answers with nothing at all", "", nil, "returned nothing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, _, gh := ghWorld(t, []string{"github.com/tofutools"})
+			t.Cleanup(agentd.SetGHTokenCommandForTest(func(context.Context) (string, error) {
+				return tc.token, tc.err
+			}))
+			require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+
+			res := gitProxyPost(t, f, "/v1/github/pr/list", map[string]any{})
+			assert.Equal(t, http.StatusServiceUnavailable, res.Code, "body=%s", res.Body.String())
+			body := res.Body.String()
+			assert.Contains(t, body, tc.want, "gh's own diagnosis is the actionable part")
+			assert.Contains(t, body, "github_token_file",
+				"and the operator needs to know gh can be skipped entirely")
+			assert.Equal(t, 0, gh.count(), "no credential means no call")
+		})
+	}
 }
 
 // TestGHProxy_RefusesATokenThatCannotBeAHeader — a stray newline inside a token

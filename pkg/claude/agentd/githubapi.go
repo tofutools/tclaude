@@ -4,32 +4,36 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
-	"github.com/zalando/go-keyring"
-	"gopkg.in/yaml.v3"
 )
 
 // githubapi.go is the GitHub half of the proxy's outbound edge: credential
 // resolution and the two HTTP seams every verb goes through.
 //
-// It replaces what used to be a `gh` subprocess. The reason is the same one
-// that shaped the Linear proxy: a token in a child process's environment is
-// readable through /proc/<pid>/environ by any same-uid process for the life of
-// the call, while a token in an Authorization header never leaves daemon
-// memory. Dropping the subprocess also drops a dependency on one CLI's output
-// formatting staying stable across releases, and lets `run download` bound an
-// unpack while it is happening rather than after.
+// The API CALLS replace what used to be a `gh` subprocess per verb. The reason
+// is the same one that shaped the Linear proxy: a token in a child process's
+// environment is readable through /proc/<pid>/environ by any same-uid process
+// for the life of the call, while a token in an Authorization header never
+// leaves daemon memory. Not depending on one CLI's output formatting staying
+// stable is a second benefit, and doing the work in-process is what lets
+// `run download` bound an unpack while it is happening rather than after.
+//
+// CREDENTIAL RESOLUTION is the deliberate exception: with no token file
+// configured the daemon runs `gh auth token`, once per request, and asks gh
+// what token it would use. Reimplementing that lookup — config file or keyring
+// depending on the host, account selection, refresh — would be a copy that
+// drifts, and one whose bugs look like authentication failures.
 //
 // Two seams rather than one, because the payloads are different in kind:
 //
@@ -64,6 +68,11 @@ const (
 	// would matter to the daemon; the bulk paths do not come through here.
 	maxGHAPIResponseBytes = 16 << 20
 
+	// ghTokenCommandTimeout bounds the `gh auth token` lookup. gh reads a file
+	// or opens a keyring; a lookup slower than this is a keyring waiting on a
+	// prompt nobody is there to answer.
+	ghTokenCommandTimeout = 10 * time.Second
+
 	// maxGHPaginatedPages bounds a --paginate-equivalent walk. Only the inline
 	// review comments paginate, and a pull request with more than this many
 	// pages of them is one no agent is going to read to the end of anyway.
@@ -75,67 +84,51 @@ const (
 // ---------------------------------------------------------------------------
 
 // ghTokenSource names where a token came from. It is reported in the daemon
-// log and in the "no token" diagnosis, never to the agent: which credential
-// store the operator uses is not the agent's business, and the token itself is
-// never rendered anywhere.
+// log, never to the agent: which credential the operator configured is not the
+// agent's business, and the token itself is never rendered anywhere.
 type ghTokenSource string
 
 const (
-	ghTokenFromFile    ghTokenSource = "agent.git_proxy.github_token_file"
-	ghTokenFromEnv     ghTokenSource = "GH_TOKEN/GITHUB_TOKEN in agentd's environment"
-	ghTokenFromHosts   ghTokenSource = "the gh CLI's hosts.yml"
-	ghTokenFromKeyring ghTokenSource = "the OS keyring (gh's secure storage)"
-	ghTokenFromGHCLI   ghTokenSource = "gh auth token"
+	ghTokenFromFile  ghTokenSource = "agent.git_proxy.github_token_file"
+	ghTokenFromGHCLI ghTokenSource = "gh auth token"
 )
 
-// ghKeyringGet is the OS-keyring seam. Production reads the real store; tests
-// swap it, because a unit test must not depend on a session D-Bus being up.
-var ghKeyringGet = keyring.Get
-
-// SetGHKeyringForTest swaps the keyring reader. Returns a restore func.
-func SetGHKeyringForTest(fn func(service, user string) (string, error)) func() {
-	prev := ghKeyringGet
-	ghKeyringGet = fn
-	return func() { ghKeyringGet = prev }
-}
-
-// ghTokenCommand is the last-resort `gh auth token` seam, kept separate from
-// the keyring one so a test can exercise either without the other.
+// ghTokenCommand is the `gh auth token` seam, swapped by tests so the suite
+// does not depend on a gh installation or on whoever it is logged in as.
 var ghTokenCommand = runGHAuthToken
 
-// SetGHTokenCommandForTest swaps the `gh auth token` fallback. Returns a
-// restore func.
+// SetGHTokenCommandForTest swaps the `gh auth token` lookup. Returns a restore
+// func.
 func SetGHTokenCommandForTest(fn func(ctx context.Context) (string, error)) func() {
 	prev := ghTokenCommand
 	ghTokenCommand = fn
 	return func() { ghTokenCommand = prev }
 }
 
-// githubToken resolves the credential this request will spend, in the order
-// that keeps every posture that worked when the proxy shelled out to `gh`.
+// githubToken resolves the credential this request will spend. Two sources,
+// in this order:
 //
-// The order matters and is not arbitrary:
+//  1. The operator's configured token file, if there is one. An explicit
+//     choice of identity wins, and a file that cannot be read is an ERROR
+//     rather than a reason to fall through — quietly spending a different
+//     credential because the configured one was unreadable is the worst of
+//     both answers.
+//  2. `gh auth token`, otherwise.
 //
-//  1. The operator's explicit configuration wins. If they named a token file,
-//     that is the identity they chose for agents, and an ambient `gh auth
-//     login` must not quietly override it.
-//  2. GH_TOKEN / GITHUB_TOKEN from agentd's own environment, which is what gh
-//     itself would have honoured had the daemon forwarded them. It did not —
-//     ghProxyEnv built the child's environment from an allow-list that omitted
-//     them — so this is the one place the direct client is deliberately MORE
-//     permissive than the subprocess was. It is the documented way to run gh
-//     unattended, and an operator who exports it into the daemon's environment
-//     has already chosen it as the daemon's identity.
-//  3. gh's own configuration, read directly: hosts.yml first, then the OS
-//     keyring gh stores tokens in when secure storage is available. This is
-//     what makes `gh auth login` keep working with no gh process involved.
-//  4. `gh auth token`, if gh happens to be installed. A fallback, not a
-//     dependency: it is reached only when every direct read failed, which in
-//     practice means a keyring gh can open and the daemon cannot.
+// Delegating to gh rather than reimplementing its lookup is deliberate. gh
+// keeps a token in its config file or in the OS keyring depending on the host,
+// picks between accounts, and refreshes what it needs to; a second
+// implementation of that in here would be a copy that drifts, and one whose
+// bugs look like authentication failures. `gh auth token` is gh's own supported
+// answer to "what token would you use", so it is the one thing asked.
 //
-// A resolved token is never cached across requests. The operator can rotate a
-// token file or re-run `gh auth login` without restarting the daemon, and the
-// read is a file or a keyring lookup rather than anything worth memoising.
+// The cost is that `gh` is a REQUIREMENT unless a token file is configured.
+// That is the trade: an operator who does not want gh on the host sets
+// agent.git_proxy.github_token_file, and one who has already run
+// `gh auth login` configures nothing.
+//
+// A resolved token is never cached across requests, so the operator can rotate
+// a token file or re-run `gh auth login` without restarting the daemon.
 func githubToken(ctx context.Context, policy config.GitProxyConfig) (string, ghTokenSource, *proxyFault) {
 	if configured := strings.TrimSpace(policy.GitHubTokenFile); configured != "" {
 		// "~/github-token.txt" is how an operator naturally writes this in a
@@ -152,46 +145,32 @@ func githubToken(ctx context.Context, policy config.GitProxyConfig) (string, ghT
 			return "", "", faultf(http.StatusServiceUnavailable, "token_unreadable",
 				"the configured agent.git_proxy.github_token_file is empty")
 		}
-		// A configured file is an explicit choice, so a bad value in it is an
-		// error rather than a reason to fall through to something else.
 		if fault := validateGHTokenShape(token, string(ghTokenFromFile)); fault != nil {
 			return "", "", fault
 		}
 		return token, ghTokenFromFile, nil
 	}
-	for _, name := range []string{"GH_TOKEN", "GITHUB_TOKEN"} {
-		if token := strings.TrimSpace(os.Getenv(name)); token != "" {
-			if fault := validateGHTokenShape(token, name); fault != nil {
-				return "", "", fault
-			}
-			return token, ghTokenFromEnv, nil
-		}
+
+	token, err := ghTokenCommand(ctx)
+	if err != nil {
+		// gh's own words, because they are the actionable part: "not logged
+		// into any GitHub hosts" and "executable file not found" call for
+		// completely different fixes and only gh can tell them apart.
+		return "", "", faultf(http.StatusServiceUnavailable, "token_missing",
+			"no GitHub token is available to the daemon: `gh auth token` failed (%v). Either "+
+				"authenticate the account agentd runs as with `gh auth login`, or set "+
+				"agent.git_proxy.github_token_file in ~/.tclaude/data/config.json to skip gh "+
+				"entirely", err)
 	}
-	hostsUser, hostsToken := readGHHostsToken()
-	if hostsToken != "" {
-		if fault := validateGHTokenShape(hostsToken, string(ghTokenFromHosts)); fault != nil {
-			return "", "", fault
-		}
-		return hostsToken, ghTokenFromHosts, nil
+	if token = strings.TrimSpace(token); token == "" {
+		return "", "", faultf(http.StatusServiceUnavailable, "token_missing",
+			"`gh auth token` returned nothing, so the account agentd runs as is not "+
+				"authenticated: run `gh auth login`, or set agent.git_proxy.github_token_file")
 	}
-	if token := readGHKeyringToken(hostsUser); token != "" {
-		if fault := validateGHTokenShape(token, string(ghTokenFromKeyring)); fault != nil {
-			return "", "", fault
-		}
-		return token, ghTokenFromKeyring, nil
+	if fault := validateGHTokenShape(token, string(ghTokenFromGHCLI)); fault != nil {
+		return "", "", fault
 	}
-	if token, err := ghTokenCommand(ctx); err == nil {
-		if token = strings.TrimSpace(token); token != "" {
-			if fault := validateGHTokenShape(token, string(ghTokenFromGHCLI)); fault != nil {
-				return "", "", fault
-			}
-			return token, ghTokenFromGHCLI, nil
-		}
-	}
-	return "", "", faultf(http.StatusServiceUnavailable, "token_missing",
-		"no GitHub token is available to the daemon: set agent.git_proxy.github_token_file in "+
-			"~/.tclaude/data/config.json, put GH_TOKEN in the environment agentd runs under, or "+
-			"authenticate the account agentd runs as with `gh auth login`")
+	return token, ghTokenFromGHCLI, nil
 }
 
 // validateGHTokenShape refuses a token that cannot go in a header.
@@ -213,107 +192,23 @@ func validateGHTokenShape(token, source string) *proxyFault {
 	return nil
 }
 
-// ghHostsFile locates gh's hosts.yml the way gh does: GH_CONFIG_DIR wins,
-// then XDG_CONFIG_HOME/gh, then ~/.config/gh.
+// runGHAuthToken asks gh for the token it would use.
 //
-// It reads gh's configuration; it does not run gh. The distinction is the whole
-// point of this file — an operator who authenticated once with `gh auth login`
-// keeps working, and a host with no gh installed at all still works as long as
-// the token reaches the daemon some other way.
-func ghHostsFile() string {
-	if dir := strings.TrimSpace(os.Getenv("GH_CONFIG_DIR")); dir != "" {
-		return filepath.Join(dir, "hosts.yml")
-	}
-	if dir := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); dir != "" {
-		return filepath.Join(dir, "gh", "hosts.yml")
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".config", "gh", "hosts.yml")
-}
-
-// ghHostsEntry is the part of gh's hosts.yml this daemon reads. `user` is kept
-// even when there is no token beside it, because it is the keyring lookup's
-// second key.
-type ghHostsEntry struct {
-	User       string `yaml:"user"`
-	OAuthToken string `yaml:"oauth_token"`
-}
-
-// readGHHostsToken returns gh's configured github.com user and, if it is
-// stored in the clear, its token.
-//
-// Every failure is silent and yields empty strings: an absent, unreadable or
-// malformed hosts.yml means "gh is not the credential source here", which is
-// an ordinary situation and not something to refuse the request over. The
-// caller falls through to the next source, and the final "no token" fault names
-// every option rather than blaming this one.
-func readGHHostsToken() (user, token string) {
-	path := ghHostsFile()
-	if path == "" {
-		return "", ""
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return "", ""
-	}
-	var hosts map[string]ghHostsEntry
-	if err := yaml.Unmarshal(raw, &hosts); err != nil {
-		return "", ""
-	}
-	entry := hosts["github.com"]
-	return strings.TrimSpace(entry.User), strings.TrimSpace(entry.OAuthToken)
-}
-
-// readGHKeyringToken reads the token gh stores in the OS secret store when
-// secure storage is available — which, since gh 2.28, is the default for
-// `gh auth login` on any host with a working keyring.
-//
-// gh keys these entries as service "gh:<hostname>", storing the token twice:
-// once under the empty user, which is the active one, and once under the
-// account's login so `gh auth switch` can find it. Reading the empty user first
-// therefore gets the identity gh itself would use.
-//
-// tclaude and gh 2.97 depend on the same go-keyring release, so this reads the
-// same entries with the same code rather than reimplementing a store format.
-func readGHKeyringToken(user string) string {
-	const service = "gh:github.com"
-	keys := []string{""}
-	if user != "" {
-		keys = append(keys, user)
-	}
-	for _, key := range keys {
-		token, err := ghKeyringGet(service, key)
-		if err != nil {
-			continue
-		}
-		if token = strings.TrimSpace(token); token != "" {
-			return token
-		}
-	}
-	return ""
-}
-
-// runGHAuthToken is the production `gh auth token` fallback.
-//
-// It is the one place this package still executes gh, and it is deliberately
-// the LAST thing tried: it exists so that a host where the daemon cannot open
-// the keyring gh can open keeps working, which was the posture before this file
-// existed. gh is looked up at call time and its absence is an ordinary error,
-// so a host without gh is not a host with a broken proxy.
+// This is the only place the package executes gh, and it runs once per request
+// rather than being cached — the same cost the proxy paid when every verb was a
+// gh invocation, now paid once instead of once per API call.
 func runGHAuthToken(ctx context.Context) (string, error) {
 	path, err := exec.LookPath("gh")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("gh is not installed on the host running agentd: %w", err)
 	}
-	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	runCtx, cancel := context.WithTimeout(ctx, ghTokenCommandTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, path, "auth", "token", "--hostname", "github.com")
-	// A constructed environment for the same reason ghProxyEnv built one: an
-	// allow-list cannot drift where a deny-list can. gh needs HOME to find its
-	// config and PATH to find its own helpers, and nothing else.
+	// A constructed environment, for the same reason the git proxy builds one:
+	// an allow-list cannot drift where a deny-list can. What is forwarded is
+	// what gh needs to find its OWN configuration — this daemon does not read
+	// any of it, it just lets gh do so.
 	cmd.Env = []string{"LC_ALL=C", "GH_PROMPT_DISABLED=1", "GH_NO_UPDATE_NOTIFIER=1", "NO_COLOR=1"}
 	for _, name := range []string{"PATH", "HOME", "XDG_CONFIG_HOME", "GH_CONFIG_DIR", "DBUS_SESSION_BUS_ADDRESS"} {
 		if v, ok := os.LookupEnv(name); ok && v != "" {
@@ -322,6 +217,15 @@ func runGHAuthToken(ctx context.Context) (string, error) {
 	}
 	out, err := cmd.Output()
 	if err != nil {
+		// gh puts its diagnosis on stderr, and it is the whole value of asking
+		// gh rather than guessing: "not logged into any GitHub hosts" is a
+		// different fix from a keyring that would not open.
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			if msg := strings.TrimSpace(string(exit.Stderr)); msg != "" {
+				return "", fmt.Errorf("%w: %s", err, msg)
+			}
+		}
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil

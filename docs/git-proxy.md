@@ -74,7 +74,7 @@ Add an `agent.git_proxy` block to `~/.tclaude/data/config.json`:
 | `protected_refs` | Branches the proxy refuses to push to at all. Absent → `["main", "master"]`; an explicit `[]` turns the protection off. |
 | `allow_force_push` | Permits `--force-with-lease` on non-protected refs. Default off. Plain `--force` is never available. |
 | `ssh_key` | Pins one private key (`ssh -i … -o IdentitiesOnly=yes`). Empty uses the daemon's ambient SSH setup — normally an ssh-agent, which is the better posture. |
-| `github_token_file` | A file whose contents are the GitHub token the daemon sends. Empty falls back through `GH_TOKEN`/`GITHUB_TOKEN` in agentd's environment, then the `gh` CLI's own stored credential — see [Where the GitHub token comes from](#where-the-github-token-comes-from). This feeds the **GitHub** half only; `git` itself authenticates over SSH or through the operator's own credential helper. |
+| `github_token_file` | A file whose contents are the GitHub token the daemon sends. Empty delegates to `gh auth token` — see [Where the GitHub token comes from](#where-the-github-token-comes-from). This feeds the **GitHub** half only; `git` itself authenticates over SSH or through the operator's own credential helper. |
 
 Both path fields accept `~/…`, which expands to the home directory of the user
 account under which `agentd` runs — that account must be able to read the file.
@@ -83,31 +83,34 @@ Shell variables are **not** expanded — a config file is not a shell, so
 
 ### Where the GitHub token comes from
 
-The daemon calls GitHub's API directly; it does not run the `gh` CLI. So it has
-to find a token itself, and it looks in the places one already is, in this
-order:
+The daemon calls GitHub's API directly, so it needs a token of its own. There
+are exactly two places it looks:
 
-| Source | Notes |
+| Source | When |
 |---|---|
-| `agent.git_proxy.github_token_file` | Your explicit choice, and it wins. If the file cannot be read, is empty, or contains a control character, the request is **refused** rather than falling through — a configured identity must not be silently swapped for another one. |
-| `GH_TOKEN` / `GITHUB_TOKEN` in agentd's environment | The documented way to run unattended. |
-| `~/.config/gh/hosts.yml` | The `gh` CLI's config, read directly. `GH_CONFIG_DIR` and `XDG_CONFIG_HOME` are honoured the same way `gh` honours them. |
-| The OS keyring | Where `gh auth login` puts a token when the host has a usable secret store, which since gh 2.28 is the default. Read under gh's own service name, with the same library gh uses. |
-| `gh auth token` | Last resort, and the only place this feature still executes `gh`. It covers the host where gh can open a keyring the daemon cannot. A host with no `gh` installed simply skips it. |
+| `agent.git_proxy.github_token_file` | Whenever it is configured. An explicit choice of identity wins, and `gh` is not consulted at all — this is how you run the proxy on a host with no `gh` installed. A file that cannot be read, is empty, or contains a control character is an **error**, not a reason to fall back: quietly spending a different credential because the configured one was unreadable is the worst of both answers. |
+| `gh auth token` | Otherwise. |
 
-**`gh` is no longer required on the host.** An operator who authenticated once
-with `gh auth login` keeps working with no change; an operator who would rather
-not install it at all can set `github_token_file` or export `GH_TOKEN`.
+**That is the whole chain.** The daemon does not read `hosts.yml`, the OS
+keyring, or `GH_TOKEN`/`GITHUB_TOKEN`, and it does not try to work out which
+account you are logged in as. gh already answers all of that, differently on
+different hosts, and a second implementation living here would be a copy that
+drifts — with bugs that present as authentication failures.
+
+So an operator who has run `gh auth login` configures nothing and it works;
+one who would rather not have `gh` on the host sets `github_token_file`. With
+neither, every GitHub verb fails with `token_missing`, carrying gh's own
+message.
+
+`gh auth token` runs once per request, not once per API call — fewer
+invocations than the proxy made when every verb was a `gh` command.
 
 The token is sent to GitHub as an `Authorization` header: it reaches the API
 through neither a child process's arguments nor its environment, so unlike the
 `GH_TOKEN` this proxy used to hand `gh` there is no window in which
-`/proc/<pid>/environ` exposes it to a same-uid process.
-
-That is a statement about the **request**. Resolving the credential can still
-run a child — `gh auth token`, the last resort above — and on that path the
-token is gh's to hold for the length of one short-lived process. Every other
-source reads a file or the keyring in-process.
+`/proc/<pid>/environ` exposes it to a same-uid process. That is a statement
+about the **request**; obtaining the token can still run gh, and on that path
+the token is gh's to hold for the length of one short-lived process.
 
 ### Remote patterns
 
@@ -398,7 +401,7 @@ the load-bearing measures do not depend on it.
 | A repo-local `credential.*` key (the program git runs to obtain a credential) | refuse + pin | Any `credential.*` key in the **local** or **worktree** scope is refused. On top of that the helper list is reset and repopulated from **global/system** configuration only, so your real helper keeps working. |
 | Argument injection | validate | Every parameter is charset-validated and refused if it begins with `-`. No passthrough flag, no `--` escape. The GitHub half has no argv at all: values reach a query parameter, a JSON body, or a typed GraphQL variable, never a command line or a document body. |
 | A hung transport | bound | Every call is time-bounded and runs in a private process group that is killed **on cancellation**, so an `ssh` child cannot outlive a timed-out request. (The kill is deliberately not issued after `Wait`: the leader's pid is reaped by then and could already belong to a stranger's process group.) |
-| Secrets in `/proc` | design | The GitHub token reaches the API as an `Authorization` header from daemon memory — never a child's argv or environment. (The `gh auth token` fallback is the one credential *source* that runs a child; it is reached only when every in-process read failed.) PR bodies and comments travel in a JSON request body — no argv, and no temporary file. |
+| Secrets in `/proc` | design | The GitHub token reaches the API as an `Authorization` header from daemon memory — never a child's argv or environment. (`gh auth token` is a child, but it is how the token is *obtained*, not how it is spent.) PR bodies and comments travel in a JSON request body — no argv, and no temporary file. |
 
 Nothing here ever runs a shell. A configuration probe that cannot be *run* is
 treated as a refusal, not as "nothing configured" — a gate that reads a failed
@@ -477,7 +480,7 @@ Two consequences worth stating plainly:
   for the life of the call. (This is about `git` only. The GitHub half never
   hands its token to a child process — see
   [Where the GitHub token comes from](#where-the-github-token-comes-from) for
-  the one fallback that runs one to *obtain* a token.)
+  the one command it runs to *obtain* one.)
 - **Everything the GitHub half writes is attributed to your GitHub account.** A
   PR the agent opens is a PR you opened.
 
@@ -499,7 +502,7 @@ tclaude proxy github pr create # → audit verb "github.pr.create"
 |---|---|
 | `503 git_proxy_disabled` | An unscoped grant has no legacy `allowed_remotes` policy. Add a `remote` scope to the grant (preferred), or configure the legacy list. |
 | `403` naming a slug | The agent lacks `proxy.git.read` / `proxy.git.push` / `proxy.github.read` / `proxy.github.write`. Grant it, or the agent can retry with `--ask-human`. |
-| `token_missing` | The daemon found no GitHub token anywhere. See [Where the GitHub token comes from](#where-the-github-token-comes-from). |
+| `token_missing` | `gh auth token` could not supply one — gh is not installed, or the account agentd runs as is not logged in. The message carries gh's own words. Run `gh auth login` as that account, or set `github_token_file` to skip gh entirely. |
 | `token_unreadable` | The configured `github_token_file` could not be read, is empty, or contains a control character (usually a stray newline mid-value). A configured file is never silently skipped in favour of another source. |
 | `response_too_large` | A read's answer exceeded 1 MiB. Ask for fewer items with `--limit`. The bound exists because these answers land in an agent's context window and in the idempotency store; it is a refusal rather than a truncation, because half a JSON document is worse than none. |
 | `remote … is not on the operator's allow-list` | Run `tclaude proxy git remotes` to see the resolved `host/owner/repo`, then add a matching pattern. |
@@ -515,7 +518,7 @@ tclaude proxy github pr create # → audit verb "github.pr.create"
 | `could not inspect this repository's configuration` | A config probe failed to run. The proxy refuses rather than assuming the repository is safe; check that `git` works in that directory. |
 | `cannot lock ref … but expected …` after a fetch | The fetch landed its objects, but a remote-tracking ref moved while it was running (usually a second fetch). Nothing was written; run the fetch again. |
 | `too_many_refs` | A fetch will not mirror a `refs/remotes/<remote>/…` or `refs/tags/…` namespace with more than 20,000 refs, because it cannot act on a partial view of one. Local branches are not subject to this. |
-| `tool_missing` | `git` is not installed on the host running agentd. |
+| `tool_missing` | `git` is not installed on the host running agentd. (`gh` has its own diagnosis — see `token_missing`.) |
 | A push hangs then times out | Usually a passphrase-protected key that is not loaded into an ssh-agent. The proxy runs `ssh -o BatchMode=yes`, so it fails rather than prompting — load the key with `ssh-add`, or set `ssh_key`. |
 | `Host key verification failed` | The account agentd runs as has no `known_hosts` entry for the forge, and `BatchMode=yes` cannot prompt to accept one. Run `ssh -T git@github.com` once as that account, or add the host key with `ssh-keyscan`. |
 | `Permission denied (publickey)` | The key agentd offered is not one the forge accepts. **Setting `ssh_key` narrows this**: it adds `-o IdentitiesOnly=yes`, so ssh offers *only* that key — an agent key or a default `~/.ssh/id_*` that would otherwise have worked is not tried. Reproduce exactly what the daemon does with `ssh -v -o BatchMode=yes -o IdentitiesOnly=yes -i <key> -T git@github.com`; a passphrase-protected key with no agent fails this way too. Clearing `ssh_key` falls back to the ambient SSH setup, which is the better posture unless you specifically want one identity. |
