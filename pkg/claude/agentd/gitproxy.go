@@ -47,13 +47,19 @@ import (
 //
 //   - Hooks are disabled outright (core.hooksPath points at a daemon-owned
 //     empty directory). This covers pre-push, post-merge and
-//     reference-transaction, the last of which fires on ref updates during
-//     BOTH fetch and push.
+//     reference-transaction, the last of which fires on ref updates — which is
+//     what makes it the one that matters for the fetch ref import, the only
+//     command this proxy still runs inside the agent's repository.
 //   - Only network-half operations run here — fetch, push, ls-remote. None of
 //     them updates the working tree, so .gitattributes smudge/clean filters
 //     never execute. `tclaude proxy git pull` is deliberately split: the
 //     daemon fetches, and the fast-forward runs in the agent's own process
 //     where it needs no credential. See the CLI side.
+//   - All three of them run their CREDENTIALED command from a daemon-owned
+//     transfer directory rather than from the agent's repository, so the
+//     configuration above is not merely distrusted but out of scope. See
+//     gitProxyXfer, and gitproxy_refs.go for the extra work fetch needs to
+//     leave its results behind.
 //   - The remote URL is validated rather than trusted. `ext::` URLs execute a
 //     command outright and `file:` escapes the allow-list, so the transport
 //     is pinned to https/ssh at the git level AND the parsed URL is
@@ -128,7 +134,39 @@ const (
 	// maxGitProxyRemotes bounds what `git remote` listing we will walk. A repo
 	// with more remotes than this is pathological; we report what we saw.
 	maxGitProxyRemotes = 50
+
+	// maxGitProxyMirrorRefs bounds a ref namespace the fetch MIRRORS between
+	// the transfer directory and the agent's repository. Truncation here is
+	// not survivable — a ref that exists locally but fell off the listing would
+	// be imported as a creation and the transaction would fail with a lock
+	// error naming nothing useful — so the listing asks for one more than this
+	// and refuses when it gets it. 20k refs is far past any working checkout.
+	maxGitProxyMirrorRefs = 20000
+
+	// maxGitProxyHaveRefs bounds the agent's OTHER refs, which are copied into
+	// the transfer directory purely so fetch negotiation can say "I already
+	// have this". Truncating those costs bandwidth and nothing else, so this
+	// one is a plain cap with no refusal attached.
+	maxGitProxyHaveRefs = 2000
+
+	// maxGitProxyRefBytes is the output bound for a ref listing. proxyTail keeps
+	// the TAIL, so an exceeded bound drops the FIRST refs — which is why every
+	// caller treats Truncated as a refusal rather than as a short answer.
+	maxGitProxyRefBytes = 4 * 1024 * 1024
+
+	// gitProxyXferMaxAge is how long an abandoned transfer directory may sit
+	// under the private data tree before the next request removes it. Every
+	// transfer cleans up after itself; this only catches the ones whose daemon
+	// was killed mid-fetch.
+	gitProxyXferMaxAge = 6 * time.Hour
 )
+
+// haveRefNamespace is where the agent's own branches are parked inside the
+// transfer directory. They exist solely as negotiation "have"s, so the
+// credentialed fetch asks the server for what the repository is actually
+// missing. Nothing is ever read back out of this namespace, and no refspec
+// points into it, so `--prune` never considers it.
+const haveRefNamespace = "refs/tclaude-have/"
 
 // gitProxyDisabledCode is the stable machine-readable code returned when an
 // unscoped grant has no legacy operator-global allow-list. A remote-scoped
@@ -239,6 +277,12 @@ type ProxyCommand struct {
 	Dir  string   // working directory; always explicit, never inherited
 	Env  []string // complete environment; NOT the daemon's
 
+	// Stdin is fed to the child, which is how `update-ref --stdin` receives a
+	// whole ref transaction as one atomic unit rather than as one subprocess
+	// per ref. It is daemon-authored in every case: no agent-supplied string
+	// reaches it unvalidated, for the same reason none reaches Args.
+	Stdin string
+
 	// MaxOutputBytes overrides the per-stream tail kept from this command.
 	// Zero means gitProxyMaxOutputBytes, which suits every command whose
 	// output is a diagnosis. A verb whose output IS the payload — a CI log,
@@ -285,6 +329,9 @@ func runProxyCommand(ctx context.Context, spec ProxyCommand) (ProxyResult, error
 	stderr := newProxyTail(maxOutput)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
+	if spec.Stdin != "" {
+		cmd.Stdin = strings.NewReader(spec.Stdin)
+	}
 	configureProxyCommand(cmd)
 
 	// Run, not Start/kill/Wait, and deliberately NO group kill afterwards.
@@ -374,18 +421,58 @@ func (b *proxyTail) Truncated() bool { return b.truncated }
 // to read it again, moments later, and the agent can rewrite that file in
 // between. Pins ride on the argv and are immune, but the keys that matter most
 // here cannot be pinned: `url.*.insteadOf` has no reset form, and a URL-scoped
-// `http.<url>.*` outranks a generic override. Verified on git 2.43 — pushing
-// from the agent's repo with a hostile insteadOf redirects to the attacker's
-// host, and pushing the same objects from a directory like this one does not.
+// `http.<url>.*` outranks a generic override. Verified on git 2.43 for both
+// directions — a push and a fetch run from the agent's repo with a hostile
+// insteadOf go to the attacker's host, and the same operations run from a
+// directory like this one do not (TestRealGit_TransferDirIgnoresAgentInsteadOf,
+// TestRealGit_FetchIsolatesTheCredentialedHalfAndImportsRefs).
 //
-// The agent's objects are reached through `objects/info/alternates` rather than
-// copied, so this costs a directory and no data movement. Nothing in it is
-// agent-writable: it lives under the private data tree.
-type gitProxyXfer struct{ dir string }
+// How it reaches the agent's objects depends on the verb, and the difference is
+// the whole reason fetch took longer to convert than push:
+//
+//   - PUSH and LS-REMOTE only ever READ objects, so the agent's store is
+//     borrowed through `objects/info/alternates`. Nothing is copied and nothing
+//     is written back.
+//   - FETCH has to LEAVE objects behind, and alternates only point one way. So
+//     the transfer directory's object store IS the agent's, named through
+//     GIT_OBJECT_DIRECTORY, and the fetched pack lands exactly where an
+//     ordinary `git fetch` would have put it. Refs are the only thing that
+//     still has to be moved afterwards — see seedRefs / importRefs.
+//
+// Either way nothing in the transfer directory is agent-writable: it lives
+// under the private data tree.
+type gitProxyXfer struct {
+	dir string
+	// objectDir, when set, is the object store git reads AND writes. Empty
+	// means the alternates arrangement above.
+	//
+	// Its value is whatever the agent's repository answers for `rev-parse
+	// --git-path objects`, so an agent that replaces `.git/objects` with a
+	// symlink aims the daemon's pack writes at the target. That is deliberately
+	// left as it is: it is exactly what an in-repo `git fetch` did before this
+	// existed, and what the alternates arrangement already reads through, so
+	// naming the path here grants nothing new. It is also a poor primitive —
+	// git names packs by content hash, the agent's own repository is destroyed
+	// in the process, and nothing is read back. Constraining it to the git
+	// common dir would break the operators who legitimately relocate an object
+	// store, which is a worse trade than this buys.
+	objectDir string
+}
 
-// newGitProxyXfer builds the transfer directory and points it at the agent's
-// object store.
-func newGitProxyXfer(ctx context.Context, s *gitProxySession) (*gitProxyXfer, *proxyFault) {
+// xferObjectMode selects between the two arrangements described on
+// gitProxyXfer.
+type xferObjectMode int
+
+const (
+	// xferBorrowObjects reads the agent's objects and writes none back.
+	xferBorrowObjects xferObjectMode = iota
+	// xferShareObjects writes fetched objects straight into the agent's store.
+	xferShareObjects
+)
+
+// newGitProxyXfer builds the transfer directory and connects it to the agent's
+// object store in the requested direction.
+func newGitProxyXfer(ctx context.Context, s *gitProxySession, mode xferObjectMode) (*gitProxyXfer, *proxyFault) {
 	base := tclcommon.TclaudeDataDir()
 	if base == "" {
 		return nil, faultf(500, "io", "could not determine tclaude private data directory")
@@ -394,6 +481,7 @@ func newGitProxyXfer(ctx context.Context, s *gitProxySession) (*gitProxyXfer, *p
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return nil, faultf(500, "io", "create transfer directory: %v", err)
 	}
+	sweepStaleXferDirs(root)
 	dir, err := os.MkdirTemp(root, "x")
 	if err != nil {
 		return nil, faultf(500, "io", "create transfer directory: %v", err)
@@ -418,6 +506,10 @@ func newGitProxyXfer(ctx context.Context, s *gitProxySession) (*gitProxyXfer, *p
 		x.cleanup()
 		return nil, faultf(500, "io", "could not prepare the transfer directory (git init: %v)", err)
 	}
+	if mode == xferShareObjects {
+		x.objectDir = objects
+		return x, nil
+	}
 	if err := os.WriteFile(filepath.Join(dir, "objects", "info", "alternates"),
 		[]byte(objects+"\n"), 0o600); err != nil {
 		x.cleanup()
@@ -426,23 +518,70 @@ func newGitProxyXfer(ctx context.Context, s *gitProxySession) (*gitProxyXfer, *p
 	return x, nil
 }
 
+// sweepStaleXferDirs removes transfer directories left behind by a daemon that
+// died mid-transfer. Every transfer removes its own on the way out, so anything
+// older than gitProxyXferMaxAge is debris. Best effort by design: a directory
+// that cannot be read or removed is skipped rather than failing the request
+// that happens to be passing through.
+func sweepStaleXferDirs(root string) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-gitProxyXferMaxAge)
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "x") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+		_ = os.RemoveAll(filepath.Join(root, entry.Name()))
+	}
+}
+
 func (x *gitProxyXfer) cleanup() {
 	if x != nil && x.dir != "" {
 		_ = os.RemoveAll(x.dir)
 	}
 }
 
+// env is gitProxyEnv plus the one GIT_* variable the daemon sets deliberately.
+// gitProxyEnv exists to guarantee no INHERITED GIT_* value reaches the child;
+// a daemon-chosen one is the opposite case, and it is what lets a fetch write
+// into the agent's object store without ever reading the agent's config.
+func (x *gitProxyXfer) env() []string {
+	env := gitProxyEnv()
+	if x.objectDir != "" {
+		env = append(env, "GIT_OBJECT_DIRECTORY="+x.objectDir)
+	}
+	return env
+}
+
 // git runs a hardened git command FROM the transfer directory. The agent's
 // repository is never the working directory and never supplies --git-dir, so
 // none of its configuration is read.
 func (x *gitProxyXfer) git(ctx context.Context, s *gitProxySession, args ...string) (ProxyResult, error) {
+	return x.gitWith(ctx, s, gitOpts{}, args...)
+}
+
+func (x *gitProxyXfer) gitWith(ctx context.Context, s *gitProxySession, o gitOpts, args ...string) (ProxyResult, error) {
 	full := append(append([]string(nil), s.pins...), "--git-dir", x.dir)
 	return proxyExec(ctx, ProxyCommand{
 		Tool: "git", Path: s.gitPath,
-		Args: append(full, args...),
-		Dir:  x.dir,
-		Env:  gitProxyEnv(),
+		Args:           append(full, args...),
+		Dir:            x.dir,
+		Env:            x.env(),
+		Stdin:          o.Stdin,
+		MaxOutputBytes: o.MaxOutputBytes,
 	})
+}
+
+func (x *gitProxyXfer) runner(s *gitProxySession) gitRunner {
+	return func(ctx context.Context, o gitOpts, args ...string) (ProxyResult, error) {
+		return x.gitWith(ctx, s, o, args...)
+	}
 }
 
 // gitProxyHooksDir returns a daemon-owned, permanently empty directory to point
@@ -895,16 +1034,38 @@ func (s *gitProxySession) configKeysScoped(ctx context.Context, pattern string) 
 	return scoped, nil
 }
 
+// gitOpts carries the per-call overrides on a hardened git invocation. Both
+// fields exist for the ref transfer: a whole update-ref transaction arrives on
+// stdin, and a ref listing needs a bigger output bound than a diagnosis does.
+type gitOpts struct {
+	Stdin          string
+	MaxOutputBytes int
+}
+
+// gitRunner is "a hardened git invocation, somewhere" — either in the agent's
+// repository or in the transfer directory. The ref helpers below work against
+// both, and which one they are given is exactly what decides whether a command
+// reads agent-controlled configuration.
+type gitRunner func(ctx context.Context, o gitOpts, args ...string) (ProxyResult, error)
+
 // git runs a hardened git command in the agent's repository.
 func (s *gitProxySession) git(ctx context.Context, args ...string) (ProxyResult, error) {
+	return s.gitWith(ctx, gitOpts{}, args...)
+}
+
+func (s *gitProxySession) gitWith(ctx context.Context, o gitOpts, args ...string) (ProxyResult, error) {
 	return proxyExec(ctx, ProxyCommand{
-		Tool: "git",
-		Path: s.gitPath,
-		Args: append(append([]string(nil), s.pins...), args...),
-		Dir:  s.repoRoot,
-		Env:  gitProxyEnv(),
+		Tool:           "git",
+		Path:           s.gitPath,
+		Args:           append(append([]string(nil), s.pins...), args...),
+		Dir:            s.repoRoot,
+		Env:            gitProxyEnv(),
+		Stdin:          o.Stdin,
+		MaxOutputBytes: o.MaxOutputBytes,
 	})
 }
+
+func (s *gitProxySession) runner() gitRunner { return s.gitWith }
 
 // gitProbe runs a local git command and returns its trimmed stdout, treating a
 // non-zero exit as "no answer" rather than an error. Probes are questions about

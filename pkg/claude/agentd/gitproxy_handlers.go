@@ -324,6 +324,11 @@ func handleGitProxyLsRemote(w http.ResponseWriter, r *http.Request) {
 // handleGitProxyFetch serves POST /v1/git/fetch. Fetch never updates the
 // working tree, which is what keeps .gitattributes filter programs out of the
 // daemon's blast radius — see the gitproxy.go header.
+//
+// Like push and ls-remote, the credentialed half runs from a daemon-owned
+// transfer directory against the validated URL. Fetch needs more than they do
+// to get there — its objects and refs have to end up in the agent's repository
+// — and gitproxy_refs.go is that half.
 func handleGitProxyFetch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
@@ -346,26 +351,25 @@ func handleGitProxyFetch(w http.ResponseWriter, r *http.Request) {
 	if !finishProxyPermission(w, r, convID, PermGitRead, resolved.FetchRef.Key(), deferred) {
 		return
 	}
-	args := []string{"fetch", gitProxyUploadPack, "--no-recurse-submodules"}
-	if body.Prune {
-		args = append(args, "--prune")
-	}
-	if body.Tags {
-		args = append(args, "--tags")
-	}
-	args = append(args, "--", resolved.Name)
 	branch := strings.TrimSpace(body.Branch)
 	if branch != "" {
 		if fault := validateBranchName(branch); fault != nil {
 			writeProxyFault(w, fault)
 			return
 		}
-		// An explicit, fully-qualified refspec rather than a bare branch name:
-		// it says exactly what will be written locally, and it cannot be
-		// reinterpreted by the remote's own refspec configuration.
-		args = append(args, fmt.Sprintf("refs/heads/%s:refs/remotes/%s/%s", branch, resolved.Name, branch))
 	}
-	s.runAndRespond(ctx, w, r, resolved, branch, args)
+	args := []string{"fetch", gitProxyUploadPack, "--no-recurse-submodules"}
+	if body.Prune {
+		args = append(args, "--prune")
+	}
+	// The validated URL and daemon-built refspecs, not the remote NAME: a name
+	// means the fetching command has to read remote.<name>.url and
+	// remote.<name>.fetch from the one file this design exists to stop
+	// consulting.
+	args = append(args, "--", resolved.FetchURL)
+	args = append(args, fetchRefspecs(resolved.Name, branch, body.Tags)...)
+
+	s.runFetchAndRespond(ctx, w, r, resolved, branch, args, body.Prune)
 }
 
 // handleGitProxyPush serves POST /v1/git/push — the only route that writes to
@@ -490,44 +494,6 @@ func (s *gitProxySession) currentBranch(ctx context.Context) string {
 	return branch
 }
 
-// runAndRespond executes a network git command under the network timeout,
-// records the safe audit detail, and writes the outcome.
-func (s *gitProxySession) runAndRespond(
-	ctx context.Context, w http.ResponseWriter, r *http.Request,
-	remote resolvedRemote, branch string, args []string,
-) {
-	runCtx, cancel := context.WithTimeout(ctx, gitProxyNetworkTimeout)
-	defer cancel()
-	res, err := s.git(runCtx, args...)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "git_failed", err.Error())
-		return
-	}
-	// Report the destination that was actually dialled. A remote with a
-	// separate remote.<name>.pushurl reaches a different host on push than on
-	// fetch, and both the audit row and the agent's own outcome must name the
-	// one this command contacted.
-	contacted := remote.contacted(len(args) > 0 && args[0] == "push").Key()
-	// Audit detail is a short, privacy-bounded diagnostic (audit.go): the
-	// remote, the ref and the outcome — never output, never a credential.
-	detail := fmt.Sprintf("remote=%s ref=%s", contacted, branch)
-	if branch == "" {
-		detail = "remote=" + contacted
-	}
-	setAuditDetail(r, fmt.Sprintf("%s exit=%d", detail, res.ExitCode))
-	writeJSON(w, http.StatusOK, gitProxyOutcome{
-		Repo:      filepath.Base(s.repoRoot),
-		Remote:    remote.Name,
-		RemoteRef: contacted,
-		Branch:    branch,
-		ExitCode:  res.ExitCode,
-		Stdout:    res.Stdout,
-		Stderr:    res.Stderr,
-		Truncated: res.Truncated,
-		TimedOut:  res.TimedOut,
-	})
-}
-
 // runIsolatedAndRespond executes a CREDENTIALED command from a daemon-owned
 // transfer directory, so the agent's repository configuration is out of scope
 // for the one command that carries the operator's credential. See gitProxyXfer.
@@ -535,7 +501,7 @@ func (s *gitProxySession) runIsolatedAndRespond(
 	ctx context.Context, w http.ResponseWriter, r *http.Request,
 	remote resolvedRemote, branch string, args []string, setUpstream bool,
 ) {
-	xfer, fault := newGitProxyXfer(ctx, s)
+	xfer, fault := newGitProxyXfer(ctx, s, xferBorrowObjects)
 	if fault != nil {
 		writeProxyFault(w, fault)
 		return
@@ -556,8 +522,93 @@ func (s *gitProxySession) runIsolatedAndRespond(
 	if res.ExitCode == 0 && setUpstream {
 		s.setUpstream(ctx, remote.Name, branch)
 	}
-	contacted := remote.contacted(true).Key()
-	setAuditDetail(r, fmt.Sprintf("remote=%s ref=%s exit=%d", contacted, branch, res.ExitCode))
+	s.respondWithOutcome(w, r, remote, remote.contacted(true).Key(), branch, res)
+}
+
+// runFetchAndRespond is the fetch equivalent of runIsolatedAndRespond, with the
+// two extra steps a fetch needs to leave its results in the agent's repository:
+// the transfer directory is seeded with the agent's refs before the credentialed
+// command runs, and the refs it produced are imported afterwards. Objects need
+// no step of their own — they were written straight into the agent's store. See
+// gitproxy_refs.go.
+func (s *gitProxySession) runFetchAndRespond(
+	ctx context.Context, w http.ResponseWriter, r *http.Request,
+	remote resolvedRemote, branch string, args []string, prune bool,
+) {
+	xfer, fault := newGitProxyXfer(ctx, s, xferShareObjects)
+	if fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	defer xfer.cleanup()
+
+	if fault := xfer.seedRefs(ctx, s, remote.Name); fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+
+	runCtx, cancel := context.WithTimeout(ctx, gitProxyNetworkTimeout)
+	defer cancel()
+	res, err := xfer.git(runCtx, s, args...)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "git_failed", err.Error())
+		return
+	}
+	contacted := remote.contacted(false).Key()
+
+	// A fetch that did not complete has nothing to import, and a partial
+	// import would be worse than none: the agent's remote-tracking refs would
+	// claim a state the fetch never reached. Report git's own verdict instead.
+	if res.ExitCode != 0 || res.TimedOut {
+		s.respondWithOutcome(w, r, remote, contacted, branch, res)
+		return
+	}
+
+	imported, fault := xfer.importRefs(ctx, s, remote.Name, prune)
+	if fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	// An import that RAN and failed is git's answer, carried through the same
+	// way a rejected push is: the objects are in place, so re-running the fetch
+	// is the cheap and correct response to whatever it says.
+	res.ExitCode = imported.ExitCode
+	res.Stderr = appendProxyLine(res.Stderr, imported.Stderr)
+	if imported.ExitCode == 0 {
+		res.Stderr = appendProxyLine(res.Stderr, imported.note())
+	}
+	s.respondWithOutcome(w, r, remote, contacted, branch, res)
+}
+
+// appendProxyLine joins two output fragments. Both sides are already bounded by
+// the subprocess tail they came from, so the result is bounded too.
+func appendProxyLine(existing, added string) string {
+	if strings.TrimSpace(added) == "" {
+		return existing
+	}
+	if strings.TrimSpace(existing) == "" {
+		return added
+	}
+	return strings.TrimRight(existing, "\n") + "\n" + added
+}
+
+// respondWithOutcome records the safe audit detail and writes the response.
+//
+// contacted is passed in rather than derived, because it is not always the
+// fetch URL: a remote with its own remote.<name>.pushurl reaches a different
+// host on push, and both the audit row and the agent's outcome must name the
+// one this command actually dialled.
+func (s *gitProxySession) respondWithOutcome(
+	w http.ResponseWriter, r *http.Request,
+	remote resolvedRemote, contacted, branch string, res ProxyResult,
+) {
+	// Audit detail is a short, privacy-bounded diagnostic (audit.go): the
+	// remote, the ref and the outcome — never output, never a credential.
+	detail := fmt.Sprintf("remote=%s ref=%s", contacted, branch)
+	if branch == "" {
+		detail = "remote=" + contacted
+	}
+	setAuditDetail(r, fmt.Sprintf("%s exit=%d", detail, res.ExitCode))
 	writeJSON(w, http.StatusOK, gitProxyOutcome{
 		Repo:      filepath.Base(s.repoRoot),
 		Remote:    remote.Name,

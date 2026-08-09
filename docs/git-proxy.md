@@ -376,37 +376,55 @@ Nothing here ever runs a shell. A configuration probe that cannot be *run* is
 treated as a refusal, not as "nothing configured" — a gate that reads a failed
 check as clean is worse than no gate.
 
-### What runs where, and what is still checked rather than enforced
+### What runs where
 
-The **credentialed** commands — `push` and `ls-remote` — run from a
-**daemon-owned transfer directory**, not from the agent's repository. It is a
-bare git dir under the private data tree that borrows the agent's objects
-through `objects/info/alternates`, so nothing is copied and the agent's
-`.git/config` is not in scope for the one command that carries the operator's
-credential. The destination is the validated URL, spelled out, and push sends a
-resolved SHA — no remote name and no branch name for git to look up.
+**Every credentialed command runs from a daemon-owned transfer directory**, not
+from the agent's repository. It is a bare git dir under the private data tree,
+created and configured only by the daemon, and it is removed when the request
+ends. The destination is always the validated URL, spelled out: push sends a
+resolved SHA, fetch carries refspecs the daemon wrote, and neither has a remote
+name for git to look up.
 
-That is what closes the check/use race for those two verbs. Every refusal gate
-reads the agent's `.git/config` in its own short-lived process; the credentialed
-command used to read it again moments later, and the agent can rewrite the file
-in between. Pins ride on the argv and were always immune, but the keys that
-matter most here cannot be pinned: `url.*.insteadOf` has no reset form, and a
-URL-scoped `http.<url>.*` outranks a generic override.
+That is what closes the **check/use race**. Every refusal gate reads the agent's
+`.git/config` in its own short-lived process; the credentialed command used to
+read it again moments later, and the agent can rewrite the file in between. Pins
+ride on the argv and were always immune, but the keys that matter most here
+cannot be pinned: `url.*.insteadOf` has no reset form, and a URL-scoped
+`http.<url>.*` outranks a generic override. Running somewhere the agent cannot
+write is what removes the second read altogether.
 
-**`fetch` is not yet converted.** It still runs in the agent's repository,
-because the objects have to land *there* and alternates only point the other
-way — closing it means fetching into the transfer directory and then moving the
-new pack across, which is a larger change than this one. Until then a fetch
-remains racy in the same way push used to be: an agent rewriting `.git/config`
-in the window can redirect it, and the credential is offered to whatever host it
-lands on. `git.read` gates the ability to try.
+**Remote-scoped permissions are therefore exact for every verb.** `push`,
+`ls-remote`, `fetch` and the GitHub operations all authorize the resolved
+destination they subsequently contact, so a `remote` scope on `git.read` or
+`git.push` is a hard boundary rather than a check that could be raced.
 
-Remote-scoped permissions inherit that distinction. `push`, `ls-remote`, and
-GitHub operations authorize the explicit resolved destination they later use,
-so their scope check is exact. `fetch` evaluates its `remote` scope against the
-normalized destination resolved before the command, but the existing config
-rewrite race remains; a scoped `git.read` grant is therefore best-effort for
-fetch, not a hard remote boundary. Full fetch isolation is tracked separately.
+Fetch takes two extra steps to get there, because unlike push it has to *leave*
+results in the agent's repository:
+
+| | How |
+|---|---|
+| Objects | The transfer directory's object store **is** the agent's, named through `GIT_OBJECT_DIRECTORY`, so the fetched pack lands exactly where an ordinary `git fetch` would have put it. Nothing is copied afterwards, and there is no quarantine to garbage-collect. |
+| Refs | The agent's remote-tracking refs and tags are copied into the transfer directory **before** the fetch, and mirrored back **after** it in one atomic `update-ref` transaction. That import is the only command touching agent-writable state, and it holds nothing worth stealing: no credential, no network. |
+
+Seeding the refs first is not an optimisation. It gives the fetch its
+negotiation "have"s (without them the server resends the whole history every
+time), it makes the summary report real deltas instead of `[new branch]` for
+everything, it is what lets `--prune` decide what went stale, and it puts the
+tags the agent already has in front of git's refuse-to-clobber check.
+
+Two consequences worth knowing:
+
+- **The repository's own `remote.<name>.fetch` refspec is ignored.** A fetch
+  always retrieves `+refs/heads/*:refs/remotes/<name>/*` (or the one branch you
+  named), plus `refs/tags/*:refs/tags/*` with `--tags`. That key is
+  agent-writable and is not one of the ones the gates inspect, and a value like
+  `+refs/*:refs/*` would have a fetch overwrite the agent's own branches.
+- **`FETCH_HEAD` is not written** in your repository, because the fetch did not
+  run there. Use the remote-tracking ref — `refs/remotes/<remote>/<branch>` —
+  which is what `tclaude proxy git pull` already does.
+
+Tags follow git's ordinary rules: a new tag is imported, an existing one is
+never overwritten or pruned.
 
 ## What this is not
 
