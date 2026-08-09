@@ -93,12 +93,13 @@ type spawnProfileJSON struct {
 	// JSON-RPC API). Unset resolves to send-keys at spawn. A value on a
 	// non-Copilot profile is a 400 (buildProfileFromJSON gates it on the
 	// profile's harness).
-	CopilotAPI    *bool `json:"copilot_api,omitempty"`
-	FastMode      *bool `json:"fast_mode,omitempty"`
-	AutoReview    *bool `json:"auto_review,omitempty"`
-	TrustDir      *bool `json:"trust_dir,omitempty"`
-	AutoMemory    *bool `json:"auto_memory,omitempty"`
-	SSHWorkaround *bool `json:"ssh_workaround,omitempty"`
+	CopilotAPI     *bool `json:"copilot_api,omitempty"`
+	CodexAppServer *bool `json:"codex_app_server,omitempty"`
+	FastMode       *bool `json:"fast_mode,omitempty"`
+	AutoReview     *bool `json:"auto_review,omitempty"`
+	TrustDir       *bool `json:"trust_dir,omitempty"`
+	AutoMemory     *bool `json:"auto_memory,omitempty"`
+	SSHWorkaround  *bool `json:"ssh_workaround,omitempty"`
 	// RemoteControl is the profile's "start with Claude Code Remote Access on"
 	// default — tri-state (null = unset, false = off, true = on). A group's
 	// remote-control policy overrides it at spawn (JOH-262).
@@ -155,6 +156,7 @@ func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 		AutoCompactWindow:          p.AutoCompactWindow,
 		ContextWindowMax:           p.ContextWindowMax,
 		CopilotAPI:                 p.CopilotAPI,
+		CodexAppServer:             p.CodexAppServer,
 		FastMode:                   p.FastMode,
 		AutoReview:                 p.AutoReview,
 		TrustDir:                   p.TrustDir,
@@ -325,6 +327,11 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 			return nil, &spawnFailure{http.StatusBadRequest, "invalid_copilot_api", err.Error()}
 		}
 	}
+	if body.CodexAppServer != nil {
+		if _, err := harness.ResolveCodexAppServer(h, body.CodexAppServer); err != nil {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_codex_app_server", err.Error()}
+		}
+	}
 	if body.FastMode != nil {
 		if _, err := harness.ResolveFastMode(h, body.FastMode); err != nil {
 			return nil, &spawnFailure{http.StatusBadRequest, "invalid_fast_mode", err.Error()}
@@ -435,6 +442,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		AutoCompactWindow:          autoCompactWindow,
 		ContextWindowMax:           contextWindowMax,
 		CopilotAPI:                 body.CopilotAPI,
+		CodexAppServer:             body.CodexAppServer,
 		FastMode:                   body.FastMode,
 		AutoReview:                 body.AutoReview,
 		TrustDir:                   body.TrustDir,

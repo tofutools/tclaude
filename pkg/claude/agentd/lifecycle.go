@@ -1848,6 +1848,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 	}
 	if err := SpawnDetachedTclaudeResume(clcommon.SpawnArgs{
 		EffectiveSandbox:           effectiveSandbox,
+		AgentID:                    persistedAgentID,
 		ConvID:                     convID,
 		Cwd:                        cwd,
 		CwdWriteProof:              pinToken,
@@ -1871,10 +1872,33 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		AutoCompactWindow:          launchConfig.AutoCompactWindow,
 		ContextWindowMax:           launchConfig.ContextWindowMax,
 		CopilotAPI:                 launchConfig.CopilotAPI,
+		CodexAppServer:             launchConfig.CodexAppServer,
 		FastMode:                   launchConfig.FastMode,
 	}); err != nil {
 		res.Action = "error"
 		res.Detail = "spawn: " + err.Error()
+		if !launchConfig.TemporaryHarnessBuiltinMode && resumePolicy != nil && resumePolicy.Previous != nil && effectiveSandbox != nil {
+			if _, cleanupErr := removeSupersededMaterializedAgentDirectories(*effectiveSandbox, *resumePolicy.Previous); cleanupErr != nil {
+				res.Detail += "; remove unused agent-owned directories: " + cleanupErr.Error()
+			}
+		}
+		if persistedAgentID != "" {
+			var previous *sandboxpolicy.Snapshot
+			if resumePolicy != nil {
+				previous = resumePolicy.Previous
+			}
+			if restoreErr := db.SetAgentEffectiveSandboxConfig(persistedAgentID, previous); restoreErr != nil {
+				res.Detail += "; restore previous sandbox snapshot: " + restoreErr.Error()
+			}
+		}
+	} else if launchConfig.CodexAppServer && !awaitCodexAppServerReady(convID) {
+		failedTmux := ""
+		if failedSession := pickAliveSession(convID); failedSession != nil {
+			failedTmux = failedSession.TmuxSession
+		}
+		stopFailedCodexAppServerLaunch(convID, "", failedTmux)
+		res.Action = "error"
+		res.Detail = "the explicitly selected Codex app-server did not become ready; the failed resumed pane was stopped"
 		if !launchConfig.TemporaryHarnessBuiltinMode && resumePolicy != nil && resumePolicy.Previous != nil && effectiveSandbox != nil {
 			if _, cleanupErr := removeSupersededMaterializedAgentDirectories(*effectiveSandbox, *resumePolicy.Previous); cleanupErr != nil {
 				res.Detail += "; remove unused agent-owned directories: " + cleanupErr.Error()
@@ -3755,6 +3779,17 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return
 	}
+	var codexAppServer, codexAppServerSet bool
+	var codexAppServerNote, codexAppServerSource string
+	codexAppServer, codexAppServerSet, codexAppServerSource, codexAppServerNote, fieldFail = resolveBoolLaunchField(
+		"codex_app_server", body.CodexAppServer != nil && *body.CodexAppServer,
+		body.CodexAppServer != nil, h.Name, profileTiers,
+		func(p *db.SpawnProfile) *bool { return p.CodexAppServer },
+		func(v bool) (bool, error) { return harness.ResolveCodexAppServer(h, &v) })
+	if fieldFail != nil {
+		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+		return
+	}
 	// Group-context inclusion rides the same tier stack, minus the harness gate:
 	// it decides what the new agent is TOLD, not how its harness runs, so a
 	// profile authored for another vendor still speaks (harnessAgnosticLaunchField).
@@ -3971,6 +4006,10 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if copilotAPI {
 		copilotAPIValue = "api"
 	}
+	codexAppServerValue := ""
+	if codexAppServer {
+		codexAppServerValue = "app-server"
+	}
 	fastModeValue := ""
 	if fastModeSet {
 		fastModeValue = harness.FastModeOff
@@ -3987,8 +4026,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		},
 		// Named for what it selects, not for the flag that selects it: "api" reads
 		// correctly whether or not send-keys is still the other option.
-		CopilotAPI: agent.ResolvedField{Value: copilotAPIValue, Source: copilotAPISource},
-		FastMode:   agent.ResolvedField{Value: fastModeValue, Source: fastModeSource},
+		CopilotAPI:     agent.ResolvedField{Value: copilotAPIValue, Source: copilotAPISource},
+		CodexAppServer: agent.ResolvedField{Value: codexAppServerValue, Source: codexAppServerSource},
+		FastMode:       agent.ResolvedField{Value: fastModeValue, Source: fastModeSource},
 	}
 	resolvedLaunch.SandboxImpl = agent.ResolvedField{
 		Value: body.SandboxImplementation, Source: sandboxImplSource, Note: sandboxImplNote}
@@ -4000,7 +4040,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if body.SandboxImplementation == "" && sandboxImplNote != "" {
 		resolvedLaunch.Notes = append(resolvedLaunch.Notes, sandboxImplNote)
 	}
-	for _, note := range append([]string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, contextWindowMaxNote, copilotAPINote, fastModeNote, autoReviewNote, trustDirNote, autoMemoryNote, sshWorkaroundNote, contextFeaturesNote, profileContextNote, includeGroupContextNote}, identityNotes...) {
+	for _, note := range append([]string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, contextWindowMaxNote, copilotAPINote, codexAppServerNote, fastModeNote, autoReviewNote, trustDirNote, autoMemoryNote, sshWorkaroundNote, contextFeaturesNote, profileContextNote, includeGroupContextNote}, identityNotes...) {
 		if note != "" {
 			resolvedLaunch.Notes = append(resolvedLaunch.Notes, note)
 		}
@@ -4492,6 +4532,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		CopilotAPI:                  copilotAPI,
 		CopilotAPISet:               copilotAPISet,
 		CopilotAPISource:            copilotAPISource,
+		CodexAppServer:              codexAppServer,
+		CodexAppServerSet:           codexAppServerSet,
+		CodexAppServerSource:        codexAppServerSource,
 		FastMode:                    fastMode,
 		FastModeSet:                 fastModeSet,
 		ReplyToConv:                 replyToConv,
@@ -4561,6 +4604,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		&resolvedLaunch.Effort:           launched.Effort,
 		&resolvedLaunch.ContextWindowMax: launched.ContextWindowMax,
 		&resolvedLaunch.CopilotAPI:       launched.CopilotAPI,
+		&resolvedLaunch.CodexAppServer:   launched.CodexAppServer,
 		&resolvedLaunch.FastMode:         launched.FastMode,
 		&resolvedLaunch.SandboxImpl:      launched.SandboxImpl,
 	} {
@@ -4826,8 +4870,11 @@ type spawnParams struct {
 	// is frozen they answer "does this value survive the overlay", not "did an
 	// operator decide it". A from-group snapshot asks the second question and
 	// used to read the first (TCL-1090).
-	CopilotAPISource    string
-	SSHWorkaroundSource string
+	CopilotAPISource     string
+	CodexAppServer       bool
+	CodexAppServerSet    bool
+	CodexAppServerSource string
+	SSHWorkaroundSource  string
 	// HarnessSource / ModelSource / EffortSource / ContextWindowMaxSource /
 	// FastModeSource / SandboxImplementationSource complete the set of
 	// attributions the resolved-launch echo renders, alongside CopilotAPISource
@@ -5050,6 +5097,10 @@ func resolveLaunchProvenance(p spawnParams) *agent.ResolvedLaunch {
 	if p.CopilotAPI {
 		copilotAPI = "api"
 	}
+	codexAppServer := ""
+	if p.CodexAppServer {
+		codexAppServer = "app-server"
+	}
 	fastMode := ""
 	if p.FastModeSet {
 		fastMode = harness.FastModeOff
@@ -5066,6 +5117,7 @@ func resolveLaunchProvenance(p spawnParams) *agent.ResolvedLaunch {
 		Effort:           agent.ResolvedField{Value: p.Effort, Source: p.EffortSource},
 		ContextWindowMax: agent.ResolvedField{Value: contextWindowMax, Source: p.ContextWindowMaxSource},
 		CopilotAPI:       agent.ResolvedField{Value: copilotAPI, Source: p.CopilotAPISource},
+		CodexAppServer:   agent.ResolvedField{Value: codexAppServer, Source: p.CodexAppServerSource},
 		FastMode:         agent.ResolvedField{Value: fastMode, Source: p.FastModeSource},
 		SandboxImpl: agent.ResolvedField{
 			Value: p.SandboxImplementation, Source: p.SandboxImplementationSource},
@@ -5852,6 +5904,16 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	}
 	noteLaunch()
 	p.CopilotAPISource = preferResolvedSource(p.CopilotAPISource, copilotAPISource)
+	var codexAppServerSource string
+	p.CodexAppServer, p.CodexAppServerSet, codexAppServerSource, fieldNote, fail = resolveBoolLaunchField(
+		"codex_app_server", p.CodexAppServer, p.CodexAppServerSet || p.CodexAppServer,
+		h.Name, tiers, func(prof *db.SpawnProfile) *bool { return prof.CodexAppServer },
+		func(v bool) (bool, error) { return harness.ResolveCodexAppServer(h, &v) })
+	if fail != nil {
+		return fail
+	}
+	noteLaunch()
+	p.CodexAppServerSource = preferResolvedSource(p.CodexAppServerSource, codexAppServerSource)
 	p.FastMode, p.FastModeSet, fieldSource, fieldNote, fail = resolveBoolLaunchField("fast_mode", p.FastMode,
 		p.FastModeSet, h.Name, tiers, func(prof *db.SpawnProfile) *bool { return prof.FastMode },
 		func(v bool) (bool, error) {
@@ -6260,10 +6322,14 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		p.EffectiveSandbox = &materialized
 		agentDirectoryCleanup = cleanup
 	}
+	if p.CodexAppServer && p.AgentID == "" {
+		p.AgentID = db.NewAgentID()
+	}
 
 	spawnArgs := clcommon.SpawnArgs{
 		EffectiveSandbox:           p.EffectiveSandbox,
 		Label:                      label,
+		AgentID:                    p.AgentID,
 		Cwd:                        p.Cwd,
 		CwdWriteProof:              p.CwdWriteProofToken,
 		CodexGitCommonDir:          p.CodexGitCommonDir,
@@ -6290,6 +6356,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		AutoCompactWindow:          p.AutoCompactWindow,
 		ContextWindowMax:           p.ContextWindowMax,
 		CopilotAPI:                 p.CopilotAPI,
+		CodexAppServer:             p.CodexAppServer,
 		FastMode:                   fastModeLaunchValue(p.FastMode, p.FastModeSet),
 	}
 	routeHelperConvID := ""
@@ -6585,7 +6652,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			}
 			return nil, &spawnFailure{http.StatusInternalServerError, "spawn", "ungrouped asynchronous spawn is not supported"}
 		}
-		p.AgentID = db.NewAgentID()
+		if p.AgentID == "" {
+			p.AgentID = db.NewAgentID()
+		}
 		if err := db.InsertPendingSpawn(pendingSpawnFromParams(g, p, label)); err != nil {
 			if openCodeLaunch != nil {
 				_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
@@ -6864,6 +6933,11 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// Conv-id resolved within the poll: finish enrollment inline (Codex, or CC
 	// with the legacy-injection revert flag) and inject the rename + welcome.
 	if convID != "" {
+		if p.CodexAppServer && !awaitCodexAppServerLaunchReady(convID, label) {
+			stopFailedCodexAppServerLaunch(convID, label, label)
+			return nil, &spawnFailure{http.StatusServiceUnavailable, "codex_app_server_unavailable",
+				"Codex app-server was explicitly selected but the verified control handle did not become ready"}
+		}
 		if pendingHeld {
 			claimed, err := db.ClaimPendingSpawnAndBindAgent(label, convID, p.AgentID, "spawn")
 			if err != nil {
@@ -8333,12 +8407,18 @@ func reserveUniqueSpawnPrivateAttachmentRootWith(
 // setup; production keeps the LiveSpawner default. See clcommon.SpawnArgs
 // for the per-field semantics.
 func SpawnDetachedTclaudeNew(args clcommon.SpawnArgs) error {
+	if err := prepareCodexAppServerRuntime(&args); err != nil {
+		return err
+	}
 	if err := prepareCopilotAPIPort(&args); err != nil {
+		failPreparedCodexAppServerRuntime(args, err)
 		return err
 	}
 	if err := Spawn.SpawnNew(args); err != nil {
+		failPreparedCodexAppServerRuntime(args, err)
 		return err
 	}
+	startCodexAppServerBootstrap(args)
 	// SessionID is the PRESET conv id, and is empty on a launch that lets the
 	// harness mint one. Those callers complete the launch themselves once their
 	// discovery poll resolves the id; doing nothing here is correct rather than a
@@ -8383,12 +8463,18 @@ func SpawnDetachedTclaudeResume(args clcommon.SpawnArgs) error {
 // caller knows and the callee cannot recover, and a caller passing the wrong one
 // by inheritance is the same bug one level up.
 func spawnDetachedTclaudeResumeAs(args clcommon.SpawnArgs, kind copilotAPILaunchKind) error {
+	if err := prepareCodexAppServerRuntime(&args); err != nil {
+		return err
+	}
 	if err := prepareCopilotAPIPort(&args); err != nil {
+		failPreparedCodexAppServerRuntime(args, err)
 		return err
 	}
 	if err := Spawn.SpawnResume(args); err != nil {
+		failPreparedCodexAppServerRuntime(args, err)
 		return err
 	}
+	startCodexAppServerBootstrap(args)
 	// A resume always knows its conversation — that is what it is resuming — so
 	// unlike the fresh-spawn path this never defers the record.
 	//
@@ -8486,6 +8572,7 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	args = appendAutoCompactWindowFlag(args, a.AutoCompactWindow)
 	args = appendContextWindowMaxFlag(args, a.ContextWindowMax)
 	args = appendCopilotAPIFlag(args, a.CopilotAPI)
+	args = appendCodexAppServerArgs(args, a)
 	args = appendFastModeFlag(args, a.FastMode)
 	args = appendCopilotAPIPortFlag(args, a.CopilotAPIPort)
 	args = appendInitialPromptArg(args, a)
@@ -8503,6 +8590,19 @@ func appendCopilotAPIFlag(args []string, copilotAPI bool) []string {
 		args = append(args, "--copilot-api")
 	}
 	return args
+}
+
+func appendCodexAppServerArgs(args []string, a clcommon.SpawnArgs) []string {
+	if !a.CodexAppServer {
+		return args
+	}
+	return append(args,
+		"--codex-app-server",
+		"--codex-app-server-generation", a.CodexAppServerGeneration,
+		"--codex-app-server-socket", a.CodexAppServerSocket,
+		"--codex-app-server-pid-file", a.CodexAppServerPIDFile,
+		"--codex-app-server-log-file", a.CodexAppServerLogFile,
+	)
 }
 
 func fastModeLaunchValue(value, set bool) string {
@@ -8719,6 +8819,7 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	// Preserve the SOURCE conv's drive across the relaunch: an agent deliberately
 	// spawned onto the API must not come back on send-keys (or vice versa).
 	args = appendCopilotAPIFlag(args, a.CopilotAPI)
+	args = appendCodexAppServerArgs(args, a)
 	args = appendFastModeFlag(args, a.FastMode)
 	args = appendCopilotAPIPortFlag(args, a.CopilotAPIPort)
 	return args

@@ -59,7 +59,8 @@ policy rather than overrides for a directly attached human session.
 recorded, not the way a fresh session would start. Every launch parameter tclaude
 records — `--sandbox`, `--ask-for-approval`, `--auto-review`, `--tools`,
 `--ask-user-question-timeout`, `--remote-control`, `--auto-memory`,
-`--context-features`, `--auto-compact-window` — is carried over unless you pass
+`--context-features`, `--auto-compact-window`, `--copilot-api`,
+`--codex-app-server` — is carried over unless you pass
 that flag yourself. Passing it wins, including when you pass the value that is
 also the default (`--auto-memory=false` keeps memory off even if the recorded
 posture had it on).

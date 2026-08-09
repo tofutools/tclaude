@@ -1359,8 +1359,9 @@ type dashboardHarness struct {
 	CanContextWindowMax bool `json:"can_context_window_max"`
 	// CanCopilotAPI is the Copilot-only API-backed-drive opt-in. The spawn
 	// dialog and profile editor gate their checkbox on it.
-	CanCopilotAPI bool `json:"can_copilot_api"`
-	CanFastMode   bool `json:"can_fast_mode"`
+	CanCopilotAPI     bool `json:"can_copilot_api"`
+	CanCodexAppServer bool `json:"can_codex_app_server"`
+	CanFastMode       bool `json:"can_fast_mode"`
 	// CanTclaudeLayer reports whether the EXPERIMENTAL tclaude-layer sandbox
 	// implementation can confine this harness's authoritative tool executor.
 	// Read through the capability path (session.ValidateTclaudeLayerHarness),
@@ -1438,6 +1439,7 @@ func buildHarnessCatalog() []dashboardHarness {
 			CanAutoCompactWindow:       h.CanAutoCompactWindow(),
 			CanContextWindowMax:        h.Name == harness.CopilotName,
 			CanCopilotAPI:              h.CanCopilotAPI(),
+			CanCodexAppServer:          h.CanCodexAppServer(),
 			CanFastMode:                h.CanFastMode(),
 			CanTclaudeLayer:            session.ValidateTclaudeLayerHarness(h.Name) == nil,
 			CanStacked:                 h.SupportsNestedSandbox(),
@@ -2035,6 +2037,11 @@ type agentState struct {
 	// it says nothing about whether anything is listening, nor whose. See
 	// TCL-1054's carry-in note.
 	CopilotAPIConnected bool `json:"copilot_api_connected,omitempty"`
+	// CodexAppServer and its state disclose the explicitly selected private
+	// app-server drive independently from the default send-keys path.
+	CodexAppServer        bool   `json:"codex_app_server,omitempty"`
+	CodexAppServerState   string `json:"codex_app_server_state,omitempty"`
+	CodexAppServerVersion string `json:"codex_app_server_version,omitempty"`
 	// CopilotAPIChannelFailed reports that this agent's CURRENT launch has been
 	// OBSERVED not to be getting an API channel — so its mail is being held and
 	// will go on being held until somebody relaunches it.
@@ -2533,6 +2540,13 @@ func stateForConvInSessionsBatched(
 						out.ContextWindowSource = "assumed"
 					}
 				}
+			}
+		}
+		if pick.Harness == harness.CodexName {
+			if runtime, runtimeErr := db.GetCodexAppServerRuntimeByConvID(pick.ConvID); runtimeErr == nil && runtime != nil {
+				out.CodexAppServer = true
+				out.CodexAppServerState = runtime.State
+				out.CodexAppServerVersion = runtime.CodexVersion
 			}
 		}
 		out.Model = snap.Model

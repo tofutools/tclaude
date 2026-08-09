@@ -217,6 +217,30 @@ Legend: ✅ supported · ⚙️ available, opt-in / configured elsewhere · ⚠�
 `copilot` is deliberately absent from the matrix above: its first wave
 implements only a few of these rows. See below.
 
+### Codex drive: send-keys vs app-server
+
+Codex agents use the established pane/send-keys path by default. An
+experimental opt-in instead starts one private `codex app-server` for the
+agent generation and attaches the normal Codex TUI to its Unix socket with
+`--remote`. Select it with `tclaude agent spawn --codex-app-server`, the
+tri-state `codex_app_server` spawn-profile field, or the Codex drive control in
+the dashboard. The selection follows the normal profile precedence chain and
+is frozen for resume, reincarnate, and clone; explicit `false` keeps send-keys
+available for A/B testing.
+
+This runtime milestone requires Codex CLI 0.147.x. The TUI's positional prompt
+remains the sole writer of the birth turn. Agentd waits for exactly one loaded
+thread, verifies it with `thread/read`, and binds without replaying the prompt.
+Each generation owns a private 0600 socket and server process, and publishes a
+`warming`, `ready`, `unavailable`, or `dead` state in the dashboard. An
+explicitly selected app-server launch fails closed on an incompatible binary,
+an unsafe or unavailable socket, an ambiguous thread, or a failed control
+connection; it never silently switches that launch back to send-keys.
+
+The stable control handle established here is the prerequisite for moving
+message, rename, and compaction operations to typed RPC calls. Until those
+operations are enabled, their existing lifecycle behavior is unchanged.
+
 ### Group-route activation matrix
 
 Group routes are a tclaude platform capability shared by harnesses; the harness

@@ -137,6 +137,9 @@ var launchCarryoverExcused = map[string]string{
 	"CopilotAPISource": "not a launch parameter of its own — it is the attribution for " +
 		"CopilotAPI, carried by that field's own record, so a separate entry here would " +
 		"be a second, desynchronizable copy of the same decision",
+	"CodexAppServerSource": "not a launch parameter of its own — it is the attribution for " +
+		"CodexAppServer, carried by that field's own record, so a separate entry here would " +
+		"be a second, desynchronizable copy of the same decision",
 	"SSHWorkaroundSource": "not a launch parameter of its own — it is the attribution for " +
 		"SSHWorkaround, which is itself excused above",
 }
@@ -386,6 +389,22 @@ var launchCarryoverFields = []launchCarryoverField{
 		},
 	},
 	{
+		flag:     "codex-app-server",
+		recorded: "CodexAppServer",
+		supplied: func(p *NewParams) bool { return p.CodexAppServer },
+		carry: func(h *harness.Harness, rec *db.AgentRelaunchProfile, p *NewParams) (any, carryOutcome) {
+			if rec.CodexAppServer == nil {
+				return nil, carryUnrecorded
+			}
+			selected, err := harness.ResolveCodexAppServer(h, rec.CodexAppServer)
+			if err != nil {
+				return nil, carryDropped
+			}
+			p.CodexAppServer = selected
+			return selected, carryApplied
+		},
+	},
+	{
 		flag:           "fast-mode",
 		recorded:       "FastMode",
 		zeroMeaningful: true,
@@ -545,6 +564,7 @@ type LaunchPosture struct {
 
 	ContextWindowMax *int64
 	CopilotAPI       *bool
+	CodexAppServer   *bool
 }
 
 // RecordLaunchPosture persists the launch postures SaveSession's UPSERT
@@ -608,6 +628,12 @@ func RecordLaunchPosture(sessionID string, h *harness.Harness, posture LaunchPos
 		if err := db.SetSessionCopilotAPI(sessionID, *posture.CopilotAPI); err != nil {
 			slog.Warn("failed to record session Copilot API mode",
 				"session_id", sessionID, "copilot_api", *posture.CopilotAPI, "error", err)
+		}
+	}
+	if h.SupportsCodexAppServer() && posture.CodexAppServer != nil {
+		if err := db.SetSessionCodexAppServer(sessionID, *posture.CodexAppServer); err != nil {
+			slog.Warn("failed to record session Codex app-server mode",
+				"session_id", sessionID, "codex_app_server", *posture.CodexAppServer, "error", err)
 		}
 	}
 	if h.CanFastMode() {

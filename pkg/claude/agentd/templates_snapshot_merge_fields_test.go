@@ -85,6 +85,7 @@ var snapshotMergeTracedBase = map[string]db.SpawnProfile{
 	// carry-forward against a member that is still Copilot.
 	"ContextWindowMax": {Harness: harness.CopilotName},
 	"CopilotAPI":       {Harness: harness.CopilotName},
+	"CodexAppServer":   {Harness: harness.CodexName},
 	// Codex-only toggles. Without a Codex base these would be judged against
 	// Claude, refused, and fall through to the disclosure escape below — which
 	// passes, but proves much less than checking them where they are legal.

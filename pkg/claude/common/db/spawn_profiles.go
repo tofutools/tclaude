@@ -81,6 +81,9 @@ type SpawnProfile struct {
 	// path every Copilot agent took before this field existed. Copilot-only,
 	// validated against the profile's harness through harness.ResolveCopilotAPI.
 	CopilotAPI *bool
+	// CodexAppServer chooses the private app-server drive for Codex. nil is
+	// unset and resolves to the legacy send-keys path; false pins send-keys.
+	CodexAppServer *bool
 	// FastMode is Codex's service tier: nil inherits config.toml, true forces
 	// fast, and false forces the standard tier.
 	FastMode *bool
@@ -187,15 +190,15 @@ func CreateSpawnProfile(p *SpawnProfile) (int64, error) {
 	res, err := tx.Exec(
 		`INSERT INTO spawn_profiles
 		   (name, disabled, disabled_reason, operator_only, harness, model, effort, sandbox, sandbox_implementation, approval, tools, ask_user_question_timeout,
-		    auto_compact_window, context_window_max, copilot_api, fast_mode,
+		    auto_compact_window, context_window_max, copilot_api, codex_app_server, fast_mode,
 		    auto_review, trust_dir,
 		    agent_name, role, descr, initial_message, startup_context,
 		    sync_worktree, auto_focus, include_group_default_context, remote_control, auto_memory, ssh_workaround,
 		    is_owner, permission_overrides, context_features,
 		    created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.Name, p.Disabled, p.DisabledReason, p.OperatorOnly, p.Harness, p.Model, p.Effort, p.Sandbox, p.SandboxImplementation, p.Approval, p.ToolGovernance, p.AskUserQuestionTimeout,
-		p.AutoCompactWindow, p.ContextWindowMax, boolPtrToNull(p.CopilotAPI), boolPtrToNull(p.FastMode),
+		p.AutoCompactWindow, p.ContextWindowMax, boolPtrToNull(p.CopilotAPI), boolPtrToNull(p.CodexAppServer), boolPtrToNull(p.FastMode),
 		boolPtrToNull(p.AutoReview), boolPtrToNull(p.TrustDir),
 		p.AgentName, p.Role, p.Descr, p.InitialMessage, p.StartupContext,
 		boolPtrToNull(p.SyncWorktree), boolPtrToNull(p.AutoFocus),
@@ -247,7 +250,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		`UPDATE spawn_profiles SET
 		   name = ?, disabled = ?, disabled_reason = ?, operator_only = ?, harness = ?, model = ?, effort = ?, sandbox = ?,
 		   sandbox_implementation = ?, approval = ?, tools = ?,
-		   ask_user_question_timeout = ?, auto_compact_window = ?, context_window_max = ?, copilot_api = ?, fast_mode = ?,
+		   ask_user_question_timeout = ?, auto_compact_window = ?, context_window_max = ?, copilot_api = ?, codex_app_server = ?, fast_mode = ?,
 		   auto_review = ?, trust_dir = ?,
 		   agent_name = ?, role = ?, descr = ?, initial_message = ?, startup_context = ?,
 		   sync_worktree = ?, auto_focus = ?, include_group_default_context = ?, remote_control = ?,
@@ -257,7 +260,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		 WHERE id = ?`,
 		p.Name, p.Disabled, p.DisabledReason, p.OperatorOnly, p.Harness, p.Model, p.Effort, p.Sandbox,
 		p.SandboxImplementation, p.Approval, p.ToolGovernance,
-		p.AskUserQuestionTimeout, p.AutoCompactWindow, p.ContextWindowMax, boolPtrToNull(p.CopilotAPI), boolPtrToNull(p.FastMode),
+		p.AskUserQuestionTimeout, p.AutoCompactWindow, p.ContextWindowMax, boolPtrToNull(p.CopilotAPI), boolPtrToNull(p.CodexAppServer), boolPtrToNull(p.FastMode),
 		boolPtrToNull(p.AutoReview), boolPtrToNull(p.TrustDir),
 		p.AgentName, p.Role, p.Descr, p.InitialMessage, p.StartupContext,
 		boolPtrToNull(p.SyncWorktree), boolPtrToNull(p.AutoFocus),
@@ -505,7 +508,7 @@ func isSpawnProfileHandleViolation(err error) bool {
 
 const spawnProfileSelect = `SELECT id, name, disabled, disabled_reason, operator_only, harness, model, effort, sandbox,
 	sandbox_implementation, approval,
-	tools, ask_user_question_timeout, auto_compact_window, context_window_max, copilot_api, fast_mode,
+	tools, ask_user_question_timeout, auto_compact_window, context_window_max, copilot_api, codex_app_server, fast_mode,
 	auto_review, trust_dir, agent_name, role, descr, initial_message, startup_context,
 	sync_worktree, auto_focus, include_group_default_context, remote_control, auto_memory, ssh_workaround,
 	is_owner, permission_overrides, context_features, created_at, updated_at
@@ -514,12 +517,12 @@ const spawnProfileSelect = `SELECT id, name, disabled, disabled_reason, operator
 func scanSpawnProfile(s rowScanner) (*SpawnProfile, error) {
 	var p SpawnProfile
 	var disabled int64
-	var copilotAPI, fastMode, autoReview, trustDir, syncWorktree, autoFocus, includeCtx, remoteControl, autoMemory, sshWorkaround, isOwner sql.NullInt64
+	var copilotAPI, codexAppServer, fastMode, autoReview, trustDir, syncWorktree, autoFocus, includeCtx, remoteControl, autoMemory, sshWorkaround, isOwner sql.NullInt64
 	var permOverrides, contextFeatures string
 	var createdAt, updatedAt dbTimestamp
 	if err := s.Scan(&p.ID, &p.Name, &disabled, &p.DisabledReason, &p.OperatorOnly, &p.Harness, &p.Model, &p.Effort, &p.Sandbox,
 		&p.SandboxImplementation, &p.Approval,
-		&p.ToolGovernance, &p.AskUserQuestionTimeout, &p.AutoCompactWindow, &p.ContextWindowMax, &copilotAPI, &fastMode,
+		&p.ToolGovernance, &p.AskUserQuestionTimeout, &p.AutoCompactWindow, &p.ContextWindowMax, &copilotAPI, &codexAppServer, &fastMode,
 		&autoReview, &trustDir, &p.AgentName, &p.Role, &p.Descr, &p.InitialMessage, &p.StartupContext,
 		&syncWorktree, &autoFocus, &includeCtx, &remoteControl, &autoMemory, &sshWorkaround,
 		&isOwner, &permOverrides, &contextFeatures, &createdAt, &updatedAt); err != nil {
@@ -527,6 +530,7 @@ func scanSpawnProfile(s rowScanner) (*SpawnProfile, error) {
 	}
 	p.Disabled = disabled != 0
 	p.CopilotAPI = nullToBoolPtr(copilotAPI)
+	p.CodexAppServer = nullToBoolPtr(codexAppServer)
 	p.FastMode = nullToBoolPtr(fastMode)
 	p.AutoReview = nullToBoolPtr(autoReview)
 	p.TrustDir = nullToBoolPtr(trustDir)

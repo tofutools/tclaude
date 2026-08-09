@@ -20,6 +20,10 @@ export const COPILOT_API_TRI_OPTIONS = [
   ['', 'Default (send-keys)'], ['1', 'API (experimental)'], ['0', 'send-keys'],
 ];
 
+export const CODEX_APP_SERVER_TRI_OPTIONS = [
+  ['', 'Default (send-keys)'], ['1', 'app-server (experimental)'], ['0', 'send-keys'],
+];
+
 export const FAST_MODE_TRI_OPTIONS = [
   ['', 'Harness default (config.toml)'], ['1', 'on'], ['0', 'off'],
 ];
@@ -39,6 +43,7 @@ const RESOLVED_LAUNCH_FIELDS = [
   ['effort', 'effort'],
   ['context_window_max', 'context_window_max'],
   ['copilot_api', 'copilot drive'],
+  ['codex_app_server', 'codex drive'],
   ['fast_mode', 'fast_mode'],
   ['sandbox_implementation', 'sandbox_implementation'],
 ];
@@ -137,8 +142,8 @@ export function profileDraft(seed = null, { editExisting = true, local = null, c
     approval_reviewer: reviewerValue(seed?.auto_review),
     trust_dir: triValue(seed?.trust_dir), remote_control: triValue(seed?.remote_control),
     auto_memory: triValue(seed?.auto_memory),
-	    copilot_api: triValue(seed?.copilot_api),
-	    fast_mode: triValue(seed?.fast_mode),
+    copilot_api: triValue(seed?.copilot_api), codex_app_server: triValue(seed?.codex_app_server),
+    fast_mode: triValue(seed?.fast_mode),
     ssh_workaround: seed?.ssh_workaround !== false,
     agent_name: seed?.agent_name || '', role: seed?.role || '', descr: seed?.descr || '',
     initial_message: seed?.initial_message || '', sync_worktree: triValue(seed?.sync_worktree),
@@ -192,6 +197,8 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
   if (autoMemory != null) body.auto_memory = autoMemory;
   const copilotAPI = (!h || h.can_copilot_api) ? readTri(draft.copilot_api) : null;
   if (copilotAPI != null) body.copilot_api = copilotAPI;
+  const codexAppServer = (!h || h.can_codex_app_server) ? readTri(draft.codex_app_server) : null;
+  if (codexAppServer != null) body.codex_app_server = codexAppServer;
   const fastMode = (!h || h.can_fast_mode) ? readTri(draft.fast_mode) : null;
   if (fastMode != null) body.fast_mode = fastMode;
   if (h?.can_ssh_workaround) {

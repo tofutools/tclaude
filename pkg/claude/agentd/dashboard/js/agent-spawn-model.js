@@ -554,6 +554,7 @@ export function spawnCapabilityView(draft, context, resolvedSandboxImpl = '') {
     showAutoCompactWindow: harness ? !!harness.can_auto_compact_window : draft.harness === 'claude',
     showContextWindowMax: harness ? !!harness.can_context_window_max : draft.harness === 'copilot',
     showCopilotAPI: harness ? !!harness.can_copilot_api : draft.harness === 'copilot',
+    showCodexAppServer: harness ? !!harness.can_codex_app_server : draft.harness === 'codex',
     showFastMode: harness ? !!harness.can_fast_mode : draft.harness === 'codex',
     ...sandboxImplView(harness, context),
     showHarnessBuiltinMode: !!(sandbox.visible && harness?.can_builtin_os_sandbox !== false
@@ -724,6 +725,7 @@ function harnessDefaults(harness, rememberedEffort = () => '') {
     autoCompactWindow: '',
     contextWindowMax: '',
     copilotAPI: false,
+    codexAppServer: false,
     fastMode: '',
     // "" = unset, so the daemon's profile tier stack still speaks. Sending
     // harness-builtin here instead would pin it and silence every lower tier.
@@ -819,6 +821,7 @@ export function selectSpawnHarness(draft, harnessName, context, rememberedEffort
     // A harness with no API-backed drive keeps the checkbox off rather than
     // sending an opt-in the daemon would reject with a 400.
     copilotAPI: harness?.can_copilot_api ? draft.copilotAPI : false,
+    codexAppServer: harness?.can_codex_app_server ? draft.codexAppServer : false,
     fastMode: harness?.can_fast_mode ? draft.fastMode : '',
     // Every harness keeps the operator's selection visible. An incapable
     // switch becomes an inline refusal warning; the browser never decides by
@@ -906,6 +909,8 @@ export function applySpawnProfile(
   // opt-in ride along onto a profile that never asked for it.
   next.copilotAPI = view.showCopilotAPI && profile.copilot_api != null
     ? !!profile.copilot_api : false;
+  next.codexAppServer = view.showCodexAppServer && profile.codex_app_server != null
+    ? !!profile.codex_app_server : false;
   next.fastMode = view.showFastMode && profile.fast_mode != null
     ? (profile.fast_mode ? '1' : '0') : '';
   // Same rule again: a profile that pins nothing clears whatever the previously
@@ -1142,6 +1147,7 @@ export function spawnProfileSeed(draft, context) {
   // pin, and it would opt the profile out of any future default change.
   if (view.showAutoMemory && draft.autoMemory) seed.auto_memory = true;
   if (view.showCopilotAPI && draft.copilotAPI) seed.copilot_api = true;
+  if (view.showCodexAppServer && draft.codexAppServer) seed.codex_app_server = true;
   if (view.showFastMode && draft.fastMode !== '') seed.fast_mode = draft.fastMode === '1';
   if (view.showSSHWorkaround) seed.ssh_workaround = !!draft.sshWorkaround;
   if (view.showAutoCompactWindow && text(draft.autoCompactWindow)) {
@@ -1258,6 +1264,7 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
   // modal is authoritative, so an unchecked box overrides a profile's opt-in.
   // Omitted entirely for every other harness, leaving the pointer nil.
   if (view.showCopilotAPI) body.copilot_api = !!draft.copilotAPI;
+  if (view.showCodexAppServer) body.codex_app_server = !!draft.codexAppServer;
   if (view.showFastMode) {
     body.fast_mode = draft.fastMode === '1' ? 'on' : draft.fastMode === '0' ? 'off' : 'inherit';
   }

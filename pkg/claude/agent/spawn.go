@@ -73,8 +73,9 @@ type ResolvedLaunch struct {
 	// an operator debugging an agent has to be able to see which one it is on
 	// without reading the profile chain back by hand. Blank Value = the
 	// send-keys default, echoed like any unpinned field. See TCL-1053.
-	CopilotAPI ResolvedField `json:"copilot_api"`
-	FastMode   ResolvedField `json:"fast_mode"`
+	CopilotAPI     ResolvedField `json:"copilot_api"`
+	CodexAppServer ResolvedField `json:"codex_app_server"`
+	FastMode       ResolvedField `json:"fast_mode"`
 	// SandboxImpl names WHO OWNS OS-level containment for this launch and which
 	// tier chose it. It is echoed rather than left to Notes because a spawn that
 	// silently inherited the experimental tclaude-layer from a group or global
@@ -441,6 +442,9 @@ type SpawnRequest struct {
 	// (Copilot); requesting it for Claude Code or Codex is a 400. Forwarded to
 	// `tclaude session new --copilot-api`. See TCL-1051 / TCL-1053.
 	CopilotAPI *bool `json:"copilot_api,omitempty"`
+	// CodexAppServer selects the private app-server drive. nil lets profile
+	// tiers speak; false pins legacy send-keys; true opts in and fails closed.
+	CodexAppServer *bool `json:"codex_app_server,omitempty"`
 	// FastMode is omitted when profile tiers may fill it, or one of inherit/on/off
 	// when this request authoritatively chooses the Codex service tier. Keeping
 	// explicit inherit on the wire lets a launch override a profile that pins on.
@@ -808,7 +812,8 @@ type SpawnParams struct {
 	// only on the CLI, like --auto-memory and --remote-control: the flag sends
 	// &true and its absence leaves the pointer nil so a profile default can still
 	// speak (and, unset everywhere, resolve to the send-keys default).
-	CopilotAPI bool `long:"copilot-api" help:"EXPERIMENTAL: drive the new Copilot agent over its embedded JSON-RPC API (copilot --ui-server) instead of tmux send-keys — messages, rename and compaction become typed calls, context is read live, and an agent blocked on a permission prompt becomes visible; soft exit uses keystrokes because the API cannot exit the CLI. Refuses unless the launch dir is already trusted (or --trust-dir) and the pane shares host loopback. The endpoint is unauthenticated and loopback-bound. Off by default; unset = filled by the profile chain, then off. Copilot only"`
+	CopilotAPI     bool `long:"copilot-api" help:"EXPERIMENTAL: drive the new Copilot agent over its embedded JSON-RPC API (copilot --ui-server) instead of tmux send-keys — messages, rename and compaction become typed calls, context is read live, and an agent blocked on a permission prompt becomes visible; soft exit uses keystrokes because the API cannot exit the CLI. Refuses unless the launch dir is already trusted (or --trust-dir) and the pane shares host loopback. The endpoint is unauthenticated and loopback-bound. Off by default; unset = filled by the profile chain, then off. Copilot only"`
+	CodexAppServer bool `long:"codex-app-server" help:"EXPERIMENTAL: drive the new Codex agent through a private per-agent app-server while keeping the normal TUI attached. Requires Codex 0.147.x. Off by default; unset = profile chain, then legacy send-keys. Codex only"`
 
 	FastMode string `long:"fast-mode" optional:"true" help:"Codex request speed: inherit (use config.toml) | on (fast, higher credit cost) | off (standard tier). Unset = filled by the profile chain, then inherit. Codex only"`
 
@@ -1286,6 +1291,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	remoteControl := p.RemoteControl
 	autoMemory := p.AutoMemory
 	copilotAPI := p.CopilotAPI
+	codexAppServer := p.CodexAppServer
 	fastMode := strings.TrimSpace(p.FastMode)
 	// --context-features is tri-state on the wire: unset leaves the map nil so the
 	// daemon's profile tier stack still speaks, while an explicit `none` sends an
@@ -1434,6 +1440,10 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 			fmt.Fprintf(stderr, "Error: %v\n", err)
 			return nil, rcInvalidArg
 		}
+		if codexAppServer, err = harness.ResolveCodexAppServer(h, &p.CodexAppServer); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return nil, rcInvalidArg
+		}
 		if fastMode, err = harness.ResolveFastModeFlag(h, fastMode); err != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", err)
 			return nil, rcInvalidArg
@@ -1527,6 +1537,10 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	if copilotAPI {
 		on := true
 		req.CopilotAPI = &on
+	}
+	if codexAppServer {
+		on := true
+		req.CodexAppServer = &on
 	}
 	if strings.TrimSpace(p.FastMode) != "" {
 		req.FastMode = fastMode
@@ -1689,6 +1703,9 @@ func printResolvedLaunch(stdout io.Writer, rl *ResolvedLaunch) {
 	if strings.TrimSpace(rl.CopilotAPI.Value) != "" {
 		fmt.Fprintf(stdout, "  Copilot drive: %s\n", formatResolvedField(rl.CopilotAPI))
 	}
+	if strings.TrimSpace(rl.CodexAppServer.Value) != "" {
+		fmt.Fprintf(stdout, "  Codex drive: %s\n", formatResolvedField(rl.CodexAppServer))
+	}
 	if strings.TrimSpace(rl.FastMode.Value) != "" {
 		fmt.Fprintf(stdout, "  Fast mode: %s\n", formatResolvedField(rl.FastMode))
 	}
@@ -1756,6 +1773,7 @@ func (rl *ResolvedLaunch) AmbientDecisions() []string {
 		{"effort", rl.Effort},
 		{"context_window_max", rl.ContextWindowMax},
 		{"copilot drive", rl.CopilotAPI},
+		{"codex drive", rl.CodexAppServer},
 		{"fast_mode", rl.FastMode},
 		{"sandbox_implementation", rl.SandboxImpl},
 	} {

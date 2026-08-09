@@ -496,6 +496,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	}
 	approval, autoReview := relaunch.Approval, relaunch.AutoReview
 	spawnArgs := clcommon.SpawnArgs{
+		AgentID:               persistedAgentID,
 		EffectiveSandbox:      effectiveSandbox,
 		Label:                 label,
 		Cwd:                   cwd,
@@ -520,6 +521,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		AutoCompactWindow:      relaunch.AutoCompactWindow,
 		ContextWindowMax:       relaunch.ContextWindowMax,
 		CopilotAPI:             relaunch.CopilotAPI,
+		CodexAppServer:         relaunch.CodexAppServer,
 		FastMode:               relaunch.FastMode,
 	}
 
@@ -743,6 +745,15 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		writeError(w, http.StatusGatewayTimeout, "timeout",
 			"spawned session "+label+" but "+missing+" never materialised within "+
 				reincarnateSpawnTimeout.String()+"; the timed-out successor was stopped and the target policy was restored")
+		return
+	}
+	if relaunch.CodexAppServer && !awaitCodexAppServerLaunchReady(newConv, label) {
+		stopFailedCodexAppServerLaunch(newConv, label, newTmux)
+		rollbackHandoff()
+		rollbackSandbox(true)
+		writeError(w, http.StatusServiceUnavailable, "codex_app_server_unavailable",
+			"the successor's explicitly selected Codex app-server did not become ready; "+
+				"the failed successor was stopped and the predecessor remains active")
 		return
 	}
 	// Tag the successor row's best-known remote-control state ON (JOH-261). The

@@ -44,6 +44,7 @@ type durableRelaunchConfig struct {
 	AutoCompactWindow           string
 	ContextWindowMax            int64
 	CopilotAPI                  bool
+	CodexAppServer              bool
 	FastMode                    string
 }
 
@@ -125,6 +126,8 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 	configuredContextWindowMax := (*int64)(nil)
 	copilotAPI := (*bool)(nil)
 	copilotAPISource := (*string)(nil)
+	codexAppServer := (*bool)(nil)
+	codexAppServerSource := (*string)(nil)
 	fastMode := (*bool)(nil)
 	if harnessOrDefault(p.Harness) == harness.CopilotName {
 		value := p.ContextWindowMax
@@ -147,6 +150,12 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 		value := p.FastMode
 		fastMode = &value
 	}
+	if harnessOrDefault(p.Harness) == harness.CodexName {
+		value := p.CodexAppServer
+		codexAppServer = &value
+		source := p.CodexAppServerSource
+		codexAppServerSource = &source
+	}
 	return db.AgentRelaunchProfile{
 		Version:               db.RelaunchProfileVersion,
 		HarnessBuiltinMode:    &harnessBuiltinMode,
@@ -164,6 +173,8 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 		ConfiguredContextWindowMax: configuredContextWindowMax,
 		CopilotAPI:                 copilotAPI,
 		CopilotAPISource:           copilotAPISource,
+		CodexAppServer:             codexAppServer,
+		CodexAppServerSource:       codexAppServerSource,
 		FastMode:                   fastMode,
 		AskUserQuestionTimeout:     &askTimeout,
 		RemoteControl:              &remoteControl,
@@ -376,6 +387,14 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 			copilotAPI = resolved
 		}
 	}
+	codexAppServer := false
+	if agentProfile.CodexAppServer != nil {
+		resolved, appServerErr := harness.ResolveCodexAppServer(h, agentProfile.CodexAppServer)
+		if appServerErr != nil {
+			return nil, fmt.Errorf("recorded Codex app-server drive is incompatible: %w", appServerErr)
+		}
+		codexAppServer = resolved
+	}
 	fastMode := ""
 	if agentProfile.FastMode != nil {
 		if resolved, fastErr := harness.ResolveFastMode(h, agentProfile.FastMode); fastErr == nil {
@@ -416,6 +435,7 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 		AutoCompactWindow:           autoCompactWindow,
 		ContextWindowMax:            contextWindowMax,
 		CopilotAPI:                  copilotAPI,
+		CodexAppServer:              codexAppServer,
 		FastMode:                    fastMode,
 	}, nil
 }

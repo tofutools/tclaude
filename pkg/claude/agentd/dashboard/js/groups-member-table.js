@@ -176,26 +176,33 @@ export function HarnessLine({ member, snapshot }) {
   // deaf agent nobody has examined yet. That is why the pending wording below
   // says "not connected" rather than anything reassuring. The full account of
   // what this flag does and does not cover is on CopilotAPIChannelFailed.
-  const driveFailed = state.copilot_api && state.copilot_api_channel_failed;
+  const codexDrive = state.codex_app_server;
+  const codexDriveState = state.codex_app_server_state || 'warming';
+  const driveFailed = (state.copilot_api && state.copilot_api_channel_failed)
+    || (codexDrive && (codexDriveState === 'unavailable' || codexDriveState === 'dead'));
   const driveState = driveFailed
     ? ' harness-drive-failed'
-    : state.copilot_api_connected
+    : (state.copilot_api_connected || (codexDrive && codexDriveState === 'ready'))
       ? ''
       : ' harness-drive-pending';
-  const drive = state.copilot_api
+  const drive = state.copilot_api || codexDrive
     ? html`<span class=${'harness-drive' + driveState}
         role="note"
         title=${driveFailed
-          ? "Launched for Copilot's embedded JSON-RPC API drive, and its channel failed to come up — this agent's messages are being HELD, not delivered, and will be until it is relaunched. Its pane still works if you type into it"
+          ? (codexDrive ? `Codex app-server control is ${codexDriveState}; the explicit API drive did not fall back to send-keys` : "Launched for Copilot's embedded JSON-RPC API drive, and its channel failed to come up — this agent's messages are being HELD, not delivered, and will be until it is relaunched. Its pane still works if you type into it")
           : state.copilot_api_connected
             ? "Driven over Copilot's embedded JSON-RPC API (copilot --ui-server), not tmux send-keys"
-            : "Launched for Copilot's embedded JSON-RPC API drive, but tclaude holds no connection to it yet — still starting up, or its channel failed to come up"}
+            : codexDrive && codexDriveState === 'ready'
+              ? `Codex app-server ready${state.codex_app_server_version ? ` (${state.codex_app_server_version})` : ''}; TUI and agentd share the verified thread`
+              : codexDrive ? 'Codex app-server is warming; send-keys fallback is disabled' : "Launched for Copilot's embedded JSON-RPC API drive, but tclaude holds no connection to it yet — still starting up, or its channel failed to come up"}
         aria-label=${driveFailed
-          ? 'Copilot API drive failed, messages held'
+          ? (codexDrive ? 'Codex app-server drive unavailable' : 'Copilot API drive failed, messages held')
           : state.copilot_api_connected
             ? 'Copilot API drive connected'
-            : 'Copilot API drive not connected'}
-        >api</span>`
+            : codexDrive && codexDriveState === 'ready'
+              ? 'Codex app-server drive ready'
+              : codexDrive ? 'Codex app-server drive warming' : 'Copilot API drive not connected'}
+        >${codexDrive ? 'app' : 'api'}</span>`
     : null;
   if (!model) {
     // A pre-tick row has no metadata text to trail, but an armed indicator is
