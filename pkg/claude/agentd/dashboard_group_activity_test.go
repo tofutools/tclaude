@@ -29,6 +29,7 @@ func TestDashboardAssets_GroupActivityWired(t *testing.T) {
 		// activity-bots.js + groups-list.js — shared keyed native render.
 		"export function ActivityBot({ bot })",
 		"export function ActivityModes({ modes, modeTitles = false })",
+		"export function ActivityHover({",
 		"key=${mode.key}",
 		"key=${bot.key}",
 		"function GroupActivity({ members, snapshot })",
@@ -39,12 +40,15 @@ func TestDashboardAssets_GroupActivityWired(t *testing.T) {
 		"const groups = snapshot.groups || []",
 		"scribeGroupVisible(group, showOfflineScribes)",
 		"const modes = activityModeViews(summary, snapshot.activity_bots)",
+		"const details = activityDetailView(lists",
+		"export function activityMemberTitle(member)",
 		// shell-island.js subscribes to the Signal and renders native activity
 		// components under the explicit host.
 		"const snapshot = state.snapshot.value",
 		"const visibility = groupsState?.visibility.value",
 		"const view = globalActivityView(snapshot, wizard, visibility)",
 		"<${ActivityModes} modes=${view.modes} />",
+		"details=${view.details}",
 		`id="shell-activity-root"`,
 		`id="global-activity"`,
 		// dashboard.css — emoji bots, sprite bots, wizard bots, and the swaps.
