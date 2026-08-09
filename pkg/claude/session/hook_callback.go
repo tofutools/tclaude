@@ -814,6 +814,16 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 			state.ConvID = input.ConvID
 		}
 	}
+	// A validated hook carrying this launch's conversation is the durable
+	// post-thread-creation barrier for the Codex app-server control connection.
+	// Agentd deliberately stays disconnected until this write: Codex 0.147
+	// auto-subscribes every connection initialized before a fresh thread exists.
+	if envSessionID != "" && input.ConvID != "" && state.ConvID == input.ConvID {
+		if _, err := db.BindWarmingCodexAppServerRuntimeFromTUI(envSessionID, input.ConvID); err != nil {
+			slog.Warn("failed to bind Codex app-server runtime from TUI hook",
+				"session_id", envSessionID, "conv_id", input.ConvID, "error", err, "module", "hooks")
+		}
+	}
 	if state.Cwd == "" && input.Cwd != "" {
 		state.Cwd = input.Cwd
 	}
@@ -1849,8 +1859,8 @@ func harnessUsesSlashContextControls(name string) bool {
 }
 
 // persistHookWorkspaceSnapshot replaces Claude Code's command-backed
-// statusline workspace write for harnesses without that surface. Codex and
-// Copilot both carry the session cwd on every hook, so resolve git there at
+// statusline workspace write for harnesses without that surface. Codex,
+// Copilot, and OpenCode all carry the session cwd on every hook, so resolve git there at
 // hook time and publish the same agent_workspace row the dashboard already
 // reads. The first branch observed also seeds conv_index.git_branch_startup;
 // later observations update only the current branch so the UI can keep showing
@@ -1858,7 +1868,8 @@ func harnessUsesSlashContextControls(name string) bool {
 // asynchronous git/gh enrichment supplies its compare and pull-request links.
 func persistHookWorkspaceSnapshot(state *SessionState, input HookCallbackInput) {
 	if state == nil || state.ConvID == "" ||
-		(state.Harness != harness.CodexName && state.Harness != harness.CopilotName) {
+		(state.Harness != harness.CodexName && state.Harness != harness.CopilotName &&
+			state.Harness != harness.OpenCodeName) {
 		return
 	}
 	if input.ConvID != "" && input.ConvID != state.ConvID {

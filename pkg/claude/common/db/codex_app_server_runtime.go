@@ -10,6 +10,7 @@ import (
 
 const (
 	CodexAppServerWarming     = "warming"
+	CodexAppServerRecovering  = "recovering"
 	CodexAppServerReady       = "ready"
 	CodexAppServerUnavailable = "unavailable"
 	CodexAppServerDead        = "dead"
@@ -36,7 +37,7 @@ func UpsertCodexAppServerRuntime(runtime CodexAppServerRuntime) error {
 		return errors.New("codex app-server runtime needs generation, launch id, agent id, and socket path")
 	}
 	switch runtime.State {
-	case CodexAppServerWarming, CodexAppServerReady, CodexAppServerUnavailable, CodexAppServerDead:
+	case CodexAppServerWarming, CodexAppServerRecovering, CodexAppServerReady, CodexAppServerUnavailable, CodexAppServerDead:
 	default:
 		return fmt.Errorf("invalid Codex app-server runtime state %q", runtime.State)
 	}
@@ -75,7 +76,7 @@ func GetCodexAppServerRuntimeByConvID(convID string) (*CodexAppServerRuntime, er
 		return nil, err
 	}
 	return scanCodexAppServerRuntime(d.QueryRow(codexAppServerRuntimeSelect+
-		` WHERE conv_id = ? ORDER BY updated_at DESC LIMIT 1`, convID))
+		` WHERE conv_id = ? ORDER BY created_at DESC LIMIT 1`, convID))
 }
 
 func GetCodexAppServerRuntimeByLaunchID(launchID string) (*CodexAppServerRuntime, error) {
@@ -87,7 +88,100 @@ func GetCodexAppServerRuntimeByLaunchID(launchID string) (*CodexAppServerRuntime
 		return nil, err
 	}
 	return scanCodexAppServerRuntime(d.QueryRow(codexAppServerRuntimeSelect+
-		` WHERE launch_id = ? ORDER BY updated_at DESC LIMIT 1`, launchID))
+		` WHERE launch_id = ? ORDER BY created_at DESC LIMIT 1`, launchID))
+}
+
+// RecoverableCodexAppServerRuntimes returns only the newest live-claiming
+// generation for each conversation/launch. Older ready rows are historical
+// evidence, never adoption candidates.
+func RecoverableCodexAppServerRuntimes() ([]CodexAppServerRuntime, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(codexAppServerRuntimeSelect+` current
+		WHERE current.state IN (?, ?, ?) AND NOT EXISTS (
+			SELECT 1 FROM codex_app_server_runtimes newer
+			WHERE newer.generation <> current.generation
+			  AND ((current.conv_id <> '' AND newer.conv_id = current.conv_id)
+			       OR (current.conv_id = '' AND newer.launch_id = current.launch_id))
+			  AND newer.created_at > current.created_at
+		)
+		ORDER BY current.created_at ASC`, CodexAppServerWarming, CodexAppServerRecovering, CodexAppServerReady)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var runtimes []CodexAppServerRuntime
+	for rows.Next() {
+		runtime, scanErr := scanCodexAppServerRuntime(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		runtimes = append(runtimes, *runtime)
+	}
+	return runtimes, rows.Err()
+}
+
+// ClaimCodexAppServerRuntimeRecovery is the cross-goroutine/process adoption
+// CAS. A recovering claim may be stolen only after its bounded lease expires,
+// so two daemon starts cannot both register the same socket generation.
+func ClaimCodexAppServerRuntimeRecovery(generation, owner string, now time.Time, lease time.Duration) (bool, error) {
+	if strings.TrimSpace(generation) == "" || strings.TrimSpace(owner) == "" || lease <= 0 {
+		return false, errors.New("codex app-server recovery claim needs generation, owner, and lease")
+	}
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	result, err := d.Exec(`UPDATE codex_app_server_runtimes
+		SET state = ?, detail = ?, updated_at = ?
+		WHERE generation = ? AND (
+			state IN (?, ?) OR (state = ? AND updated_at <= ?)
+		)`, CodexAppServerRecovering, owner, dbTime(now), generation,
+		CodexAppServerWarming, CodexAppServerReady, CodexAppServerRecovering,
+		dbTime(now.Add(-lease)))
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	return changed == 1, err
+}
+
+func CompleteCodexAppServerRuntimeRecovery(runtime CodexAppServerRuntime, owner string) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	result, err := d.Exec(`UPDATE codex_app_server_runtimes
+		SET conv_id = ?, thread_id = ?, server_pid = ?, codex_version = ?,
+		    state = ?, detail = '', updated_at = ?
+		WHERE generation = ? AND state = ? AND detail = ?`,
+		runtime.ConvID, runtime.ThreadID, runtime.ServerPID, runtime.CodexVersion,
+		CodexAppServerReady, dbTime(time.Now().UTC()), runtime.Generation,
+		CodexAppServerRecovering, owner)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	return changed == 1, err
+}
+
+func FailCodexAppServerRuntimeRecovery(generation, owner, detail string) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	result, err := d.Exec(`UPDATE codex_app_server_runtimes
+		SET state = ?, detail = ?, updated_at = ?
+		WHERE generation = ? AND state = ? AND detail = ?`,
+		CodexAppServerUnavailable, detail, dbTime(time.Now().UTC()), generation,
+		CodexAppServerRecovering, owner)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	return changed == 1, err
 }
 
 func GetCodexAppServerRuntime(generation string) (*CodexAppServerRuntime, error) {
@@ -97,6 +191,37 @@ func GetCodexAppServerRuntime(generation string) (*CodexAppServerRuntime, error)
 	}
 	return scanCodexAppServerRuntime(d.QueryRow(codexAppServerRuntimeSelect+
 		` WHERE generation = ?`, generation))
+}
+
+// BindWarmingCodexAppServerRuntimeFromTUI records the thread identity carried
+// by a validated hook from the TUI process. Codex 0.147 automatically
+// subscribes every connection that is already initialized when a fresh thread
+// is created, so agentd must not initialize its control connection until this
+// post-creation signal exists. Only the newest warming generation for the
+// launch may be bound, and a resume's predeclared conversation must match.
+func BindWarmingCodexAppServerRuntimeFromTUI(launchID, threadID string) (bool, error) {
+	launchID = strings.TrimSpace(launchID)
+	threadID = strings.TrimSpace(threadID)
+	if launchID == "" || threadID == "" {
+		return false, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	now := time.Now().UTC()
+	result, err := d.Exec(`UPDATE codex_app_server_runtimes
+		SET conv_id = ?, thread_id = ?, updated_at = ?
+		WHERE generation = (
+			SELECT generation FROM codex_app_server_runtimes
+			WHERE launch_id = ? AND state = ?
+			ORDER BY created_at DESC LIMIT 1
+		) AND (conv_id = '' OR conv_id = ?)`, threadID, threadID, dbTime(now), launchID, CodexAppServerWarming, threadID)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	return changed > 0, err
 }
 
 func DeleteCodexAppServerRuntime(generation string) error {
@@ -143,18 +268,72 @@ func MarkCodexAppServerRuntimeUnavailable(generation, detail string) error {
 	return err
 }
 
-// InvalidateCodexAppServerRuntimesAfterRestart makes the durable state match
-// the empty in-process handle registry before the daemon starts serving.
-func InvalidateCodexAppServerRuntimesAfterRestart() error {
+// MarkCodexAppServerRuntimeTerminalIfUnreplaced records a terminal observation
+// only while no newer generation for the same conversation is already ready.
+// A late watcher from an obsolete connection must not become the newest
+// durable row and obscure its live replacement.
+func MarkCodexAppServerRuntimeTerminalIfUnreplaced(generation, state, detail string) (bool, error) {
+	if state != CodexAppServerUnavailable && state != CodexAppServerDead {
+		return false, fmt.Errorf("codex app-server terminal state must be unavailable or dead, got %q", state)
+	}
 	d, err := Open()
 	if err != nil {
-		return err
+		return false, err
 	}
-	_, err = d.Exec(`UPDATE codex_app_server_runtimes
-		SET state = ?, detail = ?, updated_at = ? WHERE state IN (?, ?)`,
-		CodexAppServerUnavailable, "agentd restarted; verified control handle must be relaunched",
-		dbTime(time.Now().UTC()), CodexAppServerWarming, CodexAppServerReady)
-	return err
+	result, err := d.Exec(`UPDATE codex_app_server_runtimes
+		SET state = ?, detail = ?, updated_at = ?
+		WHERE generation = ? AND NOT EXISTS (
+			SELECT 1 FROM codex_app_server_runtimes replacement
+			WHERE replacement.conv_id = codex_app_server_runtimes.conv_id
+			  AND replacement.generation <> codex_app_server_runtimes.generation
+			  AND replacement.state = ?
+			  AND replacement.created_at > codex_app_server_runtimes.created_at
+		)`, state, detail, dbTime(time.Now().UTC()), generation, CodexAppServerReady)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	return changed == 1, err
+}
+
+// SetSessionStatusForCodexAppServerGeneration projects one app-server status
+// observation only while both the session row and the verified runtime
+// generation are still current. A late notification from a replaced socket
+// therefore cannot overwrite the successor's hook or observer state.
+func SetSessionStatusForCodexAppServerGeneration(
+	sessionID, convID string,
+	sessionCreatedAt time.Time,
+	generation, observedStatus string,
+	observedUpdatedAt time.Time,
+	status, detail string,
+	at time.Time,
+) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	result, err := d.Exec(`UPDATE sessions
+		SET status = ?, status_detail = ?, updated_at = ?
+		WHERE id = ? AND conv_id = ? AND created_at = ?
+		  AND status = ? AND updated_at = ?
+		  AND EXISTS (
+			SELECT 1 FROM codex_app_server_runtimes runtime
+			WHERE runtime.generation = ? AND runtime.conv_id = ? AND runtime.state = ?
+			  AND NOT EXISTS (
+				SELECT 1 FROM codex_app_server_runtimes replacement
+				WHERE replacement.conv_id = runtime.conv_id
+				  AND replacement.generation <> runtime.generation
+				  AND replacement.state = ?
+				  AND replacement.created_at > runtime.created_at
+			  )
+		  )`, status, detail, dbTime(at), sessionID, convID, dbTime(sessionCreatedAt),
+		observedStatus, dbTime(observedUpdatedAt), generation, convID,
+		CodexAppServerReady, CodexAppServerReady)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	return changed == 1, err
 }
 
 const codexAppServerRuntimeSelect = `SELECT generation, launch_id, agent_id,

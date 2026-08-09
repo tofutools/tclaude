@@ -161,9 +161,9 @@ export function createTransactionDialogActions({
       return result;
     },
 
-    async loadAgentWorktree(conv, { signal } = {}) {
+    async loadAgentWorktree(conv, { signal, retire = false } = {}) {
       const response = await fetchImpl(
-        `/api/agents/${encodeURIComponent(conv)}/worktree`,
+        `/api/agents/${encodeURIComponent(conv)}/worktree${retire ? '?retire=1' : ''}`,
         { credentials: 'same-origin', signal },
       );
       const payload = await responsePayload(response);

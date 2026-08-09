@@ -427,3 +427,23 @@ func TestSessionNewArgs_AskTimeout(t *testing.T) {
 		t.Fatalf("resume must append --ask-user-question-timeout 10m, got (%q, %v)", v, ok)
 	}
 }
+
+func TestSessionResumeArgs_ForwardsPreparedResourceCgroupDir(t *testing.T) {
+	bare := sessionResumeArgs(clcommon.SpawnArgs{ConvID: "ses_x", Cwd: "/tmp/x"})
+	if slices.Contains(bare, "--resource-cgroup-dir") {
+		t.Fatalf("unset resource cgroup dir must omit the internal flag, got %v", bare)
+	}
+
+	// A resume that omits the daemon-prepared boundary makes the pane prepare
+	// its own under the SAME deterministic per-session path the managed server
+	// was just started in — and preparation reclaims a populated dir by killing
+	// its members, so the omission kills the fresh server (TCL wake bug).
+	withDir := sessionResumeArgs(clcommon.SpawnArgs{
+		ConvID: "ses_x", Cwd: "/tmp/x",
+		ResourceCgroupDir: "/sys/fs/cgroup/system.slice/tclaude-tmux.service/tclaude-ab12",
+	})
+	if i := slices.Index(withDir, "--resource-cgroup-dir"); i < 0 || i+1 >= len(withDir) ||
+		withDir[i+1] != "/sys/fs/cgroup/system.slice/tclaude-tmux.service/tclaude-ab12" {
+		t.Fatalf("prepared resource cgroup dir must ride into the resumed session launcher, got %v", withDir)
+	}
+}

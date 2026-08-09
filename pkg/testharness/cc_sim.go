@@ -22,13 +22,17 @@ import (
 //
 // Lifecycle mirrors real CC closely enough that production code reading
 // the .jsonl (FreshConvRow / ScanAndUpsertFile) sees the same shape:
+//
 //   - Start writes an initial summary turn.
+//
 //   - Plain text accumulates in a buffer until "Enter" arrives, then
 //     becomes a user turn (or, if it's a slash command, gets parsed).
+//
 //   - The default handler set covers /rename, /exit, /compact, and a
 //     catch-all user-turn writer. Tests register additional behaviors
 //     via OnInput(prefix, handler); custom handlers run before defaults
 //     so a test can override a builtin without touching this file.
+//
 //   - Per-prefix delays via SetCommandDelay model "CC takes a moment
 //     to process this command" — the asynchrony catches bugs where
 //     prod assumes send-keys success ⇒ turn already on disk.
@@ -70,6 +74,25 @@ type CCSim struct {
 	buf      strings.Builder
 	handlers []handlerEntry
 	delays   []delayEntry
+
+	// ccArmed models Claude Code's "Press Ctrl-C again to exit": a C-c that
+	// reached an idle pane with an empty input buffer arms it, and the next
+	// C-c while armed exits the process the same way /exit does. Any other
+	// keystroke (including a C-c spent clearing a pending line, an Escape, or a
+	// submitted line) disarms it. This is the pane side of the harness's
+	// keystroke-free signal exit (claudeLifecycle.SignalExitKeys, driven by
+	// agentd.injectSignalExitSerializedBy). The simulator is untimed, so the
+	// armed state persists until the next input rather than expiring on the
+	// measured ~0.8 s window — every production signal-exit send delivers its
+	// C-c presses back-to-back, so the window never lapses between them.
+	ccArmed bool
+
+	// signalExitWedged makes the pane consume ctrl-c signal-exit presses
+	// without ever quitting — modelling a wedged TUI whose exit never fires,
+	// the pane state the daemon's bounded retry + escalation ladder exists to
+	// handle. It is the signal-exit analog of the typed-path idiom
+	// OnInput("/exit"){return true}. Set via SetSignalExitWedged.
+	signalExitWedged bool
 
 	// unreadyEnters models the window between the harness process starting
 	// and its TUI actually reading stdin: that many incoming Enter
@@ -271,11 +294,50 @@ func (c *CCSim) Receive(text string) {
 		c.mu.Unlock()
 		return
 	}
+	switch text {
+	case "Escape":
+		// Clears a half-typed line and dismisses a permission dialog, and
+		// disarms the ctrl-c quit window. Harmless on an idle empty pane. This
+		// is why the signal exit leads with Escape: it puts every pane state
+		// (dialog open, text in box, mid-turn) back at the prompt the ctrl-c
+		// quit needs, without approving anything the way typed /exit + Enter
+		// would (which selects a dialog's default entry).
+		c.buf.Reset()
+		c.ccArmed = false
+		c.mu.Unlock()
+		return
+	case "C-c":
+		// Models the double-ctrl-c quit. A press spent clearing a pending line
+		// does not arm; an idle press arms; the next press while armed exits
+		// through the same shutdown as /exit.
+		if c.signalExitWedged {
+			// A wedged pane reads the press but never quits.
+			c.mu.Unlock()
+			return
+		}
+		if c.buf.Len() > 0 {
+			c.buf.Reset()
+			c.ccArmed = false
+			c.mu.Unlock()
+			return
+		}
+		if c.ccArmed {
+			c.ccArmed = false
+			c.mu.Unlock()
+			c.signalExit()
+			return
+		}
+		c.ccArmed = true
+		c.mu.Unlock()
+		return
+	}
 	if text != "Enter" {
+		c.ccArmed = false
 		c.buf.WriteString(text)
 		c.mu.Unlock()
 		return
 	}
+	c.ccArmed = false
 	// Pre-TUI window (SetInputUnreadyForEnters): the tty has been collecting
 	// the literal text above, but nothing is reading the Enter — so swallow it
 	// and leave the buffer intact. Whatever arrives next concatenates onto the
@@ -421,6 +483,24 @@ func (c *CCSim) MarkDead() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.alive = false
+}
+
+// signalExit ends the pane the way the second armed C-c does — the same
+// shutdown as the typed /exit default handler (a transcript marker turn, then
+// MarkDead). Called with the lock released, mirroring dispatch's handlers.
+func (c *CCSim) signalExit() {
+	_ = c.WriteUserTurn("[ctrl-c-exit]")
+	c.MarkDead()
+}
+
+// SetSignalExitWedged makes the pane consume ctrl-c signal-exit presses
+// without ever quitting, modelling a wedged TUI whose exit never fires. It is
+// the signal-exit analog of the typed-path idiom OnInput("/exit"){return true}
+// and is how a flow test forces the daemon's bounded retry + escalation ladder.
+func (c *CCSim) SetSignalExitWedged(wedged bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.signalExitWedged = wedged
 }
 
 // AppendTurn writes one turn to the .jsonl as a single JSON line.

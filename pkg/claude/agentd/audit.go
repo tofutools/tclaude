@@ -961,6 +961,7 @@ func describeSpawn(c *auditCtx) {
 var auditedAgentVerbs = map[string]bool{
 	"reincarnate":    true,
 	"compact":        true,
+	"interrupt":      true,
 	"rename":         true,
 	"remote-control": true,
 	"clone":          true,
@@ -1003,6 +1004,7 @@ var auditedWhoamiVerbs = map[string]bool{
 	"clone":          true,
 	"rename":         true,
 	"compact":        true,
+	"interrupt":      true,
 	"remote-control": true,
 }
 

@@ -518,10 +518,7 @@ func TestRetire_DeleteWorktreeEscalatesPastAgentThatIgnoresExit(t *testing.T) {
 	// Hung agent: it consumes /exit and never goes offline on its own.
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc, "no CCSim registered for %s", conv)
-	cc.OnInput("/exit", func(c *testharness.CCSim, line string) bool {
-		_ = c.WriteUserTurn("[hung agent: /exit ignored]")
-		return true // consume — never MarkDead
-	})
+	cc.SetSignalExitWedged(true)
 
 	mux := agentd.BuildDashboardHandlerForTest()
 	code, resp := postRetireWt(t, mux, conv, "shutdown=1&delete_worktree=1")
@@ -593,10 +590,7 @@ func TestRetire_DeleteWorktreeUnkillableAgentPostsKeptNotice(t *testing.T) {
 
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc, "no CCSim registered for %s", conv)
-	cc.OnInput("/exit", func(c *testharness.CCSim, line string) bool {
-		_ = c.WriteUserTurn("[hung agent: /exit ignored]")
-		return true
-	})
+	cc.SetSignalExitWedged(true)
 
 	mux := agentd.BuildDashboardHandlerForTest()
 	code, resp := postRetireWt(t, mux, conv, "shutdown=1&delete_worktree=1")

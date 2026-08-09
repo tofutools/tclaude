@@ -1527,6 +1527,7 @@ const (
 	slashTransportSendKeys    slashTransport = "send-keys"
 	slashTransportOpenCodeAPI slashTransport = "opencode-api"
 	slashTransportCopilotAPI  slashTransport = "copilot-api"
+	slashTransportCodexAPI    slashTransport = "codex-app-server"
 )
 
 // slashFailure names WHY nothing was delivered, and — like slashTransport — it
@@ -1549,7 +1550,11 @@ const (
 	// no channel was even selected.
 	slashFailureNoPane slashFailure = "no_tmux"
 	// slashFailureControl means a managed channel was selected and refused.
-	slashFailureControl slashFailure = "control_unavailable"
+	slashFailureControl      slashFailure = "control_unavailable"
+	slashFailureStarting     slashFailure = "control_starting"
+	slashFailureBusy         slashFailure = "busy"
+	slashFailureUnsupported  slashFailure = "unsupported"
+	slashFailureDisconnected slashFailure = "disconnected"
 )
 
 // dispatchSlashCommand is injectSlashCommand's body, reporting which channel
@@ -1576,6 +1581,31 @@ func dispatchSlashCommandOn(
 			return slashTransportOpenCodeAPI, slashFailureNone
 		}
 		return slashTransportNone, slashFailureControl
+	}
+	codexSelected := false
+	if sess.Harness == harness.CodexName {
+		var codexSelectionErr error
+		codexSelected, codexSelectionErr = codexAppServerSelected(convID)
+		if codexSelectionErr != nil {
+			slog.Warn("Codex app-server posture unreadable; refusing lifecycle pane fallback",
+				"error", codexSelectionErr, "conv_id", convID, "line", line)
+			return slashTransportNone, slashFailureControl
+		}
+	}
+	if channel == deliveryChannelRouted && codexSelected {
+		life := harnessForConv(convID).Life
+		if life == nil || line != life.CompactCommand() {
+			return slashTransportNone, slashFailureUnsupported
+		}
+		if err := compactCodexAppServerThread(convID, followUp); err != nil {
+			slog.Warn("Codex app-server: compaction dispatch failed",
+				"error", err, "conv_id", convID, "line", line, "reason", reason)
+			return slashTransportNone, codexControlFailure(err)
+		}
+		slog.Info("Codex app-server: lifecycle command dispatched over RPC",
+			"conv_id", convID, "line", line, "reason", reason,
+			"tmux_session", sess.TmuxSession, "has_follow_up", followUp != "")
+		return slashTransportCodexAPI, slashFailureNone
 	}
 	// An API-driven Copilot agent takes the typed channel. Never a fallback
 	// pair with the keystrokes below: an agent that opted out of the injection
@@ -1852,31 +1882,40 @@ func injectSoftExitTextSerializedBy(lockTarget, tmuxTarget, text string, prefixK
 	return injectTextAndSubmitWithOptions(lockTarget, tmuxTarget, text, false, prefixKeys...)
 }
 
-// copilotSignalExitPresses is how many ctrl-c presses Copilot's signal exit
-// sends. The first may be spent cancelling an in-flight operation (or
-// aborting a permission dialog); the next press arms "ctrl+c again to exit";
-// the press after that lands inside the armed window and exits the CLI. On a
-// pane that had nothing to cancel the exit already fires one press earlier
-// and the surplus press lands on a dead pane, which is tolerated below.
-const copilotSignalExitPresses = 3
-
-// injectCopilotSignalExitSerializedBy is Copilot's soft exit: three ctrl-c
-// presses, one settle apart, as one lock-held sequence. Keystroke-free on
-// purpose — typed slash commands are silently dropped both mid-turn (the
-// measured 1.0.77 behaviour that used to motivate a cancel-then-/exit
-// sequence) and whenever the TUI's keypress reader wedges outright (the
-// 2026-08-09 incident: three /exit injections ignored for the full 10 s
-// escalation deadline while ctrl-c handling demonstrably kept working).
-// Copilot's double-ctrl-c quit rides that surviving path: measured against
-// 1.0.78, the "again to exit" window closes between 1.2 s and 1.5 s, and
-// second presses 0.5–1.2 s after the first all exit cleanly (status 0)
-// through the CLI's designed quit path.
+// injectSignalExitSerializedBy is a harness's keystroke-free soft exit: the
+// ordered key names from harness.Lifecycle.SignalExitKeys sent into the pane
+// one settle apart, as one lock-held sequence. Keystroke-free on purpose — a
+// typed slash command is silently dropped both mid-turn and whenever a TUI's
+// keypress reader wedges outright (the Copilot 2026-08-09 incident: three
+// /exit injections ignored for the full 10 s escalation deadline while ctrl-c
+// handling demonstrably kept working), while the ctrl-c quit rides the
+// surviving signal path. The exact keys and press count are per harness (see
+// each Lifecycle.SignalExitKeys): Copilot and Codex send three C-c; Claude Code
+// prefixes an Escape to clear a permission dialog or half-typed line first.
 //
-// The gap reuses injectSettleDelay: production's 500 ms sits inside the
-// measured window, and the flow-test override keeps simulated stops fast.
-// Only the FIRST press's failure is an error — a pane commonly dies on the
-// second press, making a later "can't find pane" the success case.
-func injectCopilotSignalExitSerializedBy(lockTarget, tmuxTarget string) error {
+// The gap is signalExitKeyGap (330 ms), deliberately tighter than the typed
+// path's injectSettleDelay: the presses must land inside the harness's
+// re-press window, and Claude Code's — bracketed at ~0.8 s on an idle pane —
+// leaves 500 ms too little margin when scheduling delay or pane load pushes a
+// press late (observed post-TCL-1137-deploy as first attempts that armed but
+// never quit). 330 ms sits inside every measured re-press window (Copilot
+// 1.2–1.5 s, Claude Code ~0.8 s, Codex unbounded) with room to spare. One
+// honest caveat: Copilot's fast side was only verified down to 0.5 s between
+// presses, so 330 ms is below its tested lower bracket — mitigated because
+// the sequence's third press lands at +660 ms, inside the verified band, even
+// if a too-quick second press were swallowed. Key names carry no
+// paste-coalescing concern, which is what injectSettleDelay's 500 ms exists
+// for. The flow-test override keeps simulated stops fast.
+// Only the FIRST key's failure is an error — a pane commonly dies on a later
+// press, making a subsequent "can't find pane" the success case.
+//
+// keys must be non-empty; callers select this path precisely when
+// SignalExitKeys is non-empty (see sendSoftExitToTarget), so the empty-list
+// error below is a belt-and-braces guard, not a reachable production path.
+func injectSignalExitSerializedBy(lockTarget, tmuxTarget string, keys []string) error {
+	if len(keys) == 0 {
+		return fmt.Errorf("signal exit: no keys for %s", tmuxTarget)
+	}
 	mu := paneInjectLock(injectLockKey(lockTarget))
 	if err := acquirePaneInjectLock(mu); err != nil {
 		return err
@@ -1887,13 +1926,13 @@ func injectCopilotSignalExitSerializedBy(lockTarget, tmuxTarget string) error {
 		LockTimeout: paneInjectLockTimeout,
 		LockID:      lockTarget,
 	}, func(run paneinput.Runner, target string) error {
-		for press := range copilotSignalExitPresses {
-			if press > 0 {
-				time.Sleep(injectSettleDelay)
+		for i, key := range keys {
+			if i > 0 {
+				time.Sleep(signalExitKeyGap)
 			}
-			if err := run("send-keys", "-t", target, "C-c"); err != nil {
-				if press == 0 {
-					return fmt.Errorf("send-keys ctrl-c: %w", err)
+			if err := run("send-keys", "-t", target, key); err != nil {
+				if i == 0 {
+					return fmt.Errorf("send-keys %s: %w", key, err)
 				}
 				return nil
 			}
@@ -1992,6 +2031,12 @@ func injectMenuToggle(tmuxTarget, toggle string, menuKeys []string, confirmDelay
 // sleeps. Overridden via SetInjectSettleDelayForTest in the flow
 // harness setup; production keeps the 500 ms safety margin.
 var injectSettleDelay = 500 * time.Millisecond
+
+// signalExitKeyGap is the gap injectSignalExitSerializedBy leaves between
+// signal-exit key presses — see that function for why it is tighter than
+// injectSettleDelay. A package var for the same flow-test reason; shrunk
+// alongside injectSettleDelay by SetInjectSettleDelayForTest.
+var signalExitKeyGap = 330 * time.Millisecond
 
 // handleWhoamiRename injects `/rename <title>` into the caller's own CC
 // pane. Permission-gated on `self.rename`.
@@ -2102,7 +2147,23 @@ func runRenameOrchestration(w http.ResponseWriter, r *http.Request, target, call
 				"the allowed characters.")
 		return
 	}
-	if !deliverRename(target, body.Title) {
+	codexSelected := false
+	if harnessForConv(target).Name == harness.CodexName {
+		var codexSelectionErr error
+		codexSelected, codexSelectionErr = codexAppServerSelected(target)
+		if codexSelectionErr != nil {
+			writeError(w, http.StatusServiceUnavailable, "control_unavailable",
+				"could not determine the target Codex control drive")
+			return
+		}
+	}
+	if codexSelected {
+		if err := renameCodexAppServerThread(target, body.Title); err != nil {
+			writeCodexControlError(w, err, "rename")
+			return
+		}
+		cacheDeliveredTitle(target, body.Title, harnessForConv(target).Name)
+	} else if !deliverRename(target, body.Title) {
 		writeError(w, http.StatusServiceUnavailable, "no_tmux",
 			"could not deliver rename to conv "+short8(target)+" (no live tmux session to inject into, or the harness's title store rejected it)")
 		return
@@ -2144,6 +2205,84 @@ func handleWhoamiCompact(w http.ResponseWriter, r *http.Request) {
 // variant.
 func handleAgentCompact(w http.ResponseWriter, r *http.Request, targetConv string) {
 	handleAgentSlash(w, r, PermAgentCompact, targetConv, compactToken, "compact")
+}
+
+func handleWhoamiInterrupt(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
+		return
+	}
+	convID, ok := requirePermission(w, r, PermSelfInterrupt)
+	if !ok {
+		return
+	}
+	if convID == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			"this endpoint operates on the calling agent; humans should target POST /v1/agent/{conv}/interrupt")
+		return
+	}
+	runCodexInterrupt(w, convID, convID)
+}
+
+func handleAgentInterrupt(w http.ResponseWriter, r *http.Request, targetConv string) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
+		return
+	}
+	caller, ok := requireCrossAgentPermission(w, r, PermAgentInterrupt, targetConv)
+	if !ok {
+		return
+	}
+	runCodexInterrupt(w, targetConv, caller)
+}
+
+func runCodexInterrupt(w http.ResponseWriter, target, caller string) {
+	if harnessForConv(target).Name != harness.CodexName {
+		writeError(w, http.StatusBadRequest, "unsupported",
+			"turn interruption is available only for Codex conversations on the app-server drive")
+		return
+	}
+	codexSelected, codexSelectionErr := codexAppServerSelected(target)
+	if codexSelectionErr != nil {
+		writeError(w, http.StatusServiceUnavailable, "control_unavailable",
+			"could not determine the target Codex control drive")
+		return
+	}
+	if !codexSelected {
+		writeError(w, http.StatusBadRequest, "unsupported",
+			"turn interruption is available only for Codex conversations on the app-server drive")
+		return
+	}
+	if err := interruptCodexAppServerThread(target); err != nil {
+		writeCodexControlError(w, err, "interrupt")
+		return
+	}
+	resp := map[string]any{
+		"conv_id": target, "action": "interrupt",
+		"note": "the verified active Codex turn was interrupted through app-server",
+	}
+	if caller != "" && caller != target {
+		resp["caller_conv"] = caller
+		stampCallerAgentID(resp, caller)
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func writeCodexControlError(w http.ResponseWriter, err error, action string) {
+	failure := codexControlFailure(err)
+	status := http.StatusServiceUnavailable
+	code := string(failure)
+	switch failure {
+	case slashFailureBusy:
+		status = http.StatusConflict
+	case slashFailureUnsupported:
+		status = http.StatusBadRequest
+	case slashFailureStarting, slashFailureDisconnected:
+		status = http.StatusServiceUnavailable
+	case slashFailureControl:
+		code = "failed"
+	}
+	writeError(w, status, code, "Codex app-server "+action+" failed: "+err.Error())
 }
 
 // slashToken selects a harness's lifecycle slash command (e.g. its
@@ -2284,7 +2423,16 @@ func runSlashOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 // deliberately worded so an operator does not go looking for the command in the
 // pane — for an API-driven agent it was never typed there, by design.
 func slashFailureDetail(failure slashFailure, target, slash string) string {
-	if failure == slashFailureControl {
+	switch failure {
+	case slashFailureStarting:
+		return "target conv " + short8(target) + " selected the Codex app-server drive, but its control channel is still starting; retry shortly"
+	case slashFailureBusy:
+		return "target conv " + short8(target) + " is busy or awaiting human interaction; retry once the Codex thread is idle"
+	case slashFailureUnsupported:
+		return "target conv " + short8(target) + " cannot map " + slash + " to a supported typed control operation"
+	case slashFailureDisconnected:
+		return "target conv " + short8(target) + " selected the Codex app-server drive, but its verified control channel is disconnected; relaunch or resume it"
+	case slashFailureControl:
 		return "target conv " + short8(target) + " could not dispatch " + slash +
 			" through its managed API channel; it is deliberately not typed into the " +
 			"pane instead. Retry when the session is idle and its channel is up"
@@ -2309,6 +2457,11 @@ func slashNote(transport slashTransport, slash string, hasFollowUp bool) string 
 				slash + " resolves, so the two are ordered"
 		}
 		return slash + " requested over the Copilot API; the outcome lands in the daemon log"
+	case slashTransportCodexAPI:
+		if hasFollowUp {
+			return slash + " requested through Codex app-server; the follow-up is submitted as a typed turn after compaction settles"
+		}
+		return slash + " requested through Codex app-server and observed until compaction settled"
 	case slashTransportNone:
 		// Unreachable from the handler, which returns on a none transport before
 		// asking for a note. Spelled out anyway because a function whose ONLY

@@ -143,6 +143,20 @@ func TestM1MethodsUseStableWireShapes(t *testing.T) {
 	}})
 	require.NoError(t, <-readDone)
 
+	forkDone := make(chan error, 1)
+	go func() {
+		cwd, last := "/tmp/fork", "turn-1"
+		_, err := client.ForkThread(context.Background(), codexappserver.ThreadForkParams{
+			ThreadID: "thread-1", Cwd: &cwd, LastTurnID: &last,
+		})
+		forkDone <- err
+	}()
+	fork := replyNext(codexappserver.MethodThreadFork, map[string]any{"thread": map[string]any{
+		"id": "thread-2", "status": map[string]any{"type": "idle"}, "turns": []any{},
+	}})
+	assert.JSONEq(t, `{"threadId":"thread-1","cwd":"/tmp/fork","lastTurnId":"turn-1"}`, string(fork.Params))
+	require.NoError(t, <-forkDone)
+
 	startDone := make(chan error, 1)
 	go func() {
 		_, err := client.StartTurn(context.Background(), codexappserver.TurnStartParams{
@@ -177,6 +191,39 @@ func TestM1MethodsUseStableWireShapes(t *testing.T) {
 	}()
 	replyNext(codexappserver.MethodTurnSteer, map[string]string{"turnId": "turn-1"})
 	require.NoError(t, <-steerDone)
+}
+
+func TestAccountRateLimitsReadUsesStableNonSubscribingRequest(t *testing.T) {
+	client, sim := startClient(t, nil)
+	drainHandshake(t, sim)
+	type readResult struct {
+		value codexappserver.AccountRateLimitsReadResult
+		err   error
+	}
+	done := make(chan readResult, 1)
+	go func() {
+		result, err := client.ReadAccountRateLimits(context.Background())
+		done <- readResult{value: result, err: err}
+	}()
+	message := nextMessage(t, sim)
+	require.Equal(t, codexappserver.MethodAccountRateLimitsRead, message.Method)
+	assert.JSONEq(t, `{}`, string(message.Params))
+	require.NoError(t, sim.Reply(message.ID, map[string]any{
+		"rateLimits": map[string]any{},
+		"rateLimitsByLimitId": map[string]any{"codex": map[string]any{
+			"limitId": "codex", "primary": map[string]any{
+				"usedPercent": 7, "windowDurationMins": 300, "resetsAt": 123,
+			},
+		}},
+	}))
+	result := <-done
+	require.NoError(t, result.err)
+	require.NotNil(t, result.value.RateLimitsByLimitID["codex"].Primary)
+	select {
+	case extra := <-sim.Messages():
+		t.Fatalf("rate-limit read unexpectedly subscribed or sent another request: %s", extra.Method)
+	case <-time.After(25 * time.Millisecond):
+	}
 }
 
 func TestServerInteractionRequestIsSurfacedThenQuarantinesClient(t *testing.T) {

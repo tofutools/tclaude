@@ -145,6 +145,7 @@ func TestMatchAuditRoute(t *testing.T) {
 		// Self-lifecycle (whoami): verb derived from {verb}.
 		{"cli self reincarnate", http.MethodPost, "/v1/whoami/reincarnate", true, "", db.AuditSourceCLI, map[string]string{"verb": "reincarnate"}},
 		{"cli self rename", http.MethodPost, "/v1/whoami/rename", true, "", db.AuditSourceCLI, map[string]string{"verb": "rename"}},
+		{"cli self interrupt", http.MethodPost, "/v1/whoami/interrupt", true, "", db.AuditSourceCLI, map[string]string{"verb": "interrupt"}},
 
 		// Template instantiate (both surfaces share the route).
 		{"cli template instantiate", http.MethodPost, "/v1/templates/crew-tpl/instantiate", true, "template.instantiate", db.AuditSourceCLI, map[string]string{"name": "crew-tpl"}},

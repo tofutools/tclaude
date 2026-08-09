@@ -31,6 +31,23 @@ func (c *Client) ReadThread(ctx context.Context, params ThreadReadParams) (Threa
 	return result.Thread, nil
 }
 
+func (c *Client) ForkThread(ctx context.Context, params ThreadForkParams) (Thread, error) {
+	if params.ThreadID == "" {
+		return Thread{}, errors.New("codexappserver: thread/fork needs threadId")
+	}
+	var result ThreadForkResult
+	if err := c.Call(ctx, MethodThreadFork, params, &result); err != nil {
+		return Thread{}, err
+	}
+	if err := validateThread(result.Thread); err != nil {
+		return Thread{}, err
+	}
+	if result.Thread.ID == params.ThreadID {
+		return Thread{}, fmt.Errorf("%w: thread/fork returned the source thread id", ErrProtocol)
+	}
+	return result.Thread, nil
+}
+
 func validateThread(thread Thread) error {
 	if thread.ID == "" || len(thread.Status) == 0 || thread.Turns == nil {
 		return fmt.Errorf("%w: thread result is missing id, status, or turns", ErrProtocol)
@@ -97,4 +114,12 @@ func (c *Client) InterruptTurn(ctx context.Context, threadID, turnID string) err
 		return errors.New("codexappserver: turn/interrupt needs threadId and turnId")
 	}
 	return c.Call(ctx, MethodTurnInterrupt, TurnInterruptParams{ThreadID: threadID, TurnID: turnID}, nil)
+}
+
+func (c *Client) ReadAccountRateLimits(ctx context.Context) (AccountRateLimitsReadResult, error) {
+	var result AccountRateLimitsReadResult
+	if err := c.Call(ctx, MethodAccountRateLimitsRead, struct{}{}, &result); err != nil {
+		return AccountRateLimitsReadResult{}, err
+	}
+	return result, nil
 }

@@ -723,9 +723,11 @@ func startOpenCodeProcess(
 		}
 		process.finish(err)
 		finishOpenCodeProcessExit(process, runtime.SessionID, cmd.Process.Pid, err, stderr)
-		if runtime.ResourceCgroupDir != "" {
-			_ = os.Remove(runtime.ResourceCgroupDir)
-		}
+		// The durable boundary dir is deliberately NOT removed here. Removing it
+		// raced relaunch reuse: stopOpenCodeProcess returns on process.done, which
+		// fires before this goroutine runs, so a restart could reuse the recorded
+		// dir just as this deleted it. An empty leftover dir costs nothing and the
+		// next PrepareResourceCgroup for the session reclaims it.
 	}()
 	runtime.PID = cmd.Process.Pid
 	if unixHandshake != nil {
@@ -2523,6 +2525,14 @@ func openCodeRuntimeSafeToReplace(runtime db.OpenCodeRuntime) bool {
 }
 
 func stopOpenCodeRuntime(sessionID string) error {
+	// Serialize teardown with reconcileOpenCodeRuntime. Without the shared lock,
+	// reconcile could restart the server after stopOpenCodeProcess returned but
+	// before this function checked liveness and deleted the durable claim.
+	value, _ := openCodeReconcileLocks.LoadOrStore(sessionID, &sync.Mutex{})
+	reconcileMu := value.(*sync.Mutex)
+	reconcileMu.Lock()
+	defer reconcileMu.Unlock()
+
 	runtime, err := db.GetOpenCodeRuntime(sessionID)
 	if err != nil {
 		return err
@@ -2531,11 +2541,15 @@ func stopOpenCodeRuntime(sessionID string) error {
 		return nil
 	}
 	stopOpenCodeProcess(*runtime, nil)
-	if runtime.Transport == db.OpenCodeTransportUnixRelay {
-		if session.IsProcessAlive(runtime.PID) {
+	if session.IsProcessAlive(runtime.PID) {
+		if runtime.Transport == db.OpenCodeTransportUnixRelay {
 			return fmt.Errorf(
 				"OpenCode recovered process remains alive; retaining Unix replay authority")
 		}
+		return fmt.Errorf(
+			"OpenCode recovered process remains alive; retaining runtime authority")
+	}
+	if runtime.Transport == db.OpenCodeTransportUnixRelay {
 		if err := opencodeapi.RemoveUnixSocket(*runtime); err != nil {
 			return fmt.Errorf("finish OpenCode Unix control cleanup: %w", err)
 		}
@@ -2545,6 +2559,19 @@ func stopOpenCodeRuntime(sessionID string) error {
 }
 
 func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
+	if runtime.ResourceCgroupDir != "" {
+		// The tmux and process-tree kills below are best-effort: a server
+		// descendant that double-forked or outlived the stop wait survives
+		// them, but it can never leave the session's resource cgroup. Reap
+		// whatever remains there so the durable boundary is empty for the
+		// next relaunch and reclaimable at the next wake.
+		defer func() {
+			if err := session.KillResourceCgroupMembers(runtime.ResourceCgroupDir); err != nil {
+				slog.Warn("OpenCode resource cgroup still holds processes after stop",
+					"session", runtime.SessionID, "dir", runtime.ResourceCgroupDir, "error", err)
+			}
+		}()
+	}
 	removeControlSocket := true
 	defer func() {
 		if !removeControlSocket {

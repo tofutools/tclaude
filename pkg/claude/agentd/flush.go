@@ -390,6 +390,31 @@ func sendNudgeBracket(toConv string, m *db.AgentMessage, nudge string) bool {
 		}
 		return true
 	}
+	// An explicitly selected Codex app-server launch is equally fail-closed:
+	// warming or unavailable control leaves the durable message queued and is
+	// never permission to put caller-controlled bytes into the TUI composer.
+	codexSelected := false
+	if sess.Harness == harness.CodexName {
+		var codexSelectionErr error
+		codexSelected, codexSelectionErr = codexAppServerSelected(toConv)
+		if codexSelectionErr != nil {
+			slog.Warn("Codex app-server posture unreadable; holding durable message without pane fallback",
+				"error", codexSelectionErr, "conv", toConv, "msg_id", m.ID)
+			return false
+		}
+	}
+	if codexSelected {
+		if err := sendCodexAppServerMessage(toConv, m.ID, nudge); err != nil {
+			if standingOrderOrigin != nil {
+				_ = db.CancelPendingStandingOrderTurnOrigin(
+					m.ToAgent, toConv, m.ID, standingOrderOrigin.OpenCodeMessageID)
+			}
+			slog.Warn("Codex app-server nudge failed; holding durable message",
+				"error", err, "conv", toConv, "msg_id", m.ID, "tmux", sess.TmuxSession)
+			return false
+		}
+		return true
+	}
 	// This recheck belongs to the exact row selected for injection: the
 	// pre-claim gate may have observed a different live session, or this pane
 	// may have entered a human-input dialog meanwhile. A narrow TOCTOU window

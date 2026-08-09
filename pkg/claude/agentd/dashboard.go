@@ -1738,6 +1738,10 @@ type dashboardMember struct {
 	// column) — see tags.go.
 	tagsView
 	Online bool `json:"online"`
+	// Waking marks a resume in flight for this conversation: offline on the
+	// wire, but seconds from either online or a failure toast. The UI renders
+	// it as a pulsing dot + "waking…" pill instead of a dead offline row.
+	Waking bool `json:"waking,omitempty"`
 	// RouteHealth is a safe capability status for route-enabled groups. It is
 	// deliberately a status-only projection; launch generations remain local.
 	RouteHealth string     `json:"route_health,omitempty"`
@@ -1768,7 +1772,9 @@ type dashboardAgent struct {
 	// tagsView carries the per-agent tag set (chips in the Description
 	// column) — see tags.go.
 	tagsView
-	Online      bool       `json:"online"`
+	Online bool `json:"online"`
+	// Waking — see dashboardMember.Waking.
+	Waking      bool       `json:"waking,omitempty"`
 	State       agentState `json:"state"`
 	Groups      []string   `json:"groups"`
 	OwnedGroups []string   `json:"owned_groups"` // subset of Groups the agent owns; UI tags these distinctly
@@ -2042,6 +2048,9 @@ type agentState struct {
 	CodexAppServer        bool   `json:"codex_app_server,omitempty"`
 	CodexAppServerState   string `json:"codex_app_server_state,omitempty"`
 	CodexAppServerVersion string `json:"codex_app_server_version,omitempty"`
+	CodexAppServerDetail  string `json:"codex_app_server_detail,omitempty"`
+	CodexObserverMode     string `json:"codex_observer_mode,omitempty"`
+	CodexObserverUpdated  string `json:"codex_observer_updated,omitempty"`
 	// CopilotAPIChannelFailed reports that this agent's CURRENT launch has been
 	// OBSERVED not to be getting an API channel — so its mail is being held and
 	// will go on being held until somebody relaunches it.
@@ -2547,6 +2556,17 @@ func stateForConvInSessionsBatched(
 				out.CodexAppServer = true
 				out.CodexAppServerState = runtime.State
 				out.CodexAppServerVersion = runtime.CodexVersion
+				out.CodexAppServerDetail = runtime.Detail
+				out.CodexObserverMode = "post-bind non-subscribing snapshots; context from rollout"
+				if observation, ok := codexAppServerObservationForConv(pick.ConvID); ok {
+					updated := observation.StatusAt
+					if observation.UsageAt.After(updated) {
+						updated = observation.UsageAt
+					}
+					if !updated.IsZero() {
+						out.CodexObserverUpdated = updated.Format(time.RFC3339)
+					}
+				}
 			}
 		}
 		out.Model = snap.Model
@@ -3068,6 +3088,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			taskRefView:       taskRefFor(b.AgentID),
 			tagsView:          tagsFor(b.AgentID),
 			Online:            b.Online,
+			Waking:            !b.Online && isConvWaking(convID),
 			State:             b.State,
 			// init non-nil so JSON serializes [] not null;
 			// the dashboard's JS does .length / .map without a guard.
@@ -3283,6 +3304,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				taskRefView:       taskRefFor(b.AgentID),
 				tagsView:          tagsFor(b.AgentID),
 				Online:            b.Online,
+				Waking:            !b.Online && isConvWaking(m.ConvID),
 				Owner:             ownerSet[m.ConvID],
 				State:             b.State,
 				Notify:            notifyPrefs[m.ConvID],
@@ -3329,6 +3351,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				taskRefView:       taskRefFor(b.AgentID),
 				tagsView:          tagsFor(b.AgentID),
 				Online:            b.Online,
+				Waking:            !b.Online && isConvWaking(ownerConv),
 				Owner:             true,
 				State:             b.State,
 				Notify:            notifyPrefs[ownerConv],

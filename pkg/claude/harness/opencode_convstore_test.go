@@ -71,6 +71,24 @@ func TestOpenCodeConvStore_ListConvsMapsDirectoryAndCaches(t *testing.T) {
 	assert.Equal(t, "Alpha native title", row.Summary)
 }
 
+func TestOpenCodeConvStore_ListConvsPreservesProjectedBranch(t *testing.T) {
+	withTestDB(t)
+	const convID = "ses_alpha111"
+	require.NoError(t, db.UpsertConvIndexBranchSnapshot(&db.ConvIndexRow{
+		ConvID: convID, ProjectPath: "/work/a", Harness: OpenCodeName,
+		GitBranch: "feature-opencode", GitBranchStartup: "main",
+	}))
+
+	_, err := openCodeTestStore(openCodeTestSessions()).ListConvs("")
+	require.NoError(t, err)
+	row, err := db.GetConvIndex(convID)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, "feature-opencode", row.GitBranch,
+		"the branch projected from the runtime cwd survives a cold-store refresh")
+	assert.Equal(t, "main", row.GitBranchStartup)
+}
+
 func TestOpenCodeFileMtime_AboveUnixNanoRangeSkipsCacheLoudlyWithoutHidingSession(t *testing.T) {
 	withTestDB(t)
 	var logs bytes.Buffer

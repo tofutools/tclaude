@@ -861,7 +861,8 @@ const copilotCancelKey = "C-c"
 // asking about never runs. A C-c that reached an idle pane with nothing to
 // cancel arms 1.0.78's "ctrl+c again to exit" instead, and the next C-c
 // while armed exits the CLI — the pair production's signal exit
-// (agentd.injectCopilotSignalExitSerializedBy) is built on.
+// (agentd.injectSignalExitSerializedBy, driven by the harness's
+// Lifecycle.SignalExitKeys) is built on.
 //
 // The trust prompt is deliberately NOT cleared, and a trust-parked pane
 // never arms: the prompt gates the whole launch rather than one request, no

@@ -374,7 +374,7 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "GET only", http.StatusMethodNotAllowed)
 				return
 			}
-			dashboardAgentWorktree(w, convSelector)
+			dashboardAgentWorktree(w, r, convSelector)
 			return
 		case "promote", "retire", "reinstate":
 			dashboardEnrollmentVerb(w, r, convSelector, parts[1])

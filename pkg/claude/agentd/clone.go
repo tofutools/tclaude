@@ -429,6 +429,28 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		res.HandoffMsgID = 0
 	}
 
+	// An API-driven Codex copy-clone uses Codex's own persisted thread fork.
+	// JSONL rewriting cannot preserve Codex's state-store identity, while a
+	// fresh/no-copy clone deliberately keeps the existing birth-prompt path.
+	// Fork only after every launch policy/provenance check above has passed.
+	codexThreadForked := false
+	if !noCopyConv && srcHarness == harness.CodexName && relaunch.CodexAppServer {
+		forkedID, forkErr := forkCodexAppServerThread(sourceConv, cwd)
+		if forkErr != nil {
+			status := http.StatusServiceUnavailable
+			code := "codex_app_server_unavailable"
+			if errors.Is(forkErr, errCodexControlBusy) {
+				status, code = http.StatusConflict, "busy"
+			} else if errors.Is(forkErr, errCodexControlAmbiguous) {
+				status, code = http.StatusConflict, "ambiguous_fork"
+			}
+			return cloneSpawnResult{}, &cloneSpawnError{Status: status, Code: code,
+				Msg: "could not fork the verified Codex app-server thread: " + forkErr.Error()}
+		}
+		newConv = forkedID
+		codexThreadForked = true
+	}
+
 	if noCopyConv {
 		label = generateSpawnLabel()
 		// No conv-id exists yet on this path; the row this launch writes is
@@ -625,14 +647,16 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		}
 	}
 	// Copy path: fork the jsonl first, then resume into it.
-	copyResult, err := convops.CopyConversationToPath(sourceConv, cwd, true /* global */)
-	if err != nil {
-		return cloneSpawnResult{}, &cloneSpawnError{
-			Status: http.StatusInternalServerError, Code: "copy",
-			Msg: "failed to copy conversation jsonl: " + err.Error(),
+	if !codexThreadForked {
+		copyResult, err := convops.CopyConversationToPath(sourceConv, cwd, true /* global */)
+		if err != nil {
+			return cloneSpawnResult{}, &cloneSpawnError{
+				Status: http.StatusInternalServerError, Code: "copy",
+				Msg: "failed to copy conversation jsonl: " + err.Error(),
+			}
 		}
+		newConv = copyResult.NewConvID
 	}
-	newConv = copyResult.NewConvID
 	// The forked jsonl fixes the conv-id before the launch, so that is what
 	// this path claims: the row it writes carries this conv, and its label is
 	// only discovered from the row afterwards. Without this the clone is a

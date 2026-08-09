@@ -95,6 +95,30 @@ func (codexLifecycle) FastModeCommand() string      { return "/fast" }
 // Codex accepts /quit from its prompt without a preparatory key.
 func (codexLifecycle) SoftExitPrefixKeys() []string { return nil }
 
+// Codex CLI's keystroke-free soft exit: three ctrl-c presses, one settle apart.
+// Measured in a real tmux pane against Codex 0.147.0 (TCL-1137):
+//
+//   - Its quit is a double ctrl-c and, unlike Claude Code, has NO tight
+//     re-press window — a second press 0.5 s, 2 s or 5 s after the first all
+//     exited cleanly (status 0). The first press on a live turn interrupts it
+//     (writing a turn_aborted event, exactly as /quit does), so a third press
+//     covers interrupt + quit; a surplus press lands on a dead pane and is
+//     tolerated by the injector.
+//   - It is equivalent to /quit for durable state. Codex persists its rollout
+//     file INCREMENTALLY during the live session (the file is created at
+//     startup and response items / event messages are appended as they occur),
+//     and writes no distinct end-of-session marker — there is no Copilot-style
+//     session.shutdown event that one exit path could write and the other skip.
+//     So a ctrl-c exit and a /quit exit leave the same rollout on disk; if a
+//     turn is in flight both abort it identically. (Byte-identical rollouts
+//     after a fully completed turn could not be A/B'd in the sandbox — Codex's
+//     bundled MCP boot and provider access made a clean completed turn
+//     unreliable there — but the incremental-persistence structure leaves no
+//     shutdown-only write for ctrl-c to lose.)
+func (codexLifecycle) SignalExitKeys() []string {
+	return []string{"C-c", "C-c", "C-c"}
+}
+
 // codexConvStore assembles conversations from Codex's split storage model.
 // The methods are thin wrappers that resolve HOME and delegate to the
 // interface-free helpers in codex_convstore.go (which take an explicit

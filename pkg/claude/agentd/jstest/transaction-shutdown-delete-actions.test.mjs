@@ -119,6 +119,30 @@ test('shutdown failures preserve the frozen transaction for explicit retry', asy
   }
 });
 
+test('worktree probe distinguishes retire cleanup from ordinary deletion', async (t) => {
+  const { stateModule, actionsModule } = await transactionModules(t);
+  const state = stateModule.createTransactionDialogState();
+  const urls = [];
+  const actions = actionsModule.createTransactionDialogActions({
+    state,
+    fetchImpl: async (url) => {
+      urls.push(url);
+      return new Response(JSON.stringify({ kind: 'linked', path: '/repo/wt' }), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      });
+    },
+    refresh: async () => {},
+    notify: () => {},
+  });
+
+  await actions.loadAgentWorktree('agt_open/code');
+  await actions.loadAgentWorktree('agt_open/code', { retire: true });
+  assert.deepEqual(urls, [
+    '/api/agents/agt_open%2Fcode/worktree',
+    '/api/agents/agt_open%2Fcode/worktree?retire=1',
+  ]);
+});
+
 test('delete action sends the optional query only for the frozen opt-in choice', async (t) => {
   const { stateModule, actionsModule } = await transactionModules(t);
   for (const row of [

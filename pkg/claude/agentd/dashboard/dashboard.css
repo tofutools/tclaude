@@ -856,6 +856,22 @@ table tr:hover { background: #161b22; }
 /* An online agent whose last turn ended in an error (CC StopFailure):
    a louder red than the offline grey so a broken agent stands out. */
 .status-dot-error { color: #f85149; }
+/* Waking: a resume is in flight — seconds of server boot, sandbox
+   construction and pane fork during which the agent is neither offline
+   nor online. A soft green pulse says "starting" without pretending
+   "running"; the dot is rendered inert (a span, not the toggle button)
+   because a second wake would only queue behind the first. */
+.status-dot-waking {
+  display: inline-block; color: #3fb950; cursor: default;
+  animation: dot-waking 1.6s ease-in-out infinite;
+}
+@keyframes dot-waking {
+  0%, 100% { opacity: 0.25; text-shadow: none; }
+  50%      { opacity: 1; text-shadow: 0 0 6px rgba(63, 185, 80, 0.55); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .status-dot-waking { animation: none; opacity: 0.6; }
+}
 .status-dot:hover { background: #1f2937; }
 .status-dot:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
 .state-pill {
@@ -895,6 +911,9 @@ table tr:hover { background: #161b22; }
 .state-error     { background: #3a0a0a; color: #ff9492; border-color: #8b1a1a; }
 .state-exited    { background: #21262d; color: #7d8590; border-color: #2a3340; }
 .state-offline   { background: #161b22; color: #484f58; border-color: #2a3340; }
+/* waking: resume in flight (see .status-dot-waking). Amber like state-idle —
+   truthful "not online yet" — with the words saying why. */
+.state-waking    { background: #36280a; color: #d29922; border-color: #4d3a1d; }
 /* crashed: an offline agent whose process died without a clean exit —
    no SessionEnd hook fired (crash, kill, or reboot). Amber, so it
    reads as "needs a look": louder than the calm grey of a clean
@@ -5276,6 +5295,19 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
 }
 .perm-scope-free { width: 130px; }
 .perm-scope-free:focus, .perm-scope-add:focus { outline: none; border-color: #58a6ff; }
+/* The dimensions with no catalogue (remote, process_template, target_agent)
+   have only the free-text box, so the commit gesture needs to be visible
+   rather than a remembered Enter. Inert until something is typed, so an empty
+   box never looks like it has an action pending — via aria-disabled rather
+   than the disabled attribute, which would drop keyboard focus to <body> at
+   the moment the value commits. */
+.perm-scope-free-add {
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 3px; color: #c9d1d9;
+  font-size: 10px; font-family: inherit; line-height: 1; padding: 3px 6px; cursor: pointer;
+}
+.perm-scope-free-add:hover { border-color: #58a6ff; color: #f0f6fc; }
+.perm-scope-free-add[aria-disabled="true"] { opacity: 0.4; cursor: default; }
+.perm-scope-free-add[aria-disabled="true"]:hover { border-color: #2a3340; color: #c9d1d9; }
 .perm-row-eff { flex: 0 0 78px; font-size: 10px; text-align: right; }
 .perm-row-eff.granted { color: #3fb950; }
 .perm-row-eff.denied { color: #f85149; }

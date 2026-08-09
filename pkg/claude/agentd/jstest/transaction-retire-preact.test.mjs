@@ -181,7 +181,7 @@ test('retire retry stays bound to the confirmed worktree after the agent moves',
   const actions = createTransactionDialogActions({
     state,
     fetchImpl: (url) => {
-      if (url.endsWith('/worktree')) {
+      if (url.includes('/worktree')) {
         return Promise.resolve(new Response(JSON.stringify({
           kind: 'linked', ...claimed, shared: false, removable: true,
         }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
@@ -561,7 +561,7 @@ test('retire failure stays inline with frozen choices and explicit retry', async
     state,
     fetchImpl: (url, init) => {
       requests.push([url, init]);
-      if (url.endsWith('/worktree')) {
+      if (url.includes('/worktree')) {
         return Promise.resolve(new Response(JSON.stringify({ kind: 'none', path: '', removable: false }), {
           status: 200, headers: { 'Content-Type': 'application/json' },
         }));

@@ -45,3 +45,14 @@ func (openCodeLifecycle) FastModeCommand() string      { return "" }
 // app.exit through the managed TUI API — so a pane-input prefix has nothing to
 // prepare.
 func (openCodeLifecycle) SoftExitPrefixKeys() []string { return nil }
+
+// OpenCode has no signal-exit keys: it is exempt from the keystroke-free ctrl-c
+// path by construction (TCL-1137). Its exit is app.exit published as a
+// tui.command.execute event over the managed server's HTTP /tui/publish
+// endpoint (agentd.injectOpenCodeSoftExitTarget), so no keystrokes and no
+// keypress reader are involved — the wedge that motivates SignalExitKeys for
+// the pane-typed harnesses cannot occur here. The one analogous risk, a TUI too
+// busy to accept a control command, is not a silent drop: the daemon detects it
+// from the projected session status (openCodeControlInputBlocked) and defers the
+// retry or falls through to the hard-kill escalation ladder.
+func (openCodeLifecycle) SignalExitKeys() []string { return nil }

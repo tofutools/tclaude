@@ -6,15 +6,25 @@ const (
 	MinimumCodexVersion = "0.147.0"
 	MaximumCodexVersion = "0.148.0"
 
-	MethodInitialize         = "initialize"
-	MethodInitialized        = "initialized"
-	MethodThreadLoadedList   = "thread/loaded/list"
-	MethodThreadRead         = "thread/read"
-	MethodThreadNameSet      = "thread/name/set"
-	MethodThreadCompactStart = "thread/compact/start"
-	MethodTurnStart          = "turn/start"
-	MethodTurnSteer          = "turn/steer"
-	MethodTurnInterrupt      = "turn/interrupt"
+	MethodInitialize            = "initialize"
+	MethodInitialized           = "initialized"
+	MethodThreadLoadedList      = "thread/loaded/list"
+	MethodThreadRead            = "thread/read"
+	MethodThreadFork            = "thread/fork"
+	MethodThreadNameSet         = "thread/name/set"
+	MethodThreadCompactStart    = "thread/compact/start"
+	MethodTurnStart             = "turn/start"
+	MethodTurnSteer             = "turn/steer"
+	MethodTurnInterrupt         = "turn/interrupt"
+	MethodAccountRateLimitsRead = "account/rateLimits/read"
+
+	NotificationThreadStatusChanged      = "thread/status/changed"
+	NotificationThreadTokenUsageUpdated  = "thread/tokenUsage/updated"
+	NotificationAccountRateLimitsUpdated = "account/rateLimits/updated"
+	NotificationTurnStarted              = "turn/started"
+	NotificationTurnCompleted            = "turn/completed"
+	NotificationItemStarted              = "item/started"
+	NotificationItemCompleted            = "item/completed"
 
 	MethodCommandApproval     = "item/commandExecution/requestApproval"
 	MethodFileChangeApproval  = "item/fileChange/requestApproval"
@@ -25,9 +35,9 @@ const (
 // StableMethods returns the capability surface validated against Codex 0.147.0.
 func StableMethods() []string {
 	return []string{
-		MethodThreadLoadedList, MethodThreadRead, MethodThreadNameSet,
+		MethodThreadLoadedList, MethodThreadRead, MethodThreadFork, MethodThreadNameSet,
 		MethodThreadCompactStart, MethodTurnStart, MethodTurnSteer,
-		MethodTurnInterrupt,
+		MethodTurnInterrupt, MethodAccountRateLimitsRead,
 	}
 }
 
@@ -92,6 +102,16 @@ type ThreadReadResult struct {
 	Thread Thread `json:"thread"`
 }
 
+type ThreadForkParams struct {
+	ThreadID   string  `json:"threadId"`
+	Cwd        *string `json:"cwd,omitempty"`
+	LastTurnID *string `json:"lastTurnId,omitempty"`
+}
+
+type ThreadForkResult struct {
+	Thread Thread `json:"thread"`
+}
+
 // Thread is the small control projection used by M1. Status, items, and
 // additive schema fields stay raw because policy belongs above this codec.
 type Thread struct {
@@ -151,4 +171,62 @@ type TurnSteerResult struct {
 type TurnInterruptParams struct {
 	ThreadID string `json:"threadId"`
 	TurnID   string `json:"turnId"`
+}
+
+type ThreadStatus struct {
+	Type        string   `json:"type"`
+	ActiveFlags []string `json:"activeFlags,omitempty"`
+}
+
+type ThreadStatusChangedNotification struct {
+	ThreadID string       `json:"threadId"`
+	Status   ThreadStatus `json:"status"`
+}
+
+type TokenUsageBreakdown struct {
+	InputTokens           int64 `json:"inputTokens"`
+	CachedInputTokens     int64 `json:"cachedInputTokens"`
+	OutputTokens          int64 `json:"outputTokens"`
+	ReasoningOutputTokens int64 `json:"reasoningOutputTokens"`
+	TotalTokens           int64 `json:"totalTokens"`
+}
+
+type ThreadTokenUsage struct {
+	Total              TokenUsageBreakdown `json:"total"`
+	Last               TokenUsageBreakdown `json:"last"`
+	ModelContextWindow *int64              `json:"modelContextWindow,omitempty"`
+}
+
+type ThreadTokenUsageUpdatedNotification struct {
+	ThreadID   string           `json:"threadId"`
+	TurnID     string           `json:"turnId"`
+	TokenUsage ThreadTokenUsage `json:"tokenUsage"`
+}
+
+type RateLimitWindow struct {
+	UsedPercent        int64  `json:"usedPercent"`
+	WindowDurationMins *int64 `json:"windowDurationMins,omitempty"`
+	ResetsAt           *int64 `json:"resetsAt,omitempty"`
+}
+
+type RateLimitSnapshot struct {
+	LimitID   *string          `json:"limitId,omitempty"`
+	LimitName *string          `json:"limitName,omitempty"`
+	PlanType  *string          `json:"planType,omitempty"`
+	Primary   *RateLimitWindow `json:"primary,omitempty"`
+	Secondary *RateLimitWindow `json:"secondary,omitempty"`
+}
+
+type AccountRateLimitsReadResult struct {
+	RateLimits          RateLimitSnapshot            `json:"rateLimits"`
+	RateLimitsByLimitID map[string]RateLimitSnapshot `json:"rateLimitsByLimitId,omitempty"`
+}
+
+type AccountRateLimitsUpdatedNotification struct {
+	RateLimits RateLimitSnapshot `json:"rateLimits"`
+}
+
+type ThreadScopedNotification struct {
+	ThreadID string `json:"threadId"`
+	TurnID   string `json:"turnId,omitempty"`
 }

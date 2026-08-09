@@ -143,6 +143,10 @@ var permissionRegistry = []PermSlug{
 		Description: "Compact own conversation via /compact (tclaude agent compact)",
 	},
 	{
+		Slug:        PermSelfInterrupt,
+		Description: "Interrupt own active Codex app-server turn (tclaude agent interrupt)",
+	},
+	{
 		Slug:        PermSelfClone,
 		Description: "Fork this agent into a sibling that inherits its identity; the original keeps running (tclaude agent clone)",
 	},
@@ -171,6 +175,11 @@ var permissionRegistry = []PermSlug{
 		Slug:        PermAgentCompact,
 		OwnerScope:  ownerScopeMember,
 		Description: "Compact ANOTHER agent's context window (tclaude agent compact --target). Group owners can compact members of groups they own without this slug.",
+	},
+	{
+		Slug:        PermAgentInterrupt,
+		OwnerScope:  ownerScopeMember,
+		Description: "Interrupt ANOTHER agent's active Codex app-server turn (tclaude agent interrupt --target). Group owners can interrupt members of groups they own without this slug.",
 	},
 	{
 		Slug:        PermAgentRename,

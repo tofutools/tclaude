@@ -369,11 +369,14 @@ func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, rela
 		} else {
 			clearFailedExitIntent(intentSet)
 			res.Action = "error"
-			switch h.Name {
-			case harness.OpenCodeName:
+			switch {
+			case h.Name == harness.OpenCodeName:
 				res.Detail = "managed OpenCode TUI exit dispatch failed"
-			case harness.CopilotName:
-				res.Detail = "managed Copilot signal exit dispatch failed"
+			case len(h.SignalExitKeys()) > 0:
+				// Every keystroke-free harness (Copilot, Claude Code, Codex)
+				// reports the signal path it actually took, not a typed
+				// exitCmd it never sent.
+				res.Detail = "managed " + h.Name + " signal exit dispatch failed"
 			default:
 				res.Detail = "send-keys " + exitCmd + " failed"
 			}
@@ -768,7 +771,6 @@ func clearFailedExitIntent(intentRef *db.SessionExitIntentRef) {
 // softExitPaneScreenTail): the intermittent ignored-exit failure is a Copilot
 // TUI behaviour, and other harnesses should not pay the capture nor leak
 // their screens into logs for a bug they do not have.
-//
 func logSoftExitPaneState(target *lifecycleTarget, reason, phase string, attempt int) {
 	if harnessForConv(target.convID).Name != harness.CopilotName {
 		return
@@ -781,21 +783,20 @@ func logSoftExitPaneState(target *lifecycleTarget, reason, phase string, attempt
 		"pane_screen", capturePaneScreenTail(target.paneID))
 }
 
-// sendSoftExitToTarget delivers one soft-exit attempt to the pane. A Copilot
-// pane gets its keystroke-free signal exit (see
-// injectCopilotSignalExitSerializedBy — its TUI silently drops typed slash
-// commands both mid-turn and whenever its keypress reader wedges, while
-// ctrl-c handling survives both states); every other harness gets its exit
-// command typed and submitted.
+// sendSoftExitToTarget delivers one soft-exit attempt to the pane. A harness
+// with a keystroke-free signal exit (harness.Lifecycle.SignalExitKeys non-empty:
+// Copilot, Claude Code, Codex) gets those keys sent as signals — a typed slash
+// command is silently dropped both mid-turn and whenever a TUI's keypress
+// reader wedges, while ctrl-c handling survives both states; every other
+// harness gets its exit command typed and submitted.
 //
-// copilot is resolved ONCE per stop by the caller and threaded through, like
-// exitCmd and prefixKeys already are: re-resolving per attempt would let a
-// conv whose rows vanish mid-stop fall back to the default harness on a
-// retry and type "/exit" into the very pane this branch exists to never type
-// into.
-func sendSoftExitToTarget(target *lifecycleTarget, copilot bool, exitCmd string, prefixKeys []string) error {
-	if copilot {
-		return injectCopilotSignalExitSerializedBy(target.tmuxSession+":0.0", target.paneID)
+// signalKeys is resolved ONCE per stop by the caller and threaded through, like
+// exitCmd and prefixKeys already are: re-resolving per attempt would let a conv
+// whose rows vanish mid-stop fall back to the default harness on a retry and
+// type "/exit" into the very pane this branch exists to never type into.
+func sendSoftExitToTarget(target *lifecycleTarget, signalKeys []string, exitCmd string, prefixKeys []string) error {
+	if len(signalKeys) > 0 {
+		return injectSignalExitSerializedBy(target.tmuxSession+":0.0", target.paneID, signalKeys)
 	}
 	return injectSoftExitTextSerializedBy(target.tmuxSession+":0.0", target.paneID, exitCmd, prefixKeys)
 }
@@ -825,9 +826,11 @@ func injectSoftExitTarget(target *lifecycleTarget, exitCmd string, prefixKeys []
 	}
 	// Resolved once for the whole stop, retries included — see
 	// sendSoftExitToTarget for why per-attempt re-resolution is unsafe.
-	copilot := harnessForConv(target.convID).Name == harness.CopilotName
+	h := harnessForConv(target.convID)
+	signalKeys := h.SignalExitKeys()
+	copilot := h.Name == harness.CopilotName
 	logSoftExitPaneState(target, reason, "pre-send", 1)
-	if err := sendSoftExitToTarget(target, copilot, exitCmd, prefixKeys); err != nil {
+	if err := sendSoftExitToTarget(target, signalKeys, exitCmd, prefixKeys); err != nil {
 		logLifecycleStopFailure("send", target.paneID, target.sessionID, err)
 		return false
 	}
@@ -852,7 +855,7 @@ func injectSoftExitTarget(target *lifecycleTarget, exitCmd string, prefixKeys []
 		// attribution and never retry against a successor.
 		return true
 	}
-	scheduleSoftExitRetryTarget(target, copilot, exitCmd, prefixKeys, reason, intentRef)
+	scheduleSoftExitRetryTarget(target, signalKeys, copilot, exitCmd, prefixKeys, reason, intentRef)
 	return true
 }
 
@@ -912,13 +915,13 @@ func clearFailedExitIntentTarget(ref *db.SessionExitIntentRef, tmuxSession strin
 	}
 }
 
-func scheduleSoftExitRetryTarget(target *lifecycleTarget, copilot bool, exitCmd string, prefixKeys []string, reason string, intentRef *db.SessionExitIntentRef) {
+func scheduleSoftExitRetryTarget(target *lifecycleTarget, signalKeys []string, copilot bool, exitCmd string, prefixKeys []string, reason string, intentRef *db.SessionExitIntentRef) {
 	goBackground(func() {
 		// Attempt-timeline logging is Copilot-only, like the screen captures
 		// (logSoftExitPaneState): the ignored-soft-exit forensics they exist
 		// for is a Copilot failure mode, and every other harness would just
-		// log more for nothing. The same caller-resolved harness decision
-		// picks the send path (sendSoftExitToTarget).
+		// log more for nothing. The signal-exit send path is picked by the
+		// caller-resolved signalKeys (sendSoftExitToTarget).
 		logAttempts := copilot
 		for attempt := 2; attempt <= softExitMaxAttempts; attempt++ {
 			select {
@@ -979,7 +982,7 @@ func scheduleSoftExitRetryTarget(target *lifecycleTarget, copilot bool, exitCmd 
 				return
 			}
 			logSoftExitPaneState(target, reason, "pre-send", attempt)
-			if err := sendSoftExitToTarget(target, copilot, exitCmd, prefixKeys); err != nil {
+			if err := sendSoftExitToTarget(target, signalKeys, exitCmd, prefixKeys); err != nil {
 				logLifecycleStopFailure("send", target.paneID, target.sessionID, err)
 				// The first /exit was already delivered; a failed RE-send must
 				// not erase that delivery's attribution. Mirror the unknown
@@ -1458,9 +1461,17 @@ func sandboxWriteProofDir(path string) (string, error) {
 }
 
 func resumeOneConvLocked(convID string, recreateMissingDir, trustRoot bool) memberOpResult {
+	// Flag the whole attempt — including time queued on the launch lock — so
+	// dashboards render the multi-second wake as "waking" rather than a dead
+	// offline dot. See waking.go.
+	defer markConvWaking(convID)()
 	launchLock := resumeLaunchLock(convID)
 	launchLock.Lock()
 	defer launchLock.Unlock()
+	return resumeOneConvClaimedUnderLaunchLock(convID, recreateMissingDir, trustRoot)
+}
+
+func resumeOneConvClaimedUnderLaunchLock(convID string, recreateMissingDir, trustRoot bool) memberOpResult {
 	if isConvOnline(convID) {
 		return resumeOneConvUnderLaunchLock(convID, recreateMissingDir, trustRoot, nil)
 	}
@@ -1482,6 +1493,72 @@ func resumeOneConvLocked(convID string, recreateMissingDir, trustRoot bool) memb
 		}
 	}
 	return res
+}
+
+// resumeOneConvWithCodexRollbackLocked proves and changes one stopped
+// generation under the same lock that excludes concurrent stop/resume. It
+// never signals a PID: the eligible runtime is already terminal, and its
+// retained numeric PID is not process identity after exit.
+func resumeOneConvWithCodexRollbackLocked(convID string, recreateMissingDir, trustRoot bool) memberOpResult {
+	launchLock := resumeLaunchLock(convID)
+	launchLock.Lock()
+	defer launchLock.Unlock()
+	res := memberOpResult{ConvID: convID}
+	if isConvOnline(convID) {
+		res.Action = "skipped:already_online"
+		res.Detail = "Codex drive unchanged; compatibility rollback requires the intended generation to be stopped"
+		return res
+	}
+	profile, err := db.AgentRelaunchProfileForConv(convID)
+	if err != nil || profile == nil {
+		res.Action = "error:codex_drive_rollback"
+		res.Detail = "load durable Codex drive: " + firstNonEmpty(errorString(err), "missing stable-agent relaunch profile")
+		return res
+	}
+	if profile.CodexAppServer == nil || !*profile.CodexAppServer {
+		return resumeOneConvClaimedUnderLaunchLock(convID, recreateMissingDir, trustRoot)
+	}
+	runtime, err := db.GetCodexAppServerRuntimeByConvID(convID)
+	if err != nil || runtime == nil ||
+		(runtime.State != db.CodexAppServerDead && runtime.State != db.CodexAppServerUnavailable) {
+		res.Action = "error:codex_drive_rollback"
+		res.Detail = "Codex drive unchanged; no terminal app-server runtime proves the intended stopped generation"
+		return res
+	}
+	launch, err := db.LoadSession(runtime.LaunchID)
+	if err != nil || launch == nil || launch.ConvID != convID || launch.Harness != harness.CodexName ||
+		launch.Status != session.StatusExited || launch.CreatedAt.Before(runtime.CreatedAt) {
+		res.Action = "error:codex_drive_rollback"
+		res.Detail = "Codex drive unchanged; recorded runtime does not match the intended stopped launch generation"
+		return res
+	}
+	candidates, err := db.FindSessionsByConvID(convID)
+	if err != nil {
+		res.Action = "error:codex_drive_rollback"
+		res.Detail = "Codex drive unchanged; list conversation launch generations: " + err.Error()
+		return res
+	}
+	for _, candidate := range candidates {
+		if candidate.CreatedAt.After(launch.CreatedAt) {
+			res.Action = "error:codex_drive_rollback"
+			res.Detail = "Codex drive unchanged; a newer conversation launch supersedes the recorded app-server generation"
+			return res
+		}
+	}
+	source := "explicit --send-keys compatibility rollback"
+	if err := db.SetAgentCodexAppServerSelectionForConv(convID, false, source); err != nil {
+		res.Action = "error:codex_drive_rollback"
+		res.Detail = "persist Codex compatibility rollback: " + err.Error()
+		return res
+	}
+	removeCodexAppServerGeneration(runtime.SocketPath)
+	return resumeOneConvClaimedUnderLaunchLock(convID, recreateMissingDir, trustRoot)
+}
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 // resumeOneConvUnderLaunchLock is the production resume path after its
@@ -2869,6 +2946,17 @@ func handleAgentResume(w http.ResponseWriter, r *http.Request, targetConv string
 		return
 	}
 	trustRoot := caller == "" || hasHumanApprovalContinuation(r, PermAgentResume, targetConv)
+	sendKeys := r.URL.Query().Get("send_keys") == "1"
+	if sendKeys && !trustRoot {
+		if parseAskHumanHeader(r) <= 0 || !requestCodexDriveRollbackApproval(w, r, PermAgentResume, targetConv, targetConv) {
+			if parseAskHumanHeader(r) <= 0 {
+				writeError(w, http.StatusForbidden, "codex_drive_change_restricted",
+					"moving a Codex agent from its selected app-server drive to send-keys requires a direct human resume or actual --ask-human approval")
+			}
+			return
+		}
+		trustRoot = true
+	}
 	// Recreating a missing path is a daemon-side mkdir with the human's
 	// filesystem authority. Keep that opt-in human-only; an agent cannot prove
 	// write access inside a directory that does not exist.
@@ -2887,7 +2975,12 @@ func handleAgentResume(w http.ResponseWriter, r *http.Request, targetConv string
 	// relaunch (the CLI's `--recreate-dir`, the dashboard's confirm-and-retry).
 	// Absent it, a vanished cwd comes back as `error:missing_cwd` so the caller
 	// can decide.
-	res := resumeOneConvLocked(targetConv, recreate, trustRoot)
+	var res memberOpResult
+	if sendKeys {
+		res = resumeOneConvWithCodexRollbackLocked(targetConv, recreate, trustRoot)
+	} else {
+		res = resumeOneConvLocked(targetConv, recreate, trustRoot)
+	}
 	if res.Action == "error:resume_provenance" && !trustRoot && parseAskHumanHeader(r) > 0 {
 		if !requestResumeRecoveryApproval(w, r, PermAgentResume, targetConv, targetConv) {
 			return
@@ -2963,6 +3056,47 @@ func requestResumeRecoveryApproval(w http.ResponseWriter, r *http.Request, perm,
 	}
 	writeError(w, http.StatusForbidden, "permission",
 		fmt.Sprintf("human declined or timed out after %s while recovering resume provenance for target %s",
+			timeout, short8(targetConv)))
+	return false
+}
+
+func requestCodexDriveRollbackApproval(w http.ResponseWriter, r *http.Request, perm, authTarget, targetConv string) bool {
+	timeout := parseAskHumanHeader(r)
+	if timeout <= 0 {
+		return false
+	}
+	if popupBaseURL == "" {
+		writeError(w, http.StatusForbidden, "permission",
+			"no popup base URL configured; Codex drive rollback cannot be approved")
+		return false
+	}
+	p := peerFromContext(r.Context())
+	if classify(p) != classAgent {
+		return false
+	}
+	callerTitle := ""
+	if row := agent.FreshConvRowResolved(p.ConvID); row != nil {
+		callerTitle = agent.DisplayTitle(row)
+	}
+	targetTitle := ""
+	if row := agent.FreshConvRowResolved(targetConv); row != nil {
+		targetTitle = agent.DisplayTitle(row)
+	}
+	targetGroup, _, _ := extractApprovalTargets(r, "")
+	req := &approvalRequest{
+		id: newApprovalID(), perm: perm, convID: p.ConvID, convTitle: callerTitle,
+		method: r.Method, path: r.URL.Path, rawQuery: r.URL.RawQuery,
+		bodyPreview: "Durably change the stopped target from the Codex app-server drive to tmux send-keys, tear down its recorded app-server runtime, and resume it. Future relaunches will remain on send-keys until explicitly changed again.",
+		bodyLabel:   "Codex drive rollback (app-server → send-keys)", targetGroup: targetGroup,
+		targetConvID: targetConv, targetConvTitle: targetTitle, createdAt: time.Now(), timeout: timeout,
+		decision: make(chan approvalOutcome, 1), extend: make(chan time.Duration, 1),
+	}
+	if requestHumanApproval(req, popupBaseURL) {
+		markHumanApprovalContinuation(r, perm, authTarget)
+		return true
+	}
+	writeError(w, http.StatusForbidden, "permission",
+		fmt.Sprintf("human declined or timed out after %s while approving Codex drive rollback for target %s",
 			timeout, short8(targetConv)))
 	return false
 }
@@ -7923,12 +8057,21 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 			"conv", convID)
 		return
 	}
-
 	if pickAliveSession(convID) == nil {
 		slog.Warn("spawn: no alive tmux session for post-init injection", "conv", convID)
 		return
 	}
 	h := harnessForConv(convID)
+	codexSelected := false
+	if h.Name == harness.CodexName {
+		var err error
+		codexSelected, err = codexAppServerSelected(convID)
+		if err != nil {
+			slog.Error("spawn: Codex app-server posture unreadable; post-init delivery abandoned without pane fallback",
+				"conv", convID, "error", err)
+			return
+		}
+	}
 
 	// An API-driven Copilot launch is not ready for post-init the moment its
 	// pane is alive. Its bootstrap creates a session under the conversation id
@@ -7944,6 +8087,11 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 			"budget; post-init delivery is abandoned because the failed launch is being "+
 			"shut down as crashed and API posture never falls back to pane input",
 			"conv", convID, "budget", copilotAPIBootstrapTimeout())
+		return
+	}
+	if codexSelected && !awaitCodexAppServerReady(convID) {
+		slog.Error("spawn: the Codex app-server channel never became ready; post-init delivery is abandoned without pane fallback",
+			"conv", convID, "budget", codexAppServerStartupTimeout)
 		return
 	}
 
@@ -8009,6 +8157,8 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 			// API-driven pane as keystrokes.
 			//
 			err = sendCopilotAPIMessage(convID, welcome)
+		case codexSelected:
+			err = sendCodexAppServerMessage(convID, spawnContextMsgID, welcome)
 		default:
 			err = injectTextAndSubmit(target, welcome)
 		}
@@ -8024,7 +8174,16 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 	// created the conversation's row (JOH-216). Runs in its own goroutine so
 	// the bounded retry never delays the rest of post-init.
 	if renameWanted && !h.SupportsRename() && h.SupportsConvs() {
-		goBackground(func() { persistSpawnTitle(convID, name) })
+		if codexSelected {
+			if err := renameCodexAppServerThread(convID, name); err != nil {
+				slog.Warn("spawn: Codex app-server rename failed without title-store fallback",
+					"conv", convID, "name", name, "error", err)
+			} else {
+				cacheDeliveredTitle(convID, name, h.Name)
+			}
+		} else {
+			goBackground(func() { persistSpawnTitle(convID, name) })
+		}
 	}
 
 	// The startup briefing (group context + task brief) already sits in
@@ -8738,6 +8897,13 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	if a.SandboxSnapshotPath != "" {
 		args = append(args, "--sandbox-snapshot-path", a.SandboxSnapshotPath,
 			"--sandbox-snapshot-digest", a.SandboxSnapshotDigest)
+	}
+	// Without this the pane prepares its own boundary under the SAME
+	// deterministic per-session path the daemon just started the managed server
+	// in — and preparation reclaims a populated dir by killing its members, so
+	// the omission is not a degraded launch but a dead server.
+	if a.ResourceCgroupDir != "" {
+		args = append(args, "--resource-cgroup-dir", a.ResourceCgroupDir)
 	}
 	if a.CwdWriteProof != "" {
 		args = append(args, "--cwd-write-proof", a.CwdWriteProof)

@@ -196,7 +196,7 @@ instead of slash-command injection).
 | **Hooks / live status** | ✅ `~/.claude/settings.json` | ✅ `~/.codex/hooks.json` (+ setup-managed trust) | ⚠️ managed liveness; full SSE mapping pending |
 | **Built-in OS sandbox** (`SupportsBuiltinOSSandbox`) | ✅ SRT | ✅ native `--sandbox` | ❌ none; `access-control` is a command filter, not confinement |
 | **OS sandbox at spawn** | ✅ implementation selector: built-in, tclaude-layer, stacked, or off; built-in mode offers `inherit`/`on` | ✅ implementation selector: built-in, tclaude-layer, stacked, or off; built-in mode offers managed profile (default) or raw confined modes | ⚠️ tclaude-layer confines the agentd-owned tool executor with documented caveats; off is explicit; `stacked` refuses; built-in `access-control` is a command filter, not confinement |
-| **Filtered network under `tclaude-layer`** ([contract](sandboxing.md#isolated-with-agentd-network-posture)) | ⚠️ Linux CIDR/ports plus DNS-to-IP host/domain leases; Linux denies active (DNS-name deny is Partial under Allow all); macOS native loopback-only lists; mixed macOS lists are NotEnforced/open; exact provider context and explicit model endpoint coverage required; the inspected set includes the cached remote managed settings, whose live fetch and hourly in-process poll can still re-route a running session | ⚠️ same Linux allow/deny gateway and native-loopback boundary; DNS-name deny is Partial under Allow all; provider route resolved from Codex's own effective config via app-server `config/read`, so enterprise/MDM layers are included, and ChatGPT sign-in resolves to `chatgpt_base_url` plus `auth.openai.com` | ⚠️ Linux allow-list packet floor plus active denies (DNS-name deny is Partial under Allow all) for explicit-provider configs only; opaque/default/dynamic routes refuse, and the local convenience presets remain launch-refused — denies included — because they name no explicit provider endpoint |
+| **Filtered network under `tclaude-layer`** ([contract](sandboxing.md#isolated-with-agentd-network-posture)) | ⚠️ Linux CIDR/ports plus DNS-to-IP host/domain leases; Linux denies active (DNS-name deny is Partial under Allow all); macOS native loopback-only lists; mixed macOS lists are NotEnforced/open; exact provider context and explicit model endpoint coverage required; the inspected set includes the cached remote managed settings, whose live fetch and hourly in-process poll can still re-route a running session | ⚠️ same Linux allow/deny gateway and native-loopback boundary; DNS-name deny is Partial under Allow all; provider route resolved from Codex's own effective configuration, so enterprise/MDM layers are included, and ChatGPT sign-in resolves to `chatgpt_base_url` plus `auth.openai.com` | ⚠️ Linux allow-list packet floor plus active denies (DNS-name deny is Partial under Allow all) for explicit-provider configs only; opaque/default/dynamic routes refuse, and the local convenience presets remain launch-refused — denies included — because they name no explicit provider endpoint |
 | **Approval posture at spawn** | ✅ per-session `--permission-mode` (inherit + Claude's modes); `auto` (default) runs the supervisor classifier, non-blocking for detached agents; `inherit` keeps `settings.json` + the agentd approval popup | ✅ `--ask-for-approval` flag, non-blocking default for agents | ✅ per-session `deny` (default), `ask`, or `allow-tools`; access-control keeps the tool baseline enabled, while `off` never auto-approves bash |
 | **Built-in tool governance at spawn** | ➖ not a separate axis | ➖ not a separate axis | ✅ `--tools allow|ask|deny` applies uniformly to bash, glob, grep, LSP, task, and skill in `access-control`; `allow` is the backward-compatible default |
 | **AskUserQuestion timeout at spawn** | ✅ per-session `inherit`/`never`/`60s`/`5m`/`10m` (delivered as a `--settings` override); `inherit` (default) keeps your `settings.json` value — set an interval per-agent / by profile so an unattended agent auto-continues instead of stalling on a question | ➖ no AskUserQuestion dialog | ❌ adapter pending |
@@ -219,27 +219,28 @@ implements only a few of these rows. See below.
 
 ### Codex drive: send-keys vs app-server
 
-Codex agents use the established pane/send-keys path by default. An
-experimental opt-in instead starts one private `codex app-server` for the
-agent generation and attaches the normal Codex TUI to its Unix socket with
-`--remote`. Select it with `tclaude agent spawn --codex-app-server`, the
-tri-state `codex_app_server` spawn-profile field, or the Codex drive control in
-the dashboard. The selection follows the normal profile precedence chain and
-is frozen for resume, reincarnate, and clone; explicit `false` keeps send-keys
-available for A/B testing.
+Codex agents use the established pane/send-keys drive by default. The
+experimental app-server drive requires Codex CLI 0.147.x and is opt-in through
+`tclaude agent spawn --codex-app-server`, the `codex_app_server` spawn-profile
+field, or the dashboard's Codex drive control. Set the profile field or control
+explicitly to false to keep the default drive. The selected drive carries over
+to resume, reincarnate, and clone.
 
-This runtime milestone requires Codex CLI 0.147.x. The TUI's positional prompt
-remains the sole writer of the birth turn. Agentd waits for exactly one loaded
-thread, verifies it with `thread/read`, and binds without replaying the prompt.
-Each generation owns a private 0600 socket and server process, and publishes a
-`warming`, `ready`, `unavailable`, or `dead` state in the dashboard. An
-explicitly selected app-server launch fails closed on an incompatible binary,
-an unsafe or unavailable socket, an ambiguous thread, or a failed control
-connection; it never silently switches that launch back to send-keys.
+The app-server drive supports durable human and peer messages, rename,
+compaction, and `tclaude agent interrupt`. Messages wait while Codex needs an
+approval or user answer. Those questions appear only in the Codex TUI: the TUI
+is the sole place to approve, deny, or answer them.
 
-The stable control handle established here is the prerequisite for moving
-message, rename, and compaction operations to typed RPC calls. Until those
-operations are enabled, their existing lifecycle behavior is unchanged.
+The dashboard reports the drive as `warming`, `ready`, `unavailable`, or
+`dead`. A ready drive also shows when its status or subscription-usage snapshot
+was last refreshed. Context and token counts continue to come from Codex's
+durable rollout data, so their freshness can differ from the app-server status
+snapshot. Legacy and explicitly opted-out sessions continue to use send-keys.
+
+An explicitly selected app-server drive fails closed if Codex is incompatible,
+the connection cannot be established safely, or control later fails. Messages
+are held and the dashboard shows the failure detail; tclaude never silently
+falls back to send-keys for that launch.
 
 ### Group-route activation matrix
 
@@ -265,7 +266,7 @@ covers **interactive human sessions**:
 | **Spawn** | ✅ `copilot`, with a caller-preset conv-id (`--session-id <uuid>`), a launch-time name (`--name=`), and an optional first turn (`-i <prompt>`) |
 | **Resume** | ✅ `copilot --resume=<id>` (exact id only on the CLI — never the picker, an id prefix, or a session name; tclaude resolves *its* own id prefixes to a full id first, via the conversation store below). Under the [API drive](#copilot-drive-send-keys-vs-api) the RPC session is resumed too, never re-created |
 | **Model & effort at spawn** | ✅ `--model=` (including `auto`) and `--effort=` (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, as advertised by the pinned 1.0.77 CLI). Note `max`: the flag accepts the whole vocabulary, but the docs describe `max` as the highest-depth tier **for Anthropic models** — Copilot may reject it for a GPT model, so pair it with a model that has that tier |
-| **Rename / compact / graceful stop** | ✅ in-pane `/rename`, `/compact`, `/exit`. `/exit` closes the *current* session: with other sessions open in the same CLI it foregrounds the newest remaining one instead of quitting, so tclaude keeps its hard-kill fallback for a pane that doesn't actually exit. The exit is preceded by a **cancel keystroke** (`C-c`, `Lifecycle.SoftExitPrefixKeys`) — see below. Under the [API drive](#copilot-drive-send-keys-vs-api) rename and compact become typed RPC calls; `/exit` deliberately does not |
+| **Rename / compact / graceful stop** | ✅ in-pane `/rename`, `/compact`, `/exit`. `/exit` closes the *current* session: with other sessions open in the same CLI it foregrounds the newest remaining one instead of quitting, so tclaude keeps its hard-kill fallback for a pane that doesn't actually exit. The managed stop does NOT type `/exit` — it sends the keystroke-free **signal exit** (three `C-c`, `Lifecycle.SignalExitKeys`) — see [below](#signal-exit-keystroke-free-soft-exit). Under the [API drive](#copilot-drive-send-keys-vs-api) rename and compact become typed RPC calls; the exit deliberately does not |
 | **Hooks / live status** | ✅ `<COPILOT_HOME>/hooks/tclaude.json` — a tclaude-**owned** drop-in file, merged by Copilot with the user's own hooks; no trust step, no `config.json` involvement. Registers `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `SessionEnd`, so a pane reports working/idle per turn and refreshes its current git branch (which also drives dashboard branch/PR links). See [below](#copilot-hooks) for what is deliberately left out. The hooks own busy/idle on both drives; the [API drive](#copilot-drive-send-keys-vs-api) adds the one state they cannot see — an agent blocked on a permission prompt |
 | **Conversation store** | ✅ cold list / resolve / cwd filter / title / existence, read from Copilot's own per-session `<COPILOT_HOME>/session-state/<id>/` files. No SQLite access at all — see [below](#copilot-conversation-store) |
 | **Sandbox** | ⚠️ `inherit` (default) / `off` — an *assertion*, not a lever. Copilot's own command sandbox has no per-launch lever tclaude can use — its hidden `--sandbox`/`--no-sandbox` flags need `--experimental`, which also lets the pane undo the choice — so tclaude neither enables nor disables it; `off` means "verified not engaged" and is what `--sandbox-impl tclaude-layer` resolves to. See [below](#copilot-and-tclaudes-outer-sandbox). Copilot's *own* command sandboxing was separately evaluated and deliberately not advertised as a harness-builtin implementation — see [below](#copilots-own-command-sandboxing) |
@@ -822,7 +823,7 @@ listed here describes both drives.
 | **Agent messages, welcomes, follow-ups** | typed into the pane as bracketed-paste keystrokes | `session.send` over the RPC connection |
 | **Rename** | `/rename <title>` typed into the pane | `session.name.set` — the same write, measured: it sets `name` and `user_named` in the session's `workspace.yaml`, the file the conversation store already reads for the title |
 | **Compaction** (`tclaude agent compact`) | `/compact` typed into the pane | `session.history.compact`, with the follow-up prompt submitted after it returns rather than racing it. "Nothing to compact" is the ordinary answer for a young session, not a failure, and the follow-up is still submitted |
-| **Soft exit / graceful stop** | `C-c` then `/exit` typed into the pane | **unchanged — still `C-c` + `/exit`.** Deliberate; see below |
+| **Soft exit / graceful stop** | keystroke-free signal exit (three `C-c`, `Lifecycle.SignalExitKeys`) | **unchanged — still the signal exit.** Deliberate; the RPCs that look like process exit (`session.shutdown`, `sessions.close`) only end a session and leave the CLI running — see below |
 | **Busy / idle** | tclaude's Copilot hooks | **unchanged — still the hooks.** They were measured firing for an RPC-created session, carrying the conversation's own id, so nothing is gained by adding a second writer |
 | **Waiting on a human** | not detectable — an agent sitting on a permission prompt looks like an agent working, because Copilot's `PermissionRequest` hook is [deliberately not installed](#copilot-hooks) | `session.permissions.pendingRequests` projects it onto the row, so the dashboard shows *awaiting permission* instead of *working*. Stays empty under `--allow-all-tools`, so it cannot mislabel an unattended agent. Note the knock-on: an agent in an awaiting state **does not receive agent mail** until the prompt is resolved, so an API-driven Copilot agent left sitting on a permission dialog now goes quiet where before it merely looked busy |
 | **Context & token counts** | followed from Copilot's durable event log — real, but only at the resolution of an authoritative disclosure (a compaction, a truncation, a shutdown) | `session.metadata.contextInfo` + `session.usage.getMetrics`, re-read whenever a session event says something may have changed (coalesced to at most one refresh per 750 ms, with a 30 s backstop). While a reading is current it is the single writer of the context columns and the durable-log follower stands down; if refreshes stop working the reading ages out after 90 s and the follower takes the row back |
@@ -989,29 +990,52 @@ could change without notice. Every behaviour described above was measured agains
 Copilot CLI **1.0.78** on Linux. Re-check this mode on a Copilot CLI upgrade
 rather than assuming it is stable.
 
-#### Copilot soft exit
+#### Signal exit (keystroke-free soft exit)
 
-Copilot's TUI accepts a slash command only while it is idle at its input
-prompt, so tclaude sends a cancel keystroke (`C-c`) immediately before `/exit`.
-Measured against the pinned 1.0.77 binary in a real tmux pane, and recorded by
-the `copilotfixture` soft-exit scenarios:
+A typed slash-command soft exit shares a structural weakness across every TUI:
+it depends on the input box being empty, on the TUI being idle at its prompt,
+and on the keypress reader actually consuming the bytes. Copilot 1.0.77/1.0.78
+was measured dropping a typed `/exit` both mid-turn and when its keypress reader
+wedged outright (three `/exit` injections ignored for a full 10 s escalation
+deadline while `C-c` handling kept working), so tclaude drives the exit through
+the surviving signal path instead. TCL-1137 measured the same `C-c` quit on the
+other pane harnesses and generalized this into a per-harness lifecycle
+capability, `Lifecycle.SignalExitKeys` (agentd's `injectSignalExitSerializedBy`
+sends the keys one settle apart; only the first key's failure is an error, since
+a pane commonly dies on a later press). The measured contract per harness:
 
-- **Mid-turn, the bare command is silently discarded.** The typed `/exit` is
-  rendered, and the submitting Enter simply clears the input box — no exit, no
-  queued message (the footer offers `ctrl+enter` to enqueue one), nothing in
-  the transcript. A retired agent that was working therefore showed *no trace*
-  of ever having been asked to exit.
-- **With a permission dialog open it is worse than a no-op.** The dialog owns
-  the keyboard, so the submitting Enter accepts its **default entry** — which
-  approves the pending command instead of exiting.
-- **`C-c` fixes both, and costs nothing when unnecessary.** Mid-turn or during
-  a tool it cancels the work and returns to the prompt; on a dialog it aborts
-  the request (the command is refused, not approved); on an idle pane it is a
-  no-op; on a pane holding a half-typed line it clears the buffer. The exit
-  that follows is still graceful — Copilot writes its `session.shutdown` event.
-- **Escape is not usable here.** The CLI holds a lone `\x1b` waiting for the
-  rest of a possible escape sequence, so a trailing `Escape` is never
-  delivered at all.
+- **Copilot** — three `C-c`, no prefix. The "again to exit" window closes
+  between 1.2 s and 1.5 s. `C-c` cancels a turn or aborts a permission dialog
+  (the pending command is refused, not approved), clears a half-typed line, and
+  on an idle pane arms then exits. The exit is graceful — Copilot writes its
+  durable `session.shutdown` event (verified from a retired session's
+  `events.jsonl` tail). Escape is deliberately unused: the CLI holds a lone
+  `\x1b` waiting for the rest of an escape sequence, so a trailing Escape is
+  never delivered.
+- **Claude Code** — `Escape` then three `C-c`. Its quit is a double `C-c` with a
+  measured ~0.8 s re-press window (0.8 s exits, 0.9 s does not), and the exit
+  runs the same shutdown path as typed `/exit` (SessionEnd hook fires with
+  reason `prompt_input_exit`). The leading Escape makes it strictly SAFER than
+  the typed path: with a permission dialog open, typed `/exit` + Enter selects
+  the dialog's default and RUNS the pending tool, while a bare `C-c` is
+  swallowed by the dialog; Escape dismisses the dialog first so the `C-c`
+  presses quit without approving anything. On idle / text-in-box / mid-turn,
+  Escape is harmless or interrupts, converging every state on the prompt.
+- **Codex** — three `C-c`, no prefix. Its quit is a double `C-c` with NO tight
+  re-press window (0.5 s–5 s all exit). Codex persists its rollout
+  incrementally during the session and writes no end-of-session marker, so a
+  `C-c` exit and a typed `/quit` leave the same durable rollout; if a turn is in
+  flight both abort it (`turn_aborted`).
+- **OpenCode** — none (`SignalExitKeys` is nil); it is exempt by construction.
+  Its exit is `app.exit` published as a `tui.command.execute` event over the
+  managed server's HTTP `/tui/publish` endpoint, so no keystrokes and no
+  keypress reader are involved. A TUI too busy to accept the command is detected
+  from the projected session status (`openCodeControlInputBlocked`) and deferred
+  or escalated — never silently dropped.
+
+Note the reincarnate pid-keyed retry path still types the exit command for all
+harnesses (`Lifecycle.SoftExitPrefixKeys` shapes its Copilot cancel), a
+deliberate scope cut; a generalized signal exit could cover it too.
 
 Panes that still refuse to close are ended by the harness-generic escalation
 ladder (`agent stop` in [agent.md](agent.md)), which follows a soft exit that
