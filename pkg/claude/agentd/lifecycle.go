@@ -4141,8 +4141,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		copilotAPIValue = "api"
 	}
 	codexAppServerValue := ""
-	if codexAppServer {
-		codexAppServerValue = "app-server"
+	if h.Name == harness.CodexName {
+		codexAppServerValue = "send-keys"
+		if codexAppServer {
+			codexAppServerValue = "app-server"
+		}
 	}
 	fastModeValue := ""
 	if fastModeSet {
@@ -5232,8 +5235,11 @@ func resolveLaunchProvenance(p spawnParams) *agent.ResolvedLaunch {
 		copilotAPI = "api"
 	}
 	codexAppServer := ""
-	if p.CodexAppServer {
-		codexAppServer = "app-server"
+	if harnessOrDefault(p.Harness) == harness.CodexName {
+		codexAppServer = "send-keys"
+		if p.CodexAppServer {
+			codexAppServer = "app-server"
+		}
 	}
 	fastMode := ""
 	if p.FastModeSet {

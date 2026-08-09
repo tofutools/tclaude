@@ -52,6 +52,7 @@ const harnesses = [{
   can_auto_review: true,
   can_ask_timeout: false, ask_timeout_modes: [], default_ask_timeout: '',
   can_remote_control: false, can_auto_memory: false, can_ssh_workaround: true,
+	can_codex_app_server: true,
   can_fast_mode: true,
   can_dir_trust: true, dir_trust_store: '~/.codex/config.toml',
   can_context_features: false, context_features: [],
@@ -356,6 +357,8 @@ test('agent-spawn model normalizes names and builds exact launch bodies', async 
   assert.equal('remote_control' in codexBody, false);
   assert.equal(codexBody.approval, 'on-request');
   assert.equal(codexBody.auto_review, true);
+	assert.equal(codexBody.codex_app_server, false,
+	  'the dashboard posts an authoritative default-off Codex drive choice');
   assert.equal(codexBody.fast_mode, 'inherit', 'dialog default explicitly selects Codex config.toml');
   const fastBody = model.buildSpawnRequest({ ...codex, name: 'fast', fastMode: '1' }, context, null, []).body;
   assert.equal(fastBody.fast_mode, 'on');
@@ -377,6 +380,39 @@ test('agent-spawn model normalizes names and builds exact launch bodies', async 
     ...codex, name: 'worker', approvalReviewer: 'human',
   }, context, { path: '', branch: '' }).body;
   assert.equal(humanBody.auto_review, false, 'explicit human review overrides a profile');
+});
+
+test('Codex app-server stays capability-gated and profile opt-in never leaks', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const context = { groups, harnesses, userDefaultModel: '', normalizeNames: true };
+  const initial = model.createSpawnDraft({ groups, harnesses, groupName: 'alpha' });
+  assert.equal(initial.codexAppServer, false, 'a fresh dialog is default-off');
+  assert.equal(model.spawnCapabilityView(initial, context).showCodexAppServer, false,
+	'non-Codex surfaces do not offer the drive');
+
+  const codex = model.selectSpawnHarness(initial, 'codex', context);
+  assert.equal(model.spawnCapabilityView(codex, context).showCodexAppServer, true);
+  const optedIn = model.applySpawnProfile(
+	codex, { name: 'api', harness: 'codex', codex_app_server: true }, context,
+  );
+  assert.equal(optedIn.codexAppServer, true);
+  assert.equal(model.buildSpawnRequest({ ...optedIn, name: 'api' }, context, null, [])
+	.body.codex_app_server, true);
+
+  const sparse = model.applySpawnProfile(
+	optedIn, { name: 'ordinary', harness: 'codex' }, context,
+  );
+  assert.equal(sparse.codexAppServer, false,
+	'a sparse profile returns to default-off instead of inheriting a prior opt-in');
+  assert.equal(model.buildSpawnRequest({ ...sparse, name: 'ordinary' }, context, null, [])
+	.body.codex_app_server, false);
+
+  const claude = model.selectSpawnHarness(optedIn, 'claude', context);
+  assert.equal(claude.codexAppServer, false, 'switching harness clears the opt-in');
+  assert.equal('codex_app_server' in model.buildSpawnRequest(
+	{ ...claude, name: 'claude-worker' }, context, null, [],
+  ).body, false, 'unsupported surfaces omit the field entirely');
 });
 
 test('agent-spawn state snapshots opens and invalidates every async generation', async (t) => {

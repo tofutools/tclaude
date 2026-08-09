@@ -58,6 +58,28 @@ func TestRunSpawn_ExplicitFastModeInheritStaysOnWire(t *testing.T) {
 		"explicit inherit must not serialize like an omitted --fast-mode")
 }
 
+func TestRunSpawn_ExplicitCodexSendKeysStaysOnWire(t *testing.T) {
+	prevAvail, prevReq := DaemonAvailableImpl, DaemonRequestImpl
+	t.Cleanup(func() { DaemonAvailableImpl, DaemonRequestImpl = prevAvail, prevReq })
+	DaemonAvailableImpl = func() bool { return true }
+	var captured SpawnRequest
+	DaemonRequestImpl = func(_, _ string, body, out any, _ DaemonOpts) error {
+		captured = body.(SpawnRequest)
+		*out.(*SpawnResponse) = SpawnResponse{Group: "alpha", ConvID: "conv-sendkeys"}
+		return nil
+	}
+
+	resp, rc := RunSpawn(&SpawnParams{
+		Group: "alpha", Name: "worker", Harness: harness.CodexName,
+		codexAppServerSpecified: true, CodexAppServer: false,
+	}, new(bytes.Buffer), new(bytes.Buffer), new(bytes.Buffer))
+	require.Equal(t, rcOK, rc)
+	require.NotNil(t, resp)
+	require.NotNil(t, captured.CodexAppServer)
+	assert.False(t, *captured.CodexAppServer,
+		"--codex-app-server=false must override an opted-in profile instead of serializing as unset")
+}
+
 // A --file brief over the 16384-byte cap is rejected with the same
 // error as an oversize --initial-message: the file-input path enforces
 // the cap, it is not a way to smuggle a larger brief past it. The
