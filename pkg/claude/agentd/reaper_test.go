@@ -84,7 +84,7 @@ func TestSessionReaper_OpenCodeServerLossOverridesLivePane(t *testing.T) {
 // row: tick one sees it alive (seeding the witnessed-alive set), the
 // process then goes, and tick two marks it exited AND fires the offline
 // notification — carrying the harness so the banner reads "Codex: Exited".
-func TestSessionReaper_ReapsDeadCodexSessionAndNotifies(t *testing.T) {
+func TestSessionReaper_IntentionalCodexAppServerStopStaysStopped(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
@@ -132,9 +132,18 @@ func TestSessionReaper_ReapsDeadCodexSessionAndNotifies(t *testing.T) {
 	require.Equal(t, 0, r.tick(time.Now()))
 	require.Empty(t, fired, "a live session is not reaped")
 	require.True(t, r.aliveLastTick[sessionID], "the live Codex session was witnessed alive")
+	agentID, _, err := db.EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentCodexAppServerSelectionForConv(convID, true, "explicit test selection"))
+	const appServerGeneration = "stopped-app-server-generation"
+	require.NoError(t, db.InsertCodexAppServerRuntimeWithCapability(db.CodexAppServerRuntime{
+		Generation: appServerGeneration, LaunchID: sessionID, AgentID: agentID,
+		ConvID: convID, ThreadID: convID, SocketPath: filepath.Join(dir, "codex", "owner", appServerGeneration, "app.sock"),
+		CodexVersion: "0.147.0", State: db.CodexAppServerReady, CreatedAt: time.Now().UTC(),
+	}, "generation-capability"))
 	require.NoError(t, db.SetSessionExitLaunchGeneration(sessionID,
 		"11111111111111111111111111111111"))
-	_, err := db.SetSessionExitIntent(sessionID, db.AgentExitActionStop,
+	_, err = db.SetSessionExitIntent(sessionID, db.AgentExitActionStop,
 		"evt_1234567890abcdef12345678", time.Now())
 	require.NoError(t, err)
 
@@ -171,6 +180,20 @@ func TestSessionReaper_ReapsDeadCodexSessionAndNotifies(t *testing.T) {
 	assert.Equal(t, db.AgentExitCauseDisappeared, audit[0].CauseKind)
 	assert.Equal(t, db.AgentExitActionStop, audit[0].LifecycleAction)
 	assert.Equal(t, "evt_1234567890abcdef12345678", audit[0].RelatedEventID)
+
+	// The production app-server teardown and another scheduler/reaper interval
+	// must not turn the lifecycle-attributed exit into a recovery episode.
+	runtime, err := db.GetCodexAppServerRuntime(appServerGeneration)
+	require.NoError(t, err)
+	require.NotNil(t, runtime)
+	assert.Equal(t, db.CodexAppServerDead, runtime.State)
+	_, err = db.GetCodexAppServerCapability(appServerGeneration)
+	assert.ErrorContains(t, err, "unavailable", "the stopped generation loses its capability exactly once")
+	runAgentRecoverySweep(time.Now().Add(time.Hour))
+	require.Equal(t, 0, r.tick(time.Now().Add(time.Hour)))
+	recovery, err := db.AgentRecoveryForAgent(agentID)
+	require.NoError(t, err)
+	assert.Nil(t, recovery, "intentional stop must not create a restart counter or warning row")
 }
 
 func TestSessionReaperExitedCodexPredecessorDoesNotStopLiveSuccessorRuntime(t *testing.T) {

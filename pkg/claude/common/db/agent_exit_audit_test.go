@@ -218,6 +218,44 @@ func TestAgentExitAudit_CallbackCanEnrichHookRace(t *testing.T) {
 	assert.Equal(t, AgentExitObserverTmux, rows[0].Observer)
 }
 
+func TestIntentionalCodexSignalExitDoesNotCreateRecoveryCandidate(t *testing.T) {
+	setupTestDB(t)
+	const (
+		sessionID  = "spwn-codex-app-server-stop"
+		convID     = "codex-app-server-stop-conv"
+		generation = "abababababababababababababababab"
+	)
+	seedExitAuditSession(t, sessionID, convID)
+	agentID, _, err := EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	require.NoError(t, SetSessionExitLaunchGeneration(sessionID, generation))
+	require.NoError(t, SetSessionExitLaunchBinding(sessionID, generation, strings.Repeat("c", 64), "%25"))
+	require.NoError(t, MarkSessionExitLaunchReleasing(sessionID, generation))
+	require.NoError(t, MarkSessionExitLaunchReleased(sessionID, generation))
+	_, err = SetSessionExitIntentIfTarget(sessionID, "tmux-"+sessionID, generation,
+		AgentExitActionStop, "evt_555555555555555555555555", time.Now())
+	require.NoError(t, err)
+
+	// App-server teardown can leave only signal/disappearance evidence. Even
+	// without exit_code=0, the durable lifecycle intent makes this a stop, not
+	// a suppressed recovery attempt.
+	_, err = RecordAgentExitObservation(AgentExitObservation{
+		SessionID: sessionID, TmuxSession: "tmux-" + sessionID,
+		Observer: AgentExitObserverReaper, CauseKind: AgentExitCauseDisappeared,
+		ExpectedGeneration: generation, ObservedState: "exited",
+	})
+	require.NoError(t, err)
+	recovery, err := AgentRecoveryForAgent(agentID)
+	require.NoError(t, err)
+	assert.Nil(t, recovery)
+
+	for _, verb := range []string{AuditVerbAgentRecoveryEligible, AuditVerbAgentRecoverySuppressed, AuditVerbAgentRecoveryScheduled} {
+		rows, listErr := ListAuditLog(AuditLogFilter{Verb: verb})
+		require.NoError(t, listErr)
+		assert.Empty(t, rows, verb)
+	}
+}
+
 func TestAgentExitAudit_ConcurrentHookAndReaperConverge(t *testing.T) {
 	setupTestDB(t)
 	seedExitAuditSession(t, "spwn-concurrent", "conv-concurrent")
