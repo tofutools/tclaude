@@ -31,6 +31,7 @@ func TestDetachSizeNormalizationRealTmuxHookAndAttachedGuard(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(hooks), "client-detached[0] display-message operator-zero")
 	require.Contains(t, string(hooks), "client-detached[100] display-message operator-hundred")
+	require.Contains(t, string(hooks), "client-detached["+tmuxDetachNormalizeHookIndex+"]")
 	require.Equal(t, 1, strings.Count(string(hooks), tmuxDetachNormalizeOption))
 
 	// Replacing the global hook array removes our entry. The next attach setup

@@ -52,8 +52,8 @@ func TestConfigureTmuxDetachNormalizationOptsInAndEnsuresHook(t *testing.T) {
 
 	want := [][]string{
 		{"set-option", "-t", "=spwn-managed:", tmuxDetachNormalizeOption, "on"},
-		{"if-shell", "-F", "#{==:#{m:*@tclaude_detach_normalize*,#{client-detached}},0}",
-			"set-hook -ag client-detached { if-shell -F '#{&&:#{==:#{@tclaude_detach_normalize},on},#{==:#{session_attached},0}}' 'run-shell -C \"resize-window -t =#{session_name}: -x 200 -y 50 ; set-option -w -t =#{session_name}: window-size latest\"' }"},
+		{"set-hook", "-g", "client-detached[9001136]",
+			"if-shell -F '#{&&:#{==:#{@tclaude_detach_normalize},on},#{==:#{session_attached},0}}' 'run-shell -C \"resize-window -t =#{session_name}: -x 200 -y 50 ; set-option -w -t =#{session_name}: window-size latest\"'"},
 	}
 	if !reflect.DeepEqual(rec.calls, want) {
 		t.Fatalf("detach hook configuration = %v, want %v", rec.calls, want)
