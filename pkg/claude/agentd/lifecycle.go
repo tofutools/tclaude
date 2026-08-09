@@ -711,6 +711,45 @@ func clearFailedExitIntent(intentRef *db.SessionExitIntentRef) {
 	}
 }
 
+// logSoftExitPaneState records what the pane is showing around one soft-exit
+// injection attempt. Two captures bracket each attempt: "pre-send" is taken
+// BEFORE that attempt's prefix keys run — Copilot's C-c clears a half-typed
+// input line, so the escalation-time capture alone can never show whether an
+// earlier attempt's exit command was sitting unsubmitted in the input box —
+// and "post-send" is taken right after the settled submit, where a discarded
+// command shows an idle prompt, a stuck one shows the text still in the box,
+// and an accepted one shows the pane tearing down. Together they let a single
+// occurrence of an ignored soft exit say which of those it was, instead of the
+// operator reconstructing it from timing (the intermittent Copilot retire
+// escalations that motivated this).
+//
+// Copilot-only, like every soft-exit screen capture (see
+// softExitPaneScreenTail): the intermittent ignored-exit failure is a Copilot
+// TUI behaviour, and other harnesses should not pay the capture nor leak
+// their screens into logs for a bug they do not have.
+func logSoftExitPaneState(target *lifecycleTarget, reason, phase string, attempt int) {
+	if harnessForConv(target.convID).Name != harness.CopilotName {
+		return
+	}
+	slog.Info("soft-exit: pane state",
+		"phase", phase, "attempt", attempt,
+		"session", target.sessionID, "conv", short8(target.convID),
+		"tmux_session", target.tmuxSession, "pane_id", target.paneID,
+		"reason", reason,
+		"pane_screen", capturePaneScreenTail(target.paneID))
+}
+
+// softExitPaneScreenTail is capturePaneScreenTail gated to Copilot panes —
+// the one harness whose soft-exit failures need screen-state forensics.
+// Returns "" for every other harness so their escalation logs stay
+// screen-free.
+func softExitPaneScreenTail(target *lifecycleTarget) string {
+	if harnessForConv(target.convID).Name != harness.CopilotName {
+		return ""
+	}
+	return capturePaneScreenTail(target.paneID)
+}
+
 func injectSoftExitTarget(target *lifecycleTarget, exitCmd string, prefixKeys []string, reason string, intentRef *db.SessionExitIntentRef) bool {
 	if target == nil {
 		return false
@@ -723,10 +762,12 @@ func injectSoftExitTarget(target *lifecycleTarget, exitCmd string, prefixKeys []
 		clearFailedExitIntentTarget(intentRef, target.tmuxSession)
 		return false
 	}
+	logSoftExitPaneState(target, reason, "pre-send", 1)
 	if err := injectSoftExitTextSerializedBy(target.tmuxSession+":0.0", target.paneID, exitCmd, prefixKeys); err != nil {
 		logLifecycleStopFailure("send", target.paneID, target.sessionID, err)
 		return false
 	}
+	logSoftExitPaneState(target, reason, "post-send", 1)
 	if afterSoftExitTargetSendForTest != nil {
 		afterSoftExitTargetSendForTest()
 	}
@@ -809,6 +850,11 @@ func clearFailedExitIntentTarget(ref *db.SessionExitIntentRef, tmuxSession strin
 
 func scheduleSoftExitRetryTarget(target *lifecycleTarget, exitCmd string, prefixKeys []string, reason string, intentRef *db.SessionExitIntentRef) {
 	goBackground(func() {
+		// Attempt-timeline logging is Copilot-only, like the screen captures
+		// (logSoftExitPaneState): the ignored-soft-exit forensics they exist
+		// for is a Copilot failure mode, and every other harness would just
+		// log more for nothing.
+		logAttempts := harnessForConv(target.convID).Name == harness.CopilotName
 		for attempt := 2; attempt <= softExitMaxAttempts; attempt++ {
 			time.Sleep(softExitRetryDelay)
 			if beforeSoftExitTargetRetryProbeForTest != nil {
@@ -825,12 +871,22 @@ func scheduleSoftExitRetryTarget(target *lifecycleTarget, exitCmd string, prefix
 				// would erase a delivered exit's attribution on a transient
 				// probe failure.
 				if alive, known := lifecycleSessionAlive(target.tmuxSession); known && !alive {
+					if logAttempts {
+						slog.Info("soft-exit retry: session gone before attempt",
+							"session", target.sessionID, "conv", short8(target.convID),
+							"attempt", attempt, "reason", reason)
+					}
 					return
 				}
 				scheduleUnknownIntentCleanup(target, intentRef)
 				return
 			}
 			if probe.state == paneProbeDead {
+				if logAttempts {
+					slog.Info("soft-exit retry: pane closed before attempt",
+						"session", target.sessionID, "conv", short8(target.convID),
+						"attempt", attempt, "reason", reason)
+				}
 				return
 			}
 			if !lifecycleProbeMatchesTarget(probe, target) {
@@ -838,8 +894,14 @@ func scheduleSoftExitRetryTarget(target *lifecycleTarget, exitCmd string, prefix
 				// predecessor transitioned; preserve intent for
 				// callback/reaper attribution and never retry against a
 				// successor (mirrors injectSoftExitTarget).
+				if logAttempts {
+					slog.Info("soft-exit retry: pane identity changed before attempt",
+						"session", target.sessionID, "conv", short8(target.convID),
+						"attempt", attempt, "reason", reason)
+				}
 				return
 			}
+			logSoftExitPaneState(target, reason, "pre-send", attempt)
 			if err := injectSoftExitTextSerializedBy(target.tmuxSession+":0.0", target.paneID, exitCmd, prefixKeys); err != nil {
 				logLifecycleStopFailure("send", target.paneID, target.sessionID, err)
 				// The first /exit was already delivered; a failed RE-send must
@@ -855,6 +917,7 @@ func scheduleSoftExitRetryTarget(target *lifecycleTarget, exitCmd string, prefix
 				scheduleUnknownIntentCleanup(target, intentRef)
 				return
 			}
+			logSoftExitPaneState(target, reason, "post-send", attempt)
 			if attempt == softExitMaxAttempts {
 				// Delivery succeeded; retain attribution through the observer window.
 				scheduleUnknownIntentCleanup(target, intentRef)

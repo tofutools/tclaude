@@ -304,7 +304,7 @@ func escalateStuckSoftExitUnderLaunchLock(target *lifecycleTarget, lifecycleActi
 		"tmux_session", target.tmuxSession, "pane_id", target.paneID,
 		"pane_pid", probe.panePID, "deadline", softExitEscalationDeadline,
 		"reason", reason,
-		"pane_screen", capturePaneScreenTail(target.paneID))
+		"pane_screen", softExitPaneScreenTail(target))
 
 	// Step 1: the identity-guarded tmux kill force-stop already uses.
 	if err := killLifecycleTarget(target); err != nil {
@@ -361,7 +361,10 @@ const (
 // escalation warn can say WHAT the harness was showing when it ignored its
 // soft exit — a permission dialog, a modal, a wedged teardown. The soft-exit
 // deadline expiring is exactly the moment that state is still on screen and
-// about to be destroyed by the kill, and nothing else records it.
+// about to be destroyed by the kill. The injection attempts each bracket
+// themselves with the same capture (logSoftExitPaneState) — necessary because
+// a retry's own prefix C-c can clear the very input-box state the escalation
+// capture would otherwise have shown.
 //
 // Best-effort by design: the pane may die between the caller's revalidate and
 // this read, and a flow-test tmux sim may not implement capture-pane. Both
