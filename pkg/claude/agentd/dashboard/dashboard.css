@@ -2372,6 +2372,7 @@ body.wizard header .activity-hover-trigger:hover { background: transparent; }
     scrollbar-width: thin; scrollbar-color: #6e7681 #0d1117;
   }
   body.wizard .activity-hover-panel { scrollbar-color: #7a5db0 #140f28; }
+  body.slop .activity-hover-panel { scrollbar-color: #c11a1a #1a0505; }
 }
 .activity-hover-panel::-webkit-scrollbar { width: 10px; height: 10px; }
 .activity-hover-panel::-webkit-scrollbar-track,
@@ -2425,6 +2426,13 @@ body.slop .activity-hover-panel {
   border-color: #9e7a00; background: linear-gradient(180deg, #351010 0%, #210808 100%);
   color: #ffe88c; box-shadow: 0 0 18px rgba(255, 215, 0, 0.25);
 }
+body.slop .activity-hover-panel::-webkit-scrollbar-track,
+body.slop .activity-hover-panel::-webkit-scrollbar-corner { background: #1a0505; }
+body.slop .activity-hover-panel::-webkit-scrollbar-thumb {
+  background: #c11a1a; border-color: #1a0505;
+}
+body.slop .activity-hover-panel::-webkit-scrollbar-thumb:hover { background: #e02b2b; }
+body.slop .activity-hover-panel::-webkit-scrollbar-thumb:active { background: #ffd700; }
 body.slop .activity-hover-panel-heading { color: #ffe88c; }
 body.slop .activity-hover-panel-summary,
 body.slop .activity-hover-worker-detail,

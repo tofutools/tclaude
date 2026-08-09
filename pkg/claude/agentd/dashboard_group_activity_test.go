@@ -73,6 +73,7 @@ func TestDashboardAssets_GroupActivityWired(t *testing.T) {
 		".activity-hover.is-open::after",
 		".activity-hover-panel::-webkit-scrollbar-thumb",
 		"body.wizard .activity-hover-panel::-webkit-scrollbar-thumb",
+		"body.slop .activity-hover-panel::-webkit-scrollbar-thumb",
 		// Config per-mode dropdowns + snapshot flag.
 		`id="cfg-dashboard-activity-bots-regular"`,
 		`id="cfg-dashboard-activity-bots-slop"`,
