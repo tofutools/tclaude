@@ -180,7 +180,16 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 	// the same cwd, environment, cgroup and optional outer sandbox wrapper. The
 	// EXIT trap makes the server a resource of this pane generation rather than
 	// a machine-global daemon. Paths are daemon-minted but still shell-quoted.
-	server := binary + " app-server --listen " +
+	server := binary
+	if spec.PermissionProfile != "" {
+		// The app-server, not the remote TUI, owns model tool execution. It
+		// therefore needs the same managed permission profile as the TUI;
+		// selecting it only on the client silently falls back to Codex's
+		// restricted :workspace policy and blocks even agentd's AF_UNIX
+		// socket. Codex accepts the global -p option before the subcommand.
+		server += " -p " + clcommon.ShellQuoteArg(spec.PermissionProfile)
+	}
+	server += " app-server --listen " +
 		clcommon.ShellQuoteArg(spec.CodexAppServerURL) +
 		" --ws-auth capability-token --ws-token-sha256 " +
 		clcommon.ShellQuoteArg(spec.CodexAppServerTokenSHA256)
