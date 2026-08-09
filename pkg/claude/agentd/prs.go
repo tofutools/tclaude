@@ -55,6 +55,8 @@ type presentedPRView struct {
 	Summary   string `json:"summary,omitempty"`
 	State     string `json:"state,omitempty"`
 	UpdatedAt string `json:"updated_at,omitempty"`
+	// Checks is the CI summary for this PR — counts only; see prchecks.go.
+	Checks    *prChecksSummary `json:"checks,omitempty"`
 	updatedAt time.Time
 }
 
@@ -144,6 +146,10 @@ type presentedPRInfo struct {
 	URL       string    `json:"url"`
 	State     string    `json:"state"`
 	FetchedAt time.Time `json:"fetched_at"`
+	// Checks rides this resolver's `gh pr view` call but is cached under
+	// the shared per-PR check key instead of here — same arrangement as
+	// repoBranchInfo.Checks. Resolver out-channel only, never persisted.
+	Checks *prChecksInfo `json:"-"`
 }
 
 func presentedPRCacheFresh(rawURL string, now time.Time) bool {
@@ -177,6 +183,13 @@ func refreshPresentedPR(agentID, rawURL, key string) {
 	}
 	info.State = strings.ToLower(strings.TrimSpace(info.State))
 	info.FetchedAt = now
+	if info.Checks != nil {
+		checks := *info.Checks
+		checks.PRState = info.State
+		checks.FetchedAt = now
+		checks.Summary = summarizePRChecks(checks.Checks, now)
+		savePRChecks(rawURL, checks)
+	}
 	savePresentedPRCache(key, rawURL, info, now)
 	if !ok || info.State == "" {
 		return
@@ -188,14 +201,15 @@ func refreshPresentedPR(agentID, rawURL, key string) {
 }
 
 func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
-	out := runInDir("", "gh", "pr", "view", strings.TrimSpace(rawURL), "--json", "number,url,state")
+	out := runInDir("", "gh", "pr", "view", strings.TrimSpace(rawURL), "--json", "number,url,state,statusCheckRollup")
 	if out == "" {
 		return presentedPRInfo{}, false
 	}
 	var pr struct {
-		Number int    `json:"number"`
-		URL    string `json:"url"`
-		State  string `json:"state"`
+		Number            int             `json:"number"`
+		URL               string          `json:"url"`
+		State             string          `json:"state"`
+		StatusCheckRollup json.RawMessage `json:"statusCheckRollup"`
 	}
 	if json.Unmarshal([]byte(out), &pr) != nil {
 		return presentedPRInfo{}, false
@@ -203,7 +217,10 @@ func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
 	if pr.URL == "" {
 		pr.URL = strings.TrimSpace(rawURL)
 	}
-	return presentedPRInfo{Number: pr.Number, URL: pr.URL, State: strings.ToLower(pr.State)}, true
+	checks := parseStatusCheckRollup(pr.StatusCheckRollup, time.Now())
+	return presentedPRInfo{
+		Number: pr.Number, URL: pr.URL, State: strings.ToLower(pr.State), Checks: &checks,
+	}, true
 }
 
 func savePresentedPRCache(key, rawURL string, info presentedPRInfo, now time.Time) {

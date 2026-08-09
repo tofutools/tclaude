@@ -786,6 +786,22 @@ when the branch has a pull request a `#<num>` link to it is shown alongside.
 Branch/PR links resolve in the background (cached, best-effort) and are simply
 absent for a non-GitHub repo or when `gh` is unavailable.
 
+Each PR link carries a **CI indicator** — a compact `n/m` pill coloured green
+(passing), red (failing) or amber (something still running). Skipped checks are
+excluded from the denominator, so `12/14` means twelve of the fourteen checks
+that actually had to run. Hovering (or focusing) the pill opens a scrollable
+panel listing every check with its status, workflow, conclusion and elapsed
+time, plus a link to the PR's checks page on GitHub; the panel stays open while
+the pointer is over it.
+
+The check data costs nothing on the 2-second snapshot: it rides along on the
+`gh pr view` calls the branch-link and presented-PR refreshes already make, and
+the snapshot only reads the resulting cache. A dedicated refresh happens only
+while a human is actually hovering — the panel re-polls its own endpoint every
+few seconds until the pointer leaves. A merged or closed PR's checks are frozen
+and never re-polled. A PR whose checks have not resolved yet, or a repo with no
+CI at all, shows no indicator rather than an empty one.
+
 Per-member actions: **focus** the session, open a **terminal** in its
 working directory, **clone**, **reincarnate**, **restart**, **rename**, edit
 **role/descr**, toggle ownership, grant a **sudo** elevation, edit

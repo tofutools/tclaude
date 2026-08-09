@@ -109,54 +109,68 @@ type dashGroup struct {
 }
 
 type dashMember struct {
-	AgentID         string    `json:"agent_id,omitempty"`
-	ConvID          string    `json:"conv_id"`
-	Title           string    `json:"title"`
-	CreatedAt       string    `json:"created_at,omitempty"`
-	Branch          string    `json:"branch,omitempty"`
-	StartupDir      string    `json:"startup_dir,omitempty"`
-	StartupBranch   string    `json:"startup_branch,omitempty"`
-	CurrentDir      string    `json:"current_dir,omitempty"`
-	BranchURL       string    `json:"branch_url,omitempty"`
-	BranchPRNum     int       `json:"branch_pr_number,omitempty"`
-	BranchPRURL     string    `json:"branch_pr_url,omitempty"`
-	BranchPRState   string    `json:"branch_pr_state,omitempty"`
-	PresentedPRs    []dashPR  `json:"presented_prs,omitempty"`
-	TaskURL         string    `json:"task_ref_url,omitempty"`
-	TaskLabel       string    `json:"task_ref_label,omitempty"`
-	Tags            []string  `json:"tags,omitempty"`
-	Online          bool      `json:"online"`
-	Notify          string    `json:"notify,omitempty"`
-	NotifyEffective bool      `json:"notify_effective"`
-	State           dashState `json:"state"`
+	AgentID         string      `json:"agent_id,omitempty"`
+	ConvID          string      `json:"conv_id"`
+	Title           string      `json:"title"`
+	CreatedAt       string      `json:"created_at,omitempty"`
+	Branch          string      `json:"branch,omitempty"`
+	StartupDir      string      `json:"startup_dir,omitempty"`
+	StartupBranch   string      `json:"startup_branch,omitempty"`
+	CurrentDir      string      `json:"current_dir,omitempty"`
+	BranchURL       string      `json:"branch_url,omitempty"`
+	BranchPRNum     int         `json:"branch_pr_number,omitempty"`
+	BranchPRURL     string      `json:"branch_pr_url,omitempty"`
+	BranchPRState   string      `json:"branch_pr_state,omitempty"`
+	BranchChecks    *dashChecks `json:"branch_checks,omitempty"`
+	PresentedPRs    []dashPR    `json:"presented_prs,omitempty"`
+	TaskURL         string      `json:"task_ref_url,omitempty"`
+	TaskLabel       string      `json:"task_ref_label,omitempty"`
+	Tags            []string    `json:"tags,omitempty"`
+	Online          bool        `json:"online"`
+	Notify          string      `json:"notify,omitempty"`
+	NotifyEffective bool        `json:"notify_effective"`
+	State           dashState   `json:"state"`
 }
 
 type dashAgent struct {
-	ConvID          string    `json:"conv_id"`
-	Title           string    `json:"title"`
-	Branch          string    `json:"branch,omitempty"`
-	StartupDir      string    `json:"startup_dir,omitempty"`
-	StartupBranch   string    `json:"startup_branch,omitempty"`
-	CurrentDir      string    `json:"current_dir,omitempty"`
-	BranchURL       string    `json:"branch_url,omitempty"`
-	BranchPRNum     int       `json:"branch_pr_number,omitempty"`
-	BranchPRURL     string    `json:"branch_pr_url,omitempty"`
-	BranchPRState   string    `json:"branch_pr_state,omitempty"`
-	PresentedPRs    []dashPR  `json:"presented_prs,omitempty"`
-	Online          bool      `json:"online"`
-	Groups          []string  `json:"groups"`
-	Effective       []string  `json:"effective"`
-	Notify          string    `json:"notify,omitempty"`
-	NotifyEffective bool      `json:"notify_effective"`
-	State           dashState `json:"state"`
+	ConvID          string      `json:"conv_id"`
+	Title           string      `json:"title"`
+	Branch          string      `json:"branch,omitempty"`
+	StartupDir      string      `json:"startup_dir,omitempty"`
+	StartupBranch   string      `json:"startup_branch,omitempty"`
+	CurrentDir      string      `json:"current_dir,omitempty"`
+	BranchURL       string      `json:"branch_url,omitempty"`
+	BranchPRNum     int         `json:"branch_pr_number,omitempty"`
+	BranchPRURL     string      `json:"branch_pr_url,omitempty"`
+	BranchPRState   string      `json:"branch_pr_state,omitempty"`
+	BranchChecks    *dashChecks `json:"branch_checks,omitempty"`
+	PresentedPRs    []dashPR    `json:"presented_prs,omitempty"`
+	Online          bool        `json:"online"`
+	Groups          []string    `json:"groups"`
+	Effective       []string    `json:"effective"`
+	Notify          string      `json:"notify,omitempty"`
+	NotifyEffective bool        `json:"notify_effective"`
+	State           dashState   `json:"state"`
 }
 
 type dashPR struct {
-	URL       string `json:"url"`
-	Number    int    `json:"number,omitempty"`
-	Summary   string `json:"summary,omitempty"`
-	State     string `json:"state,omitempty"`
-	UpdatedAt string `json:"updated_at,omitempty"`
+	URL       string      `json:"url"`
+	Number    int         `json:"number,omitempty"`
+	Summary   string      `json:"summary,omitempty"`
+	State     string      `json:"state,omitempty"`
+	UpdatedAt string      `json:"updated_at,omitempty"`
+	Checks    *dashChecks `json:"checks,omitempty"`
+}
+
+// dashChecks mirrors the CI summary agentd attaches to every PR badge.
+type dashChecks struct {
+	Total     int    `json:"total"`
+	Passed    int    `json:"passed"`
+	Failed    int    `json:"failed"`
+	Pending   int    `json:"pending"`
+	Skipped   int    `json:"skipped"`
+	State     string `json:"state"`
+	FetchedAt string `json:"fetched_at,omitempty"`
 }
 
 // dashHarness mirrors the relevant fields of agentd.dashboardHarness.

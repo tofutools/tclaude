@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"slices"
@@ -1066,6 +1067,23 @@ func SetPresentedPRInfoResolverForTest(fn func(rawURL string) (number int, resol
 		return presentedPRInfo{Number: number, URL: resolvedURL, State: state}, true
 	}
 	return func() { presentedPRInfoResolver = prev }
+}
+
+// SetPRChecksResolverForTest swaps the `gh pr view --json statusCheckRollup`
+// boundary behind the hover-driven CI refresh (GET /api/pr-checks). The fake
+// receives the PR URL and returns the raw statusCheckRollup array exactly as
+// gh would print it, so the production parse/bucket/cache path stays under
+// test. Returns a restore closure for t.Cleanup.
+func SetPRChecksResolverForTest(fn func(rawURL string) (rollupJSON string, ok bool)) func() {
+	prev := prChecksResolver
+	prChecksResolver = func(rawURL string) (prChecksInfo, bool) {
+		rollup, ok := fn(rawURL)
+		if !ok {
+			return prChecksInfo{}, false
+		}
+		return parseStatusCheckRollup(json.RawMessage(rollup), time.Now()), true
+	}
+	return func() { prChecksResolver = prev }
 }
 
 // SetRecentlyMergedPRsResolverForTest swaps the single bulk GitHub-search
