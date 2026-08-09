@@ -1461,6 +1461,10 @@ func sandboxWriteProofDir(path string) (string, error) {
 }
 
 func resumeOneConvLocked(convID string, recreateMissingDir, trustRoot bool) memberOpResult {
+	// Flag the whole attempt — including time queued on the launch lock — so
+	// dashboards render the multi-second wake as "waking" rather than a dead
+	// offline dot. See waking.go.
+	defer markConvWaking(convID)()
 	launchLock := resumeLaunchLock(convID)
 	launchLock.Lock()
 	defer launchLock.Unlock()
