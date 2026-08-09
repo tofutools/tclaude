@@ -792,7 +792,13 @@ excluded from the denominator, so `12/14` means twelve of the fourteen checks
 that actually had to run. Hovering (or focusing) the pill opens a scrollable
 panel listing every check with its status, workflow, conclusion and elapsed
 time, plus a link to the PR's checks page on GitHub; the panel stays open while
-the pointer is over it.
+the pointer is over it. It is positioned against the viewport rather than the
+table row, so opening it never extends the page's scroll area, and it flips
+above the badge when a low row leaves more room up there — defaulting to below,
+where the eye expects it. The side is chosen once, from the panel's maximum
+height, so it never moves when the checks finish loading; the panel is kept
+clear of the footer bar and the agent dock, and capped to the height actually
+available so a long list scrolls inside it.
 
 Clicking the pill opens the build behind it: the workflow run for whichever
 check explains the badge's current state — a red badge goes straight to the

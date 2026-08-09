@@ -1010,8 +1010,18 @@ a.branch-link:hover { color: #58a6ff; text-decoration: underline; }
 .ci-badge.ci-passing { color: #3fb950; border-color: rgba(63, 185, 80, 0.35); }
 .ci-badge.ci-failing { color: #f85149; border-color: rgba(248, 81, 73, 0.4); }
 .ci-badge.ci-pending { color: #d29922; border-color: rgba(210, 153, 34, 0.4); }
+/* Positioned against the VIEWPORT, with top/left/max-height written by the
+   component. Absolute positioning hung the panel off a table row, so opening
+   a tooltip on a row near the bottom stretched the dashboard's scroll area;
+   fixed takes it out of the document's overflow entirely. The component also
+   flips it above the badge when there is more room up there.
+
+   NOTE: `fixed` here depends on no ancestor of the Groups member table
+   creating a containing block — a `transform`, `filter`, `perspective` or
+   `contain: paint` on any wrapper silently turns this back into `absolute`
+   and reinstates the scroll-area growth this rule exists to fix. */
 .ci-panel {
-  display: block; position: absolute; z-index: 30; top: calc(100% + 7px); left: 0;
+  display: block; position: fixed; z-index: 30;
   width: min(360px, calc(100vw - 32px)); max-height: min(52vh, 320px);
   overflow: auto; padding: 10px 12px;
   border: 1px solid #3b4654; border-radius: 8px;
@@ -1020,16 +1030,15 @@ a.branch-link:hover { color: #58a6ff; text-decoration: underline; }
   font-size: 12px; line-height: 1.35; text-align: left; white-space: normal;
 }
 /* The 7px between badge and panel belongs to neither, so a pointer travelling
-   down to scroll the list would leave the hover root and close the panel
-   mid-motion (this component unmounts the panel on close, so that would also
-   abort its in-flight poll). Bridge the gap with a transparent strip on the
-   root itself — it exists only while the panel is open, so it never becomes
-   an invisible hover target under a closed badge. It cannot live on .ci-panel:
-   that box is overflow:auto and would clip anything above its padding box. */
-.ci-hover.is-open::after {
-  content: ""; position: absolute; left: 0; top: 100%;
-  width: min(360px, calc(100vw - 32px)); height: 9px;
-}
+   toward the list would leave the hover root and close the panel mid-motion
+   (this component unmounts the panel on close, so that would also abort its
+   in-flight poll). .ci-bridge is a transparent strip spanning that gap: a DOM
+   child of the hover root, so the pointer stays "inside" it, but positioned
+   against the viewport like the panel, so it adds nothing to the document's
+   scroll area and can span both boxes however the placement lands. It exists
+   only while the panel is open. It cannot live on .ci-panel: that box is
+   overflow:auto and would clip anything outside its padding box. */
+.ci-bridge { position: fixed; z-index: 29; }
 .ci-panel-heading { color: #f0f6fc; font-size: 12px; font-weight: 700; letter-spacing: 0.2px; }
 .ci-panel-summary { margin: 2px 0 8px; color: #8b949e; font-size: 11px; }
 .ci-checks { margin: 0; padding: 0; list-style: none; }
@@ -1123,10 +1132,10 @@ body.slop .ci-panel::-webkit-scrollbar-thumb {
   background: #9e7a00; border-color: #351010;
 }
 body.slop .ci-panel::-webkit-scrollbar-thumb:hover { background: #d8b95e; }
-/* On a narrow viewport a left-anchored panel runs off the right edge, so
-   hang it from the badge's right edge instead and narrow it. */
+/* Narrow viewport: a smaller panel. Horizontal placement is clamped into the
+   viewport by the component, so no right-edge flip is needed here. */
 @media (max-width: 640px) {
-  .ci-panel { left: auto; right: 0; width: min(320px, calc(100vw - 24px)); }
+  .ci-panel { width: min(320px, calc(100vw - 24px)); }
 }
 /* Task column: an existing label remains a conventional link; its pencil
    opens the URL + display-name editor. Empty cells offer ＋ attach. */

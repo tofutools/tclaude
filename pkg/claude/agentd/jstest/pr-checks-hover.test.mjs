@@ -130,6 +130,102 @@ test('the CI badge summarizes checks and opens a panel on hover', async (t) => {
   });
 });
 
+test('the panel is placed against the usable area, flipping above when that is where the room is', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { placePRChecksPanel } = await harness.importDashboardModule('js/pr-checks-hover.js');
+  // area is the viewport minus fixed chrome; these cases use the whole thing
+  // except where the footer/dock case says otherwise.
+  const area = { top: 0, left: 0, right: 1200, bottom: 800, width: 1200, height: 800 };
+  const panel = { width: 360 };
+  const anchorAt = (top, left = 400) => ({ top, bottom: top + 16, left, right: left + 46 });
+
+  await t.test('below by default, even with plenty of room above', () => {
+    // A badge halfway down a tall viewport has room both ways; downward is
+    // where the eye expects the panel, so it must not flip opportunistically.
+    const placed = placePRChecksPanel({ anchor: anchorAt(300), panel, area });
+    assert.equal(placed.placement, 'below');
+    assert.equal(placed.top, 323, 'hangs just under the badge');
+    assert.equal(placed.maxHeight, 320);
+  });
+
+  await t.test('above when the badge sits low and there is more room up there', () => {
+    // The reported case: a row near the bottom of a long table.
+    const placed = placePRChecksPanel({ anchor: anchorAt(700), panel, area });
+    assert.equal(placed.placement, 'above');
+    assert.ok(placed.top >= 8, 'stays inside the usable area');
+    assert.ok(placed.top + placed.maxHeight <= 700 - 7, 'clears the badge');
+  });
+
+  await t.test('the side does not depend on how much content is loaded', () => {
+    // The panel opens showing "Fetching checks…" and grows to a full list a
+    // moment later. Deciding the side on the rendered height would flip the
+    // panel to the other side mid-hover — yanking it out from under a pointer
+    // already moving toward it, which unmounts it and aborts the poll. The
+    // decision uses the panel's maximum height, so it is stable for the whole
+    // hover no matter what arrives.
+    const low = anchorAt(560);
+    const first = placePRChecksPanel({ anchor: low, panel, area });
+    const afterContentGrew = placePRChecksPanel({ anchor: low, panel, area });
+    assert.equal(first.placement, afterContentGrew.placement);
+    assert.equal(first.placement, 'above', 'a full list would not have fit below');
+    assert.deepEqual(first, afterContentGrew, 'placement is a function of geometry alone');
+  });
+
+  await t.test('a cramped side gets a scrollable panel, not an off-screen one', () => {
+    const short = { top: 0, left: 0, right: 1200, bottom: 400, width: 1200, height: 400 };
+    const placed = placePRChecksPanel({ anchor: anchorAt(330), panel, area: short });
+    assert.equal(placed.placement, 'above');
+    assert.ok(placed.top >= 8, 'never above the top edge');
+    assert.ok(placed.top + placed.maxHeight <= short.bottom - 8,
+      'and never past the bottom edge either');
+  });
+
+  await t.test('a viewport too short for the minimum still keeps the panel on screen', () => {
+    // The min-height floor can exceed the room available; the position is
+    // clamped rather than trusted, so the panel overlaps the badge instead of
+    // leaving the screen.
+    const tiny = { top: 0, left: 0, right: 800, bottom: 180, width: 800, height: 180 };
+    const placed = placePRChecksPanel({ anchor: anchorAt(150), panel, area: tiny });
+    assert.ok(placed.top >= 8 && placed.top + placed.maxHeight <= tiny.bottom - 8,
+      `panel at ${placed.top}+${placed.maxHeight} must stay inside a ${tiny.bottom}px area`);
+  });
+
+  await t.test('fixed chrome owning an edge is excluded, not painted over', () => {
+    // The footer bar and the agent dock paint ABOVE the panel, so a panel
+    // merely "inside the viewport" can have its last rows and its GitHub link
+    // hidden behind them.
+    const inset = { top: 0, left: 0, right: 1200 - 264, bottom: 800 - 29, width: 936, height: 771 };
+    const belowFooter = placePRChecksPanel({ anchor: anchorAt(430), panel, area: inset });
+    assert.ok(belowFooter.top + belowFooter.maxHeight <= inset.bottom - 8,
+      'the panel must clear the footer bar');
+    const nearDock = placePRChecksPanel({ anchor: anchorAt(200, 900), panel, area: inset });
+    assert.equal(nearDock.left, inset.right - 360 - 8, 'and stay clear of the dock rail');
+  });
+
+  await t.test('horizontal placement is clamped into the usable area', () => {
+    const right = placePRChecksPanel({ anchor: anchorAt(100, 1150), panel, area });
+    assert.equal(right.left, 1200 - 360 - 8, 'a badge near the right edge pulls the panel back');
+    const left = placePRChecksPanel({ anchor: anchorAt(100, -40), panel, area });
+    assert.equal(left.left, 8, 'and never goes off the left edge');
+  });
+
+  await t.test('the hover bridge spans both boxes, whichever side wins', () => {
+    // A clamped panel can sit well to the side of its badge; a bridge that
+    // only covered the badge's own width would let a diagonal travel fall
+    // outside the hover root and close the panel.
+    const placed = placePRChecksPanel({ anchor: anchorAt(100, 1150), panel, area });
+    const { bridge } = placed;
+    assert.equal(bridge.left, Math.min(placed.left, 1150));
+    assert.equal(bridge.left + bridge.width, Math.max(placed.left + 360, 1196));
+    assert.equal(bridge.top, 116, 'covers the gap under the badge');
+    assert.equal(bridge.height, placed.top - 116);
+
+    const above = placePRChecksPanel({ anchor: anchorAt(700), panel, area });
+    assert.equal(above.bridge.top, above.top + above.maxHeight, 'and above it when flipped');
+    assert.equal(above.bridge.height, 700 - (above.top + above.maxHeight));
+  });
+});
+
 test('the panel fetches only while it is open', async (t) => {
   const harness = await createPreactHarness(t);
   const { PRChecksBadge } = await harness.importDashboardModule('js/pr-checks-hover.js');
@@ -183,6 +279,76 @@ test('the panel fetches only while it is open', async (t) => {
     const settled = calls.length;
     await new Promise((resolve) => setTimeout(resolve, 30));
     assert.equal(calls.length, settled, 'no polling continues after the pointer leaves');
+  } finally {
+    await mounted.unmount();
+  }
+});
+
+// LinkeDOM performs no layout, so every other component test in this file
+// exercises the pre-measurement branch (the panel renders hidden). Without a
+// stub, a regression that left the panel permanently invisible — or that
+// stopped registering the scroll listeners keeping it attached — would pass
+// unnoticed. Stub the two layout reads the component makes and assert the
+// wiring itself.
+test('the measured panel is positioned and follows the viewport', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { PRChecksBadge } = await harness.importDashboardModule('js/pr-checks-hover.js');
+  stubFetch(t, () => ({ summary: {}, checks: [], resolved: false }));
+
+  const doc = globalThis.document;
+  const win = doc.defaultView || globalThis.window;
+  const listeners = [];
+  const savedAdd = win.addEventListener;
+  const savedRemove = win.removeEventListener;
+  win.addEventListener = (type, fn, opts) => { listeners.push(type); return savedAdd?.call(win, type, fn, opts); };
+  win.removeEventListener = (type, fn, opts) => {
+    const i = listeners.indexOf(type);
+    if (i >= 0) listeners.splice(i, 1);
+    return savedRemove?.call(win, type, fn, opts);
+  };
+  // A badge low on an 800px viewport: the panel belongs above it.
+  const savedRect = harness.ElementPrototype?.getBoundingClientRect;
+  const proto = harness.ElementPrototype || doc.body.constructor.prototype;
+  proto.getBoundingClientRect = function rect() {
+    if (this.classList?.contains('ci-panel')) return { top: 0, left: 0, width: 360, height: 320, right: 360, bottom: 320 };
+    return { top: 700, bottom: 716, left: 400, right: 446, width: 46, height: 16 };
+  };
+  Object.defineProperty(doc.documentElement, 'clientWidth', { value: 1200, configurable: true });
+  Object.defineProperty(doc.documentElement, 'clientHeight', { value: 800, configurable: true });
+  t.after(() => {
+    win.addEventListener = savedAdd;
+    win.removeEventListener = savedRemove;
+    if (savedRect) proto.getBoundingClientRect = savedRect; else delete proto.getBoundingClientRect;
+  });
+
+  const mounted = await harness.mount(harness.html`
+    <${PRChecksBadge} url=${PR} prNumber=${2151}
+      summary=${{ total: 4, passed: 4, skipped: 0, failed: 0, pending: 0, state: 'passing' }} />
+  `);
+  try {
+    const root = mounted.container.querySelector('.ci-hover');
+    await harness.act(() => { harness.fireEvent(root, 'mouseenter'); });
+    await flush();
+    await harness.act(async () => {});
+
+    const panel = mounted.container.querySelector('.ci-panel');
+    assert.ok(panel, 'the panel opens');
+    const style = panel.getAttribute('style') || '';
+    assert.match(style, /top:\d+px/, `panel must be positioned, got style=${style}`);
+    assert.match(style, /left:\d+px/);
+    assert.match(style, /max-height:\d+px/);
+    assert.doesNotMatch(style, /visibility:hidden/, 'a measured panel must be visible');
+    assert.ok(root.className.includes('ci-place-above'),
+      `a badge at 700px of an 800px viewport belongs above it, got ${root.className}`);
+    assert.ok(mounted.container.querySelector('.ci-bridge'), 'the hover bridge is rendered');
+
+    assert.ok(listeners.includes('scroll'), 'scroll is watched while open');
+    assert.ok(listeners.includes('resize'), 'resize is watched while open');
+
+    await harness.act(() => { harness.fireEvent(root, 'mouseleave'); });
+    assert.equal(mounted.container.querySelector('.ci-panel'), null);
+    assert.ok(!listeners.includes('scroll'), 'and both are dropped on close');
+    assert.ok(!listeners.includes('resize'));
   } finally {
     await mounted.unmount();
   }
