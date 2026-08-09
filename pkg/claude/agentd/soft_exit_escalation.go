@@ -304,7 +304,7 @@ func escalateStuckSoftExitUnderLaunchLock(target *lifecycleTarget, lifecycleActi
 		"tmux_session", target.tmuxSession, "pane_id", target.paneID,
 		"pane_pid", probe.panePID, "deadline", softExitEscalationDeadline,
 		"reason", reason,
-		"pane_screen", capturePaneScreenTail(target.paneID))
+		"pane_screen", softExitPaneScreenTail(target))
 
 	// Step 1: the identity-guarded tmux kill force-stop already uses.
 	if err := killLifecycleTarget(target); err != nil {
