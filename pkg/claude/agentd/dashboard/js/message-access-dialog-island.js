@@ -674,8 +674,8 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
     // flipped a grant must not carry owner_scopes at all: the daemon treats an
     // absent field as "unchanged", and sending the box's current value would
     // clear a stored narrowing this build could not decode into it.
-    const scopePayload = groupMode ? (ownerScopesDirty ? ownerScopes : null) : scoped;
-    try { await actions.savePermissions(descriptor, full, scopePayload); state.close(); }
+    const ownerScopePayload = groupMode && ownerScopesDirty ? ownerScopes : null;
+    try { await actions.savePermissions(descriptor, full, scoped, ownerScopePayload); state.close(); }
     catch (cause) { setError(errorText(cause)); }
     finally { busyRef.current = false; setBusy(false); }
   };

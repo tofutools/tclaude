@@ -73,23 +73,47 @@ export function permissionSeed(snapshot, descriptor) {
     return { ...((snapshot?.permissions?.overrides || {})[descriptor.conv] || {}) };
   }
   if (descriptor.mode === 'group') {
-    return Object.fromEntries((descriptor.grants || []).map((slug) => [slug, 'grant']));
+    return Object.fromEntries((descriptor.grants || []).map((grant) => [permissionGrantSlug(grant), 'grant']));
   }
-  return { ...(descriptor.overrides || {}) };
+  return Object.fromEntries(Object.entries(descriptor.overrides || {})
+    .map(([slug, override]) => [slug, permissionOverrideEffect(override)]));
+}
+
+function copyScope(scope) {
+  return Object.fromEntries(Object.entries(scope || {})
+    .map(([dim, values]) => [dim, [...(values || [])]]));
+}
+
+function permissionGrantSlug(grant) {
+  return typeof grant === 'string' ? grant : String(grant?.slug || '');
+}
+
+function permissionOverrideEffect(override) {
+  return typeof override === 'string' ? override : String(override?.effect || 'default');
+}
+
+function permissionOverrideScope(override) {
+  return typeof override === 'object' && override ? override.scope : null;
 }
 
 // permissionScopeSeed is the scope half of permissionSeed: slug → {dim:
-// [matchers]} for the agent's existing overrides. Only the live per-agent
-// editor reads persisted scopes; group grants and the buffered (pre-spawn)
-// editor have no scope storage behind them yet, so they seed empty and their
-// scope controls stay hidden rather than pretending to save something.
+// [matchers]}. Every launcher uses the same union wire shape, so the shared
+// editor can read live-agent scopes, group grant scopes, and buffered spawn or
+// profile override scopes without separate UI implementations.
 export function permissionScopeSeed(snapshot, descriptor) {
-  if (descriptor.mode !== 'agent') return {};
-  const stored = (snapshot?.permissions?.scopes || {})[descriptor.conv] || {};
+  let stored = {};
+  if (descriptor.mode === 'agent') {
+    stored = (snapshot?.permissions?.scopes || {})[descriptor.conv] || {};
+  } else if (descriptor.mode === 'group') {
+    stored = descriptor.scopes || {};
+  } else {
+    stored = Object.fromEntries(Object.entries(descriptor.overrides || {})
+      .map(([slug, override]) => [slug, permissionOverrideScope(override)])
+      .filter(([, scope]) => scope && Object.keys(scope).length));
+  }
   const out = {};
   for (const [slug, scope] of Object.entries(stored)) {
-    out[slug] = Object.fromEntries(Object.entries(scope || {})
-      .map(([dim, values]) => [dim, [...(values || [])]]));
+    out[slug] = copyScope(scope);
   }
   return out;
 }
@@ -105,10 +129,10 @@ export function unreadableScopeSlugs(snapshot, descriptor) {
   return new Set((snapshot?.permissions?.unreadable_scopes || {})[descriptor.conv] || []);
 }
 
-// scopeSupported reports whether this editor launch can persist scopes at all
-// — see permissionScopeSeed for why only the live per-agent editor can.
+// All three launch modes persist the same scope shape: immediately for agents
+// and groups, or into the buffered birth-time override for spawns/profiles.
 export function scopeSupported(descriptor) {
-  return descriptor?.mode === 'agent';
+  return ['agent', 'group', 'buffer'].includes(descriptor?.mode);
 }
 
 // scopeDimOptions answers the picker's "what can I choose here" for ONE
@@ -190,7 +214,8 @@ export function permissionRows(snapshot, descriptor, selection) {
   const groupGrants = new Map();
   for (const groupName of groups) {
     const group = (snapshot?.groups || []).find((item) => item.name === groupName);
-    for (const slug of group?.permissions || []) {
+    for (const grant of group?.permissions || []) {
+      const slug = permissionGrantSlug(grant);
       if (!groupGrants.has(slug)) groupGrants.set(slug, []);
       groupGrants.get(slug).push(groupName);
     }

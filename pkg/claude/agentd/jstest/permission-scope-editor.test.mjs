@@ -27,13 +27,15 @@ function scopeSnapshot({ slugs = [], scopes = {}, dimOptions = {}, unreadable = 
   };
 }
 
-async function openEditor(harness, snapshot, actions) {
+async function openEditor(harness, snapshot, actions, descriptor = null) {
   const [{ createMessageAccessDialogState }, { MessageAccessDialogApp }] = await Promise.all([
     harness.importDashboardModule('js/message-access-dialog-state.js'),
     harness.importDashboardModule('js/message-access-dialog-island.js'),
   ]);
   const state = createMessageAccessDialogState();
-  state.openAgentPermissions({ conv: 'conv-s', label: 'sender' });
+  if (descriptor?.mode === 'group') state.openGroupPermissions(descriptor);
+  else if (descriptor?.mode === 'buffer') state.openBufferedPermissions(descriptor);
+  else state.openAgentPermissions({ conv: 'conv-s', label: 'sender' });
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   const mounted = await harness.mount(harness.html`<${MessageAccessDialogApp} state=${state} actions=${actions}
     snapshot=${snapshot} confirmDiscard=${async () => true}/>`, host);
@@ -55,6 +57,48 @@ const noopActions = {
 
 const SPAWN = { slug: 'groups.spawn', description: 'spawn', owner_implied: false, scope_dims: ['group', 'spawn_profile'] };
 const CLIPBOARD = { slug: 'human.clipboard', description: 'clipboard', owner_implied: false };
+
+test('group and buffered profile editors use the same scoped permission controls', async (t) => {
+  const harness = await createPreactHarness(t);
+  const snapshot = scopeSnapshot({
+    slugs: [SPAWN],
+    dimOptions: { group: { values: ['alpha', 'beta'] }, spawn_profile: { values: ['reviewer'] } },
+  });
+
+  const groupSaved = [];
+  let opened = await openEditor(harness, snapshot, {
+    ...noopActions,
+    savePermissions: async (descriptor, selection, scopes, ownerScopes) => {
+      groupSaved.push({ descriptor, selection, scopes, ownerScopes });
+    },
+  }, { mode: 'group', group: 'alpha', grants: ['groups.spawn'], scopes: {
+    'groups.spawn': { group: ['alpha'] },
+  } });
+  assert.match(opened.host.querySelector('[data-slug="groups.spawn"] .perm-scope-chip').textContent, /group=alpha/);
+  await harness.act(() => opened.host.querySelector('[data-slug="groups.spawn"] button.perm-scope-twisty').click());
+  await harness.act(() => pickOption(harness,
+    opened.host.querySelector('.perm-scope-dim[data-dim="group"] .perm-scope-add'), 'beta'));
+  await harness.act(async () => { opened.host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.deepEqual(groupSaved[0].scopes, { 'groups.spawn': { group: ['alpha', 'beta'] } });
+  assert.equal(groupSaved[0].ownerScopes, null, 'grant scopes are separate from owner-bypass narrowing');
+  await opened.mounted.unmount();
+
+  const bufferSaved = [];
+  opened = await openEditor(harness, snapshot, {
+    ...noopActions,
+    savePermissions: async (descriptor, selection, scopes) => bufferSaved.push({ selection, scopes }),
+  }, { mode: 'buffer', overrides: {
+    'groups.spawn': { effect: 'grant', scope: { spawn_profile: ['reviewer'] } },
+  } });
+  assert.match(opened.host.querySelector('[data-slug="groups.spawn"] .perm-scope-chip').textContent,
+    /spawn_profile=reviewer/);
+  await harness.act(async () => { opened.host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.deepEqual(bufferSaved[0], {
+    selection: { 'groups.spawn': 'grant' },
+    scopes: { 'groups.spawn': { spawn_profile: ['reviewer'] } },
+  });
+  await opened.mounted.unmount();
+});
 
 test('a scoped grant renders its chips and an unscoped one says so', async (t) => {
   const harness = await createPreactHarness(t);

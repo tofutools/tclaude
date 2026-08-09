@@ -1600,23 +1600,24 @@ type snapshotScopeDimOptions struct {
 }
 
 type dashboardGroup struct {
-	Name                    string   `json:"name"`
-	Descr                   string   `json:"descr"`
-	AttachmentURL           string   `json:"attachment_url,omitempty"`
-	AttachmentLabel         string   `json:"attachment_label,omitempty"`
-	AttachmentLabelOverride string   `json:"attachment_label_override,omitempty"`
-	DefaultCwd              string   `json:"default_cwd"`     // pre-fills the spawn form's cwd; "" = none
-	DefaultContext          string   `json:"default_context"` // shared startup context injected into spawned agents; "" = none
-	DefaultProfile          string   `json:"default_profile"` // spawn profile whose launch fields fill blank spawn fields for this group's agents; "" = none (the spawn default's single source — the vestigial default_model was dropped, JOH-220)
-	SandboxProfile          string   `json:"sandbox_profile"` // filesystem/environment profile assigned to this group; "" = inherit global
-	Permissions             []string `json:"permissions"`     // live additive grants held by current group members
+	Name                    string                     `json:"name"`
+	Descr                   string                     `json:"descr"`
+	AttachmentURL           string                     `json:"attachment_url,omitempty"`
+	AttachmentLabel         string                     `json:"attachment_label,omitempty"`
+	AttachmentLabelOverride string                     `json:"attachment_label_override,omitempty"`
+	DefaultCwd              string                     `json:"default_cwd"`     // pre-fills the spawn form's cwd; "" = none
+	DefaultContext          string                     `json:"default_context"` // shared startup context injected into spawned agents; "" = none
+	DefaultProfile          string                     `json:"default_profile"` // spawn profile whose launch fields fill blank spawn fields for this group's agents; "" = none (the spawn default's single source — the vestigial default_model was dropped, JOH-220)
+	SandboxProfile          string                     `json:"sandbox_profile"` // filesystem/environment profile assigned to this group; "" = inherit global
+	Permissions             []string                   `json:"permissions"`     // live additive grants held by current group members
+	PermissionScopes        map[string]PermissionScope `json:"permission_scopes,omitempty"`
 	// OwnerScopes narrows this group's STRUCTURAL owner-implied permission
 	// bypass (TCL-1071): slug → the scope an owner's bypass is confined to
 	// here. Always serialized (possibly {}) so the group-permissions editor can
 	// round-trip it without distinguishing "absent" from "no narrowing".
-	OwnerScopes map[string]PermissionScope `json:"owner_scopes"`
-	MaxMembers              int      `json:"max_members"`     // hard member cap; 0 = unlimited. A spawn that would exceed it is refused.
-	NotifyEnabled           bool     `json:"notify_enabled"`  // group OS-notification switch; false mutes every member (per-agent 'on' still overrides)
+	OwnerScopes   map[string]PermissionScope `json:"owner_scopes"`
+	MaxMembers    int                        `json:"max_members"`    // hard member cap; 0 = unlimited. A spawn that would exceed it is refused.
+	NotifyEnabled bool                       `json:"notify_enabled"` // group OS-notification switch; false mutes every member (per-agent 'on' still overrides)
 	// RemoteControlPolicy is the group's remote-control policy that overrides a
 	// spawn profile's remote-control default (JOH-262): "inherit" (defer to the
 	// profile), "optin" (force Remote Access on) or "deny" (force it off).
@@ -3199,10 +3200,19 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	gt := newGroupsPhaseTimer(rc)
 	for _, g := range groups {
 		groupMark := gt.begin()
-		var groupPermissions []string
-		gt.track(&gt.perms, func() { groupPermissions, _ = db.ListAgentGroupPermissions(g.ID) })
+		groupPermissions := []string{}
+		groupPermissionScopes := map[string]PermissionScope{}
+		gt.track(&gt.perms, func() {
+			rows, _ := db.ListAgentGroupPermissionRows(g.ID)
+			for _, row := range rows {
+				groupPermissions = append(groupPermissions, row.Slug)
+				if scope := permissionScopeFromJSON(row.ScopeJSON); len(scope) > 0 {
+					groupPermissionScopes[row.Slug] = scope
+				}
+			}
+		})
 		attachment := groupAttachmentViewFor(g)
-		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, AttachmentURL: attachment.URL, AttachmentLabel: attachment.Label, AttachmentLabelOverride: attachment.LabelOverride, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, DefaultProfile: g.DefaultProfile, SandboxProfile: g.SandboxProfile, Permissions: groupPermissions, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), OwnerScopes: ownerScopesWire(g.OwnerScopesJSON), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Scribe: isScribeGroup(g), RouteGeneration: g.RouteGeneration, Members: []dashboardMember{}}
+		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, AttachmentURL: attachment.URL, AttachmentLabel: attachment.Label, AttachmentLabelOverride: attachment.LabelOverride, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, DefaultProfile: g.DefaultProfile, SandboxProfile: g.SandboxProfile, Permissions: groupPermissions, PermissionScopes: groupPermissionScopes, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), OwnerScopes: ownerScopesWire(g.OwnerScopesJSON), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Scribe: isScribeGroup(g), RouteGeneration: g.RouteGeneration, Members: []dashboardMember{}}
 		if g.ParentGroupID != nil {
 			dg.Parent = groupNameByID[*g.ParentGroupID]
 		}
