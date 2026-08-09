@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -170,6 +171,51 @@ func TestSessionReaper_ReapsDeadCodexSessionAndNotifies(t *testing.T) {
 	assert.Equal(t, db.AgentExitCauseDisappeared, audit[0].CauseKind)
 	assert.Equal(t, db.AgentExitActionStop, audit[0].LifecycleAction)
 	assert.Equal(t, "evt_1234567890abcdef12345678", audit[0].RelatedEventID)
+}
+
+func TestSessionReaperExitedCodexPredecessorDoesNotStopLiveSuccessorRuntime(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+	t.Cleanup(bgWG.Wait)
+
+	const convID = "019fe772-6b93-75a2-8702-7774c6dfb327"
+	oldCreated := time.Now().Add(-time.Minute)
+	newCreated := time.Now()
+	require.NoError(t, session.SaveSessionState(&session.SessionState{
+		ID: "spwn-predecessor", ConvID: convID, Status: session.StatusExited,
+		Harness: harness.CodexName, Created: oldCreated,
+	}))
+	require.NoError(t, session.SaveSessionState(&session.SessionState{
+		ID: convID, ConvID: convID, Status: session.StatusIdle,
+		Harness: harness.CodexName, PID: os.Getpid(), Created: newCreated,
+	}))
+	require.NoError(t, db.UpsertCodexAppServerRuntime(db.CodexAppServerRuntime{
+		Generation: "old-generation", LaunchID: "spwn-predecessor", AgentID: "agent",
+		ConvID: convID, ThreadID: convID, SocketPath: filepath.Join(dir, "old", "app.sock"),
+		State: db.CodexAppServerDead, CreatedAt: oldCreated,
+	}))
+	require.NoError(t, db.UpsertCodexAppServerRuntime(db.CodexAppServerRuntime{
+		Generation: "new-generation", LaunchID: convID, AgentID: "agent",
+		ConvID: convID, ThreadID: convID, SocketPath: filepath.Join(dir, "new", "app.sock"),
+		State: db.CodexAppServerReady, CreatedAt: newCreated,
+	}))
+
+	r := newSessionReaper()
+	r.grace = 0
+	r.tick(time.Now())
+
+	current, err := db.GetCodexAppServerRuntime("new-generation")
+	require.NoError(t, err)
+	require.NotNil(t, current)
+	assert.Equal(t, db.CodexAppServerReady, current.State,
+		"retained predecessor rows must never tear down the resumed generation")
+	predecessor, err := db.GetCodexAppServerRuntime("old-generation")
+	require.NoError(t, err)
+	require.NotNil(t, predecessor)
+	assert.Equal(t, db.CodexAppServerDead, predecessor.State)
 }
 
 func TestSessionReaper_FirstTickRecordsReconciliation(t *testing.T) {

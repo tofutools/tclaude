@@ -700,9 +700,12 @@ func stopCodexAppServerRuntimeForConv(convID string) {
 }
 
 func stopCodexAppServerRuntime(convID, launchID string) {
-	runtime, err := db.GetCodexAppServerRuntimeByConvID(convID)
-	if (err != nil || runtime == nil) && launchID != "" {
+	var runtime *db.CodexAppServerRuntime
+	var err error
+	if launchID != "" {
 		runtime, err = db.GetCodexAppServerRuntimeByLaunchID(launchID)
+	} else if convID != "" {
+		runtime, err = db.GetCodexAppServerRuntimeByConvID(convID)
 	}
 	if err != nil || runtime == nil {
 		return
