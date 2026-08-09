@@ -133,8 +133,13 @@ func openLinearProxy(w http.ResponseWriter, r *http.Request, perm string, body a
 		// say so. In the git proxy this happens inside finishProxyPermission's
 		// requirePermission call; here the decision is the set resolution above,
 		// so the record is written explicitly.
+		//
+		// It records the GRANT's scope, not the effective set, so the field means
+		// the same thing it does on a git row: the scope on the grant that
+		// authorized the action. The team actually acted on is on the same audit
+		// row already, in the verb's own detail.
 		recordAuditPermissionScope(r, perm, permissionScopeDisplay(
-			PermissionScope{ScopeDimLinearTeam: s.teams}))
+			PermissionScope{ScopeDimLinearTeam: s.scopeTeams}))
 	}
 	if perm == PermLinearWrite {
 		if fault := s.requireWrite(); fault != nil {

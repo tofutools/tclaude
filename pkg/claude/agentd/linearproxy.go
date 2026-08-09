@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -110,6 +111,11 @@ const (
 
 	// maxLinearTitleLen bounds an issue title, in runes.
 	maxLinearTitleLen = 256
+
+	// maxLinearTeamKeyLen bounds a team key. Linear's own keys are short
+	// alphanumeric labels ("TCL", "JOH"); this is far past any real one. Applied
+	// both to a caller's --team and to a `linear_team` permission-scope matcher.
+	maxLinearTeamKeyLen = 16
 
 	// maxLinearQueryLen bounds a search term.
 	maxLinearQueryLen = 256
@@ -402,12 +408,37 @@ func linearEffectiveTeams(
 		}
 	}
 	if len(teams) == 0 {
-		return nil, scopeTeams, faultf(http.StatusForbidden, linearTeamScopeEmptyCode,
-			"the %s grant is scoped to team(s) %s, none of which is on the operator's "+
-				"agent.linear_proxy.allowed_teams list (allowed: %s); the two must overlap",
-			perm, strings.Join(scopeTeams, ", "), strings.Join(policy.AllowedTeams, ", "))
+		// Two causes reach here, and only one is fixed by editing allowed_teams,
+		// so the message has to tell them apart. The loop above evaluates the
+		// WHOLE conjunction, so a candidate can fail on the scope's team term
+		// (genuine non-overlap) or on some other dimension a Linear request
+		// cannot describe — and blaming the operator's list for the second would
+		// send them to edit a list that already contains the team.
+		return nil, scopeTeams, linearScopeEmptyFault(perm, policy, scopeTeams)
 	}
 	return teams, scopeTeams, nil
+}
+
+// linearScopeEmptyFault explains an empty effective set. See its caller.
+func linearScopeEmptyFault(
+	perm string, policy config.LinearProxyConfig, scopeTeams []string,
+) *proxyFault {
+	for _, key := range scopeTeams {
+		if len(policy.AllowedTeams) > 0 && !policy.LinearTeamAllowed(key) {
+			continue
+		}
+		// This team IS reachable as far as the operator is concerned, so the
+		// team term is not what refused the request. With no operator list at
+		// all, non-overlap is impossible and this is always the answer.
+		return faultf(http.StatusForbidden, linearTeamScopeEmptyCode,
+			"the %s grant names team(s) %s, but its scope also constrains a dimension a Linear "+
+				"request does not describe, so it authorizes nothing; the scope must constrain "+
+				"linear_team alone", perm, strings.Join(scopeTeams, ", "))
+	}
+	return faultf(http.StatusForbidden, linearTeamScopeEmptyCode,
+		"the %s grant is scoped to team(s) %s, none of which is on the operator's "+
+			"agent.linear_proxy.allowed_teams list (allowed: %s); the two must overlap",
+		perm, strings.Join(scopeTeams, ", "), strings.Join(policy.AllowedTeams, ", "))
 }
 
 // lowerTeamKeys normalizes a team-key list the way the operator's allow-list is
@@ -620,9 +651,13 @@ func teamKeyOf(identifier string) string {
 	return key
 }
 
-// teamAllowed reports whether key is in this caller's effective team set. It is
-// the only place the set is read, so the identifier gate, the listing filter and
-// the row-level drop can never diverge.
+// teamAllowed reports whether key is in this caller's effective team set.
+//
+// What keeps the identifier gate, the listing filter and the row-level drop from
+// diverging is that all three read s.teams — this predicate for the two
+// per-team checks, linearTeamClause reading the field directly because it needs
+// the whole set. One field, resolved once, is the invariant; a single reader is
+// not.
 func (s *linearProxySession) teamAllowed(key string) bool {
 	key = strings.ToLower(strings.TrimSpace(key))
 	return key != "" && slices.Contains(s.teams, key)
@@ -718,18 +753,31 @@ func validateLinearIdentifier(id string) (string, *proxyFault) {
 // validateLinearTeamKeyShape bounds a team key's charset. Linear team keys are
 // short alphanumerics; anything else is refused before it can reach a filter.
 func validateLinearTeamKeyShape(key string) *proxyFault {
+	if err := linearTeamKeyShapeErr(key); err != nil {
+		return faultf(http.StatusBadRequest, "invalid_arg", "%s", err.Error())
+	}
+	return nil
+}
+
+// linearTeamKeyShapeErr is the shape rule itself, as a plain error.
+//
+// It exists apart from validateLinearTeamKeyShape so the permission-scope parser
+// can apply the SAME rule to a `linear_team` matcher without depending on the
+// proxy's fault type. One rule, two callers: a matcher an operator can write must
+// be a team key this proxy could also accept as a parameter, or a scope could
+// name something no request can ever match — which reads as a narrow grant and
+// silently authorizes nothing.
+func linearTeamKeyShapeErr(key string) error {
 	key = strings.TrimSpace(key)
 	if key == "" {
-		return faultf(http.StatusBadRequest, "invalid_arg", "a team key is required")
+		return errors.New("a team key is required")
 	}
-	if len(key) > 16 {
-		return faultf(http.StatusBadRequest, "invalid_arg",
-			"team key %q is longer than 16 characters", key)
+	if len(key) > maxLinearTeamKeyLen {
+		return fmt.Errorf("team key %q is longer than %d characters", key, maxLinearTeamKeyLen)
 	}
 	for _, r := range key {
 		if (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && (r < '0' || r > '9') {
-			return faultf(http.StatusBadRequest, "invalid_arg",
-				"team key %q contains a character that is not a letter or a digit", key)
+			return fmt.Errorf("team key %q contains a character that is not a letter or a digit", key)
 		}
 	}
 	return nil

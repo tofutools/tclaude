@@ -139,6 +139,8 @@ func parsePermissionScope(raw json.RawMessage) (PermissionScope, string, error) 
 				if _, ok := dimension.selectors[matcher]; !ok {
 					return nil, "", fmt.Errorf("unknown selector %q for permission scope dimension %q", matcher, dim)
 				}
+			} else if err := permissionScopeMatcherShape(dim, dimension, matcher); err != nil {
+				return nil, "", err
 			}
 			if !seen[matcher] {
 				scope[dim] = append(scope[dim], matcher)
@@ -158,6 +160,29 @@ func parsePermissionScope(raw json.RawMessage) (PermissionScope, string, error) 
 		return nil, "", fmt.Errorf("permission scope exceeds %d bytes", permissionScopeMaxJSONBytes)
 	}
 	return scope, string(canonical), nil
+}
+
+// permissionScopeMatcherShape bounds a LITERAL matcher to the shape its
+// dimension can actually match, for the dimensions that have one.
+//
+// Most do not: a `group` or `spawn_profile` matcher names something an operator
+// invented, and a `remote` matcher is a pattern, so there is nothing to check
+// beyond the charset rules the caller already applied. A `linear_team` matcher
+// is different — it is a Linear team key, and the Linear proxy will only ever
+// compare it against one. A matcher that cannot BE a team key ("*", say, reached
+// for by an operator expecting the wildcard the `remote` dimension really has)
+// would parse, store, and render as a narrow grant while matching nothing: every
+// single-issue verb refused and every listing empty. Refusing it at the door is
+// what turns that silence into an error an operator can read.
+func permissionScopeMatcherShape(dim ScopeDim, spec permissionScopeDimension, matcher string) error {
+	if spec.matcher != permissionScopeMatchTeamKey {
+		return nil
+	}
+	if err := linearTeamKeyShapeErr(matcher); err != nil {
+		return fmt.Errorf("permission scope dimension %q: %w (there is no wildcard: a team key "+
+			"is matched whole, case-insensitively)", dim, err)
+	}
+	return nil
 }
 
 func canonicalPermissionScopeForSlug(slug, raw string) (string, error) {

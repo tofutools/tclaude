@@ -130,7 +130,7 @@ carries no team key, so there would be nothing to check the allow-list against.
 **Team keys match exactly.** `TCL` does not authorize `TCLX`, and there is no
 wildcard.
 
-Two refusals mean two different fixes, so read the code before escalating:
+Three refusals mean three different fixes, so read the code before escalating:
 
 - `403 team_not_allowed` — the team is not on the operator's
   `agent.linear_proxy.allowed_teams`. Ask them to add it.
@@ -138,10 +138,13 @@ Two refusals mean two different fixes, so read the code before escalating:
   scoped to others. Ask them to widen your grant:
   `tclaude agent permissions grant <you> linear.read --scope linear_team=TCL,JOH`
   (a `--scope` replaces the previous one, so name every team you need).
-- `403 team_scope_empty` — your grant is team-scoped and overlaps the operator's
-  list nowhere, so it authorizes nothing at all. One of the two has to change.
+- `403 team_scope_empty` — your team scope authorizes nothing at all, either
+  because it overlaps the operator's list nowhere or because it constrains
+  something a Linear request cannot describe. The message says which; one of the
+  two lists has to change, or the scope has to be rewritten.
 
-Both messages name the list that excluded you; pass that verbatim to the human.
+Each message names what excluded you and what to change; pass it verbatim to the
+human rather than paraphrasing it as "no access to Linear".
 
 **State names must be exact** (case-insensitive). `--state "In Revue"` is
 refused rather than guessed at, and the refusal lists the team's real states.

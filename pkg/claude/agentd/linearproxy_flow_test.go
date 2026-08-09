@@ -458,6 +458,80 @@ func TestLinearProxy_ScopeWithNoTeamDimensionAuthorizesNothing(t *testing.T) {
 	assert.False(t, rec.sawAnyCall())
 }
 
+// TestLinearProxy_TeamScopeStillANDsTheOtherDimensions is the guard on the one
+// simplification a future reader is most likely to reach for.
+//
+// The effective set is built by running every candidate team through the real
+// evaluator, not by intersecting the enumerated `linear_team` matchers. The
+// difference only shows when the scope constrains a SECOND dimension: a plain
+// intersection would answer "TCL is in both lists, allow" and silently collapse
+// the conjunction to its team term, admitting a request the `group` term
+// refuses. Every other test in this file passes either way, which is exactly why
+// this one exists.
+//
+// The refusal must also explain itself correctly. Blaming the operator's
+// allow-list here would name TCL as missing from a list that contains it, and
+// send the human to edit a setting that cannot fix the grant.
+func TestLinearProxy_TeamScopeStillANDsTheOtherDimensions(t *testing.T) {
+	f, rec := linearWorld(t, []string{"TCL"})
+	require.NoError(t, db.GrantAgentPermissionWithScope(linearProxyTestConv, agentd.PermLinearRead,
+		`{"linear_team":["TCL"],"group":["dev"]}`, "test"))
+
+	res := linearPost(t, f, "/v1/linear/issue/view", map[string]any{"identifier": "TCL-1"})
+	assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), "team_scope_empty")
+	assert.Contains(t, res.Body.String(), "does not describe",
+		"the refusal must blame the undescribable dimension, not the operator's allow-list")
+	assert.NotContains(t, res.Body.String(), "must overlap",
+		"TCL IS on the operator's list; saying otherwise sends the human to the wrong knob")
+	assert.False(t, rec.sawAnyCall())
+}
+
+// TestLinearProxy_TeamScopedCallIsAuditedWithItsScope — the git proxy gets this
+// row for free inside requirePermission; the Linear proxy resolves the scope
+// itself and so writes the record by hand, which is the version that can be
+// forgotten. It records the GRANT's scope, the same thing the field means on a
+// git row, with the team actually acted on carried by the verb's own detail.
+func TestLinearProxy_TeamScopedCallIsAuditedWithItsScope(t *testing.T) {
+	f, rec := linearWorld(t, []string{"TCL", "JOH"})
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	require.NoError(t, db.GrantAgentPermissionWithScope(
+		linearProxyTestConv, agentd.PermLinearRead, `{"linear_team":["TCL"]}`, "test"))
+	rec.response = func(linearCall) (int, string) { return http.StatusOK, issueJSON("TCL-1", "TCL") }
+
+	require.Equal(t, http.StatusOK,
+		linearPost(t, f, "/v1/linear/issue/view", map[string]any{"identifier": "TCL-1"}).Code)
+
+	var detail string
+	for _, e := range fetchAudit(t, agentd.BuildDashboardHandlerForTest(), "").Entries {
+		if e.Verb == "linear.issue.view" {
+			detail = e.Detail
+		}
+	}
+	assert.Contains(t, detail, "scope: "+agentd.PermLinearRead+" [linear_team=tcl]",
+		"a scoped authorization must be recorded on the audit row")
+	assert.Contains(t, detail, "issue=TCL-1", "and the verb's own detail must survive alongside it")
+}
+
+// An UNSCOPED Linear call must leave no scope noise on its audit row — the same
+// regression guard TestPermissionScope_UnscopedGrantIsUnaffected makes for the
+// gate sites that pass no context.
+func TestLinearProxy_UnscopedCallRecordsNoScope(t *testing.T) {
+	f, rec := linearWorld(t, []string{"TCL"})
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	require.NoError(t, db.GrantAgentPermission(linearProxyTestConv, agentd.PermLinearRead, "test"))
+	rec.response = func(linearCall) (int, string) { return http.StatusOK, issueJSON("TCL-1", "TCL") }
+
+	require.Equal(t, http.StatusOK,
+		linearPost(t, f, "/v1/linear/issue/view", map[string]any{"identifier": "TCL-1"}).Code)
+
+	for _, e := range fetchAudit(t, agentd.BuildDashboardHandlerForTest(), "").Entries {
+		if e.Verb == "linear.issue.view" {
+			assert.NotContains(t, e.Detail, "scope: ")
+		}
+	}
+}
+
 // TestLinearProxy_WhoamiExplainsBothLists — whoami is the verb an agent runs
 // when something is refused, so with two lists in play it has to say which one
 // excluded the team rather than reporting one number the agent cannot act on.
