@@ -107,6 +107,8 @@ tclaude setup --install-proxy-skills
 
 They are intentionally excluded from both `--install-agent-skills` and
 `--install-all`, so agents are not shown proxy capabilities that are unavailable.
+Refreshing the ordinary bundle also removes proxy skills installed by older
+tclaude releases; pass both flags together if you want to refresh both sets.
 
 Full walkthrough: [Installation and quick start](https://tofutools.github.io/tclaude/#installation).
 

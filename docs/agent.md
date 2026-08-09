@@ -71,6 +71,8 @@ only once.
   `proxy-git` and `proxy-linear` for operators who use the credential proxies.
   These skills are intentionally excluded from both `--install-agent-skills`
   and `--install-all`, so agents do not see unavailable proxy capabilities.
+  Refreshing the ordinary bundle removes proxy skills installed by older
+  releases; pass both skill flags together to retain and refresh them.
 - **`tclaude setup --install-default-agent-permissions`** — grants the
   self-targeted slugs the bundled skills exercise (`self.rename`,
   `self.compact`, `self.interrupt`, `self.clone`, `self.schedule`,
