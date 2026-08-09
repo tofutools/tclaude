@@ -25,6 +25,17 @@ func TestValidateDarwinRouteSlotsIsBoundedAndExact(t *testing.T) {
 	}
 }
 
+func TestValidateDarwinRouteSlotsExcludeSystemListeners(t *testing.T) {
+	if err := validateDarwinRouteSlotsExclude(
+		[]int{41001, 41002}, []int{42001, 42002}); err != nil {
+		t.Fatalf("disjoint route and system listener ports rejected: %v", err)
+	}
+	if err := validateDarwinRouteSlotsExclude(
+		[]int{41001, 41002}, []int{42001, 41002}); err == nil {
+		t.Fatal("overlapping route and system listener port accepted")
+	}
+}
+
 func TestParseDarwinRouteSlotsRequiresAnExactBoundedPool(t *testing.T) {
 	slots, err := ParseDarwinRouteSlots(" 41001,41002 ")
 	if err != nil {

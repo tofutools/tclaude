@@ -127,6 +127,9 @@ func renderSeatbeltProfileWithLoopbackBindsAndRouteSlots(
 	if err := ValidateDarwinRouteSlots(routeSlots); err != nil {
 		return "", nil, err
 	}
+	if err := validateDarwinRouteSlotsExclude(routeSlots, loopbackBindPorts); err != nil {
+		return "", nil, err
+	}
 	if len(routeSlots) > 0 && tclaudeLayerPlanFloorPosture(plan) == sandboxpolicy.NetworkHostOpen {
 		return "", nil, fmt.Errorf("darwin route slots require an isolated or filtered Seatbelt network floor")
 	}

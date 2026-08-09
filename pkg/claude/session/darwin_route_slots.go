@@ -52,6 +52,33 @@ func ValidateDarwinRouteSlots(slots []int) error {
 	return nil
 }
 
+// validateDarwinRouteSlotsExclude rejects a route pool that overlaps ports
+// reserved for launch-internal listeners. The route pool is agent-visible and
+// leased through agentd; system listeners must never be registered as part of
+// that authority even if independent ephemeral allocations happen to choose
+// the same numeric port.
+func validateDarwinRouteSlotsExclude(slots, excluded []int) error {
+	if err := ValidateDarwinRouteSlots(slots); err != nil {
+		return err
+	}
+	excludedSet := make(map[int]struct{}, len(excluded))
+	for _, port := range excluded {
+		if port == 0 {
+			continue
+		}
+		if port < 0 || port > 65535 {
+			return fmt.Errorf("excluded Darwin system listener port %d is outside TCP port range", port)
+		}
+		excludedSet[port] = struct{}{}
+	}
+	for _, port := range slots {
+		if _, ok := excludedSet[port]; ok {
+			return fmt.Errorf("darwin route slot port %d overlaps a launch-internal listener", port)
+		}
+	}
+	return nil
+}
+
 // DarwinRouteSlotsEnv is the observation-only launch environment key through
 // which a sandboxed agent learns its exact pre-authorized pool. Route registry
 // authority and leasing remain in agentd.

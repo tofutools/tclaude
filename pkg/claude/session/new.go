@@ -1825,6 +1825,10 @@ func runNew(params *NewParams) error {
 		if err != nil {
 			return fmt.Errorf("reserve Darwin route launch slots: %w", err)
 		}
+		if err := validateDarwinRouteSlotsExclude(
+			darwinRouteReservation.Slots(), codexAppServerLoopbackPorts(params)); err != nil {
+			return fmt.Errorf("separate Darwin route slots from system listeners: %w", err)
+		}
 		// Claim the kernel-reserved slots before any launch contract is
 		// rendered. The normalized DB claims are the logical exclusion that
 		// survives reservation-FD closure; every later rendering/launch step
