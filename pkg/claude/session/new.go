@@ -3155,6 +3155,10 @@ func launchDetachedTmuxSession(tmuxSession, cwd, cmd string, markerArgs ...strin
 		}
 		return fmt.Errorf("failed to create tmux session: %w", err)
 	}
+	// Opt in at creation, not first tclaude attach: a detached launch may be
+	// viewed first through a raw tmux client, whose later detach has no caller
+	// returning through AttachToSession to perform cleanup.
+	ConfigureTmuxDetachNormalization(tmuxSession)
 	return nil
 }
 

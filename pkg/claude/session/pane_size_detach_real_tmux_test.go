@@ -11,11 +11,12 @@ import (
 )
 
 func TestDetachSizeNormalizationRealTmuxHookAndAttachedGuard(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	tmux := withIsolatedRealTmux(t)
-	require.NoError(t, tmux.Command("new-session", "-d", "-s", "detach-size",
-		"-x", "155", "-y", "39", "sleep", "300").Run())
 	require.NoError(t, tmux.Command("set-hook", "-g", "client-detached[0]", "display-message operator-zero").Run())
 	require.NoError(t, tmux.Command("set-hook", "-g", "client-detached[100]", "display-message operator-hundred").Run())
+	require.NoError(t, launchDetachedTmuxSession("detach-size", t.TempDir(), "exec sleep 300"),
+		"detached creation must install the normalization hook before any client attaches")
 
 	var installers sync.WaitGroup
 	for range 40 {
