@@ -173,11 +173,14 @@ type stopWaitPolicy struct {
 // today, and the list should stay short:
 //
 //   - POST /v1/agent/{selector}/stop      — the CLI's `tclaude agent stop`
-//   - POST /api/agents/{id}/stop          — the dashboard's per-agent stop button
+//   - POST /api/agents/{id}/stop          — without {"wait":true}; the shutdown
+//     dialog opts INTO waiting so its spinner spans the real stop (OpenCode's
+//     control-API exit dispatch returns in milliseconds), and its retry /
+//     force-kill affordances give a stuck ladder somewhere to land
 //   - the non-force agent delete, which deliberately refuses with 409 and asks
 //     the caller to retry rather than waiting out the escalation window
 //
-// The first two would otherwise hold a human's request for the length of the
+// The CLI stop would otherwise hold a human's request for the length of the
 // escalation window to report something the human can already see in the pane.
 // Anything that goes on to touch what the agent holds — a retire deleting its
 // directories or worktree, a delete unlinking its .jsonl, a restart relaunching

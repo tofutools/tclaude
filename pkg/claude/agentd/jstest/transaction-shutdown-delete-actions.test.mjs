@@ -68,7 +68,9 @@ test('shutdown action preserves exact force payload and completes after refresh'
       assert.equal(requests[0][1].method, 'POST');
       assert.equal(requests[0][1].credentials, 'same-origin');
       assert.deepEqual(requests[0][1].headers, { 'Content-Type': 'application/json' });
-      assert.equal(requests[0][1].body, JSON.stringify({ force: row.force }));
+      // wait:true holds the daemon response until the pane process is gone,
+      // so the dialog's spinner spans the real stop (not just the dispatch).
+      assert.equal(requests[0][1].body, JSON.stringify({ force: row.force, wait: true }));
       assert.equal(refreshedWhileOwned, null, 'successful mutation unpaints before refresh');
       assert.deepEqual(notices, [[`shutdown Stable target: ${row.action}`]]);
       assert.deepEqual(result, { ok: true, action: row.action, response: { action: row.action } });
