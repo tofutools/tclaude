@@ -496,6 +496,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	}
 	approval, autoReview := relaunch.Approval, relaunch.AutoReview
 	spawnArgs := clcommon.SpawnArgs{
+		AgentID:               persistedAgentID,
 		EffectiveSandbox:      effectiveSandbox,
 		Label:                 label,
 		Cwd:                   cwd,
@@ -520,6 +521,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		AutoCompactWindow:      relaunch.AutoCompactWindow,
 		ContextWindowMax:       relaunch.ContextWindowMax,
 		CopilotAPI:             relaunch.CopilotAPI,
+		CodexAppServer:         relaunch.CodexAppServer,
 		FastMode:               relaunch.FastMode,
 	}
 

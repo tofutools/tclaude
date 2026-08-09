@@ -190,23 +190,24 @@ type GroupTemplateAgent struct {
 // itself, and the spawn-dialog-only toggles (sync_worktree/auto_focus/
 // include_group_default_context) have no meaning for a template deploy.
 type templateInlineProfileJSON struct {
-	Harness                string            `json:"harness,omitempty"`
-	Model                  string            `json:"model,omitempty"`
-	Effort                 string            `json:"effort,omitempty"`
-	Sandbox                string            `json:"sandbox,omitempty"`
-	SandboxImplementation  string            `json:"sandbox_implementation,omitempty"`
-	Approval               string            `json:"approval,omitempty"`
-	ToolGovernance         string            `json:"tools,omitempty"`
-	AskUserQuestionTimeout string            `json:"ask_user_question_timeout,omitempty"`
-	AutoCompactWindow      string            `json:"auto_compact_window,omitempty"`
-	ContextWindowMax       int64             `json:"context_window_max,omitempty"`
-	CopilotAPI             *bool             `json:"copilot_api,omitempty"`
-	FastMode               *bool             `json:"fast_mode,omitempty"`
-	AutoReview             *bool             `json:"auto_review,omitempty"`
-	TrustDir               *bool             `json:"trust_dir,omitempty"`
-	RemoteControl          *bool             `json:"remote_control,omitempty"`
-	AutoMemory             *bool             `json:"auto_memory,omitempty"`
-	SSHWorkaround          *bool             `json:"ssh_workaround,omitempty"`
+	Harness                string                        `json:"harness,omitempty"`
+	Model                  string                        `json:"model,omitempty"`
+	Effort                 string                        `json:"effort,omitempty"`
+	Sandbox                string                        `json:"sandbox,omitempty"`
+	SandboxImplementation  string                        `json:"sandbox_implementation,omitempty"`
+	Approval               string                        `json:"approval,omitempty"`
+	ToolGovernance         string                        `json:"tools,omitempty"`
+	AskUserQuestionTimeout string                        `json:"ask_user_question_timeout,omitempty"`
+	AutoCompactWindow      string                        `json:"auto_compact_window,omitempty"`
+	ContextWindowMax       int64                         `json:"context_window_max,omitempty"`
+	CopilotAPI             *bool                         `json:"copilot_api,omitempty"`
+	CodexAppServer         *bool                         `json:"codex_app_server,omitempty"`
+	FastMode               *bool                         `json:"fast_mode,omitempty"`
+	AutoReview             *bool                         `json:"auto_review,omitempty"`
+	TrustDir               *bool                         `json:"trust_dir,omitempty"`
+	RemoteControl          *bool                         `json:"remote_control,omitempty"`
+	AutoMemory             *bool                         `json:"auto_memory,omitempty"`
+	SSHWorkaround          *bool                         `json:"ssh_workaround,omitempty"`
 	IsOwner                *bool                         `json:"is_owner,omitempty"`
 	PermissionOverrides    map[string]PermissionOverride `json:"permission_overrides,omitempty"`
 	ContextFeatures        map[string]string             `json:"context_features,omitempty"`
@@ -232,6 +233,7 @@ func inlineProfileToJSON(p *SpawnProfile) string {
 		AutoCompactWindow:      p.AutoCompactWindow,
 		ContextWindowMax:       p.ContextWindowMax,
 		CopilotAPI:             p.CopilotAPI,
+		CodexAppServer:         p.CodexAppServer,
 		FastMode:               p.FastMode,
 		AutoReview:             p.AutoReview,
 		TrustDir:               p.TrustDir,
@@ -272,6 +274,7 @@ func inlineProfileFromJSON(s string) *SpawnProfile {
 		AutoCompactWindow:      j.AutoCompactWindow,
 		ContextWindowMax:       j.ContextWindowMax,
 		CopilotAPI:             j.CopilotAPI,
+		CodexAppServer:         j.CodexAppServer,
 		FastMode:               j.FastMode,
 		AutoReview:             j.AutoReview,
 		TrustDir:               j.TrustDir,

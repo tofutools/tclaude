@@ -12,6 +12,12 @@ type SpawnSpec struct {
 	// Codex strict-Home launches set this to the binary whose split-policy
 	// behavior and identity were probed, preventing a later PATH substitution.
 	ExecutablePath string
+	// CodexAppServerSocket selects the opt-in Codex app-server drive. The
+	// adapter starts a private app-server in the same launch envelope, points
+	// the normal TUI at it with --remote, and records the server pid for agentd.
+	CodexAppServerSocket  string
+	CodexAppServerPIDFile string
+	CodexAppServerLogFile string
 	// Cwd is the resolved absolute launch directory. Most harnesses inherit it
 	// from tmux's `new-session -c`; a server-attached client may also need to
 	// forward it explicitly to the remote server (OpenCode's `attach --dir`).

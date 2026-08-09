@@ -73,7 +73,8 @@ type profileJSON struct {
 	// remote_control / auto_memory, `tclaude agent spawn --profile` does NOT fold
 	// this in client-side — the daemon resolves it down the full tier stack, so
 	// leaving it out here is what lets the group/global tiers speak too.
-	CopilotAPI *bool `json:"copilot_api,omitempty"`
+	CopilotAPI     *bool `json:"copilot_api,omitempty"`
+	CodexAppServer *bool `json:"codex_app_server,omitempty"`
 	// FastMode is Codex's nullable service-tier choice: nil inherits the global
 	// Codex config, true forces fast, false forces standard.
 	FastMode   *bool `json:"fast_mode,omitempty"`
@@ -755,6 +756,13 @@ func printProfileHuman(w io.Writer, p profileJSON) {
 			drive = "api"
 		}
 		launch = append(launch, "copilot_drive="+drive)
+	}
+	if p.CodexAppServer != nil {
+		drive := "send-keys"
+		if *p.CodexAppServer {
+			drive = "app-server"
+		}
+		launch = append(launch, "codex_drive="+drive)
 	}
 	if p.FastMode != nil {
 		mode := "off"

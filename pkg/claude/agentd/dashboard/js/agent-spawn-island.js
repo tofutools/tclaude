@@ -95,7 +95,7 @@ const PROFILE_OWNED_FIELDS = [
   'profile', 'name', 'role', 'descr', 'task', 'initialMessage',
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'tools', 'askTimeout',
   'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'sshWorkaround', 'owner', 'permissionOverrides',
-  'contextFeatures', 'autoCompactWindow', 'contextWindowMax', 'copilotAPI', 'fastMode', 'sandboxImpl', 'sandboxImplCleared',
+  'contextFeatures', 'autoCompactWindow', 'contextWindowMax', 'copilotAPI', 'codexAppServer', 'fastMode', 'sandboxImpl', 'sandboxImplCleared',
   'syncWorktree', 'autoFocus', 'includeGroupContext',
 ];
 const WORKTREE_SELECTION_FIELDS = ['worktree', 'worktreeBranch', 'worktreeBase'];
@@ -442,7 +442,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer',
       'tools', 'askTimeout', 'trustDir', 'trustDirSpecified', 'remoteControl',
       'autoMemory', 'sshWorkaround', 'autoCompactWindow', 'contextWindowMax',
-      'copilotAPI', 'fastMode', 'sandboxImpl', 'sandboxImplCleared', 'contextFeatures',
+      'copilotAPI', 'codexAppServer', 'fastMode', 'sandboxImpl', 'sandboxImplCleared', 'contextFeatures',
     ];
     for (const key of harnessFields) {
       touched.current.add(key);
@@ -1242,6 +1242,12 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       <input id="agent-spawn-copilot-api" type="checkbox" checked=${draft.copilotAPI} disabled=${busy}
         onChange=${(event) => update('copilotAPI', event.currentTarget.checked)} />
       Drive over the Copilot API instead of tmux send-keys — experimental, off by default
+    </label>
+    <label class="cron-create-enabled" id="agent-spawn-codex-app-server-row" hidden=${!view.showCodexAppServer}
+      title="EXPERIMENTAL: launch the normal Codex TUI against a private per-agent app-server. The TUI submits the initial prompt exactly once; agentd binds the created thread without replay. Requires Codex 0.147.x and fails closed if the server or verified thread handle is unavailable. Off by default so send-keys remains selectable for A/B testing.">
+      <input id="agent-spawn-codex-app-server" type="checkbox" checked=${draft.codexAppServer} disabled=${busy}
+        onChange=${(event) => update('codexAppServer', event.currentTarget.checked)} />
+      Drive Codex through a private app-server — experimental, off by default
     </label>
     <label class="cron-create-enabled" id="agent-spawn-ssh-workaround-row" hidden=${!view.showSSHWorkaround}
       title=${view.sshWorkaroundAvailable

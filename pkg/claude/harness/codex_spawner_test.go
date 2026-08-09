@@ -160,6 +160,35 @@ func TestCodexSpawner_InitialPrompt(t *testing.T) {
 	}
 }
 
+func TestCodexSpawner_AppServerKeepsTUIAsSoleBirthWriter(t *testing.T) {
+	got := codexSpawner{}.BuildCommand(SpawnSpec{
+		ExecutablePath:        "/opt/codex bin/codex",
+		InitialPrompt:         "take the first turn",
+		CodexAppServerSocket:  "/tmp/private agent/app.sock",
+		CodexAppServerPIDFile: "/tmp/private agent/server.pid",
+		CodexAppServerLogFile: "/tmp/private agent/server.log",
+	})
+
+	if strings.Count(got, "app-server --listen") != 1 {
+		t.Fatalf("launch must own exactly one app-server, got %q", got)
+	}
+	if !strings.Contains(got, "--remote 'unix:///tmp/private agent/app.sock'") {
+		t.Fatalf("the normal TUI must attach to the private server, got %q", got)
+	}
+	if strings.Count(got, "take the first turn") != 1 || !strings.HasSuffix(got, " 'take the first turn'") {
+		t.Fatalf("the positional TUI prompt must remain the sole birth writer, got %q", got)
+	}
+	if !strings.Contains(got, "trap 'kill") || !strings.Contains(got, "EXIT HUP INT TERM") {
+		t.Fatalf("the pane shell must reap its private server, got %q", got)
+	}
+	if !strings.Contains(got, "chmod 600 '/tmp/private agent/app.sock'") {
+		t.Fatalf("the private socket must be narrowed before the TUI starts, got %q", got)
+	}
+	if strings.Contains(got, "turn/start") {
+		t.Fatalf("the launch envelope must not replay the birth prompt through RPC, got %q", got)
+	}
+}
+
 // TestCodexModels covers the catalog (JOH-155): pass-through of a Codex
 // model, rejection of a Claude Code slug, and tclaude effort levels
 // accepted (validated like CC; mapped to Codex reasoning by the spawner).

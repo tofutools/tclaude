@@ -51,6 +51,9 @@ type SpawnArgs struct {
 	// row key in SQLite. It must be unique in the sessions table. Unused by
 	// SpawnResume (a resume mints its own fresh label).
 	Label string
+	// AgentID is the stable actor identity reserved by agentd. Runtime-owning
+	// launch modes use it to allocate a private per-agent generation directory.
+	AgentID string
 
 	// ConvID is the conversation to relaunch (SpawnResume). Unused by SpawnNew.
 	ConvID string
@@ -123,6 +126,16 @@ type SpawnArgs struct {
 	// omits --harness and spawns Claude Code, keeping an untagged spawn's argv
 	// exactly as before harness support (JOH-160).
 	Harness string
+
+	// CodexAppServer selects the explicit app-server-backed Codex drive. The
+	// socket/pid/log paths are daemon-minted internal handoff values; callers
+	// set only the posture and agentd fills the rest before forking session new.
+	CodexAppServer           bool
+	CodexAppServerSocket     string
+	CodexAppServerPIDFile    string
+	CodexAppServerLogFile    string
+	CodexAppServerGeneration string
+	CodexVersion             string
 
 	// OpenCodeServerURL / OpenCodeServerPassword are the private handoff from
 	// agentd's per-session server owner to the short-lived `session new`

@@ -103,6 +103,10 @@ type AgentRelaunchProfile struct {
 	// API drive it never chose. nil = unknown (legacy record, or a launch that
 	// recorded none). Mirrors HarnessBuiltinModeSource.
 	CopilotAPISource *string `json:"copilot_api_source,omitempty"`
+	// CodexAppServer is the durable per-conversation Codex drive selection.
+	// nil means legacy/unknown and resolves to send-keys.
+	CodexAppServer       *bool   `json:"codex_app_server,omitempty"`
+	CodexAppServerSource *string `json:"codex_app_server_source,omitempty"`
 	// FastMode preserves an explicit Codex tier across relaunches. nil means
 	// inherit config.toml; true/false force fast/standard respectively.
 	FastMode               *bool   `json:"fast_mode,omitempty"`
@@ -541,6 +545,21 @@ func SetSessionCopilotAPI(sessionID string, value bool) error {
 	})
 }
 
+func SetSessionCodexAppServer(sessionID string, value bool) error {
+	return updateSessionFallbackRelaunch(sessionID, func(fallback *AgentRelaunchProfile) {
+		selected := value
+		fallback.CodexAppServer = &selected
+	})
+}
+
+func SetConversationCodexAppServer(convID, harnessName, cwd string, value bool) error {
+	return updateConversationFallbackRelaunch(convID, harnessName, cwd,
+		func(fallback *AgentRelaunchProfile) {
+			selected := value
+			fallback.CodexAppServer = &selected
+		})
+}
+
 // SetSessionFastMode records explicit Codex service-tier intent. An empty mode
 // clears the field back to inherit; on/off become true/false.
 func SetSessionFastMode(sessionID, mode string) error {
@@ -971,6 +990,12 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 			conversationFallback.CopilotAPISource =
 				existingConversation.FallbackRelaunch.CopilotAPISource
 		}
+		if conversationFallback.CodexAppServer == nil {
+			conversationFallback.CodexAppServer = existingConversation.FallbackRelaunch.CodexAppServer
+		}
+		if conversationFallback.CodexAppServerSource == nil {
+			conversationFallback.CodexAppServerSource = existingConversation.FallbackRelaunch.CodexAppServerSource
+		}
 		if conversationFallback.ConfiguredContextWindowMax == nil {
 			conversationFallback.ConfiguredContextWindowMax =
 				existingConversation.FallbackRelaunch.ConfiguredContextWindowMax
@@ -1056,6 +1081,9 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		}
 		if agent.CopilotAPI != nil {
 			merged.CopilotAPI = agent.CopilotAPI
+		}
+		if agent.CodexAppServer != nil {
+			merged.CodexAppServer = agent.CodexAppServer
 		}
 		if agent.FastMode != nil {
 			merged.FastMode = agent.FastMode

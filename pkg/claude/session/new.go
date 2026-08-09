@@ -282,6 +282,14 @@ type NewParams struct {
 	// started the launch. That allocation is gone (TCL-1084).
 	CopilotAPIPort int `long:"copilot-api-port" optional:"true" help:"Loopback port for the API-backed Copilot agent's embedded JSON-RPC server. Chosen by tclaude agentd, which allocates it before forking this process; a launch that is not agentd's cannot get the drive at all, so there is nothing for it to pass here. Requires --copilot-api"`
 
+	// CodexAppServer is the deliberately opt-in Codex API drive. The private
+	// runtime paths are minted by agentd; accepting the public toggle without
+	// those paths would produce a remote TUI nobody owns, so it is refused.
+	CodexAppServer        bool   `long:"codex-app-server" help:"EXPERIMENTAL: launch Codex against a private tclaude-owned app-server and bind agentd to the TUI-created thread. Off by default; Codex 0.147.x only"`
+	CodexAppServerSocket  string `long:"codex-app-server-socket" optional:"true" help:"Internal: agentd-minted private Codex app-server Unix socket"`
+	CodexAppServerPIDFile string `long:"codex-app-server-pid-file" optional:"true" help:"Internal: agentd-minted Codex app-server pid file"`
+	CodexAppServerLogFile string `long:"codex-app-server-log-file" optional:"true" help:"Internal: agentd-minted Codex app-server log file"`
+
 	// SendKeys is the deliberate override for the Copilot API drive refusal,
 	// spelled exactly as `tclaude conv resume --send-keys` (TCL-1076) so an
 	// operator who learns the escape on one surface is not walled out on the
@@ -947,6 +955,21 @@ func runNew(params *NewParams) error {
 		return err
 	}
 	params.CopilotAPIPort = copilotAPIPort
+	codexAppServer, err := harness.ResolveCodexAppServer(h, &params.CodexAppServer)
+	if err != nil {
+		return err
+	}
+	params.CodexAppServer = codexAppServer
+	if params.CodexAppServer {
+		if !params.ManagedLaunch || strings.TrimSpace(params.CodexAppServerSocket) == "" ||
+			strings.TrimSpace(params.CodexAppServerPIDFile) == "" ||
+			strings.TrimSpace(params.CodexAppServerLogFile) == "" {
+			return fmt.Errorf("--codex-app-server requires an agentd-managed launch with private runtime paths")
+		}
+	} else if params.CodexAppServerSocket != "" || params.CodexAppServerPIDFile != "" ||
+		params.CodexAppServerLogFile != "" {
+		return fmt.Errorf("Codex app-server runtime paths require --codex-app-server")
+	}
 
 	if params.JoinGroup != "" {
 		if JoinGroupHandler == nil {
@@ -1925,6 +1948,9 @@ func runNew(params *NewParams) error {
 	}
 	spawnSpec := harness.SpawnSpec{
 		ExecutablePath:              executablePath,
+		CodexAppServerSocket:        params.CodexAppServerSocket,
+		CodexAppServerPIDFile:       params.CodexAppServerPIDFile,
+		CodexAppServerLogFile:       params.CodexAppServerLogFile,
 		Cwd:                         cwd,
 		ServerURL:                   openCodeServerURL,
 		OpenCodeTransport:           openCodeTransport,
@@ -2293,6 +2319,7 @@ func runNew(params *NewParams) error {
 		FastMode:          params.FastMode,
 		ContextWindowMax:  &params.ContextWindowMax,
 		CopilotAPI:        copilotAPIPostureToRecord(params),
+		CodexAppServer:    &params.CodexAppServer,
 	})
 	// Claude reports its live model and effort through the statusline hook.
 	// Codex and OpenCode have no equivalent startup callback, so seed the

@@ -798,14 +798,19 @@ type templateAgentLaunch struct {
 	// CopilotAPISet records that a tier actually spoke, mirroring AutoReviewSet.
 	CopilotAPI    bool
 	CopilotAPISet bool
+	// CodexAppServer selects the private app-server-backed Codex drive. It is
+	// profile-only and remains off unless a launch tier explicitly selects it.
+	CodexAppServer    bool
+	CodexAppServerSet bool
 	// CopilotAPISource / SSHWorkaroundSource name the tier that CHOSE the value,
 	// threaded into spawnParams exactly like SandboxSource. Without them the
 	// deploy passes only the Set bit, the spawn boundary re-resolves an
 	// already-set field as ProvExplicit, and every template-deployed agent
 	// records a false "an operator chose this" for a value the resolver defaulted
 	// (TCL-1090).
-	CopilotAPISource    string
-	SSHWorkaroundSource string
+	CopilotAPISource     string
+	CodexAppServerSource string
+	SSHWorkaroundSource  string
 	// HarnessSource / ModelSource / EffortSource / ContextWindowMaxSource /
 	// FastModeSource / SandboxImplementationSource are the attributions for the
 	// remaining fields the launch echo renders. This resolver has always computed
@@ -1032,6 +1037,11 @@ func validateInlineProfileForHarness(agentName string, h *harness.Harness, p *db
 	if p.CopilotAPI != nil {
 		if _, err := harness.ResolveCopilotAPI(h, p.CopilotAPI); err != nil {
 			return wrap(http.StatusBadRequest, "invalid_copilot_api", err.Error())
+		}
+	}
+	if p.CodexAppServer != nil {
+		if _, err := harness.ResolveCodexAppServer(h, p.CodexAppServer); err != nil {
+			return wrap(http.StatusBadRequest, "invalid_codex_app_server", err.Error())
 		}
 	}
 	if p.FastMode != nil {
@@ -1444,6 +1454,16 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, role 
 	if copilotAPINote != "" {
 		notes = append(notes, copilotAPINote)
 	}
+	codexAppServer, codexAppServerSet, codexAppServerSource, codexAppServerNote, fail := resolveBoolLaunchField(
+		"codex_app_server", false, false, h.Name, tiers,
+		func(p *db.SpawnProfile) *bool { return p.CodexAppServer },
+		func(v bool) (bool, error) { return harness.ResolveCodexAppServer(h, &v) })
+	if fail != nil {
+		return failed(fail)
+	}
+	if codexAppServerNote != "" {
+		notes = append(notes, codexAppServerNote)
+	}
 	fastMode, fastModeSet, fastModeSource, fastModeNote, fail := resolveBoolLaunchField(
 		"fast_mode", false, false, h.Name, tiers,
 		func(p *db.SpawnProfile) *bool { return p.FastMode },
@@ -1530,6 +1550,9 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, role 
 		CopilotAPI:             copilotAPI,
 		CopilotAPISet:          copilotAPISet,
 		CopilotAPISource:       copilotAPISource,
+		CodexAppServer:         codexAppServer,
+		CodexAppServerSet:      codexAppServerSet,
+		CodexAppServerSource:   codexAppServerSource,
 		SSHWorkaroundSource:    sshWorkaroundSource,
 		// The template tiers this resolver walked. The spawn boundary re-resolves
 		// these fields against the group/global defaults and keeps whichever
@@ -1603,6 +1626,14 @@ func copilotAPIPointer(launch templateAgentLaunch) *bool {
 		return nil
 	}
 	value := launch.CopilotAPI
+	return &value
+}
+
+func codexAppServerPointer(launch templateAgentLaunch) *bool {
+	if !launch.CodexAppServerSet {
+		return nil
+	}
+	value := launch.CodexAppServer
 	return &value
 }
 
@@ -1719,6 +1750,16 @@ func traceMemberLaunch(convID string) templateAgentLaunch {
 					out.CopilotAPISet = true
 				} else {
 					out.ObservedNotChosen = append(out.ObservedNotChosen, "copilot_api")
+				}
+			}
+		}
+		if durable.CodexAppServer != nil {
+			if value, err := harness.ResolveCodexAppServer(h, durable.CodexAppServer); err == nil {
+				if launchValueWasChosen(durable.CodexAppServerSource) {
+					out.CodexAppServer = value
+					out.CodexAppServerSet = true
+				} else {
+					out.ObservedNotChosen = append(out.ObservedNotChosen, "codex_app_server")
 				}
 			}
 		}
@@ -4245,6 +4286,9 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile, observed bool) (*
 	if out.CopilotAPI == nil {
 		out.CopilotAPI = prev.CopilotAPI
 	}
+	if out.CodexAppServer == nil {
+		out.CodexAppServer = prev.CodexAppServer
+	}
 	if out.FastMode == nil {
 		out.FastMode = prev.FastMode
 	}
@@ -4305,7 +4349,7 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile, observed bool) (*
 		out.AutoCompactWindow == "" && out.SandboxImplementation == "" &&
 		out.ContextWindowMax == 0 &&
 		out.AutoReview == nil && out.TrustDir == nil && out.RemoteControl == nil && out.AutoMemory == nil &&
-		out.SSHWorkaround == nil && out.CopilotAPI == nil && out.FastMode == nil &&
+		out.SSHWorkaround == nil && out.CopilotAPI == nil && out.CodexAppServer == nil && out.FastMode == nil &&
 		len(out.ContextFeatures) == 0 &&
 		out.IsOwner == nil && len(out.PermissionOverrides) == 0 {
 		return nil, drop
@@ -4371,6 +4415,12 @@ func dropLaunchFieldsForeignToHarness(out *db.SpawnProfile) *snapshotFieldDrop {
 		if _, err := harness.ResolveCopilotAPI(h, out.CopilotAPI); err != nil {
 			out.CopilotAPI = nil
 			dropped = append(dropped, "copilot_api")
+		}
+	}
+	if out.CodexAppServer != nil {
+		if _, err := harness.ResolveCodexAppServer(h, out.CodexAppServer); err != nil {
+			out.CodexAppServer = nil
+			dropped = append(dropped, "codex_app_server")
 		}
 	}
 	if out.FastMode != nil {
@@ -4540,7 +4590,7 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 			})
 		}
 		var inline *db.SpawnProfile
-		if launch.Harness != "" || launch.Model != "" || launch.Effort != "" || launch.Sandbox != "" || launch.Approval != "" || launch.AutoReviewSet || launch.SSHWorkaroundSet || len(launch.ContextFeatures) > 0 || launch.AutoCompactWindow != "" || launch.ContextWindowMax > 0 || launch.CopilotAPISet || launch.FastModeSet || launch.SandboxImplementation != "" || len(perms) > 0 {
+		if launch.Harness != "" || launch.Model != "" || launch.Effort != "" || launch.Sandbox != "" || launch.Approval != "" || launch.AutoReviewSet || launch.SSHWorkaroundSet || len(launch.ContextFeatures) > 0 || launch.AutoCompactWindow != "" || launch.ContextWindowMax > 0 || launch.CopilotAPISet || launch.CodexAppServerSet || launch.FastModeSet || launch.SandboxImplementation != "" || len(perms) > 0 {
 			po := make(map[string]db.PermissionOverride, len(perms))
 			for slug, override := range perms {
 				po[slug] = override
@@ -4555,6 +4605,7 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 				ContextWindowMax:      launch.ContextWindowMax,
 				SandboxImplementation: launch.SandboxImplementation,
 				CopilotAPI:            copilotAPIPointer(launch),
+				CodexAppServer:        codexAppServerPointer(launch),
 				FastMode:              fastModePointer(launch),
 				PermissionOverrides:   po,
 				ContextFeatures:       launch.ContextFeatures,
