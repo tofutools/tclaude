@@ -7834,6 +7834,48 @@ body.wizard .directory-picker-modal .modal-buttons { border-top-color: rgba(122,
 .cfg-field input:disabled, .cfg-field select:disabled { opacity: 0.4; cursor: default; }
 .cfg-field label.cfg-inline { display: flex; align-items: center; gap: 5px; cursor: pointer; }
 .cfg-field input[type=checkbox] { cursor: pointer; }
+/* Web-terminal attachment geometry is a small subsection rather than one long
+   flex row: strategy first, then one consistently aligned timing override per
+   row. It sits after Window focus because both change terminal attachment /
+   sizing behavior, while the divider keeps it from reading as another tiling
+   control. */
+.cfg-terminal-attach-field {
+  align-items: flex-start; border-top: 1px solid #30363d;
+  margin-top: 17px; padding-top: 15px;
+}
+.cfg-terminal-attach-intro { flex-basis: 100%; margin-bottom: 3px; }
+.cfg-terminal-attach-intro strong { display: block; color: #c9d1d9; font-size: 12px; }
+.cfg-terminal-attach-intro span {
+  display: block; color: #7d8590; font-size: 11px; margin-top: 4px;
+}
+.cfg-terminal-attach-field > select { min-width: 230px; }
+.cfg-terminal-attach-timings {
+  flex: 0 1 430px; margin: 6px 0 0 177px; padding: 11px 14px;
+  border-left: 2px solid #2f81f7; border-radius: 0 5px 5px 0;
+  background: #0b1016;
+}
+.cfg-terminal-attach-timings > strong {
+  display: block; color: #79c0ff; font-size: 10px;
+  letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: 5px;
+}
+.cfg-terminal-attach-timings > label {
+  display: grid; grid-template-columns: minmax(170px, 1fr) 84px 24px;
+  gap: 8px; align-items: center; min-height: 36px; cursor: default;
+}
+.cfg-terminal-attach-timings input[type=number] { width: 84px; text-align: right; }
+.cfg-terminal-attach-unit { color: #7d8590; font-size: 11px; }
+.cfg-terminal-attach-note { display: block; color: #7d8590; font-size: 10px; margin-top: 4px; }
+.cfg-terminal-attach-hint { margin-top: 2px; }
+@media (max-width: 600px) {
+  .cfg-terminal-attach-field > .cfg-label { flex-basis: 100%; }
+  .cfg-terminal-attach-field > select { width: 100%; }
+  .cfg-terminal-attach-timings { flex-basis: 100%; margin-left: 0; width: 100%; }
+  .cfg-terminal-attach-timings > label {
+    grid-template-columns: minmax(0, 1fr) 72px 20px; gap: 6px;
+  }
+  .cfg-terminal-attach-timings input[type=number] { width: 72px; }
+  .cfg-field .cfg-terminal-attach-hint { padding-left: 0; }
+}
 /* The "Notify me when an agent…" per-type checklist — a column of inline
    checkbox labels under the field label. */
 .cfg-notif-types { display: flex; flex-direction: column; gap: 4px; }
@@ -14329,6 +14371,15 @@ body.wizard #tab-config .cfg-field .cfg-label { color: #e7d9f5; }
 body.wizard #tab-config .cfg-hint,
 body.wizard #tab-config .cfg-list-row .cfg-arrow,
 body.wizard #tab-config .cfg-field details.cfg-advanced > summary { color: #b39ddb; }
+body.wizard #tab-config .cfg-terminal-attach-field { border-top-color: rgba(122, 93, 176, 0.4); }
+body.wizard #tab-config .cfg-terminal-attach-intro strong { color: #e7d9f5; }
+body.wizard #tab-config .cfg-terminal-attach-intro span,
+body.wizard #tab-config .cfg-terminal-attach-note,
+body.wizard #tab-config .cfg-terminal-attach-unit { color: #b39ddb; }
+body.wizard #tab-config .cfg-terminal-attach-timings {
+  background: #140f28; border-left-color: #a97bd6;
+}
+body.wizard #tab-config .cfg-terminal-attach-timings > strong { color: #d9b45a; }
 
 /* Inputs / selects / textareas: void field, mystic-purple frame, parchment
    text, gold-violet on focus — the same legible-dark treatment the dialogs
