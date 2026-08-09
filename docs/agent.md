@@ -2530,9 +2530,9 @@ gate group, messaging, template, and permission administration.
 | `process.templates.*` | `process.templates.read`, `process.templates.manage` |
 | `process.runs.*` | `process.runs.read`, `process.runs.manage` |
 | `human.*`     | `human.notify`, `human.clipboard` |
-| `git.*`       | `proxy.git.read`, `proxy.git.push` |
-| `github.*`    | `proxy.github.read`, `proxy.github.write` |
-| `linear.*`    | `proxy.linear.read`, `proxy.linear.write` |
+| `proxy.git.*`       | `proxy.git.read`, `proxy.git.push` |
+| `proxy.github.*`    | `proxy.github.read`, `proxy.github.write` |
+| `proxy.linear.*`    | `proxy.linear.read`, `proxy.linear.write` |
 
 Run `tclaude agent permissions slugs` for the live registry with
 descriptions — it is the source of truth; this table can drift.
