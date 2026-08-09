@@ -74,16 +74,22 @@ type ghRecorder struct {
 	// streams records every bulk transfer. zips answers them by path, and
 	// zipAny is the fallback for a fixture that does not care which artifact
 	// was asked for.
-	streams   []agentd.GitHubRequestForTest
-	zips      map[string][]byte
-	zipAny    []byte
-	streamErr error
+	streams []agentd.GitHubRequestForTest
+	zips    map[string][]byte
+	zipAny  []byte
+	// streamErrs fails one path's transfer. streamErr fails every one. The
+	// per-path form exists because a run whose log ARCHIVE has expired must
+	// still be able to fall back to its per-job logs, and both travel through
+	// this seam.
+	streamErrs map[string]error
+	streamErr  error
 }
 
 func newGHRecorder() *ghRecorder {
 	return &ghRecorder{
-		def:  ghCanned{Status: 200, Body: "{}"},
-		zips: map[string][]byte{},
+		def:        ghCanned{Status: 200, Body: "{}"},
+		zips:       map[string][]byte{},
+		streamErrs: map[string]error{},
 	}
 }
 
@@ -128,6 +134,9 @@ func (r *ghRecorder) stream(ctx context.Context, _ string, req agentd.GitHubRequ
 		zip, ok = r.zipAny, true
 	}
 	streamErr := r.streamErr
+	if perPath, found := r.streamErrs[req.Path]; found {
+		streamErr = perPath
+	}
 	r.mu.Unlock()
 
 	if streamErr != nil {
@@ -609,6 +618,112 @@ func TestGHProxy_PRCreateAlwaysSendsAHeadBranch(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &out))
 	assert.Equal(t, "https://github.com/tofutools/tclaude/pull/7\n", out.Stdout)
+}
+
+// TestGHProxy_PRCreateSendsDraftOnlyWhenAsked — a draft pull request does not
+// notify reviewers and does not run some workflows, so getting this backwards
+// in either direction is a visible mistake on a PR published as the operator.
+func TestGHProxy_PRCreateSendsDraftOnlyWhenAsked(t *testing.T) {
+	for _, draft := range []bool{true, false} {
+		t.Run(fmt.Sprintf("draft=%t", draft), func(t *testing.T) {
+			f, _, gh := ghWorld(t, []string{"github.com/tofutools"})
+			gh.def = ghCanned{Status: 201, Body: `{"number":7,"html_url":"https://x/7"}`}
+			require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubWrite, "test"))
+
+			res := gitProxyPost(t, f, "/v1/github/pr/create", map[string]any{
+				"title": "Add the thing", "body": "why", "base": "main", "draft": draft,
+			})
+			require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+			body := jsonBody(t, gh.only(t))
+			if draft {
+				assert.Equal(t, true, body["draft"])
+			} else {
+				// Absent rather than false: an ordinary pull request is what
+				// the endpoint does without being told, and sending the field
+				// would be this proxy asserting a default it does not own.
+				assert.NotContains(t, body, "draft")
+			}
+		})
+	}
+}
+
+// TestGHProxy_CommentAnswersWithTheCommentsAddress — a comment an agent cannot
+// link to is one it cannot refer to in a report or reply under.
+func TestGHProxy_CommentAnswersWithTheCommentsAddress(t *testing.T) {
+	for _, path := range []string{"/v1/github/pr/comment", "/v1/github/issue/comment"} {
+		t.Run(path, func(t *testing.T) {
+			f, _, gh := ghWorld(t, []string{"github.com/tofutools"})
+			const url = "https://github.com/tofutools/tclaude/pull/42#issuecomment-99"
+			gh.def = ghCanned{Status: 201, Body: `{"html_url":"` + url + `"}`}
+			require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubWrite, "test"))
+
+			res := gitProxyPost(t, f, path, map[string]any{"number": 42, "body": "noted"})
+			require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+			assert.Equal(t, url+"\n", ghStdout(t, res.Body.Bytes()))
+			assert.Equal(t, "noted", jsonBody(t, gh.only(t))["body"])
+		})
+	}
+}
+
+// TestGHProxy_TimeoutSaysItMayHaveTakenEffect — the one transport failure that
+// needs telling apart from the rest. "Could not connect" means nothing
+// happened; a deadline means the write may well have been applied, and an
+// agent that retries without looking opens a second pull request.
+func TestGHProxy_TimeoutSaysItMayHaveTakenEffect(t *testing.T) {
+	f, _, gh := ghWorld(t, []string{"github.com/tofutools"})
+	gh.def = ghCanned{Err: fmt.Errorf("Post \"https://api.github.com/…\": %w", context.DeadlineExceeded)}
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubWrite, "test"))
+
+	res := gitProxyPost(t, f, "/v1/github/pr/create",
+		map[string]any{"title": "Add the thing", "body": "why", "base": "main"})
+	require.Equal(t, http.StatusOK, res.Code,
+		"a 502 would tell the agent nothing about whether the PR was created")
+
+	var out struct {
+		ExitCode int    `json:"exit_code"`
+		TimedOut bool   `json:"timed_out"`
+		Stderr   string `json:"stderr"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &out))
+	assert.NotEqual(t, 0, out.ExitCode)
+	assert.True(t, out.TimedOut, "the CLI renders this as 'it may or may not have taken effect'")
+	assert.Contains(t, out.Stderr, "did not answer within")
+}
+
+// TestGHProxy_MultiCallWritesShareOneBudget — `pr create` without a base and
+// `pr ready` each make two calls. Two independent per-call bounds would let the
+// daemon run to twice what the CLI waits on, which on a write is the worst
+// place to leave "did it happen?" unanswered.
+func TestGHProxy_MultiCallWritesShareOneBudget(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+		body map[string]any
+		def  ghCanned
+	}{
+		{"pr create resolving a base", "/v1/github/pr/create",
+			map[string]any{"title": "t", "body": "b"},
+			ghCanned{Status: 200, Body: `{"default_branch":"main","number":7,"html_url":"https://x/7"}`}},
+		{"pr ready", "/v1/github/pr/ready", map[string]any{"number": 42},
+			ghCanned{Status: 200, Body: `{"data":{"repository":{"pullRequest":{"id":"PR_1","number":42,"url":"https://x/42","isDraft":true}}}}`}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, _, gh := ghWorld(t, []string{"github.com/tofutools"})
+			gh.def = tc.def
+			require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubWrite, "test"))
+
+			res := gitProxyPost(t, f, tc.path, tc.body)
+			require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+			gh.mu.Lock()
+			defer gh.mu.Unlock()
+			require.Len(t, gh.budgets, 2, "this verb makes two calls")
+			assert.Less(t, gh.budgets[1], gh.budgets[0],
+				"the second call must inherit what is LEFT of the budget, not a fresh one")
+		})
+	}
 }
 
 // TestGHProxy_PRCreateResolvesTheDefaultBranch — `--base` is optional, and the
@@ -1341,7 +1456,7 @@ func TestGHProxy_RunLogFailedRefusesAnUnrepresentableRunID(t *testing.T) {
 // GitHub 404s a run id belonging to another repository.
 func TestGHProxy_RunLogFailedAcceptsARealRunID(t *testing.T) {
 	f, _, gh := ghWorld(t, []string{"github.com/tofutools"})
-	gh.route = ghRunLogRoute(map[string]string{})
+	gh.route = ghRunLogRoute()
 	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
 
 	res := gitProxyPost(t, f, "/v1/github/run/log-failed", map[string]any{
@@ -1355,12 +1470,11 @@ func TestGHProxy_RunLogFailedAcceptsARealRunID(t *testing.T) {
 	}
 }
 
-// ghRunLogRoute scripts a completed run with one failed job.
-func ghRunLogRoute(extra map[string]string) func(agentd.GitHubRequestForTest) (ghCanned, bool) {
+// ghRunLogRoute scripts a completed run with one failed job. Its log archive
+// and per-job logs are bulk transfers, so they are registered on the stream
+// seam (gh.zips) rather than here.
+func ghRunLogRoute() func(agentd.GitHubRequestForTest) (ghCanned, bool) {
 	return func(req agentd.GitHubRequestForTest) (ghCanned, bool) {
-		if body, ok := extra[req.Path]; ok {
-			return ghCanned{Status: 200, Body: body}, true
-		}
 		switch req.Path {
 		case "repos/tofutools/tclaude/actions/runs/18234567890":
 			return ghCanned{Status: 200, Body: `{"status":"completed","conclusion":"failure"}`}, true
@@ -1427,7 +1541,7 @@ func TestGHProxy_RunLogFailedOnAGreenRunIsSilent(t *testing.T) {
 // from several jobs, and a log with no job or step column is unattributable.
 func TestGHProxy_RunLogFailedLabelsEveryLine(t *testing.T) {
 	f, _, gh := ghWorld(t, []string{"github.com/tofutools"})
-	gh.route = ghRunLogRoute(nil)
+	gh.route = ghRunLogRoute()
 	gh.zips["repos/tofutools/tclaude/actions/runs/18234567890/logs"] = zipOf(t, map[string]string{
 		"build/3_Test.txt": "--- FAIL: TestThing\n    thing_test.go:12: boom\n",
 	})
@@ -1447,13 +1561,12 @@ func TestGHProxy_RunLogFailedLabelsEveryLine(t *testing.T) {
 // the one outcome worse than reporting more log than was asked for.
 func TestGHProxy_RunLogFailedFallsBackToTheJobLog(t *testing.T) {
 	f, _, gh := ghWorld(t, []string{"github.com/tofutools"})
-	gh.route = ghRunLogRoute(map[string]string{
-		"repos/tofutools/tclaude/actions/jobs/501/logs": "the whole job log\n",
-	})
+	gh.route = ghRunLogRoute()
 	// An archive with nothing for this job in it.
 	gh.zips["repos/tofutools/tclaude/actions/runs/18234567890/logs"] = zipOf(t, map[string]string{
 		"other-job/1_Checkout.txt": "irrelevant\n",
 	})
+	gh.zips["repos/tofutools/tclaude/actions/jobs/501/logs"] = []byte("the whole job log\n")
 	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
 
 	res := gitProxyPost(t, f, "/v1/github/run/log-failed", map[string]any{"run_id": 18234567890})
@@ -1466,10 +1579,9 @@ func TestGHProxy_RunLogFailedFallsBackToTheJobLog(t *testing.T) {
 // per-job read reaches the same text one request at a time.
 func TestGHProxy_RunLogFailedSurvivesAnUnreadableArchive(t *testing.T) {
 	f, _, gh := ghWorld(t, []string{"github.com/tofutools"})
-	gh.route = ghRunLogRoute(map[string]string{
-		"repos/tofutools/tclaude/actions/jobs/501/logs": "recovered from the job endpoint\n",
-	})
-	gh.streamErr = errors.New("410 Gone")
+	gh.route = ghRunLogRoute()
+	gh.zips["repos/tofutools/tclaude/actions/jobs/501/logs"] = []byte("recovered from the job endpoint\n")
+	gh.streamErrs["repos/tofutools/tclaude/actions/runs/18234567890/logs"] = errors.New("410 Gone")
 	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
 
 	res := gitProxyPost(t, f, "/v1/github/run/log-failed", map[string]any{"run_id": 18234567890})
@@ -1639,4 +1751,23 @@ func TestGHProxy_AuditsWithoutRecordingContent(t *testing.T) {
 	assert.NotContains(t, row.Detail, title)
 	assert.NotContains(t, row.Detail, body)
 	assert.NotContains(t, row.Detail, ghTestToken)
+}
+
+// TestGHProxy_RunLogFailedNeverReportsAFailedJobAsSilence — every fallback is
+// exhausted and the job's log still cannot be read. Contributing nothing for
+// that job is indistinguishable from a run where nothing failed, which is the
+// one conclusion that would make an agent stop looking.
+func TestGHProxy_RunLogFailedNeverReportsAFailedJobAsSilence(t *testing.T) {
+	f, _, gh := ghWorld(t, []string{"github.com/tofutools"})
+	gh.route = ghRunLogRoute()
+	gh.streamErr = errors.New("502 Bad Gateway")
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+
+	res := gitProxyPost(t, f, "/v1/github/run/log-failed", map[string]any{"run_id": 18234567890})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	stdout := ghStdout(t, res.Body.Bytes())
+	assert.NotEmpty(t, stdout, "a red job must never render as an empty answer")
+	assert.Contains(t, stdout, "build\tTest\t")
+	assert.Contains(t, stdout, "could not be read")
 }

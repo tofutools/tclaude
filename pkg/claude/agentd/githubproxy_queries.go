@@ -38,7 +38,13 @@ const ghAuthorFragment = `author { __typename login ... on User { id name } }`
 
 const ghLabelsFragment = `labels(first: 100) { nodes { id name description color } }`
 
-// ghPRListQuery lists pull requests newest-updated first.
+// ghPRListQuery lists pull requests newest-created first.
+//
+// CREATED_AT rather than UPDATED_AT, because ordering interacts with `first:
+// $limit` to decide WHICH pull requests come back, not merely in what order —
+// and newest-created is the set `pr ls` has always returned. An agent asking
+// for 20 would otherwise get the 20 most recently touched, which on a busy
+// repository is a different list.
 //
 // $states is null for "all", which GraphQL reads as "no filter" rather than as
 // "no states" — the one place a null variable is load-bearing rather than
@@ -46,7 +52,7 @@ const ghLabelsFragment = `labels(first: 100) { nodes { id name description color
 const ghPRListQuery = `
 query PRList($owner: String!, $name: String!, $limit: Int!, $states: [PullRequestState!]) {
   repository(owner: $owner, name: $name) {
-    pullRequests(first: $limit, states: $states, orderBy: {field: UPDATED_AT, direction: DESC}) {
+    pullRequests(first: $limit, states: $states, orderBy: {field: CREATED_AT, direction: DESC}) {
       nodes {
         number title state isDraft headRefName baseRefName url updatedAt
         ` + ghAuthorFragment + `
@@ -106,7 +112,7 @@ query PRChecks($owner: String!, $name: String!, $number: Int!) {
 const ghIssueListQuery = `
 query IssueList($owner: String!, $name: String!, $limit: Int!, $states: [IssueState!]) {
   repository(owner: $owner, name: $name) {
-    issues(first: $limit, states: $states, orderBy: {field: UPDATED_AT, direction: DESC}) {
+    issues(first: $limit, states: $states, orderBy: {field: CREATED_AT, direction: DESC}) {
       nodes {
         number title state url updatedAt
         ` + ghAuthorFragment + `

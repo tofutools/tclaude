@@ -80,6 +80,21 @@ const (
 	// of its log.
 	maxGHProxyTextBytes = 256 * 1024
 
+	// maxGHProxyDocumentBytes bounds a JSON read's rendered answer.
+	//
+	// The subprocess this replaced was bounded at 16 KiB, which was both too
+	// small (a 64 K-character pull-request body did not fit, and the tail of a
+	// truncated JSON document does not parse) and enforced by truncation, which
+	// for JSON means an unusable answer. So the bound is generous and the
+	// failure is a REFUSAL naming `--limit`, rather than a document the caller
+	// cannot parse.
+	//
+	// A bound is still needed: these answers land in an agent's context window
+	// and in the idempotency store for its full TTL, and `issue ls --limit 100`
+	// over a repository with long bodies and many labels is not a small
+	// document.
+	maxGHProxyDocumentBytes = 1 << 20
+
 	// maxGHProxyBodyBytes bounds a PR/issue body or comment. GitHub's own
 	// limit is 65536 characters; this is that, with headroom for multi-byte
 	// runes, and it is enforced before anything is written to disk.
@@ -256,7 +271,6 @@ func newGHProxySession(ctx context.Context, convID, requestedRemote string, remo
 	}, nil
 }
 
-
 // ---------------------------------------------------------------------------
 // Artifact destination
 // ---------------------------------------------------------------------------
@@ -277,11 +291,11 @@ func newGHProxySession(ctx context.Context, convID, requestedRemote string, remo
 // which plain MkdirAll would do, and which os.Lstat could only detect in a
 // window the agent gets to race.
 //
-// What remains is gh's own write: it receives an ordinary path string and
-// resolves it itself, so an agent that swaps a component AFTER this returns can
-// still redirect the extraction. That race is real, bounded by the same-uid
-// reality the whole proxy sits inside (docs/git-proxy.md), and deliberately not
-// papered over here.
+// What remains is the window between this function returning a path and
+// extractZip re-opening it as its own os.Root, so an agent that swaps a
+// component in between can still redirect the extraction. That race is real,
+// bounded by the same-uid reality the whole proxy sits inside
+// (docs/git-proxy.md), and deliberately not papered over here.
 func (g *ghProxySession) artifactDest(runID string) (string, *proxyFault) {
 	if g.repoRoot == "" {
 		return "", faultf(http.StatusConflict, "repo_unresolved",
@@ -423,9 +437,10 @@ func isArtifactRunDir(name string) bool {
 // response either way, and a reconnecting client replays whatever this
 // produced for the full TTL. That is exactly why a stopped walk has to be
 // labelled honestly below — the degraded listing becomes the durable answer.
-// It returns the walk as well as the text, because the byte total is what
-// maxGHArtifactUnpackedBytes is enforced against and the walk is where it is
-// already known.
+// It returns the walk as well as the text so a test can assert on the figures
+// the prose is rendered from. Nothing in production reads it: the unpacked-size
+// cap is enforced inside extractZip, as bytes are written, rather than from a
+// walk that has to finish before it can judge anything.
 func artifactListing(ctx context.Context, dest string) (string, artifactWalk) {
 	type entry struct {
 		rel  string
@@ -542,8 +557,9 @@ func artifactListing(ctx context.Context, dest string) (string, artifactWalk) {
 // Complete is the field that matters: a walk stopped by the deadline, or cut
 // short by an unreadable directory, has a Bytes that is a FLOOR. Enforcing a
 // size cap against a floor would refuse downloads at random and, worse, pass
-// oversized ones whose walk happened to stop early — so the cap is only
-// applied when this is true.
+// oversized ones whose walk happened to stop early. Nothing enforces a cap from
+// it any more; it survives as the measured form of what the listing says in
+// prose, which is what the tests check the prose against.
 type artifactWalk struct {
 	Bytes    int64
 	Files    int
@@ -801,6 +817,23 @@ type ghProxyOutcome struct {
 // actionable part of a failure.
 func (g *ghProxySession) respond(w http.ResponseWriter, r *http.Request, verb string, res ProxyResult, err error) {
 	if err != nil {
+		// A deadline is an OUTCOME, not a daemon fault, and it is the one
+		// transport failure that needs telling apart from the rest: "could not
+		// connect" means nothing happened and retrying is safe, while a
+		// deadline means the request may well have been applied and the agent
+		// must go and look first. A 502 with no body says neither. TimedOut is
+		// what carries the distinction, and the CLI renders it as "it may or
+		// may not have taken effect".
+		if errors.Is(err, context.DeadlineExceeded) {
+			g.writeOutcome(w, r, verb, ghProxyOutcome{
+				Repo:     g.ownerRepo,
+				ExitCode: ghExitFailure,
+				TimedOut: true,
+				Stderr: "the GitHub API did not answer within the time the daemon allows: " +
+					err.Error(),
+			})
+			return
+		}
 		writeError(w, http.StatusBadGateway, "gh_failed", err.Error())
 		return
 	}
@@ -825,6 +858,12 @@ func (g *ghProxySession) respondJSON(w http.ResponseWriter, r *http.Request, ver
 	doc, err := ghMarshal(payload)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "gh_failed", err.Error())
+		return
+	}
+	if len(doc) > maxGHProxyDocumentBytes {
+		writeProxyFault(w, faultf(http.StatusRequestEntityTooLarge, "response_too_large",
+			"GitHub's answer to this read is %s, over the %s the proxy will return; ask for fewer "+
+				"items with `--limit`", humanBytes(int64(len(doc))), humanBytes(maxGHProxyDocumentBytes)))
 		return
 	}
 	g.writeOutcome(w, r, verb, ghProxyOutcome{Repo: g.ownerRepo, JSON: doc})

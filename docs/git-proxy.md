@@ -493,6 +493,7 @@ tclaude proxy github pr create # → audit verb "github.pr.create"
 | `403` naming a slug | The agent lacks `git.read` / `git.push` / `github.read` / `github.write`. Grant it, or the agent can retry with `--ask-human`. |
 | `token_missing` | The daemon found no GitHub token anywhere. See [Where the GitHub token comes from](#where-the-github-token-comes-from). |
 | `token_unreadable` | The configured `github_token_file` could not be read, is empty, or contains a control character (usually a stray newline mid-value). A configured file is never silently skipped in favour of another source. |
+| `response_too_large` | A read's answer exceeded 1 MiB. Ask for fewer items with `--limit`. The bound exists because these answers land in an agent's context window and in the idempotency store; it is a refusal rather than a truncation, because half a JSON document is worse than none. |
 | `remote … is not on the operator's allow-list` | Run `tclaude proxy git remotes` to see the resolved `host/owner/repo`, then add a matching pattern. |
 | `protected_ref` | The branch is in `protected_refs`. Push a feature branch and open a PR. |
 | `force_push_disabled` | Set `allow_force_push: true` if you want it. |

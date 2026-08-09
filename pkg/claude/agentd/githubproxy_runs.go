@@ -27,15 +27,20 @@ import (
 // an unpack while it is happening rather than measuring the wreckage after.
 
 const (
-	// maxGHRunLogArchiveBytes caps the run-log archive fetched for
-	// `run log-failed`. A run's whole log archive is downloaded because GitHub
-	// offers no per-step endpoint, so the bound has to sit on the archive. A
-	// large matrix build runs to tens of megabytes; this leaves generous room
-	// and still refuses something pathological.
-	maxGHRunLogArchiveBytes = 512 << 20
+	// maxGHLogTransferBytes caps a CI-log transfer: the run's whole log
+	// archive, or one job's log on the fallback path. A run's archive is
+	// downloaded in full because GitHub offers no per-step endpoint, so the
+	// bound has to sit on the transfer.
+	//
+	// It is generous on purpose, and it costs no memory to be: the archive goes
+	// to a temp file and a job log goes into a fixed-size tail buffer, so the
+	// only thing this figure bounds is time and disk. A tight bound would turn
+	// a verbose matrix leg — exactly the run someone is reading `log-failed`
+	// for — into silence.
+	maxGHLogTransferBytes = 512 << 20
 
-	// maxGHJobLogBytes caps the per-job fallback read, which happens in memory
-	// because it feeds straight into the response.
+	// maxGHJobLogBytes caps a single step's log read out of the run archive.
+	// It feeds straight into the response, so it is held in memory.
 	maxGHJobLogBytes = 32 << 20
 
 	// ghJobsPerPage is the jobs-listing page size. GitHub's maximum.
@@ -236,7 +241,7 @@ func handleGHProxyRunLogFailed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobs, failure, err := g.runJobs(ctx, runID)
+	jobs, partial, failure, err := g.runJobs(ctx, runID)
 	if failure != nil || err != nil {
 		g.respondOrFail(w, r, "run.log-failed", failure, err)
 		return
@@ -246,6 +251,11 @@ func handleGHProxyRunLogFailed(w http.ResponseWriter, r *http.Request) {
 		g.respond(w, r, "run.log-failed", ProxyResult{}, err)
 		return
 	}
+	if partial {
+		text += fmt.Sprintf(
+			"\n(this run has more than %d jobs; the rest were not inspected, so a failure among "+
+				"them is not reported here)\n", maxGHPaginatedPages*ghJobsPerPage)
+	}
 	// A run with no failed steps prints nothing and succeeds. Silence means the
 	// run is green, not that the read failed — the same answer this verb has
 	// always given, and the docs say so.
@@ -254,9 +264,13 @@ func handleGHProxyRunLogFailed(w http.ResponseWriter, r *http.Request) {
 }
 
 // runJobs lists every job in a run, following pagination.
-func (g *ghProxySession) runJobs(ctx context.Context, runID int64) ([]ghJobWire, *ProxyResult, error) {
+//
+// The truncated flag is returned rather than dropped: a run past the page cap
+// loses jobs, and a `log-failed` that reported a subset as though it were the
+// whole run would have an agent conclude a red job it never saw was green.
+func (g *ghProxySession) runJobs(ctx context.Context, runID int64) ([]ghJobWire, bool, *ProxyResult, error) {
 	var jobs []ghJobWire
-	_, failure, err := g.restPaginated(ctx, ghProxyTimeout, ghAPIRequest{
+	truncated, failure, err := g.restPaginated(ctx, ghProxyTimeout, ghAPIRequest{
 		Path: g.repoPath("actions/runs/%s/jobs", runID),
 		Query: url.Values{
 			"per_page": []string{strconv.Itoa(ghJobsPerPage)},
@@ -275,7 +289,7 @@ func (g *ghProxySession) runJobs(ctx context.Context, runID int64) ([]ghJobWire,
 		jobs = append(jobs, batch.Jobs...)
 		return nil
 	})
-	return jobs, failure, err
+	return jobs, truncated, failure, err
 }
 
 // ghLogArchive indexes a downloaded run-log archive by entry name.
@@ -350,6 +364,12 @@ func (g *ghProxySession) failedStepLogs(ctx context.Context, runID int64, jobs [
 		// no explanation at all.
 		text, failure, err := g.jobLog(ctx, job.ID)
 		if err != nil || failure != nil {
+			// Said out loud rather than skipped. A red job that contributes
+			// nothing to the output is indistinguishable from a run where
+			// nothing failed, which is the one conclusion that would make an
+			// agent stop looking.
+			fmt.Fprintf(&b, "%s\t%s\t(the log for this failed job could not be read)\n",
+				job.Name, ghFailedStepName(job))
 			continue
 		}
 		writePrefixedLog(&b, job.Name, ghFailedStepName(job), text)
@@ -385,6 +405,12 @@ func ghIsFailure(conclusion string) bool {
 // writePrefixedLog renders a step's log with each line labelled by job and
 // step, so a matrix build's interleaved output stays attributable.
 func writePrefixedLog(b *strings.Builder, jobName, stepName, text string) {
+	// An empty log is not one blank labelled line. SplitSeq over "" yields a
+	// single empty element, which would render as `job\tstep\t` and read like
+	// a step that logged a blank line rather than one that logged nothing.
+	if strings.TrimRight(text, "\n") == "" {
+		return
+	}
 	for line := range strings.SplitSeq(strings.TrimRight(text, "\n"), "\n") {
 		b.WriteString(jobName)
 		b.WriteByte('\t')
@@ -414,7 +440,7 @@ func (g *ghProxySession) fetchRunLogArchive(ctx context.Context, runID int64) (*
 	}
 	res, err := ghStream(ctx, g.token, ghAPIRequest{
 		Path: g.repoPath("actions/runs/%s/logs", runID),
-	}, f, maxGHRunLogArchiveBytes)
+	}, f, maxGHLogTransferBytes)
 	if err != nil {
 		cleanup()
 		return nil, err
@@ -453,49 +479,59 @@ func ghNormalizeLogName(s string) string {
 //
 // GitHub names it `<job name>/<step number>_<step name>.txt`, but neither half
 // is a literal copy of what the API reports: characters illegal in a filename
-// are substituted, and long names are truncated. So the lookup goes from exact
+// are substituted, and a long name is truncated. So the lookup goes from exact
 // to increasingly forgiving, and stops at the first hit:
 //
 //  1. the directory and step-number prefix, compared literally;
 //  2. the same, compared with both sides sanitized the same way;
-//  3. any entry anywhere in the archive whose base name carries the step
-//     number, when the job directory itself could not be identified.
+//  3. the only entry in the whole archive carrying that step number, when no
+//     directory matched the job at all — which is what a truncated job name
+//     looks like from here. "Only" is load-bearing: in a matrix build several
+//     jobs have a step 3, and guessing between them would attribute one leg's
+//     failure to another.
 //
 // Returning nil is a normal outcome, not a failure: the caller falls back to
 // the job's own log, which needs no name matching at all.
+//
+// Entry names are walked in sorted order throughout. Ranging a map would make
+// the winner between two equally-good candidates depend on hash order, and a
+// log read that differs run to run is worse than one that is merely wrong.
 func (a *ghLogArchive) find(jobName string, stepNumber int) *zip.File {
 	if a == nil {
 		return nil
 	}
+	names := make([]string, 0, len(a.files))
+	for name := range a.files {
+		if strings.HasSuffix(name, ".txt") {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+
 	prefix := fmt.Sprintf("%s/%d_", jobName, stepNumber)
-	for name, file := range a.files {
-		if strings.HasPrefix(name, prefix) && strings.HasSuffix(name, ".txt") {
-			return file
+	for _, name := range names {
+		if strings.HasPrefix(name, prefix) {
+			return a.files[name]
 		}
 	}
 	wantDir := ghNormalizeLogName(jobName)
 	wantStep := strconv.Itoa(stepNumber) + "_"
-	var loose *zip.File
-	for name, file := range a.files {
-		if !strings.HasSuffix(name, ".txt") {
-			continue
-		}
+	var loose []*zip.File
+	for _, name := range names {
 		dir, base := path.Split(name)
 		if !strings.HasPrefix(base, wantStep) {
 			continue
 		}
 		if ghNormalizeLogName(strings.TrimSuffix(dir, "/")) == wantDir {
-			return file
+			return a.files[name]
 		}
-		// Remembered, not returned: an entry with the right step number in
-		// the wrong job is only the answer if no job directory matched at all,
-		// and in a matrix build several jobs have a step 3.
-		if loose == nil {
-			loose = file
-		}
+		loose = append(loose, a.files[name])
 	}
-	if wantDir == "" {
-		return loose
+	// No directory matched the job, and exactly one entry in the archive
+	// carries this step number. That is the truncated-job-name case, and it is
+	// unambiguous.
+	if len(loose) == 1 {
+		return loose[0]
 	}
 	return nil
 }
@@ -514,16 +550,35 @@ func readZipEntry(file *zip.File, max int64) (string, error) {
 	return string(data), nil
 }
 
-// jobLog reads one job's complete log as text.
+// jobLog reads one job's complete log as text, keeping the TAIL.
+//
+// It streams into a tail buffer rather than going through the ordinary bounded
+// read, and the difference is the whole point. A job log has no size limit —
+// a verbose matrix leg runs to hundreds of megabytes — and an in-memory read
+// bounded from the FRONT would hand back the first N bytes of a log whose
+// failure is at the end. Nothing downstream could recover from that: the caller
+// tails the assembled text, and tailing a head-truncated log yields the middle
+// of a log rather than the end of one.
+//
+// The tail buffer is the same size as the response's own bound, because that is
+// all the caller will ever see of it — which is also why the transfer cap can
+// afford to be generous: the bytes stream through a fixed-size window.
 func (g *ghProxySession) jobLog(ctx context.Context, jobID int64) (string, *ProxyResult, error) {
-	raw, failure, err := g.restBounded(ctx, ghProxyTimeout, ghAPIRequest{
+	runCtx, cancel := ghCallContext(ctx, ghProxyTimeout)
+	defer cancel()
+
+	tail := newProxyTail(maxGHProxyTextBytes)
+	res, err := ghStream(runCtx, g.token, ghAPIRequest{
 		Path:   g.repoPath("actions/jobs/%s/logs", jobID),
 		Accept: "application/vnd.github.raw",
-	})
-	if failure != nil || err != nil {
-		return "", failure, err
+	}, tail, maxGHLogTransferBytes)
+	if err != nil {
+		return "", nil, fmt.Errorf("could not read the job's log: %w", err)
 	}
-	return string(raw), nil, nil
+	if res.Status < 200 || res.Status > 299 {
+		return "", ghFailureFor(ghAPIResult{Status: res.Status, Body: res.Body, Header: http.Header{}}), nil
+	}
+	return tail.String(), nil, nil
 }
 
 // ---------------------------------------------------------------------------

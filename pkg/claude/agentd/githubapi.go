@@ -501,9 +501,15 @@ func ghRequestURL(req ghAPIRequest) (string, error) {
 	}
 	if len(req.Query) > 0 {
 		q := u.Query()
+		// Delete then Add, so a key the caller supplies REPLACES whatever the
+		// URL already carried while still keeping every value of its own. Set
+		// in a loop would silently collapse a multi-valued key to its last
+		// value, which is the sort of thing that works until the day a caller
+		// passes two.
 		for k, vs := range req.Query {
+			q.Del(k)
 			for _, v := range vs {
-				q.Set(k, v)
+				q.Add(k, v)
 			}
 		}
 		u.RawQuery = q.Encode()
@@ -749,4 +755,3 @@ func (r ghGraphQLResponse) errorText() string {
 	}
 	return strings.Join(msgs, "; ")
 }
-

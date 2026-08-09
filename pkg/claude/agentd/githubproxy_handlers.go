@@ -129,6 +129,13 @@ func handleGHProxyPRCreate(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
+	// ONE budget across both calls. Without a base this verb makes two, and a
+	// per-call bound would let the daemon run to twice what the CLI is waiting
+	// on — which on the one verb whose failure mode is "did the PR get created
+	// or not?" is the worst place to leave that ambiguity.
+	ctx, cancel := context.WithTimeout(r.Context(), ghProxyTimeout)
+	defer cancel()
+
 	base := strings.TrimSpace(body.Base)
 	if base != "" {
 		if fault := validateBranchName(base); fault != nil {
@@ -139,7 +146,7 @@ func handleGHProxyPRCreate(w http.ResponseWriter, r *http.Request) {
 		// REST requires an explicit base; there is no "the obvious one"
 		// default the way there was on a command line. Resolving the
 		// repository's own default branch is what keeps `--base` optional.
-		resolved, failure, err := g.defaultBranch(r.Context())
+		resolved, failure, err := g.defaultBranch(ctx)
 		if failure != nil || err != nil {
 			g.respondOrFail(w, r, "pr.create", failure, err)
 			return
@@ -159,7 +166,7 @@ func handleGHProxyPRCreate(w http.ResponseWriter, r *http.Request) {
 	if body.Draft {
 		payload["draft"] = true
 	}
-	raw, failure, err := g.rest(r.Context(), ghAPIRequest{
+	raw, failure, err := g.rest(ctx, ghAPIRequest{
 		Method: http.MethodPost,
 		Path:   g.repoPath("pulls"),
 		Body:   payload,
@@ -170,6 +177,11 @@ func handleGHProxyPRCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	var created ghPRCreated
 	if err := json.Unmarshal(raw, &created); err != nil {
+		// Reported, unlike the unreadable-response case in ghURLOf, and the
+		// difference is deliberate: an edit or a comment has done its whole job
+		// by the time the response arrives, while a pull request nobody can
+		// name the URL of is a pull request the agent cannot go on to work
+		// with. Saying "created, but I lost the address" beats saying nothing.
 		g.respond(w, r, "pr.create", ProxyResult{},
 			fmt.Errorf("the pull request was created but the response could not be read: %w", err))
 		return
@@ -393,9 +405,13 @@ type ghProxyPREditRequest struct {
 }
 
 // ghURLOf pulls the html_url out of a write's response, so a verb whose effect
-// is on GitHub answers with the address of what it did. An unreadable response
-// is not worth failing a completed write over — the write happened — so it
-// degrades to empty rather than to an error.
+// is on GitHub answers with the address of what it did.
+//
+// An unreadable response degrades to empty rather than to an error: the write
+// already happened, and its callers — `pr edit`, `pr comment`, `issue comment`
+// — have nothing further for the agent to do with the address. `pr create` is
+// the exception and reports instead, because there the agent's next step needs
+// the pull request it just opened.
 func ghURLOf(raw []byte) string {
 	var out struct {
 		HTMLURL string `json:"html_url"`
@@ -469,7 +485,13 @@ func handleGHProxyPRReady(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
-	pr, failure, err := g.pullRequest(r.Context(), ghPRNodeIDQuery, number)
+	// One budget, for the same reason `pr create` has one: this verb resolves a
+	// node id and then mutates, and two independent 60s bounds would outlast
+	// what the CLI waits on.
+	ctx, cancel := context.WithTimeout(r.Context(), ghProxyTimeout)
+	defer cancel()
+
+	pr, failure, err := g.pullRequest(ctx, ghPRNodeIDQuery, number)
 	if failure != nil || err != nil {
 		g.respondOrFail(w, r, "pr.ready", failure, err)
 		return
@@ -482,7 +504,7 @@ func handleGHProxyPRReady(w http.ResponseWriter, r *http.Request) {
 			ProxyResult{Stdout: fmt.Sprintf("pull request #%d is already ready for review\n%s\n", pr.Number, pr.URL)}, nil)
 		return
 	}
-	failure, err = g.graphql(r.Context(), ghPRReadyMutation, map[string]any{"id": pr.ID}, nil)
+	failure, err = g.graphql(ctx, ghPRReadyMutation, map[string]any{"id": pr.ID}, nil)
 	if failure != nil || err != nil {
 		g.respondOrFail(w, r, "pr.ready", failure, err)
 		return

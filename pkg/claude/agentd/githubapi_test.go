@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -376,11 +377,33 @@ func TestGHLogArchiveFind(t *testing.T) {
 		require.NotNil(t, a.find("test (ubuntu/latest)", 2))
 	})
 
-	// In a matrix build several jobs have a step 3, so an entry with the right
-	// step number under the WRONG job is not the answer.
-	t.Run("another job's step of the same number is not it", func(t *testing.T) {
-		a := archiveWith("other-job/3_Run tests.txt")
+	// In a matrix build several jobs have a step 3, so several entries with the
+	// right step number under the WRONG job are an ambiguity, not an answer:
+	// attributing one leg's failure to another is worse than falling back to
+	// the whole job log.
+	t.Run("several jobs' step of the same number is an ambiguity", func(t *testing.T) {
+		a := archiveWith("test (ubuntu)/3_Run tests.txt", "test (macos)/3_Run tests.txt")
 		assert.Nil(t, a.find("build", 3))
+	})
+
+	// The truncated-job-name case: GitHub shortened the directory past
+	// recognition, but exactly one entry in the archive carries this step
+	// number, so there is nothing to confuse it with.
+	t.Run("the only entry with that step number, under an unrecognisable job", func(t *testing.T) {
+		a := archiveWith("a-very-long-job-name-truncated-by-git/3_Run tests.txt",
+			"other-job/1_Checkout.txt")
+		require.NotNil(t, a.find("a-very-long-job-name-that-github-shortened", 3))
+	})
+
+	// Ordering must not depend on map iteration: two candidates that both
+	// match the literal prefix have to resolve the same way every run.
+	t.Run("a tie resolves deterministically", func(t *testing.T) {
+		a := archiveWith("build/3_a.txt", "build/3_b.txt")
+		first := a.find("build", 3)
+		require.NotNil(t, first)
+		for range 20 {
+			assert.Same(t, first, a.find("build", 3))
+		}
 	})
 
 	t.Run("a missing step is a normal nil, not a panic", func(t *testing.T) {
@@ -399,5 +422,93 @@ func TestGHIsFailure(t *testing.T) {
 	}
 	for _, no := range []string{"success", "skipped", "neutral", ""} {
 		assert.False(t, ghIsFailure(no), "conclusion %q", no)
+	}
+}
+
+// TestGraphQLDocumentsAreInternallyConsistent is a cheap structural check on
+// every document this proxy sends.
+//
+// It cannot validate field names against GitHub's schema — nothing offline can
+// — but it catches the class of mistake that the flow tests, which answer from
+// canned fixtures, are blind to by construction: a document that is malformed,
+// or that uses a variable it never declared. Both fail only on a real call.
+//
+// The variable check is the load-bearing half. Every caller-supplied value
+// reaches GraphQL as a variable, so a renamed or misspelled one is exactly the
+// path by which a caller's value would stop being applied — a `pr ls --state
+// merged` that silently listed everything, say — with no other symptom.
+func TestGraphQLDocumentsAreInternallyConsistent(t *testing.T) {
+	docs := map[string]string{
+		"ghPRListQuery":     ghPRListQuery,
+		"ghPRViewQuery":     ghPRViewQuery,
+		"ghPRChecksQuery":   ghPRChecksQuery,
+		"ghIssueListQuery":  ghIssueListQuery,
+		"ghIssueViewQuery":  ghIssueViewQuery,
+		"ghPRNodeIDQuery":   ghPRNodeIDQuery,
+		"ghPRReadyMutation": ghPRReadyMutation,
+	}
+	declared := regexp.MustCompile(`\$(\w+):`)
+	used := regexp.MustCompile(`\$(\w+)`)
+
+	for name, doc := range docs {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, strings.Count(doc, "{"), strings.Count(doc, "}"),
+				"unbalanced braces")
+			assert.Equal(t, strings.Count(doc, "("), strings.Count(doc, ")"),
+				"unbalanced parentheses")
+
+			// The signature is everything up to the first newline after the
+			// operation name, which is where every document declares its
+			// variables.
+			signature, _, _ := strings.Cut(strings.TrimSpace(doc), "\n")
+			declaredSet := map[string]bool{}
+			for _, m := range declared.FindAllStringSubmatch(signature, -1) {
+				declaredSet[m[1]] = true
+			}
+			require.NotEmpty(t, declaredSet, "every document here is parameterised")
+
+			for _, m := range used.FindAllStringSubmatch(doc, -1) {
+				assert.True(t, declaredSet[m[1]],
+					"$%s is used but never declared in the operation signature", m[1])
+			}
+
+			// No caller value may be baked into a document. A `%` would mean
+			// somebody reached for fmt.Sprintf, which is the one way a
+			// caller's string could become syntax rather than data.
+			assert.NotContains(t, doc, "%", "a document must never be built by formatting")
+		})
+	}
+}
+
+// TestGraphQLVariablesMatchTheDocuments pins the other half: that the variables
+// the handlers actually send are the ones the documents declare.
+//
+// A document and its call site live in different files, so a variable renamed
+// in one and not the other type-checks perfectly and fails only against
+// GitHub.
+func TestGraphQLVariablesMatchTheDocuments(t *testing.T) {
+	declared := regexp.MustCompile(`\$(\w+):`)
+	for _, tc := range []struct {
+		name string
+		doc  string
+		vars []string
+	}{
+		{"pr list", ghPRListQuery, []string{"owner", "name", "limit", "states"}},
+		{"pr view", ghPRViewQuery, []string{"owner", "name", "number"}},
+		{"pr checks", ghPRChecksQuery, []string{"owner", "name", "number"}},
+		{"issue list", ghIssueListQuery, []string{"owner", "name", "limit", "states"}},
+		{"issue view", ghIssueViewQuery, []string{"owner", "name", "number"}},
+		{"pr node id", ghPRNodeIDQuery, []string{"owner", "name", "number"}},
+		{"pr ready", ghPRReadyMutation, []string{"id"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			signature, _, _ := strings.Cut(strings.TrimSpace(tc.doc), "\n")
+			var got []string
+			for _, m := range declared.FindAllStringSubmatch(signature, -1) {
+				got = append(got, m[1])
+			}
+			assert.ElementsMatch(t, tc.vars, got,
+				"the document declares different variables from the ones its caller sends")
+		})
 	}
 }
