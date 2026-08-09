@@ -747,6 +747,15 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 				reincarnateSpawnTimeout.String()+"; the timed-out successor was stopped and the target policy was restored")
 		return
 	}
+	if relaunch.CodexAppServer && !awaitCodexAppServerLaunchReady(newConv, label) {
+		stopFailedCodexAppServerLaunch(newConv, label, newTmux)
+		rollbackHandoff()
+		rollbackSandbox(true)
+		writeError(w, http.StatusServiceUnavailable, "codex_app_server_unavailable",
+			"the successor's explicitly selected Codex app-server did not become ready; "+
+				"the failed successor was stopped and the predecessor remains active")
+		return
+	}
 	// Tag the successor row's best-known remote-control state ON (JOH-261). The
 	// --remote-control launch flag already armed the new pane's Remote Access;
 	// this records tclaude's best-known state so the dashboard indicator + the

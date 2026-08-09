@@ -52,11 +52,15 @@ type stackedSandboxBindingManifest struct {
 // inherited every proof fd and the parent may remove the staging names without
 // changing the executed bytes.
 type StackedSandboxProof struct {
-	Executable     harness.NestedSandboxExecutable
-	ManifestPath   string
-	ManifestSHA256 string
-	ReadyPath      string
-	stageRoot      string
+	Executable harness.NestedSandboxExecutable
+	// VersionProbePath is the launch-owned staged engine whose bytes are bound
+	// into the outer sandbox. Unlike Executable.Path (the in-sandbox target), it
+	// is directly executable by the parent for exact-version proof.
+	VersionProbePath string
+	ManifestPath     string
+	ManifestSHA256   string
+	ReadyPath        string
+	stageRoot        string
 }
 
 // completeProbe removes the Go-only proof helper from the authority carried
@@ -277,6 +281,7 @@ func prepareStackedSandboxProof(
 	}
 
 	proof.Executable = executable
+	proof.VersionProbePath = manifest.Engine.StagePath
 	proof.Executable.Path = manifest.Engine.Destination
 	proof.ManifestPath = manifestPath
 	proof.ManifestSHA256 = stackedBindingDigest(encoded)

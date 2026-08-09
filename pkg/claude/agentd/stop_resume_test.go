@@ -122,6 +122,27 @@ func TestHandleAgentResume_AttemptsSpawnForOfflineTarget(t *testing.T) {
 	assert.Equal(t, physicalCwd, rec.cwd)
 }
 
+func TestResumeOneConv_CodexAppServerRequiresVerifiedReadiness(t *testing.T) {
+	setupTestDB(t)
+	rec := installRecordingResumeSpawner(t)
+	const convID = "codex-appserver-resume-12345678"
+	row := saveResumeSession(t, convID, t.TempDir(), harness.CodexName)
+	require.NoError(t, db.SetSessionCodexAppServer(row.ID, true))
+
+	oldAwait := awaitCodexAppServerReady
+	awaitCodexAppServerReady = func(got string) bool {
+		assert.Equal(t, convID, got)
+		return false
+	}
+	t.Cleanup(func() { awaitCodexAppServerReady = oldAwait })
+
+	res := resumeOneConv(convID)
+	assert.Equal(t, "error", res.Action)
+	assert.Contains(t, res.Detail, "did not become ready")
+	assert.Equal(t, convID, rec.convID, "the resume launch still reaches the readiness gate")
+	assert.True(t, rec.codexAppServer)
+}
+
 func TestHandleAgentResume_GroupOwnershipAuthority(t *testing.T) {
 	const (
 		target = "worker-conv-id-12345678"
@@ -469,10 +490,10 @@ func TestHandleAgentResume_AgentCannotRecreateMissingDir(t *testing.T) {
 type recordingResumeSpawner struct {
 	convID, cwd, cwdWriteProof, effort, model, harness, sandbox, sandboxImplementation, approval,
 	askUserQuestionTimeout, codexGitCommonDir string
-	autoReview, remoteControl, autoMemory, codexGitCommonDirPinned bool
-	effectiveSandbox                                               *sandboxpolicy.Snapshot
-	spawnErr                                                       error
-	resumeCalls                                                    int
+	autoReview, remoteControl, autoMemory, codexGitCommonDirPinned, codexAppServer bool
+	effectiveSandbox                                                               *sandboxpolicy.Snapshot
+	spawnErr                                                                       error
+	resumeCalls                                                                    int
 }
 
 func installRecordingResumeSpawner(t *testing.T) *recordingResumeSpawner {
@@ -505,6 +526,7 @@ func (s *recordingResumeSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	s.autoMemory = args.AutoMemory
 	s.codexGitCommonDir = args.CodexGitCommonDir
 	s.codexGitCommonDirPinned = args.CodexGitCommonDirPinned
+	s.codexAppServer = args.CodexAppServer
 	s.effectiveSandbox = args.EffectiveSandbox
 	return s.spawnErr
 }

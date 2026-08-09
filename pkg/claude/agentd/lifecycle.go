@@ -1891,6 +1891,28 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 				res.Detail += "; restore previous sandbox snapshot: " + restoreErr.Error()
 			}
 		}
+	} else if launchConfig.CodexAppServer && !awaitCodexAppServerReady(convID) {
+		failedTmux := ""
+		if failedSession := pickAliveSession(convID); failedSession != nil {
+			failedTmux = failedSession.TmuxSession
+		}
+		stopFailedCodexAppServerLaunch(convID, "", failedTmux)
+		res.Action = "error"
+		res.Detail = "the explicitly selected Codex app-server did not become ready; the failed resumed pane was stopped"
+		if !launchConfig.TemporaryHarnessBuiltinMode && resumePolicy != nil && resumePolicy.Previous != nil && effectiveSandbox != nil {
+			if _, cleanupErr := removeSupersededMaterializedAgentDirectories(*effectiveSandbox, *resumePolicy.Previous); cleanupErr != nil {
+				res.Detail += "; remove unused agent-owned directories: " + cleanupErr.Error()
+			}
+		}
+		if persistedAgentID != "" {
+			var previous *sandboxpolicy.Snapshot
+			if resumePolicy != nil {
+				previous = resumePolicy.Previous
+			}
+			if restoreErr := db.SetAgentEffectiveSandboxConfig(persistedAgentID, previous); restoreErr != nil {
+				res.Detail += "; restore previous sandbox snapshot: " + restoreErr.Error()
+			}
+		}
 	} else {
 		res.Action = "resumed"
 		if !launchConfig.TemporaryHarnessBuiltinMode && resumePolicy != nil && resumePolicy.Previous != nil && effectiveSandbox != nil {
@@ -6911,7 +6933,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// Conv-id resolved within the poll: finish enrollment inline (Codex, or CC
 	// with the legacy-injection revert flag) and inject the rename + welcome.
 	if convID != "" {
-		if p.CodexAppServer && !awaitCodexAppServer(convID) {
+		if p.CodexAppServer && !awaitCodexAppServerLaunchReady(convID, label) {
+			stopFailedCodexAppServerLaunch(convID, label, label)
 			return nil, &spawnFailure{http.StatusServiceUnavailable, "codex_app_server_unavailable",
 				"Codex app-server was explicitly selected but the verified control handle did not become ready"}
 		}
@@ -8575,6 +8598,7 @@ func appendCodexAppServerArgs(args []string, a clcommon.SpawnArgs) []string {
 	}
 	return append(args,
 		"--codex-app-server",
+		"--codex-app-server-generation", a.CodexAppServerGeneration,
 		"--codex-app-server-socket", a.CodexAppServerSocket,
 		"--codex-app-server-pid-file", a.CodexAppServerPIDFile,
 		"--codex-app-server-log-file", a.CodexAppServerLogFile,

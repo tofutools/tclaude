@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -36,10 +35,6 @@ var codexAppServerHandles = struct {
 	byGeneration map[string]*codexAppServerHandle
 }{byConv: map[string]*codexAppServerHandle{}, byGeneration: map[string]*codexAppServerHandle{}}
 
-var codexAppServerVersionOutput = func() ([]byte, error) {
-	return exec.Command("codex", "--version").CombinedOutput()
-}
-
 // prepareCodexAppServerRuntime performs every check that can be proved before
 // the pane exists, allocates an exclusive private generation, and records its
 // warming state. A selected drive never falls back to the old pane channel.
@@ -47,16 +42,6 @@ func prepareCodexAppServerRuntime(args *clcommon.SpawnArgs) error {
 	if args == nil || !args.CodexAppServer {
 		return nil
 	}
-	versionOutput, err := codexAppServerVersionOutput()
-	if err != nil {
-		return fmt.Errorf("codex app-server preflight: codex --version: %w", err)
-	}
-	version := strings.TrimSpace(string(versionOutput))
-	if err := codexappserver.CheckVersion(version); err != nil {
-		return fmt.Errorf("codex app-server preflight: %w", err)
-	}
-	version = strings.TrimSpace(strings.TrimPrefix(version, "codex-cli "))
-
 	owner := strings.TrimSpace(args.AgentID)
 	if owner == "" {
 		owner = strings.TrimSpace(args.ConvID)
@@ -89,11 +74,10 @@ func prepareCodexAppServerRuntime(args *clcommon.SpawnArgs) error {
 	args.CodexAppServerSocket = filepath.Join(generationDir, "app.sock")
 	args.CodexAppServerPIDFile = filepath.Join(generationDir, "server.pid")
 	args.CodexAppServerLogFile = filepath.Join(generationDir, "server.log")
-	args.CodexVersion = version
 	runtime := db.CodexAppServerRuntime{
 		Generation: generation, LaunchID: firstNonEmpty(args.Label, args.ConvID),
 		AgentID: owner, ConvID: args.ConvID, SocketPath: args.CodexAppServerSocket,
-		CodexVersion: version, State: db.CodexAppServerWarming,
+		State: db.CodexAppServerWarming,
 	}
 	if err := db.UpsertCodexAppServerRuntime(runtime); err != nil {
 		_ = os.Remove(generationDir)
@@ -145,6 +129,12 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 		slog.Error("Codex app-server control unavailable; refusing send-keys fallback",
 			"generation", runtime.Generation, "error", cause)
 	}
+	version, err := waitForCodexAppServerVersion(ctx, args.CodexAppServerGeneration)
+	if err != nil {
+		fail(err)
+		return
+	}
+	runtime.CodexVersion = version
 
 	pid, err := waitForCodexAppServerPID(ctx, args.CodexAppServerPIDFile)
 	if err != nil {
@@ -227,6 +217,29 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 	go watchCodexAppServerHandle(handle)
 }
 
+func waitForCodexAppServerVersion(ctx context.Context, generation string) (string, error) {
+	for {
+		runtime, err := db.GetCodexAppServerRuntime(generation)
+		if err != nil {
+			return "", err
+		}
+		if runtime == nil {
+			return "", fmt.Errorf("codex app-server runtime %q disappeared", generation)
+		}
+		if runtime.State == db.CodexAppServerUnavailable || runtime.State == db.CodexAppServerDead {
+			return "", fmt.Errorf("codex app-server version proof failed: %s", runtime.Detail)
+		}
+		if strings.TrimSpace(runtime.CodexVersion) != "" {
+			return runtime.CodexVersion, nil
+		}
+		select {
+		case <-ctx.Done():
+			return "", fmt.Errorf("wait for exact Codex version proof: %w", ctx.Err())
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+}
+
 func waitForCodexAppServerPID(ctx context.Context, path string) (int, error) {
 	for {
 		data, err := os.ReadFile(path)
@@ -304,7 +317,14 @@ func watchCodexAppServerHandle(handle *codexAppServerHandle) {
 }
 
 func stopCodexAppServerRuntimeForConv(convID string) {
+	stopCodexAppServerRuntime(convID, "")
+}
+
+func stopCodexAppServerRuntime(convID, launchID string) {
 	runtime, err := db.GetCodexAppServerRuntimeByConvID(convID)
+	if (err != nil || runtime == nil) && launchID != "" {
+		runtime, err = db.GetCodexAppServerRuntimeByLaunchID(launchID)
+	}
 	if err != nil || runtime == nil {
 		return
 	}
@@ -325,6 +345,16 @@ func stopCodexAppServerRuntimeForConv(convID string) {
 	runtime.Detail = "launch exited"
 	_ = db.UpsertCodexAppServerRuntime(*runtime)
 	removeCodexAppServerGeneration(runtime.SocketPath)
+}
+
+func stopFailedCodexAppServerLaunch(convID, launchID, tmuxSession string) {
+	stopCodexAppServerRuntime(convID, launchID)
+	if strings.TrimSpace(tmuxSession) == "" {
+		return
+	}
+	if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run(); err != nil {
+		slog.Warn("stop failed Codex app-server launch", "session", tmuxSession, "error", err)
+	}
 }
 
 func removeCodexAppServerGeneration(socketPath string) {
@@ -349,12 +379,26 @@ func codexAppServerReady(convID string) bool {
 }
 
 func awaitCodexAppServer(convID string) bool {
+	return awaitCodexAppServerLaunch(convID, "")
+}
+
+// Lifecycle seams keep failure-path tests fast without weakening the
+// production readiness check or its timeout.
+var (
+	awaitCodexAppServerReady       = awaitCodexAppServer
+	awaitCodexAppServerLaunchReady = awaitCodexAppServerLaunch
+)
+
+func awaitCodexAppServerLaunch(convID, launchID string) bool {
 	deadline := time.Now().Add(codexAppServerStartupTimeout)
 	for time.Now().Before(deadline) {
 		if codexAppServerReady(convID) {
 			return true
 		}
 		runtime, _ := db.GetCodexAppServerRuntimeByConvID(convID)
+		if runtime == nil && launchID != "" {
+			runtime, _ = db.GetCodexAppServerRuntimeByLaunchID(launchID)
+		}
 		if runtime != nil && (runtime.State == db.CodexAppServerUnavailable || runtime.State == db.CodexAppServerDead) {
 			return false
 		}

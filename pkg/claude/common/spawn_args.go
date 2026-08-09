@@ -135,7 +135,6 @@ type SpawnArgs struct {
 	CodexAppServerPIDFile    string
 	CodexAppServerLogFile    string
 	CodexAppServerGeneration string
-	CodexVersion             string
 
 	// OpenCodeServerURL / OpenCodeServerPassword are the private handoff from
 	// agentd's per-session server owner to the short-lived `session new`

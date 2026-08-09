@@ -19,9 +19,6 @@ import (
 
 func TestPrepareCodexAppServerRuntimeIsolatesAgents(t *testing.T) {
 	resetTestDB(t)
-	originalProbe := codexAppServerVersionOutput
-	codexAppServerVersionOutput = func() ([]byte, error) { return []byte("codex-cli 0.147.2\n"), nil }
-	t.Cleanup(func() { codexAppServerVersionOutput = originalProbe })
 
 	first := clcommon.SpawnArgs{CodexAppServer: true, AgentID: "agent-one", Label: "one"}
 	second := clcommon.SpawnArgs{CodexAppServer: true, AgentID: "agent-two", Label: "two"}
@@ -46,17 +43,20 @@ func TestSessionArgsCarryPrivateCodexAppServerGeneration(t *testing.T) {
 	for name, args := range map[string][]string{
 		"new": sessionNewArgs(clcommon.SpawnArgs{
 			Label: "worker", Cwd: "/tmp/work", CodexAppServer: true,
-			CodexAppServerSocket: "/tmp/app.sock", CodexAppServerPIDFile: "/tmp/app.pid",
+			CodexAppServerGeneration: "generation-1",
+			CodexAppServerSocket:     "/tmp/app.sock", CodexAppServerPIDFile: "/tmp/app.pid",
 			CodexAppServerLogFile: "/tmp/app.log",
 		}),
 		"resume": sessionResumeArgs(clcommon.SpawnArgs{
 			ConvID: "thread-1", Cwd: "/tmp/work", CodexAppServer: true,
-			CodexAppServerSocket: "/tmp/app.sock", CodexAppServerPIDFile: "/tmp/app.pid",
+			CodexAppServerGeneration: "generation-1",
+			CodexAppServerSocket:     "/tmp/app.sock", CodexAppServerPIDFile: "/tmp/app.pid",
 			CodexAppServerLogFile: "/tmp/app.log",
 		}),
 	} {
 		t.Run(name, func(t *testing.T) {
 			assert.True(t, slices.Contains(args, "--codex-app-server"))
+			assert.True(t, slices.Contains(args, "generation-1"))
 			assert.True(t, slices.Contains(args, "/tmp/app.sock"))
 			assert.True(t, slices.Contains(args, "/tmp/app.pid"))
 			assert.True(t, slices.Contains(args, "/tmp/app.log"))
@@ -64,6 +64,24 @@ func TestSessionArgsCarryPrivateCodexAppServerGeneration(t *testing.T) {
 	}
 	plain := sessionNewArgs(clcommon.SpawnArgs{Label: "worker", Cwd: "/tmp/work"})
 	assert.False(t, slices.Contains(plain, "--codex-app-server"))
+}
+
+func TestAwaitCodexAppServerLaunchFailsFastBeforeConversationBind(t *testing.T) {
+	resetTestDB(t)
+	const (
+		generation = "0123456789abcdef"
+		launchID   = "spwn-successor"
+	)
+	require.NoError(t, db.UpsertCodexAppServerRuntime(db.CodexAppServerRuntime{
+		Generation: generation, LaunchID: launchID, AgentID: "agent",
+		SocketPath: filepath.Join(t.TempDir(), "app.sock"),
+		State:      db.CodexAppServerUnavailable, Detail: "exact launch version incompatible",
+	}))
+
+	started := time.Now()
+	assert.False(t, awaitCodexAppServerLaunch("not-bound-yet", launchID))
+	assert.Less(t, time.Since(started), time.Second,
+		"a failed successor must not wait out the readiness timeout when only its launch id is known")
 }
 
 func TestCodexAppServerBootstrapBindsTUIThreadWithoutReplay(t *testing.T) {

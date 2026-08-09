@@ -541,6 +541,15 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 							slog.Warn("clone: session row reports a different conv-id than the preset one",
 								"label", label, "preset", newConv, "row", s.ConvID)
 						}
+						if relaunch.CodexAppServer && !awaitCodexAppServerLaunchReady(newConv, label) {
+							stopFailedCodexAppServerLaunch(newConv, label, newTmux)
+							agentDirectoryCleanup()
+							rollbackHandoff()
+							return cloneSpawnResult{}, &cloneSpawnError{
+								Status: http.StatusServiceUnavailable, Code: "codex_app_server_unavailable",
+								Msg: "the clone's explicitly selected Codex app-server did not become ready; the failed clone was stopped",
+							}
+						}
 						if remoteControl {
 							armRemoteControlOnNewRow(label)
 						}
@@ -551,9 +560,6 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 				} else if s.ConvID != "" {
 					// Tag the sibling row's best-known remote-control ON (JOH-261);
 					// the --remote-control launch flag already armed its pane.
-					if remoteControl {
-						armRemoteControlOnNewRow(label)
-					}
 					// This branch IS the discovery channel for a harness-minted
 					// conv-id, so it is also the first moment this clone's launch
 					// facts — the drive it took and the port it was handed — have a
@@ -573,6 +579,18 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 					// one moment per launch, so it should be one.
 					if !presetConv {
 						completeCopilotAPILaunch(s.ConvID, copilotAPILaunchFresh, proofArgs)
+					}
+					if relaunch.CodexAppServer && !awaitCodexAppServerLaunchReady(s.ConvID, label) {
+						stopFailedCodexAppServerLaunch(s.ConvID, label, newTmux)
+						agentDirectoryCleanup()
+						rollbackHandoff()
+						return cloneSpawnResult{}, &cloneSpawnError{
+							Status: http.StatusServiceUnavailable, Code: "codex_app_server_unavailable",
+							Msg: "the clone's explicitly selected Codex app-server did not become ready; the failed clone was stopped",
+						}
+					}
+					if remoteControl {
+						armRemoteControlOnNewRow(label)
 					}
 					res.NewConv, res.NewTmux, res.Label = s.ConvID, newTmux, label
 					commitRouteHelper()
@@ -716,6 +734,15 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 			if launchEnroll && !isConvOnline(newConv) {
 				time.Sleep(250 * time.Millisecond)
 				continue
+			}
+			if relaunch.CodexAppServer && !awaitCodexAppServerLaunchReady(newConv, label) {
+				stopFailedCodexAppServerLaunch(newConv, label, newTmux)
+				agentDirectoryCleanup()
+				rollbackHandoff()
+				return cloneSpawnResult{}, &cloneSpawnError{
+					Status: http.StatusServiceUnavailable, Code: "codex_app_server_unavailable",
+					Msg: "the clone's explicitly selected Codex app-server did not become ready; the failed clone was stopped",
+				}
 			}
 			// Tag the sibling row's best-known remote-control ON (JOH-261); the
 			// --remote-control launch flag (on the resume) already armed its
