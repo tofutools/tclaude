@@ -114,12 +114,19 @@ func TestCodexAgent_SpawnMessageGracefulStop(t *testing.T) {
 	}, 10*time.Second, 10*time.Millisecond,
 		"after a graceful /quit the codex pane must be offline")
 
-	// Codex has no SessionEnd hook, so the reaper is what persists
-	// status=exited after /quit. It must preserve the daemon's clean
-	// reason instead of stamping exit_reason=unexpected, which the
-	// dashboard renders as "crashed".
+	// Codex has no SessionEnd hook, so daemon reconciliation persists
+	// status=exited after /quit. Drive the reaper synchronously, but do not
+	// require this tick to own the transition: the soft-exit watchdog may
+	// concurrently observe the dead pane and persist the same state first.
+	// Either path must preserve the daemon's clean reason instead of stamping
+	// exit_reason=unexpected, which the dashboard renders as "crashed".
 	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
-	require.Equal(t, 1, reaper.Tick(), "the stopped Codex session should be reaped")
+	reaper.Tick()
+	require.Eventually(t, func() bool {
+		row, loadErr := db.LoadSession(sessions[0].ID)
+		return loadErr == nil && row != nil && row.Status == "exited"
+	}, time.Second, time.Millisecond,
+		"the stopped Codex session should be reconciled as exited")
 	reason, err = db.GetSessionExitReason(sessions[0].ID)
 	require.NoError(t, err, "GetSessionExitReason after reaper")
 	assert.Equal(t, "soft_exit", reason,
