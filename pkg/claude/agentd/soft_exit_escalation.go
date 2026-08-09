@@ -356,10 +356,13 @@ func escalateStuckSoftExitUnderLaunchLock(target *lifecycleTarget, lifecycleActi
 }
 
 // paneScreenTailLines and paneScreenTailClip bound what a pre-kill screen
-// capture may add to one warn line.
+// capture may add to one warn line. The clip is sized so a full 12-line tail
+// survives at the canonical pane width (TCL-1136: 12 × 200-col lines plus
+// separators ≈ 2.4 KB) — an undersized clip would eat the tail's HEAD, which
+// is where the harness's last real output sits.
 const (
 	paneScreenTailLines = 12
-	paneScreenTailClip  = 2000
+	paneScreenTailClip  = 3000
 )
 
 // capturePaneScreenTail reads the stuck pane's visible screen so the

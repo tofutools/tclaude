@@ -46,16 +46,16 @@ func normalizeUnattachedPaneSizes(states []*session.SessionState) {
 		return
 	}
 	out, err := tmuxOutputWithTimeout("list-sessions", "-F",
-		"#{session_name}\t#{session_attached}\t#{window_width}\t#{window_height}")
+		"#{session_name}\t#{session_attached}\t#{window_width}\t#{window_height}\t#{window-size}")
 	if err != nil {
 		return
 	}
 	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
 		fields := strings.Split(line, "\t")
-		if len(fields) != 4 {
+		if len(fields) != 5 {
 			continue
 		}
-		name, attached := fields[0], fields[1]
+		name, attached, sizing := fields[0], fields[1], fields[4]
 		sessID, ok := managed[name]
 		if !ok || attached != "0" {
 			continue
@@ -65,25 +65,41 @@ func normalizeUnattachedPaneSizes(states []*session.SessionState) {
 		if werr != nil || herr != nil {
 			continue
 		}
-		if w == clcommon.CanonicalAgentPaneWidth && h == clcommon.CanonicalAgentPaneHeight {
+		needResize := w != clcommon.CanonicalAgentPaneWidth || h != clcommon.CanonicalAgentPaneHeight
+		// A window stuck in manual sizing must be repaired even at canonical
+		// size: our own resize-window flips it to manual, and if the restore
+		// below ever failed, leaving it there would silently deny the NEXT
+		// attaching client its fit-to-client resize — a stickier variant of
+		// the very bug this sweep removes. #{window-size} in the listing is
+		// what makes that failure visible to a later tick instead of
+		// permanent.
+		if !needResize && sizing != "manual" {
 			continue
 		}
 		target := clcommon.ExactTarget(name) + ":"
-		if _, err := tmuxOutputWithTimeout("resize-window", "-t", target,
-			"-x", strconv.Itoa(clcommon.CanonicalAgentPaneWidth),
-			"-y", strconv.Itoa(clcommon.CanonicalAgentPaneHeight)); err != nil {
-			slog.Warn("pane size normalize: resize-window failed",
-				"session", sessID, "tmux_session", name, "error", err)
-			continue
+		if needResize {
+			if _, err := tmuxOutputWithTimeout("resize-window", "-t", target,
+				"-x", strconv.Itoa(clcommon.CanonicalAgentPaneWidth),
+				"-y", strconv.Itoa(clcommon.CanonicalAgentPaneHeight)); err != nil {
+				slog.Warn("pane size normalize: resize-window failed",
+					"session", sessID, "tmux_session", name, "error", err)
+				continue
+			}
 		}
 		if _, err := tmuxOutputWithTimeout("set-option", "-w", "-t", target,
 			"window-size", "latest"); err != nil {
-			slog.Warn("pane size normalize: restoring window-size latest failed",
+			slog.Warn("pane size normalize: restoring window-size latest failed; will retry next tick",
 				"session", sessID, "tmux_session", name, "error", err)
+			continue
 		}
-		slog.Info("pane size normalized after detach",
-			"session", sessID, "tmux_session", name,
-			"from", strconv.Itoa(w)+"x"+strconv.Itoa(h),
-			"to", strconv.Itoa(clcommon.CanonicalAgentPaneWidth)+"x"+strconv.Itoa(clcommon.CanonicalAgentPaneHeight))
+		if needResize {
+			slog.Info("pane size normalized after detach",
+				"session", sessID, "tmux_session", name,
+				"from", strconv.Itoa(w)+"x"+strconv.Itoa(h),
+				"to", strconv.Itoa(clcommon.CanonicalAgentPaneWidth)+"x"+strconv.Itoa(clcommon.CanonicalAgentPaneHeight))
+		} else {
+			slog.Info("pane size normalize: repaired manual window sizing",
+				"session", sessID, "tmux_session", name)
+		}
 	}
 }
