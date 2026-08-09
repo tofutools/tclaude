@@ -35,6 +35,11 @@ func TestRewriteCodexAppServerClientMessagePreservesManagedToolProfile(t *testin
 			wantField: "permissions", wantAbsent: "sandboxPolicy",
 		},
 		{
+			name:      "turn conflicting named permissions are clamped",
+			input:     `{"id":35,"method":"turn/start","params":{"threadId":"thread","input":[],"permissions":"other","sandboxPolicy":{"type":"readOnly"}}}`,
+			wantField: "permissions", wantAbsent: "sandboxPolicy",
+		},
+		{
 			name:      "named turn override is clamped",
 			input:     `{"id":4,"method":"thread/settings/update","params":{"threadId":"thread","permissions":"other"}}`,
 			wantField: "permissions",
