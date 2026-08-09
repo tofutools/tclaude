@@ -52,12 +52,30 @@ func TestDescendantCommandLines_SubtreeMatchesFullScan(t *testing.T) {
 	}
 	require.True(t, ok)
 
-	table, tableOK := readProcTable()
-	require.True(t, tableOK)
-	viaTable := descendantsFromTable(table, root)
+	// These are necessarily two different /proc observations. Even with the
+	// long-lived fixture, a loaded runner can expose a transiently incomplete
+	// children file or process-table scan. Do not mistake that non-atomic
+	// sampling window for a disagreement between the two implementations;
+	// require them to describe the same complete tree during a bounded quiet
+	// interval instead.
+	var viaTable []string
+	require.Eventually(t, func() bool {
+		var supported bool
+		viaChildren, ok, supported = descendantCommandLinesViaChildren(root)
+		if !supported || !ok {
+			return false
+		}
+		table, tableOK := readProcTable()
+		if !tableOK {
+			return false
+		}
+		viaTable = descendantsFromTable(table, root)
+		sort.Strings(viaChildren)
+		sort.Strings(viaTable)
+		return len(viaChildren) == 2 && assert.ObjectsAreEqual(viaTable, viaChildren)
+	}, 5*time.Second, 20*time.Millisecond,
+		"the cheap walk and the full scan never described the same complete subtree")
 
-	sort.Strings(viaChildren)
-	sort.Strings(viaTable)
 	assert.Equal(t, viaTable, viaChildren,
 		"the cheap walk and the full scan must describe the same subtree")
 	assert.Len(t, viaChildren, 2)

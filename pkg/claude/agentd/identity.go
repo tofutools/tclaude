@@ -392,12 +392,12 @@ const (
 	// same authority), none is default-granted, none is owner-implied (owning
 	// a group must not structurally confer push access to a forge), and none
 	// is auto-grantable from the approval popup's "always allow" button.
-	PermGitRead     = "git.read"
-	PermGitPush     = "git.push"
-	PermGitHubRead  = "github.read"
-	PermGitHubWrite = "github.write"
-	PermLinearRead  = "linear.read"
-	PermLinearWrite = "linear.write"
+	PermGitRead     = "proxy.git.read"
+	PermGitPush     = "proxy.git.push"
+	PermGitHubRead  = "proxy.github.read"
+	PermGitHubWrite = "proxy.github.write"
+	PermLinearRead  = "proxy.linear.read"
+	PermLinearWrite = "proxy.linear.write"
 )
 
 // permResolution is the verdict of the non-interactive permission

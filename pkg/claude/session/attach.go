@@ -8,6 +8,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -73,9 +74,11 @@ func runAttach(params *AttachParams) error {
 // AttachToTmuxSession attaches to a tmux session, replacing the current process
 // Returns exit code (0 = success) for use by other packages
 func AttachToTmuxSession(tmuxSession string) int {
+	ConfigureTmuxDetachNormalization(tmuxSession)
 	if err := attachToSession(tmuxSession); err != nil {
 		return 1
 	}
+	NormalizeTmuxPaneAfterDetach(tmuxSession)
 	return 0
 }
 
@@ -93,9 +96,24 @@ func AttachToSession(sessionID, tmuxSession string, forceAttach bool) error {
 	if windowTitleEnabledFn() {
 		setTerminalTitle(fmt.Sprintf("tclaude:%s", sessionID))
 	}
+	ConfigureTmuxDetachNormalization(tmuxSession)
 
-	// Attach to tmux session (replaces current process)
-	return attachToSessionWithFlags(tmuxSession, forceAttach)
+	// Resolve the persisted harness before blocking in tmux. The row can change
+	// while the client is attached, but this attachment belongs to the launch
+	// generation that was current when it began.
+	var h *harness.Harness
+	if state, err := LoadSessionState(sessionID); err == nil && state != nil {
+		h, _ = harness.Get(state.Harness)
+	}
+	if err := attachToSessionWithFlags(tmuxSession, forceAttach); err != nil {
+		return err
+	}
+	// tmux attach returns when this client detaches. Copy mode is pane state,
+	// so native-scrollback harnesses must leave it here before another client
+	// attaches or agentd injects input.
+	CancelTmuxScrollback(tmuxSession, h)
+	NormalizeTmuxPaneAfterDetach(tmuxSession)
+	return nil
 }
 
 // setTerminalTitle sets the terminal window/tab title using escape sequences.

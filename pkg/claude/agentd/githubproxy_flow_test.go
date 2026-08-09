@@ -235,7 +235,7 @@ const ghTestToken = "ghp_test_token_from_the_environment"
 // TestGHProxy_WriteRequiresItsOwnSlug — reading PRs must not confer the ability
 // to publish under the operator's GitHub identity.
 func TestGHProxy_WriteRequiresItsOwnSlug(t *testing.T) {
-	t.Run("github.read does not confer github.write", func(t *testing.T) {
+	t.Run("proxy.github.read does not confer proxy.github.write", func(t *testing.T) {
 		f, git, gh := ghWorld(t, []string{"github.com/tofutools"})
 		require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
 
@@ -282,7 +282,7 @@ func TestGHProxy_RemoteScopedRead(t *testing.T) {
 	})
 }
 
-// TestGHProxy_InheritsTheRemoteAllowList — holding github.read is not enough:
+// TestGHProxy_InheritsTheRemoteAllowList — holding proxy.github.read is not enough:
 // the underlying remote still has to be one the operator allow-listed.
 func TestGHProxy_InheritsTheRemoteAllowList(t *testing.T) {
 	f, _, gh := ghWorld(t, []string{"github.com/someone-else"})
@@ -960,7 +960,7 @@ func TestGHProxy_PRChecksDistinguishesNoRollupFromAnEmptyOne(t *testing.T) {
 }
 
 // TestGHProxy_PREditSendsTitleAndBody — editing a description is a write under
-// the operator's identity, so it sits behind github.write, and the repository
+// the operator's identity, so it sits behind proxy.github.write, and the repository
 // is derived rather than named.
 func TestGHProxy_PREditSendsTitleAndBody(t *testing.T) {
 	f, _, gh := ghWorld(t, []string{"github.com/tofutools"})
@@ -984,7 +984,7 @@ func TestGHProxy_PREditSendsTitleAndBody(t *testing.T) {
 
 // TestGHProxy_PREditRequiresWriteAndSomethingToChange.
 func TestGHProxy_PREditRequiresWriteAndSomethingToChange(t *testing.T) {
-	t.Run("github.read does not confer it", func(t *testing.T) {
+	t.Run("proxy.github.read does not confer it", func(t *testing.T) {
 		f, git, gh := ghWorld(t, []string{"github.com/tofutools"})
 		require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
 		res := gitProxyPost(t, f, "/v1/github/pr/edit", map[string]any{"number": 1, "body": "x"})
@@ -1186,10 +1186,10 @@ func orGet(method string) string {
 }
 
 // TestGHProxy_PRCommentsIsARead — reading the thread must sit behind
-// github.read, not github.write. The route name is one character away from the
-// verb that PUBLISHES a comment as the operator, so getting this backwards
-// would either lock an agent out of reading or, worse, let a read-only agent
-// through to the write path.
+// proxy.github.read, not proxy.github.write. The route name is one character
+// away from the verb that PUBLISHES a comment as the operator, so getting this
+// backwards would either lock an agent out of reading or, worse, let a
+// read-only agent through to the write path.
 func TestGHProxy_PRCommentsIsARead(t *testing.T) {
 	f, _ := ghCommentsWorld(t, `[]`, `[]`,
 		`[{"path":"a.go","line":1,"user":{"login":"coderabbitai"},"body":"nit: rename this"}]`)

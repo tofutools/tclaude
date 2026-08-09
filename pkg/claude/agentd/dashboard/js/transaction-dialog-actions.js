@@ -172,7 +172,11 @@ export function createTransactionDialogActions({
     },
 
     async shutdownAgent({ agent, label, force }) {
-      const choice = Object.freeze({ force: !!force });
+      // wait: hold the response (and so the dialog's spinner) until the pane
+      // process is actually gone, not merely until the exit was dispatched —
+      // OpenCode's control-API dispatch returns in milliseconds while the
+      // agent is still shutting down, which read as the dialog "not waiting".
+      const choice = Object.freeze({ force: !!force, wait: true });
       const response = await fetchImpl(
         `/api/agents/${encodeURIComponent(agent)}/stop`,
         {

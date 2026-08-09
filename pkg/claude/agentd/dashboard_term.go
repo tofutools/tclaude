@@ -20,6 +20,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -115,7 +116,7 @@ func handleDashboardTermWS(w http.ResponseWriter, r *http.Request) {
 	clientFlags := strings.TrimSpace(webTerminalTmuxFlags() + " " + session.ExternalTmuxNoStartFlag())
 	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s",
 		clcommon.TmuxSocketName, clientFlags, shellSingleQuote(name), shellSingleQuote(dir))
-	runPTYOverWS(w, r, cmd, name)
+	runPTYOverWS(w, r, cmd, name, "", nil)
 }
 
 // groupTermSessionName builds the tmux session name backing an ad hoc
@@ -186,7 +187,7 @@ func handleDashboardGroupTermWS(w http.ResponseWriter, r *http.Request) {
 	clientFlags := strings.TrimSpace(webTerminalTmuxFlags() + " " + session.ExternalTmuxNoStartFlag())
 	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s",
 		clcommon.TmuxSocketName, clientFlags, shellSingleQuote(sessName), shellSingleQuote(dir))
-	runPTYOverWS(w, r, cmd, sessName)
+	runPTYOverWS(w, r, cmd, sessName, "", nil)
 }
 
 // handleDashboardOpenWindowWS is the in-browser fallback for "open
@@ -247,7 +248,8 @@ func handleDashboardOpenWindowWS(w http.ResponseWriter, r *http.Request) {
 	// (#{client_tty}) teardown detachTmuxSession already flags as future work;
 	// until then this is still strictly better than the pre-fix behaviour and
 	// correct for the common native-terminal case.
-	runPTYOverWS(w, r, webTerminalAttachCmd(openAttachCmdForce(sess.ID)), sess.TmuxSession)
+	h, _ := harness.Get(sess.Harness)
+	runPTYOverWS(w, r, webTerminalAttachCmd(openAttachCmdForce(sess.ID)), sess.TmuxSession, sess.TmuxSession, h)
 }
 
 // spawnFocusWSPath builds the /api/spawn-focus-ws/{label} path the
@@ -290,7 +292,8 @@ func handleDashboardSpawnFocusWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no tmux pane for "+label, http.StatusNotFound)
 		return
 	}
-	runPTYOverWS(w, r, webTerminalAttachCmd(openAttachCmd(label)), sess.TmuxSession)
+	h, _ := harness.Get(sess.Harness)
+	runPTYOverWS(w, r, webTerminalAttachCmd(openAttachCmd(label)), sess.TmuxSession, sess.TmuxSession, h)
 }
 
 // waitForDashboardSpawnFocusSession bridges the one spawn shape where the
@@ -336,6 +339,9 @@ type termWSHook struct {
 	// RewriteCommand replaces the shell command (and associated tmux session)
 	// a terminal WebSocket route hands to runPTYOverWS.
 	RewriteCommand func(shellCommand, tmuxSession string) (string, string)
+	// ObserveTmuxCleanup records the independently selected whole-session
+	// detach target and copy-mode cleanup target before the websocket upgrade.
+	ObserveTmuxCleanup func(detachSession, cleanupSession, harnessName string)
 	// OnStart observes the PTY child process right after pty.Start.
 	OnStart func(proc *os.Process)
 	// OnResize observes each resize actually APPLIED to the PTY (only after a
@@ -501,15 +507,27 @@ func webTerminalAttachCmd(attachCommand string) string {
 // `tmux attach-session`. Callers must call checkDashboardAuth before
 // reaching here — this function performs no auth of its own.
 //
-// tmuxSession is the tmux session this PTY attaches to (the agent's
-// `spwn-…` / ad hoc `tclaude-term-…` session, on the `-L tclaude` server).
-// On teardown it is handed to detachTmuxSession so closing the modal actually
-// detaches on the tmux level. Pass "" when there is no associated session
-// (then teardown falls back to the process-group SIGHUP alone).
-func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand, tmuxSession string) {
+// detachSession is handed to detachTmuxSession so closing a browser modal can
+// intentionally detach all clients. cleanupSession independently identifies a
+// managed pane whose copy mode must be cancelled after this PTY's tmux client
+// exits. Keeping them separate lets the standalone TUI clean up its own detach
+// without evicting other viewers. Ad hoc terminals pass no cleanup harness.
+func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand, detachSession, cleanupSession string, cleanupHarness *harness.Harness) {
+	session.ConfigureTmuxDetachNormalization(cleanupSession)
 	hook := termWSTestHook
 	if hook != nil && hook.RewriteCommand != nil {
-		shellCommand, tmuxSession = hook.RewriteCommand(shellCommand, tmuxSession)
+		shellCommand, detachSession = hook.RewriteCommand(shellCommand, detachSession)
+	}
+	if hook != nil && hook.ObserveTmuxCleanup != nil {
+		harnessName := ""
+		if cleanupHarness != nil {
+			harnessName = cleanupHarness.Name
+		}
+		hook.ObserveTmuxCleanup(detachSession, cleanupSession, harnessName)
+	}
+	logSession := cleanupSession
+	if logSession == "" {
+		logSession = detachSession
 	}
 	conn, err := upgradeTerminalWebSocket(w, r)
 	if err != nil {
@@ -598,7 +616,7 @@ initialSize:
 	// arrives.
 	attachedAt := time.Now()
 	slog.Info("browser terminal attached",
-		"tmux_session", tmuxSession, "path", r.URL.Path,
+		"tmux_session", logSession, "path", r.URL.Path,
 		"size", fmt.Sprintf("%dx%d", startSize.Cols, startSize.Rows))
 	if hook != nil && hook.OnStart != nil {
 		hook.OnStart(cmd.Process)
@@ -612,12 +630,17 @@ initialSize:
 		// Reliable detach first: tell the tmux server to drop the session's
 		// clients. Then tear down the PTY/process tree (the SIGHUP is a
 		// backstop — see hangupProcessGroup).
-		detachTmuxSession(tmuxSession)
+		detachTmuxSession(detachSession)
 		_ = ptmx.Close()
 		hangupProcessGroup(cmd.Process)
 		_ = cmd.Wait()
+		// Copy mode is pane state, so clear it only after this tmux client has
+		// actually detached. This is separate from the optional whole-session
+		// detach above: the standalone TUI must preserve other viewers.
+		session.CancelTmuxScrollback(cleanupSession, cleanupHarness)
+		session.NormalizeTmuxPaneAfterDetach(cleanupSession)
 		slog.Info("browser terminal detached",
-			"tmux_session", tmuxSession, "path", r.URL.Path,
+			"tmux_session", logSession, "path", r.URL.Path,
 			"attached_for", time.Since(attachedAt).Round(time.Second).String())
 		if hook != nil && hook.OnTeardown != nil {
 			hook.OnTeardown()
@@ -683,7 +706,7 @@ initialSize:
 					if err := pty.Setsize(ptmx, size); err == nil {
 						winchProcessGroup(cmd.Process)
 						slog.Info("browser terminal resized",
-							"tmux_session", tmuxSession, "path", r.URL.Path,
+							"tmux_session", logSession, "path", r.URL.Path,
 							"size", fmt.Sprintf("%dx%d", size.Cols, size.Rows))
 						if hook != nil && hook.OnResize != nil {
 							hook.OnResize(int(size.Cols), int(size.Rows))

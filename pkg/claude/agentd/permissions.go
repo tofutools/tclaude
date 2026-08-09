@@ -442,7 +442,7 @@ var permissionRegistry = []PermSlug{
 	{
 		Slug:      PermGitPush,
 		ScopeDims: []ScopeDim{ScopeDimRemote},
-		Description: "Push to a Git remote through the daemon (tclaude proxy git push). Strictly more powerful than git.read — " +
+		Description: "Push to a Git remote through the daemon (tclaude proxy git push). Strictly more powerful than proxy.git.read — " +
 			"it writes to the forge as the operator. Refuses operator-protected branches (agent.git_proxy.protected_refs) " +
 			"outright, and force-with-lease only when agent.git_proxy.allow_force_push is on. Not default-granted and not " +
 			"owner-implied.",
@@ -466,17 +466,50 @@ var permissionRegistry = []PermSlug{
 			"GitHub account, so it is not default-granted and not owner-implied.",
 	},
 	{
-		Slug: PermLinearRead,
+		Slug:      PermLinearRead,
+		ScopeDims: []ScopeDim{ScopeDimLinearTeam},
 		Description: "Read Linear issues and comments through the daemon's Linear API key (tclaude proxy linear whoami, " +
-			"issue view/ls/comments/search). Restricted to the teams on the operator's agent.linear_proxy.allowed_teams list. " +
-			"Not default-granted: it reads private workspace data as the operator.",
+			"issue view/ls/comments/search). Narrowable per agent with --scope linear_team=TCL: with an operator " +
+			"agent.linear_proxy.allowed_teams list configured the two intersect and the scope can only narrow it, while with " +
+			"no such list a scoped grant is the whole team policy. An UNSCOPED grant is refused outright when the operator " +
+			"has no list. Not default-granted: it reads private workspace data as the operator.",
 	},
 	{
-		Slug: PermLinearWrite,
+		Slug:      PermLinearWrite,
+		ScopeDims: []ScopeDim{ScopeDimLinearTeam},
 		Description: "Create and update Linear issues, comment on them, and attach links, through the daemon's Linear API key " +
 			"(tclaude proxy linear issue create/comment/update/link). Everything it writes is attributed to the operator's Linear " +
-			"account, and it additionally requires agent.linear_proxy.allow_write. Not default-granted and not owner-implied.",
+			"account, and it additionally requires agent.linear_proxy.allow_write. Narrowable per agent with " +
+			"--scope linear_team=TCL, on the same terms as proxy.linear.read and independently of it, so read and write reach can " +
+			"differ. Not default-granted and not owner-implied.",
 	},
+}
+
+// visiblePermissionRegistry returns the permission catalog exposed to humans
+// and agents. Proxy permissions are useful only when the semantic proxy is
+// available; advertising them otherwise makes agents mistake an unavailable
+// optional feature for missing authority to use their environment's normal
+// Git, GitHub, or Linear tooling. Keep the full registry above for validation
+// and stored-grant resolution so disabling the proxy never destroys policy.
+func visiblePermissionRegistry(proxyEnabled bool) []PermSlug {
+	out := make([]PermSlug, 0, len(permissionRegistry))
+	for _, p := range permissionRegistry {
+		if !proxyEnabled && isSemanticProxyPermission(p.Slug) {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+func isSemanticProxyPermission(slug string) bool {
+	switch slug {
+	case PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite,
+		PermLinearRead, PermLinearWrite:
+		return true
+	default:
+		return false
+	}
 }
 
 // Permission slugs for the permissions-management endpoints themselves.
@@ -1165,8 +1198,7 @@ func handlePermissionsSlugs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET only")
 		return
 	}
-	out := make([]PermSlug, len(permissionRegistry))
-	copy(out, permissionRegistry)
+	out := visiblePermissionRegistry(gitProxyRoutesEnabled(r))
 	sort.Slice(out, func(i, j int) bool { return out[i].Slug < out[j].Slug })
 	writeJSON(w, http.StatusOK, out)
 }

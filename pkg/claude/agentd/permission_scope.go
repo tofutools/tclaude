@@ -25,6 +25,7 @@ const (
 	ScopeDimSpawnProfile    ScopeDim = "spawn_profile"
 	ScopeDimProcessTemplate ScopeDim = "process_template"
 	ScopeDimRemote          ScopeDim = "remote"
+	ScopeDimLinearTeam      ScopeDim = "linear_team"
 	ScopeDimTargetAgent     ScopeDim = "target_agent"
 )
 
@@ -38,22 +39,51 @@ type permissionScopeMatcherKind uint8
 const (
 	permissionScopeMatchExact permissionScopeMatcherKind = iota
 	permissionScopeMatchRemotePattern
+	// permissionScopeMatchTeamKey is a whole-key, case-insensitive comparison —
+	// deliberately NOT the remote pattern language. A Linear team key is a flat
+	// namespace with no hierarchy to match a prefix against, so a prefix rule
+	// would let "TCL" authorize "TCLX"; the same reasoning as
+	// config.LinearTeamAllowed, whose semantics this mirrors exactly. Case
+	// insensitivity is not cosmetic: Linear spells its keys upper-case, the
+	// operator allow-list is stored lower-cased, and an operator typing
+	// `--scope linear_team=tcl` means the team they read as TCL.
+	permissionScopeMatchTeamKey
 )
 
 type permissionScopeDimension struct {
 	selectors map[string]struct{}
 	matcher   permissionScopeMatcherKind
+	// enumerable says a grant's literal matchers for this dimension name a
+	// FINITE, self-describing set of concrete values, so a gate site may read
+	// them back out of the grant (permissionScopeEnumerate) instead of only
+	// testing one value at a time.
+	//
+	// It is opt-in per dimension rather than assumed, because it is only true
+	// where a matcher IS a value. A `remote` matcher is a pattern
+	// ("github.com/acme/*"), and enumerating it would hand a caller a glob
+	// where it expected a repository; a `target_agent` matcher may be a
+	// relational @selector whose members are not known until check time. A
+	// `linear_team` matcher, by contrast, is exactly one team key.
+	//
+	// Enumeration is a CONVENIENCE for a gate whose action spans several
+	// values at once (the Linear proxy's cross-team listings), never a
+	// replacement for the evaluator: callers still put each enumerated value
+	// through permissionScopeSatisfied, so the AND across dimensions and the
+	// fail-closed rules keep applying.
+	enumerable bool
 }
 
 // permissionScopeDimensions is the closed dimension registry. Besides the
 // selectors accepted by a dimension, it declares how literal matchers are
 // evaluated. Most dimensions are exact; remote deliberately reuses the git
-// proxy's slash-segmented pattern language.
+// proxy's slash-segmented pattern language, and linear_team the Linear proxy's
+// whole-key case-insensitive one.
 var permissionScopeDimensions = map[ScopeDim]permissionScopeDimension{
 	ScopeDimGroup:           {},
 	ScopeDimSpawnProfile:    {},
 	ScopeDimProcessTemplate: {},
 	ScopeDimRemote:          {matcher: permissionScopeMatchRemotePattern},
+	ScopeDimLinearTeam:      {matcher: permissionScopeMatchTeamKey, enumerable: true},
 	ScopeDimTargetAgent: {selectors: map[string]struct{}{
 		"@descendants":  {},
 		"@self-spawned": {},
@@ -109,6 +139,8 @@ func parsePermissionScope(raw json.RawMessage) (PermissionScope, string, error) 
 				if _, ok := dimension.selectors[matcher]; !ok {
 					return nil, "", fmt.Errorf("unknown selector %q for permission scope dimension %q", matcher, dim)
 				}
+			} else if err := permissionScopeMatcherShape(dim, dimension, matcher); err != nil {
+				return nil, "", err
 			}
 			if !seen[matcher] {
 				scope[dim] = append(scope[dim], matcher)
@@ -128,6 +160,29 @@ func parsePermissionScope(raw json.RawMessage) (PermissionScope, string, error) 
 		return nil, "", fmt.Errorf("permission scope exceeds %d bytes", permissionScopeMaxJSONBytes)
 	}
 	return scope, string(canonical), nil
+}
+
+// permissionScopeMatcherShape bounds a LITERAL matcher to the shape its
+// dimension can actually match, for the dimensions that have one.
+//
+// Most do not: a `group` or `spawn_profile` matcher names something an operator
+// invented, and a `remote` matcher is a pattern, so there is nothing to check
+// beyond the charset rules the caller already applied. A `linear_team` matcher
+// is different — it is a Linear team key, and the Linear proxy will only ever
+// compare it against one. A matcher that cannot BE a team key ("*", say, reached
+// for by an operator expecting the wildcard the `remote` dimension really has)
+// would parse, store, and render as a narrow grant while matching nothing: every
+// single-issue verb refused and every listing empty. Refusing it at the door is
+// what turns that silence into an error an operator can read.
+func permissionScopeMatcherShape(dim ScopeDim, spec permissionScopeDimension, matcher string) error {
+	if spec.matcher != permissionScopeMatchTeamKey {
+		return nil
+	}
+	if err := linearTeamKeyShapeErr(matcher); err != nil {
+		return fmt.Errorf("permission scope dimension %q: %w (there is no wildcard: a team key "+
+			"is matched whole, case-insensitively)", dim, err)
+	}
+	return nil
 }
 
 func canonicalPermissionScopeForSlug(slug, raw string) (string, error) {
@@ -220,7 +275,16 @@ func appendUnique(out []string, seen map[string]bool, s string) []string {
 // (see handleProcessTemplates), and target_agent has no meaningful fixed list
 // at all; both are free text plus their selectors, which is exactly what the
 // CLI's --scope accepts.
-func scopeDimOptionsSnapshot(groups []*db.AgentGroup, profiles []spawnProfileJSON) map[ScopeDim]snapshotScopeDimOptions {
+//
+// linearTeams is the operator's own agent.linear_proxy.allowed_teams. It is the
+// USEFUL catalogue rather than the complete one: a team the operator has not
+// allow-listed cannot be reached by any grant, so offering the workspace's full
+// team list would invite an operator to write a scope that authorizes nothing.
+// The picker still accepts free text, which is what makes a scope-only posture
+// (no operator list at all) writable.
+func scopeDimOptionsSnapshot(
+	groups []*db.AgentGroup, profiles []spawnProfileJSON, linearTeams []string,
+) map[ScopeDim]snapshotScopeDimOptions {
 	out := make(map[ScopeDim]snapshotScopeDimOptions, len(permissionScopeDimensions))
 	for _, dim := range permissionScopeDims() {
 		options := snapshotScopeDimOptions{Selectors: permissionScopeSelectorsFor(dim)}
@@ -237,6 +301,13 @@ func scopeDimOptionsSnapshot(groups []*db.AgentGroup, profiles []spawnProfileJSO
 		case ScopeDimSpawnProfile:
 			for _, p := range profiles {
 				options.Values = append(options.Values, p.Name)
+			}
+		case ScopeDimLinearTeam:
+			// Offered upper-cased, the way Linear itself spells a team key and
+			// the way an operator reads one in an issue identifier. The matcher
+			// is case-insensitive, so this is presentation only.
+			for _, key := range linearTeams {
+				options.Values = append(options.Values, strings.ToUpper(key))
 			}
 		}
 		sort.Strings(options.Values)

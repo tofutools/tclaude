@@ -81,3 +81,34 @@ func TestConfigureTmuxScrollback_NilHarness(t *testing.T) {
 		t.Fatalf("nil harness must be a no-op, got %v", rec.calls)
 	}
 }
+
+func TestCancelTmuxScrollback_CodexTargetsExactPane(t *testing.T) {
+	rec := withRecordingTmux(t)
+	codex, ok := harness.Get(harness.CodexName)
+	if !ok {
+		t.Fatal("codex harness not registered")
+	}
+
+	CancelTmuxScrollback("sess-codex", codex)
+
+	want := [][]string{{"send-keys", "-X", "-t", "=sess-codex:0.0", "cancel"}}
+	if !reflect.DeepEqual(rec.calls, want) {
+		t.Fatalf("codex detach cleanup = %v, want %v", rec.calls, want)
+	}
+}
+
+func TestCancelTmuxScrollback_NonNativeAndEmptyNoop(t *testing.T) {
+	rec := withRecordingTmux(t)
+	codex, ok := harness.Get(harness.CodexName)
+	if !ok {
+		t.Fatal("codex harness not registered")
+	}
+
+	CancelTmuxScrollback("sess-claude", harness.Default())
+	CancelTmuxScrollback("", codex)
+	CancelTmuxScrollback("sess-nil", nil)
+
+	if len(rec.calls) != 0 {
+		t.Fatalf("non-native or empty detach cleanup must be a no-op, got %v", rec.calls)
+	}
+}

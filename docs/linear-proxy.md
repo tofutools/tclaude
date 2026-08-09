@@ -50,13 +50,24 @@ window in which a same-uid process can read it out of `/proc`.
 **There is no anchor.** The git proxy derives its repository from the agent's
 daemon-recorded launch directory, so an agent can only reach the checkout it was
 launched in. Linear has no filesystem artifact that corresponds to that — nothing
-ties a conversation to an issue. **The team allow-list is therefore the only
-scope gate**, which is why it is mandatory, fail-closed, and checked twice.
+ties a conversation to an issue. **A team set is therefore the whole scope
+gate**, which is why it is mandatory, fail-closed, and checked twice.
+
+**The gate is a set, not one value per request.** The git proxy resolves each
+request to a single remote and gates on that. Two Linear verbs — `issue ls` and
+`issue search` with no `--team` — legitimately span every team the caller may
+reach, so the daemon resolves the whole reachable set once per request and every
+check reads it. One consequence is visible to you: a team outside that set is
+refused outright, where an out-of-scope git remote can be escalated to an
+`--ask-human` popup. There is no single team such a popup could name for a
+cross-team listing.
 
 ## Enabling it
 
-The proxy is **off** until you allow-list at least one team. There is no
-"allow everything" setting.
+The proxy is **off** until at least one team is reachable — either from the
+operator-global `allowed_teams` below, or from a per-agent
+[team-scoped grant](#restricting-an-agent-to-certain-teams). There is no "allow
+everything" setting.
 
 Add an `agent.linear_proxy` block to `~/.tclaude/data/config.json`:
 
@@ -74,7 +85,7 @@ Add an `agent.linear_proxy` block to `~/.tclaude/data/config.json`:
 
 | Field | Meaning |
 |---|---|
-| `allowed_teams` | Team keys the proxy may act on — the prefix in an issue identifier, so `TCL` authorizes `TCL-568`. Matched case-insensitively. **Empty or absent disables the proxy entirely.** |
+| `allowed_teams` | Team keys the proxy may act on — the prefix in an issue identifier, so `TCL` authorizes `TCL-568`. Matched case-insensitively. **Empty or absent disables unscoped grants**; a [team-scoped grant](#restricting-an-agent-to-certain-teams) supplies its own teams instead. |
 | `api_key_file` | A file whose contents are the Linear personal API key. Empty falls back to `LINEAR_API_KEY` in the environment agentd runs under; with neither, the proxy refuses. |
 | `allow_write` | Permits the mutating verbs at all. Default off. |
 
@@ -113,12 +124,12 @@ Two slugs, neither granted by default and neither conferred by group ownership:
 
 | Slug | Allows |
 |---|---|
-| `linear.read` | `whoami`, `issue view/ls/search/comments` |
-| `linear.write` | `issue create/comment/update/link` |
+| `proxy.linear.read` | `whoami`, `issue view/ls/search/comments` |
+| `proxy.linear.write` | `issue create/comment/update/link` |
 
 ```bash
-tclaude agent permissions grant <agent> linear.read
-tclaude agent permissions grant <agent> linear.write
+tclaude agent permissions grant <agent> proxy.linear.read
+tclaude agent permissions grant <agent> proxy.linear.write
 ```
 
 **Writing needs both the slug and `allow_write`.** They answer different
@@ -128,20 +139,78 @@ config cannot grant an agent anything.
 
 An agent without a grant can still ask for a one-off with `--ask-human 60s`.
 
+### Restricting an agent to certain teams
+
+`allowed_teams` is one list for every agent on the host. When you run several
+agents against different parts of the tracker, that is wider than you want: a
+ticket-worker on `TCL` has no business reading the `JOH` backlog just because
+another agent does.
+
+Both slugs accept a `linear_team` **grant scope**, which narrows one agent
+without touching the global list — the same mechanism as the git proxy's
+`remote` scope:
+
+```bash
+# this agent may read and write, but only within TCL
+tclaude agent permissions grant ticket-worker proxy.linear.read  --scope linear_team=TCL
+tclaude agent permissions grant ticket-worker proxy.linear.write --scope linear_team=TCL
+
+# a lead that reads two teams but only writes to one
+tclaude agent permissions grant lead proxy.linear.read  --scope linear_team=TCL,JOH
+tclaude agent permissions grant lead proxy.linear.write --scope linear_team=TCL
+```
+
+The dashboard's permission editor edits the same thing, offering your
+`allowed_teams` as the pickable values. The scopes are **per slug**, so read and
+write reach can differ, as above.
+
+Matchers follow the same whole-key, case-insensitive rule the config list does:
+`linear_team=tcl` and `linear_team=TCL` name the same team, and neither covers
+`TCLX`. There is no wildcard.
+
+**Where both lists exist they are enforced together, and neither widens the
+other** — a request must satisfy both. Where only one exists, it is the whole
+policy, with one exception: an *unscoped* grant is never a policy, so an empty
+`allowed_teams` refuses it rather than letting it through. In full:
+
+| `allowed_teams` | grant scope | Effective reach |
+|---|---|---|
+| `TCL`, `JOH` | *(none)* | `TCL`, `JOH` — the historical behaviour |
+| `TCL`, `JOH` | `TCL` | `TCL` |
+| `TCL` | `TCL`, `SECRET` | `TCL` — a grant cannot reach past the operator |
+| `TCL` | `SECRET` | nothing: `403 team_scope_empty` |
+| *(empty)* | `TCL` | `TCL` — the scope is the whole policy |
+| *(empty)* | *(none)* | nothing: `503 linear_proxy_disabled` |
+
+The last two rows are the fail-closed pair worth internalising. A scoped grant
+is a complete policy on its own, so you can run a purely per-agent posture with
+no global list at all — but a grant *without* a scope never inherits that, or
+the narrowest thing an operator can write would be the widest.
+
+Everything the daemon returns echoes the caller's **effective** set as `teams`,
+and `whoami` breaks it down into `operator_teams` and `grant_teams` so an agent
+that is refused can tell you which of the two to widen rather than guessing.
+
+A scope also changes which refusal you get, and they need different fixes:
+`team_not_allowed` is the operator's list, `team_out_of_scope` is the agent's own
+grant. Unlike an out-of-scope git remote, neither escalates to an `--ask-human`
+popup — see [the set, not one value](#what-differs-from-the-git--github-proxy)
+above.
+
 ## What an agent can do
 
 ```bash
 # Discovery — run this first, and whenever something is refused.
 tclaude proxy linear whoami
 
-# Reads (linear.read)
+# Reads (proxy.linear.read)
 tclaude proxy linear issue view TCL-568
 tclaude proxy linear issue ls --team TCL --state "In Progress"
 tclaude proxy linear issue ls --assigned-me --limit 10
 tclaude proxy linear issue search "flaky dashsnap"
 tclaude proxy linear issue comments TCL-568
 
-# Writes (linear.write + allow_write)
+# Writes (proxy.linear.write + allow_write)
 tclaude proxy linear issue comment TCL-568 --body-file progress.md
 tclaude proxy linear issue update TCL-568 --state "In Review"
 tclaude proxy linear issue create --team TCL --title "…" --description-file spec.md
@@ -149,10 +218,11 @@ tclaude proxy linear issue link TCL-568 --url https://github.com/acme/repo/pull/
 ```
 
 `whoami` is the command to point an agent at when something is refused: it lists
-every team the key can see with the allow-list verdict beside it, so the agent
-can tell you exactly which key to add instead of guessing from a 403. Past 100
-teams the answer says `teams_truncated` rather than presenting a partial list as
-the whole workspace.
+every team the key can see with the caller's own verdict beside it, plus
+`operator_teams` and `grant_teams` broken out, so the agent can tell you exactly
+which list to widen instead of guessing from a 403. Past 100 teams the answer
+says `teams_truncated` rather than presenting a partial list as the whole
+workspace.
 
 ### Closing the loop with the GitHub proxy
 
@@ -206,11 +276,15 @@ output says so: what is missing is the *start* of the discussion, not the end.
 
 ## How the team gate holds
 
-The allow-list is checked **twice**, and the second check is the load-bearing
-one.
+The daemon resolves the operator's list and the caller's grant scope into one
+**effective team set**, once, before any verb runs. Everything below reads that
+set, which is what keeps the identifier gate, the listing filter and the
+row-level drop from ever disagreeing about which teams a caller may reach.
 
-1. **On the identifier the caller supplied.** `TCL-568` → `TCL` → is it
-   allow-listed? This runs before any network call, so a refusal costs nothing.
+The set is checked **twice**, and the second check is the load-bearing one.
+
+1. **On the identifier the caller supplied.** `TCL-568` → `TCL` → is it in the
+   set? This runs before any network call, so a refusal costs nothing.
 2. **On the team Linear actually reported.** The daemon reads the issue and
    refuses on `issue.team.key` before rendering anything.
 
@@ -220,7 +294,7 @@ rather than the thing it reached. Every issue-shaped GraphQL selection therefore
 asks for `team { key }` — removing that field does not weaken the gate quietly,
 it turns the verb into an error.
 
-The same rule applies to listings: the request carries the allow-list as a
+The same rule applies to listings: the request carries the effective set as a
 filter, *and* every returned row is re-checked before it is rendered. The filter
 is a request Linear honours; only the check is a gate.
 
@@ -276,13 +350,15 @@ the workspace.
 
 | Symptom | Cause / fix |
 |---|---|
-| `503 linear_proxy_disabled` | No `allowed_teams` configured. Add the block above. |
+| `503 linear_proxy_disabled` | No `allowed_teams` configured *and* the agent's grant carries no team scope. Add the block above, or scope the grant. |
 | `503 key_missing` | No `api_key_file` and no `LINEAR_API_KEY`. |
 | `503 key_unreadable` | The configured file could not be read, or is empty. Check it is readable by the account agentd runs as, and that you used `~/` or an absolute path rather than `${HOME}`. |
 | `503 linear_auth` | Linear rejected the key. It may be revoked, expired, or lack the permission the verb needs — a read-only key cannot comment. |
-| `403` naming a slug | The agent lacks `linear.read` / `linear.write`. Grant it, or the agent can retry with `--ask-human`. |
+| `403` naming a slug | The agent lacks `proxy.linear.read` / `proxy.linear.write`. Grant it, or the agent can retry with `--ask-human`. |
 | `403 linear_write_disabled` | The slug is granted but `allow_write` is false. Both are required. |
-| `403 team_not_allowed` | The team is not on `allowed_teams`. Run `tclaude proxy linear whoami` to see the exact key to add. |
+| `403 team_not_allowed` | The operator has an `allowed_teams` list and the team is not on it. Run `tclaude proxy linear whoami` to see the exact key to add. |
+| `403 team_out_of_scope` | This agent's grant is scoped to other teams — either the team is on `allowed_teams` and the grant excludes it, or there is no operator list and the grant is the whole policy. Widen the grant, using **the slug the refusal names**, since read and write carry independent scopes: `permissions grant <agent> proxy.linear.read --scope linear_team=…` or `… proxy.linear.write --scope linear_team=…` (naming every team it needs — a scope replaces the previous one). |
+| `403 team_scope_empty` | The agent's team scope authorizes nothing at all: it overlaps a configured `allowed_teams` nowhere, or it names teams but constrains some other dimension a Linear request cannot describe, or it carries no `linear_team` at all. The message says which. |
 | `400` on an identifier | Only `TEAM-123` form is accepted; a UUID is refused on purpose. |
 | `400 unknown_state` | The state name is not one of the team's; the message lists the real ones. |
 | `404 not_found` | No such issue or team, or the operator's key cannot see it. Usually a typo'd issue number — not something to escalate. |

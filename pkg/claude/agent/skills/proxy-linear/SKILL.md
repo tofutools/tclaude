@@ -7,8 +7,9 @@ description: >-
   need to read the ticket you were spawned against, check its acceptance
   criteria or discussion, report progress on it, move it to another workflow
   state, attach the pull request you opened, or file a new issue. Gated on the
-  `linear.read` / `linear.write` slugs, neither granted by default, and bounded
-  by an operator allow-list of Linear teams.
+  `proxy.linear.read` / `proxy.linear.write` slugs, neither granted by default, and bounded
+  by an operator allow-list of Linear teams, a `linear_team` scope on your own
+  grant, or both.
 ---
 
 # Linear without holding the credential
@@ -34,10 +35,24 @@ Before anything else, run:
 tclaude proxy linear whoami
 ```
 
-It tells you three things you would otherwise have to discover from a 403: who
-the daemon's key authenticates as, every team that key can see, and which of
-those teams the operator has allow-listed for you. When something is refused,
-this is the command whose output tells the operator exactly what to add.
+It tells you what you would otherwise have to discover from a 403: who the
+daemon's key authenticates as, every team that key can see, and which of those
+teams **you** may reach. When something is refused, this is the command whose
+output tells the operator exactly what to add.
+
+Up to two independent lists bound you, and `whoami` reports both, because they
+need different fixes:
+
+- `operator_teams` — `agent.linear_proxy.allowed_teams`, the ceiling for every
+  agent on this host. Absent means the operator configured no global list, and
+  your grant's scope is the whole policy.
+- `grant_teams` — the `linear_team` scope on **your own** `proxy.linear.read` /
+  `proxy.linear.write` grant, when it has one. Absent means your grant is unscoped and
+  the operator's list alone bounds you.
+
+`allowed_teams` is what the list or lists that ARE present leave you: what you
+can actually reach. Every other verb echoes that same set as `teams`, so you
+rarely need to re-run `whoami`.
 
 ## Prerequisites
 
@@ -56,12 +71,12 @@ means they have not. Quote this to them:
 } } }
 ```
 
-**You need the slug.** `403` naming `linear.read` or `linear.write` means the
+**You need the slug.** `403` naming `proxy.linear.read` or `proxy.linear.write` means the
 human has not granted it:
 
 ```bash
-tclaude agent permissions grant <you> linear.read
-tclaude agent permissions grant <you> linear.write
+tclaude agent permissions grant <you> proxy.linear.read
+tclaude agent permissions grant <you> proxy.linear.write
 ```
 
 Or retry the one call with `--ask-human 60s` for a one-off popup approval.
@@ -116,7 +131,25 @@ tclaude proxy linear issue update TCL-568 --state "In Review"
 carries no team key, so there would be nothing to check the allow-list against.
 
 **Team keys match exactly.** `TCL` does not authorize `TCLX`, and there is no
-wildcard. `403 team_not_allowed` names the allow-list — pass that to the human.
+wildcard.
+
+Three refusals mean three different fixes, so read the code before escalating:
+
+- `403 team_not_allowed` — the team is not on the operator's
+  `agent.linear_proxy.allowed_teams`. Ask them to add it.
+- `403 team_out_of_scope` — **your** grant's team scope excludes it. Ask the
+  human to widen your grant, quoting **the slug the refusal names** — read and
+  write carry independent scopes, so a `proxy.linear.write` denial is not fixed by
+  widening `proxy.linear.read`:
+  `tclaude agent permissions grant <you> proxy.linear.write --scope linear_team=TCL,JOH`
+  (a `--scope` replaces the previous one, so name every team you need).
+- `403 team_scope_empty` — your team scope authorizes nothing at all: it
+  overlaps a configured operator list nowhere, or it constrains something a
+  Linear request cannot describe, or it carries no `linear_team` at all. The
+  message says which; a list has to change, or the scope has to be rewritten.
+
+Each message names what excluded you and what to change; pass it verbatim to the
+human rather than paraphrasing it as "no access to Linear".
 
 **State names must be exact** (case-insensitive). `--state "In Revue"` is
 refused rather than guessed at, and the refusal lists the team's real states.

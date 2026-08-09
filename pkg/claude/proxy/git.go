@@ -47,7 +47,7 @@ func gitCmd() *cobra.Command {
 			"launched in. There is no --repo flag.\n" +
 			"  * the remote must be on the operator's allow-list (agent.git_proxy.allowed_remotes). " +
 			"Run `tclaude proxy git remotes` to see the verdict for each of your remotes.\n\n" +
-			"Reads (remotes, ls-remote, fetch) need the `git.read` permission; push needs `git.push`. " +
+			"Reads (remotes, ls-remote, fetch) need the `proxy.git.read` permission; push needs `proxy.git.push`. " +
 			"Neither is granted by default — ask the operator, or pass --ask-human for a one-off approval.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
@@ -386,7 +386,7 @@ func gitProxyCall(path string, body map[string]any, askHuman, what string, stdou
 	}
 	// No "waiting for approval" banner here. --ask-human only arms a FALLBACK:
 	// the daemon raises an access request when the permission gate denies the
-	// call, and a caller that already holds git.read or git.push never waits at
+	// call, and a caller that already holds proxy.git.read or proxy.git.push never waits at
 	// all. Announcing a wait that does not happen is what runResume was fixed
 	// not to do (stop_resume_test.go).
 	var resp gitProxyOutcome

@@ -60,7 +60,7 @@ func githubCmd() *cobra.Command {
 			"The repository is not something you choose: the daemon derives it from your own repository's " +
 			"remote, and only after that remote passes the operator's allow-list " +
 			"(agent.git_proxy.allowed_remotes). Run `tclaude proxy git remotes` to see it.\n\n" +
-			"Reads need `github.read`; creating and commenting needs `github.write`. Neither is granted " +
+			"Reads need `proxy.github.read`; creating and commenting needs `proxy.github.write`. Neither is granted " +
 			"by default.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{

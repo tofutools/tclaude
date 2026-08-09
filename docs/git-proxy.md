@@ -140,19 +140,19 @@ Four slugs, none granted by default and none conferred by group ownership:
 
 | Slug | Allows |
 |---|---|
-| `git.read` | `git remotes`, `git ls-remote`, `git fetch` |
-| `git.push` | `git push` |
-| `github.read` | `github pr ls/view/checks/comments`, `github issue ls/view`, `github run ls/log-failed/artifacts/download` |
-| `github.write` | `github pr create/edit/comment/ready`, `github issue comment` |
+| `proxy.git.read` | `git remotes`, `git ls-remote`, `git fetch` |
+| `proxy.git.push` | `git push` |
+| `proxy.github.read` | `github pr ls/view/checks/comments`, `github issue ls/view`, `github run ls/log-failed/artifacts/download` |
+| `proxy.github.write` | `github pr create/edit/comment/ready`, `github issue comment` |
 
 ```bash
-tclaude agent permissions grant <agent> git.read
-tclaude agent permissions grant <agent> git.push
+tclaude agent permissions grant <agent> proxy.git.read
+tclaude agent permissions grant <agent> proxy.git.push
 
 # Preferred: constrain each credential grant to the remotes it needs.
-tclaude agent permissions grant <agent> git.read \
+tclaude agent permissions grant <agent> proxy.git.read \
   --scope 'remote=github.com/your-org/*'
-tclaude agent permissions grant <agent> git.push \
+tclaude agent permissions grant <agent> proxy.git.push \
   --scope 'remote=github.com/your-org/*'
 ```
 
@@ -173,19 +173,19 @@ which raises the ordinary [approval popup](agent.md#ad-hoc-human-approval-ask-hu
 
 ```bash
 # Discovery — no network, no credential. Run this first. With a scoped
-# git.read grant, each remote's verdict combines the global list and its scope.
+# proxy.git.read grant, each remote's verdict combines the global list and its scope.
 tclaude proxy git remotes
 
-# Reads (git.read)
+# Reads (proxy.git.read)
 tclaude proxy git ls-remote --heads
 tclaude proxy git fetch --prune
 tclaude proxy git pull                 # daemon fetch + LOCAL fast-forward
 
-# Writes (git.push)
+# Writes (proxy.git.push)
 tclaude proxy git push -u
 tclaude proxy git push --force-with-lease   # only if you enabled it
 
-# GitHub (github.read / github.write)
+# GitHub (proxy.github.read / proxy.github.write)
 tclaude proxy github pr create --title "…" --body-file pr.md
 tclaude proxy github pr ls --state open
 tclaude proxy github pr view 42
@@ -423,8 +423,8 @@ write is what removes the second read altogether.
 
 **Remote-scoped permissions are therefore exact for every verb.** `push`,
 `ls-remote`, `fetch` and the GitHub operations all authorize the resolved
-destination they subsequently contact, so a `remote` scope on `git.read` or
-`git.push` is a hard boundary rather than a check that could be raced.
+destination they subsequently contact, so a `remote` scope on `proxy.git.read` or
+`proxy.git.push` is a hard boundary rather than a check that could be raced.
 
 Fetch takes two extra steps to get there, because unlike push it has to *leave*
 results in the agent's repository:
@@ -498,7 +498,7 @@ tclaude proxy github pr create # → audit verb "github.pr.create"
 | Symptom | Cause / fix |
 |---|---|
 | `503 git_proxy_disabled` | An unscoped grant has no legacy `allowed_remotes` policy. Add a `remote` scope to the grant (preferred), or configure the legacy list. |
-| `403` naming a slug | The agent lacks `git.read` / `git.push` / `github.read` / `github.write`. Grant it, or the agent can retry with `--ask-human`. |
+| `403` naming a slug | The agent lacks `proxy.git.read` / `proxy.git.push` / `proxy.github.read` / `proxy.github.write`. Grant it, or the agent can retry with `--ask-human`. |
 | `token_missing` | The daemon found no GitHub token anywhere. See [Where the GitHub token comes from](#where-the-github-token-comes-from). |
 | `token_unreadable` | The configured `github_token_file` could not be read, is empty, or contains a control character (usually a stray newline mid-value). A configured file is never silently skipped in favour of another source. |
 | `response_too_large` | A read's answer exceeded 1 MiB. Ask for fewer items with `--limit`. The bound exists because these answers land in an agent's context window and in the idempotency store; it is a refusal rather than a truncation, because half a JSON document is worse than none. |

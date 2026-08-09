@@ -1160,6 +1160,12 @@ func dashboardStopAgent(w http.ResponseWriter, r *http.Request, convSelector str
 	}
 	var body struct {
 		Force bool `json:"force"`
+		// Wait holds the response until the pane process is actually gone (or
+		// the kill ladder is exhausted). The shutdown dialog sets it so its
+		// spinner spans the real stop instead of just the exit dispatch —
+		// OpenCode's control-API dispatch returns in milliseconds while the
+		// TUI, pane and managed server are still very much alive.
+		Wait bool `json:"wait"`
 	}
 	if r.ContentLength > 0 {
 		_ = json.NewDecoder(r.Body).Decode(&body) // optional; default false
@@ -1168,7 +1174,21 @@ func dashboardStopAgent(w http.ResponseWriter, r *http.Request, convSelector str
 	if body.Force {
 		action = db.AgentExitActionForceStop
 	}
-	out := stopOneConvWithIntent(res.ConvID, body.Force, action, auditRequestEventID(r))
+	var out memberOpResult
+	if body.Wait {
+		var outcome softExitOutcome
+		out, outcome = stopOneConvAndWait(res.ConvID, body.Force, action, auditRequestEventID(r), 0)
+		if out.Action != "error" && (outcome == softExitStuck || outcome == softExitUnattempted) {
+			// The waiting contract's answer is the process being gone. A stop
+			// that ran the whole ladder and left the agent alive is a failure
+			// the dialog must show (with its retry / force-kill affordances),
+			// not a success toast over a still-green row.
+			out.Action = "error"
+			out.Detail = joinDetail(out.Detail, errAgentStillRunning.Error())
+		}
+	} else {
+		out = stopOneConvWithIntent(res.ConvID, body.Force, action, auditRequestEventID(r))
+	}
 	// Mirror the v1 route's failure semantics (it advertises matching
 	// soft/force behavior above): a failed stop is a non-2xx response with
 	// the standard error envelope riding along, and the command-audit row

@@ -638,7 +638,7 @@ func TestGitProxy_PushRequiresItsOwnSlug(t *testing.T) {
 			"a denied caller must not cause git to run at all — not even a probe")
 	})
 
-	t.Run("git.read does not confer git.push", func(t *testing.T) {
+	t.Run("proxy.git.read does not confer proxy.git.push", func(t *testing.T) {
 		f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
 		require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitRead, "test"))
 		res := gitProxyPost(t, f, "/v1/git/push", map[string]any{})
@@ -722,7 +722,7 @@ func TestGitProxy_RemotesCombinesGlobalAndGrantScope(t *testing.T) {
 	}
 	assert.True(t, byName["origin"].Allowed)
 	assert.False(t, byName["other"].Allowed)
-	assert.Contains(t, byName["other"].RefusedFor, "git.read remote scope")
+	assert.Contains(t, byName["other"].RefusedFor, "proxy.git.read remote scope")
 }
 
 func TestGitProxy_RemotesAllowsScopedOnlyPolicy(t *testing.T) {

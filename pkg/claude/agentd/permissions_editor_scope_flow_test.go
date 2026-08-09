@@ -63,6 +63,7 @@ func TestPermEditorScope_RoundTripsThroughSnapshot(t *testing.T) {
 	const conv = "permscope-dddd-eeee-ffff-0001"
 	f.HaveConvWithTitle(conv, "agent-scope")
 	f.HaveEnrolledAgent(conv)
+	writeLinearConfig(t, []string{"TCL", "JOH"})
 
 	mux := agentd.BuildDashboardHandlerForTest()
 
@@ -82,6 +83,12 @@ func TestPermEditorScope_RoundTripsThroughSnapshot(t *testing.T) {
 		"the group picker offers the live groups")
 	assert.Contains(t, view.Permissions.DimOpts["target_agent"].Selectors, "@descendants",
 		"a dimension's relational selectors are advertised, not hardcoded in the frontend")
+	// linear_team's catalogue is the operator's own agent.linear_proxy.allowed_teams:
+	// a team they have not allow-listed cannot be reached by any grant, so
+	// offering it would only invite a scope that authorizes nothing. Rendered
+	// upper-case, the way Linear spells a key and an operator reads one.
+	assert.Equal(t, []string{"JOH", "TCL"}, view.Permissions.DimOpts["linear_team"].Values,
+		"the Linear team picker offers the operator's allow-listed teams")
 
 	// Clearing the scope is the same POST with an EXPLICIT empty scope — the
 	// editor's "remove the last chip" path — and must widen the grant back, not

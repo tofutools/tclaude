@@ -1916,14 +1916,19 @@ tclaude proxy linear issue comment # also: create, update, link
 They are not `tclaude agent` subcommands because they are not coordination:
 `agent` is about who else exists and how to reach them, `proxy` is about
 performing an operation with a credential the agent deliberately does not hold.
-The permission slugs (`git.read`, `git.push`, `github.read`, `github.write`,
-`linear.read`, `linear.write`) are still ordinary agent permissions, granted and
+The permission slugs (`proxy.git.read`, `proxy.git.push`, `proxy.github.read`, `proxy.github.write`,
+`proxy.linear.read`, `proxy.linear.write`) are still ordinary agent permissions, granted and
 audited like any other.
 
 See **[Git & GitHub proxy](git-proxy.md)** for the whole picture: the allow-list
 grammar, the slugs, the full hardening table, and why `pull` is split across the
 boundary. See **[Linear proxy](linear-proxy.md)** for the Linear half, whose
-scope gate is a team allow-list rather than a repository.
+scope gate is a team set rather than a repository.
+
+Both halves are narrowable per agent through the grant itself: `--scope
+remote=github.com/acme/*` for the git and GitHub slugs, `--scope
+linear_team=TCL` for the Linear ones. See
+[Scoped grants](#scoped-grants).
 
 ### permissions / sudo
 
@@ -2422,9 +2427,29 @@ Provenance shows what actually applied: `permissions ls` renders the winning
 source with its scope, e.g. `group:dev [group=dev]`, and an audit row records
 the scope that authorized the action.
 
-One dimension is not a plain string match: `remote` (on `git.read` /
-`git.push`) reuses the git proxy's slash-segmented pattern language, so a
-matcher can cover a whole host or org rather than one URL.
+The two **proxy** dimensions have matcher languages of their own (the
+relational `target_agent` matchers below are a third departure from plain string
+equality). `remote` (on `proxy.git.read` /
+`proxy.git.push` / `proxy.github.read` / `proxy.github.write`) reuses the git proxy's
+slash-segmented pattern language, so a matcher can cover a whole host or org
+rather than one URL. `linear_team` (on `proxy.linear.read` / `proxy.linear.write`) is a
+whole-key, case-insensitive comparison — `linear_team=tcl` and
+`linear_team=TCL` name the same team, and neither covers `TCLX`:
+
+```bash
+# this agent may read Linear, but only the TCL and JOH teams
+tclaude agent permissions grant ticket-worker proxy.linear.read \
+  --scope linear_team=TCL,JOH
+```
+
+Where the operator has configured an allow-list
+(`agent.git_proxy.allowed_remotes` / `agent.linear_proxy.allowed_teams`), these
+scopes are enforced **together with** it rather than instead of it: a scope can
+narrow what an agent reaches, never widen it past the operator's list. Where the
+operator has configured none, a scoped grant supplies its own — which is how a
+per-agent posture works with no global one, and why an *unscoped* grant is still
+refused there. See [Linear proxy](linear-proxy.md) for what that means for
+cross-team listings.
 
 **Relational matchers.** `agent.retire` and the reserved `agent.standdown`
 flow accept the `target_agent` dimension, whose matchers are evaluated from
@@ -2505,9 +2530,9 @@ gate group, messaging, template, and permission administration.
 | `process.templates.*` | `process.templates.read`, `process.templates.manage` |
 | `process.runs.*` | `process.runs.read`, `process.runs.manage` |
 | `human.*`     | `human.notify`, `human.clipboard` |
-| `git.*`       | `git.read`, `git.push` |
-| `github.*`    | `github.read`, `github.write` |
-| `linear.*`    | `linear.read`, `linear.write` |
+| `proxy.git.*`       | `proxy.git.read`, `proxy.git.push` |
+| `proxy.github.*`    | `proxy.github.read`, `proxy.github.write` |
+| `proxy.linear.*`    | `proxy.linear.read`, `proxy.linear.write` |
 
 Run `tclaude agent permissions slugs` for the live registry with
 descriptions — it is the source of truth; this table can drift.

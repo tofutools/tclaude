@@ -131,10 +131,17 @@ func decodeGitProxyBody(w http.ResponseWriter, r *http.Request, out any) bool {
 }
 
 // preflightProxyPermission preserves the cheap refusal for ungranted callers
-// while allowing a scoped grant to wait for the local remote resolution that
-// gives it meaning. The caller MUST finish a deferred decision with
-// requirePermission and ActionContext{Remote: ...} before any network touch or
-// side effect.
+// while allowing a SCOPED grant to wait for the resolution step that gives it
+// meaning — the local remote for the git and GitHub proxies, the effective team
+// set for the Linear one. Without it, a scoped grant would be undecidable against
+// the empty ActionContext available here and every call would fall through to an
+// ask-human popup.
+//
+// deferred=true means the caller MUST finish the decision before any network
+// touch or side effect: with requirePermission and a filled-in ActionContext
+// (finishProxyPermission), or by resolving the scope into the gate the verb
+// actually enforces (newLinearProxySession). Returning without doing either
+// would be an unauthorized call.
 func preflightProxyPermission(w http.ResponseWriter, r *http.Request, perm string) (convID string, deferred, ok bool) {
 	p := peerFromContext(r.Context())
 	if classify(p) == classAgent {
@@ -268,7 +275,7 @@ func describeProxyRemote(ctx context.Context, s *gitProxySession, name, convID s
 	}
 	if scoped != nil {
 		if !evalPermissionScope(*scoped, convID, ActionContext{Remote: view.RemoteRef}).Satisfied {
-			view.RefusedFor = fmt.Sprintf("%s is outside this caller's git.read remote scope", view.RemoteRef)
+			view.RefusedFor = fmt.Sprintf("%s is outside this caller's proxy.git.read remote scope", view.RemoteRef)
 			return view
 		}
 	}
@@ -373,7 +380,7 @@ func handleGitProxyFetch(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleGitProxyPush serves POST /v1/git/push — the only route that writes to
-// a remote, and the only one behind the separate git.push slug.
+// a remote, and the only one behind the separate proxy.git.push slug.
 func handleGitProxyPush(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")

@@ -9,8 +9,8 @@ description: >-
   create`, `gh pr view --comments`, `gh run view --log-failed`, or `gh run
   download` fails
   with a permission, authentication, or network error, or when you have been
-  told the daemon holds the credentials. Gated on the `git.read` / `git.push` / `github.read` /
-  `github.write` slugs, none of which is granted by default, and bounded by an
+  told the daemon holds the credentials. Gated on the `proxy.git.read` / `proxy.git.push` / `proxy.github.read` /
+  `proxy.github.write` slugs, none of which is granted by default, and bounded by an
   operator allow-list of remotes.
 ---
 
@@ -48,18 +48,18 @@ exactly what they need to add to `agent.git_proxy.allowed_remotes`.
 ## The commands
 
 ```bash
-# Reads — need `git.read`
+# Reads — need `proxy.git.read`
 tclaude proxy git remotes                       # allow-list verdict per remote
 tclaude proxy git ls-remote --heads             # does my branch exist remotely?
 tclaude proxy git fetch --prune
 tclaude proxy git pull                          # fetch, then fast-forward locally
 
-# Writes — need `git.push`
+# Writes — need `proxy.git.push`
 tclaude proxy git push -u                       # push the current branch
 tclaude proxy git push -b feat/thing
 tclaude proxy git push --force-with-lease       # only if the operator enabled it
 
-# GitHub reads — need `github.read`
+# GitHub reads — need `proxy.github.read`
 tclaude proxy github pr ls --state open
 tclaude proxy github pr view 42
 tclaude proxy github pr checks 42               # CI state; pending is an answer
@@ -71,7 +71,7 @@ tclaude proxy github run download 18234567890 --name coverage
 tclaude proxy github issue ls
 tclaude proxy github issue view 7
 
-# GitHub writes — need `github.write`
+# GitHub writes — need `proxy.github.write`
 tclaude proxy github pr create --title "…" --body-file pr.md [--draft] [--base main]
 tclaude proxy github pr comment 42 --body-file reply.md
 tclaude proxy github pr ready 42
@@ -83,8 +83,8 @@ sidesteps shell quoting — backticks especially — and keeps the text out of t
 process command line.
 
 Note the pair: `pr comments 42` **reads** the feedback, `pr comment 42
---body-file reply.md` **writes** to it. One is `github.read`, the other
-`github.write`.
+--body-file reply.md` **writes** to it. One is `proxy.github.read`, the other
+`proxy.github.write`.
 
 ## Watching a pull request you opened
 
@@ -238,7 +238,7 @@ means with plain git: fetch and rebase, then push again.
 A `403` naming a slug means you lack the permission. Ask your human to grant it:
 
 ```bash
-tclaude agent permissions grant <you> git.push
+tclaude agent permissions grant <you> proxy.git.push
 ```
 
 Or, for a single operation, request one-off approval:

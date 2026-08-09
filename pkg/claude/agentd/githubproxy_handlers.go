@@ -346,11 +346,11 @@ func handleGHProxyPRChecks(w http.ResponseWriter, r *http.Request) {
 // handleGHProxyPREdit serves POST /v1/github/pr/edit.
 //
 // Editing a description is a WRITE under the operator's GitHub identity, so it
-// sits behind github.write beside `pr create` rather than beside the reads. It
-// is deliberately narrow: title and body only. The API can also move the base
-// branch, add reviewers and change labels, and none of that is something the
-// proxy's semantic contract covers — an agent that wants it should ask a human,
-// not get it as a side effect of fixing a typo.
+// sits behind proxy.github.write beside `pr create` rather than beside the
+// reads. It is deliberately narrow: title and body only. The API can also move
+// the base branch, add reviewers and change labels, and none of that is
+// something the proxy's semantic contract covers — an agent that wants it
+// should ask a human, not get it as a side effect of fixing a typo.
 func handleGHProxyPREdit(w http.ResponseWriter, r *http.Request) {
 	var body ghProxyPREditRequest
 	g, ok := openGHProxy(w, r, PermGitHubWrite, &body, func() string { return body.Remote })

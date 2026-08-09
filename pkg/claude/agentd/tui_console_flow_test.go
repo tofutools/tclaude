@@ -200,13 +200,16 @@ func TestTUIConsoleEnterGoesToTheAgentsTmuxSession(t *testing.T) {
 func TestTUIRemoteAttachUsesANonDisplacingTmuxClient(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("dev")
-	spawned := f.Spawn("dev", "worker")
+	spawned := f.SpawnWith("dev", map[string]any{"name": "worker", "harness": "codex"})
 
-	var command, teardownSession string
+	var command, teardownSession, cleanupSession, cleanupHarness string
 	t.Cleanup(agentd.SetTermWSHookForTest(&agentd.TermWSHook{
 		RewriteCommand: func(gotCommand, gotSession string) (string, string) {
 			command, teardownSession = gotCommand, gotSession
 			return gotCommand, gotSession
+		},
+		ObserveTmuxCleanup: func(_, gotCleanupSession, gotHarness string) {
+			cleanupSession, cleanupHarness = gotCleanupSession, gotHarness
 		},
 	}))
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://agent-host:8321"))
@@ -228,6 +231,9 @@ func TestTUIRemoteAttachUsesANonDisplacingTmuxClient(t *testing.T) {
 		"a remote viewer must not displace another attached operator")
 	assert.Empty(t, teardownSession,
 		"closing this stream must not detach every other client on the session")
+	assert.Equal(t, spawned.TmuxSession, cleanupSession,
+		"this client's detach must still clean copy mode on the managed pane")
+	assert.Equal(t, "codex", cleanupHarness)
 }
 
 // Unlike the dashboard's browser terminals, this stream lands on the operator's
