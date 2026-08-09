@@ -37,10 +37,14 @@ import (
 // a startup link on another, and an explicitly presented PR on a third,
 // and all three should show one answer.
 //
-// A merged or closed PR's checks are frozen — no poll, background or
-// hover, ever refreshes one again (the single exception is a terminal PR
-// we hold no checks for at all, which gets one fetch so the panel isn't
-// permanently empty).
+// A merged or closed PR stops the *hover* poll: once a terminal state is
+// known, /api/pr-checks keeps serving the cached blob instead of spending
+// another `gh` call (the single exception is a terminal PR we hold no
+// checks for at all, which gets one fetch so the panel isn't permanently
+// empty). The piggybacked background writes are NOT gated that way — a
+// branch link still refreshes on its own TTL while an agent sits on the
+// branch, and re-stamps the rollup it got for free. That costs nothing
+// extra and self-heals a stale blob, so it is left alone.
 
 const (
 	// prChecksTTL bounds how stale cached checks may be before the hover
@@ -70,8 +74,10 @@ var prChecksResolver = livePRChecksResolver
 
 // prCheckRun is one row in the hover panel: a single check run or commit
 // status context. Timestamps ride as RFC3339 strings rather than a
-// pre-rendered duration so the frontend can tick a still-running check's
-// elapsed time between polls instead of showing the age of the cache.
+// pre-rendered duration so a still-running check's elapsed time is
+// computed against the reader's clock at render — otherwise the panel
+// would show how long the run had been going when the cache was written,
+// which for a stale blob is visibly wrong.
 type prCheckRun struct {
 	Name        string `json:"name"`
 	Bucket      string `json:"bucket"`                 // pass|fail|pending|skipped
@@ -190,7 +196,7 @@ func normalizeRollupNode(n statusCheckRollupNode) (prCheckRun, bool) {
 	}
 	if n.TypeName == "StatusContext" || (n.Name == "" && n.Context != "") {
 		run.Name = clipPRCheckText(n.Context)
-		run.URL = strings.TrimSpace(n.TargetURL)
+		run.URL = safePRCheckURL(n.TargetURL)
 		run.Source = clipPRCheckText(n.Description)
 		switch strings.ToUpper(strings.TrimSpace(n.State)) {
 		case "SUCCESS":
@@ -209,7 +215,7 @@ func normalizeRollupNode(n statusCheckRollupNode) (prCheckRun, bool) {
 	}
 
 	run.Name = clipPRCheckText(n.Name)
-	run.URL = strings.TrimSpace(n.DetailsURL)
+	run.URL = safePRCheckURL(n.DetailsURL)
 	run.Source = clipPRCheckText(n.WorkflowName)
 	status := strings.ToUpper(strings.TrimSpace(n.Status))
 	conclusion := strings.ToUpper(strings.TrimSpace(n.Conclusion))
@@ -251,6 +257,22 @@ func prCheckPendingLabel(status string) string {
 	default:
 		return strings.ToLower(strings.ReplaceAll(status, "_", " "))
 	}
+}
+
+// safePRCheckURL keeps a check's details link only when it is http(s). The
+// value is attacker-influenced — a commit status's target_url is set by
+// whoever posted it, and a check run's detailsUrl by the reporting app — and
+// the dashboard renders it as a live href in an origin whose cookie
+// authorizes every mutating /api route. A `javascript:` or `data:` URL there
+// would be a one-click privilege handoff, so anything else is dropped and the
+// row simply renders unlinked. Same rule linkify() applies in helpers.js.
+func safePRCheckURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	lower := strings.ToLower(raw)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		return raw
+	}
+	return ""
 }
 
 func clipPRCheckText(s string) string {
@@ -382,10 +404,13 @@ func (v repoLinksView) withPRChecks(idx map[string]*prChecksSummary) repoLinksVi
 
 // schedulePRChecksRefresh kicks one background `gh` resolution for a PR,
 // deduplicated per PR identity.
-func schedulePRChecksRefresh(rawURL string) {
+// Reports whether it actually started one: a call landing on an in-flight
+// key is a no-op, and saying "refreshing" there would promise the caller a
+// newer answer that nobody is fetching.
+func schedulePRChecksRefresh(rawURL string) bool {
 	key := prChecksCacheKey(rawURL)
 	if _, busy := prChecksInflight.LoadOrStore(key, struct{}{}); busy {
-		return
+		return false
 	}
 	goBackground(func() {
 		defer prChecksInflight.Delete(key)
@@ -405,6 +430,7 @@ func schedulePRChecksRefresh(rawURL string) {
 		info.Summary = summarizePRChecks(info.Checks, info.FetchedAt)
 		savePRChecks(rawURL, info)
 	})
+	return true
 }
 
 // livePRChecksResolver is the production resolver for a hover-driven
@@ -462,8 +488,10 @@ type prChecksResponse struct {
 	Checks    []prCheckRun    `json:"checks"`
 	FetchedAt string          `json:"fetched_at,omitempty"`
 	Resolved  bool            `json:"resolved"`
-	Stale     bool            `json:"stale"`
-	Refreshed bool            `json:"refreshing"`
+	// Refreshing marks a response that actually started a `gh` call behind
+	// itself, so the panel knows a newer answer is coming and can say so
+	// instead of presenting a stale list as final.
+	Refreshing bool `json:"refreshing"`
 }
 
 // handleDashboardPRChecks serves GET /api/pr-checks?url=<github pr url>.
@@ -490,16 +518,14 @@ func handleDashboardPRChecks(w http.ResponseWriter, r *http.Request) {
 	stale := !ok || time.Since(info.FetchedAt) >= prChecksHotTTL
 	refreshing := false
 	if stale && prChecksRefreshAllowed(rawURL, info, ok) {
-		schedulePRChecksRefresh(rawURL)
-		refreshing = true
+		refreshing = schedulePRChecksRefresh(rawURL)
 	}
 	resp := prChecksResponse{
-		URL:       rawURL,
-		Summary:   info.Summary,
-		Checks:    info.Checks,
-		Resolved:  ok,
-		Stale:     stale,
-		Refreshed: refreshing,
+		URL:        rawURL,
+		Summary:    info.Summary,
+		Checks:     info.Checks,
+		Resolved:   ok,
+		Refreshing: refreshing,
 	}
 	if resp.Checks == nil {
 		resp.Checks = []prCheckRun{}

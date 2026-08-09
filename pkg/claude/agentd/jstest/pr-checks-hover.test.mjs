@@ -48,6 +48,21 @@ test('the CI badge summarizes checks and opens a panel on hover', async (t) => {
     assert.equal(elapsed({}, now), '');
   });
 
+  await t.test('a hostile check URL never becomes a live link', () => {
+    // A commit status's target_url is set by whoever posted it, and this
+    // renders inside the dashboard origin whose cookie authorizes every
+    // mutating /api route. The server drops non-http(s) schemes too; neither
+    // side may be the only guard.
+    const { safeCheckURL } = mod;
+    for (const hostile of [
+      'javascript:fetch("/api/agents/x",{method:"DELETE"})',
+      'JavaScript:alert(1)', 'data:text/html,<script>1</script>', 'file:///etc/passwd', '',
+    ]) {
+      assert.equal(safeCheckURL(hostile), '', `must refuse ${hostile}`);
+    }
+    assert.equal(safeCheckURL('https://github.com/o/r/runs/1'), 'https://github.com/o/r/runs/1');
+  });
+
   await t.test('the summary line names what is outstanding', () => {
     assert.equal(
       summaryLine({ total: 14, passed: 12, failed: 1, pending: 1 }),
@@ -131,6 +146,10 @@ test('the panel fetches only while it is open', async (t) => {
     assert.match(rows[0].textContent, /CI · failure/);
     assert.match(rows[0].textContent, /3m 12s/, 'each check shows how long it took');
     assert.match(panel.querySelector('.ci-panel-note a').getAttribute('href'), /\/pull\/2151\/checks$/);
+    // A check whose details URL the server refused renders unlinked rather
+    // than as an href the reader would trust.
+    assert.equal(rows[1].querySelector('.ci-check-link'), null,
+      'a check with no usable URL must not become a link');
 
     // Leaving closes the panel and, with it, the poll — the cost of this
     // surface is bounded by "a human is looking at exactly one PR".

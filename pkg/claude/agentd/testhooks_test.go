@@ -1035,13 +1035,32 @@ func SetTileSettleWaitForTest() func() {
 // subprocess boundary is mocked, the cache + snapshot read path under
 // test runs unchanged. Returns a restore closure for t.Cleanup.
 func SetGitInfoResolverForTest(fn func(repoDir, branch string) (repoURL, defaultBranch string, prNumber int, prURL, prState string, ok bool)) func() {
+	return SetGitInfoResolverWithChecksForTest(
+		func(repoDir, branch string) (string, string, int, string, string, string, bool) {
+			repoURL, defaultBranch, prNumber, prURL, prState, ok := fn(repoDir, branch)
+			return repoURL, defaultBranch, prNumber, prURL, prState, "", ok
+		})
+}
+
+// SetGitInfoResolverWithChecksForTest is SetGitInfoResolverForTest plus the
+// statusCheckRollup array the same `gh pr view` call returns in production.
+// It exists so the piggybacked CI-check write — the path that populates every
+// badge nobody has hovered — is reachable from a test at all; pass "" for the
+// rollup to model a `gh` that reported no checks.
+func SetGitInfoResolverWithChecksForTest(fn func(repoDir, branch string) (repoURL, defaultBranch string, prNumber int, prURL, prState, rollupJSON string, ok bool)) func() {
 	prev := gitInfoResolver
 	gitInfoResolver = func(repoDir, branch string) (repoBranchInfo, bool) {
-		repoURL, defaultBranch, prNumber, prURL, prState, ok := fn(repoDir, branch)
+		repoURL, defaultBranch, prNumber, prURL, prState, rollup, ok := fn(repoDir, branch)
 		if !ok {
 			return repoBranchInfo{}, false
 		}
+		var checks *prChecksInfo
+		if rollup != "" {
+			resolved := parseStatusCheckRollup(json.RawMessage(rollup), time.Now())
+			checks = &resolved
+		}
 		return repoBranchInfo{
+			Checks:        checks,
 			RepoURL:       repoURL,
 			DefaultBranch: defaultBranch,
 			Branch:        branch,
@@ -1058,13 +1077,30 @@ func SetGitInfoResolverForTest(fn func(repoDir, branch string) (repoURL, default
 // preload/cache/singleflight path; only the `gh pr view <url>` boundary is
 // replaced.
 func SetPresentedPRInfoResolverForTest(fn func(rawURL string) (number int, resolvedURL, state string, ok bool)) func() {
+	return SetPresentedPRInfoWithChecksResolverForTest(
+		func(rawURL string) (int, string, string, string, bool) {
+			number, resolvedURL, state, ok := fn(rawURL)
+			return number, resolvedURL, state, "", ok
+		})
+}
+
+// SetPresentedPRInfoWithChecksResolverForTest is the presented-PR twin of
+// SetGitInfoResolverWithChecksForTest: it also supplies the statusCheckRollup
+// that rides the same `gh pr view`, so the presented-PR piggyback write is
+// reachable from a test.
+func SetPresentedPRInfoWithChecksResolverForTest(fn func(rawURL string) (number int, resolvedURL, state, rollupJSON string, ok bool)) func() {
 	prev := presentedPRInfoResolver
 	presentedPRInfoResolver = func(rawURL string) (presentedPRInfo, bool) {
-		number, resolvedURL, state, ok := fn(rawURL)
+		number, resolvedURL, state, rollup, ok := fn(rawURL)
 		if !ok {
 			return presentedPRInfo{}, false
 		}
-		return presentedPRInfo{Number: number, URL: resolvedURL, State: state}, true
+		info := presentedPRInfo{Number: number, URL: resolvedURL, State: state}
+		if rollup != "" {
+			resolved := parseStatusCheckRollup(json.RawMessage(rollup), time.Now())
+			info.Checks = &resolved
+		}
+		return info, true
 	}
 	return func() { presentedPRInfoResolver = prev }
 }

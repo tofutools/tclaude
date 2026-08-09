@@ -3078,7 +3078,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// the branch-link / presented-PR refreshes that already run `gh`, and by
 	// the hover endpoint. Presented PR URLs join the branch/startup ones so a
 	// presented badge gets the same indicator as an automatic one.
-	checkURLs := branchPRCacheURLs
+	checkURLs := make([]string, 0, len(branchPRCacheURLs)+len(presentedPRs))
+	checkURLs = append(checkURLs, branchPRCacheURLs...)
 	for _, rows := range presentedPRs {
 		for _, row := range rows {
 			checkURLs = append(checkURLs, row.PRURL)

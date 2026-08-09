@@ -557,7 +557,11 @@ func gitDefaultBranch(dir string) string {
 func ghPRForBranch(dir, branch string) (number int, url, state string, checks *prChecksInfo) {
 	out := runInDir(dir, "gh", "pr", "view", branch, "--json", "number,url,state,statusCheckRollup")
 	if out == "" {
-		return 0, "", "", nil
+		// The CI rollup is an enhancement; the PR link is not. A `gh` that
+		// rejects the field (old version, or a host that doesn't serve it)
+		// must not take the branch's PR number/URL/state down with it, so
+		// retry once for the fields that predate this feature.
+		return ghPRForBranchWithoutChecks(dir, branch)
 	}
 	var pr struct {
 		Number            int             `json:"number"`
@@ -570,6 +574,28 @@ func ghPRForBranch(dir, branch string) (number int, url, state string, checks *p
 	}
 	resolved := parseStatusCheckRollup(pr.StatusCheckRollup, time.Now())
 	return pr.Number, pr.URL, strings.ToLower(pr.State), &resolved
+}
+
+// ghPRForBranchWithoutChecks is ghPRForBranch's fallback: the pre-CI-badge
+// query. Reached only when the richer one failed, which is also the case
+// where a real "no PR here" answer is indistinguishable from a broken `gh`
+// — so a failure here stays silent exactly as it did before.
+func ghPRForBranchWithoutChecks(dir, branch string) (int, string, string, *prChecksInfo) {
+	out := runInDir(dir, "gh", "pr", "view", branch, "--json", "number,url,state")
+	if out == "" {
+		return 0, "", "", nil
+	}
+	var pr struct {
+		Number int    `json:"number"`
+		URL    string `json:"url"`
+		State  string `json:"state"`
+	}
+	if json.Unmarshal([]byte(out), &pr) != nil {
+		return 0, "", "", nil
+	}
+	slog.Debug("branchlinks: resolved PR without the CI rollup",
+		"repo", dir, "branch", branch, "pr", pr.Number, "module", "agentd")
+	return pr.Number, pr.URL, strings.ToLower(pr.State), nil
 }
 
 // repoHTTPSFromRemote normalises a git remote URL to its GitHub web

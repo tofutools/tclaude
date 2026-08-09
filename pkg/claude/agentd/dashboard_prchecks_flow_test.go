@@ -112,6 +112,70 @@ func TestDashboardPRChecks_HoverRefreshReachesSnapshotBadge(t *testing.T) {
 		"only the hover spends a subprocess — the snapshots must read the cache")
 }
 
+// The badge must appear for PRs nobody has hovered — that is the whole design
+// claim that the background check data rides the `gh pr view` calls the
+// branch-link and presented-PR refreshes already make. This test never touches
+// the hover endpoint: if either piggyback write were dropped, the feature would
+// silently degrade to "checks only after you hover", and only this fails.
+func TestDashboardPRChecks_BackgroundRefreshesPopulateBadges(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	const (
+		conv        = "prchecks-0000-0000-0000-000000000003"
+		branch      = "feature-piggyback"
+		branchPRURL = "https://github.com/acme/app/pull/55"
+		presented   = "https://github.com/acme/app/pull/56"
+	)
+
+	t.Cleanup(agentd.SetGitInfoResolverWithChecksForTest(
+		func(_, b string) (string, string, int, string, string, string, bool) {
+			if b != branch {
+				return "", "", 0, "", "", "", false
+			}
+			return "https://github.com/acme/app", "main", 55, branchPRURL, "open", `[
+				{"__typename":"CheckRun","name":"test","status":"COMPLETED","conclusion":"SUCCESS"},
+				{"__typename":"CheckRun","name":"lint","status":"IN_PROGRESS"}
+			]`, true
+		}))
+	t.Cleanup(agentd.SetPresentedPRInfoWithChecksResolverForTest(
+		func(rawURL string) (int, string, string, string, bool) {
+			return 56, rawURL, "open", `[
+				{"__typename":"CheckRun","name":"test","status":"COMPLETED","conclusion":"FAILURE"}
+			]`, true
+		}))
+	// Any hover-driven call would be a bug in this scenario.
+	t.Cleanup(agentd.SetPRChecksResolverForTest(func(string) (string, bool) {
+		t.Error("the background path must populate badges without a hover refresh")
+		return "", false
+	}))
+
+	f := newFlow(t)
+	f.HaveGroup("squad")
+	f.HaveAliveSessionOnBranch(conv, "spwn-piggy", "tmux-piggy", f.TestCwd("wt/piggy"), branch)
+	f.HaveMember("squad", conv)
+	require.NoError(t, db.SetAgentPermissionOverride(conv, agentd.PermSelfPR, db.PermEffectGrant, "test"))
+	require.NotNil(t, agent.FreshConvRowResolved(conv), "conv_index scan")
+
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(
+		testharness.JSONRequest(t, http.MethodPost, "/v1/whoami/prs",
+			map[string]any{"url": presented, "summary": "review me"}), conv))
+	require.Equalf(t, http.StatusOK, rec.Code, "present PR: body=%s", rec.Body.String())
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	_ = fetchDashSnapshot(t, mux) // cold: schedules both background resolves
+	agentd.WaitForBackgroundForTest()
+
+	member := findDashMember(fetchDashSnapshot(t, mux), "squad", conv)
+	require.NotNil(t, member)
+	require.NotNil(t, member.BranchChecks, "the branch refresh must have cached its rollup")
+	assert.Equal(t, "pending", member.BranchChecks.State, "one passing, one still running")
+	assert.Equal(t, 2, member.BranchChecks.Total)
+
+	require.Len(t, member.PresentedPRs, 1)
+	require.NotNil(t, member.PresentedPRs[0].Checks, "the presented-PR refresh must cache its rollup too")
+	assert.Equal(t, "failing", member.PresentedPRs[0].Checks.State)
+}
+
 // A merged or closed PR's checks are frozen, so no amount of hovering may keep
 // re-polling one. The cached answer keeps being served instead.
 func TestDashboardPRChecks_TerminalPRStopsPolling(t *testing.T) {

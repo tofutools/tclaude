@@ -203,7 +203,10 @@ func refreshPresentedPR(agentID, rawURL, key string) {
 func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
 	out := runInDir("", "gh", "pr", "view", strings.TrimSpace(rawURL), "--json", "number,url,state,statusCheckRollup")
 	if out == "" {
-		return presentedPRInfo{}, false
+		// Same reasoning as ghPRForBranch: the rollup is an enhancement, the
+		// PR's own state is what the badge colour depends on. Retry without
+		// the newer field rather than losing both.
+		return livePresentedPRInfoWithoutChecks(rawURL)
 	}
 	var pr struct {
 		Number            int             `json:"number"`
@@ -221,6 +224,25 @@ func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
 	return presentedPRInfo{
 		Number: pr.Number, URL: pr.URL, State: strings.ToLower(pr.State), Checks: &checks,
 	}, true
+}
+
+func livePresentedPRInfoWithoutChecks(rawURL string) (presentedPRInfo, bool) {
+	out := runInDir("", "gh", "pr", "view", strings.TrimSpace(rawURL), "--json", "number,url,state")
+	if out == "" {
+		return presentedPRInfo{}, false
+	}
+	var pr struct {
+		Number int    `json:"number"`
+		URL    string `json:"url"`
+		State  string `json:"state"`
+	}
+	if json.Unmarshal([]byte(out), &pr) != nil {
+		return presentedPRInfo{}, false
+	}
+	if pr.URL == "" {
+		pr.URL = strings.TrimSpace(rawURL)
+	}
+	return presentedPRInfo{Number: pr.Number, URL: pr.URL, State: strings.ToLower(pr.State)}, true
 }
 
 func savePresentedPRCache(key, rawURL string, info presentedPRInfo, now time.Time) {

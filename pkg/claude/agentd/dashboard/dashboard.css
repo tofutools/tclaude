@@ -1014,6 +1014,17 @@ a.branch-link:hover { color: #58a6ff; text-decoration: underline; }
   color: #c9d1d9; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
   font-size: 12px; line-height: 1.35; text-align: left; white-space: normal;
 }
+/* The 7px between badge and panel belongs to neither, so a pointer travelling
+   down to scroll the list would leave the hover root and close the panel
+   mid-motion (this component unmounts the panel on close, so that would also
+   abort its in-flight poll). Bridge the gap with a transparent strip on the
+   root itself — it exists only while the panel is open, so it never becomes
+   an invisible hover target under a closed badge. It cannot live on .ci-panel:
+   that box is overflow:auto and would clip anything above its padding box. */
+.ci-hover.is-open::after {
+  content: ""; position: absolute; left: 0; top: 100%;
+  width: min(360px, calc(100vw - 32px)); height: 9px;
+}
 .ci-panel-heading { color: #f0f6fc; font-size: 12px; font-weight: 700; letter-spacing: 0.2px; }
 .ci-panel-summary { margin: 2px 0 8px; color: #8b949e; font-size: 11px; }
 .ci-checks { margin: 0; padding: 0; list-style: none; }

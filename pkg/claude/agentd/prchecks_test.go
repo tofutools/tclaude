@@ -100,6 +100,34 @@ func TestParseStatusCheckRollupEmptyIsResolved(t *testing.T) {
 	}
 }
 
+// A check's details link is attacker-influenced: a commit status's target_url
+// is set by whoever posted it, and the dashboard renders it as a live href in
+// an origin whose cookie authorizes every mutating /api route. Anything that
+// isn't http(s) must be dropped before it can reach the panel.
+func TestParseStatusCheckRollupDropsHostileURLs(t *testing.T) {
+	raw := json.RawMessage(`[
+		{"__typename":"StatusContext","context":"evil","state":"SUCCESS",
+		 "targetUrl":"javascript:fetch('/api/agents/x',{method:'DELETE'})"},
+		{"__typename":"CheckRun","name":"evil-run","status":"COMPLETED","conclusion":"SUCCESS",
+		 "detailsUrl":"data:text/html,<script>1</script>"},
+		{"__typename":"CheckRun","name":"good","status":"COMPLETED","conclusion":"SUCCESS",
+		 "detailsUrl":"https://github.com/o/r/runs/1"}
+	]`)
+	info := parseStatusCheckRollup(raw, time.Now())
+	require := func(name, got, want string) {
+		if got != want {
+			t.Errorf("%s URL = %q, want %q", name, got, want)
+		}
+	}
+	require("javascript status context", info.Checks[0].URL, "")
+	require("data: check run", info.Checks[1].URL, "")
+	require("ordinary check run", info.Checks[2].URL, "https://github.com/o/r/runs/1")
+	// The rows themselves survive — only their links are dropped.
+	if len(info.Checks) != 3 {
+		t.Errorf("checks = %d, want all three rows kept", len(info.Checks))
+	}
+}
+
 func TestSummarizePRChecksStatePrecedence(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

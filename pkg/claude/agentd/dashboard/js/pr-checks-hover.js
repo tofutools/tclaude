@@ -1,5 +1,5 @@
 import { h } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useId, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 
 const html = htm.bind(h);
@@ -44,6 +44,14 @@ export function checkStateGlyph(state) {
     case 'pending': return '◐';
     default: return '·';
   }
+}
+
+// safeCheckURL mirrors the server-side scheme allowlist in prchecks.go. A
+// check's details link is attacker-influenced (a commit status's target_url
+// is set by whoever posted it), and this renders it as a live href in the
+// dashboard origin — so neither side is allowed to be the only guard.
+export function safeCheckURL(raw) {
+  return /^https?:\/\//i.test(String(raw || '').trim()) ? String(raw).trim() : '';
 }
 
 function bucketGlyph(bucket) {
@@ -131,6 +139,7 @@ function usePRChecks(url, open) {
 
 function CheckRow({ check, now }) {
   const time = elapsed(check, now);
+  const href = safeCheckURL(check.url);
   const body = html`
     <span class="ci-check-body">
       <span class="ci-check-name">${check.name}</span>
@@ -142,8 +151,8 @@ function CheckRow({ check, now }) {
   return html`
     <li class=${`ci-check ci-check-${check.bucket || 'pending'}`}>
       <span class=${`ci-check-icon ci-icon-${check.bucket || 'pending'}`} aria-hidden="true">${bucketGlyph(check.bucket)}</span>
-      ${check.url
-        ? html`<a class="ci-check-link" href=${check.url} target="_blank" rel="noopener noreferrer">${body}</a>`
+      ${href
+        ? html`<a class="ci-check-link" href=${href} target="_blank" rel="noopener noreferrer">${body}</a>`
         : body}
       <span class="ci-check-time">${time || '—'}</span>
     </li>
@@ -192,6 +201,7 @@ function PRChecksPanel({ url, prNumber, summary, panelID, headingID, state }) {
 // had rather than growing an empty indicator.
 export function PRChecksBadge({ url, prNumber, summary }) {
   const rootRef = useRef(null);
+  const instanceID = useId();
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
   const [pinned, setPinned] = useState(false);
@@ -211,7 +221,7 @@ export function PRChecksBadge({ url, prNumber, summary }) {
 
   if (!url || !summary || !(summary.total > 0)) return null;
   const denominator = checkDenominator(summary);
-  const panelID = `ci-panel-${String(prNumber || url).replace(/[^a-zA-Z0-9_-]+/g, '-')}`;
+  const panelID = `ci-panel-${instanceID.replace(/[^a-zA-Z0-9_-]+/g, '-')}`;
   const headingID = `${panelID}-heading`;
   const stateName = summary.state || 'unknown';
 
