@@ -367,6 +367,16 @@ func (h *Harness) SupportsSoftExit() bool {
 	return h != nil && h.Life != nil && h.Life.SoftExitCommand() != ""
 }
 
+// SignalExitKeys returns the harness's keystroke-free soft-exit key sequence
+// (Lifecycle.SignalExitKeys), or nil when the harness has none and its soft
+// exit is typed or dispatched out of band. nil-safe for a zero Harness.
+func (h *Harness) SignalExitKeys() []string {
+	if h == nil || h.Life == nil {
+		return nil
+	}
+	return h.Life.SignalExitKeys()
+}
+
 // SupportsRemoteControl reports whether the harness has a usable in-pane
 // remote-control toggle command (Claude Code's "/remote-control"). Callers
 // must skip the toggle injection — and hide the affordance — when false

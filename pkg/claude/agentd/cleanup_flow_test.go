@@ -1200,10 +1200,7 @@ func TestCleanupDelete_RefusesATargetItCouldNotStop(t *testing.T) {
 
 	cc := f.World.CCs.GetByConvID(unkillable)
 	require.NotNil(t, cc, "no CCSim registered for %s", unkillable)
-	cc.OnInput("/exit", func(c *testharness.CCSim, _ string) bool {
-		_ = c.WriteUserTurn("[hung agent: /exit ignored]")
-		return true
-	})
+	cc.SetSignalExitWedged(true)
 
 	mux := agentd.BuildDashboardHandlerForTest()
 	resp := postCleanup(t, mux, "/api/cleanup/agents",

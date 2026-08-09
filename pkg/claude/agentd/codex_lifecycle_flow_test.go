@@ -92,22 +92,23 @@ func TestCodexAgent_SpawnMessageGracefulStop(t *testing.T) {
 	f.AssertSentContains(spawn.TmuxTarget(), "new agent message", 10*time.Second)
 
 	// Stop GRACEFULLY. The daemon resolves the conv's harness, sees a
-	// soft-exit command, and injects Codex's `/quit`. The result must be
-	// "soft_stopped" — the lead's explicit ask is that this exercises the
-	// graceful path, not the killed_no_soft_exit hard-kill fallback.
+	// signal-exit key sequence, and injects Codex's keystroke-free
+	// double-ctrl-c quit (codexLifecycle.SignalExitKeys, TCL-1137) instead of
+	// typing `/quit`. The result must be "soft_stopped" — the lead's explicit
+	// ask is that this exercises the graceful path, not the
+	// killed_no_soft_exit hard-kill fallback.
 	stop := f.AsHuman().Stop(spawn.ConvID, false)
 	f.AssertSoftStopped(stop)
-	f.AssertSentContains(spawn.TmuxTarget(), "/quit", 10*time.Second)
+	f.AssertSentContains(spawn.TmuxTarget(), "C-c", 10*time.Second)
 	reason, err := db.GetSessionExitReason(sessions[0].ID)
 	require.NoError(t, err, "GetSessionExitReason")
 	assert.Equal(t, "soft_exit", reason,
 		"daemon soft-stop must record a clean reason before the reaper sees Codex disappear")
 
-	// `/quit` took the pane down: the CodexSim's quit handler flipped it
-	// dead, so has-session now reports offline. With the welcome drained
-	// above, the `/quit` injection no longer races it on the input buffer,
-	// so MarkDead runs synchronously during the stop; the short poll stays
-	// only as a defensive guard against send-keys settle timing.
+	// The ctrl-c quit took the pane down: CodexSim arms on the first C-c and
+	// exits on the second (the same request_quit_without_confirmation path as
+	// /quit), so has-session now reports offline. The short poll stays only as
+	// a defensive guard against send-keys settle timing.
 	require.Eventually(t, func() bool {
 		return !f.World.Tmux.IsAlive(spawn.TmuxSession)
 	}, 10*time.Second, 10*time.Millisecond,

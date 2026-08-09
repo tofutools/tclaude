@@ -129,12 +129,9 @@ func hangOnExit(t *testing.T, f *testharness.Flow, convID string) {
 	t.Helper()
 	cc := f.World.CCs.GetByConvID(convID)
 	require.NotNil(t, cc, "no CCSim registered for %s", convID)
-	cc.OnInput("/exit", func(c *testharness.CCSim, line string) bool {
-		_ = c.WriteUserTurn("[hung agent: /exit ignored]")
-		// Consume the line — do NOT fall through to the default /exit
-		// handler, which would MarkDead. A hung agent stays alive.
-		return true
-	})
+	// A hung agent reads the signal-exit ctrl-c presses but never quits, so the
+	// escalation ladder has to force-kill it.
+	cc.SetSignalExitWedged(true)
 }
 
 // === Shutdown ========================================================

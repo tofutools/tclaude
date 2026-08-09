@@ -111,10 +111,7 @@ func TestSoftExitEscalation_KillsPaneThatNeverExits(t *testing.T) {
 
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc)
-	cc.OnInput("/exit", func(c *testharness.CCSim, _ string) bool {
-		_ = c.WriteUserTurn("[wedged: /exit ignored]")
-		return true // consume; never MarkDead
-	})
+	cc.SetSignalExitWedged(true)
 
 	f.AssertSoftStopped(f.AsHuman().Stop(conv, false))
 	agentd.WaitForBackgroundForTest()
@@ -208,10 +205,7 @@ func TestSoftExitEscalation_SignalsProcessGroupWhenTmuxKillIsInsufficient(t *tes
 
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc)
-	cc.OnInput("/exit", func(c *testharness.CCSim, _ string) bool {
-		_ = c.WriteUserTurn("[unkillable: /exit ignored]")
-		return true
-	})
+	cc.SetSignalExitWedged(true)
 
 	f.AssertSoftStopped(f.AsHuman().Stop(conv, false))
 	agentd.WaitForBackgroundForTest()
@@ -239,10 +233,7 @@ func TestSoftExitEscalation_StandsDownForASuccessorPane(t *testing.T) {
 
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc)
-	cc.OnInput("/exit", func(c *testharness.CCSim, _ string) bool {
-		_ = c.WriteUserTurn("[wedged: /exit ignored]")
-		return true
-	})
+	cc.SetSignalExitWedged(true)
 
 	// Between the stop and the deadline the pane identity changes, which is
 	// what a resume reusing the conv-id-derived tmux name looks like from the
@@ -288,7 +279,7 @@ func TestSoftExitEscalation_ReconcilesExitBetweenDeadlineAndRevalidation(t *test
 
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc)
-	cc.OnInput("/exit", func(c *testharness.CCSim, _ string) bool { return true })
+	cc.SetSignalExitWedged(true)
 	var once sync.Once
 	cleanupAfterBackgroundDrain(t, agentd.SetBeforeSoftExitEscalationRevalidateForTest(func() {
 		once.Do(cc.MarkDead)

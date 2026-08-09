@@ -12,34 +12,40 @@ import (
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
-// Flow coverage for the soft-exit re-injection retry (injectSoftExit /
-// scheduleSoftExitRetry). A single /exit can be silently lost when the
-// pane's input buffer wasn't empty: send-keys appends the command to
-// whatever junk was sitting there, so the trailing Enter submits
-// "<junk>/exit" as one ordinary prompt instead of an exit, and the pane
-// keeps running. The daemon now backgrounds a retry that re-injects /exit
-// while the SAME pane is still alive — the submit above cleared the
-// buffer, so the second attempt lands clean and takes.
+// Flow coverage for the soft-exit re-injection retry (injectSoftExitTarget /
+// scheduleSoftExitRetryTarget). Claude Code's soft exit is the keystroke-free
+// signal sequence [Escape, C-c, C-c, C-c] (claudeLifecycle.SignalExitKeys,
+// TCL-1137): each attempt is one lock-held send, its leading Escape clears any
+// pending line or dialog, and the ctrl-c presses arm and quit. The daemon
+// backgrounds a bounded retry that re-sends the sequence while the SAME pane is
+// still alive, then escalates to a kill if the pane never dies.
 //
-// The simulator models the bug faithfully: CCSim.Receive buffers
-// keystrokes until an Enter arrives, so a junk fragment fed WITHOUT a
-// trailing Enter sits in the input buffer exactly as a half-typed line
-// would in a real pane. The default /exit handler matches on the "/exit"
-// prefix, so "<junk>/exit" misses it and falls through to the user-turn
-// catch-all — the pane stays alive — while a clean "/exit" triggers
-// MarkDead.
+// The simulator models the pane faithfully: CCSim.Receive arms on an idle C-c
+// and exits on the next armed C-c (the same shutdown as /exit), while a wedged
+// pane that reads the presses without quitting is modelled via
+// CCSim.SetSignalExitWedged — the state the retry + escalation ladder exists to
+// handle. Attempts are counted by countSoftExitAttempts (one Escape per send).
 
-// countExitSends returns how many times exactly `cmd` was typed into
-// target's pane via send-keys. Each soft-exit injection sends the command
-// text as one send-keys call (followed by two Enters), so this counts the
-// distinct soft-exit attempts the daemon made into that pane.
-func countExitSends(f *testharness.Flow, target, cmd string) int {
+// countSoftExitAttempts returns how many soft-exit attempts the daemon made
+// into target's pane. These scenarios run Claude Code, whose soft exit is now
+// the keystroke-free signal sequence [Escape, C-c, C-c, C-c] (see
+// claudeLifecycle.SignalExitKeys), delivered as one lock-held send per attempt.
+// Every attempt leads with exactly one Escape, so counting Escape sends counts
+// the distinct attempts — the signal-exit analog of the old "count typed /exit"
+// tally.
+func countSoftExitAttempts(f *testharness.Flow, target string) int {
+	return countKeySends(f, target, "Escape")
+}
+
+// countKeySends returns how many times exactly `key` was sent into target's
+// pane via send-keys.
+func countKeySends(f *testharness.Flow, target, key string) int {
 	n := 0
 	for _, sk := range f.World.Tmux.Sent() {
 		// Lifecycle soft-stop now targets the immutable pane id (%N), while
 		// older harness paths retain the session target. These scenarios have
-		// one pane, so count the command regardless of target spelling.
-		if sk.Text == cmd {
+		// one pane, so count the key regardless of target spelling.
+		if sk.Text == key {
 			n++
 		}
 	}
@@ -47,10 +53,13 @@ func countExitSends(f *testharness.Flow, target, cmd string) int {
 }
 
 // Scenario: the agent's input buffer holds a half-typed leftover when the
-// daemon soft-stops it. The first /exit is scrambled into a no-op prompt;
-// the background retry re-injects onto the now-clean buffer and the pane
-// finally exits. This is the bug the retry exists to recover from.
-func TestSoftExit_RetryRecoversJunkScrambledExit(t *testing.T) {
+// daemon soft-stops it. The typed-/exit era needed a background retry here: the
+// first /exit was appended to the junk and scrambled into a no-op prompt, and
+// only a re-injection onto the now-clean buffer exited. The keystroke-free
+// signal exit removes that failure mode entirely — its leading Escape clears
+// the buffer before the ctrl-c presses land, so a single first attempt exits.
+// This is the robustness win TCL-1137 buys, asserted where the old bug lived.
+func TestSoftExit_SignalExitClearsJunkBufferOnFirstAttempt(t *testing.T) {
 	f := newFlow(t)
 
 	const conv = "sxja-1111-2222-3333-4444"
@@ -60,35 +69,46 @@ func TestSoftExit_RetryRecoversJunkScrambledExit(t *testing.T) {
 	f.HaveAliveSession(conv, "spwn-sxja", tmuxSes, f.TestCwd("sxja"))
 
 	// Pre-existing junk in the pane's input buffer — a half-typed line left
-	// unsent. NO trailing Enter, so it sits in the buffer; the daemon's
-	// /exit gets appended to it.
+	// unsent. NO trailing Enter, so it sits in the buffer; the signal exit's
+	// Escape clears it before the ctrl-c presses arm and quit.
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc, "CCSim for the live agent")
 	cc.Receive("half-typed leftover ")
 
-	// This scenario needs the ladder to REACH attempt 2 — that is the whole
-	// recovery it measures — so it races the escalation watchdog exactly as
-	// the wedged-pane scenarios below do. See the header comment before
-	// TestSoftExit_BoundedRetriesForHungPane.
-	releaseEscalation := holdSoftExitEscalation(t)
-
 	stop := f.AsHuman().Stop(conv, false)
 	f.AssertSoftStopped(stop)
-
-	awaitLadderThenRelease(t, releaseEscalation, func() bool {
-		return countExitSends(f, target, "/exit") >= 2
-	}, "the ladder never re-injected, so this scenario is not measuring the retry recovery")
-	// Drain the background retry goroutine, then assert the recovery landed.
 	agentd.WaitForBackgroundForTest()
 
 	assert.False(t, f.World.Tmux.IsAlive(tmuxSes),
-		"the soft-exit retry must bring down a pane whose first /exit was scrambled by buffer junk")
-
-	// Proof the RETRY did it, not the first attempt: /exit was typed more
-	// than once. The first landed on "<junk>/exit" (a no-op prompt); the
-	// second on a clean buffer (the real exit).
-	assert.GreaterOrEqual(t, countExitSends(f, target, "/exit"), 2,
-		"daemon must have re-injected /exit after the first was lost to buffer junk")
+		"the signal exit must bring down a pane despite pre-existing buffer junk")
+	// No retry was needed: the Escape-led sequence handled the junk in one
+	// attempt, unlike the typed /exit that used to be scrambled by it.
+	assert.Equal(t, 1, countSoftExitAttempts(f, target),
+		"the signal exit clears buffer junk in a single first attempt — no re-injection")
+	// Pin Escape's role specifically: it must be sent, and BEFORE the first
+	// C-c, so the buffer is cleared before the ctrl-c presses arm and quit.
+	var idxEscape, idxFirstCC = -1, -1
+	for i, sk := range f.World.Tmux.Sent() {
+		if sk.Text == "Escape" && idxEscape == -1 {
+			idxEscape = i
+		}
+		if sk.Text == "C-c" && idxFirstCC == -1 {
+			idxFirstCC = i
+		}
+	}
+	require.NotEqual(t, -1, idxEscape, "the signal exit must send an Escape")
+	require.NotEqual(t, -1, idxFirstCC, "the signal exit must send a C-c")
+	assert.Less(t, idxEscape, idxFirstCC,
+		"Escape must precede the first C-c so buffer junk is cleared before the quit presses")
+	// Pin the FULL dispatched sequence, not just its shape. The simulated pane
+	// (like the real CLI) dies on the second armed C-c, but the daemon must
+	// still dispatch all three presses from claudeLifecycle.SignalExitKeys —
+	// the third covers the mid-turn state where the first press is spent
+	// interrupting the turn. TmuxSim logs sends to a dead pane too, so a
+	// regression that drops the surplus press is caught here even though the
+	// pane never needed it.
+	assert.Equal(t, 3, countKeySends(f, target, "C-c"),
+		"one signal-exit attempt must dispatch every C-c in SignalExitKeys, dead pane or not")
 }
 
 // Scenario: a pane with an empty input buffer honours the very first
@@ -110,11 +130,11 @@ func TestSoftExit_NoRetryWhenFirstExitSucceeds(t *testing.T) {
 
 	assert.False(t, f.World.Tmux.IsAlive(tmuxSes),
 		"a clean /exit brings the pane down on the first attempt")
-	assert.Equal(t, 1, countExitSends(f, target, "/exit"),
+	assert.Equal(t, 1, countSoftExitAttempts(f, target),
 		"a pane that exits on the first /exit must not be re-injected")
 	var exitTarget string
 	for _, sent := range f.World.Tmux.Sent() {
-		if sent.Text == "/exit" {
+		if sent.Text == "Escape" {
 			exitTarget = sent.Target
 			break
 		}
@@ -127,9 +147,16 @@ func TestSoftExit_NoRetryWhenFirstExitSucceeds(t *testing.T) {
 // THEM. Every scenario below has to reckon with that.
 //
 // A soft stop starts the bounded re-injection ladder AND, since TCL-1001, an
-// escalation watchdog. In production the two are separated by seconds: the
-// ladder's attempts land at softExitRetryDelay × softExitMaxAttempts ≈ 8 s,
-// the watchdog's deadline is 10 s. The flow fixture shrinks both — 1 ms
+// escalation watchdog. In production the two are close: the ladder's attempts
+// land at ~softExitRetryDelay × softExitMaxAttempts (plus, since TCL-1137, each
+// signal-exit attempt's own lock-held key spacing — Claude Code's four-key
+// [Escape, C-c, C-c, C-c] adds 3×injectSettleDelay ≈ 1.5 s per attempt), and
+// the watchdog's deadline is 10 s. The final retry can therefore land at or
+// just past the deadline, which is benign: a pane responsive enough to honour a
+// ctrl-c quits on the FIRST attempt (a signal is handled even when the keypress
+// reader is wedged — the whole premise of the signal exit), so the escalation
+// only ever preempts a truly wedged pane, whose kill is the correct outcome.
+// The flow fixture shrinks both — 1 ms
 // retries against a 20 ms deadline — which keeps the RATIO but throws away
 // the absolute headroom. Scheduler jitter is absolute: a goroutine that loses
 // its P for 20 ms on a loaded runner reorders these two in a way it can never
@@ -243,13 +270,11 @@ func TestSoftExit_BoundedRetriesForHungPane(t *testing.T) {
 	f.HaveConvWithTitle(conv, "hung-worker")
 	f.HaveAliveSession(conv, "spwn-sxjc", tmuxSes, f.TestCwd("sxjc"))
 
-	// A pane that consumes /exit without ever flipping dead (CC wedged).
+	// A pane that consumes the signal-exit ctrl-c presses without ever
+	// flipping dead (CC wedged).
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc)
-	cc.OnInput("/exit", func(c *testharness.CCSim, _ string) bool {
-		_ = c.WriteUserTurn("[hung: /exit ignored]")
-		return true // consume; never MarkDead
-	})
+	cc.SetSignalExitWedged(true)
 
 	// The watchdog waits until the ladder has spent its attempts. That is the
 	// production ordering (10 s deadline against ~8 s of retries); at fixture
@@ -260,7 +285,7 @@ func TestSoftExit_BoundedRetriesForHungPane(t *testing.T) {
 	stop := f.AsHuman().Stop(conv, false)
 	f.AssertSoftStopped(stop)
 	awaitLadderThenRelease(t, releaseEscalation, func() bool {
-		return countExitSends(f, target, "/exit") == 3
+		return countSoftExitAttempts(f, target) == 3
 	}, "the bounded ladder never reached its third attempt")
 	agentd.WaitForBackgroundForTest()
 
@@ -268,7 +293,7 @@ func TestSoftExit_BoundedRetriesForHungPane(t *testing.T) {
 	// total. Guards against an unbounded re-injection loop into a wedged pane.
 	// Re-asserted after the drain: the wait above proves it REACHED 3, this
 	// proves nothing pushed it past 3 afterwards.
-	assert.Equal(t, 3, countExitSends(f, target, "/exit"),
+	assert.Equal(t, 3, countSoftExitAttempts(f, target),
 		"soft-exit attempts must be capped (initial + retries), not infinite")
 	assert.False(t, f.World.Tmux.IsAlive(tmuxSes),
 		"a pane that ignored every bounded /exit must be escalated to a kill, not left running")
@@ -323,11 +348,11 @@ func TestSoftExit_RetryDoesNotExitResumedPaneReusingTmuxName(t *testing.T) {
 	f.HaveConvWithTitle(conv, "resumed-worker")
 	f.HaveAliveSession(conv, "spwn-sxjd", tmuxSes, cwd)
 
-	// Junk in the buffer scrambles the first /exit, so the pane stays alive
-	// and the retry is armed.
+	// A wedged pane ignores the first signal-exit attempt, so it stays alive
+	// and the retry is armed to reach attempt 2 where the swap is staged.
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc)
-	cc.Receive("half-typed leftover ")
+	cc.SetSignalExitWedged(true)
 
 	// Stage the resume INSIDE the retry's own pre-probe hook: the original pane
 	// exits and a fresh CCSim (a new process → new pane pid) re-registers under
@@ -418,7 +443,7 @@ func TestSoftExit_RetryDoesNotExitResumedPaneReusingTmuxName(t *testing.T) {
 		"the resumed pane must survive — the retry must not /exit a new process that reused the tmux name")
 	// The only /exit to this name was the original (scrambled) attempt; the
 	// retry recognised the pid change and never re-injected.
-	assert.Equal(t, 1, countExitSends(f, target, "/exit"),
+	assert.Equal(t, 1, countSoftExitAttempts(f, target),
 		"retry must abort once a different process owns the tmux name")
 }
 
@@ -444,7 +469,7 @@ func TestSoftExit_SelectedPaneSwapSendsZeroBytesToSuccessor(t *testing.T) {
 
 	assert.Equal(t, "error", f.AsHuman().Stop(conv, false).Action)
 	assert.True(t, f.World.Tmux.IsAlive(tmuxSes), "successor must remain alive")
-	assert.Equal(t, 0, countExitSends(f, tmuxSes+":0.0", "/exit"), "successor receives zero /exit bytes")
+	assert.Equal(t, 0, countSoftExitAttempts(f, tmuxSes+":0.0"), "successor receives zero /exit bytes")
 }
 
 func TestSoftExit_InitialProbeUnknownPreservesDeliveryWithoutRetry(t *testing.T) {
@@ -456,7 +481,7 @@ func TestSoftExit_InitialProbeUnknownPreservesDeliveryWithoutRetry(t *testing.T)
 	f.HaveAliveSession(conv, "spwn-sxjf", tmuxSes, f.TestCwd("sxjf"))
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc)
-	cc.OnInput("/exit", func(c *testharness.CCSim, _ string) bool { return true })
+	cc.SetSignalExitWedged(true)
 	// This fault is aimed at the SYNCHRONOUS post-send probe, and it reaches
 	// it for a structural reason rather than a lucky one: the hook runs inside
 	// injectSoftExitTarget, and scheduleSoftExitEscalation is not called until
@@ -481,7 +506,7 @@ func TestSoftExit_InitialProbeUnknownPreservesDeliveryWithoutRetry(t *testing.T)
 	assert.False(t, witness.probedWhenSampled(),
 		"the escalation watchdog was already probing when this fault was queued; "+
 			"it is no longer aimed at the synchronous probe")
-	assert.Equal(t, 1, countExitSends(f, tmuxSes+":0.0", "/exit"), "unknown probe must never trigger retry reinjection")
+	assert.Equal(t, 1, countSoftExitAttempts(f, tmuxSes+":0.0"), "unknown probe must never trigger retry reinjection")
 }
 
 func TestSoftExit_PreSendUnknownSendsZeroAndErrors(t *testing.T) {
@@ -514,7 +539,7 @@ func TestSoftExit_PreSendUnknownSendsZeroAndErrors(t *testing.T) {
 	require.NoError(t, d.QueryRow(`SELECT exit_intent FROM sessions WHERE id = 'spwn-sxjg'`).Scan(&intent))
 	assert.Empty(t, intent)
 	assert.True(t, f.World.Tmux.IsAlive(tmuxSes))
-	assert.Equal(t, 0, countExitSends(f, tmuxSes+":0.0", "/exit"))
+	assert.Equal(t, 0, countSoftExitAttempts(f, tmuxSes+":0.0"))
 	releaseEscalation()
 }
 
@@ -539,7 +564,7 @@ func TestSoftExit_RetryUnknownCleansWithoutSend(t *testing.T) {
 	f.HaveAliveSession(conv, "spwn-sxjh", tmuxSes, f.TestCwd("sxjh"))
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc)
-	cc.OnInput("/exit", func(c *testharness.CCSim, _ string) bool { return true })
+	cc.SetSignalExitWedged(true)
 	faults := &retryProbeFaults{faultAt: 2}
 	cleanup := agentd.SetBeforeSoftExitTargetRetryProbeForTest(faults.hook(f.World.Tmux))
 	cleanupAfterBackgroundDrain(t, cleanup)
@@ -551,7 +576,7 @@ func TestSoftExit_RetryUnknownCleansWithoutSend(t *testing.T) {
 	}, "attempt 2's probe never took the fault queued for it, so this scenario "+
 		"is not measuring an unknown probe result")
 	agentd.WaitForBackgroundForTest()
-	assert.Equal(t, 1, countExitSends(f, tmuxSes+":0.0", "/exit"))
+	assert.Equal(t, 1, countSoftExitAttempts(f, tmuxSes+":0.0"))
 	assert.Equal(t, []int{2}, faults.attempts(),
 		"an unknown probe must END the ladder; reaching attempt 3 means the abort did not hold")
 }
@@ -569,7 +594,7 @@ func TestSoftExit_FinalUnknownCleansBounded(t *testing.T) {
 	f.HaveAliveSession(conv, "spwn-sxji", tmuxSes, f.TestCwd("sxji"))
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc)
-	cc.OnInput("/exit", func(c *testharness.CCSim, _ string) bool { return true })
+	cc.SetSignalExitWedged(true)
 	faults := &retryProbeFaults{faultAt: 3}
 	cleanup := agentd.SetBeforeSoftExitTargetRetryProbeForTest(faults.hook(f.World.Tmux))
 	cleanupAfterBackgroundDrain(t, cleanup)
@@ -581,7 +606,7 @@ func TestSoftExit_FinalUnknownCleansBounded(t *testing.T) {
 	}, "attempt 3's probe never took the fault queued for it, so this scenario "+
 		"is not measuring an unknown probe result")
 	agentd.WaitForBackgroundForTest()
-	assert.Equal(t, 2, countExitSends(f, tmuxSes+":0.0", "/exit"))
+	assert.Equal(t, 2, countSoftExitAttempts(f, tmuxSes+":0.0"))
 	assert.Equal(t, []int{2, 3}, faults.attempts(),
 		"the ladder must reach its bound here; a shorter run means something aborted it early")
 }
@@ -645,7 +670,7 @@ func TestLifecycleStop_PaneGenerationBinding(t *testing.T) {
 			if !tc.force {
 				cc := f.World.CCs.GetByConvID(conv)
 				require.NotNil(t, cc)
-				cc.OnInput("/exit", func(*testharness.CCSim, string) bool { return true })
+				cc.SetSignalExitWedged(true)
 			}
 			if tc.bound {
 				f.World.Tmux.SetPaneExitGeneration(tmuxSession, boundGeneration)
@@ -680,7 +705,7 @@ func TestLifecycleStop_PaneGenerationBinding(t *testing.T) {
 			assert.Equal(t, tc.wantAction, stop.Action)
 			if releaseEscalation != nil {
 				awaitLadderThenRelease(t, releaseEscalation, func() bool {
-					return countExitSends(f, tmuxSession+":0.0", "/exit") == tc.wantSends
+					return countSoftExitAttempts(f, tmuxSession+":0.0") == tc.wantSends
 				}, "the ladder never reached its full attempt count")
 			}
 			// Drained on EVERY row, not just the ladder rows. The rows that
@@ -688,7 +713,7 @@ func TestLifecycleStop_PaneGenerationBinding(t *testing.T) {
 			// undrained assertion there cannot fail: it would be asserting
 			// that a kill has not happened YET.
 			agentd.WaitForBackgroundForTest()
-			assert.Equal(t, tc.wantSends, countExitSends(f, tmuxSession+":0.0", "/exit"))
+			assert.Equal(t, tc.wantSends, countSoftExitAttempts(f, tmuxSession+":0.0"))
 			if tc.wantKill {
 				assert.NotEmpty(t, f.World.Tmux.MutationTargets("kill-pane"))
 			} else {
@@ -724,7 +749,7 @@ func TestSoftExit_DeliveredIntentObserverWindow(t *testing.T) {
 			f.World.Tmux.SetPaneExitGeneration(tmuxSession, generation)
 			cc := f.World.CCs.GetByConvID(conv)
 			require.NotNil(t, cc)
-			cc.OnInput("/exit", func(*testharness.CCSim, string) bool { return true })
+			cc.SetSignalExitWedged(true)
 			if tc.dualFault {
 				// These two faults need no watchdog parking, and the reason is
 				// structural rather than lucky: this hook runs inside the
@@ -752,10 +777,10 @@ func TestSoftExit_DeliveredIntentObserverWindow(t *testing.T) {
 				// INSIDE the bounded observer window, which the drain would
 				// wait out.
 				awaitLadderThenRelease(t, releaseEscalation, func() bool {
-					return countExitSends(f, tmuxSession+":0.0", "/exit") == tc.wantSends
+					return countSoftExitAttempts(f, tmuxSession+":0.0") == tc.wantSends
 				}, "the ladder never reached its full attempt count")
 			} else {
-				assert.Equal(t, tc.wantSends, countExitSends(f, tmuxSession+":0.0", "/exit"))
+				assert.Equal(t, tc.wantSends, countSoftExitAttempts(f, tmuxSession+":0.0"))
 			}
 
 			d, err := db.Open()
@@ -776,7 +801,7 @@ func TestSoftExit_DeliveredIntentObserverWindow(t *testing.T) {
 			assert.Equal(t, tmuxSession, gotTmux)
 
 			agentd.WaitForBackgroundForTest()
-			assert.Equal(t, tc.wantSends, countExitSends(f, tmuxSession+":0.0", "/exit"),
+			assert.Equal(t, tc.wantSends, countSoftExitAttempts(f, tmuxSession+":0.0"),
 				"background retry must not add sends after the expected terminal state")
 			readIntent()
 			assert.Empty(t, intent, "bounded cleanup clears the exact action/event/generation owner")
@@ -809,7 +834,7 @@ func TestSoftExit_RetryIdentityDriftPreservesDeliveredIntent(t *testing.T) {
 	f.World.Tmux.SetPaneExitGeneration(tmuxSes, generation)
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc)
-	cc.OnInput("/exit", func(*testharness.CCSim, string) bool { return true })
+	cc.SetSignalExitWedged(true)
 	drifted := make(chan struct{})
 	var driftOnce sync.Once
 	cleanupAfterBackgroundDrain(t, agentd.SetBeforeSoftExitTargetRetryProbeForTest(func(attempt int) {
@@ -842,7 +867,7 @@ func TestSoftExit_RetryIdentityDriftPreservesDeliveredIntent(t *testing.T) {
 	assert.Empty(t, f.World.Tmux.MutationTargets("kill-pane"),
 		"the drifted pane belongs to a successor and must never be killed")
 
-	assert.Equal(t, 1, countExitSends(f, tmuxSes+":0.0", "/exit"),
+	assert.Equal(t, 1, countSoftExitAttempts(f, tmuxSes+":0.0"),
 		"no retry may be typed once the pane identity drifted")
 	d, err := db.Open()
 	require.NoError(t, err)
@@ -871,7 +896,7 @@ func TestSoftExit_RetryUnknownAfterSessionGonePreservesReaperAttribution(t *test
 	f.HaveAliveSession(conv, sessionID, tmuxSes, f.TestCwd("sxjm"))
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc)
-	cc.OnInput("/exit", func(*testharness.CCSim, string) bool { return true })
+	cc.SetSignalExitWedged(true)
 	sessionGone := make(chan struct{})
 	var goneOnce sync.Once
 	cleanupAfterBackgroundDrain(t, agentd.SetBeforeSoftExitTargetRetryProbeForTest(func(attempt int) {
@@ -902,7 +927,7 @@ func TestSoftExit_RetryUnknownAfterSessionGonePreservesReaperAttribution(t *test
 	assert.Empty(t, f.World.Tmux.MutationTargets("kill-pane"),
 		"a session that already vanished leaves the escalation nothing to kill")
 
-	assert.Equal(t, 1, countExitSends(f, tmuxSes+":0.0", "/exit"))
+	assert.Equal(t, 1, countSoftExitAttempts(f, tmuxSes+":0.0"))
 	d, err := db.Open()
 	require.NoError(t, err)
 	var intent, gotEventID string
@@ -930,7 +955,7 @@ func TestSoftExit_RetrySendFailurePreservesDeliveredIntentThroughWindow(t *testi
 	f.HaveAliveSession(conv, sessionID, tmuxSes, f.TestCwd("sxjn"))
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc)
-	cc.OnInput("/exit", func(*testharness.CCSim, string) bool { return true })
+	cc.SetSignalExitWedged(true)
 	retryReached := make(chan struct{})
 	var once sync.Once
 	cleanupAfterBackgroundDrain(t, agentd.SetBeforeSoftExitTargetRetryProbeForTest(func(attempt int) {
@@ -982,7 +1007,7 @@ func TestSoftExit_RetrySendFailurePreservesDeliveredIntentThroughWindow(t *testi
 	assert.Equal(t, eventID, gotEventID)
 
 	agentd.WaitForBackgroundForTest()
-	assert.Equal(t, 1, countExitSends(f, tmuxSes+":0.0", "/exit"),
+	assert.Equal(t, 1, countSoftExitAttempts(f, tmuxSes+":0.0"),
 		"the failed re-send delivers no bytes and no further retries run")
 	intent, gotEventID = readIntent()
 	assert.Empty(t, intent, "the bounded observer window still cleans up; retention is not a leak")

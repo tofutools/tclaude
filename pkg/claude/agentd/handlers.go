@@ -1882,31 +1882,30 @@ func injectSoftExitTextSerializedBy(lockTarget, tmuxTarget, text string, prefixK
 	return injectTextAndSubmitWithOptions(lockTarget, tmuxTarget, text, false, prefixKeys...)
 }
 
-// copilotSignalExitPresses is how many ctrl-c presses Copilot's signal exit
-// sends. The first may be spent cancelling an in-flight operation (or
-// aborting a permission dialog); the next press arms "ctrl+c again to exit";
-// the press after that lands inside the armed window and exits the CLI. On a
-// pane that had nothing to cancel the exit already fires one press earlier
-// and the surplus press lands on a dead pane, which is tolerated below.
-const copilotSignalExitPresses = 3
-
-// injectCopilotSignalExitSerializedBy is Copilot's soft exit: three ctrl-c
-// presses, one settle apart, as one lock-held sequence. Keystroke-free on
-// purpose — typed slash commands are silently dropped both mid-turn (the
-// measured 1.0.77 behaviour that used to motivate a cancel-then-/exit
-// sequence) and whenever the TUI's keypress reader wedges outright (the
-// 2026-08-09 incident: three /exit injections ignored for the full 10 s
-// escalation deadline while ctrl-c handling demonstrably kept working).
-// Copilot's double-ctrl-c quit rides that surviving path: measured against
-// 1.0.78, the "again to exit" window closes between 1.2 s and 1.5 s, and
-// second presses 0.5–1.2 s after the first all exit cleanly (status 0)
-// through the CLI's designed quit path.
+// injectSignalExitSerializedBy is a harness's keystroke-free soft exit: the
+// ordered key names from harness.Lifecycle.SignalExitKeys sent into the pane
+// one settle apart, as one lock-held sequence. Keystroke-free on purpose — a
+// typed slash command is silently dropped both mid-turn and whenever a TUI's
+// keypress reader wedges outright (the Copilot 2026-08-09 incident: three
+// /exit injections ignored for the full 10 s escalation deadline while ctrl-c
+// handling demonstrably kept working), while the ctrl-c quit rides the
+// surviving signal path. The exact keys and press count are per harness (see
+// each Lifecycle.SignalExitKeys): Copilot and Codex send three C-c; Claude Code
+// prefixes an Escape to clear a permission dialog or half-typed line first.
 //
-// The gap reuses injectSettleDelay: production's 500 ms sits inside the
-// measured window, and the flow-test override keeps simulated stops fast.
-// Only the FIRST press's failure is an error — a pane commonly dies on the
-// second press, making a later "can't find pane" the success case.
-func injectCopilotSignalExitSerializedBy(lockTarget, tmuxTarget string) error {
+// The gap reuses injectSettleDelay: production's 500 ms sits inside every
+// harness's measured re-press window (Copilot 1.2–1.5 s, Claude Code ~0.8 s,
+// Codex unbounded), and the flow-test override keeps simulated stops fast.
+// Only the FIRST key's failure is an error — a pane commonly dies on a later
+// press, making a subsequent "can't find pane" the success case.
+//
+// keys must be non-empty; callers select this path precisely when
+// SignalExitKeys is non-empty (see sendSoftExitToTarget), so the empty-list
+// error below is a belt-and-braces guard, not a reachable production path.
+func injectSignalExitSerializedBy(lockTarget, tmuxTarget string, keys []string) error {
+	if len(keys) == 0 {
+		return fmt.Errorf("signal exit: no keys for %s", tmuxTarget)
+	}
 	mu := paneInjectLock(injectLockKey(lockTarget))
 	if err := acquirePaneInjectLock(mu); err != nil {
 		return err
@@ -1917,13 +1916,13 @@ func injectCopilotSignalExitSerializedBy(lockTarget, tmuxTarget string) error {
 		LockTimeout: paneInjectLockTimeout,
 		LockID:      lockTarget,
 	}, func(run paneinput.Runner, target string) error {
-		for press := range copilotSignalExitPresses {
-			if press > 0 {
+		for i, key := range keys {
+			if i > 0 {
 				time.Sleep(injectSettleDelay)
 			}
-			if err := run("send-keys", "-t", target, "C-c"); err != nil {
-				if press == 0 {
-					return fmt.Errorf("send-keys ctrl-c: %w", err)
+			if err := run("send-keys", "-t", target, key); err != nil {
+				if i == 0 {
+					return fmt.Errorf("send-keys %s: %w", key, err)
 				}
 				return nil
 			}

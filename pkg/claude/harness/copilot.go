@@ -226,3 +226,19 @@ func (copilotLifecycle) FastModeCommand() string      { return "" }
 // the rest of a possible escape sequence, so a trailing Escape is never
 // delivered at all.
 func (copilotLifecycle) SoftExitPrefixKeys() []string { return []string{"C-c"} }
+
+// Copilot's keystroke-free soft exit: three ctrl-c presses, one settle apart —
+// the path agentd's managed stop uses instead of typing /exit at all (the
+// original motivation for SignalExitKeys; PR #2112, TCL-1137). Measured against
+// 1.0.78 in a real tmux pane (see copilotfixture): the "again to exit" window
+// closes between 1.2 s and 1.5 s, and a second press 0.5–1.2 s after the first
+// exits cleanly (status 0) through the CLI's designed quit path — which writes
+// the durable session.shutdown event to events.jsonl identically to /exit
+// (verified from a retired session's tail, TCL-1137). The first press may be
+// spent cancelling an in-flight turn or aborting a permission dialog, the next
+// arms the window, and the third lands inside it; a surplus press on a pane
+// that had nothing to cancel lands on a dead pane and is tolerated. Escape is
+// NOT used (see SoftExitPrefixKeys) — the CLI never delivers a lone ESC byte.
+func (copilotLifecycle) SignalExitKeys() []string {
+	return []string{"C-c", "C-c", "C-c"}
+}
