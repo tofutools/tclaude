@@ -151,15 +151,13 @@ test('standalone lifecycle connects before the real composer loads and sends thr
   const requests = [];
   const fetchImpl = async (url, options) => {
     requests.push({ url, options });
-    if (url === '/api/snapshot') {
+    if (url === '/api/agents/agt_solo/status') {
       return {
         ok: true,
         status: 200,
         json: async () => ({
-          agents: [{
-            agent_id: 'agt_solo', conv_id: 'conv-solo', online: true,
-            state: { status: 'working' },
-          }],
+          agent_id: 'agt_solo', conv_id: 'conv-solo', online: true,
+          state: { status: 'working' },
         }),
       };
     }
@@ -222,7 +220,10 @@ test('standalone lifecycle connects before the real composer loads and sends thr
     }
   });
   assertAbsent(dialogHost.querySelector('#operator-message-modal'));
-  assert.deepEqual(requests.filter(({ url }) => url !== '/api/snapshot').map(({ url }) => url), ['/api/operator-message']);
+  assert.deepEqual(
+    requests.filter(({ url }) => url !== '/api/agents/agt_solo/status').map(({ url }) => url),
+    ['/api/operator-message'],
+  );
   const messageRequest = requests.find(({ url }) => url === '/api/operator-message');
   assert.deepEqual(JSON.parse(messageRequest.options.body), {
     to: 'agt_solo',
@@ -314,7 +315,10 @@ test('standalone reattach disarms its beacon, hands off to its exact opener, and
   await page.start();
   const pane = page.state.panes.value[0];
   assert.equal(await page.actions.reattachPane(pane.key), true);
-  assert.deepEqual(requests.filter((url) => url !== '/api/snapshot'), ['/api/hide/agt_one']);
+  assert.deepEqual(
+    requests.filter((url) => url !== '/api/agents/agt_one/status'),
+    ['/api/hide/agt_one'],
+  );
   assert.equal(posted.length, 1);
   assert.equal(posted[0].targetOrigin, origin);
   assert.equal(posted[0].data.seed.initialRetry, true);
@@ -360,7 +364,7 @@ test('standalone reattach becomes the dashboard when its opener is gone', async 
   page.dispose();
 });
 
-test('standalone snapshot polling aborts on auth expiry and does not leave a timer behind', async (t) => {
+test('standalone status polling aborts on auth expiry and does not leave a timer behind', async (t) => {
   const harness = await createPreactHarness(t);
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   const seed = {
@@ -370,12 +374,12 @@ test('standalone snapshot polling aborts on auth expiry and does not leave a tim
     pathname: '/terminals', search: '?solo=1', hash: encodedSeed(seed),
   };
   let pendingResolve;
-  let snapshotOptions = null;
-  let snapshotCalls = 0;
+  let statusOptions = null;
+  let statusCalls = 0;
   const fetchImpl = async (url, options) => {
-    if (url === '/api/snapshot') {
-      snapshotCalls += 1;
-      snapshotOptions = options;
+    if (url === '/api/agents/agt_one/status') {
+      statusCalls += 1;
+      statusOptions = options;
       return new Promise((resolve) => { pendingResolve = resolve; });
     }
     return { ok: true };
@@ -396,16 +400,16 @@ test('standalone snapshot polling aborts on auth expiry and does not leave a tim
     navigatorRef: { sendBeacon: () => true },
   });
   await page.start();
-  for (let i = 0; i < 5 && !snapshotOptions; i++) await Promise.resolve();
-  assert.ok(snapshotOptions, 'the solo agent starts the status poll');
+  for (let i = 0; i < 5 && !statusOptions; i++) await Promise.resolve();
+  assert.ok(statusOptions, 'the solo agent starts the status poll');
   const expired = new harness.window.CustomEvent('tclaude:auth-expired', { detail: {} });
   harness.window.dispatchEvent(expired);
-  assert.equal(snapshotOptions.signal.aborted, true, 'auth expiry aborts the in-flight snapshot');
+  assert.equal(statusOptions.signal.aborted, true, 'auth expiry aborts the in-flight status request');
   assert.match(expired.detail.returnTo, /#open=/);
   locationRef.hash = encodedSeed(seed);
   harness.window.dispatchEvent(new harness.window.Event('hashchange'));
   await Promise.resolve();
-  assert.equal(snapshotCalls, 1, 'auth navigation cannot re-arm the solo poll');
+  assert.equal(statusCalls, 1, 'auth navigation cannot re-arm the solo poll');
   pendingResolve?.({ ok: false, status: 401 });
   page.dispose();
 });

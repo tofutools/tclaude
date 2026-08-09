@@ -272,6 +272,7 @@ func handleDashboardHideAPI(w http.ResponseWriter, r *http.Request) {
 //	POST   /api/agents/{conv}/clone        → fork a sibling (cookie-auth twin)
 //	POST   /api/agents/{conv}/reincarnate  → spawn successor + soft-exit original
 //	POST   /api/agents/{conv}/task         → set/clear task-reference link
+//	GET    /api/agents/{conv}/status       → compact standalone-terminal status
 //
 // Behaviour:
 //   - Runs conv.DeleteAgentAllGenerations (unlinks .jsonl, drops conv_index
@@ -306,6 +307,13 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 	// helpers shared with the bulk groups.{stop,resume} paths.
 	if len(parts) > 1 && parts[1] != "" {
 		switch parts[1] {
+		case "status":
+			if r.Method != http.MethodGet {
+				http.Error(w, "GET only", http.StatusMethodNotAllowed)
+				return
+			}
+			writeDashboardTerminalAgentStatus(w, convSelector)
+			return
 		case "stop":
 			if r.Method != http.MethodPost {
 				http.Error(w, "POST only", http.StatusMethodNotAllowed)
