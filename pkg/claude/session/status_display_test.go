@@ -17,7 +17,13 @@ func TestStatusDetailForDisplayHidesAppServerProvenance(t *testing.T) {
 }
 
 func TestStatusDetailForDisplayPreservesOperationalDetails(t *testing.T) {
-	for _, detail := range []string{"Bash", "rate_limit", "1 background shell running"} {
+	for _, detail := range []string{
+		"Bash",
+		"rate_limit",
+		"1 background shell running",
+		"app-server connection refused",
+		"app-server approval required",
+	} {
 		assert.Equal(t, detail, StatusDetailForDisplay(detail), detail)
 	}
 }

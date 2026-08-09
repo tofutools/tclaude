@@ -492,10 +492,17 @@ export function SandboxBadge({ member, showDetails = false }) {
 // App-server observer provenance is retained in the session model for
 // diagnostics, but it is not an activity state or an operational detail. Keep
 // this UI boundary defensive even when a snapshot contains the raw model value
-// (for example, a stale browser response during a daemon upgrade).
+// (for example, a stale browser response during a daemon upgrade), while
+// preserving similarly prefixed operational details.
+const APP_SERVER_STATUS_PROVENANCE = new Set([
+  'app-server snapshot',
+  'app-server daemon reconnect',
+  'app-server reconnect',
+]);
+
 function statusDetailForDisplay(detail) {
   const value = String(detail || '').trim();
-  return /^app-server(?:\s|$)/i.test(value) ? '' : value;
+  return APP_SERVER_STATUS_PROVENANCE.has(value.toLowerCase()) ? '' : value;
 }
 
 export function statusInfo(state, online) {

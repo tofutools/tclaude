@@ -129,15 +129,16 @@ const (
 
 // StatusDetailForDisplay removes implementation provenance from the human
 // status label while preserving the detail in the session model. Codex's
-// app-server observer records values such as "app-server snapshot" in the
-// same status_detail column used by hook-driven operational details; those
-// source labels are useful for diagnostics but are noise in regular status
-// tables. Keep this boundary narrow so meaningful details (tool names,
-// errors, approval waits, and background work) continue to render.
+// app-server observer records the source labels below in the same
+// status_detail column used by hook-driven operational details; those source
+// labels are useful for diagnostics but are noise in regular status tables.
+// Keep this boundary narrow so meaningful details (tool names, errors,
+// approval waits, and background work) continue to render.
 func StatusDetailForDisplay(detail string) string {
 	trimmed := strings.TrimSpace(detail)
 	lower := strings.ToLower(trimmed)
-	if lower == "app-server" || strings.HasPrefix(lower, "app-server ") {
+	switch lower {
+	case "app-server snapshot", "app-server daemon reconnect", "app-server reconnect":
 		return ""
 	}
 	return detail

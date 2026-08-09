@@ -151,6 +151,11 @@ test('activity status hides app-server provenance but keeps meaningful details',
   const tool = statusInfo({ status: 'working', status_detail: 'Bash' }, true);
   assert.equal(tool.detail, 'Bash');
   assert.equal(tool.title, 'working: Bash', 'meaningful operational detail remains visible');
+
+  const error = statusInfo({ status: 'error', status_detail: 'app-server connection refused' }, true);
+  assert.equal(error.detail, 'app-server connection refused',
+    'operational details sharing the provenance prefix remain visible');
+  assert.equal(error.title, 'error: app-server connection refused');
 });
 
 test('stale jackpot hold cleanup cannot mark or overwrite a newer slop identity', async (t) => {
