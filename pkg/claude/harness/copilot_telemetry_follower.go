@@ -45,7 +45,7 @@ type CopilotTelemetryFollower struct {
 }
 
 const (
-	copilotTelemetryCheckpointVersion = 1
+	copilotTelemetryCheckpointVersion = 2
 	copilotTelemetryAnchorBytes       = 64
 	// maxCopilotTelemetryCheckpointBytes bounds the durable blob. This
 	// checkpoint holds no unbounded collections — only scalars, one usage

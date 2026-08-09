@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/common/executil"
 )
 
 const (
@@ -24,6 +25,7 @@ const (
 	copilotModelCatalogRequestTimeout  = 30 * time.Second
 	copilotModelCatalogMaxResponse     = 16 << 20
 	copilotModelCatalogIntegrationID   = "copilot-developer-cli"
+	copilotModelCatalogProcessGrace    = 500 * time.Millisecond
 )
 
 const copilotEndpointQuery = `query { viewer { copilotEndpoints { api } } }`
@@ -373,7 +375,9 @@ func mergeCopilotModelCatalog(remote, enriched []json.RawMessage) ([]db.CopilotM
 // model objects its SDK exposes. The GitHub token travels over the child's
 // stdin JSON-RPC stream, never argv or logs.
 func fetchCopilotEnrichedModels(ctx context.Context, copilotPath, githubToken string) ([]json.RawMessage, error) {
-	cmd := exec.CommandContext(ctx, copilotPath,
+	processCtx, stopProcess := context.WithCancel(ctx)
+	defer stopProcess()
+	cmd := executil.CommandContextWithGrace(processCtx, copilotModelCatalogProcessGrace, copilotPath,
 		"--server", "--stdio", "--no-auto-update", "--log-level", "error")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -392,9 +396,7 @@ func fetchCopilotEnrichedModels(ctx context.Context, copilotPath, githubToken st
 	}
 	defer func() {
 		_ = stdin.Close()
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
+		stopProcess()
 		_ = cmd.Wait()
 	}()
 
