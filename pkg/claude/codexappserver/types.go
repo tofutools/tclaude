@@ -10,6 +10,7 @@ const (
 	MethodInitialized           = "initialized"
 	MethodThreadLoadedList      = "thread/loaded/list"
 	MethodThreadRead            = "thread/read"
+	MethodThreadFork            = "thread/fork"
 	MethodThreadNameSet         = "thread/name/set"
 	MethodThreadCompactStart    = "thread/compact/start"
 	MethodTurnStart             = "turn/start"
@@ -34,7 +35,7 @@ const (
 // StableMethods returns the capability surface validated against Codex 0.147.0.
 func StableMethods() []string {
 	return []string{
-		MethodThreadLoadedList, MethodThreadRead, MethodThreadNameSet,
+		MethodThreadLoadedList, MethodThreadRead, MethodThreadFork, MethodThreadNameSet,
 		MethodThreadCompactStart, MethodTurnStart, MethodTurnSteer,
 		MethodTurnInterrupt, MethodAccountRateLimitsRead,
 	}
@@ -98,6 +99,16 @@ type ThreadReadParams struct {
 }
 
 type ThreadReadResult struct {
+	Thread Thread `json:"thread"`
+}
+
+type ThreadForkParams struct {
+	ThreadID   string  `json:"threadId"`
+	Cwd        *string `json:"cwd,omitempty"`
+	LastTurnID *string `json:"lastTurnId,omitempty"`
+}
+
+type ThreadForkResult struct {
 	Thread Thread `json:"thread"`
 }
 

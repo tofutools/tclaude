@@ -122,7 +122,7 @@ func readyCodexAppServerHandle(convID string) (*codexAppServerHandle, error) {
 		runtime.Generation == handle.runtime.Generation && runtime.ThreadID == handle.runtime.ThreadID {
 		return handle, nil
 	}
-	if runtime != nil && runtime.State == db.CodexAppServerWarming {
+	if runtime != nil && (runtime.State == db.CodexAppServerWarming || runtime.State == db.CodexAppServerRecovering) {
 		return nil, errCodexControlStarting
 	}
 	return nil, errCodexControlDisconnected
@@ -237,6 +237,49 @@ func renameCodexAppServerThread(convID, title string) error {
 		return nil
 	}
 	return fmt.Errorf("%w: rename: %v", errCodexControlAmbiguous, err)
+}
+
+// forkCodexAppServerThread creates the clone identity exactly once while the
+// source is verified and idle. thread/fork has no idempotency key, so an
+// ambiguous transport result is surfaced and never replayed.
+func forkCodexAppServerThread(convID, cwd string) (string, error) {
+	handle, handleErr := readyCodexAppServerHandle(convID)
+	if handleErr != nil {
+		return "", handleErr
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), codexAppServerMutationTimeout)
+	defer cancel()
+	handle.mutations.Lock()
+	defer handle.mutations.Unlock()
+	thread, status, err := handle.readThread(ctx)
+	if err != nil {
+		return "", err
+	}
+	if status.Type != "idle" || codexThreadAwaitingHuman(status) {
+		return "", errCodexControlBusy
+	}
+	params := codexappserver.ThreadForkParams{ThreadID: handle.runtime.ThreadID}
+	if cwd != "" {
+		params.Cwd = &cwd
+	}
+	if len(thread.Turns) > 0 {
+		last := thread.Turns[len(thread.Turns)-1]
+		if last.Status == "inProgress" {
+			return "", errCodexControlBusy
+		}
+		params.LastTurnID = &last.ID
+	}
+	callCtx, cancelCall := context.WithTimeout(ctx, codexAppServerCallTimeout)
+	forked, err := handle.client.ForkThread(callCtx, params)
+	cancelCall()
+	if err != nil {
+		if codexCallAmbiguous(err) {
+			return "", fmt.Errorf("%w: thread/fork may have created a clone; refusing to retry: %v",
+				errCodexControlAmbiguous, err)
+		}
+		return "", err
+	}
+	return forked.ID, nil
 }
 
 func compactCodexAppServerThread(convID, followUp string) error {

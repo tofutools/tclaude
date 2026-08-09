@@ -109,6 +109,7 @@ func runStop(p *stopParams, stdout, stderr io.Writer) int {
 type resumeParams struct {
 	Selector    string `pos:"true" help:"Target conv: title, full conv-id, or 8+-char prefix"`
 	RecreateDir bool   `long:"recreate-dir" help:"If the agent's recorded launch directory was deleted, recreate it empty so the agent can start (otherwise resume reports missing_cwd and does nothing)"`
+	SendKeys    bool   `long:"send-keys" help:"Explicitly move a stopped Codex app-server agent back to the compatibility tmux send-keys drive before resuming. This durable rollback requires a direct human call or --ask-human approval."`
 	AskHuman    string `long:"ask-human" optional:"true" help:"On permission denial or stopped-target provenance recovery, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
 }
 
@@ -163,6 +164,13 @@ func runResume(p *resumeParams, stdout, stderr io.Writer) int {
 	path := "/v1/agent/" + url.PathEscape(selector) + "/resume"
 	if p.RecreateDir {
 		path += "?recreate=1"
+	}
+	if p.SendKeys {
+		separator := "?"
+		if strings.Contains(path, "?") {
+			separator = "&"
+		}
+		path += separator + "send_keys=1"
 	}
 	var resp struct {
 		ConvID        string   `json:"conv_id"`

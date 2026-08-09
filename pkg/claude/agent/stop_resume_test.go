@@ -62,6 +62,20 @@ func TestResumeCmdExposesAskHumanFlag(t *testing.T) {
 	assert.Contains(t, flag.Usage, "permission denial")
 }
 
+func TestRunResumeSendKeysRequestsExplicitCompatibilityRollback(t *testing.T) {
+	prevAvail, prevReq := DaemonAvailableImpl, DaemonRequestImpl
+	t.Cleanup(func() { DaemonAvailableImpl, DaemonRequestImpl = prevAvail, prevReq })
+	DaemonAvailableImpl = func() bool { return true }
+	DaemonRequestImpl = func(method, path string, _ any, out any, _ DaemonOpts) error {
+		assert.Equal(t, http.MethodPost, method)
+		assert.Equal(t, "/v1/agent/worker/resume?send_keys=1", path)
+		return json.Unmarshal([]byte(`{"conv_id":"worker-conv","action":"resumed"}`), out)
+	}
+	var stdout, stderr bytes.Buffer
+	rc := runResume(&resumeParams{Selector: "worker", SendKeys: true}, &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%s", stderr.String())
+}
+
 func TestRunGroupsResumePassesAskHumanWithoutCallerProof(t *testing.T) {
 	prevAvail, prevReq := DaemonAvailableImpl, DaemonRequestImpl
 	t.Cleanup(func() { DaemonAvailableImpl, DaemonRequestImpl = prevAvail, prevReq })

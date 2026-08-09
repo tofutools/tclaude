@@ -64,6 +64,7 @@ func runCodexAppServerObserver(handle *codexAppServerHandle) (state, detail stri
 	defer usageTicker.Stop()
 
 	refreshCodexAppServerRateLimits(handle, "app-server-read")
+	consecutiveSnapshotFailures := 0
 	for {
 		select {
 		case request := <-handle.client.ServerRequests():
@@ -73,7 +74,16 @@ func runCodexAppServerObserver(handle *codexAppServerHandle) (state, detail stri
 		case notification := <-handle.client.Notifications():
 			handleCodexAppServerNotification(handle, notification)
 		case <-statusTicker.C:
-			refreshCodexAppServerThreadSnapshot(handle)
+			if refreshCodexAppServerThreadSnapshot(handle) {
+				consecutiveSnapshotFailures = 0
+			} else {
+				consecutiveSnapshotFailures++
+				if consecutiveSnapshotFailures >= 3 {
+					_ = handle.client.Close()
+					return db.CodexAppServerUnavailable,
+						"Codex app-server stopped answering verified thread snapshots"
+				}
+			}
 		case <-usageTicker.C:
 			refreshCodexAppServerRateLimits(handle, "app-server-read")
 		case <-handle.client.Done():
@@ -102,9 +112,9 @@ func handleCodexAppServerNotification(handle *codexAppServerHandle, notification
 	}
 }
 
-func refreshCodexAppServerThreadSnapshot(handle *codexAppServerHandle) {
+func refreshCodexAppServerThreadSnapshot(handle *codexAppServerHandle) bool {
 	if handle == nil {
-		return
+		return false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), codexAppServerReadTimeout)
 	defer cancel()
@@ -114,9 +124,10 @@ func refreshCodexAppServerThreadSnapshot(handle *codexAppServerHandle) {
 	if err != nil {
 		slog.Debug("Codex app-server observer snapshot failed",
 			"generation", handle.runtime.Generation, "error", err)
-		return
+		return false
 	}
 	projectCodexAppServerRawStatus(handle, thread.Status, time.Now().UTC(), "app-server snapshot")
+	return true
 }
 
 func projectCodexAppServerRawStatus(

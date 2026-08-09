@@ -102,6 +102,12 @@ func (f *codexControlFixture) serve() {
 		switch message.Method {
 		case codexappserver.MethodThreadRead:
 			_ = f.sim.Reply(message.ID, codexappserver.ThreadReadResult{Thread: f.threadSnapshot()})
+		case codexappserver.MethodThreadFork:
+			forked := f.threadSnapshot()
+			forked.ID = "019ec113-1000-7000-8000-000000000099"
+			if !drop {
+				_ = f.sim.Reply(message.ID, codexappserver.ThreadForkResult{Thread: forked})
+			}
 		case codexappserver.MethodTurnStart, codexappserver.MethodTurnSteer:
 			var params struct {
 				Input               []codexappserver.UserInput `json:"input"`
@@ -288,6 +294,36 @@ func TestCodexAppServerRenameCompactAndInterruptUseTypedMutations(t *testing.T) 
 	assert.Equal(t, 1, f.methodCount(codexappserver.MethodThreadCompactStart))
 	assert.Equal(t, 1, f.methodCount(codexappserver.MethodTurnInterrupt))
 	f.assertNoPaneInput(t)
+}
+
+func TestCodexAppServerForkUsesVerifiedIdleHistoryExactlyOnce(t *testing.T) {
+	f := newCodexControlFixture(t)
+	f.mu.Lock()
+	f.thread.Turns = []codexappserver.Turn{{
+		ID: "last-completed-turn", Status: "completed", Items: []json.RawMessage{},
+	}}
+	f.mu.Unlock()
+	cwd := t.TempDir()
+	forked, err := forkCodexAppServerThread(f.convID, cwd)
+	require.NoError(t, err)
+	assert.Equal(t, "019ec113-1000-7000-8000-000000000099", forked)
+	assert.Equal(t, 1, f.methodCount(codexappserver.MethodThreadFork))
+	f.assertNoPaneInput(t)
+}
+
+func TestCodexAppServerAmbiguousForkIsNeverReplayed(t *testing.T) {
+	f := newCodexControlFixture(t)
+	f.mu.Lock()
+	f.drop[codexappserver.MethodThreadFork] = true
+	f.mu.Unlock()
+	previousCall := codexAppServerCallTimeout
+	codexAppServerCallTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { codexAppServerCallTimeout = previousCall })
+
+	_, err := forkCodexAppServerThread(f.convID, t.TempDir())
+	assert.ErrorIs(t, err, errCodexControlAmbiguous)
+	assert.Equal(t, 1, f.methodCount(codexappserver.MethodThreadFork),
+		"an ambiguous non-idempotent fork must not be replayed")
 }
 
 func TestCodexAppServerPerThreadArbitrationStartsOnceThenSteers(t *testing.T) {

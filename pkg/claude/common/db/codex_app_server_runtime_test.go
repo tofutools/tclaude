@@ -1,42 +1,12 @@
 package db
 
 import (
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func TestInvalidateCodexAppServerRuntimesAfterRestartClearsLiveClaims(t *testing.T) {
-	setupTestDB(t)
-	for _, tc := range []struct {
-		generation, state string
-	}{
-		{"warming-generation", CodexAppServerWarming},
-		{"ready-generation", CodexAppServerReady},
-		{"dead-generation", CodexAppServerDead},
-	} {
-		require.NoError(t, UpsertCodexAppServerRuntime(CodexAppServerRuntime{
-			Generation: tc.generation, LaunchID: "launch-" + tc.generation,
-			AgentID: "agent", SocketPath: filepath.Join(t.TempDir(), "app.sock"), State: tc.state,
-		}))
-	}
-
-	require.NoError(t, InvalidateCodexAppServerRuntimesAfterRestart())
-	for _, generation := range []string{"warming-generation", "ready-generation"} {
-		runtime, err := GetCodexAppServerRuntime(generation)
-		require.NoError(t, err)
-		require.NotNil(t, runtime)
-		assert.Equal(t, CodexAppServerUnavailable, runtime.State)
-		assert.Contains(t, runtime.Detail, "agentd restarted")
-	}
-	dead, err := GetCodexAppServerRuntime("dead-generation")
-	require.NoError(t, err)
-	require.NotNil(t, dead)
-	assert.Equal(t, CodexAppServerDead, dead.State)
-}
 
 func TestBindWarmingCodexAppServerRuntimeFromTUIIsGenerationAndResumeSafe(t *testing.T) {
 	setupTestDB(t)
@@ -99,6 +69,43 @@ func TestObsoleteCodexAppServerWatcherCannotSupersedeReadyReplacement(t *testing
 	require.NoError(t, err)
 	require.NotNil(t, current)
 	assert.Equal(t, CodexAppServerDead, current.State)
+}
+
+func TestCodexAppServerRecoveryClaimIsLeasedAndCASProtected(t *testing.T) {
+	setupTestDB(t)
+	now := time.Now().UTC()
+	runtime := CodexAppServerRuntime{
+		Generation: "recovery-generation", LaunchID: "launch", AgentID: "agent",
+		ConvID: "thread", ThreadID: "thread", SocketPath: "/tmp/app.sock",
+		CodexVersion: "0.147.0", State: CodexAppServerReady,
+	}
+	require.NoError(t, UpsertCodexAppServerRuntime(runtime))
+	claimed, err := ClaimCodexAppServerRuntimeRecovery(runtime.Generation, "daemon-one", now, time.Minute)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	claimed, err = ClaimCodexAppServerRuntimeRecovery(runtime.Generation, "daemon-two", now, time.Minute)
+	require.NoError(t, err)
+	assert.False(t, claimed, "a second daemon must not adopt the live lease")
+	claimed, err = ClaimCodexAppServerRuntimeRecovery(runtime.Generation, "daemon-two", now.Add(2*time.Minute), time.Minute)
+	require.NoError(t, err)
+	assert.True(t, claimed, "an abandoned claim becomes recoverable after its lease")
+}
+
+func TestRecoverableCodexAppServerRuntimesSelectNewestGeneration(t *testing.T) {
+	setupTestDB(t)
+	now := time.Now().UTC()
+	for _, runtime := range []CodexAppServerRuntime{
+		{Generation: "old", LaunchID: "old-launch", AgentID: "agent", ConvID: "thread", ThreadID: "thread",
+			SocketPath: "/tmp/old.sock", CodexVersion: "0.147.0", State: CodexAppServerReady, CreatedAt: now.Add(-time.Minute)},
+		{Generation: "new", LaunchID: "new-launch", AgentID: "agent", ConvID: "thread", ThreadID: "thread",
+			SocketPath: "/tmp/new.sock", CodexVersion: "0.147.0", State: CodexAppServerReady, CreatedAt: now},
+	} {
+		require.NoError(t, UpsertCodexAppServerRuntime(runtime))
+	}
+	runtimes, err := RecoverableCodexAppServerRuntimes()
+	require.NoError(t, err)
+	require.Len(t, runtimes, 1)
+	assert.Equal(t, "new", runtimes[0].Generation)
 }
 
 func TestCodexAppServerStatusWritesRequireCurrentRuntimeAndSessionGeneration(t *testing.T) {

@@ -1468,6 +1468,10 @@ func resumeOneConvLocked(convID string, recreateMissingDir, trustRoot bool) memb
 	launchLock := resumeLaunchLock(convID)
 	launchLock.Lock()
 	defer launchLock.Unlock()
+	return resumeOneConvClaimedUnderLaunchLock(convID, recreateMissingDir, trustRoot)
+}
+
+func resumeOneConvClaimedUnderLaunchLock(convID string, recreateMissingDir, trustRoot bool) memberOpResult {
 	if isConvOnline(convID) {
 		return resumeOneConvUnderLaunchLock(convID, recreateMissingDir, trustRoot, nil)
 	}
@@ -1489,6 +1493,72 @@ func resumeOneConvLocked(convID string, recreateMissingDir, trustRoot bool) memb
 		}
 	}
 	return res
+}
+
+// resumeOneConvWithCodexRollbackLocked proves and changes one stopped
+// generation under the same lock that excludes concurrent stop/resume. It
+// never signals a PID: the eligible runtime is already terminal, and its
+// retained numeric PID is not process identity after exit.
+func resumeOneConvWithCodexRollbackLocked(convID string, recreateMissingDir, trustRoot bool) memberOpResult {
+	launchLock := resumeLaunchLock(convID)
+	launchLock.Lock()
+	defer launchLock.Unlock()
+	res := memberOpResult{ConvID: convID}
+	if isConvOnline(convID) {
+		res.Action = "skipped:already_online"
+		res.Detail = "Codex drive unchanged; compatibility rollback requires the intended generation to be stopped"
+		return res
+	}
+	profile, err := db.AgentRelaunchProfileForConv(convID)
+	if err != nil || profile == nil {
+		res.Action = "error:codex_drive_rollback"
+		res.Detail = "load durable Codex drive: " + firstNonEmpty(errorString(err), "missing stable-agent relaunch profile")
+		return res
+	}
+	if profile.CodexAppServer == nil || !*profile.CodexAppServer {
+		return resumeOneConvClaimedUnderLaunchLock(convID, recreateMissingDir, trustRoot)
+	}
+	runtime, err := db.GetCodexAppServerRuntimeByConvID(convID)
+	if err != nil || runtime == nil ||
+		(runtime.State != db.CodexAppServerDead && runtime.State != db.CodexAppServerUnavailable) {
+		res.Action = "error:codex_drive_rollback"
+		res.Detail = "Codex drive unchanged; no terminal app-server runtime proves the intended stopped generation"
+		return res
+	}
+	launch, err := db.LoadSession(runtime.LaunchID)
+	if err != nil || launch == nil || launch.ConvID != convID || launch.Harness != harness.CodexName ||
+		launch.Status != session.StatusExited || launch.CreatedAt.Before(runtime.CreatedAt) {
+		res.Action = "error:codex_drive_rollback"
+		res.Detail = "Codex drive unchanged; recorded runtime does not match the intended stopped launch generation"
+		return res
+	}
+	candidates, err := db.FindSessionsByConvID(convID)
+	if err != nil {
+		res.Action = "error:codex_drive_rollback"
+		res.Detail = "Codex drive unchanged; list conversation launch generations: " + err.Error()
+		return res
+	}
+	for _, candidate := range candidates {
+		if candidate.CreatedAt.After(launch.CreatedAt) {
+			res.Action = "error:codex_drive_rollback"
+			res.Detail = "Codex drive unchanged; a newer conversation launch supersedes the recorded app-server generation"
+			return res
+		}
+	}
+	source := "explicit --send-keys compatibility rollback"
+	if err := db.SetAgentCodexAppServerSelectionForConv(convID, false, source); err != nil {
+		res.Action = "error:codex_drive_rollback"
+		res.Detail = "persist Codex compatibility rollback: " + err.Error()
+		return res
+	}
+	removeCodexAppServerGeneration(runtime.SocketPath)
+	return resumeOneConvClaimedUnderLaunchLock(convID, recreateMissingDir, trustRoot)
+}
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 // resumeOneConvUnderLaunchLock is the production resume path after its
@@ -2876,6 +2946,17 @@ func handleAgentResume(w http.ResponseWriter, r *http.Request, targetConv string
 		return
 	}
 	trustRoot := caller == "" || hasHumanApprovalContinuation(r, PermAgentResume, targetConv)
+	sendKeys := r.URL.Query().Get("send_keys") == "1"
+	if sendKeys && !trustRoot {
+		if parseAskHumanHeader(r) <= 0 || !requestCodexDriveRollbackApproval(w, r, PermAgentResume, targetConv, targetConv) {
+			if parseAskHumanHeader(r) <= 0 {
+				writeError(w, http.StatusForbidden, "codex_drive_change_restricted",
+					"moving a Codex agent from its selected app-server drive to send-keys requires a direct human resume or actual --ask-human approval")
+			}
+			return
+		}
+		trustRoot = true
+	}
 	// Recreating a missing path is a daemon-side mkdir with the human's
 	// filesystem authority. Keep that opt-in human-only; an agent cannot prove
 	// write access inside a directory that does not exist.
@@ -2894,7 +2975,12 @@ func handleAgentResume(w http.ResponseWriter, r *http.Request, targetConv string
 	// relaunch (the CLI's `--recreate-dir`, the dashboard's confirm-and-retry).
 	// Absent it, a vanished cwd comes back as `error:missing_cwd` so the caller
 	// can decide.
-	res := resumeOneConvLocked(targetConv, recreate, trustRoot)
+	var res memberOpResult
+	if sendKeys {
+		res = resumeOneConvWithCodexRollbackLocked(targetConv, recreate, trustRoot)
+	} else {
+		res = resumeOneConvLocked(targetConv, recreate, trustRoot)
+	}
 	if res.Action == "error:resume_provenance" && !trustRoot && parseAskHumanHeader(r) > 0 {
 		if !requestResumeRecoveryApproval(w, r, PermAgentResume, targetConv, targetConv) {
 			return
@@ -2970,6 +3056,47 @@ func requestResumeRecoveryApproval(w http.ResponseWriter, r *http.Request, perm,
 	}
 	writeError(w, http.StatusForbidden, "permission",
 		fmt.Sprintf("human declined or timed out after %s while recovering resume provenance for target %s",
+			timeout, short8(targetConv)))
+	return false
+}
+
+func requestCodexDriveRollbackApproval(w http.ResponseWriter, r *http.Request, perm, authTarget, targetConv string) bool {
+	timeout := parseAskHumanHeader(r)
+	if timeout <= 0 {
+		return false
+	}
+	if popupBaseURL == "" {
+		writeError(w, http.StatusForbidden, "permission",
+			"no popup base URL configured; Codex drive rollback cannot be approved")
+		return false
+	}
+	p := peerFromContext(r.Context())
+	if classify(p) != classAgent {
+		return false
+	}
+	callerTitle := ""
+	if row := agent.FreshConvRowResolved(p.ConvID); row != nil {
+		callerTitle = agent.DisplayTitle(row)
+	}
+	targetTitle := ""
+	if row := agent.FreshConvRowResolved(targetConv); row != nil {
+		targetTitle = agent.DisplayTitle(row)
+	}
+	targetGroup, _, _ := extractApprovalTargets(r, "")
+	req := &approvalRequest{
+		id: newApprovalID(), perm: perm, convID: p.ConvID, convTitle: callerTitle,
+		method: r.Method, path: r.URL.Path, rawQuery: r.URL.RawQuery,
+		bodyPreview: "Durably change the stopped target from the Codex app-server drive to tmux send-keys, tear down its recorded app-server runtime, and resume it. Future relaunches will remain on send-keys until explicitly changed again.",
+		bodyLabel:   "Codex drive rollback (app-server → send-keys)", targetGroup: targetGroup,
+		targetConvID: targetConv, targetConvTitle: targetTitle, createdAt: time.Now(), timeout: timeout,
+		decision: make(chan approvalOutcome, 1), extend: make(chan time.Duration, 1),
+	}
+	if requestHumanApproval(req, popupBaseURL) {
+		markHumanApprovalContinuation(r, perm, authTarget)
+		return true
+	}
+	writeError(w, http.StatusForbidden, "permission",
+		fmt.Sprintf("human declined or timed out after %s while approving Codex drive rollback for target %s",
 			timeout, short8(targetConv)))
 	return false
 }
