@@ -115,6 +115,8 @@ test('the Codex app-server chip discloses safe observer ownership and quarantine
     const mounted = await mount({
       ...base,
       codex_app_server_state: 'ready',
+	  codex_app_server_health: 'ready',
+	  codex_app_server_source: 'explicit',
       codex_app_server_version: '0.147.0',
       codex_observer_updated: '2026-08-09T12:34:56Z',
     });
@@ -126,6 +128,7 @@ test('the Codex app-server chip discloses safe observer ownership and quarantine
       assert.match(el.title, /connects only after TUI thread binding/);
       assert.match(el.title, /context remains rollout-derived/);
       assert.match(el.title, /2026-08-09T12:34:56Z/);
+	  assert.match(el.title, /via explicit/);
     } finally {
       await mounted.unmount();
     }
@@ -135,6 +138,7 @@ test('the Codex app-server chip discloses safe observer ownership and quarantine
     const mounted = await mount({
       ...base,
       codex_app_server_state: 'unavailable',
+	  codex_app_server_health: 'disconnected',
       codex_app_server_detail: 'unexpected server request delivered to non-subscribing observer: item/permissions/requestApproval',
     });
     try {
@@ -142,8 +146,28 @@ test('the Codex app-server chip discloses safe observer ownership and quarantine
       assert.ok(el.classList.contains('harness-drive-failed'));
       assert.match(el.title, /item\/permissions\/requestApproval/);
       assert.match(el.title, /did not fall back to send-keys/);
+	  assert.match(el.title, /resume <agent> --send-keys/);
     } finally {
       await mounted.unmount();
     }
+  });
+
+  await t.test('degraded is distinct from disconnected and remains fail-closed', async () => {
+	const mounted = await mount({
+	  ...base,
+	  codex_app_server_state: 'ready',
+	  codex_app_server_health: 'degraded',
+	  codex_app_server_detail: 'status snapshots are stale',
+	});
+	try {
+	  const el = mounted.container.querySelector('.agent-harness .harness-drive');
+	  assert.ok(el.classList.contains('harness-drive-pending'));
+	  assert.ok(!el.classList.contains('harness-drive-failed'));
+	  assert.match(el.title, /degraded/);
+	  assert.match(el.title, /fail closed/);
+	  assert.match(el.title, /status snapshots are stale/);
+	} finally {
+	  await mounted.unmount();
+	}
   });
 });

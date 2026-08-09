@@ -205,6 +205,17 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		}
 	}
 	effort, model = relaunch.Effort, relaunch.Model
+	persistCodexStateRoot := func(convID string) *cloneSpawnError {
+		if relaunch.Harness != harness.CodexName || relaunch.CodexStateRoot == "" {
+			return nil
+		}
+		if err := db.SetConversationCodexStateRoot(convID, relaunch.Harness, cwd,
+			relaunch.CodexStateRoot, relaunch.CodexStateRootSource); err != nil {
+			return &cloneSpawnError{Status: http.StatusInternalServerError, Code: "io",
+				Msg: "persist clone Codex state root: " + err.Error()}
+		}
+		return nil
+	}
 	effectiveSandbox, err := db.AgentEffectiveSandboxConfigForConv(sourceConv)
 	if err != nil {
 		return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusInternalServerError, Code: "io", Msg: "load source sandbox snapshot: " + err.Error()}
@@ -504,6 +515,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		proofArgs.ContextWindowMax = relaunch.ContextWindowMax
 		proofArgs.CopilotAPI = relaunch.CopilotAPI
 		proofArgs.CodexAppServer = relaunch.CodexAppServer
+		proofArgs.CodexStateRoot = relaunch.CodexStateRoot
 		proofArgs.FastMode = relaunch.FastMode
 		// A no-copy clone inherits the source agent's recorded posture through a
 		// `session new` fork with no -r, so it is a continuation for launch
@@ -577,6 +589,9 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 						}
 						res.NewConv, res.NewTmux, res.Label = newConv, newTmux, label
 						commitRouteHelper()
+						if rootErr := persistCodexStateRoot(newConv); rootErr != nil {
+							return cloneSpawnResult{}, rootErr
+						}
 						return res, nil
 					}
 				} else if s.ConvID != "" {
@@ -616,6 +631,9 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 					}
 					res.NewConv, res.NewTmux, res.Label = s.ConvID, newTmux, label
 					commitRouteHelper()
+					if rootErr := persistCodexStateRoot(s.ConvID); rootErr != nil {
+						return cloneSpawnResult{}, rootErr
+					}
 					return res, nil
 				}
 			}
@@ -708,6 +726,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	proofArgs.ContextWindowMax = relaunch.ContextWindowMax
 	proofArgs.CopilotAPI = relaunch.CopilotAPI
 	proofArgs.CodexAppServer = relaunch.CodexAppServer
+	proofArgs.CodexStateRoot = relaunch.CodexStateRoot
 	proofArgs.FastMode = relaunch.FastMode
 	if routeErr := prepareRouteHelper(&proofArgs); routeErr != nil {
 		agentDirectoryCleanup()
@@ -777,6 +796,9 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 			}
 			res.NewConv, res.NewTmux, res.Label = newConv, newTmux, label
 			commitRouteHelper()
+			if rootErr := persistCodexStateRoot(newConv); rootErr != nil {
+				return cloneSpawnResult{}, rootErr
+			}
 			return res, nil
 		}
 		time.Sleep(250 * time.Millisecond)
@@ -807,6 +829,9 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		"new_conv", newConv, "deadline", reincarnateSpawnTimeout)
 	res.NewConv, res.NewTmux, res.Label, res.Warn = newConv, newTmux, label, warn
 	commitRouteHelper()
+	if rootErr := persistCodexStateRoot(newConv); rootErr != nil {
+		return cloneSpawnResult{}, rootErr
+	}
 	return res, nil
 }
 

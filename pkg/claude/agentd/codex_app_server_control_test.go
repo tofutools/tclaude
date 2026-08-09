@@ -244,6 +244,30 @@ func TestCodexAppServerProductionMessageRouteIsTypedAndIdempotent(t *testing.T) 
 	f.assertNoPaneInput(t)
 }
 
+func TestCodexAppServerUnreadReminderUsesTypedRoute(t *testing.T) {
+	f := newCodexControlFixture(t)
+	_, _, err := db.EnsureAgentForConv(f.convID, "test")
+	require.NoError(t, err)
+	groupID, err := db.CreateAgentGroup("codex-app-server-reminder", "")
+	require.NoError(t, err)
+	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{
+		GroupID: groupID, ConvID: f.convID, Role: "worker",
+	}))
+	messageID, err := db.InsertAgentMessage(&db.AgentMessage{
+		GroupID: groupID, FromConv: "peer", ToConv: f.convID,
+		Subject: "review", Body: "please review",
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.MarkAgentMessageDelivered(messageID))
+
+	runUnreadReminderTickWith(time.Now().Add(2*unreadReminderInterval),
+		&unreadReminderState{remindedAt: map[string]time.Time{}})
+
+	assert.Equal(t, 1, f.methodCount(codexappserver.MethodTurnStart),
+		"the reminder must use the same app-server channel as its original nudge")
+	f.assertNoPaneInput(t)
+}
+
 func TestCodexAppServerAmbiguousMessageIsReconciledWithoutDuplicate(t *testing.T) {
 	f := newCodexControlFixture(t)
 	f.mu.Lock()

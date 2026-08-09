@@ -201,30 +201,35 @@ export function HarnessLine({ member, snapshot }) {
   // what this flag does and does not cover is on CopilotAPIChannelFailed.
   const codexDrive = state.codex_app_server;
   const codexDriveState = state.codex_app_server_state || 'warming';
+	const codexDriveHealth = state.codex_app_server_health
+	  || (codexDriveState === 'unavailable' ? 'disconnected'
+	    : codexDriveState === 'dead' ? 'crashed' : codexDriveState);
   const driveFailed = (state.copilot_api && state.copilot_api_channel_failed)
-    || (codexDrive && (codexDriveState === 'unavailable' || codexDriveState === 'dead'));
+	|| (codexDrive && (codexDriveHealth === 'disconnected' || codexDriveHealth === 'crashed'));
   const driveState = driveFailed
     ? ' harness-drive-failed'
-    : (state.copilot_api_connected || (codexDrive && codexDriveState === 'ready'))
+	: (state.copilot_api_connected || (codexDrive && codexDriveHealth === 'ready'))
       ? ''
       : ' harness-drive-pending';
   const drive = state.copilot_api || codexDrive
     ? html`<span class=${'harness-drive' + driveState}
         role="note"
         title=${driveFailed
-          ? (codexDrive ? `Codex app-server control is ${codexDriveState}; the explicit API drive did not fall back to send-keys${state.codex_app_server_detail ? `: ${state.codex_app_server_detail}` : ''}` : "Launched for Copilot's embedded JSON-RPC API drive, and its channel failed to come up — this agent's messages are being HELD, not delivered, and will be until it is relaunched. Its pane still works if you type into it")
+		  ? (codexDrive ? `Codex app-server is ${codexDriveHealth}; messages are held and the explicit drive did not fall back to send-keys. Stop and resume to retry, or explicitly roll back with tclaude agent resume <agent> --send-keys${state.codex_app_server_detail ? `: ${state.codex_app_server_detail}` : ''}` : "Launched for Copilot's embedded JSON-RPC API drive, and its channel failed to come up — this agent's messages are being HELD, not delivered, and will be until it is relaunched. Its pane still works if you type into it")
           : state.copilot_api_connected
             ? "Driven over Copilot's embedded JSON-RPC API (copilot --ui-server), not tmux send-keys"
-            : codexDrive && codexDriveState === 'ready'
-              ? `Codex app-server ready${state.codex_app_server_version ? ` (${state.codex_app_server_version})` : ''}; TUI owns approvals; agentd connects only after TUI thread binding and uses non-subscribing snapshots (context remains rollout-derived)${state.codex_observer_updated ? `; last observation ${state.codex_observer_updated}` : ''}`
-              : codexDrive ? 'Codex app-server is warming; send-keys fallback is disabled' : "Launched for Copilot's embedded JSON-RPC API drive, but tclaude holds no connection to it yet — still starting up, or its channel failed to come up"}
+			: codexDrive && codexDriveHealth === 'ready'
+			  ? `Codex app-server ready${state.codex_app_server_version ? ` (${state.codex_app_server_version})` : ''}${state.codex_app_server_source ? ` via ${state.codex_app_server_source}` : ''}; TUI owns approvals; agentd connects only after TUI thread binding and uses non-subscribing snapshots (context remains rollout-derived)${state.codex_observer_updated ? `; last observation ${state.codex_observer_updated}` : ''}`
+			  : codexDrive && codexDriveHealth === 'degraded'
+			    ? `Codex app-server is degraded; the connection or observation is being recovered and messages fail closed${state.codex_app_server_detail ? `: ${state.codex_app_server_detail}` : ''}`
+			    : codexDrive ? 'Codex app-server is warming; messages remain held until thread binding and connection verification finish; send-keys fallback is disabled' : "Launched for Copilot's embedded JSON-RPC API drive, but tclaude holds no connection to it yet — still starting up, or its channel failed to come up"}
         aria-label=${driveFailed
-          ? (codexDrive ? 'Codex app-server drive unavailable' : 'Copilot API drive failed, messages held')
+		  ? (codexDrive ? `Codex app-server drive ${codexDriveHealth}` : 'Copilot API drive failed, messages held')
           : state.copilot_api_connected
             ? 'Copilot API drive connected'
-            : codexDrive && codexDriveState === 'ready'
+			: codexDrive && codexDriveHealth === 'ready'
               ? 'Codex app-server drive ready'
-              : codexDrive ? 'Codex app-server drive warming' : 'Copilot API drive not connected'}
+			  : codexDrive ? `Codex app-server drive ${codexDriveHealth}` : 'Copilot API drive not connected'}
         >${codexDrive ? 'app' : 'api'}</span>`
     : null;
   if (!model) {

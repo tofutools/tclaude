@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -103,6 +104,9 @@ func TestCodexAgent_PendingSpawnBackfillEnrollment(t *testing.T) {
 	assert.Equal(t, resp.AgentID, ps.AgentID, "pending row persists the returned stable identity")
 	assert.Equal(t, g.ID, ps.GroupID, "pending row carries the target group")
 	assert.Equal(t, "codex-worker", ps.Name, "pending row carries the requested name")
+	require.NotNil(t, ps.CodexAppServer, "a new Codex pending row freezes even the default-off drive")
+	assert.False(t, *ps.CodexAppServer)
+	assert.Equal(t, agent.ProvHarnessDefault, ps.CodexAppServerSource)
 
 	// Not enrolled yet — there is no conv-id to enroll.
 	assert.Empty(t, f.ListGroupMembers("codex-crew"), "no member before the conv-id materialises")
@@ -143,6 +147,55 @@ func TestCodexAgent_PendingSpawnBackfillEnrollment(t *testing.T) {
 	// only after the conv-id materialised, completing the back-fill. It points
 	// the (now un-gated) agent at the briefing it can finally read.
 	f.AssertSentContains(target, fmt.Sprintf("inbox read %d", msg.ID), 10*time.Second)
+}
+
+func TestCodexPendingSweeperPreservesResolvedDriveAndProvenance(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		selected bool
+		source   string
+	}{
+		{name: "explicit-app-server", selected: true, source: agent.ProvExplicit},
+		{name: "explicit-send-keys", selected: false, source: agent.ProvExplicit},
+		{name: "profile-app-server", selected: true, source: `spawn profile "ab-opted-in"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFlow(t)
+			t.Cleanup(agentd.SetInjectSettleDelayForTest(0))
+			t.Cleanup(agentd.SetAwaitCodexAppServerReadyForTest(func(string) bool { return true }))
+			group := f.HaveGroup("pending-drive")
+			convID := "019ec113-1000-7000-8000-" + fmt.Sprintf("%012d", len(tc.name))
+			label := "pending-drive-" + strings.ReplaceAll(tc.name, "-", "_")
+			tmux := "tmux-" + label
+			f.HaveAliveCodexSession(convID, label, tmux, f.TestCwd(tc.name))
+			selected := tc.selected
+			stateRoot := filepath.Join(t.TempDir(), "codex-state")
+			require.NoError(t, db.InsertPendingSpawn(&db.PendingSpawn{
+				Label: label, AgentID: db.NewAgentID(), GroupID: group.ID, Role: "worker",
+				CodexAppServer: &selected, CodexAppServerSource: tc.source,
+				CodexStateRoot: stateRoot, CodexStateRootSource: "CODEX_HOME",
+			}))
+
+			agentd.RunPendingSpawnSweepForTest()
+
+			posture, err := db.RecordedLaunchPostureForConv(convID)
+			require.NoError(t, err)
+			require.NotNil(t, posture)
+			require.NotNil(t, posture.CodexAppServer)
+			assert.Equal(t, tc.selected, *posture.CodexAppServer)
+			require.NotNil(t, posture.CodexAppServerSource)
+			assert.Equal(t, tc.source, *posture.CodexAppServerSource)
+			require.NotNil(t, posture.CodexStateRoot)
+			assert.Equal(t, stateRoot, *posture.CodexStateRoot)
+			if tc.selected {
+				time.Sleep(20 * time.Millisecond)
+				for _, sent := range f.World.Tmux.Sent() {
+					assert.NotEqual(t, tmux+":0.0", sent.Target,
+						"a ready runtime must never be followed by a false posture and pane delivery")
+				}
+			}
+		})
+	}
 }
 
 func TestCodexAgent_PendingResponseThenInlineBackgroundEnrollment(t *testing.T) {

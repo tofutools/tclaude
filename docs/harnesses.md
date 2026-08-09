@@ -224,23 +224,53 @@ experimental app-server drive requires Codex CLI 0.147.x and is opt-in through
 `tclaude agent spawn --codex-app-server`, the `codex_app_server` spawn-profile
 field, or the dashboard's Codex drive control. Set the profile field or control
 explicitly to false to keep the default drive. The selected drive carries over
-to resume, reincarnate, and clone.
+to resume, reincarnate, and clone. Spawn output identifies the profile/default
+tier that selected the drive; the dashboard shows that provenance for an
+app-server launch too.
 
 The app-server drive supports durable human and peer messages, rename,
 compaction, and `tclaude agent interrupt`. Messages wait while Codex needs an
 approval or user answer. Those questions appear only in the Codex TUI: the TUI
 is the sole place to approve, deny, or answer them.
 
-The dashboard reports the drive as `warming`, `ready`, `unavailable`, or
-`dead`. A ready drive also shows when its status or subscription-usage snapshot
-was last refreshed. Context and token counts continue to come from Codex's
-durable rollout data, so their freshness can differ from the app-server status
-snapshot. Legacy and explicitly opted-out sessions continue to use send-keys.
+Use the diagnostic command for either your own agent or one you manage:
+
+```bash
+tclaude agent codex-app-server status
+tclaude agent codex-app-server status --target <agent>
+tclaude agent codex-app-server status --target <agent> --json
+```
+
+It reports the resolved drive and its source, compatible Codex version,
+server/socket proof state, daemon-client connection, TUI thread binding,
+approval ownership, observation freshness, message disposition, and recovery
+guidance. Private socket and log paths are withheld.
+
+The dashboard and diagnostic command distinguish `warming`, `ready`,
+`degraded`, `disconnected`, and `crashed`. `warming` is still proving the
+server and binding the TUI-created thread. `degraded` means recovery or fresh
+observation is incomplete. `disconnected` means the selected channel is not
+usable, and `crashed` means its recorded runtime ended. A ready drive also
+shows when its status or subscription-usage snapshot was last refreshed.
+Context and token counts continue to come from Codex's durable rollout data,
+so their freshness can differ from the app-server status snapshot. Legacy and
+explicitly opted-out sessions continue to use send-keys.
 
 An explicitly selected app-server drive fails closed if Codex is incompatible,
 the connection cannot be established safely, or control later fails. Messages
 are held and the dashboard shows the failure detail; tclaude never silently
 falls back to send-keys for that launch.
+
+To roll a stopped app-server agent back to the compatibility drive, use a
+direct human call or approve the agent's request:
+
+```bash
+tclaude agent resume <agent> --send-keys
+```
+
+The change is durable for future relaunches. It is intentionally explicit;
+running it against an online agent is refused without changing that agent's
+drive.
 
 ### Group-route activation matrix
 

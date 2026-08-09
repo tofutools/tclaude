@@ -32,12 +32,12 @@ import (
 // project path matches. A missing rollout tree yields no entries (not an
 // error); an unreadable threads DB degrades to rollout-only assembly with
 // a warning rather than failing the whole listing.
-func scanCodexEntries(home, cwd string) ([]convops.SessionEntry, error) {
-	paths, err := scanCodexRollouts(home)
+func scanCodexEntriesAt(configDir, cwd string) ([]convops.SessionEntry, error) {
+	paths, err := scanCodexRolloutsAt(configDir)
 	if err != nil {
 		return nil, fmt.Errorf("scan codex rollouts: %w", err)
 	}
-	threads, err := loadCodexThreads(home)
+	threads, err := loadCodexThreadsAt(configDir)
 	if err != nil {
 		slog.Warn("codex convstore: threads DB unreadable, assembling from rollouts only", "error", err)
 		threads = map[string]codexThread{}
@@ -219,7 +219,7 @@ func codexArchivedAt(t codexThread) string {
 // the ConvStore contract exactly: (nil, nil) for no match, (nil, err) for
 // a scan failure OR an ambiguous prefix, and an exact id always wins over
 // prefix matches. cwd scopes the search to one project unless global.
-func resolveCodex(home, idPrefix, cwd string, global bool) (*ConvRef, error) {
+func resolveCodexAt(configDir, idPrefix, cwd string, global bool) (*ConvRef, error) {
 	if idPrefix == "" {
 		return nil, nil
 	}
@@ -227,7 +227,7 @@ func resolveCodex(home, idPrefix, cwd string, global bool) (*ConvRef, error) {
 	if global {
 		filterCwd = ""
 	}
-	entries, err := scanCodexEntries(home, filterCwd)
+	entries, err := scanCodexEntriesAt(configDir, filterCwd)
 	if err != nil {
 		return nil, fmt.Errorf("resolve conversation %q: %w", idPrefix, err)
 	}
@@ -261,8 +261,8 @@ func resolveCodex(home, idPrefix, cwd string, global bool) (*ConvRef, error) {
 // (threads.first_user_message, or the rollout's first user message when
 // there's no row). An unknown conv yields ("", nil). Mirrors a
 // SessionEntry's DisplayTitle for the same conv so list and title agree.
-func codexTitle(home, convID string) (string, error) {
-	threads, err := loadCodexThreads(home)
+func codexTitleAt(configDir, convID string) (string, error) {
+	threads, err := loadCodexThreadsAt(configDir)
 	if err != nil {
 		slog.Warn("codex convstore: threads DB unreadable, deriving title from rollout", "error", err)
 		threads = map[string]codexThread{}
@@ -281,7 +281,7 @@ func codexTitle(home, convID string) (string, error) {
 		}
 	}
 
-	path, err := findCodexRollout(home, convID)
+	path, err := findCodexRolloutAt(configDir, convID)
 	if err != nil {
 		return "", err
 	}

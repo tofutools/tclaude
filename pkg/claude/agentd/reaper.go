@@ -337,7 +337,10 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 				}
 			}
 			releaseCopilotAPIPortForExit(st.Harness, st.ConvID, convsWithLiveLaunch, r.grace)
-			stopCodexAppServerRuntimeForConv(st.ConvID)
+			// Session rows are retained across relaunches. Stop only this exited
+			// launch's generation; a conversation-wide lookup would select and
+			// SIGTERM the healthy successor on every reaper tick.
+			stopCodexAppServerRuntime(st.ConvID, st.ID)
 			// SessionEnd may win the status race before pane-died records its richer
 			// structural evidence. Enrich the launch-scoped audit event before
 			// removing the retained pane, preserving evidence for bounded retries
@@ -472,7 +475,7 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 			}
 		}
 		releaseCopilotAPIPortForExit(st.Harness, st.ConvID, convsWithLiveLaunch, r.grace)
-		stopCodexAppServerRuntimeForConv(st.ConvID)
+		stopCodexAppServerRuntime(st.ConvID, st.ID)
 		cause := db.AgentExitCauseDisappeared
 		var exitCode *int
 		signal := ""

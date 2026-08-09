@@ -2047,6 +2047,8 @@ type agentState struct {
 	// app-server drive independently from the default send-keys path.
 	CodexAppServer        bool   `json:"codex_app_server,omitempty"`
 	CodexAppServerState   string `json:"codex_app_server_state,omitempty"`
+	CodexAppServerHealth  string `json:"codex_app_server_health,omitempty"`
+	CodexAppServerSource  string `json:"codex_app_server_source,omitempty"`
 	CodexAppServerVersion string `json:"codex_app_server_version,omitempty"`
 	CodexAppServerDetail  string `json:"codex_app_server_detail,omitempty"`
 	CodexObserverMode     string `json:"codex_observer_mode,omitempty"`
@@ -2552,19 +2554,33 @@ func stateForConvInSessionsBatched(
 			}
 		}
 		if pick.Harness == harness.CodexName {
-			if runtime, runtimeErr := db.GetCodexAppServerRuntimeByConvID(pick.ConvID); runtimeErr == nil && runtime != nil {
+			posture, postureErr := db.RecordedLaunchPostureForConv(pick.ConvID)
+			if postureErr == nil && posture != nil && posture.CodexAppServer != nil && *posture.CodexAppServer {
 				out.CodexAppServer = true
-				out.CodexAppServerState = runtime.State
-				out.CodexAppServerVersion = runtime.CodexVersion
-				out.CodexAppServerDetail = runtime.Detail
-				out.CodexObserverMode = "post-bind non-subscribing snapshots; context from rollout"
-				if observation, ok := codexAppServerObservationForConv(pick.ConvID); ok {
-					updated := observation.StatusAt
-					if observation.UsageAt.After(updated) {
-						updated = observation.UsageAt
-					}
-					if !updated.IsZero() {
-						out.CodexObserverUpdated = updated.Format(time.RFC3339)
+				if posture.CodexAppServerSource != nil {
+					out.CodexAppServerSource = strings.TrimSpace(*posture.CodexAppServerSource)
+				}
+				runtime, runtimeErr := db.GetCodexAppServerRuntimeByConvID(pick.ConvID)
+				if runtimeErr != nil || runtime == nil {
+					out.CodexAppServerHealth = "disconnected"
+					out.CodexAppServerDetail = "the app-server drive is selected but no runtime generation is recorded"
+				} else {
+					out.CodexAppServerState = runtime.State
+					observation, connected := codexAppServerObservationForConv(pick.ConvID)
+					handle := codexAppServerHandleForConv(pick.ConvID)
+					connected = connected && handle != nil && handle.runtime.Generation == runtime.Generation
+					out.CodexAppServerHealth = codexAppServerHealth(runtime, connected, observation, time.Now().UTC())
+					out.CodexAppServerVersion = runtime.CodexVersion
+					out.CodexAppServerDetail = redactCodexDiagnosticDetail(runtime.Detail)
+					out.CodexObserverMode = "post-bind non-subscribing snapshots; context from rollout"
+					if connected {
+						updated := observation.StatusAt
+						if observation.UsageAt.After(updated) {
+							updated = observation.UsageAt
+						}
+						if !updated.IsZero() {
+							out.CodexObserverUpdated = updated.Format(time.RFC3339)
+						}
 					}
 				}
 			}

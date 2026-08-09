@@ -40,9 +40,58 @@ type wireProfile struct {
 	Approval       string   `json:"approval"`
 	Tools          string   `json:"tools"`
 	AutoReview     *bool    `json:"auto_review"`
+	CodexAppServer *bool    `json:"codex_app_server"`
 	FastMode       *bool    `json:"fast_mode"`
 	SyncWorktree   *bool    `json:"sync_worktree"`
 	StartupContext string   `json:"startup_context"`
+}
+
+func TestSpawnProfiles_CodexAppServerTriStateAndHarnessGate(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	for i, value := range []any{nil, true, false} {
+		name := fmt.Sprintf("codex-drive-%d", i)
+		body := map[string]any{"name": name, "harness": "codex"}
+		if value != nil {
+			body["codex_app_server"] = value
+		}
+		rec := profileReq(t, f, http.MethodPost, "/v1/spawn-profiles", body)
+		require.Equalf(t, http.StatusCreated, rec.Code, "create body=%s", rec.Body.String())
+		rec = profileReq(t, f, http.MethodGet, "/v1/spawn-profiles/"+name, nil)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var got wireProfile
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+		if value == nil {
+			assert.Nil(t, got.CodexAppServer)
+		} else {
+			require.NotNil(t, got.CodexAppServer)
+			assert.Equal(t, value, *got.CodexAppServer)
+		}
+	}
+
+	spawn := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name": "sendkeys-worker", "profile": "codex-drive-2",
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	var spawnWire agent.SpawnResponse
+	require.NoError(t, json.Unmarshal(spawn.Raw, &spawnWire))
+	assert.Equal(t, "send-keys", spawnWire.Resolved.CodexAppServer.Value)
+	assert.Contains(t, spawnWire.Resolved.CodexAppServer.Source, "codex-drive-2")
+
+	spawn = f.AsHuman().SpawnWith("crew", map[string]any{
+		"name": "explicit-sendkeys-worker", "profile": "codex-drive-1",
+		"codex_app_server": false,
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "explicit false spawn body=%s", spawn.Raw)
+	require.NoError(t, json.Unmarshal(spawn.Raw, &spawnWire))
+	assert.Equal(t, "send-keys", spawnWire.Resolved.CodexAppServer.Value)
+	assert.Equal(t, agent.ProvExplicit, spawnWire.Resolved.CodexAppServer.Source,
+		"an explicit false must outrank an opted-in named profile")
+
+	rec := profileReq(t, f, http.MethodPost, "/v1/spawn-profiles", map[string]any{
+		"name": "claude-app-server", "harness": "claude", "codex_app_server": true,
+	})
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
 func TestSpawnProfiles_CodexFastModeTriStateAndHarnessGate(t *testing.T) {

@@ -18,6 +18,7 @@ func Cmd() *cobra.Command {
 		SubCmds: []*cobra.Command{
 			routesCmd(),
 			whoamiCmd(),
+			codexAppServerCmd(),
 			renameCmd(),
 			taskCmd(),
 			presentPRCmd(),

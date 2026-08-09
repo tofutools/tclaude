@@ -193,6 +193,22 @@ func runUnreadReminderTickWith(now time.Time, st *unreadReminderState) {
 			// keystrokes for the API drive, which is not a window or a race: it
 			// is reachable on every reminder tick for the life of the agent.
 			err = sendCopilotAPIMessage(conv, reminder)
+		case sess.Harness == harness.CodexName:
+			selected, selectionErr := codexAppServerSelected(conv)
+			if selectionErr != nil {
+				slog.Warn("unread-reminder: Codex app-server posture unreadable; holding reminder without pane fallback",
+					"error", selectionErr, "tmux", sess.TmuxSession, "conv", conv)
+				continue
+			}
+			if selected {
+				// A reminder is the same peer-derived delivery family as the
+				// original inbox nudge. Once app-server is selected, an unavailable
+				// channel leaves the cadence clock untouched for retry; it never
+				// licenses caller-controlled bytes to enter the TUI composer.
+				err = sendCodexAppServerUnreadReminder(conv, now, reminder)
+			} else {
+				err = injectTextAndSubmit(sess.TmuxSession+":0.0", reminder)
+			}
 		default:
 			err = injectTextAndSubmit(sess.TmuxSession+":0.0", reminder)
 		}

@@ -135,6 +135,16 @@ type SpawnArgs struct {
 	CodexAppServerPIDFile    string
 	CodexAppServerLogFile    string
 	CodexAppServerGeneration string
+	// CodexAppServerExistingThread is an in-process bootstrap fact: SpawnResume
+	// sets it only when ConvID names a conversation the harness already owns.
+	// It is never serialized into the session-wrapper argv.
+	CodexAppServerExistingThread bool
+	// CodexStateRoot is the host-side Codex state directory used by the
+	// short-lived tclaude wrapper to resolve/list/resume the same thread store
+	// as the original launch. It is environment-only and never serialized into
+	// argv. A sandbox snapshot may independently remap CODEX_HOME for the Codex
+	// process itself.
+	CodexStateRoot string
 
 	// OpenCodeServerURL / OpenCodeServerPassword are the private handoff from
 	// agentd's per-session server owner to the short-lived `session new`
