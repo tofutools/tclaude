@@ -371,8 +371,10 @@ test('standalone snapshot polling aborts on auth expiry and does not leave a tim
   };
   let pendingResolve;
   let snapshotOptions = null;
+  let snapshotCalls = 0;
   const fetchImpl = async (url, options) => {
     if (url === '/api/snapshot') {
+      snapshotCalls += 1;
       snapshotOptions = options;
       return new Promise((resolve) => { pendingResolve = resolve; });
     }
@@ -400,6 +402,10 @@ test('standalone snapshot polling aborts on auth expiry and does not leave a tim
   harness.window.dispatchEvent(expired);
   assert.equal(snapshotOptions.signal.aborted, true, 'auth expiry aborts the in-flight snapshot');
   assert.match(expired.detail.returnTo, /#open=/);
+  locationRef.hash = encodedSeed(seed);
+  harness.window.dispatchEvent(new harness.window.Event('hashchange'));
+  await Promise.resolve();
+  assert.equal(snapshotCalls, 1, 'auth navigation cannot re-arm the solo poll');
   pendingResolve?.({ ok: false, status: 401 });
   page.dispose();
 });

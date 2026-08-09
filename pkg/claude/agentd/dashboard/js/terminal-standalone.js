@@ -139,11 +139,12 @@ export function createStandaloneTerminalsPage({
   let soloSeed = null;
   let startPromise = null;
   let disposed = false;
+  let authExpired = false;
   const snapshot = signal(null);
   let stopSnapshotPoll = null;
 
   function ensureSnapshotPoll() {
-    if (stopSnapshotPoll || disposed || !(soloSeed?.agent || soloSeed?.hideConv)) return;
+    if (stopSnapshotPoll || disposed || authExpired || !(soloSeed?.agent || soloSeed?.hideConv)) return;
     stopSnapshotPoll = startStandaloneSnapshotPoll({ snapshot, fetchImpl, documentRef });
   }
 
@@ -209,6 +210,7 @@ export function createStandaloneTerminalsPage({
   }
 
   function onAuthExpired(event) {
+    authExpired = true;
     stopSnapshotPolling();
     if (!soloSeed || !event.detail) return;
     event.detail.returnTo = locationRef.pathname + locationRef.search

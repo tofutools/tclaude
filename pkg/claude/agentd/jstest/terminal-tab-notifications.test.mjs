@@ -82,7 +82,10 @@ test('a terminal tab raises the shared reader for its agent’s unread notificat
   });
   const glyphs = host.querySelectorAll('.mux-tab-attention');
   assert.equal(glyphs.length, 1, 'only the tab of the sending agent is marked');
-  assert.equal(glyphs[0].closest('[role="tab"]').dataset.paneKey, 'one');
+  const notificationTab = glyphs[0].closest('[role="tab"]');
+  assert.equal(notificationTab.dataset.paneKey, 'one');
+  assert.match(notificationTab.getAttribute('aria-label'), /1 unread notification from one/,
+    'the tab name keeps the notification count after status labeling');
   assert.match(glyphs[0].getAttribute('title'), /1 unread notification from one/);
   assert.match(glyphs[0].getAttribute('title'), /need a decision/);
 

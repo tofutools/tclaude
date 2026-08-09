@@ -206,7 +206,10 @@ function TerminalPane({
   const [reconnect, setReconnect] = useState(false);
   const [hasSelection, setHasSelection] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const agentStatus = terminalTabStatus(pane, snapshot?.value);
+  // Dashboard panes get their status from PaneTab. Only the solo title needs
+  // to subscribe to the standalone snapshot signal; keeping this null in the
+  // dashboard avoids an extra signal subscriber per opaque xterm host.
+  const agentStatus = manageTitle ? terminalTabStatus(pane, snapshot?.value) : null;
   const headerRef = useRef(null);
   // A solo pop-out has no tab strip to drag out of, so its header is the home
   // region: pull the title off the header and the terminal goes back to the
@@ -231,7 +234,7 @@ function TerminalPane({
       const prefix = snapshot?.value ? `${agentStatus.symbol} ` : '';
       document.title = `${prefix}${pane.label ? `${pane.label} — ` : ''}tclaude terminals`;
     }
-  }, [active, agentStatus.symbol, manageTitle, pane.label, snapshot?.value]);
+  }, [active, agentStatus?.symbol, manageTitle, pane.label, snapshot?.value]);
   return html`
     <div
       class=${`mux-pane${active ? ' active' : ''}${theme.wizard && theme.palette ? ' arcane-palette' : ''}`}
@@ -305,18 +308,23 @@ export function paneUnreadNotifications(pane, snapshotValue) {
   return memberHumanMessages(selector, snapshotValue, true);
 }
 
+function unreadNotificationLabel(pane, count) {
+  if (!count) return '';
+  const label = pane.label || 'this agent';
+  return `${count} unread notification${count === 1 ? '' : 's'} from ${label} — open quick reader`;
+}
+
 // TabAttention is the Terminals-tab twin of the Groups member row's yellow "!"
 // glyph, and opens the very same quick reader. The strip is cramped and clips
 // its own overflow, so the glyph sits inline in the tab and states its content
 // in the tooltip instead of hovering a preview card.
-function TabAttention({ pane, snapshot }) {
-  const messages = paneUnreadNotifications(pane, snapshot?.value);
+function TabAttention({ pane, snapshot, messages: suppliedMessages = null }) {
+  const messages = suppliedMessages ?? paneUnreadNotifications(pane, snapshot?.value);
   if (!messages.length) return null;
   const message = messages[0];
   const label = pane.label || 'this agent';
   const subject = message.subject || '(no subject)';
-  const title = `${messages.length} unread notification${messages.length === 1 ? '' : 's'}`
-    + ` from ${label} — open quick reader\n\n${subject}`;
+  const title = `${unreadNotificationLabel(pane, messages.length)}\n\n${subject}`;
   const open = (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -354,6 +362,9 @@ function PaneTab({
   onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, onReordered, snapshot = null,
 }) {
   const agentStatus = terminalTabStatus(pane, snapshot?.value);
+  const unreadMessages = paneUnreadNotifications(pane, snapshot?.value);
+  const notificationLabel = unreadNotificationLabel(pane, unreadMessages.length);
+  const ariaLabel = [agentStatus.ariaLabel, notificationLabel].filter(Boolean).join('. ');
   const activate = (event) => {
     if (event.type === 'keydown' && event.target.closest('button')) return;
     const reorderOffset = terminalTabReorderOffset(event);
@@ -407,7 +418,7 @@ function PaneTab({
       tabIndex="0"
       draggable="true"
       aria-selected=${active ? 'true' : 'false'}
-      aria-label=${agentStatus.ariaLabel}
+      aria-label=${ariaLabel}
       aria-controls=${pane.id}
       aria-keyshortcuts="Alt+Shift+ArrowLeft Alt+Shift+ArrowRight"
       aria-describedby="terminal-tab-reorder-help"
@@ -424,7 +435,7 @@ function PaneTab({
       onDrop=${(event) => onDrop(event, pane.key)}
     >
       <span class=${`mux-tab-status mux-tab-status-${agentStatus.className}`} aria-hidden="true">${agentStatus.symbol}</span>
-      <${TabAttention} pane=${pane} snapshot=${snapshot} />
+      <${TabAttention} pane=${pane} snapshot=${snapshot} messages=${unreadMessages} />
       <span class="mux-tab-label">${pane.label}</span>
       <button
         type="button"
@@ -1365,7 +1376,7 @@ function TerminalTabs({
               actions=${actions}
               widgetFactory=${widgetFactory}
               onComposeMessage=${composeMessageAvailable ? onComposeMessage : null}
-              snapshot=${snapshot}
+              snapshot=${manageTitle ? snapshot : null}
             />
           `)}
         </div>

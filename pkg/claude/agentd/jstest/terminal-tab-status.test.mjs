@@ -48,6 +48,30 @@ test('main-agent-idle and background counts remain visibly working', () => {
   assert.match(status.description, /background activity still running/);
 });
 
+test('status annotations keep recovery vocabulary and avoid stale work details', () => {
+  const working = terminalTabStatus(pane(), {
+    agents: [member('working', { status_detail: 'old hook detail' })],
+  });
+  assert.doesNotMatch(working.description, /old hook detail/);
+
+  const waiting = terminalTabStatus(pane(), {
+    agents: [member('awaiting_input', { status_detail: 'answer the prompt' })],
+  });
+  assert.match(waiting.description, /answer the prompt/);
+
+  const backoff = terminalTabStatus(pane(), {
+    agents: [member('idle', { recovery_status: 'backoff', recovery_detail: 'retrying soon' })],
+  });
+  assert.equal(backoff.key, 'error');
+  assert.match(backoff.description, /crash loop \/ backoff/);
+  assert.match(backoff.description, /retrying soon/);
+
+  const recovered = terminalTabStatus(pane(), {
+    agents: [member('idle', { recovery_status: 'recovered' })],
+  });
+  assert.match(recovered.description, /recovered/);
+});
+
 test('terminal status distinguishes waking, restarting, crash, exit, and offline', () => {
   const states = [
     [{ ...member('idle'), online: false, waking: true }, 'waking'],
