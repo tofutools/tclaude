@@ -281,6 +281,356 @@ func TestLinearProxy_ListIsBoundedByTheAllowList(t *testing.T) {
 	assert.Contains(t, strings.ToLower(string(vars)), "joh")
 }
 
+// --- per-agent team scoping ---
+
+// TestLinearProxy_TeamScopedGrantNarrowsWithinTheAllowList is the core of the
+// per-agent gate: the operator allows two teams, this agent's grant covers one,
+// and the intersection is what it may reach — in the identifier gate, in the
+// filter the daemon sends, and in the rows it will return.
+func TestLinearProxy_TeamScopedGrantNarrowsWithinTheAllowList(t *testing.T) {
+	scopeTCL := `{"linear_team":["TCL"]}`
+
+	t.Run("the scoped team passes", func(t *testing.T) {
+		f, rec := linearWorld(t, []string{"TCL", "JOH"})
+		require.NoError(t, db.GrantAgentPermissionWithScope(
+			linearProxyTestConv, agentd.PermLinearRead, scopeTCL, "test"))
+		rec.response = func(linearCall) (int, string) { return http.StatusOK, issueJSON("TCL-1", "TCL") }
+
+		res := linearPost(t, f, "/v1/linear/issue/view", map[string]any{"identifier": "TCL-1"})
+		require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+	})
+
+	t.Run("another allow-listed team is refused by the scope", func(t *testing.T) {
+		f, rec := linearWorld(t, []string{"TCL", "JOH"})
+		require.NoError(t, db.GrantAgentPermissionWithScope(
+			linearProxyTestConv, agentd.PermLinearRead, scopeTCL, "test"))
+
+		res := linearPost(t, f, "/v1/linear/issue/view", map[string]any{"identifier": "JOH-1"})
+		assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+		assert.Contains(t, res.Body.String(), "team_out_of_scope",
+			"the refusal must name the grant scope, not the operator's list — they need different fixes")
+		assert.False(t, rec.sawAnyCall(), "the scope refusal must precede the credential")
+	})
+
+	t.Run("the operator's list still bounds what the scope permits", func(t *testing.T) {
+		// The grant names SECRET; the operator never allow-listed it. A grant
+		// must not be able to widen past the operator's own ceiling.
+		f, rec := linearWorld(t, []string{"TCL"})
+		require.NoError(t, db.GrantAgentPermissionWithScope(
+			linearProxyTestConv, agentd.PermLinearRead, `{"linear_team":["SECRET"]}`, "test"))
+
+		res := linearPost(t, f, "/v1/linear/issue/view", map[string]any{"identifier": "SECRET-1"})
+		assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+		assert.Contains(t, res.Body.String(), "team_scope_empty",
+			"a grant that overlaps the operator's list nowhere authorizes nothing at all")
+		assert.False(t, rec.sawAnyCall())
+	})
+
+	t.Run("listings carry the scoped set, not the operator's", func(t *testing.T) {
+		f, rec := linearWorld(t, []string{"TCL", "JOH"})
+		require.NoError(t, db.GrantAgentPermissionWithScope(
+			linearProxyTestConv, agentd.PermLinearRead, scopeTCL, "test"))
+		rec.response = func(linearCall) (int, string) {
+			// Linear returns a JOH row the filter should have excluded. The
+			// daemon's own check, not the filter, is the gate.
+			return http.StatusOK, `{"data":{"issues":{"nodes":[
+				{"identifier":"TCL-1","title":"mine","team":{"key":"TCL"}},
+				{"identifier":"JOH-1","title":"not mine","team":{"key":"JOH"}}
+			]}}}`
+		}
+
+		res := linearPost(t, f, "/v1/linear/issue/list", map[string]any{})
+		require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+		assert.Contains(t, res.Body.String(), "TCL-1")
+		assert.NotContains(t, res.Body.String(), "JOH-1",
+			"an out-of-scope row must be dropped even when Linear returns it")
+
+		vars, _ := json.Marshal(rec.only(t).Variables)
+		assert.Contains(t, strings.ToLower(string(vars)), "tcl")
+		assert.NotContains(t, strings.ToLower(string(vars)), "joh",
+			"the request itself must carry the scoped set")
+	})
+
+	t.Run("a moved issue is refused on the team Linear reported", func(t *testing.T) {
+		// JOH is on the operator's list, so only the grant scope excludes it.
+		// This is the case a set-intersection bug leaks.
+		f, rec := linearWorld(t, []string{"TCL", "JOH"})
+		require.NoError(t, db.GrantAgentPermissionWithScope(
+			linearProxyTestConv, agentd.PermLinearRead, scopeTCL, "test"))
+		rec.response = func(linearCall) (int, string) {
+			return http.StatusOK, `{"data":{"issue":{"identifier":"JOH-9","title":"Reorg plan",` +
+				`"description":"confidential","team":{"key":"JOH","name":"Johan"}}}}`
+		}
+
+		res := linearPost(t, f, "/v1/linear/issue/view", map[string]any{"identifier": "TCL-1"})
+		assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+		assert.NotContains(t, res.Body.String(), "Reorg plan",
+			"an out-of-scope issue must not leak through the refusal")
+		assert.NotContains(t, res.Body.String(), "confidential")
+	})
+}
+
+// TestLinearProxy_TeamScopedWriteIsSeparateFromRead — the two slugs carry their
+// own scopes, so an agent may be allowed to read one team and write another
+// (or read a team it may not write).
+func TestLinearProxy_TeamScopedWriteIsSeparateFromRead(t *testing.T) {
+	f, rec := linearWorld(t, []string{"TCL", "JOH"},
+		func(c *config.LinearProxyConfig) { c.AllowWrite = true })
+	require.NoError(t, db.GrantAgentPermissionWithScope(
+		linearProxyTestConv, agentd.PermLinearRead, `{"linear_team":["TCL","JOH"]}`, "test"))
+	require.NoError(t, db.GrantAgentPermissionWithScope(
+		linearProxyTestConv, agentd.PermLinearWrite, `{"linear_team":["TCL"]}`, "test"))
+	rec.response = func(call linearCall) (int, string) {
+		if strings.Contains(call.Query, "query IssueView") {
+			return http.StatusOK, issueJSON("JOH-1", "JOH")
+		}
+		return http.StatusOK, `{"data":{"commentCreate":{"success":true,"comment":{"url":"u","createdAt":"t"}}}}`
+	}
+
+	// Reading JOH is in scope for linear.read.
+	res := linearPost(t, f, "/v1/linear/issue/view", map[string]any{"identifier": "JOH-1"})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	// Commenting on it is not in scope for linear.write.
+	res = linearPost(t, f, "/v1/linear/issue/comment",
+		map[string]any{"identifier": "JOH-1", "body": "progress"})
+	assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), "team_out_of_scope")
+	for _, call := range rec.snapshot() {
+		assert.NotContains(t, call.Query, "mutation CommentCreate",
+			"a refused write must not have run the mutation")
+	}
+}
+
+// TestLinearProxy_TeamScopedGrantWorksWithNoOperatorList mirrors the git
+// proxy's remote-scoped grant against an empty allowed_remotes: a scope that
+// names its own teams is a complete policy, so an operator can run a per-agent
+// posture with no global list at all.
+func TestLinearProxy_TeamScopedGrantWorksWithNoOperatorList(t *testing.T) {
+	t.Run("the scoped team is reachable", func(t *testing.T) {
+		f, rec := linearWorld(t, []string{})
+		require.NoError(t, db.GrantAgentPermissionWithScope(
+			linearProxyTestConv, agentd.PermLinearRead, `{"linear_team":["TCL"]}`, "test"))
+		rec.response = func(linearCall) (int, string) { return http.StatusOK, issueJSON("TCL-1", "TCL") }
+
+		res := linearPost(t, f, "/v1/linear/issue/view", map[string]any{"identifier": "TCL-1"})
+		require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+	})
+
+	t.Run("anything else is not", func(t *testing.T) {
+		f, rec := linearWorld(t, []string{})
+		require.NoError(t, db.GrantAgentPermissionWithScope(
+			linearProxyTestConv, agentd.PermLinearRead, `{"linear_team":["TCL"]}`, "test"))
+
+		res := linearPost(t, f, "/v1/linear/issue/view", map[string]any{"identifier": "JOH-1"})
+		assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+		assert.False(t, rec.sawAnyCall())
+	})
+
+	t.Run("an UNSCOPED grant is still disabled without a list", func(t *testing.T) {
+		// The whole point of the fail-closed default: a scope is what makes the
+		// empty-list posture safe, so a grant without one must not inherit it.
+		f, rec := linearWorld(t, []string{})
+		require.NoError(t, db.GrantAgentPermission(linearProxyTestConv, agentd.PermLinearRead, "test"))
+
+		res := linearPost(t, f, "/v1/linear/issue/view", map[string]any{"identifier": "TCL-1"})
+		assert.Equal(t, http.StatusServiceUnavailable, res.Code, "body=%s", res.Body.String())
+		assert.Contains(t, res.Body.String(), "linear_proxy_disabled")
+		assert.False(t, rec.sawAnyCall())
+	})
+}
+
+// TestLinearProxy_ScopeWithNoTeamDimensionAuthorizesNothing — a linear grant
+// scoped only by a dimension a Linear request cannot describe must fail closed.
+// Reading it as "no team constraint" would turn the narrowest possible grant
+// into the widest one.
+func TestLinearProxy_ScopeWithNoTeamDimensionAuthorizesNothing(t *testing.T) {
+	f, rec := linearWorld(t, []string{"TCL"})
+	// Written straight to the DB: the CLI and the HTTP writers refuse a
+	// dimension the slug does not declare, so only a legacy row or a registry
+	// change under a live grant can produce this.
+	require.NoError(t, db.GrantAgentPermissionWithScope(
+		linearProxyTestConv, agentd.PermLinearRead, `{"group":["dev"]}`, "test"))
+
+	res := linearPost(t, f, "/v1/linear/issue/view", map[string]any{"identifier": "TCL-1"})
+	assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), "team_scope_empty")
+	assert.False(t, rec.sawAnyCall())
+}
+
+// TestLinearProxy_TeamScopeStillANDsTheOtherDimensions is the guard on the one
+// simplification a future reader is most likely to reach for.
+//
+// The effective set is built by running every candidate team through the real
+// evaluator, not by intersecting the enumerated `linear_team` matchers. The
+// difference only shows when the scope constrains a SECOND dimension: a plain
+// intersection would answer "TCL is in both lists, allow" and silently collapse
+// the conjunction to its team term, admitting a request the `group` term
+// refuses. Every other test in this file passes either way, which is exactly why
+// this one exists.
+//
+// The refusal must also explain itself correctly. Blaming the operator's
+// allow-list here would name TCL as missing from a list that contains it, and
+// send the human to edit a setting that cannot fix the grant.
+func TestLinearProxy_TeamScopeStillANDsTheOtherDimensions(t *testing.T) {
+	f, rec := linearWorld(t, []string{"TCL"})
+	require.NoError(t, db.GrantAgentPermissionWithScope(linearProxyTestConv, agentd.PermLinearRead,
+		`{"linear_team":["TCL"],"group":["dev"]}`, "test"))
+
+	res := linearPost(t, f, "/v1/linear/issue/view", map[string]any{"identifier": "TCL-1"})
+	assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), "team_scope_empty")
+	assert.Contains(t, res.Body.String(), "does not describe",
+		"the refusal must blame the undescribable dimension, not the operator's allow-list")
+	assert.NotContains(t, res.Body.String(), "must overlap",
+		"TCL IS on the operator's list; saying otherwise sends the human to the wrong knob")
+	assert.False(t, rec.sawAnyCall())
+}
+
+// TestLinearProxy_TeamScopedCallIsAuditedWithItsScope — the git proxy gets this
+// row for free inside requirePermission; the Linear proxy resolves the scope
+// itself and so writes the record by hand, which is the version that can be
+// forgotten. It records the GRANT's scope, the same thing the field means on a
+// git row, with the team actually acted on carried by the verb's own detail.
+func TestLinearProxy_TeamScopedCallIsAuditedWithItsScope(t *testing.T) {
+	f, rec := linearWorld(t, []string{"TCL", "JOH"})
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	require.NoError(t, db.GrantAgentPermissionWithScope(
+		linearProxyTestConv, agentd.PermLinearRead, `{"linear_team":["TCL"]}`, "test"))
+	rec.response = func(linearCall) (int, string) { return http.StatusOK, issueJSON("TCL-1", "TCL") }
+
+	require.Equal(t, http.StatusOK,
+		linearPost(t, f, "/v1/linear/issue/view", map[string]any{"identifier": "TCL-1"}).Code)
+
+	var detail string
+	for _, e := range fetchAudit(t, agentd.BuildDashboardHandlerForTest(), "").Entries {
+		if e.Verb == "linear.issue.view" {
+			detail = e.Detail
+		}
+	}
+	assert.Contains(t, detail, "scope: "+agentd.PermLinearRead+" [linear_team=tcl]",
+		"a scoped authorization must be recorded on the audit row")
+	assert.Contains(t, detail, "issue=TCL-1", "and the verb's own detail must survive alongside it")
+}
+
+// TestLinearProxy_ReportedGrantTeamsAreEvaluatedNotJustNamed — permissionScopeEnumerate
+// UNIONS matchers across the winning tier's rows, so a tier holding
+// {linear_team: TCL} beside {linear_team: JOH, group: dev} NAMES both while
+// admitting only TCL. Reporting JOH as something the grant covers would claim
+// authority it never conferred — on the audit row, in whoami, and in the
+// refusal that tells an agent what its grant reaches.
+//
+// Two group grants rather than one row, because that is the only way a tier
+// holds two scopes.
+func TestLinearProxy_ReportedGrantTeamsAreEvaluatedNotJustNamed(t *testing.T) {
+	f, rec := linearWorld(t, []string{"TCL", "JOH"})
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	tcl := f.HaveGroup("team-tcl")
+	joh := f.HaveGroup("team-joh")
+	f.HaveMember("team-tcl", linearProxyTestConv)
+	f.HaveMember("team-joh", linearProxyTestConv)
+	require.NoError(t, db.ReplaceAgentGroupPermissionGrants(tcl.ID,
+		[]db.PermissionGrant{{
+			Slug: agentd.PermLinearRead, Scope: `{"linear_team":["TCL"]}`, ScopeSpecified: true,
+		}}, "test"))
+	// The JOH row also constrains `group`, which no Linear request describes, so
+	// the row admits nothing however the request is spelled.
+	require.NoError(t, db.ReplaceAgentGroupPermissionGrants(joh.ID,
+		[]db.PermissionGrant{{
+			Slug:  agentd.PermLinearRead,
+			Scope: `{"group":["dev"],"linear_team":["JOH"]}`, ScopeSpecified: true,
+		}}, "test"))
+
+	rec.response = func(linearCall) (int, string) { return http.StatusOK, issueJSON("TCL-1", "TCL") }
+	res := linearPost(t, f, "/v1/linear/issue/view", map[string]any{"identifier": "TCL-1"})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	var body struct {
+		Teams []string `json:"teams"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &body))
+	assert.Equal(t, []string{"tcl"}, body.Teams, "JOH is named by the tier but admitted by no row")
+
+	// JOH must be refused, and must not be described as something the grant covers.
+	refused := linearPost(t, f, "/v1/linear/issue/view", map[string]any{"identifier": "JOH-1"})
+	assert.Equal(t, http.StatusForbidden, refused.Code, "body=%s", refused.Body.String())
+	assert.Contains(t, refused.Body.String(), "team_out_of_scope")
+	assert.NotContains(t, refused.Body.String(), "joh",
+		"the refusal must not list the refused team as one the grant covers")
+
+	var detail string
+	for _, e := range fetchAudit(t, agentd.BuildDashboardHandlerForTest(), "").Entries {
+		if e.Verb == "linear.issue.view" && e.Status == http.StatusOK {
+			detail = e.Detail
+		}
+	}
+	assert.Contains(t, detail, "[linear_team=tcl]",
+		"the audit row must record the teams the grant ADMITS, not the ones it merely names")
+}
+
+// An UNSCOPED Linear call must leave no scope noise on its audit row — the same
+// regression guard TestPermissionScope_UnscopedGrantIsUnaffected makes for the
+// gate sites that pass no context.
+func TestLinearProxy_UnscopedCallRecordsNoScope(t *testing.T) {
+	f, rec := linearWorld(t, []string{"TCL"})
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	require.NoError(t, db.GrantAgentPermission(linearProxyTestConv, agentd.PermLinearRead, "test"))
+	rec.response = func(linearCall) (int, string) { return http.StatusOK, issueJSON("TCL-1", "TCL") }
+
+	require.Equal(t, http.StatusOK,
+		linearPost(t, f, "/v1/linear/issue/view", map[string]any{"identifier": "TCL-1"}).Code)
+
+	for _, e := range fetchAudit(t, agentd.BuildDashboardHandlerForTest(), "").Entries {
+		if e.Verb == "linear.issue.view" {
+			assert.NotContains(t, e.Detail, "scope: ")
+		}
+	}
+}
+
+// TestLinearProxy_WhoamiExplainsBothLists — whoami is the verb an agent runs
+// when something is refused, so with two lists in play it has to say which one
+// excluded the team rather than reporting one number the agent cannot act on.
+func TestLinearProxy_WhoamiExplainsBothLists(t *testing.T) {
+	f, rec := linearWorld(t, []string{"TCL", "JOH"})
+	require.NoError(t, db.GrantAgentPermissionWithScope(
+		linearProxyTestConv, agentd.PermLinearRead, `{"linear_team":["TCL"]}`, "test"))
+	rec.response = func(linearCall) (int, string) {
+		return http.StatusOK, `{"data":{"viewer":{"name":"Op","email":"op@example.com"},"teams":{"nodes":[
+			{"key":"TCL","name":"Tclaude"},{"key":"JOH","name":"Johan"},{"key":"SECRET","name":"Secret"}
+		]}}}`
+	}
+
+	res := linearPost(t, f, "/v1/linear/whoami", nil)
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	var body struct {
+		Teams []string `json:"teams"`
+		JSON  struct {
+			Teams []struct {
+				Key     string `json:"key"`
+				Allowed bool   `json:"allowed"`
+			} `json:"teams"`
+			AllowedTeams  []string `json:"allowed_teams"`
+			OperatorTeams []string `json:"operator_teams"`
+			GrantTeams    []string `json:"grant_teams"`
+		} `json:"json"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &body))
+
+	assert.Equal(t, []string{"tcl"}, body.JSON.AllowedTeams, "allowed_teams is what THIS caller may reach")
+	assert.Equal(t, []string{"tcl", "joh"}, body.JSON.OperatorTeams)
+	assert.Equal(t, []string{"tcl"}, body.JSON.GrantTeams)
+	assert.Equal(t, []string{"tcl"}, body.Teams, "every response echoes the effective set")
+
+	verdicts := map[string]bool{}
+	for _, team := range body.JSON.Teams {
+		verdicts[team.Key] = team.Allowed
+	}
+	assert.True(t, verdicts["TCL"])
+	assert.False(t, verdicts["JOH"], "operator-allowed but out of this caller's scope")
+	assert.False(t, verdicts["SECRET"])
+}
+
 // --- the document/variables invariant ---
 
 // TestLinearProxy_CallerValuesNeverReachTheDocument is the structural property

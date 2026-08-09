@@ -41,6 +41,12 @@ type ActionContext struct {
 	// Remote is the normalized host/owner/repo key the proxy will contact.
 	// URL scheme, credentials, port spelling and a trailing .git are absent.
 	Remote string
+	// LinearTeam is the Linear team KEY the request acts within — the short
+	// prefix of an issue identifier, so "TCL" for TCL-568. Case is irrelevant
+	// (the matcher folds it), but it must be a single whole key: a Linear
+	// action that spans several teams describes each of them in turn rather
+	// than passing a set, so every check is one team against one grant.
+	LinearTeam string
 }
 
 // value projects the context onto one scope dimension. An unknown dimension
@@ -58,6 +64,8 @@ func (a ActionContext) value(dim ScopeDim) string {
 		return a.ProcessTemplate
 	case ScopeDimRemote:
 		return a.Remote
+	case ScopeDimLinearTeam:
+		return a.LinearTeam
 	}
 	return ""
 }
@@ -176,9 +184,62 @@ func permissionScopeLiteralMatches(dim ScopeDim, matcher, value string) bool {
 		pattern := strings.Split(strings.ToLower(strings.Trim(matcher, "/")), "/")
 		target := strings.Split(strings.ToLower(strings.Trim(value, "/")), "/")
 		return matchRemotePattern(pattern, target)
+	case permissionScopeMatchTeamKey:
+		return strings.EqualFold(strings.TrimSpace(matcher), strings.TrimSpace(value))
 	default:
 		return false
 	}
+}
+
+// permissionScopeEnumerate reads the concrete values a verdict's winning tier
+// admits for ONE enumerable dimension, for a gate whose action spans several at
+// once — the Linear proxy's cross-team listings, which need a team universe to
+// build a filter from and have no single team to test.
+//
+// It is a read of what the grant SAYS, never a decision: the caller must still
+// put each returned value through the evaluator (permissionScopeSatisfied), so
+// a scope that also constrains another dimension still ANDs, and a value the
+// tier does not actually admit still fails. Enumerating without that second
+// step would widen a conjunction into its first term.
+//
+// Union across the tier's rows, matching evalPermissionScope. A row this build
+// cannot decode contributes nothing — the same fail-closed treatment the
+// evaluator gives it. An UNSCOPED row makes the answer meaningless (the tier
+// admits every value there is, not a list), so callers must check
+// evalPermissionScope(...).Unscoped first; this reports (nil, false) for that
+// case rather than an empty list, which would read as "admits nothing".
+func permissionScopeEnumerate(v permVerdict, dim ScopeDim) (values []string, enumerated bool) {
+	if !permissionScopeDimensions[dim].enumerable || len(v.ScopeJSON) == 0 {
+		return nil, false
+	}
+	seen := map[string]bool{}
+	for _, raw := range v.ScopeJSON {
+		scope, err := permissionScopeForEval(raw)
+		if err != nil {
+			slog.Warn("permissions: undecodable grant scope skipped while enumerating (fails closed)",
+				"source", string(v.Source), "dimension", string(dim), "error", err)
+			continue
+		}
+		if len(scope) == 0 {
+			return nil, false
+		}
+		for _, matcher := range scope[dim] {
+			// A relational @selector names no concrete value, so a dimension
+			// carrying one cannot be enumerated at all. Refusing the whole
+			// enumeration (rather than skipping the selector) is the honest
+			// answer: a partial list would silently drop authority the grant
+			// really carries.
+			if strings.HasPrefix(matcher, "@") {
+				return nil, false
+			}
+			if !seen[matcher] {
+				seen[matcher] = true
+				values = append(values, matcher)
+			}
+		}
+	}
+	sort.Strings(values)
+	return values, true
 }
 
 // permissionScopeSelectorMatches evaluates a relational @selector matcher

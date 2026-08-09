@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -14,11 +15,32 @@ import (
 // the identifier and charset gates, the filter the daemon builds, and the
 // comment renderer's bound.
 
+// testLinearSession builds a session with an UNSCOPED caller, whose effective
+// team set is therefore exactly the operator's allow-list. The scoped-grant
+// narrowing is exercised end to end in linearproxy_flow_test.go, where the grant
+// row and the permission resolver are real.
 func testLinearSession(teams ...string) *linearProxySession {
 	cfg := &config.Config{Agent: &config.AgentConfig{
 		LinearProxy: &config.LinearProxyConfig{AllowedTeams: teams},
 	}}
-	return &linearProxySession{policy: cfg.ResolvedLinearProxy(), key: "test-key"}
+	policy := cfg.ResolvedLinearProxy()
+	return &linearProxySession{policy: policy, key: "test-key", teams: policy.AllowedTeams}
+}
+
+// testScopedLinearSession is testLinearSession with a team-scoped caller: the
+// effective set is the intersection, and grantTeams is what the grant admits.
+func testScopedLinearSession(operator, granted []string) *linearProxySession {
+	cfg := &config.Config{Agent: &config.AgentConfig{
+		LinearProxy: &config.LinearProxyConfig{AllowedTeams: operator},
+	}}
+	policy := cfg.ResolvedLinearProxy()
+	s := &linearProxySession{policy: policy, key: "test-key", grantTeams: lowerTeamKeys(granted)}
+	for _, key := range policy.AllowedTeams {
+		if slices.Contains(s.grantTeams, key) {
+			s.teams = append(s.teams, key)
+		}
+	}
+	return s
 }
 
 func TestValidateLinearIdentifier(t *testing.T) {
@@ -99,6 +121,71 @@ func TestRequireAllowedTeamNamesTheAllowList(t *testing.T) {
 	assert.Contains(t, fault.Msg, "allowed_teams")
 	assert.Contains(t, fault.Msg, "tcl")
 	assert.Contains(t, fault.Msg, "joh")
+}
+
+// TestRequireAllowedTeamDistinguishesTheTwoLists — with an operator allow-list
+// AND a per-agent team scope, a refusal has two possible causes and only one
+// fix each. Naming the wrong list would send the agent's human to change a
+// setting that was never the problem.
+func TestRequireAllowedTeamDistinguishesTheTwoLists(t *testing.T) {
+	// The operator allows TCL and JOH; this agent's grant covers TCL only.
+	s := testScopedLinearSession([]string{"TCL", "JOH"}, []string{"TCL"})
+	assert.Equal(t, []string{"tcl"}, s.teams)
+
+	assert.Nil(t, s.requireAllowedTeam("TCL"))
+
+	t.Run("allowed by the operator, refused by the grant", func(t *testing.T) {
+		fault := s.requireAllowedTeam("JOH")
+		require.NotNil(t, fault)
+		assert.Equal(t, linearTeamOutOfScopeCode, fault.Code)
+		assert.Contains(t, fault.Msg, "scope")
+		assert.Contains(t, fault.Msg, "tcl", "the refusal must name what the grant DOES cover")
+	})
+
+	t.Run("refused by the operator wins the explanation", func(t *testing.T) {
+		// SECRET is outside both lists. The operator's is the one to name: a
+		// widened grant alone would still not reach it.
+		fault := s.requireAllowedTeam("SECRET")
+		require.NotNil(t, fault)
+		assert.Equal(t, "team_not_allowed", fault.Code)
+		assert.Contains(t, fault.Msg, "allowed_teams")
+	})
+}
+
+// TestScopedSessionNarrowsTheListingFilter — the filter and the row-level drop
+// must read the same effective set the identifier gate does, or a scoped agent
+// would be refused one issue by name and handed the whole team in a listing.
+func TestScopedSessionNarrowsTheListingFilter(t *testing.T) {
+	s := testScopedLinearSession([]string{"TCL", "JOH"}, []string{"JOH"})
+
+	filter := s.linearIssueFilter("", "", false)
+	alternatives := filter["and"].([]any)[0].(map[string]any)["or"].([]any)
+	require.Len(t, alternatives, 1, "the filter must carry the scoped set, not the operator's")
+	team := alternatives[0].(map[string]any)["team"].(map[string]any)
+	assert.Equal(t, "joh", team["key"].(map[string]any)["eqIgnoreCase"])
+
+	kept := s.enforceIssueList([]linearIssue{
+		{Identifier: "JOH-1", Team: linearTeamRef{Key: "JOH"}},
+		{Identifier: "TCL-1", Team: linearTeamRef{Key: "TCL"}},
+	})
+	require.Len(t, kept, 1, "a row from an operator-allowed but out-of-scope team must be dropped")
+	assert.Equal(t, "JOH-1", kept[0].Identifier)
+}
+
+// TestScopedSessionReChecksLinearsAnswer — the load-bearing second gate must be
+// the SCOPED set too. An issue moved into a team the operator allows but this
+// agent's grant does not is exactly the case a set-intersection bug would leak.
+func TestScopedSessionReChecksLinearsAnswer(t *testing.T) {
+	s := testScopedLinearSession([]string{"TCL", "JOH"}, []string{"TCL"})
+
+	assert.Nil(t, s.enforceIssueTeam(&linearIssue{Team: linearTeamRef{Key: "TCL"}}))
+
+	fault := s.enforceIssueTeam(&linearIssue{
+		Identifier: "JOH-9", Title: "moved", Team: linearTeamRef{Key: "JOH"},
+	})
+	require.NotNil(t, fault, "an out-of-scope team on Linear's own answer must be refused")
+	assert.Equal(t, linearTeamOutOfScopeCode, fault.Code)
+	assert.NotContains(t, fault.Msg, "moved", "the refusal must not carry the issue's contents")
 }
 
 // TestEnforceIssueTeamRefusesAnUncheckableIssue — a response with no team is a

@@ -77,6 +77,17 @@ func TestPermissionScopeParseAndValidate(t *testing.T) {
 		{"empty matcher list", `{"group":[]}`, PermGroupsSpawn, "", "at least one matcher"},
 		{"empty matcher", `{"group":[""]}`, PermGroupsSpawn, "", "empty matcher"},
 		{"not an object", `[]`, PermGroupsSpawn, "", "must be a JSON object"},
+		{"linear team key", `{"linear_team":["JOH","TCL"]}`, PermLinearRead, `{"linear_team":["JOH","TCL"]}`, ""},
+		// A team key is matched WHOLE, so a matcher that cannot be one would
+		// store and render as a narrow grant while matching nothing: every
+		// single-issue verb refused, every listing empty. That silence is worse
+		// than an error, so the shape rule is the same one a caller's --team
+		// passes through.
+		{"linear team wildcard is not a key", `{"linear_team":["*"]}`, PermLinearRead, "", "not a letter or a digit"},
+		{"linear team prefix glob is not a key", `{"linear_team":["TCL*"]}`, PermLinearRead, "", "not a letter or a digit"},
+		{"linear team path is not a key", `{"linear_team":["acme/TCL"]}`, PermLinearRead, "", "not a letter or a digit"},
+		{"linear team key length is bounded", `{"linear_team":["THISKEYISWAYTOOLONG"]}`, PermLinearRead, "", "longer than 16"},
+		{"undeclared linear_team dimension", `{"linear_team":["TCL"]}`, PermGroupsSpawn, "", "does not declare"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			scope, canonical, err := parsePermissionScope(json.RawMessage(tc.raw))
