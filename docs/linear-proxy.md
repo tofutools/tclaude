@@ -168,8 +168,10 @@ Matchers follow the same whole-key, case-insensitive rule the config list does:
 `linear_team=tcl` and `linear_team=TCL` name the same team, and neither covers
 `TCLX`. There is no wildcard.
 
-**The two lists are enforced together, and neither widens the other.** A
-request must satisfy both, so:
+**Where both lists exist they are enforced together, and neither widens the
+other** — a request must satisfy both. Where only one exists, it is the whole
+policy, with one exception: an *unscoped* grant is never a policy, so an empty
+`allowed_teams` refuses it rather than letting it through. In full:
 
 | `allowed_teams` | grant scope | Effective reach |
 |---|---|---|
@@ -354,9 +356,9 @@ the workspace.
 | `503 linear_auth` | Linear rejected the key. It may be revoked, expired, or lack the permission the verb needs — a read-only key cannot comment. |
 | `403` naming a slug | The agent lacks `linear.read` / `linear.write`. Grant it, or the agent can retry with `--ask-human`. |
 | `403 linear_write_disabled` | The slug is granted but `allow_write` is false. Both are required. |
-| `403 team_not_allowed` | The team is not on `allowed_teams`. Run `tclaude proxy linear whoami` to see the exact key to add. |
-| `403 team_out_of_scope` | The team *is* on `allowed_teams`, but this agent's grant is scoped to others. Widen the grant: `permissions grant <agent> linear.read --scope linear_team=…` (naming every team it needs — a scope replaces the previous one). |
-| `403 team_scope_empty` | The agent's grant is team-scoped and overlaps `allowed_teams` nowhere, so it authorizes nothing. Also covers a grant scoped only by a dimension a Linear request cannot describe. |
+| `403 team_not_allowed` | The operator has an `allowed_teams` list and the team is not on it. Run `tclaude proxy linear whoami` to see the exact key to add. |
+| `403 team_out_of_scope` | This agent's grant is scoped to other teams — either the team is on `allowed_teams` and the grant excludes it, or there is no operator list and the grant is the whole policy. Widen the grant, using **the slug the refusal names**, since read and write carry independent scopes: `permissions grant <agent> linear.read --scope linear_team=…` or `… linear.write --scope linear_team=…` (naming every team it needs — a scope replaces the previous one). |
+| `403 team_scope_empty` | The agent's team scope authorizes nothing at all: it overlaps a configured `allowed_teams` nowhere, or it names teams but constrains some other dimension a Linear request cannot describe, or it carries no `linear_team` at all. The message says which. |
 | `400` on an identifier | Only `TEAM-123` form is accepted; a UUID is refused on purpose. |
 | `400 unknown_state` | The state name is not one of the team's; the message lists the real ones. |
 | `404 not_found` | No such issue or team, or the operator's key cannot see it. Usually a typo'd issue number — not something to escalate. |

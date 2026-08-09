@@ -469,9 +469,10 @@ var permissionRegistry = []PermSlug{
 		Slug:      PermLinearRead,
 		ScopeDims: []ScopeDim{ScopeDimLinearTeam},
 		Description: "Read Linear issues and comments through the daemon's Linear API key (tclaude proxy linear whoami, " +
-			"issue view/ls/comments/search). Restricted to the teams on the operator's agent.linear_proxy.allowed_teams list, " +
-			"and narrowable per agent with --scope linear_team=TCL. Not default-granted: it reads private workspace data as " +
-			"the operator.",
+			"issue view/ls/comments/search). Narrowable per agent with --scope linear_team=TCL: with an operator " +
+			"agent.linear_proxy.allowed_teams list configured the two intersect and the scope can only narrow it, while with " +
+			"no such list a scoped grant is the whole team policy. An UNSCOPED grant is refused outright when the operator " +
+			"has no list. Not default-granted: it reads private workspace data as the operator.",
 	},
 	{
 		Slug:      PermLinearWrite,
@@ -479,7 +480,8 @@ var permissionRegistry = []PermSlug{
 		Description: "Create and update Linear issues, comment on them, and attach links, through the daemon's Linear API key " +
 			"(tclaude proxy linear issue create/comment/update/link). Everything it writes is attributed to the operator's Linear " +
 			"account, and it additionally requires agent.linear_proxy.allow_write. Narrowable per agent with " +
-			"--scope linear_team=TCL. Not default-granted and not owner-implied.",
+			"--scope linear_team=TCL, on the same terms as linear.read and independently of it, so read and write reach can " +
+			"differ. Not default-granted and not owner-implied.",
 	},
 }
 

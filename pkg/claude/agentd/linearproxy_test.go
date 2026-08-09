@@ -28,15 +28,15 @@ func testLinearSession(teams ...string) *linearProxySession {
 }
 
 // testScopedLinearSession is testLinearSession with a team-scoped caller: the
-// effective set is the intersection, and scopeTeams is what the grant named.
+// effective set is the intersection, and grantTeams is what the grant admits.
 func testScopedLinearSession(operator, granted []string) *linearProxySession {
 	cfg := &config.Config{Agent: &config.AgentConfig{
 		LinearProxy: &config.LinearProxyConfig{AllowedTeams: operator},
 	}}
 	policy := cfg.ResolvedLinearProxy()
-	s := &linearProxySession{policy: policy, key: "test-key", scopeTeams: lowerTeamKeys(granted)}
+	s := &linearProxySession{policy: policy, key: "test-key", grantTeams: lowerTeamKeys(granted)}
 	for _, key := range policy.AllowedTeams {
-		if slices.Contains(s.scopeTeams, key) {
+		if slices.Contains(s.grantTeams, key) {
 			s.teams = append(s.teams, key)
 		}
 	}

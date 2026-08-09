@@ -8,7 +8,8 @@ description: >-
   criteria or discussion, report progress on it, move it to another workflow
   state, attach the pull request you opened, or file a new issue. Gated on the
   `linear.read` / `linear.write` slugs, neither granted by default, and bounded
-  by an operator allow-list of Linear teams plus any team scope on your own grant.
+  by an operator allow-list of Linear teams, a `linear_team` scope on your own
+  grant, or both.
 ---
 
 # Linear without holding the credential
@@ -39,17 +40,19 @@ daemon's key authenticates as, every team that key can see, and which of those
 teams **you** may reach. When something is refused, this is the command whose
 output tells the operator exactly what to add.
 
-Two independent lists bound you, and `whoami` reports both, because they need
-different fixes:
+Up to two independent lists bound you, and `whoami` reports both, because they
+need different fixes:
 
 - `operator_teams` — `agent.linear_proxy.allowed_teams`, the ceiling for every
-  agent on this host.
+  agent on this host. Absent means the operator configured no global list, and
+  your grant's scope is the whole policy.
 - `grant_teams` — the `linear_team` scope on **your own** `linear.read` /
   `linear.write` grant, when it has one. Absent means your grant is unscoped and
   the operator's list alone bounds you.
 
-`allowed_teams` is the intersection: what you can actually reach. Every other
-verb echoes the same set as `teams`, so you rarely need to re-run `whoami`.
+`allowed_teams` is what the list or lists that ARE present leave you: what you
+can actually reach. Every other verb echoes that same set as `teams`, so you
+rarely need to re-run `whoami`.
 
 ## Prerequisites
 
@@ -134,14 +137,16 @@ Three refusals mean three different fixes, so read the code before escalating:
 
 - `403 team_not_allowed` — the team is not on the operator's
   `agent.linear_proxy.allowed_teams`. Ask them to add it.
-- `403 team_out_of_scope` — the operator allows the team, but **your** grant is
-  scoped to others. Ask them to widen your grant:
-  `tclaude agent permissions grant <you> linear.read --scope linear_team=TCL,JOH`
+- `403 team_out_of_scope` — **your** grant's team scope excludes it. Ask the
+  human to widen your grant, quoting **the slug the refusal names** — read and
+  write carry independent scopes, so a `linear.write` denial is not fixed by
+  widening `linear.read`:
+  `tclaude agent permissions grant <you> linear.write --scope linear_team=TCL,JOH`
   (a `--scope` replaces the previous one, so name every team you need).
-- `403 team_scope_empty` — your team scope authorizes nothing at all, either
-  because it overlaps the operator's list nowhere or because it constrains
-  something a Linear request cannot describe. The message says which; one of the
-  two lists has to change, or the scope has to be rewritten.
+- `403 team_scope_empty` — your team scope authorizes nothing at all: it
+  overlaps a configured operator list nowhere, or it constrains something a
+  Linear request cannot describe, or it carries no `linear_team` at all. The
+  message says which; a list has to change, or the scope has to be rewritten.
 
 Each message names what excluded you and what to change; pass it verbatim to the
 human rather than paraphrasing it as "no access to Linear".

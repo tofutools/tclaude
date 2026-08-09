@@ -299,10 +299,13 @@ type linearProxySession struct {
 	// fault, not a session that quietly authorizes nothing.
 	teams []string
 
-	// scopeTeams is the teams the caller's OWN grant names, lower-cased, or nil
-	// when the grant is unscoped. It exists only so a refusal can say which of
-	// the two lists excluded a key; nothing gates on it directly.
-	scopeTeams []string
+	// grantTeams is the teams the caller's OWN grant admits, lower-cased, before
+	// the operator's ceiling is applied — nil when the grant is unscoped. It is
+	// evaluated, not merely enumerated, so it never names a team the scope would
+	// refuse (see linearEffectiveTeams). Reported, never gated on: teams is the
+	// gate, and this exists so a refusal can say which of the two lists
+	// excluded a key.
+	grantTeams []string
 }
 
 // newLinearProxySession runs the operator-policy gates, resolves the caller's
@@ -327,7 +330,7 @@ func newLinearProxySession(
 			"could not read the daemon configuration: %v", err)
 	}
 	policy := cfg.ResolvedLinearProxy()
-	teams, scopeTeams, fault := linearEffectiveTeams(r, convID, perm, policy, teamScoped)
+	teams, grantTeams, fault := linearEffectiveTeams(r, convID, perm, policy, teamScoped)
 	if fault != nil {
 		return nil, fault
 	}
@@ -340,7 +343,7 @@ func newLinearProxySession(
 		key:        key,
 		deadline:   time.Now().Add(linearProxyBudget),
 		teams:      teams,
-		scopeTeams: scopeTeams,
+		grantTeams: grantTeams,
 	}, nil
 }
 
@@ -360,14 +363,26 @@ func newLinearProxySession(
 //   - unscoped grant, no operator list → nothing is reachable: the fail-closed
 //     linear_proxy_disabled answer.
 //
-// Every candidate goes through the real evaluator rather than a set
-// intersection on the enumerated matchers. permissionScopeEnumerate reads what
-// the grant SAYS; only evalPermissionScope decides, and going through it is what
-// keeps a scope that also constrains another dimension ANDing instead of
-// silently collapsing to its team term.
+// It resolves in TWO steps, and the split is what makes both answers precise.
+//
+// First, which teams the SCOPE admits, on its own merits: every team the scope
+// names, put through the real evaluator. That is not the same as the names
+// themselves. permissionScopeEnumerate unions the matchers across the winning
+// tier's rows, so a tier holding {linear_team: TCL} beside {linear_team: JOH,
+// group: dev} NAMES both while admitting only TCL — and reporting JOH as
+// something the grant covers would over-claim in a refusal message and in the
+// audit row. Only evalPermissionScope decides, which is also what keeps a scope
+// carrying a second dimension ANDing rather than collapsing to its team term.
+//
+// Second, the operator's ceiling intersected over that — or, with no operator
+// list at all, the scope's own answer standing as the whole policy.
+//
+// Separating the steps also puts the two ways an empty result arises on two
+// different paths, so each gets the refusal that names what the operator would
+// actually have to change.
 func linearEffectiveTeams(
 	r *http.Request, convID, perm string, policy config.LinearProxyConfig, teamScoped bool,
-) (teams, scopeTeams []string, fault *proxyFault) {
+) (teams, grantTeams []string, fault *proxyFault) {
 	if !teamScoped {
 		if len(policy.AllowedTeams) == 0 {
 			return nil, nil, &proxyFault{
@@ -379,66 +394,56 @@ func linearEffectiveTeams(
 		return policy.AllowedTeams, nil, nil
 	}
 	// A SECOND resolution, because the preflight's verdict does not travel here.
-	// The re-read is deliberately re-checked rather than assumed: a grant revoked
-	// between the two reads must refuse, not fall through to the operator's list.
 	// It re-reads the same request-scoped defaults, so in the ordinary case this
 	// is the same verdict the preflight saw.
 	v := resolvePermissionVerdictForRequest(r, convID, perm)
+	if v.Resolution != permAllow {
+		// The grant changed between the two reads. Name THAT rather than blaming
+		// the shape of a scope that may no longer exist — and refuse, rather than
+		// falling back on the operator's list.
+		return nil, nil, faultf(http.StatusForbidden, "permission",
+			"the %s grant was withdrawn while this request was being authorized", perm)
+	}
 	named, ok := permissionScopeEnumerate(v, ScopeDimLinearTeam)
-	if v.Resolution != permAllow || !ok || len(named) == 0 {
-		// The preflight established a scoped allow, so reaching here means one
-		// of: the grant changed under us; this build cannot decode a scope row;
-		// or the scope constrains only dimensions a Linear request does not
-		// describe. Each means the grant does not speak to any team, which is a
-		// refusal and not a licence to fall back on the operator's list.
+	if !ok || len(named) == 0 {
+		// The preflight established a scoped allow, so reaching here means this
+		// build cannot decode a scope row, or the scope constrains only
+		// dimensions a Linear request does not describe. Either way the grant
+		// does not speak to any team.
 		return nil, nil, faultf(http.StatusForbidden, linearTeamScopeEmptyCode,
 			"the %s grant is scoped, but names no Linear team this daemon can act on; "+
 				"the scope must carry linear_team (e.g. --scope linear_team=TCL)", perm)
 	}
-	scopeTeams = lowerTeamKeys(named)
-	// The operator's list is the ceiling when there is one; with none, the grant
-	// supplies its own universe.
-	candidates := policy.AllowedTeams
-	if len(candidates) == 0 {
-		candidates = named
-	}
-	for _, key := range candidates {
+	for _, key := range named {
 		if evalPermissionScope(v, convID, ActionContext{LinearTeam: key}).Satisfied {
+			grantTeams = appendTeamKey(grantTeams, key)
+		}
+	}
+	if len(grantTeams) == 0 {
+		// The scope names teams but admits none of them, so something else in the
+		// same scope refused. The operator's list is not the thing to edit.
+		return nil, nil, faultf(http.StatusForbidden, linearTeamScopeEmptyCode,
+			"the %s grant names team(s) %s, but its scope also constrains a dimension a Linear "+
+				"request does not describe, so it authorizes nothing; the scope must constrain "+
+				"linear_team alone", perm, strings.Join(lowerTeamKeys(named), ", "))
+	}
+	if len(policy.AllowedTeams) == 0 {
+		// No operator list: the scope is the whole policy, exactly as a
+		// remote-scoped git grant is against an empty allowed_remotes.
+		return grantTeams, grantTeams, nil
+	}
+	for _, key := range grantTeams {
+		if policy.LinearTeamAllowed(key) {
 			teams = appendTeamKey(teams, key)
 		}
 	}
 	if len(teams) == 0 {
-		// Two causes reach here, and only one is fixed by editing allowed_teams,
-		// so the message has to tell them apart. The loop above evaluates the
-		// WHOLE conjunction, so a candidate can fail on the scope's team term
-		// (genuine non-overlap) or on some other dimension a Linear request
-		// cannot describe — and blaming the operator's list for the second would
-		// send them to edit a list that already contains the team.
-		return nil, scopeTeams, linearScopeEmptyFault(perm, policy, scopeTeams)
+		return nil, grantTeams, faultf(http.StatusForbidden, linearTeamScopeEmptyCode,
+			"the %s grant is scoped to team(s) %s, none of which is on the operator's "+
+				"agent.linear_proxy.allowed_teams list (allowed: %s); the two must overlap",
+			perm, strings.Join(grantTeams, ", "), strings.Join(policy.AllowedTeams, ", "))
 	}
-	return teams, scopeTeams, nil
-}
-
-// linearScopeEmptyFault explains an empty effective set. See its caller.
-func linearScopeEmptyFault(
-	perm string, policy config.LinearProxyConfig, scopeTeams []string,
-) *proxyFault {
-	for _, key := range scopeTeams {
-		if len(policy.AllowedTeams) > 0 && !policy.LinearTeamAllowed(key) {
-			continue
-		}
-		// This team IS reachable as far as the operator is concerned, so the
-		// team term is not what refused the request. With no operator list at
-		// all, non-overlap is impossible and this is always the answer.
-		return faultf(http.StatusForbidden, linearTeamScopeEmptyCode,
-			"the %s grant names team(s) %s, but its scope also constrains a dimension a Linear "+
-				"request does not describe, so it authorizes nothing; the scope must constrain "+
-				"linear_team alone", perm, strings.Join(scopeTeams, ", "))
-	}
-	return faultf(http.StatusForbidden, linearTeamScopeEmptyCode,
-		"the %s grant is scoped to team(s) %s, none of which is on the operator's "+
-			"agent.linear_proxy.allowed_teams list (allowed: %s); the two must overlap",
-		perm, strings.Join(scopeTeams, ", "), strings.Join(policy.AllowedTeams, ", "))
+	return teams, grantTeams, nil
 }
 
 // lowerTeamKeys normalizes a team-key list the way the operator's allow-list is
@@ -451,6 +456,9 @@ func lowerTeamKeys(keys []string) []string {
 	return out
 }
 
+// appendTeamKey adds one normalized team key to a list, dropping blanks and
+// duplicates. Order is preserved: these lists are rendered to humans in
+// refusals and in `whoami`, so they keep the order the operator wrote.
 func appendTeamKey(out []string, key string) []string {
 	key = strings.ToLower(strings.TrimSpace(key))
 	if key == "" || slices.Contains(out, key) {
@@ -680,7 +688,7 @@ func (s *linearProxySession) requireAllowedTeam(key string) *proxyFault {
 	}
 	return faultf(http.StatusForbidden, linearTeamOutOfScopeCode,
 		"team %q is outside this caller's Linear team scope (this grant covers: %s)",
-		key, strings.Join(s.scopeTeams, ", "))
+		key, strings.Join(s.grantTeams, ", "))
 }
 
 // enforceIssueTeam is the SECOND half of the team gate, and the load-bearing

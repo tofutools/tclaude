@@ -22,10 +22,12 @@ import (
 //
 // Unlike the git and GitHub halves there is no repository to derive a scope
 // from: Linear has no filesystem artifact that ties a conversation to an issue.
-// A team set is the whole scope gate — the operator's
-// agent.linear_proxy.allowed_teams narrowed by any `linear_team` scope on the
-// caller's own linear.read / linear.write grant — and it lives entirely in the
-// daemon: a check made in this process is a check the caller could have skipped.
+// A team set is the whole scope gate: the operator's
+// agent.linear_proxy.allowed_teams and any `linear_team` scope on the caller's
+// own linear.read / linear.write grant, intersected where both are configured
+// and standing alone where only the grant scope is. It lives entirely in the
+// daemon — a check made in this process is a check the caller could have
+// skipped.
 
 // linearProxyTimeout is the client-side bound on a proxied Linear call. It
 // exceeds the daemon's own 45s so a slow Linear surfaces the daemon's answer
@@ -42,10 +44,11 @@ func linearCmd() *cobra.Command {
 			"`tclaude agentd` calls Linear's GraphQL API on the host with the operator's key. Everything " +
 			"you write is attributed to the operator's Linear account, so treat it as writing under their " +
 			"name.\n\n" +
-			"Which teams you can reach is not something you choose. The operator allow-lists them in " +
-			"agent.linear_proxy.allowed_teams, and your own grant may narrow that further with a " +
-			"linear_team scope; you may act only where the two agree. Run `tclaude proxy linear whoami` " +
-			"to see what that leaves you, beside the teams the key can actually see.\n\n" +
+			"Which teams you can reach is not something you choose. The operator may allow-list them in " +
+			"agent.linear_proxy.allowed_teams, and your own grant may carry a linear_team scope; where both " +
+			"exist you may act only where they agree, and where only the grant scope does it is the whole " +
+			"policy. Run `tclaude proxy linear whoami` to see what that leaves you, beside the teams the " +
+			"key can actually see.\n\n" +
 			"Reads need `linear.read`; writing needs `linear.write` AND the operator's " +
 			"agent.linear_proxy.allow_write. Neither slug is granted by default.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -135,9 +138,10 @@ func linearWhoamiCmd() *cobra.Command {
 		Short: "Show who the daemon's Linear key is, and which teams you may reach",
 		Long: "Reports the Linear user the operator's key authenticates as, every team that key can see, " +
 			"and whether YOU may reach each one.\n\n" +
-			"Two lists bound you and the answer breaks out both, because they need different fixes: " +
-			"operator_teams is agent.linear_proxy.allowed_teams, grant_teams is the linear_team scope on " +
-			"your own grant (absent when it is unscoped), and allowed_teams is the intersection.\n\n" +
+			"Up to two lists bound you and the answer breaks out both, because they need different fixes: " +
+			"operator_teams is agent.linear_proxy.allowed_teams (absent when the operator configured none), " +
+			"grant_teams is the linear_team scope on your own grant (absent when it is unscoped), and " +
+			"allowed_teams is what the ones that ARE present leave you.\n\n" +
 			"This is the command to run FIRST, and the command to run when something is refused: it tells " +
 			"you the exact team key — and which of the two lists — to ask the operator to widen, rather " +
 			"than leaving you to guess from a refusal.",

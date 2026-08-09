@@ -2427,7 +2427,9 @@ Provenance shows what actually applied: `permissions ls` renders the winning
 source with its scope, e.g. `group:dev [group=dev]`, and an audit row records
 the scope that authorized the action.
 
-Two dimensions are not a plain string match. `remote` (on `git.read` /
+The two **proxy** dimensions have matcher languages of their own (the
+relational `target_agent` matchers below are a third departure from plain string
+equality). `remote` (on `git.read` /
 `git.push` / `github.read` / `github.write`) reuses the git proxy's
 slash-segmented pattern language, so a matcher can cover a whole host or org
 rather than one URL. `linear_team` (on `linear.read` / `linear.write`) is a
@@ -2440,12 +2442,13 @@ tclaude agent permissions grant ticket-worker linear.read \
   --scope linear_team=TCL,JOH
 ```
 
-Both proxy dimensions are enforced **together with** the operator's own
-allow-list rather than instead of it: a scope can narrow what an agent reaches,
-never widen it past `agent.git_proxy.allowed_remotes` /
-`agent.linear_proxy.allowed_teams`. When the operator has configured no list at
-all, a scoped grant supplies its own — which is how a per-agent posture works
-with no global one. See [Linear proxy](linear-proxy.md) for what that means for
+Where the operator has configured an allow-list
+(`agent.git_proxy.allowed_remotes` / `agent.linear_proxy.allowed_teams`), these
+scopes are enforced **together with** it rather than instead of it: a scope can
+narrow what an agent reaches, never widen it past the operator's list. Where the
+operator has configured none, a scoped grant supplies its own — which is how a
+per-agent posture works with no global one, and why an *unscoped* grant is still
+refused there. See [Linear proxy](linear-proxy.md) for what that means for
 cross-team listings.
 
 **Relational matchers.** `agent.retire` and the reserved `agent.standdown`

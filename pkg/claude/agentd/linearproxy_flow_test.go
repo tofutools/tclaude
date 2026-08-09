@@ -513,6 +513,61 @@ func TestLinearProxy_TeamScopedCallIsAuditedWithItsScope(t *testing.T) {
 	assert.Contains(t, detail, "issue=TCL-1", "and the verb's own detail must survive alongside it")
 }
 
+// TestLinearProxy_ReportedGrantTeamsAreEvaluatedNotJustNamed — permissionScopeEnumerate
+// UNIONS matchers across the winning tier's rows, so a tier holding
+// {linear_team: TCL} beside {linear_team: JOH, group: dev} NAMES both while
+// admitting only TCL. Reporting JOH as something the grant covers would claim
+// authority it never conferred — on the audit row, in whoami, and in the
+// refusal that tells an agent what its grant reaches.
+//
+// Two group grants rather than one row, because that is the only way a tier
+// holds two scopes.
+func TestLinearProxy_ReportedGrantTeamsAreEvaluatedNotJustNamed(t *testing.T) {
+	f, rec := linearWorld(t, []string{"TCL", "JOH"})
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	tcl := f.HaveGroup("team-tcl")
+	joh := f.HaveGroup("team-joh")
+	f.HaveMember("team-tcl", linearProxyTestConv)
+	f.HaveMember("team-joh", linearProxyTestConv)
+	require.NoError(t, db.ReplaceAgentGroupPermissionGrants(tcl.ID,
+		[]db.PermissionGrant{{
+			Slug: agentd.PermLinearRead, Scope: `{"linear_team":["TCL"]}`, ScopeSpecified: true,
+		}}, "test"))
+	// The JOH row also constrains `group`, which no Linear request describes, so
+	// the row admits nothing however the request is spelled.
+	require.NoError(t, db.ReplaceAgentGroupPermissionGrants(joh.ID,
+		[]db.PermissionGrant{{
+			Slug:  agentd.PermLinearRead,
+			Scope: `{"group":["dev"],"linear_team":["JOH"]}`, ScopeSpecified: true,
+		}}, "test"))
+
+	rec.response = func(linearCall) (int, string) { return http.StatusOK, issueJSON("TCL-1", "TCL") }
+	res := linearPost(t, f, "/v1/linear/issue/view", map[string]any{"identifier": "TCL-1"})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	var body struct {
+		Teams []string `json:"teams"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &body))
+	assert.Equal(t, []string{"tcl"}, body.Teams, "JOH is named by the tier but admitted by no row")
+
+	// JOH must be refused, and must not be described as something the grant covers.
+	refused := linearPost(t, f, "/v1/linear/issue/view", map[string]any{"identifier": "JOH-1"})
+	assert.Equal(t, http.StatusForbidden, refused.Code, "body=%s", refused.Body.String())
+	assert.Contains(t, refused.Body.String(), "team_out_of_scope")
+	assert.NotContains(t, refused.Body.String(), "joh",
+		"the refusal must not list the refused team as one the grant covers")
+
+	var detail string
+	for _, e := range fetchAudit(t, agentd.BuildDashboardHandlerForTest(), "").Entries {
+		if e.Verb == "linear.issue.view" && e.Status == http.StatusOK {
+			detail = e.Detail
+		}
+	}
+	assert.Contains(t, detail, "[linear_team=tcl]",
+		"the audit row must record the teams the grant ADMITS, not the ones it merely names")
+}
+
 // An UNSCOPED Linear call must leave no scope noise on its audit row — the same
 // regression guard TestPermissionScope_UnscopedGrantIsUnaffected makes for the
 // gate sites that pass no context.

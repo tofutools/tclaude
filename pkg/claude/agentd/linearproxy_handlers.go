@@ -134,12 +134,17 @@ func openLinearProxy(w http.ResponseWriter, r *http.Request, perm string, body a
 		// requirePermission call; here the decision is the set resolution above,
 		// so the record is written explicitly.
 		//
-		// It records the GRANT's scope, not the effective set, so the field means
+		// It records the GRANT's teams, not the effective set, so the field means
 		// the same thing it does on a git row: the scope on the grant that
-		// authorized the action. The team actually acted on is on the same audit
-		// row already, in the verb's own detail.
+		// authorized the action, rather than that scope narrowed by an operator
+		// setting the row does not otherwise mention. The team actually acted on is
+		// already on the same audit row, in the verb's own detail.
+		//
+		// grantTeams is the EVALUATED set, which is what makes this honest: the
+		// teams the scope merely names can be a superset of the teams it admits,
+		// and recording those would claim authority the grant never conferred.
 		recordAuditPermissionScope(r, perm, permissionScopeDisplay(
-			PermissionScope{ScopeDimLinearTeam: s.scopeTeams}))
+			PermissionScope{ScopeDimLinearTeam: s.grantTeams}))
 	}
 	if perm == PermLinearWrite {
 		if fault := s.requireWrite(); fault != nil {
@@ -318,7 +323,7 @@ func handleLinearProxyWhoami(w http.ResponseWriter, r *http.Request) {
 		Teams:          teams,
 		AllowedTeams:   s.teams,
 		OperatorTeams:  s.policy.AllowedTeams,
-		GrantTeams:     s.scopeTeams,
+		GrantTeams:     s.grantTeams,
 		WriteAllowed:   s.policy.AllowWrite,
 		TeamsTruncated: len(data.Teams.Nodes) >= whoamiTeamPageSize,
 	}, "")
