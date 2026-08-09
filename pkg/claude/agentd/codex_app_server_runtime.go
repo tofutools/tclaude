@@ -180,8 +180,11 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 	threadID := ""
 	if args.CodexAppServerExistingThread {
 		threadID = strings.TrimSpace(args.ConvID)
-		if threadID == "" || runtime.ConvID != threadID ||
-			!codexAppServerResumedTUIAlive(*runtime, threadID) {
+		if threadID == "" || runtime.ConvID != threadID {
+			fail(errors.New("could not prove the exact existing-thread Codex resume launch/pane/argv"))
+			return
+		}
+		if err := waitForCodexAppServerResumedTUI(ctx, *runtime, threadID); err != nil {
 			fail(errors.New("could not prove the exact existing-thread Codex resume launch/pane/argv"))
 			return
 		}
@@ -558,6 +561,28 @@ var codexAppServerLaunchAlive = liveCodexAppServerLaunch
 // Dial. Fresh launches never use this path because an early Dial would join
 // Codex's fresh-thread subscriber set and steal TUI-only requests.
 var codexAppServerResumedTUIAlive = liveCodexAppServerResumedTUI
+
+// waitForCodexAppServerResumedTUI bridges the deliberate ordering gap in the
+// pane launch: its private app-server is started first, and only after that
+// socket becomes ready does the shell exec `codex resume ... --remote ...`.
+// Socket/PID readiness therefore cannot imply that the TUI process is already
+// visible below the pane. Keep polling the same exact launch/pane/argv proof;
+// the shared bootstrap deadline remains the bound and no weaker identity is
+// accepted while the TUI is coming up.
+func waitForCodexAppServerResumedTUI(
+	ctx context.Context, runtime db.CodexAppServerRuntime, expectedThread string,
+) error {
+	for {
+		if codexAppServerResumedTUIAlive(runtime, expectedThread) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+}
 
 func liveCodexAppServerResumedTUI(runtime db.CodexAppServerRuntime, expectedThread string) bool {
 	if !liveCodexAppServerLaunch(runtime) || runtime.ConvID != expectedThread {

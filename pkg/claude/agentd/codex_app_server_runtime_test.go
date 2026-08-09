@@ -227,7 +227,10 @@ func TestCodexAppServerExistingThreadResumeBindsWithoutTUIHook(t *testing.T) {
 	proofCalls := 0
 	codexAppServerResumedTUIAlive = func(runtime db.CodexAppServerRuntime, threadID string) bool {
 		proofCalls++
-		return runtime.Generation == "resume-generation" && runtime.LaunchID == "resume-thread" &&
+		// The production shell starts the app-server and publishes its socket
+		// before execing the resumed TUI. Reproduce that gap: the exact proof is
+		// initially absent, then appears without any identity becoming weaker.
+		return proofCalls > 1 && runtime.Generation == "resume-generation" && runtime.LaunchID == "resume-thread" &&
 			runtime.SocketPath != "" && threadID == "resume-thread"
 	}
 	t.Cleanup(func() { codexAppServerResumedTUIAlive = previousResumeProof })
@@ -268,7 +271,8 @@ func TestCodexAppServerExistingThreadResumeBindsWithoutTUIHook(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("hookless existing-thread bootstrap did not finish")
 	}
-	require.Equal(t, 2, proofCalls, "resume argv proof is revalidated after thread/read")
+	require.Equal(t, 3, proofCalls,
+		"resume argv proof waits through server-before-TUI launch ordering and is revalidated after thread/read")
 	stored, err := db.GetCodexAppServerRuntime(runtime.Generation)
 	require.NoError(t, err)
 	require.Equal(t, db.CodexAppServerReady, stored.State)
