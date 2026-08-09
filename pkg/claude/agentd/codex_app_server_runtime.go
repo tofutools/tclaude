@@ -173,14 +173,24 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 		fail(err)
 		return
 	}
-	// Do not dial before the TUI hook has proved that its thread exists and is
+	// Do not dial before the TUI hook has proved that a FRESH thread exists and is
 	// bound. In Codex 0.147 a fresh thread auto-subscribes every connection that
 	// is already initialized, even if it never calls thread/resume. Waiting
 	// before Dial makes approval ownership independent of goroutine birth order.
-	threadID, err := waitForCodexAppServerTUIBinding(ctx, runtime.Generation)
-	if err != nil {
-		fail(err)
-		return
+	threadID := ""
+	if args.CodexAppServerExistingThread {
+		threadID = strings.TrimSpace(args.ConvID)
+		if threadID == "" || runtime.ConvID != threadID ||
+			!codexAppServerResumedTUIAlive(*runtime, threadID) {
+			fail(errors.New("could not prove the exact existing-thread Codex resume launch/pane/argv"))
+			return
+		}
+	} else {
+		threadID, err = waitForCodexAppServerTUIBinding(ctx, runtime.Generation)
+		if err != nil {
+			fail(err)
+			return
+		}
 	}
 	client, err := codexappserver.Dial(ctx, runtime.SocketPath,
 		&codexappserver.Options{CodexVersion: runtime.CodexVersion})
@@ -199,9 +209,13 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 	}
 	runtime.ConvID = threadID
 	runtime.ThreadID = threadID
-	if !codexAppServerLaunchAlive(*runtime) {
+	launchAlive := codexAppServerLaunchAlive(*runtime)
+	if args.CodexAppServerExistingThread {
+		launchAlive = codexAppServerResumedTUIAlive(*runtime, threadID)
+	}
+	if !launchAlive {
 		_ = client.Close()
-		fail(errors.New("validated Codex TUI hook does not belong to the recorded live launch/pane"))
+		fail(errors.New("validated Codex TUI binding does not belong to the recorded live launch/pane"))
 		return
 	}
 	runtime.State = db.CodexAppServerReady
@@ -536,6 +550,40 @@ func liveCodexAppServerLaunch(runtime db.CodexAppServerRuntime) bool {
 }
 
 var codexAppServerLaunchAlive = liveCodexAppServerLaunch
+
+// codexAppServerResumedTUIAlive proves that the live pane belonging to this
+// exact runtime is executing `codex resume <expected thread>`. This is the
+// hookless resume barrier: the app-server socket/PID/generation were proved
+// immediately before it, and ReadThread proves the same immutable id after
+// Dial. Fresh launches never use this path because an early Dial would join
+// Codex's fresh-thread subscriber set and steal TUI-only requests.
+var codexAppServerResumedTUIAlive = liveCodexAppServerResumedTUI
+
+func liveCodexAppServerResumedTUI(runtime db.CodexAppServerRuntime, expectedThread string) bool {
+	if !liveCodexAppServerLaunch(runtime) || runtime.ConvID != expectedThread {
+		return false
+	}
+	row, err := db.LoadSession(runtime.LaunchID)
+	if err != nil || row == nil {
+		return false
+	}
+	lines, ok := session.ProcessTreeCommandLines(livePanePID(row.TmuxSession))
+	if !ok {
+		return false
+	}
+	for _, line := range lines {
+		if exactCodexResumeCommandLine(line, expectedThread) {
+			return true
+		}
+	}
+	return false
+}
+
+func exactCodexResumeCommandLine(line, expectedThread string) bool {
+	fields := strings.Fields(line)
+	return len(fields) >= 3 && filepath.Base(fields[0]) == "codex" &&
+		fields[1] == "resume" && fields[2] == expectedThread
+}
 
 func processAlive(pid int) error {
 	process, err := os.FindProcess(pid)

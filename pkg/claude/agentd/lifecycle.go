@@ -8645,6 +8645,10 @@ func SpawnDetachedTclaudeResume(args clcommon.SpawnArgs) error {
 // caller knows and the callee cannot recover, and a caller passing the wrong one
 // by inheritance is the same bug one level up.
 func spawnDetachedTclaudeResumeAs(args clcommon.SpawnArgs, kind copilotAPILaunchKind) error {
+	// A COPY clone has resume-shaped argv but names a newly forked conversation;
+	// only an ordinary durable resume may bind a known thread without waiting
+	// for a TUI hook that Codex does not emit on every resume.
+	args.CodexAppServerExistingThread = kind == copilotAPILaunchResume
 	if err := prepareCodexAppServerRuntime(&args); err != nil {
 		return err
 	}

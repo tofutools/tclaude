@@ -623,10 +623,11 @@ func TestHandleAgentResume_AgentCannotRecreateMissingDir(t *testing.T) {
 type recordingResumeSpawner struct {
 	convID, cwd, cwdWriteProof, effort, model, harness, sandbox, sandboxImplementation, approval,
 	askUserQuestionTimeout, codexGitCommonDir, codexStateRoot string
-	autoReview, remoteControl, autoMemory, codexGitCommonDirPinned, codexAppServer bool
-	effectiveSandbox                                                               *sandboxpolicy.Snapshot
-	spawnErr                                                                       error
-	resumeCalls, newCalls                                                          int
+	autoReview, remoteControl, autoMemory, codexGitCommonDirPinned, codexAppServer,
+	codexAppServerExistingThread bool
+	effectiveSandbox      *sandboxpolicy.Snapshot
+	spawnErr              error
+	resumeCalls, newCalls int
 }
 
 func installRecordingResumeSpawner(t *testing.T) *recordingResumeSpawner {
@@ -661,6 +662,7 @@ func (s *recordingResumeSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	s.codexGitCommonDir = args.CodexGitCommonDir
 	s.codexGitCommonDirPinned = args.CodexGitCommonDirPinned
 	s.codexAppServer = args.CodexAppServer
+	s.codexAppServerExistingThread = args.CodexAppServerExistingThread
 	s.codexStateRoot = args.CodexStateRoot
 	s.effectiveSandbox = args.EffectiveSandbox
 	return s.spawnErr
@@ -693,6 +695,8 @@ func TestResumeOneConv_CodexCrashRecoveryKeepsPersistedStateRootAndThread(t *tes
 	require.Equal(t, "resumed", res.Action, "detail=%s", res.Detail)
 	assert.Equal(t, convID, rec.convID, "recovery must resume the original thread id")
 	assert.Equal(t, stateRoot, rec.codexStateRoot, "wrapper must use the original Codex store")
+	assert.True(t, rec.codexAppServerExistingThread,
+		"durable recovery must select the exact existing-thread bootstrap contract")
 	assert.Equal(t, 1, rec.resumeCalls)
 	assert.Zero(t, rec.newCalls, "recovery must not create an empty replacement generation")
 }
