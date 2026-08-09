@@ -389,6 +389,10 @@ func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, rela
 			// anyway — silently returning "closed" without a single probe would
 			// hand the caller a guarantee nothing checked — just never escalate.
 			if waitForLifecycleTargetGone(target, waitPolicy.deadline) {
+				// Verified gone: the retry watchdog has nothing left to do.
+				// (A pane still alive keeps it armed — this stop may not
+				// escalate, but the re-injections are still meaningful.)
+				target.markSoftExitSettled()
 				return res, softExitClosed
 			}
 			res.Detail = joinDetail(res.Detail, "pane still alive; no escalation for this stop")
@@ -432,6 +436,10 @@ func finishStopWait(target *lifecycleTarget, waitPolicy stopWaitPolicy, lifecycl
 		deadline = softExitEscalationSignalGrace
 	}
 	outcome := awaitLifecycleTargetExit(target, deadline, lifecycleAction, relatedEventID, reason)
+	// Whatever the outcome, the stop is resolved: the pane exit was verified,
+	// or the ladder ran to its end. Release the background retry watchdog now
+	// rather than letting it sleep out its delay to rediscover this.
+	target.markSoftExitSettled()
 	switch outcome {
 	case softExitClosed:
 		if err := reconcileStoppedLifecycleTarget(target, lifecycleAction, relatedEventID, fallbackExitReason); err != nil {
@@ -460,6 +468,27 @@ type lifecycleTarget struct {
 	paneID              string
 	panePID             int
 	paneGenerationBound bool
+
+	// softExitSettled closes (via markSoftExitSettled) once a stop path has
+	// verified this target's pane is gone or run the escalation ladder to its
+	// end. The background soft-exit retry watchdog selects on it between
+	// attempts so it stands down the moment the stop resolves, instead of
+	// sleeping out its full delay only to rediscover a session that is long
+	// gone. Never closed directly — always through markSoftExitSettled.
+	softExitSettled     chan struct{}
+	softExitSettledOnce sync.Once
+}
+
+// markSoftExitSettled tells this target's background soft-exit retry watchdog
+// that the stop already resolved — the pane's exit was verified, or the
+// escalation ladder ran to its end (after which re-typing an exit command is
+// pointless either way). Idempotent, and safe when no watchdog was ever
+// scheduled.
+func (t *lifecycleTarget) markSoftExitSettled() {
+	if t == nil || t.softExitSettled == nil {
+		return
+	}
+	t.softExitSettledOnce.Do(func() { close(t.softExitSettled) })
 }
 
 type paneProbeState int
@@ -492,7 +521,7 @@ func captureLifecycleTarget(sess *db.SessionRow) (*lifecycleTarget, error) {
 	if identity.Generation != "" && p.generation != "" && p.generation != identity.Generation {
 		return nil, fmt.Errorf("pane generation mismatch")
 	}
-	return &lifecycleTarget{sessionID: sess.ID, convID: sess.ConvID, tmuxSession: sess.TmuxSession, generation: identity.Generation, paneID: p.paneID, panePID: p.panePID, paneGenerationBound: p.generation != ""}, nil
+	return &lifecycleTarget{sessionID: sess.ID, convID: sess.ConvID, tmuxSession: sess.TmuxSession, generation: identity.Generation, paneID: p.paneID, panePID: p.panePID, paneGenerationBound: p.generation != "", softExitSettled: make(chan struct{})}, nil
 }
 
 // probeLifecyclePane reads the pane's identity and liveness in one tmux call.
@@ -653,7 +682,14 @@ func scheduleOpenCodeSoftExitRetryTarget(
 ) {
 	goBackground(func() {
 		for attempt := 2; attempt <= softExitMaxAttempts; attempt++ {
-			time.Sleep(softExitRetryDelay)
+			select {
+			case <-target.softExitSettled:
+				// Mirrors scheduleSoftExitRetryTarget: the stop's own wait
+				// already verified the outcome, so stand down silently
+				// (attempt logging is a Copilot forensic, not an OpenCode one).
+				return
+			case <-time.After(softExitRetryDelay):
+			}
 			if beforeSoftExitTargetRetryProbeForTest != nil {
 				beforeSoftExitTargetRetryProbeForTest(attempt)
 			}
@@ -856,7 +892,19 @@ func scheduleSoftExitRetryTarget(target *lifecycleTarget, exitCmd string, prefix
 		// log more for nothing.
 		logAttempts := harnessForConv(target.convID).Name == harness.CopilotName
 		for attempt := 2; attempt <= softExitMaxAttempts; attempt++ {
-			time.Sleep(softExitRetryDelay)
+			select {
+			case <-target.softExitSettled:
+				// The stop's own wait already verified the outcome; no reason
+				// to wake later just to rediscover it (or to keep an operator
+				// guessing whether the watchdog is still pending).
+				if logAttempts {
+					slog.Info("soft-exit retry: watchdog cancelled; stop already settled",
+						"session", target.sessionID, "conv", short8(target.convID),
+						"attempt", attempt, "reason", reason)
+				}
+				return
+			case <-time.After(softExitRetryDelay):
+			}
 			if beforeSoftExitTargetRetryProbeForTest != nil {
 				beforeSoftExitTargetRetryProbeForTest(attempt)
 			}

@@ -111,6 +111,11 @@ func scheduleSoftExitEscalation(target *lifecycleTarget, lifecycleAction, relate
 		return
 	}
 	goBackground(func() {
+		// By the time this watchdog returns the stop is resolved either way
+		// (pane exit verified, or the ladder ran to its end), so release the
+		// soft-exit retry watchdog instead of leaving it to sleep out its
+		// delay and rediscover the outcome.
+		defer target.markSoftExitSettled()
 		if waitForLifecycleTargetGone(target, softExitEscalationDeadline) {
 			if err := reconcileStoppedLifecycleTarget(target, lifecycleAction, relatedEventID, fallbackExitReason); err != nil {
 				slog.Warn("soft-exit: recording verified pane exit failed",
