@@ -15,13 +15,18 @@ type SpawnSpec struct {
 	// CodexAppServerSocket selects the opt-in Codex app-server drive. The
 	// adapter starts a private app-server in the same launch envelope, points
 	// the normal TUI at it with --remote, and records the server pid for agentd.
-	CodexAppServerSocket      string
-	CodexAppServerURL         string
-	CodexAppServerTokenSHA256 string
+	CodexAppServerSocket       string
+	CodexAppServerURL          string
+	CodexAppServerTokenSHA256  string
 	CodexAppServerTokenHandoff string
-	TclaudeExecutable         string
-	CodexAppServerPIDFile     string
-	CodexAppServerLogFile     string
+	TclaudeExecutable          string
+	CodexAppServerPIDFile      string
+	CodexAppServerLogFile      string
+	// CodexAppServerProfileOverrides is the complete managed permission profile
+	// rendered as app-server-supported `-c key=value` overrides. App-server does
+	// not accept Codex's runtime-only `-p` selector, even though its model tools
+	// execute under the server process and need the same resolved posture.
+	CodexAppServerProfileOverrides []string
 	// Cwd is the resolved absolute launch directory. Most harnesses inherit it
 	// from tmux's `new-session -c`; a server-attached client may also need to
 	// forward it explicitly to the remote server (OpenCode's `attach --dir`).
