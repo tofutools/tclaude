@@ -960,6 +960,9 @@ func TestSoftExit_RetrySendFailurePreservesDeliveredIntentThroughWindow(t *testi
 	var once sync.Once
 	cleanupAfterBackgroundDrain(t, agentd.SetBeforeSoftExitTargetRetryProbeForTest(func(attempt int) {
 		if attempt == 2 {
+			// The retry first issues a best-effort tmux-mode cancel. Fail it and
+			// the following /exit send so the retry delivery itself still fails.
+			f.World.Tmux.FailNextCommand("send-keys")
 			f.World.Tmux.FailNextCommand("send-keys")
 			once.Do(func() { close(retryReached) })
 		}

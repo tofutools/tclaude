@@ -64,14 +64,15 @@ func TestInjectTextAndSubmit_MultilineUsesBracketedPaste(t *testing.T) {
 	const text = "first line\n\tsecond line"
 	require.NoError(t, injectTextAndSubmit("pane-multiline:0.0", text))
 	commands := rt.snapshot()
-	require.Len(t, commands, 4)
-	assert.Equal(t, "set-buffer", commands[0][0])
-	assert.Equal(t, text, commands[0][len(commands[0])-1])
-	assert.Equal(t, "paste-buffer", commands[1][0])
-	assert.True(t, slices.Contains(commands[1], "-p"), "paste must enable bracketed-paste mode: %v", commands[1])
-	assert.True(t, slices.Contains(commands[1], "-r"), "paste must preserve LF bytes: %v", commands[1])
-	assert.Equal(t, []string{"send-keys", "-t", "=pane-multiline:0.0", "Enter"}, commands[2])
-	assert.Equal(t, commands[2], commands[3])
+	require.Len(t, commands, 5)
+	assert.Equal(t, []string{"send-keys", "-X", "-t", "=pane-multiline:0.0", "cancel"}, commands[0])
+	assert.Equal(t, "set-buffer", commands[1][0])
+	assert.Equal(t, text, commands[1][len(commands[1])-1])
+	assert.Equal(t, "paste-buffer", commands[2][0])
+	assert.True(t, slices.Contains(commands[2], "-p"), "paste must enable bracketed-paste mode: %v", commands[2])
+	assert.True(t, slices.Contains(commands[2], "-r"), "paste must preserve LF bytes: %v", commands[2])
+	assert.Equal(t, []string{"send-keys", "-t", "=pane-multiline:0.0", "Enter"}, commands[3])
+	assert.Equal(t, commands[3], commands[4])
 }
 
 func TestInjectBracketedTextAndSubmit_SingleLineUsesBracketedPaste(t *testing.T) {
@@ -85,19 +86,20 @@ func TestInjectBracketedTextAndSubmit_SingleLineUsesBracketedPaste(t *testing.T)
 	const text = "[system: new agent message #42; delivery: inline] hello"
 	require.NoError(t, injectBracketedTextAndSubmit("pane-message:0.0", text))
 	commands := rt.snapshot()
-	require.Len(t, commands, 4)
-	assert.Equal(t, "set-buffer", commands[0][0])
-	assert.Equal(t, text, commands[0][len(commands[0])-1])
-	assert.Equal(t, "paste-buffer", commands[1][0])
-	assert.True(t, slices.Contains(commands[1], "-p"),
-		"single-line nudge must arrive as a Bubble Tea paste event: %v", commands[1])
+	require.Len(t, commands, 5)
+	assert.Equal(t, []string{"send-keys", "-X", "-t", "=pane-message:0.0", "cancel"}, commands[0])
+	assert.Equal(t, "set-buffer", commands[1][0])
+	assert.Equal(t, text, commands[1][len(commands[1])-1])
+	assert.Equal(t, "paste-buffer", commands[2][0])
+	assert.True(t, slices.Contains(commands[2], "-p"),
+		"single-line nudge must arrive as a Bubble Tea paste event: %v", commands[2])
 }
 
 func (r *recordingTmux) Command(args ...string) *exec.Cmd {
 	last := args[len(args)-1]
 	r.mu.Lock()
 	r.keys = append(r.keys, last)
-	blockFirstText := last != "Enter" && !r.firstTextSeen
+	blockFirstText := last != "Enter" && last != "cancel" && !r.firstTextSeen
 	if blockFirstText {
 		r.firstTextSeen = true
 	}
@@ -173,7 +175,7 @@ func TestInjectTextAndSubmit_SerializesPerPane(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("second injector did not contend on the pane lock")
 	}
-	if got := rt.snapshot(); len(got) != 1 || got[0] != "MSG-A" {
+	if got := rt.snapshot(); len(got) != 2 || got[0] != "cancel" || got[1] != "MSG-A" {
 		t.Fatalf("second injector emitted a command while the first held the pane lock: %v", got)
 	}
 	releaseFirst()
@@ -189,16 +191,16 @@ func TestInjectTextAndSubmit_SerializesPerPane(t *testing.T) {
 	}
 
 	got := rt.snapshot()
-	// Each injectTextAndSubmit emits exactly [text, Enter, Enter].
-	if len(got) != 6 {
-		t.Fatalf("expected 6 send-keys, got %d: %v", len(got), got)
+	// Each injectTextAndSubmit emits exactly [cancel, text, Enter, Enter].
+	if len(got) != 8 {
+		t.Fatalf("expected 8 send-keys, got %d: %v", len(got), got)
 	}
 	isText := func(s string) bool { return s == "MSG-A" || s == "MSG-B" }
-	if !isText(got[0]) || got[1] != "Enter" || got[2] != "Enter" ||
-		!isText(got[3]) || got[4] != "Enter" || got[5] != "Enter" {
+	if got[0] != "cancel" || !isText(got[1]) || got[2] != "Enter" || got[3] != "Enter" ||
+		got[4] != "cancel" || !isText(got[5]) || got[6] != "Enter" || got[7] != "Enter" {
 		t.Fatalf("send-keys interleaved across concurrent injectors: %v", got)
 	}
-	if got[0] == got[3] {
+	if got[1] == got[5] {
 		t.Fatalf("same message injected twice, the other was lost: %v", got)
 	}
 }

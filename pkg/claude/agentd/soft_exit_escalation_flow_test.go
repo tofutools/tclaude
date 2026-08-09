@@ -137,6 +137,10 @@ func TestSoftExitEscalation_KillsPaneWhoseInjectionFailed(t *testing.T) {
 	const tmuxSes = "tmux-escc"
 	f.HaveConvWithTitle(conv, "unreachable-worker")
 	f.HaveAliveSession(conv, "spwn-escc", tmuxSes, f.TestCwd("escc"))
+	// Agentd first issues a best-effort tmux-mode cancel under the pane-input
+	// lock, then the actual /exit send. Fail both so the harmless cancel fault
+	// cannot consume the fault intended for the delivery assertion.
+	f.World.Tmux.FailNextCommand("send-keys")
 	f.World.Tmux.FailNextCommand("send-keys")
 
 	stop := f.AsHuman().Stop(conv, false)
