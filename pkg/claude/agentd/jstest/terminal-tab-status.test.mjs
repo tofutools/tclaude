@@ -60,11 +60,23 @@ test('status annotations keep recovery vocabulary and avoid stale work details',
   assert.match(waiting.description, /answer the prompt/);
 
   const backoff = terminalTabStatus(pane(), {
-    agents: [member('idle', { recovery_status: 'backoff', recovery_detail: 'retrying soon' })],
+    agents: [{ ...member('idle', { recovery_status: 'backoff', recovery_detail: 'retrying soon' }), online: false }],
   });
   assert.equal(backoff.key, 'error');
   assert.match(backoff.description, /crash loop \/ backoff/);
   assert.match(backoff.description, /retrying soon/);
+
+  const onlineBackoff = terminalTabStatus(pane(), {
+    agents: [member('working', { recovery_status: 'backoff', recovery_detail: 'retrying soon' })],
+  });
+  assert.equal(onlineBackoff.key, 'working');
+  assert.match(onlineBackoff.description, /crash loop \/ backoff/);
+
+  const onlineSuppressed = terminalTabStatus(pane(), {
+    agents: [member('working', { recovery_status: 'suppressed' })],
+  });
+  assert.equal(onlineSuppressed.key, 'working');
+  assert.match(onlineSuppressed.description, /recovery suppressed/);
 
   const recovered = terminalTabStatus(pane(), {
     agents: [member('idle', { recovery_status: 'recovered' })],
@@ -84,6 +96,8 @@ test('terminal status distinguishes waking, restarting, crash, exit, and offline
   for (const [agent, key] of states) {
     assert.equal(terminalTabStatus(pane(), { agents: [agent] }).key, key);
   }
+  assert.equal(terminalTabStatus(pane(), { agents: [states[0][0]] }).label, 'starting up');
+  assert.match(terminalTabStatus(pane(), { agents: [states[0][0]] }).description, /starting up/);
 });
 
 test('missing roster data is explicit and never mistaken for idle work', () => {

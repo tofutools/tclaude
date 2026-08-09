@@ -27,7 +27,7 @@ const STATUS_LABELS = Object.freeze({
   error: 'error',
   crashed: 'crashed',
   offline: 'offline',
-  waking: 'waking',
+  waking: 'starting up',
   restarting: 'restarting',
   exited: 'exited',
   unknown: 'status unavailable',
@@ -110,7 +110,7 @@ function statusKey(agent) {
 
   const recovery = recoveryStatus(agent);
   if (recovery === 'restarting') return 'restarting';
-  if (recovery === 'backoff' || recovery === 'suppressed') return 'error';
+  if (!agent.online && (recovery === 'backoff' || recovery === 'suppressed')) return 'error';
   if (recovery === 'crashed') return 'crashed';
 
   if (!agent.online) {
