@@ -99,6 +99,37 @@ func GetCodexAppServerRuntime(generation string) (*CodexAppServerRuntime, error)
 		` WHERE generation = ?`, generation))
 }
 
+// BindWarmingCodexAppServerRuntimeFromTUI records the thread identity carried
+// by a validated hook from the TUI process. Codex 0.147 automatically
+// subscribes every connection that is already initialized when a fresh thread
+// is created, so agentd must not initialize its control connection until this
+// post-creation signal exists. Only the newest warming generation for the
+// launch may be bound, and a resume's predeclared conversation must match.
+func BindWarmingCodexAppServerRuntimeFromTUI(launchID, threadID string) (bool, error) {
+	launchID = strings.TrimSpace(launchID)
+	threadID = strings.TrimSpace(threadID)
+	if launchID == "" || threadID == "" {
+		return false, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	now := time.Now().UTC()
+	result, err := d.Exec(`UPDATE codex_app_server_runtimes
+		SET conv_id = ?, thread_id = ?, updated_at = ?
+		WHERE generation = (
+			SELECT generation FROM codex_app_server_runtimes
+			WHERE launch_id = ? AND state = ?
+			ORDER BY created_at DESC LIMIT 1
+		) AND (conv_id = '' OR conv_id = ?)`, threadID, threadID, dbTime(now), launchID, CodexAppServerWarming, threadID)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	return changed > 0, err
+}
+
 func DeleteCodexAppServerRuntime(generation string) error {
 	d, err := Open()
 	if err != nil {
@@ -209,61 +240,6 @@ func SetSessionStatusForCodexAppServerGeneration(
 	}
 	changed, err := result.RowsAffected()
 	return changed == 1, err
-}
-
-// UpdateContextSnapshotForCodexAppServerGeneration is the app-server twin of
-// UpdateContextSnapshotForGeneration with an additional runtime-generation
-// predicate. It also updates the durable relaunch projection in the same
-// transaction, matching the existing context writer contract.
-func UpdateContextSnapshotForCodexAppServerGeneration(
-	sessionID, convID string,
-	sessionCreatedAt time.Time,
-	generation string,
-	pct float64,
-	tokensInput, tokensOutput, windowSize int64,
-) (bool, error) {
-	if pct == 0 && tokensInput == 0 && tokensOutput == 0 && windowSize == 0 {
-		return false, nil
-	}
-	d, err := Open()
-	if err != nil {
-		return false, err
-	}
-	tx, err := d.Begin()
-	if err != nil {
-		return false, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	result, err := tx.Exec(`UPDATE sessions
-		SET context_pct = ?, tokens_input = ?, tokens_output = ?, context_window_size = ?
-		WHERE id = ? AND conv_id = ? AND created_at = ?
-		  AND EXISTS (
-			SELECT 1 FROM codex_app_server_runtimes runtime
-			WHERE runtime.generation = ? AND runtime.conv_id = ? AND runtime.state = ?
-			  AND NOT EXISTS (
-				SELECT 1 FROM codex_app_server_runtimes replacement
-				WHERE replacement.conv_id = runtime.conv_id
-				  AND replacement.generation <> runtime.generation
-				  AND replacement.state = ?
-				  AND replacement.created_at > runtime.created_at
-			  )
-		  )`, pct, tokensInput, tokensOutput, windowSize,
-		sessionID, convID, dbTime(sessionCreatedAt), generation, convID,
-		CodexAppServerReady, CodexAppServerReady)
-	if err != nil {
-		return false, err
-	}
-	changed, err := result.RowsAffected()
-	if err != nil || changed == 0 {
-		return false, err
-	}
-	if err := projectSessionRelaunchProfilesTx(tx, sessionID, relaunchProjectionOptions{}); err != nil {
-		return false, err
-	}
-	if err := tx.Commit(); err != nil {
-		return false, err
-	}
-	return true, nil
 }
 
 // InvalidateCodexAppServerRuntimesAfterRestart makes the durable state match

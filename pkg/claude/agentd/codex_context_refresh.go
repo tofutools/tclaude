@@ -343,14 +343,6 @@ func refreshCodexContextSnapshotOnReadBatched(
 	if sess == nil || !alive || sess.Harness != harness.CodexName || sess.ID == "" || sess.ConvID == "" {
 		return codexContextRefreshResult{}
 	}
-	// A fresh app-server notification is the lower-latency source for an
-	// explicitly API-driven session. Stand the rollout follower down briefly so
-	// a lagging JSONL write cannot overwrite the newer event projection. The
-	// bounded freshness window restores rollout reconciliation automatically
-	// when this deliberately non-subscribing observer sees a notification gap.
-	if context, ok := freshCodexAppServerContext(sess, time.Now()); ok {
-		return codexContextRefreshResult{context: context}
-	}
 	started := time.Now()
 	timing := codexTelemetryTiming{}
 	defer func() {

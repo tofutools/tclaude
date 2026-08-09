@@ -21,7 +21,6 @@ const (
 	codexAppServerStatusPollInterval = 2 * time.Second
 	codexAppServerUsagePollInterval  = 3 * time.Minute
 	codexAppServerReadTimeout        = 2 * time.Second
-	codexAppServerContextFreshness   = 30 * time.Second
 	codexAppServerRateReadCoalesce   = time.Second
 )
 
@@ -30,8 +29,6 @@ type codexAppServerObservation struct {
 	status       string
 	statusDetail string
 	statusAt     time.Time
-	context      harness.ContextTelemetry
-	contextAt    time.Time
 	usageAt      time.Time
 }
 
@@ -39,8 +36,6 @@ type codexAppServerObservationSnapshot struct {
 	Status       string
 	StatusDetail string
 	StatusAt     time.Time
-	Context      harness.ContextTelemetry
-	ContextAt    time.Time
 	UsageAt      time.Time
 }
 
@@ -52,15 +47,16 @@ func (o *codexAppServerObservation) snapshot() codexAppServerObservationSnapshot
 	defer o.RUnlock()
 	return codexAppServerObservationSnapshot{
 		Status: o.status, StatusDetail: o.statusDetail, StatusAt: o.statusAt,
-		Context: o.context, ContextAt: o.contextAt, UsageAt: o.usageAt,
+		UsageAt: o.usageAt,
 	}
 }
 
-// runCodexAppServerObserver consumes only notifications app-server naturally
-// sends to this control connection. It deliberately never calls thread/resume:
-// Codex 0.147.0 broadcasts approval and user-input requests to every subscribed
-// client, so subscribing a non-answering daemon would make it a second request
-// owner. Gaps are repaired with stable, non-subscribing thread/read snapshots.
+// runCodexAppServerObserver polls stable, non-subscribing snapshots. Bootstrap
+// does not initialize this connection until a validated TUI hook proves the
+// thread exists: Codex 0.147.0 auto-subscribes every connection initialized
+// before a fresh thread is created. Notifications are drained, but only the
+// account-scoped rate-limit hint is actionable; thread-scoped notifications
+// are unreachable by design.
 func runCodexAppServerObserver(handle *codexAppServerHandle) (state, detail string) {
 	statusTicker := time.NewTicker(codexAppServerStatusPollInterval)
 	usageTicker := time.NewTicker(codexAppServerUsagePollInterval)
@@ -97,49 +93,12 @@ func handleCodexAppServerNotification(handle *codexAppServerHandle, notification
 	}
 	now := time.Now().UTC()
 	switch notification.Method {
-	case codexappserver.NotificationThreadStatusChanged:
-		var event codexappserver.ThreadStatusChangedNotification
-		if json.Unmarshal(notification.Params, &event) == nil && event.ThreadID == handle.runtime.ThreadID {
-			projectCodexAppServerStatus(handle, event.Status, now, "app-server event")
-		}
-	case codexappserver.NotificationThreadTokenUsageUpdated:
-		var event codexappserver.ThreadTokenUsageUpdatedNotification
-		if json.Unmarshal(notification.Params, &event) == nil && event.ThreadID == handle.runtime.ThreadID {
-			projectCodexAppServerContext(handle, event.TokenUsage, now)
-		}
 	case codexappserver.NotificationAccountRateLimitsUpdated:
 		// The notification is explicitly sparse in the 0.147 schema. Re-read
 		// the complete snapshot instead of treating absent fields as clears.
 		if now.Sub(handle.observation.snapshot().UsageAt) >= codexAppServerRateReadCoalesce {
 			refreshCodexAppServerRateLimits(handle, "app-server-event")
 		}
-	case codexappserver.NotificationTurnStarted:
-		var event codexappserver.ThreadScopedNotification
-		if json.Unmarshal(notification.Params, &event) == nil && event.ThreadID == handle.runtime.ThreadID {
-			projectCodexAppServerStatus(handle, codexappserver.ThreadStatus{Type: "active"},
-				now, "app-server "+notification.Method)
-		}
-	case codexappserver.NotificationItemStarted:
-		var event codexappserver.ThreadScopedNotification
-		current := handle.observation.snapshot().Status
-		if json.Unmarshal(notification.Params, &event) == nil && event.ThreadID == handle.runtime.ThreadID &&
-			current != session.StatusAwaitingPermission && current != session.StatusAwaitingInput {
-			projectCodexAppServerStatus(handle, codexappserver.ThreadStatus{Type: "active"},
-				now, "app-server "+notification.Method)
-		}
-	case codexappserver.NotificationTurnCompleted:
-		// Completion variants are additive and can represent interruption,
-		// failure, compaction, or a normal item. Read the authoritative current
-		// thread state instead of inferring idle from the method name.
-		var event codexappserver.ThreadScopedNotification
-		if json.Unmarshal(notification.Params, &event) == nil && event.ThreadID == handle.runtime.ThreadID {
-			refreshCodexAppServerThreadSnapshot(handle)
-		}
-	case codexappserver.NotificationItemCompleted:
-		// Item completion is useful sequencing evidence but does not by itself
-		// imply a thread state: another item, an approval, or compaction may
-		// immediately follow. The enclosing thread/turn events and bounded
-		// snapshot own the normalized state.
 	}
 }
 
@@ -239,45 +198,6 @@ func projectCodexAppServerStatus(
 	}
 }
 
-func projectCodexAppServerContext(
-	handle *codexAppServerHandle,
-	usage codexappserver.ThreadTokenUsage,
-	at time.Time,
-) {
-	if handle == nil || usage.ModelContextWindow == nil || *usage.ModelContextWindow <= 0 ||
-		usage.Last.InputTokens < 0 || usage.Last.OutputTokens < 0 || usage.Last.TotalTokens < 0 {
-		return
-	}
-	used := usage.Last.TotalTokens
-	if used == 0 {
-		used = usage.Last.InputTokens + usage.Last.OutputTokens
-	}
-	context := harness.ContextTelemetry{
-		Pct:         float64(used) / float64(*usage.ModelContextWindow) * 100,
-		TokensInput: usage.Last.InputTokens, TokensOutput: usage.Last.OutputTokens,
-		WindowSize: *usage.ModelContextWindow,
-	}
-	handle.observation.Lock()
-	if at.Before(handle.observation.contextAt) {
-		handle.observation.Unlock()
-		return
-	}
-	handle.observation.context = context
-	handle.observation.contextAt = at
-	handle.observation.Unlock()
-
-	row, err := db.FindSessionByConvID(handle.runtime.ConvID)
-	if err != nil || row == nil || row.Harness != harness.CodexName {
-		return
-	}
-	if _, err := db.UpdateContextSnapshotForCodexAppServerGeneration(
-		row.ID, row.ConvID, row.CreatedAt, handle.runtime.Generation,
-		context.Pct, context.TokensInput, context.TokensOutput, context.WindowSize); err != nil {
-		slog.Warn("Codex app-server observer context projection failed",
-			"generation", handle.runtime.Generation, "error", err)
-	}
-}
-
 func refreshCodexAppServerRateLimits(handle *codexAppServerHandle, source string) {
 	if handle == nil {
 		return
@@ -350,16 +270,4 @@ func codexAppServerObservationForConv(convID string) (codexAppServerObservationS
 		return codexAppServerObservationSnapshot{}, false
 	}
 	return handle.observation.snapshot(), true
-}
-
-func freshCodexAppServerContext(sess *db.SessionRow, now time.Time) (*harness.ContextTelemetry, bool) {
-	if sess == nil || sess.Harness != harness.CodexName {
-		return nil, false
-	}
-	observation, ok := codexAppServerObservationForConv(sess.ConvID)
-	if !ok || observation.ContextAt.IsZero() || now.Sub(observation.ContextAt) > codexAppServerContextFreshness {
-		return nil, false
-	}
-	context := observation.Context
-	return &context, true
 }

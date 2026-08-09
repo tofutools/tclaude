@@ -814,6 +814,16 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 			state.ConvID = input.ConvID
 		}
 	}
+	// A validated hook carrying this launch's conversation is the durable
+	// post-thread-creation barrier for the Codex app-server control connection.
+	// Agentd deliberately stays disconnected until this write: Codex 0.147
+	// auto-subscribes every connection initialized before a fresh thread exists.
+	if envSessionID != "" && input.ConvID != "" && state.ConvID == input.ConvID {
+		if _, err := db.BindWarmingCodexAppServerRuntimeFromTUI(envSessionID, input.ConvID); err != nil {
+			slog.Warn("failed to bind Codex app-server runtime from TUI hook",
+				"session_id", envSessionID, "conv_id", input.ConvID, "error", err, "module", "hooks")
+		}
+	}
 	if state.Cwd == "" && input.Cwd != "" {
 		state.Cwd = input.Cwd
 	}

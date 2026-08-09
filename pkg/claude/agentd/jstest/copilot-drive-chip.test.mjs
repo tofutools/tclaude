@@ -123,6 +123,8 @@ test('the Codex app-server chip discloses safe observer ownership and quarantine
       assert.equal(el.textContent.trim(), 'app');
       assert.match(el.title, /TUI owns approvals/);
       assert.match(el.title, /non-subscribing/);
+      assert.match(el.title, /connects only after TUI thread binding/);
+      assert.match(el.title, /context remains rollout-derived/);
       assert.match(el.title, /2026-08-09T12:34:56Z/);
     } finally {
       await mounted.unmount();

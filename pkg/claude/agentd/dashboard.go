@@ -2551,20 +2551,14 @@ func stateForConvInSessionsBatched(
 				out.CodexAppServerState = runtime.State
 				out.CodexAppServerVersion = runtime.CodexVersion
 				out.CodexAppServerDetail = runtime.Detail
-				out.CodexObserverMode = "non-subscribing snapshots"
+				out.CodexObserverMode = "post-bind non-subscribing snapshots; context from rollout"
 				if observation, ok := codexAppServerObservationForConv(pick.ConvID); ok {
 					updated := observation.StatusAt
-					if observation.ContextAt.After(updated) {
-						updated = observation.ContextAt
-					}
 					if observation.UsageAt.After(updated) {
 						updated = observation.UsageAt
 					}
 					if !updated.IsZero() {
 						out.CodexObserverUpdated = updated.Format(time.RFC3339)
-					}
-					if !observation.ContextAt.IsZero() && time.Since(observation.ContextAt) <= codexAppServerContextFreshness {
-						out.ContextWindowSource = "app-server"
 					}
 				}
 			}

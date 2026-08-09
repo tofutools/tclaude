@@ -193,7 +193,7 @@ export function HarnessLine({ member, snapshot }) {
           : state.copilot_api_connected
             ? "Driven over Copilot's embedded JSON-RPC API (copilot --ui-server), not tmux send-keys"
             : codexDrive && codexDriveState === 'ready'
-              ? `Codex app-server ready${state.codex_app_server_version ? ` (${state.codex_app_server_version})` : ''}; TUI owns approvals while agentd observes through non-subscribing events and snapshots${state.codex_observer_updated ? `; last observation ${state.codex_observer_updated}` : ''}`
+              ? `Codex app-server ready${state.codex_app_server_version ? ` (${state.codex_app_server_version})` : ''}; TUI owns approvals; agentd connects only after TUI thread binding and uses non-subscribing snapshots (context remains rollout-derived)${state.codex_observer_updated ? `; last observation ${state.codex_observer_updated}` : ''}`
               : codexDrive ? 'Codex app-server is warming; send-keys fallback is disabled' : "Launched for Copilot's embedded JSON-RPC API drive, but tclaude holds no connection to it yet — still starting up, or its channel failed to come up"}
         aria-label=${driveFailed
           ? (codexDrive ? 'Codex app-server drive unavailable' : 'Copilot API drive failed, messages held')
@@ -601,14 +601,13 @@ function ContextMeter({ state }) {
   // The window here is already the effective one and context_pct is measured
   // against it, so the regular usage figures are sufficient on their own.
   const win = configuredMax > 0 ? configuredMax : Number(state?.context_window_size || 0);
-  // 'reported' is a limit the local harness disclosed; 'app-server' is the
-  // Codex live protocol reading; 'catalog' came from Copilot's authenticated
-  // remote model catalog; 'assumed' is tclaude's static per-model fallback.
+  // 'reported' is a limit the local harness disclosed; 'catalog' came from
+  // Copilot's authenticated remote model catalog; 'assumed' is tclaude's
+  // static per-model fallback.
   const source = state?.context_window_source === 'configured' ? ' (configured cap)'
     : state?.context_window_source === 'reported' ? ' (reported cap)'
-      : state?.context_window_source === 'app-server' ? ' (app-server reported)'
-        : state?.context_window_source === 'catalog' ? ' (catalog cap)'
-          : state?.context_window_source === 'assumed' ? ' (assumed cap)' : '';
+      : state?.context_window_source === 'catalog' ? ' (catalog cap)'
+        : state?.context_window_source === 'assumed' ? ' (assumed cap)' : '';
   const regularTitle = !known ? 'context window: usage not reported yet'
     : win > 0 && total > 0 ? `context: ${fmtTokens(total)} / ${fmtTokens(win)} tokens${source} — ${Math.round(pct)}%`
       : `context: ${Math.round(pct)}% full`;

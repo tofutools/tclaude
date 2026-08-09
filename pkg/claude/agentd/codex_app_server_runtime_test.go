@@ -117,13 +117,19 @@ func TestCodexAppServerBootstrapBindsTUIThreadWithoutReplay(t *testing.T) {
 		close(done)
 	}()
 
+	select {
+	case message := <-sim.Messages():
+		t.Fatalf("agentd initialized before TUI thread binding: %s", message.Method)
+	case <-time.After(100 * time.Millisecond):
+	}
+	bound, err := db.BindWarmingCodexAppServerRuntimeFromTUI("launch-1", "thread-from-tui")
+	require.NoError(t, err)
+	require.True(t, bound)
+
 	initialize := nextCodexAppServerMessage(t, sim)
 	assert.Equal(t, codexappserver.MethodInitialize, initialize.Method)
 	initialized := nextCodexAppServerMessage(t, sim)
 	assert.Equal(t, codexappserver.MethodInitialized, initialized.Method)
-	list := nextCodexAppServerMessage(t, sim)
-	require.Equal(t, codexappserver.MethodThreadLoadedList, list.Method)
-	require.NoError(t, sim.Reply(list.ID, codexappserver.ThreadLoadedListResult{Data: []string{"thread-from-tui"}}))
 	read := nextCodexAppServerMessage(t, sim)
 	require.Equal(t, codexappserver.MethodThreadRead, read.Method)
 	require.NoError(t, sim.Reply(read.ID, codexappserver.ThreadReadResult{Thread: codexappserver.Thread{
@@ -158,6 +164,120 @@ func TestCodexAppServerBootstrapBindsTUIThreadWithoutReplay(t *testing.T) {
 	codexAppServerHandles.Unlock()
 	if handle != nil {
 		_ = handle.client.Close()
+	}
+}
+
+func TestCodexAppServerBootstrapNeverJoinsFreshThreadSubscriberSet(t *testing.T) {
+	for _, ordering := range []struct {
+		name           string
+		bootstrapFirst bool
+	}{
+		{name: "bootstrap goroutine starts first", bootstrapFirst: true},
+		{name: "TUI creates thread first", bootstrapFirst: false},
+	} {
+		for _, requestMethod := range []string{
+			codexappserver.MethodCommandApproval,
+			codexappserver.MethodRequestUserInput,
+		} {
+			t.Run(ordering.name+"/"+requestMethod, func(t *testing.T) {
+				resetTestDB(t)
+				dir, err := os.MkdirTemp("/tmp", "tcl-codex-order-")
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, os.RemoveAll(dir)) })
+				sim, err := testharness.StartCodexAppServerSim(filepath.Join(dir, "app.sock"))
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = sim.Close() })
+				pidFile := filepath.Join(dir, "server.pid")
+				require.NoError(t, os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600))
+
+				generation := "generation-" + strconv.FormatBool(ordering.bootstrapFirst) + "-" +
+					strconv.Itoa(len(requestMethod))
+				require.NoError(t, db.UpsertCodexAppServerRuntime(db.CodexAppServerRuntime{
+					Generation: generation, LaunchID: "launch", AgentID: "agent",
+					SocketPath: sim.SocketPath(), CodexVersion: "0.147.0", State: db.CodexAppServerWarming,
+				}))
+				args := clcommon.SpawnArgs{CodexAppServer: true, CodexAppServerGeneration: generation,
+					CodexAppServerPIDFile: pidFile}
+				done := make(chan struct{})
+				startBootstrap := func() {
+					go func() {
+						runCodexAppServerBootstrap(args)
+						close(done)
+					}()
+				}
+				if ordering.bootstrapFirst {
+					startBootstrap()
+					select {
+					case message := <-sim.Messages():
+						t.Fatalf("bootstrap initialized before the TUI binding: %s", message.Method)
+					case <-time.After(50 * time.Millisecond):
+					}
+				}
+
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancel()
+				tui, err := codexappserver.Dial(ctx, sim.SocketPath(), nil)
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = tui.Close() })
+				tuiInitialize := nextCodexAppServerMessage(t, sim)
+				require.Equal(t, codexappserver.MethodInitialize, tuiInitialize.Method)
+				tuiInitialized := nextCodexAppServerMessage(t, sim)
+				require.Equal(t, codexappserver.MethodInitialized, tuiInitialized.Method)
+				require.Equal(t, tuiInitialize.ConnectionID, tuiInitialized.ConnectionID)
+
+				subscribed := sim.CreateFreshThread()
+				require.Equal(t, []int64{tuiInitialize.ConnectionID}, subscribed,
+					"the fresh thread must auto-subscribe only the already-initialized TUI")
+				bound, err := db.BindWarmingCodexAppServerRuntimeFromTUI("launch", "thread")
+				require.NoError(t, err)
+				require.True(t, bound)
+				if !ordering.bootstrapFirst {
+					startBootstrap()
+				}
+
+				agentInitialize := nextCodexAppServerMessage(t, sim)
+				require.Equal(t, codexappserver.MethodInitialize, agentInitialize.Method)
+				require.NotEqual(t, tuiInitialize.ConnectionID, agentInitialize.ConnectionID)
+				require.Equal(t, codexappserver.MethodInitialized, nextCodexAppServerMessage(t, sim).Method)
+				read := nextCodexAppServerMessage(t, sim)
+				require.Equal(t, codexappserver.MethodThreadRead, read.Method)
+				require.NoError(t, sim.Reply(read.ID, codexappserver.ThreadReadResult{Thread: codexappserver.Thread{
+					ID: "thread", Status: json.RawMessage(`"idle"`), Turns: []codexappserver.Turn{},
+				}}))
+				select {
+				case <-done:
+				case <-time.After(3 * time.Second):
+					t.Fatal("bootstrap did not finish")
+				}
+				if rateRead := nextCodexAppServerMessage(t, sim); rateRead.Method == codexappserver.MethodAccountRateLimitsRead {
+					require.NoError(t, sim.Reply(rateRead.ID, codexappserver.AccountRateLimitsReadResult{}))
+				}
+
+				recipients, err := sim.SendRequestToSubscribers(requestMethod, map[string]string{"threadId": "thread"})
+				require.NoError(t, err)
+				require.Equal(t, []int64{tuiInitialize.ConnectionID}, recipients)
+				select {
+				case request := <-tui.ServerRequests():
+					require.Equal(t, requestMethod, request.Method)
+				case <-time.After(time.Second):
+					t.Fatal("TUI subscriber did not receive the request")
+				}
+				time.Sleep(50 * time.Millisecond)
+				runtime, err := db.GetCodexAppServerRuntime(generation)
+				require.NoError(t, err)
+				require.Equal(t, db.CodexAppServerReady, runtime.State,
+					"the post-bind agentd connection must not receive or quarantine TUI requests")
+
+				codexAppServerHandles.Lock()
+				handle := codexAppServerHandles.byGeneration[generation]
+				delete(codexAppServerHandles.byGeneration, generation)
+				delete(codexAppServerHandles.byConv, "thread")
+				codexAppServerHandles.Unlock()
+				if handle != nil {
+					_ = handle.client.Close()
+				}
+			})
+		}
 	}
 }
 

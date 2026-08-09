@@ -20,9 +20,10 @@ const codexAppServerSimQueue = 256
 // CodexAppServerMessage is one client request or notification observed by a
 // CodexAppServerSim. ID is absent for notifications.
 type CodexAppServerMessage struct {
-	ID     json.RawMessage `json:"id,omitempty"`
-	Method string          `json:"method"`
-	Params json.RawMessage `json:"params,omitempty"`
+	ConnectionID int64           `json:"-"`
+	ID           json.RawMessage `json:"id,omitempty"`
+	Method       string          `json:"method"`
+	Params       json.RawMessage `json:"params,omitempty"`
 }
 
 // CodexAppServerSim is a small WebSocket-over-Unix fake for client unit tests
@@ -35,13 +36,22 @@ type CodexAppServerSim struct {
 	server     *http.Server
 	messages   chan CodexAppServerMessage
 
-	mu      sync.Mutex
-	conn    *websocket.Conn
-	nextID  int64
-	closed  bool
-	writeMu sync.Mutex
+	mu          sync.Mutex
+	conn        *websocket.Conn
+	connections map[int64]*codexAppServerSimConnection
+	nextConnID  int64
+	nextID      int64
+	closed      bool
+	writeMu     sync.Mutex
 
 	InitializeResult codexappserver.InitializeResult
+}
+
+type codexAppServerSimConnection struct {
+	id          int64
+	conn        *websocket.Conn
+	initialized bool
+	subscribed  bool
 }
 
 // StartCodexAppServerSim binds a fresh Unix socket. The caller owns socketPath
@@ -61,9 +71,10 @@ func StartCodexAppServerSim(socketPath string) (*CodexAppServerSim, error) {
 		return nil, fmt.Errorf("chmod Codex app-server fake socket: %w", err)
 	}
 	sim := &CodexAppServerSim{
-		socketPath: socketPath,
-		listener:   listener,
-		messages:   make(chan CodexAppServerMessage, codexAppServerSimQueue),
+		socketPath:  socketPath,
+		listener:    listener,
+		messages:    make(chan CodexAppServerMessage, codexAppServerSimQueue),
+		connections: make(map[int64]*codexAppServerSimConnection),
 		InitializeResult: codexappserver.InitializeResult{
 			UserAgent:      "codex_app_server/0.147.0",
 			CodexHome:      "/fake/codex-home",
@@ -88,21 +99,30 @@ func (s *CodexAppServerSim) serveWebSocket(w http.ResponseWriter, r *http.Reques
 	}
 	conn.SetReadLimit(codexappserver.DefaultMaxMessageBytes)
 	s.mu.Lock()
-	if s.closed || s.conn != nil {
+	if s.closed {
 		s.mu.Unlock()
 		_ = conn.Close()
 		return
 	}
+	s.nextConnID++
+	client := &codexAppServerSimConnection{id: s.nextConnID, conn: conn}
+	s.connections[client.id] = client
 	s.conn = conn
 	s.mu.Unlock()
-	s.readLoop(conn)
+	s.readLoop(client)
 }
 
-func (s *CodexAppServerSim) readLoop(conn *websocket.Conn) {
+func (s *CodexAppServerSim) readLoop(client *codexAppServerSimConnection) {
+	conn := client.conn
 	defer func() {
 		s.mu.Lock()
+		delete(s.connections, client.id)
 		if s.conn == conn {
 			s.conn = nil
+			for _, remaining := range s.connections {
+				s.conn = remaining.conn
+				break
+			}
 		}
 		s.mu.Unlock()
 		_ = conn.Close()
@@ -119,17 +139,69 @@ func (s *CodexAppServerSim) readLoop(conn *websocket.Conn) {
 		if err := json.Unmarshal(data, &message); err != nil || message.Method == "" {
 			return
 		}
+		message.ConnectionID = client.id
+		if message.Method == codexappserver.MethodInitialized {
+			s.mu.Lock()
+			client.initialized = true
+			s.mu.Unlock()
+		}
 		select {
 		case s.messages <- message:
 		default:
 			return
 		}
 		if message.Method == codexappserver.MethodInitialize && len(message.ID) != 0 {
-			if err := s.Reply(message.ID, s.InitializeResult); err != nil {
+			if err := s.writeJSONTo(conn, struct {
+				ID     json.RawMessage `json:"id"`
+				Result any             `json:"result"`
+			}{ID: message.ID, Result: s.InitializeResult}); err != nil {
 				return
 			}
 		}
 	}
+}
+
+// CreateFreshThread models Codex 0.147's startup behavior: every connection
+// that has already completed initialized is automatically subscribed to the
+// fresh thread. Connections initialized later remain unsubscribed.
+func (s *CodexAppServerSim) CreateFreshThread() []int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var subscribed []int64
+	for id, client := range s.connections {
+		if client.initialized {
+			client.subscribed = true
+			subscribed = append(subscribed, id)
+		}
+	}
+	return subscribed
+}
+
+// SendRequestToSubscribers broadcasts a server request exactly to the
+// auto-subscribed set and reports its connection ids for ordering assertions.
+func (s *CodexAppServerSim) SendRequestToSubscribers(method string, params any) ([]int64, error) {
+	s.mu.Lock()
+	s.nextID++
+	id := s.nextID
+	var recipients []*codexAppServerSimConnection
+	for _, client := range s.connections {
+		if client.subscribed {
+			recipients = append(recipients, client)
+		}
+	}
+	s.mu.Unlock()
+	ids := make([]int64, 0, len(recipients))
+	for _, client := range recipients {
+		if err := s.writeJSONTo(client.conn, struct {
+			ID     int64  `json:"id"`
+			Method string `json:"method"`
+			Params any    `json:"params"`
+		}{ID: id, Method: method, Params: params}); err != nil {
+			return ids, err
+		}
+		ids = append(ids, client.id)
+	}
+	return ids, nil
 }
 
 // Reply answers one client request.
@@ -181,9 +253,15 @@ func (s *CodexAppServerSim) writeJSON(value any) error {
 	return s.write(websocket.TextMessage, data)
 }
 
+func (s *CodexAppServerSim) writeJSONTo(conn *websocket.Conn, value any) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	return s.writeTo(conn, websocket.TextMessage, data)
+}
+
 func (s *CodexAppServerSim) write(messageType int, data []byte) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
 	s.mu.Lock()
 	conn := s.conn
 	closed := s.closed
@@ -191,6 +269,12 @@ func (s *CodexAppServerSim) write(messageType int, data []byte) error {
 	if closed || conn == nil {
 		return errors.New("codex app-server fake has no connected client")
 	}
+	return s.writeTo(conn, messageType, data)
+}
+
+func (s *CodexAppServerSim) writeTo(conn *websocket.Conn, messageType int, data []byte) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	err := conn.WriteMessage(messageType, data)
 	_ = conn.SetWriteDeadline(time.Time{})
@@ -214,9 +298,12 @@ func (s *CodexAppServerSim) Close() error {
 		return nil
 	}
 	s.closed = true
-	conn := s.conn
+	connections := make([]*websocket.Conn, 0, len(s.connections))
+	for _, client := range s.connections {
+		connections = append(connections, client.conn)
+	}
 	s.mu.Unlock()
-	if conn != nil {
+	for _, conn := range connections {
 		_ = conn.Close()
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

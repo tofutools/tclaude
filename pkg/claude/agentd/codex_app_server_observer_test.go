@@ -13,7 +13,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
-func TestCodexAppServerObserverProjectsStatusContextAndRejectsStaleOrdering(t *testing.T) {
+func TestCodexAppServerObserverProjectsSnapshotStatusAndRejectsStaleOrdering(t *testing.T) {
 	resetTestDB(t)
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	row := &db.SessionRow{
@@ -30,50 +30,27 @@ func TestCodexAppServerObserverProjectsStatusContextAndRejectsStaleOrdering(t *t
 	require.NoError(t, db.UpsertCodexAppServerRuntime(runtime))
 	handle := &codexAppServerHandle{runtime: runtime}
 
-	statusParams, err := json.Marshal(codexappserver.ThreadStatusChangedNotification{
-		ThreadID: row.ConvID,
-		Status: codexappserver.ThreadStatus{
-			Type: "active", ActiveFlags: []string{"waitingOnApproval"},
-		},
-	})
-	require.NoError(t, err)
-	handleCodexAppServerNotification(handle, codexappserver.Notification{
-		Method: codexappserver.NotificationThreadStatusChanged, Params: statusParams,
-	})
+	projectCodexAppServerStatus(handle, codexappserver.ThreadStatus{
+		Type: "active", ActiveFlags: []string{"waitingOnApproval"},
+	}, now.Add(time.Second), "app-server snapshot")
 	got, err := db.FindSessionByConvID(row.ConvID)
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, session.StatusAwaitingPermission, got.Status)
 
-	itemParams, err := json.Marshal(codexappserver.ThreadScopedNotification{ThreadID: row.ConvID})
+	// Thread-scoped notifications are unreachable after the post-bind dial and
+	// therefore ignored even if a future server happens to broadcast one.
+	statusParams, err := json.Marshal(codexappserver.ThreadStatusChangedNotification{
+		ThreadID: row.ConvID, Status: codexappserver.ThreadStatus{Type: "idle"},
+	})
 	require.NoError(t, err)
 	handleCodexAppServerNotification(handle, codexappserver.Notification{
-		Method: codexappserver.NotificationItemStarted, Params: itemParams,
+		Method: codexappserver.NotificationThreadStatusChanged, Params: statusParams,
 	})
 	got, err = db.FindSessionByConvID(row.ConvID)
 	require.NoError(t, err)
 	assert.Equal(t, session.StatusAwaitingPermission, got.Status,
-		"an item event must not erase a newer blocked state")
-
-	window := int64(200_000)
-	usageParams, err := json.Marshal(codexappserver.ThreadTokenUsageUpdatedNotification{
-		ThreadID: row.ConvID, TurnID: "turn-1",
-		TokenUsage: codexappserver.ThreadTokenUsage{
-			Last: codexappserver.TokenUsageBreakdown{
-				InputTokens: 39_000, OutputTokens: 1_000, TotalTokens: 40_000,
-			},
-			ModelContextWindow: &window,
-		},
-	})
-	require.NoError(t, err)
-	handleCodexAppServerNotification(handle, codexappserver.Notification{
-		Method: codexappserver.NotificationThreadTokenUsageUpdated, Params: usageParams,
-	})
-	snapshot, err := db.GetContextSnapshot(row.ID)
-	require.NoError(t, err)
-	assert.Equal(t, 20.0, snapshot.ContextPct)
-	assert.Equal(t, int64(39_000), snapshot.TokensInput)
-	assert.Equal(t, int64(200_000), snapshot.ContextWindowSize)
+		"a thread event must not override snapshot-owned status")
 
 	projectCodexAppServerStatus(handle, codexappserver.ThreadStatus{Type: "idle"},
 		now, "late event")
