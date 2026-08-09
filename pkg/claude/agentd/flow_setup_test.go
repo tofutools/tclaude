@@ -171,9 +171,7 @@ func newFlow(t *testing.T) *testharness.Flow {
 func holdRetiringPane(t *testing.T, f *testharness.Flow, cc *testharness.CCSim, tmuxSession string) func() {
 	t.Helper()
 	require.NotNil(t, cc, "no CCSim to hold")
-	cc.OnInput("/exit", func(*testharness.CCSim, string) bool {
-		return true
-	})
+	cc.SetSignalExitWedged(true)
 	makePaneLadderProof(t, f, tmuxSession)
 	return func() { cc.MarkDead() }
 }

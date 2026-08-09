@@ -109,6 +109,22 @@ type CodexSim struct {
 	buf        strings.Builder
 	handlers   []codexHandlerEntry
 	delays     []codexDelayEntry
+
+	// ccArmed models Codex's double-ctrl-c quit: a C-c on an idle pane with an
+	// empty buffer arms it, the next C-c exits gracefully (the same
+	// request_quit_without_confirmation path as /quit). Measured to have NO
+	// tight re-press window (0.5 s–5 s between presses all quit), so the
+	// untimed simulator matches production faithfully. A C-c spent clearing a
+	// pending line, or any other keystroke, disarms. This is the pane side of
+	// codexLifecycle.SignalExitKeys, driven by
+	// agentd.injectSignalExitSerializedBy.
+	ccArmed bool
+
+	// signalExitWedged makes the pane consume ctrl-c presses without ever
+	// quitting — the wedged-TUI state the daemon's retry + escalation ladder
+	// handles. Signal-exit analog of OnInput("/quit"){return true}. Set via
+	// SetSignalExitWedged.
+	signalExitWedged bool
 }
 
 // CodexInputHandler processes one submitted Codex input. Return true to
@@ -203,11 +219,37 @@ func (c *CodexSim) Receive(text string) {
 		c.mu.Unlock()
 		return
 	}
+	if text == "C-c" {
+		// Double-ctrl-c quit: a press spent clearing a pending line does not
+		// arm; an idle press arms; the next press while armed exits gracefully
+		// (the same request_quit_without_confirmation path as /quit).
+		if c.signalExitWedged {
+			c.mu.Unlock()
+			return
+		}
+		if c.buf.Len() > 0 {
+			c.buf.Reset()
+			c.ccArmed = false
+			c.mu.Unlock()
+			return
+		}
+		if c.ccArmed {
+			c.ccArmed = false
+			c.mu.Unlock()
+			c.MarkDead()
+			return
+		}
+		c.ccArmed = true
+		c.mu.Unlock()
+		return
+	}
 	if text != "Enter" {
+		c.ccArmed = false
 		c.buf.WriteString(text)
 		c.mu.Unlock()
 		return
 	}
+	c.ccArmed = false
 	line := c.buf.String()
 	c.buf.Reset()
 	if line == "" {
@@ -254,6 +296,16 @@ func (c *CodexSim) MarkDead() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.alive = false
+}
+
+// SetSignalExitWedged makes the pane consume ctrl-c signal-exit presses
+// without quitting, modelling a wedged TUI. Signal-exit analog of the
+// typed-path OnInput("/quit"){return true} idiom; forces the daemon's retry +
+// escalation ladder.
+func (c *CodexSim) SetSignalExitWedged(wedged bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.signalExitWedged = wedged
 }
 
 // Title returns the latest title. For Codex this is an in-memory mirror

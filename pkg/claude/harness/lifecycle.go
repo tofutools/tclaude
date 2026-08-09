@@ -53,4 +53,25 @@ type Lifecycle interface {
 	// back into the state where the command is accepted. See
 	// copilotfixture's soft-exit scenario for the measurement.
 	SoftExitPrefixKeys() []string
+	// SignalExitKeys are tmux key names sent into the pane, in order, one
+	// settle gap apart, as a KEYSTROKE-FREE soft exit — no typed slash command
+	// at all. Non-nil selects this path over SoftExitCommand in agentd's
+	// managed stop (agentd.sendSoftExitToTarget); nil keeps the typed command.
+	//
+	// It exists because a typed slash command shares a structural weakness
+	// across every TUI: it depends on the input box being empty, on the TUI
+	// being idle at its prompt, and on the keypress reader actually consuming
+	// the bytes. Copilot 1.0.77/1.0.78 was measured dropping typed "/exit" both
+	// mid-turn and when its keypress reader wedged outright, while ctrl-c
+	// handling kept working through both — so the exit that must land whatever
+	// the pane is doing rides the surviving signal path instead (TCL-1137,
+	// PR #2112). The keys are per harness because the ctrl-c quit contract
+	// differs — see each harness's SignalExitKeys for its measured window and
+	// press count, and why OpenCode (server-side app.exit over HTTP, no
+	// keypress reader involved) returns nil and stays exempt.
+	//
+	// Only the FIRST key's send is treated as an error by the injector: a pane
+	// commonly dies on a later press, making a subsequent "can't find pane" the
+	// success case.
+	SignalExitKeys() []string
 }
