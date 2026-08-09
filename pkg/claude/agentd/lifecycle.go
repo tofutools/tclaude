@@ -894,6 +894,11 @@ func scheduleSoftExitRetryTarget(target *lifecycleTarget, exitCmd string, prefix
 				// predecessor transitioned; preserve intent for
 				// callback/reaper attribution and never retry against a
 				// successor (mirrors injectSoftExitTarget).
+				if logAttempts {
+					slog.Info("soft-exit retry: pane identity changed before attempt",
+						"session", target.sessionID, "conv", short8(target.convID),
+						"attempt", attempt, "reason", reason)
+				}
 				return
 			}
 			logSoftExitPaneState(target, reason, "pre-send", attempt)
