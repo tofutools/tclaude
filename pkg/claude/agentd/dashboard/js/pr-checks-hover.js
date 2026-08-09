@@ -87,9 +87,39 @@ export function summaryLine(summary) {
   return parts.join(' · ') || 'no checks';
 }
 
+// The label has to carry both jobs this control does: report the counts, and
+// say where activating it goes. aria-haspopup is deliberately absent — the
+// panel opens on hover/focus, so promising a popup on activation would be a
+// lie to anyone who presses Enter and lands on GitHub instead.
 function badgeTitle(summary, prNumber) {
   const who = prNumber ? `#${prNumber}` : 'this pull request';
-  return `CI checks for ${who} — ${summaryLine(summary)}`;
+  return `CI checks for ${who} — ${summaryLine(summary)}. Opens the build on GitHub.`;
+}
+
+// prChecksPageURL is the fallback click target: the PR's own checks tab. Used
+// when no check offered a workflow run to jump to — a PR checked only by
+// external apps, say — so the badge is still useful, never a dead pill. The
+// PR URL is server-validated as a GitHub PR before it ever reaches a badge,
+// but it is guarded here too: this function feeds an href, and a guard that
+// covers one branch of badgeHref and not the other is the asymmetry that rots.
+export function prChecksPageURL(prURL) {
+  const safe = safeCheckURL(prURL);
+  return safe ? `${safe.replace(/\/+$/, '')}/checks` : '';
+}
+
+// badgeHref: the run that explains the badge's state when the server could
+// name one (red -> the failing build), else the PR's checks page.
+export function badgeHref(summary, prURL) {
+  return safeCheckURL(summary?.run_url) || prChecksPageURL(prURL);
+}
+
+// touchOnly reports a device with no hover — a phone or tablet. There, the
+// pointer never rests on the badge, so nothing would ever open the panel and
+// a tap would just leave the dashboard. Such a tap opens the panel instead;
+// its rows and footer link are then ordinary tappable links.
+function touchOnly() {
+  return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    && window.matchMedia('(hover: none)').matches;
 }
 
 // usePRChecks owns the poll lifecycle: it fetches on open, re-polls while the
@@ -186,7 +216,7 @@ function PRChecksPanel({ url, prNumber, summary, panelID, headingID, state }) {
       `}
       ${checks.length && error ? html`<p class="ci-panel-empty">Refresh failed — ${error}</p>` : null}
       <p class="ci-panel-note">
-        <a href=${`${url.replace(/\/+$/, '')}/checks`} target="_blank" rel="noopener noreferrer">
+        <a href=${prChecksPageURL(url)} target="_blank" rel="noopener noreferrer">
           <span class="theme-copy-regular">Open checks on GitHub ↗</span>
           <span class="theme-copy-wizard">Read the full omens ↗</span>
         </a>
@@ -204,20 +234,22 @@ export function PRChecksBadge({ url, prNumber, summary }) {
   const instanceID = useId();
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
-  const [pinned, setPinned] = useState(false);
-  const open = hovered || focused || pinned;
+  // tapped exists only for hoverless devices, where a tap opens the panel
+  // instead of navigating. On a pointer device it is never set.
+  const [tapped, setTapped] = useState(false);
+  const open = hovered || focused || tapped;
   const state = usePRChecks(open ? url : '', open);
 
-  const close = () => { setPinned(false); setHovered(false); setFocused(false); };
+  const close = () => { setHovered(false); setFocused(false); setTapped(false); };
 
   useEffect(() => {
-    if (!pinned) return undefined;
+    if (!tapped) return undefined;
     const onPointerDown = (event) => {
       if (!rootRef.current?.contains(event.target)) close();
     };
     document.addEventListener('pointerdown', onPointerDown);
     return () => document.removeEventListener('pointerdown', onPointerDown);
-  }, [pinned]);
+  }, [tapped]);
 
   if (!url || !summary || !(summary.total > 0)) return null;
   const denominator = checkDenominator(summary);
@@ -234,15 +266,20 @@ export function PRChecksBadge({ url, prNumber, summary }) {
       onFocusIn=${() => setFocused(true)}
       onFocusOut=${(event) => { if (!rootRef.current?.contains(event.relatedTarget)) setFocused(false); }}
     >
-      <button
-        type="button"
+      <a
         class=${`ci-badge ci-${stateName}`}
-        aria-haspopup="dialog"
+        href=${badgeHref(summary, url)}
+        target="_blank"
+        rel="noopener noreferrer"
+        draggable=${false}
         aria-expanded=${open ? 'true' : 'false'}
         aria-controls=${panelID}
         aria-label=${badgeTitle(summary, prNumber)}
-        title=${badgeTitle(summary, prNumber)}
-        onClick=${() => (pinned ? close() : setPinned(true))}
+        onClick=${(event) => {
+          if (!touchOnly()) return; // pointer devices: let the link navigate
+          event.preventDefault();
+          if (tapped) close(); else setTapped(true);
+        }}
         onKeyDown=${(event) => {
           if (event.key !== 'Escape') return;
           event.preventDefault();
@@ -252,7 +289,7 @@ export function PRChecksBadge({ url, prNumber, summary }) {
       >
         <span class="ci-glyph" aria-hidden="true">${checkStateGlyph(stateName)}</span>
         <span class="ci-count">${summary.passed}/${denominator}</span>
-      </button>
+      </a>
       ${open ? html`
         <${PRChecksPanel} url=${url} prNumber=${prNumber} summary=${summary}
           panelID=${panelID} headingID=${headingID} state=${state} />

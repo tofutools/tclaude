@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -79,11 +80,16 @@ var prChecksResolver = livePRChecksResolver
 // would show how long the run had been going when the cache was written,
 // which for a stale blob is visibly wrong.
 type prCheckRun struct {
-	Name        string `json:"name"`
-	Bucket      string `json:"bucket"`                 // pass|fail|pending|skipped
-	Conclusion  string `json:"conclusion,omitempty"`   // human-facing detail: success, failure, in progress, ...
-	Source      string `json:"source,omitempty"`       // workflow name, or the app/context that reported it
-	URL         string `json:"url,omitempty"`          // details link for this check
+	Name       string `json:"name"`
+	Bucket     string `json:"bucket"`               // pass|fail|pending|skipped
+	Conclusion string `json:"conclusion,omitempty"` // human-facing detail: success, failure, in progress, ...
+	Source     string `json:"source,omitempty"`     // workflow name, or the app/context that reported it
+	URL        string `json:"url,omitempty"`        // details link for this check (the job, for Actions)
+	// RunURL is the workflow run this check belongs to — its details URL with
+	// the trailing /job/<id> removed. That summary page is what a human means
+	// by "the build": it shows every job in the run, not just the one row.
+	// Empty for a check that isn't a GitHub Actions job.
+	RunURL      string `json:"run_url,omitempty"`
 	StartedAt   string `json:"started_at,omitempty"`   // RFC3339
 	CompletedAt string `json:"completed_at,omitempty"` // RFC3339
 }
@@ -100,7 +106,12 @@ type prChecksSummary struct {
 	Skipped int `json:"skipped"`
 	// State is the aggregate: passing|failing|pending|none. The badge
 	// colours off this rather than re-deriving it from the counts.
-	State     string `json:"state"`
+	State string `json:"state"`
+	// RunURL is where clicking the badge goes: the workflow run behind the
+	// check that explains the badge's current state (see leadingRunURL).
+	// Empty when no check offered one — the frontend then falls back to the
+	// PR's own checks page.
+	RunURL    string `json:"run_url,omitempty"`
 	FetchedAt string `json:"fetched_at,omitempty"` // RFC3339
 }
 
@@ -150,10 +161,80 @@ func summarizePRChecks(checks []prCheckRun, fetchedAt time.Time) prChecksSummary
 	default:
 		s.State = "passing"
 	}
+	s.RunURL = leadingRunURL(checks, s.State)
 	if !fetchedAt.IsZero() {
 		s.FetchedAt = fetchedAt.Format(time.RFC3339)
 	}
 	return s
+}
+
+// leadingRunURL picks the workflow run the badge should link to: the run
+// behind the check that explains the badge's state. A red badge takes you to
+// the failing build, an amber one to the run still going, a green one to the
+// most recent finished run. A PR usually triggers several workflow runs, so
+// "the" run is a choice, not a lookup — this is the one that answers the
+// question the badge just raised.
+//
+// It follows the aggregate state rather than trying each bucket in turn: when
+// the failing check is a non-Actions status with no run page, the honest
+// answer is "no run to show" (the frontend then falls back to the PR's checks
+// tab, which does list it) — NOT the unrelated run of some check that happens
+// to still be going. A red pill must never open a build that is merely
+// pending.
+func leadingRunURL(checks []prCheckRun, state string) string {
+	bucket := map[string]string{"failing": "fail", "pending": "pending"}[state]
+	if bucket != "" {
+		for _, c := range checks {
+			if c.Bucket == bucket && c.RunURL != "" {
+				return c.RunURL
+			}
+		}
+		return ""
+	}
+	newest, newestAt := "", ""
+	for _, c := range checks {
+		if c.RunURL == "" {
+			continue
+		}
+		// StartedAt is RFC3339, so lexical order is chronological.
+		if newest == "" || c.StartedAt > newestAt {
+			newest, newestAt = c.RunURL, c.StartedAt
+		}
+	}
+	return newest
+}
+
+// githubRunSummaryURL turns a GitHub Actions job URL into its run summary:
+//
+//	https://github.com/o/r/actions/runs/123/job/456 -> .../actions/runs/123
+//
+// The result becomes the badge's click target — the most prominent control in
+// the row — and detailsUrl is set by whichever app reported the check, so this
+// rebuilds the URL from validated parts instead of trimming the input string:
+// host must be github.com and the path must be exactly
+// /{owner}/{repo}/actions/runs/{digits}[/...]. Substring matching would have
+// accepted https://evil.example/actions/runs/1/job/2 (and the same marker
+// hidden in a fragment), pointing a red pill labelled "open the build" at an
+// attacker's page.
+//
+// Returns "" for anything else — an external CI app's link has no run page to
+// derive, and guessing one would send the operator somewhere that doesn't
+// exist.
+func githubRunSummaryURL(detailsURL string) string {
+	detailsURL = safePRCheckURL(detailsURL)
+	if detailsURL == "" {
+		return ""
+	}
+	u, err := url.Parse(detailsURL)
+	if err != nil || !strings.EqualFold(u.Host, "github.com") {
+		return ""
+	}
+	segs := pathSegments(u.Path)
+	if len(segs) < 5 || segs[2] != "actions" || segs[3] != "runs" ||
+		!isAllDigits(segs[4]) || !isGitHubOwnerSlug(segs[0]) || !isGitHubRepoSlug(segs[1]) {
+		return ""
+	}
+	return "https://github.com/" + segs[0] + "/" + segs[1] + "/actions/runs/" + segs[4]
 }
 
 // statusCheckRollupNode is the union `gh pr view --json statusCheckRollup`
@@ -216,6 +297,7 @@ func normalizeRollupNode(n statusCheckRollupNode) (prCheckRun, bool) {
 
 	run.Name = clipPRCheckText(n.Name)
 	run.URL = safePRCheckURL(n.DetailsURL)
+	run.RunURL = githubRunSummaryURL(n.DetailsURL)
 	run.Source = clipPRCheckText(n.WorkflowName)
 	status := strings.ToUpper(strings.TrimSpace(n.Status))
 	conclusion := strings.ToUpper(strings.TrimSpace(n.Conclusion))
@@ -384,6 +466,15 @@ func prChecksIndexFor(rawURLs []string) map[string]*prChecksSummary {
 			continue
 		}
 		summary := info.Summary
+		if summary.RunURL == "" && len(info.Checks) > 0 {
+			// A blob written before the badge became clickable has no run
+			// URL. Re-derive it from the checks the blob already holds rather
+			// than making every such PR wait out a refresh with a badge that
+			// silently falls back to the PR's checks tab.
+			fetchedAt := summary.FetchedAt
+			summary = summarizePRChecks(info.Checks, info.FetchedAt)
+			summary.FetchedAt = fetchedAt
+		}
 		out[urlByKey[cacheKey]] = &summary
 	}
 	return out

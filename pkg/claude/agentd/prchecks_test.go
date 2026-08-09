@@ -128,6 +128,81 @@ func TestParseStatusCheckRollupDropsHostileURLs(t *testing.T) {
 	}
 }
 
+// Clicking the badge should land on the build that explains it, so the run
+// URL is derived from a job URL and chosen by what the badge is currently
+// reporting.
+func TestGithubRunSummaryURL(t *testing.T) {
+	for raw, want := range map[string]string{
+		"https://github.com/o/r/actions/runs/123/job/456":      "https://github.com/o/r/actions/runs/123",
+		"https://github.com/o/r/actions/runs/123/job/456?pr=7": "https://github.com/o/r/actions/runs/123",
+		"https://github.com/o/r/actions/runs/123":              "https://github.com/o/r/actions/runs/123",
+		"https://github.com/o/r/actions/runs/123/":             "https://github.com/o/r/actions/runs/123",
+		"https://ci.example.com/build/9":                       "", // external app: no run page to guess
+		"https://github.com/o/r/actions/runs/notanumber/job/1": "",
+		"javascript:alert(1)/actions/runs/1":                   "", // hostile schemes never survive
+		"https://github.com/o/r/pull/1/checks":                 "",
+		// The badge href is the most prominent control in the row and
+		// detailsUrl is set by the reporting app, so a lookalike host must
+		// never survive — matching on the path substring alone would have
+		// pointed a red pill at any of these.
+		"https://evil.example/o/r/actions/runs/123/job/456":  "",
+		"https://github.com.evil.example/o/r/actions/runs/1": "",
+		"https://github.com@evil.example/o/r/actions/runs/1": "",
+		"https://evil.example/x#/o/r/actions/runs/1":         "",
+		"https://github.com/o/r/actions/runs":                "", // no run id
+		"https://github.com/o/bad__repo!/actions/runs/1":     "",
+		"HTTPS://GitHub.com/o/r/actions/runs/123/job/4":      "https://github.com/o/r/actions/runs/123",
+	} {
+		if got := githubRunSummaryURL(raw); got != want {
+			t.Errorf("githubRunSummaryURL(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
+
+func TestLeadingRunURLFollowsBadgeState(t *testing.T) {
+	const (
+		passRun    = "https://github.com/o/r/actions/runs/1"
+		failRun    = "https://github.com/o/r/actions/runs/2"
+		pendingRun = "https://github.com/o/r/actions/runs/3"
+	)
+	checks := []prCheckRun{
+		{Bucket: "pass", RunURL: passRun, StartedAt: "2026-08-09T10:00:00Z"},
+		{Bucket: "pending", RunURL: pendingRun, StartedAt: "2026-08-09T10:01:00Z"},
+		{Bucket: "fail", RunURL: failRun, StartedAt: "2026-08-09T10:02:00Z"},
+	}
+	// Red badge -> the failing build, whatever else is going on.
+	if got := leadingRunURL(checks, "failing"); got != failRun {
+		t.Errorf("failing badge links to %q, want the failing run %q", got, failRun)
+	}
+	// Amber badge -> the run still going.
+	if got := leadingRunURL(checks[:2], "pending"); got != pendingRun {
+		t.Errorf("pending badge links to %q, want the running one %q", got, pendingRun)
+	}
+	// Green badge -> the most recent finished run.
+	green := []prCheckRun{
+		{Bucket: "pass", RunURL: passRun, StartedAt: "2026-08-09T10:00:00Z"},
+		{Bucket: "pass", RunURL: failRun, StartedAt: "2026-08-09T10:05:00Z"},
+	}
+	if got := leadingRunURL(green, "passing"); got != failRun {
+		t.Errorf("passing badge links to %q, want the newest run %q", got, failRun)
+	}
+	// Nothing to link: the frontend falls back to the PR's checks page.
+	if got := leadingRunURL([]prCheckRun{{Bucket: "pass"}}, "passing"); got != "" {
+		t.Errorf("leadingRunURL with no run URLs = %q, want empty", got)
+	}
+	// A red badge must never open a build that is merely pending: when the
+	// failing check is a non-Actions status with no run page, the honest
+	// answer is "nothing to link", and the badge falls back to the PR's
+	// checks tab — which does list that status.
+	mixed := []prCheckRun{
+		{Bucket: "fail"}, // e.g. a commit status from an external CI app
+		{Bucket: "pending", RunURL: pendingRun},
+	}
+	if got := leadingRunURL(mixed, "failing"); got != "" {
+		t.Errorf("failing badge with no failing run URL = %q, want empty (not the pending run)", got)
+	}
+}
+
 func TestSummarizePRChecksStatePrecedence(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
