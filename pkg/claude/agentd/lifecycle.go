@@ -8763,6 +8763,13 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 		args = append(args, "--sandbox-snapshot-path", a.SandboxSnapshotPath,
 			"--sandbox-snapshot-digest", a.SandboxSnapshotDigest)
 	}
+	// Without this the pane prepares its own boundary under the SAME
+	// deterministic per-session path the daemon just started the managed server
+	// in — and preparation reclaims a populated dir by killing its members, so
+	// the omission is not a degraded launch but a dead server.
+	if a.ResourceCgroupDir != "" {
+		args = append(args, "--resource-cgroup-dir", a.ResourceCgroupDir)
+	}
 	if a.CwdWriteProof != "" {
 		args = append(args, "--cwd-write-proof", a.CwdWriteProof)
 	}

@@ -18,7 +18,7 @@ func PrepareResourceCgroup(string, sandboxpolicy.ResourceLimits) (string, func()
 	return "", func() {}, fmt.Errorf("resource limits are Linux only")
 }
 
-func wrapPreparedResourceCgroupCommand(string, string, string, bool) string { return "" }
+func wrapPreparedResourceCgroupCommand(string, string, string, bool, bool) string { return "" }
 
 func WrapPreparedResourceCgroupCommand(string, string, string, bool) string { return "" }
 
