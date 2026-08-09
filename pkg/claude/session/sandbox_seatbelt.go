@@ -101,6 +101,28 @@ func renderSeatbeltProfileWithLoopbackBindAndRouteSlots(
 	routeSlots []int,
 	privateWriteDirs ...TclaudeLayerPrivateWriteDir,
 ) (string, []seatbeltProfileParam, error) {
+	var loopbackBindPorts []int
+	if loopbackBindPort != 0 {
+		loopbackBindPorts = []int{loopbackBindPort}
+	}
+	return renderSeatbeltProfileWithLoopbackBindsAndRouteSlots(
+		phase0WriteDirs, requiredSocketPaths, plan, proxyEndpoint, protectedRoots,
+		tmuxSocketDir, runtimeTempDir, identity, daemonReadOnlyPaths,
+		loopbackBindPorts, routeSlots, privateWriteDirs...)
+}
+
+func renderSeatbeltProfileWithLoopbackBindsAndRouteSlots(
+	phase0WriteDirs, requiredSocketPaths []string,
+	plan sandboxpolicy.MountPlan,
+	proxyEndpoint netip.AddrPort,
+	protectedRoots []string,
+	tmuxSocketDir, runtimeTempDir string,
+	identity seatbeltIdentityLookup,
+	daemonReadOnlyPaths []string,
+	loopbackBindPorts []int,
+	routeSlots []int,
+	privateWriteDirs ...TclaudeLayerPrivateWriteDir,
+) (string, []seatbeltProfileParam, error) {
 	deploysProxy := tclaudeLayerPlanDeploysProxy(plan)
 	if err := ValidateDarwinRouteSlots(routeSlots); err != nil {
 		return "", nil, err
@@ -108,10 +130,10 @@ func renderSeatbeltProfileWithLoopbackBindAndRouteSlots(
 	if len(routeSlots) > 0 && tclaudeLayerPlanFloorPosture(plan) == sandboxpolicy.NetworkHostOpen {
 		return "", nil, fmt.Errorf("darwin route slots require an isolated or filtered Seatbelt network floor")
 	}
-	if loopbackBindPort < 0 || loopbackBindPort > 65535 {
-		return "", nil, fmt.Errorf("invalid Seatbelt loopback bind port %d", loopbackBindPort)
+	if err := validateSeatbeltLoopbackBindPorts(loopbackBindPorts); err != nil {
+		return "", nil, err
 	}
-	if loopbackBindPort != 0 && tclaudeLayerPlanFloorPosture(plan) == sandboxpolicy.NetworkHostOpen {
+	if hasSeatbeltLoopbackBindPorts(loopbackBindPorts) && tclaudeLayerPlanFloorPosture(plan) == sandboxpolicy.NetworkHostOpen {
 		return "", nil, fmt.Errorf("seatbelt loopback bind exception requires an isolated or filtered network floor")
 	}
 	switch plan.NetworkPosture {
@@ -334,11 +356,57 @@ func renderSeatbeltProfileWithLoopbackBindAndRouteSlots(
 		runtimeTempDir,
 		plan,
 		proxyEndpoint,
-		loopbackBindPort,
+		loopbackBindPorts,
 		routeSlots,
 		identity,
 	)
 	return profile, params, nil
+}
+
+func validateSeatbeltLoopbackBindPorts(ports []int) error {
+	seen := make(map[int]struct{}, len(ports))
+	for _, port := range ports {
+		if port < 0 || port > 65535 {
+			return fmt.Errorf("invalid Seatbelt loopback bind port %d", port)
+		}
+		if port == 0 {
+			continue
+		}
+		if _, ok := seen[port]; ok {
+			return fmt.Errorf("duplicate Seatbelt loopback bind port %d", port)
+		}
+		seen[port] = struct{}{}
+	}
+	return nil
+}
+
+func hasSeatbeltLoopbackBindPorts(ports []int) bool {
+	for _, port := range ports {
+		if port != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func distinctSeatbeltLoopbackPorts(routeSlots, loopbackBindPorts []int) []int {
+	portSet := make(map[int]struct{}, len(routeSlots)+len(loopbackBindPorts))
+	for _, port := range routeSlots {
+		if port != 0 {
+			portSet[port] = struct{}{}
+		}
+	}
+	for _, port := range loopbackBindPorts {
+		if port != 0 {
+			portSet[port] = struct{}{}
+		}
+	}
+	ports := make([]int, 0, len(portSet))
+	for port := range portSet {
+		ports = append(ports, port)
+	}
+	sort.Ints(ports)
+	return ports
 }
 
 // validateSeatbeltProxyEndpoint holds the proxy floor's one IP destination to
@@ -774,7 +842,7 @@ func compileSeatbeltDenyRegions(
 	runtimeTempDir string,
 	plan sandboxpolicy.MountPlan,
 	proxyEndpoint netip.AddrPort,
-	loopbackBindPort int,
+	loopbackBindPorts []int,
 	routeSlots []int,
 	identity seatbeltIdentityLookup,
 ) (string, []seatbeltProfileParam) {
@@ -800,10 +868,10 @@ func compileSeatbeltDenyRegions(
 	switch tclaudeLayerPlanFloorPosture(plan) {
 	case sandboxpolicy.NetworkIsolatedWithAgentd:
 		params = appendSeatbeltIsolatedNetworkRules(
-			&profile, params, nodes, proxyEndpoint, loopbackBindPort, routeSlots)
+			&profile, params, nodes, proxyEndpoint, loopbackBindPorts, routeSlots)
 	case sandboxpolicy.NetworkFiltered:
 		appendSeatbeltLoopbackNetworkRules(
-			&profile, plan.FilteredNetwork, routeSlots, loopbackBindPort)
+			&profile, plan.FilteredNetwork, routeSlots, loopbackBindPorts)
 	}
 	writeRules := seatbeltDenyStarts(nodes, func(mode sandboxpolicy.MountMode) bool {
 		return mode != sandboxpolicy.MountRW
@@ -996,7 +1064,7 @@ func appendSeatbeltLoopbackNetworkRules(
 	profile *strings.Builder,
 	rules *sandboxpolicy.FilteredNetworkRuleSet,
 	routeSlots []int,
-	loopbackBindPort int,
+	loopbackBindPorts []int,
 ) {
 	allowAllPorts := false
 	portSet := map[int]struct{}{}
@@ -1015,8 +1083,10 @@ func appendSeatbeltLoopbackNetworkRules(
 		portSet[port] = struct{}{}
 		udpPortSet[port] = struct{}{}
 	}
-	if loopbackBindPort != 0 {
-		portSet[loopbackBindPort] = struct{}{}
+	for _, port := range loopbackBindPorts {
+		if port != 0 {
+			portSet[port] = struct{}{}
+		}
 	}
 	ports := make([]int, 0, len(portSet))
 	for port := range portSet {
@@ -1041,12 +1111,14 @@ func appendSeatbeltLoopbackNetworkRules(
 		}
 	}
 	if len(routeSlots) > 0 {
-		bindPortSet := make(map[int]struct{}, len(routeSlots)+1)
+		bindPortSet := make(map[int]struct{}, len(routeSlots)+len(loopbackBindPorts))
 		for _, port := range routeSlots {
 			bindPortSet[port] = struct{}{}
 		}
-		if loopbackBindPort != 0 {
-			bindPortSet[loopbackBindPort] = struct{}{}
+		for _, port := range loopbackBindPorts {
+			if port != 0 {
+				bindPortSet[port] = struct{}{}
+			}
 		}
 		bindSlots := make([]int, 0, len(bindPortSet))
 		for port := range bindPortSet {
@@ -1115,7 +1187,7 @@ func appendSeatbeltIsolatedNetworkRules(
 	params []seatbeltProfileParam,
 	nodes []seatbeltRegionNode,
 	proxyEndpoint netip.AddrPort,
-	loopbackBindPort int,
+	loopbackBindPorts []int,
 	routeSlots []int,
 ) []seatbeltProfileParam {
 	exceptions := make([]int, 0, 1)
@@ -1144,19 +1216,11 @@ func appendSeatbeltIsolatedNetworkRules(
 		profile.WriteString("\n; Isolated networking denies host/public connectivity and listeners.\n")
 		profile.WriteString("; Only allowlisted connects at the parameterized socket spellings are excepted.\n")
 	}
-	bindSlots := append([]int(nil), routeSlots...)
-	if loopbackBindPort != 0 {
-		bindSlots = append(bindSlots, loopbackBindPort)
-	}
-	if err := ValidateDarwinRouteSlots(bindSlots); err != nil {
-		// The caller validates before rendering; retain a fail-closed profile
-		// shape if a future internal caller bypasses that seam.
-		profile.WriteString("(deny network-bind)\n")
-	} else if len(bindSlots) == 0 {
+	bindSlots := distinctSeatbeltLoopbackPorts(routeSlots, loopbackBindPorts)
+	if len(bindSlots) == 0 {
 		profile.WriteString("(deny network-bind)\n")
 	} else {
-		sort.Ints(bindSlots)
-		if len(bindSlots) == 1 && len(routeSlots) == 0 && loopbackBindPort != 0 {
+		if len(bindSlots) == 1 && len(routeSlots) == 0 {
 			fmt.Fprintf(profile, "(deny network-bind (require-not (local tcp \"localhost:%d\")))\n", bindSlots[0])
 		} else {
 			profile.WriteString("(deny network-bind\n  (require-all\n")
@@ -1169,7 +1233,7 @@ func appendSeatbeltIsolatedNetworkRules(
 			profile.WriteString("  ))\n")
 		}
 	}
-	if len(exceptions) == 0 && !proxyFloor && len(routeSlots) == 0 && loopbackBindPort == 0 {
+	if len(exceptions) == 0 && !proxyFloor && len(routeSlots) == 0 && len(loopbackBindPorts) == 0 {
 		profile.WriteString("(deny network-outbound)\n")
 		return params
 	}
@@ -1180,10 +1244,7 @@ func appendSeatbeltIsolatedNetworkRules(
 			path: nodes[exception].path,
 		})
 	}
-	outboundSlots := append([]int(nil), routeSlots...)
-	if loopbackBindPort != 0 {
-		outboundSlots = append(outboundSlots, loopbackBindPort)
-	}
+	outboundSlots := distinctSeatbeltLoopbackPorts(routeSlots, loopbackBindPorts)
 	appendSeatbeltFloorOutboundDenyRule(profile, len(exceptions), proxyEndpoint, outboundSlots)
 	return params
 }

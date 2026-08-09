@@ -256,7 +256,7 @@ func tclaudeLayerCommandWithRouteSlots(
 		readOnlyBinds, socketPaths, plan, harnessCommand)
 }
 
-func tclaudeLayerCommandWithRouteSlotsAndLoopbackBind(
+func tclaudeLayerCommandWithRouteSlotsAndLoopbackBinds(
 	binary string,
 	phase0WriteDirs []string,
 	privateWriteDirs []TclaudeLayerPrivateWriteDir,
@@ -267,7 +267,7 @@ func tclaudeLayerCommandWithRouteSlotsAndLoopbackBind(
 	routeSlots []int,
 	preReservation *DarwinRouteSlotReservation,
 	routeHelper *TclaudeLayerRouteHelper,
-	_ int,
+	_ []int,
 	harnessCommand string,
 ) (string, error) {
 	return tclaudeLayerCommandWithRouteSlots(binary, phase0WriteDirs, privateWriteDirs,

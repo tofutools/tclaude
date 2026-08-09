@@ -1098,10 +1098,6 @@ func WrapTclaudeLayerSpecWithLoopbackBinds(
 			return "", fmt.Errorf("invalid tclaude-layer loopback bind port %d", port)
 		}
 	}
-	loopbackBindPort := 0
-	if len(loopbackBindPorts) > 0 {
-		loopbackBindPort = loopbackBindPorts[0]
-	}
 	if err := validateTclaudeLayerRouteHelper(spec.Effective, spec.Contract.RouteHelper); err != nil {
 		return "", err
 	}
@@ -1110,15 +1106,11 @@ func WrapTclaudeLayerSpecWithLoopbackBinds(
 	if err != nil {
 		return "", err
 	}
-	routeSlots := append([]int(nil), spec.Contract.DarwinRouteSlots...)
-	if runtime.GOOS == "darwin" && len(loopbackBindPorts) > 1 {
-		routeSlots = append(routeSlots, loopbackBindPorts[1:]...)
-	}
-	if len(routeSlots) > 0 {
+	if len(spec.Contract.DarwinRouteSlots) > 0 {
 		if runtime.GOOS != "darwin" {
 			return "", fmt.Errorf("darwin route slots are unsupported on %s", runtime.GOOS)
 		}
-		return tclaudeLayerCommandWithRouteSlotsAndLoopbackBind(
+		return tclaudeLayerCommandWithRouteSlotsAndLoopbackBinds(
 			binary,
 			phase0WriteDirs,
 			privateWriteDirs,
@@ -1126,10 +1118,10 @@ func WrapTclaudeLayerSpecWithLoopbackBinds(
 			readOnlyBinds,
 			socketPaths,
 			plan,
-			routeSlots,
+			spec.Contract.DarwinRouteSlots,
 			spec.Contract.DarwinRouteReservation,
 			spec.Contract.RouteHelper,
-			loopbackBindPort,
+			loopbackBindPorts,
 			harnessCommand,
 		)
 	}
@@ -1139,6 +1131,12 @@ func WrapTclaudeLayerSpecWithLoopbackBinds(
 			readOnlyBinds, socketPaths, plan, *spec.Contract.RouteHelper,
 			harnessCommand)
 	}
+	if runtime.GOOS == "darwin" && len(loopbackBindPorts) > 1 {
+		return tclaudeLayerCommandWithRouteSlotsAndLoopbackBinds(
+			binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
+			readOnlyBinds, socketPaths, plan, nil, nil, nil,
+			loopbackBindPorts, harnessCommand)
+	}
 	return tclaudeLayerCommandWithLoopbackBind(
 		binary,
 		phase0WriteDirs,
@@ -1147,7 +1145,12 @@ func WrapTclaudeLayerSpecWithLoopbackBinds(
 		readOnlyBinds,
 		socketPaths,
 		plan,
-		loopbackBindPort,
+		func() int {
+			if len(loopbackBindPorts) == 0 {
+				return 0
+			}
+			return loopbackBindPorts[0]
+		}(),
 		harnessCommand,
 	)
 }

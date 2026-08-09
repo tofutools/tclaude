@@ -226,12 +226,32 @@ func tclaudeLayerCommandWithRouteSlotsAndLoopbackBind(
 	loopbackBindPort int,
 	harnessCommand string,
 ) (string, error) {
+	return tclaudeLayerCommandWithRouteSlotsAndLoopbackBinds(
+		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds,
+		socketPaths, plan, routeSlots, preReservation, routeHelper,
+		[]int{loopbackBindPort}, harnessCommand)
+}
+
+func tclaudeLayerCommandWithRouteSlotsAndLoopbackBinds(
+	binary string,
+	phase0WriteDirs []string,
+	privateWriteDirs []TclaudeLayerPrivateWriteDir,
+	finalHideDirs []string,
+	readOnlyBinds []TclaudeLayerReadOnlyBind,
+	socketPaths []string,
+	plan sandboxpolicy.MountPlan,
+	routeSlots []int,
+	preReservation *DarwinRouteSlotReservation,
+	routeHelper *TclaudeLayerRouteHelper,
+	loopbackBindPorts []int,
+	harnessCommand string,
+) (string, error) {
 	if tclaudeLayerPlanFloorPosture(plan) == sandboxpolicy.NetworkHostOpen {
-		loopbackBindPort = 0
+		loopbackBindPorts = nil
 	}
-	return tclaudeLayerDarwinCommandWithRouteSlots(
+	return tclaudeLayerDarwinCommandWithRouteSlotsAndLoopbackBinds(
 		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
-		readOnlyBinds, socketPaths, plan, harnessCommand, 0, loopbackBindPort,
+		readOnlyBinds, socketPaths, plan, harnessCommand, 0, loopbackBindPorts,
 		routeSlots, preReservation, routeHelper)
 }
 
@@ -268,6 +288,31 @@ func tclaudeLayerDarwinCommandWithRouteSlots(
 	preReservation *DarwinRouteSlotReservation,
 	routeHelper *TclaudeLayerRouteHelper,
 ) (string, error) {
+	var loopbackBindPorts []int
+	if loopbackBindPort != 0 {
+		loopbackBindPorts = []int{loopbackBindPort}
+	}
+	return tclaudeLayerDarwinCommandWithRouteSlotsAndLoopbackBinds(
+		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds,
+		socketPaths, plan, harnessCommand, preserveFDs, loopbackBindPorts,
+		routeSlots, preReservation, routeHelper)
+}
+
+func tclaudeLayerDarwinCommandWithRouteSlotsAndLoopbackBinds(
+	binary string,
+	phase0WriteDirs []string,
+	privateWriteDirs []TclaudeLayerPrivateWriteDir,
+	finalHideDirs []string,
+	readOnlyBinds []TclaudeLayerReadOnlyBind,
+	socketPaths []string,
+	plan sandboxpolicy.MountPlan,
+	harnessCommand string,
+	preserveFDs int,
+	loopbackBindPorts []int,
+	routeSlots []int,
+	preReservation *DarwinRouteSlotReservation,
+	routeHelper *TclaudeLayerRouteHelper,
+) (string, error) {
 	if err := ValidateDarwinRouteSlots(routeSlots); err != nil {
 		return "", err
 	}
@@ -284,7 +329,7 @@ func tclaudeLayerDarwinCommandWithRouteSlots(
 				return "", fmt.Errorf("release Darwin route slots for proxy launcher: %w", err)
 			}
 		}
-		return darwinProxyLauncherCommand(darwinProxyLaunchSpec{
+		proxySpec := darwinProxyLaunchSpec{
 			Binary:           binary,
 			Phase0WriteDirs:  phase0WriteDirs,
 			PrivateWriteDirs: privateWriteDirs,
@@ -294,14 +339,19 @@ func tclaudeLayerDarwinCommandWithRouteSlots(
 			Plan:             plan,
 			HarnessCommand:   harnessCommand,
 			PreserveFDs:      preserveFDs,
-			LoopbackBindPort: loopbackBindPort,
 			RouteSlots:       append([]int(nil), routeSlots...),
 			RouteAuthority:   proxyRouteAuthorityConfigFromHelper(routeHelper),
-		})
+		}
+		if len(loopbackBindPorts) > 0 {
+			proxySpec.LoopbackBindPort = loopbackBindPorts[0]
+			proxySpec.AdditionalLoopbackBindPorts = append(
+				[]int(nil), loopbackBindPorts[1:]...)
+		}
+		return darwinProxyLauncherCommand(proxySpec)
 	}
-	return renderDarwinSeatbeltCommandWithRouteSlots(
+	return renderDarwinSeatbeltCommandWithRouteSlotsAndLoopbackBinds(
 		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
-		readOnlyBinds, socketPaths, plan, harnessCommand, netip.AddrPort{}, loopbackBindPort, routeSlots)
+		readOnlyBinds, socketPaths, plan, harnessCommand, netip.AddrPort{}, loopbackBindPorts, routeSlots)
 }
 
 func renderDarwinSeatbeltCommand(
@@ -333,6 +383,28 @@ func renderDarwinSeatbeltCommandWithRouteSlots(
 	harnessCommand string,
 	proxyEndpoint netip.AddrPort,
 	loopbackBindPort int,
+	routeSlots []int,
+) (string, error) {
+	var loopbackBindPorts []int
+	if loopbackBindPort != 0 {
+		loopbackBindPorts = []int{loopbackBindPort}
+	}
+	return renderDarwinSeatbeltCommandWithRouteSlotsAndLoopbackBinds(
+		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds,
+		socketPaths, plan, harnessCommand, proxyEndpoint, loopbackBindPorts, routeSlots)
+}
+
+func renderDarwinSeatbeltCommandWithRouteSlotsAndLoopbackBinds(
+	binary string,
+	phase0WriteDirs []string,
+	privateWriteDirs []TclaudeLayerPrivateWriteDir,
+	finalHideDirs []string,
+	readOnlyBinds []TclaudeLayerReadOnlyBind,
+	socketPaths []string,
+	plan sandboxpolicy.MountPlan,
+	harnessCommand string,
+	proxyEndpoint netip.AddrPort,
+	loopbackBindPorts []int,
 	routeSlots []int,
 ) (string, error) {
 	switch plan.NetworkPosture {
@@ -404,7 +476,7 @@ func renderDarwinSeatbeltCommandWithRouteSlots(
 	if err != nil {
 		return "", err
 	}
-	profile, params, err := renderSeatbeltProfileWithLoopbackBindAndRouteSlots(
+	profile, params, err := renderSeatbeltProfileWithLoopbackBindsAndRouteSlots(
 		filteredContract,
 		socketPaths,
 		filteredPlan,
@@ -414,7 +486,7 @@ func renderDarwinSeatbeltCommandWithRouteSlots(
 		runtimeTempDir,
 		darwinSeatbeltLstatIdentity,
 		readOnlyPaths,
-		loopbackBindPort,
+		loopbackBindPorts,
 		routeSlots,
 		canonicalPrivateWriteDirs...,
 	)

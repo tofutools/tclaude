@@ -68,18 +68,27 @@ var (
 // ephemeral port, so the same inputs the ordinary Darwin renderer consumes are
 // carried to that launch-time boundary instead.
 type darwinProxyLaunchSpec struct {
-	Binary           string                        `json:"binary"`
-	Phase0WriteDirs  []string                      `json:"phase0_write_dirs,omitempty"`
-	PrivateWriteDirs []TclaudeLayerPrivateWriteDir `json:"private_write_dirs,omitempty"`
-	FinalHideDirs    []string                      `json:"final_hide_dirs,omitempty"`
-	ReadOnlyBinds    []TclaudeLayerReadOnlyBind    `json:"read_only_binds,omitempty"`
-	SocketPaths      []string                      `json:"socket_paths,omitempty"`
-	Plan             sandboxpolicy.MountPlan       `json:"plan"`
-	HarnessCommand   string                        `json:"harness_command"`
-	PreserveFDs      int                           `json:"preserve_fds,omitempty"`
-	LoopbackBindPort int                           `json:"loopback_bind_port,omitempty"`
-	RouteSlots       []int                         `json:"route_slots,omitempty"`
-	RouteAuthority   *proxyRouteAuthorityConfig    `json:"route_authority,omitempty"`
+	Binary                      string                        `json:"binary"`
+	Phase0WriteDirs             []string                      `json:"phase0_write_dirs,omitempty"`
+	PrivateWriteDirs            []TclaudeLayerPrivateWriteDir `json:"private_write_dirs,omitempty"`
+	FinalHideDirs               []string                      `json:"final_hide_dirs,omitempty"`
+	ReadOnlyBinds               []TclaudeLayerReadOnlyBind    `json:"read_only_binds,omitempty"`
+	SocketPaths                 []string                      `json:"socket_paths,omitempty"`
+	Plan                        sandboxpolicy.MountPlan       `json:"plan"`
+	HarnessCommand              string                        `json:"harness_command"`
+	PreserveFDs                 int                           `json:"preserve_fds,omitempty"`
+	LoopbackBindPort            int                           `json:"loopback_bind_port,omitempty"`
+	AdditionalLoopbackBindPorts []int                         `json:"additional_loopback_bind_ports,omitempty"`
+	RouteSlots                  []int                         `json:"route_slots,omitempty"`
+	RouteAuthority              *proxyRouteAuthorityConfig    `json:"route_authority,omitempty"`
+}
+
+func (spec darwinProxyLaunchSpec) loopbackBindPorts() []int {
+	ports := make([]int, 0, 1+len(spec.AdditionalLoopbackBindPorts))
+	if spec.LoopbackBindPort != 0 {
+		ports = append(ports, spec.LoopbackBindPort)
+	}
+	return append(ports, spec.AdditionalLoopbackBindPorts...)
 }
 
 func darwinProxyLauncherCommand(spec darwinProxyLaunchSpec) (string, error) {
@@ -92,8 +101,8 @@ func darwinProxyLauncherCommand(spec darwinProxyLaunchSpec) (string, error) {
 	if spec.PreserveFDs != 0 && spec.PreserveFDs != 2 {
 		return "", fmt.Errorf("Darwin proxy launcher can preserve only the server boundary's two descriptors")
 	}
-	if spec.LoopbackBindPort < 0 || spec.LoopbackBindPort > 65535 {
-		return "", fmt.Errorf("darwin proxy launcher has invalid loopback bind port %d", spec.LoopbackBindPort)
+	if err := validateSeatbeltLoopbackBindPorts(spec.loopbackBindPorts()); err != nil {
+		return "", err
 	}
 	if err := ValidateDarwinRouteSlots(spec.RouteSlots); err != nil {
 		return "", err
@@ -143,8 +152,8 @@ func decodeDarwinProxyLaunchSpec(encoded string) (darwinProxyLaunchSpec, error) 
 	if spec.PreserveFDs != 0 && spec.PreserveFDs != 2 {
 		return darwinProxyLaunchSpec{}, fmt.Errorf("Darwin proxy launcher can preserve only the server boundary's two descriptors")
 	}
-	if spec.LoopbackBindPort < 0 || spec.LoopbackBindPort > 65535 {
-		return darwinProxyLaunchSpec{}, fmt.Errorf("darwin proxy launcher has invalid loopback bind port %d", spec.LoopbackBindPort)
+	if err := validateSeatbeltLoopbackBindPorts(spec.loopbackBindPorts()); err != nil {
+		return darwinProxyLaunchSpec{}, err
 	}
 	if err := ValidateDarwinRouteSlots(spec.RouteSlots); err != nil {
 		return darwinProxyLaunchSpec{}, err
@@ -246,7 +255,7 @@ func runDarwinProxyLauncher(spec darwinProxyLaunchSpec) (int, error) {
 	}
 	defer func() { _ = server.Close() }()
 
-	seatbeltCommand, err := renderDarwinSeatbeltCommandWithRouteSlots(
+	seatbeltCommand, err := renderDarwinSeatbeltCommandWithRouteSlotsAndLoopbackBinds(
 		spec.Binary,
 		spec.Phase0WriteDirs,
 		spec.PrivateWriteDirs,
@@ -256,7 +265,7 @@ func runDarwinProxyLauncher(spec darwinProxyLaunchSpec) (int, error) {
 		spec.Plan,
 		spec.HarnessCommand,
 		endpoint,
-		spec.LoopbackBindPort,
+		spec.loopbackBindPorts(),
 		spec.RouteSlots,
 	)
 	if err != nil {

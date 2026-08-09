@@ -39,6 +39,24 @@ func TestRenderSeatbeltIsolatedRouteSlotsAreExactBindAndOutboundExceptions(t *te
 	}
 }
 
+func TestRenderSeatbeltInternalBindsDoNotConsumeDarwinRoutePool(t *testing.T) {
+	routeSlots := make([]int, DarwinRouteSlotCountMax)
+	for i := range routeSlots {
+		routeSlots[i] = 42000 + i
+	}
+	profile, _, err := renderSeatbeltProfileWithLoopbackBindsAndRouteSlots(
+		nil, nil,
+		sandboxpolicy.MountPlan{NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd},
+		netip.AddrPort{}, []string{"/Users/dev/.tclaude/data"},
+		"/private/tmp/tmux-501", "/private/var/folders/ab/runtime/T",
+		nil, nil, []int{43001, 43002}, routeSlots,
+	)
+	require.NoError(t, err, "two system listeners must not overflow the valid 16-slot agent route pool")
+	for _, port := range []string{"42000", "42015", "43001", "43002"} {
+		require.Contains(t, profile, `localhost:`+port)
+	}
+}
+
 func TestRenderSeatbeltRouteSlotsRejectHostOpenFloor(t *testing.T) {
 	_, _, err := renderSeatbeltProfileWithLoopbackBindAndRouteSlots(
 		nil, nil,
