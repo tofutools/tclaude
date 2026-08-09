@@ -400,6 +400,35 @@ func TestGHProxy_DownloadsCannotAccumulateOnDisk(t *testing.T) {
 		assert.Contains(t, dirs, "run-18234567901", "the most recent one has to survive")
 	})
 
+	// The prune bound is only a bound if it cannot be switched off, and the
+	// agent owns the directory the bound is applied to. Taking the read bit off
+	// it is the obvious attempt: if the daemon reacted by pruning nothing and
+	// downloading anyway, one chmod would buy back unbounded accumulation.
+	//
+	// It refuses instead — earlier than pruning, as it happens, because os.Root
+	// traverses by opening each component and that needs the read bit too. What
+	// matters is the outcome, so that is what this asserts rather than which
+	// gate produced it.
+	t.Run("an unreadable artifacts directory refuses the download", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root ignores the read bit, so the unreadable case cannot be staged")
+		}
+		f, rec := downloadingWorld(t,
+			ghArtifactManifestJSON(ghArtifact("logs", 4096, false)),
+			map[string]string{"a.txt": "aaaa"})
+
+		base := filepath.Join(rec.repoRoot, ".tclaude-artifacts")
+		require.NoError(t, os.MkdirAll(base, 0o755))
+		require.NoError(t, os.Chmod(base, 0o300)) // write and traverse, not read
+		t.Cleanup(func() { _ = os.Chmod(base, 0o755) })
+
+		res := gitProxyPost(t, f, "/v1/github/run/download",
+			map[string]any{"run_id": 18234567890})
+		require.Equal(t, http.StatusConflict, res.Code, "body=%s", res.Body.String())
+		assert.Len(t, ghArgvs(t, rec), 1,
+			"nothing may be downloaded into a directory whose contents the cap cannot see")
+	})
+
 	// Pruning deletes, so it must only ever delete what this proxy created.
 	t.Run("a directory the proxy did not create is left alone", func(t *testing.T) {
 		f, rec := downloadingWorld(t,
@@ -425,10 +454,15 @@ func TestGHProxy_DownloadsCannotAccumulateOnDisk(t *testing.T) {
 // public repository a fork's pull request can upload one, and `run download`
 // would fetch it. What must not happen is that it stays on disk.
 func TestGHProxy_DownloadRefusesAnArtifactThatUnpacksTooLarge(t *testing.T) {
+	// The cap is lowered rather than met: proving the refusal does not require
+	// materializing two real gigabytes on the runner, and a test that writes
+	// them fails for unrelated reasons on a tmpfs TMPDIR or a small disk.
+	t.Cleanup(agentd.SetMaxArtifactUnpackedBytesForTest(4 << 20))
+
 	// A tiny "compressed" size, unpacking to more than the on-disk cap.
 	big := strings.Repeat("x", 1<<20)
 	files := map[string]string{}
-	for i := range 2049 {
+	for i := range 5 {
 		files[fmt.Sprintf("bomb/%04d.bin", i)] = big
 	}
 	f, rec := downloadingWorld(t,

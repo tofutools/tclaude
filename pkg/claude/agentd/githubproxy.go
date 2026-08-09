@@ -117,19 +117,6 @@ const (
 	// maxGHArtifactUnpackedBytes, which does.
 	maxGHArtifactBytes = 512 << 20
 
-	// maxGHArtifactUnpackedBytes caps what ONE download may leave on disk, and
-	// it exists because maxGHArtifactBytes cannot do that job: GitHub reports
-	// the compressed size, and deflate on repetitive content runs to ratios in
-	// the hundreds. An artifact well under the zip cap can therefore unpack to
-	// far more than any disk holds — and on a public repository a fork's pull
-	// request can upload one, which `run download` will happily fetch.
-	//
-	// It is enforced after extraction, from the walk the listing does anyway:
-	// gh offers no way to bound the unpack itself, so the transient peak during
-	// extraction is not covered. What is covered is that nothing oversized is
-	// left behind, which is what a repeated-download disk attack needs.
-	maxGHArtifactUnpackedBytes = 2 << 30
-
 	// maxGHArtifactRuns caps how many run directories are KEPT. Without it the
 	// per-download bounds mean nothing in aggregate: each run id gets its own
 	// directory, nothing ever removed one, and a caller with an endless supply
@@ -162,6 +149,30 @@ const (
 	// smaller; this leaves room and still refuses a body in the wrong field.
 	maxGHArtifactNameLen = 200
 )
+
+// maxGHArtifactUnpackedBytes caps what ONE download may leave on disk, and it
+// exists because maxGHArtifactBytes cannot do that job: GitHub reports the
+// compressed size, and deflate on repetitive content runs to ratios in the
+// hundreds. An artifact well under the zip cap can therefore unpack to far more
+// than any disk holds — and on a public repository a fork's pull request can
+// upload one, which `run download` will happily fetch.
+//
+// It is enforced after extraction, from the walk the listing does anyway: gh
+// offers no way to bound the unpack itself, so the transient peak during
+// extraction is not covered. What is covered is that nothing oversized is left
+// behind, which is what a repeated-download disk attack needs.
+//
+// A var rather than a const only so a test can prove the refusal without
+// materializing two gigabytes on the runner's disk.
+var maxGHArtifactUnpackedBytes int64 = 2 << 30
+
+// SetMaxArtifactUnpackedBytesForTest lowers the on-disk cap so the refusal path
+// can be exercised against a few megabytes. Returns a restore func.
+func SetMaxArtifactUnpackedBytesForTest(n int64) func() {
+	prev := maxGHArtifactUnpackedBytes
+	maxGHArtifactUnpackedBytes = n
+	return func() { maxGHArtifactUnpackedBytes = prev }
+}
 
 // ghProxySession is a gh invocation context: the repo slug the agent's own
 // remote resolved to, plus the resolved credentials.
@@ -444,15 +455,29 @@ func (g *ghProxySession) artifactDest(runID string) (string, *proxyFault) {
 // agent dropped in beside them under any other name is not this proxy's to
 // delete, and is left alone.
 //
-// Failure to prune does not fail the download. The bound is a hygiene measure
-// against accumulation, and refusing a legitimate download because a stale
-// directory could not be removed would trade a real capability for a
-// housekeeping problem.
+// The two failure modes are deliberately NOT treated alike:
+//
+//   - A single directory that will not delete is tolerated. Refusing a
+//     legitimate download over one stale directory trades a real capability for
+//     a housekeeping problem, and it does not get the caller anywhere.
+//   - A directory that cannot be ENUMERATED refuses the download, because
+//     without the listing there is no bound, and "prune nothing, carry on" is
+//     the one outcome that would quietly restore unbounded accumulation.
+//
+// The agent owns this directory, so the question is whether it can arrange the
+// second case as an opt-out of the cap. Through the obvious route it cannot:
+// os.Root traverses by opening each component, which needs the read bit, so a
+// `chmod` that would blind ReadDir also fails the MkdirAll and WriteFile above
+// and the download is refused before reaching here. What is left is the
+// directory changing under us mid-request, where refusing is still the right
+// answer and costs the caller only its own download.
 func pruneArtifactRuns(root *os.Root, keepRunID string) *proxyFault {
 	entries, err := fs.ReadDir(root.FS(), ghArtifactDirName)
 	if err != nil {
 		return faultf(http.StatusConflict, "artifact_dir",
-			"could not inspect %s: %v", ghArtifactDirName, err)
+			"could not list %s, so the limit on kept downloads cannot be applied and this "+
+				"download is refused rather than allowed to accumulate: %v",
+			ghArtifactDirName, err)
 	}
 	type runDir struct {
 		name string
