@@ -1913,6 +1913,9 @@ func realTUIAttachToPane(agentName, tmuxSession string, inTmux bool) tea.Cmd {
 		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
 			err = nil
 		}
+		if err == nil {
+			session.NormalizeTmuxPaneAfterDetach(tmuxSession)
+		}
 		return tuiAttachedMsg{agent: agentName, session: tmuxSession, err: err}
 	})
 }

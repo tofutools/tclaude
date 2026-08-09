@@ -77,6 +77,7 @@ func AttachToTmuxSession(tmuxSession string) int {
 	if err := attachToSession(tmuxSession); err != nil {
 		return 1
 	}
+	NormalizeTmuxPaneAfterDetach(tmuxSession)
 	return 0
 }
 
@@ -109,6 +110,7 @@ func AttachToSession(sessionID, tmuxSession string, forceAttach bool) error {
 	// so native-scrollback harnesses must leave it here before another client
 	// attaches or agentd injects input.
 	CancelTmuxScrollback(tmuxSession, h)
+	NormalizeTmuxPaneAfterDetach(tmuxSession)
 	return nil
 }
 
