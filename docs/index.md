@@ -125,9 +125,9 @@ Optional extras are additive and idempotent:
 
 Proxy skills require explicit opt-in even when `--install-all` is used. This
 keeps agents from seeing proxy capabilities on installations where those
-services are not configured. Refreshing `--install-agent-skills` safely retires
-unchanged proxy manifests left by older releases; pass both skill flags
-together to refresh both sets.
+services are not configured. Refreshing `--install-agent-skills` removes proxy
+skills left by older releases; pass both skill flags together to refresh both
+sets.
 
 !!! note "Skills do not start the daemon"
     The coordination extras install skills and permissions. To use
