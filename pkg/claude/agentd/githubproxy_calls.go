@@ -256,5 +256,10 @@ func ghTailText(s string, max int) (string, bool) {
 	if i := strings.IndexByte(tail, '\n'); i >= 0 && i < len(tail)-1 {
 		tail = tail[i+1:]
 	}
-	return tail, true
+	// The slice is by BYTES, so it can land inside a multi-byte rune, and the
+	// line-boundary trim above only repairs that when the tail happens to hold
+	// a newline. A comment thread in a non-Latin script, or a log line longer
+	// than the bound, would otherwise begin with an invalid sequence. This is
+	// the same repair proxyTail.String applies to the same kind of payload.
+	return strings.ToValidUTF8(tail, "?"), true
 }

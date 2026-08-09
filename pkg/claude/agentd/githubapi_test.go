@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -105,6 +106,16 @@ func TestGHTailText(t *testing.T) {
 		got, truncated := ghTailText("short\n", 100)
 		assert.Equal(t, "short\n", got)
 		assert.False(t, truncated)
+	})
+
+	// The slice is by bytes, and the line-boundary trim only repairs a split
+	// rune when the tail happens to contain a newline. A long line of non-Latin
+	// prose has neither.
+	t.Run("a tail that splits a rune is still valid UTF-8", func(t *testing.T) {
+		text := strings.Repeat("日", 100) // three bytes per rune, no newline
+		got, truncated := ghTailText(text, 100)
+		assert.True(t, truncated)
+		assert.True(t, utf8.ValidString(got), "got %q", got)
 	})
 
 	t.Run("over the bound keeps the tail, aligned to a line", func(t *testing.T) {
@@ -511,4 +522,29 @@ func TestGraphQLVariablesMatchTheDocuments(t *testing.T) {
 				"the document declares different variables from the ones its caller sends")
 		})
 	}
+}
+
+// TestSetProxyBinariesForTestRestoresARealPath — the override must not leave
+// lazy resolution consumed but empty.
+//
+// Consuming proxyBinaries.once with a no-op would mark resolution done with
+// git == "" and err == nil, so the RESTORE would hand the next caller an empty
+// path with no error — which reads as success and is then exec'd. This runs
+// the override the way a test does and checks what is left behind.
+func TestSetProxyBinariesForTestRestoresARealPath(t *testing.T) {
+	restore := SetProxyBinariesForTest("/pinned/git")
+	pinned, err := proxyBinary("git")
+	require.NoError(t, err)
+	assert.Equal(t, "/pinned/git", pinned)
+	restore()
+
+	after, err := proxyBinary("git")
+	if err != nil {
+		// A runner without git: the recorded failure has to survive too, or
+		// the next caller execs "".
+		assert.Empty(t, after)
+		return
+	}
+	assert.NotEmpty(t, after, "restoring must not leave an empty path with a nil error")
+	assert.True(t, filepath.IsAbs(after), "and it must still be the absolute path, got %q", after)
 }

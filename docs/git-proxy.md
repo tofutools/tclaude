@@ -99,9 +99,15 @@ order:
 with `gh auth login` keeps working with no change; an operator who would rather
 not install it at all can set `github_token_file` or export `GH_TOKEN`.
 
-The token is sent as an `Authorization` header and never enters a child
-process, so unlike the `GH_TOKEN` this proxy used to hand `gh` there is no
-window in which `/proc/<pid>/environ` exposes it to a same-uid process.
+The token is sent to GitHub as an `Authorization` header: it reaches the API
+through neither a child process's arguments nor its environment, so unlike the
+`GH_TOKEN` this proxy used to hand `gh` there is no window in which
+`/proc/<pid>/environ` exposes it to a same-uid process.
+
+That is a statement about the **request**. Resolving the credential can still
+run a child — `gh auth token`, the last resort above — and on that path the
+token is gh's to hold for the length of one short-lived process. Every other
+source reads a file or the keyring in-process.
 
 ### Remote patterns
 
@@ -303,7 +309,7 @@ itself a bound on disk. Two further limits make it one:
 
 | Limit | Value | Why |
 |---|---|---|
-| Unpacked size, per download | 2 GiB | Deflate on repetitive content reaches ratios in the hundreds, so an artifact far under the zip cap can unpack to far more than a disk holds. On a public repository a fork's pull request can upload exactly that. Checked after extraction, from the walk the listing does anyway; over it, the download is **deleted** and refused. |
+| Unpacked size, per download | 2 GiB | Deflate on repetitive content reaches ratios in the hundreds, so an artifact far under the zip cap can unpack to far more than a disk holds. On a public repository a fork's pull request can upload exactly that. Enforced **as the archive expands**; the moment the budget is spent the unpack stops, what it wrote is **deleted**, and the download is refused. |
 | Run directories kept | 3 | Each run id gets its own directory. Without a cap, per-download limits bound nothing in aggregate — a caller with an endless supply of run ids fills a disk one legal download at a time. Least recently touched are pruned first; three so that comparing a red run against a green one still works. |
 
 So the proxy never leaves more than **3 × 2 GiB** behind, however many times it
@@ -312,10 +318,10 @@ because each download clears its own directory before it starts — which is als
 why a failed or timed-out download is cleaned up rather than left as a partial
 tree.
 
-The unpacked cap is enforced **while the archive expands**, not afterwards: the
-daemon unzips the download itself and stops the moment the budget is spent, so a
-zip bomb never reaches the disk it was meant to fill. What is still fetched is
-the compressed archive, bounded by the 512 MiB zip cap.
+The daemon unzips the download itself, which is what makes that cap enforceable
+during the unpack rather than after it: a zip bomb never reaches the disk it was
+meant to fill. What is still fetched in full is the compressed archive, bounded
+by the 512 MiB zip cap.
 
 A zip entry naming `../../../.ssh/authorized_keys` is a real thing an untrusted
 CI job can upload, and the daemon unpacks as the operator. Every entry is
@@ -392,7 +398,7 @@ the load-bearing measures do not depend on it.
 | A repo-local `credential.*` key (the program git runs to obtain a credential) | refuse + pin | Any `credential.*` key in the **local** or **worktree** scope is refused. On top of that the helper list is reset and repopulated from **global/system** configuration only, so your real helper keeps working. |
 | Argument injection | validate | Every parameter is charset-validated and refused if it begins with `-`. No passthrough flag, no `--` escape. The GitHub half has no argv at all: values reach a query parameter, a JSON body, or a typed GraphQL variable, never a command line or a document body. |
 | A hung transport | bound | Every call is time-bounded and runs in a private process group that is killed **on cancellation**, so an `ssh` child cannot outlive a timed-out request. (The kill is deliberately not issued after `Wait`: the leader's pid is reaped by then and could already belong to a stranger's process group.) |
-| Secrets in `/proc` | design | The GitHub token is sent as an `Authorization` header from daemon memory and never enters a child process at all. PR bodies and comments travel in a JSON request body — no argv, and no temporary file. |
+| Secrets in `/proc` | design | The GitHub token reaches the API as an `Authorization` header from daemon memory — never a child's argv or environment. (The `gh auth token` fallback is the one credential *source* that runs a child; it is reached only when every in-process read failed.) PR bodies and comments travel in a JSON request body — no argv, and no temporary file. |
 
 Nothing here ever runs a shell. A configuration probe that cannot be *run* is
 treated as a refusal, not as "nothing configured" — a gate that reads a failed
@@ -468,8 +474,10 @@ Two consequences worth stating plainly:
 - **Prefer SSH remotes.** With an ssh-agent, no secret enters the proxied child
   process at all. An HTTPS remote with a token puts that token in the child's
   environment, readable through `/proc/<pid>/environ` by any same-uid process
-  for the life of the call. (This is about `git` only. The GitHub half runs no
-  child process, so its token never appears in `/proc` at all.)
+  for the life of the call. (This is about `git` only. The GitHub half never
+  hands its token to a child process — see
+  [Where the GitHub token comes from](#where-the-github-token-comes-from) for
+  the one fallback that runs one to *obtain* a token.)
 - **Everything the GitHub half writes is attributed to your GitHub account.** A
   PR the agent opens is a PR you opened.
 

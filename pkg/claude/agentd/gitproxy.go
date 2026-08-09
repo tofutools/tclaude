@@ -238,10 +238,20 @@ func proxyBinary(name string) (string, error) {
 	return proxyBinaries.git, nil
 }
 
-// SetProxyBinariesForTest pins git's path so a flow test never depends on what
-// is installed on the runner. Returns a restore func for t.Cleanup.
+// SetProxyBinariesForTest pins git's path so a test never depends on what is
+// installed on the runner. Returns a restore func for t.Cleanup.
+//
+// It resolves for real FIRST rather than consuming the sync.Once with a no-op.
+// A no-op would mark lazy resolution as done while leaving the cache empty, so
+// the restore would put back ("", nil) — an empty path with NO error, which
+// every caller reads as success and then execs. Resolving first means the
+// value restored is the one lazy resolution would have produced anyway.
+//
+// The error is discarded on purpose: a runner without git is a legitimate
+// place to pin a fake path, and proxyBinary has already recorded the failure
+// for the restore to hand back.
 func SetProxyBinariesForTest(gitPath string) func() {
-	proxyBinaries.once.Do(func() {})
+	_, _ = proxyBinary("git")
 	prevGit, prevErr := proxyBinaries.git, proxyBinaries.err
 	proxyBinaries.git, proxyBinaries.err = gitPath, nil
 	return func() {
