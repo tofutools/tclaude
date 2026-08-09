@@ -790,62 +790,20 @@ func TestRealGit_TransferDirIgnoresAgentInsteadOf(t *testing.T) {
 // remote is a local path and the pins refuse those; it is appended AFTER the
 // pins, where a last-wins key overrides them.
 func TestRealGit_FetchIsolatesTheCredentialedHalfAndImportsRefs(t *testing.T) {
-	gitPath := gitAvailable(t)
-	root, err := filepath.EvalSymlinks(t.TempDir())
-	require.NoError(t, err)
-	// HOME decides both git's global config (there is none here) and where
-	// TclaudeDataDir puts the transfer directory, so the whole test stays
-	// inside the fixture.
-	t.Setenv("HOME", root)
+	w := newRealGitFetchWorld(t)
+	upstream, agent, git, mustGit := w.upstream, w.agent, w.git, w.mustGit
 
-	git := func(dir string, args ...string) (string, error) {
-		c := exec.Command(gitPath, args...)
-		c.Dir = dir
-		c.Env = realGitEnv(root)
-		out, err := c.CombinedOutput()
-		return string(out), err
-	}
-	mustGit := func(dir string, args ...string) string {
-		t.Helper()
-		out, err := git(dir, args...)
-		require.NoErrorf(t, err, "git %s: %s", strings.Join(args, " "), out)
-		return strings.TrimSpace(out)
-	}
-
-	// An upstream, and a seed work tree that publishes to it.
-	upstream := filepath.Join(root, "upstream.git")
-	seed := filepath.Join(root, "seed")
-	require.NoError(t, os.MkdirAll(seed, 0o755))
-	mustGit(root, "init", "-q", "--bare", upstream)
-	mustGit(seed, "init", "-q", ".")
-	mustGit(seed, "config", "user.email", "t@example.invalid")
-	mustGit(seed, "config", "user.name", "t")
-	require.NoError(t, os.WriteFile(filepath.Join(seed, "a.txt"), []byte("one\n"), 0o644))
-	mustGit(seed, "add", "a.txt")
-	mustGit(seed, "commit", "-qm", "one")
-	mustGit(seed, "branch", "-M", "main")
-	mustGit(seed, "-c", "protocol.file.allow=always", "push", "-q", upstream, "main:main")
-	first := mustGit(seed, "rev-parse", "HEAD")
-
-	// The agent's repository, cloned while upstream was still at that commit —
-	// so the objects the fetch has to deliver are genuinely not there yet.
-	// Point the bare repo's HEAD at main first, or the clone checks nothing out
-	// and the agent has no local branch to leave untouched.
-	mustGit(root, "--git-dir", upstream, "symbolic-ref", "HEAD", "refs/heads/main")
-	agent := filepath.Join(root, "agent")
-	mustGit(root, "-c", "protocol.file.allow=always", "clone", "-q", upstream, agent)
 	// A tracking ref for a branch that no longer exists upstream, so --prune
 	// has something real to remove.
-	mustGit(agent, "update-ref", "refs/remotes/origin/gone", first)
+	mustGit(agent, "update-ref", "refs/remotes/origin/gone", w.first)
 
 	// Upstream moves on: a new commit on main, a new branch, and a tag.
-	require.NoError(t, os.WriteFile(filepath.Join(seed, "a.txt"), []byte("one\ntwo\n"), 0o644))
-	mustGit(seed, "commit", "-qam", "two")
-	second := mustGit(seed, "rev-parse", "HEAD")
-	mustGit(seed, "tag", "-a", "v1", "-m", "v1")
-	mustGit(seed, "-c", "protocol.file.allow=always", "push", "-q", upstream, "main:main", "main:side", "v1")
+	second := w.advanceUpstream("two")
+	mustGit(w.seed, "tag", "-a", "v1", "-m", "v1")
+	mustGit(w.seed, "-c", "protocol.file.allow=always", "push", "-q", upstream,
+		"main:main", "main:side", "v1")
 
-	_, err = git(agent, "cat-file", "-e", second)
+	_, err := git(agent, "cat-file", "-e", second)
 	require.Error(t, err, "the fixture is only meaningful if the agent lacks the new objects")
 
 	// The agent rewrites .git/config in the window between the gates and the
@@ -863,13 +821,7 @@ func TestRealGit_FetchIsolatesTheCredentialedHalfAndImportsRefs(t *testing.T) {
 
 	// ISOLATED: the production path.
 	ctx := context.Background()
-	hooksDir := filepath.Join(root, "no-hooks")
-	require.NoError(t, os.MkdirAll(hooksDir, 0o700))
-	s := &gitProxySession{
-		gitPath:  gitPath,
-		repoRoot: agent,
-		pins:     gitProxyConfigPins(hooksDir, "ssh -o BatchMode=yes", nil),
-	}
+	s := w.session
 	xfer, fault := newGitProxyXfer(ctx, s, xferShareObjects)
 	require.Nil(t, fault, "%+v", fault)
 	defer xfer.cleanup()
@@ -909,8 +861,200 @@ func TestRealGit_FetchIsolatesTheCredentialedHalfAndImportsRefs(t *testing.T) {
 	assert.Error(t, err, "--prune must reach the agent's repository, not just the transfer directory")
 	_, err = git(agent, "rev-parse", "--verify", "refs/tags/v1")
 	assert.NoError(t, err, "a tag the fetch followed must be imported like an ordinary fetch's")
-	assert.Equal(t, first, mustGit(agent, "rev-parse", "refs/heads/main"),
+	assert.Equal(t, w.first, mustGit(agent, "rev-parse", "refs/heads/main"),
 		"the agent's own branches are never touched by a fetch")
+}
+
+// realGitFetchWorld is the fixture the fetch tests share: an upstream, a seed
+// work tree that publishes to it, and an agent repository cloned while upstream
+// was still at its first commit — so anything published afterwards is genuinely
+// missing from the agent's object store.
+type realGitFetchWorld struct {
+	root, upstream, seed, agent string
+	first                       string // the commit the agent was cloned at
+	session                     *gitProxySession
+	git                         func(dir string, args ...string) (string, error)
+	mustGit                     func(dir string, args ...string) string
+}
+
+func newRealGitFetchWorld(t *testing.T) *realGitFetchWorld {
+	t.Helper()
+	gitPath := gitAvailable(t)
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	// HOME decides both git's global config (there is none here) and where
+	// TclaudeDataDir puts the transfer directory, so the whole test stays
+	// inside the fixture.
+	t.Setenv("HOME", root)
+
+	w := &realGitFetchWorld{
+		root:     root,
+		upstream: filepath.Join(root, "upstream.git"),
+		seed:     filepath.Join(root, "seed"),
+		agent:    filepath.Join(root, "agent"),
+	}
+	w.git = func(dir string, args ...string) (string, error) {
+		c := exec.Command(gitPath, args...)
+		c.Dir = dir
+		c.Env = realGitEnv(root)
+		out, err := c.CombinedOutput()
+		return string(out), err
+	}
+	w.mustGit = func(dir string, args ...string) string {
+		t.Helper()
+		out, err := w.git(dir, args...)
+		require.NoErrorf(t, err, "git %s: %s", strings.Join(args, " "), out)
+		return strings.TrimSpace(out)
+	}
+
+	require.NoError(t, os.MkdirAll(w.seed, 0o755))
+	w.mustGit(root, "init", "-q", "--bare", w.upstream)
+	w.mustGit(w.seed, "init", "-q", ".")
+	w.mustGit(w.seed, "config", "user.email", "t@example.invalid")
+	w.mustGit(w.seed, "config", "user.name", "t")
+	require.NoError(t, os.WriteFile(filepath.Join(w.seed, "a.txt"), []byte("one\n"), 0o644))
+	w.mustGit(w.seed, "add", "a.txt")
+	w.mustGit(w.seed, "commit", "-qm", "one")
+	w.mustGit(w.seed, "branch", "-M", "main")
+	w.mustGit(w.seed, "-c", "protocol.file.allow=always", "push", "-q", w.upstream, "main:main")
+	w.first = w.mustGit(w.seed, "rev-parse", "HEAD")
+
+	// Point the bare repo's HEAD at main before cloning, or the clone checks
+	// nothing out and the agent has no local branch to leave untouched.
+	w.mustGit(root, "--git-dir", w.upstream, "symbolic-ref", "HEAD", "refs/heads/main")
+	w.mustGit(root, "-c", "protocol.file.allow=always", "clone", "-q", w.upstream, w.agent)
+
+	hooksDir := filepath.Join(root, "no-hooks")
+	require.NoError(t, os.MkdirAll(hooksDir, 0o700))
+	w.session = &gitProxySession{
+		gitPath:  gitPath,
+		repoRoot: w.agent,
+		pins:     gitProxyConfigPins(hooksDir, "ssh -o BatchMode=yes", nil),
+	}
+	return w
+}
+
+// advanceUpstream adds a commit to main and publishes it, returning the new tip.
+func (w *realGitFetchWorld) advanceUpstream(message string) string {
+	content, err := os.ReadFile(filepath.Join(w.seed, "a.txt"))
+	if err != nil {
+		content = nil
+	}
+	if err := os.WriteFile(filepath.Join(w.seed, "a.txt"),
+		append(content, []byte(message+"\n")...), 0o644); err != nil {
+		panic(err)
+	}
+	w.mustGit(w.seed, "commit", "-qam", message)
+	return w.mustGit(w.seed, "rev-parse", "HEAD")
+}
+
+// fetchArgs builds the argv the fetch handler would, plus the one relaxation a
+// local fixture remote needs. `protocol.file.allow=always` is appended AFTER
+// the pins, where a last-wins key overrides them.
+func (w *realGitFetchWorld) fetchArgs(branch string, tags, prune bool) []string {
+	args := []string{"-c", "protocol.file.allow=always",
+		"fetch", gitProxyUploadPack, "--no-recurse-submodules"}
+	if prune {
+		args = append(args, "--prune")
+	}
+	args = append(args, "--", "file://"+w.upstream)
+	return append(args, fetchRefspecs("origin", branch, tags)...)
+}
+
+// TestRealGit_FetchImportsTheRefsThatLandedWhenOthersAreRejected is the
+// regression for a failure mode that looks like nothing going wrong.
+//
+// `git fetch` exits 1 when it rejects SOME ref updates while the rest landed,
+// and the proxy's `--tags` refspec is deliberately unforced — so a tag the
+// agent already holds at a different commit produces exactly that. Treating any
+// non-zero exit as "nothing to import" stranded every branch that really did
+// move, on every subsequent fetch, while handing the agent a summary that said
+// they had moved. The summary would then be a statement about the transfer
+// directory rather than about the agent's repository, which is worse than a
+// plain failure because the agent acts on it.
+func TestRealGit_FetchImportsTheRefsThatLandedWhenOthersAreRejected(t *testing.T) {
+	w := newRealGitFetchWorld(t)
+	agent, mustGit := w.agent, w.mustGit
+	ctx := context.Background()
+
+	// The agent holds v1 at the first commit. Upstream moves both main and v1
+	// on, so the fetch has one update to make and one tag it must refuse.
+	mustGit(agent, "tag", "v1", w.first)
+	second := w.advanceUpstream("two")
+	mustGit(w.seed, "tag", "-f", "v1")
+	mustGit(w.seed, "-c", "protocol.file.allow=always", "push", "-q", "--force",
+		w.upstream, "main:main", "v1")
+
+	s := w.session
+	xfer, fault := newGitProxyXfer(ctx, s, xferShareObjects)
+	require.Nil(t, fault, "%+v", fault)
+	defer xfer.cleanup()
+	require.Nil(t, xfer.seedRefs(ctx, s, "origin"))
+
+	res, err := xfer.git(ctx, s, w.fetchArgs("", true, false)...)
+	require.NoError(t, err)
+	// The fixture is only meaningful if git really does report this as a
+	// failure while having updated the other ref.
+	require.NotEqualf(t, 0, res.ExitCode,
+		"expected a partial rejection; git said: %s", res.Stderr)
+	require.Contains(t, res.Stderr, "would clobber existing tag")
+
+	imported, fault := xfer.importRefs(ctx, s, "origin", false)
+	require.Nil(t, fault, "%+v", fault)
+	require.Equalf(t, 0, imported.ExitCode, "the import must apply: %s", imported.Stderr)
+	assert.Equal(t, 1, imported.Updated)
+
+	assert.Equal(t, second, mustGit(agent, "rev-parse", "refs/remotes/origin/main"),
+		"the branch that DID update must reach the agent's repository")
+	assert.Equal(t, w.first, mustGit(agent, "rev-parse", "refs/tags/v1^{commit}"),
+		"the tag git refused to clobber must be left exactly as it was")
+}
+
+// TestRealGit_FetchImportDoesNotFollowASymrefIntoTheAgentsBranches is the
+// regression for the `--no-deref` flag.
+//
+// `git fetch` updates remote-tracking refs with REF_NO_DEREF; an import that
+// omitted it followed a SYMBOLIC ref planted at refs/remotes/<name>/<branch>
+// and landed on whatever it pointed at — and the expected-value check followed
+// it too, so the compare-and-swap the import rests on did not stop it.
+//
+// The agent has to plant the symref itself, so this is not a credential or
+// isolation break. It is still the one way a proxied fetch could destroy the
+// agent's own work, which every other part of this design promises it cannot.
+func TestRealGit_FetchImportDoesNotFollowASymrefIntoTheAgentsBranches(t *testing.T) {
+	w := newRealGitFetchWorld(t)
+	agent, git, mustGit := w.agent, w.git, w.mustGit
+	ctx := context.Background()
+
+	// A branch of the agent's own, and a symref aimed at it wearing the name of
+	// a branch upstream is about to advertise.
+	mustGit(agent, "branch", "keep-me", w.first)
+	mustGit(agent, "symbolic-ref", "refs/remotes/origin/side", "refs/heads/keep-me")
+	second := w.advanceUpstream("two")
+	mustGit(w.seed, "-c", "protocol.file.allow=always", "push", "-q", w.upstream, "main:side")
+
+	s := w.session
+	xfer, fault := newGitProxyXfer(ctx, s, xferShareObjects)
+	require.Nil(t, fault, "%+v", fault)
+	defer xfer.cleanup()
+	require.Nil(t, xfer.seedRefs(ctx, s, "origin"))
+
+	res, err := xfer.git(ctx, s, w.fetchArgs("", false, false)...)
+	require.NoError(t, err)
+	require.Equalf(t, 0, res.ExitCode, "fetch: %s", res.Stderr)
+
+	imported, fault := xfer.importRefs(ctx, s, "origin", false)
+	require.Nil(t, fault, "%+v", fault)
+	// Either outcome is acceptable — the update may land on the symref itself
+	// or be refused — as long as it does not reach through. What must never
+	// happen is the branch moving.
+	if imported.ExitCode == 0 {
+		assert.Equal(t, second, mustGit(agent, "rev-parse", "refs/remotes/origin/side"))
+	}
+	assert.Equal(t, w.first, mustGit(agent, "rev-parse", "refs/heads/keep-me"),
+		"the import must not follow a symref into the agent's own branches")
+	_, err = git(agent, "cat-file", "-e", second)
+	assert.NoError(t, err, "the objects still landed; only the ref write was contained")
 }
 
 // TestRealGit_FetchSeedIsReadableByGit pins the one thing seedRefs does by
@@ -957,8 +1101,7 @@ func TestRealGit_FetchSeedIsReadableByGit(t *testing.T) {
 
 	// Read back through git, from the transfer directory, exactly as the fetch
 	// and the import do.
-	refs, fault := listGitRefs(ctx, xfer.runner(s), maxGitProxyMirrorRefs,
-		refTransferPatterns("origin")...)
+	refs, fault := listMirroredRefs(ctx, xfer.runner(s), refTransferPatterns("origin")...)
 	require.Nil(t, fault, "%+v", fault)
 	names := map[string]string{}
 	for _, ref := range refs {
@@ -970,7 +1113,7 @@ func TestRealGit_FetchSeedIsReadableByGit(t *testing.T) {
 
 	// The agent's own branch rides in the have-namespace, where no refspec
 	// points and --prune therefore never looks.
-	haveRefs, fault := listGitRefs(ctx, xfer.runner(s), maxGitProxyHaveRefs,
+	haveRefs, fault := listNegotiationRefs(ctx, xfer.runner(s),
 		strings.TrimSuffix(haveRefNamespace, "/"))
 	require.Nil(t, fault, "%+v", fault)
 	require.Len(t, haveRefs, 1)

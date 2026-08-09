@@ -1,6 +1,9 @@
 package agentd
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -20,7 +23,7 @@ import (
 func TestParseGitRefLines_DropsWhatMustNotReachATransaction(t *testing.T) {
 	const sha = "1111111111111111111111111111111111111111"
 
-	refs := parseGitRefLines(
+	refs := parseGitRefLines(splitNonEmptyLines(
 		sha + " refs/heads/keep\n" +
 			sha + " refs/remotes/origin/HEAD refs/remotes/origin/main\n" + // symref
 			"nothex refs/heads/bad-oid\n" +
@@ -30,7 +33,7 @@ func TestParseGitRefLines_DropsWhatMustNotReachATransaction(t *testing.T) {
 			sha + " refs/heads/tilde~1\n" +
 			sha + " refs/heads/x.lock\n" +
 			sha + " refs/heads/-dashy\n" + // fine as a ref, and never a flag: it is not argv-leading
-			sha + " refs/heads/deep/name\n")
+			sha + " refs/heads/deep/name\n"))
 
 	names := make([]string, 0, len(refs))
 	for _, ref := range refs {
@@ -128,6 +131,80 @@ func TestFetchRefspecs_AreAlwaysTheDaemonsOwn(t *testing.T) {
 	require.Len(t, specs, 2)
 	assert.Equal(t, "refs/tags/*:refs/tags/*", specs[1],
 		"unforced, which is `git fetch --tags` exactly: an existing tag is left alone")
+}
+
+// TestListRefs_MirrorRefusesOverflowAndNegotiationDoesNot pins the asymmetry
+// between the two listings, which is easy to collapse into one and wrong to.
+//
+// A MIRRORED namespace cannot survive truncation: a ref that exists in the
+// agent's repository but fell off the listing is imported as a creation, and
+// the transaction fails with a lock error naming nothing an agent could act on.
+// The NEGOTIATION namespace can: a missing "have" costs bandwidth, so refusing
+// there would mean a repository with a few thousand local branches could not
+// fetch through the proxy at all.
+func TestListRefs_MirrorRefusesOverflowAndNegotiationDoesNot(t *testing.T) {
+	const sha = "1111111111111111111111111111111111111111"
+	refLines := func(n int) string {
+		var buf strings.Builder
+		for i := range n {
+			fmt.Fprintf(&buf, "%s refs/remotes/origin/b%d\n", sha, i)
+		}
+		return buf.String()
+	}
+	// runner answers with a canned listing and records the argv it was given.
+	runner := func(out string, truncated bool, seen *[]string) gitRunner {
+		return func(_ context.Context, _ gitOpts, args ...string) (ProxyResult, error) {
+			*seen = args
+			return ProxyResult{Stdout: out, Truncated: truncated}, nil
+		}
+	}
+
+	t.Run("mirror asks for one more than it accepts", func(t *testing.T) {
+		var args []string
+		refs, fault := listMirroredRefs(context.Background(),
+			runner(refLines(3), false, &args), "refs/remotes/origin")
+		require.Nil(t, fault, "%+v", fault)
+		assert.Len(t, refs, 3)
+		assert.Contains(t, args, fmt.Sprintf("--count=%d", maxGitProxyMirrorRefs+1),
+			"one over the limit is how an overflow becomes visible at all")
+	})
+
+	t.Run("mirror refuses an overflowing listing", func(t *testing.T) {
+		var args []string
+		_, fault := listMirroredRefs(context.Background(),
+			runner(refLines(maxGitProxyMirrorRefs+1), false, &args), "refs/remotes/origin")
+		require.NotNil(t, fault)
+		assert.Equal(t, "too_many_refs", fault.Code)
+	})
+
+	t.Run("mirror refuses a truncated listing", func(t *testing.T) {
+		var args []string
+		_, fault := listMirroredRefs(context.Background(),
+			runner(refLines(3), true, &args), "refs/remotes/origin")
+		require.NotNil(t, fault, "the tail is kept, so truncation drops the FIRST refs")
+		assert.Equal(t, "too_many_refs", fault.Code)
+	})
+
+	t.Run("negotiation caps and carries on", func(t *testing.T) {
+		var args []string
+		refs, fault := listNegotiationRefs(context.Background(),
+			runner(refLines(maxGitProxyHaveRefs), true, &args), "refs/heads")
+		require.Nil(t, fault, "a repository with many branches must still be able to fetch")
+		assert.Len(t, refs, maxGitProxyHaveRefs)
+		assert.Contains(t, args, fmt.Sprintf("--count=%d", maxGitProxyHaveRefs),
+			"the cap is applied by git rather than by refusing afterwards")
+	})
+
+	t.Run("a probe that could not run is a refusal, not an empty answer", func(t *testing.T) {
+		failing := func(_ context.Context, _ gitOpts, _ ...string) (ProxyResult, error) {
+			return ProxyResult{}, errors.New("git exploded")
+		}
+		_, fault := listMirroredRefs(context.Background(), failing, "refs/remotes/origin")
+		require.NotNil(t, fault)
+		assert.Equal(t, "ref_probe_failed", fault.Code)
+		_, fault = listNegotiationRefs(context.Background(), failing, "refs/heads")
+		require.NotNil(t, fault, "even the soft cap must not read a failed probe as \"no refs\"")
+	})
 }
 
 // TestRefImportNote_SaysWhatLanded — an agent reading a fetch summary should be

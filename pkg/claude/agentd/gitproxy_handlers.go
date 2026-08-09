@@ -556,23 +556,34 @@ func (s *gitProxySession) runFetchAndRespond(
 	}
 	contacted := remote.contacted(false).Key()
 
-	// A fetch that did not complete has nothing to import, and a partial
-	// import would be worse than none: the agent's remote-tracking refs would
-	// claim a state the fetch never reached. Report git's own verdict instead.
-	if res.ExitCode != 0 || res.TimedOut {
+	// A KILLED fetch is the one case that is not imported. Its transfer
+	// directory is in whatever state the signal left it, and a partial import
+	// would have the agent's remote-tracking refs claim a state nothing
+	// reached. Re-running is the answer, and git's own verdict says so.
+	if res.TimedOut {
 		s.respondWithOutcome(w, r, remote, contacted, branch, res)
 		return
 	}
 
+	// A NON-ZERO EXIT is imported like any other. git fetch exits 1 when it
+	// rejects SOME ref updates while the rest landed — `--tags` against a tag
+	// the repository already holds is exactly that — and those other refs
+	// really did move. Skipping the import there would strand every one of
+	// them while handing the agent a summary that says they moved, and the
+	// stranding would repeat on every subsequent fetch. A fetch that failed
+	// outright needs no special case: it changed nothing in the transfer
+	// directory, so the mirror finds nothing to do.
 	imported, fault := xfer.importRefs(ctx, s, remote.Name, prune)
 	if fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
-	// An import that RAN and failed is git's answer, carried through the same
-	// way a rejected push is: the objects are in place, so re-running the fetch
-	// is the cheap and correct response to whatever it says.
-	res.ExitCode = imported.ExitCode
+	// git's own verdict wins when it had one. An import that RAN and failed is
+	// carried through the same way a rejected push is: the objects are in
+	// place, so re-running the fetch is the cheap and correct response.
+	if res.ExitCode == 0 {
+		res.ExitCode = imported.ExitCode
+	}
 	res.Stderr = appendProxyLine(res.Stderr, imported.Stderr)
 	if imported.ExitCode == 0 {
 		res.Stderr = appendProxyLine(res.Stderr, imported.note())

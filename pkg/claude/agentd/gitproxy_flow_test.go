@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -76,9 +77,16 @@ type gitProxyRecorder struct {
 	// xferRefs is the ref store of each daemon-owned transfer directory, keyed
 	// by its path. Seeded from the packed-refs file the daemon writes.
 	xferRefs map[string]map[string]string
+	// xferSeed snapshots that store as the daemon SEEDED it, before the fetch
+	// moved anything. Kept separately because the transfer directory is removed
+	// when the request ends, so a test cannot read the file back afterwards.
+	xferSeed map[string]map[string]string
 	// refTxns records every update-ref transaction applied to the agent's
 	// repository, verbatim.
 	refTxns []string
+	// refUpdateFails, when set, makes update-ref reject the transaction with
+	// this message — the shape of a compare-and-swap that lost a race.
+	refUpdateFails string
 	// rewriteTo, when set for a URL, makes `ls-remote --get-url <url>` answer
 	// with something else — simulating a repo-local url.*.insteadOf rewrite.
 	rewriteTo map[string]string
@@ -91,6 +99,11 @@ type gitProxyRecorder struct {
 	repoConfigScopes map[string]string
 	// network is the canned result for the actual fetch/push/ls-remote call.
 	network agentd.ProxyResult
+	// fetchMovedRefs models git's PARTIAL failure: a fetch that updated some
+	// refs and still exited non-zero, which is what an unforced tag refspec
+	// produces against a tag the repository already holds. Without it a
+	// non-zero `network` means the fetch moved nothing.
+	fetchMovedRefs bool
 	// configProbeFails models a config probe that could not run — the gate
 	// must refuse rather than read that as "nothing configured".
 	configProbeFails bool
@@ -131,6 +144,7 @@ func newGitProxyRecorder(repoRoot string) *gitProxyRecorder {
 			"refs/heads/main":       "4444444444444444444444444444444444444444",
 		},
 		xferRefs:         map[string]map[string]string{},
+		xferSeed:         map[string]map[string]string{},
 		rewriteTo:        map[string]string{},
 		repoConfig:       map[string]string{},
 		repoConfigScopes: map[string]string{},
@@ -499,6 +513,9 @@ func (r *gitProxyRecorder) exec(ctx context.Context, cmd agentd.ProxyCommand) (a
 		}
 		return agentd.ProxyResult{Stdout: strings.Join(lines, "\n") + "\n"}, nil
 	case "update-ref":
+		if r.refUpdateFails != "" {
+			return agentd.ProxyResult{ExitCode: 128, Stderr: "fatal: " + r.refUpdateFails}, nil
+		}
 		if err := applyRefTransaction(r.refs, cmd.Stdin); err != nil {
 			return agentd.ProxyResult{ExitCode: 128, Stderr: "fatal: " + err.Error()}, nil
 		}
@@ -509,7 +526,7 @@ func (r *gitProxyRecorder) exec(ctx context.Context, cmd agentd.ProxyCommand) (a
 		// daemon's refspecs are applied to what the canned remote advertises,
 		// on top of the seed the daemon wrote. Modelling that is what lets the
 		// import be asserted end to end rather than as an argv fragment.
-		if dir := gitDirOf(cmd.Args); dir != "" && r.network.ExitCode == 0 {
+		if dir := gitDirOf(cmd.Args); dir != "" && (r.network.ExitCode == 0 || r.fetchMovedRefs) {
 			store := r.xferStore(dir)
 			var specs []string
 			if i := slices.Index(sub, "--"); i >= 0 && i+2 <= len(sub) {
@@ -539,6 +556,7 @@ func (r *gitProxyRecorder) xferStore(dir string) map[string]string {
 		}
 	}
 	r.xferRefs[dir] = store
+	r.xferSeed[dir] = maps.Clone(store)
 	return store
 }
 
@@ -912,16 +930,24 @@ func TestGitProxy_FetchSeedsAndImportsRefs(t *testing.T) {
 
 	// The transfer directory was seeded with what the agent already had, or the
 	// server would have been told we have nothing and the fetch summary would
-	// report every branch as new.
-	seeded := false
+	// report every branch as new. Asserted on the CONTENT of the seed: the
+	// stub creates the ref store lazily, so its mere existence proves nothing.
+	xferDir := ""
 	for _, c := range rec.calls {
 		if sub := subcommand(c.Args); len(sub) > 0 && sub[0] == "fetch" {
-			store := rec.xferRefs[gitDirOf(c.Args)]
-			require.NotNil(t, store)
-			seeded = true
+			xferDir = gitDirOf(c.Args)
 		}
 	}
-	require.True(t, seeded, "the fetch must have run against a seeded transfer directory")
+	require.NotEmpty(t, xferDir, "the fetch must have run against a transfer directory")
+	seeded := rec.xferSeed[xferDir]
+	assert.Equal(t, "2222222222222222222222222222222222222222",
+		seeded["refs/remotes/origin/feat/thing"],
+		"the agent's tracking ref must have been written into the transfer directory")
+	assert.Equal(t, "5555555555555555555555555555555555555555", seeded["refs/remotes/origin/gone"],
+		"including the stale one, which is what gives --prune something to prune")
+	assert.Equal(t, "1111111111111111111111111111111111111111",
+		seeded["refs/tclaude-have/heads/feat/thing"],
+		"the agent's own branch rides in the have-namespace, where no refspec points")
 
 	assert.Equal(t, "3333333333333333333333333333333333333333",
 		rec.refs["refs/remotes/origin/feat/thing"], "an updated branch must be imported")
@@ -955,10 +981,11 @@ func TestGitProxy_FetchSeedsAndImportsRefs(t *testing.T) {
 	assert.Contains(t, rec.refs, "refs/remotes/origin/HEAD")
 }
 
-// TestGitProxy_FetchFailureImportsNothing — a fetch that did not complete has
-// nothing to import, and a partial import would be worse than none: the agent's
-// remote-tracking refs would claim a state the fetch never reached.
-func TestGitProxy_FetchFailureImportsNothing(t *testing.T) {
+// TestGitProxy_FetchFailureChangesNothing — a fetch that failed outright needs
+// no special case in the handler: it moved nothing in the transfer directory,
+// so the mirror finds nothing to do. git's own verdict is what reaches the
+// agent.
+func TestGitProxy_FetchFailureChangesNothing(t *testing.T) {
 	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
 	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitRead, "test"))
 	rec.network = agentd.ProxyResult{ExitCode: 128, Stderr: "fatal: could not read from remote repository"}
@@ -976,6 +1003,67 @@ func TestGitProxy_FetchFailureImportsNothing(t *testing.T) {
 	assert.Empty(t, rec.refTxns, "a failed fetch must not write refs")
 	assert.Equal(t, "2222222222222222222222222222222222222222",
 		rec.refs["refs/remotes/origin/feat/thing"], "the agent's refs must be untouched")
+}
+
+// TestGitProxy_FetchImportsWhatLandedDespiteANonZeroExit is the handler-level
+// half of the partial-rejection contract.
+//
+// `git fetch` exits 1 when it rejects some ref updates while the rest landed —
+// the unforced `--tags` refspec against a tag the repository already holds is
+// exactly that. Treating any non-zero exit as "nothing to import" stranded
+// every ref that really did move, on every subsequent fetch, while handing the
+// agent a summary saying they had moved. That summary would then describe the
+// transfer directory rather than the agent's repository.
+func TestGitProxy_FetchImportsWhatLandedDespiteANonZeroExit(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitRead, "test"))
+	rec.network = agentd.ProxyResult{
+		ExitCode: 1,
+		Stderr:   " ! [rejected]  v1 -> v1 (would clobber existing tag)",
+	}
+	rec.fetchMovedRefs = true
+
+	res := gitProxyPost(t, f, "/v1/git/fetch", map[string]any{"tags": true})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	assert.Equal(t, "3333333333333333333333333333333333333333",
+		rec.refs["refs/remotes/origin/feat/thing"],
+		"the refs the fetch DID move must reach the agent's repository")
+	require.Len(t, rec.refTxns, 1, "the import must have run")
+
+	var out struct {
+		ExitCode int    `json:"exit_code"`
+		Stderr   string `json:"stderr"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &out))
+	assert.Equal(t, 1, out.ExitCode,
+		"git's own verdict wins: the agent still has to know a ref was rejected")
+	assert.Contains(t, out.Stderr, "would clobber existing tag")
+	assert.Contains(t, out.Stderr, "refs imported into your repository")
+}
+
+// TestGitProxy_FetchReportsAFailedRefImport — the import is the one step whose
+// failure would otherwise be invisible: the fetch succeeded, so without this
+// the agent would read exit 0 and a summary of refs that never landed.
+func TestGitProxy_FetchReportsAFailedRefImport(t *testing.T) {
+	f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitRead, "test"))
+	// A ref that moved between the seed and the import: the transaction's
+	// compare-and-swap must refuse the whole thing rather than clobber it.
+	rec.refUpdateFails = "cannot lock ref 'refs/remotes/origin/feat/thing': is at 9999 but expected 2222"
+
+	res := gitProxyPost(t, f, "/v1/git/fetch", map[string]any{})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	var out struct {
+		ExitCode int    `json:"exit_code"`
+		Stderr   string `json:"stderr"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &out))
+	assert.NotEqual(t, 0, out.ExitCode, "a failed import must not report success")
+	assert.Contains(t, out.Stderr, "cannot lock ref",
+		"git's own diagnosis is what tells the agent what happened")
+	assert.NotContains(t, out.Stderr, "refs imported into your repository")
 }
 
 // --- the remote gate ---

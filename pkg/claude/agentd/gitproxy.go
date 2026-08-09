@@ -447,16 +447,26 @@ type gitProxyXfer struct {
 	// means the alternates arrangement above.
 	//
 	// Its value is whatever the agent's repository answers for `rev-parse
-	// --git-path objects`, so an agent that replaces `.git/objects` with a
-	// symlink aims the daemon's pack writes at the target. That is deliberately
-	// left as it is: it is exactly what an in-repo `git fetch` did before this
-	// existed, and what the alternates arrangement already reads through, so
-	// naming the path here grants nothing new. It is also a poor primitive —
-	// git names packs by content hash, the agent's own repository is destroyed
-	// in the process, and nothing is read back. Constraining it to the git
-	// common dir would break the operators who legitimately relocate an object
-	// store, which is a worse trade than this buys.
+	// --git-path objects`, so an agent that redirects that path — a symlinked
+	// `.git/objects`, a `.git/commondir` gitfile — aims the daemon at the
+	// target. Say plainly what that means, because it is NOT the same in the
+	// two modes: alternates only ever READ through the agent-named path, while
+	// this one has the daemon WRITE there, as the unsandboxed operator.
+	//
+	// It is deliberately left as it is. An in-repo `git fetch` — what this
+	// replaced — wrote to exactly the same place, so it is not a regression;
+	// and it is a poor primitive, since git names packs by content hash, the
+	// agent's own repository is destroyed in the process, and nothing is read
+	// back. Constraining it to the git common dir would break operators who
+	// legitimately relocate an object store, which is a worse trade than the
+	// narrowing buys.
 	objectDir string
+
+	// seeded is what the agent's repository held in the mirrored namespaces
+	// when the transfer directory was built, retained as the baseline the
+	// import compares and compare-and-swaps against. See importRefs.
+	seeded   []gitRef
+	seedDone bool
 }
 
 // xferObjectMode selects between the two arrangements described on
