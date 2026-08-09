@@ -123,6 +123,9 @@ func TestRetire_FailedSoftExitThenNaturalCloseIsNotLabeledDaemonKill(t *testing.
 	f.HaveEnrolledAgent(conv)
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc)
+	// Agentd first issues a best-effort tmux-mode cancel, then sends /exit.
+	// Fail both calls so the delivery failure remains the behavior under test.
+	f.World.Tmux.FailNextCommand("send-keys")
 	f.World.Tmux.FailNextCommand("send-keys")
 	var once sync.Once
 	cleanupAfterBackgroundDrain(t, agentd.SetSoftExitEscalationPollForTest(func() {
