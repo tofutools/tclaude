@@ -111,6 +111,8 @@ test('global activity details mirror pulse buckets, dedup members, and annotate 
           state: { status: 'exited' } },
         { conv_id: 'unknown', title: 'Unknown Worker', online: true,
           state: { status: 'mystery' } },
+        { conv_id: 'blank', title: 'Blank Status Worker', online: true,
+          state: {} },
         { conv_id: 'waking', title: 'Waking Worker', online: false, waking: true,
           state: { status: 'working' } },
       ],
@@ -124,15 +126,17 @@ test('global activity details mirror pulse buckets, dedup members, and annotate 
   assert.equal(membersByName.get('Recovered Ask').state, 'asking');
   assert.match(membersByName.get('Recovered Ask').annotation, /recovered/);
   assert.equal(membersByName.get('Backoff Work').state, 'working');
-  assert.match(membersByName.get('Backoff Work').annotation, /crash loop-backoff/);
+  assert.equal(membersByName.get('Backoff Work').annotation, 'crash loop / backoff');
   assert.equal(membersByName.get('Restarting Worker').state, 'working');
   assert.equal(membersByName.get('Restarting Worker').annotation, 'restarting');
   assert.equal(membersByName.get('Suppressed Worker').state, 'idle');
   assert.equal(membersByName.get('Suppressed Worker').annotation, 'recovery suppressed');
   assert.equal(membersByName.get('Pending Crash').state, 'offline');
-  assert.equal(membersByName.get('Pending Crash').annotation, 'crashed-recovery-pending');
+  assert.equal(membersByName.get('Pending Crash').annotation, 'crashed — recovery pending');
   assert.equal(membersByName.get('Exited Worker').annotation, 'exited');
   assert.equal(membersByName.get('Unknown Worker').annotation, 'status unavailable');
+  assert.equal(membersByName.get('Blank Status Worker').state, 'idle');
+  assert.equal(membersByName.get('Blank Status Worker').annotation, '');
   assert.equal(membersByName.get('Waking Worker').state, 'offline');
   assert.equal(membersByName.get('Waking Worker').annotation, 'starting up');
   assert.equal(lifecycle.details.suppressedOffline, 2);

@@ -3,6 +3,7 @@ import {
   activityModeViews,
   aggregateActivity,
   memberVariant,
+  VARIANT_ORDER,
   themedSummaryText,
 } from './group-activity.js';
 import { scribeGroupVisible } from './scribe-groups.js';
@@ -135,7 +136,6 @@ function activityMembersForVisibility(members, visible) {
 // the hover panel includes those members and calls out the suppression
 // explicitly.
 const ACTIVITY_TITLE_RE = /^[A-Za-z0-9_\-[\]{}() ]+$/;
-const ACTIVITY_DETAIL_STATE_ORDER = ['error', 'asking', 'working', 'idle', 'crashed', 'offline'];
 const ACTIVITY_DETAIL_STATES = Object.freeze(Object.assign(Object.create(null), {
   error: { label: 'Error / stuck', wizardLabel: 'Spell backfired / stuck' },
   asking: { label: 'Awaiting permission or input', wizardLabel: 'Awaiting a decree or key' },
@@ -145,7 +145,7 @@ const ACTIVITY_DETAIL_STATES = Object.freeze(Object.assign(Object.create(null), 
   offline: { label: 'Offline', wizardLabel: 'Departed' },
 }));
 const ACTIVITY_KNOWN_STATUSES = new Set([
-  'error', 'awaiting_permission', 'awaiting_input', 'working',
+  '', 'error', 'awaiting_permission', 'awaiting_input', 'working',
   'main_agent_idle', 'idle', 'exited',
 ]);
 
@@ -184,9 +184,9 @@ function activityRecoveryAnnotation(member) {
   switch (recovery) {
     case 'recovered': return 'recovered';
     case 'restarting': return 'restarting';
-    case 'backoff': return 'crash loop-backoff';
+    case 'backoff': return 'crash loop / backoff';
     case 'suppressed': return 'recovery suppressed';
-    case 'crashed': return 'crashed-recovery-pending';
+    case 'crashed': return 'crashed — recovery pending';
     default: return '';
   }
 }
@@ -258,10 +258,10 @@ function activityDetailView(lists, groupNames, summary) {
     }
     if (!stateGroups.size) continue;
     const states = [...stateGroups.values()].sort((left, right) => {
-      const a = ACTIVITY_DETAIL_STATE_ORDER.indexOf(left.key);
-      const b = ACTIVITY_DETAIL_STATE_ORDER.indexOf(right.key);
-      return (a < 0 ? ACTIVITY_DETAIL_STATE_ORDER.length : a)
-        - (b < 0 ? ACTIVITY_DETAIL_STATE_ORDER.length : b);
+      const a = VARIANT_ORDER.indexOf(left.key);
+      const b = VARIANT_ORDER.indexOf(right.key);
+      return (a < 0 ? VARIANT_ORDER.length : a)
+        - (b < 0 ? VARIANT_ORDER.length : b);
     });
     groups.push({
       key: String(groupNames?.[groupIndex] || `group-${groupIndex}`),
