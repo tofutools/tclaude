@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -589,6 +590,16 @@ initialSize:
 		_ = conn.WriteMessage(websocket.TextMessage, fmt.Appendf(nil, "Error: %v\r\n", err))
 		return
 	}
+	// Attach/detach/resize at INFO on purpose (TCL-1136): these are the
+	// events that permanently change a managed pane's size under tmux's
+	// `window-size latest`, and the size-drift investigation had no way to
+	// tell after the fact whether ANYTHING had ever attached. The size in the
+	// attach line is what the pane is being fitted to the moment the client
+	// arrives.
+	attachedAt := time.Now()
+	slog.Info("browser terminal attached",
+		"tmux_session", tmuxSession, "path", r.URL.Path,
+		"size", fmt.Sprintf("%dx%d", startSize.Cols, startSize.Rows))
 	if hook != nil && hook.OnStart != nil {
 		hook.OnStart(cmd.Process)
 	}
@@ -605,6 +616,9 @@ initialSize:
 		_ = ptmx.Close()
 		hangupProcessGroup(cmd.Process)
 		_ = cmd.Wait()
+		slog.Info("browser terminal detached",
+			"tmux_session", tmuxSession, "path", r.URL.Path,
+			"attached_for", time.Since(attachedAt).Round(time.Second).String())
 		if hook != nil && hook.OnTeardown != nil {
 			hook.OnTeardown()
 		}
@@ -668,6 +682,9 @@ initialSize:
 					// stream); the hook fires only for APPLIED resizes.
 					if err := pty.Setsize(ptmx, size); err == nil {
 						winchProcessGroup(cmd.Process)
+						slog.Info("browser terminal resized",
+							"tmux_session", tmuxSession, "path", r.URL.Path,
+							"size", fmt.Sprintf("%dx%d", size.Cols, size.Rows))
 						if hook != nil && hook.OnResize != nil {
 							hook.OnResize(int(size.Cols), int(size.Rows))
 						}

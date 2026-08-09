@@ -313,6 +313,7 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 		return 0
 	}
 	reapOrphanedOpenCodeRuntimes(states)
+	normalizeUnattachedPaneSizes(states)
 	// Which CONVERSATIONS still have a launch, computed once for the whole tick.
 	//
 	// Session rows are per-launch and exited ones are retained, but a Copilot API
