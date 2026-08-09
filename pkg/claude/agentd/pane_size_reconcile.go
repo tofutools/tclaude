@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -35,12 +36,20 @@ import (
 // -F format (bare names, no tabs), so every line fails the field check and
 // the sweep is inert.
 func normalizeUnattachedPaneSizes(states []*session.SessionState) {
-	managed := make(map[string]string, len(states))
+	type managedPane struct {
+		sessionID        string
+		nativeScrollback bool
+	}
+	managed := make(map[string]managedPane, len(states))
 	for _, st := range states {
 		if st.Status == session.StatusExited || st.TmuxSession == "" {
 			continue
 		}
-		managed[st.TmuxSession] = st.ID
+		h, ok := harness.Get(st.Harness)
+		managed[st.TmuxSession] = managedPane{
+			sessionID:        st.ID,
+			nativeScrollback: ok && h.WantsTmuxScrollback(),
+		}
 	}
 	if len(managed) == 0 {
 		return
@@ -56,9 +65,18 @@ func normalizeUnattachedPaneSizes(states []*session.SessionState) {
 			continue
 		}
 		name, attached, sizing := fields[0], fields[1], fields[4]
-		sessID, ok := managed[name]
+		pane, ok := managed[name]
 		if !ok || attached != "0" {
 			continue
+		}
+		// Native-scrollback harnesses use tmux copy mode. If the last client
+		// detached while reading history, that mode remains on the pane and
+		// consumes later automated send-keys. Cancel it on the exact managed
+		// pane; cancel also returns the view to live output. Tmux returns an
+		// error when no mode is active, which is the desired harmless no-op.
+		if pane.nativeScrollback {
+			_, _ = tmuxOutputWithTimeout("send-keys", "-X", "-t",
+				clcommon.ExactTarget(name)+":0.0", "cancel")
 		}
 		w, werr := strconv.Atoi(fields[2])
 		h, herr := strconv.Atoi(fields[3])
@@ -82,24 +100,24 @@ func normalizeUnattachedPaneSizes(states []*session.SessionState) {
 				"-x", strconv.Itoa(clcommon.CanonicalAgentPaneWidth),
 				"-y", strconv.Itoa(clcommon.CanonicalAgentPaneHeight)); err != nil {
 				slog.Warn("pane size normalize: resize-window failed",
-					"session", sessID, "tmux_session", name, "error", err)
+					"session", pane.sessionID, "tmux_session", name, "error", err)
 				continue
 			}
 		}
 		if _, err := tmuxOutputWithTimeout("set-option", "-w", "-t", target,
 			"window-size", "latest"); err != nil {
 			slog.Warn("pane size normalize: restoring window-size latest failed; will retry next tick",
-				"session", sessID, "tmux_session", name, "error", err)
+				"session", pane.sessionID, "tmux_session", name, "error", err)
 			continue
 		}
 		if needResize {
 			slog.Info("pane size normalized after detach",
-				"session", sessID, "tmux_session", name,
+				"session", pane.sessionID, "tmux_session", name,
 				"from", strconv.Itoa(w)+"x"+strconv.Itoa(h),
 				"to", strconv.Itoa(clcommon.CanonicalAgentPaneWidth)+"x"+strconv.Itoa(clcommon.CanonicalAgentPaneHeight))
 		} else {
 			slog.Info("pane size normalize: repaired manual window sizing",
-				"session", sessID, "tmux_session", name)
+				"session", pane.sessionID, "tmux_session", name)
 		}
 	}
 }
