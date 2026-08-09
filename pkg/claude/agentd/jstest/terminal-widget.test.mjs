@@ -236,7 +236,7 @@ test('fast socket refits after xterm cell measurements become available', async 
   widget.dispose();
 });
 
-test('open nudges one row after attach and restores the settled grid', async (t) => {
+test('first terminal output schedules a delayed one-row nudge and grid restore', async (t) => {
   const harness = await createPreactHarness(t);
   const { mountTerminalWidget } = await harness.importDashboardModule('js/terminals-core.js');
   const fakes = widgetFakes(harness.document);
@@ -265,8 +265,12 @@ test('open nudges one row after attach and restores the settled grid', async (t)
   await widget.connect();
   const socket = fakes.sockets[0];
   socket.open();
+  assert.equal(timers.length, 0, 'WebSocket open alone does not prove tmux attached');
+  socket.onmessage({ data: 'first attached screen' });
   assert.equal(timers.length, 1);
-  assert.equal(timers[0].delay, 1000, 'the re-sync waits for attach startup');
+  assert.equal(timers[0].delay, 1000, 'the re-sync waits after attach output starts');
+  socket.onmessage({ data: 'more screen output' });
+  assert.equal(timers.length, 1, 'only the first output frame arms the one-shot re-sync');
   const sendsAfterOpen = socket.sent.length;
   const fitsAfterOpen = fakes.terminal().addons[0].fitCount;
 
@@ -314,6 +318,7 @@ test('reconnect and dispose cancel a stale delayed resize', async (t) => {
 
   await widget.connect();
   fakes.sockets[0].open();
+  fakes.sockets[0].onmessage({ data: 'attached screen' });
   assert.equal(timers.length, 1);
 
   timers[0].handler();
@@ -322,6 +327,7 @@ test('reconnect and dispose cancel a stale delayed resize', async (t) => {
   await widget.connect();
   assert.equal(timers[1].cleared, true, 'reconnect cancels the old connection restore');
   fakes.sockets[1].open();
+  fakes.sockets[1].onmessage({ data: 'reattached screen' });
   assert.equal(timers.length, 3);
 
   widget.dispose();

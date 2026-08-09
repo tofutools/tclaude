@@ -26,9 +26,10 @@ export const INITIAL_RETRY_STABILITY_MS = 1000;
 // refit can reach tmux before the attached harness has installed its resize
 // handling. Codex is particularly visible when that happens: tmux's status bar
 // moves to the right place, but the TUI keeps its old layout until the browser
-// changes size again. Briefly nudge the PTY by one row after attach, then put it
-// back. A same-size resend is insufficient here: it signals the tmux client,
-// but tmux does not relay unchanged geometry to the process inside its pane.
+// changes size again. After the first terminal output proves the attach is
+// producing a screen, briefly nudge the PTY by one row, then put it back. A
+// same-size resend is insufficient here: it signals the tmux client, but tmux
+// does not relay unchanged geometry to the process inside its pane.
 export const POST_ATTACH_RESIZE_DELAY_MS = 1000;
 export const POST_ATTACH_RESIZE_NUDGE_MS = 100;
 
@@ -153,6 +154,7 @@ export function mountTerminalWidget({
   let retryTimer = null;
   let postOpenFitFrame = null;
   let postAttachResizeTimer = null;
+  let postAttachResizeScheduled = false;
   // The daemon this socket is attached to, read when it opened, and the
   // outstanding "tell me if that changes" registration.
   let instanceBaseline = null;
@@ -407,6 +409,7 @@ export function mountTerminalWidget({
     if (disposed) return false;
     generation += 1;
     const mine = generation;
+    postAttachResizeScheduled = false;
     abortAuth();
     closeSocket();
     cancelPostOpenFit();
@@ -457,11 +460,18 @@ export function mountTerminalWidget({
       if (isActive) fit();
       sendResize();
       schedulePostOpenFit(mine, socket);
-      schedulePostAttachResize(mine, socket);
     };
     socket.onmessage = (event) => {
       if (disposed || mine !== generation || ws !== socket) return;
       term.write(event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data);
+      // WebSocket open precedes PTY creation on the server. The first output is
+      // the browser's earliest proof that the command/tmux attach is actually
+      // producing a screen, so anchor the delayed harness reflow here instead
+      // of to a fixed interval from socket open. Only the first frame arms it.
+      if (!postAttachResizeScheduled) {
+        postAttachResizeScheduled = true;
+        schedulePostAttachResize(mine, socket);
+      }
     };
     socket.onclose = () => {
       if (disposed || mine !== generation || ws !== socket) return;
