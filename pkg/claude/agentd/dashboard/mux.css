@@ -29,6 +29,34 @@
 }
 .mux-tab:hover { color: #c9d1d9; }
 .mux-tab.active { background: #21262d; color: #c9d1d9; border-color: #3d4451; }
+.mux-tab-status {
+  flex: none; display: inline-grid; place-items: center;
+  width: 13px; height: 13px; border-radius: 50%;
+  font-size: 12px; font-weight: 700; line-height: 1;
+}
+.mux-tab-status-working { color: #3fb950; }
+.mux-tab-status-idle { color: #d29922; }
+.mux-tab-status-awaiting { color: #58a6ff; }
+.mux-tab-status-error,
+.mux-tab-status-crashed { color: #f85149; }
+.mux-tab-status-offline,
+.mux-tab-status-exited,
+.mux-tab-status-unknown { color: #8b949e; }
+.mux-tab-status-waking,
+.mux-tab-status-restarting { color: #d29922; }
+.mux-tab-status-working { animation: mux-tab-status-pulse 1.8s ease-in-out infinite; }
+.mux-tab-status-waking,
+.mux-tab-status-restarting { animation: mux-tab-status-pulse 1.2s ease-in-out infinite; }
+.mux-tab.active .mux-tab-status-working { color: #56d364; }
+@keyframes mux-tab-status-pulse {
+  0%, 100% { opacity: 0.58; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1.08); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mux-tab-status-working,
+  .mux-tab-status-waking,
+  .mux-tab-status-restarting { animation: none; }
+}
 .mux-tab-label {
   overflow: hidden; text-overflow: ellipsis; max-width: 200px;
   user-select: none;
