@@ -62,6 +62,23 @@ func TestDashboardConfigPreactBoundary(t *testing.T) {
 	if !strings.Contains(markup, `id="cfg-save"`) || !strings.Contains(markup, `id="cfg-sudo-json"`) {
 		t.Error("Config form controls are not owned by the Preact markup component")
 	}
+	windowFocus := strings.Index(markup, `id="cfg-focus-window-title"`)
+	terminalAttach := strings.Index(markup, `class="cfg-field cfg-terminal-attach-field"`)
+	agentHide := strings.Index(markup, `id="cfg-dashboard-show-agent-hide-btn"`)
+	if windowFocus < 0 || terminalAttach < windowFocus || agentHide < terminalAttach {
+		t.Error("web terminal attachment controls are not grouped after Window focus and before the remaining terminal settings")
+	}
+	for _, needle := range []string{
+		`class="cfg-terminal-attach-timings"`,
+		`id="cfg-terminal-attach-mode"`,
+		`id="cfg-terminal-attach-initial-delay"`,
+		`id="cfg-terminal-attach-repair-delay"`,
+		`id="cfg-terminal-attach-pre-delay"`,
+	} {
+		if !strings.Contains(markup, needle) {
+			t.Errorf("web terminal attachment layout missing %q", needle)
+		}
+	}
 	for _, needle := range []string{
 		"checked = !!a.persist_operator_token_keychain",
 		"a.persist_operator_token_keychain = true",

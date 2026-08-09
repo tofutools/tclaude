@@ -159,24 +159,6 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         <span class="cfg-hint">The spawn dialog's <strong>Auto focus</strong>, per-agent <strong>focus</strong> (👁), <strong>open window</strong> and <strong>open terminal</strong> actions — plus bulk focus from the 🪟 <em>windows…</em> modal, the same commands in the ⌘ palette, a click on a CWD path cell, and a message's <em>focus</em> button — normally pop a <em>native</em> OS terminal window. <strong>Checked</strong> routes them all to <em>in-browser</em> terminal panes in the dashboard's <strong>Terminals</strong> tab instead — the same surface the dedicated "web term" / "web window" buttons always use — so you never leave the browser. Bulk unfocus still detaches the selected terminal clients. The dedicated web buttons are already always web. Off by default. Stored as <code>dashboard.default_terminal</code> (the default <code>native</code> is omitted; checked writes <code>web</code>).</span>
       </div>
       <div class="cfg-field">
-        <span class="cfg-label">Web terminal attach resizing</span>
-        <${ConfigSelect} id="cfg-terminal-attach-mode" aria-label="Web terminal attach resize strategy">
-          <option value="repair">Repair after attach (default)</option>
-          <option value="initial">Initial resize only</option>
-          <option value="pre_attach">Resize before attach</option>
-        </${ConfigSelect}>
-        <label class="cfg-inline">wait before initial resize
-          <${ConfigInput} type="number" id="cfg-terminal-attach-initial-delay" min="0" max="10000" placeholder="0" aria-label="Initial terminal resize delay (milliseconds)" style="width:7em" /> ms
-        </label>
-        <label class="cfg-inline">post-attach repair wait
-          <${ConfigInput} type="number" id="cfg-terminal-attach-repair-delay" min="0" max="10000" placeholder="250" aria-label="Post-attach terminal repair delay (milliseconds)" style="width:7em" /> ms
-        </label>
-        <label class="cfg-inline">resize-to-attach wait
-          <${ConfigInput} type="number" id="cfg-terminal-attach-pre-delay" min="0" max="10000" placeholder="250" aria-label="Resize before attach delay (milliseconds)" style="width:7em" /> ms
-        </label>
-        <span class="cfg-hint"><strong>Repair after attach</strong> preserves today's sequence: send the fitted size, wait for the first screen, then nudge one row and restore it. <strong>Initial resize only</strong> skips that visible repair. <strong>Resize before attach</strong> sends the fitted grid first, waits the configured resize-to-attach interval, and only then starts the tmux attachment. Blank timing fields use the shown defaults; explicit <code>0</code> means no wait. Stored under <code>dashboard.terminal_attach</code>.</span>
-      </div>
-      <div class="cfg-field">
         <span class="cfg-label">Window focus</span>
         <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-focus-window-title" /> set the <code>tclaude:${'<id>'}</code> window/tab title</label>
         <span class="cfg-hint">tclaude normally stamps a <code>tclaude:${'<id>'}</code> title on each agent's terminal window/tab. That title is how it finds an agent's <em>existing</em> window to <strong>raise</strong> it (window focus) and to <strong>auto-tile</strong>. On a plain desktop terminal some find it ugly — <strong>uncheck</strong> to leave the terminal's own tab title alone. Trade-off: focus/tiling then can't locate the window, so "focus" falls back to opening a <em>new</em> window instead of raising the existing one (affects WSL and native-Linux/X11; the explicit "open window" action still works). <strong>Leave on for WSL</strong>, where window focus depends on it. On (default). Stored as <code>focus.window_title</code> (the default is omitted; unchecked writes <code>false</code>).</span>
@@ -195,6 +177,26 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         <label class="cfg-inline">gap <${ConfigInput} type="number" id="cfg-focus-tile-gap" min="0" max="1000" placeholder="8" aria-label="Tiling gap (pixels)" style="width:6em" /> px</label>
         <label class="cfg-inline">margin <${ConfigInput} type="number" id="cfg-focus-tile-margin" min="0" max="1000" placeholder="0" aria-label="Tiling margin (pixels)" style="width:6em" /> px</label>
         <span class="cfg-hint">When on, using the 🪟 windows… modal / command palette to focus <em>more than one</em> agent's window rearranges them into a tidy layout instead of leaving them where the OS dropped them. All windows are gathered onto <em>one</em> monitor — the one the first window is on — so a multi-monitor setup isn't scattered. By default windows keep their <em>current size</em> and are only repositioned; tick <strong>resize windows to fill the screen</strong> for the older screen-filling grid. Best-effort per platform (macOS AppleScript, Linux xdotool/kdotool, WSL PowerShell); an unsupported desktop leaves windows as-is. <strong>Gap</strong> = pixels between tiles; <strong>margin</strong> = inset from the screen edges. A single focused window is never tiled. Off (default).</span>
+      </div>
+      <div class="cfg-field cfg-terminal-attach-field">
+        <div class="cfg-terminal-attach-intro">
+          <strong>Web terminal attachment</strong>
+          <span>Choose how the browser establishes terminal geometry when attaching to tmux.</span>
+        </div>
+        <span class="cfg-label">Resize strategy</span>
+        <${ConfigSelect} id="cfg-terminal-attach-mode" aria-label="Web terminal attach resize strategy">
+          <option value="repair">Repair after attach (default)</option>
+          <option value="initial">Initial resize only</option>
+          <option value="pre_attach">Resize before attach</option>
+        </${ConfigSelect}>
+        <div class="cfg-terminal-attach-timings">
+          <strong>Timing overrides</strong>
+          <label><span>Before initial resize</span><${ConfigInput} type="number" id="cfg-terminal-attach-initial-delay" min="0" max="10000" placeholder="0" aria-label="Initial terminal resize delay (milliseconds)" /><span class="cfg-terminal-attach-unit">ms</span></label>
+          <label><span>Post-attach repair wait</span><${ConfigInput} type="number" id="cfg-terminal-attach-repair-delay" min="0" max="10000" placeholder="250" aria-label="Post-attach terminal repair delay (milliseconds)" /><span class="cfg-terminal-attach-unit">ms</span></label>
+          <label><span>Resize-to-attach wait</span><${ConfigInput} type="number" id="cfg-terminal-attach-pre-delay" min="0" max="10000" placeholder="250" aria-label="Resize before attach delay (milliseconds)" /><span class="cfg-terminal-attach-unit">ms</span></label>
+          <span class="cfg-terminal-attach-note">Blank uses the shown default; explicit <code>0</code> means no wait.</span>
+        </div>
+        <span class="cfg-hint cfg-terminal-attach-hint"><strong>Repair after attach</strong> preserves today's three-step sequence. <strong>Initial resize only</strong> skips the visible nudge and restore. <strong>Resize before attach</strong> waits between sending the fitted grid and starting the tmux attachment. Stored under <code>dashboard.terminal_attach</code>.</span>
       </div>
       <div class="cfg-field">
         <span class="cfg-label">Agent hide button</span>
