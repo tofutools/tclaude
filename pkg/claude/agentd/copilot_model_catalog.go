@@ -394,7 +394,19 @@ func fetchCopilotEnrichedModels(ctx context.Context, copilotPath, githubToken st
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start Copilot model server: %w", err)
 	}
+	stopIOWatch := make(chan struct{})
+	go func() {
+		select {
+		case <-processCtx.Done():
+			// EOF is the server protocol's graceful shutdown signal and also
+			// prevents a loader/child pair from keeping this descriptor open
+			// while process-group escalation runs.
+			_ = stdin.Close()
+		case <-stopIOWatch:
+		}
+	}()
 	defer func() {
+		close(stopIOWatch)
 		_ = stdin.Close()
 		stopProcess()
 		_ = cmd.Wait()
