@@ -739,7 +739,8 @@ func (claudeLifecycle) SoftExitPrefixKeys() []string { return nil }
 //   - Its quit is a double ctrl-c — the first press arms "Press Ctrl-C again to
 //     exit", a second press WITHIN THE WINDOW quits (status 0). The window was
 //     bracketed at ~0.8 s: a re-press 0.8 s later still quit, 0.9 s later did
-//     not. The production injectSettleDelay (500 ms) sits inside it.
+//     not. The production signal-exit key gap (agentd's signalExitKeyGap,
+//     330 ms) sits inside it with margin for delivery jitter.
 //   - The exit runs the SAME shutdown path as typed /exit: the SessionEnd hook
 //     fires with reason "prompt_input_exit" — identical to /exit — in every
 //     measured state (idle, text in the input box, mid-turn, permission dialog).
