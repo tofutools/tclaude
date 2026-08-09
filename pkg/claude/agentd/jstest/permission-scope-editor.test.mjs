@@ -390,20 +390,20 @@ test('a dimension this build has never heard of is still editable', async (t) =>
   const harness = await createPreactHarness(t);
   const saved = [];
   const FUTURE = {
-    slug: 'git.push', description: 'push', owner_implied: false, scope_dims: ['git_remote'],
+    slug: 'proxy.git.push', description: 'push', owner_implied: false, scope_dims: ['git_remote'],
   };
   const { host, mounted } = await openEditor(harness, scopeSnapshot({
     slugs: [FUTURE],
     dimOptions: { git_remote: { values: ['origin'], selectors: ['@launch-repo'] } },
   }), { ...noopActions, savePermissions: async (descriptor, selection, scopes) => { saved.push(scopes); } });
 
-  await harness.act(() => { host.querySelector('[data-slug="git.push"] button.perm-scope-twisty').click(); });
+  await harness.act(() => { host.querySelector('[data-slug="proxy.git.push"] button.perm-scope-twisty').click(); });
   const select = host.querySelector('.perm-scope-dim[data-dim="git_remote"] .perm-scope-add');
   assert.deepEqual(Array.from(select.options).map((option) => option.value), ['', 'origin', '@launch-repo'],
     'advertised values and selectors are both offered, with no frontend knowledge of the dimension');
   await harness.act(() => pickOption(harness, select, '@launch-repo'));
   await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
-  assert.deepEqual(saved[0], { 'git.push': { git_remote: ['@launch-repo'] } });
+  assert.deepEqual(saved[0], { 'proxy.git.push': { git_remote: ['@launch-repo'] } });
   await mounted.unmount();
 });
 

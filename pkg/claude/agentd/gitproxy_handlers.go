@@ -275,7 +275,7 @@ func describeProxyRemote(ctx context.Context, s *gitProxySession, name, convID s
 	}
 	if scoped != nil {
 		if !evalPermissionScope(*scoped, convID, ActionContext{Remote: view.RemoteRef}).Satisfied {
-			view.RefusedFor = fmt.Sprintf("%s is outside this caller's git.read remote scope", view.RemoteRef)
+			view.RefusedFor = fmt.Sprintf("%s is outside this caller's proxy.git.read remote scope", view.RemoteRef)
 			return view
 		}
 	}
@@ -380,7 +380,7 @@ func handleGitProxyFetch(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleGitProxyPush serves POST /v1/git/push — the only route that writes to
-// a remote, and the only one behind the separate git.push slug.
+// a remote, and the only one behind the separate proxy.git.push slug.
 func handleGitProxyPush(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")

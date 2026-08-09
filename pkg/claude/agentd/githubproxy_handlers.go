@@ -786,7 +786,7 @@ type ghProxyPREditRequest struct {
 // handleGHProxyPREdit serves POST /v1/github/pr/edit.
 //
 // Editing a description is a WRITE under the operator's GitHub identity, so it
-// sits behind github.write beside `pr create` rather than beside the reads. It
+// sits behind proxy.github.write beside `pr create` rather than beside the reads. It
 // is deliberately narrow: title and body only. `gh pr edit` can also move the
 // base branch, add reviewers and change labels, and none of that is something
 // the proxy's semantic contract covers — an agent that wants it should ask a

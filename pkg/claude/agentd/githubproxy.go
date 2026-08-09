@@ -197,7 +197,7 @@ type ghProxySession struct {
 // the agent's own remote.
 //
 // Note the ordering: the git-side gates run FIRST and in full. A caller with
-// github.read still cannot reach a repository whose remote is not on the
+// proxy.github.read still cannot reach a repository whose remote is not on the
 // operator's allow-list, because the allow-list check happens before the repo
 // slug is even derived.
 func newGHProxySession(ctx context.Context, convID, requestedRemote string, remoteScoped bool) (*ghProxySession, *proxyFault) {

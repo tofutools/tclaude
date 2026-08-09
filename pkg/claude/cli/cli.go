@@ -58,6 +58,9 @@ func ConfigureRoot(cmd *cobra.Command) {
 		if err := config.RelocateLegacyState(); err != nil {
 			return fmt.Errorf("relocate legacy tclaude state: %w", err)
 		}
+		if err := config.MigrateSemanticProxyPermissions(); err != nil {
+			slog.Warn("failed to migrate semantic-proxy permission names in config; continuing with in-memory compatibility", "error", err)
+		}
 		cfg, cfgErr := config.Load()
 		finalLogLevel := logLevel
 		if !cmd.Flags().Changed("log-level") && cfgErr == nil && cfg.LogLevel != "" {

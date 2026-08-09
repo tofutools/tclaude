@@ -1916,8 +1916,8 @@ tclaude proxy linear issue comment # also: create, update, link
 They are not `tclaude agent` subcommands because they are not coordination:
 `agent` is about who else exists and how to reach them, `proxy` is about
 performing an operation with a credential the agent deliberately does not hold.
-The permission slugs (`git.read`, `git.push`, `github.read`, `github.write`,
-`linear.read`, `linear.write`) are still ordinary agent permissions, granted and
+The permission slugs (`proxy.git.read`, `proxy.git.push`, `proxy.github.read`, `proxy.github.write`,
+`proxy.linear.read`, `proxy.linear.write`) are still ordinary agent permissions, granted and
 audited like any other.
 
 See **[Git & GitHub proxy](git-proxy.md)** for the whole picture: the allow-list
@@ -2429,16 +2429,16 @@ the scope that authorized the action.
 
 The two **proxy** dimensions have matcher languages of their own (the
 relational `target_agent` matchers below are a third departure from plain string
-equality). `remote` (on `git.read` /
-`git.push` / `github.read` / `github.write`) reuses the git proxy's
+equality). `remote` (on `proxy.git.read` /
+`proxy.git.push` / `proxy.github.read` / `proxy.github.write`) reuses the git proxy's
 slash-segmented pattern language, so a matcher can cover a whole host or org
-rather than one URL. `linear_team` (on `linear.read` / `linear.write`) is a
+rather than one URL. `linear_team` (on `proxy.linear.read` / `proxy.linear.write`) is a
 whole-key, case-insensitive comparison — `linear_team=tcl` and
 `linear_team=TCL` name the same team, and neither covers `TCLX`:
 
 ```bash
 # this agent may read Linear, but only the TCL and JOH teams
-tclaude agent permissions grant ticket-worker linear.read \
+tclaude agent permissions grant ticket-worker proxy.linear.read \
   --scope linear_team=TCL,JOH
 ```
 
@@ -2530,9 +2530,9 @@ gate group, messaging, template, and permission administration.
 | `process.templates.*` | `process.templates.read`, `process.templates.manage` |
 | `process.runs.*` | `process.runs.read`, `process.runs.manage` |
 | `human.*`     | `human.notify`, `human.clipboard` |
-| `git.*`       | `git.read`, `git.push` |
-| `github.*`    | `github.read`, `github.write` |
-| `linear.*`    | `linear.read`, `linear.write` |
+| `git.*`       | `proxy.git.read`, `proxy.git.push` |
+| `github.*`    | `proxy.github.read`, `proxy.github.write` |
+| `linear.*`    | `proxy.linear.read`, `proxy.linear.write` |
 
 Run `tclaude agent permissions slugs` for the live registry with
 descriptions — it is the source of truth; this table can drift.

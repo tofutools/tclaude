@@ -124,12 +124,12 @@ Two slugs, neither granted by default and neither conferred by group ownership:
 
 | Slug | Allows |
 |---|---|
-| `linear.read` | `whoami`, `issue view/ls/search/comments` |
-| `linear.write` | `issue create/comment/update/link` |
+| `proxy.linear.read` | `whoami`, `issue view/ls/search/comments` |
+| `proxy.linear.write` | `issue create/comment/update/link` |
 
 ```bash
-tclaude agent permissions grant <agent> linear.read
-tclaude agent permissions grant <agent> linear.write
+tclaude agent permissions grant <agent> proxy.linear.read
+tclaude agent permissions grant <agent> proxy.linear.write
 ```
 
 **Writing needs both the slug and `allow_write`.** They answer different
@@ -152,12 +152,12 @@ without touching the global list — the same mechanism as the git proxy's
 
 ```bash
 # this agent may read and write, but only within TCL
-tclaude agent permissions grant ticket-worker linear.read  --scope linear_team=TCL
-tclaude agent permissions grant ticket-worker linear.write --scope linear_team=TCL
+tclaude agent permissions grant ticket-worker proxy.linear.read  --scope linear_team=TCL
+tclaude agent permissions grant ticket-worker proxy.linear.write --scope linear_team=TCL
 
 # a lead that reads two teams but only writes to one
-tclaude agent permissions grant lead linear.read  --scope linear_team=TCL,JOH
-tclaude agent permissions grant lead linear.write --scope linear_team=TCL
+tclaude agent permissions grant lead proxy.linear.read  --scope linear_team=TCL,JOH
+tclaude agent permissions grant lead proxy.linear.write --scope linear_team=TCL
 ```
 
 The dashboard's permission editor edits the same thing, offering your
@@ -203,14 +203,14 @@ above.
 # Discovery — run this first, and whenever something is refused.
 tclaude proxy linear whoami
 
-# Reads (linear.read)
+# Reads (proxy.linear.read)
 tclaude proxy linear issue view TCL-568
 tclaude proxy linear issue ls --team TCL --state "In Progress"
 tclaude proxy linear issue ls --assigned-me --limit 10
 tclaude proxy linear issue search "flaky dashsnap"
 tclaude proxy linear issue comments TCL-568
 
-# Writes (linear.write + allow_write)
+# Writes (proxy.linear.write + allow_write)
 tclaude proxy linear issue comment TCL-568 --body-file progress.md
 tclaude proxy linear issue update TCL-568 --state "In Review"
 tclaude proxy linear issue create --team TCL --title "…" --description-file spec.md
@@ -354,10 +354,10 @@ the workspace.
 | `503 key_missing` | No `api_key_file` and no `LINEAR_API_KEY`. |
 | `503 key_unreadable` | The configured file could not be read, or is empty. Check it is readable by the account agentd runs as, and that you used `~/` or an absolute path rather than `${HOME}`. |
 | `503 linear_auth` | Linear rejected the key. It may be revoked, expired, or lack the permission the verb needs — a read-only key cannot comment. |
-| `403` naming a slug | The agent lacks `linear.read` / `linear.write`. Grant it, or the agent can retry with `--ask-human`. |
+| `403` naming a slug | The agent lacks `proxy.linear.read` / `proxy.linear.write`. Grant it, or the agent can retry with `--ask-human`. |
 | `403 linear_write_disabled` | The slug is granted but `allow_write` is false. Both are required. |
 | `403 team_not_allowed` | The operator has an `allowed_teams` list and the team is not on it. Run `tclaude proxy linear whoami` to see the exact key to add. |
-| `403 team_out_of_scope` | This agent's grant is scoped to other teams — either the team is on `allowed_teams` and the grant excludes it, or there is no operator list and the grant is the whole policy. Widen the grant, using **the slug the refusal names**, since read and write carry independent scopes: `permissions grant <agent> linear.read --scope linear_team=…` or `… linear.write --scope linear_team=…` (naming every team it needs — a scope replaces the previous one). |
+| `403 team_out_of_scope` | This agent's grant is scoped to other teams — either the team is on `allowed_teams` and the grant excludes it, or there is no operator list and the grant is the whole policy. Widen the grant, using **the slug the refusal names**, since read and write carry independent scopes: `permissions grant <agent> proxy.linear.read --scope linear_team=…` or `… proxy.linear.write --scope linear_team=…` (naming every team it needs — a scope replaces the previous one). |
 | `403 team_scope_empty` | The agent's team scope authorizes nothing at all: it overlaps a configured `allowed_teams` nowhere, or it names teams but constrains some other dimension a Linear request cannot describe, or it carries no `linear_team` at all. The message says which. |
 | `400` on an identifier | Only `TEAM-123` form is accepted; a UUID is refused on purpose. |
 | `400 unknown_state` | The state name is not one of the team's; the message lists the real ones. |

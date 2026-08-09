@@ -320,12 +320,12 @@ func completePermissionSlugs(_ *cobra.Command, _ []string, toComplete string) []
 			{"member.redesignate", "Edit role/descr on group members"},
 			{"permissions.grant", "Grant agent permissions"},
 			{"permissions.revoke", "Revoke agent permissions"},
-			{"git.read", "Read from a Git remote through the daemon's credentials"},
-			{"git.push", "Push to a Git remote through the daemon's credentials"},
-			{"github.read", "Read GitHub PRs/issues through the daemon's gh credentials"},
-			{"github.write", "Create/comment on GitHub PRs/issues as the operator"},
-			{"linear.read", "Read Linear issues/comments through the daemon's Linear key"},
-			{"linear.write", "Create/update/comment on and link Linear issues as the operator"},
+			{"proxy.git.read", "Read from a Git remote through the daemon's credentials"},
+			{"proxy.git.push", "Push to a Git remote through the daemon's credentials"},
+			{"proxy.github.read", "Read GitHub PRs/issues through the daemon's gh credentials"},
+			{"proxy.github.write", "Create/comment on GitHub PRs/issues as the operator"},
+			{"proxy.linear.read", "Read Linear issues/comments through the daemon's Linear key"},
+			{"proxy.linear.write", "Create/update/comment on and link Linear issues as the operator"},
 		}
 	}
 	out := []string{}

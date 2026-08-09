@@ -364,7 +364,7 @@ var scopedSlugEnforcementPaths = map[string]string{
 	PermGitHubWrite:       "GitHub proxy handlers — derived repository remote in ActionContext{Remote}",
 	PermLinearRead: "Linear proxy — linearEffectiveTeams evaluates ActionContext{LinearTeam} per candidate team " +
 		"into the session's effective set, which every team check reads",
-	PermLinearWrite: "Linear proxy — same effective-set resolution as linear.read",
+	PermLinearWrite: "Linear proxy — same effective-set resolution as proxy.linear.read",
 }
 
 func TestEveryScopedSlugDeclaresAnEnforcementPath(t *testing.T) {

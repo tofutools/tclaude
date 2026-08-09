@@ -187,7 +187,7 @@ func TestLinearProxy_WriteRequiresItsOwnSlug(t *testing.T) {
 		assert.False(t, rec.sawAnyCall(), "a denied caller must not reach Linear — not even a probe")
 	})
 
-	t.Run("linear.read does not confer linear.write", func(t *testing.T) {
+	t.Run("proxy.linear.read does not confer proxy.linear.write", func(t *testing.T) {
 		f, rec := linearWorld(t, []string{"TCL"})
 		require.NoError(t, db.GrantAgentPermission(linearProxyTestConv, agentd.PermLinearRead, "test"))
 		res := linearPost(t, f, "/v1/linear/issue/comment",
@@ -387,11 +387,11 @@ func TestLinearProxy_TeamScopedWriteIsSeparateFromRead(t *testing.T) {
 		return http.StatusOK, `{"data":{"commentCreate":{"success":true,"comment":{"url":"u","createdAt":"t"}}}}`
 	}
 
-	// Reading JOH is in scope for linear.read.
+	// Reading JOH is in scope for proxy.linear.read.
 	res := linearPost(t, f, "/v1/linear/issue/view", map[string]any{"identifier": "JOH-1"})
 	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
 
-	// Commenting on it is not in scope for linear.write.
+	// Commenting on it is not in scope for proxy.linear.write.
 	res = linearPost(t, f, "/v1/linear/issue/comment",
 		map[string]any{"identifier": "JOH-1", "body": "progress"})
 	assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())

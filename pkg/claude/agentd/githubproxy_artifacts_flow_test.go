@@ -730,7 +730,7 @@ func TestGHProxy_DownloadRefusesADestinationThatIsNotADirectory(t *testing.T) {
 
 // TestGHProxy_ArtifactsListIsARead — listing what a run produced spends the
 // operator's credential and returns nothing that could be written with it, so
-// it sits behind github.read beside the other reads.
+// it sits behind proxy.github.read beside the other reads.
 func TestGHProxy_ArtifactsListIsARead(t *testing.T) {
 	t.Run("ungranted", func(t *testing.T) {
 		f, rec := gitProxyWorld(t, []string{"github.com/tofutools"})
