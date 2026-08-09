@@ -249,9 +249,14 @@ func TestDotToggle_IdempotentBothDirections(t *testing.T) {
 }
 
 // Scenario: the shutdown dialog sends {"wait":true} so its spinner spans the
-// REAL stop — the response must not land until the pane process is gone. The
-// simulated pane dies on the injected exit, so the waiting stop still answers
-// soft_stopped with the session verified dead, and the snapshot agrees.
+// REAL stop — the response must not land until the pane process is gone.
+//
+// The pane WEDGES its signal exit (the ctrl-c presses CC soft exit rides on),
+// so only the escalation ladder can end it — which is what genuinely
+// distinguishes the contracts: a fire-and-forget stop answers with the pane
+// still alive (its ladder runs in the background), while the waiting stop
+// runs the ladder inline and answers with the session already verified dead.
+// Ignoring the wait flag fails the liveness assertion.
 func TestDotToggle_WaitingStopAnswersAfterThePaneIsGone(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	f := newFlow(t)
@@ -263,6 +268,9 @@ func TestDotToggle_WaitingStopAnswersAfterThePaneIsGone(t *testing.T) {
 	f.HaveAliveSession(conv, "spwn-dtwa", tmuxSes, f.TestCwd("dtwa"))
 	f.HaveEnrolledAgent(conv)
 	require.True(t, f.World.Tmux.IsAlive(tmuxSes), "pre: the agent's session is alive")
+	cc := f.World.CCs.GetByConvID(conv)
+	require.NotNil(t, cc, "no CCSim registered for %s", conv)
+	cc.SetSignalExitWedged(true)
 
 	code, resp := postDotVerb(t, mux, conv, "stop", `{"force":false,"wait":true}`)
 	require.Equal(t, http.StatusOK, code)
@@ -294,4 +302,36 @@ func TestDotToggle_WaitingForceKillAnswersAfterThePaneIsGone(t *testing.T) {
 	require.Equal(t, http.StatusOK, code)
 	assert.Equal(t, "killed", resp.Action, "detail=%s", resp.Detail)
 	assert.False(t, f.World.Tmux.IsAlive(tmuxSes))
+}
+
+// Scenario: the waiting stop's ladder runs to exhaustion and the pane is
+// STILL alive. The response must be the stop_failed error envelope — the
+// dialog shows the failure and keeps its retry affordances — never a success
+// toast over a still-green row. This is the mapping the wait branch adds on
+// top of stopOneConvAndWait (a fire-and-forget stop reports soft_stopped
+// here, having verified nothing).
+func TestDotToggle_WaitingStopReportsStuckPaneAsError(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	const conv = "dtws-1111-2222-3333-444444444444"
+	const tmuxSes = "tmux-dtws"
+	f.HaveConvWithTitle(conv, "stuck-worker")
+	f.HaveAliveSession(conv, "spwn-dtws", tmuxSes, f.TestCwd("dtws"))
+	f.HaveEnrolledAgent(conv)
+	cc := f.World.CCs.GetByConvID(conv)
+	require.NotNil(t, cc, "no CCSim registered for %s", conv)
+	exitPane := holdRetiringPane(t, f, cc, tmuxSes)
+	defer exitPane()
+
+	rec := testharness.Serve(mux, testharness.JSONRequest(
+		t, http.MethodPost, "/api/agents/"+conv+"/stop",
+		json.RawMessage(`{"force":false,"wait":true}`)))
+	require.Equal(t, http.StatusInternalServerError, rec.Code,
+		"a stop that left the agent running must not read as success: %s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "stop_failed")
+	assert.Contains(t, rec.Body.String(), "still running")
+	assert.True(t, f.World.Tmux.IsAlive(tmuxSes),
+		"fixture: the pane really did survive the ladder")
 }
