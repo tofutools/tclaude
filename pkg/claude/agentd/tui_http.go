@@ -8,6 +8,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // buildTUIHTTPHandler exposes only the versioned operations the terminal
@@ -84,7 +85,8 @@ func handleTUIAttachWS(w http.ResponseWriter, r *http.Request) {
 		shellSingleQuote(clcommon.TmuxSocketName),
 		shellSingleQuote(clcommon.ExactTarget(sess.TmuxSession)),
 	)
-	runPTYOverWS(w, r, command, "", nil)
+	h, _ := harness.Get(sess.Harness)
+	runPTYOverWS(w, r, command, "", sess.TmuxSession, h)
 }
 
 // authenticateTUIHTTPRequest accepts either an existing dashboard session or
