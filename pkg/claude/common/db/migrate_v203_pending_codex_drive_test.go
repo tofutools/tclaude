@@ -9,33 +9,33 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMigrateV201toV202AddsPendingCodexDriveTriState(t *testing.T) {
-	d, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "v201.sqlite"))
+func TestMigrateV202toV203AddsPendingCodexDriveTriState(t *testing.T) {
+	d, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "v202.sqlite"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = d.Close() })
 	mustExec(t, d, `CREATE TABLE schema_version (version INTEGER NOT NULL)`)
-	mustExec(t, d, `INSERT INTO schema_version VALUES (201)`)
+	mustExec(t, d, `INSERT INTO schema_version VALUES (202)`)
 	mustExec(t, d, `CREATE TABLE pending_spawns (label TEXT PRIMARY KEY) STRICT`)
 
-	require.NoError(t, migrateV201toV202(d))
-	assert.Equal(t, 202, schemaVersion(d))
+	require.NoError(t, migrateV202toV203(d))
+	assert.Equal(t, 203, schemaVersion(d))
 	for _, column := range []string{"codex_app_server", "codex_app_server_source", "codex_state_root", "codex_state_root_source"} {
 		var count int
 		require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('pending_spawns') WHERE name = ?`, column).Scan(&count))
 		assert.Equal(t, 1, count, column)
 	}
-	require.NoError(t, migrateV201toV202(d), "partially applied migration converges")
+	require.NoError(t, migrateV202toV203(d), "partially applied migration converges")
 }
 
-func TestMigrateV201toV202ToleratesPartialLegacySchemaWithoutPendingSpawns(t *testing.T) {
-	d, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "v201-partial.sqlite"))
+func TestMigrateV202toV203ToleratesPartialLegacySchemaWithoutPendingSpawns(t *testing.T) {
+	d, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "v202-partial.sqlite"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = d.Close() })
 	mustExec(t, d, `CREATE TABLE schema_version (version INTEGER NOT NULL)`)
-	mustExec(t, d, `INSERT INTO schema_version VALUES (201)`)
+	mustExec(t, d, `INSERT INTO schema_version VALUES (202)`)
 
-	require.NoError(t, migrateV201toV202(d))
-	assert.Equal(t, 202, schemaVersion(d))
+	require.NoError(t, migrateV202toV203(d))
+	assert.Equal(t, 203, schemaVersion(d))
 }
 
 func TestPendingSpawnCodexDriveRoundTripsUnsetTrueAndFalse(t *testing.T) {

@@ -30,7 +30,7 @@ export const INITIAL_RETRY_STABILITY_MS = 1000;
 // producing a screen, briefly nudge the PTY by one row, then put it back. A
 // same-size resend is insufficient here: it signals the tmux client, but tmux
 // does not relay unchanged geometry to the process inside its pane.
-export const POST_ATTACH_RESIZE_DELAY_MS = 1000;
+export const POST_ATTACH_RESIZE_DELAY_MS = 500;
 export const POST_ATTACH_RESIZE_NUDGE_MS = 100;
 
 // Losing agentd is the one disconnect a terminal may repair on its own, because
@@ -282,7 +282,7 @@ export function mountTerminalWidget({
   // One animation frame is enough for xterm's cell metrics, but not
   // necessarily for the tmux client and harness behind the PTY to finish
   // attaching. This later nudge deliberately fits first: if surrounding
-  // dashboard chrome also settled during that second, the re-sync starts from
+  // dashboard chrome also settled during that wait, the re-sync starts from
   // the newest grid. The original size is restored after a short interval so
   // tmux observes a real geometry transition and relays SIGWINCH into its pane.
   // It is one-shot and connection-scoped, never a resize loop.
