@@ -54,7 +54,7 @@ func TestConfigureTmuxScrollback_Codex(t *testing.T) {
 	want := [][]string{
 		{"set-option", "-t", "=sess-codex:", "mouse", "on"},
 		{"set-option", "-t", "=sess-codex:", "@tclaude_native_scrollback", "on"},
-		{"if-shell", "-F", "#{!=:#{@tclaude_scroll_detach_hook_installed},on}", tmuxScrollDetachHookInstall},
+		{"if-shell", "-F", "#{==:#{m:*@tclaude_native_scrollback*,#{client-detached}},0}", tmuxScrollDetachHookInstall},
 	}
 	if !reflect.DeepEqual(rec.calls, want) {
 		t.Fatalf("codex scrollback config = %v, want %v", rec.calls, want)

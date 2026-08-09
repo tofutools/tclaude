@@ -6,12 +6,10 @@ import (
 )
 
 const (
-	tmuxNativeScrollbackOption          = "@tclaude_native_scrollback"
-	tmuxScrollDetachHookInstalledOption = "@tclaude_scroll_detach_hook_installed"
-	tmuxScrollDetachHook                = "if-shell -F '#{&&:#{==:#{" + tmuxNativeScrollbackOption + "},on},#{==:#{session_attached},0}}'" +
+	tmuxNativeScrollbackOption = "@tclaude_native_scrollback"
+	tmuxScrollDetachHook       = "if-shell -F '#{&&:#{==:#{" + tmuxNativeScrollbackOption + "},on},#{==:#{session_attached},0}}'" +
 		" 'run-shell -C \"send-keys -X -t =#{session_name}:0.0 cancel\"'"
-	tmuxScrollDetachHookInstall = "set-hook -ag client-detached { " + tmuxScrollDetachHook + " } ; " +
-		"set-option -g " + tmuxScrollDetachHookInstalledOption + " on"
+	tmuxScrollDetachHookInstall = "set-hook -ag client-detached { " + tmuxScrollDetachHook + " }"
 )
 
 // ConfigureTmuxScrollback enables tmux mouse mode for a single session when
@@ -63,11 +61,13 @@ func enableTmuxMouseScrollback(tmuxSession string) {
 }
 
 func ensureTmuxScrollDetachHook() {
-	// Keep the check, append, and marker update in one tmux command queue. A
+	// Keep the check and append in one tmux command queue. A
 	// read followed by a separate set-hook races when a group launches several
 	// native-scrollback agents concurrently, appending the same global hook for
-	// each winner. Tmux serializes these non-blocking command queues, so only the
-	// first observes an unset server marker and executes the install list.
-	condition := "#{!=:#{" + tmuxScrollDetachHookInstalledOption + "},on}"
+	// each winner. Tmux serializes these non-blocking command queues, so only
+	// the first observes an effective hook array without our marker. Checking
+	// the actual array instead of a separate installed option also self-repairs
+	// if the operator later replaces the global hooks or reloads tmux config.
+	condition := "#{==:#{m:*" + tmuxNativeScrollbackOption + "*,#{client-detached}},0}"
 	_ = clcommon.TmuxCommand("if-shell", "-F", condition, tmuxScrollDetachHookInstall).Run()
 }

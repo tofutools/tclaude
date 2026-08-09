@@ -40,6 +40,24 @@ func TestConfigureTmuxScrollback_RealTmuxHookCancelsInactiveHarnessPane(t *testi
 	require.Contains(t, string(hooks), "client-detached[100] display-message global-hundred")
 	require.Equal(t, 1, strings.Count(string(hooks), tmuxNativeScrollbackOption))
 
+	// An ordinary set-hook -g replaces the whole global array. A later launch
+	// must inspect the real array and restore our hook without disturbing the
+	// replacement; a separate persistent "installed" marker would go stale.
+	require.NoError(t, tmux.Command("set-hook", "-g", "client-detached[0]", "display-message operator-replacement").Run())
+	installers = sync.WaitGroup{}
+	for range 40 {
+		installers.Add(1)
+		go func() {
+			defer installers.Done()
+			ensureTmuxScrollDetachHook()
+		}()
+	}
+	installers.Wait()
+	hooks, err = tmux.Command("show-hooks", "-g", "client-detached").Output()
+	require.NoError(t, err)
+	require.Contains(t, string(hooks), "client-detached[0] display-message operator-replacement")
+	require.Equal(t, 1, strings.Count(string(hooks), tmuxNativeScrollbackOption))
+
 	attach := tmux.Command("attach-session", "-t", "=scroll-hook")
 	terminal, err := pty.Start(attach)
 	require.NoError(t, err)
