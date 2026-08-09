@@ -136,6 +136,23 @@ test('Copilot member harness line shows native credits with subscription value',
   await mounted.unmount();
 });
 
+test('activity status hides app-server provenance but keeps meaningful details', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { statusInfo } = await harness.importDashboardModule('js/groups-member-table.js');
+
+  const idle = statusInfo({ status: 'idle', status_detail: 'app-server snapshot' }, true);
+  assert.equal(idle.status, 'idle');
+  assert.equal(idle.detail, '');
+  assert.equal(idle.title, 'idle');
+
+  const working = statusInfo({ status: 'working', status_detail: 'app-server reconnect' }, true);
+  assert.equal(working.title, 'working', 'changing the observer source does not change the primary label');
+
+  const tool = statusInfo({ status: 'working', status_detail: 'Bash' }, true);
+  assert.equal(tool.detail, 'Bash');
+  assert.equal(tool.title, 'working: Bash', 'meaningful operational detail remains visible');
+});
+
 test('stale jackpot hold cleanup cannot mark or overwrite a newer slop identity', async (t) => {
   const harness = await createPreactHarness(t);
   await harness.replaceDashboardModule('js/dashboard.js', `

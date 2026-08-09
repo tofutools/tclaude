@@ -2331,8 +2331,11 @@ func stateForConvInSessionsBatched(
 		}
 	}
 	out := agentState{
-		Status:       pick.Status,
-		StatusDetail: pick.StatusDetail,
+		Status: pick.Status,
+		// Keep implementation provenance in the session row, but do not ship
+		// it as the dashboard's regular status detail. Hook/tool details remain
+		// visible through the shared display boundary.
+		StatusDetail: session.StatusDetailForDisplay(pick.StatusDetail),
 		Cwd:          pick.Cwd,
 		// Harness + sandbox are launch properties of the row, surfaced
 		// regardless of liveness (a dead Codex agent is still Codex). The

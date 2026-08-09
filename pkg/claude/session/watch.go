@@ -873,8 +873,8 @@ func (m model) orderedColumns() []sessionColDef {
 		{key: sessionColStatus, visible: m.colVisible(sessionColStatus, true),
 			col: table.Column{Header: "STATUS", MinWidth: 15, Weight: 0.25, Truncate: true, SortKey: "status"},
 			cell: func(_ *model, state *SessionState) string {
-				if state.StatusDetail != "" {
-					return state.Status + ": " + state.StatusDetail
+				if detail := StatusDetailForDisplay(state.StatusDetail); detail != "" {
+					return state.Status + ": " + detail
 				}
 				return state.Status
 			}},

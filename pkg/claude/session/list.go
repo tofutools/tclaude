@@ -138,8 +138,8 @@ func runList(params *ListParams) error {
 	for _, state := range filtered {
 		colorFunc := getStatusColorFunc(state.Status)
 		status := state.Status
-		if state.StatusDetail != "" {
-			status = status + ": " + state.StatusDetail
+		if detail := StatusDetailForDisplay(state.StatusDetail); detail != "" {
+			status = status + ": " + detail
 		}
 
 		// Determine indicator: ⚡ = attached tmux, ▷ = detached tmux, ◉ = non-tmux/dead tmux

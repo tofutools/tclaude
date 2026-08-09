@@ -64,7 +64,7 @@ function AgentStatusDot({ member }) {
       title=${wakingTitle} aria-label=${wakingTitle} role="status">●</span>`;
   }
   const errored = online && state.status === 'error';
-  const detail = errored ? (state.status_detail || 'error') : '';
+  const detail = errored ? (statusInfo(state, online).detail || 'error') : '';
   const recovery = state.recovery_status || '';
   let title = recovery
     ? `${statusInfo(state, online).title} — click to ${online ? 'turn off' : 'retry now'} ${label}`
@@ -489,7 +489,16 @@ export function SandboxBadge({ member, showDetails = false }) {
     title="Recorded sandbox details" aria-label="Recorded sandbox details">›</button>` : null}</span>`;
 }
 
-function statusInfo(state, online) {
+// App-server observer provenance is retained in the session model for
+// diagnostics, but it is not an activity state or an operational detail. Keep
+// this UI boundary defensive even when a snapshot contains the raw model value
+// (for example, a stale browser response during a daemon upgrade).
+function statusDetailForDisplay(detail) {
+  const value = String(detail || '').trim();
+  return /^app-server(?:\s|$)/i.test(value) ? '' : value;
+}
+
+export function statusInfo(state, online) {
   const recovery = state?.recovery_status || '';
   if (recovery) {
     const labels = {
@@ -512,11 +521,11 @@ function statusInfo(state, online) {
     };
   }
   const status = state?.status || '';
-  const detail = state?.status_detail || '';
+  const detail = statusDetailForDisplay(state?.status_detail);
   return { status: status || 'online', detail, title: status && detail ? `${status}: ${detail}` : status || 'online' };
 }
 
-function StatePill({ state, online, conv, waking }) {
+export function StatePill({ state, online, conv, waking }) {
   if (!online && waking) {
     const title = 'resume in flight — server and pane are starting';
     return html`<span class="state-pill-wrap" tabindex=${'0'} title=${title} aria-label=${title}>
