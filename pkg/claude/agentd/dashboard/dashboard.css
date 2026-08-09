@@ -2364,6 +2364,10 @@ body.wizard header .activity-hover-trigger:hover { background: transparent; }
 .activity-hover-panel-summary {
   margin: 2px 0 10px; color: #8b949e; font-size: 11px;
 }
+/* Activity groups are semantic <section>s inside the header popover. Override
+   the page-level tab rule (`section { display: none; }`) that otherwise hides
+   every group while leaving only the panel summary and note visible. */
+.activity-hover-group { display: block; }
 .activity-hover-group + .activity-hover-group {
   margin-top: 12px; padding-top: 10px; border-top: 1px solid #30363d;
 }
