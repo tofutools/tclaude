@@ -68,6 +68,12 @@ func TestDashboardAssets_GroupActivityWired(t *testing.T) {
 		// Header activity groups are semantic sections, so they must override
 		// the page-level hidden-tab section rule to remain visible.
 		".activity-hover-group { display: block; }",
+		// The open hover keeps a pointer bridge to its scroll surface and uses
+		// dashboard scrollbars in both the default and wizard themes.
+		".activity-hover.is-open::after",
+		".activity-hover-panel::-webkit-scrollbar-thumb",
+		"body.wizard .activity-hover-panel::-webkit-scrollbar-thumb",
+		"body.slop .activity-hover-panel::-webkit-scrollbar-thumb",
 		// Config per-mode dropdowns + snapshot flag.
 		`id="cfg-dashboard-activity-bots-regular"`,
 		`id="cfg-dashboard-activity-bots-slop"`,

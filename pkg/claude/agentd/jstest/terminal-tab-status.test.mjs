@@ -152,6 +152,7 @@ test('rendered terminal tabs expose status markers and update from the roster si
   tab = host.querySelector('[role="tab"]');
   assert.equal(tab.dataset.agentStatus, 'awaiting_permission');
   assert.equal(tab.querySelector('.mux-tab-status').textContent, '?');
+  assert.match(tab.querySelector('.mux-tab-status').getAttribute('title'), /awaiting permission/);
   assert.match(tab.getAttribute('aria-label'), /awaiting permission/);
   assert.match(tab.getAttribute('title'), /needs approval/);
 
