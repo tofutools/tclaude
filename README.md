@@ -98,7 +98,15 @@ tclaude setup --check --harness codex
 Plain `tclaude setup` configures Claude Code and, when Codex is found on `PATH`,
 offers to configure Codex too. Setup is idempotent. The optional `--install-all`
 flag also installs Claude sandbox hardening and the scripted-resume threshold
-override; review those policies before enabling them.
+override; review those policies before enabling them. Credential-proxy skills
+are a separate opt-in for operators who use those services:
+
+```bash
+tclaude setup --install-proxy-skills
+```
+
+They are intentionally excluded from both `--install-agent-skills` and
+`--install-all`, so agents are not shown proxy capabilities that are unavailable.
 
 Full walkthrough: [Installation and quick start](https://tofutools.github.io/tclaude/#installation).
 

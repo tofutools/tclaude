@@ -66,8 +66,9 @@ type Params struct {
 	Yes           bool `short:"y" long:"yes" help:"Assume yes on all prompts (for scripted usage)"`
 	// The --install-* flags add optional extras on top of the baseline
 	// setup (which always runs). They do not replace or gate the baseline.
-	InstallAll               bool `long:"install-all" help:"Install every optional extra (equivalent to passing all --install-* flags) on top of the baseline setup."`
-	InstallAgentSkills       bool `long:"install-agent-skills" help:"Also install (or refresh) every bundled skill (agent-*, human-*, proxy-git, …) into Claude Code and Codex CLI user skill directories, including CODEX_HOME/skills. Idempotent; overwrites existing if present."`
+	InstallAll               bool `long:"install-all" help:"Install all standard extras on top of the baseline setup. Proxy skills remain opt-in via --install-proxy-skills."`
+	InstallAgentSkills       bool `long:"install-agent-skills" help:"Also install (or refresh) the bundled coordination skills (agent-*, human-*, and process-templates) into Claude Code and Codex CLI user skill directories, including CODEX_HOME/skills. Idempotent; overwrites existing if present."`
+	InstallProxySkills       bool `long:"install-proxy-skills" help:"Also install (or refresh) the optional proxy-git and proxy-linear skills into Claude Code and Codex CLI user skill directories, including CODEX_HOME/skills. Not included by --install-all."`
 	InstallDefaultAgentPerms bool `long:"install-default-agent-permissions" help:"Also grant the low-risk permission slugs the bundled agent-* skills exercise as agent defaults in ~/.tclaude/config.json. Idempotent; only adds missing slugs."`
 	InstallSandboxHardening  bool `long:"install-sandbox-hardening" help:"Also add the agent-sandbox hardening entries (sandbox.* and permissions.deny) to ~/.claude/settings.json, as described in docs/sandbox-hardening.md. Append-only and idempotent; never removes or overwrites existing values."`
 	InstallResumeThreshold   bool `long:"install-resume-threshold-override" help:"Also write a claude_resume.threshold_minutes override to ~/.tclaude/config.json that suppresses Claude Code's interactive 'Resume from summary' prompt for tclaude-spawned panes (it breaks scripted resume). Idempotent; skips if a value is already configured, never overwrites it."`
@@ -88,9 +89,9 @@ func Cmd() *cobra.Command {
 			"configures the status bar, and registers the tclaude:// protocol handler for " +
 			"clickable notifications.\n\n" +
 			"The --install-* flags add optional extras on top of the baseline (they do not " +
-			"replace it): --install-agent-skills, --install-default-agent-permissions, " +
+			"replace it): --install-agent-skills, --install-proxy-skills, --install-default-agent-permissions, " +
 			"--install-sandbox-hardening, --install-resume-threshold-override. " +
-			"--install-all enables every extra.",
+			"--install-all enables every standard extra; proxy skills remain explicit opt-in.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
 			if err := runSetup(params); err != nil {
@@ -409,6 +410,12 @@ func installExtras(params *Params) error {
 			return err
 		}
 	}
+	if params.InstallProxySkills {
+		fmt.Println("\n=== Proxy Skills ===")
+		if err := installProxySkills(); err != nil {
+			return err
+		}
+	}
 	if params.InstallDefaultAgentPerms || params.InstallAll {
 		fmt.Println("\n=== Default Agent Permissions ===")
 		if err := installDefaultAgentPermissions(); err != nil {
@@ -697,6 +704,26 @@ func installAgentSkills() error {
 		fmt.Printf("✓ Installed %s skill for Codex CLI at %s\n", s.Name, s.Path)
 	}
 	fmt.Println("  Run `tclaude agentd serve` (in a non-sandboxed shell) for live delivery.")
+	return nil
+}
+
+// installProxySkills writes the optional credential-proxy skills into the
+// same user-scope skill directories as the ordinary bundled skills.
+func installProxySkills() error {
+	installed, err := agent.InstallProxySkills(true)
+	if err != nil {
+		return fmt.Errorf("install Claude Code proxy skills: %w", err)
+	}
+	for _, s := range installed {
+		fmt.Printf("✓ Installed %s skill for Claude Code at %s\n", s.Name, s.Path)
+	}
+	codexInstalled, err := agent.InstallCodexProxySkills(true)
+	if err != nil {
+		return fmt.Errorf("install Codex CLI proxy skills: %w", err)
+	}
+	for _, s := range codexInstalled {
+		fmt.Printf("✓ Installed %s skill for Codex CLI at %s\n", s.Name, s.Path)
+	}
 	return nil
 }
 

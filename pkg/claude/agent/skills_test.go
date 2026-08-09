@@ -26,6 +26,26 @@ func TestInstallCodexSkillsInstallsBothUserRoots(t *testing.T) {
 	assert.Len(t, installed, len(bundledSkills)*2)
 	assert.DirExists(t, filepath.Join(home, ".agents", "skills", "agent-coord"))
 	assert.DirExists(t, filepath.Join(codexHome, "skills", "agent-coord"))
+	assert.NoDirExists(t, filepath.Join(home, ".agents", "skills", "proxy-git"))
+	assert.NoDirExists(t, filepath.Join(codexHome, "skills", "proxy-linear"))
+}
+
+func TestInstallCodexProxySkillsInstallsOnlyProxySkillsInBothUserRoots(t *testing.T) {
+	home := t.TempDir()
+	codexHome := filepath.Join(home, "custom-codex")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("CODEX_HOME", codexHome)
+
+	installed, err := InstallCodexProxySkills(true)
+
+	require.NoError(t, err)
+	assert.Len(t, installed, len(bundledProxySkills)*2)
+	for _, root := range []string{filepath.Join(home, ".agents", "skills"), filepath.Join(codexHome, "skills")} {
+		assert.DirExists(t, filepath.Join(root, "proxy-git"))
+		assert.DirExists(t, filepath.Join(root, "proxy-linear"))
+		assert.NoDirExists(t, filepath.Join(root, "agent-coord"))
+	}
 }
 
 func TestBundledSkillFrontmatterIsValidYAML(t *testing.T) {
@@ -36,7 +56,7 @@ func TestBundledSkillFrontmatterIsValidYAML(t *testing.T) {
 		Description string `yaml:"description"`
 	}
 
-	for _, name := range bundledSkills {
+	for _, name := range append(append([]string{}, bundledSkills...), bundledProxySkills...) {
 		t.Run(name, func(t *testing.T) {
 			data, err := skillsFS.ReadFile("skills/" + name + "/SKILL.md")
 			require.NoError(t, err)

@@ -47,6 +47,16 @@ would therefore be agent-influenced.
 
 ## Enabling it
 
+Install the agent-facing proxy skills explicitly:
+
+```bash
+tclaude setup --install-proxy-skills
+```
+
+They are not installed by `--install-agent-skills` or `--install-all`, because
+operators who have not configured a credential proxy should not expose those
+capabilities to their agents.
+
 The proxy becomes available to an agent when it has a remote-scoped grant or
 when the legacy operator-global `allowed_remotes` list is configured. Remote
 access is authorized by the grant scope, the legacy list, or both. There is no

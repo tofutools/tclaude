@@ -117,10 +117,15 @@ Optional extras are additive and idempotent:
 | Flag | Adds |
 |---|---|
 | `--install-agent-skills` | Bundled coordination skills for Claude Code and Codex CLI |
+| `--install-proxy-skills` | Optional `proxy-git` and `proxy-linear` skills for operators using the credential proxies |
 | `--install-default-agent-permissions` | Low-risk `self.*` grants used by those skills |
 | `--install-sandbox-hardening` | Claude Code sandbox rules that protect agentd's private state |
 | `--install-resume-threshold-override` | A Claude Code-only workaround for scripted resumes blocked by the summary chooser |
-| `--install-all` | All optional extras above |
+| `--install-all` | All standard extras above, excluding `--install-proxy-skills` |
+
+Proxy skills require explicit opt-in even when `--install-all` is used. This
+keeps agents from seeing proxy capabilities on installations where those
+services are not configured.
 
 !!! note "Skills do not start the daemon"
     The coordination extras install skills and permissions. To use

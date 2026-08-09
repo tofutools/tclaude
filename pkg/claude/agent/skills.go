@@ -19,9 +19,8 @@ import (
 //go:embed skills/agent-coord/SKILL.md skills/agent-rename/SKILL.md skills/agent-task/SKILL.md skills/present-pr-to-operator/SKILL.md skills/agent-lifecycle/SKILL.md skills/reincarnate/SKILL.md skills/agent-schedule/SKILL.md skills/agent-remote-control/SKILL.md skills/agent-dir/SKILL.md skills/agent-circles/SKILL.md skills/human-notify/SKILL.md skills/human-clipboard/SKILL.md skills/proxy-git/SKILL.md skills/proxy-linear/SKILL.md skills/process-templates
 var skillsFS embed.FS
 
-// bundledSkills is the registry of skills shipped with tclaude. Add a new
-// entry here (and a matching skills/<name>/ directory in the source tree)
-// to ship another skill.
+// bundledSkills is the registry of generally useful skills shipped with
+// tclaude. These are installed by `tclaude setup --install-agent-skills`.
 var bundledSkills = []string{
 	"agent-coord",
 	"agent-rename",
@@ -35,9 +34,16 @@ var bundledSkills = []string{
 	"agent-circles",
 	"human-notify",
 	"human-clipboard",
+	"process-templates",
+}
+
+// bundledProxySkills are useful only when the operator has configured the
+// corresponding credential proxy. Keep them out of the default agent-skill
+// set so installing the ordinary coordination tools does not advertise
+// unavailable proxy capabilities to every agent.
+var bundledProxySkills = []string{
 	"proxy-git",
 	"proxy-linear",
-	"process-templates",
 }
 
 // InstalledSkill describes a skill that was written to disk.
@@ -46,7 +52,8 @@ type InstalledSkill struct {
 	Path string // absolute path to the installed skill directory
 }
 
-// InstallSkills writes every bundled skill into ~/.claude/skills/<name>/.
+// InstallSkills writes every ordinary bundled skill into
+// ~/.claude/skills/<name>/. Proxy skills have a separate explicit installer.
 // When force is false and a destination already exists, that single skill
 // is skipped and ErrSkillExists is returned alongside whatever did install
 // successfully.
@@ -55,14 +62,35 @@ func InstallSkills(force bool) ([]InstalledSkill, error) {
 	if err != nil {
 		return nil, err
 	}
-	return installSkillsInRoot(root, force)
+	return installSkillsInRoot(root, force, bundledSkills)
 }
 
-// InstallCodexSkills writes every bundled skill into Codex's user-scope skill
-// directories. Codex's current public docs name ~/.agents/skills; current
-// Codex CLI skill tooling installs into $CODEX_HOME/skills, defaulting to
-// ~/.codex/skills. Install both so /skills sees the bundle across layouts.
+// InstallCodexSkills writes every ordinary bundled skill into Codex's
+// user-scope skill directories. Codex's current public docs name
+// ~/.agents/skills; current Codex CLI skill tooling installs into
+// $CODEX_HOME/skills, defaulting to ~/.codex/skills. Install both so /skills
+// sees the bundle across layouts.
 func InstallCodexSkills(force bool) ([]InstalledSkill, error) {
+	return installCodexSkills(force, bundledSkills)
+}
+
+// InstallProxySkills writes the optional proxy skills into
+// ~/.claude/skills/<name>/.
+func InstallProxySkills(force bool) ([]InstalledSkill, error) {
+	root, err := skillroots.Claude()
+	if err != nil {
+		return nil, err
+	}
+	return installSkillsInRoot(root, force, bundledProxySkills)
+}
+
+// InstallCodexProxySkills writes the optional proxy skills into Codex's
+// user-scope skill directories.
+func InstallCodexProxySkills(force bool) ([]InstalledSkill, error) {
+	return installCodexSkills(force, bundledProxySkills)
+}
+
+func installCodexSkills(force bool, skills []string) ([]InstalledSkill, error) {
 	roots, err := codexSkillRoots()
 	if err != nil {
 		return nil, err
@@ -71,7 +99,7 @@ func InstallCodexSkills(force bool) ([]InstalledSkill, error) {
 	var installed []InstalledSkill
 	var firstExistsErr error
 	for _, root := range roots {
-		got, err := installSkillsInRoot(root, force)
+		got, err := installSkillsInRoot(root, force, skills)
 		installed = append(installed, got...)
 		if err == nil {
 			continue
@@ -90,10 +118,10 @@ func InstallCodexSkills(force bool) ([]InstalledSkill, error) {
 	return installed, nil
 }
 
-func installSkillsInRoot(root string, force bool) ([]InstalledSkill, error) {
+func installSkillsInRoot(root string, force bool, skills []string) ([]InstalledSkill, error) {
 	var installed []InstalledSkill
 	var firstExistsErr error
-	for _, name := range bundledSkills {
+	for _, name := range skills {
 		dst := filepath.Join(root, name)
 		if !force {
 			if _, err := os.Stat(dst); err == nil {

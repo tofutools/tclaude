@@ -61,12 +61,16 @@ only once.
 
 - **`tclaude setup`** — registers hooks and the agentd socket path.
 - **`tclaude setup --install-agent-skills`** — materialises every
-  bundled skill (`agent-*`, `human-*`, `proxy-git`, `reincarnate`,
+  generally useful bundled skill (`agent-*`, `human-*`, `reincarnate`,
   `present-pr-to-operator`, `process-templates`) under
   `~/.claude/skills/` for Claude Code
   and both `~/.agents/skills/` and `$CODEX_HOME/skills` (default
   `~/.codex/skills`) for Codex CLI. Without these skills installed,
   agents won't know to use these commands.
+- **`tclaude setup --install-proxy-skills`** — separately materialises
+  `proxy-git` and `proxy-linear` for operators who use the credential proxies.
+  These skills are intentionally excluded from both `--install-agent-skills`
+  and `--install-all`, so agents do not see unavailable proxy capabilities.
 - **`tclaude setup --install-default-agent-permissions`** — grants the
   self-targeted slugs the bundled skills exercise (`self.rename`,
   `self.compact`, `self.interrupt`, `self.clone`, `self.schedule`,
@@ -2621,7 +2625,7 @@ with care.
 
 ## Bundled skills
 
-The bundled skills ship with the binary and install to `~/.claude/skills/`
+The generally useful bundled skills ship with the binary and install to `~/.claude/skills/`
 for Claude Code, plus both `~/.agents/skills/` and `$CODEX_HOME/skills`
 (default `~/.codex/skills`) for Codex CLI, via
 `tclaude setup --install-agent-skills`:
@@ -2673,17 +2677,20 @@ for Claude Code, plus both `~/.agents/skills/` and `$CODEX_HOME/skills`
   `tclaude agent clipboard`; the daemon runs the platform copy tool on
   the host. Gated on `human.clipboard` (explicit grant or `--ask-human`
   popup; not owner-implied).
-- **`proxy-git`** — fetch, push, open GitHub pull requests, and read back
+- **`proxy-git`** *(installed separately with
+  `tclaude setup --install-proxy-skills`)* — fetch, push, open GitHub pull requests, and read back
   their review comments and CI failure logs through `tclaude proxy git` /
   `tclaude proxy github` when the agent's own sandbox holds no credentials.
   See [Git & GitHub proxy](git-proxy.md).
-- **`proxy-linear`** — read and update the Linear issue an agent is working
+- **`proxy-linear`** *(installed separately with
+  `tclaude setup --install-proxy-skills`)* — read and update the Linear issue an agent is working
   on through `tclaude proxy linear` when the agent holds no Linear API key.
   See [Linear proxy](linear-proxy.md).
 
 Re-run `tclaude setup --install-agent-skills` after `go install
-…@latest` to refresh the on-disk copies with whatever the new binary
-embeds.
+…@latest` to refresh the ordinary on-disk copies with whatever the new binary
+embeds. If you use the credential proxies, also re-run
+`tclaude setup --install-proxy-skills` to refresh their skills.
 
 ## Design notes
 
