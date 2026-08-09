@@ -12,6 +12,7 @@ import { bindTerminalHandoffReceiver } from './terminal-handoff.js';
 import { dragLeftRegion, dragScreenPoint } from './terminal-drag-out.js';
 import { MAX_TERMINAL_GROUP_NAME_LENGTH } from './terminal-shell-state.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
+import { terminalTabStatus } from './terminal-tab-status.js';
 import {
   memberHumanMessages, openHumanNotificationReader,
 } from './human-notification-attention.js';
@@ -199,11 +200,16 @@ function TerminalDisconnectNotice() {
 
 function TerminalPane({
   pane, active, activationToken, solo, manageTitle, actions, widgetFactory, onComposeMessage,
+  snapshot = null,
 }) {
   const [status, setStatus] = useState('disconnected');
   const [reconnect, setReconnect] = useState(false);
   const [hasSelection, setHasSelection] = useState(false);
   const [dragging, setDragging] = useState(false);
+  // Dashboard panes get their status from PaneTab. Only the solo title needs
+  // to subscribe to the standalone snapshot signal; keeping this null in the
+  // dashboard avoids an extra signal subscriber per opaque xterm host.
+  const agentStatus = manageTitle ? terminalTabStatus(pane, snapshot?.value) : null;
   const headerRef = useRef(null);
   // A solo pop-out has no tab strip to drag out of, so its header is the home
   // region: pull the title off the header and the terminal goes back to the
@@ -223,11 +229,13 @@ function TerminalPane({
     setDragging(false);
     if (dragLeftRegion(event, headerRef.current)) void actions.reattachPane(pane.key);
   };
+  const snapshotReady = Boolean(snapshot?.value);
   useEffect(() => {
     if (active && manageTitle) {
-      document.title = `${pane.label ? `${pane.label} — ` : ''}tclaude terminals`;
+      const prefix = snapshotReady ? `${agentStatus.symbol} ` : '';
+      document.title = `${prefix}${pane.label ? `${pane.label} — ` : ''}tclaude terminals`;
     }
-  }, [active, manageTitle, pane.label]);
+  }, [active, agentStatus?.symbol, manageTitle, pane.label, snapshotReady]);
   return html`
     <div
       class=${`mux-pane${active ? ' active' : ''}${theme.wizard && theme.palette ? ' arcane-palette' : ''}`}
@@ -301,18 +309,23 @@ export function paneUnreadNotifications(pane, snapshotValue) {
   return memberHumanMessages(selector, snapshotValue, true);
 }
 
+function unreadNotificationLabel(pane, count) {
+  if (!count) return '';
+  const label = pane.label || 'this agent';
+  return `${count} unread notification${count === 1 ? '' : 's'} from ${label} — open quick reader`;
+}
+
 // TabAttention is the Terminals-tab twin of the Groups member row's yellow "!"
 // glyph, and opens the very same quick reader. The strip is cramped and clips
 // its own overflow, so the glyph sits inline in the tab and states its content
 // in the tooltip instead of hovering a preview card.
-function TabAttention({ pane, snapshot }) {
-  const messages = paneUnreadNotifications(pane, snapshot?.value);
+function TabAttention({ pane, snapshot, messages: suppliedMessages = null }) {
+  const messages = suppliedMessages ?? paneUnreadNotifications(pane, snapshot?.value);
   if (!messages.length) return null;
   const message = messages[0];
   const label = pane.label || 'this agent';
   const subject = message.subject || '(no subject)';
-  const title = `${messages.length} unread notification${messages.length === 1 ? '' : 's'}`
-    + ` from ${label} — open quick reader\n\n${subject}`;
+  const title = `${unreadNotificationLabel(pane, messages.length)}\n\n${subject}`;
   const open = (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -349,6 +362,10 @@ function PaneTab({
   pane, active, menuOpen, groupId = null, actions, openMenu, dragging, dropSide,
   onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, onReordered, snapshot = null,
 }) {
+  const agentStatus = terminalTabStatus(pane, snapshot?.value);
+  const unreadMessages = paneUnreadNotifications(pane, snapshot?.value);
+  const notificationLabel = unreadNotificationLabel(pane, unreadMessages.length);
+  const ariaLabel = [agentStatus.ariaLabel, notificationLabel].filter(Boolean).join('. ');
   const activate = (event) => {
     if (event.type === 'keydown' && event.target.closest('button')) return;
     const reorderOffset = terminalTabReorderOffset(event);
@@ -398,15 +415,17 @@ function PaneTab({
       class=${`mux-tab${active ? ' active' : ''}${dragging ? ' dragging' : ''}${dropSide ? ` drop-${dropSide}` : ''}`}
       role="tab"
       data-pane-key=${pane.key}
+      data-agent-status=${agentStatus.key}
       tabIndex="0"
       draggable="true"
       aria-selected=${active ? 'true' : 'false'}
+      aria-label=${ariaLabel}
       aria-controls=${pane.id}
       aria-keyshortcuts="Alt+Shift+ArrowLeft Alt+Shift+ArrowRight"
       aria-describedby="terminal-tab-reorder-help"
       aria-haspopup="menu"
       aria-expanded=${menuOpen ? 'true' : 'false'}
-      title="Drag to reorder · drop onto another tab to group them · drag off the strip to detach · Alt+Shift+Left/Right to move · Right-click or Shift+F10 for actions"
+      title=${`${agentStatus.title}. Drag to reorder · drop onto another tab to group them · drag off the strip to detach · Alt+Shift+Left/Right to move · Right-click or Shift+F10 for actions`}
       onClick=${activate}
       onKeyDown=${onKeyDown}
       onContextMenu=${openContextMenu}
@@ -416,7 +435,8 @@ function PaneTab({
       onDragLeave=${(event) => onDragLeave(event, pane.key)}
       onDrop=${(event) => onDrop(event, pane.key)}
     >
-      <${TabAttention} pane=${pane} snapshot=${snapshot} />
+      <span class=${`mux-tab-status mux-tab-status-${agentStatus.className}`} aria-hidden="true">${agentStatus.symbol}</span>
+      <${TabAttention} pane=${pane} snapshot=${snapshot} messages=${unreadMessages} />
       <span class="mux-tab-label">${pane.label}</span>
       <button
         type="button"
@@ -1357,6 +1377,7 @@ function TerminalTabs({
               actions=${actions}
               widgetFactory=${widgetFactory}
               onComposeMessage=${composeMessageAvailable ? onComposeMessage : null}
+              snapshot=${manageTitle ? snapshot : null}
             />
           `)}
         </div>
@@ -1488,6 +1509,7 @@ export function mountStandaloneTerminalShell({
   onComposeMessage = null,
   composeMessageReady = null,
   composeMessageDialogKind = () => '',
+  snapshot = null,
 }) {
   let disposed = false;
   render(html`
@@ -1498,6 +1520,7 @@ export function mountStandaloneTerminalShell({
       onComposeMessage=${onComposeMessage}
       composeMessageReady=${composeMessageReady}
       composeMessageDialogKind=${composeMessageDialogKind}
+      snapshot=${snapshot}
       solo=${true}
       manageTitle=${true}
       empty=${true}

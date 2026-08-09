@@ -14,8 +14,98 @@ import {
   decodeTerminalOpenHash, requestTerminalReattach, terminalDashboardURL,
 } from './terminal-handoff.js';
 import { normalizeSeed } from './terminals-core.js';
+import { SNAPSHOT_HIDDEN_POLL_MS, SNAPSHOT_POLL_MS } from './snapshot-poll.js';
 
 export { decodeTerminalOpenHash };
+
+export const STANDALONE_STATUS_TIMEOUT_MS = 20000;
+
+// The solo page is not the dashboard SPA, so it cannot subscribe to the
+// dashboard snapshot signal. Keep its one-agent title current through the
+// compact per-agent status endpoint, using the same 2s/10s visible/hidden
+// cadence but keeping the lifecycle local and bounded:
+// there is never more than one request or timer in flight, and stop() aborts
+// both beforeunload-sensitive work and its next scheduled tick.
+export function startStandaloneStatusPoll({
+  selector,
+  snapshot,
+  fetchImpl = globalThis.fetch,
+  documentRef = globalThis.document,
+  setTimeoutImpl = globalThis.setTimeout,
+  clearTimeoutImpl = globalThis.clearTimeout,
+  abortControllerCtor = globalThis.AbortController,
+} = {}) {
+  if (!selector || !snapshot || typeof fetchImpl !== 'function') return () => {};
+  if (typeof setTimeoutImpl !== 'function' || typeof clearTimeoutImpl !== 'function') return () => {};
+
+  let stopped = false;
+  let timer = null;
+  let timeoutTimer = null;
+  let inFlight = false;
+  let controller = null;
+
+  const clearTimer = () => {
+    if (timer === null) return;
+    clearTimeoutImpl(timer);
+    timer = null;
+  };
+  const clearRequestTimeout = () => {
+    if (timeoutTimer === null) return;
+    clearTimeoutImpl(timeoutTimer);
+    timeoutTimer = null;
+  };
+  const schedule = () => {
+    if (stopped || timer !== null) return;
+    timer = setTimeoutImpl(() => {
+      timer = null;
+      void run();
+    }, documentRef?.hidden ? SNAPSHOT_HIDDEN_POLL_MS : SNAPSHOT_POLL_MS);
+  };
+  const run = async () => {
+    if (stopped || inFlight) return;
+    inFlight = true;
+    const requestController = typeof abortControllerCtor === 'function'
+      ? new abortControllerCtor() : null;
+    controller = requestController;
+    if (requestController) {
+      timeoutTimer = setTimeoutImpl(() => requestController.abort(), STANDALONE_STATUS_TIMEOUT_MS);
+    }
+    try {
+      const response = await fetchImpl(`/api/agents/${encodeURIComponent(selector)}/status`, {
+        credentials: 'same-origin', cache: 'no-store',
+        ...(requestController ? { signal: requestController.signal } : {}),
+      });
+      if (stopped || !response?.ok) return;
+      const value = await response.json();
+      if (!stopped && value && typeof value === 'object') snapshot.value = { agents: [value] };
+    } catch (_) {
+      // Auth-session.js owns the visible redirect. A stopped/aborted request or
+      // a transient network miss should leave the last title alone quietly.
+    } finally {
+      clearRequestTimeout();
+      if (controller === requestController) controller = null;
+      inFlight = false;
+      schedule();
+    }
+  };
+  const onVisibilityChange = () => {
+    clearTimer();
+    if (!documentRef?.hidden) void run();
+    schedule();
+  };
+  documentRef?.addEventListener?.('visibilitychange', onVisibilityChange);
+  void run();
+
+  return () => {
+    if (stopped) return;
+    stopped = true;
+    clearTimer();
+    clearRequestTimeout();
+    controller?.abort();
+    controller = null;
+    documentRef?.removeEventListener?.('visibilitychange', onVisibilityChange);
+  };
+}
 
 export function createStandaloneTerminalsPage({
   host,
@@ -51,6 +141,26 @@ export function createStandaloneTerminalsPage({
   let soloSeed = null;
   let startPromise = null;
   let disposed = false;
+  let authExpired = false;
+  const snapshot = signal(null);
+  let stopStatusPoll = null;
+  let statusPollSelector = null;
+
+  function ensureStatusPoll() {
+    const selector = soloSeed?.agent || soloSeed?.hideConv;
+    if (disposed || authExpired || !selector || statusPollSelector === selector) return;
+    stopStatusPolling();
+    statusPollSelector = selector;
+    stopStatusPoll = startStandaloneStatusPoll({
+      selector, snapshot, fetchImpl, documentRef,
+    });
+  }
+
+  function stopStatusPolling() {
+    stopStatusPoll?.();
+    stopStatusPoll = null;
+    statusPollSelector = null;
+  }
 
   async function reattachPane(pane) {
     if (disposed || !pane) return false;
@@ -100,6 +210,7 @@ export function createStandaloneTerminalsPage({
     soloSeed = seed;
     actions.openPane(seed);
     if (seed.hideConv) detachConversations.add(seed.hideConv);
+    ensureStatusPoll();
     return seed;
   }
 
@@ -108,6 +219,8 @@ export function createStandaloneTerminalsPage({
   }
 
   function onAuthExpired(event) {
+    authExpired = true;
+    stopStatusPolling();
     if (!soloSeed || !event.detail) return;
     event.detail.returnTo = locationRef.pathname + locationRef.search
       + '#open=' + encodeURIComponent(JSON.stringify(soloSeed));
@@ -127,6 +240,7 @@ export function createStandaloneTerminalsPage({
     windowRef.removeEventListener('tclaude:auth-expired', onAuthExpired);
     windowRef.removeEventListener('pagehide', onPageHide);
     windowRef.removeEventListener('unload', dispose);
+    stopStatusPolling();
     if (mountCleanup) mountCleanup();
     else actions.dispose();
     if (messageDialogsCleanup) messageDialogsCleanup();
@@ -175,6 +289,7 @@ export function createStandaloneTerminalsPage({
         host,
         state,
         actions,
+        snapshot,
         widgetFactory,
         onComposeMessage: composeWhenReady,
         composeMessageReady,

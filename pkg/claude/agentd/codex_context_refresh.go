@@ -32,6 +32,24 @@ var codexContextRefreshMu struct {
 	stopping bool
 }
 
+// codexStatusRefreshMu is deliberately separate from codexContextRefreshMu.
+// A standalone terminal needs interrupted-child truth for its activity glyph,
+// but must not claim or delay the full dashboard's context/cost persistence
+// refresh. Its follower only advances an in-memory rollout cursor.
+var codexStatusRefreshMu struct {
+	sync.Mutex
+	last map[string]codexStatusRefreshSnapshot
+}
+
+type codexStatusRefreshSnapshot struct {
+	at                   time.Time
+	convID               string
+	createdAt            time.Time
+	interruptedSubagents map[string]struct{}
+	follower             *harness.CodexTelemetryFollower
+	refreshing           bool
+}
+
 type codexReadThroughSnapshot struct {
 	at                    time.Time
 	interruptedSubagents  map[string]struct{}
@@ -328,6 +346,72 @@ func (t codexTelemetryTiming) perfPhases() []perfPhase {
 // authoritative for that terminal fact when its SubagentStop hook was lost.
 func refreshCodexContextSnapshotOnRead(sess *db.SessionRow, alive bool) map[string]struct{} {
 	return refreshCodexContextSnapshotOnReadTimed(sess, alive, nil)
+}
+
+// refreshCodexInterruptedSubagentsForStatus is the lightweight rollout seam
+// for the standalone terminal status endpoint. It preserves the one piece of
+// Codex read-through state that changes activity classification when a
+// SubagentStop hook was lost, without context/cost writes, checkpoints, or
+// interaction with the full dashboard refresh claim.
+func refreshCodexInterruptedSubagentsForStatus(
+	sess *db.SessionRow,
+	alive bool,
+) map[string]struct{} {
+	if sess == nil || !alive || sess.Harness != harness.CodexName ||
+		sess.ID == "" || sess.ConvID == "" {
+		return nil
+	}
+
+	now := time.Now()
+	codexStatusRefreshMu.Lock()
+	if codexStatusRefreshMu.last == nil {
+		codexStatusRefreshMu.last = map[string]codexStatusRefreshSnapshot{}
+	}
+	cached := codexStatusRefreshMu.last[sess.ID]
+	if cached.convID != sess.ConvID || !cached.createdAt.Equal(sess.CreatedAt) {
+		cached = codexStatusRefreshSnapshot{
+			convID: sess.ConvID, createdAt: sess.CreatedAt,
+			follower: &harness.CodexTelemetryFollower{},
+		}
+	}
+	if cached.refreshing || (!cached.at.IsZero() && now.Sub(cached.at) < codexContextRefreshMinInterval) {
+		interrupted := cached.interruptedSubagents
+		codexStatusRefreshMu.Unlock()
+		return interrupted
+	}
+	if cached.follower == nil {
+		cached.follower = &harness.CodexTelemetryFollower{}
+	}
+	cached.refreshing = true
+	codexStatusRefreshMu.last[sess.ID] = cached
+	codexStatusRefreshMu.Unlock()
+
+	interrupted := cached.interruptedSubagents
+	home, err := os.UserHomeDir()
+	if err == nil {
+		if snap, readErr := cached.follower.RuntimeTelemetry(home, sess.ConvID); readErr == nil {
+			interrupted = snap.InterruptedSubagents
+		} else {
+			slog.Warn("codex-status: failed interrupted-subagent refresh",
+				"session_id", sess.ID, "conv_id", sess.ConvID,
+				"error", readErr, "module", "agentd")
+		}
+	} else {
+		slog.Warn("codex-status: cannot resolve home for interrupted-subagent refresh",
+			"session_id", sess.ID, "error", err, "module", "agentd")
+	}
+
+	codexStatusRefreshMu.Lock()
+	latest := codexStatusRefreshMu.last[sess.ID]
+	if latest.follower == cached.follower && latest.convID == sess.ConvID &&
+		latest.createdAt.Equal(sess.CreatedAt) {
+		latest.at = time.Now()
+		latest.interruptedSubagents = interrupted
+		latest.refreshing = false
+		codexStatusRefreshMu.last[sess.ID] = latest
+	}
+	codexStatusRefreshMu.Unlock()
+	return interrupted
 }
 
 func refreshCodexContextSnapshotOnReadTimed(sess *db.SessionRow, alive bool, record func(codexTelemetryTiming)) map[string]struct{} {

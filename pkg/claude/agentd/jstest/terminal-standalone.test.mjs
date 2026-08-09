@@ -151,6 +151,16 @@ test('standalone lifecycle connects before the real composer loads and sends thr
   const requests = [];
   const fetchImpl = async (url, options) => {
     requests.push({ url, options });
+    if (url === '/api/agents/agt_solo/status') {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          agent_id: 'agt_solo', conv_id: 'conv-solo', online: true,
+          state: { status: 'working' },
+        }),
+      };
+    }
     return {
       ok: true,
       status: 202,
@@ -183,6 +193,7 @@ test('standalone lifecycle connects before the real composer loads and sends thr
   for (let i = 0; i < 20 && !host.querySelector('[title*="queued message"]'); i++) {
     await harness.act(() => new Promise((resolve) => setImmediate(resolve)));
   }
+  assert.equal(harness.document.title, '● solo terminal — tclaude terminals');
   assert.equal(dialogHost.dataset.islandOwner, 'message-access-dialogs');
   assert.ok(host.querySelector('[title*="queued message"]'),
     'successful composer mount enables its button and shell-level shortcut');
@@ -209,8 +220,12 @@ test('standalone lifecycle connects before the real composer loads and sends thr
     }
   });
   assertAbsent(dialogHost.querySelector('#operator-message-modal'));
-  assert.deepEqual(requests.map(({ url }) => url), ['/api/operator-message']);
-  assert.deepEqual(JSON.parse(requests[0].options.body), {
+  assert.deepEqual(
+    requests.filter(({ url }) => url !== '/api/agents/agt_solo/status').map(({ url }) => url),
+    ['/api/operator-message'],
+  );
+  const messageRequest = requests.find(({ url }) => url === '/api/operator-message');
+  assert.deepEqual(JSON.parse(messageRequest.options.body), {
     to: 'agt_solo',
     subject: '',
     body: 'from detached mode',
@@ -300,7 +315,10 @@ test('standalone reattach disarms its beacon, hands off to its exact opener, and
   await page.start();
   const pane = page.state.panes.value[0];
   assert.equal(await page.actions.reattachPane(pane.key), true);
-  assert.deepEqual(requests, ['/api/hide/agt_one']);
+  assert.deepEqual(
+    requests.filter((url) => url !== '/api/agents/agt_one/status'),
+    ['/api/hide/agt_one'],
+  );
   assert.equal(posted.length, 1);
   assert.equal(posted[0].targetOrigin, origin);
   assert.equal(posted[0].data.seed.initialRetry, true);
@@ -344,6 +362,102 @@ test('standalone reattach becomes the dashboard when its opener is gone', async 
   assert.equal(fallbackSeed.ws, seed.ws);
   assert.equal(fallbackSeed.initialRetry, true);
   page.dispose();
+});
+
+test('standalone status polling aborts on auth expiry and does not leave a timer behind', async (t) => {
+  const harness = await createPreactHarness(t);
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const seed = {
+    ws: '/api/term-ws/agt_one', label: 'one', key: 'one', agent: 'agt_one',
+  };
+  const locationRef = {
+    pathname: '/terminals', search: '?solo=1', hash: encodedSeed(seed),
+  };
+  let pendingResolve;
+  let statusOptions = null;
+  let statusCalls = 0;
+  const fetchImpl = async (url, options) => {
+    if (url === '/api/agents/agt_one/status') {
+      statusCalls += 1;
+      statusOptions = options;
+      return new Promise((resolve) => { pendingResolve = resolve; });
+    }
+    return { ok: true };
+  };
+  const { createStandaloneTerminalsPage } =
+    await harness.importDashboardModule('js/terminal-standalone.js');
+  const page = createStandaloneTerminalsPage({
+    host,
+    initPrefs: async () => {},
+    initThemeSync: () => {},
+    mountShell: () => () => {},
+    mountMessageDialogs: async () => () => {},
+    fetchImpl,
+    windowRef: harness.window,
+    documentRef: harness.document,
+    locationRef,
+    historyRef: { replaceState: () => { locationRef.hash = ''; } },
+    navigatorRef: { sendBeacon: () => true },
+  });
+  await page.start();
+  for (let i = 0; i < 5 && !statusOptions; i++) await Promise.resolve();
+  assert.ok(statusOptions, 'the solo agent starts the status poll');
+  const expired = new harness.window.CustomEvent('tclaude:auth-expired', { detail: {} });
+  harness.window.dispatchEvent(expired);
+  assert.equal(statusOptions.signal.aborted, true, 'auth expiry aborts the in-flight status request');
+  assert.match(expired.detail.returnTo, /#open=/);
+  locationRef.hash = encodedSeed(seed);
+  harness.window.dispatchEvent(new harness.window.Event('hashchange'));
+  await Promise.resolve();
+  assert.equal(statusCalls, 1, 'auth navigation cannot re-arm the solo poll');
+  pendingResolve?.({ ok: false, status: 401 });
+  page.dispose();
+});
+
+test('standalone status polling follows a replacement solo selector', async (t) => {
+  const harness = await createPreactHarness(t);
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const firstSeed = {
+    ws: '/api/term-ws/agt_one', label: 'one', key: 'one', agent: 'agt_one',
+  };
+  const secondSeed = {
+    ws: '/api/term-ws/agt_two', label: 'two', key: 'two', agent: 'agt_two',
+  };
+  const locationRef = {
+    pathname: '/terminals', search: '?solo=1', hash: encodedSeed(firstSeed),
+  };
+  const requests = [];
+  const fetchImpl = (url, options) => {
+    if (!url.endsWith('/status')) return Promise.resolve({ ok: true });
+    return new Promise((resolve) => { requests.push({ url, options, resolve }); });
+  };
+  const { createStandaloneTerminalsPage } =
+    await harness.importDashboardModule('js/terminal-standalone.js');
+  const page = createStandaloneTerminalsPage({
+    host,
+    initPrefs: async () => {},
+    initThemeSync: () => {},
+    mountShell: () => () => {},
+    mountMessageDialogs: async () => () => {},
+    fetchImpl,
+    windowRef: harness.window,
+    documentRef: harness.document,
+    locationRef,
+    historyRef: { replaceState: () => { locationRef.hash = ''; } },
+    navigatorRef: { sendBeacon: () => true },
+  });
+  await page.start();
+  for (let i = 0; i < 5 && requests.length < 1; i++) await Promise.resolve();
+  assert.equal(requests[0]?.url, '/api/agents/agt_one/status');
+
+  locationRef.hash = encodedSeed(secondSeed);
+  harness.window.dispatchEvent(new harness.window.Event('hashchange'));
+  for (let i = 0; i < 5 && requests.length < 2; i++) await Promise.resolve();
+  assert.equal(requests[0].options.signal.aborted, true, 'the old selector request is aborted');
+  assert.equal(requests[1]?.url, '/api/agents/agt_two/status');
+
+  page.dispose();
+  assert.equal(requests[1].options.signal.aborted, true, 'cleanup aborts the replacement request');
 });
 
 test('standalone Preact shell renders solo chrome around an opaque active widget', async (t) => {
