@@ -55,13 +55,6 @@ type InstalledSkill struct {
 	Path string // absolute path to the installed skill directory
 }
 
-// RetiredSkill describes a legacy proxy manifest moved out of the active
-// SKILL.md location while leaving the rest of its directory untouched.
-type RetiredSkill struct {
-	Name string // skill name
-	Path string // absolute path to the recoverable disabled manifest
-}
-
 // InstallSkills writes every ordinary bundled skill into
 // ~/.claude/skills/<name>/. Proxy skills have a separate explicit installer.
 // When force is false and a destination already exists, that single skill
@@ -112,7 +105,7 @@ func InstallCodexProxySkills(force bool) ([]InstalledSkill, error) {
 // user skill root by releases where they belonged to the ordinary bundle.
 // Only an unmarked manifest that exactly matches the embedded copy is moved;
 // explicit opt-ins and locally modified skills are preserved.
-func RetireLegacyProxySkills() ([]RetiredSkill, error) {
+func RetireLegacyProxySkills() ([]InstalledSkill, error) {
 	root, err := skillroots.Claude()
 	if err != nil {
 		return nil, err
@@ -122,12 +115,12 @@ func RetireLegacyProxySkills() ([]RetiredSkill, error) {
 
 // RetireLegacyCodexProxySkills disables legacy bundled proxy skills in both
 // Codex user skill roots.
-func RetireLegacyCodexProxySkills() ([]RetiredSkill, error) {
+func RetireLegacyCodexProxySkills() ([]InstalledSkill, error) {
 	roots, err := codexSkillRoots()
 	if err != nil {
 		return nil, err
 	}
-	var retired []RetiredSkill
+	var retired []InstalledSkill
 	for _, root := range roots {
 		got, err := retireLegacyProxySkillsInRoot(root)
 		retired = append(retired, got...)
@@ -200,8 +193,8 @@ func markProxySkillsOptedIn(installed []InstalledSkill) error {
 	return nil
 }
 
-func retireLegacyProxySkillsInRoot(root string) ([]RetiredSkill, error) {
-	var retired []RetiredSkill
+func retireLegacyProxySkillsInRoot(root string) ([]InstalledSkill, error) {
+	var retired []InstalledSkill
 	for _, name := range bundledProxySkills {
 		dir := filepath.Join(root, name)
 		if _, err := os.Stat(filepath.Join(dir, proxyOptInMarkerName)); err == nil {
@@ -238,7 +231,7 @@ func retireLegacyProxySkillsInRoot(root string) ([]RetiredSkill, error) {
 		if err := os.Rename(manifest, backup); err != nil {
 			return retired, fmt.Errorf("retire legacy proxy skill %s: %w", manifest, err)
 		}
-		retired = append(retired, RetiredSkill{Name: name, Path: backup})
+		retired = append(retired, InstalledSkill{Name: name, Path: backup})
 	}
 	return retired, nil
 }
