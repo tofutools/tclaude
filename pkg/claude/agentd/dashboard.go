@@ -2526,7 +2526,8 @@ func stateForConvInSessionsBatched(
 				out.ContextWindowSource = "reported"
 			default:
 				if model := strings.TrimSpace(snap.Model); model != "" {
-					if out.ContextWindowMax = copilotCatalogContextWindow(model); out.ContextWindowMax > 0 {
+					if out.ContextWindowMax = copilotCatalogContextWindow(
+						model, copilotContextTierForSession(pick)); out.ContextWindowMax > 0 {
 						out.ContextWindowSource = "catalog"
 					} else if out.ContextWindowMax = harness.CopilotContextWindowDefault(model); out.ContextWindowMax > 0 {
 						out.ContextWindowSource = "assumed"

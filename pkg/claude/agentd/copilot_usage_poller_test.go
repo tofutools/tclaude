@@ -311,6 +311,32 @@ func TestCopilotUsageUsesFreshModelCatalog(t *testing.T) {
 	assert.Equal(t, "catalog", state.ContextWindowSource)
 }
 
+func TestCopilotUsageUsesLongContextCatalogTier(t *testing.T) {
+	setupTestDB(t)
+	resetCopilotUsageStateForTest()
+	resetCopilotContextRefreshStateForTest()
+	t.Cleanup(resetCopilotUsageStateForTest)
+	t.Cleanup(resetCopilotContextRefreshStateForTest)
+	require.NoError(t, db.ReplaceCopilotModelCatalog([]db.CopilotModelCatalogEntry{
+		{ModelID: "claude-opus-5", MaxPromptTokens: 200_000,
+			LongContextMaxPromptTokens: 936_000},
+	}, time.Now().UTC()))
+
+	sess := copilotUsageSession(t, "s-copilot", "conv-1")
+	state, claimed := claimCopilotContextRefresh(sess, time.Now())
+	require.True(t, claimed)
+	setCopilotContextTier(state, "long_context")
+	releaseCopilotContextRefresh(state)
+
+	call := copilotUsageCall(1, 468_000, 300)
+	call.Model = "claude-opus-5"
+	applyCopilotUsageCalls(sess, []harness.CopilotUsageCall{call})
+
+	snap, err := db.GetContextSnapshot(sess.ID)
+	require.NoError(t, err)
+	assert.InDelta(t, 50.0, snap.ContextPct, 0.001)
+}
+
 // TestCopilotUsagePreservesObservedWindow is the field-separation rule: the
 // configured/assumed cap drives the percentage, while the durable follower's
 // observed snapshot remains in context_window_size.

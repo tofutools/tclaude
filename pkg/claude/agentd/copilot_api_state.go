@@ -671,7 +671,7 @@ func copilotAPIEffectiveContextWindow(convID string, reading copilotAPIStateRead
 	if reading.PromptTokenLimit > 0 {
 		return reading.PromptTokenLimit
 	}
-	if window := copilotCatalogContextWindow(reading.Model); window > 0 {
+	if window := copilotCatalogContextWindow(reading.Model, ""); window > 0 {
 		return window
 	}
 	return harness.CopilotContextWindowDefault(strings.TrimSpace(reading.Model))
