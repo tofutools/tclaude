@@ -15,6 +15,42 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
+func TestCodexStatusRefreshReturnsInterruptionsWithoutTelemetryPersistence(t *testing.T) {
+	setupTestDB(t)
+	resetCodexContextRefreshStateForTest()
+	t.Cleanup(resetCodexContextRefreshStateForTest)
+
+	const (
+		sessionID = "codex-status-session"
+		convID    = "019ec004-4250-79b1-9ade-ebaea41354e9"
+	)
+	path := filepath.Join(os.Getenv("HOME"), ".codex", "sessions", "2026", "07", "16",
+		"rollout-2026-07-16T10-00-00-"+convID+".jsonl")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, nil, 0o600))
+	appendCodexRefreshEnvelope(t, path, "session_meta", map[string]any{"id": convID})
+	appendCodexRefreshEnvelope(t, path, "event_msg", map[string]any{
+		"type": "sub_agent_activity", "agent_thread_id": "child-stale", "kind": "interrupted",
+	})
+	appendCodexRefreshTokenCount(t, path, 1000, 100)
+
+	sess := &db.SessionRow{
+		ID: sessionID, ConvID: convID, TmuxSession: "codex-pane",
+		Status: "main_agent_idle", Harness: harness.CodexName, CreatedAt: time.Now(),
+	}
+	require.NoError(t, db.SaveSession(sess))
+	interrupted := refreshCodexInterruptedSubagentsForStatus(sess, true)
+	assert.Contains(t, interrupted, "child-stale")
+
+	contextSnapshot, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.Zero(t, contextSnapshot.TokensInput,
+		"status-only rollout reads must not persist context telemetry")
+	checkpoint, err := db.LoadCodexTelemetryCheckpoint(sessionID)
+	require.NoError(t, err)
+	assert.Nil(t, checkpoint, "status-only rollout reads must not write follower checkpoints")
+}
+
 func TestCodexContextRefreshPersistsAndRestoresFollowerCheckpoint(t *testing.T) {
 	setupTestDB(t)
 	resetCodexContextRefreshStateForTest()
@@ -844,6 +880,9 @@ func resetCodexContextRefreshStateForTest() {
 	codexContextRefreshMu.last = nil
 	codexContextRefreshMu.stopping = false
 	codexContextRefreshMu.Unlock()
+	codexStatusRefreshMu.Lock()
+	codexStatusRefreshMu.last = nil
+	codexStatusRefreshMu.Unlock()
 }
 
 func resetCodexRefreshThrottleForTest(sessionID string) {

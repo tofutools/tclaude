@@ -62,7 +62,11 @@ func terminalStatusForSessions(
 		StatusDetail: pick.StatusDetail,
 	}
 	if online {
+		codexInterruptedSubagents := refreshCodexInterruptedSubagentsForStatus(pick, true)
 		if set := db.ParseSubagentSet(pick.SubagentsJSON); set != nil {
+			for id := range codexInterruptedSubagents {
+				delete(set, id)
+			}
 			out.SubagentCount = set.LiveCount(time.Now())
 		} else {
 			out.SubagentCount = pick.SubagentCount
