@@ -61,7 +61,7 @@ func TestRenderSeatbeltNativeFilteredRouteSlotsAddOnlyExactOutboundAndBindRows(t
 		nil, nil,
 		sandboxpolicy.MountPlan{NetworkPosture: sandboxpolicy.NetworkFiltered, FilteredNetwork: &rules},
 		netip.AddrPort{}, []string{"/Users/dev/.tclaude/data"},
-		"/private/tmp/tmux-501", "/private/var/folders/ab/runtime/T", nil, nil, 0,
+		"/private/tmp/tmux-501", "/private/var/folders/ab/runtime/T", nil, nil, 41203,
 		[]int{41202},
 	)
 	require.NoError(t, err)
@@ -71,10 +71,40 @@ func TestRenderSeatbeltNativeFilteredRouteSlotsAddOnlyExactOutboundAndBindRows(t
 	if strings.Count(profile, `(allow network-outbound (remote tcp "localhost:41202"))`) != 1 {
 		t.Fatalf("route slot outbound exception missing:\n%s", profile)
 	}
-	if strings.Count(profile, `(allow network-outbound (remote tcp "localhost:41203"))`) != 0 {
-		t.Fatalf("unreserved neighboring slot appeared:\n%s", profile)
+	if strings.Count(profile, `(allow network-outbound (remote tcp "localhost:41203"))`) != 1 {
+		t.Fatalf("managed app-server outbound exception missing:\n%s", profile)
+	}
+	if strings.Count(profile, `(allow network-outbound (remote udp "localhost:41203"))`) != 0 {
+		t.Fatalf("managed TCP app-server port widened to UDP:\n%s", profile)
 	}
 	if strings.Count(profile, `(require-not (local tcp "localhost:41202"))`) != 1 {
 		t.Fatalf("route slot bind exception missing:\n%s", profile)
+	}
+	if strings.Count(profile, `(require-not (local tcp "localhost:41203"))`) != 1 {
+		t.Fatalf("managed app-server bind exception missing:\n%s", profile)
+	}
+	if strings.Contains(profile, `localhost:41204`) {
+		t.Fatalf("unreserved neighboring slot appeared:\n%s", profile)
+	}
+}
+
+func TestRenderSeatbeltNativeFilteredAppServerPreservesUnrestrictedBind(t *testing.T) {
+	rules, err := sandboxpolicy.CompileFilteredNetworkRules(sandboxpolicy.NetworkRules{
+		Mode:  sandboxpolicy.AccessModeList,
+		Allow: []sandboxpolicy.NetworkAllowEntry{{Loopback: true, Ports: []int{41201}}},
+	})
+	require.NoError(t, err)
+	profile, _, err := renderSeatbeltProfileWithLoopbackBindAndRouteSlots(
+		nil, nil,
+		sandboxpolicy.MountPlan{NetworkPosture: sandboxpolicy.NetworkFiltered, FilteredNetwork: &rules},
+		netip.AddrPort{}, []string{"/Users/dev/.tclaude/data"},
+		"/private/tmp/tmux-501", "/private/var/folders/ab/runtime/T", nil, nil, 41203, nil,
+	)
+	require.NoError(t, err)
+	if strings.Count(profile, `(allow network-outbound (remote tcp "localhost:41203"))`) != 1 {
+		t.Fatalf("managed app-server outbound exception missing:\n%s", profile)
+	}
+	if strings.Contains(profile, `(deny network-bind`) {
+		t.Fatalf("outbound-only native filtering must preserve unrestricted local binds:\n%s", profile)
 	}
 }

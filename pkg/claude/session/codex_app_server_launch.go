@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -44,11 +46,25 @@ func codexAppServerPrivateWriteDir(params *NewParams) (*TclaudeLayerPrivateWrite
 		{params.CodexAppServerSocket, "app.sock"},
 		{params.CodexAppServerPIDFile, "server.pid"},
 		{params.CodexAppServerLogFile, "server.log"},
+		{params.CodexAppServerTokenHandoff, "tui-capability.handoff"},
 	} {
 		path, basename := runtimePath.path, runtimePath.basename
 		if filepath.Dir(filepath.Clean(path)) != generationDir || filepath.Base(path) != basename {
 			return nil, fmt.Errorf("invalid codex app-server runtime path %q", path)
 		}
+	}
+	endpoint, err := url.Parse(params.CodexAppServerURL)
+	if err != nil || endpoint.Scheme != "ws" || endpoint.Hostname() != "127.0.0.1" ||
+		endpoint.User != nil || endpoint.Path != "" || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+		return nil, fmt.Errorf("invalid codex app-server authenticated loopback endpoint")
+	}
+	port, err := strconv.Atoi(endpoint.Port())
+	if err != nil || port < 1 || port > 65535 {
+		return nil, fmt.Errorf("invalid codex app-server authenticated loopback port")
+	}
+	digest, err := hex.DecodeString(params.CodexAppServerTokenSHA256)
+	if err != nil || len(digest) != 32 {
+		return nil, fmt.Errorf("invalid codex app-server capability digest")
 	}
 	for _, dir := range []string{ownerDir, generationDir} {
 		info, err := os.Lstat(dir)
@@ -60,6 +76,18 @@ func codexAppServerPrivateWriteDir(params *NewParams) (*TclaudeLayerPrivateWrite
 		}
 	}
 	return &TclaudeLayerPrivateWriteDir{Parent: ownerDir, Current: generationDir}, nil
+}
+
+func codexAppServerLoopbackPort(params *NewParams) int {
+	if params == nil || !params.CodexAppServer {
+		return 0
+	}
+	endpoint, err := url.Parse(params.CodexAppServerURL)
+	if err != nil {
+		return 0
+	}
+	port, _ := strconv.Atoi(endpoint.Port())
+	return port
 }
 
 func hexComponent(value string) bool {

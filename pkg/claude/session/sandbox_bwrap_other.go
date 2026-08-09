@@ -43,6 +43,20 @@ func tclaudeLayerCommand(
 	return "", fmt.Errorf("tclaude-layer is not supported on this platform")
 }
 
+func tclaudeLayerCommandWithLoopbackBind(
+	string,
+	[]string,
+	[]TclaudeLayerPrivateWriteDir,
+	[]string,
+	[]TclaudeLayerReadOnlyBind,
+	[]string,
+	sandboxpolicy.MountPlan,
+	int,
+	string,
+) (string, error) {
+	return "", fmt.Errorf("tclaude-layer is not supported on this platform")
+}
+
 func tclaudeLayerCommandWithRouteSlots(
 	string,
 	[]string,
@@ -54,6 +68,23 @@ func tclaudeLayerCommandWithRouteSlots(
 	[]int,
 	*DarwinRouteSlotReservation,
 	*TclaudeLayerRouteHelper,
+	string,
+) (string, error) {
+	return "", fmt.Errorf("Darwin route slots are unsupported on this platform")
+}
+
+func tclaudeLayerCommandWithRouteSlotsAndLoopbackBind(
+	string,
+	[]string,
+	[]TclaudeLayerPrivateWriteDir,
+	[]string,
+	[]TclaudeLayerReadOnlyBind,
+	[]string,
+	sandboxpolicy.MountPlan,
+	[]int,
+	*DarwinRouteSlotReservation,
+	*TclaudeLayerRouteHelper,
+	int,
 	string,
 ) (string, error) {
 	return "", fmt.Errorf("Darwin route slots are unsupported on this platform")

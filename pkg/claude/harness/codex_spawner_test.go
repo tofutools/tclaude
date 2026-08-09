@@ -162,18 +162,32 @@ func TestCodexSpawner_InitialPrompt(t *testing.T) {
 
 func TestCodexSpawner_AppServerKeepsTUIAsSoleBirthWriter(t *testing.T) {
 	got := codexSpawner{}.BuildCommand(SpawnSpec{
-		ExecutablePath:        "/opt/codex bin/codex",
-		InitialPrompt:         "take the first turn",
-		CodexAppServerSocket:  "/tmp/private agent/app.sock",
-		CodexAppServerPIDFile: "/tmp/private agent/server.pid",
-		CodexAppServerLogFile: "/tmp/private agent/server.log",
+		ExecutablePath:             "/opt/codex bin/codex",
+		InitialPrompt:              "take the first turn",
+		CodexAppServerSocket:       "/tmp/private agent/app.sock",
+		CodexAppServerURL:          "ws://127.0.0.1:45678",
+		CodexAppServerTokenSHA256:  strings.Repeat("ab", 32),
+		CodexAppServerTokenHandoff: "/tmp/private agent/tui-capability.handoff",
+		TclaudeExecutable:          "/opt/tclaude bin/tclaude",
+		CodexAppServerPIDFile:      "/tmp/private agent/server.pid",
+		CodexAppServerLogFile:      "/tmp/private agent/server.log",
 	})
 
 	if strings.Count(got, "app-server --listen") != 1 {
 		t.Fatalf("launch must own exactly one app-server, got %q", got)
 	}
-	if !strings.Contains(got, "--remote 'unix:///tmp/private agent/app.sock'") {
+	if !strings.Contains(got, "--remote ws://127.0.0.1:45678 --remote-auth-token-env TCLAUDE_CODEX_APP_SERVER_TOKEN") {
 		t.Fatalf("the normal TUI must attach to the private server, got %q", got)
+	}
+	if !strings.Contains(got, "--ws-auth capability-token --ws-token-sha256") ||
+		!strings.Contains(got, `shell_environment_policy.exclude=["TCLAUDE_CODEX_APP_SERVER_TOKEN"]`) {
+		t.Fatalf("native bearer auth and tool-shell credential scrubbing are required, got %q", got)
+	}
+	proofAt := strings.Index(got, "server.proved")
+	consumeAt := strings.Index(got, "codex-app-server-token-consume")
+	tuiTokenAt := strings.Index(got, `TCLAUDE_CODEX_APP_SERVER_TOKEN="$tclaude_codex_capability"`)
+	if proofAt < 0 || consumeAt <= proofAt || tuiTokenAt <= consumeAt {
+		t.Fatalf("the TUI token must remain unopened until agentd proves the native listener, got %q", got)
 	}
 	if strings.Count(got, "take the first turn") != 1 || !strings.HasSuffix(got, " 'take the first turn'") {
 		t.Fatalf("the positional TUI prompt must remain the sole birth writer, got %q", got)

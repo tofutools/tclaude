@@ -36,13 +36,14 @@ type CodexAppServerSim struct {
 	server     *http.Server
 	messages   chan CodexAppServerMessage
 
-	mu          sync.Mutex
-	conn        *websocket.Conn
-	connections map[int64]*codexAppServerSimConnection
-	nextConnID  int64
-	nextID      int64
-	closed      bool
-	writeMu     sync.Mutex
+	mu             sync.Mutex
+	conn           *websocket.Conn
+	connections    map[int64]*codexAppServerSimConnection
+	expectedBearer string
+	nextConnID     int64
+	nextID         int64
+	closed         bool
+	writeMu        sync.Mutex
 
 	InitializeResult codexappserver.InitializeResult
 }
@@ -57,6 +58,14 @@ type codexAppServerSimConnection struct {
 // StartCodexAppServerSim binds a fresh Unix socket. The caller owns socketPath
 // and should call Close; an existing path is never removed or replaced.
 func StartCodexAppServerSim(socketPath string) (*CodexAppServerSim, error) {
+	return startCodexAppServerSim(socketPath, "")
+}
+
+func StartAuthenticatedCodexAppServerSim(socketPath, token string) (*CodexAppServerSim, error) {
+	return startCodexAppServerSim(socketPath, token)
+}
+
+func startCodexAppServerSim(socketPath, token string) (*CodexAppServerSim, error) {
 	if _, err := os.Lstat(socketPath); err == nil {
 		return nil, fmt.Errorf("codex app-server fake socket already exists: %s", socketPath)
 	} else if !os.IsNotExist(err) {
@@ -71,10 +80,11 @@ func StartCodexAppServerSim(socketPath string) (*CodexAppServerSim, error) {
 		return nil, fmt.Errorf("chmod Codex app-server fake socket: %w", err)
 	}
 	sim := &CodexAppServerSim{
-		socketPath:  socketPath,
-		listener:    listener,
-		messages:    make(chan CodexAppServerMessage, codexAppServerSimQueue),
-		connections: make(map[int64]*codexAppServerSimConnection),
+		socketPath:     socketPath,
+		listener:       listener,
+		messages:       make(chan CodexAppServerMessage, codexAppServerSimQueue),
+		connections:    make(map[int64]*codexAppServerSimConnection),
+		expectedBearer: token,
 		InitializeResult: codexappserver.InitializeResult{
 			UserAgent:      "codex_app_server/0.147.0",
 			CodexHome:      "/fake/codex-home",
@@ -93,6 +103,10 @@ func (s *CodexAppServerSim) SocketPath() string                     { return s.s
 func (s *CodexAppServerSim) Messages() <-chan CodexAppServerMessage { return s.messages }
 
 func (s *CodexAppServerSim) serveWebSocket(w http.ResponseWriter, r *http.Request) {
+	if s.expectedBearer != "" && r.Header.Get("Authorization") != "Bearer "+s.expectedBearer {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	conn, err := (&websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}).Upgrade(w, r, nil)
 	if err != nil {
 		return

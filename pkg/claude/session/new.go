@@ -285,11 +285,14 @@ type NewParams struct {
 	// CodexAppServer is the deliberately opt-in Codex API drive. The private
 	// runtime paths are minted by agentd; accepting the public toggle without
 	// those paths would produce a remote TUI nobody owns, so it is refused.
-	CodexAppServer           bool   `long:"codex-app-server" help:"EXPERIMENTAL: launch Codex against a private tclaude-owned app-server and bind agentd to the TUI-created thread. Off by default; Codex 0.147.x only"`
-	CodexAppServerSocket     string `long:"codex-app-server-socket" optional:"true" help:"Internal: agentd-minted private Codex app-server Unix socket"`
-	CodexAppServerPIDFile    string `long:"codex-app-server-pid-file" optional:"true" help:"Internal: agentd-minted Codex app-server pid file"`
-	CodexAppServerLogFile    string `long:"codex-app-server-log-file" optional:"true" help:"Internal: agentd-minted Codex app-server log file"`
-	CodexAppServerGeneration string `long:"codex-app-server-generation" optional:"true" help:"Internal: agentd-minted Codex app-server runtime generation"`
+	CodexAppServer             bool   `long:"codex-app-server" help:"EXPERIMENTAL: launch Codex against a private tclaude-owned app-server and bind agentd to the TUI-created thread. Off by default; Codex 0.147.x only"`
+	CodexAppServerSocket       string `long:"codex-app-server-socket" optional:"true" help:"Internal: agentd-minted private Codex app-server Unix socket"`
+	CodexAppServerURL          string `long:"codex-app-server-url" optional:"true" help:"Internal: agentd-minted authenticated Codex app-server loopback endpoint"`
+	CodexAppServerTokenSHA256  string `long:"codex-app-server-token-sha256" optional:"true" help:"Internal: digest of the per-generation Codex app-server capability"`
+	CodexAppServerTokenHandoff string `long:"codex-app-server-token-handoff" optional:"true" help:"Internal: one-shot private Codex TUI capability handoff"`
+	CodexAppServerPIDFile      string `long:"codex-app-server-pid-file" optional:"true" help:"Internal: agentd-minted Codex app-server pid file"`
+	CodexAppServerLogFile      string `long:"codex-app-server-log-file" optional:"true" help:"Internal: agentd-minted Codex app-server log file"`
+	CodexAppServerGeneration   string `long:"codex-app-server-generation" optional:"true" help:"Internal: agentd-minted Codex app-server runtime generation"`
 
 	// SendKeys is the deliberate override for the Copilot API drive refusal,
 	// spelled exactly as `tclaude conv resume --send-keys` (TCL-1076) so an
@@ -963,12 +966,17 @@ func runNew(params *NewParams) error {
 	params.CodexAppServer = codexAppServer
 	if params.CodexAppServer {
 		if !params.ManagedLaunch || strings.TrimSpace(params.CodexAppServerSocket) == "" ||
+			strings.TrimSpace(params.CodexAppServerURL) == "" ||
+			strings.TrimSpace(params.CodexAppServerTokenSHA256) == "" ||
+			strings.TrimSpace(params.CodexAppServerTokenHandoff) == "" ||
 			strings.TrimSpace(params.CodexAppServerPIDFile) == "" ||
 			strings.TrimSpace(params.CodexAppServerLogFile) == "" ||
 			strings.TrimSpace(params.CodexAppServerGeneration) == "" {
 			return fmt.Errorf("--codex-app-server requires an agentd-managed launch with private runtime paths")
 		}
 	} else if params.CodexAppServerSocket != "" || params.CodexAppServerPIDFile != "" ||
+		params.CodexAppServerURL != "" || params.CodexAppServerTokenSHA256 != "" ||
+		params.CodexAppServerTokenHandoff != "" ||
 		params.CodexAppServerLogFile != "" || params.CodexAppServerGeneration != "" {
 		return fmt.Errorf("codex app-server runtime paths require --codex-app-server")
 	}
@@ -1961,6 +1969,10 @@ func runNew(params *NewParams) error {
 	spawnSpec := harness.SpawnSpec{
 		ExecutablePath:              executablePath,
 		CodexAppServerSocket:        params.CodexAppServerSocket,
+		CodexAppServerURL:           params.CodexAppServerURL,
+		CodexAppServerTokenSHA256:   params.CodexAppServerTokenSHA256,
+		CodexAppServerTokenHandoff:  params.CodexAppServerTokenHandoff,
+		TclaudeExecutable:           clcommon.SelfTclaudePath(),
 		CodexAppServerPIDFile:       params.CodexAppServerPIDFile,
 		CodexAppServerLogFile:       params.CodexAppServerLogFile,
 		Cwd:                         cwd,
@@ -2085,7 +2097,8 @@ func runNew(params *NewParams) error {
 				harnessCmd,
 			)
 		} else {
-			harnessCmd, err = WrapTclaudeLayerSpec(bwrapBinary, layerSpec, harnessCmd)
+			harnessCmd, err = WrapTclaudeLayerSpecWithLoopbackBind(
+				bwrapBinary, layerSpec, codexAppServerLoopbackPort(params), harnessCmd)
 		}
 		if err != nil {
 			return fmt.Errorf("wrap harness with tclaude-layer: %w", err)

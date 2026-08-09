@@ -175,6 +175,25 @@ func tclaudeLayerCommand(
 		readOnlyBinds, socketPaths, plan, harnessCommand, 0, 0)
 }
 
+func tclaudeLayerCommandWithLoopbackBind(
+	binary string,
+	phase0WriteDirs []string,
+	privateWriteDirs []TclaudeLayerPrivateWriteDir,
+	finalHideDirs []string,
+	readOnlyBinds []TclaudeLayerReadOnlyBind,
+	socketPaths []string,
+	plan sandboxpolicy.MountPlan,
+	loopbackBindPort int,
+	harnessCommand string,
+) (string, error) {
+	if tclaudeLayerPlanFloorPosture(plan) == sandboxpolicy.NetworkHostOpen {
+		loopbackBindPort = 0
+	}
+	return tclaudeLayerDarwinCommand(
+		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
+		readOnlyBinds, socketPaths, plan, harnessCommand, 0, loopbackBindPort)
+}
+
 func tclaudeLayerCommandWithRouteSlots(
 	binary string,
 	phase0WriteDirs []string,
@@ -191,6 +210,29 @@ func tclaudeLayerCommandWithRouteSlots(
 	return tclaudeLayerDarwinCommandWithRouteSlots(
 		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
 		readOnlyBinds, socketPaths, plan, harnessCommand, 0, 0, routeSlots, preReservation, routeHelper)
+}
+
+func tclaudeLayerCommandWithRouteSlotsAndLoopbackBind(
+	binary string,
+	phase0WriteDirs []string,
+	privateWriteDirs []TclaudeLayerPrivateWriteDir,
+	finalHideDirs []string,
+	readOnlyBinds []TclaudeLayerReadOnlyBind,
+	socketPaths []string,
+	plan sandboxpolicy.MountPlan,
+	routeSlots []int,
+	preReservation *DarwinRouteSlotReservation,
+	routeHelper *TclaudeLayerRouteHelper,
+	loopbackBindPort int,
+	harnessCommand string,
+) (string, error) {
+	if tclaudeLayerPlanFloorPosture(plan) == sandboxpolicy.NetworkHostOpen {
+		loopbackBindPort = 0
+	}
+	return tclaudeLayerDarwinCommandWithRouteSlots(
+		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
+		readOnlyBinds, socketPaths, plan, harnessCommand, 0, loopbackBindPort,
+		routeSlots, preReservation, routeHelper)
 }
 
 func tclaudeLayerDarwinCommand(
@@ -257,12 +299,9 @@ func tclaudeLayerDarwinCommandWithRouteSlots(
 			RouteAuthority:   proxyRouteAuthorityConfigFromHelper(routeHelper),
 		})
 	}
-	if loopbackBindPort != 0 {
-		return "", fmt.Errorf("darwin loopback bind exception requires the filtering proxy floor")
-	}
 	return renderDarwinSeatbeltCommandWithRouteSlots(
 		binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
-		readOnlyBinds, socketPaths, plan, harnessCommand, netip.AddrPort{}, 0, routeSlots)
+		readOnlyBinds, socketPaths, plan, harnessCommand, netip.AddrPort{}, loopbackBindPort, routeSlots)
 }
 
 func renderDarwinSeatbeltCommand(

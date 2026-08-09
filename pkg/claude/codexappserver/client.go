@@ -40,6 +40,9 @@ type Options struct {
 	MaxMessageBytes     int64
 	WriteTimeout        time.Duration
 	HandshakeTimeout    time.Duration
+	// BearerToken authenticates the WebSocket upgrade. It is never included in
+	// errors or retained separately from the live connection.
+	BearerToken string
 	// DialContext exists for focused transport tests. Production leaves it nil
 	// and the client dials socketPath as a Unix socket.
 	DialContext func(context.Context, string, string) (net.Conn, error)
@@ -129,7 +132,11 @@ func Dial(ctx context.Context, socketPath string, opts *Options) (*Client, error
 		HandshakeTimeout: options.HandshakeTimeout,
 		NetDialContext:   dialContext,
 	}
-	conn, response, err := dialer.DialContext(ctx, "ws://localhost/", http.Header{})
+	headers := http.Header{}
+	if options.BearerToken != "" {
+		headers.Set("Authorization", "Bearer "+options.BearerToken)
+	}
+	conn, response, err := dialer.DialContext(ctx, "ws://localhost/", headers)
 	if err != nil {
 		if response != nil && response.Body != nil {
 			_ = response.Body.Close()

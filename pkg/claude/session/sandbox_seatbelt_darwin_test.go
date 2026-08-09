@@ -298,6 +298,25 @@ func TestTclaudeLayerDarwinCommandCarriesFullAgentdSocketFloor(t *testing.T) {
 	}
 }
 
+func TestTclaudeLayerDarwinIsolatedCommandCarriesManagedServerPort(t *testing.T) {
+	command, err := tclaudeLayerServerCommandWithLoopbackBind(
+		darwinSeatbeltExecutable,
+		nil,
+		nil,
+		nil,
+		nil,
+		sandboxpolicy.AgentdSocketFloor(),
+		sandboxpolicy.MountPlan{NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd},
+		43210,
+		"true",
+	)
+	require.NoError(t, err)
+	assert.Contains(t, command,
+		`(deny network-bind (require-not (local tcp "localhost:43210")))`)
+	assert.Contains(t, command,
+		`(require-not (remote tcp "localhost:43210"))`)
+}
+
 func TestTclaudeLayerDarwinCommandDefersProxyFloorToLauncher(t *testing.T) {
 	plan := darwinProxyLauncherTestPlan(t, 443)
 	oldPrefix := darwinProxyLauncherPrefix

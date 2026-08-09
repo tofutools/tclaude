@@ -178,6 +178,33 @@ func TestExpiredUnboundCodexAppServerClaimRequiresAgeAndMissingBinding(t *testin
 	}
 }
 
+func TestCodexAppServerCapabilityPersistsSeparatelyAndIsDeletedWithRuntime(t *testing.T) {
+	setupTestDB(t)
+	runtime := CodexAppServerRuntime{
+		Generation: "credential-generation", LaunchID: "launch", AgentID: "agent",
+		SocketPath: "/tmp/credential.sock", State: CodexAppServerWarming,
+	}
+	require.NoError(t, InsertCodexAppServerRuntimeWithCapability(runtime, "restart-secret"))
+
+	got, err := GetCodexAppServerCapability(runtime.Generation)
+	require.NoError(t, err)
+	assert.Equal(t, "restart-secret", got)
+	stored, err := GetCodexAppServerRuntime(runtime.Generation)
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.NotContains(t, stored.Detail, "restart-secret")
+	runtime.State = CodexAppServerUnavailable
+	require.NoError(t, UpsertCodexAppServerRuntime(runtime))
+	_, err = GetCodexAppServerCapability(runtime.Generation)
+	assert.ErrorContains(t, err, "unavailable", "a terminal transition must erase the credential atomically")
+
+	runtime.State = CodexAppServerWarming
+	require.NoError(t, InsertCodexAppServerRuntimeWithCapability(runtime, "replacement-secret"))
+	require.NoError(t, DeleteCodexAppServerRuntime(runtime.Generation))
+	_, err = GetCodexAppServerCapability(runtime.Generation)
+	assert.ErrorContains(t, err, "unavailable")
+}
+
 func TestRecoverableCodexAppServerRuntimesSelectNewestGeneration(t *testing.T) {
 	setupTestDB(t)
 	now := time.Now().UTC()

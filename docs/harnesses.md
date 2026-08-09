@@ -233,6 +233,20 @@ compaction, and `tclaude agent interrupt`. Messages wait while Codex needs an
 approval or user answer. Those questions appear only in the Codex TUI: the TUI
 is the sole place to approve, deny, or answer them.
 
+Each launch uses a random capability on Codex's authenticated loopback
+listener. The TUI receives it without placing it in argv, and agentd reaches
+the listener through a generation-owned Unix byte relay; Codex still performs
+the bearer check after the relay. The capability is excluded from tool-shell
+environments and kept only in daemon-private state needed for restart recovery.
+Knowing the relay path is therefore insufficient to attach or drive a thread.
+
+This boundary protects managed Linux and macOS agents whose sandbox keeps
+`~/.tclaude/data` private. It does not claim isolation from an intentionally
+unconfined, same-uid process (for example a `danger-full-access` agent): that
+process can inspect or interfere with peer processes and private same-user
+state using host facilities. Use separate OS users or stronger host/container
+isolation when agents mutually distrust one another at that level.
+
 Use the diagnostic command for either your own agent or one you manage:
 
 ```bash

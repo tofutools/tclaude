@@ -31,15 +31,26 @@ type CodexAppServerRuntime struct {
 	UpdatedAt    time.Time
 }
 
-func UpsertCodexAppServerRuntime(runtime CodexAppServerRuntime) error {
+type codexAppServerRuntimeExecer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+func validateCodexAppServerRuntime(runtime CodexAppServerRuntime) error {
 	if strings.TrimSpace(runtime.Generation) == "" || strings.TrimSpace(runtime.LaunchID) == "" ||
 		strings.TrimSpace(runtime.AgentID) == "" || strings.TrimSpace(runtime.SocketPath) == "" {
 		return errors.New("codex app-server runtime needs generation, launch id, agent id, and socket path")
 	}
 	switch runtime.State {
 	case CodexAppServerWarming, CodexAppServerRecovering, CodexAppServerReady, CodexAppServerUnavailable, CodexAppServerDead:
+		return nil
 	default:
 		return fmt.Errorf("invalid Codex app-server runtime state %q", runtime.State)
+	}
+}
+
+func UpsertCodexAppServerRuntime(runtime CodexAppServerRuntime) error {
+	if err := validateCodexAppServerRuntime(runtime); err != nil {
+		return err
 	}
 	d, err := Open()
 	if err != nil {
@@ -50,7 +61,11 @@ func UpsertCodexAppServerRuntime(runtime CodexAppServerRuntime) error {
 		runtime.CreatedAt = now
 	}
 	runtime.UpdatedAt = now
-	_, err = d.Exec(`
+	return upsertCodexAppServerRuntime(d, runtime)
+}
+
+func upsertCodexAppServerRuntime(exec codexAppServerRuntimeExecer, runtime CodexAppServerRuntime) error {
+	_, err := exec.Exec(`
 		INSERT INTO codex_app_server_runtimes
 			(generation, launch_id, agent_id, conv_id, thread_id, socket_path,
 			 server_pid, codex_version, state, detail, created_at, updated_at)
@@ -64,6 +79,69 @@ func UpsertCodexAppServerRuntime(runtime CodexAppServerRuntime) error {
 	`, runtime.Generation, runtime.LaunchID, runtime.AgentID, runtime.ConvID,
 		runtime.ThreadID, runtime.SocketPath, runtime.ServerPID, runtime.CodexVersion,
 		runtime.State, runtime.Detail, dbTime(runtime.CreatedAt), dbTime(runtime.UpdatedAt))
+	return err
+}
+
+// InsertCodexAppServerRuntimeWithCapability atomically records a warming
+// generation and its restart credential. Diagnostics and ordinary runtime
+// reads intentionally never select the capability table.
+func InsertCodexAppServerRuntimeWithCapability(runtime CodexAppServerRuntime, capability string) error {
+	if err := validateCodexAppServerRuntime(runtime); err != nil {
+		return err
+	}
+	capability = strings.TrimSpace(capability)
+	if capability == "" {
+		return errors.New("codex app-server capability is empty")
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	now := time.Now().UTC()
+	if runtime.CreatedAt.IsZero() {
+		runtime.CreatedAt = now
+	}
+	runtime.UpdatedAt = now
+	if err := upsertCodexAppServerRuntime(tx, runtime); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO codex_app_server_capabilities
+		(generation, capability, created_at) VALUES (?, ?, ?)
+		ON CONFLICT(generation) DO UPDATE SET capability=excluded.capability,
+		created_at=excluded.created_at`, runtime.Generation, capability, dbTime(now)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func GetCodexAppServerCapability(generation string) (string, error) {
+	d, err := Open()
+	if err != nil {
+		return "", err
+	}
+	var capability string
+	err = d.QueryRow(`SELECT capability FROM codex_app_server_capabilities WHERE generation = ?`,
+		strings.TrimSpace(generation)).Scan(&capability)
+	if err == sql.ErrNoRows || strings.TrimSpace(capability) == "" {
+		return "", errors.New("codex app-server capability is unavailable")
+	}
+	if err != nil {
+		return "", err
+	}
+	return capability, nil
+}
+
+func DeleteCodexAppServerCapability(generation string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`DELETE FROM codex_app_server_capabilities WHERE generation = ?`, strings.TrimSpace(generation))
 	return err
 }
 
@@ -299,8 +377,18 @@ func DeleteCodexAppServerRuntime(generation string) error {
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`DELETE FROM codex_app_server_runtimes WHERE generation = ?`, generation)
-	return err
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err = tx.Exec(`DELETE FROM codex_app_server_capabilities WHERE generation = ?`, generation); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`DELETE FROM codex_app_server_runtimes WHERE generation = ?`, generation); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func SetCodexAppServerRuntimeVersion(generation, version string) error {
