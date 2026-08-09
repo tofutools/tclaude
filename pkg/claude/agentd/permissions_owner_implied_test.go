@@ -39,6 +39,7 @@ func TestPermissionRegistry_OwnerImpliedSet(t *testing.T) {
 		// members of owned groups.
 		PermAgentReincarnate:   ownerScopeMember,
 		PermAgentCompact:       ownerScopeMember,
+		PermAgentInterrupt:     ownerScopeMember,
 		PermAgentRename:        ownerScopeMember,
 		PermAgentClone:         ownerScopeMember,
 		PermAgentContextInfo:   ownerScopeMember,

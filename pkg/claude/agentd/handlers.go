@@ -1527,6 +1527,7 @@ const (
 	slashTransportSendKeys    slashTransport = "send-keys"
 	slashTransportOpenCodeAPI slashTransport = "opencode-api"
 	slashTransportCopilotAPI  slashTransport = "copilot-api"
+	slashTransportCodexAPI    slashTransport = "codex-app-server"
 )
 
 // slashFailure names WHY nothing was delivered, and — like slashTransport — it
@@ -1549,7 +1550,11 @@ const (
 	// no channel was even selected.
 	slashFailureNoPane slashFailure = "no_tmux"
 	// slashFailureControl means a managed channel was selected and refused.
-	slashFailureControl slashFailure = "control_unavailable"
+	slashFailureControl      slashFailure = "control_unavailable"
+	slashFailureStarting     slashFailure = "control_starting"
+	slashFailureBusy         slashFailure = "busy"
+	slashFailureUnsupported  slashFailure = "unsupported"
+	slashFailureDisconnected slashFailure = "disconnected"
 )
 
 // dispatchSlashCommand is injectSlashCommand's body, reporting which channel
@@ -1576,6 +1581,31 @@ func dispatchSlashCommandOn(
 			return slashTransportOpenCodeAPI, slashFailureNone
 		}
 		return slashTransportNone, slashFailureControl
+	}
+	codexSelected := false
+	if sess.Harness == harness.CodexName {
+		var codexSelectionErr error
+		codexSelected, codexSelectionErr = codexAppServerSelected(convID)
+		if codexSelectionErr != nil {
+			slog.Warn("Codex app-server posture unreadable; refusing lifecycle pane fallback",
+				"error", codexSelectionErr, "conv_id", convID, "line", line)
+			return slashTransportNone, slashFailureControl
+		}
+	}
+	if channel == deliveryChannelRouted && codexSelected {
+		life := harnessForConv(convID).Life
+		if life == nil || line != life.CompactCommand() {
+			return slashTransportNone, slashFailureUnsupported
+		}
+		if err := compactCodexAppServerThread(convID, followUp); err != nil {
+			slog.Warn("Codex app-server: compaction dispatch failed",
+				"error", err, "conv_id", convID, "line", line, "reason", reason)
+			return slashTransportNone, codexControlFailure(err)
+		}
+		slog.Info("Codex app-server: lifecycle command dispatched over RPC",
+			"conv_id", convID, "line", line, "reason", reason,
+			"tmux_session", sess.TmuxSession, "has_follow_up", followUp != "")
+		return slashTransportCodexAPI, slashFailureNone
 	}
 	// An API-driven Copilot agent takes the typed channel. Never a fallback
 	// pair with the keystrokes below: an agent that opted out of the injection
@@ -2102,7 +2132,23 @@ func runRenameOrchestration(w http.ResponseWriter, r *http.Request, target, call
 				"the allowed characters.")
 		return
 	}
-	if !deliverRename(target, body.Title) {
+	codexSelected := false
+	if harnessForConv(target).Name == harness.CodexName {
+		var codexSelectionErr error
+		codexSelected, codexSelectionErr = codexAppServerSelected(target)
+		if codexSelectionErr != nil {
+			writeError(w, http.StatusServiceUnavailable, "control_unavailable",
+				"could not determine the target Codex control drive")
+			return
+		}
+	}
+	if codexSelected {
+		if err := renameCodexAppServerThread(target, body.Title); err != nil {
+			writeCodexControlError(w, err, "rename")
+			return
+		}
+		cacheDeliveredTitle(target, body.Title, harnessForConv(target).Name)
+	} else if !deliverRename(target, body.Title) {
 		writeError(w, http.StatusServiceUnavailable, "no_tmux",
 			"could not deliver rename to conv "+short8(target)+" (no live tmux session to inject into, or the harness's title store rejected it)")
 		return
@@ -2144,6 +2190,84 @@ func handleWhoamiCompact(w http.ResponseWriter, r *http.Request) {
 // variant.
 func handleAgentCompact(w http.ResponseWriter, r *http.Request, targetConv string) {
 	handleAgentSlash(w, r, PermAgentCompact, targetConv, compactToken, "compact")
+}
+
+func handleWhoamiInterrupt(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
+		return
+	}
+	convID, ok := requirePermission(w, r, PermSelfInterrupt)
+	if !ok {
+		return
+	}
+	if convID == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			"this endpoint operates on the calling agent; humans should target POST /v1/agent/{conv}/interrupt")
+		return
+	}
+	runCodexInterrupt(w, convID, convID)
+}
+
+func handleAgentInterrupt(w http.ResponseWriter, r *http.Request, targetConv string) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
+		return
+	}
+	caller, ok := requireCrossAgentPermission(w, r, PermAgentInterrupt, targetConv)
+	if !ok {
+		return
+	}
+	runCodexInterrupt(w, targetConv, caller)
+}
+
+func runCodexInterrupt(w http.ResponseWriter, target, caller string) {
+	if harnessForConv(target).Name != harness.CodexName {
+		writeError(w, http.StatusBadRequest, "unsupported",
+			"turn interruption is available only for Codex conversations on the app-server drive")
+		return
+	}
+	codexSelected, codexSelectionErr := codexAppServerSelected(target)
+	if codexSelectionErr != nil {
+		writeError(w, http.StatusServiceUnavailable, "control_unavailable",
+			"could not determine the target Codex control drive")
+		return
+	}
+	if !codexSelected {
+		writeError(w, http.StatusBadRequest, "unsupported",
+			"turn interruption is available only for Codex conversations on the app-server drive")
+		return
+	}
+	if err := interruptCodexAppServerThread(target); err != nil {
+		writeCodexControlError(w, err, "interrupt")
+		return
+	}
+	resp := map[string]any{
+		"conv_id": target, "action": "interrupt",
+		"note": "the verified active Codex turn was interrupted through app-server",
+	}
+	if caller != "" && caller != target {
+		resp["caller_conv"] = caller
+		stampCallerAgentID(resp, caller)
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func writeCodexControlError(w http.ResponseWriter, err error, action string) {
+	failure := codexControlFailure(err)
+	status := http.StatusServiceUnavailable
+	code := string(failure)
+	switch failure {
+	case slashFailureBusy:
+		status = http.StatusConflict
+	case slashFailureUnsupported:
+		status = http.StatusBadRequest
+	case slashFailureStarting, slashFailureDisconnected:
+		status = http.StatusServiceUnavailable
+	case slashFailureControl:
+		code = "failed"
+	}
+	writeError(w, status, code, "Codex app-server "+action+" failed: "+err.Error())
 }
 
 // slashToken selects a harness's lifecycle slash command (e.g. its
@@ -2284,7 +2408,16 @@ func runSlashOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 // deliberately worded so an operator does not go looking for the command in the
 // pane — for an API-driven agent it was never typed there, by design.
 func slashFailureDetail(failure slashFailure, target, slash string) string {
-	if failure == slashFailureControl {
+	switch failure {
+	case slashFailureStarting:
+		return "target conv " + short8(target) + " selected the Codex app-server drive, but its control channel is still starting; retry shortly"
+	case slashFailureBusy:
+		return "target conv " + short8(target) + " is busy or awaiting human interaction; retry once the Codex thread is idle"
+	case slashFailureUnsupported:
+		return "target conv " + short8(target) + " cannot map " + slash + " to a supported typed control operation"
+	case slashFailureDisconnected:
+		return "target conv " + short8(target) + " selected the Codex app-server drive, but its verified control channel is disconnected; relaunch or resume it"
+	case slashFailureControl:
 		return "target conv " + short8(target) + " could not dispatch " + slash +
 			" through its managed API channel; it is deliberately not typed into the " +
 			"pane instead. Retry when the session is idle and its channel is up"
@@ -2309,6 +2442,11 @@ func slashNote(transport slashTransport, slash string, hasFollowUp bool) string 
 				slash + " resolves, so the two are ordered"
 		}
 		return slash + " requested over the Copilot API; the outcome lands in the daemon log"
+	case slashTransportCodexAPI:
+		if hasFollowUp {
+			return slash + " requested through Codex app-server; the follow-up is submitted as a typed turn after compaction settles"
+		}
+		return slash + " requested through Codex app-server and observed until compaction settled"
 	case slashTransportNone:
 		// Unreachable from the handler, which returns on a none transport before
 		// asking for a note. Spelled out anyway because a function whose ONLY

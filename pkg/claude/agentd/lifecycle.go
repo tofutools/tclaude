@@ -768,7 +768,6 @@ func clearFailedExitIntent(intentRef *db.SessionExitIntentRef) {
 // softExitPaneScreenTail): the intermittent ignored-exit failure is a Copilot
 // TUI behaviour, and other harnesses should not pay the capture nor leak
 // their screens into logs for a bug they do not have.
-//
 func logSoftExitPaneState(target *lifecycleTarget, reason, phase string, attempt int) {
 	if harnessForConv(target.convID).Name != harness.CopilotName {
 		return
@@ -7923,12 +7922,21 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 			"conv", convID)
 		return
 	}
-
 	if pickAliveSession(convID) == nil {
 		slog.Warn("spawn: no alive tmux session for post-init injection", "conv", convID)
 		return
 	}
 	h := harnessForConv(convID)
+	codexSelected := false
+	if h.Name == harness.CodexName {
+		var err error
+		codexSelected, err = codexAppServerSelected(convID)
+		if err != nil {
+			slog.Error("spawn: Codex app-server posture unreadable; post-init delivery abandoned without pane fallback",
+				"conv", convID, "error", err)
+			return
+		}
+	}
 
 	// An API-driven Copilot launch is not ready for post-init the moment its
 	// pane is alive. Its bootstrap creates a session under the conversation id
@@ -7944,6 +7952,11 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 			"budget; post-init delivery is abandoned because the failed launch is being "+
 			"shut down as crashed and API posture never falls back to pane input",
 			"conv", convID, "budget", copilotAPIBootstrapTimeout())
+		return
+	}
+	if codexSelected && !awaitCodexAppServerReady(convID) {
+		slog.Error("spawn: the Codex app-server channel never became ready; post-init delivery is abandoned without pane fallback",
+			"conv", convID, "budget", codexAppServerStartupTimeout)
 		return
 	}
 
@@ -8009,6 +8022,8 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 			// API-driven pane as keystrokes.
 			//
 			err = sendCopilotAPIMessage(convID, welcome)
+		case codexSelected:
+			err = sendCodexAppServerMessage(convID, spawnContextMsgID, welcome)
 		default:
 			err = injectTextAndSubmit(target, welcome)
 		}
@@ -8024,7 +8039,16 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 	// created the conversation's row (JOH-216). Runs in its own goroutine so
 	// the bounded retry never delays the rest of post-init.
 	if renameWanted && !h.SupportsRename() && h.SupportsConvs() {
-		goBackground(func() { persistSpawnTitle(convID, name) })
+		if codexSelected {
+			if err := renameCodexAppServerThread(convID, name); err != nil {
+				slog.Warn("spawn: Codex app-server rename failed without title-store fallback",
+					"conv", convID, "name", name, "error", err)
+			} else {
+				cacheDeliveredTitle(convID, name, h.Name)
+			}
+		} else {
+			goBackground(func() { persistSpawnTitle(convID, name) })
+		}
 	}
 
 	// The startup briefing (group context + task brief) already sits in

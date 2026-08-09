@@ -36,6 +36,7 @@ import (
 var defaultPermsForBundledSkills = []string{
 	"self.rename",
 	"self.compact",
+	"self.interrupt",
 	"self.clone",
 	"self.schedule",
 	"self.remote-control",

@@ -69,7 +69,7 @@ only once.
   agents won't know to use these commands.
 - **`tclaude setup --install-default-agent-permissions`** — grants the
   self-targeted slugs the bundled skills exercise (`self.rename`,
-  `self.compact`, `self.clone`, `self.schedule`,
+  `self.compact`, `self.interrupt`, `self.clone`, `self.schedule`,
   `self.remote-control`, `self.task`, `self.pr`, `self.tags`,
   `self.dir-repair`), plus the read-only `process.templates.read` the
   bundled process-template scribe skill needs, as agent
@@ -1737,6 +1737,7 @@ tclaude agent clone [follow-up]              # fork a sibling; the original keep
 tclaude agent clone --no-copy-conv           # clone with a blank context instead of the copied jsonl
 tclaude agent reincarnate "<follow-up>"      # replace self with a fresh successor (follow-up REQUIRED)
 tclaude agent compact [follow-up]            # inject /compact into the pane (typed RPC on an API-driven harness)
+tclaude agent interrupt                      # interrupt the active Codex app-server turn; does not stop the TUI
 tclaude agent context-info                   # show this conversation's context-window state (read-only)
 tclaude agent context-info --target <sel>    # read ANOTHER agent's context (gated: agent.context-info or group-owner)
 tclaude agent context-info --group <name|id> # one table of every group member's context % (gated likewise)
@@ -2494,8 +2495,8 @@ gate group, messaging, template, and permission administration.
 
 | Family        | Slugs |
 |---------------|-------|
-| `self.*`      | `self.rename`, `self.compact`, `self.clone`, `self.schedule`, `self.remote-control`, `self.task`, `self.pr`, `self.tags`, `self.dir-repair` |
-| `agent.*`     | `agent.rename`, `agent.compact`, `agent.reincarnate`, `agent.clone`, `agent.context-info`, `agent.resume`, `agent.stop`, `agent.delete`, `agent.schedule`, `agent.promote`, `agent.retire`, `agent.remote-control`, `agent.sandbox-impl` (not owner-conferred) |
+| `self.*`      | `self.rename`, `self.compact`, `self.interrupt`, `self.clone`, `self.schedule`, `self.remote-control`, `self.task`, `self.pr`, `self.tags`, `self.dir-repair` |
+| `agent.*`     | `agent.rename`, `agent.compact`, `agent.interrupt`, `agent.reincarnate`, `agent.clone`, `agent.context-info`, `agent.resume`, `agent.stop`, `agent.delete`, `agent.schedule`, `agent.promote`, `agent.retire`, `agent.remote-control`, `agent.sandbox-impl` (not owner-conferred) |
 | `groups.*`    | `groups.create`, `groups.rm`, `groups.archive`, `groups.stop`, `groups.resume`, `groups.retire`, `groups.spawn`, `groups.own`, `groups.link.add`, `groups.link.rm`, `groups.export`, `groups.import` |
 | `member.*`    | `member.add`, `member.remove`, `member.redesignate` |
 | `permissions.*` | `permissions.grant`, `permissions.revoke` |

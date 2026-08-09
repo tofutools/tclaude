@@ -237,9 +237,17 @@ explicitly selected app-server launch fails closed on an incompatible binary,
 an unsafe or unavailable socket, an ambiguous thread, or a failed control
 connection; it never silently switches that launch back to send-keys.
 
-The stable control handle established here is the prerequisite for moving
-message, rename, and compaction operations to typed RPC calls. Until those
-operations are enabled, their existing lifecycle behavior is unchanged.
+On the app-server drive, durable human/peer messages use `turn/start` while
+idle and `turn/steer` against the verified active turn otherwise. Rename uses
+`thread/name/set`, compaction uses `thread/compact/start`, and
+`tclaude agent interrupt` uses `turn/interrupt`. Agentd serializes mutations
+per thread and snapshots with `thread/read`; approval or user-input waits hold
+messages, and ambiguous message delivery is reconciled by its stable inbox id
+before any retry. Agentd never resumes merely to subscribe and never answers a
+server request, so the TUI remains the sole approval owner. A selected drive
+never falls back to pane input when control is starting, busy, disconnected,
+unsupported, or failed. Legacy Codex sessions retain their existing send-keys
+behavior.
 
 ### Group-route activation matrix
 

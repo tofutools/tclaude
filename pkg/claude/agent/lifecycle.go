@@ -63,6 +63,32 @@ func compactCmd() *cobra.Command {
 	}.ToCobra()
 }
 
+// --- agent interrupt ---
+
+type interruptParams struct {
+	Target   string `long:"target" optional:"true" help:"Interrupt ANOTHER agent's active Codex turn instead of self. Requires agent.interrupt, or ownership of a group containing the target."`
+	AskHuman string `long:"ask-human" optional:"true" help:"On self permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+}
+
+func interruptCmd() *cobra.Command {
+	return boa.CmdT[interruptParams]{
+		Use:   "interrupt",
+		Short: "Interrupt an active Codex app-server turn",
+		Long: "Interrupts the verified active turn of a Codex agent on the app-server drive. " +
+			"This does not stop the TUI or app-server process, and ordinary Codex send-keys sessions are unsupported. " +
+			"By default it targets self; --target uses the manager permission path.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *interruptParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Target).SetAlternativesFunc(completeConvSelectors)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *interruptParams, _ *cobra.Command, _ []string) {
+			os.Exit(runSlashWithOptionalTarget("", p.Target, p.AskHuman, "interrupt", os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
 // --- agent context-info ---
 
 type contextInfoParams struct {

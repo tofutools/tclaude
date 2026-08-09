@@ -27,6 +27,13 @@ const codexAppServerStartupTimeout = 15 * time.Second
 type codexAppServerHandle struct {
 	runtime db.CodexAppServerRuntime
 	client  *codexappserver.Client
+	// mutations serializes every tclaude-originated write to this thread. The
+	// app-server connection itself supports concurrent calls, but the control
+	// policy needs the thread/read snapshot and the following mutation to be
+	// one ordered decision.
+	mutations sync.Mutex
+	compact   *codexCompactionStage
+	nextOpID  uint64
 }
 
 var codexAppServerHandles = struct {
@@ -309,10 +316,20 @@ func watchCodexAppServerHandle(handle *codexAppServerHandle) {
 		handle.runtime.State = db.CodexAppServerDead
 		handle.runtime.Detail = fmt.Sprint(handle.client.Err())
 	}
-	_ = db.UpsertCodexAppServerRuntime(handle.runtime)
+	if changed, err := db.MarkCodexAppServerRuntimeTerminalIfUnreplaced(
+		handle.runtime.Generation, handle.runtime.State, handle.runtime.Detail); err != nil {
+		slog.Warn("record Codex app-server terminal state", "generation", handle.runtime.Generation, "error", err)
+	} else if !changed {
+		slog.Debug("ignored obsolete Codex app-server watcher after replacement became ready",
+			"generation", handle.runtime.Generation, "conv", handle.runtime.ConvID)
+	}
 	codexAppServerHandles.Lock()
-	delete(codexAppServerHandles.byConv, handle.runtime.ConvID)
-	delete(codexAppServerHandles.byGeneration, handle.runtime.Generation)
+	if codexAppServerHandles.byConv[handle.runtime.ConvID] == handle {
+		delete(codexAppServerHandles.byConv, handle.runtime.ConvID)
+	}
+	if codexAppServerHandles.byGeneration[handle.runtime.Generation] == handle {
+		delete(codexAppServerHandles.byGeneration, handle.runtime.Generation)
+	}
 	codexAppServerHandles.Unlock()
 }
 
@@ -331,7 +348,9 @@ func stopCodexAppServerRuntime(convID, launchID string) {
 	codexAppServerHandles.Lock()
 	handle := codexAppServerHandles.byGeneration[runtime.Generation]
 	delete(codexAppServerHandles.byGeneration, runtime.Generation)
-	delete(codexAppServerHandles.byConv, runtime.ConvID)
+	if codexAppServerHandles.byConv[runtime.ConvID] == handle {
+		delete(codexAppServerHandles.byConv, runtime.ConvID)
+	}
 	codexAppServerHandles.Unlock()
 	if handle != nil {
 		_ = handle.client.Close()
@@ -376,6 +395,30 @@ func codexAppServerReady(convID string) bool {
 	codexAppServerHandles.Lock()
 	defer codexAppServerHandles.Unlock()
 	return codexAppServerHandles.byConv[convID] != nil
+}
+
+func codexAppServerHandleForConv(convID string) *codexAppServerHandle {
+	codexAppServerHandles.Lock()
+	defer codexAppServerHandles.Unlock()
+	return codexAppServerHandles.byConv[convID]
+}
+
+// codexAppServerSelected is deliberately broader than readiness. Once a
+// launch selected the app-server drive, warming, disconnected, and failed
+// control states remain on that drive and must never reopen the pane-input
+// fallback.
+func codexAppServerSelected(convID string) (bool, error) {
+	profile, err := db.RecordedLaunchPostureForConv(convID)
+	if err != nil {
+		return false, err
+	}
+	if profile != nil && profile.CodexAppServer != nil {
+		return *profile.CodexAppServer, nil
+	}
+	// Runtime rows describe generations; they do not select the current drive.
+	// In particular, a historical row must never override a later explicit
+	// --codex-app-server=false posture.
+	return false, nil
 }
 
 func awaitCodexAppServer(convID string) bool {
