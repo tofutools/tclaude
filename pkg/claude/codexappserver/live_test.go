@@ -5,10 +5,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -123,4 +125,85 @@ func TestLiveCodexAppServerHandshake(t *testing.T) {
 	set, ok := shellPolicy["set"].(map[string]any)
 	require.True(t, ok, "config/read omitted shell_environment_policy.set: %#v", shellPolicy)
 	require.Equal(t, "present", set["TCLAUDE_APPSERVER_PROBE"])
+}
+
+func TestLiveCodexAppServerManagedPermissionOverlay(t *testing.T) {
+	if os.Getenv("TCLAUDE_CODEX_APPSERVER_LIVE") != "1" {
+		t.Skip("set TCLAUDE_CODEX_APPSERVER_LIVE=1 to run against installed Codex")
+	}
+	versionOutput, err := exec.Command("codex", "--version").Output()
+	require.NoError(t, err)
+	version := strings.TrimSpace(strings.TrimPrefix(string(versionOutput), "codex-cli "))
+	require.NoError(t, codexappserver.CheckVersion(version))
+
+	runtimeDir, err := os.MkdirTemp("/tmp", "codexappserver-profile-live-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(runtimeDir)) })
+	codexHome := filepath.Join(runtimeDir, "home")
+	require.NoError(t, os.Mkdir(codexHome, 0o700))
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	upstream := listener.Addr().String()
+	require.NoError(t, listener.Close())
+	readPath := filepath.Join(runtimeDir, "read")
+	writePath := filepath.Join(runtimeDir, "write")
+	denyPath := filepath.Join(runtimeDir, "deny")
+	socketPath := filepath.Join(runtimeDir, "agentd.sock")
+	for _, path := range []string{readPath, writePath, denyPath} {
+		require.NoError(t, os.Mkdir(path, 0o700))
+	}
+	const profileName = "tclaude-live-profile"
+	permissionTable := `permissions.` + profileName + `={extends=":workspace",filesystem={` +
+		strconv.Quote(readPath) + `="read",` + strconv.Quote(writePath) + `="write",` +
+		strconv.Quote(denyPath) + `="none",` + strconv.Quote(socketPath) + `="read"},` +
+		`network={enabled=true,unix_sockets={` + strconv.Quote(socketPath) + `="allow"}}}`
+
+	processCtx, stopProcess := context.WithCancel(context.Background())
+	var output bytes.Buffer
+	command := exec.CommandContext(processCtx, "codex",
+		"-c", `default_permissions="`+profileName+`"`,
+		"-c", permissionTable,
+		"app-server", "--listen", "ws://"+upstream)
+	command.Env = append(os.Environ(), "CODEX_HOME="+codexHome)
+	command.Stdout = &output
+	command.Stderr = &output
+	require.NoError(t, command.Start())
+	t.Cleanup(func() {
+		stopProcess()
+		_ = command.Wait()
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	var client *codexappserver.Client
+	for ctx.Err() == nil {
+		client, err = codexappserver.Dial(ctx, "unused", &codexappserver.Options{
+			CodexVersion: version,
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, "tcp", upstream)
+			},
+		})
+		if err == nil {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	require.NoError(t, err, output.String())
+	t.Cleanup(func() { _ = client.Close() })
+	var effective struct {
+		Config map[string]any `json:"config"`
+	}
+	require.NoError(t, client.Call(ctx, "config/read", map[string]any{
+		"cwd": runtimeDir, "includeLayers": false,
+	}, &effective), output.String())
+	require.Equal(t, profileName, effective.Config["default_permissions"])
+	encoded, err := json.Marshal(effective.Config["permissions"])
+	require.NoError(t, err)
+	visible := string(encoded)
+	for _, want := range []string{
+		profileName, readPath, `"read"`, writePath, `"write"`, denyPath, `"deny"`,
+		socketPath, `"allow"`, `"enabled":true`,
+	} {
+		require.Contains(t, visible, want)
+	}
 }
