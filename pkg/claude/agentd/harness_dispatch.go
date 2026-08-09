@@ -332,7 +332,22 @@ const (
 
 func deliverRenameOn(convID, title string, channel deliveryChannel) bool {
 	h := harnessForConv(convID)
-	if codexAppServerSelected(convID) {
+	codexSelected := false
+	if h.Name == harness.CodexName {
+		var err error
+		codexSelected, err = codexAppServerSelected(convID)
+		if err != nil {
+			slog.Warn("rename: Codex app-server posture unreadable; refusing pane fallback",
+				"conv", convID, "error", err)
+			return false
+		}
+	}
+	if codexSelected {
+		if !isValidRenameSink(title) {
+			slog.Warn("rename: title rejected by routed charset gate",
+				"conv", convID, "harness", h.Name)
+			return false
+		}
 		if err := renameCodexAppServerThread(convID, title); err != nil {
 			slog.Warn("rename: Codex app-server rename failed; refusing title-store fallback",
 				"conv", convID, "error", err)

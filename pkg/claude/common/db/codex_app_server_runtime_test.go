@@ -62,4 +62,13 @@ func TestObsoleteCodexAppServerWatcherCannotSupersedeReadyReplacement(t *testing
 	require.NoError(t, err)
 	require.NotNil(t, latest)
 	assert.Equal(t, replacement.Generation, latest.Generation)
+
+	changed, err = MarkCodexAppServerRuntimeTerminalIfUnreplaced(
+		replacement.Generation, CodexAppServerDead, "current watcher")
+	require.NoError(t, err)
+	assert.True(t, changed)
+	current, err := GetCodexAppServerRuntime(replacement.Generation)
+	require.NoError(t, err)
+	require.NotNil(t, current)
+	assert.Equal(t, CodexAppServerDead, current.State)
 }

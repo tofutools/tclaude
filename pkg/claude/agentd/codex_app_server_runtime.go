@@ -407,15 +407,18 @@ func codexAppServerHandleForConv(convID string) *codexAppServerHandle {
 // launch selected the app-server drive, warming, disconnected, and failed
 // control states remain on that drive and must never reopen the pane-input
 // fallback.
-func codexAppServerSelected(convID string) bool {
-	if profile, err := db.RecordedLaunchPostureForConv(convID); err == nil &&
-		profile != nil && profile.CodexAppServer != nil {
-		return *profile.CodexAppServer
+func codexAppServerSelected(convID string) (bool, error) {
+	profile, err := db.RecordedLaunchPostureForConv(convID)
+	if err != nil {
+		return false, err
+	}
+	if profile != nil && profile.CodexAppServer != nil {
+		return *profile.CodexAppServer, nil
 	}
 	// Runtime rows describe generations; they do not select the current drive.
 	// In particular, a historical row must never override a later explicit
 	// --codex-app-server=false posture.
-	return false
+	return false, nil
 }
 
 func awaitCodexAppServer(convID string) bool {

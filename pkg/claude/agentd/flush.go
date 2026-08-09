@@ -393,7 +393,17 @@ func sendNudgeBracket(toConv string, m *db.AgentMessage, nudge string) bool {
 	// An explicitly selected Codex app-server launch is equally fail-closed:
 	// warming or unavailable control leaves the durable message queued and is
 	// never permission to put caller-controlled bytes into the TUI composer.
-	if codexAppServerSelected(toConv) {
+	codexSelected := false
+	if sess.Harness == harness.CodexName {
+		var codexSelectionErr error
+		codexSelected, codexSelectionErr = codexAppServerSelected(toConv)
+		if codexSelectionErr != nil {
+			slog.Warn("Codex app-server posture unreadable; holding durable message without pane fallback",
+				"error", codexSelectionErr, "conv", toConv, "msg_id", m.ID)
+			return false
+		}
+	}
+	if codexSelected {
 		if err := sendCodexAppServerMessage(toConv, m.ID, nudge); err != nil {
 			if standingOrderOrigin != nil {
 				_ = db.CancelPendingStandingOrderTurnOrigin(

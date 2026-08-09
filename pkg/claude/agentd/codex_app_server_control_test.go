@@ -98,11 +98,10 @@ func (f *codexControlFixture) serve() {
 		f.methods = append(f.methods, message.Method)
 		drop := f.drop[message.Method]
 		fail := f.fail[message.Method]
-		thread := f.thread
 		f.mu.Unlock()
 		switch message.Method {
 		case codexappserver.MethodThreadRead:
-			_ = f.sim.Reply(message.ID, codexappserver.ThreadReadResult{Thread: thread})
+			_ = f.sim.Reply(message.ID, codexappserver.ThreadReadResult{Thread: f.threadSnapshot()})
 		case codexappserver.MethodTurnStart, codexappserver.MethodTurnSteer:
 			var params struct {
 				Input               []codexappserver.UserInput `json:"input"`
@@ -178,6 +177,27 @@ func (f *codexControlFixture) serve() {
 			}
 		}
 	}
+}
+
+func (f *codexControlFixture) threadSnapshot() codexappserver.Thread {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	thread := f.thread
+	thread.Status = append(json.RawMessage(nil), f.thread.Status...)
+	thread.Turns = make([]codexappserver.Turn, len(f.thread.Turns))
+	copy(thread.Turns, f.thread.Turns)
+	for i := range thread.Turns {
+		thread.Turns[i].Items = make([]json.RawMessage, len(f.thread.Turns[i].Items))
+		copy(thread.Turns[i].Items, f.thread.Turns[i].Items)
+		for j := range thread.Turns[i].Items {
+			thread.Turns[i].Items[j] = append(json.RawMessage(nil), f.thread.Turns[i].Items[j]...)
+		}
+	}
+	if f.thread.Name != nil {
+		name := *f.thread.Name
+		thread.Name = &name
+	}
+	return thread
 }
 
 func (f *codexControlFixture) methodCount(method string) int {
@@ -341,7 +361,9 @@ func TestCodexAppServerExplicitFalseRestoresOrdinaryPaneRouting(t *testing.T) {
 	f := newCodexControlFixture(t)
 	require.NoError(t, db.SetConversationCodexAppServer(
 		f.convID, harness.CodexName, t.TempDir(), false))
-	assert.False(t, codexAppServerSelected(f.convID),
+	selected, err := codexAppServerSelected(f.convID)
+	require.NoError(t, err)
+	assert.False(t, selected,
 		"current explicit false must outrank the historical ready runtime")
 	require.True(t, sendNudgeBracket(f.convID,
 		&db.AgentMessage{ID: 61, ToConv: f.convID}, "[msg #61] ordinary"))
@@ -376,4 +398,22 @@ func TestCodexAppServerCompactionRetryResumesStableFollowUpStage(t *testing.T) {
 	ids := f.submittedClientIDs()
 	require.Len(t, ids, 2)
 	assert.Equal(t, ids[0], ids[1], "the retried follow-up keeps one stable identity")
+}
+
+func TestCodexThreadContainsMessageDoesNotReuseOtherClientIdentity(t *testing.T) {
+	item := json.RawMessage(`{"type":"userMessage","clientId":"older-operation","text":"same follow-up"}`)
+	thread := codexappserver.Thread{Turns: []codexappserver.Turn{{Items: []json.RawMessage{item}}}}
+	assert.False(t, codexThreadContainsMessage(thread, "new-operation", "same follow-up"))
+	assert.True(t, codexThreadContainsMessage(thread, "older-operation", "same follow-up"))
+
+	legacy := json.RawMessage(`{"type":"userMessage","text":"same follow-up"}`)
+	thread.Turns[0].Items = []json.RawMessage{legacy}
+	assert.True(t, codexThreadContainsMessage(thread, "new-operation", "same follow-up"),
+		"unscoped legacy items retain framed-text reconciliation")
+}
+
+func TestCodexAppServerRenameKeepsRoutedCharsetGate(t *testing.T) {
+	f := newCodexControlFixture(t)
+	assert.False(t, deliverRenameOn(f.convID, "unsafe\ntitle", deliveryChannelRouted))
+	assert.Zero(t, f.methodCount(codexappserver.MethodThreadNameSet))
 }

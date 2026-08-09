@@ -1582,7 +1582,17 @@ func dispatchSlashCommandOn(
 		}
 		return slashTransportNone, slashFailureControl
 	}
-	if channel == deliveryChannelRouted && codexAppServerSelected(convID) {
+	codexSelected := false
+	if sess.Harness == harness.CodexName {
+		var codexSelectionErr error
+		codexSelected, codexSelectionErr = codexAppServerSelected(convID)
+		if codexSelectionErr != nil {
+			slog.Warn("Codex app-server posture unreadable; refusing lifecycle pane fallback",
+				"error", codexSelectionErr, "conv_id", convID, "line", line)
+			return slashTransportNone, slashFailureControl
+		}
+	}
+	if channel == deliveryChannelRouted && codexSelected {
 		life := harnessForConv(convID).Life
 		if life == nil || line != life.CompactCommand() {
 			return slashTransportNone, slashFailureUnsupported
@@ -2122,7 +2132,17 @@ func runRenameOrchestration(w http.ResponseWriter, r *http.Request, target, call
 				"the allowed characters.")
 		return
 	}
-	if codexAppServerSelected(target) {
+	codexSelected := false
+	if harnessForConv(target).Name == harness.CodexName {
+		var codexSelectionErr error
+		codexSelected, codexSelectionErr = codexAppServerSelected(target)
+		if codexSelectionErr != nil {
+			writeError(w, http.StatusServiceUnavailable, "control_unavailable",
+				"could not determine the target Codex control drive")
+			return
+		}
+	}
+	if codexSelected {
 		if err := renameCodexAppServerThread(target, body.Title); err != nil {
 			writeCodexControlError(w, err, "rename")
 			return
@@ -2202,7 +2222,18 @@ func handleAgentInterrupt(w http.ResponseWriter, r *http.Request, targetConv str
 }
 
 func runCodexInterrupt(w http.ResponseWriter, target, caller string) {
-	if !codexAppServerSelected(target) {
+	if harnessForConv(target).Name != harness.CodexName {
+		writeError(w, http.StatusBadRequest, "unsupported",
+			"turn interruption is available only for Codex conversations on the app-server drive")
+		return
+	}
+	codexSelected, codexSelectionErr := codexAppServerSelected(target)
+	if codexSelectionErr != nil {
+		writeError(w, http.StatusServiceUnavailable, "control_unavailable",
+			"could not determine the target Codex control drive")
+		return
+	}
+	if !codexSelected {
 		writeError(w, http.StatusBadRequest, "unsupported",
 			"turn interruption is available only for Codex conversations on the app-server drive")
 		return

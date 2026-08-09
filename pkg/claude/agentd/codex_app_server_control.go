@@ -85,11 +85,18 @@ func codexCallAmbiguous(err error) bool {
 // before clientUserMessageId was populated.
 func codexThreadContainsMessage(thread codexappserver.Thread, clientID, text string) bool {
 	quotedText, _ := json.Marshal(text)
-	quotedClientID, _ := json.Marshal(clientID)
 	for _, turn := range thread.Turns {
 		for _, item := range turn.Items {
-			if clientID != "" && bytes.Contains(item, []byte(`"clientId":`+string(quotedClientID))) {
-				return true
+			var projection struct {
+				ClientID *string `json:"clientId"`
+			}
+			if json.Unmarshal(item, &projection) == nil && projection.ClientID != nil {
+				if clientID != "" && *projection.ClientID == clientID {
+					return true
+				}
+				// Client-scoped items belong to one exact operation. Their text
+				// must not make a later operation with the same prose look settled.
+				continue
 			}
 			if text != "" && bytes.Contains(item, quotedText) {
 				return true
@@ -331,11 +338,11 @@ func interruptCodexAppServerThread(convID string) error {
 		return err
 	}
 	if status.Type != "active" {
-		return errCodexControlBusy
+		return fmt.Errorf("%w: no active turn to interrupt", errCodexControlUnsupported)
 	}
 	turn, ok := codexActiveTurn(thread)
 	if !ok {
-		return errCodexControlBusy
+		return fmt.Errorf("%w: no active turn to interrupt", errCodexControlUnsupported)
 	}
 	callCtx, cancelCall := context.WithTimeout(ctx, codexAppServerCallTimeout)
 	err = handle.client.InterruptTurn(callCtx, handle.runtime.ThreadID, turn.ID)
