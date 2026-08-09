@@ -65,6 +65,9 @@ func TestDashboardAssets_GroupActivityWired(t *testing.T) {
 		".actbot-sprite.actbot-wiz.actbot-working",
 		"@keyframes spr-wiz-cast",
 		"url(sprites/wiz_bot.png)",
+		// Header activity groups are semantic sections, so they must override
+		// the page-level hidden-tab section rule to remain visible.
+		".activity-hover-group { display: block; }",
 		// Config per-mode dropdowns + snapshot flag.
 		`id="cfg-dashboard-activity-bots-regular"`,
 		`id="cfg-dashboard-activity-bots-slop"`,
