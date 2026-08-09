@@ -640,6 +640,12 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
   });
   const submit = async () => {
     if (busyRef.current) return;
+    const unreadableGroupGrants = groupMode
+      ? [...unreadable].filter((slug) => currentEffect(slug) === 'grant') : [];
+    if (unreadableGroupGrants.length) {
+      setError(`Cannot save while these group grants have unreadable scopes: ${unreadableGroupGrants.join(', ')}. Remove them first or edit them with a newer tclaude build.`);
+      return;
+    }
     let ownerScopes = null;
     if (groupMode) {
       const raw = ownerScopesText.trim();
@@ -674,8 +680,8 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
     // flipped a grant must not carry owner_scopes at all: the daemon treats an
     // absent field as "unchanged", and sending the box's current value would
     // clear a stored narrowing this build could not decode into it.
-    const scopePayload = groupMode ? (ownerScopesDirty ? ownerScopes : null) : scoped;
-    try { await actions.savePermissions(descriptor, full, scopePayload); state.close(); }
+    const ownerScopePayload = groupMode && ownerScopesDirty ? ownerScopes : null;
+    try { await actions.savePermissions(descriptor, full, scoped, ownerScopePayload); state.close(); }
     catch (cause) { setError(errorText(cause)); }
     finally { busyRef.current = false; setBusy(false); }
   };

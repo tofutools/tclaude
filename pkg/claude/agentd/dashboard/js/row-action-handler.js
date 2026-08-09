@@ -687,7 +687,8 @@ export async function handleRowAction(action) {
         // owner_scopes rides along so the editor can show (and round-trip) the
         // group's owner-bypass narrowing next to its grants — the two are the
         // same PATCH and the same permission pair.
-        openGroupPermEditor(group, snapshot?.permissions || [], snapshot?.owner_scopes || {});
+        openGroupPermEditor(group, snapshot?.permissions || [], snapshot?.permission_scopes || {},
+          snapshot?.unreadable_permission_scopes || [], snapshot?.owner_scopes || {});
         return;
       }
       case 'set-group-remote-control': {

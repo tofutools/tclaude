@@ -121,6 +121,10 @@ type PermissionGrant struct {
 	// contract as PermissionOverride.Scope: validated at the wire boundary,
 	// stored verbatim here.
 	Scope string
+	// ScopeSpecified distinguishes an explicit object-arm `scope: {}` from a
+	// legacy bare slug. Replacement APIs use it to clear a scope only when the
+	// caller actually requested that widening.
+	ScopeSpecified bool `json:"-"`
 }
 
 // UnscopedGrants lifts a bare slug list into the scoped shape.
@@ -183,7 +187,10 @@ func (g *PermissionGrant) UnmarshalJSON(b []byte) error {
 	if scope == "null" || scope == "{}" {
 		scope = ""
 	}
-	*g = PermissionGrant{Slug: wire.Slug, Scope: scope}
+	*g = PermissionGrant{
+		Slug: wire.Slug, Scope: scope,
+		ScopeSpecified: len(wire.Scope) > 0 && strings.TrimSpace(string(wire.Scope)) != "null",
+	}
 	return nil
 }
 

@@ -112,12 +112,11 @@ export function createMessageAccessDialogActions({
     return response;
   }
 
-  // The third argument is mode-specific: live agent saves send the per-slug
-  // grant scopes, while group saves send the owner-bypass scope map. Buffered
-  // pre-spawn permissions have no scope storage behind them.
-  async function savePermissions(descriptor, selection, scopePayload = null) {
+  // Per-slug grant scopes use the same union wire shape in every mode. The
+  // fourth argument is group-only owner-bypass narrowing, a distinct concept
+  // from the scopes attached to the group's explicit grants.
+  async function savePermissions(descriptor, selection, scopes = {}, ownerScopes = null) {
     if (descriptor.mode === 'agent') {
-      const scopes = scopePayload || {};
       const response = await requestJSON(fetchImpl, '/api/permissions', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ conv: descriptor.conv, overrides: selection, scopes }),
@@ -128,8 +127,8 @@ export function createMessageAccessDialogActions({
       return response;
     }
     if (descriptor.mode === 'group') {
-      const ownerScopes = scopePayload;
-      const permissions = Object.keys(selection).filter((slug) => selection[slug] === 'grant');
+      const permissions = Object.keys(selection).filter((slug) => selection[slug] === 'grant')
+        .map((slug) => Object.hasOwn(scopes, slug) ? { slug, scope: scopes[slug] } : slug);
       // owner_scopes rides the same PATCH as the grants: both are permission
       // administration on the group and the endpoint gates them on the same
       // grant+revoke pair, so splitting them into two requests would only
@@ -153,7 +152,10 @@ export function createMessageAccessDialogActions({
     }
     const kept = {};
     for (const [slug, effect] of Object.entries(selection)) {
-      if (effect === 'grant' || effect === 'deny') kept[slug] = effect;
+      if (effect === 'grant' || effect === 'deny') {
+        kept[slug] = effect === 'grant' && Object.keys(scopes[slug] || {}).length
+          ? { effect, scope: scopes[slug] } : effect;
+      }
     }
     await descriptor.onSave?.(kept);
     return { overrides: kept };

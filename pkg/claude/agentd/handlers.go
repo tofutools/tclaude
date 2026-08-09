@@ -3703,7 +3703,7 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		RemoteControlPolicy *string `json:"remote_control_policy,omitempty"`
 		// Permissions is a complete replacement allowlist. Pointer distinguishes
 		// omitted (unchanged) from [] (clear every group grant).
-		Permissions *[]string `json:"permissions,omitempty"`
+		Permissions *[]db.PermissionGrant `json:"permissions,omitempty"`
 		// OwnerScopes is a complete replacement owner-scope map for this group
 		// (TCL-1071): slug → the scope that slug's owner-implied bypass is
 		// confined to here. Raw so {} and null both reach the parser and both
@@ -3737,32 +3737,26 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		}
 		ownerScopes = canonical
 	}
-	var normalizedPermissions []string
+	var normalizedPermissions []db.PermissionGrant
 	if body.Permissions != nil {
-		normalizedPermissions = make([]string, 0, len(*body.Permissions))
-		seen := map[string]bool{}
-		for _, raw := range *body.Permissions {
-			slug := strings.TrimSpace(raw)
-			if !IsKnownPermSlug(slug) {
-				writeError(w, http.StatusBadRequest, "invalid_permission", fmt.Sprintf("unknown permission slug %q", slug))
-				return
-			}
-			if !seen[slug] {
-				seen[slug] = true
-				normalizedPermissions = append(normalizedPermissions, slug)
-			}
+		var failure *spawnFailure
+		normalizedPermissions, failure = normalizeBlueprintGrants(*body.Permissions)
+		if failure != nil {
+			writeError(w, failure.Status, failure.Kind, failure.Msg)
+			return
 		}
-		sort.Strings(normalizedPermissions)
-		// A group grant is conferred on every current AND future member, and it
-		// is written UNSCOPED — the widest form there is. So it is a minting
-		// surface, and an agent caller must clear the same attenuation bar the
-		// spawn boundary and /v1/permissions/grant set. Without this an agent
+		sort.Slice(normalizedPermissions, func(i, j int) bool {
+			return normalizedPermissions[i].Slug < normalizedPermissions[j].Slug
+		})
+		// A group grant is conferred on every current AND future member, so it is
+		// a minting surface. An agent caller must clear the same attenuation bar
+		// as the spawn boundary and /v1/permissions/grant. Without this an agent
 		// whose own hold on a slug is scoped could add that slug to a group it
 		// belongs to and, on the very next request, resolve unscoped: the group
 		// tier unions its rows, and one unscoped row absorbs the tier.
 		conferred := make([]conferredGrant, 0, len(normalizedPermissions))
-		for _, slug := range normalizedPermissions {
-			conferred = append(conferred, conferredGrant{Slug: slug})
+		for _, grant := range normalizedPermissions {
+			conferred = append(conferred, conferredGrant{Slug: grant.Slug, Scope: grant.Scope})
 		}
 		if err := checkGrantAttenuation(caller, grantConferee{}, conferred); err != nil {
 			writeError(w, http.StatusForbidden, "scope_not_attenuated", err.Error())
@@ -3923,7 +3917,7 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		if grantedBy == "" {
 			grantedBy = "<human>"
 		}
-		if err := db.ReplaceAgentGroupPermissions(g.ID, normalizedPermissions, grantedBy); err != nil {
+		if err := db.ReplaceAgentGroupPermissionGrants(g.ID, normalizedPermissions, grantedBy); err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
 		}

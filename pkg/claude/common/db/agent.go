@@ -107,7 +107,7 @@ type AgentPermission struct {
 }
 
 // AgentGroupPermission is one live group grant. ScopeJSON is empty for an
-// unscoped grant; Phase 1 stores and displays it without enforcing it.
+// unscoped grant.
 type AgentGroupPermission struct {
 	GroupID   int64
 	GroupName string
@@ -160,6 +160,18 @@ func ListAgentGroupPermissionRows(groupID int64) ([]AgentGroupPermission, error)
 
 // ReplaceAgentGroupPermissions atomically replaces a group's additive grants.
 func ReplaceAgentGroupPermissions(groupID int64, slugs []string, grantedBy string) error {
+	return replaceAgentGroupPermissionGrants(groupID, UnscopedGrants(slugs), grantedBy, true)
+}
+
+// ReplaceAgentGroupPermissionGrants atomically replaces a group's additive
+// grants, including their scopes. A structured grant's supplied scope is
+// authoritative; a legacy bare slug preserves an existing narrowing, while
+// an explicitly supplied empty scope deliberately clears it.
+func ReplaceAgentGroupPermissionGrants(groupID int64, grants []PermissionGrant, grantedBy string) error {
+	return replaceAgentGroupPermissionGrants(groupID, grants, grantedBy, false)
+}
+
+func replaceAgentGroupPermissionGrants(groupID int64, grants []PermissionGrant, grantedBy string, preserveScopes bool) error {
 	d, err := Open()
 	if err != nil {
 		return err
@@ -180,42 +192,56 @@ func ReplaceAgentGroupPermissions(groupID int64, slugs []string, grantedBy strin
 	if err := tx.QueryRow(`SELECT COUNT(*) FROM agent_group_permissions WHERE group_id = ? AND slug IN ('routes.publish', 'routes.consume')`, groupID).Scan(&hadRouteCapability); err != nil {
 		return err
 	}
-	// The legacy editor replaces a group's slug set as a whole and has no
-	// scope controls yet. Preserve the stored scope of every slug that remains
-	// selected so an unrelated edit cannot silently widen it.
+	// Bare-slug callers cannot express scopes. Preserve each retained scope for
+	// those legacy callers so an unrelated edit cannot silently widen it. The
+	// scoped replacement path below supplies authoritative scopes instead.
 	existingScopes := map[string]string{}
-	rows, err := tx.Query(`SELECT slug, scope_json FROM agent_group_permissions WHERE group_id = ?`, groupID)
-	if err != nil {
-		return err
+	needsExistingScopes := preserveScopes
+	for _, grant := range grants {
+		if grant.Scope == "" && !grant.ScopeSpecified {
+			needsExistingScopes = true
+			break
+		}
 	}
-	for rows.Next() {
-		var slug, scopeJSON string
-		if err := rows.Scan(&slug, &scopeJSON); err != nil {
+	if needsExistingScopes {
+		rows, err := tx.Query(`SELECT slug, scope_json FROM agent_group_permissions WHERE group_id = ?`, groupID)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var slug, scopeJSON string
+			if err := rows.Scan(&slug, &scopeJSON); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			existingScopes[slug] = scopeJSON
+		}
+		if err := rows.Err(); err != nil {
 			_ = rows.Close()
 			return err
 		}
-		existingScopes[slug] = scopeJSON
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return err
-	}
-	if err := rows.Close(); err != nil {
-		return err
+		if err := rows.Close(); err != nil {
+			return err
+		}
 	}
 	if _, err := tx.Exec(`DELETE FROM agent_group_permissions WHERE group_id = ?`, groupID); err != nil {
 		return err
 	}
 	now := dbTime(time.Now())
 	seen := map[string]bool{}
-	for _, slug := range slugs {
+	for _, grant := range grants {
+		slug := grant.Slug
 		if seen[slug] {
 			continue
 		}
 		seen[slug] = true
+		scopeJSON := grant.Scope
+		if preserveScopes || (grant.Scope == "" && !grant.ScopeSpecified) {
+			scopeJSON = existingScopes[slug]
+		}
 		if _, err := tx.Exec(`INSERT INTO agent_group_permissions
 			(group_id, slug, granted_at, granted_by, scope_json) VALUES (?, ?, ?, ?, ?)`,
-			groupID, slug, now, grantedBy, existingScopes[slug]); err != nil {
+			groupID, slug, now, grantedBy, scopeJSON); err != nil {
 			return err
 		}
 	}
