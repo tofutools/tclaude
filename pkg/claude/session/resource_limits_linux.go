@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -241,6 +242,12 @@ func staleResourceCgroupHint(dir string) string {
 // inherited and inescapable, so this reaps exactly the session's strays.
 func reclaimBusyResourceCgroup(dir string) error {
 	if err := requestResourceCgroupKill(dir); err != nil {
+		// A dir gone between the caller's check and the kill write means some
+		// other owner (the pane wrapper, an exit waiter) finished the reclaim
+		// first, which is the goal state rather than a failure.
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
 		return fmt.Errorf("kill remaining cgroup processes: %w", err)
 	}
 	deadline := time.Now().Add(resourceCgroupKillWait)
@@ -388,7 +395,7 @@ func PrepareResourceCgroup(sessionID string, limits sandboxpolicy.ResourceLimits
 			if killErr := reclaimBusyResourceCgroup(dir); killErr != nil {
 				return "", func() {}, fmt.Errorf("resource cgroup for session %q already exists and is active or not reclaimable: %w (%v; %s)", sessionID, removeErr, killErr, staleResourceCgroupHint(dir))
 			}
-			if removeErr := os.Remove(dir); removeErr != nil {
+			if removeErr := os.Remove(dir); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 				return "", func() {}, fmt.Errorf("resource cgroup for session %q already exists and is active or not reclaimable: %w (%s)", sessionID, removeErr, staleResourceCgroupHint(dir))
 			}
 		}
@@ -564,6 +571,22 @@ func runResourceLimitExec(cgroupDir, sessionID, command string, allowUnenforced 
 	if err := child.Start(); err != nil {
 		return err
 	}
+	// A pane teardown (tmux kill-session HUPs the pane's process group, a
+	// session stop may TERM it) reaches this wrapper too. Left to the default
+	// disposition it would die on the spot, and any workload descendant that
+	// double-forked would outlive the pane inside the boundary — populating
+	// the cgroup forever and blocking the session's next wake. Reap the whole
+	// boundary instead: the kill takes the gated workload with it, so the
+	// ordinary wait-and-remove path below still finishes the cleanup. SIGINT
+	// stays untouched — an interactive harness owns that keystroke.
+	teardown := make(chan os.Signal, 1)
+	signal.Notify(teardown, syscall.SIGHUP, syscall.SIGTERM)
+	defer signal.Stop(teardown)
+	go func() {
+		for range teardown {
+			_ = KillResourceCgroupMembers(cgroupDir)
+		}
+	}()
 	_ = gateRead.Close()
 	moveErr := os.WriteFile(filepath.Join(cgroupDir, "cgroup.procs"), []byte(strconv.Itoa(child.Process.Pid)), 0o644)
 	if moveErr == nil {
@@ -589,6 +612,12 @@ func runResourceLimitExec(cgroupDir, sessionID, command string, allowUnenforced 
 		if err := recordResourceLimitOOMForExec(sessionID); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: record resource-limit OOM outcome: %v\n", err)
 		}
+	}
+	// The workload is gone, but a descendant it double-forked may not be, and
+	// it can never leave the boundary. Reap it so the rmdir below succeeds and
+	// nothing keeps running against a session that has ended.
+	if err := KillResourceCgroupMembers(cgroupDir); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: reap resource cgroup %s: %v\n", cgroupDir, err)
 	}
 	if err := os.Remove(cgroupDir); err != nil && !errors.Is(err, os.ErrNotExist) {
 		fmt.Fprintf(os.Stderr, "Warning: remove empty resource cgroup %s: %v\n", cgroupDir, err)

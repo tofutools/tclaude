@@ -905,3 +905,27 @@ func TestKillResourceCgroupMembersReapsWithoutRemovingTheBoundary(t *testing.T) 
 	assert.True(t, *killed)
 	assert.DirExists(t, dir, "the durable boundary itself stays for the next relaunch")
 }
+
+func TestResourceLimitExecReapsSurvivingDescendantsBeforeRemovingTheBoundary(t *testing.T) {
+	oldRoot := resourceCgroupRoot
+	resourceCgroupRoot = t.TempDir()
+	t.Cleanup(func() { resourceCgroupRoot = oldRoot })
+	dir := filepath.Join(resourceCgroupRoot, "tclaude-stray-descendant")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	// A double-forked descendant keeps the boundary populated after the
+	// workload itself has exited.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "cgroup.events"),
+		[]byte("populated 1\nfrozen 0\n"), 0o644))
+	killed := fakeResourceCgroupKill(t, func(killDir string) error {
+		entries, readErr := os.ReadDir(killDir)
+		require.NoError(t, readErr)
+		for _, entry := range entries {
+			require.NoError(t, os.RemoveAll(filepath.Join(killDir, entry.Name())))
+		}
+		return nil
+	})
+
+	require.NoError(t, runResourceLimitExec(dir, "session-stray-descendant", "exit 0", false))
+	assert.True(t, *killed, "pane exit must reap what outlived the workload")
+	assert.NoDirExists(t, dir, "the emptied boundary is removed with the pane")
+}

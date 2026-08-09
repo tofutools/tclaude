@@ -723,9 +723,11 @@ func startOpenCodeProcess(
 		}
 		process.finish(err)
 		finishOpenCodeProcessExit(process, runtime.SessionID, cmd.Process.Pid, err, stderr)
-		if runtime.ResourceCgroupDir != "" {
-			_ = os.Remove(runtime.ResourceCgroupDir)
-		}
+		// The durable boundary dir is deliberately NOT removed here. Removing it
+		// raced relaunch reuse: stopOpenCodeProcess returns on process.done, which
+		// fires before this goroutine runs, so a restart could reuse the recorded
+		// dir just as this deleted it. An empty leftover dir costs nothing and the
+		// next PrepareResourceCgroup for the session reclaims it.
 	}()
 	runtime.PID = cmd.Process.Pid
 	if unixHandshake != nil {
