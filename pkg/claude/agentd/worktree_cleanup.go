@@ -331,9 +331,8 @@ func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 	//
 	// Liveness is the PID check the runtime manager itself uses. A row alone is
 	// not proof: rows outlive a crashed daemon, and an unconditional claim would
-	// pin the worktree forever. Claim under the runtime's own conv-id so an
-	// agent retiring itself still excludes its own server; a row with no conv-id
-	// falls back to a synthetic claimant and therefore fails closed.
+	// pin the worktree forever. A namespaced conv-id lets retirement identify
+	// and stop its own server without mistaking it for a peer claimant.
 	runtimes, err := db.ListOpenCodeRuntimes()
 	if err != nil {
 		return snap
@@ -346,7 +345,7 @@ func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 		if snap.dirClaims[dir] == nil {
 			snap.dirClaims[dir] = map[string]bool{}
 		}
-		snap.dirClaims[dir][openCodeRuntimeClaimant] = true
+		snap.dirClaims[dir][openCodeRuntimeClaimant(runtime.ConvID)] = true
 	}
 
 	// Live séances last, under a synthetic claimant no retirement can exclude.
@@ -362,33 +361,14 @@ func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 }
 
 // openCodeRuntimeClaimant is the claimant for a live managed OpenCode server.
-//
-// Deliberately NOT the runtime's conv-id, even though the row carries one. The
-// server is a daemon-owned process, not the agent's pane, so the rule that makes
-// self-exclusion safe elsewhere — "the target is stopped by the time we remove"
-// — does not hold for it: retiring the agent stops its pane and leaves the
-// server running. Claiming under the conv-id would let that agent's own
-// retirement exclude the claim and remove the directory its live server sits in,
-// which is the exact hazard this claim exists to stop. A non-conv id blocks
-// regardless of whose retirement is asking.
-//
-// The cost is a removal deferred, not denied: cleanup reports the worktree kept
-// with openCodeRuntimeSharedNote until the server actually stops (the reaper
-// takes it within a tick), and the operator can retry. Keeping a directory a
-// live process is in is the recoverable failure; removing it is not.
-//
-// Before reaching for a conv-scoped claim here, note that the two destructive
-// boundaries do not agree on exclusion, so one such claim produces OPPOSITE
-// failures from the same state. applyWorktreeCleanup's boundary re-read honours
-// no exclusion set and keeps on any claim — a conv-scoped runtime claim made
-// deleting a just-offline OpenCode agent keep its worktree and blame "shared
-// with another agent", a peer that does not exist, with no hint a retry would
-// work. retireWorktreeDrift skips claimant == convID — the same claim was
-// excluded there and removal ran with the agent's own live server in the
-// directory. The rationale ("its own retirement should exclude its own server")
-// held only on the path where it was unsafe. A claim that must hold regardless
-// of who is asking has to be un-excludable, not conv-scoped.
-const openCodeRuntimeClaimant = "opencode-runtime:live"
+// Its namespace is load-bearing: generic deletion never excludes the server,
+// while retirement may exclude only its target's server from the preview and
+// then stops that exact runtime after the pane exits, before removal.
+const openCodeRuntimeClaimantPrefix = "opencode-runtime:live:"
+
+func openCodeRuntimeClaimant(convID string) string {
+	return openCodeRuntimeClaimantPrefix + convID
+}
 
 // openCodeRuntimeSharedNote phrases that outcome. The generic "shared with
 // another agent" would send the operator hunting for a peer that does not exist
@@ -400,10 +380,10 @@ const openCodeRuntimeSharedNote = "a managed OpenCode server is still running in
 // operator cannot see in the dashboard and would otherwise go looking for.
 // current is the note chosen so far; claimant is another holder of the root.
 func strongerSharedNote(current, claimant string) string {
-	switch claimant {
-	case seanceClaimant:
+	switch {
+	case claimant == seanceClaimant:
 		return seanceSharedNote
-	case openCodeRuntimeClaimant:
+	case strings.HasPrefix(claimant, openCodeRuntimeClaimantPrefix):
 		if current == seanceSharedNote {
 			return current
 		}
@@ -517,7 +497,7 @@ func compareSessionLaunchRecency(candidate, current *db.SessionRow) int {
 // enable, its "delete worktree" checkbox. shared/removable are
 // computed against every OTHER agent, so a worktree another agent
 // still works in comes back removable=false.
-func dashboardAgentWorktree(w http.ResponseWriter, convSelector string) {
+func dashboardAgentWorktree(w http.ResponseWriter, r *http.Request, convSelector string) {
 	convID := convSelector
 	if res, _, err := agent.ResolveSelector(convSelector); err == nil {
 		convID = res.ConvID
@@ -525,7 +505,14 @@ func dashboardAgentWorktree(w http.ResponseWriter, convSelector string) {
 		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
 		return
 	}
-	wt := captureAgentWorktreeClaims().resolve(convID, map[string]bool{convID: true})
+	excluding := map[string]bool{convID: true}
+	if r.URL.Query().Get("retire") == "1" {
+		// Retirement with worktree cleanup also shuts down this agent's managed
+		// OpenCode server before removal. It is part of the target, not a peer
+		// sharing the worktree, so do not disable the retire option for it.
+		excluding[openCodeRuntimeClaimant(convID)] = true
+	}
+	wt := captureAgentWorktreeClaims().resolve(convID, excluding)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"kind":      wt.Kind,
 		"path":      wt.Path,
@@ -773,6 +760,11 @@ func scheduleRetireWorktreeCleanup(convID string, wt agentWorktreeView, shutdown
 	// (success or failure) rides back in the HTTP response and toast, so
 	// the inline path needs no separate human-message notice.
 	if pickAliveSession(convID) == nil {
+		if shutdownRequested {
+			if kept := stopRetiringOpenCodeRuntime(convID); kept != "" {
+				return retireWorktreePlan{Action: "kept", Detail: kept}
+			}
+		}
 		if drift := retireWorktreeDrift(convID, wt); drift != "" {
 			return retireWorktreePlan{Action: "kept", Detail: drift}
 		}
@@ -798,6 +790,12 @@ func scheduleRetireWorktreeCleanup(convID string, wt agentWorktreeView, shutdown
 	title := agent.FreshTitle(convID)
 	goBackground(func() {
 		if waitForConvOffline(convID, retireWorktreeExitGrace) {
+			if kept := stopRetiringOpenCodeRuntime(convID); kept != "" {
+				slog.Warn("retire: worktree kept — OpenCode runtime did not stop",
+					"conv", convID, "path", wt.Path, "detail", kept)
+				postRetireWorktreeNotice(title, "Retire worktree kept", kept)
+				return
+			}
 			// The pane has exited, but the world moved on while it did. The
 			// promise in the toast is only safe to keep if the identity that
 			// was confirmed still describes this directory.
@@ -823,6 +821,23 @@ func scheduleRetireWorktreeCleanup(convID string, wt agentWorktreeView, shutdown
 	})
 	return retireWorktreePlan{Action: "scheduled",
 		Detail: "worktree + branch will be removed after the agent exits"}
+}
+
+// stopRetiringOpenCodeRuntime releases the daemon-owned server belonging to an
+// OpenCode conversation. Callers invoke it only after the attached pane is
+// offline, so cleanup never pulls the control plane out from under a live agent.
+func stopRetiringOpenCodeRuntime(convID string) string {
+	runtime, err := db.GetOpenCodeRuntimeByConvID(convID)
+	if err != nil {
+		return "worktree kept — could not inspect the managed OpenCode server: " + err.Error()
+	}
+	if runtime == nil {
+		return ""
+	}
+	if err := stopOpenCodeRuntime(runtime.SessionID); err != nil {
+		return "worktree kept — could not stop the managed OpenCode server: " + err.Error()
+	}
+	return ""
 }
 
 // postRetireWorktreeNotice records a FAILED deferred retire worktree
@@ -852,5 +867,8 @@ func postRetireWorktreeNotice(agentTitle, subject, detail string) {
 // the handler can resolve it BEFORE issuing the shutdown that the
 // deferred removal then waits on.
 func resolveRetireWorktree(convID string) agentWorktreeView {
-	return captureAgentWorktreeClaims().resolve(convID, map[string]bool{convID: true})
+	return captureAgentWorktreeClaims().resolve(convID, map[string]bool{
+		convID:                          true,
+		openCodeRuntimeClaimant(convID): true,
+	})
 }

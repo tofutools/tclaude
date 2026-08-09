@@ -163,6 +163,12 @@ func syncOpenCodeConvIndex(sessions []openCodeSession) ([]convops.SessionEntry, 
 			if !row.ArchivedAt.IsZero() {
 				entry.ArchivedAt = row.ArchivedAt.UTC().Format(time.RFC3339)
 			}
+			// OpenCode's supported session-list API has no branch field. The
+			// managed event projector records the live branch out of band from
+			// the runtime cwd, so carry that enrichment through this cold-store
+			// refresh instead of replacing it with an empty value.
+			entry.GitBranch = row.GitBranch
+			entry.GitBranchStartup = row.GitBranchStartup
 		}
 		if err := db.UpsertConvIndex(openCodeEntryDBRow(entry)); err != nil {
 			if db.IsTimestampRepresentationError(err) {
@@ -202,20 +208,22 @@ func openCodeSessionEntry(session openCodeSession) convops.SessionEntry {
 
 func openCodeEntryDBRow(entry convops.SessionEntry) *db.ConvIndexRow {
 	return &db.ConvIndexRow{
-		ConvID:       entry.SessionID,
-		ProjectDir:   entry.ProjectPath,
-		FullPath:     entry.FullPath,
-		FileMtime:    entry.FileMtime,
-		FileSize:     entry.FileSize,
-		FirstPrompt:  entry.FirstPrompt,
-		Summary:      entry.Summary,
-		CustomTitle:  entry.CustomTitle,
-		MessageCount: entry.MessageCount,
-		Created:      entry.Created,
-		Modified:     entry.Modified,
-		ProjectPath:  entry.ProjectPath,
-		IndexedAt:    time.Now(),
-		Harness:      OpenCodeName,
+		ConvID:           entry.SessionID,
+		ProjectDir:       entry.ProjectPath,
+		FullPath:         entry.FullPath,
+		FileMtime:        entry.FileMtime,
+		FileSize:         entry.FileSize,
+		FirstPrompt:      entry.FirstPrompt,
+		Summary:          entry.Summary,
+		CustomTitle:      entry.CustomTitle,
+		MessageCount:     entry.MessageCount,
+		Created:          entry.Created,
+		Modified:         entry.Modified,
+		ProjectPath:      entry.ProjectPath,
+		GitBranch:        entry.GitBranch,
+		GitBranchStartup: entry.GitBranchStartup,
+		IndexedAt:        time.Now(),
+		Harness:          OpenCodeName,
 	}
 }
 

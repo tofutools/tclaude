@@ -1486,7 +1486,7 @@ function RetireAgentDialog({ descriptor, actions, confirmDiscard }) {
     const generation = ++probeGeneration.current;
     const controller = new AbortController();
     probeAbort.current = controller;
-    actions.loadAgentWorktree(descriptor.conv, { signal: controller.signal }).then(
+    actions.loadAgentWorktree(descriptor.conv, { signal: controller.signal, retire: true }).then(
       (next) => {
         if (!activeRef.current || controller.signal.aborted
           || generation !== probeGeneration.current || submittedRef.current) return;
