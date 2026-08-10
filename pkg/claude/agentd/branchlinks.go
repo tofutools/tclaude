@@ -410,6 +410,14 @@ func lookupBranchLinkFromCache(repoDir, branch, key string, row *db.GitCacheRow)
 // a second caller while one is already running is a no-op. Runs via
 // goBackground so flow tests can drain it with WaitForBackgroundForTest.
 func scheduleBranchLinkRefresh(repoDir, branch, key string) {
+	// The gate goes HERE, above the gitInfoResolver seam, not only down at the
+	// argv — so it holds for every resolver including a test fake, nothing
+	// hostile ever reaches a subprocess, and a junk branch name cannot mint a
+	// git_cache row. See safeBranchForGH for why this input is untrusted
+	// despite looking daemon-derived.
+	if !safeBranchForGH(repoDir, branch) {
+		return
+	}
 	if _, busy := branchLinkInflight.LoadOrStore(key, struct{}{}); busy {
 		return
 	}
@@ -609,7 +617,10 @@ func gitDefaultBranch(dir string) string {
 // branchLinkTTL, and asking for one more JSON field is free next to a
 // second network round-trip per PR.
 func ghPRForBranch(dir, branch string) (number int, url, state string, checks *prChecksInfo) {
-	out := runInDir(dir, "gh", "pr", "view", branch, "--json", "number,url,state,statusCheckRollup")
+	if !safeBranchForGH(dir, branch) {
+		return 0, "", "", nil
+	}
+	out := runInDir(dir, "gh", ghPRListArgs(branch, true)...)
 	if out == "" {
 		// The CI rollup is an enhancement; the PR link is not. A `gh` that
 		// rejects the field (old version, or a host that doesn't serve it)
@@ -617,17 +628,90 @@ func ghPRForBranch(dir, branch string) (number int, url, state string, checks *p
 		// retry once for the fields that predate this feature.
 		return ghPRForBranchWithoutChecks(dir, branch)
 	}
-	var pr struct {
+	var prs []struct {
 		Number            int             `json:"number"`
 		URL               string          `json:"url"`
 		State             string          `json:"state"`
+		IsCrossRepository bool            `json:"isCrossRepository"`
 		StatusCheckRollup json.RawMessage `json:"statusCheckRollup"`
 	}
-	if json.Unmarshal([]byte(out), &pr) != nil {
+	if json.Unmarshal([]byte(out), &prs) != nil {
 		return 0, "", "", nil
 	}
-	resolved := parseStatusCheckRollup(pr.StatusCheckRollup, time.Now())
-	return pr.Number, pr.URL, strings.ToLower(pr.State), &resolved
+	pick := -1
+	for i := range prs {
+		if prs[i].IsCrossRepository {
+			continue
+		}
+		if strings.EqualFold(prs[i].State, "open") {
+			pick = i
+			break
+		}
+		if pick < 0 {
+			pick = i
+		}
+	}
+	if pick < 0 {
+		return 0, "", "", nil
+	}
+	resolved := parseStatusCheckRollup(prs[pick].StatusCheckRollup, time.Now())
+	return prs[pick].Number, prs[pick].URL, strings.ToLower(prs[pick].State), &resolved
+}
+
+// ghPRListArgs builds the argv for a branch's pull-request lookup.
+//
+// `pr list --head <branch>`, NEVER `pr view <branch>`, and the difference is a
+// security boundary rather than a preference. `gh pr view` accepts
+// `<number> | <url> | <branch>` in one positional slot, so the branch string —
+// which is agent-controlled, see safeBranchForGH — could select a pull request
+// by id or, via a URL, RE-AIM THE CALL AT ANOTHER REPOSITORY, spending the
+// operator's credential on a repo they never authorized. `--head` has no such
+// overloading: it is a branch filter, so the worst a strange value can do is
+// match nothing.
+//
+// Extracted so a test can pin exactly that: the branch must always appear as
+// the VALUE of --head and never as a bare positional.
+func ghPRListArgs(branch string, withChecks bool) []string {
+	fields := "number,url,state,isCrossRepository"
+	if withChecks {
+		fields += ",statusCheckRollup"
+	}
+	return []string{"pr", "list", "--head", branch, "--state", "all", "--limit", "10", "--json", fields}
+}
+
+// safeBranchForGH is the gate in front of every `gh` call this file makes, and
+// it is a SECURITY boundary rather than hygiene.
+//
+// `branch` looks daemon-derived and is not. It arrives from
+// agent.ResolveLocation, which reads it from `agent_workspace` — a row the
+// agent's own status line writes verbatim through the ungated statusline
+// broker — or from `conv_index.git_branch`, which is a free-form string lifted
+// out of the transcript. Both are agent-controlled, so anything this hands to
+// `gh` is attacker-chosen text.
+//
+// That matters because `gh pr view` accepts `<number> | <url> | <branch>`: a
+// URL argument re-aims it at ANOTHER REPOSITORY and a bare number selects a
+// pull request by id, which turned a branch string into a read of any pull
+// request the operator's token can reach. Two changes close it, and both are
+// needed:
+//
+//   - the caller above asks `gh pr list --head <branch>`, which has no
+//     number-or-URL selector semantics to out-guess — `--head` is a branch
+//     filter and nothing else;
+//   - this gate, because a value beginning with `-` would still be read as a
+//     flag in that position, and because refusing control characters,
+//     whitespace, `..` and `HEAD` costs nothing and keeps the argv boring.
+//
+// validateBranchName is the same gate the git and github proxies put in front
+// of every ref they accept; sharing it is deliberate, so a rule added there is
+// not silently missing here.
+func safeBranchForGH(dir, branch string) bool {
+	if fault := validateBranchName(branch); fault != nil {
+		slog.Debug("branchlinks: refusing a branch name that could re-aim gh",
+			"repo", dir, "module", "agentd")
+		return false
+	}
+	return true
 }
 
 // ghPRForBranchWithoutChecks is ghPRForBranch's fallback: the pre-CI-badge
@@ -635,21 +719,41 @@ func ghPRForBranch(dir, branch string) (number int, url, state string, checks *p
 // where a real "no PR here" answer is indistinguishable from a broken `gh`
 // — so a failure here stays silent exactly as it did before.
 func ghPRForBranchWithoutChecks(dir, branch string) (int, string, string, *prChecksInfo) {
-	out := runInDir(dir, "gh", "pr", "view", branch, "--json", "number,url,state")
+	if !safeBranchForGH(dir, branch) {
+		return 0, "", "", nil
+	}
+	out := runInDir(dir, "gh", ghPRListArgs(branch, false)...)
 	if out == "" {
 		return 0, "", "", nil
 	}
-	var pr struct {
-		Number int    `json:"number"`
-		URL    string `json:"url"`
-		State  string `json:"state"`
+	var prs []struct {
+		Number            int    `json:"number"`
+		URL               string `json:"url"`
+		State             string `json:"state"`
+		IsCrossRepository bool   `json:"isCrossRepository"`
 	}
-	if json.Unmarshal([]byte(out), &pr) != nil {
+	if json.Unmarshal([]byte(out), &prs) != nil {
+		return 0, "", "", nil
+	}
+	pick := -1
+	for i := range prs {
+		if prs[i].IsCrossRepository {
+			continue
+		}
+		if strings.EqualFold(prs[i].State, "open") {
+			pick = i
+			break
+		}
+		if pick < 0 {
+			pick = i
+		}
+	}
+	if pick < 0 {
 		return 0, "", "", nil
 	}
 	slog.Debug("branchlinks: resolved PR without the CI rollup",
-		"repo", dir, "branch", branch, "pr", pr.Number, "module", "agentd")
-	return pr.Number, pr.URL, strings.ToLower(pr.State), nil
+		"repo", dir, "pr", prs[pick].Number, "module", "agentd")
+	return prs[pick].Number, prs[pick].URL, strings.ToLower(prs[pick].State), nil
 }
 
 // repoHTTPSFromRemote normalises a git remote URL to its GitHub web

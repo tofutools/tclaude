@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -84,31 +85,29 @@ func TestStatuslineBranchPRResolvesWithoutADashboard(t *testing.T) {
 // TestStatuslineBranchPRRefusesABranchThatCouldNameARepository is the property
 // that lets this route carry no permission slug and write no audit row.
 //
-// The branch reaches `gh pr view`'s argv (branchlinks.go, ghPRForBranch), and
-// `gh pr view` accepts `<number> | <url> | <branch>`: a URL argument re-aims it
-// at ANOTHER REPOSITORY, and a bare number selects a pull request by id. On an
-// ungated, unaudited route, a caller-supplied value in that position would let
-// any confirmed agent read any pull request the operator's token can reach —
-// the first ask schedules `gh pr view https://github.com/victim/private/pull/1`
-// with the operator's credential, the second returns it from cache.
+// The branch reaches `gh`'s argv (branchlinks.go, ghPRForBranch). `gh pr view`
+// — which that used to call — accepts `<number> | <url> | <branch>`, so a URL
+// argument re-aims it at ANOTHER REPOSITORY and a bare number selects a pull
+// request by id: an unaudited, ungated read of any pull request the operator's
+// token can reach.
 //
-// The defence is not a sanitiser but the absence of the sink: the caller's
-// branch is compared against the daemon's own resolved branch and then
-// discarded, so nothing it sends is ever passed on. These cases would each
-// survive a plausible charset gate — the scheme-less URL and the bare `1` are
-// both legal git ref names — which is why out-guessing another tool's argument
-// parser was the wrong shape of fix.
+// THE BRANCH IS AGENT-CONTROLLED, which is the part that is easy to get wrong.
+// It looks daemon-derived — the handler passes `loc.Branch`, not the query
+// parameter — but ResolveLocation reads that out of `agent_workspace`, a row
+// the agent's own status line writes verbatim through the ungated statusline
+// broker. So the equality check against the caller's parameter is no gate at
+// all: an attacker supplies both sides. This test therefore writes the hostile
+// value the way an agent would, through db.UpsertAgentWorkspace, rather than
+// only passing it in the query string.
 //
-// The resolver must never see any of them: a refusal that still reached `gh`
-// would spend the credential regardless of what this endpoint returned.
+// The defence is at the sink: `gh pr list --head`, which has no
+// number-or-URL selector semantics, behind validateBranchName for the shapes
+// that would still be read as flags.
 func TestStatuslineBranchPRRefusesABranchThatCouldNameARepository(t *testing.T) {
 	setupTestDB(t)
 	const convID = "statusline-branchpr-0005"
 	_, _, err := db.EnsureAgentForConv(convID, "test")
 	require.NoError(t, err)
-	require.NoError(t, db.UpsertAgentWorkspace(db.AgentWorkspace{
-		ConvID: convID, Cwd: "/repo", Branch: "feature",
-	}))
 
 	var seen []string
 	defer SetGitInfoResolverForTest(
@@ -118,25 +117,86 @@ func TestStatuslineBranchPRRefusesABranchThatCouldNameARepository(t *testing.T) 
 		})()
 
 	for _, branch := range []string{
-		"https://github.com/victim/private/pull/1", // a URL re-aims gh at another repo
-		"github.com/victim/private/pull/1",
-		"--repo=victim/private",
+		"https://github.com/victim/private/pull/1", // a URL would re-aim a selector-style gh call
+		"--repo=victim/private",                    // reads as a flag in any argv position
 		"-R victim/private",
-		"1", // a bare number is a PR selector, not a branch
 		"feature branch",
 		"feat/../../etc",
 		"HEAD",
-		"",
-		"   ",
 	} {
 		t.Run(branch, func(t *testing.T) {
+			// The write an agent can perform on itself, unvalidated, through
+			// POST /v1/whoami/statusline. This is what makes loc.Branch
+			// attacker-chosen.
+			require.NoError(t, db.UpsertAgentWorkspace(db.AgentWorkspace{
+				ConvID: convID, Cwd: "/repo", Branch: branch,
+			}))
 			out := askBranchPR(t, url.QueryEscape(branch), convID)
-			assert.Empty(t, out.PRURL, "a branch that is not this agent's own must yield nothing")
+			assert.Empty(t, out.PRURL, "a branch that could name a repository must yield nothing")
 		})
 	}
 
 	WaitForBackgroundForTest()
-	assert.Empty(t, seen, "no refused branch may reach git or gh")
+	assert.Empty(t, seen, "no such branch may reach git or gh, whichever way it was planted")
+}
+
+// TestGHPRListArgsCannotNameARepository is the other half, and the one that
+// covers what no charset gate can.
+//
+// `github.com/victim/private/pull/1` and a bare `1` are LEGAL git ref names, so
+// validateBranchName admits them and should: refusing every legal branch that
+// resembles a URL would be guesswork. What makes them harmless is the argv
+// shape — `pr list --head <branch>` filters by branch, while the `pr view
+// <branch>` this replaced would have read them as a repository URL and a pull
+// request id. This pins that shape, because reverting it silently restores the
+// leak for exactly the inputs the charset gate lets through.
+func TestGHPRListArgsCannotNameARepository(t *testing.T) {
+	for _, branch := range []string{
+		"github.com/victim/private/pull/1",
+		"1",
+		"feature",
+	} {
+		t.Run(branch, func(t *testing.T) {
+			for _, withChecks := range []bool{true, false} {
+				args := ghPRListArgs(branch, withChecks)
+				require.Greater(t, len(args), 2)
+				assert.Equal(t, []string{"pr", "list"}, args[:2],
+					"never `pr view`, whose positional accepts a number or a URL")
+
+				at := slices.Index(args, branch)
+				require.Positive(t, at, "the branch must appear in the argv")
+				assert.Equal(t, "--head", args[at-1],
+					"the branch may only ever be the VALUE of --head, never a bare selector")
+			}
+		})
+	}
+}
+
+// TestGHPRForBranchRefusesToLetABranchNameARepository pins the gate at the
+// SINK, where the value actually becomes argv — one layer below the endpoint
+// above, and shared with the dashboard's own branch-link resolution, which
+// reads the same agent-written `agent_workspace` row.
+func TestGHPRForBranchRefusesToLetABranchNameARepository(t *testing.T) {
+	for _, branch := range []string{
+		"https://github.com/victim/private/pull/1",
+		"-R victim/private",
+		"--repo=victim/private",
+		"feature branch",
+		"feat/../../etc",
+		"HEAD",
+		"",
+	} {
+		t.Run(branch, func(t *testing.T) {
+			assert.False(t, safeBranchForGH("/repo", branch),
+				"this shape must never be handed to gh")
+		})
+	}
+	for _, branch := range []string{"feature", "feat/thing", "release/1.2"} {
+		t.Run("allows "+branch, func(t *testing.T) {
+			assert.True(t, safeBranchForGH("/repo", branch),
+				"an ordinary branch name must still resolve")
+		})
+	}
 }
 
 // TestStatuslineBranchPRTakesNoDirectoryFromTheCaller pins the property that

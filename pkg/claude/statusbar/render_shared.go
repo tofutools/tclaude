@@ -195,8 +195,15 @@ func applyRenderWrites(w renderWrites) (ok bool) {
 			// published git/PR snapshot. A render may reuse the 15-second git
 			// cache, so retain its actual fetch time instead of making stale PR
 			// state look newer merely because the statusline rendered again.
-			if !w.Git.FetchedAt.IsZero() {
-				ws.UpdatedAt = w.Git.FetchedAt
+			//
+			// Never a FUTURE one, though. Under brokering this whole struct is
+			// JSON the caller sent, and this field decides which observation
+			// wins in agentd's reconcilePRSlot and which source ResolveLocation
+			// believes — so a stamp far enough ahead would pin the caller's own
+			// values in place permanently. Clamping to now costs an honest
+			// render nothing: its snapshot was gathered in the past.
+			if at := w.Git.FetchedAt; !at.IsZero() && !at.After(ws.UpdatedAt) {
+				ws.UpdatedAt = at
 			}
 		}
 		if err := db.UpsertAgentWorkspace(ws); err != nil {

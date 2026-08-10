@@ -158,9 +158,30 @@ func repoSlug(rawURL string) string {
 	if _, after, ok := strings.Cut(s, "@"); ok {
 		s = after
 	}
+	// The scp-like form `host:owner/repo` has no scheme and separates the host
+	// with a colon. Rewriting it to a slash here is what lets a repository
+	// cloned that way — every non-github.com host, since getRepoHTTPS rewrites
+	// only `git@github.com:` — be recognised as its own rather than falling
+	// through as unparseable, which would switch the guard off entirely.
+	if host, rest, ok := strings.Cut(s, ":"); ok {
+		// `host:22/owner/repo` is a PORT, not a path; drop it. Distinguished
+		// from the scp form by what follows: digits then a slash.
+		if port, tail, isPort := strings.Cut(rest, "/"); isPort && isAllDigits(port) {
+			s = host + "/" + tail
+		} else {
+			s = host + "/" + rest
+		}
+	}
 	segs := strings.Split(strings.Trim(s, "/"), "/")
 	if len(segs) < 3 || segs[0] == "" || segs[1] == "" || segs[2] == "" {
 		return ""
 	}
 	return segs[0] + "/" + segs[1] + "/" + strings.TrimSuffix(segs[2], ".git")
+}
+
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	return strings.IndexFunc(s, func(r rune) bool { return r < '0' || r > '9' }) < 0
 }

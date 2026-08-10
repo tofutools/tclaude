@@ -143,12 +143,16 @@ func TestDropForeignRepoPRKeepsTheBarHonest(t *testing.T) {
 		"ssh://git@github.com/o/a",
 		"ssh://git@github.com/o/a.git",
 		"http://github.com/o/a",
-		"https://github.com/ToFuTools/A", /* GitHub's casing differs from the clone's */
+		"ssh://git@github.com:22/o/r.git", // an explicit port is not a path segment
+		"https://github.com/ToFuTools/A",  /* GitHub's casing differs from the clone's */
 	} {
 		t.Run(repoURL, func(t *testing.T) {
 			own := &GitSnapshot{RepoURL: repoURL, PRNumber: 7,
 				PRURL: "https://github.com/tofutools/a/pull/7"}
-			if !strings.Contains(strings.ToLower(repoURL), "tofutools") {
+			switch {
+			case strings.Contains(repoURL, "/o/r"):
+				own.PRURL = "https://github.com/o/r/pull/7"
+			case !strings.Contains(strings.ToLower(repoURL), "tofutools"):
 				own.PRURL = "https://github.com/o/a/pull/7"
 			}
 			dropForeignRepoPR(own)
@@ -163,4 +167,21 @@ func TestDropForeignRepoPRKeepsTheBarHonest(t *testing.T) {
 	}
 	dropForeignRepoPR(unparseable)
 	assert.Equal(t, 7, unparseable.PRNumber)
+
+	// The scp-like form is what every non-github.com host arrives as —
+	// getRepoHTTPS rewrites only `git@github.com:` — so failing to parse it
+	// would switch the guard off entirely for those panes, which is when it
+	// most needs to be on: the daemon's recorded dir may be a DIFFERENT repo
+	// on a same-named branch.
+	scpForeign := &GitSnapshot{
+		RepoURL: "git@github.corp.com:o/a", PRURL: "https://github.com/other/repo/pull/7", PRNumber: 7,
+	}
+	dropForeignRepoPR(scpForeign)
+	assert.Zero(t, scpForeign.PRNumber, "a scp-like remote must still be compared, not waved through")
+
+	scpOwn := &GitSnapshot{
+		RepoURL: "git@gitlab.com:o/a", PRURL: "https://gitlab.com/o/a/pull/7", PRNumber: 7,
+	}
+	dropForeignRepoPR(scpOwn)
+	assert.Equal(t, 7, scpOwn.PRNumber, "and its own PR must survive")
 }
