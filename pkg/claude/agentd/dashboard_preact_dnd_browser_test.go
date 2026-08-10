@@ -302,7 +302,15 @@ return (async function(){
   var rect = target.getBoundingClientRect();
   fire(target, 'dragover', {metaKey:true, clientX:rect.left + rect.width / 2, clientY:rect.top + rect.height / 2});
   if (!target.classList.contains('group-drop-clone')) throw new Error('Cmd dragover did not paint clone intent');
-  fire(target, 'drop', {clientX:rect.left + rect.width / 2, clientY:rect.top + rect.height / 2});
+  // Prove dropEffect itself is sufficient. This simulates reconciliation or a
+  // final platform event clearing the CSS/modifier fallbacks before drop.
+  target.classList.remove('group-drop-clone');
+  var drop = new DragEvent('drop', {bubbles:true, cancelable:true, dataTransfer:transfer,
+    clientX:rect.left + rect.width / 2, clientY:rect.top + rect.height / 2});
+  Object.defineProperty(drop, 'dataTransfer', {value:{
+    dropEffect:'copy', types:['application/x-tclaude-group']
+  }});
+  target.dispatchEvent(drop);
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
   if (!document.querySelector('#group-clone-modal.show')) throw new Error('modifier-less drop did not preserve clone intent');
   document.querySelector('#group-clone-cancel').click();

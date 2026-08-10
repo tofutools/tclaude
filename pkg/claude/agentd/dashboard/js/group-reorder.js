@@ -89,6 +89,16 @@ function groupTrashTarget(e) {
   return e.target.closest('#dnd-trash');
 }
 
+// isCloneDrop follows the native DnD operation first. Browsers preserve the
+// last accepted dragover effect for drop even when the platform stops exposing
+// the modifier key that selected it. The DOM marker and raw Ctrl/Cmd state
+// remain fallbacks for synthetic events and incomplete DataTransfer objects.
+function isCloneDrop(e, details) {
+  return e.dataTransfer?.dropEffect === 'copy'
+    || details?.classList.contains('group-drop-clone')
+    || !!(e.ctrlKey || e.metaKey);
+}
+
 // clearDropMarkers strips the insertion-line + nest-target classes from every
 // group.
 function clearDropMarkers() {
@@ -433,12 +443,7 @@ function bindGroupReorder() {
     const dragName = groupDragName;
     const targetName = details.getAttribute('data-group-key');
     const zone = dropZone(e, details);
-    // Chrome on macOS can report metaKey during dragover (where we paint the
-    // green clone intent) but clear it on the terminal drop event. Preserve
-    // the operation the user was actually shown; the marker is refreshed on
-    // every dragover and cleared whenever the gesture ceases to be a clone.
-    const clone = details.classList.contains('group-drop-clone')
-      || !!(e.ctrlKey || e.metaKey);
+    const clone = isCloneDrop(e, details);
     const byName = snapshotGroupsByName();
     const clonePlan = clone && byName
       ? resolveCloneDrop(dragName, targetName, zone, byName)
