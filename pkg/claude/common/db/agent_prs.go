@@ -10,7 +10,7 @@ import (
 // AgentPR is one explicitly presented pull request. The agent_id is the stable
 // actor key; (agent_id, PRURL) is unique so one agent can refresh its own PR
 // badge while another agent may present the same PR independently. State is
-// intentionally loose: callers currently use "", "open", "merged", "closed",
+// intentionally loose: callers currently use "", "open", "draft", "merged",
 // or "handled".
 type AgentPR struct {
 	ID        int64
