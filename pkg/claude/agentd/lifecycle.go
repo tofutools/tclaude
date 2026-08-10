@@ -6880,13 +6880,17 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// needs a human at it. Fired at most once; best-effort, a failure to pop
 	// a window is logged, never bubbled.
 	focused := false
+	var tmuxSession string
 	// focusMode records what focusSpawn actually did, for the three
 	// spawnOutcome literals below to report back to the caller — see
 	// spawnOutcome.FocusMode. Left "" when AutoFocus is off or the pane
 	// never came up within the poll, so focusSpawn never ran.
 	focusMode := ""
 	focusSpawn := func() {
-		if !p.AutoFocus || focused {
+		// A persisted tmux name is launch intent, not readiness: session new
+		// writes it before creating the pane. Every caller must first have
+		// observed that live pane and assigned tmuxSession.
+		if !p.AutoFocus || focused || tmuxSession == "" {
 			return
 		}
 		focused = true
@@ -6947,7 +6951,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		pollBudget = codexAsyncSpawnResponseGrace
 	}
 	deadline := launchedAt.Add(pollBudget)
-	var convID, tmuxSession string
+	var convID string
 	var lastDiscoveryScan time.Time
 	remoteArmed := false
 	pendingLaunchMarked := false
@@ -6970,10 +6974,58 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 					pendingLaunchMarked = true
 				}
 			}
-			tmuxSession = s.TmuxSession
-			if tmuxSession != "" {
-				focusSpawn() // pane is up — open it now, conv-id or not
+			// The session row is written before launchDetachedTmuxSession creates
+			// the tmux pane. In particular, a launch-enrolled Claude row already
+			// carries both its preset conv-id and tmux name at that point. Treating
+			// either field as pane readiness lets a fast terminal (observed with
+			// Ghostty on macOS) win the gap: `session attach` sees no tmux session,
+			// marks the row exited, and closes before the pane comes up.
+			//
+			// Publish/focus only after tmux itself proves the pane is alive. Keep
+			// polling otherwise; the child may still be between its row write and
+			// `tmux new-session`.
+			if s.TmuxSession == "" || !session.IsTmuxSessionAlive(s.TmuxSession) {
+				// A retained dead pane is definitive startup-failure evidence. Its
+				// callback also copies the bounded error tail into the Logs tab before
+				// cleanup; fail the spawn response instead of enrolling an offline
+				// actor and opening an attach command that can only close.
+				if s.TmuxSession != "" {
+					if evidence, inspectErr := session.InspectDeadTmuxSessionPane(s.TmuxSession); inspectErr == nil {
+						detail := "unknown exit status"
+						switch {
+						case evidence.Signal != "":
+							detail = "signal " + evidence.Signal
+						case evidence.ExitCode != nil:
+							detail = "exit code " + strconv.Itoa(*evidence.ExitCode)
+						}
+						return launchFailed(fmt.Errorf("managed pane exited during startup (%s); see the Logs tab for its output", detail))
+					}
+				}
+				// The authenticated pane callback records before cleaning the
+				// retained corpse. If it won that race, the exact launch-scoped audit
+				// row is now the durable failure evidence.
+				if exits, auditErr := db.ListAuditLog(db.AuditLogFilter{
+					Verb: db.AuditVerbAgentExit, SessionID: label, Limit: 1,
+				}); auditErr == nil && len(exits) == 1 {
+					detail := "unknown exit status"
+					switch {
+					case exits[0].Signal != "":
+						detail = "signal " + exits[0].Signal
+					case exits[0].ExitCode != nil:
+						detail = "exit code " + strconv.Itoa(*exits[0].ExitCode)
+					}
+					return launchFailed(fmt.Errorf("managed pane exited during startup (%s); see the Logs tab for its output", detail))
+				}
+				// The authenticated pane callback may already have recorded and
+				// cleaned the corpse before this poll observed it.
+				if s.Status == session.StatusExited {
+					return launchFailed(errors.New("managed pane exited during startup; see the Logs tab for its output"))
+				}
+				sleepSpawnPoll(deadline)
+				continue
 			}
+			tmuxSession = s.TmuxSession
+			focusSpawn() // pane is up — open it now, conv-id or not
 			// Arm best-known remote-control on the row the moment it
 			// materialises (JOH-258). The --remote-control launch flag already
 			// turned CC's Remote Access on; this records tclaude's best-known
@@ -7051,6 +7103,15 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		// mask a subsequent authoritative rename until another filesystem refresh.
 		if spawnHarness.Name == harness.CopilotName && spawnArgs.Name != "" {
 			cacheDeliveredTitle(preConvID, spawnArgs.Name, spawnHarness.Name)
+		}
+		// The row may have landed just after the last poll iteration. Preserve
+		// the final best-effort focus, but apply the same tmux-readiness proof as
+		// the loop above; a late row alone is still not a pane.
+		if tmuxSession == "" {
+			if s, err := db.LoadSession(label); err == nil && s != nil &&
+				s.TmuxSession != "" && session.IsTmuxSessionAlive(s.TmuxSession) {
+				tmuxSession = s.TmuxSession
+			}
 		}
 		focusSpawn()
 		markBriefingConsumed(preConvID, preMsgID, briefingInlined)

@@ -4,8 +4,10 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 )
 
@@ -40,6 +42,34 @@ func TestSpawn_AutoFocusOpensAttachTerminal(t *testing.T) {
 	assert.Equal(t, "native", spawn.FocusMode,
 		"a successful native open should report focus_mode:native")
 	assert.Empty(t, spawn.FocusWS, "no browser fallback when the native open succeeded")
+}
+
+// Scenario: session new has written the launch-enrolled row (including its
+// preset conv-id and tmux name), but the harness exits as soon as tmux starts.
+// The simulator retains the dead pane with its exit evidence.
+//
+// Expected: the row alone must never trigger auto-focus or a successful spawn.
+// A fast terminal would otherwise run `session attach` against the dead/not-yet
+// live name and close — the macOS/Ghostty symptom this test guards.
+func TestSpawn_DeadPaneFailsBeforeAutoFocus(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	f.World.SpawnPaneDiesAtLaunch = true
+	t.Cleanup(agentd.SetAsyncSpawnInlineGraceForTest(50 * time.Millisecond))
+
+	opened := false
+	t.Cleanup(agentd.SetOpenTerminalForTest(func(string) error {
+		opened = true
+		return nil
+	}))
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+		"name": "worker", "auto_focus": true,
+	})
+	require.Equalf(t, http.StatusInternalServerError, spawn.Code, "spawn body=%s", spawn.Raw)
+	assert.Contains(t, string(spawn.Raw), "managed pane exited during startup")
+	assert.False(t, opened, "a session row without a live pane must not be auto-focused")
+	assert.Empty(t, spawn.FocusMode, "no attach mode was actually opened")
 }
 
 // Scenario: a human spawns with "auto focus" checked, but the host has

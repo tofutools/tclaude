@@ -143,10 +143,11 @@ const (
 // CountAuditLog. Zero-valued fields are ignored.
 type AuditLogFilter struct {
 	// Filters (all ANDed).
-	Verb    string // exact-match on verb
-	Source  string // exact-match on source
-	Outcome string // "" all; "success" status<400; "failure" status>=400
-	Search  string // case-insensitive substring across the symbolic + id columns
+	Verb      string // exact-match on verb
+	Source    string // exact-match on source
+	SessionID string // exact-match on managed session id
+	Outcome   string // "" all; "success" status<400; "failure" status>=400
+	Search    string // case-insensitive substring across the symbolic + id columns
 
 	// Sort.
 	SortBy string // AuditSort*; "" → AuditSortTime
@@ -175,6 +176,10 @@ func auditWhere(f AuditLogFilter) (string, []any) {
 	if f.Source != "" {
 		where = append(where, "source = ?")
 		args = append(args, f.Source)
+	}
+	if f.SessionID != "" {
+		where = append(where, "session_id = ?")
+		args = append(args, f.SessionID)
 	}
 	switch f.Outcome {
 	case "success":

@@ -32,10 +32,10 @@ type World struct {
 	SkipSpawnRow bool
 
 	// SpawnPaneDiesAtLaunch, when true, is the inverse of SkipSpawnRow: the CC
-	// simSpawner writes the SessionRow (and records the launch args) but never
-	// registers a tmux pane, modelling a launch whose harness exits immediately
-	// — expired auth, a broken `claude` install, a failing MCP server — so the
-	// pane it was launched into closes with it.
+	// simSpawner writes the SessionRow (and records the launch args) and retains
+	// a dead tmux pane, modelling a launch whose harness exits immediately —
+	// expired auth, a broken `claude` install, a failing MCP server. The retained
+	// pane carries the exit evidence production's remain-on-exit hook exposes.
 	//
 	// Production writes the session row BEFORE creating the tmux session and,
 	// on the launch-enrollment path, that row is born carrying the preset
