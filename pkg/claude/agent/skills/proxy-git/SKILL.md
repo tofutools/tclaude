@@ -78,7 +78,7 @@ tclaude proxy github pr ready 42
 tclaude proxy github issue comment 7 --body-file note.md
 
 # Merging — needs `proxy.github.merge`, which `proxy.github.write` does NOT confer
-tclaude proxy github pr merge 42 [--method merge|squash|rebase] [--subject "…"]
+tclaude proxy github pr merge 42 [--method merge|squash|rebase] [--subject "…"] [--body-file msg.md]
 ```
 
 Use `--body-file` (or `--body-file -` for stdin) for anything multi-line. It

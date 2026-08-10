@@ -547,8 +547,9 @@ type ghPRMerged struct {
 // operator's account, and a merge that those rules refuse is refused here too,
 // in GitHub's own words. The operator's agent.git_proxy.protected_refs list is
 // a different matter and deliberately does not apply: it bounds direct PUSHES,
-// its defaults (main, master) are precisely the branches pull requests target,
-// and consulting it here would make every merge grant a no-op.
+// and a pull request may target any branch — including, ordinarily, one of the
+// defaults (main, master), which is what would make consulting it here a no-op
+// for most of the merges a grant is given for.
 //
 // Two calls under one budget, like `pr ready`: the state is read first because
 // GitHub answers "already merged", "closed", "still a draft" and "conflicting"

@@ -311,11 +311,11 @@ those rules refuse is refused here, in GitHub's own words — the grant does not
 bypass any of it.
 
 **`agent.git_proxy.protected_refs` does not apply.** That list bounds direct
-*pushes*, and its defaults (`main`, `master`) are exactly the branches pull
-requests target, so honouring it here would make every merge grant a no-op.
-The forge's own protection rules are the mechanism for "this branch is not
-merged into casually"; the grant is the mechanism for "this agent does not
-merge".
+*pushes*. A pull request may target any branch, but ordinarily it targets one
+of that list's defaults (`main`, `master`) — so honouring it here would be a
+no-op for most of the merges a grant is given for. The forge's own protection
+rules are the mechanism for "this branch is not merged into casually"; the
+grant is the mechanism for "this agent does not merge".
 
 Before merging, the proxy reads the pull request's state, because GitHub
 reports four quite different situations as the same `405 Pull Request is not
