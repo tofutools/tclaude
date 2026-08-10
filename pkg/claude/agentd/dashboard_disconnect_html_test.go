@@ -55,11 +55,11 @@ func TestDashboardHTML_DisconnectBanner(t *testing.T) {
 	must("state.connection.value.status === 'disconnected'", "the Preact shell subscribes to connection state")
 	must(`id="shell-disconnect-root"`, "the shell has an explicit disconnect host")
 	must(`id="disconnect-overlay"`, "the banner overlay ships in the HTML")
-	must("disconnect-overlay${disconnected ? ' show' : ''}", "Preact derives the show class from connection state")
+	must("if (!disconnected) return null;", "Preact unmounts the compositor-heavy overlay on reconnect")
+	must(`class="disconnect-overlay show"`, "the mounted disconnect overlay is visible")
 	must("Disconnected from agentd", "the banner states the problem")
 	must(`id="disconnect-status"`, "the alert status line ships")
-	must("${disconnected ? 'Reconnecting…' : ''}",
-		"the Preact alert status announces only while disconnected")
+	must(">Reconnecting…</p>", "the mounted Preact alert announces its reconnect status")
 	if strings.Contains(dashboardAssets, "getElementById('disconnect-overlay')") ||
 		strings.Contains(dashboardAssets, "getElementById('disconnect-status')") {
 		t.Error("connection watchdog must publish Signal state, not imperatively rewrite Preact-owned disconnect DOM")

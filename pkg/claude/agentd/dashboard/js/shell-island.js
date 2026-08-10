@@ -152,13 +152,21 @@ function FooterMeta({ state }) {
 
 function Disconnect({ state }) {
   const disconnected = state.connection.value.status === 'disconnected';
+  // Do not leave the full-viewport backdrop-filter subtree mounted after a
+  // reconnect. Chromium can retain the activated backdrop/animation
+  // compositor layers after an ancestor flips back to display:none; moving a
+  // transform underneath them (notably #dnd-pill during a native drag) then
+  // falls into a visibly throttled repaint path until the page is reloaded.
+  // Removing the subtree on the connected edge makes the browser tear those
+  // layers down deterministically.
+  if (!disconnected) return null;
   return html`
-    <div class=${`disconnect-overlay${disconnected ? ' show' : ''}`} id="disconnect-overlay">
+    <div class="disconnect-overlay show" id="disconnect-overlay">
       <div class="disconnect-card" role="alert" aria-live="assertive">
         <div class="disconnect-icon" aria-hidden="true">⚠️</div>
         <h2 class="disconnect-title" id="disconnect-title">Disconnected from agentd</h2>
         <p class="disconnect-body">The dashboard can’t reach the tclaude agentd daemon. Everything below may be stale, and the music has been stopped.</p>
-        <p class="disconnect-status" id="disconnect-status">${disconnected ? 'Reconnecting…' : ''}</p>
+        <p class="disconnect-status" id="disconnect-status">Reconnecting…</p>
       </div>
     </div>
   `;
