@@ -3,6 +3,7 @@ package agentd
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -10,6 +11,19 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
+
+func TestSpawnRowBelongsToLaunchRejectsPredecessorState(t *testing.T) {
+	boundary := time.Now()
+	predecessor := &db.SessionRow{ConvID: "old-conv", CreatedAt: boundary.Add(-time.Second)}
+	current := &db.SessionRow{ConvID: "new-conv", CreatedAt: boundary.Add(time.Second)}
+
+	assert.False(t, spawnRowBelongsToLaunch(predecessor, true, "new-conv", boundary),
+		"launch enrollment must not accept a predecessor with the same label")
+	assert.True(t, spawnRowBelongsToLaunch(current, true, "new-conv", boundary))
+	assert.False(t, spawnRowBelongsToLaunch(predecessor, false, "", boundary),
+		"legacy discovery must not accept a row predating the fork")
+	assert.True(t, spawnRowBelongsToLaunch(current, false, "", boundary))
+}
 
 func TestEnrollSpawnedConv_InlinedBriefingBornConsumed(t *testing.T) {
 	setupTestDB(t)

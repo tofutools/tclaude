@@ -6855,6 +6855,11 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 
 	wrapperFailure := registerWrapperFailureSignal(label)
 	defer unregisterWrapperFailureSignal(label)
+	// Bound every row/pane observation below to this fork. A random spawn label
+	// is deliberately short and can collide with durable predecessor state;
+	// recording the boundary before the child starts lets non-preset harnesses
+	// reject such a row, while launch enrollment has the stronger conv-id proof.
+	launchedAt := time.Now()
 	if err := SpawnDetachedTclaudeNew(spawnArgs); err != nil {
 		return launchFailed(err)
 	}
@@ -6941,7 +6946,6 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// without waiting on the hook. It still polls (rather than skipping
 	// straight through) so it confirms the pane actually came up and fires
 	// auto-focus, and so a genuine launch failure is caught below.
-	launchedAt := time.Now()
 	pollBudget := timeout
 	if p.Async && asyncSpawnInlineGrace < pollBudget {
 		pollBudget = asyncSpawnInlineGrace
@@ -6967,6 +6971,10 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		}
 		s, err := db.LoadSession(label)
 		if err == nil && s != nil {
+			if !spawnRowBelongsToLaunch(s, launchEnroll, preConvID, launchedAt) {
+				sleepSpawnPoll(deadline)
+				continue
+			}
 			if pendingHeld && !pendingLaunchMarked {
 				if err := db.MarkPendingSpawnLaunched(label); err != nil {
 					slog.Warn("spawn: failed to clear pending launch marker", "label", label, "error", err)
@@ -7101,6 +7109,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		// the loop above; a late row alone is still not a pane.
 		if tmuxSession == "" {
 			if s, err := db.LoadSession(label); err == nil && s != nil &&
+				spawnRowBelongsToLaunch(s, launchEnroll, preConvID, launchedAt) &&
 				s.TmuxSession != "" && session.IsTmuxSessionAlive(s.TmuxSession) {
 				tmuxSession = s.TmuxSession
 			}
@@ -7235,6 +7244,16 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	return nil, &spawnFailure{http.StatusGatewayTimeout, "timeout",
 		"spawned session " + label + " but conv-id never materialised within " + pollBudget.String() +
 			" — the session may still come up; check `tclaude session attach " + label + "`"}
+}
+
+func spawnRowBelongsToLaunch(s *db.SessionRow, launchEnroll bool, preConvID string, launchedAt time.Time) bool {
+	if s == nil {
+		return false
+	}
+	if launchEnroll {
+		return preConvID != "" && s.ConvID == preConvID
+	}
+	return !s.CreatedAt.IsZero() && !s.CreatedAt.Before(launchedAt)
 }
 
 // executeServerSpawnDeferred runs an async server-authoritative (OpenCode)
