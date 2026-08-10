@@ -1364,7 +1364,8 @@ worktree branch token and the conversation title, so it is restricted to
 collapse to a single `-` and the leading/trailing `-` that produces are
 trimmed (a `_` you typed is kept), so `--name "code reviewer!"` lands as
 `code-reviewer`. This applies uniformly to
-`tclaude agent spawn`, `--join-group`, and the dashboard's spawn modal (which
+`tclaude agent spawn`, explicit or directory-discovered group startup, and the
+dashboard's spawn modal (which
 previews the normalized name as you type). Set
 `agent.spawn_name_normalize: false` in `~/.tclaude/data/config.json` (or untick
 *Normalize spawn names* on the dashboard's Config tab) to restore the strict

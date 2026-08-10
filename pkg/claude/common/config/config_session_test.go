@@ -24,3 +24,17 @@ func TestAutoNameFromPromptEnabled(t *testing.T) {
 	assert.False(t, (&Config{Session: &SessionConfig{}}).AutoNameFromPromptEnabled(), "opt-in defaults off")
 	assert.True(t, (&Config{Session: &SessionConfig{AutoNameFromPrompt: true}}).AutoNameFromPromptEnabled())
 }
+
+func TestAutomaticGroupDefaults(t *testing.T) {
+	on, off := true, false
+	assert.True(t, (*Config)(nil).AutoJoinGroupEnabled(), "directory matching defaults on")
+	assert.True(t, (&Config{}).AutoJoinGroupEnabled(), "absent session block defaults on")
+	assert.True(t, (&Config{Session: &SessionConfig{}}).AutoJoinGroupEnabled(), "absent key defaults on")
+	assert.False(t, (&Config{Session: &SessionConfig{AutoJoinGroup: &off}}).AutoJoinGroupEnabled())
+	assert.True(t, (&Config{Session: &SessionConfig{AutoJoinGroup: &on}}).AutoJoinGroupEnabled())
+
+	assert.False(t, (*Config)(nil).AutoJoinOrCreateGroupEnabled(), "auto-create defaults off")
+	assert.False(t, (&Config{Session: &SessionConfig{}}).AutoJoinOrCreateGroupEnabled())
+	assert.True(t, (&Config{Session: &SessionConfig{AutoJoinOrCreateGroup: &on}}).AutoJoinOrCreateGroupEnabled())
+	assert.False(t, (&Config{Session: &SessionConfig{AutoJoinOrCreateGroup: &off}}).AutoJoinOrCreateGroupEnabled())
+}

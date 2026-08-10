@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os/exec"
@@ -8,6 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
@@ -33,7 +36,44 @@ func RunNewFromCommand(params *NewParams, cmd *cobra.Command) error {
 	explicit := explicitLaunchFields{}
 	cmd.Flags().Visit(func(f *pflag.Flag) { explicit[f.Name] = true })
 	params.sandboxImplExplicit = explicit.has("sandbox-impl")
+	if strings.TrimSpace(params.Cwd) != "" {
+		if explicit.has("dir") {
+			return fmt.Errorf("--cwd and --dir are aliases; pass only one")
+		}
+		params.Dir = params.Cwd
+	}
+	if strings.TrimSpace(params.JoinGroup) == "" {
+		if automaticGroupEligible(params, explicit) {
+			cfg, _ := config.Load()
+			resolveAutomaticGroupConfig(params, explicit, cfg)
+		} else {
+			// The struct's default:true keeps help honest, but direct-only modes
+			// (resume, shell, pass-through, managed children) must remain solo.
+			params.AutoJoinGroup = false
+			params.AutoJoinOrCreateGroup = false
+		}
+	}
 	return runNewWithGlobalDefault(params, explicit)
+}
+
+func automaticGroupEligible(params *NewParams, explicit explicitLaunchFields) bool {
+	if params.ManagedLaunch || strings.TrimSpace(params.Resume) != "" || params.Shell ||
+		strings.TrimSpace(params.Harness) == ShellHarnessName || params.HelpContextFeatures ||
+		clcommon.ShouldRunClaudeDirect(clcommon.ExtractClaudeExtraArgs()) {
+		return false
+	}
+	// These are deliberately solo/direct-session controls with no counterpart
+	// on the group spawn wire. Their explicit use preserves historical behavior
+	// instead of silently discarding them during an automatic match.
+	for _, flag := range []string{
+		"label", "wait-for-rate-limit", "global", "permission-profile",
+		"initial-prompt", "session-id", "send-keys", "copilot-api-port",
+	} {
+		if explicit.has(flag) {
+			return false
+		}
+	}
+	return true
 }
 
 // RunNew is the exported programmatic entry point. Programmatic callers retain
@@ -63,6 +103,24 @@ func RunNew(params *NewParams) error {
 }
 
 func runNewWithGlobalDefault(params *NewParams, explicit explicitLaunchFields) error {
+	// Group launches go through agent.RunSpawn before direct-session profile
+	// filling or harness validation. That shared daemon boundary owns the full
+	// explicit > selected profile > group > global > harness resolution chain.
+	if strings.TrimSpace(params.JoinGroup) != "" || params.AutoJoinGroup || params.AutoJoinOrCreateGroup {
+		if JoinGroupHandler == nil {
+			return fmt.Errorf("group joining is not wired up in this binary")
+		}
+		if err := JoinGroupHandler(params); !errors.Is(err, ErrNoAutomaticGroupMatch) {
+			return err
+		} else if err := validateUnmatchedGroupSpawnFlags(params); err != nil {
+			return err
+		} else {
+			// Discovery has finished and deliberately fell through. Clear the
+			// request bits so the ordinary solo-session global defaults apply.
+			params.AutoJoinGroup = false
+			params.AutoJoinOrCreateGroup = false
+		}
+	}
 	if err := applyGlobalDefaultLaunchProfile(params, explicit); err != nil {
 		return err
 	}
@@ -75,6 +133,47 @@ func runNewWithGlobalDefault(params *NewParams, explicit explicitLaunchFields) e
 		return err
 	}
 	return runNew(params)
+}
+
+func resolveAutomaticGroupConfig(params *NewParams, explicit explicitLaunchFields, cfg *config.Config) {
+	if !explicit.has("auto-join-group") {
+		params.AutoJoinGroup = cfg.AutoJoinGroupEnabled()
+	}
+	if !explicit.has("auto-join-or-create-group") {
+		params.AutoJoinOrCreateGroup = cfg.AutoJoinOrCreateGroupEnabled()
+	}
+}
+
+// validateUnmatchedGroupSpawnFlags prevents a dashboard/agent-spawn-compatible
+// flag from being silently ignored when automatic discovery legitimately
+// falls through to a solo session.
+func validateUnmatchedGroupSpawnFlags(params *NewParams) error {
+	used := map[string]bool{
+		"--profile":               strings.TrimSpace(params.Profile) != "",
+		"--sandbox-profile":       strings.TrimSpace(params.SandboxProfile) != "",
+		"--omit-sandbox-profiles": params.OmitSandboxProfiles,
+		"--worktree":              strings.TrimSpace(params.Worktree) != "",
+		"--worktree-base":         strings.TrimSpace(params.WorktreeBase) != "",
+		"--worktree-repo":         strings.TrimSpace(params.WorktreeRepo) != "",
+		"--initial-message":       strings.TrimSpace(params.InitialMessage) != "",
+		"--file":                  strings.TrimSpace(params.File) != "",
+		"--reply-to":              strings.TrimSpace(params.ReplyTo) != "",
+		"--timeout":               strings.TrimSpace(params.SpawnTimeout) != "",
+		"--ask-human":             strings.TrimSpace(params.AskHuman) != "",
+		"--auto-focus":            params.AutoFocus,
+		"--no-group-context":      params.NoGroupContext,
+		"--task":                  strings.TrimSpace(params.Task) != "",
+		"--task-label":            strings.TrimSpace(params.TaskLabel) != "",
+		"--no-owner":              params.NoOwner,
+		"--role":                  strings.TrimSpace(params.Role) != "",
+		"--descr":                 strings.TrimSpace(params.Descr) != "",
+	}
+	for flag, present := range used {
+		if present {
+			return fmt.Errorf("%s applies to a group spawn, but no group matches this directory; pass --join-group, enable --auto-join-or-create-group, or omit the flag", flag)
+		}
+	}
+	return nil
 }
 
 // applyGlobalDefaultLaunchProfile gives fresh, human-owned terminal launches
@@ -93,7 +192,7 @@ func applyGlobalDefaultLaunchProfileWithLookPath(
 	// Agentd already resolved the complete profile stack before forking its
 	// managed session-new subprocess, so the child must remain exact.
 	if params.ManagedLaunch || strings.TrimSpace(params.Resume) != "" ||
-		strings.TrimSpace(params.JoinGroup) != "" || params.Shell ||
+		strings.TrimSpace(params.JoinGroup) != "" || params.AutoJoinGroup || params.AutoJoinOrCreateGroup || params.Shell ||
 		strings.TrimSpace(params.Harness) == ShellHarnessName {
 		return nil
 	}
