@@ -279,13 +279,14 @@ if (document.querySelector('.group-drop-before, .group-drop-after, .group-drop-i
 }
 
 // groupCloneModifierDropState reproduces macOS Chrome showing a valid clone
-// dragover but reaching dragend without a usable drop event. A successful
-// native copy result must still open the clone dialog from the cached plan.
+// dragover but reaching dragend without a usable drop event or dropEffect. The
+// still-live green plan must open the clone dialog, while Escape/document-leave
+// cancellation explicitly invalidates that plan first.
 func groupCloneModifierDropState() dashsnap.State {
 	return dashsnap.State{
 		Key:     "preact-group-clone-modifier-drop",
 		Title:   "Group clone survives a missing drop event",
-		Caption: "A green Cmd-drag clone target still opens the clone dialog when macOS Chrome finishes the native copy at dragend without a usable drop event.",
+		Caption: "A green Cmd-drag clone target still opens the clone dialog when macOS Chrome reaches dragend with neither a usable drop event nor copy dropEffect.",
 		JS: openGroupsAndDockJS + `
 return (async function(){
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
@@ -313,11 +314,25 @@ return (async function(){
 
   fire(source, 'dragstart');
   fire(target, 'dragover', {metaKey:true, clientX:rect.left + rect.width / 2, clientY:rect.top + rect.height / 2});
+  document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}));
+  var cancelEnd = new DragEvent('dragend', {bubbles:true, cancelable:false, dataTransfer:transfer});
+  Object.defineProperty(cancelEnd, 'dataTransfer', {value:{dropEffect:'none'}});
+  source.dispatchEvent(cancelEnd);
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  if (document.querySelector('#group-clone-modal.show')) throw new Error('Escape dragend consumed a cancelled clone plan');
+
+  fire(source, 'dragstart');
+  fire(target, 'dragover', {metaKey:true, clientX:rect.left + rect.width / 2, clientY:rect.top + rect.height / 2});
+  // macOS Chrome emits an in-place dragleave with null relatedTarget when the
+  // mouse button is released. Its interior coordinates distinguish it from a
+  // real document exit and must preserve the still-green plan for dragend.
+  fire(target, 'dragleave', {relatedTarget:null,
+    clientX:rect.left + rect.width / 2, clientY:rect.top + rect.height / 2});
   var dragend = new DragEvent('dragend', {bubbles:true, cancelable:false, dataTransfer:transfer});
-  Object.defineProperty(dragend, 'dataTransfer', {value:{dropEffect:'copy'}});
+  Object.defineProperty(dragend, 'dataTransfer', {value:{dropEffect:'none'}});
   source.dispatchEvent(dragend);
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
-  if (!document.querySelector('#group-clone-modal.show')) throw new Error('copy dragend did not finish the cached clone plan');
+  if (!document.querySelector('#group-clone-modal.show')) throw new Error('macOS-style dragend did not finish the live green clone plan');
   document.querySelector('#group-clone-cancel').click();
 })();`,
 	}
