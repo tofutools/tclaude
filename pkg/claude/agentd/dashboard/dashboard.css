@@ -4742,10 +4742,12 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 .sandbox-import-rule .sbx-cap-tag { min-width: 5.8em; }
 .sandbox-import-rule .sbx-cap-network,
 .sandbox-import-rule .sbx-cap-include,
+.sandbox-import-rule .sbx-cap-alias,
 .sandbox-import-rule .sbx-cap-limit,
 .sandbox-import-rule .sbx-cap-sockets,
 .sandbox-import-rule .sbx-cap-mach,
-.sandbox-import-rule .sbx-cap-pre-launch {
+.sandbox-import-rule .sbx-cap-pre-launch,
+.sandbox-import-script .sbx-cap-pre-launch {
   color: #e3b341;
   background: rgba(210, 153, 34, 0.12);
   border-color: rgba(210, 153, 34, 0.35);
@@ -4754,6 +4756,45 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
   color: #d2a8ff;
   background: rgba(163, 113, 247, 0.12);
   border-color: rgba(163, 113, 247, 0.30);
+}
+.sandbox-import-rule .sbx-cap-alias {
+  color: #56d4dd;
+  background: rgba(57, 197, 207, 0.12);
+  border-color: rgba(57, 197, 207, 0.30);
+}
+.sandbox-import-script {
+  min-width: 0;
+  border: 1px solid #2a3340;
+  border-radius: 4px;
+  background: rgba(13, 17, 23, 0.55);
+}
+.sandbox-import-script > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 3px 6px;
+  cursor: pointer;
+  color: #c9d1d9;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+.sandbox-import-script > summary > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sandbox-import-script > pre {
+  max-height: 180px;
+  overflow: auto;
+  margin: 0;
+  padding: 8px 10px;
+  border-top: 1px solid #2a3340;
+  color: #c9d1d9;
+  font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .sandbox-import-warning {
   display: flex;

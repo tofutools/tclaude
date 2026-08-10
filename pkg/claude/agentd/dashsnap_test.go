@@ -3535,6 +3535,10 @@ func sandboxImportPreviewDashSnapJS() string {
   var cards=[...preview.querySelectorAll('.sandbox-import-profile')];
   if(cards.length!==2||!cards[0].open) throw new Error('sandbox-import-preview: cards did not render with the first expanded');
   if(cards[0].querySelectorAll('.sandbox-import-rule').length<10) throw new Error('sandbox-import-preview: policy axes were omitted');
+  var script=cards[0].querySelector('.sandbox-import-script');
+  if(!script) throw new Error('sandbox-import-preview: pre-launch script disclosure is missing');
+  script.open=true;
+  if(!script.querySelector('pre').textContent.includes('export BROWSER=chromium')) throw new Error('sandbox-import-preview: pre-launch script body is not reviewable');
   if(!cards[0].querySelector('.sandbox-import-warning')) throw new Error('sandbox-import-preview: missing-path warning is not attached to its profile');
   if(!document.querySelector('#sandbox-profile-import-effect').textContent.includes('1 new profile will be imported')) throw new Error('sandbox-import-preview: skip impact is not explicit');
   if(!document.querySelector('#sandbox-profile-import-modal .primary').textContent.includes('Import 1 profile')) throw new Error('sandbox-import-preview: action count is wrong');

@@ -1845,10 +1845,13 @@ function sandboxImportNetworkRows(profile) {
 function sandboxImportPolicyRows(profile) {
   const rows = [];
   for (const entry of profile.filesystem || []) rows.push({ kind: entry.access, value: entry.mount_path ? `${entry.path} → ${entry.mount_path}` : entry.path });
+  for (const rule of profile.filesystem_spellings?.rules || []) {
+    for (const spelling of rule.spellings || []) rows.push({ kind: 'alias', value: `${spelling} → ${rule.resolved_path}` });
+  }
   for (const name of profile.includes || []) rows.push({ kind: 'include', value: name });
   for (const entry of profile.environment || []) rows.push({ kind: 'env', value: `${entry.name} → ${entry.value}` });
   for (const name of profile.agent_directories || []) rows.push({ kind: 'own', value: `${name} — isolated per agent` });
-  for (const block of profile.pre_launch || []) rows.push({ kind: 'pre-launch', value: `${block.name}: ${block.script}${block.exports?.length ? ` → exports ${block.exports.join(', ')}` : ''}` });
+  for (const block of profile.pre_launch || []) rows.push({ kind: 'pre-launch', value: `${block.name}${block.exports?.length ? ` → exports ${block.exports.join(', ')}` : ''}`, script: block.script });
   for (const value of sandboxImportNetworkRows(profile)) rows.push({ kind: 'network', value });
   const sockets = sandboxAccessAxes(profile).unix_sockets;
   if (sockets.mode) rows.push({ kind: 'sockets', value: sockets.mode });
@@ -1869,7 +1872,10 @@ function SandboxImportProfile({ profile, exists, warnings, expanded }) {
       <span class=${`sandbox-import-status ${exists ? 'is-conflict' : 'is-new'}`}>${exists ? 'Already exists' : 'New'}</span>
     </summary>
     <div class="sandbox-import-policy">
-      ${rows.length ? rows.map((row, index) => html`<div key=${`${row.kind}:${row.value}:${index}`} class="sandbox-import-rule"><span class=${`sbx-cap-tag sbx-cap-${row.kind}`}>${row.kind}</span><span class="sbx-cap-val" title=${row.value}>${row.value}</span></div>`) : html`<div class="sbx-caps-empty">No sandbox rules</div>`}
+      ${rows.length ? rows.map((row, index) => row.script == null
+        ? html`<div key=${`${row.kind}:${row.value}:${index}`} class="sandbox-import-rule"><span class=${`sbx-cap-tag sbx-cap-${row.kind}`}>${row.kind}</span><span class="sbx-cap-val" title=${row.value}>${row.value}</span></div>`
+        : html`<details key=${`${row.kind}:${row.value}:${index}`} class="sandbox-import-script"><summary><span class=${`sbx-cap-tag sbx-cap-${row.kind}`}>${row.kind}</span><span>${row.value}</span></summary><pre>${row.script}</pre></details>`
+      ) : html`<div class="sbx-caps-empty">No sandbox rules</div>`}
       ${warnings.map((warning, index) => html`<div key=${`${warning.path}:${index}`} class="sandbox-import-warning" role="note">⚠ <span>${warning.path}: ${warning.message}</span></div>`)}
     </div>
   </details>`;
