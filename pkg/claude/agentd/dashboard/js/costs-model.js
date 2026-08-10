@@ -50,14 +50,24 @@ const WHOLE = usdGroups(0, 0);
 const CENTS = usdGroups(2, 2);
 const SUBCENT = usdGroups(4, 4);
 
+// From three figures up, the cents are noise on a number nobody reconciles to
+// the penny, and they cost the eye two digits on every row — so they go. The
+// tooltip below keeps them for anyone who wants them.
+const CENTS_BELOW = 100;
+
 export function fmtUSD(value) {
   if (!(value > 0)) return '$0.00';
+  // The branch follows the figure as written, not the raw number: $99.999 is
+  // written "$100.00", which belongs with the whole dollars rather than
+  // sitting in a column of them wearing cents.
+  if (Math.round(value * 100) / 100 >= CENTS_BELOW) return '$' + WHOLE.format(value);
   return value >= 0.005 ? '$' + CENTS.format(value) : '<1¢';
 }
 
-// The figure behind fmtUSD, for tooltips: the same two decimals, minus the
-// "<1¢" collapse. Money is written in cents, so extra digits are only spelled
-// out below one cent — the one place two decimals would read as a flat $0.00.
+// The figure behind fmtUSD, for tooltips: always to the cent, so a hover
+// recovers both what a three-figure amount rounds off and what "<1¢" hides.
+// Below one cent — where two decimals would read as a flat $0.00 — it spells
+// more out; nowhere else, because money is written in cents.
 export function fmtExactUSD(value) {
   if (!(value > 0)) return '$0.00';
   return '$' + (value >= 0.005 ? CENTS : SUBCENT).format(value);

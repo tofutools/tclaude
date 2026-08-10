@@ -72,22 +72,35 @@ test('Copilot cost segments retain native credits beside gross subscription doll
 
 // Dollar figures are USD wherever they are read, so the separators follow the
 // currency and not the viewer's locale: a four-figure month total reads
-// "$26,222.38", never "26 222,38 $".
+// "$26,222", never "26 222 $".
 test('USD formatting groups thousands the currency\'s way', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/costs-model.js');
 
   assert.equal(model.fmtUSD(0.42), '$0.42');
-  assert.equal(model.fmtUSD(1000), '$1,000.00');
-  assert.equal(model.fmtUSD(26222.375), '$26,222.38');
-  assert.equal(model.fmtUSD(1234567.891), '$1,234,567.89');
+  assert.equal(model.fmtUSD(99.994), '$99.99');
+  assert.equal(model.fmtUSD(1000), '$1,000');
+  assert.equal(model.fmtUSD(26222.375), '$26,222');
+  assert.equal(model.fmtUSD(1234567.891), '$1,234,568');
+  // From $100 up the cents stop being worth their two digits.
+  assert.equal(model.fmtUSD(99.99), '$99.99');
+  assert.equal(model.fmtUSD(100), '$100');
+  assert.equal(model.fmtUSD(845.88), '$846');
+  // The written figure decides the branch: $99.999 is "$100.00" to the cent,
+  // so it prints "$100" rather than wearing cents in a column of whole
+  // dollars. $99.99 is still $99.99 and keeps them.
+  assert.equal(model.fmtUSD(99.999), '$100');
+  assert.equal(model.fmtUSD(99.5), '$99.50');
+  // Halves round away from zero here and in pkg/claude/common/money alike.
+  assert.equal(model.fmtUSD(102.5), '$103');
   // Real spend that would round to $0.00 must not read as free.
   assert.equal(model.fmtUSD(0.004), '<1¢');
   assert.equal(model.fmtUSD(0), '$0.00');
 
-  // The tooltip figure is cents too — extra digits only below one cent,
-  // where two decimals would read as a flat $0.00.
+  // The tooltip keeps the cents a three-figure cell rounds off, and spells
+  // out more only below one cent, where two decimals would read as $0.00.
   assert.equal(model.fmtExactUSD(26222.375), '$26,222.38');
+  assert.equal(model.fmtExactUSD(845.88), '$845.88');
   assert.equal(model.fmtExactUSD(1.5), '$1.50');
   assert.equal(model.fmtExactUSD(0.0042), '$0.0042');
   assert.equal(model.fmtExactUSD(0), '$0.00');

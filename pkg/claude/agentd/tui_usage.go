@@ -193,9 +193,9 @@ func tuiUsageCost(u tuiUsage) string {
 	return out
 }
 
-// tuiUsageMoney formats a dollar figure the way the dashboard does: real spend
-// to the cent with thousands separators, and anything that would round to
-// $0.00 as "<1¢" rather than reading as free.
+// tuiUsageMoney formats a dollar figure the way the dashboard does: thousands
+// separated, to the cent below $100 and whole above it, and anything that
+// would round to $0.00 as "<1¢" rather than reading as free.
 func tuiUsageMoney(usd float64) string {
 	return money.USD(usd)
 }
