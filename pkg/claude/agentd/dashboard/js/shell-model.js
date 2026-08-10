@@ -7,6 +7,7 @@ import {
   themedSummaryText,
 } from './group-activity.js';
 import { scribeGroupVisible } from './scribe-groups.js';
+import { fmtExactUSD, fmtUSD } from './costs-model.js';
 
 const USAGE_BAR_WIDTH = 8;
 
@@ -39,17 +40,13 @@ function subscriptionWindows(source, prefix, hideMissing = false) {
   ];
 }
 
-function fmtCost(cost) {
-  return cost >= 0.005 ? '$' + cost.toFixed(2) : '<1¢';
-}
-
 function costToken(today, mtd) {
   return {
     key: 'api-cost',
     kind: 'cost',
     label: 'api',
-    today: today > 0 ? fmtCost(today) : '',
-    mtd: fmtCost(mtd),
+    today: today > 0 ? fmtUSD(today) : '',
+    mtd: fmtUSD(mtd),
   };
 }
 
@@ -73,8 +70,8 @@ export function usageView(usage) {
   const today = Number(usage?.today_cost_usd || 0);
   const cost = mtd > 0 ? costToken(today, mtd) : null;
   if (cost) {
-    let title = `API cost month-to-date: $${mtd.toFixed(4)}, summed across agent sessions recorded in tclaude's DB`;
-    if (today > 0) title += ` · today: $${today.toFixed(4)}`;
+    let title = `API cost month-to-date: ${fmtExactUSD(mtd)}, summed across agent sessions recorded in tclaude's DB`;
+    if (today > 0) title += ` · today: ${fmtExactUSD(today)}`;
     titles.push(title + ' · click to open the Costs tab');
   }
 

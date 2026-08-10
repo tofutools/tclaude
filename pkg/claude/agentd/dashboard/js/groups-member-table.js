@@ -15,7 +15,7 @@ import {
 } from './human-notification-attention.js';
 import { bodilessNotice } from './human-attachments.js';
 import { HarnessMark } from './harness-mark.js';
-import { fmtCredits } from './costs-model.js';
+import { fmtCredits, fmtExactUSD, fmtUSD } from './costs-model.js';
 import { isPendingWake, clearPendingWake } from './waking-state.js';
 import { PRChecksBadge } from './pr-checks-hover.js';
 
@@ -242,21 +242,21 @@ export function HarnessLine({ member, snapshot }) {
   let title = `${offline ? 'Last used harness' : 'Harness'}: ${labels.long} — ${offline ? 'Last used model' : 'Model'}: ${model}`;
   if (effort) title += ` — ${offline ? 'Last used effort' : 'Effort'}: ${effort}`;
   if (drive) title += ` — ${drive}`;
-  if (cost > 0) title += ` — API cost this session: $${cost.toFixed(4)} (API/enterprise pricing — no subscription limits)`;
+  if (cost > 0) title += ` — API cost this session: ${fmtExactUSD(cost)} (API/enterprise pricing — no subscription limits)`;
   if (virtualCost > 0) {
     title += copilotCredits
-      ? ` — WHAT-IF cost this session: ${fmtCredits(virtualCredits)} — $${virtualCost.toFixed(4)} subscription value (estimated if billed pay-per-token — you're on a subscription, so this is hypothetical, not a real charge)`
-      : ` — WHAT-IF cost this session: $${virtualCost.toFixed(4)} (estimated if billed pay-per-token — you're on a subscription, so this is hypothetical, not a real charge)`;
+      ? ` — WHAT-IF cost this session: ${fmtCredits(virtualCredits)} — ${fmtExactUSD(virtualCost)} subscription value (estimated if billed pay-per-token — you're on a subscription, so this is hypothetical, not a real charge)`
+      : ` — WHAT-IF cost this session: ${fmtExactUSD(virtualCost)} (estimated if billed pay-per-token — you're on a subscription, so this is hypothetical, not a real charge)`;
   }
   const virtualTitle = copilotCredits
-    ? `${fmtCredits(virtualCredits)} — $${virtualCost.toFixed(4)} subscription value — estimated pay-per-token-equivalent cost this session; hypothetical, not a real charge (subscription)`
+    ? `${fmtCredits(virtualCredits)} — ${fmtExactUSD(virtualCost)} subscription value — estimated pay-per-token-equivalent cost this session; hypothetical, not a real charge (subscription)`
     : 'Estimated pay-per-token-equivalent cost this session — hypothetical, not a real charge (subscription)';
   return html`<div class="agent-harness" title=${title} tabindex=${drive ? '0' : null}
     data-full-metadata=${drive ? title : null}>
     <span class=${metadataClass} role="note" aria-label=${title}><${HarnessMark} name=${harness} shortLabel=${labels.short} longLabel=${labels.long} tooltip=${drive ? title : labels.long} /><span class="harness-sep">·</span><span class="harness-model">${shortModel(model, harness)}</span>
       ${effort ? html`<span class="harness-effort" title=${effort}>${shortEffort(effort)}</span>` : null}
-      ${cost > 0 ? html`<span class="harness-cost">${cost >= 0.005 ? `$${cost.toFixed(2)}` : '<1¢'}</span>` : null}
-      ${virtualCost > 0 ? html`<span class="harness-cost harness-cost-whatif" title=${virtualTitle}>${virtualCost >= 0.005 ? `≈$${virtualCost.toFixed(2)}` : '≈<1¢'}</span>` : null}
+      ${cost > 0 ? html`<span class="harness-cost">${fmtUSD(cost)}</span>` : null}
+      ${virtualCost > 0 ? html`<span class="harness-cost harness-cost-whatif" title=${virtualTitle}>≈${fmtUSD(virtualCost)}</span>` : null}
     </span>${sandbox}${fastMode}${remote}${refused}
   </div>`;
 }

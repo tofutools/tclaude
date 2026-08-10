@@ -18,6 +18,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/money"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
 	"golang.org/x/term"
@@ -396,7 +397,7 @@ func run() error {
 
 	// Cost only shown on API plan (no rate limit buckets available)
 	if !hasLimits && input.Cost.TotalCostUSD > 0 {
-		line2 = append(line2, fmt.Sprintf("$%.2f", input.Cost.TotalCostUSD))
+		line2 = append(line2, money.USD(input.Cost.TotalCostUSD))
 	}
 
 	// Reasoning-effort level (🧠 high) trails the first line, far right.
