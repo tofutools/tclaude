@@ -92,6 +92,35 @@ function replaceOptions(select, entries) {
   select?.replaceChildren(...entries.map(([value, label]) => makeOption(value, label)));
 }
 
+const terminalAliases = {
+  iterm: 'iterm2',
+  terminal: 'terminal-app',
+  'terminal.app': 'terminal-app',
+  terminalapp: 'terminal-app',
+  apple: 'terminal-app',
+  gnome: 'gnome-terminal',
+  xfce: 'xfce4-terminal',
+  xfce4: 'xfce4-terminal',
+  'x-terminal': 'x-terminal-emulator',
+};
+
+function setTerminalSelectValue(select, value) {
+  if (!select) return;
+  select.querySelectorAll('option[data-current-terminal]').forEach(option => option.remove());
+  const raw = String(value ?? '').trim();
+  const canonical = terminalAliases[raw.toLowerCase()] || raw.toLowerCase();
+  const known = Array.from(select.querySelectorAll('option'))
+    .some(option => (option.getAttribute('value') ?? option.value ?? '') === canonical);
+  if (raw && !known) {
+    const current = makeOption(raw, `${raw} (current value)`);
+    current.setAttribute('data-current-terminal', '');
+    select.appendChild(current);
+    setSelectValue(select, raw);
+    return;
+  }
+  setSelectValue(select, canonical);
+}
+
 // populateAskSelects fills the Ask-defaults Model / Effort dropdowns from
 // the snapshot's harness catalog (the same source the spawn modal uses),
 // so the lists track the server-side catalog with no hardcoded model list.
@@ -366,7 +395,7 @@ function syncCfgRemoteStatus() {
 function populateConfigForm(cfg) {
   cfg = cfg || {};
   setSelectValue($('#cfg-log-level'), cfg.log_level || 'info');
-  $('#cfg-terminal').value = cfg.terminal || '';
+  setTerminalSelectValue($('#cfg-terminal'), cfg.terminal || '');
   const pcg = cfg.pre_compact_guard || {};
   $('#cfg-precompact-enabled').checked = !!pcg.enabled;
   $('#cfg-precompact-blockmanual').checked = !!pcg.block_manual;
@@ -620,7 +649,7 @@ function assembleConfig() {
   const cfg = JSON.parse(JSON.stringify(configObj || {}));
 
   cfg.log_level = controlValue($('#cfg-log-level'));
-  const term = $('#cfg-terminal').value.trim();
+  const term = controlValue($('#cfg-terminal')).trim();
   if (term) cfg.terminal = term; else delete cfg.terminal;
 
   // pre_compact_guard. Clone the existing block so a future sub-field

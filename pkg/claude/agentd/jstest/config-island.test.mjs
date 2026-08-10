@@ -3,6 +3,23 @@ import assert from 'node:assert/strict';
 import { assertSameNode } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
+async function selectValue(harness, select, value) {
+  const applySelection = () => {
+    for (const option of select.querySelectorAll('option')) {
+      option.removeAttribute('selected');
+      option.selected = false;
+    }
+    const selected = select.querySelector(`option[value="${value}"]`);
+    selected.setAttribute('selected', '');
+    selected.selected = true;
+  };
+  applySelection();
+  await harness.act(() => harness.fireEvent(select, 'input'));
+  // LinkeDOM resets an uncontrolled select while Preact handles the routed
+  // dirty-state render; restore the browser-owned live selection for assertions.
+  applySelection();
+}
+
 test('Config island owns the complete form markup and tracks dirty input', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createConfigState }, { ConfigApp }] = await Promise.all([
@@ -14,8 +31,8 @@ test('Config island owns the complete form markup and tracks dirty input', async
   assert.ok(mounted.container.querySelector('#cfg-sudo-json'));
   assert.ok(mounted.container.querySelector('#cfg-save'));
   state.lifecycle.loaded({ raw: '{}' });
-  const terminal = getByRole(mounted.container, 'textbox', { name: 'Terminal emulator' });
-  await harness.input(terminal, 'ghostty');
+  const terminal = mounted.container.querySelector('select[aria-label="Terminal emulator"]');
+  await selectValue(harness, terminal, 'ghostty');
   assert.equal(state.view.value.dirty, true);
   await mounted.unmount();
 });
@@ -88,7 +105,10 @@ test('Config load populates representative fields, conditions, notices, and roun
   assert.notEqual(state.view.value.phase, 'error', state.view.value.error);
   const logLevel = mounted.container.querySelector('#cfg-log-level');
   assert.equal(logLevel.querySelector('option[value="warn"]').selected, true, logLevel.outerHTML);
-  assert.equal(mounted.container.querySelector('#cfg-terminal').value, 'ghostty');
+  const terminal = mounted.container.querySelector('#cfg-terminal');
+  assert.equal(terminal.tagName, 'SELECT');
+  assert.equal(terminal.querySelector('option[value="ghostty"]').selected, true, terminal.outerHTML);
+  assert.equal(adapter.assembleConfig().terminal, 'ghostty');
   assert.equal(mounted.container.querySelector('#cfg-record-hooks').checked, true);
   assert.equal(mounted.container.querySelector('#cfg-dashboard-default-web-directory-picker').checked, true);
   assert.equal(mounted.container.querySelector('#cfg-ratelimit-5h').disabled, false);
@@ -100,6 +120,59 @@ test('Config load populates representative fields, conditions, notices, and roun
   assert.equal(assembled.dashboard.default_directory_picker, 'web');
   assert.equal(state.view.value.phase, 'ready');
   assert.equal(state.view.value.dirty, false);
+  await mounted.unmount();
+});
+
+test('Config terminal dropdown defaults to auto-detect and omits the setting', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'),
+    harness.importDashboardModule('js/config-island.js'),
+    harness.importDashboardModule('js/config-form-adapter.js'),
+  ]);
+  const state = createConfigState({ activeTab: harness.signals.signal('groups') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} />`);
+  state.lifecycle.loaded({ raw: '{}' });
+
+  const terminal = mounted.container.querySelector('#cfg-terminal');
+  const automatic = terminal.querySelector('option[value=""]');
+  assert.equal(automatic.textContent, 'Auto-detect (default)');
+  assert.equal(adapter.assembleConfig().terminal, undefined);
+
+  await mounted.unmount();
+});
+
+test('Config terminal dropdown canonicalizes aliases and preserves unknown current values', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'),
+    harness.importDashboardModule('js/config-island.js'),
+    harness.importDashboardModule('js/config-form-adapter.js'),
+  ]);
+  let raw = JSON.stringify({ terminal: 'iterm' });
+  const state = createConfigState({ activeTab: harness.signals.signal('groups') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} dependencies=${{
+    fetchImpl: async () => ({ ok: true, json: async () => ({ raw }) }),
+  }} />`);
+
+  await adapter.loadConfigTab();
+  const terminal = mounted.container.querySelector('#cfg-terminal');
+  assert.equal(terminal.querySelector('option[value="iterm2"]').selected, true);
+  assert.equal(adapter.assembleConfig().terminal, 'iterm2');
+
+  raw = JSON.stringify({ terminal: 'future-terminal' });
+  await adapter.loadConfigTab();
+  const current = terminal.querySelector('option[data-current-terminal]');
+  assert.equal(current.value, 'future-terminal');
+  assert.equal(current.textContent, 'future-terminal (current value)');
+  assert.equal(current.selected, true);
+  assert.equal(adapter.assembleConfig().terminal, 'future-terminal');
+
+  raw = '{}';
+  await adapter.loadConfigTab();
+  assert.equal(terminal.querySelector('option[data-current-terminal]'), null);
+  assert.equal(adapter.assembleConfig().terminal, undefined);
+
   await mounted.unmount();
 });
 
@@ -382,7 +455,7 @@ test('Config save validates, confirms, writes against its baseline, and clears d
   await adapter.loadConfigTab();
   const terminal = mounted.container.querySelector('#cfg-terminal');
   terminal.focus();
-  await harness.input(terminal, 'ghostty');
+  await selectValue(harness, terminal, 'ghostty');
   assert.equal(state.view.value.dirty, true);
   const saving = adapter.saveConfig();
   await new Promise(resolve => setTimeout(resolve, 0));
@@ -422,13 +495,14 @@ test('Config save preserves dirty edits and reports a stale baseline conflict', 
   };
   const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} dependencies=${{ fetchImpl }} />`);
   await adapter.loadConfigTab();
-  await harness.input(mounted.container.querySelector('#cfg-terminal'), 'unsaved');
+  const terminal = mounted.container.querySelector('#cfg-terminal');
+  await selectValue(harness, terminal, 'ghostty');
   await adapter.saveConfig();
   assert.equal(calls, 2);
   assert.equal(state.view.value.phase, 'error');
   assert.equal(state.view.value.dirty, true);
   assert.match(state.view.value.error, /changed on disk/);
-  assert.equal(mounted.container.querySelector('#cfg-terminal').value, 'unsaved');
+  assert.equal(terminal.querySelector('option[value="ghostty"]').selected, true);
   assert.match(mounted.container.querySelector('#cfg-errors').textContent, /Reload/);
   await mounted.unmount();
 });
@@ -492,13 +566,13 @@ test('Config list reconciliation preserves unrelated typing and focuses the adde
     fetchImpl: async () => ({ ok: true, json: async () => ({ raw: '{}' }) }),
   }} />`);
   await adapter.loadConfigTab();
-  const terminal = mounted.container.querySelector('#cfg-terminal');
-  terminal.focus();
-  await harness.input(terminal, 'half-typed');
+  const cloneCooldown = mounted.container.querySelector('#cfg-agent-clonecooldown');
+  cloneCooldown.focus();
+  await harness.input(cloneCooldown, 'half-typed');
   harness.fireEvent(mounted.container.querySelector('#cfg-agent-permissions .cfg-list-add'), 'click');
   await new Promise(resolve => queueMicrotask(resolve));
-  assertSameNode(mounted.container.querySelector('#cfg-terminal'), terminal);
-  assert.equal(terminal.value, 'half-typed');
+  assertSameNode(mounted.container.querySelector('#cfg-agent-clonecooldown'), cloneCooldown);
+  assert.equal(cloneCooldown.value, 'half-typed');
   assertSameNode(harness.document.activeElement,
     mounted.container.querySelector('#cfg-agent-permissions .cfg-list-row:last-of-type input'));
   await mounted.unmount();
@@ -529,21 +603,22 @@ test('Config remount discards loaded ownership and reloads the fresh form', asyn
   let loads = 0;
   const fetchImpl = async () => {
     loads++;
-    return { ok: true, json: async () => ({ raw: JSON.stringify({ terminal: `terminal-${loads}` }) }) };
+    const terminal = loads === 1 ? 'xterm' : 'ghostty';
+    return { ok: true, json: async () => ({ raw: JSON.stringify({ terminal }) }) };
   };
   const state = createConfigState({ activeTab: harness.signals.signal('config') });
   const dependencies = { fetchImpl, isCyclingTabs: () => true };
   const first = await harness.mount(harness.html`<${ConfigApp} state=${state} dependencies=${dependencies} />`);
   harness.fireEvent(nav.querySelector('button'), 'click');
   await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(first.container.querySelector('#cfg-terminal').value, 'terminal-1');
+  assert.equal(first.container.querySelector('#cfg-terminal option[value="xterm"]').selected, true);
   await first.unmount();
 
   const second = await harness.mount(harness.html`<${ConfigApp} state=${state} dependencies=${dependencies} />`);
   harness.fireEvent(nav.querySelector('button'), 'click');
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(loads, 2);
-  assert.equal(second.container.querySelector('#cfg-terminal').value, 'terminal-2');
+  assert.equal(second.container.querySelector('#cfg-terminal option[value="ghostty"]').selected, true);
   await second.unmount();
   nav.remove();
 });
