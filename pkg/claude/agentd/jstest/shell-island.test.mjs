@@ -41,6 +41,26 @@ test('shell island reacts to snapshots while preserving keyed usage and footer n
   await Promise.all([usage.unmount(), meta.unmount(), badge.unmount(), status.unmount()]);
 });
 
+test('disconnect overlay is removed on reconnect so its compositor layers cannot linger', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { Disconnect }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<${Disconnect} state=${state} />`);
+
+  assertAbsent(mounted.container.querySelector('#disconnect-overlay'));
+  await harness.act(() => state.setConnection('disconnected'));
+  assert.ok(mounted.container.querySelector('#disconnect-overlay.show'));
+  assert.equal(mounted.container.querySelector('#disconnect-status').textContent, 'Reconnecting…');
+
+  await harness.act(() => state.setConnection('connected'));
+  assertAbsent(mounted.container.querySelector('#disconnect-overlay'),
+    'reconnect destroys the backdrop-filter and animation subtree');
+  await mounted.unmount();
+});
+
 test('shell confirmation keeps capture-Escape semantics and feedback cleanup', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createShellState }, { Confirm }] = await Promise.all([
