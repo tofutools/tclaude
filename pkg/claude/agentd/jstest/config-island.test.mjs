@@ -142,6 +142,40 @@ test('Config terminal dropdown defaults to auto-detect and omits the setting', a
   await mounted.unmount();
 });
 
+test('Config terminal dropdown canonicalizes aliases and preserves unknown current values', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'),
+    harness.importDashboardModule('js/config-island.js'),
+    harness.importDashboardModule('js/config-form-adapter.js'),
+  ]);
+  let raw = JSON.stringify({ terminal: 'iterm' });
+  const state = createConfigState({ activeTab: harness.signals.signal('groups') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} dependencies=${{
+    fetchImpl: async () => ({ ok: true, json: async () => ({ raw }) }),
+  }} />`);
+
+  await adapter.loadConfigTab();
+  const terminal = mounted.container.querySelector('#cfg-terminal');
+  assert.equal(terminal.querySelector('option[value="iterm2"]').selected, true);
+  assert.equal(adapter.assembleConfig().terminal, 'iterm2');
+
+  raw = JSON.stringify({ terminal: 'future-terminal' });
+  await adapter.loadConfigTab();
+  const current = terminal.querySelector('option[data-current-terminal]');
+  assert.equal(current.value, 'future-terminal');
+  assert.equal(current.textContent, 'future-terminal (current value)');
+  assert.equal(current.selected, true);
+  assert.equal(adapter.assembleConfig().terminal, 'future-terminal');
+
+  raw = '{}';
+  await adapter.loadConfigTab();
+  assert.equal(terminal.querySelector('option[data-current-terminal]'), null);
+  assert.equal(adapter.assembleConfig().terminal, undefined);
+
+  await mounted.unmount();
+});
+
 test('Config treats agent directory parent mounting as default-on with an explicit opt-out', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([
