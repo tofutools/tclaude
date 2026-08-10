@@ -38,6 +38,7 @@ func TestDashboardPreactDnDChrome(t *testing.T) {
 		dockDragCancelState(true),
 		memberDragCancelState(),
 		groupDragCancelState(),
+		groupCloneModifierDropState(),
 		terminalTabNativeDragState(),
 	}
 	if filter := os.Getenv("TCLAUDE_DASHSNAP_FILTER"); filter != "" {
@@ -275,6 +276,38 @@ func groupDragCancelState() dashsnap.State {
 if (document.querySelector('.group-reorder-source')) throw new Error('cancel left group source highlighted');
 if (document.querySelector('.group-drop-before, .group-drop-after, .group-drop-into')) throw new Error('cancel left reorder target highlighted');
 `)
+}
+
+// groupCloneModifierDropState reproduces macOS Chrome's asymmetric modifier
+// delivery: metaKey is true while dragover paints a copy target, then false on
+// drop. The operation shown to the user must still open the clone dialog.
+func groupCloneModifierDropState() dashsnap.State {
+	return dashsnap.State{
+		Key:     "preact-group-clone-modifier-drop",
+		Title:   "Group clone survives modifier loss on drop",
+		Caption: "A green Cmd-drag clone target still opens the clone dialog when macOS Chrome clears metaKey on the terminal drop event.",
+		JS: openGroupsAndDockJS + `
+return (async function(){
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var source = document.querySelector('summary[data-group-reorder="frontend-squad"]');
+  var target = document.querySelector('details[data-group-key="infra-crew"]');
+  if (!source || !target) throw new Error('group clone drag fixture missing');
+  var transfer = new DataTransfer();
+  function fire(element, type, options) {
+    var event = new DragEvent(type, Object.assign({bubbles:true, cancelable:true, dataTransfer:transfer}, options || {}));
+    if (event.dataTransfer !== transfer) Object.defineProperty(event, 'dataTransfer', {value:transfer});
+    element.dispatchEvent(event);
+  }
+  fire(source, 'dragstart');
+  var rect = target.getBoundingClientRect();
+  fire(target, 'dragover', {metaKey:true, clientX:rect.left + rect.width / 2, clientY:rect.top + rect.height / 2});
+  if (!target.classList.contains('group-drop-clone')) throw new Error('Cmd dragover did not paint clone intent');
+  fire(target, 'drop', {clientX:rect.left + rect.width / 2, clientY:rect.top + rect.height / 2});
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  if (!document.querySelector('#group-clone-modal.show')) throw new Error('modifier-less drop did not preserve clone intent');
+  document.querySelector('#group-clone-cancel').click();
+})();`,
+	}
 }
 
 // terminalTabNativeDragState uses Chrome's input domain for the whole gesture:
