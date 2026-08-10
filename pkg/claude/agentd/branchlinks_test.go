@@ -203,3 +203,51 @@ func TestPRStateFromGHFoldsDraftIntoItsOwnState(t *testing.T) {
 	assert.Equal(t, "merged", prStateFromGH("MERGED", false))
 	assert.Equal(t, "", prStateFromGH("  ", true))
 }
+
+// The statusbar publishes its own `gh pr view` result into agent_workspace on
+// a 15s cadence, against branchLinkTTL's 90s — so its observation is almost
+// always the fresher one and owns the badge. It therefore has to resolve
+// draft too; a statusbar that reported a draft as plain "open" would put the
+// green badge straight back over the daemon's correct draft state.
+func TestBranchLinksForPartsKeepsDraftFromTheFresherWorkspaceRender(t *testing.T) {
+	now := time.Now()
+	const prURL = "https://github.com/o/r/pull/42"
+	loc := agentLocationView{
+		CurrentDir:    "/repo",
+		StartupDir:    "/repo",
+		Branch:        "feature",
+		StartupBranch: "feature",
+	}
+	ws := db.AgentWorkspace{
+		ConvID:        "conv",
+		Cwd:           "/repo",
+		Branch:        "feature",
+		RepoURL:       "https://github.com/o/r",
+		DefaultBranch: "main",
+		PRNumber:      42,
+		PRURL:         prURL,
+		PRState:       "draft",
+		UpdatedAt:     now,
+	}
+
+	links := branchLinksForParts("conv", loc, ws,
+		func(string, string) (string, int, string, string, time.Time) {
+			return "https://github.com/o/r/compare/main...feature",
+				42, prURL, "open", now.Add(-time.Minute)
+		})
+
+	assert.Equal(t, "draft", links.BranchPRState,
+		"the fresher workspace render owns the draft state")
+	assert.Equal(t, "draft", links.StartupPRState)
+
+	// Draft is not terminal: a merged observation still wins over it.
+	ws.PRState = "draft"
+	ws.UpdatedAt = now.Add(-time.Minute)
+	links = branchLinksForParts("conv", loc, ws,
+		func(string, string) (string, int, string, string, time.Time) {
+			return "https://github.com/o/r/compare/main...feature",
+				42, prURL, "merged", now
+		})
+	assert.Equal(t, "merged", links.BranchPRState,
+		"a draft badge must still give way to a merged observation")
+}

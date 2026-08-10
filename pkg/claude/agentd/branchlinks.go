@@ -595,23 +595,28 @@ func prStateFromGH(state string, isDraft bool) string {
 // query. Reached only when the richer one failed, which is also the case
 // where a real "no PR here" answer is indistinguishable from a broken `gh`
 // — so a failure here stays silent exactly as it did before.
+//
+// It deliberately asks for the long-guaranteed fields only — no isDraft.
+// This retry exists precisely because a `gh` rejected a field, so adding
+// another one that could be rejected too would defeat it. The cost is that
+// a draft resolved down here renders as a plain open badge, which is what
+// it did before drafts had a colour of their own.
 func ghPRForBranchWithoutChecks(dir, branch string) (int, string, string, *prChecksInfo) {
-	out := runInDir(dir, "gh", "pr", "view", branch, "--json", "number,url,state,isDraft")
+	out := runInDir(dir, "gh", "pr", "view", branch, "--json", "number,url,state")
 	if out == "" {
 		return 0, "", "", nil
 	}
 	var pr struct {
-		Number  int    `json:"number"`
-		URL     string `json:"url"`
-		State   string `json:"state"`
-		IsDraft bool   `json:"isDraft"`
+		Number int    `json:"number"`
+		URL    string `json:"url"`
+		State  string `json:"state"`
 	}
 	if json.Unmarshal([]byte(out), &pr) != nil {
 		return 0, "", "", nil
 	}
 	slog.Debug("branchlinks: resolved PR without the CI rollup",
 		"repo", dir, "branch", branch, "pr", pr.Number, "module", "agentd")
-	return pr.Number, pr.URL, prStateFromGH(pr.State, pr.IsDraft), nil
+	return pr.Number, pr.URL, prStateFromGH(pr.State, false), nil
 }
 
 // repoHTTPSFromRemote normalises a git remote URL to its GitHub web

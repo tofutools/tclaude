@@ -227,16 +227,19 @@ func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
 	}, true
 }
 
+// livePresentedPRInfoWithoutChecks is the presented-PR twin of
+// ghPRForBranchWithoutChecks, and asks for the same long-guaranteed field
+// set only — no isDraft, for the reason documented there. A draft that has
+// to come through this retry renders as a plain open badge.
 func livePresentedPRInfoWithoutChecks(rawURL string) (presentedPRInfo, bool) {
-	out := runInDir("", "gh", "pr", "view", strings.TrimSpace(rawURL), "--json", "number,url,state,isDraft")
+	out := runInDir("", "gh", "pr", "view", strings.TrimSpace(rawURL), "--json", "number,url,state")
 	if out == "" {
 		return presentedPRInfo{}, false
 	}
 	var pr struct {
-		Number  int    `json:"number"`
-		URL     string `json:"url"`
-		State   string `json:"state"`
-		IsDraft bool   `json:"isDraft"`
+		Number int    `json:"number"`
+		URL    string `json:"url"`
+		State  string `json:"state"`
 	}
 	if json.Unmarshal([]byte(out), &pr) != nil {
 		return presentedPRInfo{}, false
@@ -244,7 +247,7 @@ func livePresentedPRInfoWithoutChecks(rawURL string) (presentedPRInfo, bool) {
 	if pr.URL == "" {
 		pr.URL = strings.TrimSpace(rawURL)
 	}
-	return presentedPRInfo{Number: pr.Number, URL: pr.URL, State: prStateFromGH(pr.State, pr.IsDraft)}, true
+	return presentedPRInfo{Number: pr.Number, URL: pr.URL, State: prStateFromGH(pr.State, false)}, true
 }
 
 func savePresentedPRCache(key, rawURL string, info presentedPRInfo, now time.Time) {
