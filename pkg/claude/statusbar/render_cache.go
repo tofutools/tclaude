@@ -139,8 +139,6 @@ func gitCachePath(key string) string {
 	return filepath.Join(renderCacheDir, "tclaude-gitcache-"+key+".json")
 }
 
-// loadLocalGitCache is the pane-local half of loadGitCache, and like it
-// returns the entry without judging its age — getGitData holds both clocks.
 func loadLocalGitCache(key string) *GitSnapshot {
 	data, err := os.ReadFile(gitCachePath(key))
 	if err != nil {
@@ -148,6 +146,9 @@ func loadLocalGitCache(key string) *GitSnapshot {
 	}
 	var cached GitSnapshot
 	if err := json.Unmarshal(data, &cached); err != nil {
+		return nil
+	}
+	if time.Since(cached.FetchedAt) > gitCacheTTL {
 		return nil
 	}
 	return &cached

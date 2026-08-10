@@ -34,11 +34,6 @@ const (
 	barWidth         = 10
 	gitCacheTTL      = 15 * time.Second
 	compactionBuffer = 16.5 // percent reserved for compaction
-
-	// proxyPRLookupTTL is the PR-lookup cadence on the proxied path. See
-	// prLookupTTL for why it is six times the snapshot's own TTL, and why
-	// this particular number.
-	proxyPRLookupTTL = 90 * time.Second
 )
 
 // StatusLineInput represents the JSON Claude Code sends to the statusline command
@@ -105,68 +100,6 @@ type GitSnapshot struct {
 	PRURL         string    `json:"pr_url,omitempty"`
 	PRState       string    `json:"pr_state,omitempty"`
 	FetchedAt     time.Time `json:"fetched_at"`
-
-	// PRFetchedAt is when the PR fields above were last looked up, which is
-	// NOT when the snapshot was gathered: the local git facts are cheap and
-	// refresh on the 15-second cache, while a PR lookup costs a network call
-	// and carries forward across several of them. Zero on an entry written
-	// before this field existed, and on a branch with no lookup at all.
-	PRFetchedAt time.Time `json:"pr_fetched_at,omitzero"`
-
-	// PRVia records WHICH path answered — see prVia* — because the two have
-	// different costs and therefore different refresh rates. It is the
-	// snapshot's own bookkeeping and nothing renders from it.
-	PRVia string `json:"pr_via,omitempty"`
-}
-
-// prObservedAt reports when this snapshot's PR fields were actually looked up.
-//
-// It falls back to the snapshot's own time for two cases that are the same
-// answer: an entry written before PRFetchedAt existed, and a branch on which
-// no lookup ever ran (the default branch, a repo with no GitHub remote) —
-// where "no PR" is as current as the snapshot around it.
-func (g *GitSnapshot) prObservedAt() time.Time {
-	if g == nil {
-		return time.Time{}
-	}
-	if !g.PRFetchedAt.IsZero() {
-		return g.PRFetchedAt
-	}
-	return g.FetchedAt
-}
-
-// The PR lookup paths, and the cadence each earns.
-const (
-	// prViaGH is the direct `gh pr view` call: a local subprocess spending
-	// the pane's own credentials, refreshed with the rest of the snapshot
-	// exactly as it always has been.
-	prViaGH = "gh"
-
-	// prViaProxy is agentd's GitHub proxy. It spends the OPERATOR's
-	// credential and writes an audit row per call, so it gets its own,
-	// slower clock — see prLookupTTL.
-	prViaProxy = "proxy"
-)
-
-// prLookupTTL is how long a recorded PR observation stays good, by the path
-// that produced it.
-//
-// The `gh` path keeps the snapshot's own 15 seconds: it costs a local
-// subprocess and nothing else, and that is the cadence the bar has always had.
-//
-// The proxy path gets 90 seconds, which is deliberately the same
-// branchLinkTTL agentd already applies to its own dashboard PR resolution.
-// Every call there spends the operator's GitHub credential and lands in the
-// audit log, and a status line re-renders several times a second — so at 15
-// seconds a handful of panes would burn a real share of the operator's hourly
-// GraphQL budget, and bury the trail of what agents actually did with their
-// credential under a stream of render traffic. PR state is slow-moving; a
-// minute and a half of staleness on a link is not a cost anyone can see.
-func prLookupTTL(via string) time.Duration {
-	if via == prViaProxy {
-		return proxyPRLookupTTL
-	}
-	return gitCacheTTL
 }
 
 type Params struct{}
@@ -198,12 +131,6 @@ func gitCacheKey() string {
 	return hex.EncodeToString(h[:8])
 }
 
-// loadGitCache returns the cached snapshot WITHOUT applying a TTL. The
-// freshness question has two answers now — the local git facts expire on
-// gitCacheTTL, the PR fields on prLookupTTL — so an entry that is stale for
-// one purpose is still the best evidence for the other, and discarding it here
-// would mean re-asking GitHub every fifteen seconds. getGitData applies both
-// clocks.
 func loadGitCache() *GitSnapshot {
 	key := gitCacheKey()
 	if key == "" {
@@ -221,6 +148,9 @@ func loadGitCache() *GitSnapshot {
 	}
 	var cached GitSnapshot
 	if err := json.Unmarshal(row.Data, &cached); err != nil {
+		return nil
+	}
+	if time.Since(cached.FetchedAt) > gitCacheTTL {
 		return nil
 	}
 	return &cached
@@ -656,8 +586,7 @@ func getRepoHTTPS() string {
 // hammering git/gh on every statusline render. Returns nil when we
 // aren't in a git repo.
 func getGitData() *GitSnapshot {
-	cached := loadGitCache()
-	if cached != nil && time.Since(cached.FetchedAt) <= gitCacheTTL {
+	if cached := loadGitCache(); cached != nil {
 		return cached
 	}
 	if gitCmd("rev-parse", "--git-dir") == "" {
@@ -669,108 +598,14 @@ func getGitData() *GitSnapshot {
 		DefaultBranch: getDefaultBranch(),
 		FetchedAt:     time.Now(),
 	}
-	// Only check for PR on feature branches (the PR lookup is the slowest
-	// call whichever path serves it).
+	// Only check for PR on feature branches (the PR lookup is the slowest call
+	// whichever path serves it).
 	if data.RepoURL != "" && data.Branch != "" && data.DefaultBranch != "" && data.Branch != data.DefaultBranch {
-		if !carryPRForward(cached, data) {
-			n, u, s, via, answered := getPRInfo(data.Branch)
-			switch {
-			case answered:
-				data.PRNumber, data.PRURL, data.PRState, data.PRVia = n, u, s, via
-				data.PRFetchedAt = time.Now()
-				dropForeignRepoPR(data)
-			default:
-				// Nothing looked, so nothing was learned. Keep what the last
-				// snapshot knew — stamp and all — so the bar holds its link
-				// and the next refresh retries instead of treating an
-				// unanswered lookup as a settled "no pull request".
-				keepUnrefreshedPR(cached, data)
-			}
-		}
+		data.PRNumber, data.PRURL, data.PRState = getPRInfo(data.Branch)
+		dropForeignRepoPR(data)
 	}
 	saveGitCache(data)
 	return data
-}
-
-// keepUnrefreshedPR carries the previous snapshot's PR observation over
-// UNCHANGED — its stamp included — after a lookup that never got to look.
-//
-// It is carryPRForward's counterpart and deliberately ignores the age it
-// refuses on. carryPRForward answers "is this still fresh enough to reuse?";
-// this one answers "we learned nothing, so what did we know?" — and the stale
-// stamp is the point, because it is what makes the next refresh try again
-// rather than settling for the silence.
-func keepUnrefreshedPR(cached, data *GitSnapshot) {
-	if cached == nil || cached.Branch != data.Branch {
-		return
-	}
-	data.PRNumber, data.PRURL, data.PRState = cached.PRNumber, cached.PRURL, cached.PRState
-	data.PRFetchedAt, data.PRVia = cached.PRFetchedAt, cached.PRVia
-}
-
-// dropForeignRepoPR discards a PR that does not belong to the repository this
-// snapshot describes.
-//
-// The two halves of a snapshot come from different places and can disagree
-// about which repository they mean. RepoURL and Branch come from bare `git` in
-// the statusline process's own working directory; the proxied lookup names no
-// repository at all — the daemon derives one from the SESSION's recorded
-// launch directory, deliberately, so a caller cannot aim it. When an agent's
-// harness cwd is a different repository from its recorded launch dir, the
-// answer describes a repository the bar is not rendering, and without this the
-// link would show repository B's pull request under repository A's branch.
-//
-// Belt and braces on the `gh` path too, which resolves against whatever
-// repository its own cwd is in.
-func dropForeignRepoPR(data *GitSnapshot) {
-	if data.PRURL == "" || data.RepoURL == "" {
-		return
-	}
-	// Case-insensitively, because the two strings come from different places
-	// and GitHub does not force them to agree: RepoURL is whatever the local
-	// remote is spelled as, while PRURL carries the owner and repository
-	// casing GitHub has on record. A remote written `github.com/ToFuTools/…`
-	// against a PR URL GitHub renders as `tofutools` is the same repository,
-	// and dropping its PR would blank a link that is perfectly correct.
-	prefix := strings.ToLower(strings.TrimSuffix(data.RepoURL, "/")) + "/"
-	if strings.HasPrefix(strings.ToLower(data.PRURL), prefix) {
-		return
-	}
-	// Keep PRVia and PRFetchedAt: a lookup that answered about the wrong
-	// repository still happened, and re-asking it every fifteen seconds would
-	// get the same wrong answer at the same cost.
-	data.PRNumber, data.PRURL, data.PRState = 0, "", ""
-}
-
-// carryPRForward copies a still-good PR observation from the previous snapshot
-// onto the new one, reporting whether it did.
-//
-// It is what keeps the two clocks apart: the local git facts above are
-// re-gathered every 15 seconds because they are three cheap subprocesses,
-// while the PR they belong to may legitimately be a minute older. Without it
-// the proxied path would spend the operator's credential on every snapshot
-// refresh — see prLookupTTL.
-//
-// A negative result carries forward too, and that is the case that matters
-// most: a freshly-pushed feature branch has NO pull request, which is a real
-// answer costing a real call, and re-asking it every fifteen seconds is the
-// most expensive way to learn nothing.
-func carryPRForward(cached, data *GitSnapshot) bool {
-	if cached == nil || cached.PRFetchedAt.IsZero() {
-		return false
-	}
-	// A different branch's PR is not this branch's, and a clock that moved
-	// backwards makes the age meaningless — re-look-up in both cases.
-	if cached.Branch != data.Branch {
-		return false
-	}
-	age := time.Since(cached.PRFetchedAt)
-	if age < 0 || age > prLookupTTL(cached.PRVia) {
-		return false
-	}
-	data.PRNumber, data.PRURL, data.PRState = cached.PRNumber, cached.PRURL, cached.PRState
-	data.PRFetchedAt, data.PRVia = cached.PRFetchedAt, cached.PRVia
-	return true
 }
 
 // buildGitLinksFromData renders git link text from cached data.
@@ -815,62 +650,35 @@ func getDefaultBranch() string {
 	return ""
 }
 
-// getPRInfo returns the PR's number, URL, and state for the given branch,
-// plus which path answered. State is lower-cased to open|merged|closed.
-// Returns a zero number when there's no PR or the lookup failed — all
-// best-effort, never fatal.
+// getPRInfo returns the PR's number, URL, and state for the given branch.
+// State is lower-cased to open|merged|closed. Returns (0, "", "") when there's
+// no PR, or when nothing could answer — all best-effort, never fatal.
 //
-// Where it asks depends on the operator's configuration, and only on that:
-// with agentd's GitHub proxy enabled the read goes through the daemon, which
-// holds the credential, so a pane sandboxed away from ~/.config/gh still gets
-// its PR link. With no proxy configured this is the `gh` call it always was.
+// agentd is asked first, because it has already resolved this branch's pull
+// request for the dashboard's Branch column and can answer from its own cache:
+// no GitHub traffic, no credential, and — the reason this is not the GitHub
+// proxy — no permission grant and no audit row on a surface that re-renders
+// several times a second. It is also the only path that works at all in a pane
+// whose sandbox denies ~/.config/gh, which is where the `gh` below silently
+// returns nothing.
 //
-// A proxy refusal falls through to `gh` rather than giving up. The bar is
-// best-effort and an unauthenticated `gh` simply returns nothing, so the
-// fallback can only add: a pane that CAN reach GitHub itself keeps the link it
-// had before the operator turned the proxy on for somebody else.
-//
-// The returned via is still prViaProxy in that case, deliberately. It names
-// the path IN FORCE, not the one that happened to produce the bytes, and it is
-// read only to pick a refresh interval — the interval that has to be slow
-// enough for a refusal repeating on a timer, which is exactly this case.
-// The answered result reports whether anything actually LOOKED. It is not the
-// same as "there is a pull request": a lookup that ran and found none answered,
-// and the caller should cache that. What it rules out is the shared budget
-// running out — the proxy spending all of it and leaving the `gh` fallback an
-// already-expired context, which returns "no pull request" without running at
-// all. Stamped as an observation, one transient stall would suppress the link
-// for a whole proxy interval, and a real PR the previous snapshot knew about
-// would be replaced by a silence that had never been checked.
-func getPRInfo(branch string) (number int, url, state, via string, answered bool) {
-	// ONE deadline for the whole lookup, however many steps it takes. This
-	// runs inside the statusline command the harness is waiting on, so what
-	// the pane can afford is fixed; it must not grow because the answer might
-	// come from two places instead of one.
-	ctx, cancel := context.WithTimeout(context.Background(), prLookupBudget)
-	defer cancel()
-
-	if githubProxyEnabled(ctx) {
-		if n, u, s, ok := proxyPRInfo(ctx, branch); ok {
-			return n, u, s, prViaProxy, true
-		}
-		n, u, s := ghPRInfo(ctx, branch)
-		// A budget still live means `gh` was given a real chance; a spent one
-		// means what came back is the clock talking, not GitHub.
-		return n, u, s, prViaProxy, ctx.Err() == nil
+// `gh` remains the fallback, unchanged, and covers the two cases the daemon
+// cannot: no daemon at all, and a cold cache. The daemon's own answer for a
+// cold branch is "not resolved yet" rather than "no pull request" — and the
+// very ask that misses schedules the refresh that makes the next one land.
+func getPRInfo(branch string) (number int, url, state string) {
+	if n, u, s, ok := daemonBranchPR(context.Background(), branch); ok {
+		return n, u, s
 	}
-	n, u, s := ghPRInfo(ctx, branch)
-	return n, u, s, prViaGH, ctx.Err() == nil
+	return ghPRInfo(branch)
 }
 
 // ghPRInfo is the direct `gh pr view` read: the pane's own credentials, the
 // pane's own network. Returns (0, "", "") when there's no PR, gh isn't
-// installed, gh isn't authenticated, or the lookup ran out of budget.
-//
-// The context is what bounds it. This call used to be unbounded, which in a
-// status line means a `gh` waiting on a network that never answers freezes the
-// pane for as long as it likes.
-func ghPRInfo(ctx context.Context, branch string) (number int, url, state string) {
+// installed, gh isn't authenticated, or the call outran its bound.
+func ghPRInfo(branch string) (number int, url, state string) {
+	ctx, cancel := context.WithTimeout(context.Background(), ghPRTimeout)
+	defer cancel()
 	out, err := exec.CommandContext(ctx, "gh", "pr", "view", branch, "--json", "number,url,state").Output()
 	if err != nil {
 		return 0, "", ""

@@ -191,39 +191,6 @@ func gitProxyRoutesEnabled(r *http.Request) bool {
 	return false
 }
 
-// githubReadRoutesEnabled is the narrower question gitProxyRoutesEnabled does
-// not answer: could a GitHub READ from THIS caller succeed at all?
-//
-// gitProxyRoutesEnabled is a command-tree visibility bit — true when the
-// operator configured the proxy at all, or when the caller holds a scoped
-// grant on ANY of the four proxy slugs. That is the right answer for "should
-// `tclaude proxy` appear in --help" and the wrong one for a caller deciding
-// whether to spend a request: an agent granted only `proxy.git.push` would be
-// told yes, then be refused by every github read it made — on a timer, in the
-// status bar's case, with an audit row for each refusal.
-//
-// So this asks for the one slug the read needs, and then for the remote policy
-// that slug depends on: a remote-scoped grant carries its own allow-list, while
-// an unscoped one has nothing to check against unless the operator configured
-// allowed_remotes. Non-agent callers get false — the proxy resolves a
-// repository from the caller's own recorded launch directory, and a caller
-// without one has no repository for it to find.
-func githubReadRoutesEnabled(r *http.Request) bool {
-	p := peerFromContext(r.Context())
-	if classify(p) != classAgent {
-		return false
-	}
-	v := resolvePermissionVerdictForRequest(r, p.ConvID, PermGitHubRead)
-	if v.Resolution != permAllow {
-		return false
-	}
-	if !evalPermissionScope(v, p.ConvID, ActionContext{}).Unscoped {
-		return true
-	}
-	cfg, err := config.Load()
-	return err == nil && cfg.GitProxyEnabled()
-}
-
 // gitProxyDisabledMessage is written to be actionable for an unscoped grant.
 const gitProxyDisabledMessage = "the git/github proxy has no remote policy for this unscoped grant. " +
 	"Ask the operator to scope the grant by remote, or set legacy agent.git_proxy.allowed_remotes in ~/.tclaude/data/config.json " +

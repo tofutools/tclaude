@@ -102,26 +102,34 @@ The marker is omitted entirely when no window is known yet — no pin, and no `c
 ### Where the PR comes from
 
 Everything the status bar asks git for is local. The pull request is the one
-piece that needs a GitHub credential, and it has two paths:
+piece that needs a GitHub credential, and the bar does not hold one:
 
-- **When agentd reports the pane can read GitHub through the proxy** — the
-  `github_read` bit on `/v1/info`, which is true when the agent holds
-  `proxy.github.read` *and* there is a remote policy for it to act under — the
-  lookup goes through the daemon (`/v1/github/pr/list` with `--head <branch>`),
-  which holds the token. This is what keeps the PR link working in a pane whose
-  sandbox denies `~/.config/gh`, the posture the proxy exists to make workable.
-  See [git-proxy.md](git-proxy.md).
-- **Otherwise**, it shells out to `gh pr view <branch>` with the pane's own
-  credentials, exactly as it always has.
+- **agentd is asked first.** The daemon has already resolved this branch's pull
+  request for the dashboard's Branch column, on its own 90-second cache, so
+  `GET /v1/statusline/branch-pr` is a database read: no GitHub traffic, no
+  credential spent, no permission grant, and no audit row on a surface that
+  re-renders several times a second. It is also the only path that works in a
+  pane whose sandbox denies `~/.config/gh`.
+- **`gh pr view <branch>` is the fallback**, with the pane's own credentials,
+  exactly as it always has been. It covers the two cases the daemon cannot: no
+  daemon at all, and a cold cache — the daemon answers "not resolved yet"
+  rather than "no pull request" there, and the same ask that misses schedules
+  the resolution that makes the next one land.
 
-Both are best-effort: no PR, no `gh`, no grant, or no daemon all render the
-same way — a compare URL instead of a PR URL, never an error. The whole lookup
-shares one 4-second budget across every step it takes, because it runs inside
-the statusline command Claude Code is waiting on.
+The branch is sent; the **directory is not**. The daemon resolves the
+repository from the pane's own recorded location, which is what lets this route
+carry no permission slug: a caller cannot point it at a repository that is not
+its own. A returned PR whose URL does not belong to the repo the bar is
+rendering is discarded.
 
-Fork pull requests are excluded. GitHub's branch filter matches the bare ref
-name across every head repository, so without that an outside contributor's
-identically-named fork branch would render as the agent's own work.
+Both paths are best-effort: no PR, no `gh`, no daemon all render the same way —
+a compare URL instead of a PR URL, never an error.
+
+This is deliberately **not** the GitHub proxy. Routing it through
+`tclaude proxy github` would spend the operator's credential, need the
+`proxy.github.read` grant, and write an audit row per render. The proxy's own
+`pr ls --head` remains the gated, audited way for an agent to ask GitHub
+directly — see [git-proxy.md](git-proxy.md).
 
 ## Usage Command
 
@@ -139,21 +147,14 @@ tclaude usage --json
 
 The status bar caches git data to stay fast (it runs after every assistant message):
 
-| Data                            | Cache Location | TTL        |
-|---------------------------------|----------------|------------|
-| Git info (repo, branch)         | SQLite DB      | 15 seconds |
-| PR lookup, via `gh`             | SQLite DB      | 15 seconds |
-| PR lookup, via the agentd proxy | SQLite DB      | 90 seconds |
+| Data                        | Cache Location | TTL        |
+|-----------------------------|----------------|------------|
+| Git info (repo, branch, PR) | SQLite DB      | 15 seconds |
 
 - Git cache is **per-repo** (keyed by repo root hash), so parallel sessions in different repos don't interfere
-- The PR has its own clock because the two paths cost different things. A `gh`
-  call is a local subprocess; a proxied one spends the **operator's** GitHub
-  credential and writes an audit row, and a status line re-renders several
-  times a second. 90 seconds is the same interval agentd already uses for its
-  own dashboard PR resolution. A carried-forward result — including "this
-  branch has no PR", which is the usual answer on a fresh branch — is
-  republished with the time it was actually looked up, not the time the
-  surrounding snapshot was gathered
+- The PR rides that same 15-second snapshot. Asking agentd costs a cache read,
+  so there is nothing to throttle harder — the daemon's own 90-second
+  resolution interval is what actually bounds how often GitHub is reached
 - Under a `tclaude-layer` sandbox the cache moves to the pane's own `/tmp`,
   since the database is not writable there
 - Rate limits, context window, cost, and model info come fresh from Claude Code on each invocation — no caching needed

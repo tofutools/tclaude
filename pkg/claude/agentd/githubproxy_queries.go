@@ -53,8 +53,8 @@ const ghLabelsFragment = `labels(first: 100) { nodes { id name description color
 //
 // $head is what makes "is there a pull request for the branch I am on?"
 // answerable through the proxy at all. `pr view` takes a number, so without it
-// a caller who knows only its branch name — an agent that just pushed, the
-// status bar rendering a pane — has nothing to ask.
+// an agent that has just pushed a branch and knows only its name has nothing
+// to ask.
 const ghPRListQuery = `
 query PRList($owner: String!, $name: String!, $limit: Int!, $states: [PullRequestState!], $head: String) {
   repository(owner: $owner, name: $name) {

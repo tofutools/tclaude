@@ -361,6 +361,28 @@ func lookupBranchLinkRow(gitCache map[string]*db.GitCacheRow, repoDir, branch st
 	return lookupBranchLinkFromCache(repoDir, branch, key, gitCache[key])
 }
 
+// lookupBranchLinkOne resolves a single (repoDir, branch) pair, loading its
+// git_cache row itself rather than taking a preloaded map.
+//
+// The dashboard batch-loads every key it needs per snapshot, which is why the
+// hot path takes a map; a caller asking about ONE pair — the status bar, via
+// /v1/statusline/branch-pr — has nothing to batch and would otherwise have to
+// pass a map containing the very row it came to fetch. It routes through the
+// same core, so the async refresh a stale or cold entry schedules still fires:
+// that side effect is what makes the FIRST ask populate the cache the second
+// one answers from.
+func lookupBranchLinkOne(repoDir, branch string) (url string, prNumber int, prURL, prState string, fetchedAt time.Time) {
+	if repoDir == "" || branch == "" {
+		return "", 0, "", "", time.Time{}
+	}
+	key := branchLinkCacheKey(repoDir, branch)
+	// A read failure is a cold miss, not an error: the core's answer for a
+	// nil row is "nothing yet, and a refresh is now scheduled", which is
+	// exactly what an unreadable row should produce.
+	row, _ := db.LoadGitCache(key)
+	return lookupBranchLinkFromCache(repoDir, branch, key, row)
+}
+
 // lookupBranchLinkFromCache is the shared resolution core for a (repoDir,
 // branch) pair given its already-loaded git_cache row (nil == cold miss). It
 // NEVER shells out: on a missing or stale entry it schedules the async refresh

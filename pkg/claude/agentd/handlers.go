@@ -39,18 +39,11 @@ func handleInfo(w http.ResponseWriter, r *http.Request) {
 	// private config contents. It lets a sandboxed CLI that cannot read
 	// ~/.tclaude/data/config.json still resolve enabled/disabled state
 	// through the daemon. Open like the rest of /v1/info.
-	// "github_read" is the narrower sibling of "proxy": not "does this
-	// daemon offer the proxy" but "would a GitHub read from THIS caller get
-	// through". The status bar routes its pull-request lookup on it, and a
-	// caller that asked the broader question would spend a refused,
-	// audit-logged request every refresh for the whole life of a pane that
-	// was never eligible. See githubReadRoutesEnabled.
 	writeJSON(w, http.StatusOK, map[string]any{
 		"popup_base_url": popupBaseURL,
 		"idempotency":    "v1",
 		"processes":      processRoutesEnabled(),
 		"proxy":          gitProxyRoutesEnabled(r),
-		"github_read":    githubReadRoutesEnabled(r),
 	})
 }
 

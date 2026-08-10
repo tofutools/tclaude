@@ -195,17 +195,8 @@ func applyRenderWrites(w renderWrites) (ok bool) {
 			// published git/PR snapshot. A render may reuse the 15-second git
 			// cache, so retain its actual fetch time instead of making stale PR
 			// state look newer merely because the statusline rendered again.
-			//
-			// The PR fields have their own, older clock — a lookup carries
-			// forward across several snapshot refreshes (see prLookupTTL) — and
-			// this column is what agentd's reconcilePRSlot weighs against its
-			// own observation of the same pull request. Publishing the
-			// snapshot's time would claim a freshness the PR fields do not
-			// have and let a stale state outrank a fresher one; the honest
-			// answer for a row whose PR is its point is when that PR was last
-			// actually looked up.
-			if at := w.Git.prObservedAt(); !at.IsZero() {
-				ws.UpdatedAt = at
+			if !w.Git.FetchedAt.IsZero() {
+				ws.UpdatedAt = w.Git.FetchedAt
 			}
 		}
 		if err := db.UpsertAgentWorkspace(ws); err != nil {
