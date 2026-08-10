@@ -321,12 +321,26 @@ return (async function(){
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
   if (document.querySelector('#group-clone-modal.show')) throw new Error('Escape dragend consumed a cancelled clone plan');
 
+  var platformDescriptor = Object.getOwnPropertyDescriptor(navigator, 'platform');
+  var userAgentDescriptor = Object.getOwnPropertyDescriptor(navigator, 'userAgent');
+  var originalUserAgent = navigator.userAgent;
+  Object.defineProperty(navigator, 'platform', {value:'MacIntel', configurable:true});
+  Object.defineProperty(navigator, 'userAgent', {value:
+    'Mozilla/5.0 (Macintosh) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0', configurable:true});
+  fire(source, 'dragstart');
+  fire(target, 'dragover', {metaKey:true, clientX:rect.left + rect.width / 2, clientY:rect.top + rect.height / 2});
+  fire(target, 'dragleave', {relatedTarget:null, clientX:0, clientY:0, screenX:0, screenY:0});
+  var edgeEnd = new DragEvent('dragend', {bubbles:true, cancelable:false, dataTransfer:transfer});
+  Object.defineProperty(edgeEnd, 'dataTransfer', {value:{dropEffect:'none'}});
+  source.dispatchEvent(edgeEnd);
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  if (document.querySelector('#group-clone-modal.show')) throw new Error('macOS Edge zero-event bypassed ordinary exit cleanup');
+
+  Object.defineProperty(navigator, 'userAgent', {value:originalUserAgent, configurable:true});
   fire(source, 'dragstart');
   fire(target, 'dragover', {metaKey:true, clientX:rect.left + rect.width / 2, clientY:rect.top + rect.height / 2});
   // Emulate macOS Chrome for its all-zero mouse-release dragleave. Linux Chrome
   // used by this smoke must keep the ordinary outside-document behavior above.
-  var platformDescriptor = Object.getOwnPropertyDescriptor(navigator, 'platform');
-  Object.defineProperty(navigator, 'platform', {value:'MacIntel', configurable:true});
   fire(target, 'dragleave', {relatedTarget:null, clientX:0, clientY:0, screenX:0, screenY:0});
   var dragend = new DragEvent('dragend', {bubbles:true, cancelable:false, dataTransfer:transfer});
   Object.defineProperty(dragend, 'dataTransfer', {value:{dropEffect:'none'}});
@@ -335,6 +349,8 @@ return (async function(){
   if (!document.querySelector('#group-clone-modal.show')) throw new Error('macOS-style dragend did not finish the live green clone plan');
   if (platformDescriptor) Object.defineProperty(navigator, 'platform', platformDescriptor);
   else delete navigator.platform;
+  if (userAgentDescriptor) Object.defineProperty(navigator, 'userAgent', userAgentDescriptor);
+  else delete navigator.userAgent;
   document.querySelector('#group-clone-cancel').click();
 })();`,
 	}

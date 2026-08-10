@@ -462,7 +462,9 @@ function bindGroupReorder() {
       && e.clientX === 0 && e.clientY === 0
       && e.screenX === 0 && e.screenY === 0
       && /Mac/.test(navigator.platform || navigator.userAgent)
-      && /(?:Chrome|Chromium)\//.test(navigator.userAgent);
+      && /(?:Chrome|Chromium)\//.test(navigator.userAgent)
+      && !/(?:Edg|OPR|Vivaldi)\//.test(navigator.userAgent)
+      && !navigator.brave;
     const outside = !macChromeZeroRelease && !e.relatedTarget && (
       e.clientX <= 0 || e.clientY <= 0
       || e.clientX >= window.innerWidth - 1
