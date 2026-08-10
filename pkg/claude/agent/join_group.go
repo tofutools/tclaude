@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"bufio"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
+	"golang.org/x/term"
 )
 
 func init() {
@@ -30,6 +33,7 @@ func RunJoinGroup(params *session.NewParams) error {
 	}
 
 	group := strings.TrimSpace(params.JoinGroup)
+	explicitGroup := group != ""
 	if group == "" {
 		var err error
 		group, err = automaticGroupForDir(params)
@@ -39,8 +43,18 @@ func RunJoinGroup(params *session.NewParams) error {
 		if group == "" {
 			return session.ErrNoAutomaticGroupMatch
 		}
-		params.JoinGroup = group
 	}
+	if !explicitGroup && !DaemonAvailable() {
+		return automaticDaemonFallback(os.Stdin, os.Stderr, term.IsTerminal(int(os.Stdin.Fd())))
+	}
+	if !explicitGroup {
+		canonicalDir, err := canonicalGroupDir(launchDir(params))
+		if err != nil {
+			return fmt.Errorf("normalize launch directory: %w", err)
+		}
+		params.Dir = canonicalDir
+	}
+	params.JoinGroup = group
 
 	spawn := spawnParamsForJoinedSession(params, group)
 	resp, rc := RunSpawn(spawn, os.Stdout, os.Stderr, os.Stdin)
@@ -53,6 +67,25 @@ func RunJoinGroup(params *session.NewParams) error {
 
 	fmt.Println("\nAttaching... (Ctrl+B D to detach)")
 	return session.AttachToSession(resp.Label, resp.TmuxSession, false)
+}
+
+func automaticDaemonFallback(in io.Reader, out io.Writer, interactive bool) error {
+	if !interactive {
+		return fmt.Errorf("agentd is unavailable; pass --no-daemon to start a solo session non-interactively, or see `tclaude agentd serve --help`")
+	}
+	if !confirmSoloWithoutDaemon(in, out) {
+		return fmt.Errorf("agentd is unavailable; session startup canceled (pass --no-daemon to start solo, or see `tclaude agentd serve --help`)")
+	}
+	return session.ErrNoAutomaticGroupMatch
+}
+
+func confirmSoloWithoutDaemon(in io.Reader, out io.Writer) bool {
+	fmt.Fprintln(out, "agentd is unavailable, so this session cannot join its matching group or use agent features.")
+	fmt.Fprintln(out, "See `tclaude agentd serve --help` for daemon setup, or pass --no-daemon to skip this prompt.")
+	fmt.Fprint(out, "Start a solo session anyway? [y/N]: ")
+	answer, _ := bufio.NewReader(in).ReadString('\n')
+	answer = strings.ToLower(strings.TrimSpace(answer))
+	return answer == "y" || answer == "yes"
 }
 
 func spawnParamsForJoinedSession(params *session.NewParams, group string) *SpawnParams {
@@ -129,10 +162,6 @@ func automaticGroupForDir(params *session.NewParams) (string, error) {
 		return "", fmt.Errorf("directory %q matches multiple groups (%s); choose one with --join-group or disable auto-join", cwd, strings.Join(matches, ", "))
 	}
 	if len(matches) == 1 {
-		// A relative spelling was resolved against THIS terminal process. Carry
-		// the canonical result only into an actual daemon spawn; an unmatched
-		// solo fallback must retain the caller's logical path spelling.
-		params.Dir = cwd
 		return matches[0], nil
 	}
 	if !params.AutoJoinOrCreateGroup {

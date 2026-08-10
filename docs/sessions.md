@@ -70,6 +70,12 @@ flags override those settings, and an explicit `--join-group <name>` always
 wins. If more than one active group has the same canonical directory, startup
 refuses the ambiguous choice and asks for `--join-group`.
 
+If directory discovery finds a group but agentd is unavailable, an interactive
+launch offers to continue as a solo session without group membership or agent
+features. Non-interactive callers must opt into that fallback with
+`--no-daemon`; the same flag skips discovery and its prompt for interactive
+launches too. Explicit `--join-group` remains daemon-required.
+
 Resume, managed daemon launches, and `--shell` never perform directory
 discovery. When matching is enabled but finds nothing and auto-create is off,
 the command retains the historical solo-session behavior. Spawn-only flags are

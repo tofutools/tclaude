@@ -1,10 +1,12 @@
 package agent
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -30,9 +32,11 @@ func TestAutomaticGroupForDirCanonicalMatch(t *testing.T) {
 	_, err = db.SetAgentGroupDefaultCwd("project-team", alias+string(os.PathSeparator)+".")
 	require.NoError(t, err)
 
-	got, err := automaticGroupForDir(&session.NewParams{Dir: real, AutoJoinGroup: true})
+	params := &session.NewParams{Dir: alias, AutoJoinGroup: true}
+	got, err := automaticGroupForDir(params)
 	require.NoError(t, err)
 	assert.Equal(t, "project-team", got)
+	assert.Equal(t, alias, params.Dir, "discovery must preserve logical cwd until a daemon spawn is confirmed")
 }
 
 func TestAutomaticGroupForDirNoMatchAndAmbiguity(t *testing.T) {
@@ -82,6 +86,46 @@ func TestAvailableDirectoryGroupName(t *testing.T) {
 	groups := []*db.AgentGroup{{Name: "repo"}, {Name: "repo-2"}, {Name: "other"}}
 	assert.Equal(t, "repo-3", availableDirectoryGroupName("/work/repo", groups))
 	assert.Equal(t, "group", availableDirectoryGroupName("/", groups))
+}
+
+func TestConfirmSoloWithoutDaemon(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{name: "yes short", in: "y\n", want: true},
+		{name: "yes long case insensitive", in: " YES \n", want: true},
+		{name: "default no", in: "\n", want: false},
+		{name: "eof defaults no", want: false},
+		{name: "other defaults no", in: "sure\n", want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			assert.Equal(t, tc.want, confirmSoloWithoutDaemon(strings.NewReader(tc.in), &out))
+			assert.Contains(t, out.String(), "--no-daemon")
+			assert.Contains(t, out.String(), "agentd serve --help")
+		})
+	}
+}
+
+func TestAutomaticDaemonFallback(t *testing.T) {
+	var out bytes.Buffer
+	err := automaticDaemonFallback(strings.NewReader("y\n"), &out, false)
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, session.ErrNoAutomaticGroupMatch)
+	assert.Contains(t, err.Error(), "non-interactively")
+	assert.Empty(t, out.String(), "a non-interactive launch must not emit a prompt")
+
+	out.Reset()
+	err = automaticDaemonFallback(strings.NewReader("n\n"), &out, true)
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, session.ErrNoAutomaticGroupMatch)
+	assert.Contains(t, err.Error(), "canceled")
+
+	out.Reset()
+	err = automaticDaemonFallback(strings.NewReader("yes\n"), &out, true)
+	assert.ErrorIs(t, err, session.ErrNoAutomaticGroupMatch)
 }
 
 func TestAutomaticGroupForDirCreatesMissingGroup(t *testing.T) {
