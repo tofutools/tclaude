@@ -279,12 +279,12 @@ function applyGroupDrop(dragName, targetName, zone) {
 
 // finishGroupDrag handles the browser-guaranteed terminal event. Normally drop
 // consumes the plan and tears down first. If macOS Chrome omits that usable
-// drop but reports a successful native copy at dragend, finish the exact clone
-// placement that was already shown in green during the last valid dragover.
-function finishGroupDrag(e) {
-  const clonePlan = e?.dataTransfer?.dropEffect === 'copy'
-    ? groupCloneHoverPlan
-    : null;
+// drop, finish the exact clone placement that was still shown in green during
+// the last valid dragover. macOS Chrome reports dropEffect=none on this path,
+// so the accepted live plan is the reliable signal; Escape and document-leave
+// explicitly invalidate it before dragend.
+function finishGroupDrag() {
+  const clonePlan = groupCloneHoverPlan;
   const dragName = groupDragName;
   endGroupDrag();
   if (!clonePlan || !dragName) return;
@@ -345,6 +345,9 @@ function bindGroupReorder() {
   });
   listen(document, 'pointerup', restoreSummaryDraggable);
   listen(document, 'pointercancel', restoreSummaryDraggable);
+  listen(document, 'keydown', (e) => {
+    if (groupReorderActive && e.key === 'Escape') groupCloneHoverPlan = null;
+  });
 
   listen(document, 'dragstart', (e) => {
     // The drag handle is the group header (<summary> with data-group-reorder);
@@ -449,10 +452,16 @@ function bindGroupReorder() {
     if (!groupReorderActive) return;
     // Leaving the document can finish as a native copy in another window or
     // application. Invalidate the internal placement so its later dragend
-    // cannot open a stale dashboard clone dialog. Chrome may omit
-    // relatedTarget for some internal transitions too; the next dragover
-    // immediately rebuilds the plan and marker when still inside.
-    if (!e.relatedTarget) {
+    // cannot open a stale dashboard clone dialog. A null relatedTarget alone
+    // is NOT sufficient: macOS Chrome also emits that shape at the in-place
+    // mouse release that ends a clone drag. Only a null target AT the viewport
+    // boundary means the pointer actually left the document.
+    const outside = !e.relatedTarget && (
+      e.clientX <= 0 || e.clientY <= 0
+      || e.clientX >= window.innerWidth - 1
+      || e.clientY >= window.innerHeight - 1
+    );
+    if (outside) {
       groupCloneHoverPlan = null;
       clearDropMarkers();
       reorderPill(e, null);
