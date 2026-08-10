@@ -111,16 +111,19 @@ piece that needs a GitHub credential, and the bar does not hold one:
   re-renders several times a second. It is also the only path that works in a
   pane whose sandbox denies `~/.config/gh`.
 - **`gh pr view <branch>` is the fallback**, with the pane's own credentials,
-  exactly as it always has been. It covers the two cases the daemon cannot: no
-  daemon at all, and a cold cache — the daemon answers "not resolved yet"
-  rather than "no pull request" there, and the same ask that misses schedules
-  the resolution that makes the next one land.
+  exactly as it always has been. A pull request is the only success: anything
+  else — no daemon, a cold cache, a branch with no PR — falls through to `gh`,
+  so an empty answer costs exactly what it cost before this route existed. The
+  same ask that misses also schedules the daemon's resolution, so the next
+  render's ask lands.
 
-The branch is sent; the **directory is not**. The daemon resolves the
-repository from the pane's own recorded location, which is what lets this route
-carry no permission slug: a caller cannot point it at a repository that is not
-its own. A returned PR whose URL does not belong to the repo the bar is
-rendering is discarded.
+Neither the **directory** nor the **branch** is taken from the caller. The
+daemon resolves both from the pane's own recorded location; the branch the
+status bar sends is compared against that and then discarded, and a mismatch
+answers with nothing rather than guessing. That is what lets the route carry no
+permission slug: no caller-supplied value reaches the `gh` the resolution runs,
+where a URL argument would re-aim it at another repository. A returned PR whose
+URL does not belong to the repo the bar is rendering is discarded as well.
 
 Both paths are best-effort: no PR, no `gh`, no daemon all render the same way —
 a compare URL instead of a PR URL, never an error.

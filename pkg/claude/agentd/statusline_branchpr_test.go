@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -53,43 +54,73 @@ func TestStatuslineBranchPRServesTheAlreadyResolvedPR(t *testing.T) {
 		})()
 
 	cold := askBranchPR(t, branch, convID)
-	assert.False(t, cold.Resolved,
-		"a cold cache reports 'not resolved yet', never 'no pull request' — the caller falls back to gh on this")
+	assert.Empty(t, cold.PRURL,
+		"a cold cache has nothing to offer; the caller falls back to gh on this")
 
 	WaitForBackgroundForTest()
 
 	warm := askBranchPR(t, branch, convID)
-	require.True(t, warm.Resolved, "the miss scheduled the resolution; the second ask must land")
-	assert.Equal(t, 42, warm.PRNumber)
+	assert.Equal(t, 42, warm.PRNumber, "the miss scheduled the resolution; the second ask must land")
 	assert.Equal(t, "https://github.com/o/r/pull/42", warm.PRURL)
 	assert.Equal(t, "open", warm.PRState)
 }
 
-// TestStatuslineBranchPRResolvesNoPRAsAnAnswer — a freshly pushed branch has no
-// pull request, and that is a real, final answer rather than a miss. Reporting
-// it as unresolved would send every such pane to `gh` on every render, which is
-// exactly the traffic this endpoint exists to remove.
-func TestStatuslineBranchPRResolvesNoPRAsAnAnswer(t *testing.T) {
+// TestStatuslineBranchPRRefusesABranchThatCouldNameARepository is the property
+// that lets this route carry no permission slug and write no audit row.
+//
+// The branch reaches `gh pr view`'s argv (branchlinks.go, ghPRForBranch), and
+// `gh pr view` accepts `<number> | <url> | <branch>`: a URL argument re-aims it
+// at ANOTHER REPOSITORY, and a bare number selects a pull request by id. On an
+// ungated, unaudited route, a caller-supplied value in that position would let
+// any confirmed agent read any pull request the operator's token can reach —
+// the first ask schedules `gh pr view https://github.com/victim/private/pull/1`
+// with the operator's credential, the second returns it from cache.
+//
+// The defence is not a sanitiser but the absence of the sink: the caller's
+// branch is compared against the daemon's own resolved branch and then
+// discarded, so nothing it sends is ever passed on. These cases would each
+// survive a plausible charset gate — the scheme-less URL and the bare `1` are
+// both legal git ref names — which is why out-guessing another tool's argument
+// parser was the wrong shape of fix.
+//
+// The resolver must never see any of them: a refusal that still reached `gh`
+// would spend the credential regardless of what this endpoint returned.
+func TestStatuslineBranchPRRefusesABranchThatCouldNameARepository(t *testing.T) {
 	setupTestDB(t)
-	const convID = "statusline-branchpr-0002"
-	const branch = "feature"
+	const convID = "statusline-branchpr-0005"
 	_, _, err := db.EnsureAgentForConv(convID, "test")
 	require.NoError(t, err)
 	require.NoError(t, db.UpsertAgentWorkspace(db.AgentWorkspace{
-		ConvID: convID, Cwd: "/repo", Branch: branch,
+		ConvID: convID, Cwd: "/repo", Branch: "feature",
 	}))
+
+	var seen []string
 	defer SetGitInfoResolverForTest(
-		func(string, string) (string, string, int, string, string, bool) {
-			return "https://github.com/o/r", "main", 0, "", "", true
+		func(_, branch string) (string, string, int, string, string, bool) {
+			seen = append(seen, branch)
+			return "https://github.com/o/r", "main", 1, "https://github.com/o/r/pull/1", "open", true
 		})()
 
-	askBranchPR(t, branch, convID)
-	WaitForBackgroundForTest()
+	for _, branch := range []string{
+		"https://github.com/victim/private/pull/1", // a URL re-aims gh at another repo
+		"github.com/victim/private/pull/1",
+		"--repo=victim/private",
+		"-R victim/private",
+		"1", // a bare number is a PR selector, not a branch
+		"feature branch",
+		"feat/../../etc",
+		"HEAD",
+		"",
+		"   ",
+	} {
+		t.Run(branch, func(t *testing.T) {
+			out := askBranchPR(t, url.QueryEscape(branch), convID)
+			assert.Empty(t, out.PRURL, "a branch that is not this agent's own must yield nothing")
+		})
+	}
 
-	warm := askBranchPR(t, branch, convID)
-	assert.True(t, warm.Resolved, "'this branch has no PR' is an answer, not a miss")
-	assert.Zero(t, warm.PRNumber)
-	assert.Empty(t, warm.PRURL)
+	WaitForBackgroundForTest()
+	assert.Empty(t, seen, "no refused branch may reach git or gh")
 }
 
 // TestStatuslineBranchPRTakesNoDirectoryFromTheCaller pins the property that
@@ -145,7 +176,7 @@ func TestStatuslineBranchPRRefusesCallersItCannotPlace(t *testing.T) {
 			return "https://github.com/o/r", "main", 1, "https://github.com/o/r/pull/1", "open", true
 		})()
 
-	assert.False(t, askBranchPR(t, "feature").Resolved, "no agent identity, no answer")
+	assert.Empty(t, askBranchPR(t, "feature").PRURL, "no agent identity, no answer")
 
 	// A branch is required: without one there is no cache key, and an empty
 	// one must not be read as "every branch".
@@ -155,16 +186,16 @@ func TestStatuslineBranchPRRefusesCallersItCannotPlace(t *testing.T) {
 	require.NoError(t, db.UpsertAgentWorkspace(db.AgentWorkspace{
 		ConvID: convID, Cwd: "/repo", Branch: "feature",
 	}))
-	assert.False(t, askBranchPR(t, "", convID).Resolved)
+	assert.Empty(t, askBranchPR(t, "", convID).PRURL)
 
 	WaitForBackgroundForTest()
 	assert.Zero(t, resolverCalls, "neither case may reach git or gh")
 }
 
-// TestStatuslineBranchPRIsGETOnly — a POST would be recorded by the audit
-// middleware, which records mutating methods. This route is a cache read that
-// fires on a display refresh, and putting it in the operator's audit trail is
-// precisely the cost the endpoint exists to avoid.
+// TestStatuslineBranchPRIsGETOnly. The route is a read and says so; a POST
+// would also be the shape the audit middleware inspects, and while its
+// allowlist has no entry for this path under any method, a read that fires on
+// a display refresh should not be one rename away from the audit trail.
 func TestStatuslineBranchPRIsGETOnly(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handleStatuslineBranchPR(rec, httptest.NewRequest(http.MethodPost, "/v1/statusline/branch-pr", nil))

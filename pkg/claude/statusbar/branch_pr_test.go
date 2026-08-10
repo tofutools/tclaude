@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -50,8 +51,7 @@ func TestDaemonBranchPRReadsTheResolvedPR(t *testing.T) {
 	serveFakeBranchPRDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		gotPath, gotQuery = r.URL.Path, r.URL.RawQuery
 		_ = json.NewEncoder(w).Encode(branchPRResponse{
-			Resolved: true, PRNumber: 7,
-			PRURL: "https://github.com/o/r/pull/7", PRState: "OPEN",
+			PRNumber: 7, PRURL: "https://github.com/o/r/pull/7", PRState: "OPEN",
 		})
 	})
 
@@ -67,31 +67,30 @@ func TestDaemonBranchPRReadsTheResolvedPR(t *testing.T) {
 	assert.NotContains(t, gotQuery, "dir")
 }
 
-// TestDaemonBranchPRSeparatesNoPRFromNotResolvedYet is the distinction the
-// fallback turns on. "Resolved, no pull request" is a real answer and the usual
-// one on a freshly pushed branch. "Not resolved yet" is what a cold cache says
-// on the first ask — and rendering that as "no PR" would blank the link of
-// every agent whose daemon has not warmed up, when `gh` could have answered.
-func TestDaemonBranchPRSeparatesNoPRFromNotResolvedYet(t *testing.T) {
-	t.Run("resolved with no PR is an answer", func(t *testing.T) {
+// TestDaemonBranchPRTreatsAnEmptyAnswerAsNoAnswer — a pull request is the only
+// success. The daemon is deliberately not asked to distinguish "I looked and
+// there is none" from "I have not looked yet": it stamps its cache on every
+// outcome, including a `gh` that failed and a directory that resolved to the
+// wrong repository, so a flag saying otherwise would suppress the `gh` that
+// would have found the PR.
+func TestDaemonBranchPRTreatsAnEmptyAnswerAsNoAnswer(t *testing.T) {
+	t.Run("no PR in the answer", func(t *testing.T) {
 		serveFakeBranchPRDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
-			_ = json.NewEncoder(w).Encode(branchPRResponse{Resolved: true})
-		})
-		n, u, _, ok := daemonBranchPR(t.Context(), "feat")
-		assert.True(t, ok, "the daemon looked and there is no PR — do not go on to ask gh")
-		assert.Zero(t, n)
-		assert.Empty(t, u)
-	})
-	t.Run("not resolved yet is not an answer", func(t *testing.T) {
-		serveFakeBranchPRDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
-			_ = json.NewEncoder(w).Encode(branchPRResponse{Resolved: false})
+			_ = json.NewEncoder(w).Encode(branchPRResponse{})
 		})
 		_, _, _, ok := daemonBranchPR(t.Context(), "feat")
-		assert.False(t, ok, "a cold cache must fall through to gh, not render as 'no PR'")
+		assert.False(t, ok, "an empty answer must fall through to gh, exactly as before this route existed")
 	})
-	t.Run("a refusal is not an answer", func(t *testing.T) {
+	t.Run("a refusal", func(t *testing.T) {
 		serveFakeBranchPRDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusForbidden)
+		})
+		_, _, _, ok := daemonBranchPR(t.Context(), "feat")
+		assert.False(t, ok)
+	})
+	t.Run("junk body", func(t *testing.T) {
+		serveFakeBranchPRDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte("not json"))
 		})
 		_, _, _, ok := daemonBranchPR(t.Context(), "feat")
 		assert.False(t, ok)
@@ -134,19 +133,34 @@ func TestDropForeignRepoPRKeepsTheBarHonest(t *testing.T) {
 	dropForeignRepoPR(lookalike)
 	assert.Zero(t, lookalike.PRNumber)
 
-	own := &GitSnapshot{
-		RepoURL: "https://github.com/o/a", PRURL: "https://github.com/o/a/pull/7", PRNumber: 7,
+	// Every spelling of the SAME repository must be kept. The remote is
+	// written however the operator cloned it, while the PR URL carries what
+	// GitHub has on record — a prefix test would call most of these foreign
+	// and silently blank a correct link, on the `gh` path too.
+	for _, repoURL := range []string{
+		"https://github.com/o/a",
+		"https://github.com/o/a/",
+		"ssh://git@github.com/o/a",
+		"ssh://git@github.com/o/a.git",
+		"http://github.com/o/a",
+		"https://github.com/ToFuTools/A", /* GitHub's casing differs from the clone's */
+	} {
+		t.Run(repoURL, func(t *testing.T) {
+			own := &GitSnapshot{RepoURL: repoURL, PRNumber: 7,
+				PRURL: "https://github.com/tofutools/a/pull/7"}
+			if !strings.Contains(strings.ToLower(repoURL), "tofutools") {
+				own.PRURL = "https://github.com/o/a/pull/7"
+			}
+			dropForeignRepoPR(own)
+			assert.Equal(t, 7, own.PRNumber, "%s is the same repository as its own PR", repoURL)
+		})
 	}
-	dropForeignRepoPR(own)
-	assert.Equal(t, 7, own.PRNumber)
 
-	// The two strings come from different places and GitHub does not force
-	// them to agree: the remote is spelled however the operator cloned it,
-	// while the PR URL carries the casing GitHub has on record. Same
-	// repository — dropping its PR would blank a correct link.
-	casing := &GitSnapshot{
-		RepoURL: "https://github.com/ToFuTools/A", PRURL: "https://github.com/tofutools/a/pull/7", PRNumber: 7,
+	// A repo URL this cannot parse is not evidence of anything, and blanking
+	// on it would be the same silent-drop bug in the other direction.
+	unparseable := &GitSnapshot{
+		RepoURL: "github.com", PRURL: "https://github.com/o/a/pull/7", PRNumber: 7,
 	}
-	dropForeignRepoPR(casing)
-	assert.Equal(t, 7, casing.PRNumber)
+	dropForeignRepoPR(unparseable)
+	assert.Equal(t, 7, unparseable.PRNumber)
 }

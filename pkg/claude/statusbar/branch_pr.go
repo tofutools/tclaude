@@ -47,22 +47,27 @@ const ghPRTimeout = 3 * time.Second
 
 // branchPRResponse mirrors the daemon's wire shape.
 type branchPRResponse struct {
-	// Resolved reports that the daemon has actually looked. It is what
-	// separates "there is no pull request on this branch" — a real answer,
-	// and the usual one on a freshly pushed branch — from "not resolved
-	// yet", which is what a cold cache says on the first ask and must not be
-	// rendered as "no PR".
-	Resolved bool   `json:"resolved"`
 	PRNumber int    `json:"pr_number"`
 	PRURL    string `json:"pr_url"`
 	PRState  string `json:"pr_state"`
 }
 
-// daemonBranchPR asks agentd for branch's pull request, reporting ok=false when
-// the daemon could not answer — not running, could not place this pane, or has
-// not resolved the branch yet. The caller falls back to `gh` on false, which is
-// what covers the cold-cache window: the same ask that misses also schedules
-// the daemon's refresh, so the second one lands.
+// daemonBranchPR asks agentd for branch's pull request, reporting ok=false
+// whenever it does not come back with one — no daemon, a pane it cannot place,
+// a cache it has not warmed yet, or a branch with no pull request at all.
+//
+// A PR IS THE ONLY SUCCESS. The daemon is not asked to distinguish "I looked
+// and there is none" from "I have not looked", because it cannot do so
+// honestly: refreshBranchLink stamps its cache on every outcome, including a
+// `gh` that failed and a directory that resolved to the wrong repository. A
+// caller that trusted such a flag would suppress the `gh` fallback that would
+// have found the PR. So an empty answer costs exactly what it cost before this
+// route existed — one `gh pr view` — and the saving is on the branches that
+// actually have a pull request, which is where the daemon's answer is worth
+// having.
+//
+// The cold-cache miss is not wasted either: the same ask that returns nothing
+// schedules the daemon's resolution, so the next render's ask lands.
 //
 // The branch is sent; the DIRECTORY is not, and deliberately cannot be. The
 // daemon resolves that from this pane's own identity, so no caller can point it
@@ -91,7 +96,7 @@ func daemonBranchPR(ctx context.Context, branch string) (number int, prURL, stat
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&out); err != nil {
 		return 0, "", "", false
 	}
-	if !out.Resolved {
+	if out.PRURL == "" {
 		return 0, "", "", false
 	}
 	return out.PRNumber, out.PRURL, strings.ToLower(out.PRState), true
@@ -114,15 +119,44 @@ func dropForeignRepoPR(data *GitSnapshot) {
 	if data.PRURL == "" || data.RepoURL == "" {
 		return
 	}
-	// Case-insensitively, because the two strings come from different places
-	// and GitHub does not force them to agree: RepoURL is whatever the local
-	// remote is spelled as, while the PR URL carries the owner and repository
-	// casing GitHub has on record. A remote written `github.com/ToFuTools/…`
-	// against a PR URL GitHub renders as `tofutools` is the same repository,
-	// and dropping its PR would blank a link that is perfectly correct.
-	prefix := strings.ToLower(strings.TrimSuffix(data.RepoURL, "/")) + "/"
-	if strings.HasPrefix(strings.ToLower(data.PRURL), prefix) {
+	repo := repoSlug(data.RepoURL)
+	// An unrecognisable repo URL is not evidence of anything, and blanking a
+	// PR on it would be the same silent-drop bug in the other direction.
+	if repo == "" || repo == repoSlug(data.PRURL) {
 		return
 	}
 	data.PRNumber, data.PRURL, data.PRState = 0, "", ""
+}
+
+// repoSlug reduces a repository or pull-request URL to `host/owner/repo`,
+// lower-cased, or "" when it does not look like one.
+//
+// A comparison rather than a string prefix, because the two URLs it has to
+// reconcile are spelled by different authorities and agree on nothing but
+// those three segments:
+//
+//	https://github.com/o/r          the remote, as getRepoHTTPS rewrites it
+//	ssh://git@github.com/o/r        the remote, cloned over ssh — getRepoHTTPS
+//	                                rewrites only the `git@host:` form
+//	https://github.com/o/r/pull/7   the pull request, as GitHub renders it
+//
+// A prefix test calls the second of those foreign to the third and silently
+// blanks a perfectly correct link. Case folding matters for the same reason:
+// GitHub keeps the owner and repository casing it has on record, while the
+// remote is spelled however the operator cloned it.
+func repoSlug(rawURL string) string {
+	s := strings.ToLower(strings.TrimSpace(rawURL))
+	if _, after, ok := strings.Cut(s, "://"); ok {
+		s = after
+	}
+	// Strip any userinfo — `git@`, and the `user:token@` a credential helper
+	// may have written into the remote.
+	if _, after, ok := strings.Cut(s, "@"); ok {
+		s = after
+	}
+	segs := strings.Split(strings.Trim(s, "/"), "/")
+	if len(segs) < 3 || segs[0] == "" || segs[1] == "" || segs[2] == "" {
+		return ""
+	}
+	return segs[0] + "/" + segs[1] + "/" + strings.TrimSuffix(segs[2], ".git")
 }

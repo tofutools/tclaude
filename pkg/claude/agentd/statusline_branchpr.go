@@ -38,25 +38,44 @@ import (
 //     repository on the host — a filesystem reach this deliberately does not
 //     lend, and the one thing that would make an ungated endpoint a real
 //     widening rather than a re-read of what the pane already displays.
-//  2. The branch IS the caller's, because the status bar has just run `git` and
-//     knows it exactly, while the stored location can lag a branch flip by a
-//     refresh. It selects a cache key WITHIN the resolved directory and can
-//     therefore not reach outside it.
+//  2. NEITHER IS THE BRANCH. The caller sends one, but it is compared and then
+//     discarded — the lookup runs on the branch the DAEMON resolved. That is
+//     not fastidiousness: the branch reaches `gh pr view`'s argv (see
+//     ghPRForBranch), and `gh pr view` accepts `<number> | <url> | <branch>`,
+//     so a URL argument re-aims it at ANOTHER REPOSITORY and a bare number
+//     selects a pull request by id. On an ungated, unaudited route a
+//     caller-supplied value in that position would let any confirmed agent
+//     read any pull request the operator's token can reach, private ones
+//     included. Sanitising it would mean out-guessing another tool's argument
+//     parser; not passing it at all needs no such argument.
 //
-// No permission slug and no audit row, by operator ruling: this returns the
-// agent's own pull-request link, which its own status bar has always displayed,
-// and which the operator can see in the dashboard.
+//     What the caller's branch is FOR is agreement. The status bar has just
+//     run `git` and knows its branch exactly, while the stored location can
+//     lag a flip by a refresh — so a mismatch means the two are talking about
+//     different branches, and the honest answer is nothing at all. The pane
+//     then falls back to `gh`, exactly as it did before this route existed.
+//
+// No permission slug and no audit row, by operator ruling: with those
+// properties holding, this returns the agent's own pull-request link — which
+// its own status bar has always displayed, and which the operator can see in
+// the dashboard.
 
-// statuslineBranchPRResponse is the wire shape. Resolved distinguishes "this
-// daemon has looked and there is no pull request" from "it has not looked yet",
-// which the caller cannot infer from an empty PR: the first answer is final
-// until the branch moves, the second means try `gh` and ask again shortly.
+// statuslineBranchPRResponse is the wire shape.
+//
+// There is deliberately no "resolved" flag. An earlier shape had one, meaning
+// "this daemon has looked and there is no pull request" as against "it has not
+// looked yet", so the caller could skip its `gh` fallback on the first. The
+// daemon cannot honestly answer that: refreshBranchLink stamps FetchedAt on
+// EVERY outcome, including a `gh` that failed and a directory that resolved to
+// the wrong repository — so "looked, found nothing" and "looked in the wrong
+// place" were indistinguishable, and the caller suppressed a `gh` that would
+// have found the PR. An empty answer here therefore means only "nothing to
+// offer", and the caller falls back exactly as it did before this route
+// existed.
 type statuslineBranchPRResponse struct {
-	Resolved bool   `json:"resolved"`
 	PRNumber int    `json:"pr_number,omitempty"`
 	PRURL    string `json:"pr_url,omitempty"`
 	PRState  string `json:"pr_state,omitempty"`
-	RepoURL  string `json:"repo_url,omitempty"`
 }
 
 func handleStatuslineBranchPR(w http.ResponseWriter, r *http.Request) {
@@ -72,23 +91,23 @@ func handleStatuslineBranchPR(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, statuslineBranchPRResponse{})
 		return
 	}
-	branch := strings.TrimSpace(r.URL.Query().Get("branch"))
-	if branch == "" || len(branch) > maxGitProxyRefLen {
-		writeJSON(w, http.StatusOK, statuslineBranchPRResponse{})
-		return
-	}
 	loc := locationView(p.ConvID)
 	dir := loc.CurrentDir
 	if dir == "" {
 		dir = loc.StartupDir
 	}
-	if dir == "" {
+	// The caller's branch is only ever COMPARED. Everything below runs on the
+	// daemon's own resolved values, so nothing the caller sends reaches `gh` —
+	// see the header for why that is the whole security argument for an
+	// ungated route. A disagreement, or a location the daemon cannot resolve,
+	// answers with nothing and the pane falls back to `gh`.
+	branch := strings.TrimSpace(r.URL.Query().Get("branch"))
+	if dir == "" || loc.Branch == "" || branch != loc.Branch {
 		writeJSON(w, http.StatusOK, statuslineBranchPRResponse{})
 		return
 	}
-	_, prNumber, prURL, prState, fetchedAt := lookupBranchLinkOne(dir, branch)
+	_, prNumber, prURL, prState, _ := lookupBranchLinkOne(dir, loc.Branch)
 	writeJSON(w, http.StatusOK, statuslineBranchPRResponse{
-		Resolved: !fetchedAt.IsZero(),
 		PRNumber: prNumber,
 		PRURL:    prURL,
 		PRState:  prState,
