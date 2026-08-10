@@ -2,12 +2,14 @@ package session
 
 import (
 	"bytes"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/pelletier/go-toml/v2"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -26,6 +28,7 @@ const (
 	CodexNativeRegistryUnsafeOwner    = "codex_native_registry_unsafe_ownership"
 	CodexNativeRegistryUnsafeMode     = "codex_native_registry_unsafe_mode"
 	CodexNativeRegistryConflict       = "codex_native_registry_unmanaged_files"
+	codexNativeAdoptionGrace          = time.Minute
 )
 
 const (
@@ -229,18 +232,169 @@ func validateNativeRegistryFile(path string, uid uint32, marker string) error {
 }
 
 func RegisterCodexNativePermissionProfile(generation, profileName, profilePath string) error {
+	runtime, err := db.GetCodexAppServerRuntime(generation)
+	if err != nil {
+		return err
+	}
+	profile := db.CodexNativePermissionProfile{Generation: generation, ProfileName: profileName}
+	if runtime != nil {
+		profile.OwnerAgentID, profile.OwnerConvID, profile.LaunchID = runtime.AgentID, runtime.ConvID, runtime.LaunchID
+	}
 	opts, err := defaultCodexNativeRegistryOptions()
 	if err != nil {
 		return err
+	}
+	return registerCodexNativePermissionProfileFromPath(opts, profile, profilePath, true)
+}
+
+// RegisterCodexNativePermissionProfileIfInstalled opportunistically joins an
+// ordinary generated Codex launch to an already-valid global registry. Missing
+// or invalid setup is a clean skip; only app-server+builtin callers use the
+// mandatory registration function above.
+func RegisterCodexNativePermissionProfileIfInstalled(profile db.CodexNativePermissionProfile, profilePath string) (bool, error) {
+	opts, err := defaultCodexNativeRegistryOptions()
+	if err != nil {
+		return false, nil
+	}
+	return registerCodexNativePermissionProfileIfInstalled(opts, profile, profilePath)
+}
+
+// CodexNativePermissionProfileRegistration is one generated definition and
+// its durable lifecycle identity, prepared for an atomic registry join.
+type CodexNativePermissionProfileRegistration struct {
+	Profile     db.CodexNativePermissionProfile
+	ProfilePath string
+}
+
+var codexNativeRegistryBeforeOrdinaryPublish func() error
+
+// SetCodexNativeRegistryBeforeOrdinaryPublish installs the process-level
+// adopter used before an ordinary generated profile becomes the next global
+// publisher. agentd supplies the live-pane proof implementation; the hook is
+// deliberately absent in the lower-level session package itself to avoid an
+// import cycle.
+func SetCodexNativeRegistryBeforeOrdinaryPublish(fn func() error) {
+	codexNativeRegistryBeforeOrdinaryPublish = fn
+}
+
+// RegisterCodexNativePermissionProfilesIfInstalled publishes an ordinary
+// launch set as one registry generation. First-activation adoption uses the
+// batch form so requirements.toml never observes only a prefix of the live
+// profiles that were proved before publication.
+func RegisterCodexNativePermissionProfilesIfInstalled(registrations []CodexNativePermissionProfileRegistration) (bool, error) {
+	opts, err := defaultCodexNativeRegistryOptions()
+	if err != nil {
+		return false, nil
+	}
+	return registerCodexNativePermissionProfilesIfInstalled(opts, registrations)
+}
+
+func registerCodexNativePermissionProfileIfInstalled(
+	opts CodexNativeRegistryOptions, profile db.CodexNativePermissionProfile, profilePath string,
+) (bool, error) {
+	if validateCodexNativeRegistrySetup(opts) != nil {
+		return false, nil
+	}
+	if codexNativeRegistryBeforeOrdinaryPublish != nil {
+		if err := codexNativeRegistryBeforeOrdinaryPublish(); err != nil {
+			return false, fmt.Errorf("adopt live generated Codex profiles before registry publication: %w", err)
+		}
+	}
+	return registerCodexNativePermissionProfilesIfInstalled(opts, []CodexNativePermissionProfileRegistration{{
+		Profile: profile, ProfilePath: profilePath,
+	}})
+}
+
+func registerCodexNativePermissionProfilesIfInstalled(
+	opts CodexNativeRegistryOptions, registrations []CodexNativePermissionProfileRegistration,
+) (bool, error) {
+	if validateCodexNativeRegistrySetup(opts) != nil {
+		return false, nil
+	}
+	profiles := make([]db.CodexNativePermissionProfile, 0, len(registrations))
+	for _, registration := range registrations {
+		data, err := os.ReadFile(registration.ProfilePath)
+		if err != nil {
+			return false, fmt.Errorf("read generated Codex permission profile: %w", err)
+		}
+		profile := registration.Profile
+		if err := validateStoredNativeProfile(profile.ProfileName, string(data)); err != nil {
+			return false, err
+		}
+		profile.ProfileTOML = string(data)
+		profiles = append(profiles, profile)
+	}
+	if len(profiles) == 0 {
+		return true, nil
+	}
+	return true, withNativeRegistryLock(opts, func() error {
+		previous := make([]*db.CodexNativePermissionProfile, len(profiles))
+		rollback := func(last int) error {
+			var rollbackErr error
+			for i := last; i >= 0; i-- {
+				rollbackErr = errors.Join(rollbackErr,
+					restoreNativePermissionProfile(profiles[i].Generation, previous[i]))
+			}
+			if rollbackErr == nil {
+				rollbackErr = reconcileCodexNativePermissionRegistryLocked(opts)
+			}
+			return rollbackErr
+		}
+		for i, profile := range profiles {
+			stored, err := db.GetCodexNativePermissionProfile(profile.Generation)
+			if err != nil {
+				return errors.Join(fmt.Errorf("load prior native Codex permission profile: %w", err),
+					rollback(i-1))
+			}
+			previous[i] = stored
+			if err := db.UpsertCodexNativePermissionProfile(profile); err != nil {
+				return errors.Join(fmt.Errorf("persist native Codex permission profile: %w", err),
+					rollback(i-1))
+			}
+		}
+		if err := reconcileCodexNativePermissionRegistryLocked(opts); err != nil {
+			return errors.Join(err, rollback(len(profiles)-1))
+		}
+		return nil
+	})
+}
+
+// ActivateCodexNativePermissionProfile publishes a successfully-started
+// ordinary launch and prunes its ready-superseded predecessors in the same
+// registry critical section. App-server generations use their stronger
+// verified-thread readiness path instead.
+func ActivateCodexNativePermissionProfile(generation string) error {
+	opts, err := defaultCodexNativeRegistryOptions()
+	if err != nil {
+		return err
+	}
+	return withNativeRegistryLock(opts, func() error {
+		marked, err := db.MarkCodexNativePermissionProfileLaunchReady(generation)
+		if err != nil {
+			return err
+		}
+		if !marked {
+			return fmt.Errorf("activate generated Codex permission profile %s: durable registry row is missing", generation)
+		}
+		return reconcileCodexNativePermissionRegistryLocked(opts)
+	})
+}
+
+func registerCodexNativePermissionProfileFromPath(
+	opts CodexNativeRegistryOptions, profile db.CodexNativePermissionProfile, profilePath string, required bool,
+) error {
+	if !required && validateCodexNativeRegistrySetup(opts) != nil {
+		return nil
 	}
 	data, err := os.ReadFile(profilePath)
 	if err != nil {
 		return fmt.Errorf("read generated Codex permission profile: %w", err)
 	}
-	if err := validateStoredNativeProfile(profileName, string(data)); err != nil {
+	if err := validateStoredNativeProfile(profile.ProfileName, string(data)); err != nil {
 		return err
 	}
-	return registerCodexNativePermissionProfile(opts, generation, profileName, string(data))
+	profile.ProfileTOML = string(data)
+	return registerCodexNativePermissionProfileOwned(opts, profile)
 }
 
 func registerCodexNativePermissionProfile(
@@ -249,11 +403,19 @@ func registerCodexNativePermissionProfile(
 	if err := validateStoredNativeProfile(profileName, profileTOML); err != nil {
 		return err
 	}
-	profile := db.CodexNativePermissionProfile{
+	return registerCodexNativePermissionProfileOwned(opts, db.CodexNativePermissionProfile{
 		Generation: generation, ProfileName: profileName, ProfileTOML: profileTOML,
+	})
+}
+
+func registerCodexNativePermissionProfileOwned(
+	opts CodexNativeRegistryOptions, profile db.CodexNativePermissionProfile,
+) error {
+	if err := validateStoredNativeProfile(profile.ProfileName, profile.ProfileTOML); err != nil {
+		return err
 	}
 	return withNativeRegistryLock(opts, func() error {
-		previous, err := db.GetCodexNativePermissionProfile(generation)
+		previous, err := db.GetCodexNativePermissionProfile(profile.Generation)
 		if err != nil {
 			return fmt.Errorf("load prior native Codex permission profile: %w", err)
 		}
@@ -261,7 +423,7 @@ func registerCodexNativePermissionProfile(
 			return fmt.Errorf("persist native Codex permission profile: %w", err)
 		}
 		if err := reconcileCodexNativePermissionRegistryLocked(opts); err != nil {
-			rollbackErr := restoreNativePermissionProfile(generation, previous)
+			rollbackErr := restoreNativePermissionProfile(profile.Generation, previous)
 			if rollbackErr == nil {
 				rollbackErr = reconcileCodexNativePermissionRegistryLocked(opts)
 			}
@@ -295,6 +457,12 @@ func restoreCodexNativePermissionProfile(
 	profile := db.CodexNativePermissionProfile{
 		Generation: generation, ProfileName: profileName, ProfileTOML: profileTOML,
 	}
+	if runtime, runtimeErr := db.GetCodexAppServerRuntime(generation); runtimeErr != nil {
+		return runtimeErr
+	} else if runtime != nil {
+		profile.OwnerAgentID, profile.OwnerConvID, profile.LaunchID = runtime.AgentID, runtime.ConvID, runtime.LaunchID
+		profile.LaunchReady = runtime.State == db.CodexAppServerReady
+	}
 	return withNativeRegistryLock(opts, func() error {
 		if err := db.UpsertCodexNativePermissionProfile(profile); err != nil {
 			return fmt.Errorf("restore durable native Codex permission profile: %w", err)
@@ -322,7 +490,37 @@ func UnregisterCodexNativePermissionProfile(generation string) error {
 	if existing == nil && validateCodexNativeRegistrySetup(opts) != nil {
 		return nil
 	}
-	return unregisterCodexNativePermissionProfile(opts, generation)
+	return CleanupCodexNativePermissionProfiles([]string{generation})
+}
+
+// CleanupCodexNativePermissionProfiles removes an exact set of tclaude-owned
+// generations. On a configured host, intent and publication are serialized by
+// the cross-process registry lock. If the host setup is temporarily missing or
+// broken, cleanup_pending is still committed first so a later reconciliation
+// retries instead of losing the lifecycle decision.
+func CleanupCodexNativePermissionProfiles(generations []string) error {
+	if len(generations) == 0 {
+		return nil
+	}
+	opts, err := defaultCodexNativeRegistryOptions()
+	if err != nil {
+		if markErr := db.MarkCodexNativePermissionProfilesCleanupPending(generations); markErr != nil {
+			return errors.Join(err, markErr)
+		}
+		return err
+	}
+	if err := validateCodexNativeRegistrySetup(opts); err != nil {
+		if markErr := db.MarkCodexNativePermissionProfilesCleanupPending(generations); markErr != nil {
+			return errors.Join(err, markErr)
+		}
+		return err
+	}
+	return withNativeRegistryLock(opts, func() error {
+		if err := db.MarkCodexNativePermissionProfilesCleanupPending(generations); err != nil {
+			return err
+		}
+		return reconcileCodexNativePermissionRegistryLocked(opts)
+	})
 }
 
 func unregisterCodexNativePermissionProfile(opts CodexNativeRegistryOptions, generation string) error {
@@ -371,7 +569,12 @@ func ReconcileCodexNativePermissionRegistry() error {
 			return nil
 		}
 	}
-	return reconcileCodexNativePermissionRegistry(opts)
+	return withNativeRegistryLock(opts, func() error {
+		if err := markOrphanedCodexNativePermissionProfiles(); err != nil {
+			return fmt.Errorf("classify orphaned native Codex permission profiles: %w", err)
+		}
+		return reconcileCodexNativePermissionRegistryLocked(opts)
+	})
 }
 
 func reconcileCodexNativePermissionRegistry(opts CodexNativeRegistryOptions) error {
@@ -443,6 +646,108 @@ func reconcileCodexNativePermissionRegistryLocked(opts CodexNativeRegistryOption
 		return fmt.Errorf("finish native Codex permission profile cleanup: %w", err)
 	}
 	return nil
+}
+
+// markOrphanedCodexNativePermissionProfiles is the conservative startup sweep.
+// Live-claiming generations are never touched here. A terminal generation is
+// retained only when durable conversation/launch posture proves an active
+// actor can resume the same native Codex drive. Superseded rows are pruned by
+// the preceding ready-successor query; a merely warming/failed successor must
+// not evict its predecessor definition.
+func markOrphanedCodexNativePermissionProfiles() error {
+	profiles, err := db.ListCodexNativePermissionProfiles()
+	if err != nil {
+		return err
+	}
+	runtimes, err := db.ListCodexAppServerRuntimes()
+	if err != nil {
+		return err
+	}
+	byGeneration := make(map[string]db.CodexAppServerRuntime, len(runtimes))
+	for _, runtime := range runtimes {
+		byGeneration[runtime.Generation] = runtime
+	}
+	var cleanup []string
+	for _, profile := range profiles {
+		if profile.CleanupPending {
+			continue
+		}
+		runtime, ok := byGeneration[profile.Generation]
+		if !ok {
+			if codexOrdinaryProfileStillLive(profile) ||
+				(profile.OwnerConvID != "" && codexGeneratedProfileOwnerResumable(profile.OwnerConvID)) {
+				continue
+			}
+			cleanup = append(cleanup, profile.Generation)
+			continue
+		}
+		switch runtime.State {
+		case db.CodexAppServerWarming, db.CodexAppServerRecovering, db.CodexAppServerReady:
+			continue
+		case db.CodexAppServerDead, db.CodexAppServerUnavailable:
+			if codexNativeRuntimeResumable(runtime) {
+				continue
+			}
+			cleanup = append(cleanup, profile.Generation)
+		default:
+			// Unknown future states fail closed: do not remove an enforcement
+			// profile until this binary understands their liveness contract.
+			continue
+		}
+	}
+	return db.MarkCodexNativePermissionProfilesCleanupPending(cleanup)
+}
+
+func codexOrdinaryProfileStillLive(profile db.CodexNativePermissionProfile) bool {
+	if profile.LaunchID == "" {
+		return false
+	}
+	row, err := db.LoadSession(profile.LaunchID)
+	if profile.LaunchReady && err == nil && row != nil {
+		return row.Status != StatusExited
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		// A read failure cannot prove the owner is gone. Preserve enforcement
+		// and let a later reconciliation retry the liveness check.
+		return true
+	}
+	// Registration precedes pane launch and readiness. First activation can also
+	// prove a pane before session-new commits its row. Give both narrow handoffs
+	// one launch-readiness window; old rowless/not-ready generations remain
+	// definitive startup orphans.
+	return !profile.CreatedAt.IsZero() && time.Since(profile.CreatedAt) < codexNativeAdoptionGrace
+}
+
+func codexNativeRuntimeResumable(runtime db.CodexAppServerRuntime) bool {
+	if !codexGeneratedProfileOwnerResumable(runtime.ConvID) {
+		return false
+	}
+	resume, err := db.ConversationResumeProfileForConv(runtime.ConvID)
+	if err != nil || resume == nil {
+		return false
+	}
+	posture, err := db.RecordedLaunchPostureForConv(runtime.ConvID)
+	if err != nil || posture == nil || posture.CodexAppServer == nil || !*posture.CodexAppServer ||
+		posture.HarnessBuiltinMode == nil || posture.SandboxImplementation == nil {
+		return false
+	}
+	return CodexNativeRegistryApplicable(true, resume.Harness, *posture.HarnessBuiltinMode,
+		*posture.SandboxImplementation)
+}
+
+func codexGeneratedProfileOwnerResumable(convID string) bool {
+	resume, err := db.ConversationResumeProfileForConv(convID)
+	if err != nil || resume == nil || resume.Harness != harness.CodexName || strings.TrimSpace(resume.Cwd) == "" {
+		return false
+	}
+	if actor, err := db.GetAgentByConv(convID); err != nil || (actor != nil && !actor.Active()) {
+		return false
+	}
+	posture, err := db.RecordedLaunchPostureForConv(convID)
+	if err != nil || posture == nil || posture.HarnessBuiltinMode == nil {
+		return false
+	}
+	return *posture.HarnessBuiltinMode == harness.SandboxManagedProfile
 }
 
 var writeNativeRegistryFile = atomicWriteNativeRegistryFile

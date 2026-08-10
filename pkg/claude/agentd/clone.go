@@ -216,17 +216,39 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		}
 		return nil
 	}
-	effectiveSandbox, err := db.AgentEffectiveSandboxConfigForConv(sourceConv)
+	cloneSandbox, cloneSandboxSource := cloneSandboxPosture(relaunch)
+	// Every new process that renders a generated Codex profile resolves the
+	// current sandbox chain. Registry participation is a separate gate: the
+	// app-server+builtin combination requires setup, while ordinary launches
+	// register only when the exact managed registry is already installed.
+	var effectiveSandbox *sandboxpolicy.Snapshot
+	refreshGeneratedProfile := session.CodexNativeRegistryApplicable(relaunch.CodexAppServer,
+		relaunch.Harness, cloneSandbox, relaunch.SandboxImplementation)
+	if !refreshGeneratedProfile && relaunch.Harness == harness.CodexName &&
+		cloneSandbox == harness.SandboxManagedProfile {
+		refreshGeneratedProfile = true
+	}
+	if refreshGeneratedProfile {
+		effectiveSandbox, _, err = resolveCurrentSandboxChainForConv(sourceConv)
+	} else {
+		effectiveSandbox, err = db.AgentEffectiveSandboxConfigForConv(sourceConv)
+	}
 	if err != nil {
-		return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusInternalServerError, Code: "io", Msg: "load source sandbox snapshot: " + err.Error()}
+		return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: err.Error()}
 	}
 	if effectiveSandbox != nil {
-		validated, err := ensureAgentDirectoriesForRelaunch(*effectiveSandbox)
-		if err != nil {
-			return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: err.Error()}
+		if !refreshGeneratedProfile {
+			validated, err := ensureAgentDirectoriesForRelaunch(*effectiveSandbox)
+			if err != nil {
+				return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: err.Error()}
+			}
+			effectiveSandbox = &validated
 		}
-		effectiveSandbox = &validated
-		if _, launchErr := sandboxpolicy.FilesystemForLaunch(validated.Effective); launchErr != nil {
+		// A freshly resolved chain deliberately has declarations but no private
+		// directory paths yet. Both clone branches materialize those paths under
+		// the clone's new launch label below; validating them as predecessor
+		// bindings here would reject every managed cache directory.
+		if _, launchErr := sandboxpolicy.FilesystemForLaunch(effectiveSandbox.Effective); launchErr != nil {
 			return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: launchErr.Error()}
 		}
 	}
@@ -256,7 +278,6 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	// The temporary unlock belongs to the source's stable agent. A clone is a
 	// new agent and must inherit the preserved normal posture, otherwise one
 	// temporary debugging action would mint a permanently-unconfined sibling.
-	cloneSandbox, cloneSandboxSource := cloneSandboxPosture(relaunch)
 	cloneSSH := cloneSSHWorkaround(relaunch)
 	// A clone inherits the source's launch CHOICE, never its verification. For
 	// a harness whose own OS sandbox lives in mutable configuration, the

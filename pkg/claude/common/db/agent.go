@@ -2014,6 +2014,8 @@ func (c *AgentDeletionCounts) Add(o AgentDeletionCounts) {
 //   - conv_index
 //   - conversation_resume_profiles
 //   - sessions
+//   - native Codex permission profiles are marked cleanup_pending (their
+//     generated files are published by the registry reconciler after commit)
 //
 // Actor-scoped (keyed on the resolved agent_id) — ONLY when convID is the
 // actor's current_conv_id (its live generation):
@@ -2062,6 +2064,16 @@ func DeleteAgentByConvID(convID string) (AgentDeletionCounts, error) {
 	agentID, err := agentIDForConvTx(tx, convID)
 	if err != nil {
 		return c, err
+	}
+	// Couple permanent conversation deletion to durable native-registry intent
+	// in the same transaction. A crash after commit but before file publication
+	// therefore retries at daemon startup instead of leaving an ownerless live-
+	// claiming runtime definition indefinitely.
+	if _, err := tx.Exec(`UPDATE codex_native_permission_profiles SET cleanup_pending = 1
+		WHERE owner_conv_id = ? OR generation IN (
+			SELECT generation FROM codex_app_server_runtimes WHERE conv_id = ?
+		)`, convID, convID); err != nil {
+		return c, fmt.Errorf("mark native Codex profiles for cleanup: %w", err)
 	}
 
 	// Capture this conv's succession neighbours BEFORE the conv-scoped loop

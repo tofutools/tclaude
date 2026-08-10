@@ -127,6 +127,9 @@ func TestHandleAgentResume_AttemptsSpawnForOfflineTarget(t *testing.T) {
 func TestResumeOneConv_CodexAppServerRequiresVerifiedReadiness(t *testing.T) {
 	setupTestDB(t)
 	rec := installRecordingResumeSpawner(t)
+	previousPaneStarts := codexNativePaneStarts
+	codexNativePaneStarts = func() ([]byte, error) { return nil, nil }
+	t.Cleanup(func() { codexNativePaneStarts = previousPaneStarts })
 	const convID = "codex-appserver-resume-12345678"
 	row := saveResumeSession(t, convID, t.TempDir(), harness.CodexName)
 	require.NoError(t, db.SetSessionCodexAppServer(row.ID, true))

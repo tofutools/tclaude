@@ -341,6 +341,31 @@ func GetCodexAppServerRuntime(generation string) (*CodexAppServerRuntime, error)
 		` WHERE generation = ?`, generation))
 }
 
+// ListCodexAppServerRuntimes returns the durable generation inventory used by
+// native permission-registry reconciliation. Runtime rows are diagnostic
+// history as well as recovery state, so callers decide which generations are
+// still live or resumable rather than deleting rows here.
+func ListCodexAppServerRuntimes() ([]CodexAppServerRuntime, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(codexAppServerRuntimeSelect + ` ORDER BY created_at ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []CodexAppServerRuntime
+	for rows.Next() {
+		runtime, scanErr := scanCodexAppServerRuntime(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		out = append(out, *runtime)
+	}
+	return out, rows.Err()
+}
+
 // BindWarmingCodexAppServerRuntimeFromTUI records the thread identity carried
 // by a validated hook from the TUI process. Codex 0.147 automatically
 // subscribes every connection that is already initialized when a fresh thread

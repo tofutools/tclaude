@@ -101,6 +101,10 @@ func retireAgentConvWithPrecondition(
 	out.CronDisabled = retired.CronDisabled
 	out.StandingOrdersDisabled = retired.StandingOrdersDisabled
 	out.Retired = retired.Retired
+	// Still under the same launch lock as resume. Offline retirement can clean
+	// immediately; an online generation is deliberately deferred until its exit
+	// observer proves the pane is gone.
+	cleanupRetiredCodexNativeProfilesUnderLaunchLock(convID)
 	return out, retired.OwnerGroupIDs, nil
 }
 
@@ -317,7 +321,10 @@ func handleAgentPromote(w http.ResponseWriter, r *http.Request, convID string) {
 	if _, ok := requireCrossAgentPermission(w, r, PermAgentPromote, convID); !ok {
 		return
 	}
+	launchLock := resumeLaunchLock(convID)
+	launchLock.Lock()
 	prior, err := db.PromoteAgent(convID, "promote")
+	launchLock.Unlock()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
@@ -341,7 +348,7 @@ func handleAgentReinstate(w http.ResponseWriter, r *http.Request, convID string)
 	if _, ok := requireCrossAgentPermission(w, r, PermAgentPromote, convID); !ok {
 		return
 	}
-	did, err := db.ReinstateAgent(convID)
+	did, err := reinstateAgentUnderLaunchLock(convID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
@@ -356,6 +363,13 @@ func handleAgentReinstate(w http.ResponseWriter, r *http.Request, convID string)
 		"conv_id": convID,
 		"state":   db.AgentStateActive,
 	})
+}
+
+func reinstateAgentUnderLaunchLock(convID string) (bool, error) {
+	launchLock := resumeLaunchLock(convID)
+	launchLock.Lock()
+	defer launchLock.Unlock()
+	return db.ReinstateAgent(convID)
 }
 
 // dashboardEnrollmentVerb backs the Agents-tab per-row promote / retire

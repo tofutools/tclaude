@@ -1255,9 +1255,14 @@ func runNew(params *NewParams) error {
 	var codexAppServerProfileOverrides []string
 	var launchCodexSplitCapability *harness.CodexSplitPolicyCapability
 	launchProfileOwnedByPane := false
+	ordinaryNativeGeneration := ""
+	ordinaryNativeActivated := false
 	defer func() {
 		if launchProfilePath != "" && !launchProfileOwnedByPane {
 			_ = os.Remove(launchProfilePath)
+		}
+		if ordinaryNativeGeneration != "" && !ordinaryNativeActivated {
+			_ = UnregisterCodexNativePermissionProfile(ordinaryNativeGeneration)
 		}
 	}()
 	// Pin managed Codex sessions to agentd's canonical state-free socket. That
@@ -1740,22 +1745,46 @@ func runNew(params *NewParams) error {
 	// Only the tclaude-owned profile is auto-created; any other name must
 	// already be defined by the user's own config.
 	if params.PermissionProfile == harness.CodexAgentProfile {
-		profileName, profilePath, splitCapability, err := ensureCodexManagedProfileWithSnapshot(params, cwd, GenerateSessionID(), launchSandbox)
+		profileName, profilePath, splitCapability, err := ensureCodexManagedProfileWithSnapshot(params, cwd, exitGeneration, launchSandbox)
 		if err != nil {
 			return err
 		}
 		launchPermissionProfile = profileName
 		launchProfilePath = profilePath
 		launchCodexSplitCapability = splitCapability
+		ownerConvID := fullConvID
+		if params.SessionID != "" && ownerConvID == "" {
+			ownerConvID = params.SessionID
+		}
+		ownerAgentID, ownerErr := db.AgentIDForConv(ownerConvID)
+		if ownerErr != nil {
+			return fmt.Errorf("resolve generated Codex profile owner: %w", ownerErr)
+		}
+		mandatoryNative := params.CodexAppServerSocket != "" && !outerLayer
+		if mandatoryNative {
+			if err := RegisterCodexNativePermissionProfile(
+				params.CodexAppServerGeneration, profileName, profilePath,
+			); err != nil {
+				return fmt.Errorf("register managed Codex app-server profile: %w", err)
+			}
+		} else {
+			generation := "launch:" + exitGeneration
+			registered, registerErr := RegisterCodexNativePermissionProfileIfInstalled(
+				db.CodexNativePermissionProfile{
+					Generation: generation, ProfileName: profileName,
+					OwnerAgentID: ownerAgentID, OwnerConvID: ownerConvID, LaunchID: sessionID,
+				}, profilePath)
+			if registerErr != nil {
+				return fmt.Errorf("join installed Codex permission registry: %w", registerErr)
+			}
+			if registered {
+				ordinaryNativeGeneration = generation
+			}
+		}
 		if params.CodexAppServerSocket != "" {
 			if outerLayer {
 				codexAppServerProfileOverrides, err = harness.CodexAppServerProfileOverrides(profilePath)
 			} else {
-				if err := RegisterCodexNativePermissionProfile(
-					params.CodexAppServerGeneration, profileName, profilePath,
-				); err != nil {
-					return fmt.Errorf("register managed Codex app-server profile: %w", err)
-				}
 				codexAppServerProfileOverrides, err = harness.CodexAppServerRegisteredProfileOverrides(profilePath)
 			}
 			if err != nil {
@@ -2353,10 +2382,6 @@ func runNew(params *NewParams) error {
 		slog.Warn("could not capture resume provenance for direct session; a controlled stop will retry",
 			"session", sessionID, "error", provenanceErr)
 	}
-	// The pane shell now owns normal profile cleanup after Codex exits. Until
-	// this point any launch/readiness failure is cleaned by the parent defer.
-	launchProfileOwnedByPane = launchProfilePath != ""
-
 	applyTmuxWindowTitle(tmuxSession, sessionID)
 
 	// Copilot wraps clipboard OSC 52 in tmux's passthrough envelope. Enable
@@ -2439,6 +2464,17 @@ func runNew(params *NewParams) error {
 		killLaunchPane()
 		return fmt.Errorf("bind managed pane exit audit: %w", err)
 	}
+	// Launch bookkeeping and exit attribution are durable. Publish successor
+	// readiness only at this final boundary: any earlier failure unregisters
+	// this generation and cannot prune a still-resumable predecessor.
+	if ordinaryNativeGeneration != "" {
+		if err := ActivateCodexNativePermissionProfile(ordinaryNativeGeneration); err != nil {
+			killLaunchPane()
+			return fmt.Errorf("activate generated Codex permission profile: %w", err)
+		}
+		ordinaryNativeActivated = true
+	}
+	launchProfileOwnedByPane = launchProfilePath != ""
 
 	// The pane is up and bound; from here the row belongs to the live session
 	// (an attach failure below must not delete it).

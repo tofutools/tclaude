@@ -1320,5 +1320,5 @@ CREATE TABLE codex_native_permission_profiles (
 			profile_toml TEXT NOT NULL,
 			cleanup_pending INTEGER NOT NULL DEFAULT 0 CHECK (cleanup_pending IN (0, 1)),
 			created_at   INTEGER NOT NULL
-		) STRICT;
+		, owner_agent_id TEXT NOT NULL DEFAULT '', owner_conv_id TEXT NOT NULL DEFAULT '', launch_id TEXT NOT NULL DEFAULT '', launch_ready INTEGER NOT NULL DEFAULT 0 CHECK (launch_ready IN (0, 1))) STRICT;
 

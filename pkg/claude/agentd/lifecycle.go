@@ -1412,11 +1412,19 @@ func resumeOneConvWithTrustRoot(convID string, recreateMissingDir bool) memberOp
 	return resumeOneConvLocked(convID, recreateMissingDir, true)
 }
 
-var resumeLaunchLocks sync.Map         // map[convID]*sync.Mutex
+var resumeLaunchLocks sync.Map         // map[stable actor or unowned conv]*sync.Mutex
 var recoveryLaunchCommitLocks sync.Map // map[convID]*sync.Mutex
 
 func resumeLaunchLock(convID string) *sync.Mutex {
-	lock, _ := resumeLaunchLocks.LoadOrStore(convID, &sync.Mutex{})
+	key := strings.TrimSpace(convID)
+	// Reincarnation changes the current conversation but not the actor whose
+	// process lifecycle and generated policy are being serialized. Resolving
+	// every known generation to the stable actor keeps delayed predecessor
+	// reaping on the same lock as current-generation reinstate/resume.
+	if agentID, err := db.AgentIDForConv(key); err == nil && agentID != "" {
+		key = "agent:" + agentID
+	}
+	lock, _ := resumeLaunchLocks.LoadOrStore(key, &sync.Mutex{})
 	return lock.(*sync.Mutex)
 }
 
@@ -2656,6 +2664,7 @@ func finishRetiredConv(convID string, shutdown, deleteWorktree bool, wt agentWor
 		}
 	}
 	cleanupAgentDirectoriesAfterRetire(convID, shutdown)
+	cleanupRetiredCodexNativeProfiles(convID)
 	if deleteWorktree {
 		plan := scheduleRetireWorktreeCleanup(convID, wt, shutdown)
 		td.Worktree = &plan
