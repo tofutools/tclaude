@@ -29,7 +29,7 @@ test('the CI badge summarizes checks and opens a panel on hover', async (t) => {
   const harness = await createPreactHarness(t);
   const mod = await harness.importDashboardModule('js/pr-checks-hover.js');
   const {
-    PRChecksBadge, checkDenominator, checkTimeLabel, elapsed, isRunningCheck, summaryLine,
+    PRChecksBadge, checkDenominator, checkTimeLabel, elapsed, isRunningCheck, orderChecks, summaryLine,
   } = mod;
 
   await t.test('skipped checks leave the denominator', () => {
@@ -75,6 +75,27 @@ test('the CI badge summarizes checks and opens a panel on hover', async (t) => {
     assert.equal(checkTimeLabel({
       bucket: 'pending', conclusion: 'in progress', started_at: '2026-08-09T10:00:00Z',
     }, now), '3m 30s');
+  });
+
+  await t.test('checks are ordered by attention state, then name', () => {
+    const checks = [
+      { name: 'Zulu success', bucket: 'pass', conclusion: 'success' },
+      { name: 'Beta queued', bucket: 'pending', conclusion: 'queued' },
+      { name: 'Zulu failure', bucket: 'fail', conclusion: 'failure' },
+      { name: 'Alpha skipped', bucket: 'skipped', conclusion: 'skipped' },
+      { name: 'Alpha running', bucket: 'pending', conclusion: 'in progress', started_at: '2026-08-09T10:00:00Z' },
+      { name: 'Alpha failure', bucket: 'fail', conclusion: 'timed out' },
+      { name: 'Alpha pending', bucket: 'pending', conclusion: 'pending' },
+      { name: 'Beta running', bucket: 'pending', conclusion: 'in progress', started_at: '2026-08-09T10:00:00Z' },
+    ];
+
+    assert.deepEqual(orderChecks(checks).map((check) => check.name), [
+      'Alpha failure', 'Zulu failure',
+      'Alpha running', 'Beta running',
+      'Alpha pending', 'Beta queued',
+      'Alpha skipped', 'Zulu success',
+    ]);
+    assert.equal(checks[0].name, 'Zulu success', 'sorting must not mutate the API payload');
   });
 
   await t.test('a hostile check URL never becomes a live link', () => {
