@@ -323,16 +323,18 @@ return (async function(){
 
   fire(source, 'dragstart');
   fire(target, 'dragover', {metaKey:true, clientX:rect.left + rect.width / 2, clientY:rect.top + rect.height / 2});
-  // macOS Chrome emits an in-place dragleave with null relatedTarget when the
-  // mouse button is released. Its interior coordinates distinguish it from a
-  // real document exit and must preserve the still-green plan for dragend.
-  fire(target, 'dragleave', {relatedTarget:null,
-    clientX:rect.left + rect.width / 2, clientY:rect.top + rect.height / 2});
+  // Emulate macOS Chrome for its all-zero mouse-release dragleave. Linux Chrome
+  // used by this smoke must keep the ordinary outside-document behavior above.
+  var platformDescriptor = Object.getOwnPropertyDescriptor(navigator, 'platform');
+  Object.defineProperty(navigator, 'platform', {value:'MacIntel', configurable:true});
+  fire(target, 'dragleave', {relatedTarget:null, clientX:0, clientY:0, screenX:0, screenY:0});
   var dragend = new DragEvent('dragend', {bubbles:true, cancelable:false, dataTransfer:transfer});
   Object.defineProperty(dragend, 'dataTransfer', {value:{dropEffect:'none'}});
   source.dispatchEvent(dragend);
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
   if (!document.querySelector('#group-clone-modal.show')) throw new Error('macOS-style dragend did not finish the live green clone plan');
+  if (platformDescriptor) Object.defineProperty(navigator, 'platform', platformDescriptor);
+  else delete navigator.platform;
   document.querySelector('#group-clone-cancel').click();
 })();`,
 	}
