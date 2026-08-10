@@ -142,15 +142,21 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       <h3>Terminals & windows</h3>
       <div class="cfg-field">
         <span class="cfg-label">Terminal</span>
-        <${ConfigInput} type="text" id="cfg-terminal" list="cfg-terminal-list" placeholder="(auto-detect)" aria-label="Terminal emulator" autocomplete="off" spellcheck="false" />
-        <datalist id="cfg-terminal-list">
-          <option value="ghostty"></option><option value="kitty"></option>
-          <option value="wezterm"></option><option value="alacritty"></option>
-          <option value="foot"></option><option value="iterm2"></option>
-          <option value="konsole"></option><option value="gnome-terminal"></option>
-          <option value="xfce4-terminal"></option><option value="x-terminal-emulator"></option>
-          <option value="xterm"></option><option value="terminal-app"></option>
-        </datalist>
+        <${ConfigSelect} id="cfg-terminal" aria-label="Terminal emulator">
+          <option value="">Auto-detect (default)</option>
+          <option value="ghostty">Ghostty</option>
+          <option value="kitty">Kitty</option>
+          <option value="wezterm">WezTerm</option>
+          <option value="alacritty">Alacritty</option>
+          <option value="foot">Foot</option>
+          <option value="iterm2">iTerm2</option>
+          <option value="konsole">Konsole</option>
+          <option value="gnome-terminal">GNOME Terminal</option>
+          <option value="xfce4-terminal">Xfce Terminal</option>
+          <option value="x-terminal-emulator">System terminal (x-terminal-emulator)</option>
+          <option value="xterm">XTerm</option>
+          <option value="terminal-app">Terminal.app</option>
+        </${ConfigSelect}>
         <span class="cfg-hint">Terminal emulator the dashboard's spawn auto-focus / shell-attach opens. Empty = auto-detect.</span>
       </div>
       <div class="cfg-field">

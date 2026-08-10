@@ -366,7 +366,7 @@ function syncCfgRemoteStatus() {
 function populateConfigForm(cfg) {
   cfg = cfg || {};
   setSelectValue($('#cfg-log-level'), cfg.log_level || 'info');
-  $('#cfg-terminal').value = cfg.terminal || '';
+  setSelectValue($('#cfg-terminal'), cfg.terminal || '');
   const pcg = cfg.pre_compact_guard || {};
   $('#cfg-precompact-enabled').checked = !!pcg.enabled;
   $('#cfg-precompact-blockmanual').checked = !!pcg.block_manual;
@@ -620,7 +620,7 @@ function assembleConfig() {
   const cfg = JSON.parse(JSON.stringify(configObj || {}));
 
   cfg.log_level = controlValue($('#cfg-log-level'));
-  const term = $('#cfg-terminal').value.trim();
+  const term = controlValue($('#cfg-terminal')).trim();
   if (term) cfg.terminal = term; else delete cfg.terminal;
 
   // pre_compact_guard. Clone the existing block so a future sub-field
