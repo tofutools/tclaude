@@ -101,6 +101,55 @@ func TestBranchLinksForPartsUsesFreshestWorkspaceOrBranchState(t *testing.T) {
 	assert.Equal(t, "merged", links.StartupPRState)
 }
 
+// TestBranchLinksForPartsKeepsAPRTheWorkspaceHasNotSeenYet — the two sources
+// refresh on independent clocks, so between an agent opening a pull request
+// and the statusbar's next lookup there is a window where this daemon knows
+// about it and the workspace row does not. Taking the row unconditionally made
+// the badge vanish from the dashboard for the whole of that window.
+//
+// A PR beats no PR in either direction rather than the newer sighting winning,
+// because neither source can tell "there is no pull request" apart from "the
+// lookup failed": a `gh pr view` that exits non-zero because the caller is
+// unauthenticated is indistinguishable from one that found nothing, on both
+// paths.
+func TestBranchLinksForPartsKeepsAPRTheWorkspaceHasNotSeenYet(t *testing.T) {
+	now := time.Now()
+	const prURL = "https://github.com/o/r/pull/42"
+	loc := agentLocationView{
+		CurrentDir: "/repo", StartupDir: "/repo",
+		Branch: "feature", StartupBranch: "feature",
+	}
+	// A workspace snapshot that looked before the PR existed, and — the point
+	// of the 90-second proxied cadence — will not look again for a while.
+	ws := db.AgentWorkspace{
+		ConvID: "conv", Cwd: "/repo", Branch: "feature",
+		RepoURL: "https://github.com/o/r", DefaultBranch: "main",
+		UpdatedAt: now.Add(-80 * time.Second),
+	}
+
+	links := branchLinksForParts("conv", loc, ws,
+		func(string, string) (string, int, string, string, time.Time) {
+			return "https://github.com/o/r/compare/main...feature", 42, prURL, "open", now
+		})
+
+	assert.Equal(t, 42, links.BranchPRNumber,
+		"a workspace row that has not seen the PR yet must not erase one this daemon found")
+	assert.Equal(t, prURL, links.BranchPRURL)
+	assert.Equal(t, "open", links.BranchPRState)
+	assert.Equal(t, 42, links.StartupPRNumber)
+
+	// The reverse holds too: the statusbar saw a PR this daemon's own
+	// resolution has not caught up with.
+	ws.PRNumber, ws.PRURL, ws.PRState = 42, prURL, "open"
+	links = branchLinksForParts("conv", loc, ws,
+		func(string, string) (string, int, string, string, time.Time) {
+			return "https://github.com/o/r/compare/main...feature", 0, "", "", now
+		})
+	assert.Equal(t, 42, links.BranchPRNumber,
+		"and a branch cache that has not seen it must not erase the workspace's")
+	assert.Equal(t, prURL, links.BranchPRURL)
+}
+
 // resolverReturning installs a git-info resolver fake that reports a
 // fixed PR for any branch, and returns a restore closure.
 func resolverReturning(prNumber int, prURL, prState string) func() {

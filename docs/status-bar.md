@@ -104,18 +104,24 @@ The marker is omitted entirely when no window is known yet — no pin, and no `c
 Everything the status bar asks git for is local. The pull request is the one
 piece that needs a GitHub credential, and it has two paths:
 
-- **With agentd's GitHub proxy configured**, the lookup goes through the daemon
-  (`/v1/github/pr/list --head <branch>`), which holds the token. This is what
-  keeps the PR link working in a pane whose sandbox denies `~/.config/gh` —
-  the posture the proxy exists to make workable. It needs the
-  `proxy.github.read` permission slug like any other proxy read, and the
-  repository's remote still has to pass the operator's allow-list. See
-  [git-proxy.md](git-proxy.md).
+- **When agentd reports the pane can read GitHub through the proxy** — the
+  `github_read` bit on `/v1/info`, which is true when the agent holds
+  `proxy.github.read` *and* there is a remote policy for it to act under — the
+  lookup goes through the daemon (`/v1/github/pr/list` with `--head <branch>`),
+  which holds the token. This is what keeps the PR link working in a pane whose
+  sandbox denies `~/.config/gh`, the posture the proxy exists to make workable.
+  See [git-proxy.md](git-proxy.md).
 - **Otherwise**, it shells out to `gh pr view <branch>` with the pane's own
   credentials, exactly as it always has.
 
 Both are best-effort: no PR, no `gh`, no grant, or no daemon all render the
-same way — a compare URL instead of a PR URL, never an error.
+same way — a compare URL instead of a PR URL, never an error. The whole lookup
+shares one 4-second budget across every step it takes, because it runs inside
+the statusline command Claude Code is waiting on.
+
+Fork pull requests are excluded. GitHub's branch filter matches the bare ref
+name across every head repository, so without that an outside contributor's
+identically-named fork branch would render as the agent's own work.
 
 ## Usage Command
 

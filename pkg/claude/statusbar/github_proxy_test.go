@@ -1,6 +1,11 @@
 package statusbar
 
 import (
+	"encoding/json"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -40,13 +45,34 @@ func TestPickBranchPRFallsBackToTheNewest(t *testing.T) {
 	assert.Equal(t, 9, got.Number)
 }
 
-// TestPickBranchPRIgnoresAnotherBranchesPR — the daemon filters on the head
-// name, so this only fires if that filter is ever widened. Showing a
-// neighbouring branch's PR in this branch's bar would be worse than showing
-// none: it reads as "my work has a PR" when it does not.
-func TestPickBranchPRIgnoresAnotherBranchesPR(t *testing.T) {
-	prs := []ghProxyPREntry{{Number: 9, State: "OPEN", URL: "u9", HeadRefName: "other"}}
-	assert.Nil(t, pickBranchPR(prs, "feat"))
+// TestPickBranchPRIgnoresWhatIsNotThisBranchesWork. Showing someone else's PR
+// in this branch's bar is worse than showing none: it reads as "my work has a
+// PR" when it does not.
+//
+// The fork case is the one that actually reaches production. GraphQL's
+// headRefName filter matches the bare ref NAME across every head repository —
+// unlike `gh pr view <branch>`, which compares the head LABEL — so on a public
+// repo an outside contributor's `their-fork:fix-typo` comes back in the
+// listing for a local branch called `fix-typo`. The other-branch case is the
+// cheap guard against the daemon's filter ever widening.
+func TestPickBranchPRIgnoresWhatIsNotThisBranchesWork(t *testing.T) {
+	fork := []ghProxyPREntry{
+		{Number: 9, State: "OPEN", URL: "u9", HeadRefName: "feat", IsCrossRepository: true},
+	}
+	assert.Nil(t, pickBranchPR(fork, "feat"), "a fork's identically-named branch is not this branch")
+
+	// An open fork PR must not outrank this repository's own, either — the
+	// open-beats-newest rule runs after the fork is dropped, not before.
+	mixed := []ghProxyPREntry{
+		{Number: 9, State: "OPEN", URL: "u9", HeadRefName: "feat", IsCrossRepository: true},
+		{Number: 4, State: "MERGED", URL: "u4", HeadRefName: "feat"},
+	}
+	got := pickBranchPR(mixed, "feat")
+	require.NotNil(t, got)
+	assert.Equal(t, 4, got.Number)
+
+	other := []ghProxyPREntry{{Number: 9, State: "OPEN", URL: "u9", HeadRefName: "other"}}
+	assert.Nil(t, pickBranchPR(other, "feat"))
 	assert.Nil(t, pickBranchPR(nil, "feat"))
 }
 
@@ -180,8 +206,167 @@ func TestGitHubProxyEnabledIsFalseWithoutADaemon(t *testing.T) {
 	// pins the probe to a socket that does not exist rather than letting it
 	// find whatever daemon the developer running the tests has going.
 	t.Setenv(agentipc.SocketEnv, filepath.Join(dir, "no-such-agentd.sock"))
-	assert.False(t, githubProxyEnabled())
+	assert.False(t, githubProxyEnabled(t.Context()))
 
-	_, _, _, ok := proxyPRInfo("feat")
+	_, _, _, ok := proxyPRInfo(t.Context(), "feat")
 	assert.False(t, ok, "an unreachable daemon must not be read as 'this branch has no PR'")
+}
+
+// serveFakeProxyDaemon stands a daemon up on the socket path the client
+// resolves, so the whole round trip runs rather than being stubbed. Same
+// mechanism serveFakeDaemon uses for the render broker, and same reason for
+// the short base directory: a unix socket path is capped at ~108 bytes, well
+// under what a Go test's temp dir can reach.
+func serveFakeProxyDaemon(t *testing.T, handler http.Handler) {
+	t.Helper()
+	sockDir, err := os.MkdirTemp("/tmp", "tclsb")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
+	sock := filepath.Join(sockDir, "a.sock")
+	t.Setenv(agentipc.SocketEnv, sock)
+
+	ln, err := net.Listen("unix", sock)
+	require.NoError(t, err)
+	srv := httptest.NewUnstartedServer(handler)
+	srv.Listener = ln
+	srv.Start()
+	t.Cleanup(srv.Close)
+}
+
+// infoAnd serves /v1/info with the given github_read bit and routes everything
+// else to next.
+func infoAnd(githubRead bool, next http.HandlerFunc) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/info" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"github_read": githubRead})
+			return
+		}
+		next(w, r)
+	})
+}
+
+// TestGitHubProxyEnabledFollowsTheGitHubReadBit — the gate must read the
+// narrow bit, not the broad `proxy` one. An agent holding, say, only
+// `proxy.git.push` has `proxy` true and `github_read` false, and routing it
+// onto the proxy would cost it a refused, audit-logged request every refresh
+// for the life of the pane.
+func TestGitHubProxyEnabledFollowsTheGitHubReadBit(t *testing.T) {
+	t.Run("granted", func(t *testing.T) {
+		serveFakeProxyDaemon(t, infoAnd(true, func(http.ResponseWriter, *http.Request) {}))
+		assert.True(t, githubProxyEnabled(t.Context()))
+	})
+	t.Run("not granted", func(t *testing.T) {
+		serveFakeProxyDaemon(t, infoAnd(false, func(http.ResponseWriter, *http.Request) {}))
+		assert.False(t, githubProxyEnabled(t.Context()))
+	})
+	t.Run("a daemon too old to project it", func(t *testing.T) {
+		serveFakeProxyDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"proxy": true})
+		}))
+		assert.False(t, githubProxyEnabled(t.Context()),
+			"an absent bit is not a yes — fall back to gh")
+	})
+}
+
+// TestProxyPRInfoReadsTheBranchesPR — the happy path, and the one place the
+// request shape is pinned: the daemon must be asked for THIS branch's pull
+// requests in every state, or a just-merged PR's link disappears.
+func TestProxyPRInfoReadsTheBranchesPR(t *testing.T) {
+	var got map[string]any
+	serveFakeProxyDaemon(t, infoAnd(true, func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/github/pr/list", r.URL.Path)
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&got))
+		_ = json.NewEncoder(w).Encode(map[string]any{"exit_code": 0, "json": []map[string]any{
+			{"number": 7, "state": "OPEN", "url": "https://github.com/o/r/pull/7", "headRefName": "feat"},
+		}})
+	}))
+
+	n, u, s, ok := proxyPRInfo(t.Context(), "feat")
+	require.True(t, ok)
+	assert.Equal(t, 7, n)
+	assert.Equal(t, "https://github.com/o/r/pull/7", u)
+	assert.Equal(t, "open", s, "the state is lower-cased, as the gh path's always was")
+
+	assert.Equal(t, "feat", got["head"])
+	assert.Equal(t, "all", got["state"])
+	assert.Empty(t, got["remote"], "the repository is the daemon's to derive, never the caller's to name")
+}
+
+// TestProxyPRInfoSkipsAForkPR — GraphQL's headRefName filter matches the bare
+// ref name across every head repository, so a public repo where an outside
+// contributor opened a PR from their fork's identically-named branch would
+// otherwise render that stranger's PR as the agent's own work.
+func TestProxyPRInfoSkipsAForkPR(t *testing.T) {
+	serveFakeProxyDaemon(t, infoAnd(true, func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"exit_code": 0, "json": []map[string]any{
+			{"number": 9, "state": "OPEN", "url": "https://github.com/o/r/pull/9",
+				"headRefName": "feat", "isCrossRepository": true},
+		}})
+	}))
+
+	n, _, _, ok := proxyPRInfo(t.Context(), "feat")
+	assert.True(t, ok, "a listing containing only fork PRs is still an answer")
+	assert.Zero(t, n)
+}
+
+// TestProxyPRInfoSeparatesNoPRFromNoAnswer is the conflation the whole design
+// turns on. "No pull request" must be cached; "the lookup failed" must fall
+// through to `gh` and be retried — reading one as the other either hides a PR
+// that exists or re-spends the operator's credential on a settled answer.
+func TestProxyPRInfoSeparatesNoPRFromNoAnswer(t *testing.T) {
+	t.Run("empty listing is an answer", func(t *testing.T) {
+		serveFakeProxyDaemon(t, infoAnd(true, func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"exit_code": 0, "json": []any{}})
+		}))
+		n, u, _, ok := proxyPRInfo(t.Context(), "feat")
+		assert.True(t, ok)
+		assert.Zero(t, n)
+		assert.Empty(t, u)
+	})
+	t.Run("GitHub refused is not an answer", func(t *testing.T) {
+		serveFakeProxyDaemon(t, infoAnd(true, func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"exit_code": 1, "stderr": "Resource not accessible by integration"})
+		}))
+		_, _, _, ok := proxyPRInfo(t.Context(), "feat")
+		assert.False(t, ok, "HTTP 200 means the daemon reached GitHub, not that GitHub agreed")
+	})
+	t.Run("permission denied is not an answer", func(t *testing.T) {
+		serveFakeProxyDaemon(t, infoAnd(true, func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+		}))
+		_, _, _, ok := proxyPRInfo(t.Context(), "feat")
+		assert.False(t, ok)
+	})
+}
+
+// TestDropForeignRepoPRKeepsTheBarHonest — the bar's repository comes from git
+// in the pane's own cwd, while the proxy derives one from the session's
+// recorded launch dir. When they diverge the answer describes a repository the
+// bar is not rendering.
+func TestDropForeignRepoPRKeepsTheBarHonest(t *testing.T) {
+	foreign := &GitSnapshot{
+		RepoURL: "https://github.com/o/a", Branch: "feat",
+		PRNumber: 7, PRURL: "https://github.com/o/b/pull/7", PRState: "open",
+		PRVia: prViaProxy, PRFetchedAt: time.Now(),
+	}
+	dropForeignRepoPR(foreign)
+	assert.Zero(t, foreign.PRNumber)
+	assert.Empty(t, foreign.PRURL)
+	assert.Equal(t, prViaProxy, foreign.PRVia,
+		"the lookup still happened; re-asking it every 15s would buy the same wrong answer")
+
+	// A prefix match must not admit a sibling repository whose name merely
+	// starts the same way.
+	lookalike := &GitSnapshot{
+		RepoURL: "https://github.com/o/a", PRURL: "https://github.com/o/ab/pull/7", PRNumber: 7,
+	}
+	dropForeignRepoPR(lookalike)
+	assert.Zero(t, lookalike.PRNumber)
+
+	own := &GitSnapshot{
+		RepoURL: "https://github.com/o/a", PRURL: "https://github.com/o/a/pull/7", PRNumber: 7,
+	}
+	dropForeignRepoPR(own)
+	assert.Equal(t, 7, own.PRNumber)
 }

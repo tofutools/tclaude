@@ -198,11 +198,12 @@ func applyRenderWrites(w renderWrites) (ok bool) {
 			//
 			// The PR fields have their own, older clock — a lookup carries
 			// forward across several snapshot refreshes (see prLookupTTL) — and
-			// this column is what agentd compares against its own observation to
-			// decide whose PR state is newer. Publishing the snapshot's time
-			// would claim a freshness the PR fields do not have and let a stale
-			// state win; the honest answer for a row whose PR is its point is
-			// when that PR was last actually looked up.
+			// this column is what agentd's reconcilePRSlot weighs against its
+			// own observation of the same pull request. Publishing the
+			// snapshot's time would claim a freshness the PR fields do not
+			// have and let a stale state outrank a fresher one; the honest
+			// answer for a row whose PR is its point is when that PR was last
+			// actually looked up.
 			if at := w.Git.prObservedAt(); !at.IsZero() {
 				ws.UpdatedAt = at
 			}

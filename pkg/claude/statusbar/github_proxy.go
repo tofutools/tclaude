@@ -2,6 +2,7 @@ package statusbar
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -22,10 +23,10 @@ import (
 // PR link from a `gh` that could not authenticate, so the link silently
 // vanished for exactly the agents the proxy was built for.
 //
-// The gate is the operator's configuration, projected through /v1/info. With
-// no proxy configured the status bar shells out to `gh` exactly as it always
-// has; the proxy is an opt-in surface and this must not be the thing that
-// turns it on. See docs/git-proxy.md.
+// The gate is the operator's policy, projected through /v1/info as a single
+// boolean this pane could not otherwise read. Without it the status bar shells
+// out to `gh` exactly as it always has; the proxy is an opt-in surface and
+// this must not be the thing that turns it on. See docs/git-proxy.md.
 //
 // Two costs are worth stating plainly, because they are why the lookup is
 // throttled harder on this path than on the `gh` one (see prLookupTTL):
@@ -37,20 +38,23 @@ import (
 //     An agent without it simply keeps the bar it would have had.
 
 const (
-	// ghProxyProbeTimeout bounds the /v1/info capability probe. It is a
-	// constant-returning read on a local socket, so a slow one means the
-	// daemon is wedged — and a status bar must never wait on that.
-	ghProxyProbeTimeout = time.Second
-
-	// ghProxyCallTimeout bounds the pull-request read itself, which does reach
-	// GitHub. Same three seconds the render broker allows: a status line that
-	// blocks is a visibly frozen pane, and a missing PR link is not.
+	// prLookupBudget is the TOTAL wall clock one PR lookup may spend, across
+	// every step it takes: the capability probe, the proxied read, and the
+	// `gh` fallback behind it.
 	//
-	// It is far under the daemon's own 60s bound, so a genuinely slow GitHub
-	// leaves the daemon still working on a request nobody is reading. That is
-	// the right trade here — the answer is cosmetic and the next lookup will
-	// ask again.
-	ghProxyCallTimeout = 3 * time.Second
+	// One budget rather than a timeout per step, because the steps compose.
+	// Per-step bounds add up, and a wedged daemon socket that accepts but
+	// never answers would spend the probe's bound, then the read's, and only
+	// then start an unbounded subprocess — inside the statusline command the
+	// harness is waiting on. What the pane can afford is a property of the
+	// pane, not of how many places the answer might come from.
+	prLookupBudget = 4 * time.Second
+
+	// ghProxyProbeTimeout bounds the /v1/info capability probe WITHIN that
+	// budget. It is a constant-returning read on a local socket, so a slow one
+	// means the daemon is wedged, and leaving the rest of the budget for the
+	// call that actually reaches GitHub is the better use of it.
+	ghProxyProbeTimeout = time.Second
 
 	// ghProxyPRListLimit is how many pull requests to ask for on the branch.
 	// More than one because a branch can carry several over its life — a
@@ -75,6 +79,12 @@ type ghProxyPREntry struct {
 	State       string `json:"state"`
 	URL         string `json:"url"`
 	HeadRefName string `json:"headRefName"`
+	// IsCrossRepository marks a pull request whose head branch lives in a
+	// FORK. The daemon's --head filter matches the bare ref NAME across every
+	// head repository, so on a public repo a local branch called "fix-typo"
+	// lists an outside contributor's fork branch of the same name alongside
+	// its own. This is the only field that tells them apart.
+	IsCrossRepository bool `json:"isCrossRepository"`
 }
 
 // githubProxyEnabled reports whether this pane's PR lookup should go through
@@ -83,19 +93,31 @@ type ghProxyPREntry struct {
 // The answer comes from the DAEMON, never from local config, and that is the
 // whole point: a sandboxed pane cannot read ~/.tclaude/data/config.json, so
 // asking it would report "no proxy" precisely where the proxy matters most.
-// /v1/info's `proxy` bit is the capability projection of the operator's policy
-// — one boolean, with none of the allow-list behind it crossing the sandbox
-// boundary — and it already accounts for a per-agent remote-scoped grant.
+// One boolean crosses the boundary; none of the allow-list behind it does.
+//
+// It reads `github_read`, NOT the broader `proxy` bit the CLI uses to decide
+// whether to show its command tree. `proxy` is true whenever the operator
+// configured the proxy at all, or the caller holds a scoped grant on any of
+// the four proxy slugs — so an agent granted only `proxy.git.push` would be
+// told yes, then be refused by every read it made, on a timer, with an audit
+// row per refusal. `github_read` asks for the slug this call actually needs
+// plus the remote policy that slug depends on.
 //
 // Everything else is false: no daemon, an older daemon that does not project
 // the bit, a malformed answer. False means "use `gh`, as before", which is the
 // behaviour that cannot regress anyone.
-func githubProxyEnabled() bool {
+func githubProxyEnabled(ctx context.Context) bool {
 	client, err := daemonSocketClient(ghProxyProbeTimeout)
 	if err != nil {
 		return false
 	}
-	resp, err := client.Get("http://tclaude/v1/info")
+	probeCtx, cancel := context.WithTimeout(ctx, ghProxyProbeTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, "http://tclaude/v1/info", nil)
+	if err != nil {
+		return false
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return false
 	}
@@ -104,12 +126,12 @@ func githubProxyEnabled() bool {
 		return false
 	}
 	var info struct {
-		Proxy *bool `json:"proxy"`
+		GitHubRead *bool `json:"github_read"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&info); err != nil {
 		return false
 	}
-	return info.Proxy != nil && *info.Proxy
+	return info.GitHubRead != nil && *info.GitHubRead
 }
 
 // proxyPRInfo asks agentd for the pull request opened from branch, returning
@@ -121,7 +143,7 @@ func githubProxyEnabled() bool {
 // "No pull request for this branch" is an ANSWER, not a failure: it returns
 // ok=true with a zero number, so the caller caches the negative result instead
 // of asking GitHub again on the next render.
-func proxyPRInfo(branch string) (number int, url, state string, ok bool) {
+func proxyPRInfo(ctx context.Context, branch string) (number int, url, state string, ok bool) {
 	body, err := json.Marshal(map[string]any{
 		"head": branch,
 		// Every state, because a merged or closed PR is still the branch's
@@ -133,11 +155,16 @@ func proxyPRInfo(branch string) (number int, url, state string, ok bool) {
 	if err != nil {
 		return 0, "", "", false
 	}
-	client, err := daemonSocketClient(ghProxyCallTimeout)
+	// Whatever is left of the shared budget. Far under the daemon's own 60s
+	// bound, so a genuinely slow GitHub leaves the daemon still working on a
+	// request nobody is reading — the right trade for a cosmetic answer the
+	// next lookup will ask for again.
+	client, err := daemonSocketClient(prLookupBudget)
 	if err != nil {
 		return 0, "", "", false
 	}
-	req, err := http.NewRequest(http.MethodPost, "http://tclaude/v1/github/pr/list", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		"http://tclaude/v1/github/pr/list", bytes.NewReader(body))
 	if err != nil {
 		return 0, "", "", false
 	}
@@ -177,12 +204,22 @@ func proxyPRInfo(branch string) (number int, url, state string, ok bool) {
 // most recently created.
 //
 // The rows arrive newest-created first, so "first open, else first" is exactly
-// that rule. The head-name re-check is belt and braces — the daemon filtered
-// on it — but it is one comparison, and it keeps a widened filter from
-// putting another branch's PR in this branch's status bar.
+// that rule.
+//
+// Fork pull requests are dropped, and that is not belt and braces — it is the
+// difference between this and `gh`, which matches a branch on its head LABEL
+// (`owner:branch` when the head repository differs) while GraphQL's filter
+// matches the bare ref NAME across every head repository. Without the check, a
+// local branch named `fix-typo` on a public repo renders an outside
+// contributor's fork PR of the same name as though it were the agent's own
+// work. The head-name re-check beside it is the cheap guard against the
+// daemon's filter ever widening.
 func pickBranchPR(prs []ghProxyPREntry, branch string) *ghProxyPREntry {
 	var newest *ghProxyPREntry
 	for i := range prs {
+		if prs[i].IsCrossRepository {
+			continue
+		}
 		if prs[i].HeadRefName != "" && prs[i].HeadRefName != branch {
 			continue
 		}

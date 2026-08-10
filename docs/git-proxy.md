@@ -217,6 +217,22 @@ tclaude proxy github run artifacts 18234567890    # what it uploaded, and how bi
 tclaude proxy github run download 18234567890 --name coverage
 ```
 
+### Finding the pull request for a branch
+
+Every other pull-request verb takes a NUMBER. `pr ls --head <branch>` is how
+you get one when all you know is the branch you are on:
+
+```bash
+tclaude proxy github pr ls --head "$(git branch --show-current)" --state all
+```
+
+One caveat, and it matters on public repositories: GitHub filters this on the
+bare ref **name**, across every head repository. A fork's branch of the same
+name comes back in the same listing, so an outside contributor's `fix-typo` PR
+appears alongside yours. Each row carries `isCrossRepository` — `true` means
+the head branch lives in a fork, not in this repository. Check it before
+treating a row as your own work.
+
 ### Reading review feedback and CI failures
 
 `pr checks` names the job that went red; `run log-failed` says why; `run ls`

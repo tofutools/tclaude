@@ -57,6 +57,104 @@ func TestInfoProjectsGitProxyEnabled(t *testing.T) {
 	})
 }
 
+// TestInfoProjectsGitHubReadSeparately pins the distinction between the two
+// capability bits, which exists because they answer different questions.
+//
+// `proxy` is command-tree visibility: is this feature here at all. `github_read`
+// is "would a GitHub read from THIS caller get through", and a caller deciding
+// whether to spend a request needs the second. The status bar routes its
+// pull-request lookup on it several times a minute for the life of a pane; on
+// the broader bit, an agent granted only `proxy.git.push` would spend a
+// refused, audit-logged request every refresh, forever, having never been
+// eligible.
+func TestInfoProjectsGitHubReadSeparately(t *testing.T) {
+	readBits := func(t *testing.T, convID ...string) (proxy, githubRead bool) {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/v1/info", nil)
+		if len(convID) > 0 {
+			req = AsAgentPeer(req, convID[0])
+		}
+		handleInfo(recorder, req)
+		require.Equal(t, http.StatusOK, recorder.Code)
+		var info struct {
+			Proxy      *bool `json:"proxy"`
+			GitHubRead *bool `json:"github_read"`
+		}
+		require.NoError(t, json.NewDecoder(recorder.Body).Decode(&info))
+		require.NotNil(t, info.Proxy)
+		require.NotNil(t, info.GitHubRead,
+			"a current daemon must distinguish 'no' from an old daemon that omits the field")
+		return *info.Proxy, *info.GitHubRead
+	}
+
+	newAgent := func(t *testing.T, convID string) {
+		t.Helper()
+		setupTestDB(t)
+		_, _, err := db.EnsureAgentForConv(convID, "test")
+		require.NoError(t, err)
+	}
+
+	t.Run("configured but the agent holds no github grant", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		newAgent(t, "gh-read-info-0001")
+		require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{
+			GitProxy: &config.GitProxyConfig{AllowedRemotes: []string{"github.com/acme"}},
+		}}))
+		proxy, githubRead := readBits(t, "gh-read-info-0001")
+		assert.True(t, proxy, "the feature is configured, so the command tree shows")
+		assert.False(t, githubRead, "but this agent cannot read GitHub through it")
+	})
+
+	t.Run("a git-only grant does not imply a github read", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		newAgent(t, "gh-read-info-0002")
+		require.NoError(t, db.GrantAgentPermissionWithScope("gh-read-info-0002", PermGitPush,
+			`{"remote":["github.com/acme/*"]}`, "test"))
+		proxy, githubRead := readBits(t, "gh-read-info-0002")
+		assert.True(t, proxy)
+		assert.False(t, githubRead, "proxy.git.push is not proxy.github.read")
+	})
+
+	t.Run("granted with the operator's allow-list", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		newAgent(t, "gh-read-info-0003")
+		require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{
+			GitProxy: &config.GitProxyConfig{AllowedRemotes: []string{"github.com/acme"}},
+		}}))
+		require.NoError(t, db.GrantAgentPermission("gh-read-info-0003", PermGitHubRead, "test"))
+		_, githubRead := readBits(t, "gh-read-info-0003")
+		assert.True(t, githubRead)
+	})
+
+	t.Run("an unscoped grant with no allow-list has nothing to check against", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		newAgent(t, "gh-read-info-0004")
+		require.NoError(t, db.GrantAgentPermission("gh-read-info-0004", PermGitHubRead, "test"))
+		_, githubRead := readBits(t, "gh-read-info-0004")
+		assert.False(t, githubRead,
+			"an unscoped grant needs allowed_remotes; without it every read is refused")
+	})
+
+	t.Run("a remote-scoped grant carries its own allow-list", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		newAgent(t, "gh-read-info-0005")
+		require.NoError(t, db.GrantAgentPermissionWithScope("gh-read-info-0005", PermGitHubRead,
+			`{"remote":["github.com/acme/*"]}`, "test"))
+		_, githubRead := readBits(t, "gh-read-info-0005")
+		assert.True(t, githubRead)
+	})
+
+	t.Run("a caller that is not an agent has no repository to resolve", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{
+			GitProxy: &config.GitProxyConfig{AllowedRemotes: []string{"github.com/acme"}},
+		}}))
+		_, githubRead := readBits(t)
+		assert.False(t, githubRead)
+	})
+}
+
 // gitproxy_test.go pins the REFUSALS. Every case here is a way a repository an
 // agent can write could otherwise aim the daemon's credentials somewhere the
 // operator never authorized, or turn a proxied git call into command

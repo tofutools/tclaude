@@ -60,7 +60,7 @@ query PRList($owner: String!, $name: String!, $limit: Int!, $states: [PullReques
   repository(owner: $owner, name: $name) {
     pullRequests(first: $limit, states: $states, headRefName: $head, orderBy: {field: CREATED_AT, direction: DESC}) {
       nodes {
-        number title state isDraft headRefName baseRefName url updatedAt
+        number title state isDraft headRefName baseRefName url updatedAt isCrossRepository
         ` + ghAuthorFragment + `
       }
     }
@@ -244,6 +244,7 @@ type ghGQLPullRequest struct {
 	UpdatedAt      string       `json:"updatedAt"`
 	Mergeable      string       `json:"mergeable"`
 	ReviewDecision string       `json:"reviewDecision"`
+	CrossRepo      bool         `json:"isCrossRepository"`
 	Author         *ghGQLAuthor `json:"author"`
 	Commits        struct {
 		Nodes []struct {
@@ -318,6 +319,13 @@ type ghPRListEntry struct {
 	URL         string       `json:"url"`
 	UpdatedAt   string       `json:"updatedAt"`
 	Author      *ghAuthorOut `json:"author"`
+	// IsCrossRepository is true when the head branch lives in a FORK rather
+	// than in this repository. It is here because `--head` cannot tell the
+	// two apart: GraphQL's headRefName filter matches the bare ref NAME
+	// across every head repository, so a listing for "fix-typo" includes an
+	// outside contributor's fork branch of the same name. This field is how
+	// a caller distinguishes them.
+	IsCrossRepository bool `json:"isCrossRepository"`
 }
 
 func projectPRListEntry(pr ghGQLPullRequest) ghPRListEntry {
@@ -325,6 +333,7 @@ func projectPRListEntry(pr ghGQLPullRequest) ghPRListEntry {
 		Number: pr.Number, Title: pr.Title, State: pr.State, IsDraft: pr.IsDraft,
 		HeadRefName: pr.HeadRefName, BaseRefName: pr.BaseRefName, URL: pr.URL,
 		UpdatedAt: pr.UpdatedAt, Author: pr.Author.project(),
+		IsCrossRepository: pr.CrossRepo,
 	}
 }
 

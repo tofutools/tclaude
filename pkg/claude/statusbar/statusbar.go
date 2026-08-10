@@ -3,6 +3,7 @@ package statusbar
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -674,10 +675,38 @@ func getGitData() *GitSnapshot {
 		if !carryPRForward(cached, data) {
 			data.PRNumber, data.PRURL, data.PRState, data.PRVia = getPRInfo(data.Branch)
 			data.PRFetchedAt = time.Now()
+			dropForeignRepoPR(data)
 		}
 	}
 	saveGitCache(data)
 	return data
+}
+
+// dropForeignRepoPR discards a PR that does not belong to the repository this
+// snapshot describes.
+//
+// The two halves of a snapshot come from different places and can disagree
+// about which repository they mean. RepoURL and Branch come from bare `git` in
+// the statusline process's own working directory; the proxied lookup names no
+// repository at all — the daemon derives one from the SESSION's recorded
+// launch directory, deliberately, so a caller cannot aim it. When an agent's
+// harness cwd is a different repository from its recorded launch dir, the
+// answer describes a repository the bar is not rendering, and without this the
+// link would show repository B's pull request under repository A's branch.
+//
+// Belt and braces on the `gh` path too, which resolves against whatever
+// repository its own cwd is in.
+func dropForeignRepoPR(data *GitSnapshot) {
+	if data.PRURL == "" || data.RepoURL == "" {
+		return
+	}
+	if strings.HasPrefix(data.PRURL, strings.TrimSuffix(data.RepoURL, "/")+"/") {
+		return
+	}
+	// Keep PRVia and PRFetchedAt: a lookup that answered about the wrong
+	// repository still happened, and re-asking it every fifteen seconds would
+	// get the same wrong answer at the same cost.
+	data.PRNumber, data.PRURL, data.PRState = 0, "", ""
 }
 
 // carryPRForward copies a still-good PR observation from the previous snapshot
@@ -773,22 +802,33 @@ func getDefaultBranch() string {
 // read only to pick a refresh interval — the interval that has to be slow
 // enough for a refusal repeating on a timer, which is exactly this case.
 func getPRInfo(branch string) (number int, url, state, via string) {
-	if githubProxyEnabled() {
-		if n, u, s, ok := proxyPRInfo(branch); ok {
+	// ONE deadline for the whole lookup, however many steps it takes. This
+	// runs inside the statusline command the harness is waiting on, so what
+	// the pane can afford is fixed; it must not grow because the answer might
+	// come from two places instead of one.
+	ctx, cancel := context.WithTimeout(context.Background(), prLookupBudget)
+	defer cancel()
+
+	if githubProxyEnabled(ctx) {
+		if n, u, s, ok := proxyPRInfo(ctx, branch); ok {
 			return n, u, s, prViaProxy
 		}
-		n, u, s := ghPRInfo(branch)
+		n, u, s := ghPRInfo(ctx, branch)
 		return n, u, s, prViaProxy
 	}
-	n, u, s := ghPRInfo(branch)
+	n, u, s := ghPRInfo(ctx, branch)
 	return n, u, s, prViaGH
 }
 
 // ghPRInfo is the direct `gh pr view` read: the pane's own credentials, the
 // pane's own network. Returns (0, "", "") when there's no PR, gh isn't
-// installed, or gh isn't authenticated.
-func ghPRInfo(branch string) (number int, url, state string) {
-	out, err := exec.Command("gh", "pr", "view", branch, "--json", "number,url,state").Output()
+// installed, gh isn't authenticated, or the lookup ran out of budget.
+//
+// The context is what bounds it. This call used to be unbounded, which in a
+// status line means a `gh` waiting on a network that never answers freezes the
+// pane for as long as it likes.
+func ghPRInfo(ctx context.Context, branch string) (number int, url, state string) {
+	out, err := exec.CommandContext(ctx, "gh", "pr", "view", branch, "--json", "number,url,state").Output()
 	if err != nil {
 		return 0, "", ""
 	}

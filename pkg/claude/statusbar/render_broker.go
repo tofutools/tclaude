@@ -275,11 +275,11 @@ func renderDigest(req renderRequest) string {
 		// UpdatedAt freshness clock. Leaving them out means a re-lookup that
 		// confirmed the same PR does not, by itself, re-send the row, so that
 		// clock can lag its true observation. It is the safe direction —
-		// agentd compares it against its own PR observation and prefers the
-		// newer, so understating only ever defers to the daemon, which has the
-		// credential anyway. Including them would put a write on an idle
-		// pane's timer, which is precisely what the change gate exists to
-		// avoid.
+		// agentd weighs it against its own observation of the same pull
+		// request and prefers the newer, so understating only ever defers to
+		// the daemon, which has the credential anyway. Including them would
+		// put a write on an idle pane's timer, which is precisely what the
+		// change gate exists to avoid.
 		gitKey := fmt.Sprintf("%s\x00%s\x00%s\x00%d\x00%s\x00%s",
 			req.Git.RepoURL, req.Git.Branch, req.Git.DefaultBranch,
 			req.Git.PRNumber, req.Git.PRURL, req.Git.PRState)
