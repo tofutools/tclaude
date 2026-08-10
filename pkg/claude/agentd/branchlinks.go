@@ -57,11 +57,11 @@ type repoLinksView struct {
 	BranchURL        string            `json:"branch_url,omitempty"`         // web link for the current branch
 	BranchPRNumber   int               `json:"branch_pr_number,omitempty"`   // PR # for the current branch; 0 = none
 	BranchPRURL      string            `json:"branch_pr_url,omitempty"`      // web link to that PR
-	BranchPRState    string            `json:"branch_pr_state,omitempty"`    // open|merged|closed for the current branch's PR
+	BranchPRState    string            `json:"branch_pr_state,omitempty"`    // open|draft|merged|closed for the current branch's PR
 	StartupBranchURL string            `json:"startup_branch_url,omitempty"` // web link for the startup branch
 	StartupPRNumber  int               `json:"startup_pr_number,omitempty"`  // PR # for the startup branch; 0 = none
 	StartupPRURL     string            `json:"startup_pr_url,omitempty"`     // web link to that PR
-	StartupPRState   string            `json:"startup_pr_state,omitempty"`   // open|merged|closed for the startup branch's PR
+	StartupPRState   string            `json:"startup_pr_state,omitempty"`   // open|draft|merged|closed for the startup branch's PR
 	PresentedPRs     []presentedPRView `json:"presented_prs,omitempty"`      // agent-authored PRs shown alongside branch PRs
 	// CI check summaries for the branch/startup PR badges. Counts only —
 	// the per-check list is served on demand by /api/pr-checks so the 2s
@@ -84,7 +84,7 @@ type repoBranchInfo struct {
 	Branch        string    `json:"branch"`         // the branch this entry resolved
 	PRNumber      int       `json:"pr_number"`      // PR number for Branch; 0 = none
 	PRURL         string    `json:"pr_url"`         // web link to that PR
-	PRState       string    `json:"pr_state"`       // open|merged|closed; "" = no PR
+	PRState       string    `json:"pr_state"`       // open|draft|merged|closed; "" = no PR
 	FetchedAt     time.Time `json:"fetched_at"`     // resolution time — drives the TTL check
 	// Checks rides the same `gh pr view` call the PR fields come from, but
 	// is deliberately NOT persisted here: check state is cached per PR
@@ -547,7 +547,7 @@ func gitDefaultBranch(dir string) string {
 
 // ghPRForBranch returns the number, URL, state and CI check rollup of the
 // pull request whose head is branch, via `gh pr view`. The state is
-// lower-cased to open|merged|closed. Returns zero values when there's no
+// lower-cased to open|draft|merged|closed. Returns zero values when there's no
 // PR, gh isn't installed, or gh isn't authenticated — all best-effort.
 //
 // statusCheckRollup rides this existing call rather than getting one of
@@ -555,7 +555,7 @@ func gitDefaultBranch(dir string) string {
 // branchLinkTTL, and asking for one more JSON field is free next to a
 // second network round-trip per PR.
 func ghPRForBranch(dir, branch string) (number int, url, state string, checks *prChecksInfo) {
-	out := runInDir(dir, "gh", "pr", "view", branch, "--json", "number,url,state,statusCheckRollup")
+	out := runInDir(dir, "gh", "pr", "view", branch, "--json", "number,url,state,isDraft,statusCheckRollup")
 	if out == "" {
 		// The CI rollup is an enhancement; the PR link is not. A `gh` that
 		// rejects the field (old version, or a host that doesn't serve it)
@@ -567,13 +567,28 @@ func ghPRForBranch(dir, branch string) (number int, url, state string, checks *p
 		Number            int             `json:"number"`
 		URL               string          `json:"url"`
 		State             string          `json:"state"`
+		IsDraft           bool            `json:"isDraft"`
 		StatusCheckRollup json.RawMessage `json:"statusCheckRollup"`
 	}
 	if json.Unmarshal([]byte(out), &pr) != nil {
 		return 0, "", "", nil
 	}
 	resolved := parseStatusCheckRollup(pr.StatusCheckRollup, time.Now())
-	return pr.Number, pr.URL, strings.ToLower(pr.State), &resolved
+	return pr.Number, pr.URL, prStateFromGH(pr.State, pr.IsDraft), &resolved
+}
+
+// prStateFromGH folds `gh`'s separate state/isDraft pair into the single
+// lower-case state string every PR badge in the dashboard is driven by.
+// A draft is an open PR that isn't ready for review, so it gets its own
+// state rather than sharing "open"'s green badge. Only open PRs can be
+// drafts — a merged or closed PR keeps its terminal state even if GitHub
+// still reports isDraft for it.
+func prStateFromGH(state string, isDraft bool) string {
+	normalized := strings.ToLower(strings.TrimSpace(state))
+	if isDraft && normalized == "open" {
+		return "draft"
+	}
+	return normalized
 }
 
 // ghPRForBranchWithoutChecks is ghPRForBranch's fallback: the pre-CI-badge
@@ -581,21 +596,22 @@ func ghPRForBranch(dir, branch string) (number int, url, state string, checks *p
 // where a real "no PR here" answer is indistinguishable from a broken `gh`
 // — so a failure here stays silent exactly as it did before.
 func ghPRForBranchWithoutChecks(dir, branch string) (int, string, string, *prChecksInfo) {
-	out := runInDir(dir, "gh", "pr", "view", branch, "--json", "number,url,state")
+	out := runInDir(dir, "gh", "pr", "view", branch, "--json", "number,url,state,isDraft")
 	if out == "" {
 		return 0, "", "", nil
 	}
 	var pr struct {
-		Number int    `json:"number"`
-		URL    string `json:"url"`
-		State  string `json:"state"`
+		Number  int    `json:"number"`
+		URL     string `json:"url"`
+		State   string `json:"state"`
+		IsDraft bool   `json:"isDraft"`
 	}
 	if json.Unmarshal([]byte(out), &pr) != nil {
 		return 0, "", "", nil
 	}
 	slog.Debug("branchlinks: resolved PR without the CI rollup",
 		"repo", dir, "branch", branch, "pr", pr.Number, "module", "agentd")
-	return pr.Number, pr.URL, strings.ToLower(pr.State), nil
+	return pr.Number, pr.URL, prStateFromGH(pr.State, pr.IsDraft), nil
 }
 
 // repoHTTPSFromRemote normalises a git remote URL to its GitHub web

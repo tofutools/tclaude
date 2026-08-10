@@ -980,10 +980,13 @@ a.branch-link:hover { color: #58a6ff; text-decoration: underline; }
   text-decoration: none; margin-left: 5px;
 }
 .pr-link:hover { text-decoration: underline; }
-/* PR-state colours mirror GitHub's: open = green, merged = purple,
-   closed (without merge) = red. Unknown is the legacy fallback for
-   cache entries written before the state field landed. */
+/* PR-state colours mirror GitHub's: open = green, draft = grey, merged =
+   purple, closed (without merge) = red. Draft shares grey with unknown
+   exactly as GitHub does — a draft PR is open but not asking for review,
+   so it must not read as an actionable green badge. Unknown is the legacy
+   fallback for cache entries written before the state field landed. */
 .pr-link.pr-state-open    { color: #3fb950; }
+.pr-link.pr-state-draft   { color: #8b949e; }
 .pr-link.pr-state-merged  { color: #a371f7; }
 .pr-link.pr-state-closed  { color: #f85149; }
 .pr-link.pr-state-unknown { color: #8b949e; }

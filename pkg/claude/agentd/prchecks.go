@@ -120,7 +120,7 @@ type prChecksSummary struct {
 type prChecksInfo struct {
 	Summary prChecksSummary `json:"summary"`
 	Checks  []prCheckRun    `json:"checks,omitempty"`
-	// PRState is the PR's own open|merged|closed as observed by whichever
+	// PRState is the PR's own open|draft|merged|closed as observed by whichever
 	// refresh wrote this blob. It rides here so the hover endpoint can stop
 	// polling a merged PR reached through a *branch* link, which has no
 	// presented-PR row to read the state from.

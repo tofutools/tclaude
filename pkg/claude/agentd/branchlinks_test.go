@@ -192,3 +192,14 @@ func TestRefreshBranchLink_DoesNotWipePROnResolverMiss(t *testing.T) {
 	assert.Equal(t, 42, rows[0].PRNumber, "a PR-less resolution must not wipe the snapshot")
 	assert.Equal(t, "open", rows[0].PRState)
 }
+
+func TestPRStateFromGHFoldsDraftIntoItsOwnState(t *testing.T) {
+	assert.Equal(t, "draft", prStateFromGH("OPEN", true),
+		"an open draft gets its own state so the badge is not open's green")
+	assert.Equal(t, "open", prStateFromGH("OPEN", false))
+	// GitHub keeps isDraft set on some closed drafts. A terminal state is
+	// the more important thing to show, and draft is an open-only concept.
+	assert.Equal(t, "closed", prStateFromGH("CLOSED", true))
+	assert.Equal(t, "merged", prStateFromGH("MERGED", false))
+	assert.Equal(t, "", prStateFromGH("  ", true))
+}

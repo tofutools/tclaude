@@ -960,13 +960,18 @@ function CwdCell({ member }) {
   return html`<${StackedLocation} start=${path(startup, 'start')} current=${path(current, 'worktree')} differ=${!!current && !!startup && current !== startup} />`;
 }
 
+// PR states that have their own badge colour. Anything else — including a
+// cache entry written before a state was recorded — falls back to unknown.
+const PR_STATE_CLASSES = ['open', 'draft', 'merged', 'closed'];
+const prStateClass = (state) => (PR_STATE_CLASSES.includes(state) ? `pr-state-${state}` : 'pr-state-unknown');
+
 function BranchCell({ member }) {
   const branch = (name, url, prNumber, prURL, prState, checks) => {
     if (!name) return html`<span class="muted">—</span>`;
     const branchNode = url
       ? html`<a class="branch branch-link" href=${url} target="_blank" rel="noopener noreferrer" draggable=${false} title=${`Open branch on GitHub — ${name}`}>⎇ ${name}</a>`
       : html`<span class="branch" title=${`git branch: ${name}`}>⎇ ${name}</span>`;
-    const stateClass = ['open', 'merged', 'closed'].includes(prState) ? `pr-state-${prState}` : 'pr-state-unknown';
+    const stateClass = prStateClass(prState);
     const stateLabel = prState ? prState[0].toUpperCase() + prState.slice(1) : 'Pull request';
     return html`${branchNode}${prNumber && prURL ? html` <a class=${`pr-link ${stateClass}`} href=${prURL} target="_blank" rel="noopener noreferrer" draggable=${false} title=${`${stateLabel} pull request #${prNumber}`}>#${prNumber}</a><${PRChecksBadge} url=${prURL} prNumber=${prNumber} summary=${checks} />` : null}`;
   };
@@ -979,7 +984,7 @@ function BranchCell({ member }) {
     seen.add(url); return true;
   });
   return html`<${StackedLocation} start=${start} current=${current} differ=${(member.startup_branch || '') !== (member.branch || '')} />${presented.length ? html` <span class="presented-prs">${presented.map((pr) => {
-    const stateClass = ['open', 'merged', 'closed'].includes(pr.state) ? `pr-state-${pr.state}` : 'pr-state-unknown';
+    const stateClass = prStateClass(pr.state);
     return html`<span key=${pr.url} class="presented-pr"><a class=${`pr-link ${stateClass}`} href=${pr.url} target="_blank" rel="noopener noreferrer" draggable=${false} title=${pr.summary ? `${pr.summary} — ${pr.url}` : `Presented pull request — ${pr.url}`}>${pr.number ? `#${pr.number}` : pr.summary || 'PR'}</a><${PRChecksBadge} url=${pr.url} prNumber=${pr.number} summary=${pr.checks} /></span>`;
   })}</span>` : null}`;
 }
