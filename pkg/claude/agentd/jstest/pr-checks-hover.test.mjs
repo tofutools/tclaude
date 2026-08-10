@@ -266,6 +266,10 @@ test('the panel fetches only while it is open', async (t) => {
     assert.match(rows[0].textContent, /test \/ go test/);
     assert.match(rows[0].textContent, /CI · failure/);
     assert.match(rows[0].textContent, /3m 12s/, 'each check shows how long it took');
+    const heading = panel.querySelector('.ci-panel-heading a');
+    assert.equal(heading.getAttribute('href'), mounted.container.querySelector('.ci-badge').getAttribute('href'),
+      'the popover title uses the same CI summary target as the badge');
+    assert.equal(heading.getAttribute('target'), '_blank');
     assert.match(panel.querySelector('.ci-panel-note a').getAttribute('href'), /\/pull\/2151\/checks$/);
     // A check whose details URL the server refused renders unlinked rather
     // than as an href the reader would trust.

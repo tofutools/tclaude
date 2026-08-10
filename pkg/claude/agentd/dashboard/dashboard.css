@@ -1040,6 +1040,8 @@ a.branch-link:hover { color: #58a6ff; text-decoration: underline; }
    overflow:auto and would clip anything outside its padding box. */
 .ci-bridge { position: fixed; z-index: 29; }
 .ci-panel-heading { color: #f0f6fc; font-size: 12px; font-weight: 700; letter-spacing: 0.2px; }
+.ci-panel-heading a { color: inherit; text-decoration: none; }
+.ci-panel-heading a:hover { text-decoration: underline; }
 .ci-panel-summary { margin: 2px 0 8px; color: #8b949e; font-size: 11px; }
 .ci-checks { margin: 0; padding: 0; list-style: none; }
 .ci-checks li { display: flex; gap: 7px; align-items: baseline; padding: 3px 0; }
