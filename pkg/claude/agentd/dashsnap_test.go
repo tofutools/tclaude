@@ -1339,6 +1339,15 @@ func baseStates() []dashsnap.State {
 			SettleMS: 700,
 		},
 		{
+			Key:      "management-sandbox-import-preview",
+			Title:    "Management — review a sandbox-profile import",
+			Caption:  "The normalized import preview exposes exact policy rows, local portability warnings, collision status, and the resulting import count before commit.",
+			Width:    1280,
+			Height:   1000,
+			JS:       sandboxImportPreviewDashSnapJS(),
+			SettleMS: 700,
+		},
+		{
 			Key:      "management-sandbox-editor",
 			Title:    "Management — new sandbox profile",
 			Caption:  "Structured filesystem/environment policy editor with raw JSON escape hatch, dry-run confirmation, and save-in-flight state.",
@@ -3475,6 +3484,74 @@ func profileContextFeaturesJS() string {
     throw new Error('profile-context-features: the startup-context editor would not close');
   }
   context.scrollIntoView({block: 'center'});
+})();`
+}
+
+// sandboxImportPreviewDashSnapJS creates one local collision, then drives the
+// real manager, import dialog, and inspect endpoint with a portable bundle.
+// The resulting capture reviews the exact server-normalized policy rather than
+// duplicating the component with screenshot-only markup.
+func sandboxImportPreviewDashSnapJS() string {
+	return `return (async function(){
+  var local={name:'dashsnap-import-existing',filesystem:[],environment:[],includes:[],agent_directories:[],network:{baseline:'deny',packs:[],deny_packs:[],allow:[],deny:[]},unix_sockets:{mode:'closed'}};
+  var existing=await fetch('/api/sandbox-profiles',{credentials:'same-origin'}).then(function(response){return response.json();});
+  if(!existing.some(function(profile){return profile.name===local.name;})){
+    var created=await fetch('/api/sandbox-profiles',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(local)});
+    if(!created.ok) throw new Error('sandbox-import-preview: could not seed local collision: '+await created.text());
+  }
+  var module=await import('/static/js/sandbox-profiles.js');
+  module.openSandboxProfilesManageModal();
+  var deadline=Date.now()+6000;
+  while(!document.querySelector('#sandbox-profile-import-open')&&Date.now()<deadline){
+    await new Promise(function(resolve){setTimeout(resolve,40);});
+  }
+  var trigger=document.querySelector('#sandbox-profile-import-open');
+  if(!trigger) throw new Error('sandbox-import-preview: manager did not open');
+  trigger.click();
+  deadline=Date.now()+4000;
+  while(!document.querySelector('#sandbox-profile-import-modal textarea')&&Date.now()<deadline){
+    await new Promise(function(resolve){setTimeout(resolve,40);});
+  }
+  var missing='/tmp/tclaude-dashsnap-import-path-that-does-not-exist';
+  var bundle={format:'tclaude-sandbox-profiles',format_version:12,profiles:[
+    {name:'dashsnap-import-existing',filesystem:[
+      {path:'/tmp',access:'write'},
+      {path:missing,access:'read'},
+      {path:'/home',access:'deny'}
+    ],environment:[{name:'GOPRIVATE',value:'github.com/example/*'}],includes:[],agent_directories:['PLAYWRIGHT_OUTPUT'],pre_launch:[{name:'browser-wrapper',script:'export BROWSER=chromium\n',exports:['BROWSER']}],network:{baseline:'deny',engine:'proxy',packs:['net-github'],deny_packs:[],allow:[{host:'api.example.test',ports:[443]}],deny:[]},unix_sockets:{mode:'closed'},resource_limits:{memory:'2GiB',cpu:2}},
+    {name:'dashsnap-import-new',filesystem:[{path:'/tmp',access:'read'}],environment:[],includes:[],agent_directories:[],network:{baseline:'allow',packs:[],deny_packs:[],allow:[],deny:[]},unix_sockets:{mode:'open'}}
+  ]};
+  var textarea=document.querySelector('#sandbox-profile-import-modal textarea');
+  textarea.value=JSON.stringify(bundle,null,2);
+  textarea.dispatchEvent(new Event('input',{bubbles:true}));
+  await new Promise(function(resolve){requestAnimationFrame(function(){requestAnimationFrame(resolve);});});
+  document.querySelector('#sandbox-profile-import-modal .profile-transfer-preview-button').click();
+  deadline=Date.now()+7000;
+  while(!document.querySelector('#sandbox-profile-import-preview')&&Date.now()<deadline){
+    await new Promise(function(resolve){setTimeout(resolve,40);});
+  }
+  var preview=document.querySelector('#sandbox-profile-import-preview');
+  if(!preview) throw new Error('sandbox-import-preview: inspect did not render: '+document.querySelector('#sandbox-profile-import-modal .cron-create-error').textContent);
+  var cards=[...preview.querySelectorAll('.sandbox-import-profile')];
+  if(cards.length!==2||!cards[0].open) throw new Error('sandbox-import-preview: cards did not render with the first expanded');
+  if(cards[0].querySelectorAll('.sandbox-import-rule').length<10) throw new Error('sandbox-import-preview: policy axes were omitted');
+  if(!cards[0].querySelector('.sandbox-import-warning')) throw new Error('sandbox-import-preview: missing-path warning is not attached to its profile');
+  if(!document.querySelector('#sandbox-profile-import-effect').textContent.includes('1 new profile will be imported')) throw new Error('sandbox-import-preview: skip impact is not explicit');
+  if(!document.querySelector('#sandbox-profile-import-modal .primary').textContent.includes('Import 1 profile')) throw new Error('sandbox-import-preview: action count is wrong');
+  var policy=document.querySelector('#sandbox-profile-import-conflict');
+  policy.value='overwrite'; policy.dispatchEvent(new Event('change',{bubbles:true}));
+  await new Promise(function(resolve){requestAnimationFrame(function(){requestAnimationFrame(resolve);});});
+  if(!document.querySelector('#sandbox-profile-import-effect').textContent.includes('1 existing profile will be replaced')||
+     !document.querySelector('#sandbox-profile-import-modal .primary').textContent.includes('Import 2 profiles')){
+    throw new Error('sandbox-import-preview: overwrite impact is not explicit');
+  }
+  policy.value='error'; policy.dispatchEvent(new Event('change',{bubbles:true}));
+  await new Promise(function(resolve){requestAnimationFrame(function(){requestAnimationFrame(resolve);});});
+  var action=document.querySelector('#sandbox-profile-import-modal .primary');
+  if(!action.disabled||!action.textContent.includes('Resolve name conflict')) throw new Error('sandbox-import-preview: error policy still looks executable');
+  policy.value='skip'; policy.dispatchEvent(new Event('change',{bubbles:true}));
+  await new Promise(function(resolve){requestAnimationFrame(function(){requestAnimationFrame(resolve);});});
+  preview.scrollIntoView({block:'center'});
 })();`
 }
 

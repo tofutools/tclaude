@@ -1825,6 +1825,56 @@ function SandboxExport({ current, state, actions, confirmDiscard }) {
   return html`<${Overlay} id="sandbox-profile-export-modal" labelledby="sandbox-profile-export-title" onClose=${state.closeDialog} confirmDiscard=${confirmDiscard}><h3 id="sandbox-profile-export-title"><span class="sandbox-word-regular">Export sandbox profiles</span><span class="sandbox-word-wizard">📜 Inscribe wards</span></h3><div class="profile-transfer-list">${current.sandboxProfiles.map((item) => html`<label key=${item.name} class="profile-transfer-row"><input type="checkbox" checked=${selected.has(item.name)} onChange=${() => toggle(item.name)}/><span>${item.name} ${sandboxProfileSummary(item)}</span></label>`)}</div><div role="alert" class="cron-create-error">${error}</div><div class="modal-buttons"><button onClick=${state.closeDialog}>Cancel</button><span class="spacer"></span><button class="primary" disabled=${busy} onClick=${submit}>${busy ? 'Exporting…' : 'Export'}</button></div></${Overlay}>`;
 }
 
+function sandboxImportNetworkRows(profile) {
+  const network = sandboxNetworkAuthoring(profile);
+  const rows = [];
+  if (network.baseline && (network.baseline !== 'inherit' || profile.network)) rows.push(`baseline ${network.baseline}${network.baseline === 'inherit' ? '' : ' all'}${network.engine ? ` · ${network.engine} filter` : ''}`);
+  for (const pack of network.packs || []) rows.push(`allow pack ${pack}`);
+  for (const pack of network.deny_packs || []) rows.push(`deny pack ${pack}`);
+  const endpoint = (entry) => {
+    const target = entry.host || entry.domain || entry.cidr || (entry.loopback ? 'loopback' : 'unknown destination');
+    const suffix = entry.include_subdomains ? ' + subdomains' : '';
+    const ports = entry.ports?.length ? `:${entry.ports.join(',')}` : '';
+    return `${target}${suffix}${ports}`;
+  };
+  for (const entry of network.allow || []) rows.push(`allow ${endpoint(entry)}`);
+  for (const entry of network.deny || []) rows.push(`deny ${endpoint(entry)}`);
+  return rows;
+}
+
+function sandboxImportPolicyRows(profile) {
+  const rows = [];
+  for (const entry of profile.filesystem || []) rows.push({ kind: entry.access, value: entry.mount_path ? `${entry.path} → ${entry.mount_path}` : entry.path });
+  for (const name of profile.includes || []) rows.push({ kind: 'include', value: name });
+  for (const entry of profile.environment || []) rows.push({ kind: 'env', value: `${entry.name} → ${entry.value}` });
+  for (const name of profile.agent_directories || []) rows.push({ kind: 'own', value: `${name} — isolated per agent` });
+  for (const block of profile.pre_launch || []) rows.push({ kind: 'pre-launch', value: `${block.name}: ${block.script}${block.exports?.length ? ` → exports ${block.exports.join(', ')}` : ''}` });
+  for (const value of sandboxImportNetworkRows(profile)) rows.push({ kind: 'network', value });
+  const sockets = sandboxAccessAxes(profile).unix_sockets;
+  if (sockets.mode) rows.push({ kind: 'sockets', value: sockets.mode });
+  for (const entry of sockets.allow || []) rows.push({ kind: 'sockets', value: `allow ${entry.path || entry.path_glob}` });
+  const limits = profile.resource_limits || {};
+  if (limits.memory) rows.push({ kind: 'limit', value: `memory ${limits.memory}` });
+  if (limits.cpu != null) rows.push({ kind: 'limit', value: `CPU ${limits.cpu}` });
+  if (profile.darwin_allow_mach_register) rows.push({ kind: 'mach', value: 'allow Mach service registration on macOS' });
+  return rows;
+}
+
+function SandboxImportProfile({ profile, exists, warnings, expanded }) {
+  const rows = sandboxImportPolicyRows(profile);
+  return html`<details class="sandbox-import-profile" open=${expanded}>
+    <summary>
+      <span class="sandbox-import-profile-name">${profile.name}</span>
+      <span class="sandbox-import-profile-summary">${rows.length} policy ${rows.length === 1 ? 'entry' : 'entries'} · ${sandboxProfileSummary(profile)}</span>
+      <span class=${`sandbox-import-status ${exists ? 'is-conflict' : 'is-new'}`}>${exists ? 'Already exists' : 'New'}</span>
+    </summary>
+    <div class="sandbox-import-policy">
+      ${rows.length ? rows.map((row, index) => html`<div key=${`${row.kind}:${row.value}:${index}`} class="sandbox-import-rule"><span class=${`sbx-cap-tag sbx-cap-${row.kind}`}>${row.kind}</span><span class="sbx-cap-val" title=${row.value}>${row.value}</span></div>`) : html`<div class="sbx-caps-empty">No sandbox rules</div>`}
+      ${warnings.map((warning, index) => html`<div key=${`${warning.path}:${index}`} class="sandbox-import-warning" role="note">⚠ <span>${warning.path}: ${warning.message}</span></div>`)}
+    </div>
+  </details>`;
+}
+
 function SandboxImport({ current, state, actions, confirmDiscard }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const [raw, setRaw] = useState(''); const [envelope, setEnvelope] = useState(null); const [preview, setPreview] = useState(null); const [conflict, setConflict] = useState('skip'); const [error, setError] = useState(''); const [busy, setBusy] = useState('');
@@ -1840,6 +1890,16 @@ function SandboxImport({ current, state, actions, confirmDiscard }) {
     } finally { setBusy(''); }
   };
   const existing = new Set(current.sandboxProfiles.map((item) => item.name)); const incoming = preview?.profiles || envelope?.profiles || [];
+  const conflicts = incoming.filter((item) => existing.has(item.name)).length;
+  const imported = conflict === 'skip' ? incoming.length - conflicts : incoming.length;
+  const effect = conflict === 'skip'
+    ? `${conflicts ? `${conflicts} existing profile${conflicts === 1 ? '' : 's'} will stay unchanged; ` : ''}${imported} new profile${imported === 1 ? '' : 's'} will be imported.`
+    : conflict === 'overwrite'
+      ? `${conflicts} existing profile${conflicts === 1 ? '' : 's'} will be replaced; ${incoming.length - conflicts} new profile${incoming.length - conflicts === 1 ? '' : 's'} will be imported.`
+      : `Import will stop because ${conflicts} profile name${conflicts === 1 ? '' : 's'} already exist${conflicts === 1 ? 's' : ''} locally.`;
+  const importLabel = conflict === 'error' && conflicts > 0
+    ? 'Resolve name conflict'
+    : `Import ${imported} profile${imported === 1 ? '' : 's'}`;
   // The inspect reports include-graph errors PER conflict policy
   // ("skip" keeps a clashing local profile's own includes, so only one policy
   // may be invalid). Importing under "error" only succeeds when no names
@@ -1853,8 +1913,12 @@ function SandboxImport({ current, state, actions, confirmDiscard }) {
     catch (e) { setError(message(e)); }
     finally { setBusy(''); }
   };
-  return html`<${Overlay} id="sandbox-profile-import-modal" labelledby="sandbox-profile-import-title" onClose=${state.closeDialog} dirty=${!!raw} blocked=${!!busy} confirmDiscard=${confirmDiscard} registerClose=${registerClose}><h3 id="sandbox-profile-import-title"><span class="sandbox-word-regular">Import sandbox profiles</span><span class="sandbox-word-wizard">📜 Read wards</span></h3><${Row} label="File"><input type="file" accept=".json,application/json" onChange=${async (event) => { const file = event.currentTarget.files?.[0]; if (file) { setRaw(await file.text()); setPreview(null); } }}/></${Row}><${Row} label="or paste"><textarea rows="6" value=${raw} onInput=${(event) => { setRaw(event.currentTarget.value); setPreview(null); }}/></${Row}><button type="button" class="tool profile-transfer-preview-button" disabled=${busy} onClick=${inspect}>Preview</button>${preview && html`<div class="profile-transfer-list">${incoming.map((item) => html`<div key=${item.name} class="profile-transfer-row"><span>${item.name} · ${sandboxProfileSummary(item)}${existing.has(item.name) ? ' · already exists locally' : ''}</span></div>`)}</div>${incoming.some((item) => existing.has(item.name)) && html`<${Row} label="Name conflicts"><${Select} id="sandbox-profile-import-conflict" value=${conflict} onChange=${(value) => setConflict(value)} options=${[['skip', 'Skip existing'], ['overwrite', 'Overwrite existing'], ['error', 'Stop with an error']]}/></${Row}>`}${includeError && html`<div id="sandbox-profile-import-include-error" role="alert" class="cron-create-error">Include graph invalid under this conflict policy: ${includeError}</div>`}`}
-    <div role="alert" class="cron-create-error">${error}</div><div class="modal-buttons"><button disabled=${!!busy} onClick=${() => { void requestClose(); }}>Cancel</button><span class="spacer"></span><button class="primary" disabled=${busy || !preview || !!includeError} onClick=${submit}>${busy === 'import' ? 'Importing…' : 'Import'}</button></div></${Overlay}>`;
+  return html`<${Overlay} id="sandbox-profile-import-modal" labelledby="sandbox-profile-import-title" onClose=${state.closeDialog} dirty=${!!raw} blocked=${!!busy} confirmDiscard=${confirmDiscard} registerClose=${registerClose}><h3 id="sandbox-profile-import-title"><span class="sandbox-word-regular">Import sandbox profiles</span><span class="sandbox-word-wizard">📜 Read wards</span></h3><${Row} label="File"><input type="file" accept=".json,application/json" onChange=${async (event) => { const file = event.currentTarget.files?.[0]; if (file) { setRaw(await file.text()); setPreview(null); } }}/></${Row}><${Row} label="or paste"><textarea rows="6" value=${raw} onInput=${(event) => { setRaw(event.currentTarget.value); setPreview(null); }}/></${Row}><button type="button" class="tool profile-transfer-preview-button" disabled=${busy} onClick=${inspect}>${busy === 'inspect' ? 'Previewing…' : 'Preview'}</button>${preview && html`
+      <div class="sandbox-import-overview"><span>${incoming.length} profile${incoming.length === 1 ? '' : 's'} in this bundle</span>${conflicts ? html`<span class="sandbox-import-conflict-count">${conflicts} name conflict${conflicts === 1 ? '' : 's'}</span>` : null}</div>
+      <div id="sandbox-profile-import-preview" class="sandbox-import-profile-list">${incoming.map((item, index) => html`<${SandboxImportProfile} key=${item.name} profile=${item} exists=${existing.has(item.name)} warnings=${(preview.warnings || []).filter((warning) => warning.profile === item.name)} expanded=${index === 0}/>` )}</div>
+      ${conflicts ? html`<${Row} label="Name conflicts"><${Select} id="sandbox-profile-import-conflict" value=${conflict} onChange=${(value) => setConflict(value)} options=${[['skip', 'Skip existing'], ['overwrite', 'Overwrite existing'], ['error', 'Stop with an error']]}/></${Row}><div id="sandbox-profile-import-effect" class=${`sandbox-import-effect${conflict === 'error' ? ' is-error' : ''}`} role="status">${effect}</div>` : null}
+      ${includeError && html`<div id="sandbox-profile-import-include-error" role="alert" class="cron-create-error">Include graph invalid under this conflict policy: ${includeError}</div>`}`}
+    <div role="alert" class="cron-create-error">${error}</div><div class="modal-buttons"><button disabled=${!!busy} onClick=${() => { void requestClose(); }}>Cancel</button><span class="spacer"></span><button class="primary" disabled=${busy || !preview || !imported || !!includeError || (conflict === 'error' && conflicts > 0)} onClick=${submit}>${busy === 'import' ? 'Importing…' : preview ? importLabel : 'Import'}</button></div></${Overlay}>`;
 }
 
 function SandboxDiffModal({ model, close }) {

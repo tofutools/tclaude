@@ -4658,6 +4658,120 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
   cursor: default;
   opacity: 0.55;
 }
+.sandbox-import-overview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 7px 0 9px;
+  color: #8b949e;
+  font-size: 12px;
+}
+.sandbox-import-conflict-count,
+.sandbox-import-status {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border: 1px solid #3a4655;
+  border-radius: 999px;
+  background: rgba(56, 139, 253, 0.10);
+  color: #79c0ff;
+  font-size: 11px;
+  line-height: 1.35;
+}
+.sandbox-import-profile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: min(390px, 48vh);
+  overflow: auto;
+  margin-bottom: 12px;
+}
+.sandbox-import-profile {
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid #2a3340;
+  border-radius: 6px;
+  background: #0d1117;
+}
+.sandbox-import-profile[open] { border-color: #3d4d60; }
+.sandbox-import-profile > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 10px;
+  cursor: pointer;
+}
+.sandbox-import-profile-name {
+  flex: 0 0 auto;
+  max-width: 35%;
+  overflow: hidden;
+  color: #f0f6fc;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sandbox-import-profile-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: #8b949e;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sandbox-import-status.is-new {
+  border-color: rgba(63, 185, 80, 0.45);
+  background: rgba(63, 185, 80, 0.10);
+  color: #3fb950;
+}
+.sandbox-import-status.is-conflict,
+.sandbox-import-conflict-count {
+  border-color: rgba(210, 153, 34, 0.45);
+  background: rgba(210, 153, 34, 0.10);
+  color: #d29922;
+}
+.sandbox-import-policy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 11px 11px 36px;
+  border-top: 1px solid #21262d;
+}
+.sandbox-import-rule { display: flex; align-items: baseline; gap: 8px; min-width: 0; line-height: 1.5; }
+.sandbox-import-rule .sbx-cap-tag { min-width: 5.8em; }
+.sandbox-import-rule .sbx-cap-network,
+.sandbox-import-rule .sbx-cap-include,
+.sandbox-import-rule .sbx-cap-limit,
+.sandbox-import-rule .sbx-cap-sockets,
+.sandbox-import-rule .sbx-cap-mach,
+.sandbox-import-rule .sbx-cap-pre-launch {
+  color: #e3b341;
+  background: rgba(210, 153, 34, 0.12);
+  border-color: rgba(210, 153, 34, 0.35);
+}
+.sandbox-import-rule .sbx-cap-include {
+  color: #d2a8ff;
+  background: rgba(163, 113, 247, 0.12);
+  border-color: rgba(163, 113, 247, 0.30);
+}
+.sandbox-import-warning {
+  display: flex;
+  gap: 5px;
+  margin-top: 5px;
+  padding: 7px 9px;
+  border-left: 3px solid #d29922;
+  background: rgba(210, 153, 34, 0.10);
+  color: #e3b341;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.sandbox-import-effect {
+  margin: -5px 0 12px 98px;
+  color: #8b949e;
+  font-size: 12px;
+}
+.sandbox-import-effect.is-error { color: #f0883e; }
 .profile-transfer-row {
   display: grid;
   grid-template-columns: 22px minmax(0, 1fr) auto;
@@ -4714,6 +4828,10 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
   .profile-import-conflict input[type=text] {
     width: 100%;
   }
+  .sandbox-import-profile-summary { display: none; }
+  .sandbox-import-profile-name { max-width: none; }
+  .sandbox-import-policy { padding-left: 11px; }
+  .sandbox-import-effect { margin-left: 0; }
 }
 /* The role editor (JOH-240) opens on top of the roles-manage overlay, the same
    pattern as the profile editor above — pin it above plain z-index:100 overlays
@@ -13264,6 +13382,16 @@ body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) .p
   background: rgba(20, 15, 40, 0.78);
   border-color: rgba(122, 93, 176, 0.5);
 }
+body.wizard #sandbox-profile-import-modal .sandbox-import-profile {
+  background: rgba(20, 15, 40, 0.78);
+  border-color: rgba(122, 93, 176, 0.5);
+}
+body.wizard #sandbox-profile-import-modal .sandbox-import-profile[open] { border-color: #7a5db0; }
+body.wizard #sandbox-profile-import-modal .sandbox-import-profile-name { color: #f3e6c0; }
+body.wizard #sandbox-profile-import-modal .sandbox-import-profile-summary,
+body.wizard #sandbox-profile-import-modal .sandbox-import-overview,
+body.wizard #sandbox-profile-import-modal .sandbox-import-effect { color: #b39ddb; }
+body.wizard #sandbox-profile-import-modal .sandbox-import-policy { border-color: rgba(122, 93, 176, 0.35); }
 body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) input,
 body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) textarea,
 body.wizard :is(#sandbox-profile-export-modal, #sandbox-profile-import-modal) select {
