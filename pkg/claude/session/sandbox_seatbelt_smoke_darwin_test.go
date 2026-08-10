@@ -164,9 +164,12 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 	allowedPolicyListener, err := net.Listen("unix", allowedPolicySocket)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = allowedPolicyListener.Close() })
-	hostListener, err := net.Listen("tcp4", "127.0.0.1:0")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = hostListener.Close() })
+	// TCL-917's address axis needs the allowed loopback listener and a control
+	// on the SAME port at a non-loopback address. They are reserved together
+	// here, before anything else claims a port, so a collision retries instead
+	// of sinking the run (TCL-1165). The control is only exercised further down,
+	// once the sandbox posture under test is in place.
+	hostListener, samePortListener, samePortInventory := darwinLocalAccessListenerPair(t)
 	deniedHostListener, err := net.Listen("tcp4", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = deniedHostListener.Close() })
@@ -277,10 +280,11 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 	// which is why this gap survived review three times — see the same-port
 	// characterization in the helper.
 	//
-	// This control is a DIFFERENT service on the SAME port at a non-loopback
-	// local address, so reaching it from inside the sandbox cannot be confused
-	// with reaching the allowed loopback service.
-	samePortListener, samePortInventory := darwinLocalAccessSamePortControl(t, localPort)
+	// The control reserved alongside hostListener above is a DIFFERENT service
+	// on the SAME port at a non-loopback local address, so reaching it from
+	// inside the sandbox cannot be confused with reaching the allowed loopback
+	// service.
+	//
 	// Positive control: the helper's observation means nothing unless this
 	// target is independently known to answer. Without it, "refused" and
 	// "nothing was listening" are the same result.
@@ -833,9 +837,20 @@ func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
 	require.NoErrorf(t, err, "brokered status line through Seatbelt: %s", statusOutput)
 }
 
-// darwinLocalAccessSamePortControl binds a live service on the given port at a
-// NON-loopback address belonging to this machine, and returns it with the
-// interface inventory it inspected.
+// darwinLocalAccessListenerPair reserves BOTH sides of the address-axis
+// characterization together: the allowed loopback listener, and a live service
+// on that same port at a NON-loopback address belonging to this machine. It
+// returns them with the interface inventory it inspected.
+//
+// The two are reserved as a PAIR, non-loopback side first at port 0, because
+// the port must be free at both addresses and only the second bind can
+// discover that it is not. Binding loopback first and then demanding that
+// number on the LAN address makes the port an input the function may not
+// choose — so a runner process that grabbed it in between (the number comes
+// from the OS ephemeral range, which is exactly where such processes are
+// allocated from too) was an unretriable failure. That is TCL-1165: one
+// EADDRINUSE at 192.168.64.13:49204 sank a currency-formatting PR. Reserving
+// the pair lets a transient collision retry with a fresh port instead.
 //
 // It t.Fatals rather than skipping when no such address exists. A skip here
 // would be the absence-satisfied shape in the one test whose entire job is to
@@ -843,21 +858,13 @@ func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
 // nothing is exactly what this characterization exists to prevent. The
 // inventory is in the failure so "no address existed" can never be confused
 // with "the probe was not written". That fatal-rather-than-skip decision is
-// the proxy-floor smoke's, deliberately.
+// the proxy-floor smoke's, deliberately — as is the pairing above.
 //
-// IT DOES NOT COPY THAT SMOKE'S COLLISION HANDLING, and the difference is
-// forced rather than chosen. The proxy floor reserves the non-loopback side at
-// port 0 FIRST and then asks loopback for that exact port, so a transient
-// collision can retry the whole pair. Here the loopback listener already
-// exists — it is bound before the host-open posture runs and its address is
-// handed to that helper — so the port is an input, not something this function
-// may choose. A collision is therefore possible and unretriable.
-//
-// The two failure modes get DISTINCT messages for that reason: "no candidate
-// address" and "the port was taken" are different problems, and a collision
-// reported as the former would send an investigator to look for a runner
-// networking fault that does not exist.
-func darwinLocalAccessSamePortControl(t *testing.T, port int) (net.Listener, string) {
+// The two failure modes keep DISTINCT messages: "no candidate address" and
+// "no pair could be reserved" are different problems, and a collision reported
+// as the former would send an investigator to look for a runner networking
+// fault that does not exist.
+func darwinLocalAccessListenerPair(t *testing.T) (loopback, control net.Listener, inventory string) {
 	t.Helper()
 	interfaces, err := net.Interfaces()
 	require.NoError(t, err)
@@ -886,7 +893,7 @@ func darwinLocalAccessSamePortControl(t *testing.T, port int) (net.Listener, str
 		}
 	}
 	sort.Strings(observed)
-	inventory := strings.Join(observed, "\n")
+	inventory = strings.Join(observed, "\n")
 	if len(candidates) == 0 {
 		t.Fatalf("runner exposes no active globally-unicast non-loopback IPv4 address; "+
 			"it cannot execute the required same-port/different-local-address characterization\n"+
@@ -894,50 +901,54 @@ func darwinLocalAccessSamePortControl(t *testing.T, port int) (net.Listener, str
 	}
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].Less(candidates[j]) })
 	failures := []string{}
-	inUse := false
 	for _, candidate := range candidates {
-		target := netip.AddrPortFrom(candidate, uint16(port)).String()
-		listener, listenErr := net.Listen("tcp4", target)
-		if listenErr != nil {
-			if errors.Is(listenErr, syscall.EADDRINUSE) {
-				inUse = true
+		// Bounded: a runner losing ten freshly-assigned ephemeral ports in a row
+		// is not the transient collision this retry exists for, and looping until
+		// the suite deadline would report that as a hang rather than a fault.
+		for range 10 {
+			target := netip.AddrPortFrom(candidate, 0).String()
+			samePort, controlErr := net.Listen("tcp4", target)
+			if controlErr != nil {
+				failures = append(failures, fmt.Sprintf("%s control bind: %v", target, controlErr))
+				break
 			}
-			failures = append(failures, fmt.Sprintf("%s: %v", target, listenErr))
-			continue
-		}
-		t.Cleanup(func() { _ = listener.Close() })
-		// Drains the backlog so the control behaves like a live service rather
-		// than a bound-and-ignored socket. Note this is not what makes the
-		// measurement sound: a TCP handshake completes from the backlog whether
-		// or not anything accepts, so the connect would succeed regardless. What
-		// makes the result attributable is that the control is bound to a
-		// DIFFERENT ADDRESS than the allowed listener, so a successful connect
-		// cannot have landed on the allowed one.
-		go func() {
-			for {
-				conn, acceptErr := listener.Accept()
-				if acceptErr != nil {
-					return
+			port := samePort.Addr().(*net.TCPAddr).Port
+			allowed, allowedErr := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+			if allowedErr != nil {
+				_ = samePort.Close()
+				failures = append(failures, fmt.Sprintf(
+					"%s reserved port %d but the loopback bind collided: %v",
+					candidate, port, allowedErr))
+				continue
+			}
+			t.Cleanup(func() { _ = allowed.Close() })
+			t.Cleanup(func() { _ = samePort.Close() })
+			// Drains the backlog so the control behaves like a live service rather
+			// than a bound-and-ignored socket. Note this is not what makes the
+			// measurement sound: a TCP handshake completes from the backlog whether
+			// or not anything accepts, so the connect would succeed regardless. What
+			// makes the result attributable is that the control is bound to a
+			// DIFFERENT ADDRESS than the allowed listener, so a successful connect
+			// cannot have landed on the allowed one.
+			go func() {
+				for {
+					conn, acceptErr := samePort.Accept()
+					if acceptErr != nil {
+						return
+					}
+					_ = conn.Close()
 				}
-				_ = conn.Close()
-			}
-		}()
-		return listener, inventory
+			}()
+			return allowed, samePort, inventory
+		}
 	}
-	// The headline is derived from the errno, not assumed. Claiming "something
-	// else holds the port" for a permission or resource failure would send an
-	// investigator after a port conflict that never happened — an alarming
-	// wrong cause, which is not the safe direction to be wrong in.
-	cause := "the bind failed for reasons that are NOT EADDRINUSE; read the attempts below rather than assuming a port conflict"
-	if inUse {
-		cause = "at least one bind failed with EADDRINUSE, so something else already holds this port there"
-	}
-	t.Fatalf("could not place the same-port control: %d candidate non-loopback local "+
-		"address(es) exist, so this is not a runner-has-no-address fault. %s. The "+
-		"loopback listener fixed port %d before this function ran, so it cannot retry "+
-		"with a different one.\nbind attempts:\n%s\nrunner interfaces:\n%s",
-		len(candidates), cause, port, strings.Join(failures, "; "), inventory)
-	return nil, inventory
+	t.Fatalf("could not reserve a same-port loopback/non-loopback listener pair: %d candidate "+
+		"non-loopback local address(es) exist, so this is not a runner-has-no-address fault. "+
+		"Every attempt below took a fresh OS-assigned port and still lost it before the second "+
+		"bind, so read the attempts rather than assuming one stuck port.\n"+
+		"pair attempts:\n%s\nrunner interfaces:\n%s",
+		len(candidates), strings.Join(failures, "\n"), inventory)
+	return nil, nil, inventory
 }
 
 func assertSeatbeltEPERM(t *testing.T, err error, operation string) {
