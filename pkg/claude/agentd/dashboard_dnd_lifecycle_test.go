@@ -14,7 +14,7 @@ import (
 func TestDashboardDndBindersAreDisposable(t *testing.T) {
 	directTerminal := map[string]string{
 		"dnd.js":           "row.addEventListener('dragend', endDndDrag, { once: true });",
-		"group-reorder.js": "handle.addEventListener('dragend', endGroupDrag, { once: true });",
+		"group-reorder.js": "handle.addEventListener('dragend', finishGroupDrag, { once: true });",
 		"dock-dnd.js":      "card.addEventListener('dragend', endDockDrag, { once: true });",
 		"dock-save-dnd.js": "reverseSource.addEventListener('dragend', endReverseDrag, { once: true });",
 	}
