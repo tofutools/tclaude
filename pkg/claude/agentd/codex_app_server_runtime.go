@@ -86,6 +86,9 @@ type codexAppServerHandle struct {
 	compact   *codexCompactionStage
 	nextOpID  uint64
 	closing   bool
+	// watchDone closes after the final observer exits. Reconnects continue the
+	// same logical watch and leave it open until the replacement observer ends.
+	watchDone chan struct{}
 }
 
 var codexAppServerHandles = struct {
@@ -623,7 +626,7 @@ func recoverCodexAppServerRuntime(runtime db.CodexAppServerRuntime, owner string
 }
 
 func registerCodexAppServerHandle(runtime db.CodexAppServerRuntime, client *codexappserver.Client) *codexAppServerHandle {
-	handle := &codexAppServerHandle{runtime: runtime, client: client}
+	handle := &codexAppServerHandle{runtime: runtime, client: client, watchDone: make(chan struct{})}
 	codexAppServerHandles.Lock()
 	old := codexAppServerHandles.byConv[runtime.ConvID]
 	codexAppServerHandles.byConv[runtime.ConvID] = handle
@@ -904,6 +907,9 @@ func watchCodexAppServerHandle(handle *codexAppServerHandle) {
 	// pane unusable and is the deterministic-relaunch case.
 	if !closing && (state == db.CodexAppServerDead || strings.Contains(detail, "stopped answering")) {
 		stopCodexAppServerPaneAfterControlFailure(handle.runtime, detail)
+	}
+	if handle.watchDone != nil {
+		close(handle.watchDone)
 	}
 }
 
