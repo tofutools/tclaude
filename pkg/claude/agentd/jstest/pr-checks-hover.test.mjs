@@ -333,6 +333,10 @@ test('a running check ticks locally between polls', async (t) => {
 
     const time = () => mounted.container.querySelector('.ci-check-time')?.textContent;
     assert.equal(time(), '3m 30s');
+    // Preact deliberately schedules passive effects after paint; let that
+    // queue flush before inspecting the interval it installed.
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    await harness.act(async () => {});
     assert.equal(intervals.size, 1, 'one local clock runs while a started check is pending');
 
     now += 1000;
