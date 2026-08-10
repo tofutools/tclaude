@@ -52,6 +52,9 @@ func propagateAgentCompanions(x dbExecQuerier, convID, agentID string) error {
 		agentID, convID); err != nil {
 		return fmt.Errorf("propagate agent companion sessions.agent_id: %w", err)
 	}
+	if err := propagateCodexNativePermissionProfileAgent(x, convID, agentID); err != nil {
+		return err
+	}
 	// A session is registered before its conversation enrolls, so its first
 	// projection can only populate conversation-owned state. Once the stable
 	// actor binding exists, project the newest launch snapshot again to seed the

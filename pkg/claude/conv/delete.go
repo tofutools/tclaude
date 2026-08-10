@@ -3,6 +3,7 @@ package conv
 import (
 	"bufio"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -404,7 +406,7 @@ func DeleteAgentAllGenerations(convID string) (db.AgentDeletionCounts, []string,
 	// Plain conversation, or a predecessor generation: delete just this one
 	// conv (rows + files), exactly as before.
 	if actor == nil || actor.CurrentConvID != convID {
-		c, err := DeleteConvByID(convID)
+		c, err := deleteConvByIDWithNativeCleanup(convID)
 		if err != nil {
 			return counts, nil, err
 		}
@@ -450,7 +452,7 @@ func DeleteAgentAllGenerations(convID string) (db.AgentDeletionCounts, []string,
 		if g == convID || g == liveHead || g == "" {
 			continue // head deleted last; never sweep the live head; skip blanks
 		}
-		c, err := DeleteConvByID(g)
+		c, err := deleteConvByIDWithNativeCleanup(g)
 		if err != nil {
 			return counts, swept, fmt.Errorf("delete generation %s: %w", g, err)
 		}
@@ -460,7 +462,7 @@ func DeleteAgentAllGenerations(convID string) (db.AgentDeletionCounts, []string,
 
 	// The head generation last — this is the actor teardown (memberships,
 	// permissions, cron, the agents row).
-	c, err := DeleteConvByID(convID)
+	c, err := deleteConvByIDWithNativeCleanup(convID)
 	if err != nil {
 		return counts, swept, fmt.Errorf("delete head generation %s: %w", convID, err)
 	}
@@ -468,4 +470,19 @@ func DeleteAgentAllGenerations(convID string) (db.AgentDeletionCounts, []string,
 	swept = append(swept, convID)
 
 	return counts, swept, nil
+}
+
+func deleteConvByIDWithNativeCleanup(convID string) (db.AgentDeletionCounts, error) {
+	counts, err := DeleteConvByID(convID)
+	if err != nil {
+		return counts, err
+	}
+	// DeleteAgentByConvID committed cleanup_pending atomically with the
+	// irreversible conversation delete. Publish it now; startup retries any
+	// host-filesystem failure without misreporting the delete as rolled back.
+	if err := session.ReconcileCodexNativePermissionRegistry(); err != nil {
+		slog.Warn("native Codex profile cleanup pending after conversation delete",
+			"conv", convID, "error", err)
+	}
+	return counts, nil
 }

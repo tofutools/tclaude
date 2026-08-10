@@ -414,7 +414,7 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 			// The inverse of retire: clear the retired flag, returning a
 			// demoted agent to the active roster. Groups and grants stay
 			// gone — retire stripped them.
-			did, rerr := db.ReinstateAgent(tg.convID)
+			did, rerr := reinstateAgentUnderLaunchLock(tg.convID)
 			switch {
 			case rerr != nil:
 				out.Result, out.Detail = "failed", "reinstate: "+rerr.Error()

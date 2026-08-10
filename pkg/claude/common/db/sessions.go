@@ -328,6 +328,9 @@ func SaveSession(s *SessionRow) error {
 	if err != nil {
 		return err
 	}
+	if err := bindCodexNativePermissionProfileOwnerTx(tx, s.ID, s.ConvID); err != nil {
+		return err
+	}
 	if err := projectSessionRelaunchProfilesTx(tx, s.ID, relaunchProjectionOptions{}); err != nil {
 		return fmt.Errorf("project durable relaunch profiles: %w", err)
 	}
@@ -1077,12 +1080,23 @@ func SetSessionConvID(id, convID string) error {
 	if err != nil {
 		return err
 	}
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
 	// Keep agent_id in step with conv_id, but never wipe a known agent with ''
 	// when the freshly-set conv has not enrolled yet (enrollment fills it).
-	_, err = d.Exec(`UPDATE sessions SET conv_id = ?,
+	_, err = tx.Exec(`UPDATE sessions SET conv_id = ?,
 		agent_id = CASE WHEN `+agentForConvExpr+` <> '' THEN `+agentForConvExpr+` ELSE agent_id END
 		WHERE id = ?`, convID, convID, convID, id)
-	return err
+	if err != nil {
+		return err
+	}
+	if err := bindCodexNativePermissionProfileOwnerTx(tx, id, convID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // GetSessionPendingConv returns the last announced next-conv for a

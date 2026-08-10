@@ -351,6 +351,43 @@ func TestReincarnateRefreshesTargetSandboxProfile(t *testing.T) {
 	assert.Equal(t, launched.Effective, persisted.Effective)
 }
 
+func TestCloneRefreshesTargetSandboxProfileForNewProcess(t *testing.T) {
+	previousCooldown := agentd.CloneCooldown
+	agentd.CloneCooldown = 0
+	t.Cleanup(func() { agentd.CloneCooldown = previousCooldown })
+	f := newFlow(t)
+	group := f.HaveGroup("clone-refresh-crew")
+	profileID, err := db.CreateSandboxProfile(&db.SandboxProfile{
+		Name:        "clone-refreshable",
+		Environment: []db.SandboxEnvironmentEntry{{Name: "POLICY_VERSION", Value: "v1"}},
+	})
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupSandboxProfile(group.Name, "clone-refreshable")
+	require.NoError(t, err)
+	target := f.AsHuman().SpawnWith(group.Name, map[string]any{
+		"name": "worker", "harness": "codex", "sandbox": "tclaude-agent", "cwd": t.TempDir(),
+	})
+	require.Equalf(t, http.StatusOK, target.Code, "spawn target body=%s", target.Raw)
+	require.NoError(t, db.GrantAgentPermission(target.ConvID, agentd.PermSelfClone, "test"))
+	profile, err := db.GetSandboxProfileByID(profileID)
+	require.NoError(t, err)
+	profile.Environment[0].Value = "v2"
+	require.NoError(t, db.UpdateSandboxProfile(profile))
+
+	rec := agentReq(t, f, target.ConvID, http.MethodPost, "/v1/whoami/clone",
+		map[string]any{"no_copy_conv": true})
+	require.Equalf(t, http.StatusOK, rec.Code, "clone body=%s", rec.Body.String())
+	var response struct {
+		NewConv string `json:"new_conv"`
+	}
+	testharness.DecodeJSON(t, rec, &response)
+	launched, ok := f.World.SpawnSandboxPolicy(response.NewConv)
+	require.True(t, ok)
+	require.NotNil(t, launched)
+	assert.Contains(t, launched.Effective.Environment,
+		db.SandboxEnvironmentEntry{Name: "POLICY_VERSION", Value: "v2"})
+}
+
 func TestReincarnateTimeoutRestoresPreviousSandboxProfile(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Cleanup(agentd.SetReincarnateSpawnTimeoutForTest(20 * time.Millisecond))

@@ -341,6 +341,7 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 			// launch's generation; a conversation-wide lookup would select and
 			// SIGTERM the healthy successor on every reaper tick.
 			stopCodexAppServerRuntime(st.ConvID, st.ID)
+			cleanupRetiredCodexNativeProfiles(st.ConvID)
 			// SessionEnd may win the status race before pane-died records its richer
 			// structural evidence. Enrich the launch-scoped audit event before
 			// removing the retained pane, preserving evidence for bounded retries
@@ -476,6 +477,7 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 		}
 		releaseCopilotAPIPortForExit(st.Harness, st.ConvID, convsWithLiveLaunch, r.grace)
 		stopCodexAppServerRuntime(st.ConvID, st.ID)
+		cleanupRetiredCodexNativeProfiles(st.ConvID)
 		cause := db.AgentExitCauseDisappeared
 		var exitCode *int
 		signal := ""
@@ -527,6 +529,14 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 		revokeRouteHelperCredentials(st.ConvID, launchIdentity.Generation)
 		delete(r.deadPaneRecordFailure, st.ID)
 		reaped++
+		// The durable row now says exited, so the native registry classifier can
+		// distinguish a genuinely resumable definition from a failed/orphaned
+		// ordinary launch. Doing this only on the transition avoids reconciling
+		// every retained exited row on every reaper tick.
+		if err := session.ReconcileCodexNativePermissionRegistry(); err != nil {
+			slog.Warn("reaper: native Codex registry reconciliation pending",
+				"session", st.ID, "error", err)
+		}
 		if paneEvidence != nil {
 			if err := session.CleanupDeadTmuxPane(*paneEvidence); err != nil {
 				slog.Warn("reaper: retained dead pane cleanup failed",

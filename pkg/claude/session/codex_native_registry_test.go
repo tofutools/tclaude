@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -317,6 +318,185 @@ func TestCodexNativeRegistryFailedUnregisterPersistsCleanupForRestartRetry(t *te
 		require.NoError(t, readErr)
 		assert.NotContains(t, string(data), name)
 	}
+}
+
+func TestCodexNativeRegistryStartupSweepRemovesOnlyDefinitiveOrphans(t *testing.T) {
+	opts := nativeRegistryFixture(t)
+	seed := func(generation, state string, created int) string {
+		name := fmt.Sprintf("tclaude-agent-%016x", created)
+		require.NoError(t, db.UpsertCodexAppServerRuntime(db.CodexAppServerRuntime{
+			Generation: generation, LaunchID: "launch-" + generation, AgentID: "agent",
+			ConvID: "conv", SocketPath: filepath.Join(opts.ManagedDir, generation, "app.sock"),
+			State: state, CreatedAt: time.Unix(int64(created), 0),
+		}))
+		require.NoError(t, registerCodexNativePermissionProfile(opts, generation, name,
+			nativeProfile(name, "/workspace/"+generation)))
+		return name
+	}
+
+	liveName := seed("generation-live", db.CodexAppServerReady, 1)
+	terminalName := seed("generation-terminal", db.CodexAppServerDead, 2)
+	orphanName := "tclaude-agent-0000000000000003"
+	require.NoError(t, db.UpsertCodexNativePermissionProfile(db.CodexNativePermissionProfile{
+		Generation: "generation-orphan", ProfileName: orphanName,
+		ProfileTOML: nativeProfile(orphanName, "/workspace/orphan"),
+	}))
+	resumableName := "tclaude-agent-0000000000000004"
+	managedMode := harness.SandboxManagedProfile
+	require.NoError(t, db.SetConversationResumeProfile("resumable-conv", db.ConversationResumeProfile{
+		Version: db.RelaunchProfileVersion, Harness: harness.CodexName, Cwd: "/workspace/resumable",
+		FallbackRelaunch: &db.AgentRelaunchProfile{
+			Version: db.RelaunchProfileVersion, HarnessBuiltinMode: &managedMode,
+		},
+	}))
+	require.NoError(t, db.UpsertCodexNativePermissionProfile(db.CodexNativePermissionProfile{
+		Generation: "generation-resumable", ProfileName: resumableName,
+		ProfileTOML: nativeProfile(resumableName, "/workspace/resumable"),
+		OwnerConvID: "resumable-conv", LaunchID: "stopped-launch", LaunchReady: true,
+	}))
+	startingName := "tclaude-agent-0000000000000005"
+	require.NoError(t, db.UpsertCodexNativePermissionProfile(db.CodexNativePermissionProfile{
+		Generation: "generation-starting", ProfileName: startingName,
+		ProfileTOML: nativeProfile(startingName, "/workspace/starting"),
+		LaunchID:    "starting-launch", LaunchReady: false,
+	}))
+	starting, err := db.GetCodexNativePermissionProfile("generation-starting")
+	require.NoError(t, err)
+	require.NotNil(t, starting)
+	require.WithinDuration(t, time.Now(), starting.CreatedAt, time.Second)
+
+	require.NoError(t, markOrphanedCodexNativePermissionProfiles())
+	require.NoError(t, reconcileCodexNativePermissionRegistry(opts))
+	profiles, err := db.ListCodexNativePermissionProfiles()
+	require.NoError(t, err)
+	require.Len(t, profiles, 3)
+	assert.ElementsMatch(t, []string{"generation-live", "generation-resumable", "generation-starting"},
+		[]string{profiles[0].Generation, profiles[1].Generation, profiles[2].Generation})
+	config, err := os.ReadFile(filepath.Join(opts.ManagedDir, "config.toml"))
+	require.NoError(t, err)
+	assert.Contains(t, string(config), liveName)
+	assert.Contains(t, string(config), resumableName)
+	assert.Contains(t, string(config), startingName)
+	assert.NotContains(t, string(config), terminalName)
+	assert.NotContains(t, string(config), orphanName)
+}
+
+func TestCodexNativeRegistryKeepsPredecessorUntilSuccessorReady(t *testing.T) {
+	opts := nativeRegistryFixture(t)
+	oldName := "tclaude-agent-0000000000000011"
+	newName := "tclaude-agent-0000000000000012"
+	for _, runtime := range []db.CodexAppServerRuntime{
+		{Generation: "old", LaunchID: "launch-old", AgentID: "agent", ConvID: "conv",
+			SocketPath: filepath.Join(opts.ManagedDir, "old", "app.sock"), State: db.CodexAppServerReady,
+			CreatedAt: time.Unix(11, 0)},
+		{Generation: "new", LaunchID: "launch-new", AgentID: "agent", ConvID: "conv",
+			SocketPath: filepath.Join(opts.ManagedDir, "new", "app.sock"), State: db.CodexAppServerWarming,
+			CreatedAt: time.Unix(12, 0)},
+	} {
+		require.NoError(t, db.UpsertCodexAppServerRuntime(runtime))
+	}
+	require.NoError(t, registerCodexNativePermissionProfile(opts, "old", oldName,
+		nativeProfile(oldName, "/workspace/old")))
+	require.NoError(t, registerCodexNativePermissionProfile(opts, "new", newName,
+		nativeProfile(newName, "/workspace/new")))
+	require.NoError(t, markOrphanedCodexNativePermissionProfiles())
+	require.NoError(t, reconcileCodexNativePermissionRegistry(opts))
+	profiles, err := db.ListCodexNativePermissionProfiles()
+	require.NoError(t, err)
+	require.Len(t, profiles, 2, "warming successor cannot evict predecessor enforcement")
+
+	newRuntime, err := db.GetCodexAppServerRuntime("new")
+	require.NoError(t, err)
+	newRuntime.State = db.CodexAppServerReady
+	require.NoError(t, db.UpsertCodexAppServerRuntime(*newRuntime))
+	require.NoError(t, reconcileCodexNativePermissionRegistry(opts))
+	profiles, err = db.ListCodexNativePermissionProfiles()
+	require.NoError(t, err)
+	require.Len(t, profiles, 1)
+	assert.Equal(t, "new", profiles[0].Generation)
+	config, err := os.ReadFile(filepath.Join(opts.ManagedDir, "config.toml"))
+	require.NoError(t, err)
+	assert.NotContains(t, string(config), oldName)
+	assert.Contains(t, string(config), newName)
+}
+
+func TestOrdinaryGeneratedCodexProfileParticipatesOnlyWhenRegistryInstalled(t *testing.T) {
+	opts := nativeRegistryFixture(t)
+	previousAdopter := codexNativeRegistryBeforeOrdinaryPublish
+	adoptions := 0
+	codexNativeRegistryBeforeOrdinaryPublish = func() error {
+		adoptions++
+		return nil
+	}
+	t.Cleanup(func() { codexNativeRegistryBeforeOrdinaryPublish = previousAdopter })
+	name := "tclaude-agent-0000000000000021"
+	path := filepath.Join(t.TempDir(), name+".config.toml")
+	require.NoError(t, os.WriteFile(path, []byte(nativeProfile(name, "/workspace/ordinary")), 0o600))
+	profile := db.CodexNativePermissionProfile{
+		Generation: "launch:ordinary", ProfileName: name, OwnerAgentID: "agent",
+		OwnerConvID: "conv", LaunchID: "launch", LaunchReady: false,
+	}
+	registered, err := registerCodexNativePermissionProfileIfInstalled(opts, profile, path)
+	require.NoError(t, err)
+	require.True(t, registered)
+	assert.Equal(t, 1, adoptions, "every installed-registry ordinary publisher protects existing live profiles first")
+	stored, err := db.GetCodexNativePermissionProfile(profile.Generation)
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.Equal(t, "conv", stored.OwnerConvID)
+	assert.False(t, stored.LaunchReady)
+
+	require.NoError(t, os.Remove(opts.SystemDir))
+	skippedName := "tclaude-agent-0000000000000022"
+	skippedPath := filepath.Join(t.TempDir(), skippedName+".config.toml")
+	require.NoError(t, os.WriteFile(skippedPath,
+		[]byte(nativeProfile(skippedName, "/workspace/skipped")), 0o600))
+	registered, err = registerCodexNativePermissionProfileIfInstalled(opts,
+		db.CodexNativePermissionProfile{Generation: "launch:skipped", ProfileName: skippedName}, skippedPath)
+	require.NoError(t, err)
+	assert.False(t, registered, "missing optional registry must not block an ordinary launch")
+	assert.Equal(t, 1, adoptions, "an absent registry must skip without broadening launch preflight")
+	skipped, err := db.GetCodexNativePermissionProfile("launch:skipped")
+	require.NoError(t, err)
+	assert.Nil(t, skipped)
+}
+
+func TestFirstActivationBatchPublishesEveryLiveProfileTogether(t *testing.T) {
+	opts := nativeRegistryFixture(t)
+	registrations := make([]CodexNativePermissionProfileRegistration, 0, 2)
+	var names []string
+	for i := 1; i <= 2; i++ {
+		name := fmt.Sprintf("tclaude-agent-%016x", 40+i)
+		path := filepath.Join(t.TempDir(), name+".config.toml")
+		require.NoError(t, os.WriteFile(path,
+			[]byte(nativeProfile(name, fmt.Sprintf("/workspace/live-%d", i))), 0o600))
+		names = append(names, name)
+		registrations = append(registrations, CodexNativePermissionProfileRegistration{
+			Profile: db.CodexNativePermissionProfile{
+				Generation: fmt.Sprintf("adopted:%d", i), ProfileName: name,
+				LaunchID: fmt.Sprintf("launch-%d", i), LaunchReady: true,
+			},
+			ProfilePath: path,
+		})
+	}
+	previousWriter := writeNativeRegistryFile
+	requirementsWrites := 0
+	writeNativeRegistryFile = func(path string, data []byte) error {
+		if filepath.Base(path) == "requirements.toml" {
+			requirementsWrites++
+			for _, name := range names {
+				assert.Contains(t, string(data), name,
+					"first global publication must include the complete proved-live set")
+			}
+		}
+		return atomicWriteNativeRegistryFile(path, data)
+	}
+	t.Cleanup(func() { writeNativeRegistryFile = previousWriter })
+
+	registered, err := registerCodexNativePermissionProfilesIfInstalled(opts, registrations)
+	require.NoError(t, err)
+	assert.True(t, registered)
+	assert.Equal(t, 1, requirementsWrites)
 }
 
 func TestCodexNativeRegistryFailedRestoreRemainsDurableForRestartRetry(t *testing.T) {

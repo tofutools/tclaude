@@ -106,6 +106,9 @@ func prepareCodexAppServerRuntime(args *clcommon.SpawnArgs) error {
 		if err := codexNativeRegistryReadiness(); err != nil {
 			return err
 		}
+		if err := adoptLiveCodexProfilesIntoInstalledRegistry(); err != nil {
+			return fmt.Errorf("protect live generated Codex profiles before registry activation: %w", err)
+		}
 	}
 	owner := strings.TrimSpace(args.AgentID)
 	if owner == "" {
