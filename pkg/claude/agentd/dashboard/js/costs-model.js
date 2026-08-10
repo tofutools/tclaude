@@ -46,28 +46,32 @@ export function spanRange(span, monthOffset, now = new Date()) {
 // "26 222,38 $" and imply a conversion that never happened.
 const usdGroups = (min, max) => new Intl.NumberFormat('en-US',
   { minimumFractionDigits: min, maximumFractionDigits: max });
+const WHOLE = usdGroups(0, 0);
 const CENTS = usdGroups(2, 2);
-const EXACT = usdGroups(4, 4);
-const PLAIN = usdGroups(0, 2);
+const SUBCENT = usdGroups(4, 4);
 
 export function fmtUSD(value) {
   if (!(value > 0)) return '$0.00';
   return value >= 0.005 ? '$' + CENTS.format(value) : '<1¢';
 }
 
-// The unrounded figure behind fmtUSD, for tooltips: no sub-cent collapse, and
-// four decimals so a fraction-of-a-cent run still shows something.
+// The figure behind fmtUSD, for tooltips: the same two decimals, minus the
+// "<1¢" collapse. Money is written in cents, so extra digits are only spelled
+// out below one cent — the one place two decimals would read as a flat $0.00.
 export function fmtExactUSD(value) {
-  return '$' + EXACT.format(value > 0 ? value : 0);
+  if (!(value > 0)) return '$0.00';
+  return '$' + (value >= 0.005 ? CENTS : SUBCENT).format(value);
 }
 
 // Copilot's native credit figure is carried separately from dollars so a
 // tooltip can explain that the dollar amount is gross subscription value.
+// Credits are spent whole far more often than not, so a round figure stays
+// round and only a genuine fraction takes two decimals.
 export function fmtCredits(value) {
   if (!(value > 0)) return '';
   const roundedValue = Number(value.toFixed(2));
   if (!(roundedValue > 0)) return '<0.01 credits';
-  return `${PLAIN.format(roundedValue)} credits`;
+  return `${(Number.isInteger(roundedValue) ? WHOLE : CENTS).format(roundedValue)} credits`;
 }
 
 // Axis ticks stay compact — a grouped "$26,222" would crowd the gutter, so

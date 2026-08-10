@@ -130,9 +130,9 @@ test('Copilot member harness line shows native credits with subscription value',
   const line = mounted.container.querySelector('.agent-harness');
   assert.ok(line.querySelector('.harness-mark[data-harness-mark="copilot"]'));
   assert.match(line.textContent, /·gpt-5≈\$0\.43/);
-  assert.match(line.title, /WHAT-IF cost this session: 43 credits — \$0\.4300 subscription value/);
+  assert.match(line.title, /WHAT-IF cost this session: 43 credits — \$0\.43 subscription value/);
   assert.match(line.querySelector('.harness-cost-whatif').title,
-    /43 credits — \$0\.4300 subscription value/);
+    /43 credits — \$0\.43 subscription value/);
   await mounted.unmount();
 });
 

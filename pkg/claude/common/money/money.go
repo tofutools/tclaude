@@ -25,15 +25,6 @@ func USD(usd float64) string {
 	return "$" + group(fmt.Sprintf("%.2f", usd))
 }
 
-// USDExact spells the figure out to four decimals without the sub-cent
-// collapse, for tooltips and other places that want the unrounded amount.
-func USDExact(usd float64) string {
-	if !(usd > 0) {
-		usd = 0
-	}
-	return "$" + group(fmt.Sprintf("%.4f", usd))
-}
-
 // group inserts thousands separators into the integer part of a plain
 // fixed-point decimal string.
 func group(s string) string {

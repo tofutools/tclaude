@@ -20,9 +20,3 @@ func TestUSDSubCent(t *testing.T) {
 	assert.Equal(t, "$0.00", USD(0))
 	assert.Equal(t, "$0.01", USD(0.005))
 }
-
-func TestUSDExact(t *testing.T) {
-	assert.Equal(t, "$0.0042", USDExact(0.0042))
-	assert.Equal(t, "$26,222.3750", USDExact(26222.375))
-	assert.Equal(t, "$0.0000", USDExact(0))
-}

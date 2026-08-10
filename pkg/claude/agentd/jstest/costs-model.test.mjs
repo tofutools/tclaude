@@ -85,11 +85,15 @@ test('USD formatting groups thousands the currency\'s way', async (t) => {
   assert.equal(model.fmtUSD(0.004), '<1¢');
   assert.equal(model.fmtUSD(0), '$0.00');
 
+  // The tooltip figure is cents too — extra digits only below one cent,
+  // where two decimals would read as a flat $0.00.
+  assert.equal(model.fmtExactUSD(26222.375), '$26,222.38');
+  assert.equal(model.fmtExactUSD(1.5), '$1.50');
   assert.equal(model.fmtExactUSD(0.0042), '$0.0042');
-  assert.equal(model.fmtExactUSD(26222.375), '$26,222.3750');
-  assert.equal(model.fmtExactUSD(0), '$0.0000');
+  assert.equal(model.fmtExactUSD(0), '$0.00');
 
-  assert.equal(model.fmtCredits(1234.5), '1,234.5 credits');
+  assert.equal(model.fmtCredits(1234), '1,234 credits');
+  assert.equal(model.fmtCredits(1234.5), '1,234.50 credits');
 
   // Axis ticks stay compact instead of grouped — the gutter is narrow.
   assert.equal(model.fmtAxisUSD(26222.38), '$26.2k');
