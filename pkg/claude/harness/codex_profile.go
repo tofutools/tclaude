@@ -45,8 +45,14 @@ const codexAgentLaunchProfileMaxAge = 24 * time.Hour
 // metacharacter at the boundary where untrusted input could enter (the
 // human-facing --permission-profile flag).
 var codexProfileNameRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
-var codexAgentLaunchIDRe = regexp.MustCompile(`^[0-9a-f]{16}$`)
-var codexAgentLaunchProfileFileRe = regexp.MustCompile(`^tclaude-agent-[0-9a-f]{16}\.config\.toml$`)
+
+// Legacy launch profiles use GenerateSessionID's 16 hex characters. New
+// lifecycle-owned profiles reuse the 32-hex exit generation so the profile,
+// registry row, and launch authority share one identity. Accept only those two
+// exact shapes: supporting the new form must not broaden the managed filename
+// namespace to arbitrary-length hex strings.
+var codexAgentLaunchIDRe = regexp.MustCompile(`^(?:[0-9a-f]{16}|[0-9a-f]{32})$`)
+var codexAgentLaunchProfileFileRe = regexp.MustCompile(`^tclaude-agent-(?:[0-9a-f]{16}|[0-9a-f]{32})\.config\.toml$`)
 
 // ValidateCodexProfileName trims and validates a Codex permission-profile
 // name. "" passes through unchanged (the caller omits the flag); any other
@@ -513,7 +519,7 @@ func EnsureCodexAgentLaunchProfileForRules(rules CodexSandboxRules, networkAcces
 		return "", "", fmt.Errorf("managed Codex launch profile requires a launch ID")
 	}
 	if !codexAgentLaunchIDRe.MatchString(launchID) {
-		return "", "", fmt.Errorf("managed Codex launch profile ID must be 16 lowercase hex characters")
+		return "", "", fmt.Errorf("managed Codex launch profile ID must be 16 or 32 lowercase hex characters")
 	}
 	if err := CleanupStaleCodexAgentLaunchProfiles(codexAgentLaunchProfileMaxAge); err != nil {
 		return "", "", err

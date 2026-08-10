@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
@@ -410,20 +412,40 @@ func TestEnsureCodexAgentLaunchProfiles_DoNotRaceAuthority(t *testing.T) {
 	}
 }
 
+func TestEnsureCodexAgentLaunchProfileAcceptsKnownIDWidths(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir())
+	for _, launchID := range []string{
+		"0123456789abcdef",
+		"0123456789abcdef0123456789abcdef",
+	} {
+		name, path, err := EnsureCodexAgentLaunchProfile(nil, launchID)
+		require.NoError(t, err)
+		assert.Equal(t, CodexAgentProfile+"-"+launchID, name)
+		assert.Equal(t, name+".config.toml", filepath.Base(path))
+	}
+
+	_, _, err := EnsureCodexAgentLaunchProfile(nil, "0123456789abcdef01234567")
+	require.ErrorContains(t, err, "16 or 32 lowercase hex characters")
+}
+
 func TestCleanupStaleCodexAgentLaunchProfiles(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CODEX_HOME", dir)
 	base := filepath.Join(dir, CodexAgentProfile+".config.toml")
 	oldLaunch := filepath.Join(dir, CodexAgentProfile+"-1111111111111111.config.toml")
+	oldExitGenerationLaunch := filepath.Join(dir, CodexAgentProfile+"-11111111111111111111111111111111.config.toml")
 	freshLaunch := filepath.Join(dir, CodexAgentProfile+"-2222222222222222.config.toml")
 	userProfile := filepath.Join(dir, CodexAgentProfile+"-custom.config.toml")
-	for _, path := range []string{base, oldLaunch, freshLaunch, userProfile} {
+	for _, path := range []string{base, oldLaunch, oldExitGenerationLaunch, freshLaunch, userProfile} {
 		if err := os.WriteFile(path, []byte("test"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
 	old := time.Now().Add(-48 * time.Hour)
 	if err := os.Chtimes(oldLaunch, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(oldExitGenerationLaunch, old, old); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chtimes(userProfile, old, old); err != nil {
@@ -434,6 +456,9 @@ func TestCleanupStaleCodexAgentLaunchProfiles(t *testing.T) {
 	}
 	if _, err := os.Stat(oldLaunch); !os.IsNotExist(err) {
 		t.Fatalf("old launch profile still exists: %v", err)
+	}
+	if _, err := os.Stat(oldExitGenerationLaunch); !os.IsNotExist(err) {
+		t.Fatalf("old exit-generation launch profile still exists: %v", err)
 	}
 	for _, path := range []string{base, freshLaunch, userProfile} {
 		if _, err := os.Stat(path); err != nil {
