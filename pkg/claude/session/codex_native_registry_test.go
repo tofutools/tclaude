@@ -109,6 +109,18 @@ func TestCodexNativeRegistryApplicableOnlyToBuiltinSandboxAppServer(t *testing.T
 }
 
 func TestValidateCodexNativeRegistrySetupRejectsUnsafeTopologyAndFiles(t *testing.T) {
+	t.Run("canonical ancestor alias", func(t *testing.T) {
+		opts := nativeRegistryFixture(t)
+		home := filepath.Dir(filepath.Dir(filepath.Dir(opts.ManagedDir)))
+		aliasHome := filepath.Join(filepath.Dir(home), "home-alias")
+		require.NoError(t, os.Symlink(home, aliasHome))
+		aliasManaged := filepath.Join(aliasHome, ".tclaude", "data", "codex-sb-cfg")
+		require.NoError(t, os.Remove(opts.SystemDir))
+		require.NoError(t, os.Symlink(aliasManaged, opts.SystemDir))
+		opts.ManagedDir = aliasManaged
+		require.NoError(t, validateCodexNativeRegistrySetup(opts),
+			"macOS-style lexical aliases such as /var -> /private/var must compare canonically")
+	})
 	t.Run("missing symlink", func(t *testing.T) {
 		opts := nativeRegistryFixture(t)
 		require.NoError(t, os.Remove(opts.SystemDir))

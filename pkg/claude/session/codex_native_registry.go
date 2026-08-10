@@ -104,7 +104,8 @@ func validateCodexNativeRegistrySetup(opts CodexNativeRegistryOptions) error {
 			fmt.Sprintf("%s must point exactly to %s", opts.SystemDir, opts.ManagedDir)}
 	}
 	resolved, err := filepath.EvalSymlinks(opts.SystemDir)
-	if err != nil || filepath.Clean(resolved) != filepath.Clean(opts.ManagedDir) {
+	canonicalTarget, targetErr := filepath.EvalSymlinks(opts.ManagedDir)
+	if err != nil || targetErr != nil || filepath.Clean(resolved) != filepath.Clean(canonicalTarget) {
 		return &CodexNativeRegistryError{CodexNativeRegistryWrongTarget,
 			fmt.Sprintf("%s does not resolve directly to %s", opts.SystemDir, opts.ManagedDir)}
 	}
