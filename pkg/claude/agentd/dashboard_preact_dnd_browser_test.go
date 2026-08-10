@@ -168,6 +168,13 @@ return new Promise(function(resolve, reject) {
     if (!input) { reject(new Error('inline rename editor did not open')); return; }
     input.value = 'rename stays local';
     input.setSelectionRange(2, 9);
+    // NOTE (TCL-1162): this count can never grow — the resource timing buffer
+    // is already saturated when a state runs (see waitForSnapshotPublishJS), so
+    // the suspension check below passes vacuously. Deliberately left as-is:
+    // making it real would assert a contract production no longer has.
+    // dashboard_refresh_guard_test.go forbids a UI draft pausing the poll, and
+    // this whole state (which fails earlier today) needs re-framing, not a
+    // sharper assertion.
     var before = performance.getEntriesByType('resource').filter(function(e){ return e.name.indexOf('/api/snapshot') >= 0; }).length;
     setTimeout(function() {
       var after = performance.getEntriesByType('resource').filter(function(e){ return e.name.indexOf('/api/snapshot') >= 0; }).length;
@@ -190,16 +197,31 @@ document.querySelectorAll('details[data-dnd-target-group]').forEach(function(d){
 document.body.classList.add('dock-open');
 `
 
-// waitForSnapshotPublishJS waits for the next scheduled /api/snapshot request,
-// then two animation frames for the Signals-driven Preact render to flush.
+// waitForSnapshotPublishJS waits for the next scheduled snapshot publish, then
+// two animation frames for the Signals-driven Preact render to flush.
+//
+// It listens for refresh.js's `tclaude:snapshot` rather than polling
+// performance.getEntriesByType('resource') for /api/snapshot: the dashboard
+// loads well over 200 ES modules, so the document's resource timing buffer
+// (250 entries by default, and NOT resizable from a state's JS — it runs long
+// after load) is already full by the time a state starts. Once full, no further
+// resource entry is recorded and the poll could never observe a snapshot fetch,
+// whatever the page actually did (TCL-1155). The event is also the more precise
+// signal: these states assert what survives a PUBLISH, not a request.
 const waitForSnapshotPublishJS = `
 return (async function(){
-  var before = performance.getEntriesByType('resource').filter(function(e){ return e.name.indexOf('/api/snapshot') >= 0; }).length;
-  var deadline = Date.now() + 5000;
-  while (performance.getEntriesByType('resource').filter(function(e){ return e.name.indexOf('/api/snapshot') >= 0; }).length <= before && Date.now() < deadline) {
-    await new Promise(function(resolve){ setTimeout(resolve, 80); });
-  }
-  if (performance.getEntriesByType('resource').filter(function(e){ return e.name.indexOf('/api/snapshot') >= 0; }).length <= before) throw new Error('scheduled snapshot publish did not arrive');
+  await new Promise(function(resolve, reject){
+    var timer = setTimeout(function(){
+      document.removeEventListener('tclaude:snapshot', published);
+      reject(new Error('scheduled snapshot publish did not arrive'));
+    }, 5000);
+    function published(){
+      clearTimeout(timer);
+      document.removeEventListener('tclaude:snapshot', published);
+      resolve();
+    }
+    document.addEventListener('tclaude:snapshot', published);
+  });
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
 })();
 `
@@ -439,6 +461,24 @@ for (var y = rect.top + 4; y < rect.bottom - 4; y += 4) {
   }
 }
 throw new Error('group summary has no bare reorder handle point');
+`}
+	}
+	if strings.Contains(key, "member-drag") {
+		// dnd.js turns the row's draggable OFF for any gesture begun over an
+		// in-row control, so a press on the row's centre (a cwd link, as the
+		// columns are laid out today) is a click, not a drag — by design. Scan
+		// the row for a point that belongs to no such control, mirroring that
+		// suppression list, so the smoke presses a real drag handle whatever the
+		// visible columns happen to be.
+		mouseDown = dashsnap.BrowserAction{Kind: "mouse-down-at", JS: `
+var row = document.querySelector(` + "`" + selector + "`" + `);
+var rect = row.getBoundingClientRect();
+var y = rect.top + rect.height / 2;
+for (var x = rect.left + 4; x < rect.right - 4; x += 4) {
+  var hit = document.elementFromPoint(x, y);
+  if (hit && row.contains(hit) && !hit.closest('button, a, input, select, textarea, label, [data-act], [contenteditable]')) return {x:x, y:y};
+}
+throw new Error('member row has no bare drag handle point');
 `}
 	}
 	actions := []dashsnap.BrowserAction{
