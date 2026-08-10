@@ -42,10 +42,12 @@ func serveFakeBranchPRDaemon(t *testing.T, handler http.HandlerFunc) {
 }
 
 // TestDaemonBranchPRReadsTheResolvedPR — the happy path, and the one place the
-// request shape is pinned. The branch is sent; the DIRECTORY is not, and that
-// is the property that lets this endpoint be ungated: the daemon resolves the
-// repository from the caller's own identity, so no pane can point it at a
-// repository that is not its own.
+// request shape is pinned: the branch is sent and the DIRECTORY is not. What
+// the daemon does with that — resolving the repository from its own session
+// record rather than from any agent-writable table — is the property that lets
+// the route be ungated, and it is pinned daemon-side in
+// TestStatuslineBranchPRIgnoresTheAgentWritableWorkdir, which is the only place
+// it CAN be pinned.
 func TestDaemonBranchPRReadsTheResolvedPR(t *testing.T) {
 	var gotPath, gotQuery string
 	serveFakeBranchPRDaemon(t, func(w http.ResponseWriter, r *http.Request) {

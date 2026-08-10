@@ -2,7 +2,10 @@ package agentd
 
 import (
 	"net/http"
+	"path/filepath"
 	"strings"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 // statusline_branchpr.go serves GET /v1/statusline/branch-pr — the pull request
@@ -45,33 +48,37 @@ import (
 //
 // Two properties are load-bearing:
 //
-//  1. THE DIRECTORY IS NOT A PARAMETER. It is resolved from the caller's own
-//     identity through the same locationView every other agent surface uses. A
-//     caller-supplied path would let any confirmed agent ask about any
-//     repository on the host — a filesystem reach this deliberately does not
-//     lend, and the one thing that would make an ungated endpoint a real
-//     widening rather than a re-read of what the pane already displays.
-//  2. NEITHER IS THE BRANCH. The caller sends one, but it is compared and then
-//     discarded — the lookup runs on the branch the DAEMON resolved. That is
-//     not fastidiousness: the branch reaches `gh pr view`'s argv (see
-//     ghPRForBranch), and `gh pr view` accepts `<number> | <url> | <branch>`,
-//     so a URL argument re-aims it at ANOTHER REPOSITORY and a bare number
-//     selects a pull request by id. On an ungated, unaudited route a
-//     caller-supplied value in that position would let any confirmed agent
-//     read any pull request the operator's token can reach, private ones
-//     included. Sanitising it would mean out-guessing another tool's argument
-//     parser; not passing it at all needs no such argument.
+//  1. THE DIRECTORY IS NOT A PARAMETER, AND NOT agent_workdir EITHER. It comes
+//     from the session's recorded launch directory — the same root
+//     resolveProxyRepo uses, and for the identical reason, quoted there: that
+//     value is written by the daemon at spawn time and the caller never
+//     authors it.
 //
-//     What the caller's branch is FOR is agreement. The status bar has just
-//     run `git` and knows its branch exactly, while the stored location can
-//     lag a flip by a refresh — so a mismatch means the two are talking about
-//     different branches, and the honest answer is nothing at all. The pane
-//     then falls back to `gh`, exactly as it did before this route existed.
+//     The obvious-looking source is agent.ResolveLocation's CurrentDir, and it
+//     is a trap. That resolves through `agent_workdir`, which the PostToolUse
+//     hook writes from `filepath.Dir(tool_input.file_path)` — a raw payload
+//     field, on the failure arm too, and the brokered hook route clamps
+//     nothing and carries no permission slug. An agent can therefore nominate
+//     ANY path by attempting an edit, and the daemon would then run `git` and
+//     `gh` with cmd.Dir set there, where repo-local config picks the
+//     repository. `--head` being selector-free would not matter: cwd chooses
+//     the repo. spawn_dir_trust.go says the same thing in one line —
+//     agent_workdir is "display state, not an authorization root".
+//
+//  2. The branch is the caller's, validated. Once (1) holds it is no longer a
+//     repository selector: `gh pr list --head <branch>` (see ghPRListArgs)
+//     filters by branch name inside the directory (1) chose, and gh documents
+//     that it does not even accept the `owner:branch` cross-repo form. What
+//     the gate below still buys is refusing a value that would read as a FLAG
+//     in that position, plus the ordinary ref-shape rules.
 //
 // No permission slug and no audit row, by operator ruling: with those
 // properties holding, this returns the agent's own pull-request link — which
 // its own status bar has always displayed, and which the operator can see in
 // the dashboard.
+//
+// TCL-1161 tracks the remaining, deliberately deferred cost: the route is an
+// unmetered trigger for `gh`, bounded to the agent's own repository.
 
 // statuslineBranchPRResponse is the wire shape.
 //
@@ -104,25 +111,47 @@ func handleStatuslineBranchPR(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, statuslineBranchPRResponse{})
 		return
 	}
-	loc := locationView(p.ConvID)
-	dir := loc.CurrentDir
-	if dir == "" {
-		dir = loc.StartupDir
-	}
-	// The caller's branch is only ever COMPARED. Everything below runs on the
-	// daemon's own resolved values, so nothing the caller sends reaches `gh` —
-	// see the header for why that is the whole security argument for an
-	// ungated route. A disagreement, or a location the daemon cannot resolve,
-	// answers with nothing and the pane falls back to `gh`.
-	branch := strings.TrimSpace(r.URL.Query().Get("branch"))
-	if dir == "" || loc.Branch == "" || branch != loc.Branch {
+	dir, ok := recordedLaunchDirForConv(p.ConvID)
+	if !ok {
 		writeJSON(w, http.StatusOK, statuslineBranchPRResponse{})
 		return
 	}
-	_, prNumber, prURL, prState, _ := lookupBranchLinkOne(dir, loc.Branch)
+	// Validated, then used as a branch FILTER inside the directory resolved
+	// above — never as anything that could select a repository. See the header.
+	branch := strings.TrimSpace(r.URL.Query().Get("branch"))
+	if fault := validateBranchName(branch); fault != nil {
+		writeJSON(w, http.StatusOK, statuslineBranchPRResponse{})
+		return
+	}
+	_, prNumber, prURL, prState, _ := lookupBranchLinkOne(dir, branch)
 	writeJSON(w, http.StatusOK, statuslineBranchPRResponse{
 		PRNumber: prNumber,
 		PRURL:    prURL,
 		PRState:  prState,
 	})
+}
+
+// recordedLaunchDirForConv resolves the one directory this route will act in:
+// the conversation's recorded launch dir, resume provenance first.
+//
+// Deliberately the same resolution resolveProxyRepo performs, minus the git
+// gates it needs because it is about to spend a credential on a REMOTE. The
+// shared part is the part that matters: the path comes from daemon-authored
+// session state, so no request and no agent-written table can steer it.
+func recordedLaunchDirForConv(convID string) (string, bool) {
+	sess, err := db.FindSessionByConvID(convID)
+	if err != nil || sess == nil {
+		return "", false
+	}
+	dir, err := recordedLaunchDir(sess)
+	if err != nil {
+		return "", false
+	}
+	// Absolute only, for the same reason the proxy insists on it: a relative
+	// path would be resolved against whatever working directory the daemon
+	// happens to have.
+	if dir == "" || !filepath.IsAbs(dir) {
+		return "", false
+	}
+	return dir, true
 }

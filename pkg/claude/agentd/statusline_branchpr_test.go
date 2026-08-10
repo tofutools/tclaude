@@ -29,6 +29,20 @@ func askBranchPR(t *testing.T, branch string, convID ...string) statuslineBranch
 	return out
 }
 
+// newBranchPRAgent registers a conversation whose LAUNCH DIR is dir — the
+// daemon-authored session state this route resolves from. It deliberately does
+// not touch agent_workdir or agent_workspace: those are agent-writable and the
+// route must not read them.
+func newBranchPRAgent(t *testing.T, convID, dir string) {
+	t.Helper()
+	_, _, err := db.EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "sess-" + convID, ConvID: convID, TmuxSession: "tmux-" + convID,
+		Cwd: dir, Status: "idle",
+	}))
+}
+
 // TestStatuslineBranchPRResolvesWithoutADashboard is the whole point of the
 // endpoint, and the property most likely to regress silently.
 //
@@ -50,11 +64,7 @@ func TestStatuslineBranchPRResolvesWithoutADashboard(t *testing.T) {
 	setupTestDB(t)
 	const convID = "statusline-branchpr-0001"
 	const branch = "feature"
-	_, _, err := db.EnsureAgentForConv(convID, "test")
-	require.NoError(t, err)
-	require.NoError(t, db.UpsertAgentWorkspace(db.AgentWorkspace{
-		ConvID: convID, Cwd: "/repo", Branch: branch,
-	}))
+	newBranchPRAgent(t, convID, "/repo")
 	var resolved int
 	defer SetGitInfoResolverForTest(
 		func(string, string) (string, string, int, string, string, bool) {
@@ -106,8 +116,7 @@ func TestStatuslineBranchPRResolvesWithoutADashboard(t *testing.T) {
 func TestStatuslineBranchPRRefusesABranchThatCouldNameARepository(t *testing.T) {
 	setupTestDB(t)
 	const convID = "statusline-branchpr-0005"
-	_, _, err := db.EnsureAgentForConv(convID, "test")
-	require.NoError(t, err)
+	newBranchPRAgent(t, convID, "/repo")
 
 	var seen []string
 	defer SetGitInfoResolverForTest(
@@ -199,21 +208,40 @@ func TestGHPRForBranchRefusesToLetABranchNameARepository(t *testing.T) {
 	}
 }
 
-// TestStatuslineBranchPRTakesNoDirectoryFromTheCaller pins the property that
-// lets this endpoint carry no permission slug at all.
+// TestStatuslineBranchPRIgnoresTheAgentWritableWorkdir is the property that
+// lets this endpoint carry no permission slug, and the one an earlier version
+// got wrong.
 //
-// The repository is resolved from the CALLER'S OWN identity, never from a
-// parameter. A directory the caller could name would let any confirmed agent
-// ask about any repository on the host — a filesystem reach the proxy
-// deliberately refuses to lend, and the one thing that would turn an ungated
-// read of the pane's own link into a real widening.
-func TestStatuslineBranchPRTakesNoDirectoryFromTheCaller(t *testing.T) {
+// The tempting source for "which repository is this agent in" is
+// agent.ResolveLocation's CurrentDir. It resolves through `agent_workdir`,
+// which the PostToolUse hook writes from `filepath.Dir(tool_input.file_path)`
+// — a raw payload field, recorded on the failure arm too, through a brokered
+// hook route that clamps nothing and carries no permission slug. So an agent
+// nominates any path on the host by ATTEMPTING an edit there, and the daemon
+// would then run `git` and `gh` with cmd.Dir set to it, where repo-local
+// config picks the repository. A branch filter cannot help: cwd chooses the
+// repo.
+//
+// The rest of the codebase already refuses this table as authority in exactly
+// these words — resolveProxyRepo "deliberately does NOT consult agent_workdir",
+// and spawn_dir_trust.go calls it "display state, not an authorization root".
+// This route now resolves the same daemon-authored launch dir the proxy does.
+//
+// The test plants the hostile row the way the hook would and asserts the
+// resolver is never pointed at it. A version that reads CurrentDir fails here.
+func TestStatuslineBranchPRIgnoresTheAgentWritableWorkdir(t *testing.T) {
 	setupTestDB(t)
 	const convID = "statusline-branchpr-0003"
-	_, _, err := db.EnsureAgentForConv(convID, "test")
-	require.NoError(t, err)
+	const launchDir = "/repo"
+	const victimDir = "/somebody/elses/private-repo"
+	newBranchPRAgent(t, convID, launchDir)
+
+	// The two tables an agent CAN write about itself: the workdir the hook
+	// records from a tool payload, and the workspace row its own status line
+	// publishes. Neither may decide where the daemon runs gh.
+	require.NoError(t, db.UpsertAgentWorkdir(convID, victimDir, victimDir, "release-2026"))
 	require.NoError(t, db.UpsertAgentWorkspace(db.AgentWorkspace{
-		ConvID: convID, Cwd: "/repo", Branch: "feature",
+		ConvID: convID, Cwd: victimDir, Branch: "release-2026",
 	}))
 
 	var asked []string
@@ -223,19 +251,14 @@ func TestStatuslineBranchPRTakesNoDirectoryFromTheCaller(t *testing.T) {
 			return "https://github.com/o/r", "main", 1, "https://github.com/o/r/pull/1", "open", true
 		})()
 
-	// A caller trying to name someone else's repository through the query
-	// string. The parameter does not exist, so it cannot be honoured.
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet,
-		"/v1/statusline/branch-pr?branch=feature&dir=/somebody/else&repo_dir=/somebody/else", nil)
-	handleStatuslineBranchPR(rec, AsAgentPeer(req, convID))
-	require.Equal(t, http.StatusOK, rec.Code)
+	askBranchPR(t, "release-2026", convID)
 	WaitForBackgroundForTest()
 
-	require.NotEmpty(t, asked)
+	require.NotEmpty(t, asked, "the ask must still drive a resolution")
 	for _, dir := range asked {
-		assert.Equal(t, "/repo", dir,
-			"the directory comes from the caller's recorded location, never from the request")
+		assert.Equal(t, launchDir, dir,
+			"the directory must come from daemon-authored session state, never from agent_workdir")
+		assert.NotEqual(t, victimDir, dir)
 	}
 }
 
@@ -257,11 +280,7 @@ func TestStatuslineBranchPRRefusesCallersItCannotPlace(t *testing.T) {
 	// A branch is required: without one there is no cache key, and an empty
 	// one must not be read as "every branch".
 	const convID = "statusline-branchpr-0004"
-	_, _, err := db.EnsureAgentForConv(convID, "test")
-	require.NoError(t, err)
-	require.NoError(t, db.UpsertAgentWorkspace(db.AgentWorkspace{
-		ConvID: convID, Cwd: "/repo", Branch: "feature",
-	}))
+	newBranchPRAgent(t, convID, "/repo")
 	assert.Empty(t, askBranchPR(t, "", convID).PRURL)
 
 	WaitForBackgroundForTest()

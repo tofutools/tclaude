@@ -73,9 +73,16 @@ type branchPRResponse struct {
 // The cold-cache miss is not wasted either: the same ask that returns nothing
 // schedules the daemon's resolution, so the next render's ask lands.
 //
-// The branch is sent; the DIRECTORY is not, and deliberately cannot be. The
-// daemon resolves that from this pane's own identity, so no caller can point it
-// at a repository that is not its own.
+// The branch is sent; the DIRECTORY is not. The daemon resolves that from the
+// conversation's recorded launch dir — daemon-authored session state, not the
+// agent-writable tables that track where an agent has since edited — so no
+// caller can point it at a repository that is not its own. See
+// agentd/statusline_branchpr.go, which is where that gate lives and where the
+// reasoning is written out.
+//
+// One consequence for the reader: an agent working in a worktree away from its
+// launch dir gets no answer here, and falls back to `gh`. That is the intended
+// trade — a status-bar link is not worth an aiming primitive.
 func daemonBranchPR(ctx context.Context, branch string) (number int, prURL, state string, ok bool) {
 	client, err := daemonSocketClient(branchPRTimeout)
 	if err != nil {

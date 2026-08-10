@@ -124,13 +124,20 @@ piece that needs a GitHub credential, and the bar does not hold one:
   same ask that misses also schedules the daemon's resolution, so the next
   render's ask lands.
 
-Neither the **directory** nor the **branch** is taken from the caller. The
-daemon resolves both from the pane's own recorded location; the branch the
-status bar sends is compared against that and then discarded, and a mismatch
-answers with nothing rather than guessing. That is what lets the route carry no
-permission slug: no caller-supplied value reaches the `gh` the resolution runs,
-where a URL argument would re-aim it at another repository. A returned PR whose
-URL does not belong to the repo the bar is rendering is discarded as well.
+The **directory is not taken from the caller**, and not from the tables that
+track where an agent has since been editing either — those are written from
+hook payloads the agent controls. It comes from the conversation's recorded
+launch dir, the same daemon-authored root the git proxy authorizes against.
+That is what lets the route carry no permission slug.
+
+The branch *is* the caller's, validated. Once the directory is fixed it is only
+a filter: the daemon asks `gh pr list --head <branch>`, which selects no
+repository (gh does not even accept the `owner:branch` cross-repo form). A
+returned PR whose URL does not belong to the repo the bar is rendering is
+discarded as well.
+
+One consequence: an agent working in a worktree away from its launch dir gets
+no answer from the daemon and falls back to `gh`.
 
 Both paths are best-effort: no PR, no `gh`, no daemon all render the same way —
 a compare URL instead of a PR URL, never an error.
