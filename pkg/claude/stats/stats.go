@@ -12,6 +12,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/money"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -129,7 +130,7 @@ func runUsage(params *Params) error {
 				fmt.Printf("  Cache Created:  %s\n", formatNumber(int(usage.CacheCreationInputTokens)))
 			}
 			if usage.CostUSD > 0 {
-				fmt.Printf("  Cost:           $%.2f\n", usage.CostUSD)
+				fmt.Printf("  Cost:           %s\n", money.USD(usage.CostUSD))
 			}
 		}
 		fmt.Println()

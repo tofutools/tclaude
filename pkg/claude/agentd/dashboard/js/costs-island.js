@@ -5,7 +5,7 @@ import { AsyncLoadState } from './async-load-state.js';
 import { CostsChart } from './costs-chart.js';
 import {
   COST_COLUMNS, COST_SPANS, fmtLastActivity, fmtUSD, harnessLabel,
-  fmtCredits, harnessSegmentClass, monthProjectionLabel,
+  fmtCredits, fmtExactUSD, harnessSegmentClass, monthProjectionLabel,
 } from './costs-model.js';
 import { idTooltip, isModifiedClick, shortAgentId } from './helpers.js';
 
@@ -168,7 +168,7 @@ const WHAT_IF_LABEL = 'About this WHAT-IF estimate';
 // under one into "<1¢", so the exact figure is worth a hover — and a mixed row
 // names its two parts rather than calling the whole total an estimate.
 function amountTip(agent) {
-  const exact = (value) => `$${(value || 0).toFixed(4)}`;
+  const exact = (value) => fmtExactUSD(value || 0);
   const virtual = (value) => agent.virtual_cost_credits > 0
     ? `${fmtCredits(agent.virtual_cost_credits)} — ${exact(value)} subscription value`
     : `${exact(value)} estimated (WHAT-IF)`;

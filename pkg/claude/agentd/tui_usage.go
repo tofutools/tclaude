@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/money"
 	"github.com/tofutools/tclaude/pkg/claude/common/tuistyle"
 )
 
@@ -193,13 +194,10 @@ func tuiUsageCost(u tuiUsage) string {
 }
 
 // tuiUsageMoney formats a dollar figure the way the dashboard does: real spend
-// to the cent, and anything that would round to $0.00 as "<1¢" rather than
-// reading as free.
+// to the cent with thousands separators, and anything that would round to
+// $0.00 as "<1¢" rather than reading as free.
 func tuiUsageMoney(usd float64) string {
-	if usd < 0.005 {
-		return "<1¢"
-	}
-	return fmt.Sprintf("$%.2f", usd)
+	return money.USD(usd)
 }
 
 // usageLine is the console's status line: the account's subscription limits

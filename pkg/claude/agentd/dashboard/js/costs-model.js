@@ -40,24 +40,45 @@ export function spanRange(span, monthOffset, now = new Date()) {
   return { from, to: today };
 }
 
+// Every figure here is USD whatever the viewer's browser is set to, so
+// grouping is pinned to the currency's own convention (26,222.38) rather than
+// the viewer's locale — a Swedish browser must not render a US-billed total as
+// "26 222,38 $" and imply a conversion that never happened.
+const usdGroups = (min, max) => new Intl.NumberFormat('en-US',
+  { minimumFractionDigits: min, maximumFractionDigits: max });
+const WHOLE = usdGroups(0, 0);
+const CENTS = usdGroups(2, 2);
+const SUBCENT = usdGroups(4, 4);
+
 export function fmtUSD(value) {
   if (!(value > 0)) return '$0.00';
-  return value >= 0.005 ? '$' + value.toFixed(2) : '<1¢';
+  return value >= 0.005 ? '$' + CENTS.format(value) : '<1¢';
+}
+
+// The figure behind fmtUSD, for tooltips: the same two decimals, minus the
+// "<1¢" collapse. Money is written in cents, so extra digits are only spelled
+// out below one cent — the one place two decimals would read as a flat $0.00.
+export function fmtExactUSD(value) {
+  if (!(value > 0)) return '$0.00';
+  return '$' + (value >= 0.005 ? CENTS : SUBCENT).format(value);
 }
 
 // Copilot's native credit figure is carried separately from dollars so a
 // tooltip can explain that the dollar amount is gross subscription value.
+// Credits are spent whole far more often than not, so a round figure stays
+// round and only a genuine fraction takes two decimals.
 export function fmtCredits(value) {
   if (!(value > 0)) return '';
   const roundedValue = Number(value.toFixed(2));
   if (!(roundedValue > 0)) return '<0.01 credits';
-  const rounded = Math.abs(value - Math.round(value)) < 1e-9
-    ? String(Math.round(value)) : String(roundedValue);
-  return `${rounded} credits`;
+  return `${(Number.isInteger(roundedValue) ? WHOLE : CENTS).format(roundedValue)} credits`;
 }
 
+// Axis ticks stay compact — a grouped "$26,222" would crowd the gutter, so
+// four figures and up collapse to k/M instead.
 export function fmtAxisUSD(value) {
   if (!(value > 0)) return '$0';
+  if (value >= 1e6) return '$' + +(value / 1e6).toFixed(1) + 'M';
   if (value >= 1000) return '$' + +(value / 1000).toFixed(1) + 'k';
   if (value >= 1) return Number.isInteger(value) ? '$' + value : '$' + value.toFixed(2);
   return '$' + +value.toFixed(4);

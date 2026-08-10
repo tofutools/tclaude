@@ -21,18 +21,19 @@ func TestDashboardHTML_TopBarTotalCostWired(t *testing.T) {
 	}
 
 	// shell-model.js derives the token from accepted snapshot state and only
-	// returns it for nonzero cost, with the harness-line sub-cent floor.
+	// returns it for nonzero cost, formatted by costs-model.js's shared fmtUSD
+	// — the same grouping and sub-cent floor as the harness line.
 	must("const mtd = Number(usage?.total_cost_usd || 0)", "usageView reads the snapshot's month-to-date total")
 	must("const today = Number(usage?.today_cost_usd || 0)", "usageView reads the snapshot's today total")
 	must("function costToken(today, mtd)", "the cost token has its own model builder")
-	must("cost >= 0.005 ? '$' + cost.toFixed(2) : '<1¢'",
-		"two-decimal dollar format with a sub-cent floor")
+	must("return value >= 0.005 ? '$' + CENTS.format(value) : '<1¢'",
+		"grouped two-decimal dollar format with a sub-cent floor")
 
 	// The today figure is rendered ahead of mtd whenever anything was spent
 	// today — including when it equals mtd (e.g. the first of the month),
 	// so the "(today)" figure never silently vanishes.
-	must("today: today > 0 ? fmtCost(today) : ''", "today's figure rendered with its own label")
-	must("mtd: fmtCost(mtd)", "month-to-date figure rendered with its own label")
+	must("today: today > 0 ? fmtUSD(today) : ''", "today's figure rendered with its own label")
+	must("mtd: fmtUSD(mtd)", "month-to-date figure rendered with its own label")
 	must("token.today ? html`",
 		"today shown whenever anything was spent today, even when it equals mtd")
 	must(`<span class="urem">(today)</span>`, "today's amount keeps its explicit label")

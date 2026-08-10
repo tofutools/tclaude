@@ -69,3 +69,34 @@ test('Copilot cost segments retain native credits beside gross subscription doll
   assert.equal(copilotSegment.credits, 43);
   assert.equal(copilotSegment.kind, 'what_if');
 });
+
+// Dollar figures are USD wherever they are read, so the separators follow the
+// currency and not the viewer's locale: a four-figure month total reads
+// "$26,222.38", never "26 222,38 $".
+test('USD formatting groups thousands the currency\'s way', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/costs-model.js');
+
+  assert.equal(model.fmtUSD(0.42), '$0.42');
+  assert.equal(model.fmtUSD(1000), '$1,000.00');
+  assert.equal(model.fmtUSD(26222.375), '$26,222.38');
+  assert.equal(model.fmtUSD(1234567.891), '$1,234,567.89');
+  // Real spend that would round to $0.00 must not read as free.
+  assert.equal(model.fmtUSD(0.004), '<1¢');
+  assert.equal(model.fmtUSD(0), '$0.00');
+
+  // The tooltip figure is cents too — extra digits only below one cent,
+  // where two decimals would read as a flat $0.00.
+  assert.equal(model.fmtExactUSD(26222.375), '$26,222.38');
+  assert.equal(model.fmtExactUSD(1.5), '$1.50');
+  assert.equal(model.fmtExactUSD(0.0042), '$0.0042');
+  assert.equal(model.fmtExactUSD(0), '$0.00');
+
+  assert.equal(model.fmtCredits(1234), '1,234 credits');
+  assert.equal(model.fmtCredits(1234.5), '1,234.50 credits');
+
+  // Axis ticks stay compact instead of grouped — the gutter is narrow.
+  assert.equal(model.fmtAxisUSD(26222.38), '$26.2k');
+  assert.equal(model.fmtAxisUSD(2600000), '$2.6M');
+  assert.equal(model.fmtAxisUSD(12.5), '$12.50');
+});
