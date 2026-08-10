@@ -20,15 +20,19 @@ import (
 // could not authenticate, so the link silently vanished for exactly the agents
 // tclaude sandboxes hardest.
 //
-// The daemon is asked because IT ALREADY KNOWS. branchlinks.go resolves
-// (repoDir, branch) → PR on a 90-second cache for every agent the dashboard
-// lists, so this is a database read on the far side of a unix socket: no
-// GitHub traffic, no credential spent, no permission grant, and no audit row on
-// a surface that re-renders several times a second. Routing it through the
-// GitHub proxy instead would have cost all four — see
-// agentd/statusline_branchpr.go, which is where that reasoning lives, and
-// docs/git-proxy.md for the proxy's own `pr ls --head`, which remains the
-// gated and audited way to ask GitHub itself.
+// The daemon is asked because it resolves this anyway: branchlinks.go maps
+// (repoDir, branch) → PR behind a 90-second cache, so this is a database read
+// on the far side of a unix socket — no GitHub traffic, no credential spent, no
+// permission grant, and no audit row on a surface that re-renders several times
+// a second. Routing it through the GitHub proxy instead would have cost all
+// four; see agentd/statusline_branchpr.go, where that reasoning lives, and
+// docs/git-proxy.md for the proxy's own `pr ls --head`, which remains the gated
+// and audited way to ask GitHub itself.
+//
+// It resolves on DEMAND, though, not on a timer — the daemon has no scheduled
+// branch-link refresh, so the first ask on a cold cache returns nothing and
+// merely schedules the work. That is the main reason the `gh` fallback below
+// still earns its place: it covers the gap until the next render's ask lands.
 //
 // The cadence is therefore unchanged: this rides the same 15-second git
 // snapshot the bar has always used, because asking costs the daemon a cache

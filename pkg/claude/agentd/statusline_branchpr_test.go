@@ -28,18 +28,24 @@ func askBranchPR(t *testing.T, branch string, convID ...string) statuslineBranch
 	return out
 }
 
-// TestStatuslineBranchPRServesTheAlreadyResolvedPR is the whole point of the
-// endpoint: the status bar gets the pull request this daemon has ALREADY
-// resolved for the dashboard's Branch column, so the pane spends no GitHub
-// credential, needs no grant, and writes no audit row for a link it re-renders
-// several times a second.
+// TestStatuslineBranchPRResolvesWithoutADashboard is the whole point of the
+// endpoint, and the property most likely to regress silently.
 //
-// The first ask is expected to miss — the answer is a cache read, and a cold
-// cache has nothing. What makes the endpoint work is that the miss SCHEDULES
-// the resolution, so the next ask lands. That two-step is asserted here because
-// an implementation that answered from a cold cache without scheduling would
-// look identical on a single call and never resolve anything.
-func TestStatuslineBranchPRServesTheAlreadyResolvedPR(t *testing.T) {
+// The status bar gets the pull request this daemon resolves for the dashboard's
+// Branch column, so the pane spends no GitHub credential, needs no grant, and
+// writes no audit row for a link it re-renders several times a second. But
+// NOTHING IN agentd RESOLVES BRANCH LINKS ON A TIMER: the only two drivers are
+// the dashboard snapshot (`/api/snapshot`, which exists only while a browser is
+// polling it) and this route. An endpoint that merely READ the cache would
+// therefore answer nothing at all for an operator who never opens the
+// dashboard — which is most of them, most of the time.
+//
+// So the ask has to drive the resolution itself, and this test runs the whole
+// sequence without touching a single dashboard code path: cold ask returns
+// nothing and schedules the work, the work runs, the next ask lands. The
+// assertion that the resolver was invoked by the ask is what distinguishes
+// "self-driving" from "happens to find something the dashboard left behind".
+func TestStatuslineBranchPRResolvesWithoutADashboard(t *testing.T) {
 	setupTestDB(t)
 	const convID = "statusline-branchpr-0001"
 	const branch = "feature"
@@ -48,8 +54,10 @@ func TestStatuslineBranchPRServesTheAlreadyResolvedPR(t *testing.T) {
 	require.NoError(t, db.UpsertAgentWorkspace(db.AgentWorkspace{
 		ConvID: convID, Cwd: "/repo", Branch: branch,
 	}))
+	var resolved int
 	defer SetGitInfoResolverForTest(
 		func(string, string) (string, string, int, string, string, bool) {
+			resolved++
 			return "https://github.com/o/r", "main", 42, "https://github.com/o/r/pull/42", "open", true
 		})()
 
@@ -58,11 +66,19 @@ func TestStatuslineBranchPRServesTheAlreadyResolvedPR(t *testing.T) {
 		"a cold cache has nothing to offer; the caller falls back to gh on this")
 
 	WaitForBackgroundForTest()
+	require.Equal(t, 1, resolved,
+		"the ask itself must schedule the resolution — no dashboard poll happened here, and none ever has to")
 
 	warm := askBranchPR(t, branch, convID)
 	assert.Equal(t, 42, warm.PRNumber, "the miss scheduled the resolution; the second ask must land")
 	assert.Equal(t, "https://github.com/o/r/pull/42", warm.PRURL)
 	assert.Equal(t, "open", warm.PRState)
+
+	// And a fresh entry is served without spending another git/gh round: the
+	// status bar asks every 15 seconds, the daemon's own TTL is 90, and the
+	// single-flight key means several panes on the same branch share one.
+	WaitForBackgroundForTest()
+	assert.Equal(t, 1, resolved, "a warm entry must not re-resolve on every ask")
 }
 
 // TestStatuslineBranchPRRefusesABranchThatCouldNameARepository is the property

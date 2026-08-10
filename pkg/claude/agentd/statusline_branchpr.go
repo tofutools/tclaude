@@ -22,13 +22,26 @@ import (
 // audit-logged GitHub call on a display refresh, and buried the trail of what
 // agents actually did with that credential under render traffic.
 //
-// This costs none of that, because THE ANSWER ALREADY EXISTS. branchlinks.go
-// resolves (repoDir, branch) → PR on a 90-second cache for every agent the
-// dashboard lists, whether or not anyone is looking at it. Handing that value
-// back is a database read: no new GitHub traffic, no credential spent, no grant,
-// no audit row. The proxy keeps its own `pr ls --head` verb for callers that
-// genuinely want a fresh, attributable read — that one is still gated and still
-// audited.
+// This costs none of that, because it reuses a resolution the daemon already
+// performs: branchlinks.go maps (repoDir, branch) → PR behind a 90-second
+// cache, and handing that value back is a database read — no new GitHub
+// traffic, no credential spent, no grant, no audit row. The proxy keeps its own
+// `pr ls --head` verb for callers that genuinely want a fresh, attributable
+// read; that one is still gated and still audited.
+//
+// "Already performs" is not the same as "performs on a timer", and the
+// difference decides whether this route works at all. NOTHING in agentd
+// refreshes branch links on a schedule. There are exactly two drivers:
+// /api/snapshot, which runs only while a browser is polling the dashboard, and
+// this route. An implementation that merely READ the cache would therefore
+// answer nothing forever for an operator who never opens the dashboard.
+//
+// So the ask drives the work. lookupBranchLinkOne routes through the same core
+// the dashboard uses, whose cold-or-stale path schedules the async refresh —
+// which means the FIRST ask returns nothing and arranges for the second to
+// land, on the status bar's own 15-second cadence and with `gh` covering the
+// gap. TestStatuslineBranchPRResolvesWithoutADashboard pins exactly that
+// sequence with no dashboard code path involved.
 //
 // Two properties are load-bearing:
 //

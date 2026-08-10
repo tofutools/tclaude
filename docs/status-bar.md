@@ -104,12 +104,19 @@ The marker is omitted entirely when no window is known yet — no pin, and no `c
 Everything the status bar asks git for is local. The pull request is the one
 piece that needs a GitHub credential, and the bar does not hold one:
 
-- **agentd is asked first.** The daemon has already resolved this branch's pull
-  request for the dashboard's Branch column, on its own 90-second cache, so
+- **agentd is asked first.** The daemon resolves this branch's pull request for
+  the dashboard's Branch column anyway, behind a 90-second cache, so
   `GET /v1/statusline/branch-pr` is a database read: no GitHub traffic, no
   credential spent, no permission grant, and no audit row on a surface that
   re-renders several times a second. It is also the only path that works in a
   pane whose sandbox denies `~/.config/gh`.
+
+  agentd resolves branch links **on demand, not on a schedule** — the only two
+  things that drive it are the dashboard's `/api/snapshot` (which runs only
+  while a browser is polling it) and this route. So the status bar's own ask is
+  what triggers the work when nobody has the dashboard open: the first ask on a
+  cold cache returns nothing and schedules the resolution, and the next render's
+  ask, ≤15 seconds later, gets the answer.
 - **`gh pr view <branch>` is the fallback**, with the pane's own credentials,
   exactly as it always has been. A pull request is the only success: anything
   else — no daemon, a cold cache, a branch with no PR — falls through to `gh`,
