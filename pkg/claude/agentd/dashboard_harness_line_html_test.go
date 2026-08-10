@@ -89,6 +89,20 @@ func TestDashboardHTML_HarnessLineWired(t *testing.T) {
 	must("if (harness === 'opencode')", "OpenCode model display removes its provider prefix")
 	must("state.harness", "HarnessLine reads the harness tag off the agent's state")
 
+	// API-backed Copilot and app-server-backed Codex launches keep their drive
+	// and health details in this same general tooltip. They do not add "api" or
+	// "app" tokens to the visible harness/model line.
+	must("function driveTooltip(state)", "drive metadata has a dedicated tooltip formatter")
+	must("if (drive) title += ` — ${drive}`", "drive metadata is appended to the general harness tooltip")
+	must("Drive: Copilot embedded JSON-RPC API", "Copilot API drive is identified in the tooltip")
+	must("Drive: Codex app-server ready", "Codex app-server drive is identified in the tooltip")
+	if strings.Contains(dashboardAssets, "class=${'harness-drive'") {
+		t.Error("API/app-server drive metadata must not regain a visible indicator")
+	}
+	if strings.Contains(dashboardAssets, ".agent-harness .harness-drive") {
+		t.Error("removed API/app-server indicators must not retain dashboard styling")
+	}
+
 	// The selected treatment gives every known mark the same fixed geometry and
 	// muted currentColor. No per-harness color rule should creep into the row.
 	must(".agent-harness .harness-mark {", "known harness marks have a shared style rule")
@@ -102,7 +116,7 @@ func TestDashboardHTML_HarnessLineWired(t *testing.T) {
 func TestDashboardHarnessMarkNoticesEmbedded(t *testing.T) {
 	tests := map[string]string{
 		"vendor/harness-marks/README.md":                 "@lobehub/icons-static-svg",
-		"vendor/harness-marks/LICENSE-LobeHub.txt":      "Copyright (c) 2023 LobeHub",
+		"vendor/harness-marks/LICENSE-LobeHub.txt":       "Copyright (c) 2023 LobeHub",
 		"vendor/harness-marks/LICENSE-GitHub-Primer.txt": "Copyright (c) 2026 GitHub Inc.",
 		"vendor/harness-marks/LICENSE-OpenCode.txt":      "Copyright (c) 2025 opencode",
 	}

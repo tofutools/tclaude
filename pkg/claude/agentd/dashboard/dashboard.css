@@ -3634,30 +3634,6 @@ tr:hover .row-actions { opacity: 1; }
   display: block; width: 14px; height: 14px; fill: currentColor;
 }
 .agent-harness .harness-sep { color: #484f58; margin: 0 3px; }
-/* Copilot drive marker ("CP api · GPT-5.6"): rendered only for an agent driven
-   over Copilot's embedded JSON-RPC API, never for the send-keys default, so its
-   presence alone is the signal. Amber, to read as "experimental path" rather
-   than as one more piece of the harness/model text. */
-.agent-harness .harness-drive { color: #d29922; margin-left: 4px; }
-/* Launched for the API drive but not connected: same chip, dimmed and dashed,
-   so "asked for" and "actually driving" are distinguishable without adding a
-   second badge to a row that is already dense. */
-.agent-harness .harness-drive-pending {
-  color: #8b949e;
-  border-bottom: 1px dashed currentColor;
-}
-/* Observed not to be coming up: this launch's channel failed, so the agent's
-   mail is being HELD and a relaunch is the only thing that clears it. Red and
-   solid rather than dimmed and dashed, because the distinction from -pending is
-   the one that matters — dashed means "wait", this means "act". Still the same
-   chip: a deaf agent is a state of the drive, not a second thing about the row.
-
-   Not exhaustive; see CopilotAPIChannelFailed for what its absence does and
-   does not mean. */
-.agent-harness .harness-drive-failed {
-  color: #f85149;
-  border-bottom: 1px solid currentColor;
-}
 /* The reasoning-effort token trails the model after a small gap, a shade
    brighter than the surrounding harness text so the eye catches the
    current effort level. */

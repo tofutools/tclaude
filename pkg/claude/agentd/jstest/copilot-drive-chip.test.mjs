@@ -1,17 +1,17 @@
-// Unit tests for the Copilot drive chip's three states (TCL-1089).
+// Unit tests for the API/app-server drive detail in the harness tooltip.
 //
-// The chip has always distinguished "launched for the API drive" from "tclaude
-// holds a connection". That pair is not enough, and the gap is the bug this
-// ticket is about: `copilot_api && !connected` is equally true of an agent whose
-// bootstrap is still running, of every already-running agent between an agentd
-// restart and the reconcile sweep reaching it, and of an agent whose channel
-// failed and will never come up. The first two are the system working normally.
-// The third is an agent that is spawned, whose pane is alive and perfectly
-// typeable, and which will never receive another message — and until the third
-// state existed it rendered identically to an agent that was merely starting.
+// The drive detail distinguishes "launched for the API drive" from "tclaude
+// holds a connection". That pair is not enough: `copilot_api && !connected` is
+// equally true of an agent whose bootstrap is still running, of every already-
+// running agent between an agentd restart and the reconcile sweep reaching it,
+// and of an agent whose channel failed and will never come up. The first two are
+// the system working normally. The third is an agent that is spawned, whose
+// pane is alive and perfectly typeable, and which will never receive another
+// message.
 //
-// So what is defended here is the DISTINCTION, not the styling: the pending
-// state must not read as trouble, and the failed state must not read as pending.
+// So what is defended here is the DISTINCTION, not a visible indicator: the
+// pending state must not read as trouble, and the failed state must not read as
+// pending, while both remain discoverable in the general harness tooltip.
 //
 // The Go wrapper (jstest/dashboard_node_test.go) globs this package's
 // `*.test.mjs`, so this runs under `go test ./...` and skips when node is
@@ -30,7 +30,7 @@ async function memberTable(t) {
   return { harness, mod: await harness.importDashboardModule('js/groups-member-table.js') };
 }
 
-test('the Copilot drive chip tells a starting agent from a deaf one', async (t) => {
+test('the general harness tooltip tells a starting Copilot agent from a deaf one', async (t) => {
   const { harness, mod } = await memberTable(t);
   const { HarnessLine } = mod;
   const mount = async (state) =>
@@ -38,14 +38,14 @@ test('the Copilot drive chip tells a starting agent from a deaf one', async (t) 
       <${HarnessLine} member=${{ conv_id: 'c1', online: true, state }} />`);
   const base = { harness: 'copilot', model: 'GPT-5.6', copilot_api: true };
 
-  await t.test('a connected agent is the plain chip', async () => {
+  await t.test('a connected agent discloses the API drive without a visible indicator', async () => {
     const mounted = await mount({ ...base, copilot_api_connected: true });
     try {
-      const el = mounted.container.querySelector('.agent-harness .harness-drive');
-      assert.ok(el, 'expected the drive chip');
-      assert.equal(el.textContent.trim(), 'api');
-      assert.ok(!el.classList.contains('harness-drive-pending'));
-      assert.ok(!el.classList.contains('harness-drive-failed'));
+      const line = mounted.container.querySelector('.agent-harness');
+      assert.equal(line.querySelector('.harness-drive'), null);
+      assert.doesNotMatch(line.textContent, /\bapi\b/i);
+      assert.match(line.title, /Drive: Copilot embedded JSON-RPC API/);
+      assert.match(line.title, /not tmux send-keys/);
     } finally {
       await mounted.unmount();
     }
@@ -58,10 +58,11 @@ test('the Copilot drive chip tells a starting agent from a deaf one', async (t) 
     // would look broken at exactly the moments it is working.
     const mounted = await mount({ ...base, copilot_api_connected: false });
     try {
-      const el = mounted.container.querySelector('.agent-harness .harness-drive');
-      assert.ok(el.classList.contains('harness-drive-pending'));
-      assert.ok(!el.classList.contains('harness-drive-failed'),
-        'no channel yet is the normal condition of a starting agent, not a fault');
+      const line = mounted.container.querySelector('.agent-harness');
+      assert.equal(line.querySelector('.harness-drive'), null);
+      assert.match(line.title, /not connected yet/);
+      assert.match(line.title, /still starting up/,
+        'no channel yet is described as the normal condition of a starting agent');
     } finally {
       await mounted.unmount();
     }
@@ -72,38 +73,35 @@ test('the Copilot drive chip tells a starting agent from a deaf one', async (t) 
       ...base, copilot_api_connected: false, copilot_api_channel_failed: true,
     });
     try {
-      const el = mounted.container.querySelector('.agent-harness .harness-drive');
-      assert.ok(el.classList.contains('harness-drive-failed'));
-      assert.ok(!el.classList.contains('harness-drive-pending'),
-        'the two states must not both apply; dashed means wait and this means act');
+      const line = mounted.container.querySelector('.agent-harness');
+      assert.equal(line.querySelector('.harness-drive'), null);
       // The operator's actual question is "what do I do", and the answer is not
       // guessable from a coloured chip: the agent looks alive and typeable, so
       // nothing else on the row suggests its mail is going nowhere.
-      assert.match(el.title, /HELD/);
-      assert.match(el.title, /relaunched/);
-      assert.equal(el.getAttribute('aria-label'), 'Copilot API drive failed, messages held');
+      assert.match(line.title, /HELD/);
+      assert.match(line.title, /relaunched/);
+      assert.match(line.querySelector('.runtime-meta').getAttribute('aria-label'), /messages are being HELD/);
     } finally {
       await mounted.unmount();
     }
   });
 
-  await t.test('a send-keys Copilot agent has no chip at all', async () => {
-    // The chip marks the API drive only; send-keys is what every Copilot agent
-    // has always been, so a marker for it would be noise on every row. Asserted
-    // because the failed state added a second condition to the same expression.
+  await t.test('a send-keys Copilot agent has no drive detail', async () => {
     const mounted = await mount({
       harness: 'copilot', model: 'GPT-5.6', copilot_api_channel_failed: true,
     });
     try {
-      assert.equal(mounted.container.querySelector('.agent-harness .harness-drive'), null,
-        'an agent that never took the drive cannot have a failed one');
+      const line = mounted.container.querySelector('.agent-harness');
+      assert.equal(line.querySelector('.harness-drive'), null);
+      assert.doesNotMatch(line.title, /Drive:/,
+        'an agent that never took the drive cannot have drive health detail');
     } finally {
       await mounted.unmount();
     }
   });
 });
 
-test('the Codex app-server chip discloses safe observer ownership and quarantine detail', async (t) => {
+test('the general harness tooltip discloses Codex observer ownership and quarantine detail', async (t) => {
   const { harness, mod } = await memberTable(t);
   const { HarnessLine } = mod;
   const mount = async (state) =>
@@ -121,14 +119,16 @@ test('the Codex app-server chip discloses safe observer ownership and quarantine
       codex_observer_updated: '2026-08-09T12:34:56Z',
     });
     try {
-      const el = mounted.container.querySelector('.agent-harness .harness-drive');
-      assert.equal(el.textContent.trim(), 'app');
-      assert.match(el.title, /TUI owns approvals/);
-      assert.match(el.title, /non-subscribing/);
-      assert.match(el.title, /connects only after TUI thread binding/);
-      assert.match(el.title, /context remains rollout-derived/);
-      assert.match(el.title, /2026-08-09T12:34:56Z/);
-	  assert.match(el.title, /via explicit/);
+      const line = mounted.container.querySelector('.agent-harness');
+      assert.equal(line.querySelector('.harness-drive'), null);
+      assert.doesNotMatch(line.textContent, /\bapp\b/i);
+      assert.match(line.title, /Drive: Codex app-server ready/);
+      assert.match(line.title, /TUI owns approvals/);
+      assert.match(line.title, /non-subscribing/);
+      assert.match(line.title, /connects only after TUI thread binding/);
+      assert.match(line.title, /context remains rollout-derived/);
+      assert.match(line.title, /2026-08-09T12:34:56Z/);
+	  assert.match(line.title, /via explicit/);
     } finally {
       await mounted.unmount();
     }
@@ -142,11 +142,11 @@ test('the Codex app-server chip discloses safe observer ownership and quarantine
       codex_app_server_detail: 'unexpected server request delivered to non-subscribing observer: item/permissions/requestApproval',
     });
     try {
-      const el = mounted.container.querySelector('.agent-harness .harness-drive');
-      assert.ok(el.classList.contains('harness-drive-failed'));
-      assert.match(el.title, /item\/permissions\/requestApproval/);
-      assert.match(el.title, /did not fall back to send-keys/);
-	  assert.match(el.title, /resume <agent> --send-keys/);
+      const line = mounted.container.querySelector('.agent-harness');
+      assert.equal(line.querySelector('.harness-drive'), null);
+      assert.match(line.title, /item\/permissions\/requestApproval/);
+      assert.match(line.title, /did not fall back to send-keys/);
+	  assert.match(line.title, /resume <agent> --send-keys/);
     } finally {
       await mounted.unmount();
     }
@@ -160,12 +160,11 @@ test('the Codex app-server chip discloses safe observer ownership and quarantine
 	  codex_app_server_detail: 'status snapshots are stale',
 	});
 	try {
-	  const el = mounted.container.querySelector('.agent-harness .harness-drive');
-	  assert.ok(el.classList.contains('harness-drive-pending'));
-	  assert.ok(!el.classList.contains('harness-drive-failed'));
-	  assert.match(el.title, /degraded/);
-	  assert.match(el.title, /fail closed/);
-	  assert.match(el.title, /status snapshots are stale/);
+	  const line = mounted.container.querySelector('.agent-harness');
+	  assert.equal(line.querySelector('.harness-drive'), null);
+	  assert.match(line.title, /degraded/);
+	  assert.match(line.title, /fail closed/);
+	  assert.match(line.title, /status snapshots are stale/);
 	} finally {
 	  await mounted.unmount();
 	}
