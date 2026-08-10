@@ -8,6 +8,7 @@ import {
 import { shortCwd } from './helpers.js';
 import {
   MODEL_CUSTOM_VALUE,
+  SANDBOX_IMPL_DEFAULT,
   SANDBOX_PROFILE_NONE,
   WT_NEW,
   approvalControlsVisibleFor,
@@ -785,6 +786,15 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     draft, launchDefaults?.implementation,
   );
   const sandboxImplCleared = sandboxImplClearedNoticeFor(draft);
+  const effectiveSandboxImpl = draft.sandboxImpl || launchDefaults?.implementation || SANDBOX_IMPL_DEFAULT;
+  const nativeCodexRegistryWarning = draft.harness === 'codex'
+    && draft.codexAppServer
+    && draft.sandbox === 'tclaude-agent'
+    && effectiveSandboxImpl === SANDBOX_IMPL_DEFAULT
+    && !view.harness?.codex_native_registry_ready
+    ? (view.harness?.codex_native_registry_reason
+      || 'Native Codex permission-profile integration is not installed; this launch will be refused. See docs/codex-native-permission-registry.md.')
+    : '';
   const worktreeUsable = worktrees.phase === 'ready' && worktrees.isRepo;
   let worktreeEmptyLabel = '(no worktree — use CWD above)';
   if (worktrees.phase === 'loading') worktreeEmptyLabel = 'loading…';
@@ -1249,6 +1259,13 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         onChange=${(event) => update('codexAppServer', event.currentTarget.checked)} />
       Drive Codex through a private app-server — experimental, off by default
     </label>
+    ${nativeCodexRegistryWarning && html`
+      <div class="cron-create-row" id="agent-spawn-codex-native-registry-warning">
+        <span class="cron-create-label"></span>
+        <div class="cron-create-target" role="alert">
+          <div class="spawn-field-hint warn">⚠ ${nativeCodexRegistryWarning}</div>
+        </div>
+      </div>`}
     <label class="cron-create-enabled" id="agent-spawn-ssh-workaround-row" hidden=${!view.showSSHWorkaround}
       title=${view.sshWorkaroundAvailable
         ? 'Use an agent-owned copy of the host SSH client config to avoid Codex sandbox ownership errors. This overrides Git core.sshCommand; disable it if the workaround conflicts with your SSH setup.'

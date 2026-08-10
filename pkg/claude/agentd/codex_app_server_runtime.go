@@ -69,6 +69,12 @@ func prepareCodexAppServerRuntime(args *clcommon.SpawnArgs) error {
 	if args == nil || !args.CodexAppServer {
 		return nil
 	}
+	if session.CodexNativeRegistryApplicable(args.CodexAppServer, args.Harness,
+		args.Sandbox, args.SandboxImplementation) {
+		if err := codexNativeRegistryReadiness(); err != nil {
+			return err
+		}
+	}
 	owner := strings.TrimSpace(args.AgentID)
 	if owner == "" {
 		owner = strings.TrimSpace(args.ConvID)
@@ -223,6 +229,10 @@ func failPreparedCodexAppServerRuntime(args clcommon.SpawnArgs, cause error) {
 		_ = db.UpsertCodexAppServerRuntime(*runtime)
 	}
 	removeCodexAppServerGeneration(args.CodexAppServerSocket)
+	if err := session.UnregisterCodexNativePermissionProfile(args.CodexAppServerGeneration); err != nil {
+		slog.Warn("roll back failed Codex native permission profile",
+			"generation", args.CodexAppServerGeneration, "error", err)
+	}
 }
 
 func startCodexAppServerBootstrap(args clcommon.SpawnArgs) {

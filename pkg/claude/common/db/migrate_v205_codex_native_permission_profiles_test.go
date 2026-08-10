@@ -1,0 +1,26 @@
+package db
+
+import (
+	"database/sql"
+	"path/filepath"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestMigrateV204toV205AddsCodexNativePermissionProfiles(t *testing.T) {
+	d, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "v204.sqlite"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+	mustExec(t, d, `CREATE TABLE schema_version (version INTEGER NOT NULL)`)
+	mustExec(t, d, `INSERT INTO schema_version VALUES (204)`)
+
+	require.NoError(t, migrateV204toV205(d))
+	assert.Equal(t, 205, schemaVersion(d))
+	var count int
+	require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM sqlite_master
+		WHERE type = 'table' AND name = 'codex_native_permission_profiles'`).Scan(&count))
+	assert.Equal(t, 1, count)
+	require.NoError(t, migrateV204toV205(d), "partially applied migration converges")
+}

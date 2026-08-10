@@ -681,6 +681,9 @@ func runServe(p *serveParams) error {
 	// registering one generation. Until proof completes the selected drive
 	// remains fail-closed and holds mail.
 	startCodexAppServerRecovery(cronStop)
+	if err := session.ReconcileCodexNativePermissionRegistry(); err != nil {
+		slog.Warn("reconcile native Codex permission registry", "error", err)
+	}
 
 	// Copilot model-catalog mirror. The send-keys drive cannot ask its pane for
 	// model capabilities, so this refreshes Copilot's authenticated remote

@@ -6291,6 +6291,17 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		p.Harness, p.HarnessBuiltinMode, p.EffectiveSandbox, p.SandboxImplementation); fail != nil {
 		return nil, fail
 	}
+	if session.CodexNativeRegistryApplicable(p.CodexAppServer, harnessOrDefault(p.Harness),
+		p.HarnessBuiltinMode, p.SandboxImplementation) {
+		if err := codexNativeRegistryReadiness(); err != nil {
+			var setupErr *session.CodexNativeRegistryError
+			kind := "codex_native_registry_not_ready"
+			if errors.As(err, &setupErr) {
+				kind = setupErr.Code
+			}
+			return nil, &spawnFailure{http.StatusPreconditionFailed, kind, err.Error()}
+		}
+	}
 	if fail := copilotAPILoopbackFailure(
 		p.CopilotAPI, p.EffectiveSandbox, p.SandboxImplementation); fail != nil {
 		return nil, fail

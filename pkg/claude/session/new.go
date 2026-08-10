@@ -1710,7 +1710,16 @@ func runNew(params *NewParams) error {
 		launchProfilePath = profilePath
 		launchCodexSplitCapability = splitCapability
 		if params.CodexAppServerSocket != "" {
-			codexAppServerProfileOverrides, err = harness.CodexAppServerProfileOverrides(profilePath)
+			if outerLayer {
+				codexAppServerProfileOverrides, err = harness.CodexAppServerProfileOverrides(profilePath)
+			} else {
+				if err := RegisterCodexNativePermissionProfile(
+					params.CodexAppServerGeneration, profileName, profilePath,
+				); err != nil {
+					return fmt.Errorf("register managed Codex app-server profile: %w", err)
+				}
+				codexAppServerProfileOverrides, err = harness.CodexAppServerRegisteredProfileOverrides(profilePath)
+			}
 			if err != nil {
 				return fmt.Errorf("prepare managed Codex app-server profile: %w", err)
 			}
