@@ -47,6 +47,13 @@ func RunJoinGroup(params *session.NewParams) error {
 	if !explicitGroup && !DaemonAvailable() {
 		return automaticDaemonFallback(os.Stdin, os.Stderr, term.IsTerminal(int(os.Stdin.Fd())))
 	}
+	if !explicitGroup {
+		canonicalDir, err := canonicalGroupDir(launchDir(params))
+		if err != nil {
+			return fmt.Errorf("normalize launch directory: %w", err)
+		}
+		params.Dir = canonicalDir
+	}
 	params.JoinGroup = group
 
 	spawn := spawnParamsForJoinedSession(params, group)
@@ -155,10 +162,6 @@ func automaticGroupForDir(params *session.NewParams) (string, error) {
 		return "", fmt.Errorf("directory %q matches multiple groups (%s); choose one with --join-group or disable auto-join", cwd, strings.Join(matches, ", "))
 	}
 	if len(matches) == 1 {
-		// A relative spelling was resolved against THIS terminal process. Carry
-		// the canonical result only into an actual daemon spawn; an unmatched
-		// solo fallback must retain the caller's logical path spelling.
-		params.Dir = cwd
 		return matches[0], nil
 	}
 	if !params.AutoJoinOrCreateGroup {

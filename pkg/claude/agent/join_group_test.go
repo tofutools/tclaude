@@ -32,9 +32,11 @@ func TestAutomaticGroupForDirCanonicalMatch(t *testing.T) {
 	_, err = db.SetAgentGroupDefaultCwd("project-team", alias+string(os.PathSeparator)+".")
 	require.NoError(t, err)
 
-	got, err := automaticGroupForDir(&session.NewParams{Dir: real, AutoJoinGroup: true})
+	params := &session.NewParams{Dir: alias, AutoJoinGroup: true}
+	got, err := automaticGroupForDir(params)
 	require.NoError(t, err)
 	assert.Equal(t, "project-team", got)
+	assert.Equal(t, alias, params.Dir, "discovery must preserve logical cwd until a daemon spawn is confirmed")
 }
 
 func TestAutomaticGroupForDirNoMatchAndAmbiguity(t *testing.T) {
