@@ -28,7 +28,9 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 test('the CI badge summarizes checks and opens a panel on hover', async (t) => {
   const harness = await createPreactHarness(t);
   const mod = await harness.importDashboardModule('js/pr-checks-hover.js');
-  const { PRChecksBadge, checkDenominator, elapsed, summaryLine } = mod;
+  const {
+    PRChecksBadge, checkDenominator, checkTimeLabel, elapsed, isRunningCheck, summaryLine,
+  } = mod;
 
   await t.test('skipped checks leave the denominator', () => {
     // 12/14 must mean "twelve of the fourteen that had to run" — counting two
@@ -51,6 +53,28 @@ test('the CI badge summarizes checks and opens a panel on hover', async (t) => {
       'a completed check keeps its final duration, not the age of the cache',
     );
     assert.equal(elapsed({}, now), '');
+
+    assert.equal(isRunningCheck({
+      bucket: 'pending', conclusion: 'in progress', started_at: '2026-08-09T10:00:00Z',
+    }), true);
+    assert.equal(isRunningCheck({
+      bucket: 'pending', conclusion: 'queued', started_at: '2026-08-09T10:00:00Z',
+    }), false, 'a queued check stays static even if GitHub supplied a timestamp');
+    assert.equal(isRunningCheck({
+      bucket: 'pending', conclusion: 'in progress', started_at: '2026-08-09T10:00:00Z',
+      completed_at: '2026-08-09T10:00:42Z',
+    }), false, 'a completed check stays static even before its next status poll');
+    assert.equal(isRunningCheck({ bucket: 'pass', started_at: '2026-08-09T10:00:00Z' }), false);
+
+    assert.equal(checkTimeLabel({
+      bucket: 'pending', conclusion: 'queued', started_at: '2026-08-09T10:00:00Z',
+    }, now), 'queued', 'queued is a state, not an extrapolated runtime');
+    assert.equal(checkTimeLabel({
+      bucket: 'pending', conclusion: 'waiting', started_at: '2026-08-09T10:00:00Z',
+    }, now), 'waiting');
+    assert.equal(checkTimeLabel({
+      bucket: 'pending', conclusion: 'in progress', started_at: '2026-08-09T10:00:00Z',
+    }, now), '3m 30s');
   });
 
   await t.test('a hostile check URL never becomes a live link', () => {
@@ -337,6 +361,8 @@ test('a running check ticks locally between polls', async (t) => {
 
     const time = () => mounted.container.querySelector('.ci-check-time')?.textContent;
     assert.equal(time(), '3m 30s');
+    assert.ok(mounted.container.querySelector('.ci-check-icon').classList.contains('ci-check-running'),
+      'a started pending check receives the spinner class');
     // Preact deliberately schedules passive effects after paint; let that
     // queue flush before inspecting the interval it installed.
     await new Promise((resolve) => setTimeout(resolve, 120));

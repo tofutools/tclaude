@@ -262,6 +262,27 @@ export function elapsed(check, now = Date.now()) {
   return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`;
 }
 
+// A pending bucket also includes checks GitHub has merely queued. Only a
+// check with a usable start and no usable completion is actively running and
+// should receive motion (and drive the local elapsed clock).
+export function isRunningCheck(check) {
+  if (check?.bucket !== 'pending' || check?.conclusion !== 'in progress') return false;
+  const started = Date.parse(check?.started_at || '');
+  if (!Number.isFinite(started)) return false;
+  const ended = Date.parse(check?.completed_at || '');
+  return !Number.isFinite(ended) || ended < started;
+}
+
+// The right-hand column is runtime only when a check actually ran. GitHub can
+// attach a timestamp to queued/waiting checks, but counting from it implies
+// execution has begun; keep those rows honest by showing their state instead.
+export function checkTimeLabel(check, now = Date.now()) {
+  if (check?.bucket === 'pending' && !isRunningCheck(check)) {
+    return check?.conclusion || 'pending';
+  }
+  return elapsed(check, now) || '—';
+}
+
 export function summaryLine(summary) {
   const parts = [];
   if (summary?.passed) parts.push(`${summary.passed} passed`);
@@ -352,8 +373,9 @@ function usePRChecks(url, open) {
 }
 
 function CheckRow({ check, now }) {
-  const time = elapsed(check, now);
+  const time = checkTimeLabel(check, now);
   const href = safeCheckURL(check.url);
+  const running = isRunningCheck(check);
   const body = html`
     <span class="ci-check-body">
       <span class="ci-check-name">${check.name}</span>
@@ -364,11 +386,12 @@ function CheckRow({ check, now }) {
   `;
   return html`
     <li class=${`ci-check ci-check-${check.bucket || 'pending'}`}>
-      <span class=${`ci-check-icon ci-icon-${check.bucket || 'pending'}`} aria-hidden="true">${bucketGlyph(check.bucket)}</span>
+      <span class=${`ci-check-icon ci-icon-${check.bucket || 'pending'}${running ? ' ci-check-running' : ''}`}
+        aria-hidden="true">${bucketGlyph(check.bucket)}</span>
       ${href
         ? html`<a class="ci-check-link" href=${href} target="_blank" rel="noopener noreferrer">${body}</a>`
         : body}
-      <span class="ci-check-time">${time || '—'}</span>
+      <span class="ci-check-time">${time}</span>
     </li>
   `;
 }
@@ -378,10 +401,7 @@ function PRChecksPanel({ url, prNumber, summary, panelID, headingID, state, pane
   const live = data?.summary && (data.summary.total || 0) > 0 ? data.summary : summary;
   const checks = data?.checks || [];
   const [now, setNow] = useState(() => Date.now());
-  const hasRunningClock = checks.some((check) => check?.bucket === 'pending'
-    && Number.isFinite(Date.parse(check?.started_at || ''))
-    && !(Number.isFinite(Date.parse(check?.completed_at || ''))
-      && Date.parse(check.completed_at) >= Date.parse(check.started_at)));
+  const hasRunningClock = checks.some(isRunningCheck);
 
   // Polling replaces the source data every few seconds; this clock fills the
   // gaps so an open popover visibly counts up from the last reported start.

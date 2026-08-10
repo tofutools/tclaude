@@ -1063,6 +1063,13 @@ a.branch-link:hover { color: #58a6ff; text-decoration: underline; }
 .ci-icon-fail { color: #f85149; }
 .ci-icon-pending { color: #d29922; }
 .ci-icon-skipped { color: #6e7681; }
+/* Pending includes both queued and in-progress checks. Motion belongs only to
+   the latter; the component adds this class after seeing a real start time. */
+.ci-check-running { animation: ci-check-spin 1.1s linear infinite; }
+@keyframes ci-check-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .ci-check-running { animation: none; }
+}
 .ci-panel-empty { margin: 4px 0 0; color: #8b949e; font-size: 11px; }
 .ci-panel-note {
   margin: 9px 0 0; padding-top: 8px; border-top: 1px solid #30363d;
