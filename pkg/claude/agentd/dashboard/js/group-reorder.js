@@ -447,6 +447,16 @@ function bindGroupReorder() {
 
   listen(document, 'dragleave', (e) => {
     if (!groupReorderActive) return;
+    // Leaving the document can finish as a native copy in another window or
+    // application. Invalidate the internal placement so its later dragend
+    // cannot open a stale dashboard clone dialog. Chrome may omit
+    // relatedTarget for some internal transitions too; the next dragover
+    // immediately rebuilds the plan and marker when still inside.
+    if (!e.relatedTarget) {
+      groupCloneHoverPlan = null;
+      clearDropMarkers();
+      reorderPill(e, null);
+    }
     const trash = groupTrashTarget(e);
     if (!trash) return;
     if (trash.contains(e.relatedTarget)) return;

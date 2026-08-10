@@ -302,6 +302,17 @@ return (async function(){
   var rect = target.getBoundingClientRect();
   fire(target, 'dragover', {metaKey:true, clientX:rect.left + rect.width / 2, clientY:rect.top + rect.height / 2});
   if (!target.classList.contains('group-drop-clone')) throw new Error('Cmd dragover did not paint clone intent');
+  // A copy completed outside the document must not consume the cached internal
+  // placement. The null relatedTarget is the native leave-document signal.
+  fire(target, 'dragleave', {relatedTarget:null, clientX:0, clientY:0});
+  var outsideEnd = new DragEvent('dragend', {bubbles:true, cancelable:false, dataTransfer:transfer});
+  Object.defineProperty(outsideEnd, 'dataTransfer', {value:{dropEffect:'copy'}});
+  source.dispatchEvent(outsideEnd);
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  if (document.querySelector('#group-clone-modal.show')) throw new Error('outside copy dragend consumed a stale clone plan');
+
+  fire(source, 'dragstart');
+  fire(target, 'dragover', {metaKey:true, clientX:rect.left + rect.width / 2, clientY:rect.top + rect.height / 2});
   var dragend = new DragEvent('dragend', {bubbles:true, cancelable:false, dataTransfer:transfer});
   Object.defineProperty(dragend, 'dataTransfer', {value:{dropEffect:'copy'}});
   source.dispatchEvent(dragend);
