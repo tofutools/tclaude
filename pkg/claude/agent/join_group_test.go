@@ -57,6 +57,13 @@ func TestAutomaticGroupForDirNoMatchAndAmbiguity(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "multiple groups")
 	assert.Contains(t, err.Error(), "--join-group")
+	assert.Contains(t, err.Error(), "⚙")
+
+	_, err = db.SetAgentGroupDefaultSpawn("beta", true)
+	require.NoError(t, err)
+	got, err = automaticGroupForDir(&session.NewParams{Dir: dir, AutoJoinGroup: true})
+	require.NoError(t, err)
+	assert.Equal(t, "beta", got)
 }
 
 func TestAutomaticGroupForDirNoMatchPreservesLogicalDir(t *testing.T) {
@@ -80,6 +87,11 @@ func TestSpawnParamsForJoinedSessionPreservesExplicitCodexAppServerFalse(t *test
 	spawn := spawnParamsForJoinedSession(params, "team")
 	assert.False(t, spawn.CodexAppServer)
 	assert.True(t, spawn.codexAppServerSpecified)
+}
+
+func TestSpawnParamsForJoinedSessionPreservesOwner(t *testing.T) {
+	spawn := spawnParamsForJoinedSession(&session.NewParams{Owner: true}, "team")
+	assert.True(t, spawn.Owner)
 }
 
 func TestAvailableDirectoryGroupName(t *testing.T) {

@@ -53,7 +53,7 @@ tclaude
 
 The grouped launch uses the same daemon spawn orchestration as `tclaude agent
 spawn` and the dashboard modal. Consequently the top-level command accepts the
-applicable spawn controls, including `--profile`, `--name`, `--role`,
+applicable spawn controls, including `--profile`, `--name`, `--role`, `--owner`,
 `--descr`, `--initial-message`/`--file`, `--task`, `--worktree`, sandbox and
 approval controls, and harness/model/effort. It attaches to the spawned agent
 unless `--detached` is set. `--cwd` is the spawn-compatible alias for
@@ -67,8 +67,10 @@ that group's default. Auto-create defaults off. Both defaults are editable in
 the dashboard Config tab and stored as `session.auto_join_group` and
 `session.auto_join_or_create_group` in tclaude's config file. Explicit CLI
 flags override those settings, and an explicit `--join-group <name>` always
-wins. If more than one active group has the same canonical directory, startup
-refuses the ambiguous choice and asks for `--join-group`.
+wins. If more than one active group has the same canonical directory, mark one
+as the directory auto-join default from that group's **⚙** menu in the
+dashboard Groups tab. Startup uses that marked group; without one, its
+ambiguity error points to both the dashboard setting and `--join-group`.
 
 If directory discovery finds a group but agentd is unavailable, an interactive
 launch offers to continue as a solo session without group membership or agent

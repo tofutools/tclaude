@@ -6270,6 +6270,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	if fail := applyDefaultProfile(g, &p); fail != nil {
 		return nil, fail
 	}
+	if strings.TrimSpace(p.Name) == "" && groupName != "" {
+		p.Name = derivedGroupSpawnName(groupName, time.Now(), randomLabelToken())
+	}
 	// Defense in depth for template, wave, scribe, and process adapters that
 	// call executeSpawn directly instead of passing through handleGroupSpawn.
 	if fail := spawnHarnessPolicyFailure(g, p.SpawnedByConv, p.Harness); fail != nil {
@@ -7280,6 +7283,29 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	return nil, &spawnFailure{http.StatusGatewayTimeout, "timeout",
 		"spawned session " + label + " but conv-id never materialised within " + pollBudget.String() +
 			" — the session may still come up; check `tclaude session attach " + label + "`"}
+}
+
+// derivedGroupSpawnName gives unnamed group agents a readable, valid title.
+// The time keeps the operator's requested <group>-<date>-<HHmm> shape; a short
+// random tail prevents a wave of same-minute spawns from becoming ambiguous.
+func derivedGroupSpawnName(group string, now time.Time, token string) string {
+	base := agent.NormalizeSpawnName(group)
+	if base == "" {
+		base = "agent"
+	}
+	token = agent.NormalizeSpawnName(token)
+	if len(token) > 4 {
+		token = token[:4]
+	}
+	if token == "" {
+		token = "spawn"
+	}
+	suffix := now.Local().Format("20060102-1504") + "-" + token
+	budget := agent.MaxSpawnNameLen - len(suffix) - 1
+	if len(base) > budget {
+		base = strings.TrimRight(base[:budget], "-")
+	}
+	return base + "-" + suffix
 }
 
 func spawnRowBelongsToLaunch(s *db.SessionRow, launchEnroll bool, preConvID string, launchedAt time.Time) bool {

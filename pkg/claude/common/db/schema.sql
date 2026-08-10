@@ -187,7 +187,7 @@ CREATE TABLE "agent_groups" (
 			name        TEXT NOT NULL UNIQUE,
 			descr       TEXT NOT NULL DEFAULT '',
 			created_at  INTEGER NOT NULL
-		, archived_at INTEGER, default_cwd TEXT NOT NULL DEFAULT '', default_context TEXT NOT NULL DEFAULT '', max_members INTEGER NOT NULL DEFAULT 0, notify_enabled INTEGER NOT NULL DEFAULT 1, default_profile TEXT NOT NULL DEFAULT '', remote_control INTEGER, mission TEXT NOT NULL DEFAULT '', source_template TEXT NOT NULL DEFAULT '', parent_id INTEGER REFERENCES agent_groups(id) ON DELETE SET NULL, default_profile_id INTEGER, source_template_id INTEGER, sandbox_profile TEXT NOT NULL DEFAULT '', sandbox_profile_id INTEGER, attachment_url TEXT NOT NULL DEFAULT '', attachment_label TEXT NOT NULL DEFAULT '', route_generation INTEGER NOT NULL DEFAULT 0, owner_scopes_json TEXT NOT NULL DEFAULT ''
+		, archived_at INTEGER, default_cwd TEXT NOT NULL DEFAULT '', default_context TEXT NOT NULL DEFAULT '', max_members INTEGER NOT NULL DEFAULT 0, notify_enabled INTEGER NOT NULL DEFAULT 1, default_profile TEXT NOT NULL DEFAULT '', remote_control INTEGER, mission TEXT NOT NULL DEFAULT '', source_template TEXT NOT NULL DEFAULT '', parent_id INTEGER REFERENCES agent_groups(id) ON DELETE SET NULL, default_profile_id INTEGER, source_template_id INTEGER, sandbox_profile TEXT NOT NULL DEFAULT '', sandbox_profile_id INTEGER, attachment_url TEXT NOT NULL DEFAULT '', attachment_label TEXT NOT NULL DEFAULT '', route_generation INTEGER NOT NULL DEFAULT 0, owner_scopes_json TEXT NOT NULL DEFAULT '', default_spawn_group INTEGER NOT NULL DEFAULT 0
 			CHECK(length(CAST(owner_scopes_json AS BLOB)) BETWEEN 0 AND 262144)) STRICT;
 
 CREATE INDEX idx_agent_groups_archived
@@ -198,6 +198,9 @@ CREATE INDEX idx_agent_groups_default_profile_id ON agent_groups(default_profile
 CREATE INDEX idx_agent_groups_source_template_id ON agent_groups(source_template_id);
 
 CREATE INDEX idx_agent_groups_sandbox_profile_id ON agent_groups(sandbox_profile_id);
+
+CREATE UNIQUE INDEX idx_agent_groups_one_default_spawn
+			ON agent_groups(default_spawn_group) WHERE default_spawn_group = 1;
 
 CREATE TRIGGER stable_ref_group_profile_insert
 			AFTER INSERT ON agent_groups BEGIN
@@ -1318,4 +1321,3 @@ CREATE TABLE codex_native_permission_profiles (
 			cleanup_pending INTEGER NOT NULL DEFAULT 0 CHECK (cleanup_pending IN (0, 1)),
 			created_at   INTEGER NOT NULL
 		) STRICT;
-

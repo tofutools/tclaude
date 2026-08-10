@@ -3344,9 +3344,12 @@ type groupSummary struct {
 	// back to (agent_groups.default_cwd); "" = none. It is a path on the
 	// operator's own filesystem and this listing is readable by every local
 	// caller, so it is served only to a human one — see handleGroups.
-	DefaultCwd  string   `json:"default_cwd,omitempty"`
-	Permissions []string `json:"permissions,omitempty"`
-	Archived    bool     `json:"archived,omitempty"`
+	DefaultCwd string `json:"default_cwd,omitempty"`
+	// DefaultSpawnGroup is the operator-selected tie-breaker used only when
+	// directory auto-join matches more than one active group.
+	DefaultSpawnGroup bool     `json:"default_spawn_group,omitempty"`
+	Permissions       []string `json:"permissions,omitempty"`
+	Archived          bool     `json:"archived,omitempty"`
 	// NotifyMuted flags a group whose OS notifications are switched
 	// off (agent_groups.notify_enabled = false). omitempty: only the
 	// exceptional muted state is serialized.
@@ -3476,6 +3479,7 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 				MaxMembers:              g.MaxMembers,
 				DefaultProfile:          g.DefaultProfile,
 				DefaultCwd:              defaultCwd,
+				DefaultSpawnGroup:       g.DefaultSpawnGroup,
 				Permissions:             groupPermissions,
 				Archived:                g.IsArchived(),
 				NotifyMuted:             !g.NotifyEnabled,
@@ -3884,9 +3888,10 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		return
 	}
 	var body struct {
-		Descr          *string `json:"descr,omitempty"`
-		DefaultCwd     *string `json:"default_cwd,omitempty"`
-		DefaultContext *string `json:"default_context,omitempty"`
+		Descr             *string `json:"descr,omitempty"`
+		DefaultCwd        *string `json:"default_cwd,omitempty"`
+		DefaultContext    *string `json:"default_context,omitempty"`
+		DefaultSpawnGroup *bool   `json:"default_spawn_group,omitempty"`
 		// DefaultProfile names the spawn profile (JOH-210) whose launch fields
 		// fill blank spawn fields for this group's agents; "" clears it. *string
 		// so a caller can clear it by sending "" — distinct from omitting it.
@@ -3966,9 +3971,9 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 			return
 		}
 	}
-	if body.Descr == nil && body.DefaultCwd == nil && body.DefaultContext == nil && body.DefaultProfile == nil && body.MaxMembers == nil && body.NotifyEnabled == nil && body.RemoteControlPolicy == nil && body.Permissions == nil && body.OwnerScopes == nil {
+	if body.Descr == nil && body.DefaultCwd == nil && body.DefaultContext == nil && body.DefaultSpawnGroup == nil && body.DefaultProfile == nil && body.MaxMembers == nil && body.NotifyEnabled == nil && body.RemoteControlPolicy == nil && body.Permissions == nil && body.OwnerScopes == nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
-			"nothing to update (expected descr, default_cwd, default_context, default_profile, max_members, notify_enabled, remote_control_policy, permissions and/or owner_scopes)")
+			"nothing to update (expected descr, default_cwd, default_context, default_spawn_group, default_profile, max_members, notify_enabled, remote_control_policy, permissions and/or owner_scopes)")
 		return
 	}
 	resp := map[string]any{"group": g.Name}
@@ -4017,6 +4022,19 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 			return
 		}
 		resp["default_cwd"] = cwd
+	}
+
+	if body.DefaultSpawnGroup != nil {
+		n, err := db.SetAgentGroupDefaultSpawn(g.Name, *body.DefaultSpawnGroup)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_default_spawn_group", err.Error())
+			return
+		}
+		if n == 0 {
+			writeError(w, http.StatusNotFound, "not_found", "no such group")
+			return
+		}
+		resp["default_spawn_group"] = *body.DefaultSpawnGroup
 	}
 
 	if body.DefaultContext != nil {

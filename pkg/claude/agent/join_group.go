@@ -128,6 +128,7 @@ func spawnParamsForJoinedSession(params *session.NewParams, group string) *Spawn
 		CodexAppServer:         params.CodexAppServer,
 		FastMode:               params.FastMode,
 		SandboxImpl:            params.SandboxImpl,
+		Owner:                  params.Owner,
 		NoOwner:                params.NoOwner,
 	}
 	spawn.codexAppServerSpecified = params.CodexAppServerSpecified
@@ -148,21 +149,40 @@ func automaticGroupForDir(params *session.NewParams) (string, error) {
 		return "", fmt.Errorf("list groups for directory auto-join: %w", err)
 	}
 
-	var matches []string
+	var matches []*db.AgentGroup
 	for _, group := range groups {
 		if group.IsArchived() || strings.TrimSpace(group.DefaultCwd) == "" {
 			continue
 		}
 		groupDir, normalizeErr := canonicalGroupDir(group.DefaultCwd)
 		if normalizeErr == nil && groupDir == cwd {
-			matches = append(matches, group.Name)
+			matches = append(matches, group)
 		}
 	}
 	if len(matches) > 1 {
-		return "", fmt.Errorf("directory %q matches multiple groups (%s); choose one with --join-group or disable auto-join", cwd, strings.Join(matches, ", "))
+		var names []string
+		var defaults []*db.AgentGroup
+		for _, match := range matches {
+			names = append(names, match.Name)
+			if match.DefaultSpawnGroup {
+				defaults = append(defaults, match)
+			}
+		}
+		if len(defaults) == 1 {
+			params.Dir = cwd
+			return defaults[0].Name, nil
+		}
+		if len(defaults) > 1 {
+			return "", fmt.Errorf("directory %q matches multiple groups (%s) and more than one is marked as the directory auto-join default; clear the conflicting defaults in the dashboard group settings", cwd, strings.Join(names, ", "))
+		}
+		return "", fmt.Errorf("directory %q matches multiple groups (%s); choose one with --join-group, or in the dashboard Groups tab open that group's ⚙ menu and select 'make directory auto-join default'", cwd, strings.Join(names, ", "))
 	}
 	if len(matches) == 1 {
-		return matches[0], nil
+		// A relative spelling was resolved against THIS terminal process. Carry
+		// the canonical result only into an actual daemon spawn; an unmatched
+		// solo fallback must retain the caller's logical path spelling.
+		params.Dir = cwd
+		return matches[0].Name, nil
 	}
 	if !params.AutoJoinOrCreateGroup {
 		return "", nil
