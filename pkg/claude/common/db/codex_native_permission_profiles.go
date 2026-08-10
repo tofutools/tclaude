@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"errors"
 	"strings"
 	"time"
@@ -17,7 +18,7 @@ func UpsertCodexNativePermissionProfile(profile CodexNativePermissionProfile) er
 	profile.Generation = strings.TrimSpace(profile.Generation)
 	profile.ProfileName = strings.TrimSpace(profile.ProfileName)
 	if profile.Generation == "" || profile.ProfileName == "" || strings.TrimSpace(profile.ProfileTOML) == "" {
-		return errors.New("Codex native permission profile needs generation, name, and complete TOML")
+		return errors.New("codex native permission profile needs generation, name, and complete TOML")
 	}
 	d, err := Open()
 	if err != nil {
@@ -43,6 +44,26 @@ func DeleteCodexNativePermissionProfile(generation string) error {
 	return err
 }
 
+func GetCodexNativePermissionProfile(generation string) (*CodexNativePermissionProfile, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	var profile CodexNativePermissionProfile
+	var created dbTimestamp
+	err = d.QueryRow(`SELECT generation, profile_name, profile_toml, created_at
+		FROM codex_native_permission_profiles WHERE generation = ?`, strings.TrimSpace(generation)).
+		Scan(&profile.Generation, &profile.ProfileName, &profile.ProfileTOML, &created)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	profile.CreatedAt = created.Time()
+	return &profile, nil
+}
+
 func ListCodexNativePermissionProfiles() ([]CodexNativePermissionProfile, error) {
 	d, err := Open()
 	if err != nil {
@@ -65,4 +86,31 @@ func ListCodexNativePermissionProfiles() ([]CodexNativePermissionProfile, error)
 		out = append(out, profile)
 	}
 	return out, rows.Err()
+}
+
+// PruneSupersededCodexNativePermissionProfiles removes only generations that
+// have a newer verified-ready app-server runtime for the same stable agent.
+// A newest stopped/dead generation remains resumable and therefore retained;
+// an unavailable replacement cannot evict the predecessor that can recover it.
+func PruneSupersededCodexNativePermissionProfiles() (int64, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	result, err := d.Exec(`DELETE FROM codex_native_permission_profiles
+		WHERE EXISTS (
+			SELECT 1 FROM codex_app_server_runtimes current
+			WHERE current.generation = codex_native_permission_profiles.generation
+			  AND EXISTS (
+				SELECT 1 FROM codex_app_server_runtimes replacement
+				WHERE replacement.agent_id = current.agent_id
+				  AND replacement.generation <> current.generation
+				  AND replacement.state = ?
+				  AND replacement.created_at > current.created_at
+			  )
+		)`, CodexAppServerReady)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

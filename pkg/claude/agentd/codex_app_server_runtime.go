@@ -362,6 +362,10 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 	}
 	handle := registerCodexAppServerHandle(*runtime, client)
 	projectCodexAppServerRawStatus(handle, thread.Status, time.Now().UTC(), "app-server snapshot")
+	if err := session.ReconcileCodexNativePermissionRegistry(); err != nil {
+		slog.Warn("prune superseded Codex native permission profiles after ready",
+			"generation", runtime.Generation, "error", err)
+	}
 	go watchCodexAppServerHandle(handle)
 }
 
@@ -563,6 +567,10 @@ func recoverCodexAppServerRuntime(runtime db.CodexAppServerRuntime, owner string
 	}
 	handle := registerCodexAppServerHandle(runtime, client)
 	projectCodexAppServerRawStatus(handle, thread.Status, time.Now().UTC(), "app-server daemon reconnect")
+	if err := session.ReconcileCodexNativePermissionRegistry(); err != nil {
+		slog.Warn("prune superseded Codex native permission profiles after recovery",
+			"generation", runtime.Generation, "error", err)
+	}
 	go watchCodexAppServerHandle(handle)
 }
 
@@ -971,7 +979,23 @@ func stopCodexAppServerRuntime(convID, launchID string) {
 }
 
 func stopFailedCodexAppServerLaunch(convID, launchID, tmuxSession string) {
+	var generation string
+	if launchID != "" {
+		if runtime, _ := db.GetCodexAppServerRuntimeByLaunchID(launchID); runtime != nil {
+			generation = runtime.Generation
+		}
+	} else if convID != "" {
+		if runtime, _ := db.GetCodexAppServerRuntimeByConvID(convID); runtime != nil {
+			generation = runtime.Generation
+		}
+	}
 	stopCodexAppServerRuntime(convID, launchID)
+	if generation != "" {
+		if err := session.UnregisterCodexNativePermissionProfile(generation); err != nil {
+			slog.Warn("roll back failed Codex native permission profile",
+				"generation", generation, "error", err)
+		}
+	}
 	if strings.TrimSpace(tmuxSession) == "" {
 		return
 	}

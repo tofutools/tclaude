@@ -1555,6 +1555,11 @@ func resumeOneConvWithCodexRollbackLocked(convID string, recreateMissingDir, tru
 		return res
 	}
 	removeCodexAppServerGeneration(runtime.SocketPath)
+	if err := session.UnregisterCodexNativePermissionProfile(runtime.Generation); err != nil {
+		res.Action = "error:codex_drive_rollback"
+		res.Detail = "Codex drive changed, but native permission-profile cleanup failed: " + err.Error()
+		return res
+	}
 	return resumeOneConvClaimedUnderLaunchLock(convID, recreateMissingDir, trustRoot)
 }
 func errorString(err error) string {
@@ -1748,6 +1753,14 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 	relaunchSandboxImplementation := launchConfig.activeSandboxImplementation()
 	if launchConfig.TemporaryHarnessBuiltinMode {
 		effectiveSandbox = temporarySandboxLaunchSnapshot(harnessName, stableEffectiveSandbox)
+	}
+	if session.CodexNativeRegistryApplicable(launchConfig.CodexAppServer, harnessName,
+		relaunchSandbox, relaunchSandboxImplementation) {
+		if err := codexNativeRegistryReadiness(); err != nil {
+			res.Action = "error:" + codexNativeRegistryErrorCode(err)
+			res.Detail = err.Error()
+			return res
+		}
 	}
 	// The harness's own sandbox configuration is re-verified on every relaunch,
 	// never replayed from the recorded posture. For a harness tclaude can
@@ -6294,12 +6307,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	if session.CodexNativeRegistryApplicable(p.CodexAppServer, harnessOrDefault(p.Harness),
 		p.HarnessBuiltinMode, p.SandboxImplementation) {
 		if err := codexNativeRegistryReadiness(); err != nil {
-			var setupErr *session.CodexNativeRegistryError
-			kind := "codex_native_registry_not_ready"
-			if errors.As(err, &setupErr) {
-				kind = setupErr.Code
-			}
-			return nil, &spawnFailure{http.StatusPreconditionFailed, kind, err.Error()}
+			return nil, &spawnFailure{http.StatusPreconditionFailed,
+				codexNativeRegistryErrorCode(err), err.Error()}
 		}
 	}
 	if fail := copilotAPILoopbackFailure(

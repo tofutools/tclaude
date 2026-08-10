@@ -415,6 +415,25 @@ test('Codex app-server stays capability-gated and profile opt-in never leaks', a
   ).body, false, 'unsupported surfaces omit the field entirely');
 });
 
+test('native Codex registry warning is scoped to app-server builtin sandbox', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const unavailable = {
+    codex_native_registry_ready: false,
+    codex_native_registry_reason: 'managed target mode must be 0700; see '
+      + model.CODEX_NATIVE_REGISTRY_SETUP_DOC,
+  };
+  const draft = {
+    harness: 'codex', codexAppServer: true, sandbox: 'tclaude-agent', sandboxImpl: '',
+  };
+  assert.equal(model.nativeCodexRegistryWarningFor(draft, unavailable, 'harness-builtin'),
+    'managed target mode must be 0700');
+  assert.equal(model.nativeCodexRegistryWarningFor(draft, unavailable, 'tclaude-layer'), '',
+    'the outer tclaude sandbox has no native-registry setup dependency');
+  assert.equal(model.nativeCodexRegistryWarningFor({ ...draft, codexAppServer: false }, unavailable), '');
+  assert.equal(model.nativeCodexRegistryWarningFor(draft, { codex_native_registry_ready: true }), '');
+});
+
 test('agent-spawn state snapshots opens and invalidates every async generation', async (t) => {
   const harness = await createPreactHarness(t);
   const { createAgentSpawnState } = await harness.importDashboardModule('js/agent-spawn-state.js');

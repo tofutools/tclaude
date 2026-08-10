@@ -10,9 +10,12 @@ import (
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
 
 const CodexNativeRegistrySetupDoc = "https://github.com/tofutools/tclaude/blob/main/docs/codex-native-permission-registry.md"
@@ -105,6 +108,9 @@ func validateCodexNativeRegistrySetup(opts CodexNativeRegistryOptions) error {
 		return &CodexNativeRegistryError{CodexNativeRegistryWrongTarget,
 			fmt.Sprintf("%s does not resolve directly to %s", opts.SystemDir, opts.ManagedDir)}
 	}
+	if err := validateNativeRegistryDirectoryChain(opts); err != nil {
+		return err
+	}
 	target, err := os.Lstat(opts.ManagedDir)
 	if err != nil {
 		return &CodexNativeRegistryError{CodexNativeRegistryWrongTarget, "managed target is missing or unreadable"}
@@ -127,6 +133,60 @@ func validateCodexNativeRegistrySetup(opts CodexNativeRegistryOptions) error {
 			return err
 		}
 	}
+	entries, err := os.ReadDir(opts.ManagedDir)
+	if err != nil {
+		return fmt.Errorf("list managed Codex registry directory: %w", err)
+	}
+	for _, entry := range entries {
+		switch entry.Name() {
+		case "config.toml", "requirements.toml", "registry.lock":
+			continue
+		}
+		if strings.HasPrefix(entry.Name(), ".tclaude-registry-") {
+			// A concurrent atomic publisher creates this regular 0600 temporary
+			// before rename while holding registry.lock. Validate its inode but do
+			// not make pre-lock readiness spuriously fail on that safe transient.
+			if err := validateNativeRegistryFile(filepath.Join(opts.ManagedDir, entry.Name()), opts.UserUID, ""); err != nil {
+				return err
+			}
+			continue
+		}
+		return &CodexNativeRegistryError{CodexNativeRegistryConflict,
+			fmt.Sprintf("unexpected unmanaged entry %s exists in the registry directory", entry.Name())}
+	}
+	return nil
+}
+
+func validateNativeRegistryDirectoryChain(opts CodexNativeRegistryOptions) error {
+	managed := filepath.Clean(opts.ManagedDir)
+	dataDir := filepath.Dir(managed)
+	tclaudeDir := filepath.Dir(dataDir)
+	if managed == "." || dataDir == "." || tclaudeDir == "." ||
+		filepath.Base(managed) != "codex-sb-cfg" || filepath.Base(dataDir) != "data" ||
+		filepath.Base(tclaudeDir) != ".tclaude" {
+		return &CodexNativeRegistryError{CodexNativeRegistryWrongTarget,
+			"managed target must be the exact ~/.tclaude/data/codex-sb-cfg path"}
+	}
+	for _, path := range []string{tclaudeDir, dataDir, managed} {
+		info, err := os.Lstat(path)
+		if err != nil {
+			return &CodexNativeRegistryError{CodexNativeRegistryWrongTarget,
+				fmt.Sprintf("managed path component %s is missing or unreadable", path)}
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return &CodexNativeRegistryError{CodexNativeRegistryWrongTarget,
+				fmt.Sprintf("managed path component %s must be a real directory", path)}
+		}
+		owner, ok := fileOwnerUID(info)
+		if !ok || owner != opts.UserUID {
+			return &CodexNativeRegistryError{CodexNativeRegistryUnsafeOwner,
+				fmt.Sprintf("managed path component %s must be owned by the current user", path)}
+		}
+		if info.Mode().Perm()&0o022 != 0 {
+			return &CodexNativeRegistryError{CodexNativeRegistryUnsafeMode,
+				fmt.Sprintf("managed path component %s must not be group/world writable", path)}
+		}
+	}
 	return nil
 }
 
@@ -147,8 +207,12 @@ func validateNativeRegistryFile(path string, uid uint32, marker string) error {
 	if !ok || owner != uid {
 		return &CodexNativeRegistryError{CodexNativeRegistryUnsafeOwner, filepath.Base(path) + " must be owned by the current user"}
 	}
-	if info.Mode().Perm()&0o022 != 0 {
-		return &CodexNativeRegistryError{CodexNativeRegistryUnsafeMode, filepath.Base(path) + " must not be group/world writable"}
+	if info.Mode().Perm() != 0o600 {
+		return &CodexNativeRegistryError{CodexNativeRegistryUnsafeMode, filepath.Base(path) + " mode must be 0600"}
+	}
+	if info.Size() > 16<<20 {
+		return &CodexNativeRegistryError{CodexNativeRegistryConflict,
+			filepath.Base(path) + " is unexpectedly large"}
 	}
 	if marker != "" {
 		data, readErr := os.ReadFile(path)
@@ -175,30 +239,86 @@ func RegisterCodexNativePermissionProfile(generation, profileName, profilePath s
 	if err := validateStoredNativeProfile(profileName, string(data)); err != nil {
 		return err
 	}
-	if err := db.UpsertCodexNativePermissionProfile(db.CodexNativePermissionProfile{
-		Generation: generation, ProfileName: profileName, ProfileTOML: string(data),
-	}); err != nil {
-		return fmt.Errorf("persist native Codex permission profile: %w", err)
-	}
-	if err := reconcileCodexNativePermissionRegistry(opts); err != nil {
-		_ = db.DeleteCodexNativePermissionProfile(generation)
+	return registerCodexNativePermissionProfile(opts, generation, profileName, string(data))
+}
+
+func registerCodexNativePermissionProfile(
+	opts CodexNativeRegistryOptions, generation, profileName, profileTOML string,
+) error {
+	if err := validateStoredNativeProfile(profileName, profileTOML); err != nil {
 		return err
 	}
-	return nil
+	profile := db.CodexNativePermissionProfile{
+		Generation: generation, ProfileName: profileName, ProfileTOML: profileTOML,
+	}
+	return withNativeRegistryLock(opts, func() error {
+		previous, err := db.GetCodexNativePermissionProfile(generation)
+		if err != nil {
+			return fmt.Errorf("load prior native Codex permission profile: %w", err)
+		}
+		if err := db.UpsertCodexNativePermissionProfile(profile); err != nil {
+			return fmt.Errorf("persist native Codex permission profile: %w", err)
+		}
+		if err := reconcileCodexNativePermissionRegistryLocked(opts); err != nil {
+			rollbackErr := restoreNativePermissionProfile(generation, previous)
+			if rollbackErr == nil {
+				rollbackErr = reconcileCodexNativePermissionRegistryLocked(opts)
+			}
+			if rollbackErr != nil {
+				return fmt.Errorf("%w; rollback native Codex permission profile: %v", err, rollbackErr)
+			}
+			return err
+		}
+		return nil
+	})
 }
 
 func UnregisterCodexNativePermissionProfile(generation string) error {
 	if strings.TrimSpace(generation) == "" {
 		return nil
 	}
+	existing, err := db.GetCodexNativePermissionProfile(generation)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return nil
+	}
 	opts, err := defaultCodexNativeRegistryOptions()
 	if err != nil {
 		return err
 	}
-	if err := db.DeleteCodexNativePermissionProfile(generation); err != nil {
-		return err
+	return unregisterCodexNativePermissionProfile(opts, generation)
+}
+
+func unregisterCodexNativePermissionProfile(opts CodexNativeRegistryOptions, generation string) error {
+	return withNativeRegistryLock(opts, func() error {
+		previous, err := db.GetCodexNativePermissionProfile(generation)
+		if err != nil {
+			return err
+		}
+		if err := db.DeleteCodexNativePermissionProfile(generation); err != nil {
+			return err
+		}
+		if err := reconcileCodexNativePermissionRegistryLocked(opts); err != nil {
+			rollbackErr := restoreNativePermissionProfile(generation, previous)
+			if rollbackErr == nil {
+				rollbackErr = reconcileCodexNativePermissionRegistryLocked(opts)
+			}
+			if rollbackErr != nil {
+				return fmt.Errorf("%w; restore native Codex permission profile: %v", err, rollbackErr)
+			}
+			return err
+		}
+		return nil
+	})
+}
+
+func restoreNativePermissionProfile(generation string, previous *db.CodexNativePermissionProfile) error {
+	if previous != nil {
+		return db.UpsertCodexNativePermissionProfile(*previous)
 	}
-	return reconcileCodexNativePermissionRegistry(opts)
+	return db.DeleteCodexNativePermissionProfile(generation)
 }
 
 func ReconcileCodexNativePermissionRegistry() error {
@@ -207,13 +327,27 @@ func ReconcileCodexNativePermissionRegistry() error {
 		return err
 	}
 	profiles, err := db.ListCodexNativePermissionProfiles()
-	if err != nil || len(profiles) == 0 {
+	if err != nil {
 		return err
+	}
+	if len(profiles) == 0 {
+		// An unconfigured host has no native-registry obligation merely because
+		// agentd started. A configured host still converges stale generated
+		// entries back to the safe bundled-only baseline after a restart.
+		if err := validateCodexNativeRegistrySetup(opts); err != nil {
+			return nil
+		}
 	}
 	return reconcileCodexNativePermissionRegistry(opts)
 }
 
 func reconcileCodexNativePermissionRegistry(opts CodexNativeRegistryOptions) error {
+	return withNativeRegistryLock(opts, func() error {
+		return reconcileCodexNativePermissionRegistryLocked(opts)
+	})
+}
+
+func withNativeRegistryLock(opts CodexNativeRegistryOptions, fn func() error) error {
 	if err := validateCodexNativeRegistrySetup(opts); err != nil {
 		return err
 	}
@@ -221,11 +355,18 @@ func reconcileCodexNativePermissionRegistry(opts CodexNativeRegistryOptions) err
 	if err != nil {
 		return fmt.Errorf("lock native Codex permission registry: %w", err)
 	}
-	defer lock.Close()
+	defer func() { _ = lock.Close() }()
 	// Revalidate after taking the cross-process lock. This closes replacement
 	// races between the readiness check and the first managed write.
 	if err := validateCodexNativeRegistrySetup(opts); err != nil {
 		return err
+	}
+	return fn()
+}
+
+func reconcileCodexNativePermissionRegistryLocked(opts CodexNativeRegistryOptions) error {
+	if _, err := db.PruneSupersededCodexNativePermissionProfiles(); err != nil {
+		return fmt.Errorf("prune superseded native Codex permission profiles: %w", err)
 	}
 	profiles, err := db.ListCodexNativePermissionProfiles()
 	if err != nil {
@@ -249,18 +390,20 @@ func reconcileCodexNativePermissionRegistry(opts CodexNativeRegistryOptions) err
 	}
 	// The only permitted intermediate widening is a defined-but-not-yet-allowed
 	// profile. Never publish an allowlist entry before its complete definition.
-	if err := atomicWriteNativeRegistryFile(configPath, []byte(unionConfig)); err != nil {
+	if err := writeNativeRegistryFile(configPath, []byte(unionConfig)); err != nil {
 		return fmt.Errorf("publish Codex permission definitions: %w", err)
 	}
-	if err := atomicWriteNativeRegistryFile(requirementsPath, []byte(renderNativeRegistryRequirements(profiles))); err != nil {
+	if err := writeNativeRegistryFile(requirementsPath, []byte(renderNativeRegistryRequirements(profiles))); err != nil {
 		return fmt.Errorf("publish Codex permission allowlist: %w", err)
 	}
 	// Removals happen only after the exact allowlist no longer names them.
-	if err := atomicWriteNativeRegistryFile(configPath, []byte(desiredConfig)); err != nil {
+	if err := writeNativeRegistryFile(configPath, []byte(desiredConfig)); err != nil {
 		return fmt.Errorf("prune Codex permission definitions: %w", err)
 	}
 	return nil
 }
+
+var writeNativeRegistryFile = atomicWriteNativeRegistryFile
 
 func validateStoredNativeProfile(name, content string) error {
 	name, err := harness.ValidateCodexProfileName(name)
@@ -268,14 +411,52 @@ func validateStoredNativeProfile(name, content string) error {
 		return errors.New("native Codex registry accepts only generated tclaude-agent profile names")
 	}
 	var parsed struct {
-		DefaultPermissions string         `toml:"default_permissions"`
-		Permissions        map[string]any `toml:"permissions"`
+		DefaultPermissions string `toml:"default_permissions"`
+		Features           struct {
+			NetworkProxy      *bool `toml:"network_proxy"`
+			UseLegacyLandlock *bool `toml:"use_legacy_landlock"`
+		} `toml:"features"`
+		Permissions map[string]struct {
+			Extends    string            `toml:"extends"`
+			Filesystem map[string]string `toml:"filesystem"`
+			Network    struct {
+				Enabled     bool              `toml:"enabled"`
+				UnixSockets map[string]string `toml:"unix_sockets"`
+			} `toml:"network"`
+		} `toml:"permissions"`
 	}
-	if err := toml.Unmarshal([]byte(content), &parsed); err != nil {
+	if err := toml.NewDecoder(strings.NewReader(content)).DisallowUnknownFields().Decode(&parsed); err != nil {
 		return fmt.Errorf("decode generated profile TOML: %w", err)
 	}
-	if parsed.DefaultPermissions != name || parsed.Permissions[name] == nil {
+	profile, ok := parsed.Permissions[name]
+	if parsed.DefaultPermissions != name || !ok || len(parsed.Permissions) != 1 {
 		return fmt.Errorf("generated profile content does not define and select %s", name)
+	}
+	if profile.Extends != ":workspace" {
+		return fmt.Errorf("generated profile %s has unexpected base %q", name, profile.Extends)
+	}
+	for path, access := range profile.Filesystem {
+		if !filepath.IsAbs(path) || (access != "read" && access != "write" && access != "none") {
+			return fmt.Errorf("generated profile %s has invalid filesystem rule %q=%q", name, path, access)
+		}
+	}
+	for path, access := range profile.Network.UnixSockets {
+		if !filepath.IsAbs(path) || access != "allow" {
+			return fmt.Errorf("generated profile %s has invalid Unix-socket rule %q=%q", name, path, access)
+		}
+	}
+	privateStateDir := tclcommon.TclaudeDataDir()
+	if privateStateDir == "" || profile.Filesystem[privateStateDir] != "none" {
+		return fmt.Errorf("generated profile %s does not deny tclaude private state", name)
+	}
+	tmuxDir, err := clcommon.TclaudeTmuxSocketDir()
+	if err != nil || tmuxDir == "" || profile.Filesystem[tmuxDir] != "none" {
+		return fmt.Errorf("generated profile %s does not deny the tmux control directory", name)
+	}
+	agentdSocket := agentipc.CanonicalSocketPath()
+	if agentdSocket == "" || profile.Filesystem[agentdSocket] != "read" ||
+		profile.Network.UnixSockets[agentdSocket] != "allow" {
+		return fmt.Errorf("generated profile %s does not allow the canonical agentd socket", name)
 	}
 	if !strings.Contains(content, "[permissions."+name+"]") {
 		return fmt.Errorf("generated profile %s has no canonical permission table", name)
@@ -343,7 +524,7 @@ func atomicWriteNativeRegistryFile(path string, data []byte) error {
 		return err
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
+	defer func() { _ = os.Remove(tmpName) }()
 	if err := tmp.Chmod(0o600); err != nil {
 		_ = tmp.Close()
 		return err

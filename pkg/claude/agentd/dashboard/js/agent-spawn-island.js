@@ -7,8 +7,8 @@ import {
 } from './management-overlay.js';
 import { shortCwd } from './helpers.js';
 import {
+  CODEX_NATIVE_REGISTRY_SETUP_DOC,
   MODEL_CUSTOM_VALUE,
-  SANDBOX_IMPL_DEFAULT,
   SANDBOX_PROFILE_NONE,
   WT_NEW,
   approvalControlsVisibleFor,
@@ -22,6 +22,7 @@ import {
   formatAttachmentSize,
   groupHasContext,
   modelSelectValue,
+  nativeCodexRegistryWarningFor,
   prepareSpawnDraft,
   replaceSpawnProfile,
   selectedDefaultProfile,
@@ -786,15 +787,9 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     draft, launchDefaults?.implementation,
   );
   const sandboxImplCleared = sandboxImplClearedNoticeFor(draft);
-  const effectiveSandboxImpl = draft.sandboxImpl || launchDefaults?.implementation || SANDBOX_IMPL_DEFAULT;
-  const nativeCodexRegistryWarning = draft.harness === 'codex'
-    && draft.codexAppServer
-    && draft.sandbox === 'tclaude-agent'
-    && effectiveSandboxImpl === SANDBOX_IMPL_DEFAULT
-    && !view.harness?.codex_native_registry_ready
-    ? (view.harness?.codex_native_registry_reason
-      || 'Native Codex permission-profile integration is not installed; this launch will be refused. See docs/codex-native-permission-registry.md.')
-    : '';
+  const nativeCodexRegistryWarning = nativeCodexRegistryWarningFor(
+    draft, view.harness, launchDefaults?.implementation,
+  );
   const worktreeUsable = worktrees.phase === 'ready' && worktrees.isRepo;
   let worktreeEmptyLabel = '(no worktree — use CWD above)';
   if (worktrees.phase === 'loading') worktreeEmptyLabel = 'loading…';
@@ -1263,7 +1258,10 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       <div class="cron-create-row" id="agent-spawn-codex-native-registry-warning">
         <span class="cron-create-label"></span>
         <div class="cron-create-target" role="alert">
-          <div class="spawn-field-hint warn">⚠ ${nativeCodexRegistryWarning}</div>
+          <div class="spawn-field-hint warn">
+            ⚠ Native Codex permission-profile integration is not ready; this launch will be refused: ${nativeCodexRegistryWarning}.
+            <a href=${CODEX_NATIVE_REGISTRY_SETUP_DOC} target="_blank" rel="noopener">Setup and repair</a>
+          </div>
         </div>
       </div>`}
     <label class="cron-create-enabled" id="agent-spawn-ssh-workaround-row" hidden=${!view.showSSHWorkaround}

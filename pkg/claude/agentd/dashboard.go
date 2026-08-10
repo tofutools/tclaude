@@ -1372,7 +1372,7 @@ type dashboardHarness struct {
 	// dialog and profile editor gate their checkbox on it.
 	CanCopilotAPI             bool   `json:"can_copilot_api"`
 	CanCodexAppServer         bool   `json:"can_codex_app_server"`
-	CodexNativeRegistryReady  bool   `json:"codex_native_registry_ready,omitempty"`
+	CodexNativeRegistryReady  bool   `json:"codex_native_registry_ready"`
 	CodexNativeRegistryReason string `json:"codex_native_registry_reason,omitempty"`
 	CanFastMode               bool   `json:"can_fast_mode"`
 	// CanTclaudeLayer reports whether the EXPERIMENTAL tclaude-layer sandbox
