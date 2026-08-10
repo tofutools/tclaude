@@ -778,6 +778,7 @@ type SpawnParams struct {
 	// reason as the fields above — boa's short-flag enricher must not steal a
 	// letter. Experimental opt-in (off by default). See JOH-200 part 2.
 	AutoReview bool `long:"auto-review" help:"EXPERIMENTAL: route the new agent's Codex approval prompts to the guardian subagent (auto-decides in your place) instead of asking you. Off by default. Not applicable to claude"`
+	TrustDir   bool `long:"trust-dir" help:"Pre-trust the launch directory before starting the agent. Off by default; applicable only to harnesses with a directory-trust dialog"`
 
 	RemoteControl bool `long:"remote-control" help:"Start the new agent with Claude Code Remote Access ON (claude --remote-control), so it is reachable from the Claude app. Off by default. Requires a claude.ai login to pair. Not applicable to codex"`
 
@@ -1034,6 +1035,7 @@ func mergeProfileIntoSpawn(p *SpawnParams, explicitMessage string, prof *profile
 
 	out := resolvedSpawnFields{
 		AutoReview:     p.AutoReview,
+		TrustDir:       p.TrustDir,
 		AutoFocus:      p.AutoFocus,
 		InitialMessage: explicitMessage,
 	}
@@ -1067,7 +1069,7 @@ func mergeProfileIntoSpawn(p *SpawnParams, explicitMessage string, prof *profile
 		if !out.AutoReview && prof.AutoReview != nil {
 			out.AutoReview = *prof.AutoReview
 		}
-		if prof.TrustDir != nil {
+		if !out.TrustDir && prof.TrustDir != nil {
 			out.TrustDir = *prof.TrustDir
 		}
 	} else {
@@ -1302,7 +1304,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	contextWindowMax := merged.ContextWindowMax
 	sandboxImpl := strings.TrimSpace(p.SandboxImpl)
 	autoReview := p.AutoReview
-	trustDir := false
+	trustDir := p.TrustDir
 	remoteControl := p.RemoteControl
 	autoMemory := p.AutoMemory
 	copilotAPI := p.CopilotAPI
@@ -1350,6 +1352,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 			ContextWindowMax:       p.ContextWindowMax,
 			SandboxImpl:            p.SandboxImpl,
 			AutoReview:             p.AutoReview,
+			TrustDir:               p.TrustDir,
 		}
 		if validateMergedProfile {
 			validationFields = merged
@@ -1427,10 +1430,9 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 			fmt.Fprintf(stderr, "Error: %v\n", err)
 			return nil, rcInvalidArg
 		}
-		// Resolve the effective trust-dir (taken from a --profile's trust_dir,
-		// since the CLI has no dedicated flag). false for any harness is always
-		// fine; a true for a harness with no trust dialog fails fast here. The
-		// daemon re-gates server-side.
+		// Resolve the effective trust-dir (explicit --trust-dir, then a named
+		// profile). false for any harness is always fine; a true for a harness
+		// with no trust dialog fails fast here. The daemon re-gates server-side.
 		if _, err = harness.ResolveTrustDir(h, validationFields.TrustDir); err != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", err)
 			return nil, rcInvalidArg
@@ -1528,7 +1530,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		req.ContextFeatures = &contextFeatures
 	}
 	req.autoReviewSpecified = p.AutoReview
-	req.trustDirSpecified = false
+	req.trustDirSpecified = p.TrustDir
 	// --remote-control is opt-in only on the CLI: send &true when the flag is set,
 	// and leave the pointer nil otherwise so the daemon's group/profile
 	// remote-control policy fills it (the dashboard form is the surface that sends

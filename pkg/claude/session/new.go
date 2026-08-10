@@ -51,6 +51,7 @@ type NewParams struct {
 	SandboxSnapshotDigest string `short:"V" long:"sandbox-snapshot-digest" optional:"true" help:"Internal: expected effective sandbox snapshot digest"`
 	ResourceCgroupDir     string `short:"W" long:"resource-cgroup-dir" optional:"true" help:"Internal: prepared Linux resource cgroup shared with a managed server"`
 	Dir                   string `short:"C" long:"dir" optional:"true" help:"Directory to start session in (defaults to current directory)"`
+	Cwd                   string `long:"cwd" optional:"true" help:"Working directory for the new session; dashboard/agent-spawn-compatible alias for --dir"`
 	// CwdWriteProof is an internal daemon-to-session capability. The harness
 	// command checks its marker only after tmux has established the pane's cwd
 	// inode. Hidden from normal CLI help.
@@ -285,7 +286,11 @@ type NewParams struct {
 	// CodexAppServer is the deliberately opt-in Codex API drive. The private
 	// runtime paths are minted by agentd; accepting the public toggle without
 	// those paths would produce a remote TUI nobody owns, so it is refused.
-	CodexAppServer             bool   `long:"codex-app-server" help:"EXPERIMENTAL: launch Codex against a private tclaude-owned app-server and bind agentd to the TUI-created thread. Off by default; Codex 0.147.x only"`
+	CodexAppServer bool `long:"codex-app-server" help:"EXPERIMENTAL: launch Codex against a private tclaude-owned app-server and bind agentd to the TUI-created thread. Off by default; Codex 0.147.x only"`
+	// CodexAppServerSpecified preserves Cobra's omitted-vs-explicit-false bit
+	// while a top-level launch is adapted to the group spawn boundary. It is
+	// runtime adapter state, not another CLI/config parameter.
+	CodexAppServerSpecified    bool   `boa:"ignore" json:"-"`
 	CodexAppServerSocket       string `long:"codex-app-server-socket" optional:"true" help:"Internal: agentd-minted private Codex app-server Unix socket"`
 	CodexAppServerURL          string `long:"codex-app-server-url" optional:"true" help:"Internal: agentd-minted authenticated Codex app-server loopback endpoint"`
 	CodexAppServerTokenSHA256  string `long:"codex-app-server-token-sha256" optional:"true" help:"Internal: digest of the per-generation Codex app-server capability"`
@@ -308,6 +313,32 @@ type NewParams struct {
 	Name      string `long:"name" optional:"true" help:"Display name for the session (claude --name; becomes its conversation title). With --join-group it is the new agent's name"`
 	Role      string `long:"role" optional:"true" help:"Role tag for the new member in --join-group (e.g. 'tech-lead')"`
 	Descr     string `long:"descr" optional:"true" help:"Description of the new member's purpose in --join-group"`
+
+	// Automatic group discovery is resolved from explicit CLI flags over the
+	// config file in RunNewFromCommand. Programmatic RunNew callers retain their
+	// historical solo-session behavior because these zero values stay false.
+	AutoJoinGroup         bool `long:"auto-join-group" default:"true" help:"Automatically join an active group whose configured default directory matches the normalized launch directory (default: config session.auto_join_group, then true). Pass --auto-join-group=false to disable"`
+	AutoJoinOrCreateGroup bool `long:"auto-join-or-create-group" help:"When directory auto-join finds no group, create one for the normalized launch directory and join it (default: config session.auto_join_or_create_group, then false)"`
+
+	// Group-spawn parity fields. They apply when --join-group or directory
+	// discovery selects/creates a group and are then handed to agent.RunSpawn,
+	// the exact CLI path used by `tclaude agent spawn`.
+	Profile             string `long:"profile" optional:"true" help:"Spawn profile to apply when this launch joins a group; explicit launch flags override it"`
+	SandboxProfile      string `long:"sandbox-profile" optional:"true" help:"Human-only filesystem/environment sandbox profile for a group-joined launch"`
+	OmitSandboxProfiles bool   `long:"omit-sandbox-profiles" help:"Human-only: omit global, group, and explicit tclaude sandbox profiles for a group-joined launch"`
+	Worktree            string `long:"worktree" optional:"true" help:"Create or reuse this git worktree branch for a group-joined launch"`
+	WorktreeBase        string `long:"worktree-base" optional:"true" help:"Base branch for a newly-created --worktree"`
+	WorktreeRepo        string `long:"worktree-repo" optional:"true" help:"Repository in which to create --worktree when it differs from the launch directory"`
+	InitialMessage      string `long:"initial-message" optional:"true" help:"Task brief delivered to a group-joined agent's inbox"`
+	File                string `long:"file" optional:"true" help:"Read --initial-message from this file ('-' reads stdin)"`
+	ReplyTo             string `long:"reply-to" optional:"true" help:"Recipient for replies to the group-joined agent's startup brief"`
+	SpawnTimeout        string `long:"timeout" optional:"true" help:"How long to wait for a group-joined agent to register (default 30s, max 5m)"`
+	AskHuman            string `long:"ask-human" optional:"true" help:"On group create/spawn permission denial, ask the human with this timeout"`
+	AutoFocus           bool   `long:"auto-focus" help:"Open another terminal focused on the group-joined agent after spawn"`
+	NoGroupContext      bool   `long:"no-group-context" help:"Do not include the selected group's shared startup context"`
+	Task                string `long:"task" optional:"true" help:"Task-reference URL for the group-joined agent"`
+	TaskLabel           string `long:"task-label" optional:"true" help:"Display label overriding the value derived from --task"`
+	NoOwner             bool   `long:"no-owner" help:"Do not make the group-joined agent an owner even if a profile would"`
 
 	// InitialPrompt is a first-turn prompt the harness submits itself at
 	// launch (its own positional [PROMPT] arg) — used for a harness whose
@@ -472,6 +503,11 @@ func validateReplacedPermissionProfile(
 // session for AttachToSession). When nil, --join-group falls back to a
 // clear error.
 var JoinGroupHandler func(*NewParams) error
+
+// ErrNoAutomaticGroupMatch tells the session path that directory discovery was
+// enabled but found nothing and auto-create was off. The launch then continues
+// as the historical solo session. Explicit --join-group never returns it.
+var ErrNoAutomaticGroupMatch = errors.New("no automatic group match")
 
 func runNew(params *NewParams) error {
 	if params.HelpContextFeatures {

@@ -345,6 +345,19 @@ type SessionConfig struct {
 	// fallback after its first prompt. It defaults off: starting a session
 	// must not silently spend tokens or wait on another model invocation.
 	AutoNameFromPrompt bool `json:"auto_name_from_prompt,omitempty"`
+
+	// AutoJoinGroup lets a fresh terminal-owned `tclaude` / `session new`
+	// launch discover an active agent group whose default cwd is the same
+	// canonical directory as the launch cwd, then use the ordinary daemon spawn
+	// path for that group. It is a pointer because the out-of-box default is ON:
+	// nil / absent means true, while an explicit false disables discovery.
+	AutoJoinGroup *bool `json:"auto_join_group,omitempty"`
+
+	// AutoJoinOrCreateGroup extends directory discovery by creating a group when
+	// no active group owns the canonical launch cwd. The derived group name is
+	// based on the directory basename and disambiguated predictably. This is
+	// deliberately opt-in: nil / absent means false.
+	AutoJoinOrCreateGroup *bool `json:"auto_join_or_create_group,omitempty"`
 }
 
 // ResolvedTmuxNameStyle returns the effective tmux-session naming style,
@@ -366,6 +379,19 @@ func (c *Config) ResolvedTmuxNameStyle() string {
 // Nil-safe and opt-in so the default launch path remains free and immediate.
 func (c *Config) AutoNameFromPromptEnabled() bool {
 	return c != nil && c.Session != nil && c.Session.AutoNameFromPrompt
+}
+
+// AutoJoinGroupEnabled reports the terminal-start directory discovery policy.
+// It defaults on so a group configured for the current directory works with a
+// bare `tclaude`; only an explicit false disables it.
+func (c *Config) AutoJoinGroupEnabled() bool {
+	return c == nil || c.Session == nil || c.Session.AutoJoinGroup == nil || *c.Session.AutoJoinGroup
+}
+
+// AutoJoinOrCreateGroupEnabled reports whether terminal startup may create a
+// missing directory group. It is opt-in and therefore defaults off.
+func (c *Config) AutoJoinOrCreateGroupEnabled() bool {
+	return c != nil && c.Session != nil && c.Session.AutoJoinOrCreateGroup != nil && *c.Session.AutoJoinOrCreateGroup
 }
 
 // Activity-bot style values — the per-mode choices in ActivityBotsConfig.

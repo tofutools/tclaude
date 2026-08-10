@@ -587,6 +587,11 @@ function populateConfigForm(cfg) {
   $('#cfg-ratelimit-7d').value = rl ? rl.seven_day_percent_max_used : '';
 
   const a = cfg.agent || {};
+	const session = cfg.session || {};
+	// Directory auto-join defaults on; only an explicit false disables it.
+	$('#cfg-session-auto-join-group').checked = session.auto_join_group !== false;
+	// Auto-create is the higher-impact extension and defaults off.
+	$('#cfg-session-auto-join-or-create-group').checked = session.auto_join_or_create_group === true;
   $('#cfg-agent-autolaunch').checked = !!a.auto_launch_dashboard;
   $('#cfg-agent-access-autoopen').checked = !!a.access_request_auto_open_browser;
   $('#cfg-agent-access-notify').checked = !!a.access_request_system_notification;
@@ -1077,6 +1082,17 @@ function assembleConfig() {
   // had no agent key. Drop it when nothing is set.
   if (Object.keys(a).length) cfg.agent = a;
   else delete cfg.agent;
+
+	// session is shared with the existing tmux/display-name settings, so clone
+	// and preserve fields without widgets. Persist only non-default choices:
+	// auto-join=true and auto-create=false are represented by absent keys.
+	const session = (cfg.session && typeof cfg.session === 'object') ? cfg.session : {};
+	if ($('#cfg-session-auto-join-group').checked) delete session.auto_join_group;
+	else session.auto_join_group = false;
+	if ($('#cfg-session-auto-join-or-create-group').checked) session.auto_join_or_create_group = true;
+	else delete session.auto_join_or_create_group;
+	if (Object.keys(session).length) cfg.session = session;
+	else delete cfg.session;
 
   // remote_access is an optional block. Clone the existing one so a future
   // sub-field with no widget round-trips, then set the two form-owned keys:

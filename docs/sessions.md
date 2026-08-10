@@ -37,6 +37,44 @@ tclaude session new --harness codex --resume <conv-id>
 tclaude session new -d
 ```
 
+### Bare startup and directory groups
+
+A fresh terminal launch automatically looks for an active agent group whose
+configured **default directory** is the same directory as the launch. Both
+paths are made absolute, cleaned, and resolved through symlinks when possible;
+the match is exact rather than parent/child containment. Thus, after setting a
+group's default directory in the dashboard, this is enough to start an agent
+inside that group:
+
+```bash
+cd /path/to/project
+tclaude
+```
+
+The grouped launch uses the same daemon spawn orchestration as `tclaude agent
+spawn` and the dashboard modal. Consequently the top-level command accepts the
+applicable spawn controls, including `--profile`, `--name`, `--role`,
+`--descr`, `--initial-message`/`--file`, `--task`, `--worktree`, sandbox and
+approval controls, and harness/model/effort. It attaches to the spawned agent
+unless `--detached` is set. `--cwd` is the spawn-compatible alias for
+`-C`/`--dir`.
+
+Directory matching defaults on. `--auto-join-group=false` disables it for one
+launch. `--auto-join-or-create-group` additionally creates a group when no
+active group matches, using a normalized directory basename (`repo`, then
+`repo-2`, etc. when names are taken) and recording the canonical directory as
+that group's default. Auto-create defaults off. Both defaults are editable in
+the dashboard Config tab and stored as `session.auto_join_group` and
+`session.auto_join_or_create_group` in tclaude's config file. Explicit CLI
+flags override those settings, and an explicit `--join-group <name>` always
+wins. If more than one active group has the same canonical directory, startup
+refuses the ambiguous choice and asks for `--join-group`.
+
+Resume, managed daemon launches, and `--shell` never perform directory
+discovery. When matching is enabled but finds nothing and auto-create is off,
+the command retains the historical solo-session behavior. Spawn-only flags are
+rejected in that fallback rather than silently ignored.
+
 For a fresh terminal launch, `tclaude` and `tclaude session new` inherit the
 **harness, model, and effort** from the global default spawn profile selected
 in the dashboard (or with `tclaude agent profiles default set`). An explicit
@@ -103,7 +141,7 @@ about on stderr rather than only logged.
 | Flag               | Description                                              |
 |--------------------|----------------------------------------------------------|
 | `-d, --detached`   | Start session without attaching                          |
-| `-C, --dir <path>` | Directory to start the session in                       |
+| `-C, --dir <path>` / `--cwd <path>` | Directory to start the session in       |
 | `--resume <id>`    | Resume from the selected harness's conversation store     |
 | `--label <name>`   | Custom label for the session                             |
 | `--harness <name>` | Coding harness: `claude` \| `codex` \| `shell` (unset: global profile, then an installed harness; Claude preferred) |
