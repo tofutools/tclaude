@@ -42,6 +42,16 @@ func RunNewFromCommand(params *NewParams, cmd *cobra.Command) error {
 		}
 		params.Dir = params.Cwd
 	}
+	if params.NoDaemon && strings.TrimSpace(params.JoinGroup) != "" {
+		return fmt.Errorf("--no-daemon cannot be combined with --join-group")
+	}
+	if params.NoDaemon {
+		params.AutoJoinGroup = false
+		params.AutoJoinOrCreateGroup = false
+		if err := validateUnmatchedGroupSpawnFlags(params); err != nil {
+			return fmt.Errorf("--no-daemon: %w", err)
+		}
+	}
 	if strings.TrimSpace(params.JoinGroup) == "" {
 		if automaticGroupEligible(params, explicit) {
 			cfg, _ := config.Load()
@@ -62,7 +72,7 @@ func recordLaunchFlagPresence(params *NewParams, explicit explicitLaunchFields) 
 }
 
 func automaticGroupEligible(params *NewParams, explicit explicitLaunchFields) bool {
-	if params.ManagedLaunch || strings.TrimSpace(params.Resume) != "" || params.Shell ||
+	if params.ManagedLaunch || params.NoDaemon || strings.TrimSpace(params.Resume) != "" || params.Shell ||
 		strings.TrimSpace(params.Harness) == ShellHarnessName || params.HelpContextFeatures ||
 		clcommon.ShouldRunClaudeDirect(clcommon.ExtractClaudeExtraArgs()) {
 		return false

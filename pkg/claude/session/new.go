@@ -319,6 +319,7 @@ type NewParams struct {
 	// historical solo-session behavior because these zero values stay false.
 	AutoJoinGroup         bool `long:"auto-join-group" default:"true" help:"Automatically join an active group whose configured default directory matches the normalized launch directory (default: config session.auto_join_group, then true). Pass --auto-join-group=false to disable"`
 	AutoJoinOrCreateGroup bool `long:"auto-join-or-create-group" help:"When directory auto-join finds no group, create one for the normalized launch directory and join it (default: config session.auto_join_or_create_group, then false)"`
+	NoDaemon              bool `long:"no-daemon" help:"Start a solo session without agentd-backed group discovery or agent features; useful for non-interactive launches when agentd is unavailable"`
 
 	// Group-spawn parity fields. They apply when --join-group or directory
 	// discovery selects/creates a group and are then handed to agent.RunSpawn,

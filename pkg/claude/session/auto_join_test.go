@@ -43,10 +43,20 @@ func TestValidateUnmatchedGroupSpawnFlags(t *testing.T) {
 
 func TestAutomaticGroupEligibilityPreservesDirectModes(t *testing.T) {
 	assert.False(t, automaticGroupEligible(&NewParams{ManagedLaunch: true}, nil))
+	assert.False(t, automaticGroupEligible(&NewParams{NoDaemon: true}, nil))
 	assert.False(t, automaticGroupEligible(&NewParams{Resume: "abc"}, nil))
 	assert.False(t, automaticGroupEligible(&NewParams{Shell: true}, nil))
 	assert.False(t, automaticGroupEligible(&NewParams{}, explicitLaunchFields{"label": true}))
 	assert.True(t, automaticGroupEligible(&NewParams{}, nil))
+}
+
+func TestNoDaemonIsNotAGroupLaunchMode(t *testing.T) {
+	params := &NewParams{NoDaemon: true, AutoJoinGroup: true, AutoJoinOrCreateGroup: true}
+	assert.False(t, automaticGroupEligible(params, explicitLaunchFields{"no-daemon": true}))
+
+	params.AutoJoinGroup = false
+	params.AutoJoinOrCreateGroup = false
+	require.NoError(t, validateUnmatchedGroupSpawnFlags(params))
 }
 
 func TestRecordLaunchFlagPresencePreservesExplicitCodexAppServerFalse(t *testing.T) {
