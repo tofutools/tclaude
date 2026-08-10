@@ -1276,7 +1276,18 @@ test('sandbox import accepts the current v2 export envelope', async (t) => {
   const state = createManagementState(); state.openDialog({ kind: 'sandbox-import' });
   let inspected = null;
   const actions = {
-    async inspectSandboxBundle(value) { inspected = value; return { profiles: value.profiles, warnings: [] }; },
+    async inspectSandboxBundle(value) {
+      inspected = value;
+      return {
+        profiles: value.profiles.map((profile) => ({
+          ...profile,
+          filesystem: [{ path: '/canonical/cache', access: 'read' }],
+          filesystem_spellings: { version: 1, rules: [{ resolved_path: '/canonical/cache', spellings: ['/portable/cache'] }] },
+          pre_launch: [{ name: 'prepare', script: 'export CACHE=/canonical/cache\n', exports: ['CACHE'] }],
+        })),
+        warnings: [],
+      };
+    },
     async importSandboxBundle() {},
   };
   const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
@@ -1284,7 +1295,10 @@ test('sandbox import accepts the current v2 export envelope', async (t) => {
   const envelope = { format: 'tclaude-sandbox-profiles', format_version: 2, profiles: [{ name: 'offline', network_access: 'none' }] };
   const raw = host.querySelector('#sandbox-profile-import-modal textarea'); raw.value = JSON.stringify(envelope); raw.dispatchEvent(new harness.window.Event('input', { bubbles: true })); await harness.act(() => Promise.resolve());
   const preview = [...host.querySelectorAll('#sandbox-profile-import-modal button')].find((button) => button.textContent === 'Preview'); preview.click(); await harness.act(() => Promise.resolve());
-  assert.deepEqual(inspected, envelope); assert.ok(host.querySelector('#sandbox-profile-import-modal .profile-transfer-list'));
+  assert.deepEqual(inspected, envelope); assert.ok(host.querySelector('#sandbox-profile-import-preview'));
+  assert.match(host.querySelector('.sbx-cap-alias').parentElement.textContent, /\/portable\/cache → \/canonical\/cache/);
+  const script = host.querySelector('.sandbox-import-script'); script.open = true;
+  assert.equal(script.querySelector('pre').textContent, 'export CACHE=/canonical/cache\n');
   cleanups.reverse().forEach((fn) => fn());
 });
 
