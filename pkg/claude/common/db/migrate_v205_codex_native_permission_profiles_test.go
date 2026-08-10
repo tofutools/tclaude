@@ -26,5 +26,9 @@ func TestMigrateV204toV205AddsCodexNativePermissionProfiles(t *testing.T) {
 	require.NoError(t, d.QueryRow(`SELECT type FROM pragma_table_info('codex_native_permission_profiles')
 		WHERE name = 'created_at'`).Scan(&createdType))
 	assert.Equal(t, "INTEGER", createdType)
+	var cleanupType string
+	require.NoError(t, d.QueryRow(`SELECT type FROM pragma_table_info('codex_native_permission_profiles')
+		WHERE name = 'cleanup_pending'`).Scan(&cleanupType))
+	assert.Equal(t, "INTEGER", cleanupType)
 	require.NoError(t, migrateV204toV205(d), "partially applied migration converges")
 }

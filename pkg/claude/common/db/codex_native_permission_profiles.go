@@ -8,10 +8,11 @@ import (
 )
 
 type CodexNativePermissionProfile struct {
-	Generation  string
-	ProfileName string
-	ProfileTOML string
-	CreatedAt   time.Time
+	Generation     string
+	ProfileName    string
+	ProfileTOML    string
+	CleanupPending bool
+	CreatedAt      time.Time
 }
 
 func UpsertCodexNativePermissionProfile(profile CodexNativePermissionProfile) error {
@@ -28,10 +29,30 @@ func UpsertCodexNativePermissionProfile(profile CodexNativePermissionProfile) er
 		profile.CreatedAt = time.Now().UTC()
 	}
 	_, err = d.Exec(`INSERT INTO codex_native_permission_profiles
-		(generation, profile_name, profile_toml, created_at) VALUES (?, ?, ?, ?)
+		(generation, profile_name, profile_toml, cleanup_pending, created_at) VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(generation) DO UPDATE SET profile_name=excluded.profile_name,
-		profile_toml=excluded.profile_toml`, profile.Generation, profile.ProfileName,
-		profile.ProfileTOML, dbTime(profile.CreatedAt))
+		profile_toml=excluded.profile_toml, cleanup_pending=excluded.cleanup_pending`,
+		profile.Generation, profile.ProfileName, profile.ProfileTOML, profile.CleanupPending,
+		dbTime(profile.CreatedAt))
+	return err
+}
+
+func MarkCodexNativePermissionProfileCleanupPending(generation string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`UPDATE codex_native_permission_profiles SET cleanup_pending = 1
+		WHERE generation = ?`, strings.TrimSpace(generation))
+	return err
+}
+
+func DeletePendingCodexNativePermissionProfiles() error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`DELETE FROM codex_native_permission_profiles WHERE cleanup_pending = 1`)
 	return err
 }
 
@@ -51,9 +72,9 @@ func GetCodexNativePermissionProfile(generation string) (*CodexNativePermissionP
 	}
 	var profile CodexNativePermissionProfile
 	var created dbTimestamp
-	err = d.QueryRow(`SELECT generation, profile_name, profile_toml, created_at
+	err = d.QueryRow(`SELECT generation, profile_name, profile_toml, cleanup_pending, created_at
 		FROM codex_native_permission_profiles WHERE generation = ?`, strings.TrimSpace(generation)).
-		Scan(&profile.Generation, &profile.ProfileName, &profile.ProfileTOML, &created)
+		Scan(&profile.Generation, &profile.ProfileName, &profile.ProfileTOML, &profile.CleanupPending, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -69,7 +90,7 @@ func ListCodexNativePermissionProfiles() ([]CodexNativePermissionProfile, error)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT generation, profile_name, profile_toml, created_at
+	rows, err := d.Query(`SELECT generation, profile_name, profile_toml, cleanup_pending, created_at
 		FROM codex_native_permission_profiles ORDER BY profile_name`)
 	if err != nil {
 		return nil, err
@@ -79,7 +100,8 @@ func ListCodexNativePermissionProfiles() ([]CodexNativePermissionProfile, error)
 	for rows.Next() {
 		var profile CodexNativePermissionProfile
 		var created dbTimestamp
-		if err := rows.Scan(&profile.Generation, &profile.ProfileName, &profile.ProfileTOML, &created); err != nil {
+		if err := rows.Scan(&profile.Generation, &profile.ProfileName, &profile.ProfileTOML,
+			&profile.CleanupPending, &created); err != nil {
 			return nil, err
 		}
 		profile.CreatedAt = created.Time()

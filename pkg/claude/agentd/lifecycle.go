@@ -1548,6 +1548,11 @@ func resumeOneConvWithCodexRollbackLocked(convID string, recreateMissingDir, tru
 			return res
 		}
 	}
+	if err := session.UnregisterCodexNativePermissionProfile(runtime.Generation); err != nil {
+		res.Action = "error:codex_drive_rollback"
+		res.Detail = "Codex drive unchanged; native permission-profile cleanup is pending: " + err.Error()
+		return res
+	}
 	source := "explicit --send-keys compatibility rollback"
 	if err := db.SetAgentCodexAppServerSelectionForConv(convID, false, source); err != nil {
 		res.Action = "error:codex_drive_rollback"
@@ -1555,11 +1560,6 @@ func resumeOneConvWithCodexRollbackLocked(convID string, recreateMissingDir, tru
 		return res
 	}
 	removeCodexAppServerGeneration(runtime.SocketPath)
-	if err := session.UnregisterCodexNativePermissionProfile(runtime.Generation); err != nil {
-		res.Action = "error:codex_drive_rollback"
-		res.Detail = "Codex drive changed, but native permission-profile cleanup failed: " + err.Error()
-		return res
-	}
 	return resumeOneConvClaimedUnderLaunchLock(convID, recreateMissingDir, trustRoot)
 }
 func errorString(err error) string {

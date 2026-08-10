@@ -277,37 +277,40 @@ func UnregisterCodexNativePermissionProfile(generation string) error {
 	if strings.TrimSpace(generation) == "" {
 		return nil
 	}
+	opts, err := defaultCodexNativeRegistryOptions()
+	if err != nil {
+		return err
+	}
+	// Old app-server rows can predate the native registry. Let their explicit
+	// compatibility rollback proceed on an unconfigured host. Registration
+	// cannot succeed while this exact topology validation fails; on a prepared
+	// host the definitive existence check remains inside the cross-process lock.
 	existing, err := db.GetCodexNativePermissionProfile(generation)
 	if err != nil {
 		return err
 	}
-	if existing == nil {
+	if existing == nil && validateCodexNativeRegistrySetup(opts) != nil {
 		return nil
-	}
-	opts, err := defaultCodexNativeRegistryOptions()
-	if err != nil {
-		return err
 	}
 	return unregisterCodexNativePermissionProfile(opts, generation)
 }
 
 func unregisterCodexNativePermissionProfile(opts CodexNativeRegistryOptions, generation string) error {
 	return withNativeRegistryLock(opts, func() error {
-		previous, err := db.GetCodexNativePermissionProfile(generation)
+		existing, err := db.GetCodexNativePermissionProfile(generation)
 		if err != nil {
 			return err
 		}
-		if err := db.DeleteCodexNativePermissionProfile(generation); err != nil {
+		if existing == nil {
+			return nil
+		}
+		// Persist cleanup intent before touching the generated files. If a
+		// publication fails, startup reconciliation will retry the removal
+		// instead of resurrecting an orphaned allowlist entry from the row.
+		if err := db.MarkCodexNativePermissionProfileCleanupPending(generation); err != nil {
 			return err
 		}
 		if err := reconcileCodexNativePermissionRegistryLocked(opts); err != nil {
-			rollbackErr := restoreNativePermissionProfile(generation, previous)
-			if rollbackErr == nil {
-				rollbackErr = reconcileCodexNativePermissionRegistryLocked(opts)
-			}
-			if rollbackErr != nil {
-				return fmt.Errorf("%w; restore native Codex permission profile: %v", err, rollbackErr)
-			}
 			return err
 		}
 		return nil
@@ -372,11 +375,17 @@ func reconcileCodexNativePermissionRegistryLocked(opts CodexNativeRegistryOption
 	if err != nil {
 		return err
 	}
+	active := profiles[:0]
 	for _, profile := range profiles {
+		if profile.CleanupPending {
+			continue
+		}
 		if err := validateStoredNativeProfile(profile.ProfileName, profile.ProfileTOML); err != nil {
 			return fmt.Errorf("validate persisted Codex permission profile %s: %w", profile.ProfileName, err)
 		}
+		active = append(active, profile)
 	}
+	profiles = active
 	configPath := filepath.Join(opts.ManagedDir, "config.toml")
 	requirementsPath := filepath.Join(opts.ManagedDir, "requirements.toml")
 	oldConfig, readErr := os.ReadFile(configPath)
@@ -399,6 +408,9 @@ func reconcileCodexNativePermissionRegistryLocked(opts CodexNativeRegistryOption
 	// Removals happen only after the exact allowlist no longer names them.
 	if err := writeNativeRegistryFile(configPath, []byte(desiredConfig)); err != nil {
 		return fmt.Errorf("prune Codex permission definitions: %w", err)
+	}
+	if err := db.DeletePendingCodexNativePermissionProfiles(); err != nil {
+		return fmt.Errorf("finish native Codex permission profile cleanup: %w", err)
 	}
 	return nil
 }

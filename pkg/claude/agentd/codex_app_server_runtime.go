@@ -39,6 +39,32 @@ var codexAppServerRecoveryOwner = func() string {
 	return fmt.Sprintf("agentd:%d:%d", os.Getpid(), time.Now().UnixNano())
 }()
 
+var reconcileCodexNativePermissionRegistry = session.ReconcileCodexNativePermissionRegistry
+
+func reconcileCodexNativePermissionRegistryForGeneration(generation string) error {
+	before, err := db.GetCodexNativePermissionProfile(generation)
+	if err != nil {
+		return fmt.Errorf("load native Codex permission profile before reconciliation: %w", err)
+	}
+	if err := reconcileCodexNativePermissionRegistry(); err != nil {
+		return err
+	}
+	// Outer-layer and legacy app-server generations deliberately have no native
+	// profile. When this generation did register one, however, pruning must not
+	// silently make the runtime ready without its exact enforcement profile.
+	if before == nil || before.CleanupPending {
+		return nil
+	}
+	after, err := db.GetCodexNativePermissionProfile(generation)
+	if err != nil {
+		return fmt.Errorf("reload native Codex permission profile after reconciliation: %w", err)
+	}
+	if after == nil || after.CleanupPending {
+		return errors.New("native Codex permission profile was removed during reconciliation")
+	}
+	return nil
+}
+
 type codexAppServerHandle struct {
 	// runtime is immutable generation identity after registration. Reconnects
 	// replace only client while holding mutations, which every control caller
@@ -346,6 +372,11 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 		fail(errors.New("validated Codex TUI binding does not belong to the recorded live launch/pane"))
 		return
 	}
+	if err := reconcileCodexNativePermissionRegistryForGeneration(runtime.Generation); err != nil {
+		_ = client.Close()
+		fail(fmt.Errorf("validate native Codex permission registry before ready: %w", err))
+		return
+	}
 	runtime.State = db.CodexAppServerReady
 	runtime.Detail = ""
 	completed, err := db.CompleteCodexAppServerRuntimeBootstrap(*runtime)
@@ -362,7 +393,7 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 	}
 	handle := registerCodexAppServerHandle(*runtime, client)
 	projectCodexAppServerRawStatus(handle, thread.Status, time.Now().UTC(), "app-server snapshot")
-	if err := session.ReconcileCodexNativePermissionRegistry(); err != nil {
+	if err := reconcileCodexNativePermissionRegistryForGeneration(runtime.Generation); err != nil {
 		slog.Warn("prune superseded Codex native permission profiles after ready",
 			"generation", runtime.Generation, "error", err)
 	}
@@ -389,6 +420,13 @@ func startCodexAppServerRecovery(stop <-chan struct{}) {
 }
 
 func runCodexAppServerRecoverySweep() {
+	// The requirements file is the enforcement boundary for recovered native
+	// profiles. Refuse even to claim a runtime until the durable registry has
+	// converged; the next sweep retries after an operator repairs the topology.
+	if err := reconcileCodexNativePermissionRegistry(); err != nil {
+		slog.Warn("hold Codex app-server recovery until native permission registry is ready", "error", err)
+		return
+	}
 	runtimes, err := db.RecoverableCodexAppServerRuntimes()
 	if err != nil {
 		slog.Warn("list Codex app-server recovery candidates", "error", err)
@@ -555,6 +593,14 @@ func recoverCodexAppServerRuntime(runtime db.CodexAppServerRuntime, owner string
 		fail(fmt.Errorf("re-prove Codex thread identity: %w", err))
 		return
 	}
+	// Revalidate after all asynchronous identity proofs and immediately before
+	// the ready CAS. The setup may have been replaced since the sweep claimed
+	// this generation; a failure must leave the runtime terminal and unhandled.
+	if err := reconcileCodexNativePermissionRegistryForGeneration(runtime.Generation); err != nil {
+		_ = client.Close()
+		fail(fmt.Errorf("validate native Codex permission registry before recovery ready: %w", err))
+		return
+	}
 	runtime.ServerPID = pid
 	runtime.State = db.CodexAppServerReady
 	changed, err := db.CompleteCodexAppServerRuntimeRecovery(runtime, owner)
@@ -567,7 +613,7 @@ func recoverCodexAppServerRuntime(runtime db.CodexAppServerRuntime, owner string
 	}
 	handle := registerCodexAppServerHandle(runtime, client)
 	projectCodexAppServerRawStatus(handle, thread.Status, time.Now().UTC(), "app-server daemon reconnect")
-	if err := session.ReconcileCodexNativePermissionRegistry(); err != nil {
+	if err := reconcileCodexNativePermissionRegistry(); err != nil {
 		slog.Warn("prune superseded Codex native permission profiles after recovery",
 			"generation", runtime.Generation, "error", err)
 	}

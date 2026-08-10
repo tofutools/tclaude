@@ -232,6 +232,7 @@ func TestCodexNativeRegistryFailedRegistrationRollsBackDurableAndPublishedState(
 
 	second := "tclaude-agent-2222222222222222"
 	previousWriter := writeNativeRegistryFile
+	t.Cleanup(func() { writeNativeRegistryFile = previousWriter })
 	var failed atomic.Bool
 	writeNativeRegistryFile = func(path string, data []byte) error {
 		if filepath.Base(path) == "requirements.toml" && bytesContain(data, second) && failed.CompareAndSwap(false, true) {
@@ -239,7 +240,6 @@ func TestCodexNativeRegistryFailedRegistrationRollsBackDurableAndPublishedState(
 		}
 		return atomicWriteNativeRegistryFile(path, data)
 	}
-	t.Cleanup(func() { writeNativeRegistryFile = previousWriter })
 
 	err := registerCodexNativePermissionProfile(opts, "generation-2", second,
 		nativeProfile(second, "/workspace/two"))
@@ -267,6 +267,42 @@ func TestCodexNativeRegistryRestartReconcilePrunesUnregisteredProfiles(t *testin
 	for _, file := range []string{"config.toml", "requirements.toml"} {
 		data, err := os.ReadFile(filepath.Join(opts.ManagedDir, file))
 		require.NoError(t, err)
+		assert.NotContains(t, string(data), name)
+	}
+}
+
+func TestCodexNativeRegistryFailedUnregisterPersistsCleanupForRestartRetry(t *testing.T) {
+	opts := nativeRegistryFixture(t)
+	name := "tclaude-agent-5555555555555555"
+	require.NoError(t, registerCodexNativePermissionProfile(opts, "generation-5", name,
+		nativeProfile(name, "/workspace/five")))
+
+	previousWriter := writeNativeRegistryFile
+	t.Cleanup(func() { writeNativeRegistryFile = previousWriter })
+	var failed atomic.Bool
+	writeNativeRegistryFile = func(path string, data []byte) error {
+		if filepath.Base(path) == "requirements.toml" && !bytesContain(data, name) &&
+			failed.CompareAndSwap(false, true) {
+			return errors.New("injected cleanup publish failure")
+		}
+		return atomicWriteNativeRegistryFile(path, data)
+	}
+	err := unregisterCodexNativePermissionProfile(opts, "generation-5")
+	require.ErrorContains(t, err, "injected cleanup publish failure")
+	pending, getErr := db.GetCodexNativePermissionProfile("generation-5")
+	require.NoError(t, getErr)
+	require.NotNil(t, pending)
+	assert.True(t, pending.CleanupPending)
+
+	writeNativeRegistryFile = previousWriter
+	require.NoError(t, reconcileCodexNativePermissionRegistry(opts),
+		"daemon restart reconciliation retries durable cleanup intent")
+	pending, getErr = db.GetCodexNativePermissionProfile("generation-5")
+	require.NoError(t, getErr)
+	assert.Nil(t, pending)
+	for _, file := range []string{"config.toml", "requirements.toml"} {
+		data, readErr := os.ReadFile(filepath.Join(opts.ManagedDir, file))
+		require.NoError(t, readErr)
 		assert.NotContains(t, string(data), name)
 	}
 }

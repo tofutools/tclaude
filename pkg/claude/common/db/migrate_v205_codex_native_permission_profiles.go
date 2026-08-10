@@ -16,6 +16,7 @@ func migrateV204toV205(d *sql.DB) error {
 			generation   TEXT PRIMARY KEY,
 			profile_name TEXT NOT NULL UNIQUE,
 			profile_toml TEXT NOT NULL,
+			cleanup_pending INTEGER NOT NULL DEFAULT 0 CHECK (cleanup_pending IN (0, 1)),
 			created_at   INTEGER NOT NULL
 		) STRICT;
 		UPDATE schema_version SET version = 205;
