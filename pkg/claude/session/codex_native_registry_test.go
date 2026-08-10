@@ -307,6 +307,32 @@ func TestCodexNativeRegistryFailedUnregisterPersistsCleanupForRestartRetry(t *te
 	}
 }
 
+func TestCodexNativeRegistryFailedRestoreRemainsDurableForRestartRetry(t *testing.T) {
+	opts := nativeRegistryFixture(t)
+	name := "tclaude-agent-7777777777777777"
+	previousWriter := writeNativeRegistryFile
+	t.Cleanup(func() { writeNativeRegistryFile = previousWriter })
+	writeNativeRegistryFile = func(path string, data []byte) error {
+		if filepath.Base(path) == "requirements.toml" && bytesContain(data, name) {
+			return errors.New("injected restore publish failure")
+		}
+		return atomicWriteNativeRegistryFile(path, data)
+	}
+	err := restoreCodexNativePermissionProfile(opts, "generation-7", name,
+		nativeProfile(name, "/workspace/seven"))
+	require.ErrorContains(t, err, "injected restore publish failure")
+	restored, getErr := db.GetCodexNativePermissionProfile("generation-7")
+	require.NoError(t, getErr)
+	require.NotNil(t, restored, "compensating restore must survive a publication failure")
+	assert.False(t, restored.CleanupPending)
+
+	writeNativeRegistryFile = previousWriter
+	require.NoError(t, reconcileCodexNativePermissionRegistry(opts))
+	data, readErr := os.ReadFile(filepath.Join(opts.ManagedDir, "requirements.toml"))
+	require.NoError(t, readErr)
+	assert.Contains(t, string(data), name)
+}
+
 func TestValidateStoredNativeProfileRejectsExtraConfiguration(t *testing.T) {
 	_ = nativeRegistryFixture(t)
 	name := "tclaude-agent-4444444444444444"

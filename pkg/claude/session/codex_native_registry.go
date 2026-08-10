@@ -273,6 +273,35 @@ func registerCodexNativePermissionProfile(
 	})
 }
 
+// RestoreCodexNativePermissionProfile compensates a lifecycle transition that
+// removed the profile but failed before persisting its replacement drive. The
+// row deliberately remains durable when publication fails so restart
+// reconciliation can converge it and native recovery stays fail-closed.
+func RestoreCodexNativePermissionProfile(generation, profileName, profileTOML string) error {
+	opts, err := defaultCodexNativeRegistryOptions()
+	if err != nil {
+		return err
+	}
+	return restoreCodexNativePermissionProfile(opts, generation, profileName, profileTOML)
+}
+
+func restoreCodexNativePermissionProfile(
+	opts CodexNativeRegistryOptions, generation, profileName, profileTOML string,
+) error {
+	if err := validateStoredNativeProfile(profileName, profileTOML); err != nil {
+		return err
+	}
+	profile := db.CodexNativePermissionProfile{
+		Generation: generation, ProfileName: profileName, ProfileTOML: profileTOML,
+	}
+	return withNativeRegistryLock(opts, func() error {
+		if err := db.UpsertCodexNativePermissionProfile(profile); err != nil {
+			return fmt.Errorf("restore durable native Codex permission profile: %w", err)
+		}
+		return reconcileCodexNativePermissionRegistryLocked(opts)
+	})
+}
+
 func UnregisterCodexNativePermissionProfile(generation string) error {
 	if strings.TrimSpace(generation) == "" {
 		return nil

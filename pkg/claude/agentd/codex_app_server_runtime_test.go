@@ -553,6 +553,10 @@ func TestCodexAppServerDaemonRestartFailsClosedWhenNativeRegistryCannotReconcile
 		ServerPID: os.Getpid(), CodexVersion: "0.147.0", State: db.CodexAppServerReady,
 	}
 	require.NoError(t, db.UpsertCodexAppServerRuntime(runtime))
+	require.NoError(t, db.UpsertCodexNativePermissionProfile(db.CodexNativePermissionProfile{
+		Generation: runtime.Generation, ProfileName: "tclaude-agent-9999999999999999",
+		ProfileTOML: "persisted native profile",
+	}))
 	require.NoError(t, recordCodexAppServerProcessIdentity(runtime.SocketPath, runtime.ServerPID))
 	claimed, err := db.ClaimCodexAppServerRuntimeRecovery(runtime.Generation, "test-daemon", time.Now(), time.Minute)
 	require.NoError(t, err)
@@ -595,6 +599,19 @@ func TestCodexAppServerReadyValidationRejectsProfileRemovedDuringReconcile(t *te
 	t.Cleanup(func() { reconcileCodexNativePermissionRegistry = previousReconcile })
 	require.ErrorContains(t, reconcileCodexNativePermissionRegistryForGeneration(generation),
 		"removed during reconciliation")
+}
+
+func TestCodexAppServerReadyValidationSkipsUnrelatedOuterLayerGeneration(t *testing.T) {
+	resetTestDB(t)
+	calls := 0
+	previousReconcile := reconcileCodexNativePermissionRegistry
+	reconcileCodexNativePermissionRegistry = func() error {
+		calls++
+		return errors.New("broken native registry for another generation")
+	}
+	t.Cleanup(func() { reconcileCodexNativePermissionRegistry = previousReconcile })
+	require.NoError(t, reconcileCodexNativePermissionRegistryForGeneration("outer-layer-generation"))
+	assert.Zero(t, calls, "outer-layer generations must not touch the native registry")
 }
 
 func TestCodexAppServerDaemonRestartRejectsChangedProcessGeneration(t *testing.T) {

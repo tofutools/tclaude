@@ -46,14 +46,20 @@ func reconcileCodexNativePermissionRegistryForGeneration(generation string) erro
 	if err != nil {
 		return fmt.Errorf("load native Codex permission profile before reconciliation: %w", err)
 	}
+	// No row means this is an outer-layer or legacy app-server generation. Its
+	// readiness must not depend on machine-wide native-registry setup used by
+	// unrelated builtin-sandbox launches.
+	if before == nil {
+		return nil
+	}
 	if err := reconcileCodexNativePermissionRegistry(); err != nil {
 		return err
 	}
 	// Outer-layer and legacy app-server generations deliberately have no native
 	// profile. When this generation did register one, however, pruning must not
 	// silently make the runtime ready without its exact enforcement profile.
-	if before == nil || before.CleanupPending {
-		return nil
+	if before.CleanupPending {
+		return errors.New("native Codex permission profile cleanup is pending")
 	}
 	after, err := db.GetCodexNativePermissionProfile(generation)
 	if err != nil {
@@ -420,13 +426,6 @@ func startCodexAppServerRecovery(stop <-chan struct{}) {
 }
 
 func runCodexAppServerRecoverySweep() {
-	// The requirements file is the enforcement boundary for recovered native
-	// profiles. Refuse even to claim a runtime until the durable registry has
-	// converged; the next sweep retries after an operator repairs the topology.
-	if err := reconcileCodexNativePermissionRegistry(); err != nil {
-		slog.Warn("hold Codex app-server recovery until native permission registry is ready", "error", err)
-		return
-	}
 	runtimes, err := db.RecoverableCodexAppServerRuntimes()
 	if err != nil {
 		slog.Warn("list Codex app-server recovery candidates", "error", err)

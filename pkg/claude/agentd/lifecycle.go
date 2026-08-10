@@ -1502,6 +1502,10 @@ func resumeOneConvClaimedUnderLaunchLock(convID string, recreateMissingDir, trus
 // generation under the same lock that excludes concurrent stop/resume. It
 // never signals a PID: the eligible runtime is already terminal, and its
 // retained numeric PID is not process identity after exit.
+var setAgentCodexAppServerSelectionForConv = db.SetAgentCodexAppServerSelectionForConv
+var unregisterCodexNativePermissionProfile = session.UnregisterCodexNativePermissionProfile
+var restoreCodexNativePermissionProfile = session.RestoreCodexNativePermissionProfile
+
 func resumeOneConvWithCodexRollbackLocked(convID string, recreateMissingDir, trustRoot bool) memberOpResult {
 	launchLock := resumeLaunchLock(convID)
 	launchLock.Lock()
@@ -1548,15 +1552,27 @@ func resumeOneConvWithCodexRollbackLocked(convID string, recreateMissingDir, tru
 			return res
 		}
 	}
-	if err := session.UnregisterCodexNativePermissionProfile(runtime.Generation); err != nil {
+	nativeProfile, err := db.GetCodexNativePermissionProfile(runtime.Generation)
+	if err != nil {
+		res.Action = "error:codex_drive_rollback"
+		res.Detail = "load native Codex permission profile for compatibility rollback: " + err.Error()
+		return res
+	}
+	if err := unregisterCodexNativePermissionProfile(runtime.Generation); err != nil {
 		res.Action = "error:codex_drive_rollback"
 		res.Detail = "Codex drive unchanged; native permission-profile cleanup is pending: " + err.Error()
 		return res
 	}
 	source := "explicit --send-keys compatibility rollback"
-	if err := db.SetAgentCodexAppServerSelectionForConv(convID, false, source); err != nil {
+	if err := setAgentCodexAppServerSelectionForConv(convID, false, source); err != nil {
 		res.Action = "error:codex_drive_rollback"
 		res.Detail = "persist Codex compatibility rollback: " + err.Error()
+		if nativeProfile != nil {
+			if restoreErr := restoreCodexNativePermissionProfile(runtime.Generation,
+				nativeProfile.ProfileName, nativeProfile.ProfileTOML); restoreErr != nil {
+				res.Detail += "; native permission profile restore will retry at restart: " + restoreErr.Error()
+			}
+		}
 		return res
 	}
 	removeCodexAppServerGeneration(runtime.SocketPath)
