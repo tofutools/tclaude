@@ -7002,11 +7002,12 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 					}
 				}
 				// The authenticated pane callback records before cleaning the
-				// retained corpse. If it won that race, the exact launch-scoped audit
-				// row is now the durable failure evidence.
+				// retained corpse. If it won that race, an exit row created during
+				// this launch attempt is now the durable failure evidence. The time
+				// bound prevents a reused label from matching a predecessor's exit.
 				if exits, auditErr := db.ListAuditLog(db.AuditLogFilter{
 					Verb: db.AuditVerbAgentExit, SessionID: label, Limit: 1,
-				}); auditErr == nil && len(exits) == 1 {
+				}); auditErr == nil && len(exits) == 1 && !exits[0].At.Before(launchedAt) {
 					detail := "unknown exit status"
 					switch {
 					case exits[0].Signal != "":
@@ -7069,25 +7070,16 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		sleepSpawnPoll(deadline)
 	}
 
-	// Launch-enrollment path: the conv-id was PRESET, the enrollment
-	// (membership + inbox briefing) ran before the fork, and the rename +
-	// welcome are baked into the launch command — so the spawn has already
-	// succeeded as far as the daemon is concerned, whether or not the poll
-	// confirmed the session row in time. Return the preset id (NOT the polled
-	// convID, which the loop may have left empty on a slow fork). The poll
-	// above fired focus when the pane came up; fire once more in case the row
-	// landed late. We deliberately do NOT roll back on a slow/missing row: the
-	// pane is most likely just coming up, and rolling back would strand a live,
-	// named, greeted, group-less pane whose welcome points at a deleted inbox
-	// message. A genuinely failed launch (Start error) was already caught and
-	// rolled back above; a pane that dies at startup leaves an offline member
-	// the operator can retire, exactly like any agent that crashes on boot.
+	// Launch-enrollment path: the conv-id was PRESET and enrollment ran before
+	// the fork. Return it only after tmux has proved a live pane. A slow or
+	// missing pane remains enrolled because it may still materialise; rolling
+	// that state back could strand a live, named, greeted, group-less pane. But
+	// it is reported as unconfirmed, never as a successful attachable spawn.
 	if launchEnroll {
-		// Final wrapper-failure check: distinguish "wrapper reported failure
-		// during the poll window" from the genuinely-slow-pane case this
-		// success return is written for. A wrapper that fails after this
-		// point (past the poll budget) is out of signal reach — that residual
-		// keeps the old behavior: an offline member the operator can retire.
+		// Final wrapper-failure check: distinguish a reported wrapper failure
+		// from a pane that is merely too slow to confirm. A wrapper that fails
+		// after this point is out of signal reach; the unconfirmed path below
+		// preserves its enrollment so the operator can inspect or retire it.
 		select {
 		case werr := <-wrapperFailure:
 			return launchFailed(werr)
@@ -7112,6 +7104,16 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 				s.TmuxSession != "" && session.IsTmuxSessionAlive(s.TmuxSession) {
 				tmuxSession = s.TmuxSession
 			}
+		}
+		if tmuxSession == "" {
+			// The child may merely be slow, so preserve its pre-fork enrollment,
+			// briefing, launch-owned directories, and route credentials. But an
+			// unobserved pane is not a successful spawn: returning a conv-id here
+			// makes fast terminal clients attach to a session that may never exist.
+			routeHelperCommitted = true
+			markBriefingConsumed(preConvID, preMsgID, briefingInlined)
+			return nil, &spawnFailure{http.StatusGatewayTimeout, "spawn_unconfirmed",
+				"launch enrollment was preserved, but no live tmux pane appeared before the startup deadline"}
 		}
 		focusSpawn()
 		markBriefingConsumed(preConvID, preMsgID, briefingInlined)

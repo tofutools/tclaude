@@ -488,17 +488,13 @@ func runExitCallback(p exitCallbackParams) error {
 	}
 	// A dead pane is the last place a successful tmux launch's harness error is
 	// visible (`claude: command not found`, expired auth, broken config, ...).
-	// Capture a small tail before the record-first cleanup removes it. It is
-	// logged only for a short-lived, non-lifecycle exit below; routine/runtime
-	// exits never copy their screen into tclaude's log.
-	startupDiagnostic := ""
+	// Work out whether it falls in the startup window now, but do not copy pane
+	// contents until the authenticated record below has classified lifecycle
+	// exits. Expected stop/retire/reincarnate exits must never be captured.
 	startupAge := time.Duration(-1)
 	failedStartup := p.Signal != "" || (p.ExitCode != "" && p.ExitCode != "0")
 	if row, loadErr := db.LoadSession(p.SessionID); failedStartup && loadErr == nil && row != nil && !row.CreatedAt.IsZero() {
 		startupAge = time.Since(row.CreatedAt)
-		if startupAge >= 0 && startupAge <= spawnFailureDiagnosticWindow {
-			startupDiagnostic = captureDeadPaneDiagnostic(p.PaneID)
-		}
 	}
 	var code *int
 	cause := db.AgentExitCauseUnknown
@@ -529,7 +525,11 @@ func runExitCallback(p exitCallbackParams) error {
 			"pane_id", p.PaneID, "error", err)
 		return fmt.Errorf("record managed pane exit: %w", err)
 	}
-	if result.LifecycleAction == "" && startupDiagnostic != "" {
+	startupDiagnostic := ""
+	if result.LifecycleAction == "" && startupAge >= 0 && startupAge <= spawnFailureDiagnosticWindow {
+		startupDiagnostic = captureDeadPaneDiagnostic(p.PaneID)
+	}
+	if startupDiagnostic != "" {
 		slog.Error("managed pane failed during startup",
 			"session_id", p.SessionID, "tmux_session", p.TmuxSession,
 			"pane_id", p.PaneID, "event_id", result.EventID,
@@ -553,7 +553,16 @@ func captureDeadPaneDiagnostic(paneID string) string {
 	if err != nil {
 		return ""
 	}
+	return boundDeadPaneDiagnostic(out)
+}
+
+func boundDeadPaneDiagnostic(out []byte) string {
 	out = bytes.ReplaceAll(out, []byte{0}, nil)
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) > 40 {
+		lines = lines[len(lines)-40:]
+	}
+	out = []byte(strings.Join(lines, "\n"))
 	if len(out) > spawnFailureDiagnosticBytes {
 		out = bytes.ToValidUTF8(out[len(out)-spawnFailureDiagnosticBytes:], []byte("?"))
 	}

@@ -75,10 +75,11 @@ func TestSpawn_LaunchEnrollment_PresetsConvIDNoInjection(t *testing.T) {
 // lags past the daemon's conv-id poll, so the poll times out even though the
 // pane is coming up fine (named + greeted via the launch args).
 //
-// Expected: because the launch-enrollment path preset the conv-id and enrolled
-// the agent BEFORE forking, the daemon returns SUCCESS against the preset id and
-// KEEPS the enrollment — it must NOT roll back, which would strand a live,
-// named, greeted, group-less pane whose welcome points at a deleted briefing.
+// Expected: because no live pane was observed, the daemon reports an
+// unconfirmed launch rather than publishing a conv-id that a terminal would
+// immediately fail to attach to. The pre-fork enrollment is kept: the child may
+// still be coming up, and rollback would strand a named, greeted, group-less
+// pane whose welcome points at a deleted briefing.
 func TestSpawn_LaunchEnrollment_SlowRowWriteKeepsEnrollment(t *testing.T) {
 	f := newFlow(t)
 	// Shrink the async grace so the poll times out quickly, and make the sim
@@ -92,24 +93,18 @@ func TestSpawn_LaunchEnrollment_SlowRowWriteKeepsEnrollment(t *testing.T) {
 		"initial_message": "do the thing",
 	})
 
-	// A slow row write must still succeed against the preset id — never a 504
-	// or a rolled-back enrollment.
-	require.Equalf(t, http.StatusOK, spawn.Code,
-		"slow pane must still succeed, not fail/roll back; body=%s", spawn.Raw)
-	require.NotEmpty(t, spawn.ConvID, "must return the preset conv-id")
+	require.Equalf(t, http.StatusGatewayTimeout, spawn.Code,
+		"an unobserved pane must not be reported as a successful spawn; body=%s", spawn.Raw)
+	assert.Contains(t, string(spawn.Raw), "spawn_unconfirmed")
 
 	// The pre-fork enrollment survived: the agent is still a group member and
 	// its briefing is still in its inbox.
 	members := f.ListGroupMembers("alpha")
-	var found bool
-	for _, m := range members {
-		if m.ConvID == spawn.ConvID {
-			found = true
-		}
-	}
-	assert.Truef(t, found, "slow-pane agent %s must stay a group member, not be rolled back", spawn.ConvID)
+	require.Len(t, members, 1)
+	convID := members[0].ConvID
+	assert.NotEmpty(t, convID)
 
-	msg := soleInboxMessage(t, spawn.ConvID)
+	msg := soleInboxMessage(t, convID)
 	assert.Equal(t, "Startup context", msg.Subject, "the briefing must survive the slow poll")
 }
 

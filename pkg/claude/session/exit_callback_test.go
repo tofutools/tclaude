@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -408,6 +409,47 @@ func TestRunExitCallback_LogsBoundedStartupFailureOutput(t *testing.T) {
 	assert.Contains(t, got, `"msg":"managed pane exited unexpectedly"`)
 	assert.Contains(t, got, `"msg":"managed pane failed during startup"`)
 	assert.Contains(t, got, `"pane_output":"fish: Unknown command: claude"`)
+}
+
+func TestRunExitCallback_DoesNotCaptureExpectedStartupExit(t *testing.T) {
+	fake := &exitCallbackTmux{
+		paneID: "%30", deadOutput: "tmux-expected-exit|%30|1|1||30303030303030303030303030303030",
+		captureOutput: "private pane contents",
+	}
+	setupExitCallbackTest(t, fake)
+
+	const generation = "30303030303030303030303030303030"
+	const token = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	require.NoError(t, SaveSessionStateForLaunch(&SessionState{
+		ID: "spwn-expected-exit", TmuxSession: "tmux-expected-exit", ConvID: "conv-expected-exit",
+		Status: StatusWorking, Created: time.Now(),
+	}, generation, db.SessionExitGateReleased))
+	hash := sha256.Sum256([]byte(token))
+	require.NoError(t, db.SetSessionExitLaunchBinding(
+		"spwn-expected-exit", generation, hex.EncodeToString(hash[:]), "%30"))
+	_, err := db.SetSessionExitIntent("spwn-expected-exit", db.AgentExitActionStop, "", time.Now())
+	require.NoError(t, err)
+
+	require.NoError(t, runExitCallback(exitCallbackParams{
+		SessionID: "spwn-expected-exit", TmuxSession: "tmux-expected-exit", PaneID: "%30",
+		Generation: generation, Token: token, ExitCode: "1",
+	}))
+	for _, call := range fake.calls {
+		assert.NotEqual(t, "capture-pane", call[0], "expected lifecycle exits must not copy pane contents")
+	}
+}
+
+func TestBoundDeadPaneDiagnosticCapsLinesAndBytes(t *testing.T) {
+	var lines []string
+	for i := 0; i < 100; i++ {
+		lines = append(lines, fmt.Sprintf("line-%03d-%s", i, strings.Repeat("x", 300)))
+	}
+	got := boundDeadPaneDiagnostic([]byte(strings.Join(lines, "\n")))
+
+	assert.LessOrEqual(t, len([]byte(got)), spawnFailureDiagnosticBytes)
+	assert.LessOrEqual(t, len(strings.Split(got, "\n")), 40)
+	assert.Contains(t, got, "line-099-")
+	assert.NotContains(t, got, "line-059-")
 }
 
 func TestParseDeadTmuxPaneAcceptsPortableSignalRepresentations(t *testing.T) {
