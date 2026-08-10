@@ -386,8 +386,10 @@ function PRChecksPanel({ url, prNumber, summary, panelID, headingID, state, pane
     <div ref=${panelRef} class="ci-panel" style=${style}
       id=${panelID} role="dialog" aria-labelledby=${headingID}>
       <div class="ci-panel-heading" id=${headingID}>
-        <span class="theme-copy-regular">${prNumber ? `#${prNumber} · checks` : 'Pull request checks'}</span>
-        <span class="theme-copy-wizard">${prNumber ? `#${prNumber} · omens of the rite` : 'Omens of the rite'}</span>
+        <a href=${badgeHref(summary, url)} target="_blank" rel="noopener noreferrer">
+          <span class="theme-copy-regular">${prNumber ? `#${prNumber} · checks` : 'Pull request checks'}</span>
+          <span class="theme-copy-wizard">${prNumber ? `#${prNumber} · omens of the rite` : 'Omens of the rite'}</span>
+        </a>
       </div>
       <div class="ci-panel-summary">${summaryLine(live)}</div>
       ${checks.length ? html`
