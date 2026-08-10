@@ -201,6 +201,7 @@ tclaude proxy git push --force-with-lease   # only if you enabled it
 # GitHub (proxy.github.read / proxy.github.write)
 tclaude proxy github pr create --title "…" --body-file pr.md
 tclaude proxy github pr ls --state open
+tclaude proxy github pr ls --head feat/x --state all   # the PR for a branch
 tclaude proxy github pr view 42
 tclaude proxy github pr checks 42
 tclaude proxy github pr comments 42            # read ALL review feedback

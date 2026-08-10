@@ -38,6 +38,16 @@ type ghProxyListRequest struct {
 	Limit  int    `json:"limit,omitempty"`
 }
 
+// ghProxyPRListRequest is the pull-request listing, which takes one filter
+// issues have no equivalent of. A separate type rather than a Head field on
+// ghProxyListRequest: `issue list` decodes the shared shape, and a parameter it
+// silently accepts and ignores is one a caller can believe took effect.
+type ghProxyPRListRequest struct {
+	ghProxyListRequest
+	// Head narrows the listing to pull requests opened FROM this branch.
+	Head string `json:"head,omitempty"`
+}
+
 type ghProxyNumberRequest struct {
 	Remote string `json:"remote,omitempty"`
 	Number int    `json:"number"`
@@ -210,7 +220,7 @@ func (g *ghProxySession) defaultBranch(ctx context.Context) (string, *ProxyResul
 
 // handleGHProxyPRList serves POST /v1/github/pr/list.
 func handleGHProxyPRList(w http.ResponseWriter, r *http.Request) {
-	var body ghProxyListRequest
+	var body ghProxyPRListRequest
 	g, ok := openGHProxy(w, r, PermGitHubRead, &body, func() string { return body.Remote })
 	if !ok {
 		return
@@ -225,6 +235,17 @@ func handleGHProxyPRList(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
+	// Typed as any so an omitted filter reaches GraphQL as null — "every
+	// branch" — rather than as the empty string, which would match no branch
+	// at all and silently answer an unfiltered question with nothing.
+	var head any
+	if h := strings.TrimSpace(body.Head); h != "" {
+		if fault := validateBranchName(h); fault != nil {
+			writeProxyFault(w, fault)
+			return
+		}
+		head = h
+	}
 	var data struct {
 		Repository struct {
 			PullRequests struct {
@@ -234,6 +255,7 @@ func handleGHProxyPRList(w http.ResponseWriter, r *http.Request) {
 	}
 	failure, err := g.graphql(r.Context(), ghPRListQuery, map[string]any{
 		"owner": g.owner, "name": g.repo, "limit": limit, "states": ghPRStates(state),
+		"head": head,
 	}, &data)
 	if failure != nil || err != nil {
 		g.respondOrFail(w, r, "pr.list", failure, err)

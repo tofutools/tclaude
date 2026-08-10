@@ -61,6 +61,7 @@ tclaude proxy git push --force-with-lease       # only if the operator enabled i
 
 # GitHub reads — need `proxy.github.read`
 tclaude proxy github pr ls --state open
+tclaude proxy github pr ls --head feat/x --state all  # which PR is my branch's?
 tclaude proxy github pr view 42
 tclaude proxy github pr checks 42               # CI state; pending is an answer
 tclaude proxy github pr comments 42             # all review feedback (read)

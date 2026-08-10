@@ -99,6 +99,24 @@ The marker is omitted entirely when no window is known yet — no pin, and no `c
 - **On a feature branch:** shows a compare URL (`repo/compare/main...branch`)
 - **With an open PR:** shows the PR URL
 
+### Where the PR comes from
+
+Everything the status bar asks git for is local. The pull request is the one
+piece that needs a GitHub credential, and it has two paths:
+
+- **With agentd's GitHub proxy configured**, the lookup goes through the daemon
+  (`/v1/github/pr/list --head <branch>`), which holds the token. This is what
+  keeps the PR link working in a pane whose sandbox denies `~/.config/gh` —
+  the posture the proxy exists to make workable. It needs the
+  `proxy.github.read` permission slug like any other proxy read, and the
+  repository's remote still has to pass the operator's allow-list. See
+  [git-proxy.md](git-proxy.md).
+- **Otherwise**, it shells out to `gh pr view <branch>` with the pane's own
+  credentials, exactly as it always has.
+
+Both are best-effort: no PR, no `gh`, no grant, or no daemon all render the
+same way — a compare URL instead of a PR URL, never an error.
+
 ## Usage Command
 
 You can also check your subscription limits directly (uses the Anthropic OAuth API):
@@ -115,11 +133,23 @@ tclaude usage --json
 
 The status bar caches git data to stay fast (it runs after every assistant message):
 
-| Data                        | Cache Location | TTL        |
-|-----------------------------|----------------|------------|
-| Git info (repo, branch, PR) | SQLite DB      | 15 seconds |
+| Data                            | Cache Location | TTL        |
+|---------------------------------|----------------|------------|
+| Git info (repo, branch)         | SQLite DB      | 15 seconds |
+| PR lookup, via `gh`             | SQLite DB      | 15 seconds |
+| PR lookup, via the agentd proxy | SQLite DB      | 90 seconds |
 
 - Git cache is **per-repo** (keyed by repo root hash), so parallel sessions in different repos don't interfere
+- The PR has its own clock because the two paths cost different things. A `gh`
+  call is a local subprocess; a proxied one spends the **operator's** GitHub
+  credential and writes an audit row, and a status line re-renders several
+  times a second. 90 seconds is the same interval agentd already uses for its
+  own dashboard PR resolution. A carried-forward result — including "this
+  branch has no PR", which is the usual answer on a fresh branch — is
+  republished with the time it was actually looked up, not the time the
+  surrounding snapshot was gathered
+- Under a `tclaude-layer` sandbox the cache moves to the pane's own `/tmp`,
+  since the database is not writable there
 - Rate limits, context window, cost, and model info come fresh from Claude Code on each invocation — no caching needed
 
 ## How It Works

@@ -267,8 +267,19 @@ func renderDigest(req renderRequest) string {
 	_, _ = h.Write([]byte(req.EnvPinnedWindow))
 	_, _ = h.Write([]byte{0})
 	if req.Git != nil {
-		// FetchedAt ticks on every git-cache refresh without changing
-		// anything recorded, so it is excluded to keep the gate quiet.
+		// FetchedAt and PRFetchedAt tick on a cache refresh that found
+		// everything unchanged, so both are excluded to keep the gate quiet —
+		// as is PRVia, which is the snapshot's own bookkeeping.
+		//
+		// They do reach one recorded value between them: the workspace row's
+		// UpdatedAt freshness clock. Leaving them out means a re-lookup that
+		// confirmed the same PR does not, by itself, re-send the row, so that
+		// clock can lag its true observation. It is the safe direction —
+		// agentd compares it against its own PR observation and prefers the
+		// newer, so understating only ever defers to the daemon, which has the
+		// credential anyway. Including them would put a write on an idle
+		// pane's timer, which is precisely what the change gate exists to
+		// avoid.
 		gitKey := fmt.Sprintf("%s\x00%s\x00%s\x00%d\x00%s\x00%s",
 			req.Git.RepoURL, req.Git.Branch, req.Git.DefaultBranch,
 			req.Git.PRNumber, req.Git.PRURL, req.Git.PRState)
@@ -338,18 +349,20 @@ func shouldLogRefusal(sessionID string) bool {
 	return true
 }
 
-func postRenderToDaemon(req BrokeredRenderRequest) (BrokeredRenderResponse, error) {
-	var out BrokeredRenderResponse
-	body, err := json.Marshal(req)
-	if err != nil {
-		return out, err
-	}
+// daemonSocketClient builds a client bounded by timeout that dials agentd's
+// unix socket, trying each candidate path in turn.
+//
+// It attaches no identity headers, and deliberately so: agentd resolves this
+// pane from the socket's peer credentials and its harness ancestry, which is
+// the only identity a status line could honestly assert. Every statusline
+// caller shares that discipline, so the client is shared too.
+func daemonSocketClient(timeout time.Duration) (*http.Client, error) {
 	socks := agentipc.ClientSocketPaths()
 	if len(socks) == 0 {
-		return out, fmt.Errorf("no agentd socket path resolved")
+		return nil, fmt.Errorf("no agentd socket path resolved")
 	}
-	client := &http.Client{
-		Timeout: renderBrokerTimeout,
+	return &http.Client{
+		Timeout: timeout,
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 				var lastErr error
@@ -363,6 +376,18 @@ func postRenderToDaemon(req BrokeredRenderRequest) (BrokeredRenderResponse, erro
 				return nil, lastErr
 			},
 		},
+	}, nil
+}
+
+func postRenderToDaemon(req BrokeredRenderRequest) (BrokeredRenderResponse, error) {
+	var out BrokeredRenderResponse
+	body, err := json.Marshal(req)
+	if err != nil {
+		return out, err
+	}
+	client, err := daemonSocketClient(renderBrokerTimeout)
+	if err != nil {
+		return out, err
 	}
 	httpReq, err := http.NewRequest(http.MethodPost, "http://tclaude/v1/whoami/statusline", bytes.NewReader(body))
 	if err != nil {

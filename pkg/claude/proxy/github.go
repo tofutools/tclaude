@@ -230,18 +230,39 @@ type githubListParams struct {
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout. Capped at 300s. Timeout = deny."`
 }
 
+// githubPRListParams is githubListParams plus the one filter only pull
+// requests have. Spelled out rather than embedded, because boa reads the flag
+// tags off the params struct itself.
+type githubPRListParams struct {
+	State    string `long:"state" optional:"true" help:"Filter by state."`
+	Head     string `long:"head" short:"H" optional:"true" help:"Only pull requests opened FROM this branch. This is how you find the PR for a branch when you know its name and not its number."`
+	Limit    int    `long:"limit" optional:"true" help:"Maximum rows (1-100, default 20)."`
+	Remote   string `long:"remote" optional:"true" help:"Remote naming the repository to act on (default: origin)."`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout. Capped at 300s. Timeout = deny."`
+}
+
 func githubPRListCmd() *cobra.Command {
-	return boa.CmdT[githubListParams]{
-		Use:         "ls",
-		Aliases:     []string{"list"},
-		Short:       "List pull requests (open|closed|merged|all)",
+	return boa.CmdT[githubPRListParams]{
+		Use:     "ls",
+		Aliases: []string{"list"},
+		Short:   "List pull requests (open|closed|merged|all)",
+		Long: "Lists pull requests, newest-created first.\n\n" +
+			"`--head` answers the question the number-taking verbs cannot: which pull request belongs " +
+			"to the branch I am on?\n\n" +
+			"    tclaude proxy github pr ls --head my-branch --state all\n\n" +
+			"The `number` in a row is what `pr view`, `pr checks` and `pr comments` take.",
 		ParamEnrich: common.DefaultParamEnricher(),
-		InitFuncCtx: func(ctx *boa.HookContext, p *githubListParams, _ *cobra.Command) error {
+		InitFuncCtx: func(ctx *boa.HookContext, p *githubPRListParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)
 			return nil
 		},
-		RunFunc: func(p *githubListParams, _ *cobra.Command, _ []string) {
-			os.Exit(ghProxyCall("/v1/github/pr/list", listBody(p), p.AskHuman, "pr list", os.Stdout, os.Stderr))
+		RunFunc: func(p *githubPRListParams, _ *cobra.Command, _ []string) {
+			os.Exit(ghProxyCall("/v1/github/pr/list", map[string]any{
+				"remote": strings.TrimSpace(p.Remote),
+				"state":  strings.TrimSpace(p.State),
+				"head":   strings.TrimSpace(p.Head),
+				"limit":  p.Limit,
+			}, p.AskHuman, "pr list", os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
 }

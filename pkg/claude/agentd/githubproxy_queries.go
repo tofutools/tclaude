@@ -48,11 +48,17 @@ const ghLabelsFragment = `labels(first: 100) { nodes { id name description color
 //
 // $states is null for "all", which GraphQL reads as "no filter" rather than as
 // "no states" — the one place a null variable is load-bearing rather than
-// merely omitted.
+// merely omitted. $head works the same way: null lists every branch's pull
+// requests, a name narrows the listing to the ones opened FROM that branch.
+//
+// $head is what makes "is there a pull request for the branch I am on?"
+// answerable through the proxy at all. `pr view` takes a number, so without it
+// a caller who knows only its branch name — an agent that just pushed, the
+// status bar rendering a pane — has nothing to ask.
 const ghPRListQuery = `
-query PRList($owner: String!, $name: String!, $limit: Int!, $states: [PullRequestState!]) {
+query PRList($owner: String!, $name: String!, $limit: Int!, $states: [PullRequestState!], $head: String) {
   repository(owner: $owner, name: $name) {
-    pullRequests(first: $limit, states: $states, orderBy: {field: CREATED_AT, direction: DESC}) {
+    pullRequests(first: $limit, states: $states, headRefName: $head, orderBy: {field: CREATED_AT, direction: DESC}) {
       nodes {
         number title state isDraft headRefName baseRefName url updatedAt
         ` + ghAuthorFragment + `
