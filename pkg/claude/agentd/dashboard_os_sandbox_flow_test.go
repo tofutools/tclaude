@@ -513,6 +513,36 @@ func TestDashboardSnapshot_ResourceOnlyReportsItsCgroupWithoutACeiling(t *testin
 	assert.Nil(t, state.ResourceCPULimit, "no CPU ceiling was authored")
 }
 
+// ...and the snapshot itself is optional for that answer. A direct
+// `tclaude session new --sandbox-impl resource-only` and a CLI resume both
+// record a row with NO effective-sandbox snapshot, while the launch seam still
+// creates the cgroup. A read path that looked for the request inside the
+// snapshot would report "no cgroup" for a launch that has one — worse than
+// silence, since the tooltip omits the block precisely to mean there is no
+// boundary. Both enforcement seams resolve this the same way.
+func TestDashboardSnapshot_ResourceOnlyReportsItsCgroupWithoutASnapshot(t *testing.T) {
+	const convID = "sbxh-1111-2222-3333-4444"
+
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	f.HaveGroup("cliaccounted")
+	f.HaveAliveSession(convID, "spwn-sbxh", "tmux-sbxh", f.TestCwd("sbxh"))
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "spwn-sbxh", TmuxSession: "tmux-sbxh", ConvID: convID, Cwd: f.TestCwd("sbxh"),
+		Status: "running", Harness: "claude",
+		SandboxImplementation: string(sandboxpolicy.ImplementationResourceOnly),
+		HarnessBuiltinMode:    "off", OSSandboxState: "off",
+		// No EffectiveSandbox: this is the CLI launch shape.
+	}), "stamp a resource-only launch that recorded no policy snapshot")
+	f.HaveMember("cliaccounted", convID)
+
+	state := requireDashMemberState(t,
+		fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest()), "cliaccounted", convID)
+	assert.True(t, state.ResourceCgroup,
+		"the cgroup request rides the implementation, not the snapshot")
+}
+
 // A launch with no budget and an ordinary implementation must report no cgroup,
 // so the tooltip stays silent rather than spending lines on an absent boundary.
 func TestDashboardSnapshot_NoResourceBudgetReportsNoCgroup(t *testing.T) {

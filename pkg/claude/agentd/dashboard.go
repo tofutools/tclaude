@@ -2399,19 +2399,29 @@ func stateForConvInSessionsBatched(
 		// and reconciles on the next refresh (the harness has no readback).
 		RemoteControl: pick.RemoteControl,
 	}
+	// resource-only requests the cgroup through the implementation alone, so this
+	// read must not require a launch snapshot to find the request: a direct
+	// `tclaude session new --sandbox-impl resource-only` and a CLI resume both
+	// record a row with no snapshot at all, and that is exactly the launch whose
+	// only purpose IS the cgroup. Both enforcement seams (session.newSession,
+	// prepareResourceCgroup) resolve it the same way.
+	var limits sandboxpolicy.ResourceLimits
 	if pick.EffectiveSandbox != nil {
 		out.SandboxAccessNotices = append([]sandboxpolicy.AccessNotice(nil),
 			pick.EffectiveSandbox.Effective.AccessNotices...)
-		limits := pick.EffectiveSandbox.Effective.ResourceLimits
-		// The implementation is part of the answer: `resource-only` asks for the
-		// cgroup through the implementation alone, with no ceiling authored.
-		out.ResourceCgroup = sandboxpolicy.ResourceCgroupRequested(limits,
-			sandboxpolicy.Implementation(pick.SandboxImplementation))
-		out.ResourceMemoryLimit = limits.Memory
-		if limits.CPU != nil {
-			cpu := *limits.CPU
-			out.ResourceCPULimit = &cpu
-		}
+		limits = pick.EffectiveSandbox.Effective.ResourceLimits
+	}
+	implementation, implErr := sandboxpolicy.NormalizeImplementation(pick.SandboxImplementation)
+	if implErr != nil {
+		// An unrecognized implementation string cannot be resource-only, but an
+		// authored ceiling still requires the cgroup on its own.
+		implementation = sandboxpolicy.ImplementationHarnessBuiltin
+	}
+	out.ResourceCgroup = sandboxpolicy.ResourceCgroupRequested(limits, implementation)
+	out.ResourceMemoryLimit = limits.Memory
+	if limits.CPU != nil {
+		cpu := *limits.CPU
+		out.ResourceCPULimit = &cpu
 	}
 	// Codex records collaboration-child lifecycle in its rollout even when an
 	// explicit interrupt does not invoke the configured SubagentStop hook. The
