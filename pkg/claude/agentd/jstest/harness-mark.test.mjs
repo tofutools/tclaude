@@ -51,3 +51,19 @@ test('known harnesses render named product marks and unknown ones retain text', 
     }
   });
 });
+
+test('a tooltip override leaves the product accessible name intact', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { HarnessMark } = await harness.importDashboardModule('js/harness-mark.js');
+  const mounted = await harness.mount(harness.html`
+    <${HarnessMark} name="codex" shortLabel="Codex" longLabel="Codex CLI"
+      tooltip="Harness: Codex CLI — Drive: Codex app-server ready" />
+  `);
+  try {
+    const mark = mounted.container.querySelector('.harness-mark');
+    assert.equal(mark.title, 'Harness: Codex CLI — Drive: Codex app-server ready');
+    assert.equal(mark.getAttribute('aria-label'), 'Codex CLI');
+  } finally {
+    await mounted.unmount();
+  }
+});
