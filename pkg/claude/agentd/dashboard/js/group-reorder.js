@@ -455,9 +455,9 @@ function bindGroupReorder() {
     // cannot open a stale dashboard clone dialog. A null relatedTarget alone
     // is NOT sufficient: macOS Chrome emits an all-zero event with that shape
     // at the in-place mouse release that ends a Cmd/Ctrl clone drag. That event
-    // carries no positioning information at all, so ignore it and preserve the
-    // last green plan for dragend. Keep the exception platform-scoped so other
-    // browsers retain the existing viewport-exit cleanup.
+    // arrives 0.5–1s before dragend, so consume the still-green stored plan
+    // immediately instead of making the operator wait. Keep the exception
+    // platform-scoped so other browsers retain the existing exit lifecycle.
     const macChromeZeroRelease = !e.relatedTarget
       && e.clientX === 0 && e.clientY === 0
       && e.screenX === 0 && e.screenY === 0
@@ -465,6 +465,12 @@ function bindGroupReorder() {
       && /(?:Chrome|Chromium)\//.test(navigator.userAgent)
       && !/(?:Edg|OPR|Vivaldi)\//.test(navigator.userAgent)
       && !navigator.brave;
+    const releaseTarget = reorderTarget(e);
+    if (macChromeZeroRelease && groupCloneHoverPlan
+        && releaseTarget?.classList.contains('group-drop-clone')) {
+      finishGroupDrag();
+      return;
+    }
     const outside = !macChromeZeroRelease && !e.relatedTarget && (
       e.clientX <= 0 || e.clientY <= 0
       || e.clientX >= window.innerWidth - 1

@@ -342,11 +342,13 @@ return (async function(){
   // Emulate macOS Chrome for its all-zero mouse-release dragleave. Linux Chrome
   // used by this smoke must keep the ordinary outside-document behavior above.
   fire(target, 'dragleave', {relatedTarget:null, clientX:0, clientY:0, screenX:0, screenY:0});
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  if (!document.querySelector('#group-clone-modal.show')) throw new Error('macOS zero-event did not immediately finish the green clone plan');
   var dragend = new DragEvent('dragend', {bubbles:true, cancelable:false, dataTransfer:transfer});
   Object.defineProperty(dragend, 'dataTransfer', {value:{dropEffect:'none'}});
   source.dispatchEvent(dragend);
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
-  if (!document.querySelector('#group-clone-modal.show')) throw new Error('macOS-style dragend did not finish the live green clone plan');
+  if (document.querySelectorAll('#group-clone-modal.show').length !== 1) throw new Error('delayed dragend duplicated the clone dialog');
   if (platformDescriptor) Object.defineProperty(navigator, 'platform', platformDescriptor);
   else delete navigator.platform;
   if (userAgentDescriptor) Object.defineProperty(navigator, 'userAgent', userAgentDescriptor);
