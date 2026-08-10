@@ -46,6 +46,9 @@ test('the general harness tooltip tells a starting Copilot agent from a deaf one
       assert.doesNotMatch(line.textContent, /\bapi\b/i);
       assert.match(line.title, /Drive: Copilot embedded JSON-RPC API/);
       assert.match(line.title, /not tmux send-keys/);
+      assert.equal(line.getAttribute('tabindex'), '0');
+      assert.equal(line.dataset.fullMetadata, line.title,
+        'keyboard and touch focus expose the same general tooltip');
     } finally {
       await mounted.unmount();
     }
@@ -95,6 +98,7 @@ test('the general harness tooltip tells a starting Copilot agent from a deaf one
       assert.equal(line.querySelector('.harness-drive'), null);
       assert.doesNotMatch(line.title, /Drive:/,
         'an agent that never took the drive cannot have drive health detail');
+      assert.equal(line.getAttribute('tabindex'), null, 'ordinary harness lines do not add a tab stop');
     } finally {
       await mounted.unmount();
     }

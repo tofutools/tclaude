@@ -96,6 +96,9 @@ func TestDashboardHTML_HarnessLineWired(t *testing.T) {
 	must("if (drive) title += ` — ${drive}`", "drive metadata is appended to the general harness tooltip")
 	must("Drive: Copilot embedded JSON-RPC API", "Copilot API drive is identified in the tooltip")
 	must("Drive: Codex app-server ready", "Codex app-server drive is identified in the tooltip")
+	must("tabindex=${drive ? '0' : null}", "drive-bearing general tooltips are keyboard and touch focusable")
+	must("data-full-metadata=${drive ? title : null}", "focus disclosure carries the same complete tooltip text")
+	must(".agent-harness[data-full-metadata]:focus::after", "focused drive metadata reveals its tooltip without a pointer")
 	if strings.Contains(dashboardAssets, "class=${'harness-drive'") {
 		t.Error("API/app-server drive metadata must not regain a visible indicator")
 	}

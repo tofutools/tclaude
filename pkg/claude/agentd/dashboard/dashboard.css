@@ -3622,7 +3622,22 @@ tr:hover .row-actions { opacity: 1; }
      the controls above it rather than floating out to the left. */
   padding-left: 5px;
   margin-top: 3px; font-size: 10px; line-height: 1.2;
-  white-space: nowrap; cursor: default; color: #8b949e;
+  position: relative; white-space: nowrap; cursor: default; color: #8b949e;
+}
+/* API/app-server drive details live in the general harness tooltip instead of
+   visible row indicators. Pointer users retain the native title; keyboard and
+   touch focus reveal the same complete value, following the state-pill pattern. */
+.agent-harness[data-full-metadata]:focus { outline: 2px solid #58a6ff; outline-offset: 2px; }
+.agent-harness[data-full-metadata]:focus::after {
+  content: attr(data-full-metadata);
+  position: absolute; z-index: 300; left: 0; top: calc(100% + 5px);
+  box-sizing: border-box; width: max-content;
+  max-width: min(64ch, calc(100vw - 24px)); padding: 5px 7px;
+  border: 1px solid #30363d; border-radius: 4px;
+  background: #161b22; color: #c9d1d9;
+  font: 11px/1.4 ui-monospace, monospace;
+  white-space: normal; overflow-wrap: anywhere;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
 }
 .agent-harness .harness-name,
 .agent-harness .harness-mark { color: #6e7681; }
