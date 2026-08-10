@@ -103,6 +103,24 @@ test('the general harness tooltip tells a starting Copilot agent from a deaf one
       await mounted.unmount();
     }
   });
+
+  await t.test('a no-model agent exposes drive health through its harness mark', async () => {
+    const mounted = await mount({
+      harness: 'copilot', copilot_api: true, copilot_api_channel_failed: true,
+    });
+    try {
+      const line = mounted.container.querySelector('.agent-harness');
+      const mark = line.querySelector('.harness-mark');
+      assert.equal(line.querySelector('.harness-drive'), null);
+      assert.match(line.title, /messages are being HELD/);
+      assert.equal(mark.title, line.title,
+        'the mark does not mask the general drive-health tooltip');
+      assert.equal(mark.getAttribute('aria-label'), 'GitHub Copilot CLI',
+        'the title override does not replace the mark accessible name');
+    } finally {
+      await mounted.unmount();
+    }
+  });
 });
 
 test('the general harness tooltip discloses Codex observer ownership and quarantine detail', async (t) => {

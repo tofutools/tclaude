@@ -31,11 +31,11 @@ function ProductMark({ name }) {
   }
 }
 
-export function HarnessMark({ name, shortLabel, longLabel }) {
+export function HarnessMark({ name, shortLabel, longLabel, tooltip = longLabel }) {
   const key = name || 'claude';
   if (!PRODUCT_MARKS.has(key)) {
-    return html`<span class="harness-name" title=${longLabel}>${shortLabel}</span>`;
+    return html`<span class="harness-name" title=${tooltip}>${shortLabel}</span>`;
   }
   return html`<span class="harness-mark" data-harness-mark=${key}
-    role="img" aria-label=${longLabel} title=${longLabel}><${ProductMark} name=${key} /></span>`;
+    role="img" aria-label=${longLabel} title=${tooltip}><${ProductMark} name=${key} /></span>`;
 }

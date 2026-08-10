@@ -39,14 +39,14 @@ func TestDashboardHTML_HarnessLineWired(t *testing.T) {
 	must("${shortModel(model, harness)}", "the visible chip uses the harness-aware shortened model")
 	must("'Last used model' : 'Model'", "harnessLine's tooltip keeps the FULL model name and labels offline values as historical")
 	must("import { HarnessMark } from './harness-mark.js'", "the member table imports the shared harness-mark component")
-	must("<${HarnessMark} name=${harness} shortLabel=${labels.short} longLabel=${labels.long} />",
+	must("<${HarnessMark} name=${harness} shortLabel=${labels.short} longLabel=${labels.long} tooltip=${title} />",
 		"the harness line renders the mark with full-name and fallback labels")
 	must("const PRODUCT_MARKS = new Set(['claude', 'codex', 'copilot', 'opencode'])",
 		"the known product-mark set is explicit")
-	must(`role="img" aria-label=${longLabel} title=${longLabel}`,
-		"each mark exposes its full harness name to assistive tech and ordinary hover")
-	must(`class="harness-name" title=${longLabel}>${shortLabel}</span>`,
-		"an unknown future harness keeps a visible text fallback and full-name tooltip")
+	must(`role="img" aria-label=${longLabel} title=${tooltip}`,
+		"each mark keeps its full harness name for assistive tech and accepts the general tooltip on hover")
+	must(`class="harness-name" title=${tooltip}>${shortLabel}</span>`,
+		"an unknown future harness keeps a visible text fallback and accepts the general tooltip")
 
 	// The reasoning-effort level (JOH-37) trails the model — "CC · O4.8 1M
 	// hi" — read off state.effort_level, with its own styled span and a

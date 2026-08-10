@@ -232,7 +232,7 @@ export function HarnessLine({ member, snapshot }) {
     let title = `${offline ? 'Last used harness' : 'Harness'}: ${labels.long}`;
     if (drive) title += ` — ${drive}`;
     return html`<div class="agent-harness" title=${title} tabindex=${drive ? '0' : null}
-      data-full-metadata=${drive ? title : null}><span class=${metadataClass} role="note" aria-label=${title}><${HarnessMark} name=${harness} shortLabel=${labels.short} longLabel=${labels.long} /></span>${sandbox}${remote}${refused}</div>`;
+      data-full-metadata=${drive ? title : null}><span class=${metadataClass} role="note" aria-label=${title}><${HarnessMark} name=${harness} shortLabel=${labels.short} longLabel=${labels.long} tooltip=${title} /></span>${sandbox}${remote}${refused}</div>`;
   }
   const effort = state.effort_level || '';
   const cost = Number(state.cost_usd || 0);
@@ -253,7 +253,7 @@ export function HarnessLine({ member, snapshot }) {
     : 'Estimated pay-per-token-equivalent cost this session — hypothetical, not a real charge (subscription)';
   return html`<div class="agent-harness" title=${title} tabindex=${drive ? '0' : null}
     data-full-metadata=${drive ? title : null}>
-    <span class=${metadataClass} role="note" aria-label=${title}><${HarnessMark} name=${harness} shortLabel=${labels.short} longLabel=${labels.long} /><span class="harness-sep">·</span><span class="harness-model">${shortModel(model, harness)}</span>
+    <span class=${metadataClass} role="note" aria-label=${title}><${HarnessMark} name=${harness} shortLabel=${labels.short} longLabel=${labels.long} tooltip=${title} /><span class="harness-sep">·</span><span class="harness-model">${shortModel(model, harness)}</span>
       ${effort ? html`<span class="harness-effort" title=${effort}>${shortEffort(effort)}</span>` : null}
       ${cost > 0 ? html`<span class="harness-cost">${cost >= 0.005 ? `$${cost.toFixed(2)}` : '<1¢'}</span>` : null}
       ${virtualCost > 0 ? html`<span class="harness-cost harness-cost-whatif" title=${virtualTitle}>${virtualCost >= 0.005 ? `≈$${virtualCost.toFixed(2)}` : '≈<1¢'}</span>` : null}
