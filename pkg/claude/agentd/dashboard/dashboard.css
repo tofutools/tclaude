@@ -8181,6 +8181,8 @@ body.wizard .directory-picker-modal .modal-buttons { border-top-color: rgba(122,
 .cfg-field input:disabled, .cfg-field select:disabled { opacity: 0.4; cursor: default; }
 .cfg-field label.cfg-inline { display: flex; align-items: center; gap: 5px; cursor: pointer; }
 .cfg-field input[type=checkbox] { cursor: pointer; }
+.cfg-checkbox-stack-field { align-items: flex-start; }
+.cfg-checkbox-stack { display: flex; flex-direction: column; gap: 9px; }
 /* Web-terminal attachment geometry is a small subsection rather than one long
    flex row: strategy first, then one consistently aligned timing override per
    row. It sits after Window focus because both change terminal attachment /
