@@ -50,6 +50,14 @@ async function waitForSelectorCount(harness, root, selector, count) {
   return [];
 }
 
+async function waitForCondition(harness, condition, message) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (condition()) return;
+    await harness.act(() => new Promise((resolve) => setTimeout(resolve, 10)));
+  }
+  assert.ok(condition(), message);
+}
+
 test('management model preserves full-replace profile and role semantics', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/management-model.js');
@@ -469,7 +477,12 @@ test('OpenCode profile editor replaces the unsandboxed warning with its tclaude-
   assert.equal(initialNotice.hidden, false, 'the live region remains in the accessibility tree');
   assert.match(initialNotice.className, /sandbox-info-pending/,
     'the empty live region is visually clipped without using hidden');
-  await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 260)); });
+  await waitForCondition(
+    harness,
+    () => probes.length > 0
+      && !host.querySelector('#profile-editor-sandbox-info')?.classList.contains('sandbox-info-pending'),
+    'timed out waiting for the sandbox boundary probe',
+  );
 
   assert.equal(probes.at(-1).sandboxImplementation, 'tclaude-layer');
   const notice = host.querySelector('#profile-editor-sandbox-info');

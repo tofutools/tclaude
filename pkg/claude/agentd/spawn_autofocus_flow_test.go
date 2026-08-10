@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -55,7 +54,6 @@ func TestSpawn_DeadPaneFailsBeforeAutoFocus(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
 	f.World.SpawnPaneDiesAtLaunch = true
-	t.Cleanup(agentd.SetAsyncSpawnInlineGraceForTest(50 * time.Millisecond))
 
 	opened := false
 	t.Cleanup(agentd.SetOpenTerminalForTest(func(string) error {
