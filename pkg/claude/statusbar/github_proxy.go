@@ -212,15 +212,21 @@ func proxyPRInfo(ctx context.Context, branch string) (number int, url, state str
 // matches the bare ref NAME across every head repository. Without the check, a
 // local branch named `fix-typo` on a public repo renders an outside
 // contributor's fork PR of the same name as though it were the agent's own
-// work. The head-name re-check beside it is the cheap guard against the
-// daemon's filter ever widening.
+// work.
+//
+// The head-name re-check beside it demands an exact match rather than
+// tolerating an absent name, so a row that does not PROVE which branch it
+// belongs to is not credited to this one. That is the fail-closed direction,
+// and it is what makes an unfiltered listing — an older daemon that does not
+// know the `head` field and answers with every pull request in the repository
+// — degrade to no link rather than to somebody else's.
 func pickBranchPR(prs []ghProxyPREntry, branch string) *ghProxyPREntry {
 	var newest *ghProxyPREntry
 	for i := range prs {
 		if prs[i].IsCrossRepository {
 			continue
 		}
-		if prs[i].HeadRefName != "" && prs[i].HeadRefName != branch {
+		if prs[i].HeadRefName != branch {
 			continue
 		}
 		if strings.EqualFold(prs[i].State, "open") {

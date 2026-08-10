@@ -673,13 +673,39 @@ func getGitData() *GitSnapshot {
 	// call whichever path serves it).
 	if data.RepoURL != "" && data.Branch != "" && data.DefaultBranch != "" && data.Branch != data.DefaultBranch {
 		if !carryPRForward(cached, data) {
-			data.PRNumber, data.PRURL, data.PRState, data.PRVia = getPRInfo(data.Branch)
-			data.PRFetchedAt = time.Now()
-			dropForeignRepoPR(data)
+			n, u, s, via, answered := getPRInfo(data.Branch)
+			switch {
+			case answered:
+				data.PRNumber, data.PRURL, data.PRState, data.PRVia = n, u, s, via
+				data.PRFetchedAt = time.Now()
+				dropForeignRepoPR(data)
+			default:
+				// Nothing looked, so nothing was learned. Keep what the last
+				// snapshot knew — stamp and all — so the bar holds its link
+				// and the next refresh retries instead of treating an
+				// unanswered lookup as a settled "no pull request".
+				keepUnrefreshedPR(cached, data)
+			}
 		}
 	}
 	saveGitCache(data)
 	return data
+}
+
+// keepUnrefreshedPR carries the previous snapshot's PR observation over
+// UNCHANGED — its stamp included — after a lookup that never got to look.
+//
+// It is carryPRForward's counterpart and deliberately ignores the age it
+// refuses on. carryPRForward answers "is this still fresh enough to reuse?";
+// this one answers "we learned nothing, so what did we know?" — and the stale
+// stamp is the point, because it is what makes the next refresh try again
+// rather than settling for the silence.
+func keepUnrefreshedPR(cached, data *GitSnapshot) {
+	if cached == nil || cached.Branch != data.Branch {
+		return
+	}
+	data.PRNumber, data.PRURL, data.PRState = cached.PRNumber, cached.PRURL, cached.PRState
+	data.PRFetchedAt, data.PRVia = cached.PRFetchedAt, cached.PRVia
 }
 
 // dropForeignRepoPR discards a PR that does not belong to the repository this
@@ -700,7 +726,14 @@ func dropForeignRepoPR(data *GitSnapshot) {
 	if data.PRURL == "" || data.RepoURL == "" {
 		return
 	}
-	if strings.HasPrefix(data.PRURL, strings.TrimSuffix(data.RepoURL, "/")+"/") {
+	// Case-insensitively, because the two strings come from different places
+	// and GitHub does not force them to agree: RepoURL is whatever the local
+	// remote is spelled as, while PRURL carries the owner and repository
+	// casing GitHub has on record. A remote written `github.com/ToFuTools/…`
+	// against a PR URL GitHub renders as `tofutools` is the same repository,
+	// and dropping its PR would blank a link that is perfectly correct.
+	prefix := strings.ToLower(strings.TrimSuffix(data.RepoURL, "/")) + "/"
+	if strings.HasPrefix(strings.ToLower(data.PRURL), prefix) {
 		return
 	}
 	// Keep PRVia and PRFetchedAt: a lookup that answered about the wrong
@@ -801,7 +834,15 @@ func getDefaultBranch() string {
 // the path IN FORCE, not the one that happened to produce the bytes, and it is
 // read only to pick a refresh interval — the interval that has to be slow
 // enough for a refusal repeating on a timer, which is exactly this case.
-func getPRInfo(branch string) (number int, url, state, via string) {
+// The answered result reports whether anything actually LOOKED. It is not the
+// same as "there is a pull request": a lookup that ran and found none answered,
+// and the caller should cache that. What it rules out is the shared budget
+// running out — the proxy spending all of it and leaving the `gh` fallback an
+// already-expired context, which returns "no pull request" without running at
+// all. Stamped as an observation, one transient stall would suppress the link
+// for a whole proxy interval, and a real PR the previous snapshot knew about
+// would be replaced by a silence that had never been checked.
+func getPRInfo(branch string) (number int, url, state, via string, answered bool) {
 	// ONE deadline for the whole lookup, however many steps it takes. This
 	// runs inside the statusline command the harness is waiting on, so what
 	// the pane can afford is fixed; it must not grow because the answer might
@@ -811,13 +852,15 @@ func getPRInfo(branch string) (number int, url, state, via string) {
 
 	if githubProxyEnabled(ctx) {
 		if n, u, s, ok := proxyPRInfo(ctx, branch); ok {
-			return n, u, s, prViaProxy
+			return n, u, s, prViaProxy, true
 		}
 		n, u, s := ghPRInfo(ctx, branch)
-		return n, u, s, prViaProxy
+		// A budget still live means `gh` was given a real chance; a spent one
+		// means what came back is the clock talking, not GitHub.
+		return n, u, s, prViaProxy, ctx.Err() == nil
 	}
 	n, u, s := ghPRInfo(ctx, branch)
-	return n, u, s, prViaGH
+	return n, u, s, prViaGH, ctx.Err() == nil
 }
 
 // ghPRInfo is the direct `gh pr view` read: the pane's own credentials, the

@@ -74,6 +74,14 @@ func TestPickBranchPRIgnoresWhatIsNotThisBranchesWork(t *testing.T) {
 	other := []ghProxyPREntry{{Number: 9, State: "OPEN", URL: "u9", HeadRefName: "other"}}
 	assert.Nil(t, pickBranchPR(other, "feat"))
 	assert.Nil(t, pickBranchPR(nil, "feat"))
+
+	// A row that does not say which branch it belongs to does not get the
+	// benefit of the doubt. An older daemon that does not know the `head`
+	// field answers with every PR in the repository, and crediting an
+	// unlabelled row to this branch is how that becomes a wrong link rather
+	// than no link.
+	unlabelled := []ghProxyPREntry{{Number: 9, State: "OPEN", URL: "u9"}}
+	assert.Nil(t, pickBranchPR(unlabelled, "feat"))
 }
 
 // TestPRLookupTTLIsSlowerThroughTheProxy pins the whole reason the snapshot
@@ -272,16 +280,27 @@ func TestGitHubProxyEnabledFollowsTheGitHubReadBit(t *testing.T) {
 // request shape is pinned: the daemon must be asked for THIS branch's pull
 // requests in every state, or a just-merged PR's link disappears.
 func TestProxyPRInfoReadsTheBranchesPR(t *testing.T) {
-	var got map[string]any
+	// The handler RECORDS and asserts nothing: httptest runs it on its own
+	// goroutine, and require's FailNow is documented as safe only from the
+	// goroutine running the test. A failed require here would Goexit the
+	// server before it wrote a response, and the test would report an
+	// unreachable daemon instead of the mismatch that actually happened.
+	var (
+		got       map[string]any
+		gotPath   string
+		decodeErr error
+	)
 	serveFakeProxyDaemon(t, infoAnd(true, func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/v1/github/pr/list", r.URL.Path)
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&got))
+		gotPath = r.URL.Path
+		decodeErr = json.NewDecoder(r.Body).Decode(&got)
 		_ = json.NewEncoder(w).Encode(map[string]any{"exit_code": 0, "json": []map[string]any{
 			{"number": 7, "state": "OPEN", "url": "https://github.com/o/r/pull/7", "headRefName": "feat"},
 		}})
 	}))
 
 	n, u, s, ok := proxyPRInfo(t.Context(), "feat")
+	require.NoError(t, decodeErr)
+	require.Equal(t, "/v1/github/pr/list", gotPath)
 	require.True(t, ok)
 	assert.Equal(t, 7, n)
 	assert.Equal(t, "https://github.com/o/r/pull/7", u)
@@ -369,4 +388,44 @@ func TestDropForeignRepoPRKeepsTheBarHonest(t *testing.T) {
 	}
 	dropForeignRepoPR(own)
 	assert.Equal(t, 7, own.PRNumber)
+
+	// The two strings come from different places and GitHub does not force
+	// them to agree: the remote is spelled however the operator cloned it,
+	// while the PR URL carries the casing GitHub has on record. Same
+	// repository — dropping its PR would blank a correct link.
+	casing := &GitSnapshot{
+		RepoURL: "https://github.com/ToFuTools/A", PRURL: "https://github.com/tofutools/a/pull/7", PRNumber: 7,
+	}
+	dropForeignRepoPR(casing)
+	assert.Equal(t, 7, casing.PRNumber)
+}
+
+// TestGetGitDataKeepsAPRWhenNothingCouldLook — the shared budget can be spent
+// entirely by a stalled proxy, leaving the `gh` fallback an already-expired
+// context so it returns "no pull request" without running. Recording that as
+// an observation would suppress the link for a whole proxy interval on one
+// transient stall, and would replace a PR the previous snapshot knew about
+// with a silence nobody ever checked.
+func TestGetGitDataKeepsAPRWhenNothingCouldLook(t *testing.T) {
+	known := &GitSnapshot{
+		Branch: "feat", PRNumber: 42, PRURL: "https://github.com/o/r/pull/42", PRState: "open",
+		PRFetchedAt: time.Now().Add(-2 * proxyPRLookupTTL), PRVia: prViaProxy,
+	}
+	data := &GitSnapshot{Branch: "feat", FetchedAt: time.Now()}
+
+	require.False(t, carryPRForward(known, data), "the observation is too old to reuse as fresh")
+	keepUnrefreshedPR(known, data)
+
+	assert.Equal(t, 42, data.PRNumber, "an unanswered lookup must not blank a known PR")
+	assert.Equal(t, known.PRFetchedAt, data.PRFetchedAt,
+		"the stale stamp is the point — it is what makes the next refresh try again")
+	assert.False(t, carryPRForward(data, &GitSnapshot{Branch: "feat"}),
+		"and the carried-over entry is still due for a refresh")
+
+	// A branch flip means the previous snapshot's PR is not this branch's.
+	other := &GitSnapshot{Branch: "other", FetchedAt: time.Now()}
+	keepUnrefreshedPR(known, other)
+	assert.Zero(t, other.PRNumber)
+	keepUnrefreshedPR(nil, other)
+	assert.Zero(t, other.PRNumber)
 }

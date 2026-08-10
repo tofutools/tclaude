@@ -223,8 +223,14 @@ Every other pull-request verb takes a NUMBER. `pr ls --head <branch>` is how
 you get one when all you know is the branch you are on:
 
 ```bash
-tclaude proxy github pr ls --head "$(git branch --show-current)" --state all
+branch=$(git branch --show-current)
+test -n "$branch" || { echo "detached HEAD — no branch to look up"; exit 1; }
+tclaude proxy github pr ls --head "$branch" --state all
 ```
+
+The guard matters: on a detached HEAD `git branch --show-current` is empty, and
+an empty `--head` means *no filter* — so the unguarded one-liner quietly lists
+every pull request in the repository instead of failing.
 
 One caveat, and it matters on public repositories: GitHub filters this on the
 bare ref **name**, across every head repository. A fork's branch of the same
