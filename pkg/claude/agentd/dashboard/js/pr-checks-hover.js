@@ -273,6 +273,27 @@ export function isRunningCheck(check) {
   return !Number.isFinite(ended) || ended < started;
 }
 
+// orderChecks keeps the rows that need attention inside the first screenful:
+// failures, actively running checks, queued/pending checks, then completed
+// successes and skips. Names break ties inside those groups so the order stays
+// predictable as GitHub returns checks in different workflow orders.
+export function orderChecks(checks) {
+  const rank = (check) => {
+    if (check?.bucket === 'fail') return 0;
+    if (isRunningCheck(check)) return 1;
+    if (check?.bucket === 'pending') return 2;
+    if (check?.bucket === 'pass' || check?.bucket === 'skipped') return 3;
+    return 4;
+  };
+  return [...(checks || [])].sort((a, b) => {
+    const statusOrder = rank(a) - rank(b);
+    if (statusOrder) return statusOrder;
+    return String(a?.name || '').localeCompare(String(b?.name || ''), undefined, {
+      sensitivity: 'base',
+    });
+  });
+}
+
 // The right-hand column is runtime only when a check actually ran. GitHub can
 // attach a timestamp to queued/waiting checks, but counting from it implies
 // execution has begun; keep those rows honest by showing their state instead.
@@ -400,6 +421,7 @@ function PRChecksPanel({ url, prNumber, summary, panelID, headingID, state, pane
   const { data, error, loading } = state;
   const live = data?.summary && (data.summary.total || 0) > 0 ? data.summary : summary;
   const checks = data?.checks || [];
+  const orderedChecks = orderChecks(checks);
   const [now, setNow] = useState(() => Date.now());
   const hasRunningClock = checks.some(isRunningCheck);
 
@@ -431,7 +453,7 @@ function PRChecksPanel({ url, prNumber, summary, panelID, headingID, state, pane
       <div class="ci-panel-summary">${summaryLine(live)}</div>
       ${checks.length ? html`
         <ul class="ci-checks">
-          ${checks.map((check, index) => html`
+          ${orderedChecks.map((check, index) => html`
             <${CheckRow} key=${`${check.name}:${index}`} check=${check} now=${now} />
           `)}
         </ul>
