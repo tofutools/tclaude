@@ -232,19 +232,22 @@ type dashState struct {
 		Scope string `json:"scope"`
 		Name  string `json:"name"`
 	} `json:"sandbox_profiles,omitempty"`
-	SandboxProfilesRecorded bool   `json:"sandbox_profiles_recorded,omitempty"`
-	SandboxProfilesOmitted  bool   `json:"sandbox_profiles_omitted,omitempty"`
-	RemoteControl           bool   `json:"remote_control,omitempty"`
-	RecoveryStatus          string `json:"recovery_status,omitempty"`
-	RecoveryDetail          string `json:"recovery_detail,omitempty"`
-	RecoveryReason          string `json:"recovery_reason,omitempty"`
-	RecoveryCount           int    `json:"recovery_count,omitempty"`
-	RecoveryBackoff         int    `json:"recovery_backoff_seconds,omitempty"`
-	RecoveryNextAttempt     string `json:"recovery_next_attempt_at,omitempty"`
-	RecoveryLastExitCode    *int   `json:"recovery_last_exit_code,omitempty"`
-	BrokerRefusals          int    `json:"broker_refusals,omitempty"`
-	BrokerRefusalDetail     string `json:"broker_refusal_detail,omitempty"`
-	BrokerRefusalSince      string `json:"broker_refusal_since,omitempty"`
+	SandboxProfilesRecorded bool     `json:"sandbox_profiles_recorded,omitempty"`
+	SandboxProfilesOmitted  bool     `json:"sandbox_profiles_omitted,omitempty"`
+	ResourceCgroup          bool     `json:"resource_cgroup,omitempty"`
+	ResourceMemoryLimit     string   `json:"resource_memory_limit,omitempty"`
+	ResourceCPULimit        *float64 `json:"resource_cpu_limit,omitempty"`
+	RemoteControl           bool     `json:"remote_control,omitempty"`
+	RecoveryStatus          string   `json:"recovery_status,omitempty"`
+	RecoveryDetail          string   `json:"recovery_detail,omitempty"`
+	RecoveryReason          string   `json:"recovery_reason,omitempty"`
+	RecoveryCount           int      `json:"recovery_count,omitempty"`
+	RecoveryBackoff         int      `json:"recovery_backoff_seconds,omitempty"`
+	RecoveryNextAttempt     string   `json:"recovery_next_attempt_at,omitempty"`
+	RecoveryLastExitCode    *int     `json:"recovery_last_exit_code,omitempty"`
+	BrokerRefusals          int      `json:"broker_refusals,omitempty"`
+	BrokerRefusalDetail     string   `json:"broker_refusal_detail,omitempty"`
+	BrokerRefusalSince      string   `json:"broker_refusal_since,omitempty"`
 }
 
 // fetchSnapshotOnly fetches ONLY /api/snapshot (a single request). Use it when

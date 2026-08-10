@@ -203,6 +203,58 @@ const CASES = [
     tooltip: 'Status: ON\nImplementation: TClaude\nProfile: None\nWarning: filtered-network prerequisite probe: detected (bubblewrap user/network namespace execution passed; trusted root-owned pasta and nft executables were found; end-to-end gateway readiness is decided at the gated launch boundary); launch remains gated on atomic nft policy installation before the supervised pasta route becomes available\nClick to temporarily disable',
   },
   {
+    name: 'an authored cgroup budget rides the badge as its own axis',
+    state: {
+      harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'on',
+      sandbox_implementation: 'tclaude-layer',
+      resource_cgroup: true, resource_memory_limit: '8GiB', resource_cpu_limit: 2.5,
+    },
+    glyph: '🔒', danger: false,
+    tooltip: 'Status: ON\nImplementation: TClaude\nProfile: None\nCgroup: on\nMemory limit: 8GiB\nCPU limit: 2.5 cores\nClick to temporarily disable',
+  },
+  {
+    name: 'a resource-only launch has a cgroup and no access boundary',
+    state: {
+      harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'off',
+      sandbox_implementation: 'resource-only', resource_cgroup: true,
+    },
+    glyph: '⚠', danger: true,
+    tooltip: 'Status: OFF\nImplementation: None\nProfile: None\nCgroup: on\nMemory limit: unlimited\nCPU limit: unlimited',
+  },
+  {
+    name: 'a single-core ceiling is not pluralized',
+    state: {
+      harness: 'codex', sandbox_mode: 'workspace-write',
+      resource_cgroup: true, resource_cpu_limit: 1,
+    },
+    glyph: '🔒', danger: false,
+    tooltip: 'Status: ON\nImplementation: Codex\nProfile: None\nCgroup: on\nMemory limit: unlimited\nCPU limit: 1 core\nClick to temporarily disable',
+  },
+  {
+    name: 'a recorded budget that never took effect says so',
+    state: {
+      harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'on',
+      sandbox_implementation: 'tclaude-layer',
+      resource_cgroup: true, resource_memory_limit: '4GB',
+      sandbox_access_notices: [{
+        class: 'degradation', axis: 'resource_limits',
+        reason: 'operator_unenforced_launch_override', effect: 'not_enforced',
+        detail: 'the human operator used the dashboard launch override; configured CPU and memory limits are not enforced',
+      }],
+    },
+    glyph: '🔒', danger: false,
+    tooltip: 'Status: ON\nImplementation: TClaude\nProfile: None\nCgroup: requested — not enforced\nMemory limit: 4GB\nCPU limit: unlimited\nWarning: the human operator used the dashboard launch override; configured CPU and memory limits are not enforced\nClick to temporarily disable',
+  },
+  {
+    name: 'a launch with no cgroup spends no tooltip line on saying so',
+    state: {
+      harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'on',
+      sandbox_implementation: 'tclaude-layer',
+    },
+    glyph: '🔒', danger: false,
+    tooltip: 'Status: ON\nImplementation: TClaude\nProfile: None\nClick to temporarily disable',
+  },
+  {
     name: 'an offline lock stays informative but non-actionable',
     online: false,
     state: {

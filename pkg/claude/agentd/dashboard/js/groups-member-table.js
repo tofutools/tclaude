@@ -359,11 +359,39 @@ function sandboxProfileLabel(member) {
   return member.state?.sandbox_profiles_recorded ? 'None' : 'Not recorded';
 }
 
+// resourceLimitLines describes the per-agent Linux cgroup, which is a separate
+// axis from the sandbox posture above: it bounds how MUCH the workload may
+// consume, never WHAT it may reach. A `resource-only` agent has a cgroup and no
+// access boundary at all, so the two facts cannot share one verdict.
+//
+// Silent when no cgroup was requested. "Cgroup: off" on every macOS agent and
+// every Linux launch without a budget would cost a tooltip line to say nothing;
+// the lines appear exactly when there is a boundary to describe. An enforcement
+// failure still shows here, because a recorded request that did not take effect
+// is precisely what a reader must not be left guessing about.
+function resourceLimitLines(member) {
+  const state = member.state || {};
+  if (!state.resource_cgroup) return [];
+  // Both spellings mean the same for this line: the operator's own dashboard
+  // override and a host with no delegated cgroup both leave the request
+  // unenforced. The notice's own detail follows as a Warning line and names
+  // which one it was.
+  const unenforced = (state.sandbox_access_notices || []).some((notice) =>
+    notice?.axis === 'resource_limits' && notice?.effect === 'not_enforced');
+  const cpu = state.resource_cpu_limit;
+  return [
+    `Cgroup: ${unenforced ? 'requested — not enforced' : 'on'}`,
+    `Memory limit: ${state.resource_memory_limit || 'unlimited'}`,
+    `CPU limit: ${typeof cpu === 'number' ? `${cpu} core${cpu === 1 ? '' : 's'}` : 'unlimited'}`,
+  ];
+}
+
 function sandboxTooltip(member, badge, actionable, unlocked) {
   const lines = [
     `Status: ${unlocked && badge.status === 'OFF' ? 'TEMP OFF' : badge.status}`,
     `Implementation: ${sandboxImplementationLabel(member, badge)}`,
     `Profile: ${sandboxProfileLabel(member)}`,
+    ...resourceLimitLines(member),
   ];
   for (const notice of member.state?.sandbox_access_notices || []) {
     if (notice?.detail) lines.push(`Warning: ${notice.detail}`);
@@ -439,6 +467,7 @@ function sandboxRecordedDetails(member) {
     `Harness sandbox mode: ${state.sandbox_mode || 'Not recorded'}`,
     `Profile: ${sandboxProfileLabel(member)}`,
     `Source: ${source || 'Not recorded'}`,
+    ...resourceLimitLines(member),
   ];
   for (const notice of state.sandbox_access_notices || []) {
     if (notice?.detail) lines.push(`Notice: ${notice.detail}`);
