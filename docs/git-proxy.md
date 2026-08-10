@@ -149,7 +149,7 @@ SSH and HTTPS URLs for the same repository therefore produce the same key:
 
 ### Granting the permissions
 
-Four slugs, none granted by default and none conferred by group ownership:
+Five slugs, none granted by default and none conferred by group ownership:
 
 | Slug | Allows |
 |---|---|
@@ -157,6 +157,13 @@ Four slugs, none granted by default and none conferred by group ownership:
 | `proxy.git.push` | `git push` |
 | `proxy.github.read` | `github pr ls/view/checks/comments`, `github issue ls/view`, `github run ls/log-failed/artifacts/download` |
 | `proxy.github.write` | `github pr create/edit/comment/ready`, `github issue comment` |
+| `proxy.github.merge` | `github pr merge` |
+
+`proxy.github.merge` is deliberately **not** implied by `proxy.github.write`:
+opening a pull request proposes a change, merging one lands it on the base
+branch. An agent trusted to write its own work up is not thereby trusted to
+decide it ships, so an operator grants that separately or not at all. See
+[Merging a pull request](#merging-a-pull-request).
 
 ```bash
 tclaude agent permissions grant <agent> proxy.git.read
@@ -207,6 +214,10 @@ tclaude proxy github pr comments 42            # read ALL review feedback
 tclaude proxy github pr comment 42 --body-file reply.md
 tclaude proxy github pr edit 42 --body-file new-description.md
 tclaude proxy github pr ready 42
+
+# Merging (proxy.github.merge — NOT conferred by proxy.github.write)
+tclaude proxy github pr merge 42 --method squash --subject "Land the thing"
+
 tclaude proxy github issue ls
 tclaude proxy github issue view 7
 tclaude proxy github issue comment 7 --body-file note.md
@@ -281,6 +292,53 @@ under a context budget. The projection lives in `githubproxy_handlers.go`.
 > JSON; these return free text that an agent will read as part of its
 > instructions unless it has been told otherwise. The bundled `proxy-git` skill
 > says so; keep it in mind if you write your own guidance.
+
+### Merging a pull request
+
+```bash
+tclaude proxy github pr merge 42                             # merge commit
+tclaude proxy github pr merge 42 --method squash --subject "Land the thing"
+tclaude proxy github pr merge 42 --method rebase
+```
+
+This is the one GitHub write that is not covered by `proxy.github.write`. It
+has its own slug, `proxy.github.merge`, because it is the point at which an
+agent's work stops being a proposal.
+
+**GitHub still decides.** Branch protection, required reviews and required
+checks are evaluated by GitHub against the operator's account, and a merge
+those rules refuse is refused here, in GitHub's own words — the grant does not
+bypass any of it.
+
+**`agent.git_proxy.protected_refs` does not apply.** That list bounds direct
+*pushes*, and its defaults (`main`, `master`) are exactly the branches pull
+requests target, so honouring it here would make every merge grant a no-op.
+The forge's own protection rules are the mechanism for "this branch is not
+merged into casually"; the grant is the mechanism for "this agent does not
+merge".
+
+Before merging, the proxy reads the pull request's state, because GitHub
+reports four quite different situations as the same `405 Pull Request is not
+mergeable`:
+
+| State | Answer |
+|---|---|
+| already merged | **success**, saying so — the state you asked for is the state it is in |
+| closed | refused: reopen it first |
+| still a draft | refused: `pr ready` it first |
+| conflicting with its base | refused: update the branch |
+
+A pull request whose mergeability GitHub has not finished computing (`UNKNOWN`,
+which is the answer for a while after every push) is merged anyway rather than
+refused — that field is recomputed asynchronously, and refusing on it would
+refuse perfectly mergeable pull requests depending only on how recently they
+were touched.
+
+`--subject` and `--body`/`--body-file` set the merge or squash commit message;
+omit them and GitHub composes it. The head branch is left alone: there is no
+`--delete-branch`, and `sha`-conditional merging is not offered either. As with
+`pr edit`, the verb is a small whole operation rather than the endpoint's full
+surface.
 
 ### Downloading a run's artifacts
 
@@ -492,7 +550,9 @@ Two consequences worth stating plainly:
   [Where the GitHub token comes from](#where-the-github-token-comes-from) for
   the one command it runs to *obtain* one.)
 - **Everything the GitHub half writes is attributed to your GitHub account.** A
-  PR the agent opens is a PR you opened.
+  PR the agent opens is a PR you opened, and a PR it merges is one you merged —
+  which is why merging has a grant of its own rather than riding along with
+  `proxy.github.write`.
 
 ## Auditing
 
@@ -511,7 +571,7 @@ tclaude proxy github pr create # → audit verb "github.pr.create"
 | Symptom | Cause / fix |
 |---|---|
 | `503 git_proxy_disabled` | An unscoped grant has no legacy `allowed_remotes` policy. Add a `remote` scope to the grant (preferred), or configure the legacy list. |
-| `403` naming a slug | The agent lacks `proxy.git.read` / `proxy.git.push` / `proxy.github.read` / `proxy.github.write`. Grant it, or the agent can retry with `--ask-human`. |
+| `403` naming a slug | The agent lacks `proxy.git.read` / `proxy.git.push` / `proxy.github.read` / `proxy.github.write` / `proxy.github.merge`. Grant it, or the agent can retry with `--ask-human`. Note that `proxy.github.write` does not confer `proxy.github.merge`. |
 | `token_missing` | `gh auth token` could not supply one — gh is not installed, or the account agentd runs as is not logged in. The message carries gh's own words. Run `gh auth login` as that account, or set `github_token_file` to skip gh entirely. |
 | `token_unreadable` | The configured `github_token_file` could not be read, is empty, or contains a control character (usually a stray newline mid-value). A configured file is never silently skipped in favour of another source. |
 | `response_too_large` | A read's answer exceeded 1 MiB. Ask for fewer items with `--limit`. The bound exists because these answers land in an agent's context window and in the idempotency store; it is a refusal rather than a truncation, because half a JSON document is worse than none. |

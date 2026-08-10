@@ -23,3 +23,13 @@ func TestGHRunStatusCompletionMatchesTheGate(t *testing.T) {
 	assert.ElementsMatch(t, agentd.GHRunStatusesForTest(), proxy.GHRunStatusAlternativesForTest(),
 		"the CLI's completion vocabulary and the daemon's allow-list have drifted apart")
 }
+
+// TestGHMergeMethodCompletionMatchesTheGate is the same pin for `pr merge
+// --method`. Order matters here as it does not for statuses: an empty method
+// resolves to the gate's FIRST entry, so the two lists agreeing as sets is not
+// enough — completion offering "squash" first while the daemon defaults to
+// "merge" would read as a default that is not one.
+func TestGHMergeMethodCompletionMatchesTheGate(t *testing.T) {
+	assert.Equal(t, agentd.GHMergeMethodsForTest(), proxy.GHMergeMethodAlternativesForTest(),
+		"the CLI's completion vocabulary and the daemon's allow-list have drifted apart")
+}

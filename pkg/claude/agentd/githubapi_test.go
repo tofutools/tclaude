@@ -383,7 +383,7 @@ func TestGraphQLDocumentsAreInternallyConsistent(t *testing.T) {
 		"ghPRChecksQuery":   ghPRChecksQuery,
 		"ghIssueListQuery":  ghIssueListQuery,
 		"ghIssueViewQuery":  ghIssueViewQuery,
-		"ghPRNodeIDQuery":   ghPRNodeIDQuery,
+		"ghPRStateQuery":   ghPRStateQuery,
 		"ghPRReadyMutation": ghPRReadyMutation,
 	}
 	declared := regexp.MustCompile(`\$(\w+):`)
@@ -437,7 +437,7 @@ func TestGraphQLVariablesMatchTheDocuments(t *testing.T) {
 		{"pr checks", ghPRChecksQuery, []string{"owner", "name", "number"}},
 		{"issue list", ghIssueListQuery, []string{"owner", "name", "limit", "states"}},
 		{"issue view", ghIssueViewQuery, []string{"owner", "name", "number"}},
-		{"pr node id", ghPRNodeIDQuery, []string{"owner", "name", "number"}},
+		{"pr state", ghPRStateQuery, []string{"owner", "name", "number"}},
 		{"pr ready", ghPRReadyMutation, []string{"id"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -468,8 +468,7 @@ func handleGHProxyComment(w http.ResponseWriter, r *http.Request, verb string) {
 }
 
 // handleGHProxyPRReady serves POST /v1/github/pr/ready — mark a draft ready
-// for review. It is the natural end of an agent's own workflow, which is why
-// it is here and, say, `pr merge` is not: merging is the human's call.
+// for review. It is the natural end of an agent's own workflow.
 //
 // It is the one write with no REST route. REST will not clear a pull request's
 // draft flag, so this resolves the node id and calls the GraphQL mutation that
@@ -491,7 +490,7 @@ func handleGHProxyPRReady(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), ghProxyTimeout)
 	defer cancel()
 
-	pr, failure, err := g.pullRequest(ctx, ghPRNodeIDQuery, number)
+	pr, failure, err := g.pullRequest(ctx, ghPRStateQuery, number)
 	if failure != nil || err != nil {
 		g.respondOrFail(w, r, "pr.ready", failure, err)
 		return
@@ -510,6 +509,175 @@ func handleGHProxyPRReady(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.respond(w, r, "pr.ready", ProxyResult{Stdout: pr.URL + "\n"}, nil)
+}
+
+// ghProxyPRMergeRequest merges an existing pull request.
+//
+// Deliberately narrow. GitHub's merge endpoint also takes `sha` (merge only if
+// the head still matches) and the API can go on to delete the head branch;
+// neither is something this verb offers, for the same reason `pr edit` will not
+// move a base branch — the proxy's contract is a small set of whole operations,
+// not the endpoint's full surface.
+type ghProxyPRMergeRequest struct {
+	Remote  string `json:"remote,omitempty"`
+	Number  int    `json:"number"`
+	Method  string `json:"method,omitempty"`
+	Subject string `json:"subject,omitempty"`
+	Body    string `json:"body,omitempty"`
+}
+
+// ghPRMerged is GitHub's answer to a merge: the commit it produced, and whether
+// it happened at all.
+type ghPRMerged struct {
+	SHA     string `json:"sha"`
+	Merged  bool   `json:"merged"`
+	Message string `json:"message"`
+}
+
+// handleGHProxyPRMerge serves POST /v1/github/pr/merge.
+//
+// It sits behind proxy.github.merge rather than beside the other writes on
+// proxy.github.write, and the split is the point of the verb: opening a pull
+// request PROPOSES a change, merging one LANDS it on the base branch. An agent
+// trusted to write its own work up is not thereby trusted to decide it ships,
+// so an operator has to say so separately.
+//
+// What this does NOT do is loosen anything on GitHub's side. Branch protection,
+// required reviews and required checks are evaluated by GitHub against the
+// operator's account, and a merge that those rules refuse is refused here too,
+// in GitHub's own words. The operator's agent.git_proxy.protected_refs list is
+// a different matter and deliberately does not apply: it bounds direct PUSHES,
+// its defaults (main, master) are precisely the branches pull requests target,
+// and consulting it here would make every merge grant a no-op.
+//
+// Two calls under one budget, like `pr ready`: the state is read first because
+// GitHub answers "already merged", "closed", "still a draft" and "conflicting"
+// with the same 405 "Pull Request is not mergeable", and an agent that cannot
+// tell those apart will retry the one case that will never work.
+func handleGHProxyPRMerge(w http.ResponseWriter, r *http.Request) {
+	var body ghProxyPRMergeRequest
+	g, ok := openGHProxy(w, r, PermGitHubMerge, &body, func() string { return body.Remote })
+	if !ok {
+		return
+	}
+	number, fault := validateGHNumberInt(body.Number)
+	if fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	method, fault := validateGHMergeMethod(body.Method)
+	if fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	// The subject is a commit message's first line, published under the
+	// operator's account and read wherever git log is read, so it is
+	// charset-checked like a title. Empty means "let GitHub compose it", which
+	// is what the caller gets by not passing one.
+	subject := strings.TrimSpace(body.Subject)
+	if subject != "" {
+		if fault := validateGHTitle(subject); fault != nil {
+			writeProxyFault(w, fault)
+			return
+		}
+	}
+	if fault := validateGHBody(body.Body, false); fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	// One budget across the state read and the merge, for the reason `pr create`
+	// has one: two independent bounds would let the daemon run to twice what the
+	// CLI waits on, and "did it merge?" is the worst question to leave open.
+	ctx, cancel := context.WithTimeout(r.Context(), ghProxyTimeout)
+	defer cancel()
+
+	pr, failure, err := g.pullRequest(ctx, ghPRStateQuery, number)
+	if failure != nil || err != nil {
+		g.respondOrFail(w, r, "pr.merge", failure, err)
+		return
+	}
+	if answer := ghMergePreflight(pr); answer != nil {
+		g.respond(w, r, "pr.merge", *answer, nil)
+		return
+	}
+
+	payload := map[string]any{"merge_method": method}
+	// Omitted rather than sent empty, unlike `pr create`'s body: an empty
+	// commit_title is not "the default title", it is an empty first line.
+	if subject != "" {
+		payload["commit_title"] = subject
+	}
+	if strings.TrimSpace(body.Body) != "" {
+		payload["commit_message"] = body.Body
+	}
+	raw, failure, err := g.rest(ctx, ghAPIRequest{
+		Method: http.MethodPut,
+		Path:   g.repoPath("pulls/%s/merge", number),
+		Body:   payload,
+	})
+	if failure != nil || err != nil {
+		g.respondOrFail(w, r, "pr.merge", failure, err)
+		return
+	}
+	var merged ghPRMerged
+	if err := json.Unmarshal(raw, &merged); err != nil {
+		// Reported rather than degraded to silence, on the same reasoning as
+		// `pr create`: the branch is landed either way, and an agent told
+		// nothing would go and merge it again.
+		g.respond(w, r, "pr.merge", ProxyResult{},
+			fmt.Errorf("the merge was accepted but the response could not be read: %w", err))
+		return
+	}
+	if !merged.Merged {
+		// A 2xx that did not merge is not something GitHub documents, so say
+		// exactly that rather than reporting a success with no commit behind it.
+		text := strings.TrimSpace(merged.Message)
+		if text == "" {
+			text = "GitHub accepted the request but reported no merge"
+		}
+		g.respond(w, r, "pr.merge", ghResultFromError(fmt.Sprintf(
+			"pull request #%d was not merged: %s", pr.Number, text)), nil)
+		return
+	}
+	g.respond(w, r, "pr.merge", ProxyResult{Stdout: fmt.Sprintf(
+		"merged #%d into %s as %s\n%s\n", pr.Number, pr.BaseRefName, merged.SHA, pr.URL)}, nil)
+}
+
+// ghMergePreflight turns the pull request's own state into the answer, for the
+// cases GitHub would collapse into one 405.
+//
+// A nil return means "nothing known to stop it" rather than "it will merge":
+// required checks, review requirements and a base branch that moved are all
+// GitHub's to judge, and it judges them at merge time.
+//
+// `mergeable` is only consulted for CONFLICTING, which is a verdict. GitHub
+// computes the field asynchronously and reports UNKNOWN for a while after every
+// push, so refusing on anything but a definite conflict would refuse perfectly
+// mergeable pull requests depending on how recently they were touched.
+func ghMergePreflight(pr *ghGQLPullRequest) *ProxyResult {
+	switch {
+	case strings.EqualFold(pr.State, "MERGED"):
+		// Not a failure, on the same reasoning as `pr ready` against a
+		// non-draft: the caller asked for a state the pull request is already
+		// in. Reporting it as an error invites a retry that cannot succeed.
+		return &ProxyResult{Stdout: fmt.Sprintf(
+			"pull request #%d is already merged\n%s\n", pr.Number, pr.URL)}
+	case strings.EqualFold(pr.State, "CLOSED"):
+		failure := ghResultFromError(fmt.Sprintf(
+			"pull request #%d is closed, so there is nothing to merge; reopen it first", pr.Number))
+		return &failure
+	case pr.IsDraft:
+		failure := ghResultFromError(fmt.Sprintf(
+			"pull request #%d is a draft; mark it ready for review first "+
+				"(tclaude proxy github pr ready %d)", pr.Number, pr.Number))
+		return &failure
+	case strings.EqualFold(pr.Mergeable, "CONFLICTING"):
+		failure := ghResultFromError(fmt.Sprintf(
+			"pull request #%d conflicts with %s; update the branch and let GitHub recompute "+
+				"before merging", pr.Number, pr.BaseRefName))
+		return &failure
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------

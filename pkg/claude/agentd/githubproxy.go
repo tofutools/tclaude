@@ -731,17 +731,47 @@ func validateGHTitle(title string) *proxyFault {
 // of literals, so the value that reaches the request is one of these constants
 // and never the caller's string.
 func validateGHState(state string, allowed ...string) (string, *proxyFault) {
-	state = strings.ToLower(strings.TrimSpace(state))
-	if state == "" {
+	return validateGHEnum("state", state, allowed...)
+}
+
+// ghMergeMethods is the `pr merge --method` vocabulary: the three merges
+// GitHub's merge endpoint accepts. "merge" is first because an empty value
+// resolves to the first entry, and a merge commit is the method that preserves
+// the branch's commits as they were reviewed. A repository that has disabled it
+// refuses the call — GitHub's answer to give, and it names what is allowed.
+//
+// This is the AUTHORITY, like ghRunStatuses: the CLI keeps its own copy for
+// shell completion because it must not import the daemon, and
+// TestGHMergeMethodCompletionMatchesTheGate pins the two together.
+var ghMergeMethods = []string{"merge", "squash", "rebase"}
+
+// GHMergeMethodsForTest exposes the gate's vocabulary so the CLI's completion
+// copy can be pinned against it.
+func GHMergeMethodsForTest() []string { return append([]string(nil), ghMergeMethods...) }
+
+// validateGHMergeMethod bounds `pr merge --method`. Same shape as
+// validateGHState — the first entry is the default an empty value resolves to —
+// but it names the parameter in its refusal, because "state ... is not one of"
+// would send the caller looking at the wrong flag.
+func validateGHMergeMethod(method string) (string, *proxyFault) {
+	return validateGHEnum("merge method", method, ghMergeMethods...)
+}
+
+// validateGHEnum is the shared allow-list gate: the value that reaches the
+// request is one of these constants and never the caller's string. An empty
+// value resolves to allowed[0].
+func validateGHEnum(what, value string, allowed ...string) (string, *proxyFault) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
 		return allowed[0], nil
 	}
 	for _, a := range allowed {
-		if state == a {
+		if value == a {
 			return a, nil
 		}
 	}
 	return "", faultf(http.StatusBadRequest, "invalid_arg",
-		"state %q is not one of: %s", state, strings.Join(allowed, ", "))
+		"%s %q is not one of: %s", what, value, strings.Join(allowed, ", "))
 }
 
 // ghRunStatuses is the `run list --status` vocabulary: GitHub's own check

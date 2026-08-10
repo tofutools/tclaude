@@ -663,27 +663,34 @@ func TestGHProxy_TimeoutSaysItMayHaveTakenEffect(t *testing.T) {
 	assert.Contains(t, out.Stderr, "did not answer within")
 }
 
-// TestGHProxy_MultiCallWritesShareOneBudget — `pr create` without a base and
-// `pr ready` each make two calls. Two independent per-call bounds would let the
-// daemon run to twice what the CLI waits on, which on a write is the worst
-// place to leave "did it happen?" unanswered.
+// TestGHProxy_MultiCallWritesShareOneBudget — `pr create` without a base,
+// `pr ready` and `pr merge` each make two calls. Two independent per-call
+// bounds would let the daemon run to twice what the CLI waits on, which on a
+// write is the worst place to leave "did it happen?" unanswered.
 func TestGHProxy_MultiCallWritesShareOneBudget(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		path string
+		perm string
 		body map[string]any
 		def  ghCanned
 	}{
-		{"pr create resolving a base", "/v1/github/pr/create",
+		{"pr create resolving a base", "/v1/github/pr/create", agentd.PermGitHubWrite,
 			map[string]any{"title": "t", "body": "b"},
 			ghCanned{Status: 200, Body: `{"default_branch":"main","number":7,"html_url":"https://x/7"}`}},
-		{"pr ready", "/v1/github/pr/ready", map[string]any{"number": 42},
+		{"pr ready", "/v1/github/pr/ready", agentd.PermGitHubWrite, map[string]any{"number": 42},
 			ghCanned{Status: 200, Body: `{"data":{"repository":{"pullRequest":{"id":"PR_1","number":42,"url":"https://x/42","isDraft":true}}}}`}},
+		// The merge answers both calls from one canned body: the first read
+		// needs the pull request, the second needs `merged`, and neither
+		// notices the other's fields.
+		{"pr merge", "/v1/github/pr/merge", agentd.PermGitHubMerge, map[string]any{"number": 42},
+			ghCanned{Status: 200, Body: `{"merged":true,"sha":"abc1234","data":{"repository":{"pullRequest":{
+				"id":"PR_1","number":42,"url":"https://x/42","state":"OPEN","mergeable":"MERGEABLE","baseRefName":"main"}}}}`}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f, _, gh := ghWorld(t, []string{"github.com/tofutools"})
 			gh.def = tc.def
-			require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubWrite, "test"))
+			require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, tc.perm, "test"))
 
 			res := gitProxyPost(t, f, tc.path, tc.body)
 			require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
@@ -1015,6 +1022,214 @@ func TestGHProxy_PRReadyOnANonDraftIsNotAFailure(t *testing.T) {
 	assert.Equal(t, 0, out.ExitCode)
 	assert.Contains(t, out.Stdout, "already ready for review")
 	assert.Equal(t, 1, gh.count(), "no mutation is sent")
+}
+
+// ---------------------------------------------------------------------------
+// Merging
+// ---------------------------------------------------------------------------
+
+// ghMergeablePR is a pull request in the one state a merge may proceed from.
+const ghMergeablePR = `{"data":{"repository":{"pullRequest":{
+	"id":"PR_1","number":42,"url":"https://x/42","isDraft":false,
+	"state":"OPEN","mergeable":"MERGEABLE","baseRefName":"main"}}}}`
+
+// TestGHProxy_MergeNeedsItsOwnSlug is the whole reason proxy.github.merge
+// exists. Opening a pull request proposes a change; merging one lands it on the
+// base branch. An agent granted the write slug so it can write its own work up
+// must not thereby be able to decide that work ships.
+func TestGHProxy_MergeNeedsItsOwnSlug(t *testing.T) {
+	for _, slug := range []string{agentd.PermGitHubRead, agentd.PermGitHubWrite} {
+		t.Run(slug+" does not confer it", func(t *testing.T) {
+			f, git, gh := ghWorld(t, []string{"github.com/tofutools"})
+			require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, slug, "test"))
+
+			res := gitProxyPost(t, f, "/v1/github/pr/merge", map[string]any{"number": 42})
+			assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+			assert.Equal(t, 0, gh.count(), "a denied caller spends no credential")
+			assert.False(t, git.sawAnySubprocess(), "and runs nothing at all")
+		})
+	}
+
+	t.Run("granted", func(t *testing.T) {
+		f, _, gh := ghWorld(t, []string{"github.com/tofutools"})
+		gh.seq = []ghCanned{
+			{Status: 200, Body: ghMergeablePR},
+			{Status: 200, Body: `{"sha":"abc1234","merged":true,"message":"Pull Request successfully merged"}`},
+		}
+		require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubMerge, "test"))
+
+		res := gitProxyPost(t, f, "/v1/github/pr/merge", map[string]any{"number": 42})
+		require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+		var out struct {
+			ExitCode int    `json:"exit_code"`
+			Stdout   string `json:"stdout"`
+		}
+		require.NoError(t, json.Unmarshal(res.Body.Bytes(), &out))
+		assert.Equal(t, 0, out.ExitCode)
+		// The commit and the branch it landed on, because "merged" alone does
+		// not say what happened or where to look for it.
+		assert.Contains(t, out.Stdout, "merged #42 into main as abc1234")
+		assert.Contains(t, out.Stdout, "https://x/42")
+
+		// Merging under the operator's GitHub account is exactly the kind of
+		// call an operator reviews later.
+		row := auditRowByVerb(t, "github.pr.merge")
+		assert.Contains(t, row.Detail, "tofutools/tclaude")
+		assert.Contains(t, row.Detail, "exit=0")
+	})
+}
+
+// TestGHProxy_MergeBuildsTheRequestFromDerivedAndGatedValues — the repository
+// still comes from the agent's own allow-listed remote, the method from the
+// daemon's allow-list, and the commit message travels in the request body.
+func TestGHProxy_MergeBuildsTheRequestFromDerivedAndGatedValues(t *testing.T) {
+	f, _, gh := ghWorld(t, []string{"github.com/tofutools"})
+	gh.seq = []ghCanned{
+		{Status: 200, Body: ghMergeablePR},
+		{Status: 200, Body: `{"sha":"abc1234","merged":true}`},
+	}
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubMerge, "test"))
+
+	const prose = "why this lands, with `backticks` and\nnewlines"
+	res := gitProxyPost(t, f, "/v1/github/pr/merge", map[string]any{
+		"number": 42, "method": "SQUASH", "subject": "Land the thing", "body": prose,
+		"repo": "attacker/exfil", "owner": "attacker",
+	})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	calls := gh.requests()
+	require.Len(t, calls, 2, "the state read, then the merge")
+	assert.Equal(t, http.MethodPut, calls[1].Method)
+	assert.Equal(t, "repos/tofutools/tclaude/pulls/42/merge", calls[1].Path)
+	body := jsonBody(t, calls[1])
+	assert.Equal(t, "squash", body["merge_method"], "the gate lower-cases into its own literal")
+	assert.Equal(t, "Land the thing", body["commit_title"])
+	assert.Equal(t, prose, body["commit_message"])
+	// Narrow on purpose: `sha` and deleting the head branch are not this verb's.
+	assert.Len(t, body, 3)
+	assert.NotContains(t, string(calls[1].Body), "attacker")
+	assert.NotContains(t, calls[1].Path, "attacker")
+}
+
+// TestGHProxy_MergeDefaultsToAMergeCommit — an omitted method must resolve to
+// the one that preserves the commits as they were reviewed, and it must be
+// SENT: leaving merge_method out lets GitHub's own default decide instead.
+func TestGHProxy_MergeDefaultsToAMergeCommit(t *testing.T) {
+	f, _, gh := ghWorld(t, []string{"github.com/tofutools"})
+	gh.seq = []ghCanned{
+		{Status: 200, Body: ghMergeablePR},
+		{Status: 200, Body: `{"sha":"abc1234","merged":true}`},
+	}
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubMerge, "test"))
+
+	res := gitProxyPost(t, f, "/v1/github/pr/merge", map[string]any{"number": 42})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	calls := gh.requests()
+	require.Len(t, calls, 2)
+	body := jsonBody(t, calls[1])
+	assert.Equal(t, "merge", body["merge_method"])
+	// An empty commit_title is not "GitHub's default title", it is an empty
+	// first line — so an unsupplied one is omitted rather than sent blank.
+	assert.Len(t, body, 1)
+}
+
+// TestGHProxy_MergeRefusesAnUnknownMethod — the value that reaches GitHub is
+// one of the daemon's literals or the call does not happen.
+func TestGHProxy_MergeRefusesAnUnknownMethod(t *testing.T) {
+	f, _, gh := ghWorld(t, []string{"github.com/tofutools"})
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubMerge, "test"))
+
+	res := gitProxyPost(t, f, "/v1/github/pr/merge",
+		map[string]any{"number": 42, "method": "fast-forward"})
+	assert.Equal(t, http.StatusBadRequest, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), "merge method",
+		"the refusal must name the parameter the caller got wrong")
+	assert.Equal(t, 0, gh.count())
+}
+
+// TestGHProxy_MergePreflightTellsTheUnmergeableCasesApart — GitHub answers
+// every one of these with the same 405 "Pull Request is not mergeable", which
+// an agent cannot act on. Reading the state first is what makes each a distinct
+// answer, and makes the already-merged case a success rather than a retry.
+func TestGHProxy_MergePreflightTellsTheUnmergeableCasesApart(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		pr       string
+		wantExit int
+		wantText string
+	}{
+		{"already merged", `"state":"MERGED","mergeable":"UNKNOWN"`, 0, "already merged"},
+		{"closed", `"state":"CLOSED","mergeable":"UNKNOWN"`, 1, "is closed"},
+		{"still a draft", `"state":"OPEN","isDraft":true,"mergeable":"MERGEABLE"`, 1, "is a draft"},
+		{"conflicting", `"state":"OPEN","mergeable":"CONFLICTING"`, 1, "conflicts with main"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, _, gh := ghWorld(t, []string{"github.com/tofutools"})
+			gh.def = ghCanned{Status: 200, Body: `{"data":{"repository":{"pullRequest":{
+				"id":"PR_1","number":42,"url":"https://x/42","baseRefName":"main",` + tc.pr + `}}}}`}
+			require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubMerge, "test"))
+
+			res := gitProxyPost(t, f, "/v1/github/pr/merge", map[string]any{"number": 42})
+			require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+			var out struct {
+				ExitCode int    `json:"exit_code"`
+				Stdout   string `json:"stdout"`
+				Stderr   string `json:"stderr"`
+			}
+			require.NoError(t, json.Unmarshal(res.Body.Bytes(), &out))
+			assert.Equal(t, tc.wantExit, out.ExitCode)
+			assert.Contains(t, out.Stdout+out.Stderr, tc.wantText)
+			assert.Equal(t, 1, gh.count(), "the merge itself is never sent")
+		})
+	}
+}
+
+// TestGHProxy_MergeProceedsWhileMergeabilityIsStillUnknown — GitHub computes
+// `mergeable` asynchronously and reports UNKNOWN for a while after every push.
+// Refusing on it would refuse perfectly mergeable pull requests depending only
+// on how recently they were touched, so only a definite CONFLICTING stops the
+// merge; everything else is GitHub's to judge at merge time.
+func TestGHProxy_MergeProceedsWhileMergeabilityIsStillUnknown(t *testing.T) {
+	f, _, gh := ghWorld(t, []string{"github.com/tofutools"})
+	gh.seq = []ghCanned{
+		{Status: 200, Body: `{"data":{"repository":{"pullRequest":{
+			"id":"PR_1","number":42,"url":"https://x/42","isDraft":false,
+			"state":"OPEN","mergeable":"UNKNOWN","baseRefName":"main"}}}}`},
+		{Status: 200, Body: `{"sha":"abc1234","merged":true}`},
+	}
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubMerge, "test"))
+
+	res := gitProxyPost(t, f, "/v1/github/pr/merge", map[string]any{"number": 42})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+	assert.Equal(t, 2, gh.count(), "the merge is attempted")
+}
+
+// TestGHProxy_MergeReportsGitHubsRefusalVerbatim — branch protection, a
+// required review and a failing required check are all decided by GitHub
+// against the operator's account. The proxy does not second-guess them; it
+// relays the refusal, because "At least 1 approving review is required" is the
+// actionable part.
+func TestGHProxy_MergeReportsGitHubsRefusalVerbatim(t *testing.T) {
+	f, _, gh := ghWorld(t, []string{"github.com/tofutools"})
+	gh.seq = []ghCanned{
+		{Status: 200, Body: ghMergeablePR},
+		{Status: 405, Body: `{"message":"At least 1 approving review is required by reviewers with write access."}`},
+	}
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubMerge, "test"))
+
+	res := gitProxyPost(t, f, "/v1/github/pr/merge", map[string]any{"number": 42})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	var out struct {
+		ExitCode int    `json:"exit_code"`
+		Stderr   string `json:"stderr"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &out))
+	assert.NotEqual(t, 0, out.ExitCode)
+	assert.Contains(t, out.Stderr, "At least 1 approving review is required")
 }
 
 // ---------------------------------------------------------------------------
