@@ -21,7 +21,7 @@ import (
 // away from the dashboard it covers goes unnoticed and rots. TCL-1162 retired
 // five such states that had drifted against the Preact migration's asynchronous
 // renders rather than repairing assertions no one was running; what remains is
-// what still earns its keep, including the macOS group-clone regression states.
+// what still earns its keep, including the macOS group-clone regression state.
 // Prefer retiring a stale state here over teaching it to wait.
 func TestDashboardPreactDnDChrome(t *testing.T) {
 	if os.Getenv("TCLAUDE_DASHSNAP") == "" {
