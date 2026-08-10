@@ -453,10 +453,19 @@ function bindGroupReorder() {
     // Leaving the document can finish as a native copy in another window or
     // application. Invalidate the internal placement so its later dragend
     // cannot open a stale dashboard clone dialog. A null relatedTarget alone
-    // is NOT sufficient: macOS Chrome also emits that shape at the in-place
-    // mouse release that ends a clone drag. Only a null target AT the viewport
-    // boundary means the pointer actually left the document.
-    const outside = !e.relatedTarget && (
+    // is NOT sufficient: macOS Chrome emits an all-zero event with that shape
+    // at the in-place mouse release that ends a Cmd/Ctrl clone drag. That event
+    // carries no positioning information at all, so ignore it and preserve the
+    // last green plan for dragend. Keep the exception platform-scoped so other
+    // browsers retain the existing viewport-exit cleanup.
+    const macChromeZeroRelease = !e.relatedTarget
+      && e.clientX === 0 && e.clientY === 0
+      && e.screenX === 0 && e.screenY === 0
+      && /Mac/.test(navigator.platform || navigator.userAgent)
+      && /(?:Chrome|Chromium)\//.test(navigator.userAgent)
+      && !/(?:Edg|OPR|Vivaldi)\//.test(navigator.userAgent)
+      && !navigator.brave;
+    const outside = !macChromeZeroRelease && !e.relatedTarget && (
       e.clientX <= 0 || e.clientY <= 0
       || e.clientX >= window.innerWidth - 1
       || e.clientY >= window.innerHeight - 1
