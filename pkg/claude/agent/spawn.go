@@ -829,12 +829,9 @@ type SpawnParams struct {
 	// before this flag existed.
 	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"EXPERIMENTAL OS containment: off | resource-only (Linux only; no access confinement, but the launch gets a per-launch cgroup: the profile's CPU/memory limits if it authored any, otherwise accounting and OOM attribution only; no bwrap or namespaces) | harness-builtin (only for a harness with a real built-in OS sandbox) | tclaude-layer (tclaude outer wall, inner OS sandbox off) | stacked (Linux Claude/Codex only; live model-free real-engine probe, both walls). Copilot children spawned by an agent are admitted in exactly one topology: tclaude-layer. Experimental implementations refuse naming the missing capability and never fall back. Unset = profile chain, then historical harness behavior; for OpenCode that is a command filter, not confinement"`
 
+	Owner bool `long:"owner" help:"Make the new agent a group owner (requires groups.own authority)"`
 	// NoOwner declines group ownership for the new agent whatever the profile
-	// chain says. There is no positive twin: ownership is conferred by a profile
-	// (or by `groups owners add` afterwards), never by a bare CLI flag, so this
-	// is the same shape as --no-group-context — a way to say no to something a
-	// profile would otherwise decide. Declared last, with no explicit short, for
-	// the same reason as the fields above.
+	// chain says. It is the explicit-false twin of --owner.
 	NoOwner bool `long:"no-owner" help:"Do not make the new agent a group owner, whatever the selected or a default spawn profile says (default: the profile chain decides, and unset everywhere spawns an ordinary member)"`
 }
 
@@ -1190,6 +1187,10 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		fmt.Fprintln(stderr, "Error: --omit-sandbox-profiles and --sandbox-profile are mutually exclusive")
 		return nil, rcInvalidArg
 	}
+	if p.Owner && p.NoOwner {
+		fmt.Fprintln(stderr, "Error: --owner and --no-owner are mutually exclusive")
+		return nil, rcInvalidArg
+	}
 	// --worktree-base / --worktree-repo are modifiers of --worktree;
 	// rejecting them up front beats silently ignoring a flag the user
 	// expected to take effect.
@@ -1515,12 +1516,11 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		IsOwner:                merged.IsOwner,
 		PermissionOverrides:    merged.PermissionOverrides,
 	}
-	// --no-owner is the CLI's only way to decline ownership a profile would
-	// otherwise confer: the daemon resolves is_owner down the whole tier stack,
-	// so an omitted key lets a group's or the global default profile answer.
-	// Stating false here is what outranks them. Shape mirrors
-	// --no-group-context.
-	if p.NoOwner {
+	// An explicit owner choice outranks the profile stack in either direction;
+	// omission leaves the daemon free to resolve group/global defaults.
+	if p.Owner {
+		req.StateIsOwner(true)
+	} else if p.NoOwner {
 		req.StateIsOwner(false)
 	}
 	// Send the map only when the flag spoke. An empty-but-non-nil map is a real

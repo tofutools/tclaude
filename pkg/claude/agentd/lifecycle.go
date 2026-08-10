@@ -4030,6 +4030,13 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	body.InitialMessage, _, _ = resolveIdentityLaunchField(
 		initialMessageField, body.InitialMessage, body.InitialMessageSpecified(), profileTiers,
 		func(p *db.SpawnProfile) string { return p.InitialMessage }, nil)
+	// Name an otherwise unnamed group spawn before building spawnParams and its
+	// durable/audit snapshots. executeSpawn retains the same fallback for
+	// non-HTTP adapters, but the shared HTTP path must record the name it
+	// actually launches rather than an empty pre-derivation value.
+	if strings.TrimSpace(body.Name) == "" {
+		body.Name = derivedGroupSpawnName(g.Name, time.Now(), randomLabelToken())
+	}
 	// No disclosure note for auto_focus: the resolver's note channel only speaks
 	// on the harness mismatch this field skips, and a terminal window opening is
 	// its own announcement.
@@ -6270,6 +6277,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	if fail := applyDefaultProfile(g, &p); fail != nil {
 		return nil, fail
 	}
+	if strings.TrimSpace(p.Name) == "" && groupName != "" {
+		p.Name = derivedGroupSpawnName(groupName, time.Now(), randomLabelToken())
+	}
 	// Defense in depth for template, wave, scribe, and process adapters that
 	// call executeSpawn directly instead of passing through handleGroupSpawn.
 	if fail := spawnHarnessPolicyFailure(g, p.SpawnedByConv, p.Harness); fail != nil {
@@ -7280,6 +7290,29 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	return nil, &spawnFailure{http.StatusGatewayTimeout, "timeout",
 		"spawned session " + label + " but conv-id never materialised within " + pollBudget.String() +
 			" — the session may still come up; check `tclaude session attach " + label + "`"}
+}
+
+// derivedGroupSpawnName gives unnamed group agents a readable, valid title.
+// The time keeps the operator's requested <group>-<date>-<HHmm> shape; a short
+// random tail prevents a wave of same-minute spawns from becoming ambiguous.
+func derivedGroupSpawnName(group string, now time.Time, token string) string {
+	base := agent.NormalizeSpawnName(group)
+	if base == "" {
+		base = "agent"
+	}
+	token = agent.NormalizeSpawnName(token)
+	if len(token) > 4 {
+		token = token[:4]
+	}
+	if token == "" {
+		token = "spawn"
+	}
+	suffix := now.Format("20060102-1504") + "-" + token
+	budget := agent.MaxSpawnNameLen - len(suffix) - 1
+	if len(base) > budget {
+		base = strings.TrimRight(base[:budget], "-")
+	}
+	return base + "-" + suffix
 }
 
 func spawnRowBelongsToLaunch(s *db.SessionRow, launchEnroll bool, preConvID string, launchedAt time.Time) bool {

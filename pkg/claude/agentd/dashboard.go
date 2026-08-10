@@ -1627,11 +1627,12 @@ type dashboardGroup struct {
 	AttachmentURL              string                     `json:"attachment_url,omitempty"`
 	AttachmentLabel            string                     `json:"attachment_label,omitempty"`
 	AttachmentLabelOverride    string                     `json:"attachment_label_override,omitempty"`
-	DefaultCwd                 string                     `json:"default_cwd"`     // pre-fills the spawn form's cwd; "" = none
-	DefaultContext             string                     `json:"default_context"` // shared startup context injected into spawned agents; "" = none
-	DefaultProfile             string                     `json:"default_profile"` // spawn profile whose launch fields fill blank spawn fields for this group's agents; "" = none (the spawn default's single source — the vestigial default_model was dropped, JOH-220)
-	SandboxProfile             string                     `json:"sandbox_profile"` // filesystem/environment profile assigned to this group; "" = inherit global
-	Permissions                []string                   `json:"permissions"`     // live additive grants held by current group members
+	DefaultCwd                 string                     `json:"default_cwd"`                   // pre-fills the spawn form's cwd; "" = none
+	DefaultSpawnGroup          bool                       `json:"default_spawn_group,omitempty"` // directory auto-join ambiguity tie-breaker
+	DefaultContext             string                     `json:"default_context"`               // shared startup context injected into spawned agents; "" = none
+	DefaultProfile             string                     `json:"default_profile"`               // spawn profile whose launch fields fill blank spawn fields for this group's agents; "" = none (the spawn default's single source — the vestigial default_model was dropped, JOH-220)
+	SandboxProfile             string                     `json:"sandbox_profile"`               // filesystem/environment profile assigned to this group; "" = inherit global
+	Permissions                []string                   `json:"permissions"`                   // live additive grants held by current group members
 	PermissionScopes           map[string]PermissionScope `json:"permission_scopes,omitempty"`
 	UnreadablePermissionScopes []string                   `json:"unreadable_permission_scopes,omitempty"`
 	// OwnerScopes narrows this group's STRUCTURAL owner-implied permission
@@ -3314,7 +3315,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			}
 		})
 		attachment := groupAttachmentViewFor(g)
-		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, AttachmentURL: attachment.URL, AttachmentLabel: attachment.Label, AttachmentLabelOverride: attachment.LabelOverride, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, DefaultProfile: g.DefaultProfile, SandboxProfile: g.SandboxProfile, Permissions: groupPermissions, PermissionScopes: groupPermissionScopes, UnreadablePermissionScopes: groupUnreadablePermissionScopes, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), OwnerScopes: ownerScopesWire(g.OwnerScopesJSON), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Scribe: isScribeGroup(g), RouteGeneration: g.RouteGeneration, Members: []dashboardMember{}}
+		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, AttachmentURL: attachment.URL, AttachmentLabel: attachment.Label, AttachmentLabelOverride: attachment.LabelOverride, DefaultCwd: g.DefaultCwd, DefaultSpawnGroup: g.DefaultSpawnGroup, DefaultContext: g.DefaultContext, DefaultProfile: g.DefaultProfile, SandboxProfile: g.SandboxProfile, Permissions: groupPermissions, PermissionScopes: groupPermissionScopes, UnreadablePermissionScopes: groupUnreadablePermissionScopes, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), OwnerScopes: ownerScopesWire(g.OwnerScopesJSON), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Scribe: isScribeGroup(g), RouteGeneration: g.RouteGeneration, Members: []dashboardMember{}}
 		if g.ParentGroupID != nil {
 			dg.Parent = groupNameByID[*g.ParentGroupID]
 		}

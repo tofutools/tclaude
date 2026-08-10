@@ -339,6 +339,7 @@ type NewParams struct {
 	NoGroupContext      bool   `long:"no-group-context" help:"Do not include the selected group's shared startup context"`
 	Task                string `long:"task" optional:"true" help:"Task-reference URL for the group-joined agent"`
 	TaskLabel           string `long:"task-label" optional:"true" help:"Display label overriding the value derived from --task"`
+	Owner               bool   `long:"owner" help:"Make the group-joined agent a group owner (requires groups.own authority)"`
 	NoOwner             bool   `long:"no-owner" help:"Do not make the group-joined agent an owner even if a profile would"`
 
 	// InitialPrompt is a first-turn prompt the harness submits itself at

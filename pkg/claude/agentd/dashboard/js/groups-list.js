@@ -130,6 +130,7 @@ function GroupMenuItems({ group, members, snapshot, actions }) {
   const policy = group.remote_control_policy || 'inherit';
   const nextPolicy = policy === 'inherit' ? 'optin' : policy === 'optin' ? 'deny' : 'inherit';
   const notify = !!group.notify_enabled;
+  const defaultSpawnGroup = !!group.default_spawn_group;
   const wizardMode = isWizardActive();
   const contextTitle = wizardMode
     ? (contextLength ? `Party lore (${contextLength} chars) delivered to every familiar summoned into this party — click to edit` : 'No party lore — click to inscribe it')
@@ -166,6 +167,15 @@ function GroupMenuItems({ group, members, snapshot, actions }) {
       regular=${contextLength ? `📋 startup context (${contextLength} chars)…` : '📋 set startup context…'}
       wizard=${contextLength ? `📜 party lore (${contextLength} chars)…` : '📜 inscribe party lore…'}
     />
+    <button role="menuitem" ...${shared} data-act="set-default-spawn-group"
+      data-enabled=${defaultSpawnGroup ? '1' : '0'}
+      disabled=${!group.default_cwd && !defaultSpawnGroup}
+      title=${defaultSpawnGroup
+        ? 'This group wins when bare tclaude finds multiple groups for the same directory. Click to clear the default.'
+        : group.default_cwd
+          ? 'Use this group when bare tclaude finds multiple groups for the same directory. Selecting it clears the previous default.'
+          : 'Set a default spawn directory before making this the directory auto-join default.'}
+    >${defaultSpawnGroup ? '★ directory auto-join default' : '☆ make directory auto-join default'}</button>
     <button role="menuitem" ...${shared} data-act="set-group-permissions" title=${wizardMode ? 'Bestow party boons on every familiar in this party. Membership changes take effect immediately; a personal binding against one still wins.' : 'Grant permissions to every current member of this group. Membership changes take effect immediately; an agent-level Deny still wins.'}>🔑 <span class="group-perms-word-regular">group permissions</span><span class="group-perms-word-wizard">party boons</span>${group.permissions?.length ? ` (${group.permissions.length})` : ''}…</button>
     <${MenuButton} title=${wizardMode ? 'Set party wards for which realms may summon familiars into other realms' : 'Set group overrides for which harnesses may spawn agents on other harnesses'} regular="⇄ cross-harness spawns…" wizard="⇄ cross-realm summons…" onClick=${() => actions.openSpawnHarnessPolicy(group)} />
     <${MenuButton} ...${shared} data-act="toggle-group-notify" data-enabled=${notify ? '1' : '0'} title=${notifyTitle} regular=${notify ? '🔔 notifications: on' : '🔕 notifications: muted'} wizard=${notify ? '🔔 omens: on' : '🔕 omens: silent'} />

@@ -186,6 +186,7 @@ func validateUnmatchedGroupSpawnFlags(params *NewParams) error {
 		"--no-group-context":      params.NoGroupContext,
 		"--task":                  strings.TrimSpace(params.Task) != "",
 		"--task-label":            strings.TrimSpace(params.TaskLabel) != "",
+		"--owner":                 params.Owner,
 		"--no-owner":              params.NoOwner,
 		"--role":                  strings.TrimSpace(params.Role) != "",
 		"--descr":                 strings.TrimSpace(params.Descr) != "",

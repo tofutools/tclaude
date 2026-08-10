@@ -11,17 +11,18 @@ import (
 
 // AgentGroup is a row in agent_groups.
 type AgentGroup struct {
-	ID               int64
-	Name             string
-	Descr            string
-	DefaultCwd       string // pre-filled cwd for agents spawned into this group; "" = none
-	DefaultContext   string // shared startup context delivered to the inbox of agents spawned into this group; "" = none
-	DefaultProfile   string // current name of the stable spawn-profile reference whose launch fields fill blanks server-side; "" = none
-	SandboxProfile   string // current name of the stable sandbox-profile assignment; "" = none
-	SandboxProfileID int64  `json:"-"`
-	MaxMembers       int    // hard cap on member count; a spawn that would exceed it is refused. 0 = unlimited
-	NotifyEnabled    bool   // OS notifications for member agents; false mutes the whole group (a per-agent 'on' pref still overrides)
-	RemoteControl    *bool  // remote-control policy for agents spawned into this group; tri-state: nil = inherit (defer to the spawn profile), false = actively deny (force off), true = actively opt-in (force on). Overrides the profile default (JOH-262)
+	ID                int64
+	Name              string
+	Descr             string
+	DefaultCwd        string // pre-filled cwd for agents spawned into this group; "" = none
+	DefaultSpawnGroup bool   // operator-selected tie-breaker when directory auto-join matches multiple groups
+	DefaultContext    string // shared startup context delivered to the inbox of agents spawned into this group; "" = none
+	DefaultProfile    string // current name of the stable spawn-profile reference whose launch fields fill blanks server-side; "" = none
+	SandboxProfile    string // current name of the stable sandbox-profile assignment; "" = none
+	SandboxProfileID  int64  `json:"-"`
+	MaxMembers        int    // hard cap on member count; a spawn that would exceed it is refused. 0 = unlimited
+	NotifyEnabled     bool   // OS notifications for member agents; false mutes the whole group (a per-agent 'on' pref still overrides)
+	RemoteControl     *bool  // remote-control policy for agents spawned into this group; tri-state: nil = inherit (defer to the spawn profile), false = actively deny (force off), true = actively opt-in (force on). Overrides the profile default (JOH-262)
 	// AttachmentURL is the group's optional persistent http(s) reference
 	// (a Linear project, GitHub board, design doc, …). AttachmentLabel is an
 	// optional display override; callers derive a compact label when blank.
@@ -1171,11 +1172,53 @@ func SetAgentGroupDefaultCwd(name, cwd string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	res, err := db.Exec(`UPDATE agent_groups SET default_cwd = ? WHERE name = ?`, cwd, name)
+	res, err := db.Exec(`UPDATE agent_groups
+		SET default_cwd = ?, default_spawn_group = CASE WHEN ? = '' THEN 0 ELSE default_spawn_group END
+		WHERE name = ?`, cwd, cwd, name)
 	if err != nil {
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// SetAgentGroupDefaultSpawn atomically selects (or clears) the one group used
+// as a directory-auto-join tie-breaker. Selecting requires a configured cwd;
+// the database's partial unique index independently enforces the single-row
+// invariant.
+func SetAgentGroupDefaultSpawn(name string, enabled bool) (int64, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var cwd string
+	if err := tx.QueryRow(`SELECT default_cwd FROM agent_groups WHERE name = ?`, name).Scan(&cwd); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	if enabled && strings.TrimSpace(cwd) == "" {
+		return 0, fmt.Errorf("group %q needs a default spawn directory before it can be the default auto-join group", name)
+	}
+	if enabled {
+		if _, err := tx.Exec(`UPDATE agent_groups SET default_spawn_group = 0 WHERE default_spawn_group != 0`); err != nil {
+			return 0, err
+		}
+	}
+	res, err := tx.Exec(`UPDATE agent_groups SET default_spawn_group = ? WHERE name = ?`, enabled, name)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return n, tx.Commit()
 }
 
 // SetAgentGroupDefaultContext sets (or, with context == "", clears)
@@ -1477,7 +1520,7 @@ func DeleteAgentGroup(name string) error {
 	return tx.Commit()
 }
 
-const agentGroupSelect = `SELECT id, name, descr, default_cwd, default_context,
+const agentGroupSelect = `SELECT id, name, descr, default_cwd, default_spawn_group, default_context,
 	CASE WHEN default_profile_id IS NULL THEN default_profile
 	     ELSE COALESCE((SELECT name FROM spawn_profiles WHERE id = default_profile_id), '') END,
 	CASE WHEN sandbox_profile_id IS NULL THEN sandbox_profile
@@ -1489,7 +1532,7 @@ const agentGroupSelect = `SELECT id, name, descr, default_cwd, default_context,
 	COALESCE(source_template_id, 0),
 	created_at, archived_at, parent_id, route_generation, owner_scopes_json FROM agent_groups`
 
-const agentGroupAliasedSelect = `SELECT g.id, g.name, g.descr, g.default_cwd, g.default_context,
+const agentGroupAliasedSelect = `SELECT g.id, g.name, g.descr, g.default_cwd, g.default_spawn_group, g.default_context,
 	CASE WHEN g.default_profile_id IS NULL THEN g.default_profile
 	     ELSE COALESCE((SELECT name FROM spawn_profiles WHERE id = g.default_profile_id), '') END,
 	CASE WHEN g.sandbox_profile_id IS NULL THEN g.sandbox_profile
@@ -4538,7 +4581,7 @@ func scanAgentGroup(s rowScanner) (*AgentGroup, error) {
 	var g AgentGroup
 	var createdAt, archivedAt dbTimestamp
 	var remoteControl, parentID sql.NullInt64
-	if err := s.Scan(&g.ID, &g.Name, &g.Descr, &g.DefaultCwd, &g.DefaultContext,
+	if err := s.Scan(&g.ID, &g.Name, &g.Descr, &g.DefaultCwd, &g.DefaultSpawnGroup, &g.DefaultContext,
 		&g.DefaultProfile, &g.SandboxProfile, &g.SandboxProfileID,
 		&g.MaxMembers, &g.NotifyEnabled, &remoteControl, &g.AttachmentURL, &g.AttachmentLabel, &g.Mission,
 		&g.SourceTemplate, &g.SourceTemplateID, &createdAt, &archivedAt, &parentID, &g.RouteGeneration,

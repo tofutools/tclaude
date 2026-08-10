@@ -607,6 +607,12 @@ Every group, expandable to its members. Each member row shows the status
 dot, role / description, working directory, git branch or
 worktree, effective permissions, and an **owner** badge where applicable.
 
+A group's **⚙** menu can mark it as the **directory auto-join default** once
+the group has a default working directory. Only one group can hold the mark at
+a time. A bare `tclaude` launch uses the marked group to break a tie when
+several active groups map to the same canonical directory; otherwise the CLI
+reports the ambiguity and points back to this setting.
+
 An amber **!** floating over the start of an agent's name means that agent has
 sent one or more unread notifications to the human with
 `tclaude agent notify-human`. Hovering it previews the newest one; selecting it
