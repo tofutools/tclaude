@@ -6,27 +6,14 @@ import (
 )
 
 // migrateV205toV206 adds the single operator-selected group used to break an
-// otherwise ambiguous directory auto-join. It also converges the short-lived
-// pre-rebase feature-v205 schema: that build stamped v205 after adding this
-// column, while upstream v205 independently added the Codex native-profile
-// table. Ensuring both shapes here prevents either v205 history from skipping
-// the other's DDL. The partial unique index makes the group invariant durable
-// even for callers outside the normal atomic setter.
+// otherwise ambiguous directory auto-join. The partial unique index makes the
+// invariant durable even for callers outside the normal atomic setter.
 func migrateV205toV206(d *sql.DB) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return fmt.Errorf("migrate v205→v206 (default spawn group): begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS codex_native_permission_profiles (
-		generation   TEXT PRIMARY KEY,
-		profile_name TEXT NOT NULL UNIQUE,
-		profile_toml TEXT NOT NULL,
-		cleanup_pending INTEGER NOT NULL DEFAULT 0 CHECK (cleanup_pending IN (0, 1)),
-		created_at   INTEGER NOT NULL
-	) STRICT`); err != nil {
-		return fmt.Errorf("migrate v205→v206 (default spawn group): heal Codex native profiles: %w", err)
-	}
 	var haveTable int
 	if err := tx.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'agent_groups'`).Scan(&haveTable); err != nil {
 		return fmt.Errorf("migrate v205→v206 (default spawn group): table probe: %w", err)
