@@ -41,6 +41,11 @@ test('the CI badge summarizes checks and opens a panel on hover', async (t) => {
     const now = Date.parse('2026-08-09T10:03:30Z');
     assert.equal(elapsed({ started_at: '2026-08-09T10:00:00Z' }, now), '3m 30s');
     assert.equal(
+      elapsed({ started_at: '2026-08-09T10:00:00Z', completed_at: '0001-01-01T00:00:00Z' }, now),
+      '3m 30s',
+      'GitHub zero-time means the check is still running',
+    );
+    assert.equal(
       elapsed({ started_at: '2026-08-09T10:00:00Z', completed_at: '2026-08-09T10:00:42Z' }, now),
       '42s',
       'a completed check keeps its final duration, not the age of the cache',
@@ -283,6 +288,67 @@ test('the panel fetches only while it is open', async (t) => {
     const settled = calls.length;
     await new Promise((resolve) => setTimeout(resolve, 30));
     assert.equal(calls.length, settled, 'no polling continues after the pointer leaves');
+  } finally {
+    await mounted.unmount();
+  }
+});
+
+test('a running check ticks locally between polls', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { PRChecksBadge } = await harness.importDashboardModule('js/pr-checks-hover.js');
+  stubFetch(t, () => ({
+    summary: { total: 1, passed: 0, failed: 0, pending: 1, skipped: 0, state: 'pending' },
+    checks: [{
+      name: 'test', bucket: 'pending', conclusion: 'in progress', source: 'CI',
+      started_at: '2026-08-09T10:00:00Z', completed_at: '0001-01-01T00:00:00Z',
+    }],
+    resolved: true,
+  }));
+
+  let now = Date.parse('2026-08-09T10:03:30Z');
+  const savedNow = Date.now;
+  const savedSetInterval = globalThis.setInterval;
+  const savedClearInterval = globalThis.clearInterval;
+  const intervals = new Map();
+  let nextInterval = 1;
+  Date.now = () => now;
+  globalThis.setInterval = (callback, milliseconds) => {
+    assert.equal(milliseconds, 1000, 'the elapsed clock updates once per second');
+    const id = nextInterval++;
+    intervals.set(id, callback);
+    return id;
+  };
+  globalThis.clearInterval = (id) => intervals.delete(id);
+  t.after(() => {
+    Date.now = savedNow;
+    globalThis.setInterval = savedSetInterval;
+    globalThis.clearInterval = savedClearInterval;
+  });
+
+  const mounted = await harness.mount(harness.html`
+    <${PRChecksBadge} url=${PR} prNumber=${2166}
+      summary=${{ total: 1, passed: 0, failed: 0, pending: 1, skipped: 0, state: 'pending' }} />
+  `);
+  try {
+    const root = mounted.container.querySelector('.ci-hover');
+    await harness.act(() => { harness.fireEvent(root, 'mouseenter'); });
+    await flush();
+    await harness.act(async () => {});
+
+    const time = () => mounted.container.querySelector('.ci-check-time')?.textContent;
+    assert.equal(time(), '3m 30s');
+    // Preact deliberately schedules passive effects after paint; let that
+    // queue flush before inspecting the interval it installed.
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    await harness.act(async () => {});
+    assert.equal(intervals.size, 1, 'one local clock runs while a started check is pending');
+
+    now += 1000;
+    await harness.act(() => { [...intervals.values()][0](); });
+    assert.equal(time(), '3m 31s', 'the display advances without waiting for another fetch');
+
+    await harness.act(() => { harness.fireEvent(root, 'mouseleave'); });
+    assert.equal(intervals.size, 0, 'closing the popover stops its local clock');
   } finally {
     await mounted.unmount();
   }

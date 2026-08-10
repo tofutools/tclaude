@@ -251,7 +251,10 @@ export function elapsed(check, now = Date.now()) {
   const started = Date.parse(check?.started_at || '');
   if (!Number.isFinite(started)) return '';
   const ended = Date.parse(check?.completed_at || '');
-  const end = Number.isFinite(ended) ? ended : now;
+  // GitHub/older daemon responses can carry Go's zero-time sentinel for an
+  // unfinished check. It parses successfully, but is not a completion: using
+  // it produces a negative duration that would otherwise be frozen at 0s.
+  const end = Number.isFinite(ended) && ended >= started ? ended : now;
   const seconds = Math.max(0, Math.round((end - started) / 1000));
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
@@ -374,7 +377,21 @@ function PRChecksPanel({ url, prNumber, summary, panelID, headingID, state, pane
   const { data, error, loading } = state;
   const live = data?.summary && (data.summary.total || 0) > 0 ? data.summary : summary;
   const checks = data?.checks || [];
-  const now = Date.now();
+  const [now, setNow] = useState(() => Date.now());
+  const hasRunningClock = checks.some((check) => check?.bucket === 'pending'
+    && Number.isFinite(Date.parse(check?.started_at || ''))
+    && !(Number.isFinite(Date.parse(check?.completed_at || ''))
+      && Date.parse(check.completed_at) >= Date.parse(check.started_at)));
+
+  // Polling replaces the source data every few seconds; this clock fills the
+  // gaps so an open popover visibly counts up from the last reported start.
+  // Completed and queued-without-a-start rows need no timer.
+  useEffect(() => {
+    setNow(Date.now());
+    if (!hasRunningClock) return undefined;
+    const timer = globalThis.setInterval(() => setNow(Date.now()), 1000);
+    return () => globalThis.clearInterval(timer);
+  }, [hasRunningClock]);
   // Until the first measurement lands the panel is hidden rather than drawn
   // at a guessed position and moved: a tooltip that jumps on open reads as a
   // glitch. It is one layout effect away, so nothing perceptible is lost.

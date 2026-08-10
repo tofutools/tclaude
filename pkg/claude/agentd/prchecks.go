@@ -272,8 +272,8 @@ type statusCheckRollupNode struct {
 // not read as "2 outstanding" when both were skipped by a path filter.
 func normalizeRollupNode(n statusCheckRollupNode) (prCheckRun, bool) {
 	run := prCheckRun{
-		StartedAt:   strings.TrimSpace(n.StartedAt),
-		CompletedAt: strings.TrimSpace(n.CompletedAt),
+		StartedAt:   normalizePRCheckTimestamp(n.StartedAt),
+		CompletedAt: normalizePRCheckTimestamp(n.CompletedAt),
 	}
 	if n.TypeName == "StatusContext" || (n.Name == "" && n.Context != "") {
 		run.Name = clipPRCheckText(n.Context)
@@ -290,7 +290,7 @@ func normalizeRollupNode(n statusCheckRollupNode) (prCheckRun, bool) {
 			run.Bucket, run.Conclusion = "pending", strings.ToLower(strings.TrimSpace(n.State))
 		}
 		if run.StartedAt == "" {
-			run.StartedAt = strings.TrimSpace(n.CreatedAt)
+			run.StartedAt = normalizePRCheckTimestamp(n.CreatedAt)
 		}
 		return run, run.Name != ""
 	}
@@ -322,6 +322,20 @@ func normalizeRollupNode(n statusCheckRollupNode) (prCheckRun, bool) {
 		run.Conclusion = prCheckPendingLabel(status)
 	}
 	return run, run.Name != ""
+}
+
+// normalizePRCheckTimestamp turns GitHub's zero-time sentinel into the same
+// absence represented by null. `gh pr view` currently emits
+// "0001-01-01T00:00:00Z" for completedAt on some in-progress CheckRuns; if
+// that reaches the browser as a real timestamp, the negative runtime is
+// clamped to 0s and appears frozen until the check completes.
+func normalizePRCheckTimestamp(raw string) string {
+	raw = strings.TrimSpace(raw)
+	parsed, err := time.Parse(time.RFC3339, raw)
+	if err != nil || parsed.IsZero() {
+		return ""
+	}
+	return raw
 }
 
 func prCheckPendingLabel(status string) string {
