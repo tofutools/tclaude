@@ -41,6 +41,8 @@ func TestDashboardJS_GroupReorderWired(t *testing.T) {
 		{`group-drop-clone`, "clone drops carry distinct green target styling"},
 		{`e.dataTransfer?.dropEffect === 'copy'`,
 			"group clone intent follows the browser's platform-specific native drop operation"},
+		{`listen(document, 'dragend', finishGroupDrag);`,
+			"a successful native copy can finish from dragend when macOS Chrome omits a usable drop"},
 		{`tclaude.dash.groupOrder`, "group-reorder.js persists the order under its dashPrefs key"},
 		{`function sortGroupsByPref(`, "the shared order-applying helper exists"},
 		// dnd.js: the explicit isolation guard keeps the two drop handlers apart.

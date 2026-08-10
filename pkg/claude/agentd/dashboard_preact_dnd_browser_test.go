@@ -278,14 +278,14 @@ if (document.querySelector('.group-drop-before, .group-drop-after, .group-drop-i
 `)
 }
 
-// groupCloneModifierDropState reproduces macOS Chrome's asymmetric modifier
-// delivery: metaKey is true while dragover paints a copy target, then false on
-// drop. The operation shown to the user must still open the clone dialog.
+// groupCloneModifierDropState reproduces macOS Chrome showing a valid clone
+// dragover but reaching dragend without a usable drop event. A successful
+// native copy result must still open the clone dialog from the cached plan.
 func groupCloneModifierDropState() dashsnap.State {
 	return dashsnap.State{
 		Key:     "preact-group-clone-modifier-drop",
-		Title:   "Group clone survives modifier loss on drop",
-		Caption: "A green Cmd-drag clone target still opens the clone dialog when macOS Chrome clears metaKey on the terminal drop event.",
+		Title:   "Group clone survives a missing drop event",
+		Caption: "A green Cmd-drag clone target still opens the clone dialog when macOS Chrome finishes the native copy at dragend without a usable drop event.",
 		JS: openGroupsAndDockJS + `
 return (async function(){
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
@@ -302,17 +302,11 @@ return (async function(){
   var rect = target.getBoundingClientRect();
   fire(target, 'dragover', {metaKey:true, clientX:rect.left + rect.width / 2, clientY:rect.top + rect.height / 2});
   if (!target.classList.contains('group-drop-clone')) throw new Error('Cmd dragover did not paint clone intent');
-  // Prove dropEffect itself is sufficient. This simulates reconciliation or a
-  // final platform event clearing the CSS/modifier fallbacks before drop.
-  target.classList.remove('group-drop-clone');
-  var drop = new DragEvent('drop', {bubbles:true, cancelable:true, dataTransfer:transfer,
-    clientX:rect.left + rect.width / 2, clientY:rect.top + rect.height / 2});
-  Object.defineProperty(drop, 'dataTransfer', {value:{
-    dropEffect:'copy', types:['application/x-tclaude-group']
-  }});
-  target.dispatchEvent(drop);
+  var dragend = new DragEvent('dragend', {bubbles:true, cancelable:false, dataTransfer:transfer});
+  Object.defineProperty(dragend, 'dataTransfer', {value:{dropEffect:'copy'}});
+  source.dispatchEvent(dragend);
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
-  if (!document.querySelector('#group-clone-modal.show')) throw new Error('modifier-less drop did not preserve clone intent');
+  if (!document.querySelector('#group-clone-modal.show')) throw new Error('copy dragend did not finish the cached clone plan');
   document.querySelector('#group-clone-cancel').click();
 })();`,
 	}

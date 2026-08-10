@@ -74,6 +74,11 @@ let groupDragHandle = null;
 // the dragover pill + drop handler; dragover can't read the DataTransfer
 // payload (browsers gate getData to the drop event), so we stash it here.
 let groupDragName = null;
+// The last valid clone placement shown by dragover. Chrome on macOS can finish
+// a native copy without delivering a usable drop event to the document, so a
+// successful copy dragend needs enough immutable placement data to open the
+// same dialog. Cleared on every non-clone/invalid hover and during teardown.
+let groupCloneHoverPlan = null;
 
 
 // reorderTarget resolves the real-group <details> under the drag cursor,
@@ -272,6 +277,24 @@ function applyGroupDrop(dragName, targetName, zone) {
   });
 }
 
+// finishGroupDrag handles the browser-guaranteed terminal event. Normally drop
+// consumes the plan and tears down first. If macOS Chrome omits that usable
+// drop but reports a successful native copy at dragend, finish the exact clone
+// placement that was already shown in green during the last valid dragover.
+function finishGroupDrag(e) {
+  const clonePlan = e?.dataTransfer?.dropEffect === 'copy'
+    ? groupCloneHoverPlan
+    : null;
+  const dragName = groupDragName;
+  endGroupDrag();
+  if (!clonePlan || !dragName) return;
+  openGroupCloneModal(dragName, {
+    parent: clonePlan.desiredParent,
+    anchor: clonePlan.anchor,
+    before: clonePlan.before,
+  });
+}
+
 // endGroupDrag is the single teardown for a reorder drag: clear the active
 // flag, the dragged-source dimming, the drop-line markers and the pill.
 // Idempotent, so calling it from both the drop handler and dragend is safe.
@@ -280,7 +303,8 @@ function endGroupDrag() {
   // misrouted even if a DOM call below were to throw.
   groupReorderActive = false;
   groupDragName = null;
-  groupDragHandle?.removeEventListener('dragend', endGroupDrag);
+  groupCloneHoverPlan = null;
+  groupDragHandle?.removeEventListener('dragend', finishGroupDrag);
   groupDragHandle = null;
   $$('.group-reorder-source').forEach(d => d.classList.remove('group-reorder-source'));
   clearDropMarkers();
@@ -332,9 +356,10 @@ function bindGroupReorder() {
     if (!name) return;
     groupReorderActive = true;
     groupDragName = name;
-    groupDragHandle?.removeEventListener('dragend', endGroupDrag);
+    groupCloneHoverPlan = null;
+    groupDragHandle?.removeEventListener('dragend', finishGroupDrag);
     groupDragHandle = handle;
-    handle.addEventListener('dragend', endGroupDrag, { once: true });
+    handle.addEventListener('dragend', finishGroupDrag, { once: true });
     // Custom MIME ONLY — see the module header for why text/plain is
     // withheld. copyMove lets Ctrl/Cmd switch the native cursor to the clone
     // operation while a plain drag remains a reorder.
@@ -351,12 +376,13 @@ function bindGroupReorder() {
   // drop handler instead (see there) before keyed reconciliation moves the
   // source or, for a re-parent, may replace its header. Browser dragend
   // delivery after that synchronous update is not a reliable primary path.
-  listen(document, 'dragend', endGroupDrag);
+  listen(document, 'dragend', finishGroupDrag);
 
   listen(document, 'dragover', (e) => {
     if (!groupReorderActive) return;
     const trash = groupTrashTarget(e);
     if (trash) {
+      groupCloneHoverPlan = null;
       clearDropMarkers();
       e.preventDefault();
       e.dataTransfer.dropEffect = 'move';
@@ -367,6 +393,7 @@ function bindGroupReorder() {
     const details = reorderTarget(e);
     clearDropMarkers();
     if (!details) {
+      groupCloneHoverPlan = null;
       reorderPill(e, null);
       return;
     }
@@ -383,9 +410,11 @@ function bindGroupReorder() {
           : resolveDrop(groupDragName, targetName, zone, byName))
       : null;
     if (!plan) {
+      groupCloneHoverPlan = null;
       reorderPill(e, null);
       return;
     }
+    groupCloneHoverPlan = clone ? plan : null;
     e.preventDefault(); // required for `drop` to fire on this element
     e.dataTransfer.dropEffect = clone ? 'copy' : 'move';
     details.classList.toggle('group-drop-clone', clone);
