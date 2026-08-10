@@ -901,6 +901,7 @@ func darwinLocalAccessListenerPair(t *testing.T) (loopback, control net.Listener
 	}
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].Less(candidates[j]) })
 	failures := []string{}
+	raced := false
 	for _, candidate := range candidates {
 		// Bounded: a runner losing ten freshly-assigned ephemeral ports in a row
 		// is not the transient collision this retry exists for, and looping until
@@ -917,8 +918,16 @@ func darwinLocalAccessListenerPair(t *testing.T) (loopback, control net.Listener
 			if allowedErr != nil {
 				_ = samePort.Close()
 				failures = append(failures, fmt.Sprintf(
-					"%s reserved port %d but the loopback bind collided: %v",
+					"%s reserved port %d but the loopback bind failed: %v",
 					candidate, port, allowedErr))
+				// Only EADDRINUSE is the race this retry exists for. Spending the
+				// remaining attempts on EACCES or EMFILE would bury a standing
+				// fault under nine repetitions of itself and report it as a port
+				// race, which is the wrong investigation to send someone on.
+				if !errors.Is(allowedErr, syscall.EADDRINUSE) {
+					break
+				}
+				raced = true
 				continue
 			}
 			t.Cleanup(func() { _ = allowed.Close() })
@@ -942,12 +951,19 @@ func darwinLocalAccessListenerPair(t *testing.T) (loopback, control net.Listener
 			return allowed, samePort, inventory
 		}
 	}
+	// The headline is derived from what actually happened, not assumed. Calling
+	// a permission or resource failure a port race would send an investigator
+	// after a conflict that never happened, and reporting the genuine race as an
+	// ordinary bind failure would hide how narrow it is.
+	cause := "no attempt failed with EADDRINUSE, so read the attempts below rather than assuming a port race"
+	if raced {
+		cause = "at least one attempt took a FRESH OS-assigned port and still lost it before the loopback " +
+			"bind, which is a far narrower race than one stuck port"
+	}
 	t.Fatalf("could not reserve a same-port loopback/non-loopback listener pair: %d candidate "+
-		"non-loopback local address(es) exist, so this is not a runner-has-no-address fault. "+
-		"Every attempt below took a fresh OS-assigned port and still lost it before the second "+
-		"bind, so read the attempts rather than assuming one stuck port.\n"+
+		"non-loopback local address(es) exist, so this is not a runner-has-no-address fault. %s.\n"+
 		"pair attempts:\n%s\nrunner interfaces:\n%s",
-		len(candidates), strings.Join(failures, "\n"), inventory)
+		len(candidates), cause, strings.Join(failures, "\n"), inventory)
 	return nil, nil, inventory
 }
 
