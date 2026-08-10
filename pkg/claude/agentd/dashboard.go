@@ -2247,6 +2247,25 @@ type agentState struct {
 	// It is a different fact from "the tiers resolved to nothing"; the compact
 	// badge intentionally displays both as "Profile: None".
 	SandboxProfilesOmitted bool `json:"sandbox_profiles_omitted,omitempty"`
+	// ResourceCgroup reports that this launch asked for its own Linux cgroup v2
+	// — because a ceiling was authored, or because `resource-only` requests the
+	// accounting boundary on its own. It is the request the launch recorded, not
+	// a live kernel readback; a launch that was allowed to proceed without the
+	// cgroup discloses that through a resource_limits access notice, which the
+	// badge already surfaces alongside this.
+	//
+	// Resource limits are an axis of their own: they bound how MUCH a workload
+	// may consume, never WHAT it may reach. So they are reported next to the
+	// sandbox posture rather than folded into it — a `resource-only` agent has
+	// a cgroup and no access boundary at all.
+	ResourceCgroup bool `json:"resource_cgroup,omitempty"`
+	// ResourceMemoryLimit is the operator's authored memory ceiling spelling
+	// ("8GiB", "4GB"), kept verbatim so the tooltip shows what was written
+	// rather than a re-rendered byte count. Empty means no memory ceiling.
+	ResourceMemoryLimit string `json:"resource_memory_limit,omitempty"`
+	// ResourceCPULimit is the authored CPU ceiling in cores. nil means no CPU
+	// ceiling; a cgroup can exist with neither ceiling set.
+	ResourceCPULimit *float64 `json:"resource_cpu_limit,omitempty"`
 	// RemoteControl is tclaude's best-known state of whether the harness's
 	// built-in Remote Access is enabled for this agent (JOH-256). It is a
 	// best-known flag — the harness exposes no readback, so the dashboard
@@ -2383,6 +2402,16 @@ func stateForConvInSessionsBatched(
 	if pick.EffectiveSandbox != nil {
 		out.SandboxAccessNotices = append([]sandboxpolicy.AccessNotice(nil),
 			pick.EffectiveSandbox.Effective.AccessNotices...)
+		limits := pick.EffectiveSandbox.Effective.ResourceLimits
+		// The implementation is part of the answer: `resource-only` asks for the
+		// cgroup through the implementation alone, with no ceiling authored.
+		out.ResourceCgroup = sandboxpolicy.ResourceCgroupRequested(limits,
+			sandboxpolicy.Implementation(pick.SandboxImplementation))
+		out.ResourceMemoryLimit = limits.Memory
+		if limits.CPU != nil {
+			cpu := *limits.CPU
+			out.ResourceCPULimit = &cpu
+		}
 	}
 	// Codex records collaboration-child lifecycle in its rollout even when an
 	// explicit interrupt does not invoke the configured SubagentStop hook. The

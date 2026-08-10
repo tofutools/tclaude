@@ -638,9 +638,10 @@ sandbox confined the agent, `⚠` for a posture weaker than it looks. It reflect
 what actually confined the launch, not which mode was requested, so a Claude
 agent sandboxed through your own `settings.json` is badged even though it was
 spawned under the default `inherit`. Hovering it shows the compact recorded
-summary: `Status`, `Implementation`, `Profile`, zero or more persisted
-sandbox-access `Warning` lines, and a click action when the badge supports a
-temporary disable or restore. It does not show mode/settings provenance or
+summary: `Status`, `Implementation`, `Profile`, the `Cgroup` / `Memory limit` /
+`CPU limit` block when the launch carries a per-agent Linux cgroup, zero or more
+persisted sandbox-access `Warning` lines, and a click action when the badge
+supports a temporary disable or restore. It does not show mode/settings provenance or
 infer the effects of a named profile. See
 [Reading an agent's sandbox badge](sandbox-hardening.md#reading-an-agents-sandbox-badge).
 The optional adjacent **›** is a separate, non-mutating details action. It is
@@ -650,7 +651,8 @@ It expands only facts frozen on that launch row: the recorded harness sandbox
 mode (labelled **Harness sandbox mode** — the harness's own setting, which a
 `tclaude-layer` launch stands down while tclaude's wall enforces; the
 **Implementation** line above it is who enforces) and its provenance,
-applied profile names, persisted access notices, and a known partial-fidelity
+applied profile names, the same cgroup budget block, persisted access notices,
+and a known partial-fidelity
 sentence when the recorded implementation/source pair exactly matches a ruled
 producer literal. An unknown unverified pair gets a generic
 recorded-as-unverified sentence; the dashboard does not guess from source

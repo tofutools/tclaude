@@ -444,3 +444,95 @@ func TestDashboardSnapshot_SuppressedSandboxProfilesAreDistinguishable(t *testin
 	assert.True(t, state.SandboxProfilesOmitted,
 		"the mode discarded the tiers — distinct from nobody having configured one")
 }
+
+// Resource limits are a second axis beside the access posture: a cgroup bounds
+// how MUCH the workload may consume, never WHAT it may reach. The badge tooltip
+// reports it separately, which it can only do if the resolved budget — and the
+// fact that a cgroup was requested at all — survives to the browser.
+func TestDashboardSnapshot_ResourceCgroupBudgetSurfaces(t *testing.T) {
+	const convID = "sbxe-1111-2222-3333-4444"
+
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	f.HaveGroup("capped")
+	f.HaveAliveSession(convID, "spwn-sbxe", "tmux-sbxe", f.TestCwd("sbxe"))
+	cpu := 2.5
+	snapshot := sandboxpolicy.EmptySnapshot()
+	snapshot.Effective.ResourceLimits = sandboxpolicy.ResourceLimits{
+		Memory: "8GiB", MemoryBytes: 8 << 30, CPU: &cpu,
+	}
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "spwn-sbxe", TmuxSession: "tmux-sbxe", ConvID: convID, Cwd: f.TestCwd("sbxe"),
+		Status: "running", Harness: "claude",
+		SandboxImplementation: "tclaude-layer", OSSandboxState: "on",
+		EffectiveSandbox: &snapshot,
+	}), "stamp a launch carrying a per-agent cgroup budget")
+	f.HaveMember("capped", convID)
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	for name, state := range map[string]dashState{
+		"Agents[]":  requireDashAgentState(t, snap, convID),
+		"Members[]": requireDashMemberState(t, snap, "capped", convID),
+	} {
+		assert.True(t, state.ResourceCgroup, "%s: an authored ceiling requires the cgroup", name)
+		assert.Equal(t, "8GiB", state.ResourceMemoryLimit,
+			"%s: the operator's own spelling reaches the tooltip, not a re-rendered byte count", name)
+		require.NotNil(t, state.ResourceCPULimit, "%s: the CPU ceiling reaches the browser", name)
+		assert.Equal(t, 2.5, *state.ResourceCPULimit, "%s: in cores, as authored", name)
+	}
+}
+
+// `resource-only` asks for the cgroup through the implementation alone: it
+// exists to give an agent per-agent accounting, OOM attribution and a kill
+// handle even with no ceiling authored. A read path that inferred the cgroup
+// from the limits alone would report "no cgroup" for exactly the launch whose
+// only purpose is having one.
+func TestDashboardSnapshot_ResourceOnlyReportsItsCgroupWithoutACeiling(t *testing.T) {
+	const convID = "sbxf-1111-2222-3333-4444"
+
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	f.HaveGroup("accounted")
+	f.HaveAliveSession(convID, "spwn-sbxf", "tmux-sbxf", f.TestCwd("sbxf"))
+	snapshot := sandboxpolicy.EmptySnapshot()
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "spwn-sbxf", TmuxSession: "tmux-sbxf", ConvID: convID, Cwd: f.TestCwd("sbxf"),
+		Status: "running", Harness: "claude",
+		SandboxImplementation: string(sandboxpolicy.ImplementationResourceOnly),
+		OSSandboxState:        "off",
+		EffectiveSandbox:      &snapshot,
+	}), "stamp a limitless resource-only launch")
+	f.HaveMember("accounted", convID)
+
+	state := requireDashMemberState(t,
+		fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest()), "accounted", convID)
+	assert.True(t, state.ResourceCgroup, "the implementation alone requests the cgroup")
+	assert.Empty(t, state.ResourceMemoryLimit, "no memory ceiling was authored")
+	assert.Nil(t, state.ResourceCPULimit, "no CPU ceiling was authored")
+}
+
+// A launch with no budget and an ordinary implementation must report no cgroup,
+// so the tooltip stays silent rather than spending lines on an absent boundary.
+func TestDashboardSnapshot_NoResourceBudgetReportsNoCgroup(t *testing.T) {
+	const convID = "sbxg-1111-2222-3333-4444"
+
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	f.HaveGroup("plainbudget")
+	f.HaveAliveSession(convID, "spwn-sbxg", "tmux-sbxg", f.TestCwd("sbxg"))
+	snapshot := sandboxpolicy.EmptySnapshot()
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "spwn-sbxg", TmuxSession: "tmux-sbxg", ConvID: convID, Cwd: f.TestCwd("sbxg"),
+		Status: "running", Harness: "claude",
+		SandboxImplementation: "tclaude-layer", OSSandboxState: "on",
+		EffectiveSandbox: &snapshot,
+	}), "stamp a launch with no resource budget at all")
+	f.HaveMember("plainbudget", convID)
+
+	state := requireDashMemberState(t,
+		fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest()), "plainbudget", convID)
+	assert.False(t, state.ResourceCgroup, "nothing asked for a cgroup")
+}
