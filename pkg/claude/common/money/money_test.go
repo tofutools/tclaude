@@ -17,7 +17,7 @@ func TestUSD(t *testing.T) {
 // Real spend that would round to $0.00 must not read as free.
 func TestUSDSubCent(t *testing.T) {
 	assert.Equal(t, "<1¢", USD(0.004))
-	assert.Equal(t, "<1¢", USD(0))
+	assert.Equal(t, "$0.00", USD(0))
 	assert.Equal(t, "$0.01", USD(0.005))
 }
 

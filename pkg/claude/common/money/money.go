@@ -12,9 +12,13 @@ import (
 	"strings"
 )
 
-// USD formats a dollar figure to the cent, and anything that would round to
-// $0.00 as "<1¢" rather than reading as free.
+// USD formats a dollar figure to the cent. Real spend that would round to
+// $0.00 reads "<1¢" rather than as free; nothing spent at all is a plain
+// $0.00, matching the dashboard's fmtUSD.
 func USD(usd float64) string {
+	if !(usd > 0) {
+		return "$0.00"
+	}
 	if usd < 0.005 {
 		return "<1¢"
 	}
@@ -24,6 +28,9 @@ func USD(usd float64) string {
 // USDExact spells the figure out to four decimals without the sub-cent
 // collapse, for tooltips and other places that want the unrounded amount.
 func USDExact(usd float64) string {
+	if !(usd > 0) {
+		usd = 0
+	}
 	return "$" + group(fmt.Sprintf("%.4f", usd))
 }
 
