@@ -55,6 +55,29 @@ func TestAutomaticGroupForDirNoMatchAndAmbiguity(t *testing.T) {
 	assert.Contains(t, err.Error(), "--join-group")
 }
 
+func TestAutomaticGroupForDirNoMatchPreservesLogicalDir(t *testing.T) {
+	setupTestDB(t)
+	real := t.TempDir()
+	alias := filepath.Join(t.TempDir(), "repo-link")
+	require.NoError(t, os.Symlink(real, alias))
+	params := &session.NewParams{Dir: alias, AutoJoinGroup: true}
+
+	got, err := automaticGroupForDir(params)
+	require.NoError(t, err)
+	assert.Empty(t, got)
+	assert.Equal(t, alias, params.Dir)
+}
+
+func TestSpawnParamsForJoinedSessionPreservesExplicitCodexAppServerFalse(t *testing.T) {
+	params := &session.NewParams{
+		CodexAppServer:          false,
+		CodexAppServerSpecified: true,
+	}
+	spawn := spawnParamsForJoinedSession(params, "team")
+	assert.False(t, spawn.CodexAppServer)
+	assert.True(t, spawn.codexAppServerSpecified)
+}
+
 func TestAvailableDirectoryGroupName(t *testing.T) {
 	groups := []*db.AgentGroup{{Name: "repo"}, {Name: "repo-2"}, {Name: "other"}}
 	assert.Equal(t, "repo-3", availableDirectoryGroupName("/work/repo", groups))

@@ -286,7 +286,11 @@ type NewParams struct {
 	// CodexAppServer is the deliberately opt-in Codex API drive. The private
 	// runtime paths are minted by agentd; accepting the public toggle without
 	// those paths would produce a remote TUI nobody owns, so it is refused.
-	CodexAppServer             bool   `long:"codex-app-server" help:"EXPERIMENTAL: launch Codex against a private tclaude-owned app-server and bind agentd to the TUI-created thread. Off by default; Codex 0.147.x only"`
+	CodexAppServer bool `long:"codex-app-server" help:"EXPERIMENTAL: launch Codex against a private tclaude-owned app-server and bind agentd to the TUI-created thread. Off by default; Codex 0.147.x only"`
+	// CodexAppServerSpecified preserves Cobra's omitted-vs-explicit-false bit
+	// while a top-level launch is adapted to the group spawn boundary. It is
+	// runtime adapter state, not another CLI/config parameter.
+	CodexAppServerSpecified    bool   `boa:"ignore" json:"-"`
 	CodexAppServerSocket       string `long:"codex-app-server-socket" optional:"true" help:"Internal: agentd-minted private Codex app-server Unix socket"`
 	CodexAppServerURL          string `long:"codex-app-server-url" optional:"true" help:"Internal: agentd-minted authenticated Codex app-server loopback endpoint"`
 	CodexAppServerTokenSHA256  string `long:"codex-app-server-token-sha256" optional:"true" help:"Internal: digest of the per-generation Codex app-server capability"`

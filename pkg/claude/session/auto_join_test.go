@@ -20,6 +20,7 @@ func TestResolveAutomaticGroupConfigPrecedence(t *testing.T) {
 	}{
 		{name: "built-in defaults", cfg: &config.Config{}, wantJoin: true},
 		{name: "configured inverse", cfg: &config.Config{Session: &config.SessionConfig{AutoJoinGroup: &off, AutoJoinOrCreateGroup: &on}}, wantMake: true},
+		{name: "explicit solo opt out suppresses configured create", params: NewParams{AutoJoinGroup: false}, explicit: explicitLaunchFields{"auto-join-group": true}, cfg: &config.Config{Session: &config.SessionConfig{AutoJoinOrCreateGroup: &on}}},
 		{name: "explicit flags win", params: NewParams{AutoJoinGroup: false, AutoJoinOrCreateGroup: true}, explicit: explicitLaunchFields{"auto-join-group": true, "auto-join-or-create-group": true}, cfg: &config.Config{Session: &config.SessionConfig{AutoJoinGroup: &on, AutoJoinOrCreateGroup: &off}}, wantMake: true},
 	}
 	for _, tc := range cases {
@@ -46,4 +47,10 @@ func TestAutomaticGroupEligibilityPreservesDirectModes(t *testing.T) {
 	assert.False(t, automaticGroupEligible(&NewParams{Shell: true}, nil))
 	assert.False(t, automaticGroupEligible(&NewParams{}, explicitLaunchFields{"label": true}))
 	assert.True(t, automaticGroupEligible(&NewParams{}, nil))
+}
+
+func TestRecordLaunchFlagPresencePreservesExplicitCodexAppServerFalse(t *testing.T) {
+	params := &NewParams{CodexAppServer: false}
+	recordLaunchFlagPresence(params, explicitLaunchFields{"codex-app-server": true})
+	assert.True(t, params.CodexAppServerSpecified)
 }

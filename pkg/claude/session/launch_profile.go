@@ -35,7 +35,7 @@ func (e explicitLaunchFields) has(flag string) bool { return e[flag] }
 func RunNewFromCommand(params *NewParams, cmd *cobra.Command) error {
 	explicit := explicitLaunchFields{}
 	cmd.Flags().Visit(func(f *pflag.Flag) { explicit[f.Name] = true })
-	params.sandboxImplExplicit = explicit.has("sandbox-impl")
+	recordLaunchFlagPresence(params, explicit)
 	if strings.TrimSpace(params.Cwd) != "" {
 		if explicit.has("dir") {
 			return fmt.Errorf("--cwd and --dir are aliases; pass only one")
@@ -54,6 +54,11 @@ func RunNewFromCommand(params *NewParams, cmd *cobra.Command) error {
 		}
 	}
 	return runNewWithGlobalDefault(params, explicit)
+}
+
+func recordLaunchFlagPresence(params *NewParams, explicit explicitLaunchFields) {
+	params.sandboxImplExplicit = explicit.has("sandbox-impl")
+	params.CodexAppServerSpecified = explicit.has("codex-app-server")
 }
 
 func automaticGroupEligible(params *NewParams, explicit explicitLaunchFields) bool {
@@ -141,6 +146,13 @@ func resolveAutomaticGroupConfig(params *NewParams, explicit explicitLaunchField
 	}
 	if !explicit.has("auto-join-or-create-group") {
 		params.AutoJoinOrCreateGroup = cfg.AutoJoinOrCreateGroupEnabled()
+	}
+	// An explicit false is the documented one-launch solo escape hatch. It must
+	// also suppress auto-create inherited from config; an explicitly requested
+	// auto-create remains an intentional group launch.
+	if explicit.has("auto-join-group") && !params.AutoJoinGroup &&
+		!explicit.has("auto-join-or-create-group") {
+		params.AutoJoinOrCreateGroup = false
 	}
 }
 

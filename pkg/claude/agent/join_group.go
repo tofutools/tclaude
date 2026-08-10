@@ -42,6 +42,20 @@ func RunJoinGroup(params *session.NewParams) error {
 		params.JoinGroup = group
 	}
 
+	spawn := spawnParamsForJoinedSession(params, group)
+	resp, rc := RunSpawn(spawn, os.Stdout, os.Stderr, os.Stdin)
+	if rc != rcOK {
+		return fmt.Errorf("spawn into group %q failed (exit %d)", group, rc)
+	}
+	if params.Detached || resp == nil {
+		return nil
+	}
+
+	fmt.Println("\nAttaching... (Ctrl+B D to detach)")
+	return session.AttachToSession(resp.Label, resp.TmuxSession, false)
+}
+
+func spawnParamsForJoinedSession(params *session.NewParams, group string) *SpawnParams {
 	spawn := &SpawnParams{
 		Group:                  group,
 		Name:                   params.Name,
@@ -83,16 +97,8 @@ func RunJoinGroup(params *session.NewParams) error {
 		SandboxImpl:            params.SandboxImpl,
 		NoOwner:                params.NoOwner,
 	}
-	resp, rc := RunSpawn(spawn, os.Stdout, os.Stderr, os.Stdin)
-	if rc != rcOK {
-		return fmt.Errorf("spawn into group %q failed (exit %d)", group, rc)
-	}
-	if params.Detached || resp == nil {
-		return nil
-	}
-
-	fmt.Println("\nAttaching... (Ctrl+B D to detach)")
-	return session.AttachToSession(resp.Label, resp.TmuxSession, false)
+	spawn.codexAppServerSpecified = params.CodexAppServerSpecified
+	return spawn
 }
 
 // automaticGroupForDir finds the single active group whose canonical default
@@ -104,10 +110,6 @@ func automaticGroupForDir(params *session.NewParams) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("normalize launch directory: %w", err)
 	}
-	// A relative spelling was resolved against THIS terminal process. Carry the
-	// canonical result into the daemon request so agentd never reinterprets it
-	// against its own (possibly different) working directory.
-	params.Dir = cwd
 	groups, err := db.ListAgentGroups()
 	if err != nil {
 		return "", fmt.Errorf("list groups for directory auto-join: %w", err)
@@ -127,6 +129,10 @@ func automaticGroupForDir(params *session.NewParams) (string, error) {
 		return "", fmt.Errorf("directory %q matches multiple groups (%s); choose one with --join-group or disable auto-join", cwd, strings.Join(matches, ", "))
 	}
 	if len(matches) == 1 {
+		// A relative spelling was resolved against THIS terminal process. Carry
+		// the canonical result only into an actual daemon spawn; an unmatched
+		// solo fallback must retain the caller's logical path spelling.
+		params.Dir = cwd
 		return matches[0], nil
 	}
 	if !params.AutoJoinOrCreateGroup {
@@ -151,6 +157,7 @@ func automaticGroupForDir(params *session.NewParams) (string, error) {
 		return "", fmt.Errorf("create group %q for %q: %w", name, cwd, err)
 	}
 	fmt.Printf("Created group %q for %s\n", created.Name, cwd)
+	params.Dir = cwd
 	return created.Name, nil
 }
 
