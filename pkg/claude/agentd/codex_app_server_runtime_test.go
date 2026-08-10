@@ -64,6 +64,24 @@ func installCodexAppServerGenerationProofForTest(t *testing.T, launchAlive bool)
 	})
 }
 
+func closeCodexAppServerHandleForTest(t *testing.T, handle *codexAppServerHandle) {
+	t.Helper()
+	require.NotNil(t, handle)
+	handle.mutations.Lock()
+	handle.closing = true
+	err := handle.client.Close()
+	handle.mutations.Unlock()
+	require.NoError(t, err)
+	if handle.watchDone == nil {
+		return
+	}
+	select {
+	case <-handle.watchDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Codex app-server handle watcher did not stop")
+	}
+}
+
 func TestPrepareCodexAppServerRuntimeIsolatesAgents(t *testing.T) {
 	resetTestDB(t)
 
@@ -276,14 +294,8 @@ func TestCodexAppServerBootstrapBindsTUIThreadWithoutReplay(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 
-	codexAppServerHandles.Lock()
-	handle := codexAppServerHandles.byGeneration[generation]
-	delete(codexAppServerHandles.byGeneration, generation)
-	delete(codexAppServerHandles.byConv, "thread-from-tui")
-	codexAppServerHandles.Unlock()
-	if handle != nil {
-		_ = handle.client.Close()
-	}
+	handle := codexAppServerHandleForConv("thread-from-tui")
+	closeCodexAppServerHandleForTest(t, handle)
 }
 
 func TestCodexAppServerExistingThreadResumeBindsWithoutTUIHook(t *testing.T) {
@@ -371,10 +383,7 @@ func TestCodexAppServerExistingThreadResumeBindsWithoutTUIHook(t *testing.T) {
 
 	handle := codexAppServerHandleForConv(runtime.ConvID)
 	require.NotNil(t, handle)
-	handle.mutations.Lock()
-	handle.closing = true
-	_ = handle.client.Close()
-	handle.mutations.Unlock()
+	closeCodexAppServerHandleForTest(t, handle)
 }
 
 func TestCodexAppServerResumeWaitStopsWhenRecoveryClaimsGeneration(t *testing.T) {
@@ -485,10 +494,7 @@ func TestCodexAppServerDaemonRestartReadoptsExactLiveThread(t *testing.T) {
 			"recovery must not duplicate a previously committed durable message")
 	case <-time.After(100 * time.Millisecond):
 	}
-	handle.mutations.Lock()
-	handle.closing = true
-	_ = handle.client.Close()
-	handle.mutations.Unlock()
+	closeCodexAppServerHandleForTest(t, handle)
 }
 
 func TestCodexAppServerDaemonRestartRejectsWrongThreadIdentity(t *testing.T) {
@@ -781,10 +787,7 @@ func TestCodexAppServerClientFailureReconnectsSameGeneration(t *testing.T) {
 	stored, err := db.GetCodexAppServerRuntime(runtime.Generation)
 	require.NoError(t, err)
 	assert.Equal(t, db.CodexAppServerReady, stored.State)
-	handle.mutations.Lock()
-	handle.closing = true
-	_ = handle.client.Close()
-	handle.mutations.Unlock()
+	closeCodexAppServerHandleForTest(t, handle)
 }
 
 func TestCodexAppServerBootstrapNeverJoinsFreshThreadSubscriberSet(t *testing.T) {
@@ -889,14 +892,8 @@ func TestCodexAppServerBootstrapNeverJoinsFreshThreadSubscriberSet(t *testing.T)
 				require.Equal(t, db.CodexAppServerReady, runtime.State,
 					"the post-bind agentd connection must not receive or quarantine TUI requests")
 
-				codexAppServerHandles.Lock()
-				handle := codexAppServerHandles.byGeneration[generation]
-				delete(codexAppServerHandles.byGeneration, generation)
-				delete(codexAppServerHandles.byConv, "thread")
-				codexAppServerHandles.Unlock()
-				if handle != nil {
-					_ = handle.client.Close()
-				}
+				handle := codexAppServerHandleForConv("thread")
+				closeCodexAppServerHandleForTest(t, handle)
 			})
 		}
 	}
