@@ -433,7 +433,12 @@ function bindGroupReorder() {
     const dragName = groupDragName;
     const targetName = details.getAttribute('data-group-key');
     const zone = dropZone(e, details);
-    const clone = !!(e.ctrlKey || e.metaKey);
+    // Chrome on macOS can report metaKey during dragover (where we paint the
+    // green clone intent) but clear it on the terminal drop event. Preserve
+    // the operation the user was actually shown; the marker is refreshed on
+    // every dragover and cleared whenever the gesture ceases to be a clone.
+    const clone = details.classList.contains('group-drop-clone')
+      || !!(e.ctrlKey || e.metaKey);
     const byName = snapshotGroupsByName();
     const clonePlan = clone && byName
       ? resolveCloneDrop(dragName, targetName, zone, byName)

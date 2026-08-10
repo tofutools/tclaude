@@ -39,6 +39,8 @@ func TestDashboardJS_GroupReorderWired(t *testing.T) {
 		{`e.dataTransfer.effectAllowed = 'copyMove';`, "group drags allow the native copy cursor"},
 		{`openGroupCloneModal(dragName, {`, "Ctrl/Cmd group drops delegate to the clone dialog"},
 		{`group-drop-clone`, "clone drops carry distinct green target styling"},
+		{`const clone = details.classList.contains('group-drop-clone')`,
+			"the drop consumes the clone intent shown during dragover when macOS Chrome clears its modifier"},
 		{`tclaude.dash.groupOrder`, "group-reorder.js persists the order under its dashPrefs key"},
 		{`function sortGroupsByPref(`, "the shared order-applying helper exists"},
 		// dnd.js: the explicit isolation guard keeps the two drop handlers apart.
