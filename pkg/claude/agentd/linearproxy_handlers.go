@@ -173,24 +173,33 @@ func decodeLinearProxyBody(w http.ResponseWriter, r *http.Request, out any) bool
 	return true
 }
 
-// linearTeamClause builds the team half of an issue filter.
+// linearTeamClause builds the team half of an issue filter, over exactly the
+// teams ONE call may see.
 //
 // It is the ONLY place a team constraint is constructed, and every list-shaped
 // verb goes through it, so an unfiltered listing is not something a handler can
-// produce by omission. When the caller named a team it has already been gated;
-// when it did not, the clause is the caller's whole effective team set — which
-// is exactly why that set has to be resolved before any verb runs, rather than
-// one team at a time as a request arrives.
+// produce by omission. Its input is a team list rather than the session's whole
+// set because a team-spanning read is now one call per workspace: each call may
+// only ask about the teams the credential it spends actually reaches — see
+// scanTargets.
 //
 // eqIgnoreCase rather than `in`: Linear's StringComparator has no
 // case-insensitive list form, and the effective set is stored lower-cased while
 // Linear's team keys are upper-case.
-func (s *linearProxySession) linearTeamClause(team string) map[string]any {
-	if team != "" {
-		return map[string]any{"team": map[string]any{"key": map[string]any{"eqIgnoreCase": team}}}
+func linearTeamClause(teams []string) map[string]any {
+	if len(teams) == 0 {
+		// Unreachable: every scan target carries at least one team. Spelled out
+		// anyway because the alternative shapes — an empty `or`, or an omitted
+		// clause — are "match everything" in a filter whose whole job is to
+		// match something narrower. A team key is never empty, so this matches
+		// nothing.
+		return map[string]any{"team": map[string]any{"key": map[string]any{"eq": ""}}}
 	}
-	alternatives := make([]any, 0, len(s.teams))
-	for _, key := range s.teams {
+	if len(teams) == 1 {
+		return map[string]any{"team": map[string]any{"key": map[string]any{"eqIgnoreCase": teams[0]}}}
+	}
+	alternatives := make([]any, 0, len(teams))
+	for _, key := range teams {
 		alternatives = append(alternatives,
 			map[string]any{"team": map[string]any{"key": map[string]any{"eqIgnoreCase": key}}})
 	}
@@ -201,8 +210,8 @@ func (s *linearProxySession) linearTeamClause(team string) map[string]any {
 // explicitly through `and` rather than relying on Linear's implicit
 // same-level conjunction, so the team constraint's relationship to the others
 // is stated in the request instead of inferred from filter semantics.
-func (s *linearProxySession) linearIssueFilter(team, state string, assignedMe bool) map[string]any {
-	clauses := []any{s.linearTeamClause(team)}
+func linearIssueFilter(teams []string, state string, assignedMe bool) map[string]any {
+	clauses := []any{linearTeamClause(teams)}
 	if state != "" {
 		clauses = append(clauses,
 			map[string]any{"state": map[string]any{"name": map[string]any{"eqIgnoreCase": state}}})
@@ -212,6 +221,103 @@ func (s *linearProxySession) linearIssueFilter(team, state string, assignedMe bo
 			map[string]any{"assignee": map[string]any{"isMe": map[string]any{"eq": true}}})
 	}
 	return map[string]any{"and": clauses}
+}
+
+// linearScan is one call of a team-spanning read: the credential to spend and
+// the teams to ask it about.
+type linearScan struct {
+	route *linearRoute
+	teams []string
+}
+
+// scanTargets turns a verb's optional --team into the calls it has to make.
+//
+// A named team is one call against the one credential that reaches it. An
+// unnamed team is one call PER WORKSPACE the caller's effective set spans —
+// ordinarily still one, because ordinarily every allowed team lives in the
+// workspace the operator's single key belongs to.
+//
+// The fan-out is sequential and shares the request's whole budget, which is
+// what maxLinearFanout bounds. Concurrency would spend several of the
+// operator's credentials at once against a rate limit they share; a handful of
+// serial calls stays inside the window the CLI waits on.
+func (s *linearProxySession) scanTargets(team string) ([]linearScan, *proxyFault) {
+	if team != "" {
+		rt, fault := s.routeFor(team)
+		if fault != nil {
+			return nil, fault
+		}
+		return []linearScan{{route: rt, teams: []string{team}}}, nil
+	}
+	targets := make([]linearScan, 0, len(s.routes))
+	for _, rt := range s.routes {
+		targets = append(targets, linearScan{route: rt, teams: rt.teams})
+	}
+	return targets, nil
+}
+
+// mergeByUpdated merges the per-workspace results of `issue ls` and bounds them
+// to what the caller asked for.
+//
+// Each call asked for `first: limit` rows within its own workspace, so N
+// workspaces can return N*limit rows between them and the caller must still get
+// the limit rows it asked for — the MOST RECENT ones, which is what the query's
+// `orderBy: updatedAt` promises within one workspace and what this restores
+// across several. Timestamps are RFC 3339 and so sort correctly as strings.
+//
+// A single workspace keeps Linear's own order untouched: re-sorting a result
+// that is already ordered could only introduce differences, never fix any.
+func mergeByUpdated(groups [][]linearIssue, limit int) []linearIssue {
+	if len(groups) == 1 {
+		return truncateIssues(groups[0], limit)
+	}
+	var merged []linearIssue
+	for _, g := range groups {
+		merged = append(merged, g...)
+	}
+	sort.SliceStable(merged, func(i, j int) bool {
+		return merged[i].UpdatedAt > merged[j].UpdatedAt
+	})
+	return truncateIssues(merged, limit)
+}
+
+// mergeByRelevance merges the per-workspace results of `issue search`.
+//
+// Unlike a listing there is no field to re-sort on: relevance is Linear's own
+// ranking within ONE response, and two responses' ranks are not comparable. So
+// the merge takes turns instead — each workspace's best result, then each
+// workspace's second, and so on — which keeps every workspace represented in a
+// bounded result rather than letting the first one fill it.
+func mergeByRelevance(groups [][]linearIssue, limit int) []linearIssue {
+	if len(groups) == 1 {
+		return truncateIssues(groups[0], limit)
+	}
+	var merged []linearIssue
+	for round := 0; len(merged) < limit; round++ {
+		progressed := false
+		for _, g := range groups {
+			if round >= len(g) {
+				continue
+			}
+			progressed = true
+			merged = append(merged, g[round])
+			if len(merged) == limit {
+				break
+			}
+		}
+		if !progressed {
+			break
+		}
+	}
+	return merged
+}
+
+// truncateIssues bounds a result set to the limit the caller asked for.
+func truncateIssues(issues []linearIssue, limit int) []linearIssue {
+	if len(issues) > limit {
+		return issues[:limit]
+	}
+	return issues
 }
 
 // enforceIssueList applies the team gate to every row of a listing.
@@ -232,11 +338,29 @@ func (s *linearProxySession) enforceIssueList(issues []linearIssue) []linearIssu
 	return kept
 }
 
+// gateIssueTeam is the pre-call half of the team gate for an identifier-shaped
+// verb: it checks the team the caller named against the effective set and
+// returns the credential that reaches it.
+//
+// The two answers come together deliberately. Deciding that a team may be
+// reached and then reaching it with whichever key happened to be at hand would
+// query a workspace the team does not live in, and Linear answers that with
+// "entity not found" — a refusal wearing a typo's clothes.
+func (s *linearProxySession) gateIssueTeam(id string) (*linearRoute, *proxyFault) {
+	key := teamKeyOf(id)
+	if fault := s.requireAllowedTeam(key); fault != nil {
+		return nil, fault
+	}
+	return s.routeFor(key)
+}
+
 // resolveTeamMeta looks up a team's UUID and workflow states. Callers have
-// already allow-list-checked the key.
-func (s *linearProxySession) resolveTeamMeta(ctx context.Context, key string) (*linearTeamMeta, *proxyFault) {
+// already allow-list-checked the key, and pass the credential that reaches it.
+func (s *linearProxySession) resolveTeamMeta(
+	ctx context.Context, rt *linearRoute, key string,
+) (*linearTeamMeta, *proxyFault) {
 	var data linearTeamMetaData
-	if fault := s.exec(ctx, linearQueryTeamMeta, map[string]any{"key": key}, &data); fault != nil {
+	if fault := s.exec(ctx, rt, linearQueryTeamMeta, map[string]any{"key": key}, &data); fault != nil {
 		return nil, fault
 	}
 	if len(data.Teams.Nodes) == 0 {
@@ -284,24 +408,60 @@ func handleLinearProxyWhoami(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var data linearViewerData
-	if fault := s.exec(r.Context(), linearQueryViewer,
-		map[string]any{"first": whoamiTeamPageSize}, &data); fault != nil {
-		writeProxyFault(w, fault)
+	// One call per credential. A route that fails is REPORTED rather than
+	// fatal: this is the verb an operator runs to find out why something is
+	// refused, and "workspace acme's key is unreadable" is the answer they came
+	// for — losing the workspaces that do work would hide it. Only a total
+	// failure is raised as a fault, since then there is nothing to report.
+	views := make([]linearWorkspaceView, 0, len(s.routes))
+	var (
+		reached   int
+		lastFault *proxyFault
+	)
+	for _, rt := range s.routes {
+		view := linearWorkspaceView{Name: rt.name, Routes: rt.teams, Teams: []linearTeamView{}}
+		var data linearViewerData
+		if fault := s.exec(r.Context(), rt, linearQueryViewer,
+			map[string]any{"first": whoamiTeamPageSize}, &data); fault != nil {
+			view.Error = fault.Code + ": " + fault.Msg
+			lastFault = fault
+			views = append(views, view)
+			continue
+		}
+		reached++
+		viewer := data.Viewer
+		view.Viewer = &viewer
+		for _, t := range data.Teams.Nodes {
+			view.Teams = append(view.Teams,
+				linearTeamView{Key: t.Key, Name: t.Name, Allowed: s.teamAllowed(t.Key)})
+		}
+		view.TeamsTruncated = len(data.Teams.Nodes) >= whoamiTeamPageSize
+		views = append(views, view)
+	}
+	if reached == 0 {
+		writeProxyFault(w, lastFault)
 		return
 	}
-	type teamView struct {
-		Key     string `json:"key"`
-		Name    string `json:"name,omitempty"`
-		Allowed bool   `json:"allowed"`
-	}
-	teams := make([]teamView, 0, len(data.Teams.Nodes))
-	for _, t := range data.Teams.Nodes {
-		teams = append(teams, teamView{Key: t.Key, Name: t.Name, Allowed: s.teamAllowed(t.Key)})
+	// viewer/teams describe ONE workspace, so they are reported only when there
+	// is one — which is the ordinary case, and keeps its response exactly what
+	// it has always been. With several credentials in play there is no single
+	// viewer to name, and workspaces carries the breakdown instead.
+	var (
+		viewer         *linearUserRef
+		teams          []linearTeamView
+		teamsTruncated bool
+	)
+	if len(views) == 1 {
+		viewer, teams, teamsTruncated = views[0].Viewer, views[0].Teams, views[0].TeamsTruncated
 	}
 	s.respond(w, r, "whoami", struct {
-		Viewer linearUserRef `json:"viewer"`
-		Teams  []teamView    `json:"teams"`
+		Viewer *linearUserRef   `json:"viewer,omitempty"`
+		Teams  []linearTeamView `json:"teams,omitempty"`
+		// Workspaces is the per-credential breakdown: who each key
+		// authenticates as, which teams it can see, and which of the caller's
+		// teams it is the credential for. Always present, so an agent has one
+		// shape to read whether the operator configured one key or several.
+		Workspaces []linearWorkspaceView `json:"workspaces"`
 		// AllowedTeams is what THIS caller may reach: the operator's list
 		// narrowed by its own grant scope.
 		AllowedTeams []string `json:"allowed_teams"`
@@ -319,14 +479,41 @@ func handleLinearProxyWhoami(w http.ResponseWriter, r *http.Request) {
 		// find out which team to ask the operator to allow-list.
 		TeamsTruncated bool `json:"teams_truncated,omitempty"`
 	}{
-		Viewer:         data.Viewer,
+		Viewer:         viewer,
 		Teams:          teams,
+		Workspaces:     views,
 		AllowedTeams:   s.teams,
 		OperatorTeams:  s.policy.AllowedTeams,
 		GrantTeams:     s.grantTeams,
 		WriteAllowed:   s.policy.AllowWrite,
-		TeamsTruncated: len(data.Teams.Nodes) >= whoamiTeamPageSize,
-	}, "")
+		TeamsTruncated: teamsTruncated,
+	}, fmt.Sprintf("workspaces=%d", len(views)))
+}
+
+// linearTeamView is one team `whoami` reports, with the gate's verdict on it.
+type linearTeamView struct {
+	Key     string `json:"key"`
+	Name    string `json:"name,omitempty"`
+	Allowed bool   `json:"allowed"`
+}
+
+// linearWorkspaceView is `whoami`'s per-credential report.
+type linearWorkspaceView struct {
+	// Name is the operator's workspace label, or "default" for the key every
+	// team no workspaces entry claims is reached with.
+	Name string `json:"name"`
+	// Routes is the caller's own teams this credential is used for — the
+	// answer to "which key answers when I ask about TCL-1".
+	Routes []string `json:"routes,omitempty"`
+	// Viewer is who this key authenticates as; absent when the call failed.
+	Viewer *linearUserRef `json:"viewer,omitempty"`
+	// Teams is every team this key can see, whether allow-listed or not, so an
+	// agent can tell its operator what there is to allow-list.
+	Teams          []linearTeamView `json:"teams"`
+	TeamsTruncated bool             `json:"teams_truncated,omitempty"`
+	// Error is why this credential reported nothing — an unreadable key file,
+	// a key Linear rejected. The other workspaces are still reported.
+	Error string `json:"error,omitempty"`
 }
 
 // handleLinearProxyIssueView serves POST /v1/linear/issue/view.
@@ -341,12 +528,13 @@ func handleLinearProxyIssueView(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
-	if fault := s.requireAllowedTeam(teamKeyOf(id)); fault != nil {
+	rt, fault := s.gateIssueTeam(id)
+	if fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
 	var data linearIssueData
-	if fault := s.exec(r.Context(), linearQueryIssue, map[string]any{"id": id}, &data); fault != nil {
+	if fault := s.exec(r.Context(), rt, linearQueryIssue, map[string]any{"id": id}, &data); fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
@@ -379,15 +567,24 @@ func handleLinearProxyIssueList(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
-	var data linearIssuesData
-	if fault := s.exec(r.Context(), linearQueryIssues, map[string]any{
-		"filter": s.linearIssueFilter(team, state, body.AssignedMe),
-		"first":  limit,
-	}, &data); fault != nil {
+	targets, fault := s.scanTargets(team)
+	if fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
-	issues := s.enforceIssueList(data.Issues.Nodes)
+	groups := make([][]linearIssue, 0, len(targets))
+	for _, sc := range targets {
+		var data linearIssuesData
+		if fault := s.exec(r.Context(), sc.route, linearQueryIssues, map[string]any{
+			"filter": linearIssueFilter(sc.teams, state, body.AssignedMe),
+			"first":  limit,
+		}, &data); fault != nil {
+			writeProxyFault(w, fault)
+			return
+		}
+		groups = append(groups, s.enforceIssueList(data.Issues.Nodes))
+	}
+	issues := mergeByUpdated(groups, limit)
 	s.respond(w, r, "issue.list", issues, fmt.Sprintf("team=%s rows=%d", teamOrAll(team), len(issues)))
 }
 
@@ -413,16 +610,25 @@ func handleLinearProxyIssueSearch(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
-	var data linearSearchData
-	if fault := s.exec(r.Context(), linearQuerySearch, map[string]any{
-		"term":   term,
-		"filter": s.linearIssueFilter(team, "", false),
-		"first":  limit,
-	}, &data); fault != nil {
+	targets, fault := s.scanTargets(team)
+	if fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
-	issues := s.enforceIssueList(data.SearchIssues.Nodes)
+	groups := make([][]linearIssue, 0, len(targets))
+	for _, sc := range targets {
+		var data linearSearchData
+		if fault := s.exec(r.Context(), sc.route, linearQuerySearch, map[string]any{
+			"term":   term,
+			"filter": linearIssueFilter(sc.teams, "", false),
+			"first":  limit,
+		}, &data); fault != nil {
+			writeProxyFault(w, fault)
+			return
+		}
+		groups = append(groups, s.enforceIssueList(data.SearchIssues.Nodes))
+	}
+	issues := mergeByRelevance(groups, limit)
 	s.respond(w, r, "issue.search", issues, fmt.Sprintf("team=%s rows=%d", teamOrAll(team), len(issues)))
 }
 
@@ -443,7 +649,8 @@ func handleLinearProxyIssueComments(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
-	if fault := s.requireAllowedTeam(teamKeyOf(id)); fault != nil {
+	rt, fault := s.gateIssueTeam(id)
+	if fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
@@ -453,7 +660,7 @@ func handleLinearProxyIssueComments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var data linearCommentsData
-	if fault := s.exec(r.Context(), linearQueryIssueComments, map[string]any{
+	if fault := s.exec(r.Context(), rt, linearQueryIssueComments, map[string]any{
 		"id": id, "first": limit,
 	}, &data); fault != nil {
 		writeProxyFault(w, fault)
@@ -540,7 +747,8 @@ func handleLinearProxyIssueComment(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
-	if fault := s.requireAllowedTeam(teamKeyOf(id)); fault != nil {
+	rt, fault := s.gateIssueTeam(id)
+	if fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
@@ -552,7 +760,7 @@ func handleLinearProxyIssueComment(w http.ResponseWriter, r *http.Request) {
 	// happily accept one outside the allow-list, so the team is confirmed
 	// against Linear's own answer before anything is written.
 	var issue linearIssueData
-	if fault := s.exec(r.Context(), linearQueryIssue, map[string]any{"id": id}, &issue); fault != nil {
+	if fault := s.exec(r.Context(), rt, linearQueryIssue, map[string]any{"id": id}, &issue); fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
@@ -561,7 +769,7 @@ func handleLinearProxyIssueComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var data linearCommentCreateData
-	if fault := s.exec(r.Context(), linearMutationCommentCreate, map[string]any{
+	if fault := s.exec(r.Context(), rt, linearMutationCommentCreate, map[string]any{
 		"input": map[string]any{"issueId": id, "body": body.Body},
 	}, &data); fault != nil {
 		writeProxyFault(w, fault)
@@ -587,6 +795,14 @@ func handleLinearProxyIssueCreate(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
+	// The credential for the workspace this team lives in. `issue create` is
+	// the one write that names a team rather than an issue, so it resolves its
+	// route here instead of through gateIssueTeam.
+	rt, fault := s.routeFor(team)
+	if fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
 	if fault := validateLinearTitle(body.Title); fault != nil {
 		writeProxyFault(w, fault)
 		return
@@ -599,7 +815,7 @@ func handleLinearProxyIssueCreate(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
-	meta, fault := s.resolveTeamMeta(r.Context(), team)
+	meta, fault := s.resolveTeamMeta(r.Context(), rt, team)
 	if fault != nil {
 		writeProxyFault(w, fault)
 		return
@@ -620,7 +836,7 @@ func handleLinearProxyIssueCreate(w http.ResponseWriter, r *http.Request) {
 		input["stateId"] = stateID
 	}
 	var data linearIssueCreateData
-	if fault := s.exec(r.Context(), linearMutationIssueCreate, map[string]any{"input": input}, &data); fault != nil {
+	if fault := s.exec(r.Context(), rt, linearMutationIssueCreate, map[string]any{"input": input}, &data); fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
@@ -653,7 +869,8 @@ func handleLinearProxyIssueUpdate(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
-	if fault := s.requireAllowedTeam(teamKeyOf(id)); fault != nil {
+	rt, fault := s.gateIssueTeam(id)
+	if fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
@@ -679,7 +896,7 @@ func handleLinearProxyIssueUpdate(w http.ResponseWriter, r *http.Request) {
 	// Confirm the issue's real team before writing, and pick up the team key
 	// the state name has to be resolved within.
 	var issue linearIssueData
-	if fault := s.exec(r.Context(), linearQueryIssue, map[string]any{"id": id}, &issue); fault != nil {
+	if fault := s.exec(r.Context(), rt, linearQueryIssue, map[string]any{"id": id}, &issue); fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
@@ -695,7 +912,13 @@ func handleLinearProxyIssueUpdate(w http.ResponseWriter, r *http.Request) {
 		input["priority"] = *body.Priority
 	}
 	if state != "" {
-		meta, fault := s.resolveTeamMeta(r.Context(), issue.Issue.Team.Key)
+		// Still the credential that found the issue, even though the team is
+		// the one Linear reported rather than the one the caller named. A
+		// Linear team cannot move between workspaces, so the issue's real team
+		// is in the workspace this key just read it from — and asking a
+		// different key about it would be asking a workspace that has never
+		// heard of it.
+		meta, fault := s.resolveTeamMeta(r.Context(), rt, issue.Issue.Team.Key)
 		if fault != nil {
 			writeProxyFault(w, fault)
 			return
@@ -718,7 +941,7 @@ func handleLinearProxyIssueUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var data linearIssueUpdateData
-	if fault := s.exec(r.Context(), linearMutationIssueUpdate, map[string]any{
+	if fault := s.exec(r.Context(), rt, linearMutationIssueUpdate, map[string]any{
 		"id": target, "input": input,
 	}, &data); fault != nil {
 		writeProxyFault(w, fault)
@@ -754,7 +977,8 @@ func handleLinearProxyIssueLink(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
-	if fault := s.requireAllowedTeam(teamKeyOf(id)); fault != nil {
+	rt, fault := s.gateIssueTeam(id)
+	if fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
@@ -771,7 +995,7 @@ func handleLinearProxyIssueLink(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var issue linearIssueData
-	if fault := s.exec(r.Context(), linearQueryIssue, map[string]any{"id": id}, &issue); fault != nil {
+	if fault := s.exec(r.Context(), rt, linearQueryIssue, map[string]any{"id": id}, &issue); fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
@@ -784,7 +1008,7 @@ func handleLinearProxyIssueLink(w http.ResponseWriter, r *http.Request) {
 		vars["title"] = title
 	}
 	var data linearAttachmentLinkData
-	if fault := s.exec(r.Context(), linearMutationAttachmentLink, vars, &data); fault != nil {
+	if fault := s.exec(r.Context(), rt, linearMutationAttachmentLink, vars, &data); fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}

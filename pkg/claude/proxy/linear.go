@@ -142,6 +142,10 @@ func linearWhoamiCmd() *cobra.Command {
 			"operator_teams is agent.linear_proxy.allowed_teams (absent when the operator configured none), " +
 			"grant_teams is the linear_team scope on your own grant (absent when it is unscoped), and " +
 			"allowed_teams is what the ones that ARE present leave you.\n\n" +
+			"workspaces lists the daemon's Linear keys — usually one, since a single key covers every " +
+			"team in one Linear workspace. Each entry names the teams that key answers for, and carries " +
+			"an error if it is broken; a team no entry can see needs a key for ITS workspace rather than " +
+			"a wider list.\n\n" +
 			"This is the command to run FIRST, and the command to run when something is refused: it tells " +
 			"you the exact team key — and which of the two lists — to ask the operator to widen, rather " +
 			"than leaving you to guess from a refusal.",

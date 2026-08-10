@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -24,7 +25,20 @@ func testLinearSession(teams ...string) *linearProxySession {
 		LinearProxy: &config.LinearProxyConfig{AllowedTeams: teams},
 	}}
 	policy := cfg.ResolvedLinearProxy()
-	return &linearProxySession{policy: policy, key: "test-key", teams: policy.AllowedTeams}
+	return withTestRoutes(&linearProxySession{policy: policy, teams: policy.AllowedTeams})
+}
+
+// withTestRoutes gives a hand-built session the credential routing a real one
+// resolves in newLinearProxySession, so a test can exercise scanTargets and the
+// filter it feeds. These policies configure no workspaces, so every team routes
+// to the single default credential and linearRoutes cannot fail.
+func withTestRoutes(s *linearProxySession) *linearProxySession {
+	routes, byTeam, fault := linearRoutes(s.policy, s.teams)
+	if fault != nil {
+		panic("test policy could not be routed: " + fault.Msg)
+	}
+	s.routes, s.routeByTeam = routes, byTeam
+	return s
 }
 
 // testScopedLinearSession is testLinearSession with a team-scoped caller: the
@@ -34,13 +48,24 @@ func testScopedLinearSession(operator, granted []string) *linearProxySession {
 		LinearProxy: &config.LinearProxyConfig{AllowedTeams: operator},
 	}}
 	policy := cfg.ResolvedLinearProxy()
-	s := &linearProxySession{policy: policy, key: "test-key", grantTeams: lowerTeamKeys(granted)}
+	s := &linearProxySession{policy: policy, grantTeams: lowerTeamKeys(granted)}
 	for _, key := range policy.AllowedTeams {
 		if slices.Contains(s.grantTeams, key) {
 			s.teams = append(s.teams, key)
 		}
 	}
-	return s
+	return withTestRoutes(s)
+}
+
+// testLinearFilter builds the filter one call of a team-spanning verb would
+// send, going through the real scanTargets → linearIssueFilter path rather than
+// around it.
+func testLinearFilter(t *testing.T, s *linearProxySession, team, state string, assignedMe bool) map[string]any {
+	t.Helper()
+	targets, fault := s.scanTargets(team)
+	require.Nil(t, fault)
+	require.Len(t, targets, 1, "a single-workspace policy must resolve to one call")
+	return linearIssueFilter(targets[0].teams, state, assignedMe)
 }
 
 func TestValidateLinearIdentifier(t *testing.T) {
@@ -158,11 +183,9 @@ func TestRequireAllowedTeamDistinguishesTheTwoLists(t *testing.T) {
 func TestScopedSessionNarrowsTheListingFilter(t *testing.T) {
 	s := testScopedLinearSession([]string{"TCL", "JOH"}, []string{"JOH"})
 
-	filter := s.linearIssueFilter("", "", false)
-	alternatives := filter["and"].([]any)[0].(map[string]any)["or"].([]any)
-	require.Len(t, alternatives, 1, "the filter must carry the scoped set, not the operator's")
-	team := alternatives[0].(map[string]any)["team"].(map[string]any)
-	assert.Equal(t, "joh", team["key"].(map[string]any)["eqIgnoreCase"])
+	filter := testLinearFilter(t, s, "", "", false)
+	assert.Equal(t, []string{"joh"}, filterTeamKeys(t, filter),
+		"the filter must carry the scoped set, not the operator's")
 
 	kept := s.enforceIssueList([]linearIssue{
 		{Identifier: "JOH-1", Team: linearTeamRef{Key: "JOH"}},
@@ -212,30 +235,68 @@ func TestLinearIssueFilterAlwaysCarriesTheAllowList(t *testing.T) {
 	s := testLinearSession("TCL", "JOH")
 
 	t.Run("no team named: every allow-listed team", func(t *testing.T) {
-		filter := s.linearIssueFilter("", "", false)
+		filter := testLinearFilter(t, s, "", "", false)
 		clauses, ok := filter["and"].([]any)
 		require.True(t, ok)
 		require.Len(t, clauses, 1)
-		alternatives, ok := clauses[0].(map[string]any)["or"].([]any)
-		require.True(t, ok, "the team clause must be an or-of-teams")
-		assert.Len(t, alternatives, 2)
+		assert.Equal(t, []string{"tcl", "joh"}, filterTeamKeys(t, filter))
 	})
 
 	t.Run("a named team narrows rather than widens", func(t *testing.T) {
-		filter := s.linearIssueFilter("TCL", "", false)
+		filter := testLinearFilter(t, s, "TCL", "", false)
 		clauses := filter["and"].([]any)
 		require.Len(t, clauses, 1)
-		team := clauses[0].(map[string]any)["team"].(map[string]any)
-		assert.Equal(t, "TCL", team["key"].(map[string]any)["eqIgnoreCase"])
+		assert.Equal(t, []string{"TCL"}, filterTeamKeys(t, filter))
 	})
 
 	t.Run("state and assignee are ANDed on top, never instead", func(t *testing.T) {
-		filter := s.linearIssueFilter("", "In Review", true)
+		filter := testLinearFilter(t, s, "", "In Review", true)
 		clauses := filter["and"].([]any)
 		require.Len(t, clauses, 3, "the team clause must survive alongside the others")
-		_, hasTeamClause := clauses[0].(map[string]any)["or"]
-		assert.True(t, hasTeamClause, "the team clause must still be first")
+		assert.Equal(t, []string{"tcl", "joh"}, filterTeamKeys(t, filter),
+			"the team clause must still be first, and still carry the whole set")
 	})
+}
+
+// TestLinearTeamClauseNeverMatchesEverything pins the shape of the one input
+// the clause builder should never see. An empty team list has no honest filter,
+// and both obvious spellings of one — an omitted clause, an empty `or` — mean
+// "every issue in the workspace" to Linear.
+func TestLinearTeamClauseNeverMatchesEverything(t *testing.T) {
+	clause := linearTeamClause(nil)
+	team, ok := clause["team"].(map[string]any)
+	require.True(t, ok, "an empty team list must still produce a team constraint")
+	assert.Equal(t, "", team["key"].(map[string]any)["eq"],
+		"no team key is empty, so this matches nothing")
+}
+
+// filterTeamKeys extracts the teams a filter constrains to, whichever shape the
+// clause took: one team is a direct constraint, several are an `or` over them.
+func filterTeamKeys(t *testing.T, filter map[string]any) []string {
+	t.Helper()
+	clauses, ok := filter["and"].([]any)
+	require.True(t, ok, "a filter must AND its clauses explicitly")
+	require.NotEmpty(t, clauses)
+	clause, ok := clauses[0].(map[string]any)
+	require.True(t, ok, "the team clause must come first")
+
+	if alternatives, isOr := clause["or"].([]any); isOr {
+		keys := make([]string, 0, len(alternatives))
+		for _, alt := range alternatives {
+			keys = append(keys, teamKeyInClause(t, alt.(map[string]any)))
+		}
+		return keys
+	}
+	return []string{teamKeyInClause(t, clause)}
+}
+
+func teamKeyInClause(t *testing.T, clause map[string]any) string {
+	t.Helper()
+	team, ok := clause["team"].(map[string]any)
+	require.True(t, ok, "every alternative must constrain a team")
+	key, ok := team["key"].(map[string]any)["eqIgnoreCase"].(string)
+	require.True(t, ok, "teams are matched case-insensitively")
+	return key
 }
 
 func TestValidateLinearTitle(t *testing.T) {
@@ -429,6 +490,77 @@ func TestLinearProxyConfigIsFailClosed(t *testing.T) {
 		LinearProxy: &config.LinearProxyConfig{AllowedTeams: []string{"TCL"}},
 	}}
 	assert.True(t, enabled.LinearProxyEnabled())
+}
+
+// TestLinearRoutesGroupTeamsByCredential — the routing a team-spanning verb
+// fans out over. Teams no workspaces entry claims share the default route, and
+// routes come out in the order teams first appear, so a fan-out is
+// deterministic rather than map-ordered.
+func TestLinearRoutesGroupTeamsByCredential(t *testing.T) {
+	policy := config.LinearProxyConfig{
+		AllowedTeams: []string{"tcl", "acm", "joh", "ops"},
+		APIKeyFile:   "/tmp/default.key",
+		Workspaces: []config.LinearWorkspaceConfig{
+			{Name: "acme", APIKeyFile: "/tmp/acme.key", Teams: []string{"acm", "ops"}},
+		},
+	}
+	routes, byTeam, fault := linearRoutes(policy, policy.AllowedTeams)
+	require.Nil(t, fault)
+	require.Len(t, routes, 2)
+
+	assert.Equal(t, "default", routes[0].name)
+	assert.Equal(t, []string{"tcl", "joh"}, routes[0].teams)
+	assert.Equal(t, "acme", routes[1].name)
+	assert.Equal(t, []string{"acm", "ops"}, routes[1].teams)
+
+	assert.Same(t, routes[1], byTeam["acm"], "a claimed team must resolve to its own workspace")
+	assert.Same(t, routes[0], byTeam["joh"], "an unclaimed team falls back to the default key")
+}
+
+// TestLinearRoutesBoundTheFanout — one request spends one credential per
+// workspace, sequentially, inside a single budget. Past a handful that budget
+// is what would fail, and a context deadline says nothing about the cause.
+func TestLinearRoutesBoundTheFanout(t *testing.T) {
+	policy := config.LinearProxyConfig{APIKeyFile: "/tmp/default.key"}
+	var teams []string
+	for i := 0; i <= maxLinearFanout; i++ {
+		key := fmt.Sprintf("t%d", i)
+		teams = append(teams, key)
+		policy.Workspaces = append(policy.Workspaces, config.LinearWorkspaceConfig{
+			Name: key, APIKeyFile: "/tmp/" + key + ".key", Teams: []string{key},
+		})
+	}
+	policy.AllowedTeams = teams
+
+	_, _, fault := linearRoutes(policy, teams)
+	require.NotNil(t, fault, "a fan-out past the bound must be named, not silently attempted")
+	assert.Equal(t, linearMisconfiguredCode, fault.Code)
+
+	// One under the bound still resolves, so the bound is on the fan-out rather
+	// than on how many workspaces an operator may configure.
+	_, _, fault = linearRoutes(policy, teams[:maxLinearFanout])
+	assert.Nil(t, fault)
+}
+
+// TestLinearRouteKeyEnvFallbackIsTheDefaultRouteAlone — one LINEAR_API_KEY names
+// one workspace's key. Letting a second route borrow it would answer that
+// route's teams with the wrong workspace's credential, which Linear reports as
+// a missing issue rather than as an error.
+func TestLinearRouteKeyEnvFallbackIsTheDefaultRouteAlone(t *testing.T) {
+	t.Setenv("LINEAR_API_KEY", "lin_api_env")
+	s := &linearProxySession{}
+
+	key, fault := s.routeKey(&linearRoute{name: "default", isDefault: true, teams: []string{"tcl"}})
+	require.Nil(t, fault)
+	assert.Equal(t, "lin_api_env", key)
+
+	// linearRoutes already refuses a workspace entry with no key file, so this
+	// route cannot be built from a real policy. The rule is enforced here too
+	// because the two would have to be wrong TOGETHER for the environment key
+	// to answer a workspace it does not belong to.
+	_, fault = s.routeKey(&linearRoute{name: "acme", teams: []string{"acm"}})
+	require.NotNil(t, fault, "a workspace route must never borrow the environment key")
+	assert.Equal(t, linearMisconfiguredCode, fault.Code)
 }
 
 // TestLinearWriteCeilingIsIndependentOfTheSlug — allow_write is the operator's
