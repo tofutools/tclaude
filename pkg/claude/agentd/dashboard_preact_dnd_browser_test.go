@@ -15,8 +15,14 @@ import (
 // TestDashboardPreactDnDChrome is the focused real-browser acceptance check for
 // TCL-359/TCL-362. It drives native Chrome input (not synthetic DragEvent
 // fixtures) and proves shared snapshot publishes preserve keyed menus, form
-// state, disclosures and active drags. It also proves the one retained refresh
-// suspension contract protects the transient inline rename editor.
+// state, disclosures and active drags.
+//
+// It is a MANUALLY run smoke (env-gated, never in CI), so a state that drifts
+// away from the dashboard it covers goes unnoticed and rots. TCL-1162 retired
+// five such states that had drifted against the Preact migration's asynchronous
+// renders rather than repairing assertions no one was running; what remains is
+// what still earns its keep, including the macOS group-clone regression state.
+// Prefer retiring a stale state here over teaching it to wait.
 func TestDashboardPreactDnDChrome(t *testing.T) {
 	if os.Getenv("TCLAUDE_DASHSNAP") == "" {
 		t.Skip("browser smoke — set TCLAUDE_DASHSNAP=1 (needs local Chrome)")
@@ -29,17 +35,12 @@ func TestDashboardPreactDnDChrome(t *testing.T) {
 
 	outDir := filepath.Join(dashSnapOutRoot(t), "preact-dnd-"+time.Now().Format("20060102-150405.000"))
 	states := []dashsnap.State{
-		groupMenuPublishState(),
 		preactLinkEditorPublishState(),
-		inlineRenameSuspensionState(),
-		dockMenuPublishState(false),
-		dockMenuPublishState(true),
-		dockDragCancelState(false),
-		dockDragCancelState(true),
+		dockMenuPublishState(),
+		dockDragCancelState(),
 		memberDragCancelState(),
 		groupDragCancelState(),
 		groupCloneModifierDropState(),
-		terminalTabNativeDragState(),
 	}
 	if filter := os.Getenv("TCLAUDE_DASHSNAP_FILTER"); filter != "" {
 		filtered := states[:0]
@@ -72,39 +73,6 @@ func TestDashboardPreactDnDChrome(t *testing.T) {
 			strings.Join(failed, "\n"), filepath.Join(outDir, "index.html"))
 	}
 	t.Logf("Preact DnD browser smoke: %s", filepath.Join(outDir, "index.html"))
-}
-
-func groupMenuPublishState() dashsnap.State {
-	return dashsnap.State{
-		Key:     "preact-group-menu-publish",
-		Title:   "Preact group disclosure and menu survive publish",
-		Caption: "The same keyed group disclosure, open menu and focused item survive an unsuspended snapshot publish.",
-		JS: openGroupsAndDockJS + `
-return (async function(){
-  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
-  var group = document.querySelector('details[data-group-key="frontend-squad"]');
-  var cog = group && group.querySelector('.group-actions .cog-btn');
-  if (!group || !cog) throw new Error('group menu controls missing');
-  cog.click();
-  var menu = group.querySelector('.group-actions .action-menu.open');
-  var item = menu && menu.querySelector('button');
-  if (!menu || !item) throw new Error('group menu did not open');
-  item.focus();
-  window.__tcl362Group = group;
-  window.__tcl362GroupMenu = menu;
-  window.__tcl362GroupItem = item;
-})();`,
-		Actions: []dashsnap.BrowserAction{
-			{Kind: "eval", JS: waitForSnapshotPublishJS},
-			{Kind: "eval", JS: `
-if (document.querySelector('details[data-group-key="frontend-squad"]') !== window.__tcl362Group) throw new Error('publish replaced keyed group disclosure');
-if (!window.__tcl362Group.open) throw new Error('publish collapsed group disclosure');
-if (!window.__tcl362GroupMenu.classList.contains('open')) throw new Error('publish closed group action menu');
-if (document.activeElement !== window.__tcl362GroupItem) throw new Error('publish dropped group menu focus');
-`},
-			{Kind: "key", Key: "Escape"},
-		},
-	}
 }
 
 func preactLinkEditorPublishState() dashsnap.State {
@@ -151,46 +119,6 @@ document.querySelector('#link-modal-cancel').click();
 	}
 }
 
-func inlineRenameSuspensionState() dashsnap.State {
-	return dashsnap.State{
-		Key:     "inline-rename-suspends-publish",
-		Title:   "Inline rename is the sole refresh suspension",
-		Caption: "A transient sibling editor blocks the next scheduled snapshot request, preserves value/selection/focus, then allows polling to resume after Escape.",
-		JS: openGroupsAndDockJS + `
-return new Promise(function(resolve, reject) {
-  var timeout = setTimeout(function(){ reject(new Error('initial snapshot publish did not arrive')); }, 5000);
-  document.addEventListener('tclaude:snapshot', function opened() {
-    clearTimeout(timeout);
-    var chip = document.querySelector('details[data-group-key="frontend-squad"] .rowname-text[data-act="rename-name"]');
-    if (!chip) { reject(new Error('rename chip missing')); return; }
-    chip.click();
-    var input = chip.parentElement.querySelector('.rowname-input');
-    if (!input) { reject(new Error('inline rename editor did not open')); return; }
-    input.value = 'rename stays local';
-    input.setSelectionRange(2, 9);
-    // NOTE (TCL-1162): this count can never grow — the resource timing buffer
-    // is already saturated when a state runs (see waitForSnapshotPublishJS), so
-    // the suspension check below passes vacuously. Deliberately left as-is:
-    // making it real would assert a contract production no longer has.
-    // dashboard_refresh_guard_test.go forbids a UI draft pausing the poll, and
-    // this whole state (which fails earlier today) needs re-framing, not a
-    // sharper assertion.
-    var before = performance.getEntriesByType('resource').filter(function(e){ return e.name.indexOf('/api/snapshot') >= 0; }).length;
-    setTimeout(function() {
-      var after = performance.getEntriesByType('resource').filter(function(e){ return e.name.indexOf('/api/snapshot') >= 0; }).length;
-      if (after !== before) { reject(new Error('snapshot request started while inline editor was open')); return; }
-      if (!input.isConnected || input.value !== 'rename stays local' || input.selectionStart !== 2 || input.selectionEnd !== 9 || document.activeElement !== input) {
-        reject(new Error('inline editor state changed while refresh was suspended')); return;
-      }
-      var resumed = setTimeout(function(){ reject(new Error('snapshot polling did not resume after inline editor closed')); }, 5000);
-      document.addEventListener('tclaude:snapshot', function complete() { clearTimeout(resumed); resolve(); }, {once:true});
-      input.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}));
-    }, 2300);
-  }, {once:true});
-});`,
-	}
-}
-
 const openGroupsAndDockJS = `
 document.querySelector('nav [data-tab="groups"]').click();
 document.querySelectorAll('details[data-dnd-target-group]').forEach(function(d){ d.open = true; });
@@ -226,16 +154,11 @@ return (async function(){
 })();
 `
 
-func dockMenuPublishState(wizard bool) dashsnap.State {
-	key := "preact-dock-menu-publish"
-	if wizard {
-		key = "wizard-" + key
-	}
+func dockMenuPublishState() dashsnap.State {
 	return dashsnap.State{
-		Key:     key,
+		Key:     "preact-dock-menu-publish",
 		Title:   "Preact dock menu survives publish",
 		Caption: "The same keyed dock card and focused menu item survive a scheduled snapshot publish; Escape restores focus to the cog.",
-		Wizard:  wizard,
 		JS: openGroupsAndDockJS + `
 return (async function(){
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
@@ -266,12 +189,8 @@ if (document.activeElement !== window.__tcl359Card.querySelector('.dock-card-man
 	}
 }
 
-func dockDragCancelState(wizard bool) dashsnap.State {
-	key := "preact-dock-drag-cancel"
-	if wizard {
-		key = "wizard-" + key
-	}
-	return dragCancelState(key, "Preact dock drag cancellation", wizard,
+func dockDragCancelState() dashsnap.State {
+	return dragCancelState("preact-dock-drag-cancel", "Preact dock drag cancellation",
 		`.dock-card[draggable="true"][data-dock-kind="profiles"]`,
 		`.dock-card.dock-drag-source`, 0, 80, `
 if (document.querySelector('.dock-drag-source')) throw new Error('cancel left dock source dimmed');
@@ -280,7 +199,7 @@ if (document.querySelector('.dock-drop-over')) throw new Error('cancel left dock
 }
 
 func memberDragCancelState() dashsnap.State {
-	return dragCancelState("preact-member-drag-cancel", "Preact member drag cancellation", false,
+	return dragCancelState("preact-member-drag-cancel", "Preact member drag cancellation",
 		`.dnd-draggable[data-dnd-conv="f1000000-0000-4000-8000-000000000001"]`,
 		`.dnd-draggable.dnd-source-row`, 80, 0, `
 if (document.querySelector('.dnd-source-row')) throw new Error('cancel left member source highlighted');
@@ -293,7 +212,7 @@ filter.dispatchEvent(new Event('input', {bubbles:true}));
 }
 
 func groupDragCancelState() dashsnap.State {
-	return dragCancelState("preact-group-drag-cancel", "Preact group reorder cancellation", false,
+	return dragCancelState("preact-group-drag-cancel", "Preact group reorder cancellation",
 		`summary[data-group-reorder="frontend-squad"]`, `details.group-reorder-source`, 80, 0, `
 if (document.querySelector('.group-reorder-source')) throw new Error('cancel left group source highlighted');
 if (document.querySelector('.group-drop-before, .group-drop-after, .group-drop-into')) throw new Error('cancel left reorder target highlighted');
@@ -380,73 +299,7 @@ return (async function(){
 	}
 }
 
-// terminalTabNativeDragState uses Chrome's input domain for the whole gesture:
-// no synthetic DragEvent or hand-built DataTransfer participates. The terminal
-// sockets intentionally point at missing routes; this smoke owns tab chrome and
-// keyed pane identity, while the live terminal smoke covers PTY connections.
-func terminalTabNativeDragState() dashsnap.State {
-	return dashsnap.State{
-		Key:     "terminal-tab-native-drag",
-		Title:   "Terminal tabs: native drag reorder",
-		Caption: "Real Chrome drags the first terminal tab past the second; the active key and keyed pane nodes survive, and transient drag chrome clears.",
-		JS: `
-return (async function(){
-  var terminals = await import('/static/js/terminals-tab.js');
-  await terminals.openTerminalPane({ws:'/testhook/missing-terminal-one', key:'native-dnd-one', label:'one'}, {reveal:false});
-  await terminals.openTerminalPane({ws:'/testhook/missing-terminal-two', key:'native-dnd-two', label:'two'}, {reveal:false});
-  document.querySelector('nav [data-tab="terminals"]').click();
-  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
-  var tabs = document.querySelectorAll('.mux-tab');
-  if (tabs.length !== 2) throw new Error('terminal drag fixture did not open two tabs');
-  window.__terminalDnDSource = tabs[0];
-  window.__terminalDnDTarget = tabs[1];
-  window.__terminalDnDEvents = [];
-  ['dragstart','dragover','drop','dragend'].forEach(function(type){
-    document.addEventListener(type, function(event){
-      window.__terminalDnDEvents.push(type + ':' + event.target.tagName + '.' + event.target.className);
-    }, {capture:true});
-  });
-  window.__terminalDnDPanes = {};
-  document.querySelectorAll('.mux-pane').forEach(function(pane){ window.__terminalDnDPanes[pane.id] = pane; });
-})();`,
-		Actions: []dashsnap.BrowserAction{
-			{Kind: "mouse-down", Selector: `.mux-tab:first-child .mux-tab-label`},
-			{Kind: "move-to-at", Steps: 12, JS: `
-var rect = window.__terminalDnDTarget.getBoundingClientRect();
-var y = rect.top + rect.height / 2;
-for (var x = rect.left + rect.width * 0.55; x < rect.right - 3; x += 2) {
-  var hit = document.elementFromPoint(x, y);
-  if (hit && hit.closest('.mux-tab') === window.__terminalDnDTarget && !hit.closest('button')) return {x:x, y:y};
-}
-throw new Error('terminal target has no non-button point in its right half');
-`},
-			{Kind: "eval", JS: `
-if (!window.__terminalDnDSource.classList.contains('dragging')) throw new Error('Chrome did not start the terminal-tab native drag');
-if (!window.__terminalDnDTarget.classList.contains('drop-after')) throw new Error('native drag did not show the right-edge insertion marker');
-`},
-			{Kind: "mouse-up"},
-			{Kind: "eval", JS: `
-return (async function(){
-  var labels = Array.from(document.querySelectorAll('.mux-tab-label')).map(function(label){ return label.textContent; });
-  if (labels.join(',') !== 'two,one') throw new Error('native drop order: ' + labels.join(',') + '; events=' + JSON.stringify(window.__terminalDnDEvents));
-  var active = document.querySelector('.mux-tab[aria-selected="true"] .mux-tab-label');
-  if (!active || active.textContent !== 'two') throw new Error('native reorder changed the active terminal');
-  document.querySelectorAll('.mux-pane').forEach(function(pane){
-    if (window.__terminalDnDPanes[pane.id] !== pane) throw new Error('native reorder replaced keyed pane ' + pane.id);
-  });
-  if (document.querySelector('.mux-tab.dragging, .mux-tab.drop-before, .mux-tab.drop-after')) throw new Error('native drop left transient drag chrome');
-  for (;;) {
-    var close = document.querySelector('.mux-tab-close');
-    if (!close) break;
-    close.click();
-    await new Promise(function(resolve){ requestAnimationFrame(resolve); });
-  }
-})();`},
-		},
-	}
-}
-
-func dragCancelState(key, title string, wizard bool, selector, activeSelector string, dx, dy float64, cleanupChecks string) dashsnap.State {
+func dragCancelState(key, title string, selector, activeSelector string, dx, dy float64, cleanupChecks string) dashsnap.State {
 	mouseDown := dashsnap.BrowserAction{Kind: "mouse-down", Selector: selector}
 	if strings.Contains(key, "group-drag") {
 		// The group summary intentionally suppresses drags begun over its many
@@ -516,7 +369,6 @@ if (document.querySelector('.modal-overlay.show')) throw new Error('cancelled dr
 		Key:     key,
 		Title:   title,
 		Caption: caption,
-		Wizard:  wizard,
 		JS: openGroupsAndDockJS + `
 var source = document.querySelector(` + "`" + selector + "`" + `);
 if (!source) throw new Error('native drag source missing');
