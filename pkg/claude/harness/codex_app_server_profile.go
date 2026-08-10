@@ -99,6 +99,21 @@ func CodexAppServerProfileOverrides(path string) ([]string, error) {
 	return overrides, nil
 }
 
+// CodexAppServerRegisteredProfileOverrides selects a profile whose complete
+// permission definition is already present in the validated native registry.
+// Only profile-local feature switches remain on the launch command; repeating
+// permissions.<name> here would create a conflicting second definition.
+func CodexAppServerRegisteredProfileOverrides(path string) ([]string, error) {
+	overrides, err := CodexAppServerProfileOverrides(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(overrides) < 2 || !strings.HasPrefix(overrides[1], "permissions.") {
+		return nil, fmt.Errorf("managed Codex app-server profile has no permission definition")
+	}
+	return append(overrides[:1:1], overrides[2:]...), nil
+}
+
 func sortedMapKeys[V any](values map[string]V) []string {
 	keys := make([]string, 0, len(values))
 	for key := range values {

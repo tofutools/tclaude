@@ -1502,6 +1502,10 @@ func resumeOneConvClaimedUnderLaunchLock(convID string, recreateMissingDir, trus
 // generation under the same lock that excludes concurrent stop/resume. It
 // never signals a PID: the eligible runtime is already terminal, and its
 // retained numeric PID is not process identity after exit.
+var setAgentCodexAppServerSelectionForConv = db.SetAgentCodexAppServerSelectionForConv
+var unregisterCodexNativePermissionProfile = session.UnregisterCodexNativePermissionProfile
+var restoreCodexNativePermissionProfile = session.RestoreCodexNativePermissionProfile
+
 func resumeOneConvWithCodexRollbackLocked(convID string, recreateMissingDir, trustRoot bool) memberOpResult {
 	launchLock := resumeLaunchLock(convID)
 	launchLock.Lock()
@@ -1548,10 +1552,27 @@ func resumeOneConvWithCodexRollbackLocked(convID string, recreateMissingDir, tru
 			return res
 		}
 	}
+	nativeProfile, err := db.GetCodexNativePermissionProfile(runtime.Generation)
+	if err != nil {
+		res.Action = "error:codex_drive_rollback"
+		res.Detail = "load native Codex permission profile for compatibility rollback: " + err.Error()
+		return res
+	}
+	if err := unregisterCodexNativePermissionProfile(runtime.Generation); err != nil {
+		res.Action = "error:codex_drive_rollback"
+		res.Detail = "Codex drive unchanged; native permission-profile cleanup is pending: " + err.Error()
+		return res
+	}
 	source := "explicit --send-keys compatibility rollback"
-	if err := db.SetAgentCodexAppServerSelectionForConv(convID, false, source); err != nil {
+	if err := setAgentCodexAppServerSelectionForConv(convID, false, source); err != nil {
 		res.Action = "error:codex_drive_rollback"
 		res.Detail = "persist Codex compatibility rollback: " + err.Error()
+		if nativeProfile != nil {
+			if restoreErr := restoreCodexNativePermissionProfile(runtime.Generation,
+				nativeProfile.ProfileName, nativeProfile.ProfileTOML); restoreErr != nil {
+				res.Detail += "; native permission profile restore will retry at restart: " + restoreErr.Error()
+			}
+		}
 		return res
 	}
 	removeCodexAppServerGeneration(runtime.SocketPath)
@@ -1748,6 +1769,14 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 	relaunchSandboxImplementation := launchConfig.activeSandboxImplementation()
 	if launchConfig.TemporaryHarnessBuiltinMode {
 		effectiveSandbox = temporarySandboxLaunchSnapshot(harnessName, stableEffectiveSandbox)
+	}
+	if session.CodexNativeRegistryApplicable(launchConfig.CodexAppServer, harnessName,
+		relaunchSandbox, relaunchSandboxImplementation) {
+		if err := codexNativeRegistryReadiness(); err != nil {
+			res.Action = "error:" + codexNativeRegistryErrorCode(err)
+			res.Detail = err.Error()
+			return res
+		}
 	}
 	// The harness's own sandbox configuration is re-verified on every relaunch,
 	// never replayed from the recorded posture. For a harness tclaude can
@@ -6290,6 +6319,13 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	if fail := sandboxProfileCapabilityFailure(
 		p.Harness, p.HarnessBuiltinMode, p.EffectiveSandbox, p.SandboxImplementation); fail != nil {
 		return nil, fail
+	}
+	if session.CodexNativeRegistryApplicable(p.CodexAppServer, harnessOrDefault(p.Harness),
+		p.HarnessBuiltinMode, p.SandboxImplementation) {
+		if err := codexNativeRegistryReadiness(); err != nil {
+			return nil, &spawnFailure{http.StatusPreconditionFailed,
+				codexNativeRegistryErrorCode(err), err.Error()}
+		}
 	}
 	if fail := copilotAPILoopbackFailure(
 		p.CopilotAPI, p.EffectiveSandbox, p.SandboxImplementation); fail != nil {

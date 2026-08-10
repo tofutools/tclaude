@@ -1311,3 +1311,11 @@ CREATE TABLE codex_app_server_capabilities (
 			FOREIGN KEY (generation) REFERENCES codex_app_server_runtimes(generation) ON DELETE CASCADE
 		) STRICT;
 
+CREATE TABLE codex_native_permission_profiles (
+			generation   TEXT PRIMARY KEY,
+			profile_name TEXT NOT NULL UNIQUE,
+			profile_toml TEXT NOT NULL,
+			cleanup_pending INTEGER NOT NULL DEFAULT 0 CHECK (cleanup_pending IN (0, 1)),
+			created_at   INTEGER NOT NULL
+		) STRICT;
+

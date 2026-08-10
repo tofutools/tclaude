@@ -65,6 +65,14 @@ func TestCodexAppServerProfileOverridesCarriesCompleteManagedPosture(t *testing.
 	} {
 		assert.Contains(t, joined, want)
 	}
+	registered, err := CodexAppServerRegisteredProfileOverrides(path)
+	require.NoError(t, err)
+	registeredJoined := strings.Join(registered, "\n")
+	assert.Contains(t, registeredJoined, `default_permissions="`+name+`"`)
+	assert.Contains(t, registeredJoined, `features.network_proxy=false`)
+	assert.Contains(t, registeredJoined, `features.use_legacy_landlock=false`)
+	assert.NotContains(t, registeredJoined, "permissions."+name,
+		"the native registry is the single permission-definition source")
 }
 
 func TestCodexSpawnerAppServerMirrorsExecutionPosture(t *testing.T) {

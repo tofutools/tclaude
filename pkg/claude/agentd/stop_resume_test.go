@@ -183,6 +183,68 @@ func TestHandleAgentResumeExplicitSendKeysPersistsCodexRollback(t *testing.T) {
 	assert.True(t, *recorded.FastMode, "compatibility rollback must preserve unrelated relaunch intent")
 }
 
+func TestCodexDriveRollbackRestoresNativeProfileWhenSelectionWriteFails(t *testing.T) {
+	setupTestDB(t)
+	const convID = "codex-appserver-rollback-failure-12345678"
+	row := saveResumeSession(t, convID, t.TempDir(), harness.CodexName)
+	require.NoError(t, db.SetSessionCodexAppServer(row.ID, true))
+	agentID, _, err := db.EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	profile, err := db.RecordedLaunchPostureForConv(convID)
+	require.NoError(t, err)
+	selected := true
+	profile.Version = db.RelaunchProfileVersion
+	profile.CodexAppServer = &selected
+	require.NoError(t, db.SetAgentRelaunchProfile(agentID, *profile))
+	runtime := db.CodexAppServerRuntime{
+		Generation: "rollback-failure-generation", LaunchID: row.ID, AgentID: agentID,
+		ConvID: convID, ThreadID: convID, SocketPath: filepath.Join(t.TempDir(), "app.sock"),
+		State: db.CodexAppServerDead, CreatedAt: row.CreatedAt.Add(-time.Second),
+	}
+	require.NoError(t, db.UpsertCodexAppServerRuntime(runtime))
+	native := db.CodexNativePermissionProfile{
+		Generation: runtime.Generation, ProfileName: "tclaude-agent-8888888888888888",
+		ProfileTOML: "saved generated profile",
+	}
+	require.NoError(t, db.UpsertCodexNativePermissionProfile(native))
+
+	previousSet := setAgentCodexAppServerSelectionForConv
+	previousUnregister := unregisterCodexNativePermissionProfile
+	previousRestore := restoreCodexNativePermissionProfile
+	setAgentCodexAppServerSelectionForConv = func(string, bool, string) error {
+		return errors.New("injected selection write failure")
+	}
+	unregisterCodexNativePermissionProfile = func(generation string) error {
+		assert.Equal(t, runtime.Generation, generation)
+		return db.DeleteCodexNativePermissionProfile(generation)
+	}
+	restored := false
+	restoreCodexNativePermissionProfile = func(generation, name, profileTOML string) error {
+		restored = true
+		assert.Equal(t, native.Generation, generation)
+		assert.Equal(t, native.ProfileName, name)
+		assert.Equal(t, native.ProfileTOML, profileTOML)
+		return db.UpsertCodexNativePermissionProfile(native)
+	}
+	t.Cleanup(func() {
+		setAgentCodexAppServerSelectionForConv = previousSet
+		unregisterCodexNativePermissionProfile = previousUnregister
+		restoreCodexNativePermissionProfile = previousRestore
+	})
+
+	res := resumeOneConvWithCodexRollbackLocked(convID, false, false)
+	assert.Equal(t, "error:codex_drive_rollback", res.Action)
+	assert.Contains(t, res.Detail, "injected selection write failure")
+	assert.True(t, restored)
+	recorded, err := db.RecordedLaunchPostureForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, recorded.CodexAppServer)
+	assert.True(t, *recorded.CodexAppServer, "failed transition must retain the app-server drive")
+	restoredProfile, err := db.GetCodexNativePermissionProfile(runtime.Generation)
+	require.NoError(t, err)
+	require.NotNil(t, restoredProfile, "failed transition must restore the resumable native profile")
+}
+
 func TestHandleAgentResumeExplicitSendKeysDoesNotChangeOnlineTarget(t *testing.T) {
 	setupTestDB(t)
 	rec := installRecordingResumeSpawner(t)

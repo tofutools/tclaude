@@ -1370,9 +1370,11 @@ type dashboardHarness struct {
 	CanContextWindowMax bool `json:"can_context_window_max"`
 	// CanCopilotAPI is the Copilot-only API-backed-drive opt-in. The spawn
 	// dialog and profile editor gate their checkbox on it.
-	CanCopilotAPI     bool `json:"can_copilot_api"`
-	CanCodexAppServer bool `json:"can_codex_app_server"`
-	CanFastMode       bool `json:"can_fast_mode"`
+	CanCopilotAPI             bool   `json:"can_copilot_api"`
+	CanCodexAppServer         bool   `json:"can_codex_app_server"`
+	CodexNativeRegistryReady  bool   `json:"codex_native_registry_ready"`
+	CodexNativeRegistryReason string `json:"codex_native_registry_reason,omitempty"`
+	CanFastMode               bool   `json:"can_fast_mode"`
 	// CanTclaudeLayer reports whether the EXPERIMENTAL tclaude-layer sandbox
 	// implementation can confine this harness's authoritative tool executor.
 	// Read through the capability path (session.ValidateTclaudeLayerHarness),
@@ -1459,6 +1461,13 @@ func buildHarnessCatalog() []dashboardHarness {
 		if h.Name == harness.OpenCodeName {
 			dh.ProfileRecommendedApproval = harness.OpenCodeApprovalAllowTools
 			dh.ProfileRecommendedSandboxImplementation = string(sandboxpolicy.ImplementationTclaudeLayer)
+		}
+		if h.Name == harness.CodexName {
+			if registryErr := codexNativeRegistryReadiness(); registryErr == nil {
+				dh.CodexNativeRegistryReady = true
+			} else {
+				dh.CodexNativeRegistryReason = registryErr.Error()
+			}
 		}
 		if dh.CanAutoCompactWindow {
 			dh.AutoCompactWindowMin = harness.MinAutoCompactWindow

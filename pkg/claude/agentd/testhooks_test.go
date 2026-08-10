@@ -1241,6 +1241,12 @@ func SetAwaitCodexAppServerReadyForTest(fn func(string) bool) func() {
 	return func() { awaitCodexAppServerReady = previous }
 }
 
+func SetAwaitCodexAppServerLaunchReadyForTest(fn func(string, string) bool) func() {
+	previous := awaitCodexAppServerLaunchReady
+	awaitCodexAppServerLaunchReady = fn
+	return func() { awaitCodexAppServerLaunchReady = previous }
+}
+
 // SessionReaperHandle wraps a sessionReaper so flow tests can drive
 // ticks deterministically without starting its goroutine.
 type SessionReaperHandle struct{ r *sessionReaper }

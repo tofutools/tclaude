@@ -137,10 +137,24 @@ export function launchSetting(harness, key) {
 // is the historical normalized default, but a blank dialog value remains
 // unpinned so profile resolution and harness-specific behavior stay intact.
 export const SANDBOX_IMPL_DEFAULT = 'harness-builtin';
+export const CODEX_NATIVE_REGISTRY_SETUP_DOC = 'https://github.com/tofutools/tclaude/blob/main/docs/codex-native-permission-registry.md';
 export const SANDBOX_IMPL_TCLAUDE_LAYER = 'tclaude-layer';
 export const SANDBOX_IMPL_STACKED = 'stacked';
 export const SANDBOX_IMPL_OFF = 'off';
 export const SANDBOX_IMPL_RESOURCE_ONLY = 'resource-only';
+
+export function nativeCodexRegistryWarningFor(draft, harness, resolvedImplementation = '') {
+  const implementation = text(draft?.sandboxImpl)
+    || text(resolvedImplementation)
+    || SANDBOX_IMPL_DEFAULT;
+  if (draft?.harness !== 'codex' || !draft?.codexAppServer
+    || draft?.sandbox !== 'tclaude-agent'
+    || implementation !== SANDBOX_IMPL_DEFAULT
+    || harness?.codex_native_registry_ready) return '';
+  return text(harness?.codex_native_registry_reason)
+    .replace(/; see https:\/\/github\.com\/tofutools\/tclaude\/blob\/main\/docs\/codex-native-permission-registry\.md$/, '')
+    || 'setup is missing or invalid';
+}
 
 export function harnessBuiltinModeIsOff(harnessName, mode) {
   const offModes = {

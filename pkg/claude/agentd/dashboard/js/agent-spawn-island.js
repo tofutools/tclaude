@@ -7,6 +7,7 @@ import {
 } from './management-overlay.js';
 import { shortCwd } from './helpers.js';
 import {
+  CODEX_NATIVE_REGISTRY_SETUP_DOC,
   MODEL_CUSTOM_VALUE,
   SANDBOX_PROFILE_NONE,
   WT_NEW,
@@ -21,6 +22,7 @@ import {
   formatAttachmentSize,
   groupHasContext,
   modelSelectValue,
+  nativeCodexRegistryWarningFor,
   prepareSpawnDraft,
   replaceSpawnProfile,
   selectedDefaultProfile,
@@ -785,6 +787,9 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     draft, launchDefaults?.implementation,
   );
   const sandboxImplCleared = sandboxImplClearedNoticeFor(draft);
+  const nativeCodexRegistryWarning = nativeCodexRegistryWarningFor(
+    draft, view.harness, launchDefaults?.implementation,
+  );
   const worktreeUsable = worktrees.phase === 'ready' && worktrees.isRepo;
   let worktreeEmptyLabel = '(no worktree — use CWD above)';
   if (worktrees.phase === 'loading') worktreeEmptyLabel = 'loading…';
@@ -1249,6 +1254,16 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         onChange=${(event) => update('codexAppServer', event.currentTarget.checked)} />
       Drive Codex through a private app-server — experimental, off by default
     </label>
+    ${nativeCodexRegistryWarning && html`
+      <div class="cron-create-row" id="agent-spawn-codex-native-registry-warning">
+        <span class="cron-create-label"></span>
+        <div class="cron-create-target" role="alert">
+          <div class="spawn-field-hint warn">
+            ⚠ Native Codex permission-profile integration is not ready; this launch will be refused: ${nativeCodexRegistryWarning}.
+            <a href=${CODEX_NATIVE_REGISTRY_SETUP_DOC} target="_blank" rel="noopener">Setup and repair</a>
+          </div>
+        </div>
+      </div>`}
     <label class="cron-create-enabled" id="agent-spawn-ssh-workaround-row" hidden=${!view.showSSHWorkaround}
       title=${view.sshWorkaroundAvailable
         ? 'Use an agent-owned copy of the host SSH client config to avoid Codex sandbox ownership errors. This overrides Git core.sshCommand; disable it if the workaround conflicts with your SSH setup.'
