@@ -164,9 +164,10 @@ function gotoWhatIfBanner(event) {
 const WHAT_IF_MARK = '⚠︎';
 const WHAT_IF_LABEL = 'About this WHAT-IF estimate';
 
-// Tooltip for the amount itself. fmtUSD rounds to cents and collapses anything
-// under one into "<1¢", so the exact figure is worth a hover — and a mixed row
-// names its two parts rather than calling the whole total an estimate.
+// Tooltip for the amount itself. fmtUSD rounds a three-figure amount to whole
+// dollars and collapses anything under a cent into "<1¢", so the exact figure
+// is worth a hover — and a mixed row names its two parts rather than calling
+// the whole total an estimate.
 function amountTip(agent) {
   const exact = (value) => fmtExactUSD(value || 0);
   const virtual = (value) => agent.virtual_cost_credits > 0
@@ -184,13 +185,16 @@ function amountTip(agent) {
 }
 
 // Tooltip for a row's WHAT-IF marker. Mixed rows spell out the split the cell
-// no longer shows inline; pure WHAT-IF rows just qualify the amount.
+// no longer shows inline; pure WHAT-IF rows just qualify the amount. The parts
+// are formatted to the cent: this is a hover, and the mixed case writes a
+// literal sum, which three separately rounded whole-dollar terms could visibly
+// fail to balance.
 function whatIfRowTip(agent) {
   const virtual = agent.virtual_cost_credits > 0
-    ? `${fmtCredits(agent.virtual_cost_credits)} — ${fmtUSD(agent.what_if_cost_usd || agent.cost_usd)} subscription value`
-    : `${fmtUSD(agent.what_if_cost_usd || agent.cost_usd)} WHAT-IF estimate`;
+    ? `${fmtCredits(agent.virtual_cost_credits)} — ${fmtExactUSD(agent.what_if_cost_usd || agent.cost_usd)} subscription value`
+    : `${fmtExactUSD(agent.what_if_cost_usd || agent.cost_usd)} WHAT-IF estimate`;
   if (agent.cost_kind === 'mixed') {
-    return `${fmtUSD(agent.cost_usd)} total = ${fmtUSD(agent.real_cost_usd)} real`
+    return `${fmtExactUSD(agent.cost_usd)} total = ${fmtExactUSD(agent.real_cost_usd)} real`
       + ` + ${virtual} — the estimate is hypothetical,`
       + ' not a real charge. Click for details.';
   }

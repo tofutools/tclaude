@@ -9,6 +9,7 @@ package money
 
 import (
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -24,8 +25,15 @@ func USD(usd float64) string {
 	if !(usd > 0) {
 		return "$0.00"
 	}
-	if usd >= centsBelow {
-		return "$" + group(fmt.Sprintf("%.0f", usd))
+	// The branch follows the figure as written, not the raw float: $99.999
+	// is written "$100.00", which belongs with the whole dollars rather than
+	// sitting in a column of them wearing cents.
+	//
+	// math.Round, not %.0f: Go rounds a half to even and the dashboard's Intl
+	// formatter rounds it away from zero, so $102.50 would otherwise read
+	// $102 in the terminal and $103 in the browser off one payload.
+	if math.Round(usd*100)/100 >= centsBelow {
+		return "$" + group(fmt.Sprintf("%.0f", math.Round(usd)))
 	}
 	if usd < 0.005 {
 		return "<1¢"

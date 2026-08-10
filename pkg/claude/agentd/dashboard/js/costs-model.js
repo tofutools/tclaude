@@ -57,7 +57,10 @@ const CENTS_BELOW = 100;
 
 export function fmtUSD(value) {
   if (!(value > 0)) return '$0.00';
-  if (value >= CENTS_BELOW) return '$' + WHOLE.format(value);
+  // The branch follows the figure as written, not the raw number: $99.999 is
+  // written "$100.00", which belongs with the whole dollars rather than
+  // sitting in a column of them wearing cents.
+  if (Math.round(value * 100) / 100 >= CENTS_BELOW) return '$' + WHOLE.format(value);
   return value >= 0.005 ? '$' + CENTS.format(value) : '<1¢';
 }
 

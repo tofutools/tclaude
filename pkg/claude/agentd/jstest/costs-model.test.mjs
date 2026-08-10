@@ -72,7 +72,7 @@ test('Copilot cost segments retain native credits beside gross subscription doll
 
 // Dollar figures are USD wherever they are read, so the separators follow the
 // currency and not the viewer's locale: a four-figure month total reads
-// "$26,222.38", never "26 222,38 $".
+// "$26,222", never "26 222 $".
 test('USD formatting groups thousands the currency\'s way', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/costs-model.js');
@@ -86,6 +86,13 @@ test('USD formatting groups thousands the currency\'s way', async (t) => {
   assert.equal(model.fmtUSD(99.99), '$99.99');
   assert.equal(model.fmtUSD(100), '$100');
   assert.equal(model.fmtUSD(845.88), '$846');
+  // The written figure decides the branch: $99.999 is "$100.00" to the cent,
+  // so it prints "$100" rather than wearing cents in a column of whole
+  // dollars. $99.99 is still $99.99 and keeps them.
+  assert.equal(model.fmtUSD(99.999), '$100');
+  assert.equal(model.fmtUSD(99.5), '$99.50');
+  // Halves round away from zero here and in pkg/claude/common/money alike.
+  assert.equal(model.fmtUSD(102.5), '$103');
   // Real spend that would round to $0.00 must not read as free.
   assert.equal(model.fmtUSD(0.004), '<1¢');
   assert.equal(model.fmtUSD(0), '$0.00');

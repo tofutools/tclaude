@@ -35,8 +35,9 @@ func TestDashboardHTML_CostInHarnessLineWired(t *testing.T) {
 	// Zero/absent cost renders no token at all.
 	must("cost > 0 ? html", "the token is gated on nonzero cost")
 
-	// The amount goes through the shared USD formatter, so it is grouped
-	// ("$1,234.56") and sub-cent costs show as "<1¢", never a lying "$0.00".
+	// The amount goes through the shared USD formatter, so it is grouped and
+	// rounded ("$1,235"), and sub-cent costs show as "<1¢", never a lying
+	// "$0.00".
 	must("${fmtUSD(cost)}", "the amount uses the shared USD formatter")
 
 	// The tooltip carries the precise figure and names the pricing mode.

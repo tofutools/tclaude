@@ -19,6 +19,20 @@ func TestUSDDropsCentsOnLargeAmounts(t *testing.T) {
 	assert.Equal(t, "$99.99", USD(99.99))
 	assert.Equal(t, "$100", USD(100))
 	assert.Equal(t, "$846", USD(845.88))
+	// The written figure decides the branch: $99.999 is "$100.00" to the
+	// cent, so it prints "$100" rather than wearing cents in a column of
+	// whole dollars. $99.99 is still $99.99 and keeps them.
+	assert.Equal(t, "$100", USD(99.999))
+	assert.Equal(t, "$99.50", USD(99.5))
+}
+
+// A half rounds away from zero, as the dashboard's Intl formatter does — Go's
+// own %.0f would round half to even and disagree with the browser on the very
+// same payload.
+func TestUSDRoundsHalvesLikeTheDashboard(t *testing.T) {
+	assert.Equal(t, "$101", USD(100.5))
+	assert.Equal(t, "$103", USD(102.5))
+	assert.Equal(t, "$1,001", USD(1000.5))
 }
 
 // Real spend that would round to $0.00 must not read as free.
