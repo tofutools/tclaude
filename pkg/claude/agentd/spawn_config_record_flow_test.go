@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/http"
+	"regexp"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -54,4 +55,24 @@ func TestSpawn_RecordsInitialSpawnConfigVerbatim(t *testing.T) {
 	assert.Equal(t, "high", req.Effort)
 	assert.Equal(t, "worker", req.Name)
 	assert.Equal(t, "builder", req.Role)
+}
+
+func TestSpawn_RecordsDerivedNameInInitialSpawnConfig(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("review-team")
+
+	spawn := f.AsHuman().SpawnWith("review-team", map[string]any{"cwd": t.TempDir()})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	agentID, err := db.AgentIDForConv(spawn.ConvID)
+	require.NoError(t, err)
+
+	d, err := db.Open()
+	require.NoError(t, err)
+	var cfg string
+	require.NoError(t, d.QueryRow(
+		`SELECT initial_spawn_config FROM agents WHERE agent_id = ?`, agentID).Scan(&cfg))
+	var req agent.SpawnRequest
+	require.NoError(t, json.Unmarshal([]byte(cfg), &req))
+	assert.Regexp(t, regexp.MustCompile(`^review-team-[0-9]{8}-[0-9]{4}-[A-Za-z0-9_-]{4}$`), req.Name,
+		"durable spawn config records the effective derived name")
 }

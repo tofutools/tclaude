@@ -4030,6 +4030,13 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	body.InitialMessage, _, _ = resolveIdentityLaunchField(
 		initialMessageField, body.InitialMessage, body.InitialMessageSpecified(), profileTiers,
 		func(p *db.SpawnProfile) string { return p.InitialMessage }, nil)
+	// Name an otherwise unnamed group spawn before building spawnParams and its
+	// durable/audit snapshots. executeSpawn retains the same fallback for
+	// non-HTTP adapters, but the shared HTTP path must record the name it
+	// actually launches rather than an empty pre-derivation value.
+	if strings.TrimSpace(body.Name) == "" {
+		body.Name = derivedGroupSpawnName(g.Name, time.Now(), randomLabelToken())
+	}
 	// No disclosure note for auto_focus: the resolver's note channel only speaks
 	// on the harness mismatch this field skips, and a terminal window opening is
 	// its own announcement.
