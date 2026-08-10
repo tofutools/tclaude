@@ -405,10 +405,12 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
 
     <div class="cfg-section">
       <h3>Spawn & clone policy</h3>
-      <div class="cfg-field">
+      <div class="cfg-field cfg-checkbox-stack-field">
         <span class="cfg-label">Terminal startup groups</span>
-        <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-session-auto-join-group" /> a bare <code>tclaude</code> joins the group configured for its directory</label>
-        <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-session-auto-join-or-create-group" /> create and join a directory group when none exists</label>
+        <div class="cfg-checkbox-stack">
+          <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-session-auto-join-group" /> a bare <code>tclaude</code> joins the group configured for its directory</label>
+          <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-session-auto-join-or-create-group" /> create and join a directory group when none exists</label>
+        </div>
         <span class="cfg-hint">The launch directory and every group's <strong>default dir</strong> are compared as canonical absolute paths (including symlink resolution). Auto-join is on by default; auto-create is off. CLI flags <code>--auto-join-group[=false]</code> and <code>--auto-join-or-create-group[=false]</code> override these settings for one launch. An explicit <code>--join-group</code> always wins. Stored under <code>session</code>.</span>
       </div>
       <div class="cfg-field">
