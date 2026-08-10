@@ -7307,7 +7307,7 @@ func derivedGroupSpawnName(group string, now time.Time, token string) string {
 	if token == "" {
 		token = "spawn"
 	}
-	suffix := now.Local().Format("20060102-1504") + "-" + token
+	suffix := now.Format("20060102-1504") + "-" + token
 	budget := agent.MaxSpawnNameLen - len(suffix) - 1
 	if len(base) > budget {
 		base = strings.TrimRight(base[:budget], "-")
