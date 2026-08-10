@@ -7507,6 +7507,10 @@ func backfillPendingSpawnInline(g *db.AgentGroup, p spawnParams, label string, h
 		if s == nil {
 			return
 		}
+		if !spawnRowBelongsToLaunch(s, false, "", launchedAt) {
+			sleepSpawnPoll(deadline)
+			continue
+		}
 		if !launchMarked {
 			if err := db.MarkPendingSpawnLaunched(label); err != nil {
 				slog.Warn("spawn: pending inline back-fill failed to clear launch marker",

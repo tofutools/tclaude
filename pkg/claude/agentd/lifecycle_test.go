@@ -10,6 +10,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 func TestSpawnRowBelongsToLaunchRejectsPredecessorState(t *testing.T) {
@@ -23,6 +24,36 @@ func TestSpawnRowBelongsToLaunchRejectsPredecessorState(t *testing.T) {
 	assert.False(t, spawnRowBelongsToLaunch(predecessor, false, "", boundary),
 		"legacy discovery must not accept a row predating the fork")
 	assert.True(t, spawnRowBelongsToLaunch(current, false, "", boundary))
+}
+
+func TestBackfillPendingSpawnInlineRejectsPredecessorRow(t *testing.T) {
+	setupTestDB(t)
+	groupID, err := db.CreateAgentGroup("backfill-group", "")
+	require.NoError(t, err)
+	g, err := db.GetAgentGroupByName("backfill-group")
+	require.NoError(t, err)
+	require.NotNil(t, g)
+
+	const label = "spwn-collision"
+	const pendingAgent = "agt_pending_collision"
+	boundary := time.Now()
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: label, ConvID: "predecessor-conv", TmuxSession: "predecessor-tmux",
+		Status: session.StatusWorking, CreatedAt: boundary.Add(-time.Second),
+	}))
+	require.NoError(t, db.InsertPendingSpawn(&db.PendingSpawn{
+		Label: label, AgentID: pendingAgent, GroupID: groupID, Launching: true,
+	}))
+
+	backfillPendingSpawnInline(g, spawnParams{AgentID: pendingAgent}, label, nil, boundary, time.Millisecond)
+
+	pending, err := db.GetPendingSpawn(label)
+	require.NoError(t, err)
+	require.NotNil(t, pending, "a predecessor row must not claim the new reservation")
+	assert.True(t, pending.Launching, "a predecessor row must not mark the new launch observed")
+	bound, err := db.AgentIDForConv("predecessor-conv")
+	require.NoError(t, err)
+	assert.NotEqual(t, pendingAgent, bound, "a predecessor conversation must not acquire the pending actor")
 }
 
 func TestEnrollSpawnedConv_InlinedBriefingBornConsumed(t *testing.T) {
