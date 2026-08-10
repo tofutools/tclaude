@@ -249,8 +249,12 @@ func (s *linearProxySession) scanTargets(team string) ([]linearScan, *proxyFault
 		}
 		return []linearScan{{route: rt, teams: []string{team}}}, nil
 	}
-	targets := make([]linearScan, 0, len(s.routes))
-	for _, rt := range s.routes {
+	routes, fault := s.fanoutRoutes()
+	if fault != nil {
+		return nil, fault
+	}
+	targets := make([]linearScan, 0, len(routes))
+	for _, rt := range routes {
 		targets = append(targets, linearScan{route: rt, teams: rt.teams})
 	}
 	return targets, nil
@@ -271,7 +275,12 @@ func mergeByUpdated(groups [][]linearIssue, limit int) []linearIssue {
 	if len(groups) == 1 {
 		return truncateIssues(groups[0], limit)
 	}
-	var merged []linearIssue
+	// Non-nil even when every group is empty. enforceIssueList never returns
+	// nil, so a single-workspace listing with no matches has always rendered as
+	// `[]`; a nil here would render the same empty answer as `null` on a
+	// multi-workspace daemon, making the response's JSON type depend on
+	// operator configuration the agent cannot see.
+	merged := make([]linearIssue, 0, limit)
 	for _, g := range groups {
 		merged = append(merged, g...)
 	}
@@ -292,7 +301,8 @@ func mergeByRelevance(groups [][]linearIssue, limit int) []linearIssue {
 	if len(groups) == 1 {
 		return truncateIssues(groups[0], limit)
 	}
-	var merged []linearIssue
+	// Non-nil for the same reason mergeByUpdated's is.
+	merged := make([]linearIssue, 0, limit)
 	for round := 0; len(merged) < limit; round++ {
 		progressed := false
 		for _, g := range groups {
@@ -408,17 +418,20 @@ func handleLinearProxyWhoami(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// One call per credential. A route that fails is REPORTED rather than
-	// fatal: this is the verb an operator runs to find out why something is
-	// refused, and "workspace acme's key is unreadable" is the answer they came
-	// for — losing the workspaces that do work would hide it. Only a total
-	// failure is raised as a fault, since then there is nothing to report.
-	views := make([]linearWorkspaceView, 0, len(s.routes))
-	var (
-		reached   int
-		lastFault *proxyFault
-	)
-	for _, rt := range s.routes {
+	// One call per credential — this verb spans teams, so it is bounded like
+	// the listings are.
+	routes, fault := s.fanoutRoutes()
+	if fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	// A route that fails is REPORTED rather than fatal: this is the verb an
+	// operator runs to find out why something is refused, and "workspace acme's
+	// key is unreadable" is the answer they came for — losing the workspaces
+	// that do work would hide it.
+	views := make([]linearWorkspaceView, 0, len(routes))
+	var lastFault *proxyFault
+	for _, rt := range routes {
 		view := linearWorkspaceView{Name: rt.name, Routes: rt.teams, Teams: []linearTeamView{}}
 		var data linearViewerData
 		if fault := s.exec(r.Context(), rt, linearQueryViewer,
@@ -428,7 +441,6 @@ func handleLinearProxyWhoami(w http.ResponseWriter, r *http.Request) {
 			views = append(views, view)
 			continue
 		}
-		reached++
 		viewer := data.Viewer
 		view.Viewer = &viewer
 		for _, t := range data.Teams.Nodes {
@@ -438,25 +450,37 @@ func handleLinearProxyWhoami(w http.ResponseWriter, r *http.Request) {
 		view.TeamsTruncated = len(data.Teams.Nodes) >= whoamiTeamPageSize
 		views = append(views, view)
 	}
-	if reached == 0 {
+	// With ONE credential a failure is the whole answer, so it is raised as the
+	// fault it is — the response this verb has always given. With several, the
+	// breakdown IS the answer even when every one of them failed: "both keys are
+	// broken, here is which and why" is precisely what the operator ran this to
+	// find out, and collapsing it to the last route's fault would send them to
+	// fix one key and be refused again by the other.
+	if len(views) == 1 && lastFault != nil {
 		writeProxyFault(w, lastFault)
 		return
 	}
 	// viewer/teams describe ONE workspace, so they are reported only when there
 	// is one — which is the ordinary case, and keeps its response exactly what
-	// it has always been. With several credentials in play there is no single
-	// viewer to name, and workspaces carries the breakdown instead.
+	// it has always been, empty team list included. With several credentials in
+	// play there is no single viewer to name, and workspaces carries the
+	// breakdown instead.
+	//
+	// teams is a POINTER so that "this key sees no teams" (`[]`) stays
+	// distinguishable from "there is no single key to report" (absent), the way
+	// `issue update`'s priority distinguishes absent from zero. omitempty on a
+	// plain slice would collapse the two.
 	var (
 		viewer         *linearUserRef
-		teams          []linearTeamView
+		teams          *[]linearTeamView
 		teamsTruncated bool
 	)
 	if len(views) == 1 {
-		viewer, teams, teamsTruncated = views[0].Viewer, views[0].Teams, views[0].TeamsTruncated
+		viewer, teams, teamsTruncated = views[0].Viewer, &views[0].Teams, views[0].TeamsTruncated
 	}
 	s.respond(w, r, "whoami", struct {
-		Viewer *linearUserRef   `json:"viewer,omitempty"`
-		Teams  []linearTeamView `json:"teams,omitempty"`
+		Viewer *linearUserRef    `json:"viewer,omitempty"`
+		Teams  *[]linearTeamView `json:"teams,omitempty"`
 		// Workspaces is the per-credential breakdown: who each key
 		// authenticates as, which teams it can see, and which of the caller's
 		// teams it is the credential for. Always present, so an agent has one

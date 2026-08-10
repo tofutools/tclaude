@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -383,6 +384,135 @@ func TestLinearProxy_WhoamiKeepsItsSingleWorkspaceShape(t *testing.T) {
 	assert.True(t, out.JSON.Teams[0].Allowed)
 	require.Len(t, out.JSON.Workspaces, 1, "the breakdown is present whatever the configuration")
 	assert.Equal(t, "default", out.JSON.Workspaces[0].Name)
+}
+
+// TestLinearProxy_WhoamiReportsEveryFailingCredential — with several keys the
+// breakdown IS the answer even when every one of them failed. Collapsing it to
+// one fault would send the operator to fix one key and be refused again by the
+// other.
+func TestLinearProxy_WhoamiReportsEveryFailingCredential(t *testing.T) {
+	dir := t.TempDir()
+	f, rec := linearWorld(t, []string{"TCL", "ACM"}, func(c *config.LinearProxyConfig) {
+		c.APIKeyFile = filepath.Join(dir, "absent-default.key")
+		c.Workspaces = []config.LinearWorkspaceConfig{
+			{Name: "acme", APIKeyFile: filepath.Join(dir, "absent-acme.key"), Teams: []string{"ACM"}},
+		}
+	})
+	require.NoError(t, db.GrantAgentPermission(linearProxyTestConv, agentd.PermLinearRead, "test"))
+
+	res := linearPost(t, f, "/v1/linear/whoami", map[string]any{})
+	require.Equal(t, http.StatusOK, res.Code,
+		"the breakdown is the answer even when nothing worked: %s", res.Body.String())
+	assert.False(t, rec.sawAnyCall(), "neither key could be read, so neither was spent")
+
+	var out struct {
+		JSON struct {
+			Workspaces []struct {
+				Name  string `json:"name"`
+				Error string `json:"error"`
+			} `json:"workspaces"`
+		} `json:"json"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &out))
+	require.Len(t, out.JSON.Workspaces, 2)
+	for _, ws := range out.JSON.Workspaces {
+		assert.Contains(t, ws.Error, "key_unreadable", "%s must say why it failed", ws.Name)
+	}
+	assert.Contains(t, res.Body.String(), "acme")
+}
+
+// TestLinearProxy_WhoamiStillFaultsOnTheSingleKeyItHas — the converse. With one
+// credential a failure is the whole answer, and this verb has always reported
+// it as the fault it is.
+func TestLinearProxy_WhoamiStillFaultsOnTheSingleKeyItHas(t *testing.T) {
+	f, _ := linearWorld(t, []string{"TCL"}, func(c *config.LinearProxyConfig) {
+		c.APIKeyFile = filepath.Join(t.TempDir(), "absent.key")
+	})
+	require.NoError(t, db.GrantAgentPermission(linearProxyTestConv, agentd.PermLinearRead, "test"))
+
+	res := linearPost(t, f, "/v1/linear/whoami", map[string]any{})
+	assert.Equal(t, http.StatusServiceUnavailable, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), "key_unreadable")
+}
+
+// TestLinearProxy_WhoamiKeepsAnEmptyTeamListVisible — a key that can see no
+// teams at all must still report `teams: []`. Dropping the field would make an
+// agent's "which teams can this key see?" unanswerable exactly when the answer
+// ("none — you are not on any team") is the thing it needs to relay.
+func TestLinearProxy_WhoamiKeepsAnEmptyTeamListVisible(t *testing.T) {
+	f, rec := linearWorld(t, []string{"TCL"})
+	require.NoError(t, db.GrantAgentPermission(linearProxyTestConv, agentd.PermLinearRead, "test"))
+	rec.response = func(linearCall) (int, string) {
+		return http.StatusOK, `{"data":{"viewer":{"name":"Op","displayName":"Op"},"teams":{"nodes":[]}}}`
+	}
+
+	res := linearPost(t, f, "/v1/linear/whoami", map[string]any{})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), `"teams":[]`,
+		"an empty team list must be reported, not omitted")
+}
+
+// TestLinearProxy_FanoutBoundDoesNotRefuseSingleTeamVerbs — the bound is on how
+// many credentials one request spends, and most verbs spend one whatever the
+// operator configured.
+func TestLinearProxy_FanoutBoundDoesNotRefuseSingleTeamVerbs(t *testing.T) {
+	dir := t.TempDir()
+	var teams []string
+	var workspaces []config.LinearWorkspaceConfig
+	for i := 0; i < 9; i++ {
+		key := fmt.Sprintf("T%d", i)
+		teams = append(teams, key)
+		path := filepath.Join(dir, key+".key")
+		require.NoError(t, os.WriteFile(path, []byte("lin_api_"+key), 0o600))
+		workspaces = append(workspaces, config.LinearWorkspaceConfig{
+			Name: key, APIKeyFile: path, Teams: []string{key},
+		})
+	}
+	f, rec := linearWorld(t, teams, func(c *config.LinearProxyConfig) { c.Workspaces = workspaces })
+	require.NoError(t, db.GrantAgentPermission(linearProxyTestConv, agentd.PermLinearRead, "test"))
+	rec.response = func(linearCall) (int, string) { return http.StatusOK, issueJSON("T0-1", "T0") }
+
+	res := linearPost(t, f, "/v1/linear/issue/view", map[string]any{"identifier": "T0-1"})
+	require.Equal(t, http.StatusOK, res.Code,
+		"naming an issue spends one credential, whatever the fan-out would cost: %s", res.Body.String())
+	assert.Equal(t, "lin_api_T0", rec.only(t).Key)
+
+	res = linearPost(t, f, "/v1/linear/issue/list", map[string]any{})
+	assert.Equal(t, http.StatusServiceUnavailable, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), "linear_proxy_misconfigured")
+	assert.Equal(t, 1, rec.count(), "a refused fan-out must spend nothing")
+}
+
+// TestLinearProxy_KeyFileIsReadOncePerRequest — a verb that makes several calls
+// on one route must not re-read the key between them. The file is deleted from
+// under the daemon mid-request: memoized, the second call proceeds; re-read, it
+// fails with key_unreadable half way through a write.
+func TestLinearProxy_KeyFileIsReadOncePerRequest(t *testing.T) {
+	keyPath := linearKeyFile(t, "acme.key", "lin_api_acme")
+	f, rec := linearWorld(t, []string{"ACM"}, func(c *config.LinearProxyConfig) {
+		c.AllowWrite = true
+		c.Workspaces = []config.LinearWorkspaceConfig{
+			{Name: "acme", APIKeyFile: keyPath, Teams: []string{"ACM"}},
+		}
+	})
+	require.NoError(t, db.GrantAgentPermission(linearProxyTestConv, agentd.PermLinearWrite, "test"))
+	rec.response = func(call linearCall) (int, string) {
+		if strings.Contains(call.Query, "query TeamMeta") {
+			require.NoError(t, os.Remove(keyPath))
+			return http.StatusOK, `{"data":{"teams":{"nodes":[{"id":"acm-uuid","key":"ACM","name":"Acme",
+				"states":{"nodes":[{"id":"s1","name":"Todo"}]}}]}}}`
+		}
+		return http.StatusOK, `{"data":{"issueCreate":{"success":true,
+			"issue":{"identifier":"ACM-8","team":{"key":"ACM"}}}}}`
+	}
+
+	res := linearPost(t, f, "/v1/linear/issue/create",
+		map[string]any{"team": "ACM", "title": "Something for Acme"})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+	calls := rec.snapshot()
+	require.Len(t, calls, 2)
+	assert.Equal(t, "lin_api_acme", calls[1].Key,
+		"the mutation must reuse the key the first call resolved")
 }
 
 // --- helpers ---

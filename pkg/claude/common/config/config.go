@@ -1975,10 +1975,16 @@ type LinearProxyConfig struct {
 // live in it — one entry per EXTRA workspace beyond the one
 // LinearProxyConfig.APIKeyFile belongs to.
 //
-// Both fields are required, and a team may appear in at most one entry. The
+// Both fields are required, and a team key may appear in at most one entry. The
 // daemon refuses to serve a policy that breaks either rule rather than picking
 // a key for an ambiguously-routed team: a request answered by the wrong
 // workspace's key does not fail cleanly, it reports the issue as missing.
+//
+// Note that Linear only guarantees a team key to be unique WITHIN a workspace,
+// so two workspaces can each have an "OPS". Nothing in this proxy can tell
+// those apart — the allow-list, the `linear_team` grant scope and the issue
+// identifier all carry the bare key — so colliding keys across workspaces are
+// unsupported rather than merely unrouted.
 type LinearWorkspaceConfig struct {
 	// Name labels the workspace in diagnostics — `whoami`'s per-workspace
 	// breakdown, and the refusal an unreadable key produces. Free text, and

@@ -160,14 +160,21 @@ const (
 	// at their config.
 	linearMisconfiguredCode = "linear_proxy_misconfigured"
 
-	// maxLinearFanout bounds how many credentials ONE request may spend.
+	// maxLinearFanout bounds how many credentials one TEAM-SPANNING verb may
+	// spend. Verbs that name a team, or an issue, spend one whatever it is.
 	//
-	// A verb that spans teams (`issue ls` with no --team) makes one call per
-	// workspace those teams live in, sequentially, inside the single
+	// A verb that spans teams (`issue ls` with no --team, `whoami`) makes one
+	// call per workspace those teams live in, sequentially, inside the single
 	// linearProxyBudget every request shares. Past a handful of workspaces that
 	// budget is what would fail rather than the policy, and a context-deadline
-	// error says nothing about the cause — so the cause is named here instead.
+	// error says nothing about the cause — so the cause is named in
+	// fanoutRoutes instead.
 	maxLinearFanout = 8
+
+	// defaultLinearRouteName labels the credential every team no
+	// agent.linear_proxy.workspaces entry claims is reached with. Reserved: a
+	// workspace entry may not take it, since `whoami` reports routes by name.
+	defaultLinearRouteName = "default"
 )
 
 // ---------------------------------------------------------------------------
@@ -571,12 +578,21 @@ func linearRoutes(
 				"agent.linear_proxy.workspaces[%d] (%s) lists no teams, so it names a key nothing would "+
 					"ever use", i, name)
 		}
+		if strings.EqualFold(name, defaultLinearRouteName) {
+			// Reserved, because `whoami` reports routes by name and the key every
+			// unclaimed team uses is already called this. Two rows called
+			// "default" in the verb an operator runs to work out which key
+			// answered is worse than making them pick another label.
+			return nil, nil, faultf(http.StatusServiceUnavailable, linearMisconfiguredCode,
+				"agent.linear_proxy.workspaces[%d] is named %q, which names the key every team no entry "+
+					"claims already uses; give this workspace a different name", i, name)
+		}
 		rt := &linearRoute{name: name, keyFile: ws.APIKeyFile}
 		for _, key := range ws.Teams {
 			if prev, dup := claimed[key]; dup {
 				return nil, nil, faultf(http.StatusServiceUnavailable, linearMisconfiguredCode,
-					"team %q is claimed by two agent.linear_proxy.workspaces entries (%s and %s); a team "+
-						"lives in one Linear workspace, so exactly one entry may name it",
+					"team %q is claimed by two agent.linear_proxy.workspaces entries (%s and %s); one team "+
+						"key can be routed to one workspace, so exactly one entry may name it",
 					key, prev.name, name)
 			}
 			claimed[key] = rt
@@ -584,15 +600,17 @@ func linearRoutes(
 	}
 
 	var (
-		ordered []*linearRoute
-		byTeam  = make(map[string]*linearRoute, len(teams))
+		ordered  []*linearRoute
+		byTeam   = make(map[string]*linearRoute, len(teams))
 		fallback *linearRoute
 	)
 	for _, key := range teams {
 		rt, ok := claimed[key]
 		if !ok {
 			if fallback == nil {
-				fallback = &linearRoute{name: "default", keyFile: policy.APIKeyFile, isDefault: true}
+				fallback = &linearRoute{
+					name: defaultLinearRouteName, keyFile: policy.APIKeyFile, isDefault: true,
+				}
 			}
 			rt = fallback
 		}
@@ -602,13 +620,25 @@ func linearRoutes(
 		rt.teams = append(rt.teams, key)
 		byTeam[key] = rt
 	}
-	if len(ordered) > maxLinearFanout {
-		return nil, nil, faultf(http.StatusServiceUnavailable, linearMisconfiguredCode,
-			"this caller's teams are spread across %d Linear workspaces; a single request spends one "+
-				"credential per workspace, and %d is the most one request may spend — narrow the caller's "+
-				"teams with a linear_team grant scope", len(ordered), maxLinearFanout)
-	}
 	return ordered, byTeam, nil
+}
+
+// fanoutRoutes is every credential a team-spanning verb has to spend, bounded.
+//
+// The bound lives here rather than on the session because it is a bound on the
+// FAN-OUT, and most verbs do not fan out: `issue view TCL-1` spends one
+// credential whether the operator configured two workspaces or twenty, and
+// refusing it for the shape of a listing it is not performing would be a
+// restriction with no cause behind it.
+func (s *linearProxySession) fanoutRoutes() ([]*linearRoute, *proxyFault) {
+	if len(s.routes) > maxLinearFanout {
+		return nil, faultf(http.StatusServiceUnavailable, linearMisconfiguredCode,
+			"this caller's teams are spread across %d Linear workspaces, and a verb that spans teams "+
+				"spends one credential per workspace; %d is the most one request may spend — name a team, "+
+				"or narrow the caller's teams with a linear_team grant scope",
+			len(s.routes), maxLinearFanout)
+	}
+	return s.routes, nil
 }
 
 // routeFor returns the credential that reaches one team. The team has already
@@ -647,7 +677,7 @@ func resolveLinearRouteKey(rt *linearRoute) (string, *proxyFault) {
 	// Which setting to name in a refusal, so an operator is sent to the line
 	// they actually have to fix.
 	field := "agent.linear_proxy.api_key_file"
-	if rt.keyFile != "" && rt.name != "default" {
+	if !rt.isDefault {
 		field = fmt.Sprintf("the api_key_file of agent.linear_proxy.workspaces %q", rt.name)
 	}
 	if rt.keyFile != "" {

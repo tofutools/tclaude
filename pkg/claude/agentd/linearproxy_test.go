@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"slices"
@@ -517,10 +518,12 @@ func TestLinearRoutesGroupTeamsByCredential(t *testing.T) {
 	assert.Same(t, routes[0], byTeam["joh"], "an unclaimed team falls back to the default key")
 }
 
-// TestLinearRoutesBoundTheFanout — one request spends one credential per
-// workspace, sequentially, inside a single budget. Past a handful that budget
-// is what would fail, and a context deadline says nothing about the cause.
-func TestLinearRoutesBoundTheFanout(t *testing.T) {
+// TestFanoutIsBoundedButSingleTeamVerbsAreNot — a team-spanning verb spends one
+// credential per workspace inside a single budget, so it is bounded. A verb that
+// names a team spends one credential whatever the operator configured, and
+// refusing it for the shape of a listing it is not performing would be a
+// restriction with no cause behind it.
+func TestFanoutIsBoundedButSingleTeamVerbsAreNot(t *testing.T) {
 	policy := config.LinearProxyConfig{APIKeyFile: "/tmp/default.key"}
 	var teams []string
 	for i := 0; i <= maxLinearFanout; i++ {
@@ -532,14 +535,151 @@ func TestLinearRoutesBoundTheFanout(t *testing.T) {
 	}
 	policy.AllowedTeams = teams
 
-	_, _, fault := linearRoutes(policy, teams)
+	// The policy itself resolves: too many workspaces is not a broken policy.
+	routes, byTeam, fault := linearRoutes(policy, teams)
+	require.Nil(t, fault)
+	require.Len(t, routes, maxLinearFanout+1)
+	s := &linearProxySession{policy: policy, teams: teams, routes: routes, routeByTeam: byTeam}
+
+	_, fault = s.scanTargets("")
 	require.NotNil(t, fault, "a fan-out past the bound must be named, not silently attempted")
 	assert.Equal(t, linearMisconfiguredCode, fault.Code)
 
-	// One under the bound still resolves, so the bound is on the fan-out rather
-	// than on how many workspaces an operator may configure.
-	_, _, fault = linearRoutes(policy, teams[:maxLinearFanout])
+	targets, fault := s.scanTargets("t0")
+	require.Nil(t, fault, "naming a team spends one credential, so the bound does not apply")
+	require.Len(t, targets, 1)
+	assert.Equal(t, "t0", targets[0].route.name)
+
+	// One workspace fewer and the fan-out is allowed, so the bound is on the
+	// fan-out rather than on how many workspaces an operator may configure.
+	routes, byTeam, fault = linearRoutes(policy, teams[:maxLinearFanout])
+	require.Nil(t, fault)
+	s = &linearProxySession{
+		policy: policy, teams: teams[:maxLinearFanout], routes: routes, routeByTeam: byTeam,
+	}
+	_, fault = s.scanTargets("")
 	assert.Nil(t, fault)
+}
+
+// TestLinearRoutesRefuseAWorkspaceNamedDefault — `whoami` reports routes by
+// name, and the credential every unclaimed team uses is already called
+// "default". Two rows by that name in the verb an operator runs to work out
+// which key answered is worse than making them pick another label.
+func TestLinearRoutesRefuseAWorkspaceNamedDefault(t *testing.T) {
+	policy := config.LinearProxyConfig{
+		AllowedTeams: []string{"tcl"},
+		APIKeyFile:   "/tmp/default.key",
+		Workspaces: []config.LinearWorkspaceConfig{
+			{Name: "Default", APIKeyFile: "/tmp/other.key", Teams: []string{"acm"}},
+		},
+	}
+	_, _, fault := linearRoutes(policy, policy.AllowedTeams)
+	require.NotNil(t, fault, "the default route's name is reserved, case included")
+	assert.Equal(t, linearMisconfiguredCode, fault.Code)
+	assert.Contains(t, fault.Msg, "different name")
+}
+
+// TestMergeByUpdatedIsNewestFirstAndNeverNil — the merge restores across
+// workspaces what orderBy: updatedAt promises within one, and an empty result
+// must render as `[]` however many workspaces produced it. A nil slice here
+// would make the response's JSON type depend on operator configuration the
+// agent cannot see.
+func TestMergeByUpdatedIsNewestFirstAndNeverNil(t *testing.T) {
+	row := func(id, updated string) linearIssue {
+		return linearIssue{Identifier: id, UpdatedAt: updated}
+	}
+
+	t.Run("newest first across groups", func(t *testing.T) {
+		merged := mergeByUpdated([][]linearIssue{
+			{row("A-2", "2026-08-09"), row("A-1", "2026-08-01")},
+			{row("B-9", "2026-08-10"), row("B-8", "2026-08-05")},
+			{row("C-1", "2026-08-07")},
+		}, 25)
+		assert.Equal(t, []string{"B-9", "A-2", "C-1", "B-8", "A-1"}, identifiersOf(merged))
+	})
+
+	t.Run("the limit bounds the merged result", func(t *testing.T) {
+		merged := mergeByUpdated([][]linearIssue{
+			{row("A-1", "2026-08-01")},
+			{row("B-1", "2026-08-02")},
+			{row("C-1", "2026-08-03")},
+		}, 2)
+		assert.Equal(t, []string{"C-1", "B-1"}, identifiersOf(merged))
+	})
+
+	t.Run("a tie keeps workspace order", func(t *testing.T) {
+		merged := mergeByUpdated([][]linearIssue{
+			{row("A-1", "2026-08-01")},
+			{row("B-1", "2026-08-01")},
+		}, 25)
+		assert.Equal(t, []string{"A-1", "B-1"}, identifiersOf(merged),
+			"a stable sort must not reorder rows Linear ranked equally")
+	})
+
+	t.Run("empty is [] whatever the workspace count", func(t *testing.T) {
+		for name, groups := range map[string][][]linearIssue{
+			"one workspace":  {{}},
+			"two workspaces": {{}, {}},
+		} {
+			out, err := json.Marshal(mergeByUpdated(groups, 25))
+			require.NoError(t, err)
+			assert.Equal(t, "[]", string(out), "%s must render an empty listing the same way", name)
+		}
+	})
+
+	t.Run("a single group is passed through untouched", func(t *testing.T) {
+		// Not re-sorted: Linear already ordered it, and re-sorting could only
+		// introduce differences.
+		merged := mergeByUpdated([][]linearIssue{{row("A-1", ""), row("A-2", "2026-08-09")}}, 25)
+		assert.Equal(t, []string{"A-1", "A-2"}, identifiersOf(merged))
+	})
+}
+
+// TestMergeByRelevanceTakesTurns — relevance ranks from two responses are not
+// comparable, so a bounded search result must not be filled by whichever
+// workspace happens to be first.
+func TestMergeByRelevanceTakesTurns(t *testing.T) {
+	row := func(id string) linearIssue { return linearIssue{Identifier: id} }
+
+	t.Run("round-robin across groups", func(t *testing.T) {
+		merged := mergeByRelevance([][]linearIssue{
+			{row("A-1"), row("A-2")},
+			{row("B-1"), row("B-2")},
+			{row("C-1"), row("C-2")},
+		}, 25)
+		assert.Equal(t, []string{"A-1", "B-1", "C-1", "A-2", "B-2", "C-2"}, identifiersOf(merged))
+	})
+
+	t.Run("ragged groups drain rather than stall", func(t *testing.T) {
+		merged := mergeByRelevance([][]linearIssue{
+			{row("A-1")},
+			{row("B-1"), row("B-2"), row("B-3")},
+		}, 25)
+		assert.Equal(t, []string{"A-1", "B-1", "B-2", "B-3"}, identifiersOf(merged),
+			"an exhausted group must not end the merge while another still has rows")
+	})
+
+	t.Run("the limit can cut mid-round", func(t *testing.T) {
+		merged := mergeByRelevance([][]linearIssue{
+			{row("A-1"), row("A-2")},
+			{row("B-1"), row("B-2")},
+		}, 3)
+		assert.Equal(t, []string{"A-1", "B-1", "A-2"}, identifiersOf(merged))
+	})
+
+	t.Run("empty is [] whatever the workspace count", func(t *testing.T) {
+		out, err := json.Marshal(mergeByRelevance([][]linearIssue{{}, {}}, 25))
+		require.NoError(t, err)
+		assert.Equal(t, "[]", string(out))
+	})
+}
+
+func identifiersOf(issues []linearIssue) []string {
+	ids := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		ids = append(ids, issue.Identifier)
+	}
+	return ids
 }
 
 // TestLinearRouteKeyEnvFallbackIsTheDefaultRouteAlone — one LINEAR_API_KEY names

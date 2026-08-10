@@ -146,7 +146,7 @@ each key is for:
 
 | Field | Meaning |
 |---|---|
-| `name` | A label for diagnostics — `whoami`'s breakdown, and the refusal an unreadable key produces. Nothing routes on it. |
+| `name` | A label for diagnostics — `whoami`'s breakdown, and the refusal an unreadable key produces. Nothing routes on it. `default` is reserved: it already names the key every unclaimed team uses. |
 | `api_key_file` | The key created **in that workspace**. Required: there is no `LINEAR_API_KEY` fallback here, since one environment variable names one workspace's key. |
 | `teams` | The team keys that workspace's key reaches. Required. |
 
@@ -158,19 +158,31 @@ Rules worth knowing:
   stays unreachable. Adding a workspace can never widen what an agent can touch.
 - **Teams you do not list keep using `api_key_file`.** An operator with one
   workspace never writes this block, and their behaviour is unchanged.
-- **A team may appear in at most one entry**, and every entry needs both a key
-  file and a team list. A policy that breaks either rule is refused whole
+- **A team key may appear in at most one entry**, and every entry needs both a
+  key file and a team list. A policy that breaks either rule is refused whole
   (`503 linear_proxy_misconfigured`) before any credential is spent — guessing
   between two keys would query the wrong workspace, and Linear answers that with
   "no such issue" rather than an error.
+- **Team keys are only unique within a workspace.** Two workspaces can each have
+  an `OPS`, and nothing here can tell those apart: `allowed_teams`, grant scopes
+  and issue identifiers all key on the bare team key. Colliding keys across
+  workspaces are not supported — route the key to one workspace and reach the
+  other's team some other way.
 - **A verb that spans teams costs one call per workspace.** `issue ls` and
-  `issue search` without `--team` query each key in turn and merge the results —
-  newest-first for a listing, taking turns between workspaces for a search,
-  bounded by your `--limit`. Everything else spends exactly one key: the one for
-  the team in the identifier. At most 8 workspaces may take part in a single
-  request.
+  `issue search` without `--team`, and `whoami`, query each key in turn and merge
+  the results — newest-first for a listing, taking turns between workspaces for a
+  search, bounded by your `--limit`. At most 8 workspaces may take part in one
+  such verb. Everything else spends exactly one key, the one for the team in the
+  identifier, however many workspaces you have configured.
+- **`--assigned-me` means a different person in each workspace**: each key
+  authenticates as its own Linear account, so a fanned-out `issue ls
+  --assigned-me` means "assigned to whoever created that workspace's key".
 - **Keys are read only when used.** An unreadable key for a workspace a request
-  never touches does not fail that request.
+  never touches does not fail that request. But a fanned-out listing does need
+  every key it spans: one broken key fails the whole `issue ls`, rather than
+  returning a short answer that looks complete. `whoami` deliberately differs —
+  it reports each credential's failure and keeps going, because diagnosing that
+  is what it is for.
 
 `tclaude proxy linear whoami` reports each key separately under `workspaces` —
 who it authenticates as, which teams it can see, which of your teams it answers
@@ -433,7 +445,7 @@ the workspace.
 | `503 linear_proxy_disabled` | No `allowed_teams` configured *and* the agent's grant carries no team scope. Add the block above, or scope the grant. |
 | `503 key_missing` | No `api_key_file` and no `LINEAR_API_KEY`. The message names the teams that were left without a key. |
 | `503 key_unreadable` | The configured file could not be read, or is empty. The message names which key — the default one or a `workspaces` entry. Check it is readable by the account agentd runs as, and that you used `~/` or an absolute path rather than `${HOME}`. |
-| `503 linear_proxy_misconfigured` | A `workspaces` entry has no `api_key_file` or no `teams`, two entries claim the same team, or the caller's teams span more than 8 workspaces. The message says which. See [Teams in more than one Linear workspace](#teams-in-more-than-one-linear-workspace). |
+| `503 linear_proxy_misconfigured` | A `workspaces` entry has no `api_key_file`, no `teams`, or the reserved name `default`; two entries claim the same team key; or a team-spanning verb would need more than 8 credentials. The message says which. See [Teams in more than one Linear workspace](#teams-in-more-than-one-linear-workspace). |
 | `503 linear_auth` | Linear rejected the key. It may be revoked, expired, or lack the permission the verb needs — a read-only key cannot comment. |
 | `403` naming a slug | The agent lacks `proxy.linear.read` / `proxy.linear.write`. Grant it, or the agent can retry with `--ask-human`. |
 | `403 linear_write_disabled` | The slug is granted but `allow_write` is false. Both are required. |
