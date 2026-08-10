@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -444,6 +445,11 @@ type exitCallbackParams struct {
 	Signal      string
 }
 
+const (
+	spawnFailureDiagnosticWindow = 30 * time.Second
+	spawnFailureDiagnosticBytes  = 8 * 1024
+)
+
 func exitCallbackCmd() *cobra.Command {
 	var p exitCallbackParams
 	cmd := &cobra.Command{
@@ -480,6 +486,16 @@ func runExitCallback(p exitCallbackParams) error {
 		reported.ExitCode != p.ExitCode || !strings.EqualFold(reported.Signal, p.Signal) {
 		return fmt.Errorf("%w: tmux evidence mismatch", db.ErrExitCallbackRejected)
 	}
+	// A dead pane is the last place a successful tmux launch's harness error is
+	// visible (`claude: command not found`, expired auth, broken config, ...).
+	// Work out whether it falls in the startup window now, but do not copy pane
+	// contents until the authenticated record below has classified lifecycle
+	// exits. Expected stop/retire/reincarnate exits must never be captured.
+	startupAge := time.Duration(-1)
+	failedStartup := p.Signal != "" || (p.ExitCode != "" && p.ExitCode != "0")
+	if row, loadErr := db.LoadSession(p.SessionID); failedStartup && loadErr == nil && row != nil && !row.CreatedAt.IsZero() {
+		startupAge = time.Since(row.CreatedAt)
+	}
 	var code *int
 	cause := db.AgentExitCauseUnknown
 	if p.Signal != "" {
@@ -493,7 +509,7 @@ func runExitCallback(p exitCallbackParams) error {
 		cause = db.AgentExitCauseNormal
 	}
 	hash := sha256.Sum256([]byte(p.Token))
-	_, err = db.RecordAuthenticatedAgentExitObservation(db.AgentExitObservation{
+	result, err := db.RecordAuthenticatedAgentExitObservation(db.AgentExitObservation{
 		SessionID: p.SessionID, TmuxSession: p.TmuxSession, PaneID: p.PaneID,
 		Observer: db.AgentExitObserverTmux, CauseKind: cause,
 		ExitCode: code, Signal: strings.ToUpper(p.Signal), ObservedState: StatusExited,
@@ -509,6 +525,16 @@ func runExitCallback(p exitCallbackParams) error {
 			"pane_id", p.PaneID, "error", err)
 		return fmt.Errorf("record managed pane exit: %w", err)
 	}
+	startupDiagnostic := ""
+	if result.LifecycleAction == "" && startupAge >= 0 && startupAge <= spawnFailureDiagnosticWindow {
+		startupDiagnostic = captureDeadPaneDiagnostic(p.PaneID)
+	}
+	if startupDiagnostic != "" {
+		slog.Error("managed pane failed during startup",
+			"session_id", p.SessionID, "tmux_session", p.TmuxSession,
+			"pane_id", p.PaneID, "event_id", result.EventID,
+			"startup_age", startupAge.String(), "pane_output", startupDiagnostic)
+	}
 	cleanupEvidence := PaneExitEvidence{
 		TmuxSession: reported.TmuxSession, PaneID: reported.PaneID,
 		Generation: p.Generation, ExitCode: code, Signal: strings.ToUpper(reported.Signal),
@@ -520,6 +546,27 @@ func runExitCallback(p exitCallbackParams) error {
 		return fmt.Errorf("clean recorded dead pane: %w", err)
 	}
 	return nil
+}
+
+func captureDeadPaneDiagnostic(paneID string) string {
+	out, err := clcommon.TmuxCommand("capture-pane", "-p", "-J", "-S", "-40", "-t", paneID).Output()
+	if err != nil {
+		return ""
+	}
+	return boundDeadPaneDiagnostic(out)
+}
+
+func boundDeadPaneDiagnostic(out []byte) string {
+	out = bytes.ReplaceAll(out, []byte{0}, nil)
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) > 40 {
+		lines = lines[len(lines)-40:]
+	}
+	out = []byte(strings.Join(lines, "\n"))
+	if len(out) > spawnFailureDiagnosticBytes {
+		out = bytes.ToValidUTF8(out[len(out)-spawnFailureDiagnosticBytes:], []byte("?"))
+	}
+	return strings.TrimSpace(string(out))
 }
 
 type deadTmuxPane struct {

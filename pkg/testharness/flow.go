@@ -362,12 +362,15 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 		}
 	}
 	// SpawnPaneDiesAtLaunch is the inverse case: the row (above) landed, but the
-	// harness exited on startup, so no pane survives to register. Production
+	// harness exited on startup, so only a retained dead pane survives. Production
 	// writes the row before it creates the tmux session, so this ordering is
 	// faithful — the row exists and, on the launch-enrollment path, already
 	// carries the preset conv-id, while nothing is actually running.
 	if s.w.SpawnPaneDiesAtLaunch {
 		cc.Shutdown()
+		s.w.Tmux.MarkAlive(label)
+		code := 1
+		s.w.Tmux.MarkPaneDead(label, &code, "")
 		return nil
 	}
 	s.w.Tmux.Register(label, cc.Cwd, cc)

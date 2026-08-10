@@ -312,7 +312,8 @@ func waitForDashboardSpawnFocusSession(r *http.Request, label string) *db.Sessio
 
 	for {
 		sess, err := db.LoadSession(label)
-		if err == nil && sess != nil && sess.TmuxSession != "" {
+		if err == nil && sess != nil && sess.TmuxSession != "" &&
+			session.IsTmuxSessionAlive(sess.TmuxSession) {
 			return sess
 		}
 		pending, pendingErr := db.GetPendingSpawn(label)

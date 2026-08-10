@@ -430,7 +430,12 @@ func (s *gatedCodexSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 	}); err != nil {
 		return err
 	}
-	s.w.Tmux.Register(label, cx.Cwd, cx)
+	// A real Codex process held at a startup modal still owns a live tmux pane;
+	// only its rollout/first turn is absent. Register a pane-level live marker
+	// until firstTurn starts the behavioral CodexSim below. This distinction
+	// matters now that spawn success correctly requires tmux liveness rather
+	// than trusting the SessionRow's intended tmux name.
+	s.w.Tmux.MarkAlive(label)
 	s.mu.Lock()
 	s.sims[label] = cx
 	s.mu.Unlock()
@@ -580,6 +585,7 @@ func (s *gatedCodexSpawner) firstTurn(t *testing.T, label string) string {
 	require.NotNil(t, cx, "no gated codex sim for label %q", label)
 
 	require.NoError(t, cx.Start(), "codex first turn: Start (materialise rollout + go alive)")
+	s.w.Tmux.Register(label, cx.Cwd, cx)
 	require.NoError(t, cx.WriteThreadRow(testharness.CodexThreadSeed{
 		Cwd:       cx.Cwd,
 		Model:     cx.Model,

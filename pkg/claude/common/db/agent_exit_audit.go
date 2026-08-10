@@ -99,9 +99,10 @@ type ExitCallbackAuth struct {
 }
 
 type AgentExitRecordResult struct {
-	EventID  string
-	Inserted bool
-	Enriched bool
+	EventID         string
+	Inserted        bool
+	Enriched        bool
+	LifecycleAction string
 }
 
 type exitSessionMeta struct {
@@ -596,6 +597,7 @@ func recordAgentExitObservationTx(tx *sql.Tx, o AgentExitObservation, auth *Exit
 	} else {
 		merged := mergeExitAudit(*existing, entry)
 		if exitAuditEqual(*existing, merged) {
+			result.LifecycleAction = existing.LifecycleAction
 			when := o.At
 			if when.IsZero() {
 				when = time.Now()
@@ -619,11 +621,12 @@ func recordAgentExitObservationTx(tx *sql.Tx, o AgentExitObservation, auth *Exit
 	if err := reconcileAgentRecoveryCandidateTx(tx, meta, entry, when); err != nil {
 		return AgentExitRecordResult{}, AuditLogEntry{}, false, err
 	}
+	result.LifecycleAction = entry.LifecycleAction
 	return result, entry, true, nil
 }
 
 func logAgentExitObservation(entry AuditLogEntry, result AgentExitRecordResult) {
-	slog.Info("managed pane exit observed",
+	attrs := []any{
 		"event_id", entry.EventID,
 		"related_event_id", entry.RelatedEventID,
 		"agent_id", entry.TargetAgent,
@@ -638,8 +641,17 @@ func logAgentExitObservation(entry AuditLogEntry, result AgentExitRecordResult) 
 		"exit_code", nullableLogInt(entry.ExitCode),
 		"signal", unavailable(entry.Signal),
 		"lifecycle_action", unavailable(entry.LifecycleAction),
+		"reason", unavailable(entry.Reason),
 		"observed_state", entry.ObservedState,
-		"enriched", result.Enriched)
+		"enriched", result.Enriched,
+	}
+	unexpected := entry.LifecycleAction == "" && (entry.CauseKind == AgentExitCauseLaunch ||
+		entry.Signal != "" || (entry.ExitCode != nil && *entry.ExitCode != 0))
+	if unexpected {
+		slog.Error("managed pane exited unexpectedly", attrs...)
+		return
+	}
+	slog.Info("managed pane exit observed", attrs...)
 }
 
 // MarkSessionExitedAndRecordObservationIfUnchanged atomically applies the
