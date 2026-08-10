@@ -169,7 +169,6 @@ func automaticGroupForDir(params *session.NewParams) (string, error) {
 			}
 		}
 		if len(defaults) == 1 {
-			params.Dir = cwd
 			return defaults[0].Name, nil
 		}
 		if len(defaults) > 1 {
@@ -178,10 +177,6 @@ func automaticGroupForDir(params *session.NewParams) (string, error) {
 		return "", fmt.Errorf("directory %q matches multiple groups (%s); choose one with --join-group, or in the dashboard Groups tab open that group's ⚙ menu and select 'make directory auto-join default'", cwd, strings.Join(names, ", "))
 	}
 	if len(matches) == 1 {
-		// A relative spelling was resolved against THIS terminal process. Carry
-		// the canonical result only into an actual daemon spawn; an unmatched
-		// solo fallback must retain the caller's logical path spelling.
-		params.Dir = cwd
 		return matches[0].Name, nil
 	}
 	if !params.AutoJoinOrCreateGroup {
