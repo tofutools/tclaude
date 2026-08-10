@@ -39,7 +39,7 @@ func TestDashboardHTML_HarnessLineWired(t *testing.T) {
 	must("${shortModel(model, harness)}", "the visible chip uses the harness-aware shortened model")
 	must("'Last used model' : 'Model'", "harnessLine's tooltip keeps the FULL model name and labels offline values as historical")
 	must("import { HarnessMark } from './harness-mark.js'", "the member table imports the shared harness-mark component")
-	must("<${HarnessMark} name=${harness} shortLabel=${labels.short} longLabel=${labels.long} tooltip=${title} />",
+	must("<${HarnessMark} name=${harness} shortLabel=${labels.short} longLabel=${labels.long} tooltip=${drive ? title : labels.long} />",
 		"the harness line renders the mark with full-name and fallback labels")
 	must("const PRODUCT_MARKS = new Set(['claude', 'codex', 'copilot', 'opencode'])",
 		"the known product-mark set is explicit")
