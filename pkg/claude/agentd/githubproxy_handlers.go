@@ -576,7 +576,7 @@ func handleGHProxyPRMerge(w http.ResponseWriter, r *http.Request) {
 	// is what the caller gets by not passing one.
 	subject := strings.TrimSpace(body.Subject)
 	if subject != "" {
-		if fault := validateGHTitle(subject); fault != nil {
+		if fault := validateGHHeadline("subject", subject); fault != nil {
 			writeProxyFault(w, fault)
 			return
 		}
@@ -585,6 +585,10 @@ func handleGHProxyPRMerge(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
+	// Recorded before anything is spent, so a refusal is audited as a merge
+	// ATTEMPT on a named pull request rather than as an unexplained non-zero
+	// exit against the repository.
+	g.auditExtra = fmt.Sprintf("pr=%d", number)
 	// One budget across the state read and the merge, for the reason `pr create`
 	// has one: two independent bounds would let the daemon run to twice what the
 	// CLI waits on, and "did it merge?" is the worst question to leave open.
@@ -639,6 +643,9 @@ func handleGHProxyPRMerge(w http.ResponseWriter, r *http.Request) {
 			"pull request #%d was not merged: %s", pr.Number, text)), nil)
 		return
 	}
+	// The commit is what makes the audit row answer "what landed": a pull
+	// request number alone still has to be looked up on GitHub to find out.
+	g.auditExtra = fmt.Sprintf("pr=%d sha=%s", pr.Number, merged.SHA)
 	g.respond(w, r, "pr.merge", ProxyResult{Stdout: fmt.Sprintf(
 		"merged #%d into %s as %s\n%s\n", pr.Number, pr.BaseRefName, merged.SHA, pr.URL)}, nil)
 }

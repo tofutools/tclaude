@@ -1073,10 +1073,13 @@ func TestGHProxy_MergeNeedsItsOwnSlug(t *testing.T) {
 		assert.Contains(t, out.Stdout, "https://x/42")
 
 		// Merging under the operator's GitHub account is exactly the kind of
-		// call an operator reviews later.
+		// call an operator reviews later — and "this agent merged something in
+		// your repository" is not a review. The row has to name WHAT landed.
 		row := auditRowByVerb(t, "github.pr.merge")
 		assert.Contains(t, row.Detail, "tofutools/tclaude")
 		assert.Contains(t, row.Detail, "exit=0")
+		assert.Contains(t, row.Detail, "pr=42")
+		assert.Contains(t, row.Detail, "sha=abc1234")
 	})
 }
 
@@ -1100,6 +1103,13 @@ func TestGHProxy_MergeBuildsTheRequestFromDerivedAndGatedValues(t *testing.T) {
 
 	calls := gh.requests()
 	require.Len(t, calls, 2, "the state read, then the merge")
+	// BOTH calls, not only the merge: the state read carries the owner and the
+	// repository as GraphQL variables, so it is the other place a caller-named
+	// slug could land.
+	_, vars := graphqlVars(t, calls[0])
+	assert.Equal(t, "tofutools", vars["owner"])
+	assert.Equal(t, "tclaude", vars["name"])
+	assert.NotContains(t, string(calls[0].Body), "attacker")
 	assert.Equal(t, http.MethodPut, calls[1].Method)
 	assert.Equal(t, "repos/tofutools/tclaude/pulls/42/merge", calls[1].Path)
 	body := jsonBody(t, calls[1])
@@ -1205,6 +1215,46 @@ func TestGHProxy_MergeProceedsWhileMergeabilityIsStillUnknown(t *testing.T) {
 	res := gitProxyPost(t, f, "/v1/github/pr/merge", map[string]any{"number": 42})
 	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
 	assert.Equal(t, 2, gh.count(), "the merge is attempted")
+}
+
+// TestGHProxy_MergeRefusesToCallA2xxWithoutAMergeASuccess — GitHub does not
+// document a 2xx that did not merge, which is exactly why the check has to be
+// pinned: a refactor that dropped it would pass every other merge test in this
+// file, and the regression would be a success message with no commit behind it.
+func TestGHProxy_MergeRefusesToCallA2xxWithoutAMergeASuccess(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		answer   string
+		wantText string
+	}{
+		{"with a reason", `{"merged":false,"message":"Base branch was modified. Review and try the merge again."}`,
+			"Base branch was modified"},
+		// No message either — the one case with nothing of GitHub's to relay,
+		// where silence would read as success.
+		{"without one", `{"merged":false}`, "reported no merge"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, _, gh := ghWorld(t, []string{"github.com/tofutools"})
+			gh.seq = []ghCanned{
+				{Status: 200, Body: ghMergeablePR},
+				{Status: 200, Body: tc.answer},
+			}
+			require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubMerge, "test"))
+
+			res := gitProxyPost(t, f, "/v1/github/pr/merge", map[string]any{"number": 42})
+			require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+			var out struct {
+				ExitCode int    `json:"exit_code"`
+				Stdout   string `json:"stdout"`
+				Stderr   string `json:"stderr"`
+			}
+			require.NoError(t, json.Unmarshal(res.Body.Bytes(), &out))
+			assert.NotEqual(t, 0, out.ExitCode, "a merge that did not happen is not a success")
+			assert.Contains(t, out.Stderr, tc.wantText)
+			assert.NotContains(t, out.Stdout, "merged #42")
+		})
+	}
 }
 
 // TestGHProxy_MergeReportsGitHubsRefusalVerbatim — branch protection, a

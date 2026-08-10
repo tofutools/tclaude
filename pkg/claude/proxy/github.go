@@ -366,8 +366,8 @@ func githubPRMergeCmd() *cobra.Command {
 			"state you asked for is the state it is in. A draft, a closed pull request, or one that conflicts " +
 			"with its base is refused with which of those it is; GitHub reports all four as the same " +
 			"\"not mergeable\".\n\n" +
-			"The head branch is left alone. There is no --delete-branch: deleting the branch you were working " +
-			"on is a separate decision, and `tclaude proxy git` is where branch operations live.",
+			"The head branch is left alone, and there is no --delete-branch: deleting the branch you were " +
+			"working on is a separate decision, and not one this proxy makes on your behalf.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *githubPRMergeParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)

@@ -383,7 +383,7 @@ func TestGraphQLDocumentsAreInternallyConsistent(t *testing.T) {
 		"ghPRChecksQuery":   ghPRChecksQuery,
 		"ghIssueListQuery":  ghIssueListQuery,
 		"ghIssueViewQuery":  ghIssueViewQuery,
-		"ghPRStateQuery":   ghPRStateQuery,
+		"ghPRStateQuery":    ghPRStateQuery,
 		"ghPRReadyMutation": ghPRReadyMutation,
 	}
 	declared := regexp.MustCompile(`\$(\w+):`)

@@ -81,7 +81,7 @@ Add an `agent.git_proxy` block to `~/.tclaude/data/config.json`:
 | Field | Meaning |
 |---|---|
 | `allowed_remotes` | **Legacy global policy.** Remotes the proxy may talk to, as `host/owner/repo` patterns. An unscoped grant still requires a non-empty list. A remote-scoped grant can operate with this empty; when both are configured, both must match. |
-| `protected_refs` | Branches the proxy refuses to push to at all. Absent → `["main", "master"]`; an explicit `[]` turns the protection off. |
+| `protected_refs` | Branches the proxy refuses to **push** to at all. Absent → `["main", "master"]`; an explicit `[]` turns the protection off. It does not gate `github pr merge` — see [Merging a pull request](#merging-a-pull-request). |
 | `allow_force_push` | Permits `--force-with-lease` on non-protected refs. Default off. Plain `--force` is never available. |
 | `ssh_key` | Pins one private key (`ssh -i … -o IdentitiesOnly=yes`). Empty uses the daemon's ambient SSH setup — normally an ssh-agent, which is the better posture. |
 | `github_token_file` | A file whose contents are the GitHub token the daemon sends. Empty delegates to `gh auth token` — see [Where the GitHub token comes from](#where-the-github-token-comes-from). This feeds the **GitHub** half only; `git` itself authenticates over SSH or through the operator's own credential helper. |

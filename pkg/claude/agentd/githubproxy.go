@@ -211,6 +211,15 @@ type ghProxySession struct {
 	// gated by resolveProxyRepo. Only `run download` uses it, and only as the
 	// root it is not allowed to write outside of.
 	repoRoot string
+	// auditExtra is appended to this request's audit detail. Every verb records
+	// the repository, the operation and the exit code, which for a read is the
+	// whole of what an operator reviews. `pr merge` is the one verb where it is
+	// not: "this agent merged something in your repository" leaves the only
+	// question worth asking — what landed, and where — answerable only on
+	// GitHub. It holds the pull-request number the caller's value was validated
+	// into and the commit id GitHub answered with; no caller prose, and nothing
+	// from a title or a body, ever goes in it.
+	auditExtra string
 }
 
 // newGHProxySession runs every gate and resolves the GitHub repository from
@@ -693,35 +702,44 @@ func validateGHBody(body string, required bool) *proxyFault {
 // characters are refused, and so is a leading "-", which is a caller mistake
 // far more often than a real title.
 func validateGHTitle(title string) *proxyFault {
+	return validateGHHeadline("title", title)
+}
+
+// validateGHHeadline is validateGHTitle with the noun as a parameter, because
+// `pr merge --subject` submits the same shape of value — one published line —
+// through a flag that is not called `--title`. A refusal naming the wrong flag
+// sends the caller looking at a parameter the verb does not have, which is the
+// same reason validateGHMergeMethod does not reuse validateGHState's wording.
+func validateGHHeadline(what, title string) *proxyFault {
 	title = strings.TrimSpace(title)
 	if title == "" {
-		return faultf(http.StatusBadRequest, "invalid_arg", "a title is required")
+		return faultf(http.StatusBadRequest, "invalid_arg", "a %s is required", what)
 	}
 	// Runes, not bytes: maxGHProxyTitleLen and GitHub's own limit are both
 	// stated in characters, so a byte count would refuse a perfectly legal
 	// non-ASCII title at well under a third of the real limit.
 	if utf8.RuneCountInString(title) > maxGHProxyTitleLen {
 		return faultf(http.StatusBadRequest, "invalid_arg",
-			"title is longer than %d characters", maxGHProxyTitleLen)
+			"%s is longer than %d characters", what, maxGHProxyTitleLen)
 	}
 	if strings.HasPrefix(title, "-") {
 		return faultf(http.StatusBadRequest, "invalid_arg",
-			"a title may not begin with '-'")
+			"a %s may not begin with '-'", what)
 	}
 	for _, r := range title {
 		if r < 0x20 || r == 0x7f {
 			return faultf(http.StatusBadRequest, "invalid_arg",
-				"the title contains a control character (did you mean to put this in the body?)")
+				"the %s contains a control character (did you mean to put this in the body?)", what)
 		}
 		// Unicode format characters — the bidirectional overrides U+202E and
-		// U+2066..U+2069 above all — reorder how the title RENDERS without
-		// changing what it contains. This title is published under the
-		// operator's own account, where a reader has no reason to suspect the
-		// displayed text is not the stored text.
+		// U+2066..U+2069 above all — reorder how the line RENDERS without
+		// changing what it contains. It is published under the operator's own
+		// account, where a reader has no reason to suspect the displayed text
+		// is not the stored text.
 		if unicode.Is(unicode.Cf, r) {
 			return faultf(http.StatusBadRequest, "invalid_arg",
-				"the title contains a Unicode format character (U+%04X); those can reorder how the "+
-					"title renders without changing what it says", r)
+				"the %s contains a Unicode format character (U+%04X); those can reorder how it "+
+					"renders without changing what it says", what, r)
 		}
 	}
 	return nil
@@ -920,6 +938,10 @@ func (g *ghProxySession) respondOrFail(w http.ResponseWriter, r *http.Request, v
 }
 
 func (g *ghProxySession) writeOutcome(w http.ResponseWriter, r *http.Request, verb string, out ghProxyOutcome) {
-	setAuditDetail(r, fmt.Sprintf("repo=%s op=%s exit=%d", g.ownerRepo, verb, out.ExitCode))
+	detail := fmt.Sprintf("repo=%s op=%s exit=%d", g.ownerRepo, verb, out.ExitCode)
+	if g.auditExtra != "" {
+		detail += " " + g.auditExtra
+	}
+	setAuditDetail(r, detail)
 	writeJSON(w, http.StatusOK, out)
 }
