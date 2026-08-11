@@ -7328,6 +7328,13 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
   padding: 22px 12px; border: 1px dashed #34404e; border-radius: 4px;
   background: #10151b; text-align: center;
 }
+.group-standing-orders-load-failed {
+  display: flex; flex-direction: column; align-items: center; gap: 7px;
+  padding: 24px 14px; border: 1px solid #6e3b3b; border-radius: 4px;
+  background: #211416; text-align: center;
+}
+.group-standing-orders-paused-heading { margin-top: 16px; }
+.group-standing-orders-paused { opacity: 0.75; }
 .group-standing-order-origin { color: #58a6ff; text-align: center; }
 .group-standing-order-origin.locked { color: #8b949e; }
 .group-standing-order-details { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
@@ -7355,15 +7362,15 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
 .group-standing-orders-library-callout > div:first-child > span { font-size: 11px; }
 .group-standing-orders-callout-actions { display: flex; flex: 0 0 auto; gap: 6px; }
 .group-standing-orders-managed-note { margin-right: auto; color: #8b949e; font-size: 11px; }
-body.slop .group-standing-orders-live {
+body.wizard .group-standing-orders-live {
   background: #c084fc; box-shadow: 0 0 8px #c084fcaa;
 }
-body.slop .group-standing-orders-summary,
-body.slop .group-standing-orders-library-callout,
-body.slop .group-standing-orders-library { border-color: #4b3a5d; background: #17111f; }
-body.slop .group-standing-order-scope.global { color: #e6c878; border-color: #765f28; background: #2b230e; }
-body.slop .group-standing-order-scope.group { color: #ddb6ff; border-color: #76539a; background: #28193a; }
-body.slop .group-standing-order-origin { color: #c084fc; }
+body.wizard .group-standing-orders-summary,
+body.wizard .group-standing-orders-library-callout,
+body.wizard .group-standing-orders-library { border-color: #4b3a5d; background: #17111f; }
+body.wizard .group-standing-order-scope.global { color: #e6c878; border-color: #765f28; background: #2b230e; }
+body.wizard .group-standing-order-scope.group { color: #ddb6ff; border-color: #76539a; background: #28193a; }
+body.wizard .group-standing-order-origin { color: #c084fc; }
 @media (max-width: 720px) {
   .group-standing-orders-summary,
   .group-standing-orders-library-callout { align-items: stretch; flex-direction: column; }

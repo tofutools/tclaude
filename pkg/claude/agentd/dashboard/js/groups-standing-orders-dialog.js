@@ -38,6 +38,7 @@ function OrderDetails({ row, wizard }) {
 export function GroupStandingOrdersDialog({ descriptor, actions }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
   const [browsing, setBrowsing] = useState(false);
@@ -47,12 +48,14 @@ export function GroupStandingOrdersDialog({ descriptor, actions }) {
 
   const load = async () => {
     setLoading(true);
+    setLoadFailed(false);
     setError('');
     try {
       const response = await actions.loadStandingOrders(group);
       setRows(Array.isArray(response?.orders) ? response.orders : []);
     } catch (err) {
       setError((err && err.message) || String(err));
+      setLoadFailed(true);
     } finally {
       setLoading(false);
     }
@@ -62,8 +65,10 @@ export function GroupStandingOrdersDialog({ descriptor, actions }) {
     void load();
   }, [group]);
 
-  const effective = useMemo(() => rows.filter((row) =>
+  const scoped = useMemo(() => rows.filter((row) =>
     row.global || row.primary || row.assigned), [rows]);
+  const effective = useMemo(() => scoped.filter((row) => row.order?.enabled), [scoped]);
+  const paused = useMemo(() => scoped.filter((row) => !row.order?.enabled), [scoped]);
   const available = useMemo(() => rows.filter((row) =>
     !row.global && !row.primary && !row.assigned), [rows]);
   const shownAvailable = useMemo(() => {
@@ -112,10 +117,18 @@ export function GroupStandingOrdersDialog({ descriptor, actions }) {
     ${error && html`<div class="jobs-error" role="alert">${error}</div>`}
     ${loading
       ? html`<div class="empty">Loading standing orders…</div>`
+      : loadFailed
+        ? html`<div class="group-standing-orders-load-failed">
+            <strong>${wizard ? 'The archive cannot be reached.' : 'Could not load this group’s rules.'}</strong>
+            <span class="muted">${wizard
+              ? 'The silence is not proof that no decrees are bound. Try the archive again.'
+              : 'The rulebook may not be empty. Retry to load its current state.'}</span>
+            <button type="button" onClick=${() => void load()}>${wizard ? 'consult again' : 'retry'}</button>
+          </div>`
       : html`
         <div class="group-standing-orders-summary">
           <strong><span class="group-standing-orders-live" aria-hidden="true"></span>
-            ${effective.filter((row) => row.order?.enabled).length}
+            ${effective.length}
             ${wizard ? 'decrees in force' : 'rules in force'}</strong>
           <span>${effective.filter((row) => row.global).length} ${wizard ? 'realm-wide' : 'global'} ·
             ${effective.filter((row) => !row.global).length} ${wizard ? 'of this party' : 'group-scoped'}</span>
@@ -154,6 +167,27 @@ export function GroupStandingOrdersDialog({ descriptor, actions }) {
                         onClick=${() => void toggle(row, false)}>${wizard ? 'unbind' : 'remove'}</button>`}
                 </div>`;
               })}</div>`}
+        ${paused.length > 0 && html`
+          <div class="group-standing-orders-section-heading group-standing-orders-paused-heading">
+            <strong>${wizard ? 'Seals broken at the source' : 'Master disabled'}</strong>
+            <span class="muted">${wizard ? 'scoped here, but unable to speak' : 'scoped here, but not delivered'}</span>
+          </div>
+          <div class="group-standing-orders-list group-standing-orders-paused">
+            ${paused.map((row) => {
+              const order = row.order || {};
+              const locked = row.global || row.primary;
+              const busy = changing.has(order.id);
+              return html`<div key=${order.id} class="standing-order-choice group-standing-order-choice disabled">
+                <span class=${`group-standing-order-origin ${locked ? 'locked' : ''}`} aria-hidden="true">○</span>
+                <${OrderDetails} row=${row} wizard=${wizard} />
+                <span class=${`group-standing-order-scope ${row.global ? 'global' : 'group'}`}>${scopeLabel(row, wizard)}</span>
+                ${locked
+                  ? html`<span class="group-standing-order-lock" aria-label=${wizard ? 'governed elsewhere' : 'managed elsewhere'}>◇</span>`
+                  : html`<button type="button" class="group-standing-order-remove" disabled=${busy}
+                      onClick=${() => void toggle(row, false)}>${wizard ? 'unbind' : 'remove'}</button>`}
+              </div>`;
+            })}
+          </div>`}
 
         <div class="group-standing-orders-section-heading group-standing-orders-add-heading">
           <strong>${wizard ? 'Bind another decree' : 'Add to this group'}</strong>

@@ -19,6 +19,8 @@ func TestDashboardGroupStandingOrdersRulebookAssets(t *testing.T) {
 		"Consult the archive of decrees",
 		"group-standing-orders-summary",
 		"group-standing-orders-library-callout",
+		"group-standing-orders-load-failed",
+		"group-standing-orders-paused",
 	} {
 		if !strings.Contains(dialog, want) {
 			t.Errorf("standing-order rulebook dialog missing %q", want)
@@ -36,7 +38,7 @@ func TestDashboardGroupStandingOrdersRulebookAssets(t *testing.T) {
 	for _, want := range []string{
 		".group-standing-orders-summary {",
 		".group-standing-orders-library-callout {",
-		"body.slop .group-standing-orders-live",
+		"body.wizard .group-standing-orders-live",
 		"@media (max-width: 720px)",
 	} {
 		if !strings.Contains(css, want) {
