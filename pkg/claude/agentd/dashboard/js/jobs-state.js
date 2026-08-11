@@ -278,8 +278,8 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
     return true;
   }
 
-  function openStandingOrderCreate(prefill = {}) {
-    return openStandingOrderDialog({ kind: 'create', prefill: { ...prefill } });
+  function openStandingOrderCreate(prefill = {}, { onCancel = null } = {}) {
+    return openStandingOrderDialog({ kind: 'create', prefill: { ...prefill }, onCancel });
   }
 
   function openStandingOrderEdit(order = {}) {
@@ -289,8 +289,10 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
     });
   }
 
-  function closeStandingOrderDialog() {
+  function closeStandingOrderDialog({ cancelled = false } = {}) {
+    const closing = orderDialog.value;
     orderDialog.value = null;
+    if (cancelled && typeof closing?.onCancel === 'function') closing.onCancel();
   }
 
   return Object.freeze({

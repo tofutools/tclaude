@@ -95,6 +95,8 @@ export function createGroupsActions({
       const name = group?.name || group || '';
       const opened = openStandingOrderCreateModal({
         targetMode: 'group', groupName: name, scopeGroup: name,
+      }, {
+        onCancel: () => state.openStandingOrders({ name }),
       });
       if (opened) state.closeStandingOrders();
       return opened;

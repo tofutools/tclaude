@@ -10,6 +10,8 @@ func TestDashboardGroupStandingOrdersRulebookAssets(t *testing.T) {
 	actions := dashboardAssetFile(t, "js/groups-actions.js")
 	controller := dashboardAssetFile(t, "js/jobs-controller.js")
 	jobs := dashboardAssetFile(t, "js/jobs-island.js")
+	jobsState := dashboardAssetFile(t, "js/jobs-state.js")
+	orderEditor := dashboardAssetFile(t, "js/jobs-standing-order-dialog-island.js")
 	css := dashboardAssetFile(t, "dashboard.css")
 
 	for _, want := range []string{
@@ -31,12 +33,18 @@ func TestDashboardGroupStandingOrdersRulebookAssets(t *testing.T) {
 	}
 
 	if !strings.Contains(actions, "openStandingOrderCreateModal({") ||
-		!strings.Contains(actions, "targetMode: 'group', groupName: name, scopeGroup: name") {
+		!strings.Contains(actions, "targetMode: 'group', groupName: name, scopeGroup: name") ||
+		!strings.Contains(actions, "onCancel: () => state.openStandingOrders({ name })") {
 		t.Error("group rulebook create action must launch a group-prefilled standing-order editor")
 	}
 	if !strings.Contains(controller, "openStandingOrderCreateModal") ||
 		!strings.Contains(jobs, "openStandingOrderCreate: state.openStandingOrderCreate") {
 		t.Error("Jobs controller does not expose standing-order creation to the Groups rulebook")
+	}
+	if !strings.Contains(jobsState, "if (cancelled && typeof closing?.onCancel === 'function') closing.onCancel()") ||
+		!strings.Contains(orderEditor, "const cancel = () => actions.closeStandingOrderDialog({ cancelled: true })") ||
+		!strings.Contains(orderEditor, "actions.closeStandingOrderDialog();") {
+		t.Error("standing-order cancellation must return to its caller without treating a successful save as cancellation")
 	}
 	for _, want := range []string{
 		".group-standing-orders-summary {",
@@ -44,6 +52,9 @@ func TestDashboardGroupStandingOrdersRulebookAssets(t *testing.T) {
 		"body.wizard .group-standing-orders-live",
 		"body.wizard #group-standing-orders-modal .cron-create-modal",
 		"#group-standing-orders-modal .cron-create-modal button.primary",
+		"body.wizard #standing-order-modal .cron-create-modal",
+		"body.wizard #standing-order-modal #standing-order-title::before",
+		"body.wizard #standing-order-modal.standing-order-editing #standing-order-submit:disabled::before",
 		"@media (max-width: 720px)",
 	} {
 		if !strings.Contains(css, want) {
