@@ -275,7 +275,10 @@ function GroupCreateDialog({
       <textarea id="group-create-task" class="modal-context-textarea" rows="4"
         value=${draft.task} disabled=${disabled}
         onInput=${(event) => setField('task', event.currentTarget.value)}
-        placeholder="the assignment for this party — folded into the group context under ## Task so every spawned agent sees it (multi-line OK)"
+        placeholder=${words(
+          'the assignment for this group — folded into the group context under ## Task so every spawned agent sees it (multi-line OK)',
+          'the assignment for this party — folded into the group context under ## Task so every spawned agent sees it (multi-line OK)',
+        )}
         spellcheck="false"></textarea>
     </label>
     <label class="cron-create-row" id="group-create-max-members-row" hidden=${templateMode}>
