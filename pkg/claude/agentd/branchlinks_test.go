@@ -1,7 +1,6 @@
 package agentd
 
 import (
-	"slices"
 	"testing"
 	"time"
 
@@ -289,18 +288,34 @@ func TestGHPRListArgsCannotNameARepository(t *testing.T) {
 		"github.com/victim/private/pull/1",
 		"1",
 		"feature",
+		// Branch names that collide with a literal already in the argv. All
+		// four are legal git refs, and each would defeat a check that located
+		// the branch by SEARCHING for it: "pr" and "list" match the command
+		// name, "all" the --state value, "10" the --limit value. Hence the
+		// positional assertion below rather than a search.
+		"pr",
+		"list",
+		"all",
+		"10",
 	} {
 		t.Run(branch, func(t *testing.T) {
-			for _, withChecks := range []bool{true, false} {
-				args := ghPRListArgs(branch, withChecks)
-				require.Greater(t, len(args), 2)
-				assert.Equal(t, []string{"pr", "list"}, args[:2],
-					"never `pr view`, whose positional accepts a number or a URL")
+			for _, rich := range []bool{true, false} {
+				args := ghPRListArgs(branch, rich)
 
-				at := slices.Index(args, branch)
-				require.Positive(t, at, "the branch must appear in the argv")
-				assert.Equal(t, "--head", args[at-1],
-					"the branch may only ever be the VALUE of --head, never a bare selector")
+				// The whole argv is fixed literals except one slot. Pinning it
+				// exactly is what proves the branch is ONLY ever the value of
+				// --head: a second occurrence, as the bare positional `pr view`
+				// took, would change this prefix or the length.
+				want := []string{"pr", "list", "--head", branch,
+					"--state", "all", "--limit", "10", "--json"}
+				require.Len(t, args, len(want)+1,
+					"the argv is that fixed prefix plus exactly one --json field list")
+				assert.Equal(t, want, args[:len(want)],
+					"never `pr view`, whose positional accepts a number or a URL")
+				assert.Equal(t, branch, args[3],
+					"the branch may only ever be the VALUE of --head")
+				assert.NotContains(t, args[len(want):], branch,
+					"the field list is a fixed literal and must never carry caller data")
 			}
 		})
 	}
