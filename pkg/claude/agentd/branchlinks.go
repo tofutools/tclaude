@@ -173,26 +173,58 @@ func branchLinksForParts(convID string, loc agentLocationView, ws db.AgentWorksp
 	// Branch slot: only override when the agent is on the launch dir
 	// (the dir agent_workspace describes) AND the branch matches.
 	if ws.Branch == loc.Branch && ws.Cwd != "" && loc.CurrentDir == ws.Cwd {
-		state, updated := ws.PRState, ws.UpdatedAt
-		if samePRURL(ws.PRURL, v.BranchPRURL) {
-			state, updated = newestPRState(v.BranchPRState, v.branchPRUpdated, state, updated)
-		}
-		v.BranchURL, v.BranchPRNumber, v.BranchPRURL, v.BranchPRState =
-			webURL, ws.PRNumber, ws.PRURL, state
-		v.branchPRUpdated = updated
+		v.BranchURL = webURL
+		v.BranchPRNumber, v.BranchPRURL, v.BranchPRState, v.branchPRUpdated = reconcilePRSlot(
+			v.BranchPRNumber, v.BranchPRURL, v.BranchPRState, v.branchPRUpdated, ws)
 	}
 	// Startup slot: workspace's Cwd is by definition the launch dir, so
 	// matching ws.Branch to StartupBranch is enough.
 	if ws.Branch == loc.StartupBranch && ws.Cwd != "" && loc.StartupDir == ws.Cwd {
-		state, updated := ws.PRState, ws.UpdatedAt
-		if samePRURL(ws.PRURL, v.StartupPRURL) {
-			state, updated = newestPRState(v.StartupPRState, v.startupPRUpdated, state, updated)
-		}
-		v.StartupBranchURL, v.StartupPRNumber, v.StartupPRURL, v.StartupPRState =
-			webURL, ws.PRNumber, ws.PRURL, state
-		v.startupPRUpdated = updated
+		v.StartupBranchURL = webURL
+		v.StartupPRNumber, v.StartupPRURL, v.StartupPRState, v.startupPRUpdated = reconcilePRSlot(
+			v.StartupPRNumber, v.StartupPRURL, v.StartupPRState, v.startupPRUpdated, ws)
 	}
 	return v
+}
+
+// reconcilePRSlot merges the live agent_workspace snapshot into a resolved link
+// slot. It decides WHICH pull request the slot names, not only what state to
+// show for it.
+//
+// Same pull request in both sources: newestPRState reconciles the states, the
+// long-standing rule — whichever source looked most recently owns the answer.
+//
+// Different pull requests is the case the identity has to be decided for, and
+// "none at all" is one of the two. It is not hypothetical: the statusbar's
+// snapshot and this daemon's own resolution run on independent clocks, so
+// between an agent opening a PR and the statusbar's next lookup there is a
+// window where one source knows about it and the other does not. Taking the
+// workspace row unconditionally — which is what this did — let the source that
+// had not looked yet erase the PR the other had already found, and the badge
+// vanished from the dashboard for the length of that window.
+//
+// A PR beats no PR, in either direction, rather than the newer observation
+// winning. That is the deliberate asymmetry: neither side can tell "there is
+// no pull request" apart from "the lookup failed" — a `gh pr view` that exits
+// non-zero because the caller is unauthenticated is indistinguishable from one
+// that found nothing, on BOTH paths — so an absence is never evidence strong
+// enough to retract a PR somebody actually saw. A pull request that genuinely
+// disappears is not a thing GitHub does.
+func reconcilePRSlot(number int, url, state string, updated time.Time, ws db.AgentWorkspace) (int, string, string, time.Time) {
+	switch {
+	case samePRURL(ws.PRURL, url):
+		s, at := newestPRState(state, updated, ws.PRState, ws.UpdatedAt)
+		return ws.PRNumber, ws.PRURL, s, at
+	case ws.PRURL == "" && url != "":
+		return number, url, state, updated
+	case url == "" && ws.PRURL != "":
+		return ws.PRNumber, ws.PRURL, ws.PRState, ws.UpdatedAt
+	}
+	// Two different pull requests, both real: the newer sighting wins.
+	if !updated.IsZero() && updated.After(ws.UpdatedAt) {
+		return number, url, state, updated
+	}
+	return ws.PRNumber, ws.PRURL, ws.PRState, ws.UpdatedAt
 }
 
 // withPresentedPRs attaches explicitly presented PRs and reconciles duplicate
@@ -356,6 +388,14 @@ func lookupBranchLinkFromCache(repoDir, branch, key string, row *db.GitCacheRow)
 // a second caller while one is already running is a no-op. Runs via
 // goBackground so flow tests can drain it with WaitForBackgroundForTest.
 func scheduleBranchLinkRefresh(repoDir, branch, key string) {
+	// The gate goes HERE, above the gitInfoResolver seam, not only down at the
+	// argv — so it holds for every resolver including a test fake, nothing
+	// hostile ever reaches a subprocess, and a junk branch name cannot mint a
+	// git_cache row. See safeBranchForGH for why this input is untrusted
+	// despite looking daemon-derived.
+	if !safeBranchForGH(repoDir, branch) {
+		return
+	}
 	if _, busy := branchLinkInflight.LoadOrStore(key, struct{}{}); busy {
 		return
 	}
@@ -555,7 +595,10 @@ func gitDefaultBranch(dir string) string {
 // branchLinkTTL, and asking for one more JSON field is free next to a
 // second network round-trip per PR.
 func ghPRForBranch(dir, branch string) (number int, url, state string, checks *prChecksInfo) {
-	out := runInDir(dir, "gh", "pr", "view", branch, "--json", "number,url,state,isDraft,statusCheckRollup")
+	if !safeBranchForGH(dir, branch) {
+		return 0, "", "", nil
+	}
+	out := runInDir(dir, "gh", ghPRListArgs(branch, true)...)
 	if out == "" {
 		// The CI rollup is an enhancement; the PR link is not. A `gh` that
 		// rejects the field (old version, or a host that doesn't serve it)
@@ -563,18 +606,99 @@ func ghPRForBranch(dir, branch string) (number int, url, state string, checks *p
 		// retry once for the fields that predate this feature.
 		return ghPRForBranchWithoutChecks(dir, branch)
 	}
-	var pr struct {
+	var prs []struct {
 		Number            int             `json:"number"`
 		URL               string          `json:"url"`
 		State             string          `json:"state"`
 		IsDraft           bool            `json:"isDraft"`
+		IsCrossRepository bool            `json:"isCrossRepository"`
 		StatusCheckRollup json.RawMessage `json:"statusCheckRollup"`
 	}
-	if json.Unmarshal([]byte(out), &pr) != nil {
+	if json.Unmarshal([]byte(out), &prs) != nil {
 		return 0, "", "", nil
 	}
-	resolved := parseStatusCheckRollup(pr.StatusCheckRollup, time.Now())
-	return pr.Number, pr.URL, prStateFromGH(pr.State, pr.IsDraft), &resolved
+	pick := -1
+	for i := range prs {
+		if prs[i].IsCrossRepository {
+			continue
+		}
+		if strings.EqualFold(prs[i].State, "open") {
+			pick = i
+			break
+		}
+		if pick < 0 {
+			pick = i
+		}
+	}
+	if pick < 0 {
+		return 0, "", "", nil
+	}
+	resolved := parseStatusCheckRollup(prs[pick].StatusCheckRollup, time.Now())
+	return prs[pick].Number, prs[pick].URL,
+		prStateFromGH(prs[pick].State, prs[pick].IsDraft), &resolved
+}
+
+// ghPRListArgs builds the argv for a branch's pull-request lookup.
+//
+// `pr list --head <branch>`, NEVER `pr view <branch>`, and the difference is a
+// security boundary rather than a preference. `gh pr view` accepts
+// `<number> | <url> | <branch>` in one positional slot, so the branch string —
+// which is agent-controlled, see safeBranchForGH — could select a pull request
+// by id or, via a URL, RE-AIM THE CALL AT ANOTHER REPOSITORY, spending the
+// operator's credential on a repo they never authorized. `--head` has no such
+// overloading: it is a branch filter, so the worst a strange value can do is
+// match nothing.
+//
+// Extracted so a test can pin exactly that: the branch must always appear as
+// the VALUE of --head and never as a bare positional.
+//
+// rich selects the full field set. The fallback caller passes false and gets
+// only the long-guaranteed fields, for the reason ghPRForBranchWithoutChecks
+// gives: that retry exists because a `gh` rejected a field, so asking for more
+// of the same would defeat it. isCrossRepository stays in both because without
+// it a fork's identically-named branch is rendered as this branch's PR, which
+// is a wrong answer rather than a missing enhancement.
+func ghPRListArgs(branch string, rich bool) []string {
+	fields := "number,url,state,isCrossRepository"
+	if rich {
+		fields += ",isDraft,statusCheckRollup"
+	}
+	return []string{"pr", "list", "--head", branch, "--state", "all", "--limit", "10", "--json", fields}
+}
+
+// safeBranchForGH is the gate in front of every `gh` call this file makes, and
+// it is a SECURITY boundary rather than hygiene.
+//
+// `branch` looks daemon-derived and is not. It arrives from
+// agent.ResolveLocation, which reads it from `agent_workspace` — a row the
+// agent's own status line writes verbatim through the ungated statusline
+// broker — or from `conv_index.git_branch`, which is a free-form string lifted
+// out of the transcript. Both are agent-controlled, so anything this hands to
+// `gh` is attacker-chosen text.
+//
+// That matters because `gh pr view` accepts `<number> | <url> | <branch>`: a
+// URL argument re-aims it at ANOTHER REPOSITORY and a bare number selects a
+// pull request by id, which turned a branch string into a read of any pull
+// request the operator's token can reach. Two changes close it, and both are
+// needed:
+//
+//   - the caller above asks `gh pr list --head <branch>`, which has no
+//     number-or-URL selector semantics to out-guess — `--head` is a branch
+//     filter and nothing else;
+//   - this gate, because a value beginning with `-` would still be read as a
+//     flag in that position, and because refusing control characters,
+//     whitespace, `..` and `HEAD` costs nothing and keeps the argv boring.
+//
+// validateBranchName is the same gate the git and github proxies put in front
+// of every ref they accept; sharing it is deliberate, so a rule added there is
+// not silently missing here.
+func safeBranchForGH(dir, branch string) bool {
+	if fault := validateBranchName(branch); fault != nil {
+		slog.Debug("branchlinks: refusing a branch name that could re-aim gh",
+			"repo", dir, "module", "agentd")
+		return false
+	}
+	return true
 }
 
 // prStateFromGH folds `gh`'s separate state/isDraft pair into the single
@@ -602,21 +726,44 @@ func prStateFromGH(state string, isDraft bool) string {
 // a draft resolved down here renders as a plain open badge, which is what
 // it did before drafts had a colour of their own.
 func ghPRForBranchWithoutChecks(dir, branch string) (int, string, string, *prChecksInfo) {
-	out := runInDir(dir, "gh", "pr", "view", branch, "--json", "number,url,state")
+	if !safeBranchForGH(dir, branch) {
+		return 0, "", "", nil
+	}
+	out := runInDir(dir, "gh", ghPRListArgs(branch, false)...)
 	if out == "" {
 		return 0, "", "", nil
 	}
-	var pr struct {
-		Number int    `json:"number"`
-		URL    string `json:"url"`
-		State  string `json:"state"`
+	var prs []struct {
+		Number            int    `json:"number"`
+		URL               string `json:"url"`
+		State             string `json:"state"`
+		IsCrossRepository bool   `json:"isCrossRepository"`
 	}
-	if json.Unmarshal([]byte(out), &pr) != nil {
+	if json.Unmarshal([]byte(out), &prs) != nil {
+		return 0, "", "", nil
+	}
+	pick := -1
+	for i := range prs {
+		if prs[i].IsCrossRepository {
+			continue
+		}
+		if strings.EqualFold(prs[i].State, "open") {
+			pick = i
+			break
+		}
+		if pick < 0 {
+			pick = i
+		}
+	}
+	if pick < 0 {
 		return 0, "", "", nil
 	}
 	slog.Debug("branchlinks: resolved PR without the CI rollup",
-		"repo", dir, "branch", branch, "pr", pr.Number, "module", "agentd")
-	return pr.Number, pr.URL, prStateFromGH(pr.State, false), nil
+		"repo", dir, "pr", prs[pick].Number, "module", "agentd")
+	// No isDraft in the minimal field set, so a draft that comes through here
+	// renders as a plain open badge — main's documented trade for keeping the
+	// fallback able to fall back.
+	return prs[pick].Number, prs[pick].URL, prStateFromGH(prs[pick].State, false), nil
 }
 
 // repoHTTPSFromRemote normalises a git remote URL to its GitHub web

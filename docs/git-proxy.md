@@ -208,6 +208,7 @@ tclaude proxy git push --force-with-lease   # only if you enabled it
 # GitHub (proxy.github.read / proxy.github.write)
 tclaude proxy github pr create --title "…" --body-file pr.md
 tclaude proxy github pr ls --state open
+tclaude proxy github pr ls --head feat/x --state all   # the PR for a branch
 tclaude proxy github pr view 42
 tclaude proxy github pr checks 42
 tclaude proxy github pr comments 42            # read ALL review feedback
@@ -226,6 +227,28 @@ tclaude proxy github run log-failed 18234567890   # why that check went red
 tclaude proxy github run artifacts 18234567890    # what it uploaded, and how big
 tclaude proxy github run download 18234567890 --name coverage
 ```
+
+### Finding the pull request for a branch
+
+Every other pull-request verb takes a NUMBER. `pr ls --head <branch>` is how
+you get one when all you know is the branch you are on:
+
+```bash
+branch=$(git branch --show-current)
+test -n "$branch" || { echo "detached HEAD — no branch to look up"; exit 1; }
+tclaude proxy github pr ls --head "$branch" --state all
+```
+
+The guard matters: on a detached HEAD `git branch --show-current` is empty, and
+an empty `--head` means *no filter* — so the unguarded one-liner quietly lists
+every pull request in the repository instead of failing.
+
+One caveat, and it matters on public repositories: GitHub filters this on the
+bare ref **name**, across every head repository. A fork's branch of the same
+name comes back in the same listing, so an outside contributor's `fix-typo` PR
+appears alongside yours. Each row carries `isCrossRepository` — `true` means
+the head branch lives in a fork, not in this repository. Check it before
+treating a row as your own work.
 
 ### Reading review feedback and CI failures
 

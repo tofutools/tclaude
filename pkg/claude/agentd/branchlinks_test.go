@@ -101,6 +101,55 @@ func TestBranchLinksForPartsUsesFreshestWorkspaceOrBranchState(t *testing.T) {
 	assert.Equal(t, "merged", links.StartupPRState)
 }
 
+// TestBranchLinksForPartsKeepsAPRTheWorkspaceHasNotSeenYet — the two sources
+// refresh on independent clocks, so between an agent opening a pull request
+// and the statusbar's next lookup there is a window where this daemon knows
+// about it and the workspace row does not. Taking the row unconditionally made
+// the badge vanish from the dashboard for the whole of that window.
+//
+// A PR beats no PR in either direction rather than the newer sighting winning,
+// because neither source can tell "there is no pull request" apart from "the
+// lookup failed": a `gh pr view` that exits non-zero because the caller is
+// unauthenticated is indistinguishable from one that found nothing, on both
+// paths.
+func TestBranchLinksForPartsKeepsAPRTheWorkspaceHasNotSeenYet(t *testing.T) {
+	now := time.Now()
+	const prURL = "https://github.com/o/r/pull/42"
+	loc := agentLocationView{
+		CurrentDir: "/repo", StartupDir: "/repo",
+		Branch: "feature", StartupBranch: "feature",
+	}
+	// A workspace snapshot that looked before the PR existed, and — the point
+	// of the 90-second proxied cadence — will not look again for a while.
+	ws := db.AgentWorkspace{
+		ConvID: "conv", Cwd: "/repo", Branch: "feature",
+		RepoURL: "https://github.com/o/r", DefaultBranch: "main",
+		UpdatedAt: now.Add(-80 * time.Second),
+	}
+
+	links := branchLinksForParts("conv", loc, ws,
+		func(string, string) (string, int, string, string, time.Time) {
+			return "https://github.com/o/r/compare/main...feature", 42, prURL, "open", now
+		})
+
+	assert.Equal(t, 42, links.BranchPRNumber,
+		"a workspace row that has not seen the PR yet must not erase one this daemon found")
+	assert.Equal(t, prURL, links.BranchPRURL)
+	assert.Equal(t, "open", links.BranchPRState)
+	assert.Equal(t, 42, links.StartupPRNumber)
+
+	// The reverse holds too: the statusbar saw a PR this daemon's own
+	// resolution has not caught up with.
+	ws.PRNumber, ws.PRURL, ws.PRState = 42, prURL, "open"
+	links = branchLinksForParts("conv", loc, ws,
+		func(string, string) (string, int, string, string, time.Time) {
+			return "https://github.com/o/r/compare/main...feature", 0, "", "", now
+		})
+	assert.Equal(t, 42, links.BranchPRNumber,
+		"and a branch cache that has not seen it must not erase the workspace's")
+	assert.Equal(t, prURL, links.BranchPRURL)
+}
+
 // resolverReturning installs a git-info resolver fake that reports a
 // fixed PR for any branch, and returns a restore closure.
 func resolverReturning(prNumber int, prURL, prState string) func() {
@@ -191,6 +240,85 @@ func TestRefreshBranchLink_DoesNotWipePROnResolverMiss(t *testing.T) {
 	require.Len(t, rows, 1)
 	assert.Equal(t, 42, rows[0].PRNumber, "a PR-less resolution must not wipe the snapshot")
 	assert.Equal(t, "open", rows[0].PRState)
+}
+
+// TestGHPRForBranchRefusesToLetABranchNameARepository pins the gate where a
+// branch string becomes argv.
+//
+// The branch reaching this file is NOT daemon-derived, despite arriving through
+// agent.ResolveLocation: it comes from `agent_workspace` (written verbatim by
+// the agent's own statusline broker) or from `conv_index.git_branch` (a
+// free-form transcript string). So it is attacker-chosen text handed to a
+// subprocess run with the operator's GitHub credentials.
+func TestGHPRForBranchRefusesToLetABranchNameARepository(t *testing.T) {
+	for _, branch := range []string{
+		"https://github.com/victim/private/pull/1",
+		"-R victim/private",
+		"--repo=victim/private",
+		"feature branch",
+		"feat/../../etc",
+		"HEAD",
+		"",
+	} {
+		t.Run(branch, func(t *testing.T) {
+			assert.False(t, safeBranchForGH("/repo", branch),
+				"this shape must never be handed to gh")
+		})
+	}
+	for _, branch := range []string{"feature", "feat/thing", "release/1.2"} {
+		t.Run("allows "+branch, func(t *testing.T) {
+			assert.True(t, safeBranchForGH("/repo", branch),
+				"an ordinary branch name must still resolve")
+		})
+	}
+}
+
+// TestGHPRListArgsCannotNameARepository covers what no charset gate can.
+//
+// `github.com/victim/private/pull/1` and a bare `1` are LEGAL git ref names, so
+// validateBranchName admits them and should: refusing every legal branch that
+// resembles a URL would be guesswork. What makes them harmless is the argv
+// shape — `pr list --head <branch>` filters by branch, while the `pr view
+// <branch>` this replaced accepts `<number> | <url> | <branch>` in ONE
+// positional slot and would have read them as a pull-request id and a
+// repository URL. Reverting the shape silently restores that for exactly the
+// inputs the charset gate lets through, so it is pinned here.
+func TestGHPRListArgsCannotNameARepository(t *testing.T) {
+	for _, branch := range []string{
+		"github.com/victim/private/pull/1",
+		"1",
+		"feature",
+		// Branch names that collide with a literal already in the argv. All
+		// four are legal git refs, and each would defeat a check that located
+		// the branch by SEARCHING for it: "pr" and "list" match the command
+		// name, "all" the --state value, "10" the --limit value. Hence the
+		// positional assertion below rather than a search.
+		"pr",
+		"list",
+		"all",
+		"10",
+	} {
+		t.Run(branch, func(t *testing.T) {
+			for _, rich := range []bool{true, false} {
+				args := ghPRListArgs(branch, rich)
+
+				// The whole argv is fixed literals except one slot. Pinning it
+				// exactly is what proves the branch is ONLY ever the value of
+				// --head: a second occurrence, as the bare positional `pr view`
+				// took, would change this prefix or the length.
+				want := []string{"pr", "list", "--head", branch,
+					"--state", "all", "--limit", "10", "--json"}
+				require.Len(t, args, len(want)+1,
+					"the argv is that fixed prefix plus exactly one --json field list")
+				assert.Equal(t, want, args[:len(want)],
+					"never `pr view`, whose positional accepts a number or a URL")
+				assert.Equal(t, branch, args[3],
+					"the branch may only ever be the VALUE of --head")
+				assert.NotContains(t, args[len(want):], branch,
+					"the field list is a fixed literal and must never carry caller data")
+			}
+		})
+	}
 }
 
 func TestPRStateFromGHFoldsDraftIntoItsOwnState(t *testing.T) {

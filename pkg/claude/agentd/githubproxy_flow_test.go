@@ -791,6 +791,57 @@ func TestGHProxy_PRListMapsTheStateVocabulary(t *testing.T) {
 	}
 }
 
+// TestGHProxy_PRListFiltersByHeadBranch — `--head` is the only way to get from
+// a branch name to its pull request through this proxy: every other verb takes
+// a number. It is what lets an agent that just pushed, and the status bar
+// rendering its pane, ask "is there a PR for this branch?" at all.
+//
+// The omitted case is the half that can break silently. An empty filter must
+// reach GraphQL as null — "every branch" — because the empty STRING is a
+// branch name that matches nothing, so a regression there would answer every
+// unfiltered listing with an empty array rather than an error.
+func TestGHProxy_PRListFiltersByHeadBranch(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body map[string]any
+		want any
+	}{
+		{"named branch", map[string]any{"head": "feat/thing"}, "feat/thing"},
+		{"surrounding whitespace is trimmed", map[string]any{"head": "  feat/thing  "}, "feat/thing"},
+		{"omitted", map[string]any{}, nil},
+		{"blank", map[string]any{"head": "   "}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, _, gh := ghWorld(t, []string{"github.com/tofutools"})
+			gh.def = ghCanned{Status: 200, Body: `{"data":{"repository":{"pullRequests":{"nodes":[]}}}}`}
+			require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+
+			res := gitProxyPost(t, f, "/v1/github/pr/list", tc.body)
+			require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+			_, vars := graphqlVars(t, gh.only(t))
+			assert.Equal(t, tc.want, vars["head"])
+		})
+	}
+}
+
+// TestGHProxy_PRListRefusesAnInvalidHeadBranch — the head filter is a git ref
+// name and goes through the same gate every other ref in this proxy does, so a
+// caller cannot smuggle a shape past it just because this one lands in a
+// GraphQL variable rather than an argv.
+func TestGHProxy_PRListRefusesAnInvalidHeadBranch(t *testing.T) {
+	f, _, gh := ghWorld(t, []string{"github.com/tofutools"})
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+
+	for _, head := range []string{"--upload-pack=id", "feat/../../etc", "feat thing", "HEAD"} {
+		t.Run(head, func(t *testing.T) {
+			res := gitProxyPost(t, f, "/v1/github/pr/list", map[string]any{"head": head})
+			assert.Equal(t, http.StatusBadRequest, res.Code, "body=%s", res.Body.String())
+		})
+	}
+	assert.Equal(t, 0, gh.count(), "no invalid branch filter may reach GitHub")
+}
+
 // TestGHProxy_PRViewRendersTheDocumentedFieldSet pins the answer's shape.
 //
 // The field vocabulary is a contract: the bundled skill and every agent written

@@ -432,7 +432,7 @@ func TestGraphQLVariablesMatchTheDocuments(t *testing.T) {
 		doc  string
 		vars []string
 	}{
-		{"pr list", ghPRListQuery, []string{"owner", "name", "limit", "states"}},
+		{"pr list", ghPRListQuery, []string{"owner", "name", "limit", "states", "head"}},
 		{"pr view", ghPRViewQuery, []string{"owner", "name", "number"}},
 		{"pr checks", ghPRChecksQuery, []string{"owner", "name", "number"}},
 		{"issue list", ghIssueListQuery, []string{"owner", "name", "limit", "states"}},
