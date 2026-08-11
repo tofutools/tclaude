@@ -49,7 +49,7 @@ import (
 // Opt-in and network-dependent, like the dashsnap harness: it is not wired
 // into CI. Run it with
 //
-//	TCLAUDE_LINEAR_SCHEMA_CHECK=1 go test ./pkg/claude/agentd/ -run TestLinearQueryDocuments -v
+//	TCLAUDE_LINEAR_SCHEMA_CHECK=1 go test ./pkg/claude/agentd/ -run 'TestLinear.*MatchLiveSchema' -v
 func TestLinearQueryDocumentsMatchLiveSchema(t *testing.T) {
 	if os.Getenv("TCLAUDE_LINEAR_SCHEMA_CHECK") == "" {
 		t.Skip("set TCLAUDE_LINEAR_SCHEMA_CHECK=1 to validate the GraphQL documents against api.linear.app")

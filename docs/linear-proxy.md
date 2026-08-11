@@ -478,7 +478,7 @@ validates a document before it authenticates, so a well-formed query comes back
 `GRAPHQL_VALIDATION_FAILED`:
 
 ```bash
-TCLAUDE_LINEAR_SCHEMA_CHECK=1 go test ./pkg/claude/agentd/ -run TestLinearQueryDocuments -v
+TCLAUDE_LINEAR_SCHEMA_CHECK=1 go test ./pkg/claude/agentd/ -run 'TestLinear.*MatchLiveSchema' -v
 ```
 
 It is not wired into CI (it needs the network). Run it when you touch
