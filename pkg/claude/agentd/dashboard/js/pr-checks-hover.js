@@ -251,12 +251,57 @@ export function elapsed(check, now = Date.now()) {
   const started = Date.parse(check?.started_at || '');
   if (!Number.isFinite(started)) return '';
   const ended = Date.parse(check?.completed_at || '');
-  const end = Number.isFinite(ended) ? ended : now;
+  // GitHub/older daemon responses can carry Go's zero-time sentinel for an
+  // unfinished check. It parses successfully, but is not a completion: using
+  // it produces a negative duration that would otherwise be frozen at 0s.
+  const end = Number.isFinite(ended) && ended >= started ? ended : now;
   const seconds = Math.max(0, Math.round((end - started) / 1000));
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m ${String(seconds % 60).padStart(2, '0')}s`;
   return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`;
+}
+
+// A pending bucket also includes checks GitHub has merely queued. Only a
+// check with a usable start and no usable completion is actively running and
+// should receive motion (and drive the local elapsed clock).
+export function isRunningCheck(check) {
+  if (check?.bucket !== 'pending' || check?.conclusion !== 'in progress') return false;
+  const started = Date.parse(check?.started_at || '');
+  if (!Number.isFinite(started)) return false;
+  const ended = Date.parse(check?.completed_at || '');
+  return !Number.isFinite(ended) || ended < started;
+}
+
+// orderChecks keeps the rows that need attention inside the first screenful:
+// failures, actively running checks, queued/pending checks, then completed
+// successes and skips. Names break ties inside those groups so the order stays
+// predictable as GitHub returns checks in different workflow orders.
+export function orderChecks(checks) {
+  const rank = (check) => {
+    if (check?.bucket === 'fail') return 0;
+    if (isRunningCheck(check)) return 1;
+    if (check?.bucket === 'pending') return 2;
+    if (check?.bucket === 'pass' || check?.bucket === 'skipped') return 3;
+    return 4;
+  };
+  return [...(checks || [])].sort((a, b) => {
+    const statusOrder = rank(a) - rank(b);
+    if (statusOrder) return statusOrder;
+    return String(a?.name || '').localeCompare(String(b?.name || ''), undefined, {
+      sensitivity: 'base',
+    });
+  });
+}
+
+// The right-hand column is runtime only when a check actually ran. GitHub can
+// attach a timestamp to queued/waiting checks, but counting from it implies
+// execution has begun; keep those rows honest by showing their state instead.
+export function checkTimeLabel(check, now = Date.now()) {
+  if (check?.bucket === 'pending' && !isRunningCheck(check)) {
+    return check?.conclusion || 'pending';
+  }
+  return elapsed(check, now) || '—';
 }
 
 export function summaryLine(summary) {
@@ -349,8 +394,9 @@ function usePRChecks(url, open) {
 }
 
 function CheckRow({ check, now }) {
-  const time = elapsed(check, now);
+  const time = checkTimeLabel(check, now);
   const href = safeCheckURL(check.url);
+  const running = isRunningCheck(check);
   const body = html`
     <span class="ci-check-body">
       <span class="ci-check-name">${check.name}</span>
@@ -361,11 +407,12 @@ function CheckRow({ check, now }) {
   `;
   return html`
     <li class=${`ci-check ci-check-${check.bucket || 'pending'}`}>
-      <span class=${`ci-check-icon ci-icon-${check.bucket || 'pending'}`} aria-hidden="true">${bucketGlyph(check.bucket)}</span>
+      <span class=${`ci-check-icon ci-icon-${check.bucket || 'pending'}${running ? ' ci-check-running' : ''}`}
+        aria-hidden="true">${bucketGlyph(check.bucket)}</span>
       ${href
         ? html`<a class="ci-check-link" href=${href} target="_blank" rel="noopener noreferrer">${body}</a>`
         : body}
-      <span class="ci-check-time">${time || '—'}</span>
+      <span class="ci-check-time">${time}</span>
     </li>
   `;
 }
@@ -374,7 +421,19 @@ function PRChecksPanel({ url, prNumber, summary, panelID, headingID, state, pane
   const { data, error, loading } = state;
   const live = data?.summary && (data.summary.total || 0) > 0 ? data.summary : summary;
   const checks = data?.checks || [];
-  const now = Date.now();
+  const orderedChecks = orderChecks(checks);
+  const [now, setNow] = useState(() => Date.now());
+  const hasRunningClock = checks.some(isRunningCheck);
+
+  // Polling replaces the source data every few seconds; this clock fills the
+  // gaps so an open popover visibly counts up from the last reported start.
+  // Completed and queued-without-a-start rows need no timer.
+  useEffect(() => {
+    setNow(Date.now());
+    if (!hasRunningClock) return undefined;
+    const timer = globalThis.setInterval(() => setNow(Date.now()), 1000);
+    return () => globalThis.clearInterval(timer);
+  }, [hasRunningClock]);
   // Until the first measurement lands the panel is hidden rather than drawn
   // at a guessed position and moved: a tooltip that jumps on open reads as a
   // glitch. It is one layout effect away, so nothing perceptible is lost.
@@ -386,13 +445,15 @@ function PRChecksPanel({ url, prNumber, summary, panelID, headingID, state, pane
     <div ref=${panelRef} class="ci-panel" style=${style}
       id=${panelID} role="dialog" aria-labelledby=${headingID}>
       <div class="ci-panel-heading" id=${headingID}>
-        <span class="theme-copy-regular">${prNumber ? `#${prNumber} · checks` : 'Pull request checks'}</span>
-        <span class="theme-copy-wizard">${prNumber ? `#${prNumber} · omens of the rite` : 'Omens of the rite'}</span>
+        <a href=${badgeHref(summary, url)} target="_blank" rel="noopener noreferrer">
+          <span class="theme-copy-regular">${prNumber ? `#${prNumber} · checks` : 'Pull request checks'}</span>
+          <span class="theme-copy-wizard">${prNumber ? `#${prNumber} · omens of the rite` : 'Omens of the rite'}</span>
+        </a>
       </div>
       <div class="ci-panel-summary">${summaryLine(live)}</div>
       ${checks.length ? html`
         <ul class="ci-checks">
-          ${checks.map((check, index) => html`
+          ${orderedChecks.map((check, index) => html`
             <${CheckRow} key=${`${check.name}:${index}`} check=${check} now=${now} />
           `)}
         </ul>

@@ -69,6 +69,8 @@ func TestDashboardConfigPreactBoundary(t *testing.T) {
 		t.Error("web terminal attachment controls are not grouped after Window focus and before the remaining terminal settings")
 	}
 	for _, needle := range []string{
+		`<${ConfigSelect} id="cfg-terminal" aria-label="Terminal emulator">`,
+		`<option value="">Auto-detect (default)</option>`,
 		`class="cfg-terminal-attach-timings"`,
 		`id="cfg-terminal-attach-mode"`,
 		`id="cfg-terminal-attach-initial-delay"`,
@@ -78,6 +80,9 @@ func TestDashboardConfigPreactBoundary(t *testing.T) {
 		if !strings.Contains(markup, needle) {
 			t.Errorf("web terminal attachment layout missing %q", needle)
 		}
+	}
+	if strings.Contains(markup, `id="cfg-terminal-list"`) {
+		t.Error("terminal picker retains the retired datalist instead of the standard config dropdown")
 	}
 	for _, needle := range []string{
 		"checked = !!a.persist_operator_token_keychain",

@@ -20,7 +20,7 @@ import (
 //   - DefaultBranch  the repo's default branch (main/master/...)
 //   - PRNumber       open PR # for Branch; 0 = none
 //   - PRURL          web link to that PR
-//   - PRState        open|merged|closed; "" = no PR
+//   - PRState        open|draft|merged|closed; "" = no PR
 //   - UpdatedAt      freshness clock ResolveLocation compares against
 type AgentWorkspace struct {
 	ConvID        string

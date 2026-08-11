@@ -485,6 +485,16 @@ Hovering the glyph shows the compact summary and any persisted access warnings:
 - `Profile`: the applied tclaude sandbox-profile names in resolution order,
   `None` when the launch recorded an empty profile chain, or `Not recorded` for
   an older row.
+- `Cgroup`, `Memory limit`, and `CPU limit` when — and only when — the launch
+  asked for its own Linux cgroup v2, either because a ceiling was authored or
+  because the `resource-only` implementation requests the accounting boundary on
+  its own. The ceilings show the operator's authored spelling (`8GiB`,
+  `2.5 cores`) or `unlimited` for an axis with no ceiling, and `Cgroup` reads
+  `requested — not enforced` when a recorded `resource_limits` notice says the
+  launch proceeded without it. Launches with no cgroup show none of these lines:
+  resource limits are a separate axis from confinement — they bound how much a
+  workload may consume, never what it may reach — so a `resource-only` agent
+  correctly reports `Status: OFF` beside `Cgroup: on`.
 - Zero or more `Warning:` lines for persisted sandbox access notices. These
   report launch-specific access composition, enforcement degradation, or
   materialization warnings; they are distinct from the removed provenance and

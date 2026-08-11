@@ -28,7 +28,9 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 test('the CI badge summarizes checks and opens a panel on hover', async (t) => {
   const harness = await createPreactHarness(t);
   const mod = await harness.importDashboardModule('js/pr-checks-hover.js');
-  const { PRChecksBadge, checkDenominator, elapsed, summaryLine } = mod;
+  const {
+    PRChecksBadge, checkDenominator, checkTimeLabel, elapsed, isRunningCheck, orderChecks, summaryLine,
+  } = mod;
 
   await t.test('skipped checks leave the denominator', () => {
     // 12/14 must mean "twelve of the fourteen that had to run" — counting two
@@ -41,11 +43,59 @@ test('the CI badge summarizes checks and opens a panel on hover', async (t) => {
     const now = Date.parse('2026-08-09T10:03:30Z');
     assert.equal(elapsed({ started_at: '2026-08-09T10:00:00Z' }, now), '3m 30s');
     assert.equal(
+      elapsed({ started_at: '2026-08-09T10:00:00Z', completed_at: '0001-01-01T00:00:00Z' }, now),
+      '3m 30s',
+      'GitHub zero-time means the check is still running',
+    );
+    assert.equal(
       elapsed({ started_at: '2026-08-09T10:00:00Z', completed_at: '2026-08-09T10:00:42Z' }, now),
       '42s',
       'a completed check keeps its final duration, not the age of the cache',
     );
     assert.equal(elapsed({}, now), '');
+
+    assert.equal(isRunningCheck({
+      bucket: 'pending', conclusion: 'in progress', started_at: '2026-08-09T10:00:00Z',
+    }), true);
+    assert.equal(isRunningCheck({
+      bucket: 'pending', conclusion: 'queued', started_at: '2026-08-09T10:00:00Z',
+    }), false, 'a queued check stays static even if GitHub supplied a timestamp');
+    assert.equal(isRunningCheck({
+      bucket: 'pending', conclusion: 'in progress', started_at: '2026-08-09T10:00:00Z',
+      completed_at: '2026-08-09T10:00:42Z',
+    }), false, 'a completed check stays static even before its next status poll');
+    assert.equal(isRunningCheck({ bucket: 'pass', started_at: '2026-08-09T10:00:00Z' }), false);
+
+    assert.equal(checkTimeLabel({
+      bucket: 'pending', conclusion: 'queued', started_at: '2026-08-09T10:00:00Z',
+    }, now), 'queued', 'queued is a state, not an extrapolated runtime');
+    assert.equal(checkTimeLabel({
+      bucket: 'pending', conclusion: 'waiting', started_at: '2026-08-09T10:00:00Z',
+    }, now), 'waiting');
+    assert.equal(checkTimeLabel({
+      bucket: 'pending', conclusion: 'in progress', started_at: '2026-08-09T10:00:00Z',
+    }, now), '3m 30s');
+  });
+
+  await t.test('checks are ordered by attention state, then name', () => {
+    const checks = [
+      { name: 'Zulu success', bucket: 'pass', conclusion: 'success' },
+      { name: 'Beta queued', bucket: 'pending', conclusion: 'queued' },
+      { name: 'Zulu failure', bucket: 'fail', conclusion: 'failure' },
+      { name: 'Alpha skipped', bucket: 'skipped', conclusion: 'skipped' },
+      { name: 'Alpha running', bucket: 'pending', conclusion: 'in progress', started_at: '2026-08-09T10:00:00Z' },
+      { name: 'Alpha failure', bucket: 'fail', conclusion: 'timed out' },
+      { name: 'Alpha pending', bucket: 'pending', conclusion: 'pending' },
+      { name: 'Beta running', bucket: 'pending', conclusion: 'in progress', started_at: '2026-08-09T10:00:00Z' },
+    ];
+
+    assert.deepEqual(orderChecks(checks).map((check) => check.name), [
+      'Alpha failure', 'Zulu failure',
+      'Alpha running', 'Beta running',
+      'Alpha pending', 'Beta queued',
+      'Alpha skipped', 'Zulu success',
+    ]);
+    assert.equal(checks[0].name, 'Zulu success', 'sorting must not mutate the API payload');
   });
 
   await t.test('a hostile check URL never becomes a live link', () => {
@@ -266,6 +316,10 @@ test('the panel fetches only while it is open', async (t) => {
     assert.match(rows[0].textContent, /test \/ go test/);
     assert.match(rows[0].textContent, /CI · failure/);
     assert.match(rows[0].textContent, /3m 12s/, 'each check shows how long it took');
+    const heading = panel.querySelector('.ci-panel-heading a');
+    assert.equal(heading.getAttribute('href'), mounted.container.querySelector('.ci-badge').getAttribute('href'),
+      'the popover title uses the same CI summary target as the badge');
+    assert.equal(heading.getAttribute('target'), '_blank');
     assert.match(panel.querySelector('.ci-panel-note a').getAttribute('href'), /\/pull\/2151\/checks$/);
     // A check whose details URL the server refused renders unlinked rather
     // than as an href the reader would trust.
@@ -279,6 +333,69 @@ test('the panel fetches only while it is open', async (t) => {
     const settled = calls.length;
     await new Promise((resolve) => setTimeout(resolve, 30));
     assert.equal(calls.length, settled, 'no polling continues after the pointer leaves');
+  } finally {
+    await mounted.unmount();
+  }
+});
+
+test('a running check ticks locally between polls', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { PRChecksBadge } = await harness.importDashboardModule('js/pr-checks-hover.js');
+  stubFetch(t, () => ({
+    summary: { total: 1, passed: 0, failed: 0, pending: 1, skipped: 0, state: 'pending' },
+    checks: [{
+      name: 'test', bucket: 'pending', conclusion: 'in progress', source: 'CI',
+      started_at: '2026-08-09T10:00:00Z', completed_at: '0001-01-01T00:00:00Z',
+    }],
+    resolved: true,
+  }));
+
+  let now = Date.parse('2026-08-09T10:03:30Z');
+  const savedNow = Date.now;
+  const savedSetInterval = globalThis.setInterval;
+  const savedClearInterval = globalThis.clearInterval;
+  const intervals = new Map();
+  let nextInterval = 1;
+  Date.now = () => now;
+  globalThis.setInterval = (callback, milliseconds) => {
+    assert.equal(milliseconds, 1000, 'the elapsed clock updates once per second');
+    const id = nextInterval++;
+    intervals.set(id, callback);
+    return id;
+  };
+  globalThis.clearInterval = (id) => intervals.delete(id);
+  t.after(() => {
+    Date.now = savedNow;
+    globalThis.setInterval = savedSetInterval;
+    globalThis.clearInterval = savedClearInterval;
+  });
+
+  const mounted = await harness.mount(harness.html`
+    <${PRChecksBadge} url=${PR} prNumber=${2166}
+      summary=${{ total: 1, passed: 0, failed: 0, pending: 1, skipped: 0, state: 'pending' }} />
+  `);
+  try {
+    const root = mounted.container.querySelector('.ci-hover');
+    await harness.act(() => { harness.fireEvent(root, 'mouseenter'); });
+    await flush();
+    await harness.act(async () => {});
+
+    const time = () => mounted.container.querySelector('.ci-check-time')?.textContent;
+    assert.equal(time(), '3m 30s');
+    assert.ok(mounted.container.querySelector('.ci-check-icon').classList.contains('ci-check-running'),
+      'a started pending check receives the spinner class');
+    // Preact deliberately schedules passive effects after paint; let that
+    // queue flush before inspecting the interval it installed.
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    await harness.act(async () => {});
+    assert.equal(intervals.size, 1, 'one local clock runs while a started check is pending');
+
+    now += 1000;
+    await harness.act(() => { [...intervals.values()][0](); });
+    assert.equal(time(), '3m 31s', 'the display advances without waiting for another fetch');
+
+    await harness.act(() => { harness.fireEvent(root, 'mouseleave'); });
+    assert.equal(intervals.size, 0, 'closing the popover stops its local clock');
   } finally {
     await mounted.unmount();
   }

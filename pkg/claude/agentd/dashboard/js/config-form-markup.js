@@ -142,15 +142,21 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       <h3>Terminals & windows</h3>
       <div class="cfg-field">
         <span class="cfg-label">Terminal</span>
-        <${ConfigInput} type="text" id="cfg-terminal" list="cfg-terminal-list" placeholder="(auto-detect)" aria-label="Terminal emulator" autocomplete="off" spellcheck="false" />
-        <datalist id="cfg-terminal-list">
-          <option value="ghostty"></option><option value="kitty"></option>
-          <option value="wezterm"></option><option value="alacritty"></option>
-          <option value="foot"></option><option value="iterm2"></option>
-          <option value="konsole"></option><option value="gnome-terminal"></option>
-          <option value="xfce4-terminal"></option><option value="x-terminal-emulator"></option>
-          <option value="xterm"></option><option value="terminal-app"></option>
-        </datalist>
+        <${ConfigSelect} id="cfg-terminal" aria-label="Terminal emulator">
+          <option value="">Auto-detect (default)</option>
+          <option value="ghostty">Ghostty</option>
+          <option value="kitty">Kitty</option>
+          <option value="wezterm">WezTerm</option>
+          <option value="alacritty">Alacritty</option>
+          <option value="foot">Foot</option>
+          <option value="iterm2">iTerm2</option>
+          <option value="konsole">Konsole</option>
+          <option value="gnome-terminal">GNOME Terminal</option>
+          <option value="xfce4-terminal">Xfce Terminal</option>
+          <option value="x-terminal-emulator">System terminal (x-terminal-emulator)</option>
+          <option value="xterm">XTerm</option>
+          <option value="terminal-app">Terminal.app</option>
+        </${ConfigSelect}>
         <span class="cfg-hint">Terminal emulator the dashboard's spawn auto-focus / shell-attach opens. Empty = auto-detect.</span>
       </div>
       <div class="cfg-field">
@@ -399,6 +405,14 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
 
     <div class="cfg-section">
       <h3>Spawn & clone policy</h3>
+      <div class="cfg-field cfg-checkbox-stack-field">
+        <span class="cfg-label">Terminal startup groups</span>
+        <div class="cfg-checkbox-stack">
+          <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-session-auto-join-group" /> a bare <code>tclaude</code> joins the group configured for its directory</label>
+          <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-session-auto-join-or-create-group" /> create and join a directory group when none exists</label>
+        </div>
+        <span class="cfg-hint">The launch directory and every group's <strong>default dir</strong> are compared as canonical absolute paths (including symlink resolution). Auto-join is on by default; auto-create is off. CLI flags <code>--auto-join-group[=false]</code> and <code>--auto-join-or-create-group[=false]</code> override these settings for one launch. An explicit <code>--join-group</code> always wins. Stored under <code>session</code>.</span>
+      </div>
       <div class="cfg-field">
         <span class="cfg-label">Spawn restriction</span>
         <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-agent-spawnrestrict" /> agents may only spawn into groups they belong to</label>

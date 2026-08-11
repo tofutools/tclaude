@@ -17,7 +17,7 @@ func TestParseStatusCheckRollupBuckets(t *testing.T) {
 		 "workflowName":"CI","detailsUrl":"https://github.com/o/r/runs/1",
 		 "startedAt":"2026-08-09T10:00:00Z","completedAt":"2026-08-09T10:03:12Z"},
 		{"__typename":"CheckRun","name":"lint","status":"IN_PROGRESS","conclusion":"",
-		 "workflowName":"CI","startedAt":"2026-08-09T10:00:00Z"},
+		 "workflowName":"CI","startedAt":"2026-08-09T10:00:00Z","completedAt":"0001-01-01T00:00:00Z"},
 		{"__typename":"CheckRun","name":"flaky","status":"COMPLETED","conclusion":"CANCELLED"},
 		{"__typename":"CheckRun","name":"neutral-job","status":"COMPLETED","conclusion":"NEUTRAL"},
 		{"__typename":"CheckRun","name":"docs-only","status":"COMPLETED","conclusion":"SKIPPED"},
@@ -47,6 +47,9 @@ func TestParseStatusCheckRollupBuckets(t *testing.T) {
 		if buckets[name] != want {
 			t.Errorf("%s bucket = %q, want %q", name, buckets[name], want)
 		}
+	}
+	if got := info.Checks[1].CompletedAt; got != "" {
+		t.Errorf("in-progress completed_at = %q, want GitHub's zero-time sentinel normalized away", got)
 	}
 
 	s := info.Summary

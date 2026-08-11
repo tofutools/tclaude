@@ -713,6 +713,20 @@ export async function handleRowAction(action) {
         refresh();
         return;
       }
+      case 'set-default-spawn-group': {
+        const enabled = data.enabled !== '1';
+        const r = await fetch(`/api/groups/${encodeURIComponent(group)}`, {
+          method: 'PATCH', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ default_spawn_group: enabled }),
+        });
+        if (!r.ok) { toast(`set directory auto-join default failed: ${await r.text()}`, true); return; }
+        toast(enabled
+          ? `${group}: directory auto-join default selected`
+          : `${group}: directory auto-join default cleared`);
+        refresh();
+        return;
+      }
       // 'set-group-model' was retired with the per-group default_model
       // (JOH-210): the group 🧠 chip is now a clickable spawn-profile picker
       // (set-group-profile, above), not a model editor. No data-act emits

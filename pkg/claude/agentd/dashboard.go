@@ -1370,9 +1370,11 @@ type dashboardHarness struct {
 	CanContextWindowMax bool `json:"can_context_window_max"`
 	// CanCopilotAPI is the Copilot-only API-backed-drive opt-in. The spawn
 	// dialog and profile editor gate their checkbox on it.
-	CanCopilotAPI     bool `json:"can_copilot_api"`
-	CanCodexAppServer bool `json:"can_codex_app_server"`
-	CanFastMode       bool `json:"can_fast_mode"`
+	CanCopilotAPI             bool   `json:"can_copilot_api"`
+	CanCodexAppServer         bool   `json:"can_codex_app_server"`
+	CodexNativeRegistryReady  bool   `json:"codex_native_registry_ready"`
+	CodexNativeRegistryReason string `json:"codex_native_registry_reason,omitempty"`
+	CanFastMode               bool   `json:"can_fast_mode"`
 	// CanTclaudeLayer reports whether the EXPERIMENTAL tclaude-layer sandbox
 	// implementation can confine this harness's authoritative tool executor.
 	// Read through the capability path (session.ValidateTclaudeLayerHarness),
@@ -1459,6 +1461,13 @@ func buildHarnessCatalog() []dashboardHarness {
 		if h.Name == harness.OpenCodeName {
 			dh.ProfileRecommendedApproval = harness.OpenCodeApprovalAllowTools
 			dh.ProfileRecommendedSandboxImplementation = string(sandboxpolicy.ImplementationTclaudeLayer)
+		}
+		if h.Name == harness.CodexName {
+			if registryErr := codexNativeRegistryReadiness(); registryErr == nil {
+				dh.CodexNativeRegistryReady = true
+			} else {
+				dh.CodexNativeRegistryReason = registryErr.Error()
+			}
 		}
 		if dh.CanAutoCompactWindow {
 			dh.AutoCompactWindowMin = harness.MinAutoCompactWindow
@@ -1618,11 +1627,12 @@ type dashboardGroup struct {
 	AttachmentURL              string                     `json:"attachment_url,omitempty"`
 	AttachmentLabel            string                     `json:"attachment_label,omitempty"`
 	AttachmentLabelOverride    string                     `json:"attachment_label_override,omitempty"`
-	DefaultCwd                 string                     `json:"default_cwd"`     // pre-fills the spawn form's cwd; "" = none
-	DefaultContext             string                     `json:"default_context"` // shared startup context injected into spawned agents; "" = none
-	DefaultProfile             string                     `json:"default_profile"` // spawn profile whose launch fields fill blank spawn fields for this group's agents; "" = none (the spawn default's single source — the vestigial default_model was dropped, JOH-220)
-	SandboxProfile             string                     `json:"sandbox_profile"` // filesystem/environment profile assigned to this group; "" = inherit global
-	Permissions                []string                   `json:"permissions"`     // live additive grants held by current group members
+	DefaultCwd                 string                     `json:"default_cwd"`                   // pre-fills the spawn form's cwd; "" = none
+	DefaultSpawnGroup          bool                       `json:"default_spawn_group,omitempty"` // directory auto-join ambiguity tie-breaker
+	DefaultContext             string                     `json:"default_context"`               // shared startup context injected into spawned agents; "" = none
+	DefaultProfile             string                     `json:"default_profile"`               // spawn profile whose launch fields fill blank spawn fields for this group's agents; "" = none (the spawn default's single source — the vestigial default_model was dropped, JOH-220)
+	SandboxProfile             string                     `json:"sandbox_profile"`               // filesystem/environment profile assigned to this group; "" = inherit global
+	Permissions                []string                   `json:"permissions"`                   // live additive grants held by current group members
 	PermissionScopes           map[string]PermissionScope `json:"permission_scopes,omitempty"`
 	UnreadablePermissionScopes []string                   `json:"unreadable_permission_scopes,omitempty"`
 	// OwnerScopes narrows this group's STRUCTURAL owner-implied permission
@@ -2237,6 +2247,25 @@ type agentState struct {
 	// It is a different fact from "the tiers resolved to nothing"; the compact
 	// badge intentionally displays both as "Profile: None".
 	SandboxProfilesOmitted bool `json:"sandbox_profiles_omitted,omitempty"`
+	// ResourceCgroup reports that this launch asked for its own Linux cgroup v2
+	// — because a ceiling was authored, or because `resource-only` requests the
+	// accounting boundary on its own. It is the request the launch recorded, not
+	// a live kernel readback; a launch that was allowed to proceed without the
+	// cgroup discloses that through a resource_limits access notice, which the
+	// badge already surfaces alongside this.
+	//
+	// Resource limits are an axis of their own: they bound how MUCH a workload
+	// may consume, never WHAT it may reach. So they are reported next to the
+	// sandbox posture rather than folded into it — a `resource-only` agent has
+	// a cgroup and no access boundary at all.
+	ResourceCgroup bool `json:"resource_cgroup,omitempty"`
+	// ResourceMemoryLimit is the operator's authored memory ceiling spelling
+	// ("8GiB", "4GB"), kept verbatim so the tooltip shows what was written
+	// rather than a re-rendered byte count. Empty means no memory ceiling.
+	ResourceMemoryLimit string `json:"resource_memory_limit,omitempty"`
+	// ResourceCPULimit is the authored CPU ceiling in cores. nil means no CPU
+	// ceiling; a cgroup can exist with neither ceiling set.
+	ResourceCPULimit *float64 `json:"resource_cpu_limit,omitempty"`
 	// RemoteControl is tclaude's best-known state of whether the harness's
 	// built-in Remote Access is enabled for this agent (JOH-256). It is a
 	// best-known flag — the harness exposes no readback, so the dashboard
@@ -2370,9 +2399,29 @@ func stateForConvInSessionsBatched(
 		// and reconciles on the next refresh (the harness has no readback).
 		RemoteControl: pick.RemoteControl,
 	}
+	// resource-only requests the cgroup through the implementation alone, so this
+	// read must not require a launch snapshot to find the request: a direct
+	// `tclaude session new --sandbox-impl resource-only` and a CLI resume both
+	// record a row with no snapshot at all, and that is exactly the launch whose
+	// only purpose IS the cgroup. Both enforcement seams (session.newSession,
+	// prepareResourceCgroup) resolve it the same way.
+	var limits sandboxpolicy.ResourceLimits
 	if pick.EffectiveSandbox != nil {
 		out.SandboxAccessNotices = append([]sandboxpolicy.AccessNotice(nil),
 			pick.EffectiveSandbox.Effective.AccessNotices...)
+		limits = pick.EffectiveSandbox.Effective.ResourceLimits
+	}
+	implementation, implErr := sandboxpolicy.NormalizeImplementation(pick.SandboxImplementation)
+	if implErr != nil {
+		// An unrecognized implementation string cannot be resource-only, but an
+		// authored ceiling still requires the cgroup on its own.
+		implementation = sandboxpolicy.ImplementationHarnessBuiltin
+	}
+	out.ResourceCgroup = sandboxpolicy.ResourceCgroupRequested(limits, implementation)
+	out.ResourceMemoryLimit = limits.Memory
+	if limits.CPU != nil {
+		cpu := *limits.CPU
+		out.ResourceCPULimit = &cpu
 	}
 	// Codex records collaboration-child lifecycle in its rollout even when an
 	// explicit interrupt does not invoke the configured SubagentStop hook. The
@@ -3305,7 +3354,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			}
 		})
 		attachment := groupAttachmentViewFor(g)
-		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, AttachmentURL: attachment.URL, AttachmentLabel: attachment.Label, AttachmentLabelOverride: attachment.LabelOverride, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, DefaultProfile: g.DefaultProfile, SandboxProfile: g.SandboxProfile, Permissions: groupPermissions, PermissionScopes: groupPermissionScopes, UnreadablePermissionScopes: groupUnreadablePermissionScopes, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), OwnerScopes: ownerScopesWire(g.OwnerScopesJSON), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Scribe: isScribeGroup(g), RouteGeneration: g.RouteGeneration, Members: []dashboardMember{}}
+		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, AttachmentURL: attachment.URL, AttachmentLabel: attachment.Label, AttachmentLabelOverride: attachment.LabelOverride, DefaultCwd: g.DefaultCwd, DefaultSpawnGroup: g.DefaultSpawnGroup, DefaultContext: g.DefaultContext, DefaultProfile: g.DefaultProfile, SandboxProfile: g.SandboxProfile, Permissions: groupPermissions, PermissionScopes: groupPermissionScopes, UnreadablePermissionScopes: groupUnreadablePermissionScopes, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), OwnerScopes: ownerScopesWire(g.OwnerScopesJSON), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Scribe: isScribeGroup(g), RouteGeneration: g.RouteGeneration, Members: []dashboardMember{}}
 		if g.ParentGroupID != nil {
 			dg.Parent = groupNameByID[*g.ParentGroupID]
 		}

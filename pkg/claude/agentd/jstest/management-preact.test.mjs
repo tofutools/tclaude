@@ -50,6 +50,14 @@ async function waitForSelectorCount(harness, root, selector, count) {
   return [];
 }
 
+async function waitForCondition(harness, condition, message) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (condition()) return;
+    await harness.act(() => new Promise((resolve) => setTimeout(resolve, 10)));
+  }
+  assert.ok(condition(), message);
+}
+
 test('management model preserves full-replace profile and role semantics', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/management-model.js');
@@ -469,7 +477,12 @@ test('OpenCode profile editor replaces the unsandboxed warning with its tclaude-
   assert.equal(initialNotice.hidden, false, 'the live region remains in the accessibility tree');
   assert.match(initialNotice.className, /sandbox-info-pending/,
     'the empty live region is visually clipped without using hidden');
-  await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 260)); });
+  await waitForCondition(
+    harness,
+    () => probes.length > 0
+      && !host.querySelector('#profile-editor-sandbox-info')?.classList.contains('sandbox-info-pending'),
+    'timed out waiting for the sandbox boundary probe',
+  );
 
   assert.equal(probes.at(-1).sandboxImplementation, 'tclaude-layer');
   const notice = host.querySelector('#profile-editor-sandbox-info');
@@ -1276,7 +1289,18 @@ test('sandbox import accepts the current v2 export envelope', async (t) => {
   const state = createManagementState(); state.openDialog({ kind: 'sandbox-import' });
   let inspected = null;
   const actions = {
-    async inspectSandboxBundle(value) { inspected = value; return { profiles: value.profiles, warnings: [] }; },
+    async inspectSandboxBundle(value) {
+      inspected = value;
+      return {
+        profiles: value.profiles.map((profile) => ({
+          ...profile,
+          filesystem: [{ path: '/canonical/cache', access: 'read' }],
+          filesystem_spellings: { version: 1, rules: [{ resolved_path: '/canonical/cache', spellings: ['/portable/cache'] }] },
+          pre_launch: [{ name: 'prepare', script: 'export CACHE=/canonical/cache\n', exports: ['CACHE'] }],
+        })),
+        warnings: [],
+      };
+    },
     async importSandboxBundle() {},
   };
   const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
@@ -1284,7 +1308,10 @@ test('sandbox import accepts the current v2 export envelope', async (t) => {
   const envelope = { format: 'tclaude-sandbox-profiles', format_version: 2, profiles: [{ name: 'offline', network_access: 'none' }] };
   const raw = host.querySelector('#sandbox-profile-import-modal textarea'); raw.value = JSON.stringify(envelope); raw.dispatchEvent(new harness.window.Event('input', { bubbles: true })); await harness.act(() => Promise.resolve());
   const preview = [...host.querySelectorAll('#sandbox-profile-import-modal button')].find((button) => button.textContent === 'Preview'); preview.click(); await harness.act(() => Promise.resolve());
-  assert.deepEqual(inspected, envelope); assert.ok(host.querySelector('#sandbox-profile-import-modal .profile-transfer-list'));
+  assert.deepEqual(inspected, envelope); assert.ok(host.querySelector('#sandbox-profile-import-preview'));
+  assert.match(host.querySelector('.sbx-cap-alias').parentElement.textContent, /\/portable\/cache → \/canonical\/cache/);
+  const script = host.querySelector('.sandbox-import-script'); script.open = true;
+  assert.equal(script.querySelector('pre').textContent, 'export CACHE=/canonical/cache\n');
   cleanups.reverse().forEach((fn) => fn());
 });
 

@@ -74,6 +74,11 @@ let groupDragHandle = null;
 // the dragover pill + drop handler; dragover can't read the DataTransfer
 // payload (browsers gate getData to the drop event), so we stash it here.
 let groupDragName = null;
+// The last valid clone placement shown by dragover. Chrome on macOS can finish
+// a native copy without delivering a usable drop event to the document, so a
+// successful copy dragend needs enough immutable placement data to open the
+// same dialog. Cleared on every non-clone/invalid hover and during teardown.
+let groupCloneHoverPlan = null;
 
 
 // reorderTarget resolves the real-group <details> under the drag cursor,
@@ -87,6 +92,16 @@ function reorderTarget(e) {
 
 function groupTrashTarget(e) {
   return e.target.closest('#dnd-trash');
+}
+
+// isCloneDrop follows the native DnD operation first. Browsers preserve the
+// last accepted dragover effect for drop even when the platform stops exposing
+// the modifier key that selected it. The DOM marker and raw Ctrl/Cmd state
+// remain fallbacks for synthetic events and incomplete DataTransfer objects.
+function isCloneDrop(e, details) {
+  return e.dataTransfer?.dropEffect === 'copy'
+    || details?.classList.contains('group-drop-clone')
+    || !!(e.ctrlKey || e.metaKey);
 }
 
 // clearDropMarkers strips the insertion-line + nest-target classes from every
@@ -262,6 +277,24 @@ function applyGroupDrop(dragName, targetName, zone) {
   });
 }
 
+// finishGroupDrag handles the browser-guaranteed terminal event. Normally drop
+// consumes the plan and tears down first. If macOS Chrome omits that usable
+// drop, finish the exact clone placement that was still shown in green during
+// the last valid dragover. macOS Chrome reports dropEffect=none on this path,
+// so the accepted live plan is the reliable signal; Escape and document-leave
+// explicitly invalidate it before dragend.
+function finishGroupDrag() {
+  const clonePlan = groupCloneHoverPlan;
+  const dragName = groupDragName;
+  endGroupDrag();
+  if (!clonePlan || !dragName) return;
+  openGroupCloneModal(dragName, {
+    parent: clonePlan.desiredParent,
+    anchor: clonePlan.anchor,
+    before: clonePlan.before,
+  });
+}
+
 // endGroupDrag is the single teardown for a reorder drag: clear the active
 // flag, the dragged-source dimming, the drop-line markers and the pill.
 // Idempotent, so calling it from both the drop handler and dragend is safe.
@@ -270,7 +303,8 @@ function endGroupDrag() {
   // misrouted even if a DOM call below were to throw.
   groupReorderActive = false;
   groupDragName = null;
-  groupDragHandle?.removeEventListener('dragend', endGroupDrag);
+  groupCloneHoverPlan = null;
+  groupDragHandle?.removeEventListener('dragend', finishGroupDrag);
   groupDragHandle = null;
   $$('.group-reorder-source').forEach(d => d.classList.remove('group-reorder-source'));
   clearDropMarkers();
@@ -311,6 +345,9 @@ function bindGroupReorder() {
   });
   listen(document, 'pointerup', restoreSummaryDraggable);
   listen(document, 'pointercancel', restoreSummaryDraggable);
+  listen(document, 'keydown', (e) => {
+    if (groupReorderActive && e.key === 'Escape') groupCloneHoverPlan = null;
+  });
 
   listen(document, 'dragstart', (e) => {
     // The drag handle is the group header (<summary> with data-group-reorder);
@@ -322,9 +359,10 @@ function bindGroupReorder() {
     if (!name) return;
     groupReorderActive = true;
     groupDragName = name;
-    groupDragHandle?.removeEventListener('dragend', endGroupDrag);
+    groupCloneHoverPlan = null;
+    groupDragHandle?.removeEventListener('dragend', finishGroupDrag);
     groupDragHandle = handle;
-    handle.addEventListener('dragend', endGroupDrag, { once: true });
+    handle.addEventListener('dragend', finishGroupDrag, { once: true });
     // Custom MIME ONLY — see the module header for why text/plain is
     // withheld. copyMove lets Ctrl/Cmd switch the native cursor to the clone
     // operation while a plain drag remains a reorder.
@@ -341,12 +379,13 @@ function bindGroupReorder() {
   // drop handler instead (see there) before keyed reconciliation moves the
   // source or, for a re-parent, may replace its header. Browser dragend
   // delivery after that synchronous update is not a reliable primary path.
-  listen(document, 'dragend', endGroupDrag);
+  listen(document, 'dragend', finishGroupDrag);
 
   listen(document, 'dragover', (e) => {
     if (!groupReorderActive) return;
     const trash = groupTrashTarget(e);
     if (trash) {
+      groupCloneHoverPlan = null;
       clearDropMarkers();
       e.preventDefault();
       e.dataTransfer.dropEffect = 'move';
@@ -357,6 +396,7 @@ function bindGroupReorder() {
     const details = reorderTarget(e);
     clearDropMarkers();
     if (!details) {
+      groupCloneHoverPlan = null;
       reorderPill(e, null);
       return;
     }
@@ -373,9 +413,11 @@ function bindGroupReorder() {
           : resolveDrop(groupDragName, targetName, zone, byName))
       : null;
     if (!plan) {
+      groupCloneHoverPlan = null;
       reorderPill(e, null);
       return;
     }
+    groupCloneHoverPlan = clone ? plan : null;
     e.preventDefault(); // required for `drop` to fire on this element
     e.dataTransfer.dropEffect = clone ? 'copy' : 'move';
     details.classList.toggle('group-drop-clone', clone);
@@ -408,6 +450,37 @@ function bindGroupReorder() {
 
   listen(document, 'dragleave', (e) => {
     if (!groupReorderActive) return;
+    // Leaving the document can finish as a native copy in another window or
+    // application. Invalidate the internal placement so its later dragend
+    // cannot open a stale dashboard clone dialog. A null relatedTarget alone
+    // is NOT sufficient: macOS Chrome emits an all-zero event with that shape
+    // at the in-place mouse release that ends a Cmd/Ctrl clone drag. That event
+    // arrives 0.5–1s before dragend, so consume the still-green stored plan
+    // immediately instead of making the operator wait. Keep the exception
+    // platform-scoped so other browsers retain the existing exit lifecycle.
+    const macChromeZeroRelease = !e.relatedTarget
+      && e.clientX === 0 && e.clientY === 0
+      && e.screenX === 0 && e.screenY === 0
+      && /Mac/.test(navigator.platform || navigator.userAgent)
+      && /(?:Chrome|Chromium)\//.test(navigator.userAgent)
+      && !/(?:Edg|OPR|Vivaldi)\//.test(navigator.userAgent)
+      && !navigator.brave;
+    const releaseTarget = reorderTarget(e);
+    if (macChromeZeroRelease && groupCloneHoverPlan
+        && releaseTarget?.classList.contains('group-drop-clone')) {
+      finishGroupDrag();
+      return;
+    }
+    const outside = !macChromeZeroRelease && !e.relatedTarget && (
+      e.clientX <= 0 || e.clientY <= 0
+      || e.clientX >= window.innerWidth - 1
+      || e.clientY >= window.innerHeight - 1
+    );
+    if (outside) {
+      groupCloneHoverPlan = null;
+      clearDropMarkers();
+      reorderPill(e, null);
+    }
     const trash = groupTrashTarget(e);
     if (!trash) return;
     if (trash.contains(e.relatedTarget)) return;
@@ -433,7 +506,7 @@ function bindGroupReorder() {
     const dragName = groupDragName;
     const targetName = details.getAttribute('data-group-key');
     const zone = dropZone(e, details);
-    const clone = !!(e.ctrlKey || e.metaKey);
+    const clone = isCloneDrop(e, details);
     const byName = snapshotGroupsByName();
     const clonePlan = clone && byName
       ? resolveCloneDrop(dragName, targetName, zone, byName)

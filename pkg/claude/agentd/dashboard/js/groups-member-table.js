@@ -15,7 +15,7 @@ import {
 } from './human-notification-attention.js';
 import { bodilessNotice } from './human-attachments.js';
 import { HarnessMark } from './harness-mark.js';
-import { fmtCredits } from './costs-model.js';
+import { fmtCredits, fmtExactUSD, fmtUSD } from './costs-model.js';
 import { isPendingWake, clearPendingWake } from './waking-state.js';
 import { PRChecksBadge } from './pr-checks-hover.js';
 
@@ -141,6 +141,42 @@ function RemoteBadge({ member }) {
   return html`<span class="remote-badge" data-act="web-open-window" ...${memberAttrs(member)} title=${title}>📱</span>`;
 }
 
+// driveTooltip keeps the launch drive and its health on the harness/model
+// line's general tooltip. The Groups table used to render separate "api" and
+// "app" indicators for these facts; they made an implementation detail look
+// like primary row metadata even though the full explanation still required a
+// hover. Keep the diagnostic detail, including fail-closed recovery guidance,
+// without adding another visible token to the row.
+function driveTooltip(state) {
+  const codexDrive = state.codex_app_server;
+  if (!state.copilot_api && !codexDrive) return '';
+
+  const codexDriveState = state.codex_app_server_state || 'warming';
+  const codexDriveHealth = state.codex_app_server_health
+    || (codexDriveState === 'unavailable' ? 'disconnected'
+      : codexDriveState === 'dead' ? 'crashed' : codexDriveState);
+  const driveFailed = (state.copilot_api && state.copilot_api_channel_failed)
+    || (codexDrive && (codexDriveHealth === 'disconnected' || codexDriveHealth === 'crashed'));
+
+  if (driveFailed) {
+    return codexDrive
+      ? `Drive: Codex app-server is ${codexDriveHealth}; messages are held and the explicit drive did not fall back to send-keys. Stop and resume to retry, or explicitly roll back with tclaude agent resume <agent> --send-keys${state.codex_app_server_detail ? `: ${state.codex_app_server_detail}` : ''}`
+      : "Drive: Copilot embedded JSON-RPC API channel failed to come up; this agent's messages are being HELD, not delivered, and will be until it is relaunched. Its pane still works if you type into it";
+  }
+  if (state.copilot_api_connected) {
+    return "Drive: Copilot embedded JSON-RPC API (copilot --ui-server), not tmux send-keys";
+  }
+  if (codexDrive && codexDriveHealth === 'ready') {
+    return `Drive: Codex app-server ready${state.codex_app_server_version ? ` (${state.codex_app_server_version})` : ''}${state.codex_app_server_source ? ` via ${state.codex_app_server_source}` : ''}; TUI owns approvals; agentd connects only after TUI thread binding and uses non-subscribing snapshots (context remains rollout-derived)${state.codex_observer_updated ? `; last observation ${state.codex_observer_updated}` : ''}`;
+  }
+  if (codexDrive && codexDriveHealth === 'degraded') {
+    return `Drive: Codex app-server is degraded; the connection or observation is being recovered and messages fail closed${state.codex_app_server_detail ? `: ${state.codex_app_server_detail}` : ''}`;
+  }
+  return codexDrive
+    ? 'Drive: Codex app-server is warming; messages remain held until thread binding and connection verification finish; send-keys fallback is disabled'
+    : "Drive: Copilot embedded JSON-RPC API is not connected yet — still starting up, or its channel failed to come up";
+}
+
 // BrokerRefusalBadge warns that agentd is REFUSING this agent's brokered
 // telemetry callbacks (TCL-761). It matters because the refusal is silent
 // everywhere else: the agent keeps working, but its status, cost, context
@@ -178,61 +214,7 @@ export function HarnessLine({ member, snapshot }) {
   const fastMode = html`<${FastModeBadge} member=${member} />`;
   const remote = html`<${RemoteBadge} member=${member} />`;
   const refused = html`<${BrokerRefusalBadge} member=${member} />`;
-  // Only the API drive is marked. send-keys is what every Copilot agent has
-  // always been, so a chip for it would be noise on every row; the point of the
-  // marker is telling the two apart while both drives are live.
-  //
-  // The chip marks LAUNCH INTENT; whether tclaude actually holds a connection
-  // is a separate fact and gets its own state, because the two disagree while
-  // an agent is starting up and stay disagreed forever if its channel never
-  // came up. A chip that read "api" off intent alone would say an agent is
-  // API-driven while nothing is on the other end of it.
-  //
-  // Not-connected splits in two, and the split is the whole point of the third
-  // state. "No connection" is the normal condition of an agent that is starting
-  // up and of every agent between an agentd restart and the reconcile sweep
-  // reaching it, so on its own it is not news. What IS news is a channel the
-  // daemon watched fail: that agent's mail is being held and nothing but a
-  // relaunch will clear it, and until this state existed it looked identical to
-  // an agent that was merely still starting.
-  //
-  // Absence of the failed state is not an all-clear — a pending chip may be a
-  // deaf agent nobody has examined yet. That is why the pending wording below
-  // says "not connected" rather than anything reassuring. The full account of
-  // what this flag does and does not cover is on CopilotAPIChannelFailed.
-  const codexDrive = state.codex_app_server;
-  const codexDriveState = state.codex_app_server_state || 'warming';
-	const codexDriveHealth = state.codex_app_server_health
-	  || (codexDriveState === 'unavailable' ? 'disconnected'
-	    : codexDriveState === 'dead' ? 'crashed' : codexDriveState);
-  const driveFailed = (state.copilot_api && state.copilot_api_channel_failed)
-	|| (codexDrive && (codexDriveHealth === 'disconnected' || codexDriveHealth === 'crashed'));
-  const driveState = driveFailed
-    ? ' harness-drive-failed'
-	: (state.copilot_api_connected || (codexDrive && codexDriveHealth === 'ready'))
-      ? ''
-      : ' harness-drive-pending';
-  const drive = state.copilot_api || codexDrive
-    ? html`<span class=${'harness-drive' + driveState}
-        role="note"
-        title=${driveFailed
-		  ? (codexDrive ? `Codex app-server is ${codexDriveHealth}; messages are held and the explicit drive did not fall back to send-keys. Stop and resume to retry, or explicitly roll back with tclaude agent resume <agent> --send-keys${state.codex_app_server_detail ? `: ${state.codex_app_server_detail}` : ''}` : "Launched for Copilot's embedded JSON-RPC API drive, and its channel failed to come up — this agent's messages are being HELD, not delivered, and will be until it is relaunched. Its pane still works if you type into it")
-          : state.copilot_api_connected
-            ? "Driven over Copilot's embedded JSON-RPC API (copilot --ui-server), not tmux send-keys"
-			: codexDrive && codexDriveHealth === 'ready'
-			  ? `Codex app-server ready${state.codex_app_server_version ? ` (${state.codex_app_server_version})` : ''}${state.codex_app_server_source ? ` via ${state.codex_app_server_source}` : ''}; TUI owns approvals; agentd connects only after TUI thread binding and uses non-subscribing snapshots (context remains rollout-derived)${state.codex_observer_updated ? `; last observation ${state.codex_observer_updated}` : ''}`
-			  : codexDrive && codexDriveHealth === 'degraded'
-			    ? `Codex app-server is degraded; the connection or observation is being recovered and messages fail closed${state.codex_app_server_detail ? `: ${state.codex_app_server_detail}` : ''}`
-			    : codexDrive ? 'Codex app-server is warming; messages remain held until thread binding and connection verification finish; send-keys fallback is disabled' : "Launched for Copilot's embedded JSON-RPC API drive, but tclaude holds no connection to it yet — still starting up, or its channel failed to come up"}
-        aria-label=${driveFailed
-		  ? (codexDrive ? `Codex app-server drive ${codexDriveHealth}` : 'Copilot API drive failed, messages held')
-          : state.copilot_api_connected
-            ? 'Copilot API drive connected'
-			: codexDrive && codexDriveHealth === 'ready'
-              ? 'Codex app-server drive ready'
-			  : codexDrive ? `Codex app-server drive ${codexDriveHealth}` : 'Copilot API drive not connected'}
-        >${codexDrive ? 'app' : 'api'}</span>`
-    : null;
+  const drive = driveTooltip(state);
   if (!model) {
     // A pre-tick row has no metadata text to trail, but an armed indicator is
     // still worth a minimal line — including a sandbox verdict, which is
@@ -247,8 +229,10 @@ export function HarnessLine({ member, snapshot }) {
         || Number(state.broker_refusals || 0) > 0;
       return indicated ? html`<div class="agent-harness">${sandbox}${remote}${refused}</div>` : null;
     }
-    const title = `${offline ? 'Last used harness' : 'Harness'}: ${labels.long}`;
-    return html`<div class="agent-harness" title=${title}><span class=${metadataClass} role="note" aria-label=${title}><${HarnessMark} name=${harness} shortLabel=${labels.short} longLabel=${labels.long} />${drive}</span>${sandbox}${remote}${refused}</div>`;
+    let title = `${offline ? 'Last used harness' : 'Harness'}: ${labels.long}`;
+    if (drive) title += ` — ${drive}`;
+    return html`<div class="agent-harness" title=${title} tabindex=${drive ? '0' : null}
+      data-full-metadata=${drive ? title : null}><span class=${metadataClass} role="note" aria-label=${title}><${HarnessMark} name=${harness} shortLabel=${labels.short} longLabel=${labels.long} tooltip=${drive ? title : labels.long} /></span>${sandbox}${remote}${refused}</div>`;
   }
   const effort = state.effort_level || '';
   const cost = Number(state.cost_usd || 0);
@@ -257,20 +241,22 @@ export function HarnessLine({ member, snapshot }) {
   const copilotCredits = harness === 'copilot' && virtualCredits > 0;
   let title = `${offline ? 'Last used harness' : 'Harness'}: ${labels.long} — ${offline ? 'Last used model' : 'Model'}: ${model}`;
   if (effort) title += ` — ${offline ? 'Last used effort' : 'Effort'}: ${effort}`;
-  if (cost > 0) title += ` — API cost this session: $${cost.toFixed(4)} (API/enterprise pricing — no subscription limits)`;
+  if (drive) title += ` — ${drive}`;
+  if (cost > 0) title += ` — API cost this session: ${fmtExactUSD(cost)} (API/enterprise pricing — no subscription limits)`;
   if (virtualCost > 0) {
     title += copilotCredits
-      ? ` — WHAT-IF cost this session: ${fmtCredits(virtualCredits)} — $${virtualCost.toFixed(4)} subscription value (estimated if billed pay-per-token — you're on a subscription, so this is hypothetical, not a real charge)`
-      : ` — WHAT-IF cost this session: $${virtualCost.toFixed(4)} (estimated if billed pay-per-token — you're on a subscription, so this is hypothetical, not a real charge)`;
+      ? ` — WHAT-IF cost this session: ${fmtCredits(virtualCredits)} — ${fmtExactUSD(virtualCost)} subscription value (estimated if billed pay-per-token — you're on a subscription, so this is hypothetical, not a real charge)`
+      : ` — WHAT-IF cost this session: ${fmtExactUSD(virtualCost)} (estimated if billed pay-per-token — you're on a subscription, so this is hypothetical, not a real charge)`;
   }
   const virtualTitle = copilotCredits
-    ? `${fmtCredits(virtualCredits)} — $${virtualCost.toFixed(4)} subscription value — estimated pay-per-token-equivalent cost this session; hypothetical, not a real charge (subscription)`
+    ? `${fmtCredits(virtualCredits)} — ${fmtExactUSD(virtualCost)} subscription value — estimated pay-per-token-equivalent cost this session; hypothetical, not a real charge (subscription)`
     : 'Estimated pay-per-token-equivalent cost this session — hypothetical, not a real charge (subscription)';
-  return html`<div class="agent-harness" title=${title}>
-    <span class=${metadataClass} role="note" aria-label=${title}><${HarnessMark} name=${harness} shortLabel=${labels.short} longLabel=${labels.long} />${drive}<span class="harness-sep">·</span><span class="harness-model">${shortModel(model, harness)}</span>
+  return html`<div class="agent-harness" title=${title} tabindex=${drive ? '0' : null}
+    data-full-metadata=${drive ? title : null}>
+    <span class=${metadataClass} role="note" aria-label=${title}><${HarnessMark} name=${harness} shortLabel=${labels.short} longLabel=${labels.long} tooltip=${drive ? title : labels.long} /><span class="harness-sep">·</span><span class="harness-model">${shortModel(model, harness)}</span>
       ${effort ? html`<span class="harness-effort" title=${effort}>${shortEffort(effort)}</span>` : null}
-      ${cost > 0 ? html`<span class="harness-cost">${cost >= 0.005 ? `$${cost.toFixed(2)}` : '<1¢'}</span>` : null}
-      ${virtualCost > 0 ? html`<span class="harness-cost harness-cost-whatif" title=${virtualTitle}>${virtualCost >= 0.005 ? `≈$${virtualCost.toFixed(2)}` : '≈<1¢'}</span>` : null}
+      ${cost > 0 ? html`<span class="harness-cost">${fmtUSD(cost)}</span>` : null}
+      ${virtualCost > 0 ? html`<span class="harness-cost harness-cost-whatif" title=${virtualTitle}>≈${fmtUSD(virtualCost)}</span>` : null}
     </span>${sandbox}${fastMode}${remote}${refused}
   </div>`;
 }
@@ -373,11 +359,39 @@ function sandboxProfileLabel(member) {
   return member.state?.sandbox_profiles_recorded ? 'None' : 'Not recorded';
 }
 
+// resourceLimitLines describes the per-agent Linux cgroup, which is a separate
+// axis from the sandbox posture above: it bounds how MUCH the workload may
+// consume, never WHAT it may reach. A `resource-only` agent has a cgroup and no
+// access boundary at all, so the two facts cannot share one verdict.
+//
+// Silent when no cgroup was requested. "Cgroup: off" on every macOS agent and
+// every Linux launch without a budget would cost a tooltip line to say nothing;
+// the lines appear exactly when there is a boundary to describe. An enforcement
+// failure still shows here, because a recorded request that did not take effect
+// is precisely what a reader must not be left guessing about.
+function resourceLimitLines(member) {
+  const state = member.state || {};
+  if (!state.resource_cgroup) return [];
+  // Both spellings mean the same for this line: the operator's own dashboard
+  // override and a host with no delegated cgroup both leave the request
+  // unenforced. The notice's own detail follows as a Warning line and names
+  // which one it was.
+  const unenforced = (state.sandbox_access_notices || []).some((notice) =>
+    notice?.axis === 'resource_limits' && notice?.effect === 'not_enforced');
+  const cpu = state.resource_cpu_limit;
+  return [
+    `Cgroup: ${unenforced ? 'requested — not enforced' : 'on'}`,
+    `Memory limit: ${state.resource_memory_limit || 'unlimited'}`,
+    `CPU limit: ${typeof cpu === 'number' ? `${cpu} core${cpu === 1 ? '' : 's'}` : 'unlimited'}`,
+  ];
+}
+
 function sandboxTooltip(member, badge, actionable, unlocked) {
   const lines = [
     `Status: ${unlocked && badge.status === 'OFF' ? 'TEMP OFF' : badge.status}`,
     `Implementation: ${sandboxImplementationLabel(member, badge)}`,
     `Profile: ${sandboxProfileLabel(member)}`,
+    ...resourceLimitLines(member),
   ];
   for (const notice of member.state?.sandbox_access_notices || []) {
     if (notice?.detail) lines.push(`Warning: ${notice.detail}`);
@@ -453,6 +467,7 @@ function sandboxRecordedDetails(member) {
     `Harness sandbox mode: ${state.sandbox_mode || 'Not recorded'}`,
     `Profile: ${sandboxProfileLabel(member)}`,
     `Source: ${source || 'Not recorded'}`,
+    ...resourceLimitLines(member),
   ];
   for (const notice of state.sandbox_access_notices || []) {
     if (notice?.detail) lines.push(`Notice: ${notice.detail}`);
@@ -974,13 +989,18 @@ function CwdCell({ member }) {
   return html`<${StackedLocation} start=${path(startup, 'start')} current=${path(current, 'worktree')} differ=${!!current && !!startup && current !== startup} />`;
 }
 
+// PR states that have their own badge colour. Anything else — including a
+// cache entry written before a state was recorded — falls back to unknown.
+const PR_STATE_CLASSES = ['open', 'draft', 'merged', 'closed'];
+const prStateClass = (state) => (PR_STATE_CLASSES.includes(state) ? `pr-state-${state}` : 'pr-state-unknown');
+
 function BranchCell({ member }) {
   const branch = (name, url, prNumber, prURL, prState, checks) => {
     if (!name) return html`<span class="muted">—</span>`;
     const branchNode = url
       ? html`<a class="branch branch-link" href=${url} target="_blank" rel="noopener noreferrer" draggable=${false} title=${`Open branch on GitHub — ${name}`}>⎇ ${name}</a>`
       : html`<span class="branch" title=${`git branch: ${name}`}>⎇ ${name}</span>`;
-    const stateClass = ['open', 'merged', 'closed'].includes(prState) ? `pr-state-${prState}` : 'pr-state-unknown';
+    const stateClass = prStateClass(prState);
     const stateLabel = prState ? prState[0].toUpperCase() + prState.slice(1) : 'Pull request';
     return html`${branchNode}${prNumber && prURL ? html` <a class=${`pr-link ${stateClass}`} href=${prURL} target="_blank" rel="noopener noreferrer" draggable=${false} title=${`${stateLabel} pull request #${prNumber}`}>#${prNumber}</a><${PRChecksBadge} url=${prURL} prNumber=${prNumber} summary=${checks} />` : null}`;
   };
@@ -993,7 +1013,7 @@ function BranchCell({ member }) {
     seen.add(url); return true;
   });
   return html`<${StackedLocation} start=${start} current=${current} differ=${(member.startup_branch || '') !== (member.branch || '')} />${presented.length ? html` <span class="presented-prs">${presented.map((pr) => {
-    const stateClass = ['open', 'merged', 'closed'].includes(pr.state) ? `pr-state-${pr.state}` : 'pr-state-unknown';
+    const stateClass = prStateClass(pr.state);
     return html`<span key=${pr.url} class="presented-pr"><a class=${`pr-link ${stateClass}`} href=${pr.url} target="_blank" rel="noopener noreferrer" draggable=${false} title=${pr.summary ? `${pr.summary} — ${pr.url}` : `Presented pull request — ${pr.url}`}>${pr.number ? `#${pr.number}` : pr.summary || 'PR'}</a><${PRChecksBadge} url=${pr.url} prNumber=${pr.number} summary=${pr.checks} /></span>`;
   })}</span>` : null}`;
 }

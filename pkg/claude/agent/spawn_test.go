@@ -80,6 +80,32 @@ func TestRunSpawn_ExplicitCodexSendKeysStaysOnWire(t *testing.T) {
 		"--codex-app-server=false must override an opted-in profile instead of serializing as unset")
 }
 
+func TestRunSpawnExplicitOwnerStaysOnWire(t *testing.T) {
+	prevAvail, prevReq := DaemonAvailableImpl, DaemonRequestImpl
+	t.Cleanup(func() { DaemonAvailableImpl, DaemonRequestImpl = prevAvail, prevReq })
+	DaemonAvailableImpl = func() bool { return true }
+	var captured SpawnRequest
+	DaemonRequestImpl = func(_, _ string, body, out any, _ DaemonOpts) error {
+		captured = body.(SpawnRequest)
+		*out.(*SpawnResponse) = SpawnResponse{Group: "alpha", ConvID: "conv-owner"}
+		return nil
+	}
+
+	resp, rc := RunSpawn(&SpawnParams{Group: "alpha", Owner: true}, new(bytes.Buffer), new(bytes.Buffer), new(bytes.Buffer))
+	require.Equal(t, rcOK, rc)
+	require.NotNil(t, resp)
+	assert.True(t, captured.IsOwnerSpecified())
+	assert.True(t, captured.IsOwner)
+}
+
+func TestRunSpawnRejectsOwnerAndNoOwner(t *testing.T) {
+	stderr := new(bytes.Buffer)
+	resp, rc := RunSpawn(&SpawnParams{Group: "alpha", Owner: true, NoOwner: true}, new(bytes.Buffer), stderr, new(bytes.Buffer))
+	assert.Nil(t, resp)
+	assert.Equal(t, rcInvalidArg, rc)
+	assert.Contains(t, stderr.String(), "mutually exclusive")
+}
+
 func TestSpawnCommandRecordsCodexAppServerFlagPresenceAfterParsing(t *testing.T) {
 	for _, tc := range []struct {
 		name      string

@@ -18,6 +18,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/money"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
 	"golang.org/x/term"
@@ -396,7 +397,7 @@ func run() error {
 
 	// Cost only shown on API plan (no rate limit buckets available)
 	if !hasLimits && input.Cost.TotalCostUSD > 0 {
-		line2 = append(line2, fmt.Sprintf("$%.2f", input.Cost.TotalCostUSD))
+		line2 = append(line2, money.USD(input.Cost.TotalCostUSD))
 	}
 
 	// Reasoning-effort level (🧠 high) trails the first line, far right.
@@ -648,23 +649,37 @@ func getDefaultBranch() string {
 }
 
 // getPRInfo returns the open PR's number, URL, and state for the given
-// branch via gh CLI. State is lower-cased to open|merged|closed.
+// branch via gh CLI. State is lower-cased to open|draft|merged|closed.
 // Returns (0, "", "") when there's no PR, gh isn't installed, or gh
 // isn't authenticated — all best-effort, never fatal.
+//
+// Draft matters here even though the statusline itself doesn't colour by
+// state: this snapshot is published to agent_workspace, and the dashboard
+// prefers it over its own bl_ cache whenever it is fresher (which, at a 15s
+// TTL against branchLinkTTL's 90s, is nearly always). Reporting a draft as
+// plain "open" would therefore overwrite the daemon's correct draft state
+// and put the green badge back.
 func getPRInfo(branch string) (number int, url, state string) {
-	out, err := exec.Command("gh", "pr", "view", branch, "--json", "number,url,state").Output()
+	out, err := exec.Command("gh", "pr", "view", branch, "--json", "number,url,state,isDraft").Output()
 	if err != nil {
 		return 0, "", ""
 	}
 	var pr struct {
-		Number int    `json:"number"`
-		URL    string `json:"url"`
-		State  string `json:"state"`
+		Number  int    `json:"number"`
+		URL     string `json:"url"`
+		State   string `json:"state"`
+		IsDraft bool   `json:"isDraft"`
 	}
 	if json.Unmarshal(out, &pr) != nil {
 		return 0, "", ""
 	}
-	return pr.Number, pr.URL, strings.ToLower(pr.State)
+	prState := strings.ToLower(strings.TrimSpace(pr.State))
+	// A draft is an open PR that isn't asking for review; a merged or closed
+	// PR keeps its terminal state even if GitHub still reports isDraft.
+	if pr.IsDraft && prState == "open" {
+		prState = "draft"
+	}
+	return pr.Number, pr.URL, prState
 }
 
 // contextBar returns a progress bar for context usage with a compaction

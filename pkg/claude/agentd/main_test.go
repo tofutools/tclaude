@@ -126,7 +126,9 @@ func TestMain(m *testing.M) {
 		func(string, []sandboxpolicy.EnvironmentEntry, string) (json.RawMessage, error) {
 			return json.RawMessage(`{"config":{},"origins":{}}`), nil
 		})
+	restoreCodexNativeRegistry := agentd.SetCodexNativeRegistryReadinessForTest(func() error { return nil })
 	code := m.Run()
+	restoreCodexNativeRegistry()
 	restoreCodexProbe()
 	restoreCopilotReconnect()
 	restoreCopilotPostInitWait()

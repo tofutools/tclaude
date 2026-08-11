@@ -185,13 +185,13 @@ test('Costs rows carry an accurate, banner-linked WHAT-IF marker', async (t) => 
   // hypothetical — $1.00 of it is billed.
   const mixedCell = cell('conv-c');
   assert.match(mixedCell.textContent.replace(/\s+/g, ''), /^\$1\.50⚠︎$/, 'a mixed row shows one total plus the marker');
-  assert.equal(mixedCell.title, '$1.5000 total — $1.0000 real spend + $0.5000 estimated (WHAT-IF)',
+  assert.equal(mixedCell.title, '$1.50 total — $1.00 real spend + $0.50 estimated (WHAT-IF)',
     'the amount tooltip names both parts instead of labelling the whole total an estimate');
   assert.match(mixedCell.querySelector('.cost-whatif-mark').title, /\$1\.00 real \+ \$0\.50 WHAT-IF estimate/,
     'the marker tooltip carries the split the cell no longer shows inline');
 
-  assert.equal(cell('conv-a').title, '$3.0000 real spend', 'a real row is named real');
-  assert.equal(cell('conv-b').title, '$2.0000 estimated (WHAT-IF)', 'a hypothetical row is named an estimate');
+  assert.equal(cell('conv-a').title, '$3.00 real spend', 'a real row is named real');
+  assert.equal(cell('conv-b').title, '$2.00 estimated (WHAT-IF)', 'a hypothetical row is named an estimate');
   assertAbsent(cell('conv-d').querySelector('.cost-whatif-mark'), 'a zero-cost row (kind "") is not marked as an estimate');
 
   // Clicking through. A modified click belongs to the browser — the marker is a
@@ -273,7 +273,7 @@ test('Copilot WHAT-IF tooltips identify native credits and subscription value', 
   const actions = { load: async () => {}, loadFactor: async () => {}, saveFactor: async () => {} };
   const mounted = await harness.mount(harness.html`<${CostsApp} state=${state} actions=${actions} />`);
   const cell = mounted.container.querySelector('tr[data-key="cost-conv-copilot-2026-07-10"] .cost-amt');
-  assert.equal(cell.title, '43 credits — $0.4300 subscription value');
+  assert.equal(cell.title, '43 credits — $0.43 subscription value');
   assert.match(cell.querySelector('.cost-whatif-mark').title,
     /43 credits — \$0\.43 subscription value/);
 

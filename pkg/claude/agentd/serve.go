@@ -680,6 +680,14 @@ func runServe(p *serveParams) error {
 	// the durable CAS in that sweep prevents concurrent daemon starts from both
 	// registering one generation. Until proof completes the selected drive
 	// remains fail-closed and holds mail.
+	if session.ValidateCodexNativeRegistrySetup() == nil {
+		if err := adoptLiveCodexProfilesIntoInstalledRegistry(); err != nil {
+			slog.Warn("adopt live generated Codex profiles into installed registry", "error", err)
+		}
+	}
+	if err := session.ReconcileCodexNativePermissionRegistry(); err != nil {
+		slog.Warn("reconcile native Codex permission registry", "error", err)
+	}
 	startCodexAppServerRecovery(cronStop)
 
 	// Copilot model-catalog mirror. The send-keys drive cannot ask its pane for

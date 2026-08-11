@@ -778,6 +778,7 @@ type SpawnParams struct {
 	// reason as the fields above — boa's short-flag enricher must not steal a
 	// letter. Experimental opt-in (off by default). See JOH-200 part 2.
 	AutoReview bool `long:"auto-review" help:"EXPERIMENTAL: route the new agent's Codex approval prompts to the guardian subagent (auto-decides in your place) instead of asking you. Off by default. Not applicable to claude"`
+	TrustDir   bool `long:"trust-dir" help:"Pre-trust the launch directory before starting the agent. Off by default; applicable only to harnesses with a directory-trust dialog"`
 
 	RemoteControl bool `long:"remote-control" help:"Start the new agent with Claude Code Remote Access ON (claude --remote-control), so it is reachable from the Claude app. Off by default. Requires a claude.ai login to pair. Not applicable to codex"`
 
@@ -828,12 +829,9 @@ type SpawnParams struct {
 	// before this flag existed.
 	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"EXPERIMENTAL OS containment: off | resource-only (Linux only; no access confinement, but the launch gets a per-launch cgroup: the profile's CPU/memory limits if it authored any, otherwise accounting and OOM attribution only; no bwrap or namespaces) | harness-builtin (only for a harness with a real built-in OS sandbox) | tclaude-layer (tclaude outer wall, inner OS sandbox off) | stacked (Linux Claude/Codex only; live model-free real-engine probe, both walls). Copilot children spawned by an agent are admitted in exactly one topology: tclaude-layer. Experimental implementations refuse naming the missing capability and never fall back. Unset = profile chain, then historical harness behavior; for OpenCode that is a command filter, not confinement"`
 
+	Owner bool `long:"owner" help:"Make the new agent a group owner (requires groups.own authority)"`
 	// NoOwner declines group ownership for the new agent whatever the profile
-	// chain says. There is no positive twin: ownership is conferred by a profile
-	// (or by `groups owners add` afterwards), never by a bare CLI flag, so this
-	// is the same shape as --no-group-context — a way to say no to something a
-	// profile would otherwise decide. Declared last, with no explicit short, for
-	// the same reason as the fields above.
+	// chain says. It is the explicit-false twin of --owner.
 	NoOwner bool `long:"no-owner" help:"Do not make the new agent a group owner, whatever the selected or a default spawn profile says (default: the profile chain decides, and unset everywhere spawns an ordinary member)"`
 }
 
@@ -1034,6 +1032,7 @@ func mergeProfileIntoSpawn(p *SpawnParams, explicitMessage string, prof *profile
 
 	out := resolvedSpawnFields{
 		AutoReview:     p.AutoReview,
+		TrustDir:       p.TrustDir,
 		AutoFocus:      p.AutoFocus,
 		InitialMessage: explicitMessage,
 	}
@@ -1067,7 +1066,7 @@ func mergeProfileIntoSpawn(p *SpawnParams, explicitMessage string, prof *profile
 		if !out.AutoReview && prof.AutoReview != nil {
 			out.AutoReview = *prof.AutoReview
 		}
-		if prof.TrustDir != nil {
+		if !out.TrustDir && prof.TrustDir != nil {
 			out.TrustDir = *prof.TrustDir
 		}
 	} else {
@@ -1188,6 +1187,10 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		fmt.Fprintln(stderr, "Error: --omit-sandbox-profiles and --sandbox-profile are mutually exclusive")
 		return nil, rcInvalidArg
 	}
+	if p.Owner && p.NoOwner {
+		fmt.Fprintln(stderr, "Error: --owner and --no-owner are mutually exclusive")
+		return nil, rcInvalidArg
+	}
 	// --worktree-base / --worktree-repo are modifiers of --worktree;
 	// rejecting them up front beats silently ignoring a flag the user
 	// expected to take effect.
@@ -1302,7 +1305,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	contextWindowMax := merged.ContextWindowMax
 	sandboxImpl := strings.TrimSpace(p.SandboxImpl)
 	autoReview := p.AutoReview
-	trustDir := false
+	trustDir := p.TrustDir
 	remoteControl := p.RemoteControl
 	autoMemory := p.AutoMemory
 	copilotAPI := p.CopilotAPI
@@ -1350,6 +1353,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 			ContextWindowMax:       p.ContextWindowMax,
 			SandboxImpl:            p.SandboxImpl,
 			AutoReview:             p.AutoReview,
+			TrustDir:               p.TrustDir,
 		}
 		if validateMergedProfile {
 			validationFields = merged
@@ -1427,10 +1431,9 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 			fmt.Fprintf(stderr, "Error: %v\n", err)
 			return nil, rcInvalidArg
 		}
-		// Resolve the effective trust-dir (taken from a --profile's trust_dir,
-		// since the CLI has no dedicated flag). false for any harness is always
-		// fine; a true for a harness with no trust dialog fails fast here. The
-		// daemon re-gates server-side.
+		// Resolve the effective trust-dir (explicit --trust-dir, then a named
+		// profile). false for any harness is always fine; a true for a harness
+		// with no trust dialog fails fast here. The daemon re-gates server-side.
 		if _, err = harness.ResolveTrustDir(h, validationFields.TrustDir); err != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", err)
 			return nil, rcInvalidArg
@@ -1513,12 +1516,11 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		IsOwner:                merged.IsOwner,
 		PermissionOverrides:    merged.PermissionOverrides,
 	}
-	// --no-owner is the CLI's only way to decline ownership a profile would
-	// otherwise confer: the daemon resolves is_owner down the whole tier stack,
-	// so an omitted key lets a group's or the global default profile answer.
-	// Stating false here is what outranks them. Shape mirrors
-	// --no-group-context.
-	if p.NoOwner {
+	// An explicit owner choice outranks the profile stack in either direction;
+	// omission leaves the daemon free to resolve group/global defaults.
+	if p.Owner {
+		req.StateIsOwner(true)
+	} else if p.NoOwner {
 		req.StateIsOwner(false)
 	}
 	// Send the map only when the flag spoke. An empty-but-non-nil map is a real
@@ -1528,7 +1530,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		req.ContextFeatures = &contextFeatures
 	}
 	req.autoReviewSpecified = p.AutoReview
-	req.trustDirSpecified = false
+	req.trustDirSpecified = p.TrustDir
 	// --remote-control is opt-in only on the CLI: send &true when the flag is set,
 	// and leave the pointer nil otherwise so the daemon's group/profile
 	// remote-control policy fills it (the dashboard form is the surface that sends

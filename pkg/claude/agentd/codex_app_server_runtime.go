@@ -39,6 +39,38 @@ var codexAppServerRecoveryOwner = func() string {
 	return fmt.Sprintf("agentd:%d:%d", os.Getpid(), time.Now().UnixNano())
 }()
 
+var reconcileCodexNativePermissionRegistry = session.ReconcileCodexNativePermissionRegistry
+
+func reconcileCodexNativePermissionRegistryForGeneration(generation string) error {
+	before, err := db.GetCodexNativePermissionProfile(generation)
+	if err != nil {
+		return fmt.Errorf("load native Codex permission profile before reconciliation: %w", err)
+	}
+	// No row means this is an outer-layer or legacy app-server generation. Its
+	// readiness must not depend on machine-wide native-registry setup used by
+	// unrelated builtin-sandbox launches.
+	if before == nil {
+		return nil
+	}
+	if err := reconcileCodexNativePermissionRegistry(); err != nil {
+		return err
+	}
+	// Outer-layer and legacy app-server generations deliberately have no native
+	// profile. When this generation did register one, however, pruning must not
+	// silently make the runtime ready without its exact enforcement profile.
+	if before.CleanupPending {
+		return errors.New("native Codex permission profile cleanup is pending")
+	}
+	after, err := db.GetCodexNativePermissionProfile(generation)
+	if err != nil {
+		return fmt.Errorf("reload native Codex permission profile after reconciliation: %w", err)
+	}
+	if after == nil || after.CleanupPending {
+		return errors.New("native Codex permission profile was removed during reconciliation")
+	}
+	return nil
+}
+
 type codexAppServerHandle struct {
 	// runtime is immutable generation identity after registration. Reconnects
 	// replace only client while holding mutations, which every control caller
@@ -54,6 +86,9 @@ type codexAppServerHandle struct {
 	compact   *codexCompactionStage
 	nextOpID  uint64
 	closing   bool
+	// watchDone closes after the final observer exits. Reconnects continue the
+	// same logical watch and leave it open until the replacement observer ends.
+	watchDone chan struct{}
 }
 
 var codexAppServerHandles = struct {
@@ -68,6 +103,15 @@ var codexAppServerHandles = struct {
 func prepareCodexAppServerRuntime(args *clcommon.SpawnArgs) error {
 	if args == nil || !args.CodexAppServer {
 		return nil
+	}
+	if session.CodexNativeRegistryApplicable(args.CodexAppServer, args.Harness,
+		args.Sandbox, args.SandboxImplementation) {
+		if err := codexNativeRegistryReadiness(); err != nil {
+			return err
+		}
+		if err := adoptLiveCodexProfilesIntoInstalledRegistry(); err != nil {
+			return fmt.Errorf("protect live generated Codex profiles before registry activation: %w", err)
+		}
 	}
 	owner := strings.TrimSpace(args.AgentID)
 	if owner == "" {
@@ -223,6 +267,10 @@ func failPreparedCodexAppServerRuntime(args clcommon.SpawnArgs, cause error) {
 		_ = db.UpsertCodexAppServerRuntime(*runtime)
 	}
 	removeCodexAppServerGeneration(args.CodexAppServerSocket)
+	if err := session.UnregisterCodexNativePermissionProfile(args.CodexAppServerGeneration); err != nil {
+		slog.Warn("roll back failed Codex native permission profile",
+			"generation", args.CodexAppServerGeneration, "error", err)
+	}
 }
 
 func startCodexAppServerBootstrap(args clcommon.SpawnArgs) {
@@ -336,6 +384,11 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 		fail(errors.New("validated Codex TUI binding does not belong to the recorded live launch/pane"))
 		return
 	}
+	if err := reconcileCodexNativePermissionRegistryForGeneration(runtime.Generation); err != nil {
+		_ = client.Close()
+		fail(fmt.Errorf("validate native Codex permission registry before ready: %w", err))
+		return
+	}
 	runtime.State = db.CodexAppServerReady
 	runtime.Detail = ""
 	completed, err := db.CompleteCodexAppServerRuntimeBootstrap(*runtime)
@@ -352,6 +405,10 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 	}
 	handle := registerCodexAppServerHandle(*runtime, client)
 	projectCodexAppServerRawStatus(handle, thread.Status, time.Now().UTC(), "app-server snapshot")
+	if err := reconcileCodexNativePermissionRegistryForGeneration(runtime.Generation); err != nil {
+		slog.Warn("prune superseded Codex native permission profiles after ready",
+			"generation", runtime.Generation, "error", err)
+	}
 	go watchCodexAppServerHandle(handle)
 }
 
@@ -541,6 +598,14 @@ func recoverCodexAppServerRuntime(runtime db.CodexAppServerRuntime, owner string
 		fail(fmt.Errorf("re-prove Codex thread identity: %w", err))
 		return
 	}
+	// Revalidate after all asynchronous identity proofs and immediately before
+	// the ready CAS. The setup may have been replaced since the sweep claimed
+	// this generation; a failure must leave the runtime terminal and unhandled.
+	if err := reconcileCodexNativePermissionRegistryForGeneration(runtime.Generation); err != nil {
+		_ = client.Close()
+		fail(fmt.Errorf("validate native Codex permission registry before recovery ready: %w", err))
+		return
+	}
 	runtime.ServerPID = pid
 	runtime.State = db.CodexAppServerReady
 	changed, err := db.CompleteCodexAppServerRuntimeRecovery(runtime, owner)
@@ -553,11 +618,15 @@ func recoverCodexAppServerRuntime(runtime db.CodexAppServerRuntime, owner string
 	}
 	handle := registerCodexAppServerHandle(runtime, client)
 	projectCodexAppServerRawStatus(handle, thread.Status, time.Now().UTC(), "app-server daemon reconnect")
+	if err := reconcileCodexNativePermissionRegistry(); err != nil {
+		slog.Warn("prune superseded Codex native permission profiles after recovery",
+			"generation", runtime.Generation, "error", err)
+	}
 	go watchCodexAppServerHandle(handle)
 }
 
 func registerCodexAppServerHandle(runtime db.CodexAppServerRuntime, client *codexappserver.Client) *codexAppServerHandle {
-	handle := &codexAppServerHandle{runtime: runtime, client: client}
+	handle := &codexAppServerHandle{runtime: runtime, client: client, watchDone: make(chan struct{})}
 	codexAppServerHandles.Lock()
 	old := codexAppServerHandles.byConv[runtime.ConvID]
 	codexAppServerHandles.byConv[runtime.ConvID] = handle
@@ -839,6 +908,9 @@ func watchCodexAppServerHandle(handle *codexAppServerHandle) {
 	if !closing && (state == db.CodexAppServerDead || strings.Contains(detail, "stopped answering")) {
 		stopCodexAppServerPaneAfterControlFailure(handle.runtime, detail)
 	}
+	if handle.watchDone != nil {
+		close(handle.watchDone)
+	}
 }
 
 // reconnectCodexAppServerHandle repairs a lost agentd WebSocket while the
@@ -961,7 +1033,23 @@ func stopCodexAppServerRuntime(convID, launchID string) {
 }
 
 func stopFailedCodexAppServerLaunch(convID, launchID, tmuxSession string) {
+	var generation string
+	if launchID != "" {
+		if runtime, _ := db.GetCodexAppServerRuntimeByLaunchID(launchID); runtime != nil {
+			generation = runtime.Generation
+		}
+	} else if convID != "" {
+		if runtime, _ := db.GetCodexAppServerRuntimeByConvID(convID); runtime != nil {
+			generation = runtime.Generation
+		}
+	}
 	stopCodexAppServerRuntime(convID, launchID)
+	if generation != "" {
+		if err := session.UnregisterCodexNativePermissionProfile(generation); err != nil {
+			slog.Warn("roll back failed Codex native permission profile",
+				"generation", generation, "error", err)
+		}
+	}
 	if strings.TrimSpace(tmuxSession) == "" {
 		return
 	}

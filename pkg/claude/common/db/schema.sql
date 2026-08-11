@@ -188,7 +188,7 @@ CREATE TABLE "agent_groups" (
 			descr       TEXT NOT NULL DEFAULT '',
 			created_at  INTEGER NOT NULL
 		, archived_at INTEGER, default_cwd TEXT NOT NULL DEFAULT '', default_context TEXT NOT NULL DEFAULT '', max_members INTEGER NOT NULL DEFAULT 0, notify_enabled INTEGER NOT NULL DEFAULT 1, default_profile TEXT NOT NULL DEFAULT '', remote_control INTEGER, mission TEXT NOT NULL DEFAULT '', source_template TEXT NOT NULL DEFAULT '', parent_id INTEGER REFERENCES agent_groups(id) ON DELETE SET NULL, default_profile_id INTEGER, source_template_id INTEGER, sandbox_profile TEXT NOT NULL DEFAULT '', sandbox_profile_id INTEGER, attachment_url TEXT NOT NULL DEFAULT '', attachment_label TEXT NOT NULL DEFAULT '', route_generation INTEGER NOT NULL DEFAULT 0, owner_scopes_json TEXT NOT NULL DEFAULT ''
-			CHECK(length(CAST(owner_scopes_json AS BLOB)) BETWEEN 0 AND 262144)) STRICT;
+			CHECK(length(CAST(owner_scopes_json AS BLOB)) BETWEEN 0 AND 262144), default_spawn_group INTEGER NOT NULL DEFAULT 0) STRICT;
 
 CREATE INDEX idx_agent_groups_archived
 			ON agent_groups(archived_at);
@@ -242,6 +242,9 @@ CREATE TRIGGER sandbox_profile_group_ref_update
 			WHEN NEW.sandbox_profile_id IS NOT NULL
 			 AND NOT EXISTS (SELECT 1 FROM sandbox_profiles WHERE id = NEW.sandbox_profile_id)
 			BEGIN SELECT RAISE(ABORT, 'sandbox profile reference does not exist'); END;
+
+CREATE UNIQUE INDEX idx_agent_groups_one_default_spawn
+			ON agent_groups(default_spawn_group) WHERE default_spawn_group = 1;
 
 CREATE TABLE "agent_cron_jobs" (
 			id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1310,4 +1313,12 @@ CREATE TABLE codex_app_server_capabilities (
 			created_at INTEGER NOT NULL,
 			FOREIGN KEY (generation) REFERENCES codex_app_server_runtimes(generation) ON DELETE CASCADE
 		) STRICT;
+
+CREATE TABLE codex_native_permission_profiles (
+			generation   TEXT PRIMARY KEY,
+			profile_name TEXT NOT NULL UNIQUE,
+			profile_toml TEXT NOT NULL,
+			cleanup_pending INTEGER NOT NULL DEFAULT 0 CHECK (cleanup_pending IN (0, 1)),
+			created_at   INTEGER NOT NULL
+		, owner_agent_id TEXT NOT NULL DEFAULT '', owner_conv_id TEXT NOT NULL DEFAULT '', launch_id TEXT NOT NULL DEFAULT '', launch_ready INTEGER NOT NULL DEFAULT 0 CHECK (launch_ready IN (0, 1))) STRICT;
 

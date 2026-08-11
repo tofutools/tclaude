@@ -897,6 +897,20 @@ func TestDashboardAssets_GroupWebTerminalWired(t *testing.T) {
 	}
 }
 
+func TestDashboardAssets_DefaultDirectoryAutoJoinGroupWired(t *testing.T) {
+	for _, needle := range []string{
+		`data-act="set-default-spawn-group"`,
+		`group.default_spawn_group`,
+		`make directory auto-join default`,
+		`case 'set-default-spawn-group':`,
+		`JSON.stringify({ default_spawn_group: enabled })`,
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets missing %q — default directory auto-join group wiring broken", needle)
+		}
+	}
+}
+
 // TestDashboardAssets_ShowAgentHideButtonWired guards the per-agent "hide
 // window" button's default-hidden toggle (config
 // dashboard.show_agent_hide_button), whose pieces span several files that must

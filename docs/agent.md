@@ -552,8 +552,11 @@ an owner and `permissions.grant` to seed overrides. A profile the caller NAMED
 is direct intent, so an unauthorized caller is refused; a group or global
 DEFAULT profile is ambient configuration nobody typed at this launch, so it is
 skipped and disclosed in the `resolved` echo instead of failing the spawn.
-`tclaude agent spawn --no-owner` declines ownership a profile would otherwise
-confer, the same shape as `--no-group-context`.
+`tclaude agent spawn --owner` explicitly makes the new agent a group owner;
+the caller needs `groups.own`. `--no-owner` declines ownership a profile would
+otherwise confer, the same shape as `--no-group-context`. The two flags are
+mutually exclusive. Bare and explicit group-joined `tclaude` launches accept
+the same pair.
 
 One limitation to know about: emptiness at a higher tier is silence, not "no".
 A profile carrying no `role` (or no `permission_overrides`) does not blank out a
@@ -1364,12 +1367,15 @@ worktree branch token and the conversation title, so it is restricted to
 collapse to a single `-` and the leading/trailing `-` that produces are
 trimmed (a `_` you typed is kept), so `--name "code reviewer!"` lands as
 `code-reviewer`. This applies uniformly to
-`tclaude agent spawn`, `--join-group`, and the dashboard's spawn modal (which
+`tclaude agent spawn`, explicit or directory-discovered group startup, and the
+dashboard's spawn modal (which
 previews the normalized name as you type). Set
 `agent.spawn_name_normalize: false` in `~/.tclaude/data/config.json` (or untick
 *Normalize spawn names* on the dashboard's Config tab) to restore the strict
 behaviour, where an out-of-charset name is rejected. An empty name is always
-valid — the agent gets an auto-generated label.
+valid. Group spawns derive a readable unique name from the group and local
+launch time, such as `review-team-20260810-1427-a1b2`; explicit names and
+profile-provided names still win.
 
 **Naming the tmux session after the agent (opt-in).** A spawn's *label* is its
 tclaude session id: the `sessions` primary key, and — because it is handed to

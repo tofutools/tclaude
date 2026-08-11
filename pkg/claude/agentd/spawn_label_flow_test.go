@@ -61,10 +61,10 @@ func TestSpawn_LabelFromNameDisambiguatesDuplicates(t *testing.T) {
 	assert.Equal(t, second.Label, second.TmuxSession)
 }
 
-// Scenario: the flag is on but the spawn is unnamed. There is no stem to build
-// a label from, so it falls back to the random token — "just give me an agent"
-// keeps working.
-func TestSpawn_LabelFromNameFallsBackWhenUnnamed(t *testing.T) {
+// Scenario: the flag is on and the request omits a name. Group spawns now
+// derive a readable unique name, so that effective name also supplies the
+// label stem — "just give me an agent" stays recognizable and attachable.
+func TestSpawn_LabelFromDerivedNameWhenRequestUnnamed(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
 
@@ -74,6 +74,7 @@ func TestSpawn_LabelFromNameFallsBackWhenUnnamed(t *testing.T) {
 
 	resp := f.SpawnWith("alpha", map[string]any{"name": ""})
 	require.Equalf(t, 200, resp.Code, "unnamed spawn should succeed; body=%s", resp.Raw)
-	assert.Regexpf(t, `^spwn-[0-9a-f]{6}$`, resp.Label,
-		"an unnamed spawn keeps the random label; body=%s", resp.Raw)
+	assert.Regexpf(t, `^alpha-[0-9]{8}-[0-9]{4}-[A-Za-z0-9_-]{4}$`, resp.Label,
+		"the derived agent name supplies the opted-in label; body=%s", resp.Raw)
+	assert.Equal(t, resp.Label, resp.TmuxSession)
 }

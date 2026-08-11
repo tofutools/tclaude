@@ -201,7 +201,7 @@ func refreshPresentedPR(agentID, rawURL, key string) {
 }
 
 func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
-	out := runInDir("", "gh", "pr", "view", strings.TrimSpace(rawURL), "--json", "number,url,state,statusCheckRollup")
+	out := runInDir("", "gh", "pr", "view", strings.TrimSpace(rawURL), "--json", "number,url,state,isDraft,statusCheckRollup")
 	if out == "" {
 		// Same reasoning as ghPRForBranch: the rollup is an enhancement, the
 		// PR's own state is what the badge colour depends on. Retry without
@@ -212,6 +212,7 @@ func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
 		Number            int             `json:"number"`
 		URL               string          `json:"url"`
 		State             string          `json:"state"`
+		IsDraft           bool            `json:"isDraft"`
 		StatusCheckRollup json.RawMessage `json:"statusCheckRollup"`
 	}
 	if json.Unmarshal([]byte(out), &pr) != nil {
@@ -222,10 +223,14 @@ func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
 	}
 	checks := parseStatusCheckRollup(pr.StatusCheckRollup, time.Now())
 	return presentedPRInfo{
-		Number: pr.Number, URL: pr.URL, State: strings.ToLower(pr.State), Checks: &checks,
+		Number: pr.Number, URL: pr.URL, State: prStateFromGH(pr.State, pr.IsDraft), Checks: &checks,
 	}, true
 }
 
+// livePresentedPRInfoWithoutChecks is the presented-PR twin of
+// ghPRForBranchWithoutChecks, and asks for the same long-guaranteed field
+// set only — no isDraft, for the reason documented there. A draft that has
+// to come through this retry renders as a plain open badge.
 func livePresentedPRInfoWithoutChecks(rawURL string) (presentedPRInfo, bool) {
 	out := runInDir("", "gh", "pr", "view", strings.TrimSpace(rawURL), "--json", "number,url,state")
 	if out == "" {
@@ -242,7 +247,7 @@ func livePresentedPRInfoWithoutChecks(rawURL string) (presentedPRInfo, bool) {
 	if pr.URL == "" {
 		pr.URL = strings.TrimSpace(rawURL)
 	}
-	return presentedPRInfo{Number: pr.Number, URL: pr.URL, State: strings.ToLower(pr.State)}, true
+	return presentedPRInfo{Number: pr.Number, URL: pr.URL, State: prStateFromGH(pr.State, false)}, true
 }
 
 func savePresentedPRCache(key, rawURL string, info presentedPRInfo, now time.Time) {
@@ -739,10 +744,10 @@ func validateAgentPRSummary(summary string) error {
 func normalizeAgentPRState(state string) (string, error) {
 	state = strings.ToLower(strings.TrimSpace(state))
 	switch state {
-	case "", "open", "merged", "closed", "handled":
+	case "", "open", "draft", "merged", "closed", "handled":
 		return state, nil
 	default:
-		return "", fmt.Errorf("PR state must be one of: open, merged, closed, handled")
+		return "", fmt.Errorf("PR state must be one of: open, draft, merged, closed, handled")
 	}
 }
 

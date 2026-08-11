@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -42,6 +43,7 @@ func installCodexAppServerGenerationProofForTest(t *testing.T, launchAlive bool)
 	previousEndpointOwner := codexAppServerProcessOwnsEndpoint
 	previousRelayPID := codexAppServerRelayPID
 	previousServerPID := codexAppServerServerPID
+	previousReconcile := reconcileCodexNativePermissionRegistry
 	codexAppServerProcessIdentity = func(int, string) (string, error) { return "test-process-generation", nil }
 	codexAppServerLaunchAlive = func(db.CodexAppServerRuntime) bool { return launchAlive }
 	codexAppServerCapability = func(string) (string, error) { return "test-capability", nil }
@@ -49,6 +51,7 @@ func installCodexAppServerGenerationProofForTest(t *testing.T, launchAlive bool)
 	codexAppServerProcessOwnsEndpoint = func(int, string) bool { return true }
 	codexAppServerRelayPID = func(context.Context, string) (int, error) { return os.Getpid(), nil }
 	codexAppServerServerPID = func(context.Context, string, string) (int, error) { return os.Getpid(), nil }
+	reconcileCodexNativePermissionRegistry = func() error { return nil }
 	t.Cleanup(func() {
 		codexAppServerProcessIdentity = previousIdentity
 		codexAppServerLaunchAlive = previousLaunch
@@ -57,7 +60,26 @@ func installCodexAppServerGenerationProofForTest(t *testing.T, launchAlive bool)
 		codexAppServerProcessOwnsEndpoint = previousEndpointOwner
 		codexAppServerRelayPID = previousRelayPID
 		codexAppServerServerPID = previousServerPID
+		reconcileCodexNativePermissionRegistry = previousReconcile
 	})
+}
+
+func closeCodexAppServerHandleForTest(t *testing.T, handle *codexAppServerHandle) {
+	t.Helper()
+	require.NotNil(t, handle)
+	handle.mutations.Lock()
+	handle.closing = true
+	err := handle.client.Close()
+	handle.mutations.Unlock()
+	require.NoError(t, err)
+	if handle.watchDone == nil {
+		return
+	}
+	select {
+	case <-handle.watchDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Codex app-server handle watcher did not stop")
+	}
 }
 
 func TestPrepareCodexAppServerRuntimeIsolatesAgents(t *testing.T) {
@@ -272,14 +294,8 @@ func TestCodexAppServerBootstrapBindsTUIThreadWithoutReplay(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 
-	codexAppServerHandles.Lock()
-	handle := codexAppServerHandles.byGeneration[generation]
-	delete(codexAppServerHandles.byGeneration, generation)
-	delete(codexAppServerHandles.byConv, "thread-from-tui")
-	codexAppServerHandles.Unlock()
-	if handle != nil {
-		_ = handle.client.Close()
-	}
+	handle := codexAppServerHandleForConv("thread-from-tui")
+	closeCodexAppServerHandleForTest(t, handle)
 }
 
 func TestCodexAppServerExistingThreadResumeBindsWithoutTUIHook(t *testing.T) {
@@ -367,10 +383,7 @@ func TestCodexAppServerExistingThreadResumeBindsWithoutTUIHook(t *testing.T) {
 
 	handle := codexAppServerHandleForConv(runtime.ConvID)
 	require.NotNil(t, handle)
-	handle.mutations.Lock()
-	handle.closing = true
-	_ = handle.client.Close()
-	handle.mutations.Unlock()
+	closeCodexAppServerHandleForTest(t, handle)
 }
 
 func TestCodexAppServerResumeWaitStopsWhenRecoveryClaimsGeneration(t *testing.T) {
@@ -481,10 +494,7 @@ func TestCodexAppServerDaemonRestartReadoptsExactLiveThread(t *testing.T) {
 			"recovery must not duplicate a previously committed durable message")
 	case <-time.After(100 * time.Millisecond):
 	}
-	handle.mutations.Lock()
-	handle.closing = true
-	_ = handle.client.Close()
-	handle.mutations.Unlock()
+	closeCodexAppServerHandleForTest(t, handle)
 }
 
 func TestCodexAppServerDaemonRestartRejectsWrongThreadIdentity(t *testing.T) {
@@ -531,6 +541,83 @@ func TestCodexAppServerDaemonRestartRejectsWrongThreadIdentity(t *testing.T) {
 	assert.Equal(t, db.CodexAppServerUnavailable, stored.State)
 	assert.Contains(t, stored.Detail, "different-thread")
 	assert.Nil(t, codexAppServerHandleForConv(runtime.ConvID))
+}
+
+func TestCodexAppServerDaemonRestartFailsClosedWhenNativeRegistryCannotReconcile(t *testing.T) {
+	resetTestDB(t)
+	installCodexAppServerGenerationProofForTest(t, true)
+	reconcileCodexNativePermissionRegistry = func() error { return errors.New("unsafe /etc/codex topology") }
+	dir, err := os.MkdirTemp("/tmp", "tcl-codex-registry-recovery-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(dir)) })
+	sim, err := testharness.StartCodexAppServerSim(filepath.Join(dir, "app.sock"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sim.Close() })
+	runtime := db.CodexAppServerRuntime{
+		Generation: "registry-failure-generation", LaunchID: "registry-failure-launch", AgentID: "agent",
+		ConvID: "registry-failure-thread", ThreadID: "registry-failure-thread", SocketPath: sim.SocketPath(),
+		ServerPID: os.Getpid(), CodexVersion: "0.147.0", State: db.CodexAppServerReady,
+	}
+	require.NoError(t, db.UpsertCodexAppServerRuntime(runtime))
+	require.NoError(t, db.UpsertCodexNativePermissionProfile(db.CodexNativePermissionProfile{
+		Generation: runtime.Generation, ProfileName: "tclaude-agent-9999999999999999",
+		ProfileTOML: "persisted native profile",
+	}))
+	require.NoError(t, recordCodexAppServerProcessIdentity(runtime.SocketPath, runtime.ServerPID))
+	claimed, err := db.ClaimCodexAppServerRuntimeRecovery(runtime.Generation, "test-daemon", time.Now(), time.Minute)
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	done := make(chan struct{})
+	go func() {
+		recoverCodexAppServerRuntime(runtime, "test-daemon")
+		close(done)
+	}()
+	require.Equal(t, codexappserver.MethodInitialize, nextCodexAppServerMessage(t, sim).Method)
+	require.Equal(t, codexappserver.MethodInitialized, nextCodexAppServerMessage(t, sim).Method)
+	read := nextCodexAppServerMessage(t, sim)
+	require.Equal(t, codexappserver.MethodThreadRead, read.Method)
+	require.NoError(t, sim.Reply(read.ID, codexappserver.ThreadReadResult{Thread: codexappserver.Thread{
+		ID: runtime.ThreadID, Status: json.RawMessage(`{"type":"idle"}`), Turns: []codexappserver.Turn{},
+	}}))
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("registry-failure recovery did not finish")
+	}
+	stored, err := db.GetCodexAppServerRuntime(runtime.Generation)
+	require.NoError(t, err)
+	assert.Equal(t, db.CodexAppServerUnavailable, stored.State)
+	assert.Contains(t, stored.Detail, "unsafe /etc/codex topology")
+	assert.Nil(t, codexAppServerHandleForConv(runtime.ConvID))
+}
+
+func TestCodexAppServerReadyValidationRejectsProfileRemovedDuringReconcile(t *testing.T) {
+	resetTestDB(t)
+	const generation = "profile-pruned-generation"
+	require.NoError(t, db.UpsertCodexNativePermissionProfile(db.CodexNativePermissionProfile{
+		Generation: generation, ProfileName: "tclaude-agent-6666666666666666", ProfileTOML: "complete-profile",
+	}))
+	previousReconcile := reconcileCodexNativePermissionRegistry
+	reconcileCodexNativePermissionRegistry = func() error {
+		return db.DeleteCodexNativePermissionProfile(generation)
+	}
+	t.Cleanup(func() { reconcileCodexNativePermissionRegistry = previousReconcile })
+	require.ErrorContains(t, reconcileCodexNativePermissionRegistryForGeneration(generation),
+		"removed during reconciliation")
+}
+
+func TestCodexAppServerReadyValidationSkipsUnrelatedOuterLayerGeneration(t *testing.T) {
+	resetTestDB(t)
+	calls := 0
+	previousReconcile := reconcileCodexNativePermissionRegistry
+	reconcileCodexNativePermissionRegistry = func() error {
+		calls++
+		return errors.New("broken native registry for another generation")
+	}
+	t.Cleanup(func() { reconcileCodexNativePermissionRegistry = previousReconcile })
+	require.NoError(t, reconcileCodexNativePermissionRegistryForGeneration("outer-layer-generation"))
+	assert.Zero(t, calls, "outer-layer generations must not touch the native registry")
 }
 
 func TestCodexAppServerDaemonRestartRejectsChangedProcessGeneration(t *testing.T) {
@@ -700,10 +787,7 @@ func TestCodexAppServerClientFailureReconnectsSameGeneration(t *testing.T) {
 	stored, err := db.GetCodexAppServerRuntime(runtime.Generation)
 	require.NoError(t, err)
 	assert.Equal(t, db.CodexAppServerReady, stored.State)
-	handle.mutations.Lock()
-	handle.closing = true
-	_ = handle.client.Close()
-	handle.mutations.Unlock()
+	closeCodexAppServerHandleForTest(t, handle)
 }
 
 func TestCodexAppServerBootstrapNeverJoinsFreshThreadSubscriberSet(t *testing.T) {
@@ -808,14 +892,8 @@ func TestCodexAppServerBootstrapNeverJoinsFreshThreadSubscriberSet(t *testing.T)
 				require.Equal(t, db.CodexAppServerReady, runtime.State,
 					"the post-bind agentd connection must not receive or quarantine TUI requests")
 
-				codexAppServerHandles.Lock()
-				handle := codexAppServerHandles.byGeneration[generation]
-				delete(codexAppServerHandles.byGeneration, generation)
-				delete(codexAppServerHandles.byConv, "thread")
-				codexAppServerHandles.Unlock()
-				if handle != nil {
-					_ = handle.client.Close()
-				}
+				handle := codexAppServerHandleForConv("thread")
+				closeCodexAppServerHandleForTest(t, handle)
 			})
 		}
 	}

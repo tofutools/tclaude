@@ -92,6 +92,35 @@ function replaceOptions(select, entries) {
   select?.replaceChildren(...entries.map(([value, label]) => makeOption(value, label)));
 }
 
+const terminalAliases = {
+  iterm: 'iterm2',
+  terminal: 'terminal-app',
+  'terminal.app': 'terminal-app',
+  terminalapp: 'terminal-app',
+  apple: 'terminal-app',
+  gnome: 'gnome-terminal',
+  xfce: 'xfce4-terminal',
+  xfce4: 'xfce4-terminal',
+  'x-terminal': 'x-terminal-emulator',
+};
+
+function setTerminalSelectValue(select, value) {
+  if (!select) return;
+  select.querySelectorAll('option[data-current-terminal]').forEach(option => option.remove());
+  const raw = String(value ?? '').trim();
+  const canonical = terminalAliases[raw.toLowerCase()] || raw.toLowerCase();
+  const known = Array.from(select.querySelectorAll('option'))
+    .some(option => (option.getAttribute('value') ?? option.value ?? '') === canonical);
+  if (raw && !known) {
+    const current = makeOption(raw, `${raw} (current value)`);
+    current.setAttribute('data-current-terminal', '');
+    select.appendChild(current);
+    setSelectValue(select, raw);
+    return;
+  }
+  setSelectValue(select, canonical);
+}
+
 // populateAskSelects fills the Ask-defaults Model / Effort dropdowns from
 // the snapshot's harness catalog (the same source the spawn modal uses),
 // so the lists track the server-side catalog with no hardcoded model list.
@@ -366,7 +395,7 @@ function syncCfgRemoteStatus() {
 function populateConfigForm(cfg) {
   cfg = cfg || {};
   setSelectValue($('#cfg-log-level'), cfg.log_level || 'info');
-  $('#cfg-terminal').value = cfg.terminal || '';
+  setTerminalSelectValue($('#cfg-terminal'), cfg.terminal || '');
   const pcg = cfg.pre_compact_guard || {};
   $('#cfg-precompact-enabled').checked = !!pcg.enabled;
   $('#cfg-precompact-blockmanual').checked = !!pcg.block_manual;
@@ -558,6 +587,11 @@ function populateConfigForm(cfg) {
   $('#cfg-ratelimit-7d').value = rl ? rl.seven_day_percent_max_used : '';
 
   const a = cfg.agent || {};
+	const session = cfg.session || {};
+	// Directory auto-join defaults on; only an explicit false disables it.
+	$('#cfg-session-auto-join-group').checked = session.auto_join_group !== false;
+	// Auto-create is the higher-impact extension and defaults off.
+	$('#cfg-session-auto-join-or-create-group').checked = session.auto_join_or_create_group === true;
   $('#cfg-agent-autolaunch').checked = !!a.auto_launch_dashboard;
   $('#cfg-agent-access-autoopen').checked = !!a.access_request_auto_open_browser;
   $('#cfg-agent-access-notify').checked = !!a.access_request_system_notification;
@@ -620,7 +654,7 @@ function assembleConfig() {
   const cfg = JSON.parse(JSON.stringify(configObj || {}));
 
   cfg.log_level = controlValue($('#cfg-log-level'));
-  const term = $('#cfg-terminal').value.trim();
+  const term = controlValue($('#cfg-terminal')).trim();
   if (term) cfg.terminal = term; else delete cfg.terminal;
 
   // pre_compact_guard. Clone the existing block so a future sub-field
@@ -1048,6 +1082,17 @@ function assembleConfig() {
   // had no agent key. Drop it when nothing is set.
   if (Object.keys(a).length) cfg.agent = a;
   else delete cfg.agent;
+
+	// session is shared with the existing tmux/display-name settings, so clone
+	// and preserve fields without widgets. Persist only non-default choices:
+	// auto-join=true and auto-create=false are represented by absent keys.
+	const session = (cfg.session && typeof cfg.session === 'object') ? cfg.session : {};
+	if ($('#cfg-session-auto-join-group').checked) delete session.auto_join_group;
+	else session.auto_join_group = false;
+	if ($('#cfg-session-auto-join-or-create-group').checked) session.auto_join_or_create_group = true;
+	else delete session.auto_join_or_create_group;
+	if (Object.keys(session).length) cfg.session = session;
+	else delete cfg.session;
 
   // remote_access is an optional block. Clone the existing one so a future
   // sub-field with no widget round-trips, then set the two form-owned keys:
