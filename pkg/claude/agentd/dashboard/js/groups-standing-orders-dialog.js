@@ -42,6 +42,7 @@ export function GroupStandingOrdersDialog({ descriptor, actions }) {
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
   const [browsing, setBrowsing] = useState(false);
+  const [explaining, setExplaining] = useState(false);
   const [changing, setChanging] = useState(new Set());
   const group = descriptor.group;
   const wizard = useWizardTheme();
@@ -109,10 +110,15 @@ export function GroupStandingOrdersDialog({ descriptor, actions }) {
     resizeKey="tclaude.dash.modalSize.group-standing-orders"
   >
     <div class="group-standing-orders-heading">
-      <h3 id="group-standing-orders-title">${wizard ? `✦ Decrees of party ${group}` : `Rules for ${group}`}</h3>
-      <p class="muted">${wizard
-        ? 'Enduring commandments whispered to every familiar in this party.'
-        : 'Durable guidance delivered to every agent in this group.'}</p>
+      <div>
+        <h3 id="group-standing-orders-title">${wizard ? `✦ Decrees of party ${group}` : `Rules for ${group}`}</h3>
+        <p class="muted">${wizard
+          ? 'Enduring commandments whispered to every familiar in this party.'
+          : 'Durable guidance delivered to every agent in this group.'}</p>
+      </div>
+      <button type="button" class="group-standing-orders-close"
+        aria-label=${wizard ? 'Seal decrees' : 'Close rules'}
+        disabled=${changing.size > 0} onClick=${actions.closeStandingOrders}>×</button>
     </div>
     ${error && html`<div class="jobs-error" role="alert">${error}</div>`}
     ${loading
@@ -125,13 +131,36 @@ export function GroupStandingOrdersDialog({ descriptor, actions }) {
               : 'The rulebook may not be empty. Retry to load its current state.'}</span>
             <button type="button" onClick=${() => void load()}>${wizard ? 'consult again' : 'retry'}</button>
           </div>`
+      : rows.length === 0
+        ? html`<div class="group-standing-orders-first-run">
+            <div class="group-standing-orders-first-icon" aria-hidden="true">${wizard ? '📜' : '◎'}</div>
+            <strong>${wizard ? 'The party bears no decrees' : 'No standing orders yet'}</strong>
+            <p>${wizard
+              ? 'Inscribe the first enduring commandment. Present and future familiars alike shall heed its words.'
+              : 'Create the first reusable rule for this group. It will apply to every current member and anyone added later.'}</p>
+            <div class="group-standing-orders-first-actions">
+              <button type="button" class="primary" onClick=${() => actions.openStandingOrderCreate(group)}>
+                ${wizard ? '✦ inscribe first decree' : '+ create first rule'}</button>
+              <button type="button" onClick=${() => setExplaining(!explaining)}
+                aria-expanded=${explaining ? 'true' : 'false'}>
+                ${wizard ? 'consult the lore' : 'what are standing orders?'}</button>
+            </div>
+            ${explaining && html`<div class="group-standing-orders-explainer">
+              ${wizard
+                ? 'Decrees are reusable instructions delivered when a chosen omen occurs. Their bindings and omens remain editable in Labours.'
+                : 'Standing orders are reusable instructions delivered when a chosen trigger occurs. Their scope and trigger remain editable in Automations.'}
+            </div>`}
+          </div>
+          <div class="group-standing-orders-first-hint">
+            <strong>${wizard ? 'Scrolls already bound elsewhere?' : 'Already have rules elsewhere?'}</strong>
+            ${wizard
+              ? ' When the archive holds decrees, it may be opened from here.'
+              : ' Once reusable rules exist, this view offers a library to add them here.'}
+          </div>`
       : html`
         <div class="group-standing-orders-summary">
-          <strong><span class="group-standing-orders-live" aria-hidden="true"></span>
-            ${effective.length}
-            ${wizard ? 'decrees in force' : 'rules in force'}</strong>
-          <span>${effective.filter((row) => row.global).length} ${wizard ? 'realm-wide' : 'global'} ·
-            ${effective.filter((row) => !row.global).length} ${wizard ? 'of this party' : 'group-scoped'}</span>
+          <strong><span class="group-standing-orders-live" aria-hidden="true"></span>${`${effective.length} ${wizard ? 'decrees' : 'rules'} in force`}</strong>
+          <span>${`${effective.filter((row) => row.global).length} ${wizard ? 'realm-wide' : 'global'} · ${effective.filter((row) => !row.global).length} ${wizard ? 'of this party' : 'group-scoped'}`}</span>
         </div>
         <div class="group-standing-orders-section-heading">
           <strong>${wizard ? 'Decrees in force' : 'In force'}</strong>
@@ -232,8 +261,8 @@ export function GroupStandingOrdersDialog({ descriptor, actions }) {
         </div>`}
     <div class="modal-buttons">
       <span class="group-standing-orders-managed-note">◇ ${wizard
-        ? 'Realm-wide decrees are governed in Labours'
-        : 'Inherited rules are managed in Automations'}</span>
+        ? (rows.length ? 'Realm-wide decrees are governed in Labours' : 'Realm-wide decrees shall reveal themselves here')
+        : (rows.length ? 'Inherited rules are managed in Automations' : 'Global rules will appear here automatically')}</span>
       <button type="button" onClick=${actions.closeStandingOrders} disabled=${changing.size > 0}>${wizard ? 'seal' : 'done'}</button>
     </div>
   <//>`;
