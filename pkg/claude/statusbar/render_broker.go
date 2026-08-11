@@ -338,20 +338,18 @@ func shouldLogRefusal(sessionID string) bool {
 	return true
 }
 
-// daemonSocketClient builds a client bounded by timeout that dials agentd's
-// unix socket, trying each candidate path in turn.
-//
-// It attaches no identity headers, and deliberately so: agentd resolves this
-// pane from the socket's peer credentials and its harness ancestry, which is
-// the only identity a status line could honestly assert. Every statusline
-// caller shares that discipline, so the client is shared too.
-func daemonSocketClient(timeout time.Duration) (*http.Client, error) {
+func postRenderToDaemon(req BrokeredRenderRequest) (BrokeredRenderResponse, error) {
+	var out BrokeredRenderResponse
+	body, err := json.Marshal(req)
+	if err != nil {
+		return out, err
+	}
 	socks := agentipc.ClientSocketPaths()
 	if len(socks) == 0 {
-		return nil, fmt.Errorf("no agentd socket path resolved")
+		return out, fmt.Errorf("no agentd socket path resolved")
 	}
-	return &http.Client{
-		Timeout: timeout,
+	client := &http.Client{
+		Timeout: renderBrokerTimeout,
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 				var lastErr error
@@ -365,18 +363,6 @@ func daemonSocketClient(timeout time.Duration) (*http.Client, error) {
 				return nil, lastErr
 			},
 		},
-	}, nil
-}
-
-func postRenderToDaemon(req BrokeredRenderRequest) (BrokeredRenderResponse, error) {
-	var out BrokeredRenderResponse
-	body, err := json.Marshal(req)
-	if err != nil {
-		return out, err
-	}
-	client, err := daemonSocketClient(renderBrokerTimeout)
-	if err != nil {
-		return out, err
 	}
 	httpReq, err := http.NewRequest(http.MethodPost, "http://tclaude/v1/whoami/statusline", bytes.NewReader(body))
 	if err != nil {

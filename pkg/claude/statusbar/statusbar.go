@@ -3,7 +3,6 @@ package statusbar
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -598,11 +597,9 @@ func getGitData() *GitSnapshot {
 		DefaultBranch: getDefaultBranch(),
 		FetchedAt:     time.Now(),
 	}
-	// Only check for PR on feature branches (the PR lookup is the slowest call
-	// whichever path serves it).
+	// Only check for PR on feature branches (gh pr view is the slowest call).
 	if data.RepoURL != "" && data.Branch != "" && data.DefaultBranch != "" && data.Branch != data.DefaultBranch {
 		data.PRNumber, data.PRURL, data.PRState = getPRInfo(data.Branch)
-		dropForeignRepoPR(data)
 	}
 	saveGitCache(data)
 	return data
@@ -650,36 +647,12 @@ func getDefaultBranch() string {
 	return ""
 }
 
-// getPRInfo returns the PR's number, URL, and state for the given branch.
-// State is lower-cased to open|merged|closed. Returns (0, "", "") when there's
-// no PR, or when nothing could answer — all best-effort, never fatal.
-//
-// agentd is asked first, because it has already resolved this branch's pull
-// request for the dashboard's Branch column and can answer from its own cache:
-// no GitHub traffic, no credential, and — the reason this is not the GitHub
-// proxy — no permission grant and no audit row on a surface that re-renders
-// several times a second. It is also the only path that works at all in a pane
-// whose sandbox denies ~/.config/gh, which is where the `gh` below silently
-// returns nothing.
-//
-// `gh` remains the fallback, unchanged, and covers the two cases the daemon
-// cannot: no daemon at all, and a cold cache. The daemon's own answer for a
-// cold branch is "not resolved yet" rather than "no pull request" — and the
-// very ask that misses schedules the refresh that makes the next one land.
+// getPRInfo returns the open PR's number, URL, and state for the given
+// branch via gh CLI. State is lower-cased to open|merged|closed.
+// Returns (0, "", "") when there's no PR, gh isn't installed, or gh
+// isn't authenticated — all best-effort, never fatal.
 func getPRInfo(branch string) (number int, url, state string) {
-	if n, u, s, ok := daemonBranchPR(context.Background(), branch); ok {
-		return n, u, s
-	}
-	return ghPRInfo(branch)
-}
-
-// ghPRInfo is the direct `gh pr view` read: the pane's own credentials, the
-// pane's own network. Returns (0, "", "") when there's no PR, gh isn't
-// installed, gh isn't authenticated, or the call outran its bound.
-func ghPRInfo(branch string) (number int, url, state string) {
-	ctx, cancel := context.WithTimeout(context.Background(), ghPRTimeout)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "gh", "pr", "view", branch, "--json", "number,url,state").Output()
+	out, err := exec.Command("gh", "pr", "view", branch, "--json", "number,url,state").Output()
 	if err != nil {
 		return 0, "", ""
 	}

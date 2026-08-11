@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -240,4 +241,67 @@ func TestRefreshBranchLink_DoesNotWipePROnResolverMiss(t *testing.T) {
 	require.Len(t, rows, 1)
 	assert.Equal(t, 42, rows[0].PRNumber, "a PR-less resolution must not wipe the snapshot")
 	assert.Equal(t, "open", rows[0].PRState)
+}
+
+// TestGHPRForBranchRefusesToLetABranchNameARepository pins the gate where a
+// branch string becomes argv.
+//
+// The branch reaching this file is NOT daemon-derived, despite arriving through
+// agent.ResolveLocation: it comes from `agent_workspace` (written verbatim by
+// the agent's own statusline broker) or from `conv_index.git_branch` (a
+// free-form transcript string). So it is attacker-chosen text handed to a
+// subprocess run with the operator's GitHub credentials.
+func TestGHPRForBranchRefusesToLetABranchNameARepository(t *testing.T) {
+	for _, branch := range []string{
+		"https://github.com/victim/private/pull/1",
+		"-R victim/private",
+		"--repo=victim/private",
+		"feature branch",
+		"feat/../../etc",
+		"HEAD",
+		"",
+	} {
+		t.Run(branch, func(t *testing.T) {
+			assert.False(t, safeBranchForGH("/repo", branch),
+				"this shape must never be handed to gh")
+		})
+	}
+	for _, branch := range []string{"feature", "feat/thing", "release/1.2"} {
+		t.Run("allows "+branch, func(t *testing.T) {
+			assert.True(t, safeBranchForGH("/repo", branch),
+				"an ordinary branch name must still resolve")
+		})
+	}
+}
+
+// TestGHPRListArgsCannotNameARepository covers what no charset gate can.
+//
+// `github.com/victim/private/pull/1` and a bare `1` are LEGAL git ref names, so
+// validateBranchName admits them and should: refusing every legal branch that
+// resembles a URL would be guesswork. What makes them harmless is the argv
+// shape — `pr list --head <branch>` filters by branch, while the `pr view
+// <branch>` this replaced accepts `<number> | <url> | <branch>` in ONE
+// positional slot and would have read them as a pull-request id and a
+// repository URL. Reverting the shape silently restores that for exactly the
+// inputs the charset gate lets through, so it is pinned here.
+func TestGHPRListArgsCannotNameARepository(t *testing.T) {
+	for _, branch := range []string{
+		"github.com/victim/private/pull/1",
+		"1",
+		"feature",
+	} {
+		t.Run(branch, func(t *testing.T) {
+			for _, withChecks := range []bool{true, false} {
+				args := ghPRListArgs(branch, withChecks)
+				require.Greater(t, len(args), 2)
+				assert.Equal(t, []string{"pr", "list"}, args[:2],
+					"never `pr view`, whose positional accepts a number or a URL")
+
+				at := slices.Index(args, branch)
+				require.Positive(t, at, "the branch must appear in the argv")
+				assert.Equal(t, "--head", args[at-1],
+					"the branch may only ever be the VALUE of --head, never a bare selector")
+			}
+		})
+	}
 }

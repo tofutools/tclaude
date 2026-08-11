@@ -1154,7 +1154,6 @@ func isLoopbackHost(host string) bool {
 func buildMux() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/info", handleInfo)
-	mux.HandleFunc("/v1/statusline/branch-pr", handleStatuslineBranchPR)
 	mux.HandleFunc("/v1/dashboard/open", handleDashboardOpen)
 	mux.HandleFunc("/v1/whoami", handleWhoami)
 	mux.HandleFunc("/v1/whoami/rename", handleWhoamiRename)
