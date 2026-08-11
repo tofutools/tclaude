@@ -21,6 +21,9 @@ func TestDashboardGroupStandingOrdersRulebookAssets(t *testing.T) {
 		"group-standing-orders-library-callout",
 		"group-standing-orders-load-failed",
 		"group-standing-orders-paused",
+		"group-standing-orders-first-run",
+		"The party bears no decrees",
+		"No standing orders yet",
 	} {
 		if !strings.Contains(dialog, want) {
 			t.Errorf("standing-order rulebook dialog missing %q", want)
@@ -39,6 +42,8 @@ func TestDashboardGroupStandingOrdersRulebookAssets(t *testing.T) {
 		".group-standing-orders-summary {",
 		".group-standing-orders-library-callout {",
 		"body.wizard .group-standing-orders-live",
+		"body.wizard #group-standing-orders-modal .cron-create-modal",
+		"#group-standing-orders-modal .cron-create-modal button.primary",
 		"@media (max-width: 720px)",
 	} {
 		if !strings.Contains(css, want) {

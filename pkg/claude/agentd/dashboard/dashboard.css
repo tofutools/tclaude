@@ -7339,8 +7339,33 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
 .group-standing-order-choice:hover { border-color: #3d4b5d; }
 .group-standing-order-choice.disabled { opacity: 0.7; }
 .group-standing-order-choice input:disabled { cursor: not-allowed; }
-.group-standing-orders-heading { margin-bottom: 14px; }
+.group-standing-orders-heading {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  margin: -18px -22px 18px; padding: 18px 22px 15px;
+  border-bottom: 1px solid #2a3340;
+}
 .group-standing-orders-heading p { margin: 4px 0 0; }
+.group-standing-orders-close {
+  flex: 0 0 auto; border: 0 !important; padding: 0 2px !important;
+  background: transparent !important; color: #7d8590 !important;
+  font-size: 19px !important; line-height: 1; box-shadow: none !important;
+}
+.group-standing-orders-close:hover { color: #c9d1d9 !important; }
+#group-standing-orders-modal .cron-create-modal button:not(.group-standing-orders-close) {
+  border: 1px solid #3a4654; border-radius: 4px;
+  padding: 6px 10px; background: #21262d; color: #c9d1d9;
+  font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+#group-standing-orders-modal .cron-create-modal button:not(.group-standing-orders-close):hover:not(:disabled) {
+  background: #2d333b; border-color: #58a6ff;
+}
+#group-standing-orders-modal .cron-create-modal button.primary {
+  background: #1f6feb; border-color: #388bfd; color: #fff;
+}
+#group-standing-orders-modal .cron-create-modal button.primary:hover:not(:disabled) {
+  background: #388bfd; border-color: #58a6ff;
+}
+#group-standing-orders-modal .cron-create-modal button:disabled { opacity: 0.65; cursor: not-allowed; }
 .group-standing-orders-summary {
   display: flex; align-items: center; gap: 18px;
   padding: 9px 11px; margin-bottom: 14px;
@@ -7363,6 +7388,28 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
   padding: 22px 12px; border: 1px dashed #34404e; border-radius: 4px;
   background: #10151b; text-align: center;
 }
+.group-standing-orders-first-run {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 34px 20px 30px; border: 1px dashed #34404e; border-radius: 5px;
+  background: #10151b; text-align: center;
+}
+.group-standing-orders-first-icon {
+  display: grid; place-items: center; width: 44px; height: 44px; margin-bottom: 13px;
+  border: 1px solid #38516d; border-radius: 50%; background: #10243a;
+  color: #79c0ff; font-size: 21px;
+}
+.group-standing-orders-first-run > strong { color: #e6edf3; font-size: 14px; }
+.group-standing-orders-first-run > p {
+  max-width: 430px; margin: 5px auto 17px; color: #8b949e;
+}
+.group-standing-orders-first-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.group-standing-orders-explainer {
+  max-width: 460px; margin-top: 14px; padding: 9px 11px;
+  border-left: 2px solid #388bfd; background: #0d1117; color: #9ca8b4;
+  font-size: 11px; text-align: left;
+}
+.group-standing-orders-first-hint { margin: 12px 0 0; color: #7d8590; font-size: 11px; }
+.group-standing-orders-first-hint strong { color: #9ca8b4; }
 .group-standing-orders-load-failed {
   display: flex; flex-direction: column; align-items: center; gap: 7px;
   padding: 24px 14px; border: 1px solid #6e3b3b; border-radius: 4px;
@@ -7397,6 +7444,56 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
 .group-standing-orders-library-callout > div:first-child > span { font-size: 11px; }
 .group-standing-orders-callout-actions { display: flex; flex: 0 0 auto; gap: 6px; }
 .group-standing-orders-managed-note { margin-right: auto; color: #8b949e; font-size: 11px; }
+body.wizard #group-standing-orders-modal .cron-create-modal {
+  background: radial-gradient(circle at 50% 0, #271934 0%, #1b1524 42%, #15101d 100%);
+  border: 1px solid #6e4c86; box-shadow: 0 22px 70px #000d, 0 0 32px #a96ee628;
+  color: #e7d9f5;
+}
+body.wizard #group-standing-orders-modal .group-standing-orders-heading {
+  border-bottom-color: #4e3961;
+  background: linear-gradient(110deg, #291b36, #1b1524);
+}
+body.wizard #group-standing-orders-modal .group-standing-orders-heading h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  font-size: 16px; letter-spacing: 0.3px; text-shadow: 0 0 7px #a97bd699;
+}
+body.wizard #group-standing-orders-modal .group-standing-orders-heading p,
+body.wizard #group-standing-orders-modal .muted { color: #ad9abb; }
+body.wizard #group-standing-orders-modal .group-standing-orders-close { color: #9d87ad !important; }
+body.wizard #group-standing-orders-modal .group-standing-orders-close:hover { color: #f3e6c0 !important; }
+body.wizard #group-standing-orders-modal .cron-create-modal button:not(.group-standing-orders-close) {
+  background: #2a2034; border-color: #59466b; color: #e7d9f5;
+}
+body.wizard #group-standing-orders-modal .cron-create-modal button:not(.group-standing-orders-close):hover:not(:disabled) {
+  background: #39294a; border-color: #d9b45a;
+}
+body.wizard #group-standing-orders-modal .cron-create-modal button.primary {
+  background: linear-gradient(180deg, #7650a5, #563477);
+  border-color: #b184d1; color: #fff7dc; box-shadow: 0 0 12px #b26de840;
+}
+body.wizard #group-standing-orders-modal .cron-create-modal button.primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #8d65ba, #654087);
+  border-color: #f3e6c0; box-shadow: 0 0 17px #b26de866;
+}
+body.wizard #group-standing-orders-modal .group-standing-orders-first-run {
+  border-color: #694f7e; background: linear-gradient(145deg, #17101f, #120e19);
+}
+body.wizard #group-standing-orders-modal .group-standing-orders-first-icon {
+  border-color: #9370b2; background: #2b1940; color: #e4bfff;
+  box-shadow: 0 0 18px #b878ee4d;
+}
+body.wizard #group-standing-orders-modal .group-standing-orders-first-run > strong {
+  color: #f3e6c0; font-family: Georgia, serif; font-size: 15px;
+}
+body.wizard #group-standing-orders-modal .group-standing-orders-first-run > p,
+body.wizard #group-standing-orders-modal .group-standing-orders-first-hint,
+body.wizard #group-standing-orders-modal .group-standing-orders-managed-note { color: #a795b2; }
+body.wizard #group-standing-orders-modal .group-standing-orders-first-hint strong { color: #c9b5d7; }
+body.wizard #group-standing-orders-modal .group-standing-orders-explainer {
+  border-left-color: #a97bd6; background: #100c17; color: #b9a8c5;
+}
+body.wizard #group-standing-orders-modal .modal-buttons { border-top-color: #40304f; }
 body.wizard .group-standing-orders-live {
   background: #c084fc; box-shadow: 0 0 8px #c084fcaa;
 }
@@ -7410,6 +7507,7 @@ body.wizard .group-standing-order-origin { color: #c084fc; }
   .group-standing-orders-summary,
   .group-standing-orders-library-callout { align-items: stretch; flex-direction: column; }
   .group-standing-orders-callout-actions { flex-wrap: wrap; }
+  .group-standing-orders-first-actions { flex-direction: column; }
   .group-standing-order-choice { grid-template-columns: 20px minmax(0, 1fr) auto; }
   .group-standing-order-scope { grid-column: 2; justify-self: start; }
 }
