@@ -382,8 +382,11 @@ func seedModelCostDashSnap(t *testing.T, members []dashMemberSpec) {
 		// onto the daily row the Costs tab groups and colours by.
 		if row.harness != "" {
 			session, err := db.LoadSession(m.label)
-			if err != nil || session == nil {
+			if err != nil {
 				t.Fatalf("load session for %s: %v", m.title, err)
+			}
+			if session == nil {
+				t.Fatalf("load session for %s: no session row %q", m.title, m.label)
 			}
 			session.Harness = row.harness
 			if err := db.SaveSession(session); err != nil {
@@ -1198,7 +1201,7 @@ func baseStates() []dashsnap.State {
 		{
 			Key:      "bounded-costs-normal",
 			Title:    "Bounded Preact — Costs normal",
-			Caption:  "Costs island completed its request and rendered controls for the fixture's empty-cost span.",
+			Caption:  "Costs island completed its request and rendered the per-model spend strip, the harness-stacked chart and the per-agent breakdown over the fixture's seeded spend.",
 			JS:       boundedTabJS("costs", "#costs-factor"),
 			SettleMS: 500,
 		},

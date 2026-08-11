@@ -987,7 +987,12 @@ test('native member rows preserve the legacy field, capability and selector matr
   assert.ok(harnessMark, 'the runtime line starts with the Claude Code product mark');
   assert.equal(harnessMark.title, 'Claude Code');
   assert.equal(harnessMark.getAttribute('aria-label'), 'Claude Code');
-  assert.match(harnessLine.textContent, /·O4\.8 1Mhi<1¢≈\$0\.42🔒›📱/);
+  // The fixture records the model as Claude Code emits it for an extended
+  // window — "Opus 4.8 (1M context)" — and the line renders the model ALONE.
+  // The window belongs to the context meter beside it, which measures the
+  // EFFECTIVE window and so stays right under a pinned --auto-compact-window
+  // where a name baked at launch could not.
+  assert.match(harnessLine.textContent, /·Opus 4\.8hi<1¢≈\$0\.42🔒›📱/);
   assert.equal(harnessLine.querySelector('.harness-effort').textContent, 'hi');
   assert.equal(harnessLine.querySelector('.harness-effort').title, 'high');
   assert.match(harnessLine.title, /WHAT-IF cost this session/);

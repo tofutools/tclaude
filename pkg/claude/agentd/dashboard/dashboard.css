@@ -15036,6 +15036,20 @@ body.wizard #costs-table .cost-total-row td { border-top-color: #4a3a6b; }
 body.wizard #costs-table th.cost-sort:hover,
 body.wizard #costs-table th.cost-sort.active { color: #d9b45a; }
 
+/* ─── Per-model spend strip: a treasury split between the summoned ─────
+   Same treatment as the table below it — gold amounts, violet chrome — so
+   the strip reads as part of the same ledger rather than a grey panel
+   dropped into the arcane tab. The WHAT-IF amount overrides `.cost-amt` at
+   equal specificity in the default skin, so it must be re-stated here too or
+   a hypothetical model would keep its olive while everything around it gilds. */
+body.wizard #costs-model-rollup { border-color: #4a3a6b; }
+body.wizard .costs-model-cell { border-right-color: #362a52; }
+body.wizard .costs-model-cell b { color: #f0d066; }
+body.wizard .costs-model-cell b.cost-model-whatif { color: #b39ddb; }
+body.wizard .costs-model-cell span.muted { color: #8f7bbf; }
+body.wizard .costs-model-bar { background: #2c2150; }
+body.wizard .costs-model-bar i { background: linear-gradient(90deg, #d9b45a, #f0d066); }
+
 /* ─── WHAT-IF banner → an arcane divination warning ───────────────────
    The hypothetical pay-per-token estimate for a subscription reads as a
    scrying, framed in the theme's amber-on-void so it still signals

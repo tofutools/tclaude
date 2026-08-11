@@ -309,23 +309,18 @@ func TestDashboardHTML_SpawnHarnessMenusWired(t *testing.T) {
 	must("harness.effort_levels : DEFAULT_EFFORTS", "the effort menu reads the harness's effort levels from the catalog")
 }
 
-// TestDashboardHTML_DisplayModelRules pins the displayModel() normalisation
-// rules. The transform lives entirely in helpers.js JS and the repo has
-// no JS test runner, so — as with the context-meter formula — this guards
-// the *rules* by asserting their source substrings survive, and the
-// contract is documented here for the manual-verification trail:
+// TestDashboardHTML_ModelNamingWired guards the parts of the model-naming
+// surface that a JS test cannot see: that the roster and the Costs tab both
+// go through the ONE shared normaliser, and that the spend strip is wired
+// into the render tree and carries styling in the shipped CSS.
 //
-//	"Opus 5 (1M context)"   → "Opus 5"       (context marker peeled)
-//	"claude-opus-5[1m]"     → "claude-opus-5" ([1m] launch alias peeled)
-//	"Opus 4.8 (fast)"       → "Opus 4.8 (fast)" (other qualifiers KEPT)
-//	"Sonnet 4.6"            → "Sonnet 4.6"   (untouched)
-//
-// The kept-qualifier case is the load-bearing one: peeling ANY trailing
-// parenthetical would collapse two genuinely different models onto one name.
-// The window itself is not lost — the context meter next to the name renders
-// the EFFECTIVE window, which is why it, and not the display name, is where
-// an agent pinned by --auto-compact-window reads correctly.
-func TestDashboardHTML_DisplayModelRules(t *testing.T) {
+// The RULES themselves — which suffixes are peeled, which qualifiers survive,
+// how the rollup totals and dedupes — are covered behaviourally in
+// pkg/claude/agentd/jstest (helpers/costs-model tests), which executes the
+// real modules. Asserting the same rules here as source substrings would only
+// catch a rename while reading like real coverage, so this deliberately does
+// not try.
+func TestDashboardHTML_ModelNamingWired(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
 		if !strings.Contains(dashboardAssets, needle) {
@@ -333,40 +328,18 @@ func TestDashboardHTML_DisplayModelRules(t *testing.T) {
 		}
 	}
 
-	// Rule 1: peel a trailing [1m] launch-alias suffix.
-	must(`if (/\[1m\]$/i.test(main)) main = main.slice(0, -'[1m]'.length).trim();`,
-		"peels a trailing [1m] window suffix")
+	// One normaliser, three call sites. A second, divergent implementation is
+	// exactly how "Opus 5" and "Opus 5 (1M context)" drifted apart before.
+	must("function displayModel(model, harness = '') {", "the shared model normaliser is defined once")
+	must("${displayModel(model, harness)}", "the roster's visible token uses it")
+	must("export function costModelLabel(agent) {", "the costs tab funnels through one label helper")
+	must("costModelLabel(left).localeCompare(costModelLabel(right))", "the Model column sorts on that label")
+	must("agent.harness, costModelLabel(agent)]", "the costs filter matches that label")
+	must(`<td><span class="muted">${costModelLabel(agent)}</span></td>`, "the Model cell renders that label")
 
-	// Rule 2: peel a trailing parenthetical ONLY when it names a context window.
-	must(`const paren = main.match(/\(([^)]*)\)\s*$/);`, "finds the trailing parenthetical")
-	must("if (paren && /context/i.test(paren[1]))", "peels it only when it names a context window")
-
-	// Rule 3: the Costs tab shows, sorts and filters on the SAME normalised
-	// label, so one model never splits into two values.
-	must("export function costModelLabel(agent) {", "the costs tab has one model label helper")
-	must("costModelLabel(left).localeCompare(costModelLabel(right))", "the Model column sorts on the normalised label")
-	must("agent.harness, costModelLabel(agent)]", "the costs filter matches the normalised label")
-	must(`<td><span class="muted">${costModelLabel(agent)}</span></td>`, "the Model cell renders the normalised label")
-}
-
-// TestDashboardHTML_ModelRollupWired guards the Costs tab's per-model spend
-// strip: the only place that answers "how much of this was Opus". It totals
-// the same filtered rows the table's total row sums, so the shares always
-// reconcile with the amount printed underneath them.
-func TestDashboardHTML_ModelRollupWired(t *testing.T) {
-	must := func(needle, why string) {
-		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
-			t.Errorf("dashboard assets missing %q (%s)", needle, why)
-		}
-	}
-
-	must("export function modelRollup(rows) {", "the per-model rollup is computed in the cost model")
-	must("function ModelRollup({ current }) {", "the rollup component is defined")
-	must("const entries = modelRollup(current.rows);", "the rollup totals the VISIBLE rows, matching the table total")
-	must("if (entries.length < 2) return null;", "a single-model fleet gets no strip that would just restate the total")
-	must("<${ModelRollup} current=${current} />", "the strip renders above the cost table")
-	must("entry.whatIf += agent.what_if_cost_usd || 0;", "the hypothetical subset is tracked so it can be marked")
+	// The strip renders above the table and is styled in both skins — neither
+	// is observable from the module tests, which never load the stylesheet.
+	must("<${ModelRollup} current=${current} />", "the per-model spend strip renders above the cost table")
 	must("#costs-model-rollup {", "the strip is styled")
-	must(".costs-model-bar i { display: block;", "the share bar has a fill element")
+	must("body.wizard #costs-model-rollup {", "the strip is skinned for the wizard theme like the table below it")
 }
