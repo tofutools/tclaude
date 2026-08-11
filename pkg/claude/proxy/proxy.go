@@ -97,7 +97,8 @@ func Cmd() *cobra.Command {
 			"You describe the operation (\"push my branch\"); the daemon builds the command. There is no " +
 			"passthrough flag, no way to influence the argv it runs, and no raw-GraphQL escape hatch.\n\n" +
 			"Every verb needs a permission slug the operator grants: `proxy.git.read`, `proxy.git.push`, " +
-			"`proxy.github.read`, `proxy.github.write`, `proxy.linear.read`, `proxy.linear.write`. None is granted by default — " +
+			"`proxy.github.read`, `proxy.github.write`, `proxy.github.merge`, `proxy.linear.read`, " +
+			"`proxy.linear.write`. None is granted by default — " +
 			"ask the operator, or pass --ask-human for a one-off approval.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{

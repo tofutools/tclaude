@@ -182,7 +182,7 @@ func gitProxyRoutesEnabled(r *http.Request) bool {
 	if classify(p) != classAgent {
 		return false
 	}
-	for _, slug := range []string{PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite} {
+	for _, slug := range []string{PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge} {
 		v := resolvePermissionVerdictForRequest(r, p.ConvID, slug)
 		if v.Resolution == permAllow && !evalPermissionScope(v, p.ConvID, ActionContext{}).Unscoped {
 			return true

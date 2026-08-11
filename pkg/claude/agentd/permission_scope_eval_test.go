@@ -362,6 +362,7 @@ var scopedSlugEnforcementPaths = map[string]string{
 	PermGitPush:           "git proxy handler — resolved push remote in ActionContext{Remote}",
 	PermGitHubRead:        "GitHub proxy handlers — derived repository remote in ActionContext{Remote}",
 	PermGitHubWrite:       "GitHub proxy handlers — derived repository remote in ActionContext{Remote}",
+	PermGitHubMerge:       "GitHub proxy pr merge handler — derived repository remote in ActionContext{Remote}",
 	PermLinearRead: "Linear proxy — linearEffectiveTeams evaluates ActionContext{LinearTeam} per candidate team " +
 		"into the session's effective set, which every team check reads",
 	PermLinearWrite: "Linear proxy — same effective-set resolution as proxy.linear.read",

@@ -462,8 +462,20 @@ var permissionRegistry = []PermSlug{
 		Slug:      PermGitHubWrite,
 		ScopeDims: []ScopeDim{ScopeDimRemote},
 		Description: "Create and comment on GitHub pull requests and issues through the daemon's gh credentials " +
-			"(tclaude proxy github pr create/comment/ready, issue comment). Everything it writes is attributed to the operator's " +
-			"GitHub account, so it is not default-granted and not owner-implied.",
+			"(tclaude proxy github pr create/edit/comment/ready, issue comment). Everything it writes is attributed to the " +
+			"operator's GitHub account, so it is not default-granted and not owner-implied. It does NOT confer " +
+			"proxy.github.merge.",
+	},
+	{
+		Slug:      PermGitHubMerge,
+		ScopeDims: []ScopeDim{ScopeDimRemote},
+		Description: "Merge a GitHub pull request through the daemon's gh credentials (tclaude proxy github pr merge). " +
+			"Split off from proxy.github.write, and not implied by it: opening a pull request proposes a change, while merging " +
+			"one lands it on the base branch under the operator's GitHub account. GitHub's own branch protection and required " +
+			"checks still apply. agent.git_proxy.protected_refs does NOT, because that list bounds direct pushes, while a " +
+			"pull request may target any branch — ordinarily one of that list's defaults (main, master), which is what " +
+			"would make honouring it here a no-op for most of the merges a grant is given for. Not default-granted and " +
+			"not owner-implied.",
 	},
 	{
 		Slug:      PermLinearRead,
@@ -504,7 +516,7 @@ func visiblePermissionRegistry(proxyEnabled bool) []PermSlug {
 
 func isSemanticProxyPermission(slug string) bool {
 	switch slug {
-	case PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite,
+	case PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge,
 		PermLinearRead, PermLinearWrite:
 		return true
 	default:

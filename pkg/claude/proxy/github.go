@@ -60,8 +60,9 @@ func githubCmd() *cobra.Command {
 			"The repository is not something you choose: the daemon derives it from your own repository's " +
 			"remote, and only after that remote passes the operator's allow-list " +
 			"(agent.git_proxy.allowed_remotes). Run `tclaude proxy git remotes` to see it.\n\n" +
-			"Reads need `proxy.github.read`; creating and commenting needs `proxy.github.write`. Neither is granted " +
-			"by default.",
+			"Reads need `proxy.github.read`; creating and commenting needs `proxy.github.write`; merging a pull " +
+			"request needs `proxy.github.merge`, which `proxy.github.write` does NOT confer. None is granted by " +
+			"default.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			githubPRCmd(),
@@ -171,6 +172,7 @@ func githubPRCmd() *cobra.Command {
 			githubPRCommentCmd(),
 			githubPREditCmd(),
 			githubPRReadyCmd(),
+			githubPRMergeCmd(),
 		},
 	}.ToCobra()
 }
@@ -337,6 +339,72 @@ func githubPRReadyCmd() *cobra.Command {
 			os.Exit(ghProxyCall("/v1/github/pr/ready", numberBody(p), p.AskHuman, "pr ready", os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
+}
+
+type githubPRMergeParams struct {
+	Number   int    `pos:"true" help:"Pull-request number."`
+	Method   string `long:"method" short:"m" optional:"true" help:"How to merge: merge (default), squash or rebase."`
+	Subject  string `long:"subject" optional:"true" help:"First line of the merge/squash commit. Omit to let GitHub compose it."`
+	Body     string `long:"body" optional:"true" help:"Rest of the commit message. Prefer --body-file for anything multi-line."`
+	BodyFile string `long:"body-file" short:"F" optional:"true" help:"Read the rest of the commit message from this file ('-' reads stdin)."`
+	Remote   string `long:"remote" optional:"true" help:"Remote naming the repository to act on (default: origin)."`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout. Capped at 300s. Timeout = deny."`
+}
+
+func githubPRMergeCmd() *cobra.Command {
+	return boa.CmdT[githubPRMergeParams]{
+		Use:   "merge",
+		Short: "Merge a pull request (needs `proxy.github.merge`)",
+		Long: "Merges a pull request into its base branch, as the OPERATOR's GitHub account.\n\n" +
+			"This is the one verb `proxy.github.write` does not cover. It has its own grant, " +
+			"`proxy.github.merge`, because opening a pull request proposes a change while merging one lands " +
+			"it — being trusted to write your work up is not the same as being trusted to decide it ships.\n\n" +
+			"GitHub's own rules still decide: branch protection, required reviews and required checks are " +
+			"evaluated against the operator's account, and a merge they refuse is refused here, in GitHub's " +
+			"words.\n\n" +
+			"Merging a pull request that is ALREADY merged succeeds and says so, rather than failing — the " +
+			"state you asked for is the state it is in. A draft, a closed pull request, or one that conflicts " +
+			"with its base is refused with which of those it is; GitHub reports all four as the same " +
+			"\"not mergeable\".\n\n" +
+			"The head branch is left alone, and there is no --delete-branch: deleting the branch you were " +
+			"working on is a separate decision, and not one this proxy makes on your behalf.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *githubPRMergeParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)
+			boa.GetParamT(ctx, &p.Method).SetAlternatives(ghMergeMethodAlternatives)
+			return nil
+		},
+		RunFunc: func(p *githubPRMergeParams, _ *cobra.Command, _ []string) {
+			os.Exit(runGitHubPRMerge(p, os.Stdin, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+// ghMergeMethodAlternatives mirrors the daemon's `pr merge --method` vocabulary
+// for shell completion, on the same terms as ghRunStatusAlternatives: the
+// daemon validates independently, this is a convenience, and
+// TestGHMergeMethodCompletionMatchesTheGate pins it to the authority in
+// pkg/claude/agentd.
+var ghMergeMethodAlternatives = []string{"merge", "squash", "rebase"}
+
+// GHMergeMethodAlternativesForTest exposes the completion vocabulary so it can
+// be pinned against the daemon's gate.
+func GHMergeMethodAlternativesForTest() []string {
+	return append([]string(nil), ghMergeMethodAlternatives...)
+}
+
+func runGitHubPRMerge(p *githubPRMergeParams, stdin io.Reader, stdout, stderr io.Writer) int {
+	body, rc := agent.ResolveBodyInput(p.Body, p.BodyFile, "--body", stdin, stderr)
+	if rc != rcOK {
+		return rc
+	}
+	return ghProxyCall("/v1/github/pr/merge", map[string]any{
+		"remote":  strings.TrimSpace(p.Remote),
+		"number":  p.Number,
+		"method":  strings.TrimSpace(p.Method),
+		"subject": strings.TrimSpace(p.Subject),
+		"body":    body,
+	}, p.AskHuman, "pr merge", stdout, stderr)
 }
 
 type githubCommentParams struct {

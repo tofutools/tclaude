@@ -384,18 +384,24 @@ const (
 	PermRoutesConsume = "routes.consume"
 	// The Git-remote / GitHub proxy lends agentd's OWN credentials — an SSH
 	// key, a GitHub token — to an agent that has been deliberately sandboxed
-	// away from them. That makes these four unlike every other slug here:
-	// holding one does not merely authorize a coordination action, it spends
-	// the operator's identity on a remote host.
+	// away from them. That makes these unlike every other slug here: holding
+	// one does not merely authorize a coordination action, it spends the
+	// operator's identity on a remote host.
 	//
 	// So they are split read/write per family (a fetch and a push are not the
 	// same authority), none is default-granted, none is owner-implied (owning
 	// a group must not structurally confer push access to a forge), and none
 	// is auto-grantable from the approval popup's "always allow" button.
+	//
+	// PermGitHubMerge is split off from proxy.github.write for the same reason
+	// push is split off from read: opening a pull request proposes a change,
+	// while merging one lands it on the base branch. An agent trusted to write
+	// its own work up is not thereby trusted to decide it ships.
 	PermGitRead     = "proxy.git.read"
 	PermGitPush     = "proxy.git.push"
 	PermGitHubRead  = "proxy.github.read"
 	PermGitHubWrite = "proxy.github.write"
+	PermGitHubMerge = "proxy.github.merge"
 	PermLinearRead  = "proxy.linear.read"
 	PermLinearWrite = "proxy.linear.write"
 )

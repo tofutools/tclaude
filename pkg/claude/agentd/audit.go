@@ -335,6 +335,7 @@ var (
 		"pr.comments":    true,
 		"pr.edit":        true,
 		"pr.ready":       true,
+		"pr.merge":       true,
 		"issue.list":     true,
 		"issue.view":     true,
 		"issue.comment":  true,

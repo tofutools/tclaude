@@ -134,15 +134,22 @@ query IssueView($owner: String!, $name: String!, $number: Int!) {
   }
 }`
 
-// ghPRNodeIDQuery resolves the opaque node id `pr ready` needs.
+// ghPRStateQuery reads the identity and state of a pull request a write is
+// about to act on. Two verbs share it, for two different reasons.
 //
-// It exists because marking a draft ready is the one write in this proxy with
-// no REST route: REST will not clear the `draft` flag on a pull request, and
-// the GraphQL mutation that does takes a node id rather than a number.
-const ghPRNodeIDQuery = `
-query PRNodeID($owner: String!, $name: String!, $number: Int!) {
+// `pr ready` needs the opaque node id, because marking a draft ready is the one
+// write in this proxy with no REST route: REST will not clear the `draft` flag,
+// and the GraphQL mutation that does takes a node id rather than a number.
+//
+// `pr merge` needs the state, because GitHub answers every reason a merge
+// cannot happen — already merged, closed, still a draft, conflicting — with the
+// same 405 "Pull Request is not mergeable". Reading the state first is what
+// lets the proxy say which of those it is, and tell the already-merged case
+// apart from a real failure.
+const ghPRStateQuery = `
+query PRState($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
-    pullRequest(number: $number) { id number url isDraft state }
+    pullRequest(number: $number) { id number url isDraft state mergeable baseRefName }
   }
 }`
 

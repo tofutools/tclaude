@@ -10,7 +10,7 @@ description: >-
   download` fails
   with a permission, authentication, or network error, or when you have been
   told the daemon holds the credentials. Gated on the `proxy.git.read` / `proxy.git.push` / `proxy.github.read` /
-  `proxy.github.write` slugs, none of which is granted by default, and bounded by an
+  `proxy.github.write` / `proxy.github.merge` slugs, none of which is granted by default, and bounded by an
   operator allow-list of remotes.
 ---
 
@@ -76,6 +76,9 @@ tclaude proxy github pr create --title "…" --body-file pr.md [--draft] [--base
 tclaude proxy github pr comment 42 --body-file reply.md
 tclaude proxy github pr ready 42
 tclaude proxy github issue comment 7 --body-file note.md
+
+# Merging — needs `proxy.github.merge`, which `proxy.github.write` does NOT confer
+tclaude proxy github pr merge 42 [--method merge|squash|rebase] [--subject "…"] [--body-file msg.md]
 ```
 
 Use `--body-file` (or `--body-file -` for stdin) for anything multi-line. It
@@ -85,6 +88,14 @@ process command line.
 Note the pair: `pr comments 42` **reads** the feedback, `pr comment 42
 --body-file reply.md` **writes** to it. One is `proxy.github.read`, the other
 `proxy.github.write`.
+
+Merging has a slug of its own. Holding `proxy.github.write` lets you open the
+pull request and answer its review; it does not let you merge it. If `pr merge`
+comes back 403, that is the operator's decision about who lands changes, not a
+misconfiguration — ask before assuming the grant is missing by accident.
+GitHub's own branch protection and required checks apply on top, so a merge can
+still be refused with an approving-review or failing-check message that is
+GitHub's to give and yours to act on.
 
 ## Watching a pull request you opened
 

@@ -1927,8 +1927,8 @@ They are not `tclaude agent` subcommands because they are not coordination:
 `agent` is about who else exists and how to reach them, `proxy` is about
 performing an operation with a credential the agent deliberately does not hold.
 The permission slugs (`proxy.git.read`, `proxy.git.push`, `proxy.github.read`, `proxy.github.write`,
-`proxy.linear.read`, `proxy.linear.write`) are still ordinary agent permissions, granted and
-audited like any other.
+`proxy.github.merge`, `proxy.linear.read`, `proxy.linear.write`) are still ordinary agent permissions,
+granted and audited like any other.
 
 See **[Git & GitHub proxy](git-proxy.md)** for the whole picture: the allow-list
 grammar, the slugs, the full hardening table, and why `pull` is split across the
@@ -2440,7 +2440,7 @@ the scope that authorized the action.
 The two **proxy** dimensions have matcher languages of their own (the
 relational `target_agent` matchers below are a third departure from plain string
 equality). `remote` (on `proxy.git.read` /
-`proxy.git.push` / `proxy.github.read` / `proxy.github.write`) reuses the git proxy's
+`proxy.git.push` / `proxy.github.read` / `proxy.github.write` / `proxy.github.merge`) reuses the git proxy's
 slash-segmented pattern language, so a matcher can cover a whole host or org
 rather than one URL. `linear_team` (on `proxy.linear.read` / `proxy.linear.write`) is a
 whole-key, case-insensitive comparison — `linear_team=tcl` and
@@ -2541,7 +2541,7 @@ gate group, messaging, template, and permission administration.
 | `process.runs.*` | `process.runs.read`, `process.runs.manage` |
 | `human.*`     | `human.notify`, `human.clipboard` |
 | `proxy.git.*`       | `proxy.git.read`, `proxy.git.push` |
-| `proxy.github.*`    | `proxy.github.read`, `proxy.github.write` |
+| `proxy.github.*`    | `proxy.github.read`, `proxy.github.write`, `proxy.github.merge` |
 | `proxy.linear.*`    | `proxy.linear.read`, `proxy.linear.write` |
 
 Run `tclaude agent permissions slugs` for the live registry with
