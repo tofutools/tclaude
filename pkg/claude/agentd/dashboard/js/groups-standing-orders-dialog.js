@@ -81,6 +81,7 @@ export function GroupStandingOrdersDialog({ descriptor, actions }) {
         .some((value) => String(value || '').toLowerCase().includes(needle));
     });
   }, [available, query]);
+  const firstRun = !loading && !loadFailed && rows.length === 0;
 
   const toggle = async (row, assigned) => {
     const id = row.order?.id;
@@ -261,8 +262,8 @@ export function GroupStandingOrdersDialog({ descriptor, actions }) {
         </div>`}
     <div class="modal-buttons">
       <span class="group-standing-orders-managed-note">◇ ${wizard
-        ? (rows.length ? 'Realm-wide decrees are governed in Labours' : 'Realm-wide decrees shall reveal themselves here')
-        : (rows.length ? 'Inherited rules are managed in Automations' : 'Global rules will appear here automatically')}</span>
+        ? (firstRun ? 'Realm-wide decrees shall reveal themselves here' : 'Realm-wide decrees are governed in Labours')
+        : (firstRun ? 'Global rules will appear here automatically' : 'Inherited rules are managed in Automations')}</span>
       <button type="button" onClick=${actions.closeStandingOrders} disabled=${changing.size > 0}>${wizard ? 'seal' : 'done'}</button>
     </div>
   <//>`;

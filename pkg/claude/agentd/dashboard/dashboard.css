@@ -7341,7 +7341,7 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
 .group-standing-order-choice input:disabled { cursor: not-allowed; }
 .group-standing-orders-heading {
   display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
-  margin: -18px -20px 18px; padding: 18px 20px 15px;
+  margin: -18px -22px 18px; padding: 18px 22px 15px;
   border-bottom: 1px solid #2a3340;
 }
 .group-standing-orders-heading p { margin: 4px 0 0; }
@@ -7408,7 +7408,7 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
   border-left: 2px solid #388bfd; background: #0d1117; color: #9ca8b4;
   font-size: 11px; text-align: left;
 }
-.group-standing-orders-first-hint { margin: 12px 0 0; color: #74808d; font-size: 11px; }
+.group-standing-orders-first-hint { margin: 12px 0 0; color: #7d8590; font-size: 11px; }
 .group-standing-orders-first-hint strong { color: #9ca8b4; }
 .group-standing-orders-load-failed {
   display: flex; flex-direction: column; align-items: center; gap: 7px;
