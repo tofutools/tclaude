@@ -51,7 +51,10 @@ const PANEL_MIN_H = 120;
 //
 // Whatever side wins, the result is clamped into the usable area and capped
 // to the height actually available, so a long list scrolls inside the panel
-// instead of running off-screen or under the footer.
+// instead of running off-screen or under the footer. For an above placement,
+// `top` is the panel's BOTTOM edge: CSS translateY(-100%) positions it from
+// its actual rendered height. A short list therefore stays next to the badge,
+// and a list that grows while open grows upward without another measurement.
 export function placePRChecksPanel({ anchor, panel, area }) {
   const cap = Math.max(PANEL_MIN_H, Math.min(PANEL_MAX_H, Math.round(area.height * 0.52)));
   const spaceBelow = area.bottom - anchor.bottom - PANEL_GAP - PANEL_MARGIN;
@@ -60,13 +63,15 @@ export function placePRChecksPanel({ anchor, panel, area }) {
   const room = above ? spaceAbove : spaceBelow;
   const maxHeight = Math.max(PANEL_MIN_H, Math.min(cap, room));
   const left = clamp(anchor.left, area.left + PANEL_MARGIN, area.right - panel.width - PANEL_MARGIN);
-  // The min-height floor above can exceed the room on a very short viewport,
-  // so the final position is clamped rather than trusted: off-screen and
-  // behind the footer are both worse than overlapping the badge.
+  // The max-height floor can exceed the room on a very short viewport, so the
+  // anchor edge is clamped rather than trusted: overlapping the badge is less
+  // bad than putting part of the panel outside the usable area.
   const top = clamp(
-    above ? anchor.top - PANEL_GAP - maxHeight : anchor.bottom + PANEL_GAP,
-    area.top + PANEL_MARGIN,
-    Math.max(area.top + PANEL_MARGIN, area.bottom - PANEL_MARGIN - maxHeight),
+    above ? anchor.top - PANEL_GAP : anchor.bottom + PANEL_GAP,
+    above ? area.top + PANEL_MARGIN + maxHeight : area.top + PANEL_MARGIN,
+    above
+      ? Math.max(area.top + PANEL_MARGIN + maxHeight, area.bottom - PANEL_MARGIN)
+      : Math.max(area.top + PANEL_MARGIN, area.bottom - PANEL_MARGIN - maxHeight),
   );
   // The bridge is the transparent strip that keeps the pointer "inside" the
   // hover root while it crosses the gap. It spans both boxes horizontally,
@@ -75,8 +80,8 @@ export function placePRChecksPanel({ anchor, panel, area }) {
   const bridge = {
     left: Math.min(left, anchor.left),
     width: Math.max(left + panel.width, anchor.right) - Math.min(left, anchor.left),
-    top: above ? top + maxHeight : anchor.bottom,
-    height: Math.max(0, above ? anchor.top - (top + maxHeight) : top - anchor.bottom),
+    top: above ? Math.min(top, anchor.top) : anchor.bottom,
+    height: Math.max(0, above ? anchor.top - top : top - anchor.bottom),
   };
   return { top, left, maxHeight, bridge, placement: above ? 'above' : 'below' };
 }
@@ -439,7 +444,8 @@ function PRChecksPanel({ url, prNumber, summary, panelID, headingID, state, pane
   // glitch. It is one layout effect away, so nothing perceptible is lost.
   // The same applies once the badge scrolls out of the usable area.
   const style = placement && !placement.hidden
-    ? `top:${placement.top}px;left:${placement.left}px;max-height:${placement.maxHeight}px`
+    ? `top:${placement.top}px;left:${placement.left}px;max-height:${placement.maxHeight}px;` +
+      (placement.placement === 'above' ? 'transform:translateY(-100%)' : '')
     : 'visibility:hidden';
   return html`
     <div ref=${panelRef} class="ci-panel" style=${style}
