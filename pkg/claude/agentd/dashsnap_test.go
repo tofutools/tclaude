@@ -335,10 +335,74 @@ func seedDashSnapFixture(t *testing.T, f *testharness.Flow) {
 	}
 
 	seedActivityBadgesDashSnap(t)
+	seedModelCostDashSnap(t, append(append([]dashMemberSpec{}, feMembers...), infraMembers...))
 	seedPalette(t, f)
 	seedProcessDashSnap(t, f)
 	seedUsageHistoryDashSnap(t)
 	seedRetireDialogDashSnap(t, f)
+}
+
+// seedModelCostDashSnap gives the fixture fleet the two facts the statusline
+// hook records on a real agent: the model it is running on and what it has
+// spent. Without them the Groups roster renders no harness/model line at all
+// (harnessLine returns "" until a model arrives) and the Costs tab has only
+// its empty-span notice — so the two surfaces most affected by how a model is
+// NAMED had no visual coverage whatsoever.
+//
+// The models are chosen to exercise the naming rules end to end. Two agents
+// run the same model recorded differently — "Opus 5 (1M context)" against a
+// plain "Opus 5" — which is exactly how a real fleet looks when only some
+// agents launched on the extended window, and the pair must render as ONE
+// model everywhere: one label in the roster, one row group in the Costs
+// table's Model column, one cell in the rollup. The Codex agent keeps the
+// strip honest about mixed fleets, and the deliberate price spread (Opus far
+// above Sonnet) is what makes the per-model shares worth reading.
+func seedModelCostDashSnap(t *testing.T, members []dashMemberSpec) {
+	t.Helper()
+	spend := map[string]struct {
+		model   string
+		effort  string
+		harness string
+		usd     float64
+	}{
+		"fe-lead":        {model: "Opus 5 (1M context)", effort: "high", usd: 8.10},
+		"fe-dev-forms":   {model: "Opus 5", effort: "medium", usd: 1.42},
+		"fe-dev-charts":  {model: "Sonnet 4.6", effort: "high", usd: 0.31},
+		"fe-dev-legacy":  {model: "Sonnet 4.6", effort: "medium", usd: 0.18},
+		"infra-lead":     {model: "Opus 4.8", effort: "medium", usd: 2.05},
+		"infra-dev-db":   {model: "GPT-5.6 Codex", effort: "medium", harness: "codex", usd: 0.44},
+		"fe-dev-watcher": {model: "Sonnet 4.6", effort: "low", usd: 0.09},
+	}
+	for _, m := range members {
+		row, ok := spend[m.title]
+		if !ok {
+			continue
+		}
+		// The harness must land BEFORE the cost write, which denormalises it
+		// onto the daily row the Costs tab groups and colours by.
+		if row.harness != "" {
+			session, err := db.LoadSession(m.label)
+			if err != nil {
+				t.Fatalf("load session for %s: %v", m.title, err)
+			}
+			if session == nil {
+				t.Fatalf("load session for %s: no session row %q", m.title, m.label)
+			}
+			session.Harness = row.harness
+			if err := db.SaveSession(session); err != nil {
+				t.Fatalf("seed harness for %s: %v", m.title, err)
+			}
+		}
+		if err := db.UpdateSessionModel(m.label, row.model); err != nil {
+			t.Fatalf("seed model for %s: %v", m.title, err)
+		}
+		if err := db.UpdateSessionEffort(m.label, row.effort); err != nil {
+			t.Fatalf("seed effort for %s: %v", m.title, err)
+		}
+		if err := db.UpdateSessionCost(m.label, row.usd); err != nil {
+			t.Fatalf("seed cost for %s: %v", m.title, err)
+		}
+	}
 }
 
 // seedActivityBadgesDashSnap stamps the two activity ledgers onto the
@@ -1137,7 +1201,7 @@ func baseStates() []dashsnap.State {
 		{
 			Key:      "bounded-costs-normal",
 			Title:    "Bounded Preact — Costs normal",
-			Caption:  "Costs island completed its request and rendered controls for the fixture's empty-cost span.",
+			Caption:  "Costs island completed its request and rendered the per-model spend strip, the harness-stacked chart and the per-agent breakdown over the fixture's seeded spend.",
 			JS:       boundedTabJS("costs", "#costs-factor"),
 			SettleMS: 500,
 		},

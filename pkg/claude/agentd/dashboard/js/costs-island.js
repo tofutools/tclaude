@@ -4,8 +4,8 @@ import htm from 'htm';
 import { AsyncLoadState } from './async-load-state.js';
 import { CostsChart } from './costs-chart.js';
 import {
-  COST_COLUMNS, COST_SPANS, fmtLastActivity, fmtUSD, harnessLabel,
-  fmtCredits, fmtExactUSD, harnessSegmentClass, monthProjectionLabel,
+  COST_COLUMNS, COST_SPANS, costModelLabel, fmtLastActivity, fmtUSD, harnessLabel,
+  fmtCredits, fmtExactUSD, harnessSegmentClass, modelRollup, monthProjectionLabel,
 } from './costs-model.js';
 import { idTooltip, isModifiedClick, shortAgentId } from './helpers.js';
 
@@ -202,6 +202,35 @@ function whatIfRowTip(agent) {
     + ' not a real charge. Click for details.';
 }
 
+// ModelRollup is the per-model spend strip above the table: one cell per
+// model, biggest first, over the same rows the table lists and the total row
+// sums. It answers "how much of this was Opus" — a question the per-agent
+// rows and the harness-stacked chart both leave to mental arithmetic, and the
+// one that matters most because the models in a mixed fleet differ several
+// fold in price per token.
+//
+// Hidden below two models, where every cell would restate the grand total and
+// the strip would be pure chrome. A hypothetical entry carries the same ≈ the
+// row amounts use, so a WHAT-IF-only model never reads as money actually spent.
+function ModelRollup({ current }) {
+  const entries = modelRollup(current.rows);
+  if (entries.length < 2) return null;
+  return html`<div id="costs-model-rollup">
+    ${entries.map((entry) => {
+      const share = Math.round(entry.share * 100);
+      const estimate = entry.whatIf > 0;
+      const tip = `${entry.model}: ${fmtExactUSD(entry.cost)} across ${entry.agents} agent${entry.agents === 1 ? '' : 's'}`
+        + ` — ${share}% of the ${current.filtered ? 'matched' : 'listed'} spend`
+        + (estimate ? `, of which ${fmtExactUSD(entry.whatIf)} is hypothetical WHAT-IF (subscription), not a real charge` : '');
+      return html`<div class="costs-model-cell" key=${entry.model} title=${tip}>
+        <b class=${estimate ? 'cost-amt cost-model-whatif' : 'cost-amt'}>${estimate ? '≈' : ''}${fmtUSD(entry.cost)}</b>
+        <span class="muted">${entry.model} · ${entry.agents} agent${entry.agents === 1 ? '' : 's'} · ${share}%</span>
+        <span class="costs-model-bar"><i style=${`width:${Math.max(share, 1)}%`}></i></span>
+      </div>`;
+    })}
+  </div>`;
+}
+
 function CostsTable({ state, current }) {
   const [hovered, setHovered] = useState(null);
   const inputRef = useRef(null);
@@ -220,6 +249,7 @@ function CostsTable({ state, current }) {
       <button class="clear-filter" id="filter-costs-clear" title="Clear filter" aria-label="Clear cost filter"
         onClick=${() => { state.setQuery(''); inputRef.current?.focus(); }}>×</button>
     </div>
+    <${ModelRollup} current=${current} />
     <div id="costs-table" onMouseLeave=${() => setHovered(null)}
       onMouseOver=${(event) => setHovered(event.target.closest('tr[data-conv]')?.dataset.conv || null)}>
       ${current.rows.length === 0
@@ -247,7 +277,7 @@ function CostsTable({ state, current }) {
                   title=${whatIfRowTip(agent)} aria-label=${WHAT_IF_LABEL}
                   onClick=${gotoWhatIfBanner}>${WHAT_IF_MARK}</a>`}</span></td>
               <td><span class="muted">${harnessLabel(agent.harness)}</span></td>
-              <td><span class="muted">${agent.model || ''}</span></td>
+              <td><span class="muted">${costModelLabel(agent)}</span></td>
               <td><span class="muted">${fmtLastActivity(agent)}</span></td>
             </tr>`;
           })}

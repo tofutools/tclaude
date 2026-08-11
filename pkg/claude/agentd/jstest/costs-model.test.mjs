@@ -113,3 +113,95 @@ test('USD formatting groups thousands the currency\'s way', async (t) => {
   assert.equal(model.fmtAxisUSD(2600000), '$2.6M');
   assert.equal(model.fmtAxisUSD(12.5), '$12.50');
 });
+
+// The model an agent runs on reaches the dashboard as the harness's own
+// display name, which for an extended-window model carries the window with it
+// ("Opus 5 (1M context)"). Whether a given agent launched on that window is an
+// accident of its launch flags, not a difference in model — so the Costs tab
+// must reduce both spellings to ONE value, or the same model sorts apart, and
+// a filter for either finds only half of what it cost.
+test('One model is one value: the Costs label peels the window, keeps every other qualifier', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/costs-model.js');
+
+  assert.equal(model.costModelLabel({ model: 'Opus 5 (1M context)' }), 'Opus 5');
+  assert.equal(model.costModelLabel({ model: 'Opus 5' }), 'Opus 5',
+    'the plain spelling is already canonical');
+  assert.equal(model.costModelLabel({ model: 'claude-opus-5[1m]' }), 'claude-opus-5',
+    'an operator-typed launch alias loses only its window suffix');
+  assert.equal(model.costModelLabel({ model: 'Opus 4.8 (fast)' }), 'Opus 4.8 (fast)',
+    'a qualifier that is NOT a context window names a different model and must survive');
+  assert.equal(model.costModelLabel({ model: '' }), '(unknown)',
+    'an unattributed amount still gets a name, so spend cannot go missing from the table');
+  assert.equal(model.costModelLabel({}), '(unknown)');
+
+  // The Groups roster peels an OpenCode provider prefix to keep its token
+  // narrow, and keeps the provider in the row tooltip. This tab must NOT: the
+  // same model reached through two providers bills at two different rates, it
+  // has no tooltip to fall back on, and merging them would hide a real price
+  // difference — the same defect this label exists to prevent, inverted.
+  assert.equal(model.costModelLabel({ model: 'anthropic/claude-sonnet-4-5', harness: 'opencode' }),
+    'anthropic/claude-sonnet-4-5');
+  assert.equal(model.costModelLabel({ model: 'openrouter/claude-sonnet-4-5', harness: 'opencode' }),
+    'openrouter/claude-sonnet-4-5', 'two providers of one model stay two separately priced rows');
+
+  // Sorting and filtering go through the same label, so the two spellings are
+  // adjacent under the sort and both answer to one query.
+  const rows = [
+    { conv_id: 'a', title: 'wide', harness: 'claude', model: 'Opus 5 (1M context)', cost_usd: 8 },
+    { conv_id: 'b', title: 'plain', harness: 'claude', model: 'Opus 5', cost_usd: 2 },
+    { conv_id: 'c', title: 'small', harness: 'claude', model: 'Sonnet 4.6', cost_usd: 1 },
+  ];
+  const sorted = model.sortCostAgents(rows, { key: 'model', dir: 'asc' });
+  assert.deepEqual(sorted.map((row) => row.conv_id), ['a', 'b', 'c'],
+    'both Opus 5 spellings sort together, ahead of Sonnet');
+  assert.deepEqual(rows.filter((row) => model.matchesCostAgent(row, 'opus 5')).map((row) => row.conv_id),
+    ['a', 'b'], 'one query finds the whole model, not the half that skipped the extended window');
+});
+
+// The per-agent rows answer "what did this agent cost" and the chart stacks by
+// harness; neither answers "how much of this was Opus", which is the question
+// that matters when the models in one fleet differ several fold in price.
+test('The per-model rollup merges spellings, shares to 100%, and marks hypothetical spend', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/costs-model.js');
+
+  const rows = [
+    { conv_id: 'a', model: 'Opus 5 (1M context)', cost_usd: 8 },
+    { conv_id: 'b', model: 'Opus 5', cost_usd: 1 },
+    // Same conversation across two days: one agent, counted once.
+    { conv_id: 'b', model: 'Opus 5', cost_usd: 1 },
+    { conv_id: 'c', model: 'Sonnet 4.6', cost_usd: 6, what_if_cost_usd: 6 },
+    { conv_id: 'd', model: '', cost_usd: 4 },
+  ];
+  const rollup = model.modelRollup(rows);
+  assert.deepEqual(rollup.map((entry) => entry.model), ['Opus 5', 'Sonnet 4.6', '(unknown)'],
+    'biggest spender first; a row with no recorded model is named, not dropped');
+  assert.equal(rollup[0].cost, 10, 'both Opus 5 spellings total into one entry');
+  assert.equal(rollup[0].agents, 2, 'a conversation spanning two days is ONE agent');
+  assert.equal(rollup[0].share, 0.5);
+  assert.equal(rollup[2].model, '(unknown)');
+  assert.equal(rollup.reduce((sum, entry) => sum + entry.share, 0), 1,
+    'the shares partition the listed spend exactly');
+  assert.equal(rollup[1].whatIf, 6,
+    'the hypothetical subset is tracked so a WHAT-IF-only model can be marked as an estimate');
+  assert.equal(rollup[0].whatIf, 0);
+
+  // A model that spent nothing is dropped once anything else has: its 0% cell
+  // says only "this model appears in the table", and one such row was enough
+  // to force a breakdown of what is really a single-model fleet.
+  const withFreeloader = model.modelRollup([
+    { conv_id: 'a', model: 'Opus 5', cost_usd: 4 },
+    { conv_id: 'b', model: 'Sonnet 4.6', cost_usd: 0 },
+  ]);
+  assert.deepEqual(withFreeloader.map((entry) => entry.model), ['Opus 5'],
+    'a zero-cost model neither shows a 0% cell nor pushes the strip past its threshold');
+
+  // A span where NOTHING spent must not divide by zero, and keeps its models:
+  // every share is 0, not NaN, and the entries are not emptied.
+  const free = model.modelRollup([{ conv_id: 'a', model: 'Opus 5', cost_usd: 0 }]);
+  assert.equal(free.length, 1);
+  assert.equal(free[0].share, 0);
+  assert.deepEqual(model.modelRollup([]), []);
+  assert.deepEqual(model.modelRollup(undefined), []);
+});

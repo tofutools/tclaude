@@ -3586,6 +3586,41 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Per-model spend strip above the cost table: equal-width cells, one per
+   model, biggest spender first. Framed like a single unit rather than as
+   separate cards because the cells partition ONE total — the share bar under
+   each amount is only readable as a fraction of a whole that visibly holds
+   together. Wraps rather than scrolls: a fleet on five models should get two
+   rows of cells, not a hidden sixth. */
+#costs-model-rollup {
+  display: flex; flex-wrap: wrap; margin: 0 0 10px;
+  border: 1px solid #30363d; border-radius: 5px; overflow: hidden;
+}
+.costs-model-cell {
+  flex: 1 1 150px; min-width: 0; padding: 6px 9px;
+  border-right: 1px solid #21262d; cursor: default;
+}
+.costs-model-cell:last-child { border-right: 0; }
+.costs-model-cell b {
+  display: block; font-size: 13px; font-weight: 600;
+  font-family: ui-monospace, monospace;
+}
+/* A model whose spend is wholly or partly hypothetical carries the same ≈ the
+   row amounts use, dimmed and italic for the same reason: it must never read
+   as money actually charged. */
+.costs-model-cell b.cost-model-whatif { color: #8a8f6e; font-style: italic; }
+.costs-model-cell span.muted {
+  display: block; font-size: 10px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* The share bar is deliberately unlabelled and one flat colour: it encodes
+   proportion only. Colouring it per model would collide with the chart's
+   .cost-seg-hN palette, which means HARNESS there — two palettes on one tab
+   saying different things is worse than none. */
+.costs-model-bar {
+  display: block; height: 3px; margin-top: 5px; border-radius: 2px; background: #21262d;
+}
+.costs-model-bar i { display: block; height: 100%; border-radius: 2px; background: #6e9c7d; }
 /* Clickable column headers — same affordance as the Audit table. */
 #costs-table th.cost-sort { cursor: pointer; user-select: none; white-space: nowrap; }
 #costs-table th.cost-sort:hover { color: #58a6ff; }
@@ -3611,7 +3646,7 @@ tr:hover .row-actions { opacity: 1; }
    cell (.agent-ctl) so the controls sit together — no empty gap from
    the dot living in its own column. */
 .agent-ctl { display: inline-flex; align-items: center; gap: 6px; }
-/* The harness + model line ("CC · O4.8 1M") sits UNDER the dot/focus/
+/* The harness + model line ("CC · Opus 4.8") sits UNDER the dot/focus/
    cog cluster in the same first cell — no extra column. One continuous
    muted string, no chip/box: the harness prefix and the middot sit a
    shade dimmer than the model name (the bit that actually varies), which
@@ -3657,7 +3692,7 @@ tr:hover .row-actions { opacity: 1; }
    current effort level. */
 .agent-harness .harness-effort { color: #d2a8ff; margin-left: 5px; }
 /* Per-agent API cost ("$0.42") trailing the harness/model line —
-   "CC · O4.8 1M high $0.42". Only rendered when the session reported
+   "CC · Opus 4.8 high $0.42". Only rendered when the session reported
    nonzero cost on API/enterprise pricing (harnessLine omits the token
    otherwise), so subscription rows never carry it. Muted money-green,
    a shade brighter than the harness text, like the effort token. */
@@ -3675,7 +3710,7 @@ body.cost-whatif .agent-harness .harness-cost-whatif { display: inline; }
 body.agent-cost-hidden .agent-harness .harness-cost { display: none; }
 tr:hover .agent-harness { color: #c9d1d9; }
 /* Per-agent sandbox indicator — a bare 🔒 (or ⚠) glyph trailing the harness
-   line, next to the 📱 remote indicator: "CC · O4.8 1M high 🔒 📱". No frame
+   line, next to the 📱 remote indicator: "CC · Opus 4.8 high 🔒 📱". No frame
    and no text; the mode, the resolved verdict and the deciding settings file
    all live in the tooltip. It was a framed chip on its own line below the
    controls, which spent a row of height per agent on what a padlock conveys.
@@ -3717,7 +3752,7 @@ tr:hover .agent-harness { color: #c9d1d9; }
 .agent-harness .runtime-meta-offline .harness-sep { color: #9aa4af; }
 .agent-harness .runtime-meta-offline .harness-cost-whatif { color: #969c79; }
 /* Per-agent "remote on" indicator — a bare 📱 glyph trailing the harness
-   line ("CC · O4.8 1M high 📱"), shown ONLY when Remote Access is armed
+   line ("CC · Opus 4.8 high 📱"), shown ONLY when Remote Access is armed
    (best-known) — an off agent carries none, so an armed one stands out as
    reachable from the Claude app/phone. No frame/box (the brief: just the
    symbol is enough); it sits inline with the effort/cost tokens with a small
@@ -15000,6 +15035,20 @@ body.wizard #costs-table tr.cost-chain-hl td { background: rgba(122, 93, 176, 0.
 body.wizard #costs-table .cost-total-row td { border-top-color: #4a3a6b; }
 body.wizard #costs-table th.cost-sort:hover,
 body.wizard #costs-table th.cost-sort.active { color: #d9b45a; }
+
+/* ─── Per-model spend strip: a treasury split between the summoned ─────
+   Same treatment as the table below it — gold amounts, violet chrome — so
+   the strip reads as part of the same ledger rather than a grey panel
+   dropped into the arcane tab. The WHAT-IF amount overrides `.cost-amt` at
+   equal specificity in the default skin, so it must be re-stated here too or
+   a hypothetical model would keep its olive while everything around it gilds. */
+body.wizard #costs-model-rollup { border-color: #4a3a6b; }
+body.wizard .costs-model-cell { border-right-color: #362a52; }
+body.wizard .costs-model-cell b { color: #f0d066; }
+body.wizard .costs-model-cell b.cost-model-whatif { color: #b39ddb; }
+body.wizard .costs-model-cell span.muted { color: #8f7bbf; }
+body.wizard .costs-model-bar { background: #2c2150; }
+body.wizard .costs-model-bar i { background: linear-gradient(90deg, #d9b45a, #f0d066); }
 
 /* ─── WHAT-IF banner → an arcane divination warning ───────────────────
    The hypothetical pay-per-token estimate for a subscription reads as a

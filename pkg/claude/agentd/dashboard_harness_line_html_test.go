@@ -6,7 +6,7 @@ import (
 )
 
 // TestDashboardHTML_HarnessLineWired guards the per-agent harness/model
-// line — "[Claude mark] · O4.8 1M" under the row's dot/focus/cog cluster — plus
+// line — "[Claude mark] · Opus 4.8" under the row's dot/focus/cog cluster — plus
 // its appearance in the status-dot tooltip. The pieces span three files
 // (groups-member-table.js owns and wires it into the member
 // cell, dashboard.css styles it); a rename in one silently breaks the
@@ -32,11 +32,11 @@ func TestDashboardHTML_HarnessLineWired(t *testing.T) {
 	// dot/actions, NOT a new <td>.
 	must("<${HarnessLine} member=${member} snapshot=${snapshot} /></td>", "HarnessLine renders in the agent-ctl cell")
 
-	// The always-visible model is shortModel()-compressed; the harness uses a
+	// The always-visible model is displayModel()-normalised; the harness uses a
 	// compact product mark while both FULL names stay in tooltips/accessibility
 	// labels (the title attrs / the status-dot tip).
-	must("function shortModel(", "shortModel compressor is defined")
-	must("${shortModel(model, harness)}", "the visible chip uses the harness-aware shortened model")
+	must("function displayModel(", "displayModel normaliser is defined")
+	must("${displayModel(model, harness)}", "the visible chip uses the harness-aware normalised model")
 	must("'Last used model' : 'Model'", "harnessLine's tooltip keeps the FULL model name and labels offline values as historical")
 	must("import { HarnessMark } from './harness-mark.js'", "the member table imports the shared harness-mark component")
 	must("<${HarnessMark} name=${harness} shortLabel=${labels.short} longLabel=${labels.long} tooltip=${drive ? title : labels.long} />",
@@ -48,10 +48,10 @@ func TestDashboardHTML_HarnessLineWired(t *testing.T) {
 	must(`class="harness-name" title=${tooltip}>${shortLabel}</span>`,
 		"an unknown future harness keeps a visible text fallback and accepts the general tooltip")
 
-	// The reasoning-effort level (JOH-37) trails the model — "CC · O4.8 1M
+	// The reasoning-effort level (JOH-37) trails the model — "CC · Opus 4.8
 	// hi" — read off state.effort_level, with its own styled span and a
 	// full-name tooltip. Omitted when absent so models without effort support
-	// stay at "CC · O4.8 1M".
+	// stay at "CC · Opus 4.8".
 	must("state.effort_level", "HarnessLine reads the effort level off the agent's state")
 	must("const EFFORT_LABELS = {", "effort levels have compact display labels")
 	must("low: 'lw'", "low effort is displayed as lw")
@@ -309,20 +309,18 @@ func TestDashboardHTML_SpawnHarnessMenusWired(t *testing.T) {
 	must("harness.effort_levels : DEFAULT_EFFORTS", "the effort menu reads the harness's effort levels from the catalog")
 }
 
-// TestDashboardHTML_ShortModelRules pins the shortModel() compression
-// rules. The transform lives entirely in helpers.js JS and the repo has
-// no JS test runner, so — as with the context-meter formula — this guards
-// the *rules* by asserting their source substrings survive, and the
-// contract is documented here for the manual-verification trail:
+// TestDashboardHTML_ModelNamingWired guards the parts of the model-naming
+// surface that a JS test cannot see: that the roster and the Costs tab both
+// go through the ONE shared normaliser, and that the spend strip is wired
+// into the render tree and carries styling in the shipped CSS.
 //
-//	"Opus 4.8 (1M context)" → "O4.8 1M"   (initial+version, size token)
-//	"Opus 4.8"              → "O4.8"       (initial glued to version)
-//	"Sonnet 4.6"            → "S4.6"
-//	"Haiku 4.5"             → "H4.5"
-//
-// A regression in any rule (dropping the parenthetical peel, the size
-// extraction, or the no-space initial+version glue) trips one of these.
-func TestDashboardHTML_ShortModelRules(t *testing.T) {
+// The RULES themselves — which suffixes are peeled, which qualifiers survive,
+// how the rollup totals and dedupes — are covered behaviourally in
+// pkg/claude/agentd/jstest (helpers/costs-model tests), which executes the
+// real modules. Asserting the same rules here as source substrings would only
+// catch a rename while reading like real coverage, so this deliberately does
+// not try.
+func TestDashboardHTML_ModelNamingWired(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
 		if !strings.Contains(dashboardAssets, needle) {
@@ -330,13 +328,18 @@ func TestDashboardHTML_ShortModelRules(t *testing.T) {
 		}
 	}
 
-	// Rule 1: peel a trailing "(…)" parenthetical and pull a size token.
-	must(`main.match(/\(([^)]*)\)\s*$/)`, "peels the trailing parenthetical")
-	must(`paren[1].match(/\d+\s*[KMBkmb]/)`, "extracts the window size token (1M / 200K)")
+	// One normaliser, three call sites. A second, divergent implementation is
+	// exactly how "Opus 5" and "Opus 5 (1M context)" drifted apart before.
+	must("function displayModel(model, harness = '') {", "the shared model normaliser is defined once")
+	must("${displayModel(model, harness)}", "the roster's visible token uses it")
+	must("export function costModelLabel(agent) {", "the costs tab funnels through one label helper")
+	must("costModelLabel(left).localeCompare(costModelLabel(right))", "the Model column sorts on that label")
+	must("agent.harness, costModelLabel(agent)]", "the costs filter matches that label")
+	must(`<td><span class="muted">${costModelLabel(agent)}</span></td>`, "the Model cell renders that label")
 
-	// Rule 2: family initial glued onto the version with no space.
-	must("parts[0][0].toUpperCase() + parts.slice(1).join(' ')", "initial + version, no space")
-
-	// Rule 2b: the size token is appended after a space when present.
-	must("size ? `${core} ${size}` : core", "size token joins with a space, else core alone")
+	// The strip renders above the table and is styled in both skins — neither
+	// is observable from the module tests, which never load the stylesheet.
+	must("<${ModelRollup} current=${current} />", "the per-model spend strip renders above the cost table")
+	must("#costs-model-rollup {", "the strip is styled")
+	must("body.wizard #costs-model-rollup {", "the strip is skinned for the wizard theme like the table below it")
 }

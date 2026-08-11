@@ -1,3 +1,5 @@
+import { displayModel } from './helpers.js';
+
 export const COST_SPANS = [
   { key: 'month', label: 'This month' },
   { key: '7d', label: 'Last 7d', days: 7 },
@@ -247,6 +249,77 @@ export function harnessSegmentClass(harness, harnesses) {
   return 'cost-seg-h' + (index >= 0 ? index % HARNESS_PALETTE_N : 0);
 }
 
+// UNKNOWN_MODEL names a row whose model was never recorded, matching the
+// "(unknown)" collectCosts already gives a title it cannot name. It is a
+// visible label rather than a blank precisely because this tab attributes
+// MONEY: an unattributed amount has to be nameable, sortable and filterable,
+// or spend goes missing from every reading of the table.
+export const UNKNOWN_MODEL = '(unknown)';
+
+// costModelLabel is the one model string this tab shows, sorts and filters
+// on. It is the shared displayModel() normalisation — see helpers.js for why
+// the context-window marker is peeled — and routing all three through it is
+// the point: the raw column split ONE model into two values whenever some
+// agents happened to launch on the extended window, so "Opus 5" and "Opus 5
+// (1M context)" sorted apart and a filter for either found only half the
+// spend.
+//
+// The harness is deliberately NOT passed. displayModel() peels an OpenCode
+// provider prefix ("anthropic/claude-sonnet-4-5" → "claude-sonnet-4-5") for
+// the Groups roster, where the token must stay narrow and the provider
+// survives in the row's tooltip. Here it would do the very damage this
+// function exists to undo, only inverted: the same model reached through two
+// providers bills at two different rates, and collapsing them would merge two
+// real prices into one row, one rollup cell, and no filter that can separate
+// them. This tab has no tooltip to fall back on, so the provider stays in the
+// label.
+export function costModelLabel(agent) {
+  return displayModel(agent?.model) || UNKNOWN_MODEL;
+}
+
+// modelRollup totals the visible rows by model, biggest spender first.
+//
+// The table answers "what did this agent cost"; the chart stacks by HARNESS.
+// Neither answers the question an operator running a mixed fleet actually
+// asks — "how much of this month was Opus?" — which mattered enough to build
+// once Opus and Sonnet rows sat in one list at several times the price per
+// token. Computed from the same filtered rows the total row sums, so the
+// shares always reconcile with the amount printed underneath them.
+//
+// `whatIf` is the hypothetical subset of `cost`, not a sibling of it (rows
+// carry the combined figure in cost_usd), so a caller marks an entry as an
+// estimate without ever adding the two together.
+//
+// A model that spent NOTHING is dropped once anything else has spent: it
+// contributes a 0% cell that says only "this model appears in the table",
+// which the table itself says better — and one such row (a freshly-spawned
+// agent, an unattributed $0 slice) was otherwise enough to push the strip past
+// its two-entry threshold and render a breakdown of a single-model fleet.
+// When NOTHING has spent, the entries are kept rather than emptied, so a
+// zero-cost span still lists the models it ran.
+export function modelRollup(rows) {
+  const totals = new Map();
+  for (const agent of rows || []) {
+    const model = costModelLabel(agent);
+    const entry = totals.get(model) || { model, cost: 0, whatIf: 0, convIDs: new Set() };
+    entry.cost += agent.cost_usd || 0;
+    entry.whatIf += agent.what_if_cost_usd || 0;
+    if (agent.conv_id) entry.convIDs.add(agent.conv_id);
+    totals.set(model, entry);
+  }
+  const total = [...totals.values()].reduce((sum, entry) => sum + entry.cost, 0);
+  return [...totals.values()]
+    .filter((entry) => total <= 0 || entry.cost > 0)
+    .map((entry) => ({
+      model: entry.model,
+      cost: entry.cost,
+      whatIf: entry.whatIf,
+      agents: entry.convIDs.size,
+      share: total > 0 ? entry.cost / total : 0,
+    }))
+    .sort((left, right) => right.cost - left.cost || left.model.localeCompare(right.model));
+}
+
 function recencyKey(agent) {
   if (agent.last_activity) return agent.last_activity;
   if (agent.last_day) return agent.last_day + 'T00:00:00';
@@ -264,7 +337,7 @@ export function sortCostAgents(agents, sort) {
       case 'agent': result = (left.title || '').localeCompare(right.title || ''); break;
       case 'cost': result = (left.cost_usd || 0) - (right.cost_usd || 0); break;
       case 'harness': result = harnessLabel(left.harness).localeCompare(harnessLabel(right.harness)); break;
-      case 'model': result = (left.model || '').localeCompare(right.model || ''); break;
+      case 'model': result = costModelLabel(left).localeCompare(costModelLabel(right)); break;
       default: result = compare(recencyKey(left), recencyKey(right));
     }
     if (result) return result < 0 ? -mul : mul;
@@ -286,7 +359,7 @@ export function fmtLastActivity(agent) {
 
 export function matchesCostAgent(agent, query) {
   const needle = query.trim().toLowerCase();
-  return !needle || [agent.title, agent.agent_id, agent.conv_id, agent.harness, agent.model]
+  return !needle || [agent.title, agent.agent_id, agent.conv_id, agent.harness, costModelLabel(agent)]
     .some((value) => (value || '').toLowerCase().includes(needle));
 }
 

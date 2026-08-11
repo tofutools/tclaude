@@ -17,7 +17,7 @@ import (
 // when the statusline input carries no subscription rate-limit
 // buckets). It must surface on /api/snapshot so the dashboard can
 // append a "$0.42" token to the per-agent harness/model line
-// ("CC · O4.8 1M high $0.42"). Rides on the same row read as the
+// ("CC · Opus 4.8 high $0.42"). Rides on the same row read as the
 // context meter; no new poller, no new data source.
 //
 // Asserts the cost appears on BOTH the Agents[] roster and the group
