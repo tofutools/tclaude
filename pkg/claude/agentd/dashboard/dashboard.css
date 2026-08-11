@@ -7578,6 +7578,9 @@ body.wizard #standing-order-modal #standing-order-submit:hover:not(:disabled) {
   border-color: #f3e6c0; box-shadow: 0 3px 0 #1e1640, 0 0 17px #b26de866;
 }
 body.wizard #standing-order-modal #standing-order-submit:disabled::before { content: "⏳ Inscribing…"; }
+body.wizard #standing-order-modal.standing-order-editing #standing-order-submit:disabled::before {
+  content: "⏳ Re-inscribing…";
+}
 @media (max-width: 720px) {
   .group-standing-orders-summary,
   .group-standing-orders-library-callout { align-items: stretch; flex-direction: column; }
