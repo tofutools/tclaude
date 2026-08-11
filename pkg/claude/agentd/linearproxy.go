@@ -75,12 +75,29 @@ const (
 	linearProxyTimeout = 45 * time.Second
 
 	// linearProxyBudget bounds a whole REQUEST, however many calls the verb
-	// makes. Several verbs make more than one — `issue update --state` makes
-	// three (confirm the issue, resolve the team's states, mutate) — and a
-	// per-call bound alone would let the daemon run to 3x45s while the CLI
-	// gave up at 75s. That failure mode is the bad one: the agent cannot tell
-	// whether the mutation landed, and a retry double-posts under the
-	// operator's name.
+	// makes. Several verbs make more than one, and a fully-specified `issue
+	// update` makes seven: confirm the issue, resolve the team's states, then
+	// one lookup each for the project, milestone and assignee names and one for
+	// the whole label set, then the mutation. A per-call bound alone would let
+	// the daemon run to 7x45s while the CLI gave up at 75s. That failure mode is
+	// the bad one: the agent cannot tell whether the mutation landed, and a
+	// retry double-posts under the operator's name.
+	//
+	// Every one of those calls is an indexed lookup returning a handful of rows,
+	// so the budget is not tight in practice — but it is what makes a degraded
+	// Linear surface as the daemon's own answer rather than as a client hang-up.
+
+	// linearMutationHeadroom is how much of that budget must remain for a write
+	// to be attempted at all.
+	//
+	// The reads a write verb makes first — confirming the issue, resolving names
+	// — can eat the budget between them when Linear is degraded, and the
+	// mutation would then be sent with a sliver of deadline and cut off
+	// mid-flight. That is the one outcome the budget exists to prevent: the
+	// agent cannot tell whether the write landed, and a retry writes twice under
+	// the operator's name. Refusing before sending anything is unambiguous, and
+	// it is what "not attempted" has to mean.
+	linearMutationHeadroom = 5 * time.Second
 	//
 	// Same reasoning as ghProxyCommentsTimeout, which is one budget across
 	// both of `pr comments`' gh calls. The budget stays inside the bound the
@@ -715,6 +732,21 @@ func resolveLinearRouteKey(rt *linearRoute) (string, *proxyFault) {
 		"no Linear API key is configured for team(s) %s: set agent.linear_proxy.api_key_file, or put "+
 			"LINEAR_API_KEY in the environment agentd runs under",
 		strings.Join(rt.teams, ", "))
+}
+
+// requireMutationBudget refuses a write the request no longer has time to
+// finish, BEFORE it is sent.
+//
+// It is called at the point a verb has done all its reading and is about to
+// mutate. See linearMutationHeadroom for why a clean refusal beats a write cut
+// off mid-flight.
+func (s *linearProxySession) requireMutationBudget() *proxyFault {
+	if s.deadline.IsZero() || time.Until(s.deadline) >= linearMutationHeadroom {
+		return nil
+	}
+	return faultf(http.StatusGatewayTimeout, "linear_budget_spent",
+		"this request spent its %s budget reading Linear before it could write; nothing was "+
+			"written, so it is safe to retry", linearProxyBudget)
 }
 
 // requireWrite gates the mutating verbs on the operator's own ceiling. The

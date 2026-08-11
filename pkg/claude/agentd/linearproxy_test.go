@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -725,6 +726,29 @@ func TestLinearWriteCeilingIsIndependentOfTheSlug(t *testing.T) {
 // catch the two things that would silently weaken them: a document that stopped
 // naming its operation, and an issue selection that lost the `team { key }`
 // the allow-list is enforced on.
+// TestRequireMutationBudgetRefusesRatherThanWriteHalfway — the reads a write
+// verb makes first can eat the whole budget when Linear is degraded, and a
+// mutation sent with a sliver of deadline left gets cut off mid-flight. That is
+// the one outcome the budget exists to prevent: the agent cannot tell whether
+// the write landed, and a retry writes twice under the operator's name.
+func TestRequireMutationBudgetRefusesRatherThanWriteHalfway(t *testing.T) {
+	s := testLinearSession("TCL")
+
+	// A session built by hand has no deadline, which means unbounded — the unit
+	// tests rely on that, so it must not start refusing writes.
+	assert.Nil(t, s.requireMutationBudget(), "an unbounded session has nothing to run out of")
+
+	s.deadline = time.Now().Add(linearProxyBudget)
+	assert.Nil(t, s.requireMutationBudget(), "a fresh budget must allow the write")
+
+	s.deadline = time.Now().Add(linearMutationHeadroom / 2)
+	fault := s.requireMutationBudget()
+	require.NotNil(t, fault)
+	assert.Equal(t, "linear_budget_spent", fault.Code)
+	assert.Contains(t, fault.Msg, "nothing was written",
+		"the refusal has to say the write did not happen, or a retry is a coin toss")
+}
+
 func TestLinearProxyDocumentsAreConstants(t *testing.T) {
 	require.NotEmpty(t, linearProxyDocuments)
 	for name, doc := range linearProxyDocuments {
