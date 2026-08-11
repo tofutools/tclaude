@@ -40,7 +40,8 @@ func TestDashboardHTML_PartyProfilePicker(t *testing.T) {
 	// it can be hidden in template mode.
 	must(`id="group-create-template"`, "the party-profile dropdown exists")
 	must(`id="group-create-manage-templates"`, "the ⧉ manage-circles affordance exists")
-	must(`plain="Party profile" wizard="Summoning circle"`, "the picker label swaps per vocab mode")
+	must(`plain="Group template" wizard="Summoning circle"`, "the picker label swaps per vocab mode")
+	mustNot(`plain="Party profile"`, "regular mode uses plain group vocabulary, not wizard wording")
 	must(`plain="⧉ manage templates…" wizard="⧉ manage circles…"`, "the manage button label swaps per vocab mode")
 	must(`id="group-create-task-row"`, "the template-only Task row exists")
 	must(`id="group-create-task"`, "the Task textarea exists")
@@ -58,7 +59,7 @@ func TestDashboardHTML_PartyProfilePicker(t *testing.T) {
 	must(".template-preview .tp-badges .tc-count {", "the readback badge chips are styled")
 
 	// (c) JS: prefill + preview + instantiate routing carrying the group's own
-	// edited context copy, and the "(blank party)" default both vocab modes.
+	// edited context copy, and the blank-default option in both vocab modes.
 	must("selectGroupCreateTemplate", "the pure selection-prefill transition is wired")
 	must("TemplatePreview", "the Preact roster preview is wired")
 	must("actions.submit(draft, template, current.parentGroup)", "the shared action boundary owns create/instantiate routing")
@@ -71,7 +72,7 @@ func TestDashboardHTML_PartyProfilePicker(t *testing.T) {
 	must("openTemplateManager({ onClose });", "template-manager reconciliation uses an explicit close callback")
 	must("state.isCurrent(generation)", "async returns are guarded by the open generation")
 	must("if (submitLock.current) return;", "duplicate submissions are synchronously blocked")
-	must("(blank party)", "the regular blank-party default option")
+	must("(blank group)", "the regular blank-group default option")
 	must("(no circle — a blank party)", "the wizard blank-party default option")
 
 	// Group creation has one primary entry point. Templates are selected inside

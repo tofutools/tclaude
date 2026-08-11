@@ -203,15 +203,18 @@ function GroupCreateDialog({
     /></h3>
     <label class="cron-create-row">
       <span class="cron-create-label"><${Words}
-        plain="Party profile" wizard="Summoning circle" /></span>
+        plain="Group template" wizard="Summoning circle" /></span>
       <select id="group-create-template" value=${draft.template} disabled=${disabled}
         onChange=${(event) => changeTemplate(event.currentTarget.value)}>
-        <option value="">${words('(blank party)', '(no circle — a blank party)')}</option>
+        <option value="">${words('(blank group)', '(no circle — a blank party)')}</option>
         ${templates.map((entry) => html`<option key=${entry.name} value=${entry.name}>${entry.name}</option>`)}
       </select>
       <button id="group-create-manage-templates" type="button" class="tool"
         disabled=${disabled}
-        title="Open the group templates manager to create or edit a circle — the created/edited circle is available in this picker when you close it"
+        title=${words(
+          'Open the group templates manager to create or edit a template — the created/edited template is available in this picker when you close it',
+          'Open the group templates manager to create or edit a circle — the created/edited circle is available in this picker when you close it',
+        )}
         onClick=${manageTemplates}><${Words}
           plain="⧉ manage templates…" wizard="⧉ manage circles…" /></button>
     </label>
