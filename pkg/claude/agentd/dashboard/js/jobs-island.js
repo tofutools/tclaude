@@ -444,6 +444,7 @@ export function mountJobsIsland({
     openCreate: state.openCronCreate,
     openEdit: state.openCronEdit,
     openDuplicate: state.openCronDuplicate,
+    openStandingOrderCreate: state.openStandingOrderCreate,
   };
   let unregister = null;
   let cleaned = false;

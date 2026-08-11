@@ -16,6 +16,7 @@ import {
 } from './add-member-actions.js';
 import { openSpawnHarnessPolicy } from './spawn-harness-policy-controller.js';
 import { openGroupAttachmentDialog } from './action-dialog-controller.js';
+import { openStandingOrderCreateModal } from './jobs-controller.js';
 
 // Claude Code applies /rename in-pane, then the conversation monitor indexes
 // its JSONL write after a 500ms quiet window. The mutation response therefore
@@ -89,6 +90,14 @@ export function createGroupsActions({
     },
     closeStandingOrders() {
       state.closeStandingOrders();
+    },
+    openStandingOrderCreate(group) {
+      const name = group?.name || group || '';
+      const opened = openStandingOrderCreateModal({
+        targetMode: 'group', groupName: name, scopeGroup: name,
+      });
+      if (opened) state.closeStandingOrders();
+      return opened;
     },
     async loadStandingOrders(group) {
       const response = await fetchImpl(

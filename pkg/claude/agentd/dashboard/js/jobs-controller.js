@@ -18,3 +18,7 @@ function requireController() {
 export function openCronCreateModal(prefill = {}) {
   return requireController().openCreate(prefill);
 }
+
+export function openStandingOrderCreateModal(prefill = {}) {
+  return requireController().openStandingOrderCreate(prefill);
+}
