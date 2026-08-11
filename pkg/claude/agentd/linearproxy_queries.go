@@ -87,6 +87,12 @@ query Whoami($first: Int!) {
 // issueUpdate.id — so rather than rely on an undocumented behaviour, the
 // confirming read every write verb already performs hands over the UUID and
 // the mutation uses that.
+//
+// The project and milestone UUIDs ride along for the same reason the issue's
+// does. `issue update --milestone` has to resolve a milestone name within the
+// issue's CURRENT project when the same call does not also set one, and a
+// milestone name is only unique inside its project — so the confirming read is
+// where that project id comes from rather than a second lookup.
 const linearQueryIssue = linearIssueFields + `
 query IssueView($id: String!) {
   issue(id: $id) {
@@ -97,7 +103,8 @@ query IssueView($id: String!) {
     dueDate
     creator { displayName }
     parent { identifier title }
-    project { name }
+    project { id name }
+    projectMilestone { id name }
     labels(first: 20) { nodes { name } }
   }
 }`
@@ -169,6 +176,72 @@ query TeamMeta($key: String!) {
   }
 }`
 
+// The four documents below all do the same job for a different entity: turn a
+// NAME an agent can reasonably know into the UUID Linear's mutation inputs
+// take. They exist because `IssueCreateInput`/`IssueUpdateInput` accept
+// `projectId`, `projectMilestoneId`, `assigneeId` and `labelIds` and nothing
+// else — an agent that had to supply those directly would need a UUID it can
+// only get by reading something the proxy does not expose.
+//
+// Each takes its whole filter as a variable, built in linearproxy_resolve.go,
+// for the same reason `issue ls` does: the team constraint and the names being
+// matched are caller-influenced data, and data belongs in `variables`.
+//
+// All four select enough to DIAGNOSE a miss as well as resolve a hit — the
+// team a label belongs to, the group it sits in, whether a user is still
+// active — because these resolvers refuse on ambiguity rather than guessing,
+// and a refusal has to say what it found.
+
+// linearQueryProject resolves a project NAME within one team.
+const linearQueryProject = `
+query ProjectResolve($filter: ProjectFilter, $first: Int!) {
+  projects(filter: $filter, first: $first) {
+    nodes { id name }
+  }
+}`
+
+// linearQueryProjectMilestone resolves a milestone NAME within one project.
+//
+// Milestone names are unique only inside a project, which is why the filter
+// always carries one — see resolveMilestoneID for where that project comes from
+// when the caller did not name one.
+const linearQueryProjectMilestone = `
+query MilestoneResolve($filter: ProjectMilestoneFilter, $first: Int!) {
+  projectMilestones(filter: $filter, first: $first) {
+    nodes { id name project { id name } }
+  }
+}`
+
+// linearQueryIssueLabels resolves label NAMES for one team.
+//
+// One call for all of them, not one per name: the filter ORs an eqIgnoreCase
+// clause per requested name, so a six-label issue costs the same single call a
+// one-label issue does. `team { key name }` and `parent { name }` come back so
+// a duplicate name can be told apart in a refusal, and so the team-scoped label
+// can be preferred over the workspace-wide one.
+const linearQueryIssueLabels = `
+query LabelResolve($filter: IssueLabelFilter, $first: Int!) {
+  issueLabels(filter: $filter, first: $first) {
+    nodes {
+      id
+      name
+      team { key name }
+      parent { name }
+    }
+  }
+}`
+
+// linearQueryUsers resolves an assignee by display name, full name or email.
+//
+// `active` rides along so a deactivated account with the same name as a current
+// one does not make the name permanently ambiguous — see resolveAssigneeID.
+const linearQueryUsers = `
+query UserResolve($filter: UserFilter, $first: Int!) {
+  users(filter: $filter, first: $first) {
+    nodes { id name displayName email active }
+  }
+}`
+
 // linearMutationCommentCreate backs `issue comment` — the highest-value write,
 // an agent reporting progress on its own ticket.
 const linearMutationCommentCreate = `
@@ -218,6 +291,10 @@ var linearProxyDocuments = map[string]string{
 	"search":            linearQuerySearch,
 	"comments":          linearQueryIssueComments,
 	"teamMeta":          linearQueryTeamMeta,
+	"project":           linearQueryProject,
+	"projectMilestone":  linearQueryProjectMilestone,
+	"issueLabels":       linearQueryIssueLabels,
+	"users":             linearQueryUsers,
 	"commentCreate":     linearMutationCommentCreate,
 	"issueCreate":       linearMutationIssueCreate,
 	"issueUpdate":       linearMutationIssueUpdate,
@@ -259,7 +336,17 @@ type linearIssueRef struct {
 	Title      string `json:"title,omitempty"`
 }
 
+// linearProjectRef is a project as an issue reports it. The UUID is selected
+// only by linearQueryIssue, whose answer is what `issue update --milestone`
+// resolves a milestone name within when the same call sets no project.
 type linearProjectRef struct {
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name"`
+}
+
+// linearMilestoneRef is a project milestone as an issue reports it.
+type linearMilestoneRef struct {
+	ID   string `json:"id,omitempty"`
 	Name string `json:"name"`
 }
 
@@ -288,9 +375,69 @@ type linearIssue struct {
 	Team          linearTeamRef     `json:"team"`
 	Parent        *linearIssueRef   `json:"parent,omitempty"`
 	Project       *linearProjectRef `json:"project,omitempty"`
-	Labels        *struct {
+	// ProjectMilestone is selected only by linearQueryIssue, so `issue view`
+	// can read back what `--milestone` set. A milestone with no project cannot
+	// exist, so this is nil whenever Project is.
+	ProjectMilestone *linearMilestoneRef `json:"projectMilestone,omitempty"`
+	Labels           *struct {
 		Nodes []linearLabelRef `json:"nodes"`
 	} `json:"labels,omitempty"`
+}
+
+// linearProjectNode is one row of linearQueryProject.
+type linearProjectNode struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type linearProjectsData struct {
+	Projects struct {
+		Nodes []linearProjectNode `json:"nodes"`
+	} `json:"projects"`
+}
+
+// linearMilestoneNode is one row of linearQueryProjectMilestone.
+type linearMilestoneNode struct {
+	ID      string            `json:"id"`
+	Name    string            `json:"name"`
+	Project *linearProjectRef `json:"project"`
+}
+
+type linearMilestonesData struct {
+	ProjectMilestones struct {
+		Nodes []linearMilestoneNode `json:"nodes"`
+	} `json:"projectMilestones"`
+}
+
+// linearLabelNode is one row of linearQueryIssueLabels. Team is a pointer
+// because a workspace-wide label has none, and that difference is what decides
+// a same-name collision.
+type linearLabelNode struct {
+	ID     string          `json:"id"`
+	Name   string          `json:"name"`
+	Team   *linearTeamRef  `json:"team"`
+	Parent *linearLabelRef `json:"parent"`
+}
+
+type linearLabelsData struct {
+	IssueLabels struct {
+		Nodes []linearLabelNode `json:"nodes"`
+	} `json:"issueLabels"`
+}
+
+// linearUserNode is one row of linearQueryUsers.
+type linearUserNode struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	DisplayName string `json:"displayName"`
+	Email       string `json:"email"`
+	Active      bool   `json:"active"`
+}
+
+type linearUsersData struct {
+	Users struct {
+		Nodes []linearUserNode `json:"nodes"`
+	} `json:"users"`
 }
 
 type linearComment struct {

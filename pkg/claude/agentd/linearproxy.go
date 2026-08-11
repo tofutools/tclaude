@@ -75,12 +75,17 @@ const (
 	linearProxyTimeout = 45 * time.Second
 
 	// linearProxyBudget bounds a whole REQUEST, however many calls the verb
-	// makes. Several verbs make more than one — `issue update --state` makes
-	// three (confirm the issue, resolve the team's states, mutate) — and a
-	// per-call bound alone would let the daemon run to 3x45s while the CLI
-	// gave up at 75s. That failure mode is the bad one: the agent cannot tell
-	// whether the mutation landed, and a retry double-posts under the
-	// operator's name.
+	// makes. Several verbs make more than one, and a fully-specified `issue
+	// update` makes seven: confirm the issue, resolve the team's states, then
+	// one lookup each for the project, milestone and assignee names and one for
+	// the whole label set, then the mutation. A per-call bound alone would let
+	// the daemon run to 7x45s while the CLI gave up at 75s. That failure mode is
+	// the bad one: the agent cannot tell whether the mutation landed, and a
+	// retry double-posts under the operator's name.
+	//
+	// Every one of those calls is an indexed lookup returning a handful of rows,
+	// so the budget is not tight in practice — but it is what makes a degraded
+	// Linear surface as the daemon's own answer rather than as a client hang-up.
 	//
 	// Same reasoning as ghProxyCommentsTimeout, which is one budget across
 	// both of `pr comments`' gh calls. The budget stays inside the bound the

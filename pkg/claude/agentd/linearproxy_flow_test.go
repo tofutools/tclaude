@@ -798,6 +798,289 @@ func TestLinearProxy_UpdateResolvesStateCaseInsensitively(t *testing.T) {
 		"issue update must mutate by the issue's UUID, not by its identifier")
 }
 
+// --- project, milestone, assignee and labels ---
+
+// linearFieldStubs is a recorder script covering every lookup the name-shaped
+// fields make, so a test only has to say which of them it cares about.
+func linearFieldStubs(call linearCall) (int, string, bool) {
+	switch {
+	case strings.Contains(call.Query, "query IssueView"):
+		return http.StatusOK, issueWithProjectJSON("TCL-1", "TCL", "prj-current", "Current"), true
+	case strings.Contains(call.Query, "query TeamMeta"):
+		return http.StatusOK, `{"data":{"teams":{"nodes":[{"id":"team-uuid","key":"TCL","name":"Tclaude",
+			"states":{"nodes":[{"id":"s2","name":"In Review"}]}}]}}}`, true
+	case strings.Contains(call.Query, "query ProjectResolve"):
+		return http.StatusOK, `{"data":{"projects":{"nodes":[{"id":"prj-next","name":"Next"}]}}}`, true
+	case strings.Contains(call.Query, "query MilestoneResolve"):
+		return http.StatusOK, `{"data":{"projectMilestones":{"nodes":[
+			{"id":"ms-beta","name":"Beta","project":{"id":"prj-current","name":"Current"}}]}}}`, true
+	case strings.Contains(call.Query, "query UserResolve"):
+		return http.StatusOK, `{"data":{"users":{"nodes":[
+			{"id":"usr-1","displayName":"mikael","email":"m@example.com","active":true}]}}}`, true
+	case strings.Contains(call.Query, "query LabelResolve"):
+		return http.StatusOK, `{"data":{"issueLabels":{"nodes":[
+			{"id":"lbl-bug","name":"Bug","team":{"key":"TCL"}}]}}}`, true
+	}
+	return 0, "", false
+}
+
+// issueWithProjectJSON is issueJSON for an issue that already sits in a
+// project, which is what `--milestone` without `--project` resolves within.
+func issueWithProjectJSON(identifier, teamKey, projectID, projectName string) string {
+	return `{"data":{"issue":{"id":"` + issueUUIDFor(identifier) + `","identifier":"` + identifier +
+		`","title":"A thing","url":"https://linear.app/acme/issue/` + identifier +
+		`","team":{"key":"` + teamKey + `","name":"Team"},` +
+		`"project":{"id":"` + projectID + `","name":"` + projectName + `"}}}}`
+}
+
+// linearWriteWorld is the setup every write test below repeats: an allow-listed
+// team, the operator's write ceiling raised, and the write slug granted.
+func linearWriteWorld(t *testing.T) (*testharness.Flow, *linearRecorder) {
+	t.Helper()
+	f, rec := linearWorld(t, []string{"TCL"}, func(c *config.LinearProxyConfig) { c.AllowWrite = true })
+	require.NoError(t, db.GrantAgentPermission(linearProxyTestConv, agentd.PermLinearWrite, "test"))
+	return f, rec
+}
+
+// lastMutationInput is the `input` variable of the last call, which is what
+// Linear will actually act on.
+func lastMutationInput(t *testing.T, rec *linearRecorder) map[string]any {
+	t.Helper()
+	calls := rec.snapshot()
+	require.NotEmpty(t, calls)
+	input, ok := calls[len(calls)-1].Variables["input"].(map[string]any)
+	require.True(t, ok, "the mutation must carry its input as a variable")
+	return input
+}
+
+// TestLinearProxy_CreateResolvesNamesToIDs — an agent has no way to obtain a
+// Linear UUID, so the whole point of these fields is that names reach the
+// mutation as ids. Asserting on the input is the only way to see that happen:
+// a name that failed to resolve would otherwise surface as a Linear error much
+// later, or as a field silently not set.
+func TestLinearProxy_CreateResolvesNamesToIDs(t *testing.T) {
+	f, rec := linearWriteWorld(t)
+	rec.response = func(call linearCall) (int, string) {
+		if status, body, ok := linearFieldStubs(call); ok {
+			return status, body
+		}
+		return http.StatusOK, `{"data":{"issueCreate":{"success":true,
+			"issue":{"identifier":"TCL-2","team":{"key":"TCL"}}}}}`
+	}
+
+	res := linearPost(t, f, "/v1/linear/issue/create", map[string]any{
+		"team": "TCL", "title": "A thing",
+		"project": "Next", "milestone": "Beta", "assignee": "mikael", "labels": []string{"bug"},
+	})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	input := lastMutationInput(t, rec)
+	assert.Equal(t, "prj-next", input["projectId"])
+	assert.Equal(t, "ms-beta", input["projectMilestoneId"])
+	assert.Equal(t, "usr-1", input["assigneeId"])
+	assert.Equal(t, []any{"lbl-bug"}, input["labelIds"])
+}
+
+// TestLinearProxy_UpdateResolvesNamesToIDs is the same contract on the update
+// path, which additionally has to carry the issue's description.
+func TestLinearProxy_UpdateResolvesNamesToIDs(t *testing.T) {
+	f, rec := linearWriteWorld(t)
+	rec.response = func(call linearCall) (int, string) {
+		if status, body, ok := linearFieldStubs(call); ok {
+			return status, body
+		}
+		return http.StatusOK, `{"data":{"issueUpdate":{"success":true,
+			"issue":{"identifier":"TCL-1","team":{"key":"TCL"}}}}}`
+	}
+
+	res := linearPost(t, f, "/v1/linear/issue/update", map[string]any{
+		"identifier": "TCL-1", "description": "A new body",
+		"project": "Next", "assignee": "mikael", "labels": []string{"bug"},
+	})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	input := lastMutationInput(t, rec)
+	assert.Equal(t, "A new body", input["description"])
+	assert.Equal(t, "prj-next", input["projectId"])
+	assert.Equal(t, "usr-1", input["assigneeId"])
+	assert.Equal(t, []any{"lbl-bug"}, input["labelIds"])
+}
+
+// TestLinearProxy_UpdateResolvesAMilestoneInTheIssuesOwnProject — an agent that
+// says "put this on the Beta milestone" is talking about the project the ticket
+// is already in, and should not have to restate it.
+func TestLinearProxy_UpdateResolvesAMilestoneInTheIssuesOwnProject(t *testing.T) {
+	f, rec := linearWriteWorld(t)
+	rec.response = func(call linearCall) (int, string) {
+		if status, body, ok := linearFieldStubs(call); ok {
+			return status, body
+		}
+		return http.StatusOK, `{"data":{"issueUpdate":{"success":true,
+			"issue":{"identifier":"TCL-1","team":{"key":"TCL"}}}}}`
+	}
+
+	res := linearPost(t, f, "/v1/linear/issue/update",
+		map[string]any{"identifier": "TCL-1", "milestone": "Beta"})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	var milestoneFilter map[string]any
+	for _, call := range rec.snapshot() {
+		if strings.Contains(call.Query, "query MilestoneResolve") {
+			milestoneFilter, _ = call.Variables["filter"].(map[string]any)
+		}
+	}
+	require.NotNil(t, milestoneFilter, "the milestone name must have been resolved")
+	encoded, err := json.Marshal(milestoneFilter)
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), "prj-current",
+		"the lookup must be scoped to the project the confirming read reported")
+
+	assert.Equal(t, "ms-beta", lastMutationInput(t, rec)["projectMilestoneId"])
+}
+
+// TestLinearProxy_UpdateRefusesAMilestoneWithNoProject — the same verb on an
+// issue that sits in no project. Refusing beats searching the workspace: a
+// milestone name is unique only inside a project.
+func TestLinearProxy_UpdateRefusesAMilestoneWithNoProject(t *testing.T) {
+	f, rec := linearWriteWorld(t)
+	rec.response = func(call linearCall) (int, string) {
+		if strings.Contains(call.Query, "query IssueView") {
+			return http.StatusOK, issueJSON("TCL-1", "TCL") // no project
+		}
+		return http.StatusOK, `{"data":{}}`
+	}
+
+	res := linearPost(t, f, "/v1/linear/issue/update",
+		map[string]any{"identifier": "TCL-1", "milestone": "Beta"})
+	assert.Equal(t, http.StatusBadRequest, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), "milestone_needs_project")
+
+	for _, call := range rec.snapshot() {
+		assert.NotContains(t, call.Query, "mutation IssueUpdate",
+			"an unresolved milestone must not reach the mutation")
+	}
+}
+
+// TestLinearProxy_UnresolvableNamesNeverReachTheMutation generalises the
+// state-name contract to the new fields: a name that matches nothing is a
+// refusal, and nothing is written on the way to it. The alternative — writing
+// the fields that did resolve — would leave the ticket half-updated with no way
+// for the agent to tell which half.
+func TestLinearProxy_UnresolvableNamesNeverReachTheMutation(t *testing.T) {
+	for _, tc := range []struct {
+		name, field, value, code string
+		empty                    string
+	}{
+		{name: "project", field: "project", value: "Nope", code: "unknown_project",
+			empty: `{"data":{"projects":{"nodes":[]}}}`},
+		{name: "assignee", field: "assignee", value: "nobody", code: "unknown_assignee",
+			empty: `{"data":{"users":{"nodes":[]}}}`},
+		{name: "label", field: "labels", value: "nosuchlabel", code: "unknown_label",
+			empty: `{"data":{"issueLabels":{"nodes":[]}}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, rec := linearWriteWorld(t)
+			rec.response = func(call linearCall) (int, string) {
+				if strings.Contains(call.Query, "query IssueView") {
+					return http.StatusOK, issueWithProjectJSON("TCL-1", "TCL", "prj-current", "Current")
+				}
+				return http.StatusOK, tc.empty
+			}
+
+			body := map[string]any{"identifier": "TCL-1"}
+			if tc.field == "labels" {
+				body[tc.field] = []string{tc.value}
+			} else {
+				body[tc.field] = tc.value
+			}
+			res := linearPost(t, f, "/v1/linear/issue/update", body)
+			assert.Equal(t, http.StatusBadRequest, res.Code, "body=%s", res.Body.String())
+			assert.Contains(t, res.Body.String(), tc.code)
+
+			for _, call := range rec.snapshot() {
+				assert.NotContains(t, call.Query, "mutation IssueUpdate",
+					"an unresolved name must not reach the mutation")
+			}
+		})
+	}
+}
+
+// TestLinearProxy_UpdateClearsWithoutLookingAnythingUp — clearing a field names
+// nothing, so there is nothing to resolve and no credential to spend on it. The
+// null is what Linear reads as "unset"; an absent key would mean "leave it".
+func TestLinearProxy_UpdateClearsWithoutLookingAnythingUp(t *testing.T) {
+	f, rec := linearWriteWorld(t)
+	rec.response = func(call linearCall) (int, string) {
+		if strings.Contains(call.Query, "query IssueView") {
+			return http.StatusOK, issueWithProjectJSON("TCL-1", "TCL", "prj-current", "Current")
+		}
+		return http.StatusOK, `{"data":{"issueUpdate":{"success":true,
+			"issue":{"identifier":"TCL-1","team":{"key":"TCL"}}}}}`
+	}
+
+	res := linearPost(t, f, "/v1/linear/issue/update", map[string]any{
+		"identifier": "TCL-1",
+		"assignee":   "", "project": "", "description": "", "labels": []string{},
+	})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	input := lastMutationInput(t, rec)
+	for _, key := range []string{"assigneeId", "projectId"} {
+		require.Contains(t, input, key, "a clear must send the key")
+		assert.Nil(t, input[key], "Linear reads a null as 'unset' and an absent key as 'leave it'")
+	}
+	assert.Equal(t, "", input["description"])
+	assert.Equal(t, []any{}, input["labelIds"])
+
+	for _, call := range rec.snapshot() {
+		for _, lookup := range []string{"ProjectResolve", "UserResolve", "LabelResolve"} {
+			assert.NotContains(t, call.Query, lookup, "a clear names nothing to look up")
+		}
+	}
+}
+
+// TestLinearProxy_UpdateStillRefusesAnEmptyChangeSet — the daemon's own check,
+// independent of the CLI's, now that there are eight fields it has to consider
+// rather than three.
+func TestLinearProxy_UpdateStillRefusesAnEmptyChangeSet(t *testing.T) {
+	f, rec := linearWriteWorld(t)
+
+	res := linearPost(t, f, "/v1/linear/issue/update", map[string]any{"identifier": "TCL-1"})
+	assert.Equal(t, http.StatusBadRequest, res.Code, "body=%s", res.Body.String())
+	assert.False(t, rec.sawAnyCall(), "an empty change set must be refused before a credential is spent")
+}
+
+// TestLinearProxy_NameLookupsStayInsideTheTeamGate — these lookups are new
+// places a caller's string reaches Linear, and each of them has to carry the
+// team the gate approved rather than searching the workspace. A project or
+// label resolved outside the gate would attach the ticket to something the
+// agent was never allowed to see.
+func TestLinearProxy_NameLookupsStayInsideTheTeamGate(t *testing.T) {
+	f, rec := linearWriteWorld(t)
+	rec.response = func(call linearCall) (int, string) {
+		if status, body, ok := linearFieldStubs(call); ok {
+			return status, body
+		}
+		return http.StatusOK, `{"data":{"issueUpdate":{"success":true,
+			"issue":{"identifier":"TCL-1","team":{"key":"TCL"}}}}}`
+	}
+
+	res := linearPost(t, f, "/v1/linear/issue/update", map[string]any{
+		"identifier": "TCL-1", "project": "Next", "labels": []string{"bug"},
+	})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	for _, call := range rec.snapshot() {
+		if !strings.Contains(call.Query, "ProjectResolve") && !strings.Contains(call.Query, "LabelResolve") {
+			continue
+		}
+		encoded, err := json.Marshal(call.Variables["filter"])
+		require.NoError(t, err)
+		assert.Contains(t, string(encoded), "TCL",
+			"a name lookup must be scoped to the team the gate approved")
+	}
+}
+
 // TestLinearProxy_LargeBodyIsAccepted — the skill tells agents to use
 // --body-file "for anything multi-line", and a progress report is routinely
 // several kilobytes. A transport-level cap below the validator's own limit

@@ -6,7 +6,8 @@ description: >-
   API on the host with the OPERATOR's key, so you never hold one. Use when you
   need to read the ticket you were spawned against, check its acceptance
   criteria or discussion, report progress on it, move it to another workflow
-  state, attach the pull request you opened, or file a new issue. Gated on the
+  state, set its project, milestone, assignee or labels, rewrite its
+  description, attach the pull request you opened, or file a new issue. Gated on the
   `proxy.linear.read` / `proxy.linear.write` slugs, neither granted by default, and bounded
   by an operator allow-list of Linear teams, a `linear_team` scope on your own
   grant, or both.
@@ -115,7 +116,7 @@ not — that is a change only the human can make.
 ## Reads
 
 ```bash
-tclaude proxy linear issue view TCL-568          # description, state, assignee, labels
+tclaude proxy linear issue view TCL-568          # description, state, assignee, project, milestone, labels
 tclaude proxy linear issue ls --team TCL --state "In Progress"
 tclaude proxy linear issue ls --assigned-me --limit 10
 tclaude proxy linear issue search "flaky dashsnap"
@@ -133,6 +134,32 @@ tclaude proxy linear issue update TCL-568 --state "In Review"
 tclaude proxy linear issue link TCL-568 --url https://github.com/acme/repo/pull/42
 tclaude proxy linear issue create --team TCL --title "…" --description-file spec.md
 ```
+
+`issue update` changes the title, description, state, priority, project,
+milestone, assignee and labels; whatever you omit is left alone.
+
+```bash
+tclaude proxy linear issue update TCL-568 --description-file rewritten.md
+tclaude proxy linear issue update TCL-568 --assignee mikael --label bug --label backend
+tclaude proxy linear issue update TCL-568 --project tclaude --milestone v2
+tclaude proxy linear issue create --team TCL --title "…" --project tclaude --assignee mikael
+```
+
+**These flags take NAMES, not UUIDs** — the project, milestone, person and
+labels as you would say them. The daemon resolves each within the issue's team.
+
+Four things to know before you use them:
+
+- **`--label` is the COMPLETE set.** The labels you name become the issue's
+  labels; the ones you leave out come off. Read the issue first if you meant to
+  add one. Repeat the flag, or separate names with commas.
+- **A milestone belongs to a project.** On `create`, pass `--project` alongside
+  it. On `update`, it resolves inside the project the issue is already in.
+- **An empty value clears the field**, and only when you type it: `--assignee ''`
+  unassigns, `--label ''` removes every label. Omitting a flag never changes
+  anything.
+- **Nothing is created on demand.** A label or project that does not exist is a
+  refusal, not a new one.
 
 **Everything you write is attributed to the operator's Linear account.** A
 comment you post is a comment they posted; an issue you create is a real ticket
@@ -181,9 +208,19 @@ human rather than paraphrasing it as "no access to Linear".
 refused rather than guessed at, and the refusal lists the team's real states.
 Read them and retry.
 
-**`issue update` changes only title, state and priority.** Reassigning a team or
-an owner is not something the proxy will do for you. Neither is deleting or
-archiving anything.
+**Every other name is matched the same way.** `unknown_project`,
+`unknown_milestone`, `unknown_assignee` and `unknown_label` mean the name
+matched nothing the team can reach — check the spelling against `issue view` of
+a ticket that already has it. The `ambiguous_*` codes mean several things share
+the name and the proxy will not guess between them; the message says what it
+found, and for a person the email address is the way through.
+
+**`milestone_needs_project`** means you named a milestone for an issue that
+would sit in no project. Pass `--project` in the same call.
+
+**`issue update` will not change the TEAM.** Moving an issue between teams would
+carry it out of the gate this whole surface is built on. Neither will it delete
+or archive anything.
 
 **`404 not_found` usually means you typo'd the issue number.** Check it against
 `issue ls` rather than escalating.

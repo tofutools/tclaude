@@ -305,7 +305,9 @@ tclaude proxy linear issue comments TCL-568
 # Writes (proxy.linear.write + allow_write)
 tclaude proxy linear issue comment TCL-568 --body-file progress.md
 tclaude proxy linear issue update TCL-568 --state "In Review"
-tclaude proxy linear issue create --team TCL --title "…" --description-file spec.md
+tclaude proxy linear issue update TCL-568 --assignee mikael --label bug --label backend
+tclaude proxy linear issue create --team TCL --title "…" --description-file spec.md \
+  --project tclaude --milestone "v2" --assignee mikael --label bug
 tclaude proxy linear issue link TCL-568 --url https://github.com/acme/repo/pull/42
 ```
 
@@ -345,12 +347,64 @@ case-insensitively but never fuzzily. A name that is not one of them is refused,
 and the refusal lists the real ones. A near-match that silently moved a ticket
 to the wrong column would be worse than an error.
 
+### Names, not UUIDs
+
+`--project`, `--milestone`, `--assignee` and `--label` take the names a ticket
+is discussed in. The daemon resolves each to the UUID Linear's mutation inputs
+require, because an agent has no way to obtain one: the proxy refuses UUIDs as
+issue references, and nothing else it returns carries one to reuse.
+
+Resolution follows the same rules `--state` does — exact, case-insensitive,
+never fuzzy — and each lookup is scoped to the team the gate already approved:
+
+| Flag | Resolved against | Refusals |
+|---|---|---|
+| `--project` | the projects accessible to the issue's team | `unknown_project`, `ambiguous_project` |
+| `--milestone` | the milestones of that project | `unknown_milestone`, `ambiguous_milestone`, `milestone_needs_project` |
+| `--assignee` | Linear users, by display name, full name or email | `unknown_assignee`, `ambiguous_assignee` |
+| `--label` | the team's labels **and** the workspace-wide ones | `unknown_label`, `ambiguous_label` |
+
+Worth knowing:
+
+- **A milestone belongs to a project.** `--milestone` on `issue create` needs
+  `--project` in the same call. On `issue update` it resolves within the
+  project the issue is already in, or the one `--project` sets alongside it; an
+  issue in no project is refused rather than searched for workspace-wide, since
+  milestone names are unique only inside a project.
+- **`--label` is the complete set, not an addition.** The labels you name become
+  the issue's labels. Repeat the flag, or separate names with commas.
+- **A label is never created on demand.** A name that matches nothing is
+  refused, and the refusal says which name missed.
+- **A team's own label beats a workspace-wide one of the same name** — that team
+  has said what the word means for its issues. Any other collision (two labels
+  in different groups, say) is refused with the groups named.
+- **A deactivated Linear account loses to an active one** with the same name, so
+  a former colleague cannot make a current one unassignable. When the only match
+  is deactivated it still resolves.
+- **Ambiguity is always a refusal, never a choice.** Two things sharing a name
+  means the daemon cannot know which was meant, and a wrong guess would land
+  silently under your Linear account.
+- **`--assignee` is the one lookup that is not team-scoped.** Linear's user
+  filter has no team dimension, and assigning a ticket to a reviewer who mostly
+  works elsewhere is ordinary. The issue being assigned still had to pass the
+  gate; what this widens is only what an agent can *learn* — whether a user with
+  an exactly-matching name or email exists. A miss says exactly that and never
+  lists your workspace.
+
 ### What `issue update` will not change
 
-Only the title, state and priority — the same deliberate narrowness as the
-GitHub half's `pr edit`. Moving an issue between teams would take it out of the
-allow-list, and assignment is a workspace decision rather than a coding one.
+The **team**. Moving an issue between teams would carry it out of the
+allow-list the whole gate is built on, so it is the one field this verb refuses.
 There is no delete, no archive, and no raw-GraphQL escape hatch.
+
+Everything else a coding agent legitimately owns on its ticket can be changed:
+title, description, state, priority, project, milestone, assignee and labels.
+Whatever you omit is left alone.
+
+Passing an **empty value** clears the field instead — `--assignee ''`
+unassigns, `--project ''` takes the issue out of its project, `--label ''`
+removes every label. Omitting the flag and passing it empty are different
+requests, and only the second one touches the field.
 
 ### Comment threads read chronologically
 
@@ -423,6 +477,14 @@ It is not wired into CI (it needs the network). Run it when you touch
 production — that code means tclaude's own query no longer matches Linear's
 schema, which is a tclaude bug and not something an agent should retry.
 
+It covers the **documents** and not the **variable values**: Linear validates a
+document before it authenticates but coerces variables only afterwards, so the
+filter maps in `linearproxy_handlers.go` / `linearproxy_resolve.go` and the
+mutation inputs are outside its reach. Drift there surfaces at execution time
+as `linear_failed` rather than as a wrong answer, but it will not be caught
+before it ships — check those against Linear's schema by hand (its API answers
+`__type` introspection with no credential).
+
 ## What this is not
 
 `agentd`'s permission layer is a coordination guardrail, not a security
@@ -454,6 +516,9 @@ the workspace.
 | `403 team_scope_empty` | The agent's team scope authorizes nothing at all: it overlaps a configured `allowed_teams` nowhere, or it names teams but constrains some other dimension a Linear request cannot describe, or it carries no `linear_team` at all. The message says which. |
 | `400` on an identifier | Only `TEAM-123` form is accepted; a UUID is refused on purpose. |
 | `400 unknown_state` | The state name is not one of the team's; the message lists the real ones. |
+| `400 unknown_project` / `unknown_milestone` / `unknown_assignee` / `unknown_label` | The name matched nothing the team can reach. Matching is exact and case-insensitive, and nothing is created on demand. |
+| `400 ambiguous_project` / `ambiguous_milestone` / `ambiguous_assignee` / `ambiguous_label` | Several things share the name and the proxy will not guess. The message says what it found; for an assignee, use the email address. |
+| `400 milestone_needs_project` | A milestone belongs to a project and the issue would have none. Pass `--project` in the same call, or set one first. |
 | `404 not_found` | No such issue or team, or the operator's key cannot see it. Usually a typo'd issue number — not something to escalate. |
 | `429 linear_rate_limited` | Linear's budget is spent (2,500 requests/hour per key). The message carries the reset time. |
 | `502 linear_schema_drift` | tclaude's query no longer matches Linear's schema. A tclaude bug — do not retry; run the schema-drift test above. |

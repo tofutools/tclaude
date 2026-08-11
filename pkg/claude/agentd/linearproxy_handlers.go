@@ -82,6 +82,11 @@ type linearCreateRequest struct {
 	Description string `json:"description,omitempty"`
 	Priority    int    `json:"priority,omitempty"`
 	State       string `json:"state,omitempty"`
+	// The project, milestone, assignee and label names, shared with `issue
+	// update` so the two verbs cannot drift apart on what they accept. A create
+	// has nothing to leave alone, so its handler folds an empty value into an
+	// absent one — see normalizedForCreate.
+	linearIssueNameFields
 }
 
 type linearUpdateRequest struct {
@@ -91,12 +96,43 @@ type linearUpdateRequest struct {
 	// Priority is a pointer because 0 is a meaningful value ("no priority"),
 	// so absent and "set it to none" have to be distinguishable.
 	Priority *int `json:"priority,omitempty"`
+	// Description is a pointer for the same reason the fields below are: an
+	// empty description is a real state ("this ticket has no body"), so absent
+	// and "clear it" have to be told apart. Title and State stay plain strings
+	// because neither can be cleared — a title is required and a state is one
+	// of the team's own.
+	Description *string `json:"description,omitempty"`
+	linearIssueNameFields
 }
 
 type linearLinkRequest struct {
 	Identifier string `json:"identifier"`
 	URL        string `json:"url"`
 	Title      string `json:"title,omitempty"`
+}
+
+// normalizedForCreate drops the empty values a create has no meaning for.
+//
+// On `issue update` an empty value is the CLEAR — "this issue should have no
+// project" — and it reaches Linear as an explicit null. A new issue has nothing
+// to clear, so the same spelling there would send a null that says exactly what
+// omitting the field says. Folding it here keeps that difference in one place
+// rather than in every resolver.
+func (b linearCreateRequest) normalizedForCreate() linearIssueNameFields {
+	f := b.linearIssueNameFields
+	if f.Project != nil && strings.TrimSpace(*f.Project) == "" {
+		f.Project = nil
+	}
+	if f.Milestone != nil && strings.TrimSpace(*f.Milestone) == "" {
+		f.Milestone = nil
+	}
+	if f.Assignee != nil && strings.TrimSpace(*f.Assignee) == "" {
+		f.Assignee = nil
+	}
+	if f.Labels != nil && len(trimmedNonEmpty(*f.Labels)) == 0 {
+		f.Labels = nil
+	}
+	return f
 }
 
 // openLinearProxy is the shared prologue: method check, permission gate,
@@ -859,6 +895,16 @@ func handleLinearProxyIssueCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		input["stateId"] = stateID
 	}
+	// The team key comes from Linear's own answer rather than from body.Team:
+	// resolveTeamMeta re-checks it against the allow-list, so this is the key
+	// the gate actually approved, and it is the one the project and label
+	// lookups have to be scoped to.
+	if fault := s.applyIssueNameFields(
+		r.Context(), rt, meta.Key, "", body.normalizedForCreate(), input,
+	); fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
 	var data linearIssueCreateData
 	if fault := s.exec(r.Context(), rt, linearMutationIssueCreate, map[string]any{"input": input}, &data); fault != nil {
 		writeProxyFault(w, fault)
@@ -878,10 +924,15 @@ func handleLinearProxyIssueCreate(w http.ResponseWriter, r *http.Request) {
 
 // handleLinearProxyIssueUpdate serves POST /v1/linear/issue/update.
 //
-// Only title, state and priority can be changed — the same deliberate
-// narrowness as the GitHub half's `pr edit`. Reassigning a team would move an
-// issue out of the allow-list, and reassigning an owner is a workspace
-// decision rather than a coding one.
+// It changes the fields a coding agent legitimately owns on the ticket it is
+// working: title, description, state, priority, project, milestone, assignee
+// and labels. What stays out is the TEAM — moving an issue between teams would
+// carry it out of the allow-list the whole gate is built on, so it is the one
+// field this verb will not touch. There is still no delete and no archive.
+//
+// Whichever field the caller omits is left alone. The name-shaped fields
+// additionally distinguish "clear it" from "leave it", which is what the
+// pointers on linearUpdateRequest are for.
 func handleLinearProxyIssueUpdate(w http.ResponseWriter, r *http.Request) {
 	var body linearUpdateRequest
 	s, ok := openLinearProxy(w, r, PermLinearWrite, &body)
@@ -900,9 +951,11 @@ func handleLinearProxyIssueUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	title := strings.TrimSpace(body.Title)
 	state := strings.TrimSpace(body.State)
-	if title == "" && state == "" && body.Priority == nil {
+	if title == "" && state == "" && body.Priority == nil &&
+		body.Description == nil && !body.any() {
 		writeProxyFault(w, faultf(http.StatusBadRequest, "invalid_arg",
-			"nothing to update — pass a title, a state, or a priority"))
+			"nothing to update — pass a title, description, state, priority, project, milestone, "+
+				"assignee or label set"))
 		return
 	}
 	if title != "" {
@@ -913,6 +966,14 @@ func handleLinearProxyIssueUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Priority != nil {
 		if fault := validateLinearPriority(*body.Priority); fault != nil {
+			writeProxyFault(w, fault)
+			return
+		}
+	}
+	if body.Description != nil {
+		// Not `required`: an empty description is the clear, which is a real
+		// thing to ask for on an update even though it is not on a create.
+		if fault := validateLinearBody(*body.Description, false); fault != nil {
 			writeProxyFault(w, fault)
 			return
 		}
@@ -931,6 +992,13 @@ func handleLinearProxyIssueUpdate(w http.ResponseWriter, r *http.Request) {
 	input := map[string]any{}
 	if title != "" {
 		input["title"] = title
+	}
+	if body.Description != nil {
+		// Sent as-is, including the empty string: Linear reads that as "no
+		// description" rather than as "leave it", which is precisely the clear
+		// the caller asked for. Trimming here would silently turn a description
+		// of whitespace into a clear the caller did not ask for.
+		input["description"] = *body.Description
 	}
 	if body.Priority != nil {
 		input["priority"] = *body.Priority
@@ -953,6 +1021,17 @@ func handleLinearProxyIssueUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		input["stateId"] = stateID
+	}
+	// Same credential and same team as the state resolution above, and for the
+	// same reason: the issue's real team is the one Linear just reported, and it
+	// lives in the workspace this key read it from.
+	//
+	// currentProjectID comes off the confirming read so that `--milestone`
+	// without `--project` resolves within the project the issue is already in.
+	if fault := s.applyIssueNameFields(r.Context(), rt, issue.Issue.Team.Key,
+		currentProjectID(issue.Issue), body.linearIssueNameFields, input); fault != nil {
+		writeProxyFault(w, fault)
+		return
 	}
 	// Mutate by the UUID the confirming read returned, not by the identifier.
 	// Linear documents commentCreate and attachmentLinkURL as accepting an
@@ -1055,6 +1134,16 @@ func optionalTeam(s *linearProxySession, raw string) (string, *proxyFault) {
 		return "", nil
 	}
 	return s.validateLinearTeam(raw)
+}
+
+// currentProjectID is the project an issue is already in, or "" when it has
+// none. Only `issue update --milestone` reads it, to resolve a milestone name
+// within the project the caller did not have to restate.
+func currentProjectID(issue *linearIssue) string {
+	if issue == nil || issue.Project == nil {
+		return ""
+	}
+	return strings.TrimSpace(issue.Project.ID)
 }
 
 // teamOrAll renders a team for the audit detail.
