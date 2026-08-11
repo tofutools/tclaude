@@ -51,7 +51,7 @@ func TestDashboardHTML_RemoteControlWired(t *testing.T) {
 	must(".remote-badge:hover", "the clickable remote indicator has a hover affordance")
 
 	// helpers.js: harnessLine appends the indicator to the END of the harness
-	// line, trailing the effort/cost tokens — "CC · O4.8 1M high 📱" — rather
+	// line, trailing the effort/cost tokens — "CC · Opus 4.8 high 📱" — rather
 	// than a standalone chip in the control cell, so the symbol reads as part
 	// of the agent's at-a-glance line.
 	must("const remote = html`<${RemoteBadge} member=${member} />`;", "HarnessLine builds the remote indicator")

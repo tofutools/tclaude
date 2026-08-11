@@ -6,7 +6,7 @@ import (
 )
 
 // TestDashboardHTML_CostInHarnessLineWired guards the per-agent API-cost
-// token — "$0.42" trailing the harness/model line ("CC · O4.8 1M high
+// token — "$0.42" trailing the harness/model line ("CC · Opus 4.8 high
 // $0.42") under the row's dot/focus/cog cluster. The pieces span two
 // files (helpers.js builds it inside harnessLine, dashboard.css styles
 // it); a rename in one silently breaks the feature in the browser, and

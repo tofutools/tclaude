@@ -4,7 +4,8 @@ import htm from 'htm';
 import { applySortState, tableSortState, MEMBER_ACCESSORS } from './sort.js';
 import { visibleMemberCols, memberColHidden } from './member-columns.js';
 import {
-  shortAgentId, idTooltip, relTime, shortCwd, harnessCanRename, harnessCanRemoteControl,
+  shortAgentId, idTooltip, relTime, shortCwd, displayModel,
+  harnessCanRename, harnessCanRemoteControl,
   SLOP_SYMBOLS,
 } from './helpers.js';
 import { isWizardActive } from './slop.js';
@@ -101,28 +102,6 @@ function harnessLong(name) {
   return harnessLabels(name).long;
 }
 
-function shortModel(model, harness = '') {
-  let main = String(model || '').trim();
-  if (!main) return '';
-  // OpenCode identifies models as provider/model on the wire. The provider is
-  // retained in the row tooltip and persisted metadata, but repeating it in
-  // the narrow visible token makes mixed-harness rows needlessly lopsided.
-  if (harness === 'opencode') {
-    const separator = main.indexOf('/');
-    if (separator >= 0 && separator < main.length - 1) main = main.slice(separator + 1);
-  }
-  let size = '';
-  const paren = main.match(/\(([^)]*)\)\s*$/);
-  if (paren) {
-    main = main.slice(0, paren.index).trim();
-    const match = paren[1].match(/\d+\s*[KMBkmb]/);
-    if (match) size = match[0].replace(/\s+/g, '').toUpperCase();
-  }
-  const parts = main.split(/\s+/);
-  const core = parts.length >= 2 ? parts[0][0].toUpperCase() + parts.slice(1).join(' ') : main;
-  return size ? `${core} ${size}` : core;
-}
-
 const EFFORT_LABELS = {
   low: 'lw',
   medium: 'md',
@@ -207,7 +186,7 @@ export function HarnessLine({ member, snapshot }) {
   const labels = harnessLabels(harness);
   const model = state.model || '';
   // Both indicators trail the metadata text as bare glyphs, tightly packed:
-  // "CC · O4.8 1M high 🔒 📱". The sandbox one used to own a framed chip on its
+  // "CC · Opus 4.8 high 🔒 📱". The sandbox one used to own a framed chip on its
   // own line below, which cost a whole row of height to say what a padlock says.
   const sandbox = html`<${SandboxBadge} member=${member}
     showDetails=${!!snapshot?.recorded_sandbox_details_enabled} />`;
@@ -253,7 +232,7 @@ export function HarnessLine({ member, snapshot }) {
     : 'Estimated pay-per-token-equivalent cost this session — hypothetical, not a real charge (subscription)';
   return html`<div class="agent-harness" title=${title} tabindex=${drive ? '0' : null}
     data-full-metadata=${drive ? title : null}>
-    <span class=${metadataClass} role="note" aria-label=${title}><${HarnessMark} name=${harness} shortLabel=${labels.short} longLabel=${labels.long} tooltip=${drive ? title : labels.long} /><span class="harness-sep">·</span><span class="harness-model">${shortModel(model, harness)}</span>
+    <span class=${metadataClass} role="note" aria-label=${title}><${HarnessMark} name=${harness} shortLabel=${labels.short} longLabel=${labels.long} tooltip=${drive ? title : labels.long} /><span class="harness-sep">·</span><span class="harness-model">${displayModel(model, harness)}</span>
       ${effort ? html`<span class="harness-effort" title=${effort}>${shortEffort(effort)}</span>` : null}
       ${cost > 0 ? html`<span class="harness-cost">${fmtUSD(cost)}</span>` : null}
       ${virtualCost > 0 ? html`<span class="harness-cost harness-cost-whatif" title=${virtualTitle}>≈${fmtUSD(virtualCost)}</span>` : null}

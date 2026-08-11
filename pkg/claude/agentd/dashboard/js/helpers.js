@@ -362,6 +362,48 @@ function shortCwd(cwd) {
   return out;
 }
 
+// displayModel renders the model a row is running on the way an operator
+// says it out loud — "Opus 5", "Sonnet 4.6", "GPT-5.6 Codex". The stored
+// value is the harness's own display name (Claude Code's
+// model.display_name, recorded by the statusline hook), which for an
+// extended-window model arrives as "Opus 5 (1M context)".
+//
+// TWO THINGS ARE PEELED, AND ONLY TWO.
+//
+// A trailing "[1m]" suffix: an operator-typed launch alias
+// ("claude-opus-5[1m]") that reached the model field without the harness
+// having normalised it into a display name yet.
+//
+// A trailing parenthetical naming a CONTEXT WINDOW. The window is not the
+// model's identity and the row already states it, better, twice over: the
+// context meter beside the name renders the EFFECTIVE window and its
+// tooltip spells out "context: 210k / 1M tokens (reported cap)". Keeping
+// it in the name was worse than redundant — an agent launched with
+// --auto-compact-window pinned to 450k had a meter measured against 450k
+// sitting next to a name still advertising 1M, so the two window facts on
+// one row disagreed and the louder one was wrong. Same reasoning, and
+// deliberately the same rule, as the status line's trimContextParenthetical.
+//
+// Everything else survives verbatim, including any other parenthetical: a
+// future "Opus 4.8 (fast)" is a genuinely different model from "Opus 4.8"
+// and must not collapse onto it. Only the marker the row states elsewhere,
+// more precisely, is removed.
+function displayModel(model, harness = '') {
+  let main = String(model || '').trim();
+  if (!main) return '';
+  // OpenCode identifies models as provider/model on the wire. The provider is
+  // retained in the row tooltip and persisted metadata, but repeating it in
+  // the narrow visible token makes mixed-harness rows needlessly lopsided.
+  if (harness === 'opencode') {
+    const separator = main.indexOf('/');
+    if (separator >= 0 && separator < main.length - 1) main = main.slice(separator + 1);
+  }
+  if (/\[1m\]$/i.test(main)) main = main.slice(0, -'[1m]'.length).trim();
+  const paren = main.match(/\(([^)]*)\)\s*$/);
+  if (paren && /context/i.test(paren[1])) main = main.slice(0, paren.index).trim();
+  return main;
+}
+
 // offlineDefault returns the tab-wide "show offline" checkbox state
 // for the 'groups' tab. Defaults to true (show everything) when
 // the checkbox isn't in the DOM yet / the user hasn't touched it.
@@ -525,7 +567,7 @@ export {
   $, $$, isModifiedClick, esc, themeWords, linkify, shortId, shortAgentId, idTooltip,
   makeModalResizable, bindModalSubmitHotkey,
   harnessCanRename, harnessCanRemoteControl,
-  relTime, shortCwd, offlineDefault, groupOfflineOverride, groupShowOffline,
+  relTime, shortCwd, displayModel, offlineDefault, groupOfflineOverride, groupShowOffline,
   // slop-fx.js and the native member reels share one symbol sequence.
   SLOP_SYMBOLS,
   // Shared native/web directory-picker boundary. The Preact island registers

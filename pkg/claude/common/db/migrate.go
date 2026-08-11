@@ -1411,7 +1411,7 @@ func migrateV49toV50(db *sql.DB) error {
 // reasoning-effort parameter), so the statusbar hook records it onto the
 // session row alongside the model and context-window snapshot. The
 // statusbar renders it left of the branch and the dashboard appends it
-// to the per-agent model line ("CC · O4.8 1M high").
+// to the per-agent model line ("CC · Opus 4.8 high").
 //
 // A sibling column to sessions.model (v47) rather than a JSON side-blob:
 // it's a single display-only string written on the same cadence as the
