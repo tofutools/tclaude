@@ -3,6 +3,7 @@ package agentd
 import (
 	"context"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,10 +15,15 @@ import (
 //
 // It exists because `IssueCreateInput` and `IssueUpdateInput` accept
 // `projectId`, `projectMilestoneId`, `assigneeId` and `labelIds` and nothing
-// else. An agent has no way to obtain a UUID: the proxy deliberately refuses
-// them as issue references, and nothing else it returns carries one it could
-// reuse. So the daemon does the lookup, from the vocabulary a ticket is
-// discussed in.
+// else, and a UUID is not a thing an agent can be asked for: no verb on this
+// surface ACCEPTS one — identifiers are the only issue reference, deliberately
+// — so a UUID an agent had read somewhere would be a value with nowhere to go.
+// The daemon does the lookup instead, from the vocabulary a ticket is discussed
+// in.
+//
+// (`issue view` does return some ids — the issue's own, and now its project's
+// and milestone's. They are read back by this package, not by the agent, and
+// there is no input that would take one.)
 //
 // Three rules hold for every resolver here, and they are the same three
 // resolveStateID has followed since the proxy shipped:
@@ -48,10 +54,20 @@ const (
 	// before it reaches a filter.
 	maxLinearNameLen = 256
 
-	// maxLinearIssueLabels bounds how many labels one call may set. It matches
-	// the `labels(first: 20)` selection `issue view` reads back with, so the
-	// proxy cannot set a label set it would then fail to show.
-	maxLinearIssueLabels = 20
+	// maxLinearIssueLabels bounds how many labels one call may set. It MUST stay
+	// equal to the `labels(first:)` page linearQueryIssue reads back with, and
+	// the reason is not symmetry for its own sake.
+	//
+	// `--label` replaces the whole set, so the way an agent adds one label is to
+	// read the issue, then resend its labels plus the new one. If `issue view`
+	// showed fewer labels than a call may set, that loop would silently drop the
+	// ones it could not see — deleting a human's labels under the operator's
+	// name, with nothing in the output to say it happened.
+	//
+	// 50 is far past any real issue; Linear's own UI stops being usable long
+	// before it. An issue carrying more than this still cannot be safely
+	// round-tripped, which is why the docs say to read before replacing.
+	maxLinearIssueLabels = 50
 
 	// linearResolvePageSize bounds a resolution query. Every one of them filters
 	// on an exact name, so a handful of rows is already an ambiguity and a full
@@ -87,13 +103,26 @@ func (f linearIssueNameFields) any() bool {
 	return f.Project != nil || f.Milestone != nil || f.Assignee != nil || f.Labels != nil
 }
 
+// linearIssuePlacement is where an issue sits BEFORE a mutation: the project it
+// belongs to and the milestone within it, each empty when it has none. On
+// `issue create` both are empty by definition.
+//
+// It travels as one value rather than two strings because the two are not
+// independent — a milestone belongs to exactly one project — and every use here
+// is about keeping them consistent with each other.
+type linearIssuePlacement struct {
+	ProjectID   string
+	MilestoneID string
+}
+
 // applyIssueNameFields resolves every name-shaped field the caller supplied and
 // writes the resulting ids into a mutation input.
 //
-// currentProjectID is the project the issue is ALREADY in, empty on create and
-// on an issue with no project. It matters for one case only: a milestone named
-// without a project in the same call has to be resolved somewhere, and the
-// issue's own project is the only defensible answer.
+// `current` is where the issue sits now, and it does two jobs. A milestone
+// named without a project in the same call has to be resolved somewhere, and
+// the issue's own project is the only defensible answer; and a call that moves
+// the issue to a DIFFERENT project has to deal with the milestone it is leaving
+// behind, whether or not the caller thought about it.
 //
 // The order is not arbitrary. Project resolves first because the milestone
 // lookup depends on its answer, and a caller that moves an issue to a new
@@ -103,13 +132,14 @@ func (f linearIssueNameFields) any() bool {
 func (s *linearProxySession) applyIssueNameFields(
 	ctx context.Context,
 	rt *linearRoute,
-	teamKey, currentProjectID string,
+	teamKey string,
+	current linearIssuePlacement,
 	f linearIssueNameFields,
 	input map[string]any,
 ) *proxyFault {
 	// projectID tracks the project the issue will be in once this mutation
 	// lands, which is what a milestone has to belong to.
-	projectID := currentProjectID
+	projectID := current.ProjectID
 	if f.Project != nil {
 		name := strings.TrimSpace(*f.Project)
 		if name == "" {
@@ -150,6 +180,25 @@ func (s *linearProxySession) applyIssueNameFields(
 			}
 			input["projectMilestoneId"] = id
 		}
+	} else if projectID != current.ProjectID && current.MilestoneID != "" {
+		// The project moved and the caller said nothing about the milestone.
+		//
+		// A milestone belongs to exactly one project, so the one this issue
+		// carries cannot come along — leaving projectMilestoneId alone would
+		// either have Linear refuse the whole update (a 502 the agent is told
+		// not to retry, naming nothing it could act on) or, worse, leave the
+		// ticket pointing at a milestone of a project it is no longer in.
+		//
+		// Clearing rather than refusing, because a caller that renamed the
+		// project field is not making a mistake and has nothing to fix: the
+		// milestone was a property of where the issue used to be. A caller who
+		// wants one in the new project names it, and the branch above resolves
+		// it there.
+		//
+		// Only when the project genuinely CHANGES. `--project` naming the
+		// project the issue is already in resolves to the same id and leaves
+		// the milestone untouched, which is what asking for no change means.
+		input["projectMilestoneId"] = nil
 	}
 
 	if f.Assignee != nil {
@@ -460,9 +509,13 @@ func (s *linearProxySession) resolveLabelIDs(
 		ids = append(ids, id)
 	}
 	if len(missing) > 0 {
+		// "reachable from" rather than "on team X": the lookup covers the
+		// workspace-wide labels too, which belong to no team, and a message that
+		// said otherwise would send someone looking in the wrong settings page.
 		return nil, faultf(http.StatusBadRequest, "unknown_label",
-			"team %s has no label named %s; labels are matched exactly (case-insensitively) and are "+
-				"not created on demand", teamKey, strings.Join(quoteAll(missing), ", "))
+			"no label named %s is reachable from team %s; labels are matched exactly "+
+				"(case-insensitively) and are not created on demand",
+			strings.Join(quoteAll(missing), ", "), teamKey)
 	}
 	return ids, nil
 }
@@ -500,16 +553,25 @@ func pickLabel(matches []linearLabelNode, teamKey, name string) (string, *proxyF
 
 // labelGroupLabels describes colliding labels by the group they sit in, which
 // is the only thing that tells them apart in Linear's own UI.
+//
+// Descriptions are deduplicated. Two labels that this can only call
+// "workspace-wide" are told apart by nothing it can print, and saying so twice
+// reads as a rendering bug rather than as the genuine dead end it is — the
+// count in the message already carries how many there were.
 func labelGroupLabels(matches []linearLabelNode) []string {
 	out := make([]string, 0, len(matches))
 	for _, m := range matches {
+		var desc string
 		switch {
 		case m.Parent != nil && strings.TrimSpace(m.Parent.Name) != "":
-			out = append(out, "in group "+strconv.Quote(m.Parent.Name))
+			desc = "in group " + strconv.Quote(m.Parent.Name)
 		case m.Team != nil && strings.TrimSpace(m.Team.Key) != "":
-			out = append(out, "on team "+m.Team.Key)
+			desc = "on team " + m.Team.Key
 		default:
-			out = append(out, "workspace-wide")
+			desc = "workspace-wide"
+		}
+		if !slices.Contains(out, desc) {
+			out = append(out, desc)
 		}
 	}
 	sort.Strings(out)

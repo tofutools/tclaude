@@ -105,7 +105,7 @@ query IssueView($id: String!) {
     parent { identifier title }
     project { id name }
     projectMilestone { id name }
-    labels(first: 20) { nodes { name } }
+    labels(first: 50) { nodes { name } }
   }
 }`
 

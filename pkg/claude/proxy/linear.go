@@ -351,7 +351,7 @@ type linearCreateParams struct {
 	Project   string   `long:"project" optional:"true" help:"Project to file the issue under, by name, matched case-insensitively among the projects the team can reach."`
 	Milestone string   `long:"milestone" optional:"true" help:"Project milestone, by name. Milestones belong to a project, so --project is required alongside it."`
 	Assignee  string   `long:"assignee" optional:"true" help:"Assignee, by Linear display name, full name or email address. Ambiguity is refused rather than guessed at — use the email."`
-	Labels    []string `long:"label" optional:"true" help:"Label to apply, by name. Repeat for several, or separate them with commas. Labels are matched exactly and are never created on demand."`
+	Labels    []string `long:"label" optional:"true" help:"Label to apply, by name. Repeat for several; a value is also split on commas, so a name containing a comma or a double quote cannot be passed. Labels are matched exactly and are never created on demand."`
 }
 
 func linearIssueCreateCmd() *cobra.Command {
@@ -454,10 +454,10 @@ type linearUpdateParams struct {
 	AskHuman        string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout. Capped at 300s. Timeout = deny."`
 	// Declared last for the same reason linearCreateParams' are: shorthands are
 	// handed out in field order, and --ask-human already had -a.
-	Project   string   `long:"project" optional:"true" help:"Move the issue to this project, by name. Pass an empty string to take it out of its project."`
+	Project   string   `long:"project" optional:"true" help:"Move the issue to this project, by name. A milestone the issue carries is dropped, since a milestone belongs to one project. Pass an empty string to take it out of its project."`
 	Milestone string   `long:"milestone" optional:"true" help:"Project milestone, by name, resolved within the issue's project (or the one --project sets in the same call). Pass an empty string to clear it."`
 	Assignee  string   `long:"assignee" optional:"true" help:"New assignee, by Linear display name, full name or email address. Pass an empty string to unassign."`
-	Labels    []string `long:"label" optional:"true" help:"The COMPLETE label set, by name; repeat for several or separate them with commas. This REPLACES the issue's labels rather than adding to them. Pass --label '' to remove them all."`
+	Labels    []string `long:"label" optional:"true" help:"The COMPLETE label set, by name; repeat for several. This REPLACES the issue's labels rather than adding to them; read the issue first if you meant to add one. A value is also split on commas, so a name containing a comma or a double quote cannot be passed. Pass --label '' to remove them all."`
 }
 
 func linearIssueUpdateCmd() *cobra.Command {

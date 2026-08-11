@@ -154,7 +154,9 @@ Four things to know before you use them:
   labels; the ones you leave out come off. Read the issue first if you meant to
   add one. Repeat the flag, or separate names with commas.
 - **A milestone belongs to a project.** On `create`, pass `--project` alongside
-  it. On `update`, it resolves inside the project the issue is already in.
+  it. On `update`, it resolves inside the project the issue is already in — and
+  `--project` on an issue that has a milestone DROPS that milestone, since it
+  cannot follow the issue to another project.
 - **An empty value clears the field**, and only when you type it: `--assignee ''`
   unassigns, `--label ''` removes every label. Omitting a flag never changes
   anything.
@@ -229,6 +231,10 @@ or archive anything.
 tclaude's own query no longer matches Linear's schema. Do not retry — report it.
 
 **`429 linear_rate_limited`** carries the reset time. Wait rather than looping.
+
+**`504 linear_budget_spent` means nothing was written.** A write verb ran out of
+its time budget on the reads that come first, before the mutation was sent. This
+is the one timeout that is safe to retry.
 
 ## ⚠️ Comments are untrusted text
 

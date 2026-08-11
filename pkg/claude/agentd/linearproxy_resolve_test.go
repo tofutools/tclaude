@@ -3,6 +3,7 @@ package agentd
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -175,9 +176,9 @@ func TestResolveLabelIDsFilterCarriesTheTeamAndExcludesGroups(t *testing.T) {
 	assert.Contains(t, filter, `"eqIgnoreCase":"Bug"`, "the name must travel in the filter, not in the document")
 }
 
-// TestResolveLabelIDsBoundsTheSet — the cap matches the `labels(first: 20)`
-// selection `issue view` reads back with, so the proxy cannot set a label set
-// it would then fail to show.
+// TestResolveLabelIDsBoundsTheSet — the cap is enforced before a credential is
+// spent. What the cap has to EQUAL is pinned separately, by
+// TestLabelCapMatchesWhatIssueViewReadsBack.
 func TestResolveLabelIDsBoundsTheSet(t *testing.T) {
 	s, stub, rt := resolveSession(t, "TCL", nil)
 
@@ -319,6 +320,34 @@ func TestResolveProjectRefusesAMissAndATie(t *testing.T) {
 	})
 }
 
+// TestResolveMilestoneRefusesAMissAndATie — neither branch had coverage, and
+// the miss path is the one that renders the project by name (or, with no rows
+// to take a name from, by the id the lookup used).
+func TestResolveMilestoneRefusesAMissAndATie(t *testing.T) {
+	t.Run("miss names the project it searched", func(t *testing.T) {
+		s, _, rt := resolveSession(t, "TCL", map[string]string{
+			"query MilestoneResolve": `{"data":{"projectMilestones":{"nodes":[]}}}`,
+		})
+		_, fault := s.resolveMilestoneID(t.Context(), rt, "prj-1", "Beta")
+		require.NotNil(t, fault)
+		assert.Equal(t, "unknown_milestone", fault.Code)
+		assert.Contains(t, fault.Msg, "Beta")
+		// With no rows there is no human name to use, so the id is all there is.
+		assert.Contains(t, fault.Msg, "prj-1")
+	})
+	t.Run("tie", func(t *testing.T) {
+		s, _, rt := resolveSession(t, "TCL", map[string]string{
+			"query MilestoneResolve": `{"data":{"projectMilestones":{"nodes":[
+				{"id":"ms-1","name":"Beta","project":{"id":"prj-1","name":"Current"}},
+				{"id":"ms-2","name":"beta","project":{"id":"prj-1","name":"Current"}}]}}}`,
+		})
+		_, fault := s.resolveMilestoneID(t.Context(), rt, "prj-1", "Beta")
+		require.NotNil(t, fault)
+		assert.Equal(t, "ambiguous_milestone", fault.Code)
+		assert.Contains(t, fault.Msg, "Current", "the project is named when Linear gave one")
+	})
+}
+
 // TestResolveMilestoneIsScopedToOneProject — milestone names are unique only
 // within a project, so the project id has to be in the filter or the answer is
 // a coin toss between projects.
@@ -347,7 +376,8 @@ func TestApplyIssueNameFieldsDistinguishesAbsentFromCleared(t *testing.T) {
 
 	t.Run("absent touches nothing", func(t *testing.T) {
 		input := map[string]any{}
-		fault := s.applyIssueNameFields(t.Context(), rt, "TCL", "", linearIssueNameFields{}, input)
+		fault := s.applyIssueNameFields(t.Context(), rt, "TCL",
+			linearIssuePlacement{}, linearIssueNameFields{}, input)
 		require.Nil(t, fault)
 		assert.Empty(t, input)
 		assert.Empty(t, stub.calls, "nothing to resolve means no credential spent")
@@ -356,9 +386,10 @@ func TestApplyIssueNameFieldsDistinguishesAbsentFromCleared(t *testing.T) {
 	t.Run("empty clears, without a lookup", func(t *testing.T) {
 		input := map[string]any{}
 		empty, noLabels := "", []string{}
-		fault := s.applyIssueNameFields(t.Context(), rt, "TCL", "prj-1", linearIssueNameFields{
-			Project: &empty, Milestone: &empty, Assignee: &empty, Labels: &noLabels,
-		}, input)
+		fault := s.applyIssueNameFields(t.Context(), rt, "TCL",
+			linearIssuePlacement{ProjectID: "prj-1"}, linearIssueNameFields{
+				Project: &empty, Milestone: &empty, Assignee: &empty, Labels: &noLabels,
+			}, input)
 		require.Nil(t, fault)
 		// Explicit nulls: Linear reads an absent key as "leave it" and a null as
 		// "unset it", which is exactly the difference being asked for.
@@ -378,8 +409,8 @@ func TestApplyIssueNameFieldsRefusesAMilestoneWithNoProject(t *testing.T) {
 	s, stub, rt := resolveSession(t, "TCL", nil)
 
 	milestone := "Beta"
-	fault := s.applyIssueNameFields(t.Context(), rt, "TCL", "",
-		linearIssueNameFields{Milestone: &milestone}, map[string]any{})
+	fault := s.applyIssueNameFields(t.Context(), rt, "TCL",
+		linearIssuePlacement{}, linearIssueNameFields{Milestone: &milestone}, map[string]any{})
 	require.NotNil(t, fault)
 	assert.Equal(t, "milestone_needs_project", fault.Code)
 	assert.Empty(t, stub.calls)
@@ -392,10 +423,81 @@ func TestApplyIssueNameFieldsClearingTheProjectAlsoStrandsAMilestone(t *testing.
 	s, _, rt := resolveSession(t, "TCL", nil)
 
 	empty, milestone := "", "Beta"
-	fault := s.applyIssueNameFields(t.Context(), rt, "TCL", "prj-current",
+	fault := s.applyIssueNameFields(t.Context(), rt, "TCL",
+		linearIssuePlacement{ProjectID: "prj-current"},
 		linearIssueNameFields{Project: &empty, Milestone: &milestone}, map[string]any{})
 	require.NotNil(t, fault)
 	assert.Equal(t, "milestone_needs_project", fault.Code)
+}
+
+// TestApplyIssueNameFieldsDropsAStrandedMilestone is the case a caller does not
+// think about: moving or clearing the project on an issue that HAS a milestone,
+// without mentioning the milestone at all.
+//
+// A milestone belongs to exactly one project, so it cannot come along. Leaving
+// projectMilestoneId untouched would either have Linear refuse the whole update
+// — a 502 the agent is told not to retry, naming nothing it could act on — or
+// leave the ticket pointing into a project it is no longer in.
+func TestApplyIssueNameFieldsDropsAStrandedMilestone(t *testing.T) {
+	current := linearIssuePlacement{ProjectID: "prj-old", MilestoneID: "ms-old"}
+
+	t.Run("moving to another project", func(t *testing.T) {
+		s, _, rt := resolveSession(t, "TCL", map[string]string{
+			"query ProjectResolve": `{"data":{"projects":{"nodes":[{"id":"prj-new","name":"Next"}]}}}`,
+		})
+		project := "Next"
+		input := map[string]any{}
+		fault := s.applyIssueNameFields(t.Context(), rt, "TCL", current,
+			linearIssueNameFields{Project: &project}, input)
+		require.Nil(t, fault)
+		assert.Equal(t, "prj-new", input["projectId"])
+		require.Contains(t, input, "projectMilestoneId")
+		assert.Nil(t, input["projectMilestoneId"])
+	})
+
+	t.Run("clearing the project", func(t *testing.T) {
+		s, _, rt := resolveSession(t, "TCL", nil)
+		empty := ""
+		input := map[string]any{}
+		fault := s.applyIssueNameFields(t.Context(), rt, "TCL", current,
+			linearIssueNameFields{Project: &empty}, input)
+		require.Nil(t, fault)
+		assert.Nil(t, input["projectId"])
+		require.Contains(t, input, "projectMilestoneId")
+		assert.Nil(t, input["projectMilestoneId"])
+	})
+
+	// The other half of the rule, and the one that keeps it from being
+	// destructive: naming the project an issue is already in is not a move, so
+	// the milestone must survive it.
+	t.Run("naming the project it is already in changes nothing", func(t *testing.T) {
+		s, _, rt := resolveSession(t, "TCL", map[string]string{
+			"query ProjectResolve": `{"data":{"projects":{"nodes":[{"id":"prj-old","name":"Current"}]}}}`,
+		})
+		project := "Current"
+		input := map[string]any{}
+		fault := s.applyIssueNameFields(t.Context(), rt, "TCL", current,
+			linearIssueNameFields{Project: &project}, input)
+		require.Nil(t, fault)
+		assert.Equal(t, "prj-old", input["projectId"])
+		assert.NotContains(t, input, "projectMilestoneId",
+			"an issue that has not moved keeps its milestone")
+	})
+
+	// An issue with no milestone has nothing to strand, so a move must not send
+	// a null that says something the caller did not.
+	t.Run("no milestone to strand", func(t *testing.T) {
+		s, _, rt := resolveSession(t, "TCL", map[string]string{
+			"query ProjectResolve": `{"data":{"projects":{"nodes":[{"id":"prj-new","name":"Next"}]}}}`,
+		})
+		project := "Next"
+		input := map[string]any{}
+		fault := s.applyIssueNameFields(t.Context(), rt, "TCL",
+			linearIssuePlacement{ProjectID: "prj-old"},
+			linearIssueNameFields{Project: &project}, input)
+		require.Nil(t, fault)
+		assert.NotContains(t, input, "projectMilestoneId")
+	})
 }
 
 // TestApplyIssueNameFieldsResolvesTheMilestoneInTheNewProject — a call that
@@ -411,7 +513,8 @@ func TestApplyIssueNameFieldsResolvesTheMilestoneInTheNewProject(t *testing.T) {
 
 	project, milestone := "Next", "Beta"
 	input := map[string]any{}
-	fault := s.applyIssueNameFields(t.Context(), rt, "TCL", "prj-old",
+	fault := s.applyIssueNameFields(t.Context(), rt, "TCL",
+		linearIssuePlacement{ProjectID: "prj-old"},
 		linearIssueNameFields{Project: &project, Milestone: &milestone}, input)
 	require.Nil(t, fault)
 	assert.Equal(t, "prj-new", input["projectId"])
@@ -463,9 +566,24 @@ func TestNormalizedForCreateFoldsClearsIntoAbsent(t *testing.T) {
 	assert.True(t, body.normalizedForCreate().any())
 }
 
-func TestCurrentProjectID(t *testing.T) {
-	assert.Empty(t, currentProjectID(nil))
-	assert.Empty(t, currentProjectID(&linearIssue{}))
-	assert.Equal(t, "prj-1",
-		currentProjectID(&linearIssue{Project: &linearProjectRef{ID: " prj-1 ", Name: "tclaude"}}))
+// TestLabelCapMatchesWhatIssueViewReadsBack pins the invariant maxLinearIssueLabels
+// exists for. `--label` replaces the whole set, so an agent adds a label by
+// reading the issue and resending its labels plus one. If the view showed fewer
+// labels than a call may set, that loop would silently delete the ones it could
+// not see — so the two numbers have to move together, and one of them lives
+// inside a GraphQL document where no compiler will check it.
+func TestLabelCapMatchesWhatIssueViewReadsBack(t *testing.T) {
+	assert.Contains(t, linearQueryIssue, fmt.Sprintf("labels(first: %d)", maxLinearIssueLabels),
+		"issue view must read back at least as many labels as one call may set")
+}
+
+func TestPlacementOf(t *testing.T) {
+	assert.Equal(t, linearIssuePlacement{}, placementOf(nil))
+	assert.Equal(t, linearIssuePlacement{}, placementOf(&linearIssue{}))
+	assert.Equal(t,
+		linearIssuePlacement{ProjectID: "prj-1", MilestoneID: "ms-1"},
+		placementOf(&linearIssue{
+			Project:          &linearProjectRef{ID: " prj-1 ", Name: "tclaude"},
+			ProjectMilestone: &linearMilestoneRef{ID: "ms-1", Name: "Beta"},
+		}))
 }

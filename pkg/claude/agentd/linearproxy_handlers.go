@@ -899,9 +899,15 @@ func handleLinearProxyIssueCreate(w http.ResponseWriter, r *http.Request) {
 	// resolveTeamMeta re-checks it against the allow-list, so this is the key
 	// the gate actually approved, and it is the one the project and label
 	// lookups have to be scoped to.
+	// An empty placement: a new issue sits nowhere yet, so there is no project
+	// to resolve a milestone within and no milestone to strand.
 	if fault := s.applyIssueNameFields(
-		r.Context(), rt, meta.Key, "", body.normalizedForCreate(), input,
+		r.Context(), rt, meta.Key, linearIssuePlacement{}, body.normalizedForCreate(), input,
 	); fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	if fault := s.requireMutationBudget(); fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
@@ -1026,10 +1032,12 @@ func handleLinearProxyIssueUpdate(w http.ResponseWriter, r *http.Request) {
 	// same reason: the issue's real team is the one Linear just reported, and it
 	// lives in the workspace this key read it from.
 	//
-	// currentProjectID comes off the confirming read so that `--milestone`
-	// without `--project` resolves within the project the issue is already in.
+	// The issue's current placement comes off the confirming read, so
+	// `--milestone` without `--project` resolves within the project the issue is
+	// already in, and a call that moves it elsewhere can deal with the milestone
+	// it leaves behind.
 	if fault := s.applyIssueNameFields(r.Context(), rt, issue.Issue.Team.Key,
-		currentProjectID(issue.Issue), body.linearIssueNameFields, input); fault != nil {
+		placementOf(issue.Issue), body.linearIssueNameFields, input); fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
@@ -1041,6 +1049,10 @@ func handleLinearProxyIssueUpdate(w http.ResponseWriter, r *http.Request) {
 	if target == "" {
 		writeProxyFault(w, faultf(http.StatusBadGateway, "linear_failed",
 			"the Linear response carried no issue id; refusing to guess one for a write"))
+		return
+	}
+	if fault := s.requireMutationBudget(); fault != nil {
+		writeProxyFault(w, fault)
 		return
 	}
 	var data linearIssueUpdateData
@@ -1136,14 +1148,24 @@ func optionalTeam(s *linearProxySession, raw string) (string, *proxyFault) {
 	return s.validateLinearTeam(raw)
 }
 
-// currentProjectID is the project an issue is already in, or "" when it has
-// none. Only `issue update --milestone` reads it, to resolve a milestone name
-// within the project the caller did not have to restate.
-func currentProjectID(issue *linearIssue) string {
-	if issue == nil || issue.Project == nil {
-		return ""
+// placementOf is where an issue sits before an update: its project and the
+// milestone within it, each empty when it has none.
+//
+// Only `issue update` reads it, and only linearQueryIssue selects the two ids
+// it is built from — which is why that read is the one every write verb already
+// performs.
+func placementOf(issue *linearIssue) linearIssuePlacement {
+	if issue == nil {
+		return linearIssuePlacement{}
 	}
-	return strings.TrimSpace(issue.Project.ID)
+	var placement linearIssuePlacement
+	if issue.Project != nil {
+		placement.ProjectID = strings.TrimSpace(issue.Project.ID)
+	}
+	if issue.ProjectMilestone != nil {
+		placement.MilestoneID = strings.TrimSpace(issue.ProjectMilestone.ID)
+	}
+	return placement
 }
 
 // teamOrAll renders a team for the audit detail.

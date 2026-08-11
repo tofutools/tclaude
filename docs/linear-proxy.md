@@ -351,17 +351,17 @@ to the wrong column would be worse than an error.
 
 `--project`, `--milestone`, `--assignee` and `--label` take the names a ticket
 is discussed in. The daemon resolves each to the UUID Linear's mutation inputs
-require, because an agent has no way to obtain one: the proxy refuses UUIDs as
-issue references, and nothing else it returns carries one to reuse.
+require, so that no input on this surface ever asks an agent for one.
 
 Resolution follows the same rules `--state` does — exact, case-insensitive,
-never fuzzy — and each lookup is scoped to the team the gate already approved:
+never fuzzy. Project, milestone and label lookups are bounded by the team the
+gate already approved; the two exceptions are called out below:
 
 | Flag | Resolved against | Refusals |
 |---|---|---|
 | `--project` | the projects accessible to the issue's team | `unknown_project`, `ambiguous_project` |
 | `--milestone` | the milestones of that project | `unknown_milestone`, `ambiguous_milestone`, `milestone_needs_project` |
-| `--assignee` | Linear users, by display name, full name or email | `unknown_assignee`, `ambiguous_assignee` |
+| `--assignee` | **every** Linear user the key can see, by display name, full name or email | `unknown_assignee`, `ambiguous_assignee` |
 | `--label` | the team's labels **and** the workspace-wide ones | `unknown_label`, `ambiguous_label` |
 
 Worth knowing:
@@ -384,12 +384,21 @@ Worth knowing:
 - **Ambiguity is always a refusal, never a choice.** Two things sharing a name
   means the daemon cannot know which was meant, and a wrong guess would land
   silently under your Linear account.
+- **Changing an issue's project drops its milestone.** A milestone belongs to
+  exactly one project, so it cannot come along; `--project` on an issue that has
+  one clears it, unless the same call names a milestone of the new project.
+  Naming the project the issue is *already* in changes nothing.
 - **`--assignee` is the one lookup that is not team-scoped.** Linear's user
   filter has no team dimension, and assigning a ticket to a reviewer who mostly
   works elsewhere is ordinary. The issue being assigned still had to pass the
-  gate; what this widens is only what an agent can *learn* — whether a user with
-  an exactly-matching name or email exists. A miss says exactly that and never
-  lists your workspace.
+  gate — what widens is what an agent can *learn*. Read the next bullet before
+  granting `proxy.linear.write` narrowly and assuming it bounds that.
+- **An ambiguous `--assignee` returns the matching users' email addresses**, so
+  the agent can retry with one. That is a real disclosure: an agent scoped to a
+  single team can confirm whether a name exists in your workspace and, on a
+  common first name, read back the addresses it collides with. A *miss* says
+  only that nothing matched and never lists your workspace. Assigning also
+  notifies that person, under your Linear account.
 
 ### What `issue update` will not change
 
@@ -477,13 +486,25 @@ It is not wired into CI (it needs the network). Run it when you touch
 production — that code means tclaude's own query no longer matches Linear's
 schema, which is a tclaude bug and not something an agent should retry.
 
-It covers the **documents** and not the **variable values**: Linear validates a
-document before it authenticates but coerces variables only afterwards, so the
-filter maps in `linearproxy_handlers.go` / `linearproxy_resolve.go` and the
-mutation inputs are outside its reach. Drift there surfaces at execution time
-as `linear_failed` rather than as a wrong answer, but it will not be caught
-before it ships — check those against Linear's schema by hand (its API answers
-`__type` introspection with no credential).
+A sibling test, `TestLinearFilterShapesMatchLiveSchema`, covers the **filter
+maps** the same way. A value passed in `variables` is coerced only after
+authentication and so is never checked without a credential — but a variable's
+*default* value is part of the document, so each filter is inlined there and
+validated with it. The filters come from the real builders, and a control case
+asserts that a made-up field is still refused, so the test cannot quietly stop
+checking anything.
+
+What remains unchecked is the **mutation inputs**, which are assembled field by
+field across a handler rather than by one function a test can call. Drift there
+surfaces at execution time as `linear_failed` rather than as a wrong answer, but
+it will not be caught before it ships — check those against Linear's schema by
+hand. Its API answers `__type` introspection with no credential, which is the
+cheapest way to do that:
+
+```bash
+curl -s https://api.linear.app/graphql -H 'Content-Type: application/json' \
+  -d '{"query":"{ __type(name: \"IssueUpdateInput\") { inputFields { name } } }"}'
+```
 
 ## What this is not
 
@@ -521,6 +542,7 @@ the workspace.
 | `400 milestone_needs_project` | A milestone belongs to a project and the issue would have none. Pass `--project` in the same call, or set one first. |
 | `404 not_found` | No such issue or team, or the operator's key cannot see it. Usually a typo'd issue number — not something to escalate. |
 | `429 linear_rate_limited` | Linear's budget is spent (2,500 requests/hour per key). The message carries the reset time. |
+| `504 linear_budget_spent` | A write verb used its whole 60s budget on the reads and name lookups that come first, so the mutation was **not attempted**. Nothing was written; retrying is safe. Usually means Linear is degraded. |
 | `502 linear_schema_drift` | tclaude's query no longer matches Linear's schema. A tclaude bug — do not retry; run the schema-drift test above. |
 | `502 linear_unreachable` | The daemon could not reach `api.linear.app`. |
 | A write times out client-side | Every verb is bounded by one 60s budget across all the calls it makes, inside the CLI's 75s wait, so a slow Linear surfaces the daemon's answer rather than an ambiguous hang-up. If you see a client-side timeout anyway, the daemon is wedged — do not retry a write blindly. |

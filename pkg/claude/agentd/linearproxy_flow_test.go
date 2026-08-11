@@ -827,10 +827,20 @@ func linearFieldStubs(call linearCall) (int, string, bool) {
 // issueWithProjectJSON is issueJSON for an issue that already sits in a
 // project, which is what `--milestone` without `--project` resolves within.
 func issueWithProjectJSON(identifier, teamKey, projectID, projectName string) string {
+	return issuePlacedJSON(identifier, teamKey, projectID, projectName, "", "")
+}
+
+// issuePlacedJSON is the confirming read for an issue with a project and,
+// optionally, a milestone within it — the shape linearQueryIssue really
+// returns, and the one `issue update` reads its placement out of.
+func issuePlacedJSON(identifier, teamKey, projectID, projectName, milestoneID, milestoneName string) string {
+	placement := `"project":{"id":"` + projectID + `","name":"` + projectName + `"}`
+	if milestoneID != "" {
+		placement += `,"projectMilestone":{"id":"` + milestoneID + `","name":"` + milestoneName + `"}`
+	}
 	return `{"data":{"issue":{"id":"` + issueUUIDFor(identifier) + `","identifier":"` + identifier +
 		`","title":"A thing","url":"https://linear.app/acme/issue/` + identifier +
-		`","team":{"key":"` + teamKey + `","name":"Team"},` +
-		`"project":{"id":"` + projectID + `","name":"` + projectName + `"}}}}`
+		`","team":{"key":"` + teamKey + `","name":"Team"},` + placement + `}}}`
 }
 
 // linearWriteWorld is the setup every write test below repeats: an allow-listed
@@ -973,6 +983,11 @@ func TestLinearProxy_UnresolvableNamesNeverReachTheMutation(t *testing.T) {
 	}{
 		{name: "project", field: "project", value: "Nope", code: "unknown_project",
 			empty: `{"data":{"projects":{"nodes":[]}}}`},
+		// The issue fixture carries a project, so the milestone name gets as far
+		// as a lookup and misses there rather than being refused for having no
+		// project to search — that refusal has its own test.
+		{name: "milestone", field: "milestone", value: "Nope", code: "unknown_milestone",
+			empty: `{"data":{"projectMilestones":{"nodes":[]}}}`},
 		{name: "assignee", field: "assignee", value: "nobody", code: "unknown_assignee",
 			empty: `{"data":{"users":{"nodes":[]}}}`},
 		{name: "label", field: "labels", value: "nosuchlabel", code: "unknown_label",
@@ -1050,11 +1065,64 @@ func TestLinearProxy_UpdateStillRefusesAnEmptyChangeSet(t *testing.T) {
 	assert.False(t, rec.sawAnyCall(), "an empty change set must be refused before a credential is spent")
 }
 
+// TestLinearProxy_MovingAnIssueDropsAStrandedMilestone is the end-to-end shape
+// of the fix: an issue in a project, on a milestone, moved to another project
+// by a caller who said nothing about the milestone.
+//
+// A milestone belongs to one project, so it cannot follow. The mutation must
+// carry an explicit null for it — leaving it out would send Linear an issue
+// pointing at a milestone of a project it is no longer in.
+func TestLinearProxy_MovingAnIssueDropsAStrandedMilestone(t *testing.T) {
+	f, rec := linearWriteWorld(t)
+	rec.response = func(call linearCall) (int, string) {
+		switch {
+		case strings.Contains(call.Query, "query IssueView"):
+			return http.StatusOK, issuePlacedJSON("TCL-1", "TCL", "prj-current", "Current", "ms-beta", "Beta")
+		case strings.Contains(call.Query, "query ProjectResolve"):
+			return http.StatusOK, `{"data":{"projects":{"nodes":[{"id":"prj-next","name":"Next"}]}}}`
+		}
+		return http.StatusOK, `{"data":{"issueUpdate":{"success":true,
+			"issue":{"identifier":"TCL-1","team":{"key":"TCL"}}}}}`
+	}
+
+	res := linearPost(t, f, "/v1/linear/issue/update",
+		map[string]any{"identifier": "TCL-1", "project": "Next"})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+
+	input := lastMutationInput(t, rec)
+	assert.Equal(t, "prj-next", input["projectId"])
+	require.Contains(t, input, "projectMilestoneId",
+		"the stranded milestone must be cleared in the same mutation")
+	assert.Nil(t, input["projectMilestoneId"])
+}
+
+// TestLinearProxy_ViewReadsBackTheMilestone — SKILL.md tells agents `issue view`
+// shows the milestone, which is how they check what `--milestone` set. The
+// selection carrying it is one line in a GraphQL document, and a response type
+// that failed to decode it would leave the field silently absent.
+func TestLinearProxy_ViewReadsBackTheMilestone(t *testing.T) {
+	f, rec := linearWorld(t, []string{"TCL"})
+	require.NoError(t, db.GrantAgentPermission(linearProxyTestConv, agentd.PermLinearRead, "test"))
+	rec.response = func(linearCall) (int, string) {
+		return http.StatusOK, issuePlacedJSON("TCL-1", "TCL", "prj-1", "Current", "ms-beta", "Beta")
+	}
+
+	res := linearPost(t, f, "/v1/linear/issue/view", map[string]any{"identifier": "TCL-1"})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), "projectMilestone")
+	assert.Contains(t, res.Body.String(), "Beta")
+}
+
 // TestLinearProxy_NameLookupsStayInsideTheTeamGate — these lookups are new
 // places a caller's string reaches Linear, and each of them has to carry the
 // team the gate approved rather than searching the workspace. A project or
 // label resolved outside the gate would attach the ticket to something the
 // agent was never allowed to see.
+//
+// `--assignee` is deliberately absent from the request below, because its
+// lookup is the one that is NOT team-scoped — Linear's UserFilter has no team
+// dimension. Asserting over it here would either fail or quietly weaken what
+// this test claims about the other two.
 func TestLinearProxy_NameLookupsStayInsideTheTeamGate(t *testing.T) {
 	f, rec := linearWriteWorld(t)
 	rec.response = func(call linearCall) (int, string) {
@@ -1070,15 +1138,38 @@ func TestLinearProxy_NameLookupsStayInsideTheTeamGate(t *testing.T) {
 	})
 	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
 
+	var checked int
 	for _, call := range rec.snapshot() {
-		if !strings.Contains(call.Query, "ProjectResolve") && !strings.Contains(call.Query, "LabelResolve") {
+		var want string
+		switch {
+		case strings.Contains(call.Query, "ProjectResolve"):
+			// The team is ANDed with the name, not ORed beside it: an `or` here
+			// would match every project named "Next" in the workspace.
+			want = `{"accessibleTeams":{"some":{"key":{"eqIgnoreCase":"TCL"}}}}`
+		case strings.Contains(call.Query, "LabelResolve"):
+			// Team-or-workspace-wide, and that whole alternative ANDed with the
+			// names — the one place a non-team clause is deliberately allowed.
+			want = `{"or":[{"team":{"key":{"eqIgnoreCase":"TCL"}}},{"team":{"null":true}}]}`
+		default:
 			continue
 		}
-		encoded, err := json.Marshal(call.Variables["filter"])
-		require.NoError(t, err)
-		assert.Contains(t, string(encoded), "TCL",
-			"a name lookup must be scoped to the team the gate approved")
+		filter, ok := call.Variables["filter"].(map[string]any)
+		require.True(t, ok)
+		clauses, ok := filter["and"].([]any)
+		require.True(t, ok, "a scoped lookup must AND its team clause, not merely mention the team")
+
+		var found bool
+		for _, clause := range clauses {
+			encoded, err := json.Marshal(clause)
+			require.NoError(t, err)
+			if string(encoded) == want {
+				found = true
+			}
+		}
+		assert.True(t, found, "expected an ANDed %s in %v", want, filter)
+		checked++
 	}
+	assert.Equal(t, 2, checked, "both scoped lookups must have run and been checked")
 }
 
 // TestLinearProxy_LargeBodyIsAccepted — the skill tells agents to use
