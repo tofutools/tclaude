@@ -328,11 +328,26 @@ func TestResolveMilestoneRefusesAMissAndATie(t *testing.T) {
 		s, _, rt := resolveSession(t, "TCL", map[string]string{
 			"query MilestoneResolve": `{"data":{"projectMilestones":{"nodes":[]}}}`,
 		})
-		_, fault := s.resolveMilestoneID(t.Context(), rt, "prj-1", "Beta")
+		_, fault := s.resolveMilestoneID(t.Context(), rt, "prj-1", "Current", "Beta")
 		require.NotNil(t, fault)
 		assert.Equal(t, "unknown_milestone", fault.Code)
 		assert.Contains(t, fault.Msg, "Beta")
-		// With no rows there is no human name to use, so the id is all there is.
+		// A miss returns no rows, so there is no project name in Linear's answer
+		// to use — the one the CALLER supplied has to carry the message instead.
+		// Live testing caught this: before the name was threaded through, a
+		// typo'd milestone was refused with the project's raw UUID, which is the
+		// one string the caller cannot match against anything they typed.
+		assert.Contains(t, fault.Msg, "Current")
+		assert.NotContains(t, fault.Msg, "prj-1", "a UUID is not something the caller can act on")
+	})
+
+	t.Run("miss with no name anywhere falls back to the id", func(t *testing.T) {
+		s, _, rt := resolveSession(t, "TCL", map[string]string{
+			"query MilestoneResolve": `{"data":{"projectMilestones":{"nodes":[]}}}`,
+		})
+		_, fault := s.resolveMilestoneID(t.Context(), rt, "prj-1", "", "Beta")
+		require.NotNil(t, fault)
+		// Not good, but better than naming nothing at all.
 		assert.Contains(t, fault.Msg, "prj-1")
 	})
 	t.Run("tie", func(t *testing.T) {
@@ -341,7 +356,7 @@ func TestResolveMilestoneRefusesAMissAndATie(t *testing.T) {
 				{"id":"ms-1","name":"Beta","project":{"id":"prj-1","name":"Current"}},
 				{"id":"ms-2","name":"beta","project":{"id":"prj-1","name":"Current"}}]}}}`,
 		})
-		_, fault := s.resolveMilestoneID(t.Context(), rt, "prj-1", "Beta")
+		_, fault := s.resolveMilestoneID(t.Context(), rt, "prj-1", "Current", "Beta")
 		require.NotNil(t, fault)
 		assert.Equal(t, "ambiguous_milestone", fault.Code)
 		assert.Contains(t, fault.Msg, "Current", "the project is named when Linear gave one")
@@ -357,7 +372,7 @@ func TestResolveMilestoneIsScopedToOneProject(t *testing.T) {
 			{"id":"ms-1","name":"Beta","project":{"id":"prj-1","name":"tclaude"}}]}}}`,
 	})
 
-	id, fault := s.resolveMilestoneID(t.Context(), rt, "prj-1", "beta")
+	id, fault := s.resolveMilestoneID(t.Context(), rt, "prj-1", "Current", "beta")
 	require.Nil(t, fault)
 	assert.Equal(t, "ms-1", id)
 
@@ -439,7 +454,7 @@ func TestApplyIssueNameFieldsClearingTheProjectAlsoStrandsAMilestone(t *testing.
 // — a 502 the agent is told not to retry, naming nothing it could act on — or
 // leave the ticket pointing into a project it is no longer in.
 func TestApplyIssueNameFieldsDropsAStrandedMilestone(t *testing.T) {
-	current := linearIssuePlacement{ProjectID: "prj-old", MilestoneID: "ms-old"}
+	current := linearIssuePlacement{ProjectID: "prj-old", ProjectName: "Current", MilestoneID: "ms-old"}
 
 	t.Run("moving to another project", func(t *testing.T) {
 		s, _, rt := resolveSession(t, "TCL", map[string]string{
@@ -581,7 +596,7 @@ func TestPlacementOf(t *testing.T) {
 	assert.Equal(t, linearIssuePlacement{}, placementOf(nil))
 	assert.Equal(t, linearIssuePlacement{}, placementOf(&linearIssue{}))
 	assert.Equal(t,
-		linearIssuePlacement{ProjectID: "prj-1", MilestoneID: "ms-1"},
+		linearIssuePlacement{ProjectID: "prj-1", ProjectName: "tclaude", MilestoneID: "ms-1"},
 		placementOf(&linearIssue{
 			Project:          &linearProjectRef{ID: " prj-1 ", Name: "tclaude"},
 			ProjectMilestone: &linearMilestoneRef{ID: "ms-1", Name: "Beta"},

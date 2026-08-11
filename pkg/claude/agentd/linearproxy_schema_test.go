@@ -203,7 +203,7 @@ func liveProbeFilter(t *testing.T, name string) map[string]any {
 	case "project":
 		_, _ = s.resolveProjectID(t.Context(), rt, "TCL", "Some project")
 	case "milestone":
-		_, _ = s.resolveMilestoneID(t.Context(), rt, "8a7d5f6e-1234-4a2b-9c8d-1122334455ff", "Beta")
+		_, _ = s.resolveMilestoneID(t.Context(), rt, "8a7d5f6e-1234-4a2b-9c8d-1122334455ff", "Some project", "Beta")
 	case "label":
 		_, _ = s.resolveLabelIDs(t.Context(), rt, "TCL", []string{"bug", "needs review"})
 	case "user":

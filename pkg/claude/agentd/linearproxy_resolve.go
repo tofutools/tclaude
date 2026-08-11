@@ -111,7 +111,11 @@ func (f linearIssueNameFields) any() bool {
 // independent — a milestone belongs to exactly one project — and every use here
 // is about keeping them consistent with each other.
 type linearIssuePlacement struct {
-	ProjectID   string
+	ProjectID string
+	// ProjectName is what a human calls that project. It is carried for one
+	// purpose: a milestone refusal has to name the project it searched, and a
+	// UUID is not something the caller can match against anything they typed.
+	ProjectName string
 	MilestoneID string
 }
 
@@ -138,13 +142,15 @@ func (s *linearProxySession) applyIssueNameFields(
 	input map[string]any,
 ) *proxyFault {
 	// projectID tracks the project the issue will be in once this mutation
-	// lands, which is what a milestone has to belong to.
-	projectID := current.ProjectID
+	// lands, which is what a milestone has to belong to. projectName is the same
+	// project as a human would name it, kept only so a milestone refusal can say
+	// where it looked.
+	projectID, projectName := current.ProjectID, current.ProjectName
 	if f.Project != nil {
 		name := strings.TrimSpace(*f.Project)
 		if name == "" {
 			input["projectId"] = nil
-			projectID = ""
+			projectID, projectName = "", ""
 		} else {
 			if fault := validateLinearName(name, "project"); fault != nil {
 				return fault
@@ -154,7 +160,7 @@ func (s *linearProxySession) applyIssueNameFields(
 				return fault
 			}
 			input["projectId"] = id
-			projectID = id
+			projectID, projectName = id, name
 		}
 	}
 
@@ -174,7 +180,7 @@ func (s *linearProxySession) applyIssueNameFields(
 					"a milestone belongs to a project, and this issue would have none — "+
 						"name the project in the same call, or set one on the issue first")
 			}
-			id, fault := s.resolveMilestoneID(ctx, rt, projectID, name)
+			id, fault := s.resolveMilestoneID(ctx, rt, projectID, projectName, name)
 			if fault != nil {
 				return fault
 			}
@@ -287,9 +293,11 @@ func (s *linearProxySession) resolveProjectID(
 //
 // projectID is required by construction — see applyIssueNameFields, which
 // refuses before calling this rather than letting a name be matched against
-// every project in the workspace.
+// every project in the workspace. projectName is that project as a human names
+// it, and may be empty; it exists only so a refusal can say where it looked in
+// terms the caller can recognise.
 func (s *linearProxySession) resolveMilestoneID(
-	ctx context.Context, rt *linearRoute, projectID, name string,
+	ctx context.Context, rt *linearRoute, projectID, projectName, name string,
 ) (string, *proxyFault) {
 	filter := map[string]any{"and": []any{
 		map[string]any{"name": map[string]any{"eqIgnoreCase": name}},
@@ -305,29 +313,37 @@ func (s *linearProxySession) resolveMilestoneID(
 	if fault := requireCompletePage(len(nodes), "milestone", name); fault != nil {
 		return "", fault
 	}
+	label := milestoneProjectLabel(nodes, projectName, projectID)
 	switch len(nodes) {
 	case 0:
-		// The project is named rather than its UUID: the caller supplied a name
-		// or the issue already carried one, and neither is a UUID they could
-		// match this against.
 		return "", faultf(http.StatusBadRequest, "unknown_milestone",
-			"project %s has no milestone named %q", milestoneProjectLabel(nodes, projectID), name)
+			"project %s has no milestone named %q", label, name)
 	case 1:
 		return nodes[0].ID, nil
 	}
 	return "", faultf(http.StatusBadRequest, "ambiguous_milestone",
 		"%d milestones in project %s are named %q; the proxy will not guess between them",
-		len(nodes), milestoneProjectLabel(nodes, projectID), name)
+		len(nodes), label, name)
 }
 
-// milestoneProjectLabel names the project in a milestone refusal: its human
-// name when Linear returned one, otherwise the id the lookup used. The zero-row
-// case has no name to use, which is exactly when the id is all there is.
-func milestoneProjectLabel(nodes []linearMilestoneNode, projectID string) string {
+// milestoneProjectLabel names the project in a milestone refusal.
+//
+// The order is what makes the message useful. Linear's own answer comes first
+// when there is one; then the name the caller typed or the issue already
+// carried; and only with neither does the UUID appear. That last case is the
+// one live testing caught — a miss returns no rows to take a name from, so
+// before the caller's own name was threaded here the refusal for a typo'd
+// milestone read "project "61420c3c-…" has no milestone named …", naming the
+// project with the one string the caller could not match against anything they
+// had typed.
+func milestoneProjectLabel(nodes []linearMilestoneNode, projectName, projectID string) string {
 	for _, n := range nodes {
 		if n.Project != nil && strings.TrimSpace(n.Project.Name) != "" {
 			return strconv.Quote(n.Project.Name)
 		}
+	}
+	if strings.TrimSpace(projectName) != "" {
+		return strconv.Quote(projectName)
 	}
 	return strconv.Quote(projectID)
 }

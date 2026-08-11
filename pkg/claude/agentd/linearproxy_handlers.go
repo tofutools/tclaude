@@ -1161,6 +1161,7 @@ func placementOf(issue *linearIssue) linearIssuePlacement {
 	var placement linearIssuePlacement
 	if issue.Project != nil {
 		placement.ProjectID = strings.TrimSpace(issue.Project.ID)
+		placement.ProjectName = strings.TrimSpace(issue.Project.Name)
 	}
 	if issue.ProjectMilestone != nil {
 		placement.MilestoneID = strings.TrimSpace(issue.ProjectMilestone.ID)
