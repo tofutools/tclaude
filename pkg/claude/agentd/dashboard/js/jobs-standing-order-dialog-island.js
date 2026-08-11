@@ -177,10 +177,11 @@ export function StandingOrderDialog({ descriptor, snapshot, actions, confirmDisc
       setBusy(false);
     }
   };
+  const cancel = () => actions.closeStandingOrderDialog({ cancelled: true });
 
   return html`<${Overlay} id="standing-order-modal"
     overlayClass=${editing ? 'standing-order-editing' : ''}
-    labelledby="standing-order-title" onClose=${actions.closeStandingOrderDialog}
+    labelledby="standing-order-title" onClose=${cancel}
     onSubmitHotkey=${busy ? null : submit} dirty=${dirty} blocked=${busy}
     confirmDiscard=${confirmDiscard} registerClose=${registerClose}
     resizeKey="tclaude.dash.modalSize.standing-order">

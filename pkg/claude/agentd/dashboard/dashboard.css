@@ -7503,6 +7503,81 @@ body.wizard .group-standing-orders-library { border-color: #4b3a5d; background: 
 body.wizard .group-standing-order-scope.global { color: #e6c878; border-color: #765f28; background: #2b230e; }
 body.wizard .group-standing-order-scope.group { color: #ddb6ff; border-color: #76539a; background: #28193a; }
 body.wizard .group-standing-order-origin { color: #c084fc; }
+
+/* The standing-order editor is the authoring half of the group rulebook. In
+   wizard mode it uses the same violet-void surface, parchment text, and
+   gilded actions as the decree picker rather than inheriting the plain cron
+   form chrome. The fields remain structurally identical across themes. */
+body.wizard #standing-order-modal .cron-create-modal {
+  background: radial-gradient(circle at 50% 0, #271934 0%, #1b1524 38%, #140f1c 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 22px 70px #000d, 0 0 32px rgba(122, 93, 176, 0.38);
+  color: #e7d9f5;
+}
+body.wizard #standing-order-modal #standing-order-title {
+  font-size: 0; color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 0.7px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.7), 0 1px 0 #1e1640;
+}
+body.wizard #standing-order-modal #standing-order-title::before {
+  content: "📜 Inscribe a standing decree"; font-size: 16px;
+}
+body.wizard #standing-order-modal.standing-order-editing #standing-order-title::before {
+  content: "📜 Re-inscribe the standing decree";
+}
+body.wizard #standing-order-modal :is(.cron-create-label, .muted) { color: #ad9abb; }
+body.wizard #standing-order-modal .standing-order-choice strong,
+body.wizard #standing-order-modal .cron-target-modes { color: #e7d9f5; }
+body.wizard #standing-order-modal :is(input[type=checkbox], input[type=radio]) { accent-color: #a97bd6; }
+body.wizard #standing-order-modal :is(
+  input[type=text], input[type=number], select, textarea
+) {
+  background: #100c17; border-color: rgba(122, 93, 176, 0.58); color: #f3e6c0;
+}
+body.wizard #standing-order-modal :is(
+  input[type=text], input[type=number], select, textarea
+):focus {
+  border-color: #a97bd6; box-shadow: 0 0 0 1px rgba(169, 123, 214, 0.35);
+  outline: none;
+}
+body.wizard #standing-order-modal select option { color: #1a1330; background: #e7d9f5; }
+body.wizard #standing-order-modal :is(.standing-order-options, .standing-order-native-hooks details) {
+  background: #100c17; border-color: rgba(122, 93, 176, 0.5);
+}
+body.wizard #standing-order-modal .standing-order-native-hooks summary {
+  color: #f3e6c0; border-bottom-color: rgba(122, 93, 176, 0.35);
+}
+body.wizard #standing-order-modal .modal-meta {
+  background: #100c17; border-left-color: #d9b45a; color: #ad9abb;
+}
+body.wizard #standing-order-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.45); }
+body.wizard #standing-order-modal #standing-order-cancel {
+  font-size: 0; background: #2a2034; border-color: #59466b; color: #e7d9f5;
+}
+body.wizard #standing-order-modal #standing-order-cancel::before {
+  content: "Abandon inscription"; font-size: 12px;
+}
+body.wizard #standing-order-modal #standing-order-cancel:hover:not(:disabled) {
+  background: #39294a; border-color: #d9b45a;
+}
+body.wizard #standing-order-modal #standing-order-submit {
+  font-size: 0;
+  background: linear-gradient(180deg, #7650a5, #563477);
+  border: 2px solid #d9b45a; border-radius: 6px; color: #fff7dc;
+  box-shadow: 0 3px 0 #1e1640, 0 0 12px rgba(178, 109, 232, 0.35);
+}
+body.wizard #standing-order-modal #standing-order-submit::before {
+  content: "✦ Seal decree"; font-size: 13px;
+}
+body.wizard #standing-order-modal.standing-order-editing #standing-order-submit::before {
+  content: "✦ Re-seal decree";
+}
+body.wizard #standing-order-modal #standing-order-submit:hover:not(:disabled) {
+  background: linear-gradient(180deg, #8d65ba, #654087);
+  border-color: #f3e6c0; box-shadow: 0 3px 0 #1e1640, 0 0 17px #b26de866;
+}
+body.wizard #standing-order-modal #standing-order-submit:disabled::before { content: "⏳ Inscribing…"; }
 @media (max-width: 720px) {
   .group-standing-orders-summary,
   .group-standing-orders-library-callout { align-items: stretch; flex-direction: column; }
