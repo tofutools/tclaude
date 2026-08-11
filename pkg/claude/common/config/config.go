@@ -1966,7 +1966,27 @@ type LinearProxyConfig struct {
 	// Accepts `~/…`, expanded against the home directory of the account
 	// agentd runs as. Shell variables are NOT expanded — a config file is
 	// not a shell.
+	//
+	// This is the DEFAULT key: it is used for every allowed team that no
+	// Workspaces entry claims. An operator whose teams all live in one Linear
+	// workspace needs nothing else.
 	APIKeyFile string `json:"api_key_file,omitempty"`
+
+	// Workspaces routes named teams to a DIFFERENT key from APIKeyFile.
+	//
+	// It exists because a Linear personal API key is scoped to ONE workspace:
+	// the one its creator was logged into. Within that workspace a single key
+	// reaches every team its account can see, whoever created them — so teams
+	// that merely have different owners need no entry here. Teams in a
+	// SEPARATE workspace cannot be reached by that key at all, at which point
+	// the only way to cover them is a second key created in that workspace.
+	//
+	// Authorization is NOT what this list does. AllowedTeams above and the
+	// caller's grant scope decide which teams may be reached; an entry here
+	// only says which credential reaches one. A team named here and absent
+	// from AllowedTeams stays unreachable, and adding a workspace can never
+	// widen what an agent may touch.
+	Workspaces []LinearWorkspaceConfig `json:"workspaces,omitempty"`
 
 	// AllowWrite permits the mutating verbs (`issue create`, `issue
 	// comment`, `issue update`, `issue link`) at all. Default off, so an
@@ -1975,6 +1995,41 @@ type LinearProxyConfig struct {
 	// permission slug still gates the caller on top of this: the config is
 	// the operator's ceiling, the slug is the per-agent grant.
 	AllowWrite bool `json:"allow_write,omitempty"`
+}
+
+// LinearWorkspaceConfig binds one Linear workspace's key to the teams that
+// live in it — one entry per EXTRA workspace beyond the one
+// LinearProxyConfig.APIKeyFile belongs to.
+//
+// Both fields are required, and a team key may appear in at most one entry. The
+// daemon refuses to serve a policy that breaks either rule rather than picking
+// a key for an ambiguously-routed team: a request answered by the wrong
+// workspace's key does not fail cleanly, it reports the issue as missing.
+//
+// Note that Linear only guarantees a team key to be unique WITHIN a workspace,
+// so two workspaces can each have an "OPS". Nothing in this proxy can tell
+// those apart — the allow-list, the `linear_team` grant scope and the issue
+// identifier all carry the bare key — so colliding keys across workspaces are
+// unsupported rather than merely unrouted.
+type LinearWorkspaceConfig struct {
+	// Name labels the workspace in diagnostics — `whoami`'s per-workspace
+	// breakdown, and the refusal an unreadable key produces. Free text, and
+	// only that: nothing routes on it. Blank falls back to the entry's
+	// position ("workspace 2").
+	Name string `json:"name,omitempty"`
+
+	// APIKeyFile is a file holding the personal API key created IN THIS
+	// WORKSPACE. Same handling as LinearProxyConfig.APIKeyFile: `~/…` is
+	// expanded, shell variables are not, and the key never enters
+	// config.json. Unlike that field there is no environment fallback — one
+	// LINEAR_API_KEY cannot stand in for several workspaces, so an entry
+	// without a file names no key at all and is refused.
+	APIKeyFile string `json:"api_key_file"`
+
+	// Teams is the team keys this workspace's key reaches, compared
+	// case-insensitively. Empty makes the entry unreachable, which is a
+	// misconfiguration rather than a no-op, so it is refused too.
+	Teams []string `json:"teams"`
 }
 
 // GitProxyConfig is the operator's policy for the daemon-mediated Git-remote
@@ -2091,6 +2146,31 @@ func (c *Config) ResolvedLinearProxy() LinearProxyConfig {
 		out.AllowedTeams = normalizeGitProxyPatterns(src.AllowedTeams)
 		out.APIKeyFile = strings.TrimSpace(src.APIKeyFile)
 		out.AllowWrite = src.AllowWrite
+		out.Workspaces = normalizeLinearWorkspaces(src.Workspaces)
+	}
+	return out
+}
+
+// normalizeLinearWorkspaces trims each workspace entry and normalizes its team
+// list the way AllowedTeams is normalized, so the two are directly comparable.
+//
+// It deliberately does NOT drop malformed entries. An entry with no key file or
+// no teams is a mistake the operator has to see: silently discarding it would
+// route that workspace's teams to the default key, which is exactly the wrong
+// key, and the resulting "issue does not exist" would send them looking at
+// Linear rather than at their config. The daemon refuses such a policy — see
+// agentd.linearRoutes.
+func normalizeLinearWorkspaces(in []LinearWorkspaceConfig) []LinearWorkspaceConfig {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]LinearWorkspaceConfig, 0, len(in))
+	for _, ws := range in {
+		out = append(out, LinearWorkspaceConfig{
+			Name:       strings.TrimSpace(ws.Name),
+			APIKeyFile: strings.TrimSpace(ws.APIKeyFile),
+			Teams:      normalizeGitProxyPatterns(ws.Teams),
+		})
 	}
 	return out
 }

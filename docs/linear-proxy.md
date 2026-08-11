@@ -96,7 +96,8 @@ Add an `agent.linear_proxy` block to `~/.tclaude/data/config.json`:
 | Field | Meaning |
 |---|---|
 | `allowed_teams` | Team keys the proxy may act on — the prefix in an issue identifier, so `TCL` authorizes `TCL-568`. Matched case-insensitively. **Empty or absent disables unscoped grants**; a [team-scoped grant](#restricting-an-agent-to-certain-teams) supplies its own teams instead. |
-| `api_key_file` | A file whose contents are the Linear personal API key. Empty falls back to `LINEAR_API_KEY` in the environment agentd runs under; with neither, the proxy refuses. |
+| `api_key_file` | A file whose contents are the Linear personal API key. Empty falls back to `LINEAR_API_KEY` in the environment agentd runs under; with neither, the proxy refuses. This is the **default** key: every allowed team that no `workspaces` entry claims is reached with it. |
+| `workspaces` | Extra keys for teams in **other Linear workspaces**. Absent is the normal case — see [Teams in more than one Linear workspace](#teams-in-more-than-one-linear-workspace). |
 | `allow_write` | Permits the mutating verbs at all. Default off. |
 
 `api_key_file` accepts `~/…`, expanded against the home directory of the account
@@ -106,6 +107,87 @@ shell, so `"${HOME}/key.txt"` is taken literally.
 The key is deliberately not stored in `config.json` itself: that file is
 plaintext, appears in the dashboard's Config tab, and is the sort of thing that
 ends up in a bug report.
+
+### Teams in more than one Linear workspace
+
+**One key usually covers every team you need.** A Linear personal API key is
+scoped to the workspace its creator was logged into, and within that workspace
+it reaches every team the account can see — *whoever created those teams*. A
+colleague's team in your workspace needs no extra key; it needs your account to
+have access to it (join it, or be invited if it is
+[private](https://linear.app/docs/private-teams)). When creating the key, under
+**Team access**, choose *All teams you have access to* — or name the teams
+explicitly, which narrows the key without needing a second one.
+
+A second key is needed only when teams live in **separate workspaces**, because
+no permission on the first key can reach across that boundary. Create one key
+inside each workspace (switch workspaces from the top-left workspace name first
+— the key belongs to whichever one you are in), then tell the daemon which teams
+each key is for:
+
+```json
+{
+  "agent": {
+    "linear_proxy": {
+      "allowed_teams": ["TCL", "ACM", "OPS"],
+      "api_key_file": "~/.tclaude/linear-key.txt",
+      "workspaces": [
+        {
+          "name": "acme",
+          "api_key_file": "~/.tclaude/linear-acme-key.txt",
+          "teams": ["ACM", "OPS"]
+        }
+      ],
+      "allow_write": false
+    }
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `name` | A label for diagnostics — `whoami`'s breakdown, and the refusal an unreadable key produces. Nothing routes on it. `default` is reserved: it already names the key every unclaimed team uses. |
+| `api_key_file` | The key created **in that workspace**. Required: there is no `LINEAR_API_KEY` fallback here, since one environment variable names one workspace's key. |
+| `teams` | The team keys that workspace's key reaches. Required. |
+
+Rules worth knowing:
+
+- **A `workspaces` entry decides which key reaches a team, never whether an
+  agent may.** `allowed_teams` and the agent's own grant scope remain the whole
+  authorization gate, so a team listed here and missing from `allowed_teams`
+  stays unreachable. Adding a workspace can never widen what an agent can touch.
+- **Teams you do not list keep using `api_key_file`.** An operator with one
+  workspace never writes this block, and their behaviour is unchanged.
+- **A team key may appear in at most one entry**, and every entry needs both a
+  key file and a team list. A policy that breaks either rule is refused whole
+  (`503 linear_proxy_misconfigured`) before any credential is spent — guessing
+  between two keys would query the wrong workspace, and Linear answers that with
+  "no such issue" rather than an error.
+- **Team keys are only unique within a workspace.** Two workspaces can each have
+  an `OPS`, and nothing here can tell those apart: `allowed_teams`, grant scopes
+  and issue identifiers all key on the bare team key. Colliding keys across
+  workspaces are not supported — route the key to one workspace and reach the
+  other's team some other way.
+- **A verb that spans teams costs one call per workspace.** `issue ls` and
+  `issue search` without `--team`, and `whoami`, query each key in turn and merge
+  the results — newest-first for a listing, taking turns between workspaces for a
+  search, bounded by your `--limit`. At most 8 workspaces may take part in one
+  such verb. Everything else spends exactly one key, the one for the team in the
+  identifier, however many workspaces you have configured.
+- **`--assigned-me` means a different person in each workspace**: each key
+  authenticates as its own Linear account, so a fanned-out `issue ls
+  --assigned-me` means "assigned to whoever created that workspace's key".
+- **Keys are read only when used.** An unreadable key for a workspace a request
+  never touches does not fail that request. But a fanned-out listing does need
+  every key it spans: one broken key fails the whole `issue ls`, rather than
+  returning a short answer that looks complete. `whoami` deliberately differs —
+  it reports each credential's failure and keeps going, because diagnosing that
+  is what it is for.
+
+`tclaude proxy linear whoami` reports each key separately under `workspaces` —
+who it authenticates as, which teams it can see, which of your teams it answers
+for, and an `error` for any that failed. With a single key the response also
+keeps its familiar top-level `viewer` and `teams`.
 
 ### Team keys match whole, not as a prefix
 
@@ -361,8 +443,9 @@ the workspace.
 | Symptom | Cause / fix |
 |---|---|
 | `503 linear_proxy_disabled` | No `allowed_teams` configured *and* the agent's grant carries no team scope. Add the block above, or scope the grant. |
-| `503 key_missing` | No `api_key_file` and no `LINEAR_API_KEY`. |
-| `503 key_unreadable` | The configured file could not be read, or is empty. Check it is readable by the account agentd runs as, and that you used `~/` or an absolute path rather than `${HOME}`. |
+| `503 key_missing` | No `api_key_file` and no `LINEAR_API_KEY`. The message names the teams that were left without a key. |
+| `503 key_unreadable` | The configured file could not be read, or is empty. The message names which key — the default one or a `workspaces` entry. Check it is readable by the account agentd runs as, and that you used `~/` or an absolute path rather than `${HOME}`. |
+| `503 linear_proxy_misconfigured` | A `workspaces` entry has no `api_key_file`, no `teams`, or the reserved name `default`; two entries claim the same team key; or a team-spanning verb would need more than 8 credentials. The message says which. See [Teams in more than one Linear workspace](#teams-in-more-than-one-linear-workspace). |
 | `503 linear_auth` | Linear rejected the key. It may be revoked, expired, or lack the permission the verb needs — a read-only key cannot comment. |
 | `403` naming a slug | The agent lacks `proxy.linear.read` / `proxy.linear.write`. Grant it, or the agent can retry with `--ask-human`. |
 | `403 linear_write_disabled` | The slug is granted but `allow_write` is false. Both are required. |

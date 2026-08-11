@@ -54,6 +54,12 @@ need different fixes:
 can actually reach. Every other verb echoes that same set as `teams`, so you
 rarely need to re-run `whoami`.
 
+`workspaces` lists the daemon's Linear keys — usually one, called `default`.
+Each entry says who that key authenticates as, which teams it can see, which of
+*your* teams it answers for (`routes`), and an `error` if it is broken. A
+missing team that appears in no entry means the operator needs to add a key for
+that workspace, not widen a list.
+
 ## Prerequisites
 
 **The daemon must be running.** If you see
@@ -70,6 +76,26 @@ means they have not. Quote this to them:
     "allow_write": false
 } } }
 ```
+
+**A team in another Linear workspace needs its own key.** One key covers every
+team in one workspace, whoever created them — but nothing reaches across
+workspaces. If `whoami` shows a team you need is missing from every entry under
+`workspaces`, quote this to the human, alongside a key they create while logged
+into *that* workspace:
+
+```json
+{ "agent": { "linear_proxy": {
+    "allowed_teams": ["TCL", "ACM"],
+    "api_key_file": "~/.tclaude/linear-key.txt",
+    "workspaces": [
+      { "name": "acme", "api_key_file": "~/.tclaude/linear-acme-key.txt", "teams": ["ACM"] }
+    ]
+} } }
+```
+
+A `workspaces` entry only says which key reaches a team; `allowed_teams` and
+your grant scope still decide whether you may. `503 linear_proxy_misconfigured`
+means the entries contradict each other — the message says how.
 
 **You need the slug.** `403` naming `proxy.linear.read` or `proxy.linear.write` means the
 human has not granted it:

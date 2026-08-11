@@ -150,6 +150,31 @@ const (
 	// nothing however the request is spelled. Reported once, up front, rather
 	// than as a per-team refusal on every verb.
 	linearTeamScopeEmptyCode = "team_scope_empty"
+
+	// linearMisconfiguredCode is the refusal for an operator policy the daemon
+	// cannot act on at all: a workspace entry naming no key or no team, or two
+	// entries claiming the same team. Fail-closed rather than best-effort —
+	// picking a key for an ambiguously-routed team would answer with the wrong
+	// workspace's credential, and Linear reports that as "no such issue" rather
+	// than as an error, sending the operator to look at their tracker instead of
+	// at their config.
+	linearMisconfiguredCode = "linear_proxy_misconfigured"
+
+	// maxLinearFanout bounds how many credentials one TEAM-SPANNING verb may
+	// spend. Verbs that name a team, or an issue, spend one whatever it is.
+	//
+	// A verb that spans teams (`issue ls` with no --team, `whoami`) makes one
+	// call per workspace those teams live in, sequentially, inside the single
+	// linearProxyBudget every request shares. Past a handful of workspaces that
+	// budget is what would fail rather than the policy, and a context-deadline
+	// error says nothing about the cause — so the cause is named in
+	// fanoutRoutes instead.
+	maxLinearFanout = 8
+
+	// defaultLinearRouteName labels the credential every team no
+	// agent.linear_proxy.workspaces entry claims is reached with. Reserved: a
+	// workspace entry may not take it, since `whoami` reports routes by name.
+	defaultLinearRouteName = "default"
 )
 
 // ---------------------------------------------------------------------------
@@ -284,10 +309,9 @@ func doLinearRequest(ctx context.Context, key string, req linearRequest) (linear
 // ---------------------------------------------------------------------------
 
 // linearProxySession is one Linear invocation context: the operator's policy,
-// the caller's effective team set, and the resolved key.
+// the caller's effective team set, and the credentials that reach it.
 type linearProxySession struct {
 	policy config.LinearProxyConfig
-	key    string
 	// deadline is the wall-clock end of this request's whole budget, shared
 	// by every call the verb makes. Zero means "unbounded", which only
 	// happens in a unit test that built a session directly.
@@ -306,6 +330,44 @@ type linearProxySession struct {
 	// gate, and this exists so a refusal can say which of the two lists
 	// excluded a key.
 	grantTeams []string
+
+	// routes is the credentials this caller's effective team set is spread
+	// across — one per Linear workspace involved, in the order teams first
+	// appear in `teams`. Ordinarily there is exactly one.
+	//
+	// A route carries the teams it reaches rather than a key, because the key
+	// is read lazily: a broken key file for a workspace this request never
+	// touches must not fail the request. See routeKey.
+	routes []*linearRoute
+	// routeByTeam maps every team in `teams` to the route that reaches it, so
+	// a per-team verb picks its credential without scanning.
+	routeByTeam map[string]*linearRoute
+}
+
+// linearRoute is one credential and the part of the caller's effective team
+// set it reaches.
+type linearRoute struct {
+	// name labels the route in diagnostics: the operator's workspace name, or
+	// "default" for the key every unclaimed team uses.
+	name string
+	// keyFile is the file holding this route's key. Empty only on the default
+	// route, which then falls back to LINEAR_API_KEY.
+	keyFile string
+	// isDefault marks the route every team no workspaces entry claims uses. It
+	// is what makes the LINEAR_API_KEY fallback positional rather than a
+	// property of "any route with no file": one environment variable names one
+	// workspace's key, and a second route borrowing it would answer its teams
+	// with a credential that cannot see them.
+	isDefault bool
+	// teams is this route's share of the session's effective team set,
+	// lower-cased, in the session's own order.
+	teams []string
+
+	// key, loaded and fault memoize routeKey: one read per route per request,
+	// whichever verb asks and however many calls it makes.
+	key    string
+	loaded bool
+	fault  *proxyFault
 }
 
 // newLinearProxySession runs the operator-policy gates, resolves the caller's
@@ -334,16 +396,17 @@ func newLinearProxySession(
 	if fault != nil {
 		return nil, fault
 	}
-	key, fault := linearAPIKey(policy)
+	routes, byTeam, fault := linearRoutes(policy, teams)
 	if fault != nil {
 		return nil, fault
 	}
 	return &linearProxySession{
-		policy:     policy,
-		key:        key,
-		deadline:   time.Now().Add(linearProxyBudget),
-		teams:      teams,
-		grantTeams: grantTeams,
+		policy:      policy,
+		deadline:    time.Now().Add(linearProxyBudget),
+		teams:       teams,
+		grantTeams:  grantTeams,
+		routes:      routes,
+		routeByTeam: byTeam,
 	}, nil
 }
 
@@ -467,36 +530,191 @@ func appendTeamKey(out []string, key string) []string {
 	return append(out, key)
 }
 
-// linearAPIKey resolves the operator's Linear personal API key: the configured
-// file if there is one, else LINEAR_API_KEY from the daemon's own environment.
+// linearRoutes spreads the caller's effective team set across the credentials
+// that reach it, and is the whole of the multi-key mechanism.
 //
-// Deliberately not stored in config.json — that file is plaintext, shows up in
-// the dashboard's Config tab, and is the sort of thing an operator copies into
-// a bug report.
-func linearAPIKey(policy config.LinearProxyConfig) (string, *proxyFault) {
-	if configured := strings.TrimSpace(policy.APIKeyFile); configured != "" {
+// It exists because a Linear personal API key is scoped to ONE workspace — the
+// one its creator was logged into. Within that workspace the key reaches every
+// team the account can see, whoever created them, so the ordinary operator
+// needs exactly one key and gets exactly one route here. Teams in a separate
+// workspace are invisible to that key, and no permission on it can change
+// that, so covering them takes a second key and a
+// agent.linear_proxy.workspaces entry saying which teams it is for.
+//
+// Two properties matter more than the mapping itself:
+//
+//   - Routing is not authorization. Every team routed here has already passed
+//     linearEffectiveTeams; a workspace entry can only decide WHICH KEY reaches
+//     a team the caller could already reach, never whether it may. That is why
+//     this runs after the team set is resolved rather than alongside it.
+//
+//   - The mapping is total and unambiguous or the request does not run. A team
+//     no entry claims goes to the default key, which is the pre-workspaces
+//     behaviour; a team TWO entries claim is a refusal, because guessing
+//     between them produces a "no such issue" from the wrong workspace rather
+//     than an error.
+//
+// The whole policy is validated on every request, including entries this
+// caller's teams never touch. A misconfigured entry is then reported by the
+// first call anyone makes rather than lying in wait for the one agent whose
+// team it routes.
+func linearRoutes(
+	policy config.LinearProxyConfig, teams []string,
+) ([]*linearRoute, map[string]*linearRoute, *proxyFault) {
+	claimed := make(map[string]*linearRoute)
+	for i, ws := range policy.Workspaces {
+		name := ws.Name
+		if name == "" {
+			name = fmt.Sprintf("workspace %d", i+1)
+		}
+		if ws.APIKeyFile == "" {
+			return nil, nil, faultf(http.StatusServiceUnavailable, linearMisconfiguredCode,
+				"agent.linear_proxy.workspaces[%d] (%s) has no api_key_file; an extra workspace is only "+
+					"reachable with a key created inside it, and there is no environment fallback for one",
+				i, name)
+		}
+		if len(ws.Teams) == 0 {
+			return nil, nil, faultf(http.StatusServiceUnavailable, linearMisconfiguredCode,
+				"agent.linear_proxy.workspaces[%d] (%s) lists no teams, so it names a key nothing would "+
+					"ever use", i, name)
+		}
+		if strings.EqualFold(name, defaultLinearRouteName) {
+			// Reserved, because `whoami` reports routes by name and the key every
+			// unclaimed team uses is already called this. Two rows called
+			// "default" in the verb an operator runs to work out which key
+			// answered is worse than making them pick another label.
+			return nil, nil, faultf(http.StatusServiceUnavailable, linearMisconfiguredCode,
+				"agent.linear_proxy.workspaces[%d] is named %q, which names the key every team no entry "+
+					"claims already uses; give this workspace a different name", i, name)
+		}
+		rt := &linearRoute{name: name, keyFile: ws.APIKeyFile}
+		for _, key := range ws.Teams {
+			if prev, dup := claimed[key]; dup {
+				return nil, nil, faultf(http.StatusServiceUnavailable, linearMisconfiguredCode,
+					"team %q is claimed by two agent.linear_proxy.workspaces entries (%s and %s); one team "+
+						"key can be routed to one workspace, so exactly one entry may name it",
+					key, prev.name, name)
+			}
+			claimed[key] = rt
+		}
+	}
+
+	var (
+		ordered  []*linearRoute
+		byTeam   = make(map[string]*linearRoute, len(teams))
+		fallback *linearRoute
+	)
+	for _, key := range teams {
+		rt, ok := claimed[key]
+		if !ok {
+			if fallback == nil {
+				fallback = &linearRoute{
+					name: defaultLinearRouteName, keyFile: policy.APIKeyFile, isDefault: true,
+				}
+			}
+			rt = fallback
+		}
+		if len(rt.teams) == 0 {
+			ordered = append(ordered, rt)
+		}
+		rt.teams = append(rt.teams, key)
+		byTeam[key] = rt
+	}
+	return ordered, byTeam, nil
+}
+
+// fanoutRoutes is every credential a team-spanning verb has to spend, bounded.
+//
+// The bound lives here rather than on the session because it is a bound on the
+// FAN-OUT, and most verbs do not fan out: `issue view TCL-1` spends one
+// credential whether the operator configured two workspaces or twenty, and
+// refusing it for the shape of a listing it is not performing would be a
+// restriction with no cause behind it.
+func (s *linearProxySession) fanoutRoutes() ([]*linearRoute, *proxyFault) {
+	if len(s.routes) > maxLinearFanout {
+		return nil, faultf(http.StatusServiceUnavailable, linearMisconfiguredCode,
+			"this caller's teams are spread across %d Linear workspaces, and a verb that spans teams "+
+				"spends one credential per workspace; %d is the most one request may spend — name a team, "+
+				"or narrow the caller's teams with a linear_team grant scope",
+			len(s.routes), maxLinearFanout)
+	}
+	return s.routes, nil
+}
+
+// routeFor returns the credential that reaches one team. The team has already
+// passed the gate, so a miss is a programming error rather than a refusal —
+// reported as one, so a verb that forgets to gate first cannot silently borrow
+// the default key.
+func (s *linearProxySession) routeFor(teamKey string) (*linearRoute, *proxyFault) {
+	if rt, ok := s.routeByTeam[strings.ToLower(strings.TrimSpace(teamKey))]; ok {
+		return rt, nil
+	}
+	return nil, faultf(http.StatusInternalServerError, "team_unresolved",
+		"no Linear credential is routed to team %q; refusing to guess one", teamKey)
+}
+
+// routeKey resolves one route's Linear personal API key: the configured file,
+// or — on the default route only — LINEAR_API_KEY from the daemon's own
+// environment.
+//
+// Keys are deliberately not stored in config.json — that file is plaintext,
+// shows up in the dashboard's Config tab, and is the sort of thing an operator
+// copies into a bug report.
+//
+// The result is memoized on the route, so a verb making several calls reads
+// each file once, and a route the verb never uses is never read at all.
+func (s *linearProxySession) routeKey(rt *linearRoute) (string, *proxyFault) {
+	if rt.loaded {
+		return rt.key, rt.fault
+	}
+	rt.loaded = true
+	rt.key, rt.fault = resolveLinearRouteKey(rt)
+	return rt.key, rt.fault
+}
+
+// resolveLinearRouteKey is routeKey without the memoization.
+func resolveLinearRouteKey(rt *linearRoute) (string, *proxyFault) {
+	// Which setting to name in a refusal, so an operator is sent to the line
+	// they actually have to fix.
+	field := "agent.linear_proxy.api_key_file"
+	if !rt.isDefault {
+		field = fmt.Sprintf("the api_key_file of agent.linear_proxy.workspaces %q", rt.name)
+	}
+	if rt.keyFile != "" {
 		// "~/linear-key.txt" is how an operator naturally writes this, and the
 		// same expandTilde every other human-typed path in the daemon goes
 		// through applies here.
-		raw, err := os.ReadFile(expandTilde(configured))
+		raw, err := os.ReadFile(expandTilde(rt.keyFile))
 		if err != nil {
 			return "", faultf(http.StatusServiceUnavailable, "key_unreadable",
-				"the configured agent.linear_proxy.api_key_file could not be read: %v%s",
-				err, shellVarHint(configured))
+				"%s could not be read: %v%s", field, err, shellVarHint(rt.keyFile))
 		}
 		key := strings.TrimSpace(string(raw))
 		if key == "" {
-			return "", faultf(http.StatusServiceUnavailable, "key_unreadable",
-				"the configured agent.linear_proxy.api_key_file is empty")
+			return "", faultf(http.StatusServiceUnavailable, "key_unreadable", "%s is empty", field)
 		}
 		return key, nil
+	}
+	// The environment fallback belongs to the default route alone: one
+	// LINEAR_API_KEY names one workspace's key, so letting a second route
+	// borrow it would answer that route's teams with the wrong workspace's
+	// credential — and Linear reports that as a missing issue rather than as an
+	// error. linearRoutes already refuses a workspace entry with no key file;
+	// this is the same rule where the key is actually chosen, so the two would
+	// have to be wrong together for the environment key to reach a workspace it
+	// does not belong to.
+	if !rt.isDefault {
+		return "", faultf(http.StatusServiceUnavailable, linearMisconfiguredCode,
+			"the agent.linear_proxy.workspaces entry %q names no api_key_file, and LINEAR_API_KEY "+
+				"belongs to the default workspace rather than to this one", rt.name)
 	}
 	if key := strings.TrimSpace(os.Getenv("LINEAR_API_KEY")); key != "" {
 		return key, nil
 	}
 	return "", faultf(http.StatusServiceUnavailable, "key_missing",
-		"no Linear API key is configured: set agent.linear_proxy.api_key_file, or put LINEAR_API_KEY "+
-			"in the environment agentd runs under")
+		"no Linear API key is configured for team(s) %s: set agent.linear_proxy.api_key_file, or put "+
+			"LINEAR_API_KEY in the environment agentd runs under",
+		strings.Join(rt.teams, ", "))
 }
 
 // requireWrite gates the mutating verbs on the operator's own ceiling. The
@@ -511,13 +729,26 @@ func (s *linearProxySession) requireWrite() *proxyFault {
 			"~/.tclaude/data/config.json")
 }
 
-// exec runs one GraphQL operation and unmarshals `data` into out.
+// exec runs one GraphQL operation against one route's credential and
+// unmarshals `data` into out.
 //
 // doc must be one of the package-level document constants. vars carries every
 // caller-supplied value. Nothing in this function inspects either — which is
 // exactly why every caller builds vars from values that have passed a
 // validateLinear* gate.
-func (s *linearProxySession) exec(ctx context.Context, doc string, vars map[string]any, out any) *proxyFault {
+//
+// The route is a parameter rather than session state because it is the second
+// half of the team gate's answer: having decided that a team may be reached,
+// the caller must also spend the credential that can reach IT and no other. A
+// verb that picked the wrong route would query a workspace where the team does
+// not exist, and Linear reports that as an empty result rather than an error.
+func (s *linearProxySession) exec(
+	ctx context.Context, rt *linearRoute, doc string, vars map[string]any, out any,
+) *proxyFault {
+	key, fault := s.routeKey(rt)
+	if fault != nil {
+		return fault
+	}
 	// The tighter of the per-call bound and what is left of the whole
 	// request's budget. The budget is what keeps a multi-call verb inside the
 	// window the CLI is waiting on; the per-call bound is what stops any one
@@ -525,7 +756,7 @@ func (s *linearProxySession) exec(ctx context.Context, doc string, vars map[stri
 	runCtx, cancel := s.callContext(ctx)
 	defer cancel()
 
-	res, err := linearDo(runCtx, s.key, linearRequest{Query: doc, Variables: vars})
+	res, err := linearDo(runCtx, key, linearRequest{Query: doc, Variables: vars})
 	if err != nil {
 		return faultf(http.StatusBadGateway, "linear_unreachable",
 			"could not reach the Linear API: %v", err)
