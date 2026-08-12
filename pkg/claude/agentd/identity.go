@@ -773,82 +773,28 @@ func requirePermission(w http.ResponseWriter, r *http.Request, perm string, actx
 	return requirePermissionEx(w, r, perm, actx...)
 }
 
-// requireGroupPermission gates a GROUP-scoped endpoint behind perm with
-// the structural rule that OWNING g confers perm by default. It is
-// requirePermission plus an owner-of-this-group bypass: owner-state
-// raises the default group-lifecycle slugs (groups.members.spawn / groups.members.stop /
-// groups.members.retire / groups.members.resume) so a lead can run its own team's
-// lifecycle without an explicit grant. Consistent with the universal
-// precedence — the bypass fills only the permUndecided gap, an explicit
-// deny override still suppresses it, and a non-owner still needs the slug.
+// requireGroupPermission gates a group-scoped endpoint behind perm. Ownership
+// contributes ordinary OwnerImplied grants scoped to each owned group; this
+// gate identifies which group is the ownership subject. Exact denies still
+// suppress the derived grant, and non-owners need another positive source.
 //
 // It is also the one gate that fills in an ActionContext by itself: the
 // target group is its whole reason for existing, so a grant scoped to
 // {"group": [...]} is evaluated here rather than waiting for a per-handler
 // migration. Any caller-supplied context wins, so a handler that also knows
 // the profile or template can pass a fuller one.
-// The bypass is narrowed by g's OWN owner-scope map (TCL-1071): this gate
-// knows exactly which group is being acted on, so it consults that group's map
-// and no other. An owner of a narrowed g1 and an unnarrowed g2 acting on g2 is
-// therefore unaffected.
+// Owner-grant constraints are read from g itself. An owner of a constrained
+// g1 and an unconstrained g2 acting on g2 is therefore unaffected.
 func requireGroupPermission(w http.ResponseWriter, r *http.Request, perm string, g *db.AgentGroup, actx ...ActionContext) (string, bool) {
 	ctx := actionContextOf(actx)
 	if ctx.Group == "" {
 		ctx.Group = g.Name
 	}
 	ctx.structuralGroup = g.Name
-	caller, ok := requirePermissionEx(w, r, perm, ctx)
-	if !ok || caller == "" || !isBulkGroupMemberPermission(perm) {
-		return caller, ok
+	if isBulkGroupMemberPermission(perm) {
+		ctx.bulkGroupMemberCoverage = true
 	}
-	targets := ctx.affectedConvs
-	if targets == nil {
-		members, err := db.ListAgentGroupMembers(g.ID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
-			return "", false
-		}
-		for _, member := range members {
-			if perm == PermGroupsMembersRetire && sameActor(caller, member.ConvID) {
-				continue
-			}
-			targets = append(targets, member.ConvID)
-		}
-	}
-	seenGroups := map[string]bool{}
-	for _, target := range targets {
-		groups, err := activeGroupNamesForConvs(target)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", "resolve affected groups: "+err.Error())
-			return "", false
-		}
-		targetAgent, err := db.AgentIDForConv(target)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", "resolve affected agent: "+err.Error())
-			return "", false
-		}
-		for _, group := range groups {
-			candidate := ctx
-			candidate.Group = group
-			candidate.TargetAgent = targetAgent
-			candidate.targetConv = target
-			if allowed, _ := permissionAllowsAction(r, caller, perm, candidate); !allowed {
-				writeError(w, http.StatusForbidden, "permission",
-					fmt.Sprintf("caller is not granted permission %q for every current active group affected by this operation", perm))
-				return "", false
-			}
-			seenGroups[group] = true
-		}
-	}
-	groups := make([]string, 0, len(seenGroups))
-	for group := range seenGroups {
-		groups = append(groups, group)
-	}
-	sort.Strings(groups)
-	if len(groups) > 0 {
-		recordAuditPermissionScope(r, perm, "group="+strings.Join(groups, ","))
-	}
-	return caller, true
+	return requirePermissionEx(w, r, perm, ctx)
 }
 
 func isBulkGroupMemberPermission(slug string) bool {
@@ -864,9 +810,74 @@ func isBulkGroupMemberPermission(slug string) bool {
 // concrete action. A scoped positive source that misses the action does not
 // revoke lower positive authority: the owner/member tier may still cover it.
 // An explicit deny remains authoritative and suppresses structural grants.
-func permissionAllowsAction(r *http.Request, convID, perm string, actx ActionContext) (bool, string) {
+func permissionAllowsAction(r *http.Request, convID, perm string, actx ActionContext) (bool, string, error) {
 	v := resolvePermissionVerdictForRequest(r, convID, perm)
-	return permissionVerdictAllowsAction(v, convID, perm, actx)
+	if actx.bulkGroupMemberCoverage {
+		return permissionVerdictAllowsBulkGroupAction(v, convID, perm, actx)
+	}
+	allowed, matched := permissionVerdictAllowsAction(v, convID, perm, actx)
+	return allowed, matched, nil
+}
+
+func permissionVerdictAllowsBulkGroupAction(v permVerdict, convID, perm string, actx ActionContext) (bool, string, error) {
+	targets := actx.affectedConvs
+	if targets == nil {
+		g, err := db.GetAgentGroupByName(actx.structuralGroup)
+		if err != nil {
+			return false, "", fmt.Errorf("resolve target group: %w", err)
+		}
+		if g == nil {
+			return false, "", fmt.Errorf("resolve target group: group %q not found", actx.structuralGroup)
+		}
+		members, err := db.ListAgentGroupMembers(g.ID)
+		if err != nil {
+			return false, "", fmt.Errorf("resolve affected members: %w", err)
+		}
+		for _, member := range members {
+			if perm == PermGroupsMembersRetire && sameActor(convID, member.ConvID) {
+				continue
+			}
+			targets = append(targets, member.ConvID)
+		}
+	}
+	if len(targets) == 0 {
+		base := actx
+		base.bulkGroupMemberCoverage = false
+		allowed, matched := permissionVerdictAllowsAction(v, convID, perm, base)
+		return allowed, matched, nil
+	}
+	seenGroups := map[string]bool{}
+	for _, target := range targets {
+		groups, err := activeGroupNamesForConvs(target)
+		if err != nil {
+			return false, "", fmt.Errorf("resolve affected groups: %w", err)
+		}
+		if len(groups) == 0 {
+			return false, "", nil
+		}
+		targetAgent, err := db.AgentIDForConv(target)
+		if err != nil {
+			return false, "", fmt.Errorf("resolve affected agent: %w", err)
+		}
+		for _, group := range groups {
+			candidate := actx
+			candidate.bulkGroupMemberCoverage = false
+			candidate.Group = group
+			candidate.structuralGroup = group
+			candidate.TargetAgent = targetAgent
+			candidate.targetConv = target
+			if allowed, _ := permissionVerdictAllowsAction(v, convID, perm, candidate); !allowed {
+				return false, "", nil
+			}
+			seenGroups[group] = true
+		}
+	}
+	groups := make([]string, 0, len(seenGroups))
+	for group := range seenGroups {
+		groups = append(groups, group)
+	}
+	sort.Strings(groups)
+	return true, "group=" + strings.Join(groups, ","), nil
 }
 
 func permissionVerdictAllowsAction(v permVerdict, convID, perm string, actx ActionContext) (bool, string) {
@@ -925,14 +936,9 @@ func loadBearingSudoGrantID(r *http.Request, convID, perm string, actx ActionCon
 //   - Scoped allow the context satisfies → pass, and the matched scope is
 //     recorded on the request's audit row.
 //   - Scoped allow the context does not satisfy, or a scoped dimension the
-//     site did not describe → the grant does not decide this action: the
-//     structural owner bypass may still fill the gap, then the ask-human
-//     popup, then 403. Never a silent allow.
-//
-// The bypass receives the slug and the SAME ActionContext, because the
-// owner-implied bypass is itself scopeable per group (TCL-1071): a bypass that
-// could not see what the action targets could not tell a permitted spawn from
-// a refused one.
+//     site did not describe → that source does not decide this action. An
+//     owner/member-derived grant may still cover it, then the ask-human popup,
+//     then 403. Never a silent allow.
 func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, actx ...ActionContext) (string, bool) {
 	// Authorization code may only name capabilities in the central registry.
 	// Fail before identity resolution (including the implicit-human path), so a
@@ -980,8 +986,8 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ac
 	}
 	// Defaults, per-conv grant/deny overrides, and sudo grants all
 	// resolve in resolvePermission. A permAllow passes; a permUndecided
-	// may still pass via the structural owner bypass; permDeny is
-	// authoritative and (like an undecided with no bypass) falls through
+	// may still pass via an owner/member-derived grant; permDeny is
+	// authoritative and (like an undecided with no derived grant) falls through
 	// to the popup-or-403 path below.
 	allowed := false
 	if hasWriteProofApprovalContinuation(r, p.ConvID, perm, p.ConvID) ||
@@ -990,9 +996,14 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ac
 		// grants (and their scopes) are not consulted at all.
 		allowed = true
 	} else {
-		bypassCtx := actionContextOf(actx)
+		actionCtx := actionContextOf(actx)
 		var matched string
-		allowed, matched = permissionAllowsAction(r, p.ConvID, perm, bypassCtx)
+		var evalErr error
+		allowed, matched, evalErr = permissionAllowsAction(r, p.ConvID, perm, actionCtx)
+		if evalErr != nil {
+			writeError(w, http.StatusInternalServerError, "io", evalErr.Error())
+			return "", false
+		}
 		recordAuditPermissionScope(r, perm, matched)
 	}
 	if !allowed {

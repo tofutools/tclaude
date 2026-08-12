@@ -182,7 +182,7 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 			scopeContext.TargetAgent = targetAgent
 		}
 	}
-	if allowed, matched := permissionAllowsAction(r, p.ConvID, perm, scopeContext); allowed {
+	if allowed, matched, _ := permissionAllowsAction(r, p.ConvID, perm, scopeContext); allowed {
 		recordAuditPermissionScope(r, perm, matched)
 		recordAuthorizedPermission(r, perm, loadBearingSudoGrantID(r, p.ConvID, perm, scopeContext))
 		return p.ConvID, true
@@ -206,7 +206,8 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 			for _, group := range groups {
 				candidate := scopeContext
 				candidate.Group = group
-				if allowed, _ := permissionAllowsAction(r, p.ConvID, sibling, candidate); !allowed {
+				candidate.structuralGroup = group
+				if allowed, _, _ := permissionAllowsAction(r, p.ConvID, sibling, candidate); !allowed {
 					covered = false
 					break
 				}

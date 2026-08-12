@@ -230,6 +230,7 @@ func TestEffectivePerms_OwnerConferredSlugsCarryTheirScope(t *testing.T) {
 		g := f.HaveGroup(name)
 		require.NoError(t, db.AddAgentGroupOwner(g.ID, owner, "test"), "seed owner of "+name)
 	}
+	require.NoError(t, db.GrantAgentPermission(owner, agentd.PermGroupsMembersTask, "test"))
 
 	view := effectiveViewFor(t, f, owner)
 
@@ -243,6 +244,8 @@ func TestEffectivePerms_OwnerConferredSlugsCarryTheirScope(t *testing.T) {
 	assert.NotContains(t, view.Effective, agentd.PermAgentRename)
 	assert.Equal(t, "owner [group=squad-a] OR [group=squad-b]",
 		view.Provenance[agentd.PermGroupsMembersRename])
+	assert.Equal(t, "override", view.Provenance[agentd.PermGroupsMembersTask],
+		"an unscoped explicit grant already covers the owner scope and should not render a redundant OR clause")
 	// human.notify remains the deliberate global owner bonus.
 	assert.Equal(t, "owner", view.Provenance[agentd.PermHumanNotify])
 }

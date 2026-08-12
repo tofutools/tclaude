@@ -43,7 +43,7 @@ type ownerScopeMap map[string]PermissionScope
 //
 // The per-slug scope goes through exactly the validation a GRANT scope does —
 // same dimension registry, same declared-dimension rule — so an operator
-// cannot narrow an owner bypass along a dimension no gate evaluates.
+// cannot constrain an owner-derived grant along a dimension no gate evaluates.
 func parseOwnerScopes(raw json.RawMessage) (ownerScopeMap, string, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
@@ -78,7 +78,7 @@ func parseOwnerScopes(raw json.RawMessage) (ownerScopeMap, string, error) {
 			// Narrowing something ownership never conferred would silently do
 			// nothing; say so rather than storing a no-op the operator will
 			// later read as protection.
-			return nil, "", fmt.Errorf("permission %q has no owner-implied bypass to narrow", slug)
+			return nil, "", fmt.Errorf("permission %q is not contributed by group ownership", slug)
 		}
 		scope, _, err := parsePermissionScope(rawScope)
 		if err != nil {
@@ -86,11 +86,11 @@ func parseOwnerScopes(raw json.RawMessage) (ownerScopeMap, string, error) {
 		}
 		if len(scope) == 0 {
 			// {} would parse as "unscoped", i.e. exactly the unrestricted
-			// bypass the operator was trying to constrain. Refuse the
+			// grant the operator was trying to constrain. Refuse the
 			// ambiguity instead of storing the widest possible reading of a
 			// value written to narrow.
 			return nil, "", fmt.Errorf("permission %q: an owner scope must name at least one dimension "+
-				"(omit the slug entirely to leave its owner bypass unrestricted)", slug)
+				"(omit the slug entirely to leave its owner-contributed grant unrestricted)", slug)
 		}
 		if err := validatePermissionScopeForSlug(slug, scope); err != nil {
 			return nil, "", err
@@ -143,8 +143,13 @@ func ownerPermissionMatch(convID, slug string, actx ActionContext) (bool, string
 	if entry.Unrestricted {
 		return true, ""
 	}
+	if actx.structuralGroup == "" {
+		return false, ""
+	}
+	ownerCtx := actx
+	ownerCtx.Group = actx.structuralGroup
 	for _, scope := range entry.Scopes {
-		if permissionScopeSatisfied(convID, scope, actx) {
+		if permissionScopeSatisfied(convID, scope, ownerCtx) {
 			return true, permissionScopeDisplay(scope)
 		}
 	}

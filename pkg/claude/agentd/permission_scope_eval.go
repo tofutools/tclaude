@@ -65,6 +65,11 @@ type ActionContext struct {
 	// footprint for an operation such as clone that also creates inherited
 	// ownership relationships. It is already deduplicated by the producer.
 	affectedGroups []string
+	// bulkGroupMemberCoverage asks the central evaluator to require this slug
+	// for every current active group containing every affected conversation.
+	// Keeping the check inside the evaluator means an uncovered footprint is
+	// still eligible for the ordinary one-shot human approval path.
+	bulkGroupMemberCoverage bool
 }
 
 // value projects the context onto one scope dimension. An unknown dimension

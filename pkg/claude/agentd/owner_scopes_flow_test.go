@@ -268,7 +268,7 @@ func TestOwnerScopes_PatchValidatesTheMap(t *testing.T) {
 		},
 	})
 	require.Equal(t, http.StatusBadRequest, notOwnerImplied.Code, notOwnerImplied.Body.String())
-	assert.Contains(t, notOwnerImplied.Body.String(), "no owner-implied bypass to narrow")
+	assert.Contains(t, notOwnerImplied.Body.String(), "is not contributed by group ownership")
 
 	// A rejected map leaves nothing behind.
 	g, err := db.GetAgentGroupByName("g1")

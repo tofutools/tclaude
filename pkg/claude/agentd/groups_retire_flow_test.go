@@ -338,6 +338,32 @@ func TestGroupRetire_OwnerFilterAuthorizesOnlyAffectedCohort(t *testing.T) {
 	assert.Equal(t, db.AgentStateActive, state)
 }
 
+func TestGroupRetire_HumanApprovalCoversSharedMemberFootprint(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://popup.test"))
+	t.Cleanup(agentd.StubApprovalForTest(true))
+	f := newFlow(t)
+	const owner = "ret-approval-owner-1111-2222"
+	const shared = "ret-approval-shared-1111-2222"
+	owned := f.HaveGroup("ret-approval-owned")
+	unowned := f.HaveGroup("ret-approval-unowned")
+	f.HaveEnrolledAgent(owner)
+	f.HaveConvWithTitle(shared, "shared-worker")
+	f.HaveMember(owned.Name, shared)
+	f.HaveMember(unowned.Name, shared)
+	require.NoError(t, db.AddAgentGroupOwner(owned.ID, owner, "test"))
+
+	r := testharness.JSONRequest(t, http.MethodPost,
+		"/v1/groups/"+owned.Name+"/retire?shutdown=0", nil)
+	r.Header.Set("X-Tclaude-Ask-Human", "5s")
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(r, owner))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	state, err := db.AgentState(shared)
+	require.NoError(t, err)
+	assert.Equal(t, db.AgentStateRetired, state,
+		"one-shot human approval must cover the whole shared-member mutation")
+}
+
 func TestGroupRetire_OwnerEmptyFilterCohortIsAuthorized(t *testing.T) {
 	f := newFlow(t)
 	const owner = "ret-empty-owner-1111-2222-3333"

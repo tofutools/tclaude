@@ -335,7 +335,7 @@ var permissionRegistry = []PermSlug{
 		Slug:         PermGroupsSettingsOwnerScopes,
 		OwnerImplied: true,
 		ScopeDims:    []ScopeDim{ScopeDimGroup},
-		Description:  "Set or clear a group's owner-bypass narrowing. Also requires permissions.grant and permissions.revoke.",
+		Description:  "Set or clear a group's owner-grant constraints. Also requires permissions.grant and permissions.revoke.",
 	},
 	{
 		Slug:         PermGroupsMembersAdd,
@@ -1169,8 +1169,8 @@ func writeEffectivePermissions(w http.ResponseWriter, r *http.Request, state per
 
 // ownerImpliedSlugsFor returns the owner-conferred tier for convID —
 // non-empty only when the conv owns at least one group. Ownership is a
-// structural bypass (PermSlug.OwnerImplied), so an owner effectively holds
-// these without an explicit grant, CONFINED by each owned group's own
+// derived grant (PermSlug.OwnerImplied), so an owner effectively holds these
+// without an explicit assignment, CONFINED by each owned group's own
 // owner-scope map (TCL-1071). A DB error degrades to "not an owner": owner
 // perms go un-annotated rather than failing the whole listing.
 func ownerImpliedSlugsFor(convID string) ownerImpliedTier {
@@ -1204,8 +1204,8 @@ func ownedGroupNamesFor(convID string) []string {
 // effectivePermsFor answers "what would the gate decide for this agent",
 // slug by slug, by asking the gate's own resolver
 // (resolvePermissionVerdict) about every candidate slug and applying the
-// structural group-owner bypass exactly where requirePermissionEx applies
-// it: at the permUndecided gap, never over an explicit deny.
+// owner-derived grant exactly where requirePermissionEx applies it: at the
+// permUndecided gap, never over an explicit deny.
 //
 // It deliberately does NOT re-derive the precedence from `state`. The
 // listing used to union (defaults ∪ per-conv grants ∪ owner-implied) and
@@ -1219,7 +1219,7 @@ func ownedGroupNamesFor(convID string) []string {
 // default as a parameter, as the request path does) and the candidate
 // enumeration; ownerImplied is empty for a non-owner.
 //
-// ownerAdded reports the subset held SOLELY via the owner bypass, so the
+// ownerAdded reports the subset held SOLELY via an owner-derived grant, so the
 // caller can annotate those rows "(via ownership)". provenance maps every
 // effective slug to the source that granted it ("sudo", "override",
 // "group", "default", "owner").
@@ -1251,14 +1251,14 @@ func effectivePermsFor(state permissionsState, convID string, ownerImplied owner
 			// A scoped higher-tier grant and owner-derived group scopes are
 			// additive at the action gate. Preserve both in the effective view;
 			// otherwise an owner with explicit B + owned A would be shown only B.
-			if len(v.ScopeJSON) > 0 {
+			if permissionVerdictIsNarrowed(v) {
 				if entry, ok := ownerImplied[slug]; ok && entry.confers() {
 					provenance[slug] += " OR " + ownerProvenance(slug, entry)
 					matched[permSourceOwner] = true
 				}
 			}
 		case permUndecided:
-			// The owner bypass fills exactly this gap — see
+			// The owner-derived grant fills exactly this gap — see
 			// requirePermissionEx, where it is consulted only for
 			// permUndecided so an explicit deny stays authoritative.
 			// entry.confers() rather than mere presence: a DEGRADED entry
@@ -1305,6 +1305,18 @@ func effectivePermsFor(state permissionsState, convID string, ownerImplied owner
 		source += " −denies"
 	}
 	return effective, ownerAdded, provenance, source
+}
+
+func permissionVerdictIsNarrowed(v permVerdict) bool {
+	if len(v.ScopeJSON) == 0 {
+		return false
+	}
+	for _, scope := range v.ScopeJSON {
+		if strings.TrimSpace(scope) == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func memberImpliedForAgent(convID, slug string) bool {
