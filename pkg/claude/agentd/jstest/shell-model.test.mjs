@@ -31,7 +31,11 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
 
   assert.deepEqual(messagesBadgeView({ messages_unread: 98, access_requests_pending: 3 }),
     { text: '99+', hidden: false, blink: true });
-  assert.equal(footerMetaView({ version: 'v1', popup_base: 'http://x', generated_at: 'now' }).base, 'http://x');
+  assert.deepEqual(
+    footerMetaView({ version: 'v1', popup_base: 'http://x', generated_at: 'now', auth_session: { minted_at: 'then' } }),
+    { version: 'v1', generatedAt: 'now' },
+    'footer excludes the dashboard URL and auth session metadata',
+  );
 
   const member = { conv_id: 'same', online: true, state: { status: 'working' } };
   const activity = globalActivityView({
