@@ -245,6 +245,21 @@ func TestCronGroupMulticast_AuthGate_DeniesNonMember(t *testing.T) {
 	assert.Empty(t, jobs, "the denied create wrote no job row")
 }
 
+func TestCronGroupMulticast_ExplicitDenySuppressesMembership(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("team")
+	const member = "cgm4-deny-aaaa-bbbb-cccc-000000000003"
+	f.HaveMember("team", member)
+	require.NoError(t, db.SetAgentPermissionOverride(
+		member, agentd.PermGroupsMessagesSchedule, db.PermEffectDeny, "test"))
+
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(
+		t, http.MethodPost, "/v1/cron", map[string]any{
+			"target": "group:team", "interval": "10m", "body": "denied",
+		}), member))
+	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+}
+
 // Scenario 5: the dashboard's Group (multicast) cron form — and the
 // per-group ⏰-schedule button that opens it — POSTs /api/cron with
 // target=group:<name>. Pins that wire path end to end: the cookie-auth
