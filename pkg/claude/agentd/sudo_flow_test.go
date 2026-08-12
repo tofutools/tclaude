@@ -560,6 +560,39 @@ func TestSudo_DownstreamAuditAnnotation_GroupsCreateOwner(t *testing.T) {
 	assert.Equal(t, want, owners[0].GrantedBy, "granted_by")
 }
 
+func TestSudo_DownstreamAuditAnnotation_GroupsAdminUmbrella(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+	t.Cleanup(agentd.StubApprovalForTest(true))
+
+	f := newFlow(t)
+	const conv = "aud-admin-aaaa-bbbb-1111"
+	f.HaveConvWithTitle(conv, "group-admin")
+	sudoReq := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/sudo", map[string]any{
+		"slugs": []string{agentd.PermGroupsAdmin}, "duration": "5m",
+	}), conv)
+	sudoRec := testharness.Serve(f.Mux, sudoReq)
+	require.Equal(t, http.StatusOK, sudoRec.Code, sudoRec.Body.String())
+	var sudoResp struct {
+		Grants []struct {
+			ID int64 `json:"id"`
+		} `json:"grants"`
+	}
+	require.NoError(t, json.Unmarshal(sudoRec.Body.Bytes(), &sudoResp))
+	require.Len(t, sudoResp.Grants, 1)
+
+	createReq := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
+		"/v1/groups", map[string]any{"name": "team-via-admin-sudo"}), conv)
+	createRec := testharness.Serve(f.Mux, createReq)
+	require.Equal(t, http.StatusCreated, createRec.Code, createRec.Body.String())
+	g, err := db.GetAgentGroupByName("team-via-admin-sudo")
+	require.NoError(t, err)
+	owners, err := db.ListAgentGroupOwners(g.ID)
+	require.NoError(t, err)
+	require.Len(t, owners, 1)
+	assert.Equal(t, fmt.Sprintf("%s:via-sudo:grant-id=%d", conv, sudoResp.Grants[0].ID), owners[0].GrantedBy)
+}
+
 // Scenario: agent has groups.create via the normal permission_overrides
 // path (agent_permissions row), then creates a group. The auto-owner's
 // granted_by is the plain conv-id — NO via-sudo annotation, because

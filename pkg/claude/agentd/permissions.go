@@ -1349,33 +1349,33 @@ func granterLabel(granterConvID string) string {
 //     permission (a per-conv grant override or the default-permissions
 //     list). Annotating those with via-sudo would be misleading.
 //
-// A per-conv deny override is treated like the no-non-sudo-source case:
-// if the call passed at all, sudo is the only thing that could have
-// allowed it, so the via-sudo annotation applies.
-//
 // Only used at the audit-write layer, not in the hot read path —
 // re-checking config + DB here is fine.
 func auditedCaller(callerConvID, perm string) string {
 	if callerConvID == "" {
 		return ""
 	}
-	effect, hasOverride, _ := db.AgentPermissionOverride(callerConvID, perm)
-	if hasOverride && effect == db.PermEffectGrant {
+	cfg, _ := config.Load()
+	src := loadPermSources(callerConvID)
+	// First resolve without the sudo tier. If standing authority (including a
+	// group grant or the groups.admin umbrella) suffices, sudo was not
+	// load-bearing and must not be stamped onto the operation.
+	withoutSudo := src
+	withoutSudo.sudo = map[string]sudoPermSource{}
+	standing := resolveEffectivePermissionVerdictFrom(withoutSudo, perm,
+		cfg.HasDefaultPermission(perm), cfg.HasDefaultPermission(PermGroupsAdmin))
+	if contextFreeResolution(standing) == permAllow {
 		return callerConvID
 	}
-	if !hasOverride {
-		cfg, _ := config.Load()
-		if cfg.HasDefaultPermission(perm) {
-			return callerConvID
-		}
-	}
-	// Either an explicit deny override, or no non-sudo source at all —
-	// the call could only have passed via an active sudo grant.
-	grantID, err := db.LookupActiveSudoGrantID(callerConvID, perm)
-	if err != nil || grantID == 0 {
+	// Re-resolve with sudo. The winning effective verdict may be either the
+	// exact operation slug or groups.admin; carrying SudoGrantID from that
+	// verdict preserves the umbrella elevation's forensic provenance.
+	effective := resolveEffectivePermissionVerdictFrom(src, perm,
+		cfg.HasDefaultPermission(perm), cfg.HasDefaultPermission(PermGroupsAdmin))
+	if contextFreeResolution(effective) != permAllow || effective.SudoGrantID == 0 {
 		return callerConvID
 	}
-	return fmt.Sprintf("%s:via-sudo:grant-id=%d", callerConvID, grantID)
+	return fmt.Sprintf("%s:via-sudo:grant-id=%d", callerConvID, effective.SudoGrantID)
 }
 
 // handlePermissionsGrant adds slug to either the DefaultPermissions list
