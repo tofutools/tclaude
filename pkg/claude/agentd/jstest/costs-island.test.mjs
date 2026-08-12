@@ -123,8 +123,11 @@ test('Costs island keeps its cross-line word gaps and leads with the WHAT-IF cav
     harness.importDashboardModule('js/costs-state.js'), harness.importDashboardModule('js/costs-island.js'),
   ]);
   const chained = payload();
+  // Same agent_id as the base conv-a row: the API derives agent_id per conv
+  // (peerAgentID), so one conv never carries two ids — and the table chains
+  // rows by agent id, so a mismatched id here would silently unchain them.
   chained.agents.push({
-    agent_id: 'agt_alpha2', conv_id: 'conv-a', day: '2026-07-09', title: 'Alpha', harness: 'claude',
+    agent_id: 'agt_alpha', conv_id: 'conv-a', day: '2026-07-09', title: 'Alpha', harness: 'claude',
     model: 'opus', cost_usd: 1, real_cost_usd: 1, cost_kind: 'real', continued: true,
   });
   const snapshot = harness.signals.signal({ cost_tab_visible: true, cost_tab_whatif: true });

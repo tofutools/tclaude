@@ -79,7 +79,7 @@ async function materializeDashboardModules(t) {
   return { workDir, targets };
 }
 
-function installDOM(t) {
+function installDOM(t, preTeardown = []) {
   const { window } = parseHTML('<!doctype html><html><body></body></html>');
   const { document } = window;
   const globals = [...new Set([
@@ -207,7 +207,12 @@ function installDOM(t) {
     },
   });
 
-  t.after(() => {
+  t.after(async () => {
+    // Pending mount cleanups need the DOM globals this hook is about to
+    // remove, and node:test runs after-hooks FIFO — a hook mount() registers
+    // later would fire after this teardown and crash on the missing
+    // `document`. Flush them here instead, before the globals go away.
+    for (const cleanup of preTeardown.splice(0).reverse()) await cleanup();
     Object.defineProperty(eventTargetProto, 'addEventListener', addDescriptor);
     Object.defineProperty(eventTargetProto, 'removeEventListener', removeDescriptor);
     if (detailsHasInstance) {
@@ -280,7 +285,8 @@ export function getByLabelText(root, expected) {
 
 export async function createPreactHarness(t) {
   const { workDir, targets } = await materializeDashboardModules(t);
-  const { window, document } = installDOM(t);
+  const pendingUnmounts = [];
+  const { window, document } = installDOM(t, pendingUnmounts);
   const loadTarget = (specifier) => import(pathToFileURL(targets.get(specifier)));
   const [preact, hooks, signals, htmModule, testUtils] = await Promise.all([
     loadTarget('preact'),
@@ -307,13 +313,25 @@ export async function createPreactHarness(t) {
     const ownsContainer = container === undefined;
     if (ownsContainer) container = document.body.appendChild(document.createElement('div'));
     await testUtils.act(() => preact.render(vnode, container));
+    // Unmount idempotently, and ALSO at test teardown: an assertion that
+    // throws between mount and the test's own unmount() otherwise leaks the
+    // component's effects — a leaked setInterval keeps the Node event loop
+    // alive, so the runner reports nothing and the suite hangs to the CI
+    // timeout instead of printing the failure. Registered on installDOM's
+    // pre-teardown list (not t.after directly): after-hooks run FIFO, so a
+    // hook added here would fire only after the DOM globals are gone.
+    let unmounted = false;
+    const unmount = async () => {
+      if (unmounted) return;
+      unmounted = true;
+      await testUtils.act(() => preact.render(null, container));
+      if (ownsContainer) container.remove();
+    };
+    pendingUnmounts.push(unmount);
     return {
       container,
       rerender: async (next) => testUtils.act(() => preact.render(next, container)),
-      unmount: async () => {
-        await testUtils.act(() => preact.render(null, container));
-        if (ownsContainer) container.remove();
-      },
+      unmount,
     };
   };
 
