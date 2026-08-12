@@ -14,6 +14,7 @@ test('shell island reacts to snapshots while preserving keyed usage and footer n
   const feedback = createShellState();
   const snapshot = {
     version: 'v1', popup_base: 'http://127.0.0.1:9999', generated_at: '2026-07-13T10:00:00Z',
+    auth_session: { minted_at: '2026-07-13T09:00:00Z' },
     messages_unread: 2, access_requests_pending: 1,
     usage: { available: true, five_hour: { pct: 17, remaining: '2h' }, seven_day: { pct: 20, remaining: '4d' } },
     groups: [], ungrouped: [],
@@ -25,15 +26,17 @@ test('shell island reacts to snapshots while preserving keyed usage and footer n
   state.beginRequest();
   await harness.act(() => state.commitRequest(1, snapshot));
   const fiveHour = usage.container.querySelector('.uw');
-  const baseText = meta.container.querySelector('.meta-base').firstChild;
+  const version = meta.container.querySelector('.meta-version');
   assert.equal(badge.container.querySelector('#messages-badge').textContent, '3');
   assert.ok(badge.container.querySelector('#messages-badge').classList.contains('blink'));
+  assertAbsent(meta.container.querySelector('.meta-base'), 'footer omits the dashboard URL');
+  assertAbsent(meta.container.querySelector('.footer-session-toggle'), 'footer omits auth controls');
 
   state.beginRequest();
   await harness.act(() => state.commitRequest(2, { ...snapshot, generated_at: '2026-07-13T10:00:02Z' }));
   assertSameNode(usage.container.querySelector('.uw'), fiveHour, 'stable usage token survives a poll');
-  assertSameNode(meta.container.querySelector('.meta-base').firstChild, baseText,
-    'unchanged base URL remains a valid selection anchor');
+  assertSameNode(meta.container.querySelector('.meta-version'), version,
+    'unchanged version remains a valid selection anchor');
 
   feedback.showStatus('live');
   const status = await harness.mount(harness.html`<${island.Status} feedback=${feedback} />`);

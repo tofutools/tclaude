@@ -107,9 +107,7 @@ export function footerMetaView(snapshot) {
   if (!snapshot) return null;
   return {
     version: snapshot.version || 'unknown',
-    base: snapshot.popup_base || '',
     generatedAt: snapshot.generated_at || '',
-    authSession: snapshot.auth_session || null,
   };
 }
 

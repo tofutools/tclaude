@@ -141,31 +141,6 @@ footer {
   gap: 16px;
 }
 footer .meta { color: #7d8590; font-size: 12px; }
-.footer-session-toggle {
-  margin-left: 10px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: #8c959f;
-  font: inherit;
-  cursor: pointer;
-}
-.footer-session-toggle:hover { color: #c9d1d9; }
-.footer-session-panel {
-  position: absolute;
-  right: 24px;
-  bottom: calc(100% + 8px);
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 270px;
-  padding: 10px 12px;
-  color: #c9d1d9;
-  background: #161b22;
-  border: 1px solid #30363d;
-  border-radius: 6px;
-  box-shadow: 0 8px 24px #01040999;
-}
 /* Reserve the fixed footer's height at the page bottom so scrolling to the
    end never leaves the last row hidden behind the bar. The Messages tab
    pins body to the viewport height and scrolls internally, so it shrinks

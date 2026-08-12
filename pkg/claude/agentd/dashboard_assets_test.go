@@ -95,22 +95,28 @@ func TestDashboardEmbed_HasExpectedFiles(t *testing.T) {
 }
 
 // TestDashboardFooterVersionWired guards the footer's status line: it should
-// show the running tclaude version alongside the dashboard URL and refresh
-// heartbeat. The JSON field itself is covered by the snapshot flow test; this
-// pins the client-side render contract.
+// show the running tclaude version alongside the refresh heartbeat, without
+// exposing the dashboard URL or authentication details. The JSON fields are
+// covered by the snapshot flow test; this pins the client-side render contract.
 func TestDashboardFooterVersionWired(t *testing.T) {
 	for _, needle := range []string{
 		`id="shell-meta-root"`,
 		`const view = footerMetaView(state.snapshot.value);`,
 		`class="meta-version">tclaude version ${view.version}</span>`,
-		`class="meta-base">${view.base}</span>`,
 		`refreshed <span class="meta-time">${new Date(view.generatedAt).toLocaleTimeString()}</span>`,
-		`const FOOTER_SESSION_EXPANDED_PREF = 'tclaude.dash.footer.session_expanded';`,
-		`auth cookie expires ${auth.expires_at ?`,
-		`minted ${new Date(auth.minted_at).toLocaleString()}`,
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard footer missing %q", needle)
+		}
+	}
+	for _, needle := range []string{
+		`class="meta-base"`,
+		`footer-session-toggle`,
+		`footer-session-panel`,
+		`auth cookie expires`,
+	} {
+		if strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard footer still contains %q", needle)
 		}
 	}
 }
