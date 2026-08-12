@@ -430,15 +430,16 @@ tclaude agent clone --target worker-1 \
   "explore the no-prepared-statement branch while worker-1 keeps the prepared-statement path"
 ```
 
-Auth model (same for all four verbs): the caller passes if EITHER
+Auth model (same for all four verbs): the caller passes if either
 
 - they hold the matching `agent.<verb>` slug (`agent.compact`,
   `agent.reincarnate`, `agent.clone`, `agent.context-info`; default
   human-only — granted via
-  `tclaude agent permissions grant <caller> agent.<verb>`), OR
-- they own at least one group that contains the target (mirrors how
-  `tclaude agent message` already special-cases group owners). For
-  `--group`, ownership of THAT group is the bypass.
+  `tclaude agent permissions grant <caller> agent.<verb>`), or
+- the matching `groups.members.<verb>` has positive scope coverage for every
+  current active group containing the target. Ownership contributes that
+  group slug for each owned group. For `--group`, every directly affected
+  member must be covered.
 
 The response includes `caller_conv` so the target's audit trail
 records who acted. For `reincarnate`, the handoff message uses
