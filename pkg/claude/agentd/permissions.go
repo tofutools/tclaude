@@ -1463,8 +1463,15 @@ func granterLabel(granterConvID string) string {
 // Only used at the audit-write layer, not in the hot read path —
 // re-checking config + DB here is fine.
 func auditedCaller(callerConvID, perm string) string {
+	return auditedCallerWithSudoGrant(callerConvID, perm, 0)
+}
+
+func auditedCallerWithSudoGrant(callerConvID, perm string, decisionGrantID int64) string {
 	if callerConvID == "" {
 		return ""
+	}
+	if decisionGrantID > 0 {
+		return fmt.Sprintf("%s:via-sudo:grant-id=%d", callerConvID, decisionGrantID)
 	}
 	cfg, _ := config.Load()
 	src := loadPermSources(callerConvID)

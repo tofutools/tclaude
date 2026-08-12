@@ -240,7 +240,7 @@ func handleWhoamiReincarnate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	runReincarnationOrchestration(w, caller, caller, "", body, auditRequestEventID(r))
+	runReincarnationOrchestration(w, caller, caller, "", 0, body, auditRequestEventID(r))
 }
 
 // handleAgentReincarnate handles POST /v1/agent/{conv}/reincarnate
@@ -259,7 +259,9 @@ func handleAgentReincarnate(w http.ResponseWriter, r *http.Request, targetConv s
 	if !ok {
 		return
 	}
-	runReincarnationOrchestration(w, targetConv, caller, PermAgentReincarnate, body, auditRequestEventID(r))
+	runReincarnationOrchestration(w, targetConv, caller,
+		authorizedPermissionForRequest(r, PermAgentReincarnate), authorizedSudoGrantIDForRequest(r),
+		body, auditRequestEventID(r))
 }
 
 type reincarnateBody struct {
@@ -327,7 +329,7 @@ func decodeReincarnateBody(w http.ResponseWriter, r *http.Request) (reincarnateB
 //     which are unconditionally available to active agents.
 //
 // Writes the JSON response (or error) directly to w.
-func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm string, body reincarnateBody, relatedEventID string) {
+func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm string, sudoGrantID int64, body reincarnateBody, relatedEventID string) {
 	launchLock := resumeLaunchLock(target)
 	launchLock.Lock()
 	defer launchLock.Unlock()
@@ -772,7 +774,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	// alongside the other lifecycle ops.
 	granter := "system:reincarnate"
 	if caller != target {
-		granter = "system:reincarnate:by=" + auditedCaller(caller, perm)
+		granter = "system:reincarnate:by=" + auditedCallerWithSudoGrant(caller, perm, sudoGrantID)
 	}
 
 	// 4. Advance the actor old → new (db.RotateAgentConv): the agent_id never

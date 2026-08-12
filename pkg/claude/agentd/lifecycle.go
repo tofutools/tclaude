@@ -85,9 +85,11 @@ func handleGroupStop(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		return
 	}
 	affected := make([]string, 0, len(members))
+	selected := make(map[string]bool, len(members))
 	for _, member := range members {
 		if pickAliveSession(member.ConvID) != nil {
 			affected = append(affected, member.ConvID)
+			selected[member.ConvID] = true
 		}
 	}
 	if _, ok := requireGroupPermission(w, r, PermGroupsMembersStop, g,
@@ -111,6 +113,10 @@ func handleGroupStop(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	out := groupOpResp{Group: g.Name, Action: "stop", Members: []memberOpResult{}}
 	out.Members = mapAgentsConcurrently(members, batchAgentOpConcurrency,
 		func(_ int, m *db.AgentGroupMember) (memberOpResult, bool) {
+			if m.ConvID != "" && !selected[m.ConvID] {
+				return memberOpResult{ConvID: m.ConvID, AgentID: peerAgentID(m.ConvID),
+					Title: agent.FreshTitle(m.ConvID), Action: "skipped:already_offline"}, true
+			}
 			res, _ := stopOneConvAndWait(m.ConvID, force, action, requestEventID, 0)
 			res.AgentID = peerAgentID(m.ConvID)
 			res.Title = agent.FreshTitle(m.ConvID)
@@ -1237,9 +1243,11 @@ func handleGroupResume(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		return
 	}
 	affected := make([]string, 0, len(members))
+	selected := make(map[string]bool, len(members))
 	for _, member := range members {
 		if member.ConvID != "" && pickAliveSession(member.ConvID) == nil {
 			affected = append(affected, member.ConvID)
+			selected[member.ConvID] = true
 		}
 	}
 	caller, ok := requireGroupPermission(w, r, PermGroupsMembersResume, g,
@@ -1258,6 +1266,10 @@ func handleGroupResume(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	out := groupOpResp{Group: g.Name, Action: "resume", Members: []memberOpResult{}}
 	out.Members = mapAgentsConcurrently(members, powerOnConcurrency,
 		func(_ int, m *db.AgentGroupMember) (memberOpResult, bool) {
+			if m.ConvID != "" && !selected[m.ConvID] {
+				return memberOpResult{ConvID: m.ConvID, AgentID: peerAgentID(m.ConvID),
+					Title: agent.FreshTitle(m.ConvID), Action: "skipped:already_online"}, true
+			}
 			res := resumeOneConvLocked(m.ConvID, false, requestTrustRoot)
 			confirmResumedConvOnline(m.ConvID, &res)
 			res.AgentID = peerAgentID(m.ConvID)

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -148,6 +149,7 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 // already supply it. A failed resolution leaves the dimension empty, so a
 // target-scoped grant fails closed.
 func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, targetConv string, actx ...ActionContext) (string, bool) {
+	clearAuthorizedPermission(r)
 	p := peerFromContext(r.Context())
 	switch classify(p) {
 	case classUnidentified:
@@ -166,6 +168,7 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 	}
 	if hasWriteProofApprovalContinuation(r, p.ConvID, perm, targetConv) ||
 		hasHumanApprovalContinuation(r, perm, targetConv) {
+		recordAuthorizedPermission(r, perm, 0)
 		return p.ConvID, true
 	}
 	scopeContext := actionContextOf(actx)
@@ -181,6 +184,7 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 	}
 	if allowed, matched := permissionAllowsAction(r, p.ConvID, perm, scopeContext); allowed {
 		recordAuditPermissionScope(r, perm, matched)
+		recordAuthorizedPermission(r, perm, loadBearingSudoGrantID(r, p.ConvID, perm, scopeContext))
 		return p.ConvID, true
 	}
 
@@ -198,6 +202,7 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 			slog.Warn("permissions: target group footprint lookup failed", "target", targetConv, "error", err)
 		} else if len(groups) > 0 {
 			covered := true
+			var sudoGrantID int64
 			for _, group := range groups {
 				candidate := scopeContext
 				candidate.Group = group
@@ -205,9 +210,13 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 					covered = false
 					break
 				}
+				if sudoGrantID == 0 {
+					sudoGrantID = loadBearingSudoGrantID(r, p.ConvID, sibling, candidate)
+				}
 			}
 			if covered {
 				recordAuditPermissionScope(r, sibling, "group="+strings.Join(groups, ","))
+				recordAuthorizedPermission(r, sibling, sudoGrantID)
 				return p.ConvID, true
 			}
 		}
@@ -250,6 +259,7 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 		}
 		if requestHumanApproval(req, popupBaseURL) {
 			markWriteProofHumanApproval(r, perm, targetConv)
+			recordAuthorizedPermission(r, perm, 0)
 			return p.ConvID, true
 		}
 		writeError(w, http.StatusForbidden, "permission",
@@ -262,6 +272,37 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 		fmt.Sprintf("caller is not granted %q for target %s, and is not an owner of any group containing it (grant via `tclaude agent permissions grant %s %s`, add caller as owner of a shared group, or call again with X-Tclaude-Ask-Human: <duration> to ask the human via popup)",
 			perm, short8(targetConv), perm, short8(p.ConvID)))
 	return "", false
+}
+
+const (
+	authorizedPermissionHeader = "X-Tclaude-Internal-Authorized-Permission"
+	authorizedSudoGrantHeader  = "X-Tclaude-Internal-Authorized-Sudo-Grant"
+)
+
+func clearAuthorizedPermission(r *http.Request) {
+	r.Header.Del(authorizedPermissionHeader)
+	r.Header.Del(authorizedSudoGrantHeader)
+}
+
+func recordAuthorizedPermission(r *http.Request, slug string, sudoGrantID int64) {
+	r.Header.Set(authorizedPermissionHeader, slug)
+	if sudoGrantID > 0 {
+		r.Header.Set(authorizedSudoGrantHeader, strconv.FormatInt(sudoGrantID, 10))
+	} else {
+		r.Header.Del(authorizedSudoGrantHeader)
+	}
+}
+
+func authorizedPermissionForRequest(r *http.Request, fallback string) string {
+	if slug := r.Header.Get(authorizedPermissionHeader); slug != "" {
+		return slug
+	}
+	return fallback
+}
+
+func authorizedSudoGrantIDForRequest(r *http.Request) int64 {
+	id, _ := strconv.ParseInt(r.Header.Get(authorizedSudoGrantHeader), 10, 64)
+	return id
 }
 
 // activeGroupNamesForConvs computes the bounded authorization footprint used

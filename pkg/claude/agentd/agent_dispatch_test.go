@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -133,6 +134,32 @@ func TestRequireCrossAgentPermission_GlobalDenyDoesNotDenyDistinctGroupSlug(t *t
 	r := requestWithPeer(&peer{PID: 999, HasClaudeAncestor: true, ConvID: "manager"})
 	_, ok := requireCrossAgentPermission(w, r, PermAgentReincarnate, "worker")
 	assert.True(t, ok, "a deny applies to its exact global slug, not its distinct group sibling")
+}
+
+func TestRequireCrossAgentPermission_RecordsScopedSiblingSudoProvenance(t *testing.T) {
+	setupTestDB(t)
+	_, _, err := db.EnsureAgentForConv("manager", "test")
+	require.NoError(t, err)
+	gID, err := db.CreateAgentGroup("team", "")
+	require.NoError(t, err)
+	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "worker"}))
+	now := time.Now()
+	grantID, err := db.InsertSudoGrant(&db.SudoGrant{
+		ConvID: "manager", Slug: PermGroupsMembersReincarnate,
+		ScopeJSON: `{"group":["team"]}`,
+		GrantedAt: now, ExpiresAt: now.Add(time.Minute), GrantedBy: "human:test",
+	})
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	r := requestWithPeer(&peer{PID: 999, HasClaudeAncestor: true, ConvID: "manager"})
+	_, ok := requireCrossAgentPermission(w, r, PermAgentReincarnate, "worker")
+	require.True(t, ok, "scoped sibling sudo should authorize; body=%s", w.Body.String())
+	assert.Equal(t, PermGroupsMembersReincarnate, authorizedPermissionForRequest(r, ""))
+	assert.Equal(t, grantID, authorizedSudoGrantIDForRequest(r))
+	assert.Equal(t, fmt.Sprintf("manager:via-sudo:grant-id=%d", grantID),
+		auditedCallerWithSudoGrant("manager", authorizedPermissionForRequest(r, ""),
+			authorizedSudoGrantIDForRequest(r)))
 }
 
 func TestRequireCrossAgentPermission_OwnerOfDifferentGroupDoesNotAllow(t *testing.T) {

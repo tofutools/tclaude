@@ -9,6 +9,7 @@ import (
 	"os"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1119,7 +1120,7 @@ func handleWhoamiClone(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	runCloneOrchestration(w, r, caller, caller, PermSelfClone, body)
+	runCloneOrchestration(w, r, caller, caller, PermSelfClone, nil, body)
 }
 
 // handleAgentClone handles POST /v1/agent/{conv}/clone (cross-agent).
@@ -1143,7 +1144,7 @@ func handleAgentClone(w http.ResponseWriter, r *http.Request, targetConv string)
 	if !ok {
 		return
 	}
-	runCloneOrchestration(w, r, targetConv, caller, PermAgentClone, body)
+	runCloneOrchestration(w, r, targetConv, caller, authorizedPermissionForRequest(r, PermAgentClone), groups, body)
 }
 
 func cloneAuthorizationGroups(targetConv string) ([]string, error) {
@@ -1240,7 +1241,7 @@ func decodeCloneBody(w http.ResponseWriter, r *http.Request) (cloneBody, bool) {
 //     before use; a bad value fails the whole clone with a 400. An
 //     AGENT caller must additionally pass the dir write-proof for it
 //     (see below).
-func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, caller, perm string, body cloneBody) {
+func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, caller, perm string, authorizedGroups []string, body cloneBody) {
 	followUp, noCopyConv, cwdOverride := body.FollowUp, body.NoCopyConv, body.Cwd
 	// 1. Snapshot target state. Same shape as reincarnate's snapshot
 	// pass.
@@ -1382,6 +1383,20 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 		if g != nil {
 			policyGroups = append(policyGroups, g)
 			seenPolicyGroup[groupID] = struct{}{}
+		}
+	}
+	if authorizedGroups != nil {
+		actual := make([]string, 0, len(policyGroups))
+		for _, group := range policyGroups {
+			if group != nil && !group.IsArchived() {
+				actual = append(actual, group.Name)
+			}
+		}
+		sort.Strings(actual)
+		if !slices.Equal(actual, authorizedGroups) {
+			writeError(w, http.StatusConflict, "authorization_footprint_changed",
+				"the target's current group footprint changed during clone authorization; retry the request")
+			return
 		}
 	}
 	// A clone is a fresh agent process even though it inherits the target's
@@ -1531,7 +1546,8 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	// the CLI.
 	granter := "system:clone"
 	if caller != target {
-		granter = "system:clone:by=" + auditedCaller(caller, perm)
+		granter = "system:clone:by=" + auditedCallerWithSudoGrant(caller, perm,
+			authorizedSudoGrantIDForRequest(r))
 	} else if grantID, _ := db.LookupActiveSudoGrantID(caller, perm); grantID > 0 {
 		// Self-clone via sudo: no :by= (it's just the target itself)
 		// but still surface the via-sudo annotation so forensics can

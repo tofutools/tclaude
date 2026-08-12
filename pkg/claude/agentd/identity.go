@@ -866,6 +866,10 @@ func isBulkGroupMemberPermission(slug string) bool {
 // An explicit deny remains authoritative and suppresses structural grants.
 func permissionAllowsAction(r *http.Request, convID, perm string, actx ActionContext) (bool, string) {
 	v := resolvePermissionVerdictForRequest(r, convID, perm)
+	return permissionVerdictAllowsAction(v, convID, perm, actx)
+}
+
+func permissionVerdictAllowsAction(v permVerdict, convID, perm string, actx ActionContext) (bool, string) {
 	switch v.Resolution {
 	case permAllow:
 		eval := evalPermissionScope(v, convID, actx)
@@ -880,6 +884,27 @@ func permissionAllowsAction(r *http.Request, convID, perm string, actx ActionCon
 	default:
 		return false, ""
 	}
+}
+
+// loadBearingSudoGrantID returns the durable grant responsible for an action,
+// but only when the same action is not already covered by standing sources
+// (including owner/member-derived grants). This decision-time check retains
+// scoped sudo provenance that a context-free audit re-resolution cannot see.
+func loadBearingSudoGrantID(r *http.Request, convID, perm string, actx ActionContext) int64 {
+	cfg, _ := config.Load()
+	src := loadPermSources(convID)
+	withoutSudo := src
+	withoutSudo.sudo = map[string]sudoPermSource{}
+	standing := resolveEffectivePermissionVerdictFrom(withoutSudo, perm,
+		cfg.HasDefaultPermission(perm), cfg.HasDefaultPermission(PermGroupsAdmin))
+	if allowed, _ := permissionVerdictAllowsAction(standing, convID, perm, actx); allowed {
+		return 0
+	}
+	effective := resolvePermissionVerdictForRequest(r, convID, perm)
+	if allowed, _ := permissionVerdictAllowsAction(effective, convID, perm, actx); allowed && effective.SudoGrantID > 0 {
+		return effective.SudoGrantID
+	}
+	return 0
 }
 
 // requirePermissionEx is the shared core of requirePermission and

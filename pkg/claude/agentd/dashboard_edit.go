@@ -1245,7 +1245,7 @@ func dashboardCloneAgent(w http.ResponseWriter, r *http.Request, convSelector st
 	if !ok {
 		return
 	}
-	runCloneOrchestration(w, r, res.ConvID, dashboardGranter, "", body)
+	runCloneOrchestration(w, r, res.ConvID, dashboardGranter, "", nil, body)
 }
 
 // reincarnateMode* are the two modes the dashboard reincarnate button
