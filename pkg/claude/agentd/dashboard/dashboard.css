@@ -7100,6 +7100,38 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
 .spawn-role-row .spawn-perms-indicator {
   flex: 0 0 auto; padding-top: 6px; color: #7d8590; white-space: nowrap;
 }
+.agent-spawn-role-picker { flex: 1 1 auto; min-width: 0; }
+.spawn-form-section {
+  margin: 12px 0 2px; padding-top: 9px; border-top: 1px solid #30363d;
+  color: #b9c9da; font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;
+}
+.spawn-form-section span { color: #7d8590; font-weight: 500; }
+.agent-spawn-role-chips {
+  min-height: 34px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  border: 1px solid #30363d; border-radius: 4px; background: #0d1117; padding: 5px 7px;
+}
+.agent-spawn-role-chips:focus-within { border-color: #58a6ff; }
+.agent-spawn-role-chip {
+  display: inline-flex; align-items: stretch; overflow: hidden; border: 1px solid #315b87;
+  border-radius: 999px; background: #17345a; color: #dbeaff;
+}
+.agent-spawn-role-chip.missing { border-color: #9e6a03; background: rgba(187, 128, 9, .16); }
+.agent-spawn-role-chip button { border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.agent-spawn-role-chip .role-chip-inspect { padding: 3px 3px 3px 9px; }
+.agent-spawn-role-chip .role-chip-remove { padding: 3px 8px 3px 4px; color: #9fc6ef; }
+.agent-spawn-role-chip button:hover { color: #fff; }
+#agent-spawn-role-add {
+  width: auto; min-width: 112px; border: 1px dashed #426084; border-radius: 999px;
+  background: transparent; color: #79b8ff; padding: 3px 8px;
+}
+.agent-spawn-role-inspect {
+  display: grid; gap: 5px; margin-top: 6px; border: 1px solid #303b49; border-radius: 5px;
+  background: #111820; padding: 8px 10px; color: #aebdcd; font-size: 12px;
+}
+.agent-spawn-role-inspect.missing { border-color: #9e6a03; color: #d29922; }
+.agent-spawn-role-inspect b { display: inline-block; min-width: 46px; color: #d7e3f1; }
+.agent-spawn-role-inspect .role-inspect-grants { display: inline-flex; flex-wrap: wrap; gap: 5px; }
+.agent-spawn-role-inspect code { border-radius: 3px; background: #1b2632; padding: 1px 4px; color: #8ed5b1; }
 .cron-create-row input[type=text]:focus,
 .cron-create-row input:not([type]):focus,
 .sbx-section input:not([type]):focus,

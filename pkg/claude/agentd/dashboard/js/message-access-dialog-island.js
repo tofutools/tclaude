@@ -798,7 +798,7 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
   const subtitle = groupMode ? `Group: ${descriptor.group} · every current member receives these grants immediately`
     : descriptor.mode === 'agent' ? `Agent: ${descriptor.label || shortConv} · ${shortConv}`
     : roleMode ? `Role${descriptor.label ? `: ${descriptor.label}` : ''} · granted when the role is assigned`
-    : `New agent${descriptor.label ? ` “${descriptor.label}”` : ''}${descriptor.group ? ` → ${descriptor.group}` : ''} · applied when it spawns`;
+    : `New agent${descriptor.label ? ` “${descriptor.label}”` : ''}${descriptor.group ? ` → ${descriptor.group}` : ''} · fully composed from defaults, group, roles, ownership, and overrides`;
   const wizardSubtitle = groupMode ? `Party: ${descriptor.group} · every familiar receives these boons immediately`
     : descriptor.mode === 'agent' ? `Familiar: ${descriptor.label || shortConv} · ${shortConv}`
     : roleMode ? `Class${descriptor.label ? `: ${descriptor.label}` : ''} · bestowed when the class is assigned`

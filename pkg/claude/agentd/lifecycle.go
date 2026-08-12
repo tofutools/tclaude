@@ -3387,6 +3387,7 @@ func spawnAuditProfileSnapshot(p *db.SpawnProfile) any {
 		"agent_name":                    p.AgentName,
 		"role":                          p.Role,
 		"role_ref":                      p.RoleRef,
+		"role_refs":                     p.RoleRefs,
 		"descr":                         p.Descr,
 		"initial_message":               redactedAuditText(p.InitialMessage),
 		"startup_context":               redactedAuditText(p.StartupContext),
@@ -4089,35 +4090,35 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if profileNameNote != "" {
 		identityNotes = append(identityNotes, profileNameNote)
 	}
-	var roleRefSource string
-	var roleRefNote string
-	body.RoleRef, roleRefSource, roleRefNote = resolveIdentityLaunchField(
-		roleRefField, body.RoleRef, body.RoleRefSpecified(), profileTiers,
-		func(p *db.SpawnProfile) string { return p.RoleRef }, nil)
-	if roleRefNote != "" {
-		identityNotes = append(identityNotes, roleRefNote)
-	}
-	var selectedRole *db.Role
-	if body.RoleRef != "" {
-		var roleErr error
-		selectedRole, roleErr = db.GetRole(body.RoleRef)
+	roleRefs, roleRefsSource := resolveRoleRefsLaunchField(body, profileTiers)
+	selectedRoles := make([]*db.Role, 0, len(roleRefs))
+	for _, roleRef := range roleRefs {
+		selectedRole, roleErr := db.GetRole(roleRef)
 		if roleErr != nil {
 			writeError(w, http.StatusInternalServerError, "io", roleErr.Error())
 			return
 		}
 		if selectedRole == nil {
 			writeError(w, http.StatusBadRequest, "invalid_role",
-				fmt.Sprintf("role_ref %q does not name a role in the role library", body.RoleRef))
+				fmt.Sprintf("role %q does not name a role in the role library", roleRef))
 			return
 		}
-		body.RoleRef = selectedRole.Name
+		selectedRoles = append(selectedRoles, selectedRole)
+	}
+	body.RoleRefs = make([]string, 0, len(selectedRoles))
+	for _, selectedRole := range selectedRoles {
+		body.RoleRefs = append(body.RoleRefs, selectedRole.Name)
+	}
+	body.RoleRef = ""
+	if len(body.RoleRefs) > 0 {
+		body.RoleRef = body.RoleRefs[0]
 	}
 	var roleSource string
 	body.Role, roleSource, _ = resolveIdentityLaunchField(
 		roleField, body.Role, body.RoleSpecified(), profileTiers,
 		func(p *db.SpawnProfile) string { return p.Role }, nil)
-	if body.Role == "" && roleSource == "" && selectedRole != nil {
-		body.Role = selectedRole.Name
+	if body.Role == "" && roleSource == "" && len(selectedRoles) > 0 {
+		body.Role = selectedRoles[0].Name
 	}
 	body.Descr, _, _ = resolveIdentityLaunchField(
 		descrField, body.Descr, body.DescrSpecified(), profileTiers,
@@ -4173,10 +4174,18 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	}
 	// Role grants form the lowest access tier. A spawn profile or explicit
 	// per-spawn override can still narrow or replace an individual slug.
-	if selectedRole != nil && len(selectedRole.Permissions) > 0 {
-		merged := make(map[string]db.PermissionOverride, len(selectedRole.Permissions)+len(permOverrides))
-		for _, grant := range selectedRole.Permissions {
-			merged[grant.Slug] = db.PermissionOverride{Effect: db.PermEffectGrant, Scope: grant.Scope}
+	if len(selectedRoles) > 0 {
+		merged := make(map[string]db.PermissionOverride, len(permOverrides))
+		for _, selectedRole := range selectedRoles {
+			for _, grant := range selectedRole.Permissions {
+				candidate := db.PermissionOverride{Effect: db.PermEffectGrant, Scope: grant.Scope}
+				if existing, ok := merged[grant.Slug]; ok && existing != candidate {
+					writeError(w, http.StatusBadRequest, "role_scope_conflict",
+						fmt.Sprintf("roles grant %s with incompatible scopes; make the scopes identical or keep that grant on one role", grant.Slug))
+					return
+				}
+				merged[grant.Slug] = candidate
+			}
 		}
 		for slug, override := range permOverrides {
 			merged[slug] = override
@@ -4185,8 +4194,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		// explicitly selected role must not become an ambient/default grant just
 		// because a lower-intent default profile also contributes overrides.
 		if len(permOverrides) == 0 ||
-			(!launchTierIsDefault(profileTiers, roleRefSource) && launchTierIsDefault(profileTiers, overridesSource)) {
-			overridesSource = roleRefSource
+			(!launchTierIsDefault(profileTiers, roleRefsSource) && launchTierIsDefault(profileTiers, overridesSource)) {
+			overridesSource = roleRefsSource
 		}
 		permOverrides = merged
 	}
@@ -4289,7 +4298,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// compatible tier. It has no per-spawn override: unlike initial_message this
 	// is policy attached to the selected model/profile, not a task default.
 	profileContext, profileContextNote := resolveProfileStartupContext(h.Name, profileTiers)
-	if selectedRole != nil {
+	for _, selectedRole := range selectedRoles {
 		profileContext = appendRoleBlock(profileContext, selectedRole.Brief)
 	}
 	contextWindowMaxValue := ""
@@ -5745,6 +5754,47 @@ func resolveIdentityLaunchField(
 		return raw, tier.source, strings.Join(notes, "; ")
 	}
 	return "", "", strings.Join(notes, "; ")
+}
+
+// resolveRoleRefsLaunchField is the list-valued twin of
+// resolveIdentityLaunchField. A role set is one intentional composition: the
+// highest tier that specifies any roles wins as a whole rather than merging
+// ambient profile roles into an explicit selection.
+func resolveRoleRefsLaunchField(body agent.SpawnRequest, tiers []launchProfileTier) ([]string, string) {
+	if body.RoleRefsSpecified() || body.RoleRefSpecified() {
+		refs := body.RoleRefs
+		if !body.RoleRefsSpecified() && strings.TrimSpace(body.RoleRef) != "" {
+			refs = []string{body.RoleRef}
+		}
+		return cleanRoleRefs(refs), agent.ProvExplicit
+	}
+	for _, tier := range tiers {
+		if tier.profile == nil {
+			continue
+		}
+		refs := tier.profile.RoleRefs
+		if len(refs) == 0 && strings.TrimSpace(tier.profile.RoleRef) != "" {
+			refs = []string{tier.profile.RoleRef}
+		}
+		if refs = cleanRoleRefs(refs); len(refs) > 0 {
+			return refs, tier.source
+		}
+	}
+	return nil, ""
+}
+
+func cleanRoleRefs(refs []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		ref = strings.TrimSpace(ref)
+		if ref == "" || seen[ref] {
+			continue
+		}
+		seen[ref] = true
+		out = append(out, ref)
+	}
+	return out
 }
 
 // resolveOverridesLaunchField is resolveIdentityLaunchField for the birth-time

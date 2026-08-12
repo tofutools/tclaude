@@ -101,6 +101,11 @@ func UpdateRole(rl *Role) error {
 		if _, err := tx.Exec(`UPDATE spawn_profiles SET role_ref = ? WHERE role_ref = ?`, rl.Name, previousName); err != nil {
 			return err
 		}
+		if _, err := tx.Exec(`UPDATE spawn_profiles
+			SET role_refs = (SELECT json_group_array(CASE value WHEN ? THEN ? ELSE value END) FROM json_each(role_refs))
+			WHERE EXISTS (SELECT 1 FROM json_each(role_refs) WHERE value = ?)`, previousName, rl.Name, previousName); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -204,7 +209,9 @@ func SpawnProfilesReferencingRole(name string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT name FROM spawn_profiles WHERE role_ref = ? ORDER BY name`, name)
+	rows, err := d.Query(`SELECT name FROM spawn_profiles
+		WHERE role_ref = ? OR EXISTS (SELECT 1 FROM json_each(role_refs) WHERE value = ?)
+		ORDER BY name`, name, name)
 	if err != nil {
 		return nil, err
 	}

@@ -134,6 +134,24 @@ func TestRoleRenameUpdatesTemplateAndSpawnProfileReferences(t *testing.T) {
 	assert.Equal(t, "audit-chief", tmpl.Agents[0].RoleRef)
 }
 
+func TestRoleRenameUpdatesEverySpawnProfileRoleReference(t *testing.T) {
+	setupTestDB(t)
+	id, err := CreateRole(&Role{Name: "audit-helper", Brief: "Review."})
+	require.NoError(t, err)
+	_, err = CreateRole(&Role{Name: "go-helper", Brief: "Maintain."})
+	require.NoError(t, err)
+	_, err = CreateSpawnProfile(&SpawnProfile{Name: "review-kit", RoleRefs: []string{"go-helper", "audit-helper"}})
+	require.NoError(t, err)
+
+	require.NoError(t, UpdateRole(&Role{ID: id, Name: "audit-chief", Brief: "Review."}))
+	profile, err := GetSpawnProfile("review-kit")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"go-helper", "audit-chief"}, profile.RoleRefs)
+	refs, err := SpawnProfilesReferencingRole("audit-chief")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"review-kit"}, refs)
+}
+
 // TestEnsureSeededRoles proves the canonical roles are seeded on Open and that
 // a user's edit to a seed survives a re-seed (edits are sacred), while a
 // deleted seed is re-added.

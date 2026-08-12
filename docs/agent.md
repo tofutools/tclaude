@@ -500,8 +500,8 @@ All mutating subcommands take `--ask-human <duration>` (see
 ### spawn profiles
 
 Spawn profiles are reusable launch and identity presets. A profile may also
-select a saved role preset with `role_ref`; the role contributes behavioral
-guidance and baseline access while the profile continues to own launch policy.
+select saved role presets with `role_refs`; their behavioral guidance and
+baseline access compose while the profile continues to own launch policy.
 Profiles can be paused
 without being deleted:
 
@@ -536,7 +536,7 @@ Template and wave deploys are the exception: they compose each agent's startup
 context themselves from the template and the mission, so this toggle has no
 meaning there and is not part of a template-local inline profile.
 
-The profile's identity fields (`agent_name`, free-text `role`, `role_ref`, `descr`,
+The profile's identity fields (`agent_name`, free-text `role`, `role_refs`, `descr`,
 `initial_message`), its `auto_focus` and `remote_control` toggles and its
 birth-time access controls (`is_owner`, `permission_overrides`) ride the same
 daemon-side tier stack, so naming a profile is enough to get them — the agentd
@@ -2178,8 +2178,8 @@ to install a fresh copy. See [Starter task forces](dashboard.md#starter-task-for
 ### roles
 
 Manage the [role library](dashboard.md#roles-library) — named, reusable
-behavior and access presets selected with `role_ref` from direct spawns, spawn
-profiles, or template agents. `ls` / `show` are open; writes need
+behavior and access presets selected with `role_ref` from direct spawns and
+template agents, or `role_refs` from spawn profiles. `ls` / `show` are open; writes need
 `roles.manage` (effectively human-only). Like templates, a role carries a
 multi-line brief, so it is authored as JSON via `--file`. `show` without
 `--json` prints the role's brief and permission slugs:

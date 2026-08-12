@@ -106,11 +106,12 @@ type spawnProfileJSON struct {
 	RemoteControl *bool `json:"remote_control,omitempty"`
 
 	// Identity / enrollment fields (dialog-side).
-	AgentName      string `json:"agent_name,omitempty"`
-	Role           string `json:"role,omitempty"`
-	RoleRef        string `json:"role_ref,omitempty"`
-	Descr          string `json:"descr,omitempty"`
-	InitialMessage string `json:"initial_message,omitempty"`
+	AgentName      string   `json:"agent_name,omitempty"`
+	Role           string   `json:"role,omitempty"`
+	RoleRef        string   `json:"role_ref,omitempty"`
+	RoleRefs       []string `json:"role_refs,omitempty"`
+	Descr          string   `json:"descr,omitempty"`
+	InitialMessage string   `json:"initial_message,omitempty"`
 	// StartupContext is profile-owned guidance injected into every resolved
 	// spawn's briefing. It is deliberately separate from InitialMessage, which
 	// is only a replaceable task default in the spawn dialog.
@@ -167,6 +168,7 @@ func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 		AgentName:                  p.AgentName,
 		Role:                       p.Role,
 		RoleRef:                    p.RoleRef,
+		RoleRefs:                   append([]string{}, p.RoleRefs...),
 		Descr:                      p.Descr,
 		InitialMessage:             p.InitialMessage,
 		StartupContext:             p.StartupContext,
@@ -426,8 +428,17 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 	if err != nil {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_context_features", err.Error()}
 	}
-	roleRef := strings.TrimSpace(body.RoleRef)
-	if roleRef != "" {
+	roleRefs := body.RoleRefs
+	if len(roleRefs) == 0 && strings.TrimSpace(body.RoleRef) != "" {
+		roleRefs = []string{body.RoleRef}
+	}
+	seenRoleRefs := map[string]bool{}
+	resolvedRoleRefs := make([]string, 0, len(roleRefs))
+	for _, raw := range roleRefs {
+		roleRef := strings.TrimSpace(raw)
+		if roleRef == "" || seenRoleRefs[roleRef] {
+			continue
+		}
 		role, err := db.GetRole(roleRef)
 		if err != nil {
 			return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
@@ -436,7 +447,12 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 			return nil, &spawnFailure{http.StatusBadRequest, "invalid_role",
 				fmt.Sprintf("no role named %q", roleRef)}
 		}
-		roleRef = role.Name
+		seenRoleRefs[role.Name] = true
+		resolvedRoleRefs = append(resolvedRoleRefs, role.Name)
+	}
+	roleRef := ""
+	if len(resolvedRoleRefs) > 0 {
+		roleRef = resolvedRoleRefs[0]
 	}
 
 	return &db.SpawnProfile{
@@ -466,6 +482,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		AgentName:                  agentName,
 		Role:                       strings.TrimSpace(body.Role),
 		RoleRef:                    roleRef,
+		RoleRefs:                   resolvedRoleRefs,
 		Descr:                      strings.TrimSpace(body.Descr),
 		InitialMessage:             im,
 		StartupContext:             startupContext,
@@ -509,6 +526,8 @@ func buildInlineProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawn
 		return nil, reject("role")
 	case strings.TrimSpace(body.RoleRef) != "":
 		return nil, reject("role_ref")
+	case len(body.RoleRefs) != 0:
+		return nil, reject("role_refs")
 	case strings.TrimSpace(body.Descr) != "":
 		return nil, reject("descr")
 	case strings.TrimSpace(body.InitialMessage) != "":

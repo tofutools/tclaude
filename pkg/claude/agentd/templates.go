@@ -1897,8 +1897,14 @@ func collectReferencedRoles(t *db.GroupTemplate, profiles []spawnProfileJSON) ([
 		}
 	}
 	for _, p := range profiles {
-		if err := add(p.RoleRef); err != nil {
-			return nil, err
+		refs := p.RoleRefs
+		if len(refs) == 0 && p.RoleRef != "" {
+			refs = []string{p.RoleRef}
+		}
+		for _, ref := range refs {
+			if err := add(ref); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return out, nil
@@ -2462,14 +2468,18 @@ func effectiveTemplateAgentOwner(a db.GroupTemplateAgent, lookupProfile func(str
 // resolutions are kept separate for clarity — a vanished profile is reported
 // the same typed failure by both. A nil role contributes nothing.
 //
-// resolveTemplateAgentRole applies the template identity precedence for saved
-// role presets: an agent's direct role_ref wins, then its saved spawn profile.
-func resolveTemplateAgentRole(a db.GroupTemplateAgent) (*db.Role, *spawnFailure) {
-	ref := strings.TrimSpace(a.RoleRef)
+// resolveTemplateAgentRoles applies the template identity precedence for saved
+// role presets: an agent's direct role_ref wins, then its saved spawn profile's
+// complete role set.
+func resolveTemplateAgentRoles(a db.GroupTemplateAgent) ([]*db.Role, *spawnFailure) {
+	refs := []string{}
+	if ref := strings.TrimSpace(a.RoleRef); ref != "" {
+		refs = []string{ref}
+	}
 	// A template agent's own role selection is explicit and wins. Otherwise a
 	// referenced spawn profile may provide the behavior/access preset, matching
 	// direct-spawn identity resolution. Template-local profiles reject role_ref.
-	if ref == "" && (strings.TrimSpace(a.SpawnProfile) != "" || a.SpawnProfileID > 0) {
+	if len(refs) == 0 && (strings.TrimSpace(a.SpawnProfile) != "" || a.SpawnProfileID > 0) {
 		var profile *db.SpawnProfile
 		var err error
 		if a.SpawnProfileID > 0 {
@@ -2484,23 +2494,33 @@ func resolveTemplateAgentRole(a db.GroupTemplateAgent) (*db.Role, *spawnFailure)
 			return nil, &spawnFailure{http.StatusBadRequest, "invalid_profile",
 				fmt.Sprintf("references spawn profile %q which no longer exists", a.SpawnProfile)}
 		}
-		ref = strings.TrimSpace(profile.RoleRef)
+		refs = append([]string{}, profile.RoleRefs...)
+		if len(refs) == 0 && strings.TrimSpace(profile.RoleRef) != "" {
+			refs = []string{profile.RoleRef}
+		}
 	}
-	if ref == "" {
+	refs = cleanRoleRefs(refs)
+	if len(refs) == 0 {
 		return nil, nil
 	}
-	role, err := db.GetRole(ref)
-	if err != nil {
-		return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+	roles := make([]*db.Role, 0, len(refs))
+	for _, ref := range refs {
+		role, err := db.GetRole(ref)
+		if err != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		}
+		if role != nil {
+			roles = append(roles, role)
+		}
 	}
 	// Preserve the existing graceful degradation for a role deleted outside the
 	// guarded API: the agent still launches, without the vanished preset.
-	return role, nil
+	return roles, nil
 }
 
 // Roles contribute grants only, never denies or ownership. Launch profiles stay
 // independent, so a role cannot silently change how the agent is launched.
-func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, []permOverride, *spawnFailure) {
+func resolveTemplateAgentAccess(a db.GroupTemplateAgent, roles []*db.Role) (bool, []permOverride, *spawnFailure) {
 	order := []string{}
 	eff := map[string]db.PermissionOverride{}
 	set := func(slug string, override db.PermissionOverride) {
@@ -2514,9 +2534,14 @@ func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, [
 		eff[slug] = override
 	}
 	// Tier 1: the referenced role's default grants.
-	if role != nil {
+	for _, role := range roles {
 		for _, s := range role.Permissions {
-			set(s.Slug, db.PermissionOverride{Effect: db.PermEffectGrant, Scope: s.Scope})
+			candidate := db.PermissionOverride{Effect: db.PermEffectGrant, Scope: s.Scope}
+			if existing, ok := eff[s.Slug]; ok && existing != candidate {
+				return false, nil, &spawnFailure{http.StatusBadRequest, "role_scope_conflict",
+					fmt.Sprintf("roles grant %s with incompatible scopes", s.Slug)}
+			}
+			set(s.Slug, candidate)
 		}
 	}
 	// Ownership composes tri-state up the tiers, most specific last: the

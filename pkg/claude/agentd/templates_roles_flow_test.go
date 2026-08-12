@@ -87,8 +87,12 @@ func TestGroupTemplate_ProfileRoleRef_AppliesDefaults(t *testing.T) {
 		"name": "profile-auditor", "brief": "Audit from the saved profile.",
 		"permissions": []string{"human.notify"},
 	}).Code)
+	require.Equal(t, http.StatusCreated, createRole(t, f, map[string]any{
+		"name": "profile-maintainer", "brief": "Maintain from the saved profile.",
+		"permissions": []string{"self.rename"},
+	}).Code)
 	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
-		"name": "audit-kit", "role_ref": "profile-auditor", "model": "haiku",
+		"name": "audit-kit", "role_refs": []string{"profile-auditor", "profile-maintainer"}, "model": "haiku",
 	}).Code)
 	require.Equal(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
 		"name":   "profile-role-team",
@@ -105,8 +109,10 @@ func TestGroupTemplate_ProfileRoleRef_AppliesDefaults(t *testing.T) {
 	agentd.WaitForBackgroundForTest()
 
 	assert.Contains(t, res.Agents[0].Granted, "human.notify")
+	assert.Contains(t, res.Agents[0].Granted, "self.rename")
 	msg := soleInboxMessage(t, res.Agents[0].ConvID)
 	assert.Contains(t, msg.Body, "Audit from the saved profile.")
+	assert.Contains(t, msg.Body, "Maintain from the saved profile.")
 	model, ok := f.World.SpawnModel(res.Agents[0].ConvID)
 	require.True(t, ok)
 	assert.Equal(t, "haiku", model, "launch policy still comes from the profile")

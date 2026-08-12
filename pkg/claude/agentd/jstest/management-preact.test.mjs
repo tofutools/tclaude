@@ -61,14 +61,16 @@ async function waitForCondition(harness, condition, message) {
 test('management model preserves full-replace profile and role semantics', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/management-model.js');
-  const original = { name: 'old', aliases: ['codex-reviewer'], harness: 'codex', approval: 'never', auto_review: true, model: 'gpt-5', disabled: false, disabled_reason: 'previous outage', operator_only: true };
+  const original = { name: 'old', aliases: ['codex-reviewer'], harness: 'codex', approval: 'never', auto_review: true, model: 'gpt-5', role_refs: ['reviewer', 'go-maintainer'], disabled: false, disabled_reason: 'previous outage', operator_only: true };
   const draft = model.profileDraft(original, {}, catalog); draft.name = 'renamed'; draft.trust_dir = '1';
   assert.equal(draft.approval_reviewer, 'auto_review');
+  assert.deepEqual(draft.role_refs, ['reviewer', 'go-maintainer']);
   draft.aliases_text += ', cold-reviewer';
   const payload = model.profilePayload(draft, original, catalog);
   assert.equal(payload.name, 'renamed'); assert.equal(payload.approval, 'never'); assert.equal(payload.auto_review, true); assert.equal(payload.trust_dir, true);
   assert.equal(payload.disabled, false); assert.equal(payload.disabled_reason, 'previous outage');
   assert.equal(payload.operator_only, true);
+  assert.deepEqual(payload.role_refs, ['reviewer', 'go-maintainer']);
   draft.approval_reviewer = 'human'; assert.equal(model.profilePayload(draft, original, catalog).auto_review, false);
   assert.deepEqual(payload.aliases, ['codex-reviewer', 'cold-reviewer']);
   draft.harness = 'claude'; draft.approval = 'plan'; draft.sandbox = 'on';
@@ -3551,6 +3553,52 @@ test('role editor preserves nested permission focus and saves behavior/access on
   await harness.act(() => permissionOptions.onSave({ read: 'grant', write: 'grant' }));
   host.querySelector('#role-editor-modal .primary').click(); await harness.act(() => Promise.resolve()); assert.ok(saved); assert.deepEqual(saved.payload.permissions, ['read', 'write']);
   assert.equal(saved.payload.spawn_profile, undefined); assert.equal(saved.payload.model, undefined);
+  cleanups.reverse().forEach((fn) => fn());
+});
+
+test('profile editor composes inspectable roles into its permission preview', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.roles.value = [
+    { name: 'reviewer', descr: 'Checks correctness', brief: 'Review the change.', permissions: ['messages.send'] },
+    { name: 'maintainer', descr: 'Maintains Go code', brief: 'Keep the tree healthy.', permissions: [{ slug: 'groups.members.spawn', scope: { group: ['alpha'] } }] },
+  ];
+  state.openDialog({ kind: 'profile-editor', seed: { name: 'review-kit', harness: 'claude', role_refs: ['reviewer'] }, options: {}, catalog });
+  let permissionOptions = null;
+  let saved = null;
+  const cleanups = [];
+  const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  mountManagementIsland({
+    host, state,
+    actions: { async saveProfile(value) { saved = value; } },
+    confirmDiscard: async () => true,
+    openProfilePermissions(options) { permissionOptions = options; },
+    registerCleanup(fn) { cleanups.push(fn); },
+  });
+  await harness.act(() => Promise.resolve());
+
+  const reviewer = host.querySelector('.role-chip-inspect');
+  assert.match(reviewer.title, /Checks correctness/);
+  assert.match(reviewer.title, /messages.send/);
+  reviewer.click(); await harness.act(() => Promise.resolve());
+  assert.match(host.querySelector('.agent-spawn-role-inspect').textContent, /Review the change/);
+
+  const add = host.querySelector('#profile-editor-role-add');
+  choose(add, 'maintainer');
+  add.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual([...host.querySelectorAll('.role-chip-inspect')].map((chip) => chip.textContent), ['reviewer', 'maintainer']);
+
+  host.querySelector('#profile-editor-perms').click();
+  assert.deepEqual(permissionOptions.roleGrants, [
+    { slug: 'messages.send', scope: '', role: 'reviewer' },
+    { slug: 'groups.members.spawn', scope: 'group=alpha', role: 'maintainer' },
+  ]);
+  host.querySelector('#profile-editor-submit').click(); await harness.act(() => Promise.resolve());
+  assert.deepEqual(saved.payload.role_refs, ['reviewer', 'maintainer']);
   cleanups.reverse().forEach((fn) => fn());
 });
 

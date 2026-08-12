@@ -453,14 +453,14 @@ func checkTemplateDeployAttenuation(agents []db.GroupTemplateAgent, callerConvID
 		return nil
 	}
 	for _, a := range agents {
-		role, roleFail := resolveTemplateAgentRole(a)
+		roles, roleFail := resolveTemplateAgentRoles(a)
 		if roleFail != nil {
 			// Fail rather than judge a smaller grant set than the wave runner may
 			// confer. Profile resolution failures are reported by deploy as well.
 			return fmt.Errorf("template agent %q: could not resolve role to check what this deploy would confer: %s",
 				a.Name, roleFail.Msg)
 		}
-		_, overrides, fail := resolveTemplateAgentAccess(a, role)
+		_, overrides, fail := resolveTemplateAgentAccess(a, roles)
 		if fail != nil {
 			continue
 		}

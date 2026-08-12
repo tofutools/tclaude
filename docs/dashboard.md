@@ -1031,7 +1031,7 @@ itself creates the clone beside it.
 
 Reusable launch presets for agents. A spawn profile can carry the harness,
 model, effort, sandbox / permission-mode defaults, OpenCode tool governance,
-agent name, free-text role label, saved role preset, description, initial
+agent name, free-text display-role label, saved behavior/access roles, description, initial
 message, profile-specific startup context, dialog toggles, owner default, and per-slug permission
 overrides. It deliberately does **not** carry a working directory or worktree:
 those stay per-spawn.
@@ -1474,10 +1474,15 @@ and a baseline **permission set**. It deliberately carries no harness, model,
 effort, sandbox, approval, tool-governance, or spawn-profile setting; those
 remain launch policy owned by spawn profiles and launch controls.
 
-A role can be selected in the direct spawn dialog, saved in a spawn profile,
-or referenced by a template agent through `role_ref`. This is distinct from the
-freeform `role` **label** (for example `tech-lead`), which is display/routing
-text and carries no defaults.
+One or more roles can be selected in the direct spawn dialog or saved in a
+spawn profile; a template agent can reference one directly through `role_ref`
+and can inherit a profile's complete role set. Their briefs and permission
+grants compose. This is distinct from the freeform `role` **label** (for
+example `tech-lead`), which is display/routing text and carries no defaults.
+Role chips can be hovered or clicked to inspect their description, brief, and
+grants. The spawn dialog's **Permissions…** editor shows the fully composed
+result—including global and group defaults, every selected role, ownership,
+and explicit overrides—with the source of each effective grant.
 
 Each saved role is fully **editable** from this dialog (**+ new role** /
 per-card **edit** / **delete**). The template editor's role picker also shows
@@ -1485,8 +1490,8 @@ an inline inspect panel with the role's description, permission slugs, and
 expandable brief. The same view is available from the CLI with
 `tclaude agent roles show <name>`.
 
-**Roles resolve at spawn time.** A template or profile stores only the role's
-name in `role_ref`; its current brief and permissions are read when an agent is
+**Roles resolve at spawn time.** A template stores a role name in `role_ref`;
+a profile stores its role names in `role_refs`. Current briefs and permissions are read when an agent is
 spawned. Editing a role therefore changes future spawns, not running agents.
 Deleting a role is refused while any template or spawn profile still references
 it; the dialog identifies those references so they can be dropped or repointed.

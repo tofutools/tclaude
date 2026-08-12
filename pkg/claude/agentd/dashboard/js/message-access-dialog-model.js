@@ -202,6 +202,13 @@ export function permissionRows(snapshot, descriptor, selection) {
   const defaults = new Set(snapshot?.permissions?.defaults || []);
   const groups = membershipGroups(snapshot, descriptor);
   const groupGrants = new Map();
+  const roleGrants = new Map();
+  for (const grant of descriptor.roleGrants || []) {
+    const slug = permissionGrantSlug(grant);
+    if (!slug) continue;
+    if (!roleGrants.has(slug)) roleGrants.set(slug, []);
+    roleGrants.get(slug).push({ role: String(grant?.role || ''), scope: String(grant?.scope || '') });
+  }
   for (const groupName of groups) {
     const group = (snapshot?.groups || []).find((item) => item.name === groupName);
     for (const grant of group?.permissions || []) {
@@ -220,6 +227,11 @@ export function permissionRows(snapshot, descriptor, selection) {
     if (effect === 'default' && defaults.has(slug.slug)) sources.push('global default');
     if (effect === 'default' && groupGrants.has(slug.slug)) {
       sources.push(`group: ${groupGrants.get(slug.slug).join(', ')}`);
+    }
+    if (effect === 'default' && roleGrants.has(slug.slug)) {
+      for (const grant of roleGrants.get(slug.slug)) {
+        sources.push(`role: ${grant.role}${grant.scope ? ` [${grant.scope}]` : ''}`);
+      }
     }
     if (effect === 'default' && slug.owner_implied && ownedGroups.length) {
       sources.push(ownerSource(slug.scope_dims, ownedGroups));
