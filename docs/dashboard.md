@@ -1352,7 +1352,7 @@ required concepts. A full template can carry:
 > **⚠ legacy inline** notice and an **Extract to profile…** button that
 > materializes the inline values into a reusable spawn profile and points the
 > agent at it. (Bundled [starters](#starter-task-forces) that still list an
-> inline `groups.spawn` grant on their lead deploy correctly for the same
+> inline `groups.members.spawn` grant on their lead deploy correctly for the same
 > reason.)
 
 Per-card actions: **🚀 deploy** (against a mission — see
@@ -1599,7 +1599,7 @@ Group policy is allow-only so membership in several groups composes as a union;
 an explicit Deny on an individual agent still wins.
 
 The same dialog carries the group's **owner-bypass narrowing** as a small JSON
-box: `{"groups.spawn": {"spawn_profile": ["reviewer"]}}` confines what OWNING
+box: `{"groups.members.spawn": {"spawn_profile": ["reviewer"]}}` confines what OWNING
 this group confers by itself, without touching any explicit grant an owner
 holds. Empty means the unrestricted bypass. Saving sends it on the same PATCH
 as the grants above, and the daemon rejects a map naming an unknown slug or a
@@ -2308,7 +2308,7 @@ shared, so the terminal and the dashboard never disagree about who is stalling.
   refused cleanly (nothing is sent).
 - **Stand down.** **⏻ stand down** winds the whole force down — the mirror of
   deploy (see [Winding a force down](#winding-a-force-down)). It is gated on the
-  human, group owners, or the **`groups.retire`** slug.
+  human, group owners, or the **`groups.members.retire`** slug.
 
 ### The rhythm model
 
@@ -2348,7 +2348,7 @@ Three verbs, with different blast radii:
   choreography**. It **keeps the group row** as a dormant record — the mission,
   provenance, and process history all survive — so it is *not* a delete. Reach
   for it when a mission is done and you want the force wound down but its record
-  kept. Gated on the human, group owners, or `groups.retire`.
+  kept. Gated on the human, group owners, or `groups.members.retire`.
 - **Delete group** (the group ⚙ cog, or `groups rm`) is the **full sweep**: it
   removes the group and, in one transaction, its advisory **process state** and
   transition log, its staged-spawn **wave choreography**, and its group-target

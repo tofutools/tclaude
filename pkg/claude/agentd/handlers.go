@@ -3707,7 +3707,7 @@ func registerV1GroupRoutes(mux *http.ServeMux) {
 
 	// Stand down a task force (JOH-345): retire the roster + sweep the
 	// deploy-seeded rhythms and pending waves, keeping the group as a dormant
-	// record. The mirror of `task-force deploy`. Gated on groups.retire +
+	// record. The mirror of `task-force deploy`. Gated on groups.members.retire +
 	// owner-pass (see handleGroupStandDown).
 	mux.HandleFunc("POST /v1/groups/{name}/stand-down", v1GroupRoute(handleGroupStandDown))
 
@@ -3759,11 +3759,11 @@ func v1GroupRoute(fn func(http.ResponseWriter, *http.Request, *db.AgentGroup)) h
 	}
 }
 
-// handleGroupDelete deletes a group. Permission slug: groups.rm
+// handleGroupDelete deletes a group. Permission slug: groups.delete
 // (default human-only). db.DeleteAgentGroup fails with a constraint
 // error if the group still has blocking references.
 func handleGroupDelete(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	if _, ok := requirePermission(w, r, PermGroupsRm); !ok {
+	if _, ok := requirePermission(w, r, PermGroupsDelete); !ok {
 		return
 	}
 	hookHarnesses := standingOrderHookHarnessesForGroupBestEffort(g.ID)
@@ -3920,34 +3920,34 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	}
 	required := make([]string, 0, 10)
 	if body.Descr != nil {
-		required = append(required, PermGroupsDescription)
+		required = append(required, PermGroupsSettingsDescription)
 	}
 	if body.DefaultCwd != nil {
-		required = append(required, PermGroupsDefaultDir)
+		required = append(required, PermGroupsSettingsDefaultDir)
 	}
 	if body.DefaultContext != nil {
-		required = append(required, PermGroupsDefaultCtx)
+		required = append(required, PermGroupsSettingsDefaultContext)
 	}
 	if body.DefaultSpawnGroup != nil {
-		required = append(required, PermGroupsDefaultSpawn)
+		required = append(required, PermGroupsSettingsDefaultSpawnTarget)
 	}
 	if body.DefaultProfile != nil {
-		required = append(required, PermGroupsDefaultProf)
+		required = append(required, PermGroupsSettingsDefaultProfile)
 	}
 	if body.MaxMembers != nil {
-		required = append(required, PermGroupsMaxMembers)
+		required = append(required, PermGroupsSettingsMaxMembers)
 	}
 	if body.NotifyEnabled != nil {
-		required = append(required, PermGroupsNotify)
+		required = append(required, PermGroupsSettingsNotifications)
 	}
 	if body.RemoteControlPolicy != nil {
-		required = append(required, PermGroupsRemoteCtrl)
+		required = append(required, PermGroupsSettingsRemoteControlPolicy)
 	}
 	if body.Permissions != nil {
-		required = append(required, PermGroupsPermissions)
+		required = append(required, PermGroupsSettingsMemberPermissions)
 	}
 	if body.OwnerScopes != nil {
-		required = append(required, PermGroupsOwnerScopes)
+		required = append(required, PermGroupsSettingsOwnerScopes)
 	}
 	caller := ""
 	for _, perm := range required {
@@ -4571,11 +4571,11 @@ func handleGroupOwnersList(w http.ResponseWriter, _ *http.Request, g *db.AgentGr
 }
 
 // handleGroupOwnersAdd grants ownership of g to a conv. Permission-
-// gated on groups.own (default human-only). The granted_by column
+// gated on groups.owners.manage (default human-only). The granted_by column
 // records "" for human-issued grants and the agent's conv-id for
 // agent-issued ones.
 func handleGroupOwnersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	grantedBy, ok := requirePermission(w, r, PermGroupsOwn)
+	grantedBy, ok := requirePermission(w, r, PermGroupsOwnersManage)
 	if !ok {
 		return
 	}
@@ -4598,7 +4598,7 @@ func handleGroupOwnersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
 		return
 	}
-	if err := db.AddAgentGroupOwner(g.ID, res.ConvID, auditedCaller(grantedBy, PermGroupsOwn)); err != nil {
+	if err := db.AddAgentGroupOwner(g.ID, res.ConvID, auditedCaller(grantedBy, PermGroupsOwnersManage)); err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
@@ -4611,9 +4611,9 @@ func handleGroupOwnersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 
 // handleGroupOwnersRemove revokes ownership. 404 when convID wasn't
 // an owner — distinct from "no such group" (which the dispatcher
-// catches). Permission-gated on groups.own.
+// catches). Permission-gated on groups.owners.manage.
 func handleGroupOwnersRemove(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, convSelector string) {
-	if _, ok := requirePermission(w, r, PermGroupsOwn); !ok {
+	if _, ok := requirePermission(w, r, PermGroupsOwnersManage); !ok {
 		return
 	}
 	if !requireGroupActive(w, g) {
@@ -4638,7 +4638,7 @@ func handleGroupOwnersRemove(w http.ResponseWriter, r *http.Request, g *db.Agent
 }
 
 func handleGroupMembersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	if _, ok := requirePermission(w, r, PermMemberAdd); !ok {
+	if _, ok := requirePermission(w, r, PermGroupsMembersAdd); !ok {
 		return
 	}
 	if !requireGroupActive(w, g) {
@@ -4679,9 +4679,9 @@ func handleGroupMembersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 
 // handleGroupMembersUpdate patches role/descr on an existing member.
 // Only fields explicitly present in the request body are touched — pass
-// `null` (or omit) to leave a field unchanged. Gated on member.redesignate.
+// `null` (or omit) to leave a field unchanged. Gated on groups.members.update.
 func handleGroupMembersUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, convSelector string) {
-	if _, ok := requirePermission(w, r, PermMemberRedesignate); !ok {
+	if _, ok := requirePermission(w, r, PermGroupsMembersUpdate); !ok {
 		return
 	}
 	if !requireGroupActive(w, g) {
@@ -4717,7 +4717,7 @@ func handleGroupMembersUpdate(w http.ResponseWriter, r *http.Request, g *db.Agen
 }
 
 func handleGroupMembersRemove(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, convSelector string) {
-	if _, ok := requirePermission(w, r, PermMemberRemove); !ok {
+	if _, ok := requirePermission(w, r, PermGroupsMembersRemove); !ok {
 		return
 	}
 	if !requireGroupActive(w, g) {

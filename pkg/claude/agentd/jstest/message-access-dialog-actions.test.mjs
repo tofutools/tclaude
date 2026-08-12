@@ -137,20 +137,20 @@ test('permission actions use mode-specific payloads and buffered saves strip def
   });
   await actions.savePermissions(
     { mode: 'group', group: 'team' },
-    { 'groups.spawn': 'grant', 'agent.send': 'default' },
-    { 'groups.spawn': { group: ['team'] } },
+    { 'groups.members.spawn': 'grant', 'agent.send': 'default' },
+    { 'groups.members.spawn': { group: ['team'] } },
   );
   await actions.savePermissions(
     { mode: 'buffer', onSave: async (value) => { buffered = value; } },
-    { 'groups.spawn': 'grant', 'agent.send': 'deny', 'self.rename': 'default' },
-    { 'groups.spawn': { group: ['team'] } },
+    { 'groups.members.spawn': 'grant', 'agent.send': 'deny', 'self.rename': 'default' },
+    { 'groups.members.spawn': { group: ['team'] } },
   );
   assert.deepEqual(calls, [{ url: '/api/groups/team', body: {
-    permissions: [{ slug: 'groups.spawn', scope: { group: ['team'] } }],
+    permissions: [{ slug: 'groups.members.spawn', scope: { group: ['team'] } }],
   } }]);
   assert.equal(notices[0], 'team: 1 party boon bound');
   assert.deepEqual(buffered, {
-    'groups.spawn': { effect: 'grant', scope: { group: ['team'] } },
+    'groups.members.spawn': { effect: 'grant', scope: { group: ['team'] } },
     'agent.send': 'deny',
   });
 });
@@ -170,19 +170,19 @@ test('group permission saves carry owner_scopes only when the editor touched it'
   // Not edited: the field must be ABSENT, so the daemon leaves the stored
   // narrowing alone. Sending the box's current value would clear a narrowing
   // this build could not decode into it.
-  await actions.savePermissions({ mode: 'group', group: 'team' }, { 'groups.spawn': 'grant' }, {}, null);
+  await actions.savePermissions({ mode: 'group', group: 'team' }, { 'groups.members.spawn': 'grant' }, {}, null);
   // Edited to a real map, and edited to {} — the deliberate clear. `{}` is
   // meaningful, which is why the action tests against null and not truthiness.
-  const narrowing = { 'groups.spawn': { spawn_profile: ['reviewer'] } };
-  await actions.savePermissions({ mode: 'group', group: 'team' }, { 'groups.spawn': 'grant' }, {}, narrowing);
-  await actions.savePermissions({ mode: 'group', group: 'team' }, { 'groups.spawn': 'grant' }, {}, {});
+  const narrowing = { 'groups.members.spawn': { spawn_profile: ['reviewer'] } };
+  await actions.savePermissions({ mode: 'group', group: 'team' }, { 'groups.members.spawn': 'grant' }, {}, narrowing);
+  await actions.savePermissions({ mode: 'group', group: 'team' }, { 'groups.members.spawn': 'grant' }, {}, {});
   // A present-but-empty per-grant scope is the explicit clear arm. Omitting
   // the slug from the scopes map is the legacy "leave its scope alone" arm.
-  await actions.savePermissions({ mode: 'group', group: 'team' }, { 'groups.spawn': 'grant' }, { 'groups.spawn': {} }, null);
+  await actions.savePermissions({ mode: 'group', group: 'team' }, { 'groups.members.spawn': 'grant' }, { 'groups.members.spawn': {} }, null);
   assert.deepEqual(calls, [
-    { permissions: ['groups.spawn'] },
-    { permissions: ['groups.spawn'], owner_scopes: narrowing },
-    { permissions: ['groups.spawn'], owner_scopes: {} },
-    { permissions: [{ slug: 'groups.spawn', scope: {} }] },
+    { permissions: ['groups.members.spawn'] },
+    { permissions: ['groups.members.spawn'], owner_scopes: narrowing },
+    { permissions: ['groups.members.spawn'], owner_scopes: {} },
+    { permissions: [{ slug: 'groups.members.spawn', scope: {} }] },
   ]);
 });

@@ -26,12 +26,12 @@ test('Owner-conferred permission sources carry their scope', async (t) => {
     groups: [],
     agents: [{ conv_id: 'c1', owned_groups: ['dev'] }],
     slugs: [
-      { slug: 'groups.spawn', owner_implied: true, owner_scope: 'group' },
+      { slug: 'groups.members.spawn', owner_implied: true, owner_scope: 'group' },
       { slug: 'human.notify', owner_implied: true, owner_scope: 'any' },
     ],
   };
   const rows = model.permissionRows(snapshot, { mode: 'agent', conv: 'c1' }, {});
   const bySlug = Object.fromEntries(rows.map((row) => [row.slug, row]));
-  assert.deepEqual(bySlug['groups.spawn'].sources, ['owner: dev']);
+  assert.deepEqual(bySlug['groups.members.spawn'].sources, ['owner: dev']);
   assert.deepEqual(bySlug['human.notify'].sources, ['owner: any group owned']);
 });

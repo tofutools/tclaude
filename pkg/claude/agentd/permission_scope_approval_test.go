@@ -8,21 +8,21 @@ import (
 
 // The offered scope is a projection of the gate's ActionContext onto the
 // dimensions the slug DECLARES — never wider, and never a dimension the slug
-// does not admit. groups.spawn declares group + spawn_profile, so a context
+// does not admit. groups.members.spawn declares group + spawn_profile, so a context
 // that names only the group must yield only the group: a scope naming an
 // undescribed dimension could not be satisfied, and one naming nothing at all
 // would be a blanket grant wearing the narrow button's label.
 func TestApprovalScopeForSlug_ProjectsOnlyDescribedDeclaredDims(t *testing.T) {
-	scopeJSON, display := approvalScopeForSlug(PermGroupsSpawn, ActionContext{Group: "alpha"})
+	scopeJSON, display := approvalScopeForSlug(PermGroupsMembersSpawn, ActionContext{Group: "alpha"})
 	assert.JSONEq(t, `{"group":["alpha"]}`, scopeJSON)
 	assert.Equal(t, "group=alpha", display)
 
-	both, _ := approvalScopeForSlug(PermGroupsSpawn, ActionContext{Group: "alpha", SpawnProfile: "p1"})
+	both, _ := approvalScopeForSlug(PermGroupsMembersSpawn, ActionContext{Group: "alpha", SpawnProfile: "p1"})
 	assert.JSONEq(t, `{"group":["alpha"],"spawn_profile":["p1"]}`, both)
 
 	// A dimension the slug does not declare is dropped, not smuggled in: the
 	// scope writer would reject it, and offering nothing is the right answer.
-	undeclared, _ := approvalScopeForSlug(PermGroupsSpawn, ActionContext{ProcessTemplate: "tmpl"})
+	undeclared, _ := approvalScopeForSlug(PermGroupsMembersSpawn, ActionContext{ProcessTemplate: "tmpl"})
 	assert.Empty(t, undeclared, "a context the slug cannot be scoped by offers no scoped button")
 }
 
@@ -34,7 +34,7 @@ func TestApprovalScopeForSlug_EmptyWhenNothingToNarrowTo(t *testing.T) {
 	assert.Empty(t, noDims)
 	assert.Empty(t, display)
 
-	noContext, _ := approvalScopeForSlug(PermGroupsSpawn, ActionContext{})
+	noContext, _ := approvalScopeForSlug(PermGroupsMembersSpawn, ActionContext{})
 	assert.Empty(t, noContext)
 
 	unknownSlug, _ := approvalScopeForSlug("no.such.slug", ActionContext{Group: "alpha"})
@@ -43,7 +43,7 @@ func TestApprovalScopeForSlug_EmptyWhenNothingToNarrowTo(t *testing.T) {
 
 func TestMergeApprovalScope(t *testing.T) {
 	merged := func(existing, added string) (string, bool) {
-		return mergeApprovalScope(PermGroupsSpawn, existing, added)
+		return mergeApprovalScope(PermGroupsMembersSpawn, existing, added)
 	}
 
 	// One dimension widening is a true union, and is what makes a second

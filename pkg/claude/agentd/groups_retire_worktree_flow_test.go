@@ -14,7 +14,7 @@ import (
 )
 
 // Flow coverage for the BATCH parallel of the single-agent retire
-// worktree option: a bulk groups.retire can also remove each retired
+// worktree option: a bulk groups.members.retire can also remove each retired
 // member's git worktree AND delete its branch when delete_worktree is
 // set. It reuses the single-agent machinery per member
 // (resolveRetireWorktree before the shutdown, scheduleRetireWorktreeCleanup
@@ -270,7 +270,7 @@ func TestGroupRetire_V1DeleteWorktreeQuery(t *testing.T) {
 	f.HaveAliveSession(worker, "spwn-bwvw", "tmux-bwvw", cwd)
 	f.HaveMember(group, caller)
 	f.HaveMember(group, worker)
-	require.NoError(t, db.GrantAgentPermission(caller, "groups.retire", "human"))
+	require.NoError(t, db.GrantAgentPermission(caller, "groups.members.retire", "human"))
 	fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
 		cwd: {Root: cwd, Branch: "feat", Kind: "linked"},
 	})

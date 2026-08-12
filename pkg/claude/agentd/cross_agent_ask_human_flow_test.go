@@ -327,7 +327,7 @@ func TestGroupResume_ProvenanceRecoveryApprovalIsMemberScoped(t *testing.T) {
 		require.Eventually(t, func() bool {
 			for _, request := range fetchAccessReqSnapshot(t, dashboard).AccessRequests {
 				if request.Status == db.AccessRequestStatusPending &&
-					request.Perm == agentd.PermGroupsResume && request.ID != exclude {
+					request.Perm == agentd.PermGroupsMembersResume && request.ID != exclude {
 					id = request.ID
 					return true
 				}

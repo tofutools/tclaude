@@ -27,7 +27,7 @@ func TestRenderPermissionsState_LeadsWithAgentID(t *testing.T) {
 	t.Run("known agent_id leads the ID column", func(t *testing.T) {
 		state := permissionsState{
 			Defaults:  []string{"groups.create"},
-			Overrides: map[string]map[string]string{conv: {"groups.spawn": "grant", "human.notify": "deny"}},
+			Overrides: map[string]map[string]string{conv: {"groups.members.spawn": "grant", "human.notify": "deny"}},
 			AgentIDs:  map[string]string{conv: agentID},
 		}
 		var buf bytes.Buffer
@@ -45,7 +45,7 @@ func TestRenderPermissionsState_LeadsWithAgentID(t *testing.T) {
 
 	t.Run("missing agent_id falls back to the conv prefix", func(t *testing.T) {
 		state := permissionsState{
-			Overrides: map[string]map[string]string{conv: {"groups.spawn": "grant"}},
+			Overrides: map[string]map[string]string{conv: {"groups.members.spawn": "grant"}},
 			// AgentIDs intentionally empty — the daemon couldn't project one.
 		}
 		var buf bytes.Buffer
@@ -185,16 +185,16 @@ func TestPermissionScopeFlagAndDisplay(t *testing.T) {
 func TestRenderPermissionsStateShowsScopes(t *testing.T) {
 	const conv = "scope-1111-2222-3333"
 	state := permissionsState{
-		Overrides: map[string]map[string]string{conv: {"groups.spawn": "grant"}},
+		Overrides: map[string]map[string]string{conv: {"groups.members.spawn": "grant"}},
 		Scopes: map[string]map[string]permissionScope{conv: {
-			"groups.spawn": {"group": {"dev"}, "spawn_profile": {"locked"}},
+			"groups.members.spawn": {"group": {"dev"}, "spawn_profile": {"locked"}},
 		}},
 	}
 	var out bytes.Buffer
 	if rc := renderPermissionsState(state, &out); rc != rcOK {
 		t.Fatalf("renderPermissionsState rc = %d", rc)
 	}
-	if want := "groups.spawn [group=dev spawn_profile=locked]"; !strings.Contains(out.String(), want) {
+	if want := "groups.members.spawn [group=dev spawn_profile=locked]"; !strings.Contains(out.String(), want) {
 		t.Errorf("scope missing from roster; want %q in:\n%s", want, out.String())
 	}
 }

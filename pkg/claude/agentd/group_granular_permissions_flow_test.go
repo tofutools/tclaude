@@ -26,7 +26,7 @@ func TestGroupSettings_DedicatedDefaultDirGrantDoesNotAuthorizeRename(t *testing
 	f.HaveGroup("alpha")
 	const conv = "granular-dir-aaaa-bbbb-1111"
 	f.HaveConvWithTitle(conv, "dir-editor")
-	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermGroupsDefaultDir, "test"))
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermGroupsSettingsDefaultDir, "test"))
 
 	code, body := patchGroupSettingAsAgent(t, f, conv, map[string]any{"default_cwd": t.TempDir()})
 	require.Equal(t, http.StatusOK, code, body)
@@ -47,7 +47,7 @@ func TestGroupSettings_RenameGrantAuthorizesOnlyRename(t *testing.T) {
 
 	code, body := patchGroupSettingAsAgent(t, f, conv, map[string]any{"default_cwd": t.TempDir()})
 	assert.Equal(t, http.StatusForbidden, code, body)
-	assert.Contains(t, body, agentd.PermGroupsDefaultDir)
+	assert.Contains(t, body, agentd.PermGroupsSettingsDefaultDir)
 }
 
 func TestGroupSettings_AdminUmbrellaAndDedicatedDenyPrecedence(t *testing.T) {
@@ -60,10 +60,10 @@ func TestGroupSettings_AdminUmbrellaAndDedicatedDenyPrecedence(t *testing.T) {
 	code, body := patchGroupSettingAsAgent(t, f, conv, map[string]any{"descr": "managed"})
 	require.Equal(t, http.StatusOK, code, body)
 
-	require.NoError(t, db.SetAgentPermissionOverride(conv, agentd.PermGroupsDefaultDir, db.PermEffectDeny, "test"))
+	require.NoError(t, db.SetAgentPermissionOverride(conv, agentd.PermGroupsSettingsDefaultDir, db.PermEffectDeny, "test"))
 	code, body = patchGroupSettingAsAgent(t, f, conv, map[string]any{"default_cwd": t.TempDir()})
 	assert.Equal(t, http.StatusForbidden, code, body)
-	assert.Contains(t, body, agentd.PermGroupsDefaultDir)
+	assert.Contains(t, body, agentd.PermGroupsSettingsDefaultDir)
 
 	// The deny narrows only this operation; the umbrella still covers others.
 	code, body = patchGroupSettingAsAgent(t, f, conv, map[string]any{"max_members": 4})
@@ -94,7 +94,7 @@ func TestGroupSettings_OneTimeApprovalUsesDedicatedPermission(t *testing.T) {
 		for _, request := range snap.AccessRequests {
 			if request.Status == db.AccessRequestStatusPending {
 				pendingID = request.ID
-				return request.Perm == agentd.PermGroupsDefaultDir
+				return request.Perm == agentd.PermGroupsSettingsDefaultDir
 			}
 		}
 		return false

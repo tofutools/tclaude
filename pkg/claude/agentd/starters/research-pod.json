@@ -13,7 +13,7 @@
         "descr": "Coordinator — scopes the question and owns the answer.",
         "initial_message": "You coordinate the pod. Turn the question into a sharp, answerable scope — sub-questions, sources worth checking, and what 'done' looks like — then hand each researcher a distinct angle. Keep the work aligned, and own folding the verified findings into the final answer.",
         "is_owner": true,
-        "permissions": ["groups.spawn"],
+        "permissions": ["groups.members.spawn"],
         "wave": 0
       },
       {

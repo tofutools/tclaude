@@ -165,14 +165,14 @@ func purgeExpiredPreparedWorktreesLocked() {
 
 // handleWorktreePrepare answers POST /v1/worktrees/prepare.
 //
-// Gated on groups.spawn — the worktree is the launch directory half of a
+// Gated on groups.members.spawn — the worktree is the launch directory half of a
 // spawn the caller is about to make — with the owner bypass widened to
 // "owns any group": a lead that spawns its own team without an explicit
 // grant must be able to prepare the directory it spawns into. The
 // group-scoped spawn gate still binds the spawn itself; this endpoint
 // creates a directory, not an agent.
 func handleWorktreePrepare(w http.ResponseWriter, r *http.Request) {
-	caller, ok := requirePermissionEx(w, r, PermGroupsSpawn, ownsAnyGroupPermitting)
+	caller, ok := requirePermissionEx(w, r, PermGroupsMembersSpawn, ownsAnyGroupPermitting)
 	if !ok {
 		return
 	}
@@ -309,7 +309,7 @@ func handleWorktreePrepare(w http.ResponseWriter, r *http.Request) {
 // the endpoint removes a directory, so it deliberately cannot be pointed
 // at an arbitrary path.
 func handleWorktreeDiscard(w http.ResponseWriter, r *http.Request) {
-	caller, ok := requirePermissionEx(w, r, PermGroupsSpawn, ownsAnyGroupPermitting)
+	caller, ok := requirePermissionEx(w, r, PermGroupsMembersSpawn, ownsAnyGroupPermitting)
 	if !ok {
 		return
 	}

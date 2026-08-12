@@ -82,7 +82,7 @@ func TestPermissionScopeCovers(t *testing.T) {
 // the SHAPE of a scoped hold.
 func TestCheckGrantAttenuation_NoGranterScopeIsANoOp(t *testing.T) {
 	assert.NoError(t, checkGrantAttenuation("", grantConferee{}, []conferredGrant{
-		{Slug: PermGroupsSpawn, Scope: ""},
+		{Slug: PermGroupsMembersSpawn, Scope: ""},
 	}), "the human operator confers freely")
 	assert.NoError(t, checkGrantAttenuation("some-conv", grantConferee{}, nil),
 		"a request conferring nothing is never refused")
@@ -91,15 +91,15 @@ func TestCheckGrantAttenuation_NoGranterScopeIsANoOp(t *testing.T) {
 // Denies confer no authority, so they never need cover — only grants do.
 func TestConferredGrantsFromOverridesSkipsDenies(t *testing.T) {
 	grants := conferredGrantsFromOverrides(map[string]db.PermissionOverride{
-		PermGroupsSpawn:      {Effect: db.PermEffectGrant, Scope: `{"group":["a"]}`},
-		PermPermissionsGrant: db.Deny(),
-		PermGroupsOwn:        db.Grant(),
+		PermGroupsMembersSpawn: {Effect: db.PermEffectGrant, Scope: `{"group":["a"]}`},
+		PermPermissionsGrant:   db.Deny(),
+		PermGroupsOwnersManage: db.Grant(),
 	})
 	require.Len(t, grants, 2)
 	// Sorted by slug, so a refusal message is stable across runs.
-	assert.Equal(t, PermGroupsOwn, grants[0].Slug)
+	assert.Equal(t, PermGroupsOwnersManage, grants[0].Slug)
 	assert.Equal(t, "", grants[0].Scope)
-	assert.Equal(t, PermGroupsSpawn, grants[1].Slug)
+	assert.Equal(t, PermGroupsMembersSpawn, grants[1].Slug)
 	assert.Equal(t, `{"group":["a"]}`, grants[1].Scope)
 }
 

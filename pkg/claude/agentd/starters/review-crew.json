@@ -13,7 +13,7 @@
         "descr": "Crew lead — scopes the audit and owns the verdict.",
         "initial_message": "You lead the audit. Pin down exactly what's under review — the diff, the change set, the risk areas — and assign each reviewer a lens. Stay out of their way while they work cold, then own the final verdict once the synthesizer has merged the findings.",
         "is_owner": true,
-        "permissions": ["groups.spawn"],
+        "permissions": ["groups.members.spawn"],
         "wave": 0
       },
       {

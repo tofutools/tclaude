@@ -22,7 +22,7 @@ func TestRequireScopedLinkAuthority_HumanPasses(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := requestWithPeer(&peer{PID: 999, HumanTokenValid: true})
-	_, ok := requireScopedLinkAuthority(w, r, groupA, link, PermGroupsLinkRm)
+	_, ok := requireScopedLinkAuthority(w, r, groupA, link, PermGroupsLinkRemove)
 	require.True(t, ok, "human should pass; body=%s", w.Body.String())
 }
 
@@ -39,7 +39,7 @@ func TestRequireScopedLinkAuthority_OwnerOfFromBypasses(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := requestWithPeer(&peer{PID: 999, HasClaudeAncestor: true, ConvID: "manager"})
-	caller, ok := requireScopedLinkAuthority(w, r, groupA, link, PermGroupsLinkRm)
+	caller, ok := requireScopedLinkAuthority(w, r, groupA, link, PermGroupsLinkRemove)
 	require.True(t, ok, "owner of FROM should bypass slug; body=%s", w.Body.String())
 	assert.Equal(t, "manager", caller, "caller")
 }
@@ -59,7 +59,7 @@ func TestRequireScopedLinkAuthority_OwnerOfToDoesNotBypass(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := requestWithPeer(&peer{PID: 999, HasClaudeAncestor: true, ConvID: "manager"})
-	_, ok := requireScopedLinkAuthority(w, r, groupB, link, PermGroupsLinkRm)
+	_, ok := requireScopedLinkAuthority(w, r, groupB, link, PermGroupsLinkRemove)
 	assert.False(t, ok, "owner of TO should NOT bypass; expected 403 forcing the slug")
 }
 
@@ -72,11 +72,11 @@ func TestRequireScopedLinkAuthority_GrantedSlugAllowsRegardlessOfSide(t *testing
 	id, _ := db.InsertAgentGroupLink(a, b, db.LinkModeMembersToMembers, "")
 	link, _ := db.GetAgentGroupLinkByID(id)
 	groupB, _ := db.GetAgentGroupByID(b)
-	require.NoError(t, db.GrantAgentPermission("manager", PermGroupsLinkRm, "<test>"))
+	require.NoError(t, db.GrantAgentPermission("manager", PermGroupsLinkRemove, "<test>"))
 
 	w := httptest.NewRecorder()
 	r := requestWithPeer(&peer{PID: 999, HasClaudeAncestor: true, ConvID: "manager"})
-	caller, ok := requireScopedLinkAuthority(w, r, groupB, link, PermGroupsLinkRm)
+	caller, ok := requireScopedLinkAuthority(w, r, groupB, link, PermGroupsLinkRemove)
 	require.True(t, ok, "slug holder should pass even on TO side; body=%s", w.Body.String())
 	assert.Equal(t, "manager", caller, "caller")
 }
@@ -117,7 +117,7 @@ func TestRequireGroupLinkAuthority_DenyBeatsOwnerBypass(t *testing.T) {
 
 // TestRequireScopedLinkAuthority_DenyBeatsOwnerBypass: same for the
 // PATCH/DELETE path — owning the FROM side no longer overrides a deny
-// on groups.link.rm (TCL-1018).
+// on groups.link.remove (TCL-1018).
 func TestRequireScopedLinkAuthority_DenyBeatsOwnerBypass(t *testing.T) {
 	setupTestDB(t)
 	a, _ := db.CreateAgentGroup("a", "")
@@ -126,12 +126,12 @@ func TestRequireScopedLinkAuthority_DenyBeatsOwnerBypass(t *testing.T) {
 	link, _ := db.GetAgentGroupLinkByID(id)
 	groupA, _ := db.GetAgentGroupByID(a)
 	require.NoError(t, db.AddAgentGroupOwner(a, "manager", "<test>"))
-	require.NoError(t, db.SetAgentPermissionOverride("manager", PermGroupsLinkRm, db.PermEffectDeny, "<test>"))
+	require.NoError(t, db.SetAgentPermissionOverride("manager", PermGroupsLinkRemove, db.PermEffectDeny, "<test>"))
 
 	w := httptest.NewRecorder()
 	r := requestWithPeer(&peer{PID: 999, HasClaudeAncestor: true, ConvID: "manager"})
-	_, ok := requireScopedLinkAuthority(w, r, groupA, link, PermGroupsLinkRm)
+	_, ok := requireScopedLinkAuthority(w, r, groupA, link, PermGroupsLinkRemove)
 	require.False(t, ok, "denied owner should be refused link-rm on the FROM side")
 	assert.Equal(t, http.StatusForbidden, w.Code, "status")
-	assert.Contains(t, w.Body.String(), PermGroupsLinkRm, "403 should name the slug")
+	assert.Contains(t, w.Body.String(), PermGroupsLinkRemove, "403 should name the slug")
 }

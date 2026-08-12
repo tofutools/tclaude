@@ -34,8 +34,8 @@ func TestGroupTemplate_ProfileInline_AppliesAtDeploy(t *testing.T) {
 				"ask_user_question_timeout": "60s",
 				"is_owner":                  true,
 				"permission_overrides": map[string]any{
-					agentd.PermGroupsSpawn:   "grant",
-					agentd.PermMessageDirect: "deny",
+					agentd.PermGroupsMembersSpawn: "grant",
+					agentd.PermMessageDirect:      "deny",
 				},
 			}},
 		},
@@ -70,7 +70,7 @@ func TestGroupTemplate_ProfileInline_AppliesAtDeploy(t *testing.T) {
 
 	overrides, err := db.ListAgentPermissionOverridesForConv(leadConv)
 	require.NoError(t, err)
-	assert.Equal(t, "grant", overrides[agentd.PermGroupsSpawn], "inline profile grant applied")
+	assert.Equal(t, "grant", overrides[agentd.PermGroupsMembersSpawn], "inline profile grant applied")
 	assert.Equal(t, "deny", overrides[agentd.PermMessageDirect], "inline profile deny applied")
 }
 
@@ -158,7 +158,7 @@ func TestGroupTemplate_ProfileInline_WireRoundTrip(t *testing.T) {
 			{"name": "lead", "profile_inline": map[string]any{
 				"harness": "codex", "model": "gpt-5", "effort": "low", "remote_control": false,
 				"codex_app_server":     true,
-				"permission_overrides": map[string]any{agentd.PermGroupsSpawn: "grant"},
+				"permission_overrides": map[string]any{agentd.PermGroupsMembersSpawn: "grant"},
 			}},
 		},
 	}).Code, "create template")
@@ -189,7 +189,7 @@ func TestGroupTemplate_ProfileInline_WireRoundTrip(t *testing.T) {
 	assert.False(t, *p.RemoteControl)
 	require.NotNil(t, p.CodexAppServer)
 	assert.True(t, *p.CodexAppServer)
-	assert.Equal(t, map[string]string{agentd.PermGroupsSpawn: "grant"}, p.PermissionOverrides)
+	assert.Equal(t, map[string]string{agentd.PermGroupsMembersSpawn: "grant"}, p.PermissionOverrides)
 }
 
 // Scenario: harness-composition validation at SAVE. A blank-harness

@@ -26,7 +26,7 @@ func TestPermissionScopeGrantWireRoundTrip(t *testing.T) {
 
 	grant := postPermissionScope(t, f, "grant", map[string]any{
 		"target": target,
-		"slug":   agentd.PermGroupsSpawn,
+		"slug":   agentd.PermGroupsMembersSpawn,
 		"scope": map[string]any{
 			"group":         []string{"dev"},
 			"spawn_profile": []string{"locked", "reviewer"},
@@ -46,7 +46,7 @@ func TestPermissionScopeGrantWireRoundTrip(t *testing.T) {
 	d, err := db.Open()
 	require.NoError(t, err)
 	require.NoError(t, d.QueryRow(`SELECT scope_json FROM agent_permissions WHERE agent_id = ? AND slug = ?`,
-		agentID, agentd.PermGroupsSpawn).Scan(&stored))
+		agentID, agentd.PermGroupsMembersSpawn).Scan(&stored))
 	assert.JSONEq(t, `{"group":["dev"],"spawn_profile":["locked","reviewer"]}`, stored)
 
 	view := getPermissionsTarget(t, f, target, target)
@@ -56,7 +56,7 @@ func TestPermissionScopeGrantWireRoundTrip(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(view.Body), &effective))
 	assert.Equal(t, "override [group=dev spawn_profile=locked,reviewer]",
-		effective.Provenance[agentd.PermGroupsSpawn])
+		effective.Provenance[agentd.PermGroupsMembersSpawn])
 
 	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t,
 		http.MethodGet, "/v1/permissions", nil)))
@@ -65,7 +65,7 @@ func TestPermissionScopeGrantWireRoundTrip(t *testing.T) {
 		Scopes map[string]map[string]map[string][]string `json:"scopes"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &state))
-	assert.Equal(t, []string{"dev"}, state.Scopes[target][agentd.PermGroupsSpawn]["group"])
+	assert.Equal(t, []string{"dev"}, state.Scopes[target][agentd.PermGroupsMembersSpawn]["group"])
 }
 
 func TestPermissionScopeGrantPathRejections(t *testing.T) {
@@ -81,9 +81,9 @@ func TestPermissionScopeGrantPathRejections(t *testing.T) {
 	}{
 		{"undeclared dimension", "grant", map[string]any{"target": target, "slug": agentd.PermProcessRunsManage, "scope": map[string]any{"group": []string{"dev"}}}, "does not declare"},
 		{"unknown selector", "grant", map[string]any{"target": target, "slug": agentd.PermAgentRetire, "scope": map[string]any{"target_agent": []string{"@parent"}}}, "unknown selector"},
-		{"selector on wrong dimension", "grant", map[string]any{"target": target, "slug": agentd.PermGroupsSpawn, "scope": map[string]any{"group": []string{"@descendants"}}}, "unknown selector"},
-		{"scoped default", "grant", map[string]any{"target": "default", "slug": agentd.PermGroupsSpawn, "scope": map[string]any{"group": []string{"dev"}}}, "not supported"},
-		{"scoped deny", "deny", map[string]any{"target": target, "slug": agentd.PermGroupsSpawn, "scope": map[string]any{"group": []string{"dev"}}}, "cannot carry"},
+		{"selector on wrong dimension", "grant", map[string]any{"target": target, "slug": agentd.PermGroupsMembersSpawn, "scope": map[string]any{"group": []string{"@descendants"}}}, "unknown selector"},
+		{"scoped default", "grant", map[string]any{"target": "default", "slug": agentd.PermGroupsMembersSpawn, "scope": map[string]any{"group": []string{"dev"}}}, "not supported"},
+		{"scoped deny", "deny", map[string]any{"target": target, "slug": agentd.PermGroupsMembersSpawn, "scope": map[string]any{"group": []string{"dev"}}}, "cannot carry"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			res := postPermissionScope(t, f, tc.verb, tc.body)
@@ -104,10 +104,10 @@ func TestPermissionSlugsAdvertiseScopeDimensions(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &slugs))
 	for _, slug := range slugs {
-		if slug.Slug == agentd.PermGroupsSpawn {
+		if slug.Slug == agentd.PermGroupsMembersSpawn {
 			assert.Equal(t, []string{"group", "spawn_profile"}, slug.ScopeDims)
 			return
 		}
 	}
-	t.Fatal("groups.spawn missing from registry response")
+	t.Fatal("groups.members.spawn missing from registry response")
 }

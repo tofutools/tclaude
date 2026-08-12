@@ -27,7 +27,7 @@ func resetTestDB(t *testing.T) {
 //
 // If you add/remove an AutoGrantable slug, update BOTH the registry flag
 // and this list. Destructive / fleet-affecting slugs (agent.delete,
-// groups.rm, permissions.*) must never appear here.
+// groups.delete, permissions.*) must never appear here.
 func TestPermissionRegistry_AutoGrantableSet(t *testing.T) {
 	want := []string{PermHumanClipboard, PermHumanNotify}
 	got := AutoGrantableSlugs()
@@ -40,8 +40,8 @@ func TestPermissionRegistry_AutoGrantableSet(t *testing.T) {
 	// A clearly-destructive slug must never be auto-grantable.
 	assert.False(t, IsAutoGrantableSlug(PermAgentDelete),
 		"agent.delete must never be auto-grantable")
-	assert.False(t, IsAutoGrantableSlug("groups.rm"),
-		"groups.rm must never be auto-grantable")
+	assert.False(t, IsAutoGrantableSlug("groups.delete"),
+		"groups.delete must never be auto-grantable")
 	// An unknown slug is not auto-grantable.
 	assert.False(t, IsAutoGrantableSlug("no.such.slug"))
 }

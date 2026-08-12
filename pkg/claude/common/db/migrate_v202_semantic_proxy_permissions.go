@@ -64,7 +64,7 @@ func migrateV201toV202(d *sql.DB) error {
 				return fmt.Errorf("migrate v201→v202 (%s collision %s): %w", spec.table, oldSlug, err)
 			}
 		}
-		if err = renameSlugColumn(tx, spec.table, "slug"); err != nil {
+		if err = renameSlugColumn(tx, spec.table, "slug", semanticProxyPermissionRenames); err != nil {
 			return fmt.Errorf("migrate v201→v202 (%s): %w", spec.table, err)
 		}
 	}
@@ -73,7 +73,7 @@ func migrateV201toV202(d *sql.DB) error {
 		{"agent_sudo_grants", "slug"},
 		{"access_requests", "perm"},
 	} {
-		if err = renameSlugColumnIfPresent(tx, spec.table, spec.column); err != nil {
+		if err = renameSlugColumnIfPresent(tx, spec.table, spec.column, semanticProxyPermissionRenames); err != nil {
 			return fmt.Errorf("migrate v201→v202 (%s.%s): %w", spec.table, spec.column, err)
 		}
 	}
@@ -82,7 +82,9 @@ func migrateV201toV202(d *sql.DB) error {
 		{"roles", "permissions"},
 		{"group_template_agents", "permissions"},
 	} {
-		if err = migratePermissionJSONColumn(tx, spec.table, spec.column, renamePermissionGrantList); err != nil {
+		if err = migratePermissionJSONColumn(tx, spec.table, spec.column, func(value string) (string, bool, error) {
+			return renamePermissionGrantList(value, semanticProxyPermissionRenames)
+		}); err != nil {
 			return fmt.Errorf("migrate v201→v202 (%s.%s): %w", spec.table, spec.column, err)
 		}
 	}
@@ -92,11 +94,15 @@ func migrateV201toV202(d *sql.DB) error {
 		{"agent_groups", "owner_scopes_json"},
 		{"group_templates", "owner_scopes_json"},
 	} {
-		if err = migratePermissionJSONColumn(tx, spec.table, spec.column, renamePermissionMap); err != nil {
+		if err = migratePermissionJSONColumn(tx, spec.table, spec.column, func(value string) (string, bool, error) {
+			return renamePermissionMap(value, semanticProxyPermissionRenames)
+		}); err != nil {
 			return fmt.Errorf("migrate v201→v202 (%s.%s): %w", spec.table, spec.column, err)
 		}
 	}
-	if err = migratePermissionJSONColumn(tx, "group_template_agents", "profile_inline", renameInlineProfilePermissions); err != nil {
+	if err = migratePermissionJSONColumn(tx, "group_template_agents", "profile_inline", func(value string) (string, bool, error) {
+		return renameInlineProfilePermissions(value, semanticProxyPermissionRenames)
+	}); err != nil {
 		return fmt.Errorf("migrate v201→v202 (group_template_agents.profile_inline): %w", err)
 	}
 
@@ -109,16 +115,16 @@ func migrateV201toV202(d *sql.DB) error {
 	return nil
 }
 
-func renameSlugColumnIfPresent(tx *sql.Tx, table, column string) error {
+func renameSlugColumnIfPresent(tx *sql.Tx, table, column string, renames map[string]string) error {
 	exists, err := txTableExists(tx, table)
 	if err != nil || !exists {
 		return err
 	}
-	return renameSlugColumn(tx, table, column)
+	return renameSlugColumn(tx, table, column, renames)
 }
 
-func renameSlugColumn(tx *sql.Tx, table, column string) error {
-	for oldSlug, newSlug := range semanticProxyPermissionRenames {
+func renameSlugColumn(tx *sql.Tx, table, column string, renames map[string]string) error {
+	for oldSlug, newSlug := range renames {
 		if _, err := tx.Exec(`UPDATE `+table+` SET `+column+` = ? WHERE `+column+` = ?`, newSlug, oldSlug); err != nil {
 			return err
 		}
@@ -179,7 +185,7 @@ func migratePermissionJSONColumn(tx *sql.Tx, table, column string, transform per
 	return nil
 }
 
-func renamePermissionGrantList(value string) (string, bool, error) {
+func renamePermissionGrantList(value string, renames map[string]string) (string, bool, error) {
 	if value == "" {
 		return value, false, nil
 	}
@@ -194,7 +200,7 @@ func renamePermissionGrantList(value string) (string, bool, error) {
 	changed := false
 	out := make([]PermissionGrant, 0, len(grants))
 	for _, grant := range grants {
-		newSlug, legacy := semanticProxyPermissionRenames[grant.Slug]
+		newSlug, legacy := renames[grant.Slug]
 		if !legacy {
 			out = append(out, grant)
 			continue
@@ -214,7 +220,7 @@ func renamePermissionGrantList(value string) (string, bool, error) {
 	return string(b), true, err
 }
 
-func renamePermissionMap(value string) (string, bool, error) {
+func renamePermissionMap(value string, renames map[string]string) (string, bool, error) {
 	if value == "" {
 		return value, false, nil
 	}
@@ -222,7 +228,7 @@ func renamePermissionMap(value string) (string, bool, error) {
 	if err := json.Unmarshal([]byte(value), &entries); err != nil {
 		return "", false, err
 	}
-	changed := renameRawPermissionMap(entries)
+	changed := renameRawPermissionMap(entries, renames)
 	if !changed {
 		return value, false, nil
 	}
@@ -230,9 +236,9 @@ func renamePermissionMap(value string) (string, bool, error) {
 	return string(b), true, err
 }
 
-func renameRawPermissionMap(entries map[string]json.RawMessage) bool {
+func renameRawPermissionMap(entries map[string]json.RawMessage, renames map[string]string) bool {
 	changed := false
-	for oldSlug, newSlug := range semanticProxyPermissionRenames {
+	for oldSlug, newSlug := range renames {
 		value, ok := entries[oldSlug]
 		if !ok {
 			continue
@@ -246,7 +252,7 @@ func renameRawPermissionMap(entries map[string]json.RawMessage) bool {
 	return changed
 }
 
-func renameInlineProfilePermissions(value string) (string, bool, error) {
+func renameInlineProfilePermissions(value string, renames map[string]string) (string, bool, error) {
 	if value == "" {
 		return value, false, nil
 	}
@@ -262,7 +268,7 @@ func renameInlineProfilePermissions(value string) (string, bool, error) {
 	if err := json.Unmarshal(raw, &entries); err != nil {
 		return "", false, err
 	}
-	if !renameRawPermissionMap(entries) {
+	if !renameRawPermissionMap(entries, renames) {
 		return value, false, nil
 	}
 	raw, err := json.Marshal(entries)

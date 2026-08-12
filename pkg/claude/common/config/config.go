@@ -1683,7 +1683,7 @@ func (c *Config) ResolvedLogRotation() (maxSizeBytes int64, keep int) {
 // log_level etc.). config keeps only what humans naturally write.
 //
 // Permission slugs are simple dotted strings, e.g. "self.rename",
-// "member.redesignate", "agent.spawn". Unknown slugs are ignored
+// "groups.members.update", "agent.spawn". Unknown slugs are ignored
 // (forward-compat: a user grants a permission a future build wires up).
 //
 // Sudo carries the human-curated defaults for `tclaude agent sudo`
@@ -1712,7 +1712,7 @@ func (c *Config) ResolvedLogRotation() (maxSizeBytes int64, keep int) {
 //
 // SpawnGroupRestriction / SpawnAllowedGroups / SpawnMaxPerHour are the
 // global knobs of the agent-spawn guardrail layer — runaway-prevention
-// for the case where the human grants an AGENT the `groups.spawn`
+// for the case where the human grants an AGENT the `groups.members.spawn`
 // permission. They only ever affect agent callers; a human (no claude
 // ancestor) bypasses every spawn guardrail, as everywhere else.
 //
@@ -2800,7 +2800,7 @@ func Normalize(c *Config) {
 	if c == nil {
 		return
 	}
-	canonicalizeSemanticProxyPermissions(c)
+	canonicalizePermissionNames(c)
 	if c.LogLevel == "" {
 		c.LogLevel = "info"
 	}
@@ -2841,29 +2841,52 @@ var semanticProxyPermissionRenames = map[string]string{
 	"linear.write": "proxy.linear.write",
 }
 
-// canonicalizeSemanticProxyPermissions upgrades every config field that holds
+var groupPermissionRenames = map[string]string{
+	"groups.rm":                  "groups.delete",
+	"groups.stop":                "groups.members.stop",
+	"groups.resume":              "groups.members.resume",
+	"groups.retire":              "groups.members.retire",
+	"groups.spawn":               "groups.members.spawn",
+	"groups.own":                 "groups.owners.manage",
+	"member.add":                 "groups.members.add",
+	"member.remove":              "groups.members.remove",
+	"member.redesignate":         "groups.members.update",
+	"groups.description":         "groups.settings.description",
+	"groups.default-dir":         "groups.settings.default-dir",
+	"groups.default-context":     "groups.settings.default-context",
+	"groups.default-spawn-group": "groups.settings.default-spawn-target",
+	"groups.default-profile":     "groups.settings.default-profile",
+	"groups.max-members":         "groups.settings.max-members",
+	"groups.notifications":       "groups.settings.notifications",
+	"groups.remote-control":      "groups.settings.remote-control-policy",
+	"groups.permissions":         "groups.settings.member-permissions",
+	"groups.owner-scopes":        "groups.settings.owner-scopes",
+	"groups.link.rm":             "groups.link.remove",
+}
+
+// canonicalizePermissionNames upgrades every config field that holds
 // permission slugs. It also runs from Normalize so a read-only managed process
 // gets the correct effective policy even when it cannot rewrite operator state.
-func canonicalizeSemanticProxyPermissions(c *Config) bool {
+func canonicalizePermissionNames(c *Config) bool {
 	if c == nil || c.Agent == nil {
 		return false
 	}
-	changed := renamePermissionList(&c.Agent.DefaultPermissions)
+	changed := renamePermissionList(&c.Agent.DefaultPermissions, semanticProxyPermissionRenames, groupPermissionRenames)
 	if c.Agent.Sudo == nil {
 		return changed
 	}
-	if renamePermissionList(c.Agent.Sudo.Blocklist) {
+	if renamePermissionList(c.Agent.Sudo.Blocklist, semanticProxyPermissionRenames, groupPermissionRenames) {
 		changed = true
 	}
 	for _, override := range c.Agent.Sudo.Overrides {
-		if override != nil && renamePermissionList(override.Blocklist) {
+		if override != nil && renamePermissionList(override.Blocklist, semanticProxyPermissionRenames, groupPermissionRenames) {
 			changed = true
 		}
 	}
 	return changed
 }
 
-func renamePermissionList(slugs *[]string) bool {
+func renamePermissionList(slugs *[]string, renameSets ...map[string]string) bool {
 	if slugs == nil {
 		return false
 	}
@@ -2874,7 +2897,13 @@ func renamePermissionList(slugs *[]string) bool {
 	changed := false
 	out := make([]string, 0, len(*slugs))
 	for _, slug := range *slugs {
-		canonical, legacy := semanticProxyPermissionRenames[slug]
+		canonical, legacy := slug, false
+		for _, renames := range renameSets {
+			if renamed, ok := renames[slug]; ok {
+				canonical, legacy = renamed, true
+				break
+			}
+		}
 		if !legacy {
 			out = append(out, slug)
 			continue
@@ -2892,10 +2921,10 @@ func renamePermissionList(slugs *[]string) bool {
 	return changed
 }
 
-// MigrateSemanticProxyPermissions persists the slug rename in config.json.
+// MigratePermissionNames persists permission-slug renames in config.json.
 // Missing and sandbox-inaccessible config are clean no-ops; malformed config
 // is returned to the caller so it can warn without overwriting human edits.
-func MigrateSemanticProxyPermissions() error {
+func MigratePermissionNames() error {
 	saveMu.Lock()
 	defer saveMu.Unlock()
 	data, err := os.ReadFile(ConfigPath())
@@ -2909,7 +2938,7 @@ func MigrateSemanticProxyPermissions() error {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return err
 	}
-	if !canonicalizeSemanticProxyPermissions(&cfg) {
+	if !canonicalizePermissionNames(&cfg) {
 		return nil
 	}
 	Normalize(&cfg)

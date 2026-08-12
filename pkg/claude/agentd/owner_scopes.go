@@ -19,7 +19,7 @@ import (
 // either got the whole slug or was not an owner.
 //
 // A group may now carry an owner-scope map, slug → scope, that CONFINES that
-// bypass for that group. {"groups.spawn":{"spawn_profile":["p1"]}} on group g1
+// bypass for that group. {"groups.members.spawn":{"spawn_profile":["p1"]}} on group g1
 // means: an owner of g1 with no grant of its own may spawn into g1 with
 // profile p1, and is refused (popup, then 403) with p2 or an inline profile.
 //
@@ -28,7 +28,7 @@ import (
 //   - It narrows ONLY the bypass. An EXPLICIT grant the owner holds resolves
 //     first, under the ordinary precedence, and is untouched — an operator who
 //     wants that narrowed edits the grant's own scope, which is individually
-//     controllable. So an owner holding an unscoped groups.spawn grant is
+//     controllable. So an owner holding an unscoped groups.members.spawn grant is
 //     unaffected by any owner-scope map.
 //   - It is PER GROUP. An owner of g1 (narrowed) and g2 (not) acting on g2 is
 //     unaffected; acting on g1 is confined. Every bypass site therefore has to

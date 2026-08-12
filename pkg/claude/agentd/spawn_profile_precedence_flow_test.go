@@ -187,7 +187,7 @@ func TestOperatorOnlySpawnProfilesAllowHumanAndBlockAgentAtEveryTier(t *testing.
 
 			const lead = "operator-only-agent-caller-111111111111"
 			f.HaveMember(g.Name, lead)
-			require.NoError(t, db.GrantAgentPermission(lead, agentd.PermGroupsSpawn, "test"))
+			require.NoError(t, db.GrantAgentPermission(lead, agentd.PermGroupsMembersSpawn, "test"))
 			denied := f.AsAgent(lead).SpawnWith(g.Name, tc.body)
 			assert.Equal(t, http.StatusForbidden, denied.Code)
 			assert.Contains(t, string(denied.Raw), "profile_operator_only")

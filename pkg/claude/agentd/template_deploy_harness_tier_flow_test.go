@@ -189,7 +189,7 @@ func TestTemplateDeploy_HarnessComesFromTheGlobalDefaultProfile(t *testing.T) {
 // deploy itself still returns 201 and the rest of a roster is unaffected.
 //
 // A human deploy is deliberately NOT affected — the matrix exists to constrain
-// agents holding groups.spawn and bypasses a caller with no conv-id — which is
+// agents holding groups.members.spawn and bypasses a caller with no conv-id — which is
 // why every other test in this file, all human-initiated, deploys Codex happily.
 func TestTemplateDeploy_GroupTierVendorIsSubjectToTheHarnessPolicy(t *testing.T) {
 	f := newFlow(t)

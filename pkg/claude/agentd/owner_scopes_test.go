@@ -21,22 +21,22 @@ func TestParseOwnerScopes(t *testing.T) {
 		{name: "null is no narrowing", raw: "null"},
 		{name: "empty object is no narrowing", raw: "{}"},
 		{name: "canonicalizes and sorts",
-			raw:           `{"groups.spawn":{"spawn_profile":["p2","p1"]}}`,
-			wantCanonical: `{"groups.spawn":{"spawn_profile":["p1","p2"]}}`},
-		{name: "not an object", raw: `["groups.spawn"]`,
+			raw:           `{"groups.members.spawn":{"spawn_profile":["p2","p1"]}}`,
+			wantCanonical: `{"groups.members.spawn":{"spawn_profile":["p1","p2"]}}`},
+		{name: "not an object", raw: `["groups.members.spawn"]`,
 			wantErr: "owner scopes must be a JSON object"},
 		{name: "unknown slug", raw: `{"groups.teleport":{"group":["g1"]}}`,
 			wantErr: `unknown permission slug "groups.teleport"`},
 		{name: "slug with no owner bypass", raw: `{"permissions.grant":{"group":["g1"]}}`,
 			wantErr: `permission "permissions.grant" has no owner-implied bypass to narrow`},
-		{name: "dimension the slug does not declare", raw: `{"groups.spawn":{"remote":["github.com"]}}`,
-			wantErr: `permission slug "groups.spawn" does not declare scope dimension "remote"`},
-		{name: "unknown dimension", raw: `{"groups.spawn":{"phase":["design"]}}`,
+		{name: "dimension the slug does not declare", raw: `{"groups.members.spawn":{"remote":["github.com"]}}`,
+			wantErr: `permission slug "groups.members.spawn" does not declare scope dimension "remote"`},
+		{name: "unknown dimension", raw: `{"groups.members.spawn":{"phase":["design"]}}`,
 			wantErr: `unknown permission scope dimension "phase"`},
 		// The whole point of writing one of these is to narrow, so the value
 		// that would silently mean "unrestricted" is refused rather than
 		// stored as the widest possible reading of a narrowing.
-		{name: "empty scope for a slug is refused", raw: `{"groups.spawn":{}}`,
+		{name: "empty scope for a slug is refused", raw: `{"groups.members.spawn":{}}`,
 			wantErr: "an owner scope must name at least one dimension"},
 		{name: "slug with no owner-implied entry and empty scope reports the slug first",
 			raw:     `{"permissions.grant":{}}`,
@@ -59,8 +59,8 @@ func TestParseOwnerScopes(t *testing.T) {
 // "unrestricted". The inversion would be the worst possible failure: a
 // narrowing written by a newer daemon becoming a wildcard on an older one.
 func TestOwnerBypassPermittedForGroupFailsClosedOnUndecodableMap(t *testing.T) {
-	g := &db.AgentGroup{ID: 1, Name: "g1", OwnerScopesJSON: `{"groups.spawn":{"mystery":["x"]}}`}
-	assert.False(t, ownerBypassPermittedForGroup(g, "conv-1", PermGroupsSpawn, ActionContext{Group: "g1", SpawnProfile: "p1"}),
+	g := &db.AgentGroup{ID: 1, Name: "g1", OwnerScopesJSON: `{"groups.members.spawn":{"mystery":["x"]}}`}
+	assert.False(t, ownerBypassPermittedForGroup(g, "conv-1", PermGroupsMembersSpawn, ActionContext{Group: "g1", SpawnProfile: "p1"}),
 		"an undecodable owner-scope map must deny the bypass")
 	assert.False(t, ownerBypassPermittedForGroup(g, "conv-1", PermHumanNotify, ActionContext{}),
 		"and it denies it for EVERY slug on that group, not just the malformed entry")
@@ -68,20 +68,20 @@ func TestOwnerBypassPermittedForGroupFailsClosedOnUndecodableMap(t *testing.T) {
 
 func TestOwnerBypassPermittedForGroup(t *testing.T) {
 	narrowed := &db.AgentGroup{ID: 1, Name: "g1",
-		OwnerScopesJSON: `{"groups.spawn":{"spawn_profile":["p1"]}}`}
+		OwnerScopesJSON: `{"groups.members.spawn":{"spawn_profile":["p1"]}}`}
 	unnarrowed := &db.AgentGroup{ID: 2, Name: "g2"}
 
-	assert.True(t, ownerBypassPermittedForGroup(narrowed, "c", PermGroupsSpawn,
+	assert.True(t, ownerBypassPermittedForGroup(narrowed, "c", PermGroupsMembersSpawn,
 		ActionContext{Group: "g1", SpawnProfile: "p1"}), "the named profile passes")
-	assert.False(t, ownerBypassPermittedForGroup(narrowed, "c", PermGroupsSpawn,
+	assert.False(t, ownerBypassPermittedForGroup(narrowed, "c", PermGroupsMembersSpawn,
 		ActionContext{Group: "g1", SpawnProfile: "p2"}), "another profile is refused")
-	assert.False(t, ownerBypassPermittedForGroup(narrowed, "c", PermGroupsSpawn,
+	assert.False(t, ownerBypassPermittedForGroup(narrowed, "c", PermGroupsMembersSpawn,
 		ActionContext{Group: "g1"}), "an inline/unnamed profile leaves the dimension undescribed and fails closed")
-	assert.True(t, ownerBypassPermittedForGroup(narrowed, "c", PermGroupsStop,
+	assert.True(t, ownerBypassPermittedForGroup(narrowed, "c", PermGroupsMembersStop,
 		ActionContext{Group: "g1"}), "a slug the map does not mention keeps the unrestricted bypass")
-	assert.True(t, ownerBypassPermittedForGroup(unnarrowed, "c", PermGroupsSpawn, ActionContext{Group: "g2"}),
+	assert.True(t, ownerBypassPermittedForGroup(unnarrowed, "c", PermGroupsMembersSpawn, ActionContext{Group: "g2"}),
 		"a group with no map is exactly today's bypass")
-	assert.False(t, ownerBypassPermittedForGroup(nil, "c", PermGroupsSpawn, ActionContext{}),
+	assert.False(t, ownerBypassPermittedForGroup(nil, "c", PermGroupsMembersSpawn, ActionContext{}),
 		"no group is no bypass")
 }
 
@@ -97,15 +97,15 @@ func TestOwnerImpliedTierUnionsAcrossOwnedGroups(t *testing.T) {
 	narrowedID, err := db.CreateAgentGroup("tier-narrow", "")
 	require.NoError(t, err)
 	require.NoError(t, db.AddAgentGroupOwner(narrowedID, owner, "test"))
-	_, err = db.SetAgentGroupOwnerScopes("tier-narrow", `{"groups.spawn":{"spawn_profile":["p1"]}}`)
+	_, err = db.SetAgentGroupOwnerScopes("tier-narrow", `{"groups.members.spawn":{"spawn_profile":["p1"]}}`)
 	require.NoError(t, err)
 
 	tier := ownerImpliedTierFor(owner)
-	require.Contains(t, tier, PermGroupsSpawn)
-	assert.False(t, tier[PermGroupsSpawn].Unrestricted, "the only owned group narrows spawn")
-	assert.True(t, tier[PermGroupsStop].Unrestricted, "an unmentioned slug is unrestricted")
-	assert.True(t, tier.satisfiedBy(owner, PermGroupsSpawn, ActionContext{Group: "tier-narrow", SpawnProfile: "p1"}))
-	assert.False(t, tier.satisfiedBy(owner, PermGroupsSpawn, ActionContext{Group: "tier-narrow", SpawnProfile: "p2"}))
+	require.Contains(t, tier, PermGroupsMembersSpawn)
+	assert.False(t, tier[PermGroupsMembersSpawn].Unrestricted, "the only owned group narrows spawn")
+	assert.True(t, tier[PermGroupsMembersStop].Unrestricted, "an unmentioned slug is unrestricted")
+	assert.True(t, tier.satisfiedBy(owner, PermGroupsMembersSpawn, ActionContext{Group: "tier-narrow", SpawnProfile: "p1"}))
+	assert.False(t, tier.satisfiedBy(owner, PermGroupsMembersSpawn, ActionContext{Group: "tier-narrow", SpawnProfile: "p2"}))
 
 	// Owning a SECOND, unnarrowed group restores the unrestricted reading —
 	// union with unrestricted is unrestricted, the same rule an unscoped row
@@ -115,21 +115,21 @@ func TestOwnerImpliedTierUnionsAcrossOwnedGroups(t *testing.T) {
 	require.NoError(t, db.AddAgentGroupOwner(wideID, owner, "test"))
 
 	tier = ownerImpliedTierFor(owner)
-	assert.True(t, tier[PermGroupsSpawn].Unrestricted,
+	assert.True(t, tier[PermGroupsMembersSpawn].Unrestricted,
 		"an unnarrowed owned group must not be suppressed by a narrowed sibling")
-	assert.True(t, tier.satisfiedBy(owner, PermGroupsSpawn, ActionContext{Group: "tier-wide", SpawnProfile: "p2"}))
+	assert.True(t, tier.satisfiedBy(owner, PermGroupsMembersSpawn, ActionContext{Group: "tier-wide", SpawnProfile: "p2"}))
 }
 
 // The listing must state the reach the gate will actually allow. An owner
 // whose bypass is pinned to one profile is not holding the fleet-wide slug the
 // bare "owner:group" provenance implies.
 func TestOwnerProvenanceRendersTheNarrowing(t *testing.T) {
-	assert.Equal(t, "owner:group", ownerProvenance(PermGroupsSpawn, ownerTierEntry{Unrestricted: true}))
+	assert.Equal(t, "owner:group", ownerProvenance(PermGroupsMembersSpawn, ownerTierEntry{Unrestricted: true}))
 	assert.Equal(t, "owner:group [spawn_profile=p1]",
-		ownerProvenance(PermGroupsSpawn, ownerTierEntry{
+		ownerProvenance(PermGroupsMembersSpawn, ownerTierEntry{
 			Scopes: []PermissionScope{{ScopeDimSpawnProfile: {"p1"}}}}))
 	assert.Equal(t, "owner:group [spawn_profile=p1] OR [spawn_profile=p2]",
-		ownerProvenance(PermGroupsSpawn, ownerTierEntry{Scopes: []PermissionScope{
+		ownerProvenance(PermGroupsMembersSpawn, ownerTierEntry{Scopes: []PermissionScope{
 			{ScopeDimSpawnProfile: {"p2"}}, {ScopeDimSpawnProfile: {"p1"}}}}),
 		"two owned groups' narrowings render as the OR the gate evaluates")
 	assert.Equal(t, "owner:any", ownerProvenance(PermHumanNotify, ownerTierEntry{Unrestricted: true}))
@@ -137,7 +137,7 @@ func TestOwnerProvenanceRendersTheNarrowing(t *testing.T) {
 
 // Attenuation must consult the NARROWED owner tier where the plain resolver is
 // undecided. Without this an owner pinned to one profile could mint a child an
-// unscoped groups.spawn and act through it — the escalation attenuation exists
+// unscoped groups.members.spawn and act through it — the escalation attenuation exists
 // to stop, arriving through the bypass instead of a grant.
 func TestGranterScopesForSlugUsesNarrowedOwnerTier(t *testing.T) {
 	setupTestDB(t)
@@ -146,9 +146,9 @@ func TestGranterScopesForSlugUsesNarrowedOwnerTier(t *testing.T) {
 	cfg, err := config.Load()
 	require.NoError(t, err)
 
-	narrow := ownerImpliedTier{PermGroupsSpawn: {Scopes: []PermissionScope{
+	narrow := ownerImpliedTier{PermGroupsMembersSpawn: {Scopes: []PermissionScope{
 		{ScopeDimSpawnProfile: {"p1"}}}}}
-	scopes, scoped := granterScopesForSlug(src, cfg, narrow, PermGroupsSpawn)
+	scopes, scoped := granterScopesForSlug(src, cfg, narrow, PermGroupsMembersSpawn)
 	require.True(t, scoped, "a narrowed owner bypass is a shape to attenuate against")
 	require.Len(t, scopes, 1)
 	assert.False(t, permissionScopeCovers(scopes[0], nil),
@@ -157,10 +157,10 @@ func TestGranterScopesForSlugUsesNarrowedOwnerTier(t *testing.T) {
 		"but may confer within its own narrowing")
 
 	_, scoped = granterScopesForSlug(src, cfg, ownerImpliedTier{
-		PermGroupsSpawn: {Unrestricted: true}}, PermGroupsSpawn)
+		PermGroupsMembersSpawn: {Unrestricted: true}}, PermGroupsMembersSpawn)
 	assert.False(t, scoped, "an unrestricted owner tier stays unconstrained, as before Phase 6")
 
-	_, scoped = granterScopesForSlug(src, cfg, nil, PermGroupsSpawn)
+	_, scoped = granterScopesForSlug(src, cfg, nil, PermGroupsMembersSpawn)
 	assert.False(t, scoped, "a non-owner with no grant is unconstrained (permissions.grant is recursive)")
 }
 
@@ -171,14 +171,14 @@ func TestGranterScopesForSlugUsesNarrowedOwnerTier(t *testing.T) {
 func TestGranterScopesForSlugPrefersExplicitGrantOverOwnerNarrowing(t *testing.T) {
 	setupTestDB(t)
 	const granter = "owner-atten-explicit-0001"
-	require.NoError(t, db.GrantAgentPermission(granter, PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(granter, PermGroupsMembersSpawn, "test"))
 	src := loadPermSources(granter)
 	cfg, err := config.Load()
 	require.NoError(t, err)
 
-	narrow := ownerImpliedTier{PermGroupsSpawn: {Scopes: []PermissionScope{
+	narrow := ownerImpliedTier{PermGroupsMembersSpawn: {Scopes: []PermissionScope{
 		{ScopeDimSpawnProfile: {"p1"}}}}}
-	_, scoped := granterScopesForSlug(src, cfg, narrow, PermGroupsSpawn)
+	_, scoped := granterScopesForSlug(src, cfg, narrow, PermGroupsMembersSpawn)
 	assert.False(t, scoped,
 		"an unscoped explicit grant wins over a narrowed bypass, so delegation stays unconstrained")
 }
@@ -215,18 +215,18 @@ func TestOwnerBypassFillsTheGroupDimensionFromTheCarryingGroup(t *testing.T) {
 
 	// And a group-scoped gate that passes no context at all still knows its own
 	// group — the same rule applied one site earlier.
-	_, err = db.SetAgentGroupOwnerScopes("groupdim", `{"groups.spawn":{"group":["groupdim"]}}`)
+	_, err = db.SetAgentGroupOwnerScopes("groupdim", `{"groups.members.spawn":{"group":["groupdim"]}}`)
 	require.NoError(t, err)
 	g, err := db.GetAgentGroupByName("groupdim")
 	require.NoError(t, err)
-	assert.True(t, ownerOfGroupPermitting(g, owner, PermGroupsSpawn, ActionContext{}))
+	assert.True(t, ownerOfGroupPermitting(g, owner, PermGroupsMembersSpawn, ActionContext{}))
 }
 
 // The failure the degraded flag exists for. A group whose stored map this
 // build cannot decode confers NOTHING at the gate — so the owner must not be
 // read as an UNCONSTRAINED granter, which is what "no tier entry" would mean.
 // Without this, an owner narrowed by a newer daemon's map could, after a
-// downgrade, mint a child an unscoped groups.spawn and act through it.
+// downgrade, mint a child an unscoped groups.members.spawn and act through it.
 func TestOwnerTierDegradesRatherThanVanishingOnUndecodableMap(t *testing.T) {
 	setupTestDB(t)
 	const owner = "owner-degraded-conv-0001"
@@ -237,27 +237,27 @@ func TestOwnerTierDegradesRatherThanVanishingOnUndecodableMap(t *testing.T) {
 	require.NoError(t, db.AddAgentGroupOwner(id, owner, "test"))
 	// Written straight to the row: the HTTP boundary would refuse this, which
 	// is precisely why it can only arrive from a build that knew the dimension.
-	_, err = db.SetAgentGroupOwnerScopes("degraded", `{"groups.spawn":{"mystery":["x"]}}`)
+	_, err = db.SetAgentGroupOwnerScopes("degraded", `{"groups.members.spawn":{"mystery":["x"]}}`)
 	require.NoError(t, err)
 
 	tier := ownerImpliedTierFor(owner)
-	entry := tier[PermGroupsSpawn]
+	entry := tier[PermGroupsMembersSpawn]
 	assert.True(t, entry.Degraded, "the unreadable group is recorded, not skipped")
 	assert.False(t, entry.confers(), "and it authorizes nothing")
 
 	// Listing == gate: the slug must NOT be reported effective.
 	effective, ownerAdded, _, _ := effectivePermsFor(permissionsState{}, owner, tier)
-	assert.NotContains(t, effective, PermGroupsSpawn)
-	assert.NotContains(t, ownerAdded, PermGroupsSpawn)
+	assert.NotContains(t, effective, PermGroupsMembersSpawn)
+	assert.NotContains(t, ownerAdded, PermGroupsMembersSpawn)
 	g, err := db.GetAgentGroupByName("degraded")
 	require.NoError(t, err)
-	assert.False(t, ownerOfGroupPermitting(g, owner, PermGroupsSpawn,
+	assert.False(t, ownerOfGroupPermitting(g, owner, PermGroupsMembersSpawn,
 		ActionContext{Group: "degraded", SpawnProfile: "p1"}), "and the gate refuses it too")
 
 	// Attenuation must read it as "confers nothing", NOT as unconstrained.
 	cfg, err := config.Load()
 	require.NoError(t, err)
-	scopes, scoped := granterScopesForSlug(loadPermSources(owner), cfg, tier, PermGroupsSpawn)
+	scopes, scoped := granterScopesForSlug(loadPermSources(owner), cfg, tier, PermGroupsMembersSpawn)
 	require.True(t, scoped, "a tier the daemon failed to read is not an absence of constraint")
 	assert.Empty(t, scopes, "so the owner may confer nothing through it")
 }
@@ -274,17 +274,17 @@ func TestOwnerTierDegradedGroupDoesNotSuppressAReadableOne(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, db.AddAgentGroupOwner(id, owner, "test"))
 	}
-	_, err = db.SetAgentGroupOwnerScopes("deg-bad", `{"groups.spawn":{"mystery":["x"]}}`)
+	_, err = db.SetAgentGroupOwnerScopes("deg-bad", `{"groups.members.spawn":{"mystery":["x"]}}`)
 	require.NoError(t, err)
 
 	tier := ownerImpliedTierFor(owner)
-	entry := tier[PermGroupsSpawn]
+	entry := tier[PermGroupsMembersSpawn]
 	assert.True(t, entry.Unrestricted, "the readable, unnarrowed group still confers")
 	assert.True(t, entry.confers())
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
-	_, scoped := granterScopesForSlug(loadPermSources(owner), cfg, tier, PermGroupsSpawn)
+	_, scoped := granterScopesForSlug(loadPermSources(owner), cfg, tier, PermGroupsMembersSpawn)
 	assert.False(t, scoped, "and an unrestricted tier stays unconstrained for delegation")
 }
 

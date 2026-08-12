@@ -34,7 +34,7 @@ func narrowOwnerBypass(t *testing.T, f *testharness.Flow, group string, scopes m
 }
 
 // THE headline scenario (TCL-1071). Group g1 pins its owner-implied
-// groups.spawn to one profile. An owner of g1 holding NO grant of its own may
+// groups.members.spawn to one profile. An owner of g1 holding NO grant of its own may
 // spawn into g1 with that profile — the bypass still fills the gap — and is
 // refused with any other profile, and with an inline shape that names none.
 //
@@ -52,7 +52,7 @@ func TestOwnerScopes_NarrowedBypassGatesSpawnPerProfile(t *testing.T) {
 	const owner = "ownerscope-lead-aaaa-bbbb-cccc-00000000001"
 	haveSpawnCapableOwner(t, f, "g1", owner)
 	narrowOwnerBypass(t, f, "g1", map[string]any{
-		agentd.PermGroupsSpawn: map[string]any{"spawn_profile": []string{"p1"}},
+		agentd.PermGroupsMembersSpawn: map[string]any{"spawn_profile": []string{"p1"}},
 	})
 
 	allowed := spawnWithProfile(t, f, owner, "g1", "p1-worker", "p1")
@@ -60,7 +60,7 @@ func TestOwnerScopes_NarrowedBypassGatesSpawnPerProfile(t *testing.T) {
 
 	other := spawnWithProfile(t, f, owner, "g1", "p2-worker", "p2")
 	assert.Equal(t, http.StatusForbidden, other.Code, other.Body)
-	assert.Contains(t, other.Body, agentd.PermGroupsSpawn,
+	assert.Contains(t, other.Body, agentd.PermGroupsMembersSpawn,
 		"a narrowed-away bypass lands on the ordinary not-granted path, naming the slug")
 
 	inline := spawnWithProfile(t, f, owner, "g1", "inline-worker", "")
@@ -89,9 +89,9 @@ func TestOwnerScopes_ExplicitGrantIsUnaffectedByNarrowing(t *testing.T) {
 	const owner = "ownerscope-lead-aaaa-bbbb-cccc-00000000002"
 	haveSpawnCapableOwner(t, f, "g1", owner)
 	narrowOwnerBypass(t, f, "g1", map[string]any{
-		agentd.PermGroupsSpawn: map[string]any{"spawn_profile": []string{"p1"}},
+		agentd.PermGroupsMembersSpawn: map[string]any{"spawn_profile": []string{"p1"}},
 	})
-	grantScoped(t, f, owner, agentd.PermGroupsSpawn, nil)
+	grantScoped(t, f, owner, agentd.PermGroupsMembersSpawn, nil)
 
 	allowed := spawnWithProfile(t, f, owner, "g1", "granted-worker", "p2")
 	assert.Equal(t, http.StatusOK, allowed.Code, allowed.Body,
@@ -115,7 +115,7 @@ func TestOwnerScopes_NarrowingIsPerGroup(t *testing.T) {
 	haveSpawnCapableOwner(t, f, "g1", owner)
 	haveSpawnCapableOwner(t, f, "g2", owner)
 	narrowOwnerBypass(t, f, "g1", map[string]any{
-		agentd.PermGroupsSpawn: map[string]any{"spawn_profile": []string{"p1"}},
+		agentd.PermGroupsMembersSpawn: map[string]any{"spawn_profile": []string{"p1"}},
 	})
 
 	refused := spawnWithProfile(t, f, owner, "g1", "g1-p2-worker", "p2")
@@ -139,9 +139,9 @@ func TestOwnerScopes_DenyStillSuppressesTheNarrowedBypass(t *testing.T) {
 	const owner = "ownerscope-lead-aaaa-bbbb-cccc-00000000004"
 	haveSpawnCapableOwner(t, f, "g1", owner)
 	narrowOwnerBypass(t, f, "g1", map[string]any{
-		agentd.PermGroupsSpawn: map[string]any{"spawn_profile": []string{"p1"}},
+		agentd.PermGroupsMembersSpawn: map[string]any{"spawn_profile": []string{"p1"}},
 	})
-	require.NoError(t, db.SetAgentPermissionOverride(owner, agentd.PermGroupsSpawn, db.PermEffectDeny, "test"))
+	require.NoError(t, db.SetAgentPermissionOverride(owner, agentd.PermGroupsMembersSpawn, db.PermEffectDeny, "test"))
 
 	refused := spawnWithProfile(t, f, owner, "g1", "denied-worker", "p1")
 	assert.Equal(t, http.StatusForbidden, refused.Code, refused.Body,
@@ -157,7 +157,7 @@ func TestOwnerScopes_ListingRendersTheNarrowing(t *testing.T) {
 	const owner = "ownerscope-lead-aaaa-bbbb-cccc-00000000005"
 	haveSpawnCapableOwner(t, f, "g1", owner)
 	narrowOwnerBypass(t, f, "g1", map[string]any{
-		agentd.PermGroupsSpawn: map[string]any{"spawn_profile": []string{"p1"}},
+		agentd.PermGroupsMembersSpawn: map[string]any{"spawn_profile": []string{"p1"}},
 	})
 
 	view := getPermissionsTarget(t, f, owner, owner)
@@ -166,14 +166,14 @@ func TestOwnerScopes_ListingRendersTheNarrowing(t *testing.T) {
 		Provenance map[string]string `json:"provenance"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(view.Body), &effective))
-	assert.Equal(t, "owner:group [spawn_profile=p1]", effective.Provenance[agentd.PermGroupsSpawn],
+	assert.Equal(t, "owner:group [spawn_profile=p1]", effective.Provenance[agentd.PermGroupsMembersSpawn],
 		"the owner tier states where its reach ends")
-	assert.Equal(t, "owner:group", effective.Provenance[agentd.PermGroupsStop],
+	assert.Equal(t, "owner:group", effective.Provenance[agentd.PermGroupsMembersStop],
 		"a slug the map does not mention keeps the unrestricted rendering")
 }
 
 // Attenuation through the BYPASS. An owner whose only authority for
-// groups.spawn is a narrowed bypass must not be able to mint a child a wider
+// groups.members.spawn is a narrowed bypass must not be able to mint a child a wider
 // one and act through it — the same escalation the grant path already refuses,
 // arriving via ownership instead.
 func TestOwnerScopes_NarrowedOwnerCannotConferWiderSpawn(t *testing.T) {
@@ -185,16 +185,16 @@ func TestOwnerScopes_NarrowedOwnerCannotConferWiderSpawn(t *testing.T) {
 	const owner = "ownerscope-lead-aaaa-bbbb-cccc-00000000006"
 	haveSpawnCapableOwner(t, f, "g1", owner)
 	narrowOwnerBypass(t, f, "g1", map[string]any{
-		agentd.PermGroupsSpawn: map[string]any{"spawn_profile": []string{"p1"}},
+		agentd.PermGroupsMembersSpawn: map[string]any{"spawn_profile": []string{"p1"}},
 	})
 	// permissions.grant is what lets it mint at all; it is deliberately
-	// unscoped so the refusal below can only come from the groups.spawn shape.
+	// unscoped so the refusal below can only come from the groups.members.spawn shape.
 	grantScoped(t, f, owner, agentd.PermPermissionsGrant, nil)
 
 	rec := agentReq(t, f, owner, http.MethodPost, "/v1/groups/g1/spawn", map[string]any{
 		"name": "wide-child", "profile": "p1",
 		"permission_overrides": map[string]any{
-			agentd.PermGroupsSpawn: db.PermEffectGrant,
+			agentd.PermGroupsMembersSpawn: db.PermEffectGrant,
 		},
 	})
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
@@ -205,7 +205,7 @@ func TestOwnerScopes_NarrowedOwnerCannotConferWiderSpawn(t *testing.T) {
 	ok := agentReq(t, f, owner, http.MethodPost, "/v1/groups/g1/spawn", map[string]any{
 		"name": "narrow-child", "profile": "p1",
 		"permission_overrides": map[string]any{
-			agentd.PermGroupsSpawn: map[string]any{
+			agentd.PermGroupsMembersSpawn: map[string]any{
 				"effect": db.PermEffectGrant,
 				"scope":  map[string]any{"spawn_profile": []string{"p1"}},
 			},
@@ -215,9 +215,9 @@ func TestOwnerScopes_NarrowedOwnerCannotConferWiderSpawn(t *testing.T) {
 }
 
 // A bypass site with NO target group in context fails closed for a narrowed
-// group's contribution. /v1/worktrees/prepare is gated on groups.spawn through
+// group's contribution. /v1/worktrees/prepare is gated on groups.members.spawn through
 // the owns-any-group bypass and describes neither a group nor a profile, so an
-// owner whose ONLY group narrows groups.spawn cannot reach it — while an owner
+// owner whose ONLY group narrows groups.members.spawn cannot reach it — while an owner
 // of an unnarrowed group still can.
 func TestOwnerScopes_NoTargetGroupInContextFailsClosed(t *testing.T) {
 	f := newFlow(t)
@@ -228,7 +228,7 @@ func TestOwnerScopes_NoTargetGroupInContextFailsClosed(t *testing.T) {
 	haveSpawnCapableOwner(t, f, "g1", narrowed)
 	haveSpawnCapableOwner(t, f, "g2", wide)
 	narrowOwnerBypass(t, f, "g1", map[string]any{
-		agentd.PermGroupsSpawn: map[string]any{"spawn_profile": []string{"p1"}},
+		agentd.PermGroupsMembersSpawn: map[string]any{"spawn_profile": []string{"p1"}},
 	})
 
 	// A malformed body would be rejected before the gate, so send a real one
@@ -252,7 +252,7 @@ func TestOwnerScopes_PatchValidatesTheMap(t *testing.T) {
 
 	bad := humanReq(t, f, http.MethodPatch, "/v1/groups/g1", map[string]any{
 		"owner_scopes": map[string]any{
-			agentd.PermGroupsSpawn: map[string]any{"remote": []string{"github.com"}},
+			agentd.PermGroupsMembersSpawn: map[string]any{"remote": []string{"github.com"}},
 		},
 	})
 	require.Equal(t, http.StatusBadRequest, bad.Code, bad.Body.String())
@@ -273,11 +273,11 @@ func TestOwnerScopes_PatchValidatesTheMap(t *testing.T) {
 
 	// And the accepted form round-trips, canonicalized, then clears.
 	narrowOwnerBypass(t, f, "g1", map[string]any{
-		agentd.PermGroupsSpawn: map[string]any{"spawn_profile": []string{"p2", "p1"}},
+		agentd.PermGroupsMembersSpawn: map[string]any{"spawn_profile": []string{"p2", "p1"}},
 	})
 	g, err = db.GetAgentGroupByName("g1")
 	require.NoError(t, err)
-	assert.Equal(t, `{"groups.spawn":{"spawn_profile":["p1","p2"]}}`, g.OwnerScopesJSON)
+	assert.Equal(t, `{"groups.members.spawn":{"spawn_profile":["p1","p2"]}}`, g.OwnerScopesJSON)
 
 	narrowOwnerBypass(t, f, "g1", map[string]any{})
 	g, err = db.GetAgentGroupByName("g1")

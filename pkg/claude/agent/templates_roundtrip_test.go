@@ -28,7 +28,7 @@ func TestTemplateJSON_ProfileInlineRoundTripsLosslessly(t *testing.T) {
 					"effort": "high",
 					"remote_control": true,
 					"is_owner": true,
-					"permission_overrides": {"groups.spawn": "grant", "message.direct": "deny"},
+					"permission_overrides": {"groups.members.spawn": "grant", "message.direct": "deny"},
 					"some_future_field": "must-survive-too"
 				}
 			}
@@ -59,7 +59,7 @@ func TestTemplateJSON_ProfileInlineRoundTripsLosslessly(t *testing.T) {
 	assert.Equal(t, "must-survive-too", pi["some_future_field"],
 		"unknown daemon-side fields round-trip too (raw JSON, not a typed mirror)")
 	po := pi["permission_overrides"].(map[string]any)
-	assert.Equal(t, "grant", po["groups.spawn"])
+	assert.Equal(t, "grant", po["groups.members.spawn"])
 	assert.Equal(t, "deny", po["message.direct"])
 }
 
@@ -69,12 +69,12 @@ func TestTemplateJSON_ProfileInlineRoundTripsLosslessly(t *testing.T) {
 func TestInlineProfileTag_RendersAccessBits(t *testing.T) {
 	tag := inlineProfileTag(json.RawMessage(
 		`{"model":"haiku","remote_control":true,"is_owner":true,` +
-			`"permission_overrides":{"groups.spawn":"grant","message.direct":"deny"}}`))
+			`"permission_overrides":{"groups.members.spawn":"grant","message.direct":"deny"}}`))
 	assert.True(t, strings.HasPrefix(tag, "custom-launch={"), "tag shape: %s", tag)
 	assert.Contains(t, tag, "model haiku")
 	assert.Contains(t, tag, "remote-control true")
 	assert.Contains(t, tag, "owner true")
-	assert.Contains(t, tag, "groups.spawn:grant")
+	assert.Contains(t, tag, "groups.members.spawn:grant")
 	assert.Contains(t, tag, "message.direct:deny")
 
 	assert.Empty(t, inlineProfileTag(nil), "absent profile renders nothing")

@@ -49,7 +49,7 @@ func physicalTestPath(t *testing.T, path string) string {
 // Ensures that stopping a conv that has no live tmux session returns
 // the idempotent `skipped:already_offline` sentinel rather than a
 // 503 error or a 200 with an empty action. Mirrors the bulk
-// groups.stop behaviour exactly — single-conv variant should be
+// groups.members.stop behaviour exactly — single-conv variant should be
 // indistinguishable from a one-member group stop.
 func TestHandleAgentStop_SkipsOfflineTarget(t *testing.T) {
 	setupTestDB(t)
@@ -472,7 +472,7 @@ func TestStopOneConv_DefaultWrapperArmsForceStopIntent(t *testing.T) {
 }
 
 // resumeOneConv must report `skipped:no_conv_id` when called with an
-// empty conv-id. This mirrors the bulk groups.resume placeholder
+// empty conv-id. This mirrors the bulk groups.members.resume placeholder
 // handling — without a conv-id we have no .jsonl to resume from.
 func TestResumeOneConv_EmptyConvIDSkips(t *testing.T) {
 	setupTestDB(t)

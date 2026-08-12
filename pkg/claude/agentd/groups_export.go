@@ -469,6 +469,7 @@ func SetGroupImportAfterCollisionCheckForTest(fn func()) func() {
 func canonicalizeImportedPermissionScopes(exp *groupexport.Export) error {
 	for i := range exp.Group.Permissions {
 		permission := &exp.Group.Permissions[i]
+		permission.Slug = db.CanonicalPermissionSlug(permission.Slug)
 		canonical, err := canonicalImportedPermissionScopeForSlug(permission.Slug, permission.ScopeJSON)
 		if err != nil {
 			return fmt.Errorf("group permission %q has invalid scope: %w", permission.Slug, err)
@@ -477,6 +478,7 @@ func canonicalizeImportedPermissionScopes(exp *groupexport.Export) error {
 	}
 	for i := range exp.Permissions {
 		permission := &exp.Permissions[i]
+		permission.Slug = db.CanonicalPermissionSlug(permission.Slug)
 		canonical, err := canonicalImportedPermissionScopeForSlug(permission.Slug, permission.ScopeJSON)
 		if err != nil {
 			return fmt.Errorf("permission %s/%s has invalid scope: %w", permission.ConvID, permission.Slug, err)
@@ -488,6 +490,7 @@ func canonicalizeImportedPermissionScopes(exp *groupexport.Export) error {
 	}
 	for i := range exp.SudoGrants {
 		grant := &exp.SudoGrants[i]
+		grant.Slug = db.CanonicalPermissionSlug(grant.Slug)
 		canonical, err := canonicalImportedPermissionScopeForSlug(grant.Slug, grant.ScopeJSON)
 		if err != nil {
 			return fmt.Errorf("sudo grant %s/%s has invalid scope: %w", grant.ConvID, grant.Slug, err)

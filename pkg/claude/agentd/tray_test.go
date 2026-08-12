@@ -218,14 +218,14 @@ func TestApprovalRegistry_SnapshotSortsOldestFirst(t *testing.T) {
 func TestFormatApprovalSlotLabel_UsesConvTitleWhenPresent(t *testing.T) {
 	row := pendingApprovalSummary{
 		ID:        "abcdef0123",
-		Perm:      "groups.spawn",
+		Perm:      "groups.members.spawn",
 		AgentID:   "agt_1234567890abcdef",
 		ConvTitle: "alice",
 		ConvID:    "aaaa-bbbb",
 		CreatedAt: time.Now().Add(-90 * time.Second),
 	}
 	label := formatApprovalSlotLabel(row)
-	assert.Contains(t, label, "groups.spawn", "label should mention perm")
+	assert.Contains(t, label, "groups.members.spawn", "label should mention perm")
 	assert.Contains(t, label, "agt_12345678", "label should lead caller metadata with the stable id")
 	assert.Contains(t, label, "alice", "label should mention conv title")
 	assert.Less(t, strings.Index(label, "agt_12345678"), strings.Index(label, "alice"),

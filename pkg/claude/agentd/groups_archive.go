@@ -8,7 +8,7 @@ import (
 )
 
 // handleGroupArchive marks a group as archived (soft-deleted).
-// Mutating operations on the group (member.add, owners.*, message)
+// Mutating operations on the group (groups.members.add, owners.*, message)
 // will refuse afterwards; listing surfaces hide it from defaults.
 // Members + ownership rows + message history all stay intact for
 // forensic queries; reverse with /v1/groups/{name}/unarchive.
@@ -64,7 +64,7 @@ var errGroupArchived = errors.New("group is archived; unarchive it first or pick
 // requireGroupActive refuses if g is archived. Returns true on
 // active groups; on archived groups it writes a 409 + descriptive
 // error and returns false. Use at the top of every mutation handler
-// (member.add, owners.*, message, etc.) — a sealed group should
+// (groups.members.add, owners.*, message, etc.) — a sealed group should
 // reject all writes.
 func requireGroupActive(w http.ResponseWriter, g *db.AgentGroup) bool {
 	if g == nil || !g.IsArchived() {

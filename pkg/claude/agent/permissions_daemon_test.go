@@ -116,8 +116,8 @@ func TestPermissionsLs_OldDaemonResponseRefused(t *testing.T) {
 		// the roster, with no `resolved` discriminator and no target echo.
 		return http.StatusOK, permissionsState{
 			Defaults:  []string{"self.rename"},
-			Grants:    map[string][]string{conv: {"groups.spawn"}},
-			Overrides: map[string]map[string]string{conv: {"groups.spawn": "grant"}},
+			Grants:    map[string][]string{conv: {"groups.members.spawn"}},
+			Overrides: map[string]map[string]string{conv: {"groups.members.spawn": "grant"}},
 		}
 	}
 
@@ -150,7 +150,7 @@ func TestPermissionsLs_RosterTitlesComeFromDaemon(t *testing.T) {
 		assert.Equal(t, "/v1/permissions", path, "untargeted read hits the plain endpoint")
 		return http.StatusOK, permissionsState{
 			Defaults:  []string{"self.rename"},
-			Overrides: map[string]map[string]string{conv: {"groups.spawn": "grant"}},
+			Overrides: map[string]map[string]string{conv: {"groups.members.spawn": "grant"}},
 			AgentIDs:  map[string]string{conv: "agt_032fdfcfbb0578a5a1cf6493db7264fb"},
 			Titles:    map[string]string{conv: "sandbox-lead"},
 		}

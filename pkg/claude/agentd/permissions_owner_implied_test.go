@@ -27,7 +27,8 @@ import (
 // If you add/remove an owner-bypass call site, update both the registry
 // scope AND this map — a drift here means the UI lies about what an owner
 // can actually do. Slugs gated by plain requirePermission (no owner
-// bypass — e.g. groups.create/rm/own, member.*, groups.rename/clone,
+// bypass — e.g. groups.create/delete/owners.manage, groups.members.*,
+// groups.rename/clone,
 // permissions.*, message.direct) must NOT be marked.
 func TestPermissionRegistry_OwnerImpliedSet(t *testing.T) {
 	// Each slug mapped to the reach its bypass call site actually has.
@@ -56,15 +57,15 @@ func TestPermissionRegistry_OwnerImpliedSet(t *testing.T) {
 		PermAgentInboxWatch:    ownerScopeMember,
 		// requireGroupPermission and the other group-scoped endpoints —
 		// the owned group itself.
-		PermGroupsStop:       ownerScopeGroup,
-		PermGroupsResume:     ownerScopeGroup,
-		PermGroupsRetire:     ownerScopeGroup,
-		PermGroupsSpawn:      ownerScopeGroup,
-		PermGroupsAttachment: ownerScopeGroup,
-		PermGroupsLinkAdd:    ownerScopeGroup,
-		PermGroupsLinkRm:     ownerScopeGroup,
-		PermGroupsNest:       ownerScopeGroup,
-		PermProcessAdvance:   ownerScopeGroup,
+		PermGroupsMembersStop:   ownerScopeGroup,
+		PermGroupsMembersResume: ownerScopeGroup,
+		PermGroupsMembersRetire: ownerScopeGroup,
+		PermGroupsMembersSpawn:  ownerScopeGroup,
+		PermGroupsAttachment:    ownerScopeGroup,
+		PermGroupsLinkAdd:       ownerScopeGroup,
+		PermGroupsLinkRemove:    ownerScopeGroup,
+		PermGroupsNest:          ownerScopeGroup,
+		PermProcessAdvance:      ownerScopeGroup,
 		// Both of templates.instantiate's owner-bypass sites are
 		// requireGroupPermission over an EXISTING group (rebrief and
 		// reinforce). Its other two sites take plain requirePermission,

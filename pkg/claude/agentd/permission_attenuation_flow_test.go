@@ -55,7 +55,7 @@ func TestAttenuation_SpawnProfileScopedGrantGatesPerProfile(t *testing.T) {
 
 	const lead = "atten-lead-aaaa-bbbb-cccc-000000000001"
 	haveSpawnCapableMember(t, f, "alpha", lead)
-	grantScoped(t, f, lead, agentd.PermGroupsSpawn, map[string]any{"spawn_profile": []string{"p1"}})
+	grantScoped(t, f, lead, agentd.PermGroupsMembersSpawn, map[string]any{"spawn_profile": []string{"p1"}})
 
 	allowed := spawnWithProfile(t, f, lead, "alpha", "p1-worker", "p1")
 	require.Equal(t, http.StatusOK, allowed.Code, allowed.Body)
@@ -65,7 +65,7 @@ func TestAttenuation_SpawnProfileScopedGrantGatesPerProfile(t *testing.T) {
 
 	inline := spawnWithProfile(t, f, lead, "alpha", "inline-worker", "")
 	assert.Equal(t, http.StatusForbidden, inline.Code, inline.Body)
-	assert.Contains(t, inline.Body, agentd.PermGroupsSpawn,
+	assert.Contains(t, inline.Body, agentd.PermGroupsMembersSpawn,
 		"an unnamed profile is the ordinary not-granted path, naming the slug")
 }
 
@@ -83,7 +83,7 @@ func TestAttenuation_SpawnProfileScopeSeesTheGroupDefault(t *testing.T) {
 
 	const lead = "atten-lead-aaaa-bbbb-cccc-000000000002"
 	haveSpawnCapableMember(t, f, "alpha", lead)
-	grantScoped(t, f, lead, agentd.PermGroupsSpawn,
+	grantScoped(t, f, lead, agentd.PermGroupsMembersSpawn,
 		map[string]any{"spawn_profile": []string{"groupdefault"}})
 
 	allowed := spawnWithProfile(t, f, lead, "alpha", "default-worker", "")
@@ -91,16 +91,16 @@ func TestAttenuation_SpawnProfileScopeSeesTheGroupDefault(t *testing.T) {
 }
 
 // The attenuation matrix at the spawn boundary. One lead, whose own
-// groups.spawn is pinned to two groups, tries to mint that slug onto children
+// groups.members.spawn is pinned to two groups, tries to mint that slug onto children
 // at various widths.
 func TestAttenuation_SpawnConferringWiderThanHeldIsRefused(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
 	const lead = "atten-lead-aaaa-bbbb-cccc-000000000003"
 	haveSpawnCapableMember(t, f, "alpha", lead)
-	// Unscoped groups.spawn so the spawn itself always clears the gate — this
+	// Unscoped groups.members.spawn so the spawn itself always clears the gate — this
 	// test is about what the spawn CONFERS, not whether it may spawn.
-	grantScoped(t, f, lead, agentd.PermGroupsSpawn, nil)
+	grantScoped(t, f, lead, agentd.PermGroupsMembersSpawn, nil)
 	grantScoped(t, f, lead, agentd.PermPermissionsGrant, nil)
 	// The slug under test is held NARROWLY.
 	grantScoped(t, f, lead, agentd.PermRoutesPublish, map[string]any{"group": []string{"alpha", "beta"}})
@@ -145,10 +145,10 @@ func TestAttenuation_SpawnConferringWiderThanHeldIsRefused(t *testing.T) {
 	})
 
 	t.Run("a slug the granter holds unscoped is unconstrained", func(t *testing.T) {
-		// groups.spawn is held UNSCOPED above, so conferring it unscoped is
+		// groups.members.spawn is held UNSCOPED above, so conferring it unscoped is
 		// exactly the pre-scope behaviour and must keep working.
 		res := spawnConferring(t, f, lead, "alpha", "spawner-worker", map[string]any{
-			agentd.PermGroupsSpawn: db.PermEffectGrant,
+			agentd.PermGroupsMembersSpawn: db.PermEffectGrant,
 		})
 		assert.Equal(t, http.StatusOK, res.Code, res.Body)
 	})
@@ -289,7 +289,7 @@ func TestAttenuation_SpawnConfersSelectorToDescendantByConstruction(t *testing.T
 	f.HaveGroup("alpha")
 	const lead = "atten-selector-spawn-lead-aaaa-bbbb-cccc-0001"
 	haveSpawnCapableMember(t, f, "alpha", lead)
-	grantScoped(t, f, lead, agentd.PermGroupsSpawn, nil)
+	grantScoped(t, f, lead, agentd.PermGroupsMembersSpawn, nil)
 	grantScoped(t, f, lead, agentd.PermPermissionsGrant, nil)
 	grantScoped(t, f, lead, agentd.PermAgentRetire,
 		map[string]any{"target_agent": []string{"@self-spawned"}})
@@ -349,7 +349,7 @@ func TestAttenuation_CaptureAsProfilePreservesScopes(t *testing.T) {
 	f := newFlow(t)
 	const source = "atten-src-aaaa-bbbb-cccc-000000000005"
 	f.HaveConvWithTitle(source, "scoped-source")
-	grantScoped(t, f, source, agentd.PermGroupsSpawn, map[string]any{"group": []string{"alpha"}})
+	grantScoped(t, f, source, agentd.PermGroupsMembersSpawn, map[string]any{"group": []string{"alpha"}})
 	grantScoped(t, f, source, agentd.PermRoutesPublish, nil)
 
 	rec := humanReq(t, f, http.MethodPost, "/v1/spawn-profiles/from-agent",
@@ -360,7 +360,7 @@ func TestAttenuation_CaptureAsProfilePreservesScopes(t *testing.T) {
 		PermissionOverrides map[string]db.PermissionOverride `json:"permission_overrides"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &seed))
-	assert.Equal(t, `{"group":["alpha"]}`, seed.PermissionOverrides[agentd.PermGroupsSpawn].Scope,
+	assert.Equal(t, `{"group":["alpha"]}`, seed.PermissionOverrides[agentd.PermGroupsMembersSpawn].Scope,
 		"the captured profile keeps the narrowing the live grant had")
 	assert.Equal(t, db.Grant(), seed.PermissionOverrides[agentd.PermRoutesPublish],
 		"an unscoped grant still captures as the plain unscoped form")
@@ -553,7 +553,7 @@ func TestAttenuation_GranterCannotShedItsOwnScope(t *testing.T) {
 // that slug to a group it belongs to and resolve unscoped on the next request
 // (the group tier unions its rows, and one unscoped row absorbs the tier).
 //
-// The endpoint gates permission-list mutation on groups.permissions in addition
+// The endpoint gates permission-list mutation on groups.settings.member-permissions in addition
 // to the generic grant/revoke capabilities. Give the caller that mutation gate
 // so this test reaches the attenuation check it is intended to exercise.
 func TestAttenuation_GroupPermissionsPatchIsAttenuated(t *testing.T) {
@@ -561,7 +561,7 @@ func TestAttenuation_GroupPermissionsPatchIsAttenuated(t *testing.T) {
 	group := f.HaveGroup("alpha")
 	const lead = "atten-lead-aaaa-bbbb-cccc-000000000009"
 	f.HaveMember("alpha", lead)
-	grantScoped(t, f, lead, agentd.PermGroupsPermissions, nil)
+	grantScoped(t, f, lead, agentd.PermGroupsSettingsMemberPermissions, nil)
 	grantScoped(t, f, lead, agentd.PermPermissionsGrant, nil)
 	grantScoped(t, f, lead, agentd.PermPermissionsRevoke, nil)
 	grantScoped(t, f, lead, agentd.PermRoutesPublish, map[string]any{"group": []string{"alpha"}})
@@ -630,7 +630,7 @@ func TestAttenuation_SpawnProfileTierConferralIsAttenuated(t *testing.T) {
 	g := f.HaveGroup("alpha")
 	const lead = "atten-lead-aaaa-bbbb-cccc-000000000009"
 	haveSpawnCapableMember(t, f, "alpha", lead)
-	grantScoped(t, f, lead, agentd.PermGroupsSpawn, nil)
+	grantScoped(t, f, lead, agentd.PermGroupsMembersSpawn, nil)
 	grantScoped(t, f, lead, agentd.PermPermissionsGrant, nil)
 	// Held narrowly; every profile below tries to confer it UNSCOPED.
 	grantScoped(t, f, lead, agentd.PermRoutesPublish, map[string]any{"group": []string{"alpha"}})
@@ -677,7 +677,7 @@ func TestAttenuation_SpawnProfileTierConferralIsAttenuated(t *testing.T) {
 	})
 }
 
-// Scenario: the spawn body is decoded BEFORE the groups.spawn gate, because
+// Scenario: the spawn body is decoded BEFORE the groups.members.spawn gate, because
 // the gate has to judge the profile the request asks for. That decode must not
 // infer "no body" from Content-Length: a chunked request carries -1, and
 // reading that as empty would hand the handler a zero-valued SpawnRequest —
@@ -698,8 +698,8 @@ func TestAttenuation_SpawnBodySurvivesUnknownContentLength(t *testing.T) {
 
 	const lead = "atten-lead-aaaa-bbbb-cccc-000000000010"
 	haveSpawnCapableMember(t, f, "alpha", lead)
-	// groups.spawn pinned to ONE profile — the dimension the decode feeds.
-	grantScoped(t, f, lead, agentd.PermGroupsSpawn,
+	// groups.members.spawn pinned to ONE profile — the dimension the decode feeds.
+	grantScoped(t, f, lead, agentd.PermGroupsMembersSpawn,
 		map[string]any{"spawn_profile": []string{"chunked-p1"}})
 
 	chunkedSpawn := func(t *testing.T, body map[string]any) *httptest.ResponseRecorder {

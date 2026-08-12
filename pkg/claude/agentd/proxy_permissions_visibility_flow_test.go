@@ -61,7 +61,7 @@ func TestProxyPermissionSlugsFollowProxyVisibility(t *testing.T) {
 
 	t.Run("disabled", func(t *testing.T) {
 		for _, got := range [][]string{readRegistry(t), readDashboard(t)} {
-			assert.Contains(t, got, agentd.PermGroupsSpawn)
+			assert.Contains(t, got, agentd.PermGroupsMembersSpawn)
 			for _, slug := range proxySlugs {
 				assert.NotContains(t, got, slug)
 			}

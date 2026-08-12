@@ -35,7 +35,7 @@ func TestMigrateV38toV39_AddsEffectColumn(t *testing.T) {
 			PRIMARY KEY (conv_id, slug)
 		);
 		INSERT INTO agent_permissions (conv_id, slug, granted_at, granted_by) VALUES
-			('conv-1', 'groups.spawn', '2026-01-01T00:00:00Z', '<human>'),
+			('conv-1', 'groups.members.spawn', '2026-01-01T00:00:00Z', '<human>'),
 			('conv-2', 'groups.create', '2026-01-02T00:00:00Z', '<human>');
 	`)
 	require.NoError(t, err, "seed v38 schema")
