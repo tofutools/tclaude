@@ -161,21 +161,25 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must("state.setQuery(event.currentTarget.value)", "filter input wired")
 	must("No agents match the filter.", "empty-after-filter state rendered")
 
-	// Continued-conversation marker: a multi-day conversation splits into
-	// one row per day, and the earlier-day slices carry `continued`,
-	// rendered with a ↩ marker styled by .cost-cont.
-	must("agent.continued", "continuation flag read from the API row")
+	// Continued-agent marker: a multi-day agent splits into one row per
+	// day, and the earlier-day slices are rendered with a ↩ marker styled
+	// by .cost-cont. The marker derives from the agent-keyed chain (below),
+	// not the API's per-conversation `continued` flag, so a conv rotation
+	// (/clear, resume-after-exit) can't strand a day outside the chain.
+	must("agent.day < lastDay[key]", "continuation derived from the agent-keyed chain")
 	must("↩", "continuation marker glyph rendered")
 	must(".cost-cont", "continuation marker styled")
 
-	// Multi-day chain: a conversation with more than one slice tags its
-	// rows so the current generation (the latest-day head) reads as the
-	// live tip of a chain and hovering any row highlights the whole set.
-	must("slices[agent.conv_id]", "rows-per-conversation counted to detect multi-day chains")
+	// Multi-day chain: an agent with more than one slice tags its rows so
+	// the current generation (the latest-day head) reads as the live tip
+	// of a chain and hovering any row highlights the whole set. The chain
+	// keys on the stable agent id (conv id as the agent-less fallback), so
+	// a conv-id rotation under a live agent doesn't split its chain.
+	must("agent.agent_id || agent.conv_id", "chain keyed on the stable agent id, conv id fallback")
 	must("↳", "chain-head marker glyph rendered on the latest day")
 	must(".cost-head", "chain-head marker styled")
-	must(`data-conv=${chain ? agent.conv_id : undefined}`, "chain rows tagged with their shared conv id")
-	must("setHovered(event.target.closest('tr[data-conv]')", "chain hover-highlight wired")
+	must(`data-chain=${chain ? key : undefined}`, "chain rows tagged with their shared chain key")
+	must("setHovered(event.target.closest('tr[data-chain]')", "chain hover-highlight wired")
 	must(".cost-chain-hl", "hovered chain highlight styled")
 	must("#costs-table tr.cost-chain td:first-child", "chain rows carry the left accent")
 
