@@ -56,6 +56,7 @@ import { registerAgentSpawnController } from './agent-spawn-controller.js';
 import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
 import { HelpDisclosure, HelpField } from './help-field.js';
 import { SandboxImplHint } from './sandbox-impl-hint.js';
+import { isWizardActive } from './slop.js';
 import {
   RESOLVED_DEFAULTS_CHAIN, SANDBOX_PROFILE_COMPOSITION,
   resolvedDefaultOption, harnessBuiltinModeOptionLabel,
@@ -117,6 +118,18 @@ function sandboxPolicyKey(group, sandboxProfile, revision) {
 
 function Words({ plain, wizard, prefix = 'theme-copy' }) {
   return html`<span class=${`${prefix}-regular`}>${plain}</span><span class=${`${prefix}-wizard`}>${wizard}</span>`;
+}
+
+function useWizardTheme() {
+  const [wizard, setWizard] = useState(isWizardActive());
+  useEffect(() => {
+    const update = (event) => setWizard(
+      event.detail?.active == null ? isWizardActive() : Boolean(event.detail.active),
+    );
+    document.addEventListener('tclaude:wizard', update);
+    return () => document.removeEventListener('tclaude:wizard', update);
+  }, []);
+  return wizard;
 }
 
 function ErrorBanner({ error, onDismiss }) {
@@ -237,6 +250,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   const [busy, setBusy] = useState(false);
   const [browseBusy, setBrowseBusy] = useState('');
   const [helpOpen, setHelpOpen] = useState('');
+  const wizard = useWizardTheme();
   const [inspectedRole, setInspectedRole] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const nameRef = useRef(null);
@@ -904,9 +918,8 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         <${AttachmentList} attachments=${attachments} remove=${removeAttachment} busy=${busy} />
       </div>
     </div>
-    <div class="spawn-form-section">Behavior & access</div>
     <div class="cron-create-row agent-spawn-roles-row">
-      <span class="cron-create-label">Roles</span>
+      <span class="cron-create-label"><${Words} plain="Roles" wizard="Classes" /></span>
       <div class="agent-spawn-role-picker">
         <div class="agent-spawn-role-chips" id="agent-spawn-role-refs">
           ${selectedRoles.map((role) => html`<span key=${role.name} class=${`agent-spawn-role-chip${role.missing ? ' missing' : ''}`}>
@@ -919,19 +932,18 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
               }}>×</button>
           </span>`)}
           <select id="agent-spawn-role-add" value="" disabled=${busy || (context.roles || []).every((role) => (draft.roleRefs || []).includes(role.name))}
-            aria-label="Add role" onChange=${(event) => {
+            aria-label=${wizard ? 'Add class' : 'Add role'} onChange=${(event) => {
               const next = event.currentTarget.value;
               if (!next) return;
               const before = draft.roleRefs || [];
               update('roleRefs', [...before, next]);
               event.currentTarget.value = '';
             }}>
-            <option value="">＋ Add role…</option>
+            <option value="">${wizard ? '＋ Add class…' : '＋ Add role…'}</option>
             ${(context.roles || []).filter((role) => !(draft.roleRefs || []).includes(role.name))
               .map((role) => html`<option key=${role.name} value=${role.name}>${role.name}${role.descr ? ` — ${role.descr}` : ''}</option>`)}
           </select>
         </div>
-        <div class="spawn-field-hint" id="agent-spawn-roles-hint">Behavior and access presets. Hover or click a role to inspect its brief and grants.</div>
         ${inspected && html`<div class=${`agent-spawn-role-inspect${inspected.missing ? ' missing' : ''}`}>
           ${inspected.missing ? html`⚠ This role is no longer in the library.` : html`
             ${inspected.descr && html`<div class="role-inspect-descr">${inspected.descr}</div>`}
@@ -940,7 +952,6 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         </div>`}
       </div>
     </div>
-    <div class="spawn-form-section">Dashboard identity <span>display only</span></div>
     <div class="cron-create-row spawn-role-row">
       <span class="cron-create-label">Display role</span>
       <input id="agent-spawn-role" type="text" value=${draft.role} disabled=${busy}
