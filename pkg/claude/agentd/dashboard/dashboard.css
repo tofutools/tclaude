@@ -7101,9 +7101,13 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
   flex: 0 0 auto; padding-top: 6px; color: #7d8590; white-space: nowrap;
 }
 .agent-spawn-role-picker { flex: 1 1 auto; min-width: 0; }
+/* Match the normal row select's 29px closed height and chrome. The role pills
+   remain outlined inside it, while the add selector reads as the field's plain
+   current value instead of a second dashed control nested inside the first. */
 .agent-spawn-role-chips {
-  min-height: 34px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
-  border: 1px solid #30363d; border-radius: 4px; background: #0d1117; padding: 5px 7px;
+  box-sizing: border-box; min-height: 29px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  border: 1px solid #2a3340; border-radius: 4px; background: #0d1117; padding: 3px 7px;
 }
 .agent-spawn-role-chips:focus-within { border-color: #58a6ff; }
 .agent-spawn-role-chips select option { color: #c9d1d9; background: #0d1117; }
@@ -7117,9 +7121,12 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
 .agent-spawn-role-chip .role-chip-remove { padding: 3px 8px 3px 4px; color: #9fc6ef; }
 .agent-spawn-role-chip button:hover { color: #fff; }
 #agent-spawn-role-add {
-  width: auto; min-width: 112px; border: 1px dashed #426084; border-radius: 999px;
-  background: transparent; color: #79b8ff; padding: 3px 8px;
+  box-sizing: border-box; width: auto; min-width: 112px; min-height: 21px;
+  flex: 1 1 112px; align-self: center;
+  border: 0; border-radius: 0; background: transparent;
+  color: #c9d1d9; padding: 2px 24px 2px 2px; font-size: 13px;
 }
+#agent-spawn-role-add:focus { border: 0; }
 .agent-spawn-role-inspect {
   display: grid; gap: 5px; margin-top: 6px; border: 1px solid #303b49; border-radius: 5px;
   background: #111820; padding: 8px 10px; color: #aebdcd; font-size: 12px;
