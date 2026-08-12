@@ -465,7 +465,7 @@ var permissionRegistry = []PermSlug{
 	},
 	{
 		Slug:        PermRolesManage,
-		Description: "Create, edit and delete roles in the role library — named, reusable bundles of a canonical role-brief, a default launch shape and a default permission set that a template roster agent references and inherits from (JOH-240). Reads are open; writes rewrite shared role defaults, so not default-granted (effectively human-only).",
+		Description: "Create, edit and delete roles in the role library — named, reusable bundles of a canonical role-brief and default permission grants. Launch policy belongs to spawn profiles. Reads are open; writes rewrite shared role defaults, so not default-granted (effectively human-only).",
 	},
 	{
 		Slug:        PermProcessAdvance,

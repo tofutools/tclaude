@@ -3348,6 +3348,7 @@ func spawnAuditProfileSnapshot(p *db.SpawnProfile) any {
 		"context_features":              p.ContextFeatures,
 		"agent_name":                    p.AgentName,
 		"role":                          p.Role,
+		"role_ref":                      p.RoleRef,
 		"descr":                         p.Descr,
 		"initial_message":               redactedAuditText(p.InitialMessage),
 		"startup_context":               redactedAuditText(p.StartupContext),
@@ -4050,9 +4051,36 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if profileNameNote != "" {
 		identityNotes = append(identityNotes, profileNameNote)
 	}
-	body.Role, _, _ = resolveIdentityLaunchField(
+	var roleRefSource string
+	var roleRefNote string
+	body.RoleRef, roleRefSource, roleRefNote = resolveIdentityLaunchField(
+		roleRefField, body.RoleRef, body.RoleRefSpecified(), profileTiers,
+		func(p *db.SpawnProfile) string { return p.RoleRef }, nil)
+	if roleRefNote != "" {
+		identityNotes = append(identityNotes, roleRefNote)
+	}
+	var selectedRole *db.Role
+	if body.RoleRef != "" {
+		var roleErr error
+		selectedRole, roleErr = db.GetRole(body.RoleRef)
+		if roleErr != nil {
+			writeError(w, http.StatusInternalServerError, "io", roleErr.Error())
+			return
+		}
+		if selectedRole == nil {
+			writeError(w, http.StatusBadRequest, "invalid_role",
+				fmt.Sprintf("role_ref %q does not name a role in the role library", body.RoleRef))
+			return
+		}
+		body.RoleRef = selectedRole.Name
+	}
+	var roleSource string
+	body.Role, roleSource, _ = resolveIdentityLaunchField(
 		roleField, body.Role, body.RoleSpecified(), profileTiers,
 		func(p *db.SpawnProfile) string { return p.Role }, nil)
+	if body.Role == "" && roleSource == "" && selectedRole != nil {
+		body.Role = selectedRole.Name
+	}
 	body.Descr, _, _ = resolveIdentityLaunchField(
 		descrField, body.Descr, body.DescrSpecified(), profileTiers,
 		func(p *db.SpawnProfile) string { return p.Descr }, nil)
@@ -4104,6 +4132,25 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		} else {
 			permOverrides = normalized
 		}
+	}
+	// Role grants form the lowest access tier. A spawn profile or explicit
+	// per-spawn override can still narrow or replace an individual slug.
+	if selectedRole != nil && len(selectedRole.Permissions) > 0 {
+		merged := make(map[string]db.PermissionOverride, len(selectedRole.Permissions)+len(permOverrides))
+		for _, grant := range selectedRole.Permissions {
+			merged[grant.Slug] = db.PermissionOverride{Effect: db.PermEffectGrant, Scope: grant.Scope}
+		}
+		for slug, override := range permOverrides {
+			merged[slug] = override
+		}
+		// Preserve the strongest intent source for the privilege gate below. An
+		// explicitly selected role must not become an ambient/default grant just
+		// because a lower-intent default profile also contributes overrides.
+		if len(permOverrides) == 0 ||
+			(!launchTierIsDefault(profileTiers, roleRefSource) && launchTierIsDefault(profileTiers, overridesSource)) {
+			overridesSource = roleRefSource
+		}
+		permOverrides = merged
 	}
 	// Birth-time access privilege gate, on the RESOLVED values. A human
 	// (dashboard) caller always passes; an agent caller must hold the SAME slug
@@ -4204,6 +4251,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// compatible tier. It has no per-spawn override: unlike initial_message this
 	// is policy attached to the selected model/profile, not a task default.
 	profileContext, profileContextNote := resolveProfileStartupContext(h.Name, profileTiers)
+	if selectedRole != nil {
+		profileContext = appendRoleBlock(profileContext, selectedRole.Brief)
+	}
 	contextWindowMaxValue := ""
 	if body.ContextWindowMax > 0 {
 		contextWindowMaxValue = strconv.FormatInt(body.ContextWindowMax, 10)
@@ -5591,6 +5641,7 @@ const (
 	permissionOverridesField = "permission_overrides"
 	nameField                = "name"
 	roleField                = "role"
+	roleRefField             = "role_ref"
 	descrField               = "descr"
 	initialMessageField      = "initial_message"
 )
@@ -8473,7 +8524,7 @@ func buildSpawnContextBody(groupName, groupContext, profileContext, initialMessa
 	}
 	if profileContext != "" {
 		sections = append(sections,
-			"Spawn profile startup context — guidance attached to this agent's launch profile:\n\n"+profileContext)
+			"Agent preset startup context — guidance attached to this agent's selected profile and role:\n\n"+profileContext)
 	}
 	if initialMessage != "" {
 		sections = append(sections, "Your task brief:\n\n"+initialMessage)

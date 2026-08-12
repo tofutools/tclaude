@@ -75,8 +75,8 @@ func partitionWaves(agents []db.GroupTemplateAgent) []db.WaveGroup {
 }
 
 // spawnWaveAgents spawns one wave's agents via the shared executeSpawn core,
-// applying each agent's role brief, launch profile, ownership + permission
-// grants. Extracted from runInstantiation so the inline first wave and the
+// applying each agent's role behavior/access preset, launch profile, ownership
+// and permission grants. Extracted from runInstantiation so the inline first wave and the
 // background later waves run the SAME per-agent path. Best-effort per agent: a
 // spawn/grant failure is recorded on that agent's result and skips just it —
 // the partial-team-on-failure contract, per wave.

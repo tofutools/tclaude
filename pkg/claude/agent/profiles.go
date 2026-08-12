@@ -99,6 +99,7 @@ type profileJSON struct {
 	// Identity / enrollment fields.
 	AgentName      string `json:"agent_name,omitempty"`
 	Role           string `json:"role,omitempty"`
+	RoleRef        string `json:"role_ref,omitempty"`
 	Descr          string `json:"descr,omitempty"`
 	InitialMessage string `json:"initial_message,omitempty"`
 	StartupContext string `json:"startup_context,omitempty"`
@@ -782,6 +783,9 @@ func printProfileHuman(w io.Writer, p profileJSON) {
 	}
 	if p.Role != "" {
 		ident = append(ident, "role="+p.Role)
+	}
+	if p.RoleRef != "" {
+		ident = append(ident, "role_ref="+p.RoleRef)
 	}
 	if len(ident) > 0 {
 		fmt.Fprintf(w, "  agent:   %s\n", strings.Join(ident, " · "))

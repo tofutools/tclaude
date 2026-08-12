@@ -342,6 +342,7 @@ export function createManagementActions({
     await load(kind);
   }
   function openProfileEditor(seed = null, options = {}) {
+    void load('roles');
     state.openDialog({
       kind: 'profile-editor',
       seed,
@@ -378,11 +379,9 @@ export function createManagementActions({
     return true;
   }
   function openRoleEditor(seed = null) {
-    void load('profiles');
     state.openDialog({
       kind: 'role-editor',
       seed,
-      catalog: getSnapshot()?.harnesses || [],
       slugs: getSnapshot()?.slugs || [],
     });
   }

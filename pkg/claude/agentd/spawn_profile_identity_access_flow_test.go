@@ -134,6 +134,59 @@ func TestSpawnProfileAccess_NamedProfileAppliesOverrides(t *testing.T) {
 	assert.Equal(t, "deny", overrides["self.rename"], "profile deny applied at birth")
 }
 
+// A saved role is a behavior/access preset independent of launch policy. A
+// direct spawn that selects one gets its brief and grants, and defaults the
+// membership label to the role name when no distinct label was supplied.
+func TestSpawnRoleRef_AppliesBehaviorAndAccess(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	require.Equal(t, http.StatusCreated, createRole(t, f, map[string]any{
+		"name": "cold-auditor", "brief": "Review this change cold.",
+		"permissions": []string{"human.notify"},
+	}).Code)
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+		"name": "worker", "role_ref": "cold-auditor",
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+
+	overrides, err := db.ListAgentPermissionOverridesForConv(spawn.ConvID)
+	require.NoError(t, err)
+	assert.Equal(t, "grant", overrides["human.notify"])
+	msg := soleInboxMessage(t, spawn.ConvID)
+	assert.Contains(t, msg.Body, "## Role")
+	assert.Contains(t, msg.Body, "Review this change cold.")
+	members := f.ListGroupMembers("alpha")
+	for _, member := range members {
+		if member.ConvID == spawn.ConvID {
+			assert.Equal(t, "cold-auditor", member.Role)
+			return
+		}
+	}
+	t.Fatal("spawned member not found")
+}
+
+func TestSpawnProfileRoleRef_AppliesAndRoleDeleteIsGuarded(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	require.Equal(t, http.StatusCreated, createRole(t, f, map[string]any{
+		"name": "ux-tester", "brief": "Test the user-visible behavior.",
+	}).Code)
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "test-kit", "role_ref": "ux-tester", "model": "haiku",
+	}).Code)
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+		"name": "worker", "profile": "test-kit",
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	assert.Contains(t, soleInboxMessage(t, spawn.ConvID).Body, "Test the user-visible behavior.")
+
+	rec := humanReq(t, f, http.MethodDelete, "/v1/roles/ux-tester", nil)
+	assert.Equal(t, http.StatusConflict, rec.Code)
+	assert.Contains(t, rec.Body.String(), "test-kit")
+}
+
 // Scenario: the dashboard posts permission_overrides as an empty object when the
 // operator has cleared the editor. Presence is what marks the caller as having
 // spoken, so the profile's overrides must not come back.

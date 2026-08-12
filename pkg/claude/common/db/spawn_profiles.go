@@ -114,7 +114,8 @@ type SpawnProfile struct {
 
 	// Identity / enrollment fields (dialog-side). "" = unset.
 	AgentName      string // the dialog's "Name" field (the spawned agent's display name)
-	Role           string
+	Role           string // optional free-text membership/routing label
+	RoleRef        string // optional behavioral/access role library reference
 	Descr          string
 	InitialMessage string
 	// StartupContext is durable guidance delivered to every agent that resolves
@@ -192,15 +193,15 @@ func CreateSpawnProfile(p *SpawnProfile) (int64, error) {
 		   (name, disabled, disabled_reason, operator_only, harness, model, effort, sandbox, sandbox_implementation, approval, tools, ask_user_question_timeout,
 		    auto_compact_window, context_window_max, copilot_api, codex_app_server, fast_mode,
 		    auto_review, trust_dir,
-		    agent_name, role, descr, initial_message, startup_context,
+		    agent_name, role, role_ref, descr, initial_message, startup_context,
 		    sync_worktree, auto_focus, include_group_default_context, remote_control, auto_memory, ssh_workaround,
 		    is_owner, permission_overrides, context_features,
 		    created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.Name, p.Disabled, p.DisabledReason, p.OperatorOnly, p.Harness, p.Model, p.Effort, p.Sandbox, p.SandboxImplementation, p.Approval, p.ToolGovernance, p.AskUserQuestionTimeout,
 		p.AutoCompactWindow, p.ContextWindowMax, boolPtrToNull(p.CopilotAPI), boolPtrToNull(p.CodexAppServer), boolPtrToNull(p.FastMode),
 		boolPtrToNull(p.AutoReview), boolPtrToNull(p.TrustDir),
-		p.AgentName, p.Role, p.Descr, p.InitialMessage, p.StartupContext,
+		p.AgentName, p.Role, p.RoleRef, p.Descr, p.InitialMessage, p.StartupContext,
 		boolPtrToNull(p.SyncWorktree), boolPtrToNull(p.AutoFocus),
 		boolPtrToNull(p.IncludeGroupDefaultContext), boolPtrToNull(p.RemoteControl),
 		boolPtrToNull(p.AutoMemory), boolPtrToNull(p.SSHWorkaround),
@@ -252,7 +253,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		   sandbox_implementation = ?, approval = ?, tools = ?,
 		   ask_user_question_timeout = ?, auto_compact_window = ?, context_window_max = ?, copilot_api = ?, codex_app_server = ?, fast_mode = ?,
 		   auto_review = ?, trust_dir = ?,
-		   agent_name = ?, role = ?, descr = ?, initial_message = ?, startup_context = ?,
+		   agent_name = ?, role = ?, role_ref = ?, descr = ?, initial_message = ?, startup_context = ?,
 		   sync_worktree = ?, auto_focus = ?, include_group_default_context = ?, remote_control = ?,
 		   auto_memory = ?, ssh_workaround = ?,
 		   is_owner = ?, permission_overrides = ?, context_features = ?,
@@ -262,7 +263,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		p.SandboxImplementation, p.Approval, p.ToolGovernance,
 		p.AskUserQuestionTimeout, p.AutoCompactWindow, p.ContextWindowMax, boolPtrToNull(p.CopilotAPI), boolPtrToNull(p.CodexAppServer), boolPtrToNull(p.FastMode),
 		boolPtrToNull(p.AutoReview), boolPtrToNull(p.TrustDir),
-		p.AgentName, p.Role, p.Descr, p.InitialMessage, p.StartupContext,
+		p.AgentName, p.Role, p.RoleRef, p.Descr, p.InitialMessage, p.StartupContext,
 		boolPtrToNull(p.SyncWorktree), boolPtrToNull(p.AutoFocus),
 		boolPtrToNull(p.IncludeGroupDefaultContext), boolPtrToNull(p.RemoteControl),
 		boolPtrToNull(p.AutoMemory), boolPtrToNull(p.SSHWorkaround),
@@ -291,6 +292,8 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 	for _, stmt := range []string{
 		`UPDATE agent_groups SET default_profile = ? WHERE default_profile_id = ?`,
 		`UPDATE group_template_agents SET spawn_profile = ? WHERE spawn_profile_id = ?`,
+		// Keep the now-inert legacy role launch columns coherent for database
+		// compatibility with older binaries; the live role model never reads them.
 		`UPDATE roles SET spawn_profile = ? WHERE spawn_profile_id = ?`,
 	} {
 		if _, err := tx.Exec(stmt, p.Name, p.ID); err != nil {
@@ -433,6 +436,8 @@ func DeleteSpawnProfile(name string) (int64, error) {
 	for _, stmt := range []string{
 		`UPDATE agent_groups SET default_profile = '', default_profile_id = NULL WHERE default_profile_id = ?`,
 		`UPDATE group_template_agents SET spawn_profile = '', spawn_profile_id = NULL WHERE spawn_profile_id = ?`,
+		// See UpdateSpawnProfile: legacy role launch columns remain inert but
+		// coherent for older binaries that may open the same database.
 		`UPDATE roles SET spawn_profile = '', spawn_profile_id = NULL WHERE spawn_profile_id = ?`,
 	} {
 		if _, err := tx.Exec(stmt, id); err != nil {
@@ -509,7 +514,7 @@ func isSpawnProfileHandleViolation(err error) bool {
 const spawnProfileSelect = `SELECT id, name, disabled, disabled_reason, operator_only, harness, model, effort, sandbox,
 	sandbox_implementation, approval,
 	tools, ask_user_question_timeout, auto_compact_window, context_window_max, copilot_api, codex_app_server, fast_mode,
-	auto_review, trust_dir, agent_name, role, descr, initial_message, startup_context,
+	auto_review, trust_dir, agent_name, role, role_ref, descr, initial_message, startup_context,
 	sync_worktree, auto_focus, include_group_default_context, remote_control, auto_memory, ssh_workaround,
 	is_owner, permission_overrides, context_features, created_at, updated_at
 	FROM spawn_profiles`
@@ -523,7 +528,7 @@ func scanSpawnProfile(s rowScanner) (*SpawnProfile, error) {
 	if err := s.Scan(&p.ID, &p.Name, &disabled, &p.DisabledReason, &p.OperatorOnly, &p.Harness, &p.Model, &p.Effort, &p.Sandbox,
 		&p.SandboxImplementation, &p.Approval,
 		&p.ToolGovernance, &p.AskUserQuestionTimeout, &p.AutoCompactWindow, &p.ContextWindowMax, &copilotAPI, &codexAppServer, &fastMode,
-		&autoReview, &trustDir, &p.AgentName, &p.Role, &p.Descr, &p.InitialMessage, &p.StartupContext,
+		&autoReview, &trustDir, &p.AgentName, &p.Role, &p.RoleRef, &p.Descr, &p.InitialMessage, &p.StartupContext,
 		&syncWorktree, &autoFocus, &includeCtx, &remoteControl, &autoMemory, &sshWorkaround,
 		&isOwner, &permOverrides, &contextFeatures, &createdAt, &updatedAt); err != nil {
 		return nil, err

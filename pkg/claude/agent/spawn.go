@@ -221,6 +221,9 @@ type SpawnRequest struct {
 	// per-group handle.
 	Name string `json:"name,omitempty"`
 	Role string `json:"role,omitempty"`
+	// RoleRef selects behavioral guidance and access defaults from the role
+	// library. Role remains the independent membership/routing label.
+	RoleRef string `json:"role_ref,omitempty"`
 	// Descr is the short, one-line description shown on the dashboard
 	// (the group-member "Description" column). Keep it terse — the
 	// agent's actual task brief goes in InitialMessage instead.
@@ -549,6 +552,7 @@ type SpawnRequest struct {
 	// and inherits the profile's value. Populated by UnmarshalJSON, off the wire.
 	nameSpecified                bool
 	roleSpecified                bool
+	roleRefSpecified             bool
 	descrSpecified               bool
 	initialMessageSpecified      bool
 	autoFocusSpecified           bool
@@ -575,6 +579,7 @@ func (r *SpawnRequest) UnmarshalJSON(data []byte) error {
 	_, r.trustDirSpecified = fields["trust_dir"]
 	_, r.nameSpecified = fields["name"]
 	_, r.roleSpecified = fields["role"]
+	_, r.roleRefSpecified = fields["role_ref"]
 	_, r.descrSpecified = fields["descr"]
 	_, r.initialMessageSpecified = fields["initial_message"]
 	_, r.autoFocusSpecified = fields["auto_focus"]
@@ -606,6 +611,9 @@ func (r SpawnRequest) MarshalJSON() ([]byte, error) {
 	}
 	if r.roleSpecified {
 		stated["role"] = r.Role
+	}
+	if r.roleRefSpecified {
+		stated["role_ref"] = r.RoleRef
 	}
 	if r.descrSpecified {
 		stated["descr"] = r.Descr
@@ -674,6 +682,9 @@ func (r SpawnRequest) NameSpecified() bool { return r.nameSpecified }
 // RoleSpecified reports whether role appeared in decoded JSON.
 func (r SpawnRequest) RoleSpecified() bool { return r.roleSpecified }
 
+// RoleRefSpecified reports whether role_ref appeared in decoded JSON.
+func (r SpawnRequest) RoleRefSpecified() bool { return r.roleRefSpecified }
+
 // DescrSpecified reports whether descr appeared in decoded JSON.
 func (r SpawnRequest) DescrSpecified() bool { return r.descrSpecified }
 
@@ -696,6 +707,7 @@ type SpawnParams struct {
 	Group          string `pos:"true" help:"Existing group to join the new agent into"`
 	Name           string `long:"name" short:"n" optional:"true" help:"Name for the new agent (e.g. 'reviewer'). Becomes its conversation title via /rename"`
 	Role           string `long:"role" short:"r" optional:"true" help:"Role tag for the new member (e.g. 'tech-lead')"`
+	RoleRef        string `long:"role-ref" optional:"true" help:"Behavioral guidance and default access from a saved role (see 'tclaude agent roles ls'); independent of --role's routing/display label"`
 	Descr          string `long:"descr" short:"d" optional:"true" help:"Short one-line description shown on the dashboard. Keep it terse — use --initial-message for the task brief"`
 	InitialMessage string `long:"initial-message" short:"m" optional:"true" help:"Task brief delivered to the new agent's inbox. Newlines are preserved — pass a full multi-line brief if you like"`
 	File           string `long:"file" short:"f" optional:"true" help:"Read the task brief from this file instead of --initial-message ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing briefs. Mutually exclusive with --initial-message; same 16384-byte cap"`
@@ -941,6 +953,7 @@ type resolvedSpawnFields struct {
 
 	Name           string
 	Role           string
+	RoleRef        string
 	Descr          string
 	InitialMessage string
 
@@ -986,7 +999,7 @@ func harnessEquivalent(a, b string) bool {
 // profile. A spawn that pins a *different* --harness brings its own launch
 // config (validated against that harness); copying the profile's foreign model/
 // sandbox over it would just 400 at validation. A blank --harness adopts the
-// profile's. Identity fields (name/role/descr/initial_message) and the harness-
+// profile's. Identity fields (name/role/role_ref/descr/initial_message) and the harness-
 // agnostic toggles (auto_focus, include_group_context, is_owner,
 // permission_overrides) are inherited regardless of harness.
 //
@@ -1040,6 +1053,7 @@ func mergeProfileIntoSpawn(p *SpawnParams, explicitMessage string, prof *profile
 	// Identity fields — harness-agnostic, always inherited (flag wins).
 	out.Name = pick(p.Name, profStr(prof, func(pf *profileJSON) string { return pf.AgentName }))
 	out.Role = pick(p.Role, profStr(prof, func(pf *profileJSON) string { return pf.Role }))
+	out.RoleRef = pick(p.RoleRef, profStr(prof, func(pf *profileJSON) string { return pf.RoleRef }))
 	out.Descr = pick(p.Descr, profStr(prof, func(pf *profileJSON) string { return pf.Descr }))
 	if out.InitialMessage == "" && prof != nil {
 		out.InitialMessage = strings.TrimSpace(prof.InitialMessage)
@@ -1493,6 +1507,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		OmitSandboxProfiles:    p.OmitSandboxProfiles,
 		Name:                   name,
 		Role:                   merged.Role,
+		RoleRef:                merged.RoleRef,
 		Descr:                  merged.Descr,
 		TaskURL:                strings.TrimSpace(p.Task),
 		TaskLabel:              strings.TrimSpace(p.TaskLabel),

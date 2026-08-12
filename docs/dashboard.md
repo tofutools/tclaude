@@ -1031,8 +1031,8 @@ itself creates the clone beside it.
 
 Reusable launch presets for agents. A spawn profile can carry the harness,
 model, effort, sandbox / permission-mode defaults, OpenCode tool governance,
-agent name, role, description, initial message, profile-specific startup
-context, dialog toggles, owner default, and per-slug permission
+agent name, free-text role label, saved role preset, description, initial
+message, profile-specific startup context, dialog toggles, owner default, and per-slug permission
 overrides. It deliberately does **not** carry a working directory or worktree:
 those stay per-spawn.
 
@@ -1052,7 +1052,7 @@ non-empty context wins; contexts are not concatenated.
 A profile may also have multiple **aliases**: alternate handles such as
 `codex-reviewer` for a canonically named `gpt5.6-sol-high` profile. Aliases
 resolve anywhere a spawn profile is accepted, including `agent spawn
---profile`, defaults, roles, templates, process agent performers, Ask, and
+--profile`, defaults, templates, process agent performers, Ask, and
 Scribe. The palette keeps one card per real profile and shows its aliases next
 to the primary name. Cards stay compact with a truncated chip list; hover the
 card, or keyboard-focus its action button, to open a tooltip to its left with
@@ -1320,8 +1320,7 @@ required concepts. A full template can carry:
 - a **roster** of agent specs — name, role label, description, task brief, and
   an **owner** flag (which member leads the group);
 - a **role reference** per agent (`role_ref`) into the [roles library](#roles-library),
-  so the agent inherits that role's canonical brief and launch defaults beneath
-  its own fields;
+  so the agent inherits that role's canonical brief and baseline permissions;
 - **a launch profile per agent** — the agent's launch shape *and* its birth-time
   permissions are a single **pick a stored [spawn profile](#spawn-profiles)**: the
   profile's harness / model / effort / sandbox / approval and its
@@ -1469,37 +1468,32 @@ tclaude agent task-force deploy dev-squad --mission "…"  # then deploy it agai
 ### Roles library
 
 Open it from the Groups tab's filter-bar cog (**⚙ → ⧉ roles…**; **⧉ classes…**
-in wizard mode). A **role** is a named, reusable bundle of defaults a template
-roster agent can point at: a canonical **role-brief** (folded into that agent's
-startup context under a `## Role` block), a default **launch shape**
-(spawn-profile reference, or inline harness / model / effort / sandbox /
-approval / OpenCode tool governance), and a default **permission set**. A template agent references a role
-by name in its `role_ref` field; the role fills whatever the agent leaves blank
-and the agent's own fields always override it. This is distinct from the
-freeform `role` **label** on an agent (e.g. `tech-lead`), which is just
-display / routing text and carries no defaults.
+in wizard mode). A **role** is a named, reusable behavior and access preset: a
+canonical **role brief** (folded into startup context under a `## Role` block)
+and a baseline **permission set**. It deliberately carries no harness, model,
+effort, sandbox, approval, tool-governance, or spawn-profile setting; those
+remain launch policy owned by spawn profiles and launch controls.
 
-Each saved role is fully **editable** — create, edit or delete any of them, over
-every field above, from this dialog (**+ new role** / per-card **edit** /
-**delete**). Every role picker (today: the templates editor's per-agent **Role
-library** dropdown) shows an inline **inspect panel** beneath the selection —
-the role's description, its launch shape (spawn-profile / harness / model /
-effort / sandbox / approval / tool governance), its granted permission **slugs**, and its brief
-(expandable) — so picking a role is never blind. The same view is available from
-the CLI with `tclaude agent roles show <name>`.
+A role can be selected in the direct spawn dialog, saved in a spawn profile,
+or referenced by a template agent through `role_ref`. This is distinct from the
+freeform `role` **label** (for example `tech-lead`), which is display/routing
+text and carries no defaults.
 
-**Roles resolve at deploy time.** A template stores only a role's *name* in its
-`role_ref`; the role's actual fields are read when the template is deployed. So
-editing a role changes what **future** deploys inherit — already-deployed groups
-are untouched (they captured the role's values at their own deploy). Because a
-live reference matters, **deleting a role is refused while any template still
-references it** — the dialog surfaces the referencing templates so you can edit
-them to drop or repoint the reference first, then delete the role.
+Each saved role is fully **editable** from this dialog (**+ new role** /
+per-card **edit** / **delete**). The template editor's role picker also shows
+an inline inspect panel with the role's description, permission slugs, and
+expandable brief. The same view is available from the CLI with
+`tclaude agent roles show <name>`.
+
+**Roles resolve at spawn time.** A template or profile stores only the role's
+name in `role_ref`; its current brief and permissions are read when an agent is
+spawned. Editing a role therefore changes future spawns, not running agents.
+Deleting a role is refused while any template or spawn profile still references
+it; the dialog identifies those references so they can be dropped or repointed.
 
 tclaude ships six **seed roles** — `po`, `lead`, `dev`, `designer`, `reviewer`,
 and `tester` — as short, generic starting points. Their briefs are sensible
-defaults, not policy, and their launch fields and permissions are deliberately
-left blank (what a role launches on or is granted is your call). The seeds are
+defaults, not policy, and their permissions are deliberately empty. The seeds are
 **self-healing**: they are re-checked on every daemon start, so a seed you
 delete (once no template references it) reappears on the next open — but **your
 edits are sacred**, never overwritten by the re-seed. Edit a seed to taste, or

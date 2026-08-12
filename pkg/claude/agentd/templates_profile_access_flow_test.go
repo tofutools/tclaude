@@ -208,8 +208,12 @@ func exportRaw(t *testing.T, f *testharness.Flow, name string) map[string]any {
 func TestTemplateExportImport_EmbedsAndMaterializesProfile(t *testing.T) {
 	f := newFlow(t)
 
+	require.Equalf(t, http.StatusCreated, createRole(t, f, map[string]any{
+		"name": "shipped-role", "brief": "Portable role guidance.",
+	}).Code, "create role")
 	require.Equalf(t, http.StatusCreated, createProfile(t, f, map[string]any{
 		"name":            "shipped-kit",
+		"role_ref":        "shipped-role",
 		"model":           "haiku",
 		"is_owner":        true,
 		"disabled":        true,
@@ -234,14 +238,24 @@ func TestTemplateExportImport_EmbedsAndMaterializesProfile(t *testing.T) {
 	assert.Equal(t, true, p0["disabled"], "embedded profile carries its disable switch")
 	assert.Equal(t, "provider maintenance", p0["disabled_reason"],
 		"embedded profile carries its spawn safety state")
+	assert.Equal(t, "shipped-role", p0["role_ref"], "embedded profile carries its role preset")
+	roles, _ := env["roles"].([]any)
+	require.Len(t, roles, 1, "export embeds the role referenced indirectly by the profile")
+	r0, _ := roles[0].(map[string]any)
+	assert.Equal(t, "shipped-role", r0["name"])
 
-	// Simulate importing on a machine that LACKS the profile: delete it here,
-	// then re-import under a fresh name. The importer must materialize it.
+	// Simulate importing on a machine that lacks both presets. Import must
+	// materialize the role before validating/materializing the profile.
 	_, err := db.DeleteSpawnProfile("shipped-kit")
 	require.NoError(t, err, "delete local profile to simulate a fresh machine")
+	_, err = db.DeleteRole("shipped-role")
+	require.NoError(t, err, "delete local role to simulate a fresh machine")
 
 	rec := humanReq(t, f, http.MethodPost, "/v1/templates/import?as=shipper2", env)
 	require.Equalf(t, http.StatusCreated, rec.Code, "import (missing profile): %s", rec.Body.String())
+	revivedRole, err := db.GetRole("shipped-role")
+	require.NoError(t, err)
+	require.NotNil(t, revivedRole, "import materializes the profile's role preset first")
 	var ir tmplImportResult
 	testharness.DecodeJSON(t, rec, &ir)
 	assert.Contains(t, ir.Warnings, `imported spawn profile "shipped-kit"`, "materialized the missing profile")

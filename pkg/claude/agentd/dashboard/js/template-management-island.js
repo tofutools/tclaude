@@ -2022,34 +2022,11 @@ function RoleInspect({ roleName, roles }) {
   if (!role)
     return html`<div class="role-inspect role-inspect-missing">
       ⚠ This role is no longer in the library. A referencing agent falls back
-      to its own inline overrides at deploy.
+      to its own behavior and access settings at deploy.
     </div>`;
-  const launch = [
-    ['profile', role.spawn_profile && `⚙ ${role.spawn_profile}`],
-    ['harness', role.harness],
-    ['model', role.model],
-    ['effort', role.effort],
-    ['sandbox', role.sandbox],
-    ['approval', role.approval],
-    ['tools', role.tools],
-  ].filter(([, value]) => value);
   const brief = (role.brief || '').trim();
   return html`<div class="role-inspect">
     ${role.descr && html`<div class="role-inspect-descr">${role.descr}</div>`}
-    <div class="role-inspect-row">
-      <span class="role-inspect-key">launch</span>${launch.length
-        ? html`<span class="role-inspect-vals"
-            >${launch.map(
-              ([key, value]) =>
-                html`<span key=${key} class="role-inspect-chip"
-                  ><b>${key}</b> ${value}</span
-                >`,
-            )}</span
-          >`
-        : html`<span class="role-inspect-muted"
-            >inherits (no defaults set)</span
-          >`}
-    </div>
     <div class="role-inspect-row">
       <span class="role-inspect-key">grants</span>${role.permissions?.length
         ? html`<span class="role-inspect-vals"
@@ -2178,7 +2155,7 @@ function AgentRow({
     if (
       await confirm({
         title: 'Remove custom launch config?',
-        body: 'Discard this agent’s template-local launch config? It is not saved anywhere else — the agent falls back to its picked profile / role / the defaults. Applies to the stored template when you save.',
+        body: 'Discard this agent’s template-local launch config? It is not saved anywhere else — the agent falls back to its picked profile or the defaults. Applies to the stored template when you save.',
         meta: agent.name || `agent #${index + 1}`,
         okLabel: 'Remove custom config',
       })
@@ -2294,7 +2271,7 @@ function AgentRow({
     </div>
     <label
       class="template-agent-roleref"
-      title="Reference a role from the library: the agent inherits that role's canonical brief, default launch shape and default permissions."
+      title="Reference a role from the library: the agent inherits that role's canonical brief and default permissions. Launch settings remain independent."
       ><span>Role library</span
       ><select
         class="ta-role-ref"

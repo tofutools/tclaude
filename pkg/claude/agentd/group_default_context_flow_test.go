@@ -128,7 +128,7 @@ func TestSpawnProfileContext_InjectedIndependently(t *testing.T) {
 	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
 
 	msg := soleInboxMessage(t, spawn.ConvID)
-	assert.Contains(t, msg.Body, "Spawn profile startup context")
+	assert.Contains(t, msg.Body, "Agent preset startup context")
 	assert.Contains(t, msg.Body, "state assumptions before making broad edits")
 	assert.Contains(t, msg.Body, "Implement the requested change")
 	assert.NotContains(t, msg.Body, "GROUP GUIDANCE MUST BE OMITTED")

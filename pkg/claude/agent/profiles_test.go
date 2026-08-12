@@ -348,6 +348,7 @@ func TestMergeProfileIntoSpawn_ProfileFillsBlanks(t *testing.T) {
 		TrustDir:            boolPtr(true),
 		AgentName:           "reviewer",
 		Role:                "qa",
+		RoleRef:             "reviewer-role",
 		Descr:               "from profile",
 		InitialMessage:      "profile brief",
 		AutoFocus:           boolPtr(true),
@@ -365,6 +366,7 @@ func TestMergeProfileIntoSpawn_ProfileFillsBlanks(t *testing.T) {
 	assert.True(t, got.TrustDir)
 	assert.Equal(t, "reviewer", got.Name, "agent_name pre-fills --name")
 	assert.Equal(t, "qa", got.Role)
+	assert.Equal(t, "reviewer-role", got.RoleRef)
 	assert.Equal(t, "from profile", got.Descr)
 	assert.Equal(t, "profile brief", got.InitialMessage)
 	assert.True(t, got.AutoFocus)
@@ -380,18 +382,21 @@ func TestMergeProfileIntoSpawn_FlagsOverrideProfile(t *testing.T) {
 		Effort:         "medium",
 		AgentName:      "profile-name",
 		Role:           "profile-role",
+		RoleRef:        "profile-role-ref",
 		InitialMessage: "profile brief",
 	}
 	p := &SpawnParams{
-		Name:   "flag-name",
-		Role:   "flag-role",
-		Model:  "opus",
-		Effort: "high",
+		Name:    "flag-name",
+		Role:    "flag-role",
+		RoleRef: "flag-role-ref",
+		Model:   "opus",
+		Effort:  "high",
 	}
 	got := mergeProfileIntoSpawn(p, "flag brief", prof)
 
 	assert.Equal(t, "flag-name", got.Name, "explicit --name wins")
 	assert.Equal(t, "flag-role", got.Role, "explicit --role wins")
+	assert.Equal(t, "flag-role-ref", got.RoleRef, "explicit --role-ref wins")
 	assert.Equal(t, "opus", got.Model, "explicit --model wins")
 	assert.Equal(t, "high", got.Effort, "explicit --effort wins")
 	assert.Equal(t, "flag brief", got.InitialMessage, "explicit brief wins")
@@ -421,6 +426,7 @@ func TestMergeProfileIntoSpawn_HarnessMismatchSkipsLaunch(t *testing.T) {
 		TrustDir:            boolPtr(true),
 		AgentName:           "reviewer",
 		Role:                "qa",
+		RoleRef:             "reviewer-role",
 		AutoFocus:           boolPtr(true),
 		IsOwner:             boolPtr(true),
 		PermissionOverrides: db.UnscopedOverrides(map[string]string{"human.notify": "grant"}),
@@ -440,6 +446,7 @@ func TestMergeProfileIntoSpawn_HarnessMismatchSkipsLaunch(t *testing.T) {
 	// mismatch — is_owner / permission_overrides are authority, not launch shape.
 	assert.Equal(t, "reviewer", got.Name)
 	assert.Equal(t, "qa", got.Role)
+	assert.Equal(t, "reviewer-role", got.RoleRef, "role preset is harness-agnostic")
 	assert.True(t, got.AutoFocus, "auto_focus is harness-agnostic")
 	assert.True(t, got.IsOwner, "is_owner inherited regardless of harness")
 	assert.Equal(t, db.UnscopedOverrides(map[string]string{"human.notify": "grant"}), got.PermissionOverrides,

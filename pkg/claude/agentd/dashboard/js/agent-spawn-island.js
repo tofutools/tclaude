@@ -94,7 +94,7 @@ const UNENFORCED_SANDBOX_TITLE = 'Operator-only escape hatch. If closed network 
   + 'be enforced, launch with outbound network access open. Enforceable filesystem and '
   + 'Unix-socket rules still apply. This choice is not saved and starts unchecked every time.';
 const PROFILE_OWNED_FIELDS = [
-  'profile', 'name', 'role', 'descr', 'task', 'initialMessage',
+  'profile', 'name', 'role', 'roleRef', 'descr', 'task', 'initialMessage',
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'tools', 'askTimeout',
   'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'sshWorkaround', 'owner', 'permissionOverrides',
   'contextFeatures', 'autoCompactWindow', 'contextWindowMax', 'copilotAPI', 'codexAppServer', 'fastMode', 'sandboxImpl', 'sandboxImplCleared',
@@ -170,6 +170,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   const context = useMemo(() => ({
     groups: current.groups,
     harnesses: current.harnesses,
+    roles: current.roles,
     sandboxImpl: current.sandboxImpl,
     userDefaultModel: current.userDefaultModel,
     defaultTerminal: current.defaultTerminal,
@@ -876,11 +877,26 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         <${AttachmentList} attachments=${attachments} remove=${removeAttachment} busy=${busy} />
       </div>
     </div>
+    <label class="cron-create-row" title="Behavioral guidance and default access from the role library. Harness and launch posture come from the selected spawn profile and launch controls.">
+      <span class="cron-create-label">Role preset</span>
+      <select id="agent-spawn-role-ref" value=${draft.roleRef} disabled=${busy}
+        onChange=${(event) => {
+          const next = event.currentTarget.value;
+          setDraft((currentDraft) => ({
+            ...currentDraft,
+            roleRef: next,
+            role: !currentDraft.role || currentDraft.role === currentDraft.roleRef ? next : currentDraft.role,
+          }));
+        }}>
+        <option value="">— none —</option>
+        ${(context.roles || []).map((role) => html`<option key=${role.name} value=${role.name}>${role.name}</option>`)}
+      </select>
+    </label>
     <div class="cron-create-row spawn-role-row">
-      <span class="cron-create-label">Role</span>
+      <span class="cron-create-label">Role label</span>
       <input id="agent-spawn-role" type="text" value=${draft.role} disabled=${busy}
         onInput=${(event) => update('role', event.currentTarget.value)}
-        placeholder="optional — short tag (e.g. researcher, planner)" autocomplete="off" spellcheck="false" />
+        placeholder="optional — independent routing/display tag" autocomplete="off" spellcheck="false" />
       <label class="spawn-owner-toggle" title="Make the new agent a group owner of the destination group at birth.">
         <input id="agent-spawn-owner" type="checkbox" checked=${draft.owner} disabled=${busy}
           onChange=${(event) => update('owner', event.currentTarget.checked)} /> owner

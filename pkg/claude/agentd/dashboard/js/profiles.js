@@ -237,6 +237,7 @@ function profileSummary(p, { status = true } = {}) {
   // agent onto the experimental layer, which is worth seeing at a glance.
   if (p.sandbox_implementation) parts.push(`impl ${p.sandbox_implementation}`);
   if (p.agent_name) parts.push(`name ${p.agent_name}`);
+  if (p.role_ref) parts.push(`role preset ${p.role_ref}`);
   if (p.role) parts.push(p.role);
   // The *bool toggles read as on/off only when explicitly set (an absent
   // toggle leaves the dialog's own default, so it isn't worth a chip).

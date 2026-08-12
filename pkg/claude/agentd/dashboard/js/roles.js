@@ -11,8 +11,6 @@
 // and the template editor's per-agent role dropdown (modal-templates.js) read
 // through here so there is one fetch path and one cache.
 
-import { harnessBuiltinModeLabel } from './resolved-defaults.js';
-
 const API = '/api/roles';
 
 // In-memory cache of the full role list (each entry is a complete roleJSON —
@@ -84,19 +82,10 @@ async function deleteRole(name) {
 }
 
 // roleSummary builds a compact one-line summary of a role's set fields for the
-// manage-modal cards — only the fields actually set show. The launch fields
-// lead (profile/harness/model/…), then the permission count.
+// manage-modal cards — only the behavioral/access fields actually set show.
 function roleSummary(rl) {
   const parts = [];
-  if (rl.spawn_profile) parts.push(`⚙ ${rl.spawn_profile}`);
-  if (rl.harness && rl.harness !== 'claude') parts.push(rl.harness);
-  if (rl.model) parts.push(rl.model);
-  if (rl.effort) parts.push(`effort ${rl.effort}`);
-  // A role's sandbox mode is shown verbatim everywhere else; `inherit` is the
-  // one token that needs saying out loud.
-  if (rl.sandbox) parts.push(`sandbox ${harnessBuiltinModeLabel(rl.harness || 'claude', rl.sandbox)}`);
-  if (rl.approval) parts.push(`approval ${rl.approval}`);
-  if (rl.tools) parts.push(`tools ${rl.tools}`);
+  if (rl.brief) parts.push('role brief');
   const nPerms = (rl.permissions || []).length;
   if (nPerms) parts.push(`${nPerms} perm${nPerms === 1 ? '' : 's'}`);
   return parts.join(' · ');

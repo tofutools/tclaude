@@ -1,7 +1,7 @@
 import { h, render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { profileSummary, profileAliasesLabel, profileChoices, findProfileByHandle } from './profiles.js';
+import { profileSummary, profileAliasesLabel } from './profiles.js';
 import { roleSummary } from './roles.js';
 import { AUTO_MEMORY_TRI_OPTIONS, CODEX_APP_SERVER_TRI_OPTIONS, COPILOT_API_TRI_OPTIONS, FAST_MODE_TRI_OPTIONS, dirtyDraft, harnessByName, harnessDefaults, profileDraft, profileHarnessDefaults, profilePayload, readTri, roleDraft, rolePayload, TRI_OPTIONS } from './management-model.js';
 import { registerManagementController } from './management-controller.js';
@@ -949,7 +949,7 @@ function Manager({ kind, current, state, actions, confirmDiscard }) {
   // shortened box whenever the live listing refreshes.
   return html`<${Overlay} id=${`${domKind}-manage-modal`} manage labelledby=${`${domKind}-manage-title`} onClose=${state.closeManager} confirmDiscard=${confirmDiscard} resizeKey=${`tclaude.dash.modalSize.${domKind}-manage`} fitContent=${false}>
     <h3 id=${`${domKind}-manage-title`}>${title}</h3>
-    <p class="manage-intro">${profiles ? "Reusable bundles of the spawn dialog's launch and identity fields." : roles ? 'Named reusable role briefs, launch defaults, and permissions.' : 'Filesystem and environment policy applied when an agent launches.'}</p>
+    <p class="manage-intro">${profiles ? "Reusable bundles of the spawn dialog's launch and identity fields." : roles ? 'Named reusable behavior, guidance, and access presets.' : 'Filesystem and environment policy applied when an agent launches.'}</p>
     <div class="filter-bar"><input id=${`filter-${kind}`} value=${filter} onInput=${(event) => { setFilter.value = event.currentTarget.value; }} placeholder="Filter" autocomplete="off" spellcheck="false" autofocus /><span class="filter-count" id=${`filter-${kind}-count`}>${q ? `${list.length} / ${all.length}` : all.length}</span><button class="clear-filter" onClick=${() => { setFilter.value = ''; }}>×</button><span class="spacer"></span>
       ${profiles && html`<button id="profile-export-open" class="tool" onClick=${() => state.openDialog({ kind: 'profile-export' })}>⇪ export</button><button id="profile-import-open" class="tool" onClick=${() => state.openDialog({ kind: 'profile-import' })}>⤒ import</button>`}
       ${kind === 'sandbox' && html`<button id="sandbox-profile-export-open" class="tool" onClick=${() => state.openDialog({ kind: 'sandbox-export' })}>⇪ export</button><button id="sandbox-profile-import-open" class="tool" onClick=${() => state.openDialog({ kind: 'sandbox-import' })}>⤒ import</button><button id="sandbox-profile-scribe-open" class="tool" onClick=${() => actions.configureSandboxWithAgent({ name: '', filesystem: [], environment: [], network_access: '' })}>🤖 configure with agent</button>`}
@@ -1015,10 +1015,10 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
     });
   };
   const [helpOpen, setHelpOpen] = useState('');
-  const modelID = profile ? 'profile-editor-model' : 'role-editor-model';
-  const approvalID = profile ? 'profile-editor-approval' : 'role-editor-approval';
-  const sandboxID = profile ? 'profile-editor-sandbox' : 'role-editor-sandbox';
-  const toolsID = profile ? 'profile-editor-tools' : 'role-editor-tools';
+  const modelID = 'profile-editor-model';
+  const approvalID = 'profile-editor-approval';
+  const sandboxID = 'profile-editor-sandbox';
+  const toolsID = 'profile-editor-tools';
   const approvalLabel = draft.harness === 'codex' ? 'Approval policy' : 'Permission mode';
   const recommendedApproval = profile
     ? hEntry?.profile_recommended_approval || hEntry?.default_approval
@@ -1101,7 +1101,7 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
   const reviewerHelp = approvalReviewerHelp(draft.approval_reviewer, draft.approval);
   const modelControl = hasModelList ? html`<div class="cron-create-target"><${Select} id=${modelID} value=${customModel ? '__custom__' : draft.model} onChange=${(value) => { if (value === '__custom__') { setCustomModel(true); change(setDraft, 'model', ''); } else { setCustomModel(false); change(setDraft, 'model', value); } }} options=${[['', 'Default (unset)'], ...models.map((model) => [model, model]), ['__custom__', 'Custom model id…']]} />${customModel && html`<input id=${`${modelID}-custom`} type="text" aria-label="Custom model id" value=${draft.model} onInput=${(event) => change(setDraft, 'model', event.currentTarget.value)} placeholder="model id or alias" autocomplete="off" spellcheck="false" autofocus />`}</div>` : html`<input id=${modelID} type="text" aria-label="Model id" value=${draft.model} onInput=${(event) => change(setDraft, 'model', event.currentTarget.value)} placeholder="blank = unset; model id or alias" autocomplete="off" spellcheck="false"/>`;
   return html`
-    <${Row} label="Harness"><${Select} id=${profile ? 'profile-editor-harness' : 'role-editor-harness'} value=${draft.harness} onChange=${updateHarness} options=${catalog.map((entry) => [entry.name, entry.display_name || entry.name])} /></${Row}>
+    <${Row} label="Harness"><${Select} id="profile-editor-harness" value=${draft.harness} onChange=${updateHarness} options=${catalog.map((entry) => [entry.name, entry.display_name || entry.name])} /></${Row}>
     <${Row} label="Model" title="Model suggested by the selected harness. Blank leaves it unset; Custom model id accepts an out-of-catalog model supported by that harness.">${modelControl}</${Row}>
     <${Row} label="Effort"><${Select} value=${draft.effort} onChange=${(value) => change(setDraft, 'effort', value)} options=${[['', "Default (harness's own)"], ...(hEntry?.effort_levels || ['low', 'medium', 'high', 'xhigh', 'max']).map((value) => [value, value])]} /></${Row}>
     ${profile && hEntry && html`<${Row} label="Sandbox"
@@ -1214,7 +1214,7 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
   `;
 }
 
-function ProfileEditor({ descriptor, state, actions, confirmDiscard, openProfilePermissions, openProfileContextFeatures }) {
+function ProfileEditor({ descriptor, roles = [], state, actions, confirmDiscard, openProfilePermissions, openProfileContextFeatures }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const { seed, options = {}, catalog = [] } = descriptor;
   const baseline = useMemo(() => profileDraft(seed, options, catalog), [descriptor]);
@@ -1255,7 +1255,8 @@ function ProfileEditor({ descriptor, state, actions, confirmDiscard, openProfile
     <${Row} label="Codex drive" hidden=${hEntry && !hEntry.can_codex_app_server} title="EXPERIMENTAL: launch the normal Codex TUI against a private per-agent app-server. The TUI is the sole birth writer and agentd binds the created thread without replay. Requires Codex 0.147.x and fails closed if unavailable. Unset means send-keys for deliberate A/B testing."><${Select} id="profile-editor-codex-app-server" value=${draft.codex_app_server} onChange=${(value) => change(setDraft, 'codex_app_server', value)} options=${CODEX_APP_SERVER_TRI_OPTIONS}/></${Row}>
     <${Row} label="Fast mode" hidden=${hEntry && !hEntry.can_fast_mode} title="Codex fast mode uses a higher-cost, lower-latency service tier. Harness default leaves the global Codex config in charge."><${Select} id="profile-editor-fast-mode" value=${draft.fast_mode} onChange=${(value) => change(setDraft, 'fast_mode', value)} options=${FAST_MODE_TRI_OPTIONS}/></${Row}>
     <${Row} label="SSH workaround" hidden=${!hEntry?.can_ssh_workaround} title=${sshWorkaroundAvailable ? "Use an agent-owned copy of the host SSH client config to avoid Codex sandbox ownership errors. This overrides Git core.sshCommand; uncheck it if the workaround conflicts with your setup." : "Available only for the Codex tclaude-agent managed sandbox."}><input id="profile-editor-ssh-workaround" type="checkbox" checked=${sshWorkaroundAvailable && draft.ssh_workaround} disabled=${!sshWorkaroundAvailable} onChange=${(event) => change(setDraft, 'ssh_workaround', event.currentTarget.checked)} /></${Row}>
-    ${[['Agent name', 'agent_name', 'optional — names the spawned agent'], ['Role', 'role', 'optional — e.g. researcher, planner'], ['Descr', 'descr', 'optional — short one-line description']].map(([label, key, placeholder]) => html`<${Row} key=${key} label=${label} hidden=${local}><input value=${draft[key]} onInput=${(event) => change(setDraft, key, event.currentTarget.value)} placeholder=${placeholder} autocomplete="off" spellcheck="false"/></${Row}>`)}
+    <${Row} label="Role preset" hidden=${local} title="Behavioral guidance and default access from the role library. Launch settings remain owned by this spawn profile."><${Select} id="profile-editor-role-ref" value=${draft.role_ref} onChange=${(value) => change(setDraft, 'role_ref', value)} options=${[['', '— none —'], ...roles.map((role) => [role.name, role.name])]} /></${Row}>
+    ${[['Agent name', 'agent_name', 'optional — names the spawned agent'], ['Role label', 'role', 'optional — routing/display label; defaults independently of the role preset'], ['Descr', 'descr', 'optional — short one-line description']].map(([label, key, placeholder]) => html`<${Row} key=${key} label=${label} hidden=${local}><input value=${draft[key]} onInput=${(event) => change(setDraft, key, event.currentTarget.value)} placeholder=${placeholder} autocomplete="off" spellcheck="false"/></${Row}>`)}
     <${Row} label="Initial msg" hidden=${local}><textarea value=${draft.initial_message} onInput=${(event) => change(setDraft, 'initial_message', event.currentTarget.value)} rows="3" placeholder="optional — task brief pre-filled into the spawn dialog" spellcheck="false" /></${Row}>
     <${Row} label="Profile context" title="Extra startup guidance delivered to every agent that resolves this profile. It is kept separate from the per-spawn task brief and group context."><textarea id="profile-editor-startup-context" value=${draft.startup_context} onInput=${(event) => change(setDraft, 'startup_context', event.currentTarget.value)} rows="5" placeholder="optional — model/profile-specific guidance injected into every spawn" spellcheck="false" /></${Row}>
     ${[['Sync worktree', 'sync_worktree'], ['Auto focus', 'auto_focus'], ['Group context', 'include_group_default_context'], ['Group owner', 'is_owner']].map(([label, key]) => html`<${Row} key=${key} label=${label} hidden=${local && key !== 'is_owner'}><${Select} id=${key === 'is_owner' ? 'profile-editor-owner' : `profile-editor-${key.replaceAll('_', '-')}`} value=${draft[key]} onChange=${(value) => change(setDraft, key, value)} options=${TRI_OPTIONS}/></${Row}>`)}
@@ -1265,17 +1266,15 @@ function ProfileEditor({ descriptor, state, actions, confirmDiscard, openProfile
   </${Overlay}>`;
 }
 
-function RoleEditor({ descriptor, current, state, actions, confirmDiscard, openProfilePermissions }) {
+function RoleEditor({ descriptor, state, actions, confirmDiscard, openProfilePermissions }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
-  const { seed, catalog = [] } = descriptor;
-  const baseline = useMemo(() => roleDraft(seed, catalog), [descriptor]);
+  const { seed } = descriptor;
+  const baseline = useMemo(() => roleDraft(seed), [descriptor]);
   const [draft, setDraft] = useState(() => clone(baseline)); const dirty = dirtyDraft(draft, baseline);
   const saving = state.busy.value === 'role-save';
-  const choices = profileChoices(current.profiles); const selectedProfile = findProfileByHandle(current.profiles, draft.spawn_profile); if (draft.spawn_profile && !selectedProfile) choices.push({ value: draft.spawn_profile, label: `${draft.spawn_profile} (missing)` });
-  const submit = async () => { state.error.value = ''; if (!draft.name.trim()) { state.error.value = 'role name is required'; return; } await actions.saveRole({ draft, original: seed, payload: rolePayload(draft, catalog) }); };
+  const submit = async () => { state.error.value = ''; if (!draft.name.trim()) { state.error.value = 'role name is required'; return; } await actions.saveRole({ draft, original: seed, payload: rolePayload(draft) }); };
   return html`<${Overlay} id="role-editor-modal" labelledby="role-editor-title" onClose=${state.closeDialog} dirty=${dirty} blocked=${saving} confirmDiscard=${confirmDiscard} registerClose=${registerClose}><h3 id="role-editor-title">${seed ? `Edit role: ${seed.name}` : 'New role'}</h3>
     <${Row} label="Name"><input id="role-editor-name" value=${draft.name} onInput=${(event) => change(setDraft, 'name', event.currentTarget.value)} placeholder="role name — kebab-or-snake-case label (e.g. reviewer)" autofocus autocomplete="off" spellcheck="false" /></${Row}><${Row} label="Descr"><input id="role-editor-descr" value=${draft.descr} onInput=${(event) => change(setDraft, 'descr', event.currentTarget.value)} placeholder="optional — short one-line description" autocomplete="off" spellcheck="false" /></${Row}><${Row} label="Brief"><textarea id="role-editor-brief" rows="5" value=${draft.brief} onInput=${(event) => change(setDraft, 'brief', event.currentTarget.value)} placeholder="canonical role-brief — prepended to a referencing agent's startup context (newlines OK)" spellcheck="false" /></${Row}>
-    <${HarnessFields} draft=${draft} setDraft=${setDraft} catalog=${catalog} actions=${actions}/><${Row} label="Spawn profile"><${Select} value=${draft.spawn_profile} onChange=${(value) => change(setDraft, 'spawn_profile', value)} options=${[['', '(none)'], ...choices.map((choice) => [choice.value, choice.label])]} /></${Row}>
     <div class="cron-create-row"><span class="cron-create-label">Permissions</span><button id="role-editor-perms" class="tool" type="button" onClick=${() => openProfilePermissions({
       overrides: grantListToOverrides(draft.permissions), grantOnly: true, subject: 'role',
       label: draft.name.trim(),
@@ -2009,9 +2008,9 @@ function DialogSlot({ state, actions, confirmDiscard, openProfilePermissions, op
   const descriptor = state.dialog.value;
   switch (descriptor?.kind) {
     case 'profile-editor':
-      return html`<${ProfileEditor} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions} openProfileContextFeatures=${openProfileContextFeatures}/>`;
+      return html`<${ProfileEditor} descriptor=${descriptor} roles=${state.roles.value || []} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions} openProfileContextFeatures=${openProfileContextFeatures}/>`;
     case 'role-editor':
-      return html`<${RoleEditor} descriptor=${descriptor} current=${{ profiles: state.profiles.value || [] }} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions}/>`;
+      return html`<${RoleEditor} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions}/>`;
     case 'profile-export':
       return html`<${ProfileExport} current=${{ profiles: state.profiles.value || [] }} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
     case 'profile-import':

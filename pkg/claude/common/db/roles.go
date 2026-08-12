@@ -14,15 +14,12 @@ var ErrRoleNameTaken = errors.New("a role with that name already exists")
 // Role is a row in roles — a named, reusable bundle of defaults a template
 // roster agent can reference instead of re-typing them (JOH-240). A role
 // carries a canonical role-brief (guidance prepended to that agent's startup
-// briefing), a default launch shape (the same fields template agents got
-// in v89), and a default permission set.
+// briefing) and a default permission set. Launch policy deliberately belongs
+// to spawn profiles, not roles.
 //
 // A template agent references a role by name (group_template_agents.role_ref);
-// the referenced role's defaults sit BENEATH the agent's own overrides at
-// instantiate: agent inline → agent profile → role → harness default (the
-// group-default tier is empty for a freshly-instantiated group). All launch
-// text fields use "" for unset ("inherit"), mirroring spawn_profiles and the
-// per-agent launch fields.
+// the referenced role supplies behavioral guidance and access defaults while
+// the template agent / spawn profile independently supplies its launch shape.
 type Role struct {
 	ID   int64
 	Name string // the role handle (UNIQUE)
@@ -33,21 +30,9 @@ type Role struct {
 	// role. "" = no brief (the block is omitted).
 	Brief string
 
-	// Default launch shape — the same launch fields template agents carry
-	// (JOH-239). SpawnProfile exposes the current name of a stable profile ref;
-	// the inline fields are defaults. "" = unset (inherit).
-	SpawnProfile   string
-	SpawnProfileID int64 `json:"-"`
-	Harness        string
-	Model          string
-	Effort         string
-	Sandbox        string
-	Approval       string
-	ToolGovernance string
-
-	// Permissions is the role's default permission set, merged beneath a
-	// referencing agent's own permission grants at instantiate (union, agent
-	// extends, deduped). Each entry is a slug plus an optional scope. Stored as
+	// Permissions is the role's baseline permission set, merged beneath a
+	// referencing agent's spawn-profile or explicit permission overrides. Each
+	// entry is a slug plus an optional scope. Stored as
 	// a JSON list like group_template_agents; a bare slug is unscoped.
 	Permissions []PermissionGrant
 
@@ -62,21 +47,11 @@ func CreateRole(rl *Role) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	profileID := sql.NullInt64{Int64: rl.SpawnProfileID, Valid: rl.SpawnProfileID > 0}
-	if !profileID.Valid {
-		profileID, err = registryIDByNameDB(d, "spawn_profiles", rl.SpawnProfile)
-		if err != nil {
-			return 0, err
-		}
-	}
 	now := dbTime(time.Now())
 	res, err := d.Exec(
-		`INSERT INTO roles
-		   (name, descr, brief, spawn_profile, spawn_profile_id, harness, model, effort, sandbox, approval, tools,
-		    permissions, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		rl.Name, rl.Descr, rl.Brief, rl.SpawnProfile, profileID, rl.Harness, rl.Model, rl.Effort,
-		rl.Sandbox, rl.Approval, rl.ToolGovernance, permsToJSON(rl.Permissions), now, now)
+		`INSERT INTO roles (name, descr, brief, permissions, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		rl.Name, rl.Descr, rl.Brief, permsToJSON(rl.Permissions), now, now)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return 0, ErrRoleNameTaken
@@ -94,26 +69,18 @@ func UpdateRole(rl *Role) error {
 	if err != nil {
 		return err
 	}
-	profileID := sql.NullInt64{Int64: rl.SpawnProfileID, Valid: rl.SpawnProfileID > 0}
-	if !profileID.Valid {
-		profileID, err = registryIDByNameDB(d, "spawn_profiles", rl.SpawnProfile)
-		if err != nil {
-			return err
-		}
-	}
 	tx, err := d.Begin()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	var previousName string
+	if err := tx.QueryRow(`SELECT name FROM roles WHERE id = ?`, rl.ID).Scan(&previousName); err != nil {
+		return err
+	}
 	res, err := tx.Exec(
-		`UPDATE roles SET
-		   name = ?, descr = ?, brief = ?, spawn_profile = ?, spawn_profile_id = ?, harness = ?, model = ?,
-		   effort = ?, sandbox = ?, approval = ?, tools = ?, permissions = ?, updated_at = ?
-		 WHERE id = ?`,
-		rl.Name, rl.Descr, rl.Brief, rl.SpawnProfile, profileID, rl.Harness, rl.Model, rl.Effort,
-		rl.Sandbox, rl.Approval, rl.ToolGovernance, permsToJSON(rl.Permissions),
-		dbTime(time.Now()), rl.ID)
+		`UPDATE roles SET name = ?, descr = ?, brief = ?, permissions = ?, updated_at = ? WHERE id = ?`,
+		rl.Name, rl.Descr, rl.Brief, permsToJSON(rl.Permissions), dbTime(time.Now()), rl.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrRoleNameTaken
@@ -127,17 +94,13 @@ func UpdateRole(rl *Role) error {
 	if n == 0 {
 		return sql.ErrNoRows
 	}
-	// A v109 caller may hold an object loaded before a concurrent profile
-	// rename: its name snapshot is stale but SpawnProfileID is still correct.
-	// The name-write trigger must also serve old binaries and therefore cannot
-	// distinguish that object from a legacy name-only update. Restore the
-	// authoritative ID in a second statement atomically, and canonicalize the
-	// legacy name snapshot for an older binary. A dangling historical ID keeps
-	// the supplied snapshot because the subquery yields NULL.
-	if _, err := tx.Exec(`UPDATE roles SET
-		spawn_profile = COALESCE((SELECT name FROM spawn_profiles WHERE id = ?), spawn_profile),
-		spawn_profile_id = ? WHERE id = ?`, profileID, profileID, rl.ID); err != nil {
-		return err
+	if previousName != rl.Name {
+		if _, err := tx.Exec(`UPDATE group_template_agents SET role_ref = ? WHERE role_ref = ?`, rl.Name, previousName); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE spawn_profiles SET role_ref = ? WHERE role_ref = ?`, rl.Name, previousName); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -233,19 +196,37 @@ func TemplatesReferencingRole(name string) ([]string, error) {
 	return out, rows.Err()
 }
 
-const roleSelect = `SELECT id, name, descr, brief,
-	CASE WHEN spawn_profile_id IS NULL THEN spawn_profile
-	     ELSE COALESCE((SELECT name FROM spawn_profiles WHERE id = spawn_profile_id), '') END,
-	COALESCE(spawn_profile_id, 0), harness, model, effort,
-	sandbox, approval, tools, permissions, created_at, updated_at
-	FROM roles`
+// SpawnProfilesReferencingRole returns saved launch profiles whose behavioral
+// role preset points at name. Role deletion is guarded against these live refs
+// for the same reason template refs are guarded.
+func SpawnProfilesReferencingRole(name string) ([]string, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT name FROM spawn_profiles WHERE role_ref = ? ORDER BY name`, name)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := []string{}
+	for rows.Next() {
+		var profile string
+		if err := rows.Scan(&profile); err != nil {
+			return nil, err
+		}
+		out = append(out, profile)
+	}
+	return out, rows.Err()
+}
+
+const roleSelect = `SELECT id, name, descr, brief, permissions, created_at, updated_at FROM roles`
 
 func scanRole(s rowScanner) (*Role, error) {
 	var rl Role
 	var perms string
 	var createdAt, updatedAt dbTimestamp
-	if err := s.Scan(&rl.ID, &rl.Name, &rl.Descr, &rl.Brief, &rl.SpawnProfile, &rl.SpawnProfileID, &rl.Harness,
-		&rl.Model, &rl.Effort, &rl.Sandbox, &rl.Approval, &rl.ToolGovernance, &perms, &createdAt, &updatedAt); err != nil {
+	if err := s.Scan(&rl.ID, &rl.Name, &rl.Descr, &rl.Brief, &perms, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
 	rl.Permissions = permsFromJSON(perms)
