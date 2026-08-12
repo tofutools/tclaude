@@ -117,6 +117,8 @@ func TestDashboardHTML_WizardTheme(t *testing.T) {
 	// Sudo) is themed too — frame + active chamber.
 	must("body.wizard .access-subnav {", "the access sub-nav frame is themed in wizard mode")
 	must("body.wizard .access-subtab.active {", "the active access sub-tab is gilt-lit in wizard mode")
+	must("body.wizard #access-slugs .filter-bar {", "the slug-registry filter gets a scoped wizard treatment")
+	must("body.wizard #access-slugs .filter-bar input:focus {", "the slug-registry scrying field has an arcane focus state")
 }
 
 // TestDashboardHTML_WizardTabNames pins the arcane nav-tab names — every tab
