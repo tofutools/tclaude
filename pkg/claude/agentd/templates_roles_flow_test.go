@@ -79,6 +79,39 @@ func TestGroupTemplate_RoleRef_AppliesDefaults(t *testing.T) {
 		"the role's canonical brief is in the composed context")
 }
 
+// A saved spawn profile may select the role preset for a template member, just
+// as it does for a direct spawn. The template's own role_ref remains optional.
+func TestGroupTemplate_ProfileRoleRef_AppliesDefaults(t *testing.T) {
+	f := newFlow(t)
+	require.Equal(t, http.StatusCreated, createRole(t, f, map[string]any{
+		"name": "profile-auditor", "brief": "Audit from the saved profile.",
+		"permissions": []string{"human.notify"},
+	}).Code)
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "audit-kit", "role_ref": "profile-auditor", "model": "haiku",
+	}).Code)
+	require.Equal(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+		"name":   "profile-role-team",
+		"agents": []map[string]any{{"name": "auditor", "spawn_profile": "audit-kit"}},
+	}).Code)
+
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/profile-role-team/instantiate",
+		map[string]any{"group_name": "profile-role-group"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "instantiate: %s", rec.Body.String())
+	var res instantiateResult
+	testharness.DecodeJSON(t, rec, &res)
+	require.Equal(t, 1, res.Spawned)
+	require.Equal(t, 0, res.Failed, "%+v", res.Agents)
+	agentd.WaitForBackgroundForTest()
+
+	assert.Contains(t, res.Agents[0].Granted, "human.notify")
+	msg := soleInboxMessage(t, res.Agents[0].ConvID)
+	assert.Contains(t, msg.Body, "Audit from the saved profile.")
+	model, ok := f.World.SpawnModel(res.Agents[0].ConvID)
+	require.True(t, ok)
+	assert.Equal(t, "haiku", model, "launch policy still comes from the profile")
+}
+
 // Scenario: launch settings stay independent of roles, while role grants and
 // an agent's inline grants compose as a union.
 func TestGroupTemplate_RoleRef_AgentOverridesWinAndPermsUnion(t *testing.T) {

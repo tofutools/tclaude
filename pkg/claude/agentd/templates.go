@@ -2462,6 +2462,42 @@ func effectiveTemplateAgentOwner(a db.GroupTemplateAgent, lookupProfile func(str
 // resolutions are kept separate for clarity — a vanished profile is reported
 // the same typed failure by both. A nil role contributes nothing.
 //
+// resolveTemplateAgentRole applies the template identity precedence for saved
+// role presets: an agent's direct role_ref wins, then its saved spawn profile.
+func resolveTemplateAgentRole(a db.GroupTemplateAgent) (*db.Role, *spawnFailure) {
+	ref := strings.TrimSpace(a.RoleRef)
+	// A template agent's own role selection is explicit and wins. Otherwise a
+	// referenced spawn profile may provide the behavior/access preset, matching
+	// direct-spawn identity resolution. Template-local profiles reject role_ref.
+	if ref == "" && (strings.TrimSpace(a.SpawnProfile) != "" || a.SpawnProfileID > 0) {
+		var profile *db.SpawnProfile
+		var err error
+		if a.SpawnProfileID > 0 {
+			profile, err = db.GetSpawnProfileByID(a.SpawnProfileID)
+		} else {
+			profile, err = db.ResolveSpawnProfile(a.SpawnProfile)
+		}
+		if err != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		}
+		if profile == nil {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_profile",
+				fmt.Sprintf("references spawn profile %q which no longer exists", a.SpawnProfile)}
+		}
+		ref = strings.TrimSpace(profile.RoleRef)
+	}
+	if ref == "" {
+		return nil, nil
+	}
+	role, err := db.GetRole(ref)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+	}
+	// Preserve the existing graceful degradation for a role deleted outside the
+	// guarded API: the agent still launches, without the vanished preset.
+	return role, nil
+}
+
 // Roles contribute grants only, never denies or ownership. Launch profiles stay
 // independent, so a role cannot silently change how the agent is launched.
 func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, []permOverride, *spawnFailure) {
