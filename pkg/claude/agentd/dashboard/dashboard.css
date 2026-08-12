@@ -7136,15 +7136,14 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
 .cron-create-row > button.tool {
   flex: 0 0 auto; align-self: stretch; padding: 0 12px; white-space: nowrap;
 }
-/* The spawn-profile editor's Permissions… and Context… rows carry a label, a
+/* The profile/role editors' Permissions… and Context… rows carry a label, a
    button and a summary badge — no input or select for the button to match — so
-   the stretch above has nothing to size against and just inflates the button to
-   the row height. That is invisible next to the one-line "Permissions" label and
-   obvious next to "Startup context", which wraps to two lines in the 72px label
-   column and left the Context… button visibly taller than its twin. Top-align
-   both and restore button.tool's own vertical padding so they render at the same
-   height as the spawn dialog's Role-row buttons. */
-.cron-create-row > button.tool:is(#profile-editor-perms, #profile-editor-context-features) {
+   the stretch above has nothing to size against and leaves the button's text
+   vertically cramped. This was initially applied only to the profile editor,
+   making the later role-editor twin visibly thinner. Top-align all three and
+   restore button.tool's own vertical padding so they match the spawn dialog's
+   Role-row buttons. */
+.cron-create-row > button.tool:is(#profile-editor-perms, #profile-editor-context-features, #role-editor-perms) {
   align-self: flex-start; padding: 5px 12px;
 }
 /* Live inline help under the one spawn-dialog control that still needs it: the
