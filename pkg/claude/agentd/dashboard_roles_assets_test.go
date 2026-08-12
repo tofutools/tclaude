@@ -40,6 +40,7 @@ func TestDashboardAssets_RoleLibraryWired(t *testing.T) {
 		`.cron-create-row input:not([type])`,
 		`body.wizard #role-editor-modal .cron-create-row input:not([type])`,
 		`id="profile-editor-perms" class="tool"`,
+		`.cron-create-row > button.tool:is(#profile-editor-perms, #profile-editor-context-features, #role-editor-perms)`,
 		// dashboard.css — the pure-CSS wizard vocabulary swap ("roles" → "classes").
 		"body.wizard .roles-word-wizard { display: inline; }",
 	} {
