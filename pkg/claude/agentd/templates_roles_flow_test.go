@@ -118,6 +118,42 @@ func TestGroupTemplate_ProfileRoleRef_AppliesDefaults(t *testing.T) {
 	assert.Equal(t, "haiku", model, "launch policy still comes from the profile")
 }
 
+func TestGroupTemplate_ProfileRoleRefs_RejectScopeConflictBeforeSpawn(t *testing.T) {
+	f := newFlow(t)
+	for _, tc := range []struct {
+		name  string
+		group string
+	}{{"profile-alpha-spawner", "alpha"}, {"profile-beta-spawner", "beta"}} {
+		require.Equal(t, http.StatusCreated, createRole(t, f, map[string]any{
+			"name": tc.name,
+			"permissions": []any{map[string]any{
+				"slug":  agentd.PermGroupsMembersSpawn,
+				"scope": map[string]any{"group": []string{tc.group}},
+			}},
+		}).Code)
+	}
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name":      "conflicting-access-kit",
+		"role_refs": []string{"profile-alpha-spawner", "profile-beta-spawner"},
+	}).Code)
+	require.Equal(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+		"name":   "conflicting-access-team",
+		"agents": []map[string]any{{"name": "worker", "spawn_profile": "conflicting-access-kit"}},
+	}).Code)
+
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/conflicting-access-team/instantiate",
+		map[string]any{"group_name": "conflicting-access-group"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "instantiate: %s", rec.Body.String())
+	var res instantiateResult
+	testharness.DecodeJSON(t, rec, &res)
+	assert.Equal(t, 0, res.Spawned)
+	assert.Equal(t, 1, res.Failed)
+	require.Len(t, res.Agents, 1)
+	assert.Equal(t, "role_scope_conflict", res.Agents[0].ErrorKind)
+	assert.Empty(t, res.Agents[0].ConvID, "invalid role access must fail before a harness is spawned")
+	assert.Empty(t, f.ListGroupMembers("conflicting-access-group"))
+}
+
 // Scenario: launch settings stay independent of roles, while role grants and
 // an agent's inline grants compose as a union.
 func TestGroupTemplate_RoleRef_AgentOverridesWinAndPermsUnion(t *testing.T) {
