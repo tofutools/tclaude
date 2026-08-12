@@ -76,12 +76,18 @@ func convJSONLPath(home, cwd, convID string) string {
 
 func TestGroupImport_CanonicalizesLegacyPermissionSlugs(t *testing.T) {
 	f := newFlow(t)
+	const convID = "legacy-permission-agent"
 	exp := &groupexport.Export{
 		FormatVersion: groupexport.FormatVersion,
 		SourceGroup:   "legacy-permissions",
-		Group: groupexport.Group{Permissions: []groupexport.GroupPermission{{
-			Slug: "groups.spawn",
-		}}},
+		Group: groupexport.Group{Permissions: []groupexport.GroupPermission{
+			{Slug: "groups.spawn", GrantedBy: "legacy"},
+			{Slug: agentd.PermGroupsMembersSpawn, GrantedBy: "canonical"},
+		}},
+		Permissions: []groupexport.Permission{
+			{ConvID: convID, Slug: "groups.spawn", Effect: db.PermEffectGrant, GrantedBy: "legacy"},
+			{ConvID: convID, Slug: agentd.PermGroupsMembersSpawn, Effect: db.PermEffectDeny, GrantedBy: "canonical"},
+		},
 	}
 	archive, err := groupexport.Marshal(exp)
 	require.NoError(t, err)
@@ -94,6 +100,14 @@ func TestGroupImport_CanonicalizesLegacyPermissionSlugs(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, permissions, 1)
 	assert.Equal(t, agentd.PermGroupsMembersSpawn, permissions[0].Slug)
+	assert.Equal(t, "canonical", permissions[0].GrantedBy)
+
+	overrides, err := db.ListAgentPermissionOverrideRowsForConv(convID)
+	require.NoError(t, err)
+	require.Len(t, overrides, 1)
+	assert.Equal(t, agentd.PermGroupsMembersSpawn, overrides[0].Slug)
+	assert.Equal(t, db.PermEffectDeny, overrides[0].Effect)
+	assert.Equal(t, "canonical", overrides[0].GrantedBy)
 }
 
 // TestGroupExportImport_RoundTripPreservesEverything is the core safety
