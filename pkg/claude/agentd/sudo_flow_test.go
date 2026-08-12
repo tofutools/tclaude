@@ -92,6 +92,23 @@ func TestSudo_Approved_GrantsForDuration(t *testing.T) {
 	assert.Equal(t, wantAgent, listed[0].AgentID, "listing should carry the stable agent_id")
 }
 
+func TestSudo_UnknownSlugRejectedBeforeApproval(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+
+	f := newFlow(t)
+	const conv = "sudo-unknown-aaaa-bbbb-1111"
+	f.HaveConvWithTitle(conv, "worker")
+	r := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/sudo", map[string]any{
+		"slugs": []string{"groups.teleport"}, "duration": "5m",
+	}), conv)
+	rec := testharness.Serve(f.Mux, r)
+	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "unknown_slug")
+	snapshot := fetchAccessReqSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	assert.Zero(t, snapshot.AccessRequestsPending, "unknown slugs must never reach approval")
+}
+
 // Scenario: popup denies; no rows are inserted. Pins the explicit
 // deny path — without it, a denied request might silently leak rows
 // (defense-in-depth against handler ordering bugs).
@@ -540,6 +557,39 @@ func TestSudo_DownstreamAuditAnnotation_GroupsCreateOwner(t *testing.T) {
 	require.Len(t, owners, 1, "owner rows")
 	want := fmt.Sprintf("%s:via-sudo:grant-id=%d", conv, grantID)
 	assert.Equal(t, want, owners[0].GrantedBy, "granted_by")
+}
+
+func TestSudo_DownstreamAuditAnnotation_GroupsAdminUmbrella(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+	t.Cleanup(agentd.StubApprovalForTest(true))
+
+	f := newFlow(t)
+	const conv = "aud-admin-aaaa-bbbb-1111"
+	f.HaveConvWithTitle(conv, "group-admin")
+	sudoReq := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/sudo", map[string]any{
+		"slugs": []string{agentd.PermGroupsAdmin}, "duration": "5m",
+	}), conv)
+	sudoRec := testharness.Serve(f.Mux, sudoReq)
+	require.Equal(t, http.StatusOK, sudoRec.Code, sudoRec.Body.String())
+	var sudoResp struct {
+		Grants []struct {
+			ID int64 `json:"id"`
+		} `json:"grants"`
+	}
+	require.NoError(t, json.Unmarshal(sudoRec.Body.Bytes(), &sudoResp))
+	require.Len(t, sudoResp.Grants, 1)
+
+	createReq := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
+		"/v1/groups", map[string]any{"name": "team-via-admin-sudo"}), conv)
+	createRec := testharness.Serve(f.Mux, createReq)
+	require.Equal(t, http.StatusCreated, createRec.Code, createRec.Body.String())
+	g, err := db.GetAgentGroupByName("team-via-admin-sudo")
+	require.NoError(t, err)
+	owners, err := db.ListAgentGroupOwners(g.ID)
+	require.NoError(t, err)
+	require.Len(t, owners, 1)
+	assert.Equal(t, fmt.Sprintf("%s:via-sudo:grant-id=%d", conv, sudoResp.Grants[0].ID), owners[0].GrantedBy)
 }
 
 // Scenario: agent has groups.create via the normal permission_overrides

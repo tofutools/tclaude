@@ -317,6 +317,7 @@ const (
 	PermAgentTask          = "agent.task"
 	PermAgentPR            = "agent.pr"
 	PermAgentTags          = "agent.tags"
+	PermGroupsAdmin        = "groups.admin"
 	PermGroupsCreate       = "groups.create"
 	PermGroupsRm           = "groups.rm"
 	PermGroupsStop         = "groups.stop"
@@ -336,6 +337,16 @@ const (
 	PermGroupsNest         = "groups.nest"
 	PermAgentInboxWatch    = "agent.inbox-watch"
 	PermGroupsRename       = "groups.rename"
+	PermGroupsDescription  = "groups.description"
+	PermGroupsDefaultDir   = "groups.default-dir"
+	PermGroupsDefaultCtx   = "groups.default-context"
+	PermGroupsDefaultSpawn = "groups.default-spawn-group"
+	PermGroupsDefaultProf  = "groups.default-profile"
+	PermGroupsMaxMembers   = "groups.max-members"
+	PermGroupsNotify       = "groups.notifications"
+	PermGroupsRemoteCtrl   = "groups.remote-control"
+	PermGroupsPermissions  = "groups.permissions"
+	PermGroupsOwnerScopes  = "groups.owner-scopes"
 	PermGroupsAttachment   = "groups.attachment"
 	PermGroupsClone        = "groups.clone"
 	PermGroupsLinkAdd      = "groups.link.add"
@@ -451,7 +462,9 @@ func resolvePermission(convID, slug string) permResolution {
 // provenance without re-querying a grant that may expire or be replaced.
 func resolvePermissionWithSudoGrantID(convID, slug string) (permResolution, int64) {
 	cfg, _ := config.Load()
-	return resolvePermissionWithDefault(convID, slug, cfg.HasDefaultPermission(slug))
+	v := resolveEffectivePermissionVerdict(convID, slug,
+		cfg.HasDefaultPermission(slug), cfg.HasDefaultPermission(PermGroupsAdmin))
+	return contextFreeResolution(v), v.SudoGrantID
 }
 
 // resolvePermissionVerdictForRequest is the request-scoped resolver the two
@@ -459,15 +472,43 @@ func resolvePermissionWithSudoGrantID(convID, slug string) (permResolution, int6
 // scoped allow can only be answered against the request's ActionContext.
 func resolvePermissionVerdictForRequest(r *http.Request, convID, slug string) permVerdict {
 	if defaults, ok := r.Context().Value(permissionDefaultsKey{}).(map[string]bool); ok {
-		return resolvePermissionVerdict(convID, slug, defaults[slug])
+		return resolveEffectivePermissionVerdict(convID, slug, defaults[slug], defaults[PermGroupsAdmin])
 	}
 	cfg, _ := config.Load()
-	return resolvePermissionVerdict(convID, slug, cfg.HasDefaultPermission(slug))
+	return resolveEffectivePermissionVerdict(convID, slug,
+		cfg.HasDefaultPermission(slug), cfg.HasDefaultPermission(PermGroupsAdmin))
 }
 
-func resolvePermissionWithDefault(convID, slug string, defaultAllowed bool) (permResolution, int64) {
-	v := resolvePermissionVerdict(convID, slug, defaultAllowed)
-	return contextFreeResolution(v), v.SudoGrantID
+// resolveEffectivePermissionVerdict adds the groups.admin umbrella to the
+// ordinary exact-slug resolver. Exact decisions always go first: in
+// particular, a dedicated deny suppresses an umbrella grant. An umbrella deny
+// does not suppress a separately granted dedicated capability; it only removes
+// the umbrella source.
+func resolveEffectivePermissionVerdict(convID, slug string, defaultAllowed, adminDefaultAllowed bool) permVerdict {
+	src := loadPermSources(convID)
+	return resolveEffectivePermissionVerdictFrom(src, slug, defaultAllowed, adminDefaultAllowed)
+}
+
+func resolveEffectivePermissionVerdictFrom(src permSources, slug string, defaultAllowed, adminDefaultAllowed bool) permVerdict {
+	if !IsKnownPermSlug(slug) {
+		return permVerdict{Resolution: permUndecided, Source: permSourceNone}
+	}
+	exact := resolvePermissionVerdictFrom(src, slug, defaultAllowed)
+	if exact.Resolution == permDeny || !IsGroupsAdminImpliedSlug(slug) {
+		return exact
+	}
+	admin := resolvePermissionVerdictFrom(src, PermGroupsAdmin, adminDefaultAllowed)
+	if exact.Resolution == permUndecided && admin.Resolution == permAllow {
+		return admin
+	}
+	// A scoped dedicated allow may not cover this particular action. An
+	// unscoped umbrella still does, so prefer it here; otherwise the gate would
+	// stop at the unsatisfied dedicated scope and never reach groups.admin.
+	if exact.Resolution == permAllow && contextFreeResolution(exact) == permUndecided &&
+		admin.Resolution == permAllow && contextFreeResolution(admin) == permAllow {
+		return admin
+	}
+	return exact
 }
 
 // contextFreeResolution collapses a verdict for a reader that cannot say what
@@ -666,10 +707,6 @@ func resolveGroupBoundPermissionVerdictForRequest(r *http.Request, convID, slug 
 // here shows up in the listing for free rather than silently making the
 // listing wrong (an agent held human.notify via a group grant while
 // `permissions ls` reported it absent).
-func resolvePermissionVerdict(convID, slug string, defaultAllowed bool) permVerdict {
-	return resolvePermissionVerdictFrom(loadPermSources(convID), slug, defaultAllowed)
-}
-
 // resolvePermissionVerdictFrom applies the precedence to already-read
 // sources. This is the one place the ordering lives; a caller resolving
 // many slugs for one agent loads the sources once and calls this per
@@ -772,6 +809,15 @@ func requireGroupPermission(w http.ResponseWriter, r *http.Request, perm string,
 // could not see what the action targets could not tell a permitted spawn from
 // a refused one.
 func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ownerBypass ownerBypassFunc, actx ...ActionContext) (string, bool) {
+	// Authorization code may only name capabilities in the central registry.
+	// Fail before identity resolution (including the implicit-human path), so a
+	// typo can never appear as a valid denial or reach one-time approval.
+	if !IsKnownPermSlug(perm) {
+		slog.Error("authorization gate references unregistered permission", "permission", perm, "path", r.URL.Path)
+		writeError(w, http.StatusInternalServerError, "unregistered_permission",
+			fmt.Sprintf("authorization gate references unregistered permission %q", perm))
+		return "", false
+	}
 	p := peerFromContext(r.Context())
 	switch classify(p) {
 	case classUnidentified:

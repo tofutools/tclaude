@@ -2359,6 +2359,21 @@ has [classified the caller](#identity), it decides:
    it confers — see [Owner-bypass narrowing](#owner-bypass-narrowing).
 3. **Neither?** Refused fail-closed — see [Identity](#identity).
 
+`groups.admin` is the explicit umbrella for the registered `groups.*` and
+`member.*` administration vocabulary. A grant of it satisfies those gates,
+but a deny on a dedicated operation (for example `groups.default-dir`) still
+wins. Group settings use dedicated capabilities: granting
+`groups.default-dir` does not permit rename, context changes, or any other
+mutation.
+
+Compatibility note: older builds used the then-unregistered `groups.rename`
+string as a catch-all for group settings. It is now registered and strictly
+rename-only. Existing stored/configured `groups.rename` grants remain valid
+for rename but are deliberately not broadened during migration; replace an
+old catch-all grant with `groups.admin`, or preferably the dedicated setting
+slugs actually needed. This avoids silently converting a rename-only grant
+into full administration.
+
 ### Storage split
 
 | Where                                     | What                          | How to edit               |
@@ -2532,7 +2547,7 @@ gate group, messaging, template, and permission administration.
 |---------------|-------|
 | `self.*`      | `self.rename`, `self.compact`, `self.interrupt`, `self.clone`, `self.schedule`, `self.remote-control`, `self.task`, `self.pr`, `self.tags`, `self.dir-repair` |
 | `agent.*`     | `agent.rename`, `agent.compact`, `agent.interrupt`, `agent.reincarnate`, `agent.clone`, `agent.context-info`, `agent.resume`, `agent.stop`, `agent.delete`, `agent.schedule`, `agent.promote`, `agent.retire`, `agent.remote-control`, `agent.sandbox-impl` (not owner-conferred) |
-| `groups.*`    | `groups.create`, `groups.rm`, `groups.archive`, `groups.stop`, `groups.resume`, `groups.retire`, `groups.spawn`, `groups.own`, `groups.link.add`, `groups.link.rm`, `groups.export`, `groups.import` |
+| `groups.*`    | `groups.admin`, `groups.create`, `groups.rm`, `groups.rename`, `groups.description`, `groups.default-dir`, `groups.default-context`, `groups.default-spawn-group`, `groups.default-profile`, `groups.max-members`, `groups.notifications`, `groups.remote-control`, `groups.permissions`, `groups.owner-scopes`, `groups.archive`, `groups.stop`, `groups.resume`, `groups.retire`, `groups.spawn`, `groups.own`, `groups.nest`, `groups.attachment`, `groups.clone`, `groups.link.add`, `groups.link.rm`, `groups.export`, `groups.import` |
 | `member.*`    | `member.add`, `member.remove`, `member.redesignate` |
 | `permissions.*` | `permissions.grant`, `permissions.revoke` |
 | `message.*`   | `message.direct` |
@@ -2562,8 +2577,10 @@ tclaude agent groups create foo --ask-human 30s
 # → human clicks Deny or timeout fires → CLI fails with 403
 ```
 
-**Timeout = Deny** so an unattended request never silently grants. The
-request surface is authenticated by the same init-token exchange the
+**Timeout = Deny** so an unattended request never silently grants. Unknown
+permission strings are rejected before an approval request is created; the
+live registry is the only valid vocabulary. The request surface is
+authenticated by the same init-token exchange the
 [dashboard](dashboard.md#auth) uses. By default no browser is opened and
 no OS banner is sent; opt into those extra alerts with
 `agent.access_request_auto_open_browser` and

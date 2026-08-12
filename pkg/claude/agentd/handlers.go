@@ -3868,25 +3868,15 @@ func normalizeGroupDescr(s string) string {
 // *int and clears to "unlimited" with 0. An empty body (no field) is a
 // 400.
 //
-// Permission: groups.rename. Setting a group's description / default
-// cwd / context / profile / member cap is the same class of human-curated
-// group config as renaming it (the blast radius is a dashboard label /
-// UI prefill / spawn-time injection / spawn refusal, strictly lower
-// than a rename), so it rides the existing slug rather than minting a
-// new one. Default human-only.
+// Each independently meaningful setting has its own permission. This keeps a
+// default-directory grant from also authorizing a rename, context injection,
+// or a member-cap change. groups.admin is accepted centrally as an umbrella.
 //
 // permissions AND owner_scopes are permission administration and additionally
 // require permissions.grant + permissions.revoke — the same pair, because both
 // fields can widen (clearing a narrowing) and narrow (adding one) in a single
 // write.
 func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	caller, ok := requirePermission(w, r, PermGroupsRename)
-	if !ok {
-		return
-	}
-	if !requireGroupActive(w, g) {
-		return
-	}
 	var body struct {
 		Descr             *string `json:"descr,omitempty"`
 		DefaultCwd        *string `json:"default_cwd,omitempty"`
@@ -3921,6 +3911,53 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "json", err.Error())
+		return
+	}
+	if body.Descr == nil && body.DefaultCwd == nil && body.DefaultContext == nil && body.DefaultSpawnGroup == nil && body.DefaultProfile == nil && body.MaxMembers == nil && body.NotifyEnabled == nil && body.RemoteControlPolicy == nil && body.Permissions == nil && body.OwnerScopes == nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			"nothing to update (expected descr, default_cwd, default_context, default_spawn_group, default_profile, max_members, notify_enabled, remote_control_policy, permissions and/or owner_scopes)")
+		return
+	}
+	required := make([]string, 0, 10)
+	if body.Descr != nil {
+		required = append(required, PermGroupsDescription)
+	}
+	if body.DefaultCwd != nil {
+		required = append(required, PermGroupsDefaultDir)
+	}
+	if body.DefaultContext != nil {
+		required = append(required, PermGroupsDefaultCtx)
+	}
+	if body.DefaultSpawnGroup != nil {
+		required = append(required, PermGroupsDefaultSpawn)
+	}
+	if body.DefaultProfile != nil {
+		required = append(required, PermGroupsDefaultProf)
+	}
+	if body.MaxMembers != nil {
+		required = append(required, PermGroupsMaxMembers)
+	}
+	if body.NotifyEnabled != nil {
+		required = append(required, PermGroupsNotify)
+	}
+	if body.RemoteControlPolicy != nil {
+		required = append(required, PermGroupsRemoteCtrl)
+	}
+	if body.Permissions != nil {
+		required = append(required, PermGroupsPermissions)
+	}
+	if body.OwnerScopes != nil {
+		required = append(required, PermGroupsOwnerScopes)
+	}
+	caller := ""
+	for _, perm := range required {
+		resolved, ok := requirePermission(w, r, perm, ActionContext{Group: g.Name})
+		if !ok {
+			return
+		}
+		caller = resolved
+	}
+	if !requireGroupActive(w, g) {
 		return
 	}
 	if body.Permissions != nil || body.OwnerScopes != nil {
@@ -3970,11 +4007,6 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 			writeError(w, http.StatusForbidden, "scope_not_attenuated", err.Error())
 			return
 		}
-	}
-	if body.Descr == nil && body.DefaultCwd == nil && body.DefaultContext == nil && body.DefaultSpawnGroup == nil && body.DefaultProfile == nil && body.MaxMembers == nil && body.NotifyEnabled == nil && body.RemoteControlPolicy == nil && body.Permissions == nil && body.OwnerScopes == nil {
-		writeError(w, http.StatusBadRequest, "invalid_arg",
-			"nothing to update (expected descr, default_cwd, default_context, default_spawn_group, default_profile, max_members, notify_enabled, remote_control_policy, permissions and/or owner_scopes)")
-		return
 	}
 	resp := map[string]any{"group": g.Name}
 

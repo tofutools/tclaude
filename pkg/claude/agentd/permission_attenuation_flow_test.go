@@ -553,17 +553,15 @@ func TestAttenuation_GranterCannotShedItsOwnScope(t *testing.T) {
 // that slug to a group it belongs to and resolve unscoped on the next request
 // (the group tier unions its rows, and one unscoped row absorbs the tier).
 //
-// The endpoint gates on groups.rename, which is NOT in the permission registry
-// today — so no API grant can hand it to an agent and the path is effectively
-// human-only right now. This grants it at the storage layer, which is what the
-// daemon would resolve if the slug were ever registered, so the check is under
-// test before that day rather than after it.
+// The endpoint gates permission-list mutation on groups.permissions in addition
+// to the generic grant/revoke capabilities. Give the caller that mutation gate
+// so this test reaches the attenuation check it is intended to exercise.
 func TestAttenuation_GroupPermissionsPatchIsAttenuated(t *testing.T) {
 	f := newFlow(t)
 	group := f.HaveGroup("alpha")
 	const lead = "atten-lead-aaaa-bbbb-cccc-000000000009"
 	f.HaveMember("alpha", lead)
-	require.NoError(t, db.GrantAgentPermission(lead, agentd.PermGroupsRename, "<test>"))
+	grantScoped(t, f, lead, agentd.PermGroupsPermissions, nil)
 	grantScoped(t, f, lead, agentd.PermPermissionsGrant, nil)
 	grantScoped(t, f, lead, agentd.PermPermissionsRevoke, nil)
 	grantScoped(t, f, lead, agentd.PermRoutesPublish, map[string]any{"group": []string{"alpha"}})
