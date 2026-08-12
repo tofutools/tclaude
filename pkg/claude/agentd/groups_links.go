@@ -413,9 +413,8 @@ func handleGroupLinksRemove(w http.ResponseWriter, r *http.Request, g *db.AgentG
 // requireScopedLinkAuthority for the PATCH/DELETE path that has to
 // look at the actual link direction.
 //
-// Ownership is resolved centrally from the slug's OwnerScope, so it obeys the
-// same precedence as every other owner-implied slug: it fills only the
-// permUndecided gap and an explicit per-conv deny suppresses it.
+// Ownership contributes the same group-scoped slug this gate requests. The
+// central resolver applies its ordinary scope and same-slug deny semantics.
 func requireGroupLinkAuthority(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, perm string) (string, bool) {
 	return requireGroupPermission(w, r, perm, g)
 }

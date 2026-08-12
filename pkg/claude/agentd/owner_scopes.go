@@ -13,37 +13,28 @@ import (
 
 // Per-group owner scopes (§6 of the scoped-permissions design, TCL-1071).
 //
-// Group ownership structurally confers a set of slugs — the owner-implied
-// BYPASS, which fills the permUndecided gap at every gate that takes one (see
-// PermSlug.OwnerScope). Until now that bypass was all-or-nothing: an owner
-// either got the whole slug or was not an owner.
-//
-// A group may now carry an owner-scope map, slug → scope, that CONFINES that
-// bypass for that group. {"groups.members.spawn":{"spawn_profile":["p1"]}} on group g1
-// means: an owner of g1 with no grant of its own may spawn into g1 with
-// profile p1, and is refused (popup, then 403) with p2 or an inline profile.
+// Group ownership contributes ordinary permission grants. Group-aware slugs
+// get one grant scoped to each owned active group; the two declared global
+// bonuses are unscoped. A group's owner-scope map adds AND constraints to the
+// grant that group contributes. For example, a spawn_profile constraint on g1
+// permits that owner grant only for the named profiles in g1.
 //
 // Three properties are load-bearing, and each is settled operator policy:
 //
-//   - It narrows ONLY the bypass. An EXPLICIT grant the owner holds resolves
-//     first, under the ordinary precedence, and is untouched — an operator who
-//     wants that narrowed edits the grant's own scope, which is individually
-//     controllable. So an owner holding an unscoped groups.members.spawn grant is
-//     unaffected by any owner-scope map.
+//   - It narrows ONLY this group's contributed grant. Other positive grants
+//     compose with it and retain their own scopes.
 //   - It is PER GROUP. An owner of g1 (narrowed) and g2 (not) acting on g2 is
-//     unaffected; acting on g1 is confined. Every bypass site therefore has to
-//     pick the RIGHT group's map, which is why the helpers below take a group
-//     (or enumerate owned groups) rather than a boolean "is an owner".
+//     unaffected; acting on g1 is confined.
 //   - Where no target group is in context, a narrowed map fails CLOSED for
 //     that group's contribution: an owner-scope map that cannot be evaluated
 //     must never read as "unrestricted".
 //
-// Deny still suppresses the bypass entirely, and grants stay monotonic: a map
-// can only take reach AWAY from the structural bypass, never add any.
+// A same-slug deny suppresses the owner source, and a constraint can only take
+// reach away from the contributed grant.
 
 // ownerScopeMap is a group's owner-scope map in evaluated form: slug → the
-// scope that slug's owner-implied bypass is confined to for this group. A slug
-// ABSENT from the map is unrestricted (today's bypass); the map never widens.
+// extra scope applied to that group's contributed grant. A slug absent from
+// the map gets no extra constraints beyond the mandatory owned-group scope.
 type ownerScopeMap map[string]PermissionScope
 
 // parseOwnerScopes parses, validates and canonicalizes an owner-scope map from

@@ -828,17 +828,15 @@ type permissionsEffectiveResp struct {
 	// ownership, so the CLI can annotate those rows "(via ownership)".
 	OwnerImplied []string `json:"owner_implied"`
 	// Provenance maps each effective slug to the resolver source that
-	// granted it — "sudo", "override", "group", "default", or "owner"
-	// (the structural bypass). It comes straight from the gate's own
+	// granted it — "sudo", "override", "group", "default", or "owner".
+	// It comes straight from the gate's own
 	// verdict, so the listing explains a decision without a second model
 	// of the precedence.
 	Provenance map[string]string `json:"provenance,omitempty"`
 	// OwnedGroups names the ACTIVE groups this target owns, so a client
 	// can say WHERE an owner-conferred slug applies. Empty for a
-	// non-owner. Pair it with the slug's owner_scope from
-	// /v1/permissions/slugs: a "group"/"member"-scoped slug reaches only
-	// these groups (or their members), while an "any"-scoped one is
-	// genuinely unscoped.
+	// non-owner. Owner-implied slugs that declare the group dimension receive
+	// one scope per name; owner-implied slugs without it are global bonuses.
 	OwnedGroups []string `json:"owned_groups,omitempty"`
 }
 
