@@ -162,11 +162,13 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must("No agents match the filter.", "empty-after-filter state rendered")
 
 	// Continued-agent marker: a multi-day agent splits into one row per
-	// day, and the earlier-day slices are rendered with a ↩ marker styled
-	// by .cost-cont. The marker derives from the agent-keyed chain (below),
-	// not the API's per-conversation `continued` flag, so a conv rotation
-	// (/clear, resume-after-exit) can't strand a day outside the chain.
-	must("agent.day < lastDay[key]", "continuation derived from the agent-keyed chain")
+	// day, and every slice but the chain head is rendered with a ↩ marker
+	// styled by .cost-cont. The marker derives from the agent-keyed chain
+	// (below), not the API's per-conversation `continued` flag, so a conv
+	// rotation (/clear, resume-after-exit) can't strand a day outside the
+	// chain — and the head is picked by latest (day, activity), so a
+	// mid-day rotation's two same-day slices still yield exactly one ↳.
+	must("sliceRank(agent) > sliceRank(chainHead[key])", "single chain head picked by latest day + activity")
 	must("↩", "continuation marker glyph rendered")
 	must(".cost-cont", "continuation marker styled")
 

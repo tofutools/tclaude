@@ -240,15 +240,21 @@ function CostsTable({ state, current }) {
   // rows with no agent. A /clear or a resume-after-exit rotates the conv
   // id under the same agent, so keying on conv_id alone rendered the
   // agent's pre-rotation days as an unrelated, unlinked row. The ↩/↳
-  // markers are derived from the same chain (latest day = head), not from
-  // the API's per-conversation `continued` flag, for the same reason.
+  // markers are derived from the same chain, not from the API's
+  // per-conversation `continued` flag, for the same reason. The head is
+  // the single slice with the latest (day, last activity) — a mid-day
+  // rotation yields two same-day slices, and without the activity
+  // tie-break both would claim the ↳ tip.
   const chainKey = (agent) => agent.agent_id || agent.conv_id;
+  const sliceRank = (agent) => `${agent.day}|${agent.last_activity || ''}|${agent.conv_id}`;
   const slices = {};
-  const lastDay = {};
+  const chainDays = {};
+  const chainHead = {};
   for (const agent of agents) {
     const key = chainKey(agent);
     slices[key] = (slices[key] || 0) + 1;
-    if (!lastDay[key] || agent.day > lastDay[key]) lastDay[key] = agent.day;
+    (chainDays[key] = chainDays[key] || new Set()).add(agent.day);
+    if (!chainHead[key] || sliceRank(agent) > sliceRank(chainHead[key])) chainHead[key] = agent;
   }
   return html`<${Fragment}>
     <div class="filter-bar" id="costs-table-filter">
@@ -270,7 +276,9 @@ function CostsTable({ state, current }) {
           ${current.rows.map((agent) => {
             const key = chainKey(agent);
             const chain = slices[key] > 1;
-            const continued = chain && agent.day < lastDay[key];
+            const head = chainHead[key];
+            const continued = chain && !(agent.conv_id === head.conv_id && agent.day === head.day);
+            const chainDayCount = chainDays[key].size;
             const classes = [continued ? 'cost-continued' : '', chain ? 'cost-chain' : '', hovered === key ? 'cost-chain-hl' : ''].filter(Boolean).join(' ');
             const marker = continued ? '↩' : chain ? '↳' : '';
             // Every row shows one plain total in the same money-green,
@@ -284,7 +292,7 @@ function CostsTable({ state, current }) {
             return html`<tr key=${`${agent.conv_id}:${agent.day}`} data-key=${`cost-${agent.conv_id}-${agent.day}`}
               data-chain=${chain ? key : undefined} class=${classes || undefined}>
               <td title=${agent.title || '(unknown)'}>${marker && html`<span class=${continued ? 'cost-cont' : 'cost-head'}
-                title=${continued ? 'Continued agent — hover to highlight all its days' : `Latest day of an agent active across ${slices[key]} days`}>${marker}</span>`}${marker ? ' ' : ''}
+                title=${continued ? 'Continued agent — hover to highlight all its days' : `Latest slice of an agent active across ${chainDayCount} day${chainDayCount === 1 ? '' : 's'}`}>${marker}</span>`}${marker ? ' ' : ''}
                 <span class="rowname">${agent.title || '(unknown)'}</span> <span class="id" title=${idTooltip(agent.agent_id, agent.conv_id)}>${shortAgentId(agent.agent_id, agent.conv_id)}</span></td>
               <td><span class="cost-amt" title=${amountTip(agent)}>
                 ${fmtUSD(agent.cost_usd)}${whatIf && html`<a class="cost-whatif-mark" href="#costs-whatif-banner"
