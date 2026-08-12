@@ -97,10 +97,10 @@ func TestConferredGrantsFromOverridesSkipsDenies(t *testing.T) {
 	})
 	require.Len(t, grants, 2)
 	// Sorted by slug, so a refusal message is stable across runs.
-	assert.Equal(t, PermGroupsOwnersManage, grants[0].Slug)
-	assert.Equal(t, "", grants[0].Scope)
-	assert.Equal(t, PermGroupsMembersSpawn, grants[1].Slug)
-	assert.Equal(t, `{"group":["a"]}`, grants[1].Scope)
+	assert.Equal(t, PermGroupsMembersSpawn, grants[0].Slug)
+	assert.Equal(t, `{"group":["a"]}`, grants[0].Scope)
+	assert.Equal(t, PermGroupsOwnersManage, grants[1].Slug)
+	assert.Equal(t, "", grants[1].Scope)
 }
 
 // The union arm of a birth-time override: an unscoped override still writes
