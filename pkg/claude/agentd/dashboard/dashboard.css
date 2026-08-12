@@ -7992,19 +7992,6 @@ body.wizard .directory-picker-modal .modal-buttons { border-top-color: rgba(122,
 .tpl-concepts-table thead th { color: #7d8590; font-weight: 600; background: #161b22; }
 .tpl-concepts-table tbody th { color: #58a6ff; font-weight: 600; white-space: nowrap; }
 .tpl-concepts-table td { color: #adbac7; }
-/* Permission checkbox list — the template editor's inline list is gone
-   (JOH-350: permissions ride the picked profile), but the role editor
-   (modal-roles.js) still renders one into #role-editor-perms-list, so its
-   container + label layout stays shared here. */
-.ta-perms-list {
-  display: flex; flex-wrap: wrap; gap: 3px 12px; margin-top: 6px;
-  max-height: 150px; overflow-y: auto;
-}
-.ta-perms-list label {
-  display: flex; align-items: center; gap: 4px; color: #c9d1d9;
-  cursor: pointer; flex: 0 0 calc(50% - 6px);
-}
-.ta-perms-list label input { margin: 0; }
 /* JOH-364: input[type=number] (the per-agent .ta-wave field) was missing from
    this list, so in PLAIN mode it fell back to the browser's white UA field and
    a content-width box — out of step with its .ta-name / .ta-role siblings in
@@ -12870,8 +12857,7 @@ body.wizard #template-editor-modal .template-agent-row {
   background: #1b1338; border-color: rgba(122, 93, 176, 0.4);
 }
 body.wizard #template-editor-modal .template-agent-num { color: #a97bd6; }
-body.wizard #template-editor-modal .template-agent-owner,
-body.wizard #template-editor-modal .ta-perms-list label { color: #e7d9f5; }
+body.wizard #template-editor-modal .template-agent-owner { color: #e7d9f5; }
 /* Work-pattern rows ride the .template-agent-row re-skin above; only
    their send-to select needs its own arcane coat. */
 body.wizard #template-editor-modal .template-pattern-sendto { color: #b39ddb; }
@@ -13809,10 +13795,8 @@ body.wizard #roles-manage-modal .modal-buttons button:hover { background: #3a2a6
    The role-editor dialog (JOH-349 sweep). Its inner div carries the
    .template-editor-modal CLASS (not the id), so the editor re-skin above never
    reaches it — this block scopes to #role-editor-modal by id, the same
-   id-only discipline the profile editor follows. The .ta-perms-list is the
-   shared permission-checkbox list JOH-350 deliberately kept for modal-roles;
-   it is skinned here via body.wizard scoping only — the plain-mode base rules
-   are untouched. All of Name / Descr / model-codex are text inputs; Harness /
+   id-only discipline the profile editor follows. All of Name / Descr /
+   model-codex are text inputs; Harness /
    Model / Effort / Sandbox / Permission-mode / Spawn-profile are selects. */
 body.wizard #role-editor-modal .cron-create-modal {
   background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
@@ -13841,11 +13825,6 @@ body.wizard #role-editor-modal .cron-create-row select:focus,
 body.wizard #role-editor-modal .cron-create-row textarea:focus { border-color: #a97bd6; }
 /* Open <select> options render on the OS layer — dark ink on parchment. */
 body.wizard #role-editor-modal .cron-create-row select option { color: #1a1330; background: #e7d9f5; }
-/* The shared permission-checkbox list (.ta-perms-list): parchment labels,
-   arcane-purple checkbox accents — skinned via body.wizard scope, plain-mode
-   base rules left intact. */
-body.wizard #role-editor-modal .ta-perms-list label { color: #e7d9f5; }
-body.wizard #role-editor-modal .ta-perms-list input[type=checkbox] { accent-color: #a97bd6; }
 /* Secondary + inline buttons (Cancel): tarnished-gold; the exclusion keeps the
    Save lever below out of reach. */
 body.wizard #role-editor-modal button:not(#role-editor-submit) {

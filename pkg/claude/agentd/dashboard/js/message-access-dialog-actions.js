@@ -152,7 +152,7 @@ export function createMessageAccessDialogActions({
     }
     const kept = {};
     for (const [slug, effect] of Object.entries(selection)) {
-      if (effect === 'grant' || effect === 'deny') {
+      if (effect === 'grant' || (!descriptor.grantOnly && effect === 'deny')) {
         kept[slug] = effect === 'grant' && Object.keys(scopes[slug] || {}).length
           ? { effect, scope: scopes[slug] } : effect;
       }

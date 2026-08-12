@@ -127,6 +127,7 @@ test('permission actions use mode-specific payloads and buffered saves strip def
   const calls = [];
   const notices = [];
   let buffered = null;
+  let roleBuffered = null;
   const actions = createMessageAccessDialogActions({
     fetchImpl: async (url, options) => {
       calls.push({ url, body: JSON.parse(options.body) });
@@ -145,6 +146,11 @@ test('permission actions use mode-specific payloads and buffered saves strip def
     { 'groups.members.spawn': 'grant', 'agent.send': 'deny', 'self.rename': 'default' },
     { 'groups.members.spawn': { group: ['team'] } },
   );
+  await actions.savePermissions(
+    { mode: 'buffer', grantOnly: true, onSave: async (value) => { roleBuffered = value; } },
+    { 'future.permission': 'grant', 'agent.send': 'deny' },
+    { 'future.permission': { future_dimension: ['narrow'] } },
+  );
   assert.deepEqual(calls, [{ url: '/api/groups/team', body: {
     permissions: [{ slug: 'groups.members.spawn', scope: { group: ['team'] } }],
   } }]);
@@ -153,6 +159,9 @@ test('permission actions use mode-specific payloads and buffered saves strip def
     'groups.members.spawn': { effect: 'grant', scope: { group: ['team'] } },
     'agent.send': 'deny',
   });
+  assert.deepEqual(roleBuffered, {
+    'future.permission': { effect: 'grant', scope: { future_dimension: ['narrow'] } },
+  }, 'grant-only blueprints keep canonical scopes and cannot emit denies');
 });
 
 test('group permission saves carry owner_scopes only when the editor touched it', async (t) => {

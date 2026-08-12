@@ -5,7 +5,7 @@ import { profileSummary, profileAliasesLabel, profileChoices, findProfileByHandl
 import { roleSummary } from './roles.js';
 import { AUTO_MEMORY_TRI_OPTIONS, CODEX_APP_SERVER_TRI_OPTIONS, COPILOT_API_TRI_OPTIONS, FAST_MODE_TRI_OPTIONS, dirtyDraft, harnessByName, harnessDefaults, profileDraft, profileHarnessDefaults, profilePayload, readTri, roleDraft, rolePayload, TRI_OPTIONS } from './management-model.js';
 import { registerManagementController } from './management-controller.js';
-import { grantScopeLabel, grantSlug, hasGrant, toggleGrant } from './permission-grant-list.js';
+import { grantListToOverrides, grantOverridesToList } from './permission-grant-list.js';
 import {
   sandboxAccessAxes,
   sandboxAccessDraftErrors,
@@ -1265,29 +1265,22 @@ function ProfileEditor({ descriptor, state, actions, confirmDiscard, openProfile
   </${Overlay}>`;
 }
 
-function RoleEditor({ descriptor, current, state, actions, confirmDiscard }) {
+function RoleEditor({ descriptor, current, state, actions, confirmDiscard, openProfilePermissions }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
-  const { seed, catalog = [], slugs = [] } = descriptor;
+  const { seed, catalog = [] } = descriptor;
   const baseline = useMemo(() => roleDraft(seed, catalog), [descriptor]);
   const [draft, setDraft] = useState(() => clone(baseline)); const dirty = dirtyDraft(draft, baseline);
   const saving = state.busy.value === 'role-save';
   const choices = profileChoices(current.profiles); const selectedProfile = findProfileByHandle(current.profiles, draft.spawn_profile); if (draft.spawn_profile && !selectedProfile) choices.push({ value: draft.spawn_profile, label: `${draft.spawn_profile} (missing)` });
-  // A role's grants may be scoped ({slug, scope}), which these checkboxes
-  // cannot express. They must still round-trip: a save from this dialog is
-  // about the boxes the operator ticked, and must not quietly widen a grant
-  // someone narrowed. Ticked = the slug is present at all; unticking removes
-  // it whatever shape it had; ticking adds the plain unscoped grant.
-  const toggle = (slug) => setDraft((value) => ({ ...value, permissions: toggleGrant(value.permissions, slug) }));
   const submit = async () => { state.error.value = ''; if (!draft.name.trim()) { state.error.value = 'role name is required'; return; } await actions.saveRole({ draft, original: seed, payload: rolePayload(draft, catalog) }); };
   return html`<${Overlay} id="role-editor-modal" labelledby="role-editor-title" onClose=${state.closeDialog} dirty=${dirty} blocked=${saving} confirmDiscard=${confirmDiscard} registerClose=${registerClose}><h3 id="role-editor-title">${seed ? `Edit role: ${seed.name}` : 'New role'}</h3>
     <${Row} label="Name"><input id="role-editor-name" value=${draft.name} onInput=${(event) => change(setDraft, 'name', event.currentTarget.value)} placeholder="role name — kebab-or-snake-case label (e.g. reviewer)" autofocus autocomplete="off" spellcheck="false" /></${Row}><${Row} label="Descr"><input id="role-editor-descr" value=${draft.descr} onInput=${(event) => change(setDraft, 'descr', event.currentTarget.value)} placeholder="optional — short one-line description" autocomplete="off" spellcheck="false" /></${Row}><${Row} label="Brief"><textarea id="role-editor-brief" rows="5" value=${draft.brief} onInput=${(event) => change(setDraft, 'brief', event.currentTarget.value)} placeholder="canonical role-brief — prepended to a referencing agent's startup context (newlines OK)" spellcheck="false" /></${Row}>
     <${HarnessFields} draft=${draft} setDraft=${setDraft} catalog=${catalog} actions=${actions}/><${Row} label="Spawn profile"><${Select} value=${draft.spawn_profile} onChange=${(value) => change(setDraft, 'spawn_profile', value)} options=${[['', '(none)'], ...choices.map((choice) => [choice.value, choice.label])]} /></${Row}>
-    <div class="cron-create-row"><span class="cron-create-label">Permissions (${draft.permissions.length})</span><div class="ta-perms-list">${slugs.map((slug) => {
-    const scoped = grantScopeLabel((draft.permissions || []).find((entry) => grantSlug(entry) === slug.slug));
-    return html`<label key=${slug.slug} title=${slug.description || ''}><input type="checkbox" checked=${hasGrant(draft.permissions, slug.slug)} onChange=${() => toggle(slug.slug)} /> ${slug.slug}${scoped
-      ? html` <span class="perm-scope-chip" title=${`This grant is narrowed to ${scoped}. It is kept as-is on save; edit it with the tclaude agent CLI.`}>${scoped}</span>`
-      : null}</label>`;
-  })}</div></div>
+    <div class="cron-create-row"><span class="cron-create-label">Permissions</span><button id="role-editor-perms" class="tool" type="button" onClick=${() => openProfilePermissions({
+      overrides: grantListToOverrides(draft.permissions), grantOnly: true, subject: 'role',
+      label: draft.name.trim(),
+      onSave: (kept) => change(setDraft, 'permissions', grantOverridesToList(kept)),
+    })}>Permissions…</button><span>${draft.permissions.length || ''}</span></div>
     <div class="cron-create-error" role="alert">${state.error.value}</div><div class="modal-buttons"><button disabled=${saving} onClick=${() => { void requestClose(); }}>Cancel</button><span class="spacer"></span><button id="role-editor-submit" class="primary" disabled=${saving} onClick=${submit}>${saving ? 'Saving…' : 'Save role'}</button></div>
   </${Overlay}>`;
 }
@@ -2018,7 +2011,7 @@ function DialogSlot({ state, actions, confirmDiscard, openProfilePermissions, op
     case 'profile-editor':
       return html`<${ProfileEditor} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions} openProfileContextFeatures=${openProfileContextFeatures}/>`;
     case 'role-editor':
-      return html`<${RoleEditor} descriptor=${descriptor} current=${{ profiles: state.profiles.value || [] }} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+      return html`<${RoleEditor} descriptor=${descriptor} current=${{ profiles: state.profiles.value || [] }} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions}/>`;
     case 'profile-export':
       return html`<${ProfileExport} current=${{ profiles: state.profiles.value || [] }} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
     case 'profile-import':

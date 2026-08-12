@@ -3546,12 +3546,14 @@ test('role editor preserves missing profile references and nested permission foc
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
   ]);
   const state = createManagementState(); state.openDialog({ kind: 'role-editor', seed: { name: 'reviewer', spawn_profile: 'removed-profile', permissions: ['read'] }, catalog, slugs: [{ slug: 'read' }, { slug: 'write', description: 'write things' }] });
-  let saved = null; const actions = { async saveRole(value) { saved = value; state.closeDialog(); } }; const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
-  mountManagementIsland({ host, state, actions, confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } }); await harness.act(() => Promise.resolve());
+  let saved = null; let permissionOptions = null; const actions = { async saveRole(value) { saved = value; state.closeDialog(); } }; const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  mountManagementIsland({ host, state, actions, confirmDiscard: async () => true, openProfilePermissions(options) { permissionOptions = options; }, registerCleanup(fn) { cleanups.push(fn); } }); await harness.act(() => Promise.resolve());
   const profile = [...host.querySelectorAll('option')].find((option) => option.value === 'removed-profile'); assert.match(profile.textContent, /missing/);
   assert.match(host.querySelector('#role-editor-name').placeholder, /reviewer/); assert.equal(host.querySelector('#role-editor-model').tagName, 'SELECT'); assert.ok([...host.querySelector('#role-editor-harness').options].some((option) => option.value === 'claude'));
-  const write = [...host.querySelectorAll('.ta-perms-list input')][1]; write.focus(); write.checked = true; write.dispatchEvent(new harness.window.Event('change', { bubbles: true })); await harness.act(() => Promise.resolve());
-  assertSameNode(harness.document.activeElement, write); assert.match(host.querySelector('.cron-create-label').parentElement.parentElement.textContent, /reviewer|Role/i);
+  const permissions = host.querySelector('#role-editor-perms'); permissions.focus(); permissions.click(); await harness.act(() => Promise.resolve());
+  assertSameNode(harness.document.activeElement, permissions); assert.equal(permissionOptions.grantOnly, true);
+  await harness.act(() => permissionOptions.onSave({ read: 'grant', write: 'grant' }));
+  assert.match(host.querySelector('.cron-create-label').parentElement.parentElement.textContent, /reviewer|Role/i);
   host.querySelector('#role-editor-modal .primary').click(); await harness.act(() => Promise.resolve()); assert.ok(saved); assert.deepEqual(saved.payload.permissions, ['read', 'write']);
   cleanups.reverse().forEach((fn) => fn());
 });

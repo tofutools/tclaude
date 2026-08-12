@@ -35,6 +35,7 @@ func TestDashboardAssets_RoleLibraryWired(t *testing.T) {
 		"id=${`${domKind}-manage-modal`}",
 		`id="role-editor-modal"`,
 		`id="role-editor-brief"`,
+		`id="role-editor-perms" class="tool"`,
 		`id="role-editor-submit"`,
 		`.cron-create-row input:not([type])`,
 		`body.wizard #role-editor-modal .cron-create-row input:not([type])`,

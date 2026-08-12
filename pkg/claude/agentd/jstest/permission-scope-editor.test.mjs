@@ -100,6 +100,78 @@ test('group and buffered profile editors use the same scoped permission controls
   await opened.mounted.unmount();
 });
 
+test('role grants use the shared scoped editor in grant-only regular and wizard modes', async (t) => {
+  const harness = await createPreactHarness(t);
+  const saved = [];
+  const opened = await openEditor(harness, scopeSnapshot({
+    slugs: [SPAWN, CLIPBOARD],
+    dimOptions: { group: { values: ['dev', 'ops'] }, spawn_profile: { values: [] } },
+  }), {
+    ...noopActions,
+    savePermissions: async (descriptor, selection, scopes) => saved.push({ descriptor, selection, scopes }),
+  }, {
+    mode: 'buffer', grantOnly: true, subject: 'role', label: 'lead',
+    overrides: { 'groups.members.spawn': { effect: 'grant', scope: { group: ['dev'] } } },
+  });
+
+  assert.match(opened.host.querySelector('.perm-edit-title-regular').textContent, /role permissions/i);
+  assert.match(opened.host.querySelector('.perm-edit-title-wizard').textContent, /Class Boons/i,
+    'the shared editor retains its wizard-mode title');
+  assert.match(opened.host.querySelector('.perm-edit-banner .perm-edit-banner-wizard')?.textContent
+    || opened.host.querySelector('.perm-edit-banner').textContent, /CLASS BOONS/i);
+  assertAbsent(opened.host.querySelector('[data-effect="deny"]'));
+  assert.match(opened.host.querySelector('[data-slug="groups.members.spawn"] .perm-scope-chip').textContent,
+    /group=dev/);
+
+  await harness.act(() => opened.host.querySelector('[data-slug="groups.members.spawn"] button.perm-scope-twisty').click());
+  await harness.act(() => pickOption(harness,
+    opened.host.querySelector('.perm-scope-dim[data-dim="group"] .perm-scope-add'), 'ops'));
+  await harness.act(async () => { opened.host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].selection['groups.members.spawn'], 'grant');
+  assert.deepEqual(saved[0].scopes, { 'groups.members.spawn': { group: ['dev', 'ops'] } });
+  await opened.mounted.unmount();
+});
+
+test('a buffered role save preserves an unknown slug and scope fail-closed', async (t) => {
+  const harness = await createPreactHarness(t);
+  const saved = [];
+  const opened = await openEditor(harness, scopeSnapshot({ slugs: [CLIPBOARD] }), {
+    ...noopActions,
+    savePermissions: async (descriptor, selection, scopes) => saved.push({ selection, scopes }),
+  }, {
+    mode: 'buffer', grantOnly: true, subject: 'role', label: 'future-role',
+    overrides: {
+      'future.permission': { effect: 'grant', scope: { future_dimension: ['narrow'] } },
+    },
+  });
+
+  assertAbsent(opened.host.querySelector('[data-slug="future.permission"]'),
+    'unknown slugs have no invented registry metadata or editable row');
+  await harness.act(async () => { opened.host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.equal(saved[0].selection['future.permission'], 'grant');
+  assert.deepEqual(saved[0].scopes, {
+    'future.permission': { future_dimension: ['narrow'] },
+  }, 'an unrelated save cannot flatten the unknown scoped grant');
+  await opened.mounted.unmount();
+});
+
+test('canceling and reopening role permissions does not leak the abandoned draft', async (t) => {
+  const harness = await createPreactHarness(t);
+  const opened = await openEditor(harness, scopeSnapshot({ slugs: [CLIPBOARD] }), noopActions, {
+    mode: 'buffer', grantOnly: true, subject: 'role', label: 'first', overrides: {},
+  });
+  await harness.act(() => opened.host.querySelector('[data-slug="human.clipboard"] [data-effect="grant"]').click());
+  await harness.act(async () => { opened.host.querySelector('#perm-edit-cancel').click(); await Promise.resolve(); });
+  await harness.act(() => opened.state.openBufferedPermissions({
+    grantOnly: true, subject: 'role', label: 'second', overrides: {},
+  }));
+  assert.match(opened.host.querySelector('#perm-edit-subtitle').textContent, /second/);
+  assert.ok(opened.host.querySelector('[data-slug="human.clipboard"] [data-effect="default"].active'),
+    'the new launch starts from its own baseline');
+  await opened.mounted.unmount();
+});
+
 test('an unreadable group scope cannot be widened by saving the editor', async (t) => {
   const harness = await createPreactHarness(t);
   const saved = [];
