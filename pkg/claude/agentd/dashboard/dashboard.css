@@ -12857,7 +12857,7 @@ body.wizard #template-editor-modal .template-agent-row {
   background: #1b1338; border-color: rgba(122, 93, 176, 0.4);
 }
 body.wizard #template-editor-modal .template-agent-num { color: #a97bd6; }
-body.wizard #template-editor-modal .template-agent-owner,
+body.wizard #template-editor-modal .template-agent-owner { color: #e7d9f5; }
 /* Work-pattern rows ride the .template-agent-row re-skin above; only
    their send-to select needs its own arcane coat. */
 body.wizard #template-editor-modal .template-pattern-sendto { color: #b39ddb; }
