@@ -7,7 +7,10 @@ const prefs = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
 const payload = (title = 'Alpha') => ({
   generated_at: '2026-07-12T00:00:00Z',
   permissions: { defaults: ['agent.send'], overrides: { a: { 'agent.spawn': 'grant' } } },
-  slugs: [{ slug: 'agent.send', description: 'Send messages', owner_implied: true }],
+  slugs: [
+    { slug: 'agent.send', description: 'Send messages', owner_implied: true },
+    { slug: 'groups.members.spawn', description: 'Create workers', owner_implied: false },
+  ],
   agents: [{ conv_id: 'a', agent_id: 'agt_alpha', title }],
   sudo: [{ id: 7, conv_id: 'a', agent_id: 'agt_alpha', conv_title: title, slug: 'agent.send', granted_at: '2026-07-11T23:00:00Z', expires_at: '2026-07-12T00:00:05Z' }],
 });
@@ -39,6 +42,19 @@ test('Access island owns navigation, filtering, keyed rows, and local countdowns
   assert.equal(state.view.value.subtab, 'slugs');
   assert.deepEqual(navigated, { tab: 'access', subtab: 'slugs' }, 'navigation announces the new subtab without waiting for a DOM commit');
   assert.match(mounted.container.textContent, /Send messages/);
+  const slugFilter = getByRole(mounted.container, 'textbox', { name: 'Filter permission slugs by name' });
+  await harness.input(slugFilter, 'GROUPS.MEMBERS');
+  assert.ok(mounted.container.querySelector('tr[data-key="groups.members.spawn"]'));
+  assert.equal(mounted.container.querySelector('tr[data-key="agent.send"]'), null);
+  assert.match(mounted.container.textContent, /1 \/ 2/);
+  await harness.input(slugFilter, 'Send messages');
+  assert.match(mounted.container.textContent, /No matching permission slugs/,
+    'the filter matches slug names only, not descriptions');
+  const clearSlugFilter = getByRole(mounted.container, 'button', { name: 'Clear slug filter' });
+  await harness.act(() => harness.fireEvent(clearSlugFilter, 'click'));
+  assert.equal(slugFilter.value, '');
+  assertSameNode(harness.document.activeElement, slugFilter);
+  assert.ok(mounted.container.querySelector('tr[data-key="agent.send"]'));
   await mounted.unmount();
 });
 

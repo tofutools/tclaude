@@ -7,6 +7,7 @@ import {
 import { persistedTableSort, persistTableSort } from './sort.js';
 
 const SUDO_FILTER_KEY = 'tclaude.dash.filter.sudo';
+const SLUG_FILTER_KEY = 'tclaude.dash.filter.slugs';
 
 function message(error) {
   let detail = error?.message || String(error);
@@ -23,6 +24,7 @@ export function createAccessState({
   now = () => Date.now(),
 } = {}) {
   const subtab = signal('permissions');
+  const slugQuery = signal('');
   const sudoQuery = signal('');
   const sudoSort = signal(null);
   const clock = signal(now());
@@ -33,6 +35,8 @@ export function createAccessState({
     const data = snapshot.value;
     const permissions = data?.permissions ?? null;
     const slugs = data?.slugs ?? null;
+    const normalizedSlugQuery = slugQuery.value.trim().toLocaleLowerCase();
+    const filteredSlugs = slugs?.filter((row) => String(row.slug || '').toLocaleLowerCase().includes(normalizedSlugQuery)) ?? null;
     const snapshotMs = Date.parse(data?.generated_at || '');
     const allSudo = (data?.sudo || []).map((row) => ({
       ...row,
@@ -45,7 +49,9 @@ export function createAccessState({
       permissions,
       defaults: permissions?.defaults || [],
       permissionRows: permissionRows(permissions, data?.agents || []),
-      slugs,
+      slugs: filteredSlugs,
+      slugTotal: slugs?.length || 0,
+      slugQuery: slugQuery.value,
       sudoAvailable: data !== null && Array.isArray(data?.sudo),
       sudo: filteredSudo,
       sudoTotal: allSudo.length,
@@ -58,6 +64,7 @@ export function createAccessState({
   function initialize() {
     if (initialized) return false;
     initialized = true;
+    slugQuery.value = prefs.getItem(SLUG_FILTER_KEY) || '';
     sudoQuery.value = prefs.getItem(SUDO_FILTER_KEY) || '';
     const saved = persistedTableSort('sudo');
     if (saved && SUDO_COLUMNS_KEYS.has(saved.col) && (saved.dir === 'asc' || saved.dir === 'desc')) {
@@ -75,6 +82,11 @@ export function createAccessState({
     const next = String(value ?? '');
     sudoQuery.value = next;
     if (next) prefs.setItem(SUDO_FILTER_KEY, next); else prefs.removeItem(SUDO_FILTER_KEY);
+  }
+  function setSlugQuery(value) {
+    const next = String(value ?? '');
+    slugQuery.value = next;
+    if (next) prefs.setItem(SLUG_FILTER_KEY, next); else prefs.removeItem(SLUG_FILTER_KEY);
   }
   function cycleSudoSort(key) {
     if (!SUDO_COLUMNS_KEYS.has(key)) return false;
@@ -107,8 +119,8 @@ export function createAccessState({
   }
 
   return Object.freeze({
-    subtab, sudoQuery, sudoSort, clock, mutation, view, initialize, setSubtab,
-    setSudoQuery, cycleSudoSort, tick, beginMutation, endMutation, failMutation,
+    subtab, slugQuery, sudoQuery, sudoSort, clock, mutation, view, initialize, setSubtab,
+    setSlugQuery, setSudoQuery, cycleSudoSort, tick, beginMutation, endMutation, failMutation,
   });
 }
 

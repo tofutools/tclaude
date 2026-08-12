@@ -42,15 +42,28 @@ export function ownerScopeTitle(scope) {
   return 'Conferred by group ownership';
 }
 
-function SlugsView({ current }) {
+function SlugsView({ state, current }) {
+  const filterRef = useRef(null);
   if (!current.snapshotLoaded) return html`<div class="empty">Loading slug registry…</div>`;
   if (current.snapshotLoaded && !current.slugs) {
     return html`<div role="alert" class="island-error">The permission slug registry is unavailable in the latest snapshot.</div>`;
   }
-  if (!current.slugs?.length) return html`<div class="empty">No slugs registered.</div>`;
   return html`<${Fragment}>
+    <div class="filter-bar">
+      <input ref=${filterRef} id="filter-slugs" type="text" aria-label="Filter permission slugs by name"
+        placeholder="Filter by slug name" autocomplete="off" spellcheck=${false}
+        value=${current.slugQuery} onInput=${(event) => state.setSlugQuery(event.currentTarget.value)}
+        onKeyDown=${(event) => { if (event.key === 'Escape') state.setSlugQuery(''); }} />
+      <span class="filter-count" id="filter-slugs-count" aria-live="polite">${current.slugQuery
+        ? `${current.slugs.length} / ${current.slugTotal}`
+        : `${current.slugTotal} slug${current.slugTotal === 1 ? '' : 's'}`}</span>
+      <button class="clear-filter" id="filter-slugs-clear" title="Clear filter" aria-label="Clear slug filter"
+        onClick=${() => { state.setSlugQuery(''); filterRef.current?.focus(); }}>×</button>
+    </div>
     <div class="muted" style="font-size:11px;margin-bottom:6px">👑 = group ownership confers this slug without an explicit grant. <b>group</b> = over the groups you own; <b>member</b> = over their members; <b>any</b> = unscoped, owning any group is enough. A per-agent deny suppresses the bypass.</div>
-    <table><thead><tr><th>Slug</th><th>Owner</th><th>Description</th></tr></thead><tbody>
+    ${current.slugs.length === 0
+      ? html`<div class="empty">${current.slugTotal ? 'No matching permission slugs.' : 'No slugs registered.'}</div>`
+      : html`<table><thead><tr><th>Slug</th><th>Owner</th><th>Description</th></tr></thead><tbody>
       ${current.slugs.map((slug) => html`<tr key=${slug.slug} data-key=${slug.slug}>
         <td><span class="slug">${slug.slug}</span></td>
         <td>${slug.owner_implied
@@ -58,7 +71,7 @@ function SlugsView({ current }) {
           : html`<span class="muted">—</span>`}</td>
         <td>${slug.description || ''}</td>
       </tr>`)}
-    </tbody></table>
+    </tbody></table>`}
   </${Fragment}>`;
 }
 
@@ -163,7 +176,7 @@ export function AccessApp({ state, actions }) {
     </div>
     <div class=${`access-panel${current.subtab === 'slugs' ? ' active' : ''}`} id="access-slugs" role="tabpanel" aria-label="Slug registry">
       <p class="access-sub-intro">Every capability slug an agent can be granted — registered by the daemon, read-only here. Grant them as permanent overrides (Permissions) or temporary elevations (Sudo).</p>
-      <div id="slugs-body"><${SlugsView} current=${current} /></div>
+      <div id="slugs-body"><${SlugsView} state=${state} current=${current} /></div>
     </div>
     <div class=${`access-panel${current.subtab === 'sudo' ? ' active' : ''}`} id="access-sudo" role="tabpanel" aria-label="Sudo">
       <${SudoView} state=${state} actions=${actions} current=${current} />
