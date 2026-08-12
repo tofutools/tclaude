@@ -786,13 +786,14 @@ func requireGroupPermission(w http.ResponseWriter, r *http.Request, perm string,
 }
 
 // requirePermissionEx is the shared core of requirePermission and
-// requireGroupPermission. Group ownership is consulted from the registry
-// with the resolved caller conv-id ONLY when the slug is otherwise undecided
-// (no grant, no deny) — a structural grant that fills the default-slug
-// gap. It is deliberately NOT consulted on permDeny: a deny override is
-// always authoritative and suppresses the bypass, the same precedence
-// every other gate follows. Slugs with no OwnerScope, or calls that omit the
-// target required by that scope, simply receive no ownership source.
+// requireGroupPermission. Group ownership and group membership are consulted
+// from the registry with the resolved caller conv-id ONLY when the slug is
+// otherwise undecided (no grant, no deny) — structural sources that fill the
+// default-slug gap. Neither is consulted on permDeny: a deny override is
+// always authoritative and suppresses them, the same precedence every other
+// gate follows. Slugs with no OwnerScope, or calls that omit the target
+// required by that scope, receive no ownership source; a slug that is not
+// MemberImplied, or a call with no structuralGroup, receives no member source.
 //
 // actx (at most one) describes what the request targets, and is evaluated
 // against the winning grant's scope (§4/§6):

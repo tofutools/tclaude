@@ -649,6 +649,17 @@ func IsOwnerImpliedSlug(slug string) bool {
 	return false
 }
 
+// IsMemberImpliedSlug reports whether active membership in the action's
+// target group structurally confers slug.
+func IsMemberImpliedSlug(slug string) bool {
+	for _, p := range permissionRegistry {
+		if p.Slug == slug {
+			return p.MemberImplied
+		}
+	}
+	return false
+}
+
 // OwnerScopeForSlug returns how far slug's owner bypass reaches
 // ("group", "member", "any"), or "" when ownership confers nothing.
 func OwnerScopeForSlug(slug string) string {
@@ -1245,14 +1256,7 @@ func effectivePermsFor(state permissionsState, convID string, ownerImplied owner
 }
 
 func memberImpliedForAgent(convID, slug string) bool {
-	memberImplied := false
-	for _, entry := range permissionRegistry {
-		if entry.Slug == slug {
-			memberImplied = entry.MemberImplied
-			break
-		}
-	}
-	if !memberImplied {
+	if !IsMemberImpliedSlug(slug) {
 		return false
 	}
 	groups, err := db.ListGroupsForConv(convID)

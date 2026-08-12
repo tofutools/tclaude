@@ -260,9 +260,12 @@ func ownerOfGroupContainingPermitting(convID, targetConv, slug string, actx Acti
 	}
 	for _, id := range ids {
 		g, err := db.GetAgentGroupByID(id)
-		if err != nil || g == nil || g.IsArchived() {
+		if err != nil || g == nil {
 			slog.Warn("permissions: owner-scope group lookup failed (bypass fails closed)",
 				"group_id", id, "slug", slug, "error", err)
+			continue
+		}
+		if g.IsArchived() {
 			continue
 		}
 		candidate := actx
@@ -290,7 +293,12 @@ func ownerOwnsEveryActiveGroupContaining(convID, targetConv string) bool {
 		}
 		activeGroups++
 		owns, err := db.IsAgentGroupOwner(g.ID, convID)
-		if err != nil || !owns {
+		if err != nil {
+			slog.Warn("permissions: target-group ownership lookup failed (owner bypass fails closed)",
+				"conv", convID, "target", targetConv, "group", g.Name, "error", err)
+			return false
+		}
+		if !owns {
 			// Cross-agent verbs act on the agent as a whole. If one active
 			// group containing it is outside the caller's ownership, the
 			// structural bypass must not let that caller affect the other
@@ -387,14 +395,7 @@ func ownerPermissionPermitted(convID, slug string, actx ActionContext) bool {
 }
 
 func memberPermissionPermitted(convID, slug string, actx ActionContext) bool {
-	var registered *PermSlug
-	for i := range permissionRegistry {
-		if permissionRegistry[i].Slug == slug {
-			registered = &permissionRegistry[i]
-			break
-		}
-	}
-	if registered == nil || !registered.MemberImplied || actx.structuralGroup == "" {
+	if !IsMemberImpliedSlug(slug) || actx.structuralGroup == "" {
 		return false
 	}
 	g, err := db.GetAgentGroupByName(actx.structuralGroup)

@@ -55,11 +55,12 @@ func TestPermissionRegistry_OwnerImpliedSet(t *testing.T) {
 		PermAgentRetire:        ownerScopeMember,
 		PermAgentRemoteControl: ownerScopeMember,
 		PermAgentInboxWatch:    ownerScopeMember,
-		// requireGroupPermission and the other group-scoped endpoints —
-		// the owned group itself.
-		PermGroupsMembersStop:                 ownerScopeGroupMembers,
-		PermGroupsMembersResume:               ownerScopeGroupMembers,
-		PermGroupsMembersRetire:               ownerScopeGroupMembers,
+		// Bulk lifecycle verbs change each affected member's global agent
+		// state, so ownership must cover all of that member's active groups.
+		PermGroupsMembersStop:   ownerScopeGroupMembers,
+		PermGroupsMembersResume: ownerScopeGroupMembers,
+		PermGroupsMembersRetire: ownerScopeGroupMembers,
+		// Other group-scoped endpoints act on the owned group itself.
 		PermGroupsMembersSpawn:                ownerScopeGroup,
 		PermGroupsOwnersManage:                ownerScopeGroup,
 		PermGroupsRename:                      ownerScopeGroup,

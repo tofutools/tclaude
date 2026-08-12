@@ -169,7 +169,11 @@ func requireSpawnWorktreePermission(w http.ResponseWriter, r *http.Request, grou
 	ctx := ActionContext{Group: group}
 	if group != "" {
 		g, err := db.GetAgentGroupByName(group)
-		if err == nil && g != nil && !g.IsArchived() {
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", "look up spawn group: "+err.Error())
+			return "", false
+		}
+		if g != nil && !g.IsArchived() {
 			return requireGroupPermission(w, r, PermGroupsMembersSpawn, g, ctx)
 		}
 	}
