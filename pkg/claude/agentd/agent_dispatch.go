@@ -405,3 +405,25 @@ func ownerOfGroupContaining(ownerConv, targetConv string) bool {
 	ok, err := db.OwnerHasGroupContaining(ownerConv, targetConv)
 	return err == nil && ok
 }
+
+// ownerOwnsEveryActiveGroupContaining is retained for non-permission
+// relationship visibility (currently cron read filtering). Authorization gates
+// do not call it; they resolve the dedicated groups.members.* slugs instead.
+func ownerOwnsEveryActiveGroupContaining(ownerConv, targetConv string) bool {
+	groups, err := db.ListGroupsForConv(targetConv)
+	if err != nil {
+		return false
+	}
+	active := 0
+	for _, group := range groups {
+		if group.IsArchived() {
+			continue
+		}
+		active++
+		owns, err := db.IsAgentGroupOwner(group.ID, ownerConv)
+		if err != nil || !owns {
+			return false
+		}
+	}
+	return active > 0
+}

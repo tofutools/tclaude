@@ -80,36 +80,6 @@ func TestSpawnWorktreePermissionUsesTargetGroupOwnership(t *testing.T) {
 	assert.False(t, ok, "owning an unrelated group must not authorize worktree preparation")
 }
 
-// A stored map this build cannot decode must deny the bypass, not read as
-// "unrestricted". The inversion would be the worst possible failure: a
-// narrowing written by a newer daemon becoming a wildcard on an older one.
-func TestOwnerBypassPermittedForGroupFailsClosedOnUndecodableMap(t *testing.T) {
-	g := &db.AgentGroup{ID: 1, Name: "g1", OwnerScopesJSON: `{"groups.members.spawn":{"mystery":["x"]}}`}
-	assert.False(t, ownerBypassPermittedForGroup(g, "conv-1", PermGroupsMembersSpawn, ActionContext{Group: "g1", SpawnProfile: "p1"}),
-		"an undecodable owner-scope map must deny the bypass")
-	assert.False(t, ownerBypassPermittedForGroup(g, "conv-1", PermHumanNotify, ActionContext{}),
-		"and it denies it for EVERY slug on that group, not just the malformed entry")
-}
-
-func TestOwnerBypassPermittedForGroup(t *testing.T) {
-	narrowed := &db.AgentGroup{ID: 1, Name: "g1",
-		OwnerScopesJSON: `{"groups.members.spawn":{"spawn_profile":["p1"]}}`}
-	unnarrowed := &db.AgentGroup{ID: 2, Name: "g2"}
-
-	assert.True(t, ownerBypassPermittedForGroup(narrowed, "c", PermGroupsMembersSpawn,
-		ActionContext{Group: "g1", SpawnProfile: "p1"}), "the named profile passes")
-	assert.False(t, ownerBypassPermittedForGroup(narrowed, "c", PermGroupsMembersSpawn,
-		ActionContext{Group: "g1", SpawnProfile: "p2"}), "another profile is refused")
-	assert.False(t, ownerBypassPermittedForGroup(narrowed, "c", PermGroupsMembersSpawn,
-		ActionContext{Group: "g1"}), "an inline/unnamed profile leaves the dimension undescribed and fails closed")
-	assert.True(t, ownerBypassPermittedForGroup(narrowed, "c", PermGroupsMembersStop,
-		ActionContext{Group: "g1"}), "a slug the map does not mention keeps the unrestricted bypass")
-	assert.True(t, ownerBypassPermittedForGroup(unnarrowed, "c", PermGroupsMembersSpawn, ActionContext{Group: "g2"}),
-		"a group with no map is exactly today's bypass")
-	assert.False(t, ownerBypassPermittedForGroup(nil, "c", PermGroupsMembersSpawn, ActionContext{}),
-		"no group is no bypass")
-}
-
 // The multi-group rule: narrowing is PER GROUP, so an owner of a narrowed g1
 // and an unnarrowed g2 keeps its full reach over g2. This is the subtlety a
 // site that only asked "is this caller an owner" would get wrong.
@@ -258,10 +228,9 @@ func TestOwnerTierDegradesRatherThanVanishingOnUndecodableMap(t *testing.T) {
 	effective, ownerAdded, _, _ := effectivePermsFor(permissionsState{}, owner, tier)
 	assert.NotContains(t, effective, PermGroupsMembersSpawn)
 	assert.NotContains(t, ownerAdded, PermGroupsMembersSpawn)
-	g, err := db.GetAgentGroupByName("degraded")
-	require.NoError(t, err)
-	assert.False(t, ownerOfGroupPermitting(g, owner, PermGroupsMembersSpawn,
-		ActionContext{Group: "degraded", SpawnProfile: "p1"}), "and the gate refuses it too")
+	allowed, _ := ownerPermissionMatch(owner, PermGroupsMembersSpawn,
+		ActionContext{Group: "degraded", SpawnProfile: "p1"})
+	assert.False(t, allowed, "and the ordinary owner-derived grant refuses it too")
 
 	// Attenuation must read it as "confers nothing", NOT as unconstrained.
 	cfg, err := config.Load()
