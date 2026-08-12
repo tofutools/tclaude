@@ -323,7 +323,7 @@ test('agent-spawn model normalizes names and builds exact launch bodies', async 
   );
   assert.equal(request.url, '/api/groups/alpha/spawn');
   assert.deepEqual(request.body, {
-    name: 'worker', role: 'reviewer', descr: 'does review', initial_message: 'ship it',
+    name: 'worker', role: 'reviewer', role_ref: '', descr: 'does review', initial_message: 'ship it',
     auto_focus: true, include_group_context: true, profile: 'group-default',
     attachments: ['/tmp/a.png'], effort: 'high', model: 'opus',
     task_ref_url: 'https://linear.app/TCL-458', harness: 'claude', sandbox: 'on',
