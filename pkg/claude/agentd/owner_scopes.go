@@ -298,10 +298,7 @@ func ownerOwnsEveryActiveGroupContaining(convID, targetConv string) bool {
 			return false
 		}
 	}
-	if activeGroups == 0 {
-		return false
-	}
-	return true
+	return activeGroups != 0
 }
 
 // ownerCanManageAllGroupMembers applies the same whole-agent boundary to bulk
