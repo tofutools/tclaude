@@ -23,7 +23,7 @@ import (
 // stop into archive but the blast radius is too high to bake in
 // silently; explicit two-step keeps the destructive part visible.
 func handleGroupArchive(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	if _, ok := requirePermission(w, r, PermGroupsArchive); !ok {
+	if _, ok := requireGroupPermission(w, r, PermGroupsArchive, g); !ok {
 		return
 	}
 	if err := db.ArchiveAgentGroup(g.Name); err != nil {
@@ -41,7 +41,7 @@ func handleGroupArchive(w http.ResponseWriter, r *http.Request, g *db.AgentGroup
 // archived_at so the group is active again. Idempotent on
 // already-active groups.
 func handleGroupUnarchive(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	if _, ok := requirePermission(w, r, PermGroupsArchive); !ok {
+	if _, ok := requireGroupPermission(w, r, PermGroupsArchive, g); !ok {
 		return
 	}
 	if err := db.UnarchiveAgentGroup(g.Name); err != nil {

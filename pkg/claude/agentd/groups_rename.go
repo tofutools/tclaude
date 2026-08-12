@@ -26,7 +26,7 @@ import (
 // Same-name rename is a no-op (200 OK + audit row) so the human can
 // safely retry after a typo elsewhere without an error.
 func handleGroupRename(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	caller, ok := requirePermission(w, r, PermGroupsRename)
+	caller, ok := requireGroupPermission(w, r, PermGroupsRename, g)
 	if !ok {
 		return
 	}

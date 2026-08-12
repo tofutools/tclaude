@@ -413,41 +413,26 @@ func handleGroupLinksRemove(w http.ResponseWriter, r *http.Request, g *db.AgentG
 // requireScopedLinkAuthority for the PATCH/DELETE path that has to
 // look at the actual link direction.
 //
-// The bypass runs through requirePermissionEx, so it obeys the same
-// precedence as every other owner-implied slug: it fills only the
-// permUndecided gap and an explicit per-conv deny override suppresses
-// it. An owner caller still never reaches the slug-denied branch:
-// requirePermissionEx evaluates the bypass ahead of the popup /
-// 403-with-helpful-message handling. The caller-class and retired-agent
-// checks do run first, so a retired owner is refused — the same order
-// every other group-scoped gate already uses.
+// Ownership is resolved centrally from the slug's OwnerScope, so it obeys the
+// same precedence as every other owner-implied slug: it fills only the
+// permUndecided gap and an explicit per-conv deny suppresses it.
 func requireGroupLinkAuthority(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, perm string) (string, bool) {
-	// The owner-of-g structural bypass applies only to a confirmed agent
-	// (it needs a conv-id). The human, and every fail-closed class, are
-	// handled uniformly by requirePermissionEx.
-	return requirePermissionEx(w, r, perm, func(convID, slug string, actx ActionContext) bool {
-		return ownerOfGroupPermitting(g, convID, slug, actx)
-	})
+	return requireGroupPermission(w, r, perm, g)
 }
 
 // requireScopedLinkAuthority is the PATCH/DELETE variant: the link is
 // already fetched, so we know whether g is the FROM or TO side. The
 // owner-of-g bypass ONLY applies when g is the FROM side of the
 // supplied link. Owners of the TO side must hold the slug — they can't
-// unilaterally manage links that point INTO their group. Like the
-// create path, the bypass goes through requirePermissionEx and so fills
-// only the permUndecided gap — an explicit deny override on the slug is
-// authoritative even for an owner of the FROM side.
+// unilaterally manage links that point INTO their group. The ActionContext
+// names the group for explicit scoped grants, but names it as an ownership
+// subject only on the FROM side.
 func requireScopedLinkAuthority(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, link *db.AgentGroupLink, perm string) (string, bool) {
-	// Owner-of-g bypass: confirmed agent only, and only when g is the
-	// FROM side of the link. The human and every fail-closed class are
-	// handled uniformly by requirePermissionEx.
-	return requirePermissionEx(w, r, perm, func(convID, slug string, actx ActionContext) bool {
-		if link == nil || link.FromGroupID != g.ID {
-			return false
-		}
-		return ownerOfGroupPermitting(g, convID, slug, actx)
-	})
+	ctx := ActionContext{Group: g.Name}
+	if link != nil && link.FromGroupID == g.ID {
+		ctx.structuralGroup = g.Name
+	}
+	return requirePermission(w, r, perm, ctx)
 }
 
 // resolveGroupSelector resolves `s` to an AgentGroup. Accepts a group

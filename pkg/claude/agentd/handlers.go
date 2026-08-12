@@ -3951,7 +3951,7 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	}
 	caller := ""
 	for _, perm := range required {
-		resolved, ok := requirePermission(w, r, perm, ActionContext{Group: g.Name})
+		resolved, ok := requireGroupPermission(w, r, perm, g, ActionContext{Group: g.Name})
 		if !ok {
 			return
 		}
@@ -4483,51 +4483,13 @@ func agentStateHasSnapshot(s agentState) bool {
 	})
 }
 
-// requireGroupContextAccess gates the group-wide context read. The human
-// operator always passes. An agent passes if it holds the
-// agent.context-info slug, or if it owns this group (the owner bypass) —
-// but an explicit deny override is ALWAYS authoritative and suppresses
-// the owner bypass, mirroring the universal precedence in
-// resolvePermission / requireCrossAgentPermission (the owner bypass only
-// fills the "undecided" gap). Unidentified / unconfirmed / unidentifiable
-// callers are refused fail-closed. Returns the caller's conv-id ("" for
-// humans) on success; on failure the error response is already written.
+// requireGroupContextAccess gates the group-wide context read through the
+// normal agent.context-info slug. Supplying the group as its ownership subject
+// lets the central resolver confer that slug to an owner only when the caller
+// owns every active group containing every returned member.
 func requireGroupContextAccess(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) (string, bool) {
-	p := peerFromContext(r.Context())
-	switch classify(p) {
-	case classUnidentified:
-		writeUnidentified(w)
-		return "", false
-	case classHuman:
-		return "", true
-	case classAgentUnknown:
-		writeAgentUnknown(w)
-		return "", false
-	case classUnconfirmed:
-		writeUnconfirmed(w, r)
-		return "", false
-	case classAgent:
-		// Confirmed agent — evaluate slug + owner bypass below.
-	}
-	switch resolvePermission(p.ConvID, PermAgentContextInfo) {
-	case permAllow:
-		return p.ConvID, true
-	case permUndecided:
-		// No grant/deny source — the owner bypass applies, narrowed by g's
-		// own owner-scope map (TCL-1071). The group is the whole subject of
-		// this endpoint, so the context names it and no other group's map
-		// can be consulted by mistake.
-		if ownerOfGroupPermitting(g, p.ConvID, PermAgentContextInfo, ActionContext{Group: g.Name}) {
-			return p.ConvID, true
-		}
-	case permDeny:
-		// Explicit deny is authoritative — it suppresses the owner bypass.
-	}
-	writeError(w, http.StatusForbidden, "permission",
-		fmt.Sprintf("caller is not granted %q and is not an owner of group %q "+
-			"(be added as a group owner, or grant via `tclaude agent permissions grant %s %s`)",
-			PermAgentContextInfo, g.Name, PermAgentContextInfo, short8(p.ConvID)))
-	return "", false
+	ctx := ActionContext{Group: g.Name, structuralGroup: g.Name}
+	return requirePermission(w, r, PermAgentContextInfo, ctx)
 }
 
 type ownerJSON struct {
@@ -4575,7 +4537,7 @@ func handleGroupOwnersList(w http.ResponseWriter, _ *http.Request, g *db.AgentGr
 // records "" for human-issued grants and the agent's conv-id for
 // agent-issued ones.
 func handleGroupOwnersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	grantedBy, ok := requirePermission(w, r, PermGroupsOwnersManage)
+	grantedBy, ok := requireGroupPermission(w, r, PermGroupsOwnersManage, g)
 	if !ok {
 		return
 	}
@@ -4613,7 +4575,7 @@ func handleGroupOwnersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 // an owner — distinct from "no such group" (which the dispatcher
 // catches). Permission-gated on groups.owners.manage.
 func handleGroupOwnersRemove(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, convSelector string) {
-	if _, ok := requirePermission(w, r, PermGroupsOwnersManage); !ok {
+	if _, ok := requireGroupPermission(w, r, PermGroupsOwnersManage, g); !ok {
 		return
 	}
 	if !requireGroupActive(w, g) {
@@ -4638,7 +4600,7 @@ func handleGroupOwnersRemove(w http.ResponseWriter, r *http.Request, g *db.Agent
 }
 
 func handleGroupMembersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	if _, ok := requirePermission(w, r, PermGroupsMembersAdd); !ok {
+	if _, ok := requireGroupPermission(w, r, PermGroupsMembersAdd, g); !ok {
 		return
 	}
 	if !requireGroupActive(w, g) {
@@ -4681,7 +4643,7 @@ func handleGroupMembersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 // Only fields explicitly present in the request body are touched — pass
 // `null` (or omit) to leave a field unchanged. Gated on groups.members.update.
 func handleGroupMembersUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, convSelector string) {
-	if _, ok := requirePermission(w, r, PermGroupsMembersUpdate); !ok {
+	if _, ok := requireGroupPermission(w, r, PermGroupsMembersUpdate, g); !ok {
 		return
 	}
 	if !requireGroupActive(w, g) {
@@ -4717,7 +4679,7 @@ func handleGroupMembersUpdate(w http.ResponseWriter, r *http.Request, g *db.Agen
 }
 
 func handleGroupMembersRemove(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, convSelector string) {
-	if _, ok := requirePermission(w, r, PermGroupsMembersRemove); !ok {
+	if _, ok := requireGroupPermission(w, r, PermGroupsMembersRemove, g); !ok {
 		return
 	}
 	if !requireGroupActive(w, g) {

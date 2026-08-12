@@ -201,6 +201,7 @@ function membershipGroups(snapshot, descriptor) {
 // scope, and keeps the historical group-naming wording.
 export function ownerSource(scope, ownedGroups) {
   if (scope === 'group') return `owner: ${ownedGroups.join(', ')}`;
+  if (scope === 'group_members') return `owner: protected rosters of ${ownedGroups.join(', ')}`;
   if (scope === 'member') return `owner: members of ${ownedGroups.join(', ')}`;
   if (scope === 'any') return 'owner: any group owned';
   // Legacy daemons send no scope at all — keep the historical wording.
@@ -234,6 +235,9 @@ export function permissionRows(snapshot, descriptor, selection) {
     }
     if (effect === 'default' && slug.owner_implied && ownedGroups.length) {
       sources.push(ownerSource(slug.owner_scope, ownedGroups));
+    }
+    if (effect === 'default' && slug.member_implied && descriptor.mode === 'agent' && groups.length) {
+      sources.push(`member: ${groups.join(', ')}`);
     }
     const granted = descriptor.mode === 'group' ? effect === 'grant' : effect !== 'deny' && sources.length > 0;
     return { ...slug, effect, granted, sources, ownedGroups, inDefault: defaults.has(slug.slug) };

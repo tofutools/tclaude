@@ -250,6 +250,26 @@ func TestEffectivePerms_OwnerConferredSlugsCarryTheirScope(t *testing.T) {
 		"an ownsAnyGroup slug must not claim a per-group scope")
 }
 
+func TestEffectivePerms_MemberConferredSlugIsListed(t *testing.T) {
+	f := newFlow(t)
+	const member = "epms-aaaa-bbbb-cccc-0001"
+	f.HaveEnrolledAgent(member)
+	f.HaveGroup("member-squad")
+	f.HaveMember("member-squad", member)
+
+	view := effectiveViewFor(t, f, member)
+	assert.Contains(t, view.Effective, agentd.PermGroupsMessagesSchedule)
+	assert.Equal(t, "member:group", view.Provenance[agentd.PermGroupsMessagesSchedule])
+	assert.Contains(t, view.Source, "+member")
+
+	const loner = "epms-aaaa-bbbb-cccc-0002"
+	f.HaveConvWithTitle(loner, "no-groups")
+	f.HaveEnrolledAgent(loner)
+	lonerView := effectiveViewFor(t, f, loner)
+	assert.NotContains(t, lonerView.Effective, agentd.PermGroupsMessagesSchedule,
+		"membership in no active group confers nothing")
+}
+
 // Scenario: an archived group confers nothing — its endpoints reject
 // mutation — so naming it as the scope would promise reach the owner
 // does not have.

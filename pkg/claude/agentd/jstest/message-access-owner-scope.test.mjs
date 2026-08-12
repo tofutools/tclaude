@@ -12,6 +12,7 @@ test('Owner-conferred permission sources carry their scope', async (t) => {
   const model = await harness.importDashboardModule('js/message-access-dialog-model.js');
 
   assert.equal(model.ownerSource('group', ['dev', 'qa']), 'owner: dev, qa');
+  assert.equal(model.ownerSource('group_members', ['dev', 'qa']), 'owner: protected rosters of dev, qa');
   assert.equal(model.ownerSource('member', ['dev', 'qa']), 'owner: members of dev, qa');
   assert.equal(model.ownerSource('any', ['dev', 'qa']), 'owner: any group owned');
   // A daemon that predates owner_scope sends none; keep the old wording.
@@ -24,14 +25,16 @@ test('Owner-conferred permission sources carry their scope', async (t) => {
   const snapshot = {
     permissions: { defaults: [] },
     groups: [],
-    agents: [{ conv_id: 'c1', owned_groups: ['dev'] }],
+    agents: [{ conv_id: 'c1', owned_groups: ['dev'], groups: ['dev'] }],
     slugs: [
       { slug: 'groups.members.spawn', owner_implied: true, owner_scope: 'group' },
       { slug: 'human.notify', owner_implied: true, owner_scope: 'any' },
+      { slug: 'groups.messages.schedule', owner_implied: true, owner_scope: 'group', member_implied: true },
     ],
   };
   const rows = model.permissionRows(snapshot, { mode: 'agent', conv: 'c1' }, {});
   const bySlug = Object.fromEntries(rows.map((row) => [row.slug, row]));
   assert.deepEqual(bySlug['groups.members.spawn'].sources, ['owner: dev']);
   assert.deepEqual(bySlug['human.notify'].sources, ['owner: any group owned']);
+  assert.deepEqual(bySlug['groups.messages.schedule'].sources, ['owner: dev', 'member: dev']);
 });

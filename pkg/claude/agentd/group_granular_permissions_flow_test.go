@@ -70,6 +70,29 @@ func TestGroupSettings_AdminUmbrellaAndDedicatedDenyPrecedence(t *testing.T) {
 	assert.Equal(t, http.StatusOK, code, body)
 }
 
+func TestGroupSettings_OwnerCanEditOnlyOwnedGroup(t *testing.T) {
+	f := newFlow(t)
+	owned := f.HaveGroup("alpha")
+	f.HaveGroup("beta")
+	const conv = "group-owner-settings-0001"
+	f.HaveConvWithTitle(conv, "owner-editor")
+	require.NoError(t, db.AddAgentGroupOwner(owned.ID, conv, "test"))
+
+	code, body := patchGroupSettingAsAgent(t, f, conv, map[string]any{"descr": "owned"})
+	require.Equal(t, http.StatusOK, code, body)
+
+	r := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPatch,
+		"/v1/groups/beta", map[string]any{"descr": "not-owned"}), conv)
+	rec := testharness.Serve(f.Mux, r)
+	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), agentd.PermGroupsSettingsDescription)
+
+	require.NoError(t, db.SetAgentPermissionOverride(conv,
+		agentd.PermGroupsSettingsDescription, db.PermEffectDeny, "test"))
+	code, body = patchGroupSettingAsAgent(t, f, conv, map[string]any{"descr": "denied"})
+	assert.Equal(t, http.StatusForbidden, code, body)
+}
+
 func TestGroupSettings_OneTimeApprovalUsesDedicatedPermission(t *testing.T) {
 	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
 	t.Cleanup(restoreURL)

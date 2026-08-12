@@ -37,9 +37,14 @@ function PermissionsView({ current }) {
 // fleet-wide authority the gate does not grant (TCL-1013).
 export function ownerScopeTitle(scope) {
   if (scope === 'group') return 'Conferred by ownership — over the groups you own';
+  if (scope === 'group_members') return 'Conferred by ownership — over an owned-group roster only when every member the operation may affect is also contained exclusively in groups you own';
   if (scope === 'member') return 'Conferred by ownership — over members of the groups you own';
   if (scope === 'any') return 'Conferred by ownership — unscoped; owning any group is enough';
   return 'Conferred by group ownership';
+}
+
+function ownerScopeLabel(scope) {
+  return scope === 'group_members' ? 'group members' : scope;
 }
 
 function SlugsView({ state, current }) {
@@ -66,14 +71,17 @@ function SlugsView({ state, current }) {
       <button class="clear-filter" id="filter-slugs-clear" title="Clear filter" aria-label="Clear slug filter"
         onClick=${() => { state.setSlugQuery(''); filterRef.current?.focus(); }}>×</button>
     </div>
-    <div class="muted" style="font-size:11px;margin-bottom:6px">👑 = group ownership confers this slug without an explicit grant. <b>group</b> = over the groups you own; <b>member</b> = over their members; <b>any</b> = unscoped, owning any group is enough. A per-agent deny suppresses the bypass.</div>
+    <div class="muted" style="font-size:11px;margin-bottom:6px">👑 = group ownership confers this slug; 👥 = group membership confers it. <b>group</b> = over the groups you own; <b>group members</b> = over an owned-group roster only when every member the operation may affect is also contained exclusively in groups you own; <b>member</b> = over an agent only when you own all its active groups; <b>any</b> = unscoped, owning any group is enough. A per-agent deny suppresses structural grants.</div>
     ${current.slugs.length === 0
       ? html`<div class="empty">${current.slugTotal ? 'No matching permission slugs.' : 'No slugs registered.'}</div>`
       : html`<table><thead><tr><th>Slug</th><th>Owner</th><th>Description</th></tr></thead><tbody>
       ${current.slugs.map((slug) => html`<tr key=${slug.slug} data-key=${slug.slug}>
         <td><span class="slug">${slug.slug}</span></td>
-        <td>${slug.owner_implied
-          ? html`<span class="owner-badge" title=${ownerScopeTitle(slug.owner_scope)}>👑${slug.owner_scope ? ` ${slug.owner_scope}` : ''}</span>`
+        <td>${slug.owner_implied || slug.member_implied
+          ? html`<${Fragment}>
+              ${slug.owner_implied ? html`<span class="owner-badge" title=${ownerScopeTitle(slug.owner_scope)}>👑${slug.owner_scope ? ` ${ownerScopeLabel(slug.owner_scope)}` : ''}</span>` : ''}
+              ${slug.member_implied ? html` <span class="owner-badge" title="Conferred by membership — only for the group the agent belongs to">👥 group</span>` : ''}
+            </${Fragment}>`
           : html`<span class="muted">—</span>`}</td>
         <td>${slug.description || ''}</td>
       </tr>`)}

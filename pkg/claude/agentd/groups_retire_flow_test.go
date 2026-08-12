@@ -308,6 +308,60 @@ func TestGroupRetire_StatusFilterIdleOnly(t *testing.T) {
 	assert.True(t, f.World.Tmux.IsAlive("tmux-work"), "a working member's pane must not be touched")
 }
 
+func TestGroupRetire_OwnerFilterAuthorizesOnlyAffectedCohort(t *testing.T) {
+	f := newFlow(t)
+	const owner = "ret-filter-owner-1111-2222-3333"
+	const idle = "ret-filter-idle-1111-2222-3333"
+	const sharedWorking = "ret-filter-work-1111-2222-3333"
+	owned := f.HaveGroup("ret-filter-owned")
+	unowned := f.HaveGroup("ret-filter-unowned")
+	f.HaveEnrolledAgent(owner)
+	for _, conv := range []string{idle, sharedWorking} {
+		f.HaveConvWithTitle(conv, conv)
+		f.HaveMember(owned.Name, conv)
+	}
+	f.HaveMember(unowned.Name, sharedWorking)
+	require.NoError(t, db.AddAgentGroupOwner(owned.ID, owner, "test"))
+	f.HaveAliveSession(idle, "spwn-ret-idle", "tmux-ret-idle", f.TestCwd("idle"))
+	f.HaveAliveSession(sharedWorking, "spwn-ret-work", "tmux-ret-work", f.TestCwd("work"))
+	setConvStatus(t, idle, "idle")
+	setConvStatus(t, sharedWorking, "working")
+
+	code, resp := postGroupRetire(t, f.Mux, func(r *http.Request) *http.Request {
+		return agentd.AsAgentPeer(r, owner)
+	}, owned.Name, "status=idle")
+	require.Equal(t, http.StatusOK, code)
+	assert.Equal(t, "retired", retireMemberAction(resp, idle), "members=%+v", resp.Members)
+	assert.Empty(t, retireMemberAction(resp, sharedWorking), "filtered shared member must be untouched")
+	state, err := db.AgentState(sharedWorking)
+	require.NoError(t, err)
+	assert.Equal(t, db.AgentStateActive, state)
+}
+
+func TestGroupRetire_OwnerEmptyFilterCohortIsAuthorized(t *testing.T) {
+	f := newFlow(t)
+	const owner = "ret-empty-owner-1111-2222-3333"
+	const sharedWorking = "ret-empty-work-1111-2222-3333"
+	owned := f.HaveGroup("ret-empty-owned")
+	unowned := f.HaveGroup("ret-empty-unowned")
+	f.HaveEnrolledAgent(owner)
+	f.HaveConvWithTitle(sharedWorking, "working")
+	f.HaveMember(owned.Name, sharedWorking)
+	f.HaveMember(unowned.Name, sharedWorking)
+	require.NoError(t, db.AddAgentGroupOwner(owned.ID, owner, "test"))
+	f.HaveAliveSession(sharedWorking, "spwn-ret-empty", "tmux-ret-empty", f.TestCwd("work"))
+	setConvStatus(t, sharedWorking, "working")
+
+	code, resp := postGroupRetire(t, f.Mux, func(r *http.Request) *http.Request {
+		return agentd.AsAgentPeer(r, owner)
+	}, owned.Name, "status=offline")
+	require.Equal(t, http.StatusOK, code)
+	assert.Empty(t, resp.Members)
+	state, err := db.AgentState(sharedWorking)
+	require.NoError(t, err)
+	assert.Equal(t, db.AgentStateActive, state)
+}
+
 // Scenario: ?status=offline retires ONLY the members with no live
 // session — the "Retire offline agents in <group>" palette command. An
 // online (idle) member is left untouched and omitted.

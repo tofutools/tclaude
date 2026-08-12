@@ -2,6 +2,8 @@ package agentd
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -53,6 +55,29 @@ func TestParseOwnerScopes(t *testing.T) {
 			assert.Equal(t, tc.wantCanonical, canonical)
 		})
 	}
+}
+
+func TestSpawnWorktreePermissionUsesTargetGroupOwnership(t *testing.T) {
+	setupTestDB(t)
+	const owner = "worktree-owner-conv-0001"
+	_, _, err := db.EnsureAgentForConv(owner, "spawn")
+	require.NoError(t, err)
+	ownedID, err := db.CreateAgentGroup("worktree-owned", "")
+	require.NoError(t, err)
+	_, err = db.CreateAgentGroup("worktree-unowned", "")
+	require.NoError(t, err)
+	require.NoError(t, db.AddAgentGroupOwner(ownedID, owner, "test"))
+
+	request := func() *http.Request {
+		return requestWithPeer(&peer{PID: 999, HasClaudeAncestor: true, ConvID: owner})
+	}
+	w := httptest.NewRecorder()
+	_, ok := requireSpawnWorktreePermission(w, request(), "worktree-owned")
+	assert.True(t, ok, "ownership should confer the spawn slug for that group's worktree; body=%s", w.Body.String())
+
+	w = httptest.NewRecorder()
+	_, ok = requireSpawnWorktreePermission(w, request(), "worktree-unowned")
+	assert.False(t, ok, "owning an unrelated group must not authorize worktree preparation")
 }
 
 // A stored map this build cannot decode must deny the bypass, not read as
@@ -326,4 +351,44 @@ func TestOwnerOfGroupContainingPermittingUnionsCandidates(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, ownerOfGroupContainingPermitting(owner, target, PermAgentRetire, actx),
 		"with every candidate narrowed away, nothing carries it")
+}
+
+func TestOwnerBypassRejectsMemberSharedWithUnownedActiveGroup(t *testing.T) {
+	setupTestDB(t)
+	const owner = "owner-shared-conv-0001"
+	const target = "owner-shared-target-0001"
+	for _, conv := range []string{owner, target} {
+		_, _, err := db.EnsureAgentForConv(conv, "spawn")
+		require.NoError(t, err)
+	}
+	ownedID, err := db.CreateAgentGroup("shared-owned", "")
+	require.NoError(t, err)
+	unownedID, err := db.CreateAgentGroup("shared-unowned", "")
+	require.NoError(t, err)
+	require.NoError(t, db.AddAgentGroupOwner(ownedID, owner, "test"))
+	for _, id := range []int64{ownedID, unownedID} {
+		require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: id, ConvID: target}))
+	}
+
+	assert.False(t, ownerOfGroupContainingPermitting(owner, target, PermAgentStop, ActionContext{}),
+		"an owner-only cross-agent action must not affect another active group's member")
+	assert.False(t, ownerPermissionPermitted(owner, PermAgentStop, ActionContext{targetConv: target}),
+		"the registry-driven member scope enforces the shared-member boundary")
+	owned, err := db.GetAgentGroupByID(ownedID)
+	require.NoError(t, err)
+	assert.False(t, ownerCanManageAllGroupMembers(owned, owner),
+		"the same boundary applies to bulk group lifecycle actions")
+	assert.False(t, ownerPermissionPermitted(owner, PermGroupsMembersStop,
+		ActionContext{Group: owned.Name, structuralGroup: owned.Name}),
+		"the registry-driven whole-roster scope enforces the shared-member boundary")
+
+	require.NoError(t, db.ArchiveAgentGroup("shared-unowned"))
+	assert.True(t, ownerOfGroupContainingPermitting(owner, target, PermAgentStop, ActionContext{}),
+		"archived forensic membership does not make an active-group owner lose its bypass")
+	require.NoError(t, db.UnarchiveAgentGroup("shared-unowned"))
+	require.NoError(t, db.AddAgentGroupOwner(unownedID, owner, "test"))
+	assert.True(t, ownerOfGroupContainingPermitting(owner, target, PermAgentStop, ActionContext{}),
+		"owning every active group containing the target restores the bypass")
+	assert.True(t, ownerPermissionPermitted(owner, PermAgentStop, ActionContext{targetConv: target}),
+		"the central resolver restores the member slug when every active group is owned")
 }
