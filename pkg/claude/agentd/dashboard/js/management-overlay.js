@@ -45,6 +45,7 @@ export function ManagementOverlay({
   confirmDiscard,
   resizeKey = '',
   fitContent = true,
+  persistHeight = true,
   guardBackdropDrag = false,
   onDragEnter = null,
   onDragOver = null,
@@ -108,10 +109,8 @@ export function ManagementOverlay({
   });
   useLayoutEffect(() => {
     if (!resizeKey) return undefined;
-    return fitContent
-      ? makeModalResizable(dialogRef.current, resizeKey)
-      : makeModalResizable(dialogRef.current, resizeKey, { fitContent: false });
-  }, [resizeKey, fitContent]);
+    return makeModalResizable(dialogRef.current, resizeKey, { fitContent, persistHeight });
+  }, [resizeKey, fitContent, persistHeight]);
   useLayoutEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog) return undefined;

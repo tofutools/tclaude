@@ -850,6 +850,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     confirmDiscard=${confirmDiscard}
     registerClose=${registerClose}
     resizeKey="tclaude.dash.modalSize.agent-spawn"
+    persistHeight=${false}
     guardBackdropDrag=${true}
     initialFocusRef=${nameRef}
     dialogClass=${`cron-create-modal${dragOver ? ' spawn-drag-over' : ''}`}
