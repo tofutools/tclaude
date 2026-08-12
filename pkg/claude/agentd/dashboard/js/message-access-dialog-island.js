@@ -661,6 +661,8 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
   const rowsDirty = rows.some((row) => currentEffect(row.slug) !== baselineEffect(row.slug));
   const scopesDirty = rows.some((row) => scopeJSON(scopeOf(row.slug)) !== scopeJSON(scopeBaseline[row.slug] || {}));
   const groupMode = descriptor.mode === 'group';
+  const grantOnly = descriptor.mode === 'buffer' && !!descriptor.grantOnly;
+  const roleMode = grantOnly && descriptor.subject === 'role';
   const scopesEditable = scopeSupported(descriptor);
   // The twisty gutter is reserved for the whole visible list as soon as any
   // slug in it can carry a scope, so rows stay left-aligned instead of
@@ -753,7 +755,13 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
       setDraftEpoch((epoch) => epoch + 1);
     }
     const scopeAt = (slug) => effectiveScopes[slug] || {};
-    const full = Object.fromEntries(rows.map((row) => [row.slug, currentEffect(row.slug)]));
+    // Buffered blueprints can outlive the registry version that authored
+    // them. Keep unknown legacy slugs in the emitted draft even though there
+    // is no registry metadata with which to render an editable row. Live
+    // agent/group saves remain registry-bounded batches.
+    const full = descriptor.mode === 'buffer'
+      ? { ...selection, ...Object.fromEntries(rows.map((row) => [row.slug, currentEffect(row.slug)])) }
+      : Object.fromEntries(rows.map((row) => [row.slug, currentEffect(row.slug)]));
     // Only a granted slug carries a scope: a deny is unconditional by design,
     // and a slug back at Default has no row to attach one to. Sending a scope
     // for either is a 400 from the daemon, so drop them here where the user's
@@ -768,6 +776,15 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
         && (!!row.scope_dims?.length || Object.keys(scopeAt(row.slug)).length)
         && !unreadable.has(row.slug))
       .map((row) => [row.slug, scopeAt(row.slug)])) : {};
+    // As above, an unknown buffered slug is not editable, but its canonical
+    // scope must round-trip exactly. Otherwise opening and saving a role made
+    // by a newer build would silently widen that grant to unscoped.
+    if (descriptor.mode === 'buffer') {
+      const known = new Set(rows.map((row) => row.slug));
+      for (const [slug, scope] of Object.entries(effectiveScopes)) {
+        if (!known.has(slug) && full[slug] === 'grant') scoped[slug] = scope;
+      }
+    }
     // Only send the map when the box was actually EDITED. A save that merely
     // flipped a grant must not carry owner_scopes at all: the daemon treats an
     // absent field as "unchanged", and sending the box's current value would
@@ -780,25 +797,29 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
   const shortConv = String(descriptor.conv || '').slice(0, 8);
   const subtitle = groupMode ? `Group: ${descriptor.group} · every current member receives these grants immediately`
     : descriptor.mode === 'agent' ? `Agent: ${descriptor.label || shortConv} · ${shortConv}`
+    : roleMode ? `Role${descriptor.label ? `: ${descriptor.label}` : ''} · granted when the role is assigned`
     : `New agent${descriptor.label ? ` “${descriptor.label}”` : ''}${descriptor.group ? ` → ${descriptor.group}` : ''} · applied when it spawns`;
   const wizardSubtitle = groupMode ? `Party: ${descriptor.group} · every familiar receives these boons immediately`
     : descriptor.mode === 'agent' ? `Familiar: ${descriptor.label || shortConv} · ${shortConv}`
+    : roleMode ? `Class${descriptor.label ? `: ${descriptor.label}` : ''} · bestowed when the class is assigned`
     : `New familiar${descriptor.label ? ` “${descriptor.label}”` : ''}${descriptor.group ? ` → ${descriptor.group}` : ''} · bestowed when summoned`;
   return html`<${Overlay} id="perm-edit-modal" dialogClass="perm-edit-modal" labelledby="perm-edit-title"
     onClose=${state.close} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}
     registerClose=${registerClose}>
-    <h3 id="perm-edit-title"><span class="perm-edit-title-regular">${groupMode ? 'Edit group permissions' : 'Edit permanent permissions'}</span>
-      <span class="perm-edit-title-wizard">${groupMode ? '✨ Party Boons' : '📕 The Grimoire'}</span></h3>
+    <h3 id="perm-edit-title"><span class="perm-edit-title-regular">${groupMode ? 'Edit group permissions' : roleMode ? 'Edit role permissions' : 'Edit permanent permissions'}</span>
+      <span class="perm-edit-title-wizard">${groupMode ? '✨ Party Boons' : roleMode ? '📕 Class Boons' : '📕 The Grimoire'}</span></h3>
     <div class="perm-edit-banner" id="perm-edit-banner">${groupMode
       ? html`<${Words} plain=${html`<strong>GROUP GRANTS</strong> — selected permissions apply immediately to every current member. An agent-level <strong>Deny</strong> still wins.`}
           wizard=${html`<strong>PARTY BOONS</strong> — bestow capabilities on every familiar in this party. A personal binding against one still wins.`}/>`
+      : roleMode ? html`<${Words} plain=${html`<strong>ROLE GRANTS</strong> — granted permissions are applied whenever this role is assigned. Narrow a grant with its scope controls, or leave it unscoped to apply everywhere.`}
+          wizard=${html`<strong>CLASS BOONS</strong> — these powers accompany every familiar assigned this class. Bind a boon with its scope controls, or leave it unbound to apply everywhere.`}/>`
       : html`<${Words} plain=${html`<strong>PERMANENT</strong> — these per-agent overrides persist until changed. <strong>Grant</strong> adds a slug, <strong>Deny</strong> blocks inherited sources, and <strong>Default</strong> inherits them.`}
           wizard=${html`<strong>THE GRIMOIRE</strong> — these bindings follow this familiar until changed. <strong>Grant</strong> bestows a slug, <strong>Deny</strong> seals inherited boons away, and <strong>Default</strong> inherits them.`}/>`}</div>
     <p class="perm-edit-subtitle" id="perm-edit-subtitle"><${Words} plain=${subtitle} wizard=${wizardSubtitle}/></p>
     ${rows.some((row) => row.ownedGroups?.length) && html`<div class="perm-edit-owner-note" id="perm-edit-owner-note">👑 Owner-implied permissions are shown with their owned-group source; an explicit Deny remains the final veto.</div>`}
     <div class="perm-edit-toolbar"><input id="perm-edit-filter" type="text" value=${filter} placeholder="Filter slugs…" autocomplete="off" spellcheck="false"
       onInput=${(event) => setFilter(event.currentTarget.value)} /><button type="button" id="perm-edit-reset" title="Set every slug back to Default (inherit)"
-      onClick=${() => setSelection(Object.fromEntries(rows.map((row) => [row.slug, 'default'])))}><span class="pe-btn-regular">${groupMode ? 'none granted' : 'all default'}</span><span class="pe-btn-wizard">unbind all</span></button></div>
+      onClick=${() => setSelection(Object.fromEntries(rows.map((row) => [row.slug, 'default'])))}><span class="pe-btn-regular">${groupMode || grantOnly ? 'none granted' : 'all default'}</span><span class="pe-btn-wizard">unbind all</span></button></div>
     <div id="perm-edit-list" class="perm-edit-list">${visible.length ? visible.map((row) => {
     // The scope controls appear only where they can mean something: a slug
     // that declares dimensions, granted, in an editor whose save path can
@@ -823,7 +844,7 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
         title="This grant's stored scope cannot be read by this build, so it authorizes nothing at the gate. Saving will not overwrite it — edit it with the tclaude agent permissions CLI, or set the slug back to Default first.">unreadable scope</span></span>`}
       <div class="perm-tristate"><button type="button" data-effect="default" class=${currentEffect(row.slug) === 'default' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'default')}>${groupMode ? html`<${Words} plain="Not granted" wizard="Unbound"/>` : 'Default'}</button>
         <button type="button" data-effect="grant" class=${currentEffect(row.slug) === 'grant' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'grant')}>${groupMode ? html`<${Words} plain="Grant" wizard="Bestow"/>` : 'Grant'}</button>
-        ${!groupMode && html`<button type="button" data-effect="deny" class=${currentEffect(row.slug) === 'deny' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'deny')}>Deny</button>`}</div>
+        ${!groupMode && !grantOnly && html`<button type="button" data-effect="deny" class=${currentEffect(row.slug) === 'deny' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'deny')}>Deny</button>`}</div>
       ${scopable
     // The column is kept but emptied rather than removed: dropping it would
     // let a scopable row's tristate buttons sit further right than its

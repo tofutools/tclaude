@@ -3,11 +3,9 @@ import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
 
 // Blueprint grant lists (a role's default permissions, a template agent's
-// inline grants) may carry scoped entries that the checkbox editors cannot
-// express. The rule these tests pin is one-directional: such an entry is
-// carried through a save untouched, never flattened to its bare slug — that
-// flattening would widen a grant someone deliberately narrowed, off a save
-// made for an entirely unrelated reason.
+// inline grants) carry the canonical grant/scope shape. The shared permission
+// editor uses the override union, so the role entry point adapts in both
+// directions without flattening a narrowed grant.
 
 const catalog = [{ name: 'claude', can_sandbox: true, can_approval: true, sandbox_modes: ['off'], approval_modes: ['auto'] }];
 const slugs = [
@@ -23,68 +21,71 @@ async function openRoleEditor(harness, seed, actions) {
   const state = createManagementState();
   state.openDialog({ kind: 'role-editor', seed, options: {}, catalog, slugs });
   const cleanups = [];
+  let permissionOptions = null;
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   mountManagementIsland({
     host,
     state,
     actions: { loadUnsandboxedAutonomy: async () => ({ warnings: [] }), ...actions },
     confirmDiscard: async () => true,
-    openProfilePermissions() {},
+    openProfilePermissions(options) { permissionOptions = options; },
     registerCleanup(fn) { cleanups.push(fn); },
   });
   await harness.act(() => Promise.resolve());
-  return { host, cleanup: () => cleanups.reverse().forEach((fn) => fn()) };
+  return { host, permissionOptions: () => permissionOptions, cleanup: () => cleanups.reverse().forEach((fn) => fn()) };
 }
 
-test('the role editor keeps a scoped grant it cannot express, and labels it', async (t) => {
+test('the role editor opens the shared grant-only editor with canonical scoped input', async (t) => {
   const harness = await createPreactHarness(t);
   const saved = [];
   const seed = {
     name: 'lead', harness: 'claude',
     permissions: [{ slug: 'groups.members.spawn', scope: { group: ['dev'] } }],
   };
-  const { host, cleanup } = await openRoleEditor(harness, seed, {
+  const { host, permissionOptions, cleanup } = await openRoleEditor(harness, seed, {
     async saveRole({ payload }) { saved.push(payload); },
   });
+  assert.equal(host.querySelector('.ta-perms-list'), null, 'the old checkbox wall is gone');
+  await harness.act(() => host.querySelector('#role-editor-perms').click());
+  assert.deepEqual(permissionOptions().overrides, {
+    'groups.members.spawn': { effect: 'grant', scope: { group: ['dev'] } },
+  });
+  assert.equal(permissionOptions().grantOnly, true);
+  assert.equal(permissionOptions().subject, 'role');
 
-  const boxes = [...host.querySelectorAll('.ta-perms-list label')];
-  const spawn = boxes.find((label) => label.textContent.includes('groups.members.spawn'));
-  assert.equal(spawn.querySelector('input').getAttribute('checked'), 'true',
-    'a scoped grant is still a held grant — the box must be ticked');
-  assert.equal(spawn.querySelector('.perm-scope-chip').textContent, 'group=dev',
-    'and the row says what it is narrowed to, so the operator is not misled');
-
-  // Save with an unrelated edit: the scoped entry must come back out exactly
-  // as it went in.
-  const notify = boxes.find((label) => label.textContent.includes('human.notify'));
-  await harness.act(() => harness.fireEvent(notify.querySelector('input'), 'change'));
+  await harness.act(() => permissionOptions().onSave({
+    'groups.members.spawn': { effect: 'grant', scope: { group: ['dev', 'ops'] } },
+    'human.notify': 'grant',
+  }));
   await harness.act(async () => { host.querySelector('#role-editor-submit').click(); await Promise.resolve(); });
   assert.deepEqual(saved[0].permissions,
-    [{ slug: 'groups.members.spawn', scope: { group: ['dev'] } }, 'human.notify']);
+    [{ slug: 'groups.members.spawn', scope: { group: ['dev', 'ops'] } }, 'human.notify']);
   cleanup();
 });
 
-test('unticking a scoped grant removes it rather than leaving a hidden duplicate', async (t) => {
+test('canceling the permission sub-editor leaves the role draft unchanged', async (t) => {
   const harness = await createPreactHarness(t);
   const saved = [];
   const seed = {
     name: 'lead', harness: 'claude',
     permissions: [{ slug: 'groups.members.spawn', scope: { group: ['dev'] } }],
   };
-  const { host, cleanup } = await openRoleEditor(harness, seed, {
+  const { host, permissionOptions, cleanup } = await openRoleEditor(harness, seed, {
     async saveRole({ payload }) { saved.push(payload); },
   });
-  const spawn = [...host.querySelectorAll('.ta-perms-list label')]
-    .find((label) => label.textContent.includes('groups.members.spawn'));
-  await harness.act(() => harness.fireEvent(spawn.querySelector('input'), 'change'));
+  await harness.act(() => host.querySelector('#role-editor-perms').click());
+  assert.ok(permissionOptions(), 'the sub-editor was opened');
+  // Cancel does not invoke onSave. Saving the parent therefore emits its
+  // original draft, including the exact scope.
   await harness.act(async () => { host.querySelector('#role-editor-submit').click(); await Promise.resolve(); });
-  assert.deepEqual(saved[0].permissions, [], 'the entry is gone, whatever shape it had');
+  assert.deepEqual(saved[0].permissions, seed.permissions);
   cleanup();
 });
 
 test('grant helpers project the union without widening it', async (t) => {
   const harness = await createPreactHarness(t);
-  const { grantSlug, grantScopeLabel, hasGrant, toggleGrant, grantToOverride } =
+  const { grantSlug, grantScopeLabel, hasGrant, toggleGrant, grantToOverride,
+    grantListToOverrides, grantOverridesToList } =
     await harness.importDashboardModule('js/permission-grant-list.js');
 
   assert.equal(grantSlug('human.notify'), 'human.notify');
@@ -99,4 +100,10 @@ test('grant helpers project the union without widening it', async (t) => {
   assert.equal(grantToOverride('x'), 'grant');
   assert.deepEqual(grantToOverride({ slug: 'x', scope: { group: ['a'] } }),
     { effect: 'grant', scope: { group: ['a'] } });
+  assert.deepEqual(grantListToOverrides(['human.notify', { slug: 'x', scope: { group: ['a'] } }]), {
+    'human.notify': 'grant', x: { effect: 'grant', scope: { group: ['a'] } },
+  });
+  assert.deepEqual(grantOverridesToList({
+    'human.notify': 'grant', x: { effect: 'grant', scope: { group: ['a'] } }, ignored: 'deny',
+  }), ['human.notify', { slug: 'x', scope: { group: ['a'] } }]);
 });
