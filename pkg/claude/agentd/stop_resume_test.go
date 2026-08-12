@@ -365,7 +365,7 @@ func TestHandleAgentResume_GroupOwnershipAuthority(t *testing.T) {
 		require.NoError(t, db.AddAgentGroupOwner(ownerGroupID, owner, "test"))
 		if denyResume {
 			require.NoError(t, db.SetAgentPermissionOverride(
-				owner, PermAgentResume, db.PermEffectDeny, "test"))
+				owner, PermGroupsMembersResume, db.PermEffectDeny, "test"))
 		}
 		saveResumeSession(t, target, cwd, harness.DefaultName)
 

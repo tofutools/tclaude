@@ -70,6 +70,10 @@ type ActionContext struct {
 	// Keeping the check inside the evaluator means an uncovered footprint is
 	// still eligible for the ordinary one-shot human approval path.
 	bulkGroupMemberCoverage bool
+	// alternatePermission is an ordinary second slug that may authorize the
+	// same action. Group-wide views use it to preserve a global agent.* grant
+	// while also accepting the dedicated groups.members.* capability.
+	alternatePermission string
 }
 
 // value projects the context onto one scope dimension. An unknown dimension

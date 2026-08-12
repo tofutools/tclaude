@@ -66,7 +66,7 @@ func TestPermOwnerVisible_SlugsExposeOwnerImplied(t *testing.T) {
 func assertOwnerImpliedShape(t *testing.T, m map[string]bool) {
 	t.Helper()
 	for _, owner := range []string{
-		agentd.PermGroupsMembersSpawn, agentd.PermGroupsMembersRetire, agentd.PermAgentReincarnate,
+		agentd.PermGroupsMembersSpawn, agentd.PermGroupsMembersRetire, agentd.PermGroupsMembersReincarnate,
 		agentd.PermHumanNotify, agentd.PermGroupsLinkAdd, agentd.PermProcessRunsRead,
 		agentd.PermGroupsMembersAdd, agentd.PermGroupsRename, agentd.PermGroupsSettingsDescription,
 	} {

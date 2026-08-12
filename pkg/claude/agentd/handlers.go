@@ -4419,12 +4419,12 @@ func handleGroupContext(w http.ResponseWriter, r *http.Request, g *db.AgentGroup
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET only")
 		return
 	}
-	if _, ok := requireGroupContextAccess(w, r, g); !ok {
-		return
-	}
 	members, err := db.ListAgentGroupMembers(g.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	if _, ok := requireGroupContextAccess(w, r, g, members); !ok {
 		return
 	}
 	// One tmux ls for the whole listing; the per-member snapshot read
@@ -4484,11 +4484,21 @@ func agentStateHasSnapshot(s agentState) bool {
 }
 
 // requireGroupContextAccess gates the group-wide context read through the
-// normal agent.context-info slug. Supplying the group as its ownership subject
-// lets the central resolver confer that slug to an owner only when the caller
-// owns every active group containing every returned member.
-func requireGroupContextAccess(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) (string, bool) {
-	ctx := ActionContext{Group: g.Name, structuralGroup: g.Name}
+// global agent.context-info slug OR the dedicated groups.members.context-info
+// sibling. The sibling must cover every active group containing every returned
+// member; ownership contributes it only for owned groups.
+func requireGroupContextAccess(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, members []*db.AgentGroupMember) (string, bool) {
+	affected := make([]string, 0, len(members))
+	for _, member := range members {
+		affected = append(affected, member.ConvID)
+	}
+	ctx := ActionContext{
+		Group:                   g.Name,
+		structuralGroup:         g.Name,
+		affectedConvs:           affected,
+		bulkGroupMemberCoverage: true,
+		alternatePermission:     PermGroupsMembersContextInfo,
+	}
 	return requirePermission(w, r, PermAgentContextInfo, ctx)
 }
 

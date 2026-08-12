@@ -812,11 +812,21 @@ func isBulkGroupMemberPermission(slug string) bool {
 // An explicit deny remains authoritative and suppresses structural grants.
 func permissionAllowsAction(r *http.Request, convID, perm string, actx ActionContext) (bool, string, error) {
 	v := resolvePermissionVerdictForRequest(r, convID, perm)
-	if actx.bulkGroupMemberCoverage {
-		return permissionVerdictAllowsBulkGroupAction(v, convID, perm, actx)
+	if !actx.bulkGroupMemberCoverage {
+		allowed, matched := permissionVerdictAllowsAction(v, convID, perm, actx)
+		return allowed, matched, nil
 	}
-	allowed, matched := permissionVerdictAllowsAction(v, convID, perm, actx)
-	return allowed, matched, nil
+	coverageSlug := perm
+	if actx.alternatePermission != "" {
+		base := actx
+		base.bulkGroupMemberCoverage = false
+		if allowed, matched := permissionVerdictAllowsAction(v, convID, perm, base); allowed {
+			return true, matched, nil
+		}
+		coverageSlug = actx.alternatePermission
+		v = resolvePermissionVerdictForRequest(r, convID, coverageSlug)
+	}
+	return permissionVerdictAllowsBulkGroupAction(v, convID, coverageSlug, actx)
 }
 
 func permissionVerdictAllowsBulkGroupAction(v permVerdict, convID, perm string, actx ActionContext) (bool, string, error) {

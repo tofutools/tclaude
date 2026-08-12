@@ -194,7 +194,7 @@ func TestCronPatchOwner_UsesCanonicalSchedulingAuthority(t *testing.T) {
 		f.HaveMember(g.Name, proposed)
 		require.NoError(t, db.AddAgentGroupOwner(g.ID, caller, "test"))
 		require.NoError(t, db.SetAgentPermissionOverride(
-			caller, agentd.PermAgentSchedule, db.PermEffectDeny, "test"))
+			caller, agentd.PermGroupsMembersSchedule, db.PermEffectDeny, "test"))
 		before, err := db.GetAgentCronJob(job.ID)
 		require.NoError(t, err)
 

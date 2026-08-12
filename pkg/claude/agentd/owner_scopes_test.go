@@ -30,7 +30,7 @@ func TestParseOwnerScopes(t *testing.T) {
 		{name: "unknown slug", raw: `{"groups.teleport":{"group":["g1"]}}`,
 			wantErr: `unknown permission slug "groups.teleport"`},
 		{name: "slug with no owner bypass", raw: `{"permissions.grant":{"group":["g1"]}}`,
-			wantErr: `permission "permissions.grant" has no owner-implied bypass to narrow`},
+			wantErr: `permission "permissions.grant" is not contributed by group ownership`},
 		{name: "dimension the slug does not declare", raw: `{"groups.members.spawn":{"remote":["github.com"]}}`,
 			wantErr: `permission slug "groups.members.spawn" does not declare scope dimension "remote"`},
 		{name: "unknown dimension", raw: `{"groups.members.spawn":{"phase":["design"]}}`,
@@ -42,7 +42,7 @@ func TestParseOwnerScopes(t *testing.T) {
 			wantErr: "an owner scope must name at least one dimension"},
 		{name: "slug with no owner-implied entry and empty scope reports the slug first",
 			raw:     `{"permissions.grant":{}}`,
-			wantErr: `permission "permissions.grant" has no owner-implied bypass to narrow`},
+			wantErr: `permission "permissions.grant" is not contributed by group ownership`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, canonical, err := parseOwnerScopes(json.RawMessage(tc.raw))
