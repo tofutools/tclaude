@@ -169,7 +169,7 @@ function growModalToFitContent(modalEl) {
 }
 
 // makeModalResizable persists a CSS-`resize`-enabled modal's dragged size
-// (width + height) in dashPrefs, keyed by `key`, so it survives reopen,
+// (width + height by default) in dashPrefs, keyed by `key`, so it survives reopen,
 // daemon restart and tab — dashPrefs lives server-side, unlike
 // localStorage which the random loopback port would partition away.
 // `modalEl` is the element that carries `resize` in CSS (the inner card,
@@ -198,6 +198,11 @@ function growModalToFitContent(modalEl) {
 // grow-write. Filtering those out means auto-grow never fights a deliberate
 // drag-shrink and our height write can't recurse — no re-entrancy guard needed.
 //
+// `persistHeight: false` lets content-driven forms (notably agent spawn) retain
+// only the operator's chosen width. Their height is recalculated from their
+// fields each time they open, while the current open can still be resized on
+// either axis.
+//
 // Those last two behaviours (content-tracking min-size + auto-grow) suit FORM
 // dialogs, whose whole body should stay visible. A LIST panel — the templates-
 // manage overlay, whose body is a scroll region — opts out with
@@ -208,13 +213,14 @@ function growModalToFitContent(modalEl) {
 // is then a fixed CSS min-height on the card.
 function makeModalResizable(modalEl, key, opts = {}) {
   if (!modalEl) return;
+  const persistHeight = opts.persistHeight !== false;
   let saved = { w: 0, h: 0 };
   try {
     const s = JSON.parse(dashPrefs.getItem(key));
     if (s && typeof s === 'object') saved = { w: +s.w || 0, h: +s.h || 0 };
   } catch (_) { /* missing / corrupt — fall back to the CSS default size */ }
   if (saved.w) modalEl.style.width = saved.w + 'px';
-  if (saved.h) modalEl.style.height = saved.h + 'px';
+  if (persistHeight && saved.h) modalEl.style.height = saved.h + 'px';
   let downW = 0, downH = 0;
   const onPointerDown = (event) => {
     // Descendants may own independent resize handles (notably textareas).
@@ -230,8 +236,8 @@ function makeModalResizable(modalEl, key, opts = {}) {
     if (!downW && !downH) return;
     const w = modalEl.offsetWidth, h = modalEl.offsetHeight;
     if (w === downW && h === downH) return;     // a click, not a resize
-    if (w === saved.w && h === saved.h) return; // already the stored size
-    saved = { w, h };
+    if (w === saved.w && (!persistHeight || h === saved.h)) return; // already stored
+    saved = persistHeight ? { w, h } : { w };
     try { dashPrefs.setItem(key, JSON.stringify(saved)); } catch (_) {}
   };
   modalEl.addEventListener('pointerdown', onPointerDown);

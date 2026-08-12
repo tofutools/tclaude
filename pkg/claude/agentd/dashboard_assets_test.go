@@ -356,17 +356,21 @@ func TestDashboardJS_SelectTooltipWired(t *testing.T) {
 	}
 }
 
-// TestDashboardJS_ModalResizePersisted guards that the resizable spawn /
-// clone dialogs persist their dragged size: a helper stores width+height
-// in dashPrefs and both the legacy spawn binder and Preact clone overlay wire
-// it to their resizable card. A drop
+// TestDashboardJS_ModalResizePersisted guards that resizable dialogs persist
+// their dragged size in dashPrefs. Agent spawn opts out of height persistence
+// so its content determines the height on every open; clone and the other
+// overlays retain the shared width+height default. A drop
 // here means the modal would silently forget its size across reopens.
 func TestDashboardJS_ModalResizePersisted(t *testing.T) {
 	for _, needle := range []string{
-		"function makeModalResizable(",                     // helper exists (helpers.js)
-		`resizeKey="tclaude.dash.modalSize.agent-spawn"`,   // Preact spawn overlay wires it
-		`resizeKey="tclaude.dash.modalSize.clone-agent"`,   // Preact clone modal wires it
-		"makeModalResizable(dialogRef.current, resizeKey)", // Preact management overlays wire it
+		"function makeModalResizable(",                                                    // helper exists (helpers.js)
+		"const persistHeight = opts.persistHeight !== false;",                             // helper supports width-only persistence
+		"if (persistHeight && saved.h)",                                                   // old saved heights are ignored in width-only mode
+		"persistHeight ? { w, h } : { w }",                                                // width-only mode does not write a height field
+		`resizeKey="tclaude.dash.modalSize.agent-spawn"`,                                  // Preact spawn overlay wires it
+		`persistHeight=${false}`,                                                          // spawn restores width but recalculates height
+		`resizeKey="tclaude.dash.modalSize.clone-agent"`,                                  // Preact clone modal wires it
+		"makeModalResizable(dialogRef.current, resizeKey, { fitContent, persistHeight })", // overlays wire options
 		`resizeKey: 'tclaude.dash.modalSize.templates-manage'`,
 		`fitContent: false`,
 		"tclaude.dash.modalSize.agent-spawn",            // per-modal pref key
