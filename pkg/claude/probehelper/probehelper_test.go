@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -63,6 +65,35 @@ func TestAFUnixModeExitContract(t *testing.T) {
 	}
 	assert.Zero(t, afUnixExit())
 	assert.Equal(t, 42, closed)
+}
+
+func TestOpenCodeUnixRelayClosesAdjacentExecutableDescriptor(t *testing.T) {
+	previousClose := closeFD
+	previousServe := serveInheritedUnixRelay
+	t.Cleanup(func() {
+		closeFD = previousClose
+		serveInheritedUnixRelay = previousServe
+	})
+	serveInheritedUnixRelay = func(context.Context, int, string, []string) error {
+		return errors.New("stop after descriptor check")
+	}
+
+	for _, listenerFD := range []int{3, 8} {
+		t.Run(fmt.Sprintf("listener-fd-%d", listenerFD), func(t *testing.T) {
+			closed := -1
+			closeFD = func(fd int) error {
+				closed = fd
+				return nil
+			}
+			handled, code := Dispatch([]string{
+				"tclaude", OpenCodeUnixRelayMode, strconv.Itoa(listenerFD),
+				"127.0.0.1:1", "--", "/missing-opencode",
+			})
+			assert.True(t, handled)
+			assert.Equal(t, stubFailureExit, code)
+			assert.Equal(t, listenerFD+1, closed)
+		})
+	}
 }
 
 func TestServeStubDeterministicMessagesRoundTrip(t *testing.T) {
