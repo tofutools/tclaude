@@ -86,6 +86,14 @@ const profiles = [{
   remote_control: true,
 }];
 
+const roles = [{
+  name: 'reviewer', descr: 'Cold review', brief: 'Review carefully.',
+  permissions: ['human.notify'],
+}, {
+  name: 'go-maintainer', descr: 'Own Go quality', brief: 'Keep Go healthy.',
+  permissions: [{ slug: 'groups.members.spawn', scope: { group: ['alpha'] } }],
+}];
+
 const sandboxImpl = {
   options: [
     { value: 'harness-builtin', label: '{harness} built-in' },
@@ -323,7 +331,7 @@ test('agent-spawn model normalizes names and builds exact launch bodies', async 
   );
   assert.equal(request.url, '/api/groups/alpha/spawn');
   assert.deepEqual(request.body, {
-    name: 'worker', role: 'reviewer', role_ref: '', descr: 'does review', initial_message: 'ship it',
+    name: 'worker', role: 'reviewer', role_refs: [], descr: 'does review', initial_message: 'ship it',
     auto_focus: true, include_group_context: true, profile: 'group-default',
     attachments: ['/tmp/a.png'], effort: 'high', model: 'opus',
     task_ref_url: 'https://linear.app/TCL-458', harness: 'claude', sandbox: 'on',
@@ -606,7 +614,7 @@ async function mountSpawn(t, overrides = {}) {
   ]);
   const state = createAgentSpawnState({
     getSnapshot: () => ({
-      groups, harnesses, sandbox_impl: sandboxImpl, user_default_model: 'sonnet',
+      groups, harnesses, roles, sandbox_impl: sandboxImpl, user_default_model: 'sonnet',
     }),
   });
   const calls = [];
@@ -648,6 +656,36 @@ async function mountSpawn(t, overrides = {}) {
   />`, host);
   return { harness, host, state, actions, calls, cleanup: mounted.unmount };
 }
+
+test('spawn role chips compose multiple roles, inspect details, and feed the permission preview', async (t) => {
+  const mounted = await mountSpawn(t);
+  const { harness, host, state, calls } = mounted;
+  state.open({ groupName: 'alpha' });
+  await flush(harness);
+
+  const add = host.querySelector('#agent-spawn-role-add');
+  for (const role of ['reviewer', 'go-maintainer']) {
+    setValue(add, role);
+    await harness.act(() => harness.fireEvent(add, 'change'));
+  }
+  assert.deepEqual([...host.querySelectorAll('.agent-spawn-role-chip .role-chip-inspect')]
+    .map((button) => button.textContent), ['reviewer', 'go-maintainer']);
+
+  const reviewer = host.querySelector('.agent-spawn-role-chip .role-chip-inspect');
+  assert.match(reviewer.title, /Review carefully/);
+  assert.match(reviewer.title, /human.notify/);
+  reviewer.click();
+  await flush(harness);
+  assert.match(host.querySelector('.agent-spawn-role-inspect').textContent, /Review carefully/);
+
+  host.querySelector('#agent-spawn-perms').click();
+  const descriptor = calls.find(([kind]) => kind === 'permissions')?.[1];
+  assert.deepEqual(descriptor.roleGrants, [
+    { slug: 'human.notify', scope: '', role: 'reviewer' },
+    { slug: 'groups.members.spawn', scope: 'group=alpha', role: 'go-maintainer' },
+  ]);
+  await mounted.cleanup();
+});
 
 test('Preact agent-spawn renders the unenforced-network checkbox under the sandbox profile', async (t) => {
   const mounted = await mountSpawn(t);
@@ -1258,10 +1296,10 @@ test('Preact agent-spawn collapses mode help behind [?] and keeps only ⚠ cavea
       ['SELECT', 'BUTTON', 'SPAN'], `${id} renders only the select, its [?], and the collapsed help`);
   }
 
-  // The name normalization feedback is the only surviving inline hint. Count
-  // exact ids so an accidental id-less help paragraph cannot ride along.
+  // Only persistent, field-specific hints survive; mode explanations remain
+  // behind their [?] controls. Count exact ids so accidental prose cannot ride along.
   const persistent = [...host.querySelectorAll('.spawn-field-hint')];
-  assert.deepEqual(persistent.map((node) => node.id), ['agent-spawn-name-hint']);
+  assert.deepEqual(persistent.map((node) => node.id), ['agent-spawn-name-hint', 'agent-spawn-roles-hint']);
 
   // Fixture help carries no ⚠, so no caveat line is on screen at all. The
   // caveat path itself is covered against real harness copy in

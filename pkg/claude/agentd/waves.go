@@ -157,14 +157,14 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 		}
 		// Resolve the behavior/access role from the agent itself, or from its
 		// selected spawn profile when the agent leaves role_ref blank.
-		role, rfail := resolveTemplateAgentRole(a)
+		roles, rfail := resolveTemplateAgentRoles(a)
 		if rfail != nil {
 			res.ErrorKind = rfail.Kind
 			res.Error = rfail.Msg
 			wr.failMember(res)
 			continue
 		}
-		launch, lfail := resolveTemplateAgentLaunch(g, a, role, agentCwd, caller)
+		launch, lfail := resolveTemplateAgentLaunch(g, a, nil, agentCwd, caller)
 		if lfail != nil {
 			res.ErrorKind = lfail.Kind
 			res.Error = lfail.Msg
@@ -179,6 +179,18 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			wr.failMember(res)
 			continue
 		}
+		// Resolve birth-time access before starting the harness. Role composition
+		// can fail (for example when two roles grant one slug under incompatible
+		// scopes); discovering that after executeSpawn would leave a live agent
+		// whose promised access was never applied.
+		owner, overrides, afail := resolveTemplateAgentAccess(a, roles)
+		if afail != nil {
+			res.ErrorKind = afail.Kind
+			res.Error = afail.Msg
+			res.Resolved = templateResolverFailureEcho(launch)
+			wr.failMember(res)
+			continue
+		}
 		// Held until the spawn returns its echo, which is where they belong: one
 		// per-agent disclosure channel, not a template-tier list beside a
 		// spawn-tier one. A spawn FAILURE still reports them below, since a
@@ -188,8 +200,8 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 		// Fold the role brief ("## Role") + the template process ("## Process")
 		// into THIS agent's startup context — no-ops when absent.
 		agentContext := groupContext
-		if role != nil {
-			agentContext = appendRoleBlock(groupContext, role.Brief)
+		for _, role := range roles {
+			agentContext = appendRoleBlock(agentContext, role.Brief)
 		}
 		agentContext = appendProcessBlock(agentContext, process, a.Role)
 		cwdProofToken := ""
@@ -305,18 +317,9 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 		// actor's agent_id exists and resolves here.
 		stampTaskForceTag(outcome.ConvID, templateName)
 
-		// Birth-time access controls (JOH-350 / JOH-354): owner + permission
-		// overrides now RIDE the agent's referenced spawn profile, composed with
-		// the role's default grants and any legacy inline grants. A vanished
-		// profile was already caught by resolveTemplateAgentLaunch above, so this
-		// second resolve failing is unexpected — record it per-agent, don't abort.
-		owner, overrides, afail := resolveTemplateAgentAccess(a, role)
-		if afail != nil {
-			res.ErrorKind = afail.Kind
-			res.Error = "spawned, but resolving access failed: " + afail.Msg
-			wr.Results = append(wr.Results, res)
-			continue
-		}
+		// Apply the already-validated birth-time access controls: owner +
+		// permission overrides from the referenced profile, composed with role
+		// grants and legacy inline grants.
 		if owner {
 			switch {
 			case suppressOwner:

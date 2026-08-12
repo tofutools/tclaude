@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
 	"time"
@@ -166,6 +167,61 @@ func TestSpawnRoleRef_AppliesBehaviorAndAccess(t *testing.T) {
 	t.Fatal("spawned member not found")
 }
 
+func TestSpawnRoleRefs_ComposeBehaviorAndAccess(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	require.Equal(t, http.StatusCreated, createRole(t, f, map[string]any{
+		"name": "review-composer", "brief": "Review every change.",
+		"permissions": []string{"human.notify"},
+	}).Code)
+	require.Equal(t, http.StatusCreated, createRole(t, f, map[string]any{
+		"name": "maintainer", "brief": "Keep the Go code healthy.",
+		"permissions": []string{"self.rename"},
+	}).Code)
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+		"name": "worker", "role": "review lead", "role_refs": []string{"review-composer", "maintainer"},
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	overrides, err := db.ListAgentPermissionOverridesForConv(spawn.ConvID)
+	require.NoError(t, err)
+	assert.Equal(t, "grant", overrides["human.notify"])
+	assert.Equal(t, "grant", overrides["self.rename"])
+	msg := soleInboxMessage(t, spawn.ConvID)
+	assert.Contains(t, msg.Body, "Review every change.")
+	assert.Contains(t, msg.Body, "Keep the Go code healthy.")
+	for _, member := range f.ListGroupMembers("alpha") {
+		if member.ConvID == spawn.ConvID {
+			assert.Equal(t, "review lead", member.Role, "display label remains independent")
+			return
+		}
+	}
+	t.Fatal("spawned member not found")
+}
+
+func TestSpawnRoleRefs_RejectIncompatibleScopes(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	for _, tc := range []struct {
+		name  string
+		group string
+	}{{"alpha-spawner", "alpha"}, {"beta-spawner", "beta"}} {
+		require.Equal(t, http.StatusCreated, createRole(t, f, map[string]any{
+			"name": tc.name,
+			"permissions": []any{map[string]any{
+				"slug":  agentd.PermGroupsMembersSpawn,
+				"scope": map[string]any{"group": []string{tc.group}},
+			}},
+		}).Code)
+	}
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+		"name": "worker", "role_refs": []string{"alpha-spawner", "beta-spawner"},
+	})
+	assert.Equal(t, http.StatusBadRequest, spawn.Code)
+	assert.Contains(t, string(spawn.Raw), "role_scope_conflict")
+}
+
 func TestSpawnProfileRoleRef_AppliesAndRoleDeleteIsGuarded(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
@@ -185,6 +241,36 @@ func TestSpawnProfileRoleRef_AppliesAndRoleDeleteIsGuarded(t *testing.T) {
 	rec := humanReq(t, f, http.MethodDelete, "/v1/roles/ux-tester", nil)
 	assert.Equal(t, http.StatusConflict, rec.Code)
 	assert.Contains(t, rec.Body.String(), "test-kit")
+}
+
+func TestSpawnProfileRoleRefs_RoundTripAndCompose(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	for _, role := range []map[string]any{
+		{"name": "profile-reviewer", "brief": "Review from profile.", "permissions": []string{"human.notify"}},
+		{"name": "profile-maintainer", "brief": "Maintain from profile.", "permissions": []string{"self.rename"}},
+	} {
+		require.Equal(t, http.StatusCreated, createRole(t, f, role).Code)
+	}
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "combined-kit", "role_refs": []string{"profile-reviewer", "profile-maintainer"},
+	}).Code)
+
+	get := humanReq(t, f, http.MethodGet, "/v1/spawn-profiles/combined-kit", nil)
+	require.Equal(t, http.StatusOK, get.Code)
+	var profile map[string]any
+	require.NoError(t, json.Unmarshal(get.Body.Bytes(), &profile))
+	assert.Equal(t, []any{"profile-reviewer", "profile-maintainer"}, profile["role_refs"])
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "worker", "profile": "combined-kit"})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	overrides, err := db.ListAgentPermissionOverridesForConv(spawn.ConvID)
+	require.NoError(t, err)
+	assert.Equal(t, "grant", overrides["human.notify"])
+	assert.Equal(t, "grant", overrides["self.rename"])
+	brief := soleInboxMessage(t, spawn.ConvID).Body
+	assert.Contains(t, brief, "Review from profile.")
+	assert.Contains(t, brief, "Maintain from profile.")
 }
 
 // Scenario: the dashboard posts permission_overrides as an empty object when the

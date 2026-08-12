@@ -2,11 +2,47 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"sort"
 	"strings"
 	"time"
 )
+
+func normalizeProfileRoleRefs(roleRefs []string, legacy string) []string {
+	if len(roleRefs) == 0 && strings.TrimSpace(legacy) != "" {
+		roleRefs = []string{legacy}
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(roleRefs))
+	for _, ref := range roleRefs {
+		ref = strings.TrimSpace(ref)
+		if ref == "" || seen[ref] {
+			continue
+		}
+		seen[ref] = true
+		out = append(out, ref)
+	}
+	return out
+}
+
+func marshalProfileRoleRefs(roleRefs []string, legacy string) (string, string) {
+	refs := normalizeProfileRoleRefs(roleRefs, legacy)
+	first := ""
+	if len(refs) > 0 {
+		first = refs[0]
+	}
+	b, _ := json.Marshal(refs)
+	return first, string(b)
+}
+
+func unmarshalProfileRoleRefs(raw, legacy string) []string {
+	var refs []string
+	if err := json.Unmarshal([]byte(raw), &refs); err != nil {
+		refs = nil
+	}
+	return normalizeProfileRoleRefs(refs, legacy)
+}
 
 // ErrSpawnProfileNameTaken is returned by CreateSpawnProfile /
 // UpdateSpawnProfile when another profile already owns the name. The name is
@@ -113,9 +149,10 @@ type SpawnProfile struct {
 	ContextFeatures map[string]string
 
 	// Identity / enrollment fields (dialog-side). "" = unset.
-	AgentName      string // the dialog's "Name" field (the spawned agent's display name)
-	Role           string // optional free-text membership/routing label
-	RoleRef        string // optional behavioral/access role library reference
+	AgentName      string   // the dialog's "Name" field (the spawned agent's display name)
+	Role           string   // optional free-text membership/routing label
+	RoleRef        string   // compatibility projection of the first role reference
+	RoleRefs       []string // ordered behavioral/access role library references
 	Descr          string
 	InitialMessage string
 	// StartupContext is durable guidance delivered to every agent that resolves
@@ -188,20 +225,21 @@ func CreateSpawnProfile(p *SpawnProfile) (int64, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 	now := dbTime(time.Now())
+	roleRef, roleRefs := marshalProfileRoleRefs(p.RoleRefs, p.RoleRef)
 	res, err := tx.Exec(
 		`INSERT INTO spawn_profiles
 		   (name, disabled, disabled_reason, operator_only, harness, model, effort, sandbox, sandbox_implementation, approval, tools, ask_user_question_timeout,
 		    auto_compact_window, context_window_max, copilot_api, codex_app_server, fast_mode,
 		    auto_review, trust_dir,
-		    agent_name, role, role_ref, descr, initial_message, startup_context,
+		    agent_name, role, role_ref, role_refs, descr, initial_message, startup_context,
 		    sync_worktree, auto_focus, include_group_default_context, remote_control, auto_memory, ssh_workaround,
 		    is_owner, permission_overrides, context_features,
 		    created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.Name, p.Disabled, p.DisabledReason, p.OperatorOnly, p.Harness, p.Model, p.Effort, p.Sandbox, p.SandboxImplementation, p.Approval, p.ToolGovernance, p.AskUserQuestionTimeout,
 		p.AutoCompactWindow, p.ContextWindowMax, boolPtrToNull(p.CopilotAPI), boolPtrToNull(p.CodexAppServer), boolPtrToNull(p.FastMode),
 		boolPtrToNull(p.AutoReview), boolPtrToNull(p.TrustDir),
-		p.AgentName, p.Role, p.RoleRef, p.Descr, p.InitialMessage, p.StartupContext,
+		p.AgentName, p.Role, roleRef, roleRefs, p.Descr, p.InitialMessage, p.StartupContext,
 		boolPtrToNull(p.SyncWorktree), boolPtrToNull(p.AutoFocus),
 		boolPtrToNull(p.IncludeGroupDefaultContext), boolPtrToNull(p.RemoteControl),
 		boolPtrToNull(p.AutoMemory), boolPtrToNull(p.SSHWorkaround),
@@ -247,13 +285,14 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 	if _, err := tx.Exec(`DELETE FROM spawn_profile_aliases WHERE profile_id = ?`, p.ID); err != nil {
 		return err
 	}
+	roleRef, roleRefs := marshalProfileRoleRefs(p.RoleRefs, p.RoleRef)
 	res, err := tx.Exec(
 		`UPDATE spawn_profiles SET
 		   name = ?, disabled = ?, disabled_reason = ?, operator_only = ?, harness = ?, model = ?, effort = ?, sandbox = ?,
 		   sandbox_implementation = ?, approval = ?, tools = ?,
 		   ask_user_question_timeout = ?, auto_compact_window = ?, context_window_max = ?, copilot_api = ?, codex_app_server = ?, fast_mode = ?,
 		   auto_review = ?, trust_dir = ?,
-		   agent_name = ?, role = ?, role_ref = ?, descr = ?, initial_message = ?, startup_context = ?,
+		   agent_name = ?, role = ?, role_ref = ?, role_refs = ?, descr = ?, initial_message = ?, startup_context = ?,
 		   sync_worktree = ?, auto_focus = ?, include_group_default_context = ?, remote_control = ?,
 		   auto_memory = ?, ssh_workaround = ?,
 		   is_owner = ?, permission_overrides = ?, context_features = ?,
@@ -263,7 +302,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		p.SandboxImplementation, p.Approval, p.ToolGovernance,
 		p.AskUserQuestionTimeout, p.AutoCompactWindow, p.ContextWindowMax, boolPtrToNull(p.CopilotAPI), boolPtrToNull(p.CodexAppServer), boolPtrToNull(p.FastMode),
 		boolPtrToNull(p.AutoReview), boolPtrToNull(p.TrustDir),
-		p.AgentName, p.Role, p.RoleRef, p.Descr, p.InitialMessage, p.StartupContext,
+		p.AgentName, p.Role, roleRef, roleRefs, p.Descr, p.InitialMessage, p.StartupContext,
 		boolPtrToNull(p.SyncWorktree), boolPtrToNull(p.AutoFocus),
 		boolPtrToNull(p.IncludeGroupDefaultContext), boolPtrToNull(p.RemoteControl),
 		boolPtrToNull(p.AutoMemory), boolPtrToNull(p.SSHWorkaround),
@@ -514,7 +553,7 @@ func isSpawnProfileHandleViolation(err error) bool {
 const spawnProfileSelect = `SELECT id, name, disabled, disabled_reason, operator_only, harness, model, effort, sandbox,
 	sandbox_implementation, approval,
 	tools, ask_user_question_timeout, auto_compact_window, context_window_max, copilot_api, codex_app_server, fast_mode,
-	auto_review, trust_dir, agent_name, role, role_ref, descr, initial_message, startup_context,
+	auto_review, trust_dir, agent_name, role, role_ref, role_refs, descr, initial_message, startup_context,
 	sync_worktree, auto_focus, include_group_default_context, remote_control, auto_memory, ssh_workaround,
 	is_owner, permission_overrides, context_features, created_at, updated_at
 	FROM spawn_profiles`
@@ -523,17 +562,21 @@ func scanSpawnProfile(s rowScanner) (*SpawnProfile, error) {
 	var p SpawnProfile
 	var disabled int64
 	var copilotAPI, codexAppServer, fastMode, autoReview, trustDir, syncWorktree, autoFocus, includeCtx, remoteControl, autoMemory, sshWorkaround, isOwner sql.NullInt64
-	var permOverrides, contextFeatures string
+	var roleRefs, permOverrides, contextFeatures string
 	var createdAt, updatedAt dbTimestamp
 	if err := s.Scan(&p.ID, &p.Name, &disabled, &p.DisabledReason, &p.OperatorOnly, &p.Harness, &p.Model, &p.Effort, &p.Sandbox,
 		&p.SandboxImplementation, &p.Approval,
 		&p.ToolGovernance, &p.AskUserQuestionTimeout, &p.AutoCompactWindow, &p.ContextWindowMax, &copilotAPI, &codexAppServer, &fastMode,
-		&autoReview, &trustDir, &p.AgentName, &p.Role, &p.RoleRef, &p.Descr, &p.InitialMessage, &p.StartupContext,
+		&autoReview, &trustDir, &p.AgentName, &p.Role, &p.RoleRef, &roleRefs, &p.Descr, &p.InitialMessage, &p.StartupContext,
 		&syncWorktree, &autoFocus, &includeCtx, &remoteControl, &autoMemory, &sshWorkaround,
 		&isOwner, &permOverrides, &contextFeatures, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
 	p.Disabled = disabled != 0
+	p.RoleRefs = unmarshalProfileRoleRefs(roleRefs, p.RoleRef)
+	if len(p.RoleRefs) > 0 {
+		p.RoleRef = p.RoleRefs[0]
+	}
 	p.CopilotAPI = nullToBoolPtr(copilotAPI)
 	p.CodexAppServer = nullToBoolPtr(codexAppServer)
 	p.FastMode = nullToBoolPtr(fastMode)

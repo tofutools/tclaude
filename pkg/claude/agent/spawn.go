@@ -222,8 +222,11 @@ type SpawnRequest struct {
 	Name string `json:"name,omitempty"`
 	Role string `json:"role,omitempty"`
 	// RoleRef selects behavioral guidance and access defaults from the role
-	// library. Role remains the independent membership/routing label.
-	RoleRef string `json:"role_ref,omitempty"`
+	// library. RoleRefs is the multi-role form; RoleRef remains accepted as a
+	// compatibility shorthand for one role. Role remains the independent
+	// membership/routing label.
+	RoleRef  string   `json:"role_ref,omitempty"`
+	RoleRefs []string `json:"role_refs,omitempty"`
 	// Descr is the short, one-line description shown on the dashboard
 	// (the group-member "Description" column). Keep it terse — the
 	// agent's actual task brief goes in InitialMessage instead.
@@ -553,6 +556,7 @@ type SpawnRequest struct {
 	nameSpecified                bool
 	roleSpecified                bool
 	roleRefSpecified             bool
+	roleRefsSpecified            bool
 	descrSpecified               bool
 	initialMessageSpecified      bool
 	autoFocusSpecified           bool
@@ -580,6 +584,7 @@ func (r *SpawnRequest) UnmarshalJSON(data []byte) error {
 	_, r.nameSpecified = fields["name"]
 	_, r.roleSpecified = fields["role"]
 	_, r.roleRefSpecified = fields["role_ref"]
+	_, r.roleRefsSpecified = fields["role_refs"]
 	_, r.descrSpecified = fields["descr"]
 	_, r.initialMessageSpecified = fields["initial_message"]
 	_, r.autoFocusSpecified = fields["auto_focus"]
@@ -614,6 +619,9 @@ func (r SpawnRequest) MarshalJSON() ([]byte, error) {
 	}
 	if r.roleRefSpecified {
 		stated["role_ref"] = r.RoleRef
+	}
+	if r.roleRefsSpecified {
+		stated["role_refs"] = r.RoleRefs
 	}
 	if r.descrSpecified {
 		stated["descr"] = r.Descr
@@ -684,6 +692,9 @@ func (r SpawnRequest) RoleSpecified() bool { return r.roleSpecified }
 
 // RoleRefSpecified reports whether role_ref appeared in decoded JSON.
 func (r SpawnRequest) RoleRefSpecified() bool { return r.roleRefSpecified }
+
+// RoleRefsSpecified reports whether role_refs appeared in decoded JSON.
+func (r SpawnRequest) RoleRefsSpecified() bool { return r.roleRefsSpecified }
 
 // DescrSpecified reports whether descr appeared in decoded JSON.
 func (r SpawnRequest) DescrSpecified() bool { return r.descrSpecified }
@@ -954,6 +965,7 @@ type resolvedSpawnFields struct {
 	Name           string
 	Role           string
 	RoleRef        string
+	RoleRefs       []string
 	Descr          string
 	InitialMessage string
 
@@ -1053,7 +1065,17 @@ func mergeProfileIntoSpawn(p *SpawnParams, explicitMessage string, prof *profile
 	// Identity fields — harness-agnostic, always inherited (flag wins).
 	out.Name = pick(p.Name, profStr(prof, func(pf *profileJSON) string { return pf.AgentName }))
 	out.Role = pick(p.Role, profStr(prof, func(pf *profileJSON) string { return pf.Role }))
-	out.RoleRef = pick(p.RoleRef, profStr(prof, func(pf *profileJSON) string { return pf.RoleRef }))
+	if strings.TrimSpace(p.RoleRef) != "" {
+		out.RoleRefs = []string{strings.TrimSpace(p.RoleRef)}
+	} else if prof != nil {
+		out.RoleRefs = append([]string(nil), prof.RoleRefs...)
+		if len(out.RoleRefs) == 0 && strings.TrimSpace(prof.RoleRef) != "" {
+			out.RoleRefs = []string{strings.TrimSpace(prof.RoleRef)}
+		}
+	}
+	if len(out.RoleRefs) > 0 {
+		out.RoleRef = out.RoleRefs[0]
+	}
 	out.Descr = pick(p.Descr, profStr(prof, func(pf *profileJSON) string { return pf.Descr }))
 	if out.InitialMessage == "" && prof != nil {
 		out.InitialMessage = strings.TrimSpace(prof.InitialMessage)
@@ -1508,6 +1530,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		Name:                   name,
 		Role:                   merged.Role,
 		RoleRef:                merged.RoleRef,
+		RoleRefs:               append([]string(nil), merged.RoleRefs...),
 		Descr:                  merged.Descr,
 		TaskURL:                strings.TrimSpace(p.Task),
 		TaskLabel:              strings.TrimSpace(p.TaskLabel),

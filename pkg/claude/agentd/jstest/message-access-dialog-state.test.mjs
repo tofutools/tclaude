@@ -29,7 +29,7 @@ test('models keep stable identity, role search, and permission veto/source data'
     groups: [{ name: 'team', permissions: ['groups.members.spawn'], members: [{ agent_id: 'agt_alice', conv_id: 'conv-new', title: 'alice', role: 'reviewer', descr: 'cold eyes', online: true }] }],
     permissions: { defaults: ['self.rename'], overrides: { 'conv-new': { 'groups.members.spawn': 'deny' } } },
     slugs: [
-      { slug: 'groups.members.spawn', description: 'spawn', owner_implied: true },
+      { slug: 'groups.members.spawn', description: 'spawn', owner_implied: true, scope_dims: ['group'] },
       { slug: 'self.rename', description: 'rename', owner_implied: false },
     ],
   };
@@ -48,4 +48,21 @@ test('models keep stable identity, role search, and permission veto/source data'
   const profile = model.permissionRows(snapshot, { mode: 'buffer', group: 'the spawn group' }, {});
   assert.deepEqual(profile.find((row) => row.slug === 'groups.members.spawn').sources, [],
     'a reusable profile invents no destination group source');
+
+  const composed = model.permissionRows(snapshot, {
+    mode: 'buffer', group: 'team', ownsGroup: true,
+    roleGrants: [
+      { slug: 'self.rename', role: 'reviewer', scope: '' },
+      { slug: 'groups.members.spawn', role: 'maintainer', scope: 'group=team' },
+    ],
+  }, {});
+  assert.deepEqual(composed.find((row) => row.slug === 'self.rename').sources,
+    ['global default', 'role: reviewer']);
+  assert.deepEqual(composed.find((row) => row.slug === 'groups.members.spawn').sources,
+    ['group: team', 'role: maintainer [group=team]', 'owner grant: team']);
+
+  const vetoed = model.permissionRows(snapshot, {
+    mode: 'buffer', group: 'team', roleGrants: [{ slug: 'self.rename', role: 'reviewer' }],
+  }, { 'self.rename': 'deny' }).find((row) => row.slug === 'self.rename');
+  assert.equal(vetoed.granted, false, 'an explicit spawn deny vetoes every composed source');
 });
