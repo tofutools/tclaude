@@ -47,7 +47,8 @@ var (
 		}
 		return fd, err
 	}
-	closeFD = unix.Close
+	closeFD                 = unix.Close
+	serveInheritedUnixRelay = opencodeapi.ServeInheritedUnixRelay
 )
 
 // Dispatch handles the two private stacked-probe modes before normal command
@@ -87,8 +88,12 @@ func Dispatch(args []string) (bool, int) {
 		if err != nil {
 			return true, invalidInvocationExit
 		}
-		_ = unix.Close(4)
-		if err := opencodeapi.ServeInheritedUnixRelay(
+		// The launcher always preserves the relay executable immediately after
+		// the listener. Filtered-network supervisors prepend their own inherited
+		// descriptors, so the pair is not necessarily fd 3/fd 4. Closing fd 4
+		// here could instead close the Go runtime's lazily-created netpoll eventfd.
+		_ = closeFD(fd + 1)
+		if err := serveInheritedUnixRelay(
 			context.Background(), fd, args[3], args[5:]); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "tclaude OpenCode Unix relay: %v\n", err)
 			return true, stubFailureExit
