@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"slices"
 	"sort"
 	"testing"
 )
@@ -145,5 +146,17 @@ func TestPermissionRegistry_OwnerImpliedSet(t *testing.T) {
 		if IsOwnerImpliedSlug(s) {
 			t.Errorf("IsOwnerImpliedSlug(%q) = true, want false (no owner bypass)", s)
 		}
+	}
+}
+
+func TestPermissionRegistry_MemberImpliedSet(t *testing.T) {
+	var got []string
+	for _, entry := range permissionRegistry {
+		if entry.MemberImplied {
+			got = append(got, entry.Slug)
+		}
+	}
+	if want := []string{PermGroupsMessagesSchedule}; !slices.Equal(got, want) {
+		t.Fatalf("member-implied slugs = %v, want %v", got, want)
 	}
 }

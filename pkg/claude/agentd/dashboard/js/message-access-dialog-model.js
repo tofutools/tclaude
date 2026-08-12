@@ -236,6 +236,9 @@ export function permissionRows(snapshot, descriptor, selection) {
     if (effect === 'default' && slug.owner_implied && ownedGroups.length) {
       sources.push(ownerSource(slug.owner_scope, ownedGroups));
     }
+    if (effect === 'default' && slug.member_implied && descriptor.mode === 'agent' && groups.length) {
+      sources.push(`member: ${groups.join(', ')}`);
+    }
     const granted = descriptor.mode === 'group' ? effect === 'grant' : effect !== 'deny' && sources.length > 0;
     return { ...slug, effect, granted, sources, ownedGroups, inDefault: defaults.has(slug.slug) };
   });

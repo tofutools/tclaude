@@ -65,9 +65,13 @@ type PermSlug struct {
 	ScopeDims []ScopeDim `json:"scope_dims,omitempty"`
 	// OwnerImplied is derived from OwnerScope by initPermissionRegistry —
 	// do not set it in a registry literal.
-	OwnerImplied  bool       `json:"owner_implied,omitempty"`
-	OwnerScope    ownerScope `json:"owner_scope,omitempty"`
-	AutoGrantable bool       `json:"auto_grantable,omitempty"`
+	OwnerImplied bool       `json:"owner_implied,omitempty"`
+	OwnerScope   ownerScope `json:"owner_scope,omitempty"`
+	// MemberImplied marks a group-scoped slug conferred by membership in the
+	// action's target group. Like ownership, it is a structural source below an
+	// explicit deny, not an endpoint-specific bypass.
+	MemberImplied bool `json:"member_implied,omitempty"`
+	AutoGrantable bool `json:"auto_grantable,omitempty"`
 }
 
 // ownerScope names how far a slug's group-owner bypass reaches. See the
@@ -326,9 +330,10 @@ var permissionRegistry = []PermSlug{
 		Description: "Edit role/descr on existing members (tclaude agent groups update-member)",
 	},
 	{
-		Slug:        PermGroupsMessagesSchedule,
-		OwnerScope:  ownerScopeGroup,
-		Description: "Create and manage recurring messages targeting a group. Group owners can schedule messages for groups they own without this slug.",
+		Slug:          PermGroupsMessagesSchedule,
+		OwnerScope:    ownerScopeGroup,
+		MemberImplied: true,
+		Description:   "Create and manage recurring messages targeting a group. Membership or ownership confers this slug only for that group.",
 	},
 	{
 		Slug:        PermPermissionsGrant,
@@ -1208,6 +1213,10 @@ func effectivePermsFor(state permissionsState, convID string, ownerImplied owner
 				// possibly to a narrowed slice of one owned group.
 				provenance[slug] = ownerProvenance(slug, entry)
 				matched[permSourceOwner] = true
+			} else if memberImpliedForAgent(convID, slug) {
+				effective = append(effective, slug)
+				provenance[slug] = "member:group"
+				matched[permSourceMember] = true
 			}
 		case permDeny:
 			anyDeny = true
@@ -1226,10 +1235,36 @@ func effectivePermsFor(state permissionsState, convID string, ownerImplied owner
 	if matched[permSourceOwner] {
 		source += "+owner"
 	}
+	if matched[permSourceMember] {
+		source += "+member"
+	}
 	if anyDeny {
 		source += " −denies"
 	}
 	return effective, ownerAdded, provenance, source
+}
+
+func memberImpliedForAgent(convID, slug string) bool {
+	memberImplied := false
+	for _, entry := range permissionRegistry {
+		if entry.Slug == slug {
+			memberImplied = entry.MemberImplied
+			break
+		}
+	}
+	if !memberImplied {
+		return false
+	}
+	groups, err := db.ListGroupsForConv(convID)
+	if err != nil {
+		return false
+	}
+	for _, g := range groups {
+		if !g.IsArchived() {
+			return true
+		}
+	}
+	return false
 }
 
 // ownerProvenance renders the provenance value for a slug held via the

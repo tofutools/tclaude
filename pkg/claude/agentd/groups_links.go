@@ -430,7 +430,7 @@ func requireGroupLinkAuthority(w http.ResponseWriter, r *http.Request, g *db.Age
 func requireScopedLinkAuthority(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, link *db.AgentGroupLink, perm string) (string, bool) {
 	ctx := ActionContext{Group: g.Name}
 	if link != nil && link.FromGroupID == g.ID {
-		ctx.ownerGroup = g.Name
+		ctx.structuralGroup = g.Name
 	}
 	return requirePermission(w, r, perm, ctx)
 }

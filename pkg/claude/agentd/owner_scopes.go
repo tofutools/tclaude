@@ -349,17 +349,17 @@ func ownerPermissionPermitted(convID, slug string, actx ActionContext) bool {
 		}
 		// A group-wide member read has no single target conversation. Treat it
 		// as authority over the roster and apply the same shared-member bound.
-		if actx.ownerGroup == "" {
+		if actx.structuralGroup == "" {
 			return false
 		}
-		g, err := db.GetAgentGroupByName(actx.ownerGroup)
+		g, err := db.GetAgentGroupByName(actx.structuralGroup)
 		return err == nil && g != nil && ownerCanManageGroupMembers(g, convID, true) &&
 			ownerOfGroupPermitting(g, convID, slug, actx)
 	case ownerScopeGroup, ownerScopeGroupMembers:
-		if actx.ownerGroup == "" {
+		if actx.structuralGroup == "" {
 			return false
 		}
-		g, err := db.GetAgentGroupByName(actx.ownerGroup)
+		g, err := db.GetAgentGroupByName(actx.structuralGroup)
 		if err != nil || g == nil {
 			return false
 		}
@@ -371,6 +371,29 @@ func ownerPermissionPermitted(convID, slug string, actx ActionContext) bool {
 	default:
 		return false
 	}
+}
+
+func memberPermissionPermitted(convID, slug string, actx ActionContext) bool {
+	var registered *PermSlug
+	for i := range permissionRegistry {
+		if permissionRegistry[i].Slug == slug {
+			registered = &permissionRegistry[i]
+			break
+		}
+	}
+	if registered == nil || !registered.MemberImplied || actx.structuralGroup == "" {
+		return false
+	}
+	g, err := db.GetAgentGroupByName(actx.structuralGroup)
+	if err != nil || g == nil || g.IsArchived() {
+		return false
+	}
+	member, err := db.FindMemberInGroup(g.ID, convID)
+	return err == nil && member != nil
+}
+
+func structuralPermissionPermitted(convID, slug string, actx ActionContext) bool {
+	return ownerPermissionPermitted(convID, slug, actx) || memberPermissionPermitted(convID, slug, actx)
 }
 
 // ownerTierEntry is what group ownership confers on one agent for one slug,

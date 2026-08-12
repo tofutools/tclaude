@@ -48,13 +48,13 @@ type ActionContext struct {
 	// than passing a set, so every check is one team against one grant.
 	LinearTeam string
 
-	// ownerGroup is the group whose ownership may confer the requested slug.
+	// structuralGroup is the group whose ownership or membership may confer the requested slug.
 	// It is deliberately distinct from Group: Group evaluates an explicit
-	// grant's scope, while ownerGroup selects a structural permission source.
+	// grant's scope, while structuralGroup selects a structural permission source.
 	// Keeping both lets an inbound-link mutation describe its group to scoped
 	// grants without accidentally treating ownership of the destination as
 	// authority over the source's link.
-	ownerGroup string
+	structuralGroup string
 	// targetConv is the live conversation acted on by a whole-agent operation.
 	// TargetAgent remains the stable, operator-facing scope value.
 	targetConv string

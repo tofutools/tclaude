@@ -189,7 +189,7 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 		// Scoped away from this action: the grant decides nothing here, so
 		// fall through to the owner bypass and then the popup, exactly as an
 		// undecided verdict would.
-		if ownerPermissionPermitted(p.ConvID, perm, scopeContext) {
+		if structuralPermissionPermitted(p.ConvID, perm, scopeContext) {
 			return p.ConvID, true
 		}
 	case permUndecided:
@@ -198,7 +198,7 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 		// by the owner-scope map of whichever owned group contains the
 		// target (TCL-1071). Each candidate group is judged on its own map,
 		// so a narrowed group cannot suppress an unnarrowed one.
-		if ownerPermissionPermitted(p.ConvID, perm, scopeContext) {
+		if structuralPermissionPermitted(p.ConvID, perm, scopeContext) {
 			return p.ConvID, true
 		}
 	case permDeny:

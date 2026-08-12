@@ -4488,7 +4488,7 @@ func agentStateHasSnapshot(s agentState) bool {
 // lets the central resolver confer that slug to an owner only when the caller
 // owns every active group containing every returned member.
 func requireGroupContextAccess(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) (string, bool) {
-	ctx := ActionContext{Group: g.Name, ownerGroup: g.Name}
+	ctx := ActionContext{Group: g.Name, structuralGroup: g.Name}
 	return requirePermission(w, r, PermAgentContextInfo, ctx)
 }
 

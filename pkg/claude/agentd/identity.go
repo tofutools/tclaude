@@ -555,6 +555,9 @@ const (
 	// the structural group-owner bypass that call sites (and the listing)
 	// apply to fill the permUndecided gap.
 	permSourceOwner permSource = "owner"
+	// permSourceMember is a registry-declared capability conferred by active
+	// membership in the action's target group.
+	permSourceMember permSource = "member"
 )
 
 // permVerdict is a resolution plus the provenance behind it.
@@ -778,7 +781,7 @@ func requireGroupPermission(w http.ResponseWriter, r *http.Request, perm string,
 	if ctx.Group == "" {
 		ctx.Group = g.Name
 	}
-	ctx.ownerGroup = g.Name
+	ctx.structuralGroup = g.Name
 	return requirePermissionEx(w, r, perm, ctx)
 }
 
@@ -876,10 +879,10 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ac
 			} else {
 				// The grant is scoped away from this action, so it decides
 				// nothing here — the same gap permUndecided leaves.
-				allowed = ownerPermissionPermitted(p.ConvID, perm, bypassCtx)
+				allowed = structuralPermissionPermitted(p.ConvID, perm, bypassCtx)
 			}
 		case permUndecided:
-			allowed = ownerPermissionPermitted(p.ConvID, perm, bypassCtx)
+			allowed = structuralPermissionPermitted(p.ConvID, perm, bypassCtx)
 		case permDeny:
 			// Authoritative deny — suppresses the owner bypass.
 		}

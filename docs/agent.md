@@ -1895,8 +1895,8 @@ tclaude agent cron rm <id>
 Cron jobs default to self-targeted; `--target group:<name>`
 multicasts. Managing your own jobs needs `self.schedule`; managing
 another agent's needs `agent.schedule`; creating or managing a group-targeted
-job needs `groups.messages.schedule`. Group ownership confers the latter only
-for the owned group. A one-off `group:` message remains an ordinary group
+job needs `groups.messages.schedule`. Membership or ownership confers the
+latter only for that group. A one-off `group:` message remains an ordinary group
 participation operation and does not install a durable sender.
 
 New jobs wait for their first scheduled due time. `--run-immediately` opts

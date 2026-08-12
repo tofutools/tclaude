@@ -379,7 +379,7 @@ func TestOwnerBypassRejectsMemberSharedWithUnownedActiveGroup(t *testing.T) {
 	assert.False(t, ownerCanManageAllGroupMembers(owned, owner),
 		"the same boundary applies to bulk group lifecycle actions")
 	assert.False(t, ownerPermissionPermitted(owner, PermGroupsMembersStop,
-		ActionContext{Group: owned.Name, ownerGroup: owned.Name}),
+		ActionContext{Group: owned.Name, structuralGroup: owned.Name}),
 		"the registry-driven whole-roster scope enforces the shared-member boundary")
 
 	require.NoError(t, db.ArchiveAgentGroup("shared-unowned"))
