@@ -79,7 +79,7 @@ const daemonSoftExitReason = "soft_exit"
 // Members that aren't currently online are reported as
 // `skipped:already_offline` and skipped — stop is idempotent.
 func handleGroupStop(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	if _, ok := requireGroupPermission(w, r, PermGroupsStop, g); !ok {
+	if _, ok := requireGroupPermission(w, r, PermGroupsMembersStop, g); !ok {
 		return
 	}
 	force := r.URL.Query().Get("force") == "1"
@@ -117,7 +117,7 @@ func handleGroupStop(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 
 // stopOneConv soft-stops (or force-kills with `force=true`) the live
 // tmux session for convID. Returns the per-conv result. Shared between
-// the bulk groups.stop loop and the single-conv agent.stop endpoint.
+// the bulk groups.members.stop loop and the single-conv agent.stop endpoint.
 //
 // Result shape mirrors the existing memberOpResult so the bulk
 // summary table renders the same regardless of how the call was
@@ -1224,12 +1224,12 @@ func livePaneCwd(tmuxSession string) (string, error) {
 // — resume is idempotent. The "ensure my team is up" reconciliation
 // the TODO design described.
 func handleGroupResume(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	caller, ok := requireGroupPermission(w, r, PermGroupsResume, g)
+	caller, ok := requireGroupPermission(w, r, PermGroupsMembersResume, g)
 	if !ok {
 		return
 	}
 	authTarget := caller
-	requestTrustRoot := caller == "" || hasHumanApprovalContinuation(r, PermGroupsResume, authTarget)
+	requestTrustRoot := caller == "" || hasHumanApprovalContinuation(r, PermGroupsMembersResume, authTarget)
 	members, err := db.ListAgentGroupMembers(g.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
@@ -1263,7 +1263,7 @@ func handleGroupResume(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 				continue
 			}
 			convID := out.Members[i].ConvID
-			if !requestResumeRecoveryApproval(w, r, PermGroupsResume, authTarget, convID) {
+			if !requestResumeRecoveryApproval(w, r, PermGroupsMembersResume, authTarget, convID) {
 				return
 			}
 			res := resumeOneConvLocked(convID, false, true)
@@ -1341,7 +1341,7 @@ func confirmResumedConvOnline(convID string, res *memberOpResult) {
 
 // resumeOneConv spawns a detached `tclaude session new -r <conv>`
 // for convID if it isn't already online. Returns the per-conv
-// result. Shared between the bulk groups.resume loop and the
+// result. Shared between the bulk groups.members.resume loop and the
 // single-conv agent.resume endpoint.
 //
 // Idempotent: convs already online come back as
@@ -1391,7 +1391,7 @@ func resolveConvLaunchMetadata(convID string) (cwd, effort, model, harnessName s
 // resumeOneConv resumes convID without recreating a deleted launch dir:
 // a resume into a vanished cwd surfaces as `error:missing_cwd` (Detail =
 // the path) so the caller can decide whether to recreate it. Thin wrapper
-// over resumeOneConvRecreate — the default for the bulk groups.resume /
+// over resumeOneConvRecreate — the default for the bulk groups.members.resume /
 // power-on loops, which must not silently recreate directories en masse.
 func resumeOneConv(convID string) memberOpResult {
 	return resumeOneConvRecreate(convID, false)
@@ -2233,7 +2233,7 @@ func resolveResumeConvFromHarnessStores(convID string) (*harness.ConvRef, bool) 
 	return nil, false
 }
 
-// groupRetireResp is the response shape of the bulk groups.retire
+// groupRetireResp is the response shape of the bulk groups.members.retire
 // endpoint. It mirrors groupOpResp (so the CLI renders the per-member
 // table identically to stop/resume) but carries an extra Warnings list
 // — retire can leave a group ownerless when it demotes an owner, and
@@ -2323,7 +2323,7 @@ func disableGroupRhythmsIfEmptied(g *db.AgentGroup) int {
 
 // handleGroupRetire retires the active-agent members of the group in
 // one shot — the bulk parallel of `agent retire`, completing the
-// groups.stop / groups.resume lifecycle family (which until now had no
+// groups.members.stop / groups.members.resume lifecycle family (which until now had no
 // retire sibling). It is the SO_PEERCRED /v1 surface; the cookie-authed
 // dashboard route (dashboardGroupRetire) shares the same core.
 //
@@ -2349,7 +2349,7 @@ func disableGroupRhythmsIfEmptied(g *db.AgentGroup) int {
 // (the main repo and worktrees shared with a surviving agent are kept,
 // removal waits until the member's pane exits).
 //
-// Permission: groups.retire (not in the global defaults — retiring
+// Permission: groups.members.retire (not in the global defaults — retiring
 // agents is a sensitive cleanup the human normally drives; the slug
 // delegates it to a trusted coordinator). Gated with
 // requireGroupPermission, like the other bulk group endpoints
@@ -2359,7 +2359,7 @@ func disableGroupRhythmsIfEmptied(g *db.AgentGroup) int {
 // permUndecided gap — an explicit deny override is always
 // authoritative and suppresses it.
 func handleGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	caller, ok := requireGroupPermission(w, r, PermGroupsRetire, g)
+	caller, ok := requireGroupPermission(w, r, PermGroupsMembersRetire, g)
 	if !ok {
 		return
 	}
@@ -2808,7 +2808,7 @@ func joinDetail(base, extra string) string {
 }
 
 // handleAgentStop stops a single conv's tmux session. Sibling of
-// the bulk groups.stop. Auth: agent.stop slug OR caller is owner of
+// the bulk groups.members.stop. Auth: agent.stop slug OR caller is owner of
 // a group containing target. Routed via /v1/agent/{selector}/stop;
 // `?force=1` switches to tmux kill-session.
 func handleAgentStop(w http.ResponseWriter, r *http.Request, targetConv string) {
@@ -2975,7 +2975,7 @@ func handleAgentDelete(w http.ResponseWriter, r *http.Request, targetConv string
 }
 
 // handleAgentResume resumes a single conv into a fresh detached
-// tmux session. Sibling of the bulk groups.resume. Auth:
+// tmux session. Sibling of the bulk groups.members.resume. Auth:
 // agent.resume slug OR caller is owner of a group containing
 // target. Routed via /v1/agent/{selector}/resume.
 func handleAgentResume(w http.ResponseWriter, r *http.Request, targetConv string) {
@@ -3272,7 +3272,7 @@ func normalizeSpawnPermissionOverrides(in map[string]db.PermissionOverride) (map
 	return out, ""
 }
 
-// Permission: groups.spawn (default human-only — this lets an agent
+// Permission: groups.members.spawn (default human-only — this lets an agent
 // run arbitrary CC instances on the human's machine, blast radius
 // matches `agent.spawn` in the design doc).
 // marshalSpawnConfig serialises a spawn request to the verbatim JSON stored on
@@ -3407,7 +3407,7 @@ func spawnAuditResolution(p spawnParams, launch *agent.ResolvedLaunch, requested
 // the body cannot simply be consumed here.
 //
 // On a malformed body it writes the 400 and returns false. That 400 now
-// precedes the groups.spawn refusal for an unauthorized caller; it discloses
+// precedes the groups.members.spawn refusal for an unauthorized caller; it discloses
 // nothing beyond "your JSON did not parse".
 //
 // "Was there a body" is decided from the bytes actually READ, not from
@@ -3424,7 +3424,7 @@ func decodeSpawnBody(w http.ResponseWriter, r *http.Request, body *agent.SpawnRe
 	// The popup's restore bound is the sibling limit and the natural ceiling: a
 	// body this path cannot buffer is one snapshotRequestBody could not preview
 	// either. Without it, ReadAll on an unbounded chunked stream is a trivial
-	// pre-authorization memory sink — this runs BEFORE the groups.spawn gate.
+	// pre-authorization memory sink — this runs BEFORE the groups.members.spawn gate.
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxApprovalRestoreBody))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "json", err.Error())
@@ -3475,7 +3475,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// agent (e.g. a PO orchestrating workers) resolves to its conv-id,
 	// the human resolves to "". It is the default reply-to target for
 	// the startup briefing assembled further down. Owners of g pass
-	// without an explicit groups.spawn grant (owner-state default); the
+	// without an explicit groups.members.spawn grant (owner-state default); the
 	// spawn guardrails below still bind them (member cap, rate limit) and
 	// already treat an owner as allowed for the group restriction.
 	//
@@ -3485,7 +3485,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// between the CLI and the dashboard. See its doc comment for the
 	// per-field semantics.
 	//
-	// It is decoded BEFORE the gate because groups.spawn may be scoped by
+	// It is decoded BEFORE the gate because groups.members.spawn may be scoped by
 	// spawn_profile, and the gate can only evaluate that against the profile
 	// this spawn will actually launch with. decodeSpawnBody restores r.Body so
 	// the ask-human popup still previews the full request.
@@ -3500,7 +3500,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// an inline launch shape is not a named profile and must not pass a
 	// profile-pinned grant. An unscoped grant is unaffected, so this reaches
 	// the existing 400 for a bad profile name exactly as before.
-	spawnerConvID, ok := requireGroupPermission(w, r, PermGroupsSpawn, g,
+	spawnerConvID, ok := requireGroupPermission(w, r, PermGroupsMembersSpawn, g,
 		ActionContext{Group: g.Name, SpawnProfile: resolvedSpawnProfileNameForScope(g, body.Profile)})
 	if !ok {
 		return
@@ -3534,7 +3534,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	}
 
 	// Spawn guardrails — runaway-prevention for an agent that the human
-	// granted `groups.spawn`. The group's hard member cap (binds the human
+	// granted `groups.members.spawn`. The group's hard member cap (binds the human
 	// too) and — for agent callers only (spawnerConvID != "") — the group
 	// restriction run here, before any subprocess is launched, so a rejected
 	// spawn costs nothing. The third guardrail, the per-caller rate limit,
@@ -4084,11 +4084,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	}
 	// Birth-time access privilege gate, on the RESOLVED values. A human
 	// (dashboard) caller always passes; an agent caller must hold the SAME slug
-	// the dedicated post-spawn endpoints require — groups.own to mint an owner
+	// the dedicated post-spawn endpoints require — groups.owners.manage to mint an owner
 	// (handleGroupOwnersAdd) and permissions.grant to set per-slug overrides
 	// (handlePermissionsGrant). Group ownership is deliberately NOT sufficient:
 	// owner-state confers only the owner-implied lifecycle slugs
-	// (groups.spawn/stop/…), NOT groups.own or permissions.grant — so keying on
+	// (groups.members.spawn/stop/…), NOT groups.owners.manage or permissions.grant — so keying on
 	// ownership would let an owner mint a child holding permissions.grant and
 	// escalate globally. resolvePermission (no owner bypass) is the same
 	// evaluation those endpoints run.
@@ -4100,14 +4100,14 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// disclosed instead: an operator's house default must not start refusing
 	// every spawn its own agents make.
 	if spawnerConvID != "" {
-		if isOwner && resolvePermission(spawnerConvID, PermGroupsOwn) != permAllow {
+		if isOwner && resolvePermission(spawnerConvID, PermGroupsOwnersManage) != permAllow {
 			if !launchTierIsDefault(profileTiers, isOwnerSource) {
 				writeError(w, http.StatusForbidden, "forbidden",
-					"making the spawned agent a group owner requires the "+PermGroupsOwn+" permission")
+					"making the spawned agent a group owner requires the "+PermGroupsOwnersManage+" permission")
 				return
 			}
 			identityNotes = append(identityNotes, fmt.Sprintf(
-				"%s is_owner ignored (caller lacks %s)", isOwnerSource, PermGroupsOwn))
+				"%s is_owner ignored (caller lacks %s)", isOwnerSource, PermGroupsOwnersManage))
 			isOwner, isOwnerSource = false, ""
 		}
 		if len(permOverrides) > 0 && resolvePermission(spawnerConvID, PermPermissionsGrant) != permAllow {
@@ -7961,7 +7961,7 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 	// agent is already spawned + grouped, and the human can re-apply from the
 	// Edit-agent modal; a failed grant must not strand the spawn. The grants
 	// were authorised at the boundary (handleGroupSpawn requires the same slug
-	// the dedicated endpoints do — groups.own / permissions.grant — for an agent
+	// the dedicated endpoints do — groups.owners.manage / permissions.grant — for an agent
 	// caller), so granter just records who requested it. We use granterLabel
 	// rather than auditedCaller, so a (narrow) sudo-elevated spawn-time grant is
 	// NOT via-sudo-annotated in the audit row the way the dedicated endpoints

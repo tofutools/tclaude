@@ -381,9 +381,9 @@ func handleGroupLinksRemove(w http.ResponseWriter, r *http.Request, g *db.AgentG
 		return
 	}
 	// Auth: owner-bypass-only-when-g-is-FROM. Owners of the TO side
-	// must hold groups.link.rm — they can't unilaterally cut their
+	// must hold groups.link.remove — they can't unilaterally cut their
 	// inbound channels.
-	if _, ok := requireScopedLinkAuthority(w, r, g, link, PermGroupsLinkRm); !ok {
+	if _, ok := requireScopedLinkAuthority(w, r, g, link, PermGroupsLinkRemove); !ok {
 		return
 	}
 	n, err := db.DeleteAgentGroupLink(id)

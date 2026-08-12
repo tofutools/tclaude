@@ -120,8 +120,8 @@ func TestSpawnProfileAccess_NamedProfileAppliesOverrides(t *testing.T) {
 	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
 		"name": "granting",
 		"permission_overrides": map[string]any{
-			agentd.PermGroupsSpawn: "grant",
-			"self.rename":          "deny",
+			agentd.PermGroupsMembersSpawn: "grant",
+			"self.rename":                 "deny",
 		},
 	}).Code)
 
@@ -130,7 +130,7 @@ func TestSpawnProfileAccess_NamedProfileAppliesOverrides(t *testing.T) {
 
 	overrides, err := db.ListAgentPermissionOverridesForConv(spawn.ConvID)
 	require.NoError(t, err)
-	assert.Equal(t, "grant", overrides[agentd.PermGroupsSpawn], "profile grant applied at birth")
+	assert.Equal(t, "grant", overrides[agentd.PermGroupsMembersSpawn], "profile grant applied at birth")
 	assert.Equal(t, "deny", overrides["self.rename"], "profile deny applied at birth")
 }
 
@@ -143,7 +143,7 @@ func TestSpawnProfileAccess_ExplicitEmptyOverridesBeatProfile(t *testing.T) {
 
 	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
 		"name":                 "granting",
-		"permission_overrides": map[string]any{agentd.PermGroupsSpawn: "grant"},
+		"permission_overrides": map[string]any{agentd.PermGroupsMembersSpawn: "grant"},
 	}).Code)
 
 	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
@@ -158,7 +158,7 @@ func TestSpawnProfileAccess_ExplicitEmptyOverridesBeatProfile(t *testing.T) {
 }
 
 // Scenario: the escalation gate still binds a profile-supplied owner flag. A
-// profile the caller NAMED is direct intent, so an agent without groups.own is
+// profile the caller NAMED is direct intent, so an agent without groups.owners.manage is
 // refused loudly rather than quietly getting a non-owner child — the same 403 an
 // explicit is_owner already produced.
 func TestSpawnProfileAccess_NamedProfileOwnerStillGated(t *testing.T) {
@@ -171,13 +171,13 @@ func TestSpawnProfileAccess_NamedProfileOwnerStillGated(t *testing.T) {
 
 	const spawner = "spwn-1111-2222-3333-4444"
 	f.HaveMember("alpha", spawner)
-	require.NoError(t, db.GrantAgentPermission(spawner, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(spawner, agentd.PermGroupsMembersSpawn, "test"))
 
 	spawn := f.AsAgent(spawner).SpawnWith("alpha", map[string]any{
 		"name": "henchman", "profile": "lead-profile",
 	})
 	assert.Equalf(t, http.StatusForbidden, spawn.Code,
-		"a NAMED profile's is_owner is direct intent and must 403 without groups.own; body=%s", spawn.Raw)
+		"a NAMED profile's is_owner is direct intent and must 403 without groups.owners.manage; body=%s", spawn.Raw)
 }
 
 // Scenario: the same flag one tier down is ambient configuration nobody typed at
@@ -194,14 +194,14 @@ func TestSpawnProfileAccess_DefaultTierOwnerFallsThroughForUnprivilegedAgent(t *
 
 	const spawner = "spwn-2222-3333-4444-5555"
 	f.HaveMember("alpha", spawner)
-	require.NoError(t, db.GrantAgentPermission(spawner, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(spawner, agentd.PermGroupsMembersSpawn, "test"))
 
 	spawn := f.AsAgent(spawner).SpawnWith("alpha", map[string]any{"name": "worker"})
 	require.Equalf(t, http.StatusOK, spawn.Code,
 		"an ambient default profile must not fail the spawn; body=%s", spawn.Raw)
 
 	assert.False(t, ownsGroup(t, g.ID, spawn.ConvID), "the unauthorized owner grant was skipped")
-	assert.Contains(t, string(spawn.Raw), `is_owner ignored (caller lacks `+agentd.PermGroupsOwn,
+	assert.Contains(t, string(spawn.Raw), `is_owner ignored (caller lacks `+agentd.PermGroupsOwnersManage,
 		"the skip is disclosed rather than silent")
 }
 
@@ -384,12 +384,12 @@ func TestSpawnProfileAccess_NamedProfileOverridesStillGated(t *testing.T) {
 
 	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
 		"name":                 "granting",
-		"permission_overrides": map[string]any{agentd.PermGroupsSpawn: "grant"},
+		"permission_overrides": map[string]any{agentd.PermGroupsMembersSpawn: "grant"},
 	}).Code)
 
 	const spawner = "spwn-3333-4444-5555-6666"
 	f.HaveMember("alpha", spawner)
-	require.NoError(t, db.GrantAgentPermission(spawner, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(spawner, agentd.PermGroupsMembersSpawn, "test"))
 
 	spawn := f.AsAgent(spawner).SpawnWith("alpha", map[string]any{
 		"name": "henchman", "profile": "granting",
@@ -408,13 +408,13 @@ func TestSpawnProfileAccess_DefaultTierOverridesFallThroughForUnprivilegedAgent(
 
 	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
 		"name":                 "team-default",
-		"permission_overrides": map[string]any{agentd.PermGroupsSpawn: "grant"},
+		"permission_overrides": map[string]any{agentd.PermGroupsMembersSpawn: "grant"},
 	}).Code)
 	require.Equal(t, http.StatusOK, setGroupProfile(t, f, "alpha", "team-default").Code)
 
 	const spawner = "spwn-4444-5555-6666-7777"
 	f.HaveMember("alpha", spawner)
-	require.NoError(t, db.GrantAgentPermission(spawner, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(spawner, agentd.PermGroupsMembersSpawn, "test"))
 
 	spawn := f.AsAgent(spawner).SpawnWith("alpha", map[string]any{"name": "worker"})
 	require.Equalf(t, http.StatusOK, spawn.Code,

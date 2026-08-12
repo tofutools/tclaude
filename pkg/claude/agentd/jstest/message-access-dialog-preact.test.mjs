@@ -328,7 +328,7 @@ test('sudo selection excludes blocklisted slugs and preserves a failed draft for
     grantSudo: async (payload) => { payloads.push(payload); if (payloads.length === 1) throw new Error('denied once'); },
   };
   const slugs = [
-    { slug: 'groups.spawn', description: 'spawn' },
+    { slug: 'groups.members.spawn', description: 'spawn' },
     { slug: 'permissions.grant', description: 'grant' },
     { slug: 'permissions.revoke', description: 'revoke' },
   ];
@@ -342,7 +342,7 @@ test('sudo selection excludes blocklisted slugs and preserves a failed draft for
   assert.equal(host.querySelector('#sudo-grant-error').textContent, 'denied once');
   assert.equal(host.querySelector('#sudo-grant-duration').value, '30m');
   await harness.act(async () => { host.querySelector('#sudo-grant-submit').click(); await Promise.resolve(); });
-  assert.deepEqual(payloads[1], { agentID: 'agt_s', slugs: ['groups.spawn'], duration: '30m', reason: 'release' });
+  assert.deepEqual(payloads[1], { agentID: 'agt_s', slugs: ['groups.members.spawn'], duration: '30m', reason: 'release' });
   assert.equal(state.dialog.value, null);
   await mounted.unmount();
 });
@@ -359,29 +359,29 @@ test('permission draft survives live registry/source changes and submits the rec
   };
   const initial = snapshot({
     members: [{ ...member('sender'), agent_id: 'agt_sender', conv_id: 'conv-s' }],
-    slugs: [{ slug: 'groups.spawn', description: 'spawn', owner_implied: false }],
-    permissions: { defaults: [], overrides: { 'conv-s': { 'groups.spawn': 'deny' } } },
+    slugs: [{ slug: 'groups.members.spawn', description: 'spawn', owner_implied: false }],
+    permissions: { defaults: [], overrides: { 'conv-s': { 'groups.members.spawn': 'deny' } } },
   });
   const { host, mounted, rerender } = await mountDialogs(harness, state, actions, initial);
-  const spawnRow = host.querySelector('[data-slug="groups.spawn"]');
+  const spawnRow = host.querySelector('[data-slug="groups.members.spawn"]');
   await harness.act(() => { spawnRow.querySelector('[data-effect="grant"]').click(); });
   const updated = snapshot({
     members: [{ ...member('sender'), agent_id: 'agt_sender', conv_id: 'conv-s' }],
     slugs: [
-      { slug: 'groups.spawn', description: 'spawn', owner_implied: false },
+      { slug: 'groups.members.spawn', description: 'spawn', owner_implied: false },
       { slug: 'self.rename', description: 'rename', owner_implied: false },
     ],
-    permissions: { defaults: ['self.rename'], overrides: { 'conv-s': { 'groups.spawn': 'deny' } } },
+    permissions: { defaults: ['self.rename'], overrides: { 'conv-s': { 'groups.members.spawn': 'deny' } } },
   });
-  updated.groups[0].permissions = ['groups.spawn'];
+  updated.groups[0].permissions = ['groups.members.spawn'];
   await rerender(updated);
-  assert.equal(host.querySelector('[data-slug="groups.spawn"] [data-effect="grant"]').classList.contains('active'), true,
+  assert.equal(host.querySelector('[data-slug="groups.members.spawn"] [data-effect="grant"]').classList.contains('active'), true,
     'live snapshot does not reset the edited tri-state');
   assert.equal(host.querySelector('[data-slug="self.rename"] [data-effect="default"]').classList.contains('active'), true,
     'new registry slug reconciles at Default without moving the baseline');
   assert.match(host.querySelector('[data-slug="self.rename"] .perm-row-eff').textContent, /global default/);
   await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
-  assert.deepEqual(saved[0].selection, { 'groups.spawn': 'grant', 'self.rename': 'default' });
+  assert.deepEqual(saved[0].selection, { 'groups.members.spawn': 'grant', 'self.rename': 'default' });
   await mounted.unmount();
 });
 

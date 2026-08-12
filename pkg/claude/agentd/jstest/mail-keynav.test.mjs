@@ -23,7 +23,7 @@ const SIDEBAR_ORDER = ['all', 'human', 'group:tclaude', 'conv-a', 'conv-b', 'con
 function accessRequest(id, overrides = {}) {
   return {
     id, agent_id: 'agt_alpha', conv_id: 'conv-a', conv_title: 'Alpha',
-    perm: 'groups.spawn', created_at: '2026-07-12T00:00:00Z',
+    perm: 'groups.members.spawn', created_at: '2026-07-12T00:00:00Z',
     deadline: '2026-07-12T00:05:00Z', ...overrides,
   };
 }

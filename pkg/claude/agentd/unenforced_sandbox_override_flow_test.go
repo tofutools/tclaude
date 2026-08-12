@@ -171,7 +171,7 @@ func TestUnenforcedSandboxOverrideRejectsEveryRawV1Caller(t *testing.T) {
 
 	const parent = "raw-agent-1111-2222-3333-444444444444"
 	f.HaveMember("crew", parent)
-	require.NoError(t, db.GrantAgentPermission(parent, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(parent, agentd.PermGroupsMembersSpawn, "test"))
 	agent := f.AsAgent(parent).SpawnWith("crew", body)
 	require.Equal(t, http.StatusForbidden, agent.Code)
 	assert.JSONEq(t, `{

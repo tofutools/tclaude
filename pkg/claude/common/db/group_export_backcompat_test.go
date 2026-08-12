@@ -108,11 +108,11 @@ func TestGroupExport_GroupPermissionsRoundTrip(t *testing.T) {
 
 	srcID, err := CreateAgentGroup("src", "")
 	require.NoError(t, err)
-	require.NoError(t, ReplaceAgentGroupPermissions(srcID, []string{"human.notify", "groups.spawn"}, "test"))
+	require.NoError(t, ReplaceAgentGroupPermissions(srcID, []string{"human.notify", "groups.members.spawn"}, "test"))
 	exp, err := CollectGroupExport("src")
 	require.NoError(t, err)
 	require.Len(t, exp.Group.Permissions, 2)
-	assert.Equal(t, "groups.spawn", exp.Group.Permissions[0].Slug)
+	assert.Equal(t, "groups.members.spawn", exp.Group.Permissions[0].Slug)
 	assert.Equal(t, "human.notify", exp.Group.Permissions[1].Slug)
 	assert.Equal(t, "test", exp.Group.Permissions[0].GrantedBy)
 	assert.NotEmpty(t, exp.Group.Permissions[0].GrantedAt)
@@ -125,13 +125,13 @@ func TestGroupExport_GroupPermissionsRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	got, err := ListAgentGroupPermissions(dst.ID)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"groups.spawn", "human.notify"}, got)
+	assert.Equal(t, []string{"groups.members.spawn", "human.notify"}, got)
 	d, err := Open()
 	require.NoError(t, err)
 	var grantedAt dbTimestamp
 	var grantedBy string
 	require.NoError(t, d.QueryRow(`SELECT granted_at, granted_by FROM agent_group_permissions WHERE group_id = ? AND slug = ?`,
-		dst.ID, "groups.spawn").Scan(&grantedAt, &grantedBy))
+		dst.ID, "groups.members.spawn").Scan(&grantedAt, &grantedBy))
 	assert.Equal(t, exp.Group.Permissions[0].GrantedAt, grantedAt.Time().Format(time.RFC3339Nano), "timestamp preserved")
 	assert.Equal(t, exp.Group.Permissions[0].GrantedBy, grantedBy, "attribution preserved")
 }
@@ -141,7 +141,7 @@ func TestImportGroup_RequiresAndAppliesPermissionScopeCanonicalizer(t *testing.T
 
 	scopedGroup := groupexport.Group{
 		Permissions: []groupexport.GroupPermission{{
-			Slug: "groups.spawn", ScopeJSON: `{"group":["dev","dev"]}`,
+			Slug: "groups.members.spawn", ScopeJSON: `{"group":["dev","dev"]}`,
 		}},
 	}
 	_, err := ImportGroup(minimalImportPlan("missing-validator", scopedGroup))
@@ -156,11 +156,11 @@ func TestImportGroup_RequiresAndAppliesPermissionScopeCanonicalizer(t *testing.T
 		SourceGroup:   "scoped",
 		Group:         scopedGroup,
 		Permissions: []groupexport.Permission{{
-			ConvID: conv, Slug: "groups.spawn", Effect: PermEffectGrant,
+			ConvID: conv, Slug: "groups.members.spawn", Effect: PermEffectGrant,
 			ScopeJSON: `{"group":["dev","dev"]}`,
 		}},
 		SudoGrants: []groupexport.SudoGrant{{
-			ConvID: conv, Slug: "groups.spawn", ScopeJSON: `{"group":["dev","dev"]}`,
+			ConvID: conv, Slug: "groups.members.spawn", ScopeJSON: `{"group":["dev","dev"]}`,
 			ExpiresAt: "2099-01-01T00:00:00Z",
 		}},
 	}
@@ -170,7 +170,7 @@ func TestImportGroup_RequiresAndAppliesPermissionScopeCanonicalizer(t *testing.T
 		ConvRemap: map[string]string{},
 		CanonicalizePermissionScope: func(slug, raw string) (string, error) {
 			validated++
-			assert.Equal(t, "groups.spawn", slug)
+			assert.Equal(t, "groups.members.spawn", slug)
 			assert.Equal(t, `{"group":["dev","dev"]}`, raw)
 			return `{"group":["dev"]}`, nil
 		},
@@ -395,7 +395,7 @@ func TestImportGroup_FreshActorMetadataRestored(t *testing.T) {
 			Members:       []groupexport.Member{{ConvID: "conv-fresh", Role: "member", JoinedAt: "2026-01-01T00:00:00Z"}},
 			Owners:        []groupexport.Owner{{ConvID: "conv-fresh", GrantedAt: "2026-01-01T00:00:00Z", GrantedBy: "source"}},
 			Permissions: []groupexport.Permission{{
-				ConvID: "conv-fresh", Slug: "groups.spawn", Effect: PermEffectGrant,
+				ConvID: "conv-fresh", Slug: "groups.members.spawn", Effect: PermEffectGrant,
 				GrantedAt: "2026-01-01T00:00:00Z", GrantedBy: "source",
 			}},
 			Enrollments: []groupexport.Enrollment{{
@@ -404,7 +404,7 @@ func TestImportGroup_FreshActorMetadataRestored(t *testing.T) {
 				RetireReason: "src-reason", PendingName: "src-pending",
 			}},
 			SudoGrants: []groupexport.SudoGrant{{
-				ConvID: "conv-fresh", Slug: "groups.spawn", GrantedAt: "2026-01-01T00:00:00Z",
+				ConvID: "conv-fresh", Slug: "groups.members.spawn", GrantedAt: "2026-01-01T00:00:00Z",
 				ExpiresAt: "2099-01-01T00:00:00Z", GrantedBy: "source", Reason: "source grant",
 			}},
 			CronJobs: []groupexport.CronJob{{

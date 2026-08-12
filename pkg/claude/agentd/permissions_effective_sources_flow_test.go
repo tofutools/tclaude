@@ -239,8 +239,8 @@ func TestEffectivePerms_OwnerConferredSlugsCarryTheirScope(t *testing.T) {
 	assert.Equal(t, []string{"squad-a", "squad-b"}, view.OwnedGroups,
 		"the response names the owned groups, sorted, so a client need not read the DB")
 
-	// groups.spawn reaches the owned groups themselves...
-	assert.Equal(t, "owner:group", view.Provenance[agentd.PermGroupsSpawn],
+	// groups.members.spawn reaches the owned groups themselves...
+	assert.Equal(t, "owner:group", view.Provenance[agentd.PermGroupsMembersSpawn],
 		"a requireGroupPermission slug is group-scoped")
 	// ...agent.rename reaches their members...
 	assert.Equal(t, "owner:member", view.Provenance[agentd.PermAgentRename],

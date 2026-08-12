@@ -38,7 +38,7 @@ func groupsLinkCmd() *cobra.Command {
 			"group's members (or owners) to another group's members, without " +
 			"requiring co-membership or owner bridging. Links are directional. " +
 			"Mutating subcommands need permission slugs `groups.link.add` / " +
-			"`groups.link.rm` — an owner of the FROM group passes without the " +
+			"`groups.link.remove` — an owner of the FROM group passes without the " +
 			"slug. Read subcommands are open.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
@@ -291,7 +291,7 @@ func groupsLinkRmCmd() *cobra.Command {
 	return boa.CmdT[groupsLinkRmParams]{
 		Use:         "rm",
 		Short:       "Remove an inter-group communication link",
-		Long:        "Pass the group the link is scoped under (either endpoint) and the link's numeric id. Requires `groups.link.rm` for agents not owning the FROM group.",
+		Long:        "Pass the group the link is scoped under (either endpoint) and the link's numeric id. Requires `groups.link.remove` for agents not owning the FROM group.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *groupsLinkRmParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)

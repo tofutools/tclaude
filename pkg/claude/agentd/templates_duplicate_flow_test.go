@@ -51,7 +51,7 @@ func TestTemplateDuplicate_FullFidelityRoundTrip(t *testing.T) {
 			{
 				"name": "lead", "role": "lead", "descr": "coordinates",
 				"is_owner": true, "initial_message": "Lead the team.",
-				"permissions":   []string{"groups.spawn"},
+				"permissions":   []string{"groups.members.spawn"},
 				"spawn_profile": "cheap", "model": "opus", "effort": "high",
 				"wave": 0,
 			},
@@ -104,7 +104,7 @@ func TestTemplateDuplicate_FullFidelityRoundTrip(t *testing.T) {
 	assert.Equal(t, "opus", lead["model"], "inline model stored")
 	assert.Equal(t, "high", lead["effort"], "inline effort stored")
 	assert.Equal(t, "Lead the team.", lead["initial_message"], "initial message stored")
-	assert.Equal(t, []any{"groups.spawn"}, lead["permissions"], "permission slug stored")
+	assert.Equal(t, []any{"groups.members.spawn"}, lead["permissions"], "permission slug stored")
 	rev, _ := agents[1].(map[string]any)
 	assert.Equal(t, "cold-reviewer", rev["role_ref"], "role_ref stored")
 	assert.EqualValues(t, 1, rev["wave"], "distinct wave stored")

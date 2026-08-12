@@ -19,7 +19,7 @@ func TestSudoGrant_AgentIDPopulated(t *testing.T) {
 	// the offsets match (the known DB sort hazard).
 	now := time.Now()
 	id, err := InsertSudoGrant(&SudoGrant{
-		ConvID: "worker", Slug: "groups.spawn", GrantedAt: now,
+		ConvID: "worker", Slug: "groups.members.spawn", GrantedAt: now,
 		ExpiresAt: now.Add(time.Hour), GrantedBy: "human",
 	})
 	require.NoError(t, err, "InsertSudoGrant")
@@ -58,7 +58,7 @@ func TestSudoGrant_AgentKeySurvivesConversationRotation(t *testing.T) {
 	require.NoError(t, err)
 	now := time.Now()
 	_, err = InsertSudoGrantForAgent(&SudoGrant{
-		AgentID: agentID, Slug: "groups.spawn", GrantedAt: now,
+		AgentID: agentID, Slug: "groups.members.spawn", GrantedAt: now,
 		ExpiresAt: now.Add(time.Hour), GrantedBy: "human-dashboard",
 	})
 	require.NoError(t, err)

@@ -356,7 +356,7 @@ func TestResume_RepopulatedGroup_ReenablesOnlyAutoDisabledRhythms(t *testing.T) 
 }
 
 // Scenario: stand-down gating mirrors retire — the human always passes, a group
-// owner passes structurally, and a plain member without groups.retire is refused.
+// owner passes structurally, and a plain member without groups.members.retire is refused.
 func TestStandDown_Gating(t *testing.T) {
 	f := newFlow(t)
 
@@ -366,11 +366,11 @@ func TestStandDown_Gating(t *testing.T) {
 	require.NotEmpty(t, leadConv)
 	require.NotEmpty(t, devConv)
 
-	// A plain member without groups.retire is refused — nothing changes.
+	// A plain member without groups.members.retire is refused — nothing changes.
 	rec := testharness.Serve(f.Mux,
 		agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/groups/raid/stand-down", nil), devConv))
 	require.Equalf(t, http.StatusForbidden, rec.Code,
-		"non-owner without groups.retire should be 403; body=%s", rec.Body.String())
+		"non-owner without groups.members.retire should be 403; body=%s", rec.Body.String())
 	assert.Equal(t, 2, memberCount(t, "raid"), "a refused stand-down changed nothing")
 
 	// The owner (the lead) passes via the structural owner bypass — this stand

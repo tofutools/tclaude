@@ -52,7 +52,7 @@ func spawnAttempt(t *testing.T, f *testharness.Flow, caller, group, name string)
 //
 // The same scenario pins the display-can't-drift invariant: `permissions ls`
 // renders the scope the gate enforced, so a reader is never told the lead
-// holds groups.spawn without being told where.
+// holds groups.members.spawn without being told where.
 func TestPermissionScope_GroupScopedGrantGatesSpawnPerGroup(t *testing.T) {
 	f := newFlow(t)
 	// The Audit tab's handler requires a dashboard origin; assert on the
@@ -66,14 +66,14 @@ func TestPermissionScope_GroupScopedGrantGatesSpawnPerGroup(t *testing.T) {
 	const lead = "scopegate-lead-aaaa-bbbb-cccc-000000000001"
 	haveSpawnCapableMember(t, f, "alpha", lead)
 	f.HaveMember("beta", lead)
-	grantScoped(t, f, lead, agentd.PermGroupsSpawn, map[string]any{"group": []string{"alpha"}})
+	grantScoped(t, f, lead, agentd.PermGroupsMembersSpawn, map[string]any{"group": []string{"alpha"}})
 
 	allowed := spawnAttempt(t, f, lead, "alpha", "in-scope-worker")
 	require.Equal(t, http.StatusOK, allowed.Code, allowed.Body)
 
 	refused := spawnAttempt(t, f, lead, "beta", "out-of-scope-worker")
 	assert.Equal(t, http.StatusForbidden, refused.Code, refused.Body)
-	assert.Contains(t, refused.Body, agentd.PermGroupsSpawn,
+	assert.Contains(t, refused.Body, agentd.PermGroupsMembersSpawn,
 		"refusal must be the ordinary not-granted path, naming the slug")
 
 	// Nothing was spawned into beta.
@@ -89,7 +89,7 @@ func TestPermissionScope_GroupScopedGrantGatesSpawnPerGroup(t *testing.T) {
 		Provenance map[string]string `json:"provenance"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(view.Body), &effective))
-	assert.Equal(t, "override [group=alpha]", effective.Provenance[agentd.PermGroupsSpawn])
+	assert.Equal(t, "override [group=alpha]", effective.Provenance[agentd.PermGroupsMembersSpawn])
 
 	// The audit row for the allowed spawn names the scope that admitted it.
 	entries := fetchAudit(t, agentd.BuildDashboardHandlerForTest(), "").Entries
@@ -99,7 +99,7 @@ func TestPermissionScope_GroupScopedGrantGatesSpawnPerGroup(t *testing.T) {
 			spawnDetail = e.Detail
 		}
 	}
-	assert.Contains(t, spawnDetail, "scope: "+agentd.PermGroupsSpawn+" [group=alpha]",
+	assert.Contains(t, spawnDetail, "scope: "+agentd.PermGroupsMembersSpawn+" [group=alpha]",
 		"a scoped authorization must be recorded on the audit row")
 }
 
@@ -114,7 +114,7 @@ func TestPermissionScope_UndescribedDimensionFailsClosed(t *testing.T) {
 	f.HaveGroup("alpha")
 	const lead = "scopegate-lead-aaaa-bbbb-cccc-000000000002"
 	haveSpawnCapableMember(t, f, "alpha", lead)
-	grantScoped(t, f, lead, agentd.PermGroupsSpawn, map[string]any{"spawn_profile": []string{"locked"}})
+	grantScoped(t, f, lead, agentd.PermGroupsMembersSpawn, map[string]any{"spawn_profile": []string{"locked"}})
 
 	refused := spawnAttempt(t, f, lead, "alpha", "profile-scoped-worker")
 	assert.Equal(t, http.StatusForbidden, refused.Code, refused.Body)
@@ -128,7 +128,7 @@ func TestPermissionScope_UnscopedGrantIsUnaffected(t *testing.T) {
 	f.HaveGroup("alpha")
 	const lead = "scopegate-lead-aaaa-bbbb-cccc-000000000003"
 	haveSpawnCapableMember(t, f, "alpha", lead)
-	grantScoped(t, f, lead, agentd.PermGroupsSpawn, nil)
+	grantScoped(t, f, lead, agentd.PermGroupsMembersSpawn, nil)
 
 	allowed := spawnAttempt(t, f, lead, "alpha", "unscoped-worker")
 	require.Equal(t, http.StatusOK, allowed.Code, allowed.Body)
@@ -175,12 +175,12 @@ func TestPermissionScope_LineageSelectorsGateRetire(t *testing.T) {
 	f.HaveGroup("alpha")
 	const parent = "scope-lineage-parent-aaaa-bbbb-cccc-00000001"
 	haveSpawnCapableMember(t, f, "alpha", parent)
-	require.NoError(t, db.GrantAgentPermission(parent, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(parent, agentd.PermGroupsMembersSpawn, "test"))
 
 	child := f.AsAgent(parent).SpawnWith("alpha", map[string]any{"name": "lineage-child"})
 	require.Equalf(t, http.StatusOK, child.Code, "child spawn: %s", child.Raw)
 	require.NotEmpty(t, child.ConvID)
-	require.NoError(t, db.GrantAgentPermission(child.ConvID, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(child.ConvID, agentd.PermGroupsMembersSpawn, "test"))
 	grandchild := f.AsAgent(child.ConvID).SpawnWith("alpha", map[string]any{"name": "lineage-grandchild"})
 	require.Equalf(t, http.StatusOK, grandchild.Code, "grandchild spawn: %s", grandchild.Raw)
 	require.NotEmpty(t, grandchild.ConvID)
@@ -399,15 +399,15 @@ func TestPermissionScope_DenyBeatsScopedAllowAtTheGate(t *testing.T) {
 
 	alpha, err := db.GetAgentGroupByName("alpha")
 	require.NoError(t, err)
-	require.NoError(t, db.ReplaceAgentGroupPermissions(alpha.ID, []string{agentd.PermGroupsSpawn}, "test"))
-	setGroupGrantScope(t, alpha.ID, agentd.PermGroupsSpawn, `{"group":["alpha"]}`)
+	require.NoError(t, db.ReplaceAgentGroupPermissions(alpha.ID, []string{agentd.PermGroupsMembersSpawn}, "test"))
+	setGroupGrantScope(t, alpha.ID, agentd.PermGroupsMembersSpawn, `{"group":["alpha"]}`)
 
 	// The group grant alone admits the spawn — the scope matches the target.
 	allowed := spawnAttempt(t, f, lead, "alpha", "group-scoped-worker")
 	require.Equal(t, http.StatusOK, allowed.Code, allowed.Body)
 
 	// A per-agent deny above it is authoritative all the same.
-	require.NoError(t, db.SetAgentPermissionOverride(lead, agentd.PermGroupsSpawn, db.PermEffectDeny, "test"))
+	require.NoError(t, db.SetAgentPermissionOverride(lead, agentd.PermGroupsMembersSpawn, db.PermEffectDeny, "test"))
 	refused := spawnAttempt(t, f, lead, "alpha", "denied-worker")
 	assert.Equal(t, http.StatusForbidden, refused.Code, refused.Body)
 }

@@ -11,7 +11,7 @@ import { createPreactHarness } from './preact-harness.mjs';
 
 const catalog = [{ name: 'claude', can_sandbox: true, can_approval: true, sandbox_modes: ['off'], approval_modes: ['auto'] }];
 const slugs = [
-  { slug: 'groups.spawn', description: 'spawn' },
+  { slug: 'groups.members.spawn', description: 'spawn' },
   { slug: 'human.notify', description: 'notify' },
 ];
 
@@ -41,14 +41,14 @@ test('the role editor keeps a scoped grant it cannot express, and labels it', as
   const saved = [];
   const seed = {
     name: 'lead', harness: 'claude',
-    permissions: [{ slug: 'groups.spawn', scope: { group: ['dev'] } }],
+    permissions: [{ slug: 'groups.members.spawn', scope: { group: ['dev'] } }],
   };
   const { host, cleanup } = await openRoleEditor(harness, seed, {
     async saveRole({ payload }) { saved.push(payload); },
   });
 
   const boxes = [...host.querySelectorAll('.ta-perms-list label')];
-  const spawn = boxes.find((label) => label.textContent.includes('groups.spawn'));
+  const spawn = boxes.find((label) => label.textContent.includes('groups.members.spawn'));
   assert.equal(spawn.querySelector('input').getAttribute('checked'), 'true',
     'a scoped grant is still a held grant — the box must be ticked');
   assert.equal(spawn.querySelector('.perm-scope-chip').textContent, 'group=dev',
@@ -60,7 +60,7 @@ test('the role editor keeps a scoped grant it cannot express, and labels it', as
   await harness.act(() => harness.fireEvent(notify.querySelector('input'), 'change'));
   await harness.act(async () => { host.querySelector('#role-editor-submit').click(); await Promise.resolve(); });
   assert.deepEqual(saved[0].permissions,
-    [{ slug: 'groups.spawn', scope: { group: ['dev'] } }, 'human.notify']);
+    [{ slug: 'groups.members.spawn', scope: { group: ['dev'] } }, 'human.notify']);
   cleanup();
 });
 
@@ -69,13 +69,13 @@ test('unticking a scoped grant removes it rather than leaving a hidden duplicate
   const saved = [];
   const seed = {
     name: 'lead', harness: 'claude',
-    permissions: [{ slug: 'groups.spawn', scope: { group: ['dev'] } }],
+    permissions: [{ slug: 'groups.members.spawn', scope: { group: ['dev'] } }],
   };
   const { host, cleanup } = await openRoleEditor(harness, seed, {
     async saveRole({ payload }) { saved.push(payload); },
   });
   const spawn = [...host.querySelectorAll('.ta-perms-list label')]
-    .find((label) => label.textContent.includes('groups.spawn'));
+    .find((label) => label.textContent.includes('groups.members.spawn'));
   await harness.act(() => harness.fireEvent(spawn.querySelector('input'), 'change'));
   await harness.act(async () => { host.querySelector('#role-editor-submit').click(); await Promise.resolve(); });
   assert.deepEqual(saved[0].permissions, [], 'the entry is gone, whatever shape it had');

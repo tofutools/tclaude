@@ -568,7 +568,7 @@ test('profile choices expose aliases as distinct handles tied to one profile', a
     agent_name: 'worker', role: 'reviewer', descr: 'cold\nreview', initial_message: 'check this',
     sync_worktree: true, auto_focus: false, include_group_default_context: true, is_owner: false,
     permission_overrides: {
-      'human.notify': 'grant', 'groups.spawn': 'deny',
+      'human.notify': 'grant', 'groups.members.spawn': 'deny',
       'routes.publish': { effect: 'grant', scope: { group: ['tofutools'] } },
     },
   }), [
@@ -577,7 +577,7 @@ test('profile choices expose aliases as distinct handles tied to one profile', a
     'ask-timeout 5m', 'auto-review off', 'trust-dir on', 'remote-control off', 'auto-memory on',
     'name worker', 'role reviewer', 'descr cold review', 'initial message · 10 chars',
     'sync-wt on', 'focus off', 'group-ctx on', 'owner off',
-    'perm groups.spawn deny', 'perm human.notify grant', 'perm routes.publish grant[group=tofutools]',
+    'perm groups.members.spawn deny', 'perm human.notify grant', 'perm routes.publish grant[group=tofutools]',
   ]);
 });
 
@@ -4148,7 +4148,7 @@ test('cloning a spawn profile opens a create-mode editor on a free, alias-safe h
   const source = {
     name: 'luna', aliases: ['moon'], operator_only: true, harness: 'codex',
     model: 'gpt-5.6-luna', effort: 'high', sandbox: 'workspace-write',
-    approval: 'never', permission_overrides: { 'groups.spawn': 'grant' },
+    approval: 'never', permission_overrides: { 'groups.members.spawn': 'grant' },
   };
   const profiles = [source, { name: 'other', aliases: ['luna-copy'] }];
   const created = [];
@@ -4203,7 +4203,7 @@ test('cloning a spawn profile opens a create-mode editor on a free, alias-safe h
     {
       name: 'luna-copy-2', harness: 'codex', model: 'gpt-5.6-luna', effort: 'high',
       sandbox: 'workspace-write', approval: 'never', operator_only: true,
-      permission_overrides: { 'groups.spawn': 'grant' },
+      permission_overrides: { 'groups.members.spawn': 'grant' },
     },
   );
 

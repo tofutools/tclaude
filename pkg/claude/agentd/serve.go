@@ -1210,14 +1210,14 @@ func buildMux() http.Handler {
 	// Spawn worktrees (spawn_worktree.go): the launch-directory half of
 	// `tclaude agent spawn --worktree`, resolved daemon-side so a
 	// sandboxed caller's own filesystem restrictions do not apply to a
-	// checkout it never touches. Gated on groups.spawn plus, for
+	// checkout it never touches. Gated on groups.members.spawn plus, for
 	// creation, the dir write-proof over the repo and the worktree's
 	// parent. Distinct from the console-only POST /v1/worktrees
 	// (tui_worktree.go), which stays human-only.
 	mux.HandleFunc("POST "+worktreePreparePath, handleWorktreePrepare)
 	mux.HandleFunc("POST "+worktreeDiscardPath, handleWorktreeDiscard)
 	// Scribe summon (JOH-361): summon a pre-briefed, pre-granted scribe agent.
-	// Human always passes; an agent caller needs groups.spawn + permissions.grant.
+	// Human always passes; an agent caller needs groups.members.spawn + permissions.grant.
 	mux.HandleFunc("POST /v1/scribe", handleScribeSummon)
 	mux.HandleFunc("POST /v1/groups/import", handleGroupImport)
 	mux.HandleFunc("POST /v1/groups/import/inspect", handleGroupImportInspect)

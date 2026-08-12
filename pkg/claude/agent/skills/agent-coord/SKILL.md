@@ -251,7 +251,7 @@ exception, for when no suitable profile exists or the task pins a specific
 vendor/model (see the policy-bound warning below).
 
 When you delegate work by spawning a fresh agent
-(`tclaude agent spawn <group> …`, needs `groups.spawn`), the launch shape is
+(`tclaude agent spawn <group> …`, needs `groups.members.spawn`), the launch shape is
 **not** simply "the flags you passed, else the harness default". Each launch
 field (`--harness`, `--model`, `--effort`, `--sandbox`, `--ask-for-approval`,
 `--ask-user-question-timeout`) is resolved independently through this
@@ -360,14 +360,14 @@ generates no approval request for the reviewer to decide.
   subcommands (`groups create|rm|add|remove|update-member` and group-setting
   verbs) are
   permission-gated. By default agents can't run them. Humans bypass
-  the gate. Slugs: `groups.create`, `groups.rm`, `groups.stop`,
-  `groups.resume`, `groups.retire`, `member.add`, `member.remove`,
-  `member.redesignate`; settings use dedicated slugs such as
-  `groups.default-dir`, and `groups.admin` is the explicit umbrella for every
-  registered `groups.*` / `member.*` administration operation. A dedicated
+  the gate. Slugs: `groups.create`, `groups.delete`, `groups.members.stop`,
+  `groups.members.resume`, `groups.members.retire`, `groups.members.add`, `groups.members.remove`,
+  `groups.members.update`; settings use dedicated slugs such as
+  `groups.settings.default-dir`, and `groups.admin` is the explicit umbrella for every
+  registered `groups.*` administration operation. A dedicated
   deny still wins over the umbrella. A **group owner gets the lifecycle verbs for
-  its own group by default** — `groups.spawn` / `groups.stop` /
-  `groups.retire` / `groups.resume`, plus — for owning any group at all —
+  its own group by default** — `groups.members.spawn` / `groups.members.stop` /
+  `groups.members.retire` / `groups.members.resume`, plus — for owning any group at all —
   `human.notify` and the read-only `process.runs.read` — without an
   explicit grant (an explicit deny override still suppresses them).
   Ownership confers no process *mutation* authority: `process.runs.manage`

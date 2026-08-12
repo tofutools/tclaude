@@ -173,7 +173,7 @@ func TestRetire_WithoutShutdownKeepsSessionAlive(t *testing.T) {
 	if cfg.Agent == nil {
 		cfg.Agent = &config.AgentConfig{}
 	}
-	cfg.Agent.DefaultPermissions = []string{agentd.PermGroupsSpawn}
+	cfg.Agent.DefaultPermissions = []string{agentd.PermGroupsMembersSpawn}
 	require.NoError(t, config.Save(cfg))
 	denied := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe", map[string]any{
 		"name": "retired-scribe", "slugs": []string{agentd.PermTemplatesManage}, "brief": "must not run",

@@ -103,7 +103,7 @@ func TestGroupTemplate_RoleRef_AgentOverridesWinAndPermsUnion(t *testing.T) {
 		"name": "team",
 		"agents": []map[string]any{
 			// Inline model overrides the role's; the agent adds its own perm.
-			{"name": "d1", "role_ref": "coder", "model": "opus", "permissions": []string{"groups.spawn"}},
+			{"name": "d1", "role_ref": "coder", "model": "opus", "permissions": []string{"groups.members.spawn"}},
 		},
 	}
 	require.Equalf(t, http.StatusCreated,
@@ -124,7 +124,7 @@ func TestGroupTemplate_RoleRef_AgentOverridesWinAndPermsUnion(t *testing.T) {
 	assert.Equal(t, "opus", model, "the agent's inline model wins over the role default")
 
 	// The grant set is the union of role + agent permissions, deduped.
-	assert.ElementsMatch(t, []string{"human.notify", "groups.spawn"}, res.Agents[0].Granted,
+	assert.ElementsMatch(t, []string{"human.notify", "groups.members.spawn"}, res.Agents[0].Granted,
 		"granted set is the role UNION agent permissions")
 }
 

@@ -16,7 +16,7 @@ func TestSpawnHarnessPolicyReturnsConfiguredReasonToAgent(t *testing.T) {
 	g := f.HaveGroup("alpha")
 	const lead = "lead-cross-harness-policy-111111111111"
 	f.HaveMember("alpha", lead)
-	require.NoError(t, db.GrantAgentPermission(lead, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(lead, agentd.PermGroupsMembersSpawn, "test"))
 	require.NoError(t, db.ReplaceSpawnHarnessRules(0, []db.SpawnHarnessRule{{
 		SourceHarness: "claude", TargetHarness: "codex",
 		Decision: db.SpawnHarnessDeny, Reason: "Codex credits are reserved for release reviews",
@@ -37,7 +37,7 @@ func TestSpawnHarnessPolicyGroupDenyOverridesGlobalAllow(t *testing.T) {
 	g := f.HaveGroup("alpha")
 	const lead = "lead-group-harness-policy-222222222222"
 	f.HaveMember(g.Name, lead)
-	require.NoError(t, db.GrantAgentPermission(lead, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(lead, agentd.PermGroupsMembersSpawn, "test"))
 	require.NoError(t, db.ReplaceSpawnHarnessRules(0, []db.SpawnHarnessRule{{
 		SourceHarness: "claude", TargetHarness: "codex", Decision: db.SpawnHarnessAllow,
 	}}))
@@ -59,7 +59,7 @@ func TestSpawnHarnessPolicyChecksHarnessResolvedByDefaultProfile(t *testing.T) {
 	g := f.HaveGroup("alpha")
 	const lead = "lead-profile-harness-policy-333333333333"
 	f.HaveMember(g.Name, lead)
-	require.NoError(t, db.GrantAgentPermission(lead, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(lead, agentd.PermGroupsMembersSpawn, "test"))
 	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
 		"name": "codex-default", "harness": "codex", "model": "gpt-5-codex",
 	}).Code)

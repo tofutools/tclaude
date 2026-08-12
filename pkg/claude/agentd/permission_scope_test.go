@@ -10,16 +10,16 @@ import (
 
 func TestPermissionRegistryScopeDeclarations(t *testing.T) {
 	want := map[string][]ScopeDim{
-		PermGroupsSpawn:       {ScopeDimGroup, ScopeDimSpawnProfile},
-		PermProcessRunsManage: {ScopeDimProcessTemplate},
-		PermAgentRetire:       {ScopeDimGroup, ScopeDimTargetAgent},
-		PermAgentStanddown:    {ScopeDimGroup, ScopeDimTargetAgent},
-		PermRoutesPublish:     {ScopeDimGroup},
-		PermRoutesConsume:     {ScopeDimGroup},
-		PermGitRead:           {ScopeDimRemote},
-		PermGitPush:           {ScopeDimRemote},
-		PermGitHubRead:        {ScopeDimRemote},
-		PermGitHubWrite:       {ScopeDimRemote},
+		PermGroupsMembersSpawn: {ScopeDimGroup, ScopeDimSpawnProfile},
+		PermProcessRunsManage:  {ScopeDimProcessTemplate},
+		PermAgentRetire:        {ScopeDimGroup, ScopeDimTargetAgent},
+		PermAgentStanddown:     {ScopeDimGroup, ScopeDimTargetAgent},
+		PermRoutesPublish:      {ScopeDimGroup},
+		PermRoutesConsume:      {ScopeDimGroup},
+		PermGitRead:            {ScopeDimRemote},
+		PermGitPush:            {ScopeDimRemote},
+		PermGitHubRead:         {ScopeDimRemote},
+		PermGitHubWrite:        {ScopeDimRemote},
 	}
 	for _, entry := range permissionRegistry {
 		if dims, ok := want[entry.Slug]; ok {
@@ -63,20 +63,20 @@ func TestPermissionScopeParseAndValidate(t *testing.T) {
 		want    string
 		wantErr string
 	}{
-		{"absent", "", PermGroupsSpawn, "", ""},
-		{"empty object", `{}`, PermGroupsSpawn, "", ""},
-		{"exact and canonical", `{"spawn_profile":["p2","p1","p1"],"group":["dev"]}`, PermGroupsSpawn, `{"group":["dev"],"spawn_profile":["p1","p2"]}`, ""},
+		{"absent", "", PermGroupsMembersSpawn, "", ""},
+		{"empty object", `{}`, PermGroupsMembersSpawn, "", ""},
+		{"exact and canonical", `{"spawn_profile":["p2","p1","p1"],"group":["dev"]}`, PermGroupsMembersSpawn, `{"group":["dev"],"spawn_profile":["p1","p2"]}`, ""},
 		{"reserved selector", `{"target_agent":["@descendants","@self-spawned"]}`, PermAgentRetire, `{"target_agent":["@descendants","@self-spawned"]}`, ""},
 		{"undeclared dimension", `{"group":["dev"]}`, PermProcessRunsManage, "", "does not declare"},
 		{"remote pattern", `{"remote":["github.com/tofutools/*"]}`, PermGitPush, `{"remote":["github.com/tofutools/*"]}`, ""},
-		{"undeclared remote dimension", `{"remote":["origin"]}`, PermGroupsSpawn, "", "does not declare"},
-		{"dimension whitespace", `{" group":["dev"]}`, PermGroupsSpawn, "", "surrounding whitespace"},
+		{"undeclared remote dimension", `{"remote":["origin"]}`, PermGroupsMembersSpawn, "", "does not declare"},
+		{"dimension whitespace", `{" group":["dev"]}`, PermGroupsMembersSpawn, "", "surrounding whitespace"},
 		{"unknown selector", `{"target_agent":["@parent"]}`, PermAgentRetire, "", "unknown selector"},
-		{"selector on wrong dimension", `{"group":["@descendants"]}`, PermGroupsSpawn, "", "unknown selector"},
-		{"control character", `{"group":["dev\nadmin"]}`, PermGroupsSpawn, "", "control characters"},
-		{"empty matcher list", `{"group":[]}`, PermGroupsSpawn, "", "at least one matcher"},
-		{"empty matcher", `{"group":[""]}`, PermGroupsSpawn, "", "empty matcher"},
-		{"not an object", `[]`, PermGroupsSpawn, "", "must be a JSON object"},
+		{"selector on wrong dimension", `{"group":["@descendants"]}`, PermGroupsMembersSpawn, "", "unknown selector"},
+		{"control character", `{"group":["dev\nadmin"]}`, PermGroupsMembersSpawn, "", "control characters"},
+		{"empty matcher list", `{"group":[]}`, PermGroupsMembersSpawn, "", "at least one matcher"},
+		{"empty matcher", `{"group":[""]}`, PermGroupsMembersSpawn, "", "empty matcher"},
+		{"not an object", `[]`, PermGroupsMembersSpawn, "", "must be a JSON object"},
 		{"linear team key", `{"linear_team":["JOH","TCL"]}`, PermLinearRead, `{"linear_team":["JOH","TCL"]}`, ""},
 		// A team key is matched WHOLE, so a matcher that cannot be one would
 		// store and render as a narrow grant while matching nothing: every
@@ -87,7 +87,7 @@ func TestPermissionScopeParseAndValidate(t *testing.T) {
 		{"linear team prefix glob is not a key", `{"linear_team":["TCL*"]}`, PermLinearRead, "", "not a letter or a digit"},
 		{"linear team path is not a key", `{"linear_team":["acme/TCL"]}`, PermLinearRead, "", "not a letter or a digit"},
 		{"linear team key length is bounded", `{"linear_team":["THISKEYISWAYTOOLONG"]}`, PermLinearRead, "", "longer than 16"},
-		{"undeclared linear_team dimension", `{"linear_team":["TCL"]}`, PermGroupsSpawn, "", "does not declare"},
+		{"undeclared linear_team dimension", `{"linear_team":["TCL"]}`, PermGroupsMembersSpawn, "", "does not declare"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			scope, canonical, err := parsePermissionScope(json.RawMessage(tc.raw))
@@ -115,13 +115,13 @@ func TestCanonicalizeImportedPermissionScopesCoversAllGrantTables(t *testing.T) 
 	const want = `{"group":["dev","ops"]}`
 	exp := &groupexport.Export{
 		Group: groupexport.Group{Permissions: []groupexport.GroupPermission{{
-			Slug: PermGroupsSpawn, ScopeJSON: raw,
+			Slug: PermGroupsMembersSpawn, ScopeJSON: raw,
 		}}},
 		Permissions: []groupexport.Permission{{
-			ConvID: "conv", Slug: PermGroupsSpawn, Effect: "grant", ScopeJSON: raw,
+			ConvID: "conv", Slug: PermGroupsMembersSpawn, Effect: "grant", ScopeJSON: raw,
 		}},
 		SudoGrants: []groupexport.SudoGrant{{
-			ConvID: "conv", Slug: PermGroupsSpawn, ScopeJSON: raw,
+			ConvID: "conv", Slug: PermGroupsMembersSpawn, ScopeJSON: raw,
 		}},
 	}
 	if err := canonicalizeImportedPermissionScopes(exp); err != nil {

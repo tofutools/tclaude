@@ -38,7 +38,7 @@ var ErrNestedClaudeSpawn = errors.New("refusing to launch a nested Claude Code s
 // human's shell) in its ancestry — no `claude`/`node` — and
 // ClaudeAncestorCheck returns false for it. Agents that genuinely need
 // another session go through `tclaude agent spawn`, which the daemon
-// gates on the `groups.spawn` permission.
+// gates on the `groups.members.spawn` permission.
 //
 // Known limitation: if the human starts `tclaude agentd serve` from
 // inside a Claude Code session, daemon-forked spawns would inherit that
@@ -55,7 +55,7 @@ func GuardAgainstNestedSpawn() error {
 		"blocked to prevent runaway, nested agent spawns.\n\n"+
 		"  - Agents that need another session should use `tclaude agent spawn`,\n"+
 		"    which is routed through the agentd daemon and gated by the\n"+
-		"    `groups.spawn` permission.\n"+
+		"    `groups.members.spawn` permission.\n"+
 		"  - Humans should run `tclaude` from a terminal that is not attached\n"+
 		"    to a Claude Code session",
 		ErrNestedClaudeSpawn)

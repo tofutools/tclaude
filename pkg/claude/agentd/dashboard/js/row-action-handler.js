@@ -121,7 +121,7 @@ export async function handleRowAction(action) {
         // Stand down the force (JOH-345): the mirror of deploy. Retires every
         // member and sweeps the deploy-seeded rhythms + pending waves, keeping
         // the group as a dormant record. Destructive to the running roster, so
-        // confirm first. Server-gated (groups.retire / owner-pass) — a
+        // confirm first. Server-gated (groups.members.retire / owner-pass) — a
         // non-permitted click surfaces as a 403 toast.
         const confirmed = await confirmModal({
           title: 'Stand down the force?',

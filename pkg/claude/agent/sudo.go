@@ -65,7 +65,7 @@ type sudoGrantJSON struct {
 // --- sudo request ---
 
 type sudoRequestParams struct {
-	Slugs    []string `pos:"true" help:"One or more permission slugs to elevate (e.g. groups.spawn member.add)"`
+	Slugs    []string `pos:"true" help:"One or more permission slugs to elevate (e.g. groups.members.spawn groups.members.add)"`
 	Duration string   `long:"duration" short:"d" help:"How long the elevation lasts (e.g. 5m, 1h). Capped at 1h. Default: 5m." default:""`
 	Reason   string   `long:"reason" short:"r" help:"Optional justification surfaced in the popup + audit trail" default:""`
 	Target   string   `long:"target" short:"t" optional:"true" help:"Proactively grant the elevation TO another conv (title / prefix / conv-id). Human-only — no popup; the CLI shell IS the consent. Agents cannot use this (manager-pattern approval is deferred). Without --target the call goes through the popup as usual."`
