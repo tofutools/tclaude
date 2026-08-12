@@ -95,8 +95,6 @@ func TestSudo_Approved_GrantsForDuration(t *testing.T) {
 func TestSudo_UnknownSlugRejectedBeforeApproval(t *testing.T) {
 	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
 	t.Cleanup(restoreURL)
-	approvalCalls, restoreApproval := agentd.StubCountingApprovalForTest(true)
-	t.Cleanup(restoreApproval)
 
 	f := newFlow(t)
 	const conv = "sudo-unknown-aaaa-bbbb-1111"
@@ -107,7 +105,8 @@ func TestSudo_UnknownSlugRejectedBeforeApproval(t *testing.T) {
 	rec := testharness.Serve(f.Mux, r)
 	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "unknown_slug")
-	assert.EqualValues(t, 0, approvalCalls(), "unknown slugs must never reach approval")
+	snapshot := fetchAccessReqSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	assert.Zero(t, snapshot.AccessRequestsPending, "unknown slugs must never reach approval")
 }
 
 // Scenario: popup denies; no rows are inserted. Pins the explicit
