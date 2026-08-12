@@ -332,6 +332,16 @@ func ownerCanManageGroupMembers(g *db.AgentGroup, convID string, skipCaller bool
 	return true
 }
 
+func ownerCanManageConvs(convID string, targets []string) bool {
+	for _, target := range targets {
+		if target != "" && !sameActor(target, convID) &&
+			!ownerOwnsEveryActiveGroupContaining(convID, target) {
+			return false
+		}
+	}
+	return true
+}
+
 // ownerPermissionPermitted resolves group ownership as a permission source.
 // It is the only place that interprets PermSlug.OwnerScope for an action gate;
 // handlers supply targets through ActionContext and never choose an ownership
@@ -364,8 +374,14 @@ func ownerPermissionPermitted(convID, slug string, actx ActionContext) bool {
 			return false
 		}
 		skipCaller := slug == PermGroupsMembersRetire
-		if scope == ownerScopeGroupMembers && !ownerCanManageGroupMembers(g, convID, skipCaller) {
-			return false
+		if scope == ownerScopeGroupMembers {
+			if actx.affectedConvs != nil {
+				if !ownerCanManageConvs(convID, actx.affectedConvs) {
+					return false
+				}
+			} else if !ownerCanManageGroupMembers(g, convID, skipCaller) {
+				return false
+			}
 		}
 		return ownerOfGroupPermitting(g, convID, slug, actx)
 	default:

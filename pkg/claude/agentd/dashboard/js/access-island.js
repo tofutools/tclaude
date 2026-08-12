@@ -37,7 +37,7 @@ function PermissionsView({ current }) {
 // fleet-wide authority the gate does not grant (TCL-1013).
 export function ownerScopeTitle(scope) {
   if (scope === 'group') return 'Conferred by ownership — over the groups you own';
-  if (scope === 'group_members') return 'Conferred by ownership — over a whole owned-group roster only when every affected member is also contained exclusively in groups you own';
+  if (scope === 'group_members') return 'Conferred by ownership — over an owned-group roster only when every member the operation may affect is also contained exclusively in groups you own';
   if (scope === 'member') return 'Conferred by ownership — over members of the groups you own';
   if (scope === 'any') return 'Conferred by ownership — unscoped; owning any group is enough';
   return 'Conferred by group ownership';
@@ -71,7 +71,7 @@ function SlugsView({ state, current }) {
       <button class="clear-filter" id="filter-slugs-clear" title="Clear filter" aria-label="Clear slug filter"
         onClick=${() => { state.setSlugQuery(''); filterRef.current?.focus(); }}>×</button>
     </div>
-    <div class="muted" style="font-size:11px;margin-bottom:6px">👑 = group ownership confers this slug; 👥 = group membership confers it. <b>group</b> = over the groups you own; <b>group members</b> = over an owned group's whole roster only when every affected member is also contained exclusively in groups you own; <b>member</b> = over an agent only when you own all its active groups; <b>any</b> = unscoped, owning any group is enough. A per-agent deny suppresses structural grants.</div>
+    <div class="muted" style="font-size:11px;margin-bottom:6px">👑 = group ownership confers this slug; 👥 = group membership confers it. <b>group</b> = over the groups you own; <b>group members</b> = over an owned-group roster only when every member the operation may affect is also contained exclusively in groups you own; <b>member</b> = over an agent only when you own all its active groups; <b>any</b> = unscoped, owning any group is enough. A per-agent deny suppresses structural grants.</div>
     ${current.slugs.length === 0
       ? html`<div class="empty">${current.slugTotal ? 'No matching permission slugs.' : 'No slugs registered.'}</div>`
       : html`<table><thead><tr><th>Slug</th><th>Owner</th><th>Description</th></tr></thead><tbody>

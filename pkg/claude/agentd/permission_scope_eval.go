@@ -58,6 +58,9 @@ type ActionContext struct {
 	// targetConv is the live conversation acted on by a whole-agent operation.
 	// TargetAgent remains the stable, operator-facing scope value.
 	targetConv string
+	// affectedConvs, when non-nil, is a stable, precomputed cohort for a bulk
+	// whole-agent mutation. Nil means the operation can affect the live roster.
+	affectedConvs []string
 }
 
 // value projects the context onto one scope dimension. An unknown dimension

@@ -2359,18 +2359,40 @@ func disableGroupRhythmsIfEmptied(g *db.AgentGroup) int {
 // permUndecided gap — an explicit deny override is always
 // authoritative and suppresses it.
 func handleGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	caller, ok := requireGroupPermission(w, r, PermGroupsMembersRetire, g)
-	if !ok {
-		return
-	}
 	filter, ferr := parseRetireStatusFilter(r.URL.Query().Get("status"))
 	if ferr != nil {
 		writeError(w, http.StatusBadRequest, "status", ferr.Error())
 		return
 	}
+	var selected map[string]struct{}
+	var affected []string
+	if filter != nil {
+		members, err := db.ListAgentGroupMembers(g.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		alive, _ := session.LiveTmuxSessions()
+		selected = map[string]struct{}{}
+		for _, member := range members {
+			online, status := convLiveStatus(member.ConvID, alive)
+			if filter.matches(online, status) {
+				selected[member.ConvID] = struct{}{}
+				affected = append(affected, member.ConvID)
+			}
+		}
+	}
+	ctx := ActionContext{}
+	if filter != nil {
+		ctx.affectedConvs = affected
+	}
+	caller, ok := requireGroupPermission(w, r, PermGroupsMembersRetire, g, ctx)
+	if !ok {
+		return
+	}
 	out, err := bulkRetireGroupMembers(g, caller,
 		strings.TrimSpace(r.URL.Query().Get("reason")),
-		retireShouldShutdown(r), retireShouldDeleteWorktree(r), filter, nil,
+		retireShouldShutdown(r), retireShouldDeleteWorktree(r), nil, selected,
 		auditRequestEventID(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
