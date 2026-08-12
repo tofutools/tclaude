@@ -2367,6 +2367,7 @@ func handleGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	var selected map[string]struct{}
 	var affected []string
 	if filter != nil {
+		affected = []string{}
 		members, err := db.ListAgentGroupMembers(g.ID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
