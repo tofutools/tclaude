@@ -8,8 +8,9 @@ description: >-
   rename the conversation/session/agent, or when you decide to give yourself a
   clearer name (e.g. after taking on a new role in a group). Manager pattern:
   `tclaude agent rename "<title>" --target <peer>` renames ANOTHER agent
-  (requires the `agent.rename` slug, OR being an owner of a group containing the
-  target).
+  (requires global `agent.rename`, or `groups.members.rename` covering every
+  current active group containing the target; ownership contributes the latter
+  for owned groups).
 ---
 
 # Renaming yourself

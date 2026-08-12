@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -178,33 +179,38 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 			scopeContext.TargetAgent = targetAgent
 		}
 	}
-	v := resolvePermissionVerdictForRequest(r, p.ConvID, perm)
-	switch v.Resolution {
-	case permAllow:
-		eval := evalPermissionScope(v, p.ConvID, scopeContext)
-		if eval.Satisfied {
-			recordAuditPermissionScope(r, perm, eval.Matched)
-			return p.ConvID, true
+	if allowed, matched := permissionAllowsAction(r, p.ConvID, perm, scopeContext); allowed {
+		recordAuditPermissionScope(r, perm, matched)
+		return p.ConvID, true
+	}
+
+	// A global agent.* deny or missing grant does not suppress the distinct
+	// groups.members.* capability. The sibling must cover EVERY current active
+	// group containing the target; different positive sources may collectively
+	// cover that finite set.
+	if sibling := GroupSiblingForSlug(perm); sibling != "" {
+		groups := scopeContext.affectedGroups
+		var err error
+		if groups == nil {
+			groups, err = activeGroupNamesForConvs(targetConv)
 		}
-		// Scoped away from this action: the grant decides nothing here, so
-		// fall through to the owner bypass and then the popup, exactly as an
-		// undecided verdict would.
-		if structuralPermissionPermitted(p.ConvID, perm, scopeContext) {
-			return p.ConvID, true
+		if err != nil {
+			slog.Warn("permissions: target group footprint lookup failed", "target", targetConv, "error", err)
+		} else if len(groups) > 0 {
+			covered := true
+			for _, group := range groups {
+				candidate := scopeContext
+				candidate.Group = group
+				if allowed, _ := permissionAllowsAction(r, p.ConvID, sibling, candidate); !allowed {
+					covered = false
+					break
+				}
+			}
+			if covered {
+				recordAuditPermissionScope(r, sibling, "group="+strings.Join(groups, ","))
+				return p.ConvID, true
+			}
 		}
-	case permUndecided:
-		// No grant source — the group-owner structural bypass still
-		// applies: an owner can manage members of groups it owns, narrowed
-		// by the owner-scope map of whichever owned group contains the
-		// target (TCL-1071). Each candidate group is judged on its own map,
-		// so a narrowed group cannot suppress an unnarrowed one.
-		if structuralPermissionPermitted(p.ConvID, perm, scopeContext) {
-			return p.ConvID, true
-		}
-	case permDeny:
-		// Explicit per-conv deny override — authoritative; it suppresses
-		// the owner bypass too. Fall through to the human-approval popup
-		// so the human can still grant a one-off exception.
 	}
 
 	// Last chance: human-approval popup. Same shape as the
@@ -256,6 +262,34 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 		fmt.Sprintf("caller is not granted %q for target %s, and is not an owner of any group containing it (grant via `tclaude agent permissions grant %s %s`, add caller as owner of a shared group, or call again with X-Tclaude-Ask-Human: <duration> to ask the human via popup)",
 			perm, short8(targetConv), perm, short8(p.ConvID)))
 	return "", false
+}
+
+// activeGroupNamesForConvs computes the bounded authorization footprint used
+// by group-scoped operations on globally shared agents. It snapshots current
+// active memberships exactly once per target, ignores archived/history rows,
+// and never recursively chases downstream effects.
+func activeGroupNamesForConvs(targets ...string) ([]string, error) {
+	seen := map[string]bool{}
+	for _, target := range targets {
+		if target == "" {
+			continue
+		}
+		groups, err := db.ListGroupsForConv(target)
+		if err != nil {
+			return nil, err
+		}
+		for _, group := range groups {
+			if group != nil && !group.IsArchived() {
+				seen[group.Name] = true
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for name := range seen {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 // requireInboxAccess resolves the effective inbox conv for a read-only

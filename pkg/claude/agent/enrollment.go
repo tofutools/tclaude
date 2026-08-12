@@ -43,8 +43,7 @@ func promoteCmd() *cobra.Command {
 			"\n\n" +
 			"If the target is a retired agent, promote reinstates it. " +
 			"\n\n" +
-			"Auth: requires the agent.promote permission OR being an owner " +
-			"of a group containing the target.",
+			"Auth: requires global agent.promote, or groups.members.promote covering every current active group containing the target. Ownership automatically contributes the latter for owned groups.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *promoteParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Selector).SetAlternativesFunc(completeConvSelectors)
@@ -122,8 +121,7 @@ func retireCmd() *cobra.Command {
 			"This is the non-destructive alternative to `tclaude agent " +
 			"delete`, which permanently wipes the conversation. " +
 			"\n\n" +
-			"Auth: requires the agent.retire permission OR being an owner " +
-			"of a group containing the target.",
+			"Auth: requires global agent.retire, or groups.members.retire covering every current active group containing the target. Ownership automatically contributes the latter for owned groups.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *retireParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Selector).SetAlternativesFunc(completeConvSelectors)

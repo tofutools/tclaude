@@ -61,6 +61,10 @@ type ActionContext struct {
 	// affectedConvs, when non-nil, is a stable, precomputed cohort for a bulk
 	// whole-agent mutation. Nil means the operation can affect the live roster.
 	affectedConvs []string
+	// affectedGroups, when non-nil, is a stable, precomputed authorization
+	// footprint for an operation such as clone that also creates inherited
+	// ownership relationships. It is already deduplicated by the producer.
+	affectedGroups []string
 }
 
 // value projects the context onto one scope dimension. An unknown dimension

@@ -79,7 +79,19 @@ const daemonSoftExitReason = "soft_exit"
 // Members that aren't currently online are reported as
 // `skipped:already_offline` and skipped — stop is idempotent.
 func handleGroupStop(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	if _, ok := requireGroupPermission(w, r, PermGroupsMembersStop, g); !ok {
+	members, err := db.ListAgentGroupMembers(g.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	affected := make([]string, 0, len(members))
+	for _, member := range members {
+		if pickAliveSession(member.ConvID) != nil {
+			affected = append(affected, member.ConvID)
+		}
+	}
+	if _, ok := requireGroupPermission(w, r, PermGroupsMembersStop, g,
+		ActionContext{affectedConvs: affected}); !ok {
 		return
 	}
 	force := r.URL.Query().Get("force") == "1"
@@ -88,11 +100,6 @@ func handleGroupStop(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		action = db.AgentExitActionForceStop
 	}
 	requestEventID := auditRequestEventID(r)
-	members, err := db.ListAgentGroupMembers(g.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io", err.Error())
-		return
-	}
 	// Every member is stopped CONCURRENTLY and each stop WAITS for its pane
 	// process to actually die (the full ladder: the exit command plus its
 	// double-tap re-injections, then kill-pane, SIGTERM, SIGKILL). Sequentially
@@ -1224,17 +1231,24 @@ func livePaneCwd(tmuxSession string) (string, error) {
 // — resume is idempotent. The "ensure my team is up" reconciliation
 // the TODO design described.
 func handleGroupResume(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	caller, ok := requireGroupPermission(w, r, PermGroupsMembersResume, g)
-	if !ok {
-		return
-	}
-	authTarget := caller
-	requestTrustRoot := caller == "" || hasHumanApprovalContinuation(r, PermGroupsMembersResume, authTarget)
 	members, err := db.ListAgentGroupMembers(g.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
+	affected := make([]string, 0, len(members))
+	for _, member := range members {
+		if member.ConvID != "" && pickAliveSession(member.ConvID) == nil {
+			affected = append(affected, member.ConvID)
+		}
+	}
+	caller, ok := requireGroupPermission(w, r, PermGroupsMembersResume, g,
+		ActionContext{affectedConvs: affected})
+	if !ok {
+		return
+	}
+	authTarget := caller
+	requestTrustRoot := caller == "" || hasHumanApprovalContinuation(r, PermGroupsMembersResume, authTarget)
 	// Resume every member CONCURRENTLY: each one is a DB/filesystem probe plus
 	// a spawned `tclaude session new` subprocess, so a sequential loop cost the
 	// SUM of every member's launch. The bound is the same one the dashboard's

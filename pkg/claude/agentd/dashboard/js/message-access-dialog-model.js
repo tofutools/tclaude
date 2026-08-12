@@ -193,21 +193,9 @@ function membershipGroups(snapshot, descriptor) {
   return [];
 }
 
-// ownerSource phrases where an owner-conferred slug actually reaches.
-// Naming the owned groups is right for a group- or member-scoped slug,
-// but wrong for an unscoped one (human.notify, process.runs.read): those
-// come from owning ANYTHING, so listing particular groups reads as a
-// limit that is not there. A daemon that predates owner_scope sends no
-// scope, and keeps the historical group-naming wording.
-export function ownerSource(scope, ownedGroups) {
-  if (scope === 'group') return `owner: ${ownedGroups.join(', ')}`;
-  if (scope === 'group_members') return `owner: protected rosters of ${ownedGroups.join(', ')}`;
-  if (scope === 'member') return `owner: members of ${ownedGroups.join(', ')}`;
-  if (scope === 'any') return 'owner: any group owned';
-  // Legacy daemons send no scope at all — keep the historical wording.
-  // A scope this build does not recognise is deliberately NOT guessed
-  // into the narrower group phrasing.
-  return scope ? 'owner: conferred by group ownership' : `owner: ${ownedGroups.join(', ')}`;
+export function ownerSource(scopeDims, ownedGroups) {
+  if ((scopeDims || []).includes('group')) return `owner grant: ${ownedGroups.join(', ')}`;
+  return 'owner grant: global';
 }
 
 export function permissionRows(snapshot, descriptor, selection) {
@@ -234,7 +222,7 @@ export function permissionRows(snapshot, descriptor, selection) {
       sources.push(`group: ${groupGrants.get(slug.slug).join(', ')}`);
     }
     if (effect === 'default' && slug.owner_implied && ownedGroups.length) {
-      sources.push(ownerSource(slug.owner_scope, ownedGroups));
+      sources.push(ownerSource(slug.scope_dims, ownedGroups));
     }
     if (effect === 'default' && slug.member_implied && descriptor.mode === 'agent' && groups.length) {
       sources.push(`member: ${groups.join(', ')}`);

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -324,6 +325,20 @@ const (
 	PermGroupsMembersResume               = "groups.members.resume"
 	PermGroupsMembersRetire               = "groups.members.retire"
 	PermGroupsMembersSpawn                = "groups.members.spawn"
+	PermGroupsMembersReincarnate          = "groups.members.reincarnate"
+	PermGroupsMembersCompact              = "groups.members.compact"
+	PermGroupsMembersInterrupt            = "groups.members.interrupt"
+	PermGroupsMembersRename               = "groups.members.rename"
+	PermGroupsMembersClone                = "groups.members.clone"
+	PermGroupsMembersContextInfo          = "groups.members.context-info"
+	PermGroupsMembersTask                 = "groups.members.task"
+	PermGroupsMembersPR                   = "groups.members.pr"
+	PermGroupsMembersTags                 = "groups.members.tags"
+	PermGroupsMembersSchedule             = "groups.members.schedule"
+	PermGroupsMembersDelete               = "groups.members.delete"
+	PermGroupsMembersPromote              = "groups.members.promote"
+	PermGroupsMembersRemoteControl        = "groups.members.remote-control"
+	PermGroupsMembersInboxWatch           = "groups.members.inbox-watch"
 	PermGroupsOwnersManage                = "groups.owners.manage"
 	PermGroupsMembersAdd                  = "groups.members.add"
 	PermGroupsMembersRemove               = "groups.members.remove"
@@ -782,7 +797,89 @@ func requireGroupPermission(w http.ResponseWriter, r *http.Request, perm string,
 		ctx.Group = g.Name
 	}
 	ctx.structuralGroup = g.Name
-	return requirePermissionEx(w, r, perm, ctx)
+	caller, ok := requirePermissionEx(w, r, perm, ctx)
+	if !ok || caller == "" || !isBulkGroupMemberPermission(perm) {
+		return caller, ok
+	}
+	targets := ctx.affectedConvs
+	if targets == nil {
+		members, err := db.ListAgentGroupMembers(g.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return "", false
+		}
+		for _, member := range members {
+			if perm == PermGroupsMembersRetire && sameActor(caller, member.ConvID) {
+				continue
+			}
+			targets = append(targets, member.ConvID)
+		}
+	}
+	seenGroups := map[string]bool{}
+	for _, target := range targets {
+		groups, err := activeGroupNamesForConvs(target)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", "resolve affected groups: "+err.Error())
+			return "", false
+		}
+		targetAgent, err := db.AgentIDForConv(target)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", "resolve affected agent: "+err.Error())
+			return "", false
+		}
+		for _, group := range groups {
+			candidate := ctx
+			candidate.Group = group
+			candidate.TargetAgent = targetAgent
+			candidate.targetConv = target
+			if allowed, _ := permissionAllowsAction(r, caller, perm, candidate); !allowed {
+				writeError(w, http.StatusForbidden, "permission",
+					fmt.Sprintf("caller is not granted permission %q for every current active group affected by this operation", perm))
+				return "", false
+			}
+			seenGroups[group] = true
+		}
+	}
+	groups := make([]string, 0, len(seenGroups))
+	for group := range seenGroups {
+		groups = append(groups, group)
+	}
+	sort.Strings(groups)
+	if len(groups) > 0 {
+		recordAuditPermissionScope(r, perm, "group="+strings.Join(groups, ","))
+	}
+	return caller, true
+}
+
+func isBulkGroupMemberPermission(slug string) bool {
+	switch slug {
+	case PermGroupsMembersStop, PermGroupsMembersResume, PermGroupsMembersRetire:
+		return true
+	default:
+		return false
+	}
+}
+
+// permissionAllowsAction evaluates all standing sources for one slug and one
+// concrete action. A scoped positive source that misses the action does not
+// revoke lower positive authority: the owner/member tier may still cover it.
+// An explicit deny remains authoritative and suppresses structural grants.
+func permissionAllowsAction(r *http.Request, convID, perm string, actx ActionContext) (bool, string) {
+	v := resolvePermissionVerdictForRequest(r, convID, perm)
+	switch v.Resolution {
+	case permAllow:
+		eval := evalPermissionScope(v, convID, actx)
+		if eval.Satisfied {
+			return true, eval.Matched
+		}
+		return structuralPermissionMatch(convID, perm, actx)
+	case permUndecided:
+		return structuralPermissionMatch(convID, perm, actx)
+	case permDeny:
+		return false, ""
+	default:
+		return false, ""
+	}
 }
 
 // requirePermissionEx is the shared core of requirePermission and
@@ -869,24 +966,10 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ac
 		// grants (and their scopes) are not consulted at all.
 		allowed = true
 	} else {
-		v := resolvePermissionVerdictForRequest(r, p.ConvID, perm)
 		bypassCtx := actionContextOf(actx)
-		switch v.Resolution {
-		case permAllow:
-			eval := evalPermissionScope(v, p.ConvID, bypassCtx)
-			if eval.Satisfied {
-				allowed = true
-				recordAuditPermissionScope(r, perm, eval.Matched)
-			} else {
-				// The grant is scoped away from this action, so it decides
-				// nothing here — the same gap permUndecided leaves.
-				allowed = structuralPermissionPermitted(p.ConvID, perm, bypassCtx)
-			}
-		case permUndecided:
-			allowed = structuralPermissionPermitted(p.ConvID, perm, bypassCtx)
-		case permDeny:
-			// Authoritative deny — suppresses the owner bypass.
-		}
+		var matched string
+		allowed, matched = permissionAllowsAction(r, p.ConvID, perm, bypassCtx)
+		recordAuditPermissionScope(r, perm, matched)
 	}
 	if !allowed {
 		// Permission denied. If the caller asked for a human-override

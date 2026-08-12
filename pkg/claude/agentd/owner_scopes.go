@@ -347,51 +347,29 @@ func ownerCanManageConvs(convID string, targets []string) bool {
 	return true
 }
 
-// ownerPermissionPermitted resolves group ownership as a permission source.
-// It is the only place that interprets PermSlug.OwnerScope for an action gate;
-// handlers supply targets through ActionContext and never choose an ownership
-// predicate themselves.
+// ownerPermissionPermitted evaluates ownership through the same typed scope
+// vocabulary as every persisted grant. Ownership contributes one group-scoped
+// grant per owned active group for group-aware slugs, or an unscoped grant for
+// the deliberately global owner bonuses.
 func ownerPermissionPermitted(convID, slug string, actx ActionContext) bool {
-	scope := ownerScope(OwnerScopeForSlug(slug))
-	switch scope {
-	case ownerScopeNone:
-		return false
-	case ownerScopeAny:
-		return ownsAnyGroupPermitting(convID, slug, actx)
-	case ownerScopeMember:
-		if actx.targetConv != "" {
-			return ownerOfGroupContainingPermitting(convID, actx.targetConv, slug, actx)
-		}
-		// A group-wide member read has no single target conversation. Treat it
-		// as authority over the roster and apply the same shared-member bound.
-		if actx.structuralGroup == "" {
-			return false
-		}
-		g, err := db.GetAgentGroupByName(actx.structuralGroup)
-		return err == nil && g != nil && ownerCanManageGroupMembers(g, convID, true) &&
-			ownerOfGroupPermitting(g, convID, slug, actx)
-	case ownerScopeGroup, ownerScopeGroupMembers:
-		if actx.structuralGroup == "" {
-			return false
-		}
-		g, err := db.GetAgentGroupByName(actx.structuralGroup)
-		if err != nil || g == nil {
-			return false
-		}
-		skipCaller := slug == PermGroupsMembersRetire
-		if scope == ownerScopeGroupMembers {
-			if actx.affectedConvs != nil {
-				if !ownerCanManageConvs(convID, actx.affectedConvs) {
-					return false
-				}
-			} else if !ownerCanManageGroupMembers(g, convID, skipCaller) {
-				return false
-			}
-		}
-		return ownerOfGroupPermitting(g, convID, slug, actx)
-	default:
-		return false
+	ok, _ := ownerPermissionMatch(convID, slug, actx)
+	return ok
+}
+
+func ownerPermissionMatch(convID, slug string, actx ActionContext) (bool, string) {
+	entry, ok := ownerImpliedTierFor(convID)[slug]
+	if !ok || !entry.confers() {
+		return false, ""
 	}
+	if entry.Unrestricted {
+		return true, ""
+	}
+	for _, scope := range entry.Scopes {
+		if permissionScopeSatisfied(convID, scope, actx) {
+			return true, permissionScopeDisplay(scope)
+		}
+	}
+	return false, ""
 }
 
 func memberPermissionPermitted(convID, slug string, actx ActionContext) bool {
@@ -408,6 +386,13 @@ func memberPermissionPermitted(convID, slug string, actx ActionContext) bool {
 
 func structuralPermissionPermitted(convID, slug string, actx ActionContext) bool {
 	return ownerPermissionPermitted(convID, slug, actx) || memberPermissionPermitted(convID, slug, actx)
+}
+
+func structuralPermissionMatch(convID, slug string, actx ActionContext) (bool, string) {
+	if ok, scope := ownerPermissionMatch(convID, slug, actx); ok {
+		return true, scope
+	}
+	return memberPermissionPermitted(convID, slug, actx), ""
 }
 
 // ownerTierEntry is what group ownership confers on one agent for one slug,
@@ -528,20 +513,51 @@ func ownerImpliedTierFor(convID string) ownerImpliedTier {
 				tier[slug] = entry
 				continue
 			}
-			if entry.Unrestricted {
-				continue
-			}
-			scope, narrowed := scopes[slug]
-			if !narrowed {
+			constraint := scopes[slug]
+			if containsScopeDim(permissionScopeDimsForSlug(slug), ScopeDimGroup) {
+				scope, ok := ownerDerivedGroupScope(g.Name, constraint)
+				if ok {
+					entry.Scopes = append(entry.Scopes, scope)
+				}
+			} else if len(constraint) == 0 {
 				entry.Unrestricted = true
 				entry.Scopes = nil
-			} else {
-				entry.Scopes = append(entry.Scopes, scope)
+			} else if !entry.Unrestricted {
+				entry.Scopes = append(entry.Scopes, clonePermissionScope(constraint))
 			}
 			tier[slug] = entry
 		}
 	}
 	return tier
+}
+
+// ownerDerivedGroupScope intersects the mandatory owned-group boundary with
+// the group's optional owner constraint. A conflicting explicit group matcher
+// contributes no grant; it can never widen ownership to another group.
+func ownerDerivedGroupScope(group string, constraint PermissionScope) (PermissionScope, bool) {
+	out := clonePermissionScope(constraint)
+	if matchers, constrained := out[ScopeDimGroup]; constrained {
+		matched := false
+		for _, matcher := range matchers {
+			if matcher == group {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return nil, false
+		}
+	}
+	out[ScopeDimGroup] = []string{group}
+	return out, true
+}
+
+func clonePermissionScope(in PermissionScope) PermissionScope {
+	out := make(PermissionScope, len(in)+1)
+	for dim, matchers := range in {
+		out[dim] = append([]string(nil), matchers...)
+	}
+	return out
 }
 
 // ownerScopeDisplay renders the owner tier's reach for one slug, appended to

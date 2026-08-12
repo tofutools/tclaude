@@ -9,6 +9,7 @@ import (
 	"os"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1128,7 +1129,13 @@ func handleAgentClone(w http.ResponseWriter, r *http.Request, targetConv string)
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
 		return
 	}
-	caller, ok := requireCrossAgentPermission(w, r, PermAgentClone, targetConv)
+	groups, err := cloneAuthorizationGroups(targetConv)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "snapshot clone authorization groups: "+err.Error())
+		return
+	}
+	caller, ok := requireCrossAgentPermission(w, r, PermAgentClone, targetConv,
+		ActionContext{affectedGroups: groups})
 	if !ok {
 		return
 	}
@@ -1137,6 +1144,33 @@ func handleAgentClone(w http.ResponseWriter, r *http.Request, targetConv string)
 		return
 	}
 	runCloneOrchestration(w, r, targetConv, caller, PermAgentClone, body)
+}
+
+func cloneAuthorizationGroups(targetConv string) ([]string, error) {
+	groups, err := activeGroupNamesForConvs(targetConv)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool, len(groups))
+	for _, name := range groups {
+		seen[name] = true
+	}
+	ownedIDs, err := db.ListGroupsOwnedBy(targetConv)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range ownedIDs {
+		group, err := db.GetAgentGroupByID(id)
+		if err != nil {
+			return nil, err
+		}
+		if group != nil && !group.IsArchived() && !seen[group.Name] {
+			groups = append(groups, group.Name)
+			seen[group.Name] = true
+		}
+	}
+	sort.Strings(groups)
+	return groups, nil
 }
 
 // cloneBody is the decoded, validated POST body shared by the clone

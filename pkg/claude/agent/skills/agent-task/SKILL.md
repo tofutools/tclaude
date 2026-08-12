@@ -7,8 +7,9 @@ description: >-
   record what work item YOU are on (`self.task`, default-granted), or, when
   spawning workers, to point each one at its issue: `tclaude agent spawn --task
   <url>`. Manager pattern: `tclaude agent task set <url> --target <peer>` sets
-  ANOTHER agent's link (requires the `agent.task` slug, OR being an owner of a
-  group containing the target).
+  ANOTHER agent's link (requires global `agent.task`, or `groups.members.task`
+  covering every current active group containing the target; ownership
+  contributes the latter for owned groups).
 ---
 
 # Task-reference links

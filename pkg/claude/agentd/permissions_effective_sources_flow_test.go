@@ -219,10 +219,7 @@ func TestPermissionsRoster_DisclosesGroupGrants(t *testing.T) {
 		"the roster must name the slugs a group confers on its members")
 }
 
-// Scenario: an owner-conferred slug must say WHERE it applies. The gate
-// scopes the owner bypass to owned groups (or their members) for most
-// slugs, and not at all for the ownsAnyGroup pair — so a listing that
-// says only "via ownership" claims authority the gate refuses.
+// Scenario: owner-contributed group slugs expose their ordinary scopes.
 func TestEffectivePerms_OwnerConferredSlugsCarryTheirScope(t *testing.T) {
 	f := newFlow(t)
 
@@ -240,14 +237,14 @@ func TestEffectivePerms_OwnerConferredSlugsCarryTheirScope(t *testing.T) {
 		"the response names the owned groups, sorted, so a client need not read the DB")
 
 	// groups.members.spawn reaches the owned groups themselves...
-	assert.Equal(t, "owner:group", view.Provenance[agentd.PermGroupsMembersSpawn],
-		"a requireGroupPermission slug is group-scoped")
-	// ...agent.rename reaches their members...
-	assert.Equal(t, "owner:member", view.Provenance[agentd.PermAgentRename],
-		"a requireCrossAgentPermission slug is member-scoped")
-	// ...and human.notify is genuinely unscoped (ownsAnyGroup).
-	assert.Equal(t, "owner:any", view.Provenance[agentd.PermHumanNotify],
-		"an ownsAnyGroup slug must not claim a per-group scope")
+	assert.Equal(t, "owner [group=squad-a] OR [group=squad-b]", view.Provenance[agentd.PermGroupsMembersSpawn])
+	// Global agent.* slugs are no longer owner-conferred; the dedicated group
+	// sibling carries that authority instead.
+	assert.NotContains(t, view.Effective, agentd.PermAgentRename)
+	assert.Equal(t, "owner [group=squad-a] OR [group=squad-b]",
+		view.Provenance[agentd.PermGroupsMembersRename])
+	// human.notify remains the deliberate global owner bonus.
+	assert.Equal(t, "owner", view.Provenance[agentd.PermHumanNotify])
 }
 
 func TestEffectivePerms_MemberConferredSlugIsListed(t *testing.T) {

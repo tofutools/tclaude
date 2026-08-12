@@ -128,36 +128,49 @@ func TestOwnerImpliedTierUnionsAcrossOwnedGroups(t *testing.T) {
 	tier := ownerImpliedTierFor(owner)
 	require.Contains(t, tier, PermGroupsMembersSpawn)
 	assert.False(t, tier[PermGroupsMembersSpawn].Unrestricted, "the only owned group narrows spawn")
-	assert.True(t, tier[PermGroupsMembersStop].Unrestricted, "an unmentioned slug is unrestricted")
+	assert.True(t, tier.satisfiedBy(owner, PermGroupsMembersStop, ActionContext{Group: "tier-narrow"}),
+		"an unmentioned slug still gets the mandatory owned-group scope")
 	assert.True(t, tier.satisfiedBy(owner, PermGroupsMembersSpawn, ActionContext{Group: "tier-narrow", SpawnProfile: "p1"}))
 	assert.False(t, tier.satisfiedBy(owner, PermGroupsMembersSpawn, ActionContext{Group: "tier-narrow", SpawnProfile: "p2"}))
 
-	// Owning a SECOND, unnarrowed group restores the unrestricted reading —
-	// union with unrestricted is unrestricted, the same rule an unscoped row
-	// applies within a grant tier.
+	// Owning a second group contributes a second scoped row; it never turns the
+	// group permission into a global one.
 	wideID, err := db.CreateAgentGroup("tier-wide", "")
 	require.NoError(t, err)
 	require.NoError(t, db.AddAgentGroupOwner(wideID, owner, "test"))
 
 	tier = ownerImpliedTierFor(owner)
-	assert.True(t, tier[PermGroupsMembersSpawn].Unrestricted,
-		"an unnarrowed owned group must not be suppressed by a narrowed sibling")
+	assert.False(t, tier[PermGroupsMembersSpawn].Unrestricted)
+	assert.Len(t, tier[PermGroupsMembersSpawn].Scopes, 2)
 	assert.True(t, tier.satisfiedBy(owner, PermGroupsMembersSpawn, ActionContext{Group: "tier-wide", SpawnProfile: "p2"}))
+}
+
+func TestOwnerImpliedTierIgnoresArchivedGroups(t *testing.T) {
+	setupTestDB(t)
+	const owner = "owner-archived-conv-0001"
+	_, _, err := db.EnsureAgentForConv(owner, "spawn")
+	require.NoError(t, err)
+	id, err := db.CreateAgentGroup("archived-owner-grant", "")
+	require.NoError(t, err)
+	require.NoError(t, db.AddAgentGroupOwner(id, owner, "test"))
+	require.Contains(t, ownerImpliedTierFor(owner), PermGroupsMembersSpawn)
+	require.NoError(t, db.ArchiveAgentGroup("archived-owner-grant"))
+	assert.Empty(t, ownerImpliedTierFor(owner), "archived ownership is forensic history, not live authority")
 }
 
 // The listing must state the reach the gate will actually allow. An owner
 // whose bypass is pinned to one profile is not holding the fleet-wide slug the
 // bare "owner:group" provenance implies.
 func TestOwnerProvenanceRendersTheNarrowing(t *testing.T) {
-	assert.Equal(t, "owner:group", ownerProvenance(PermGroupsMembersSpawn, ownerTierEntry{Unrestricted: true}))
-	assert.Equal(t, "owner:group [spawn_profile=p1]",
+	assert.Equal(t, "owner", ownerProvenance(PermHumanNotify, ownerTierEntry{Unrestricted: true}))
+	assert.Equal(t, "owner [group=g1 spawn_profile=p1]",
 		ownerProvenance(PermGroupsMembersSpawn, ownerTierEntry{
-			Scopes: []PermissionScope{{ScopeDimSpawnProfile: {"p1"}}}}))
-	assert.Equal(t, "owner:group [spawn_profile=p1] OR [spawn_profile=p2]",
+			Scopes: []PermissionScope{{ScopeDimGroup: {"g1"}, ScopeDimSpawnProfile: {"p1"}}}}))
+	assert.Equal(t, "owner [group=g1 spawn_profile=p1] OR [group=g2 spawn_profile=p2]",
 		ownerProvenance(PermGroupsMembersSpawn, ownerTierEntry{Scopes: []PermissionScope{
-			{ScopeDimSpawnProfile: {"p2"}}, {ScopeDimSpawnProfile: {"p1"}}}}),
+			{ScopeDimGroup: {"g2"}, ScopeDimSpawnProfile: {"p2"}},
+			{ScopeDimGroup: {"g1"}, ScopeDimSpawnProfile: {"p1"}}}}),
 		"two owned groups' narrowings render as the OR the gate evaluates")
-	assert.Equal(t, "owner:any", ownerProvenance(PermHumanNotify, ownerTierEntry{Unrestricted: true}))
 }
 
 // Attenuation must consult the NARROWED owner tier where the plain resolver is
@@ -208,43 +221,14 @@ func TestGranterScopesForSlugPrefersExplicitGrantOverOwnerNarrowing(t *testing.T
 		"an unscoped explicit grant wins over a narrowed bypass, so delegation stays unconstrained")
 }
 
-// The group dimension is filled in by the site that KNOWS which group carries
-// the bypass. Otherwise the obvious narrowing — {"agent.retire": {"group":
-// ["g1"]}} on g1 — would refuse every time and read as a revoke rather than the
-// confinement the operator wrote. The cross-agent gate cannot fill it in: it
-// targets an agent, and which owned group carries the authority is only decided
-// while enumerating candidates.
-func TestOwnerBypassFillsTheGroupDimensionFromTheCarryingGroup(t *testing.T) {
-	setupTestDB(t)
-	const owner = "owner-groupdim-conv-0001"
-	const target = "owner-groupdim-target-0001"
-	for _, conv := range []string{owner, target} {
-		_, _, err := db.EnsureAgentForConv(conv, "spawn")
-		require.NoError(t, err)
-	}
-	id, err := db.CreateAgentGroup("groupdim", "")
-	require.NoError(t, err)
-	require.NoError(t, db.AddAgentGroupOwner(id, owner, "test"))
-	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: id, ConvID: target, Role: "worker"}))
+func TestOwnerDerivedGrantAlwaysCarriesItsOwnedGroup(t *testing.T) {
+	scope, ok := ownerDerivedGroupScope("groupdim", PermissionScope{ScopeDimSpawnProfile: {"reviewer"}})
+	require.True(t, ok)
+	assert.Equal(t, []string{"groupdim"}, scope[ScopeDimGroup])
+	assert.Equal(t, []string{"reviewer"}, scope[ScopeDimSpawnProfile])
 
-	_, err = db.SetAgentGroupOwnerScopes("groupdim", `{"agent.retire":{"group":["groupdim"]}}`)
-	require.NoError(t, err)
-	assert.True(t, ownerOfGroupContainingPermitting(owner, target, PermAgentRetire, ActionContext{}),
-		"the candidate group IS the group the bypass flows through")
-
-	// Naming a DIFFERENT group still refuses: filling the dimension states the
-	// truth, it does not wave the matcher through.
-	_, err = db.SetAgentGroupOwnerScopes("groupdim", `{"agent.retire":{"group":["elsewhere"]}}`)
-	require.NoError(t, err)
-	assert.False(t, ownerOfGroupContainingPermitting(owner, target, PermAgentRetire, ActionContext{}))
-
-	// And a group-scoped gate that passes no context at all still knows its own
-	// group — the same rule applied one site earlier.
-	_, err = db.SetAgentGroupOwnerScopes("groupdim", `{"groups.members.spawn":{"group":["groupdim"]}}`)
-	require.NoError(t, err)
-	g, err := db.GetAgentGroupByName("groupdim")
-	require.NoError(t, err)
-	assert.True(t, ownerOfGroupPermitting(g, owner, PermGroupsMembersSpawn, ActionContext{}))
+	_, ok = ownerDerivedGroupScope("groupdim", PermissionScope{ScopeDimGroup: {"elsewhere"}})
+	assert.False(t, ok, "a constraint cannot redirect an owner grant to another group")
 }
 
 // The failure the degraded flag exists for. A group whose stored map this
@@ -304,91 +288,14 @@ func TestOwnerTierDegradedGroupDoesNotSuppressAReadableOne(t *testing.T) {
 
 	tier := ownerImpliedTierFor(owner)
 	entry := tier[PermGroupsMembersSpawn]
-	assert.True(t, entry.Unrestricted, "the readable, unnarrowed group still confers")
+	assert.False(t, entry.Unrestricted, "group owner grants are never global")
 	assert.True(t, entry.confers())
+	assert.True(t, tier.satisfiedBy(owner, PermGroupsMembersSpawn,
+		ActionContext{Group: "deg-good"}), "the readable group still contributes its scoped grant")
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
-	_, scoped := granterScopesForSlug(loadPermSources(owner), cfg, tier, PermGroupsMembersSpawn)
-	assert.False(t, scoped, "and an unrestricted tier stays unconstrained for delegation")
-}
-
-// The cross-agent bypass unions per candidate group: an owner of a narrowed g1
-// and an unnarrowed g2 that BOTH contain the target still passes through g2.
-// This is the multi-group rule at the one site that has no group in its
-// ActionContext at all.
-func TestOwnerOfGroupContainingPermittingUnionsCandidates(t *testing.T) {
-	setupTestDB(t)
-	const owner = "owner-xagent-conv-0001"
-	const target = "owner-xagent-target-0001"
-	for _, conv := range []string{owner, target} {
-		_, _, err := db.EnsureAgentForConv(conv, "spawn")
-		require.NoError(t, err)
-	}
-	var ids []int64
-	for _, name := range []string{"xa-narrow", "xa-wide"} {
-		id, err := db.CreateAgentGroup(name, "")
-		require.NoError(t, err)
-		require.NoError(t, db.AddAgentGroupOwner(id, owner, "test"))
-		require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: id, ConvID: target, Role: "worker"}))
-		ids = append(ids, id)
-	}
-	require.Len(t, ids, 2)
-	// xa-narrow pins agent.retire to descendants only; the caller did not spawn
-	// the target, so that arm can never match.
-	_, err := db.SetAgentGroupOwnerScopes("xa-narrow", `{"agent.retire":{"target_agent":["@descendants"]}}`)
-	require.NoError(t, err)
-
-	targetAgent, err := db.AgentIDForConv(target)
-	require.NoError(t, err)
-	actx := ActionContext{TargetAgent: targetAgent}
-	assert.True(t, ownerOfGroupContainingPermitting(owner, target, PermAgentRetire, actx),
-		"the unnarrowed candidate group still carries the bypass")
-
-	// Narrow the second group the same way and the bypass is gone: every
-	// candidate now refuses.
-	_, err = db.SetAgentGroupOwnerScopes("xa-wide", `{"agent.retire":{"target_agent":["@descendants"]}}`)
-	require.NoError(t, err)
-	assert.False(t, ownerOfGroupContainingPermitting(owner, target, PermAgentRetire, actx),
-		"with every candidate narrowed away, nothing carries it")
-}
-
-func TestOwnerBypassRejectsMemberSharedWithUnownedActiveGroup(t *testing.T) {
-	setupTestDB(t)
-	const owner = "owner-shared-conv-0001"
-	const target = "owner-shared-target-0001"
-	for _, conv := range []string{owner, target} {
-		_, _, err := db.EnsureAgentForConv(conv, "spawn")
-		require.NoError(t, err)
-	}
-	ownedID, err := db.CreateAgentGroup("shared-owned", "")
-	require.NoError(t, err)
-	unownedID, err := db.CreateAgentGroup("shared-unowned", "")
-	require.NoError(t, err)
-	require.NoError(t, db.AddAgentGroupOwner(ownedID, owner, "test"))
-	for _, id := range []int64{ownedID, unownedID} {
-		require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: id, ConvID: target}))
-	}
-
-	assert.False(t, ownerOfGroupContainingPermitting(owner, target, PermAgentStop, ActionContext{}),
-		"an owner-only cross-agent action must not affect another active group's member")
-	assert.False(t, ownerPermissionPermitted(owner, PermAgentStop, ActionContext{targetConv: target}),
-		"the registry-driven member scope enforces the shared-member boundary")
-	owned, err := db.GetAgentGroupByID(ownedID)
-	require.NoError(t, err)
-	assert.False(t, ownerCanManageAllGroupMembers(owned, owner),
-		"the same boundary applies to bulk group lifecycle actions")
-	assert.False(t, ownerPermissionPermitted(owner, PermGroupsMembersStop,
-		ActionContext{Group: owned.Name, structuralGroup: owned.Name}),
-		"the registry-driven whole-roster scope enforces the shared-member boundary")
-
-	require.NoError(t, db.ArchiveAgentGroup("shared-unowned"))
-	assert.True(t, ownerOfGroupContainingPermitting(owner, target, PermAgentStop, ActionContext{}),
-		"archived forensic membership does not make an active-group owner lose its bypass")
-	require.NoError(t, db.UnarchiveAgentGroup("shared-unowned"))
-	require.NoError(t, db.AddAgentGroupOwner(unownedID, owner, "test"))
-	assert.True(t, ownerOfGroupContainingPermitting(owner, target, PermAgentStop, ActionContext{}),
-		"owning every active group containing the target restores the bypass")
-	assert.True(t, ownerPermissionPermitted(owner, PermAgentStop, ActionContext{targetConv: target}),
-		"the central resolver restores the member slug when every active group is owned")
+	scopes, scoped := granterScopesForSlug(loadPermSources(owner), cfg, tier, PermGroupsMembersSpawn)
+	assert.True(t, scoped)
+	assert.NotEmpty(t, scopes, "the readable group's scope remains available for delegation")
 }

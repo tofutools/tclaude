@@ -2866,7 +2866,8 @@ func ListOwnedGroupScopes(convID string) ([]OwnedGroupScopes, error) {
 	rows, err := d.Query(`SELECT g.id, g.name, g.owner_scopes_json
 		FROM agent_group_owners o
 		JOIN agent_groups g ON g.id = o.group_id
-		WHERE o.agent_id = (SELECT agent_id FROM agent_conversations WHERE conv_id = ?)`, convID)
+		WHERE o.agent_id = (SELECT agent_id FROM agent_conversations WHERE conv_id = ?)
+		  AND g.archived_at IS NULL`, convID)
 	if err != nil {
 		return nil, err
 	}

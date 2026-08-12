@@ -166,9 +166,9 @@ func TestOwnerScopes_ListingRendersTheNarrowing(t *testing.T) {
 		Provenance map[string]string `json:"provenance"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(view.Body), &effective))
-	assert.Equal(t, "owner:group [spawn_profile=p1]", effective.Provenance[agentd.PermGroupsMembersSpawn],
+	assert.Equal(t, "owner [group=g1 spawn_profile=p1]", effective.Provenance[agentd.PermGroupsMembersSpawn],
 		"the owner tier states where its reach ends")
-	assert.Equal(t, "owner:group_members", effective.Provenance[agentd.PermGroupsMembersStop],
+	assert.Equal(t, "owner [group=g1]", effective.Provenance[agentd.PermGroupsMembersStop],
 		"a slug the map does not mention keeps the unrestricted rendering")
 }
 
@@ -207,7 +207,7 @@ func TestOwnerScopes_NarrowedOwnerCannotConferWiderSpawn(t *testing.T) {
 		"permission_overrides": map[string]any{
 			agentd.PermGroupsMembersSpawn: map[string]any{
 				"effect": db.PermEffectGrant,
-				"scope":  map[string]any{"spawn_profile": []string{"p1"}},
+				"scope":  map[string]any{"group": []string{"g1"}, "spawn_profile": []string{"p1"}},
 			},
 		},
 	})
