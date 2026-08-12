@@ -757,8 +757,8 @@ func TestDashboardHTML_WizardGrimoireCopy(t *testing.T) {
 	}
 
 	// Title copy: a pure-CSS span swap, "Edit permanent permissions" → "📕 The Grimoire".
-	must(`<span class="perm-edit-title-regular">${groupMode ? 'Edit group permissions' : 'Edit permanent permissions'}</span>`, "the default perm-editor title span")
-	must(`<span class="perm-edit-title-wizard">${groupMode ? '✨ Party Boons' : '📕 The Grimoire'}</span>`, "the wizard perm-editor title span")
+	must(`<span class="perm-edit-title-regular">${groupMode ? 'Edit group permissions' : roleMode ? 'Edit role permissions' : 'Edit permanent permissions'}</span>`, "the default perm-editor title span")
+	must(`<span class="perm-edit-title-wizard">${groupMode ? '✨ Party Boons' : roleMode ? '📕 Class Boons' : '📕 The Grimoire'}</span>`, "the wizard perm-editor title span")
 	must("body.wizard #perm-edit-title .perm-edit-title-regular", "wizard hides the default title")
 	must("body.wizard #perm-edit-title .perm-edit-title-wizard", "wizard shows the Grimoire title")
 
@@ -789,7 +789,7 @@ func TestDashboardHTML_WizardPartyBoons(t *testing.T) {
 
 	must(`<span class="group-perms-word-wizard">party boons</span>`, "the group menu names party boons")
 	must("body.wizard .group-perms-word-wizard { display: inline; }", "wizard reveals party-boon vocabulary")
-	must("groupMode ? '✨ Party Boons' : '📕 The Grimoire'", "the group editor receives its own wizard title")
+	must("groupMode ? '✨ Party Boons' : roleMode ? '📕 Class Boons' : '📕 The Grimoire'", "the group editor receives its own wizard title")
 	must("<strong>PARTY BOONS</strong>", "the group editor explains boons rather than per-agent overrides")
 	must("every familiar receives these boons immediately", "the group editor subtitle uses party vocabulary")
 	must(`plain="Grant" wizard="Bestow"`, "Grant becomes Bestow")
