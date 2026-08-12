@@ -54,6 +54,7 @@ func TestDashboardAssets_RoleLibraryWired(t *testing.T) {
 	for _, obsolete := range []string{
 		`id="role-editor-harness"`, `id="role-editor-model"`,
 		`id="role-editor-sandbox"`, `id="role-editor-approval"`,
+		`border: 1px dashed #426084`,
 	} {
 		if dashboardSourceContains(dashboardAssets, obsolete) {
 			t.Errorf("dashboard assets still expose role-owned launch control %q", obsolete)
