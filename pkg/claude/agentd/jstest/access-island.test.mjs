@@ -50,6 +50,13 @@ test('Access island owns navigation, filtering, keyed rows, and local countdowns
   await harness.input(slugFilter, 'Send messages');
   assert.match(mounted.container.textContent, /No matching permission slugs/,
     'the filter matches slug names only, not descriptions');
+  await harness.act(() => harness.fireEvent(slugFilter, 'keydown', { key: 'Escape' }));
+  assert.equal(slugFilter.value, '');
+  assert.ok(mounted.container.querySelector('tr[data-key="agent.send"]'), 'Escape restores the full slug list');
+  await harness.input(slugFilter, '   ');
+  assert.equal(slugFilter.value, '', 'whitespace-only input is normalized to an empty query');
+  assert.match(mounted.container.textContent, /2 slugs/);
+  await harness.input(slugFilter, 'agent');
   const clearSlugFilter = getByRole(mounted.container, 'button', { name: 'Clear slug filter' });
   await harness.act(() => harness.fireEvent(clearSlugFilter, 'click'));
   assert.equal(slugFilter.value, '');

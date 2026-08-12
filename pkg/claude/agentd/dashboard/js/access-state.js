@@ -64,7 +64,7 @@ export function createAccessState({
   function initialize() {
     if (initialized) return false;
     initialized = true;
-    slugQuery.value = prefs.getItem(SLUG_FILTER_KEY) || '';
+    slugQuery.value = String(prefs.getItem(SLUG_FILTER_KEY) ?? '').trim();
     sudoQuery.value = prefs.getItem(SUDO_FILTER_KEY) || '';
     const saved = persistedTableSort('sudo');
     if (saved && SUDO_COLUMNS_KEYS.has(saved.col) && (saved.dir === 'asc' || saved.dir === 'desc')) {
@@ -84,7 +84,7 @@ export function createAccessState({
     if (next) prefs.setItem(SUDO_FILTER_KEY, next); else prefs.removeItem(SUDO_FILTER_KEY);
   }
   function setSlugQuery(value) {
-    const next = String(value ?? '');
+    const next = String(value ?? '').trim();
     slugQuery.value = next;
     if (next) prefs.setItem(SLUG_FILTER_KEY, next); else prefs.removeItem(SLUG_FILTER_KEY);
   }
