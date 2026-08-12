@@ -357,11 +357,15 @@ generates no approval request for the reviewer to decide.
 - **Don't spam.** Tmux nudges interleave with the receiver's input box;
   too many in quick succession will wreck their UX.
 - **Don't mutate group membership unless granted.** Mutating
-  subcommands (`groups create|rm|add|remove|update-member`) are
+  subcommands (`groups create|rm|add|remove|update-member` and group-setting
+  verbs) are
   permission-gated. By default agents can't run them. Humans bypass
   the gate. Slugs: `groups.create`, `groups.rm`, `groups.stop`,
   `groups.resume`, `groups.retire`, `member.add`, `member.remove`,
-  `member.redesignate`. A **group owner gets the lifecycle verbs for
+  `member.redesignate`; settings use dedicated slugs such as
+  `groups.default-dir`, and `groups.admin` is the explicit umbrella for every
+  registered `groups.*` / `member.*` administration operation. A dedicated
+  deny still wins over the umbrella. A **group owner gets the lifecycle verbs for
   its own group by default** — `groups.spawn` / `groups.stop` /
   `groups.retire` / `groups.resume`, plus — for owning any group at all —
   `human.notify` and the read-only `process.runs.read` — without an

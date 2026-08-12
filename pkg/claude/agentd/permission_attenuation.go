@@ -152,7 +152,8 @@ func permissionScopeCovers(granter, conferred PermissionScope) bool {
 // unrestricted owner tier still reads as unconstrained, so no pre-Phase-6
 // delegation changes.
 func granterScopesForSlug(src permSources, cfg *config.Config, ownerTier ownerImpliedTier, slug string) ([]PermissionScope, bool) {
-	v := resolvePermissionVerdictFrom(src, slug, cfg.HasDefaultPermission(slug))
+	v := resolveEffectivePermissionVerdictFrom(src, slug,
+		cfg.HasDefaultPermission(slug), cfg.HasDefaultPermission(PermGroupsAdmin))
 	if v.Resolution == permDeny {
 		// A granter DENIED a slug may confer nothing through it. Reading a deny
 		// as "unconstrained" (the same answer as "does not hold it") would make

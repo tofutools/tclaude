@@ -129,10 +129,10 @@ func init() { initPermissionRegistry() }
 
 // permissionRegistry is the single source of truth for known slugs. It's
 // what `permissions slugs` returns and what the validators consult when
-// they want to refuse an unknown slug. Forward-compat: the daemon stores
-// any string the human writes (so a future build that wires up a new
-// slug picks up grants written before that build shipped), but the CLI's
-// `grant` command refuses unknown slugs to catch typos.
+// they want to refuse an unknown slug. Legacy config/DB rows may retain an
+// unknown string for round-trip compatibility, but it is inert until a future
+// build registers it; all mutation and authorization boundaries accept only
+// this vocabulary.
 var permissionRegistry = []PermSlug{
 	{
 		Slug:        PermSelfRename,
@@ -149,6 +149,10 @@ var permissionRegistry = []PermSlug{
 	{
 		Slug:        PermSelfClone,
 		Description: "Fork this agent into a sibling that inherits its identity; the original keeps running (tclaude agent clone)",
+	},
+	{
+		Slug:        PermSelfRemoteControl,
+		Description: "Toggle own Claude Code Remote Access (tclaude agent remote-control). Default-granted for supported harnesses.",
 	},
 	{
 		Slug:        PermSelfTask,
@@ -212,6 +216,10 @@ var permissionRegistry = []PermSlug{
 		Description: "Set ANOTHER agent's tags — the Description-column chip labels (tclaude agent tags set/add/rm --target). Group owners can set tags on members of groups they own without this slug.",
 	},
 	{
+		Slug:        PermGroupsAdmin,
+		Description: "Umbrella for every registered groups.* and member.* group-administration operation. A dedicated per-operation deny still wins, so groups.admin can be narrowed without replacing it with many grants.",
+	},
+	{
 		Slug:        PermGroupsCreate,
 		Description: "Create new agent groups (tclaude agent groups create)",
 	},
@@ -243,6 +251,50 @@ var permissionRegistry = []PermSlug{
 	{
 		Slug:        PermGroupsOwn,
 		Description: "Grant or revoke group ownership (tclaude agent groups grant-owner / revoke-owner)",
+	},
+	{
+		Slug:        PermGroupsRename,
+		Description: "Rename a group (tclaude agent groups rename). This permission authorizes only rename; use a dedicated setting slug or groups.admin for other mutations.",
+	},
+	{
+		Slug:        PermGroupsDescription,
+		Description: "Set or clear a group's description (tclaude agent groups set-descr)",
+	},
+	{
+		Slug:        PermGroupsDefaultDir,
+		Description: "Set or clear a group's default spawn directory (tclaude agent groups set-default-dir)",
+	},
+	{
+		Slug:        PermGroupsDefaultCtx,
+		Description: "Set or clear a group's shared startup context (tclaude agent groups set-context)",
+	},
+	{
+		Slug:        PermGroupsDefaultSpawn,
+		Description: "Make or unmake a group the default spawn target (tclaude agent groups set-default)",
+	},
+	{
+		Slug:        PermGroupsDefaultProf,
+		Description: "Set or clear a group's default spawn profile (tclaude agent groups set-default-profile)",
+	},
+	{
+		Slug:        PermGroupsMaxMembers,
+		Description: "Set or clear a group's hard member cap (tclaude agent groups set-max-members)",
+	},
+	{
+		Slug:        PermGroupsNotify,
+		Description: "Mute or unmute notifications for a group's agents (tclaude agent groups set-notifications)",
+	},
+	{
+		Slug:        PermGroupsRemoteCtrl,
+		Description: "Set or clear a group's Claude Code remote-control policy (tclaude agent groups set-remote-control)",
+	},
+	{
+		Slug:        PermGroupsPermissions,
+		Description: "Replace a group's live member permission grants. Also requires permissions.grant and permissions.revoke.",
+	},
+	{
+		Slug:        PermGroupsOwnerScopes,
+		Description: "Set or clear a group's owner-bypass narrowing. Also requires permissions.grant and permissions.revoke.",
 	},
 	{
 		Slug:        PermMemberAdd,
@@ -296,6 +348,10 @@ var permissionRegistry = []PermSlug{
 		Slug:        PermGroupsAttachment,
 		OwnerScope:  ownerScopeGroup,
 		Description: "Set or clear a group's persistent external reference link (tclaude agent groups attachment set/clear). Group owners can manage the attachment on groups they own without this slug.",
+	},
+	{
+		Slug:        PermGroupsClone,
+		Description: "Clone a group and its selected group-level configuration (tclaude agent groups clone)",
 	},
 	{
 		Slug:        PermAgentDelete,
@@ -542,6 +598,16 @@ func IsKnownPermSlug(slug string) bool {
 		}
 	}
 	return false
+}
+
+// IsGroupsAdminImpliedSlug reports whether groups.admin is an umbrella for
+// slug. The registry deliberately reserves the groups.* and member.*
+// namespaces for group administration, so newly registered operations join
+// the umbrella automatically instead of requiring a second hand-maintained
+// list. The umbrella never implies itself.
+func IsGroupsAdminImpliedSlug(slug string) bool {
+	return slug != PermGroupsAdmin &&
+		(strings.HasPrefix(slug, "groups.") || strings.HasPrefix(slug, "member."))
 }
 
 // IsOwnerImpliedSlug reports whether group ownership structurally confers
@@ -1094,7 +1160,8 @@ func effectivePermsFor(state permissionsState, convID string, ownerImplied owner
 	// issuing a query per slug per agent.
 	src := loadPermSources(convID)
 	for _, slug := range candidatePermissionSlugs(state, convID, ownerImplied, src) {
-		v := resolvePermissionVerdictFrom(src, slug, defaults[slug])
+		v := resolveEffectivePermissionVerdictFrom(src, slug,
+			defaults[slug], defaults[PermGroupsAdmin])
 		switch v.Resolution {
 		case permAllow:
 			effective = append(effective, slug)
@@ -1315,11 +1382,9 @@ func auditedCaller(callerConvID, perm string) string {
 // (target=="default", in config.json) or to agent_permissions(conv_id,
 // slug) in SQLite. Idempotent.
 //
-// Refuses unknown slugs with a 400 listing the registered ones. This
-// catches typos at the CLI; if the human really wants to grant a slug
-// a future build will pick up, they can hand-edit config.json (the
-// daemon honours unknown slugs at evaluation time too — we just refuse
-// new CLI-driven grants of them).
+// Refuses unknown slugs with a 400 listing the registered ones. The registry
+// is the sole vocabulary shared by grants, dashboard controls, sudo, imports,
+// and authorization gates.
 func handlePermissionsGrant(w http.ResponseWriter, r *http.Request) {
 	granter, ok := requirePermission(w, r, PermPermissionsGrant)
 	if !ok {
@@ -1331,9 +1396,8 @@ func handlePermissionsGrant(w http.ResponseWriter, r *http.Request) {
 	}
 	if !IsKnownPermSlug(body.Slug) {
 		writeError(w, http.StatusBadRequest, "unknown_slug",
-			fmt.Sprintf("unknown permission slug %q. Known slugs: %s. "+
-				"To grant a slug a future build wires up, edit %s by hand.",
-				body.Slug, strings.Join(knownSlugs(), ", "), config.ConfigPath()))
+			fmt.Sprintf("unknown permission slug %q. Known slugs: %s.",
+				body.Slug, strings.Join(knownSlugs(), ", ")))
 		return
 	}
 	scope, scopeJSON, err := parsePermissionScope(body.Scope)

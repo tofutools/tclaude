@@ -236,6 +236,14 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 			"slugs[] is required (at least one slug to elevate)")
 		return
 	}
+	for _, slug := range body.Slugs {
+		if !IsKnownPermSlug(slug) {
+			writeError(w, http.StatusBadRequest, "unknown_slug",
+				fmt.Sprintf("unknown permission slug %q. Known slugs: %s.",
+					slug, strings.Join(knownSlugs(), ", ")))
+			return
+		}
+	}
 
 	// Two paths through this endpoint:
 	//

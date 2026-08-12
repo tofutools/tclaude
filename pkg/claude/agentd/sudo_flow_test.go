@@ -92,6 +92,24 @@ func TestSudo_Approved_GrantsForDuration(t *testing.T) {
 	assert.Equal(t, wantAgent, listed[0].AgentID, "listing should carry the stable agent_id")
 }
 
+func TestSudo_UnknownSlugRejectedBeforeApproval(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+	approvalCalls, restoreApproval := agentd.StubCountingApprovalForTest(true)
+	t.Cleanup(restoreApproval)
+
+	f := newFlow(t)
+	const conv = "sudo-unknown-aaaa-bbbb-1111"
+	f.HaveConvWithTitle(conv, "worker")
+	r := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/sudo", map[string]any{
+		"slugs": []string{"groups.teleport"}, "duration": "5m",
+	}), conv)
+	rec := testharness.Serve(f.Mux, r)
+	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "unknown_slug")
+	assert.EqualValues(t, 0, approvalCalls(), "unknown slugs must never reach approval")
+}
+
 // Scenario: popup denies; no rows are inserted. Pins the explicit
 // deny path — without it, a denied request might silently leak rows
 // (defense-in-depth against handler ordering bugs).
