@@ -78,7 +78,7 @@ func TestDashboardSpawnEffectiveSandboxSilentWhenSandboxed(t *testing.T) {
 
 // The same probe that drives the Claude TCL-586 warning must also surface
 // OpenCode's "access-control is not a real sandbox" line, so the spawn dialog
-// and the profile/role editors warn when an OpenCode agent's sandbox is on.
+// and the profile editor warns when an OpenCode agent's sandbox is on.
 func TestDashboardSpawnEffectiveSandboxOpenCodeAccessControl(t *testing.T) {
 	withDashboardAuth(t)
 	home := t.TempDir()

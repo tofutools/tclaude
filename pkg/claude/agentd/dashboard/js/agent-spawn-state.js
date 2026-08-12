@@ -18,6 +18,7 @@ export function createAgentSpawnState({ getSnapshot = () => null } = {}) {
       }),
       groups: Object.freeze([...(snapshot.groups || [])]),
       harnesses: Object.freeze([...(snapshot.harnesses || [])]),
+      roles: Object.freeze([...(snapshot.roles || [])]),
       // Host-wide sandbox-implementation catalog. Frozen at open like the rest,
       // so the dialog reasons about one consistent snapshot.
       sandboxImpl: Object.freeze({ ...(snapshot.sandbox_impl || {}) }),

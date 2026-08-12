@@ -69,7 +69,8 @@ type templateAgentJSON struct {
 	Permissions    []db.PermissionGrant `json:"permissions"`
 
 	// RoleRef references a role in the role library (JOH-240): the agent
-	// inherits that role's defaults beneath its own overrides. Empty = none.
+	// inherits that role's brief and baseline permissions. Launch settings stay
+	// independent. Empty = none.
 	RoleRef string `json:"role_ref,omitempty"`
 
 	// Per-role launch profile (JOH-239): a spawn-profile reference by name plus
@@ -369,8 +370,8 @@ func renderTemplateHuman(stdout io.Writer, t templateJSON) {
 		if len(a.Permissions) > 0 {
 			tags = append(tags, "perms="+strings.Join(permissionGrantDisplays(a.Permissions), ","))
 		}
-		// Per-role launch profile (JOH-239): show the profile reference and any
-		// inline overrides so an edit loop sees what each role launches with.
+		// Per-agent launch profile (JOH-239): show the profile reference and any
+		// inline overrides so an edit loop sees how each member launches.
 		if a.SpawnProfile != "" {
 			tags = append(tags, "profile="+a.SpawnProfile)
 		}

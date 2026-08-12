@@ -5,14 +5,14 @@ import (
 	"fmt"
 )
 
-// migrateV90toV91 stands up the role library (JOH-240): a `roles` table of
-// named, reusable defaults (a canonical role-brief + a default launch shape +
-// a default permission set) and a `role_ref` column on group_template_agents
-// so a template roster agent can REFERENCE a role and inherit its defaults.
+// migrateV90toV91 stands up the original role library (JOH-240) and a
+// `role_ref` column on group_template_agents. The launch columns in this
+// historical schema are retained for database compatibility; the live role
+// model now uses only name, description, brief and permissions.
 //
-// The roles table mirrors spawn_profiles' launch fields (harness / model /
-// effort / sandbox / approval — TEXT, "" = inherit) plus the permissions JSON
-// list group_template_agents carries; brief is the canonical role-brief text.
+// The table originally mirrored spawn_profiles' launch fields. Those legacy
+// columns remain inert; permissions and brief are the role preset's access and
+// behavioral guidance.
 // role_ref is the by-name reference on the template agent (no DB-level FK —
 // existence is validated at the wire boundary, following spawn_profile); ""
 // means "no role", so a pre-existing template agent reads as unreferenced.

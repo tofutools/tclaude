@@ -769,7 +769,7 @@ export function createSpawnDraft({
     group: text(group?.name),
     fixedGroup: !!groupName,
     profile: '',
-    name: '', role: '', descr: '', task: '', initialMessage: '',
+    name: '', role: '', roleRef: '', descr: '', task: '', initialMessage: '',
     ...harnessDefaults(harness, rememberedEffort),
     owner: false,
     permissionOverrides: {},
@@ -935,6 +935,7 @@ export function applySpawnProfile(
   next.sandboxImplCleared = null;
   if (profile.agent_name) next.name = text(profile.agent_name);
   if (profile.role) next.role = text(profile.role);
+  next.roleRef = text(profile.role_ref);
   if (profile.descr) next.descr = text(profile.descr);
   if (profile.initial_message) next.initialMessage = text(profile.initial_message);
   if (profile.auto_focus != null) next.autoFocus = !!profile.auto_focus;
@@ -981,7 +982,7 @@ export function clearSpawnProfileFields(draft, context, {
   return syncSpawnWorktree({
     ...draft,
     profile: '',
-    name: '', role: '', descr: '', task: '', initialMessage: '',
+    name: '', role: '', roleRef: '', descr: '', task: '', initialMessage: '',
     harness: defaults.harness,
     model: defaults.model,
     customModel: defaults.customModel,
@@ -1129,6 +1130,7 @@ export function spawnProfileSeed(draft, context) {
     effort: draft.effort,
     agent_name: text(draft.name).trim(),
     role: text(draft.role).trim(),
+    role_ref: text(draft.roleRef).trim(),
     descr: text(draft.descr).trim(),
     initial_message: draft.initialMessage,
     auto_focus: !!draft.autoFocus,
@@ -1181,7 +1183,7 @@ export function spawnProfileSeed(draft, context) {
 }
 
 const DIRTY_FIELDS = [
-  'group', 'profile', 'name', 'role', 'descr', 'task', 'initialMessage',
+  'group', 'profile', 'name', 'role', 'roleRef', 'descr', 'task', 'initialMessage',
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'sandboxProfile', 'approval',
   'approvalReviewer', 'tools', 'askTimeout', 'autoCompactWindow', 'contextWindowMax', 'copilotAPI', 'fastMode', 'sandboxImpl', 'allowUnenforcedSandbox', 'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'sshWorkaround', 'owner',
   'cwd', 'wtRepo', 'worktree', 'worktreeBranch', 'worktreeBase',
@@ -1242,6 +1244,7 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
   const body = {
     name: text(draft.name).trim(),
     role: text(draft.role).trim(),
+    role_ref: text(draft.roleRef).trim(),
     descr: text(draft.descr).trim(),
     initial_message: draft.initialMessage,
     auto_focus: !!draft.autoFocus,

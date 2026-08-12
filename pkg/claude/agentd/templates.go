@@ -57,8 +57,8 @@ type templateAgentJSON struct {
 	Permissions    []db.PermissionGrant `json:"permissions"`
 
 	// Role is a by-name reference to a role in the role library (JOH-240): the
-	// agent inherits that role's defaults (canonical role-brief, launch shape,
-	// permission set) BENEATH its own overrides. Empty = no role. Named
+	// agent inherits that role's behavioral brief and permission grants. Launch
+	// shape remains independent. Empty = no role. Named
 	// "role_ref" on the wire to stay distinct from the free-text Role display
 	// label above.
 	RoleRef string `json:"role_ref,omitempty"`
@@ -433,8 +433,7 @@ func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure)
 		// Role reference (JOH-240): validate the referenced role exists at save,
 		// exactly as the spawn-profile reference is validated — so a template
 		// can't persist a dangling role_ref. Blank = no role. Resolved BEFORE
-		// the launch validation so the role's tiers can feed the validation
-		// harness below.
+		// access and briefing resolution below.
 		roleRef := strings.TrimSpace(a.RoleRef)
 		var role *db.Role
 		if roleRef != "" {
@@ -455,8 +454,8 @@ func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure)
 		// profile exists and the inline overrides against the harness they will
 		// launch on. The validation harness mirrors the instantiate-time
 		// resolution — the agent's inline harness wins, else the template-local
-		// profile's harness, else the referenced profile's, else the role's,
-		// else the role's own profile's, else the default (Claude Code) — so a
+		// profile's harness, else the referenced profile's, else the default
+		// (Claude Code) — so a
 		// value accepted here is checked against the same catalog the spawn
 		// will use. Blank fields stay blank (Validate*, not Resolve*): the
 		// launch boundary applies its own defaults at instantiate.
@@ -865,20 +864,12 @@ type templateAgentLaunch struct {
 // It checks the referenced spawn profile exists and validates the inline
 // overrides against the harness they will launch on — the agent's inline
 // harness wins, else the template-local profile's, else the referenced
-// profile's, else the role's, else the role's own profile's, else the default
-// (Claude Code) — the same adoption order the instantiate-time overlay walks,
-// so a value accepted here is checked against the same catalog the spawn will
-// use. (Without the role tiers in the chain, a template whose harness comes
-// from its role — e.g. blank agent fields over a role whose profile is Codex —
-// was validated against the wrong catalog: Claude-only models saved fine and
-// then failed every deploy, while legitimate Codex models were falsely
-// rejected at save.) role is the agent's resolved role_ref (nil = none); a
-// role edited AFTER the template is saved can still shift the harness — that
-// surfaces as a per-agent deploy failure, exactly like a post-save registry
-// profile edit. Blank fields stay blank (Validate*, not Resolve*): the launch
-// boundary applies its own secure defaults at instantiate. Mirrors
-// buildProfileFromJSON's harness-scoped validation.
-func validateTemplateAgentLaunch(agentName string, a templateAgentJSON, inline *db.SpawnProfile, role *db.Role) (templateAgentLaunch, *spawnFailure) {
+// profile's, else the default (Claude Code) — the same adoption order the
+// instantiate-time overlay walks. A referenced role is intentionally irrelevant
+// here: roles supply behavior and access, while spawn profiles own launch policy.
+// Blank fields stay blank (Validate*, not Resolve*): the launch boundary applies
+// its own secure defaults at instantiate.
+func validateTemplateAgentLaunch(agentName string, a templateAgentJSON, inline *db.SpawnProfile, _ *db.Role) (templateAgentLaunch, *spawnFailure) {
 	profRef := strings.TrimSpace(a.SpawnProfile)
 	var refProfile *db.SpawnProfile
 	if profRef != "" {
@@ -902,23 +893,6 @@ func validateTemplateAgentLaunch(agentName string, a templateAgentJSON, inline *
 	}
 	if valHarness == "" && refProfile != nil {
 		valHarness = refProfile.Harness
-	}
-	if valHarness == "" && role != nil {
-		valHarness = strings.TrimSpace(role.Harness)
-		if valHarness == "" {
-			if ref := strings.TrimSpace(role.SpawnProfile); ref != "" {
-				rp, err := db.ResolveSpawnProfile(ref)
-				if err != nil {
-					return templateAgentLaunch{}, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
-				}
-				// A dangling role profile is tolerated here (role save enforces
-				// existence; a profile deleted since is a per-agent deploy
-				// failure) — the chain just falls through to the default.
-				if rp != nil {
-					valHarness = rp.Harness
-				}
-			}
-		}
 	}
 	h, err := harness.ResolveSpawnable(valHarness)
 	if err != nil {
@@ -1062,7 +1036,6 @@ func validateInlineProfileForHarness(agentName string, h *harness.Harness, p *db
 // priority first:
 //
 //	per-agent inline override → per-agent spawn profile →
-//	  role inline defaults → role's spawn profile →
 //	  group default spawn profile → global default profile → harness secure default
 //
 // The last two tiers were missing until TCL-1110, on the strength of a comment
@@ -1079,8 +1052,7 @@ func validateInlineProfileForHarness(agentName string, h *harness.Harness, p *db
 // Each remaining field then resolves independently: inline agent values are
 // explicit and fail loudly, while profile-like tiers validate against the chosen
 // harness and a foreign invalid value is skipped with a disclosure note. g is
-// the group being deployed into (nil = none, e.g. a pure resolution test). role
-// is the resolved role the agent references (nil = none). caller is the spawning
+// the group being deployed into (nil = none, e.g. a pure resolution test). caller is the spawning
 // agent's conv-id (empty for a human): it lets a genuinely defaulted approval
 // posture be narrowed without losing that provenance during template
 // resolution, and it is the identity the two default profiles are gated
@@ -1093,7 +1065,7 @@ func validateInlineProfileForHarness(agentName string, h *harness.Harness, p *db
 // to the rest of the roster) if a referenced profile vanished or a resolved
 // value is invalid for the harness. The returned Harness is the resolved
 // canonical name (e.g. "claude"); SpawnProfile is left empty (already consumed).
-func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, role *db.Role, cwd, caller string) (templateAgentLaunch, *spawnFailure) {
+func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db.Role, cwd, caller string) (templateAgentLaunch, *spawnFailure) {
 	var refProfile *db.SpawnProfile
 	if ref := strings.TrimSpace(a.SpawnProfile); ref != "" || a.SpawnProfileID > 0 {
 		var prof *db.SpawnProfile
@@ -1115,42 +1087,6 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, role 
 		}
 		refProfile = prof
 	}
-	var roleProfile *db.SpawnProfile
-	if role != nil {
-		if ref := strings.TrimSpace(role.SpawnProfile); ref != "" || role.SpawnProfileID > 0 {
-			var prof *db.SpawnProfile
-			var err error
-			if role.SpawnProfileID > 0 {
-				prof, err = db.GetSpawnProfileByID(role.SpawnProfileID)
-			} else {
-				prof, err = db.ResolveSpawnProfile(ref)
-			}
-			if err != nil {
-				return templateAgentLaunch{}, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
-			}
-			if prof == nil {
-				return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_profile",
-					fmt.Sprintf("role %q references spawn profile %q which no longer exists", role.Name, ref)}
-			}
-			if fail := profileSpawnFailure(prof, caller); fail != nil {
-				return templateAgentLaunch{}, &spawnFailure{fail.Status, fail.Kind,
-					fmt.Sprintf("role %q: %s", role.Name, fail.Msg)}
-			}
-			roleProfile = prof
-		}
-	}
-
-	// Role inline defaults are a profile-like tier for per-field resolution.
-	// Give the synthetic profile a stable name so a self-inconsistent value can
-	// still produce the helper's useful tier-qualified error.
-	var roleInline *db.SpawnProfile
-	if role != nil {
-		roleInline = &db.SpawnProfile{
-			Name: "role " + role.Name + " inline", Harness: role.Harness,
-			Model: role.Model, Effort: role.Effort, Sandbox: role.Sandbox, Approval: role.Approval,
-			ToolGovernance: role.ToolGovernance,
-		}
-	}
 	inlineProfile := a.ProfileInline
 	if inlineProfile != nil && strings.TrimSpace(inlineProfile.Name) == "" {
 		copy := *inlineProfile
@@ -1160,8 +1096,6 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, role 
 	tiers := []launchProfileTier{
 		{profile: inlineProfile, source: `template profile_inline`},
 		{profile: refProfile, source: profileSource(refProfile, agent.ProvCLIProfileSource)},
-		{profile: roleInline, source: fmt.Sprintf(`role %q inline defaults`, roleName(role))},
-		{profile: roleProfile, source: roleProfileSource(role, roleProfile)},
 	}
 
 	// The two ambient tiers, in the same order and with the same wording the
@@ -1200,7 +1134,7 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, role 
 			defaultTier: true},
 	}
 
-	// Resolve harness independently. Partial inline-profile/role tiers only pin
+	// Resolve harness independently. Partial inline-profile tiers only pin
 	// a harness when they name one; registry profiles pin their default harness
 	// even when the stored value is blank, matching direct spawn.
 	// harnessSource tracks the tier alongside the walk rather than being
@@ -1220,16 +1154,6 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, role 
 	if harnessName == "" && refProfile != nil {
 		harnessName = harnessOrDefault(refProfile.Harness)
 		harnessSource = tiers[1].source
-	}
-	if harnessName == "" && role != nil {
-		harnessName = strings.TrimSpace(role.Harness)
-		if harnessName != "" {
-			harnessSource = tiers[2].source
-		}
-	}
-	if harnessName == "" && roleProfile != nil {
-		harnessName = harnessOrDefault(roleProfile.Harness)
-		harnessSource = tiers[3].source
 	}
 	// The ambient tiers, last. Like the registry-profile tiers above, a default
 	// profile pins its harness even when the stored value is blank — that is
@@ -1572,20 +1496,6 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, role 
 		Info:                        info,
 		Warnings:                    warnings,
 	}, nil
-}
-
-func roleName(role *db.Role) string {
-	if role == nil {
-		return ""
-	}
-	return role.Name
-}
-
-func roleProfileSource(role *db.Role, profile *db.SpawnProfile) string {
-	if role == nil || profile == nil {
-		return ""
-	}
-	return fmt.Sprintf(`role %q profile %q`, role.Name, profile.Name)
 }
 
 // launchValueWasChosen reports whether a durable launch value carries the mark
@@ -1941,7 +1851,7 @@ type templateExportEnvelope struct {
 	// dropped on import, exactly like an unknown spawn-profile reference.
 	Roles []roleJSON `json:"roles,omitempty"`
 	// Profiles embeds the full definitions of every spawn profile the template's
-	// agents (or their embedded roles) reference by name (JOH-350) — the profile
+	// agents reference by name (JOH-350) — the profile
 	// now carries the agent's launch shape AND its birth-time permissions/owner,
 	// so it must travel for the export to reproduce the same team elsewhere.
 	// Import materializes any that are MISSING locally (never overwriting an
@@ -1954,46 +1864,54 @@ type templateExportEnvelope struct {
 	Profiles []spawnProfileJSON `json:"profiles,omitempty"`
 }
 
-// collectReferencedRoles gathers the full definitions of every role the
-// template's agents reference, for embedding in a portable export. Missing
-// roles (a ref whose row was deleted since the template was authored) are
-// silently skipped — import degrades such a dangling ref anyway. Order is
-// stable (first-referenced) and each role is embedded once.
-func collectReferencedRoles(t *db.GroupTemplate) ([]roleJSON, error) {
+// collectReferencedRoles gathers every role referenced directly by a template
+// agent or indirectly by one of its spawn profiles. Missing roles are silently
+// skipped — import degrades a dangling reference anyway. Order is stable
+// (direct references first, then profile references) and each role appears once.
+func collectReferencedRoles(t *db.GroupTemplate, profiles []spawnProfileJSON) ([]roleJSON, error) {
 	seen := map[string]bool{}
 	out := []roleJSON{}
-	for _, a := range t.Agents {
-		ref := strings.TrimSpace(a.RoleRef)
+	add := func(ref string) error {
+		ref = strings.TrimSpace(ref)
 		if ref == "" || seen[ref] {
-			continue
+			return nil
 		}
 		seen[ref] = true
 		rl, err := db.GetRole(ref)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if rl == nil {
-			continue
+			return nil
 		}
 		j := roleToJSON(rl)
 		// Portable: strip the machine-local timestamps (like the template's).
 		j.CreatedAt = ""
 		j.UpdatedAt = ""
 		out = append(out, j)
+		return nil
+	}
+	for _, a := range t.Agents {
+		if err := add(a.RoleRef); err != nil {
+			return nil, err
+		}
+	}
+	for _, p := range profiles {
+		if err := add(p.RoleRef); err != nil {
+			return nil, err
+		}
 	}
 	return out, nil
 }
 
 // collectReferencedProfiles gathers the full definitions of every spawn profile
 // the template references, for embedding in a portable export (JOH-350). A
-// profile is referenced either directly by an agent's spawn_profile or by a
-// role the agent references (a role can name a default profile too), so both
-// sources are swept — with the given roles (the ones already gathered for
-// embedding) providing the role→profile links without a second role fetch.
+// profile is referenced directly by an agent's spawn_profile. Roles are
+// behavior/access presets and never carry launch-profile references.
 // Missing profiles (a ref whose row was deleted since authoring) are silently
 // skipped — import degrades such a dangling ref anyway. Order is stable
 // (first-referenced) and each profile is embedded once.
-func collectReferencedProfiles(t *db.GroupTemplate, roles []roleJSON) ([]spawnProfileJSON, error) {
+func collectReferencedProfiles(t *db.GroupTemplate) ([]spawnProfileJSON, error) {
 	seen := map[string]bool{}
 	out := []spawnProfileJSON{}
 	add := func(ref string) error {
@@ -2018,11 +1936,6 @@ func collectReferencedProfiles(t *db.GroupTemplate, roles []roleJSON) ([]spawnPr
 	}
 	for _, a := range t.Agents {
 		if err := add(a.SpawnProfile); err != nil {
-			return nil, err
-		}
-	}
-	for _, rl := range roles {
-		if err := add(rl.SpawnProfile); err != nil {
 			return nil, err
 		}
 	}
@@ -2057,17 +1970,17 @@ func handleTemplateExport(w http.ResponseWriter, r *http.Request) {
 	// envelope's exported_at carries the only meaningful timestamp).
 	inner.CreatedAt = ""
 	inner.UpdatedAt = ""
-	// Embed the referenced role definitions so the export stays portable
-	// (JOH-240) — import re-creates any that are missing on the target.
-	roles, err := collectReferencedRoles(t)
+	// Embed the referenced spawn profiles too (JOH-350) — sweeping the agents'
+	// direct refs — so a profile-driven
+	// team's launch shape + birth-time permissions travel with the export.
+	profiles, err := collectReferencedProfiles(t)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	// Embed the referenced spawn profiles too (JOH-350) — sweeping both the
-	// agents' direct refs and any the embedded roles carry — so a profile-driven
-	// team's launch shape + birth-time permissions travel with the export.
-	profiles, err := collectReferencedProfiles(t, roles)
+	// Embed roles referenced either directly by the template or indirectly by
+	// one of those profiles, so the complete preset graph stays portable.
+	roles, err := collectReferencedRoles(t, profiles)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
@@ -2139,7 +2052,7 @@ func sanitizeImportedTemplate(body templateJSON) (templateJSON, []string) {
 			rl, err := db.GetRole(ref)
 			if err == nil && rl == nil {
 				warnings = append(warnings, fmt.Sprintf(
-					"agent %q: role %q does not exist here — dropped the reference; the agent will use its own launch overrides",
+					"agent %q: role %q does not exist here — dropped the behavior/access reference",
 					label, ref))
 				a.RoleRef = ""
 			}
@@ -2400,20 +2313,18 @@ func importTemplateEnvelope(env templateExportEnvelope, asName string, update bo
 		body.Name = asName
 	}
 
-	// Re-create any embedded spawn profile that is MISSING locally FIRST (JOH-350)
-	// — before roles (a role's validation checks its referenced profile exists)
-	// and before the sanitize pass checks agent profile references. An existing
-	// profile of the same name is never overwritten (sacred edits).
-	profileWarnings, pfail := recreateMissingProfiles(env.Profiles)
-	if pfail != nil {
-		return templateImportResult{}, false, pfail
-	}
-	// Re-create any embedded role that is MISSING locally, BEFORE the sanitize
-	// pass checks role references — an existing role of the same name is never
-	// overwritten (sacred edits). Warnings report what was created / skipped.
+	// Re-create embedded roles first because an embedded spawn profile may
+	// select one through role_ref. Existing roles are never overwritten.
 	roleWarnings, rfail := recreateMissingRoles(env.Roles)
 	if rfail != nil {
 		return templateImportResult{}, false, rfail
+	}
+	// Re-create any embedded spawn profile that is missing locally before the
+	// sanitize pass checks agent profile references. Existing profiles are never
+	// overwritten (sacred edits).
+	profileWarnings, pfail := recreateMissingProfiles(env.Profiles)
+	if pfail != nil {
+		return templateImportResult{}, false, pfail
 	}
 
 	cleaned, sanitizeWarnings := sanitizeImportedTemplate(body)
@@ -2551,13 +2462,44 @@ func effectiveTemplateAgentOwner(a db.GroupTemplateAgent, lookupProfile func(str
 // resolutions are kept separate for clarity — a vanished profile is reported
 // the same typed failure by both. A nil role contributes nothing.
 //
-// Scope note: only the ROLE's default grant list (role.Permissions) feeds access
-// here — a role's OWN referenced spawn profile (role.SpawnProfile) contributes
-// launch fields (resolveTemplateAgentLaunch) but NOT owner/permission overrides.
-// That matches the pre-JOH-350 contract (a role only ever contributed grants,
-// never denies or ownership) and keeps the access seam a single, obvious
-// profile: the one the AGENT picks. Widening it to role profiles would let a
-// role silently deny/own through an indirection, which is deliberately not done.
+// resolveTemplateAgentRole applies the template identity precedence for saved
+// role presets: an agent's direct role_ref wins, then its saved spawn profile.
+func resolveTemplateAgentRole(a db.GroupTemplateAgent) (*db.Role, *spawnFailure) {
+	ref := strings.TrimSpace(a.RoleRef)
+	// A template agent's own role selection is explicit and wins. Otherwise a
+	// referenced spawn profile may provide the behavior/access preset, matching
+	// direct-spawn identity resolution. Template-local profiles reject role_ref.
+	if ref == "" && (strings.TrimSpace(a.SpawnProfile) != "" || a.SpawnProfileID > 0) {
+		var profile *db.SpawnProfile
+		var err error
+		if a.SpawnProfileID > 0 {
+			profile, err = db.GetSpawnProfileByID(a.SpawnProfileID)
+		} else {
+			profile, err = db.ResolveSpawnProfile(a.SpawnProfile)
+		}
+		if err != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		}
+		if profile == nil {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_profile",
+				fmt.Sprintf("references spawn profile %q which no longer exists", a.SpawnProfile)}
+		}
+		ref = strings.TrimSpace(profile.RoleRef)
+	}
+	if ref == "" {
+		return nil, nil
+	}
+	role, err := db.GetRole(ref)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+	}
+	// Preserve the existing graceful degradation for a role deleted outside the
+	// guarded API: the agent still launches, without the vanished preset.
+	return role, nil
+}
+
+// Roles contribute grants only, never denies or ownership. Launch profiles stay
+// independent, so a role cannot silently change how the agent is launched.
 func resolveTemplateAgentAccess(a db.GroupTemplateAgent, role *db.Role) (bool, []permOverride, *spawnFailure) {
 	order := []string{}
 	eff := map[string]db.PermissionOverride{}
@@ -2979,11 +2921,9 @@ type instantiateSpec struct {
 // launch-profile selections folded in (see instantiateSpec.agentProfiles): for a
 // member the map names that carries NO launch config of its own, the map's profile
 // becomes its spawn profile. "No config of its own" means no referenced spawn
-// profile, no referenced role, and no inline launch field — any of those is the
-// member's own explicit setting and MUST win over a deploy-form default (setting
-// SpawnProfile would otherwise land at a tier above the role, silently displacing
-// it, and would also apply the default profile's birth permissions/ownership over
-// a member that expressed its own launch shape). A member the map does not name,
+// profile, no local profile, and no inline launch field. A role reference is
+// deliberately irrelevant: it supplies behavior/access and composes with the
+// selected launch profile. A member the map does not name,
 // or one that is already configured, is left untouched — so a stale or broad
 // override can never displace an explicit per-member choice. The client resolves
 // the same eligibility before sending, so this is normally a no-op guard; it makes
@@ -3000,7 +2940,6 @@ func applyAgentProfileOverrides(agents []db.GroupTemplateAgent, overrides map[st
 		a := &out[i]
 		configured := strings.TrimSpace(a.SpawnProfile) != "" ||
 			a.ProfileInline != nil ||
-			strings.TrimSpace(a.RoleRef) != "" ||
 			strings.TrimSpace(a.Harness) != "" || strings.TrimSpace(a.Model) != "" ||
 			strings.TrimSpace(a.Effort) != "" || strings.TrimSpace(a.Sandbox) != "" ||
 			strings.TrimSpace(a.Approval) != ""
@@ -4566,7 +4505,7 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 		// strictly more authority than the group it was traced from.
 		perms := grantedOverridesForConv(convID)
 		// Re-trace the member's OBSERVABLE launch fields (JOH-239) so a round-trip
-		// preserves each role's launch shape. The spawn-profile REFERENCE is
+		// preserves each member's launch shape. The spawn-profile REFERENCE is
 		// blueprint curation, not observable — it is preserved by name-match in the
 		// update path (handleTemplateFromGroup), like the per-agent brief.
 		//

@@ -37,6 +37,9 @@ func TestDashboardAssets_RoleLibraryWired(t *testing.T) {
 		`id="role-editor-brief"`,
 		`id="role-editor-perms" class="tool"`,
 		`id="role-editor-submit"`,
+		`id="agent-spawn-role-ref"`,
+		`id="profile-editor-role-ref"`,
+		`role_ref: text(draft.roleRef).trim()`,
 		`.cron-create-row input:not([type])`,
 		`body.wizard #role-editor-modal .cron-create-row input:not([type])`,
 		`id="profile-editor-perms" class="tool"`,
@@ -46,6 +49,14 @@ func TestDashboardAssets_RoleLibraryWired(t *testing.T) {
 	} {
 		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard assets missing %q — role-library wiring broken", needle)
+		}
+	}
+	for _, obsolete := range []string{
+		`id="role-editor-harness"`, `id="role-editor-model"`,
+		`id="role-editor-sandbox"`, `id="role-editor-approval"`,
+	} {
+		if dashboardSourceContains(dashboardAssets, obsolete) {
+			t.Errorf("dashboard assets still expose role-owned launch control %q", obsolete)
 		}
 	}
 }

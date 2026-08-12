@@ -90,7 +90,7 @@ command filter, not confinement or an OS sandbox. Shell redirection, symlinks,
 and subprocess binaries bypass its fixed command/path checks and reach outside
 the authored paths.
 Because `access-control` reads like a sandbox without confining like one, the
-spawn dialog, profile/role editors, and `session new` surface an operator
+spawn dialog, profile editor, and `session new` surface an operator
 warning whenever it is selected (the same channel as Claude Code's
 unsandboxed-autonomy warning) — attaching a filesystem/network sandbox profile
 does not change this by itself, since those profiles compile into the same soft
@@ -1749,7 +1749,7 @@ use and can stall a detached agent; `deny` blocks them. OpenCode v1.18.4
 defines these three actions as run, prompt, and block respectively, and
 evaluates the last matching rule as authoritative (see the [OpenCode permission
 reference](https://opencode.ai/docs/permissions/)). The value is available in
-the spawn dialog, spawn profiles, roles, and `agent spawn --tools`; clone,
+the spawn dialog, spawn profiles, and `agent spawn --tools`; clone,
 resume, and reincarnate preserve the resolved launch value. It is intentionally
 independent of the edit/web approval selector.
 

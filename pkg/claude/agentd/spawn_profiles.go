@@ -108,6 +108,7 @@ type spawnProfileJSON struct {
 	// Identity / enrollment fields (dialog-side).
 	AgentName      string `json:"agent_name,omitempty"`
 	Role           string `json:"role,omitempty"`
+	RoleRef        string `json:"role_ref,omitempty"`
 	Descr          string `json:"descr,omitempty"`
 	InitialMessage string `json:"initial_message,omitempty"`
 	// StartupContext is profile-owned guidance injected into every resolved
@@ -165,6 +166,7 @@ func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 		RemoteControl:              p.RemoteControl,
 		AgentName:                  p.AgentName,
 		Role:                       p.Role,
+		RoleRef:                    p.RoleRef,
 		Descr:                      p.Descr,
 		InitialMessage:             p.InitialMessage,
 		StartupContext:             p.StartupContext,
@@ -424,6 +426,18 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 	if err != nil {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_context_features", err.Error()}
 	}
+	roleRef := strings.TrimSpace(body.RoleRef)
+	if roleRef != "" {
+		role, err := db.GetRole(roleRef)
+		if err != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		}
+		if role == nil {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_role",
+				fmt.Sprintf("no role named %q", roleRef)}
+		}
+		roleRef = role.Name
+	}
 
 	return &db.SpawnProfile{
 		Name:                       name,
@@ -451,6 +465,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		AutoMemory:                 body.AutoMemory,
 		AgentName:                  agentName,
 		Role:                       strings.TrimSpace(body.Role),
+		RoleRef:                    roleRef,
 		Descr:                      strings.TrimSpace(body.Descr),
 		InitialMessage:             im,
 		StartupContext:             startupContext,
@@ -492,6 +507,8 @@ func buildInlineProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawn
 		return nil, reject("agent_name")
 	case strings.TrimSpace(body.Role) != "":
 		return nil, reject("role")
+	case strings.TrimSpace(body.RoleRef) != "":
+		return nil, reject("role_ref")
 	case strings.TrimSpace(body.Descr) != "":
 		return nil, reject("descr")
 	case strings.TrimSpace(body.InitialMessage) != "":

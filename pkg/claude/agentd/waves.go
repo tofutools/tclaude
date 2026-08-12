@@ -75,8 +75,8 @@ func partitionWaves(agents []db.GroupTemplateAgent) []db.WaveGroup {
 }
 
 // spawnWaveAgents spawns one wave's agents via the shared executeSpawn core,
-// applying each agent's role brief, launch profile, ownership + permission
-// grants. Extracted from runInstantiation so the inline first wave and the
+// applying each agent's role behavior/access preset, launch profile, ownership
+// and permission grants. Extracted from runInstantiation so the inline first wave and the
 // background later waves run the SAME per-agent path. Best-effort per agent: a
 // spawn/grant failure is recorded on that agent's result and skips just it —
 // the partial-team-on-failure contract, per wave.
@@ -155,16 +155,14 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			res.WorktreePath = agentWorktreePath
 			res.WorktreeBranch = agentWorktreeBranch
 		}
-		// Resolve the role this agent references (JOH-240), if any. A role that
-		// vanished since save degrades gracefully — role stays nil and the agent
-		// falls through to its own overrides / harness defaults.
-		var role *db.Role
-		if ref := strings.TrimSpace(a.RoleRef); ref != "" {
-			if rl, rerr := db.GetRole(ref); rerr != nil {
-				slog.Warn("wave spawn: role lookup failed", "role", ref, "error", rerr)
-			} else {
-				role = rl
-			}
+		// Resolve the behavior/access role from the agent itself, or from its
+		// selected spawn profile when the agent leaves role_ref blank.
+		role, rfail := resolveTemplateAgentRole(a)
+		if rfail != nil {
+			res.ErrorKind = rfail.Kind
+			res.Error = rfail.Msg
+			wr.failMember(res)
+			continue
 		}
 		launch, lfail := resolveTemplateAgentLaunch(g, a, role, agentCwd, caller)
 		if lfail != nil {

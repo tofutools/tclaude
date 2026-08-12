@@ -82,8 +82,10 @@ test('management model preserves full-replace profile and role semantics', async
   assert.equal(toOpenCode.trust_dir, undefined, 'a harness with no trust dialog drops trust_dir');
   const role = model.roleDraft({ name: 'reviewer', permissions: ['read'] }, catalog);
   assert.deepEqual(model.rolePayload(role, catalog).permissions, ['read']);
-  const openCodeRole = model.roleDraft({ name: 'locked', harness: 'opencode', tools: 'ask' }, catalog);
-  assert.equal(model.rolePayload(openCodeRole, catalog).tools, 'ask');
+  const legacyRole = model.roleDraft({ name: 'locked', harness: 'opencode', tools: 'ask', model: 'old-model' }, catalog);
+  assert.deepEqual(model.rolePayload(legacyRole, catalog), {
+    name: 'locked', descr: '', brief: '', permissions: [],
+  }, 'role payloads contain behavior/access only, even for legacy rows');
   const defaults = model.profileDraft(null, {}, catalog); assert.equal(defaults.sandbox, 'inherit'); assert.equal(defaults.approval, 'inherit'); assert.equal(defaults.ask_user_question_timeout, 'inherit');
   const legacyCodex = model.profileDraft({ name: 'legacy', harness: 'codex', approval: '' }, {}, catalog);
   assert.equal(legacyCodex.approval, 'never', 'an empty legacy Codex profile renders the explicit daemon default');
@@ -499,9 +501,7 @@ test('OpenCode profile editor replaces the unsandboxed warning with its tclaude-
   cleanups.reverse().forEach((fn) => fn());
 });
 
-// The role editor shares HarnessFields, so it must show the same warning under
-// its own element id — asserted here, not just by comment.
-test('role editor shows the unsandboxed-autonomy warning', async (t) => {
+test('role editor carries no launch controls or autonomy warning', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
@@ -511,26 +511,22 @@ test('role editor shows the unsandboxed-autonomy warning', async (t) => {
   const cleanups = [];
   const host = harness.document.createElement('div');
   harness.document.body.appendChild(host);
-  const loadUnsandboxedAutonomy = async ({ sandbox, approval }) => ({
-    warnings: sandbox === 'off' && approval === 'auto' ? ['⚠ this role runs commands unattended with no sandbox.'] : [],
-  });
+  let autonomyLoads = 0;
+  const loadUnsandboxedAutonomy = async () => { autonomyLoads += 1; return { warnings: ['unexpected'] }; };
   mountManagementIsland({
     host, state,
     actions: { async saveRole() {}, loadUnsandboxedAutonomy },
     confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); },
   });
   await harness.act(() => Promise.resolve());
-  await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 260)); });
-
-  const warning = host.querySelector('#role-editor-autonomy-warning');
-  assert.ok(warning, 'the role editor renders the warning under its own id');
-  assert.equal(warning.querySelector('[role="alert"]').getAttribute('role'), 'alert');
-  assert.match(warning.textContent, /commands unattended/);
+  assertAbsent(host.querySelector('#role-editor-autonomy-warning'));
+  assertAbsent(host.querySelector('#role-editor-harness'));
+  assertAbsent(host.querySelector('#role-editor-model'));
+  assert.equal(autonomyLoads, 0, 'a behavior/access preset never probes launch posture');
   cleanups.reverse().forEach((fn) => fn());
 });
 
-// A role editor shares HarnessFields, so it gets the same warning; and an
-// actions object without the probe method (older callers, or a harness that
+// An actions object without the probe method (older callers, or a harness that
 // never wires it) must simply render no warning rather than throw.
 test('profile editor tolerates an actions object without the autonomy probe', async (t) => {
   const harness = await createPreactHarness(t);
@@ -3540,21 +3536,21 @@ test('common-rule controls are described and named for assistive technology', as
   unmount();
 });
 
-test('role editor preserves missing profile references and nested permission focus', async (t) => {
+test('role editor preserves nested permission focus and saves behavior/access only', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
   ]);
-  const state = createManagementState(); state.openDialog({ kind: 'role-editor', seed: { name: 'reviewer', spawn_profile: 'removed-profile', permissions: ['read'] }, catalog, slugs: [{ slug: 'read' }, { slug: 'write', description: 'write things' }] });
+  const state = createManagementState(); state.openDialog({ kind: 'role-editor', seed: { name: 'reviewer', spawn_profile: 'removed-profile', model: 'legacy-model', permissions: ['read'] }, catalog, slugs: [{ slug: 'read' }, { slug: 'write', description: 'write things' }] });
   let saved = null; let permissionOptions = null; const actions = { async saveRole(value) { saved = value; state.closeDialog(); } }; const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
   mountManagementIsland({ host, state, actions, confirmDiscard: async () => true, openProfilePermissions(options) { permissionOptions = options; }, registerCleanup(fn) { cleanups.push(fn); } }); await harness.act(() => Promise.resolve());
-  const profile = [...host.querySelectorAll('option')].find((option) => option.value === 'removed-profile'); assert.match(profile.textContent, /missing/);
-  assert.match(host.querySelector('#role-editor-name').placeholder, /reviewer/); assert.equal(host.querySelector('#role-editor-model').tagName, 'SELECT'); assert.ok([...host.querySelector('#role-editor-harness').options].some((option) => option.value === 'claude'));
+  assert.match(host.querySelector('#role-editor-name').placeholder, /reviewer/);
+  assertAbsent(host.querySelector('#role-editor-model')); assertAbsent(host.querySelector('#role-editor-harness'));
   const permissions = host.querySelector('#role-editor-perms'); permissions.focus(); permissions.click(); await harness.act(() => Promise.resolve());
   assertSameNode(harness.document.activeElement, permissions); assert.equal(permissionOptions.grantOnly, true);
   await harness.act(() => permissionOptions.onSave({ read: 'grant', write: 'grant' }));
-  assert.match(host.querySelector('.cron-create-label').parentElement.parentElement.textContent, /reviewer|Role/i);
   host.querySelector('#role-editor-modal .primary').click(); await harness.act(() => Promise.resolve()); assert.ok(saved); assert.deepEqual(saved.payload.permissions, ['read', 'write']);
+  assert.equal(saved.payload.spawn_profile, undefined); assert.equal(saved.payload.model, undefined);
   cleanups.reverse().forEach((fn) => fn());
 });
 

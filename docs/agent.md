@@ -499,7 +499,10 @@ All mutating subcommands take `--ask-human <duration>` (see
 
 ### spawn profiles
 
-Spawn profiles are reusable launch and identity presets. They can be paused
+Spawn profiles are reusable launch and identity presets. A profile may also
+select a saved role preset with `role_ref`; the role contributes behavioral
+guidance and baseline access while the profile continues to own launch policy.
+Profiles can be paused
 without being deleted:
 
 ```bash
@@ -533,7 +536,7 @@ Template and wave deploys are the exception: they compose each agent's startup
 context themselves from the template and the mission, so this toggle has no
 meaning there and is not part of a template-local inline profile.
 
-The profile's identity fields (`agent_name`, `role`, `descr`,
+The profile's identity fields (`agent_name`, free-text `role`, `role_ref`, `descr`,
 `initial_message`), its `auto_focus` and `remote_control` toggles and its
 birth-time access controls (`is_owner`, `permission_overrides`) ride the same
 daemon-side tier stack, so naming a profile is enough to get them — the agentd
@@ -1291,7 +1294,7 @@ replacing it, so an assignment is refused while one is active
 ### spawn
 
 ```bash
-tclaude agent spawn <group> [--profile P] [--name N --role R --descr T --cwd DIR]
+tclaude agent spawn <group> [--profile P] [--role-ref ROLE] [--name N --role R --descr T --cwd DIR]
                             [--initial-message MSG | --file PATH] [--reply-to SEL]
                             [--worktree BRANCH [--worktree-base B] [--worktree-repo DIR]]
                             [--sandbox-profile P | --omit-sandbox-profiles]
@@ -1309,6 +1312,11 @@ materialise, and adds it to `<group>`. The new session lands in
 other launch flags are needed. Explicit harness/model/effort/sandbox/approval
 flags are for when no suitable profile exists or a policy pins a specific
 vendor/model; see the default-resolution chain in `tclaude agent spawn --help`.
+
+`--role-ref <name>` selects a saved [role preset](#roles): its brief is added to
+startup context and its permission grants become baseline access. It does not
+select or change the harness, model, sandbox, or approval mode. `--role` remains
+the separate free-text membership label used for display and routing.
 
 `--initial-message` (or `--file PATH` / `--file -` for stdin) delivers
 the new agent a task brief in its inbox; `--reply-to` routes its reply
@@ -2129,7 +2137,7 @@ harness default (Claude Code at its default model/effort). To run scribes on a
 different harness/model — e.g. Codex, or a cheaper model for their light
 editing — set `scribe.profile` in `~/.tclaude/data/config.json` (or pick it from the
 dashboard **Config tab → Ask & scribe defaults**) to the name of a saved [spawn
-profile](#roles); each fresh summon adopts that profile's whole launch
+profile](#spawn-profiles); each fresh summon adopts that profile's whole launch
 shape, and the harness-matched dir-trust pre-seed follows it automatically.
 Resolved live at summon time — a deleted or renamed profile self-heals to the
 default rather than wedging the summon. Every click creates an independently
@@ -2169,27 +2177,26 @@ to install a fresh copy. See [Starter task forces](dashboard.md#starter-task-for
 
 ### roles
 
-Manage the [role library](dashboard.md#roles-library) — named, reusable agent
-defaults a template agent references via its `role_ref` field. `ls` / `show`
-are open; writes need `roles.manage` (effectively human-only). Like templates, a
-role carries a multi-line brief, so it is authored as JSON via `--file`. `show`
-without `--json` prints the role's brief, launch shape and permission slugs — so
-you can see at a glance what picking the role implies (the same transparency the
-dashboard role picker surfaces inline):
+Manage the [role library](dashboard.md#roles-library) — named, reusable
+behavior and access presets selected with `role_ref` from direct spawns, spawn
+profiles, or template agents. `ls` / `show` are open; writes need
+`roles.manage` (effectively human-only). Like templates, a role carries a
+multi-line brief, so it is authored as JSON via `--file`. `show` without
+`--json` prints the role's brief and permission slugs:
 
 ```bash
 tclaude agent roles ls
 tclaude agent roles show <name> [--json]
-tclaude agent roles create --file <path>          # {name, descr, brief, spawn_profile, harness, model, effort, sandbox, approval, permissions}
+tclaude agent roles create --file <path>          # {name, descr, brief, permissions}
 tclaude agent roles edit <name> --file <path>     # full replace
-tclaude agent roles rm <name>                     # refused while a template still references the role; a deleted seed reappears on the next daemon open
+tclaude agent roles rm <name>                     # refused while a template/profile references it; deleted seeds reappear on next daemon open
 ```
 
-Roles resolve at **deploy time**: editing a role changes what *future* deploys
-of a referencing template inherit; already-deployed agents are untouched. Because
-a live reference matters, `rm` is refused while any template still names the role
-(the error lists them) — edit those templates to drop or repoint the reference
-first.
+Roles resolve at **spawn time**: editing a role changes what *future* direct or
+template spawns inherit; already-running agents are untouched. Because a live
+reference matters, `rm` is refused while any template or spawn profile still
+names the role (the error lists them) — edit those references to drop or
+repoint the role first.
 
 ### task-force deploy
 

@@ -15,11 +15,10 @@ var ReservedRoleNames = map[string]bool{
 }
 
 // seedRole is one canonical role tclaude ships. The briefs are SHORT, generic
-// defaults — a sensible starting point, NOT policy. Launch fields and
-// permissions are intentionally left blank/empty: what a role should launch on
-// or be granted is the user's call, so a seed presumes neither. A user edits a
-// seed to taste and their edits are then sacred (never overwritten by the
-// re-seed on open).
+// defaults — a sensible starting point, NOT policy. Permissions are
+// intentionally empty: what a role may access is the user's call, so a seed
+// presumes nothing. A user edits a seed to taste and their edits are then
+// sacred (never overwritten by the re-seed on open).
 type seedRole struct {
 	name  string
 	descr string
