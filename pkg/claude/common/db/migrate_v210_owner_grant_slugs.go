@@ -28,14 +28,14 @@ var ownerGrantSlugRenames = map[string]string{
 	"agent.inbox-watch":    "groups.members.inbox-watch",
 }
 
-// migrateV208toV209 preserves owner-grant constraints from existing
+// migrateV209toV210 preserves owner-grant constraints from existing
 // installations after ownership moves from global agent.* permissions to
 // group-scoped groups.members.* siblings. Other permission-bearing columns are
 // intentionally untouched because the global agent.* vocabulary still exists.
-func migrateV208toV209(d *sql.DB) error {
+func migrateV209toV210(d *sql.DB) error {
 	tx, err := d.Begin()
 	if err != nil {
-		return fmt.Errorf("migrate v208→v209 (owner grant slugs): begin: %w", err)
+		return fmt.Errorf("migrate v209→v210 (owner grant slugs): begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -46,14 +46,14 @@ func migrateV208toV209(d *sql.DB) error {
 		if err = migratePermissionJSONColumn(tx, spec.table, spec.column, func(value string) (string, bool, error) {
 			return renamePermissionMap(value, ownerGrantSlugRenames)
 		}); err != nil {
-			return fmt.Errorf("migrate v208→v209 (%s.%s): %w", spec.table, spec.column, err)
+			return fmt.Errorf("migrate v209→v210 (%s.%s): %w", spec.table, spec.column, err)
 		}
 	}
-	if _, err = tx.Exec(`UPDATE schema_version SET version = 209`); err != nil {
-		return fmt.Errorf("migrate v208→v209 (version): %w", err)
+	if _, err = tx.Exec(`UPDATE schema_version SET version = 210`); err != nil {
+		return fmt.Errorf("migrate v209→v210 (version): %w", err)
 	}
 	if err = tx.Commit(); err != nil {
-		return fmt.Errorf("migrate v208→v209 (commit): %w", err)
+		return fmt.Errorf("migrate v209→v210 (commit): %w", err)
 	}
 	return nil
 }

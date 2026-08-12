@@ -232,12 +232,15 @@ func TestGroupContext_OwnerSeesEveryMember(t *testing.T) {
 	const freshLabel = "lbl-gcf0"
 
 	g := f.HaveGroup("team")
+	coordination := f.HaveGroup("coordination")
 	f.HaveConvWithTitle(hot, "hot-worker")
 	f.HaveAliveSession(hot, hotLabel, "tmux-gch0", f.TestCwd("gch0"))
 	f.HaveMember("team", hot)
 	f.HaveConvWithTitle(fresh, "fresh-worker")
 	f.HaveAliveSession(fresh, freshLabel, "tmux-gcf0", f.TestCwd("gcf0"))
 	f.HaveMember("team", fresh)
+	f.HaveMember("team", lead)
+	f.HaveMember(coordination.Name, lead)
 	require.NoError(t, db.AddAgentGroupOwner(g.ID, lead, "test"), "seed owner")
 
 	// Only the hot worker has reported a snapshot.
@@ -250,7 +253,7 @@ func TestGroupContext_OwnerSeesEveryMember(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, "group context (owner): body=%s", rec.Body.String())
 	var entries []ctxGroupEntry
 	testharness.DecodeJSON(t, rec, &entries)
-	require.Len(t, entries, 2, "two members expected")
+	require.Len(t, entries, 3, "all members, including the caller, are returned")
 
 	hotEntry := findCtxEntry(entries, hot)
 	require.NotNil(t, hotEntry, "hot worker missing from group context")

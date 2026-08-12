@@ -4489,7 +4489,14 @@ func agentStateHasSnapshot(s agentState) bool {
 // member; ownership contributes it only for owned groups.
 func requireGroupContextAccess(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, members []*db.AgentGroupMember) (string, bool) {
 	affected := make([]string, 0, len(members))
+	caller := ""
+	if p := peerFromContext(r.Context()); classify(p) == classAgent {
+		caller = p.ConvID
+	}
 	for _, member := range members {
+		if sameActor(caller, member.ConvID) {
+			continue
+		}
 		affected = append(affected, member.ConvID)
 	}
 	ctx := ActionContext{
