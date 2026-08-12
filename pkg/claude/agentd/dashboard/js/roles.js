@@ -1,9 +1,9 @@
 // roles.js — the role-library DATA layer (JOH-240).
 //
 // A role is a named, reusable bundle of defaults a template roster agent can
-// reference: a canonical role-brief (folded into the agent's startup context),
-// a default launch shape (harness / model / effort / sandbox / approval or a
-// spawn-profile reference), and a default permission set. Stored server-side
+// reference: a canonical role brief (folded into the agent's startup context)
+// and a default permission set. Launch configuration belongs to spawn profiles.
+// Stored server-side
 // behind /api/roles (the loopback twin of the daemon's /v1/roles surface; see
 // dashboard_roles.go).
 //
