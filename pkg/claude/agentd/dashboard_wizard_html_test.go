@@ -1977,7 +1977,7 @@ func TestDashboardHTML_WizardTemplateNativeControlSweep(t *testing.T) {
 	must("body.wizard #roles-manage-modal .manage-modal", "the roles-library overlay surface is re-skinned")
 	must("body.wizard #roles-manage-modal #role-create-open.primary", "the + new class primary gets the gilded-arcane chrome")
 	must("body.wizard #role-editor-modal .cron-create-modal", "the role-editor surface is re-skinned")
-	must("body.wizard #role-editor-modal .ta-perms-list input[type=checkbox] { accent-color: #a97bd6; }", "the shared perm-checkbox list gets the arcane accent via wizard scope")
+	must("body.wizard #role-editor-modal button:not(#role-editor-submit)", "the shared permission editor entry gets the secondary wizard chrome")
 	must("body.wizard #role-editor-modal #role-editor-submit", "the Save-role button gets the gilded lever chrome")
 }
 
