@@ -663,7 +663,23 @@ test('spawn role chips compose multiple roles, inspect details, and feed the per
   state.open({ groupName: 'alpha' });
   await flush(harness);
 
-  const add = host.querySelector('#agent-spawn-role-add');
+  assertAbsent(host.querySelector('.spawn-form-section'));
+  assertAbsent(host.querySelector('#agent-spawn-roles-hint'));
+  assert.equal(host.querySelector('.agent-spawn-roles-row').nextElementSibling.classList.contains('spawn-role-row'), true,
+    'Roles remains a normal row directly above display identity');
+
+  let add = host.querySelector('#agent-spawn-role-add');
+  assert.equal(add.options[0].textContent, '＋ Add role…');
+  harness.document.body.classList.add('wizard');
+  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:wizard', { detail: { active: true } }));
+  await flush(harness);
+  add = host.querySelector('#agent-spawn-role-add');
+  assert.equal(add.options[0].textContent, '＋ Add class…');
+  assert.equal(add.getAttribute('aria-label'), 'Add class');
+  harness.document.body.classList.remove('wizard');
+  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:wizard', { detail: { active: false } }));
+  await flush(harness);
+  add = host.querySelector('#agent-spawn-role-add');
   for (const role of ['reviewer', 'go-maintainer']) {
     setValue(add, role);
     await harness.act(() => harness.fireEvent(add, 'change'));
@@ -1299,7 +1315,7 @@ test('Preact agent-spawn collapses mode help behind [?] and keeps only ⚠ cavea
   // Only persistent, field-specific hints survive; mode explanations remain
   // behind their [?] controls. Count exact ids so accidental prose cannot ride along.
   const persistent = [...host.querySelectorAll('.spawn-field-hint')];
-  assert.deepEqual(persistent.map((node) => node.id), ['agent-spawn-name-hint', 'agent-spawn-roles-hint']);
+  assert.deepEqual(persistent.map((node) => node.id), ['agent-spawn-name-hint']);
 
   // Fixture help carries no ⚠, so no caveat line is on screen at all. The
   // caveat path itself is covered against real harness copy in
