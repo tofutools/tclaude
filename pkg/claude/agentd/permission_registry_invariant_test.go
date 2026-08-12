@@ -4,9 +4,9 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -21,14 +21,15 @@ import (
 // catalog entry fails without anyone updating a second hand-maintained list.
 func TestPermissionRegistryContainsEveryPermissionConstant(t *testing.T) {
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, ".", func(info fs.FileInfo) bool {
-		return !strings.HasSuffix(info.Name(), "_test.go")
-	}, 0)
+	entries, err := os.ReadDir(".")
 	require.NoError(t, err)
-	pkg := pkgs["agentd"]
-	require.NotNil(t, pkg)
-
-	for filename, file := range pkg.Files {
+	for _, entry := range entries {
+		filename := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(filename, ".go") || strings.HasSuffix(filename, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, filename, nil, 0)
+		require.NoError(t, err, filename)
 		ast.Inspect(file, func(node ast.Node) bool {
 			decl, ok := node.(*ast.GenDecl)
 			if !ok || decl.Tok != token.CONST {

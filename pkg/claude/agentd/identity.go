@@ -511,11 +511,6 @@ func resolveEffectivePermissionVerdictFrom(src permSources, slug string, default
 	return exact
 }
 
-func resolvePermissionWithDefault(convID, slug string, defaultAllowed bool) (permResolution, int64) {
-	v := resolveEffectivePermissionVerdict(convID, slug, defaultAllowed, false)
-	return contextFreeResolution(v), v.SudoGrantID
-}
-
 // contextFreeResolution collapses a verdict for a reader that cannot say what
 // the action targets — every boolean sibling of the gate, and the gates
 // themselves before an ActionContext exists.
@@ -712,10 +707,6 @@ func resolveGroupBoundPermissionVerdictForRequest(r *http.Request, convID, slug 
 // here shows up in the listing for free rather than silently making the
 // listing wrong (an agent held human.notify via a group grant while
 // `permissions ls` reported it absent).
-func resolvePermissionVerdict(convID, slug string, defaultAllowed bool) permVerdict {
-	return resolvePermissionVerdictFrom(loadPermSources(convID), slug, defaultAllowed)
-}
-
 // resolvePermissionVerdictFrom applies the precedence to already-read
 // sources. This is the one place the ordering lives; a caller resolving
 // many slugs for one agent loads the sources once and calls this per
