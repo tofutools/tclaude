@@ -25,7 +25,7 @@ func TestDashboardSudo_RevokeByID(t *testing.T) {
 	now := time.Now()
 	id1, err := db.InsertSudoGrant(&db.SudoGrant{
 		ConvID:    "alice",
-		Slug:      "groups.spawn",
+		Slug:      "groups.members.spawn",
 		GrantedAt: now,
 		ExpiresAt: now.Add(10 * time.Minute),
 		GrantedBy: "human:popup-id=test",
@@ -33,7 +33,7 @@ func TestDashboardSudo_RevokeByID(t *testing.T) {
 	require.NoError(t, err, "seed grant 1")
 	id2, err := db.InsertSudoGrant(&db.SudoGrant{
 		ConvID:    "alice",
-		Slug:      "member.add",
+		Slug:      "groups.members.add",
 		GrantedAt: now,
 		ExpiresAt: now.Add(10 * time.Minute),
 		GrantedBy: "human:popup-id=test",
@@ -69,7 +69,7 @@ func TestDashboardSudo_RevokeByAgent(t *testing.T) {
 
 	now := time.Now()
 	// Two grants for alice, one for bob — only alice's should die.
-	for _, slug := range []string{"groups.spawn", "member.add"} {
+	for _, slug := range []string{"groups.members.spawn", "groups.members.add"} {
 		_, err := db.InsertSudoGrant(&db.SudoGrant{
 			ConvID: aliceConv, Slug: slug,
 			GrantedAt: now, ExpiresAt: now.Add(10 * time.Minute),
@@ -78,7 +78,7 @@ func TestDashboardSudo_RevokeByAgent(t *testing.T) {
 		require.NoError(t, err, "seed alice grant %s", slug)
 	}
 	_, err := db.InsertSudoGrant(&db.SudoGrant{
-		ConvID: bobConv, Slug: "groups.spawn",
+		ConvID: bobConv, Slug: "groups.members.spawn",
 		GrantedAt: now, ExpiresAt: now.Add(10 * time.Minute),
 		GrantedBy: "human:popup-id=test",
 	})
@@ -107,7 +107,7 @@ func TestDashboardSudo_RevokeAll(t *testing.T) {
 	now := time.Now()
 	for _, conv := range []string{"alice", "bob", "carol"} {
 		_, err := db.InsertSudoGrant(&db.SudoGrant{
-			ConvID: conv, Slug: "groups.spawn",
+			ConvID: conv, Slug: "groups.members.spawn",
 			GrantedAt: now, ExpiresAt: now.Add(10 * time.Minute),
 			GrantedBy: "human:popup-id=test",
 		})
@@ -133,7 +133,7 @@ func TestDashboardSudo_BadRequest_NoSelector(t *testing.T) {
 
 	now := time.Now()
 	_, err := db.InsertSudoGrant(&db.SudoGrant{
-		ConvID: "alice", Slug: "groups.spawn",
+		ConvID: "alice", Slug: "groups.members.spawn",
 		GrantedAt: now, ExpiresAt: now.Add(10 * time.Minute),
 		GrantedBy: "human:popup-id=test",
 	})
@@ -156,7 +156,7 @@ func TestDashboardSudo_AuthRequired(t *testing.T) {
 
 	now := time.Now()
 	id, err := db.InsertSudoGrant(&db.SudoGrant{
-		ConvID: "alice", Slug: "groups.spawn",
+		ConvID: "alice", Slug: "groups.members.spawn",
 		GrantedAt: now, ExpiresAt: now.Add(10 * time.Minute),
 		GrantedBy: "human:popup-id=test",
 	})
@@ -188,7 +188,7 @@ func TestSnapshot_ActiveSudoSurfaces(t *testing.T) {
 	now := time.Now()
 	grantID, err := db.InsertSudoGrant(&db.SudoGrant{
 		ConvID:    aliceConv,
-		Slug:      "groups.spawn",
+		Slug:      "groups.members.spawn",
 		GrantedAt: now,
 		ExpiresAt: now.Add(15 * time.Minute),
 		GrantedBy: "human:popup-id=test",
@@ -208,7 +208,7 @@ func TestSnapshot_ActiveSudoSurfaces(t *testing.T) {
 	require.Len(t, got.Sudo, 1, "snapshot Sudo entries; body=%s", w.Body.String())
 	assert.Equal(t, grantID, got.Sudo[0].ID, "snapshot Sudo[0].ID")
 	assert.Equal(t, aliceConv, got.Sudo[0].ConvID, "snapshot Sudo[0].ConvID")
-	assert.Equal(t, "groups.spawn", got.Sudo[0].Slug, "snapshot Sudo[0].Slug")
+	assert.Equal(t, "groups.members.spawn", got.Sudo[0].Slug, "snapshot Sudo[0].Slug")
 	assert.Greater(t, got.Sudo[0].RemainingSeconds, int64(0),
 		"snapshot Sudo[0].RemainingSeconds should be positive")
 
@@ -226,7 +226,7 @@ func TestSnapshot_ActiveSudoSurfaces(t *testing.T) {
 	assert.Equal(t, grantID, alice.ActiveSudo[0].ID, "alice.ActiveSudo[0].ID")
 	assert.Empty(t, alice.ActiveSudo[0].ConvID,
 		"alice.ActiveSudo[0].ConvID should be empty (already implied by row)")
-	assert.Contains(t, alice.ActiveSudo[0].Slug, "groups.spawn", "alice.ActiveSudo[0].Slug")
+	assert.Contains(t, alice.ActiveSudo[0].Slug, "groups.members.spawn", "alice.ActiveSudo[0].Slug")
 }
 
 // TestDashboardSudo_GrantProactive exercises the cookie-auth twin
@@ -245,7 +245,7 @@ func TestDashboardSudo_GrantProactive(t *testing.T) {
 	agentID, _, err := db.EnsureAgentForConv(conv, "test")
 	require.NoError(t, err)
 
-	body := `{"agent_id":"` + agentID + `","slugs":["groups.spawn"],"duration":"5m","reason":"bootstrap"}`
+	body := `{"agent_id":"` + agentID + `","slugs":["groups.members.spawn"],"duration":"5m","reason":"bootstrap"}`
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPost, "/api/sudo", body)
 	handleDashboardSudoAPI(w, r)
@@ -255,7 +255,7 @@ func TestDashboardSudo_GrantProactive(t *testing.T) {
 	require.NoError(t, err, "ListActiveSudoGrants")
 	require.Len(t, rows, 1, "active grants")
 	got := rows[0]
-	assert.Equal(t, "groups.spawn", got.Slug, "slug")
+	assert.Equal(t, "groups.members.spawn", got.Slug, "slug")
 	assert.Equal(t, "bootstrap", got.Reason, "reason")
 	assert.Equal(t, dashboardSudoGranter, got.GrantedBy,
 		"granted_by (proactive label distinguishes from popup-approved)")
@@ -280,7 +280,7 @@ func TestDashboardSudo_GrantBlocklist(t *testing.T) {
 	agentID, _, err := db.EnsureAgentForConv(conv, "test")
 	require.NoError(t, err)
 
-	body := `{"agent_id":"` + agentID + `","slugs":["groups.spawn","permissions.grant"],"duration":"5m"}`
+	body := `{"agent_id":"` + agentID + `","slugs":["groups.members.spawn","permissions.grant"],"duration":"5m"}`
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPost, "/api/sudo", body)
 	handleDashboardSudoAPI(w, r)
@@ -307,7 +307,7 @@ func TestDashboardSudo_GrantDurationCap(t *testing.T) {
 	agentID, _, err := db.EnsureAgentForConv(conv, "test")
 	require.NoError(t, err)
 
-	body := `{"agent_id":"` + agentID + `","slugs":["groups.spawn"],"duration":"24h"}`
+	body := `{"agent_id":"` + agentID + `","slugs":["groups.members.spawn"],"duration":"24h"}`
 	w := httptest.NewRecorder()
 	r := dashboardRequest(http.MethodPost, "/api/sudo", body)
 	handleDashboardSudoAPI(w, r)
@@ -331,7 +331,7 @@ func TestDashboardSudo_GrantAuthRequired(t *testing.T) {
 	agentID, _, err := db.EnsureAgentForConv(conv, "test")
 	require.NoError(t, err)
 
-	body := `{"agent_id":"` + agentID + `","slugs":["groups.spawn"],"duration":"5m"}`
+	body := `{"agent_id":"` + agentID + `","slugs":["groups.members.spawn"],"duration":"5m"}`
 	w := httptest.NewRecorder()
 	// Request without cookie / Origin.
 	r := httptest.NewRequest(http.MethodPost, "/api/sudo", strings.NewReader(body))

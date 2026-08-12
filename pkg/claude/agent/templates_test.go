@@ -54,7 +54,7 @@ func TestRunTemplatesLs_FormatsTable(t *testing.T) {
 	var calls []capturedReq
 	stubDaemon(t, &calls, ok(`[
 		{"name":"feature-team","descr":"a PO and two devs","agents":[
-			{"name":"PO","is_owner":true,"permissions":["groups.spawn"]},
+			{"name":"PO","is_owner":true,"permissions":["groups.members.spawn"]},
 			{"name":"dev1","permissions":[]},
 			{"name":"dev2","permissions":[]}]},
 		{"name":"solo","agents":[{"name":"worker","permissions":[]}]}]`))
@@ -88,7 +88,7 @@ func TestRunTemplatesShow_HumanView(t *testing.T) {
 		"default_context":"shared boilerplate",
 		"agents":[{"name":"PO","role":"product-owner","descr":"leads",
 			"initial_message":"Coordinate the team.","is_owner":true,
-			"permissions":["groups.spawn"]}]}`))
+			"permissions":["groups.members.spawn"]}]}`))
 
 	var stdout, stderr bytes.Buffer
 	rc := runTemplatesShow(&templatesShowParams{Name: "feature-team"}, &stdout, &stderr)
@@ -100,7 +100,7 @@ func TestRunTemplatesShow_HumanView(t *testing.T) {
 	assert.Contains(t, out, "PO")
 	assert.Contains(t, out, "owner", "owner tag is shown")
 	assert.Contains(t, out, "role=product-owner")
-	assert.Contains(t, out, "groups.spawn", "permission slugs are shown")
+	assert.Contains(t, out, "groups.members.spawn", "permission slugs are shown")
 	assert.Contains(t, out, "Coordinate the team.", "the per-agent brief is shown")
 	require.Len(t, calls, 1)
 	assert.Equal(t, "/v1/templates/feature-team", calls[0].path)
@@ -172,7 +172,7 @@ func TestRunTemplatesCreate_SendsParsedTemplate(t *testing.T) {
 	file := filepath.Join(dir, "tmpl.json")
 	require.NoError(t, os.WriteFile(file, []byte(
 		`{"name":"feature-team","descr":"d","agents":[
-			{"name":"PO","is_owner":true,"permissions":["groups.spawn"]},
+			{"name":"PO","is_owner":true,"permissions":["groups.members.spawn"]},
 			{"name":"dev1","permissions":[]}]}`), 0o644))
 
 	var calls []capturedReq
@@ -258,7 +258,7 @@ func TestRunTemplatesInstantiate_HappyPath(t *testing.T) {
 	var calls []capturedReq
 	stubDaemon(t, &calls, ok(`{"group":"phoenix","template":"feature-team","spawned":2,"failed":0,
 		"agents":[
-			{"name":"PO","final_name":"phoenix-PO","conv_id":"abcd1234-0000-0000-0000-000000000000","owner":true,"granted":["groups.spawn"]},
+			{"name":"PO","final_name":"phoenix-PO","conv_id":"abcd1234-0000-0000-0000-000000000000","owner":true,"granted":["groups.members.spawn"]},
 			{"name":"dev1","final_name":"phoenix-dev1","conv_id":"efef5678-0000-0000-0000-000000000000"}]}`))
 
 	var stdout, stderr bytes.Buffer
@@ -271,7 +271,7 @@ func TestRunTemplatesInstantiate_HappyPath(t *testing.T) {
 	assert.Contains(t, out, "2 spawned, 0 failed")
 	assert.Contains(t, out, "phoenix-PO")
 	assert.Contains(t, out, "owner")
-	assert.Contains(t, out, "groups.spawn")
+	assert.Contains(t, out, "groups.members.spawn")
 
 	require.Len(t, calls, 1)
 	assert.Equal(t, "/v1/templates/feature-team/instantiate", calls[0].path)
@@ -488,7 +488,7 @@ func stubDaemonGetRaw(t *testing.T, gotPath *string, body string) {
 const exportEnvelopeWire = `{"format":"tclaude-task-force","format_version":3,` +
 	`"template":{"name":"crew","agents":[{"name":"lead","permissions":[]}]},` +
 	`"roles":[{"name":"dev"}],` +
-	`"profiles":[{"name":"lead-kit","is_owner":true,"permission_overrides":{"groups.spawn":"grant"}}],` +
+	`"profiles":[{"name":"lead-kit","is_owner":true,"permission_overrides":{"groups.members.spawn":"grant"}}],` +
 	`"some_future_envelope_field":"must-survive"}`
 
 // runTemplatesExport must pass the daemon's export bytes through VERBATIM

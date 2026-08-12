@@ -547,13 +547,13 @@ An `agent_name` that is not a safe spawn-name token is normalized the same way
 a typed name is, and skipped with a note if it still cannot be one.
 
 The birth-time access controls stay gated on the caller's own authority, now
-applied to the RESOLVED value. An agent caller still needs `groups.own` to mint
+applied to the RESOLVED value. An agent caller still needs `groups.owners.manage` to mint
 an owner and `permissions.grant` to seed overrides. A profile the caller NAMED
 is direct intent, so an unauthorized caller is refused; a group or global
 DEFAULT profile is ambient configuration nobody typed at this launch, so it is
 skipped and disclosed in the `resolved` echo instead of failing the spawn.
 `tclaude agent spawn --owner` explicitly makes the new agent a group owner;
-the caller needs `groups.own`. `--no-owner` declines ownership a profile would
+the caller needs `groups.owners.manage`. `--no-owner` declines ownership a profile would
 otherwise confer, the same shape as `--no-group-context`. The two flags are
 mutually exclusive. Bare and explicit group-joined `tclaude` launches accept
 the same pair.
@@ -1301,7 +1301,7 @@ tclaude agent spawn <group> [--profile P] [--name N --role R --descr T --cwd DIR
 Launches a fresh detached CC session, waits for its conv-id to
 materialise, and adds it to `<group>`. The new session lands in
 `--cwd` (defaults to the caller's cwd, or the group's
-[default dir](#groups)). Requires the `groups.spawn` permission
+[default dir](#groups)). Requires the `groups.members.spawn` permission
 (human-only by default).
 
 **Prefer a spawn profile.** With `--profile <name>` (an operator-preconfigured
@@ -1458,7 +1458,7 @@ a stand-by seed and its inbox-pointer welcome is injected post-connect, once
 the inbox row exists. The legacy Claude-Code `spawn_legacy_injection` revert
 always uses the post-connect inbox pointer.
 
-**Spawn guardrails.** `groups.spawn` is human-only by default, but the
+**Spawn guardrails.** `groups.members.spawn` is human-only by default, but the
 human can grant it to a coordinator agent so it can grow its own team.
 To keep a spawn-capable agent from running away (a recursive spawn
 explosion) or minting a less-confined child, an **agent** caller is
@@ -2262,7 +2262,7 @@ sweeps (deletes) the deploy-seeded runtime — the group-target rhythm cron jobs
 and any pending wave choreography — while **keeping the group row** as a dormant
 record (mission, provenance, and process history preserved). It is deliberately
 *not* a group delete (`groups rm` does that). Gated on the human, group owners,
-or `groups.retire`.
+or `groups.members.retire`.
 
 ```bash
 tclaude agent task-force stand-down <group> [--no-shutdown] [--reason "<why>"] [--ask-human <duration>]
@@ -2347,8 +2347,8 @@ has [classified the caller](#identity), it decides:
    `sudo` elevation. **Group-owner state** raises an owner's default
    slugs: owning a group confers, for that group, the `agent.*`
    manager-pattern checks against its members, the group-lifecycle
-   verbs (`groups.spawn` / `groups.stop` / `groups.retire` /
-   `groups.resume`), and — for owning *any* group — `human.notify` plus
+   verbs (`groups.members.spawn` / `groups.members.stop` / `groups.members.retire` /
+   `groups.members.resume`), and — for owning *any* group — `human.notify` plus
    `process.runs.read`. These owner
    defaults fill only the *undecided* gap — an explicit **deny** override
    is always authoritative and suppresses them, read or write.
@@ -2359,11 +2359,11 @@ has [classified the caller](#identity), it decides:
    it confers — see [Owner-bypass narrowing](#owner-bypass-narrowing).
 3. **Neither?** Refused fail-closed — see [Identity](#identity).
 
-`groups.admin` is the explicit umbrella for the registered `groups.*` and
-`member.*` administration vocabulary. A grant of it satisfies those gates,
-but a deny on a dedicated operation (for example `groups.default-dir`) still
+`groups.admin` is the explicit umbrella for the registered `groups.*`
+administration vocabulary. A grant of it satisfies those gates,
+but a deny on a dedicated operation (for example `groups.settings.default-dir`) still
 wins. Group settings use dedicated capabilities: granting
-`groups.default-dir` does not permit rename, context changes, or any other
+`groups.settings.default-dir` does not permit rename, context changes, or any other
 mutation.
 
 Compatibility note: older builds used the then-unregistered `groups.rename`
@@ -2373,6 +2373,14 @@ for rename but are deliberately not broadened during migration; replace an
 old catch-all grant with `groups.admin`, or preferably the dedicated setting
 slugs actually needed. This avoids silently converting a rename-only grant
 into full administration.
+
+Older installations may also contain the pre-namespace group slugs such as
+`groups.spawn`, `groups.stop`, `groups.own`, `member.add`, `groups.default-dir`,
+or `groups.rm`. On upgrade, SQLite and config migrations rewrite these to the
+canonical `groups.members.*`, `groups.owners.*`, `groups.settings.*`, and
+`groups.delete` names. Legacy group-export archives are canonicalized when
+imported. If both spellings exist for the same subject, the canonical entry is
+kept so an explicitly authored new grant or deny remains authoritative.
 
 ### Storage split
 
@@ -2403,7 +2411,7 @@ scope is a map of typed dimensions to matchers:
 
 ```bash
 # spawn into "dev" and nowhere else
-tclaude agent permissions grant p7-worker groups.spawn --scope group=dev
+tclaude agent permissions grant p7-worker groups.members.spawn --scope group=dev
 
 # start runs of either release process, no others
 tclaude agent permissions grant lead process.runs.manage \
@@ -2506,10 +2514,10 @@ slug to the same scope shape a grant takes:
 
 ```bash
 tclaude agent groups set-owner-scopes reviewers \
-  '{"groups.spawn": {"spawn_profile": ["reviewer"]}}'
+  '{"groups.members.spawn": {"spawn_profile": ["reviewer"]}}'
 ```
 
-An owner of `reviewers` that holds no `groups.spawn` grant of its own may now
+An owner of `reviewers` that holds no `groups.members.spawn` grant of its own may now
 spawn into it with the `reviewer` profile, and is refused (popup, then 403)
 with any other profile or with an inline launch shape that names none. Omit the
 map (or pass `{}`) to clear the narrowing. The dashboard writes the same field
@@ -2535,7 +2543,7 @@ Four properties are worth stating plainly:
 Every slug in the map must be one ownership actually confers, and every
 dimension must be one that slug declares — the same validation a grant scope
 gets. `permissions ls` renders the result, e.g.
-`groups.spawn … owner:group [spawn_profile=reviewer]`.
+`groups.members.spawn … owner:group [spawn_profile=reviewer]`.
 
 ### Slugs
 
@@ -2547,8 +2555,7 @@ gate group, messaging, template, and permission administration.
 |---------------|-------|
 | `self.*`      | `self.rename`, `self.compact`, `self.interrupt`, `self.clone`, `self.schedule`, `self.remote-control`, `self.task`, `self.pr`, `self.tags`, `self.dir-repair` |
 | `agent.*`     | `agent.rename`, `agent.compact`, `agent.interrupt`, `agent.reincarnate`, `agent.clone`, `agent.context-info`, `agent.resume`, `agent.stop`, `agent.delete`, `agent.schedule`, `agent.promote`, `agent.retire`, `agent.remote-control`, `agent.sandbox-impl` (not owner-conferred) |
-| `groups.*`    | `groups.admin`, `groups.create`, `groups.rm`, `groups.rename`, `groups.description`, `groups.default-dir`, `groups.default-context`, `groups.default-spawn-group`, `groups.default-profile`, `groups.max-members`, `groups.notifications`, `groups.remote-control`, `groups.permissions`, `groups.owner-scopes`, `groups.archive`, `groups.stop`, `groups.resume`, `groups.retire`, `groups.spawn`, `groups.own`, `groups.nest`, `groups.attachment`, `groups.clone`, `groups.link.add`, `groups.link.rm`, `groups.export`, `groups.import` |
-| `member.*`    | `member.add`, `member.remove`, `member.redesignate` |
+| `groups.*`    | `groups.admin`, `groups.create`, `groups.delete`, `groups.rename`, `groups.settings.description`, `groups.settings.default-dir`, `groups.settings.default-context`, `groups.settings.default-spawn-target`, `groups.settings.default-profile`, `groups.settings.max-members`, `groups.settings.notifications`, `groups.settings.remote-control-policy`, `groups.settings.member-permissions`, `groups.settings.owner-scopes`, `groups.archive`, `groups.members.stop`, `groups.members.resume`, `groups.members.retire`, `groups.members.spawn`, `groups.owners.manage`, `groups.nest`, `groups.attachment`, `groups.clone`, `groups.link.add`, `groups.link.remove`, `groups.export`, `groups.import` |
 | `permissions.*` | `permissions.grant`, `permissions.revoke` |
 | `message.*`   | `message.direct` |
 | `templates.*` | `templates.manage`, `templates.instantiate` |
@@ -2604,7 +2611,7 @@ the [dashboard](dashboard.md) permission editor as a normal allow override
 `tclaude agent permissions revoke <agent> <slug>`. A **deny** override
 still beats it — deny is always authoritative. The button is rendered (and
 its action accepted) **only** for eligible slugs; destructive or
-fleet-affecting slugs (e.g. `agent.delete`, `groups.rm`) never offer it.
+fleet-affecting slugs (e.g. `agent.delete`, `groups.delete`) never offer it.
 
 **Always allow — this scope.** When the gated action is one the gate
 describes in [scope](#scoped-grants) dimensions, the card offers a second,

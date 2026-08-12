@@ -40,12 +40,12 @@ func TestDaemonSpawn_NotBlockedByNestedClaudeGuard(t *testing.T) {
 	f.HaveGroup("alpha")
 
 	// The requester is an agent (AsAgentPeer => HasClaudeAncestor=true)
-	// with `groups.spawn` granted — the realistic "a lead agent spawns
+	// with `groups.members.spawn` granted — the realistic "a lead agent spawns
 	// a worker" path, and the one most at risk of being broken.
 	const lead = "lead-aaaa-bbbb-cccc-111111111111"
 	f.HaveMember("alpha", lead)
-	require.NoError(t, db.GrantAgentPermission(lead, agentd.PermGroupsSpawn, "test"),
-		"grant groups.spawn to the requesting agent")
+	require.NoError(t, db.GrantAgentPermission(lead, agentd.PermGroupsMembersSpawn, "test"),
+		"grant groups.members.spawn to the requesting agent")
 
 	// f.Spawn fatals on any non-200, so a guard that wrongly blocked
 	// the daemon path would fail the test right here.

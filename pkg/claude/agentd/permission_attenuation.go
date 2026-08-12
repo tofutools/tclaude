@@ -17,8 +17,8 @@ import (
 // authority than it holds itself. Before scopes existed there was nothing to
 // compare: every grant was the whole slug, so "holds permissions.grant" was the
 // only question. A scoped grant makes the question real, and its most
-// dangerous answer is the quiet one: an agent whose own groups.spawn is pinned
-// to one profile minting a child an UNSCOPED groups.spawn, then acting through
+// dangerous answer is the quiet one: an agent whose own groups.members.spawn is pinned
+// to one profile minting a child an UNSCOPED groups.members.spawn, then acting through
 // the child.
 //
 // So: for every conferred grant, the granter's effective scope for that slug
@@ -147,7 +147,7 @@ func permissionScopeCovers(granter, conferred PermissionScope) bool {
 // "unconstrained", because ownership conferred whole slugs and carried no
 // shape. A NARROWED owner bypass does carry one, and it must attenuate: an
 // owner whose spawn is pinned to one profile could otherwise mint a child an
-// unscoped groups.spawn and act through it — the exact escalation this rule
+// unscoped groups.members.spawn and act through it — the exact escalation this rule
 // exists to stop, arriving through the bypass instead of a grant. An
 // unrestricted owner tier still reads as unconstrained, so no pre-Phase-6
 // delegation changes.

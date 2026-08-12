@@ -281,7 +281,7 @@ func TestWaves_QueuedProfileAccessSurvivesRename(t *testing.T) {
 	owner := true
 	profileID, err := db.CreateSpawnProfile(&db.SpawnProfile{
 		Name: "before", Model: "haiku", IsOwner: &owner,
-		PermissionOverrides: db.UnscopedOverrides(map[string]string{agentd.PermGroupsSpawn: db.PermEffectGrant}),
+		PermissionOverrides: db.UnscopedOverrides(map[string]string{agentd.PermGroupsMembersSpawn: db.PermEffectGrant}),
 	})
 	require.NoError(t, err)
 	require.Equal(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
@@ -301,7 +301,7 @@ func TestWaves_QueuedProfileAccessSurvivesRename(t *testing.T) {
 
 	require.NoError(t, db.UpdateSpawnProfile(&db.SpawnProfile{
 		ID: profileID, Name: "after", Model: "haiku", IsOwner: &owner,
-		PermissionOverrides: db.UnscopedOverrides(map[string]string{agentd.PermGroupsSpawn: db.PermEffectGrant}),
+		PermissionOverrides: db.UnscopedOverrides(map[string]string{agentd.PermGroupsMembersSpawn: db.PermEffectGrant}),
 	}))
 	settleWaveMember(t, f, leadConv)
 
@@ -315,7 +315,7 @@ func TestWaves_QueuedProfileAccessSurvivesRename(t *testing.T) {
 	assert.True(t, ownsGroup(t, g.ID, devConv), "profile owner default survived the rename")
 	overrides, err := db.ListAgentPermissionOverridesForConv(devConv)
 	require.NoError(t, err)
-	assert.Equal(t, db.PermEffectGrant, overrides[agentd.PermGroupsSpawn],
+	assert.Equal(t, db.PermEffectGrant, overrides[agentd.PermGroupsMembersSpawn],
 		"profile permission override survived the rename")
 }
 

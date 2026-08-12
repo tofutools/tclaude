@@ -74,6 +74,42 @@ func convJSONLPath(home, cwd, convID string) string {
 		convops.PathToProjectDir(cwd), convID+".jsonl")
 }
 
+func TestGroupImport_CanonicalizesLegacyPermissionSlugs(t *testing.T) {
+	f := newFlow(t)
+	const convID = "legacy-permission-agent"
+	exp := &groupexport.Export{
+		FormatVersion: groupexport.FormatVersion,
+		SourceGroup:   "legacy-permissions",
+		Group: groupexport.Group{Permissions: []groupexport.GroupPermission{
+			{Slug: "groups.spawn", GrantedBy: "legacy"},
+			{Slug: agentd.PermGroupsMembersSpawn, GrantedBy: "canonical"},
+		}},
+		Permissions: []groupexport.Permission{
+			{ConvID: convID, Slug: "groups.spawn", Effect: db.PermEffectGrant, GrantedBy: "legacy"},
+			{ConvID: convID, Slug: agentd.PermGroupsMembersSpawn, Effect: db.PermEffectDeny, GrantedBy: "canonical"},
+		},
+	}
+	archive, err := groupexport.Marshal(exp)
+	require.NoError(t, err)
+
+	importArchiveOK(t, f, archive, f.TestCwd("legacy-permissions"), "")
+	g, err := db.GetAgentGroupByName("legacy-permissions")
+	require.NoError(t, err)
+	require.NotNil(t, g)
+	permissions, err := db.ListAgentGroupPermissionRows(g.ID)
+	require.NoError(t, err)
+	require.Len(t, permissions, 1)
+	assert.Equal(t, agentd.PermGroupsMembersSpawn, permissions[0].Slug)
+	assert.Equal(t, "canonical", permissions[0].GrantedBy)
+
+	overrides, err := db.ListAgentPermissionOverrideRowsForConv(convID)
+	require.NoError(t, err)
+	require.Len(t, overrides, 1)
+	assert.Equal(t, agentd.PermGroupsMembersSpawn, overrides[0].Slug)
+	assert.Equal(t, db.PermEffectDeny, overrides[0].Effect)
+	assert.Equal(t, "canonical", overrides[0].GrantedBy)
+}
+
 // TestGroupExportImport_RoundTripPreservesEverything is the core safety
 // net: a group with members, roles, an owner, grant+deny permissions and
 // real conversation .jsonl files is exported, the source machine is then
@@ -106,7 +142,7 @@ func TestGroupExportImport_RoundTripPreservesEverything(t *testing.T) {
 	f.HaveMemberWithRole("team", aConv, "lead")
 	f.HaveMemberWithRole("team", bConv, "worker")
 	require.NoError(t, db.AddAgentGroupOwner(src.ID, aConv, "test"))
-	require.NoError(t, db.SetAgentPermissionOverride(aConv, "groups.spawn", db.PermEffectGrant, "test"))
+	require.NoError(t, db.SetAgentPermissionOverride(aConv, "groups.members.spawn", db.PermEffectGrant, "test"))
 	require.NoError(t, db.SetAgentPermissionOverride(bConv, "self.rename", db.PermEffectDeny, "test"))
 	// A parent/child message pair so message + parent_id remap is exercised.
 	parentID, err := db.InsertAgentMessage(&db.AgentMessage{
@@ -173,7 +209,7 @@ func TestGroupExportImport_RoundTripPreservesEverything(t *testing.T) {
 	// Permissions — both the grant and the deny.
 	permA, err := db.ListAgentPermissionOverridesForConv(aConv)
 	require.NoError(t, err)
-	assert.Equal(t, db.PermEffectGrant, permA["groups.spawn"], "grant override restored")
+	assert.Equal(t, db.PermEffectGrant, permA["groups.members.spawn"], "grant override restored")
 	permB, err := db.ListAgentPermissionOverridesForConv(bConv)
 	require.NoError(t, err)
 	assert.Equal(t, db.PermEffectDeny, permB["self.rename"], "deny override restored")
@@ -278,7 +314,7 @@ func TestGroupExportImport_SameMachineReimportRemaps(t *testing.T) {
 	src := f.HaveGroup("team")
 	f.HaveMemberWithRole("team", aConv, "lead")
 	f.HaveMemberWithRole("team", bConv, "worker")
-	require.NoError(t, db.SetAgentPermissionOverride(aConv, "groups.spawn", db.PermEffectGrant, "test"))
+	require.NoError(t, db.SetAgentPermissionOverride(aConv, "groups.members.spawn", db.PermEffectGrant, "test"))
 
 	archive := exportGroup(t, f, "team")
 	srcContentA, err := os.ReadFile(convJSONLPath(home, srcCwd, aConv))
@@ -313,7 +349,7 @@ func TestGroupExportImport_SameMachineReimportRemaps(t *testing.T) {
 	require.NotEmpty(t, freshA)
 	permFresh, err := db.ListAgentPermissionOverridesForConv(freshA)
 	require.NoError(t, err)
-	assert.Equal(t, db.PermEffectGrant, permFresh["groups.spawn"],
+	assert.Equal(t, db.PermEffectGrant, permFresh["groups.members.spawn"],
 		"permission remapped onto the fresh conv-id")
 
 	// The ORIGINAL group is untouched.
@@ -407,7 +443,7 @@ func TestGroupImport_RejectsInvalidPermissionScopeBeforeFilesystem(t *testing.T)
 		FormatVersion: groupexport.FormatVersion,
 		SourceGroup:   "invalid-scope",
 		Group: groupexport.Group{Permissions: []groupexport.GroupPermission{{
-			Slug: agentd.PermGroupsSpawn, ScopeJSON: `{"remote":["origin"]}`,
+			Slug: agentd.PermGroupsMembersSpawn, ScopeJSON: `{"remote":["origin"]}`,
 		}}},
 	}
 	archive, err := groupexport.Marshal(exp)
@@ -556,7 +592,7 @@ func TestGroupImport_LatePlainConversationIndexCollisionRollsBackAuthority(t *te
 		Members:       []groupexport.Member{{ConvID: convID, Role: "lead"}},
 		Owners:        []groupexport.Owner{{ConvID: convID, GrantedBy: "human"}},
 		Permissions: []groupexport.Permission{{
-			ConvID: convID, Slug: "groups.spawn", Effect: db.PermEffectGrant, GrantedBy: "human",
+			ConvID: convID, Slug: "groups.members.spawn", Effect: db.PermEffectGrant, GrantedBy: "human",
 		}},
 		SudoGrants: []groupexport.SudoGrant{{
 			ConvID: convID, Slug: "human.notify", GrantedAt: "2026-01-01T00:00:00Z",
@@ -732,7 +768,7 @@ func TestGroupImport_LateOmittedSuccessionCollisionRollsBackAllSideEffects(t *te
 		Members:       []groupexport.Member{{ConvID: importedConv, Role: "lead"}},
 		Owners:        []groupexport.Owner{{ConvID: importedConv, GrantedBy: "human"}},
 		Permissions: []groupexport.Permission{{
-			ConvID: importedConv, Slug: "groups.spawn", Effect: db.PermEffectGrant,
+			ConvID: importedConv, Slug: "groups.members.spawn", Effect: db.PermEffectGrant,
 		}},
 		SudoGrants: []groupexport.SudoGrant{{
 			ConvID: importedConv, Slug: "human.notify", GrantedAt: "2026-01-01T00:00:00Z",

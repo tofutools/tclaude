@@ -308,7 +308,7 @@ type NewParams struct {
 
 	// --join-group makes the new session auto-join an existing agent group
 	// the moment its conv-id materialises. Routed through the daemon's
-	// `groups.spawn` orchestration; not compatible with --resume / --label.
+	// `groups.members.spawn` orchestration; not compatible with --resume / --label.
 	JoinGroup string `long:"join-group" optional:"true" help:"Spawn the session and add it to an existing agent group (shorthand for agent spawn + foreground attach)"`
 	Name      string `long:"name" optional:"true" help:"Display name for the session (claude --name; becomes its conversation title). With --join-group it is the new agent's name"`
 	Role      string `long:"role" optional:"true" help:"Role tag for the new member in --join-group (e.g. 'tech-lead')"`
@@ -339,7 +339,7 @@ type NewParams struct {
 	NoGroupContext      bool   `long:"no-group-context" help:"Do not include the selected group's shared startup context"`
 	Task                string `long:"task" optional:"true" help:"Task-reference URL for the group-joined agent"`
 	TaskLabel           string `long:"task-label" optional:"true" help:"Display label overriding the value derived from --task"`
-	Owner               bool   `long:"owner" help:"Make the group-joined agent a group owner (requires groups.own authority)"`
+	Owner               bool   `long:"owner" help:"Make the group-joined agent a group owner (requires groups.owners.manage authority)"`
 	NoOwner             bool   `long:"no-owner" help:"Do not make the group-joined agent an owner even if a profile would"`
 
 	// InitialPrompt is a first-turn prompt the harness submits itself at
@@ -1061,7 +1061,7 @@ func runNew(params *NewParams) error {
 	// Self-guard: a Claude Code instance must not directly launch
 	// another Claude Code session. Placed after the --join-group and
 	// pass-through branches on purpose: --join-group delegates to the
-	// agentd daemon (gated there by the `groups.spawn` permission), and
+	// agentd daemon (gated there by the `groups.members.spawn` permission), and
 	// pass-through only prints `claude --help`/`--version`. Daemon-forked
 	// spawns are unaffected — see GuardAgainstNestedSpawn.
 	if err := GuardAgainstNestedSpawn(); err != nil {

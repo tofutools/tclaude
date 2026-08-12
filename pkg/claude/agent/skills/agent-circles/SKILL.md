@@ -171,7 +171,7 @@ it only when asked. Example minimal body:
   "default_context": "Use worktrees and open PRs.",
   "agents": [
     { "name": "PO",   "role": "product-owner", "is_owner": true,
-      "initial_message": "Coordinate the team.", "permissions": ["groups.spawn"] },
+      "initial_message": "Coordinate the team.", "permissions": ["groups.members.spawn"] },
     { "name": "dev1", "role": "dev", "initial_message": "Build feature A." },
     { "name": "dev2", "role": "dev", "initial_message": "Build feature B." }
   ]

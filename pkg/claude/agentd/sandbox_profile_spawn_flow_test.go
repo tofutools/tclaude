@@ -55,7 +55,7 @@ func TestSandboxProfileSpawnRefreshesExplicitValuesOnResumeAndSelectionIsHumanOn
 	require.NotNil(t, persisted)
 	assert.Equal(t, snapshot.Effective.Environment, persisted.Effective.Environment)
 
-	require.NoError(t, db.GrantAgentPermission(spawn.ConvID, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(spawn.ConvID, agentd.PermGroupsMembersSpawn, "test"))
 	require.NoError(t, db.GrantAgentPermission(spawn.ConvID, agentd.PermSandboxProfilesManage, "test"))
 	denied := f.AsAgent(spawn.ConvID).SpawnWith("crew", map[string]any{
 		"name": "child", "sandbox_profile": "literal-env", "approval": "default",
@@ -169,7 +169,7 @@ func TestSandboxProfileResumeRefreshesComposedPolicyAndCanSpawnChild(t *testing.
 				}
 				parent := f.AsHuman().SpawnWith("crew", parentBody)
 				require.Equalf(t, http.StatusOK, parent.Code, "spawn body=%s", parent.Raw)
-				require.NoError(t, db.GrantAgentPermission(parent.ConvID, agentd.PermGroupsSpawn, "test"))
+				require.NoError(t, db.GrantAgentPermission(parent.ConvID, agentd.PermGroupsMembersSpawn, "test"))
 
 				writeRoot, err := filepath.EvalSymlinks(t.TempDir())
 				require.NoError(t, err)
@@ -339,7 +339,7 @@ func TestSandboxProfileAgentCanSpawnChildWithAdditionalAgentDirectories(t *testi
 	require.NoError(t, err)
 	parentSession.HarnessBuiltinMode = "tclaude-agent"
 	require.NoError(t, db.SaveSession(parentSession))
-	require.NoError(t, db.GrantAgentPermission(parent.ConvID, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(parent.ConvID, agentd.PermGroupsMembersSpawn, "test"))
 	parentSnapshot, ok := f.World.SpawnSandboxPolicy(parent.ConvID)
 	require.True(t, ok)
 	require.NotNil(t, parentSnapshot)
@@ -396,7 +396,7 @@ func TestSandboxProfileSpawnRejectsAmbientCapabilityWideningAfterParentLaunch(t 
 				"name": "parent", "approval": "bypassPermissions",
 			})
 			require.Equalf(t, http.StatusOK, parent.Code, "spawn body=%s", parent.Raw)
-			require.NoError(t, db.GrantAgentPermission(parent.ConvID, agentd.PermGroupsSpawn, "test"))
+			require.NoError(t, db.GrantAgentPermission(parent.ConvID, agentd.PermGroupsMembersSpawn, "test"))
 
 			writeRoot := t.TempDir()
 			_, err := db.CreateSandboxProfile(&db.SandboxProfile{
@@ -449,7 +449,7 @@ func TestSandboxProfileSpawnRejectsExplicitInternetWidening(t *testing.T) {
 		require.NotNil(t, parentSession)
 		parentSession.HarnessBuiltinMode = harness.SandboxManagedProfile
 		require.NoError(t, db.SaveSession(parentSession))
-		require.NoError(t, db.GrantAgentPermission(parent.ConvID, agentd.PermGroupsSpawn, "test"))
+		require.NoError(t, db.GrantAgentPermission(parent.ConvID, agentd.PermGroupsMembersSpawn, "test"))
 		makeInternetProfile(t)
 
 		denied := f.AsAgent(parent.ConvID).SpawnWith("crew", map[string]any{
@@ -465,7 +465,7 @@ func TestSandboxProfileSpawnRejectsExplicitInternetWidening(t *testing.T) {
 		f.HaveGroup("crew")
 		const parent = "legacy-1111-2222-3333-444444444444"
 		f.HaveMember("crew", parent)
-		require.NoError(t, db.GrantAgentPermission(parent, agentd.PermGroupsSpawn, "test"))
+		require.NoError(t, db.GrantAgentPermission(parent, agentd.PermGroupsMembersSpawn, "test"))
 		makeInternetProfile(t)
 
 		denied := f.AsAgent(parent).SpawnWith("crew", map[string]any{
@@ -496,7 +496,7 @@ func TestSandboxProfileWriteRootParticipatesInAgentSpawnProof(t *testing.T) {
 		"name": "parent", "cwd": t.TempDir(), "approval": "bypassPermissions",
 	})
 	require.Equalf(t, http.StatusOK, parent.Code, "spawn body=%s", parent.Raw)
-	require.NoError(t, db.GrantAgentPermission(parent.ConvID, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(parent.ConvID, agentd.PermGroupsMembersSpawn, "test"))
 
 	childCwd, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
@@ -532,7 +532,7 @@ func TestMissingSandboxProfileWriteRootProofsNearestExistingAncestor(t *testing.
 		"name": "parent", "cwd": t.TempDir(), "approval": "bypassPermissions",
 	})
 	require.Equalf(t, http.StatusOK, parent.Code, "spawn body=%s", parent.Raw)
-	require.NoError(t, db.GrantAgentPermission(parent.ConvID, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(parent.ConvID, agentd.PermGroupsMembersSpawn, "test"))
 
 	childCwd, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)

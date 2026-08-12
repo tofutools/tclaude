@@ -78,7 +78,7 @@ const harnesses = [{
 const profiles = [{
   name: 'group-default', harness: 'claude', model: 'opus', effort: 'high',
   role: 'reviewer', initial_message: 'review this', remote_control: true,
-  is_owner: true, permission_overrides: { 'groups.spawn': 'grant' },
+  is_owner: true, permission_overrides: { 'groups.members.spawn': 'grant' },
 }, {
   name: 'codex-profile', aliases: ['codex-fast'], harness: 'codex',
   model: 'gpt-5.6', sandbox: 'danger-full-access', approval: 'on-request',
@@ -170,7 +170,7 @@ test('agent-spawn model preserves precedence, sparse profiles, gates, and hidden
   assert.equal(draft.role, 'reviewer');
   assert.equal(draft.remoteControl, true);
   assert.equal(draft.owner, true);
-  assert.deepEqual(draft.permissionOverrides, { 'groups.spawn': 'grant' });
+  assert.deepEqual(draft.permissionOverrides, { 'groups.members.spawn': 'grant' });
 
   const sparse = model.applySpawnProfile(
     { ...draft, model: 'sonnet' }, { harness: 'claude', role: 'navigator' }, context, remembered,
@@ -315,7 +315,7 @@ test('agent-spawn model normalizes names and builds exact launch bodies', async 
     name: 'worker', role: 'reviewer', descr: 'does review', task: 'https://linear.app/TCL-458',
     initialMessage: 'ship it', model: 'opus', effort: 'high', sandbox: 'on',
     approval: 'plan', askTimeout: 'never', sandboxProfile: 'strict',
-    remoteControl: false, owner: true, permissionOverrides: { 'groups.spawn': 'grant' },
+    remoteControl: false, owner: true, permissionOverrides: { 'groups.members.spawn': 'grant' },
     cwd: '/mono', wtRepo: '/mono/sub', profile: 'group-default',
   };
   const request = model.buildSpawnRequest(
@@ -329,7 +329,7 @@ test('agent-spawn model normalizes names and builds exact launch bodies', async 
     task_ref_url: 'https://linear.app/TCL-458', harness: 'claude', sandbox: 'on',
     sandbox_profile: 'strict', approval: 'plan', ask_user_question_timeout: 'never',
     remote_control: false, auto_memory: false, is_owner: true,
-    permission_overrides: { 'groups.spawn': 'grant' },
+    permission_overrides: { 'groups.members.spawn': 'grant' },
     // Always present for a trim-capable harness, empty when nothing is trimmed:
     // the form is the authoritative statement of what the agent loads, so an
     // omitted field would let the daemon's profile tier stack re-apply a
@@ -1200,7 +1200,7 @@ test('Preact agent-spawn preserves failed drafts, permission handoff, IME-safe h
   await harness.act(() => harness.fireEvent(host.querySelector('#agent-spawn-perms'), 'click'));
   assert.ok(calls.filter(([kind]) => kind === 'permissions').length >= 1, JSON.stringify(calls));
   const permissions = calls.find(([kind]) => kind === 'permissions')[1];
-  permissions.onSave({ 'groups.spawn': 'deny' });
+  permissions.onSave({ 'groups.members.spawn': 'deny' });
   await flush(harness);
   assert.match(host.querySelector('#agent-spawn-perms-indicator').textContent, /1 deny/);
 

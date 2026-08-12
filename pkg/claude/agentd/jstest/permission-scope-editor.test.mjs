@@ -55,7 +55,7 @@ const noopActions = {
   grantSudo: async () => {}, savePermissions: async () => {},
 };
 
-const SPAWN = { slug: 'groups.spawn', description: 'spawn', owner_implied: false, scope_dims: ['group', 'spawn_profile'] };
+const SPAWN = { slug: 'groups.members.spawn', description: 'spawn', owner_implied: false, scope_dims: ['group', 'spawn_profile'] };
 const CLIPBOARD = { slug: 'human.clipboard', description: 'clipboard', owner_implied: false };
 
 test('group and buffered profile editors use the same scoped permission controls', async (t) => {
@@ -71,15 +71,15 @@ test('group and buffered profile editors use the same scoped permission controls
     savePermissions: async (descriptor, selection, scopes, ownerScopes) => {
       groupSaved.push({ descriptor, selection, scopes, ownerScopes });
     },
-  }, { mode: 'group', group: 'alpha', grants: ['groups.spawn'], scopes: {
-    'groups.spawn': { group: ['alpha'] },
+  }, { mode: 'group', group: 'alpha', grants: ['groups.members.spawn'], scopes: {
+    'groups.members.spawn': { group: ['alpha'] },
   } });
-  assert.match(opened.host.querySelector('[data-slug="groups.spawn"] .perm-scope-chip').textContent, /group=alpha/);
-  await harness.act(() => opened.host.querySelector('[data-slug="groups.spawn"] button.perm-scope-twisty').click());
+  assert.match(opened.host.querySelector('[data-slug="groups.members.spawn"] .perm-scope-chip').textContent, /group=alpha/);
+  await harness.act(() => opened.host.querySelector('[data-slug="groups.members.spawn"] button.perm-scope-twisty').click());
   await harness.act(() => pickOption(harness,
     opened.host.querySelector('.perm-scope-dim[data-dim="group"] .perm-scope-add'), 'beta'));
   await harness.act(async () => { opened.host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
-  assert.deepEqual(groupSaved[0].scopes, { 'groups.spawn': { group: ['alpha', 'beta'] } });
+  assert.deepEqual(groupSaved[0].scopes, { 'groups.members.spawn': { group: ['alpha', 'beta'] } });
   assert.equal(groupSaved[0].ownerScopes, null, 'grant scopes are separate from owner-bypass narrowing');
   await opened.mounted.unmount();
 
@@ -88,14 +88,14 @@ test('group and buffered profile editors use the same scoped permission controls
     ...noopActions,
     savePermissions: async (descriptor, selection, scopes) => bufferSaved.push({ selection, scopes }),
   }, { mode: 'buffer', overrides: {
-    'groups.spawn': { effect: 'grant', scope: { spawn_profile: ['reviewer'] } },
+    'groups.members.spawn': { effect: 'grant', scope: { spawn_profile: ['reviewer'] } },
   } });
-  assert.match(opened.host.querySelector('[data-slug="groups.spawn"] .perm-scope-chip').textContent,
+  assert.match(opened.host.querySelector('[data-slug="groups.members.spawn"] .perm-scope-chip').textContent,
     /spawn_profile=reviewer/);
   await harness.act(async () => { opened.host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
   assert.deepEqual(bufferSaved[0], {
-    selection: { 'groups.spawn': 'grant' },
-    scopes: { 'groups.spawn': { spawn_profile: ['reviewer'] } },
+    selection: { 'groups.members.spawn': 'grant' },
+    scopes: { 'groups.members.spawn': { spawn_profile: ['reviewer'] } },
   });
   await opened.mounted.unmount();
 });
@@ -107,16 +107,16 @@ test('an unreadable group scope cannot be widened by saving the editor', async (
     ...noopActions,
     savePermissions: async (...args) => saved.push(args),
   }, {
-    mode: 'group', group: 'alpha', grants: ['groups.spawn'], unreadable: ['groups.spawn'],
+    mode: 'group', group: 'alpha', grants: ['groups.members.spawn'], unreadable: ['groups.members.spawn'],
   });
 
-  assert.match(host.querySelector('[data-slug="groups.spawn"] .perm-scope-chip').textContent,
+  assert.match(host.querySelector('[data-slug="groups.members.spawn"] .perm-scope-chip').textContent,
     /unreadable scope/);
   await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
   assert.equal(saved.length, 0, 'saving must not rewrite the fail-closed scope as an unscoped grant');
   assert.match(host.querySelector('#perm-edit-error').textContent, /Cannot save.*unreadable scopes/);
 
-  await harness.act(() => host.querySelector('[data-slug="groups.spawn"] [data-effect="default"]').click());
+  await harness.act(() => host.querySelector('[data-slug="groups.members.spawn"] [data-effect="default"]').click());
   await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
   assert.equal(saved.length, 1, 'removing the unreadable grant remains an explicit safe escape hatch');
   await mounted.unmount();
@@ -126,10 +126,10 @@ test('a scoped grant renders its chips and an unscoped one says so', async (t) =
   const harness = await createPreactHarness(t);
   const { host, mounted } = await openEditor(harness, scopeSnapshot({
     slugs: [SPAWN, CLIPBOARD],
-    scopes: { 'groups.spawn': { group: ['alpha', 'beta'] } },
+    scopes: { 'groups.members.spawn': { group: ['alpha', 'beta'] } },
   }), noopActions);
 
-  const chips = host.querySelectorAll('[data-slug="groups.spawn"] .perm-scope-chip');
+  const chips = host.querySelectorAll('[data-slug="groups.members.spawn"] .perm-scope-chip');
   assert.equal(chips.length, 1, 'one chip per constrained dimension');
   assert.equal(chips[0].textContent.replace(/\s+/g, ' ').trim(), 'group=alpha, beta');
 
@@ -142,7 +142,7 @@ test('a scoped grant renders its chips and an unscoped one says so', async (t) =
 test('an unscoped grant is labelled unscoped rather than left blank', async (t) => {
   const harness = await createPreactHarness(t);
   const { host, mounted } = await openEditor(harness, scopeSnapshot({ slugs: [SPAWN] }), noopActions);
-  const chip = host.querySelector('[data-slug="groups.spawn"] .perm-scope-chip.unscoped');
+  const chip = host.querySelector('[data-slug="groups.members.spawn"] .perm-scope-chip.unscoped');
   assert.ok(chip, 'a granted, dimensioned, unnarrowed slug must SAY it applies everywhere');
   assert.match(chip.textContent, /unscoped/);
   await mounted.unmount();
@@ -157,10 +157,10 @@ test('a scopable row puts its chips in-row and its effective source in the drawe
   const harness = await createPreactHarness(t);
   const { host, mounted } = await openEditor(harness, scopeSnapshot({
     slugs: [SPAWN],
-    scopes: { 'groups.spawn': { group: ['alpha'] } },
+    scopes: { 'groups.members.spawn': { group: ['alpha'] } },
   }), noopActions);
 
-  const row = host.querySelector('.perm-row[data-slug="groups.spawn"]');
+  const row = host.querySelector('.perm-row[data-slug="groups.members.spawn"]');
   assert.equal(row.querySelector(':scope > .perm-scope-chips .perm-scope-chip').textContent.replace(/\s+/g, ''),
     'group=alpha', 'the chips are a row item, not stacked under the slug');
   // The column is emptied, not removed: it still reserves its width so the
@@ -169,7 +169,7 @@ test('a scopable row puts its chips in-row and its effective source in the drawe
   assert.ok(row.querySelector('.perm-row-eff.empty'));
 
   await harness.act(() => { row.querySelector('button.perm-scope-twisty').click(); });
-  const eff = host.querySelector('.perm-scope-drawer[data-slug="groups.spawn"] .perm-row-eff');
+  const eff = host.querySelector('.perm-scope-drawer[data-slug="groups.members.spawn"] .perm-row-eff');
   assert.ok(eff, 'the effective source is still reachable — it moved, it was not dropped');
   assert.match(eff.textContent, /✓/);
   await mounted.unmount();
@@ -201,8 +201,8 @@ test('the drawer offers one editor per advertised dimension and saves what was p
     },
   }), { ...noopActions, savePermissions: async (descriptor, selection, scopes) => { saved.push({ selection, scopes }); } });
 
-  await harness.act(() => { host.querySelector('[data-slug="groups.spawn"] button.perm-scope-twisty').click(); });
-  const drawer = host.querySelector('.perm-scope-drawer[data-slug="groups.spawn"]');
+  await harness.act(() => { host.querySelector('[data-slug="groups.members.spawn"] button.perm-scope-twisty').click(); });
+  const drawer = host.querySelector('.perm-scope-drawer[data-slug="groups.members.spawn"]');
   assert.ok(drawer);
   assert.deepEqual(
     Array.from(drawer.querySelectorAll('.perm-scope-dim')).map((row) => row.dataset.dim),
@@ -212,11 +212,11 @@ test('the drawer offers one editor per advertised dimension and saves what was p
 
   const groupSelect = drawer.querySelector('.perm-scope-dim[data-dim="group"] .perm-scope-add');
   await harness.act(() => pickOption(harness, groupSelect, 'beta'));
-  assert.match(host.querySelector('[data-slug="groups.spawn"] .perm-scope-chip').textContent, /group=beta/,
+  assert.match(host.querySelector('[data-slug="groups.members.spawn"] .perm-scope-chip').textContent, /group=beta/,
     'the row chips track the drawer edit live');
 
   await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
-  assert.deepEqual(saved[0].scopes, { 'groups.spawn': { group: ['beta'] } });
+  assert.deepEqual(saved[0].scopes, { 'groups.members.spawn': { group: ['beta'] } });
   await mounted.unmount();
 });
 
@@ -332,16 +332,16 @@ test('a typed matcher withdrawn from the screen is not resurrected by Save', asy
   // and the operator can no longer see to fix.
   opened = await openEditor(harness, scopeSnapshot({
     slugs: [SPAWN], dimOptions: { group: { values: ['alpha'] } },
-    scopes: { 'groups.spawn': { group: ['alpha'], legacy_dim: ['x'] } },
+    scopes: { 'groups.members.spawn': { group: ['alpha'], legacy_dim: ['x'] } },
   }), actions);
-  await harness.act(() => { opened.host.querySelector('[data-slug="groups.spawn"] button.perm-scope-twisty').click(); });
+  await harness.act(() => { opened.host.querySelector('[data-slug="groups.members.spawn"] button.perm-scope-twisty').click(); });
   await typeInto(opened.host, 'legacy_dim', 'y');
   await harness.act(() => {
     opened.host.querySelector('.perm-scope-dim[data-dim="legacy_dim"] .perm-scope-chip .x').click();
   });
   assertAbsent(opened.host.querySelector('.perm-scope-dim[data-dim="legacy_dim"]'));
   await harness.act(async () => { opened.host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
-  assert.deepEqual(saved.at(-1), { 'groups.spawn': { group: ['alpha'] } },
+  assert.deepEqual(saved.at(-1), { 'groups.members.spawn': { group: ['alpha'] } },
     'the removed dimension stays removed');
   await opened.mounted.unmount();
 });
@@ -412,14 +412,14 @@ test('scopes are dropped for a slug moved off Grant', async (t) => {
   const saved = [];
   const { host, mounted } = await openEditor(harness, scopeSnapshot({
     slugs: [SPAWN],
-    scopes: { 'groups.spawn': { group: ['alpha'] } },
+    scopes: { 'groups.members.spawn': { group: ['alpha'] } },
   }), { ...noopActions, savePermissions: async (descriptor, selection, scopes) => { saved.push({ selection, scopes }); } });
 
-  await harness.act(() => { host.querySelector('[data-slug="groups.spawn"] [data-effect="deny"]').click(); });
-  assertAbsent(host.querySelector('[data-slug="groups.spawn"] .perm-scope-chips'),
+  await harness.act(() => { host.querySelector('[data-slug="groups.members.spawn"] [data-effect="deny"]').click(); });
+  assertAbsent(host.querySelector('[data-slug="groups.members.spawn"] .perm-scope-chips'),
     'a deny is unconditional, so it shows no scope to edit');
   await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
-  assert.deepEqual(saved[0].selection, { 'groups.spawn': 'deny' });
+  assert.deepEqual(saved[0].selection, { 'groups.members.spawn': 'deny' });
   assert.deepEqual(saved[0].scopes, {}, 'no scope rides a deny — the daemon would refuse it');
   await mounted.unmount();
 });
@@ -429,17 +429,17 @@ test('a grant whose stored scope cannot be decoded is never shown as unscoped', 
   const saved = [];
   const { host, mounted } = await openEditor(harness, scopeSnapshot({
     slugs: [SPAWN],
-    unreadable: ['groups.spawn'],
+    unreadable: ['groups.members.spawn'],
   }), { ...noopActions, savePermissions: async (descriptor, selection, scopes) => { saved.push(scopes); } });
 
-  const chip = host.querySelector('[data-slug="groups.spawn"] .perm-scope-chip');
+  const chip = host.querySelector('[data-slug="groups.members.spawn"] .perm-scope-chip');
   assert.ok(chip, 'the row must say something about the scope it cannot read');
   assert.match(chip.textContent, /unreadable scope/);
   assert.equal(chip.classList.contains('unscoped'), false,
     'a grant that authorizes nothing must never read as one that authorizes everything');
   // No editor either: the operator cannot narrow what the build cannot show,
   // and the daemon refuses to overwrite the row from here.
-  assertAbsent(host.querySelector('[data-slug="groups.spawn"] button.perm-scope-twisty'));
+  assertAbsent(host.querySelector('[data-slug="groups.members.spawn"] button.perm-scope-twisty'));
   await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
   assert.deepEqual(saved[0], {}, 'saving sends no scope for it, and the daemon keeps the stored one');
   await mounted.unmount();
@@ -448,21 +448,21 @@ test('a grant whose stored scope cannot be decoded is never shown as unscoped', 
 test('a stored dimension the slug no longer accepts can still be removed', async (t) => {
   const harness = await createPreactHarness(t);
   const saved = [];
-  // groups.spawn declares group + spawn_profile; the stored scope also carries
+  // groups.members.spawn declares group + spawn_profile; the stored scope also carries
   // a dimension a past build allowed. Without an editor for it, every save
   // would be refused by the daemon and the operator could not fix it here.
   const { host, mounted } = await openEditor(harness, scopeSnapshot({
     slugs: [SPAWN],
-    scopes: { 'groups.spawn': { group: ['alpha'], legacy_dim: ['x'] } },
+    scopes: { 'groups.members.spawn': { group: ['alpha'], legacy_dim: ['x'] } },
   }), { ...noopActions, savePermissions: async (descriptor, selection, scopes) => { saved.push(scopes); } });
 
-  await harness.act(() => { host.querySelector('[data-slug="groups.spawn"] button.perm-scope-twisty').click(); });
+  await harness.act(() => { host.querySelector('[data-slug="groups.members.spawn"] button.perm-scope-twisty').click(); });
   const stale = host.querySelector('.perm-scope-dim[data-dim="legacy_dim"]');
   assert.ok(stale, 'a stored dimension gets an editor even when the slug stopped declaring it');
   assert.ok(stale.querySelector('.perm-scope-stale'), 'and is flagged as no longer accepted');
   await harness.act(() => { stale.querySelector('.perm-scope-chip .x').click(); });
   await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
-  assert.deepEqual(saved[0], { 'groups.spawn': { group: ['alpha'] } });
+  assert.deepEqual(saved[0], { 'groups.members.spawn': { group: ['alpha'] } });
   await mounted.unmount();
 });
 
@@ -471,9 +471,9 @@ test('a scope value cannot smuggle markup into the row chips', async (t) => {
   const evil = '<img src=x onerror="globalThis.__pwned = true">';
   const { host, mounted } = await openEditor(harness, scopeSnapshot({
     slugs: [SPAWN],
-    scopes: { 'groups.spawn': { group: [evil] } },
+    scopes: { 'groups.members.spawn': { group: [evil] } },
   }), noopActions);
-  const chip = host.querySelector('[data-slug="groups.spawn"] .perm-scope-chip');
+  const chip = host.querySelector('[data-slug="groups.members.spawn"] .perm-scope-chip');
   assert.equal(chip.querySelector('img'), null, 'a scope value is text, never markup');
   assert.ok(chip.textContent.includes(evil), 'and it is shown verbatim so the operator sees what is stored');
   assert.equal(globalThis.__pwned, undefined);

@@ -503,7 +503,7 @@ type SpawnRequest struct {
 	// group (and thus holding its owner-conferred slugs). false (the default)
 	// spawns an ordinary member. Mirrors the group-template
 	// GroupTemplateAgent.IsOwner field; honoured only for a human (dashboard)
-	// caller or a caller holding groups.own (the daemon rejects an escalation
+	// caller or a caller holding groups.owners.manage (the daemon rejects an escalation
 	// attempt by an unprivileged agent).
 	//
 	// OMITTING the key is not the same as sending false: the daemon resolves
@@ -829,7 +829,7 @@ type SpawnParams struct {
 	// before this flag existed.
 	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"EXPERIMENTAL OS containment: off | resource-only (Linux only; no access confinement, but the launch gets a per-launch cgroup: the profile's CPU/memory limits if it authored any, otherwise accounting and OOM attribution only; no bwrap or namespaces) | harness-builtin (only for a harness with a real built-in OS sandbox) | tclaude-layer (tclaude outer wall, inner OS sandbox off) | stacked (Linux Claude/Codex only; live model-free real-engine probe, both walls). Copilot children spawned by an agent are admitted in exactly one topology: tclaude-layer. Experimental implementations refuse naming the missing capability and never fall back. Unset = profile chain, then historical harness behavior; for OpenCode that is a command filter, not confinement"`
 
-	Owner bool `long:"owner" help:"Make the new agent a group owner (requires groups.own authority)"`
+	Owner bool `long:"owner" help:"Make the new agent a group owner (requires groups.owners.manage authority)"`
 	// NoOwner declines group ownership for the new agent whatever the profile
 	// chain says. It is the explicit-false twin of --owner.
 	NoOwner bool `long:"no-owner" help:"Do not make the new agent a group owner, whatever the selected or a default spawn profile says (default: the profile chain decides, and unset everywhere spawns an ordinary member)"`
@@ -893,7 +893,7 @@ func spawnCmd() *cobra.Command {
 			"inspect the defaults up front with `tclaude agent profiles default show` " +
 			"and `tclaude agent groups ls` (PROFILE column). " +
 			"\n\n" +
-			"Requires the `groups.spawn` permission (default: human-only).",
+			"Requires the `groups.members.spawn` permission (default: human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *SpawnParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)

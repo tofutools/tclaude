@@ -62,7 +62,7 @@ const sudoDefaultPopupTimeout = 60 * time.Second
 // the request-validation layer (no popup) so a misclick or runaway
 // loop can't even surface them to the human.
 //
-// Group ownership (`groups.own`) is intentionally NOT blocklisted —
+// Group ownership (`groups.owners.manage`) is intentionally NOT blocklisted —
 // it spreads power but the time-bound + popup audit make it
 // recoverable. Forbid only the truly recursive escalation.
 //

@@ -42,7 +42,7 @@ func TestMigrateV41toV42_AddsGroupTemplates(t *testing.T) {
 	_, err = d.Exec(`
 		INSERT INTO group_template_agents
 			(template_id, ordinal, name, role, descr, initial_message, is_owner, permissions)
-		VALUES (?, 0, 'PO', 'product-owner', 'the owner', 'lead the team', 1, '["groups.spawn"]')`,
+		VALUES (?, 0, 'PO', 'product-owner', 'the owner', 'lead the team', 1, '["groups.members.spawn"]')`,
 		tid)
 	require.NoError(t, err, "insert template agent")
 

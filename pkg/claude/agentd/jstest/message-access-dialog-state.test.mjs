@@ -26,10 +26,10 @@ test('models keep stable identity, role search, and permission veto/source data'
   const model = await harness.importDashboardModule('js/message-access-dialog-model.js');
   const snapshot = {
     agents: [{ agent_id: 'agt_alice', conv_id: 'conv-new', title: 'alice', online: true, groups: ['team'], owned_groups: ['team'] }],
-    groups: [{ name: 'team', permissions: ['groups.spawn'], members: [{ agent_id: 'agt_alice', conv_id: 'conv-new', title: 'alice', role: 'reviewer', descr: 'cold eyes', online: true }] }],
-    permissions: { defaults: ['self.rename'], overrides: { 'conv-new': { 'groups.spawn': 'deny' } } },
+    groups: [{ name: 'team', permissions: ['groups.members.spawn'], members: [{ agent_id: 'agt_alice', conv_id: 'conv-new', title: 'alice', role: 'reviewer', descr: 'cold eyes', online: true }] }],
+    permissions: { defaults: ['self.rename'], overrides: { 'conv-new': { 'groups.members.spawn': 'deny' } } },
     slugs: [
-      { slug: 'groups.spawn', description: 'spawn', owner_implied: true },
+      { slug: 'groups.members.spawn', description: 'spawn', owner_implied: true },
       { slug: 'self.rename', description: 'rename', owner_implied: false },
     ],
   };
@@ -38,7 +38,7 @@ test('models keep stable identity, role search, and permission veto/source data'
 
   const descriptor = { mode: 'agent', conv: 'conv-new' };
   const rows = model.permissionRows(snapshot, descriptor, model.permissionSeed(snapshot, descriptor));
-  const spawn = rows.find((row) => row.slug === 'groups.spawn');
+  const spawn = rows.find((row) => row.slug === 'groups.members.spawn');
   assert.equal(spawn.effect, 'deny');
   assert.equal(spawn.granted, false, 'explicit deny vetoes group and owner sources');
   const rename = rows.find((row) => row.slug === 'self.rename');
@@ -46,6 +46,6 @@ test('models keep stable identity, role search, and permission veto/source data'
   assert.deepEqual(rename.sources, ['global default']);
 
   const profile = model.permissionRows(snapshot, { mode: 'buffer', group: 'the spawn group' }, {});
-  assert.deepEqual(profile.find((row) => row.slug === 'groups.spawn').sources, [],
+  assert.deepEqual(profile.find((row) => row.slug === 'groups.members.spawn').sources, [],
     'a reusable profile invents no destination group source');
 });

@@ -66,7 +66,7 @@ func fullTemplateBody(name string) map[string]any {
 		"default_context": "TEAM RULES: worktrees + PRs",
 		"agents": []map[string]any{
 			{"name": "lead", "role": "lead", "descr": "coordinates", "is_owner": true,
-				"initial_message": "Lead the team.", "permissions": []string{"groups.spawn"},
+				"initial_message": "Lead the team.", "permissions": []string{"groups.members.spawn"},
 				"model": "opus", "effort": "high"},
 			{"name": "tester", "role": "qa", "model": "haiku"},
 		},
@@ -121,7 +121,7 @@ func TestTemplateExportImport_RoundTrip(t *testing.T) {
 	lead := got.Agents[0]
 	assert.Equal(t, "lead", lead.Name)
 	assert.True(t, lead.IsOwner, "owner flag preserved")
-	assert.Equal(t, []string{"groups.spawn"}, lead.Permissions, "permission slug preserved")
+	assert.Equal(t, []string{"groups.members.spawn"}, lead.Permissions, "permission slug preserved")
 	assert.Equal(t, "opus", lead.Model, "inline model preserved")
 	assert.Equal(t, "high", lead.Effort, "inline effort preserved")
 	assert.Equal(t, "haiku", got.Agents[1].Model, "tester model preserved")
@@ -279,7 +279,7 @@ func TestTemplateImport_UnknownPermSlugDegrades(t *testing.T) {
 	tmpl := map[string]any{
 		"name": "perms",
 		"agents": []map[string]any{
-			{"name": "worker", "permissions": []string{"groups.spawn", "made.up.slug"}},
+			{"name": "worker", "permissions": []string{"groups.members.spawn", "made.up.slug"}},
 		},
 	}
 	env := map[string]any{"format": "tclaude-task-force", "format_version": 1, "template": tmpl}
@@ -296,7 +296,7 @@ func TestTemplateImport_UnknownPermSlugDegrades(t *testing.T) {
 	var got wireTemplateFor
 	testharness.DecodeJSON(t, rec, &got)
 	require.Len(t, got.Agents, 1)
-	assert.Equal(t, []string{"groups.spawn"}, got.Agents[0].Permissions, "known slug kept, unknown dropped")
+	assert.Equal(t, []string{"groups.members.spawn"}, got.Agents[0].Permissions, "known slug kept, unknown dropped")
 }
 
 // TestTemplateImport_UnknownSlugInInlineProfileDegrades: an unknown slug
@@ -312,7 +312,7 @@ func TestTemplateImport_UnknownSlugInInlineProfileDegrades(t *testing.T) {
 			{"name": "worker", "profile_inline": map[string]any{
 				"model": "haiku",
 				"permission_overrides": map[string]any{
-					"groups.spawn":  "grant",
+					"groups.members.spawn":  "grant",
 					"made.up.slug2": "grant",
 				},
 			}},
@@ -341,7 +341,7 @@ func TestTemplateImport_UnknownSlugInInlineProfileDegrades(t *testing.T) {
 	require.Len(t, got.Agents, 1)
 	require.NotNil(t, got.Agents[0].ProfileInline, "inline profile survives the import")
 	assert.Equal(t, "haiku", got.Agents[0].ProfileInline.Model)
-	assert.Equal(t, map[string]string{"groups.spawn": "grant"},
+	assert.Equal(t, map[string]string{"groups.members.spawn": "grant"},
 		got.Agents[0].ProfileInline.PermissionOverrides, "known slug kept, unknown dropped")
 }
 

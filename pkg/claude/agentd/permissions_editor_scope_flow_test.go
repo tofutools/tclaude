@@ -69,15 +69,15 @@ func TestPermEditorScope_RoundTripsThroughSnapshot(t *testing.T) {
 
 	code, body := postScopedPerms(t, mux, map[string]any{
 		"conv":      conv,
-		"overrides": map[string]string{agentd.PermGroupsSpawn: "grant"},
-		"scopes":    map[string]any{agentd.PermGroupsSpawn: map[string][]string{"group": {"alpha"}}},
+		"overrides": map[string]string{agentd.PermGroupsMembersSpawn: "grant"},
+		"scopes":    map[string]any{agentd.PermGroupsMembersSpawn: map[string][]string{"group": {"alpha"}}},
 	})
 	require.Equal(t, http.StatusOK, code, body)
 
 	view := fetchScopeView(t, mux)
-	assert.Equal(t, "grant", view.Permissions.Overrides[conv][agentd.PermGroupsSpawn])
+	assert.Equal(t, "grant", view.Permissions.Overrides[conv][agentd.PermGroupsMembersSpawn])
 	assert.Equal(t, map[string][]string{"group": {"alpha"}},
-		view.Permissions.Scopes[conv][agentd.PermGroupsSpawn],
+		view.Permissions.Scopes[conv][agentd.PermGroupsMembersSpawn],
 		"the editor must be able to render what the grant was narrowed to")
 	assert.Contains(t, view.Permissions.DimOpts["group"].Values, "alpha",
 		"the group picker offers the live groups")
@@ -97,32 +97,32 @@ func TestPermEditorScope_RoundTripsThroughSnapshot(t *testing.T) {
 	// below pins that.)
 	code, body = postScopedPerms(t, mux, map[string]any{
 		"conv":      conv,
-		"overrides": map[string]string{agentd.PermGroupsSpawn: "grant"},
-		"scopes":    map[string]any{agentd.PermGroupsSpawn: map[string][]string{}},
+		"overrides": map[string]string{agentd.PermGroupsMembersSpawn: "grant"},
+		"scopes":    map[string]any{agentd.PermGroupsMembersSpawn: map[string][]string{}},
 	})
 	require.Equal(t, http.StatusOK, code, body)
 	view = fetchScopeView(t, mux)
-	assert.Empty(t, view.Permissions.Scopes[conv][agentd.PermGroupsSpawn],
+	assert.Empty(t, view.Permissions.Scopes[conv][agentd.PermGroupsMembersSpawn],
 		"an unscoped grant carries no scope at all")
-	assert.Equal(t, "grant", view.Permissions.Overrides[conv][agentd.PermGroupsSpawn])
+	assert.Equal(t, "grant", view.Permissions.Overrides[conv][agentd.PermGroupsMembersSpawn])
 
 	// And the mirror: a save that does not mention the slug in scopes{} leaves
 	// the stored narrowing alone. The editor posts every displayed slug at its
 	// current effect, so the other reading would strip a scope off every save.
 	code, body = postScopedPerms(t, mux, map[string]any{
 		"conv":      conv,
-		"overrides": map[string]string{agentd.PermGroupsSpawn: "grant"},
-		"scopes":    map[string]any{agentd.PermGroupsSpawn: map[string][]string{"group": {"alpha"}}},
+		"overrides": map[string]string{agentd.PermGroupsMembersSpawn: "grant"},
+		"scopes":    map[string]any{agentd.PermGroupsMembersSpawn: map[string][]string{"group": {"alpha"}}},
 	})
 	require.Equal(t, http.StatusOK, code, body)
 	code, body = postScopedPerms(t, mux, map[string]any{
 		"conv":      conv,
-		"overrides": map[string]string{agentd.PermGroupsSpawn: "grant"},
+		"overrides": map[string]string{agentd.PermGroupsMembersSpawn: "grant"},
 	})
 	require.Equal(t, http.StatusOK, code, body)
 	view = fetchScopeView(t, mux)
 	assert.Equal(t, map[string][]string{"group": {"alpha"}},
-		view.Permissions.Scopes[conv][agentd.PermGroupsSpawn],
+		view.Permissions.Scopes[conv][agentd.PermGroupsMembersSpawn],
 		"a slug the batch does not mention keeps its stored scope")
 }
 
@@ -140,25 +140,25 @@ func TestPermEditorScope_RefusesToWidenAnUnreadableScope(t *testing.T) {
 	f.HaveEnrolledAgent(conv)
 	// Written past the HTTP validators, exactly as a newer daemon would have.
 	require.NoError(t, db.SetAgentPermissionOverrideWithScope(
-		conv, agentd.PermGroupsSpawn, db.PermEffectGrant, `{"dimension_from_the_future":["x"]}`, "test"))
+		conv, agentd.PermGroupsMembersSpawn, db.PermEffectGrant, `{"dimension_from_the_future":["x"]}`, "test"))
 
 	mux := agentd.BuildDashboardHandlerForTest()
 	view := fetchScopeView(t, mux)
-	assert.Empty(t, view.Permissions.Scopes[conv][agentd.PermGroupsSpawn],
+	assert.Empty(t, view.Permissions.Scopes[conv][agentd.PermGroupsMembersSpawn],
 		"an undecodable scope must not be reported as a readable one")
-	assert.Contains(t, view.Permissions.Unreadable[conv], agentd.PermGroupsSpawn,
+	assert.Contains(t, view.Permissions.Unreadable[conv], agentd.PermGroupsMembersSpawn,
 		"it must be reported as unreadable, so the editor cannot render it as unscoped")
 
 	code, body := postScopedPerms(t, mux, map[string]any{
 		"conv":      conv,
-		"overrides": map[string]string{agentd.PermGroupsSpawn: "grant"},
+		"overrides": map[string]string{agentd.PermGroupsMembersSpawn: "grant"},
 	})
 	assert.Equal(t, http.StatusConflict, code, body)
 
 	rows, err := db.ListAgentPermissionOverrideRowsForConv(conv)
 	require.NoError(t, err)
 	for _, row := range rows {
-		if row.Slug == agentd.PermGroupsSpawn {
+		if row.Slug == agentd.PermGroupsMembersSpawn {
 			assert.Equal(t, `{"dimension_from_the_future":["x"]}`, row.ScopeJSON,
 				"the refused save must leave the narrow (if unreadable) grant exactly as it was")
 		}
@@ -168,10 +168,10 @@ func TestPermEditorScope_RefusesToWidenAnUnreadableScope(t *testing.T) {
 	// away, so the operator is never stuck with a grant they cannot clear.
 	code, body = postScopedPerms(t, mux, map[string]any{
 		"conv":      conv,
-		"overrides": map[string]string{agentd.PermGroupsSpawn: "default"},
+		"overrides": map[string]string{agentd.PermGroupsMembersSpawn: "default"},
 	})
 	require.Equal(t, http.StatusOK, code, body)
-	assert.Empty(t, fetchScopeView(t, mux).Permissions.Overrides[conv][agentd.PermGroupsSpawn])
+	assert.Empty(t, fetchScopeView(t, mux).Permissions.Overrides[conv][agentd.PermGroupsMembersSpawn])
 }
 
 // Scenario: the write path refuses the two ways a scope could mean something
@@ -189,16 +189,16 @@ func TestPermEditorScope_RefusesScopesTheGateCouldNotHonour(t *testing.T) {
 
 	code, body := postScopedPerms(t, mux, map[string]any{
 		"conv":      conv,
-		"overrides": map[string]string{agentd.PermGroupsSpawn: "grant"},
-		"scopes":    map[string]any{agentd.PermGroupsSpawn: map[string][]string{"process_template": {"t1"}}},
+		"overrides": map[string]string{agentd.PermGroupsMembersSpawn: "grant"},
+		"scopes":    map[string]any{agentd.PermGroupsMembersSpawn: map[string][]string{"process_template": {"t1"}}},
 	})
 	assert.Equal(t, http.StatusBadRequest, code, body)
 	assert.Contains(t, body, "scope dimension")
 
 	code, body = postScopedPerms(t, mux, map[string]any{
 		"conv":      conv,
-		"overrides": map[string]string{agentd.PermGroupsSpawn: "deny"},
-		"scopes":    map[string]any{agentd.PermGroupsSpawn: map[string][]string{"group": {"alpha"}}},
+		"overrides": map[string]string{agentd.PermGroupsMembersSpawn: "deny"},
+		"scopes":    map[string]any{agentd.PermGroupsMembersSpawn: map[string][]string{"group": {"alpha"}}},
 	})
 	assert.Equal(t, http.StatusBadRequest, code, body)
 	assert.Contains(t, body, "only a grant can be scoped")

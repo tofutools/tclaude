@@ -30,8 +30,8 @@ func TestGroupTemplate_ProfileCarriesPermissionsAndOwnerAtDeploy(t *testing.T) {
 		"model":    "haiku",
 		"is_owner": true,
 		"permission_overrides": map[string]any{
-			agentd.PermGroupsSpawn:   "grant",
-			agentd.PermMessageDirect: "deny",
+			agentd.PermGroupsMembersSpawn: "grant",
+			agentd.PermMessageDirect:      "deny",
 		},
 	}).Code, "create profile")
 
@@ -56,7 +56,7 @@ func TestGroupTemplate_ProfileCarriesPermissionsAndOwnerAtDeploy(t *testing.T) {
 	// The per-agent result reports the owner + the granted slug (the deny is not
 	// a "grant", so it is not listed there).
 	assert.True(t, res.Agents[0].Owner, "result reports the profile's owner default")
-	assert.Contains(t, res.Agents[0].Granted, agentd.PermGroupsSpawn, "result reports the profile grant")
+	assert.Contains(t, res.Agents[0].Granted, agentd.PermGroupsMembersSpawn, "result reports the profile grant")
 
 	// Real surfaces: the profile launched the agent (its model), owns the group,
 	// and both overrides landed on the conv.
@@ -71,7 +71,7 @@ func TestGroupTemplate_ProfileCarriesPermissionsAndOwnerAtDeploy(t *testing.T) {
 
 	overrides, err := db.ListAgentPermissionOverridesForConv(leadConv)
 	require.NoError(t, err)
-	assert.Equal(t, "grant", overrides[agentd.PermGroupsSpawn], "profile grant applied at deploy")
+	assert.Equal(t, "grant", overrides[agentd.PermGroupsMembersSpawn], "profile grant applied at deploy")
 	assert.Equal(t, "deny", overrides[agentd.PermMessageDirect], "profile deny applied at deploy")
 }
 
@@ -84,7 +84,7 @@ func TestGroupTemplate_InlineGrantWinsOverProfileDeny(t *testing.T) {
 	require.Equalf(t, http.StatusCreated, createProfile(t, f, map[string]any{
 		"name": "locked",
 		"permission_overrides": map[string]any{
-			agentd.PermGroupsSpawn: "deny",
+			agentd.PermGroupsMembersSpawn: "deny",
 		},
 	}).Code, "create profile")
 
@@ -92,7 +92,7 @@ func TestGroupTemplate_InlineGrantWinsOverProfileDeny(t *testing.T) {
 		"name": "team",
 		"agents": []map[string]any{
 			// Inline grant of the slug the profile denies — inline wins.
-			{"name": "lead", "spawn_profile": "locked", "permissions": []string{agentd.PermGroupsSpawn}},
+			{"name": "lead", "spawn_profile": "locked", "permissions": []string{agentd.PermGroupsMembersSpawn}},
 		},
 	}).Code, "create template")
 
@@ -106,7 +106,7 @@ func TestGroupTemplate_InlineGrantWinsOverProfileDeny(t *testing.T) {
 
 	overrides, err := db.ListAgentPermissionOverridesForConv(res.Agents[0].ConvID)
 	require.NoError(t, err)
-	assert.Equal(t, "grant", overrides[agentd.PermGroupsSpawn],
+	assert.Equal(t, "grant", overrides[agentd.PermGroupsMembersSpawn],
 		"the agent's inline grant overrides the profile's deny")
 }
 
@@ -120,19 +120,19 @@ func TestGroupTemplate_ProfileDenyOverridesRoleGrant(t *testing.T) {
 
 	require.Equalf(t, http.StatusCreated, createRole(t, f, map[string]any{
 		"name":        "spawner",
-		"permissions": []string{agentd.PermGroupsSpawn},
+		"permissions": []string{agentd.PermGroupsMembersSpawn},
 	}).Code, "create role")
 	require.Equalf(t, http.StatusCreated, createProfile(t, f, map[string]any{
 		"name": "no-spawn",
 		"permission_overrides": map[string]any{
-			agentd.PermGroupsSpawn: "deny",
+			agentd.PermGroupsMembersSpawn: "deny",
 		},
 	}).Code, "create profile")
 
 	require.Equalf(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
 		"name": "team",
 		"agents": []map[string]any{
-			// role_ref grants groups.spawn, profile denies it, no inline override.
+			// role_ref grants groups.members.spawn, profile denies it, no inline override.
 			{"name": "lead", "role_ref": "spawner", "spawn_profile": "no-spawn"},
 		},
 	}).Code, "create template")
@@ -148,10 +148,10 @@ func TestGroupTemplate_ProfileDenyOverridesRoleGrant(t *testing.T) {
 
 	overrides, err := db.ListAgentPermissionOverridesForConv(res.Agents[0].ConvID)
 	require.NoError(t, err)
-	assert.Equal(t, "deny", overrides[agentd.PermGroupsSpawn],
+	assert.Equal(t, "deny", overrides[agentd.PermGroupsMembersSpawn],
 		"the profile's deny overrides the role's default grant")
 	// And the deny is not reported as a grant on the per-agent result.
-	assert.NotContains(t, res.Agents[0].Granted, agentd.PermGroupsSpawn,
+	assert.NotContains(t, res.Agents[0].Granted, agentd.PermGroupsMembersSpawn,
 		"a denied slug is not listed as granted")
 }
 
@@ -166,7 +166,7 @@ func TestGroupTemplate_LegacyInlinePermsAndOwnerStillApplyAtDeploy(t *testing.T)
 	require.Equalf(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
 		"name": "legacy",
 		"agents": []map[string]any{
-			{"name": "lead", "is_owner": true, "permissions": []string{agentd.PermGroupsSpawn}},
+			{"name": "lead", "is_owner": true, "permissions": []string{agentd.PermGroupsMembersSpawn}},
 		},
 	}).Code, "create template")
 
@@ -185,7 +185,7 @@ func TestGroupTemplate_LegacyInlinePermsAndOwnerStillApplyAtDeploy(t *testing.T)
 	assert.True(t, ownsGroup(t, g.ID, leadConv), "inline is_owner still makes the agent a group owner")
 	overrides, err := db.ListAgentPermissionOverridesForConv(leadConv)
 	require.NoError(t, err)
-	assert.Equal(t, "grant", overrides[agentd.PermGroupsSpawn], "inline permission grant still applies")
+	assert.Equal(t, "grant", overrides[agentd.PermGroupsMembersSpawn], "inline permission grant still applies")
 }
 
 // exportEnvelopeRaw decodes an export as a generic map so a test can re-POST the
@@ -215,7 +215,7 @@ func TestTemplateExportImport_EmbedsAndMaterializesProfile(t *testing.T) {
 		"disabled":        true,
 		"disabled_reason": "provider maintenance",
 		"permission_overrides": map[string]any{
-			agentd.PermGroupsSpawn: "grant",
+			agentd.PermGroupsMembersSpawn: "grant",
 		},
 	}).Code, "create profile")
 	require.Equalf(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
@@ -254,7 +254,7 @@ func TestTemplateExportImport_EmbedsAndMaterializesProfile(t *testing.T) {
 	assert.True(t, got.Disabled, "materialized profile remains disabled")
 	assert.Equal(t, "provider maintenance", got.DisabledReason,
 		"materialized profile remains disabled")
-	assert.Equal(t, db.Grant(), got.PermissionOverrides[agentd.PermGroupsSpawn], "materialized profile keeps its overrides")
+	assert.Equal(t, db.Grant(), got.PermissionOverrides[agentd.PermGroupsMembersSpawn], "materialized profile keeps its overrides")
 
 	// The imported template's agent still references the materialized profile by
 	// name. Its disabled state intentionally blocks instantiation until enabled.

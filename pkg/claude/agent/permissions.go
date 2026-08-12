@@ -208,10 +208,10 @@ func renderPermissionsState(state permissionsState, stdout io.Writer) int {
 	tbl := table.New(
 		table.Column{Header: "ID", Width: 12},
 		table.Column{Header: "TITLE", MinWidth: 8, Weight: 0.7, Truncate: true},
-		table.Column{Header: "GRANTED", MinWidth: 10, Weight: 1.2, Truncate: true},
-		table.Column{Header: "DENIED", MinWidth: 8, Weight: 1.0, Truncate: true},
+		table.Column{Header: "GRANTED", MinWidth: 10, Weight: 1.2},
+		table.Column{Header: "DENIED", MinWidth: 8, Weight: 1.0},
 	)
-	tbl.SetTerminalWidth(table.GetTerminalWidth())
+	maxGranted, maxDenied := 10, 8
 	keys := make([]string, 0, len(state.Overrides))
 	for k := range state.Overrides {
 		keys = append(keys, k)
@@ -240,7 +240,14 @@ func renderPermissionsState(state permissionsState, stdout io.Writer) int {
 			strings.Join(granted, ", "),
 			strings.Join(denied, ", "),
 		}})
+		maxGranted = max(maxGranted, table.StringWidth(strings.Join(granted, ", ")))
+		maxDenied = max(maxDenied, table.StringWidth(strings.Join(denied, ", ")))
 	}
+	// Permission names and their scopes are security-relevant output. Widen
+	// beyond a narrow terminal when necessary rather than hiding the decisive
+	// suffix behind an ellipsis. ID (12), minimum title (8), and three two-space
+	// paddings account for the non-permission columns.
+	tbl.SetTerminalWidth(max(table.GetTerminalWidth(), 12+8+6+maxGranted+maxDenied))
 	fmt.Fprintln(stdout, tbl.Render())
 	return rcOK
 }

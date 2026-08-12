@@ -410,34 +410,37 @@ func TestSave_AtomicAndRepeatable(t *testing.T) {
 	assert.Equal(t, "warn", got.LogLevel)
 }
 
-func TestMigrateSemanticProxyPermissions(t *testing.T) {
+func TestMigratePermissionNames(t *testing.T) {
 	isolateConfigHome(t)
 	require.NoError(t, os.MkdirAll(filepath.Dir(ConfigPath()), 0o700))
 	require.NoError(t, os.WriteFile(ConfigPath(), []byte(`{
   "agent": {
-    "default_permissions": ["git.read", "proxy.git.read", "linear.write"],
+    "default_permissions": ["git.read", "proxy.git.read", "linear.write", "groups.spawn", "groups.members.spawn"],
     "sudo": {
-      "blocklist": ["github.write"],
-      "overrides": {"worker": {"blocklist": ["linear.read"]}}
+      "blocklist": ["github.write", "groups.rm"],
+      "overrides": {"worker": {"blocklist": ["linear.read", "member.add"]}}
     }
   }
 }`), 0o600))
 
-	require.NoError(t, MigrateSemanticProxyPermissions())
+	require.NoError(t, MigratePermissionNames())
 	raw, err := os.ReadFile(ConfigPath())
 	require.NoError(t, err)
 	assert.NotContains(t, string(raw), `"git.read"`)
 	assert.NotContains(t, string(raw), `"linear.write"`)
 	assert.NotContains(t, string(raw), `"github.write"`)
 	assert.NotContains(t, string(raw), `"linear.read"`)
+	assert.NotContains(t, string(raw), `"groups.spawn"`)
+	assert.NotContains(t, string(raw), `"groups.rm"`)
+	assert.NotContains(t, string(raw), `"member.add"`)
 
 	cfg, err := Load()
 	require.NoError(t, err)
-	assert.Equal(t, []string{"proxy.git.read", "proxy.linear.write"}, cfg.Agent.DefaultPermissions,
+	assert.Equal(t, []string{"proxy.git.read", "proxy.linear.write", "groups.members.spawn"}, cfg.Agent.DefaultPermissions,
 		"an already-canonical entry wins a collision without duplication")
-	assert.Equal(t, []string{"proxy.github.write"}, *cfg.Agent.Sudo.Blocklist)
-	assert.Equal(t, []string{"proxy.linear.read"}, *cfg.Agent.Sudo.Overrides["worker"].Blocklist)
-	require.NoError(t, MigrateSemanticProxyPermissions(), "migration is idempotent")
+	assert.Equal(t, []string{"proxy.github.write", "groups.delete"}, *cfg.Agent.Sudo.Blocklist)
+	assert.Equal(t, []string{"proxy.linear.read", "groups.members.add"}, *cfg.Agent.Sudo.Overrides["worker"].Blocklist)
+	require.NoError(t, MigratePermissionNames(), "migration is idempotent")
 }
 
 // A config with no log_rotation block — or a nil config — resolves to

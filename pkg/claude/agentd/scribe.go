@@ -104,7 +104,7 @@ type scribeOutcome struct {
 }
 
 // handleScribeSummon is the shared /v1 handler. The human (dashboard peer or a
-// human on the socket) always passes; an agent caller must hold groups.spawn —
+// human on the socket) always passes; an agent caller must hold groups.members.spawn —
 // and, because a summon applies birth-time grants, permissions.grant too. That
 // is exactly the bar handleGroupSpawn sets for a birth-time-granted spawn, so
 // no new privilege model is introduced.
@@ -115,7 +115,7 @@ func handleScribeSummon(w http.ResponseWriter, r *http.Request) {
 	}
 	// requirePermission hands back the caller's conv-id: a real agent resolves
 	// to its conv, the human resolves to "".
-	spawnerConvID, ok := requirePermission(w, r, PermGroupsSpawn)
+	spawnerConvID, ok := requirePermission(w, r, PermGroupsMembersSpawn)
 	if !ok {
 		return
 	}
@@ -179,7 +179,7 @@ func handleScribeSummon(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// A summon applies birth-time grants, so an agent caller (not the human)
-	// needs permissions.grant on top of groups.spawn — the same guard
+	// needs permissions.grant on top of groups.members.spawn — the same guard
 	// handleGroupSpawn puts on a spawn carrying permission_overrides.
 	var permissionGrantSudoID int64
 	if spawnerConvID != "" {

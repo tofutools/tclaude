@@ -126,7 +126,7 @@ type copilotAPIDriveRequest struct {
 	// and "the same command without --copilot-api", which for a live managed agent
 	// is refused again by the carried arm. Found by cold review.
 	ResumeSelector string
-	// JoinGroup marks a launch that will hand off to the daemon's groups.spawn
+	// JoinGroup marks a launch that will hand off to the daemon's groups.members.spawn
 	// rather than starting a pane here. It changes only the wording: `RunJoinGroup`
 	// POSTs and never launches a local pane, so a refusal claiming "the pane would
 	// come up with that endpoint listening" would be describing something that does

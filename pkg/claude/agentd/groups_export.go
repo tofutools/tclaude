@@ -467,6 +467,30 @@ func SetGroupImportAfterCollisionCheckForTest(fn func()) func() {
 }
 
 func canonicalizeImportedPermissionScopes(exp *groupexport.Export) error {
+	// A pre-v208 database could contain both a legacy slug and its canonical
+	// replacement because they were distinct primary-key values at the time.
+	// Collapse those archive rows before import, matching the database/config
+	// migration rule: an originally canonical row wins over its legacy alias.
+	groupPermissions := make([]groupexport.GroupPermission, 0, len(exp.Group.Permissions))
+	groupPermissionIndex := make(map[string]int, len(exp.Group.Permissions))
+	groupPermissionCanonical := make(map[string]bool, len(exp.Group.Permissions))
+	for _, permission := range exp.Group.Permissions {
+		originalSlug := permission.Slug
+		permission.Slug = db.CanonicalPermissionSlug(originalSlug)
+		idx, exists := groupPermissionIndex[permission.Slug]
+		originallyCanonical := originalSlug == permission.Slug
+		if exists {
+			if originallyCanonical && !groupPermissionCanonical[permission.Slug] {
+				groupPermissions[idx] = permission
+				groupPermissionCanonical[permission.Slug] = true
+			}
+			continue
+		}
+		groupPermissionIndex[permission.Slug] = len(groupPermissions)
+		groupPermissionCanonical[permission.Slug] = originallyCanonical
+		groupPermissions = append(groupPermissions, permission)
+	}
+	exp.Group.Permissions = groupPermissions
 	for i := range exp.Group.Permissions {
 		permission := &exp.Group.Permissions[i]
 		canonical, err := canonicalImportedPermissionScopeForSlug(permission.Slug, permission.ScopeJSON)
@@ -475,6 +499,29 @@ func canonicalizeImportedPermissionScopes(exp *groupexport.Export) error {
 		}
 		permission.ScopeJSON = canonical
 	}
+
+	permissions := make([]groupexport.Permission, 0, len(exp.Permissions))
+	type permissionKey struct{ convID, slug string }
+	permissionIndex := make(map[permissionKey]int, len(exp.Permissions))
+	permissionCanonical := make(map[permissionKey]bool, len(exp.Permissions))
+	for _, permission := range exp.Permissions {
+		originalSlug := permission.Slug
+		permission.Slug = db.CanonicalPermissionSlug(originalSlug)
+		key := permissionKey{convID: permission.ConvID, slug: permission.Slug}
+		idx, exists := permissionIndex[key]
+		originallyCanonical := originalSlug == permission.Slug
+		if exists {
+			if originallyCanonical && !permissionCanonical[key] {
+				permissions[idx] = permission
+				permissionCanonical[key] = true
+			}
+			continue
+		}
+		permissionIndex[key] = len(permissions)
+		permissionCanonical[key] = originallyCanonical
+		permissions = append(permissions, permission)
+	}
+	exp.Permissions = permissions
 	for i := range exp.Permissions {
 		permission := &exp.Permissions[i]
 		canonical, err := canonicalImportedPermissionScopeForSlug(permission.Slug, permission.ScopeJSON)
@@ -488,6 +535,7 @@ func canonicalizeImportedPermissionScopes(exp *groupexport.Export) error {
 	}
 	for i := range exp.SudoGrants {
 		grant := &exp.SudoGrants[i]
+		grant.Slug = db.CanonicalPermissionSlug(grant.Slug)
 		canonical, err := canonicalImportedPermissionScopeForSlug(grant.Slug, grant.ScopeJSON)
 		if err != nil {
 			return fmt.Errorf("sudo grant %s/%s has invalid scope: %w", grant.ConvID, grant.Slug, err)

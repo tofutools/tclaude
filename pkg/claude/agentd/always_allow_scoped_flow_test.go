@@ -37,7 +37,7 @@ func askHumanSpawnAttempt(t *testing.T, f *testharness.Flow, caller, group, name
 //     between this button and the blanket one.
 func TestScopedAlwaysAllow_PersistsOnlyTheApprovedScope(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	t.Cleanup(agentd.SetAutoGrantableForTest(agentd.PermGroupsSpawn))
+	t.Cleanup(agentd.SetAutoGrantableForTest(agentd.PermGroupsMembersSpawn))
 	t.Cleanup(agentd.StubScopedAlwaysAllowApprovalForTest())
 
 	f := newFlow(t)
@@ -58,13 +58,13 @@ func TestScopedAlwaysAllow_PersistsOnlyTheApprovedScope(t *testing.T) {
 	require.NoError(t, err)
 	var stored *db.AgentPermission
 	for i := range rows {
-		if rows[i].Slug == agentd.PermGroupsSpawn {
+		if rows[i].Slug == agentd.PermGroupsMembersSpawn {
 			stored = &rows[i]
 		}
 	}
 	require.NotNil(t, stored, "the scoped always-allow must persist an override")
 	assert.Equal(t, db.PermEffectGrant, stored.Effect)
-	// The exact-value guard: groups.spawn also declares spawn_profile, and the
+	// The exact-value guard: groups.members.spawn also declares spawn_profile, and the
 	// gate described no profile. A scope naming one — or naming no dimension
 	// at all — would hand over more than the human approved.
 	assert.JSONEq(t, `{"group":["alpha"]}`, stored.ScopeJSON,
@@ -89,7 +89,7 @@ func TestScopedAlwaysAllow_PersistsOnlyTheApprovedScope(t *testing.T) {
 // button says.
 func TestScopedAlwaysAllow_SecondApprovalUnionsWithTheFirst(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	t.Cleanup(agentd.SetAutoGrantableForTest(agentd.PermGroupsSpawn))
+	t.Cleanup(agentd.SetAutoGrantableForTest(agentd.PermGroupsMembersSpawn))
 	t.Cleanup(agentd.StubScopedAlwaysAllowApprovalForTest())
 
 	f := newFlow(t)
@@ -108,7 +108,7 @@ func TestScopedAlwaysAllow_SecondApprovalUnionsWithTheFirst(t *testing.T) {
 	rows, err := db.ListAgentPermissionOverrideRowsForConv(lead)
 	require.NoError(t, err)
 	for _, row := range rows {
-		if row.Slug != agentd.PermGroupsSpawn {
+		if row.Slug != agentd.PermGroupsMembersSpawn {
 			continue
 		}
 		assert.JSONEq(t, `{"group":["alpha","beta"]}`, row.ScopeJSON,

@@ -12,7 +12,7 @@ import (
 )
 
 // Spawn guardrails — runaway-prevention for an agent the human granted
-// `groups.spawn`. Three checks fire in handleGroupSpawn before any CC
+// `groups.members.spawn`. Three checks fire in handleGroupSpawn before any CC
 // subprocess is launched: a per-group member cap (binds the human
 // too), a group restriction (agent may only spawn into a group it is a
 // member/owner of), and a per-caller spawn rate limit. See
@@ -22,7 +22,7 @@ import (
 // `tclaude agent groups members` (GET /v1/groups/{name}/members) — not
 // the simulator internals.
 
-// Scenario: an agent that holds `groups.spawn` and is a MEMBER of the
+// Scenario: an agent that holds `groups.members.spawn` and is a MEMBER of the
 // target group spawns a worker into it. The group restriction must let
 // this through — growing your own team is exactly the safe case.
 func TestSpawnGuardrails_AgentSpawnsIntoOwnGroup_OK(t *testing.T) {
@@ -31,7 +31,7 @@ func TestSpawnGuardrails_AgentSpawnsIntoOwnGroup_OK(t *testing.T) {
 
 	const lead = "lead-aaaa-bbbb-cccc-111111111111"
 	f.HaveMember("alpha", lead)
-	require.NoError(t, db.GrantAgentPermission(lead, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(lead, agentd.PermGroupsMembersSpawn, "test"))
 
 	// f.Spawn fatals on any non-200 — the success IS the assertion.
 	resp := f.AsAgent(lead).Spawn("alpha", "worker")
@@ -58,13 +58,13 @@ func TestSpawnGuardrails_AgentOwnerSpawnsIntoGroup_OK(t *testing.T) {
 
 	const po = "popo-aaaa-bbbb-cccc-222222222222"
 	require.NoError(t, db.AddAgentGroupOwner(g.ID, po, "test"))
-	require.NoError(t, db.GrantAgentPermission(po, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(po, agentd.PermGroupsMembersSpawn, "test"))
 
 	resp := f.AsAgent(po).Spawn("alpha", "worker")
 	require.NotEmpty(t, resp.ConvID, "an owner (non-member) must be allowed to spawn into its group")
 }
 
-// Scenario: an agent with `groups.spawn` tries to spawn into a group it
+// Scenario: an agent with `groups.members.spawn` tries to spawn into a group it
 // is neither a member nor an owner of. The group restriction refuses it
 // with 403 — a spawn-capable agent grows its OWN team, not arbitrary
 // new ones. No member is added.
@@ -75,7 +75,7 @@ func TestSpawnGuardrails_AgentSpawnsIntoForeignGroup_Refused(t *testing.T) {
 
 	const lead = "lead-aaaa-bbbb-cccc-111111111111"
 	f.HaveMember("beta", lead)
-	require.NoError(t, db.GrantAgentPermission(lead, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(lead, agentd.PermGroupsMembersSpawn, "test"))
 
 	resp := f.AsAgent(lead).SpawnWith("alpha", map[string]any{"alias": "worker"})
 	require.Equal(t, http.StatusForbidden, resp.Code,
@@ -101,7 +101,7 @@ func TestSpawnGuardrails_AllowlistWidensForeignSpawn(t *testing.T) {
 
 	const lead = "lead-aaaa-bbbb-cccc-111111111111"
 	f.HaveMember("beta", lead)
-	require.NoError(t, db.GrantAgentPermission(lead, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(lead, agentd.PermGroupsMembersSpawn, "test"))
 
 	resp := f.AsAgent(lead).SpawnWith("alpha", map[string]any{"alias": "worker"})
 	require.Equal(t, http.StatusOK, resp.Code,
@@ -122,7 +122,7 @@ func TestSpawnGuardrails_RestrictionToggleOff_AllowsForeignSpawn(t *testing.T) {
 
 	const lead = "lead-aaaa-bbbb-cccc-111111111111"
 	f.HaveMember("beta", lead)
-	require.NoError(t, db.GrantAgentPermission(lead, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(lead, agentd.PermGroupsMembersSpawn, "test"))
 
 	resp := f.AsAgent(lead).SpawnWith("alpha", map[string]any{"alias": "worker"})
 	require.Equal(t, http.StatusOK, resp.Code,
@@ -144,7 +144,7 @@ func TestSpawnGuardrails_RateLimit_RefusesAfterN(t *testing.T) {
 
 	const lead = "lead-aaaa-bbbb-cccc-111111111111"
 	f.HaveMember("alpha", lead)
-	require.NoError(t, db.GrantAgentPermission(lead, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(lead, agentd.PermGroupsMembersSpawn, "test"))
 
 	a := f.AsAgent(lead)
 	r1 := a.SpawnWith("alpha", map[string]any{"alias": "w1"})
@@ -178,8 +178,8 @@ func TestSpawnGuardrails_RateLimit_IsPerCaller(t *testing.T) {
 	const leadB = "ledb-aaaa-bbbb-cccc-222222222222"
 	f.HaveMember("alpha", leadA)
 	f.HaveMember("alpha", leadB)
-	require.NoError(t, db.GrantAgentPermission(leadA, agentd.PermGroupsSpawn, "test"))
-	require.NoError(t, db.GrantAgentPermission(leadB, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(leadA, agentd.PermGroupsMembersSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(leadB, agentd.PermGroupsMembersSpawn, "test"))
 
 	rA := f.AsAgent(leadA).SpawnWith("alpha", map[string]any{"alias": "wa"})
 	require.Equal(t, http.StatusOK, rA.Code, "lead-a spawn body=%s", rA.Raw)

@@ -17,7 +17,7 @@ import (
 
 func TestSpawnAuditDetailCarriesRequestResolutionAndResponse(t *testing.T) {
 	resolved := map[string]any{
-		"params":   map[string]any{"harness": "codex", "permission_overrides": map[string]string{"groups.spawn": "grant"}},
+		"params":   map[string]any{"harness": "codex", "permission_overrides": map[string]string{"groups.members.spawn": "grant"}},
 		"profiles": map[string]any{"group_default": "secure-codex"},
 	}
 	detail := encodeSpawnAuditDetail("role: reviewer", []byte(`{"name":"worker","role":"reviewer","initial_message":"private prompt","write_proof_token":"one-shot-secret"}`),

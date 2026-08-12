@@ -28,7 +28,7 @@ func TestSudoGrantsCleanup_PurgesAgedExpiredRows(t *testing.T) {
 
 	old, err := db.InsertSudoGrant(&db.SudoGrant{
 		ConvID:    "old",
-		Slug:      "groups.spawn",
+		Slug:      "groups.members.spawn",
 		GrantedAt: now.Add(-long - time.Hour),
 		ExpiresAt: now.Add(-long),
 		GrantedBy: "human:popup-id=test",
@@ -36,7 +36,7 @@ func TestSudoGrantsCleanup_PurgesAgedExpiredRows(t *testing.T) {
 	require.NoError(t, err, "seed old grant")
 	recent, err := db.InsertSudoGrant(&db.SudoGrant{
 		ConvID:    "recent",
-		Slug:      "groups.spawn",
+		Slug:      "groups.members.spawn",
 		GrantedAt: now.Add(-2 * time.Hour),
 		ExpiresAt: now.Add(-time.Hour),
 		GrantedBy: "human:popup-id=test",
@@ -44,7 +44,7 @@ func TestSudoGrantsCleanup_PurgesAgedExpiredRows(t *testing.T) {
 	require.NoError(t, err, "seed recent grant")
 	active, err := db.InsertSudoGrant(&db.SudoGrant{
 		ConvID:    "active",
-		Slug:      "groups.spawn",
+		Slug:      "groups.members.spawn",
 		GrantedAt: now,
 		ExpiresAt: now.Add(10 * time.Minute),
 		GrantedBy: "human:popup-id=test",
@@ -72,7 +72,7 @@ func TestSudoGrantsCleanup_QuietWhenNothingToPurge(t *testing.T) {
 	now := time.Now()
 	id, err := db.InsertSudoGrant(&db.SudoGrant{
 		ConvID:    "alice",
-		Slug:      "groups.spawn",
+		Slug:      "groups.members.spawn",
 		GrantedAt: now,
 		ExpiresAt: now.Add(10 * time.Minute),
 		GrantedBy: "human:popup-id=test",

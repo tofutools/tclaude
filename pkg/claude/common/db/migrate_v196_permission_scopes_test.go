@@ -31,7 +31,7 @@ func TestMigrateV195toV196AddsPermissionScopes(t *testing.T) {
 	mustExec(t, d, `INSERT INTO agent_groups (name, created_at) VALUES ('scope-check', 1)`)
 	_, err = d.Exec(`INSERT INTO agent_group_permissions
 		(group_id, slug, granted_at, granted_by, scope_json)
-		VALUES ((SELECT id FROM agent_groups WHERE name = 'scope-check'), 'groups.spawn', 1, 'test', ?)`,
+		VALUES ((SELECT id FROM agent_groups WHERE name = 'scope-check'), 'groups.members.spawn', 1, 'test', ?)`,
 		strings.Repeat("x", 262145))
 	require.Error(t, err)
 	require.NoError(t, migrateV195toV196(d), "partially applied migration converges")
