@@ -67,11 +67,12 @@ func msgRowCount(t *testing.T, conv string) int {
 func TestCronGroupMulticast_FiresToEveryMember(t *testing.T) {
 	f := newFlow(t)
 
-	f.HaveGroup("team")
+	g := f.HaveGroup("team")
 	const po = "cgm1-popo-aaaa-bbbb-cccc-000000000001"
 	const w1 = "cgm1-wkr1-aaaa-bbbb-cccc-000000000002"
 	const w2 = "cgm1-wkr2-aaaa-bbbb-cccc-000000000003"
 	f.HaveMember("team", po)
+	require.NoError(t, db.AddAgentGroupOwner(g.ID, po, "test"))
 	f.HaveMember("team", w1)
 	f.HaveMember("team", w2)
 	f.HaveAliveSession(w1, "spwn-cgm1-w1", "tclaude-spwn-cgm1-w1", f.TestCwd("work"))
@@ -133,6 +134,7 @@ func TestCronGroupMulticast_MembershipResolvedAtFireTime(t *testing.T) {
 	const w2 = "cgm2-wkr2-aaaa-bbbb-cccc-000000000003"
 	const w3 = "cgm2-wkr3-aaaa-bbbb-cccc-000000000004"
 	f.HaveMember("team", po)
+	require.NoError(t, db.AddAgentGroupOwner(g.ID, po, "test"))
 	f.HaveMember("team", w1)
 	f.HaveMember("team", w2)
 
@@ -310,10 +312,11 @@ func TestCronGroupMulticast_DashboardCreate(t *testing.T) {
 func TestCronGroupMulticast_DeletedGroup_RemovesGroupJob(t *testing.T) {
 	f := newFlow(t)
 
-	f.HaveGroup("doomed")
+	g := f.HaveGroup("doomed")
 	const po = "cgm6-popo-aaaa-bbbb-cccc-000000000001"
 	const w1 = "cgm6-wkr1-aaaa-bbbb-cccc-000000000002"
 	f.HaveMember("doomed", po)
+	require.NoError(t, db.AddAgentGroupOwner(g.ID, po, "test"))
 	f.HaveMember("doomed", w1)
 
 	id := createCronJobAsAgent(t, f, po, map[string]any{

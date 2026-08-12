@@ -15,9 +15,9 @@ import (
 // site says "this request spawns with p1", and the resolver's winning scope
 // is evaluated against it.
 //
-// One field per ScopeDim, and nothing else — this is deliberately not a
-// general fact bag. A new dimension adds a field here and a case in value();
-// TestActionContextCoversEveryScopeDimension fails if the two drift.
+// The exported fields are one-per-ScopeDim. The two unexported fields identify
+// the ownership subject used by the same central permission resolver: they are
+// authorization context, not operator-configurable scope dimensions.
 //
 // The zero value means "the call site said nothing about this action", which
 // is exactly how the ~129 gate sites that pass no context behave. A scoped
@@ -47,6 +47,17 @@ type ActionContext struct {
 	// action that spans several teams describes each of them in turn rather
 	// than passing a set, so every check is one team against one grant.
 	LinearTeam string
+
+	// ownerGroup is the group whose ownership may confer the requested slug.
+	// It is deliberately distinct from Group: Group evaluates an explicit
+	// grant's scope, while ownerGroup selects a structural permission source.
+	// Keeping both lets an inbound-link mutation describe its group to scoped
+	// grants without accidentally treating ownership of the destination as
+	// authority over the source's link.
+	ownerGroup string
+	// targetConv is the live conversation acted on by a whole-agent operation.
+	// TargetAgent remains the stable, operator-facing scope value.
+	targetConv string
 }
 
 // value projects the context onto one scope dimension. An unknown dimension

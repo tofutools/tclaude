@@ -1587,7 +1587,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		if worktreeRepo == "" {
 			worktreeRepo = cwd
 		}
-		prepared, wtErr := resolveSpawnWorktree(worktreeRepo, wt, p.WorktreeBase, ask)
+		prepared, wtErr := resolveSpawnWorktree(p.Group, worktreeRepo, wt, p.WorktreeBase, ask)
 		if wtErr != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", wtErr)
 			// The failure now comes off the wire, so it carries the

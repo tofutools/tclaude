@@ -41,13 +41,6 @@ import (
 // Deny still suppresses the bypass entirely, and grants stay monotonic: a map
 // can only take reach AWAY from the structural bypass, never add any.
 
-// ownerBypassFunc is the structural owner bypass a gate hands to
-// requirePermissionEx. It receives the resolved caller, the slug under
-// evaluation and the request's ActionContext — the last two because the
-// bypass is itself narrowable per group, so "is this caller an owner" is no
-// longer a sufficient question.
-type ownerBypassFunc func(convID, slug string, actx ActionContext) bool
-
 // ownerScopeMap is a group's owner-scope map in evaluated form: slug → the
 // scope that slug's owner-implied bypass is confined to for this group. A slug
 // ABSENT from the map is unrestricted (today's bypass); the map never widens.
@@ -256,6 +249,9 @@ func ownsAnyGroupPermitting(convID, slug string, actx ActionContext) bool {
 // narrowing {"agent.retire": {"group": ["g1"]}} on g1 would refuse every time
 // and read as a revoke rather than the confinement the operator wrote.
 func ownerOfGroupContainingPermitting(convID, targetConv, slug string, actx ActionContext) bool {
+	if !ownerOwnsEveryActiveGroupContaining(convID, targetConv) {
+		return false
+	}
 	ids, err := db.ListOwnedGroupIDsContaining(convID, targetConv)
 	if err != nil {
 		slog.Warn("permissions: owner-of-group-containing lookup failed",
@@ -264,7 +260,7 @@ func ownerOfGroupContainingPermitting(convID, targetConv, slug string, actx Acti
 	}
 	for _, id := range ids {
 		g, err := db.GetAgentGroupByID(id)
-		if err != nil || g == nil {
+		if err != nil || g == nil || g.IsArchived() {
 			slog.Warn("permissions: owner-scope group lookup failed (bypass fails closed)",
 				"group_id", id, "slug", slug, "error", err)
 			continue
@@ -278,6 +274,103 @@ func ownerOfGroupContainingPermitting(convID, targetConv, slug string, actx Acti
 		}
 	}
 	return false
+}
+
+func ownerOwnsEveryActiveGroupContaining(convID, targetConv string) bool {
+	groups, err := db.ListGroupsForConv(targetConv)
+	if err != nil {
+		slog.Warn("permissions: target group lookup failed (owner bypass fails closed)",
+			"conv", convID, "target", targetConv, "error", err)
+		return false
+	}
+	activeGroups := 0
+	for _, g := range groups {
+		if g.IsArchived() {
+			continue
+		}
+		activeGroups++
+		owns, err := db.IsAgentGroupOwner(g.ID, convID)
+		if err != nil || !owns {
+			// Cross-agent verbs act on the agent as a whole. If one active
+			// group containing it is outside the caller's ownership, the
+			// structural bypass must not let that caller affect the other
+			// group's member. An explicit agent.* grant remains the escape hatch.
+			return false
+		}
+	}
+	if activeGroups == 0 {
+		return false
+	}
+	return true
+}
+
+// ownerCanManageAllGroupMembers applies the same whole-agent boundary to bulk
+// group lifecycle verbs. Stop/resume/retire are named under groups.*, but they
+// change each member's global agent state rather than just its row in g.
+func ownerCanManageAllGroupMembers(g *db.AgentGroup, convID string) bool {
+	return ownerCanManageGroupMembers(g, convID, false)
+}
+
+func ownerCanManageGroupMembers(g *db.AgentGroup, convID string, skipCaller bool) bool {
+	if g == nil {
+		return false
+	}
+	members, err := db.ListAgentGroupMembers(g.ID)
+	if err != nil {
+		slog.Warn("permissions: group member lookup failed (owner bypass fails closed)",
+			"group", g.Name, "conv", convID, "error", err)
+		return false
+	}
+	for _, member := range members {
+		if skipCaller && sameActor(member.ConvID, convID) {
+			continue
+		}
+		if !ownerOwnsEveryActiveGroupContaining(convID, member.ConvID) {
+			return false
+		}
+	}
+	return true
+}
+
+// ownerPermissionPermitted resolves group ownership as a permission source.
+// It is the only place that interprets PermSlug.OwnerScope for an action gate;
+// handlers supply targets through ActionContext and never choose an ownership
+// predicate themselves.
+func ownerPermissionPermitted(convID, slug string, actx ActionContext) bool {
+	scope := ownerScope(OwnerScopeForSlug(slug))
+	switch scope {
+	case ownerScopeNone:
+		return false
+	case ownerScopeAny:
+		return ownsAnyGroupPermitting(convID, slug, actx)
+	case ownerScopeMember:
+		if actx.targetConv != "" {
+			return ownerOfGroupContainingPermitting(convID, actx.targetConv, slug, actx)
+		}
+		// A group-wide member read has no single target conversation. Treat it
+		// as authority over the roster and apply the same shared-member bound.
+		if actx.ownerGroup == "" {
+			return false
+		}
+		g, err := db.GetAgentGroupByName(actx.ownerGroup)
+		return err == nil && g != nil && ownerCanManageGroupMembers(g, convID, true) &&
+			ownerOfGroupPermitting(g, convID, slug, actx)
+	case ownerScopeGroup, ownerScopeGroupMembers:
+		if actx.ownerGroup == "" {
+			return false
+		}
+		g, err := db.GetAgentGroupByName(actx.ownerGroup)
+		if err != nil || g == nil {
+			return false
+		}
+		skipCaller := slug == PermGroupsMembersRetire
+		if scope == ownerScopeGroupMembers && !ownerCanManageGroupMembers(g, convID, skipCaller) {
+			return false
+		}
+		return ownerOfGroupPermitting(g, convID, slug, actx)
+	default:
+		return false
+	}
 }
 
 // ownerTierEntry is what group ownership confers on one agent for one slug,

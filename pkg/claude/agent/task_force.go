@@ -133,7 +133,7 @@ func runTaskForceDeploy(p *taskForceDeployParams, stdin io.Reader, stdout, stder
 			}
 			worktreeRepo = wd
 		}
-		prepared, wtErr := resolveSpawnWorktree(worktreeRepo, wt, p.WorktreeBase, 0)
+		prepared, wtErr := resolveSpawnWorktree(p.Group, worktreeRepo, wt, p.WorktreeBase, 0)
 		if wtErr != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", wtErr)
 			return MapDaemonErrorToRC(wtErr)

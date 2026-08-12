@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/worktree"
 )
 
@@ -82,6 +83,7 @@ const (
 // worse thing to get wrong.
 type preparedWorktree struct {
 	caller        string // conv-id, or "" for the human
+	group         string
 	path          string
 	branch        string
 	branchCreated bool
@@ -154,6 +156,26 @@ func takePreparedWorktree(token, caller string) (preparedWorktree, bool) {
 	return entry, true
 }
 
+func peekPreparedWorktree(token string) (preparedWorktree, bool) {
+	preparedWorktreesMu.Lock()
+	defer preparedWorktreesMu.Unlock()
+	purgeExpiredPreparedWorktreesLocked()
+	entry, ok := preparedWorktrees[token]
+	return entry, ok
+}
+
+func requireSpawnWorktreePermission(w http.ResponseWriter, r *http.Request, group string) (string, bool) {
+	group = strings.TrimSpace(group)
+	ctx := ActionContext{Group: group}
+	if group != "" {
+		g, err := db.GetAgentGroupByName(group)
+		if err == nil && g != nil && !g.IsArchived() {
+			return requireGroupPermission(w, r, PermGroupsMembersSpawn, g, ctx)
+		}
+	}
+	return requirePermission(w, r, PermGroupsMembersSpawn, ctx)
+}
+
 func purgeExpiredPreparedWorktreesLocked() {
 	now := time.Now()
 	for tok, entry := range preparedWorktrees {
@@ -165,20 +187,19 @@ func purgeExpiredPreparedWorktreesLocked() {
 
 // handleWorktreePrepare answers POST /v1/worktrees/prepare.
 //
-// Gated on groups.members.spawn — the worktree is the launch directory half of a
-// spawn the caller is about to make — with the owner bypass widened to
-// "owns any group": a lead that spawns its own team without an explicit
-// grant must be able to prepare the directory it spawns into. The
-// group-scoped spawn gate still binds the spawn itself; this endpoint
-// creates a directory, not an agent.
+// Gated on groups.members.spawn — the worktree is the launch-directory half of
+// a spawn the caller is about to make. The request carries that target group so
+// the central permission resolver can apply the same group-scoped grant or
+// ownership source as the spawn itself. It must not accept the old, overbroad
+// "owns any group" shortcut.
 func handleWorktreePrepare(w http.ResponseWriter, r *http.Request) {
-	caller, ok := requirePermissionEx(w, r, PermGroupsMembersSpawn, ownsAnyGroupPermitting)
-	if !ok {
-		return
-	}
 	var body agent.WorktreePrepareRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "json", err.Error())
+		return
+	}
+	caller, ok := requireSpawnWorktreePermission(w, r, body.Group)
+	if !ok {
 		return
 	}
 	branch := strings.TrimSpace(body.Branch)
@@ -294,7 +315,7 @@ func handleWorktreePrepare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token := registerPreparedWorktree(preparedWorktree{
-		caller: caller, path: path, branch: branch, branchCreated: !branchExisted,
+		caller: caller, group: strings.TrimSpace(body.Group), path: path, branch: branch, branchCreated: !branchExisted,
 	})
 	writeJSON(w, http.StatusOK, agent.WorktreePrepareResponse{
 		Path: path, Branch: branch, Created: true, DiscardToken: token,
@@ -309,10 +330,6 @@ func handleWorktreePrepare(w http.ResponseWriter, r *http.Request) {
 // the endpoint removes a directory, so it deliberately cannot be pointed
 // at an arbitrary path.
 func handleWorktreeDiscard(w http.ResponseWriter, r *http.Request) {
-	caller, ok := requirePermissionEx(w, r, PermGroupsMembersSpawn, ownsAnyGroupPermitting)
-	if !ok {
-		return
-	}
 	var body agent.WorktreeDiscardRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "json", err.Error())
@@ -321,6 +338,11 @@ func handleWorktreeDiscard(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimSpace(body.Token)
 	if token == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "a discard token is required")
+		return
+	}
+	prepared, _ := peekPreparedWorktree(token)
+	caller, ok := requireSpawnWorktreePermission(w, r, prepared.group)
+	if !ok {
 		return
 	}
 	entry, found := takePreparedWorktree(token, caller)

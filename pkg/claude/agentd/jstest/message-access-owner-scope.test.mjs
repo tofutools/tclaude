@@ -12,6 +12,7 @@ test('Owner-conferred permission sources carry their scope', async (t) => {
   const model = await harness.importDashboardModule('js/message-access-dialog-model.js');
 
   assert.equal(model.ownerSource('group', ['dev', 'qa']), 'owner: dev, qa');
+  assert.equal(model.ownerSource('group_members', ['dev', 'qa']), 'owner: protected rosters of dev, qa');
   assert.equal(model.ownerSource('member', ['dev', 'qa']), 'owner: members of dev, qa');
   assert.equal(model.ownerSource('any', ['dev', 'qa']), 'owner: any group owned');
   // A daemon that predates owner_scope sends none; keep the old wording.

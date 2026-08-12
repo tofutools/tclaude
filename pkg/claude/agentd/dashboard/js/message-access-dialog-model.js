@@ -201,6 +201,7 @@ function membershipGroups(snapshot, descriptor) {
 // scope, and keeps the historical group-naming wording.
 export function ownerSource(scope, ownedGroups) {
   if (scope === 'group') return `owner: ${ownedGroups.join(', ')}`;
+  if (scope === 'group_members') return `owner: protected rosters of ${ownedGroups.join(', ')}`;
   if (scope === 'member') return `owner: members of ${ownedGroups.join(', ')}`;
   if (scope === 'any') return 'owner: any group owned';
   // Legacy daemons send no scope at all — keep the historical wording.

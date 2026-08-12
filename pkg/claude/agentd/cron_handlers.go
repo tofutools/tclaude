@@ -1442,44 +1442,24 @@ func authCronWrite(w http.ResponseWriter, r *http.Request, targetConv string) (s
 	return caller, true
 }
 
-// authCronWriteGroup gates create / patch / delete of a GROUP-target
-// cron job. It mirrors handleMulticast's broadcast gate: you may
-// schedule (or manage) a recurring multicast into a group only if you
-// belong to it or own it. Caller passes if any of:
-//
-//   - human (no Claude ancestor)
-//   - caller is a member of the target group
-//   - caller owns the target group
-//
-// Returns (callerConvID, ok); callerConvID is "" for humans.
+// authCronWriteGroup gates create / patch / delete of a GROUP-target cron job
+// through the normal permission resolver. A one-off multicast remains a group
+// participation primitive, but installing a recurring sender is durable group
+// mutation and therefore has its own groups.messages.schedule slug. Ownership
+// confers that slug only for the owned group.
 func authCronWriteGroup(w http.ResponseWriter, r *http.Request, groupID int64) (string, bool) {
-	caller, isHuman, ok := authedCaller(w, r)
-	if !ok {
-		return "", false
-	}
-	if isHuman {
-		return "", true
-	}
-	member, err := db.FindMemberInGroup(groupID, caller)
+	g, err := db.GetAgentGroupByID(groupID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return "", false
 	}
-	if member != nil {
-		return caller, true
+	if g == nil {
+		// The human may still run/inspect a stale job so the scheduler can
+		// report its normal no-target result. An agent receives no ownership
+		// subject and therefore needs an explicit unscoped slug.
+		return requirePermission(w, r, PermGroupsMessagesSchedule)
 	}
-	owner, err := db.IsAgentGroupOwner(groupID, caller)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io", err.Error())
-		return "", false
-	}
-	if owner {
-		return caller, true
-	}
-	writeError(w, http.StatusForbidden, "auth",
-		"scheduling or managing a recurring multicast into a group requires "+
-			"you to be a member or owner of that group")
-	return "", false
+	return requireGroupPermission(w, r, PermGroupsMessagesSchedule, g)
 }
 
 // authCronJob gates the by-id mutations (enable / disable / run-now /

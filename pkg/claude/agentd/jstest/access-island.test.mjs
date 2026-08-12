@@ -135,6 +135,7 @@ test('Slug table owner badge spells out the ownership scope', async (t) => {
   const harness = await createPreactHarness(t);
   const island = await harness.importDashboardModule('js/access-island.js');
   assert.match(island.ownerScopeTitle('group'), /groups you own/);
+  assert.match(island.ownerScopeTitle('group_members'), /whole owned-group roster/);
   assert.match(island.ownerScopeTitle('member'), /members of the groups you own/);
   assert.match(island.ownerScopeTitle('any'), /unscoped/);
   // Legacy daemon sends no scope at all.

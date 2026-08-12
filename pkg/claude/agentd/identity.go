@@ -328,6 +328,7 @@ const (
 	PermGroupsMembersAdd                  = "groups.members.add"
 	PermGroupsMembersRemove               = "groups.members.remove"
 	PermGroupsMembersUpdate               = "groups.members.update"
+	PermGroupsMessagesSchedule            = "groups.messages.schedule"
 	PermSelfSchedule                      = "self.schedule"
 	PermAgentSchedule                     = "agent.schedule"
 	PermAgentStop                         = "agent.stop"
@@ -751,7 +752,7 @@ func resolvePermissionVerdictFrom(src permSources, slug string, defaultAllowed b
 // may be scoped (§4). Omitting it is the norm and costs nothing for an
 // unscoped grant; see requirePermissionEx for what a scoped grant does then.
 func requirePermission(w http.ResponseWriter, r *http.Request, perm string, actx ...ActionContext) (string, bool) {
-	return requirePermissionEx(w, r, perm, nil, actx...)
+	return requirePermissionEx(w, r, perm, actx...)
 }
 
 // requireGroupPermission gates a GROUP-scoped endpoint behind perm with
@@ -777,19 +778,18 @@ func requireGroupPermission(w http.ResponseWriter, r *http.Request, perm string,
 	if ctx.Group == "" {
 		ctx.Group = g.Name
 	}
-	return requirePermissionEx(w, r, perm, func(convID, slug string, bypassCtx ActionContext) bool {
-		return ownerOfGroupPermitting(g, convID, slug, bypassCtx)
-	}, ctx)
+	ctx.ownerGroup = g.Name
+	return requirePermissionEx(w, r, perm, ctx)
 }
 
 // requirePermissionEx is the shared core of requirePermission and
-// requireGroupPermission. ownerBypass, when non-nil, is consulted with
-// the resolved caller conv-id ONLY when the slug is otherwise undecided
+// requireGroupPermission. Group ownership is consulted from the registry
+// with the resolved caller conv-id ONLY when the slug is otherwise undecided
 // (no grant, no deny) — a structural grant that fills the default-slug
 // gap. It is deliberately NOT consulted on permDeny: a deny override is
 // always authoritative and suppresses the bypass, the same precedence
-// every other gate follows. ownerBypass == nil reproduces plain
-// requirePermission behaviour exactly.
+// every other gate follows. Slugs with no OwnerScope, or calls that omit the
+// target required by that scope, simply receive no ownership source.
 //
 // actx (at most one) describes what the request targets, and is evaluated
 // against the winning grant's scope (§4/§6):
@@ -808,7 +808,7 @@ func requireGroupPermission(w http.ResponseWriter, r *http.Request, perm string,
 // owner-implied bypass is itself scopeable per group (TCL-1071): a bypass that
 // could not see what the action targets could not tell a permitted spawn from
 // a refused one.
-func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ownerBypass ownerBypassFunc, actx ...ActionContext) (string, bool) {
+func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, actx ...ActionContext) (string, bool) {
 	// Authorization code may only name capabilities in the central registry.
 	// Fail before identity resolution (including the implicit-human path), so a
 	// typo can never appear as a valid denial or reach one-time approval.
@@ -876,10 +876,10 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ow
 			} else {
 				// The grant is scoped away from this action, so it decides
 				// nothing here — the same gap permUndecided leaves.
-				allowed = ownerBypass != nil && ownerBypass(p.ConvID, perm, bypassCtx)
+				allowed = ownerPermissionPermitted(p.ConvID, perm, bypassCtx)
 			}
 		case permUndecided:
-			allowed = ownerBypass != nil && ownerBypass(p.ConvID, perm, bypassCtx)
+			allowed = ownerPermissionPermitted(p.ConvID, perm, bypassCtx)
 		case permDeny:
 			// Authoritative deny — suppresses the owner bypass.
 		}

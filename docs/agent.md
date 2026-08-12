@@ -1894,7 +1894,10 @@ tclaude agent cron rm <id>
 
 Cron jobs default to self-targeted; `--target group:<name>`
 multicasts. Managing your own jobs needs `self.schedule`; managing
-another agent's needs `agent.schedule` (or group ownership).
+another agent's needs `agent.schedule`; creating or managing a group-targeted
+job needs `groups.messages.schedule`. Group ownership confers the latter only
+for the owned group. A one-off `group:` message remains an ordinary group
+participation operation and does not install a durable sender.
 
 New jobs wait for their first scheduled due time. `--run-immediately` opts
 into one immediate first delivery and then preserves the normal cadence from
@@ -2345,10 +2348,17 @@ has [classified the caller](#identity), it decides:
    (global), a live grant from any active group it belongs to, the agent's
    per-conv grants (SQLite), or an active
    `sudo` elevation. **Group-owner state** raises an owner's default
-   slugs: owning a group confers, for that group, the `agent.*`
-   manager-pattern checks against its members, the group-lifecycle
-   verbs (`groups.members.spawn` / `groups.members.stop` / `groups.members.retire` /
-   `groups.members.resume`), and — for owning *any* group — `human.notify` plus
+   slugs: owning a group confers, for that group, its group-local roster,
+   settings, ownership-delegation, archive, link, attachment, nesting,
+   recurring-message scheduling and lifecycle verbs, plus the `agent.*`
+   manager-pattern checks against members.
+   Because an `agent.*` action changes the whole agent, not one membership,
+   that structural source applies only when the caller owns **every active
+   group containing the target**. The same rule protects bulk stop, resume and
+   retire: an owner cannot use an owned group to alter a member shared with an
+   unowned active group. Such an action requires an explicit operation slug or
+   one-shot approval. Owning
+   *any* group also confers `human.notify` plus
    `process.runs.read`. These owner
    defaults fill only the *undecided* gap — an explicit **deny** override
    is always authoritative and suppresses them, read or write.
@@ -2555,7 +2565,7 @@ gate group, messaging, template, and permission administration.
 |---------------|-------|
 | `self.*`      | `self.rename`, `self.compact`, `self.interrupt`, `self.clone`, `self.schedule`, `self.remote-control`, `self.task`, `self.pr`, `self.tags`, `self.dir-repair` |
 | `agent.*`     | `agent.rename`, `agent.compact`, `agent.interrupt`, `agent.reincarnate`, `agent.clone`, `agent.context-info`, `agent.resume`, `agent.stop`, `agent.delete`, `agent.schedule`, `agent.promote`, `agent.retire`, `agent.remote-control`, `agent.sandbox-impl` (not owner-conferred) |
-| `groups.*`    | `groups.admin`, `groups.create`, `groups.delete`, `groups.rename`, `groups.settings.description`, `groups.settings.default-dir`, `groups.settings.default-context`, `groups.settings.default-spawn-target`, `groups.settings.default-profile`, `groups.settings.max-members`, `groups.settings.notifications`, `groups.settings.remote-control-policy`, `groups.settings.member-permissions`, `groups.settings.owner-scopes`, `groups.archive`, `groups.members.stop`, `groups.members.resume`, `groups.members.retire`, `groups.members.spawn`, `groups.owners.manage`, `groups.nest`, `groups.attachment`, `groups.clone`, `groups.link.add`, `groups.link.remove`, `groups.export`, `groups.import` |
+| `groups.*`    | `groups.admin`, `groups.create`, `groups.delete`, `groups.rename`, `groups.settings.description`, `groups.settings.default-dir`, `groups.settings.default-context`, `groups.settings.default-spawn-target`, `groups.settings.default-profile`, `groups.settings.max-members`, `groups.settings.notifications`, `groups.settings.remote-control-policy`, `groups.settings.member-permissions`, `groups.settings.owner-scopes`, `groups.archive`, `groups.members.add`, `groups.members.remove`, `groups.members.update`, `groups.members.stop`, `groups.members.resume`, `groups.members.retire`, `groups.members.spawn`, `groups.messages.schedule`, `groups.owners.manage`, `groups.nest`, `groups.attachment`, `groups.clone`, `groups.link.add`, `groups.link.remove`, `groups.export`, `groups.import` |
 | `permissions.*` | `permissions.grant`, `permissions.revoke` |
 | `message.*`   | `message.direct` |
 | `templates.*` | `templates.manage`, `templates.instantiate` |

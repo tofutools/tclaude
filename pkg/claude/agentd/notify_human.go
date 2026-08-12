@@ -687,7 +687,7 @@ func notifyHumanSenderSessionID(callerConv string) string {
 // callerConvID is "" for the human path. On failure the response is
 // already written.
 func requireNotifyHumanPermission(w http.ResponseWriter, r *http.Request) (string, bool) {
-	return requirePermissionEx(w, r, PermHumanNotify, ownsAnyGroupPermitting)
+	return requirePermission(w, r, PermHumanNotify)
 }
 
 // notifyHumanCallerTitle resolves a caller conv-id to its display title

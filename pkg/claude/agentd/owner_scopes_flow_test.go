@@ -168,7 +168,7 @@ func TestOwnerScopes_ListingRendersTheNarrowing(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(view.Body), &effective))
 	assert.Equal(t, "owner:group [spawn_profile=p1]", effective.Provenance[agentd.PermGroupsMembersSpawn],
 		"the owner tier states where its reach ends")
-	assert.Equal(t, "owner:group", effective.Provenance[agentd.PermGroupsMembersStop],
+	assert.Equal(t, "owner:group_members", effective.Provenance[agentd.PermGroupsMembersStop],
 		"a slug the map does not mention keeps the unrestricted rendering")
 }
 
@@ -214,12 +214,10 @@ func TestOwnerScopes_NarrowedOwnerCannotConferWiderSpawn(t *testing.T) {
 	assert.Equal(t, http.StatusOK, ok.Code, ok.Body.String())
 }
 
-// A bypass site with NO target group in context fails closed for a narrowed
-// group's contribution. /v1/worktrees/prepare is gated on groups.members.spawn through
-// the owns-any-group bypass and describes neither a group nor a profile, so an
-// owner whose ONLY group narrows groups.members.spawn cannot reach it — while an owner
-// of an unnarrowed group still can.
-func TestOwnerScopes_NoTargetGroupInContextFailsClosed(t *testing.T) {
+// Worktree preparation carries the group of the spawn it is preparing, so the
+// central resolver applies that exact group's ownership and narrowing. It must
+// not fall back to authority derived from an unrelated owned group.
+func TestOwnerScopes_WorktreeUsesTargetGroupContext(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("g1")
 	f.HaveGroup("g2")
@@ -233,14 +231,20 @@ func TestOwnerScopes_NoTargetGroupInContextFailsClosed(t *testing.T) {
 
 	// A malformed body would be rejected before the gate, so send a real one
 	// and read only the AUTHORIZATION outcome: 403 vs anything else.
-	body := map[string]any{"repo": f.World.HomeDir, "branch": "ownerscope-wt"}
+	body := map[string]any{"repo": f.World.HomeDir, "branch": "ownerscope-wt", "group": "g1"}
 	refused := agentReq(t, f, narrowed, http.MethodPost, "/v1/worktrees/prepare", body)
 	assert.Equal(t, http.StatusForbidden, refused.Code, refused.Body.String(),
-		"a site that names no group cannot satisfy a narrowing, so it must refuse")
+		"the target group's missing spawn-profile context cannot satisfy its narrowing")
 
+	body["group"] = "g2"
 	permitted := agentReq(t, f, wide, http.MethodPost, "/v1/worktrees/prepare", body)
 	assert.NotEqual(t, http.StatusForbidden, permitted.Code, permitted.Body.String(),
-		"an owner of an unnarrowed group still passes the gate")
+		"an owner of the named, unnarrowed group passes the authorization gate")
+
+	body["group"] = "g1"
+	refused = agentReq(t, f, wide, http.MethodPost, "/v1/worktrees/prepare", body)
+	assert.Equal(t, http.StatusForbidden, refused.Code, refused.Body.String(),
+		"ownership of g2 must not authorize a worktree being prepared for g1")
 }
 
 // The write surface: PATCH /v1/groups/{name} validates the map through the

@@ -8,15 +8,16 @@ import (
 // TestPermissionRegistry_OwnerImpliedSet pins the EXACT set of slugs the
 // registry marks OwnerImplied. The flag drives what the dashboard editor +
 // the CLI `permissions ls` show as "held via ownership", so it must stay in
-// lockstep with the daemon's actual owner-bypass call sites:
+// lockstep with the daemon's central ownership resolver:
 //
-//   - requireGroupPermission     → groups.{stop,resume,retire,spawn,attachment}
-//   - groups_links owner bypass  → groups.link.{add,rm}
-//   - requireCrossAgentPermission/requireGroupContextAccess →
+//   - ownerScopeGroup → group-local roster, settings, ownership, archive,
+//     attachment, nesting, linking, recurring-message and process operations
+//   - ownerScopeGroupMembers → bulk whole-agent lifecycle operations, protected
+//     when any affected member is shared with an unowned active group
+//   - ownerScopeMember →
 //     agent.{reincarnate,compact,rename,clone,context-info,task,pr,tags,
 //     schedule,stop,resume,delete,promote,retire}
-//   - requireNotifyHumanPermission → human.notify
-//   - requireProcessRunReadPermission → process.runs.read
+//   - ownerScopeAny → human.notify and process.runs.read
 //
 // Known limit of this test: it mirrors the registry by hand, so it
 // catches a slug whose SCOPE drifts from its call site, but not a slug
@@ -24,12 +25,10 @@ import (
 // remote-control and agent.inbox-watch were exactly that until TCL-1013.
 // When adding a gated endpoint, register its slug.
 //
-// If you add/remove an owner-bypass call site, update both the registry
-// scope AND this map — a drift here means the UI lies about what an owner
-// can actually do. Slugs gated by plain requirePermission (no owner
-// bypass — e.g. groups.create/delete/owners.manage, groups.members.*,
-// groups.rename/clone,
-// permissions.*, message.direct) must NOT be marked.
+// If you change an ownership conferral, update both the registry scope AND this
+// map — a drift here means the UI lies about what an owner can actually do.
+// Slugs with ownerScopeNone (e.g. groups.create/delete/clone, permissions.*,
+// message.direct) must NOT be marked.
 func TestPermissionRegistry_OwnerImpliedSet(t *testing.T) {
 	// Each slug mapped to the reach its bypass call site actually has.
 	// The UI renders this scope verbatim ("via ownership of: dev, qa"),
@@ -57,15 +56,31 @@ func TestPermissionRegistry_OwnerImpliedSet(t *testing.T) {
 		PermAgentInboxWatch:    ownerScopeMember,
 		// requireGroupPermission and the other group-scoped endpoints —
 		// the owned group itself.
-		PermGroupsMembersStop:   ownerScopeGroup,
-		PermGroupsMembersResume: ownerScopeGroup,
-		PermGroupsMembersRetire: ownerScopeGroup,
-		PermGroupsMembersSpawn:  ownerScopeGroup,
-		PermGroupsAttachment:    ownerScopeGroup,
-		PermGroupsLinkAdd:       ownerScopeGroup,
-		PermGroupsLinkRemove:    ownerScopeGroup,
-		PermGroupsNest:          ownerScopeGroup,
-		PermProcessAdvance:      ownerScopeGroup,
+		PermGroupsMembersStop:                 ownerScopeGroupMembers,
+		PermGroupsMembersResume:               ownerScopeGroupMembers,
+		PermGroupsMembersRetire:               ownerScopeGroupMembers,
+		PermGroupsMembersSpawn:                ownerScopeGroup,
+		PermGroupsOwnersManage:                ownerScopeGroup,
+		PermGroupsRename:                      ownerScopeGroup,
+		PermGroupsSettingsDescription:         ownerScopeGroup,
+		PermGroupsSettingsDefaultDir:          ownerScopeGroup,
+		PermGroupsSettingsDefaultContext:      ownerScopeGroup,
+		PermGroupsSettingsDefaultProfile:      ownerScopeGroup,
+		PermGroupsSettingsMaxMembers:          ownerScopeGroup,
+		PermGroupsSettingsNotifications:       ownerScopeGroup,
+		PermGroupsSettingsRemoteControlPolicy: ownerScopeGroup,
+		PermGroupsSettingsMemberPermissions:   ownerScopeGroup,
+		PermGroupsSettingsOwnerScopes:         ownerScopeGroup,
+		PermGroupsMembersAdd:                  ownerScopeGroup,
+		PermGroupsMembersRemove:               ownerScopeGroup,
+		PermGroupsMembersUpdate:               ownerScopeGroup,
+		PermGroupsMessagesSchedule:            ownerScopeGroup,
+		PermGroupsArchive:                     ownerScopeGroup,
+		PermGroupsAttachment:                  ownerScopeGroup,
+		PermGroupsLinkAdd:                     ownerScopeGroup,
+		PermGroupsLinkRemove:                  ownerScopeGroup,
+		PermGroupsNest:                        ownerScopeGroup,
+		PermProcessAdvance:                    ownerScopeGroup,
 		// Both of templates.instantiate's owner-bypass sites are
 		// requireGroupPermission over an EXISTING group (rebrief and
 		// reinforce). Its other two sites take plain requirePermission,
