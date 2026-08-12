@@ -87,6 +87,7 @@ export function createAccessState({
     const next = String(value ?? '').trim();
     slugQuery.value = next;
     if (next) prefs.setItem(SLUG_FILTER_KEY, next); else prefs.removeItem(SLUG_FILTER_KEY);
+    return next;
   }
   function cycleSudoSort(key) {
     if (!SUDO_COLUMNS_KEYS.has(key)) return false;

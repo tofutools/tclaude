@@ -52,7 +52,13 @@ function SlugsView({ state, current }) {
     <div class="filter-bar">
       <input ref=${filterRef} id="filter-slugs" type="text" aria-label="Filter permission slugs by name"
         placeholder="Filter by slug name" autocomplete="off" spellcheck=${false}
-        value=${current.slugQuery} onInput=${(event) => state.setSlugQuery(event.currentTarget.value)}
+        value=${current.slugQuery} onInput=${(event) => {
+          const normalized = state.setSlugQuery(event.currentTarget.value);
+          // A whitespace-only edit can normalize to the signal's existing
+          // empty value, which does not trigger a Preact rerender. Reconcile
+          // the live control so it never displays a no-op persisted query.
+          if (event.currentTarget.value !== normalized) event.currentTarget.value = normalized;
+        }}
         onKeyDown=${(event) => { if (event.key === 'Escape') state.setSlugQuery(''); }} />
       <span class="filter-count" id="filter-slugs-count" aria-live="polite">${current.slugQuery
         ? `${current.slugs.length} / ${current.slugTotal}`
