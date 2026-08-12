@@ -86,8 +86,14 @@ func handleGroupStop(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	}
 	affected := make([]string, 0, len(members))
 	selected := make(map[string]bool, len(members))
+	alive, err := session.LiveTmuxSessions()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "snapshot live group members: "+err.Error())
+		return
+	}
 	for _, member := range members {
-		if pickAliveSession(member.ConvID) != nil {
+		online, _ := convLiveStatus(member.ConvID, alive)
+		if online {
 			affected = append(affected, member.ConvID)
 			selected[member.ConvID] = true
 		}
@@ -1244,8 +1250,14 @@ func handleGroupResume(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	}
 	affected := make([]string, 0, len(members))
 	selected := make(map[string]bool, len(members))
+	alive, err := session.LiveTmuxSessions()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "snapshot live group members: "+err.Error())
+		return
+	}
 	for _, member := range members {
-		if member.ConvID != "" && pickAliveSession(member.ConvID) == nil {
+		online, _ := convLiveStatus(member.ConvID, alive)
+		if member.ConvID != "" && !online {
 			affected = append(affected, member.ConvID)
 			selected[member.ConvID] = true
 		}

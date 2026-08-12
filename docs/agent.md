@@ -1993,8 +1993,8 @@ tclaude agent alias ls / get / rm
 ```
 
 `rename` injects `/rename <title>` into the target's CC pane via
-`tmux send-keys`; gated on `self.rename` (self) or `agent.rename`
-(another). The title charset is strict
+`tmux send-keys`; gated on `self.rename` for self, or global `agent.rename` /
+complete `groups.members.rename` coverage for another agent. The title charset is strict
 (`[A-Za-z0-9_\-\[\]{}() ]`, single ASCII spaces, max 64 chars) — a
 hard security gate, because the title becomes literal keystroke
 input. Harnesses that are not driven by keystrokes take their own
@@ -2449,10 +2449,10 @@ that description:
 - Matchers **within one dimension OR**: `group=dev,ops` means either group.
 - Dimensions **AND**: `group=dev spawn_profile=p1` means both must match.
 - A dimension the scope does not mention is **unconstrained**.
-- Only the **winning tier** is consulted (per-agent override, else group
-  grants, else defaults). A per-agent grant scoped to `dev` applies `dev`
-  even when a group grant underneath is broader — that is what lets an
-  operator narrow one agent without touching its group.
+- Standing grants use the normal winning tier (per-agent override, else group
+  grants, else defaults). Owner-contributed grants are an additional positive
+  source: explicit scope B plus owner scope A authorizes A or B. A same-slug
+  explicit deny still suppresses the owner source.
 - Scopes **union within a tier**: an agent in two groups that both grant the
   slug may act within either scope. One **unscoped row absorbs the tier** —
   union with unscoped is unscoped — no matter where it sorts.
@@ -2464,7 +2464,7 @@ to write one.
 
 **A scope that does not match decides nothing** — it does not deny. The
 allow simply stops applying to this action, leaving the same gap an agent
-with no grant leaves: the structural owner bypass may still fill it, then
+with no grant leaves: an owner-contributed grant may still fill it, then
 `--ask-human` may, and otherwise the call is a 403. This matters at gate
 sites that have not been taught to describe their action yet: a dimension
 the site did not describe **fails closed**, so a scoped grant there degrades
@@ -2523,44 +2523,49 @@ Consequently `@descendants` and `@self-spawned` cover agents spawned after the
 lineage table landed; pre-existing agents have no inferred ancestry and fail
 closed.
 
-### Owner-bypass narrowing
+### Owner-contributed grants
 
-Owning a group confers the slugs above *structurally*, without a grant. A group
-may confine that bypass — and only that bypass — with an owner-scope map from
-slug to the same scope shape a grant takes:
+Owning an active group contributes a documented set of ordinary permission
+slugs. Every owner-conferred `groups.*` slug is scoped to the owned group; it
+does not change the meaning of a global `agent.*` slug. `human.notify` and
+`process.runs.read` are the two deliberate unscoped owner bonuses.
+
+For a whole-agent operation, global `agent.<verb>` remains the fleet-wide
+capability. Its `groups.members.<verb>` sibling works only when its positive
+scopes collectively cover every current active group containing the target.
+The check uses a bounded current-membership footprint, ignores archived and
+historical memberships, and rejects atomically if any group is uncovered.
+Clone additionally covers every current group whose membership or ownership
+the clone will inherit.
+
+A group may add constraints to the ordinary grant it contributes, using an
+owner-scope map from slug to the same scope shape a direct grant takes:
 
 ```bash
 tclaude agent groups set-owner-scopes reviewers \
   '{"groups.members.spawn": {"spawn_profile": ["reviewer"]}}'
 ```
 
-An owner of `reviewers` that holds no `groups.members.spawn` grant of its own may now
-spawn into it with the `reviewer` profile, and is refused (popup, then 403)
-with any other profile or with an inline launch shape that names none. Omit the
-map (or pass `{}`) to clear the narrowing. The dashboard writes the same field
+The `reviewers` owner grant now permits spawning only with the `reviewer`
+profile. Omit the map (or pass `{}`) to clear the extra constraint. The dashboard writes the same field
 from Groups tab → group ⚙ → **group permissions…**, and a group template can
 declare it so every force deployed from the template is born with it.
 
-Four properties are worth stating plainly:
+Three properties are worth stating plainly:
 
-- **Bypass only.** An *explicit* grant the owner separately holds resolves
-  first, under the ordinary precedence, and is untouched. Narrow that with
-  `permissions grant --scope`.
+- **One positive source.** The constraint applies only to the grant contributed
+  by this owned group. Other positive grants compose with it and are untouched;
+  constrain those with `permissions grant --scope`.
 - **Per group.** An owner of a narrowed group and an unnarrowed one is confined
   only when acting on the narrowed one.
-- **Fail-closed where the target group is unknown.** A few endpoints take the
-  bypass on "owns *any* group" and describe no group at all (`human.notify`,
-  `process.runs.read`, worktree prepare/discard). A narrowed group contributes
-  nothing there, so an owner whose *only* group narrows the slug is refused;
-  owning one unnarrowed group is enough to pass.
-- **It only takes reach away.** A deny still suppresses the bypass entirely,
+- **It only takes reach away.** A same-slug deny suppresses the owner grant,
   and a narrowed owner cannot confer a *wider* grant than its narrowing
   through the spawn / grant / template-deploy minting surfaces.
 
 Every slug in the map must be one ownership actually confers, and every
 dimension must be one that slug declares — the same validation a grant scope
 gets. `permissions ls` renders the result, e.g.
-`groups.members.spawn … owner:group [spawn_profile=reviewer]`.
+`groups.members.spawn … owner [group=reviewers spawn_profile=reviewer]`.
 
 ### Slugs
 
@@ -2571,8 +2576,8 @@ gate group, messaging, template, and permission administration.
 | Family        | Slugs |
 |---------------|-------|
 | `self.*`      | `self.rename`, `self.compact`, `self.interrupt`, `self.clone`, `self.schedule`, `self.remote-control`, `self.task`, `self.pr`, `self.tags`, `self.dir-repair` |
-| `agent.*`     | `agent.rename`, `agent.compact`, `agent.interrupt`, `agent.reincarnate`, `agent.clone`, `agent.context-info`, `agent.resume`, `agent.stop`, `agent.delete`, `agent.schedule`, `agent.promote`, `agent.retire`, `agent.remote-control`, `agent.sandbox-impl` (not owner-conferred) |
-| `groups.*`    | `groups.admin`, `groups.create`, `groups.delete`, `groups.rename`, `groups.settings.description`, `groups.settings.default-dir`, `groups.settings.default-context`, `groups.settings.default-spawn-target`, `groups.settings.default-profile`, `groups.settings.max-members`, `groups.settings.notifications`, `groups.settings.remote-control-policy`, `groups.settings.member-permissions`, `groups.settings.owner-scopes`, `groups.archive`, `groups.members.add`, `groups.members.remove`, `groups.members.update`, `groups.members.stop`, `groups.members.resume`, `groups.members.retire`, `groups.members.spawn`, `groups.messages.schedule`, `groups.owners.manage`, `groups.nest`, `groups.attachment`, `groups.clone`, `groups.link.add`, `groups.link.remove`, `groups.export`, `groups.import` |
+| `agent.*`     | Global cross-agent capabilities: `agent.rename`, `agent.compact`, `agent.interrupt`, `agent.reincarnate`, `agent.clone`, `agent.context-info`, `agent.resume`, `agent.stop`, `agent.delete`, `agent.schedule`, `agent.promote`, `agent.retire`, `agent.remote-control`, `agent.inbox-watch`, `agent.sandbox-impl` |
+| `groups.*`    | Group objects/settings plus `groups.members.{reincarnate,compact,interrupt,rename,clone,context-info,task,pr,tags,schedule,stop,resume,delete,promote,retire,remote-control,inbox-watch,spawn,add,remove,update}`. Run `permissions slugs` for the complete registry. |
 | `permissions.*` | `permissions.grant`, `permissions.revoke` |
 | `message.*`   | `message.direct` |
 | `templates.*` | `templates.manage`, `templates.instantiate` |
