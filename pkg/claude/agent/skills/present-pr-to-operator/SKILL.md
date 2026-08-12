@@ -6,8 +6,9 @@ description: >-
   and want the human/operator to see it even if branch/statusline PR detection
   has not picked it up. Requires `self.pr` for your own PR (default-granted by
   `tclaude setup --install-default-agent-permissions`); manager pattern:
-  `tclaude agent present-pr <url> --target <peer>` requires `agent.pr`, OR
-  ownership of a group containing the target.
+  `tclaude agent present-pr <url> --target <peer>` requires global `agent.pr`,
+  or `groups.members.pr` covering every current active group containing the
+  target; ownership contributes the latter for owned groups.
 ---
 
 # Present PR To Operator
@@ -46,5 +47,5 @@ Leads can present or handle a worker's PR with:
 tclaude agent present-pr https://github.com/owner/repo/pull/42 --target worker-name
 ```
 
-That cross-agent form requires `agent.pr`, unless the caller owns a group that
-contains the target.
+That cross-agent form requires global `agent.pr`, or `groups.members.pr`
+covering every current active group containing the target.

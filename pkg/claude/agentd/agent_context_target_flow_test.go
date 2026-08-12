@@ -102,13 +102,10 @@ func TestContextInfo_OwnerReadsWorkerTarget(t *testing.T) {
 	assert.Equal(t, lead, other.CallerConv, "cross-agent read echoes caller_conv")
 }
 
-// Scenario: a group owner has an explicit DENY override on
-// agent.context-info. Deny is always authoritative — it suppresses the
-// owner bypass on both the per-target and the group read, the same
-// universal precedence every cross-agent verb follows. The owner bypass
-// only fills the "undecided" gap (no explicit grant or deny); it never
-// beats an explicit deny.
-func TestContextInfo_DenyOverrideBeatsOwnerBypass(t *testing.T) {
+// Scenario: agent.context-info and groups.members.context-info are distinct
+// capabilities. Denying the global slug does not suppress the scoped owner
+// grant; denying that exact sibling does.
+func TestContextInfo_DeniesAreExactAcrossOwnerSibling(t *testing.T) {
 	f := newFlow(t)
 
 	const lead = "ctxd-aaaa-bbbb-cccc-dddd"
@@ -120,7 +117,7 @@ func TestContextInfo_DenyOverrideBeatsOwnerBypass(t *testing.T) {
 	f.HaveAliveSession(worker, label, "tmux-ctxe", f.TestCwd("ctxe"))
 	f.HaveMember("squad", worker)
 	require.NoError(t, db.AddAgentGroupOwner(g.ID, lead, "test"), "seed owner")
-	// An explicit deny override locks the owner out — deny always wins.
+	// The global deny is exact and leaves the owner-contributed sibling intact.
 	require.NoError(t,
 		db.SetAgentPermissionOverride(lead, agentd.PermAgentContextInfo, db.PermEffectDeny, "test"),
 		"seed deny override")
@@ -128,17 +125,22 @@ func TestContextInfo_DenyOverrideBeatsOwnerBypass(t *testing.T) {
 		db.UpdateContextSnapshot(label, 64.0, 120000, 8000, 200000),
 		"seed worker snapshot")
 
-	// Per-target read: owner is denied despite ownership.
+	// Per-target and group reads still pass through groups.members.context-info.
 	rec := testharness.Serve(f.Mux,
 		agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/agent/"+worker+"/context", nil), lead))
-	assert.Equal(t, http.StatusForbidden, rec.Code,
-		"deny override must beat the owner bypass on --target; body=%s", rec.Body.String())
+	assert.Equal(t, http.StatusOK, rec.Code, "global deny must not suppress the distinct sibling; body=%s", rec.Body.String())
 
-	// Group listing: owner is denied despite ownership.
+	rec = testharness.Serve(f.Mux,
+		agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/groups/squad/context", nil), lead))
+	assert.Equal(t, http.StatusOK, rec.Code, "global deny must not suppress the group sibling; body=%s", rec.Body.String())
+
+	require.NoError(t,
+		db.SetAgentPermissionOverride(lead, agentd.PermGroupsMembersContextInfo, db.PermEffectDeny, "test"),
+		"seed exact sibling deny")
 	rec = testharness.Serve(f.Mux,
 		agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/groups/squad/context", nil), lead))
 	assert.Equal(t, http.StatusForbidden, rec.Code,
-		"deny override must beat the owner bypass on --group; body=%s", rec.Body.String())
+		"exact sibling deny must suppress the owner contribution; body=%s", rec.Body.String())
 }
 
 // Scenario: a plain co-member (not an owner, no slug) tries to read a
@@ -230,12 +232,15 @@ func TestGroupContext_OwnerSeesEveryMember(t *testing.T) {
 	const freshLabel = "lbl-gcf0"
 
 	g := f.HaveGroup("team")
+	coordination := f.HaveGroup("coordination")
 	f.HaveConvWithTitle(hot, "hot-worker")
 	f.HaveAliveSession(hot, hotLabel, "tmux-gch0", f.TestCwd("gch0"))
 	f.HaveMember("team", hot)
 	f.HaveConvWithTitle(fresh, "fresh-worker")
 	f.HaveAliveSession(fresh, freshLabel, "tmux-gcf0", f.TestCwd("gcf0"))
 	f.HaveMember("team", fresh)
+	f.HaveMember("team", lead)
+	f.HaveMember(coordination.Name, lead)
 	require.NoError(t, db.AddAgentGroupOwner(g.ID, lead, "test"), "seed owner")
 
 	// Only the hot worker has reported a snapshot.
@@ -248,7 +253,7 @@ func TestGroupContext_OwnerSeesEveryMember(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, "group context (owner): body=%s", rec.Body.String())
 	var entries []ctxGroupEntry
 	testharness.DecodeJSON(t, rec, &entries)
-	require.Len(t, entries, 2, "two members expected")
+	require.Len(t, entries, 3, "all members, including the caller, are returned")
 
 	hotEntry := findCtxEntry(entries, hot)
 	require.NotNil(t, hotEntry, "hot worker missing from group context")

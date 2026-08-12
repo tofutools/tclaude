@@ -61,6 +61,19 @@ type ActionContext struct {
 	// affectedConvs, when non-nil, is a stable, precomputed cohort for a bulk
 	// whole-agent mutation. Nil means the operation can affect the live roster.
 	affectedConvs []string
+	// affectedGroups, when non-nil, is a stable, precomputed authorization
+	// footprint for an operation such as clone that also creates inherited
+	// ownership relationships. It is already deduplicated by the producer.
+	affectedGroups []string
+	// bulkGroupMemberCoverage asks the central evaluator to require this slug
+	// for every current active group containing every affected conversation.
+	// Keeping the check inside the evaluator means an uncovered footprint is
+	// still eligible for the ordinary one-shot human approval path.
+	bulkGroupMemberCoverage bool
+	// alternatePermission is an ordinary second slug that may authorize the
+	// same action. Group-wide views use it to preserve a global agent.* grant
+	// while also accepting the dedicated groups.members.* capability.
+	alternatePermission string
 }
 
 // value projects the context onto one scope dimension. An unknown dimension

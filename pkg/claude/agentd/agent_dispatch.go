@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -147,6 +149,7 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 // already supply it. A failed resolution leaves the dimension empty, so a
 // target-scoped grant fails closed.
 func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, targetConv string, actx ...ActionContext) (string, bool) {
+	clearAuthorizedPermission(r)
 	p := peerFromContext(r.Context())
 	switch classify(p) {
 	case classUnidentified:
@@ -165,6 +168,7 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 	}
 	if hasWriteProofApprovalContinuation(r, p.ConvID, perm, targetConv) ||
 		hasHumanApprovalContinuation(r, perm, targetConv) {
+		recordAuthorizedPermission(r, perm, 0)
 		return p.ConvID, true
 	}
 	scopeContext := actionContextOf(actx)
@@ -178,33 +182,45 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 			scopeContext.TargetAgent = targetAgent
 		}
 	}
-	v := resolvePermissionVerdictForRequest(r, p.ConvID, perm)
-	switch v.Resolution {
-	case permAllow:
-		eval := evalPermissionScope(v, p.ConvID, scopeContext)
-		if eval.Satisfied {
-			recordAuditPermissionScope(r, perm, eval.Matched)
-			return p.ConvID, true
+	if allowed, matched, _ := permissionAllowsAction(r, p.ConvID, perm, scopeContext); allowed {
+		recordAuditPermissionScope(r, perm, matched)
+		recordAuthorizedPermission(r, perm, loadBearingSudoGrantID(r, p.ConvID, perm, scopeContext))
+		return p.ConvID, true
+	}
+
+	// A global agent.* deny or missing grant does not suppress the distinct
+	// groups.members.* capability. The sibling must cover EVERY current active
+	// group containing the target; different positive sources may collectively
+	// cover that finite set.
+	if sibling := GroupSiblingForSlug(perm); sibling != "" {
+		groups := scopeContext.affectedGroups
+		var err error
+		if groups == nil {
+			groups, err = activeGroupNamesForConvs(targetConv)
 		}
-		// Scoped away from this action: the grant decides nothing here, so
-		// fall through to the owner bypass and then the popup, exactly as an
-		// undecided verdict would.
-		if structuralPermissionPermitted(p.ConvID, perm, scopeContext) {
-			return p.ConvID, true
+		if err != nil {
+			slog.Warn("permissions: target group footprint lookup failed", "target", targetConv, "error", err)
+		} else if len(groups) > 0 {
+			covered := true
+			var sudoGrantID int64
+			for _, group := range groups {
+				candidate := scopeContext
+				candidate.Group = group
+				candidate.structuralGroup = group
+				if allowed, _, _ := permissionAllowsAction(r, p.ConvID, sibling, candidate); !allowed {
+					covered = false
+					break
+				}
+				if sudoGrantID == 0 {
+					sudoGrantID = loadBearingSudoGrantID(r, p.ConvID, sibling, candidate)
+				}
+			}
+			if covered {
+				recordAuditPermissionScope(r, sibling, "group="+strings.Join(groups, ","))
+				recordAuthorizedPermission(r, sibling, sudoGrantID)
+				return p.ConvID, true
+			}
 		}
-	case permUndecided:
-		// No grant source — the group-owner structural bypass still
-		// applies: an owner can manage members of groups it owns, narrowed
-		// by the owner-scope map of whichever owned group contains the
-		// target (TCL-1071). Each candidate group is judged on its own map,
-		// so a narrowed group cannot suppress an unnarrowed one.
-		if structuralPermissionPermitted(p.ConvID, perm, scopeContext) {
-			return p.ConvID, true
-		}
-	case permDeny:
-		// Explicit per-conv deny override — authoritative; it suppresses
-		// the owner bypass too. Fall through to the human-approval popup
-		// so the human can still grant a one-off exception.
 	}
 
 	// Last chance: human-approval popup. Same shape as the
@@ -244,6 +260,7 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 		}
 		if requestHumanApproval(req, popupBaseURL) {
 			markWriteProofHumanApproval(r, perm, targetConv)
+			recordAuthorizedPermission(r, perm, 0)
 			return p.ConvID, true
 		}
 		writeError(w, http.StatusForbidden, "permission",
@@ -256,6 +273,65 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 		fmt.Sprintf("caller is not granted %q for target %s, and is not an owner of any group containing it (grant via `tclaude agent permissions grant %s %s`, add caller as owner of a shared group, or call again with X-Tclaude-Ask-Human: <duration> to ask the human via popup)",
 			perm, short8(targetConv), perm, short8(p.ConvID)))
 	return "", false
+}
+
+const (
+	authorizedPermissionHeader = "X-Tclaude-Internal-Authorized-Permission"
+	authorizedSudoGrantHeader  = "X-Tclaude-Internal-Authorized-Sudo-Grant"
+)
+
+func clearAuthorizedPermission(r *http.Request) {
+	r.Header.Del(authorizedPermissionHeader)
+	r.Header.Del(authorizedSudoGrantHeader)
+}
+
+func recordAuthorizedPermission(r *http.Request, slug string, sudoGrantID int64) {
+	r.Header.Set(authorizedPermissionHeader, slug)
+	if sudoGrantID > 0 {
+		r.Header.Set(authorizedSudoGrantHeader, strconv.FormatInt(sudoGrantID, 10))
+	} else {
+		r.Header.Del(authorizedSudoGrantHeader)
+	}
+}
+
+func authorizedPermissionForRequest(r *http.Request, fallback string) string {
+	if slug := r.Header.Get(authorizedPermissionHeader); slug != "" {
+		return slug
+	}
+	return fallback
+}
+
+func authorizedSudoGrantIDForRequest(r *http.Request) int64 {
+	id, _ := strconv.ParseInt(r.Header.Get(authorizedSudoGrantHeader), 10, 64)
+	return id
+}
+
+// activeGroupNamesForConvs computes the bounded authorization footprint used
+// by group-scoped operations on globally shared agents. It snapshots current
+// active memberships exactly once per target, ignores archived/history rows,
+// and never recursively chases downstream effects.
+func activeGroupNamesForConvs(targets ...string) ([]string, error) {
+	seen := map[string]bool{}
+	for _, target := range targets {
+		if target == "" {
+			continue
+		}
+		groups, err := db.ListGroupsForConv(target)
+		if err != nil {
+			return nil, err
+		}
+		for _, group := range groups {
+			if group != nil && !group.IsArchived() {
+				seen[group.Name] = true
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for name := range seen {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 // requireInboxAccess resolves the effective inbox conv for a read-only
@@ -329,4 +405,26 @@ func ownerOfGroupContaining(ownerConv, targetConv string) bool {
 	}
 	ok, err := db.OwnerHasGroupContaining(ownerConv, targetConv)
 	return err == nil && ok
+}
+
+// ownerOwnsEveryActiveGroupContaining is retained for non-permission
+// relationship visibility (currently cron read filtering). Authorization gates
+// do not call it; they resolve the dedicated groups.members.* slugs instead.
+func ownerOwnsEveryActiveGroupContaining(ownerConv, targetConv string) bool {
+	groups, err := db.ListGroupsForConv(targetConv)
+	if err != nil {
+		return false
+	}
+	active := 0
+	for _, group := range groups {
+		if group.IsArchived() {
+			continue
+		}
+		active++
+		owns, err := db.IsAgentGroupOwner(group.ID, ownerConv)
+		if err != nil || !owns {
+			return false
+		}
+	}
+	return active > 0
 }

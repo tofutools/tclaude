@@ -862,8 +862,8 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
   }) : html`<div class="empty" style="padding:10px">${rows.length ? 'No matching permission slugs.' : 'No permission slugs registered.'}</div>`}</div>
     ${groupMode && html`<div class="perm-edit-owner-scopes" id="perm-edit-owner-scopes">
       <label for="perm-edit-owner-scopes-input"><${Words}
-        plain=${html`👑 <strong>Owner-bypass narrowing</strong> — confines what OWNING this group structurally confers, e.g. <code>{"groups.members.spawn": {"spawn_profile": ["reviewer"]}}</code>. Empty = unrestricted. Explicit grants an owner holds are unaffected.`}
-        wizard=${html`👑 <strong>Bind the crown</strong> — confines what wearing this party's crown grants by itself, e.g. <code>{"groups.members.spawn": {"spawn_profile": ["reviewer"]}}</code>. Empty = unbound. Boons bestowed directly are untouched.`}/></label>
+        plain=${html`👑 <strong>Owner-grant constraints</strong> — adds constraints to the automatic permission grants contributed by owning this group, e.g. <code>{"groups.members.spawn": {"spawn_profile": ["reviewer"]}}</code>. Empty = no extra constraints. Other grants are unaffected.`}
+        wizard=${html`👑 <strong>Bind the crown</strong> — adds constraints to the boons granted by wearing this party's crown, e.g. <code>{"groups.members.spawn": {"spawn_profile": ["reviewer"]}}</code>. Empty = unbound. Other boons are untouched.`}/></label>
       <textarea id="perm-edit-owner-scopes-input" rows="4" spellcheck="false" autocomplete="off"
         placeholder=${'{\n  "groups.members.spawn": { "spawn_profile": ["reviewer"] }\n}'}
         value=${ownerScopesText} onInput=${(event) => setOwnerScopesText(event.currentTarget.value)}></textarea>

@@ -1657,7 +1657,7 @@ func runGroupsSetRemoteControl(p *groupsSetRemoteControlParams, stdout, stderr i
 
 type groupsSetOwnerScopesParams struct {
 	Group    string `pos:"true" help:"Group to configure"`
-	Scopes   string `pos:"true" optional:"true" help:"Owner-scope map as JSON: a permission slug mapped to the scope its owner-implied bypass is confined to, e.g. '{\"groups.members.spawn\": {\"spawn_profile\": [\"reviewer\"]}}'. Omit (and omit --file) to clear every narrowing."`
+	Scopes   string `pos:"true" optional:"true" help:"Owner-grant constraint map as JSON, e.g. '{\"groups.members.spawn\": {\"spawn_profile\": [\"reviewer\"]}}'. Omit (and omit --file) to clear every constraint."`
 	File     string `long:"file" short:"f" optional:"true" help:"Read the JSON map from this file instead of the positional argument ('-' reads stdin). Mutually exclusive with the positional argument."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 }
@@ -1665,16 +1665,16 @@ type groupsSetOwnerScopesParams struct {
 func groupsSetOwnerScopesCmd() *cobra.Command {
 	return boa.CmdT[groupsSetOwnerScopesParams]{
 		Use:   "set-owner-scopes",
-		Short: "Narrow (or clear) what OWNING this group structurally confers",
-		Long: "Owning a group structurally confers a set of permissions without an explicit grant — " +
-			"the owner-implied bypass. This command CONFINES that bypass for one group, as a JSON map " +
+		Short: "Constrain (or clear) this group's automatic owner grants",
+		Long: "Owning a group contributes a documented set of ordinary permission grants scoped to that group. " +
+			"This command adds constraints to those grants for one group, as a JSON map " +
 			"from permission slug to scope: '{\"groups.members.spawn\": {\"spawn_profile\": [\"reviewer\"]}}' " +
-			"means an owner of this group with no grant of its own may spawn into it only with the " +
+			"means this group's automatic owner grant permits spawning only with the " +
 			"reviewer profile, and is refused otherwise.\n\n" +
-			"It narrows ONLY the bypass. An explicit grant the owner separately holds resolves first and " +
-			"is untouched — narrow that with `permissions grant --scope`. It is also per-group: an owner " +
+			"It constrains ONLY this group's owner-contributed grant. Other positive grants compose with it " +
+			"and are untouched — constrain those with `permissions grant --scope`. It is also per-group: an owner " +
 			"of this group and another is confined only when acting on this one. Omit <scopes> (and " +
-			"--file) to clear the narrowing and restore the unrestricted bypass. " +
+			"--file) to clear the extra constraints. " +
 			"Gated on `groups.settings.owner-scopes` (or `groups.admin`) plus `permissions.grant` and `permissions.revoke` " +
 			"(default human-only), because a write can both add and remove a narrowing.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -1731,15 +1731,15 @@ func runGroupsSetOwnerScopes(p *groupsSetOwnerScopesParams, stdin io.Reader, std
 		return MapDaemonErrorToRC(err)
 	}
 	if len(resp.OwnerScopes) == 0 {
-		fmt.Fprintf(stdout, "%s: owner-bypass narrowing cleared (owners hold the full owner-implied set here)\n", resp.Group)
+		fmt.Fprintf(stdout, "%s: owner-grant constraints cleared\n", resp.Group)
 		return rcOK
 	}
 	rendered, err := json.Marshal(resp.OwnerScopes)
 	if err != nil {
-		fmt.Fprintf(stdout, "%s: owner-bypass narrowing set for %d slug(s)\n", resp.Group, len(resp.OwnerScopes))
+		fmt.Fprintf(stdout, "%s: owner-grant constraints set for %d slug(s)\n", resp.Group, len(resp.OwnerScopes))
 		return rcOK
 	}
-	fmt.Fprintf(stdout, "%s: owner-bypass narrowing set to %s\n", resp.Group, rendered)
+	fmt.Fprintf(stdout, "%s: owner-grant constraints set to %s\n", resp.Group, rendered)
 	return rcOK
 }
 

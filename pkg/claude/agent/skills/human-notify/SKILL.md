@@ -125,11 +125,10 @@ including to empty files.
 
 Sending is gated on the **`human.notify`** permission slug. It is
 **not** in the global defaults — the human grants it to a trusted
-coordinating agent (typically the Product Owner). A **group owner gets
-it by default**, slug or not — owning a group is itself a trusted
-coordinating role — unless an explicit **deny** override is set (deny is
-always authoritative). An agent that is neither a slug-holder nor a group
-owner gets a `403` naming the slug.
+coordinating agent (typically the Product Owner). Owning any active group
+contributes an ordinary unscoped `human.notify` grant unless an explicit
+same-slug **deny** override is set. An agent without an effective grant gets a
+`403` naming the slug.
 
 If you need to notify the human just this once and you do not hold the
 slug, add `--ask-human <duration>`:

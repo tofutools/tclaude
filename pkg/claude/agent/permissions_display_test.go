@@ -59,10 +59,7 @@ func TestRenderPermissionsState_LeadsWithAgentID(t *testing.T) {
 	})
 }
 
-// TestPermSourceNote_OwnerScope pins how an owner-conferred slug is
-// phrased (TCL-1013). The gate scopes the owner bypass to owned groups or
-// their members for most slugs; rendering all of them as a bare "(via
-// ownership)" reads as fleet-wide authority the gate refuses.
+// TestPermSourceNote_OwnerScope pins ordinary scoped owner-grant provenance.
 func TestPermSourceNote_OwnerScope(t *testing.T) {
 	owned := []string{"dev", "qa"}
 
@@ -73,22 +70,10 @@ func TestPermSourceNote_OwnerScope(t *testing.T) {
 		want   string
 	}{
 		{
-			name:   "group-scoped names the owned groups",
-			source: "owner:group",
+			name:   "group-scoped owner grant displays its ordinary scope",
+			source: "owner [group=dev]",
 			owned:  owned,
-			want:   "(via ownership of: dev, qa)",
-		},
-		{
-			name:   "member-scoped says it reaches their members",
-			source: "owner:member",
-			owned:  owned,
-			want:   "(via ownership of: dev, qa — their members only)",
-		},
-		{
-			name:   "unscoped must not claim a per-group limit",
-			source: "owner:any",
-			owned:  owned,
-			want:   "(via ownership)",
+			want:   "(via ownership; scope: [group=dev])",
 		},
 		{
 			// An older daemon sends bare "owner" with no scope.
@@ -135,19 +120,15 @@ func TestPermSourceNote_OwnerScope(t *testing.T) {
 	}
 }
 
-// TestOwnerScopeCell pins the OWNER column of `permissions slugs`: three
-// call-site families confer three different reaches, and collapsing them
-// into one tick is what let the table imply fleet-wide authority.
+// TestOwnerScopeCell pins the OWNER GRANT column of `permissions slugs`.
 func TestOwnerScopeCell(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		in   permSlugEntry
 		want string
 	}{
-		{"group scope", permSlugEntry{OwnerImplied: true, OwnerScope: "group"}, "✔ group"},
-		{"member scope", permSlugEntry{OwnerImplied: true, OwnerScope: "member"}, "✔ member"},
-		{"any scope", permSlugEntry{OwnerImplied: true, OwnerScope: "any"}, "✔ any"},
-		{"older daemon sends no scope", permSlugEntry{OwnerImplied: true}, "✔"},
+		{"group scope", permSlugEntry{OwnerImplied: true, ScopeDims: []string{"group"}}, "✔ owned groups"},
+		{"global", permSlugEntry{OwnerImplied: true}, "✔ global"},
 		{"no owner bypass", permSlugEntry{}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

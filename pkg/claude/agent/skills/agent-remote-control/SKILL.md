@@ -9,8 +9,9 @@ description: >-
   remote access, reach this session from their phone or the Claude app, or check
   whether it's currently reachable (`status`). Codex CLI has no built-in remote
   access, so this is Claude-Code-only. Manager pattern: `--target <peer>` toggles
-  ANOTHER agent's remote access (requires the `agent.remote-control` slug, OR
-  being an owner of a group containing the target).
+  ANOTHER agent's remote access (requires global `agent.remote-control`, or
+  `groups.members.remote-control` covering every current active group
+  containing the target; ownership contributes the latter for owned groups).
 ---
 
 # Remote access: reach your session from the Claude app

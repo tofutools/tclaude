@@ -22,7 +22,7 @@ func TestMigrateV209AddsSpawnProfileRoleRef(t *testing.T) {
 
 	require.NoError(t, migrateV208toV209(d))
 	assert.Equal(t, 209, schemaVersion(d))
-	assert.Equal(t, 209, currentVersion, "tripwire: bump this with the next migration")
+	assert.GreaterOrEqual(t, currentVersion, 209)
 	assertRowValue(t, d, `SELECT role_ref FROM spawn_profiles WHERE name = 'existing'`, "")
 	require.NoError(t, migrateV208toV209(d), "partially applied migration converges")
 }

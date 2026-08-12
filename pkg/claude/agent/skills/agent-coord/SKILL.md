@@ -365,11 +365,12 @@ generates no approval request for the reviewer to decide.
   `groups.members.update`; settings use dedicated slugs such as
   `groups.settings.default-dir`, and `groups.admin` is the explicit umbrella for every
   registered `groups.*` administration operation. A dedicated
-  deny still wins over the umbrella. A **group owner gets the lifecycle verbs for
-  its own group by default** — `groups.members.spawn` / `groups.members.stop` /
-  `groups.members.retire` / `groups.members.resume`, plus — for owning any group at all —
-  `human.notify` and the read-only `process.runs.read` — without an
-  explicit grant (an explicit deny override still suppresses them).
+  deny still wins over the umbrella. Ownership contributes the documented
+  owner-grant slugs as ordinary permissions: one group-scoped grant per owned
+  active group for `groups.*` capabilities, plus the global `human.notify` and
+  read-only `process.runs.read` bonuses. Whole-agent verbs require their
+  `groups.members.*` slug to cover every current active group containing the
+  target. A same-slug explicit deny suppresses the contributed grant.
   Ownership confers no process *mutation* authority: `process.runs.manage`
   and `process.templates.manage` still need a grant or `--ask-human`.
 

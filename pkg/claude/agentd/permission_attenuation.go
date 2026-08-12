@@ -137,20 +137,9 @@ func permissionScopeCovers(granter, conferred PermissionScope) bool {
 //   - nothing grants the granter this slug, so there is no shape to attenuate
 //     against (see the "what this check is NOT" note above).
 //
-// EXPLICIT grants resolve through the plain resolver, NOT the group-owner
-// bypass. That ordering is the settled precedence: an operator narrowing a
-// group's owner bypass has said nothing about the grants that owner separately
-// holds, and those are individually controllable.
-//
-// ownerTier is consulted only where the plain resolver is UNDECIDED — the gap
-// the owner bypass fills at the gate. Before TCL-1071 that gap always meant
-// "unconstrained", because ownership conferred whole slugs and carried no
-// shape. A NARROWED owner bypass does carry one, and it must attenuate: an
-// owner whose spawn is pinned to one profile could otherwise mint a child an
-// unscoped groups.members.spawn and act through it — the exact escalation this rule
-// exists to stop, arriving through the bypass instead of a grant. An
-// unrestricted owner tier still reads as unconstrained, so no pre-Phase-6
-// delegation changes.
+// Positive sources compose. A scoped explicit grant for group B and an owner
+// grant for group A therefore attenuate against A OR B, just as the action
+// gate authorizes either. An unscoped row from either source absorbs the union.
 func granterScopesForSlug(src permSources, cfg *config.Config, ownerTier ownerImpliedTier, slug string) ([]PermissionScope, bool) {
 	v := resolveEffectivePermissionVerdictFrom(src, slug,
 		cfg.HasDefaultPermission(slug), cfg.HasDefaultPermission(PermGroupsAdmin))
@@ -204,6 +193,12 @@ func granterScopesForSlug(src permSources, cfg *config.Config, ownerTier ownerIm
 		// Every row in the winning tier was undecodable: the granter can act
 		// on nothing through this slug, so it may confer nothing through it.
 		return []PermissionScope{}, true
+	}
+	if entry, conferred := ownerTier[slug]; conferred {
+		if entry.Unrestricted {
+			return nil, false
+		}
+		scopes = append(scopes, entry.Scopes...)
 	}
 	return scopes, true
 }

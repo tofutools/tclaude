@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
@@ -113,14 +114,9 @@ type permSlugEntry struct {
 	Slug        string `json:"slug"`
 	Description string `json:"description"`
 	// OwnerImplied mirrors agentd.PermSlug.OwnerImplied: group ownership
-	// confers this slug structurally (the owner-bypass), so an owner holds
-	// it for owned groups / their members without an explicit grant.
-	OwnerImplied bool `json:"owner_implied,omitempty"`
-	// OwnerScope says how far that bypass reaches — "group" (the owned
-	// groups), "member" (their members) or "any" (unscoped). Empty from a
-	// daemon that predates the field.
-	OwnerScope string   `json:"owner_scope,omitempty"`
-	ScopeDims  []string `json:"scope_dims,omitempty"`
+	// contributes this ordinary permission slug.
+	OwnerImplied bool     `json:"owner_implied,omitempty"`
+	ScopeDims    []string `json:"scope_dims,omitempty"`
 }
 
 type permissionScope map[string][]string
@@ -396,6 +392,9 @@ func permSourceNote(source string, ownerImplied bool, ownedGroups []string) stri
 		return ownerScopeNote(ownerScope, ownedGroups)
 	}
 	if base == "owner" || ownerImplied {
+		if scope != "" {
+			return "(via ownership; scope: " + scope + ")"
+		}
 		return "(via ownership)"
 	}
 	return ""
@@ -620,20 +619,15 @@ func runPermissionsMutate(path, verb, target, slug string, scopeFlags []string, 
 	return rcOK
 }
 
-// ownerScopeCell renders the OWNER column: the scope an owner-conferred
-// slug actually reaches, not a bare tick. Three call-site families confer
-// three different reaches, and collapsing them into ✔ is what let the
-// listing imply fleet-wide authority. An older daemon sends no scope, so
-// a plain OwnerImplied still renders ✔.
+// ownerScopeCell renders the ordinary grant shape ownership contributes.
 func ownerScopeCell(s permSlugEntry) string {
-	switch s.OwnerScope {
-	case "group", "member", "any":
-		return "✔ " + s.OwnerScope
+	if !s.OwnerImplied {
+		return ""
 	}
-	if s.OwnerImplied {
-		return "✔"
+	if slices.Contains(s.ScopeDims, "group") {
+		return "✔ owned groups"
 	}
-	return ""
+	return "✔ global"
 }
 
 // --- permissions slugs ---
@@ -676,7 +670,7 @@ func runPermissionsSlugs(p *permissionsSlugsParams, stdout, stderr io.Writer) in
 	}
 	tbl := table.New(
 		table.Column{Header: "SLUG", MinWidth: 12, Weight: 0.5, Truncate: true},
-		table.Column{Header: "OWNER", Width: 8},
+		table.Column{Header: "OWNER GRANT", Width: 16},
 		table.Column{Header: "SCOPES", MinWidth: 8, Weight: 0.4, Truncate: true},
 		table.Column{Header: "DESCRIPTION", MinWidth: 20, Weight: 1.5, Truncate: true},
 	)
@@ -685,10 +679,9 @@ func runPermissionsSlugs(p *permissionsSlugsParams, stdout, stderr io.Writer) in
 		tbl.AddRow(table.Row{Cells: []string{s.Slug, ownerScopeCell(s), strings.Join(s.ScopeDims, ", "), s.Description}})
 	}
 	fmt.Fprintln(stdout, tbl.Render())
-	fmt.Fprintln(stdout, "\nOWNER = group ownership confers this slug without an explicit grant.")
-	fmt.Fprintln(stdout, "  ✔ group   — over the groups you own")
-	fmt.Fprintln(stdout, "  ✔ member  — over members of the groups you own")
-	fmt.Fprintln(stdout, "  ✔ any     — unscoped; owning any group at all is enough")
-	fmt.Fprintln(stdout, "A per-agent deny suppresses the bypass.")
+	fmt.Fprintln(stdout, "\nOWNER GRANT = group ownership contributes this permission automatically.")
+	fmt.Fprintln(stdout, "  ✔ owned groups — one grant scoped to each group you own")
+	fmt.Fprintln(stdout, "  ✔ global       — unscoped when you own any active group")
+	fmt.Fprintln(stdout, "A per-agent deny for the same slug suppresses the owner grant.")
 	return rcOK
 }
