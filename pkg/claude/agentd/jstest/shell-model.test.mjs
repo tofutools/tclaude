@@ -49,7 +49,7 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
   const prs = {
     available: true, total: 5, updated_at: 'now', search_url: 'https://github.com/pulls?q=x',
     items: [
-      { number: 1, url: 'https://github.com/acme/app/pull/1', agent_id: 'agt_1', checks: { state: 'failing' } },
+      { number: 1, url: 'https://github.com/acme/app/pull/1', agent_id: 'agt_1', checks: { total: 2, failed: 1, pending: 1, state: 'failing' } },
       { number: 2, url: 'https://github.com/acme/app/pull/2', checks: { total: 2, pending: 2, state: 'pending' } },
       { number: 3, url: 'https://github.com/acme/app/pull/3', checks: { total: 2, passed: 2, state: 'passing' } },
       { number: 4, url: 'https://github.com/acme/app/pull/4' },
