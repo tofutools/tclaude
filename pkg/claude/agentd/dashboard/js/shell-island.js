@@ -15,6 +15,7 @@ import { PRChecksBadge } from './pr-checks-hover.js';
 import { hasUnreadHumanNotifications } from './human-notification-attention.js';
 
 const html = htm.bind(h);
+const OPEN_PRS_HOVER_CLOSE_DELAY_MS = 1000;
 
 function UsageToken({ token }) {
   if (token.kind === 'cost') {
@@ -142,6 +143,7 @@ function OpenPRs({ state }) {
   const [hovered, setHovered] = useState(false);
   const [pinned, setPinned] = useState(false);
   const rootRef = useRef(null);
+  const hoverCloseTimer = useRef(null);
   const view = authoredOpenPRsView(state.snapshot.value, filter);
   // The indicator is permanent by default (dashboard.always_show_open_prs), so
   // the popover must open at zero open PRs too — that is where the recently
@@ -151,10 +153,32 @@ function OpenPRs({ state }) {
   const visible = view.available && (view.total > 0 || view.alwaysShow);
   const open = visible && (hovered || pinned);
 
+  const cancelHoverClose = () => {
+    if (hoverCloseTimer.current === null) return;
+    clearTimeout(hoverCloseTimer.current);
+    hoverCloseTimer.current = null;
+  };
+  const enter = () => {
+    cancelHoverClose();
+    setHovered(true);
+  };
+  const leave = () => {
+    cancelHoverClose();
+    hoverCloseTimer.current = setTimeout(() => {
+      hoverCloseTimer.current = null;
+      setHovered(false);
+    }, OPEN_PRS_HOVER_CLOSE_DELAY_MS);
+  };
+
+  useEffect(() => () => cancelHoverClose(), []);
+
   useEffect(() => {
     if (!pinned) return undefined;
     const outside = (event) => {
-      if (!rootRef.current?.contains(event.target)) setPinned(false);
+      if (rootRef.current?.contains(event.target)) return;
+      cancelHoverClose();
+      setPinned(false);
+      setHovered(false);
     };
     document.addEventListener('pointerdown', outside);
     return () => document.removeEventListener('pointerdown', outside);
@@ -182,7 +206,7 @@ function OpenPRs({ state }) {
   const openFilterActive = !view.showingRecent && filter !== 'attention' && filter !== 'unattached';
   return html`
     <span ref=${rootRef} class=${`open-prs${open ? ' is-open' : ''}${view.total > 0 ? '' : ' is-empty'}`}
-      onMouseEnter=${() => setHovered(true)} onMouseLeave=${() => setHovered(false)}>
+      onMouseEnter=${enter} onMouseLeave=${leave}>
       <button type="button" class="open-prs-trigger" aria-haspopup="dialog"
         aria-expanded=${open ? 'true' : 'false'} aria-controls="open-prs-popover"
         onClick=${() => setPinned((value) => !value)}>
