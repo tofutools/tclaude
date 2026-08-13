@@ -5,10 +5,10 @@ import (
 	"testing"
 )
 
-func TestSpawnAttachmentsPrivateBaseUsesProtectedDaemonData(t *testing.T) {
+func TestSpawnAttachmentsPrivateBaseUsesAgentReachableAPI(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	want := filepath.Join(TclaudeDataDir(), "spawn-attachments")
+	want := filepath.Join(TclaudeAPIDir(), "spawn-attachments")
 	if got := SpawnAttachmentsPrivateBase(); got != want {
-		t.Fatalf("SpawnAttachmentsPrivateBase() = %q, want protected path %q", got, want)
+		t.Fatalf("SpawnAttachmentsPrivateBase() = %q, want agent-reachable path %q", got, want)
 	}
 }

@@ -1563,22 +1563,20 @@ func TestBwrapCommandShellQuotesHarnessCommand(t *testing.T) {
 	assert.Contains(t, got, "--new-session")
 }
 
-// TestLaunchContractReachesExactlyOneProtectedRootPath is the enumeration the
+// TestLaunchContractDoesNotReachProtectedRootPath is the enumeration the
 // protected-root invariant needs in order to be checkable rather than merely
 // asserted (TCL-791, required by the sandbox-v2 lead before merge).
 //
 // The invariant is absolute for POLICY input: no profile, include,
-// acknowledgement, or flag reaches a protected root. The launch contract is
-// the one channel that does, exactly once — the per-session spawn-attachment
-// drop-box, which is daemon-owned, path-derived from the session identity, and
-// bound on top of the hide that already covers the rest of the root.
+// acknowledgement, flag, or daemon-authored launch-contract entry reaches a
+// protected root. The per-session spawn-attachment drop-box is daemon-owned
+// and path-derived from the session identity, but now lives in the
+// agent-reachable API tree rather than making an exception below data/.
 //
 // Prose cannot guard that. This test enumerates EVERY bwrap operation that
 // makes host content visible inside the sandbox at or below a protected root
-// and asserts the resulting set is exactly {drop-box child}. A second such
-// path — from any channel, whether a new launch-contract field, a plan entry,
-// or a repair mount — fails here with the offending path named.
-func TestLaunchContractReachesExactlyOneProtectedRootPath(t *testing.T) {
+// and asserts the resulting set is empty.
+func TestLaunchContractDoesNotReachProtectedRootPath(t *testing.T) {
 	home, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	t.Setenv("HOME", home)
@@ -1594,14 +1592,13 @@ func TestLaunchContractReachesExactlyOneProtectedRootPath(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, protected)
 
-	// The real drop-box paths, so relocating them without revisiting this
-	// invariant fails here rather than silently widening the allowed set.
+	// The real drop-box paths must stay outside protected state while remaining
+	// part of the launch contract.
 	dropBoxParent := common.SpawnAttachmentsPrivateBase()
 	dropBoxChild := common.SpawnAttachmentsPrivateDir("session-under-test")
 	require.NoError(t, os.MkdirAll(dropBoxChild, 0o700))
-	require.Truef(t, underAnyProtectedRoot(protected, dropBoxChild),
-		"precondition: the drop-box %s must itself sit under a protected root, "+
-			"or this test proves nothing", dropBoxChild)
+	require.Falsef(t, underAnyProtectedRoot(protected, dropBoxChild),
+		"the agent-facing drop-box %s must not sit under protected state", dropBoxChild)
 
 	// The widest legal policy shape: deny the ancestor, reopen an ordinary
 	// child. Built through Normalize and RenderMountPlan because that is the
@@ -1637,16 +1634,10 @@ func TestLaunchContractReachesExactlyOneProtectedRootPath(t *testing.T) {
 		}
 	}
 
-	require.Contains(t, reached, dropBoxChild,
-		"the drop-box bind must actually land, or the equality below is vacuous")
-	for dst, flag := range reached {
-		assert.Equalf(t, dropBoxChild, dst,
-			"%s %s reaches protected state through the launch contract. The "+
-				"spawn-attachment drop-box is the ONLY sanctioned path below a "+
-				"protected root (TCL-791). If this is deliberate, it needs a ruling "+
-				"and this test updated — not a silent second exception.", flag, dst)
-	}
-	assert.Len(t, reached, 1)
+	assert.Empty(t, reached,
+		"no bind may reach protected state through the launch contract")
+	assert.Contains(t, args, dropBoxChild,
+		"the drop-box child must still be present in the launch contract")
 }
 
 func underAnyProtectedRoot(protected []string, path string) bool {

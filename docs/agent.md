@@ -917,14 +917,12 @@ must work without the protected-root wall launches with the sandbox disabled
 instead — a posture that is visible and unambiguous, rather than an agent that
 looks sandboxed while holding daemon-state access.
 
-One daemon-owned mount does land inside a protected root, and it is not a
-policy reopen: the spawn-attachment drop-box
-(`~/.tclaude/data/spawn-attachments/<session hash>`). Attachments have to reach
-the agent, its path is derived from the session identity rather than named by
-any profile or agent, and it is bound on top of the hide that already covers
-the rest of the root — so what becomes visible is that session's own attachment
-area (daemon-created, session-writable, holding the promoted attachment batch),
-never the database or another session's state beneath it.
+Spawn attachments live outside the protected roots under the agent-reachable
+API tree (`~/.tclaude/api/spawn-attachments/<session hash>`). Their path is
+derived from the session identity rather than named by any profile or agent.
+The tclaude sandbox hides the shared parent and reopens only the current
+session's daemon-created attachment area, so sibling sessions' files remain
+hidden without contradicting the protected-root deny.
 
 `~/.codex` is **not** a protected root — it is ordinary harness state that an
 agent normally needs to read. An ordinary `deny` row may cover it, and a
