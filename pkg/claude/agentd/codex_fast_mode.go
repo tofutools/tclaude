@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -66,12 +67,11 @@ func codexFastModeFromFollowerNow(sess *db.SessionRow) (fast, known bool, err er
 	return fast, known, nil
 }
 
-// dashboardDisableCodexFastModeAgent re-proves live Fast state immediately
-// before sending Codex's no-argument toggle. Codex currently exposes no
-// directional /fast off command, so a manual toggle in the tiny interval
-// between this proof and pane delivery can still race; callers explicitly
-// accept that limitation.
-func dashboardDisableCodexFastModeAgent(w http.ResponseWriter, _ *http.Request, convSelector string) {
+// dashboardSetCodexFastModeAgent re-proves live Fast state immediately before
+// sending Codex's no-argument toggle. Codex currently exposes no directional
+// /fast command, so a manual toggle in the tiny interval between this proof
+// and pane delivery can still race; callers explicitly accept that limitation.
+func dashboardSetCodexFastModeAgent(w http.ResponseWriter, _ *http.Request, convSelector string, desired bool) {
 	resolved, _, err := agent.ResolveSelector(convSelector)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "resolve agent: "+err.Error())
@@ -108,11 +108,15 @@ func dashboardDisableCodexFastModeAgent(w http.ResponseWriter, _ *http.Request, 
 		writeError(w, http.StatusConflict, "unknown", "Codex has not reported live Fast mode state and the agent has no explicit tclaude launch setting")
 		return
 	}
-	if !fast {
-		writeError(w, http.StatusConflict, "already_off", "Codex Fast mode is already off")
+	if fast == desired {
+		state := "off"
+		if desired {
+			state = "on"
+		}
+		writeError(w, http.StatusConflict, "already_"+state, "Codex Fast mode is already "+state)
 		return
 	}
-	if !injectSlashCommand(resolved.ConvID, h.Life.FastModeCommand(), "", "dashboard fast-mode disable") {
+	if !injectCodexFastModeToggle(sess, h.Life.FastModeCommand(), desired) {
 		writeError(w, http.StatusConflict, "delivery_failed", "could not deliver the Fast mode toggle to the live Codex pane")
 		return
 	}
@@ -127,8 +131,26 @@ func dashboardDisableCodexFastModeAgent(w http.ResponseWriter, _ *http.Request, 
 	codexContextRefreshMu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"conv_id":   resolved.ConvID,
-		"requested": "fast_off",
+		"requested": map[bool]string{true: "fast_on", false: "fast_off"}[desired],
 	})
+}
+
+// injectCodexFastModeToggle deliberately uses the pane for both Codex drives.
+// Codex 0.147's stable app-server protocol has no settings mutation for an
+// already-running thread; /fast remains a TUI command even when app-server
+// owns turns. Keep this exact compile-time token path separate from the generic
+// lifecycle dispatcher, whose app-server branch must continue to fail closed
+// for commands without typed RPC equivalents.
+func injectCodexFastModeToggle(sess *db.SessionRow, command string, desired bool) bool {
+	target := sess.TmuxSession + ":0.0"
+	if err := injectTextAndSubmit(target, command); err != nil {
+		slog.Warn("Codex Fast mode inject failed", "error", err, "tmux", sess.TmuxSession,
+			"conv_id", sess.ConvID, "desired", desired)
+		return false
+	}
+	slog.Info("Codex Fast mode toggle injected via send-keys", "tmux_session", sess.TmuxSession,
+		"conv_id", sess.ConvID, "desired", desired)
+	return true
 }
 
 // afterResolveCodexFastModeForTest is a deterministic seam for proving that

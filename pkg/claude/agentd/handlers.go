@@ -1465,8 +1465,8 @@ func messageInlineText(m *db.AgentMessage) (string, bool) {
 	return text, true
 }
 
-// injectSlashCommand finds an alive tmux session for convID and types the
-// given slash-command line into its CC pane, followed by a submit Enter.
+// injectSlashCommandOn finds an alive tmux session for convID and dispatches
+// the given slash-command line through the selected harness control channel.
 // If followUp is non-empty, it is sent as a fresh prompt right after the
 // slash submit. Returns true on successful delivery.
 //
@@ -1491,14 +1491,8 @@ func messageInlineText(m *db.AgentMessage) (string, bool) {
 // each atomic, but NOT the pair: another injector can take the pane
 // between them. That is consistent with the best-effort follow-up
 // ordering described above and is not a regression.
-func injectSlashCommand(convID, line, followUp, reason string) bool {
-	return injectSlashCommandOn(convID, line, followUp, reason, deliveryChannelRouted)
-}
-
-// injectSlashCommandOn is injectSlashCommand with the caller's delivery channel
-// carried through to the dispatch.
-//
-// It exists because an override applied only at the top is not an override. The
+// The explicit delivery channel exists because an override applied only at the
+// top is not an override. The
 // first version of the spawn's pane fallback set the channel at deliverRenameOn
 // and stopped there; the rename it forced to the pane was then refused by
 // dispatchSlashCommand, which asks copilotAPIDriven again on its own account

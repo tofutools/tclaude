@@ -743,6 +743,23 @@ function RemoteMenuItem({ member, canRemote }) {
   return html`<${MenuButton} member=${member} act="toggle-remote-control" attrs=${{ 'data-intent': on ? 'off' : 'on' }} regular=${`${glyph} remote: ${on ? 'on' : 'off'}`} wizard=${`${glyph} remote scrying: ${on ? 'on' : 'off'}`} title=${title} />`;
 }
 
+function FastModeMenuItem({ member }) {
+  if (member.state?.harness !== 'codex') return null;
+  const label = member.title || member.conv_id;
+  const known = typeof member.state?.fast_mode === 'boolean';
+  const on = member.state?.fast_mode === true;
+  const intent = on ? 'off' : 'on';
+  const regular = known ? `⚡ ${on ? 'disable' : 'enable'} fast mode` : '⚡ fast mode unavailable';
+  const title = !member.online
+    ? `${regular} is unavailable while ${label} is offline`
+    : !known
+      ? `Fast mode cannot be changed until Codex reports the live service tier for ${label}`
+      : `${on ? 'Disable' : 'Enable'} Fast mode for ${label}; the agent stays running and the change applies to subsequent turns.`;
+  return html`<${MenuButton} member=${member} act="fast-mode-set"
+    attrs=${{ 'data-intent': intent }} regular=${regular} wizard=${regular}
+    title=${title} disabled=${!member.online || !known} />`;
+}
+
 function RestartMenuItem({ member }) {
   const label = member.title || member.conv_id;
   const regular = '↻ restart';
@@ -821,6 +838,7 @@ function MemberMenu({ member, group, snapshot, actions, ungrouped }) {
     <${MenuButton} member=${member} act="sudo-grant" regular="+ sudo" wizard="+ sudo" title=${wizardCopy('Grant a time-bounded sudo elevation to this agent', 'Grant this familiar a time-bounded sudo boon')} />
     <${NotifyMenuItem} member=${member} />
     <${RemoteMenuItem} member=${member} canRemote=${canRemote} />
+    <${FastModeMenuItem} member=${member} />
     <${MenuButton} member=${member} selector="label" act="cron-new" attrs=${{ 'data-prefill': prefill }} regular="⏰ schedule…" wizard="⏳ bind ritual…" title=${wizardCopy(`Schedule a recurring nudge for ${label}`, `Bind a recurring ritual for familiar ${label}`)} />
     <${MenuSeparator} />
     <${MenuButton} member=${member} act="clone" attrs=${{ 'data-cwd': member.state?.cwd || member.cwd || '' }} regular="clone" wizard="mirror familiar" title=${wizardCopy('Fork a sibling agent that inherits identity (groups, perms, ownership). The original keeps running.', 'Mirror this familiar into a sibling that inherits its parties, boons, and ownership. The original keeps channeling.')} />

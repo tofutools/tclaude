@@ -16,7 +16,10 @@ func TestDashboardHTML_CodexFastModeIndicatorWired(t *testing.T) {
 	must("member.state?.fast_mode !== true", "unknown and known-off state render no badge")
 	must("data-act=${actionable ? 'fast-mode-disable' : null}", "the live indicator dispatches disable")
 	must("case 'fast-mode-disable':", "the delegated action handler routes the click")
-	must("/fast-mode/disable`", "the browser posts to the guarded endpoint")
-	must("server re-checks that Fast mode is still on", "confirmation discloses the toggle re-check")
+	must("function FastModeMenuItem({ member })", "the row cog menu owns the directional control")
+	must(`act="fast-mode-set"`, "the row menu dispatches the directional action")
+	must("<${FastModeMenuItem} member=${member} />", "the Fast mode control sits in the row cog menu")
+	must("/fast-mode/${enabling ? 'enable' : 'disable'}`", "the browser posts to the guarded directional endpoint")
+	must("server re-checks that Fast mode is still ${enabling ? 'off' : 'on'}", "confirmation discloses the directional toggle re-check")
 	must(".fast-mode-badge", "the indicator has compact dashboard styling")
 }

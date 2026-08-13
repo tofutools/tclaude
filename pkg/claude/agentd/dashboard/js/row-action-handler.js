@@ -259,14 +259,17 @@ export async function handleRowAction(action) {
         refresh();
         return;
       }
-      case 'fast-mode-disable': {
+      case 'fast-mode-disable':
+      case 'fast-mode-set': {
+        const intent = act === 'fast-mode-disable' ? 'off' : (data.intent === 'on' ? 'on' : 'off');
+        const enabling = intent === 'on';
         const confirmed = await confirmModal({
-          title: `Disable Fast mode for ${label}?`,
-          body: 'This sends Codex’s /fast toggle after the server re-checks that Fast mode is still on. The agent stays running and subsequent turns use standard routing.',
-          okLabel: 'Disable Fast mode',
+          title: `${enabling ? 'Enable' : 'Disable'} Fast mode for ${label}?`,
+          body: `This sends Codex’s /fast toggle after the server re-checks that Fast mode is still ${enabling ? 'off' : 'on'}. The agent stays running and subsequent turns use ${enabling ? 'faster, higher-cost' : 'standard'} routing.`,
+          okLabel: `${enabling ? 'Enable' : 'Disable'} Fast mode`,
         });
         if (!confirmed) return;
-        const r = await fetch(`/api/agents/${encodeURIComponent(agent)}/fast-mode/disable`, {
+        const r = await fetch(`/api/agents/${encodeURIComponent(agent)}/fast-mode/${enabling ? 'enable' : 'disable'}`, {
           method: 'POST', credentials: 'same-origin',
         });
         if (!r.ok) {
@@ -275,11 +278,11 @@ export async function handleRowAction(action) {
             const parsed = JSON.parse(detail);
             detail = parsed.error || parsed.message || detail;
           } catch (_) { /* plain error */ }
-          toast(`Fast mode disable failed: ${detail}`, true);
+          toast(`Fast mode ${intent} failed: ${detail}`, true);
           refresh();
           return;
         }
-        toast(`${label}: Fast mode disable requested`);
+        toast(`${label}: Fast mode ${intent} requested`);
         refresh();
         return;
       }
