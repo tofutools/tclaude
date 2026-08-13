@@ -10,10 +10,18 @@ import (
 )
 
 // SpawnAttachmentsPrivateBase is the daemon-owned parent hidden from every
-// tclaude-layer launch. It lives below the existing protected daemon-data root
-// so pre-TCL-779 launch specs that lack a private reopen still cannot see it.
-// Each current launch reopens only its own hashed child.
+// tclaude-layer launch. It lives in the agent-reachable API tree because the
+// attachment paths are handed to agents; keeping them below the protected data
+// root makes those paths unusable from an outer/native sandbox that enforces
+// the protected-root deny. Each launch still reopens only its own hashed child.
 func SpawnAttachmentsPrivateBase() string {
+	return filepath.Join(TclaudeAPIDir(), "spawn-attachments")
+}
+
+// LegacySpawnAttachmentsPrivateBase returns the pre-relocation parent. It is
+// retained only so agentd can serve and eventually sweep attachment roots that
+// belong to tclaude-layer sessions still running across an upgrade.
+func LegacySpawnAttachmentsPrivateBase() string {
 	return filepath.Join(TclaudeDataDir(), "spawn-attachments")
 }
 
@@ -24,6 +32,13 @@ func SpawnAttachmentsPrivateBase() string {
 func SpawnAttachmentsPrivateDir(sessionID string) string {
 	sum := sha256.Sum256([]byte(strings.TrimSpace(sessionID)))
 	return filepath.Join(SpawnAttachmentsPrivateBase(), hex.EncodeToString(sum[:]))
+}
+
+// LegacySpawnAttachmentsPrivateDir returns the old root for a session that
+// may still have that exact path mounted from a pre-relocation launch.
+func LegacySpawnAttachmentsPrivateDir(sessionID string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(sessionID)))
+	return filepath.Join(LegacySpawnAttachmentsPrivateBase(), hex.EncodeToString(sum[:]))
 }
 
 // PrepareSpawnAttachmentsPrivateDir materializes the stable private root for

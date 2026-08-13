@@ -801,14 +801,14 @@ func TestOpenCodeRuntimeSandboxSpecRoundTripsAndRevalidates(t *testing.T) {
 	for _, protected := range protectedPaths {
 		if sandboxpolicy.PathContainsOrEqual(
 			protected,
-			tclcommon.SpawnAttachmentsPrivateBase(),
+			tclcommon.LegacySpawnAttachmentsPrivateBase(),
 		) {
 			privateParentProtected = true
 			break
 		}
 	}
 	assert.True(t, privateParentProtected,
-		"pre-field v2 servers must inherit the existing daemon-data hide over the private parent")
+		"pre-field v2 servers must inherit the daemon-data hide over the legacy private parent")
 
 	_, err = openCodeRuntimeSandboxSpec(db.OpenCodeRuntime{
 		Cwd:                   cwd,

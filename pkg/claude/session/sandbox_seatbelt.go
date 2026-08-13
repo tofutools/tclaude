@@ -293,10 +293,9 @@ func renderSeatbeltProfileWithLoopbackBindAndRouteSlots(
 		ordered = append(ordered,
 			seatbeltRegion{
 				path: parent, mode: sandboxpolicy.MountHide,
-				// The parent is nested below the protected daemon-data hide,
-				// but it remains its own deny boundary. This later,
-				// daemon-authored exception must beat any policy carveout
-				// while still reopening exactly the current child.
+				// The parent remains its own deny boundary. This daemon-authored
+				// exception must beat any policy carveout while still reopening
+				// exactly the current child.
 				denyBoundary: true,
 			},
 			seatbeltRegion{

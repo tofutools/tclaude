@@ -161,3 +161,22 @@ func TestSweepPrivateAttachmentRootsNeverRemovesLiveRoot(t *testing.T) {
 	_, err = os.Stat(inactiveRoot)
 	assert.True(t, os.IsNotExist(err), "an old empty inactive root should be swept")
 }
+
+func TestSweepPrivateAttachmentRootsIncludesLegacyBase(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	now := time.Now()
+	old := now.Add(-spawnAttachmentBatchTTL - time.Hour)
+	liveRoot := tclcommon.LegacySpawnAttachmentsPrivateDir("legacy-live")
+	inactiveRoot := tclcommon.LegacySpawnAttachmentsPrivateDir("legacy-inactive")
+	for _, root := range []string{liveRoot, inactiveRoot} {
+		require.NoError(t, os.MkdirAll(root, 0o700))
+		require.NoError(t, os.Chtimes(root, old, old))
+	}
+
+	sweepPrivateAttachmentRootsAt(now, map[string]bool{liveRoot: true})
+
+	_, err := os.Stat(liveRoot)
+	require.NoError(t, err, "a live legacy root must remain mounted and available")
+	_, err = os.Stat(inactiveRoot)
+	assert.True(t, os.IsNotExist(err), "an old empty inactive legacy root should be swept")
+}

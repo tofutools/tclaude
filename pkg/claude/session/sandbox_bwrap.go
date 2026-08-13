@@ -1948,12 +1948,6 @@ func bwrapArgsWithDaemonFinal(
 	// still lands, and appendTclaudeLayerProtectedRehides restores the hides on
 	// top of it.
 	//
-	// The one thing mounted back inside a protected root afterwards is the
-	// daemon's own spawn-attachment drop-box (class 4 below). It is not policy
-	// input — its path is derived from the session identity, never named by a
-	// profile or an agent — and it exposes a single daemon-created directory
-	// holding this session's own attachments, not the protected state
-	// underneath it.
 	protectedRoots, err := sandboxpolicy.ProtectedPaths()
 	if err != nil {
 		return nil, fmt.Errorf("resolve protected sandbox roots: %w", err)
@@ -2087,14 +2081,11 @@ func bwrapArgsWithDaemonFinal(
 	// read-only remount is non-recursive, so the child remains writable while
 	// sibling names stay absent.
 	//
-	// This is the sole bind that lands at or below a protected root, and it is
-	// deliberate: attachments have to reach the agent. It is not a policy
-	// reopen. The path comes from the session identity via
+	// The path comes from the session identity via
 	// SpawnAttachmentsPrivateDir, so neither a profile nor the agent can steer
-	// it, and the class-3 tmpfs still covers everything else under the root —
-	// what becomes visible is this session's own attachment area, not protected
-	// state. It is daemon-created and session-writable; it holds the promoted
-	// attachment batch, never the database or another session's directory.
+	// it. What becomes visible is this session's own attachment area, not
+	// another session's directory. It is daemon-created and session-writable;
+	// it holds the promoted attachment batch.
 	for _, privateDir := range privateWriteDirs {
 		args = hideRemounts.appendHide(args, privateDir.Parent)
 		args = append(args, "--bind", privateDir.Current, privateDir.Current)
