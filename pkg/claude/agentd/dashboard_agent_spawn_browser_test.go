@@ -63,7 +63,6 @@ func TestDashboardAgentSpawnChrome(t *testing.T) {
 
 func agentSpawnBrowserStates() []dashsnap.State {
 	return []dashsnap.State{
-		agentSpawnResizePersistenceBrowserState(),
 		agentSpawnBrowserState("plain-blank", "Plain blank spawn", false, ""),
 		agentSpawnBrowserState("wizard-blank", "Wizard blank spawn", true, ""),
 		agentSpawnBrowserState("plain-profile", "Plain saved-profile spawn", false, `
@@ -142,6 +141,7 @@ for (var field of document.querySelectorAll('#agent-spawn-modal input, #agent-sp
 }
 submit.scrollIntoView({block:'end'});
 `),
+		agentSpawnResizePersistenceBrowserState(),
 	}
 }
 
