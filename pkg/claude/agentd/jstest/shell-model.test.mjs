@@ -81,6 +81,13 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
   assert.equal(recentView.showingRecent, true);
   assert.equal(recentView.searchURL, 'https://github.com/pulls?q=closed');
   assert.equal(recentView.total, 3, 'the trigger count stays the OPEN count');
+  assert.equal(recentView.truncated, false);
+  assert.equal(
+    authoredOpenPRsView({ authored_open_prs: { ...withRecent, truncated: true, recent_truncated: true } }, 'recent').truncated,
+    true, 'a capped recent page is disclosed, not presented as complete');
+  assert.equal(
+    authoredOpenPRsView({ authored_open_prs: { ...withRecent, recent_truncated: true } }).truncated,
+    false, 'the open list keeps its own truncation flag');
   // Window 0 disables the filter; a stale "recent" selection falls back to open.
   const off = authoredOpenPRsView({ authored_open_prs: { ...withRecent, recent_window_days: 0 } }, 'recent');
   assert.equal(off.showingRecent, false);

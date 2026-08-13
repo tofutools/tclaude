@@ -46,6 +46,41 @@ func TestDecodeAuthoredRecentPRsKeepsTerminalStateOutOfTheOpenList(t *testing.T)
 	assert.Equal(t, "merged", view.Recent[0].State)
 	assert.Equal(t, "2026-08-12T10:00:00Z", view.Recent[0].ClosedAt)
 	assert.Equal(t, "closed", view.Recent[1].State)
+	assert.False(t, view.RecentTruncated)
+}
+
+func TestDecodeAuthoredRecentPRsReportsTruncation(t *testing.T) {
+	data := []byte(`{"data":{"search":{"issueCount":0,"nodes":[]},
+      "recent":{"issueCount":80,"nodes":[
+        {"number":5,"title":"Closed","url":"https://github.com/acme/app/pull/5","state":"MERGED","mergedAt":"2026-08-11T10:00:00Z"}
+      ]}}}`)
+	view, _, err := decodeAuthoredOpenPRGraphQL(data, "octocat")
+	require.NoError(t, err)
+	assert.True(t, view.RecentTruncated,
+		"a capped page must not be presented as the complete recent count")
+}
+
+func TestAuthoredPRSearchArgsSelectQueryAndWindow(t *testing.T) {
+	now := time.Date(2026, 8, 13, 3, 0, 0, 0, time.UTC)
+	open := authoredPRSearchArgs("octocat", 0, now)
+	assert.Contains(t, open, "query="+authoredOpenPRGraphQLQuery)
+	for _, arg := range open {
+		assert.NotContains(t, arg, "qr=", "the closed search is skipped when the window is off")
+		assert.NotContains(t, arg, "rfirst=")
+	}
+
+	recent := authoredPRSearchArgs("octocat", 3, now)
+	assert.Contains(t, recent, "query="+authoredRecentPRGraphQLQuery)
+	assert.Contains(t, recent, "qr=author:octocat is:closed type:pr closed:>=2026-08-10 sort:updated-desc")
+	assert.Contains(t, recent, "rfirst=50")
+	assert.Contains(t, recent, "q=author:octocat is:open type:pr sort:updated-desc",
+		"the open search is identical either way")
+
+	// Both query shapes must embed the SAME open search: the two-search shape
+	// is what a default configuration runs, so a divergent copy would strand
+	// every default install on a stale rollup selection.
+	assert.Contains(t, authoredOpenPRGraphQLQuery, authoredOpenPRSearchFragment)
+	assert.Contains(t, authoredRecentPRGraphQLQuery, authoredOpenPRSearchFragment)
 }
 
 func TestFilterRecentAuthoredPRsEnforcesTheExactWindow(t *testing.T) {

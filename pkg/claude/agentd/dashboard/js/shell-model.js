@@ -158,7 +158,7 @@ export function authoredOpenPRsView(snapshot, filter = 'all') {
     available: true,
     alwaysShow: !!source.always_show,
     total: Number(source.total || all.length),
-    truncated: !showingRecent && !!source.truncated,
+    truncated: showingRecent ? !!source.recent_truncated : !!source.truncated,
     updatedAt: source.updated_at || '',
     searchURL: showingRecent ? searchURL(source.recent_search_url) : searchURL(source.search_url),
     attention: all.filter(needsAttention).length,

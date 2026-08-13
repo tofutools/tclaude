@@ -30,8 +30,12 @@ const (
 // One GraphQL search returns the operator's cross-repository PR list and the
 // head commit's check rollup. That keeps this daemon-wide feature at one
 // GitHub request per poll instead of one gh subprocess per open PR.
-const authoredOpenPRGraphQLQuery = `query($q:String!,$first:Int!){
-  search(query:$q,type:ISSUE,first:$first){
+//
+// The open search is a shared fragment because BOTH query shapes below embed
+// it, and the two-search shape is the one a default configuration actually
+// runs — a second copy would silently drift the moment someone edited the
+// rollup selection here.
+const authoredOpenPRSearchFragment = `  search(query:$q,type:ISSUE,first:$first){
     issueCount
     nodes{
       ... on PullRequest{
@@ -44,29 +48,18 @@ const authoredOpenPRGraphQLQuery = `query($q:String!,$first:Int!){
         }}}}}}
       }
     }
-  }
-}`
+  }`
 
-// authoredRecentPRGraphQLQuery is appended as a second aliased search when the
-// "recently closed" window is enabled, so the poller still makes ONE GitHub
-// request per tick. Closed pull requests deliberately carry no check rollup:
-// CI state on something already merged or abandoned is noise, and the rollup
-// is the expensive half of the response.
-const authoredRecentPRGraphQLQuery = `query($q:String!,$first:Int!,$qr:String!,$rfirst:Int!){
-  search(query:$q,type:ISSUE,first:$first){
-    issueCount
-    nodes{
-      ... on PullRequest{
-        number title url isDraft updatedAt
-        repository{nameWithOwner}
-        commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:100){totalCount nodes{
-          __typename
-          ... on CheckRun{name status conclusion detailsUrl startedAt completedAt}
-          ... on StatusContext{context state targetUrl description createdAt}
-        }}}}}}
-      }
-    }
-  }
+const authoredOpenPRGraphQLQuery = "query($q:String!,$first:Int!){\n" +
+	authoredOpenPRSearchFragment + "\n}"
+
+// authoredRecentPRGraphQLQuery adds a second aliased search when the "recently
+// closed" window is enabled, so the poller still makes ONE GitHub request per
+// tick. Closed pull requests deliberately carry no check rollup: CI state on
+// something already merged or abandoned is noise, and the rollup is the
+// expensive half of the response.
+const authoredRecentPRGraphQLQuery = "query($q:String!,$first:Int!,$qr:String!,$rfirst:Int!){\n" +
+	authoredOpenPRSearchFragment + `
   recent: search(query:$qr,type:ISSUE,first:$rfirst){
     issueCount
     nodes{
@@ -119,6 +112,12 @@ type dashboardAuthoredOpenPRs struct {
 	// RecentSearchURL is the GitHub search escape hatch for the recent list,
 	// mirroring SearchURL for the open one.
 	RecentSearchURL string `json:"recent_search_url,omitempty"`
+	// RecentTruncated reports that GitHub matched more closed pull requests in
+	// the window than authoredRecentPRLimit returned. The popover says so
+	// rather than presenting the cap as a complete count — the search is
+	// ordered by last update, so a truncated page is not even "the N most
+	// recently closed".
+	RecentTruncated bool `json:"recent_truncated,omitempty"`
 }
 
 var authoredOpenPRResolver = liveAuthoredOpenPRResolver
@@ -227,28 +226,7 @@ func liveAuthoredOpenPRResolver() (dashboardAuthoredOpenPRs, error) {
 	setAuthoredOpenPRActiveLogin(login)
 	cfg, _ := config.Load()
 	windowDays := cfg.RecentPRWindowDays()
-	query := authoredOpenPRGraphQLQuery
-	extra := []string(nil)
-	if windowDays > 0 {
-		// GitHub's `closed:` qualifier is whole-UTC-day granularity, so the
-		// bound is a date. The snapshot re-filters to the exact instant window
-		// (recentPRCutoff), which keeps a same-day close visible without this
-		// query having to reason about hours.
-		since := time.Now().UTC().AddDate(0, 0, -windowDays).Format("2006-01-02")
-		query = authoredRecentPRGraphQLQuery
-		extra = []string{
-			"-f", "qr=author:" + login + " is:closed type:pr closed:>=" + since + " sort:updated-desc",
-			"-F", "rfirst=" + strconv.Itoa(authoredRecentPRLimit),
-		}
-	}
-	args := []string{
-		"api", "--hostname", "github.com", "graphql",
-		"-f", "query=" + query,
-		"-f", "q=author:" + login + " is:open type:pr sort:updated-desc",
-		"-F", "first=" + strconv.Itoa(authoredOpenPRLimit),
-	}
-	args = append(args, extra...)
-	out, err := runInDirWithError("", "gh", args...)
+	out, err := runInDirWithError("", "gh", authoredPRSearchArgs(login, windowDays, time.Now())...)
 	if err != nil {
 		return dashboardAuthoredOpenPRs{}, err
 	}
@@ -261,6 +239,35 @@ func liveAuthoredOpenPRResolver() (dashboardAuthoredOpenPRs, error) {
 		savePRChecks(rawURL, info)
 	}
 	return view, nil
+}
+
+// authoredPRSearchArgs builds the `gh api graphql` argv for one poll. It is
+// separated from the subprocess call so the query selection, the search
+// qualifiers and the date arithmetic are unit-testable — a typo in `qr=`
+// would otherwise only show up as a silently empty recent list in production.
+// Every value lands in argv, never in a shell string.
+func authoredPRSearchArgs(login string, windowDays int, now time.Time) []string {
+	query := authoredOpenPRGraphQLQuery
+	extra := []string(nil)
+	if windowDays > 0 {
+		// GitHub's `closed:` qualifier is whole-UTC-day granularity, so the
+		// bound is a date. The snapshot re-filters to the exact instant window
+		// (filterRecentAuthoredPRs), which keeps a same-day close visible
+		// without this query having to reason about hours.
+		since := now.UTC().AddDate(0, 0, -windowDays).Format("2006-01-02")
+		query = authoredRecentPRGraphQLQuery
+		extra = []string{
+			"-f", "qr=author:" + login + " is:closed type:pr closed:>=" + since + " sort:updated-desc",
+			"-F", "rfirst=" + strconv.Itoa(authoredRecentPRLimit),
+		}
+	}
+	args := []string{
+		"api", "--hostname", "github.com", "graphql",
+		"-f", "query=" + query,
+		"-f", "q=author:" + login + " is:open type:pr sort:updated-desc",
+		"-F", "first=" + strconv.Itoa(authoredOpenPRLimit),
+	}
+	return append(args, extra...)
 }
 
 func decodeAuthoredOpenPRGraphQL(data []byte, login string) (dashboardAuthoredOpenPRs, map[string]prChecksInfo, error) {
@@ -378,6 +385,7 @@ func decodeAuthoredOpenPRGraphQL(data []byte, login string) (dashboardAuthoredOp
 			State: state, ClosedAt: closedAt,
 		})
 	}
+	view.RecentTruncated = payload.Data.Recent.IssueCount > authoredRecentPRLimit
 	// Newest first: the recent list answers "what did I just land", so recency
 	// is the only useful order — unlike the open list, nothing here needs
 	// attention ranking.

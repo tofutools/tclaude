@@ -159,8 +159,13 @@ footer {
 .open-prs-chevron { color: #6e7681; font-size: 10px; }
 /* Zero open PRs. The indicator is permanent by default, so at rest it must
    read as "nothing waiting" rather than as another live counter: the amber
-   dot and the blue count badge both go neutral. */
-.open-prs.is-empty .open-prs-trigger { color: #7d8590; }
+   dot and the blue count badge both go neutral.
+   The label is muted AT REST only. This selector outranks the shared
+   hover/focus/open rule above, so it has to exclude those states itself —
+   otherwise the state that is now permanent by default would be the one
+   control in the footer that never brightens under the pointer. The dot and
+   count stay muted throughout: they carry "nothing waiting", not focus. */
+.open-prs.is-empty:not(.is-open) .open-prs-trigger:not(:hover):not(:focus-visible) { color: #7d8590; }
 .open-prs.is-empty .open-prs-dot { background: #30363d; }
 .open-prs.is-empty .open-prs-count { background: #21262d; color: #8b949e; }
 .open-prs-popover {

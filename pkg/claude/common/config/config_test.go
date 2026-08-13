@@ -1305,3 +1305,57 @@ func TestAgentDirsMountParentEnabled(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &out))
 	assert.False(t, out.AgentDirsMountParentEnabled(), "explicit false survives round-trip")
 }
+
+// TestAlwaysShowOpenPRs covers the dashboard.always_show_open_prs resolver:
+// nil config / absent block / nil pointer all default to a permanent footer
+// indicator (true); only an explicit false hides it at zero. A default config
+// marshals no dashboard block, and the explicit opt-out survives Save/Load.
+func TestAlwaysShowOpenPRs(t *testing.T) {
+	bp := func(b bool) *bool { return &b }
+
+	assert.True(t, (*Config)(nil).AlwaysShowOpenPRs(), "nil → permanent")
+	assert.True(t, (&Config{}).AlwaysShowOpenPRs(), "no block → permanent")
+	assert.True(t, (&Config{Dashboard: &DashboardConfig{}}).AlwaysShowOpenPRs(), "nil pointer → permanent")
+	assert.True(t, (&Config{Dashboard: &DashboardConfig{AlwaysShowOpenPRs: bp(true)}}).AlwaysShowOpenPRs())
+	assert.False(t, (&Config{Dashboard: &DashboardConfig{AlwaysShowOpenPRs: bp(false)}}).AlwaysShowOpenPRs(),
+		"explicit false → hide at zero")
+
+	clean, err := json.Marshal(&Config{})
+	require.NoError(t, err)
+	assert.NotContains(t, string(clean), "always_show_open_prs")
+
+	t.Setenv("HOME", t.TempDir())
+	require.NoError(t, Save(&Config{Dashboard: &DashboardConfig{AlwaysShowOpenPRs: bp(false)}}))
+	loaded, err := Load()
+	require.NoError(t, err)
+	assert.False(t, loaded.AlwaysShowOpenPRs(), "the opt-out survives round-trip")
+}
+
+// TestRecentPRWindowDays covers the dashboard.recent_pr_window_days resolver:
+// absent falls back to the default, 0 means "filter off" (and must survive as
+// a real value, not be mistaken for absent), and out-of-range values clamp
+// instead of asking GitHub for unbounded history.
+func TestRecentPRWindowDays(t *testing.T) {
+	ip := func(i int) *int { return &i }
+	days := func(p *int) int {
+		return (&Config{Dashboard: &DashboardConfig{RecentPRWindowDays: p}}).RecentPRWindowDays()
+	}
+
+	assert.Equal(t, RecentPRWindowDaysDefault, (*Config)(nil).RecentPRWindowDays(), "nil → default")
+	assert.Equal(t, RecentPRWindowDaysDefault, (&Config{}).RecentPRWindowDays(), "no block → default")
+	assert.Equal(t, RecentPRWindowDaysDefault, days(nil), "absent key → default")
+	assert.Equal(t, 0, days(ip(0)), "explicit 0 → filter off, not default")
+	assert.Equal(t, 7, days(ip(7)))
+	assert.Equal(t, RecentPRWindowDaysMax, days(ip(365)), "an over-long window clamps")
+	assert.Equal(t, 0, days(ip(-5)), "a negative window reads as off")
+
+	clean, err := json.Marshal(&Config{})
+	require.NoError(t, err)
+	assert.NotContains(t, string(clean), "recent_pr_window_days")
+
+	t.Setenv("HOME", t.TempDir())
+	require.NoError(t, Save(&Config{Dashboard: &DashboardConfig{RecentPRWindowDays: ip(0)}}))
+	loaded, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, 0, loaded.RecentPRWindowDays(), "an explicit 0 is not lost to omitempty")
+}

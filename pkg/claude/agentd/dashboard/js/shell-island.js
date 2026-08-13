@@ -174,8 +174,9 @@ function OpenPRs({ state }) {
 
   if (!visible) return null;
   const age = view.updatedAt ? new Date(view.updatedAt).toLocaleTimeString() : '';
-  const recentLabel = view.recentWindowDays === 1
-    ? 'Closed today' : `Closed ${view.recentWindowDays}d`;
+  // A rolling 24h window is not "today" — a PR closed at 23:00 yesterday is in
+  // it — so every window reads as a span, including the 1-day one.
+  const recentLabel = `Closed ${view.recentWindowDays}d`;
   // "recent" selected while the window is configured off falls back to the
   // open list, so the Open chip — not a vanished chip — must read as active.
   const openFilterActive = !view.showingRecent && filter !== 'attention' && filter !== 'unattached';
@@ -190,7 +191,7 @@ function OpenPRs({ state }) {
         <span class="open-prs-chevron" aria-hidden="true">⌃</span>
       </button>
       ${open ? html`
-        <div id="open-prs-popover" class="open-prs-popover" role="dialog" aria-label="Your open pull requests">
+        <div id="open-prs-popover" class="open-prs-popover" role="dialog" aria-label="Your pull requests">
           <div class="open-prs-head"><strong>Your pull requests</strong><span class="open-prs-count">${view.total}</span>${age ? html`<span class="open-prs-age">updated ${age}</span>` : null}</div>
           <div class="open-prs-filters" role="group" aria-label="Filter pull requests">
             <button class=${openFilterActive ? 'active' : ''} aria-pressed=${openFilterActive} onClick=${() => setFilter('all')}>Open ${view.total}</button>
@@ -204,7 +205,7 @@ function OpenPRs({ state }) {
             ? html`<ul class="open-pr-list">${view.items.map((pr) => html`<${OpenPRRow} key=${pr.url} pr=${pr} />`)}</ul>`
             : html`<p class="open-prs-empty">${view.showingRecent
               ? `Nothing merged or closed in the last ${view.recentWindowDays} day(s).`
-              : (filter === 'all' && view.total <= 0 ? 'No open pull requests.' : 'No pull requests match this filter.')}</p>`}
+              : (openFilterActive && view.total <= 0 ? 'No open pull requests.' : 'No pull requests match this filter.')}</p>`}
           ${view.searchURL ? html`<div class="open-prs-foot">${view.truncated ? html`<span>Showing the first ${view.items.length} · </span>` : null}<a href=${view.searchURL} target="_blank" rel="noopener noreferrer">${view.showingRecent ? 'See them all on GitHub ↗' : 'Open all on GitHub ↗'}</a></div>` : null}
         </div>
       ` : null}
