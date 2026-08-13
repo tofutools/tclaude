@@ -113,16 +113,23 @@ function FooterMeta({ state }) {
   `;
 }
 
+// A closed/merged row is dotted by its terminal state instead of its CI state
+// — checks on something already landed say nothing useful — and it drops the
+// "no active agent" note, which only means something for open work.
 function OpenPRRow({ pr }) {
+  const terminal = pr.state === 'merged' || pr.state === 'closed';
+  const dot = terminal ? pr.state : (pr?.checks?.state || 'unknown');
   return html`
     <li class="open-pr-row">
-      <span class=${`open-pr-state open-pr-state-${pr?.checks?.state || 'unknown'}`} aria-hidden="true"></span>
+      <span class=${`open-pr-state open-pr-state-${dot}`} aria-hidden="true"></span>
       <span class="open-pr-main">
         <a class="open-pr-title" href=${pr.url} target="_blank" rel="noopener noreferrer">${pr.title || `Pull request #${pr.number}`}</a>
         <span class="open-pr-meta">
           <span>${pr.repository}</span><span> · #${pr.number}</span>
-          ${pr.agent_title ? html`<span> · ${pr.agent_title}</span>` : html`<span> · no active agent</span>`}
-          ${pr.draft ? html`<span> · draft</span>` : null}
+          ${terminal ? html`<span> · ${pr.state}${pr.closed_at ? ` ${new Date(pr.closed_at).toLocaleDateString()}` : ''}</span>` : null}
+          ${!terminal && pr.agent_title ? html`<span> · ${pr.agent_title}</span>` : null}
+          ${!terminal && !pr.agent_title ? html`<span> · no active agent</span>` : null}
+          ${pr.draft && !terminal ? html`<span> · draft</span>` : null}
         </span>
       </span>
       <${PRChecksBadge} url=${pr.url} prNumber=${pr.number} summary=${pr.checks} />
@@ -136,7 +143,13 @@ function OpenPRs({ state }) {
   const [pinned, setPinned] = useState(false);
   const rootRef = useRef(null);
   const view = authoredOpenPRsView(state.snapshot.value, filter);
-  const open = view.available && view.total > 0 && (hovered || pinned);
+  // The indicator is permanent by default (dashboard.always_show_open_prs), so
+  // the popover must open at zero open PRs too — that is where the recently
+  // closed list lives. It still stays out of the footer entirely until the
+  // daemon has resolved a GitHub identity, since a fixed "Open PRs 0" would be
+  // a lie when `gh` is missing or logged out.
+  const visible = view.available && (view.total > 0 || view.alwaysShow);
+  const open = visible && (hovered || pinned);
 
   useEffect(() => {
     if (!pinned) return undefined;
@@ -159,10 +172,15 @@ function OpenPRs({ state }) {
     return () => document.removeEventListener('keydown', escape);
   }, [open]);
 
-  if (!view.available || view.total <= 0) return null;
+  if (!visible) return null;
   const age = view.updatedAt ? new Date(view.updatedAt).toLocaleTimeString() : '';
+  const recentLabel = view.recentWindowDays === 1
+    ? 'Closed today' : `Closed ${view.recentWindowDays}d`;
+  // "recent" selected while the window is configured off falls back to the
+  // open list, so the Open chip — not a vanished chip — must read as active.
+  const openFilterActive = !view.showingRecent && filter !== 'attention' && filter !== 'unattached';
   return html`
-    <span ref=${rootRef} class=${`open-prs${open ? ' is-open' : ''}`}
+    <span ref=${rootRef} class=${`open-prs${open ? ' is-open' : ''}${view.total > 0 ? '' : ' is-empty'}`}
       onMouseEnter=${() => setHovered(true)} onMouseLeave=${() => setHovered(false)}>
       <button type="button" class="open-prs-trigger" aria-haspopup="dialog"
         aria-expanded=${open ? 'true' : 'false'} aria-controls="open-prs-popover"
@@ -173,14 +191,21 @@ function OpenPRs({ state }) {
       </button>
       ${open ? html`
         <div id="open-prs-popover" class="open-prs-popover" role="dialog" aria-label="Your open pull requests">
-          <div class="open-prs-head"><strong>Your open pull requests</strong><span class="open-prs-count">${view.total}</span>${age ? html`<span class="open-prs-age">updated ${age}</span>` : null}</div>
+          <div class="open-prs-head"><strong>Your pull requests</strong><span class="open-prs-count">${view.total}</span>${age ? html`<span class="open-prs-age">updated ${age}</span>` : null}</div>
           <div class="open-prs-filters" role="group" aria-label="Filter pull requests">
-            <button class=${filter === 'all' ? 'active' : ''} aria-pressed=${filter === 'all'} onClick=${() => setFilter('all')}>All</button>
+            <button class=${openFilterActive ? 'active' : ''} aria-pressed=${openFilterActive} onClick=${() => setFilter('all')}>Open ${view.total}</button>
             <button class=${filter === 'attention' ? 'active' : ''} aria-pressed=${filter === 'attention'} onClick=${() => setFilter('attention')}>Needs attention ${view.attention}</button>
             <button class=${filter === 'unattached' ? 'active' : ''} aria-pressed=${filter === 'unattached'} onClick=${() => setFilter('unattached')}>Unattached ${view.unattached}</button>
+            ${view.recentWindowDays > 0 ? html`<button class=${view.showingRecent ? 'active' : ''} aria-pressed=${view.showingRecent}
+              title=${`Pull requests you merged or closed in the last ${view.recentWindowDays} day(s)`}
+              onClick=${() => setFilter('recent')}>${recentLabel} ${view.recentCount}</button>` : null}
           </div>
-          ${view.items.length ? html`<ul class="open-pr-list">${view.items.map((pr) => html`<${OpenPRRow} key=${pr.url} pr=${pr} />`)}</ul>` : html`<p class="open-prs-empty">No pull requests match this filter.</p>`}
-          ${view.searchURL ? html`<div class="open-prs-foot">${view.truncated ? html`<span>Showing the first ${view.items.length} · </span>` : null}<a href=${view.searchURL} target="_blank" rel="noopener noreferrer">Open all on GitHub ↗</a></div>` : null}
+          ${view.items.length
+            ? html`<ul class="open-pr-list">${view.items.map((pr) => html`<${OpenPRRow} key=${pr.url} pr=${pr} />`)}</ul>`
+            : html`<p class="open-prs-empty">${view.showingRecent
+              ? `Nothing merged or closed in the last ${view.recentWindowDays} day(s).`
+              : (filter === 'all' && view.total <= 0 ? 'No open pull requests.' : 'No pull requests match this filter.')}</p>`}
+          ${view.searchURL ? html`<div class="open-prs-foot">${view.truncated ? html`<span>Showing the first ${view.items.length} · </span>` : null}<a href=${view.searchURL} target="_blank" rel="noopener noreferrer">${view.showingRecent ? 'See them all on GitHub ↗' : 'Open all on GitHub ↗'}</a></div>` : null}
         </div>
       ` : null}
     </span>

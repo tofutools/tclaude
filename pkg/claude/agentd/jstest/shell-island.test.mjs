@@ -97,6 +97,53 @@ test('footer open PRs disclosure pins, filters, and closes accessibly', async (t
   await mounted.unmount();
 });
 
+test('footer open PRs stays mounted at zero and lists recently closed PRs', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { OpenPRs }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<${OpenPRs} state=${state} />`);
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, { authored_open_prs: {
+    available: true, always_show: true, total: 0, updated_at: '2026-08-13T08:00:00Z',
+    items: [],
+    recent_window_days: 3,
+    recent_search_url: 'https://github.com/pulls?q=closed',
+    recent: [
+      { number: 9, url: 'https://github.com/acme/app/pull/9', title: 'Landed', repository: 'acme/app', state: 'merged', closed_at: '2026-08-12T10:00:00Z' },
+    ],
+  } }));
+  const trigger = getByRole(mounted.container, 'button', { name: /Open PRs/ });
+  assert.ok(mounted.container.querySelector('.open-prs.is-empty'), 'zero open PRs reads as idle, not as a live counter');
+
+  await harness.act(() => trigger.click());
+  assert.equal(mounted.container.querySelectorAll('.open-pr-row').length, 0);
+  assert.match(mounted.container.querySelector('.open-prs-empty').textContent, /No open pull requests\./);
+
+  await harness.act(() => getByRole(mounted.container, 'button', { name: /Closed 3d 1/ }).click());
+  assert.deepEqual([...mounted.container.querySelectorAll('.open-pr-title')].map((node) => node.textContent), ['Landed']);
+  assert.ok(mounted.container.querySelector('.open-pr-state-merged'), 'a merged PR is dotted by its terminal state');
+  await mounted.unmount();
+});
+
+test('footer open PRs can be opted out of the permanent indicator', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { OpenPRs }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<${OpenPRs} state=${state} />`);
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, { authored_open_prs: {
+    available: true, always_show: false, total: 0, items: [], recent_window_days: 3, recent: [],
+  } }));
+  assertAbsent(mounted.container.querySelector('.open-prs'));
+  await mounted.unmount();
+});
+
 test('shell confirmation keeps capture-Escape semantics and feedback cleanup', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createShellState }, { Confirm }] = await Promise.all([

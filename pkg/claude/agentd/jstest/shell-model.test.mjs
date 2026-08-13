@@ -59,6 +59,34 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
   assert.equal(authoredOpenPRsView({ authored_open_prs: prs }).attention, 2);
   assert.equal(authoredOpenPRsView({ authored_open_prs: { ...prs, search_url: 'javascript:alert(1)' } }).searchURL, '');
 
+  // Recently closed PRs live in their own filter: they must not reach the open
+  // list, the open count, or the attention/unattached tallies.
+  const withRecent = {
+    ...prs,
+    always_show: true,
+    recent_window_days: 3,
+    recent_search_url: 'https://github.com/pulls?q=closed',
+    recent: [
+      { number: 9, url: 'https://github.com/acme/app/pull/9', state: 'merged', closed_at: '2026-08-12T10:00:00Z' },
+      { number: 8, url: 'not-a-pr-url', state: 'closed', closed_at: '2026-08-11T10:00:00Z' },
+    ],
+  };
+  const openView = authoredOpenPRsView({ authored_open_prs: withRecent });
+  assert.deepEqual(openView.items.map((pr) => pr.number), [1, 2, 3]);
+  assert.equal(openView.recentCount, 1, 'a malformed recent URL is dropped');
+  assert.equal(openView.attention, 2, 'recent PRs never inflate the open tallies');
+  assert.equal(openView.alwaysShow, true);
+  const recentView = authoredOpenPRsView({ authored_open_prs: withRecent }, 'recent');
+  assert.deepEqual(recentView.items.map((pr) => pr.number), [9]);
+  assert.equal(recentView.showingRecent, true);
+  assert.equal(recentView.searchURL, 'https://github.com/pulls?q=closed');
+  assert.equal(recentView.total, 3, 'the trigger count stays the OPEN count');
+  // Window 0 disables the filter; a stale "recent" selection falls back to open.
+  const off = authoredOpenPRsView({ authored_open_prs: { ...withRecent, recent_window_days: 0 } }, 'recent');
+  assert.equal(off.showingRecent, false);
+  assert.equal(off.recentCount, 0);
+  assert.deepEqual(off.items.map((pr) => pr.number), [1, 2, 3]);
+
   const member = { conv_id: 'same', online: true, state: { status: 'working' } };
   const activity = globalActivityView({
     groups: [{ name: 'alpha', members: [member] }, { name: 'beta', members: [member] }],
