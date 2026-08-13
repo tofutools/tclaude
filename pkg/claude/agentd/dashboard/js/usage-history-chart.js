@@ -114,6 +114,10 @@ function resetTimingLabel(resetAt, now, wizard = false) {
     : `Reported quota reset ${formatUsageDuration(delta)} ago`;
 }
 
+function ariaClauses(parts) {
+  return parts.filter(Boolean).join('; ');
+}
+
 export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 168, wizard = false, onTogglePoint }) {
   const w = (plain, wizardly) => (wizard ? wizardly : plain);
   const [tooltip, setTooltip] = useState(null);
@@ -175,7 +179,7 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
         scope,
         `${hoverPoint.pct.toFixed(1)}% · ${new Date(hoverPoint.time).toLocaleString()}`,
         beforeResetLabel(resetAt, hoverPoint.time, wizard),
-      ],
+      ].filter(Boolean),
     });
   };
   const showTooltip = (anchorX, anchorY, tone, title, lines, pointAt = null) => {
@@ -334,13 +338,16 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
         x2=${x(forecastAt)} y2=${y(forecastPct)} />
       <line class="usage-forecast-hit-target" x1=${x(latest.time)} y1=${y(latest.pct)}
         x2=${x(forecastAt)} y2=${y(forecastPct)} tabIndex="0" role="img"
-        aria-label=${`${w('Prediction', 'Prophecy')}; ${scope}; ${forecastPct.toFixed(1)}% at ${new Date(forecastAt).toLocaleString()}; ${beforeResetLabel(resetAt, forecastAt, wizard)}`}
+        aria-label=${ariaClauses([w('Prediction', 'Prophecy'), scope,
+          `${forecastPct.toFixed(1)}% at ${new Date(forecastAt).toLocaleString()}`,
+          beforeResetLabel(resetAt, forecastAt, wizard)])}
         onfocus=${() => showForecastTooltip(1)} onblur=${hideTooltip} />
     </${Fragment}>`}
     ${now > start && now < horizon && html`<g class="usage-now-mark">
       <line x1=${x(now)} x2=${x(now)} y1=${PAD.top} y2=${H - PAD.bottom} />
       <line class="usage-marker-hit-target" x1=${x(now)} x2=${x(now)} y1=${PAD.top} y2=${H - PAD.bottom}
-        tabIndex="0" role="img" aria-label=${`${w('Now', 'This moment')}; ${scope}; ${new Date(now).toLocaleString()}; ${beforeResetLabel(resetAt, now, wizard)}`}
+        tabIndex="0" role="img" aria-label=${ariaClauses([w('Now', 'This moment'), scope,
+          new Date(now).toLocaleString(), beforeResetLabel(resetAt, now, wizard)])}
         onfocus=${() => showNowTooltip()} onblur=${hideTooltip} />
     </g>`}
     ${pointMarkers.map((point, index) => {
@@ -350,7 +357,10 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
         <circle class="usage-point" cx=${x(point.time)} cy=${y(point.pct)} r="2.25" />
         <circle class="usage-point-hit-target" cx=${x(point.time)} cy=${y(point.pct)} r="8"
           tabIndex=${index === keyboardPointIndex ? '0' : '-1'} role="button" aria-pressed=${Boolean(point.excluded)}
-          aria-label=${`${point.excluded ? w('Excluded sample', 'Veiled reading') : w('Sample', 'Reading')}; ${scope}; ${point.pct.toFixed(1)}% at ${new Date(point.time).toLocaleString()}; ${pointResetLabel}; ${actionLabel}${index === keyboardPointIndex ? w('; use left and right arrow keys to explore samples', '; use left and right arrow keys to explore readings') : ''}`}
+          aria-label=${`${ariaClauses([
+            point.excluded ? w('Excluded sample', 'Veiled reading') : w('Sample', 'Reading'), scope,
+            `${point.pct.toFixed(1)}% at ${new Date(point.time).toLocaleString()}`, pointResetLabel, actionLabel,
+          ])}${index === keyboardPointIndex ? w('; use left and right arrow keys to explore samples', '; use left and right arrow keys to explore readings') : ''}`}
           onfocus=${() => {
             setKeyboardPointAt(index);
             showPointTooltip(point);
