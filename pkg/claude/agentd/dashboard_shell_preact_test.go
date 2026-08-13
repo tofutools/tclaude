@@ -86,3 +86,20 @@ func TestDashboardShellPreactBoundary(t *testing.T) {
 		mustNot(refresh, legacyCall, "snapshot refresh publishes state instead of repainting shell DOM")
 	}
 }
+
+func TestDashboardOpenPRsHoverBridge(t *testing.T) {
+	for _, rule := range dashboardCSSRules(t) {
+		if !strings.Contains(rule.selectors, ".open-prs.is-open::before") {
+			continue
+		}
+		for _, declaration := range []string{
+			"position: fixed", "bottom: var(--footer-h)", "height: 10px",
+		} {
+			if !strings.Contains(rule.declarations, declaration) {
+				t.Errorf("open PR hover bridge missing %q in %q", declaration, rule.declarations)
+			}
+		}
+		return
+	}
+	t.Fatal("dashboard.css has no open PR hover bridge")
+}
