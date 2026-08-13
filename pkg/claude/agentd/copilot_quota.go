@@ -119,7 +119,7 @@ func refreshCopilotQuota(ctx context.Context, deps copilotQuotaDeps) (stored, sk
 		usedPercent = window.UsedRequests / window.EntitlementRequests * 100
 	}
 	if math.IsNaN(usedPercent) || math.IsInf(usedPercent, 0) {
-		return false, false, errors.New("Copilot quota returned a non-finite percentage")
+		return false, false, errors.New("copilot quota returned a non-finite percentage")
 	}
 	usedPercent = math.Max(0, math.Min(100, usedPercent))
 	var resetAt time.Time
