@@ -71,6 +71,14 @@ func TestRefreshCopilotQuotaSkipsMissingCLIAndUnlimitedPlan(t *testing.T) {
 
 	t.Run("unlimited", func(t *testing.T) {
 		setupTestDB(t)
+		observed := time.Now().UTC().Add(-time.Minute)
+		_, err := db.SaveSubscriptionUsageSample(db.SubscriptionUsageSample{
+			Provider: db.SubscriptionProviderGitHub, ObservedAt: observed,
+			Source: "account.getQuota", Windows: []db.SubscriptionUsageWindow{{
+				Name: "monthly", UsedPercent: 74,
+			}},
+		})
+		require.NoError(t, err)
 		stored, skipped, err := refreshCopilotQuota(context.Background(), copilotQuotaDeps{
 			lookPath: func(name string) (string, error) { return "/bin/" + name, nil },
 			commandOutput: func(context.Context, string, ...string) ([]byte, error) {
@@ -84,7 +92,14 @@ func TestRefreshCopilotQuotaSkipsMissingCLIAndUnlimitedPlan(t *testing.T) {
 			now: time.Now,
 		})
 		require.NoError(t, err)
-		assert.False(t, stored)
-		assert.True(t, skipped)
+		assert.True(t, stored, "clearing the obsolete finite series changes dashboard state")
+		assert.False(t, skipped)
+		rows, err := db.SubscriptionUsageHistorySince(observed.Add(-time.Minute))
+		require.NoError(t, err)
+		assert.Empty(t, rows, "an unlimited plan must not leave its old finite graph visible")
+		_, _, current, hasHistory, err := db.LoadDashboardUsageCaches()
+		require.NoError(t, err)
+		assert.Nil(t, current)
+		assert.False(t, hasHistory)
 	})
 }

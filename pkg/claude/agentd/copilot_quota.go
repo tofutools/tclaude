@@ -110,7 +110,8 @@ func refreshCopilotQuota(ctx context.Context, deps copilotQuotaDeps) (stored, sk
 	}
 	window, ok := quota.QuotaSnapshots["premium_interactions"]
 	if !ok || window.IsUnlimitedEntitlement || window.EntitlementRequests <= 0 {
-		return false, true, nil
+		cleared, clearErr := db.DeleteSubscriptionUsageProvider(db.SubscriptionProviderGitHub)
+		return cleared, !cleared, clearErr
 	}
 	usedPercent := 0.0
 	if window.RemainingPercentage != nil {

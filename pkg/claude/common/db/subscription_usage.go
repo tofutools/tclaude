@@ -62,6 +62,30 @@ type SubscriptionUsageHistoryRow struct {
 // applying the requested flag to a different point in the same sample bucket.
 var ErrSubscriptionUsagePointNotFound = errors.New("subscription usage point not found")
 
+// DeleteSubscriptionUsageProvider removes a provider's retained percentage
+// series. Callers use this when a successful account reading confirms there
+// is no longer a finite limit; leaving the old samples behind would make the
+// dashboard present an obsolete quota as current.
+func DeleteSubscriptionUsageProvider(provider string) (bool, error) {
+	provider = strings.TrimSpace(provider)
+	if provider == "" {
+		return false, errors.New("delete subscription usage provider: provider is required")
+	}
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	result, err := d.Exec(`DELETE FROM subscription_usage_samples WHERE provider = ?`, provider)
+	if err != nil {
+		return false, fmt.Errorf("delete subscription usage provider: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("delete subscription usage provider: affected rows: %w", err)
+	}
+	return changed > 0, nil
+}
+
 // SubscriptionUsageHistorySince returns retained observations at or after
 // since, ordered so callers can group and walk each provider/window series.
 func SubscriptionUsageHistorySince(since time.Time) ([]SubscriptionUsageHistoryRow, error) {
