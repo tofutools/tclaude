@@ -650,6 +650,11 @@ func runServe(p *serveParams) error {
 	// channel and never scales its poll count with agents or groups.
 	startRecentlyMergedPRPoller(cronStop)
 
+	// Cross-repository authored open PRs for the dashboard footer. One
+	// GraphQL search carries both the list and CI rollups; the 2s snapshot only
+	// reads its durable cache.
+	startAuthoredOpenPRPoller(cronStop)
+
 	// Subscription-usage poller. Disabled by default; when
 	// usage.poll_anthropic_api is enabled it keeps the SQLite usage_cache
 	// row fresh via the Anthropic usage API even when no Claude Code

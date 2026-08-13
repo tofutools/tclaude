@@ -4,7 +4,7 @@ import { createPreactHarness } from './preact-harness.mjs';
 
 test('shell models preserve usage layouts, badge urgency, footer, and activity deduplication', async (t) => {
   const harness = await createPreactHarness(t);
-  const { usageView, messagesBadgeView, footerMetaView, globalActivityView } =
+  const { usageView, messagesBadgeView, footerMetaView, authoredOpenPRsView, globalActivityView } =
     await harness.importDashboardModule('js/shell-model.js');
 
   assert.equal(usageView(null).text, 'usage: n/a');
@@ -36,6 +36,18 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
     { version: 'v1', generatedAt: 'now' },
     'footer excludes the dashboard URL and auth session metadata',
   );
+  const prs = {
+    available: true, total: 3, updated_at: 'now', search_url: 'https://github.com/pulls?q=x',
+    items: [
+      { number: 1, url: 'https://github.com/acme/app/pull/1', agent_id: 'agt_1', checks: { state: 'failing' } },
+      { number: 2, url: 'https://github.com/acme/app/pull/2', checks: { state: 'pending' } },
+      { number: 3, url: 'https://github.com/acme/app/pull/3', checks: { state: 'passing' } },
+    ],
+  };
+  assert.deepEqual(authoredOpenPRsView({ authored_open_prs: prs }, 'attention').items.map((pr) => pr.number), [1, 2]);
+  assert.deepEqual(authoredOpenPRsView({ authored_open_prs: prs }, 'unattached').items.map((pr) => pr.number), [2, 3]);
+  assert.equal(authoredOpenPRsView({ authored_open_prs: prs }).attention, 2);
+  assert.equal(authoredOpenPRsView({ authored_open_prs: { ...prs, search_url: 'javascript:alert(1)' } }).searchURL, '');
 
   const member = { conv_id: 'same', online: true, state: { status: 'working' } };
   const activity = globalActivityView({

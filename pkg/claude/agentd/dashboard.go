@@ -959,6 +959,11 @@ type snapshotPayload struct {
 	// rolling windows) rendered in the dashboard's top bar. Always
 	// present — Available=false carries the graceful "n/a" state.
 	Usage dashboardUsage `json:"usage"`
+	// AuthoredOpenPRs is the cached cross-repository list behind the fixed
+	// footer's Open PRs popover. The background poller owns GitHub access; the
+	// snapshot only performs one bounded cache read and associates matching
+	// agent PR URLs in memory.
+	AuthoredOpenPRs dashboardAuthoredOpenPRs `json:"authored_open_prs"`
 	// Templates are the group-template blueprints rendered in the
 	// Templates tab. Empty slice (not nil) so JS .map() is safe.
 	Templates []templateJSON `json:"templates"`
@@ -3669,6 +3674,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		pluginsErr       error
 		usagePhases      []perfPhase
 		openCodeActivity bool
+		authoredOpenPRs  dashboardAuthoredOpenPRs
 	)
 	// These collectors do not depend on each other. Most are one or two small
 	// SQLite reads; serial execution made their fixed per-query overhead add up
@@ -3690,6 +3696,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		snapshotNamedLoad{"roles", func() { roles = collectRolesSnapshot() }},
 		snapshotNamedLoad{"messages", func() { messages, messagesUnread = buildHumanMessagesSnapshot() }},
 		snapshotNamedLoad{"plugins", func() { plugins, pluginsWarn, pluginsErr = collectPluginsSnapshot() }},
+		snapshotNamedLoad{"authored_open_prs", func() { authoredOpenPRs = loadAuthoredOpenPRsSnapshot() }},
 	)
 	for i := range collectorPhases {
 		if collectorPhases[i].Name == "usage" {
@@ -3710,6 +3717,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.ExportJobsActive = exportJobsActive
 	out.Links = links
 	out.Usage = usage
+	out.AuthoredOpenPRs = associateAuthoredOpenPRs(authoredOpenPRs, out.Agents)
 	// Costs-tab visibility: show when there is real pay-per-token spend to
 	// display, OR a subscription account has opted into the WHAT-IF view
 	// (cost.show_on_subscription). A subscription-only account with the opt-in

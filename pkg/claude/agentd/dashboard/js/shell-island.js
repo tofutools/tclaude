@@ -6,10 +6,12 @@ import { ActivityModes } from './activity-bots.js';
 import { ActivityHover } from './activity-hover.js';
 import {
   footerMetaView,
+  authoredOpenPRsView,
   globalActivityView,
   messagesBadgeView,
   usageView,
 } from './shell-model.js';
+import { PRChecksBadge } from './pr-checks-hover.js';
 import { hasUnreadHumanNotifications } from './human-notification-attention.js';
 
 const html = htm.bind(h);
@@ -111,6 +113,80 @@ function FooterMeta({ state }) {
   `;
 }
 
+function OpenPRRow({ pr }) {
+  return html`
+    <li class="open-pr-row">
+      <span class=${`open-pr-state open-pr-state-${pr?.checks?.state || 'unknown'}`} aria-hidden="true"></span>
+      <span class="open-pr-main">
+        <a class="open-pr-title" href=${pr.url} target="_blank" rel="noopener noreferrer">${pr.title || `Pull request #${pr.number}`}</a>
+        <span class="open-pr-meta">
+          <span>${pr.repository}</span><span> · #${pr.number}</span>
+          ${pr.agent_title ? html`<span> · ${pr.agent_title}</span>` : html`<span> · no active agent</span>`}
+          ${pr.draft ? html`<span> · draft</span>` : null}
+        </span>
+      </span>
+      <${PRChecksBadge} url=${pr.url} prNumber=${pr.number} summary=${pr.checks} />
+    </li>
+  `;
+}
+
+function OpenPRs({ state }) {
+  const [filter, setFilter] = useState('all');
+  const [hovered, setHovered] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const rootRef = useRef(null);
+  const view = authoredOpenPRsView(state.snapshot.value, filter);
+  const open = view.available && view.total > 0 && (hovered || pinned);
+
+  useEffect(() => {
+    if (!pinned) return undefined;
+    const outside = (event) => {
+      if (!rootRef.current?.contains(event.target)) setPinned(false);
+    };
+    document.addEventListener('pointerdown', outside);
+    return () => document.removeEventListener('pointerdown', outside);
+  }, [pinned]);
+  useEffect(() => {
+    if (!open) return undefined;
+    const escape = (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setPinned(false);
+      setHovered(false);
+      rootRef.current?.querySelector('.open-prs-trigger')?.focus();
+    };
+    document.addEventListener('keydown', escape);
+    return () => document.removeEventListener('keydown', escape);
+  }, [open]);
+
+  if (!view.available || view.total <= 0) return null;
+  const age = view.updatedAt ? new Date(view.updatedAt).toLocaleTimeString() : '';
+  return html`
+    <span ref=${rootRef} class=${`open-prs${open ? ' is-open' : ''}`}
+      onMouseEnter=${() => setHovered(true)} onMouseLeave=${() => setHovered(false)}>
+      <button type="button" class="open-prs-trigger" aria-haspopup="dialog"
+        aria-expanded=${open ? 'true' : 'false'} aria-controls="open-prs-popover"
+        onClick=${() => setPinned((value) => !value)}>
+        <span class="open-prs-dot" aria-hidden="true"></span>
+        <span>Open PRs</span><span class="open-prs-count">${view.total}</span>
+        <span class="open-prs-chevron" aria-hidden="true">⌃</span>
+      </button>
+      ${open ? html`
+        <div id="open-prs-popover" class="open-prs-popover" role="dialog" aria-label="Your open pull requests">
+          <div class="open-prs-head"><strong>Your open pull requests</strong><span class="open-prs-count">${view.total}</span>${age ? html`<span class="open-prs-age">updated ${age}</span>` : null}</div>
+          <div class="open-prs-filters" role="group" aria-label="Filter pull requests">
+            <button class=${filter === 'all' ? 'active' : ''} aria-pressed=${filter === 'all'} onClick=${() => setFilter('all')}>All</button>
+            <button class=${filter === 'attention' ? 'active' : ''} aria-pressed=${filter === 'attention'} onClick=${() => setFilter('attention')}>Needs attention ${view.attention}</button>
+            <button class=${filter === 'unattached' ? 'active' : ''} aria-pressed=${filter === 'unattached'} onClick=${() => setFilter('unattached')}>Unattached ${view.unattached}</button>
+          </div>
+          ${view.items.length ? html`<ul class="open-pr-list">${view.items.map((pr) => html`<${OpenPRRow} key=${pr.url} pr=${pr} />`)}</ul>` : html`<p class="open-prs-empty">No pull requests match this filter.</p>`}
+          ${view.searchURL ? html`<div class="open-prs-foot">${view.truncated ? html`<span>Showing the first ${view.items.length} · </span>` : null}<a href=${view.searchURL} target="_blank" rel="noopener noreferrer">Open all on GitHub ↗</a></div>` : null}
+        </div>
+      ` : null}
+    </span>
+  `;
+}
+
 function Disconnect({ state }) {
   const disconnected = state.connection.value.status === 'disconnected';
   // Do not leave the full-viewport backdrop-filter subtree mounted after a
@@ -201,6 +277,7 @@ export function mountShellIsland({ hosts, state, groupsState, feedback, register
     [hosts.statusHost, html`<${Status} feedback=${feedback} />`],
     [hosts.messagesBadgeHost, html`<${MessagesBadge} state=${state} />`],
     [hosts.metaHost, html`<${FooterMeta} state=${state} />`],
+    [hosts.openPRsHost, html`<${OpenPRs} state=${state} />`],
     [hosts.disconnectHost, html`<${Disconnect} state=${state} />`],
     [hosts.toastHost, html`<${Toast} feedback=${feedback} />`],
     [hosts.confirmHost, html`<${Confirm} feedback=${feedback} />`],
@@ -216,4 +293,4 @@ export function mountShellIsland({ hosts, state, groupsState, feedback, register
   }
 }
 
-export { Confirm, Disconnect, FooterMeta, GlobalActivity, MessagesBadge, Status, Toast, Usage };
+export { Confirm, Disconnect, FooterMeta, GlobalActivity, MessagesBadge, OpenPRs, Status, Toast, Usage };

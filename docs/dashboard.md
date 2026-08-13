@@ -794,6 +794,16 @@ when the branch has a pull request a `#<num>` link to it is shown alongside.
 Branch/PR links resolve in the background (cached, best-effort) and are simply
 absent for a non-GitHub repo or when `gh` is unavailable.
 
+The fixed footer also shows an **Open PRs** count when the active GitHub
+identity has authored pull requests open across any repository. Hover previews
+the list; click/tap or keyboard activation pins it while you inspect or filter
+it. The popover puts failing and running checks first, identifies the active
+agent attached to a PR when one exists, and can narrow to PRs needing attention
+or PRs with no active agent. Its GitHub search link is the escape hatch for the
+complete list when the bounded dashboard result is truncated. The daemon polls
+and caches this list in the background; the two-second dashboard snapshot never
+runs `gh` itself.
+
 Each PR link carries a **CI indicator** — a compact `n/m` pill coloured green
 (passing), red (failing) or amber (something still running). Skipped checks are
 excluded from the denominator, so `12/14` means twelve of the fourteen checks

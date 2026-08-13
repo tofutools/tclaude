@@ -64,6 +64,39 @@ test('disconnect overlay is removed on reconnect so its compositor layers cannot
   await mounted.unmount();
 });
 
+test('footer open PRs disclosure pins, filters, and closes accessibly', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { OpenPRs }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<${OpenPRs} state=${state} />`);
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, { authored_open_prs: {
+    available: true, total: 3, updated_at: '2026-08-13T08:00:00Z',
+    search_url: 'https://github.com/pulls?q=open',
+    items: [
+      { number: 1, url: 'https://github.com/acme/app/pull/1', title: 'Fails', repository: 'acme/app', agent_id: 'agt_1', agent_title: 'builder', checks: { total: 1, failed: 1, state: 'failing' } },
+      { number: 2, url: 'https://github.com/acme/app/pull/2', title: 'Runs', repository: 'acme/app', checks: { total: 1, pending: 1, state: 'pending' } },
+      { number: 3, url: 'https://github.com/acme/app/pull/3', title: 'Passes', repository: 'acme/app', agent_id: 'agt_3', checks: { total: 1, passed: 1, state: 'passing' } },
+    ],
+  } }));
+  const trigger = getByRole(mounted.container, 'button', { name: /Open PRs/ });
+  assert.equal(trigger.getAttribute('aria-expanded'), 'false');
+  await harness.act(() => trigger.click());
+  assert.equal(trigger.getAttribute('aria-expanded'), 'true');
+  assert.equal(mounted.container.querySelectorAll('.open-pr-row').length, 3);
+
+  await harness.act(() => getByRole(mounted.container, 'button', { name: /Unattached 1/ }).click());
+  assert.deepEqual([...mounted.container.querySelectorAll('.open-pr-title')].map((node) => node.textContent), ['Runs']);
+
+  await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }));
+  assertAbsent(mounted.container.querySelector('#open-prs-popover'));
+  assertSameNode(harness.document.activeElement, trigger);
+  await mounted.unmount();
+});
+
 test('shell confirmation keeps capture-Escape semantics and feedback cleanup', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createShellState }, { Confirm }] = await Promise.all([
