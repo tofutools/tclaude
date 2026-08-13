@@ -97,6 +97,37 @@ test('footer open PRs disclosure pins, filters, and closes accessibly', async (t
   await mounted.unmount();
 });
 
+test('footer open PRs gives the pointer one second to reach the popover', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { OpenPRs }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<${OpenPRs} state=${state} />`);
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, { authored_open_prs: {
+    available: true, total: 1, items: [
+      { number: 1, url: 'https://github.com/acme/app/pull/1', title: 'Open', repository: 'acme/app' },
+    ],
+  } }));
+  const root = mounted.container.querySelector('.open-prs');
+
+  await harness.act(() => harness.fireEvent(root, 'mouseenter'));
+  assert.ok(mounted.container.querySelector('#open-prs-popover'));
+  await harness.act(() => harness.fireEvent(root, 'mouseleave'));
+  assert.ok(mounted.container.querySelector('#open-prs-popover'),
+    'leaving does not close the popover immediately');
+
+  // Returning before the grace period expires cancels that close. A second
+  // leave starts a fresh, complete grace period.
+  await harness.act(() => harness.fireEvent(root, 'mouseenter'));
+  await harness.act(() => harness.fireEvent(root, 'mouseleave'));
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 1100)));
+  assertAbsent(mounted.container.querySelector('#open-prs-popover'));
+  await mounted.unmount();
+});
+
 test('footer open PRs stays mounted at zero and lists recently closed PRs', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createDashboardState }, { OpenPRs }] = await Promise.all([
