@@ -83,6 +83,8 @@ test('footer open PRs disclosure pins, filters, and closes accessibly', async (t
     ],
   } }));
   const trigger = getByRole(mounted.container, 'button', { name: /Open PRs/ });
+  assert.ok(mounted.container.querySelector('.open-prs.has-attention'),
+    'the counter is highlighted while at least one PR needs attention');
   assert.equal(trigger.getAttribute('aria-expanded'), 'false');
   await harness.act(() => trigger.click());
   assert.equal(trigger.getAttribute('aria-expanded'), 'true');
@@ -94,6 +96,26 @@ test('footer open PRs disclosure pins, filters, and closes accessibly', async (t
   await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }));
   assertAbsent(mounted.container.querySelector('#open-prs-popover'));
   assertSameNode(harness.document.activeElement, trigger);
+  await mounted.unmount();
+});
+
+test('footer open PR counter is neutral while only clean CI is running', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { OpenPRs }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<${OpenPRs} state=${state} />`);
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, { authored_open_prs: {
+    available: true, total: 1, items: [
+      { number: 1, url: 'https://github.com/acme/app/pull/1', checks: { total: 2, pending: 2, state: 'pending' } },
+    ],
+  } }));
+  assert.ok(mounted.container.querySelector('.open-prs'));
+  assertAbsent(mounted.container.querySelector('.open-prs.has-attention'),
+    'an open PR with clean ongoing CI keeps the counter grey');
   await mounted.unmount();
 });
 
