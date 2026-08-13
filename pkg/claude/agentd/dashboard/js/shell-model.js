@@ -146,7 +146,14 @@ export function authoredOpenPRsView(snapshot, filter = 'all') {
   // merged PR must never inflate them.
   const recentWindowDays = Math.max(0, Number(source.recent_window_days || 0));
   const recent = recentWindowDays > 0 ? sane(source.recent) : [];
-  const needsAttention = (pr) => ['failing', 'pending'].includes(pr?.checks?.state);
+  // A clean run that is still in flight needs time, not operator attention.
+  // Everything terminal (red or green) is ready for a decision, while a PR
+  // with no checks at all is ready for the operator to notice that absence.
+  const needsAttention = (pr) => {
+    const checks = pr?.checks;
+    if (!checks || Number(checks.total || 0) === 0) return true;
+    return checks.state === 'failing' || checks.state === 'passing';
+  };
   const showingRecent = filter === 'recent' && recentWindowDays > 0;
   const filtered = showingRecent ? recent : all.filter((pr) => {
     if (filter === 'attention') return needsAttention(pr);

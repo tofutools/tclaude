@@ -410,13 +410,15 @@ func authoredOpenPRAttentionRank(pr dashboardAuthoredOpenPR) int {
 		switch pr.Checks.State {
 		case "failing":
 			return 0
-		case "pending":
-			return 1
 		case "passing":
+			return 2
+		case "pending":
+			// A clean run in flight is the one state that does not need
+			// operator attention yet, so keep it behind actionable PRs.
 			return 3
 		}
 	}
-	return 2
+	return 1
 }
 
 func reconcileTruncatedPRChecks(summary *prChecksSummary, rollupState string, total int) {
