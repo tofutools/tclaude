@@ -215,6 +215,7 @@ func pollAuthoredOpenPRs() error {
 			State: view.Recent[i].State, FetchedAt: now,
 		}, now)
 	}
+	applyAuthoredStatesToPresentedPRs(view)
 	if !isGitHubOwnerSlug(view.Login) {
 		return fmt.Errorf("resolver returned invalid GitHub login")
 	}
@@ -227,6 +228,48 @@ func pollAuthoredOpenPRs() error {
 	}
 	setAuthoredOpenPRActiveLogin(view.Login)
 	return nil
+}
+
+// applyAuthoredStatesToPresentedPRs keeps the durable presented-PR lifecycle
+// aligned with the shared observation cache. Terminal observations start the
+// badge's expiry grace period; open/draft observations also matter because a
+// closed (but not merged) GitHub PR can be reopened. UpdateAgentPRState owns
+// the race guards, including the rule that merged can never regress.
+func applyAuthoredStatesToPresentedPRs(view dashboardAuthoredOpenPRs) {
+	observed := make(map[string]string, len(view.Items)+len(view.Recent))
+	for _, pr := range view.Items {
+		state := "open"
+		if pr.Draft {
+			state = "draft"
+		}
+		observed[prStateKey(pr.URL)] = state
+	}
+	for _, pr := range view.Recent {
+		if isTerminalPresentedPRState(pr.State) {
+			observed[prStateKey(pr.URL)] = strings.ToLower(strings.TrimSpace(pr.State))
+		}
+	}
+	if len(observed) == 0 {
+		return
+	}
+	all, err := db.ListUnhandledAgentPRs()
+	if err != nil {
+		slog.Warn("open-prs: failed to reconcile presented PR rows", "error", err, "module", "agentd")
+		return
+	}
+	for _, rows := range all {
+		for _, row := range rows {
+			state, ok := observed[prStateKey(row.PRURL)]
+			if !ok || strings.EqualFold(row.State, state) {
+				continue
+			}
+			if _, err := db.UpdateAgentPRState(row.AgentID, row.PRURL, state); err != nil {
+				slog.Warn("open-prs: failed to apply state to presented PR",
+					"error", err, "agent_id", row.AgentID, "url", row.PRURL,
+					"state", state, "module", "agentd")
+			}
+		}
+	}
 }
 
 func liveAuthoredOpenPRResolver() (dashboardAuthoredOpenPRs, error) {

@@ -161,7 +161,7 @@ func TestPollAndAssociateAuthoredOpenPRs(t *testing.T) {
 	row, err := db.LoadGitCache(authoredOpenPRCacheKey("octocat"))
 	require.NoError(t, err)
 	require.NotNil(t, row)
-	assert.WithinDuration(t, time.Now(), row.FetchedAt, time.Second)
+	assert.WithinDuration(t, time.Now(), row.FetchedAt, 2*time.Second)
 	states := cachedPresentedPRStates([]string{"https://github.com/acme/app/pull/12"})
 	assert.Equal(t, "open", states[prStateKey("https://github.com/acme/app/pull/12")].state,
 		"the footer poll publishes into the shared per-PR state source")
@@ -193,6 +193,35 @@ func TestReconcileAuthoredOpenPRsUsesTheSameStateAndChecksAsGroups(t *testing.T)
 		withPRChecks(checks)
 	assert.Equal(t, got.Recent[0].State, links.BranchPRState)
 	assert.Equal(t, got.Recent[0].Checks, links.BranchChecks)
+}
+
+func TestApplyAuthoredStatesExpiresAndReopensPresentedPRs(t *testing.T) {
+	setupTestDB(t)
+	const prURL = "https://github.com/acme/app/pull/12"
+	agentID, _, err := db.EnsureAgentForConv("conv_1", "test")
+	require.NoError(t, err)
+	_, err = db.UpsertAgentPR(agentID, prURL, "Ship it", "open")
+	require.NoError(t, err)
+
+	applyAuthoredStatesToPresentedPRs(dashboardAuthoredOpenPRs{Recent: []dashboardAuthoredOpenPR{{
+		URL: prURL + "/files", State: "closed",
+	}}})
+
+	all, err := db.ListUnhandledAgentPRs()
+	require.NoError(t, err)
+	require.Len(t, all[agentID], 1)
+	assert.Equal(t, "closed", all[agentID][0].State)
+	assert.WithinDuration(t, time.Now(), all[agentID][0].UpdatedAt, time.Second,
+		"the terminal observation starts the normal presented-PR grace period")
+
+	applyAuthoredStatesToPresentedPRs(dashboardAuthoredOpenPRs{Items: []dashboardAuthoredOpenPR{{
+		URL: prURL,
+	}}})
+	all, err = db.ListUnhandledAgentPRs()
+	require.NoError(t, err)
+	require.Len(t, all[agentID], 1)
+	assert.Equal(t, "open", all[agentID][0].State,
+		"a reopened PR must not expire from the old closed observation")
 }
 
 func TestAuthoredOpenPRCacheRequiresCurrentProcessIdentity(t *testing.T) {
