@@ -3167,7 +3167,13 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   gap: 2px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-#usage .uline { display: inline-flex; align-items: center; gap: 12px; white-space: nowrap; }
+#usage .uline {
+  display: inline-flex;
+  align-items: center;
+  align-self: stretch;
+  gap: 12px;
+  white-space: nowrap;
+}
 /* Provider/source label — always present, even with one source. The box fits
    the longest normal row ("Anthropic API:") so quota bars and cost figures
    start on one stable column as sources appear and disappear. */
@@ -3175,7 +3181,8 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   display: inline-block;
   color: #7d8590;
   text-align: right;
-  min-width: 14ch; /* "Anthropic API:" */
+  width: 14ch; /* "Anthropic API:" */
+  flex: 0 0 14ch;
 }
 /* Per-field column widths inside each window, worst-case sized so 5h/7d,
    the bars, the percents, and the reset hints all line up between the two

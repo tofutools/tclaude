@@ -63,7 +63,8 @@ func TestDashboardHTML_CodexUsageColumnAlignment(t *testing.T) {
 	// overflow and desync the right-aligned rows (see
 	// TestDashboardCSS_UsageRemColumnFitsWorstCaseRemaining). The source-label
 	// column also fits provider-prefixed API-cost rows.
-	must("min-width: 14ch;", "the source-label column reserves \"Anthropic API:\"")
+	must("width: 14ch;", "the source-label column fixes the \"Anthropic API:\" width")
+	must("align-self: stretch;", "short provider rows share the longest row's data start")
 	must("min-width: 4ch;", "the percent column reserves up to \"100%\"")
 	must("min-width: 8ch;", "the reset-hint column reserves its worst case \"(23h59m)\"")
 	must("#usage.multiline .upct", "the percent column is fixed-width + right-aligned")

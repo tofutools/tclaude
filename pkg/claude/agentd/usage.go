@@ -247,9 +247,10 @@ func collectCopilotUsageSnapshot(row *db.SubscriptionUsageHistoryRow, idleTimeou
 	if time.Since(row.ObservedAt) > idleTimeout {
 		return nil
 	}
+	resetAt := copilotMonthlyResetAt(row.ObservedAt)
 	return &copilotDashboardUsage{Available: true, Monthly: &usageWindow{
-		Pct: row.UsedPercent, ResetsAt: formatResetsAt(row.ResetsAt),
-		Remaining: formatRemaining(row.ResetsAt),
+		Pct: row.UsedPercent, ResetsAt: formatResetsAt(resetAt),
+		Remaining: formatRemaining(resetAt),
 	}}
 }
 

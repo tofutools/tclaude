@@ -46,7 +46,6 @@ type copilotQuotaWindow struct {
 	EntitlementRequests    float64  `json:"entitlementRequests"`
 	UsedRequests           float64  `json:"usedRequests"`
 	RemainingPercentage    *float64 `json:"remainingPercentage"`
-	ResetDate              string   `json:"resetDate"`
 }
 
 func startCopilotQuotaPoller(stop <-chan struct{}) {
@@ -123,14 +122,8 @@ func refreshCopilotQuota(ctx context.Context, deps copilotQuotaDeps) (stored, sk
 		return false, false, errors.New("copilot quota returned a non-finite percentage")
 	}
 	usedPercent = math.Max(0, math.Min(100, usedPercent))
-	var resetAt time.Time
-	if window.ResetDate != "" {
-		resetAt, err = time.Parse(time.RFC3339Nano, window.ResetDate)
-		if err != nil {
-			return false, false, fmt.Errorf("parse Copilot quota reset date: %w", err)
-		}
-	}
 	observedAt := deps.now().UTC()
+	resetAt := copilotMonthlyResetAt(observedAt)
 	stored, err = db.SaveSubscriptionUsageSample(db.SubscriptionUsageSample{
 		Provider: db.SubscriptionProviderGitHub, ObservedAt: observedAt,
 		Source: "account.getQuota",
@@ -140,6 +133,11 @@ func refreshCopilotQuota(ctx context.Context, deps copilotQuotaDeps) (stored, sk
 		}},
 	})
 	return stored, false, err
+}
+
+func copilotMonthlyResetAt(observedAt time.Time) time.Time {
+	observedAt = observedAt.UTC()
+	return time.Date(observedAt.Year(), observedAt.Month()+1, 1, 0, 0, 0, 0, time.UTC)
 }
 
 func fetchCopilotQuota(ctx context.Context, copilotPath, githubToken string) (copilotQuotaSnapshot, error) {
