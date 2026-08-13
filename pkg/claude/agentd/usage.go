@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -60,6 +62,10 @@ type dashboardUsage struct {
 	// figure beside the "(mtd)" headline; 0 (nothing spent today, or a
 	// subscription account) renders no today figure.
 	TodayCostUSD float64 `json:"today_cost_usd,omitempty"`
+	// APICosts attributes the same real month/today totals by provider. The
+	// Groups top-bar renders these rows instead of an ambiguous bare "api"
+	// token, even when only one provider contributed spend.
+	APICosts []dashboardAPICost `json:"api_costs,omitempty"`
 	// Codex is the Codex account's subscription usage, lifted from Codex's
 	// local rollout files (see codex_usage.go). nil — the field is omitted
 	// — when Codex isn't installed or has no recent usage data, so the top
@@ -68,9 +74,24 @@ type dashboardUsage struct {
 	// above stay Claude's (historical names), so an existing client that
 	// doesn't know about Codex is unaffected.
 	Codex *codexDashboardUsage `json:"codex,omitempty"`
+	// Copilot is GitHub Copilot's finite monthly premium-request allowance.
+	// Unlimited plans intentionally omit it because there is no percentage
+	// limit to graph.
+	Copilot *copilotDashboardUsage `json:"copilot,omitempty"`
 	// historyAvailable stays server-local: it gates the dedicated Usage tab
 	// without adding internal storage state to the public usage readout.
 	historyAvailable bool
+}
+
+type dashboardAPICost struct {
+	Provider     string  `json:"provider"`
+	TotalCostUSD float64 `json:"total_cost_usd"`
+	TodayCostUSD float64 `json:"today_cost_usd,omitempty"`
+}
+
+type copilotDashboardUsage struct {
+	Available bool         `json:"available"`
+	Monthly   *usageWindow `json:"monthly,omitempty"`
 }
 
 // usageWindow is one rolling-limit bucket: percent consumed plus the
@@ -151,12 +172,15 @@ func collectUsageSnapshot(idleTimeout time.Duration) (dashboardUsage, bool, []pe
 	}
 
 	var totalCost, todayCost float64
+	var apiCosts []dashboardAPICost
 	var hasRealCost bool
 	var costErr error
 	timed("cost_history", func() {
 		rows, err := db.AllCostDailyRows()
 		costErr = err
-		totalCost, todayCost, hasRealCost = dashboardCostTotalsFromRows(rows, time.Now())
+		now := time.Now()
+		totalCost, todayCost, hasRealCost = dashboardCostTotalsFromRows(rows, now)
+		apiCosts = dashboardAPICostsFromRows(rows, now)
 		if costErr != nil {
 			slog.Debug("usage snapshot: read daily costs failed; omitting cost readout", "error", costErr)
 			// Preserve the old visibility behavior on the exceptional path: if the
@@ -168,17 +192,20 @@ func collectUsageSnapshot(idleTimeout time.Duration) (dashboardUsage, bool, []pe
 
 	var usageRow *db.UsageCacheRow
 	var codexRow *db.CodexUsageCacheRow
+	var copilotRow *db.SubscriptionUsageHistoryRow
 	var hasUsageHistory bool
 	var cacheErr error
 	timed("rate_limit_caches", func() {
-		usageRow, codexRow, hasUsageHistory, cacheErr = db.LoadDashboardUsageCaches()
+		usageRow, codexRow, copilotRow, hasUsageHistory, cacheErr = db.LoadDashboardUsageCaches()
 	})
 
 	assembleStart := time.Now()
 	out := dashboardUsage{
 		TotalCostUSD:     totalCost,
 		TodayCostUSD:     todayCost,
+		APICosts:         apiCosts,
 		Codex:            collectCodexUsageSnapshot(codexRow),
+		Copilot:          collectCopilotUsageSnapshot(copilotRow, idleTimeout),
 		historyAvailable: hasUsageHistory,
 	}
 	if idleTimeout <= 0 {
@@ -208,6 +235,22 @@ func collectUsageSnapshot(idleTimeout time.Duration) (dashboardUsage, bool, []pe
 	out.SevenDay = sd
 	phases = append(phases, perfPhase{Name: "assemble", Ms: durMs(time.Since(assembleStart))})
 	return out, hasRealCost, phases, costErr
+}
+
+func collectCopilotUsageSnapshot(row *db.SubscriptionUsageHistoryRow, idleTimeout time.Duration) *copilotDashboardUsage {
+	if row == nil || row.ObservedAt.IsZero() {
+		return nil
+	}
+	if idleTimeout <= 0 {
+		idleTimeout = usageStaleAfter
+	}
+	if time.Since(row.ObservedAt) > idleTimeout {
+		return nil
+	}
+	return &copilotDashboardUsage{Available: true, Monthly: &usageWindow{
+		Pct: row.UsedPercent, ResetsAt: formatResetsAt(row.ResetsAt),
+		Remaining: formatRemaining(row.ResetsAt),
+	}}
 }
 
 // handleUsage serves the account-level subscription usage readout — the same
@@ -324,6 +367,59 @@ func dashboardCostTotalsFromRows(rows []db.CostDailyRow, now time.Time) (month, 
 		}
 	}
 	return month, today, hasReal
+}
+
+func dashboardAPICostsFromRows(rows []db.CostDailyRow, now time.Time) []dashboardAPICost {
+	monthKey := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).Format(costDayKey)
+	todayKey := now.Format(costDayKey)
+	byProvider := make(map[string]*dashboardAPICost)
+	for _, delta := range db.CostDeltas(rows, false) {
+		provider := apiCostProvider(delta.Harness, delta.Model)
+		entry := byProvider[provider]
+		if entry == nil {
+			entry = &dashboardAPICost{Provider: provider}
+			byProvider[provider] = entry
+		}
+		if delta.Day >= monthKey {
+			entry.TotalCostUSD += delta.USD
+		}
+		if delta.Day >= todayKey {
+			entry.TodayCostUSD += delta.USD
+		}
+	}
+	providers := make([]string, 0, len(byProvider))
+	for provider, cost := range byProvider {
+		if cost.TotalCostUSD > 0 {
+			providers = append(providers, provider)
+		}
+	}
+	sort.Strings(providers)
+	out := make([]dashboardAPICost, 0, len(providers))
+	for _, provider := range providers {
+		out = append(out, *byProvider[provider])
+	}
+	return out
+}
+
+func apiCostProvider(harnessName, model string) string {
+	switch strings.ToLower(strings.TrimSpace(harnessName)) {
+	case "claude":
+		return db.SubscriptionProviderAnthropic
+	case "codex":
+		return db.SubscriptionProviderOpenAI
+	case "copilot":
+		return db.SubscriptionProviderGitHub
+	case "opencode":
+		if provider, _, ok := strings.Cut(strings.TrimSpace(model), "/"); ok && provider != "" {
+			return strings.ToLower(provider)
+		}
+		return "opencode"
+	default:
+		if harnessName = strings.ToLower(strings.TrimSpace(harnessName)); harnessName != "" {
+			return harnessName
+		}
+		return "unknown"
+	}
 }
 
 // usageWindowFor converts a cached bucket into the wire shape, or nil

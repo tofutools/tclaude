@@ -375,24 +375,44 @@ func mergeCopilotModelCatalog(remote, enriched []json.RawMessage) ([]db.CopilotM
 // model objects its SDK exposes. The GitHub token travels over the child's
 // stdin JSON-RPC stream, never argv or logs.
 func fetchCopilotEnrichedModels(ctx context.Context, copilotPath, githubToken string) ([]json.RawMessage, error) {
+	var result struct {
+		Models []json.RawMessage `json:"models"`
+	}
+	params := struct {
+		GitHubToken string `json:"gitHubToken"`
+	}{GitHubToken: githubToken}
+	if err := callCopilotOneShotRPC(ctx, copilotPath, "models.list", params, &result); err != nil {
+		return nil, fmt.Errorf("list enriched Copilot models: %w", err)
+	}
+	if len(result.Models) == 0 {
+		return nil, errors.New("list enriched Copilot models: response contains no models")
+	}
+	return result.Models, nil
+}
+
+// callCopilotOneShotRPC starts the installed CLI's credential-free stdio
+// server, performs the connect handshake and one account-scoped request, then
+// closes the process. Account credentials belong in params so they travel over
+// stdin and can never leak through argv or child diagnostics.
+func callCopilotOneShotRPC(ctx context.Context, copilotPath, method string, params, result any) error {
 	processCtx, stopProcess := context.WithCancel(ctx)
 	defer stopProcess()
 	cmd := executil.CommandContextWithGrace(processCtx, copilotModelCatalogProcessGrace, copilotPath,
 		"--server", "--stdio", "--no-auto-update", "--log-level", "error")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, fmt.Errorf("open Copilot server stdin: %w", err)
+		return fmt.Errorf("open Copilot server stdin: %w", err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, fmt.Errorf("open Copilot server stdout: %w", err)
+		return fmt.Errorf("open Copilot server stdout: %w", err)
 	}
 	// The models.list request carries a GitHub token over stdin. Discard child
 	// diagnostics rather than risk a future CLI build echoing request params
 	// into an error that agentd would log.
 	cmd.Stderr = io.Discard
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start Copilot model server: %w", err)
+		return fmt.Errorf("start Copilot server: %w", err)
 	}
 	stopIOWatch := make(chan struct{})
 	go func() {
@@ -414,21 +434,9 @@ func fetchCopilotEnrichedModels(ctx context.Context, copilotPath, githubToken st
 
 	reader := bufio.NewReader(stdout)
 	if err := callCopilotStdioRPC(reader, stdin, 1, "connect", struct{}{}, nil); err != nil {
-		return nil, fmt.Errorf("connect to Copilot model server: %w", err)
+		return fmt.Errorf("connect to Copilot server: %w", err)
 	}
-	var result struct {
-		Models []json.RawMessage `json:"models"`
-	}
-	params := struct {
-		GitHubToken string `json:"gitHubToken"`
-	}{GitHubToken: githubToken}
-	if err := callCopilotStdioRPC(reader, stdin, 2, "models.list", params, &result); err != nil {
-		return nil, fmt.Errorf("list enriched Copilot models: %w", err)
-	}
-	if len(result.Models) == 0 {
-		return nil, errors.New("list enriched Copilot models: response contains no models")
-	}
-	return result.Models, nil
+	return callCopilotStdioRPC(reader, stdin, 2, method, params, result)
 }
 
 func callCopilotStdioRPC(reader *bufio.Reader, writer io.Writer, id int64, method string, params, result any) error {

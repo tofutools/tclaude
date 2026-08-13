@@ -210,31 +210,49 @@ func LoadCodexUsageCache() (*CodexUsageCacheRow, error) {
 }
 
 // LoadDashboardUsageCaches reads the single-row Claude and Codex usage caches
-// together, plus whether retained subscription history exists. The dashboard
-// needs all three on every snapshot; one query avoids extra pool checkouts and
-// SQLite round trips while preserving the caches as independently optional.
-func LoadDashboardUsageCaches() (*UsageCacheRow, *CodexUsageCacheRow, bool, error) {
+// together, the latest GitHub Copilot monthly quota, and whether retained
+// subscription history exists. The dashboard needs all four on every snapshot;
+// one query avoids extra pool checkouts and SQLite round trips while preserving
+// every source as independently optional.
+func LoadDashboardUsageCaches() (*UsageCacheRow, *CodexUsageCacheRow, *SubscriptionUsageHistoryRow, bool, error) {
 	d, err := Open()
 	if err != nil {
-		return nil, nil, false, err
+		return nil, nil, nil, false, err
 	}
 	var usageData sql.NullString
 	var fetchedAt, lastAttemptAt dbTimestamp
 	var codexData, source sql.NullString
 	var observedAt, updatedAt dbTimestamp
+	var copilotProvider, copilotWindow, copilotSource sql.NullString
+	var copilotDuration sql.NullInt64
+	var copilotPercent sql.NullFloat64
+	var copilotResetsAt, copilotObservedAt dbTimestamp
 	var hasHistory bool
 	historyCutoff := dbTime(time.Now().UTC().Add(-DefaultSubscriptionUsageRetention))
 	err = d.QueryRow(`SELECT
 			u.data, u.fetched_at, u.last_attempt_at,
 			c.data, c.observed_at, c.updated_at, c.source,
+			g.provider, g.window_name, g.duration_seconds, g.used_percent,
+			g.resets_at, g.observed_at, g.source,
 			EXISTS(SELECT 1 FROM subscription_usage_samples WHERE sampled_at >= ? LIMIT 1)
 		FROM (SELECT 1) singleton
 		LEFT JOIN usage_cache u ON u.id = 1
-		LEFT JOIN codex_usage_cache c ON c.id = 1`, historyCutoff).Scan(
+		LEFT JOIN codex_usage_cache c ON c.id = 1
+		LEFT JOIN (
+			SELECT s.provider, w.window_name, w.duration_seconds, w.used_percent,
+				w.resets_at, w.observed_at, w.source
+			FROM subscription_usage_samples s
+			JOIN subscription_usage_windows w ON w.sample_id = s.id
+			WHERE s.provider = ? AND w.window_name = 'monthly'
+			ORDER BY w.observed_at DESC LIMIT 1
+		) g ON TRUE`, historyCutoff, SubscriptionProviderGitHub).Scan(
 		&usageData, &fetchedAt, &lastAttemptAt,
-		&codexData, &observedAt, &updatedAt, &source, &hasHistory)
+		&codexData, &observedAt, &updatedAt, &source,
+		&copilotProvider, &copilotWindow, &copilotDuration, &copilotPercent,
+		&copilotResetsAt, &copilotObservedAt, &copilotSource,
+		&hasHistory)
 	if err != nil {
-		return nil, nil, false, err
+		return nil, nil, nil, false, err
 	}
 	var usage *UsageCacheRow
 	if usageData.Valid {
@@ -251,7 +269,16 @@ func LoadDashboardUsageCaches() (*UsageCacheRow, *CodexUsageCacheRow, bool, erro
 		codex.ObservedAt = observedAt.Time()
 		codex.UpdatedAt = updatedAt.Time()
 	}
-	return usage, codex, hasHistory, nil
+	var copilot *SubscriptionUsageHistoryRow
+	if copilotProvider.Valid && copilotWindow.Valid && copilotPercent.Valid {
+		copilot = &SubscriptionUsageHistoryRow{
+			Provider: copilotProvider.String, WindowName: copilotWindow.String,
+			Duration:    time.Duration(copilotDuration.Int64) * time.Second,
+			UsedPercent: copilotPercent.Float64, ResetsAt: copilotResetsAt.Time(),
+			ObservedAt: copilotObservedAt.Time(), Source: copilotSource.String,
+		}
+	}
+	return usage, codex, copilot, hasHistory, nil
 }
 
 // TryClaimUsageFetch atomically checks whether a fetch is needed (last_attempt_at

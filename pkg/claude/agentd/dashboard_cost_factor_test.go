@@ -160,7 +160,10 @@ func mustLoadFactor(t *testing.T) float64 {
 func TestApplyCostDisplayFactor(t *testing.T) {
 	build := func() snapshotPayload {
 		return snapshotPayload{
-			Usage:     dashboardUsage{TotalCostUSD: 10, TodayCostUSD: 2},
+			Usage: dashboardUsage{
+				TotalCostUSD: 10, TodayCostUSD: 2,
+				APICosts: []dashboardAPICost{{Provider: "anthropic", TotalCostUSD: 10, TodayCostUSD: 2}},
+			},
 			Agents:    []dashboardAgent{{ConvID: "a", State: agentState{CostUSD: 4}}},
 			Ungrouped: []dashboardAgent{{ConvID: "u", State: agentState{CostUSD: 1}}},
 			Groups: []dashboardGroup{{
@@ -179,6 +182,8 @@ func TestApplyCostDisplayFactor(t *testing.T) {
 	applyCostDisplayFactor(&scaled, 1.5)
 	assert.InDelta(t, 15.0, scaled.Usage.TotalCostUSD, 1e-9)
 	assert.InDelta(t, 3.0, scaled.Usage.TodayCostUSD, 1e-9)
+	assert.InDelta(t, 15.0, scaled.Usage.APICosts[0].TotalCostUSD, 1e-9)
+	assert.InDelta(t, 3.0, scaled.Usage.APICosts[0].TodayCostUSD, 1e-9)
 	assert.InDelta(t, 6.0, scaled.Agents[0].State.CostUSD, 1e-9)
 	assert.InDelta(t, 1.5, scaled.Ungrouped[0].State.CostUSD, 1e-9)
 	assert.InDelta(t, 12.0, scaled.Groups[0].Members[0].State.CostUSD, 1e-9)
