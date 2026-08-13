@@ -125,6 +125,28 @@ func TestDashboardCodexFastMode_ExplicitLaunchSeedsIndicatorUntilRuntimeEvent(t 
 	assert.False(t, *row.State.FastMode, "live standard-tier event overrides launch Fast")
 }
 
+func TestDashboardCodexFastMode_AppServerDriveStillUsesPaneToggle(t *testing.T) {
+	const conv = "019ec064-4250-79b1-9ade-ebaea4170645"
+	agentd.ResetCodexContextRefreshForTest()
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	f.HaveGroup("fast-squad")
+	cx := f.HaveAliveCodexSession(conv, "spwn-fast-app-server", "tmux-fast-app-server", f.TestCwd("fast-app-server"))
+	f.HaveMember("fast-squad", conv)
+	_, _, err := db.EnsureAgentForConv(conv, "test")
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentCodexAppServerSelectionForConv(conv, true, "explicit test selection"))
+	require.NoError(t, cx.WriteThreadSettingsApplied("default"))
+	cx.OnInput("/fast", func(c *testharness.CodexSim, _ string) bool {
+		require.NoError(t, c.WriteThreadSettingsApplied("priority"))
+		return true
+	})
+
+	rec := postDashboardFastMode(t, agentd.BuildDashboardHandlerForTest(), conv, "enable")
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	f.AssertSentContains("tmux-fast-app-server:0.0", "/fast", 10*time.Second)
+}
+
 func TestDashboardCodexFastMode_UnknownRefusesWithoutInference(t *testing.T) {
 	const conv = "019ec064-4250-79b1-9ade-ebaea4170641"
 	agentd.ResetCodexContextRefreshForTest()
