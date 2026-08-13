@@ -1,7 +1,6 @@
 package agentd
 
 import (
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -9,37 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
-
-func TestBranchLinkSkipsDuplicateRefreshWhenSharedPRStateIsFresh(t *testing.T) {
-	setupTestDB(t)
-	const (
-		repoDir = "/repo/wt"
-		branch  = "feature"
-		prURL   = "https://github.com/o/r/pull/42"
-	)
-	now := time.Now()
-	info := repoBranchInfo{
-		RepoURL: "https://github.com/o/r", DefaultBranch: "main", Branch: branch,
-		PRNumber: 42, PRURL: prURL, PRState: "open", FetchedAt: now.Add(-2 * branchLinkTTL),
-	}
-	data, err := json.Marshal(info)
-	require.NoError(t, err)
-	key := branchLinkCacheKey(repoDir, branch)
-	row := &db.GitCacheRow{Data: data, FetchedAt: info.FetchedAt}
-	savePresentedPRCache(presentedPRCacheKey(prURL), prURL, presentedPRInfo{
-		Number: 42, URL: prURL, State: "open", FetchedAt: now,
-	}, now)
-
-	calls := 0
-	restore := SetGitInfoResolverForTest(func(string, string) (string, string, int, string, string, bool) {
-		calls++
-		return "https://github.com/o/r", "main", 42, prURL, "open", true
-	})
-	t.Cleanup(restore)
-	lookupBranchLinkFromCache(repoDir, branch, key, row)
-	WaitForBackgroundForTest()
-	assert.Zero(t, calls, "the shared fresh PR observation avoids a duplicate GitHub lookup")
-}
 
 func TestRepoLinksViewUsesFreshestPRStateAcrossSources(t *testing.T) {
 	now := time.Now()
