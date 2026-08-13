@@ -120,10 +120,15 @@ test('footer open PRs gives the pointer one second to reach the popover', async 
     'leaving does not close the popover immediately');
 
   // Returning before the grace period expires cancels that close. A second
-  // leave starts a fresh, complete grace period.
+  // leave starts a fresh, complete grace period: 800ms after that second
+  // leave, the original timer would already have fired if it survived.
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 300)));
   await harness.act(() => harness.fireEvent(root, 'mouseenter'));
   await harness.act(() => harness.fireEvent(root, 'mouseleave'));
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 1100)));
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 800)));
+  assert.ok(mounted.container.querySelector('#open-prs-popover'),
+    're-entry cancels the old timer and the final leave gets a full grace period');
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 300)));
   assertAbsent(mounted.container.querySelector('#open-prs-popover'));
   await mounted.unmount();
 });
