@@ -373,6 +373,8 @@ func TestDashboardJS_ModalResizePersisted(t *testing.T) {
 		"const persistHeight = opts.persistHeight !== false;",                             // helper supports width-only persistence
 		"if (persistHeight && saved.h)",                                                   // old saved heights are ignored in width-only mode
 		"persistHeight ? { w, h } : { w }",                                                // width-only mode does not write a height field
+		"const pointerTarget = modalEl.ownerDocument || modalEl;",                         // resize completion is tracked beyond the card boundary
+		"pointerTarget.addEventListener('pointerup', onPointerUp, true)",                  // native drag releases outside the card still save
 		`resizeKey="tclaude.dash.modalSize.agent-spawn"`,                                  // Preact spawn overlay wires it
 		`persistHeight=${false}`,                                                          // spawn restores width but recalculates height
 		`resizeKey="tclaude.dash.modalSize.clone-agent"`,                                  // Preact clone modal wires it
