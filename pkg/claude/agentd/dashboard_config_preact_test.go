@@ -94,3 +94,37 @@ func TestDashboardConfigPreactBoundary(t *testing.T) {
 		}
 	}
 }
+
+// The footer's Open PRs knobs are only reachable from the Config tab, so the
+// markup control, its load binding and its save binding must all exist — a
+// control the adapter never reads silently discards whatever the operator
+// typed.
+func TestDashboardConfigOpenPRControlsRoundTrip(t *testing.T) {
+	read := func(name string) string {
+		t.Helper()
+		data, err := fs.ReadFile(dashboardAssetsFS, name)
+		if err != nil {
+			t.Fatalf("reading %s: %v", name, err)
+		}
+		return string(data)
+	}
+	markup := read("js/config-form-markup.js")
+	adapter := read("js/config-form-adapter.js")
+	for _, needle := range []string{
+		`id="cfg-dashboard-always-show-open-prs"`,
+		`id="cfg-dashboard-recent-pr-window-days"`,
+	} {
+		if !strings.Contains(markup, needle) {
+			t.Errorf("Config markup missing Open PRs control %q", needle)
+		}
+		id := strings.TrimSuffix(strings.TrimPrefix(needle, `id="`), `"`)
+		if got := strings.Count(adapter, "#"+id); got < 2 {
+			t.Errorf("Config adapter references %q %d times; it must both load and save it", id, got)
+		}
+	}
+	for _, needle := range []string{"dashboard.always_show_open_prs", "dashboard.recent_pr_window_days"} {
+		if !strings.Contains(adapter, needle) {
+			t.Errorf("Config adapter never writes %q", needle)
+		}
+	}
+}

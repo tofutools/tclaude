@@ -794,15 +794,34 @@ when the branch has a pull request a `#<num>` link to it is shown alongside.
 Branch/PR links resolve in the background (cached, best-effort) and are simply
 absent for a non-GitHub repo or when `gh` is unavailable.
 
-The fixed footer also shows an **Open PRs** count when the active GitHub
-identity has authored pull requests open across any repository. Hover previews
-the list; click/tap or keyboard activation pins it while you inspect or filter
-it. The popover puts failing and running checks first, identifies the active
-agent attached to a PR when one exists, and can narrow to PRs needing attention
-or PRs with no active agent. Its GitHub search link is the escape hatch for the
+The fixed footer also shows an **Open PRs** count for pull requests the active
+GitHub identity has authored across any repository. Hover previews the list;
+click/tap or keyboard activation pins it while you inspect or filter it. The
+popover puts failing and running checks first, identifies the active agent
+attached to a PR when one exists, and can narrow to PRs needing attention or
+PRs with no active agent. Its GitHub search link is the escape hatch for the
 complete list when the bounded dashboard result is truncated. The daemon polls
 and caches this list in the background; the two-second dashboard snapshot never
 runs `gh` itself.
+
+The indicator is **permanent by default**: it stays in the footer at zero open
+PRs (rendered muted rather than as a live counter), so it is a fixed place to
+look rather than something that appears and disappears as the last PR merges.
+Set `dashboard.always_show_open_prs` to `false` (Config tab → Dashboard → Open
+PRs indicator) to go back to showing it only while something is open. Either
+way it stays hidden until the daemon has resolved a GitHub identity — with no
+`gh` login there is nothing to count.
+
+The popover carries one more filter, **Closed Nd**, listing pull requests you
+merged or closed within `dashboard.recent_pr_window_days` (default `3`, max
+`30`). It is deliberately a separate list: recently closed PRs never enter the
+open list, the footer count, or the attention/unattached tallies, and they are
+dotted by their terminal state (purple merged, red closed) instead of by CI
+state. The recent page is capped like the open one, and says so ("Showing the
+first N") rather than presenting the cap as a complete count. Setting the
+window to `0` removes the filter and stops the daemon from searching for
+closed PRs at all. Narrowing the window applies on the next
+dashboard poll; widening it takes effect on the next background search.
 
 Each PR link carries a **CI indicator** — a compact `n/m` pill coloured green
 (passing), red (failing) or amber (something still running). Skipped checks are

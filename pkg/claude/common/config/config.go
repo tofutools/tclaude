@@ -493,6 +493,27 @@ type DashboardConfig struct {
 	// snapshot each poll and toggles body.hscroll-follow; it replaces the old
 	// per-browser header toggle button. See (*Config).HScrollFollow.
 	HScrollFollow *bool `json:"hscroll_follow,omitempty"`
+	// AlwaysShowOpenPRs keeps the fixed footer's "Open PRs" indicator
+	// mounted even when the active GitHub identity has no open pull requests
+	// at all. Default true: the indicator is a permanent, glanceable entry
+	// point to the popover (which also carries the recently closed/merged
+	// list), so it should not appear and disappear as the last PR merges.
+	// An explicit false restores the older behaviour of showing it only
+	// while at least one authored PR is open. Either way the indicator stays
+	// hidden until the daemon has actually resolved a GitHub identity — a
+	// permanent "Open PRs 0" would be a lie when `gh` is missing or logged
+	// out. A *bool so absent (the default) is distinguishable from an
+	// explicit false. See (*Config).AlwaysShowOpenPRs.
+	AlwaysShowOpenPRs *bool `json:"always_show_open_prs,omitempty"`
+	// RecentPRWindowDays bounds the footer popover's "Recently closed"
+	// filter: authored pull requests merged or closed within this many days
+	// back. Default 3 (absent / nil). 0 disables the filter entirely and the
+	// daemon then stops searching for closed PRs at all; larger values are
+	// clamped to RecentPRWindowDaysMax so a hand-edited config cannot ask
+	// GitHub for an unbounded history every poll. A *int so an explicit 0
+	// (off) is distinguishable from an absent key (default). See
+	// (*Config).RecentPRWindowDays.
+	RecentPRWindowDays *int `json:"recent_pr_window_days,omitempty"`
 	// GroupQuickOptions selects how the editable "quick option" chips in each
 	// group <summary> header (📝 description, 📁 default dir, 🧠 default
 	// profile, 🔗 links) are displayed — one of GroupQuickOptions{Hover,
@@ -1377,6 +1398,43 @@ func (c *Config) HScrollFollow() bool {
 		return true
 	}
 	return *c.Dashboard.HScrollFollow
+}
+
+// RecentPRWindowDaysDefault / RecentPRWindowDaysMax bound the footer
+// popover's "recently closed" lookback — config
+// dashboard.recent_pr_window_days.
+const (
+	RecentPRWindowDaysDefault = 3
+	RecentPRWindowDaysMax     = 30
+)
+
+// AlwaysShowOpenPRs reports whether the dashboard footer's Open PRs
+// indicator stays mounted with zero open pull requests — config
+// dashboard.always_show_open_prs. Default true (absent block / nil pointer);
+// only an explicit "always_show_open_prs": false restores the show-only-when-
+// non-empty behaviour. Nil-safe on the receiver so callers need no guard.
+func (c *Config) AlwaysShowOpenPRs() bool {
+	if c == nil || c.Dashboard == nil || c.Dashboard.AlwaysShowOpenPRs == nil {
+		return true
+	}
+	return *c.Dashboard.AlwaysShowOpenPRs
+}
+
+// RecentPRWindowDays reports the lookback, in days, for the footer popover's
+// "recently closed" pull-request filter — config
+// dashboard.recent_pr_window_days. Default RecentPRWindowDaysDefault (absent
+// block / nil pointer), 0 means the filter is off, and anything above
+// RecentPRWindowDaysMax (or negative) is clamped into range. Nil-safe on the
+// receiver so callers need no guard.
+func (c *Config) RecentPRWindowDays() int {
+	if c == nil || c.Dashboard == nil || c.Dashboard.RecentPRWindowDays == nil {
+		return RecentPRWindowDaysDefault
+	}
+	days := *c.Dashboard.RecentPRWindowDays
+	if days < 0 {
+		return 0
+	}
+	return min(days, RecentPRWindowDaysMax)
 }
 
 // normalizeGroupQuickOptions returns s when it's a known mode, else ""

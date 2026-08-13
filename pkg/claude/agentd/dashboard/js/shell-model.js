@@ -134,24 +134,38 @@ export function footerMetaView(snapshot) {
   };
 }
 
+const PR_URL_RE = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*(?:\/.*)?$/;
+
 export function authoredOpenPRsView(snapshot, filter = 'all') {
   const source = snapshot?.authored_open_prs;
-  if (!source?.available) return { available: false, items: [], total: 0 };
-  const all = (source.items || []).filter((pr) => /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*(?:\/.*)?$/.test(pr?.url || ''));
+  if (!source?.available) return { available: false, items: [], total: 0, recentCount: 0, recentWindowDays: 0 };
+  const sane = (list) => (list || []).filter((pr) => PR_URL_RE.test(pr?.url || ''));
+  const all = sane(source.items);
+  // The recent list is deliberately kept out of `all`: the trigger count, the
+  // attention/unattached tallies and their filters are about OPEN work, and a
+  // merged PR must never inflate them.
+  const recentWindowDays = Math.max(0, Number(source.recent_window_days || 0));
+  const recent = recentWindowDays > 0 ? sane(source.recent) : [];
   const needsAttention = (pr) => ['failing', 'pending'].includes(pr?.checks?.state);
-  const filtered = all.filter((pr) => {
+  const showingRecent = filter === 'recent' && recentWindowDays > 0;
+  const filtered = showingRecent ? recent : all.filter((pr) => {
     if (filter === 'attention') return needsAttention(pr);
     if (filter === 'unattached') return !pr?.agent_id;
     return true;
   });
+  const searchURL = (raw) => (/^https:\/\/github\.com\//.test(raw || '') ? raw : '');
   return {
     available: true,
+    alwaysShow: !!source.always_show,
     total: Number(source.total || all.length),
-    truncated: !!source.truncated,
+    truncated: showingRecent ? !!source.recent_truncated : !!source.truncated,
     updatedAt: source.updated_at || '',
-    searchURL: /^https:\/\/github\.com\//.test(source.search_url || '') ? source.search_url : '',
+    searchURL: showingRecent ? searchURL(source.recent_search_url) : searchURL(source.search_url),
     attention: all.filter(needsAttention).length,
     unattached: all.filter((pr) => !pr?.agent_id).length,
+    recentCount: recent.length,
+    recentWindowDays,
+    showingRecent,
     items: filtered,
   };
 }

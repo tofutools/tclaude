@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -20,13 +21,21 @@ const (
 	authoredOpenPRMaxBackoff   = 5 * time.Minute
 	authoredOpenPRLimit        = 100
 	authoredOpenPRTitleMax     = 240
+	// authoredRecentPRLimit bounds the second (recently closed/merged) search.
+	// The recent list is a "what did I just land" glance, not an archive, so it
+	// stays well below the open-PR page size.
+	authoredRecentPRLimit = 50
 )
 
 // One GraphQL search returns the operator's cross-repository PR list and the
 // head commit's check rollup. That keeps this daemon-wide feature at one
 // GitHub request per poll instead of one gh subprocess per open PR.
-const authoredOpenPRGraphQLQuery = `query($q:String!,$first:Int!){
-  search(query:$q,type:ISSUE,first:$first){
+//
+// The open search is a shared fragment because BOTH query shapes below embed
+// it, and the two-search shape is the one a default configuration actually
+// runs — a second copy would silently drift the moment someone edited the
+// rollup selection here.
+const authoredOpenPRSearchFragment = `  search(query:$q,type:ISSUE,first:$first){
     issueCount
     nodes{
       ... on PullRequest{
@@ -37,6 +46,26 @@ const authoredOpenPRGraphQLQuery = `query($q:String!,$first:Int!){
           ... on CheckRun{name status conclusion detailsUrl startedAt completedAt}
           ... on StatusContext{context state targetUrl description createdAt}
         }}}}}}
+      }
+    }
+  }`
+
+const authoredOpenPRGraphQLQuery = "query($q:String!,$first:Int!){\n" +
+	authoredOpenPRSearchFragment + "\n}"
+
+// authoredRecentPRGraphQLQuery adds a second aliased search when the "recently
+// closed" window is enabled, so the poller still makes ONE GitHub request per
+// tick. Closed pull requests deliberately carry no check rollup: CI state on
+// something already merged or abandoned is noise, and the rollup is the
+// expensive half of the response.
+const authoredRecentPRGraphQLQuery = "query($q:String!,$first:Int!,$qr:String!,$rfirst:Int!){\n" +
+	authoredOpenPRSearchFragment + `
+  recent: search(query:$qr,type:ISSUE,first:$rfirst){
+    issueCount
+    nodes{
+      ... on PullRequest{
+        number title url isDraft updatedAt state mergedAt closedAt
+        repository{nameWithOwner}
       }
     }
   }
@@ -52,6 +81,11 @@ type dashboardAuthoredOpenPR struct {
 	Checks     *prChecksSummary `json:"checks,omitempty"`
 	AgentID    string           `json:"agent_id,omitempty"`
 	AgentTitle string           `json:"agent_title,omitempty"`
+	// State and ClosedAt are populated only for the recently closed list:
+	// "merged" or "closed", and the RFC3339 instant it reached that state.
+	// Items in the open list leave both empty.
+	State    string `json:"state,omitempty"`
+	ClosedAt string `json:"closed_at,omitempty"`
 }
 
 type dashboardAuthoredOpenPRs struct {
@@ -62,6 +96,28 @@ type dashboardAuthoredOpenPRs struct {
 	Total     int                       `json:"total"`
 	Truncated bool                      `json:"truncated,omitempty"`
 	Items     []dashboardAuthoredOpenPR `json:"items"`
+	// AlwaysShow mirrors config dashboard.always_show_open_prs. It is
+	// resolved when the SNAPSHOT is built, not when the cache is written, so
+	// toggling the knob takes effect on the next dashboard poll instead of
+	// waiting for the next GitHub search.
+	AlwaysShow bool `json:"always_show"`
+	// Recent carries pull requests merged or closed inside the configured
+	// window (dashboard.recent_pr_window_days), newest first. Empty when the
+	// window is 0 (filter disabled). It is a separate list, never merged into
+	// Items, so the open-PR count and filters stay about open work.
+	Recent []dashboardAuthoredOpenPR `json:"recent"`
+	// RecentWindowDays is the resolved lookback the Recent list was built
+	// with. 0 means the "recently closed" filter is off.
+	RecentWindowDays int `json:"recent_window_days"`
+	// RecentSearchURL is the GitHub search escape hatch for the recent list,
+	// mirroring SearchURL for the open one.
+	RecentSearchURL string `json:"recent_search_url,omitempty"`
+	// RecentTruncated reports that GitHub matched more closed pull requests in
+	// the window than authoredRecentPRLimit returned. The popover says so
+	// rather than presenting the cap as a complete count — the search is
+	// ordered by last update, so a truncated page is not even "the N most
+	// recently closed".
+	RecentTruncated bool `json:"recent_truncated,omitempty"`
 }
 
 var authoredOpenPRResolver = liveAuthoredOpenPRResolver
@@ -168,13 +224,9 @@ func liveAuthoredOpenPRResolver() (dashboardAuthoredOpenPRs, error) {
 	// the old identity's private metadata is already hidden; a prior cache for
 	// this same identity may still be served while the poller retries.
 	setAuthoredOpenPRActiveLogin(login)
-	args := []string{
-		"api", "--hostname", "github.com", "graphql",
-		"-f", "query=" + authoredOpenPRGraphQLQuery,
-		"-f", "q=author:" + login + " is:open type:pr sort:updated-desc",
-		"-F", "first=" + strconv.Itoa(authoredOpenPRLimit),
-	}
-	out, err := runInDirWithError("", "gh", args...)
+	cfg, _ := config.Load()
+	windowDays := cfg.RecentPRWindowDays()
+	out, err := runInDirWithError("", "gh", authoredPRSearchArgs(login, windowDays, time.Now())...)
 	if err != nil {
 		return dashboardAuthoredOpenPRs{}, err
 	}
@@ -182,10 +234,40 @@ func liveAuthoredOpenPRResolver() (dashboardAuthoredOpenPRs, error) {
 	if err != nil {
 		return dashboardAuthoredOpenPRs{}, err
 	}
+	view.RecentWindowDays = windowDays
 	for rawURL, info := range checksByURL {
 		savePRChecks(rawURL, info)
 	}
 	return view, nil
+}
+
+// authoredPRSearchArgs builds the `gh api graphql` argv for one poll. It is
+// separated from the subprocess call so the query selection, the search
+// qualifiers and the date arithmetic are unit-testable — a typo in `qr=`
+// would otherwise only show up as a silently empty recent list in production.
+// Every value lands in argv, never in a shell string.
+func authoredPRSearchArgs(login string, windowDays int, now time.Time) []string {
+	query := authoredOpenPRGraphQLQuery
+	extra := []string(nil)
+	if windowDays > 0 {
+		// GitHub's `closed:` qualifier is whole-UTC-day granularity, so the
+		// bound is a date. The snapshot re-filters to the exact instant window
+		// (filterRecentAuthoredPRs), which keeps a same-day close visible
+		// without this query having to reason about hours.
+		since := now.UTC().AddDate(0, 0, -windowDays).Format("2006-01-02")
+		query = authoredRecentPRGraphQLQuery
+		extra = []string{
+			"-f", "qr=author:" + login + " is:closed type:pr closed:>=" + since + " sort:updated-desc",
+			"-F", "rfirst=" + strconv.Itoa(authoredRecentPRLimit),
+		}
+	}
+	args := []string{
+		"api", "--hostname", "github.com", "graphql",
+		"-f", "query=" + query,
+		"-f", "q=author:" + login + " is:open type:pr sort:updated-desc",
+		"-F", "first=" + strconv.Itoa(authoredOpenPRLimit),
+	}
+	return append(args, extra...)
 }
 
 func decodeAuthoredOpenPRGraphQL(data []byte, login string) (dashboardAuthoredOpenPRs, map[string]prChecksInfo, error) {
@@ -217,6 +299,22 @@ func decodeAuthoredOpenPRGraphQL(data []byte, login string) (dashboardAuthoredOp
 					} `json:"commits"`
 				} `json:"nodes"`
 			} `json:"search"`
+			Recent struct {
+				IssueCount int `json:"issueCount"`
+				Nodes      []struct {
+					Number     int    `json:"number"`
+					Title      string `json:"title"`
+					URL        string `json:"url"`
+					IsDraft    bool   `json:"isDraft"`
+					UpdatedAt  string `json:"updatedAt"`
+					State      string `json:"state"`
+					MergedAt   string `json:"mergedAt"`
+					ClosedAt   string `json:"closedAt"`
+					Repository struct {
+						NameWithOwner string `json:"nameWithOwner"`
+					} `json:"repository"`
+				} `json:"nodes"`
+			} `json:"recent"`
 		} `json:"data"`
 		Errors []struct {
 			Message string `json:"message"`
@@ -236,6 +334,7 @@ func decodeAuthoredOpenPRGraphQL(data []byte, login string) (dashboardAuthoredOp
 		Total:     payload.Data.Search.IssueCount,
 		Truncated: payload.Data.Search.IssueCount > authoredOpenPRLimit,
 		Items:     []dashboardAuthoredOpenPR{},
+		Recent:    []dashboardAuthoredOpenPR{},
 	}
 	checksByURL := make(map[string]prChecksInfo)
 	for _, node := range payload.Data.Search.Nodes {
@@ -243,12 +342,8 @@ func decodeAuthoredOpenPRGraphQL(data []byte, login string) (dashboardAuthoredOp
 		if !ok || node.Number <= 0 || ref.number != node.Number {
 			continue
 		}
-		title := strings.TrimSpace(node.Title)
-		if len(title) > authoredOpenPRTitleMax {
-			title = title[:authoredOpenPRTitleMax] + "…"
-		}
 		item := dashboardAuthoredOpenPR{
-			Number: node.Number, URL: strings.TrimSpace(node.URL), Title: title,
+			Number: node.Number, URL: strings.TrimSpace(node.URL), Title: truncateAuthoredPRTitle(node.Title),
 			Repository: ref.repo, Draft: node.IsDraft, UpdatedAt: node.UpdatedAt,
 		}
 		if len(node.Commits.Nodes) > 0 && node.Commits.Nodes[0].Commit.StatusCheckRollup != nil {
@@ -270,7 +365,44 @@ func decodeAuthoredOpenPRGraphQL(data []byte, login string) (dashboardAuthoredOp
 		}
 		return view.Items[i].UpdatedAt > view.Items[j].UpdatedAt
 	})
+	for _, node := range payload.Data.Recent.Nodes {
+		ref, ok := githubPRRefFromURL(node.URL)
+		if !ok || node.Number <= 0 || ref.number != node.Number {
+			continue
+		}
+		state := "closed"
+		closedAt := strings.TrimSpace(node.ClosedAt)
+		if strings.EqualFold(strings.TrimSpace(node.State), "MERGED") {
+			state = "merged"
+			if merged := strings.TrimSpace(node.MergedAt); merged != "" {
+				closedAt = merged
+			}
+		}
+		view.Recent = append(view.Recent, dashboardAuthoredOpenPR{
+			Number: node.Number, URL: strings.TrimSpace(node.URL),
+			Title: truncateAuthoredPRTitle(node.Title), Repository: ref.repo,
+			Draft: node.IsDraft, UpdatedAt: node.UpdatedAt,
+			State: state, ClosedAt: closedAt,
+		})
+	}
+	view.RecentTruncated = payload.Data.Recent.IssueCount > authoredRecentPRLimit
+	// Newest first: the recent list answers "what did I just land", so recency
+	// is the only useful order — unlike the open list, nothing here needs
+	// attention ranking.
+	sort.SliceStable(view.Recent, func(i, j int) bool {
+		return view.Recent[i].ClosedAt > view.Recent[j].ClosedAt
+	})
 	return view, checksByURL, nil
+}
+
+// truncateAuthoredPRTitle bounds a PR title before it reaches the snapshot,
+// so one pathological title cannot bloat every dashboard poll.
+func truncateAuthoredPRTitle(raw string) string {
+	title := strings.TrimSpace(raw)
+	if len(title) > authoredOpenPRTitleMax {
+		return title[:authoredOpenPRTitleMax] + "…"
+	}
+	return title
 }
 
 func authoredOpenPRAttentionRank(pr dashboardAuthoredOpenPR) int {
@@ -320,25 +452,69 @@ func reconcileTruncatedPRChecks(summary *prChecksSummary, rollupState string, to
 	}
 }
 
-func loadAuthoredOpenPRsSnapshot() dashboardAuthoredOpenPRs {
-	empty := dashboardAuthoredOpenPRs{Items: []dashboardAuthoredOpenPR{}}
+func loadAuthoredOpenPRsSnapshot(cfg *config.Config) dashboardAuthoredOpenPRs {
+	blank := func() dashboardAuthoredOpenPRs {
+		return dashboardAuthoredOpenPRs{
+			Items:      []dashboardAuthoredOpenPR{},
+			Recent:     []dashboardAuthoredOpenPR{},
+			AlwaysShow: cfg.AlwaysShowOpenPRs(),
+		}
+	}
+	view := blank()
 	authoredOpenPRActiveLogin.RLock()
 	login := authoredOpenPRActiveLogin.login
 	authoredOpenPRActiveLogin.RUnlock()
 	if !isGitHubOwnerSlug(login) {
-		return empty
+		return view
 	}
 	row, err := db.LoadGitCache(authoredOpenPRCacheKey(login))
-	if err != nil || row == nil || json.Unmarshal(row.Data, &empty) != nil {
-		return dashboardAuthoredOpenPRs{Items: []dashboardAuthoredOpenPR{}}
+	if err != nil || row == nil || json.Unmarshal(row.Data, &view) != nil {
+		return blank()
 	}
-	if !strings.EqualFold(empty.Login, login) {
-		return dashboardAuthoredOpenPRs{Items: []dashboardAuthoredOpenPR{}}
+	if !strings.EqualFold(view.Login, login) {
+		return blank()
 	}
-	if empty.Items == nil {
-		empty.Items = []dashboardAuthoredOpenPR{}
+	if view.Items == nil {
+		view.Items = []dashboardAuthoredOpenPR{}
 	}
-	return empty
+	// The two knobs are resolved here rather than at poll time so a config
+	// change lands on the next 2-second dashboard poll instead of waiting for
+	// the next GitHub search. Narrowing the window therefore takes effect
+	// immediately; widening it still needs a poll to fetch the older PRs.
+	view.AlwaysShow = cfg.AlwaysShowOpenPRs()
+	// A widened window cannot be honoured from a cache fetched under the old
+	// one, so the snapshot advertises the narrower of the two until the poller
+	// catches up — better than promising 14 days and listing 3.
+	windowDays := min(cfg.RecentPRWindowDays(), view.RecentWindowDays)
+	view.RecentWindowDays = windowDays
+	view.Recent = filterRecentAuthoredPRs(view.Recent, windowDays, time.Now())
+	view.RecentSearchURL = ""
+	if windowDays > 0 {
+		view.RecentSearchURL = "https://github.com/pulls?q=" + url.QueryEscape(
+			"is:closed is:pr author:"+login+" closed:>="+
+				time.Now().UTC().AddDate(0, 0, -windowDays).Format("2006-01-02"))
+	}
+	return view
+}
+
+// filterRecentAuthoredPRs drops cached entries that have aged out of (or were
+// never inside) the configured window. A cached list can outlive a narrowed
+// window by up to one poll interval, and GitHub's date-granular `closed:`
+// bound is deliberately generous, so the snapshot enforces the exact instant.
+func filterRecentAuthoredPRs(items []dashboardAuthoredOpenPR, windowDays int, now time.Time) []dashboardAuthoredOpenPR {
+	out := []dashboardAuthoredOpenPR{}
+	if windowDays <= 0 {
+		return out
+	}
+	cutoff := now.Add(-time.Duration(windowDays) * 24 * time.Hour)
+	for _, item := range items {
+		closed, err := time.Parse(time.RFC3339, strings.TrimSpace(item.ClosedAt))
+		if err != nil || closed.Before(cutoff) {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func authoredOpenPRCacheKey(login string) string {
@@ -367,10 +543,12 @@ func associateAuthoredOpenPRs(view dashboardAuthoredOpenPRs, agents []dashboardA
 			}
 		}
 	}
-	for i := range view.Items {
-		if ref, ok := byPR[prStateKey(view.Items[i].URL)]; ok {
-			view.Items[i].AgentID = ref.id
-			view.Items[i].AgentTitle = ref.title
+	for _, list := range [][]dashboardAuthoredOpenPR{view.Items, view.Recent} {
+		for i := range list {
+			if ref, ok := byPR[prStateKey(list[i].URL)]; ok {
+				list[i].AgentID = ref.id
+				list[i].AgentTitle = ref.title
+			}
 		}
 	}
 	return view
