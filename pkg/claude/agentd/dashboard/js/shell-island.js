@@ -205,7 +205,7 @@ function OpenPRs({ state }) {
   // open list, so the Open chip — not a vanished chip — must read as active.
   const openFilterActive = !view.showingRecent && filter !== 'attention' && filter !== 'unattached';
   return html`
-    <span ref=${rootRef} class=${`open-prs${open ? ' is-open' : ''}${view.total > 0 ? '' : ' is-empty'}`}
+    <span ref=${rootRef} class=${`open-prs${open ? ' is-open' : ''}${view.total > 0 ? '' : ' is-empty'}${view.attention > 0 ? ' has-attention' : ''}`}
       onMouseEnter=${enter} onMouseLeave=${leave}>
       <button type="button" class="open-prs-trigger" aria-haspopup="dialog"
         aria-expanded=${open ? 'true' : 'false'} aria-controls="open-prs-popover"
