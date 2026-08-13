@@ -95,12 +95,14 @@ function UsageSeriesCard({ series, payload, span, onSetHours, onSetLookahead, on
   const resetCount = series.reset_count ?? series.resets?.length ?? 0;
   const windowLabel = usageWindowScopeLabel(series, wizard);
   const scope = usageScopeLabel(series, wizard);
+  const sampled = latest ? `${w('sampled', 'scried')} ${formatUsageTime(latest.at, now)}` : w('no sample', 'no reading');
+  const reset = latest?.resets_at ? formatUsageResetCountdown(latest.resets_at, now, wizard) : '';
   return html`<article class="usage-series-card">
     <div class="usage-card-header">
       <div><span class="usage-provider">${usageProviderLabel(series.provider)}</span>
         <h3>${windowLabel}</h3></div>
       <div class="usage-current"><strong>${latest ? `${latest.pct.toFixed(1)}%` : '—'}</strong>
-        <span>${latest ? `${w('sampled', 'scried')} ${formatUsageTime(latest.at, now)}` : w('no sample', 'no reading')} · ${formatUsageResetCountdown(latest?.resets_at, now, wizard)}</span></div>
+        <span>${sampled}${reset ? ` · ${reset}` : ''}</span></div>
     </div>
     <${UsageSpanControls} scope=${scope} span=${span} onSetHours=${onSetHours} onSetLookahead=${onSetLookahead} wizard=${wizard} />
     <${UsageHistoryChart} series=${series} from=${series.from ?? payload.from} generatedAt=${payload.generated_at}

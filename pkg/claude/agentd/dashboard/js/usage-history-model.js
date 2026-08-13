@@ -90,7 +90,7 @@ export function formatUsageDuration(milliseconds) {
 // strings are safe for the whole tab and one mechanism covers it.
 export function formatUsageResetCountdown(value, now = Date.now(), wizard = false) {
   const at = new Date(value).getTime();
-  if (!Number.isFinite(at)) return wizard ? 'replenishment unknown' : 'reset unknown';
+  if (!Number.isFinite(at)) return '';
   const delta = at - now;
   if (Math.abs(delta) <= 60_000) return wizard ? 'replenishing now' : 'resets now';
   if (wizard) {

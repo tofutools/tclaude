@@ -84,7 +84,7 @@ function nearestCandidate(best, candidate) {
 // usage-history-model.js for why these are plain strings rather than the
 // two-spans `Words` trick (SVG <text> cannot hold a <span> twin).
 function beforeResetLabel(resetAt, time, wizard = false) {
-  if (resetAt === null) return wizard ? 'hour of replenishment unknown' : 'reset time unknown';
+  if (resetAt === null) return '';
   const delta = resetAt - time;
   if (Math.abs(delta) <= 60_000) return wizard ? 'at replenishment' : 'at reset';
   const word = wizard ? 'replenishment' : 'reset';
@@ -101,7 +101,7 @@ function relativeMarkerTime(at, now, wizard = false) {
 }
 
 function resetTimingLabel(resetAt, now, wizard = false) {
-  if (resetAt === null) return wizard ? 'The hour of replenishment is unknown' : 'Reset time unknown';
+  if (resetAt === null) return '';
   const delta = resetAt - now;
   if (Math.abs(delta) <= 60_000) return wizard ? 'The reserves replenish now' : 'Quota resets now';
   if (wizard) {
@@ -179,7 +179,7 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
     });
   };
   const showTooltip = (anchorX, anchorY, tone, title, lines, pointAt = null) => {
-    setTooltip({ x: anchorX, y: anchorY, tone, title, lines, pointAt });
+    setTooltip({ x: anchorX, y: anchorY, tone, title, lines: lines.filter(Boolean), pointAt });
   };
   const hideTooltip = () => setTooltip(null);
   const togglePoint = (point) => {
