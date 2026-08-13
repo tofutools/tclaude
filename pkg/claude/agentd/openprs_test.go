@@ -29,9 +29,7 @@ func TestDecodeAuthoredOpenPRGraphQLSortsAttentionAndCachesChecks(t *testing.T) 
 
 func TestPollAndAssociateAuthoredOpenPRs(t *testing.T) {
 	setupTestDB(t)
-	authoredOpenPRActiveLogin.Lock()
-	authoredOpenPRActiveLogin.login = ""
-	authoredOpenPRActiveLogin.Unlock()
+	setAuthoredOpenPRActiveLogin("")
 	previous := authoredOpenPRResolver
 	t.Cleanup(func() { authoredOpenPRResolver = previous })
 	authoredOpenPRResolver = func() (dashboardAuthoredOpenPRs, error) {
@@ -66,14 +64,10 @@ func TestAuthoredOpenPRCacheRequiresCurrentProcessIdentity(t *testing.T) {
 	now := time.Now()
 	data := []byte(`{"available":true,"login":"old-user","total":1,"items":[{"number":1,"title":"private","url":"https://github.com/private/repo/pull/1"}]}`)
 	require.NoError(t, db.SaveGitCache(authoredOpenPRCacheKey("old-user"), data, now))
-	authoredOpenPRActiveLogin.Lock()
-	authoredOpenPRActiveLogin.login = ""
-	authoredOpenPRActiveLogin.Unlock()
+	setAuthoredOpenPRActiveLogin("")
 	assert.False(t, loadAuthoredOpenPRsSnapshot().Available,
 		"a daemon restart must not publish the previous credential's private metadata")
-	authoredOpenPRActiveLogin.Lock()
-	authoredOpenPRActiveLogin.login = "new-user"
-	authoredOpenPRActiveLogin.Unlock()
+	setAuthoredOpenPRActiveLogin("new-user")
 	assert.False(t, loadAuthoredOpenPRsSnapshot().Available,
 		"a different active identity must never load the previous identity's cache")
 }

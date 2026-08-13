@@ -153,17 +153,21 @@ func pollAuthoredOpenPRs() error {
 	if err := db.SaveGitCache(authoredOpenPRCacheKey(view.Login), data, now); err != nil {
 		return fmt.Errorf("save authored open PR cache: %w", err)
 	}
-	authoredOpenPRActiveLogin.Lock()
-	authoredOpenPRActiveLogin.login = view.Login
-	authoredOpenPRActiveLogin.Unlock()
+	setAuthoredOpenPRActiveLogin(view.Login)
 	return nil
 }
 
 func liveAuthoredOpenPRResolver() (dashboardAuthoredOpenPRs, error) {
 	login, ok := cachedGitHubLogin()
 	if !ok {
+		setAuthoredOpenPRActiveLogin("")
 		return dashboardAuthoredOpenPRs{}, fmt.Errorf("resolve active GitHub login")
 	}
+	// Switch the snapshot's cache namespace as soon as the local credential
+	// identity is known, before the network search. If the request then fails,
+	// the old identity's private metadata is already hidden; a prior cache for
+	// this same identity may still be served while the poller retries.
+	setAuthoredOpenPRActiveLogin(login)
 	args := []string{
 		"api", "--hostname", "github.com", "graphql",
 		"-f", "query=" + authoredOpenPRGraphQLQuery,
@@ -339,6 +343,12 @@ func loadAuthoredOpenPRsSnapshot() dashboardAuthoredOpenPRs {
 
 func authoredOpenPRCacheKey(login string) string {
 	return authoredOpenPRCachePrefix + strings.ToLower(strings.TrimSpace(login))
+}
+
+func setAuthoredOpenPRActiveLogin(login string) {
+	authoredOpenPRActiveLogin.Lock()
+	authoredOpenPRActiveLogin.login = strings.TrimSpace(login)
+	authoredOpenPRActiveLogin.Unlock()
 }
 
 func associateAuthoredOpenPRs(view dashboardAuthoredOpenPRs, agents []dashboardAgent) dashboardAuthoredOpenPRs {
