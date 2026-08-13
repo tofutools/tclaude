@@ -45,7 +45,7 @@ func TestDashboardShellPreactBoundary(t *testing.T) {
 	for _, host := range []string{
 		"shell-activity-root", "shell-usage-root", "shell-status-root",
 		"shell-notify-root", "shell-credits-root", "shell-messages-badge-root",
-		"shell-meta-root", "shell-disconnect-root", "shell-confirm-root",
+		"shell-meta-root", "shell-open-prs-root", "shell-disconnect-root", "shell-confirm-root",
 		"shell-toast-root", "shell-palette-button-root", "shell-palette-modal-root",
 	} {
 		must(html, `id="`+host+`"`, "the shell has an explicit stable host")

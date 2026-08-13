@@ -111,6 +111,28 @@ export function footerMetaView(snapshot) {
   };
 }
 
+export function authoredOpenPRsView(snapshot, filter = 'all') {
+  const source = snapshot?.authored_open_prs;
+  if (!source?.available) return { available: false, items: [], total: 0 };
+  const all = (source.items || []).filter((pr) => /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*(?:\/.*)?$/.test(pr?.url || ''));
+  const needsAttention = (pr) => ['failing', 'pending'].includes(pr?.checks?.state);
+  const filtered = all.filter((pr) => {
+    if (filter === 'attention') return needsAttention(pr);
+    if (filter === 'unattached') return !pr?.agent_id;
+    return true;
+  });
+  return {
+    available: true,
+    total: Number(source.total || all.length),
+    truncated: !!source.truncated,
+    updatedAt: source.updated_at || '',
+    searchURL: /^https:\/\/github\.com\//.test(source.search_url || '') ? source.search_url : '',
+    attention: all.filter(needsAttention).length,
+    unattached: all.filter((pr) => !pr?.agent_id).length,
+    items: filtered,
+  };
+}
+
 // activityMembersForVisibility preserves the top bar's status overview while
 // respecting the Groups tab's view policy. A hidden group still contributes
 // live agents (the header is global, not a mirror of the current tab), but its

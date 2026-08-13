@@ -14,6 +14,7 @@ const shellDescriptor = createIslandDescriptor({
     creditsLeaderboardHost: '#vegas-leaderboard',
     messagesBadgeHost: '#shell-messages-badge-root',
     metaHost: '#shell-meta-root',
+    openPRsHost: '#shell-open-prs-root',
     disconnectHost: '#shell-disconnect-root',
     confirmHost: '#shell-confirm-root',
     toastHost: '#shell-toast-root',
