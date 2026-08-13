@@ -172,7 +172,9 @@ footer {
   width: min(470px, calc(100vw - 24px)); height: 10px;
 }
 body.dock-open .open-prs-popover { right: calc(var(--dock-w) + 12px); }
-body.dock-open .open-prs.is-open::before { right: calc(var(--dock-w) + 12px); }
+body.dock-open .open-prs.is-open::before {
+  right: 12px; width: calc(var(--dock-w) + min(470px, calc(100vw - 24px)));
+}
 .open-prs-head { display: flex; align-items: center; gap: 8px; padding: 13px 14px 10px; border-bottom: 1px solid #2a3340; }
 .open-prs-head strong { font-size: 13px; }
 .open-prs-age { margin-left: auto; color: #7d8590; font-size: 10px; }
