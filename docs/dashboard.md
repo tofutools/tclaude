@@ -860,6 +860,12 @@ group. (Turning the agent on/off is the status dot's job — see above.
 Permanently *deleting* an agent is offered on the virtual Ungrouped
 group's rows, not on grouped rows — see below.)
 
+For a live Codex agent whose service tier is known, the same ⚙ menu offers
+**enable fast mode** or **disable fast mode** according to its current state.
+The server re-checks that state before sending Codex's `/fast` toggle, so a
+stale menu cannot knowingly reverse an already-completed change. The item is
+disabled while the agent is offline or before Codex has reported its tier.
+
 The member ⚙ menu's ordinary **↻ restart** stops and resumes the same
 conversation under its current durable launch configuration. This is the
 quick way to pick up changes to assigned sandbox profiles: profile selection

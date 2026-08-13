@@ -14,8 +14,12 @@ import (
 )
 
 func postDashboardFastDisable(t *testing.T, handler http.Handler, convID string) *httptest.ResponseRecorder {
+	return postDashboardFastMode(t, handler, convID, "disable")
+}
+
+func postDashboardFastMode(t *testing.T, handler http.Handler, convID, direction string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, "/api/agents/"+convID+"/fast-mode/disable", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/agents/"+convID+"/fast-mode/"+direction, nil)
 	req.Header.Set("Origin", "http://127.0.0.1:0")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, agentd.AsHumanPeer(req))
@@ -67,6 +71,20 @@ func TestDashboardCodexFastMode_LiveIndicatorAndDisable(t *testing.T) {
 	rec = postDashboardFastDisable(t, handler, conv)
 	assert.Equal(t, http.StatusConflict, rec.Code, "body=%s", rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "already_off")
+
+	// The same guarded toggle works in the opposite direction from the row
+	// menu, and refuses a duplicate enable after Codex reports the change.
+	cx.OnInput("/fast", func(c *testharness.CodexSim, _ string) bool {
+		require.NoError(t, c.WriteThreadSettingsApplied("priority"))
+		return true
+	})
+	rec = postDashboardFastMode(t, handler, conv, "enable")
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	f.AssertSentContains("tmux-fast-live:0.0", "/fast", 10*time.Second)
+
+	rec = postDashboardFastMode(t, handler, conv, "enable")
+	assert.Equal(t, http.StatusConflict, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "already_on")
 }
 
 func TestDashboardCodexFastMode_ExplicitLaunchSeedsIndicatorUntilRuntimeEvent(t *testing.T) {
@@ -123,6 +141,9 @@ func TestDashboardCodexFastMode_UnknownRefusesWithoutInference(t *testing.T) {
 	assert.Nil(t, row.State.FastMode, "an inherited launch remains unknown without a live event")
 
 	rec := postDashboardFastDisable(t, handler, conv)
+	assert.Equal(t, http.StatusConflict, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "unknown")
+	rec = postDashboardFastMode(t, handler, conv, "enable")
 	assert.Equal(t, http.StatusConflict, rec.Code, "body=%s", rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "unknown")
 	for _, sent := range f.World.Tmux.Sent() {
