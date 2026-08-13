@@ -688,8 +688,8 @@ func snapshotSudoTrayState() (int, string) {
 	return len(rows), fmt.Sprintf("soonest expires in %s", rem)
 }
 
-// makeTrayIcon returns a small filled-circle icon. PNG everywhere
-// except Windows, which needs ICO-wrapped PNG for Shell_NotifyIcon.
+// makeTrayIcon returns the status-coloured tclaude agent-network icon. PNG
+// everywhere except Windows, which needs ICO-wrapped PNG for Shell_NotifyIcon.
 
 func makeTrayIcon(c color.RGBA) []byte {
 	pngBytes := makeIconPNG(c)
@@ -704,6 +704,15 @@ func makeIconPNG(c color.RGBA) []byte {
 	img := image.NewRGBA(image.Rect(0, 0, size, size))
 	center := float64(size) / 2
 	radius := float64(size)/2 - 1
+	white := color.RGBA{R: 255, G: 255, B: 255, A: 255}
+
+	// The three outer nodes represent coordinated agents; the ringed middle
+	// node is their shared coordinator. Keep this geometry deliberately bold:
+	// tray hosts commonly display the 22px source at only 16px.
+	topX, topY := center, 5.5
+	midX, midY := center, 10.5
+	leftX, leftY := 6.0, 16.0
+	rightX, rightY := 16.0, 16.0
 	for y := 0; y < size; y++ {
 		for x := 0; x < size; x++ {
 			dx := float64(x) - center + 0.5
@@ -713,6 +722,17 @@ func makeIconPNG(c color.RGBA) []byte {
 			}
 		}
 	}
+
+	// Connections go down first so their ends tuck cleanly beneath the nodes.
+	drawIconSegment(img, topX, topY, midX, midY, 1.25, white)
+	drawIconSegment(img, midX, midY, leftX, leftY, 1.25, white)
+	drawIconSegment(img, midX, midY, rightX, rightY, 1.25, white)
+	drawIconCircle(img, topX, topY, 2.75, white)
+	drawIconCircle(img, leftX, leftY, 2.75, white)
+	drawIconCircle(img, rightX, rightY, 2.75, white)
+	drawIconCircle(img, midX, midY, 2.65, white)
+	drawIconCircle(img, midX, midY, 1.15, c)
+
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {
 		// Encoding a 22x22 RGBA never fails in practice; an empty PNG
@@ -720,6 +740,45 @@ func makeIconPNG(c color.RGBA) []byte {
 		return nil
 	}
 	return buf.Bytes()
+}
+
+// drawIconCircle draws a small antialias-free disc. At tray scale, whole-pixel
+// edges remain crisper across GTK, Cocoa, and Windows scaling than a blurred
+// vector rasterization.
+func drawIconCircle(img *image.RGBA, cx, cy, radius float64, c color.RGBA) {
+	radiusSquared := radius * radius
+	for y := img.Bounds().Min.Y; y < img.Bounds().Max.Y; y++ {
+		for x := img.Bounds().Min.X; x < img.Bounds().Max.X; x++ {
+			dx := float64(x) + 0.5 - cx
+			dy := float64(y) + 0.5 - cy
+			if dx*dx+dy*dy <= radiusSquared {
+				img.Set(x, y, c)
+			}
+		}
+	}
+}
+
+// drawIconSegment draws a line with round caps by testing each pixel's
+// distance from the nearest point on the segment.
+func drawIconSegment(img *image.RGBA, x1, y1, x2, y2, radius float64, c color.RGBA) {
+	vx, vy := x2-x1, y2-y1
+	lengthSquared := vx*vx + vy*vy
+	radiusSquared := radius * radius
+	for y := img.Bounds().Min.Y; y < img.Bounds().Max.Y; y++ {
+		for x := img.Bounds().Min.X; x < img.Bounds().Max.X; x++ {
+			px, py := float64(x)+0.5, float64(y)+0.5
+			t := ((px-x1)*vx + (py-y1)*vy) / lengthSquared
+			if t < 0 {
+				t = 0
+			} else if t > 1 {
+				t = 1
+			}
+			dx, dy := px-(x1+t*vx), py-(y1+t*vy)
+			if dx*dx+dy*dy <= radiusSquared {
+				img.Set(x, y, c)
+			}
+		}
+	}
 }
 
 // pngToICO wraps a PNG in a single-image ICO container. Windows
