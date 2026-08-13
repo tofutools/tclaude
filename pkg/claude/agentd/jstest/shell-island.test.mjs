@@ -132,6 +132,7 @@ test('footer open PRs gives the pointer one second to reach the popover', async 
   assertAbsent(mounted.container.querySelector('#open-prs-popover'));
 
   const trigger = getByRole(mounted.container, 'button', { name: /Open PRs/ });
+  await harness.act(() => harness.fireEvent(root, 'mouseenter'));
   await harness.act(() => trigger.click());
   await harness.act(() => harness.fireEvent(root, 'mouseleave'));
   await harness.act(() => harness.fireEvent(harness.document.body, 'pointerdown'));
