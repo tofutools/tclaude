@@ -118,12 +118,11 @@ func TestDashboardUsage_CopilotMonthlyQuotaSurfacedInSnapshot(t *testing.T) {
 	newFlow(t)
 
 	now := time.Now().UTC()
-	reset := now.Add(18 * 24 * time.Hour)
 	_, err := db.SaveSubscriptionUsageSample(db.SubscriptionUsageSample{
 		Provider: db.SubscriptionProviderGitHub, ObservedAt: now,
 		Source: "account.getQuota", Windows: []db.SubscriptionUsageWindow{{
 			Name: "monthly", Duration: 30 * 24 * time.Hour,
-			UsedPercent: 58.2, ResetsAt: reset,
+			UsedPercent: 58.2, ResetsAt: now.Add(18 * 24 * time.Hour),
 		}},
 	})
 	require.NoError(t, err)
@@ -133,7 +132,10 @@ func TestDashboardUsage_CopilotMonthlyQuotaSurfacedInSnapshot(t *testing.T) {
 	assert.True(t, snap.Usage.Copilot.Available)
 	require.NotNil(t, snap.Usage.Copilot.Monthly)
 	assert.InDelta(t, 58.2, snap.Usage.Copilot.Monthly.Pct, 1e-9)
-	assert.NotEmpty(t, snap.Usage.Copilot.Monthly.ResetsAt)
+	wantReset := time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC)
+	assert.Equal(t, wantReset.Format(time.RFC3339Nano), snap.Usage.Copilot.Monthly.ResetsAt,
+		"the snapshot ignores old raw reset metadata and uses the documented month boundary")
+	assert.NotEmpty(t, snap.Usage.Copilot.Monthly.Remaining)
 }
 
 // Scenario: subscription usage is "sometimes not available". The

@@ -182,3 +182,37 @@ test('usage chart renders even time ticks and unified immediate tooltips', async
 
   await view.unmount();
 });
+
+test('resetless usage charts omit blank tooltip rows and aria separators', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { UsageHistoryChart } = await harness.importDashboardModule('js/usage-history-chart.js');
+  const now = Date.UTC(2026, 6, 18, 12);
+  const view = await harness.mount(harness.preact.h(UsageHistoryChart, {
+    series: {
+      provider: 'github', window_name: 'monthly',
+      points: [{ at: new Date(now - 60 * 60_000).toISOString(), pct: 7 }],
+      resets: [],
+      forecast: {
+        status: 'projected', rate_pct_per_hour: 1,
+        hits_limit_at: new Date(now + 93 * 60 * 60_000).toISOString(),
+      },
+    },
+    from: new Date(now - 24 * 60 * 60_000).toISOString(),
+    generatedAt: new Date(now).toISOString(),
+    lookaheadHours: 24,
+  }));
+
+  for (const target of view.container.querySelectorAll(
+    '.usage-forecast-hit-target, .usage-now-mark .usage-marker-hit-target, .usage-point-hit-target',
+  )) {
+    const label = target.getAttribute('aria-label');
+    assert.doesNotMatch(label, /;\s*;/, 'missing reset clause leaves no doubled separator');
+    assert.doesNotMatch(label, /;\s*$/, 'missing reset clause leaves no trailing separator');
+  }
+  const forecast = view.container.querySelector('.usage-forecast-hit-target');
+  await harness.act(() => harness.fireEvent(forecast, 'focus'));
+  const tooltip = view.container.querySelector('.usage-chart-tooltip.forecast');
+  assert.equal(tooltip.querySelectorAll('tspan').length, 3, 'title plus two real lines, with no blank reset row');
+  assert.doesNotMatch(tooltip.textContent, /reset|unknown/i);
+  await view.unmount();
+});

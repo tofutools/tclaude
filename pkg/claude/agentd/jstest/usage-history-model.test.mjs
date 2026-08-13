@@ -31,6 +31,7 @@ test('usage prediction copy states lockout duration and unambiguous average rate
     'resets in 6d 23h 17m',
   );
   assert.equal(formatUsageResetCountdown(new Date(now - 60_001).toISOString(), now), 'reset 1m ago');
+  assert.equal(formatUsageResetCountdown('', now), '', 'missing reset metadata adds no confusing unknown/reset copy');
   assert.equal(forecast.headline, 'Prediction: limit hit in 47h (5d 1h before reset)');
   assert.deepEqual(forecast.lines, [
     'Predicted time without quota access: 5d 1h',

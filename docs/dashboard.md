@@ -1778,8 +1778,13 @@ Subscription accounts get an account-wide **Usage** tab once Claude, Codex, or
 GitHub Copilot has supplied a quota reading. Copilot's installed CLI normalizes
 the authenticated account allowance; agentd samples its finite monthly
 premium-request (AIC) quota every 15 minutes. Unlimited Copilot plans have no
-percentage ceiling and therefore add no graph. OpenCode provider/model activity
-also reveals the tab even when it cannot supply a quota reading. It plots the retained
+percentage ceiling and therefore add no graph. The CLI payload's raw timestamp
+is not used as a reset time; Copilot's countdown follows GitHub's
+[documented calendar-month boundary](https://docs.github.com/en/copilot/concepts/billing/usage-based-billing-for-individuals)
+(the first day at 00:00 UTC; GitHub documents the
+[same boundary for legacy premium requests](https://docs.github.com/en/copilot/reference/copilot-billing/request-based-billing-legacy/monitor-premium-requests)). OpenCode
+provider/model activity also reveals the tab even when it cannot supply a quota
+reading. It plots the retained
 15-minute samples as one line chart per provider and quota window, with
 24-hour, 7-day, 30-day, and 90-day history views. A separate 5-hour, 24-hour,
 7-day, or 30-day lookahead controls the future portion of every chart without
