@@ -130,6 +130,13 @@ test('footer open PRs gives the pointer one second to reach the popover', async 
     're-entry cancels the old timer and the final leave gets a full grace period');
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 300)));
   assertAbsent(mounted.container.querySelector('#open-prs-popover'));
+
+  const trigger = getByRole(mounted.container, 'button', { name: /Open PRs/ });
+  await harness.act(() => trigger.click());
+  await harness.act(() => harness.fireEvent(root, 'mouseleave'));
+  await harness.act(() => harness.fireEvent(harness.document.body, 'pointerdown'));
+  assertAbsent(mounted.container.querySelector('#open-prs-popover'),
+    'an explicit outside dismissal does not inherit the hover grace period');
   await mounted.unmount();
 });
 

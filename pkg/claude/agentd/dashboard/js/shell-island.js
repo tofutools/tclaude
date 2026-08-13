@@ -175,7 +175,10 @@ function OpenPRs({ state }) {
   useEffect(() => {
     if (!pinned) return undefined;
     const outside = (event) => {
-      if (!rootRef.current?.contains(event.target)) setPinned(false);
+      if (rootRef.current?.contains(event.target)) return;
+      cancelHoverClose();
+      setPinned(false);
+      setHovered(false);
     };
     document.addEventListener('pointerdown', outside);
     return () => document.removeEventListener('pointerdown', outside);
