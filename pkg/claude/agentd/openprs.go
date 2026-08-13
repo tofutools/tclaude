@@ -8,13 +8,14 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 const (
-	authoredOpenPRCacheKey     = "authored_open_prs_v1"
+	authoredOpenPRCachePrefix  = "authored_open_prs_v1_"
 	authoredOpenPRPollInterval = 30 * time.Second
 	authoredOpenPRMaxBackoff   = 5 * time.Minute
 	authoredOpenPRLimit        = 100
@@ -31,7 +32,7 @@ const authoredOpenPRGraphQLQuery = `query($q:String!,$first:Int!){
       ... on PullRequest{
         number title url isDraft updatedAt
         repository{nameWithOwner}
-        commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){nodes{
+        commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:100){totalCount nodes{
           __typename
           ... on CheckRun{name status conclusion detailsUrl startedAt completedAt}
           ... on StatusContext{context state targetUrl description createdAt}
@@ -64,6 +65,15 @@ type dashboardAuthoredOpenPRs struct {
 }
 
 var authoredOpenPRResolver = liveAuthoredOpenPRResolver
+
+// authoredOpenPRActiveLogin is deliberately process-local. A daemon restart
+// publishes no durable PR cache until this process has successfully resolved
+// the active credential and refreshed it; that prevents a previous gh user's
+// private titles/repositories leaking after an auth switch or token change.
+var authoredOpenPRActiveLogin struct {
+	sync.RWMutex
+	login string
+}
 
 func startAuthoredOpenPRPoller(stop <-chan struct{}) {
 	go func() {
@@ -133,13 +143,19 @@ func pollAuthoredOpenPRs() error {
 			savePRChecks(view.Items[i].URL, info)
 		}
 	}
+	if !isGitHubOwnerSlug(view.Login) {
+		return fmt.Errorf("resolver returned invalid GitHub login")
+	}
 	data, err := json.Marshal(view)
 	if err != nil {
 		return fmt.Errorf("encode authored open PR cache: %w", err)
 	}
-	if err := db.SaveGitCache(authoredOpenPRCacheKey, data, now); err != nil {
+	if err := db.SaveGitCache(authoredOpenPRCacheKey(view.Login), data, now); err != nil {
 		return fmt.Errorf("save authored open PR cache: %w", err)
 	}
+	authoredOpenPRActiveLogin.Lock()
+	authoredOpenPRActiveLogin.login = view.Login
+	authoredOpenPRActiveLogin.Unlock()
 	return nil
 }
 
@@ -186,8 +202,10 @@ func decodeAuthoredOpenPRGraphQL(data []byte, login string) (dashboardAuthoredOp
 						Nodes []struct {
 							Commit struct {
 								StatusCheckRollup *struct {
+									State    string `json:"state"`
 									Contexts struct {
-										Nodes []json.RawMessage `json:"nodes"`
+										TotalCount int               `json:"totalCount"`
+										Nodes      []json.RawMessage `json:"nodes"`
 									} `json:"contexts"`
 								} `json:"statusCheckRollup"`
 							} `json:"commit"`
@@ -232,6 +250,9 @@ func decodeAuthoredOpenPRGraphQL(data []byte, login string) (dashboardAuthoredOp
 		if len(node.Commits.Nodes) > 0 && node.Commits.Nodes[0].Commit.StatusCheckRollup != nil {
 			raw, _ := json.Marshal(node.Commits.Nodes[0].Commit.StatusCheckRollup.Contexts.Nodes)
 			info := parseStatusCheckRollup(raw, now)
+			reconcileTruncatedPRChecks(&info.Summary,
+				node.Commits.Nodes[0].Commit.StatusCheckRollup.State,
+				node.Commits.Nodes[0].Commit.StatusCheckRollup.Contexts.TotalCount)
 			info.PRState = "open"
 			item.Checks = &info.Summary
 			checksByURL[item.URL] = info
@@ -262,16 +283,62 @@ func authoredOpenPRAttentionRank(pr dashboardAuthoredOpenPR) int {
 	return 2
 }
 
+func reconcileTruncatedPRChecks(summary *prChecksSummary, rollupState string, total int) {
+	if summary == nil || total <= summary.Total {
+		return
+	}
+	summary.Total = total
+	known := summary.Passed + summary.Failed + summary.Pending + summary.Skipped
+	missing := max(0, total-known)
+	switch strings.ToUpper(strings.TrimSpace(rollupState)) {
+	case "FAILURE", "ERROR":
+		summary.State = "failing"
+		if summary.Failed == 0 {
+			summary.Failed = 1
+			missing--
+		}
+	case "PENDING", "EXPECTED":
+		summary.State = "pending"
+		summary.Pending += missing
+		missing = 0
+	case "SUCCESS":
+		summary.State = "passing"
+		summary.Passed += missing
+		missing = 0
+	default:
+		// An unknown aggregate cannot honestly turn a partial page green.
+		summary.State = "pending"
+		summary.Pending += missing
+		missing = 0
+	}
+	if missing > 0 {
+		summary.Pending += missing
+	}
+}
+
 func loadAuthoredOpenPRsSnapshot() dashboardAuthoredOpenPRs {
 	empty := dashboardAuthoredOpenPRs{Items: []dashboardAuthoredOpenPR{}}
-	row, err := db.LoadGitCache(authoredOpenPRCacheKey)
+	authoredOpenPRActiveLogin.RLock()
+	login := authoredOpenPRActiveLogin.login
+	authoredOpenPRActiveLogin.RUnlock()
+	if !isGitHubOwnerSlug(login) {
+		return empty
+	}
+	row, err := db.LoadGitCache(authoredOpenPRCacheKey(login))
 	if err != nil || row == nil || json.Unmarshal(row.Data, &empty) != nil {
+		return dashboardAuthoredOpenPRs{Items: []dashboardAuthoredOpenPR{}}
+	}
+	if !strings.EqualFold(empty.Login, login) {
 		return dashboardAuthoredOpenPRs{Items: []dashboardAuthoredOpenPR{}}
 	}
 	if empty.Items == nil {
 		empty.Items = []dashboardAuthoredOpenPR{}
 	}
 	return empty
+}
+
+func authoredOpenPRCacheKey(login string) string {
+	return authoredOpenPRCachePrefix + strings.ToLower(strings.TrimSpace(login))
 }
 
 func associateAuthoredOpenPRs(view dashboardAuthoredOpenPRs, agents []dashboardAgent) dashboardAuthoredOpenPRs {

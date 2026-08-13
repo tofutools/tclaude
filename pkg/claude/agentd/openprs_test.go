@@ -29,6 +29,9 @@ func TestDecodeAuthoredOpenPRGraphQLSortsAttentionAndCachesChecks(t *testing.T) 
 
 func TestPollAndAssociateAuthoredOpenPRs(t *testing.T) {
 	setupTestDB(t)
+	authoredOpenPRActiveLogin.Lock()
+	authoredOpenPRActiveLogin.login = ""
+	authoredOpenPRActiveLogin.Unlock()
 	previous := authoredOpenPRResolver
 	t.Cleanup(func() { authoredOpenPRResolver = previous })
 	authoredOpenPRResolver = func() (dashboardAuthoredOpenPRs, error) {
@@ -52,10 +55,44 @@ func TestPollAndAssociateAuthoredOpenPRs(t *testing.T) {
 	assert.Equal(t, "agt_1", view.Items[0].AgentID)
 	assert.Equal(t, "builder", view.Items[0].AgentTitle)
 
-	row, err := db.LoadGitCache(authoredOpenPRCacheKey)
+	row, err := db.LoadGitCache(authoredOpenPRCacheKey("octocat"))
 	require.NoError(t, err)
 	require.NotNil(t, row)
 	assert.WithinDuration(t, time.Now(), row.FetchedAt, time.Second)
+}
+
+func TestAuthoredOpenPRCacheRequiresCurrentProcessIdentity(t *testing.T) {
+	setupTestDB(t)
+	now := time.Now()
+	data := []byte(`{"available":true,"login":"old-user","total":1,"items":[{"number":1,"title":"private","url":"https://github.com/private/repo/pull/1"}]}`)
+	require.NoError(t, db.SaveGitCache(authoredOpenPRCacheKey("old-user"), data, now))
+	authoredOpenPRActiveLogin.Lock()
+	authoredOpenPRActiveLogin.login = ""
+	authoredOpenPRActiveLogin.Unlock()
+	assert.False(t, loadAuthoredOpenPRsSnapshot().Available,
+		"a daemon restart must not publish the previous credential's private metadata")
+	authoredOpenPRActiveLogin.Lock()
+	authoredOpenPRActiveLogin.login = "new-user"
+	authoredOpenPRActiveLogin.Unlock()
+	assert.False(t, loadAuthoredOpenPRsSnapshot().Available,
+		"a different active identity must never load the previous identity's cache")
+}
+
+func TestReconcileTruncatedPRChecksUsesAggregateState(t *testing.T) {
+	failing := prChecksSummary{Total: 100, Passed: 100, State: "passing"}
+	reconcileTruncatedPRChecks(&failing, "FAILURE", 125)
+	assert.Equal(t, "failing", failing.State)
+	assert.Equal(t, 125, failing.Total)
+	assert.Equal(t, 1, failing.Failed)
+	assert.Equal(t, 24, failing.Pending, "unseen non-failing contexts remain incomplete")
+
+	pending := prChecksSummary{Total: 100, Passed: 90, Pending: 10, State: "pending"}
+	reconcileTruncatedPRChecks(&pending, "PENDING", 120)
+	assert.Equal(t, 30, pending.Pending)
+
+	passing := prChecksSummary{Total: 100, Passed: 100, State: "passing"}
+	reconcileTruncatedPRChecks(&passing, "SUCCESS", 120)
+	assert.Equal(t, 120, passing.Passed)
 }
 
 func TestAuthoredOpenPRRetryDelayCaps(t *testing.T) {
