@@ -1948,12 +1948,6 @@ func bwrapArgsWithDaemonFinal(
 	// still lands, and appendTclaudeLayerProtectedRehides restores the hides on
 	// top of it.
 	//
-	// The one thing mounted back inside a protected root afterwards is the
-	// daemon's own spawn-attachment drop-box (class 4 below). It is not policy
-	// input — its path is derived from the session identity, never named by a
-	// profile or an agent — and it exposes a single daemon-created directory
-	// holding this session's own attachments, not the protected state
-	// underneath it.
 	protectedRoots, err := sandboxpolicy.ProtectedPaths()
 	if err != nil {
 		return nil, fmt.Errorf("resolve protected sandbox roots: %w", err)

@@ -361,6 +361,37 @@ func TestTerminalAttachmentsRouteUsesLayerVisibleSessionRoot(t *testing.T) {
 	assert.True(t, strings.HasPrefix(response.Files[0].Path, privateRoot+string(filepath.Separator)))
 }
 
+func TestTerminalAttachmentsRouteUsesLegacyRootForLiveUpgradeSession(t *testing.T) {
+	withDashboardAuth(t)
+	isolateSpawnAttachmentsBase(t)
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+
+	const label = "pre-relocation-layer-terminal"
+	now := time.Now()
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID:                    label,
+		TmuxSession:           "tmux-pre-relocation",
+		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+		Status:                "working",
+		CreatedAt:             now,
+		UpdatedAt:             now,
+	}))
+	legacyRoot := tclcommon.LegacySpawnAttachmentsPrivateDir(label)
+	require.NoError(t, os.MkdirAll(legacyRoot, 0o700))
+
+	base, createBase, status, err := terminalAttachmentBase(
+		"/api/spawn-focus-ws/"+label,
+		func(tmux string) bool { return tmux == "tmux-pre-relocation" },
+	)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, status)
+	assert.Equal(t, legacyRoot, base)
+	assert.False(t, createBase)
+}
+
 func TestTerminalAttachmentBaseRejectsStaleUnknownAndHostileTargets(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	db.ResetForTest()

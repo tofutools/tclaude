@@ -18,6 +18,13 @@ func SpawnAttachmentsPrivateBase() string {
 	return filepath.Join(TclaudeAPIDir(), "spawn-attachments")
 }
 
+// LegacySpawnAttachmentsPrivateBase returns the pre-relocation parent. It is
+// retained only so agentd can serve and eventually sweep attachment roots that
+// belong to tclaude-layer sessions still running across an upgrade.
+func LegacySpawnAttachmentsPrivateBase() string {
+	return filepath.Join(TclaudeDataDir(), "spawn-attachments")
+}
+
 // SpawnAttachmentsPrivateDir returns the stable, path-safe private directory
 // for one session-row identity. Hashing avoids turning a caller-controlled
 // session label into path syntax while keeping agentd and the launch seam in
@@ -25,6 +32,13 @@ func SpawnAttachmentsPrivateBase() string {
 func SpawnAttachmentsPrivateDir(sessionID string) string {
 	sum := sha256.Sum256([]byte(strings.TrimSpace(sessionID)))
 	return filepath.Join(SpawnAttachmentsPrivateBase(), hex.EncodeToString(sum[:]))
+}
+
+// LegacySpawnAttachmentsPrivateDir returns the old root for a session that
+// may still have that exact path mounted from a pre-relocation launch.
+func LegacySpawnAttachmentsPrivateDir(sessionID string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(sessionID)))
+	return filepath.Join(LegacySpawnAttachmentsPrivateBase(), hex.EncodeToString(sum[:]))
 }
 
 // PrepareSpawnAttachmentsPrivateDir materializes the stable private root for

@@ -338,6 +338,16 @@ func terminalAttachmentBase(
 		return spawnAttachmentsBaseDir(), true, http.StatusOK, nil
 	case sandboxpolicy.ImplementationTclaudeLayer:
 		privateRoot := tclcommon.SpawnAttachmentsPrivateDir(sess.ID)
+		// A pane that stayed live across the data/ -> api/ relocation still has
+		// only its old root mounted. Keep routing terminal uploads there until
+		// that pane exits; every fresh launch prepares the new API-tree root.
+		if _, err := os.Lstat(privateRoot); os.IsNotExist(err) {
+			legacyRoot := tclcommon.LegacySpawnAttachmentsPrivateDir(sess.ID)
+			if info, legacyErr := os.Lstat(legacyRoot); legacyErr == nil &&
+				info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+				privateRoot = legacyRoot
+			}
+		}
 		if !filepath.IsAbs(privateRoot) {
 			return "", false, http.StatusConflict, fmt.Errorf(
 				"terminal session private attachment root is unavailable",
