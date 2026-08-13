@@ -12,21 +12,24 @@ import (
 )
 
 func TestDecodeAuthoredOpenPRGraphQLSortsAttentionAndCachesChecks(t *testing.T) {
-	data := []byte(`{"data":{"search":{"issueCount":3,"nodes":[
+	data := []byte(`{"data":{"search":{"issueCount":4,"nodes":[
         {"number":3,"title":"Passing","url":"https://github.com/acme/app/pull/3","updatedAt":"2026-08-13T08:00:00Z","commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":[{"__typename":"CheckRun","name":"test","status":"COMPLETED","conclusion":"SUCCESS"}]}}}}]}},
         {"number":1,"title":"Failing","url":"https://github.com/acme/app/pull/1","updatedAt":"2026-08-13T07:00:00Z","commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":[{"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"FAILURE"}]}}}}]}},
         {"number":2,"title":"No checks","url":"https://github.com/acme/other/pull/2","updatedAt":"2026-08-13T09:00:00Z","commits":{"nodes":[]}},
+        {"number":4,"title":"Running clean","url":"https://github.com/acme/app/pull/4","updatedAt":"2026-08-13T10:00:00Z","commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":[{"__typename":"CheckRun","name":"test","status":"IN_PROGRESS"}]}}}}]}},
         {"number":9,"title":"Reject issue URL","url":"https://github.com/acme/app/issues/9"}
       ]}}}`)
 	view, checks, err := decodeAuthoredOpenPRGraphQL(data, "octocat")
 	require.NoError(t, err)
-	require.Len(t, view.Items, 3)
-	assert.Equal(t, []int{1, 2, 3}, []int{view.Items[0].Number, view.Items[1].Number, view.Items[2].Number})
+	require.Len(t, view.Items, 4)
+	assert.Equal(t, []int{1, 2, 3, 4}, []int{view.Items[0].Number, view.Items[1].Number, view.Items[2].Number, view.Items[3].Number},
+		"clean CI still running sorts behind PRs that need attention")
 	assert.Equal(t, "failing", view.Items[0].Checks.State)
 	assert.Equal(t, "passing", view.Items[2].Checks.State)
+	assert.Equal(t, "pending", view.Items[3].Checks.State)
 	assert.Equal(t, "acme/other", view.Items[1].Repository)
 	assert.Contains(t, view.SearchURL, "author%3Aoctocat")
-	assert.Len(t, checks, 2)
+	assert.Len(t, checks, 3)
 }
 
 func TestDecodeAuthoredRecentPRsKeepsTerminalStateOutOfTheOpenList(t *testing.T) {

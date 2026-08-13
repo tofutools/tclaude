@@ -47,16 +47,22 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
     'footer excludes the dashboard URL and auth session metadata',
   );
   const prs = {
-    available: true, total: 3, updated_at: 'now', search_url: 'https://github.com/pulls?q=x',
+    available: true, total: 5, updated_at: 'now', search_url: 'https://github.com/pulls?q=x',
     items: [
-      { number: 1, url: 'https://github.com/acme/app/pull/1', agent_id: 'agt_1', checks: { state: 'failing' } },
-      { number: 2, url: 'https://github.com/acme/app/pull/2', checks: { state: 'pending' } },
-      { number: 3, url: 'https://github.com/acme/app/pull/3', checks: { state: 'passing' } },
+      { number: 1, url: 'https://github.com/acme/app/pull/1', agent_id: 'agt_1', checks: { total: 2, failed: 1, pending: 1, state: 'failing' } },
+      { number: 2, url: 'https://github.com/acme/app/pull/2', checks: { total: 2, pending: 2, state: 'pending' } },
+      { number: 3, url: 'https://github.com/acme/app/pull/3', checks: { total: 2, passed: 2, state: 'passing' } },
+      { number: 4, url: 'https://github.com/acme/app/pull/4' },
+      { number: 5, url: 'https://github.com/acme/app/pull/5', checks: { total: 0, state: 'none' } },
     ],
   };
-  assert.deepEqual(authoredOpenPRsView({ authored_open_prs: prs }, 'attention').items.map((pr) => pr.number), [1, 2]);
-  assert.deepEqual(authoredOpenPRsView({ authored_open_prs: prs }, 'unattached').items.map((pr) => pr.number), [2, 3]);
-  assert.equal(authoredOpenPRsView({ authored_open_prs: prs }).attention, 2);
+  assert.deepEqual(
+    authoredOpenPRsView({ authored_open_prs: prs }, 'attention').items.map((pr) => pr.number),
+    [1, 3, 4, 5],
+    'failed, completed, and no-CI PRs need attention; clean CI still running does not',
+  );
+  assert.deepEqual(authoredOpenPRsView({ authored_open_prs: prs }, 'unattached').items.map((pr) => pr.number), [2, 3, 4, 5]);
+  assert.equal(authoredOpenPRsView({ authored_open_prs: prs }).attention, 4);
   assert.equal(authoredOpenPRsView({ authored_open_prs: { ...prs, search_url: 'javascript:alert(1)' } }).searchURL, '');
 
   // Recently closed PRs live in their own filter: they must not reach the open
@@ -72,15 +78,15 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
     ],
   };
   const openView = authoredOpenPRsView({ authored_open_prs: withRecent });
-  assert.deepEqual(openView.items.map((pr) => pr.number), [1, 2, 3]);
+  assert.deepEqual(openView.items.map((pr) => pr.number), [1, 2, 3, 4, 5]);
   assert.equal(openView.recentCount, 1, 'a malformed recent URL is dropped');
-  assert.equal(openView.attention, 2, 'recent PRs never inflate the open tallies');
+  assert.equal(openView.attention, 4, 'recent PRs never inflate the open tallies');
   assert.equal(openView.alwaysShow, true);
   const recentView = authoredOpenPRsView({ authored_open_prs: withRecent }, 'recent');
   assert.deepEqual(recentView.items.map((pr) => pr.number), [9]);
   assert.equal(recentView.showingRecent, true);
   assert.equal(recentView.searchURL, 'https://github.com/pulls?q=closed');
-  assert.equal(recentView.total, 3, 'the trigger count stays the OPEN count');
+  assert.equal(recentView.total, 5, 'the trigger count stays the OPEN count');
   assert.equal(recentView.truncated, false);
   assert.equal(
     authoredOpenPRsView({ authored_open_prs: { ...withRecent, truncated: true, recent_truncated: true } }, 'recent').truncated,
@@ -92,7 +98,7 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
   const off = authoredOpenPRsView({ authored_open_prs: { ...withRecent, recent_window_days: 0 } }, 'recent');
   assert.equal(off.showingRecent, false);
   assert.equal(off.recentCount, 0);
-  assert.deepEqual(off.items.map((pr) => pr.number), [1, 2, 3]);
+  assert.deepEqual(off.items.map((pr) => pr.number), [1, 2, 3, 4, 5]);
 
   const member = { conv_id: 'same', online: true, state: { status: 'working' } };
   const activity = globalActivityView({
