@@ -171,6 +171,10 @@ footer {
   content: ""; position: fixed; right: 12px; bottom: var(--footer-h); z-index: 42;
   width: min(470px, calc(100vw - 24px)); height: 10px;
 }
+/* The dock normally paints above the footer. Lift the footer only while this
+   disclosure is open so the bridge can receive hover across the dock's bottom
+   edge; its visible popover is already shifted clear of the dock. */
+footer:has(.open-prs.is-open) { z-index: 46; }
 body.dock-open .open-prs-popover { right: calc(var(--dock-w) + 12px); }
 body.dock-open .open-prs.is-open::before {
   right: 12px; width: calc(var(--dock-w) + min(470px, calc(100vw - 24px)));

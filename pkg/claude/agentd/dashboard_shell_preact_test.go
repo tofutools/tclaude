@@ -90,6 +90,7 @@ func TestDashboardShellPreactBoundary(t *testing.T) {
 func TestDashboardOpenPRsHoverBridge(t *testing.T) {
 	foundBase := false
 	foundDock := false
+	foundRaisedFooter := false
 	for _, rule := range dashboardCSSRules(t) {
 		if strings.TrimSpace(rule.selectors) == ".open-prs.is-open::before" {
 			foundBase = true
@@ -111,11 +112,20 @@ func TestDashboardOpenPRsHoverBridge(t *testing.T) {
 				}
 			}
 		}
+		if strings.TrimSpace(rule.selectors) == "footer:has(.open-prs.is-open)" {
+			foundRaisedFooter = true
+			if !strings.Contains(rule.declarations, "z-index: 46") {
+				t.Errorf("open PR footer must paint above the z-index 45 dock: %q", rule.declarations)
+			}
+		}
 	}
 	if !foundBase {
 		t.Error("dashboard.css has no open PR hover bridge")
 	}
 	if !foundDock {
 		t.Error("dashboard.css has no dock-open PR hover bridge geometry")
+	}
+	if !foundRaisedFooter {
+		t.Error("dashboard.css does not raise the open PR footer above the dock")
 	}
 }
