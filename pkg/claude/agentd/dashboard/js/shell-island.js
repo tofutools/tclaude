@@ -193,6 +193,11 @@ function OpenPRs({ state }) {
       ${open ? html`
         <div id="open-prs-popover" class="open-prs-popover" role="dialog" aria-label="Your pull requests">
           <div class="open-prs-head"><strong>Your pull requests</strong><span class="open-prs-count">${view.total}</span>${age ? html`<span class="open-prs-age">updated ${age}</span>` : null}</div>
+          ${view.items.length
+            ? html`<ul class="open-pr-list">${view.items.map((pr) => html`<${OpenPRRow} key=${pr.url} pr=${pr} />`)}</ul>`
+            : html`<p class="open-prs-empty">${view.showingRecent
+              ? `Nothing merged or closed in the last ${view.recentWindowDays} day(s).`
+              : (openFilterActive && view.total <= 0 ? 'No open pull requests.' : 'No pull requests match this filter.')}</p>`}
           <div class="open-prs-filters" role="group" aria-label="Filter pull requests">
             <button class=${openFilterActive ? 'active' : ''} aria-pressed=${openFilterActive} onClick=${() => setFilter('all')}>Open ${view.total}</button>
             <button class=${filter === 'attention' ? 'active' : ''} aria-pressed=${filter === 'attention'} onClick=${() => setFilter('attention')}>Needs attention ${view.attention}</button>
@@ -201,11 +206,6 @@ function OpenPRs({ state }) {
               title=${`Pull requests you merged or closed in the last ${view.recentWindowDays} day(s)`}
               onClick=${() => setFilter('recent')}>${recentLabel} ${view.recentCount}</button>` : null}
           </div>
-          ${view.items.length
-            ? html`<ul class="open-pr-list">${view.items.map((pr) => html`<${OpenPRRow} key=${pr.url} pr=${pr} />`)}</ul>`
-            : html`<p class="open-prs-empty">${view.showingRecent
-              ? `Nothing merged or closed in the last ${view.recentWindowDays} day(s).`
-              : (openFilterActive && view.total <= 0 ? 'No open pull requests.' : 'No pull requests match this filter.')}</p>`}
           ${view.searchURL ? html`<div class="open-prs-foot">${view.truncated ? html`<span>Showing the first ${view.items.length} · </span>` : null}<a href=${view.searchURL} target="_blank" rel="noopener noreferrer">${view.showingRecent ? 'See them all on GitHub ↗' : 'Open all on GitHub ↗'}</a></div>` : null}
         </div>
       ` : null}

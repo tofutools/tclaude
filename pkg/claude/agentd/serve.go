@@ -643,16 +643,9 @@ func runServe(p *serveParams) error {
 	// spawning a subprocess. Shares the daemon-wide stop channel.
 	startPluginChecker(cronStop)
 
-	// Recently merged presented PR poller. One global, repo-deduped
-	// GitHub Search API call catches the common authored-by-me merge case
-	// within about ten seconds; the existing individual PR refresh remains
-	// the best-effort fallback for everything else. Shares the daemon stop
-	// channel and never scales its poll count with agents or groups.
-	startRecentlyMergedPRPoller(cronStop)
-
-	// Cross-repository authored open PRs for the dashboard footer. One
-	// GraphQL search carries both the list and CI rollups; the 2s snapshot only
-	// reads its durable cache.
+	// One cross-repository PR poll feeds the footer and every Groups PR badge.
+	// The GraphQL response carries open/recent state plus CI rollups into the
+	// canonical per-PR caches; the 2s snapshot only reads those shared caches.
 	startAuthoredOpenPRPoller(cronStop)
 
 	// Subscription-usage poller. Disabled by default; when

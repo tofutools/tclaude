@@ -376,7 +376,12 @@ func lookupBranchLinkFromCache(repoDir, branch, key string, row *db.GitCacheRow)
 			fresh = time.Since(info.FetchedAt) < branchLinkTTL
 		}
 	}
-	if !fresh {
+	// Once a branch has discovered its PR, the canonical per-PR cache can keep
+	// state/check freshness alive. The authored poll or a hover/presented
+	// refresh may already have updated that identity, so do not repeat the
+	// branch's git+GitHub lookup merely because its placement cache aged.
+	prFresh := info.PRURL != "" && presentedPRCacheFresh(info.PRURL, time.Now())
+	if !fresh && !prFresh {
 		scheduleBranchLinkRefresh(repoDir, branch, key)
 	}
 	return branchWebURL(info.RepoURL, info.DefaultBranch, branch),
@@ -425,6 +430,11 @@ func refreshBranchLink(repoDir, branch, key string) {
 		checks.FetchedAt = info.FetchedAt
 		checks.Summary = summarizePRChecks(checks.Checks, checks.FetchedAt)
 		savePRChecks(info.PRURL, checks)
+	}
+	if info.PRURL != "" && info.PRState != "" {
+		savePresentedPRCache(presentedPRCacheKey(info.PRURL), info.PRURL, presentedPRInfo{
+			Number: info.PRNumber, URL: info.PRURL, State: info.PRState, FetchedAt: info.FetchedAt,
+		}, info.FetchedAt)
 	}
 	data, err := json.Marshal(info)
 	if err != nil {

@@ -3067,6 +3067,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		presentedPRs      map[string][]db.AgentPR
 		cachedPRStates    prStateIndex
 		allTags           map[string][]string
+		authoredOpenPRs   dashboardAuthoredOpenPRs
 		branchPRCacheURLs []string
 	)
 	rc := newSnapshotRowCache(convIDs, aliveSessions, func(phases []perfPhase) {
@@ -3094,8 +3095,25 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			taskRefs, _ = db.ListAgentTaskRefsByAgentIDs(visibleAgentIDs)
 		}},
 		snapshotNamedLoad{"presented_prs", func() { presentedPRs = preloadPresentedPRsForDashboard(time.Now()) }},
-		snapshotNamedLoad{"pr_state_cache", func() { cachedPRStates = cachedPresentedPRStates(branchPRCacheURLs) }},
 		snapshotNamedLoad{"tags", func() { allTags, _ = db.ListAllAgentTags() }},
+		snapshotNamedLoad{"authored_open_prs", func() { authoredOpenPRs = loadAuthoredOpenPRsSnapshot(cfg) }},
+	)...)
+	// Every PR visualization draws state and checks from these two canonical
+	// identity-keyed caches. Build the union first so branch/startup,
+	// explicitly presented and footer-only PRs share one bounded batch read.
+	allPRCacheURLs := append([]string(nil), branchPRCacheURLs...)
+	for _, rows := range presentedPRs {
+		for _, row := range rows {
+			allPRCacheURLs = append(allPRCacheURLs, row.PRURL)
+		}
+	}
+	for _, list := range [][]dashboardAuthoredOpenPR{authoredOpenPRs.Items, authoredOpenPRs.Recent} {
+		for _, pr := range list {
+			allPRCacheURLs = append(allPRCacheURLs, pr.URL)
+		}
+	}
+	span.addChildren("preload", runSnapshotNamedLoads(
+		snapshotNamedLoad{"pr_state_cache", func() { cachedPRStates = cachedPresentedPRStates(allPRCacheURLs) }},
 	)...)
 
 	taskRefFor := func(agentID string) taskRefView {
@@ -3109,6 +3127,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// an automatic branch link on another are observations of the same PR, not
 	// independent display state.
 	freshPRStates := make(prStateIndex)
+	addAuthoredOpenPRStates(freshPRStates, authoredOpenPRs)
 	for _, convID := range convIDs {
 		freshPRStates.addRepoLinks(rc.viewFor(convID).Links)
 	}
@@ -3132,14 +3151,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// the branch-link / presented-PR refreshes that already run `gh`, and by
 	// the hover endpoint. Presented PR URLs join the branch/startup ones so a
 	// presented badge gets the same indicator as an automatic one.
-	checkURLs := make([]string, 0, len(branchPRCacheURLs)+len(presentedPRs))
-	checkURLs = append(checkURLs, branchPRCacheURLs...)
-	for _, rows := range presentedPRs {
-		for _, row := range rows {
-			checkURLs = append(checkURLs, row.PRURL)
-		}
-	}
-	prChecks := prChecksIndexFor(checkURLs)
+	prChecks := prChecksIndexFor(allPRCacheURLs)
 	// Same preload discipline as taskRefs: one ListAllAgentTags per snapshot,
 	// keyed by agent_id, looked up per row (not a query per member/agent in
 	// this 2s-polled path). The stored set is already sorted alphabetically.
@@ -3674,7 +3686,6 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		pluginsErr       error
 		usagePhases      []perfPhase
 		openCodeActivity bool
-		authoredOpenPRs  dashboardAuthoredOpenPRs
 	)
 	// These collectors do not depend on each other. Most are one or two small
 	// SQLite reads; serial execution made their fixed per-query overhead add up
@@ -3696,7 +3707,6 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		snapshotNamedLoad{"roles", func() { roles = collectRolesSnapshot() }},
 		snapshotNamedLoad{"messages", func() { messages, messagesUnread = buildHumanMessagesSnapshot() }},
 		snapshotNamedLoad{"plugins", func() { plugins, pluginsWarn, pluginsErr = collectPluginsSnapshot() }},
-		snapshotNamedLoad{"authored_open_prs", func() { authoredOpenPRs = loadAuthoredOpenPRsSnapshot(cfg) }},
 	)
 	for i := range collectorPhases {
 		if collectorPhases[i].Name == "usage" {
@@ -3717,7 +3727,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.ExportJobsActive = exportJobsActive
 	out.Links = links
 	out.Usage = usage
-	out.AuthoredOpenPRs = associateAuthoredOpenPRs(authoredOpenPRs, out.Agents)
+	out.AuthoredOpenPRs = associateAuthoredOpenPRs(
+		reconcileAuthoredOpenPRs(authoredOpenPRs, freshPRStates, prChecks, time.Now()),
+		out.Agents,
+	)
 	// Costs-tab visibility: show when there is real pay-per-token spend to
 	// display, OR a subscription account has opted into the WHAT-IF view
 	// (cost.show_on_subscription). A subscription-only account with the opt-in
