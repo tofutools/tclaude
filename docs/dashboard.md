@@ -1764,9 +1764,12 @@ the bundled `human-notify` skill so agents discover the `--attach` workflow.
 
 ### Usage
 
-Subscription accounts get an account-wide **Usage** tab once Claude or Codex
-has supplied a quota reading. OpenCode provider/model activity also reveals the
-tab even when it cannot supply a quota reading. It plots the retained
+Subscription accounts get an account-wide **Usage** tab once Claude, Codex, or
+GitHub Copilot has supplied a quota reading. Copilot's installed CLI normalizes
+the authenticated account allowance; agentd samples its finite monthly
+premium-request (AIC) quota every 15 minutes. Unlimited Copilot plans have no
+percentage ceiling and therefore add no graph. OpenCode provider/model activity
+also reveals the tab even when it cannot supply a quota reading. It plots the retained
 15-minute samples as one line chart per provider and quota window, with
 24-hour, 7-day, 30-day, and 90-day history views. A separate 5-hour, 24-hour,
 7-day, or 30-day lookahead controls the future portion of every chart without
@@ -1807,6 +1810,12 @@ old. Long views are downsampled for display while forecast calculations still
 use the full retained series. Provider quota data is account-wide and does not
 reliably attribute consumption to individual models, so forecasts are per
 provider and window rather than per model.
+
+The Groups header uses the same current readings as a compact provider-row
+glance. Claude, Codex, and Copilot rows are always named, even when only one is
+available. Real API-cost rows are likewise attributed (`Anthropic API`,
+`OpenAI API`, and so on) instead of collapsing a single source into an
+ambiguous bare `api` figure.
 
 ### Debug
 

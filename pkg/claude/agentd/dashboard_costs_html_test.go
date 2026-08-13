@@ -25,7 +25,8 @@ func TestDashboardHTML_TopBarTotalCostWired(t *testing.T) {
 	// — the same grouping and sub-cent floor as the harness line.
 	must("const mtd = Number(usage?.total_cost_usd || 0)", "usageView reads the snapshot's month-to-date total")
 	must("const today = Number(usage?.today_cost_usd || 0)", "usageView reads the snapshot's today total")
-	must("function costToken(today, mtd)", "the cost token has its own model builder")
+	must("function costToken(key, today, mtd)", "provider-keyed cost tokens have their own model builder")
+	must("label: `${providerLabel(item.provider)} API:`", "API-cost rows always carry a provider prefix")
 	must("return value >= 0.005 ? '$' + CENTS.format(value) : '<1¢'",
 		"grouped two-decimal dollar format with a sub-cent floor")
 

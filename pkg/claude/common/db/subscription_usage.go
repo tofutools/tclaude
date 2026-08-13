@@ -19,6 +19,7 @@ const (
 
 	SubscriptionProviderAnthropic = "anthropic"
 	SubscriptionProviderOpenAI    = "openai"
+	SubscriptionProviderGitHub    = "github"
 )
 
 // SubscriptionUsageWindow is one rate-limit window in an account-wide

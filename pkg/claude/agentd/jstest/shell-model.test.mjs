@@ -14,9 +14,12 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
     seven_day: { pct: 80, remaining: '5d' },
     total_cost_usd: 0.42,
     today_cost_usd: 0.12,
+    api_costs: [{ provider: 'anthropic', total_cost_usd: 0.42, today_cost_usd: 0.12 }],
   });
-  assert.equal(claude.multiline, false);
-  assert.deepEqual(claude.lines[0].tokens.map((token) => token.key), ['claude-5h', 'claude-7d', 'api-cost']);
+  assert.equal(claude.multiline, true);
+  assert.deepEqual(claude.lines.map((line) => line.label), ['Claude:', 'Anthropic API:']);
+  assert.deepEqual(claude.lines[0].tokens.map((token) => token.key), ['claude-5h', 'claude-7d']);
+  assert.equal(claude.lines[1].tokens[0].key, 'api-cost-anthropic');
   assert.equal(claude.lines[0].tokens[0].filled, 1);
   assert.equal(claude.lines[0].tokens[1].color, '#f85149');
 
@@ -28,6 +31,13 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
   assert.equal(mixed.multiline, true);
   assert.deepEqual(mixed.lines.map((line) => line.label), ['Claude:', 'Codex:']);
   assert.equal(mixed.lines[1].tokens[0].hidden, true, 'missing Codex 5h retains its geometry');
+
+  const copilot = usageView({
+    copilot: { available: true, monthly: { pct: 58.2, remaining: '18d' } },
+  });
+  assert.deepEqual(copilot.lines.map((line) => line.label), ['Copilot:']);
+  assert.equal(copilot.lines[0].tokens[0].label, '', 'monthly word stays hidden so bars align');
+  assert.equal(copilot.lines[0].tokens[0].pct, 58);
 
   assert.deepEqual(messagesBadgeView({ messages_unread: 98, access_requests_pending: 3 }),
     { text: '99+', hidden: false, blink: true });

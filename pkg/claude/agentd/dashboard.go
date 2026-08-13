@@ -3810,6 +3810,10 @@ func applyCostDisplayFactor(out *snapshotPayload, factor float64) {
 	}
 	out.Usage.TotalCostUSD *= factor
 	out.Usage.TodayCostUSD *= factor
+	for i := range out.Usage.APICosts {
+		out.Usage.APICosts[i].TotalCostUSD *= factor
+		out.Usage.APICosts[i].TodayCostUSD *= factor
+	}
 	scaleAgents := func(rows []dashboardAgent) {
 		for i := range rows {
 			rows[i].State.CostUSD *= factor

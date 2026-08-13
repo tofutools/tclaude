@@ -696,6 +696,10 @@ func runServe(p *serveParams) error {
 	// snapshot in tclaude's SQLite database. Missing optional CLIs are an info-
 	// only no-op; installed but unauthenticated/broken tooling logs as an error.
 	startCopilotModelCatalogMirror(cronStop)
+	// Copilot exposes its finite monthly premium-request allowance through the
+	// authenticated account.getQuota RPC. Retain a 15-minute account-wide
+	// history for the Usage tab and the Groups top-bar glance.
+	startCopilotQuotaPoller(cronStop)
 
 	// Copilot API reconnect. Handles live in process memory, so this daemon
 	// starts with none while every `copilot --ui-server` pane from before the

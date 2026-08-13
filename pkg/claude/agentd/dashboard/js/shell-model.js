@@ -40,14 +40,23 @@ function subscriptionWindows(source, prefix, hideMissing = false) {
   ];
 }
 
-function costToken(today, mtd) {
+function costToken(key, today, mtd) {
   return {
-    key: 'api-cost',
+    key,
     kind: 'cost',
-    label: 'api',
+    label: '',
     today: today > 0 ? fmtUSD(today) : '',
     mtd: fmtUSD(mtd),
   };
+}
+
+function providerLabel(provider) {
+  if (provider === 'anthropic') return 'Anthropic';
+  if (provider === 'openai') return 'OpenAI';
+  if (provider === 'github') return 'GitHub Copilot';
+  if (provider === 'opencode') return 'OpenCode';
+  if (provider === 'unknown') return 'Unknown';
+  return String(provider || 'Unknown');
 }
 
 export function usageView(usage) {
@@ -66,28 +75,42 @@ export function usageView(usage) {
     titles.push(`Codex subscription usage ${noun} — ${codexPeriods.join(' and ')} rolling ${windowNoun}`);
   }
 
+  const copilotUsage = usage?.copilot;
+  const copilot = copilotUsage?.available && copilotUsage?.monthly
+    ? [usageWindow('copilot-monthly', '', copilotUsage.monthly)]
+    : [];
+  if (copilot.length) titles.push('GitHub Copilot monthly premium-request (AIC) allowance');
+
   const mtd = Number(usage?.total_cost_usd || 0);
   const today = Number(usage?.today_cost_usd || 0);
-  const cost = mtd > 0 ? costToken(today, mtd) : null;
-  if (cost) {
+  const apiCosts = (usage?.api_costs || [])
+    .map((item) => ({
+      provider: item.provider || 'unknown',
+      today: Number(item.today_cost_usd || 0),
+      mtd: Number(item.total_cost_usd || 0),
+    }))
+    .filter((item) => item.mtd > 0);
+  // Older daemons supplied only an aggregate. Keep that wire shape readable,
+  // but current snapshots always provide provider-attributed rows.
+  if (!apiCosts.length && mtd > 0) apiCosts.push({ provider: 'unknown', today, mtd });
+  if (apiCosts.length) {
     let title = `API cost month-to-date: ${fmtExactUSD(mtd)}, summed across agent sessions recorded in tclaude's DB`;
     if (today > 0) title += ` · today: ${fmtExactUSD(today)}`;
     titles.push(title + ' · click to open the Costs tab');
   }
 
-  if (codex.length) {
-    const lines = [];
-    if (claude.length) lines.push({ key: 'claude', label: 'Claude:', tokens: claude });
-    lines.push({ key: 'codex', label: 'Codex:', tokens: codex });
-    if (cost) lines.push({ key: 'cost', label: '', tokens: [cost] });
-    return { na: false, multiline: true, title: titles.join(' · '), lines };
+  const lines = [];
+  if (claude.length) lines.push({ key: 'claude', label: 'Claude:', tokens: claude });
+  if (codex.length) lines.push({ key: 'codex', label: 'Codex:', tokens: codex });
+  if (copilot.length) lines.push({ key: 'copilot', label: 'Copilot:', tokens: copilot });
+  for (const item of apiCosts) {
+    lines.push({
+      key: `cost-${item.provider}`,
+      label: `${providerLabel(item.provider)} API:`,
+      tokens: [costToken(`api-cost-${item.provider}`, item.today, item.mtd)],
+    });
   }
-
-  const tokens = [...claude];
-  if (cost) tokens.push(cost);
-  if (tokens.length) {
-    return { na: false, multiline: false, title: titles.join(' · '), lines: [{ key: 'usage', label: null, tokens }] };
-  }
+  if (lines.length) return { na: false, multiline: true, title: titles.join(' · '), lines };
   return {
     na: true,
     multiline: false,
