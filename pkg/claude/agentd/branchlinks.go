@@ -426,6 +426,11 @@ func refreshBranchLink(repoDir, branch, key string) {
 		checks.Summary = summarizePRChecks(checks.Checks, checks.FetchedAt)
 		savePRChecks(info.PRURL, checks)
 	}
+	if info.PRURL != "" && info.PRState != "" {
+		savePresentedPRCache(presentedPRCacheKey(info.PRURL), info.PRURL, presentedPRInfo{
+			Number: info.PRNumber, URL: info.PRURL, State: info.PRState, FetchedAt: info.FetchedAt,
+		}, info.FetchedAt)
+	}
 	data, err := json.Marshal(info)
 	if err != nil {
 		return

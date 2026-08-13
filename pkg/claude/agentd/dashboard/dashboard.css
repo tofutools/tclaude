@@ -200,6 +200,21 @@ body.dock-open .open-prs.is-open::before {
 }
 .open-prs-filters button.active { color: #c9d1d9; border-color: #385b81; background: #172a40; }
 .open-pr-list { min-height: 0; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+/* The list is the popover's only scrolling surface. Match the dashboard's
+   other dark panes in both Firefox and Chromium/WebKit instead of exposing
+   the browser's light native scrollbar inside the dark footer disclosure. */
+@supports not selector(::-webkit-scrollbar) {
+  .open-pr-list { scrollbar-width: thin; scrollbar-color: #6e7681 #0d1117; }
+  body.wizard .open-pr-list { scrollbar-color: #7a5db0 #140f28; }
+}
+.open-pr-list::-webkit-scrollbar { width: 10px; height: 10px; }
+.open-pr-list::-webkit-scrollbar-track,
+.open-pr-list::-webkit-scrollbar-corner { background: #0d1117; }
+.open-pr-list::-webkit-scrollbar-thumb {
+  background: #6e7681; border: 2px solid #0d1117; border-radius: 6px;
+}
+.open-pr-list::-webkit-scrollbar-thumb:hover { background: #8b949e; }
+.open-pr-list::-webkit-scrollbar-thumb:active { background: #b1bac4; }
 .open-pr-row { display: grid; grid-template-columns: 9px minmax(0,1fr) auto; gap: 9px; align-items: center; padding: 10px 13px; border-bottom: 1px solid #222b35; }
 .open-pr-state { width: 7px; height: 7px; border-radius: 50%; background: #6e7681; }
 .open-pr-state-passing { background: #3fb950; }
@@ -10075,6 +10090,41 @@ body.wizard footer {
   border-top: 1px solid #d9b45a;
 }
 body.wizard footer .meta { color: #e7d9f5; opacity: 0.85; }
+/* The PR disclosure lives above the themed footer but is fixed outside its
+   visual box, so it needs its own arcane surface and descendant colours. */
+body.wizard .open-prs-popover {
+  border-color: #7a5db0;
+  background: linear-gradient(180deg, #241b3d 0%, #140f28 100%);
+  color: #e7d9f5;
+  box-shadow: 0 0 24px rgba(122, 93, 176, 0.35), 0 14px 45px rgba(0, 0, 0, 0.55);
+}
+body.wizard .open-prs-head,
+body.wizard .open-prs-filters,
+body.wizard .open-pr-row { border-color: #33284d; }
+body.wizard .open-prs-head strong {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 0.4px;
+}
+body.wizard .open-prs-age,
+body.wizard .open-pr-meta,
+body.wizard .open-prs-empty { color: #9a86c4; }
+body.wizard .open-prs-filters button { border-color: #4a3d6b; color: #b39ddb; }
+body.wizard .open-prs-filters button:hover { border-color: #7a5db0; color: #e7d9f5; }
+body.wizard .open-prs-filters button.active {
+  border-color: #d9b45a; background: #3a2a63; color: #f3e6c0;
+}
+body.wizard .open-pr-title { color: #e7d9f5; }
+body.wizard .open-pr-title:hover { color: #f3d58b; }
+body.wizard .open-prs-foot { background: #1c1436; }
+body.wizard .open-prs-foot a { color: #d9b45a; }
+body.wizard .open-pr-list::-webkit-scrollbar-track,
+body.wizard .open-pr-list::-webkit-scrollbar-corner { background: #140f28; }
+body.wizard .open-pr-list::-webkit-scrollbar-thumb {
+  background: #7a5db0; border-color: #140f28;
+}
+body.wizard .open-pr-list::-webkit-scrollbar-thumb:hover { background: #a97bd6; }
+body.wizard .open-pr-list::-webkit-scrollbar-thumb:active { background: #c9a6f0; }
 /* State pills keep their default fill; a purple/gold/emerald edge makes them
    pop on the violet background (mirrors slop's gold-edge tweak). */
 body.wizard .state-working   { border-color: #a97bd6; }

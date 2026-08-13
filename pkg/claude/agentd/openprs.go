@@ -16,8 +16,11 @@ import (
 )
 
 const (
-	authoredOpenPRCachePrefix  = "authored_open_prs_v1_"
-	authoredOpenPRPollInterval = 30 * time.Second
+	authoredOpenPRCachePrefix = "authored_open_prs_v1_"
+	// This is the dashboard's one daemon-wide PR poll. It replaces the former
+	// separate 10-second merged-PR search, so keep that faster cadence while
+	// sharing its result across the footer and Groups surfaces.
+	authoredOpenPRPollInterval = 10 * time.Second
 	authoredOpenPRMaxBackoff   = 5 * time.Minute
 	authoredOpenPRLimit        = 100
 	authoredOpenPRTitleMax     = 240
@@ -167,7 +170,7 @@ func authoredOpenPRRetryDelay(failures int) time.Duration {
 		return authoredOpenPRPollInterval
 	}
 	delay := authoredOpenPRPollInterval
-	for range min(failures, 4) {
+	for range min(failures, 5) {
 		delay *= 2
 	}
 	return min(delay, authoredOpenPRMaxBackoff)
@@ -185,12 +188,19 @@ func pollAuthoredOpenPRs() error {
 		view.Items = []dashboardAuthoredOpenPR{}
 	}
 	for i := range view.Items {
+		state := "open"
+		if view.Items[i].Draft {
+			state = "draft"
+		}
+		savePresentedPRCache(presentedPRCacheKey(view.Items[i].URL), view.Items[i].URL, presentedPRInfo{
+			Number: view.Items[i].Number, URL: view.Items[i].URL, State: state, FetchedAt: now,
+		}, now)
 		if view.Items[i].Checks == nil {
 			continue
 		}
 		info := prChecksInfo{
 			Summary:   *view.Items[i].Checks,
-			PRState:   "open",
+			PRState:   state,
 			FetchedAt: now,
 		}
 		// The resolver saved the full check list already. Do not overwrite it
@@ -199,6 +209,13 @@ func pollAuthoredOpenPRs() error {
 			savePRChecks(view.Items[i].URL, info)
 		}
 	}
+	for i := range view.Recent {
+		savePresentedPRCache(presentedPRCacheKey(view.Recent[i].URL), view.Recent[i].URL, presentedPRInfo{
+			Number: view.Recent[i].Number, URL: view.Recent[i].URL,
+			State: view.Recent[i].State, FetchedAt: now,
+		}, now)
+	}
+	applyAuthoredStatesToPresentedPRs(view)
 	if !isGitHubOwnerSlug(view.Login) {
 		return fmt.Errorf("resolver returned invalid GitHub login")
 	}
@@ -211,6 +228,48 @@ func pollAuthoredOpenPRs() error {
 	}
 	setAuthoredOpenPRActiveLogin(view.Login)
 	return nil
+}
+
+// applyAuthoredStatesToPresentedPRs keeps the durable presented-PR lifecycle
+// aligned with the shared observation cache. Terminal observations start the
+// badge's expiry grace period; open/draft observations also matter because a
+// closed (but not merged) GitHub PR can be reopened. UpdateAgentPRState owns
+// the race guards, including the rule that merged can never regress.
+func applyAuthoredStatesToPresentedPRs(view dashboardAuthoredOpenPRs) {
+	observed := make(map[string]string, len(view.Items)+len(view.Recent))
+	for _, pr := range view.Items {
+		state := "open"
+		if pr.Draft {
+			state = "draft"
+		}
+		observed[prStateKey(pr.URL)] = state
+	}
+	for _, pr := range view.Recent {
+		if isTerminalPresentedPRState(pr.State) {
+			observed[prStateKey(pr.URL)] = strings.ToLower(strings.TrimSpace(pr.State))
+		}
+	}
+	if len(observed) == 0 {
+		return
+	}
+	all, err := db.ListUnhandledAgentPRs()
+	if err != nil {
+		slog.Warn("open-prs: failed to reconcile presented PR rows", "error", err, "module", "agentd")
+		return
+	}
+	for _, rows := range all {
+		for _, row := range rows {
+			state, ok := observed[prStateKey(row.PRURL)]
+			if !ok || strings.EqualFold(row.State, state) {
+				continue
+			}
+			if _, err := db.UpdateAgentPRState(row.AgentID, row.PRURL, state); err != nil {
+				slog.Warn("open-prs: failed to apply state to presented PR",
+					"error", err, "agent_id", row.AgentID, "url", row.PRURL,
+					"state", state, "module", "agentd")
+			}
+		}
+	}
 }
 
 func liveAuthoredOpenPRResolver() (dashboardAuthoredOpenPRs, error) {
@@ -226,7 +285,11 @@ func liveAuthoredOpenPRResolver() (dashboardAuthoredOpenPRs, error) {
 	setAuthoredOpenPRActiveLogin(login)
 	cfg, _ := config.Load()
 	windowDays := cfg.RecentPRWindowDays()
-	out, err := runInDirWithError("", "gh", authoredPRSearchArgs(login, windowDays, time.Now())...)
+	// Even when the footer's recent filter is disabled, fetch one day of
+	// terminal authored PRs. Groups uses the same response to retire merged
+	// badges, replacing its former independent GitHub Search poll.
+	fetchWindowDays := max(windowDays, 1)
+	out, err := runInDirWithError("", "gh", authoredPRSearchArgs(login, fetchWindowDays, time.Now())...)
 	if err != nil {
 		return dashboardAuthoredOpenPRs{}, err
 	}
@@ -234,7 +297,7 @@ func liveAuthoredOpenPRResolver() (dashboardAuthoredOpenPRs, error) {
 	if err != nil {
 		return dashboardAuthoredOpenPRs{}, err
 	}
-	view.RecentWindowDays = windowDays
+	view.RecentWindowDays = fetchWindowDays
 	for rawURL, info := range checksByURL {
 		savePRChecks(rawURL, info)
 	}
@@ -525,6 +588,88 @@ func setAuthoredOpenPRActiveLogin(login string) {
 	authoredOpenPRActiveLogin.Lock()
 	authoredOpenPRActiveLogin.login = strings.TrimSpace(login)
 	authoredOpenPRActiveLogin.Unlock()
+}
+
+// addAuthoredOpenPRStates folds the daemon-wide GitHub search into the same
+// per-PR observation index used by branch, startup and presented badges. The
+// search fetch time is the observation time; a PR's updatedAt is content
+// activity and cannot be used to decide which poll saw its state last.
+func addAuthoredOpenPRStates(idx prStateIndex, view dashboardAuthoredOpenPRs) {
+	fetchedAt, _ := time.Parse(time.RFC3339, strings.TrimSpace(view.UpdatedAt))
+	for _, pr := range view.Items {
+		state := "open"
+		if pr.Draft {
+			state = "draft"
+		}
+		idx.add(pr.URL, state, fetchedAt)
+	}
+	for _, pr := range view.Recent {
+		idx.add(pr.URL, pr.State, fetchedAt)
+	}
+}
+
+// reconcileAuthoredOpenPRs projects the shared per-PR state/check caches back
+// onto the footer list. Groups and the footer therefore render one observation
+// for an identity on every 2-second snapshot, even between GitHub poll ticks.
+// If another shared writer observes a merge first, move that cached open item
+// to Recent immediately instead of leaving it in two contradictory surfaces.
+func reconcileAuthoredOpenPRs(
+	view dashboardAuthoredOpenPRs,
+	states prStateIndex,
+	checks map[string]*prChecksSummary,
+	now time.Time,
+) dashboardAuthoredOpenPRs {
+	recentByKey := make(map[string]int, len(view.Recent))
+	for i := range view.Recent {
+		recentByKey[prStateKey(view.Recent[i].URL)] = i
+	}
+	open := make([]dashboardAuthoredOpenPR, 0, len(view.Items))
+	for _, pr := range view.Items {
+		key := prStateKey(pr.URL)
+		if summary := checks[key]; summary != nil {
+			copy := *summary
+			pr.Checks = &copy
+		}
+		observation, known := states[key]
+		if !known || !isTerminalPresentedPRState(observation.state) {
+			if known {
+				pr.Draft = strings.EqualFold(observation.state, "draft")
+			}
+			open = append(open, pr)
+			continue
+		}
+
+		view.Total = max(0, view.Total-1)
+		if view.RecentWindowDays <= 0 || observation.updatedAt.IsZero() ||
+			observation.updatedAt.Before(now.Add(-time.Duration(view.RecentWindowDays)*24*time.Hour)) {
+			continue
+		}
+		pr.State = strings.ToLower(observation.state)
+		pr.ClosedAt = observation.updatedAt.Format(time.RFC3339)
+		if i, exists := recentByKey[key]; exists {
+			view.Recent[i] = pr
+			continue
+		}
+		recentByKey[key] = len(view.Recent)
+		view.Recent = append(view.Recent, pr)
+	}
+	view.Items = open
+
+	for i := range view.Recent {
+		key := prStateKey(view.Recent[i].URL)
+		if observation, ok := states[key]; ok && isTerminalPresentedPRState(observation.state) {
+			view.Recent[i].State = strings.ToLower(observation.state)
+		}
+		if summary := checks[key]; summary != nil {
+			copy := *summary
+			view.Recent[i].Checks = &copy
+		}
+	}
+	view.Recent = filterRecentAuthoredPRs(view.Recent, view.RecentWindowDays, now)
+	sort.SliceStable(view.Recent, func(i, j int) bool {
+		return view.Recent[i].ClosedAt > view.Recent[j].ClosedAt
+	})
+	return view
 }
 
 func associateAuthoredOpenPRs(view dashboardAuthoredOpenPRs, agents []dashboardAgent) dashboardAuthoredOpenPRs {

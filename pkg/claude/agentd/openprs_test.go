@@ -161,7 +161,67 @@ func TestPollAndAssociateAuthoredOpenPRs(t *testing.T) {
 	row, err := db.LoadGitCache(authoredOpenPRCacheKey("octocat"))
 	require.NoError(t, err)
 	require.NotNil(t, row)
-	assert.WithinDuration(t, time.Now(), row.FetchedAt, time.Second)
+	assert.WithinDuration(t, time.Now(), row.FetchedAt, 2*time.Second)
+	states := cachedPresentedPRStates([]string{"https://github.com/acme/app/pull/12"})
+	assert.Equal(t, "open", states[prStateKey("https://github.com/acme/app/pull/12")].state,
+		"the footer poll publishes into the shared per-PR state source")
+}
+
+func TestReconcileAuthoredOpenPRsUsesTheSameStateAndChecksAsGroups(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	const prURL = "https://github.com/acme/app/pull/12"
+	view := dashboardAuthoredOpenPRs{
+		Available: true, Total: 1, RecentWindowDays: 3,
+		Items:  []dashboardAuthoredOpenPR{{Number: 12, URL: prURL, Title: "Ship it"}},
+		Recent: []dashboardAuthoredOpenPR{},
+	}
+	states := make(prStateIndex)
+	states.add(prURL, "merged", now)
+	checks := map[string]*prChecksSummary{
+		prStateKey(prURL): {Total: 2, Passed: 1, Failed: 1, State: "failing"},
+	}
+
+	got := reconcileAuthoredOpenPRs(view, states, checks, now)
+	assert.Zero(t, got.Total)
+	assert.Empty(t, got.Items, "a merge observed by Groups must leave the footer's open list immediately")
+	require.Len(t, got.Recent, 1)
+	assert.Equal(t, "merged", got.Recent[0].State)
+	assert.Equal(t, "failing", got.Recent[0].Checks.State)
+
+	links := repoLinksView{BranchPRURL: prURL, BranchPRState: "open"}.
+		withFreshestPRStates(states).
+		withPRChecks(checks)
+	assert.Equal(t, got.Recent[0].State, links.BranchPRState)
+	assert.Equal(t, got.Recent[0].Checks, links.BranchChecks)
+}
+
+func TestApplyAuthoredStatesExpiresAndReopensPresentedPRs(t *testing.T) {
+	setupTestDB(t)
+	const prURL = "https://github.com/acme/app/pull/12"
+	agentID, _, err := db.EnsureAgentForConv("conv_1", "test")
+	require.NoError(t, err)
+	_, err = db.UpsertAgentPR(agentID, prURL, "Ship it", "open")
+	require.NoError(t, err)
+
+	applyAuthoredStatesToPresentedPRs(dashboardAuthoredOpenPRs{Recent: []dashboardAuthoredOpenPR{{
+		URL: prURL + "/files", State: "closed",
+	}}})
+
+	all, err := db.ListUnhandledAgentPRs()
+	require.NoError(t, err)
+	require.Len(t, all[agentID], 1)
+	assert.Equal(t, "closed", all[agentID][0].State)
+	assert.WithinDuration(t, time.Now(), all[agentID][0].UpdatedAt, time.Second,
+		"the terminal observation starts the normal presented-PR grace period")
+
+	applyAuthoredStatesToPresentedPRs(dashboardAuthoredOpenPRs{Items: []dashboardAuthoredOpenPR{{
+		URL: prURL,
+	}}})
+	all, err = db.ListUnhandledAgentPRs()
+	require.NoError(t, err)
+	require.Len(t, all[agentID], 1)
+	assert.Equal(t, "open", all[agentID][0].State,
+		"a reopened PR must not expire from the old closed observation")
 }
 
 func TestAuthoredOpenPRCacheRequiresCurrentProcessIdentity(t *testing.T) {
@@ -195,8 +255,8 @@ func TestReconcileTruncatedPRChecksUsesAggregateState(t *testing.T) {
 }
 
 func TestAuthoredOpenPRRetryDelayCaps(t *testing.T) {
-	assert.Equal(t, 30*time.Second, authoredOpenPRRetryDelay(0))
-	assert.Equal(t, time.Minute, authoredOpenPRRetryDelay(1))
-	assert.Equal(t, 5*time.Minute, authoredOpenPRRetryDelay(4))
+	assert.Equal(t, 10*time.Second, authoredOpenPRRetryDelay(0))
+	assert.Equal(t, 20*time.Second, authoredOpenPRRetryDelay(1))
+	assert.Equal(t, 5*time.Minute, authoredOpenPRRetryDelay(5))
 	assert.Equal(t, 5*time.Minute, authoredOpenPRRetryDelay(20))
 }

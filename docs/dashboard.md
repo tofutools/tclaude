@@ -819,8 +819,8 @@ open list, the footer count, or the attention/unattached tallies, and they are
 dotted by their terminal state (purple merged, red closed) instead of by CI
 state. The recent page is capped like the open one, and says so ("Showing the
 first N") rather than presenting the cap as a complete count. Setting the
-window to `0` removes the filter and stops the daemon from searching for
-closed PRs at all. Narrowing the window applies on the next
+window to `0` removes the filter. The shared dashboard PR poll still searches
+a one-day terminal window so Groups badges stay current. Narrowing applies on the next
 dashboard poll; widening it takes effect on the next background search.
 
 Each PR link carries a **CI indicator** — a compact `n/m` pill coloured green

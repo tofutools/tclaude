@@ -129,3 +129,44 @@ func TestDashboardOpenPRsHoverBridge(t *testing.T) {
 		t.Error("dashboard.css does not raise the open PR footer above the dock")
 	}
 }
+
+func TestDashboardOpenPRsThemed(t *testing.T) {
+	css := string(mustReadFS(dashboardAssetsFS, "dashboard.css"))
+	island := string(mustReadFS(dashboardAssetsFS, "js/shell-island.js"))
+
+	fallbackStart := strings.Index(css, "@supports not selector(::-webkit-scrollbar) {\n  .open-pr-list")
+	webkitStart := strings.Index(css, ".open-pr-list::-webkit-scrollbar {")
+	if fallbackStart < 0 || webkitStart <= fallbackStart {
+		t.Fatal("open PR standard scrollbar fallback must precede the WebKit scrollbar rules")
+	}
+	fallback := css[fallbackStart:webkitStart]
+	for _, want := range []string{
+		"scrollbar-color: #6e7681 #0d1117",
+		"body.wizard .open-pr-list { scrollbar-color: #7a5db0 #140f28; }",
+	} {
+		if !strings.Contains(fallback, want) {
+			t.Errorf("open PR non-WebKit scrollbar fallback missing %q", want)
+		}
+	}
+
+	for _, want := range []string{
+		".open-pr-list::-webkit-scrollbar-thumb:hover { background: #8b949e; }",
+		".open-pr-list::-webkit-scrollbar-thumb:active { background: #b1bac4; }",
+		"body.wizard .open-prs-popover {",
+		"background: linear-gradient(180deg, #241b3d 0%, #140f28 100%);",
+		"body.wizard .open-prs-filters button.active {",
+		"body.wizard .open-pr-list::-webkit-scrollbar-thumb:hover { background: #a97bd6; }",
+	} {
+		if !strings.Contains(css, want) {
+			t.Errorf("open PR theming missing %q", want)
+		}
+	}
+
+	list := strings.Index(island, "? html`<ul class=\"open-pr-list\">")
+	empty := strings.Index(island, ": html`<p class=\"open-prs-empty\">")
+	filters := strings.Index(island, `<div class="open-prs-filters"`)
+	footer := strings.Index(island, "? html`<div class=\"open-prs-foot\">")
+	if list < 0 || empty < 0 || filters < 0 || footer < 0 || list >= filters || empty >= filters || filters >= footer {
+		t.Errorf("open PR filters must follow both result variants and precede the footer")
+	}
+}
