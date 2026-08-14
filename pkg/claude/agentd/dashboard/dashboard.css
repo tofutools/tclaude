@@ -106,7 +106,7 @@ header {
   align-items: center;
   gap: 16px;
 }
-header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+header h1 { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 600; }
 header .meta { color: #7d8590; font-size: 12px; }
 /* Stable Preact ownership hosts should not add a new flex/inline layout box;
    their rendered child keeps the exact shell geometry that preceded them. */
@@ -8820,12 +8820,41 @@ body.slop .online          { color: #56d364; text-shadow: 0 0 6px rgba(86, 211, 
 /* The header icon is the easter-egg toggle: click it to flip slop
    mode on or off (see js/slop.js). `cursor: pointer` is the only
    affordance — discoverable to anyone who hovers, silent otherwise.
-   In slop mode the icon also jiggles; the wrapper span keeps the
-   animation isolated to the glyph so the rest of the h1 stays still. */
+   In slop mode the icon also jiggles; the button keeps the animation
+   isolated to the mark so the rest of the h1 stays still. */
 .slop-icon {
+  position: relative;
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  padding: 3px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
   cursor: pointer;
-  display: inline-block;
 }
+.slop-icon:hover { background: #262e38; }
+.slop-icon:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
+.slop-icon img { display: block; width: 22px; height: 22px; }
+.theme-mode-badge {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  display: none;
+  width: 15px;
+  height: 15px;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #161b22;
+  border-radius: 50%;
+  background: #8b0000;
+  font-size: 8px;
+  line-height: 1;
+}
+body:is(.slop, .wizard) .theme-mode-badge { display: inline-flex; }
+body.wizard .theme-mode-badge { border-color: #170f2e; background: #3a2f57; }
 body.slop header h1 .slop-icon {
   animation: slop-jiggle 2.4s ease-in-out infinite;
 }
@@ -10076,6 +10105,13 @@ body.wizard header button {
   border-radius: 4px; padding: 4px 10px;
 }
 body.wizard header button:hover { background: #3a2a63; }
+/* The product-mark button keeps its compact icon geometry; the broad themed
+   header-button rule above is for the full-size action controls beside it. */
+body.wizard header h1 .slop-icon {
+  border: 0;
+  border-radius: 7px;
+  padding: 3px;
+}
 body.wizard nav {
   background: #1c1436;
   border-bottom: 1px solid #d9b45a;
