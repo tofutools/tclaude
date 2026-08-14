@@ -110,6 +110,7 @@ test('Messages island preserves native controls, CSS hooks, focus, reader, and k
   assert.equal(mounted.container.querySelector('.mail-attachment-size').textContent, '1.5 KiB');
   const attachmentIndicator = mounted.container.querySelector('.mail-row-attachments');
   assert.equal(attachmentIndicator.getAttribute('title'), '1 attachment');
+  assert.equal(attachmentIndicator.getAttribute('role'), 'img');
   assert.equal(attachmentIndicator.getAttribute('aria-label'), '1 attachment');
   assert.ok(attachmentIndicator.querySelector('svg'));
   assert.equal(attachmentIndicator.querySelector('.mail-row-attachment-count'), null,

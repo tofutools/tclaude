@@ -208,7 +208,7 @@ function MessageHead({ message, aggregate, controller }) {
 function MessageAttachmentIndicator({ count }) {
   if (!count) return null;
   const label = `${count} attachment${count === 1 ? '' : 's'}`;
-  return html`<span class="mail-row-attachments" title=${label} aria-label=${label}>
+  return html`<span class="mail-row-attachments" role="img" title=${label} aria-label=${label}>
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="m21.4 11.6-8.9 8.9a6 6 0 0 1-8.5-8.5l9.7-9.7a4 4 0 0 1 5.7 5.7l-9.7 9.7a2 2 0 0 1-2.8-2.8l8.9-8.9" />
