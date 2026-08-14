@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -108,17 +109,54 @@ func codexFastModeProbeBoundary(
 	if sess.EffectiveSandbox != nil {
 		environment = append(environment, sess.EffectiveSandbox.Effective.Environment...)
 	}
+	relaunch, relaunchErr := db.AgentRelaunchProfileForConv(sess.ConvID)
+	if relaunchErr != nil {
+		return environment, "", relaunchErr
+	}
+	if relaunch != nil && relaunch.CodexStateRoot != nil &&
+		strings.TrimSpace(*relaunch.CodexStateRoot) != "" {
+		// The launch wrapper freezes the resolved Codex state directory even
+		// when HOME, rather than CODEX_HOME, originally selected it. Pinning
+		// CODEX_HOME to that exact root recreates the same config boundary.
+		filtered := environment[:0]
+		for _, entry := range environment {
+			if entry.Name != "CODEX_HOME" {
+				filtered = append(filtered, entry)
+			}
+		}
+		environment = append(filtered, sandboxpolicy.EnvironmentEntry{
+			Name: "CODEX_HOME", Value: strings.TrimSpace(*relaunch.CodexStateRoot),
+		})
+	}
+	profileForGeneration := func(generation string) (string, error) {
+		profile, profileErr := db.GetCodexNativePermissionProfile(generation)
+		if profileErr != nil || profile == nil {
+			return "", profileErr
+		}
+		return profile.ProfileName, nil
+	}
+	if runtime, runtimeErr := db.GetCodexAppServerRuntimeByConvID(sess.ConvID); runtimeErr != nil {
+		return environment, "", runtimeErr
+	} else if runtime != nil && runtime.LaunchID == sess.ID {
+		profile, profileErr := profileForGeneration(runtime.Generation)
+		if profileErr != nil {
+			return environment, "", profileErr
+		}
+		if profile != "" {
+			return environment, profile, nil
+		}
+	}
 	identity, identityErr := db.GetSessionExitLaunchIdentity(sess.ID)
 	if identityErr != nil {
 		return environment, "", identityErr
 	}
 	if identity.Generation != "" {
-		profile, profileErr := db.GetCodexNativePermissionProfile(identity.Generation)
+		profile, profileErr := profileForGeneration("launch:" + identity.Generation)
 		if profileErr != nil {
 			return environment, "", profileErr
 		}
-		if profile != nil {
-			return environment, profile.ProfileName, nil
+		if profile != "" {
+			return environment, profile, nil
 		}
 	}
 	// User-authored Codex profiles are persisted in the historical sandbox_mode
