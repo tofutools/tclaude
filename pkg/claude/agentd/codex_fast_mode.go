@@ -4,11 +4,14 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // codexFastModeFromFollowerNow bypasses the dashboard's one-second presentation
@@ -42,6 +45,45 @@ func codexFastModeFromFollowerNow(sess *db.SessionRow) (fast, known bool, err er
 	}
 	fast, known = codexFastModeForSession(snap, sess)
 
+	if !known {
+		profile, profileErr := db.AgentRelaunchProfileForConv(sess.ConvID)
+		if profileErr != nil {
+			return false, false, profileErr
+		}
+		if profile != nil && profile.FastMode != nil {
+			fast, known = *profile.FastMode, true
+		}
+	}
+	if !known {
+		// Inherit deliberately records no launch override. Ask Codex's own
+		// merged config reader for a best-effort baseline instead; a later live
+		// thread_settings_applied event supersedes it.
+		environment, permissionProfile, boundaryErr := codexFastModeProbeBoundary(sess)
+		if boundaryErr != nil {
+			slog.Debug("Codex inherited Fast mode launch boundary unavailable", "error", boundaryErr,
+				"conv_id", sess.ConvID)
+		}
+		inherited, inheritedKnown, inheritedErr := session.CodexEffectiveFastMode(
+			sess.Cwd, environment, permissionProfile)
+		if inheritedErr != nil {
+			slog.Debug("Codex inherited Fast mode probe failed", "error", inheritedErr,
+				"conv_id", sess.ConvID, "cwd", sess.Cwd)
+		} else if inheritedKnown {
+			fast, known = inherited, true
+		}
+
+		// config/read may take long enough for the live thread to change while
+		// it runs. Re-read the incremental follower after the probe so any
+		// current-generation settings event wins before we cache or act.
+		latest, latestErr := follower.RuntimeTelemetry(home, sess.ConvID)
+		if latestErr != nil {
+			return false, false, latestErr
+		}
+		if liveFast, liveKnown := codexFastModeForSession(latest, sess); liveKnown {
+			fast, known = liveFast, true
+		}
+	}
+
 	// Keep the ordinary snapshot read-through cache coherent, but do not move
 	// its refresh timestamp: this focused proof does not perform the context,
 	// effort, usage, cost, or checkpoint persistence work of a dashboard tick.
@@ -55,16 +97,76 @@ func codexFastModeFromFollowerNow(sess *db.SessionRow) (fast, known bool, err er
 		codexContextRefreshMu.last[sess.ID] = cached
 	}
 	codexContextRefreshMu.Unlock()
-	if !known {
-		profile, profileErr := db.AgentRelaunchProfileForConv(sess.ConvID)
-		if profileErr != nil {
-			return false, false, profileErr
+	return fast, known, nil
+}
+
+func codexFastModeProbeBoundary(
+	sess *db.SessionRow,
+) (environment []sandboxpolicy.EnvironmentEntry, permissionProfile string, err error) {
+	if sess == nil {
+		return nil, "", nil
+	}
+	if sess.EffectiveSandbox != nil {
+		environment = append(environment, sess.EffectiveSandbox.Effective.Environment...)
+	}
+	relaunch, relaunchErr := db.AgentRelaunchProfileForConv(sess.ConvID)
+	if relaunchErr != nil {
+		return environment, "", relaunchErr
+	}
+	if relaunch != nil && relaunch.CodexStateRoot != nil &&
+		strings.TrimSpace(*relaunch.CodexStateRoot) != "" {
+		// The launch wrapper freezes the resolved Codex state directory even
+		// when HOME, rather than CODEX_HOME, originally selected it. Pinning
+		// CODEX_HOME to that exact root recreates the same config boundary.
+		filtered := environment[:0]
+		for _, entry := range environment {
+			if entry.Name != "CODEX_HOME" {
+				filtered = append(filtered, entry)
+			}
 		}
-		if profile != nil && profile.FastMode != nil {
-			return *profile.FastMode, true, nil
+		environment = append(filtered, sandboxpolicy.EnvironmentEntry{
+			Name: "CODEX_HOME", Value: strings.TrimSpace(*relaunch.CodexStateRoot),
+		})
+	}
+	profileForGeneration := func(generation string) (string, error) {
+		profile, profileErr := db.GetCodexNativePermissionProfile(generation)
+		if profileErr != nil || profile == nil {
+			return "", profileErr
+		}
+		return profile.ProfileName, nil
+	}
+	if runtime, runtimeErr := db.GetCodexAppServerRuntimeByConvID(sess.ConvID); runtimeErr != nil {
+		return environment, "", runtimeErr
+	} else if runtime != nil && runtime.LaunchID == sess.ID {
+		profile, profileErr := profileForGeneration(runtime.Generation)
+		if profileErr != nil {
+			return environment, "", profileErr
+		}
+		if profile != "" {
+			return environment, profile, nil
 		}
 	}
-	return fast, known, nil
+	identity, identityErr := db.GetSessionExitLaunchIdentity(sess.ID)
+	if identityErr != nil {
+		return environment, "", identityErr
+	}
+	if identity.Generation != "" {
+		profile, profileErr := profileForGeneration("launch:" + identity.Generation)
+		if profileErr != nil {
+			return environment, "", profileErr
+		}
+		if profile != "" {
+			return environment, profile, nil
+		}
+	}
+	// User-authored Codex profiles are persisted in the historical sandbox_mode
+	// column. Built-in sandbox values are flags rather than profile names.
+	switch sess.HarnessBuiltinMode {
+	case "", harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxDangerFull:
+		return environment, "", nil
+	default:
+		return environment, sess.HarnessBuiltinMode, nil
+	}
 }
 
 // dashboardSetCodexFastModeAgent re-proves live Fast state immediately before
@@ -105,8 +207,11 @@ func dashboardSetCodexFastModeAgent(w http.ResponseWriter, _ *http.Request, conv
 		return
 	}
 	if !known {
-		writeError(w, http.StatusConflict, "unknown", "Codex has not reported live Fast mode state and the agent has no explicit tclaude launch setting")
-		return
+		// /fast is only a toggle. When both telemetry and the inherited-config
+		// probe are unavailable, honor the operator's requested direction by
+		// assuming the opposite current state. Codex's next settings readback
+		// repairs the dashboard if that guess was wrong.
+		fast = !desired
 	}
 	if fast == desired {
 		state := "off"
