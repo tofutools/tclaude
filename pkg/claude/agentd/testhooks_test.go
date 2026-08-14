@@ -1561,6 +1561,19 @@ func WaitForCodexApprovalProcessingForTest(t *testing.T, m *codexApprovalMonitor
 // than samples recorded by earlier tests in the same process.
 func ResetPerfForTest() { perfReset() }
 
+// SetOperatorMessageAttachmentBasesForTest isolates browser attachment staging
+// and durable agent-message files for flow tests.
+func SetOperatorMessageAttachmentBasesForTest(staging, durable string) func() {
+	previousStaging := spawnAttachmentsBase
+	previousDurable := operatorMessageAttachmentsBase
+	spawnAttachmentsBase = staging
+	operatorMessageAttachmentsBase = durable
+	return func() {
+		spawnAttachmentsBase = previousStaging
+		operatorMessageAttachmentsBase = previousDurable
+	}
+}
+
 type dashTestHandler struct{ inner http.Handler }
 
 func (h *dashTestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {

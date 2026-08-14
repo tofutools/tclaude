@@ -75,6 +75,28 @@ test('operator message uploads its frozen attachment batch before posting the ta
   });
 });
 
+test('human reply uploads attachments before posting the reply token', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createMessageAccessDialogActions } = await harness.importDashboardModule('js/message-access-dialog-actions.js');
+  const calls = [];
+  const actions = createMessageAccessDialogActions({
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return url === '/api/spawn-attachments'
+        ? response(200, { token: 'reply-batch' })
+        : response(200, { queued: true });
+    },
+  });
+  const file = new Blob(['screenshot']);
+  Object.defineProperty(file, 'name', { value: 'shot.png' });
+  await actions.replyHuman({ id: 17, body: '', files: [file], label: 'worker' });
+  assert.deepEqual(calls.map((call) => call.url), ['/api/spawn-attachments', '/api/human-messages/reply']);
+  assert.equal(calls[0].options.body.get('file').name, 'shot.png');
+  assert.deepEqual(JSON.parse(calls[1].options.body), {
+    id: 17, body: '', attachment_token: 'reply-batch',
+  });
+});
+
 test('all-live announcement skips attachments and reports partial fan-out', async (t) => {
   const harness = await createPreactHarness(t);
   const { createMessageAccessDialogActions } = await harness.importDashboardModule('js/message-access-dialog-actions.js');

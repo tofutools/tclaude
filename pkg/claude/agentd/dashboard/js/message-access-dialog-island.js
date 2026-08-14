@@ -409,27 +409,52 @@ function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const context = descriptor.context || {};
   const [body, setBody] = useState('');
+  const [files, setFiles] = useState([]);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
+  const fileInputRef = useRef(null);
   const [error, setError] = useState('');
   const [serverOffline, setServerOffline] = useState(false);
   useEffect(() => { setServerOffline(false); }, [snapshot]);
   const online = !serverOffline && senderOnline(snapshot, context.agent || '', context.conv || '');
   const label = context.label || context.conv || '(agent)';
+  const addFiles = (incoming) => {
+    if (busyRef.current) return;
+    setFiles((current) => [...current, ...Array.from(incoming || []).filter(Boolean)].slice(0, 8));
+  };
+  const removeFile = (index) => {
+    if (busyRef.current) return;
+    setFiles((current) => current.filter((_, candidate) => candidate !== index));
+  };
   const submit = async () => {
     if (busyRef.current) return;
     const clean = body.trim(); setError('');
-    if (!clean) { setError('Reply is required — type your answer.'); return; }
+    if (!clean && !files.length) { setError('Write a reply or attach a file.'); return; }
     if (!online) { setError('The agent is offline — it has no live session to receive a reply.'); return; }
     busyRef.current = true;
     setBusy(true);
-    try { await actions.replyHuman({ id: Number(context.id), body: clean, label }); state.close(); }
+    try { await actions.replyHuman({ id: Number(context.id), body: clean, files: [...files], label }); state.close(); }
     catch (cause) { if (cause?.code === 'offline') setServerOffline(true); setError(errorText(cause)); }
     finally { busyRef.current = false; setBusy(false); }
   };
   return html`<${Overlay} id="human-reply-modal" labelledby="human-reply-title"
-    onClose=${state.close} dirty=${!!body} blocked=${busy} confirmDiscard=${confirmDiscard}
-    registerClose=${registerClose}>
+    onClose=${state.close} dirty=${!!body || files.length > 0} blocked=${busy} confirmDiscard=${confirmDiscard}
+    registerClose=${registerClose} guardBackdropDrag=${true}
+    onPaste=${(event) => {
+      const pasted = Array.from(event.clipboardData?.files || []);
+      if (!pasted.length) return;
+      event.preventDefault();
+      addFiles(pasted);
+    }}
+    onDragOver=${(event) => {
+      if (event.dataTransfer?.types?.includes('Files')) event.preventDefault();
+    }}
+    onDrop=${(event) => {
+      const dropped = Array.from(event.dataTransfer?.files || []);
+      if (!dropped.length) return;
+      event.preventDefault();
+      addFiles(dropped);
+    }}>
     <h3 id="human-reply-title"><span class="human-reply-title-regular">Reply to agent</span><span class="human-reply-title-wizard">✒ Answer the familiar</span></h3>
     <p id="human-reply-desc" class="modal-hint">Queues your answer in this agent's inbox for delivery when its pane is ready. Delivered as a message from you, the operator.</p>
     <label class="cron-create-row"><span class="cron-create-label">To</span><div class="cron-create-target"><div id="human-reply-to">
@@ -438,7 +463,15 @@ function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard
       ? '🟢 Online — your reply will be queued and delivered when its pane is ready.'
       : '⚫ Offline — this agent has no live session, so it can’t receive a reply. Replying is disabled until it’s back online.'}</div></div></label>
     <label class="cron-create-row"><span class="cron-create-label">Reply</span><textarea id="human-reply-body" rows="4" value=${body}
-      placeholder="your reply (required) — ⌘/Ctrl+Enter to send" spellcheck="false" onInput=${(event) => setBody(event.currentTarget.value)} onKeyDown=${fieldSubmit(submit)}></textarea></label>
+      placeholder="your reply — ⌘/Ctrl+Enter to send" spellcheck="false" onInput=${(event) => setBody(event.currentTarget.value)} onKeyDown=${fieldSubmit(submit)}></textarea></label>
+    <div class="cron-create-row"><span class="cron-create-label">Attachments</span>
+      <div class="cron-create-target spawn-attachments"><div class="spawn-attachments-controls">
+        <button type="button" id="human-reply-attach-btn" disabled=${busy}
+          onClick=${() => fileInputRef.current?.click()}>📎 Attach files…</button>
+        <input ref=${fileInputRef} type="file" id="human-reply-attach-input" multiple hidden disabled=${busy}
+          onChange=${(event) => { addFiles(event.currentTarget.files); event.currentTarget.value = ''; }}/>
+        <span class="spawn-attachments-hint">…or drag files here / paste a screenshot</span>
+      </div><${OperatorAttachmentList} files=${files} busy=${busy} remove=${removeFile}/></div></div>
     <${ErrorLine} id="human-reply-error" value=${error}/><div class="modal-buttons">
       <button id="human-reply-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button><span class="spacer"></span>
       <button id="human-reply-submit" class="primary" type="button" disabled=${busy || !online} onClick=${submit}>${busy ? 'Sending…' : 'Send reply'}</button>
