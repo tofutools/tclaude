@@ -59,6 +59,7 @@ func TestDashboardHTML_MessageFilterAboveList(t *testing.T) {
 		`<div class="mail-list-filter">`,
 		`id="mail-mark-all"`,
 		`id="mail-clear-read"`,
+		`>🗑 delete read</button>`,
 		`id="filter-messages-clear"`, // the Messages island wires the clear button
 	} {
 		if !strings.Contains(html, needle) {
@@ -81,5 +82,41 @@ func TestDashboardHTML_MessageFilterAboveList(t *testing.T) {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard.css missing %q — Messages-tab grid layout regressed", needle)
 		}
+	}
+}
+
+// TestDashboardHTML_DeleteReadMessagesConfirms guards the destructive human-
+// notification sweep: its label says what it does, and the shared confirmation
+// dialog remains between the click and the delete request.
+func TestDashboardHTML_DeleteReadMessagesConfirms(t *testing.T) {
+	js := string(mustReadFS(dashboardAssetsFS, "js/row-action-handler.js"))
+	caseStart := strings.Index(js, `case 'msg-clear':`)
+	if caseStart < 0 {
+		t.Fatal("row-action-handler.js: msg-clear case missing")
+	}
+	caseEnd := strings.Index(js[caseStart:], `case 'msg-delete':`)
+	if caseEnd < 0 {
+		t.Fatal("row-action-handler.js: could not bound msg-clear case")
+	}
+	clearCase := js[caseStart : caseStart+caseEnd]
+
+	for _, needle := range []string{
+		`case 'msg-clear':`,
+		`title: 'Delete read messages?'`,
+		`body: 'Permanently deletes every message that has been marked read. Unread messages are kept.'`,
+		`okLabel: 'Delete read'`,
+		`if (!confirmed) return;`,
+		`fetch('/api/human-messages/clear'`,
+	} {
+		if !strings.Contains(clearCase, needle) {
+			t.Errorf("row-action-handler.js missing %q — delete-read confirmation regressed", needle)
+		}
+	}
+
+	confirmIdx := strings.Index(clearCase, `title: 'Delete read messages?'`)
+	cancelIdx := strings.Index(clearCase, `if (!confirmed) return;`)
+	deleteIdx := strings.Index(clearCase, `fetch('/api/human-messages/clear'`)
+	if confirmIdx < 0 || cancelIdx < 0 || deleteIdx < 0 || confirmIdx >= cancelIdx || cancelIdx >= deleteIdx {
+		t.Error("delete-read action must confirm, honor cancellation, then make the destructive request")
 	}
 }
