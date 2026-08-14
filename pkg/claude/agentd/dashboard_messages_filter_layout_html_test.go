@@ -90,6 +90,16 @@ func TestDashboardHTML_MessageFilterAboveList(t *testing.T) {
 // dialog remains between the click and the delete request.
 func TestDashboardHTML_DeleteReadMessagesConfirms(t *testing.T) {
 	js := string(mustReadFS(dashboardAssetsFS, "js/row-action-handler.js"))
+	caseStart := strings.Index(js, `case 'msg-clear':`)
+	if caseStart < 0 {
+		t.Fatal("row-action-handler.js: msg-clear case missing")
+	}
+	caseEnd := strings.Index(js[caseStart:], `case 'msg-delete':`)
+	if caseEnd < 0 {
+		t.Fatal("row-action-handler.js: could not bound msg-clear case")
+	}
+	clearCase := js[caseStart : caseStart+caseEnd]
+
 	for _, needle := range []string{
 		`case 'msg-clear':`,
 		`title: 'Delete read messages?'`,
@@ -98,14 +108,15 @@ func TestDashboardHTML_DeleteReadMessagesConfirms(t *testing.T) {
 		`if (!confirmed) return;`,
 		`fetch('/api/human-messages/clear'`,
 	} {
-		if !strings.Contains(js, needle) {
+		if !strings.Contains(clearCase, needle) {
 			t.Errorf("row-action-handler.js missing %q — delete-read confirmation regressed", needle)
 		}
 	}
 
-	confirmIdx := strings.Index(js, `title: 'Delete read messages?'`)
-	deleteIdx := strings.Index(js, `fetch('/api/human-messages/clear'`)
-	if confirmIdx < 0 || deleteIdx < 0 || confirmIdx >= deleteIdx {
-		t.Error("delete-read confirmation must occur before the destructive request")
+	confirmIdx := strings.Index(clearCase, `title: 'Delete read messages?'`)
+	cancelIdx := strings.Index(clearCase, `if (!confirmed) return;`)
+	deleteIdx := strings.Index(clearCase, `fetch('/api/human-messages/clear'`)
+	if confirmIdx < 0 || cancelIdx < 0 || deleteIdx < 0 || confirmIdx >= cancelIdx || cancelIdx >= deleteIdx {
+		t.Error("delete-read action must confirm, honor cancellation, then make the destructive request")
 	}
 }
