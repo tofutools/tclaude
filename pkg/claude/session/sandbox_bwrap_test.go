@@ -587,6 +587,31 @@ func TestValidateTclaudeLayerLaunchSpecAllowsEquivalentNestedReadOnlyAccess(t *t
 		"the read-only child is more specific than its writable state ancestor")
 }
 
+// A Codex-only host may never have created Claude's per-process session-state
+// directory. The outer layer still hides that cross-harness protected root,
+// and bubblewrap requires the target to exist before its read-only root is
+// established. Preparing a Codex launch must therefore create the mountpoint
+// without adding it to Codex's writable launch contract.
+func TestPrepareTclaudeLayerHarnessStateCreatesCrossHarnessProtectedMountpoints(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := filepath.Join(home, "work")
+	require.NoError(t, os.MkdirAll(cwd, 0o700))
+
+	spec, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
+		HarnessName: harness.CodexName,
+		Cwd:         cwd,
+	})
+	require.NoError(t, err)
+	claudeSessions := filepath.Join(home, ".claude", "sessions")
+	assert.NoDirExists(t, claudeSessions)
+
+	require.NoError(t, PrepareTclaudeLayerHarnessState(spec))
+	assert.DirExists(t, claudeSessions)
+	assert.NotContains(t, spec.Contract.WriteDirs, claudeSessions,
+		"the host mountpoint must remain outside Codex's writable launch contract")
+}
+
 func TestBuildTclaudeLayerLaunchSpecMaterializesSharedContract(t *testing.T) {
 	home, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)

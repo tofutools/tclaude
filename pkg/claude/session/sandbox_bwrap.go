@@ -1613,10 +1613,17 @@ func ValidateTclaudeLayerLaunchSpec(spec TclaudeLayerLaunchSpec) error {
 	return err
 }
 
-// PrepareTclaudeLayerHarnessState materializes only the harness-owned state
-// roots named explicitly by a frozen launch spec. Operator-authored profile
-// paths remain non-creating: a future allow path must not appear on the host
-// merely because a launch mentioned it.
+// PrepareTclaudeLayerHarnessState materializes the harness-owned state roots
+// named explicitly by a frozen launch spec, plus the fixed protected-root
+// mountpoints every outer layer hides. Operator-authored profile paths remain
+// non-creating: a future allow path must not appear on the host merely because
+// a launch mentioned it.
+//
+// Protected mountpoints must exist before bubblewrap starts. Its root is
+// read-only, so `--tmpfs ~/.claude/sessions` cannot create a missing target at
+// mount time. This matters on a Codex-only host where ~/.claude/sessions has
+// never existed: the path is still hidden to prevent cross-harness state
+// disclosure, but it is not harness state Codex would otherwise prepare.
 func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
 	if !supportedTclaudeLayerLaunchSpecVersion(spec.Version) {
 		return fmt.Errorf("unsupported tclaude-layer launch spec version %d", spec.Version)
@@ -1639,6 +1646,18 @@ func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
 	protectedRoots, err := sandboxpolicy.ProtectedPaths()
 	if err != nil {
 		return fmt.Errorf("resolve protected paths before preparing harness state: %w", err)
+	}
+	for _, path := range protectedRoots {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			return fmt.Errorf("prepare tclaude-layer protected mountpoint %q: %w", path, err)
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("inspect tclaude-layer protected mountpoint %q: %w", path, err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("tclaude-layer protected mountpoint %q is not a directory", path)
+		}
 	}
 	for index, path := range stateDirs {
 		path = filepath.Clean(strings.TrimSpace(path))
