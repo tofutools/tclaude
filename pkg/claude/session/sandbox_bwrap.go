@@ -1647,17 +1647,8 @@ func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
 	if err != nil {
 		return fmt.Errorf("resolve protected paths before preparing harness state: %w", err)
 	}
-	for _, path := range protectedRoots {
-		if err := os.MkdirAll(path, 0o700); err != nil {
-			return fmt.Errorf("prepare tclaude-layer protected mountpoint %q: %w", path, err)
-		}
-		info, err := os.Stat(path)
-		if err != nil {
-			return fmt.Errorf("inspect tclaude-layer protected mountpoint %q: %w", path, err)
-		}
-		if !info.IsDir() {
-			return fmt.Errorf("tclaude-layer protected mountpoint %q is not a directory", path)
-		}
+	if err := prepareTclaudeLayerProtectedMountpoints(protectedRoots); err != nil {
+		return err
 	}
 	for index, path := range stateDirs {
 		path = filepath.Clean(strings.TrimSpace(path))
