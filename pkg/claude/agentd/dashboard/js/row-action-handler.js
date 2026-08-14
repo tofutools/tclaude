@@ -265,7 +265,7 @@ export async function handleRowAction(action) {
         const enabling = intent === 'on';
         const confirmed = await confirmModal({
           title: `${enabling ? 'Enable' : 'Disable'} Fast mode for ${label}?`,
-          body: `This sends Codex’s /fast toggle after the server re-checks that Fast mode is still ${enabling ? 'off' : 'on'}. The agent stays running and subsequent turns use ${enabling ? 'faster, higher-cost' : 'standard'} routing.`,
+          body: `This sends Codex’s /fast toggle after the server re-checks the live state and, when needed, infers the inherited setting. The agent stays running and subsequent turns use ${enabling ? 'faster, higher-cost' : 'standard'} routing.`,
           okLabel: `${enabling ? 'Enable' : 'Disable'} Fast mode`,
         });
         if (!confirmed) return;

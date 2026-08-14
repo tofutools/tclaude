@@ -9,6 +9,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // codexFastModeFromFollowerNow bypasses the dashboard's one-second presentation
@@ -42,6 +43,28 @@ func codexFastModeFromFollowerNow(sess *db.SessionRow) (fast, known bool, err er
 	}
 	fast, known = codexFastModeForSession(snap, sess)
 
+	if !known {
+		profile, profileErr := db.AgentRelaunchProfileForConv(sess.ConvID)
+		if profileErr != nil {
+			return false, false, profileErr
+		}
+		if profile != nil && profile.FastMode != nil {
+			fast, known = *profile.FastMode, true
+		}
+	}
+	if !known {
+		// Inherit deliberately records no launch override. Ask Codex's own
+		// merged config reader for a best-effort baseline instead; a later live
+		// thread_settings_applied event supersedes it.
+		inherited, inheritedKnown, inheritedErr := session.CodexEffectiveFastMode(sess.Cwd)
+		if inheritedErr != nil {
+			slog.Debug("Codex inherited Fast mode probe failed", "error", inheritedErr,
+				"conv_id", sess.ConvID, "cwd", sess.Cwd)
+		} else if inheritedKnown {
+			fast, known = inherited, true
+		}
+	}
+
 	// Keep the ordinary snapshot read-through cache coherent, but do not move
 	// its refresh timestamp: this focused proof does not perform the context,
 	// effort, usage, cost, or checkpoint persistence work of a dashboard tick.
@@ -55,15 +78,6 @@ func codexFastModeFromFollowerNow(sess *db.SessionRow) (fast, known bool, err er
 		codexContextRefreshMu.last[sess.ID] = cached
 	}
 	codexContextRefreshMu.Unlock()
-	if !known {
-		profile, profileErr := db.AgentRelaunchProfileForConv(sess.ConvID)
-		if profileErr != nil {
-			return false, false, profileErr
-		}
-		if profile != nil && profile.FastMode != nil {
-			return *profile.FastMode, true, nil
-		}
-	}
 	return fast, known, nil
 }
 
@@ -105,8 +119,11 @@ func dashboardSetCodexFastModeAgent(w http.ResponseWriter, _ *http.Request, conv
 		return
 	}
 	if !known {
-		writeError(w, http.StatusConflict, "unknown", "Codex has not reported live Fast mode state and the agent has no explicit tclaude launch setting")
-		return
+		// /fast is only a toggle. When both telemetry and the inherited-config
+		// probe are unavailable, honor the operator's requested direction by
+		// assuming the opposite current state. Codex's next settings readback
+		// repairs the dashboard if that guess was wrong.
+		fast = !desired
 	}
 	if fast == desired {
 		state := "off"

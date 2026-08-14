@@ -749,15 +749,15 @@ function FastModeMenuItem({ member }) {
   const known = typeof member.state?.fast_mode === 'boolean';
   const on = member.state?.fast_mode === true;
   const intent = on ? 'off' : 'on';
-  const regular = known ? `⚡ ${on ? 'disable' : 'enable'} fast mode` : '⚡ fast mode unavailable';
+  const regular = known ? `⚡ ${on ? 'disable' : 'enable'} fast mode` : '⚡ enable fast mode';
   const title = !member.online
     ? `${regular} is unavailable while ${label} is offline`
     : !known
-      ? `Fast mode cannot be changed until Codex reports the live service tier for ${label}`
+      ? `Enable Fast mode for ${label}; the current tier is unknown, so tclaude will infer the inherited setting and sync from Codex's next readback.`
       : `${on ? 'Disable' : 'Enable'} Fast mode for ${label}; the agent stays running and the change applies to subsequent turns.`;
   return html`<${MenuButton} member=${member} act="fast-mode-set"
     attrs=${{ 'data-intent': intent }} regular=${regular} wizard=${regular}
-    title=${title} disabled=${!member.online || !known} />`;
+    title=${title} disabled=${!member.online} />`;
 }
 
 function RestartMenuItem({ member }) {

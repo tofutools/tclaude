@@ -50,18 +50,34 @@ var codexProviderRoutingKeys = []string{
 	"profiles",
 }
 
-// codexEffectiveConfig is the provider-routing projection of one
-// `config/read`. Everything else Codex reports is deliberately dropped: this
-// seam decides network destinations, not harness behavior.
+// codexEffectiveConfig is the small projection of one `config/read` used by
+// tclaude: provider routing for filtered-launch enforcement, plus the service
+// tier used as a best-effort baseline by the live Fast-mode control. Everything
+// else Codex reports is deliberately dropped.
 type codexEffectiveConfig struct {
 	ModelProvider  string
 	OpenAIBaseURL  string
 	ChatGPTBaseURL string
 	AuthStore      string
+	ServiceTier    string
 	ModelProviders map[string]codexEffectiveProvider
 	// RemoteOrigins names, per routing key, the remotely delivered layer that
 	// won it. Empty when every routing key came from a local file.
 	RemoteOrigins []codexRemoteConfigOrigin
+}
+
+// CodexEffectiveFastMode asks Codex's own config loader for the inherited
+// service tier that a flagless launch in cwd would receive. This is a
+// best-effort baseline for live controls: a running thread may have been
+// launched before the config changed, and its thread_settings_applied
+// telemetry remains authoritative whenever it exists.
+func CodexEffectiveFastMode(cwd string) (fast, known bool, err error) {
+	config, err := codexEffectiveConfigReader(cwd, nil, "")
+	if err != nil {
+		return false, false, err
+	}
+	return strings.EqualFold(config.ServiceTier, "priority") ||
+		strings.EqualFold(config.ServiceTier, "fast"), true, nil
 }
 
 type codexEffectiveProvider struct {
@@ -305,6 +321,7 @@ func parseCodexEffectiveConfig(
 			OpenAIBaseURL  *string `json:"openai_base_url"`
 			ChatGPTBaseURL *string `json:"chatgpt_base_url"`
 			AuthStore      *string `json:"cli_auth_credentials_store"`
+			ServiceTier    *string `json:"service_tier"`
 			ModelProviders map[string]struct {
 				BaseURL            *string `json:"base_url"`
 				RequiresOpenAIAuth *bool   `json:"requires_openai_auth"`
@@ -337,6 +354,7 @@ func parseCodexEffectiveConfig(
 		OpenAIBaseURL:  value(response.Config.OpenAIBaseURL),
 		ChatGPTBaseURL: value(response.Config.ChatGPTBaseURL),
 		AuthStore:      value(response.Config.AuthStore),
+		ServiceTier:    value(response.Config.ServiceTier),
 	}
 	if len(response.Config.ModelProviders) > 0 {
 		effective.ModelProviders = make(

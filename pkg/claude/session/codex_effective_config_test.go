@@ -6,12 +6,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 func TestParseCodexEffectiveConfigNamesRemotelyDeliveredOrigins(t *testing.T) {
 	raw := json.RawMessage(`{
 	  "config": {
 	    "model_provider": "corp",
+	    "service_tier": "priority",
 	    "openai_base_url": "https://openai-gateway.example/v1",
 	    "chatgpt_base_url": "https://codex.acme.example/backend-api/",
 	    "cli_auth_credentials_store": "file",
@@ -53,6 +55,7 @@ func TestParseCodexEffectiveConfigNamesRemotelyDeliveredOrigins(t *testing.T) {
 	assert.Equal(t, "https://openai-gateway.example/v1", config.OpenAIBaseURL)
 	assert.Equal(t, "https://codex.acme.example/backend-api/", config.ChatGPTBaseURL)
 	assert.Equal(t, "file", config.AuthStore)
+	assert.Equal(t, "priority", config.ServiceTier)
 	require.Contains(t, config.ModelProviders, "corp")
 	assert.Equal(t, "https://models.example/v1",
 		config.ModelProviders["corp"].BaseURL)
@@ -85,6 +88,32 @@ func TestParseCodexEffectiveConfigNamesRemotelyDeliveredOrigins(t *testing.T) {
 	assert.Equal(t,
 		`chatgpt_base_url from mdm layer "com.openai.codex/config" (sha256:mdm)`,
 		config.RemoteOrigins[0].String())
+}
+
+func TestCodexEffectiveFastModeUsesMergedConfig(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		tier string
+		fast bool
+	}{
+		{name: "priority", tier: "priority", fast: true},
+		{name: "legacy fast", tier: "fast", fast: true},
+		{name: "default", tier: "default", fast: false},
+		{name: "unset defaults off", tier: "", fast: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			previous := codexEffectiveConfigReader
+			codexEffectiveConfigReader = func(string, []sandboxpolicy.EnvironmentEntry, string) (codexEffectiveConfig, error) {
+				return codexEffectiveConfig{ServiceTier: tc.tier}, nil
+			}
+			t.Cleanup(func() { codexEffectiveConfigReader = previous })
+
+			fast, known, err := CodexEffectiveFastMode("/work")
+			require.NoError(t, err)
+			assert.True(t, known)
+			assert.Equal(t, tc.fast, fast)
+		})
+	}
 }
 
 func TestCodexProviderRoutingKeyMatchesTableMembers(t *testing.T) {
