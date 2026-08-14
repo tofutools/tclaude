@@ -108,7 +108,7 @@ func TestCodexEffectiveFastModeUsesMergedConfig(t *testing.T) {
 			}
 			t.Cleanup(func() { codexEffectiveConfigReader = previous })
 
-			fast, known, err := CodexEffectiveFastMode("/work")
+			fast, known, err := CodexEffectiveFastMode("/work", nil, "")
 			require.NoError(t, err)
 			assert.True(t, known)
 			assert.Equal(t, tc.fast, fast)

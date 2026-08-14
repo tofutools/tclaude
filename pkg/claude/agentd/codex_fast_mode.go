@@ -8,6 +8,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -56,12 +57,29 @@ func codexFastModeFromFollowerNow(sess *db.SessionRow) (fast, known bool, err er
 		// Inherit deliberately records no launch override. Ask Codex's own
 		// merged config reader for a best-effort baseline instead; a later live
 		// thread_settings_applied event supersedes it.
-		inherited, inheritedKnown, inheritedErr := session.CodexEffectiveFastMode(sess.Cwd)
+		environment, permissionProfile, boundaryErr := codexFastModeProbeBoundary(sess)
+		if boundaryErr != nil {
+			slog.Debug("Codex inherited Fast mode launch boundary unavailable", "error", boundaryErr,
+				"conv_id", sess.ConvID)
+		}
+		inherited, inheritedKnown, inheritedErr := session.CodexEffectiveFastMode(
+			sess.Cwd, environment, permissionProfile)
 		if inheritedErr != nil {
 			slog.Debug("Codex inherited Fast mode probe failed", "error", inheritedErr,
 				"conv_id", sess.ConvID, "cwd", sess.Cwd)
 		} else if inheritedKnown {
 			fast, known = inherited, true
+		}
+
+		// config/read may take long enough for the live thread to change while
+		// it runs. Re-read the incremental follower after the probe so any
+		// current-generation settings event wins before we cache or act.
+		latest, latestErr := follower.RuntimeTelemetry(home, sess.ConvID)
+		if latestErr != nil {
+			return false, false, latestErr
+		}
+		if liveFast, liveKnown := codexFastModeForSession(latest, sess); liveKnown {
+			fast, known = liveFast, true
 		}
 	}
 
@@ -79,6 +97,38 @@ func codexFastModeFromFollowerNow(sess *db.SessionRow) (fast, known bool, err er
 	}
 	codexContextRefreshMu.Unlock()
 	return fast, known, nil
+}
+
+func codexFastModeProbeBoundary(
+	sess *db.SessionRow,
+) (environment []sandboxpolicy.EnvironmentEntry, permissionProfile string, err error) {
+	if sess == nil {
+		return nil, "", nil
+	}
+	if sess.EffectiveSandbox != nil {
+		environment = append(environment, sess.EffectiveSandbox.Effective.Environment...)
+	}
+	identity, identityErr := db.GetSessionExitLaunchIdentity(sess.ID)
+	if identityErr != nil {
+		return environment, "", identityErr
+	}
+	if identity.Generation != "" {
+		profile, profileErr := db.GetCodexNativePermissionProfile(identity.Generation)
+		if profileErr != nil {
+			return environment, "", profileErr
+		}
+		if profile != nil {
+			return environment, profile.ProfileName, nil
+		}
+	}
+	// User-authored Codex profiles are persisted in the historical sandbox_mode
+	// column. Built-in sandbox values are flags rather than profile names.
+	switch sess.HarnessBuiltinMode {
+	case "", harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxDangerFull:
+		return environment, "", nil
+	default:
+		return environment, sess.HarnessBuiltinMode, nil
+	}
 }
 
 // dashboardSetCodexFastModeAgent re-proves live Fast state immediately before

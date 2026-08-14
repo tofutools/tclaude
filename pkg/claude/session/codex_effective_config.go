@@ -71,8 +71,12 @@ type codexEffectiveConfig struct {
 // best-effort baseline for live controls: a running thread may have been
 // launched before the config changed, and its thread_settings_applied
 // telemetry remains authoritative whenever it exists.
-func CodexEffectiveFastMode(cwd string) (fast, known bool, err error) {
-	config, err := codexEffectiveConfigReader(cwd, nil, "")
+func CodexEffectiveFastMode(
+	cwd string,
+	environment []sandboxpolicy.EnvironmentEntry,
+	permissionProfile string,
+) (fast, known bool, err error) {
+	config, err := codexEffectiveConfigReader(cwd, environment, permissionProfile)
 	if err != nil {
 		return false, false, err
 	}

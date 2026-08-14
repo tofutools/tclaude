@@ -5,8 +5,10 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -24,6 +26,35 @@ func TestSessionArgsCarryExplicitFastMode(t *testing.T) {
 		})
 		assert.Equal(t, mode, valueAfter(resume, "--fast-mode"))
 	}
+}
+
+func TestCodexFastModeProbeBoundaryUsesRecordedLaunch(t *testing.T) {
+	setupTestDB(t)
+	const generation = "fast-mode-generation"
+	require.NoError(t, db.UpsertCodexNativePermissionProfile(db.CodexNativePermissionProfile{
+		Generation: generation, ProfileName: "tclaude-agent-fast-mode",
+		ProfileTOML: "default_permissions = \"workspace-write\"\n",
+	}))
+	sess := &db.SessionRow{
+		ID: "fast-mode-session", ConvID: "fast-mode-conv", Harness: harness.CodexName,
+		HarnessBuiltinMode:   harness.SandboxDangerFull,
+		ExitLaunchGeneration: generation, ExitLaunchGateState: db.SessionExitGateUngated,
+		EffectiveSandbox: &sandboxpolicy.Snapshot{Version: sandboxpolicy.SnapshotVersion, Effective: sandboxpolicy.EffectiveProfile{
+			Environment: []sandboxpolicy.EnvironmentEntry{
+				{Name: "CODEX_HOME", Value: "/agent/codex-home"},
+				{Name: "PATH", Value: "/agent/bin"},
+			},
+		}},
+	}
+	require.NoError(t, db.SaveSession(sess))
+
+	environment, profile, err := codexFastModeProbeBoundary(sess)
+	require.NoError(t, err)
+	assert.Equal(t, "tclaude-agent-fast-mode", profile)
+	assert.Equal(t, []sandboxpolicy.EnvironmentEntry{
+		{Name: "CODEX_HOME", Value: "/agent/codex-home"},
+		{Name: "PATH", Value: "/agent/bin"},
+	}, environment)
 }
 
 func TestCodexFastModeForSessionRejectsPreviousGenerationObservation(t *testing.T) {

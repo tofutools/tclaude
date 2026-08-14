@@ -224,6 +224,38 @@ func TestDashboardCodexFastMode_ProbeFailureStillToggles(t *testing.T) {
 	f.AssertSentContains("tmux-fast-no-probe:0.0", "/fast", 10*time.Second)
 }
 
+func TestDashboardCodexFastMode_ReadbackDuringProbeWins(t *testing.T) {
+	const conv = "019ec064-4250-79b1-9ade-ebaea4170648"
+	agentd.ResetCodexContextRefreshForTest()
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	probeStarted := make(chan struct{})
+	releaseProbe := make(chan struct{})
+	t.Cleanup(session.SetCodexEffectiveConfigProbeForTest(
+		func(string, []sandboxpolicy.EnvironmentEntry, string) (json.RawMessage, error) {
+			close(probeStarted)
+			<-releaseProbe
+			return json.RawMessage(`{"config":{"service_tier":"default"},"origins":{}}`), nil
+		}))
+	f := newFlow(t)
+	f.HaveGroup("fast-squad")
+	cx := f.HaveAliveCodexSession(conv, "spwn-fast-probe-race", "tmux-fast-probe-race", f.TestCwd("fast-probe-race"))
+	f.HaveMember("fast-squad", conv)
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		done <- postDashboardFastMode(t, agentd.BuildDashboardHandlerForTest(), conv, "enable")
+	}()
+	<-probeStarted
+	require.NoError(t, cx.WriteThreadSettingsApplied("priority"))
+	close(releaseProbe)
+	rec := <-done
+	assert.Equal(t, http.StatusConflict, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "already_on")
+	for _, sent := range f.World.Tmux.Sent() {
+		assert.NotEqual(t, "/fast", sent.Text, "authoritative readback during the probe must prevent a stale toggle")
+	}
+}
+
 func TestDashboardCodexFastMode_RejectsGenerationRotatedAfterResolve(t *testing.T) {
 	const (
 		oldConv = "019ec064-4250-79b1-9ade-ebaea4170642"
