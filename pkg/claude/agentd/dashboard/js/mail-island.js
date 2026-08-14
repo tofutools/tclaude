@@ -205,9 +205,22 @@ function MessageHead({ message, aggregate, controller }) {
     ${party && html`<span class="mail-row-party" title=${conv ? idTooltip(agent, conv) : undefined}>${party}</span>`}</${Fragment}>`;
 }
 
+function MessageAttachmentIndicator({ count }) {
+  if (!count) return null;
+  const label = `${count} attachment${count === 1 ? '' : 's'}`;
+  return html`<span class="mail-row-attachments" title=${label} aria-label=${label}>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+      stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="m21.4 11.6-8.9 8.9a6 6 0 0 1-8.5-8.5l9.7-9.7a4 4 0 0 1 5.7 5.7l-9.7 9.7a2 2 0 0 1-2.8-2.8l8.9-8.9" />
+    </svg>
+    ${count > 1 && html`<span class="mail-row-attachment-count" aria-hidden="true">${count}</span>`}
+  </span>`;
+}
+
 function MessageRow({ message, current, aggregate, controller }) {
   const active = message.id === current.selectedMsgId;
   const unread = !message.read;
+  const attachmentCount = messageAttachments(message).length;
   return html`<div class="mail-row-wrap" data-key=${message.id} data-kind=${controller.msgKind(message)}>
     <input type="checkbox" class="mail-msg-check" data-id=${message.id} checked=${current.selectedMsgs.has(message.id)}
       disabled=${current.busy} title="Select message"
@@ -221,7 +234,10 @@ function MessageRow({ message, current, aggregate, controller }) {
         ${message.group && html`<span class="mail-row-group">${message.group}</span>`}
         <span class="mail-row-time">${relTime(message.created_at)}</span>
       </span>
-      <span class="mail-row-subject">${controller.msgPreview(message)}</span>
+      <span class="mail-row-subject-line">
+        <span class="mail-row-subject">${controller.msgPreview(message)}</span>
+        <${MessageAttachmentIndicator} count=${attachmentCount} />
+      </span>
     </button>
     <button class="mail-row-del" data-id=${message.id}
       title="Delete this message" disabled=${current.busy}
