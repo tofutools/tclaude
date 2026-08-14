@@ -155,6 +155,7 @@ func TestDashboardOpenPRsThemed(t *testing.T) {
 		"body.wizard .open-prs-popover {",
 		"background: linear-gradient(180deg, #241b3d 0%, #140f28 100%);",
 		"body.wizard .open-prs-filters button.active {",
+		"body.wizard .open-prs-final-ci { color: #b39ddb; }",
 		"body.wizard .open-pr-list::-webkit-scrollbar-thumb:hover { background: #a97bd6; }",
 	} {
 		if !strings.Contains(css, want) {
@@ -168,5 +169,15 @@ func TestDashboardOpenPRsThemed(t *testing.T) {
 	footer := strings.Index(island, "? html`<div class=\"open-prs-foot\">")
 	if list < 0 || empty < 0 || filters < 0 || footer < 0 || list >= filters || empty >= filters || filters >= footer {
 		t.Errorf("open PR filters must follow both result variants and precede the footer")
+	}
+	for _, want := range []string{
+		"const [showFinalCI, setShowFinalCI] = useState(false);",
+		"summary=${terminal && !showFinalCI ? null : pr.checks}",
+		"view.showingRecent ? html`<label class=\"open-prs-final-ci\"",
+		"Closed and merged pull requests are never refreshed.",
+	} {
+		if !strings.Contains(island, want) {
+			t.Errorf("closed PR final-CI opt-in missing %q", want)
+		}
 	}
 }
