@@ -61,20 +61,21 @@ function providerLabel(provider) {
 
 // Missing subscription windows are initially represented by hidden tokens so
 // rows from different sources can share stable columns. A placeholder has no
-// alignment work to do, though, when every other row leaves that column empty
-// too. Drop only those globally-empty placeholders: a weekly-only Codex row
-// becomes compact on its own, while a Claude, Copilot, or API-cost token in the
-// first column keeps Codex's missing 5h slot reserved.
+// alignment work to do, though, when every other quota row leaves that same
+// window empty too. Drop only those globally-empty quota placeholders: a
+// weekly-only Codex row becomes compact on its own or beside unrelated monthly
+// usage / API cost, while a Claude 5h token keeps Codex's missing 5h slot
+// reserved.
 function trimEmptyUsageColumns(lines) {
-  const occupied = new Set();
+  const occupiedWindows = new Set();
   for (const line of lines) {
-    line.tokens.forEach((token, index) => {
-      if (!token.hidden) occupied.add(index);
-    });
+    for (const token of line.tokens) {
+      if (token.kind === 'window' && token.label && !token.hidden) occupiedWindows.add(token.label);
+    }
   }
   return lines.map((line) => ({
     ...line,
-    tokens: line.tokens.filter((token, index) => !token.hidden || occupied.has(index)),
+    tokens: line.tokens.filter((token) => !token.hidden || occupiedWindows.has(token.label)),
   }));
 }
 

@@ -148,17 +148,30 @@ test('usage model trims only placeholder columns that no source occupies', async
       want: { claude: ['claude-5h', 'claude-7d'], codex: ['(codex-5h)', 'codex-7d'] },
     },
     {
-      name: 'API cost keeps the missing Codex 5h alignment slot',
+      name: 'API cost does not impersonate the 5h quota column',
       usage: { ...codex({ seven_day: window() }), ...cost },
-      want: { codex: ['(codex-5h)', 'codex-7d'], 'cost-openai': ['api-cost-openai'] },
+      want: { codex: ['codex-7d'], 'cost-openai': ['api-cost-openai'] },
     },
     {
-      name: 'Copilot keeps the missing Codex 5h alignment slot',
+      name: 'Copilot monthly usage does not impersonate the 5h quota column',
       usage: {
         ...codex({ seven_day: window() }),
         copilot: { available: true, monthly: window() },
       },
-      want: { codex: ['(codex-5h)', 'codex-7d'], copilot: ['copilot-monthly'] },
+      want: { codex: ['codex-7d'], copilot: ['copilot-monthly'] },
+    },
+    {
+      name: 'Claude still preserves quota alignment when API cost is also present',
+      usage: {
+        available: true, five_hour: window(), seven_day: window(),
+        ...codex({ seven_day: window() }),
+        ...cost,
+      },
+      want: {
+        claude: ['claude-5h', 'claude-7d'],
+        codex: ['(codex-5h)', 'codex-7d'],
+        'cost-openai': ['api-cost-openai'],
+      },
     },
     {
       name: 'a zero cost row does not reserve a column',

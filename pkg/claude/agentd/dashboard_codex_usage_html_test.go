@@ -85,10 +85,12 @@ func TestDashboardHTML_CodexUsageColumnAlignment(t *testing.T) {
 // TestDashboardHTML_UsageAlwaysReservesBothWindows guards the two-line
 // readout's alignment rule: both window slots are initially emitted even when
 // a source omits one. Codex's omitted slot is hidden rather than rendered as a
-// misleading 0%, and retains its geometry whenever another row occupies that
-// column. A column that is empty across every source is trimmed by the model;
-// that behavioural matrix lives in jstest/shell-model.test.mjs. Claude retains
-// its visible zero placeholder behavior.
+// misleading 0%, and retains its geometry whenever another quota row occupies
+// that same window column. A quota column that is empty across every matching
+// source is trimmed by the model; unrelated monthly usage and API cost do not
+// impersonate 5h/7d columns. That behavioural matrix lives in
+// jstest/shell-model.test.mjs. Claude retains its visible zero placeholder
+// behavior.
 func TestDashboardHTML_UsageAlwaysReservesBothWindows(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
