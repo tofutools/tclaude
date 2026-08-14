@@ -117,7 +117,7 @@ function FooterMeta({ state }) {
 // A closed/merged row is dotted by its terminal state instead of its CI state
 // — checks on something already landed say nothing useful — and it drops the
 // "no active agent" note, which only means something for open work.
-function OpenPRRow({ pr }) {
+function OpenPRRow({ pr, showFinalCI = false }) {
   const terminal = pr.state === 'merged' || pr.state === 'closed';
   const dot = terminal ? pr.state : (pr?.checks?.state || 'unknown');
   return html`
@@ -133,13 +133,19 @@ function OpenPRRow({ pr }) {
           ${pr.draft && !terminal ? html`<span> · draft</span>` : null}
         </span>
       </span>
-      <${PRChecksBadge} url=${pr.url} prNumber=${pr.number} summary=${pr.checks} />
+      <${PRChecksBadge} url=${pr.url} prNumber=${pr.number}
+        summary=${terminal && !showFinalCI ? null : pr.checks} />
     </li>
   `;
 }
 
 function OpenPRs({ state }) {
   const [filter, setFilter] = useState('all');
+  // Closed/merged work is history, so its last CI result stays quiet unless
+  // the operator explicitly asks for it. This is intentionally local UI
+  // state: enabling it reveals the cached snapshot summary but changes no
+  // daemon setting and triggers no terminal-PR refresh on its own.
+  const [showFinalCI, setShowFinalCI] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [pinned, setPinned] = useState(false);
   const rootRef = useRef(null);
@@ -218,7 +224,7 @@ function OpenPRs({ state }) {
         <div id="open-prs-popover" class="open-prs-popover" role="dialog" aria-label="Your pull requests">
           <div class="open-prs-head"><strong>Your pull requests</strong><span class="open-prs-count">${view.total}</span>${age ? html`<span class="open-prs-age">updated ${age}</span>` : null}</div>
           ${view.items.length
-            ? html`<ul class="open-pr-list">${view.items.map((pr) => html`<${OpenPRRow} key=${pr.url} pr=${pr} />`)}</ul>`
+            ? html`<ul class="open-pr-list">${view.items.map((pr) => html`<${OpenPRRow} key=${pr.url} pr=${pr} showFinalCI=${view.showingRecent && showFinalCI} />`)}</ul>`
             : html`<p class="open-prs-empty">${view.showingRecent
               ? `Nothing merged or closed in the last ${view.recentWindowDays} day(s).`
               : (openFilterActive && view.total <= 0 ? 'No open pull requests.' : 'No pull requests match this filter.')}</p>`}
@@ -230,7 +236,15 @@ function OpenPRs({ state }) {
               title=${`Pull requests you merged or closed in the last ${view.recentWindowDays} day(s)`}
               onClick=${() => setFilter('recent')}>${recentLabel} ${view.recentCount}</button>` : null}
           </div>
-          ${view.searchURL ? html`<div class="open-prs-foot">${view.truncated ? html`<span>Showing the first ${view.items.length} · </span>` : null}<a href=${view.searchURL} target="_blank" rel="noopener noreferrer">${view.showingRecent ? 'See them all on GitHub ↗' : 'Open all on GitHub ↗'}</a></div>` : null}
+          ${view.searchURL || view.showingRecent ? html`<div class="open-prs-foot">
+            <span>${view.truncated ? html`<span>Showing the first ${view.items.length} · </span>` : null}${view.searchURL ? html`<a href=${view.searchURL} target="_blank" rel="noopener noreferrer">${view.showingRecent ? 'See them all on GitHub ↗' : 'Open all on GitHub ↗'}</a>` : null}</span>
+            ${view.showingRecent ? html`<label class="open-prs-final-ci"
+              title="Show the last cached CI result. Closed and merged pull requests are never refreshed.">
+              <input type="checkbox" checked=${showFinalCI}
+                onChange=${(event) => setShowFinalCI(event.currentTarget.checked)} />
+              <span>Final CI</span>
+            </label>` : null}
+          </div>` : null}
         </div>
       ` : null}
     </span>
