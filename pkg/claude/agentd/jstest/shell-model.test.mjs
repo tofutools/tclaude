@@ -116,6 +116,78 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
   assert.equal(activity.details.groups[0].states[0].members[0].name, 'same');
 });
 
+test('usage model trims only placeholder columns that no source occupies', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { usageView } = await harness.importDashboardModule('js/shell-model.js');
+  const window = (pct = 10) => ({ pct, remaining: '1h' });
+  const codex = (windows) => ({ codex: { available: true, ...windows } });
+  const cost = { total_cost_usd: 1, api_costs: [{ provider: 'openai', total_cost_usd: 1 }] };
+
+  const cases = [
+    {
+      name: 'weekly-only Codex is compact on its own',
+      usage: codex({ seven_day: window() }),
+      want: { codex: ['codex-7d'] },
+    },
+    {
+      name: '5h-only Codex is compact on its own',
+      usage: codex({ five_hour: window() }),
+      want: { codex: ['codex-5h'] },
+    },
+    {
+      name: 'both Codex windows remain visible',
+      usage: codex({ five_hour: window(), seven_day: window() }),
+      want: { codex: ['codex-5h', 'codex-7d'] },
+    },
+    {
+      name: 'Claude 5h keeps the missing Codex 5h alignment slot',
+      usage: {
+        available: true, five_hour: window(), seven_day: window(),
+        ...codex({ seven_day: window() }),
+      },
+      want: { claude: ['claude-5h', 'claude-7d'], codex: ['(codex-5h)', 'codex-7d'] },
+    },
+    {
+      name: 'API cost keeps the missing Codex 5h alignment slot',
+      usage: { ...codex({ seven_day: window() }), ...cost },
+      want: { codex: ['(codex-5h)', 'codex-7d'], 'cost-openai': ['api-cost-openai'] },
+    },
+    {
+      name: 'Copilot keeps the missing Codex 5h alignment slot',
+      usage: {
+        ...codex({ seven_day: window() }),
+        copilot: { available: true, monthly: window() },
+      },
+      want: { codex: ['(codex-5h)', 'codex-7d'], copilot: ['copilot-monthly'] },
+    },
+    {
+      name: 'a zero cost row does not reserve a column',
+      usage: {
+        ...codex({ seven_day: window() }),
+        total_cost_usd: 0,
+        api_costs: [{ provider: 'openai', total_cost_usd: 0 }],
+      },
+      want: { codex: ['codex-7d'] },
+    },
+    {
+      name: 'unreported Codex windows do not create an empty row',
+      usage: codex({}),
+      want: {},
+      na: true,
+    },
+  ];
+
+  for (const tc of cases) {
+    const view = usageView(tc.usage);
+    assert.equal(view.na, !!tc.na, tc.name);
+    const got = Object.fromEntries(view.lines.map((line) => [
+      line.key,
+      line.tokens.map((token) => token.hidden ? `(${token.key})` : token.key),
+    ]));
+    assert.deepEqual(got, tc.want, tc.name);
+  }
+});
+
 test('global activity details mirror pulse buckets, dedup members, and annotate finer states', async (t) => {
   const harness = await createPreactHarness(t);
   const { globalActivityView, activityMemberTitle } = await harness.importDashboardModule('js/shell-model.js');

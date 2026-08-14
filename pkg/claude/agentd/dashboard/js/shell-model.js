@@ -59,6 +59,25 @@ function providerLabel(provider) {
   return String(provider || 'Unknown');
 }
 
+// Missing subscription windows are initially represented by hidden tokens so
+// rows from different sources can share stable columns. A placeholder has no
+// alignment work to do, though, when every other row leaves that column empty
+// too. Drop only those globally-empty placeholders: a weekly-only Codex row
+// becomes compact on its own, while a Claude, Copilot, or API-cost token in the
+// first column keeps Codex's missing 5h slot reserved.
+function trimEmptyUsageColumns(lines) {
+  const occupied = new Set();
+  for (const line of lines) {
+    line.tokens.forEach((token, index) => {
+      if (!token.hidden) occupied.add(index);
+    });
+  }
+  return lines.map((line) => ({
+    ...line,
+    tokens: line.tokens.filter((token, index) => !token.hidden || occupied.has(index)),
+  }));
+}
+
 export function usageView(usage) {
   const titles = [];
   const claude = subscriptionWindows(usage, 'claude');
@@ -101,7 +120,7 @@ export function usageView(usage) {
 
   const lines = [];
   if (claude.length) lines.push({ key: 'claude', label: 'Claude:', tokens: claude });
-  if (codex.length) lines.push({ key: 'codex', label: 'Codex:', tokens: codex });
+  if (codex.length && codexPeriods.length) lines.push({ key: 'codex', label: 'Codex:', tokens: codex });
   if (copilot.length) lines.push({ key: 'copilot', label: 'Copilot:', tokens: copilot });
   for (const item of apiCosts) {
     lines.push({
@@ -110,7 +129,9 @@ export function usageView(usage) {
       tokens: [costToken(`api-cost-${item.provider}`, item.today, item.mtd)],
     });
   }
-  if (lines.length) return { na: false, multiline: true, title: titles.join(' · '), lines };
+  if (lines.length) {
+    return { na: false, multiline: true, title: titles.join(' · '), lines: trimEmptyUsageColumns(lines) };
+  }
   return {
     na: true,
     multiline: false,

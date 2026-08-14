@@ -83,10 +83,12 @@ func TestDashboardHTML_CodexUsageColumnAlignment(t *testing.T) {
 }
 
 // TestDashboardHTML_UsageAlwaysReservesBothWindows guards the two-line
-// readout's alignment rule: both window slots are emitted even when a source
-// omits one. Codex's omitted slot is hidden rather than rendered as a
-// misleading 0%, but visibility:hidden preserves its geometry so 7d remains
-// under 7d. Claude retains its visible zero placeholder behavior.
+// readout's alignment rule: both window slots are initially emitted even when
+// a source omits one. Codex's omitted slot is hidden rather than rendered as a
+// misleading 0%, and retains its geometry whenever another row occupies that
+// column. A column that is empty across every source is trimmed by the model;
+// that behavioural matrix lives in jstest/shell-model.test.mjs. Claude retains
+// its visible zero placeholder behavior.
 func TestDashboardHTML_UsageAlwaysReservesBothWindows(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
@@ -103,6 +105,7 @@ func TestDashboardHTML_UsageAlwaysReservesBothWindows(t *testing.T) {
 	must("usageWindow(`${prefix}-5h`, '5h', source.five_hour || zero, hideMissing && !source.five_hour)", "the 5h slot is always emitted and can be hidden when absent")
 	must("usageWindow(`${prefix}-7d`, '7d', source.seven_day || zero, hideMissing && !source.seven_day)", "the 7d slot is always emitted and can be hidden when absent")
 	must("subscriptionWindows(codexUsage, 'codex', true)", "Codex hides missing limit placeholders")
+	must("trimEmptyUsageColumns(lines)", "globally empty placeholder columns are trimmed after all sources are known")
 	must("#usage .uw.umissing { visibility: hidden; }", "missing Codex windows retain their alignment geometry")
 	must("aria-hidden=${token.hidden ? 'true' : null}", "hidden placeholders are omitted from the accessibility tree")
 	// Tooltip periods are derived from reported windows, so weekly-only Codex
