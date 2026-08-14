@@ -580,7 +580,7 @@ export function MailApp({ controller }) {
       <button class="tool" id="mail-mark-all" data-act="msg-mark-all-read"
         title="Mark every human notification read" hidden=${current.selected !== 'human'}>✓ mark all read</button>
       <button class="tool" id="mail-clear-read" data-act="msg-clear"
-        title="Delete every human notification that has been marked read" hidden=${current.selected !== 'human'}>🧹 clear read</button>
+        title="Delete every human notification that has been marked read" hidden=${current.selected !== 'human'}>🗑 delete read</button>
       <button class="tool" id="mail-agent-mark-all" data-act="mail-agent-mark-all"
         title="Mark every message this agent has received as read (on its behalf)"
         onClick=${controller.markAllAgentRead}

@@ -1042,17 +1042,17 @@ export async function handleRowAction(action) {
       }
       case 'msg-clear': {
         const confirmed = await confirmModal({
-          title: 'Clear read messages?',
+          title: 'Delete read messages?',
           body: 'Permanently deletes every message that has been marked read. Unread messages are kept.',
-          okLabel: 'Clear read',
+          okLabel: 'Delete read',
         });
         if (!confirmed) return;
         const r = await fetch('/api/human-messages/clear', {
           method: 'POST', credentials: 'same-origin',
         });
-        if (!r.ok) { toast(`Clear failed: ${await r.text()}`, true); return; }
+        if (!r.ok) { toast(`Delete failed: ${await r.text()}`, true); return; }
         const res = await r.json().catch(() => ({}));
-        toast(`cleared ${res.deleted || 0} read message(s)`);
+        toast(`deleted ${res.deleted || 0} read message(s)`);
         refresh();
         return;
       }

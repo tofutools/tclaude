@@ -1645,7 +1645,7 @@ dimension that slug does not declare. See
 Notifications agents have sent the human via `tclaude agent notify-human`
 (see [Agent Coordination → bundled skills](agent.md#bundled-skills)). Each row
 shows the sender, group, subject, and body; the nav tab carries an
-unread-count badge. **✓ mark all read** clears the badge; **🧹 clear read**
+unread-count badge. **✓ mark all read** clears the badge; **🗑 delete read**
 deletes every already-read message. It is the human's side of the
 human-notify channel — an explicit nudge surface kept separate from the busy
 terminal. When the badge shows waiting work, selecting **Messages** opens the

@@ -59,6 +59,7 @@ func TestDashboardHTML_MessageFilterAboveList(t *testing.T) {
 		`<div class="mail-list-filter">`,
 		`id="mail-mark-all"`,
 		`id="mail-clear-read"`,
+		`>🗑 delete read</button>`,
 		`id="filter-messages-clear"`, // the Messages island wires the clear button
 	} {
 		if !strings.Contains(html, needle) {
@@ -81,5 +82,30 @@ func TestDashboardHTML_MessageFilterAboveList(t *testing.T) {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard.css missing %q — Messages-tab grid layout regressed", needle)
 		}
+	}
+}
+
+// TestDashboardHTML_DeleteReadMessagesConfirms guards the destructive human-
+// notification sweep: its label says what it does, and the shared confirmation
+// dialog remains between the click and the delete request.
+func TestDashboardHTML_DeleteReadMessagesConfirms(t *testing.T) {
+	js := string(mustReadFS(dashboardAssetsFS, "js/row-action-handler.js"))
+	for _, needle := range []string{
+		`case 'msg-clear':`,
+		`title: 'Delete read messages?'`,
+		`body: 'Permanently deletes every message that has been marked read. Unread messages are kept.'`,
+		`okLabel: 'Delete read'`,
+		`if (!confirmed) return;`,
+		`fetch('/api/human-messages/clear'`,
+	} {
+		if !strings.Contains(js, needle) {
+			t.Errorf("row-action-handler.js missing %q — delete-read confirmation regressed", needle)
+		}
+	}
+
+	confirmIdx := strings.Index(js, `title: 'Delete read messages?'`)
+	deleteIdx := strings.Index(js, `fetch('/api/human-messages/clear'`)
+	if confirmIdx < 0 || deleteIdx < 0 || confirmIdx >= deleteIdx {
+		t.Error("delete-read confirmation must occur before the destructive request")
 	}
 }
