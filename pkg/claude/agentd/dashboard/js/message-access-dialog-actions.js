@@ -86,9 +86,11 @@ export function createMessageAccessDialogActions({
 
   async function replyHuman({ id, body, files, label }) {
     const attachmentToken = await uploadOperatorAttachments(files);
+    const payload = { id, body };
+    if (attachmentToken) payload.attachment_token = attachmentToken;
     const response = await requestJSON(fetchImpl, '/api/human-messages/reply', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, body, attachment_token: attachmentToken }),
+      body: JSON.stringify(payload),
     });
     notify(response.queued
       ? `reply queued for ${label}`
