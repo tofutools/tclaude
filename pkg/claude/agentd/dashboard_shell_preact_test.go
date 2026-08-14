@@ -172,6 +172,7 @@ func TestDashboardOpenPRsThemed(t *testing.T) {
 	}
 	for _, want := range []string{
 		"const [showFinalCI, setShowFinalCI] = useState(false);",
+		"showFinalCI=${view.showingRecent && showFinalCI}",
 		"summary=${terminal && !showFinalCI ? null : pr.checks}",
 		"view.showingRecent ? html`<label class=\"open-prs-final-ci\"",
 		"Closed and merged pull requests are never refreshed.",
