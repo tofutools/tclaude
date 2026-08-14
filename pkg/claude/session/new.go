@@ -2144,6 +2144,9 @@ func runNew(params *NewParams) error {
 			return fmt.Errorf("build tclaude-layer launch spec: %w", specErr)
 		}
 		layerSpec = spec
+		if prepareErr := PrepareTclaudeLayerHarnessState(layerSpec); prepareErr != nil {
+			return fmt.Errorf("prepare tclaude-layer launch state: %w", prepareErr)
+		}
 		if stacked {
 			stackedProof, err = ProbeStackedSandbox(bwrapBinary, spec, h, cwd)
 			if err != nil {
