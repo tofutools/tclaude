@@ -79,7 +79,7 @@ func dashboardSourceContains(source, needle string) bool {
 // — a renamed or misplaced file would otherwise fail only at runtime,
 // when the daemon serves an empty page or 404s a module.
 func TestDashboardEmbed_HasExpectedFiles(t *testing.T) {
-	for _, name := range []string{"dashboard.html", "dashboard.css", "js/dashboard.js"} {
+	for _, name := range []string{"dashboard.html", "dashboard.css", "tclaude-icon.svg", "js/dashboard.js"} {
 		data, err := fs.ReadFile(dashboardAssetsFS, name)
 		if err != nil {
 			t.Errorf("embedded dashboard asset %q not found: %v", name, err)

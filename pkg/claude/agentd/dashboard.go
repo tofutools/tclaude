@@ -84,6 +84,7 @@ func init() {
 	// ES module ships as .mjs — a type the host table often does not carry.
 	_ = mime.AddExtensionType(".mjs", "text/javascript")
 	_ = mime.AddExtensionType(".css", "text/css")
+	_ = mime.AddExtensionType(".svg", "image/svg+xml")
 	_ = mime.AddExtensionType(".map", "application/json")
 }
 
