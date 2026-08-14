@@ -8787,6 +8787,15 @@ body.slop header button {
   border-radius: 4px; padding: 4px 10px;
 }
 body.slop header button:hover { background: #4a0a0a; }
+/* Keep the product-mark button compact; the broad rule above styles the
+   full-size header actions, whose padding would squeeze this 28px control. */
+body.slop header h1 .slop-icon {
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  padding: 3px;
+}
+body.slop header h1 .slop-icon:hover { background: #4a0a0a; }
 body.slop nav {
   background: #2a0808;
   border-bottom: 1px solid #ffd700;
@@ -10108,10 +10117,12 @@ body.wizard header button:hover { background: #3a2a63; }
 /* The product-mark button keeps its compact icon geometry; the broad themed
    header-button rule above is for the full-size action controls beside it. */
 body.wizard header h1 .slop-icon {
+  background: transparent;
   border: 0;
   border-radius: 7px;
   padding: 3px;
 }
+body.wizard header h1 .slop-icon:hover { background: #3a2a63; }
 body.wizard nav {
   background: #1c1436;
   border-bottom: 1px solid #d9b45a;
