@@ -37,13 +37,19 @@ func TestFilteredNetworkNsenterArgsJoinOwnerUsernsFirst(t *testing.T) {
 }
 
 func TestFilteredNetworkInstallBasePolicyValidatesInputs(t *testing.T) {
-	// A missing policy is a no-op (nothing to install).
-	require.NoError(t, (&preparedFilteredNetworkRelay{}).installBasePolicy(123))
+	// A nil relay is a no-op (non-filtered launch).
+	var nilRelay *preparedFilteredNetworkRelay
+	require.NoError(t, nilRelay.installBasePolicy(123))
+	// An active relay with no rendered ruleset must fail closed rather than come
+	// up unfiltered.
+	require.ErrorContains(t,
+		(&preparedFilteredNetworkRelay{}).installBasePolicy(123), "no rendered policy")
 	// A rendered policy with no helper paths must fail loudly rather than exec a
 	// bare command name.
 	relay := &preparedFilteredNetworkRelay{Policy: "flush ruleset\n"}
 	require.ErrorContains(t, relay.installBasePolicy(123), "helper paths")
-	// An invalid namespace pid is rejected before any namespace work.
+	// With no pinned namespace fd, an invalid namespace pid is rejected before
+	// any namespace work.
 	relay = &preparedFilteredNetworkRelay{
 		Policy: "flush ruleset\n", NsenterPath: "/usr/bin/nsenter", NFTPath: "/usr/sbin/nft",
 	}

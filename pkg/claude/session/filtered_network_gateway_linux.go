@@ -99,6 +99,10 @@ type preparedFilteredNetworkRelay struct {
 	dnsUDP          *net.UDPConn
 	dnsTCP          *net.TCPListener
 	dnsNFTAuthority *os.File
+	// sandboxNetns pins the sandbox network namespace at the moment its peer
+	// identity is validated in waitPolicyReady, so installBasePolicy operates on
+	// exactly that namespace and cannot be redirected by a reused PID.
+	sandboxNetns *os.File
 }
 
 func encodeFilteredNetworkRelayPolicy(plan sandboxpolicy.MountPlan) (string, error) {
@@ -411,6 +415,9 @@ func (p *preparedFilteredNetworkRelay) Close() {
 	if p.dnsNFTAuthority != nil {
 		_ = p.dnsNFTAuthority.Close()
 	}
+	if p.sandboxNetns != nil {
+		_ = p.sandboxNetns.Close()
+	}
 	for _, file := range p.Files {
 		_ = file.Close()
 	}
@@ -439,6 +446,15 @@ func (p *preparedFilteredNetworkRelay) waitPolicyReady(namespacePID int) error {
 	if err := validateFilteredNetworkSyncPeer(sync, namespacePID); err != nil {
 		return err
 	}
+	// Pin the validated namespace by fd immediately, so installBasePolicy acts on
+	// exactly this namespace even if the sandbox PID is later reused.
+	netFD, err := unix.Open(
+		filepath.Join("/proc", strconv.Itoa(namespacePID), "ns", "net"),
+		unix.O_RDONLY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("pin sandbox network namespace: %w", err)
+	}
+	p.sandboxNetns = os.NewFile(uintptr(netFD), "sandbox-netns")
 	if err := sync.SetReadDeadline(time.Now().Add(filteredNetworkPastaReadyTimeout)); err != nil {
 		return err
 	}
@@ -506,22 +522,37 @@ func (p *preparedFilteredNetworkRelay) waitPolicyReady(namespacePID int) error {
 // because setns(CLONE_NEWUSER) is illegal from the multithreaded Go runtime;
 // nsenter is single-threaded C.
 func (p *preparedFilteredNetworkRelay) installBasePolicy(namespacePID int) error {
-	if p == nil || strings.TrimSpace(p.Policy) == "" {
+	if p == nil {
 		return nil
 	}
-	if namespacePID <= 0 {
-		return fmt.Errorf("filtered-network policy install requires a namespace pid")
+	// An active filtered relay with no rendered ruleset must fail closed rather
+	// than launch the sandbox with pasta attached and no policy (unfiltered
+	// egress). The nil no-op above covers only a zero-value non-filtered relay.
+	if strings.TrimSpace(p.Policy) == "" {
+		return fmt.Errorf(
+			"filtered-network relay is active but has no rendered policy to install")
 	}
 	if p.NsenterPath == "" || p.NFTPath == "" {
 		return fmt.Errorf("filtered-network policy install is missing its helper paths")
 	}
-	netPath := filepath.Join("/proc", strconv.Itoa(namespacePID), "ns", "net")
-	netFD, err := unix.Open(netPath, unix.O_RDONLY|unix.O_CLOEXEC, 0)
-	if err != nil {
-		return fmt.Errorf("open sandbox network namespace: %w", err)
+	netFile := p.sandboxNetns
+	if netFile != nil {
+		// Consume the namespace pinned at validation time.
+		p.sandboxNetns = nil
+		defer func() { _ = netFile.Close() }()
+	} else {
+		if namespacePID <= 0 {
+			return fmt.Errorf("filtered-network policy install requires a namespace pid")
+		}
+		netFD, err := unix.Open(
+			filepath.Join("/proc", strconv.Itoa(namespacePID), "ns", "net"),
+			unix.O_RDONLY|unix.O_CLOEXEC, 0)
+		if err != nil {
+			return fmt.Errorf("open sandbox network namespace: %w", err)
+		}
+		netFile = os.NewFile(uintptr(netFD), "sandbox-netns")
+		defer func() { _ = netFile.Close() }()
 	}
-	netFile := os.NewFile(uintptr(netFD), "sandbox-netns")
-	defer func() { _ = netFile.Close() }()
 	ownerFD, err := unix.IoctlRetInt(int(netFile.Fd()), unix.NS_GET_USERNS)
 	if err != nil {
 		return fmt.Errorf("resolve owning user namespace of sandbox netns: %w", err)
@@ -546,6 +577,13 @@ func (p *preparedFilteredNetworkRelay) installBasePolicy(namespacePID int) error
 // startDNSBroker builds and starts the DNS broker from the descriptors adopted
 // in waitPolicyReady. It runs only after installBasePolicy so the sets the
 // broker mutates already exist.
+//
+// The broker mutates nft sets from the supervisor over the NETLINK_NETFILTER
+// socket the sandbox bootstrap opened (dnsNFTAuthority). That socket is now
+// created with zero capabilities in the sandbox, yet the mutations succeed:
+// nfnetlink gates each message on the sender's authority in the netns's owning
+// user namespace, and the supervisor is that namespace's euid owner, so it
+// holds CAP_NET_ADMIN there — the same authority installBasePolicy relies on.
 func (p *preparedFilteredNetworkRelay) startDNSBroker() error {
 	if p == nil || p.dnsUDP == nil {
 		return nil
