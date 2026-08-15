@@ -1944,7 +1944,7 @@ func bwrapArgsWithDaemonFinal(
 		if err != nil {
 			return nil, err
 		}
-		args, err = appendTclaudeLayerTclaudeCLI(args, clcommon.SelfTclaudePath())
+		args, err = appendTclaudeLayerTclaudeCLI(args, tclaudeLayerTclaudeCLIPath())
 		if err != nil {
 			return nil, err
 		}
@@ -2454,6 +2454,12 @@ var tclaudeLayerStaticOSPaths = []string{
 
 const tclaudeLayerConstructedRootTclaudePath = "/usr/bin/tclaude"
 
+// tclaudeLayerTclaudeCLIPath is a seam for the real bubblewrap smoke, whose
+// renderer runs inside a Go test executable but must project the separately
+// built tclaude CLI. Production always resolves the active CLI through the
+// shared sibling/PATH-aware resolver.
+var tclaudeLayerTclaudeCLIPath = clcommon.SelfTclaudePath
+
 // appendTclaudeLayerStaticOSRoot constructs the fixed executable/runtime
 // surface approved for the isolated posture. Merged-usr aliases remain
 // symlinks instead of becoming separate recursive host binds.
@@ -2511,9 +2517,6 @@ func appendTclaudeLayerTclaudeCLI(args []string, candidate string) ([]string, er
 	}
 	if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
 		return nil, fmt.Errorf("tclaude CLI path %q is not an executable regular file", resolved)
-	}
-	if tclaudeLayerStaticOSRootProvides(resolved) {
-		return args, nil
 	}
 	return append(args,
 		"--ro-bind", resolved, tclaudeLayerConstructedRootTclaudePath), nil

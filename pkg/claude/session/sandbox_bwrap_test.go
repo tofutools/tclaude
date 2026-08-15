@@ -1323,10 +1323,15 @@ func TestAppendTclaudeLayerTclaudeCLIResolvesOneExecutableFile(t *testing.T) {
 	}, got)
 }
 
-func TestAppendTclaudeLayerTclaudeCLISkipsExecutableAlreadyInStaticRoot(t *testing.T) {
+func TestAppendTclaudeLayerTclaudeCLIProjectsExecutableAlreadyInStaticRoot(t *testing.T) {
+	resolved, err := filepath.EvalSymlinks("/bin/sh")
+	require.NoError(t, err)
 	got, err := appendTclaudeLayerTclaudeCLI([]string{"prefix"}, "/bin/sh")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"prefix"}, got)
+	assert.Equal(t, []string{
+		"prefix",
+		"--ro-bind", resolved, tclaudeLayerConstructedRootTclaudePath,
+	}, got, "the active CLI must land on PATH even when its source is under /opt or another static root")
 }
 
 func TestAppendTclaudeLayerTclaudeCLIRejectsNonExecutableFile(t *testing.T) {
