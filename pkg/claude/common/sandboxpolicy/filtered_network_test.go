@@ -109,6 +109,16 @@ func TestCompileFilteredNetworkRulesAcceptsOpenDenyAndRejectsAmbiguousEntries(t 
 	require.NoError(t, err)
 	assert.Equal(t, FilteredNetworkDefaultAccept, open.DefaultVerdict)
 	require.Len(t, open.DenyRules, 1)
+	assert.False(t, open.BlockHostLoopback,
+		"legacy default-accept deny policies retain their existing host-loopback topology")
+
+	privateList, err := CompileFilteredNetworkRules(NetworkRules{
+		Mode: AccessModeList, Namespace: NetworkNamespacePrivate,
+		Allow: []NetworkAllowEntry{{Loopback: true, Ports: []int{3000}}},
+	})
+	require.NoError(t, err)
+	assert.False(t, privateList.BlockHostLoopback,
+		"default-drop list policy must let its explicit loopback rule decide access")
 
 	_, err = CompileFilteredNetworkRules(NetworkRules{
 		Mode: AccessModeList,
