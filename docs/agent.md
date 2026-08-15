@@ -644,6 +644,14 @@ loopback destination and may narrow it to integer ports. Legacy `network.mode`
 payloads remain readable, but the editor preserves their list entries as
 manual rows and never infers pack ownership.
 
+`network.namespace` accepts `host`, `private`, or omission. `private` is an
+exact Linux `tclaude-layer` option: it uses the packet gateway with a
+default-accept policy when the baseline is otherwise open, preserving ordinary
+TCP/UDP egress while separating host loopback and abstract Unix sockets. It
+fails closed when its Linux prerequisites are unavailable. Namespace policy
+composes restrictively, so a private parent cannot be widened to host-shared by
+a child profile.
+
 `unix_sockets.mode` accepts `open`, `closed`, `list`, or may be omitted to
 preserve the next tier's posture. Unix-socket list entries select an absolute
 `path` or bounded `path_glob` (`**` is refused). The agentd socket is a

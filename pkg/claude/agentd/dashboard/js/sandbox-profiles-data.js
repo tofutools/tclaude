@@ -69,6 +69,8 @@ export function sandboxProfileSummary(profile) {
   if (networkDenies) parts.push(`${networkDenies} network deny${networkDenies === 1 ? '' : 's'}`);
   if (authoredNetwork.engine === 'packet') parts.push('packet filter');
   if (authoredNetwork.engine === 'proxy') parts.push('proxy filter');
+  if (authoredNetwork.namespace === 'private') parts.push('private routed network');
+  if (authoredNetwork.namespace === 'host') parts.push('shared host network');
   const axes = sandboxAccessAxes(profile);
   if (axes.unix_sockets.mode) parts.push(`sockets ${axes.unix_sockets.mode}${axes.unix_sockets.mode === 'list' ? ` (${axes.unix_sockets.allow.length})` : ''}`);
   return parts.join(' · ') || 'no sandbox rules';
@@ -122,6 +124,7 @@ export function sandboxNetworkAuthoring(profile = {}) {
     // Engine is orthogonal to the legacy mode this branch reconstructs, so a
     // legacy payload that already names one keeps it.
     ...(network?.engine ? { engine: network.engine } : {}),
+    ...(network?.namespace ? { namespace: network.namespace } : {}),
   };
 }
 
@@ -185,6 +188,7 @@ export function sandboxProfileForWire(draft) {
       ...((value.network.allow || []).length ? { allow: value.network.allow } : {}),
       ...((value.network.deny || []).length ? { deny: value.network.deny } : {}),
       ...(value.network.engine ? { engine: value.network.engine } : {}),
+      ...(value.network.namespace ? { namespace: value.network.namespace } : {}),
     };
   }
   const networkAllow = networkEntriesForWire(value.network.allow);
@@ -217,6 +221,7 @@ export function sandboxAccessDraftErrors(draft) {
   const axes = sandboxAccessAxes(draft);
   if (!['inherit', 'allow', 'deny'].includes(authoredNetwork.baseline)) errors.push('Network baseline is invalid.');
   if (!['', 'packet', 'proxy'].includes(authoredNetwork.engine || '')) errors.push('Network filtering engine is invalid.');
+  if (!['', 'host', 'private'].includes(authoredNetwork.namespace || '')) errors.push('Network namespace is invalid.');
   if (authoredNetwork.baseline === 'inherit' &&
       (authoredNetwork.packs.length || authoredNetwork.deny_packs.length ||
        authoredNetwork.allow.length || authoredNetwork.deny.length)) {

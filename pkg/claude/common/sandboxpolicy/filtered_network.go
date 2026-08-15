@@ -95,7 +95,8 @@ func CompileFilteredNetworkRules(rules NetworkRules) (FilteredNetworkRuleSet, er
 	if err := validateAccessMode("network", rules.Mode); err != nil {
 		return FilteredNetworkRuleSet{}, err
 	}
-	if rules.Mode == AccessModeUnset {
+	if rules.Mode == AccessModeUnset &&
+		rules.Namespace != NetworkNamespacePrivate {
 		return FilteredNetworkRuleSet{}, fmt.Errorf(
 			"filtered network rules require an explicit network mode")
 	}
@@ -115,7 +116,8 @@ func CompileFilteredNetworkRules(rules NetworkRules) (FilteredNetworkRuleSet, er
 		ProtocolContract: FilteredNetworkProtocolContract,
 		DefaultVerdict:   FilteredNetworkDefaultDrop,
 	}
-	if rules.Mode == AccessModeOpen {
+	if rules.Mode == AccessModeOpen ||
+		(rules.Mode == AccessModeUnset && rules.Namespace == NetworkNamespacePrivate) {
 		out.DefaultVerdict = FilteredNetworkDefaultAccept
 	}
 	out.Rules = compileFilteredNetworkEntries(allow)

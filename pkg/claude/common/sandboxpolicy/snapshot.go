@@ -204,9 +204,10 @@ func PlannedEffectiveAccessAxes(effective EffectiveProfile) (ResolvedAxes, error
 				// different engine here than the preview named would be exactly
 				// the disclosure-does-not-match-rendered-surface bug.
 				axes.Network = NetworkRules{
-					Mode:   AccessModeOpen,
-					Deny:   cloneNetworkRules(axes.Network).Deny,
-					Engine: axes.Network.Engine,
+					Mode:      AccessModeOpen,
+					Deny:      cloneNetworkRules(axes.Network).Deny,
+					Engine:    axes.Network.Engine,
+					Namespace: axes.Network.Namespace,
 				}
 			case "ports_unsupported":
 				if axes.Network.Mode != AccessModeList {
@@ -265,6 +266,10 @@ func omitNetworkEntries(
 }
 
 func networkRulesContained(parent, child NetworkRules) bool {
+	if parent.Namespace == NetworkNamespacePrivate &&
+		child.Namespace != NetworkNamespacePrivate {
+		return false
+	}
 	// A replacement must retain every launched deny. Requiring explicit
 	// coverage is intentionally conservative even when the child baseline
 	// would happen to make a particular deny redundant.

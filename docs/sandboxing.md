@@ -952,6 +952,18 @@ Allow all, Deny rules are restrictions while Allow rules are redundant. The
 editor labels either redundant case instead of rejecting it. No override
 carries no rows.
 
+The adjacent **Network namespace** selector is independent of the baseline and
+filtering engine. **Shared host** preserves the historical host network.
+**Private, routed** (`network.namespace: "private"`) uses the existing Linux
+`tclaude-layer` namespace and `pasta` gateway while an Allow all baseline keeps
+ordinary TCP/UDP destinations unrestricted. This separates abstract Unix
+sockets from the host without requiring the IP network to be deny-by-default.
+Host localhost services and IDE bridges are not shared in this posture. It is
+supported only for exact Linux `tclaude-layer` Claude Code, Codex, and OpenCode
+launches; missing prerequisites or another target refuse the launch rather
+than falling back to the host namespace. A private namespace in an included or
+global profile cannot be widened by a child profile selecting Shared host.
+
 Network denies are enforced for Claude Code and Codex on the Linux
 `tclaude-layer` filtered gateway. CIDR and local-machine denies are fully
 enforced. DNS-name denies are fully enforced under Deny all; under Allow all

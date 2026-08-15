@@ -737,6 +737,34 @@ func TestNetworkPostureForOpenDenyUsesFilteredGateway(t *testing.T) {
 	}
 }
 
+func TestPrivateRoutedOpenUsesDefaultAcceptFilteredGateway(t *testing.T) {
+	rules := NetworkRules{
+		Mode: AccessModeOpen, Namespace: NetworkNamespacePrivate,
+	}
+	posture, err := NetworkPostureForRules(rules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if posture != NetworkFiltered {
+		t.Fatalf("private routed posture = %s, want filtered", posture)
+	}
+	if !NetworkRulesArePrivateRoutedOpen(rules) {
+		t.Fatal("private routed open rules were not recognized")
+	}
+
+	plan, err := RenderMountPlan(EffectiveProfile{Network: &rules})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.FilteredNetwork == nil ||
+		plan.FilteredNetwork.DefaultVerdict != FilteredNetworkDefaultAccept {
+		t.Fatalf("private routed filtered plan = %#v, want default accept", plan.FilteredNetwork)
+	}
+	if plan.RootPosture != RootConstructed {
+		t.Fatalf("private routed root = %s, want constructed", plan.RootPosture)
+	}
+}
+
 // TestMountPlanSnapshot pins the diffable rendering. These strings are the
 // groundwork for a dry-run/effective-plan surface, so a change to them is a
 // change to an operator-facing contract and should be deliberate.

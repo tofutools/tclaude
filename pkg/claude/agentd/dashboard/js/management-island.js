@@ -603,6 +603,12 @@ const NETWORK_ENGINE_OPTIONS = [
   ['proxy', 'Proxy filter'],
 ];
 
+const NETWORK_NAMESPACE_OPTIONS = [
+  ['', 'No override'],
+  ['host', 'Shared host'],
+  ['private', 'Private, routed'],
+];
+
 const DEFAULT_NETWORK_PACKS = ['net-local', 'net-anthropic', 'net-openai-codex'];
 
 function networkEntriesMayOverlap(left = {}, right = {}) {
@@ -707,7 +713,11 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, packVisibilit
       // The engine survives a baseline change: it is not one of the rules the
       // baseline governs, and silently clearing it would change the mechanism
       // as a side effect of an unrelated edit.
-      return { ...value, network: { baseline, ...next, ...(current.engine ? { engine: current.engine } : {}) } };
+      return { ...value, network: {
+        baseline, ...next,
+        ...(current.engine ? { engine: current.engine } : {}),
+        ...(current.namespace ? { namespace: current.namespace } : {}),
+      } };
     });
   };
   const packMode = (id) => rules.packs.includes(id) ? 'allow'
@@ -750,6 +760,8 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, packVisibilit
       entryCount=${rules.packs.length + rules.deny_packs.length + manualRows.length}>
     <label class="sbx-network-baseline-label">Baseline <${Select} id="sandbox-profile-editor-network-baseline" value=${rules.baseline} onChange=${changeBaseline} options=${NETWORK_BASELINE_OPTIONS}/></label>
     <label class="sbx-network-baseline-label">Filtering engine <${Select} id="sandbox-profile-editor-network-engine" value=${rules.engine || ''} onChange=${(engine) => update({ engine })} options=${NETWORK_ENGINE_OPTIONS}/></label>
+    <label class="sbx-network-baseline-label">Network namespace <${Select} id="sandbox-profile-editor-network-namespace" value=${rules.namespace || ''} onChange=${(namespace) => update({ namespace })} options=${NETWORK_NAMESPACE_OPTIONS}/></label>
+    ${rules.namespace === 'private' && html`<p class="sbx-inline-note">Linux tclaude-layer only. Internet traffic is routed normally, but host localhost services, IDE bridges, and abstract Unix sockets are not shared.</p>`}
     ${packVisibilityError && html`<div class="sbx-network-pack-visibility-error" role="alert"><span>⚠ ${packVisibilityError}</span>
       <button type="button" onClick=${retryPackCatalog}>${packCatalogBusy ? 'retry loading' : 'retry catalog'}</button></div>`}
     <fieldset class=${`sbx-network-unlocks${editable ? '' : ' sbx-disabled'}`}>
@@ -1901,7 +1913,7 @@ function SandboxImport({ current, state, actions, confirmDiscard }) {
     setError(''); setBusy('inspect');
     try {
       const parsed = JSON.parse(raw);
-      if (parsed?.format !== 'tclaude-sandbox-profiles' || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].includes(parsed?.format_version)) throw new Error('not a tclaude sandbox-profile export');
+      if (parsed?.format !== 'tclaude-sandbox-profiles' || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].includes(parsed?.format_version)) throw new Error('not a tclaude sandbox-profile export');
       const found = await actions.inspectSandboxBundle(parsed);
       setEnvelope(parsed); setPreview(found);
     } catch (e) {

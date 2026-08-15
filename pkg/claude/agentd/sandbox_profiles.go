@@ -92,7 +92,7 @@ const sandboxProfileMaxBodyBytes = 8 << 20
 
 const (
 	sandboxProfileExportFormat        = "tclaude-sandbox-profiles"
-	sandboxProfileExportVersion       = 12
+	sandboxProfileExportVersion       = 13
 	sandboxProfileExportVersionLegacy = 9
 )
 
@@ -725,9 +725,14 @@ func handleSandboxProfilesExport(w http.ResponseWriter, r *http.Request) {
 	}
 	formatVersion := sandboxProfileExportVersionLegacy
 	for _, profile := range out {
-		if profile.DarwinAllowMachRegister {
-			formatVersion = sandboxProfileExportVersion
+		if profile.Network != nil && profile.Network.Namespace != "" {
+			formatVersion = 13
 			break
+		}
+		if profile.DarwinAllowMachRegister {
+			if formatVersion < 12 {
+				formatVersion = 12
+			}
 		}
 		if profile.ResourceLimits.Enabled() {
 			if formatVersion < 11 {
@@ -952,6 +957,10 @@ func handleSandboxProfilesImportInspect(w http.ResponseWriter, r *http.Request) 
 // v9 when every profile is deny-free so older releases can still import them;
 // any deny state requires v10 because an older importer ignoring it would
 // silently widen the authored policy.
+// Version 11 adds resource limits, version 12 adds Darwin Mach-registration
+// access, and version 13 adds the network namespace selection. A v13 field
+// cannot be sent under an older envelope because ignoring `private` would
+// silently replace its network boundary with the shared host namespace.
 //
 // Older versions stay readable so imports from older installations keep
 // working. The two removals are handled DIFFERENTLY on purpose. The retired
@@ -974,6 +983,16 @@ func supportedSandboxProfileExport(format string, version int) bool {
 
 func validateSandboxProfileExportVersionContent(env sandboxProfileExportEnvelope) *spawnFailure {
 	for _, profile := range env.Profiles {
+		if env.FormatVersion < 13 && profile.Network != nil &&
+			profile.Network.Namespace != "" {
+			return &spawnFailure{
+				Status: http.StatusBadRequest,
+				Kind:   "invalid_format",
+				Msg: fmt.Sprintf(
+					"sandbox profile %q contains a network namespace selection, which requires export format version 13",
+					profile.Name),
+			}
+		}
 		if env.FormatVersion < 12 && profile.DarwinAllowMachRegister {
 			return &spawnFailure{
 				Status: http.StatusBadRequest,
