@@ -1944,6 +1944,10 @@ func bwrapArgsWithDaemonFinal(
 		if err != nil {
 			return nil, err
 		}
+		args, err = appendTclaudeLayerTclaudeCLI(args, clcommon.SelfTclaudePath())
+		if err != nil {
+			return nil, err
+		}
 		args, resolverTarget, err = appendTclaudeLayerHostResolver(args, plan)
 		if err != nil {
 			return nil, err
@@ -2448,6 +2452,8 @@ var tclaudeLayerStaticOSPaths = []string{
 	"/opt",
 }
 
+const tclaudeLayerConstructedRootTclaudePath = "/usr/bin/tclaude"
+
 // appendTclaudeLayerStaticOSRoot constructs the fixed executable/runtime
 // surface approved for the isolated posture. Merged-usr aliases remain
 // symlinks instead of becoming separate recursive host binds.
@@ -2472,6 +2478,45 @@ func appendTclaudeLayerStaticOSRoot(args []string) ([]string, error) {
 		args = append(args, "--ro-bind", path, path)
 	}
 	return args, nil
+}
+
+// appendTclaudeLayerTclaudeCLI keeps the coordination client available inside
+// a constructed root. That root already allowlists the agentd socket, but a
+// tclaude installed outside the fixed OS surface (for example ~/go/bin) would
+// otherwise disappear with its parent directory.
+//
+// Exactly one resolved executable file is exposed, read-only, at a fixed PATH
+// destination. The bind deliberately lands before operator policy replay: a
+// later filesystem hide or replacement therefore still wins, and this
+// coordination convenience cannot weaken any authored filesystem decision.
+// SelfTclaudePath is resolved by the caller so the standalone tclaude-agentd
+// binary selects the real tclaude CLI rather than binding itself.
+func appendTclaudeLayerTclaudeCLI(args []string, candidate string) ([]string, error) {
+	candidate = strings.TrimSpace(candidate)
+	if candidate == "" {
+		return nil, fmt.Errorf("resolve tclaude CLI for constructed root: path is empty")
+	}
+	absolute, err := filepath.Abs(candidate)
+	if err != nil {
+		return nil, fmt.Errorf("resolve tclaude CLI path %q: %w", candidate, err)
+	}
+	resolved, err := filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return nil, fmt.Errorf("resolve tclaude CLI path %q: %w", absolute, err)
+	}
+	resolved = filepath.Clean(resolved)
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("inspect tclaude CLI path %q: %w", resolved, err)
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		return nil, fmt.Errorf("tclaude CLI path %q is not an executable regular file", resolved)
+	}
+	if tclaudeLayerStaticOSRootProvides(resolved) {
+		return args, nil
+	}
+	return append(args,
+		"--ro-bind", resolved, tclaudeLayerConstructedRootTclaudePath), nil
 }
 
 // tclaudeLayerHostResolverRuntimeRoot is the only directory outside the static

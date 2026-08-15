@@ -1306,6 +1306,65 @@ func TestBwrapArgsConstructsHostOpenRootWithoutUnsharingNetwork(t *testing.T) {
 		"an inherited root has no constructed root to allowlist sockets into")
 }
 
+func TestAppendTclaudeLayerTclaudeCLIResolvesOneExecutableFile(t *testing.T) {
+	root := t.TempDir()
+	realBinary := filepath.Join(root, "real-tclaude")
+	require.NoError(t, os.WriteFile(realBinary, []byte("fixture"), 0o755))
+	linkedBinary := filepath.Join(root, "tclaude")
+	require.NoError(t, os.Symlink(realBinary, linkedBinary))
+
+	got, err := appendTclaudeLayerTclaudeCLI([]string{"prefix"}, linkedBinary)
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"prefix",
+		"--ro-bind", realBinary, tclaudeLayerConstructedRootTclaudePath,
+	}, got)
+}
+
+func TestAppendTclaudeLayerTclaudeCLISkipsExecutableAlreadyInStaticRoot(t *testing.T) {
+	got, err := appendTclaudeLayerTclaudeCLI([]string{"prefix"}, "/bin/sh")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"prefix"}, got)
+}
+
+func TestAppendTclaudeLayerTclaudeCLIRejectsNonExecutableFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tclaude")
+	require.NoError(t, os.WriteFile(path, []byte("fixture"), 0o644))
+
+	_, err := appendTclaudeLayerTclaudeCLI(nil, path)
+	require.ErrorContains(t, err, "is not an executable regular file")
+}
+
+func TestBwrapArgsOperatorHideCanShadowConstructedRootTclaudeCLI(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	plan := sandboxpolicy.MountPlan{
+		NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd,
+		Entries: []sandboxpolicy.MountEntry{{
+			Path: "/usr",
+			Mode: sandboxpolicy.MountHide,
+		}},
+	}
+
+	got, err := bwrapArgsWithDaemonFinal(
+		nil, plan, nil, nil, nil, nil, "", nil)
+	require.NoError(t, err)
+
+	resolvedSelf, err := filepath.EvalSymlinks(clcommon.SelfTclaudePath())
+	require.NoError(t, err)
+	if tclaudeLayerStaticOSRootProvides(resolvedSelf) {
+		t.Skip("test executable is already provided by the static OS root")
+	}
+	cliBind := indexOfBwrapBind(got, "--ro-bind", resolvedSelf, tclaudeLayerConstructedRootTclaudePath)
+	usrHide := indexOfBwrapTriplet(got, "--tmpfs", "/usr")
+	require.NotEqual(t, -1, cliBind)
+	require.NotEqual(t, -1, usrHide)
+	assert.Less(t, cliBind, usrHide,
+		"authored policy replay must be able to shadow the coordination convenience")
+	assert.Len(t, indicesOfBwrapBind(got, "--ro-bind", resolvedSelf, tclaudeLayerConstructedRootTclaudePath), 1,
+		"the applier must not repair the CLI bind after an authored hide")
+}
+
 func TestBwrapArgsIsolatedAliasesRespectHideAndRemountOrdering(t *testing.T) {
 	home, err := filepath.EvalSymlinks(agentipctest.ShortSocketDir(t))
 	require.NoError(t, err)
@@ -1489,6 +1548,16 @@ func indicesOfBwrapTriplet(args []string, flag, path string) []int {
 	var indices []int
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] == flag && args[i+1] == path {
+			indices = append(indices, i)
+		}
+	}
+	return indices
+}
+
+func indicesOfBwrapBind(args []string, flag, source, target string) []int {
+	var indices []int
+	for i := 0; i+2 < len(args); i++ {
+		if args[i] == flag && args[i+1] == source && args[i+2] == target {
 			indices = append(indices, i)
 		}
 	}
