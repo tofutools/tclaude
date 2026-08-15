@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
 func TestMigrateV211toV212SeedsExistingPRsWithoutReplay(t *testing.T) {
@@ -28,6 +29,7 @@ func TestMigrateV211toV212SeedsExistingPRsWithoutReplay(t *testing.T) {
 
 func TestDeleteTriggerRulePreservesFiringAndWorkerHistory(t *testing.T) {
 	setupTestDB(t)
+	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Triggers: true}}))
 	ruleID, err := InsertTriggerRule(&TriggerRule{Name: "history", Enabled: true, OperatorAuthored: true,
 		ScopeKind: TriggerScopeGlobal, Source: TriggerSourcePROpened, DraftFilter: TriggerDraftInclude,
 		Actions: []TriggerAction{{Type: TriggerActionSpawn, Spawn: &TriggerSpawnAction{Profile: "reviewer", InstructionTemplate: "review", MaxLiveWorkers: 1}}}})
@@ -59,6 +61,7 @@ func TestDeleteTriggerRulePreservesFiringAndWorkerHistory(t *testing.T) {
 
 func TestUpsertAgentPRQueuesOneDurableOpenEdge(t *testing.T) {
 	setupTestDB(t)
+	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Triggers: true}}))
 	agent, _, err := EnsureAgentForConv("conv-new-pr", "test")
 	require.NoError(t, err)
 	_, err = UpsertAgentPRDetails(agent, "https://github.com/o/r/pull/42", "new", "open", "topic", false)

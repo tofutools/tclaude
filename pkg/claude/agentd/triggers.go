@@ -41,6 +41,9 @@ func startTriggerScheduler(stop <-chan struct{}) {
 }
 
 func runTriggerTick(now time.Time) {
+	if !triggerRoutesEnabled() {
+		return
+	}
 	if _, err := db.InterruptRunningTriggerFirings(now); err != nil {
 		slog.Warn("triggers: close interrupted firings", "error", err)
 		return

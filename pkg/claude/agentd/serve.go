@@ -564,7 +564,9 @@ func runServe(p *serveParams) error {
 	defer close(cronStop)
 	startCronScheduler(cronStop)
 	startStandingOrderDebounceScheduler(cronStop)
-	startTriggerScheduler(cronStop)
+	if cfg.TriggersEnabled() {
+		startTriggerScheduler(cronStop)
+	}
 	// Processes runtime: one bounded startup page plus a coarse fallback sweep.
 	// Each actively advancing run is claimed by exactly one daemon-owned drive;
 	// SQLite remains the only authoritative checkpoint writer.
@@ -1290,8 +1292,8 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/permissions/revoke", handlePermissionsRevoke)
 	mux.HandleFunc("/v1/cron", handleCron)
 	mux.HandleFunc("/v1/cron/", handleCronByID)
-	mux.HandleFunc("/v1/triggers", handleTriggers)
-	mux.HandleFunc("/v1/triggers/", handleTriggerRead)
+	mux.HandleFunc("/v1/triggers", triggerRoute(handleTriggers))
+	mux.HandleFunc("/v1/triggers/", triggerRoute(handleTriggerRead))
 	// Sudo: most-specific path goes first so the trailing-slash form
 	// catches /v1/sudo/{id} and the bare form catches POST/GET/DELETE
 	// against the collection.

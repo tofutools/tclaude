@@ -1196,6 +1196,14 @@ func TestProcessesEnabled(t *testing.T) {
 	assert.True(t, (&Config{Features: &FeaturesConfig{Processes: true}}).ProcessesEnabled(), "explicit true → true")
 }
 
+func TestTriggersEnabled(t *testing.T) {
+	var nilCfg *Config
+	assert.False(t, nilCfg.TriggersEnabled(), "nil config → false")
+	assert.False(t, (&Config{}).TriggersEnabled(), "no features block → false")
+	assert.False(t, (&Config{Features: &FeaturesConfig{}}).TriggersEnabled(), "features block, flag unset → false")
+	assert.True(t, (&Config{Features: &FeaturesConfig{Triggers: true}}).TriggersEnabled(), "explicit true → true")
+}
+
 func TestGroupsRouteMapEnabled(t *testing.T) {
 	var nilCfg *Config
 	assert.False(t, nilCfg.GroupsRouteMapEnabled(), "nil config → false")
@@ -1249,6 +1257,7 @@ func TestFeaturesConfig_RoundTrips(t *testing.T) {
 	in := &Config{Features: &FeaturesConfig{
 		GroupsRouteMap:                 true,
 		Processes:                      true,
+		Triggers:                       true,
 		GroupAttachments:               GroupAttachmentsFixed,
 		TerminalCommandPaletteShortcut: true,
 		RecordedSandboxDetails:         true,
@@ -1256,11 +1265,12 @@ func TestFeaturesConfig_RoundTrips(t *testing.T) {
 	data, err := json.Marshal(in)
 	require.NoError(t, err)
 	assert.Contains(t, string(data),
-		`"features":{"groups_route_map":true,"processes":true,"group_attachments":"fixed","terminal_command_palette_shortcut":true,"recorded_sandbox_details":true}`)
+		`"features":{"groups_route_map":true,"processes":true,"triggers":true,"group_attachments":"fixed","terminal_command_palette_shortcut":true,"recorded_sandbox_details":true}`)
 
 	var out Config
 	require.NoError(t, json.Unmarshal(data, &out))
 	assert.True(t, out.ProcessesEnabled())
+	assert.True(t, out.TriggersEnabled())
 	assert.True(t, out.GroupsRouteMapEnabled())
 	assert.Equal(t, GroupAttachmentsFixed, out.GroupAttachmentsMode())
 	assert.True(t, out.TerminalCommandPaletteShortcutEnabled())

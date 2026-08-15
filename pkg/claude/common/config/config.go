@@ -163,6 +163,11 @@ type FeaturesConfig struct {
 	// routes) as they land.
 	Processes bool `json:"processes,omitempty"`
 
+	// Triggers enables the in-development event-to-action automation engine.
+	// It defaults off while trigger sources, actions, and dashboard controls
+	// are landing in bounded slices.
+	Triggers bool `json:"triggers,omitempty"`
+
 	// GroupAttachments selects how the in-development persistent http(s)
 	// attachment control appears on group titles. It defaults off while the
 	// interaction design is being refined. Disabling it hides the dashboard
@@ -210,11 +215,21 @@ const (
 // identically regardless of which layer detected it.
 const ProcessesDisabledMessage = "process commands are disabled; set features.processes=true in tclaude config to use this experimental surface"
 
+// TriggersDisabledMessage is the stable response returned by daemon trigger
+// routes while the experimental feature is disabled.
+const TriggersDisabledMessage = "trigger commands are disabled; set features.triggers=true in tclaude config to use this experimental surface"
+
 // ProcessesEnabled reports whether the opt-in Processes feature flag is set.
 // Nil-safe on both the config and the features block, so callers can gate on
 // a bare Load() result without nil checks.
 func (c *Config) ProcessesEnabled() bool {
 	return c != nil && c.Features != nil && c.Features.Processes
+}
+
+// TriggersEnabled reports whether the opt-in Triggers feature flag is set.
+// It is nil-safe and defaults off.
+func (c *Config) TriggersEnabled() bool {
+	return c != nil && c.Features != nil && c.Features.Triggers
 }
 
 // GroupsRouteMapEnabled reports whether the opt-in Groups Members | Route map

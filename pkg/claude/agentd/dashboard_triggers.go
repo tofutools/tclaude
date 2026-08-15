@@ -17,8 +17,8 @@ import (
 //	POST           /api/triggers/{id}/enable|disable
 //	GET            /api/triggers/{id}/firings?limit=N
 func registerDashboardTriggerRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/api/triggers", handleDashboardTriggers)
-	mux.HandleFunc("/api/triggers/", handleDashboardTrigger)
+	mux.HandleFunc("/api/triggers", triggerRoute(handleDashboardTriggers))
+	mux.HandleFunc("/api/triggers/", triggerRoute(handleDashboardTrigger))
 }
 
 type dashboardTriggerMutation struct {

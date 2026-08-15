@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
 // AgentPR is one explicitly presented pull request. The agent_id is the stable
@@ -28,11 +30,12 @@ func UpsertAgentPR(agentID, prURL, summary, state string) (AgentPR, error) {
 	return UpsertAgentPRDetails(agentID, prURL, summary, state, "", strings.EqualFold(strings.TrimSpace(state), "draft"))
 }
 
-// UpsertAgentPRDetails is the trigger-aware presentation boundary. The PR row
-// and its pr.opened observation commit together: agentd may crash before it
-// evaluates the event, but a restart can always reconcile the durable pending
-// row. Re-presenting the same PR only refreshes a still-pending event and can
-// never create a second opening edge.
+// UpsertAgentPRDetails is the trigger-aware presentation boundary. When the
+// opt-in trigger feature is enabled, the PR row and its pr.opened observation
+// commit together: agentd may crash before evaluation, but a restart can
+// reconcile the durable pending row. With the feature off, presentation stays
+// unchanged and writes no trigger event. Re-presenting the same PR only
+// refreshes a still-pending event and can never create a second opening edge.
 func UpsertAgentPRDetails(agentID, prURL, summary, state, branch string, draft bool) (AgentPR, error) {
 	agentID = strings.TrimSpace(agentID)
 	prURL = strings.TrimSpace(prURL)
@@ -73,8 +76,11 @@ func UpsertAgentPRDetails(agentID, prURL, summary, state, branch string, draft b
 	}
 	row.CreatedAt = created.Time()
 	row.UpdatedAt = updated.Time()
-	if err := enqueueTriggerPREventTx(tx, row, branch, draft, now); err != nil {
-		return AgentPR{}, err
+	cfg, configErr := config.Load()
+	if configErr == nil && cfg.TriggersEnabled() {
+		if err := enqueueTriggerPREventTx(tx, row, branch, draft, now); err != nil {
+			return AgentPR{}, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return AgentPR{}, err
