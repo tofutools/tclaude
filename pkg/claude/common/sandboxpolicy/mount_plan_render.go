@@ -253,7 +253,7 @@ func NetworkRulesArePrivateRoutedOpen(rules NetworkRules) bool {
 // hide them. The capability layer rates this combination Partial and discloses
 // the abstract-socket remainder; see harness.accessEnforcementTable.
 func RootPostureForAxes(axes ResolvedAxes) RootPosture {
-	return RootPostureForAxesAndMode(axes, FilesystemRootAutomatic)
+	return RootPostureForAxesAndMode(axes, axes.FilesystemRoot)
 }
 
 // RootPostureForAxesAndMode composes the explicit filesystem-root control

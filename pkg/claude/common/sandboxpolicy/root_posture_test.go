@@ -31,6 +31,9 @@ func TestRootPostureSeparatesConstructedRootFromNetworkIsolation(t *testing.T) {
 }
 
 func TestExplicitFilesystemRootComposesWithAxisMinimum(t *testing.T) {
+	assert.Equal(t, RootConstructed, RootPostureForAxes(ResolvedAxes{
+		Network: NetworkRules{Mode: AccessModeOpen}, FilesystemRoot: FilesystemRootSeparate,
+	}))
 	assert.Equal(t, RootConstructed, RootPostureForMode(
 		NetworkHostOpen, AccessModeOpen, FilesystemRootSeparate))
 	assert.Equal(t, RootHostInherited, RootPostureForMode(
