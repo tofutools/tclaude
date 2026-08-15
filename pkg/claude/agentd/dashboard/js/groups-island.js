@@ -195,6 +195,7 @@ export function GroupsList({ host, state, actions }) {
   const [hoveredGroupKey, setHoveredGroupKey] = useState(null);
   const [triggers, setTriggers] = useState([]);
   const current = state.view.value;
+  const triggersEnabled = state.snapshot.value?.triggers_enabled === true;
 
   useEffect(() => {
     syncBotAnimations();
@@ -202,12 +203,16 @@ export function GroupsList({ host, state, actions }) {
   });
 
   useEffect(() => {
+    if (!triggersEnabled) {
+      setTriggers([]);
+      return undefined;
+    }
     if (typeof actions.loadTriggers !== 'function') return undefined;
     let active = true;
     actions.loadTriggers().then((rows) => { if (active) setTriggers(rows); })
       .catch((error) => actions.reportError(error));
     return () => { active = false; };
-  }, []);
+  }, [triggersEnabled]);
 
   useEffect(() => {
     const onClick = (event) => {

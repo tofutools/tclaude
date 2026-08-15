@@ -1393,7 +1393,7 @@ test('Groups keeps its trigger projection read-only, collapsed, and capped', asy
   ]);
   const state = createGroupsState({ prefs: memoryPrefs(), resetOffsets: () => {}, ...stateDependencies() });
   state.initialize();
-  state.publish(snapshot([{ id: 3, name: 'alpha', members: [] }]));
+  state.publish({ ...snapshot([{ id: 3, name: 'alpha', members: [] }]), triggers_enabled: true });
   const rules = Array.from({ length: 6 }, (_, index) => ({
     id: index + 1, name: `rule ${index + 1}`, enabled: true,
     scope: index === 0 ? 'global' : 'group', group: index === 0 ? '' : 'alpha',
@@ -1415,6 +1415,29 @@ test('Groups keeps its trigger projection read-only, collapsed, and capped', asy
   assert.equal(edit.textContent, 'edit in Automations →');
   assert.equal(edit.getAttribute('href'), '/automations/triggers');
   assert.equal(projection.querySelectorAll('button').length, 0, 'the projection has no editor or mutation controls');
+  await mounted.unmount();
+});
+
+test('Groups omits the trigger projection and its API load while the feature is off', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createGroupsState }, { GroupsList }] = await Promise.all([
+    harness.importDashboardModule('js/groups-state.js'),
+    harness.importDashboardModule('js/groups-island.js'),
+  ]);
+  const state = createGroupsState({ prefs: memoryPrefs(), resetOffsets: () => {}, ...stateDependencies() });
+  state.initialize();
+  state.publish({ ...snapshot([{ id: 3, name: 'alpha', members: [] }]), triggers_enabled: false });
+  let loads = 0;
+  const actions = {
+    sort: () => {}, page: () => {}, setPageSize: () => {},
+    loadTriggers: async () => { loads += 1; return []; },
+    reportError: (error) => { throw error; },
+  };
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const mounted = await harness.mount(harness.html`<${GroupsList} host=${host} state=${state} actions=${actions} />`, host);
+  await harness.act(() => Promise.resolve());
+  assert.equal(loads, 0, 'the gated trigger API is not called');
+  assert.equal(mounted.container.querySelector('.group-triggers-section'), null);
   await mounted.unmount();
 });
 

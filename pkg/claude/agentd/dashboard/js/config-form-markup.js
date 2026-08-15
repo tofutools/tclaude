@@ -610,6 +610,11 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         <span class="cfg-hint">BPMN-lite repeatable process graphs with a drag-and-drop template editor. Runtime execution is temporarily unavailable while the engine is rebuilt. Stored as <code>features.processes</code>.</span>
       </div>
       <div class="cfg-field">
+        <span class="cfg-label">Triggers</span>
+        <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-feature-triggers" /> enable the in-development <strong>Triggers</strong> automation feature</label>
+        <span class="cfg-hint">PR-opened rules with bounded spawn and message actions. Off by default; the Automations subview, Groups projection, engine, and API stay absent until enabled. Takes effect on the next dashboard refresh. Stored as <code>features.triggers</code>.</span>
+      </div>
+      <div class="cfg-field">
         <span class="cfg-label">Groups Route map</span>
         <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-feature-groups-route-map" /> enable the opt-in <strong>Members | Route map</strong> Groups view</label>
         <span class="cfg-hint">Read-only agent route leases and health for selected groups. Off by default; the route map and its snapshot projection stay absent until enabled. Takes effect on the next dashboard refresh. Stored as <code>features.groups_route_map</code>.</span>

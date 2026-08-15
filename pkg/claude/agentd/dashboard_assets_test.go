@@ -1054,6 +1054,7 @@ func TestDashboardAssets_FeatureFlagsWired(t *testing.T) {
 	owners := map[string][]string{
 		"js/config-form-markup.js": {
 			`id="cfg-feature-processes"`, `features.processes`,
+			`id="cfg-feature-triggers"`, `features.triggers`,
 			`id="cfg-feature-groups-route-map"`, `features.groups_route_map`,
 			`id="cfg-feature-group-attachments"`, `features.group_attachments`,
 			`id="cfg-feature-terminal-command-palette-shortcut"`,
@@ -1063,6 +1064,7 @@ func TestDashboardAssets_FeatureFlagsWired(t *testing.T) {
 		},
 		"js/config-form-adapter.js": {
 			"#cfg-feature-processes", "feats.processes = true",
+			"#cfg-feature-triggers", "feats.triggers = true",
 			"#cfg-feature-groups-route-map", "feats.groups_route_map = true",
 			"#cfg-feature-group-attachments", "feats.group_attachments = groupAttachments",
 			"#cfg-feature-terminal-command-palette-shortcut",

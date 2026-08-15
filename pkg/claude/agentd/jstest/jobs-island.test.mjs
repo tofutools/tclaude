@@ -14,6 +14,7 @@ function prefs() {
 
 function page(name = 'Daily summary') {
   return {
+    triggers_enabled: true,
     export_jobs_active: 1,
     jobs: [
       { kind: 'cron', cron: {
@@ -185,6 +186,33 @@ test('Standing-order target renders from the stable agent without a live convers
   const row = mounted.container.querySelector('tr[data-key="standing-order-3"]');
   assert.match(row.textContent, /agt_persiste/);
   assert.doesNotMatch(row.textContent, /no target/);
+  await mounted.unmount();
+});
+
+test('Triggers sub-view stays absent and a stale deep link falls back while the feature is off', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createJobsState }, { JobsApp }] = await Promise.all([
+    harness.importDashboardModule('js/jobs-state.js'),
+    harness.importDashboardModule('js/jobs-island.js'),
+  ]);
+  const snapshot = harness.signals.signal({ ...page(), triggers_enabled: false });
+  const state = createJobsState({ snapshot, prefs: prefs() });
+  state.initialize();
+  state.setKind('trigger');
+  state.beginRequest(1);
+  state.commitRequest(1);
+  let triggerLoads = 0;
+  const actions = {
+    refresh: () => {}, loadTriggers: async () => { triggerLoads += 1; return []; },
+    openCronCreate: () => {}, openCronEdit: () => {}, openCronDuplicate: () => {}, runCron: () => {},
+    toggleCron: () => {}, deleteCron: () => {}, downloadExport: () => {}, dismissExport: () => {},
+  };
+  const mounted = await harness.mount(harness.html`<${JobsApp} state=${state} actions=${actions} />`);
+  await harness.act(() => Promise.resolve());
+  assert.equal(mounted.container.querySelector('[role="tab"][href="/automations/triggers"]'), null);
+  assert.equal(mounted.container.querySelector('.trigger-filter-bar'), null);
+  assert.equal(triggerLoads, 0, 'the gated trigger API is not called');
+  assert.equal(state.kind.value, 'all', 'a stale trigger deep link returns to Automations');
   await mounted.unmount();
 });
 

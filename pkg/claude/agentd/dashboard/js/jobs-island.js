@@ -336,9 +336,21 @@ const JOB_KIND_COUNT_LABELS = {
 
 export function JobsApp({ state, actions }) {
   const current = state.view.value;
+  const triggersKnown = current.dashboard != null;
+  const triggersEnabled = current.dashboard?.triggers_enabled === true;
+  const visibleKinds = !triggersKnown || triggersEnabled
+    ? JOBS_KINDS : JOBS_KINDS.filter((kind) => kind !== 'trigger');
+  const displayKind = triggersKnown && !triggersEnabled && current.kind === 'trigger' ? 'all' : current.kind;
   const inputRef = useRef(null);
   const refreshTimer = useRef(null);
   useEffect(() => () => clearTimeout(refreshTimer.current), []);
+  useEffect(() => {
+    if (!triggersKnown || triggersEnabled || current.kind !== 'trigger') return;
+    if (state.setKind('all')) void actions.refresh();
+    document.dispatchEvent(new CustomEvent('tclaude:navigated', {
+      detail: { location: state.location.value },
+    }));
+  }, [triggersKnown, triggersEnabled, current.kind]);
 
   const queueRefresh = () => {
     clearTimeout(refreshTimer.current);
@@ -351,11 +363,11 @@ export function JobsApp({ state, actions }) {
   const paging = current.paging;
   const total = paging.total || 0;
   const totalAll = paging.total_unfiltered || 0;
-  const count = current.kind === 'trigger' ? '' : current.query
+  const count = displayKind === 'trigger' ? '' : current.query
     ? `${total} / ${totalAll}`
-    : `${totalAll} ${current.kind === 'all'
+    : `${totalAll} ${displayKind === 'all'
       ? `item${totalAll === 1 ? '' : 's'}`
-      : JOB_KIND_COUNT_LABELS[current.kind][totalAll === 1 ? 0 : 1]}`;
+      : JOB_KIND_COUNT_LABELS[displayKind][totalAll === 1 ? 0 : 1]}`;
 
   const activateKind = (value) => {
     if (state.setKind(value)) void actions.refresh();
@@ -376,13 +388,13 @@ export function JobsApp({ state, actions }) {
 
   return html`<div class="jobs-island">
     <div class="jobs-subnav" role="tablist" aria-label="Automation views">
-      ${JOBS_KINDS.map((kind) => html`<a href=${toPath(jobsLocation(kind))}
-        class=${`jobs-subtab${current.kind === kind ? ' active' : ''}`}
-        role="tab" aria-selected=${current.kind === kind ? 'true' : 'false'}
+      ${visibleKinds.map((kind) => html`<a href=${toPath(jobsLocation(kind))}
+        class=${`jobs-subtab${displayKind === kind ? ' active' : ''}`}
+        role="tab" aria-selected=${displayKind === kind ? 'true' : 'false'}
         onClick=${(event) => selectKind(event, kind)}
         onKeyDown=${(event) => keyDownKind(event, kind)}>${JOB_KIND_LABELS[kind]}</a>`)}
     </div>
-    ${current.kind !== 'trigger' && html`<div class="filter-bar">
+    ${displayKind !== 'trigger' && html`<div class="filter-bar">
       <input ref=${inputRef} id="filter-jobs" type="text" aria-label="Filter automations"
         placeholder="Filter this view (name + agent/owner/target + subject + body + status)"
         autocomplete="off" spellcheck=${false} value=${current.query}
@@ -391,25 +403,25 @@ export function JobsApp({ state, actions }) {
       <button class="clear-filter" id="filter-jobs-clear" title="Clear filter" aria-label="Clear automation filter"
         onClick=${() => { onQuery(''); inputRef.current?.focus(); }}>×</button>
       <span class="spacer"></span>
-      ${(current.kind === 'all' || current.kind === 'cron') && html`
+      ${(displayKind === 'all' || displayKind === 'cron') && html`
         <button id="cron-create-open" class="primary" title="Schedule a new recurring cron job"
           onClick=${() => actions.openCronCreate({})}>
           <span class="cron-open-label-regular">+ new cron job</span>
           <span class="cron-open-label-wizard">⏳ Bind a recurring ritual</span>
         </button>`}
-      ${(current.kind === 'all' || current.kind === 'standing-order') && html`
+      ${(displayKind === 'all' || displayKind === 'standing-order') && html`
         <button id="standing-order-create-open" class="primary"
           title="Create a standing instruction triggered at session boundaries"
           onClick=${() => actions.openStandingOrderCreate({})}>+ new standing order</button>`}
     </div>`}
-    ${current.kind === 'trigger' ? html`<${TriggerWorkspace} state=${state} actions=${actions} />` : html`<${Fragment}>
+    ${displayKind === 'trigger' ? html`<${TriggerWorkspace} state=${state} actions=${actions} />` : html`<${Fragment}>
     <${AsyncLoadState} label="Automations" request=${current.request}
       retry=${() => void actions.refresh()} errorClass="jobs-error" />
     <div id="jobs-list" aria-busy=${current.request.phase === 'loading' ? 'true' : 'false'}>
       ${!current.request.hasLoaded
         ? null
         : current.rows.length === 0
-          ? html`<${EmptyJobs} kind=${current.kind} />`
+          ? html`<${EmptyJobs} kind=${displayKind} />`
           : html`<${Fragment}>
             <table>
               <${SortHead} active=${current.sort} onSort=${(col) => state.cycleSort(col)} />

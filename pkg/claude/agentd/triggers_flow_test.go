@@ -14,6 +14,15 @@ import (
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
+func TestDashboardSnapshotDynamicallyGatesTriggers(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	newFlow(t)
+	handler := agentd.BuildDashboardHandlerForTest()
+	assert.False(t, fetchDashSnapshot(t, handler).TriggersEnabled)
+	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Triggers: true}}))
+	assert.True(t, fetchDashSnapshot(t, handler).TriggersEnabled)
+}
+
 func triggerMessageBody(group string, debounce int64) map[string]any {
 	return map[string]any{
 		"name": "review-nudge", "enabled": true, "scope": "group", "group": group,
