@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -58,5 +59,15 @@ func TestDashboardTriggersAssets(t *testing.T) {
 		if !strings.Contains(css, want) {
 			t.Errorf("trigger CSS missing %q", want)
 		}
+	}
+	// Trigger steps are semantic <section>s, while the dashboard's page tabs
+	// use a global `section { display: none; }` rule. Keep the scoped override
+	// explicit: DOM-only Preact tests still see hidden elements as text.
+	triggerStepRule := regexp.MustCompile(`(?s)\.trigger-editor-step\s*\{[^}]*display:\s*block\s*;`)
+	if !strings.Contains(triggerUI, "<section class=${`trigger-editor-step") {
+		t.Error("trigger editor steps must remain semantic sections")
+	}
+	if !triggerStepRule.MatchString(css) {
+		t.Error("trigger editor steps must override the page-level hidden section rule")
 	}
 }
