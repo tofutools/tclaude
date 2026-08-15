@@ -28,6 +28,14 @@ func TestCopilotAPILoopbackFailure(t *testing.T) {
 			Network: &sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeClosed},
 		},
 	}
+	privateNetwork := &sandboxpolicy.Snapshot{
+		Effective: sandboxpolicy.EffectiveProfile{
+			Network: &sandboxpolicy.NetworkRules{
+				Mode:      sandboxpolicy.AccessModeOpen,
+				Namespace: sandboxpolicy.NetworkNamespacePrivate,
+			},
+		},
+	}
 	openNetwork := &sandboxpolicy.Snapshot{
 		Effective: sandboxpolicy.EffectiveProfile{
 			Network: &sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeOpen},
@@ -36,7 +44,7 @@ func TestCopilotAPILoopbackFailure(t *testing.T) {
 
 	t.Run("a launch that did not ask for the API drive is untouched", func(t *testing.T) {
 		assert.Nil(t, copilotAPILoopbackFailure(
-			false, closedNetwork, string(sandboxpolicy.ImplementationTclaudeLayer)),
+			false, privateNetwork, string(sandboxpolicy.ImplementationTclaudeLayer)),
 			"this gates the channel, not the sandbox: a send-keys agent may be "+
 				"isolated exactly as before")
 	})
@@ -48,18 +56,26 @@ func TestCopilotAPILoopbackFailure(t *testing.T) {
 
 	t.Run("the API drive under a private namespace is refused", func(t *testing.T) {
 		fail := copilotAPILoopbackFailure(
-			true, closedNetwork, string(sandboxpolicy.ImplementationTclaudeLayer))
+			true, privateNetwork, string(sandboxpolicy.ImplementationTclaudeLayer))
 		require.NotNil(t, fail, "an unreachable port must be refused, not launched")
 		assert.Equal(t, "copilot_api_unreachable_network_posture", fail.Kind)
-		assert.Contains(t, fail.Msg, "isolated-with-agentd",
+		assert.Contains(t, fail.Msg, "filtered",
 			"the refusal must name the posture the launch would actually have built")
 		assert.Contains(t, fail.Msg, "host loopback",
 			"the refusal must say what the drive needs, so it is actionable")
+		assert.Contains(t, fail.Msg, "network.namespace host or omitted")
+	})
+
+	t.Run("the API drive under closed networking is refused", func(t *testing.T) {
+		fail := copilotAPILoopbackFailure(
+			true, closedNetwork, string(sandboxpolicy.ImplementationTclaudeLayer))
+		require.NotNil(t, fail)
+		assert.Contains(t, fail.Msg, "isolated-with-agentd")
 	})
 
 	t.Run("no outer layer is admitted whatever the profile says", func(t *testing.T) {
 		assert.Nil(t, copilotAPILoopbackFailure(
-			true, closedNetwork, string(sandboxpolicy.ImplementationOff)),
+			true, privateNetwork, string(sandboxpolicy.ImplementationOff)),
 			"without a tclaude-built namespace there is only one loopback")
 	})
 

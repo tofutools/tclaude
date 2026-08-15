@@ -195,6 +195,25 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 	assert.Contains(t, openCodeNotices[0].Detail,
 		"abstract-namespace Unix sockets")
 
+	// Copilot's state/cache/executable catalog is materialized by the same
+	// constructed-root renderer. Its real launch smoke is the evidence that
+	// those grants are sufficient, so the capability table may now admit it.
+	copilot := MustGet(CopilotName)
+	copilotCaps, err := accessEnforcementForTargetForTest(
+		copilot, sandboxpolicy.ImplementationTclaudeLayer,
+		hostOpenClosedSockets, CopilotSandboxOff, "linux",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, EnforcePartial, copilotCaps.socketClosed)
+	copilotRendered, copilotNotices, err := PlanAccessEnforcement(
+		hostOpenClosedSockets, copilotCaps)
+	require.NoError(t, err)
+	assert.Equal(t, sandboxpolicy.AccessModeClosed,
+		copilotRendered.UnixSockets.Mode)
+	require.Len(t, copilotNotices, 1)
+	assert.Contains(t, copilotNotices[0].Detail,
+		"host-network constructed root")
+
 	hostOpenSocketList := sandboxpolicy.ResolvedAxes{
 		Network: sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeOpen},
 		UnixSockets: sandboxpolicy.UnixSocketRules{
@@ -300,11 +319,6 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 			name: "stacked", harness: h,
 			implementation: sandboxpolicy.ImplementationStacked,
 			mode:           ClaudeSandboxOff,
-		},
-		{
-			name: "copilot", harness: MustGet(CopilotName),
-			implementation: sandboxpolicy.ImplementationTclaudeLayer,
-			mode:           CopilotSandboxOff,
 		},
 	} {
 		t.Run("filtered fallback "+tc.name, func(t *testing.T) {
@@ -785,7 +799,7 @@ func TestSandboxOffPredictionNeverCreditsBuiltinEnforcement(t *testing.T) {
 			Mode: sandboxpolicy.AccessModeClosed,
 		},
 	}
-	for _, harnessName := range []string{DefaultName, CodexName, OpenCodeName} {
+	for _, harnessName := range []string{DefaultName, CodexName, OpenCodeName, CopilotName} {
 		t.Run(harnessName, func(t *testing.T) {
 			prediction, err := PredictAccessEnforcement(
 				MustGet(harnessName), sandboxpolicy.ImplementationOff,
@@ -1609,19 +1623,50 @@ func TestPrivateRoutedNamespaceRequiresExactReadyLinuxLayer(t *testing.T) {
 			Mode: sandboxpolicy.AccessModeClosed,
 		},
 	}
-	for _, harnessName := range []string{DefaultName, CodexName, OpenCodeName} {
+	for _, harnessName := range []string{DefaultName, CodexName, OpenCodeName, CopilotName} {
 		t.Run(harnessName, func(t *testing.T) {
 			row, err := accessEnforcementTable(
 				MustGet(harnessName), sandboxpolicy.ImplementationTclaudeLayer, axes,
 				OpenCodeSandboxTclaudeLayer, "linux", true)
 			require.NoError(t, err)
+			assert.Equal(t, EnforceFull, row.NetworkList)
 			assert.Equal(t, EnforcePartial, row.SocketClosed)
 			assert.True(t, row.ConstructedRoot)
 		})
 	}
+	filteredCopilotAxes := sandboxpolicy.ResolvedAxes{Network: sandboxpolicy.NetworkRules{
+		Mode:  sandboxpolicy.AccessModeList,
+		Allow: []sandboxpolicy.NetworkAllowEntry{{CIDR: "192.0.2.0/24"}},
+	}}
+	filteredCopilot, err := accessEnforcementTable(
+		MustGet(CopilotName), sandboxpolicy.ImplementationTclaudeLayer,
+		filteredCopilotAxes, CopilotSandboxOff, "linux", true)
+	require.NoError(t, err)
+	assert.Equal(t, EnforceNone, filteredCopilot.NetworkList,
+		"private default-allow evidence must not overclaim destination filtering")
+	for _, rules := range []sandboxpolicy.NetworkRules{
+		{
+			Mode:      sandboxpolicy.AccessModeList,
+			Allow:     []sandboxpolicy.NetworkAllowEntry{{CIDR: "192.0.2.0/24"}},
+			Namespace: sandboxpolicy.NetworkNamespacePrivate,
+			Engine:    sandboxpolicy.NetworkEngineProxy,
+		},
+		{
+			Mode:      sandboxpolicy.AccessModeOpen,
+			Deny:      []sandboxpolicy.NetworkAllowEntry{{CIDR: "192.0.2.0/24"}},
+			Namespace: sandboxpolicy.NetworkNamespacePrivate,
+			Engine:    sandboxpolicy.NetworkEngineProxy,
+		},
+	} {
+		_, proxyErr := accessEnforcementTable(
+			MustGet(CopilotName), sandboxpolicy.ImplementationTclaudeLayer,
+			sandboxpolicy.ResolvedAxes{Network: rules}, CopilotSandboxOff, "linux", true)
+		require.ErrorContains(t, proxyErr,
+			"widening them would switch the launch to the packet gateway")
+	}
 	h := MustGet(OpenCodeName)
 
-	_, err := accessEnforcementTable(
+	_, err = accessEnforcementTable(
 		h, sandboxpolicy.ImplementationTclaudeLayer, axes,
 		OpenCodeSandboxTclaudeLayer, "linux", false)
 	require.ErrorContains(t, err, "private-network prerequisites")

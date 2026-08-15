@@ -142,6 +142,11 @@ jobs:
           npm install --global opencode-ai@1.18.6
           opencode --version
 
+      - name: Install pinned Copilot smoke binary
+        run: |
+          npm install --global @github/copilot@1.0.77
+          copilot --version
+
       - name: Install pinned stacked sandbox engines
         shell: bash
         run: |
@@ -441,7 +446,7 @@ jobs:
 
           smoke_log="$RUNNER_TEMP/tclaude-filtered-network-smoke.log"
           go test ./pkg/claude/session \
-            -run '^TestTclaudeLayerFilteredNetwork(DNS)?(Deny)?Smoke$' \
+            -run '^(TestTclaudeLayerFilteredNetwork(DNS)?(Deny)?Smoke|TestCopilotTclaudeLayerNetworkSmoke)$' \
             -count=1 -v -timeout=180s |
             tee "$smoke_log"
           if ! grep -q '^--- PASS: TestTclaudeLayerFilteredNetworkSmoke ' "$smoke_log"; then
@@ -453,6 +458,16 @@ jobs:
               echo "The smoke must execute IPv4/IPv6 CIDR+port TCP+UDP allow and deny cases, synthetic host loopback, capability drop, and fail-closed pasta teardown."
             } >> "$GITHUB_STEP_SUMMARY"
             echo "::error::TestTclaudeLayerFilteredNetworkSmoke did not report an explicit pass"
+            exit 1
+          fi
+          if ! grep -q '^--- PASS: TestCopilotTclaudeLayerNetworkSmoke ' "$smoke_log"; then
+            {
+              echo "### Copilot tclaude-layer network smoke did not complete"
+              echo
+              echo "The real production Copilot spawner did not pass inside both the host-network constructed root and the private routed namespace."
+              echo "A skip, missing/renamed test, build-tag mismatch, or zero-test success is a hard failure."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestCopilotTclaudeLayerNetworkSmoke did not report an explicit pass"
             exit 1
           fi
           if ! grep -q '^--- PASS: TestTclaudeLayerFilteredNetworkDNSSmoke ' "$smoke_log"; then

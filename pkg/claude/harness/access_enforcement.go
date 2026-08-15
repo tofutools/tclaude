@@ -350,19 +350,32 @@ func accessEnforcementTable(
 	if axes.Network.Namespace == sandboxpolicy.NetworkNamespacePrivate {
 		if implementation != sandboxpolicy.ImplementationTclaudeLayer ||
 			goos != "linux" || h == nil ||
-			(h.Name != DefaultName && h.Name != CodexName && h.Name != OpenCodeName) {
+			(h.Name != DefaultName && h.Name != CodexName && h.Name != OpenCodeName &&
+				h.Name != CopilotName) {
 			harnessName := "<unresolved>"
 			if h != nil {
 				harnessName = h.Name
 			}
 			return accessEnforcementTableRow{}, fmt.Errorf(
-				"network.namespace %q requires Linux tclaude-layer with Claude Code, Codex, or OpenCode; resolved target is harness %q, sandbox implementation %q, platform %q",
+				"network.namespace %q requires Linux tclaude-layer with Claude Code, Codex, OpenCode, or Copilot; resolved target is harness %q, sandbox implementation %q, platform %q",
 				axes.Network.Namespace, harnessName, implementation, goos)
 		}
 		if !filteredNetworkReady {
 			return accessEnforcementTableRow{}, fmt.Errorf(
 				"network.namespace %q requires the Linux private-network prerequisites (user/network namespaces, bubblewrap, pasta, nftables, and required capabilities)",
 				axes.Network.Namespace)
+		}
+		if h.Name == CopilotName && axes.Network.Engine == sandboxpolicy.NetworkEngineProxy {
+			discriminating, discriminatingErr :=
+				sandboxpolicy.NetworkRulesAreDiscriminating(axes.Network)
+			if discriminatingErr != nil {
+				return accessEnforcementTableRow{}, discriminatingErr
+			}
+			if discriminating {
+				return accessEnforcementTableRow{}, fmt.Errorf(
+					"network.engine %q cannot be used with Copilot destination rules in a private namespace: Copilot does not enforce those rules, and widening them would switch the launch to the packet gateway after proxy prerequisites were checked; remove the destination rules to use private routed networking, or select the packet engine and accept the disclosed unsupported-rule widening",
+					axes.Network.Engine)
+			}
 		}
 	}
 	if implementation.OmitsOSConfinement() {
@@ -420,50 +433,54 @@ func accessEnforcementTable(
 		// launch does not run. The proxy's own cells stay EnforceNone until
 		// their carriage smokes land.
 		packetGateway := deployedEngine != sandboxpolicy.NetworkEngineProxy
+		filteredGatewayHarness := h.Name == DefaultName || h.Name == CodexName ||
+			h.Name == OpenCodeName
+		privateRoutedCopilot := h.Name == CopilotName &&
+			sandboxpolicy.NetworkRulesArePrivateRoutedOpen(axes.Network)
 		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
 			packetGateway &&
 			goos == "linux" && filteredNetworkReady &&
-			(h.Name == DefaultName || h.Name == CodexName ||
-				h.Name == OpenCodeName) {
+			(filteredGatewayHarness || privateRoutedCopilot) {
 			caps.NetworkList = EnforceFull
-			caps.NetworkSelectors = []NetworkSelectorCapability{
-				{
-					Selector: string(sandboxpolicy.NetworkSelectorHost),
-					Level:    EnforceFull,
-					Detail:   filteredNetworkDNSCaveat(),
-				},
-				{
-					Selector: string(sandboxpolicy.NetworkSelectorDomain),
-					Level:    EnforceFull,
-					Detail:   filteredNetworkDNSCaveat(),
-				},
-				{
-					Selector: string(sandboxpolicy.NetworkSelectorCIDR),
-					Level:    EnforceFull,
-				},
-				{
-					Selector: string(sandboxpolicy.NetworkSelectorLoopback),
-					Level:    EnforceFull,
-					Detail:   FilteredNetworkLoopbackCaveat,
-				},
-			}
-			caps.NetworkPorts = EnforceFull
-			caps.NetworkListCondition =
-				"At launch, bubblewrap, pasta, and nft must pass live checks. If any check fails, these rules are not enforced and outbound traffic is open."
-			if h.Name == OpenCodeName {
-				// Preview and runtime must not disagree: OpenCode reaches this
-				// gateway only through an inspected explicit provider, and a
-				// launch without one is refused rather than started unfiltered.
-				caps.NetworkListCondition +=
-					" " + OpenCodeFilteredExplicitProviderCaveat
+			if filteredGatewayHarness {
+				caps.NetworkSelectors = []NetworkSelectorCapability{
+					{
+						Selector: string(sandboxpolicy.NetworkSelectorHost),
+						Level:    EnforceFull,
+						Detail:   filteredNetworkDNSCaveat(),
+					},
+					{
+						Selector: string(sandboxpolicy.NetworkSelectorDomain),
+						Level:    EnforceFull,
+						Detail:   filteredNetworkDNSCaveat(),
+					},
+					{
+						Selector: string(sandboxpolicy.NetworkSelectorCIDR),
+						Level:    EnforceFull,
+					},
+					{
+						Selector: string(sandboxpolicy.NetworkSelectorLoopback),
+						Level:    EnforceFull,
+						Detail:   FilteredNetworkLoopbackCaveat,
+					},
+				}
+				caps.NetworkPorts = EnforceFull
+				caps.NetworkListCondition =
+					"At launch, bubblewrap, pasta, and nft must pass live checks. If any check fails, these rules are not enforced and outbound traffic is open."
+				if h.Name == OpenCodeName {
+					// Preview and runtime must not disagree: OpenCode reaches this
+					// gateway only through an inspected explicit provider, and a
+					// launch without one is refused rather than started unfiltered.
+					caps.NetworkListCondition +=
+						" " + OpenCodeFilteredExplicitProviderCaveat
+				}
 			}
 			caps.Mechanism = "tclaude-layer bubblewrap + supervised DNS/pasta/nftables gateway"
 		}
 		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
 			packetGateway &&
 			goos == "linux" && filteredNetworkReady &&
-			(h.Name == DefaultName || h.Name == CodexName ||
-				h.Name == OpenCodeName) {
+			filteredGatewayHarness {
 			dnsDenyLevel := EnforceFull
 			dnsDenyDetail := ""
 			if axes.Network.Mode == sandboxpolicy.AccessModeOpen {
@@ -971,10 +988,9 @@ func accessEnforcementTable(
 //     host-open root has no smoke evidence, and an unproven combination may not
 //     raise a capability rating.
 //   - A harness whose tclaude-layer renderer supports a constructed root.
-//     Claude Code and Codex render the pane inside that root; OpenCode renders
-//     its agentd-owned tool server there while its attach pane remains outside.
-//     Copilot is kept out until its distinct state-directory contract has the
-//     same launch and smoke coverage.
+//     Claude Code, Codex, and Copilot render the pane inside that root;
+//     OpenCode renders its agentd-owned tool server there while its attach pane
+//     remains outside.
 //   - A host-open network posture. An allow list or any deny renders the
 //     filtered posture instead, which already constructs its root beneath a
 //     private network namespace and is rated separately.
@@ -1003,7 +1019,7 @@ func linuxHostOpenConstructedRootAvailable(
 		return false
 	}
 	if h == nil || (h.Name != DefaultName && h.Name != CodexName &&
-		h.Name != OpenCodeName) {
+		h.Name != OpenCodeName && h.Name != CopilotName) {
 		return false
 	}
 	posture, err := sandboxpolicy.NetworkPostureForRules(axes.Network)

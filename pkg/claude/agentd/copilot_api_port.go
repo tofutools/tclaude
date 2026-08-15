@@ -69,7 +69,8 @@ func copilotAPILoopbackFailure(
 			"the API-backed Copilot drive needs the pane to share host loopback, but this "+
 				"launch resolves to the %q network posture, which gives the pane a private "+
 				"network namespace that agentd cannot reach — spawn without the API drive, "+
-				"or use a sandbox profile whose network access is open (%q)",
+				"or use a sandbox profile whose network access is open in the shared host "+
+				"namespace (%q; network.namespace host or omitted)",
 			posture, sandboxpolicy.NetworkHostOpen.String()),
 	}
 }

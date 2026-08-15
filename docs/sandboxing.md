@@ -845,7 +845,7 @@ wraps the whole harness process, not only its tool executions:
 Since TCL-798 the constructed root is no longer welded to the network posture.
 A profile that leaves network access open but authors the `unix_sockets` axis
 as `closed` or an allow `list` gets a **host-network constructed root** on
-Linux for Claude Code, Codex, and OpenCode: bubblewrap builds the same fresh
+Linux for Claude Code, Codex, OpenCode, and Copilot: bubblewrap builds the same fresh
 root and PID namespace as the isolated posture, binds the agentd socket and any
 listed sockets back, and does NOT create a network namespace, so host IP
 networking, host loopback services, and the IDE bridge keep working. For
@@ -959,7 +959,7 @@ filtering engine. **Shared host** preserves the historical host network.
 ordinary TCP/UDP destinations unrestricted. This separates abstract Unix
 sockets from the host without requiring the IP network to be deny-by-default.
 Host localhost services and IDE bridges are not shared in this posture. It is
-supported only for exact Linux `tclaude-layer` Claude Code, Codex, and OpenCode
+supported only for exact Linux `tclaude-layer` Claude Code, Codex, OpenCode, and Copilot
 launches; missing prerequisites or another target refuse the launch rather
 than falling back to the host namespace. A private namespace in an included or
 global profile cannot be widened by a child profile selecting Shared host.

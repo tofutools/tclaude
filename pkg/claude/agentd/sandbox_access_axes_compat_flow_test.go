@@ -106,7 +106,8 @@ func TestSandboxProfileEnforcementPredictionIsOrderedAndCannotGateLaunch(t *test
 		"/v1/sandbox-profiles/socket-wall/enforcement?"+
 			"for=tclaude-layer%2Fclaude%2Flinux&"+
 			"for=harness-builtin%2Fcodex%2Fdarwin&"+
-			"for=tclaude-layer%2Fopencode%2Flinux", nil)
+			"for=tclaude-layer%2Fopencode%2Flinux&"+
+			"for=tclaude-layer%2Fcopilot%2Flinux", nil)
 	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	var got struct {
 		Profile string `json:"profile"`
@@ -121,7 +122,7 @@ func TestSandboxProfileEnforcementPredictionIsOrderedAndCannotGateLaunch(t *test
 	}
 	testharness.DecodeJSON(t, rec, &got)
 	assert.Equal(t, "socket-wall", got.Profile)
-	require.Len(t, got.Targets, 3)
+	require.Len(t, got.Targets, 4)
 	assert.Equal(t, "tclaude-layer", got.Targets[0].Implementation)
 	assert.Equal(t, "linux", got.Targets[0].Platform)
 	assert.True(t, got.Targets[0].Predicted)
@@ -152,6 +153,14 @@ func TestSandboxProfileEnforcementPredictionIsOrderedAndCannotGateLaunch(t *test
 	assert.True(t, got.Targets[2].Axes.ConstructedRoot,
 		"OpenCode's tool server uses the host-network constructed root")
 	assert.Contains(t, got.Targets[2].Axes.UnixSockets.Detail,
+		"abstract-namespace Unix sockets")
+	assert.Equal(t, "copilot", got.Targets[3].Harness)
+	assert.Equal(t, "tclaude-layer", got.Targets[3].Implementation)
+	assert.Equal(t, harness.AccessPredictionEnforcedPartial,
+		got.Targets[3].Axes.UnixSockets.Outcome)
+	assert.True(t, got.Targets[3].Axes.ConstructedRoot,
+		"Copilot's state and executable catalog is projected into the constructed root")
+	assert.Contains(t, got.Targets[3].Axes.UnixSockets.Detail,
 		"abstract-namespace Unix sockets")
 
 	// The editor's Block all baseline is represented as a list posture with an
