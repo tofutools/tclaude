@@ -450,13 +450,13 @@ func wrapPreparedResourceCgroupCommand(sessionID, dir, command string, allowUnen
 }
 
 // WrapPreparedResourceCgroupCommand renders the pane-side resource wrapper for
-// a cgroup that agentd already prepared. Managed servers use this when their
-// durable process tree must be forked by the external tmux runtime rather than
-// by agentd itself. The wrapped child OWNS the boundary's workload here, so
-// exit-time reaping applies; attach panes joining a server's boundary go
-// through the shared variant inside launchSession instead.
+// a durable cgroup that agentd already prepared and owns. Managed servers use
+// this when their process tree must be forked by the external tmux runtime
+// rather than by agentd itself. The wrapper must leave the boundary in place:
+// agentd can retry the server launch in that same boundary, and owns reaping
+// its members during managed-server teardown.
 func WrapPreparedResourceCgroupCommand(sessionID, dir, command string, allowUnenforced bool) string {
-	return wrapPreparedResourceCgroupCommand(sessionID, dir, command, allowUnenforced, false)
+	return wrapPreparedResourceCgroupCommand(sessionID, dir, command, allowUnenforced, true)
 }
 
 // ConfigureProcessResourceCgroup asks clone3 to place cmd in the prepared

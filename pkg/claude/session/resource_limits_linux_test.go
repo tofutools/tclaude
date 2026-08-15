@@ -947,10 +947,10 @@ func TestResourceLimitExecSharedBoundaryLeavesTheServerAndItsDirAlone(t *testing
 	assert.DirExists(t, dir, "the server's boundary must survive the attach client")
 }
 
-func TestWrapPreparedResourceCgroupCommandMarksOnlySharedBoundaries(t *testing.T) {
-	owned := WrapPreparedResourceCgroupCommand("s", "/sys/fs/cgroup/x/tclaude-a", "cmd", false)
-	assert.NotContains(t, owned, "--shared-boundary",
-		"a managed server pane owns its workload and must reap at exit")
+func TestWrapPreparedResourceCgroupCommandMarksManagedBoundaryShared(t *testing.T) {
+	managed := WrapPreparedResourceCgroupCommand("s", "/sys/fs/cgroup/x/tclaude-a", "cmd", false)
+	assert.Contains(t, managed, "--shared-boundary",
+		"agentd owns a managed server boundary across launch retries")
 	shared := wrapPreparedResourceCgroupCommand("s", "/sys/fs/cgroup/x/tclaude-a", "cmd", false, true)
 	assert.Contains(t, shared, "--shared-boundary")
 }
