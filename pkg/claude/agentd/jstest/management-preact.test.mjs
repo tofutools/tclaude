@@ -4106,6 +4106,11 @@ test('network filtering engine is authorable, survives a baseline change, and is
     network: { baseline: 'deny', allow: [{ domain: 'example.com' }], engine: 'proxy' },
     unix_sockets: { mode: '', allow: [] },
   }).network.engine, 'proxy');
+  assert.equal(model.sandboxProfileForWire({
+    name: 'private', filesystem: [], environment: [],
+    network: { baseline: 'allow', namespace: 'private' },
+    unix_sockets: { mode: '', allow: [] },
+  }).network.namespace, 'private');
   assert.equal(Object.hasOwn(model.sandboxProfileForWire({
     name: 'plain', filesystem: [], environment: [],
     network: { baseline: 'deny', allow: [{ domain: 'example.com' }] },
@@ -4121,6 +4126,9 @@ test('network filtering engine is authorable, survives a baseline change, and is
   assert.match(model.sandboxAccessDraftErrors({
     network: { baseline: 'deny', packs: [], deny_packs: [], allow: [], deny: [], engine: 'socks' },
   }).join(' '), /filtering engine is invalid/);
+  assert.match(model.sandboxAccessDraftErrors({
+    network: { baseline: 'allow', packs: [], deny_packs: [], allow: [], deny: [], namespace: 'container' },
+  }).join(' '), /namespace is invalid/);
   assert.deepEqual(model.sandboxAccessDraftErrors({
     name: 'ok', filesystem: [], environment: [],
     network: { baseline: 'deny', packs: [], deny_packs: [], allow: [], deny: [], engine: 'proxy' },
@@ -4161,6 +4169,14 @@ test('profile editor engine control selects an engine and keeps it across a base
   choose(engine, 'proxy');
   await harness.act(() => harness.fireEvent(engine, 'change'));
 
+  const namespace = host.querySelector('#sandbox-profile-editor-network-namespace');
+  assert.ok(namespace, 'the editor offers a network-namespace control');
+  assert.deepEqual([...namespace.options].map((option) => option.value),
+    ['', 'host', 'private']);
+  choose(namespace, 'private');
+  await harness.act(() => harness.fireEvent(namespace, 'change'));
+  assert.match(host.textContent, /host localhost services, IDE bridges/);
+
   // Changing the baseline must not clear the engine: it is not one of the
   // rules the baseline governs, and losing it would swap the mechanism as a
   // side effect of an unrelated edit.
@@ -4170,10 +4186,14 @@ test('profile editor engine control selects an engine and keeps it across a base
   assert.equal(
     host.querySelector('#sandbox-profile-editor-network-engine').value, 'proxy',
     'the engine survives a baseline change');
+  assert.equal(
+    host.querySelector('#sandbox-profile-editor-network-namespace').value, 'private',
+    'the namespace survives a baseline change');
 
   await harness.act(() => harness.fireEvent(
     host.querySelector('#sandbox-profile-editor-submit'), 'click'));
   assert.equal(saved.draft.network.engine, 'proxy');
+  assert.equal(saved.draft.network.namespace, 'private');
   assert.equal(saved.draft.network.baseline, 'allow');
 
   unmount();

@@ -1383,7 +1383,12 @@ func openCodeFilteredNetworkSpec(
 		return false
 	}
 	posture, err := session.TclaudeLayerNetworkPosture(spec.Effective)
-	return err == nil && posture == sandboxpolicy.NetworkFiltered
+	if err != nil || posture != sandboxpolicy.NetworkFiltered {
+		return false
+	}
+	axes, err := sandboxpolicy.PlannedEffectiveAccessAxes(spec.Effective)
+	return err == nil &&
+		!sandboxpolicy.NetworkRulesArePrivateRoutedOpen(axes.Network)
 }
 
 func openCodeFilteredControlledEnvironmentName(name string) bool {
@@ -1631,6 +1636,12 @@ func openCodeTclaudeLayerLaunchSpec(
 	}
 	if posture != sandboxpolicy.NetworkHostOpen {
 		if posture == sandboxpolicy.NetworkFiltered {
+			axes, axesErr := sandboxpolicy.PlannedEffectiveAccessAxes(effective)
+			if axesErr != nil {
+				return nil, axesErr
+			}
+			providerFiltered := !sandboxpolicy.NetworkRulesArePrivateRoutedOpen(
+				axes.Network)
 			// The engine comes from the composed policy, through the same
 			// resolution the launch itself performs, so the preflight probes
 			// the floor the launch will actually build. Never re-derived here:
@@ -1646,6 +1657,9 @@ func openCodeTclaudeLayerLaunchSpec(
 				return nil, filteredErr
 			}
 			if goruntime.GOOS == "darwin" {
+				if !providerFiltered {
+					return nil, fmt.Errorf("private routed networking requires Linux")
+				}
 				return buildOpenCodeTclaudeLayerLaunchSpec(
 					cwd, gitWriteDirs, snapshot, agentID, false, true,
 					privateSessionIDs...)
@@ -1654,7 +1668,7 @@ func openCodeTclaudeLayerLaunchSpec(
 				return nil, fmt.Errorf("OpenCode filtered networking requires Linux or macOS")
 			}
 			return buildOpenCodeTclaudeLayerLaunchSpec(
-				cwd, gitWriteDirs, snapshot, agentID, true, true,
+				cwd, gitWriteDirs, snapshot, agentID, true, providerFiltered,
 				privateSessionIDs...)
 		}
 		openCodeHarness, resolveErr := harness.Resolve(harness.OpenCodeName)

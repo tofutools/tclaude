@@ -1598,3 +1598,35 @@ func TestResolveAccessEnforcementAdmitsUnconfinedImplementations(t *testing.T) {
 		"a layer launch with no functioning boundary must still refuse")
 	assert.Contains(t, err.Error(), "requires a functioning OS sandbox")
 }
+
+func TestPrivateRoutedNamespaceRequiresExactReadyLinuxLayer(t *testing.T) {
+	h := MustGet(OpenCodeName)
+	axes := sandboxpolicy.ResolvedAxes{
+		Network: sandboxpolicy.NetworkRules{
+			Mode:      sandboxpolicy.AccessModeOpen,
+			Namespace: sandboxpolicy.NetworkNamespacePrivate,
+		},
+		UnixSockets: sandboxpolicy.UnixSocketRules{
+			Mode: sandboxpolicy.AccessModeClosed,
+		},
+	}
+	row, err := accessEnforcementTable(
+		h, sandboxpolicy.ImplementationTclaudeLayer, axes,
+		OpenCodeSandboxTclaudeLayer, "linux", true)
+	require.NoError(t, err)
+	assert.Equal(t, EnforcePartial, row.SocketClosed)
+	assert.True(t, row.ConstructedRoot)
+
+	_, err = accessEnforcementTable(
+		h, sandboxpolicy.ImplementationTclaudeLayer, axes,
+		OpenCodeSandboxTclaudeLayer, "linux", false)
+	require.ErrorContains(t, err, "private-network prerequisites")
+	_, err = accessEnforcementTable(
+		h, sandboxpolicy.ImplementationTclaudeLayer, axes,
+		OpenCodeSandboxTclaudeLayer, "darwin", true)
+	require.ErrorContains(t, err, "requires Linux tclaude-layer")
+	_, err = accessEnforcementTable(
+		h, sandboxpolicy.ImplementationStacked, axes,
+		OpenCodeSandboxTclaudeLayer, "linux", true)
+	require.ErrorContains(t, err, "requires Linux tclaude-layer")
+}

@@ -1231,3 +1231,20 @@ func TestOpenCodeCredentialHandoffNeverEntersWrapperArgv(t *testing.T) {
 	assert.NotContains(t, joined, "top-secret")
 	assert.NotContains(t, joined, "43210")
 }
+
+func TestOpenCodePrivateRoutedNetworkIsNotProviderFiltered(t *testing.T) {
+	spec := &session.TclaudeLayerLaunchSpec{Effective: sandboxpolicy.EffectiveProfile{
+		Network: &sandboxpolicy.NetworkRules{
+			Mode:      sandboxpolicy.AccessModeOpen,
+			Namespace: sandboxpolicy.NetworkNamespacePrivate,
+		},
+	}}
+	assert.False(t, openCodeFilteredNetworkSpec(spec),
+		"unrestricted private routing must not activate provider authority isolation")
+
+	spec.Effective.Network.Deny = []sandboxpolicy.NetworkAllowEntry{{
+		CIDR: "192.0.2.0/24",
+	}}
+	assert.True(t, openCodeFilteredNetworkSpec(spec),
+		"a private namespace with destination rules remains provider-filtered")
+}

@@ -973,6 +973,9 @@ func ValidateTclaudeLayerNetwork(
 	if err != nil {
 		return nil, err
 	}
+	if sandboxpolicy.NetworkRulesArePrivateRoutedOpen(axes.Network) {
+		return nil, nil
+	}
 	switch axes.Network.Mode {
 	case sandboxpolicy.AccessModeUnset:
 		return nil, nil

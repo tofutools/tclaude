@@ -45,6 +45,17 @@ const (
 	NetworkBaselineDeny    NetworkBaseline = "deny"
 )
 
+// NetworkNamespace selects whether the harness shares the host network
+// namespace or runs behind tclaude's routed namespace. Omitted preserves the
+// historical target default.
+type NetworkNamespace string
+
+const (
+	NetworkNamespaceUnset   NetworkNamespace = ""
+	NetworkNamespaceHost    NetworkNamespace = "host"
+	NetworkNamespacePrivate NetworkNamespace = "private"
+)
+
 type NetworkRules struct {
 	// Mode is the forever-readable legacy/effective representation. Newly
 	// authored profiles use Baseline; resolved launch authority uses Mode.
@@ -54,6 +65,7 @@ type NetworkRules struct {
 	DenyPacks []string            `json:"deny_packs,omitempty"`
 	Allow     []NetworkAllowEntry `json:"allow,omitempty"`
 	Deny      []NetworkAllowEntry `json:"deny,omitempty"`
+	Namespace NetworkNamespace    `json:"namespace,omitempty"`
 	// Engine names HOW a discriminating rule set is enforced. It is not an
 	// access axis: it can neither widen nor narrow the destinations the rest of
 	// this struct authorizes, which is why it composes by most-explicit-wins
@@ -355,10 +367,13 @@ func normalizeNetworkRules(in *NetworkRules) (*NetworkRules, error) {
 	if err := ValidateNetworkEngine(in.Engine); err != nil {
 		return nil, err
 	}
+	if err := ValidateNetworkNamespace(in.Namespace); err != nil {
+		return nil, err
+	}
 	out := &NetworkRules{
 		Mode: in.Mode, Baseline: in.Baseline,
 		Packs: packs, DenyPacks: denyPacks,
-		Engine: in.Engine,
+		Engine: in.Engine, Namespace: in.Namespace,
 	}
 	out.Allow, err = normalizeNetworkEntries(in.Allow, "allow")
 	if err != nil {
@@ -409,7 +424,10 @@ func normalizeEffectiveNetworkRules(in *NetworkRules) (*NetworkRules, error) {
 	if err := ValidateNetworkEngine(in.Engine); err != nil {
 		return nil, err
 	}
-	out := &NetworkRules{Mode: in.Mode, Engine: in.Engine}
+	if err := ValidateNetworkNamespace(in.Namespace); err != nil {
+		return nil, err
+	}
+	out := &NetworkRules{Mode: in.Mode, Engine: in.Engine, Namespace: in.Namespace}
 	var err error
 	out.Allow, err = normalizeNetworkEntries(in.Allow, "allow")
 	if err != nil {
@@ -1053,7 +1071,31 @@ func intersectNetworkRules(left, right NetworkRules) NetworkRules {
 	out := intersectNetworkBaselines(left, right)
 	out.Deny = unionNetworkEntries(left.Deny, right.Deny)
 	out.Engine = mergeNetworkEngines(left.Engine, right.Engine)
+	out.Namespace = intersectNetworkNamespaces(left.Namespace, right.Namespace)
 	return out
+}
+
+// A private namespace is the restrictive choice and cannot be widened by a
+// more-specific profile selecting the shared host namespace.
+func intersectNetworkNamespaces(left, right NetworkNamespace) NetworkNamespace {
+	if left == NetworkNamespacePrivate || right == NetworkNamespacePrivate {
+		return NetworkNamespacePrivate
+	}
+	if right != NetworkNamespaceUnset {
+		return right
+	}
+	return left
+}
+
+func ValidateNetworkNamespace(namespace NetworkNamespace) error {
+	switch namespace {
+	case NetworkNamespaceUnset, NetworkNamespaceHost, NetworkNamespacePrivate:
+		return nil
+	default:
+		return fmt.Errorf(
+			"network.namespace %q is invalid (want host, private, or omitted)",
+			namespace)
+	}
 }
 
 // mergeNetworkEngines carries the engine across a merge that intersects

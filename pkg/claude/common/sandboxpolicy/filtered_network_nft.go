@@ -82,6 +82,10 @@ func RenderFilteredNetworkNFT(rules FilteredNetworkRuleSet) (string, error) {
 			return "", err
 		}
 	}
+	if rules.BlockHostLoopback {
+		body.WriteString("    ip daddr " + FilteredNetworkLoopbackIPv4 + "/32 drop\n")
+		body.WriteString("    ip6 daddr " + FilteredNetworkLoopbackIPv6 + "/128 drop\n")
+	}
 	// Denies precede established-flow acceptance so a fresh negative DNS lease
 	// cuts matching established TCP and UDP authority immediately.
 	body.WriteString("    ct state established accept\n")

@@ -191,11 +191,17 @@ func RenderMountPlanWithEngine(
 // sees it; a surviving NetworkFiltered value is therefore an enforceable-or-
 // refuse contract, never permission to silently approximate.
 func NetworkPostureForRules(rules NetworkRules) (NetworkPosture, error) {
+	if err := ValidateNetworkNamespace(rules.Namespace); err != nil {
+		return NetworkHostOpen, err
+	}
 	switch rules.Mode {
 	case AccessModeUnset:
+		if rules.Namespace == NetworkNamespacePrivate {
+			return NetworkFiltered, nil
+		}
 		return NetworkHostOpen, nil
 	case AccessModeOpen:
-		if len(rules.Deny) > 0 {
+		if len(rules.Deny) > 0 || rules.Namespace == NetworkNamespacePrivate {
 			return NetworkFiltered, nil
 		}
 		return NetworkHostOpen, nil
@@ -209,6 +215,16 @@ func NetworkPostureForRules(rules NetworkRules) (NetworkPosture, error) {
 			rules.Mode,
 		)
 	}
+}
+
+// NetworkRulesArePrivateRoutedOpen identifies the new namespace-only posture:
+// IP destinations remain unrestricted, but the process is routed through a
+// private network namespace. It uses the filtered packet floor without asking
+// the harness-specific model-provider filtering gates to constrain traffic.
+func NetworkRulesArePrivateRoutedOpen(rules NetworkRules) bool {
+	return rules.Namespace == NetworkNamespacePrivate &&
+		(rules.Mode == AccessModeUnset ||
+			(rules.Mode == AccessModeOpen && len(rules.Deny) == 0))
 }
 
 // RootPostureForAxes decides whether the plan needs a constructed filesystem

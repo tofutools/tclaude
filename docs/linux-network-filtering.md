@@ -59,12 +59,15 @@ The resolved `network.mode` maps to one of three tclaude-layer postures:
 | Profile mode | Linux behavior |
 |---|---|
 | omitted, or `open` without denies | Keep the host network namespace. There is no tclaude egress filter. |
+| omitted or `open`, with `namespace: "private"` | Create a private network namespace and attach `pasta` with a default-accept nftables policy. Ordinary TCP/UDP egress remains available, while host loopback and abstract Unix sockets are not shared. |
 | `open` with denies | For exact `tclaude-layer` Claude Code and Codex launches, create the filtered namespace with a default-accept nftables baseline and the authored deny layer. Unsupported target cells omit the deny rows and remain host-open with disclosure. |
 | `closed` | Create a private network namespace with sandbox-private loopback and no external route. |
 | `list` | Create a private network namespace, install the filtered nftables policy, and attach the supervised DNS and `pasta` gateway. |
 
 The legacy `network_access: internet` and `network_access: none` spellings map
 to `open` and `closed`, respectively. A list has no legacy spelling.
+The `network.namespace` field accepts `host`, `private`, or omission; omission
+preserves the historical target default.
 
 The constructed-root postures also isolate PIDs and pathname Unix sockets.
 Unix-socket access is a separate filesystem/mount concern; nftables does not

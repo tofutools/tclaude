@@ -347,6 +347,20 @@ func accessEnforcementTable(
 	validatedBuiltinMode, goos string,
 	filteredNetworkReady bool,
 ) (accessEnforcementTableRow, error) {
+	if axes.Network.Namespace == sandboxpolicy.NetworkNamespacePrivate {
+		if implementation != sandboxpolicy.ImplementationTclaudeLayer ||
+			goos != "linux" || h == nil ||
+			(h.Name != DefaultName && h.Name != CodexName && h.Name != OpenCodeName) {
+			return accessEnforcementTableRow{}, fmt.Errorf(
+				"network.namespace %q requires Linux tclaude-layer with Claude Code, Codex, or OpenCode",
+				axes.Network.Namespace)
+		}
+		if !filteredNetworkReady {
+			return accessEnforcementTableRow{}, fmt.Errorf(
+				"network.namespace %q requires the Linux private-network prerequisites (user/network namespaces, bubblewrap, pasta, nftables, and required capabilities)",
+				axes.Network.Namespace)
+		}
+	}
 	if implementation.OmitsOSConfinement() {
 		// `resource-only` shares every verdict AND the mechanism string with
 		// `off`. It is tempting to name its cgroup here, but this table only
@@ -1002,6 +1016,9 @@ func linuxPlannedNetworkConfinesSockets(
 	rules sandboxpolicy.NetworkRules,
 	caps accessEnforcementTableRow,
 ) bool {
+	if rules.Namespace == sandboxpolicy.NetworkNamespacePrivate {
+		return caps.NetworkList != EnforceNone
+	}
 	switch rules.Mode {
 	case sandboxpolicy.AccessModeClosed:
 		return caps.NetworkClosed != EnforceNone
@@ -1613,6 +1630,7 @@ func PlanAccessEnforcement(
 		}
 		rendered.Network = sandboxpolicy.NetworkRules{
 			Mode: sandboxpolicy.AccessModeOpen, Engine: axes.Network.Engine,
+			Namespace: axes.Network.Namespace,
 		}
 		notices = append(notices, degradationNotice(
 			"network",
@@ -1687,9 +1705,10 @@ func PlanAccessEnforcement(
 			// policy that lost its engine would deploy the pre-engine default
 			// while the preview named the authored one.
 			rendered.Network = sandboxpolicy.NetworkRules{
-				Mode:   sandboxpolicy.AccessModeOpen,
-				Deny:   cloneNetworkEntries(axes.Network.Deny),
-				Engine: axes.Network.Engine,
+				Mode:      sandboxpolicy.AccessModeOpen,
+				Deny:      cloneNetworkEntries(axes.Network.Deny),
+				Engine:    axes.Network.Engine,
+				Namespace: axes.Network.Namespace,
 			}
 			notices = append(notices, degradationNotice(
 				"network", "no_mechanism", sandboxpolicy.AccessNoticeEffectNotEnforced,
@@ -1709,9 +1728,10 @@ func PlanAccessEnforcement(
 					}
 				}
 				rendered.Network = sandboxpolicy.NetworkRules{
-					Mode:   sandboxpolicy.AccessModeOpen,
-					Deny:   cloneNetworkEntries(axes.Network.Deny),
-					Engine: axes.Network.Engine,
+					Mode:      sandboxpolicy.AccessModeOpen,
+					Deny:      cloneNetworkEntries(axes.Network.Deny),
+					Engine:    axes.Network.Engine,
+					Namespace: axes.Network.Namespace,
 				}
 				notices = append(notices, degradationNotice(
 					"network", "selector_unsupported", sandboxpolicy.AccessNoticeEffectNotEnforced,

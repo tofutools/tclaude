@@ -477,13 +477,17 @@ func planSandboxProfileAccessForLaunch(
 		); noProxyNotice != nil {
 			notices = append(notices, *noProxyNotice)
 		}
-		resolvedModel, resolveModelErr := session.ResolveTclaudeLayerModelTransport(
-			h, modelContext)
-		if resolveModelErr != nil {
-			return nil, sandboxCapabilitySpawnFailure(
-				session.AnnotateDenyDrivenFilteredModelTransport(
-					rendered.Network, resolveModelErr),
-				harness.SandboxCapabilityModelTransport)
+		resolvedModel := harness.ResolvedModelTransport{}
+		if !sandboxpolicy.NetworkRulesArePrivateRoutedOpen(rendered.Network) {
+			var resolveModelErr error
+			resolvedModel, resolveModelErr = session.ResolveTclaudeLayerModelTransport(
+				h, modelContext)
+			if resolveModelErr != nil {
+				return nil, sandboxCapabilitySpawnFailure(
+					session.AnnotateDenyDrivenFilteredModelTransport(
+						rendered.Network, resolveModelErr),
+					harness.SandboxCapabilityModelTransport)
+			}
 		}
 		modelNotices, modelErr := session.ValidateTclaudeLayerNetwork(
 			h, plannedEffective, resolvedModel,
