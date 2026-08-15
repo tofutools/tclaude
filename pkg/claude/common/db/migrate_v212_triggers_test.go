@@ -17,7 +17,15 @@ func TestMigrateV211toV212SeedsExistingPRsWithoutReplay(t *testing.T) {
 	require.NoError(t, err)
 	d, err := Open()
 	require.NoError(t, err)
-	_, err = d.Exec(`DELETE FROM trigger_pr_events`)
+	_, err = d.Exec(`
+		DROP TABLE trigger_workers;
+		DROP TABLE trigger_action_outcomes;
+		DROP TABLE trigger_firings;
+		DROP TABLE trigger_pr_events;
+		DROP TABLE trigger_pr_observations;
+		DROP TABLE trigger_rules;
+		DROP TABLE daemon_spawn_history;
+	`)
 	require.NoError(t, err)
 	_, err = d.Exec(`UPDATE schema_version SET version=211`)
 	require.NoError(t, err)
@@ -59,7 +67,7 @@ func TestDeleteTriggerRulePreservesFiringAndWorkerHistory(t *testing.T) {
 	assert.Equal(t, 1, orphanedRules)
 }
 
-func TestUpsertAgentPRQueuesOneDurableOpenEdge(t *testing.T) {
+func TestUpsertAgentPRQueuesDurableOpenedAndCoalescedUpdatedEdges(t *testing.T) {
 	setupTestDB(t)
 	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Triggers: true}}))
 	agent, _, err := EnsureAgentForConv("conv-new-pr", "test")
@@ -68,9 +76,45 @@ func TestUpsertAgentPRQueuesOneDurableOpenEdge(t *testing.T) {
 	require.NoError(t, err)
 	_, err = UpsertAgentPRDetails(agent, "https://github.com/o/r/pull/42", "edited", "open", "topic-2", false)
 	require.NoError(t, err)
+	_, err = UpsertAgentPRDetails(agent, "https://github.com/o/r/pull/42", "edited again", "draft", "topic-3", true)
+	require.NoError(t, err)
 	events, err := ListPendingTriggerPREvents(10)
 	require.NoError(t, err)
-	require.Len(t, events, 1)
+	require.Len(t, events, 2)
+	assert.Equal(t, TriggerSourcePROpened, events[0].Source)
 	assert.Equal(t, 42, events[0].PRNumber)
-	assert.Equal(t, "topic-2", events[0].PRBranch)
+	assert.Equal(t, "topic", events[0].PRBranch)
+	assert.Equal(t, TriggerSourcePRUpdated, events[1].Source)
+	assert.Equal(t, "topic-3", events[1].PRBranch)
+	assert.Equal(t, "open", events[1].PreviousState)
+	assert.Equal(t, "draft", events[1].CurrentState)
+}
+
+func TestObserveTriggerPRCIInitializesAndEmitsOnlyFreshTransitions(t *testing.T) {
+	setupTestDB(t)
+	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Triggers: true}}))
+	agent, _, err := EnsureAgentForConv("conv-ci-pr", "test")
+	require.NoError(t, err)
+	pr, err := UpsertAgentPR(agent, "https://github.com/o/r/pull/43", "ci", "open")
+	require.NoError(t, err)
+	base := time.Now().UTC()
+	emitted, err := ObserveTriggerPRCI(pr.ID, "pending", base)
+	require.NoError(t, err)
+	assert.False(t, emitted, "first fresh observation is a baseline")
+	emitted, err = ObserveTriggerPRCI(pr.ID, "failing", base.Add(time.Second))
+	require.NoError(t, err)
+	assert.True(t, emitted)
+	emitted, err = ObserveTriggerPRCI(pr.ID, "passing", base.Add(2*time.Second))
+	require.NoError(t, err)
+	assert.True(t, emitted)
+	emitted, err = ObserveTriggerPRCI(pr.ID, "failing", base.Add(time.Second))
+	require.NoError(t, err)
+	assert.False(t, emitted, "stale observations cannot regress the edge detector")
+	events, err := ListPendingTriggerPREvents(10)
+	require.NoError(t, err)
+	require.Len(t, events, 3)
+	assert.Equal(t, TriggerSourceCIFailed, events[1].Source)
+	assert.Equal(t, "pending", events[1].PreviousState)
+	assert.Equal(t, "failing", events[1].CurrentState)
+	assert.Equal(t, TriggerSourceCISucceeded, events[2].Source)
 }

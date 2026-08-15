@@ -11,10 +11,10 @@ import (
 
 func TestEvaluatePROpenedControls(t *testing.T) {
 	now := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
-	rule := &db.TriggerRule{Enabled: true, ScopeKind: db.TriggerScopeGroup, GroupID: 7,
+	rule := &db.TriggerRule{Enabled: true, Source: db.TriggerSourcePROpened, ScopeKind: db.TriggerScopeGroup, GroupID: 7,
 		DraftFilter: db.TriggerDraftExclude, DebounceSeconds: 10, CooldownSeconds: 60,
 		CreatedAt: now.Add(-time.Hour)}
-	event := db.TriggerPREvent{GroupIDs: []int64{7}, OccurredAt: now.Add(-time.Minute), UpdatedAt: now.Add(-5 * time.Second)}
+	event := db.TriggerPREvent{Source: db.TriggerSourcePROpened, GroupIDs: []int64{7}, OccurredAt: now.Add(-time.Minute), UpdatedAt: now.Add(-5 * time.Second)}
 	d := Evaluate(rule, event, now, time.Time{}, false)
 	assert.Equal(t, OutcomeDeferredDebounce, d.Outcome)
 	event.UpdatedAt = now.Add(-time.Minute)
@@ -24,6 +24,16 @@ func TestEvaluatePROpenedControls(t *testing.T) {
 	assert.Equal(t, OutcomeSuppressedLoop, d.Outcome)
 	d = Evaluate(rule, event, now, time.Time{}, false)
 	require.True(t, d.Fire)
+}
+
+func TestEvaluateRequiresExactSource(t *testing.T) {
+	now := time.Now().UTC()
+	rule := &db.TriggerRule{Enabled: true, Source: db.TriggerSourceCIFailed, ScopeKind: db.TriggerScopeGlobal,
+		DraftFilter: db.TriggerDraftInclude, CreatedAt: now.Add(-time.Hour)}
+	event := db.TriggerPREvent{Source: db.TriggerSourceCISucceeded, OccurredAt: now.Add(-time.Minute), UpdatedAt: now.Add(-time.Minute)}
+	d := Evaluate(rule, event, now, time.Time{}, false)
+	assert.False(t, d.Fire)
+	assert.Equal(t, OutcomeOutOfScope, d.Outcome)
 }
 
 func TestRenderTemplate(t *testing.T) {

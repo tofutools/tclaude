@@ -17,12 +17,23 @@ import (
 	triggerlogic "github.com/tofutools/tclaude/pkg/claude/triggers"
 )
 
-var triggerTickInterval = 2 * time.Second
+var (
+	triggerTickInterval   = 2 * time.Second
+	triggerCIPollInterval = 30 * time.Second
+)
+
+const triggerCIPollBatch = 20
 
 // triggerAuthorityMu gives rule mutation/retirement and firing the same
 // ordering guarantee cron uses: every side effect re-reads the rule and live
 // principal while holding this lock.
 var triggerAuthorityMu sync.Mutex
+
+var triggerCIWatchState = struct {
+	sync.Mutex
+	initialized bool
+	identities  map[string]struct{}
+}{identities: make(map[string]struct{})}
 
 func startTriggerScheduler(stop <-chan struct{}) {
 	go func() {
@@ -39,6 +50,212 @@ func startTriggerScheduler(stop <-chan struct{}) {
 		}
 	}()
 }
+
+func startTriggerSourcePollers(stop <-chan struct{}) {
+	initializeTriggerCIWatchState()
+	go func() {
+		pollTriggerCITransitions(time.Now().UTC())
+		t := time.NewTicker(triggerCIPollInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case now := <-t.C:
+				pollTriggerCITransitions(now.UTC())
+			}
+		}
+	}()
+	go func() {
+		var backoff recentlyMergedPRPollBackoff
+		delay := time.Duration(0)
+		for {
+			if delay > 0 {
+				t := time.NewTimer(delay)
+				select {
+				case <-stop:
+					t.Stop()
+					return
+				case <-t.C:
+				}
+			}
+			if !triggerRoutesEnabled() {
+				delay = recentlyMergedPRPollInterval
+				continue
+			}
+			enabled, enabledErr := db.HasEnabledTriggerSource(db.TriggerSourcePRMerged)
+			if enabledErr != nil {
+				slog.Warn("triggers: inspect merged PR watchers", "error", enabledErr)
+				delay = recentlyMergedPRPollInterval
+				continue
+			}
+			if !enabled {
+				delay = recentlyMergedPRPollInterval
+				continue
+			}
+			attempted, err := pollRecentlyMergedPRs()
+			var warn bool
+			delay, warn, _, _ = backoff.next(attempted, err)
+			if warn {
+				slog.Warn("triggers: merged PR poll failed", "error", err)
+			}
+		}
+	}()
+}
+
+type triggerCIIdentityWatch struct {
+	key           string
+	owner         db.AgentPR
+	presentations []db.AgentPR
+	rebaseline    bool
+}
+
+func triggerCIIdentityWatches(prs []db.AgentPR) []triggerCIIdentityWatch {
+	byKey := make(map[string]int)
+	var out []triggerCIIdentityWatch
+	for _, pr := range prs {
+		key := prStateKey(pr.PRURL)
+		if key == "" {
+			key = strings.ToLower(strings.TrimSpace(pr.PRURL))
+		}
+		index, found := byKey[key]
+		if !found {
+			index = len(out)
+			byKey[key] = index
+			out = append(out, triggerCIIdentityWatch{key: key, owner: pr})
+		}
+		out[index].presentations = append(out[index].presentations, pr)
+		if pr.ID < out[index].owner.ID {
+			out[index].owner = pr
+		}
+	}
+	return out
+}
+
+func initializeTriggerCIWatchState() {
+	triggerCIWatchState.Lock()
+	defer triggerCIWatchState.Unlock()
+	triggerCIWatchState.identities = make(map[string]struct{})
+	if triggerRoutesEnabled() {
+		prs, err := db.ListTriggerCIWatchPRs(0)
+		if err != nil {
+			triggerCIWatchState.initialized = false
+			return
+		}
+		for _, watch := range triggerCIIdentityWatches(prs) {
+			triggerCIWatchState.identities[watch.key] = struct{}{}
+		}
+	}
+	triggerCIWatchState.initialized = true
+}
+
+func setTriggerCIWatchSet(watches []triggerCIIdentityWatch) []triggerCIIdentityWatch {
+	triggerCIWatchState.Lock()
+	defer triggerCIWatchState.Unlock()
+	previous := triggerCIWatchState.identities
+	if !triggerCIWatchState.initialized {
+		previous = map[string]struct{}{}
+	}
+	current := make(map[string]struct{}, len(watches))
+	for i := range watches {
+		_, existed := previous[watches[i].key]
+		watches[i].rebaseline = !existed
+		if existed {
+			current[watches[i].key] = struct{}{}
+		}
+	}
+	triggerCIWatchState.identities = current
+	triggerCIWatchState.initialized = true
+	return watches
+}
+
+func markTriggerCIIdentityWatched(key string) {
+	triggerCIWatchState.Lock()
+	triggerCIWatchState.identities[key] = struct{}{}
+	triggerCIWatchState.Unlock()
+}
+
+func clearTriggerCIWatchSet() {
+	triggerCIWatchState.Lock()
+	triggerCIWatchState.identities = make(map[string]struct{})
+	triggerCIWatchState.initialized = true
+	triggerCIWatchState.Unlock()
+}
+
+func pollTriggerCITransitions(now time.Time) {
+	if !triggerRoutesEnabled() {
+		clearTriggerCIWatchSet()
+		return
+	}
+	prs, err := db.ListTriggerCIWatchPRs(0)
+	if err != nil {
+		slog.Warn("triggers: list CI-watched PRs", "error", err)
+		return
+	}
+	watches := setTriggerCIWatchSet(triggerCIIdentityWatches(prs))
+	if len(watches) > triggerCIPollBatch {
+		watches = watches[:triggerCIPollBatch]
+	}
+	for _, watch := range watches {
+		pr := watch.owner
+		key := prChecksCacheKey(pr.PRURL)
+		if _, busy := prChecksInflight.LoadOrStore(key, struct{}{}); busy {
+			continue
+		}
+		info, ok := prChecksResolver(pr.PRURL)
+		prChecksInflight.Delete(key)
+		if !ok {
+			// A failed refresh is unknown. Never reinterpret an older cached
+			// green/red summary as the current state.
+			for _, presented := range watch.presentations {
+				if err := db.MarkTriggerCIPollAttempt(presented.ID, now); err != nil {
+					slog.Warn("triggers: record failed CI poll attempt", "error", err, "url", presented.PRURL)
+				}
+			}
+			continue
+		}
+		info.FetchedAt = now
+		info.Summary = summarizePRChecks(info.Checks, now)
+		savePRChecks(pr.PRURL, info)
+		state := strings.ToLower(strings.TrimSpace(info.PRState))
+		if state != "" {
+			for _, presented := range watch.presentations {
+				update := db.UpdateAgentPRStateQuiet
+				if presented.ID == pr.ID {
+					update = db.UpdateAgentPRState
+				}
+				if _, err := update(presented.AgentID, presented.PRURL, state); err != nil {
+					slog.Warn("triggers: apply fresh PR state", "error", err, "url", presented.PRURL, "state", state)
+				}
+			}
+		}
+		if isTerminalPresentedPRState(state) {
+			for _, presented := range watch.presentations {
+				_ = db.MarkTriggerCIPollAttempt(presented.ID, now)
+			}
+			continue
+		}
+		if watch.rebaseline {
+			err = db.BaselineTriggerPRCI(pr.ID, info.Summary.State, now)
+			if err == nil {
+				markTriggerCIIdentityWatched(watch.key)
+			}
+		} else {
+			_, err = db.ObserveTriggerPRCI(pr.ID, info.Summary.State, now)
+		}
+		if err != nil {
+			slog.Warn("triggers: record CI transition", "error", err, "url", pr.PRURL)
+		}
+		for _, presented := range watch.presentations {
+			if presented.ID != pr.ID {
+				_ = db.MarkTriggerCIPollAttempt(presented.ID, now)
+			}
+		}
+	}
+}
+
+// PollTriggerCITransitionsForTest synchronously runs one bounded watched-PR poll.
+func PollTriggerCITransitionsForTest(now time.Time) { pollTriggerCITransitions(now) }
 
 func runTriggerTick(now time.Time) {
 	if !triggerRoutesEnabled() {
@@ -486,7 +703,7 @@ func executeTriggerMessage(rule *db.TriggerRule, spec *db.TriggerMessageAction, 
 	}
 	subject := triggerlogic.RenderTemplate(spec.SubjectTemplate, event, groupName)
 	if strings.TrimSpace(subject) == "" {
-		subject = "[trigger:" + rule.Name + "] pr.opened"
+		subject = "[trigger:" + rule.Name + "] " + event.Source
 	}
 	body := triggerlogic.RenderTemplate(spec.BodyTemplate, event, groupName)
 	id, err := db.InsertAgentMessage(&db.AgentMessage{GroupID: groupID, FromConv: ownerConv, ToConv: targetConv, Subject: subject, Body: body, ToRecipients: []string{targetConv}, OperatorAuthored: rule.OperatorAuthored})

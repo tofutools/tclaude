@@ -28,21 +28,24 @@ type Decision struct {
 	DueAt   time.Time
 }
 
-// Evaluate decides whether rule should fire for one immutable PR-open edge.
+// Evaluate decides whether rule should fire for one immutable PR event edge.
 // lastFired is the last completed firing for this rule revision family;
 // spawnedByRule is supplied by the provenance store for loop protection.
 func Evaluate(rule *db.TriggerRule, event db.TriggerPREvent, now time.Time, lastFired time.Time, spawnedByRule bool) Decision {
 	if rule == nil || !rule.Enabled {
 		return Decision{Outcome: OutcomeDisabled, Detail: "rule is disabled"}
 	}
+	if rule.Source != event.Source {
+		return Decision{Outcome: OutcomeOutOfScope, Detail: "event source does not match rule source"}
+	}
 	if rule.CreatedAt.After(event.OccurredAt) {
-		return Decision{Outcome: OutcomeRuleTooNew, Detail: "rule was installed after this PR opened"}
+		return Decision{Outcome: OutcomeRuleTooNew, Detail: "rule was installed after this event occurred"}
 	}
 	if spawnedByRule {
 		return Decision{Outcome: OutcomeSuppressedLoop, Detail: "PR author was spawned by this rule"}
 	}
 	if rule.AuthorIsAgent != nil && !*rule.AuthorIsAgent {
-		return Decision{Outcome: OutcomeOutOfScope, Detail: "pr.opened observations are agent-authored"}
+		return Decision{Outcome: OutcomeOutOfScope, Detail: "PR observations are agent-authored"}
 	}
 	if rule.ScopeKind == db.TriggerScopeGroup && !containsID(event.GroupIDs, rule.GroupID) {
 		return Decision{Outcome: OutcomeOutOfScope, Detail: fmt.Sprintf("PR author was not in group %d when the PR was presented", rule.GroupID)}
@@ -83,6 +86,9 @@ func containsID(ids []int64, want int64) bool {
 // vocabulary shared by spawn and message actions.
 func RenderTemplate(raw string, event db.TriggerPREvent, group string) string {
 	replacements := []string{
+		"{{event.source}}", event.Source,
+		"{{event.previous_state}}", event.PreviousState,
+		"{{event.current_state}}", event.CurrentState,
 		"{{pr.url}}", event.PRURL,
 		"{{pr.number}}", fmt.Sprintf("%d", event.PRNumber),
 		"{{pr.branch}}", event.PRBranch,

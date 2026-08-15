@@ -90,6 +90,7 @@ func handleTriggerRead(w http.ResponseWriter, r *http.Request) {
 }
 
 type triggerExplainRequest struct {
+	Source        string `json:"source"`
 	PRURL         string `json:"pr_url"`
 	PRNumber      int    `json:"pr_number"`
 	PRBranch      string `json:"pr_branch"`
@@ -121,7 +122,15 @@ func handleTriggerExplain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
-	event := db.TriggerPREvent{PRURL: strings.TrimSpace(body.PRURL), PRNumber: body.PRNumber, PRBranch: body.PRBranch, PRAuthorAgent: strings.TrimSpace(body.PRAuthorAgent), Draft: body.Draft, OccurredAt: now, UpdatedAt: now}
+	source := strings.TrimSpace(body.Source)
+	if source == "" {
+		source = db.TriggerSourcePROpened
+	}
+	if !db.IsTriggerSource(source) {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "unsupported trigger source")
+		return
+	}
+	event := db.TriggerPREvent{Source: source, PRURL: strings.TrimSpace(body.PRURL), PRNumber: body.PRNumber, PRBranch: body.PRBranch, PRAuthorAgent: strings.TrimSpace(body.PRAuthorAgent), Draft: body.Draft, OccurredAt: now, UpdatedAt: now}
 	if body.Group != "" {
 		g, err := resolveTriggerGroup(body.Group)
 		if err != nil || g == nil {

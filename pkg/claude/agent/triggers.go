@@ -101,6 +101,7 @@ func runTriggersShow(stdout, stderr io.Writer, selector string) int {
 }
 
 type triggersExplainParams struct {
+	Source string `long:"source" optional:"true" default:"pr.opened" help:"Event source to simulate."`
 	URL    string `long:"pr-url" help:"PR URL to simulate."`
 	Number int    `long:"pr-number" optional:"true"`
 	Branch string `long:"pr-branch" optional:"true"`
@@ -127,7 +128,7 @@ func runTriggersExplain(stdout, stderr io.Writer, p *triggersExplainParams) int 
 			Detail   string `json:"detail"`
 		} `json:"results"`
 	}
-	body := map[string]any{"pr_url": strings.TrimSpace(p.URL), "pr_number": p.Number, "pr_branch": p.Branch, "author_agent": strings.TrimSpace(p.Author), "group": strings.TrimSpace(p.Group), "draft": p.Draft}
+	body := map[string]any{"source": strings.TrimSpace(p.Source), "pr_url": strings.TrimSpace(p.URL), "pr_number": p.Number, "pr_branch": p.Branch, "author_agent": strings.TrimSpace(p.Author), "group": strings.TrimSpace(p.Group), "draft": p.Draft}
 	if err := DaemonRequest(http.MethodPost, "/v1/triggers/explain", body, &resp, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)

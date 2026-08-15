@@ -21,11 +21,10 @@ import (
 // Two properties shape the design:
 //
 //   - The snapshot path (polled every 2s, per agent row) must not grow a
-//     subprocess. So the *background* check data is never fetched on its
-//     own: the check rollup rides along on the `gh pr view` calls the
-//     branch-link and presented-PR refreshes already make, and the
-//     snapshot only reads the resulting cache. Adding statusCheckRollup
-//     to those calls costs one more JSON field, not one more request.
+//     subprocess. Dashboard check data rides along on the `gh pr view` calls
+//     the branch-link and presented-PR refreshes already make, and the
+//     snapshot only reads the resulting cache. Enabled CI trigger rules have
+//     a separate bounded poller; they never depend on snapshot/hover traffic.
 //
 //   - A human staring at a hover panel wants the checks to move. So the
 //     panel's own endpoint (GET /api/pr-checks) schedules a dedicated

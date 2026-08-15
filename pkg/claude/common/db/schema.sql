@@ -1322,49 +1322,6 @@ CREATE TABLE codex_native_permission_profiles (
 			created_at   INTEGER NOT NULL
 		, owner_agent_id TEXT NOT NULL DEFAULT '', owner_conv_id TEXT NOT NULL DEFAULT '', launch_id TEXT NOT NULL DEFAULT '', launch_ready INTEGER NOT NULL DEFAULT 0 CHECK (launch_ready IN (0, 1))) STRICT;
 
-CREATE TABLE trigger_rules (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			name TEXT NOT NULL UNIQUE,
-			row_version INTEGER NOT NULL DEFAULT 1,
-			revision INTEGER NOT NULL DEFAULT 1,
-			enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
-			owner_agent TEXT NOT NULL DEFAULT '',
-			operator_authored INTEGER NOT NULL DEFAULT 0 CHECK (operator_authored IN (0, 1)),
-			scope_kind TEXT NOT NULL CHECK (scope_kind IN ('global', 'group')),
-			group_id INTEGER REFERENCES agent_groups(id) ON DELETE CASCADE,
-			source TEXT NOT NULL CHECK (source = 'pr.opened'),
-			author_is_agent INTEGER CHECK (author_is_agent IS NULL OR author_is_agent IN (0, 1)),
-			draft_filter TEXT NOT NULL DEFAULT 'include' CHECK (draft_filter IN ('include', 'exclude', 'only')),
-			debounce_seconds INTEGER NOT NULL DEFAULT 0 CHECK (debounce_seconds >= 0),
-			cooldown_seconds INTEGER NOT NULL DEFAULT 0 CHECK (cooldown_seconds >= 0),
-			actions_json TEXT NOT NULL,
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL,
-			CHECK ((scope_kind = 'group') = (group_id IS NOT NULL))
-		) STRICT;
-
-CREATE INDEX idx_trigger_rules_enabled ON trigger_rules(enabled, source);
-
-CREATE INDEX idx_trigger_rules_group ON trigger_rules(group_id);
-
-CREATE TABLE trigger_pr_events (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			agent_pr_id INTEGER NOT NULL UNIQUE REFERENCES agent_prs(id) ON DELETE CASCADE,
-			event_ref TEXT NOT NULL UNIQUE,
-			pr_url TEXT NOT NULL,
-			pr_number INTEGER NOT NULL DEFAULT 0,
-			pr_branch TEXT NOT NULL DEFAULT '',
-			pr_author_agent TEXT NOT NULL,
-			draft INTEGER NOT NULL DEFAULT 0 CHECK (draft IN (0, 1)),
-			group_ids_json TEXT NOT NULL DEFAULT '[]',
-			occurred_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL,
-			status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processed', 'preexisting', 'interrupted')),
-			processed_at INTEGER
-		) STRICT;
-
-CREATE INDEX idx_trigger_pr_events_pending ON trigger_pr_events(status, updated_at);
-
 CREATE TABLE trigger_firings (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			rule_id INTEGER REFERENCES trigger_rules(id) ON DELETE SET NULL,
@@ -1417,4 +1374,62 @@ CREATE TABLE daemon_spawn_history (
 
 CREATE INDEX idx_daemon_spawn_history_principal
 			ON daemon_spawn_history(principal, spawned_at);
+
+CREATE TABLE "trigger_rules" (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL UNIQUE,
+			row_version INTEGER NOT NULL DEFAULT 1,
+			revision INTEGER NOT NULL DEFAULT 1,
+			enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+			owner_agent TEXT NOT NULL DEFAULT '',
+			operator_authored INTEGER NOT NULL DEFAULT 0 CHECK (operator_authored IN (0, 1)),
+			scope_kind TEXT NOT NULL CHECK (scope_kind IN ('global', 'group')),
+			group_id INTEGER REFERENCES agent_groups(id) ON DELETE CASCADE,
+			source TEXT NOT NULL CHECK (source IN ('pr.opened','pr.updated','pr.merged','ci.failed','ci.succeeded')),
+			author_is_agent INTEGER CHECK (author_is_agent IS NULL OR author_is_agent IN (0, 1)),
+			draft_filter TEXT NOT NULL DEFAULT 'include' CHECK (draft_filter IN ('include', 'exclude', 'only')),
+			debounce_seconds INTEGER NOT NULL DEFAULT 0 CHECK (debounce_seconds >= 0),
+			cooldown_seconds INTEGER NOT NULL DEFAULT 0 CHECK (cooldown_seconds >= 0),
+			actions_json TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			CHECK ((scope_kind = 'group') = (group_id IS NOT NULL))
+		) STRICT;
+
+CREATE INDEX idx_trigger_rules_enabled ON trigger_rules(enabled, source);
+
+CREATE INDEX idx_trigger_rules_group ON trigger_rules(group_id);
+
+CREATE TABLE "trigger_pr_events" (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			agent_pr_id INTEGER NOT NULL REFERENCES agent_prs(id) ON DELETE CASCADE,
+			source TEXT NOT NULL CHECK (source IN ('pr.opened','pr.updated','pr.merged','ci.failed','ci.succeeded')),
+			event_ref TEXT NOT NULL UNIQUE,
+			pr_url TEXT NOT NULL,
+			pr_number INTEGER NOT NULL DEFAULT 0,
+			pr_branch TEXT NOT NULL DEFAULT '',
+			pr_author_agent TEXT NOT NULL,
+			draft INTEGER NOT NULL DEFAULT 0 CHECK (draft IN (0, 1)),
+			group_ids_json TEXT NOT NULL DEFAULT '[]',
+			previous_state TEXT NOT NULL DEFAULT '',
+			current_state TEXT NOT NULL DEFAULT '',
+			occurred_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processed', 'preexisting', 'interrupted')),
+			processed_at INTEGER
+		) STRICT;
+
+CREATE INDEX idx_trigger_pr_events_pending ON trigger_pr_events(status, updated_at);
+
+CREATE INDEX idx_trigger_pr_events_pr_source ON trigger_pr_events(agent_pr_id, source, id);
+
+CREATE TABLE trigger_pr_observations (
+			agent_pr_id INTEGER PRIMARY KEY REFERENCES agent_prs(id) ON DELETE CASCADE,
+			event_sequence INTEGER NOT NULL DEFAULT 1,
+			ci_state TEXT NOT NULL DEFAULT '',
+			ci_observed_at INTEGER,
+			ci_polled_at INTEGER,
+			branch_context TEXT NOT NULL DEFAULT '',
+			updated_at INTEGER NOT NULL
+		) STRICT;
 
