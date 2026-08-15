@@ -415,16 +415,12 @@ function AccessReader({ request, controller }) {
     ? 'Choose a petition to weigh its boon.' : 'Select an access request to review its details.'}</div>`;
   const handled = !controller.accessIsPending(request);
   const outcome = handled ? controller.accessOutcome(request.status) : null;
-  const callerState = request.caller_state === 'retired'
-    ? (wizard ? 'banished' : 'retired')
-    : request.caller_state === 'missing' ? (wizard ? 'lost to the mists' : 'metadata missing') : '';
   return html`<${Fragment}>
     <div class="mail-reader-head">
       <div class="mail-subject">${wizard ? 'Petition' : 'Access request'} <span class="mail-id">#${shortId(request.id)}</span></div>
       <div class="mail-headers">
-        <${HeaderRow} label="From"><span class="mail-cid"
-          title=${idTooltip(request.agent_id, request.current_conv_id || request.conv_id)}>${shortAgentId(request.agent_id, request.conv_id)}</span>
-          ${request.conv_title ? ` · ${request.conv_title}` : ' · (title unavailable)'}${callerState ? ` · ${callerState}` : ''}</${HeaderRow}>
+        <${HeaderRow} label="From"><span
+          title=${idTooltip(request.agent_id, request.current_conv_id || request.conv_id)}>${controller.accessWho(request)}</span></${HeaderRow}>
         <${HeaderRow} label=${wizard ? 'Calling incarnation' : 'Request generation'}><span class="mail-cid"
           title=${request.conv_id}>${shortAgentId('', request.conv_id)}</span></${HeaderRow}>
         ${request.current_conv_id && request.current_conv_id !== request.conv_id && html`<${HeaderRow}
