@@ -288,8 +288,10 @@ func collectCronJobs(d *sql.DB, groupID int64) ([]groupexport.CronJob, []string,
 	// rather than dropping it.
 	rows, err := d.Query(`
 		SELECT j.id, j.name, j.target_kind, COALESCE(ow.current_conv_id, ''), COALESCE(tg.current_conv_id, ''),
-		       j.interval_seconds, j.subject, j.body,
-		       j.enabled, j.run_immediately, j.queue_when_offline, j.created_at, j.last_run_at, j.last_run_status
+		       j.interval_seconds, j.subject, j.body, j.action_kind,j.spawn_profile,j.spawn_role_refs_json,
+		       j.spawn_name_template,j.spawn_instruction_template,j.spawn_concurrency_policy,
+		       j.spawn_max_live_workers,j.spawn_worker_deadline_seconds,
+		       j.enabled, j.run_immediately, j.queue_when_offline, j.operator_authored, j.created_at, j.last_run_at, j.last_run_status
 		FROM agent_cron_jobs j
 		LEFT JOIN agents ow ON ow.agent_id = j.owner_agent
 		LEFT JOIN agents tg ON tg.agent_id = j.target_agent
@@ -302,13 +304,32 @@ func collectCronJobs(d *sql.DB, groupID int64) ([]groupexport.CronJob, []string,
 	var ids []string
 	for rows.Next() {
 		var j groupexport.CronJob
+		var spawnRolesJSON string
 		var createdAt, lastRunAt dbTimestamp
 		if err := rows.Scan(&j.ID, &j.Name, &j.TargetKind, &j.OwnerConv, &j.TargetConv,
-			&j.IntervalSeconds, &j.Subject, &j.Body, &j.Enabled, &j.RunImmediately, &j.QueueWhenOffline, &createdAt,
+			&j.IntervalSeconds, &j.Subject, &j.Body, &j.ActionKind, &j.SpawnProfile, &spawnRolesJSON,
+			&j.SpawnNameTemplate, &j.SpawnInstructionTemplate, &j.SpawnConcurrencyPolicy,
+			&j.SpawnMaxLiveWorkers, &j.SpawnWorkerDeadlineSeconds,
+			&j.Enabled, &j.RunImmediately, &j.QueueWhenOffline, &j.OperatorAuthored, &createdAt,
 			&lastRunAt, &j.LastRunStatus); err != nil {
 			return nil, nil, fmt.Errorf("scan cron job: %w", err)
 		}
 		j.CreatedAt = exportTimestamp(createdAt)
+		if err := json.Unmarshal([]byte(spawnRolesJSON), &j.SpawnRoleRefs); err != nil {
+			return nil, nil, fmt.Errorf("decode cron job %d spawn roles: %w", j.ID, err)
+		}
+		if j.ActionKind == CronActionMessage {
+			// Keep legacy archives byte-shape-compatible: message is the durable
+			// default, so only spawn jobs need the new action payload serialized.
+			j.ActionKind = ""
+			j.SpawnProfile = ""
+			j.SpawnRoleRefs = nil
+			j.SpawnNameTemplate = ""
+			j.SpawnInstructionTemplate = ""
+			j.SpawnConcurrencyPolicy = ""
+			j.SpawnMaxLiveWorkers = 0
+			j.SpawnWorkerDeadlineSeconds = 0
+		}
 		j.LastRunAt = exportTimestamp(lastRunAt)
 		out = append(out, j)
 		ids = append(ids, fmt.Sprintf("%d", j.ID))
@@ -1181,6 +1202,22 @@ func (c *importCtx) cronJobsAndRuns() error {
 	// to the run rows.
 	jobIDMap := make(map[int64]int64, len(c.exp.CronJobs))
 	for _, j := range c.exp.CronJobs {
+		spawnRolesJSON, err := json.Marshal(j.SpawnRoleRefs)
+		if err != nil {
+			return fmt.Errorf("import: cron job %q spawn roles: %w", j.Name, err)
+		}
+		actionKind := j.ActionKind
+		if actionKind == "" {
+			actionKind = CronActionMessage
+		}
+		policy := j.SpawnConcurrencyPolicy
+		if policy == "" {
+			policy = CronConcurrencyForbid
+		}
+		maxLive := j.SpawnMaxLiveWorkers
+		if maxLive <= 0 {
+			maxLive = 1
+		}
 		ownerAgent, err := c.rcToAgent(j.OwnerConv)
 		if err != nil {
 			return fmt.Errorf("import: cron job %q owner actor: %w", j.Name, err)
@@ -1199,10 +1236,15 @@ func (c *importCtx) cronJobsAndRuns() error {
 		res, err := c.tx.Exec(`
 			INSERT INTO agent_cron_jobs
 				(name, target_kind, owner_agent, target_agent, group_id, interval_seconds,
-				 subject, body, enabled, run_immediately, queue_when_offline, created_at, last_run_at, last_run_status)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				 subject,body,action_kind,spawn_profile,spawn_role_refs_json,spawn_name_template,
+				 spawn_instruction_template,spawn_concurrency_policy,spawn_max_live_workers,
+				 spawn_worker_deadline_seconds,enabled,run_immediately,queue_when_offline,operator_authored,created_at,last_run_at,last_run_status)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			j.Name, kind, ownerAgent, targetAgent, c.newGroupID,
-			j.IntervalSeconds, j.Subject, j.Body, j.Enabled, j.RunImmediately, j.QueueWhenOffline, requiredImportDBTime(j.CreatedAt),
+			j.IntervalSeconds, j.Subject, j.Body, actionKind, j.SpawnProfile, string(spawnRolesJSON),
+			j.SpawnNameTemplate, j.SpawnInstructionTemplate, policy,
+			maxLive, j.SpawnWorkerDeadlineSeconds,
+			j.Enabled, j.RunImmediately, j.QueueWhenOffline, j.OperatorAuthored, requiredImportDBTime(j.CreatedAt),
 			nullableDBTimeText(j.LastRunAt), j.LastRunStatus)
 		if err != nil {
 			return fmt.Errorf("import: cron job %q: %w", j.Name, err)

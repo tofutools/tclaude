@@ -1890,6 +1890,9 @@ tclaude agent cron add --interval 10m --body "status check?" [--target SEL --nam
 tclaude agent cron add --interval 10m --run-immediately --body "start now, then repeat"
 tclaude agent cron add --interval 10m --queue-when-offline --body "retain until resume"
 tclaude agent cron add --cron "0 9 * * 1-5" --body "morning standup"   # cron expression instead of interval
+tclaude agent cron add --interval 8h --action spawn --target group:maintainers \
+  --spawn-profile flaky-fixer --concurrency Forbid --worker-deadline 2h \
+  --name-template flaky-scanner --file scanner-instructions.md
 tclaude agent cron ls
 tclaude agent cron disable <id>      # pause without deleting
 tclaude agent cron enable <id>
@@ -1917,6 +1920,29 @@ opts the job into durable delivery while its target is down. Group jobs apply
 the policy per member: online members still receive a tick when other members
 are offline. `cron logs` records `skipped_offline` when all eligible recipients
 were offline and `partial_offline` for a mixed group delivery.
+
+A cron job can instead spawn one managed worker on every tick with
+`--action spawn`. This experimental action is available only while
+`features.triggers=true`; existing message jobs remain available and unchanged
+when the flag is off. Spawn jobs require a `group:` target, a spawn profile,
+and worker instructions (`--instruction` or `--file`). The job's owning
+principal is re-authorized at every firing, including any spawn-profile-scoped
+grant, so revoking authority prevents later launches without rewriting the
+job.
+
+Overlap follows Kubernetes CronJob vocabulary: `Forbid` (the default) records
+`skipped_concurrent`, `Replace` waits for a bounded stop before launching a
+fresh worker (and records `replace_stop_failed` without launching if it cannot
+confirm the stop), and `Allow` admits concurrent workers up to
+`--max-live-workers`. `--worker-deadline` adds best-effort deadline enforcement
+through the same managed-worker ledger used by event triggers. The full stop
+protocol is intentionally separate; history reports the outcome agentd could
+actually establish, including `interrupted` crash recovery and
+`spawned_tracking_failed` when dispatch loses its worker reservation race.
+Spawn payload and target fields are not PATCH-editable in this initial API;
+recreate the job to change them. `{{fire_time}}` may be used in the name or instruction
+template. Instructions receive RFC 3339; names receive a title-safe compact
+UTC timestamp such as `20260815T153000Z`.
 
 ### Git, GitHub and Linear — see `tclaude proxy`
 
