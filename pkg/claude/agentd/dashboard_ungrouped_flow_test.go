@@ -33,6 +33,7 @@ type dashSnapshot struct {
 	PluginsTabVisible         bool               `json:"plugins_tab_visible"`
 	DebugTabVisible           bool               `json:"debug_tab_visible"`
 	ProcessesEnabled          bool               `json:"processes_enabled"`
+	TriggersEnabled           bool               `json:"triggers_enabled"`
 	GroupsRouteMapEnabled     bool               `json:"groups_route_map_enabled"`
 	GroupAttachmentsMode      string             `json:"group_attachments_mode"`
 	TerminalPaletteShortcut   bool               `json:"terminal_command_palette_shortcut_enabled"`

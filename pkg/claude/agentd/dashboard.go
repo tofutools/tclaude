@@ -1025,6 +1025,10 @@ type snapshotPayload struct {
 	// surface. It is re-read on every snapshot so changing config takes effect
 	// without restarting agentd, matching processRoute.
 	ProcessesEnabled bool `json:"processes_enabled"`
+	// TriggersEnabled gates the experimental Automations subview and compact
+	// Groups projection. Re-read on every snapshot so Config changes take
+	// effect without restarting agentd, matching triggerRoute.
+	TriggersEnabled bool `json:"triggers_enabled"`
 	// GroupsRouteMapEnabled gates the experimental Members | Route map Groups
 	// subview and its bounded route projection. Re-read on every snapshot so a
 	// Config-tab change takes effect without restarting agentd.
@@ -3288,6 +3292,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		ShowAgentHideButton:      cfg.ShowAgentHideButton(),
 		ShowGroupDescription:     cfg.ShowGroupDescription(),
 		ProcessesEnabled:         cfg.ProcessesEnabled(),
+		TriggersEnabled:          cfg.TriggersEnabled(),
 		GroupsRouteMapEnabled:    groupsRouteMapEnabled,
 		GroupAttachmentsMode:     cfg.GroupAttachmentsMode(),
 		TerminalPaletteShortcut:  cfg.TerminalCommandPaletteShortcutEnabled(),

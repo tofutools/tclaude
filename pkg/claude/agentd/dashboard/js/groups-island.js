@@ -193,12 +193,26 @@ export function GroupsControls({ state, actions }) {
 export function GroupsList({ host, state, actions }) {
   useWizardTheme();
   const [hoveredGroupKey, setHoveredGroupKey] = useState(null);
+  const [triggers, setTriggers] = useState([]);
   const current = state.view.value;
+  const triggersEnabled = state.snapshot.value?.triggers_enabled === true;
 
   useEffect(() => {
     syncBotAnimations();
     syncWizardOrbit();
   });
+
+  useEffect(() => {
+    if (!triggersEnabled) {
+      setTriggers([]);
+      return undefined;
+    }
+    if (typeof actions.loadTriggers !== 'function') return undefined;
+    let active = true;
+    actions.loadTriggers().then((rows) => { if (active) setTriggers(rows); })
+      .catch((error) => actions.reportError(error));
+    return () => { active = false; };
+  }, [triggersEnabled]);
 
   useEffect(() => {
     const onClick = (event) => {
@@ -255,7 +269,8 @@ export function GroupsList({ host, state, actions }) {
 
   return html`<${GroupsInteractionProvider}>
     <${BrokerRefusalNotice} snapshot=${state.snapshot.value} />
-    <${GroupsNativeList} groups=${current.groups} snapshot=${state.snapshot.value} actions=${actions} hoveredGroupKey=${hoveredGroupKey} />
+    <${GroupsNativeList} groups=${current.groups} snapshot=${state.snapshot.value} actions=${actions}
+      triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} />
     ${state.standingOrdersDialog.value && html`
       <${GroupStandingOrdersDialog}
         key=${state.standingOrdersDialog.value.launchID}
