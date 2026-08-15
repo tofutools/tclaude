@@ -617,6 +617,7 @@ func TestProxyEngineSpawnDoesNotGateOnThePacketPrerequisite(t *testing.T) {
 		profile     string
 		engine      sandboxpolicy.NetworkEngine
 		wantPosture sandboxpolicy.NetworkPosture
+		wantStatus  int
 		// The engine the guard must verify the host for is the DEPLOYED one,
 		// which for an unset selection on a discriminating policy is the packet
 		// gateway — the pre-engine default, unchanged.
@@ -627,21 +628,25 @@ func TestProxyEngineSpawnDoesNotGateOnThePacketPrerequisite(t *testing.T) {
 			"gate-engine-proxy",
 			sandboxpolicy.NetworkEngineProxy,
 			sandboxpolicy.NetworkFiltered,
+			http.StatusOK,
 			sandboxpolicy.NetworkEngineProxy,
 		},
 		// The packet gateway keeps its own gate exactly as before: an absent
-		// prerequisite still widens it to host-open. This is the parity half —
-		// TCL-883 gives the proxy floor a gate, it does not remove anyone's.
+		// prerequisite still plans it as host-open. The authored deny would then
+		// be omitted, so TCL-1191 refuses the unconfirmed reduced launch. This is
+		// the parity half — the proxy floor does not inherit the packet gate.
 		{
 			"gate-engine-packet",
 			sandboxpolicy.NetworkEnginePacket,
 			sandboxpolicy.NetworkHostOpen,
+			http.StatusUnprocessableEntity,
 			sandboxpolicy.NetworkEnginePacket,
 		},
 		{
 			"gate-engine-unset",
 			sandboxpolicy.NetworkEngineUnset,
 			sandboxpolicy.NetworkHostOpen,
+			http.StatusUnprocessableEntity,
 			sandboxpolicy.NetworkEnginePacket,
 		},
 	} {
@@ -667,7 +672,10 @@ func TestProxyEngineSpawnDoesNotGateOnThePacketPrerequisite(t *testing.T) {
 				"sandbox_implementation": string(sandboxpolicy.ImplementationTclaudeLayer),
 				"sandbox_profile":        tc.profile,
 			})
-			require.Equalf(t, http.StatusOK, resp.Code, "spawn body=%s", resp.Raw)
+			require.Equalf(t, tc.wantStatus, resp.Code, "spawn body=%s", resp.Raw)
+			if tc.wantStatus == http.StatusUnprocessableEntity {
+				assert.Contains(t, string(resp.Raw), harness.SandboxCapabilityNetworkDeny)
+			}
 
 			require.NotEmpty(t, requested,
 				"the guard must verify the host for the floor it intends to build")
