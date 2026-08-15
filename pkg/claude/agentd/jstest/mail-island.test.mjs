@@ -227,6 +227,17 @@ test('Messages clear action keeps the cleared query when the input has not repai
   const { accessWho, mailController } = await harness.importDashboardModule('js/mail.js');
   assert.equal(accessWho({ agent_id: 'agt_alpha', conv_id: 'conv-a', conv_title: 'Alpha', title_status: 'current' }), 'Alpha');
   assert.equal(accessWho({ agent_id: 'agt_alpha', conv_id: 'conv-a', conv_title: '(title unavailable)', title_status: 'unavailable' }), 'agt_alpha');
+  assert.equal(accessWho({
+    agent_id: 'agt_alpha', conv_id: 'conv-a', conv_title: '(title unavailable)',
+  }), 'agt_alpha');
+  assert.equal(accessWho({
+    agent_id: 'agt_alpha', conv_id: 'conv-a', conv_title: 'Alpha',
+    title_status: 'current', caller_state: 'retired',
+  }), 'Alpha · retired');
+  assert.equal(accessWho({
+    agent_id: 'agt_alpha', conv_id: 'conv-a', conv_title: 'Alpha',
+    title_status: 'current', caller_state: 'missing',
+  }), 'Alpha · metadata missing');
   const input = harness.document.body.appendChild(harness.document.createElement('input'));
   input.id = 'filter-messages';
   input.value = 'stale query';
