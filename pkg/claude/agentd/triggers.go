@@ -475,6 +475,22 @@ func triggerActionGroup(rule *db.TriggerRule, event db.TriggerPREvent) (*db.Agen
 }
 
 func executeTriggerSpawn(rule *db.TriggerRule, firingID int64, index int, spec *db.TriggerSpawnAction, event db.TriggerPREvent, now time.Time) (string, string, string) {
+	return executeManagedSpawn(rule, index, spec, event, now, managedWorkerSource{
+		RuleID: rule.ID, FiringID: firingID, RatePrincipal: fmt.Sprintf("trigger:%d", rule.ID),
+		Tag: fmt.Sprintf("trigger:%d", rule.ID),
+	})
+}
+
+type managedWorkerSource struct {
+	RuleID        int64
+	FiringID      int64
+	CronJobID     int64
+	CronRunID     int64
+	RatePrincipal string
+	Tag           string
+}
+
+func executeManagedSpawn(rule *db.TriggerRule, index int, spec *db.TriggerSpawnAction, event db.TriggerPREvent, now time.Time, source managedWorkerSource) (string, string, string) {
 	if spec == nil {
 		return "invalid_action", "missing spawn payload", ""
 	}
@@ -510,7 +526,7 @@ func executeTriggerSpawn(rule *db.TriggerRule, firingID int64, index int, spec *
 			return "permission_denied", fmt.Sprintf("owner lacks %s for group %s and spawn profile %s", PermGroupsMembersSpawn, g.Name, profile.Name), ""
 		}
 	}
-	if n, err := db.CountLiveTriggerWorkers(rule.ID, index); err != nil {
+	if n, err := db.CountLiveManagedWorkers(source.RuleID, source.CronJobID, index); err != nil {
 		return "io", err.Error(), ""
 	} else if n >= spec.MaxLiveWorkers {
 		return "max_live_workers", fmt.Sprintf("rule already has %d live workers (max %d)", n, spec.MaxLiveWorkers), ""
@@ -521,7 +537,7 @@ func executeTriggerSpawn(rule *db.TriggerRule, firingID int64, index int, spec *
 	}
 	claimed := claimSpawnRateSlot(recorder, ownerConv)
 	if ownerConv == "" {
-		claimed = claimDaemonSpawnRateSlot(recorder, fmt.Sprintf("trigger:%d", rule.ID))
+		claimed = claimDaemonSpawnRateSlot(recorder, source.RatePrincipal)
 	}
 	if !claimed {
 		return "rate_limited", strings.TrimSpace(recorder.Body.String()), ""
@@ -632,7 +648,9 @@ func executeTriggerSpawn(rule *db.TriggerRule, firingID int64, index int, spec *
 	}
 	p.EffectiveSandbox = &snapshot
 	p.AgentID = db.NewAgentID()
-	worker := &db.TriggerWorker{RuleID: rule.ID, FiringID: firingID, ActionIndex: index, AgentID: p.AgentID, State: "reserved", CreatedAt: now}
+	worker := &db.TriggerWorker{RuleID: source.RuleID, FiringID: source.FiringID,
+		CronJobID: source.CronJobID, CronRunID: source.CronRunID,
+		ActionIndex: index, AgentID: p.AgentID, State: "reserved", CreatedAt: now}
 	if spec.WorkerDeadlineSeconds > 0 {
 		worker.DeadlineAt = now.Add(time.Duration(spec.WorkerDeadlineSeconds) * time.Second)
 	}
@@ -660,7 +678,7 @@ func executeTriggerSpawn(rule *db.TriggerRule, firingID int64, index int, spec *
 	if err := db.MarkTriggerWorkerDispatched(workerID, out.ConvID, out.Label); err != nil {
 		return "spawned_tracking_pending", err.Error(), agentID
 	}
-	_ = db.AddAgentTags(agentID, fmt.Sprintf("trigger:%d", rule.ID))
+	_ = db.AddAgentTags(agentID, source.Tag)
 	return "spawned", "", agentID
 }
 
@@ -730,11 +748,17 @@ func reconcileTriggerWorkers(now time.Time) {
 				_ = stopOneConv(conv, false)
 			}
 			_ = db.CompleteTriggerWorker(w.ID, "deadline_exceeded", "worker deadline elapsed", now)
+			if w.CronRunID > 0 {
+				_ = db.FinishAgentCronRun(w.CronRunID, "deadline_exceeded", "worker deadline elapsed", w.ID, w.AgentID)
+			}
 			continue
 		}
 		sess, _ := db.FindSessionByConvID(conv)
 		if sess != nil && (sess.Status == session.StatusExited || sess.Status == session.StatusError) {
 			_ = db.CompleteTriggerWorker(w.ID, "exited", sess.Status, now)
+			if w.CronRunID > 0 {
+				_ = db.FinishAgentCronRun(w.CronRunID, "exited", sess.Status, w.ID, w.AgentID)
+			}
 		}
 	}
 }

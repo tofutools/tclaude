@@ -225,6 +225,8 @@ type TriggerWorker struct {
 	ID           int64     `json:"id"`
 	RuleID       int64     `json:"rule_id"`
 	FiringID     int64     `json:"firing_id"`
+	CronJobID    int64     `json:"cron_job_id,omitempty"`
+	CronRunID    int64     `json:"cron_run_id,omitempty"`
 	ActionIndex  int       `json:"action_index"`
 	AgentID      string    `json:"agent_id"`
 	ConvID       string    `json:"conv_id,omitempty"`
@@ -884,12 +886,22 @@ func ListTriggerActionOutcomes(firingID int64) ([]TriggerActionOutcome, error) {
 }
 
 func CountLiveTriggerWorkers(ruleID int64, actionIndex int) (int, error) {
+	return CountLiveManagedWorkers(ruleID, 0, actionIndex)
+}
+
+// CountLiveManagedWorkers counts durable reservations as live capacity. Exactly
+// one of ruleID or cronJobID identifies the worker source.
+func CountLiveManagedWorkers(ruleID, cronJobID int64, actionIndex int) (int, error) {
 	d, err := Open()
 	if err != nil {
 		return 0, err
 	}
 	var n int
-	err = d.QueryRow(`SELECT COUNT(*) FROM trigger_workers WHERE rule_id=? AND action_index=? AND state IN ('reserved','pending','live')`, ruleID, actionIndex).Scan(&n)
+	if cronJobID > 0 {
+		err = d.QueryRow(`SELECT COUNT(*) FROM trigger_workers WHERE cron_job_id=? AND action_index=? AND state IN ('reserved','pending','live')`, cronJobID, actionIndex).Scan(&n)
+	} else {
+		err = d.QueryRow(`SELECT COUNT(*) FROM trigger_workers WHERE rule_id=? AND action_index=? AND state IN ('reserved','pending','live')`, ruleID, actionIndex).Scan(&n)
+	}
 	return n, err
 }
 func InsertTriggerWorker(w *TriggerWorker) (int64, error) {
@@ -901,7 +913,20 @@ func InsertTriggerWorker(w *TriggerWorker) (int64, error) {
 	if !w.DeadlineAt.IsZero() {
 		deadline = dbTime(w.DeadlineAt.UTC())
 	}
-	res, err := d.Exec(`INSERT INTO trigger_workers(rule_id,firing_id,action_index,agent_id,conv_id,pending_label,state,deadline_at,created_at) VALUES(?,?,?,?,?,?,?,?,?)`, w.RuleID, w.FiringID, w.ActionIndex, w.AgentID, w.ConvID, w.PendingLabel, w.State, deadline, dbTime(w.CreatedAt.UTC()))
+	var ruleID, firingID, cronJobID, cronRunID any
+	if w.RuleID > 0 {
+		ruleID = w.RuleID
+	}
+	if w.FiringID > 0 {
+		firingID = w.FiringID
+	}
+	if w.CronJobID > 0 {
+		cronJobID = w.CronJobID
+	}
+	if w.CronRunID > 0 {
+		cronRunID = w.CronRunID
+	}
+	res, err := d.Exec(`INSERT INTO trigger_workers(rule_id,firing_id,cron_job_id,cron_run_id,action_index,agent_id,conv_id,pending_label,state,deadline_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, ruleID, firingID, cronJobID, cronRunID, w.ActionIndex, w.AgentID, w.ConvID, w.PendingLabel, w.State, deadline, dbTime(w.CreatedAt.UTC()))
 	if err != nil {
 		return 0, err
 	}
@@ -935,7 +960,7 @@ func ListActiveTriggerWorkers() ([]TriggerWorker, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT id,COALESCE(rule_id,0),firing_id,action_index,agent_id,conv_id,pending_label,state,
+	rows, err := d.Query(`SELECT id,COALESCE(rule_id,0),COALESCE(firing_id,0),COALESCE(cron_job_id,0),COALESCE(cron_run_id,0),action_index,agent_id,conv_id,pending_label,state,
 		deadline_at,created_at,completed_at,detail FROM trigger_workers
 		WHERE state IN ('reserved','pending','live') ORDER BY created_at,id`)
 	if err != nil {
@@ -947,7 +972,7 @@ func ListActiveTriggerWorkers() ([]TriggerWorker, error) {
 		var w TriggerWorker
 		var deadline, completed sql.NullInt64
 		var created dbTimestamp
-		if err := rows.Scan(&w.ID, &w.RuleID, &w.FiringID, &w.ActionIndex, &w.AgentID, &w.ConvID, &w.PendingLabel, &w.State, &deadline, &created, &completed, &w.Detail); err != nil {
+		if err := rows.Scan(&w.ID, &w.RuleID, &w.FiringID, &w.CronJobID, &w.CronRunID, &w.ActionIndex, &w.AgentID, &w.ConvID, &w.PendingLabel, &w.State, &deadline, &created, &completed, &w.Detail); err != nil {
 			return nil, err
 		}
 		w.CreatedAt = created.Time()
@@ -962,8 +987,35 @@ func ListActiveTriggerWorkers() ([]TriggerWorker, error) {
 	return out, rows.Err()
 }
 
+func ListActiveCronWorkers(jobID int64) ([]TriggerWorker, error) {
+	all, err := ListActiveTriggerWorkers()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]TriggerWorker, 0, len(all))
+	for _, w := range all {
+		if w.CronJobID == jobID {
+			out = append(out, w)
+		}
+	}
+	return out, nil
+}
+
+func ManagedWorkerIDForAgent(agentID string) (int64, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	var id int64
+	err = d.QueryRow(`SELECT id FROM trigger_workers WHERE agent_id=?`, strings.TrimSpace(agentID)).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return id, err
+}
+
 func CompleteTriggerWorker(id int64, state, detail string, now time.Time) error {
-	if state != "failed" && state != "exited" && state != "deadline_exceeded" {
+	if state != "failed" && state != "exited" && state != "deadline_exceeded" && state != "replaced" {
 		return errors.New("invalid trigger worker terminal state")
 	}
 	d, err := Open()

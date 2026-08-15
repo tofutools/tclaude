@@ -260,7 +260,13 @@ CREATE TABLE "agent_cron_jobs" (
 			last_run_at      INTEGER,
 			last_run_status  TEXT NOT NULL DEFAULT ''
 		, target_kind TEXT NOT NULL DEFAULT 'conv'
-			CHECK (target_kind IN ('conv', 'group')), cron_expr TEXT NOT NULL DEFAULT '', target_role TEXT NOT NULL DEFAULT '', disabled_reason TEXT NOT NULL DEFAULT '', run_immediately INTEGER NOT NULL DEFAULT 0, queue_when_offline INTEGER NOT NULL DEFAULT 0, operator_authored INTEGER NOT NULL DEFAULT 0) STRICT;
+			CHECK (target_kind IN ('conv', 'group')), cron_expr TEXT NOT NULL DEFAULT '', target_role TEXT NOT NULL DEFAULT '', disabled_reason TEXT NOT NULL DEFAULT '', run_immediately INTEGER NOT NULL DEFAULT 0, queue_when_offline INTEGER NOT NULL DEFAULT 0, operator_authored INTEGER NOT NULL DEFAULT 0,
+			action_kind TEXT NOT NULL DEFAULT 'message' CHECK (action_kind IN ('message','spawn')),
+			spawn_profile TEXT NOT NULL DEFAULT '', spawn_role_refs_json TEXT NOT NULL DEFAULT '[]',
+			spawn_name_template TEXT NOT NULL DEFAULT '', spawn_instruction_template TEXT NOT NULL DEFAULT '',
+			spawn_concurrency_policy TEXT NOT NULL DEFAULT 'Forbid' CHECK (spawn_concurrency_policy IN ('Forbid','Replace','Allow')),
+			spawn_max_live_workers INTEGER NOT NULL DEFAULT 1 CHECK (spawn_max_live_workers > 0),
+			spawn_worker_deadline_seconds INTEGER NOT NULL DEFAULT 0 CHECK (spawn_worker_deadline_seconds >= 0)) STRICT;
 
 CREATE INDEX idx_agent_cron_jobs_owner ON agent_cron_jobs(owner_agent);
 
@@ -271,7 +277,9 @@ CREATE TABLE "agent_cron_runs" (
 			job_id    INTEGER NOT NULL REFERENCES agent_cron_jobs(id) ON DELETE CASCADE,
 			fired_at  INTEGER NOT NULL,
 			status    TEXT NOT NULL DEFAULT '',
-			error_msg TEXT NOT NULL DEFAULT ''
+			error_msg TEXT NOT NULL DEFAULT '',
+			worker_id INTEGER,
+			worker_agent TEXT NOT NULL DEFAULT ''
 		) STRICT;
 
 CREATE INDEX idx_agent_cron_runs_job
@@ -1353,19 +1361,24 @@ CREATE TABLE trigger_action_outcomes (
 CREATE TABLE trigger_workers (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			rule_id INTEGER REFERENCES trigger_rules(id) ON DELETE SET NULL,
-			firing_id INTEGER NOT NULL REFERENCES trigger_firings(id) ON DELETE CASCADE,
+			firing_id INTEGER REFERENCES trigger_firings(id) ON DELETE SET NULL,
+			cron_job_id INTEGER REFERENCES agent_cron_jobs(id) ON DELETE SET NULL,
+			cron_run_id INTEGER REFERENCES agent_cron_runs(id) ON DELETE SET NULL,
 			action_index INTEGER NOT NULL,
 			agent_id TEXT NOT NULL UNIQUE,
 			conv_id TEXT NOT NULL DEFAULT '',
-			state TEXT NOT NULL DEFAULT 'reserved' CHECK (state IN ('reserved', 'pending', 'live', 'failed', 'exited', 'deadline_exceeded')),
+			state TEXT NOT NULL DEFAULT 'reserved' CHECK (state IN ('reserved', 'pending', 'live', 'failed', 'exited', 'deadline_exceeded', 'replaced')),
 			pending_label TEXT NOT NULL DEFAULT '',
 			deadline_at INTEGER,
 			created_at INTEGER NOT NULL,
 			completed_at INTEGER,
-			detail TEXT NOT NULL DEFAULT ''
+			detail TEXT NOT NULL DEFAULT '',
+			CHECK (rule_id IS NULL OR cron_job_id IS NULL)
 		) STRICT;
 
 CREATE INDEX idx_trigger_workers_rule_live ON trigger_workers(rule_id, state);
+
+CREATE INDEX idx_trigger_workers_cron_live ON trigger_workers(cron_job_id, state);
 
 CREATE TABLE daemon_spawn_history (
 			principal TEXT NOT NULL,
@@ -1374,7 +1387,6 @@ CREATE TABLE daemon_spawn_history (
 
 CREATE INDEX idx_daemon_spawn_history_principal
 			ON daemon_spawn_history(principal, spawned_at);
-
 CREATE TABLE "trigger_rules" (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			name TEXT NOT NULL UNIQUE,
@@ -1432,4 +1444,3 @@ CREATE TABLE trigger_pr_observations (
 			branch_context TEXT NOT NULL DEFAULT '',
 			updated_at INTEGER NOT NULL
 		) STRICT;
-
