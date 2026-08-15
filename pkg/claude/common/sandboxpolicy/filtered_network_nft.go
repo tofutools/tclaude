@@ -46,9 +46,11 @@ func RenderFilteredNetworkNFT(rules FilteredNetworkRuleSet) (string, error) {
 	body.WriteString("  chain dns_redirect {\n")
 	body.WriteString("    type nat hook output priority dstnat; policy accept;\n")
 	body.WriteString("    ip daddr " + FilteredNetworkDNSIPv4 +
-		" udp dport 53 redirect to :" + strconv.Itoa(FilteredNetworkDNSListenerPort) + "\n")
+		" udp dport 53 dnat ip to " + FilteredNetworkDNSIPv4 + ":" +
+		strconv.Itoa(FilteredNetworkDNSListenerPort) + "\n")
 	body.WriteString("    ip daddr " + FilteredNetworkDNSIPv4 +
-		" tcp dport 53 redirect to :" + strconv.Itoa(FilteredNetworkDNSListenerPort) + "\n")
+		" tcp dport 53 dnat ip to " + FilteredNetworkDNSIPv4 + ":" +
+		strconv.Itoa(FilteredNetworkDNSListenerPort) + "\n")
 	body.WriteString("  }\n")
 	for _, polarity := range []struct {
 		deny  bool

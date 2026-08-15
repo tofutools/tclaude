@@ -41,8 +41,11 @@ func TestRenderFilteredNetworkNFTRedirectsPrivateDNSWithoutPrivilegedBind(t *tes
 	for _, protocol := range []string{"udp", "tcp"} {
 		assert.Contains(t, got,
 			"ip daddr "+FilteredNetworkDNSIPv4+" "+protocol+
-				" dport 53 redirect to :"+strconv.Itoa(FilteredNetworkDNSListenerPort))
+				" dport 53 dnat ip to "+FilteredNetworkDNSIPv4+":"+
+				strconv.Itoa(FilteredNetworkDNSListenerPort))
 	}
+	assert.NotContains(t, got, " redirect ",
+		"LOCAL_OUT redirect rewrites the resolver address to 127.0.0.1")
 }
 
 func TestRenderFilteredNetworkNFTRendersCIDRPortsAndSyntheticLoopback(t *testing.T) {
