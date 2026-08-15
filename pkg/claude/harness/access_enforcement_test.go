@@ -525,6 +525,11 @@ func TestPlanAccessEnforcementOmitsUnsupportedDeniesIndividually(t *testing.T) {
 	assert.Equal(t, SandboxCapabilityNetworkDeny, capability.Kind)
 	assert.Contains(t, capability.Message, "affected authored entries: 1, 2")
 	assert.Contains(t, capability.Message, "Allow launch with unenforced rules")
+	_, _, err = PlanAccessEnforcement(
+		axes, caps, AccessEnforcementOptions{AllowUnenforcedNetworkClosed: true})
+	require.ErrorAs(t, err, &capability)
+	assert.Equal(t, SandboxCapabilityNetworkDeny, capability.Kind,
+		"the closed-network option must not authorize omitted deny entries")
 
 	rendered, notices, err := PlanAccessEnforcement(
 		axes, caps, AccessEnforcementOptions{AllowReducedNetworkDeny: true})
