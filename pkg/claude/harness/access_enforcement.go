@@ -709,7 +709,20 @@ func accessEnforcementTable(
 			caps.NetworkListRefusal =
 				"missing capability unsupported_filtered_network_posture: this platform does not enforce OpenCode's local-only network list, so the launch would start with outbound network access fully open rather than restricted to this machine; use Claude Code or Codex, which enforce a local-only list here, or use network open deliberately if unrestricted outbound is intended"
 		}
-		if axes.Network.Mode == sandboxpolicy.AccessModeClosed {
+		networkPosture, postureErr := sandboxpolicy.NetworkPostureForRules(
+			axes.Network)
+		if postureErr != nil {
+			return accessEnforcementTableRow{}, postureErr
+		}
+		// On Linux both isolated and filtered networking build the same
+		// constructed filesystem root and private network namespace. Socket
+		// confinement therefore works under either posture; keying this branch
+		// only on the legacy exact `closed` spelling incorrectly classified a
+		// modern block-baseline/list policy as host-open.
+		networkConfinesLinuxSockets := goos == "linux" &&
+			linuxPlannedNetworkConfinesSockets(axes.Network, caps)
+		if axes.Network.Mode == sandboxpolicy.AccessModeClosed ||
+			networkConfinesLinuxSockets {
 			caps.SocketClosed = EnforceFull
 			// M3 materializes the resolved list at launch. Seatbelt provides
 			// connect-level enforcement for the same paths.
@@ -725,14 +738,6 @@ func accessEnforcementTable(
 				// sockets beneath them.
 				caps.SocketClosed = EnforcePartial
 				caps.SocketList = EnforcePartial
-				// Name the posture in the mechanism itself. Every disclosure
-				// that prints a mechanism — the launch degradation notice, the
-				// predicted axis detail, the spawn warning — then says WHICH
-				// boundary is active. An operator whose pre-existing
-				// sockets+open profile starts behaving differently after an
-				// upgrade learns why from the launch notes rather than from a
-				// build that stopped working.
-				caps.Mechanism = mechanism + " (host-network constructed root)"
 				caps.SocketCombinationDetail =
 					"listed Unix sockets are bound and sockets outside the sandbox's readable/writable directories remain hidden, " +
 						"but sockets beneath those readable/writable directories remain reachable"
@@ -794,8 +799,6 @@ func accessEnforcementTable(
 		// disagree with the applier. Linux only: Seatbelt is a path filter over
 		// the host namespace and has no root to construct.
 		if goos == "linux" {
-			networkPosture, postureErr := sandboxpolicy.NetworkPostureForRules(
-				axes.Network)
 			socketTier := axes.UnixSockets.Mode
 			if !linuxHostOpenConstructedRootAvailable(
 				h, implementation, axes, goos) {
@@ -949,9 +952,11 @@ func accessEnforcementTable(
 //     a harness-native inner sandbox whose interaction with a constructed
 //     host-open root has no smoke evidence, and an unproven combination may not
 //     raise a capability rating.
-//   - Claude Code or Codex. OpenCode's boundary is its agentd-owned server with
-//     a control plane of its own; its host-open arm is deliberately left on the
-//     pre-TCL-798 path.
+//   - A harness whose tclaude-layer renderer supports a constructed root.
+//     Claude Code and Codex render the pane inside that root; OpenCode renders
+//     its agentd-owned tool server there while its attach pane remains outside.
+//     Copilot is kept out until its distinct state-directory contract has the
+//     same launch and smoke coverage.
 //   - A host-open network posture. An allow list or any deny renders the
 //     filtered posture instead, which already constructs its root beneath a
 //     private network namespace and is rated separately.
@@ -979,11 +984,44 @@ func linuxHostOpenConstructedRootAvailable(
 	if implementation != sandboxpolicy.ImplementationTclaudeLayer {
 		return false
 	}
-	if h == nil || (h.Name != DefaultName && h.Name != CodexName) {
+	if h == nil || (h.Name != DefaultName && h.Name != CodexName &&
+		h.Name != OpenCodeName) {
 		return false
 	}
 	posture, err := sandboxpolicy.NetworkPostureForRules(axes.Network)
 	return err == nil && posture == sandboxpolicy.NetworkHostOpen
+}
+
+// linuxPlannedNetworkConfinesSockets reports whether capability planning will
+// preserve a private network namespace for these authored rules. Looking only
+// at the authored posture is unsafe: an unsupported list, or a deny set whose
+// entries cannot be expressed, is widened to host-open later in the ladder.
+// Socket planning must anticipate that widening so it cannot preserve a socket
+// tier whose eventual host-open root the target does not support.
+func linuxPlannedNetworkConfinesSockets(
+	rules sandboxpolicy.NetworkRules,
+	caps accessEnforcementTableRow,
+) bool {
+	switch rules.Mode {
+	case sandboxpolicy.AccessModeClosed:
+		return caps.NetworkClosed != EnforceNone
+	case sandboxpolicy.AccessModeList:
+		return caps.NetworkList != EnforceNone &&
+			len(networkUnsupportedEntries(rules.Allow, caps.NetworkSelectors)) == 0
+	case sandboxpolicy.AccessModeOpen:
+		for _, entry := range rules.Deny {
+			capability, ok := networkSelectorCapability(
+				caps.NetworkDenySelectors, networkSelectorForEntry(entry))
+			if !ok || capability.Level == EnforceNone {
+				continue
+			}
+			if len(entry.Ports) > 0 && caps.NetworkDenyPorts == EnforceNone {
+				continue
+			}
+			return true
+		}
+	}
+	return false
 }
 
 // SupportsHostOpenConstructedRoot reports whether this launch target would get

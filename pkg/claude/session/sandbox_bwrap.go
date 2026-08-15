@@ -935,12 +935,12 @@ func TclaudeLayerRootPosture(
 // authored one.
 //
 // The extra gate matters because the socket-driven constructed root is a Linux
-// tclaude-layer mechanism for Claude Code and Codex only. Everywhere else the
-// ladder is about to widen the axis away, and the applier will render an
-// inherited root — so deriving a constructed root here would make the probe
-// demand a namespace the launch does not need, and, worse, make
-// ApplyAgentSocketEnv refuse an operator's explicit agentd socket for a launch
-// that never confines sockets at all.
+// tclaude-layer mechanism only for harness renderers with matching launch
+// coverage. Everywhere else the ladder is about to widen the axis away, and
+// the applier will render an inherited root — so deriving a constructed root
+// here would make the probe demand a namespace the launch does not need, and,
+// worse, make ApplyAgentSocketEnv refuse an operator's explicit agentd socket
+// for a launch that never confines sockets at all.
 func TclaudeLayerLaunchRootPosture(
 	h *harness.Harness,
 	implementation sandboxpolicy.Implementation,

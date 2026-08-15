@@ -173,6 +173,28 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 		"read-only OS surface it mounts (/usr, /bin, /sbin, /lib*, /etc, /opt)",
 		"sockets on the static OS surface stay connectable; naming it is what makes the remainder honest")
 
+	// OpenCode's attach pane remains outside the sandbox, but its agentd-owned
+	// tool server uses the same constructed-root renderer. It must therefore
+	// receive the same partial socket boundary instead of refusing this profile.
+	openCode, err := Resolve(OpenCodeName)
+	require.NoError(t, err)
+	openCodeCaps, err := accessEnforcementForTargetForTest(
+		openCode, sandboxpolicy.ImplementationTclaudeLayer,
+		hostOpenClosedSockets, OpenCodeSandboxTclaudeLayer, "linux",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, EnforcePartial, openCodeCaps.socketClosed)
+	openCodeRendered, openCodeNotices, err := PlanAccessEnforcement(
+		hostOpenClosedSockets, openCodeCaps)
+	require.NoError(t, err)
+	assert.Equal(t, sandboxpolicy.AccessModeClosed,
+		openCodeRendered.UnixSockets.Mode)
+	require.Len(t, openCodeNotices, 1)
+	assert.Contains(t, openCodeNotices[0].Detail,
+		"host-network constructed root")
+	assert.Contains(t, openCodeNotices[0].Detail,
+		"abstract-namespace Unix sockets")
+
 	hostOpenSocketList := sandboxpolicy.ResolvedAxes{
 		Network: sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeOpen},
 		UnixSockets: sandboxpolicy.UnixSocketRules{
@@ -216,19 +238,88 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, EnforceNone, caps.socketClosed)
 
-	// A deny entry renders the filtered posture instead of host-open; that
-	// combination is rated by its own row, not by this one.
+	// A deny entry renders the filtered posture instead of host-open. Its
+	// private network namespace and constructed root enforce the same partial
+	// socket boundary as closed networking.
 	hostOpenDeniedClosedSockets := hostOpenClosedSockets
 	hostOpenDeniedClosedSockets.Network = sandboxpolicy.NetworkRules{
 		Mode: sandboxpolicy.AccessModeOpen,
 		Deny: []sandboxpolicy.NetworkAllowEntry{{Host: "metadata.google.internal"}},
 	}
-	caps, err = accessEnforcementForTargetForTest(
+	filteredRow, err := accessEnforcementTable(
 		h, sandboxpolicy.ImplementationTclaudeLayer, hostOpenDeniedClosedSockets,
-		ClaudeSandboxOff, "linux",
+		ClaudeSandboxOff, "linux", true,
 	)
 	require.NoError(t, err)
-	assert.Equal(t, EnforceNone, caps.socketClosed)
+	caps = accessEnforcementFromTable(filteredRow)
+	assert.Equal(t, EnforcePartial, caps.socketClosed)
+	assert.NotContains(t, caps.mechanism, "host-network",
+		"a filtered private namespace must retain the gateway mechanism name")
+	rendered, notices, err = PlanAccessEnforcement(
+		hostOpenDeniedClosedSockets, caps)
+	require.NoError(t, err)
+	assert.Equal(t, sandboxpolicy.AccessModeClosed,
+		rendered.UnixSockets.Mode)
+	require.Len(t, notices, 2,
+		"the default-allow DNS deny and socket remainder are both partial")
+	assert.Contains(t, notices[0].Detail, "listed Unix sockets are bound")
+
+	// The dashboard's block-all baseline is a list posture, not the legacy
+	// exact `closed` spelling. It still builds a private network namespace and
+	// must not fall through to the host-open socket refusal.
+	blockedBaselineClosedSockets := hostOpenClosedSockets
+	blockedBaselineClosedSockets.Network = sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeList,
+	}
+	openCode, err = Resolve(OpenCodeName)
+	require.NoError(t, err)
+	filteredRow, err = accessEnforcementTable(
+		openCode, sandboxpolicy.ImplementationTclaudeLayer,
+		blockedBaselineClosedSockets, OpenCodeSandboxTclaudeLayer, "linux", true,
+	)
+	require.NoError(t, err)
+	caps = accessEnforcementFromTable(filteredRow)
+	assert.Equal(t, EnforcePartial, caps.socketClosed)
+	rendered, _, err = PlanAccessEnforcement(
+		blockedBaselineClosedSockets, caps)
+	require.NoError(t, err)
+	assert.Equal(t, sandboxpolicy.AccessModeClosed,
+		rendered.UnixSockets.Mode)
+
+	// An authored filtered posture can still be widened to host-open when the
+	// target cannot enforce its network rules. Do not let that widening smuggle
+	// an unsupported host-open constructed root past the explicit harness and
+	// implementation gate.
+	for _, tc := range []struct {
+		name           string
+		harness        *Harness
+		implementation sandboxpolicy.Implementation
+		mode           string
+	}{
+		{
+			name: "stacked", harness: h,
+			implementation: sandboxpolicy.ImplementationStacked,
+			mode:           ClaudeSandboxOff,
+		},
+		{
+			name: "copilot", harness: MustGet(CopilotName),
+			implementation: sandboxpolicy.ImplementationTclaudeLayer,
+			mode:           CopilotSandboxOff,
+		},
+	} {
+		t.Run("filtered fallback "+tc.name, func(t *testing.T) {
+			fallbackCaps, fallbackErr := accessEnforcementForTargetForTest(
+				tc.harness, tc.implementation, blockedBaselineClosedSockets,
+				tc.mode, "linux",
+			)
+			require.NoError(t, fallbackErr)
+			assert.Equal(t, EnforceNone, fallbackCaps.socketClosed)
+			_, _, fallbackErr = PlanAccessEnforcement(
+				blockedBaselineClosedSockets, fallbackCaps)
+			require.ErrorContains(t, fallbackErr,
+				`unix_sockets "closed" cannot be enforced with open network access`)
+		})
+	}
 
 	// The public resolver consumes the same axes rather than returning a static
 	// per-target capability descriptor. Unlike the table helper above it reads
