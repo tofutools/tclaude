@@ -44,6 +44,9 @@ func TestCronPatch_SpawnTransitionsValidateMergedRowAtomically(t *testing.T) {
 	assert.Zero(t, got.SpawnWorkerDeadlineSeconds, "switch defaults stale inactive deadline")
 	assert.Equal(t, []string{"reviewer"}, got.SpawnRoleRefs)
 	assert.Equal(t, "message", got.Body, "inactive message payload is retained")
+	rec = testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPatch,
+		"/v1/cron/"+strconv.FormatInt(id, 10), map[string]any{"spawn_roles": nil})))
+	require.Equal(t, http.StatusBadRequest, rec.Code, "an explicit null is not an array: %s", rec.Body.String())
 
 	rec = testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPatch,
 		"/v1/cron/"+strconv.FormatInt(id, 10), map[string]any{

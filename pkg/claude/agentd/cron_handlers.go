@@ -1275,26 +1275,26 @@ type cronActor struct {
 
 func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (decodedCronPatch, bool) {
 	var body struct {
-		Name                       *string          `json:"name,omitempty"`
-		Target                     *string          `json:"target,omitempty"`
-		Owner                      *string          `json:"owner,omitempty"`
-		Interval                   *string          `json:"interval,omitempty"`
-		CronExpr                   *string          `json:"cron_expr,omitempty"`
-		Subject                    *string          `json:"subject,omitempty"`
-		Body                       *string          `json:"body,omitempty"`
-		Enabled                    *bool            `json:"enabled,omitempty"`
-		RunImmediately             *bool            `json:"run_immediately,omitempty"`
-		QueueWhenOffline           *bool            `json:"queue_when_offline,omitempty"`
-		GroupID                    *int64           `json:"group_id,omitempty"`
-		Role                       *string          `json:"role,omitempty"`
-		ActionKind                 *string          `json:"action_kind,omitempty"`
-		SpawnProfile               *string          `json:"spawn_profile,omitempty"`
-		SpawnRoles                 *json.RawMessage `json:"spawn_roles,omitempty"`
-		SpawnNameTemplate          *string          `json:"spawn_name_template,omitempty"`
-		SpawnInstructionTemplate   *string          `json:"spawn_instruction_template,omitempty"`
-		SpawnConcurrencyPolicy     *string          `json:"spawn_concurrency_policy,omitempty"`
-		SpawnMaxLiveWorkers        *int             `json:"spawn_max_live_workers,omitempty"`
-		SpawnWorkerDeadlineSeconds *int64           `json:"spawn_worker_deadline_seconds,omitempty"`
+		Name                       *string         `json:"name,omitempty"`
+		Target                     *string         `json:"target,omitempty"`
+		Owner                      *string         `json:"owner,omitempty"`
+		Interval                   *string         `json:"interval,omitempty"`
+		CronExpr                   *string         `json:"cron_expr,omitempty"`
+		Subject                    *string         `json:"subject,omitempty"`
+		Body                       *string         `json:"body,omitempty"`
+		Enabled                    *bool           `json:"enabled,omitempty"`
+		RunImmediately             *bool           `json:"run_immediately,omitempty"`
+		QueueWhenOffline           *bool           `json:"queue_when_offline,omitempty"`
+		GroupID                    *int64          `json:"group_id,omitempty"`
+		Role                       *string         `json:"role,omitempty"`
+		ActionKind                 *string         `json:"action_kind,omitempty"`
+		SpawnProfile               *string         `json:"spawn_profile,omitempty"`
+		SpawnRoles                 json.RawMessage `json:"spawn_roles,omitempty"`
+		SpawnNameTemplate          *string         `json:"spawn_name_template,omitempty"`
+		SpawnInstructionTemplate   *string         `json:"spawn_instruction_template,omitempty"`
+		SpawnConcurrencyPolicy     *string         `json:"spawn_concurrency_policy,omitempty"`
+		SpawnMaxLiveWorkers        *int            `json:"spawn_max_live_workers,omitempty"`
+		SpawnWorkerDeadlineSeconds *int64          `json:"spawn_worker_deadline_seconds,omitempty"`
 	}
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -1338,13 +1338,13 @@ func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (decodedCronPat
 		}
 		patch.SpawnConcurrencyPolicy = &policy
 	}
-	if body.SpawnRoles != nil {
-		if strings.TrimSpace(string(*body.SpawnRoles)) == "null" {
+	if len(body.SpawnRoles) > 0 {
+		if strings.TrimSpace(string(body.SpawnRoles)) == "null" {
 			writeError(w, http.StatusBadRequest, "invalid_arg", "spawn_roles must be an array")
 			return decodedCronPatch{}, false
 		}
 		var roles []string
-		if err := json.Unmarshal(*body.SpawnRoles, &roles); err != nil {
+		if err := json.Unmarshal(body.SpawnRoles, &roles); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", "spawn_roles must be an array of strings")
 			return decodedCronPatch{}, false
 		}
