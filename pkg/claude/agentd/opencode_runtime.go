@@ -160,6 +160,7 @@ var (
 	wrapOpenCodeTclaudeLayer                 = session.WrapTclaudeLayerServerSpec
 	wrapOpenCodeTclaudeLayerWithLoopbackBind = session.WrapTclaudeLayerServerSpecWithLoopbackBind
 	openCodeRelayExecutable                  = os.Executable
+	removeOpenCodeResourceCgroup             = session.RemoveResourceCgroup
 )
 
 func startOpenCodeRuntime(
@@ -229,7 +230,7 @@ func startOpenCodeRuntime(
 			return nil, fmt.Errorf(
 				"refusing to replace live OpenCode Unix runtime without socket ownership proof")
 		}
-		if err := stopOpenCodeRuntime(sessionID); err != nil {
+		if err := stopOpenCodeRuntimeForReplacement(sessionID); err != nil {
 			return nil, fmt.Errorf("retire prior OpenCode runtime: %w", err)
 		}
 	}
@@ -2542,6 +2543,17 @@ func openCodeRuntimeSafeToReplace(runtime db.OpenCodeRuntime) bool {
 }
 
 func stopOpenCodeRuntime(sessionID string) error {
+	return stopOpenCodeRuntimeWithCgroupDisposition(sessionID, true)
+}
+
+// stopOpenCodeRuntimeForReplacement stops the current process and deletes its
+// runtime authority while retaining the already-validated resource boundary
+// that startOpenCodeRuntime is about to reuse for the replacement process.
+func stopOpenCodeRuntimeForReplacement(sessionID string) error {
+	return stopOpenCodeRuntimeWithCgroupDisposition(sessionID, false)
+}
+
+func stopOpenCodeRuntimeWithCgroupDisposition(sessionID string, removeCgroup bool) error {
 	// Serialize teardown with reconcileOpenCodeRuntime. Without the shared lock,
 	// reconcile could restart the server after stopOpenCodeProcess returned but
 	// before this function checked liveness and deleted the durable claim.
@@ -2571,8 +2583,10 @@ func stopOpenCodeRuntime(sessionID string) error {
 			return fmt.Errorf("finish OpenCode Unix control cleanup: %w", err)
 		}
 	}
-	if err := session.RemoveResourceCgroup(runtime.ResourceCgroupDir); err != nil {
-		return fmt.Errorf("remove retired OpenCode resource cgroup: %w", err)
+	if removeCgroup {
+		if err := removeOpenCodeResourceCgroup(runtime.ResourceCgroupDir); err != nil {
+			return fmt.Errorf("remove retired OpenCode resource cgroup: %w", err)
+		}
 	}
 	clearOpenCodeVirtualCostState(sessionID)
 	return db.DeleteOpenCodeRuntime(sessionID)

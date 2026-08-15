@@ -757,6 +757,34 @@ func TestStopLoopbackRuntimeRetainsAuthorityWhileRecordedProcessLives(t *testing
 		"a live loopback process must retain the claim that protects its worktree")
 }
 
+func TestOpenCodeRuntimeReplacementPreservesCgroupUntilFinalRetirement(t *testing.T) {
+	setupTestDB(t)
+	oldRemove := removeOpenCodeResourceCgroup
+	t.Cleanup(func() { removeOpenCodeResourceCgroup = oldRemove })
+	var removed []string
+	removeOpenCodeResourceCgroup = func(dir string) error {
+		removed = append(removed, dir)
+		return nil
+	}
+	runtime := db.OpenCodeRuntime{
+		SessionID: "spwn-cgroup-replacement", PID: 0,
+		ServerURL: "http://127.0.0.1:43210", Cwd: t.TempDir(),
+		Transport:         db.OpenCodeTransportLoopbackTCP,
+		ResourceCgroupDir: "/sys/fs/cgroup/system.slice/tclaude-tmux.service/tclaude-replacement",
+	}
+	record := func() { require.NoError(t, db.UpsertOpenCodeRuntime(runtime)) }
+
+	record()
+	require.NoError(t, stopOpenCodeRuntimeForReplacement(runtime.SessionID))
+	assert.Empty(t, removed,
+		"same-session replacement must retain the prepared boundary it will reuse")
+
+	record()
+	require.NoError(t, stopOpenCodeRuntime(runtime.SessionID))
+	assert.Equal(t, []string{runtime.ResourceCgroupDir}, removed,
+		"final retirement must dispose of the durable boundary")
+}
+
 func TestRandomOpenCodePassword(t *testing.T) {
 	first, err := randomOpenCodePassword()
 	require.NoError(t, err)
