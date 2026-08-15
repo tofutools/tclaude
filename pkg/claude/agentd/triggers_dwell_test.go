@@ -80,16 +80,27 @@ func TestTriggerDwellFiresOnceAcrossTicksAndRearmsOnlyAfterFalse(t *testing.T) {
 		ForSeconds: 60, Actions: []db.TriggerAction{{Type: db.TriggerActionMessage,
 			Message: &db.TriggerMessageAction{BodyTemplate: "idle {{agent.id}} {{event.fact_result}}"}}}})
 	require.NoError(t, err)
+	longRuleID, err := db.InsertTriggerRule(&db.TriggerRule{Name: "idle-long", Enabled: true, OperatorAuthored: true,
+		ScopeKind: db.TriggerScopeGlobal, Source: db.TriggerSourceAgentIdle, DraftFilter: db.TriggerDraftInclude,
+		ForSeconds: 3600, Actions: []db.TriggerAction{{Type: db.TriggerActionMessage,
+			Message: &db.TriggerMessageAction{BodyTemplate: "long idle {{agent.id}}"}}}})
+	require.NoError(t, err)
 
 	runTriggerTick(now)
 	firings, err := db.ListTriggerFirings(ruleID, 10)
 	require.NoError(t, err)
 	require.Len(t, firings, 1)
 	assert.Equal(t, agentID, firings[0].AgentID)
+	longFirings, err := db.ListTriggerFirings(longRuleID, 10)
+	require.NoError(t, err)
+	assert.Empty(t, longFirings, "a shorter same-source rule cannot mature this rule")
 	runTriggerTick(now.Add(time.Hour))
 	firings, err = db.ListTriggerFirings(ruleID, 10)
 	require.NoError(t, err)
 	assert.Len(t, firings, 1, "a durable mature episode cannot refire after another tick/restart")
+	longFirings, err = db.ListTriggerFirings(longRuleID, 10)
+	require.NoError(t, err)
+	assert.Len(t, longFirings, 1, "the long rule fires only when its own dwell matures")
 
 	row.Status = session.StatusWorking
 	row.LastHook = now.Add(time.Hour + time.Second)
@@ -102,4 +113,7 @@ func TestTriggerDwellFiresOnceAcrossTicksAndRearmsOnlyAfterFalse(t *testing.T) {
 	firings, err = db.ListTriggerFirings(ruleID, 10)
 	require.NoError(t, err)
 	assert.Len(t, firings, 2, "an observed false condition re-arms the next true episode")
+	longFirings, err = db.ListTriggerFirings(longRuleID, 10)
+	require.NoError(t, err)
+	assert.Len(t, longFirings, 1, "the short rule's re-armed event cannot refire the long rule")
 }

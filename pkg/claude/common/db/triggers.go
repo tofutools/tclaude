@@ -196,6 +196,7 @@ func (a *TriggerAction) validate() error {
 type TriggerPREvent struct {
 	ID             int64     `json:"id"`
 	AgentPRID      int64     `json:"agent_pr_id"`
+	OriginRuleID   int64     `json:"origin_rule_id,omitempty"`
 	Source         string    `json:"source"`
 	EventRef       string    `json:"event_ref"`
 	PRURL          string    `json:"pr_url"`
@@ -826,9 +827,9 @@ func ApplyTriggerDwellState(rule *TriggerRule, state TriggerDwellState, detail, 
 		}
 		eventRef := fmt.Sprintf("%s:%d:%d:%s:%d", source, rule.ID, rule.Revision, state.AgentID, state.Episode)
 		res, err := tx.Exec(`INSERT INTO trigger_pr_events
-			(source,event_ref,agent_id,agent_harness,fact_result,fact_observed_at,dwell_started_at,
+			(origin_rule_id,source,event_ref,agent_id,agent_harness,fact_result,fact_observed_at,dwell_started_at,
 			 group_ids_json,occurred_at,updated_at,status)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(event_ref) DO NOTHING`, source, eventRef,
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(event_ref) DO NOTHING`, rule.ID, source, eventRef,
 			state.AgentID, strings.TrimSpace(harness), state.Result, nullableDBTime(factObservedAt),
 			nullableDBTime(state.TrueSince), groups, dbTime(now.UTC()), dbTime(now.UTC()), TriggerEventPending)
 		if err != nil {
@@ -854,7 +855,7 @@ func ListPendingTriggerPREvents(limit int) ([]TriggerPREvent, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT id,agent_pr_id,source,event_ref,pr_url,pr_number,pr_branch,pr_author_agent,
+	rows, err := d.Query(`SELECT id,agent_pr_id,origin_rule_id,source,event_ref,pr_url,pr_number,pr_branch,pr_author_agent,
 		agent_id,agent_harness,fact_result,fact_observed_at,dwell_started_at,draft,
 		group_ids_json,previous_state,current_state,occurred_at,updated_at,status,processed_at FROM trigger_pr_events
 		WHERE status IN ('pending','interrupted') AND processed_at IS NULL ORDER BY occurred_at,id LIMIT ?`, limit)
@@ -865,17 +866,20 @@ func ListPendingTriggerPREvents(limit int) ([]TriggerPREvent, error) {
 	var out []TriggerPREvent
 	for rows.Next() {
 		var e TriggerPREvent
-		var agentPRID sql.NullInt64
+		var agentPRID, originRuleID sql.NullInt64
 		var groups string
 		var occurred, updated dbTimestamp
 		var observed, dwell, processed sql.NullInt64
-		if err := rows.Scan(&e.ID, &agentPRID, &e.Source, &e.EventRef, &e.PRURL, &e.PRNumber, &e.PRBranch, &e.PRAuthorAgent,
+		if err := rows.Scan(&e.ID, &agentPRID, &originRuleID, &e.Source, &e.EventRef, &e.PRURL, &e.PRNumber, &e.PRBranch, &e.PRAuthorAgent,
 			&e.AgentID, &e.AgentHarness, &e.FactResult, &observed, &dwell, &e.Draft, &groups,
 			&e.PreviousState, &e.CurrentState, &occurred, &updated, &e.Status, &processed); err != nil {
 			return nil, err
 		}
 		if agentPRID.Valid {
 			e.AgentPRID = agentPRID.Int64
+		}
+		if originRuleID.Valid {
+			e.OriginRuleID = originRuleID.Int64
 		}
 		_ = json.Unmarshal([]byte(groups), &e.GroupIDs)
 		e.OccurredAt = occurred.Time()

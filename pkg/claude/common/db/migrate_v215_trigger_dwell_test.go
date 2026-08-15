@@ -38,6 +38,7 @@ func TestTriggerDwellStateAndEventEvidenceRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	assert.Zero(t, events[0].AgentPRID)
+	assert.Equal(t, ruleID, events[0].OriginRuleID)
 	assert.Equal(t, TriggerSourceAgentIdle, events[0].Source)
 	assert.Equal(t, agentID, events[0].AgentID)
 	assert.Equal(t, "claude", events[0].AgentHarness)

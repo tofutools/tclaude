@@ -1880,8 +1880,8 @@ directories the agent moved into.
 ### event and agent-state triggers
 
 Trigger rules are an experimental, daemon-owned automation surface gated by
-`features.triggers=true`. The dashboard creates and edits rules; agents can
-inspect them with `tclaude agent triggers ls`, `show`, and `explain`. PR and CI
+`features.triggers=true`. The trigger REST API creates and edits rules; agents
+can inspect them with `tclaude agent triggers ls`, `show`, and `explain`. PR and CI
 sources are edge events. The two agent-state sources instead require a
 positive `for_seconds` dwell and fire once per continuously true episode:
 

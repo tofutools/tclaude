@@ -144,7 +144,7 @@ func handleTriggerExplain(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if body.Group != "" {
+	if body.Group != "" && !db.IsTriggerStateSource(source) {
 		g, err := resolveTriggerGroup(body.Group)
 		if err != nil || g == nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", "group not found")
@@ -159,22 +159,15 @@ func handleTriggerExplain(w http.ResponseWriter, r *http.Request) {
 	}
 	results := make([]triggerExplainResult, 0, len(rules))
 	var observed triggerFactObservation
+	var stateAgent *db.Agent
+	factObserved := false
 	if db.IsTriggerStateSource(source) {
 		agent, err := db.GetAgent(event.AgentID)
 		if err != nil || agent == nil || !agent.Active() {
 			writeError(w, http.StatusBadRequest, "invalid_arg", "active agent not found")
 			return
 		}
-		sessions, sessionsErr := db.ListSessions()
-		alive, aliveErr := cachedLiveTmuxSessions()
-		var rows []*db.SessionRow
-		for _, row := range sessions {
-			if row.ConvID == agent.CurrentConvID {
-				rows = append(rows, row)
-			}
-		}
-		observed = observeTriggerAgentFact(source, agent, rows, alive, sessionsErr, aliveErr, now)
-		event.AgentHarness, event.FactResult, event.FactObservedAt = observed.harness, observed.result, observed.observed
+		stateAgent = agent
 		groups, _ := db.ListGroupsForAgent(agent.AgentID)
 		for _, group := range groups {
 			event.GroupIDs = append(event.GroupIDs, group.ID)
@@ -185,6 +178,27 @@ func handleTriggerExplain(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if db.IsTriggerStateSource(source) && rule.Source == source {
+			eligibility := triggerlogic.Evaluate(rule, event, now, time.Time{}, false)
+			if eligibility.Outcome == triggerlogic.OutcomeDisabled ||
+				eligibility.Outcome == triggerlogic.OutcomeOutOfScope ||
+				eligibility.Outcome == triggerlogic.OutcomeRuleTooNew {
+				results = append(results, triggerExplainResult{RuleID: rule.ID, RuleName: rule.Name,
+					Outcome: eligibility.Outcome, Detail: eligibility.Detail})
+				continue
+			}
+			if !factObserved {
+				sessions, sessionsErr := db.ListSessions()
+				alive, aliveErr := cachedLiveTmuxSessions()
+				var rows []*db.SessionRow
+				for _, row := range sessions {
+					if row.ConvID == stateAgent.CurrentConvID {
+						rows = append(rows, row)
+					}
+				}
+				observed = observeTriggerAgentFact(source, stateAgent, rows, alive, sessionsErr, aliveErr, now)
+				event.AgentHarness, event.FactResult, event.FactObservedAt = observed.harness, observed.result, observed.observed
+				factObserved = true
+			}
 			previous, _ := db.GetTriggerDwellState(rule.ID, event.AgentID)
 			var prior *triggerlogic.DwellState
 			if previous != nil {

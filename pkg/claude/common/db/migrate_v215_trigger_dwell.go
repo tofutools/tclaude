@@ -63,6 +63,7 @@ func migrateV214toV215(d *sql.DB) error {
 		CREATE TABLE trigger_pr_events_v215 (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			agent_pr_id INTEGER REFERENCES agent_prs(id) ON DELETE CASCADE,
+			origin_rule_id INTEGER REFERENCES trigger_rules(id) ON DELETE SET NULL,
 			source TEXT NOT NULL CHECK (source IN ('pr.opened','pr.updated','pr.merged','ci.failed','ci.succeeded','agent.idle','agent.awaiting_input')),
 			event_ref TEXT NOT NULL UNIQUE,
 			pr_url TEXT NOT NULL DEFAULT '',

@@ -457,6 +457,9 @@ func processTriggerPREvent(event db.TriggerPREvent, now time.Time) {
 	}
 	allTerminal := true
 	for _, candidate := range rules {
+		if db.IsTriggerStateSource(event.Source) && candidate.ID != event.OriginRuleID {
+			continue
+		}
 		last, err := db.LatestCompletedTriggerFiring(candidate.ID)
 		if err != nil {
 			slog.Warn("triggers: read cooldown", "rule", candidate.ID, "error", err)

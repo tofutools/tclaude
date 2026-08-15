@@ -12,6 +12,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	triggerlogic "github.com/tofutools/tclaude/pkg/claude/triggers"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -349,6 +350,41 @@ func TestTriggerExplainSurfacesUnknownAgentFact(t *testing.T) {
 	assert.Equal(t, "unknown", body.Results[0].Outcome)
 	assert.Equal(t, "unknown", body.Results[0].FactResult)
 	assert.NotEmpty(t, body.Results[0].Detail)
+}
+
+func TestTriggerExplainDoesNotExposeOutOfScopeAgentFact(t *testing.T) {
+	f := triggerFlow(t)
+	const caller = "explain-group-owner"
+	const target = "explain-outside-target"
+	f.HaveConvWithTitle(caller, "owner")
+	f.HaveConvWithTitle(target, "outside")
+	group := f.HaveGroup("explain-owned")
+	require.NoError(t, db.AddAgentGroupOwner(group.ID, caller, "test"))
+	targetAgent, _, err := db.EnsureAgentForConv(target, "test")
+	require.NoError(t, err)
+	_, err = db.InsertTriggerRule(&db.TriggerRule{Name: "owned-idle", Enabled: true, OperatorAuthored: true,
+		ScopeKind: db.TriggerScopeGroup, GroupID: group.ID, Source: db.TriggerSourceAgentIdle,
+		DraftFilter: db.TriggerDraftInclude, ForSeconds: 60, Actions: []db.TriggerAction{{Type: db.TriggerActionMessage,
+			Message: &db.TriggerMessageAction{Target: "agent", BodyTemplate: "wake"}}}})
+	require.NoError(t, err)
+
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
+		"/v1/triggers/explain", map[string]any{"source": db.TriggerSourceAgentIdle,
+			"agent_id": targetAgent, "group": group.Name}), caller))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var body struct {
+		Results []struct {
+			Outcome        string    `json:"outcome"`
+			Detail         string    `json:"detail"`
+			FactResult     string    `json:"fact_result"`
+			FactObservedAt time.Time `json:"fact_observed_at"`
+		} `json:"results"`
+	}
+	testharness.DecodeJSON(t, rec, &body)
+	require.Len(t, body.Results, 1)
+	assert.Equal(t, triggerlogic.OutcomeOutOfScope, body.Results[0].Outcome)
+	assert.Empty(t, body.Results[0].FactResult)
+	assert.True(t, body.Results[0].FactObservedAt.IsZero())
 }
 
 func TestDashboardTriggerStateSourceRoundTripsDwell(t *testing.T) {
