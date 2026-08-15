@@ -1680,7 +1680,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     ${constructedRootWarning && html`<div class="sbx-constructed-root-warning" role="alert">
       <strong>⚠ Separate filesystem root</strong>
       <div>${constructedRootWarning.reasons.length
-        ? `${constructedRootWarning.reasons.join(' and ')} require`
+        ? `${constructedRootWarning.reasons.join(' and ')} ${constructedRootWarning.reasons.length === 1 ? 'requires' : 'require'}`
         : 'This resolved sandbox policy requires'} a separate, minimal filesystem root on ${constructedRootWarning.targets.join('; ')}.</div>
       <div>Only the fixed read-only OS/runtime surface and filesystem paths explicitly mounted below remain visible. Home-installed tools elsewhere may disappear unless you grant their paths.</div>
     </div>`}

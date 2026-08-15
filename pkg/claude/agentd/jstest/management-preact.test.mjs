@@ -2143,7 +2143,7 @@ test('sandbox editor warns immediately when the resolved target constructs a fil
   const socketWarning = socketEditor.host.querySelector('.sbx-constructed-root-warning');
   assert.equal(socketWarning.getAttribute('role'), 'alert');
   assert.match(socketWarning.textContent,
-    /Separate filesystem root.*Unix-socket restriction.*OpenCode on Linux · tclaude sandbox/s);
+    /Separate filesystem root.*Unix-socket restriction requires a separate, minimal filesystem root on OpenCode on Linux · tclaude sandbox/s);
   assert.match(socketWarning.textContent,
     /fixed read-only OS\/runtime surface.*explicitly mounted.*Home-installed tools.*unless you grant their paths/s);
   assert.equal(socketEditor.host.querySelectorAll(
