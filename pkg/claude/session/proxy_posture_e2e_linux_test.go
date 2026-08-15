@@ -758,7 +758,7 @@ func postureE2ELoopbackOnlyHelper(t *testing.T, fixture postureE2EFixture) {
 	// assertion loud if the floor ever grows another listener, which is the
 	// right failure for a smoke whose whole subject is what is running.
 	require.Equalf(t,
-		[]string{strconv.Itoa(filteredNetworkDNSPort)},
+		[]string{strconv.Itoa(sandboxpolicy.FilteredNetworkDNSListenerPort)},
 		postureE2EListeningPorts(t),
 		"the packet floor's DNS broker must be the ONLY listener in a namespace with no filtering proxy")
 	fmt.Println(

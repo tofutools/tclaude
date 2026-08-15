@@ -251,10 +251,10 @@ For filtered mode, rootless bubblewrap maps the invoking host user to UID/GID
 the invoking user, and files created by the harness map back to that host
 UID/GID.
 
-The namespace bootstrap temporarily receives:
-
-- `CAP_NET_BIND_SERVICE`, to bind the private DNS listener on port 53;
-- `CAP_NET_ADMIN`, to install the namespace-local nftables policy.
+The namespace bootstrap temporarily receives `CAP_NET_ADMIN` to install the
+namespace-local nftables policy. The private DNS listener binds unprivileged
+port 1053; an nftables output redirect sends only `127.0.0.53:53` DNS traffic
+to it, so the bootstrap does not require `CAP_NET_BIND_SERVICE`.
 
 Before running `nft`, the bootstrap sets no-new-privileges and narrows its
 capability sets so only `CAP_NET_ADMIN` crosses that trusted child exec. Before

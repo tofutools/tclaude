@@ -8,15 +8,19 @@ import (
 )
 
 const (
-	FilteredNetworkNFTTable       = "tclaude_filter"
-	FilteredNetworkLoopbackIPv4   = "169.254.2.2"
-	FilteredNetworkLoopbackIPv6   = "fd00::2"
-	FilteredNetworkGatewayIPv6    = "fe80::1"
-	FilteredNetworkDNSIPv4        = "127.0.0.53"
-	FilteredNetworkBootstrapPath  = "/tmp/.tclaude-filtered-bootstrap"
-	FilteredNetworkNFTPolicyPath  = "/tmp/.tclaude-filtered-policy.nft"
-	FilteredNetworkBootstrapReady = "filtered-network-policy-ready"
-	FilteredNetworkDNSSetSize     = 4096
+	FilteredNetworkNFTTable     = "tclaude_filter"
+	FilteredNetworkLoopbackIPv4 = "169.254.2.2"
+	FilteredNetworkLoopbackIPv6 = "fd00::2"
+	FilteredNetworkGatewayIPv6  = "fe80::1"
+	FilteredNetworkDNSIPv4      = "127.0.0.53"
+	// FilteredNetworkDNSListenerPort is deliberately unprivileged. resolv.conf
+	// still targets port 53; the namespace-local nft output hook redirects only
+	// that private resolver address to this listener before filtering.
+	FilteredNetworkDNSListenerPort = 1053
+	FilteredNetworkBootstrapPath   = "/tmp/.tclaude-filtered-bootstrap"
+	FilteredNetworkNFTPolicyPath   = "/tmp/.tclaude-filtered-policy.nft"
+	FilteredNetworkBootstrapReady  = "filtered-network-policy-ready"
+	FilteredNetworkDNSSetSize      = 4096
 )
 
 // The batch starts from a fresh private namespace and is applied with nft -f,
@@ -39,6 +43,15 @@ func RenderFilteredNetworkNFT(rules FilteredNetworkRuleSet) (string, error) {
 	var body strings.Builder
 	body.WriteString("flush ruleset\n")
 	body.WriteString("table inet " + FilteredNetworkNFTTable + " {\n")
+	body.WriteString("  chain dns_redirect {\n")
+	body.WriteString("    type nat hook output priority dstnat; policy accept;\n")
+	body.WriteString("    ip daddr " + FilteredNetworkDNSIPv4 +
+		" udp dport 53 dnat ip to " + FilteredNetworkDNSIPv4 + ":" +
+		strconv.Itoa(FilteredNetworkDNSListenerPort) + "\n")
+	body.WriteString("    ip daddr " + FilteredNetworkDNSIPv4 +
+		" tcp dport 53 dnat ip to " + FilteredNetworkDNSIPv4 + ":" +
+		strconv.Itoa(FilteredNetworkDNSListenerPort) + "\n")
+	body.WriteString("  }\n")
 	for _, polarity := range []struct {
 		deny  bool
 		rules []FilteredNetworkRule

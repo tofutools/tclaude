@@ -118,12 +118,10 @@ func filteredNetworkProbeCapabilityCheck(posture sandboxpolicy.NetworkPosture) s
 	if posture != sandboxpolicy.NetworkFiltered {
 		return ""
 	}
-	// CAP_NET_ADMIN is bit 12: the fourth hex digit from the right must be
-	// odd. CAP_NET_BIND_SERVICE is bit 10: the third digit must have bit 2.
+	// CAP_NET_ADMIN is bit 12: the fourth hex digit from the right must be odd.
 	// This stays within POSIX shell vocabulary and needs no probe helper.
 	return ` && cap_eff=$(sed -n 's/^CapEff:[[:space:]]*//p' /proc/self/status)` +
-		` && case "$cap_eff" in *[13579bBdDfF]???) true ;; *) false ;; esac` +
-		` && case "$cap_eff" in *[4567cCdDeEfF]??) true ;; *) false ;; esac`
+		` && case "$cap_eff" in *[13579bBdDfF]???) true ;; *) false ;; esac`
 }
 
 func resolveBwrapBinary(

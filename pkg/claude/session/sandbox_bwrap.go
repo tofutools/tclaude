@@ -1905,8 +1905,8 @@ func bwrapArgsWithDaemonFinal(
 	case sandboxpolicy.NetworkFiltered:
 		// Rootless bubblewrap maps the invoking host user to namespace root.
 		// That identity is required only so the sealed bootstrap can receive
-		// CAP_NET_ADMIN for the namespace-local nft policy and
-		// CAP_NET_BIND_SERVICE for its private DNS listener. Host file ownership
+		// CAP_NET_ADMIN for the namespace-local nft policy. The private DNS
+		// listener uses an unprivileged port behind an nft redirect. Host file ownership
 		// remains the invoking user's, and the bootstrap zeroes and verifies
 		// every capability set before the harness exec.
 		args = append(args,
