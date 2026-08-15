@@ -1,8 +1,10 @@
 package agentd_test
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -325,6 +327,62 @@ func TestReincarnate_TemporaryOffDisablesTclaudeOuterLayer(t *testing.T) {
 	require.True(t, ok, "reincarnation must record the successor's sandbox mode")
 	assert.Equal(t, harness.ClaudeSandboxOff, mode,
 		"temporary off must also disable the harness-native sandbox")
+}
+
+func TestSandboxRestart_CodexUnlockRepairsPersistedThreadPolicy(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	t.Setenv("CODEX_HOME", t.TempDir())
+	f := newFlow(t)
+	f.HaveGroup("crew")
+
+	source := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name":    "codex-unlock-source",
+		"harness": harness.CodexName,
+		"sandbox": harness.SandboxManagedProfile,
+	})
+	require.Equalf(t, http.StatusOK, source.Code, "spawn body=%s", source.Raw)
+	profile, err := db.AgentRelaunchProfileForConv(source.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, profile)
+	require.NotNil(t, profile.CodexStateRoot)
+	stateRoot := *profile.CodexStateRoot
+	stateDB, err := sql.Open("sqlite", filepath.Join(stateRoot, "state_5.sqlite"))
+	require.NoError(t, err)
+	_, err = stateDB.Exec(`CREATE TABLE threads (
+		id TEXT PRIMARY KEY,
+		sandbox_policy TEXT NOT NULL,
+		approval_mode TEXT NOT NULL
+	)`)
+	require.NoError(t, err)
+	result, err := stateDB.Exec(`INSERT INTO threads (id, sandbox_policy, approval_mode)
+		VALUES (?, ?, ?)`, source.ConvID, `{"type":"managed"}`, "on-request")
+	require.NoError(t, err)
+	rows, err := result.RowsAffected()
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows, "the Codex simulator must create the resumed thread row")
+	require.NoError(t, stateDB.Close())
+
+	f.SetSessionStatus(source.ConvID, "idle")
+	unlock := testharness.Serve(agentd.BuildDashboardHandlerForTest(),
+		testharness.JSONRequest(t, http.MethodPost,
+			"/api/agents/"+source.ConvID+"/sandbox-restart",
+			map[string]any{"action": "unlock"}))
+	require.Equalf(t, http.StatusOK, unlock.Code, "unlock body=%s", unlock.Body.String())
+	mode, ok := f.World.SpawnSandbox(source.ConvID)
+	require.True(t, ok, "temporary restart must reach the simulated spawner")
+	assert.Equal(t, harness.SandboxDangerFull, mode)
+
+	stateDB, err = sql.Open("sqlite", filepath.Join(stateRoot, "state_5.sqlite"))
+	require.NoError(t, err)
+	defer func() { _ = stateDB.Close() }()
+	var policy, approval string
+	require.NoError(t, stateDB.QueryRow(
+		`SELECT sandbox_policy, approval_mode FROM threads WHERE id = ?`, source.ConvID,
+	).Scan(&policy, &approval))
+	assert.Equal(t, `{"type":"disabled"}`, policy,
+		"Codex resume must not retain the preceding managed sandbox")
+	assert.Equal(t, "on-request", approval,
+		"sandbox restart must preserve the independent approval posture")
 }
 
 func TestSandboxRestart_RestoresExactDurableImplementation(t *testing.T) {
