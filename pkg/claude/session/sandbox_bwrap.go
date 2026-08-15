@@ -749,12 +749,29 @@ func ProbeFilteredNetworkPrerequisite() FilteredNetworkPrerequisite {
 // ValidateFilteredNetworkHarnessSupport is the harness activation seam. All
 // currently registered tclaude-layer harnesses consume the Linux filtered
 // gateway; provider-specific model transport remains independently fail-closed.
+//
+// Ordinary filtered rules retain the historical widen-and-disclose behavior
+// when the gateway is unavailable. An explicitly private namespace is
+// different: its topology is the policy, so falling back to host networking
+// would violate the operator's selection. Refuse it here, where the exact live
+// probe detail is still available, rather than later in the capability table
+// after that result has been reduced to a boolean.
 func ValidateFilteredNetworkHarnessSupport(
 	_ *harness.Harness,
 	_ sandboxpolicy.Implementation,
-	_ sandboxpolicy.ResolvedAxes,
-	_ FilteredNetworkPrerequisite,
+	axes sandboxpolicy.ResolvedAxes,
+	probe FilteredNetworkPrerequisite,
 ) error {
+	if axes.Network.Namespace == sandboxpolicy.NetworkNamespacePrivate &&
+		!probe.Detected {
+		detail := strings.TrimSpace(probe.Detail)
+		if detail == "" {
+			detail = "the prerequisite probe returned no detail"
+		}
+		return fmt.Errorf(
+			"network.namespace %q requires the Linux private-network prerequisites: %s",
+			axes.Network.Namespace, detail)
+	}
 	return nil
 }
 

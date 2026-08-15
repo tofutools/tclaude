@@ -251,6 +251,37 @@ func TestPlanSandboxProfileAccessActivatesReadyOpenCodeWithExplicitProvider(t *t
 	require.Nil(t, failure)
 }
 
+func TestPlanSandboxProfileAccessPrivateNetworkReportsExactProbeFailure(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("private routed networking is Linux-only")
+	}
+	oldProbe := probeFilteredNetworkPrerequisite
+	t.Cleanup(func() { probeFilteredNetworkPrerequisite = oldProbe })
+	probeFilteredNetworkPrerequisite = func() session.FilteredNetworkPrerequisite {
+		return session.FilteredNetworkPrerequisite{
+			Detail: "rootless pasta is required: executable file not found in $PATH",
+		}
+	}
+	snapshot := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
+		Network: &sandboxpolicy.NetworkRules{
+			Mode:      sandboxpolicy.AccessModeOpen,
+			Namespace: sandboxpolicy.NetworkNamespacePrivate,
+		},
+	}}
+
+	_, failure := planSandboxProfileAccessForLaunch(
+		harness.OpenCodeName,
+		harness.OpenCodeSandboxTclaudeLayer,
+		snapshot,
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+		session.ModelTransportLaunchContext{},
+		false,
+	)
+	require.NotNil(t, failure)
+	require.Contains(t, failure.Msg,
+		"rootless pasta is required: executable file not found in $PATH")
+}
+
 // TestPlanSandboxProfileAccessEnforcesOpenCodeLinuxDenyRows pins the launch
 // side of the OpenCode deny activation: a default-allow profile carrying a deny
 // row must resolve the filtered posture and keep that row, instead of omitting
