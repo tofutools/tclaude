@@ -76,6 +76,121 @@ func TestCronSpawnConcurrencyPolicies(t *testing.T) {
 	})
 }
 
+func TestCronSpawnRestartWindowAdvancesCadenceBeforeDispatch(t *testing.T) {
+	for _, policy := range []string{db.CronConcurrencyForbid, db.CronConcurrencyReplace, db.CronConcurrencyAllow} {
+		t.Run(policy, func(t *testing.T) {
+			_, job := cronSpawnFixture(t, policy, 2)
+			now := time.Now().UTC()
+			d, err := db.Open()
+			require.NoError(t, err)
+			_, err = d.Exec(`UPDATE agent_cron_jobs SET created_at=? WHERE id=?`, now.Add(-9*time.Hour).UnixNano(), job.ID)
+			require.NoError(t, err)
+			const crash = "crash-after-cadence"
+			restore := agentd.SetCronAfterSpawnCadenceForTest(func(int64) { panic(crash) })
+			func() {
+				defer func() { assert.Equal(t, crash, recover()) }()
+				agentd.RunCronTickForTest(now)
+			}()
+			restore()
+			workers, err := db.ListActiveCronWorkers(job.ID)
+			require.NoError(t, err)
+			assert.Empty(t, workers, "crash happened before reservation/dispatch")
+			runs, err := db.ListAgentCronRunsForJob(job.ID, 10)
+			require.NoError(t, err)
+			require.Len(t, runs, 1)
+			assert.Equal(t, "running", runs[0].Status)
+
+			agentd.RunCronTickForTest(now.Add(time.Minute))
+			runs, err = db.ListAgentCronRunsForJob(job.ID, 10)
+			require.NoError(t, err)
+			require.Len(t, runs, 1, "restart must not dispatch the same due tick again")
+			assert.Equal(t, "interrupted", runs[0].Status)
+		})
+	}
+}
+
+func TestCronSpawnTickClosesStaleRunningRunAndOwnerlessReservation(t *testing.T) {
+	_, job := cronSpawnFixture(t, db.CronConcurrencyForbid, 1)
+	now := time.Now().UTC()
+	runID, err := db.InsertAgentCronRun(&db.AgentCronRun{JobID: job.ID, FiredAt: now.Add(-2 * time.Minute), Status: "running"})
+	require.NoError(t, err)
+	_, err = db.InsertTriggerWorker(&db.TriggerWorker{CronJobID: job.ID, CronRunID: runID,
+		ActionIndex: 0, AgentID: db.NewAgentID(), State: "reserved", CreatedAt: now.Add(-2 * time.Minute)})
+	require.NoError(t, err)
+	_, err = db.InsertTriggerWorker(&db.TriggerWorker{CronJobID: job.ID,
+		ActionIndex: 0, AgentID: db.NewAgentID(), State: "reserved", CreatedAt: now.Add(-2 * time.Minute)})
+	require.NoError(t, err)
+
+	agentd.RunCronTickForTest(now)
+	active, err := db.ListActiveCronWorkers(job.ID)
+	require.NoError(t, err)
+	assert.Empty(t, active, "stale and ownerless reservations cannot block Forbid forever")
+	runs, err := db.ListAgentCronRunsForJob(job.ID, 10)
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, "interrupted", runs[0].Status)
+}
+
+func TestCronSpawnReplaceFailsClosedWhenPriorWorkerCannotBeStopped(t *testing.T) {
+	f, job := cronSpawnFixture(t, db.CronConcurrencyReplace, 1)
+	_, err := db.InsertTriggerWorker(&db.TriggerWorker{
+		CronJobID: job.ID, ActionIndex: 0, AgentID: db.NewAgentID(), State: "reserved", CreatedAt: time.Now(),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "replace_stop_failed", runCronNow(t, f, job.ID))
+	workers, err := db.ListActiveCronWorkers(job.ID)
+	require.NoError(t, err)
+	assert.Len(t, workers, 1, "failed stop must not launch a replacement")
+}
+
+func TestManagedSpawnLostPromotionRaceIsHonestForCronAndTrigger(t *testing.T) {
+	losePromotion := func(workerID int64) {
+		require.NoError(t, db.CompleteTriggerWorker(workerID, "deadline_exceeded", "test race", time.Now()))
+	}
+
+	t.Run("cron", func(t *testing.T) {
+		f, job := cronSpawnFixture(t, db.CronConcurrencyForbid, 1)
+		t.Cleanup(agentd.SetManagedWorkerBeforePromotionForTest(losePromotion))
+		assert.Equal(t, "spawned_tracking_failed", runCronNow(t, f, job.ID))
+		workers, err := db.ListActiveCronWorkers(job.ID)
+		require.NoError(t, err)
+		assert.Empty(t, workers)
+	})
+
+	t.Run("trigger", func(t *testing.T) {
+		f := triggerFlow(t)
+		f.HaveGroup("alpha")
+		_, err := db.SetAgentGroupDefaultCwd("alpha", t.TempDir())
+		require.NoError(t, err)
+		_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "reviewer", Harness: "claude"})
+		require.NoError(t, err)
+		const author = "promotion-race-author"
+		f.HaveConvWithTitle(author, "author")
+		f.HaveMember("alpha", author)
+		g, err := db.GetAgentGroupByName("alpha")
+		require.NoError(t, err)
+		ruleID, err := db.InsertTriggerRule(&db.TriggerRule{Name: "promotion-race", Enabled: true, OperatorAuthored: true,
+			ScopeKind: db.TriggerScopeGroup, GroupID: g.ID, Source: db.TriggerSourcePROpened,
+			DraftFilter: db.TriggerDraftInclude, Actions: []db.TriggerAction{{Type: db.TriggerActionSpawn,
+				Spawn: &db.TriggerSpawnAction{Profile: "reviewer", InstructionTemplate: "review", MaxLiveWorkers: 1}}}})
+		require.NoError(t, err)
+		authorAgent, err := db.AgentIDForConv(author)
+		require.NoError(t, err)
+		_, err = db.UpsertAgentPR(authorAgent, "https://github.com/o/r/pull/123", "ready", "open")
+		require.NoError(t, err)
+		t.Cleanup(agentd.SetManagedWorkerBeforePromotionForTest(losePromotion))
+		agentd.RunTriggerTickForTest(time.Now().Add(time.Second))
+		rows, err := db.ListTriggerFirings(ruleID, 10)
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		require.Len(t, rows[0].Actions, 1)
+		assert.Equal(t, "spawned_tracking_failed", rows[0].Actions[0].Outcome)
+		active, err := db.ListActiveTriggerWorkers()
+		require.NoError(t, err)
+		assert.Empty(t, active)
+	})
+}
+
 func TestCronSpawnRestartEvidencePreventsDuplicateAndDenialIsNotRetried(t *testing.T) {
 	t.Run("deadline terminal state reaches cron history", func(t *testing.T) {
 		f, job := cronSpawnFixture(t, db.CronConcurrencyForbid, 1)
@@ -150,4 +265,41 @@ func TestCronSpawnFeatureGateLeavesMessageCronAvailable(t *testing.T) {
 		"target": "group:alpha", "interval": "1h", "body": "still works",
 	})))
 	assert.Equal(t, http.StatusOK, message.Code, message.Body.String())
+}
+
+func TestCronSpawnCreateWarnsAboutMissingGrantAndPatchRejectsUnsupportedEdits(t *testing.T) {
+	f := triggerFlow(t)
+	f.HaveGroup("alpha")
+	_, err := db.SetAgentGroupDefaultCwd("alpha", t.TempDir())
+	require.NoError(t, err)
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "scanner", Harness: "claude"})
+	require.NoError(t, err)
+	const owner = "cron-warning-owner"
+	f.HaveConvWithTitle(owner, "owner")
+	f.HaveMember("alpha", owner)
+	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/cron", map[string]any{
+		"name": "warning", "target": "group:alpha", "owner": owner, "interval": "8h",
+		"action_kind": "spawn", "spawn_profile": "scanner", "spawn_instruction_template": "scan",
+	})))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var created struct {
+		ID       int64    `json:"id"`
+		Warnings []string `json:"warnings"`
+	}
+	testharness.DecodeJSON(t, rec, &created)
+	require.Len(t, created.Warnings, 1)
+	assert.Contains(t, created.Warnings[0], agentd.PermGroupsMembersSpawn)
+
+	for name, body := range map[string]map[string]any{
+		"retarget":      {"target": "group:alpha"},
+		"spawn payload": {"spawn_instruction_template": "new scan"},
+		"action kind":   {"action_kind": "message"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			patch := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPatch,
+				fmt.Sprintf("/v1/cron/%d", created.ID), body)))
+			assert.Equal(t, http.StatusBadRequest, patch.Code, patch.Body.String())
+			assert.Contains(t, patch.Body.String(), "recreate the cron job")
+		})
+	}
 }

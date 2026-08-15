@@ -28,6 +28,7 @@ const triggerCIPollBatch = 20
 // ordering guarantee cron uses: every side effect re-reads the rule and live
 // principal while holding this lock.
 var triggerAuthorityMu sync.Mutex
+var managedWorkerBeforePromotionForTest func(int64)
 
 var triggerCIWatchState = struct {
 	sync.Mutex
@@ -488,6 +489,7 @@ type managedWorkerSource struct {
 	CronRunID     int64
 	RatePrincipal string
 	Tag           string
+	OwnerConv     string
 }
 
 func executeManagedSpawn(rule *db.TriggerRule, index int, spec *db.TriggerSpawnAction, event db.TriggerPREvent, now time.Time, source managedWorkerSource) (string, string, string) {
@@ -498,9 +500,13 @@ func executeManagedSpawn(rule *db.TriggerRule, index int, spec *db.TriggerSpawnA
 	if err != nil {
 		return "target_invalid", err.Error(), ""
 	}
-	ownerConv, err := triggerOwnerConv(rule)
-	if err != nil {
-		return "permission_denied", err.Error(), ""
+	ownerConv := source.OwnerConv
+	if source.CronJobID == 0 {
+		var err error
+		ownerConv, err = triggerOwnerConv(rule)
+		if err != nil {
+			return "permission_denied", err.Error(), ""
+		}
 	}
 	profile, err := db.ResolveSpawnProfile(spec.Profile)
 	if err != nil {
@@ -675,11 +681,33 @@ func executeManagedSpawn(rule *db.TriggerRule, index int, spec *db.TriggerSpawnA
 		_ = db.CompleteTriggerWorker(workerID, "failed", "spawn returned a different stable agent identity", time.Now().UTC())
 		return "spawned_tracking_failed", "spawn returned a different stable agent identity", agentID
 	}
-	if err := db.MarkTriggerWorkerDispatched(workerID, out.ConvID, out.Label); err != nil {
+	if managedWorkerBeforePromotionForTest != nil {
+		managedWorkerBeforePromotionForTest(workerID)
+	}
+	promoted, err := db.MarkTriggerWorkerDispatched(workerID, out.ConvID, out.Label)
+	if err != nil {
 		return "spawned_tracking_pending", err.Error(), agentID
+	}
+	if !promoted {
+		conv := strings.TrimSpace(out.ConvID)
+		if conv == "" {
+			conv, _ = db.CurrentConvForAgent(agentID)
+		}
+		if conv != "" {
+			_ = stopOneConv(conv, false)
+		}
+		return "spawned_tracking_failed", "worker reservation ended while spawn dispatch was in progress; launched worker was stopped best-effort", agentID
 	}
 	_ = db.AddAgentTags(agentID, source.Tag)
 	return "spawned", "", agentID
+}
+
+// SetManagedWorkerBeforePromotionForTest installs a deterministic seam after
+// launch and before the reserved worker CAS is promoted to pending/live.
+func SetManagedWorkerBeforePromotionForTest(fn func(int64)) func() {
+	old := managedWorkerBeforePromotionForTest
+	managedWorkerBeforePromotionForTest = fn
+	return func() { managedWorkerBeforePromotionForTest = old }
 }
 
 func executeTriggerMessage(rule *db.TriggerRule, spec *db.TriggerMessageAction, event db.TriggerPREvent) (string, string, int64) {

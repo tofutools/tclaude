@@ -78,10 +78,11 @@ type jobJSON struct {
 	// tclaude-paused rhythm from a hand-paused one — `task-force status`
 	// (JOH-346) renders it as "disabled (auto: group-retired)". omitempty:
 	// only the exceptional auto-disabled state serializes.
-	DisabledReason string `json:"disabled_reason,omitempty"`
-	CreatedAt      string `json:"created_at,omitempty"`
-	LastRunAt      string `json:"last_run_at,omitempty"`
-	LastRunStatus  string `json:"last_run_status,omitempty"`
+	DisabledReason string   `json:"disabled_reason,omitempty"`
+	CreatedAt      string   `json:"created_at,omitempty"`
+	LastRunAt      string   `json:"last_run_at,omitempty"`
+	LastRunStatus  string   `json:"last_run_status,omitempty"`
+	Warnings       []string `json:"warnings,omitempty"`
 }
 
 func toJobJSON(j *db.AgentCronJob) jobJSON {
@@ -600,6 +601,7 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 		SpawnMaxLiveWorkers:        body.SpawnMaxLiveWorkers,
 		SpawnWorkerDeadlineSeconds: body.SpawnWorkerDeadlineSeconds,
 	}
+	var createWarnings []string
 	var createCaller string
 
 	if ct.Kind == db.CronTargetGroup {
@@ -688,6 +690,21 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 		job.GroupID = groupID
 		job.OwnerConv = owner
 	}
+	if actionKind == db.CronActionSpawn {
+		profile, err := db.ResolveSpawnProfile(job.SpawnProfile)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", "resolve spawn profile: "+err.Error())
+			return
+		}
+		if profile == nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", fmt.Sprintf("spawn profile %q does not exist", job.SpawnProfile))
+			return
+		}
+		job.SpawnProfile = profile.Name
+		if warning := cronSpawnPreflightWarning(r, job.OwnerConv, ct.Group, profile.Name); warning != "" {
+			createWarnings = append(createWarnings, warning)
+		}
+	}
 
 	if job.RunImmediately || explicitRoutingGroup != nil {
 		if cronBeforeAuthorityLockForTest != nil {
@@ -726,7 +743,30 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		row, _ = db.GetAgentCronJob(id)
 	}
-	writeJSON(w, http.StatusOK, toJobJSON(row))
+	out := toJobJSON(row)
+	out.Warnings = createWarnings
+	writeJSON(w, http.StatusOK, out)
+}
+
+// cronSpawnPreflightWarning is advisory: permissions can change between job
+// creation and firing, so fire-time reauthorization remains authoritative.
+func cronSpawnPreflightWarning(r *http.Request, ownerConv string, g *db.AgentGroup, profile string) string {
+	if ownerConv == "" || g == nil {
+		return ""
+	}
+	authRequest := nonInteractiveCronAuthRequest(r)
+	ctx := ActionContext{Group: g.Name, SpawnProfile: profile, structuralGroup: g.Name}
+	allowed, _, err := permissionAllowsAction(authRequest, ownerConv, PermGroupsMembersSpawn, ctx)
+	if err == nil && !allowed && resolvePermissionVerdictForRequest(authRequest, ownerConv, PermGroupsMembersSpawn).Resolution != permDeny {
+		allowed, _ = structuralPermissionMatch(ownerConv, PermGroupsMembersSpawn, ctx)
+	}
+	if err != nil {
+		return "could not verify the owning agent's spawn permission; firing will reauthorize and may be denied"
+	}
+	if !allowed {
+		return fmt.Sprintf("owning agent lacks %s for group %s and spawn profile %s; firing will be denied until granted", PermGroupsMembersSpawn, g.Name, profile)
+	}
+	return ""
 }
 
 // resolveCronTarget turns a cron `target` selector into a concrete
@@ -882,6 +922,17 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 		return
 	}
 	patch := decoded.patch
+	if decoded.spawnPayloadPresent {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			"spawn action and payload fields are not editable yet; recreate the cron job")
+		return
+	}
+	if job.ActionKind == db.CronActionSpawn && (decoded.targetSelector != nil || patch.GroupID != nil ||
+		patch.TargetRole != nil || patch.Body != nil || patch.Subject != nil || patch.QueueWhenOffline != nil) {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			"spawn jobs cannot be retargeted or edited with message-only fields; recreate the cron job")
+		return
+	}
 	// Resolve user-facing selectors before taking cronAuthorityMu: the normal
 	// resolver may refresh the conversation index from project files. Errors are
 	// deliberately held until after the common locked boundary so an agent
@@ -1072,10 +1123,11 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 // Empty body / no recognised fields is allowed and produces an
 // empty patch — handleCronPatch then no-ops cleanly.
 type decodedCronPatch struct {
-	patch          db.UpdateCronPatch
-	targetSelector *string
-	target         *cronTarget
-	owner          *string
+	patch               db.UpdateCronPatch
+	targetSelector      *string
+	target              *cronTarget
+	owner               *string
+	spawnPayloadPresent bool
 }
 
 // cronActor is a selector resolved to both forms of one actor identity. Agent
@@ -1091,18 +1143,26 @@ type cronActor struct {
 
 func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (decodedCronPatch, bool) {
 	var body struct {
-		Name             *string `json:"name,omitempty"`
-		Target           *string `json:"target,omitempty"`
-		Owner            *string `json:"owner,omitempty"`
-		Interval         *string `json:"interval,omitempty"`
-		CronExpr         *string `json:"cron_expr,omitempty"`
-		Subject          *string `json:"subject,omitempty"`
-		Body             *string `json:"body,omitempty"`
-		Enabled          *bool   `json:"enabled,omitempty"`
-		RunImmediately   *bool   `json:"run_immediately,omitempty"`
-		QueueWhenOffline *bool   `json:"queue_when_offline,omitempty"`
-		GroupID          *int64  `json:"group_id,omitempty"`
-		Role             *string `json:"role,omitempty"`
+		Name                       *string          `json:"name,omitempty"`
+		Target                     *string          `json:"target,omitempty"`
+		Owner                      *string          `json:"owner,omitempty"`
+		Interval                   *string          `json:"interval,omitempty"`
+		CronExpr                   *string          `json:"cron_expr,omitempty"`
+		Subject                    *string          `json:"subject,omitempty"`
+		Body                       *string          `json:"body,omitempty"`
+		Enabled                    *bool            `json:"enabled,omitempty"`
+		RunImmediately             *bool            `json:"run_immediately,omitempty"`
+		QueueWhenOffline           *bool            `json:"queue_when_offline,omitempty"`
+		GroupID                    *int64           `json:"group_id,omitempty"`
+		Role                       *string          `json:"role,omitempty"`
+		ActionKind                 *string          `json:"action_kind,omitempty"`
+		SpawnProfile               *string          `json:"spawn_profile,omitempty"`
+		SpawnRoles                 *json.RawMessage `json:"spawn_roles,omitempty"`
+		SpawnNameTemplate          *string          `json:"spawn_name_template,omitempty"`
+		SpawnInstructionTemplate   *string          `json:"spawn_instruction_template,omitempty"`
+		SpawnConcurrencyPolicy     *string          `json:"spawn_concurrency_policy,omitempty"`
+		SpawnMaxLiveWorkers        *int             `json:"spawn_max_live_workers,omitempty"`
+		SpawnWorkerDeadlineSeconds *int64           `json:"spawn_worker_deadline_seconds,omitempty"`
 	}
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -1194,6 +1254,10 @@ func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (decodedCronPat
 	}
 	return decodedCronPatch{
 		patch: patch, targetSelector: body.Target, owner: body.Owner,
+		spawnPayloadPresent: body.ActionKind != nil || body.SpawnProfile != nil || body.SpawnRoles != nil ||
+			body.SpawnNameTemplate != nil || body.SpawnInstructionTemplate != nil ||
+			body.SpawnConcurrencyPolicy != nil || body.SpawnMaxLiveWorkers != nil ||
+			body.SpawnWorkerDeadlineSeconds != nil,
 	}, true
 }
 

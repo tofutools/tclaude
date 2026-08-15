@@ -250,6 +250,7 @@ type CronJob struct {
 	Enabled                    int64    `json:"enabled"`
 	RunImmediately             int64    `json:"run_immediately,omitempty"`
 	QueueWhenOffline           int64    `json:"queue_when_offline,omitempty"`
+	OperatorAuthored           bool     `json:"operator_authored,omitempty"`
 	CreatedAt                  string   `json:"created_at"`
 	LastRunAt                  string   `json:"last_run_at"`
 	LastRunStatus              string   `json:"last_run_status"`

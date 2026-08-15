@@ -153,6 +153,14 @@ func TestGroupExportImport_RoundTripPreservesEverything(t *testing.T) {
 		GroupID: src.ID, FromConv: bConv, ToConv: aConv, Body: "reply", ParentID: parentID,
 	})
 	require.NoError(t, err)
+	_, err = db.InsertAgentCronJob(&db.AgentCronJob{
+		Name: "operator-spawn", TargetKind: db.CronTargetGroup, GroupID: src.ID,
+		IntervalSeconds: 3600, Enabled: true, OperatorAuthored: true,
+		ActionKind: db.CronActionSpawn, SpawnProfile: "scanner",
+		SpawnInstructionTemplate: "scan", SpawnConcurrencyPolicy: db.CronConcurrencyForbid,
+		SpawnMaxLiveWorkers: 1,
+	})
+	require.NoError(t, err)
 
 	archive := exportGroup(t, f, "team")
 	require.NotEmpty(t, archive)
@@ -213,6 +221,11 @@ func TestGroupExportImport_RoundTripPreservesEverything(t *testing.T) {
 	permB, err := db.ListAgentPermissionOverridesForConv(bConv)
 	require.NoError(t, err)
 	assert.Equal(t, db.PermEffectDeny, permB["self.rename"], "deny override restored")
+	jobs, err := db.ListAgentCronJobs()
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	assert.True(t, jobs[0].OperatorAuthored, "operator-authored cron ownership survives export/import")
+	assert.Empty(t, jobs[0].OwnerConv, "operator-authored cron remains ownerless")
 
 	// .jsonl content restored at the new location, with the source cwd
 	// rewritten to the import target and no stale source path left.

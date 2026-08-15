@@ -1,8 +1,10 @@
 package agentd
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +28,10 @@ var cronAuthorityMu sync.Mutex
 var cronAfterDueListForTest func()
 var cronAfterAuthorityRevalidationForTest func(int64)
 var cronBeforeAuthorityLockForTest func(string)
+var cronAfterSpawnCadenceForTest func(int64)
+
+const cronReplaceStopTimeout = 5 * time.Second
+const cronInterruptedRunGrace = time.Minute
 
 // startCronScheduler spins up the agent_cron_jobs scheduler in its
 // own goroutine. The goroutine ticks every cronTickInterval, fires
@@ -38,6 +44,9 @@ var cronBeforeAuthorityLockForTest func(string)
 // downtime; for "I missed five 10-minute checks" the human can
 // always re-trigger manually.
 func startCronScheduler(stop <-chan struct{}) {
+	if _, err := db.InterruptOrphanedCronSpawns(time.Now().UTC(), time.Now().UTC()); err != nil {
+		slog.Warn("cron: close interrupted spawn runs at startup", "error", err)
+	}
 	go func() {
 		// Fire one tick immediately on startup so just-added jobs
 		// don't have to wait the full interval before their first
@@ -61,6 +70,10 @@ func startCronScheduler(stop <-chan struct{}) {
 // the result. Errors are logged per-job and never abort the sweep —
 // one bad job shouldn't stop the others from firing.
 func runCronTick(now time.Time) {
+	if _, err := db.InterruptOrphanedCronSpawns(now.UTC(), now.UTC().Add(-cronInterruptedRunGrace)); err != nil {
+		slog.Warn("cron: close stale spawn runs", "error", err)
+		return
+	}
 	due, err := db.ListDueAgentCronJobs(now)
 	if err != nil {
 		slog.Warn("cron: list due jobs failed", "error", err)
@@ -121,6 +134,16 @@ func fireCronJobAndRecord(j *db.AgentCronJob, now time.Time) (string, error) {
 	if err != nil {
 		return "history_failed", err
 	}
+	// Evidence first: advance the cadence before any spawn side effect. A crash
+	// after this point may leave an honestly incomplete run, but restart cannot
+	// replay the same due tick under Allow or Replace and create a duplicate.
+	if err := db.UpdateAgentCronJobLastRun(j.ID, now, "running"); err != nil {
+		_ = db.FinishAgentCronRun(runID, "history_failed", err.Error(), 0, "")
+		return "history_failed", err
+	}
+	if cronAfterSpawnCadenceForTest != nil {
+		cronAfterSpawnCadenceForTest(j.ID)
+	}
 	status, detail, workerID, workerAgent := fireCronSpawn(j, runID, now)
 	if err := db.FinishAgentCronRun(runID, status, detail, workerID, workerAgent); err != nil {
 		slog.Warn("cron: finish run row failed", "job", j.ID, "run", runID, "error", err)
@@ -138,6 +161,10 @@ func fireCronSpawn(j *db.AgentCronJob, runID int64, now time.Time) (string, stri
 	if !j.IsGroupTarget() || j.GroupID <= 0 {
 		return "spawn_failed", "spawn jobs require a group target", 0, ""
 	}
+	ownerConv, err := cronSpawnOwnerConv(j)
+	if err != nil {
+		return "permission_denied", err.Error(), 0, ""
+	}
 	active, err := db.ListActiveCronWorkers(j.ID)
 	if err != nil {
 		return "spawn_failed", err.Error(), 0, ""
@@ -154,16 +181,31 @@ func fireCronSpawn(j *db.AgentCronJob, runID int64, now time.Time) (string, stri
 		}
 	case db.CronConcurrencyReplace:
 		for _, worker := range active {
-			conv, _ := db.CurrentConvForAgent(worker.AgentID)
+			conv, lookupErr := db.CurrentConvForAgent(worker.AgentID)
+			if lookupErr != nil {
+				return "replace_stop_failed", "resolve prior worker: " + lookupErr.Error(), 0, ""
+			}
 			if conv == "" {
 				conv = worker.ConvID
 			}
-			if conv != "" {
-				_ = stopOneConv(conv, false)
+			if conv == "" {
+				return "replace_stop_failed", "prior worker has no known conversation", 0, ""
 			}
-			_ = db.CompleteTriggerWorker(worker.ID, "replaced", "replaced by a later cron firing", now)
+			stop, outcome := stopOneConvAndWait(conv, false, db.AgentExitActionStop, "", cronReplaceStopTimeout)
+			if stop.Action == "error" || outcome == softExitStuck || outcome == softExitUnattempted {
+				detail := strings.TrimSpace(stop.Detail)
+				if detail == "" {
+					detail = "prior worker did not stop within the bounded replace window"
+				}
+				return "replace_stop_failed", detail, 0, ""
+			}
+			if err := db.CompleteTriggerWorker(worker.ID, "replaced", "replaced by a later cron firing", now); err != nil {
+				return "replace_stop_failed", "record prior worker replacement: " + err.Error(), 0, ""
+			}
 			if worker.CronRunID > 0 {
-				_ = db.FinishAgentCronRun(worker.CronRunID, "replace_stopped", "worker replaced by a later firing", worker.ID, worker.AgentID)
+				if err := db.FinishAgentCronRun(worker.CronRunID, "replace_stopped", "worker replaced by a later firing", worker.ID, worker.AgentID); err != nil {
+					return "replace_stop_failed", "record prior run replacement: " + err.Error(), 0, ""
+				}
 			}
 			replaced = true
 		}
@@ -183,13 +225,53 @@ func fireCronSpawn(j *db.AgentCronJob, runID int64, now time.Time) (string, stri
 	event := db.TriggerPREvent{GroupIDs: []int64{j.GroupID}, OccurredAt: now}
 	status, detail, agentID := executeManagedSpawn(rule, 0, spec, event, now, managedWorkerSource{
 		CronJobID: j.ID, CronRunID: runID, RatePrincipal: fmt.Sprintf("cron:%d", j.ID),
-		Tag: fmt.Sprintf("cron:%d", j.ID),
+		Tag: fmt.Sprintf("cron:%d", j.ID), OwnerConv: ownerConv,
 	})
 	workerID, _ := db.ManagedWorkerIDForAgent(agentID)
 	if status == "spawned" && replaced {
 		status = "replace_stopped"
 	}
 	return status, detail, workerID, agentID
+}
+
+func cronSpawnOwnerConv(j *db.AgentCronJob) (string, error) {
+	if j.OperatorAuthored {
+		return "", nil
+	}
+	owner, err := db.GetAgent(j.OwnerAgent)
+	if err != nil {
+		return "", err
+	}
+	if !owner.Active() {
+		return "", errors.New("owning agent is retired or unavailable")
+	}
+	conv, err := db.CurrentConvForAgent(j.OwnerAgent)
+	if err != nil {
+		return "", err
+	}
+	if conv == "" {
+		return "", errors.New("owning agent has no current conversation")
+	}
+	g, err := db.GetAgentGroupByID(j.GroupID)
+	if err != nil {
+		return "", err
+	}
+	if g == nil || g.IsArchived() {
+		return "", errors.New("cron target group is unavailable")
+	}
+	req, _ := http.NewRequest(http.MethodPost, "http://cron.invalid", nil)
+	ctx := ActionContext{Group: g.Name, structuralGroup: g.Name}
+	allowed, _, authErr := permissionAllowsAction(req, conv, PermGroupsMessagesSchedule, ctx)
+	if authErr != nil {
+		return "", authErr
+	}
+	if !allowed && resolvePermissionVerdictForRequest(req, conv, PermGroupsMessagesSchedule).Resolution != permDeny {
+		allowed, _ = structuralPermissionMatch(conv, PermGroupsMessagesSchedule, ctx)
+	}
+	if !allowed {
+		return "", fmt.Errorf("owner lacks %s for group %s", PermGroupsMessagesSchedule, g.Name)
+	}
+	return conv, nil
 }
 
 // SetCronAfterDueListForTest installs a deterministic scheduler race hook.
@@ -215,6 +297,14 @@ func SetCronBeforeAuthorityLockForTest(fn func(string)) func() {
 	old := cronBeforeAuthorityLockForTest
 	cronBeforeAuthorityLockForTest = fn
 	return func() { cronBeforeAuthorityLockForTest = old }
+}
+
+// SetCronAfterSpawnCadenceForTest installs a crash-window seam after a spawn
+// run has durably advanced cadence but before worker reservation/dispatch.
+func SetCronAfterSpawnCadenceForTest(fn func(int64)) func() {
+	old := cronAfterSpawnCadenceForTest
+	cronAfterSpawnCadenceForTest = fn
+	return func() { cronAfterSpawnCadenceForTest = old }
 }
 
 // RunCronTickForTest runs one scheduler sweep synchronously.

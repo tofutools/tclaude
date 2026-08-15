@@ -933,17 +933,21 @@ func InsertTriggerWorker(w *TriggerWorker) (int64, error) {
 	return res.LastInsertId()
 }
 
-func MarkTriggerWorkerDispatched(id int64, convID, pendingLabel string) error {
+func MarkTriggerWorkerDispatched(id int64, convID, pendingLabel string) (bool, error) {
 	state := "pending"
 	if strings.TrimSpace(convID) != "" {
 		state = "live"
 	}
 	d, err := Open()
 	if err != nil {
-		return err
+		return false, err
 	}
-	_, err = d.Exec(`UPDATE trigger_workers SET conv_id=?,pending_label=?,state=? WHERE id=? AND state='reserved'`, strings.TrimSpace(convID), strings.TrimSpace(pendingLabel), state, id)
-	return err
+	res, err := d.Exec(`UPDATE trigger_workers SET conv_id=?,pending_label=?,state=? WHERE id=? AND state='reserved'`, strings.TrimSpace(convID), strings.TrimSpace(pendingLabel), state, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }
 func RuleSpawnedAgent(ruleID int64, agentID string) (bool, error) {
 	d, err := Open()
@@ -1015,7 +1019,7 @@ func ManagedWorkerIDForAgent(agentID string) (int64, error) {
 }
 
 func CompleteTriggerWorker(id int64, state, detail string, now time.Time) error {
-	if state != "failed" && state != "exited" && state != "deadline_exceeded" && state != "replaced" {
+	if state != "failed" && state != "exited" && state != "deadline_exceeded" && state != "replaced" && state != "interrupted" {
 		return errors.New("invalid trigger worker terminal state")
 	}
 	d, err := Open()
@@ -1024,4 +1028,47 @@ func CompleteTriggerWorker(id int64, state, detail string, now time.Time) error 
 	}
 	_, err = d.Exec(`UPDATE trigger_workers SET state=?,detail=?,completed_at=? WHERE id=? AND state IN ('reserved','pending','live')`, state, detail, dbTime(now.UTC()), id)
 	return err
+}
+
+// InterruptOrphanedCronSpawns closes crash evidence that can otherwise hold a
+// Forbid job forever. staleBefore is now at daemon startup (all running work is
+// from the prior process) and a bounded cutoff during ordinary ticks.
+func InterruptOrphanedCronSpawns(now, staleBefore time.Time) (int64, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	detail := "daemon stopped before cron spawn completed"
+	workerRes, err := tx.Exec(`UPDATE trigger_workers
+		SET state='interrupted',detail=?,completed_at=?
+		WHERE state='reserved' AND cron_job_id IS NOT NULL AND created_at<=? AND (
+			deadline_at IS NOT NULL AND deadline_at<=? OR cron_run_id IS NULL OR
+			NOT EXISTS (SELECT 1 FROM agent_cron_runs r WHERE r.id=trigger_workers.cron_run_id AND r.status='running') OR
+			EXISTS (SELECT 1 FROM agent_cron_runs r WHERE r.id=trigger_workers.cron_run_id AND r.status='running' AND r.fired_at<=?)
+		)`, detail, dbTime(now.UTC()), dbTime(staleBefore.UTC()), dbTime(now.UTC()), dbTime(staleBefore.UTC()))
+	if err != nil {
+		return 0, err
+	}
+	runRes, err := tx.Exec(`UPDATE agent_cron_runs SET status='interrupted',error_msg=?
+		WHERE status='running' AND fired_at<=?`, detail, dbTime(staleBefore.UTC()))
+	if err != nil {
+		return 0, err
+	}
+	workers, err := workerRes.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	runs, err := runRes.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return workers + runs, nil
 }

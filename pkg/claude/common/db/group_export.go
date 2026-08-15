@@ -291,7 +291,7 @@ func collectCronJobs(d *sql.DB, groupID int64) ([]groupexport.CronJob, []string,
 		       j.interval_seconds, j.subject, j.body, j.action_kind,j.spawn_profile,j.spawn_role_refs_json,
 		       j.spawn_name_template,j.spawn_instruction_template,j.spawn_concurrency_policy,
 		       j.spawn_max_live_workers,j.spawn_worker_deadline_seconds,
-		       j.enabled, j.run_immediately, j.queue_when_offline, j.created_at, j.last_run_at, j.last_run_status
+		       j.enabled, j.run_immediately, j.queue_when_offline, j.operator_authored, j.created_at, j.last_run_at, j.last_run_status
 		FROM agent_cron_jobs j
 		LEFT JOIN agents ow ON ow.agent_id = j.owner_agent
 		LEFT JOIN agents tg ON tg.agent_id = j.target_agent
@@ -310,7 +310,7 @@ func collectCronJobs(d *sql.DB, groupID int64) ([]groupexport.CronJob, []string,
 			&j.IntervalSeconds, &j.Subject, &j.Body, &j.ActionKind, &j.SpawnProfile, &spawnRolesJSON,
 			&j.SpawnNameTemplate, &j.SpawnInstructionTemplate, &j.SpawnConcurrencyPolicy,
 			&j.SpawnMaxLiveWorkers, &j.SpawnWorkerDeadlineSeconds,
-			&j.Enabled, &j.RunImmediately, &j.QueueWhenOffline, &createdAt,
+			&j.Enabled, &j.RunImmediately, &j.QueueWhenOffline, &j.OperatorAuthored, &createdAt,
 			&lastRunAt, &j.LastRunStatus); err != nil {
 			return nil, nil, fmt.Errorf("scan cron job: %w", err)
 		}
@@ -1238,13 +1238,13 @@ func (c *importCtx) cronJobsAndRuns() error {
 				(name, target_kind, owner_agent, target_agent, group_id, interval_seconds,
 				 subject,body,action_kind,spawn_profile,spawn_role_refs_json,spawn_name_template,
 				 spawn_instruction_template,spawn_concurrency_policy,spawn_max_live_workers,
-				 spawn_worker_deadline_seconds,enabled,run_immediately,queue_when_offline,created_at,last_run_at,last_run_status)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				 spawn_worker_deadline_seconds,enabled,run_immediately,queue_when_offline,operator_authored,created_at,last_run_at,last_run_status)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			j.Name, kind, ownerAgent, targetAgent, c.newGroupID,
 			j.IntervalSeconds, j.Subject, j.Body, actionKind, j.SpawnProfile, string(spawnRolesJSON),
 			j.SpawnNameTemplate, j.SpawnInstructionTemplate, policy,
 			maxLive, j.SpawnWorkerDeadlineSeconds,
-			j.Enabled, j.RunImmediately, j.QueueWhenOffline, requiredImportDBTime(j.CreatedAt),
+			j.Enabled, j.RunImmediately, j.QueueWhenOffline, j.OperatorAuthored, requiredImportDBTime(j.CreatedAt),
 			nullableDBTimeText(j.LastRunAt), j.LastRunStatus)
 		if err != nil {
 			return fmt.Errorf("import: cron job %q: %w", j.Name, err)

@@ -70,6 +70,7 @@ type cronJobJSON struct {
 	CreatedAt                  string   `json:"created_at,omitempty"`
 	LastRunAt                  string   `json:"last_run_at,omitempty"`
 	LastRunStatus              string   `json:"last_run_status,omitempty"`
+	Warnings                   []string `json:"warnings,omitempty"`
 }
 
 // ---- ls ----
@@ -321,6 +322,9 @@ func runCronAdd(p *cronAddParams, stdin io.Reader, stdout, stderr io.Writer) int
 		fmt.Fprintln(stdout, "  Offline delivery is durable; ticks queue until the target returns.")
 	} else {
 		fmt.Fprintln(stdout, "  Offline ticks are discarded (pass --queue-when-offline to retain them).")
+	}
+	for _, warning := range resp.Warnings {
+		fmt.Fprintf(stdout, "  Warning: %s\n", warning)
 	}
 	switch {
 	case resp.TargetKind == "group":

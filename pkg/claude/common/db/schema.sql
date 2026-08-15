@@ -1367,7 +1367,7 @@ CREATE TABLE trigger_workers (
 			action_index INTEGER NOT NULL,
 			agent_id TEXT NOT NULL UNIQUE,
 			conv_id TEXT NOT NULL DEFAULT '',
-			state TEXT NOT NULL DEFAULT 'reserved' CHECK (state IN ('reserved', 'pending', 'live', 'failed', 'exited', 'deadline_exceeded', 'replaced')),
+			state TEXT NOT NULL DEFAULT 'reserved' CHECK (state IN ('reserved', 'pending', 'live', 'failed', 'exited', 'deadline_exceeded', 'replaced', 'interrupted')),
 			pending_label TEXT NOT NULL DEFAULT '',
 			deadline_at INTEGER,
 			created_at INTEGER NOT NULL,

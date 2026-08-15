@@ -1931,12 +1931,16 @@ grant, so revoking authority prevents later launches without rewriting the
 job.
 
 Overlap follows Kubernetes CronJob vocabulary: `Forbid` (the default) records
-`skipped_concurrent`, `Replace` stops and records the prior worker before
-launching a fresh one, and `Allow` admits concurrent workers up to
+`skipped_concurrent`, `Replace` waits for a bounded stop before launching a
+fresh worker (and records `replace_stop_failed` without launching if it cannot
+confirm the stop), and `Allow` admits concurrent workers up to
 `--max-live-workers`. `--worker-deadline` adds best-effort deadline enforcement
 through the same managed-worker ledger used by event triggers. The full stop
 protocol is intentionally separate; history reports the outcome agentd could
-actually establish. `{{fire_time}}` may be used in the name or instruction
+actually establish, including `interrupted` crash recovery and
+`spawned_tracking_failed` when dispatch loses its worker reservation race.
+Spawn payload and target fields are not PATCH-editable in this initial API;
+recreate the job to change them. `{{fire_time}}` may be used in the name or instruction
 template. Instructions receive RFC 3339; names receive a title-safe compact
 UTC timestamp such as `20260815T153000Z`.
 
