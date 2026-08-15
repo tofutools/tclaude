@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -27,7 +26,6 @@ import (
 
 const (
 	tclaudeLayerFilteredBootstrapCommand = "tclaude-layer-filtered-bootstrap"
-	tclaudeLayerFilteredNFTCommand       = "tclaude-layer-filtered-nft"
 	filteredNetworkPolicyEncodingLimit   = 64 << 10
 	filteredNetworkBootstrapBinaryFD     = 4
 	filteredNetworkPolicyFD              = 5
@@ -55,27 +53,25 @@ func filteredNetworkHelperEnv() []string {
 	}
 }
 
-func filteredNetworkBootstrapCapabilityArgs() []string {
+// filteredNetworkNsenterArgs is the argv (excluding the nsenter binary) the
+// supervisor uses to install the base nft ruleset into the sandbox's private
+// network namespace from OUTSIDE bubblewrap's AppArmor confinement. The two
+// preserved descriptors are the netns's OWNING user namespace (fd 3) and the
+// netns itself (fd 4); installBasePolicy opens them and passes them as
+// ExtraFiles, which land at those fixed fd numbers in the nsenter child.
+//
+// --preserve-credentials is required: bubblewrap sets setgroups=deny on the
+// sandbox userns, so nsenter's default setgroups() call would fail. Skipping it
+// is safe because joining the owning user namespace already lands the caller at
+// uid 0 inside that namespace, so nft runs with CAP_NET_ADMIN scoped to it.
+func filteredNetworkNsenterArgs(nftPath string) []string {
 	return []string{
-		"--cap-add", "CAP_NET_ADMIN",
+		"--preserve-credentials",
+		"--user=/proc/self/fd/3",
+		"--net=/proc/self/fd/4",
+		"--",
+		nftPath, "-f", "-",
 	}
-}
-
-func filteredNetworkNFTCommand(nftPath string) *exec.Cmd {
-	cmd := exec.Command(
-		sandboxpolicy.FilteredNetworkBootstrapPath,
-		"session",
-		tclaudeLayerFilteredNFTCommand,
-		"--nft", nftPath,
-	)
-	cmd.Env = filteredNetworkHelperEnv()
-	// The parent narrows every capability set before this additive ambient
-	// request. The internal child verifies the resulting exact sets before it
-	// execs nft; the later harness exec follows an explicit all-set drop.
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		AmbientCaps: []uintptr{unix.CAP_NET_ADMIN},
-	}
-	return cmd
 }
 
 type preparedFilteredNetworkRelay struct {
@@ -87,10 +83,26 @@ type preparedFilteredNetworkRelay struct {
 	PastaPath    string
 	PastaPIDFile string
 	Rules        sandboxpolicy.FilteredNetworkRuleSet
+	// Policy is the rendered nft ruleset. It is installed by the supervisor via
+	// installBasePolicy rather than inside the sandbox, because bubblewrap's
+	// stock AppArmor profile denies all capabilities to the sandboxed process.
+	Policy       string
+	NsenterPath  string
+	NFTPath      string
 	DNSUpstreams []string
 	DNSHosts     map[string][]netip.Addr
 	DNSBroker    *filteredNetworkDNSBroker
 	DNSWait      <-chan error
+	// DNS descriptors are adopted in waitPolicyReady and consumed by
+	// startDNSBroker, which runs only after the base policy is installed so the
+	// broker never mutates sets the base ruleset has not yet declared.
+	dnsUDP          *net.UDPConn
+	dnsTCP          *net.TCPListener
+	dnsNFTAuthority *os.File
+	// sandboxNetns pins the sandbox network namespace at the moment its peer
+	// identity is validated in waitPolicyReady, so installBasePolicy operates on
+	// exactly that namespace and cannot be redirected by a reused PID.
+	sandboxNetns *os.File
 }
 
 func encodeFilteredNetworkRelayPolicy(plan sandboxpolicy.MountPlan) (string, error) {
@@ -256,14 +268,15 @@ func prepareFilteredNetworkRelay(encoded string) (_ preparedFilteredNetworkRelay
 		"--ro-bind-data", strconv.Itoa(filteredNetworkResolvFD),
 		resolvDestination,
 	)
-	setupArgs = append(setupArgs, filteredNetworkBootstrapCapabilityArgs()...)
+	// The sandboxed bootstrap holds no capabilities: it only binds DNS listeners
+	// in the fresh namespace and gates the harness exec. The base nft policy is
+	// installed from the supervisor (installBasePolicy) after the namespace is up.
 	return preparedFilteredNetworkRelay{
 		SetupArgs: setupArgs,
 		Command: []string{
 			sandboxpolicy.FilteredNetworkBootstrapPath,
 			"session",
 			tclaudeLayerFilteredBootstrapCommand,
-			"--nft", executables.NFT,
 			"--",
 		},
 		Files:        files,
@@ -271,6 +284,9 @@ func prepareFilteredNetworkRelay(encoded string) (_ preparedFilteredNetworkRelay
 		PastaPath:    executables.Pasta,
 		PastaPIDFile: filepath.Join(pidDir, "pasta.pid"),
 		Rules:        ir,
+		Policy:       policy,
+		NsenterPath:  executables.Nsenter,
+		NFTPath:      executables.NFT,
 		DNSUpstreams: dnsUpstreams,
 		DNSHosts:     dnsHosts,
 	}, nil
@@ -388,6 +404,20 @@ func (p *preparedFilteredNetworkRelay) Close() {
 	if p.DNSBroker != nil {
 		p.DNSBroker.Close()
 	}
+	// Adopted DNS descriptors that startDNSBroker never consumed (e.g. a failed
+	// base-policy install) are released here; the broker owns them otherwise.
+	if p.dnsUDP != nil {
+		_ = p.dnsUDP.Close()
+	}
+	if p.dnsTCP != nil {
+		_ = p.dnsTCP.Close()
+	}
+	if p.dnsNFTAuthority != nil {
+		_ = p.dnsNFTAuthority.Close()
+	}
+	if p.sandboxNetns != nil {
+		_ = p.sandboxNetns.Close()
+	}
 	for _, file := range p.Files {
 		_ = file.Close()
 	}
@@ -416,6 +446,15 @@ func (p *preparedFilteredNetworkRelay) waitPolicyReady(namespacePID int) error {
 	if err := validateFilteredNetworkSyncPeer(sync, namespacePID); err != nil {
 		return err
 	}
+	// Pin the validated namespace by fd immediately, so installBasePolicy acts on
+	// exactly this namespace even if the sandbox PID is later reused.
+	netFD, err := unix.Open(
+		filepath.Join("/proc", strconv.Itoa(namespacePID), "ns", "net"),
+		unix.O_RDONLY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("pin sandbox network namespace: %w", err)
+	}
+	p.sandboxNetns = os.NewFile(uintptr(netFD), "sandbox-netns")
 	if err := sync.SetReadDeadline(time.Now().Add(filteredNetworkPastaReadyTimeout)); err != nil {
 		return err
 	}
@@ -466,19 +505,103 @@ func (p *preparedFilteredNetworkRelay) waitPolicyReady(namespacePID int) error {
 		_ = tcp.Close()
 		return err
 	}
+	// The DNS broker is not started here. The base nft policy must be installed
+	// first (installBasePolicy) so the broker never adds elements to sets the
+	// ruleset has not yet declared; startDNSBroker consumes these descriptors.
+	p.dnsUDP = udp
+	p.dnsTCP = tcp
+	p.dnsNFTAuthority = nftAuthority
+	return sync.SetReadDeadline(time.Time{})
+}
+
+// installBasePolicy loads the rendered nft ruleset into the sandbox's private
+// network namespace from the supervisor, which runs outside bubblewrap's
+// AppArmor confinement. It joins the user namespace that OWNS the netns
+// (resolved via NS_GET_USERNS, not the sandbox child's possibly-nested inner
+// userns) and the netns itself, then runs nft. The join is delegated to nsenter
+// because setns(CLONE_NEWUSER) is illegal from the multithreaded Go runtime;
+// nsenter is single-threaded C.
+func (p *preparedFilteredNetworkRelay) installBasePolicy(namespacePID int) error {
+	if p == nil {
+		return nil
+	}
+	// An active filtered relay with no rendered ruleset must fail closed rather
+	// than launch the sandbox with pasta attached and no policy (unfiltered
+	// egress). The nil no-op above covers only a zero-value non-filtered relay.
+	if strings.TrimSpace(p.Policy) == "" {
+		return fmt.Errorf(
+			"filtered-network relay is active but has no rendered policy to install")
+	}
+	if p.NsenterPath == "" || p.NFTPath == "" {
+		return fmt.Errorf("filtered-network policy install is missing its helper paths")
+	}
+	netFile := p.sandboxNetns
+	if netFile != nil {
+		// Consume the namespace pinned at validation time.
+		p.sandboxNetns = nil
+		defer func() { _ = netFile.Close() }()
+	} else {
+		if namespacePID <= 0 {
+			return fmt.Errorf("filtered-network policy install requires a namespace pid")
+		}
+		netFD, err := unix.Open(
+			filepath.Join("/proc", strconv.Itoa(namespacePID), "ns", "net"),
+			unix.O_RDONLY|unix.O_CLOEXEC, 0)
+		if err != nil {
+			return fmt.Errorf("open sandbox network namespace: %w", err)
+		}
+		netFile = os.NewFile(uintptr(netFD), "sandbox-netns")
+		defer func() { _ = netFile.Close() }()
+	}
+	ownerFD, err := unix.IoctlRetInt(int(netFile.Fd()), unix.NS_GET_USERNS)
+	if err != nil {
+		return fmt.Errorf("resolve owning user namespace of sandbox netns: %w", err)
+	}
+	ownerFile := os.NewFile(uintptr(ownerFD), "sandbox-owner-userns")
+	defer func() { _ = ownerFile.Close() }()
+	// ExtraFiles land at fd 3, 4 in the child with close-on-exec cleared, matching
+	// the /proc/self/fd references in filteredNetworkNsenterArgs.
+	cmd := exec.Command(p.NsenterPath, filteredNetworkNsenterArgs(p.NFTPath)...)
+	cmd.Env = filteredNetworkHelperEnv()
+	cmd.Stdin = strings.NewReader(p.Policy)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	cmd.ExtraFiles = []*os.File{ownerFile, netFile}
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf(
+			"install filtered-network base policy in sandbox namespace: %w", err)
+	}
+	return nil
+}
+
+// startDNSBroker builds and starts the DNS broker from the descriptors adopted
+// in waitPolicyReady. It runs only after installBasePolicy so the sets the
+// broker mutates already exist.
+//
+// The broker mutates nft sets from the supervisor over the NETLINK_NETFILTER
+// socket the sandbox bootstrap opened (dnsNFTAuthority). That socket is now
+// created with zero capabilities in the sandbox, yet the mutations succeed:
+// nfnetlink gates each message on the sender's authority in the netns's owning
+// user namespace, and the supervisor is that namespace's euid owner, so it
+// holds CAP_NET_ADMIN there — the same authority installBasePolicy relies on.
+func (p *preparedFilteredNetworkRelay) startDNSBroker() error {
+	if p == nil || p.dnsUDP == nil {
+		return nil
+	}
 	broker, err := newFilteredNetworkDNSBroker(
-		p.Rules, udp, tcp, nftAuthority,
+		p.Rules, p.dnsUDP, p.dnsTCP, p.dnsNFTAuthority,
 		hostFilteredDNSExchange(p.DNSUpstreams, p.DNSHosts),
 	)
 	if err != nil {
-		_ = udp.Close()
-		_ = tcp.Close()
-		_ = nftAuthority.Close()
 		return err
 	}
+	// The broker now owns these descriptors and closes them on teardown.
+	p.dnsUDP = nil
+	p.dnsTCP = nil
+	p.dnsNFTAuthority = nil
 	p.DNSBroker = broker
 	p.DNSWait = broker.Start()
-	return sync.SetReadDeadline(time.Time{})
+	return nil
 }
 
 func receiveFilteredNetworkDNSDescriptors(oob []byte) ([]*os.File, error) {
@@ -645,38 +768,25 @@ func filteredNetworkPastaArgs(pidFile string, namespacePID int) []string {
 }
 
 func tclaudeLayerFilteredBootstrapCmd() *cobra.Command {
-	var nftPath string
-	cmd := &cobra.Command{
+	return &cobra.Command{
 		Use:    tclaudeLayerFilteredBootstrapCommand + " -- <command> [args...]",
-		Short:  "Install the filtered-network policy and enter the harness (internal)",
+		Short:  "Bind filtered-network DNS listeners and enter the harness (internal)",
 		Hidden: true,
 		Args:   cobra.MinimumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			return runTclaudeLayerFilteredBootstrap(nftPath, args)
+			return runTclaudeLayerFilteredBootstrap(args)
 		},
 	}
-	cmd.Flags().StringVar(&nftPath, "nft", "", "resolved nft executable (internal)")
-	return cmd
 }
 
-func tclaudeLayerFilteredNFTCmd() *cobra.Command {
-	var nftPath string
-	cmd := &cobra.Command{
-		Use:    tclaudeLayerFilteredNFTCommand,
-		Short:  "Verify filtered-network nft authority and install policy (internal)",
-		Hidden: true,
-		Args:   cobra.NoArgs,
-		RunE: func(*cobra.Command, []string) error {
-			return runTclaudeLayerFilteredNFT(nftPath)
-		},
-	}
-	cmd.Flags().StringVar(&nftPath, "nft", "", "resolved nft executable (internal)")
-	return cmd
-}
-
-func runTclaudeLayerFilteredBootstrap(nftPath string, command []string) error {
-	nftPath = filepath.Clean(strings.TrimSpace(nftPath))
-	if !filepath.IsAbs(nftPath) || len(command) == 0 {
+// runTclaudeLayerFilteredBootstrap runs INSIDE the sandbox. It no longer holds
+// any capability and does not install the nft policy: it binds the DNS
+// listeners in the fresh network namespace, hands them to the supervisor, waits
+// for the gateway (base policy + pasta) to come up, then execs the harness. The
+// supervisor installs the base nft policy from outside the sandbox, where it is
+// not subject to bubblewrap's AppArmor capability denial.
+func runTclaudeLayerFilteredBootstrap(command []string) error {
+	if len(command) == 0 {
 		return fmt.Errorf("filtered-network bootstrap contract is invalid")
 	}
 	dnsFiles, err := openFilteredNetworkDNSDescriptors()
@@ -688,16 +798,6 @@ func runTclaudeLayerFilteredBootstrap(nftPath string, command []string) error {
 			_ = file.Close()
 		}
 	}()
-	if err := narrowFilteredNetworkBootstrapForNFT(); err != nil {
-		return err
-	}
-	nft := filteredNetworkNFTCommand(nftPath)
-	nft.Stdin = nil
-	nft.Stdout = os.Stderr
-	nft.Stderr = os.Stderr
-	if err := nft.Run(); err != nil {
-		return fmt.Errorf("install atomic filtered-network nft policy: %w", err)
-	}
 	sync, err := net.DialUnix(
 		"unixpacket",
 		nil,
@@ -712,7 +812,7 @@ func runTclaudeLayerFilteredBootstrap(nftPath string, command []string) error {
 		[]byte(sandboxpolicy.FilteredNetworkBootstrapReady), rights, nil,
 	); err != nil {
 		_ = sync.Close()
-		return fmt.Errorf("signal filtered-network nft readiness: %w", err)
+		return fmt.Errorf("signal filtered-network namespace readiness: %w", err)
 	}
 	buffer := make([]byte, 64)
 	n, err := sync.Read(buffer)
@@ -741,136 +841,6 @@ func runTclaudeLayerFilteredBootstrap(nftPath string, command []string) error {
 		}
 	}
 	return unix.Exec(executable, command, os.Environ())
-}
-
-type filteredNetworkCapabilityState struct {
-	Effective   uint64
-	Permitted   uint64
-	Inheritable uint64
-	Ambient     uint64
-}
-
-func narrowFilteredNetworkBootstrapForNFT() error {
-	if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
-		return fmt.Errorf("set no-new-privileges before filtered nft exec: %w", err)
-	}
-	if err := unix.Prctl(
-		unix.PR_CAP_AMBIENT,
-		unix.PR_CAP_AMBIENT_CLEAR_ALL,
-		0, 0, 0,
-	); err != nil {
-		return fmt.Errorf("clear ambient capabilities before filtered nft exec: %w", err)
-	}
-	mask := uint32(1) << unix.CAP_NET_ADMIN
-	header := unix.CapUserHeader{Version: unix.LINUX_CAPABILITY_VERSION_3}
-	data := [2]unix.CapUserData{{
-		Effective: mask, Permitted: mask, Inheritable: mask,
-	}}
-	if err := unix.Capset(&header, &data[0]); err != nil {
-		return fmt.Errorf("narrow filtered nft capability sets: %w", err)
-	}
-	expected := filteredNetworkCapabilityState{
-		Effective: uint64(mask), Permitted: uint64(mask),
-		Inheritable: uint64(mask),
-	}
-	if err := requireFilteredNetworkCapabilityState(expected); err != nil {
-		return fmt.Errorf("verify filtered nft parent capability sets: %w", err)
-	}
-	return nil
-}
-
-func runTclaudeLayerFilteredNFT(nftPath string) error {
-	nftPath = filepath.Clean(strings.TrimSpace(nftPath))
-	if !filepath.IsAbs(nftPath) {
-		return fmt.Errorf("filtered-network nft child contract is invalid")
-	}
-	mask := uint64(1) << unix.CAP_NET_ADMIN
-	expected := filteredNetworkCapabilityState{
-		Effective: mask, Permitted: mask, Inheritable: mask, Ambient: mask,
-	}
-	if err := requireFilteredNetworkCapabilityState(expected); err != nil {
-		return fmt.Errorf("verify filtered nft child capability sets: %w", err)
-	}
-	noNewPrivileges, _, errno := unix.Syscall6(
-		unix.SYS_PRCTL,
-		uintptr(unix.PR_GET_NO_NEW_PRIVS),
-		0, 0, 0, 0, 0,
-	)
-	if errno != 0 {
-		return fmt.Errorf("inspect filtered nft no-new-privileges: %w", errno)
-	}
-	if noNewPrivileges != 1 {
-		return fmt.Errorf("filtered nft child has no-new-privileges disabled")
-	}
-	return unix.Exec(
-		nftPath,
-		[]string{nftPath, "-f", sandboxpolicy.FilteredNetworkNFTPolicyPath},
-		filteredNetworkHelperEnv(),
-	)
-}
-
-func requireFilteredNetworkCapabilityState(
-	expected filteredNetworkCapabilityState,
-) error {
-	status, err := os.ReadFile("/proc/self/status")
-	if err != nil {
-		return fmt.Errorf("read filtered-network capability state: %w", err)
-	}
-	actual, err := parseFilteredNetworkCapabilityState(status)
-	if err != nil {
-		return err
-	}
-	if actual != expected {
-		return fmt.Errorf(
-			"capability state is effective=%016x permitted=%016x inheritable=%016x ambient=%016x; want effective=%016x permitted=%016x inheritable=%016x ambient=%016x",
-			actual.Effective,
-			actual.Permitted,
-			actual.Inheritable,
-			actual.Ambient,
-			expected.Effective,
-			expected.Permitted,
-			expected.Inheritable,
-			expected.Ambient,
-		)
-	}
-	return nil
-}
-
-func parseFilteredNetworkCapabilityState(
-	status []byte,
-) (filteredNetworkCapabilityState, error) {
-	values := map[string]*uint64{}
-	var state filteredNetworkCapabilityState
-	values["CapEff"] = &state.Effective
-	values["CapPrm"] = &state.Permitted
-	values["CapInh"] = &state.Inheritable
-	values["CapAmb"] = &state.Ambient
-	for _, line := range strings.Split(string(status), "\n") {
-		name, value, found := strings.Cut(line, ":")
-		target, wanted := values[name]
-		if !found || !wanted {
-			continue
-		}
-		parsed, parseErr := strconv.ParseUint(strings.TrimSpace(value), 16, 64)
-		if parseErr != nil {
-			return filteredNetworkCapabilityState{}, fmt.Errorf(
-				"parse filtered-network %s: %w", name, parseErr)
-		}
-		*target = parsed
-		delete(values, name)
-	}
-	if len(values) != 0 {
-		missing := make([]string, 0, len(values))
-		for name := range values {
-			missing = append(missing, name)
-		}
-		sort.Strings(missing)
-		return filteredNetworkCapabilityState{}, fmt.Errorf(
-			"filtered-network capability state is missing %s",
-			strings.Join(missing, ", "),
-		)
-	}
-	return state, nil
 }
 
 func openFilteredNetworkDNSDescriptors() ([]*os.File, error) {
