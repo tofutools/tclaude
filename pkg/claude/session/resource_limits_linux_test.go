@@ -506,7 +506,7 @@ func TestResourceLimitExecDoesNotAttributeASurvivedOOMToACleanExit(t *testing.T)
 	// accord — exactly the shape that used to be reported as an OOM death.
 	require.NoError(t, runResourceLimitExec(
 		dir, "session-oom-survivor",
-		"printf 'oom_kill 1\\n' > '"+events+"'; exit 0", false, false,
+		"printf 'oom_kill 1\\n' > '"+events+"'; exit 0", false, false, false,
 	))
 	assert.False(t, recorded,
 		"a workload that exited cleanly must not be recorded as killed by its ceiling")
@@ -544,7 +544,7 @@ func TestResourceLimitExecRecordsAKillRelayedByTheWrapperShell(t *testing.T) {
 	require.NoError(t, runResourceLimitExec(
 		dir, "session-oom-victim",
 		"printf 'oom_kill 1\\n' > '"+events+"'; /bin/sleep 30 & victim=$!; kill -KILL $victim; wait $victim",
-		false, false,
+		false, false, false,
 	))
 	assert.Equal(t, "session-oom-victim", recordedFor,
 		"a ceiling that actually killed the workload has to reach the session's exit reason")
@@ -647,7 +647,7 @@ func TestResourceLimitExecOperatorOverrideFallsBackAfterAttachFailure(t *testing
 	t.Cleanup(func() { recordResourceLimitRuntimeOverrideForExec = oldRecord })
 
 	require.NoError(t, runResourceLimitExec(
-		dir, "session-runtime-failure", "exit 0", true, false,
+		dir, "session-runtime-failure", "exit 0", true, false, false,
 	))
 	assert.True(t, recorded)
 }
@@ -660,7 +660,7 @@ func TestResourceLimitExecFailsClosedAfterAttachFailure(t *testing.T) {
 	require.NoError(t, os.Mkdir(dir, 0o755))
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "cgroup.procs"), 0o755))
 
-	err := runResourceLimitExec(dir, "session-runtime-failure", "exit 0", false, false)
+	err := runResourceLimitExec(dir, "session-runtime-failure", "exit 0", false, false, false)
 	assert.ErrorContains(t, err, "attach workload")
 }
 
@@ -677,7 +677,7 @@ func TestResourceLimitExecFailsClosedWhenOverrideDisclosureCannotPersist(t *test
 	}
 	t.Cleanup(func() { recordResourceLimitRuntimeOverrideForExec = oldRecord })
 
-	err := runResourceLimitExec(dir, "session-runtime-failure", "exit 0", true, false)
+	err := runResourceLimitExec(dir, "session-runtime-failure", "exit 0", true, false, false)
 	assert.ErrorContains(t, err, "required resource-limit override disclosure")
 }
 
@@ -925,9 +925,34 @@ func TestResourceLimitExecReapsSurvivingDescendantsBeforeRemovingTheBoundary(t *
 		return nil
 	})
 
-	require.NoError(t, runResourceLimitExec(dir, "session-stray-descendant", "exit 0", false, false))
+	require.NoError(t, runResourceLimitExec(dir, "session-stray-descendant", "exit 0", false, false, false))
 	assert.True(t, *killed, "pane exit must reap what outlived the workload")
 	assert.NoDirExists(t, dir, "the emptied boundary is removed with the pane")
+}
+
+func TestResourceLimitExecPreservedBoundaryReapsMembersButLeavesDirectory(t *testing.T) {
+	oldRoot := resourceCgroupRoot
+	resourceCgroupRoot = t.TempDir()
+	t.Cleanup(func() { resourceCgroupRoot = oldRoot })
+	dir := filepath.Join(resourceCgroupRoot, "tclaude-managed-retry")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "cgroup.events"),
+		[]byte("populated 1\nfrozen 0\n"), 0o644))
+	killed := fakeResourceCgroupKill(t, func(killDir string) error {
+		for _, name := range []string{"cgroup.events", "cgroup.procs"} {
+			if err := os.Remove(filepath.Join(killDir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		}
+		return nil
+	})
+
+	require.NoError(t, runResourceLimitExec(
+		dir, "session-managed-retry", "exit 0", false, false, true))
+	assert.True(t, *killed, "a failed managed-server attempt must reap its workload")
+	assert.DirExists(t, dir, "agentd's durable boundary must remain for the next attempt")
+	require.NoError(t, RemoveResourceCgroup(dir))
+	assert.NoDirExists(t, dir, "final managed-server retirement removes the durable boundary")
 }
 
 func TestResourceLimitExecSharedBoundaryLeavesTheServerAndItsDirAlone(t *testing.T) {
@@ -942,15 +967,17 @@ func TestResourceLimitExecSharedBoundaryLeavesTheServerAndItsDirAlone(t *testing
 		[]byte("populated 1\nfrozen 0\n"), 0o644))
 	killed := fakeResourceCgroupKill(t, func(string) error { return nil })
 
-	require.NoError(t, runResourceLimitExec(dir, "session-shared", "exit 0", false, true))
+	require.NoError(t, runResourceLimitExec(dir, "session-shared", "exit 0", false, true, false))
 	assert.False(t, *killed, "an attach client's exit must not kill the server sharing its boundary")
 	assert.DirExists(t, dir, "the server's boundary must survive the attach client")
 }
 
 func TestWrapPreparedResourceCgroupCommandMarksManagedBoundaryShared(t *testing.T) {
 	managed := WrapPreparedResourceCgroupCommand("s", "/sys/fs/cgroup/x/tclaude-a", "cmd", false)
-	assert.Contains(t, managed, "--shared-boundary",
+	assert.Contains(t, managed, "--preserve-boundary",
 		"agentd owns a managed server boundary across launch retries")
-	shared := wrapPreparedResourceCgroupCommand("s", "/sys/fs/cgroup/x/tclaude-a", "cmd", false, true)
+	assert.NotContains(t, managed, "--shared-boundary",
+		"the managed server wrapper still owns and reaps its workload")
+	shared := wrapPreparedResourceCgroupCommand("s", "/sys/fs/cgroup/x/tclaude-a", "cmd", false, true, false)
 	assert.Contains(t, shared, "--shared-boundary")
 }

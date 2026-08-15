@@ -1600,7 +1600,6 @@ func TestResolveAccessEnforcementAdmitsUnconfinedImplementations(t *testing.T) {
 }
 
 func TestPrivateRoutedNamespaceRequiresExactReadyLinuxLayer(t *testing.T) {
-	h := MustGet(OpenCodeName)
 	axes := sandboxpolicy.ResolvedAxes{
 		Network: sandboxpolicy.NetworkRules{
 			Mode:      sandboxpolicy.AccessModeOpen,
@@ -1610,14 +1609,19 @@ func TestPrivateRoutedNamespaceRequiresExactReadyLinuxLayer(t *testing.T) {
 			Mode: sandboxpolicy.AccessModeClosed,
 		},
 	}
-	row, err := accessEnforcementTable(
-		h, sandboxpolicy.ImplementationTclaudeLayer, axes,
-		OpenCodeSandboxTclaudeLayer, "linux", true)
-	require.NoError(t, err)
-	assert.Equal(t, EnforcePartial, row.SocketClosed)
-	assert.True(t, row.ConstructedRoot)
+	for _, harnessName := range []string{DefaultName, CodexName, OpenCodeName} {
+		t.Run(harnessName, func(t *testing.T) {
+			row, err := accessEnforcementTable(
+				MustGet(harnessName), sandboxpolicy.ImplementationTclaudeLayer, axes,
+				OpenCodeSandboxTclaudeLayer, "linux", true)
+			require.NoError(t, err)
+			assert.Equal(t, EnforcePartial, row.SocketClosed)
+			assert.True(t, row.ConstructedRoot)
+		})
+	}
+	h := MustGet(OpenCodeName)
 
-	_, err = accessEnforcementTable(
+	_, err := accessEnforcementTable(
 		h, sandboxpolicy.ImplementationTclaudeLayer, axes,
 		OpenCodeSandboxTclaudeLayer, "linux", false)
 	require.ErrorContains(t, err, "private-network prerequisites")
@@ -1629,4 +1633,5 @@ func TestPrivateRoutedNamespaceRequiresExactReadyLinuxLayer(t *testing.T) {
 		h, sandboxpolicy.ImplementationStacked, axes,
 		OpenCodeSandboxTclaudeLayer, "linux", true)
 	require.ErrorContains(t, err, "requires Linux tclaude-layer")
+	require.ErrorContains(t, err, `harness "opencode", sandbox implementation "stacked", platform "linux"`)
 }

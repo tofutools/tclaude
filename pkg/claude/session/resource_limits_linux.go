@@ -272,6 +272,22 @@ func KillResourceCgroupMembers(dir string) error {
 	return reclaimBusyResourceCgroup(dir)
 }
 
+// RemoveResourceCgroup retires an agentd-owned durable boundary after its
+// managed server is permanently stopped. Relaunch and port-retry paths use
+// KillResourceCgroupMembers instead so the same directory remains reusable.
+func RemoveResourceCgroup(dir string) error {
+	if dir == "" {
+		return nil
+	}
+	if err := KillResourceCgroupMembers(dir); err != nil {
+		return err
+	}
+	if err := os.Remove(dir); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 func wrapResourceLimitedCommand(
 	sessionID string,
 	limits sandboxpolicy.ResourceLimits,
@@ -282,7 +298,7 @@ func wrapResourceLimitedCommand(
 	if err != nil {
 		return "", func() {}, err
 	}
-	return wrapPreparedResourceCgroupCommand(sessionID, dir, command, allowUnenforced, false), cleanup, nil
+	return wrapPreparedResourceCgroupCommand(sessionID, dir, command, allowUnenforced, false, false), cleanup, nil
 }
 
 // PrepareResourceCgroup creates and configures the shared workload boundary.
@@ -435,7 +451,7 @@ func PrepareResourceCgroup(sessionID string, limits sandboxpolicy.ResourceLimits
 // server owns and lives in: an attach pane. A shared wrapper must never reap
 // or remove the boundary at exit — its child's death says nothing about the
 // server's life, and reaping there kills the server through the shared cgroup.
-func wrapPreparedResourceCgroupCommand(sessionID, dir, command string, allowUnenforced, shared bool) string {
+func wrapPreparedResourceCgroupCommand(sessionID, dir, command string, allowUnenforced, shared, preserve bool) string {
 	wrapper := clcommon.DetectAbsoluteCmd("session", "resource-limit-exec") +
 		" --cgroup-dir " + clcommon.ShellQuoteArg(dir) +
 		" --session-id " + clcommon.ShellQuoteArg(sessionID) +
@@ -445,6 +461,9 @@ func wrapPreparedResourceCgroupCommand(sessionID, dir, command string, allowUnen
 	}
 	if shared {
 		wrapper += " --shared-boundary"
+	}
+	if preserve {
+		wrapper += " --preserve-boundary"
 	}
 	return wrapper
 }
@@ -456,7 +475,7 @@ func wrapPreparedResourceCgroupCommand(sessionID, dir, command string, allowUnen
 // agentd can retry the server launch in that same boundary, and owns reaping
 // its members during managed-server teardown.
 func WrapPreparedResourceCgroupCommand(sessionID, dir, command string, allowUnenforced bool) string {
-	return wrapPreparedResourceCgroupCommand(sessionID, dir, command, allowUnenforced, true)
+	return wrapPreparedResourceCgroupCommand(sessionID, dir, command, allowUnenforced, false, true)
 }
 
 // ConfigureProcessResourceCgroup asks clone3 to place cmd in the prepared
@@ -525,13 +544,13 @@ func containsString(values []string, wanted string) bool {
 
 func resourceLimitExecCmd() *cobra.Command {
 	var cgroupDir, command, sessionID string
-	var allowUnenforced, sharedBoundary bool
+	var allowUnenforced, sharedBoundary, preserveBoundary bool
 	cmd := &cobra.Command{
 		Use:    "resource-limit-exec",
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runResourceLimitExec(cgroupDir, sessionID, command, allowUnenforced, sharedBoundary)
+			return runResourceLimitExec(cgroupDir, sessionID, command, allowUnenforced, sharedBoundary, preserveBoundary)
 		},
 	}
 	cmd.Flags().StringVar(&cgroupDir, "cgroup-dir", "", "prepared cgroup directory")
@@ -539,10 +558,14 @@ func resourceLimitExecCmd() *cobra.Command {
 	cmd.Flags().StringVar(&command, "command", "", "shell command")
 	cmd.Flags().BoolVar(&allowUnenforced, "allow-unenforced", false, "operator authorized fallback without enforcement")
 	cmd.Flags().BoolVar(&sharedBoundary, "shared-boundary", false, "the boundary belongs to a managed server; never reap or remove it at exit")
+	cmd.Flags().BoolVar(&preserveBoundary, "preserve-boundary", false, "reap the workload but preserve the agentd-owned boundary for reuse")
 	return cmd
 }
 
-func runResourceLimitExec(cgroupDir, sessionID, command string, allowUnenforced, sharedBoundary bool) error {
+func runResourceLimitExec(cgroupDir, sessionID, command string, allowUnenforced, sharedBoundary, preserveBoundary bool) error {
+	if sharedBoundary && preserveBoundary {
+		return errors.New("resource-limit-exec boundary cannot be both shared and preserved")
+	}
 	cgroupDir = filepath.Clean(cgroupDir)
 	rel, err := filepath.Rel(resourceCgroupRoot, cgroupDir)
 	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) || !strings.HasPrefix(filepath.Base(cgroupDir), "tclaude-") || filepath.Base(cgroupDir) == resourceSupervisorCgroup {
@@ -637,8 +660,10 @@ func runResourceLimitExec(cgroupDir, sessionID, command string, allowUnenforced,
 		if err := KillResourceCgroupMembers(cgroupDir); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: reap resource cgroup %s: %v\n", cgroupDir, err)
 		}
-		if err := os.Remove(cgroupDir); err != nil && !errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintf(os.Stderr, "Warning: remove empty resource cgroup %s: %v\n", cgroupDir, err)
+		if !preserveBoundary {
+			if err := os.Remove(cgroupDir); err != nil && !errors.Is(err, os.ErrNotExist) {
+				fmt.Fprintf(os.Stderr, "Warning: remove empty resource cgroup %s: %v\n", cgroupDir, err)
+			}
 		}
 	}
 	if waitErr == nil {

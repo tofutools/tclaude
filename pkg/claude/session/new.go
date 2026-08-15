@@ -2236,7 +2236,7 @@ func runNew(params *NewParams) error {
 				// accounting. Shared: the wrapper must not reap or remove the
 				// boundary when the attach client exits.
 				wrapped = wrapPreparedResourceCgroupCommand(
-					sessionID, params.ResourceCgroupDir, harnessCmd, params.AllowUnenforcedSandbox, true)
+					sessionID, params.ResourceCgroupDir, harnessCmd, params.AllowUnenforcedSandbox, true, false)
 				cleanup = func() {}
 			} else {
 				wrapped, cleanup, resourceErr = wrapResourceLimitedCommand(

@@ -2571,6 +2571,9 @@ func stopOpenCodeRuntime(sessionID string) error {
 			return fmt.Errorf("finish OpenCode Unix control cleanup: %w", err)
 		}
 	}
+	if err := session.RemoveResourceCgroup(runtime.ResourceCgroupDir); err != nil {
+		return fmt.Errorf("remove retired OpenCode resource cgroup: %w", err)
+	}
 	clearOpenCodeVirtualCostState(sessionID)
 	return db.DeleteOpenCodeRuntime(sessionID)
 }
