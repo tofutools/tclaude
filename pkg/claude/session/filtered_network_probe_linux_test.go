@@ -71,7 +71,7 @@ func TestFilteredNetworkPrerequisiteProbeNamesEveryBuildingBlock(t *testing.T) {
 	require.True(t, got.Detected)
 	assert.Contains(t, got.Detail, "bubblewrap")
 	assert.Contains(t, got.Detail, "user/network namespace")
-	assert.Contains(t, got.Detail, "CAP_NET_ADMIN")
+	assert.Contains(t, got.Detail, "nsenter")
 	assert.NotContains(t, got.Detail, "CAP_NET_BIND_SERVICE")
 	assert.Contains(t, got.Detail, "pasta")
 	assert.Contains(t, got.Detail, "nft")
@@ -151,16 +151,18 @@ func TestFilteredNetworkPrerequisiteProbeRefusesOlderPasta(t *testing.T) {
 	assert.Contains(t, got.LaunchWhy(false), "outbound remains open")
 }
 
-func TestFilteredNetworkProbeArgsRequireNamespaceRootCapability(t *testing.T) {
+func TestFilteredNetworkProbeArgsBuildTheNamespaceShapeWithoutInSandboxCapability(t *testing.T) {
 	args, err := tclaudeLayerProbeArgs(
 		sandboxpolicy.NetworkFiltered, sandboxpolicy.RootConstructed)
 	require.NoError(t, err)
 	joined := strings.Join(args, " ")
 	assert.Contains(t, joined,
-		"--unshare-user --uid 0 --gid 0 --unshare-net --unshare-pid --cap-add CAP_NET_ADMIN")
-	assert.NotContains(t, joined, "CAP_NET_BIND_SERVICE")
-	assert.Contains(t, joined, `case "$cap_eff" in`)
-	assert.Contains(t, joined, "[13579bBdDfF]???")
+		"--unshare-user --uid 0 --gid 0 --unshare-net --unshare-pid")
+	// The base policy is installed by the supervisor via nsenter, so the probe
+	// no longer grants or checks any in-sandbox capability.
+	assert.NotContains(t, joined, "--cap-add")
+	assert.NotContains(t, joined, "CAP_NET_ADMIN")
+	assert.NotContains(t, joined, `case "$cap_eff" in`)
 }
 
 func TestFilteredNetworkPrerequisiteProbeReportsFirstMissingCapability(t *testing.T) {

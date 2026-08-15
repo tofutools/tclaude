@@ -393,6 +393,15 @@ func runTclaudeLayerWinchRelay(
 		if err := filtered.waitPolicyReady(status.ChildPID); err != nil {
 			return 125, err
 		}
+		// Install the base nft policy from here — outside bubblewrap's AppArmor
+		// confinement — before the DNS broker (which mutates the sets the base
+		// ruleset declares) starts and before pasta attaches.
+		if err := filtered.installBasePolicy(status.ChildPID); err != nil {
+			return 125, err
+		}
+		if err := filtered.startDNSBroker(); err != nil {
+			return 125, err
+		}
 	}
 	pasta, pastaWait, err := filtered.startPasta(status.ChildPID)
 	if err != nil {
