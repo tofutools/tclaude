@@ -1,10 +1,8 @@
 package agentd_test
 
 import (
-	"database/sql"
 	"encoding/json"
 	"net/http"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -329,9 +327,8 @@ func TestReincarnate_TemporaryOffDisablesTclaudeOuterLayer(t *testing.T) {
 		"temporary off must also disable the harness-native sandbox")
 }
 
-func TestSandboxRestart_CodexUnlockRepairsPersistedThreadPolicy(t *testing.T) {
+func TestSandboxRestart_RefusesCodexHarnessBuiltinUnlock(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	t.Setenv("CODEX_HOME", t.TempDir())
 	f := newFlow(t)
 	f.HaveGroup("crew")
 
@@ -341,26 +338,36 @@ func TestSandboxRestart_CodexUnlockRepairsPersistedThreadPolicy(t *testing.T) {
 		"sandbox": harness.SandboxManagedProfile,
 	})
 	require.Equalf(t, http.StatusOK, source.Code, "spawn body=%s", source.Raw)
-	profile, err := db.AgentRelaunchProfileForConv(source.ConvID)
+	f.SetSessionStatus(source.ConvID, "idle")
+	unlock := testharness.Serve(agentd.BuildDashboardHandlerForTest(),
+		testharness.JSONRequest(t, http.MethodPost,
+			"/api/agents/"+source.ConvID+"/sandbox-restart",
+			map[string]any{"action": "unlock"}))
+	require.Equalf(t, http.StatusConflict, unlock.Code, "unlock body=%s", unlock.Body.String())
+	assert.Contains(t, unlock.Body.String(), "Codex restores the persisted sandbox policy on resume")
+
+	mode, active, err := db.TemporaryHarnessBuiltinModeForConv(source.ConvID)
 	require.NoError(t, err)
-	require.NotNil(t, profile)
-	require.NotNil(t, profile.CodexStateRoot)
-	stateRoot := *profile.CodexStateRoot
-	stateDB, err := sql.Open("sqlite", filepath.Join(stateRoot, "state_5.sqlite"))
+	assert.False(t, active, "a refused unlock must not persist a temporary override")
+	assert.Empty(t, mode)
+	row, err := db.FindSessionByConvID(source.ConvID)
 	require.NoError(t, err)
-	_, err = stateDB.Exec(`CREATE TABLE threads (
-		id TEXT PRIMARY KEY,
-		sandbox_policy TEXT NOT NULL,
-		approval_mode TEXT NOT NULL
-	)`)
-	require.NoError(t, err)
-	result, err := stateDB.Exec(`INSERT INTO threads (id, sandbox_policy, approval_mode)
-		VALUES (?, ?, ?)`, source.ConvID, `{"type":"managed"}`, "on-request")
-	require.NoError(t, err)
-	rows, err := result.RowsAffected()
-	require.NoError(t, err)
-	require.Equal(t, int64(1), rows, "the Codex simulator must create the resumed thread row")
-	require.NoError(t, stateDB.Close())
+	require.NotNil(t, row)
+	assert.Equal(t, "idle", row.Status,
+		"the server must refuse before stopping the live Codex conversation")
+}
+
+func TestSandboxRestart_AllowsCodexTclaudeLayerUnlock(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	f.HaveGroup("crew")
+
+	source := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name":                   "codex-outer-layer-source",
+		"harness":                harness.CodexName,
+		"sandbox_implementation": string(sandboxpolicy.ImplementationTclaudeLayer),
+	})
+	require.Equalf(t, http.StatusOK, source.Code, "spawn body=%s", source.Raw)
 
 	f.SetSessionStatus(source.ConvID, "idle")
 	unlock := testharness.Serve(agentd.BuildDashboardHandlerForTest(),
@@ -368,21 +375,15 @@ func TestSandboxRestart_CodexUnlockRepairsPersistedThreadPolicy(t *testing.T) {
 			"/api/agents/"+source.ConvID+"/sandbox-restart",
 			map[string]any{"action": "unlock"}))
 	require.Equalf(t, http.StatusOK, unlock.Code, "unlock body=%s", unlock.Body.String())
-	mode, ok := f.World.SpawnSandbox(source.ConvID)
-	require.True(t, ok, "temporary restart must reach the simulated spawner")
-	assert.Equal(t, harness.SandboxDangerFull, mode)
 
-	stateDB, err = sql.Open("sqlite", filepath.Join(stateRoot, "state_5.sqlite"))
-	require.NoError(t, err)
-	defer func() { _ = stateDB.Close() }()
-	var policy, approval string
-	require.NoError(t, stateDB.QueryRow(
-		`SELECT sandbox_policy, approval_mode FROM threads WHERE id = ?`, source.ConvID,
-	).Scan(&policy, &approval))
-	assert.Equal(t, `{"type":"disabled"}`, policy,
-		"Codex resume must not retain the preceding managed sandbox")
-	assert.Equal(t, "on-request", approval,
-		"sandbox restart must preserve the independent approval posture")
+	implementation, ok := f.World.SpawnSandboxImplementation(source.ConvID)
+	require.True(t, ok, "temporary restart must reach the simulated spawner")
+	assert.Equal(t, string(sandboxpolicy.ImplementationHarnessBuiltin), implementation,
+		"the supported Codex transition removes tclaude's outer layer")
+	mode, ok := f.World.SpawnSandbox(source.ConvID)
+	require.True(t, ok)
+	assert.Equal(t, harness.SandboxDangerFull, mode,
+		"Codex was already launched with its built-in sandbox disabled under the outer layer")
 }
 
 func TestSandboxRestart_RestoresExactDurableImplementation(t *testing.T) {

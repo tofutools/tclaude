@@ -365,7 +365,15 @@ function resourceLimitLines(member) {
   ];
 }
 
-function sandboxTooltip(member, badge, actionable, unlocked) {
+const CODEX_BUILTIN_UNLOCK_UNAVAILABLE = 'Temporary disable unavailable: Codex restores its persisted built-in sandbox policy when this conversation resumes. Use the tclaude-layer implementation or start a new Codex conversation without the built-in sandbox.';
+
+function codexBuiltinUnlockUnsupported(member, unlocked) {
+  const state = member.state || {};
+  const implementation = state.sandbox_implementation || 'harness-builtin';
+  return !unlocked && state.harness === 'codex' && implementation === 'harness-builtin';
+}
+
+function sandboxTooltip(member, badge, actionable, unlocked, unlockUnsupported = false) {
   const lines = [
     `Status: ${unlocked && badge.status === 'OFF' ? 'TEMP OFF' : badge.status}`,
     `Implementation: ${sandboxImplementationLabel(member, badge)}`,
@@ -377,6 +385,8 @@ function sandboxTooltip(member, badge, actionable, unlocked) {
   }
   if (actionable) {
     lines.push(unlocked ? 'Click to restore normal sandbox' : 'Click to temporarily disable');
+  } else if (unlockUnsupported) {
+    lines.push(CODEX_BUILTIN_UNLOCK_UNAVAILABLE);
   }
   return lines.join('\n');
 }
@@ -467,9 +477,10 @@ export function SandboxBadge({ member, showDetails = false }) {
   // verdict. Only the warning produced by this temporary override is a
   // restore shortcut; otherwise clicking a warning would misleadingly offer
   // to "unlock" an agent that is already unconfined.
-  const actionable = !!member.online && (unlocked || !badge.danger);
+  const unlockUnsupported = !badge.danger && codexBuiltinUnlockUnsupported(member, unlocked);
+  const actionable = !!member.online && !unlockUnsupported && (unlocked || !badge.danger);
   const action = unlocked ? 'restore' : 'unlock';
-  const title = sandboxTooltip(member, badge, actionable, unlocked);
+  const title = sandboxTooltip(member, badge, actionable, unlocked, unlockUnsupported);
   const className = `sandbox-badge${badge.danger ? ' sandbox-danger' : ''}${badge.offline ? ' runtime-meta-offline' : ''}${actionable ? ' sandbox-action' : ''}`;
   // aria-label carries the same full text as the tooltip: a glyph-only
   // indicator whose whole meaning is the hover would otherwise be pointer-only.
@@ -774,10 +785,13 @@ function RestartMenuItem({ member }) {
 
 function SandboxRestartMenuItem({ member }) {
   const unlocked = !!member.state?.temporary_sandbox_mode;
+  const unlockUnsupported = codexBuiltinUnlockUnsupported(member, unlocked);
   const label = member.title || member.conv_id;
   const regular = unlocked ? '🔒 restore sandbox + restart' : '⚠ restart without sandbox';
   const wizard = unlocked ? '🔒 restore ward + reincant' : '⚠ reincant without ward';
-  const title = !member.online
+  const title = unlockUnsupported
+    ? CODEX_BUILTIN_UNLOCK_UNAVAILABLE
+    : !member.online
     ? `${regular} is unavailable while ${label} is offline`
     : unlocked
       ? `Stop and restart ${label} with its preserved normal sandbox configuration. Requires the agent to be fully idle with no background agents or shell commands.`
@@ -785,7 +799,7 @@ function SandboxRestartMenuItem({ member }) {
   return html`<${MenuButton}
     member=${member} act="sandbox-restart" className=${unlocked ? undefined : 'danger'}
     attrs=${{ 'data-action': unlocked ? 'restore' : 'unlock' }}
-    regular=${regular} wizard=${wizard} title=${title} disabled=${!member.online}
+    regular=${regular} wizard=${wizard} title=${title} disabled=${!member.online || unlockUnsupported}
   />`;
 }
 
