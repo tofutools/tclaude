@@ -20,9 +20,14 @@ import (
 func TestCronPatch_SpawnTransitionsValidateMergedRowAtomically(t *testing.T) {
 	f := triggerFlow(t)
 	group := f.HaveGroup("patch-spawn")
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{
+		Name: "scanner", Aliases: []string{"scan-alias"}, Harness: "claude",
+	})
+	require.NoError(t, err)
 	id, err := db.InsertAgentCronJob(&db.AgentCronJob{
 		Name: "switcher", TargetKind: db.CronTargetGroup, GroupID: group.ID,
 		IntervalSeconds: 600, Body: "message", ActionKind: db.CronActionMessage, Enabled: true,
+		SpawnProfile:           "scan-alias",
 		SpawnConcurrencyPolicy: db.CronConcurrencyAllow, SpawnMaxLiveWorkers: 7,
 		SpawnWorkerDeadlineSeconds: 99,
 	})
@@ -30,7 +35,7 @@ func TestCronPatch_SpawnTransitionsValidateMergedRowAtomically(t *testing.T) {
 
 	patch := agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPatch,
 		"/v1/cron/"+strconv.FormatInt(id, 10), map[string]any{
-			"action_kind": "spawn", "spawn_profile": "scanner",
+			"action_kind":                "spawn",
 			"spawn_instruction_template": "inspect {{fire_time}}", "spawn_roles": []string{"reviewer"},
 		}))
 	rec := testharness.Serve(f.Mux, patch)
@@ -43,10 +48,20 @@ func TestCronPatch_SpawnTransitionsValidateMergedRowAtomically(t *testing.T) {
 	assert.Equal(t, 1, got.SpawnMaxLiveWorkers, "switch defaults stale inactive worker limit")
 	assert.Zero(t, got.SpawnWorkerDeadlineSeconds, "switch defaults stale inactive deadline")
 	assert.Equal(t, []string{"reviewer"}, got.SpawnRoleRefs)
+	assert.Equal(t, "scanner", got.SpawnProfile, "a dormant alias is canonicalized when switching into spawn")
 	assert.Equal(t, "message", got.Body, "inactive message payload is retained")
 	rec = testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPatch,
 		"/v1/cron/"+strconv.FormatInt(id, 10), map[string]any{"spawn_roles": nil})))
 	require.Equal(t, http.StatusBadRequest, rec.Code, "an explicit null is not an array: %s", rec.Body.String())
+	rec = testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPatch,
+		"/v1/cron/"+strconv.FormatInt(id, 10), map[string]any{
+			"name": "missing-profile-must-not-stick", "spawn_profile": "does-not-exist",
+		})))
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	got, err = db.GetAgentCronJob(id)
+	require.NoError(t, err)
+	assert.Equal(t, "switcher", got.Name, "missing profile rejects the entire patch")
+	assert.Equal(t, "scanner", got.SpawnProfile)
 
 	rec = testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPatch,
 		"/v1/cron/"+strconv.FormatInt(id, 10), map[string]any{

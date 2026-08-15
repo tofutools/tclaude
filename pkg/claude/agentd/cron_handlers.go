@@ -1182,6 +1182,20 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 			writeError(w, http.StatusNotFound, triggerDisabledCode, config.TriggersDisabledMessage)
 			return
 		}
+		if proposedJob.ActionKind == db.CronActionSpawn {
+			profile, err := db.ResolveSpawnProfile(proposedJob.SpawnProfile)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "io", "resolve spawn profile: "+err.Error())
+				return
+			}
+			if profile == nil {
+				writeError(w, http.StatusBadRequest, "invalid_arg",
+					fmt.Sprintf("spawn profile %q does not exist", proposedJob.SpawnProfile))
+				return
+			}
+			proposedJob.SpawnProfile = profile.Name
+			patch.SpawnProfile = &profile.Name
+		}
 		if err := validateProposedCronJob(proposedJob); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 			return
