@@ -45,6 +45,17 @@ func TestDashboardJobsPreactBoundary(t *testing.T) {
 			t.Errorf("Jobs island bypasses its component/action boundary with %q", forbidden)
 		}
 	}
+	spawnFields := read("js/spawn-action-fields.js")
+	for _, needle := range []string{"SpawnActionFields", "TemplatePlaceholderChips", "Worker deadline"} {
+		if !strings.Contains(spawnFields, needle) {
+			t.Errorf("shared spawn action fields missing %q", needle)
+		}
+	}
+	for _, needle := range []string{"CronRunInspector", "loadCronLogs", "cron-action-kind"} {
+		if !strings.Contains(island, needle) {
+			t.Errorf("Jobs cron spawn surface missing %q", needle)
+		}
+	}
 	css := read("dashboard.css")
 	subtabStart := strings.Index(css, ".jobs-subtab {")
 	subtabEnd := -1

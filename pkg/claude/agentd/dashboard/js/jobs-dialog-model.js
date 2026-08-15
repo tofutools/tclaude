@@ -14,6 +14,15 @@ export function cronJobToPrefill(job = {}, { duplicate = false } = {}) {
     cronExpr: text(job.cron_expr),
     subject: text(job.subject),
     body: text(job.body),
+    actionKind: job.action_kind === 'spawn' ? 'spawn' : 'message',
+    spawnProfile: text(job.spawn_profile),
+    spawnRoles: Array.isArray(job.spawn_roles) ? [...job.spawn_roles] : [],
+    spawnNameTemplate: text(job.spawn_name_template),
+    spawnInstructionTemplate: text(job.spawn_instruction_template),
+    spawnConcurrencyPolicy: ['Forbid', 'Replace', 'Allow'].includes(job.spawn_concurrency_policy)
+      ? job.spawn_concurrency_policy : 'Forbid',
+    spawnMaxLiveWorkers: Number(job.spawn_max_live_workers) || 1,
+    spawnWorkerDeadlineSeconds: Number(job.spawn_worker_deadline_seconds) || 0,
     enabled: !!job.enabled,
     runImmediately: !!job.run_immediately,
     queueWhenOffline: !!job.queue_when_offline,
@@ -39,6 +48,17 @@ export function createCronDraft(prefill = {}) {
     cronExpr,
     subject: text(prefill.subject),
     body: text(prefill.body),
+    actionKind: prefill.actionKind === 'spawn' ? 'spawn' : 'message',
+    spawn: {
+      profile: text(prefill.spawnProfile),
+      roles: Array.isArray(prefill.spawnRoles) ? [...prefill.spawnRoles] : [],
+      nameTemplate: text(prefill.spawnNameTemplate),
+      instructionTemplate: text(prefill.spawnInstructionTemplate),
+      concurrencyPolicy: ['Forbid', 'Replace', 'Allow'].includes(prefill.spawnConcurrencyPolicy)
+        ? prefill.spawnConcurrencyPolicy : 'Forbid',
+      maxLiveWorkers: Number(prefill.spawnMaxLiveWorkers) || 1,
+      workerDeadlineSeconds: Number(prefill.spawnWorkerDeadlineSeconds) || 0,
+    },
     enabled: prefill.enabled === undefined ? true : !!prefill.enabled,
     runImmediately: prefill.runImmediately === undefined ? false : !!prefill.runImmediately,
     queueWhenOffline: prefill.queueWhenOffline === undefined ? false : !!prefill.queueWhenOffline,
@@ -57,13 +77,26 @@ export function cronTargetValue(target = {}) {
 }
 
 export function validateCronDraft(dialog, draft) {
+  if (draft.actionKind === 'spawn' && draft.target.mode !== 'group') {
+    return { code: 'spawn-group', message: 'Spawn jobs require a group target.' };
+  }
   const target = cronTargetValue(draft.target);
   if (!target) {
     if (draft.target.mode === 'group') return { code: 'group-target', message: 'Pick a group from the dropdown (or create one first via the Groups tab).' };
     if (draft.target.scopeGroup) return { code: 'scoped-target', message: 'This group has no members to nudge — switch to Group (multicast), or add a member to the group first.' };
     return { code: 'solo-target', message: 'Target is required — type an agt_ id / title / conv-id or use 🔍 to pick.' };
   }
-  if (!draft.body) return { code: 'body', message: 'Body is required (the message text the cron job sends).' };
+  if (draft.actionKind === 'spawn') {
+    if (!draft.spawn.profile.trim()) return { code: 'spawn-profile', message: 'Spawn profile is required.' };
+    if (!draft.spawn.instructionTemplate.trim()) return { code: 'spawn-instruction', message: 'Spawn instruction template is required.' };
+    if (!['Forbid', 'Replace', 'Allow'].includes(draft.spawn.concurrencyPolicy)) {
+      return { code: 'spawn-concurrency', message: 'Concurrency policy must be Forbid, Replace, or Allow.' };
+    }
+    if (Number(draft.spawn.maxLiveWorkers) <= 0) return { code: 'spawn-max-live', message: 'Max live workers must be positive.' };
+    if (Number(draft.spawn.workerDeadlineSeconds) < 0) return { code: 'spawn-deadline', message: 'Worker deadline cannot be negative.' };
+  } else if (!draft.body) {
+    return { code: 'body', message: 'Body is required (the message text the cron job sends).' };
+  }
   if (draft.runImmediately && !draft.enabled) {
     return { code: 'immediate-disabled', message: 'Run immediately requires Enabled, so the requested first run can be delivered.' };
   }
@@ -87,12 +120,23 @@ export function buildCronMutation(dialog, draft) {
   const interval = draft.interval.trim();
   const cronExpr = draft.cronExpr.trim();
   const subject = draft.subject.trim();
+  const spawnPayload = {
+    action_kind: draft.actionKind,
+    spawn_profile: draft.spawn.profile.trim(),
+    spawn_roles: [...draft.spawn.roles],
+    spawn_name_template: draft.spawn.nameTemplate,
+    spawn_instruction_template: draft.spawn.instructionTemplate,
+    spawn_concurrency_policy: draft.spawn.concurrencyPolicy,
+    spawn_max_live_workers: Number(draft.spawn.maxLiveWorkers),
+    spawn_worker_deadline_seconds: Number(draft.spawn.workerDeadlineSeconds),
+  };
 
   if (dialog.kind === 'edit') {
     const payload = {
       name, body: draft.body, subject, enabled: draft.enabled,
       run_immediately: draft.runImmediately,
       queue_when_offline: draft.queueWhenOffline,
+      ...spawnPayload,
     };
     if (owner) payload.owner = owner;
     if (draft.scheduleMode === 'cron') payload.cron_expr = cronExpr;
@@ -114,7 +158,9 @@ export function buildCronMutation(dialog, draft) {
     name, target, subject, body: draft.body, enabled: draft.enabled,
     run_immediately: draft.runImmediately,
     queue_when_offline: draft.queueWhenOffline,
+    action_kind: draft.actionKind,
   };
+  if (draft.actionKind === 'spawn') Object.assign(payload, spawnPayload);
   if (draft.scheduleMode === 'cron') payload.cron_expr = cronExpr;
   else payload.interval = interval;
   if (owner) payload.owner = owner;
@@ -123,7 +169,10 @@ export function buildCronMutation(dialog, draft) {
 }
 
 export function resetCronDraftForAnother(draft) {
-  return { ...draft, name: '', subject: '', body: '' };
+  return {
+    ...draft, name: '', subject: '', body: '',
+    spawn: { ...draft.spawn, nameTemplate: '', instructionTemplate: '' },
+  };
 }
 
 export function standingOrderToPrefill(order = {}) {

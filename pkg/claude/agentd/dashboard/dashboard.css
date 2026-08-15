@@ -11095,6 +11095,7 @@ body.wizard #cron-create-modal .modal-meta {
 body.wizard #cron-create-modal .cron-create-label,
 body.wizard #cron-create-modal .cron-create-enabled { color: #b39ddb; }
 body.wizard #cron-create-modal .cron-create-row input[type=text],
+body.wizard #cron-create-modal .cron-create-row input[type=number],
 body.wizard #cron-create-modal .cron-create-row select,
 body.wizard #cron-create-modal .cron-create-row textarea {
   background: #140f28;
@@ -11102,6 +11103,7 @@ body.wizard #cron-create-modal .cron-create-row textarea {
   color: #f3e6c0;
 }
 body.wizard #cron-create-modal .cron-create-row input[type=text]:focus,
+body.wizard #cron-create-modal .cron-create-row input[type=number]:focus,
 body.wizard #cron-create-modal .cron-create-row select:focus,
 body.wizard #cron-create-modal .cron-create-row textarea:focus {
   border-color: #a97bd6;
@@ -11131,6 +11133,50 @@ body.wizard #cron-create-modal .cron-schedule-chips button.selected {
   box-shadow: 0 0 8px rgba(169, 123, 214, 0.55);
 }
 body.wizard #cron-create-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+
+/* Scheduled spawn action. The shared field component also powers trigger
+   spawn actions; this wrapper only supplies the cron dialog's aligned shell. */
+.cron-spawn-action { align-items: flex-start; }
+.cron-spawn-action-body {
+  flex: 1; min-width: 0; overflow: hidden;
+  border: 1px solid #30363d; border-radius: 6px; background: #0d141c;
+}
+.cron-spawn-action-body .trigger-action-fields + .trigger-action-fields {
+  padding-top: 0;
+}
+.cron-spawn-action-body .trigger-permission-warning { margin: 0 10px 10px; }
+body.wizard #cron-create-modal .cron-spawn-action-body {
+  background: #18122b; border-color: rgba(122, 93, 176, .55);
+}
+body.wizard #cron-create-modal .cron-spawn-action-body .trigger-action-fields label { color: #b39ddb; }
+
+/* Cron action identity and on-demand run ledger. The list remains compact;
+   worker details are paid for only when the operator expands one row. */
+.cron-action-kind {
+  display: inline-flex; align-items: center; margin-top: 4px; padding: 1px 7px;
+  border: 1px solid #30363d; border-radius: 999px; font-size: 10px; line-height: 16px;
+}
+.cron-action-kind.message { color: #79c0ff; border-color: #275b8e; background: #0b2742; }
+.cron-action-kind.spawn { color: #d2a8ff; border-color: #593a78; background: #241536; }
+.cron-spawn-summary { margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cron-feature-note { margin-top: 3px; color: #e3b341; font-size: 10px; }
+.cron-run-inspector-row > td { padding: 0 !important; background: #0f151c; }
+.cron-run-inspector { padding: 12px 18px 16px 34px; border-bottom: 1px solid #30363d; }
+.cron-run-inspector-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.cron-run-inspector-head .muted { flex: 1; }
+.cron-runs { border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
+.cron-run {
+  display: grid; grid-template-columns: minmax(150px, .8fr) minmax(110px, auto) minmax(180px, 1.4fr) minmax(150px, .8fr);
+  gap: 10px; align-items: center; padding: 7px 9px; border-bottom: 1px solid #21262d; font-size: 11px;
+}
+.cron-run:last-child { border-bottom: 0; }
+.cron-run-detail { min-width: 0; overflow-wrap: anywhere; white-space: normal; }
+.cron-run-worker { white-space: nowrap; }
+body.wizard .cron-run-inspector-row > td { background: #140f28; }
+body.wizard .cron-runs { background: #18122b; border-color: rgba(122, 93, 176, .55); }
+@media (max-width: 900px) {
+  .cron-run { grid-template-columns: 1fr; gap: 4px; }
+}
 
 /* Create = ⏳ Bind it! — the submit button re-skinned into a gilded conjuring
    lever, the cron twin of the spawn dialog's 🔮 Summon! and the retire dialog's

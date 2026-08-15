@@ -10,9 +10,19 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
+function choose(select, value) {
+  for (const option of select.options) {
+    if (option.value === value) option.setAttribute('selected', '');
+    else option.removeAttribute('selected');
+  }
+  Object.defineProperty(select, 'value', { configurable: true, writable: true, value });
+}
+
 function snapshot(revision = 1) {
   return {
     revision,
+    triggers_enabled: true,
+    profiles: [{ name: 'reviewer', aliases: ['review-kit'] }],
     agents: [
       { agent_id: 'agt_one', conv_id: 'conv-one', title: 'One', online: true },
       { agent_id: 'agt_two', conv_id: 'conv-two', title: 'Two', online: true },
@@ -184,6 +194,56 @@ test('cron edit and duplicate descriptors render their distinct component modes'
   assert.equal(mounted.container.querySelector('#cron-create-name').value, 'daily-copy');
   assert.ok(mounted.container.querySelector('#cron-create-save-another'));
   await mounted.unmount();
+});
+
+test('cron action picker gates spawn and submits the full scheduled-worker payload', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { CronDialog } = await harness.importDashboardModule('js/jobs-dialog-island.js');
+  const saved = [];
+  const actions = {
+    closeCronDialog: () => {}, explainCron: async () => ({ valid: true }),
+    saveCron: async (mutation) => { saved.push(mutation); return { id: 14 }; },
+  };
+  const mounted = await harness.mount(harness.html`<${CronDialog} descriptor=${createDescriptor()}
+    snapshot=${snapshot()} actions=${actions} confirmDiscard=${async () => true} />`);
+  const kind = mounted.container.querySelector('#cron-create-action-kind');
+  assert.deepEqual([...kind.options].map((option) => option.value), ['message', 'spawn']);
+  choose(kind, 'spawn');
+  await harness.act(() => harness.fireEvent(kind, 'change'));
+  assert.equal(mounted.container.querySelector('#cron-create-target-group') != null, true,
+    'spawn selection atomically moves the draft to a group target');
+  assert.equal(mounted.container.querySelector('#cron-create-body'), null);
+  assert.equal(mounted.container.querySelector('#cron-create-queue-when-offline'), null);
+  const group = mounted.container.querySelector('#cron-create-group');
+  choose(group, 'alpha');
+  await harness.act(() => harness.fireEvent(group, 'change'));
+  await harness.input(mounted.container.querySelector('#cron-create-spawn-profile'), 'reviewer');
+  await harness.input(mounted.container.querySelector('#cron-create-spawn-roles'), 'reviewer, read-only');
+  await harness.input(mounted.container.querySelector('#cron-create-spawn-name-template'), 'night-{{fire_time}}');
+  await harness.input(mounted.container.querySelector('#cron-create-spawn-instruction-template'), 'Review at {{fire_time}}');
+  const policy = mounted.container.querySelector('#cron-create-spawn-concurrency');
+  choose(policy, 'Allow');
+  await harness.act(() => harness.fireEvent(policy, 'change'));
+  await harness.input(mounted.container.querySelector('#cron-create-spawn-max-live'), '3');
+  await harness.input(mounted.container.querySelector('#cron-create-spawn-deadline'), '1200');
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('#cron-create-submit'), 'click'));
+  assert.equal(saved.length, 1);
+  assert.deepEqual(saved[0].payload, {
+    name: '', target: 'group:alpha', subject: '', body: 'status', enabled: true,
+    run_immediately: false, queue_when_offline: false, action_kind: 'spawn',
+    spawn_profile: 'reviewer', spawn_roles: ['reviewer', 'read-only'],
+    spawn_name_template: 'night-{{fire_time}}', spawn_instruction_template: 'Review at {{fire_time}}',
+    spawn_concurrency_policy: 'Allow', spawn_max_live_workers: 3,
+    spawn_worker_deadline_seconds: 1200, interval: '5m',
+  });
+  await mounted.unmount();
+
+  const disabledSnapshot = { ...snapshot(), triggers_enabled: false };
+  const gated = await harness.mount(harness.html`<${CronDialog} descriptor=${createDescriptor({ launchID: 2 })}
+    snapshot=${disabledSnapshot} actions=${actions} confirmDiscard=${async () => true} />`);
+  assert.deepEqual([...gated.container.querySelector('#cron-create-action-kind').options].map((option) => option.value), ['message']);
+  assert.equal(gated.container.querySelector('#cron-create-spawn-fields'), null);
+  await gated.unmount();
 });
 
 test('cron explainer rejects stale responses while stacked pickers and live snapshots retain the draft', async (t) => {
