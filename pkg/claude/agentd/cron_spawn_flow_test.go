@@ -267,7 +267,36 @@ func TestCronSpawnFeatureGateLeavesMessageCronAvailable(t *testing.T) {
 	assert.Equal(t, http.StatusOK, message.Code, message.Body.String())
 }
 
-func TestCronSpawnCreateWarnsAboutMissingGrantAndPatchRejectsUnsupportedEdits(t *testing.T) {
+func TestDashboardCronLogsPreserveWorkerIdentity(t *testing.T) {
+	f := newFlow(t)
+	group := f.HaveGroup("log-workers")
+	jobID, err := db.InsertAgentCronJob(&db.AgentCronJob{
+		Name: "worker-log", TargetKind: db.CronTargetGroup, GroupID: group.ID,
+		IntervalSeconds: 600, Body: "unused", Enabled: true,
+	})
+	require.NoError(t, err)
+	_, err = db.InsertAgentCronRun(&db.AgentCronRun{
+		JobID: jobID, FiredAt: time.Now().UTC(), Status: "spawned",
+		WorkerID: 42, WorkerAgent: "agt_worker_identity",
+	})
+	require.NoError(t, err)
+
+	rec := testharness.Serve(agentd.BuildDashboardHandlerForTest(), dashReq(t, http.MethodGet,
+		fmt.Sprintf("/api/cron/%d/logs", jobID), nil))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var out struct {
+		Runs []struct {
+			WorkerID    int64  `json:"worker_id"`
+			WorkerAgent string `json:"worker_agent"`
+		} `json:"runs"`
+	}
+	testharness.DecodeJSON(t, rec, &out)
+	require.Len(t, out.Runs, 1)
+	assert.EqualValues(t, 42, out.Runs[0].WorkerID)
+	assert.Equal(t, "agt_worker_identity", out.Runs[0].WorkerAgent)
+}
+
+func TestCronSpawnCreateWarnsAboutMissingGrantAndPatchEditsPayload(t *testing.T) {
 	f := triggerFlow(t)
 	f.HaveGroup("alpha")
 	_, err := db.SetAgentGroupDefaultCwd("alpha", t.TempDir())
@@ -280,6 +309,8 @@ func TestCronSpawnCreateWarnsAboutMissingGrantAndPatchRejectsUnsupportedEdits(t 
 	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/cron", map[string]any{
 		"name": "warning", "target": "group:alpha", "owner": owner, "interval": "8h",
 		"action_kind": "spawn", "spawn_profile": "scanner", "spawn_instruction_template": "scan",
+		"spawn_concurrency_policy": db.CronConcurrencyReplace, "spawn_max_live_workers": 3,
+		"spawn_worker_deadline_seconds": 60,
 	})))
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var created struct {
@@ -290,16 +321,17 @@ func TestCronSpawnCreateWarnsAboutMissingGrantAndPatchRejectsUnsupportedEdits(t 
 	require.Len(t, created.Warnings, 1)
 	assert.Contains(t, created.Warnings[0], agentd.PermGroupsMembersSpawn)
 
-	for name, body := range map[string]map[string]any{
-		"retarget":      {"target": "group:alpha"},
-		"spawn payload": {"spawn_instruction_template": "new scan"},
-		"action kind":   {"action_kind": "message"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			patch := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPatch,
-				fmt.Sprintf("/v1/cron/%d", created.ID), body)))
-			assert.Equal(t, http.StatusBadRequest, patch.Code, patch.Body.String())
-			assert.Contains(t, patch.Body.String(), "recreate the cron job")
-		})
-	}
+	patch := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPatch,
+		fmt.Sprintf("/v1/cron/%d", created.ID), map[string]any{
+			"spawn_instruction_template": "new scan", "spawn_roles": []string{},
+		})))
+	require.Equal(t, http.StatusOK, patch.Code, patch.Body.String())
+	got, err := db.GetAgentCronJob(created.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "new scan", got.SpawnInstructionTemplate)
+	assert.Empty(t, got.SpawnRoleRefs, "an explicit empty spawn_roles array clears the replacement set")
+	assert.Equal(t, db.CronConcurrencyReplace, got.SpawnConcurrencyPolicy, "omitted fields remain unchanged")
+	assert.Equal(t, 3, got.SpawnMaxLiveWorkers)
+	assert.EqualValues(t, 60, got.SpawnWorkerDeadlineSeconds)
 }

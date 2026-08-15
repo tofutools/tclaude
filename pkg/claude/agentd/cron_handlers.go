@@ -900,6 +900,122 @@ func validateCronName(name string) error {
 	return nil
 }
 
+func applyCronPatch(job *db.AgentCronJob, patch db.UpdateCronPatch) *db.AgentCronJob {
+	proposed := *job
+	proposed.SpawnRoleRefs = append([]string(nil), job.SpawnRoleRefs...)
+	if patch.Name != nil {
+		proposed.Name = *patch.Name
+	}
+	if patch.TargetKind != nil {
+		proposed.TargetKind = *patch.TargetKind
+	}
+	if patch.GroupID != nil {
+		proposed.GroupID = *patch.GroupID
+	}
+	if patch.TargetRole != nil {
+		proposed.TargetRole = *patch.TargetRole
+	}
+	if patch.IntervalSeconds != nil {
+		proposed.IntervalSeconds = *patch.IntervalSeconds
+	}
+	if patch.CronExpr != nil {
+		proposed.CronExpr = *patch.CronExpr
+	}
+	if patch.Subject != nil {
+		proposed.Subject = *patch.Subject
+	}
+	if patch.Body != nil {
+		proposed.Body = *patch.Body
+	}
+	if patch.Enabled != nil {
+		proposed.Enabled = *patch.Enabled
+	}
+	if patch.RunImmediately != nil {
+		proposed.RunImmediately = *patch.RunImmediately
+	}
+	if patch.QueueWhenOffline != nil {
+		proposed.QueueWhenOffline = *patch.QueueWhenOffline
+	}
+	if patch.ActionKind != nil {
+		proposed.ActionKind = *patch.ActionKind
+	}
+	if patch.SpawnProfile != nil {
+		proposed.SpawnProfile = *patch.SpawnProfile
+	}
+	if patch.SpawnRoleRefs != nil {
+		proposed.SpawnRoleRefs = append([]string(nil), (*patch.SpawnRoleRefs)...)
+	}
+	if patch.SpawnNameTemplate != nil {
+		proposed.SpawnNameTemplate = *patch.SpawnNameTemplate
+	}
+	if patch.SpawnInstructionTemplate != nil {
+		proposed.SpawnInstructionTemplate = *patch.SpawnInstructionTemplate
+	}
+	if patch.SpawnConcurrencyPolicy != nil {
+		proposed.SpawnConcurrencyPolicy = *patch.SpawnConcurrencyPolicy
+	}
+	if patch.SpawnMaxLiveWorkers != nil {
+		proposed.SpawnMaxLiveWorkers = *patch.SpawnMaxLiveWorkers
+	}
+	if patch.SpawnWorkerDeadlineSeconds != nil {
+		proposed.SpawnWorkerDeadlineSeconds = *patch.SpawnWorkerDeadlineSeconds
+	}
+	return &proposed
+}
+
+func validateProposedCronJob(job *db.AgentCronJob) error {
+	if err := validateCronName(job.Name); err != nil {
+		return err
+	}
+	if (job.IntervalSeconds > 0) == (strings.TrimSpace(job.CronExpr) != "") {
+		return errors.New("job must have exactly one schedule mode")
+	}
+	if job.IntervalSeconds > 0 && job.IntervalSeconds < 30 {
+		return errors.New("interval must be >= 30s (the scheduler tick interval)")
+	}
+	if job.CronExpr != "" {
+		if err := cronexpr.Validate(job.CronExpr); err != nil {
+			return err
+		}
+	}
+	if job.RunImmediately && !job.Enabled {
+		return errors.New("run_immediately requires enabled=true so the requested run is not contradictory")
+	}
+	if strings.TrimSpace(job.TargetRole) != "" && !job.IsGroupTarget() {
+		return errors.New("role is only valid for a group target (it filters group members)")
+	}
+	switch job.ActionKind {
+	case db.CronActionMessage:
+		if job.Body == "" {
+			return errors.New("body is required (the message text the cron job sends)")
+		}
+	case db.CronActionSpawn:
+		if !job.IsGroupTarget() || job.GroupID <= 0 {
+			return errors.New("spawn jobs require a group target")
+		}
+		if strings.TrimSpace(job.SpawnProfile) == "" || strings.TrimSpace(job.SpawnInstructionTemplate) == "" {
+			return errors.New("spawn_profile and spawn_instruction_template are required for spawn jobs")
+		}
+		if len(job.SpawnInstructionTemplate) > db.TriggerTemplateMaxLen || len(job.SpawnNameTemplate) > db.TriggerNameMaxLen {
+			return errors.New("spawn instruction or name template is too long")
+		}
+		if job.SpawnWorkerDeadlineSeconds < 0 || job.SpawnWorkerDeadlineSeconds > db.TriggerMaxDelaySeconds {
+			return errors.New("spawn_worker_deadline_seconds is out of range")
+		}
+		if job.SpawnMaxLiveWorkers <= 0 {
+			return errors.New("spawn_max_live_workers must be positive")
+		}
+		switch job.SpawnConcurrencyPolicy {
+		case db.CronConcurrencyForbid, db.CronConcurrencyReplace, db.CronConcurrencyAllow:
+		default:
+			return errors.New("spawn_concurrency_policy must be Forbid, Replace, or Allow")
+		}
+	default:
+		return errors.New("action_kind must be message or spawn")
+	}
+	return nil
+}
+
 // handleCronPatch applies a partial update to one job. Validation
 // mirrors handleCronCreate; only fields explicitly present in the
 // JSON body are touched. A run_immediately false→true transition triggers one
@@ -922,15 +1038,8 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 		return
 	}
 	patch := decoded.patch
-	if decoded.spawnPayloadPresent {
-		writeError(w, http.StatusBadRequest, "invalid_arg",
-			"spawn action and payload fields are not editable yet; recreate the cron job")
-		return
-	}
-	if job.ActionKind == db.CronActionSpawn && (decoded.targetSelector != nil || patch.GroupID != nil ||
-		patch.TargetRole != nil || patch.Body != nil || patch.Subject != nil || patch.QueueWhenOffline != nil) {
-		writeError(w, http.StatusBadRequest, "invalid_arg",
-			"spawn jobs cannot be retargeted or edited with message-only fields; recreate the cron job")
+	if job.ActionKind == db.CronActionSpawn && !triggerRoutesEnabled() {
+		writeError(w, http.StatusNotFound, triggerDisabledCode, config.TriggersDisabledMessage)
 		return
 	}
 	// Resolve user-facing selectors before taking cronAuthorityMu: the normal
@@ -1053,6 +1162,30 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 				patch.OperatorAuthored = &operatorAuthored
 			}
 		}
+		switchingIntoSpawn := job.ActionKind != db.CronActionSpawn && patch.ActionKind != nil && *patch.ActionKind == db.CronActionSpawn
+		if switchingIntoSpawn {
+			if patch.SpawnConcurrencyPolicy == nil {
+				policy := db.CronConcurrencyForbid
+				patch.SpawnConcurrencyPolicy = &policy
+			}
+			if patch.SpawnMaxLiveWorkers == nil {
+				maxLive := 1
+				patch.SpawnMaxLiveWorkers = &maxLive
+			}
+			if patch.SpawnWorkerDeadlineSeconds == nil {
+				deadline := int64(0)
+				patch.SpawnWorkerDeadlineSeconds = &deadline
+			}
+		}
+		proposedJob := applyCronPatch(job, patch)
+		if proposedJob.ActionKind == db.CronActionSpawn && !triggerRoutesEnabled() {
+			writeError(w, http.StatusNotFound, triggerDisabledCode, config.TriggersDisabledMessage)
+			return
+		}
+		if err := validateProposedCronJob(proposedJob); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+			return
+		}
 	}
 	triggerImmediate := patch.RunImmediately != nil && *patch.RunImmediately && !job.RunImmediately
 	effectiveEnabled := job.Enabled
@@ -1123,11 +1256,10 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 // Empty body / no recognised fields is allowed and produces an
 // empty patch — handleCronPatch then no-ops cleanly.
 type decodedCronPatch struct {
-	patch               db.UpdateCronPatch
-	targetSelector      *string
-	target              *cronTarget
-	owner               *string
-	spawnPayloadPresent bool
+	patch          db.UpdateCronPatch
+	targetSelector *string
+	target         *cronTarget
+	owner          *string
 }
 
 // cronActor is a selector resolved to both forms of one actor identity. Agent
@@ -1171,13 +1303,52 @@ func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (decodedCronPat
 		}
 	}
 	patch := db.UpdateCronPatch{
-		Name:             body.Name,
-		Subject:          body.Subject,
-		Body:             body.Body,
-		Enabled:          body.Enabled,
-		RunImmediately:   body.RunImmediately,
-		QueueWhenOffline: body.QueueWhenOffline,
-		GroupID:          body.GroupID,
+		Name:                       body.Name,
+		Subject:                    body.Subject,
+		Body:                       body.Body,
+		Enabled:                    body.Enabled,
+		RunImmediately:             body.RunImmediately,
+		QueueWhenOffline:           body.QueueWhenOffline,
+		GroupID:                    body.GroupID,
+		ActionKind:                 body.ActionKind,
+		SpawnProfile:               body.SpawnProfile,
+		SpawnNameTemplate:          body.SpawnNameTemplate,
+		SpawnInstructionTemplate:   body.SpawnInstructionTemplate,
+		SpawnConcurrencyPolicy:     body.SpawnConcurrencyPolicy,
+		SpawnMaxLiveWorkers:        body.SpawnMaxLiveWorkers,
+		SpawnWorkerDeadlineSeconds: body.SpawnWorkerDeadlineSeconds,
+	}
+	if body.ActionKind != nil {
+		kind := strings.TrimSpace(*body.ActionKind)
+		patch.ActionKind = &kind
+	}
+	if body.SpawnProfile != nil {
+		profile := strings.TrimSpace(*body.SpawnProfile)
+		patch.SpawnProfile = &profile
+	}
+	if body.SpawnConcurrencyPolicy != nil {
+		policy := strings.TrimSpace(*body.SpawnConcurrencyPolicy)
+		switch strings.ToLower(policy) {
+		case "forbid":
+			policy = db.CronConcurrencyForbid
+		case "replace":
+			policy = db.CronConcurrencyReplace
+		case "allow":
+			policy = db.CronConcurrencyAllow
+		}
+		patch.SpawnConcurrencyPolicy = &policy
+	}
+	if body.SpawnRoles != nil {
+		if strings.TrimSpace(string(*body.SpawnRoles)) == "null" {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "spawn_roles must be an array")
+			return decodedCronPatch{}, false
+		}
+		var roles []string
+		if err := json.Unmarshal(*body.SpawnRoles, &roles); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "spawn_roles must be an array of strings")
+			return decodedCronPatch{}, false
+		}
+		patch.SpawnRoleRefs = &roles
 	}
 	// Role filter (JOH-244): normalize "all" → "" (whole group) so the stored
 	// value drives the fan-out's empty-filter path.
@@ -1193,11 +1364,6 @@ func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (decodedCronPat
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 			return decodedCronPatch{}, false
 		}
-	}
-	if body.Body != nil && *body.Body == "" {
-		writeError(w, http.StatusBadRequest, "invalid_arg",
-			"body must not be empty when present (the message text the cron job sends)")
-		return decodedCronPatch{}, false
 	}
 	// Schedule fields preserve the exactly-one-mode invariant without
 	// reading the row: setting either mode also clears the other. A
@@ -1252,13 +1418,7 @@ func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (decodedCronPat
 		empty := ""
 		patch.CronExpr = &empty
 	}
-	return decodedCronPatch{
-		patch: patch, targetSelector: body.Target, owner: body.Owner,
-		spawnPayloadPresent: body.ActionKind != nil || body.SpawnProfile != nil || body.SpawnRoles != nil ||
-			body.SpawnNameTemplate != nil || body.SpawnInstructionTemplate != nil ||
-			body.SpawnConcurrencyPolicy != nil || body.SpawnMaxLiveWorkers != nil ||
-			body.SpawnWorkerDeadlineSeconds != nil,
-	}, true
+	return decodedCronPatch{patch: patch, targetSelector: body.Target, owner: body.Owner}, true
 }
 
 // proposedCronPatchTarget returns the canonical destination requested by a

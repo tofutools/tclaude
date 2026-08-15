@@ -174,27 +174,5 @@ func dashboardCronExplain(w http.ResponseWriter, r *http.Request) {
 // shape as the /v1/cron/{id}/logs response so the dashboard can reuse
 // the same parsing helpers (if we ever share JS).
 func dashboardCronLogs(w http.ResponseWriter, r *http.Request, id int64) {
-	limit := 25
-	if s := r.URL.Query().Get("limit"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 1000 {
-			limit = n
-		}
-	}
-	runs, err := db.ListAgentCronRunsForJob(id, limit)
-	if err != nil {
-		http.Error(w, "list runs: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	out := make([]map[string]any, 0, len(runs))
-	for _, run := range runs {
-		out = append(out, map[string]any{
-			"id":        run.ID,
-			"fired_at":  run.FiredAt.Format(time.RFC3339),
-			"status":    run.Status,
-			"error_msg": run.ErrorMsg,
-		})
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"runs": out,
-	})
+	handleCronLogs(w, asDashboardHumanPeer(r), id)
 }

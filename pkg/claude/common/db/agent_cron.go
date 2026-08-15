@@ -689,19 +689,27 @@ func DeleteGroupTargetCronJobs(groupID int64) (int, error) {
 // nil → leave field unchanged. Pointer-shaped so callers can distinguish
 // "set to zero" from "don't touch".
 type UpdateCronPatch struct {
-	Name             *string
-	OwnerConv        *string
-	TargetKind       *string
-	TargetConv       *string
-	GroupID          *int64
-	TargetRole       *string
-	IntervalSeconds  *int64
-	CronExpr         *string
-	Subject          *string
-	Body             *string
-	Enabled          *bool
-	RunImmediately   *bool
-	QueueWhenOffline *bool
+	Name                       *string
+	OwnerConv                  *string
+	TargetKind                 *string
+	TargetConv                 *string
+	GroupID                    *int64
+	TargetRole                 *string
+	IntervalSeconds            *int64
+	CronExpr                   *string
+	Subject                    *string
+	Body                       *string
+	Enabled                    *bool
+	RunImmediately             *bool
+	QueueWhenOffline           *bool
+	ActionKind                 *string
+	SpawnProfile               *string
+	SpawnRoleRefs              *[]string
+	SpawnNameTemplate          *string
+	SpawnInstructionTemplate   *string
+	SpawnConcurrencyPolicy     *string
+	SpawnMaxLiveWorkers        *int
+	SpawnWorkerDeadlineSeconds *int64
 	// OperatorAuthored, when non-nil, re-syncs human-operator attribution with a
 	// changed owner: a job re-owned to a sender agent must stop firing as the
 	// operator, and one cleared back to no owner resumes it.
@@ -714,7 +722,10 @@ func (p UpdateCronPatch) Empty() bool {
 		p.TargetConv == nil && p.GroupID == nil && p.TargetRole == nil &&
 		p.IntervalSeconds == nil && p.CronExpr == nil && p.Subject == nil &&
 		p.Body == nil && p.Enabled == nil && p.RunImmediately == nil &&
-		p.QueueWhenOffline == nil
+		p.QueueWhenOffline == nil && p.ActionKind == nil && p.SpawnProfile == nil &&
+		p.SpawnRoleRefs == nil && p.SpawnNameTemplate == nil &&
+		p.SpawnInstructionTemplate == nil && p.SpawnConcurrencyPolicy == nil &&
+		p.SpawnMaxLiveWorkers == nil && p.SpawnWorkerDeadlineSeconds == nil
 }
 
 // UpdateAgentCronJobFields applies a partial update to one row. Only
@@ -817,6 +828,42 @@ func UpdateAgentCronJobFields(id int64, p UpdateCronPatch) (int, error) {
 	if p.QueueWhenOffline != nil {
 		sets = append(sets, "queue_when_offline = ?")
 		args = append(args, boolToInt(*p.QueueWhenOffline))
+	}
+	if p.ActionKind != nil {
+		sets = append(sets, "action_kind = ?")
+		args = append(args, *p.ActionKind)
+	}
+	if p.SpawnProfile != nil {
+		sets = append(sets, "spawn_profile = ?")
+		args = append(args, *p.SpawnProfile)
+	}
+	if p.SpawnRoleRefs != nil {
+		rolesJSON, err := json.Marshal(*p.SpawnRoleRefs)
+		if err != nil {
+			return 0, err
+		}
+		sets = append(sets, "spawn_role_refs_json = ?")
+		args = append(args, string(rolesJSON))
+	}
+	if p.SpawnNameTemplate != nil {
+		sets = append(sets, "spawn_name_template = ?")
+		args = append(args, *p.SpawnNameTemplate)
+	}
+	if p.SpawnInstructionTemplate != nil {
+		sets = append(sets, "spawn_instruction_template = ?")
+		args = append(args, *p.SpawnInstructionTemplate)
+	}
+	if p.SpawnConcurrencyPolicy != nil {
+		sets = append(sets, "spawn_concurrency_policy = ?")
+		args = append(args, *p.SpawnConcurrencyPolicy)
+	}
+	if p.SpawnMaxLiveWorkers != nil {
+		sets = append(sets, "spawn_max_live_workers = ?")
+		args = append(args, *p.SpawnMaxLiveWorkers)
+	}
+	if p.SpawnWorkerDeadlineSeconds != nil {
+		sets = append(sets, "spawn_worker_deadline_seconds = ?")
+		args = append(args, *p.SpawnWorkerDeadlineSeconds)
 	}
 	if p.OperatorAuthored != nil {
 		sets = append(sets, "operator_authored = ?")

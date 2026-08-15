@@ -12,9 +12,101 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
+
+func TestCronPatch_SpawnTransitionsValidateMergedRowAtomically(t *testing.T) {
+	f := triggerFlow(t)
+	group := f.HaveGroup("patch-spawn")
+	id, err := db.InsertAgentCronJob(&db.AgentCronJob{
+		Name: "switcher", TargetKind: db.CronTargetGroup, GroupID: group.ID,
+		IntervalSeconds: 600, Body: "message", ActionKind: db.CronActionMessage, Enabled: true,
+		SpawnConcurrencyPolicy: db.CronConcurrencyAllow, SpawnMaxLiveWorkers: 7,
+		SpawnWorkerDeadlineSeconds: 99,
+	})
+	require.NoError(t, err)
+
+	patch := agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPatch,
+		"/v1/cron/"+strconv.FormatInt(id, 10), map[string]any{
+			"action_kind": "spawn", "spawn_profile": "scanner",
+			"spawn_instruction_template": "inspect {{fire_time}}", "spawn_roles": []string{"reviewer"},
+		}))
+	rec := testharness.Serve(f.Mux, patch)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	got, err := db.GetAgentCronJob(id)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, db.CronActionSpawn, got.ActionKind)
+	assert.Equal(t, db.CronConcurrencyForbid, got.SpawnConcurrencyPolicy, "switch defaults stale inactive policy")
+	assert.Equal(t, 1, got.SpawnMaxLiveWorkers, "switch defaults stale inactive worker limit")
+	assert.Zero(t, got.SpawnWorkerDeadlineSeconds, "switch defaults stale inactive deadline")
+	assert.Equal(t, []string{"reviewer"}, got.SpawnRoleRefs)
+	assert.Equal(t, "message", got.Body, "inactive message payload is retained")
+
+	rec = testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPatch,
+		"/v1/cron/"+strconv.FormatInt(id, 10), map[string]any{
+			"name": "must-not-stick", "spawn_max_live_workers": 0,
+		})))
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	got, err = db.GetAgentCronJob(id)
+	require.NoError(t, err)
+	assert.Equal(t, "switcher", got.Name, "invalid merged row rejects the entire patch")
+	assert.Equal(t, 1, got.SpawnMaxLiveWorkers)
+
+	rec = testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPatch,
+		"/v1/cron/"+strconv.FormatInt(id, 10), map[string]any{
+			"action_kind": "message", "body": "back to message",
+		})))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	got, err = db.GetAgentCronJob(id)
+	require.NoError(t, err)
+	assert.Equal(t, db.CronActionMessage, got.ActionKind)
+	assert.Equal(t, "scanner", got.SpawnProfile, "inactive spawn payload is retained")
+	assert.Equal(t, []string{"reviewer"}, got.SpawnRoleRefs)
+}
+
+func TestCronPatch_SpawnFeatureOffRefusesSpawnEditsOnly(t *testing.T) {
+	f := newFlow(t)
+	group := f.HaveGroup("patch-off")
+	spawnID, err := db.InsertAgentCronJob(&db.AgentCronJob{
+		Name: "spawn", TargetKind: db.CronTargetGroup, GroupID: group.ID,
+		IntervalSeconds: 600, ActionKind: db.CronActionSpawn, SpawnProfile: "scanner",
+		SpawnInstructionTemplate: "scan", SpawnConcurrencyPolicy: db.CronConcurrencyForbid,
+		SpawnMaxLiveWorkers: 1, Enabled: true,
+	})
+	require.NoError(t, err)
+	messageID, err := db.InsertAgentCronJob(&db.AgentCronJob{
+		Name: "message", TargetKind: db.CronTargetGroup, GroupID: group.ID,
+		IntervalSeconds: 600, ActionKind: db.CronActionMessage, Body: "ping", Enabled: true,
+	})
+	require.NoError(t, err)
+
+	for _, body := range []map[string]any{{"name": "blocked"}, {"action_kind": "message", "body": "convert"}} {
+		rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPatch,
+			"/v1/cron/"+strconv.FormatInt(spawnID, 10), body)))
+		assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+		assert.Contains(t, rec.Body.String(), config.TriggersDisabledMessage)
+	}
+	gotSpawn, err := db.GetAgentCronJob(spawnID)
+	require.NoError(t, err)
+	assert.Equal(t, db.CronActionSpawn, gotSpawn.ActionKind)
+	assert.Equal(t, "spawn", gotSpawn.Name)
+
+	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPatch,
+		"/v1/cron/"+strconv.FormatInt(messageID, 10), map[string]any{"name": "message-edited"})))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	rec = testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPatch,
+		"/v1/cron/"+strconv.FormatInt(messageID, 10), map[string]any{
+			"action_kind": "spawn", "spawn_profile": "scanner", "spawn_instruction_template": "scan",
+		})))
+	assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+	gotMessage, err := db.GetAgentCronJob(messageID)
+	require.NoError(t, err)
+	assert.Equal(t, "message-edited", gotMessage.Name)
+	assert.Equal(t, db.CronActionMessage, gotMessage.ActionKind)
+}
 
 // Scenario: PATCH /v1/cron/{id} with just `enabled:false` flips
 // enabled and leaves every other field untouched. Pins the partial-
