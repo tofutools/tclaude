@@ -2001,15 +2001,6 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 			return res
 		}
 	}
-	if harnessName == harness.CodexName && relaunchSandbox == harness.SandboxDangerFull {
-		if err := harness.PrepareCodexDangerFullAccessResume(
-			launchConfig.CodexStateRoot, convID,
-		); err != nil {
-			res.Action = "error"
-			res.Detail = err.Error()
-			return res
-		}
-	}
 	if err := SpawnDetachedTclaudeResume(clcommon.SpawnArgs{
 		EffectiveSandbox:           effectiveSandbox,
 		AgentID:                    persistedAgentID,

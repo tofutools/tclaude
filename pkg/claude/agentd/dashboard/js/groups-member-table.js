@@ -365,7 +365,17 @@ function resourceLimitLines(member) {
   ];
 }
 
+const CODEX_OWN_SANDBOX_UNLOCK_UNAVAILABLE = 'Temporary disable unavailable: Codex restores its persisted sandbox policy when this conversation resumes. Use the tclaude-layer implementation or start a new Codex conversation without the built-in sandbox.';
+
+function codexOwnSandboxUnlockUnsupported(member, unlocked) {
+  const state = member.state || {};
+  const implementation = state.sandbox_implementation || 'harness-builtin';
+  return !unlocked && state.harness === 'codex'
+    && (implementation === 'harness-builtin' || implementation === 'stacked');
+}
+
 function sandboxTooltip(member, badge, actionable, unlocked) {
+  const unlockUnsupported = !badge.danger && codexOwnSandboxUnlockUnsupported(member, unlocked);
   const lines = [
     `Status: ${unlocked && badge.status === 'OFF' ? 'TEMP OFF' : badge.status}`,
     `Implementation: ${sandboxImplementationLabel(member, badge)}`,
@@ -377,6 +387,8 @@ function sandboxTooltip(member, badge, actionable, unlocked) {
   }
   if (actionable) {
     lines.push(unlocked ? 'Click to restore normal sandbox' : 'Click to temporarily disable');
+  } else if (unlockUnsupported) {
+    lines.push(CODEX_OWN_SANDBOX_UNLOCK_UNAVAILABLE);
   }
   return lines.join('\n');
 }
@@ -467,7 +479,8 @@ export function SandboxBadge({ member, showDetails = false }) {
   // verdict. Only the warning produced by this temporary override is a
   // restore shortcut; otherwise clicking a warning would misleadingly offer
   // to "unlock" an agent that is already unconfined.
-  const actionable = !!member.online && (unlocked || !badge.danger);
+  const unlockUnsupported = !badge.danger && codexOwnSandboxUnlockUnsupported(member, unlocked);
+  const actionable = !!member.online && !unlockUnsupported && (unlocked || !badge.danger);
   const action = unlocked ? 'restore' : 'unlock';
   const title = sandboxTooltip(member, badge, actionable, unlocked);
   const className = `sandbox-badge${badge.danger ? ' sandbox-danger' : ''}${badge.offline ? ' runtime-meta-offline' : ''}${actionable ? ' sandbox-action' : ''}`;
@@ -774,10 +787,13 @@ function RestartMenuItem({ member }) {
 
 function SandboxRestartMenuItem({ member }) {
   const unlocked = !!member.state?.temporary_sandbox_mode;
+  const unlockUnsupported = codexOwnSandboxUnlockUnsupported(member, unlocked);
   const label = member.title || member.conv_id;
   const regular = unlocked ? '🔒 restore sandbox + restart' : '⚠ restart without sandbox';
   const wizard = unlocked ? '🔒 restore ward + reincant' : '⚠ reincant without ward';
-  const title = !member.online
+  const title = unlockUnsupported
+    ? CODEX_OWN_SANDBOX_UNLOCK_UNAVAILABLE
+    : !member.online
     ? `${regular} is unavailable while ${label} is offline`
     : unlocked
       ? `Stop and restart ${label} with its preserved normal sandbox configuration. Requires the agent to be fully idle with no background agents or shell commands.`
@@ -785,7 +801,7 @@ function SandboxRestartMenuItem({ member }) {
   return html`<${MenuButton}
     member=${member} act="sandbox-restart" className=${unlocked ? undefined : 'danger'}
     attrs=${{ 'data-action': unlocked ? 'restore' : 'unlock' }}
-    regular=${regular} wizard=${wizard} title=${title} disabled=${!member.online}
+    regular=${regular} wizard=${wizard} title=${title} disabled=${!member.online || unlockUnsupported}
   />`;
 }
 
