@@ -351,9 +351,13 @@ func accessEnforcementTable(
 		if implementation != sandboxpolicy.ImplementationTclaudeLayer ||
 			goos != "linux" || h == nil ||
 			(h.Name != DefaultName && h.Name != CodexName && h.Name != OpenCodeName) {
+			harnessName := "<unresolved>"
+			if h != nil {
+				harnessName = h.Name
+			}
 			return accessEnforcementTableRow{}, fmt.Errorf(
-				"network.namespace %q requires Linux tclaude-layer with Claude Code, Codex, or OpenCode",
-				axes.Network.Namespace)
+				"network.namespace %q requires Linux tclaude-layer with Claude Code, Codex, or OpenCode; resolved target is harness %q, sandbox implementation %q, platform %q",
+				axes.Network.Namespace, harnessName, implementation, goos)
 		}
 		if !filteredNetworkReady {
 			return accessEnforcementTableRow{}, fmt.Errorf(

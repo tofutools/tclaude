@@ -227,6 +227,32 @@ func TestOpenCodeFilteredNetworkUsesSharedPrerequisiteContract(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestPrivateNetworkPrerequisiteRefusalNamesExactProbeFailure(t *testing.T) {
+	axes := sandboxpolicy.ResolvedAxes{Network: sandboxpolicy.NetworkRules{
+		Mode:      sandboxpolicy.AccessModeOpen,
+		Namespace: sandboxpolicy.NetworkNamespacePrivate,
+	}}
+	err := ValidateFilteredNetworkHarnessSupport(
+		harness.MustGet(harness.OpenCodeName),
+		sandboxpolicy.ImplementationTclaudeLayer,
+		axes,
+		FilteredNetworkPrerequisite{
+			Detail: "rootless pasta is required: executable file not found in $PATH",
+		},
+	)
+	require.ErrorContains(t, err,
+		"rootless pasta is required: executable file not found in $PATH")
+	require.ErrorContains(t, err, `network.namespace "private"`)
+
+	err = ValidateFilteredNetworkHarnessSupport(
+		harness.MustGet(harness.OpenCodeName),
+		sandboxpolicy.ImplementationTclaudeLayer,
+		axes,
+		FilteredNetworkPrerequisite{Detected: true},
+	)
+	require.NoError(t, err)
+}
+
 func TestSessionReplanRetainsFilteredProbeNoticeForPersistence(t *testing.T) {
 	prior := []sandboxpolicy.AccessNotice{{
 		Class:  sandboxpolicy.AccessNoticeClassDegradation,
