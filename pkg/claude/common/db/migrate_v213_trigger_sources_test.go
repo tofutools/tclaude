@@ -37,6 +37,7 @@ func TestMigrateV212toV213PreservesRuleEventAndFiringLedger(t *testing.T) {
 	// helpers. This test deliberately rolls only the trigger tables back to the
 	// v212 shape; the unrelated cron-managed-worker schema is already v214.
 	require.NoError(t, migrateV214toV215(d))
+	require.NoError(t, migrateV215toV216(d))
 
 	rule, err := GetTriggerRule(ruleID)
 	require.NoError(t, err)

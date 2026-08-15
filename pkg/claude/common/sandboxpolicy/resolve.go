@@ -47,6 +47,7 @@ type ResolutionProvenance struct {
 	Filesystem       map[string][]ProfileSource `json:"filesystem"`
 	Environment      map[string]ProfileSource   `json:"environment"`
 	AgentDirectories map[string][]ProfileSource `json:"agent_directories"`
+	FilesystemRoot   *ProfileSource             `json:"filesystem_root,omitempty"`
 	Network          *ProfileSource             `json:"network,omitempty"`
 	UnixSockets      *ProfileSource             `json:"unix_sockets,omitempty"`
 	ResourceMemory   *ProfileSource             `json:"resource_memory,omitempty"`
@@ -62,20 +63,21 @@ type EffectiveProfile struct {
 	// still contain symlinks. Modern registry profiles retain those spellings
 	// in non-authoritative metadata; legacy profiles may have already lost
 	// them. Omitempty keeps snapshots with no observable aliases byte-compatible.
-	MountAliases            []MountAlias         `json:"mount_aliases,omitempty"`
-	Environment             []EnvironmentEntry   `json:"environment"`
-	AgentDirectories        []string             `json:"agent_directories"`
-	NetworkAccess           NetworkAccess        `json:"network_access,omitempty"`
-	Network                 *NetworkRules        `json:"network,omitempty"`
-	UnixSockets             *UnixSocketRules     `json:"unix_sockets,omitempty"`
-	ResourceLimits          ResourceLimits       `json:"resource_limits,omitempty"`
-	DarwinAllowMachRegister bool                 `json:"darwin_allow_mach_register,omitempty"`
+	MountAliases            []MountAlias       `json:"mount_aliases,omitempty"`
+	Environment             []EnvironmentEntry `json:"environment"`
+	AgentDirectories        []string           `json:"agent_directories"`
+	FilesystemRoot          FilesystemRootMode `json:"filesystem_root,omitempty"`
+	NetworkAccess           NetworkAccess      `json:"network_access,omitempty"`
+	Network                 *NetworkRules      `json:"network,omitempty"`
+	UnixSockets             *UnixSocketRules   `json:"unix_sockets,omitempty"`
+	ResourceLimits          ResourceLimits     `json:"resource_limits,omitempty"`
+	DarwinAllowMachRegister bool               `json:"darwin_allow_mach_register,omitempty"`
 	// PreLaunch is composed across scopes in tier order (global, group,
 	// explicit): a later tier replaces a same-named block in place and appends
 	// new ones. Order is execution order, so it is never sorted.
-	PreLaunch []PreLaunchBlock `json:"pre_launch,omitempty"`
-	AccessNotices           []AccessNotice       `json:"access_notices,omitempty"`
-	Provenance              ResolutionProvenance `json:"provenance"`
+	PreLaunch     []PreLaunchBlock     `json:"pre_launch,omitempty"`
+	AccessNotices []AccessNotice       `json:"access_notices,omitempty"`
+	Provenance    ResolutionProvenance `json:"provenance"`
 }
 
 // resolvedFilesystemGrant is one merged rule. The map it lives in is keyed on
@@ -127,6 +129,7 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 	hasNewUnixSockets := false
 	networkListContributors := []string{}
 	preLaunch := []PreLaunchBlock{}
+	filesystemRoot := FilesystemRootAutomatic
 	engineSelections := []NetworkEngineSelection{}
 	socketListContributors := []string{}
 	observableFilesystemSpellings := []observableFilesystemSpelling{}
@@ -189,6 +192,11 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 		source := ProfileSource{Scope: tier.scope, Profile: normalized.Name}
 		result.Provenance.Applied = append(result.Provenance.Applied, source)
 		preLaunch = mergePreLaunch(preLaunch, normalized.PreLaunch)
+		if filesystemRootRank(normalized.FilesystemRoot) > filesystemRootRank(filesystemRoot) {
+			filesystemRoot = normalized.FilesystemRoot
+			rootSource := source
+			result.Provenance.FilesystemRoot = &rootSource
+		}
 		for _, grant := range normalized.Filesystem {
 			guest := grant.GuestPath()
 			current, exists := filesystem[guest]
@@ -447,7 +455,19 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 	if len(preLaunch) > 0 {
 		result.PreLaunch = preLaunch
 	}
+	result.FilesystemRoot = filesystemRoot
 	return result, nil
+}
+
+func filesystemRootRank(mode FilesystemRootMode) int {
+	switch mode {
+	case FilesystemRootSeparate:
+		return 2
+	case FilesystemRootInherit:
+		return 1
+	default:
+		return 0
+	}
 }
 
 // mountAliasesForPath returns the symlinks a constructed root must recreate

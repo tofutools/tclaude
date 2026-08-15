@@ -132,6 +132,19 @@ const (
 	NetworkAccessNone     NetworkAccess = "none"
 )
 
+// FilesystemRootMode is the operator-authored filesystem namespace posture.
+// The zero value preserves the historical automatic behavior: network and
+// Unix-socket restrictions may still require a constructed root. Inherit is
+// an explicit preference for the host root, but it cannot weaken either an
+// included/scoped Separate request or another axis that requires construction.
+type FilesystemRootMode string
+
+const (
+	FilesystemRootAutomatic FilesystemRootMode = ""
+	FilesystemRootInherit   FilesystemRootMode = "inherit"
+	FilesystemRootSeparate  FilesystemRootMode = "separate"
+)
+
 // Profile is the harness-neutral, operator-authored capability bundle. It is
 // NetworkAccess is optional so existing profiles keep their harness's current
 // network behavior. Harness launch posture belongs to spawn profiles instead.
@@ -148,6 +161,7 @@ type Profile struct {
 	FilesystemSpellings     *FilesystemSpellings `json:"filesystem_spellings,omitempty"`
 	Environment             []EnvironmentEntry   `json:"environment,omitempty"`
 	AgentDirectories        []string             `json:"agent_directories,omitempty"`
+	FilesystemRoot          FilesystemRootMode   `json:"filesystem_root,omitempty"`
 	NetworkAccess           NetworkAccess        `json:"network_access,omitempty"`
 	Network                 *NetworkRules        `json:"network,omitempty"`
 	UnixSockets             *UnixSocketRules     `json:"unix_sockets,omitempty"`
@@ -261,6 +275,10 @@ func normalize(in Profile, allowMissing, authoring bool) (Profile, []string, err
 	if err != nil {
 		return Profile{}, nil, err
 	}
+	filesystemRoot, err := NormalizeFilesystemRootMode(in.FilesystemRoot)
+	if err != nil {
+		return Profile{}, nil, err
+	}
 	network, err := normalizeNetworkRules(in.Network)
 	if err != nil {
 		return Profile{}, nil, err
@@ -286,11 +304,21 @@ func normalize(in Profile, allowMissing, authoring bool) (Profile, []string, err
 	sort.Strings(missing)
 	return Profile{
 		Name: name, Filesystem: filesystem, FilesystemSpellings: filesystemSpellings,
-		Environment: environment, AgentDirectories: agentDirectories, NetworkAccess: networkAccess,
+		Environment: environment, AgentDirectories: agentDirectories, FilesystemRoot: filesystemRoot, NetworkAccess: networkAccess,
 		Network: network, UnixSockets: unixSockets, ResourceLimits: resourceLimits,
 		DarwinAllowMachRegister: in.DarwinAllowMachRegister, PreLaunch: preLaunch,
 		Includes: includes,
 	}, missing, nil
+}
+
+// NormalizeFilesystemRootMode validates one authored root posture.
+func NormalizeFilesystemRootMode(in FilesystemRootMode) (FilesystemRootMode, error) {
+	switch in {
+	case FilesystemRootAutomatic, FilesystemRootInherit, FilesystemRootSeparate:
+		return in, nil
+	default:
+		return "", fmt.Errorf("filesystem_root %q is invalid (want inherit, separate, or omitted for automatic)", in)
+	}
 }
 
 // NormalizeNetworkAccess validates one network posture without requiring a

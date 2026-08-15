@@ -1278,7 +1278,7 @@ test('sandbox access-axis model preserves legacy meaning and validates structure
     implementation: 'harness-builtin', harness: 'codex', platform: 'darwin',
   }), 'Codex on macOS · built-in sandbox · no filtered network sandbox yet');
   assert.deepEqual(model.sandboxConstructedRootWarning({
-    contexts: [{ context: { group: 'crew' },
+    contexts: [{ context: { group: 'crew' }, filesystem_root: 'separate',
       // Prediction contexts carry the resolved legacy/effective shape: Mode
       // plus materialized Deny rows, not necessarily the authored Baseline.
       network: { mode: 'open', namespace: 'private', deny: [{ cidr: '192.0.2.0/24' }] },
@@ -1293,6 +1293,7 @@ test('sandbox access-axis model preserves legacy meaning and validates structure
     }],
   }, 0), {
     reasons: [
+      'the explicit filesystem-root setting',
       'the private network namespace',
       'the restricted network rules',
       'the Unix-socket restriction',
@@ -2112,7 +2113,7 @@ test('sandbox editor warns immediately when the resolved target constructs a fil
     const state = createManagementState();
     state.openDialog({ kind: 'sandbox-editor', seed: {
       name: 'root-warning', filesystem: [], environment: [], includes: [], agent_directories: [],
-      network: context.network, unix_sockets: context.unix_sockets,
+      filesystem_root: context.filesystem_root || '', network: context.network, unix_sockets: context.unix_sockets,
     }, options: {} });
     const mounted = mountSandboxEditor(harness, mountManagementIsland, state, {
       async predictSandbox() {
@@ -2129,7 +2130,7 @@ test('sandbox editor warns immediately when the resolved target constructs a fil
             target: { implementation: 'tclaude-layer', harness: 'opencode', platform: 'linux' },
             axes, context_axes: [axes],
           }],
-          contexts: [{ context: { group: 'crew' }, network: context.network, unix_sockets: context.unix_sockets }],
+          contexts: [{ context: { group: 'crew' }, filesystem_root: context.filesystem_root || '', network: context.network, unix_sockets: context.unix_sockets }],
         };
       },
     });
@@ -2159,6 +2160,16 @@ test('sandbox editor warns immediately when the resolved target constructs a fil
     /private network namespace/);
   privateEditor.unmount();
   privateEditor.host.remove();
+
+  const explicitEditor = await renderEditor(true, {
+    filesystem_root: 'separate', network: { baseline: 'allow' }, unix_sockets: { mode: '' },
+  });
+  assert.match(explicitEditor.host.querySelector('#sandbox-profile-editor-filesystem-root').textContent,
+    /Automatic.*Inherit host filesystem root.*Separate\/minimal filesystem root/s);
+  assert.match(explicitEditor.host.querySelector('.sbx-constructed-root-warning').textContent,
+    /explicit filesystem-root setting requires a separate, minimal filesystem root/);
+  explicitEditor.unmount();
+  explicitEditor.host.remove();
 
   const inheritedEditor = await renderEditor(false, {
     network: { baseline: 'allow' }, unix_sockets: { mode: 'closed' },

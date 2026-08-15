@@ -21,6 +21,7 @@ const (
 const (
 	SandboxCapabilityNetworkAllowlist = "unsupported_sandbox_profile_network_allowlist"
 	SandboxCapabilitySocketAllowlist  = "unsupported_sandbox_profile_socket_allowlist"
+	SandboxCapabilityFilesystemRoot   = "unsupported_sandbox_profile_filesystem_root"
 )
 
 // AccessEnforcementOptions contains launch-boundary decisions that may widen
@@ -347,6 +348,11 @@ func accessEnforcementTable(
 	validatedBuiltinMode, goos string,
 	filteredNetworkReady bool,
 ) (accessEnforcementTableRow, error) {
+	if err := ValidateExplicitFilesystemRoot(
+		h, implementation, axes.FilesystemRoot, goos,
+	); err != nil {
+		return accessEnforcementTableRow{}, err
+	}
 	if axes.Network.Namespace == sandboxpolicy.NetworkNamespacePrivate {
 		if implementation != sandboxpolicy.ImplementationTclaudeLayer ||
 			goos != "linux" || h == nil ||
@@ -844,6 +850,8 @@ func accessEnforcementTable(
 			caps.ConstructedRoot = postureErr == nil &&
 				sandboxpolicy.RootPostureFor(networkPosture, socketTier) ==
 					sandboxpolicy.RootConstructed
+			caps.ConstructedRoot = caps.ConstructedRoot ||
+				axes.FilesystemRoot == sandboxpolicy.FilesystemRootSeparate
 		}
 		// Carried security item: an authored resolver socket restores in-sandbox
 		// name-to-literal conversion and defeats the proxy engine's name
@@ -1077,6 +1085,46 @@ func SupportsHostOpenConstructedRoot(
 	goos string,
 ) bool {
 	return linuxHostOpenConstructedRootAvailable(h, implementation, axes, goos)
+}
+
+// SupportsExplicitFilesystemRoot reports the proven target matrix for an
+// operator-authored separate root. Unlike the socket helper above, this is
+// independent of network posture: the explicit control owns the request.
+func SupportsExplicitFilesystemRoot(
+	h *Harness,
+	implementation sandboxpolicy.Implementation,
+	goos string,
+) bool {
+	return goos == "linux" &&
+		implementation == sandboxpolicy.ImplementationTclaudeLayer &&
+		h != nil && (h.Name == DefaultName || h.Name == CodexName ||
+		h.Name == OpenCodeName || h.Name == CopilotName)
+}
+
+// ValidateExplicitFilesystemRoot applies the explicit-root target matrix at
+// launch boundaries, including boundaries that would otherwise skip access
+// planning because the profile has no network or Unix-socket rules.
+func ValidateExplicitFilesystemRoot(
+	h *Harness,
+	implementation sandboxpolicy.Implementation,
+	mode sandboxpolicy.FilesystemRootMode,
+	goos string,
+) error {
+	if mode != sandboxpolicy.FilesystemRootSeparate ||
+		SupportsExplicitFilesystemRoot(h, implementation, goos) {
+		return nil
+	}
+	harnessName := "<unresolved>"
+	if h != nil {
+		harnessName = h.Name
+	}
+	return &SandboxCapabilityError{
+		Harness: harnessName,
+		Kind:    SandboxCapabilityFilesystemRoot,
+		Message: fmt.Sprintf(
+			"filesystem_root %q requires Linux tclaude-layer with Claude Code, Codex, OpenCode, or Copilot; resolved target is harness %q, sandbox implementation %q, platform %q",
+			mode, harnessName, implementation, goos),
+	}
 }
 
 func accessEnforcementFromTable(row accessEnforcementTableRow) AccessEnforcement {

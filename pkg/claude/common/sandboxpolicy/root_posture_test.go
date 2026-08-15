@@ -30,6 +30,22 @@ func TestRootPostureSeparatesConstructedRootFromNetworkIsolation(t *testing.T) {
 	}
 }
 
+func TestExplicitFilesystemRootComposesWithAxisMinimum(t *testing.T) {
+	assert.Equal(t, RootConstructed, RootPostureForAxes(ResolvedAxes{
+		Network: NetworkRules{Mode: AccessModeOpen}, FilesystemRoot: FilesystemRootSeparate,
+	}))
+	assert.Equal(t, RootConstructed, RootPostureForMode(
+		NetworkHostOpen, AccessModeOpen, FilesystemRootSeparate))
+	assert.Equal(t, RootHostInherited, RootPostureForMode(
+		NetworkHostOpen, AccessModeOpen, FilesystemRootInherit))
+	assert.Equal(t, RootConstructed, RootPostureForMode(
+		NetworkFiltered, AccessModeOpen, FilesystemRootInherit),
+		"inherit is a preference and cannot weaken a stricter network requirement")
+	assert.Equal(t, RootConstructed, RootPostureForMode(
+		NetworkHostOpen, AccessModeClosed, FilesystemRootInherit),
+		"inherit is a preference and cannot weaken a stricter socket requirement")
+}
+
 // A plan literal written before this field existed names only a network
 // posture. Reading its zero-valued root as "inherit the host root" would
 // unbuild the root of exactly the postures whose purpose is building one, so
@@ -94,4 +110,13 @@ func TestRenderMountPlanDerivesRootPostureFromBothAxes(t *testing.T) {
 			assert.Equal(t, tc.want, plan.EffectiveRootPosture())
 		})
 	}
+}
+
+func TestRenderMountPlanHonorsExplicitSeparateRoot(t *testing.T) {
+	plan, err := RenderMountPlan(EffectiveProfile{
+		FilesystemRoot: FilesystemRootSeparate,
+		Network:        &NetworkRules{Mode: AccessModeOpen},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, RootConstructed, plan.RootPosture)
 }

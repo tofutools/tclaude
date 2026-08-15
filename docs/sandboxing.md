@@ -843,6 +843,19 @@ wraps the whole harness process, not only its tool executions:
   launch-contract path.
 
 Since TCL-798 the constructed root is no longer welded to the network posture.
+A sandbox profile can select the filesystem root explicitly with
+`filesystem_root`: omit it for **Automatic**, use `inherit` to prefer the
+read-only host root, or use `separate` to request the minimal constructed root
+even when network and Unix sockets remain open. Explicit separation is
+supported by Linux `tclaude-layer` for Claude Code, Codex, OpenCode, and
+Copilot; other targets refuse it during preview/spawn rather than ignoring it.
+
+The setting composes monotonically. `separate` in any included, global, group,
+or explicit profile wins. `inherit` cannot weaken a private/restricted network
+or Unix-socket rule whose enforcement itself requires a constructed root. This
+keeps existing profiles unchanged: an omitted setting retains the same
+automatic derivation they had before the control existed.
+
 A profile that leaves network access open but authors the `unix_sockets` axis
 as `closed` or an allow `list` gets a **host-network constructed root** on
 Linux for Claude Code, Codex, OpenCode, and Copilot: bubblewrap builds the same fresh
@@ -867,9 +880,10 @@ consequence is that the agent cannot see or signal host processes, and tools
 that read the host process table stop working. This is stated in the launch
 warning alongside the abstract-socket caveat.
 
-It is never on by default. A profile that says nothing about `unix_sockets`, or
-sets it to `open`, launches with exactly the read-only host root it launched
-with before.
+It is never newly enabled by an omitted setting. A profile that says nothing
+about `filesystem_root`, says nothing about `unix_sockets` (or sets sockets to
+`open`), and has no network rule requiring construction launches with exactly
+the read-only host root it launched with before.
 
 Two consequences of building the root reach beyond sockets, and both are stated
 in the launch warning rather than left to be discovered:

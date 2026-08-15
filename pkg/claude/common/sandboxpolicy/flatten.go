@@ -94,6 +94,7 @@ func FlattenWithNotices(in Profile, lookup LookupProfile) (Profile, []AccessNoti
 		Filesystem:              make([]FilesystemGrant, 0, len(parts.filesystem)),
 		Environment:             make([]EnvironmentEntry, 0, len(parts.environment)),
 		AgentDirectories:        make([]string, 0, len(parts.agentDirectories)),
+		FilesystemRoot:          parts.filesystemRoot,
 		NetworkAccess:           parts.networkAccess,
 		ResourceLimits:          parts.resourceLimits,
 		DarwinAllowMachRegister: parts.darwinAllowMachRegister,
@@ -187,6 +188,7 @@ type flattenedParts struct {
 	hasFilesystemSpellings  bool
 	environment             map[string]EnvironmentEntry
 	agentDirectories        map[string]struct{}
+	filesystemRoot          FilesystemRootMode
 	networkAccess           NetworkAccess
 	network                 NetworkRules
 	unixSockets             UnixSocketRules
@@ -305,6 +307,9 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 			delete(out.environment, name)
 			out.agentDirectories[name] = struct{}{}
 		}
+		if filesystemRootRank(parts.filesystemRoot) > filesystemRootRank(out.filesystemRoot) {
+			out.filesystemRoot = parts.filesystemRoot
+		}
 		if parts.networkAccess != NetworkAccessInherit {
 			out.networkAccess = parts.networkAccess
 		}
@@ -354,6 +359,9 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 	for _, name := range p.AgentDirectories {
 		delete(out.environment, name)
 		out.agentDirectories[name] = struct{}{}
+	}
+	if filesystemRootRank(p.FilesystemRoot) > filesystemRootRank(out.filesystemRoot) {
+		out.filesystemRoot = p.FilesystemRoot
 	}
 	if p.NetworkAccess != NetworkAccessInherit {
 		out.networkAccess = p.NetworkAccess

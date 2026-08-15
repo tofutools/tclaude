@@ -20,6 +20,7 @@ import (
 type wireSandboxProfile struct {
 	Name                    string   `json:"name"`
 	AgentDirectories        []string `json:"agent_directories"`
+	FilesystemRoot          string   `json:"filesystem_root"`
 	NetworkAccess           string   `json:"network_access"`
 	DarwinAllowMachRegister bool     `json:"darwin_allow_mach_register"`
 	Filesystem              []struct {
@@ -37,6 +38,92 @@ type wireSandboxProfile struct {
 		Name  string `json:"name"`
 		Value string `json:"value"`
 	} `json:"environment"`
+}
+
+func TestSandboxProfileFilesystemRootRoundTripAndExportGate(t *testing.T) {
+	f := newFlow(t)
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
+		"name": "separate-root", "filesystem_root": "separate",
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "create body=%s", rec.Body.String())
+
+	rec = profileReq(t, f, http.MethodGet, "/v1/sandbox-profiles/separate-root", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got wireSandboxProfile
+	testharness.DecodeJSON(t, rec, &got)
+	assert.Equal(t, "separate", got.FilesystemRoot)
+
+	rec = profileReq(t, f, http.MethodGet, "/v1/sandbox-profiles/export?name=separate-root", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var bundle map[string]any
+	testharness.DecodeJSON(t, rec, &bundle)
+	assert.Equal(t, float64(14), bundle["format_version"])
+
+	bundle["format_version"] = float64(13)
+	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import/inspect", bundle)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "requires export format version 14")
+}
+
+func TestSandboxProfileExportUsesHighestVersionAcrossOrderedProfiles(t *testing.T) {
+	f := newFlow(t)
+	for _, profile := range []map[string]any{
+		{
+			"name": "private-first",
+			"network": map[string]any{
+				"baseline": "allow", "namespace": "private",
+			},
+		},
+		{"name": "root-second", "filesystem_root": "separate"},
+	} {
+		rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", profile)
+		require.Equalf(t, http.StatusCreated, rec.Code, "create body=%s", rec.Body.String())
+	}
+
+	rec := profileReq(t, f, http.MethodGet,
+		"/v1/sandbox-profiles/export?name=private-first&name=root-second", nil)
+	require.Equalf(t, http.StatusOK, rec.Code, "export body=%s", rec.Body.String())
+	var bundle map[string]any
+	testharness.DecodeJSON(t, rec, &bundle)
+	assert.Equal(t, float64(14), bundle["format_version"])
+
+	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import/inspect", bundle)
+	assert.Equalf(t, http.StatusOK, rec.Code, "inspect body=%s", rec.Body.String())
+}
+
+func TestSandboxProfileFilesystemRootPredictionRefusesUnsupportedTargets(t *testing.T) {
+	f := newFlow(t)
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", map[string]any{
+		"draft": map[string]any{
+			"name": "separate-root-preview", "filesystem_root": "separate",
+		},
+		"targets": []any{
+			map[string]any{"implementation": "tclaude-layer", "harness": "codex", "platform": "linux"},
+			map[string]any{"implementation": "harness-builtin", "harness": "codex", "platform": "linux"},
+		},
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "preview body=%s", rec.Body.String())
+	var got struct {
+		Targets []struct {
+			Predicted bool `json:"predicted"`
+			Axes      struct {
+				ConstructedRoot bool `json:"constructed_root"`
+			} `json:"axes"`
+			Refusal *struct {
+				Kind    string `json:"kind"`
+				Message string `json:"message"`
+			} `json:"refusal"`
+		} `json:"targets"`
+	}
+	testharness.DecodeJSON(t, rec, &got)
+	require.Len(t, got.Targets, 2)
+	assert.True(t, got.Targets[0].Predicted)
+	assert.True(t, got.Targets[0].Axes.ConstructedRoot)
+	assert.Nil(t, got.Targets[0].Refusal)
+	assert.False(t, got.Targets[1].Predicted)
+	require.NotNil(t, got.Targets[1].Refusal)
+	assert.Equal(t, "unsupported_sandbox_profile_filesystem_root", got.Targets[1].Refusal.Kind)
+	assert.Contains(t, got.Targets[1].Refusal.Message, "requires Linux tclaude-layer")
 }
 
 func TestSandboxProfilesPayloadReadsAndMutationsRequireDedicatedPermission(t *testing.T) {

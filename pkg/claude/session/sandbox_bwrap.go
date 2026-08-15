@@ -944,7 +944,8 @@ func TclaudeLayerRootPosture(
 	if err != nil {
 		return sandboxpolicy.RootHostInherited, err
 	}
-	return sandboxpolicy.RootPostureFor(posture, axes.UnixSockets.Mode), nil
+	return sandboxpolicy.RootPostureForMode(
+		posture, axes.UnixSockets.Mode, effective.FilesystemRoot), nil
 }
 
 // TclaudeLayerLaunchRootPosture is TclaudeLayerRootPosture for a launch surface
@@ -968,13 +969,19 @@ func TclaudeLayerLaunchRootPosture(
 	if err != nil {
 		return sandboxpolicy.RootHostInherited, err
 	}
+	if err := harness.ValidateExplicitFilesystemRoot(
+		h, implementation, effective.FilesystemRoot, runtime.GOOS,
+	); err != nil {
+		return sandboxpolicy.RootHostInherited, err
+	}
 	sockets := axes.UnixSockets.Mode
 	if !harness.SupportsHostOpenConstructedRoot(
 		h, implementation, axes, runtime.GOOS) {
 		// Keep only the network posture's own implication.
 		sockets = sandboxpolicy.AccessModeUnset
 	}
-	return sandboxpolicy.RootPostureFor(posture, sockets), nil
+	return sandboxpolicy.RootPostureForMode(
+		posture, sockets, effective.FilesystemRoot), nil
 }
 
 // ValidateTclaudeLayerNetwork refuses an isolated whole-process launch unless
