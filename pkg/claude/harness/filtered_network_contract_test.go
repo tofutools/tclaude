@@ -46,7 +46,7 @@ func TestAssessFilteredNetworkRulesCIDROnlyTargetMatchesActivatedCapabilityCells
 	require.NoError(t, err)
 	assert.Equal(t, EnforceFull, aggregate)
 
-	for _, harnessName := range []string{DefaultName, CodexName, OpenCodeName} {
+	for _, harnessName := range []string{DefaultName, CodexName, OpenCodeName, CopilotName} {
 		h := MustGet(harnessName)
 		caps, tableErr := accessEnforcementTable(
 			h, sandboxpolicy.ImplementationTclaudeLayer,

@@ -14,7 +14,17 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
+
+func TestSandboxProfilePredictionTargetAcceptsCopilotTclaudeLayer(t *testing.T) {
+	target, err := parseSandboxProfileEnforcementTarget("tclaude-layer/copilot/linux")
+	require.NoError(t, err)
+	assert.Equal(t, sandboxpolicy.ImplementationTclaudeLayer, target.implementation)
+	assert.Equal(t, harness.CopilotName, target.harness.Name)
+	assert.Equal(t, "linux", target.platform)
+}
 
 func serveDashboardSandboxProfiles(w http.ResponseWriter, r *http.Request) {
 	mux := http.NewServeMux()

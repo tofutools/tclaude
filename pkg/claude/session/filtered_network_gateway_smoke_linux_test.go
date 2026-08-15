@@ -68,7 +68,7 @@ func TestFilteredSmokeUDPLocalAddrUsesFixturePort(t *testing.T) {
 }
 
 // TestTclaudeLayerFilteredNetworkSmoke is the named executing CI boundary for
-// the M2b Claude/Codex tclaude-layer cells. The runner supplies two live
+// the M2b Claude/Codex/OpenCode/Copilot tclaude-layer cells. The runner supplies two live
 // adjacent targets from a separate network namespace, so allowed CIDR+port,
 // denied port, denied adjacent CIDR, TCP, and UDP are all observable outcomes.
 // It also exercises synthetic host loopback and kills the supervised pasta
@@ -214,8 +214,10 @@ func runTclaudeLayerFilteredNetworkSmoke(t *testing.T, smokeKind string) {
 	snapshot := sandboxpolicy.EmptySnapshot()
 	snapshot.Effective.Network = &rules
 
-	wrapped := make(map[string]string, 2)
-	for _, harnessName := range []string{harness.DefaultName, harness.CodexName} {
+	wrapped := make(map[string]string, 4)
+	for _, harnessName := range []string{
+		harness.DefaultName, harness.CodexName, harness.OpenCodeName, harness.CopilotName,
+	} {
 		t.Run(harnessName, func(t *testing.T) {
 			h := harness.MustGet(harnessName)
 			notices, validateErr := ValidateTclaudeLayerNetwork(

@@ -195,6 +195,25 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 	assert.Contains(t, openCodeNotices[0].Detail,
 		"abstract-namespace Unix sockets")
 
+	// Copilot's state/cache/executable catalog is materialized by the same
+	// constructed-root renderer. Its real launch smoke is the evidence that
+	// those grants are sufficient, so the capability table may now admit it.
+	copilot := MustGet(CopilotName)
+	copilotCaps, err := accessEnforcementForTargetForTest(
+		copilot, sandboxpolicy.ImplementationTclaudeLayer,
+		hostOpenClosedSockets, CopilotSandboxOff, "linux",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, EnforcePartial, copilotCaps.socketClosed)
+	copilotRendered, copilotNotices, err := PlanAccessEnforcement(
+		hostOpenClosedSockets, copilotCaps)
+	require.NoError(t, err)
+	assert.Equal(t, sandboxpolicy.AccessModeClosed,
+		copilotRendered.UnixSockets.Mode)
+	require.Len(t, copilotNotices, 1)
+	assert.Contains(t, copilotNotices[0].Detail,
+		"host-network constructed root")
+
 	hostOpenSocketList := sandboxpolicy.ResolvedAxes{
 		Network: sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeOpen},
 		UnixSockets: sandboxpolicy.UnixSocketRules{
@@ -300,11 +319,6 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 			name: "stacked", harness: h,
 			implementation: sandboxpolicy.ImplementationStacked,
 			mode:           ClaudeSandboxOff,
-		},
-		{
-			name: "copilot", harness: MustGet(CopilotName),
-			implementation: sandboxpolicy.ImplementationTclaudeLayer,
-			mode:           CopilotSandboxOff,
 		},
 	} {
 		t.Run("filtered fallback "+tc.name, func(t *testing.T) {
@@ -641,8 +655,9 @@ func TestLinuxTclaudeLayerDenyCapabilityDrivesPredictionAndLaunchPlan(t *testing
 		DefaultName:  ClaudeSandboxOff,
 		CodexName:    SandboxDangerFull,
 		OpenCodeName: OpenCodeSandboxTclaudeLayer,
+		CopilotName:  CopilotSandboxOff,
 	}
-	for _, harnessName := range []string{DefaultName, CodexName, OpenCodeName} {
+	for _, harnessName := range []string{DefaultName, CodexName, OpenCodeName, CopilotName} {
 		t.Run(harnessName, func(t *testing.T) {
 			row, err := accessEnforcementTable(
 				MustGet(harnessName),
@@ -785,7 +800,7 @@ func TestSandboxOffPredictionNeverCreditsBuiltinEnforcement(t *testing.T) {
 			Mode: sandboxpolicy.AccessModeClosed,
 		},
 	}
-	for _, harnessName := range []string{DefaultName, CodexName, OpenCodeName} {
+	for _, harnessName := range []string{DefaultName, CodexName, OpenCodeName, CopilotName} {
 		t.Run(harnessName, func(t *testing.T) {
 			prediction, err := PredictAccessEnforcement(
 				MustGet(harnessName), sandboxpolicy.ImplementationOff,

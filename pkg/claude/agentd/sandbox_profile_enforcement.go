@@ -1101,7 +1101,7 @@ func parseSandboxProfileEnforcementTarget(raw string) (parsedSandboxProfileEnfor
 		harnessName = parts[1]
 	}
 	switch harnessName {
-	case harness.DefaultName, harness.CodexName, harness.OpenCodeName:
+	case harness.DefaultName, harness.CodexName, harness.OpenCodeName, harness.CopilotName:
 	default:
 		return parsedSandboxProfileEnforcementTarget{}, invalidSandboxProfileTarget(raw)
 	}

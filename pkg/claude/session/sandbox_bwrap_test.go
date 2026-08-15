@@ -859,6 +859,8 @@ func TestValidateTclaudeLayerNetworkRequiresDescriptorAndExplicitTransportAssert
 	require.NoError(t, err)
 	openCode, err := harness.Resolve(harness.OpenCodeName)
 	require.NoError(t, err)
+	copilot, err := harness.Resolve(harness.CopilotName)
+	require.NoError(t, err)
 
 	closed := sandboxpolicy.EffectiveProfile{NetworkAccess: sandboxpolicy.NetworkAccessNone}
 	_, validateErr := ValidateTclaudeLayerNetwork(openCode, closed, harness.ResolvedModelTransport{})
@@ -883,6 +885,18 @@ func TestValidateTclaudeLayerNetworkRequiresDescriptorAndExplicitTransportAssert
 		NetworkAccess: sandboxpolicy.NetworkAccessInternet,
 	}, harness.ResolvedModelTransport{})
 	require.NoError(t, validateErr)
+
+	// Private routing leaves destinations unrestricted. In particular,
+	// Copilot's first-party route does not need a provider endpoint assertion;
+	// the namespace is a topology boundary, not a destination allow list.
+	privateOpen := sandboxpolicy.EffectiveProfile{Network: &sandboxpolicy.NetworkRules{
+		Mode:      sandboxpolicy.AccessModeOpen,
+		Namespace: sandboxpolicy.NetworkNamespacePrivate,
+	}}
+	notices, validateErr := ValidateTclaudeLayerNetwork(
+		copilot, privateOpen, harness.ResolvedModelTransport{})
+	require.NoError(t, validateErr)
+	assert.Empty(t, notices)
 }
 
 func TestValidateTclaudeLayerFilteredNetworkRequiresHonestModelResolution(t *testing.T) {

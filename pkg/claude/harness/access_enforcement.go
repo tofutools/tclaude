@@ -350,13 +350,14 @@ func accessEnforcementTable(
 	if axes.Network.Namespace == sandboxpolicy.NetworkNamespacePrivate {
 		if implementation != sandboxpolicy.ImplementationTclaudeLayer ||
 			goos != "linux" || h == nil ||
-			(h.Name != DefaultName && h.Name != CodexName && h.Name != OpenCodeName) {
+			(h.Name != DefaultName && h.Name != CodexName && h.Name != OpenCodeName &&
+				h.Name != CopilotName) {
 			harnessName := "<unresolved>"
 			if h != nil {
 				harnessName = h.Name
 			}
 			return accessEnforcementTableRow{}, fmt.Errorf(
-				"network.namespace %q requires Linux tclaude-layer with Claude Code, Codex, or OpenCode; resolved target is harness %q, sandbox implementation %q, platform %q",
+				"network.namespace %q requires Linux tclaude-layer with Claude Code, Codex, OpenCode, or Copilot; resolved target is harness %q, sandbox implementation %q, platform %q",
 				axes.Network.Namespace, harnessName, implementation, goos)
 		}
 		if !filteredNetworkReady {
@@ -424,7 +425,7 @@ func accessEnforcementTable(
 			packetGateway &&
 			goos == "linux" && filteredNetworkReady &&
 			(h.Name == DefaultName || h.Name == CodexName ||
-				h.Name == OpenCodeName) {
+				h.Name == OpenCodeName || h.Name == CopilotName) {
 			caps.NetworkList = EnforceFull
 			caps.NetworkSelectors = []NetworkSelectorCapability{
 				{
@@ -463,7 +464,7 @@ func accessEnforcementTable(
 			packetGateway &&
 			goos == "linux" && filteredNetworkReady &&
 			(h.Name == DefaultName || h.Name == CodexName ||
-				h.Name == OpenCodeName) {
+				h.Name == OpenCodeName || h.Name == CopilotName) {
 			dnsDenyLevel := EnforceFull
 			dnsDenyDetail := ""
 			if axes.Network.Mode == sandboxpolicy.AccessModeOpen {
@@ -971,10 +972,9 @@ func accessEnforcementTable(
 //     host-open root has no smoke evidence, and an unproven combination may not
 //     raise a capability rating.
 //   - A harness whose tclaude-layer renderer supports a constructed root.
-//     Claude Code and Codex render the pane inside that root; OpenCode renders
-//     its agentd-owned tool server there while its attach pane remains outside.
-//     Copilot is kept out until its distinct state-directory contract has the
-//     same launch and smoke coverage.
+//     Claude Code, Codex, and Copilot render the pane inside that root;
+//     OpenCode renders its agentd-owned tool server there while its attach pane
+//     remains outside.
 //   - A host-open network posture. An allow list or any deny renders the
 //     filtered posture instead, which already constructs its root beneath a
 //     private network namespace and is rated separately.
@@ -1003,7 +1003,7 @@ func linuxHostOpenConstructedRootAvailable(
 		return false
 	}
 	if h == nil || (h.Name != DefaultName && h.Name != CodexName &&
-		h.Name != OpenCodeName) {
+		h.Name != OpenCodeName && h.Name != CopilotName) {
 		return false
 	}
 	posture, err := sandboxpolicy.NetworkPostureForRules(axes.Network)
