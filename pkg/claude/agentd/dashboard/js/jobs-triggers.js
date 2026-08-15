@@ -482,9 +482,9 @@ function TriggerDialog({ descriptor, state, actions }) {
       <${Step} name="WHERE" expanded=${step === 'where'} onToggle=${() => setStep(step === 'where' ? '' : 'where')}
         valid=${whereValid} summary=${draft.scope === 'global' ? 'global' : `group ${draft.group || 'required'}`}>
         <div class="trigger-fields trigger-scope-fields">
-          <label><input type="radio" name="trigger-scope" checked=${draft.scope === 'global'} onChange=${() => setDraft({ ...draft, scope: 'global', group: '' })} /> global</label>
-          <label><input type="radio" name="trigger-scope" checked=${draft.scope === 'group'} onChange=${() => setDraft({ ...draft, scope: 'group' })} /> group</label>
-          ${draft.scope === 'group' && html`<label>Group<select required value=${draft.group} onChange=${(event) => setDraft({ ...draft, group: event.currentTarget.value })}>
+          <label class="trigger-scope-option"><input type="radio" name="trigger-scope" checked=${draft.scope === 'global'} onChange=${() => setDraft({ ...draft, scope: 'global', group: '' })} /> global</label>
+          <label class="trigger-scope-option"><input type="radio" name="trigger-scope" checked=${draft.scope === 'group'} onChange=${() => setDraft({ ...draft, scope: 'group' })} /> group</label>
+          ${draft.scope === 'group' && html`<label class="trigger-scope-group">Group<select required value=${draft.group} onChange=${(event) => setDraft({ ...draft, group: event.currentTarget.value })}>
             <option value="">pick a group…</option>${groups.map((group) => html`<option key=${group} value=${group}>${group}</option>`)}</select></label>`}
         </div>
       </${Step}>
