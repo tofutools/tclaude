@@ -92,7 +92,7 @@ const sandboxProfileMaxBodyBytes = 8 << 20
 
 const (
 	sandboxProfileExportFormat        = "tclaude-sandbox-profiles"
-	sandboxProfileExportVersion       = 13
+	sandboxProfileExportVersion       = 14
 	sandboxProfileExportVersionLegacy = 9
 )
 
@@ -108,6 +108,7 @@ type sandboxProfileJSON struct {
 	FilesystemSpellings     *sandboxpolicy.FilesystemSpellings `json:"filesystem_spellings"`
 	Environment             []sandboxpolicy.EnvironmentEntry   `json:"environment"`
 	AgentDirectories        []string                           `json:"agent_directories,omitempty"`
+	FilesystemRoot          sandboxpolicy.FilesystemRootMode   `json:"filesystem_root,omitempty"`
 	NetworkAccess           sandboxpolicy.NetworkAccess        `json:"network_access,omitempty"`
 	Network                 *sandboxpolicy.NetworkRules        `json:"network,omitempty"`
 	UnixSockets             *sandboxpolicy.UnixSocketRules     `json:"unix_sockets,omitempty"`
@@ -157,8 +158,9 @@ func sandboxProfileToJSON(p *db.SandboxProfile, localFields bool) sandboxProfile
 		Name: p.Name, Filesystem: p.Filesystem,
 		FilesystemSpellings: p.FilesystemSpellings,
 		Environment:         p.Environment, AgentDirectories: p.AgentDirectories,
-		NetworkAccess: sandboxpolicy.LegacyNetworkAccessForExport(p.Network, p.NetworkAccess),
-		Network:       p.Network, UnixSockets: p.UnixSockets, ResourceLimits: p.ResourceLimits,
+		FilesystemRoot: p.FilesystemRoot,
+		NetworkAccess:  sandboxpolicy.LegacyNetworkAccessForExport(p.Network, p.NetworkAccess),
+		Network:        p.Network, UnixSockets: p.UnixSockets, ResourceLimits: p.ResourceLimits,
 		DarwinAllowMachRegister: p.DarwinAllowMachRegister, PreLaunch: p.PreLaunch,
 		Includes: p.Includes,
 	}
@@ -178,7 +180,7 @@ func buildSandboxProfile(body sandboxProfileJSON) (*db.SandboxProfile, []string,
 	input := sandboxpolicy.Profile{
 		Name: body.Name, Filesystem: body.Filesystem,
 		FilesystemSpellings: body.FilesystemSpellings,
-		Environment:         body.Environment, AgentDirectories: body.AgentDirectories, NetworkAccess: body.NetworkAccess,
+		Environment:         body.Environment, AgentDirectories: body.AgentDirectories, FilesystemRoot: body.FilesystemRoot, NetworkAccess: body.NetworkAccess,
 		Network: body.Network, UnixSockets: body.UnixSockets, ResourceLimits: body.ResourceLimits,
 		DarwinAllowMachRegister: body.DarwinAllowMachRegister, PreLaunch: body.PreLaunch,
 		Includes: body.Includes,
@@ -198,7 +200,8 @@ func buildSandboxProfile(body sandboxProfileJSON) (*db.SandboxProfile, []string,
 		Name: normalized.Name, Filesystem: normalized.Filesystem,
 		FilesystemSpellings: normalized.FilesystemSpellings,
 		Environment:         normalized.Environment, AgentDirectories: normalized.AgentDirectories,
-		NetworkAccess: normalized.NetworkAccess, Network: normalized.Network,
+		FilesystemRoot: normalized.FilesystemRoot,
+		NetworkAccess:  normalized.NetworkAccess, Network: normalized.Network,
 		UnixSockets: normalized.UnixSockets, ResourceLimits: normalized.ResourceLimits,
 		DarwinAllowMachRegister: normalized.DarwinAllowMachRegister, PreLaunch: normalized.PreLaunch,
 		Includes: normalized.Includes,
@@ -209,7 +212,7 @@ func buildSandboxProfileForImport(body sandboxProfileJSON) (*db.SandboxProfile, 
 	normalized, missing, err := sandboxpolicy.NormalizeForImport(sandboxpolicy.Profile{
 		Name: body.Name, Filesystem: body.Filesystem,
 		FilesystemSpellings: body.FilesystemSpellings,
-		Environment:         body.Environment, AgentDirectories: body.AgentDirectories, NetworkAccess: body.NetworkAccess,
+		Environment:         body.Environment, AgentDirectories: body.AgentDirectories, FilesystemRoot: body.FilesystemRoot, NetworkAccess: body.NetworkAccess,
 		Network: body.Network, UnixSockets: body.UnixSockets, ResourceLimits: body.ResourceLimits,
 		DarwinAllowMachRegister: body.DarwinAllowMachRegister, PreLaunch: body.PreLaunch,
 		Includes: body.Includes,
@@ -221,7 +224,8 @@ func buildSandboxProfileForImport(body sandboxProfileJSON) (*db.SandboxProfile, 
 		Name: normalized.Name, Filesystem: normalized.Filesystem,
 		FilesystemSpellings: normalized.FilesystemSpellings,
 		Environment:         normalized.Environment, AgentDirectories: normalized.AgentDirectories,
-		NetworkAccess: normalized.NetworkAccess, Network: normalized.Network,
+		FilesystemRoot: normalized.FilesystemRoot,
+		NetworkAccess:  normalized.NetworkAccess, Network: normalized.Network,
 		UnixSockets: normalized.UnixSockets, ResourceLimits: normalized.ResourceLimits,
 		DarwinAllowMachRegister: normalized.DarwinAllowMachRegister, PreLaunch: normalized.PreLaunch,
 		Includes: normalized.Includes,
@@ -725,6 +729,10 @@ func handleSandboxProfilesExport(w http.ResponseWriter, r *http.Request) {
 	}
 	formatVersion := sandboxProfileExportVersionLegacy
 	for _, profile := range out {
+		if profile.FilesystemRoot != "" {
+			formatVersion = 14
+			break
+		}
 		if profile.Network != nil && profile.Network.Namespace != "" {
 			formatVersion = 13
 			break
@@ -961,6 +969,8 @@ func handleSandboxProfilesImportInspect(w http.ResponseWriter, r *http.Request) 
 // access, and version 13 adds the network namespace selection. A v13 field
 // cannot be sent under an older envelope because ignoring `private` would
 // silently replace its network boundary with the shared host namespace.
+// Version 14 adds the explicit filesystem-root posture. Omitting it preserves
+// the historical automatic derivation.
 //
 // Older versions stay readable so imports from older installations keep
 // working. The two removals are handled DIFFERENTLY on purpose. The retired
@@ -983,6 +993,15 @@ func supportedSandboxProfileExport(format string, version int) bool {
 
 func validateSandboxProfileExportVersionContent(env sandboxProfileExportEnvelope) *spawnFailure {
 	for _, profile := range env.Profiles {
+		if env.FormatVersion < 14 && profile.FilesystemRoot != "" {
+			return &spawnFailure{
+				Status: http.StatusBadRequest,
+				Kind:   "invalid_format",
+				Msg: fmt.Sprintf(
+					"sandbox profile %q contains a filesystem root selection, which requires export format version 14",
+					profile.Name),
+			}
+		}
 		if env.FormatVersion < 13 && profile.Network != nil &&
 			profile.Network.Namespace != "" {
 			return &spawnFailure{

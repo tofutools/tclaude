@@ -104,6 +104,9 @@ type SocketAllowEntry struct {
 type ResolvedAxes struct {
 	Network     NetworkRules
 	UnixSockets UnixSocketRules
+	// FilesystemRoot is carried to capability planning so prediction and launch
+	// validation can refuse an explicit separate root on unsupported targets.
+	FilesystemRoot FilesystemRootMode `json:"-"`
 	// Filesystem is the authored filesystem authority this policy grants,
 	// carried alongside the two access axes rather than folded into them.
 	//
@@ -240,8 +243,9 @@ func DeriveAccessAxes(p Profile) (ResolvedAxes, error) {
 		sockets.Mode = AccessModeClosed
 	}
 	return ResolvedAxes{
-		Network:     network,
-		UnixSockets: sockets,
+		Network:        network,
+		UnixSockets:    sockets,
+		FilesystemRoot: p.FilesystemRoot,
 		// Taken from the profile this derivation was handed, so every caller
 		// that already builds axes from a whole profile — the editor
 		// prediction, the spawn guard, the launch boundary — gains the

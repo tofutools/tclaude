@@ -1449,7 +1449,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     const axes = sandboxAccessAxes(seed || {});
     const network = sandboxNetworkAuthoring(seed || {});
     const filesystem_spellings = clone(seed?.filesystem_spellings ?? null);
-    return { id: seed?.id || 0, name: seed?.name || '', filesystem: sandboxFilesystemEditorRows(seed?.filesystem || [], filesystem_spellings), filesystem_spellings, environment: clone(seed?.environment || []), includes: clone(seed?.includes || []), agent_directories: clone(seed?.agent_directories || []), network_access: '', network, unix_sockets: axes.unix_sockets, resource_limits: { memory: seed?.resource_limits?.memory || '', cpu: seed?.resource_limits?.cpu == null ? '' : String(seed.resource_limits.cpu) }, darwin_allow_mach_register: !!seed?.darwin_allow_mach_register, ...(seed?.pre_launch ? { pre_launch: sandboxPreLaunchEditorRows(seed.pre_launch) } : {}) };
+    return { id: seed?.id || 0, name: seed?.name || '', filesystem: sandboxFilesystemEditorRows(seed?.filesystem || [], filesystem_spellings), filesystem_spellings, filesystem_root: seed?.filesystem_root || '', environment: clone(seed?.environment || []), includes: clone(seed?.includes || []), agent_directories: clone(seed?.agent_directories || []), network_access: '', network, unix_sockets: axes.unix_sockets, resource_limits: { memory: seed?.resource_limits?.memory || '', cpu: seed?.resource_limits?.cpu == null ? '' : String(seed.resource_limits.cpu) }, darwin_allow_mach_register: !!seed?.darwin_allow_mach_register, ...(seed?.pre_launch ? { pre_launch: sandboxPreLaunchEditorRows(seed.pre_launch) } : {}) };
   }, [descriptor]);
   const initialFilesystemWire = sandboxFilesystemWire(baseline, baseline);
   const [draft, setDraft] = useState(() => clone(baseline)); const [advanced, setAdvanced] = useState(false); const [rawFS, setRawFS] = useState(() => JSON.stringify(initialFilesystemWire.filesystem, null, 2)); const [rawSpellings, setRawSpellings] = useState(() => JSON.stringify(initialFilesystemWire.filesystem_spellings, null, 2)); const [rawEnv, setRawEnv] = useState(() => JSON.stringify(baseline.environment, null, 2)); const [rawIncludes, setRawIncludes] = useState(() => JSON.stringify(baseline.includes, null, 2)); const [rawAgentDirs, setRawAgentDirs] = useState(() => JSON.stringify(baseline.agent_directories, null, 2)); const [rawNetwork, setRawNetwork] = useState(() => JSON.stringify(baseline.network, null, 2)); const [rawSockets, setRawSockets] = useState(() => JSON.stringify(baseline.unix_sockets, null, 2)); const [rawResources, setRawResources] = useState(() => JSON.stringify(sandboxResourceLimitsForWire(baseline.resource_limits), null, 2)); const [rawPreLaunch, setRawPreLaunch] = useState(() => JSON.stringify(sandboxPreLaunchForWire(baseline.pre_launch || []), null, 2));
@@ -1688,6 +1688,12 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
       help=${FILESYSTEM_HELP} hidden=${advanced}
       attention=${globalConfigWarnings.length > 0 || !!commonRuleFeedError}
       entryCount=${draft.filesystem.length}>
+      <div class="sbx-resource-fields"><label>Filesystem root <select id="sandbox-profile-editor-filesystem-root" value=${draft.filesystem_root || ''} onChange=${(event) => setDraft((value) => ({ ...value, filesystem_root: event.currentTarget.value }))}>
+        <option value="">Automatic (from other rules)</option>
+        <option value="inherit">Inherit host filesystem root</option>
+        <option value="separate">Separate/minimal filesystem root</option>
+      </select></label></div>
+      <div class="sbx-resource-intro">A separate root exposes only the fixed read-only OS/runtime surface and the directory mounts in this policy. Network or Unix-socket restrictions can still require it even when “inherit” is selected. Explicit separation currently requires Linux tclaude-layer.</div>
       ${(globalFilesystem.length > 0 || globalConfigWarnings.length > 0) && html`<div class="sbx-global-filesystem">
         <div class="sbx-global-controls"><label class="sbx-global-toggle" title="These read-only rows come from Claude Code and Codex global sandbox config. They are launch context, not part of the named profile."><input id="sandbox-profile-editor-show-global-filesystem" type="checkbox" checked=${showGlobalFilesystem} onChange=${(event) => setShowGlobalFilesystem(event.currentTarget.checked)}/> Show inherited global config rules${globalFilesystem.length ? ` (${globalFilesystem.length})` : ''}</label>
           ${showGlobalFilesystem && globalFilesystem.length > 0 && html`<label class="sbx-global-filter" for="sandbox-profile-editor-global-harness-filter">Builtins <select id="sandbox-profile-editor-global-harness-filter" value=${globalHarnessFilter} onChange=${(event) => setGlobalHarnessFilter(event.currentTarget.value)}><option value="both">Claude + Codex</option><option value="claude">Claude only</option><option value="codex">Codex only</option><option value="none">None</option></select></label>`}
@@ -1878,6 +1884,7 @@ function sandboxImportNetworkRows(profile) {
 
 function sandboxImportPolicyRows(profile) {
   const rows = [];
+  if (profile.filesystem_root) rows.push({ kind: 'root', value: profile.filesystem_root === 'separate' ? 'separate/minimal filesystem root' : 'inherit host filesystem root' });
   for (const entry of profile.filesystem || []) rows.push({ kind: entry.access, value: entry.mount_path ? `${entry.path} → ${entry.mount_path}` : entry.path });
   for (const rule of profile.filesystem_spellings?.rules || []) {
     for (const spelling of rule.spellings || []) rows.push({ kind: 'alias', value: `${spelling} → ${rule.resolved_path}` });
@@ -1922,7 +1929,7 @@ function SandboxImport({ current, state, actions, confirmDiscard }) {
     setError(''); setBusy('inspect');
     try {
       const parsed = JSON.parse(raw);
-      if (parsed?.format !== 'tclaude-sandbox-profiles' || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].includes(parsed?.format_version)) throw new Error('not a tclaude sandbox-profile export');
+      if (parsed?.format !== 'tclaude-sandbox-profiles' || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].includes(parsed?.format_version)) throw new Error('not a tclaude sandbox-profile export');
       const found = await actions.inspectSandboxBundle(parsed);
       setEnvelope(parsed); setPreview(found);
     } catch (e) {

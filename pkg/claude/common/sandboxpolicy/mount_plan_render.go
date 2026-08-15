@@ -162,7 +162,7 @@ func RenderMountPlanWithEngine(
 		return MountPlan{}, err
 	}
 	plan.NetworkPosture = posture
-	plan.RootPosture = RootPostureForAxes(axes)
+	plan.RootPosture = RootPostureForAxesAndMode(axes, effective.FilesystemRoot)
 	plan.DarwinAllowMachRegister = effective.DarwinAllowMachRegister
 	if err := ValidateNetworkEngine(selected); err != nil {
 		return MountPlan{}, fmt.Errorf("resolve network filtering engine: %w", err)
@@ -253,6 +253,12 @@ func NetworkRulesArePrivateRoutedOpen(rules NetworkRules) bool {
 // hide them. The capability layer rates this combination Partial and discloses
 // the abstract-socket remainder; see harness.accessEnforcementTable.
 func RootPostureForAxes(axes ResolvedAxes) RootPosture {
+	return RootPostureForAxesAndMode(axes, FilesystemRootAutomatic)
+}
+
+// RootPostureForAxesAndMode composes the explicit filesystem-root control
+// with the minimum posture required by the network and Unix-socket axes.
+func RootPostureForAxesAndMode(axes ResolvedAxes, mode FilesystemRootMode) RootPosture {
 	posture, err := NetworkPostureForRules(axes.Network)
 	if err != nil {
 		// An invalid network mode is reported by NetworkPostureForRules at the
@@ -260,7 +266,17 @@ func RootPostureForAxes(axes ResolvedAxes) RootPosture {
 		// value from being the reason a root is NOT constructed.
 		return RootConstructed
 	}
-	return RootPostureFor(posture, axes.UnixSockets.Mode)
+	return RootPostureForMode(posture, axes.UnixSockets.Mode, mode)
+}
+
+// RootPostureForMode is RootPostureFor with the authored filesystem-root
+// preference included. Separate is monotonic; inherit and automatic still
+// yield to stricter network or socket requirements.
+func RootPostureForMode(posture NetworkPosture, sockets AccessMode, mode FilesystemRootMode) RootPosture {
+	if mode == FilesystemRootSeparate {
+		return RootConstructed
+	}
+	return RootPostureFor(posture, sockets)
 }
 
 // RootPostureFor is RootPostureForAxes with the network half already decided.

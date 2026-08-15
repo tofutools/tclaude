@@ -190,6 +190,16 @@ func TestFlattenNetworkAccessUsesLastExplicitLayer(t *testing.T) {
 	assert.Equal(t, NetworkAccessInternet, got.NetworkAccess)
 }
 
+func TestFlattenFilesystemRootCannotWeakenIncludedSeparateRoot(t *testing.T) {
+	flattened, err := Flatten(Profile{
+		Name: "root", Includes: []string{"base"}, FilesystemRoot: FilesystemRootInherit,
+	}, func(name string) (*Profile, error) {
+		return &Profile{Name: name, FilesystemRoot: FilesystemRootSeparate}, nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, FilesystemRootSeparate, flattened.FilesystemRoot)
+}
+
 func TestFlattenNetworkDeniesRemainResolvable(t *testing.T) {
 	child := &Profile{
 		Name: "child",

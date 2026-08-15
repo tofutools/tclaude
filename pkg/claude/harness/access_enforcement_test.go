@@ -1680,3 +1680,33 @@ func TestPrivateRoutedNamespaceRequiresExactReadyLinuxLayer(t *testing.T) {
 	require.ErrorContains(t, err, "requires Linux tclaude-layer")
 	require.ErrorContains(t, err, `harness "opencode", sandbox implementation "stacked", platform "linux"`)
 }
+
+func TestExplicitSeparateFilesystemRootRequiresProvenLinuxLayer(t *testing.T) {
+	axes := sandboxpolicy.ResolvedAxes{
+		Network:        sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeOpen},
+		FilesystemRoot: sandboxpolicy.FilesystemRootSeparate,
+	}
+	row, err := accessEnforcementTable(
+		MustGet(CodexName), sandboxpolicy.ImplementationTclaudeLayer,
+		axes, "", "linux", true)
+	require.NoError(t, err)
+	assert.True(t, row.ConstructedRoot)
+
+	for _, tc := range []struct {
+		implementation sandboxpolicy.Implementation
+		platform       string
+	}{
+		{sandboxpolicy.ImplementationHarnessBuiltin, "linux"},
+		{sandboxpolicy.ImplementationStacked, "linux"},
+		{sandboxpolicy.ImplementationTclaudeLayer, "darwin"},
+	} {
+		_, err := accessEnforcementTable(
+			MustGet(CodexName), tc.implementation, axes,
+			"", tc.platform, true)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "filesystem_root")
+		var capability *SandboxCapabilityError
+		require.ErrorAs(t, err, &capability)
+		assert.Equal(t, SandboxCapabilityFilesystemRoot, capability.Kind)
+	}
+}

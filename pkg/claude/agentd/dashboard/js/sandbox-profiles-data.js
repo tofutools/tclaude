@@ -54,6 +54,8 @@ export function sandboxProfileSummary(profile) {
   if (inc.length) parts.push(`${inc.length} include${inc.length === 1 ? '' : 's'}`);
   if (env.length) parts.push(`${env.length} env key${env.length === 1 ? '' : 's'}`);
   if (own.length) parts.push(`${own.length} agent dir${own.length === 1 ? '' : 's'}`);
+  if (profile.filesystem_root === 'separate') parts.push('separate filesystem root');
+  if (profile.filesystem_root === 'inherit') parts.push('inherit filesystem root');
   if (pre.length) parts.push(`${pre.length} pre-launch script${pre.length === 1 ? '' : 's'}`);
   const limits = profile.resource_limits || {};
   if (limits.memory) parts.push(`memory ${limits.memory}`);
@@ -628,6 +630,7 @@ export function sandboxConstructedRootWarning(prediction = {}, contextIndex = 0)
   const authoredNetwork = sandboxNetworkAuthoring(effective);
   const axes = sandboxAccessAxes(effective);
   const reasons = [];
+  if (effective.filesystem_root === 'separate') reasons.push('the explicit filesystem-root setting');
   if (authoredNetwork.namespace === 'private') reasons.push('the private network namespace');
   if (authoredNetwork.baseline === 'deny' || ['closed', 'list'].includes(axes.network.mode)
       || authoredNetwork.deny_packs.length || (axes.network.deny || []).length) {

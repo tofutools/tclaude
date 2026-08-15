@@ -944,7 +944,8 @@ func TclaudeLayerRootPosture(
 	if err != nil {
 		return sandboxpolicy.RootHostInherited, err
 	}
-	return sandboxpolicy.RootPostureFor(posture, axes.UnixSockets.Mode), nil
+	return sandboxpolicy.RootPostureForMode(
+		posture, axes.UnixSockets.Mode, effective.FilesystemRoot), nil
 }
 
 // TclaudeLayerLaunchRootPosture is TclaudeLayerRootPosture for a launch surface
@@ -968,13 +969,20 @@ func TclaudeLayerLaunchRootPosture(
 	if err != nil {
 		return sandboxpolicy.RootHostInherited, err
 	}
+	if effective.FilesystemRoot == sandboxpolicy.FilesystemRootSeparate &&
+		!harness.SupportsExplicitFilesystemRoot(h, implementation, runtime.GOOS) {
+		return sandboxpolicy.RootHostInherited, fmt.Errorf(
+			"filesystem_root %q requires Linux tclaude-layer with Claude Code, Codex, OpenCode, or Copilot",
+			effective.FilesystemRoot)
+	}
 	sockets := axes.UnixSockets.Mode
 	if !harness.SupportsHostOpenConstructedRoot(
 		h, implementation, axes, runtime.GOOS) {
 		// Keep only the network posture's own implication.
 		sockets = sandboxpolicy.AccessModeUnset
 	}
-	return sandboxpolicy.RootPostureFor(posture, sockets), nil
+	return sandboxpolicy.RootPostureForMode(
+		posture, sockets, effective.FilesystemRoot), nil
 }
 
 // ValidateTclaudeLayerNetwork refuses an isolated whole-process launch unless
