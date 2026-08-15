@@ -6,3 +6,7 @@ export function formatJobInterval(seconds) {
   if (seconds < 86400) return Math.floor(seconds / 3600) + 'h';
   return Math.floor(seconds / 86400) + 'd';
 }
+
+export function cronRunSucceeded(status) {
+  return ['ok', 'spawned', 'replace_stopped'].includes(status);
+}

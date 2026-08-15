@@ -1,10 +1,10 @@
 import { Fragment, h, render } from 'preact';
-import { useEffect, useRef } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { JOBS_COLS } from './sort.js';
 import { JOBS_KINDS, JOBS_PAGE_SIZES, jobsLocation } from './jobs-state.js';
 import { toPath } from './nav-history-core.js';
-import { formatJobInterval } from './jobs-format.js';
+import { cronRunSucceeded, formatJobInterval } from './jobs-format.js';
 import { EXPORT_STEPS, activeExportStepIndex, fmtBytes } from './export-progress.js';
 import { idTooltip, isModifiedClick, relTime, shortAgentId } from './helpers.js';
 import { AsyncLoadState } from './async-load-state.js';
@@ -61,13 +61,68 @@ function CronSchedule({ job }) {
 
 function CronStatus({ status }) {
   if (!status) return html`<span class="state-pill state-offline" title="never run">never run</span>`;
-  const cls = status === 'ok' ? 'state-working' : 'state-awaiting';
+  const failed = /denied|failed|error|deadline|feature_disabled/.test(status);
+  const cls = cronRunSucceeded(status)
+    ? 'state-working'
+    : failed ? 'state-error' : 'state-awaiting';
   return html`<span class=${`state-pill ${cls}`} title=${status}>${status}</span>`;
 }
 
-function CronRow({ job, actions }) {
-  const bodySummary = (job.body || '').replace(/\s+/g, ' ').trim();
-  return html`<tr data-key=${`cron-${job.id}`}>
+function CronActionSummary({ job }) {
+  if (job.action_kind !== 'spawn') return html`<span class="cron-action-kind message">✉ message</span>`;
+  const roles = (job.spawn_roles || []).join(', ');
+  const policy = job.spawn_concurrency_policy || 'Forbid';
+  return html`<${Fragment}>
+    <span class="cron-action-kind spawn">⚡ spawn</span>
+    <div class="muted cron-spawn-summary">${job.spawn_profile || 'profile missing'}
+      ${roles ? ` · roles ${roles}` : ''} · ${policy}
+      ${policy === 'Allow' ? ` up to ${job.spawn_max_live_workers || 1}` : ''}
+    </div>
+  </${Fragment}>`;
+}
+
+function CronRunInspector({ id, runs, loading, error, onRefresh }) {
+  return html`<div class="cron-run-inspector" id=${id}>
+    <div class="cron-run-inspector-head"><strong>Recent runs</strong>
+      <span class="muted">Recorded scheduler outcomes; worker identity appears when a spawn reached a managed worker.</span>
+      <button type="button" onClick=${onRefresh} disabled=${loading}>refresh</button></div>
+    ${error && html`<div class="jobs-error" role="alert">${error}<button type="button" onClick=${onRefresh}>retry</button></div>`}
+    ${loading ? html`<div class="muted">Loading run history…</div>` : !error && runs.length === 0
+      ? html`<div class="muted">No runs recorded.</div>`
+      : html`<div class="cron-runs">${runs.map((run) => html`<div class="cron-run" key=${run.id}>
+          <span>${run.fired_at ? new Date(run.fired_at).toLocaleString() : 'unknown time'}</span>
+          <${CronStatus} status=${run.status || 'unknown'} />
+          <span class="muted cron-run-detail" title=${run.error_msg || ''}>${run.error_msg || ''}</span>
+          <span class="cron-run-worker">${run.worker_agent
+            ? html`<code title=${run.worker_agent}>${shortAgentId(run.worker_agent, '')}</code>`
+            : html`<span class="muted">no worker</span>`}
+            ${run.worker_id ? html`<span class="muted"> · worker #${run.worker_id}</span>` : null}</span>
+        </div>`)}</div>`}
+  </div>`;
+}
+
+function CronRow({ job, actions, triggersEnabled }) {
+  const [expanded, setExpanded] = useState(false);
+  const [runs, setRuns] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const isSpawn = job.action_kind === 'spawn';
+  const actionSummary = isSpawn ? job.spawn_instruction_template : job.body;
+  const bodySummary = (actionSummary || '').replace(/\s+/g, ' ').trim();
+  const editBlocked = isSpawn && !triggersEnabled;
+  const loadRuns = async () => {
+    setLoading(true); setError('');
+    try { setRuns(await actions.loadCronLogs(job.id)); }
+    catch (err) { setError(err?.message || String(err)); }
+    finally { setLoading(false); }
+  };
+  const toggleRuns = () => {
+    const next = !expanded;
+    setExpanded(next);
+    if (next && !loading) void loadRuns();
+  };
+  return html`<${Fragment}>
+  <tr data-key=${`cron-${job.id}`} class=${expanded ? 'cron-row expanded' : 'cron-row'}>
     <td>${job.enabled
       ? html`<span class="online" title="enabled">●</span>`
       : html`<span class="offline" title="disabled">○</span>`}</td>
@@ -76,6 +131,8 @@ function CronRow({ job, actions }) {
     <td title=${bodySummary}>
       <div class="rowname">${job.name}</div>
       ${job.subject && html`<div class="muted">${job.subject}</div>`}
+      <${CronActionSummary} job=${job} />
+      ${editBlocked && html`<div class="cron-feature-note">features.triggers is off · editing unavailable</div>`}
     </td>
     <td>
       <${CronTarget} job=${job} />
@@ -88,15 +145,23 @@ function CronRow({ job, actions }) {
     <td><${CronSchedule} job=${job} /></td>
     <td><div class="row-actions">
       <button onClick=${() => actions.runCron(job)} title="Fire this job immediately (also stamps last_run_at)">run now</button>
-      <button onClick=${() => actions.openCronEdit(job)} title="Edit this cron job">edit</button>
-      <button onClick=${() => actions.openCronDuplicate(job)} title="Duplicate this cron job">duplicate</button>
+      <button onClick=${toggleRuns} aria-expanded=${expanded ? 'true' : 'false'} aria-controls=${`cron-run-inspector-${job.id}`}
+        title="Show recorded run outcomes">${expanded ? 'hide logs' : 'logs'}</button>
+      <button disabled=${editBlocked} onClick=${() => actions.openCronEdit(job)}
+        title=${editBlocked ? 'Enable features.triggers to edit this spawn job' : 'Edit this cron job'}>edit</button>
+      <button disabled=${editBlocked} onClick=${() => actions.openCronDuplicate(job)}
+        title=${editBlocked ? 'Enable features.triggers to duplicate this spawn job' : 'Duplicate this cron job'}>duplicate</button>
       <button class=${job.enabled ? 'warn' : ''} onClick=${() => actions.toggleCron(job)}
         title=${job.enabled ? 'Pause this cron job' : 'Re-enable this cron job'}>
         ${job.enabled ? 'disable' : 'enable'}
       </button>
       <button class="danger" onClick=${() => actions.deleteCron(job)} title="Delete this cron job">delete</button>
     </div></td>
-  </tr>`;
+  </tr>
+  ${expanded && html`<tr class="cron-run-inspector-row"><td colspan="9">
+    <${CronRunInspector} id=${`cron-run-inspector-${job.id}`} runs=${runs || []} loading=${loading} error=${error} onRefresh=${loadRuns} />
+  </td></tr>`}
+  </${Fragment}>`;
 }
 
 function StandingOrderTarget({ order }) {
@@ -426,7 +491,8 @@ export function JobsApp({ state, actions }) {
             <table>
               <${SortHead} active=${current.sort} onSort=${(col) => state.cycleSort(col)} />
               <tbody>${current.rows.map((row) => row.kind === 'cron'
-                ? html`<${CronRow} key=${`cron-${row.cron?.id}`} job=${row.cron || {}} actions=${actions} />`
+                ? html`<${CronRow} key=${`cron-${row.cron?.id}`} job=${row.cron || {}} actions=${actions}
+                    triggersEnabled=${triggersEnabled} />`
                 : row.kind === 'standing-order'
                   ? html`<${StandingOrderRow} key=${`standing-order-${row.order?.id}`}
                     order=${row.order || {}} actions=${actions} />`

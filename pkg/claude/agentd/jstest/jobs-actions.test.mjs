@@ -26,7 +26,10 @@ test('Jobs actions preserve confirmation, mutation, modal, download, and error b
   };
   const actions = createJobsActions({
     state,
-    requestMutation: async (path, options) => { mutations.push({ path, options }); },
+    requestMutation: async (path, options) => {
+      mutations.push({ path, options });
+      if (path.endsWith('/run-now')) return { status: 'ok' };
+    },
     refresh: async () => {},
     confirm: async () => confirms,
     notify: (...args) => notices.push(args),
@@ -98,6 +101,25 @@ test('Jobs actions preserve confirmation, mutation, modal, download, and error b
   ]);
 });
 
+test('Jobs run-now reports recorded 200-level failure outcomes honestly', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createJobsActions } = await harness.importDashboardModule('js/jobs-actions.js');
+  const notices = [];
+  const state = {
+    upsertCron: () => {}, openCronCreate: () => {}, openCronEdit: () => {},
+    openCronDuplicate: () => {}, closeCronDialog: () => {},
+  };
+  const actions = createJobsActions({
+    state,
+    requestMutation: async () => ({ status: 'permission_denied' }),
+    refresh: async () => {}, confirm: async () => true,
+    notify: (...args) => notices.push(args), download: () => {},
+  });
+
+  assert.equal(await actions.runCron({ id: 4, name: 'daily', action_kind: 'spawn' }), false);
+  assert.deepEqual(notices, [['cron run now: daily — permission_denied', true]]);
+});
+
 test('Jobs cron transport returns canonical rows without awaiting the follow-up refresh', async (t) => {
   const harness = await createPreactHarness(t);
   const { createJobsActions } = await harness.importDashboardModule('js/jobs-actions.js');
@@ -113,12 +135,14 @@ test('Jobs cron transport returns canonical rows without awaiting the follow-up 
     requestMutation: async (path, options) => {
       calls.push({ path, options });
       if (path === '/api/cron/explain') return { valid: true, description: 'daily' };
+      if (path.includes('/logs')) return { runs: [{ id: 3, status: 'spawned', worker_agent: 'agt_worker' }] };
       return { id: 8, name: 'saved' };
     },
     refresh: () => { refreshed += 1; return new Promise(() => {}); },
     confirm: async () => true, notify: () => {}, download: () => {},
   });
   assert.deepEqual(await actions.explainCron('@daily'), { valid: true, description: 'daily' });
+  assert.deepEqual(await actions.loadCronLogs(8), [{ id: 3, status: 'spawned', worker_agent: 'agt_worker' }]);
   const saved = await actions.saveCron({
     path: '/api/cron', method: 'POST', payload: { target: 'agt_one' },
   });
@@ -127,6 +151,7 @@ test('Jobs cron transport returns canonical rows without awaiting the follow-up 
   assert.equal(refreshed, 1, 'refresh starts but cannot pin the accepted dialog mutation');
   assert.deepEqual(calls, [
     { path: '/api/cron/explain', options: { body: { expr: '@daily' }, refreshAfter: false } },
+    { path: '/api/cron/8/logs?limit=25', options: { method: 'GET', refreshAfter: false } },
     { path: '/api/cron', options: { method: 'POST', body: { target: 'agt_one' }, refreshAfter: false } },
   ]);
 });

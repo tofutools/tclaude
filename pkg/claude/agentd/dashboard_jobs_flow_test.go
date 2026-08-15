@@ -188,6 +188,11 @@ func TestDashboardJobs_UnifiedListing(t *testing.T) {
 	assert.Equal(t, 4, cronOnly.TotalUnfiltered, "total_unfiltered ignores q")
 	require.Len(t, cronOnly.Rows, 1)
 	assert.Equal(t, "cron", cronOnly.Rows[0].Kind)
+	for _, query := range []string{"spawn", "scanner", "replace", "scan"} {
+		spawnOnly := getJobs(t, dash, "?q="+query)
+		require.Len(t, spawnOnly.Rows, 1, "spawn field %q participates in search", query)
+		assert.Equal(t, "cron", spawnOnly.Rows[0].Kind)
+	}
 
 	exportOnly := getJobs(t, dash, "?q=alpha")
 	require.Len(t, exportOnly.Rows, 1)

@@ -12,6 +12,7 @@ import {
   buildCronMutation, createCronDraft, cronDraftDirty,
   resetCronDraftForAnother, validateCronDraft,
 } from './jobs-dialog-model.js';
+import { SpawnActionFields } from './spawn-action-fields.js';
 
 const html = htm.bind(h);
 const INTERVAL_PRESETS = ['5m', '15m', '1h', '4h', '24h'];
@@ -29,7 +30,7 @@ function useLiveTheme() {
   }, []);
 }
 
-function CronTargetPicker({ value, onChange, snapshot, onPick }) {
+function CronTargetPicker({ value, onChange, snapshot, onPick, groupOnly = false }) {
   useLiveTheme();
   const scope = value.scopeGroup || '';
   const groups = groupsForPicker(snapshot, scope);
@@ -42,10 +43,12 @@ function CronTargetPicker({ value, onChange, snapshot, onPick }) {
   const setMode = (mode) => onChange({ ...value, mode });
   return html`<div class="cron-create-target" id="cron-create-target-picker">
     <div class="cron-target-modes">
+      ${groupOnly ? html`<span class="muted">Group target required for worker spawns</span>` : html`<${Fragment}>
       <label><input type="radio" name="cron-create-target-mode" value="solo" checked=${value.mode === 'solo'}
         onChange=${() => setMode('solo')} /> <${Words} plain="Solo agent" wizard="Solo familiar"/></label>
       <label><input type="radio" name="cron-create-target-mode" value="group" checked=${value.mode === 'group'}
         onChange=${() => setMode('group')} /> <${Words} plain="Group (multicast)" wizard="Party (multicast)"/></label>
+      </${Fragment}>`}
     </div>
     ${value.mode === 'solo' && !scope && html`<div class="cron-target-input-row" id="cron-create-target-solo">
       <input id="cron-create-target" type="text" value=${value.target}
@@ -157,7 +160,16 @@ export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
   const dirty = cronDraftDirty(draft, initial);
   const editing = descriptor.kind === 'edit';
   const scope = draft.target.scopeGroup;
+  const triggersEnabled = snapshot?.triggers_enabled === true;
+  const profileOptions = [...new Set((snapshot?.profiles || []).flatMap((profile) => [
+    profile.name, ...(profile.aliases || []),
+  ]).filter(Boolean))];
   const update = (patch) => setDraft((value) => ({ ...value, ...patch }));
+  const setActionKind = (actionKind) => setDraft((value) => ({
+    ...value,
+    actionKind,
+    target: actionKind === 'spawn' ? { ...value.target, mode: 'group', target: '' } : value.target,
+  }));
 
   useEffect(() => {
     if (draft.scheduleMode !== 'cron') {
@@ -266,9 +278,17 @@ export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
       </div></div></label>
       <label class="cron-create-row"><span class="cron-create-label">Target</span>
         <${CronTargetPicker} value=${draft.target} snapshot=${snapshot}
+          groupOnly=${draft.actionKind === 'spawn'}
           onChange=${(target) => update({ target })}
           onPick=${() => setPicker({ field: 'target', title: 'Pick target' })}/></label>
-      ${draft.target.mode === 'group' && html`<label class="cron-create-row" id="cron-create-role-row"><span class="cron-create-label"
+      <label class="cron-create-row"><span class="cron-create-label">Action</span>
+        <select id="cron-create-action-kind" value=${draft.actionKind}
+          onChange=${(event) => setActionKind(event.currentTarget.value)}>
+          <option value="message">message</option>
+          ${triggersEnabled && html`<option value="spawn">spawn agent</option>`}
+        </select>
+      </label>
+      ${draft.target.mode === 'group' && draft.actionKind === 'message' && html`<label class="cron-create-row" id="cron-create-role-row"><span class="cron-create-label"
         title="For a group / party target only: deliver only to members / familiars whose role / class matches. Blank or 'all' means the whole target.">
         <${Words} plain="Role filter" wizard="Class filter"/></span>
         <input id="cron-create-role" type="text" value=${draft.role}
@@ -297,6 +317,7 @@ export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
             onRetry=${() => setExplainRevision((value) => value + 1)}/></div>
         </div>`}
       </div></label>
+      ${draft.actionKind === 'message' ? html`<${Fragment}>
       <label class="cron-create-row"><span class="cron-create-label">Subject</span>
         <input id="cron-create-subject" type="text" maxlength="100" value=${draft.subject}
           placeholder="optional, shows in inbox listings" autocomplete="off" spellcheck=${false}
@@ -305,16 +326,44 @@ export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
         <textarea id="cron-create-body" rows="4" value=${draft.body}
           placeholder="message text the cron job sends each tick (required)" spellcheck=${false}
           onInput=${(event) => update({ body: event.currentTarget.value })}></textarea></label>
+      </${Fragment}>` : html`<div class="cron-create-row cron-spawn-action" id="cron-create-spawn-fields">
+        <span class="cron-create-label">Spawn</span><div class="cron-spawn-action-body">
+        <${SpawnActionFields} fieldPrefix="cron-create-spawn" profileOptions=${profileOptions}
+          placeholderTokens=${['{{fire_time}}']}
+          instructionPlaceholder="Describe the recurring work for this worker."
+          value=${{
+            profile: draft.spawn.profile, roles: draft.spawn.roles,
+            nameTemplate: draft.spawn.nameTemplate,
+            instructionTemplate: draft.spawn.instructionTemplate,
+            workerDeadlineSeconds: draft.spawn.workerDeadlineSeconds,
+          }} onChange=${(spawn) => update({ spawn: {
+            ...draft.spawn, profile: spawn.profile, roles: spawn.roles,
+            nameTemplate: spawn.nameTemplate, instructionTemplate: spawn.instructionTemplate,
+            workerDeadlineSeconds: spawn.workerDeadlineSeconds,
+          } })} />
+        <div class="trigger-action-fields cron-spawn-concurrency">
+          <label>Concurrency policy<select id="cron-create-spawn-concurrency" value=${draft.spawn.concurrencyPolicy}
+            onChange=${(event) => update({ spawn: { ...draft.spawn, concurrencyPolicy: event.currentTarget.value } })}>
+            <option value="Forbid">Forbid — skip while a worker is live</option>
+            <option value="Replace">Replace — stop the live worker first</option>
+            <option value="Allow">Allow — run workers concurrently</option>
+          </select></label>
+          ${draft.spawn.concurrencyPolicy === 'Allow' && html`<label>Max live workers<input
+            id="cron-create-spawn-max-live" type="number" min="1" value=${draft.spawn.maxLiveWorkers}
+            onInput=${(event) => update({ spawn: { ...draft.spawn, maxLiveWorkers: Number(event.currentTarget.value) } })} /></label>`}
+        </div>
+        <div class="trigger-permission-warning" role="note">⚠ Each firing is re-authorized as the owning principal. Missing or revoked spawn permissions are recorded in run history.</div>
+      </div></div>`}
       <label class="cron-create-enabled"><input id="cron-create-enabled" type="checkbox" checked=${draft.enabled}
         onChange=${(event) => update({ enabled: event.currentTarget.checked })} /> Enabled</label>
       <label class="cron-create-enabled" title="On create, or when changed from off to on during an edit, fire exactly once now. The normal cadence continues from that fire.">
         <input id="cron-create-run-immediately" type="checkbox" checked=${draft.runImmediately}
           onChange=${(event) => update({ runImmediately: event.currentTarget.checked })} /> Run immediately once
       </label>
-      <label class="cron-create-enabled" title="By default, a tick is discarded when its target has no live agent pane. Enable this only when stale reminders should be retained until the target returns.">
+      ${draft.actionKind === 'message' && html`<label class="cron-create-enabled" title="By default, a tick is discarded when its target has no live agent pane. Enable this only when stale reminders should be retained until the target returns.">
         <input id="cron-create-queue-when-offline" type="checkbox" checked=${draft.queueWhenOffline}
           onChange=${(event) => update({ queueWhenOffline: event.currentTarget.checked })} /> Queue while offline
-      </label>
+      </label>`}
       <div class="cron-create-error" id="cron-create-error" role="alert">${error}</div>
       <div class="modal-buttons"><button id="cron-create-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
         <span class="spacer"></span>${!editing && html`<button id="cron-create-save-another" class="secondary" type="button" disabled=${busy}

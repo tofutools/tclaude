@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { relTime } from './helpers.js';
+import { SpawnActionFields, TemplatePlaceholderChips } from './spawn-action-fields.js';
 
 const html = htm.bind(h);
 const TRIGGER_SOURCES = Object.freeze([
@@ -268,7 +269,7 @@ function Step({ name, summary, expanded, onToggle, valid, children }) {
   </section>`;
 }
 
-function ActionEditor({ action, index, update, remove }) {
+function ActionEditor({ action, index, update, remove, profileOptions }) {
   const insert = (field, token) => {
     if (action.type === 'spawn') update({ ...action, spawn: { ...action.spawn, [field]: `${action.spawn?.[field] || ''}${token}` } });
     else update({ ...action, message: { ...action.message, [field]: `${action.message?.[field] || ''}${token}` } });
@@ -278,22 +279,25 @@ function ActionEditor({ action, index, update, remove }) {
       <select value=${action.type} onChange=${(event) => update(emptyAction(event.currentTarget.value))}>
         <option value="spawn">spawn agent</option><option value="message">message</option>
       </select><button type="button" class="danger" onClick=${remove} disabled=${false}>×</button></div>
-    ${action.type === 'spawn' ? html`<div class="trigger-action-fields">
-      <label>Profile<input value=${action.spawn?.profile || ''} required placeholder="spawn profile name"
-        onInput=${(event) => update({ ...action, spawn: { ...action.spawn, profile: event.currentTarget.value } })} /></label>
-      <label>Roles<input value=${(action.spawn?.roles || []).join(', ')} placeholder="reviewer, read-only"
-        onInput=${(event) => update({ ...action, spawn: { ...action.spawn, roles: event.currentTarget.value.split(',').map((v) => v.trim()).filter(Boolean) } })} /></label>
-      <label>Name template<input value=${action.spawn?.name_template || ''} placeholder="review-{{pr.number}}"
-        onInput=${(event) => update({ ...action, spawn: { ...action.spawn, name_template: event.currentTarget.value } })} /></label>
-      <label class="trigger-template-field">Instruction template<textarea rows="5" required value=${action.spawn?.instruction_template || ''}
-        placeholder="Review {{pr.url}} and report significant findings."
-        onInput=${(event) => update({ ...action, spawn: { ...action.spawn, instruction_template: event.currentTarget.value } })}></textarea>
-        <span class="trigger-placeholder-chips">${PLACEHOLDERS.map((token) => html`<button type="button" key=${token} onClick=${() => insert('instruction_template', token)}>${token}</button>`)}</span></label>
+    ${action.type === 'spawn' ? html`<${Fragment}>
+      <${SpawnActionFields} fieldPrefix=${`trigger-action-${index}`} placeholderTokens=${PLACEHOLDERS}
+        profileOptions=${profileOptions}
+        instructionPlaceholder="Review {{pr.url}} and report significant findings."
+        value=${{
+          profile: action.spawn?.profile || '', roles: action.spawn?.roles || [],
+          nameTemplate: action.spawn?.name_template || '',
+          instructionTemplate: action.spawn?.instruction_template || '',
+          workerDeadlineSeconds: action.spawn?.worker_deadline_seconds || 0,
+        }} onChange=${(spawn) => update({ ...action, spawn: {
+          ...action.spawn, profile: spawn.profile, roles: spawn.roles,
+          name_template: spawn.nameTemplate, instruction_template: spawn.instructionTemplate,
+          worker_deadline_seconds: spawn.workerDeadlineSeconds,
+        } })} />
+      <div class="trigger-action-fields">
       <label>Max live workers<input type="number" min="1" value=${action.spawn?.max_live_workers || 1}
         onInput=${(event) => update({ ...action, spawn: { ...action.spawn, max_live_workers: Number(event.currentTarget.value) } })} /></label>
-      <label>Worker deadline (seconds)<input type="number" min="0" value=${action.spawn?.worker_deadline_seconds || 0}
-        onInput=${(event) => update({ ...action, spawn: { ...action.spawn, worker_deadline_seconds: Number(event.currentTarget.value) } })} /></label>
-    </div>` : html`<div class="trigger-action-fields">
+      </div>
+    </${Fragment}>` : html`<div class="trigger-action-fields">
       <label>Target<select value=${action.message?.target || 'pr.author_agent'}
         onChange=${(event) => update({ ...action, message: { ...action.message, target: event.currentTarget.value } })}>
         <option value="pr.author_agent">PR author agent</option><option value="group">event group</option></select></label>
@@ -301,7 +305,7 @@ function ActionEditor({ action, index, update, remove }) {
         onInput=${(event) => update({ ...action, message: { ...action.message, subject_template: event.currentTarget.value } })} /></label>
       <label class="trigger-template-field">Body template<textarea rows="4" required value=${action.message?.body_template || ''}
         onInput=${(event) => update({ ...action, message: { ...action.message, body_template: event.currentTarget.value } })}></textarea>
-        <span class="trigger-placeholder-chips">${PLACEHOLDERS.map((token) => html`<button type="button" key=${token} onClick=${() => insert('body_template', token)}>${token}</button>`)}</span></label>
+        <${TemplatePlaceholderChips} tokens=${PLACEHOLDERS} onInsert=${(token) => insert('body_template', token)} /></label>
     </div>`}
   </div>`;
 }
@@ -320,6 +324,9 @@ function TriggerDialog({ descriptor, state, actions }) {
   const [error, setError] = useState('');
   const snapshot = state.view.value.dashboard;
   const groups = (snapshot?.groups || []).filter((group) => !group.virtual).map((group) => group.name);
+  const profileOptions = [...new Set((snapshot?.profiles || []).flatMap((profile) => [
+    profile.name, ...(profile.aliases || []),
+  ]).filter(Boolean))];
   const source = triggerSource(draft.source);
   const updateAction = (index, action) => setDraft((value) => ({ ...value, actions: value.actions.map((item, i) => i === index ? action : item) }));
   const removeAction = (index) => setDraft((value) => ({ ...value, actions: value.actions.filter((_, i) => i !== index) }));
@@ -371,7 +378,7 @@ function TriggerDialog({ descriptor, state, actions }) {
       <${Step} name="THEN" expanded=${step === 'then'} onToggle=${() => setStep(step === 'then' ? '' : 'then')}
         valid=${thenValid} summary=${draft.actions.length ? draft.actions.map(actionSummary).join(' → ') : 'action required'}>
         <div class="trigger-actions-editor">${draft.actions.map((action, index) => html`<${ActionEditor} key=${index} action=${action} index=${index}
-          update=${(next) => updateAction(index, next)} remove=${() => removeAction(index)} />`)}
+          update=${(next) => updateAction(index, next)} remove=${() => removeAction(index)} profileOptions=${profileOptions} />`)}
           <div class="trigger-add-actions"><button type="button" onClick=${() => setDraft({ ...draft, actions: [...draft.actions, emptyAction('spawn')] })}>+ spawn action</button>
             <button type="button" onClick=${() => setDraft({ ...draft, actions: [...draft.actions, emptyAction('message')] })}>+ message action</button></div>
           ${draft.actions.some((action) => action.type === 'spawn') && html`<div class="trigger-permission-warning" role="note">
