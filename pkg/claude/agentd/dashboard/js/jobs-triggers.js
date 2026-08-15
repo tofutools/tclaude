@@ -2,7 +2,7 @@ import { Fragment, h } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
-import { relTime } from './helpers.js';
+import { relTime, shortAgentId } from './helpers.js';
 import { SpawnActionFields, TemplatePlaceholderChips } from './spawn-action-fields.js';
 
 const html = htm.bind(h);
@@ -12,11 +12,22 @@ const TRIGGER_SOURCES = Object.freeze([
   { value: 'pr.merged', label: 'PR merged', summary: 'a PR is merged' },
   { value: 'ci.failed', label: 'CI failed', summary: 'CI transitions to failing' },
   { value: 'ci.succeeded', label: 'CI succeeded', summary: 'CI transitions to passing' },
+  { value: 'agent.idle', label: 'Agent idle', summary: 'an agent stays idle' },
+  { value: 'agent.awaiting_input', label: 'Agent awaiting input', summary: 'an agent keeps waiting for human input' },
 ]);
-const PLACEHOLDERS = [
+const PR_PLACEHOLDERS = [
   '{{pr.url}}', '{{pr.number}}', '{{pr.branch}}', '{{pr.author_agent}}', '{{group}}',
   '{{event.source}}', '{{event.previous_state}}', '{{event.current_state}}',
 ];
+const STATE_PLACEHOLDERS = [
+  '{{group}}', '{{event.source}}',
+  '{{agent.id}}', '{{agent.harness}}', '{{event.fact_result}}',
+  '{{event.fact_observed_at}}', '{{event.dwell_started_at}}',
+];
+
+function isStateSource(source) {
+  return source === 'agent.idle' || source === 'agent.awaiting_input';
+}
 
 function triggerSource(source) {
   return TRIGGER_SOURCES.find((entry) => entry.value === source) ||
@@ -36,6 +47,11 @@ function firingField(row, lower, upper) {
   return row?.[lower] ?? row?.[upper];
 }
 
+function evidenceTime(value) {
+  if (!value || String(value).startsWith('0001-01-01T00:00:00')) return '';
+  return Number.isNaN(new Date(value).getTime()) ? '' : value;
+}
+
 function triggerState(rule) {
   if (!rule.enabled) return { key: 'disabled', label: 'disabled' };
   const last = rule.firings?.[0];
@@ -49,6 +65,9 @@ function triggerState(rule) {
 }
 
 function whenSummary(rule) {
+  if (isStateSource(rule.source)) {
+    return `${rule.source} · for ${secondsLabel(rule.for_seconds)} · debounce ${secondsLabel(rule.debounce_seconds)} · cooldown ${secondsLabel(rule.cooldown_seconds)}`;
+  }
   const author = rule.author_is_agent === true ? 'agent PRs' : rule.author_is_agent === false ? 'human PRs' : 'any author';
   const drafts = rule.draft_filter === 'exclude' ? 'no drafts' : rule.draft_filter === 'only' ? 'drafts only' : 'drafts included';
   return `${rule.source || 'pr.opened'} · ${author} · ${drafts}`;
@@ -61,7 +80,7 @@ function actionSummary(action) {
     return `spawn ${spawn.profile || 'profile required'}${roles ? ` · ${roles}` : ''}`;
   }
   const message = action.message || {};
-  return `message ${message.target === 'group' ? 'group' : 'PR author'}`;
+  return `message ${message.target === 'group' ? 'group' : message.target === 'agent' ? 'selected agent' : 'PR author'}`;
 }
 
 function scopeSummary(rule) {
@@ -83,18 +102,30 @@ function lastFiring(rule) {
 
 function TriggerInspector({ rule, actions, onEdit }) {
   const [firings, setFirings] = useState(rule.firings || []);
+  const [dwellStates, setDwellStates] = useState(rule.dwell_states || []);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   useEffect(() => {
     let active = true;
     setLoading(true);
-    actions.loadTriggerFirings(rule.id).then((rows) => {
-      if (active) setFirings(rows);
+    setError('');
+    actions.loadTriggerDetail(rule.id).then((detail) => {
+      if (active) {
+        setFirings(Array.isArray(detail?.firings) ? detail.firings : []);
+        setDwellStates(Array.isArray(detail?.dwell_states) ? detail.dwell_states : []);
+      }
     }).catch((err) => { if (active) setError(err.message || String(err)); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [rule.id, rule.row_version]);
-  const configured = [
+  const stateSource = isStateSource(rule.source);
+  const configured = stateSource ? [
+    ['source', triggerSource(rule.source).label],
+    ['sustained for', secondsLabel(rule.for_seconds)],
+    ['scope', scopeSummary(rule)],
+    ['debounce after dwell', secondsLabel(rule.debounce_seconds)],
+    ['cooldown', secondsLabel(rule.cooldown_seconds)],
+  ] : [
     ['source', triggerSource(rule.source).label],
     ['author', rule.author_is_agent === true ? 'agent only' : rule.author_is_agent === false ? 'human only' : 'any author'],
     ['draft policy', rule.draft_filter || 'include'],
@@ -112,7 +143,26 @@ function TriggerInspector({ rule, actions, onEdit }) {
         <div class="trigger-verdicts">${configured.map(([label, detail]) => html`
           <div key=${label}><span class="muted">•</span>
             <strong>${label}</strong><span class="muted">— ${detail}</span></div>`)}</div>
-        <div class="trigger-fact-note">The current API does not expose a live fact snapshot. Unknown event facts are evaluated at firing time, never displayed as false.</div>
+        <div class="trigger-fact-note">${stateSource
+          ? 'Live observations are persisted below. Unknown means the fact could not be observed; it is never treated as false and resets the sustained timer.'
+          : 'The current API does not expose a live PR fact snapshot. Unknown event facts are evaluated at firing time, never displayed as false.'}</div>
+        ${stateSource && html`<div class="trigger-dwell-section"><h4>Current agent observations</h4>
+          ${dwellStates.length === 0 ? html`<div class="muted">No agent observations recorded yet.</div>`
+            : html`<div class="trigger-dwell-states">${dwellStates.map((dwell) => {
+                const result = firingField(dwell, 'result', 'Result') || 'unknown';
+                const agentID = firingField(dwell, 'agent_id', 'AgentID');
+                const harness = firingField(dwell, 'harness', 'Harness');
+                const observed = evidenceTime(firingField(dwell, 'fact_observed_at', 'FactObservedAt'));
+                const trueSince = evidenceTime(firingField(dwell, 'true_since', 'TrueSince'));
+                return html`<div class="trigger-dwell-state" key=${agentID}>
+                  <code title=${agentID}>${shortAgentId(agentID, '')}</code>
+                  <strong class=${`trigger-fact-result ${result}`}>${result}</strong>
+                  <span>${harness || 'unknown harness'}</span>
+                  <span class="muted">${observed ? `observed ${relTime(observed)}` : 'observation time unknown'}${trueSince ? ` · true since ${relTime(trueSince)}` : ''}</span>
+                  ${firingField(dwell, 'detail', 'Detail') && html`<span class="muted trigger-dwell-detail">${firingField(dwell, 'detail', 'Detail')}</span>`}
+                </div>`;
+              })}</div>`}
+        </div>`}
       </section>
       <section>
         <h4>Recent firings</h4>
@@ -128,14 +178,23 @@ function TriggerInspector({ rule, actions, onEdit }) {
               const source = firingField(firing, 'source', 'Source');
               const previousState = firingField(firing, 'previous_state', 'PreviousState');
               const currentState = firingField(firing, 'current_state', 'CurrentState');
+              const agentID = firingField(firing, 'agent_id', 'AgentID');
+              const agentHarness = firingField(firing, 'agent_harness', 'AgentHarness');
+              const factResult = firingField(firing, 'fact_result', 'FactResult');
+              const factObservedAt = evidenceTime(firingField(firing, 'fact_observed_at', 'FactObservedAt'));
+              const dwellStartedAt = evidenceTime(firingField(firing, 'dwell_started_at', 'DwellStartedAt'));
               const outcomes = firingField(firing, 'actions', 'Actions') || [];
               return html`<div class="trigger-firing" key=${id}>
                 <div><strong class=${outcome === 'ok' ? 'trigger-ok' : 'trigger-warn'}>${outcome}</strong>
                   <span>${started ? new Date(started).toLocaleString() : ''}</span>
                   <span class="muted">${eventRef || ''}</span></div>
-                ${(source || previousState || currentState) && html`<div class="trigger-firing-context">
+                ${(source || previousState || currentState || agentID || factResult || factObservedAt || dwellStartedAt) && html`<div class="trigger-firing-context">
                   ${source && html`<span><span class="muted">source</span> <code>${source}</code></span>`}
                   ${(previousState || currentState) && html`<span><span class="muted">transition</span> ${previousState || 'unknown'} → ${currentState || 'unknown'}</span>`}
+                  ${agentID && html`<span><span class="muted">agent</span> <code title=${agentID}>${shortAgentId(agentID, '')}</code>${agentHarness ? ` · ${agentHarness}` : ''}</span>`}
+                  ${factResult && html`<span><span class="muted">fact</span> <strong class=${`trigger-fact-result ${factResult}`}>${factResult}</strong></span>`}
+                  ${factObservedAt && html`<span><span class="muted">observed</span> ${new Date(factObservedAt).toLocaleString()}</span>`}
+                  ${dwellStartedAt && html`<span><span class="muted">dwell began</span> ${new Date(dwellStartedAt).toLocaleString()}</span>`}
                 </div>`}
                 ${detail && html`<div class="muted">${detail}</div>`}
                 ${outcomes.map((action) => {
@@ -234,9 +293,9 @@ export function TriggerWorkspace({ state, actions }) {
   </div>`;
 }
 
-function emptyAction(type = 'spawn') {
+function emptyAction(type = 'spawn', stateSource = false) {
   return type === 'message'
-    ? { type: 'message', message: { target: 'pr.author_agent', subject_template: '', body_template: '' } }
+    ? { type: 'message', message: { target: stateSource ? 'agent' : 'pr.author_agent', subject_template: '', body_template: '' } }
     : { type: 'spawn', spawn: { profile: '', roles: [], name_template: '', instruction_template: '', max_live_workers: 1, worker_deadline_seconds: 3600 } };
 }
 
@@ -245,6 +304,7 @@ function createDraft(rule = {}) {
     name: rule.name || '', enabled: rule.enabled ?? true, row_version: rule.row_version,
     source: rule.source || 'pr.opened', author_is_agent: rule.author_is_agent === undefined ? true : rule.author_is_agent,
     draft_filter: rule.draft_filter || 'exclude', debounce_seconds: Number(rule.debounce_seconds || 0),
+    for_seconds: Number(rule.for_seconds || 0),
     cooldown_seconds: Number(rule.cooldown_seconds || 0), scope: rule.scope || 'global', group: rule.group || '',
     actions: (rule.actions || []).length ? structuredClone(rule.actions) : [emptyAction()],
   };
@@ -252,6 +312,8 @@ function createDraft(rule = {}) {
 
 function draftValid(draft) {
   if (!draft.name.trim() || (draft.scope === 'group' && !draft.group) || !draft.actions.length) return false;
+  if (isStateSource(draft.source) && Number(draft.for_seconds) <= 0) return false;
+  if (!isStateSource(draft.source) && Number(draft.for_seconds) !== 0) return false;
   return draft.actions.every((action) => action.type === 'spawn'
     ? action.spawn?.profile?.trim() && action.spawn?.instruction_template?.trim() && Number(action.spawn?.max_live_workers) > 0
     : action.message?.body_template?.trim());
@@ -269,18 +331,36 @@ function Step({ name, summary, expanded, onToggle, valid, children }) {
   </section>`;
 }
 
-function ActionEditor({ action, index, update, remove, profileOptions }) {
+function HarnessCapabilityNotes({ harnesses, source }) {
+  if (!isStateSource(source)) return null;
+  return html`<div class="trigger-harness-capabilities" role="note">
+    <strong>Harness observation</strong>
+    <span class="muted">Unsupported or unavailable facts stay unknown; they are never inferred false.</span>
+    <div>${(harnesses || []).map((entry) => {
+      const supported = source === 'agent.idle' || !!entry.can_observe_awaiting_input;
+      const codexCaveat = source === 'agent.awaiting_input' && entry.name === 'codex' && supported;
+      return html`<span class=${`trigger-harness-capability ${supported ? 'supported' : 'unknown'}`} key=${entry.name}>
+        <strong>${entry.display_name || entry.name}</strong>
+        <span>${supported ? 'observable' : 'unknown only'}</span>
+        ${codexCaveat && html`<small>requires a ready managed app-server</small>`}
+      </span>`;
+    })}</div>
+  </div>`;
+}
+
+function ActionEditor({ action, index, update, remove, profileOptions, stateSource }) {
+  const placeholders = stateSource ? STATE_PLACEHOLDERS : PR_PLACEHOLDERS;
   const insert = (field, token) => {
     if (action.type === 'spawn') update({ ...action, spawn: { ...action.spawn, [field]: `${action.spawn?.[field] || ''}${token}` } });
     else update({ ...action, message: { ...action.message, [field]: `${action.message?.[field] || ''}${token}` } });
   };
   return html`<div class="trigger-action-editor">
     <div class="trigger-action-editor-head"><strong>${index + 1} · ${action.type === 'spawn' ? '⚡ Spawn agent' : '✉ Message'}</strong>
-      <select value=${action.type} onChange=${(event) => update(emptyAction(event.currentTarget.value))}>
+      <select value=${action.type} onChange=${(event) => update(emptyAction(event.currentTarget.value, stateSource))}>
         <option value="spawn">spawn agent</option><option value="message">message</option>
       </select><button type="button" class="danger" onClick=${remove} disabled=${false}>×</button></div>
     ${action.type === 'spawn' ? html`<${Fragment}>
-      <${SpawnActionFields} fieldPrefix=${`trigger-action-${index}`} placeholderTokens=${PLACEHOLDERS}
+      <${SpawnActionFields} fieldPrefix=${`trigger-action-${index}`} placeholderTokens=${placeholders}
         profileOptions=${profileOptions}
         instructionPlaceholder="Review {{pr.url}} and report significant findings."
         value=${{
@@ -298,14 +378,17 @@ function ActionEditor({ action, index, update, remove, profileOptions }) {
         onInput=${(event) => update({ ...action, spawn: { ...action.spawn, max_live_workers: Number(event.currentTarget.value) } })} /></label>
       </div>
     </${Fragment}>` : html`<div class="trigger-action-fields">
-      <label>Target<select value=${action.message?.target || 'pr.author_agent'}
+      <label>Target<select value=${action.message?.target || (stateSource ? 'agent' : 'pr.author_agent')}
         onChange=${(event) => update({ ...action, message: { ...action.message, target: event.currentTarget.value } })}>
-        <option value="pr.author_agent">PR author agent</option><option value="group">event group</option></select></label>
+        ${stateSource
+          ? html`<option value="agent">selected fact agent</option>`
+          : html`<option value="pr.author_agent">PR author agent</option>`}
+        <option value="group">event group</option></select></label>
       <label>Subject template<input value=${action.message?.subject_template || ''}
         onInput=${(event) => update({ ...action, message: { ...action.message, subject_template: event.currentTarget.value } })} /></label>
       <label class="trigger-template-field">Body template<textarea rows="4" required value=${action.message?.body_template || ''}
         onInput=${(event) => update({ ...action, message: { ...action.message, body_template: event.currentTarget.value } })}></textarea>
-        <${TemplatePlaceholderChips} tokens=${PLACEHOLDERS} onInsert=${(token) => insert('body_template', token)} /></label>
+        <${TemplatePlaceholderChips} tokens=${placeholders} onInsert=${(token) => insert('body_template', token)} /></label>
     </div>`}
   </div>`;
 }
@@ -328,9 +411,11 @@ function TriggerDialog({ descriptor, state, actions }) {
     profile.name, ...(profile.aliases || []),
   ]).filter(Boolean))];
   const source = triggerSource(draft.source);
+  const stateSource = isStateSource(draft.source);
+  const harnesses = snapshot?.harnesses || [];
   const updateAction = (index, action) => setDraft((value) => ({ ...value, actions: value.actions.map((item, i) => i === index ? action : item) }));
   const removeAction = (index) => setDraft((value) => ({ ...value, actions: value.actions.filter((_, i) => i !== index) }));
-  const whenValid = !!draft.source;
+  const whenValid = !!draft.source && (!stateSource || Number(draft.for_seconds) > 0);
   const whereValid = draft.scope === 'global' || !!draft.group;
   const thenValid = draft.actions.length > 0 && draftValid({ ...draft, name: draft.name || 'x', scope: 'global' });
   const save = async (event) => {
@@ -343,6 +428,25 @@ function TriggerDialog({ descriptor, state, actions }) {
     } catch (err) { setError(err.message || String(err)); }
     finally { setBusy(false); }
   };
+  const changeSource = (nextSource) => setDraft((value) => {
+    const nextIsState = isStateSource(nextSource);
+    const wasState = isStateSource(value.source);
+    const actions = value.actions.map((action) => {
+      if (action.type !== 'message' || !action.message) return action;
+      const target = action.message.target;
+      if (nextIsState && target === 'pr.author_agent') {
+        return { ...action, message: { ...action.message, target: 'agent' } };
+      }
+      if (!nextIsState && target === 'agent') {
+        return { ...action, message: { ...action.message, target: 'pr.author_agent' } };
+      }
+      return action;
+    });
+    return {
+      ...value, source: nextSource, actions,
+      for_seconds: nextIsState ? (wasState ? value.for_seconds : (Number(value.for_seconds) || 300)) : 0,
+    };
+  });
   return html`<${Overlay} id="trigger-modal" dialogClass="cron-create-modal trigger-modal" labelledby="trigger-modal-title"
     onClose=${state.closeTriggerDialog} blocked=${busy} resizeKey="tclaude.dash.modalSize.trigger">
     <form onSubmit=${save}>
@@ -353,18 +457,27 @@ function TriggerDialog({ descriptor, state, actions }) {
       <label class="trigger-name-field">Name<input autofocus required maxlength="80" value=${draft.name}
         onInput=${(event) => setDraft({ ...draft, name: event.currentTarget.value })} /></label>
       <${Step} name="WHEN" expanded=${step === 'when'} onToggle=${() => setStep(step === 'when' ? '' : 'when')}
-        valid=${whenValid} summary=${`${source.summary} · ${draft.author_is_agent === true ? 'by an agent' : draft.author_is_agent === false ? 'by a human' : 'any author'} · ${draft.draft_filter === 'exclude' ? 'not a draft' : draft.draft_filter === 'only' ? 'draft only' : 'drafts included'} · debounce ${secondsLabel(draft.debounce_seconds)}`}>
+        valid=${whenValid} summary=${stateSource
+          ? `${source.summary} for ${secondsLabel(draft.for_seconds)} · then debounce ${secondsLabel(draft.debounce_seconds)} · cooldown ${secondsLabel(draft.cooldown_seconds)}`
+          : `${source.summary} · ${draft.author_is_agent === true ? 'by an agent' : draft.author_is_agent === false ? 'by a human' : 'any author'} · ${draft.draft_filter === 'exclude' ? 'not a draft' : draft.draft_filter === 'only' ? 'draft only' : 'drafts included'} · debounce ${secondsLabel(draft.debounce_seconds)}`}>
         <div class="trigger-fields">
-          <label>Source<select value=${draft.source} onChange=${(event) => setDraft({ ...draft, source: event.currentTarget.value })}>
+          <label>Source<select value=${draft.source} onChange=${(event) => changeSource(event.currentTarget.value)}>
             ${TRIGGER_SOURCES.map((entry) => html`<option key=${entry.value} value=${entry.value}>${entry.label} · ${entry.value}</option>`)}
           </select></label>
-          <label>Author<select value=${String(draft.author_is_agent)} onChange=${(event) => setDraft({ ...draft, author_is_agent: event.currentTarget.value === 'null' ? null : event.currentTarget.value === 'true' })}>
-            <option value="true">agent only</option><option value="false">human only</option><option value="null">any author</option></select></label>
-          <label>Draft PRs<select value=${draft.draft_filter} onChange=${(event) => setDraft({ ...draft, draft_filter: event.currentTarget.value })}>
-            <option value="exclude">exclude</option><option value="include">include</option><option value="only">only drafts</option></select></label>
-          <label>Debounce (seconds)<input type="number" min="0" value=${draft.debounce_seconds} onInput=${(event) => setDraft({ ...draft, debounce_seconds: Number(event.currentTarget.value) })} /></label>
+          ${stateSource ? html`<label>Sustained for (seconds)<input type="number" min="1" required value=${draft.for_seconds}
+            onInput=${(event) => setDraft({ ...draft, for_seconds: Number(event.currentTarget.value) })} /></label>` : html`<${Fragment}>
+            <label>Author<select value=${String(draft.author_is_agent)} onChange=${(event) => setDraft({ ...draft, author_is_agent: event.currentTarget.value === 'null' ? null : event.currentTarget.value === 'true' })}>
+              <option value="true">agent only</option><option value="false">human only</option><option value="null">any author</option></select></label>
+            <label>Draft PRs<select value=${draft.draft_filter} onChange=${(event) => setDraft({ ...draft, draft_filter: event.currentTarget.value })}>
+              <option value="exclude">exclude</option><option value="include">include</option><option value="only">only drafts</option></select></label>
+            <label>Debounce (seconds)<input type="number" min="0" value=${draft.debounce_seconds} onInput=${(event) => setDraft({ ...draft, debounce_seconds: Number(event.currentTarget.value) })} /></label>
+          </${Fragment}>`}
+          ${stateSource && html`<label>Debounce after dwell (seconds)<input type="number" min="0" value=${draft.debounce_seconds}
+            onInput=${(event) => setDraft({ ...draft, debounce_seconds: Number(event.currentTarget.value) })} /></label>`}
           <label>Cooldown (seconds)<input type="number" min="0" value=${draft.cooldown_seconds} onInput=${(event) => setDraft({ ...draft, cooldown_seconds: Number(event.currentTarget.value) })} /></label>
         </div>
+        ${stateSource && html`<div class="trigger-dwell-timing-note">Sustained-for establishes continuous truth. Debounce then delays firing after the dwell matures; cooldown suppresses later firings.</div>`}
+        <${HarnessCapabilityNotes} harnesses=${harnesses} source=${draft.source} />
       </${Step}>
       <${Step} name="WHERE" expanded=${step === 'where'} onToggle=${() => setStep(step === 'where' ? '' : 'where')}
         valid=${whereValid} summary=${draft.scope === 'global' ? 'global' : `group ${draft.group || 'required'}`}>
@@ -378,9 +491,9 @@ function TriggerDialog({ descriptor, state, actions }) {
       <${Step} name="THEN" expanded=${step === 'then'} onToggle=${() => setStep(step === 'then' ? '' : 'then')}
         valid=${thenValid} summary=${draft.actions.length ? draft.actions.map(actionSummary).join(' → ') : 'action required'}>
         <div class="trigger-actions-editor">${draft.actions.map((action, index) => html`<${ActionEditor} key=${index} action=${action} index=${index}
-          update=${(next) => updateAction(index, next)} remove=${() => removeAction(index)} profileOptions=${profileOptions} />`)}
-          <div class="trigger-add-actions"><button type="button" onClick=${() => setDraft({ ...draft, actions: [...draft.actions, emptyAction('spawn')] })}>+ spawn action</button>
-            <button type="button" onClick=${() => setDraft({ ...draft, actions: [...draft.actions, emptyAction('message')] })}>+ message action</button></div>
+          update=${(next) => updateAction(index, next)} remove=${() => removeAction(index)} profileOptions=${profileOptions} stateSource=${stateSource} />`)}
+          <div class="trigger-add-actions"><button type="button" onClick=${() => setDraft({ ...draft, actions: [...draft.actions, emptyAction('spawn', stateSource)] })}>+ spawn action</button>
+            <button type="button" onClick=${() => setDraft({ ...draft, actions: [...draft.actions, emptyAction('message', stateSource)] })}>+ message action</button></div>
           ${draft.actions.some((action) => action.type === 'spawn') && html`<div class="trigger-permission-warning" role="note">
             ⚠ This rule spawns agents. Firings are re-authorized as the owning principal; revoked or missing permissions are recorded as denied, not silently dropped.
           </div>`}

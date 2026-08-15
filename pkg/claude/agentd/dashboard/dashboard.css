@@ -14665,6 +14665,17 @@ body.wizard .jobs-subnav {
 .trigger-verdicts { border: 1px solid #30363d; border-radius: 6px; padding: 8px 10px; }
 .trigger-verdicts > div { display: grid; grid-template-columns: 18px 105px 1fr; gap: 4px; line-height: 22px; }
 .trigger-fact-note { margin-top: 7px; color: #7d8590; font-size: 10px; }
+.trigger-dwell-section { margin-top: 14px; }
+.trigger-dwell-states { display: flex; flex-direction: column; gap: 6px; }
+.trigger-dwell-state {
+  display: grid; grid-template-columns: minmax(78px, auto) 58px minmax(72px, auto) 1fr;
+  gap: 7px; align-items: baseline; padding: 6px 8px;
+  border: 1px solid #30363d; border-radius: 5px; font-size: 10px;
+}
+.trigger-dwell-detail { grid-column: 1 / -1; overflow-wrap: anywhere; }
+.trigger-fact-result.true { color: #3fb950; }
+.trigger-fact-result.false { color: #8b949e; }
+.trigger-fact-result.unknown { color: #e3b341; }
 .trigger-firings { border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
 .trigger-firing { padding: 7px 9px; border-bottom: 1px solid #21262d; font-size: 11px; }
 .trigger-firing:last-child { border-bottom: 0; }
@@ -14693,6 +14704,7 @@ body.wizard .jobs-subnav {
 .trigger-fields { display: grid; grid-template-columns: repeat(3, minmax(150px, 1fr)); gap: 10px; }
 .trigger-fields label, .trigger-action-fields label { display: flex; flex-direction: column; gap: 4px; color: #8b949e; font-size: 11px; }
 .trigger-fields :is(input, select), .trigger-action-fields :is(input, select, textarea), .trigger-name-field input { width: 100%; }
+.trigger-dwell-timing-note { margin-top: 8px; color: #8b949e; font-size: 10px; }
 #trigger-modal .trigger-modal :is(input:not([type=checkbox]):not([type=radio]), select, textarea) {
   box-sizing: border-box; padding: 5px 7px;
   background: #0d1117; border: 1px solid #30363d; border-radius: 4px;
@@ -14722,6 +14734,15 @@ body.wizard .jobs-subnav {
 }
 .trigger-action-editor-head button.danger { color: #ff7b72; }
 .trigger-placeholder-chips button { color: #e3a54b; }
+.trigger-harness-capabilities {
+  display: flex; flex-direction: column; gap: 5px; margin-top: 10px; padding: 8px 10px;
+  border: 1px solid #30363d; border-radius: 6px; background: #0d141c; font-size: 10px;
+}
+.trigger-harness-capabilities > div { display: flex; flex-wrap: wrap; gap: 6px; }
+.trigger-harness-capability { display: inline-flex; align-items: baseline; gap: 5px; padding: 3px 7px; border: 1px solid #30363d; border-radius: 999px; }
+.trigger-harness-capability.supported { color: #7ee787; border-color: #275d36; background: #0f2d17; }
+.trigger-harness-capability.unknown { color: #e3b341; border-color: #614d14; background: #2b2408; }
+.trigger-harness-capability small { color: #8b949e; }
 .trigger-add-actions { display: flex; gap: 7px; }
 .trigger-permission-warning { padding: 8px 10px; border: 1px solid #614d14; border-radius: 6px; color: #e3b341; background: #2b2208; font-size: 11px; }
 
@@ -14796,6 +14817,9 @@ body.wizard #trigger-modal .modal-buttons button.primary {
 body.wizard .trigger-row:hover, body.wizard .trigger-row.selected { background: #211934; }
 body.wizard .trigger-inspector-row > td { background: #140f28; }
 body.wizard :is(.trigger-verdicts, .trigger-firings, .group-triggers-section) {
+  background: #18122b; border-color: rgba(122, 93, 176, .55);
+}
+body.wizard :is(.trigger-dwell-state, #trigger-modal .trigger-harness-capabilities) {
   background: #18122b; border-color: rgba(122, 93, 176, .55);
 }
 body.wizard .group-triggers-section > summary { color: #f3e6c0; }

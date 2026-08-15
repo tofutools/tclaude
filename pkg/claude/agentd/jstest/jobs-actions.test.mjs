@@ -219,6 +219,7 @@ test('Trigger actions use the frozen REST contract and row-version CAS', async (
       calls.push({ path, options });
       if (path === '/api/triggers') return { triggers: [{ id: 4, name: 'review' }] };
       if (path.includes('/firings')) return { firings: [{ id: 8, outcome: 'ok' }] };
+      if (path === '/api/triggers/4' && options.method === 'GET') return { id: 4, dwell_states: [{ result: 'unknown' }] };
       return { id: 4, name: 'review' };
     },
     refresh: async () => {}, confirm: async () => true,
@@ -227,6 +228,7 @@ test('Trigger actions use the frozen REST contract and row-version CAS', async (
 
   assert.deepEqual(await actions.loadTriggers(), [{ id: 4, name: 'review', firings: [{ id: 8, outcome: 'ok' }] }]);
   assert.deepEqual(await actions.loadTriggerFirings(4), [{ id: 8, outcome: 'ok' }]);
+  assert.deepEqual(await actions.loadTriggerDetail(4), { id: 4, dwell_states: [{ result: 'unknown' }] });
   await actions.saveTrigger({ editing: false, payload: { name: 'review' } });
   await actions.saveTrigger({ editing: true, id: 4, payload: { name: 'review 2', row_version: 7 } });
   await actions.toggleTrigger({ id: 4, row_version: 7, name: 'review', enabled: true });
@@ -236,6 +238,7 @@ test('Trigger actions use the frozen REST contract and row-version CAS', async (
     ['/api/triggers', 'GET'],
     ['/api/triggers/4/firings?limit=1', 'GET'],
     ['/api/triggers/4/firings?limit=20', 'GET'],
+    ['/api/triggers/4', 'GET'],
     ['/api/triggers', 'POST'],
     ['/api/triggers/4', 'PATCH'],
     ['/api/triggers/4/disable?row_version=7', 'POST'],

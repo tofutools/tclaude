@@ -18,8 +18,11 @@ func TestDashboardTriggersAssets(t *testing.T) {
 		"cron-create-modal trigger-modal",
 		"{{pr.url}}", "{{pr.number}}", "{{pr.branch}}", "{{pr.author_agent}}", "{{group}}",
 		"pr.updated", "pr.merged", "ci.failed", "ci.succeeded",
+		"agent.idle", "agent.awaiting_input", "Sustained for (seconds)",
+		"Debounce then delays firing after the dwell matures",
 		"{{event.source}}", "{{event.previous_state}}", "{{event.current_state}}",
-		"The current API does not expose a live fact snapshot",
+		"{{agent.id}}", "{{agent.harness}}", "{{event.fact_result}}", "{{event.fact_observed_at}}", "{{event.dwell_started_at}}",
+		"Unknown means the fact could not be observed", "selected fact agent", "trigger-harness-capabilities",
 	} {
 		if !strings.Contains(triggerUI, want) {
 			t.Errorf("trigger dashboard UI missing %q", want)
@@ -31,7 +34,7 @@ func TestDashboardTriggersAssets(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"/api/triggers", "/firings?limit=20", "row_version=${encodeURIComponent(rule.row_version)}",
+		"/api/triggers", "/firings?limit=20", "loadTriggerDetail", "row_version=${encodeURIComponent(rule.row_version)}",
 	} {
 		if !strings.Contains(jobsActions, want) {
 			t.Errorf("trigger REST action wiring missing %q", want)
@@ -46,6 +49,7 @@ func TestDashboardTriggersAssets(t *testing.T) {
 	}
 	for _, want := range []string{
 		".trigger-inspector-grid", ".trigger-editor-step", ".trigger-permission-warning", ".trigger-firing-context",
+		".trigger-dwell-states", ".trigger-fact-result.unknown", ".trigger-harness-capabilities",
 		".group-triggers-section", "grid-template-columns: 1fr",
 		"#trigger-modal .trigger-modal :is(input:not([type=checkbox]):not([type=radio]), select, textarea)",
 		"body.wizard #trigger-modal .trigger-modal",
