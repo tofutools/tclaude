@@ -188,7 +188,8 @@ func quoteName(name string) string { return `"` + name + `"` }
 type SpawnRequest struct {
 	// AllowUnenforcedSandbox is the dashboard-only, fresh-spawn authorization
 	// to proceed when the selected implementation cannot enforce closed network
-	// access. It is accepted only from the cookie-authenticated dashboard route,
+	// access or every authored network deny entry. It is accepted only from the
+	// cookie-authenticated dashboard route,
 	// is never profile/config-backed, and has no CLI flag. False or absent keeps
 	// the ordinary fail-closed behavior.
 	AllowUnenforcedSandbox bool `json:"allow_unenforced_sandbox,omitempty"`

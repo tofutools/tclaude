@@ -91,9 +91,10 @@ const SANDBOX_IMPL_TITLE = 'Which layer owns OS-level containment for the new ag
   + 'sandbox off inside it. Linux only, and it needs bwrap plus unprivileged user namespaces — '
   + 'a host without them refuses the launch instead of falling back. '
   + `Blank uses the resolved defaults. ${RESOLVED_DEFAULTS_CHAIN}`;
-const UNENFORCED_SANDBOX_TITLE = 'Operator-only escape hatch. If closed network access cannot '
-  + 'be enforced, launch with outbound network access open. Enforceable filesystem and '
-  + 'Unix-socket rules still apply. This choice is not saved and starts unchecked every time.';
+const UNENFORCED_SANDBOX_TITLE = 'Operator-only escape hatch. If closed network access or individual '
+  + 'network deny rules cannot be enforced, launch with those rules unenforced. Other enforceable '
+  + 'filesystem, network, and Unix-socket rules still apply. This choice is not saved and starts '
+  + 'unchecked every time.';
 const PROFILE_OWNED_FIELDS = [
   'profile', 'name', 'role', 'roleRefs', 'descr', 'task', 'initialMessage',
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'tools', 'askTimeout',
@@ -1155,7 +1156,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
             aria-describedby="agent-spawn-allow-unenforced-sandbox-description"
             checked=${draft.allowUnenforcedSandbox} disabled=${busy}
             onChange=${(event) => update('allowUnenforcedSandbox', event.currentTarget.checked)} />
-          Allow launch without enforcement
+          Allow launch with unenforced rules
         </label>
         <span id="agent-spawn-allow-unenforced-sandbox-description"
           class="spawn-field-description">${UNENFORCED_SANDBOX_TITLE}</span>

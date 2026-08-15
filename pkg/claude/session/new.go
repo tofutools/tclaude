@@ -1619,20 +1619,10 @@ func runNew(params *NewParams) error {
 		if capsErr != nil {
 			return capsErr
 		}
-		allowUnenforcedNetworkClosed := false
-		for _, notice := range launchSandbox.Effective.AccessNotices {
-			if notice.Class == sandboxpolicy.AccessNoticeClassDegradation &&
-				notice.Axis == "network" &&
-				notice.Reason == sandboxpolicy.AccessNoticeReasonOperatorUnenforcedLaunchOverride &&
-				notice.Effect == sandboxpolicy.AccessNoticeEffectNotEnforced {
-				allowUnenforcedNetworkClosed = true
-				break
-			}
-		}
+		accessOptions := accessEnforcementOptionsFromLaunchNotices(
+			launchSandbox.Effective.AccessNotices)
 		rendered, notices, planErr := harness.PlanAccessEnforcement(
-			axes, caps, harness.AccessEnforcementOptions{
-				AllowUnenforcedNetworkClosed: allowUnenforcedNetworkClosed,
-			},
+			axes, caps, accessOptions,
 		)
 		if planErr != nil {
 			return planErr
@@ -2505,6 +2495,26 @@ func runNew(params *NewParams) error {
 	launchRowCommitted = true
 	darwinRouteCommitted = true
 	return announceAndAttach(fmt.Sprintf("Created session %s", tmuxSession), sessionID, tmuxSession, cwd, params.Detached)
+}
+
+func accessEnforcementOptionsFromLaunchNotices(
+	notices []sandboxpolicy.AccessNotice,
+) harness.AccessEnforcementOptions {
+	options := harness.AccessEnforcementOptions{}
+	for _, notice := range notices {
+		if notice.Class != sandboxpolicy.AccessNoticeClassDegradation ||
+			notice.Axis != "network" ||
+			notice.Effect != sandboxpolicy.AccessNoticeEffectNotEnforced {
+			continue
+		}
+		switch notice.Reason {
+		case sandboxpolicy.AccessNoticeReasonOperatorUnenforcedLaunchOverride:
+			options.AllowUnenforcedNetworkClosed = true
+		case sandboxpolicy.AccessNoticeReasonOperatorReducedNetworkDenyOverride:
+			options.AllowReducedNetworkDeny = true
+		}
+	}
+	return options
 }
 
 func validateSandboxImplementationDecision(

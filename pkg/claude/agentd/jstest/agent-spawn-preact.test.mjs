@@ -703,7 +703,7 @@ test('spawn role chips compose multiple roles, inspect details, and feed the per
   await mounted.cleanup();
 });
 
-test('Preact agent-spawn renders the unenforced-network checkbox under the sandbox profile', async (t) => {
+test('Preact agent-spawn renders the unenforced-rules checkbox under the sandbox profile', async (t) => {
   const mounted = await mountSpawn(t);
   const { harness, host, state } = mounted;
   try {
@@ -717,9 +717,9 @@ test('Preact agent-spawn renders the unenforced-network checkbox under the sandb
     assert.equal(row.id, 'agent-spawn-allow-unenforced-sandbox-row');
     assert.equal(row.previousElementSibling.id, 'agent-spawn-sandbox-profile-row');
     const label = checkbox.closest('label');
-    assert.match(label.textContent, /Allow launch without enforcement/);
+    assert.match(label.textContent, /Allow launch with unenforced rules/);
     assert.match(label.title, /Operator-only escape hatch/);
-    assert.match(label.title, /outbound network access open/);
+    assert.match(label.title, /individual network deny rules/);
     assert.match(label.title, /not saved and starts unchecked every time/);
     const description = host.querySelector('#agent-spawn-allow-unenforced-sandbox-description');
     assert.equal(checkbox.getAttribute('aria-describedby'), description.id);

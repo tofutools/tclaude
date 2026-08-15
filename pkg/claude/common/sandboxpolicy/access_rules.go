@@ -149,6 +149,12 @@ const (
 	// snapshot carries this exact notice through the forked session launcher;
 	// profiles cannot author it.
 	AccessNoticeReasonOperatorUnenforcedLaunchOverride = "operator_unenforced_launch_override"
+	// AccessNoticeReasonOperatorReducedNetworkDenyOverride records the
+	// dashboard-only, fresh-spawn authorization to omit deny entries that the
+	// selected launch target cannot enforce. Keeping this distinct from the
+	// closed-network override prevents either narrow authorization from being
+	// reused for the other refusal by the forked session launcher.
+	AccessNoticeReasonOperatorReducedNetworkDenyOverride = "operator_reduced_network_deny_override"
 	// AccessNoticeReasonUnconfinedImplementation records that the resolved
 	// profile chain authored access rules which the selected implementation
 	// confines nothing to enforce them with. It exists for `resource-only`,
