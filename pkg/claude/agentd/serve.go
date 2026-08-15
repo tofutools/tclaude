@@ -566,6 +566,7 @@ func runServe(p *serveParams) error {
 	startStandingOrderDebounceScheduler(cronStop)
 	if cfg.TriggersEnabled() {
 		startTriggerScheduler(cronStop)
+		startTriggerSourcePollers(cronStop)
 	}
 	// Processes runtime: one bounded startup page plus a coarse fallback sweep.
 	// Each actively advancing run is claimed by exactly one daemon-owned drive;

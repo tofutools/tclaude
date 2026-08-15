@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"fmt"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,6 +14,55 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
+
+func TestTriggerCIPollerUsesFreshTransitionsAndDurableBaseline(t *testing.T) {
+	f := triggerFlow(t)
+	g := f.HaveGroup("ci-watch")
+	const author = "ci-trigger-author"
+	f.HaveConvWithTitle(author, "author")
+	f.HaveMember("ci-watch", author)
+	ruleID, err := db.InsertTriggerRule(&db.TriggerRule{Name: "ci-failure", Enabled: true, OperatorAuthored: true,
+		ScopeKind: db.TriggerScopeGroup, GroupID: g.ID, Source: db.TriggerSourceCIFailed,
+		DraftFilter: db.TriggerDraftInclude, Actions: []db.TriggerAction{{Type: db.TriggerActionMessage,
+			Message: &db.TriggerMessageAction{BodyTemplate: "CI {{event.previous_state}} -> {{event.current_state}} for {{pr.url}}"}}}})
+	require.NoError(t, err)
+	agentID, err := db.AgentIDForConv(author)
+	require.NoError(t, err)
+	_, err = db.UpsertAgentPR(agentID, "https://github.com/o/r/pull/90", "checks", "open")
+	require.NoError(t, err)
+	var calls atomic.Int32
+	t.Cleanup(agentd.SetPRChecksResolverForTest(func(string) (string, bool) {
+		if calls.Add(1) == 1 {
+			return `[{"__typename":"CheckRun","name":"build","status":"IN_PROGRESS"}]`, true
+		}
+		return `[{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"FAILURE"}]`, true
+	}))
+	base := time.Now().UTC().Add(time.Second)
+	agentd.PollTriggerCITransitionsForTest(base)
+	agentd.RunTriggerTickForTest(base)
+	firings, err := db.ListTriggerFirings(ruleID, 10)
+	require.NoError(t, err)
+	assert.Empty(t, firings, "the first fresh state only establishes the durable baseline")
+	agentd.PollTriggerCITransitionsForTest(base.Add(time.Second))
+	agentd.RunTriggerTickForTest(base.Add(time.Second))
+	firings, err = db.ListTriggerFirings(ruleID, 10)
+	require.NoError(t, err)
+	require.Len(t, firings, 1)
+	assert.Equal(t, "ok", firings[0].Outcome)
+
+	// Re-reading the same fresh failing state, including after another engine
+	// tick, cannot synthesize a restart edge.
+	agentd.PollTriggerCITransitionsForTest(base.Add(2 * time.Second))
+	agentd.RunTriggerTickForTest(base.Add(2 * time.Second))
+	firings, err = db.ListTriggerFirings(ruleID, 10)
+	require.NoError(t, err)
+	assert.Len(t, firings, 1)
+
+	require.NoError(t, config.Save(&config.Config{}))
+	before := calls.Load()
+	agentd.PollTriggerCITransitionsForTest(base.Add(3 * time.Second))
+	assert.Equal(t, before, calls.Load(), "flag-off poller does not resolve GitHub state")
+}
 
 func TestDashboardSnapshotDynamicallyGatesTriggers(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))

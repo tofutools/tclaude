@@ -31,11 +31,11 @@ func UpsertAgentPR(agentID, prURL, summary, state string) (AgentPR, error) {
 }
 
 // UpsertAgentPRDetails is the trigger-aware presentation boundary. When the
-// opt-in trigger feature is enabled, the PR row and its pr.opened observation
-// commit together: agentd may crash before evaluation, but a restart can
-// reconcile the durable pending row. With the feature off, presentation stays
-// unchanged and writes no trigger event. Re-presenting the same PR only
-// refreshes a still-pending event and can never create a second opening edge.
+// opt-in trigger feature is enabled, the PR row and its opened/updated
+// observation commit together: agentd may crash before evaluation, but a
+// restart can reconcile the durable pending row. With the feature off,
+// presentation stays unchanged and writes no trigger event. Re-presenting the
+// same PR never creates a second opening edge; pending update edges coalesce.
 func UpsertAgentPRDetails(agentID, prURL, summary, state, branch string, draft bool) (AgentPR, error) {
 	agentID = strings.TrimSpace(agentID)
 	prURL = strings.TrimSpace(prURL)
@@ -57,6 +57,17 @@ func UpsertAgentPRDetails(agentID, prURL, summary, state, branch string, draft b
 		return AgentPR{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	var existed bool
+	var previousState string
+	err = tx.QueryRow(`SELECT state FROM agent_prs WHERE agent_id=? AND pr_url=?`, agentID, prURL).Scan(&previousState)
+	switch {
+	case err == nil:
+		existed = true
+	case errors.Is(err, sql.ErrNoRows):
+		err = nil
+	default:
+		return AgentPR{}, err
+	}
 	if _, err := tx.Exec(`INSERT INTO agent_prs
 		(agent_id, pr_url, summary, state, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?)
@@ -78,7 +89,15 @@ func UpsertAgentPRDetails(agentID, prURL, summary, state, branch string, draft b
 	row.UpdatedAt = updated.Time()
 	cfg, configErr := config.Load()
 	if configErr == nil && cfg.TriggersEnabled() {
-		if err := enqueueTriggerPREventTx(tx, row, branch, draft, now); err != nil {
+		if !existed {
+			err = enqueueTriggerPREventTx(tx, row, branch, draft, now)
+		} else {
+			err = enqueueTriggerTransitionTx(tx, row, TriggerSourcePRUpdated, previousState, state, branch, draft, now)
+			if err == nil && !strings.EqualFold(strings.TrimSpace(previousState), "merged") && strings.EqualFold(state, "merged") {
+				err = enqueueTriggerTransitionTx(tx, row, TriggerSourcePRMerged, previousState, "merged", branch, draft, now)
+			}
+		}
+		if err != nil {
 			return AgentPR{}, err
 		}
 	}
@@ -140,15 +159,49 @@ func UpdateAgentPRState(agentID, prURL, state string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	res, err := d.Exec(`UPDATE agent_prs
-		SET state = ?, updated_at = ?
-		WHERE agent_id = ? AND pr_url = ? AND state <> 'handled'
-			AND (LOWER(TRIM(state)) <> 'merged' OR LOWER(TRIM(?)) = 'merged')`,
-		state, dbTime(time.Now().UTC()), agentID, prURL, state)
+	tx, err := d.Begin()
 	if err != nil {
 		return 0, err
 	}
-	return res.RowsAffected()
+	defer func() { _ = tx.Rollback() }()
+	var before AgentPR
+	var created, updated dbTimestamp
+	err = tx.QueryRow(`SELECT id,agent_id,pr_url,summary,state,created_at,updated_at FROM agent_prs
+		WHERE agent_id=? AND pr_url=?`, agentID, prURL).Scan(&before.ID, &before.AgentID, &before.PRURL,
+		&before.Summary, &before.State, &created, &updated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	before.CreatedAt, before.UpdatedAt = created.Time(), updated.Time()
+	now := time.Now().UTC()
+	res, err := tx.Exec(`UPDATE agent_prs
+		SET state = ?, updated_at = ?
+		WHERE agent_id = ? AND pr_url = ? AND state <> 'handled'
+			AND (LOWER(TRIM(state)) <> 'merged' OR LOWER(TRIM(?)) = 'merged')`,
+		state, dbTime(now), agentID, prURL, state)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil || n == 0 {
+		return n, err
+	}
+	if cfg, cfgErr := config.Load(); cfgErr == nil && cfg.TriggersEnabled() &&
+		!strings.EqualFold(strings.TrimSpace(before.State), "merged") && strings.EqualFold(state, "merged") {
+		previous := before.State
+		before.State = state
+		before.UpdatedAt = now
+		if err := enqueueTriggerTransitionTx(tx, before, TriggerSourcePRMerged, previous, "merged", "", strings.EqualFold(previous, "draft"), now); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // GetAgentPR returns the row for an agent+URL pair, or the zero value when

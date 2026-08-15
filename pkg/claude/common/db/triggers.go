@@ -12,9 +12,13 @@ import (
 )
 
 const (
-	TriggerScopeGlobal    = "global"
-	TriggerScopeGroup     = "group"
-	TriggerSourcePROpened = "pr.opened"
+	TriggerScopeGlobal       = "global"
+	TriggerScopeGroup        = "group"
+	TriggerSourcePROpened    = "pr.opened"
+	TriggerSourcePRUpdated   = "pr.updated"
+	TriggerSourcePRMerged    = "pr.merged"
+	TriggerSourceCIFailed    = "ci.failed"
+	TriggerSourceCISucceeded = "ci.succeeded"
 
 	TriggerDraftInclude = "include"
 	TriggerDraftExclude = "exclude"
@@ -104,8 +108,9 @@ func (r *TriggerRule) Validate() error {
 	if (r.ScopeKind == TriggerScopeGroup) != (r.GroupID > 0) {
 		return fmt.Errorf("%w: group scope requires exactly one group", ErrTriggerInvalid)
 	}
-	if r.Source != TriggerSourcePROpened {
-		return fmt.Errorf("%w: source must be %s", ErrTriggerInvalid, TriggerSourcePROpened)
+	if !slices.Contains([]string{TriggerSourcePROpened, TriggerSourcePRUpdated, TriggerSourcePRMerged,
+		TriggerSourceCIFailed, TriggerSourceCISucceeded}, r.Source) {
+		return fmt.Errorf("%w: unsupported source %q", ErrTriggerInvalid, r.Source)
 	}
 	if !slices.Contains([]string{TriggerDraftInclude, TriggerDraftExclude, TriggerDraftOnly}, r.DraftFilter) {
 		return fmt.Errorf("%w: draft_filter must be include, exclude, or only", ErrTriggerInvalid)
@@ -168,6 +173,7 @@ func (a *TriggerAction) validate() error {
 type TriggerPREvent struct {
 	ID            int64     `json:"id"`
 	AgentPRID     int64     `json:"agent_pr_id"`
+	Source        string    `json:"source"`
 	EventRef      string    `json:"event_ref"`
 	PRURL         string    `json:"pr_url"`
 	PRNumber      int       `json:"pr_number"`
@@ -175,6 +181,8 @@ type TriggerPREvent struct {
 	PRAuthorAgent string    `json:"pr_author_agent"`
 	Draft         bool      `json:"draft"`
 	GroupIDs      []int64   `json:"group_ids"`
+	PreviousState string    `json:"previous_state,omitempty"`
+	CurrentState  string    `json:"current_state,omitempty"`
 	OccurredAt    time.Time `json:"occurred_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 	Status        string    `json:"status"`
@@ -182,16 +190,19 @@ type TriggerPREvent struct {
 }
 
 type TriggerFiring struct {
-	ID           int64                  `json:"id"`
-	RuleID       int64                  `json:"rule_id"`
-	RuleRevision int64                  `json:"rule_revision"`
-	EventID      int64                  `json:"event_id"`
-	EventRef     string                 `json:"event_ref"`
-	Outcome      string                 `json:"outcome"`
-	Detail       string                 `json:"detail,omitempty"`
-	StartedAt    time.Time              `json:"started_at"`
-	FinishedAt   time.Time              `json:"finished_at,omitempty"`
-	Actions      []TriggerActionOutcome `json:"actions"`
+	ID            int64                  `json:"id"`
+	RuleID        int64                  `json:"rule_id"`
+	RuleRevision  int64                  `json:"rule_revision"`
+	EventID       int64                  `json:"event_id"`
+	EventRef      string                 `json:"event_ref"`
+	Source        string                 `json:"source,omitempty"`
+	PreviousState string                 `json:"previous_state,omitempty"`
+	CurrentState  string                 `json:"current_state,omitempty"`
+	Outcome       string                 `json:"outcome"`
+	Detail        string                 `json:"detail,omitempty"`
+	StartedAt     time.Time              `json:"started_at"`
+	FinishedAt    time.Time              `json:"finished_at,omitempty"`
+	Actions       []TriggerActionOutcome `json:"actions"`
 }
 
 type TriggerActionOutcome struct {
@@ -366,6 +377,16 @@ func ListTriggerRules() ([]*TriggerRule, error) {
 	return out, rows.Err()
 }
 
+func HasEnabledTriggerSource(source string) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	var found bool
+	err = d.QueryRow(`SELECT EXISTS(SELECT 1 FROM trigger_rules WHERE enabled=1 AND source=?)`, strings.TrimSpace(source)).Scan(&found)
+	return found, err
+}
+
 const triggerRuleSelect = `SELECT id, name, row_version, revision, enabled, owner_agent,
 	operator_authored, scope_kind, COALESCE(group_id,0), source, author_is_agent,
 	draft_filter, debounce_seconds, cooldown_seconds, actions_json, created_at, updated_at FROM trigger_rules`
@@ -409,21 +430,67 @@ func derivePRNumber(raw string) int {
 	return n
 }
 
-func enqueueTriggerPREventTx(tx *sql.Tx, pr AgentPR, branch string, draft bool, now time.Time) error {
+func triggerPRGroupsJSONTx(tx *sql.Tx, agentID string) (string, error) {
 	var groups string
-	if err := tx.QueryRow(`SELECT COALESCE(json_group_array(group_id),'[]') FROM
-		(SELECT group_id FROM agent_group_members WHERE agent_id=? ORDER BY group_id)`, pr.AgentID).Scan(&groups); err != nil {
+	err := tx.QueryRow(`SELECT COALESCE(json_group_array(group_id),'[]') FROM
+		(SELECT group_id FROM agent_group_members WHERE agent_id=? ORDER BY group_id)`, agentID).Scan(&groups)
+	return groups, err
+}
+
+func enqueueTriggerPREventTx(tx *sql.Tx, pr AgentPR, branch string, draft bool, now time.Time) error {
+	groups, err := triggerPRGroupsJSONTx(tx, pr.AgentID)
+	if err != nil {
 		return err
 	}
-	_, err := tx.Exec(`INSERT INTO trigger_pr_events
-		(agent_pr_id,event_ref,pr_url,pr_number,pr_branch,pr_author_agent,draft,group_ids_json,occurred_at,updated_at,status)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)
-		ON CONFLICT(agent_pr_id) DO UPDATE SET
+	_, err = tx.Exec(`INSERT INTO trigger_pr_events
+		(agent_pr_id,source,event_ref,pr_url,pr_number,pr_branch,pr_author_agent,draft,group_ids_json,occurred_at,updated_at,status)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(event_ref) DO UPDATE SET
 			updated_at=excluded.updated_at,
 			pr_branch=CASE WHEN trigger_pr_events.status='pending' AND excluded.pr_branch<>'' THEN excluded.pr_branch ELSE trigger_pr_events.pr_branch END,
 			draft=CASE WHEN trigger_pr_events.status='pending' THEN excluded.draft ELSE trigger_pr_events.draft END,
 			group_ids_json=CASE WHEN trigger_pr_events.status='pending' THEN excluded.group_ids_json ELSE trigger_pr_events.group_ids_json END`,
-		pr.ID, "pr.opened:"+pr.AgentID+":"+pr.PRURL, pr.PRURL, derivePRNumber(pr.PRURL), strings.TrimSpace(branch), pr.AgentID, draft, groups, dbTime(pr.CreatedAt), dbTime(now), TriggerEventPending)
+		pr.ID, TriggerSourcePROpened, "pr.opened:"+pr.AgentID+":"+pr.PRURL, pr.PRURL, derivePRNumber(pr.PRURL), strings.TrimSpace(branch), pr.AgentID, draft, groups, dbTime(pr.CreatedAt), dbTime(now), TriggerEventPending)
+	if err == nil {
+		_, err = tx.Exec(`INSERT OR IGNORE INTO trigger_pr_observations(agent_pr_id,event_sequence,updated_at) VALUES(?,1,?)`, pr.ID, dbTime(now))
+	}
+	return err
+}
+
+func enqueueTriggerTransitionTx(tx *sql.Tx, pr AgentPR, source, previous, current, branch string, draft bool, now time.Time) error {
+	groups, err := triggerPRGroupsJSONTx(tx, pr.AgentID)
+	if err != nil {
+		return err
+	}
+	if source == TriggerSourcePRUpdated {
+		res, err := tx.Exec(`UPDATE trigger_pr_events SET pr_branch=?,draft=?,group_ids_json=?,
+			previous_state=CASE WHEN previous_state='' THEN ? ELSE previous_state END,current_state=?,
+			occurred_at=?,updated_at=? WHERE id=(SELECT id FROM trigger_pr_events
+			WHERE agent_pr_id=? AND source='pr.updated' AND status='pending' AND processed_at IS NULL
+			ORDER BY id DESC LIMIT 1)`, strings.TrimSpace(branch), draft, groups, strings.TrimSpace(previous),
+			strings.TrimSpace(current), dbTime(now), dbTime(now), pr.ID)
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil || n > 0 {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`INSERT INTO trigger_pr_observations(agent_pr_id,event_sequence,updated_at)
+		VALUES(?,1,?) ON CONFLICT(agent_pr_id) DO UPDATE SET event_sequence=event_sequence+1,updated_at=excluded.updated_at`, pr.ID, dbTime(now)); err != nil {
+		return err
+	}
+	var sequence int64
+	if err := tx.QueryRow(`SELECT event_sequence FROM trigger_pr_observations WHERE agent_pr_id=?`, pr.ID).Scan(&sequence); err != nil {
+		return err
+	}
+	eventRef := fmt.Sprintf("%s:%d:%d", source, pr.ID, sequence)
+	_, err = tx.Exec(`INSERT INTO trigger_pr_events
+		(agent_pr_id,source,event_ref,pr_url,pr_number,pr_branch,pr_author_agent,draft,group_ids_json,
+		 previous_state,current_state,occurred_at,updated_at,status)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, pr.ID, source, eventRef, pr.PRURL, derivePRNumber(pr.PRURL),
+		strings.TrimSpace(branch), pr.AgentID, draft, groups, strings.TrimSpace(previous), strings.TrimSpace(current),
+		dbTime(now), dbTime(now), TriggerEventPending)
 	return err
 }
 
@@ -433,8 +500,8 @@ func ReconcileTriggerPREvents() (int64, error) {
 		return 0, err
 	}
 	res, err := d.Exec(`INSERT OR IGNORE INTO trigger_pr_events
-		(agent_pr_id,event_ref,pr_url,pr_number,pr_author_agent,draft,group_ids_json,occurred_at,updated_at,status)
-		SELECT p.id,'pr.opened:'||p.agent_id||':'||p.pr_url,p.pr_url,0,p.agent_id,
+		(agent_pr_id,source,event_ref,pr_url,pr_number,pr_author_agent,draft,group_ids_json,occurred_at,updated_at,status)
+		SELECT p.id,'pr.opened','pr.opened:'||p.agent_id||':'||p.pr_url,p.pr_url,0,p.agent_id,
 		CASE WHEN lower(trim(p.state))='draft' THEN 1 ELSE 0 END,
 		COALESCE((SELECT json_group_array(m.group_id) FROM agent_group_members m WHERE m.agent_id=p.agent_id),'[]'),
 		p.created_at,p.updated_at,'pending' FROM agent_prs p`)
@@ -442,6 +509,116 @@ func ReconcileTriggerPREvents() (int64, error) {
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// ListTriggerCIWatchPRs returns the bounded set of non-terminal presented PRs
+// that are in scope for at least one enabled CI transition rule.
+func ListTriggerCIWatchPRs(limit int) ([]AgentPR, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT DISTINCT p.id,p.agent_id,p.pr_url,p.summary,p.state,p.created_at,p.updated_at
+		FROM agent_prs p JOIN trigger_rules r ON r.enabled=1 AND r.source IN ('ci.failed','ci.succeeded')
+		LEFT JOIN trigger_pr_observations o ON o.agent_pr_id=p.id
+		WHERE lower(trim(p.state)) NOT IN ('handled','merged','closed')
+		  AND (r.scope_kind='global' OR EXISTS (SELECT 1 FROM agent_group_members m
+		      WHERE m.agent_id=p.agent_id AND m.group_id=r.group_id))
+		ORDER BY COALESCE(o.ci_polled_at,0),p.id LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []AgentPR
+	for rows.Next() {
+		var p AgentPR
+		var created, updated dbTimestamp
+		if err := rows.Scan(&p.ID, &p.AgentID, &p.PRURL, &p.Summary, &p.State, &created, &updated); err != nil {
+			return nil, err
+		}
+		p.CreatedAt, p.UpdatedAt = created.Time(), updated.Time()
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// MarkTriggerCIPollAttempt advances only the scheduler fairness clock. It is
+// deliberately separate from ci_observed_at: a failed resolver is unknown and
+// must not make an old check summary fresh.
+func MarkTriggerCIPollAttempt(agentPRID int64, attemptedAt time.Time) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`INSERT INTO trigger_pr_observations(agent_pr_id,event_sequence,ci_polled_at,updated_at)
+		VALUES(?,1,?,?) ON CONFLICT(agent_pr_id) DO UPDATE SET ci_polled_at=excluded.ci_polled_at`,
+		agentPRID, dbTime(attemptedAt.UTC()), dbTime(attemptedAt.UTC()))
+	return err
+}
+
+// ObserveTriggerPRCI durably advances the last fresh aggregate CI state for a
+// presented PR. The first observation establishes a baseline; later changes
+// to passing/failing emit exactly one transition event. Older observations are
+// ignored, so a slow poll cannot regress the durable edge detector.
+func ObserveTriggerPRCI(agentPRID int64, state string, observedAt time.Time) (bool, error) {
+	state = strings.ToLower(strings.TrimSpace(state))
+	if !slices.Contains([]string{"passing", "failing", "pending", "none"}, state) {
+		return false, fmt.Errorf("%w: unsupported CI state %q", ErrTriggerInvalid, state)
+	}
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var pr AgentPR
+	var created, updated dbTimestamp
+	if err := tx.QueryRow(`SELECT id,agent_id,pr_url,summary,state,created_at,updated_at FROM agent_prs WHERE id=?`, agentPRID).
+		Scan(&pr.ID, &pr.AgentID, &pr.PRURL, &pr.Summary, &pr.State, &created, &updated); err != nil {
+		return false, err
+	}
+	pr.CreatedAt, pr.UpdatedAt = created.Time(), updated.Time()
+	var previous string
+	var priorAt sql.NullInt64
+	err = tx.QueryRow(`SELECT ci_state,ci_observed_at FROM trigger_pr_observations WHERE agent_pr_id=?`, agentPRID).Scan(&previous, &priorAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		_, err = tx.Exec(`INSERT INTO trigger_pr_observations(agent_pr_id,event_sequence,ci_state,ci_observed_at,ci_polled_at,updated_at)
+			VALUES(?,1,?,?,?,?)`, agentPRID, state, dbTime(observedAt.UTC()), dbTime(observedAt.UTC()), dbTime(observedAt.UTC()))
+		if err == nil {
+			err = tx.Commit()
+		}
+		return false, err
+	}
+	if err != nil {
+		return false, err
+	}
+	if priorAt.Valid && observedAt.Before(time.Unix(0, priorAt.Int64)) {
+		return false, nil
+	}
+	if _, err := tx.Exec(`UPDATE trigger_pr_observations SET ci_state=?,ci_observed_at=?,ci_polled_at=?,updated_at=? WHERE agent_pr_id=?`,
+		state, dbTime(observedAt.UTC()), dbTime(observedAt.UTC()), dbTime(observedAt.UTC()), agentPRID); err != nil {
+		return false, err
+	}
+	emitted := previous != "" && previous != state && (state == "passing" || state == "failing")
+	if emitted {
+		source := TriggerSourceCISucceeded
+		if state == "failing" {
+			source = TriggerSourceCIFailed
+		}
+		if err := enqueueTriggerTransitionTx(tx, pr, source, previous, state, "", strings.EqualFold(pr.State, "draft"), observedAt.UTC()); err != nil {
+			return false, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return emitted, nil
 }
 
 func ListPendingTriggerPREvents(limit int) ([]TriggerPREvent, error) {
@@ -452,8 +629,8 @@ func ListPendingTriggerPREvents(limit int) ([]TriggerPREvent, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT id,agent_pr_id,event_ref,pr_url,pr_number,pr_branch,pr_author_agent,draft,
-		group_ids_json,occurred_at,updated_at,status,processed_at FROM trigger_pr_events
+	rows, err := d.Query(`SELECT id,agent_pr_id,source,event_ref,pr_url,pr_number,pr_branch,pr_author_agent,draft,
+		group_ids_json,previous_state,current_state,occurred_at,updated_at,status,processed_at FROM trigger_pr_events
 		WHERE status IN ('pending','interrupted') AND processed_at IS NULL ORDER BY occurred_at,id LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -465,7 +642,7 @@ func ListPendingTriggerPREvents(limit int) ([]TriggerPREvent, error) {
 		var groups string
 		var occurred, updated dbTimestamp
 		var processed sql.NullInt64
-		if err := rows.Scan(&e.ID, &e.AgentPRID, &e.EventRef, &e.PRURL, &e.PRNumber, &e.PRBranch, &e.PRAuthorAgent, &e.Draft, &groups, &occurred, &updated, &e.Status, &processed); err != nil {
+		if err := rows.Scan(&e.ID, &e.AgentPRID, &e.Source, &e.EventRef, &e.PRURL, &e.PRNumber, &e.PRBranch, &e.PRAuthorAgent, &e.Draft, &groups, &e.PreviousState, &e.CurrentState, &occurred, &updated, &e.Status, &processed); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(groups), &e.GroupIDs)
@@ -613,7 +790,11 @@ func ListTriggerFirings(ruleID int64, limit int) ([]TriggerFiring, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT id,COALESCE(rule_id,0),rule_revision,event_id,event_ref,outcome,detail,started_at,finished_at FROM trigger_firings WHERE (?=0 OR rule_id=?) ORDER BY started_at DESC,id DESC LIMIT ?`, ruleID, ruleID, limit)
+	rows, err := d.Query(`SELECT f.id,COALESCE(f.rule_id,0),f.rule_revision,f.event_id,f.event_ref,
+		COALESCE(e.source,''),COALESCE(e.previous_state,''),COALESCE(e.current_state,''),
+		f.outcome,f.detail,f.started_at,f.finished_at FROM trigger_firings f
+		LEFT JOIN trigger_pr_events e ON e.id=f.event_id
+		WHERE (?=0 OR f.rule_id=?) ORDER BY f.started_at DESC,f.id DESC LIMIT ?`, ruleID, ruleID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -623,7 +804,8 @@ func ListTriggerFirings(ruleID int64, limit int) ([]TriggerFiring, error) {
 		var f TriggerFiring
 		var st dbTimestamp
 		var fin sql.NullInt64
-		if err := rows.Scan(&f.ID, &f.RuleID, &f.RuleRevision, &f.EventID, &f.EventRef, &f.Outcome, &f.Detail, &st, &fin); err != nil {
+		if err := rows.Scan(&f.ID, &f.RuleID, &f.RuleRevision, &f.EventID, &f.EventRef, &f.Source,
+			&f.PreviousState, &f.CurrentState, &f.Outcome, &f.Detail, &st, &fin); err != nil {
 			return nil, err
 		}
 		f.StartedAt = st.Time()

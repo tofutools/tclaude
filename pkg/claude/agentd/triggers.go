@@ -17,7 +17,12 @@ import (
 	triggerlogic "github.com/tofutools/tclaude/pkg/claude/triggers"
 )
 
-var triggerTickInterval = 2 * time.Second
+var (
+	triggerTickInterval   = 2 * time.Second
+	triggerCIPollInterval = 30 * time.Second
+)
+
+const triggerCIPollBatch = 20
 
 // triggerAuthorityMu gives rule mutation/retirement and firing the same
 // ordering guarantee cron uses: every side effect re-reads the rule and live
@@ -39,6 +44,93 @@ func startTriggerScheduler(stop <-chan struct{}) {
 		}
 	}()
 }
+
+func startTriggerSourcePollers(stop <-chan struct{}) {
+	go func() {
+		pollTriggerCITransitions(time.Now().UTC())
+		t := time.NewTicker(triggerCIPollInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case now := <-t.C:
+				pollTriggerCITransitions(now.UTC())
+			}
+		}
+	}()
+	go func() {
+		var backoff recentlyMergedPRPollBackoff
+		delay := time.Duration(0)
+		for {
+			if delay > 0 {
+				t := time.NewTimer(delay)
+				select {
+				case <-stop:
+					t.Stop()
+					return
+				case <-t.C:
+				}
+			}
+			if !triggerRoutesEnabled() {
+				delay = recentlyMergedPRPollInterval
+				continue
+			}
+			enabled, enabledErr := db.HasEnabledTriggerSource(db.TriggerSourcePRMerged)
+			if enabledErr != nil {
+				slog.Warn("triggers: inspect merged PR watchers", "error", enabledErr)
+				delay = recentlyMergedPRPollInterval
+				continue
+			}
+			if !enabled {
+				delay = recentlyMergedPRPollInterval
+				continue
+			}
+			attempted, err := pollRecentlyMergedPRs()
+			var warn bool
+			delay, warn, _, _ = backoff.next(attempted, err)
+			if warn {
+				slog.Warn("triggers: merged PR poll failed", "error", err)
+			}
+		}
+	}()
+}
+
+func pollTriggerCITransitions(now time.Time) {
+	if !triggerRoutesEnabled() {
+		return
+	}
+	prs, err := db.ListTriggerCIWatchPRs(triggerCIPollBatch)
+	if err != nil {
+		slog.Warn("triggers: list CI-watched PRs", "error", err)
+		return
+	}
+	for _, pr := range prs {
+		key := prChecksCacheKey(pr.PRURL)
+		if _, busy := prChecksInflight.LoadOrStore(key, struct{}{}); busy {
+			continue
+		}
+		info, ok := prChecksResolver(pr.PRURL)
+		prChecksInflight.Delete(key)
+		if !ok {
+			// A failed refresh is unknown. Never reinterpret an older cached
+			// green/red summary as the current state.
+			if err := db.MarkTriggerCIPollAttempt(pr.ID, now); err != nil {
+				slog.Warn("triggers: record failed CI poll attempt", "error", err, "url", pr.PRURL)
+			}
+			continue
+		}
+		info.FetchedAt = now
+		info.Summary = summarizePRChecks(info.Checks, now)
+		savePRChecks(pr.PRURL, info)
+		if _, err := db.ObserveTriggerPRCI(pr.ID, info.Summary.State, now); err != nil {
+			slog.Warn("triggers: record CI transition", "error", err, "url", pr.PRURL)
+		}
+	}
+}
+
+// PollTriggerCITransitionsForTest synchronously runs one bounded watched-PR poll.
+func PollTriggerCITransitionsForTest(now time.Time) { pollTriggerCITransitions(now) }
 
 func runTriggerTick(now time.Time) {
 	if !triggerRoutesEnabled() {
@@ -486,7 +578,7 @@ func executeTriggerMessage(rule *db.TriggerRule, spec *db.TriggerMessageAction, 
 	}
 	subject := triggerlogic.RenderTemplate(spec.SubjectTemplate, event, groupName)
 	if strings.TrimSpace(subject) == "" {
-		subject = "[trigger:" + rule.Name + "] pr.opened"
+		subject = "[trigger:" + rule.Name + "] " + event.Source
 	}
 	body := triggerlogic.RenderTemplate(spec.BodyTemplate, event, groupName)
 	id, err := db.InsertAgentMessage(&db.AgentMessage{GroupID: groupID, FromConv: ownerConv, ToConv: targetConv, Subject: subject, Body: body, ToRecipients: []string{targetConv}, OperatorAuthored: rule.OperatorAuthored})
