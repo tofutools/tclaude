@@ -280,7 +280,7 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 	require.NoError(t, err)
 	caps = accessEnforcementFromTable(filteredRow)
 	assert.Equal(t, EnforcePartial, caps.socketClosed)
-	rendered, notices, err = PlanAccessEnforcement(
+	rendered, _, err = PlanAccessEnforcement(
 		blockedBaselineClosedSockets, caps)
 	require.NoError(t, err)
 	assert.Equal(t, sandboxpolicy.AccessModeClosed,
