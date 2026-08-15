@@ -5076,7 +5076,8 @@ type spawnParams struct {
 	DarwinRouteCapable    bool
 	DarwinRouteAgentID    string
 	// AllowUnenforcedSandbox is the already-authorized dashboard-only decision
-	// to widen the exact closed-network/EnforceNone refusal. It is birth-only:
+	// to widen a closed-network/EnforceNone refusal or omit unsupported network
+	// deny entries. It is birth-only:
 	// resume, reincarnate, clone, and every non-dashboard spawn path leave it
 	// false and therefore retain fail-closed behavior.
 	AllowUnenforcedSandbox bool

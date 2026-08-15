@@ -20,16 +20,18 @@ const (
 
 const (
 	SandboxCapabilityNetworkAllowlist = "unsupported_sandbox_profile_network_allowlist"
+	SandboxCapabilityNetworkDeny      = "unsupported_sandbox_profile_network_deny"
 	SandboxCapabilitySocketAllowlist  = "unsupported_sandbox_profile_socket_allowlist"
 	SandboxCapabilityFilesystemRoot   = "unsupported_sandbox_profile_filesystem_root"
 )
 
 // AccessEnforcementOptions contains launch-boundary decisions that may widen
-// the ordinary capability plan. Its only caller-settable field is deliberately
-// specific to the exact refusal it can suppress; it is not a generic bypass
-// for SandboxCapabilityError kinds.
+// the ordinary capability plan. Each caller-settable field is deliberately
+// specific to the exact refusal it can suppress; neither is a generic bypass
+// for SandboxCapabilityError kinds or for the other field's refusal.
 type AccessEnforcementOptions struct {
 	AllowUnenforcedNetworkClosed bool
+	AllowReducedNetworkDeny      bool
 }
 
 // AccessEnforcement is an opaque launch-only capability token. Its fields stay
@@ -1689,6 +1691,8 @@ func PlanAccessEnforcement(
 
 	allowUnenforcedNetworkClosed := len(options) > 0 &&
 		options[0].AllowUnenforcedNetworkClosed
+	allowReducedNetworkDeny := len(options) > 0 &&
+		options[0].AllowReducedNetworkDeny
 	if axes.Network.Mode == sandboxpolicy.AccessModeClosed && caps.networkClosed == EnforceNone {
 		if !allowUnenforcedNetworkClosed {
 			return sandboxpolicy.ResolvedAxes{}, nil, &SandboxCapabilityError{
@@ -1877,6 +1881,18 @@ func PlanAccessEnforcement(
 			}
 		}
 		rendered.Network.Deny = kept
+		omitted := append(slices.Clone(selectorOmitted), portOmitted...)
+		slices.Sort(omitted)
+		omitted = slices.Compact(omitted)
+		if len(omitted) > 0 && !allowReducedNetworkDeny {
+			return sandboxpolicy.ResolvedAxes{}, nil, &SandboxCapabilityError{
+				Kind: SandboxCapabilityNetworkDeny,
+				Message: fmt.Sprintf(
+					"%s (%s scope) cannot enforce every authored network deny entry; affected authored entries: %s; choose a sandbox implementation that enforces these entries, remove them, or enable “Allow launch with unenforced rules” in the dashboard spawn dialog",
+					caps.mechanism, caps.scope, formatEntryIndices(omitted),
+				),
+			}
+		}
 		if len(selectorOmitted) > 0 {
 			notices = append(notices, degradationNotice(
 				"network", "deny_selector_unsupported",
@@ -1891,6 +1907,14 @@ func PlanAccessEnforcement(
 				sandboxpolicy.AccessNoticeEffectNotEnforced,
 				caps, "the listed port-scoped deny destinations cannot be expressed and are omitted; they are not widened into whole-destination blocks",
 				portOmitted,
+			))
+		}
+		if len(omitted) > 0 {
+			notices = append(notices, degradationNotice(
+				"network", sandboxpolicy.AccessNoticeReasonOperatorReducedNetworkDenyOverride,
+				sandboxpolicy.AccessNoticeEffectNotEnforced,
+				caps, "the human operator used the dashboard launch override; the listed unsupported network deny entries are omitted from this launch",
+				omitted,
 			))
 		}
 		if len(selectorPartial) > 0 {
@@ -1949,7 +1973,7 @@ func PlanAccessEnforcement(
 
 func closedNetworkRefusal(mechanism, scope string) string {
 	return fmt.Sprintf(
-		"%s (%s scope) cannot enforce closed network access; choose a sandbox implementation that can enforce closed network access, use network open, or enable “Allow launch without enforcement” in the dashboard spawn dialog",
+		"%s (%s scope) cannot enforce closed network access; choose a sandbox implementation that can enforce closed network access, use network open, or enable “Allow launch with unenforced rules” in the dashboard spawn dialog",
 		mechanism, scope,
 	)
 }

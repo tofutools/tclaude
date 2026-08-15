@@ -434,6 +434,7 @@ func planSandboxProfileAccessForLaunch(
 	rendered, notices, err := harness.PlanAccessEnforcement(
 		axes, caps, harness.AccessEnforcementOptions{
 			AllowUnenforcedNetworkClosed: allowUnenforcedSandbox,
+			AllowReducedNetworkDeny:      allowUnenforcedSandbox,
 		},
 	)
 	notices = append(resourceNotices, notices...)

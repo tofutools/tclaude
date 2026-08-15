@@ -519,16 +519,32 @@ func TestPlanAccessEnforcementOmitsUnsupportedDeniesIndividually(t *testing.T) {
 		mechanism:        "test gateway",
 		scope:            "process",
 	}
-	rendered, notices, err := PlanAccessEnforcement(axes, caps)
+	_, _, err := PlanAccessEnforcement(axes, caps)
+	var capability *SandboxCapabilityError
+	require.ErrorAs(t, err, &capability)
+	assert.Equal(t, SandboxCapabilityNetworkDeny, capability.Kind)
+	assert.Contains(t, capability.Message, "affected authored entries: 1, 2")
+	assert.Contains(t, capability.Message, "Allow launch with unenforced rules")
+	_, _, err = PlanAccessEnforcement(
+		axes, caps, AccessEnforcementOptions{AllowUnenforcedNetworkClosed: true})
+	require.ErrorAs(t, err, &capability)
+	assert.Equal(t, SandboxCapabilityNetworkDeny, capability.Kind,
+		"the closed-network option must not authorize omitted deny entries")
+
+	rendered, notices, err := PlanAccessEnforcement(
+		axes, caps, AccessEnforcementOptions{AllowReducedNetworkDeny: true})
 	require.NoError(t, err)
 	assert.Equal(t, []sandboxpolicy.NetworkAllowEntry{{
 		CIDR: "192.0.2.0/24",
 	}}, rendered.Network.Deny)
-	require.Len(t, notices, 2)
+	require.Len(t, notices, 3)
 	assert.Equal(t, "deny_selector_unsupported", notices[0].Reason)
 	assert.Equal(t, []int{2}, notices[0].Entries)
 	assert.Equal(t, "deny_ports_unsupported", notices[1].Reason)
 	assert.Equal(t, []int{1}, notices[1].Entries)
+	assert.Equal(t, sandboxpolicy.AccessNoticeReasonOperatorReducedNetworkDenyOverride,
+		notices[2].Reason)
+	assert.Equal(t, []int{1, 2}, notices[2].Entries)
 	assert.NotContains(t, rendered.Network.Deny,
 		sandboxpolicy.NetworkAllowEntry{Domain: "blocked.example"},
 		"an unsupported port-scoped deny must never widen to all ports")
@@ -725,13 +741,16 @@ func TestLinuxTclaudeLayerDenyCapabilityDrivesPredictionAndLaunchPlan(t *testing
 	)
 	require.NoError(t, err)
 	rendered, notices, err := PlanAccessEnforcement(
-		axes, accessEnforcementFromTable(row))
+		axes, accessEnforcementFromTable(row),
+		AccessEnforcementOptions{AllowReducedNetworkDeny: true})
 	require.NoError(t, err)
 	assert.Empty(t, rendered.Network.Deny,
 		"a cell without deny capability must omit deny rows")
-	require.Len(t, notices, 1)
+	require.Len(t, notices, 2)
 	assert.Equal(t, "deny_selector_unsupported", notices[0].Reason)
 	assert.Equal(t, []int{0, 1}, notices[0].Entries)
+	assert.Equal(t, sandboxpolicy.AccessNoticeReasonOperatorReducedNetworkDenyOverride,
+		notices[1].Reason)
 }
 
 func TestCodexBuiltinFilteredNetworkPredictionDisclosesUnavailableCapability(t *testing.T) {
@@ -1363,13 +1382,17 @@ func TestClosedNetworkOverrideWidensOnlyThatAxisAndPinsRefusalCopy(t *testing.T)
 	}
 	const refusal = "Codex builtin sandbox (tools-only scope) cannot enforce closed network access; " +
 		"choose a sandbox implementation that can enforce closed network access, use network open, " +
-		"or enable “Allow launch without enforcement” in the dashboard spawn dialog"
+		"or enable “Allow launch with unenforced rules” in the dashboard spawn dialog"
 
 	_, _, err := PlanAccessEnforcement(axes, caps)
 	var capability *SandboxCapabilityError
 	require.ErrorAs(t, err, &capability)
 	assert.Equal(t, SandboxCapabilityNetworkAllowlist, capability.Kind)
 	assert.Equal(t, refusal, capability.Message)
+	_, _, err = PlanAccessEnforcement(
+		axes, caps, AccessEnforcementOptions{AllowReducedNetworkDeny: true})
+	require.ErrorContains(t, err, "cannot enforce closed network access",
+		"the reduced-deny option must not authorize a closed-network widening")
 
 	predicted := DescribePredictedAccess(axes, PredictedAccessEnforcement{
 		NetworkClosed: EnforceNone,
