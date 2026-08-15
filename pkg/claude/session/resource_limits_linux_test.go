@@ -401,7 +401,17 @@ func TestConfigureProcessResourceCgroupUsesAtomicClonePlacement(t *testing.T) {
 }
 
 func TestValidatePreparedResourceCgroupAcceptsRemovedAxesOnlyAtMax(t *testing.T) {
-	dir := t.TempDir()
+	oldRoot := resourceCgroupRoot
+	resourceCgroupRoot = t.TempDir()
+	t.Cleanup(func() { resourceCgroupRoot = oldRoot })
+	delegation := filepath.Join(resourceCgroupRoot, "delegated")
+	dir := filepath.Join(delegation, "tclaude-removed-axes")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	// Pin both inputs to ExternalResourceDelegationDir. Otherwise a developer
+	// running the suite inside tmux can inherit the host's live delegation and
+	// turn this value-validation test into an accidental containment test.
+	t.Setenv("TMUX", "")
+	t.Setenv(ResourceDelegationDirEnv, delegation)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "memory.max"), []byte("max\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "cpu.max"), []byte("max 100000\n"), 0o644))
 	require.NoError(t, ValidatePreparedResourceCgroup(dir, sandboxpolicy.ResourceLimits{}))
