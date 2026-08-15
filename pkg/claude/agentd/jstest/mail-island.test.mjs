@@ -161,8 +161,11 @@ test('Messages access request view retains decree hooks and decision controls', 
   assert.equal(mounted.container.querySelector('#mail-reader').dataset.kind, 'decree');
   const headerRows = [...mounted.container.querySelectorAll('.mail-headers .mail-hrow')]
     .map((row) => row.textContent.replace(/\s+/g, ' ').trim());
-  assert.ok(headerRows.some((row) => row.startsWith('Fromagt_alpha · Alpha')),
-    'stable caller agent id must lead the mutable title');
+  assert.ok(headerRows.some((row) => row.startsWith('FromAlpha')),
+    'the readable caller name must lead while its identifiers stay on hover');
+  const fromValue = mounted.container.querySelector('.mail-headers .mail-hval span');
+  assert.equal(fromValue.getAttribute('title'), 'agt_alpha / conv-b');
+  assert.doesNotMatch(fromValue.textContent, /agt_alpha/);
   assert.ok(headerRows.some((row) => row.startsWith('Request generationconv-a')));
   assert.ok(headerRows.some((row) => row.startsWith('Current generationconv-b')));
   assert.match(mounted.container.textContent, /Always allow/);
@@ -221,7 +224,9 @@ test('Messages clear action keeps the cleared query when the input has not repai
   });
   t.after(() => { globalThis.fetch = previousFetch; });
 
-  const { mailController } = await harness.importDashboardModule('js/mail.js');
+  const { accessWho, mailController } = await harness.importDashboardModule('js/mail.js');
+  assert.equal(accessWho({ agent_id: 'agt_alpha', conv_id: 'conv-a', conv_title: 'Alpha', title_status: 'current' }), 'Alpha');
+  assert.equal(accessWho({ agent_id: 'agt_alpha', conv_id: 'conv-a', conv_title: '(title unavailable)', title_status: 'unavailable' }), 'agt_alpha');
   const input = harness.document.body.appendChild(harness.document.createElement('input'));
   input.id = 'filter-messages';
   input.value = 'stale query';
