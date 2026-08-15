@@ -38,7 +38,7 @@ func TestDashboardTriggerEditorChrome(t *testing.T) {
 		States: []dashsnap.State{{
 			Key:     "new-trigger-editor",
 			Title:   "New trigger editor",
-			Caption: "The semantic WHEN, WHERE, and THEN sections remain visible under the dashboard's production CSS cascade.",
+			Caption: "The semantic editor sections stay visible, and WHERE renders aligned, dark-palette scope controls plus its dynamic group selector.",
 			JS: `return (async function(){
   document.querySelector('nav [data-tab="jobs"]').click();
   var deadline = Date.now() + 5000;
@@ -65,6 +65,28 @@ func TestDashboardTriggerEditorChrome(t *testing.T) {
   if (hidden.length) throw new Error('dialog semantic sections hidden by page-tab CSS: ' + hidden.map(function(section){ return section.textContent.trim().slice(0, 20); }).join(', '));
   var labels = sections.map(function(section){ return section.querySelector('.trigger-step-label').textContent.trim(); }).join(' ');
   if (labels !== 'WHEN WHERE THEN') throw new Error('trigger steps are incomplete: ' + labels);
+  var where = sections.find(function(section){ return section.querySelector('.trigger-step-label').textContent.trim() === 'WHERE'; });
+  where.querySelector('.trigger-step-head').click();
+  await Promise.resolve();
+  var scope = dialog.querySelector('.trigger-scope-fields');
+  var options = Array.from(scope.querySelectorAll('.trigger-scope-option'));
+  var radios = Array.from(scope.querySelectorAll('input[type="radio"]'));
+  if (options.length !== 2 || radios.length !== 2) throw new Error('WHERE scope options are incomplete');
+  var optionRects = options.map(function(option){ return option.getBoundingClientRect(); });
+  var radioRects = radios.map(function(radio){ return radio.getBoundingClientRect(); });
+  if (optionRects.some(function(rect){ return rect.width > 100; })) throw new Error('scope option stretched across the editor');
+  if (radioRects.some(function(rect){ return rect.width !== 14 || rect.height !== 14; })) throw new Error('scope radios lost their bounded control size');
+  if (Math.abs(optionRects[0].top - optionRects[1].top) > 1) throw new Error('scope option labels do not share a baseline');
+  if (radios.some(function(radio){
+    var style = getComputedStyle(radio);
+    return style.colorScheme !== 'dark' || style.accentColor === 'auto';
+  })) throw new Error('scope radios lost the dashboard dark-palette skin');
+  options[1].click();
+  await Promise.resolve();
+  var groupField = dialog.querySelector('.trigger-scope-group');
+  var groupSelect = groupField && groupField.querySelector('select');
+  if (!groupSelect || getComputedStyle(groupField).flexDirection !== 'column') throw new Error('group scope selector did not render as the explicit flexible field');
+  if (groupSelect.getBoundingClientRect().width < 200) throw new Error('group scope selector did not consume the remaining row width');
 })();`,
 		}},
 	})

@@ -24,6 +24,7 @@ func TestDashboardTriggersAssets(t *testing.T) {
 		"{{event.source}}", "{{event.previous_state}}", "{{event.current_state}}",
 		"{{agent.id}}", "{{agent.harness}}", "{{event.fact_result}}", "{{event.fact_observed_at}}", "{{event.dwell_started_at}}",
 		"Unknown means the fact could not be observed", "selected fact agent", "trigger-harness-capabilities",
+		"trigger-scope-option", "trigger-scope-group",
 	} {
 		if !strings.Contains(triggerUI, want) {
 			t.Errorf("trigger dashboard UI missing %q", want)
@@ -55,6 +56,7 @@ func TestDashboardTriggersAssets(t *testing.T) {
 		"#trigger-modal .trigger-modal :is(input:not([type=checkbox]):not([type=radio]), select, textarea)",
 		"body.wizard #trigger-modal .trigger-modal",
 		"body.wizard :is(.trigger-verdicts, .trigger-firings, .group-triggers-section)",
+		".trigger-scope-option input[type=radio]", ".trigger-scope-fields > .trigger-scope-group",
 	} {
 		if !strings.Contains(css, want) {
 			t.Errorf("trigger CSS missing %q", want)
