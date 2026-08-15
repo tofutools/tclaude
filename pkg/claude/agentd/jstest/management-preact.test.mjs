@@ -1277,6 +1277,33 @@ test('sandbox access-axis model preserves legacy meaning and validates structure
   assert.equal(model.sandboxTargetLabel({
     implementation: 'harness-builtin', harness: 'codex', platform: 'darwin',
   }), 'Codex on macOS · built-in sandbox · no filtered network sandbox yet');
+  assert.deepEqual(model.sandboxConstructedRootWarning({
+    contexts: [{ context: {
+      network: { baseline: 'allow', namespace: 'private', deny: [{ cidr: '192.0.2.0/24' }] },
+      unix_sockets: { mode: 'closed' },
+    } }],
+    targets: [{
+      target: { implementation: 'tclaude-layer', harness: 'codex', platform: 'linux' },
+      context_axes: [{ constructed_root: true }],
+    }, {
+      target: { implementation: 'harness-builtin', harness: 'codex', platform: 'darwin' },
+      context_axes: [{ constructed_root: false }],
+    }],
+  }, 0), {
+    reasons: [
+      'the private network namespace',
+      'the restricted network rules',
+      'the Unix-socket restriction',
+    ],
+    targets: ['Codex on Linux · tclaude sandbox'],
+  }, 'the daemon verdict selects both the applicable target and the authored causes');
+  assert.equal(model.sandboxConstructedRootWarning({
+    contexts: [{ context: { unix_sockets: { mode: 'closed' } } }],
+    targets: [{
+      axes: { constructed_root: true },
+      context_axes: [{ constructed_root: false }],
+    }],
+  }, 0), null, 'a context-specific false verdict is not replaced by the aggregate target verdict');
 });
 
 test('sandbox import accepts the current v2 export envelope', async (t) => {
@@ -2072,6 +2099,72 @@ test('sandbox editor tolerates legacy and modern sparse profile payloads', async
     unmount();
     host.remove();
   }
+});
+
+test('sandbox editor warns immediately when the resolved target constructs a filesystem root', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const renderEditor = async (constructedRoot, context) => {
+    const state = createManagementState();
+    state.openDialog({ kind: 'sandbox-editor', seed: {
+      name: 'root-warning', filesystem: [], environment: [], includes: [], agent_directories: [],
+      network: context.network, unix_sockets: context.unix_sockets,
+    }, options: {} });
+    const mounted = mountSandboxEditor(harness, mountManagementIsland, state, {
+      async predictSandbox() {
+        const axes = {
+          filesystem: { outcome: 'enforced', detail: '' },
+          environment: { outcome: 'enforced', detail: '' },
+          agent_directories: { outcome: 'enforced', detail: '' },
+          network: { outcome: 'enforced', detail: '' },
+          unix_sockets: { outcome: 'enforced', detail: '' },
+          constructed_root: constructedRoot,
+        };
+        return {
+          targets: [{
+            target: { implementation: 'tclaude-layer', harness: 'opencode', platform: 'linux' },
+            axes, context_axes: [axes],
+          }],
+          contexts: [{ context, network: context.network, unix_sockets: context.unix_sockets }],
+        };
+      },
+    });
+    await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+    return mounted;
+  };
+
+  const socketEditor = await renderEditor(true, {
+    network: { baseline: 'allow' }, unix_sockets: { mode: 'closed' },
+  });
+  const socketWarning = socketEditor.host.querySelector('.sbx-constructed-root-warning');
+  assert.equal(socketWarning.getAttribute('role'), 'alert');
+  assert.match(socketWarning.textContent,
+    /Separate filesystem root.*Unix-socket restriction.*OpenCode on Linux · tclaude sandbox/s);
+  assert.match(socketWarning.textContent,
+    /fixed read-only OS\/runtime surface.*explicitly mounted.*Home-installed tools.*unless you grant their paths/s);
+  assert.equal(socketEditor.host.querySelectorAll(
+    '.sbx-constructed-root-warning, #sandbox-profile-editor-filesystem-section')[0], socketWarning,
+    'the warning appears before the filesystem grants that can restore required tools');
+  socketEditor.unmount();
+  socketEditor.host.remove();
+
+  const privateEditor = await renderEditor(true, {
+    network: { baseline: 'allow', namespace: 'private' }, unix_sockets: { mode: '' },
+  });
+  assert.match(privateEditor.host.querySelector('.sbx-constructed-root-warning').textContent,
+    /private network namespace/);
+  privateEditor.unmount();
+  privateEditor.host.remove();
+
+  const inheritedEditor = await renderEditor(false, {
+    network: { baseline: 'allow' }, unix_sockets: { mode: 'closed' },
+  });
+  assertAbsent(inheritedEditor.host.querySelector('.sbx-constructed-root-warning'),
+    'authored socket rules alone do not imply the warning on a target that keeps the host root');
+  inheritedEditor.unmount();
+  inheritedEditor.host.remove();
 });
 
 test('sandbox editor renders one authored-spelling row and keeps authority pinned through preview', async (t) => {
