@@ -186,6 +186,7 @@ test('Trigger actions use the frozen REST contract and row-version CAS', async (
     openCronCreate: () => {}, openCronEdit: () => {}, openCronDuplicate: () => {}, closeCronDialog: () => {},
     openStandingOrderCreate: () => {}, openStandingOrderEdit: () => {}, closeStandingOrderDialog: () => {},
     openTriggerCreate: () => {}, openTriggerEdit: () => {}, closeTriggerDialog: () => {},
+    invalidateTriggers: () => {},
   };
   const actions = createJobsActions({
     state,

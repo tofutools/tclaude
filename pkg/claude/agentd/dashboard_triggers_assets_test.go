@@ -15,6 +15,7 @@ func TestDashboardTriggersAssets(t *testing.T) {
 	for _, want := range []string{
 		"TriggerWorkspace", "TriggerInspector", "TriggerDialogRoot",
 		"WHEN", "WHERE", "THEN", "trigger-permission-warning",
+		"cron-create-modal trigger-modal",
 		"{{pr.url}}", "{{pr.number}}", "{{pr.branch}}", "{{pr.author_agent}}", "{{group}}",
 		"The current API does not expose a live fact snapshot",
 	} {
@@ -22,7 +23,7 @@ func TestDashboardTriggersAssets(t *testing.T) {
 			t.Errorf("trigger dashboard UI missing %q", want)
 		}
 	}
-	for _, want := range []string{"trigger: 'triggers'", "openTriggerCreate", "openTriggerEdit"} {
+	for _, want := range []string{"trigger: 'triggers'", "openTriggerCreate", "openTriggerEdit", "invalidateTriggers"} {
 		if !strings.Contains(jobsState, want) {
 			t.Errorf("trigger navigation/state missing %q", want)
 		}

@@ -78,11 +78,12 @@ function TriggerInspector({ rule, actions, onEdit }) {
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [rule.id, rule.row_version]);
-  const verdicts = [
-    [rule.enabled, 'rule.enabled', rule.enabled ? 'enabled' : 'disabled'],
-    [rule.source === 'pr.opened', 'source', 'PR opened'],
-    [rule.author_is_agent !== false, 'author', rule.author_is_agent === true ? 'must be an agent' : 'any author'],
-    [rule.draft_filter !== 'only', 'draft policy', rule.draft_filter || 'include'],
+  const configured = [
+    ['source', 'PR opened'],
+    ['author', rule.author_is_agent === true ? 'agent only' : rule.author_is_agent === false ? 'human only' : 'any author'],
+    ['draft policy', rule.draft_filter || 'include'],
+    ['scope', scopeSummary(rule)],
+    ['debounce / cooldown', `${secondsLabel(rule.debounce_seconds)} / ${secondsLabel(rule.cooldown_seconds)}`],
   ];
   return html`<div class="trigger-inspector" onClick=${(event) => event.stopPropagation()}>
     <div class="trigger-inspector-head">
@@ -91,9 +92,9 @@ function TriggerInspector({ rule, actions, onEdit }) {
     </div>
     <div class="trigger-inspector-grid">
       <section>
-        <h4>Condition evaluation</h4>
-        <div class="trigger-verdicts">${verdicts.map(([pass, label, detail]) => html`
-          <div key=${label}><span class=${pass ? 'trigger-pass' : 'trigger-fail'}>${pass ? '✓' : '×'}</span>
+        <h4>Configured match</h4>
+        <div class="trigger-verdicts">${configured.map(([label, detail]) => html`
+          <div key=${label}><span class="muted">•</span>
             <strong>${label}</strong><span class="muted">— ${detail}</span></div>`)}</div>
         <div class="trigger-fact-note">The current API does not expose a live fact snapshot. Unknown event facts are evaluated at firing time, never displayed as false.</div>
       </section>
@@ -116,8 +117,11 @@ function TriggerInspector({ rule, actions, onEdit }) {
                 ${detail && html`<div class="muted">${detail}</div>`}
                 ${outcomes.map((action) => {
                   const actionOutcome = firingField(action, 'outcome', 'Outcome');
+                  const success = ['spawned', 'queued', 'ok'].includes(actionOutcome);
+                  const failure = !success && (/denied|invalid|not_found|\bio\b|fail|error/.test(actionOutcome) ||
+                    ['max_live_workers', 'rate_limited'].includes(actionOutcome));
                   return html`<div class="trigger-action-outcome" key=${firingField(action, 'id', 'ID')}>
-                    <span class=${actionOutcome === 'permission_denied' ? 'trigger-fail' : 'trigger-pass'}>${actionOutcome === 'permission_denied' ? '×' : '✓'}</span>
+                    <span class=${success ? 'trigger-pass' : failure ? 'trigger-fail' : 'trigger-warn'}>${success ? '✓' : failure ? '×' : '!'}</span>
                     <code>${firingField(action, 'action_type', 'ActionType')}</code>
                     <strong>${actionOutcome}</strong>
                     <span class="muted">${firingField(action, 'detail', 'Detail') || ''}</span>
@@ -171,13 +175,17 @@ export function TriggerWorkspace({ state, actions }) {
   const [error, setError] = useState('');
   const [selected, setSelected] = useState(null);
   const [query, setQuery] = useState('');
+  const revision = state.triggerRevision.value;
   const load = async () => {
-    setLoading(true); setError('');
+    // Keep the last authoritative rows visible during a post-mutation reload;
+    // only the first load needs to replace the table with a spinner.
+    if (rules.length === 0) setLoading(true);
+    setError('');
     try { setRules(await actions.loadTriggers()); }
     catch (err) { setError(err.message || String(err)); }
     finally { setLoading(false); }
   };
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(); }, [revision]);
   const shown = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return rules;
@@ -305,7 +313,7 @@ function TriggerDialog({ descriptor, state, actions }) {
     } catch (err) { setError(err.message || String(err)); }
     finally { setBusy(false); }
   };
-  return html`<${Overlay} id="trigger-modal" dialogClass="trigger-modal" labelledby="trigger-modal-title"
+  return html`<${Overlay} id="trigger-modal" dialogClass="cron-create-modal trigger-modal" labelledby="trigger-modal-title"
     onClose=${state.closeTriggerDialog} blocked=${busy} resizeKey="tclaude.dash.modalSize.trigger">
     <form onSubmit=${save}>
       <div class="trigger-modal-heading"><div><h3 id="trigger-modal-title">${editing ? `Edit trigger — ${descriptor.rule.name}` : 'New trigger'}</h3>

@@ -75,6 +75,7 @@ export function createJobsActions({
           ? `/api/triggers/${encodeURIComponent(id)}` : '/api/triggers', {
           method: editing ? 'PATCH' : 'POST', body: payload, refreshAfter: false,
         });
+        state.invalidateTriggers();
         notify(`trigger ${editing ? 'saved' : 'created'}: ${trigger?.name || ('#' + (trigger?.id || ''))}`);
         return trigger;
       } catch (error) {

@@ -57,6 +57,7 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
   const dialog = signal(null);
   const orderDialog = signal(null);
   const triggerDialog = signal(null);
+  const triggerRevision = signal(0);
   let initialized = false;
   let nextLaunchID = 0;
 
@@ -319,14 +320,18 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
     triggerDialog.value = null;
   }
 
+  function invalidateTriggers() {
+    triggerRevision.value += 1;
+  }
+
   return Object.freeze({
-    query, kind, offset, limit, sort, request, dialog, orderDialog, triggerDialog, params, view, location,
+    query, kind, offset, limit, sort, request, dialog, orderDialog, triggerDialog, triggerRevision, params, view, location,
     initialize, setQuery, setKind, applyLocation, cycleSort, page, setPageSize, syncServedOffset,
     beginRequest, acceptsRequest, invalidateRequest,
     commitRequest, failRequest, discardRequest, upsertCron,
     openCronCreate, openCronEdit, openCronDuplicate, closeCronDialog,
     openStandingOrderCreate, openStandingOrderEdit, closeStandingOrderDialog,
-    openTriggerCreate, openTriggerEdit, closeTriggerDialog,
+    openTriggerCreate, openTriggerEdit, closeTriggerDialog, invalidateTriggers,
   });
 }
 

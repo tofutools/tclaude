@@ -274,24 +274,28 @@ test('Triggers sub-view renders rule summaries and expands the firing inspector'
   const rule = {
     id: 7, name: 'review new PRs', row_version: 3, enabled: true,
     operator_authored: true, scope: 'group', group: 'alpha', source: 'pr.opened',
-    author_is_agent: true, draft_filter: 'exclude', debounce_seconds: 60, cooldown_seconds: 300,
+    author_is_agent: false, draft_filter: 'only', debounce_seconds: 60, cooldown_seconds: 300,
     actions: [{ type: 'message', message: { target: 'pr.author_agent', body_template: 'Review {{pr.url}}' } }],
   };
   const firing = {
     id: 9, outcome: 'partial_failure', detail: 'one action denied', event_ref: 'pr.opened:agt_author:https://example/pr/2',
     started_at: '2026-07-11T11:00:00Z', finished_at: '2026-07-11T11:00:01Z',
-    actions: [{ id: 10, action_type: 'message', outcome: 'permission_denied', detail: 'message.send not held' }],
+    actions: [
+      { id: 10, action_type: 'message', outcome: 'permission_denied', detail: 'message.send not held' },
+      { id: 11, action_type: 'spawn', outcome: 'max_live_workers', detail: 'one worker still active' },
+    ],
   };
+  let toggleSucceeds = false;
   const actions = {
     refresh: async () => {}, loadTriggers: async () => [{ ...rule, firings: [firing] }],
-    loadTriggerFirings: async () => [firing], toggleTrigger: async () => true,
+    loadTriggerFirings: async () => [firing], toggleTrigger: async () => toggleSucceeds,
     deleteTrigger: async () => true, openTriggerCreate: state.openTriggerCreate,
   };
   const mounted = await harness.mount(harness.html`<${JobsApp} state=${state} actions=${actions} />`);
   const tab = getByRole(mounted.container, 'tab', { name: 'Triggers' });
   assert.equal(tab.getAttribute('href'), '/automations/triggers');
   await harness.act(() => harness.fireEvent(tab, 'click', { button: 0 }));
-  await harness.act(() => Promise.resolve());
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   assert.equal(state.kind.value, 'trigger');
   assert.doesNotMatch(state.params.value, /kind=trigger/, 'the separate trigger collection never leaks into /api/jobs');
   const row = mounted.container.querySelector('tr[data-key="trigger-7"]');
@@ -303,6 +307,15 @@ test('Triggers sub-view renders rule summaries and expands the firing inspector'
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   assert.match(mounted.container.querySelector('.trigger-inspector').textContent, /permission_denied/);
   assert.match(mounted.container.querySelector('.trigger-inspector').textContent, /message.send not held/);
+  assert.equal(mounted.container.querySelectorAll('.trigger-verdicts .trigger-fail').length, 0,
+    'valid configured alternatives are never presented as failed event facts');
+  assert.equal(mounted.container.querySelectorAll('.trigger-action-outcome .trigger-fail').length, 2,
+    'permission and concurrency failures are both visibly failures');
+  const enabled = row.querySelector('input[type="checkbox"]');
+  enabled.checked = false;
+  await harness.act(() => harness.fireEvent(enabled, 'change'));
+  assert.equal(enabled.checked, true, 'failed toggle rolls the native control back to server state');
+  toggleSucceeds = true;
   await harness.act(() => harness.fireEvent(getByRole(mounted.container, 'button', { name: '+ new trigger' }), 'click'));
   assert.equal(state.triggerDialog.value.kind, 'create');
   await mounted.unmount();
@@ -328,5 +341,61 @@ test('Trigger editor uses stacked WHEN WHERE THEN steps and shows spawn authorit
   assert.match(mounted.container.textContent, /Firings are re-authorized as the owning principal/);
   assert.ok(mounted.container.querySelector('.trigger-placeholder-chips'));
   assert.match(mounted.container.querySelector('.trigger-placeholder-chips').textContent, /{{pr.url}}/);
+  await mounted.unmount();
+});
+
+test('creating a trigger invalidates and reloads the visible list', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createJobsState }, { JobsApp }, { TriggerDialogRoot }, { createJobsActions }] = await Promise.all([
+    harness.importDashboardModule('js/jobs-state.js'),
+    harness.importDashboardModule('js/jobs-island.js'),
+    harness.importDashboardModule('js/jobs-triggers.js'),
+    harness.importDashboardModule('js/jobs-actions.js'),
+  ]);
+  const snapshot = harness.signals.signal({ ...page(), groups: [{ id: 2, name: 'alpha' }] });
+  const state = createJobsState({ snapshot, prefs: prefs() });
+  state.initialize();
+  state.setKind('trigger');
+  state.beginRequest(1);
+  state.commitRequest(1);
+  let rules = [];
+  const requests = [];
+  const actions = createJobsActions({
+    state,
+    requestMutation: async (path, options) => {
+      requests.push(`${options.method} ${path}`);
+      if (path === '/api/triggers' && options.method === 'GET') return { triggers: rules };
+      if (path.endsWith('/firings?limit=1')) return { firings: [] };
+      if (path === '/api/triggers' && options.method === 'POST') {
+        rules = [{ id: 7, row_version: 1, operator_authored: true, ...options.body }];
+        return rules[0];
+      }
+      throw new Error(`unexpected request ${options.method} ${path}`);
+    },
+    refresh: async () => {}, confirm: async () => true, notify: () => {}, download: () => {},
+  });
+  const mounted = await harness.mount(harness.html`<${harness.preact.Fragment}>
+    <${JobsApp} state=${state} actions=${actions} />
+    <${TriggerDialogRoot} state=${state} actions=${actions} />
+  </${harness.preact.Fragment}>`);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.match(mounted.container.textContent, /No triggers yet/);
+  await harness.act(() => harness.fireEvent(getByRole(mounted.container, 'button', { name: '+ new trigger' }), 'click'));
+  const name = mounted.container.querySelector('.trigger-name-field input');
+  await harness.input(name, 'new name');
+  const then = [...mounted.container.querySelectorAll('.trigger-step-head')]
+    .find((button) => button.textContent.includes('THEN'));
+  await harness.act(() => harness.fireEvent(then, 'click'));
+  const actionFields = mounted.container.querySelector('.trigger-action-fields');
+  await harness.input(actionFields.querySelector('input'), 'sol-med');
+  await harness.input(actionFields.querySelector('textarea'), 'Review {{pr.url}}');
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('#trigger-modal form'), 'submit'));
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.equal(state.triggerDialog.value, null);
+  const updatedRow = mounted.container.querySelector('tr[data-key="trigger-7"]');
+  assert.ok(updatedRow, `updated trigger row missing (${requests.join(', ')}): ${mounted.container.textContent}`);
+  assert.match(updatedRow.textContent, /new name/,
+    'successful POST refreshes the still-mounted trigger list');
   await mounted.unmount();
 });
