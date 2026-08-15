@@ -172,35 +172,69 @@ func handleDashboardTrigger(w http.ResponseWriter, r *http.Request) {
 }
 
 func decodeDashboardTrigger(w http.ResponseWriter, r *http.Request, existing *db.TriggerRule) (*db.TriggerRule, int64, bool) {
-	var body dashboardTriggerMutation
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	var raw json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 		writeError(w, 400, "invalid_arg", err.Error())
 		return nil, 0, false
 	}
-	rule := &db.TriggerRule{Name: body.Name, Enabled: true, OperatorAuthored: true, ScopeKind: body.Scope, Source: body.Source, AuthorIsAgent: body.AuthorIsAgent, DraftFilter: body.DraftFilter, DebounceSeconds: body.DebounceSeconds, CooldownSeconds: body.CooldownSeconds, Actions: body.Actions}
-	if body.Enabled != nil {
+	var body dashboardTriggerMutation
+	if err := json.Unmarshal(raw, &body); err != nil {
+		writeError(w, 400, "invalid_arg", err.Error())
+		return nil, 0, false
+	}
+	var present map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &present); err != nil {
+		writeError(w, 400, "invalid_arg", err.Error())
+		return nil, 0, false
+	}
+	rule := &db.TriggerRule{Enabled: true, OperatorAuthored: true, Source: db.TriggerSourcePROpened, DraftFilter: db.TriggerDraftInclude}
+	if existing != nil {
+		copy := *existing
+		copy.Actions = append([]db.TriggerAction(nil), existing.Actions...)
+		rule = &copy
+	}
+	if _, ok := present["name"]; ok {
+		rule.Name = body.Name
+	}
+	if _, ok := present["enabled"]; ok && body.Enabled != nil {
 		rule.Enabled = *body.Enabled
 	}
-	if rule.Source == "" {
-		rule.Source = db.TriggerSourcePROpened
+	if _, ok := present["scope"]; ok {
+		rule.ScopeKind = body.Scope
 	}
-	if rule.DraftFilter == "" {
-		rule.DraftFilter = db.TriggerDraftInclude
+	if _, ok := present["source"]; ok {
+		rule.Source = body.Source
 	}
-	if existing != nil {
-		rule.OwnerAgent = existing.OwnerAgent
-		rule.OperatorAuthored = existing.OperatorAuthored
-		if body.Enabled == nil {
-			rule.Enabled = existing.Enabled
+	if value, ok := present["author_is_agent"]; ok {
+		if string(value) == "null" {
+			rule.AuthorIsAgent = nil
+		} else {
+			rule.AuthorIsAgent = body.AuthorIsAgent
 		}
+	}
+	if _, ok := present["draft_filter"]; ok {
+		rule.DraftFilter = body.DraftFilter
+	}
+	if _, ok := present["debounce_seconds"]; ok {
+		rule.DebounceSeconds = body.DebounceSeconds
+	}
+	if _, ok := present["cooldown_seconds"]; ok {
+		rule.CooldownSeconds = body.CooldownSeconds
+	}
+	if _, ok := present["actions"]; ok {
+		rule.Actions = body.Actions
 	}
 	if rule.ScopeKind == db.TriggerScopeGroup {
-		g, err := resolveDashboardTriggerGroup(body.Group)
-		if err != nil {
-			writeError(w, 400, "invalid_group", err.Error())
-			return nil, 0, false
+		if _, groupPresent := present["group"]; groupPresent || rule.GroupID == 0 {
+			g, err := resolveDashboardTriggerGroup(body.Group)
+			if err != nil {
+				writeError(w, 400, "invalid_group", err.Error())
+				return nil, 0, false
+			}
+			rule.GroupID = g.ID
 		}
-		rule.GroupID = g.ID
+	} else {
+		rule.GroupID = 0
 	}
 	if err := rule.Validate(); err != nil {
 		writeTriggerError(w, err)

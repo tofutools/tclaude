@@ -48,8 +48,73 @@ func TestDashboardTriggersCRUDContract(t *testing.T) {
 	body["name"] = "review-nudge-v2"
 	rec = testharness.Serve(dash, dashReq(t, http.MethodPatch, fmt.Sprintf("/api/triggers/%d", created.ID), body))
 	require.Equal(t, 200, rec.Code, rec.Body.String())
+	var replaced struct {
+		RowVersion      int64              `json:"row_version"`
+		Name            string             `json:"name"`
+		DebounceSeconds int64              `json:"debounce_seconds"`
+		CooldownSeconds int64              `json:"cooldown_seconds"`
+		Actions         []db.TriggerAction `json:"actions"`
+	}
+	testharness.DecodeJSON(t, rec, &replaced)
+	rec = testharness.Serve(dash, dashReq(t, http.MethodPatch, fmt.Sprintf("/api/triggers/%d", created.ID), map[string]any{
+		"row_version": replaced.RowVersion, "cooldown_seconds": 30,
+	}))
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	var partial struct {
+		Name            string             `json:"name"`
+		DebounceSeconds int64              `json:"debounce_seconds"`
+		CooldownSeconds int64              `json:"cooldown_seconds"`
+		Actions         []db.TriggerAction `json:"actions"`
+	}
+	testharness.DecodeJSON(t, rec, &partial)
+	assert.Equal(t, "review-nudge-v2", partial.Name)
+	assert.Equal(t, int64(10), partial.DebounceSeconds)
+	assert.Equal(t, int64(30), partial.CooldownSeconds)
+	assert.Len(t, partial.Actions, 1, "partial PATCH preserves omitted actions")
 	rec = testharness.Serve(dash, dashReq(t, http.MethodPatch, fmt.Sprintf("/api/triggers/%d", created.ID), body))
 	assert.Equal(t, http.StatusConflict, rec.Code)
+}
+
+func TestTriggerRestartClosesRunningFiringWithoutReplay(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const author = "interrupted-author-conv"
+	f.HaveConvWithTitle(author, "author")
+	f.HaveMember("alpha", author)
+	dash := agentd.BuildDashboardHandlerForTest()
+	rec := testharness.Serve(dash, dashReq(t, http.MethodPost, "/api/triggers", triggerMessageBody("alpha", 0)))
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	var created struct{ ID int64 }
+	testharness.DecodeJSON(t, rec, &created)
+	authorAgent, err := db.AgentIDForConv(author)
+	require.NoError(t, err)
+	_, err = db.UpsertAgentPR(authorAgent, "https://github.com/o/r/pull/88", "ready", "open")
+	require.NoError(t, err)
+	events, err := db.ListPendingTriggerPREvents(10)
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	_, inserted, err := db.InsertTriggerFiring(created.ID, 1, events[0].ID, events[0].EventRef, "running", "", time.Now())
+	require.NoError(t, err)
+	require.True(t, inserted)
+	agentd.RunTriggerTickForTest(time.Now().Add(time.Second))
+	firings, err := db.ListTriggerFirings(created.ID, 10)
+	require.NoError(t, err)
+	require.Len(t, firings, 1)
+	assert.Equal(t, "interrupted", firings[0].Outcome)
+	assert.Empty(t, firings[0].Actions)
+	events, err = db.ListPendingTriggerPREvents(10)
+	require.NoError(t, err)
+	assert.Empty(t, events, "interrupted event must not be replayed")
+	d, err := db.Open()
+	require.NoError(t, err)
+	var eventStatus string
+	var processedAt any
+	require.NoError(t, d.QueryRow(`SELECT status,processed_at FROM trigger_pr_events WHERE id=?`, firings[0].EventID).Scan(&eventStatus, &processedAt))
+	assert.Equal(t, db.TriggerEventInterrupted, eventStatus)
+	assert.NotNil(t, processedAt)
+	msgs, err := db.ListAgentMessagesForConv(author, 10)
+	require.NoError(t, err)
+	assert.Empty(t, msgs)
 }
 
 func TestTriggerReadPermissionsFilterGlobalAndGroupRules(t *testing.T) {
@@ -173,7 +238,11 @@ func TestTriggerSpawnUsesProfileTemplatesProvenanceAndLiveBound(t *testing.T) {
 	f.HaveGroup("alpha")
 	_, err := db.SetAgentGroupDefaultCwd("alpha", t.TempDir())
 	require.NoError(t, err)
-	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "reviewer", Harness: "claude"})
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "reviewer", Harness: "claude", Model: "sonnet"})
+	require.NoError(t, err)
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "group-default", Harness: "claude", Model: "opus"})
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupDefaultProfile("alpha", "group-default")
 	require.NoError(t, err)
 	const author = "spawn-author-conv"
 	f.HaveConvWithTitle(author, "author")
@@ -204,6 +273,9 @@ func TestTriggerSpawnUsesProfileTemplatesProvenanceAndLiveBound(t *testing.T) {
 	assert.True(t, loop, "worker provenance is durable for loop protection")
 	conv, err := db.CurrentConvForAgent(spawned)
 	require.NoError(t, err)
+	model, ok := f.World.SpawnModel(conv)
+	require.True(t, ok)
+	assert.Equal(t, "sonnet", model, "trigger-selected profile must override the group's default profile")
 	msgs, err := db.ListAgentMessagesForConv(conv, 20)
 	require.NoError(t, err)
 	require.NotEmpty(t, msgs)
@@ -216,4 +288,34 @@ func TestTriggerSpawnUsesProfileTemplatesProvenanceAndLiveBound(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rows, 2)
 	assert.Equal(t, "max_live_workers", rows[0].Actions[0].Outcome)
+}
+
+func TestTriggerMaxLiveWorkersIsPerAction(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	_, err := db.SetAgentGroupDefaultCwd("alpha", t.TempDir())
+	require.NoError(t, err)
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "reviewer", Harness: "claude"})
+	require.NoError(t, err)
+	const author = "multi-action-author-conv"
+	f.HaveConvWithTitle(author, "author")
+	f.HaveMember("alpha", author)
+	g, err := db.GetAgentGroupByName("alpha")
+	require.NoError(t, err)
+	action := db.TriggerAction{Type: db.TriggerActionSpawn, Spawn: &db.TriggerSpawnAction{Profile: "reviewer", InstructionTemplate: "Review {{pr.url}}", MaxLiveWorkers: 1}}
+	ruleID, err := db.InsertTriggerRule(&db.TriggerRule{Name: "two-reviewers", Enabled: true, OperatorAuthored: true,
+		ScopeKind: db.TriggerScopeGroup, GroupID: g.ID, Source: db.TriggerSourcePROpened,
+		DraftFilter: db.TriggerDraftInclude, Actions: []db.TriggerAction{action, action}})
+	require.NoError(t, err)
+	authorAgent, err := db.AgentIDForConv(author)
+	require.NoError(t, err)
+	_, err = db.UpsertAgentPR(authorAgent, "https://github.com/o/r/pull/99", "ready", "open")
+	require.NoError(t, err)
+	agentd.RunTriggerTickForTest(time.Now().Add(time.Second))
+	rows, err := db.ListTriggerFirings(ruleID, 10)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Len(t, rows[0].Actions, 2)
+	assert.Equal(t, "spawned", rows[0].Actions[0].Outcome)
+	assert.Equal(t, "spawned", rows[0].Actions[1].Outcome)
 }

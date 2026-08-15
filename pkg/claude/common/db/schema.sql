@@ -1359,7 +1359,7 @@ CREATE TABLE trigger_pr_events (
 			group_ids_json TEXT NOT NULL DEFAULT '[]',
 			occurred_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
-			status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processed', 'preexisting')),
+			status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processed', 'preexisting', 'interrupted')),
 			processed_at INTEGER
 		) STRICT;
 
@@ -1367,7 +1367,7 @@ CREATE INDEX idx_trigger_pr_events_pending ON trigger_pr_events(status, updated_
 
 CREATE TABLE trigger_firings (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			rule_id INTEGER NOT NULL REFERENCES trigger_rules(id) ON DELETE CASCADE,
+			rule_id INTEGER REFERENCES trigger_rules(id) ON DELETE SET NULL,
 			rule_revision INTEGER NOT NULL,
 			event_id INTEGER NOT NULL REFERENCES trigger_pr_events(id) ON DELETE CASCADE,
 			event_ref TEXT NOT NULL,
@@ -1395,12 +1395,13 @@ CREATE TABLE trigger_action_outcomes (
 
 CREATE TABLE trigger_workers (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			rule_id INTEGER NOT NULL REFERENCES trigger_rules(id) ON DELETE CASCADE,
+			rule_id INTEGER REFERENCES trigger_rules(id) ON DELETE SET NULL,
 			firing_id INTEGER NOT NULL REFERENCES trigger_firings(id) ON DELETE CASCADE,
 			action_index INTEGER NOT NULL,
 			agent_id TEXT NOT NULL UNIQUE,
 			conv_id TEXT NOT NULL DEFAULT '',
-			state TEXT NOT NULL DEFAULT 'live' CHECK (state IN ('pending', 'live', 'exited', 'deadline_exceeded')),
+			state TEXT NOT NULL DEFAULT 'reserved' CHECK (state IN ('reserved', 'pending', 'live', 'failed', 'exited', 'deadline_exceeded')),
+			pending_label TEXT NOT NULL DEFAULT '',
 			deadline_at INTEGER,
 			created_at INTEGER NOT NULL,
 			completed_at INTEGER,

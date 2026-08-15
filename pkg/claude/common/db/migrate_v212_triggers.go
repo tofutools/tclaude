@@ -51,14 +51,14 @@ func migrateV211toV212(d *sql.DB) error {
 			group_ids_json TEXT NOT NULL DEFAULT '[]',
 			occurred_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
-			status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processed', 'preexisting')),
+			status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processed', 'preexisting', 'interrupted')),
 			processed_at INTEGER
 		) STRICT;
 		CREATE INDEX IF NOT EXISTS idx_trigger_pr_events_pending ON trigger_pr_events(status, updated_at);
 
 		CREATE TABLE IF NOT EXISTS trigger_firings (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			rule_id INTEGER NOT NULL REFERENCES trigger_rules(id) ON DELETE CASCADE,
+			rule_id INTEGER REFERENCES trigger_rules(id) ON DELETE SET NULL,
 			rule_revision INTEGER NOT NULL,
 			event_id INTEGER NOT NULL REFERENCES trigger_pr_events(id) ON DELETE CASCADE,
 			event_ref TEXT NOT NULL,
@@ -85,12 +85,13 @@ func migrateV211toV212(d *sql.DB) error {
 
 		CREATE TABLE IF NOT EXISTS trigger_workers (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			rule_id INTEGER NOT NULL REFERENCES trigger_rules(id) ON DELETE CASCADE,
+			rule_id INTEGER REFERENCES trigger_rules(id) ON DELETE SET NULL,
 			firing_id INTEGER NOT NULL REFERENCES trigger_firings(id) ON DELETE CASCADE,
 			action_index INTEGER NOT NULL,
 			agent_id TEXT NOT NULL UNIQUE,
 			conv_id TEXT NOT NULL DEFAULT '',
-			state TEXT NOT NULL DEFAULT 'live' CHECK (state IN ('pending', 'live', 'exited', 'deadline_exceeded')),
+			state TEXT NOT NULL DEFAULT 'reserved' CHECK (state IN ('reserved', 'pending', 'live', 'failed', 'exited', 'deadline_exceeded')),
+			pending_label TEXT NOT NULL DEFAULT '',
 			deadline_at INTEGER,
 			created_at INTEGER NOT NULL,
 			completed_at INTEGER,
@@ -104,18 +105,34 @@ func migrateV211toV212(d *sql.DB) error {
 		) STRICT;
 		CREATE INDEX IF NOT EXISTS idx_daemon_spawn_history_principal
 			ON daemon_spawn_history(principal, spawned_at);
-
-		INSERT OR IGNORE INTO trigger_pr_events
-			(agent_pr_id, event_ref, pr_url, pr_number, pr_author_agent, draft,
-			 group_ids_json, occurred_at, updated_at, status, processed_at)
-		SELECT p.id, 'pr.opened:' || p.agent_id || ':' || p.pr_url, p.pr_url, 0,
-		       p.agent_id, CASE WHEN lower(trim(p.state)) = 'draft' THEN 1 ELSE 0 END,
-		       COALESCE((SELECT json_group_array(m.group_id)
-		                 FROM agent_group_members m WHERE m.agent_id = p.agent_id), '[]'),
-		       p.created_at, p.updated_at, 'preexisting', p.updated_at
-		FROM agent_prs p;
 	`); err != nil {
 		return fmt.Errorf("migrate v211→v212 (triggers): apply: %w", err)
+	}
+	havePRs, err := txTableExists(tx, "agent_prs")
+	if err != nil {
+		return fmt.Errorf("migrate v211→v212 (triggers): probe agent_prs: %w", err)
+	}
+	if havePRs {
+		haveMembers, probeErr := txTableExists(tx, "agent_group_members")
+		if probeErr != nil {
+			return fmt.Errorf("migrate v211→v212 (triggers): probe agent_group_members: %w", probeErr)
+		}
+		groupsExpr := `'[]'`
+		if haveMembers {
+			groupsExpr = `COALESCE((SELECT json_group_array(m.group_id)
+				FROM agent_group_members m WHERE m.agent_id = p.agent_id), '[]')`
+		}
+		if _, err = tx.Exec(`
+			INSERT OR IGNORE INTO trigger_pr_events
+				(agent_pr_id, event_ref, pr_url, pr_number, pr_author_agent, draft,
+				 group_ids_json, occurred_at, updated_at, status, processed_at)
+			SELECT p.id, 'pr.opened:' || p.agent_id || ':' || p.pr_url, p.pr_url, 0,
+			       p.agent_id, CASE WHEN lower(trim(p.state)) = 'draft' THEN 1 ELSE 0 END,
+			       ` + groupsExpr + `, p.created_at, p.updated_at, 'preexisting', p.updated_at
+			FROM agent_prs p;
+		`); err != nil {
+			return fmt.Errorf("migrate v211→v212 (triggers): seed existing PRs: %w", err)
+		}
 	}
 	if _, err = tx.Exec(`UPDATE schema_version SET version = 212`); err != nil {
 		return fmt.Errorf("migrate v211→v212 (triggers): version: %w", err)

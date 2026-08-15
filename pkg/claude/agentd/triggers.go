@@ -41,6 +41,10 @@ func startTriggerScheduler(stop <-chan struct{}) {
 }
 
 func runTriggerTick(now time.Time) {
+	if _, err := db.InterruptRunningTriggerFirings(now); err != nil {
+		slog.Warn("triggers: close interrupted firings", "error", err)
+		return
+	}
 	if _, err := db.ReconcileTriggerPREvents(); err != nil {
 		slog.Warn("triggers: reconcile PR events", "error", err)
 		return
@@ -65,7 +69,7 @@ func processTriggerPREvent(event db.TriggerPREvent, now time.Time) {
 		slog.Warn("triggers: list rules", "error", err)
 		return
 	}
-	deferred := false
+	allTerminal := true
 	for _, candidate := range rules {
 		last, err := db.LatestCompletedTriggerFiring(candidate.ID)
 		if err != nil {
@@ -83,11 +87,13 @@ func processTriggerPREvent(event db.TriggerPREvent, now time.Time) {
 		}
 		decision := triggerlogic.Evaluate(candidate, event, now, lastAt, spawnedByRule)
 		if decision.Outcome == triggerlogic.OutcomeDeferredDebounce {
-			deferred = true
+			allTerminal = false
 			continue
 		}
 		if decision.Fire {
-			fireTriggerRule(candidate.ID, candidate.Revision, event, now)
+			if !fireTriggerRule(candidate.ID, candidate.Revision, event, now) {
+				allTerminal = false
+			}
 			continue
 		}
 		// Durable suppressions are firing-history facts too. Out-of-scope and
@@ -96,40 +102,43 @@ func processTriggerPREvent(event db.TriggerPREvent, now time.Time) {
 		case triggerlogic.OutcomeSuppressedCooldown, triggerlogic.OutcomeSuppressedLoop,
 			triggerlogic.OutcomeDraftFiltered:
 			if id, inserted, insertErr := db.InsertTriggerFiring(candidate.ID, candidate.Revision,
-				event.ID, event.EventRef, decision.Outcome, decision.Detail, now); insertErr == nil && inserted {
-				_ = db.FinishTriggerFiring(id, decision.Outcome, decision.Detail, now)
+				event.ID, event.EventRef, decision.Outcome, decision.Detail, now); insertErr != nil {
+				allTerminal = false
+			} else if inserted {
+				if finishErr := db.FinishTriggerFiring(id, decision.Outcome, decision.Detail, now); finishErr != nil {
+					allTerminal = false
+				}
 			}
 		}
 	}
-	if !deferred {
+	if allTerminal {
 		if err := db.MarkTriggerPREventProcessed(event.ID, now); err != nil {
 			slog.Warn("triggers: mark PR event processed", "event", event.ID, "error", err)
 		}
 	}
 }
 
-func fireTriggerRule(ruleID, expectedRevision int64, event db.TriggerPREvent, now time.Time) {
+func fireTriggerRule(ruleID, expectedRevision int64, event db.TriggerPREvent, now time.Time) bool {
 	triggerAuthorityMu.Lock()
 	defer triggerAuthorityMu.Unlock()
 	rule, err := db.GetTriggerRule(ruleID)
 	if err != nil || rule == nil {
-		return
+		return false
 	}
 	if !rule.Enabled || rule.Revision != expectedRevision {
-		return
+		return false
 	}
 	if !rule.OperatorAuthored {
 		conv, err := db.CurrentConvForAgent(rule.OwnerAgent)
 		if err != nil || conv == "" {
-			recordTriggerDenial(rule, event, now, "owner unavailable")
-			return
+			return recordTriggerDenial(rule, event, now, "owner unavailable")
 		}
 		rule.OwnerAgent = strings.TrimSpace(rule.OwnerAgent)
 	}
 	firingID, inserted, err := db.InsertTriggerFiring(rule.ID, rule.Revision, event.ID,
 		event.EventRef, "running", "", now)
 	if err != nil || !inserted {
-		return
+		return err == nil
 	}
 	overall := "ok"
 	var details []string
@@ -137,21 +146,28 @@ func fireTriggerRule(ruleID, expectedRevision int64, event db.TriggerPREvent, no
 		outcome := executeTriggerAction(rule, firingID, i, actionSpec, event, now)
 		if err := db.InsertTriggerActionOutcome(&outcome); err != nil {
 			slog.Warn("triggers: record action outcome", "firing", firingID, "action", i, "error", err)
+			_ = db.FinishTriggerFiring(firingID, "interrupted", "action completed but its outcome could not be recorded", time.Now().UTC())
+			_ = db.MarkTriggerPREventInterrupted(event.ID, time.Now().UTC())
+			return true
 		}
 		if outcome.Outcome != "ok" && outcome.Outcome != "spawned" && outcome.Outcome != "queued" {
 			overall = "partial_failure"
 			details = append(details, fmt.Sprintf("action %d: %s", i, outcome.Detail))
 		}
 	}
-	_ = db.FinishTriggerFiring(firingID, overall, strings.Join(details, "; "), time.Now().UTC())
+	return db.FinishTriggerFiring(firingID, overall, strings.Join(details, "; "), time.Now().UTC()) == nil
 }
 
-func recordTriggerDenial(rule *db.TriggerRule, event db.TriggerPREvent, now time.Time, detail string) {
+func recordTriggerDenial(rule *db.TriggerRule, event db.TriggerPREvent, now time.Time, detail string) bool {
 	id, inserted, err := db.InsertTriggerFiring(rule.ID, rule.Revision, event.ID, event.EventRef,
 		"permission_denied", detail, now)
-	if err == nil && inserted {
-		_ = db.FinishTriggerFiring(id, "permission_denied", detail, now)
+	if err != nil {
+		return false
 	}
+	if !inserted {
+		return true
+	}
+	return db.FinishTriggerFiring(id, "permission_denied", detail, now) == nil
 }
 
 func executeTriggerAction(rule *db.TriggerRule, firingID int64, index int, spec db.TriggerAction, event db.TriggerPREvent, now time.Time) db.TriggerActionOutcome {
@@ -184,6 +200,35 @@ func triggerOwnerConv(rule *db.TriggerRule) (string, error) {
 	}
 	if conv == "" {
 		return "", errors.New("owning agent has no current conversation")
+	}
+	req, _ := http.NewRequest(http.MethodPost, "http://trigger.invalid", nil)
+	if rule.ScopeKind == db.TriggerScopeGlobal {
+		allowed, _, authErr := permissionAllowsAction(req, conv, PermTriggersManage, ActionContext{})
+		if authErr != nil {
+			return "", authErr
+		}
+		if !allowed {
+			return "", fmt.Errorf("owner lacks %s", PermTriggersManage)
+		}
+		return conv, nil
+	}
+	g, err := db.GetAgentGroupByID(rule.GroupID)
+	if err != nil {
+		return "", err
+	}
+	if g == nil || g.IsArchived() {
+		return "", errors.New("trigger group is unavailable")
+	}
+	ctx := ActionContext{Group: g.Name, structuralGroup: g.Name}
+	allowed, _, authErr := permissionAllowsAction(req, conv, PermGroupsTriggersManage, ctx)
+	if authErr != nil {
+		return "", authErr
+	}
+	if !allowed && resolvePermissionVerdictForRequest(req, conv, PermGroupsTriggersManage).Resolution != permDeny {
+		allowed, _ = structuralPermissionMatch(conv, PermGroupsTriggersManage, ctx)
+	}
+	if !allowed {
+		return "", fmt.Errorf("owner lacks %s for group %s", PermGroupsTriggersManage, g.Name)
 	}
 	return conv, nil
 }
@@ -233,15 +278,19 @@ func executeTriggerSpawn(rule *db.TriggerRule, firingID int64, index int, spec *
 	}
 	if ownerConv != "" {
 		req, _ := http.NewRequest(http.MethodPost, "http://trigger.invalid", nil)
-		allowed, _, authErr := permissionAllowsAction(req, ownerConv, PermGroupsMembersSpawn, ActionContext{Group: g.Name, SpawnProfile: profile.Name})
+		ctx := ActionContext{Group: g.Name, SpawnProfile: profile.Name, structuralGroup: g.Name}
+		allowed, _, authErr := permissionAllowsAction(req, ownerConv, PermGroupsMembersSpawn, ctx)
 		if authErr != nil {
 			return "io", authErr.Error(), ""
+		}
+		if !allowed && resolvePermissionVerdictForRequest(req, ownerConv, PermGroupsMembersSpawn).Resolution != permDeny {
+			allowed, _ = structuralPermissionMatch(ownerConv, PermGroupsMembersSpawn, ctx)
 		}
 		if !allowed {
 			return "permission_denied", fmt.Sprintf("owner lacks %s for group %s and spawn profile %s", PermGroupsMembersSpawn, g.Name, profile.Name), ""
 		}
 	}
-	if n, err := db.CountLiveTriggerWorkers(rule.ID); err != nil {
+	if n, err := db.CountLiveTriggerWorkers(rule.ID, index); err != nil {
 		return "io", err.Error(), ""
 	} else if n >= spec.MaxLiveWorkers {
 		return "max_live_workers", fmt.Sprintf("rule already has %d live workers (max %d)", n, spec.MaxLiveWorkers), ""
@@ -297,8 +346,16 @@ func executeTriggerSpawn(rule *db.TriggerRule, firingID int64, index int, spec *
 		}
 	}
 	isOwner := profile.IsOwner != nil && *profile.IsOwner
-	if ownerConv != "" && isOwner && resolvePermission(ownerConv, PermGroupsOwnersManage) != permAllow {
-		return "permission_denied", "spawn profile confers group ownership but owner lacks " + PermGroupsOwnersManage, ""
+	if ownerConv != "" && isOwner {
+		req, _ := http.NewRequest(http.MethodPost, "http://trigger.invalid", nil)
+		ctx := ActionContext{Group: g.Name, structuralGroup: g.Name}
+		allowed, _, _ := permissionAllowsAction(req, ownerConv, PermGroupsOwnersManage, ctx)
+		if !allowed && resolvePermissionVerdictForRequest(req, ownerConv, PermGroupsOwnersManage).Resolution != permDeny {
+			allowed, _ = structuralPermissionMatch(ownerConv, PermGroupsOwnersManage, ctx)
+		}
+		if !allowed {
+			return "permission_denied", "spawn profile confers group ownership but owner lacks " + PermGroupsOwnersManage, ""
+		}
 	}
 	cwd := strings.TrimSpace(g.DefaultCwd)
 	if cwd == "" && ownerConv != "" {
@@ -354,8 +411,18 @@ func executeTriggerSpawn(rule *db.TriggerRule, firingID int64, index int, spec *
 		}
 	}
 	p.EffectiveSandbox = &snapshot
-	out, fail := executeSpawn(g, p)
+	p.AgentID = db.NewAgentID()
+	worker := &db.TriggerWorker{RuleID: rule.ID, FiringID: firingID, ActionIndex: index, AgentID: p.AgentID, State: "reserved", CreatedAt: now}
+	if spec.WorkerDeadlineSeconds > 0 {
+		worker.DeadlineAt = now.Add(time.Duration(spec.WorkerDeadlineSeconds) * time.Second)
+	}
+	workerID, err := db.InsertTriggerWorker(worker)
+	if err != nil {
+		return "spawn_failed", "reserve trigger worker: " + err.Error(), ""
+	}
+	out, fail := executeSpawn(&profileGroup, p)
 	if fail != nil {
+		_ = db.CompleteTriggerWorker(workerID, "failed", fail.Msg, time.Now().UTC())
 		return "spawn_failed", fail.Msg, ""
 	}
 	agentID := out.AgentID
@@ -363,18 +430,15 @@ func executeTriggerSpawn(rule *db.TriggerRule, firingID int64, index int, spec *
 		agentID, _ = db.AgentIDForConv(out.ConvID)
 	}
 	if agentID == "" {
+		_ = db.CompleteTriggerWorker(workerID, "failed", "spawn returned no stable agent identity", time.Now().UTC())
 		return "spawn_failed", "spawn returned no stable agent identity", ""
 	}
-	state := "live"
-	if out.ConvID == "" {
-		state = "pending"
+	if agentID != p.AgentID {
+		_ = db.CompleteTriggerWorker(workerID, "failed", "spawn returned a different stable agent identity", time.Now().UTC())
+		return "spawned_tracking_failed", "spawn returned a different stable agent identity", agentID
 	}
-	worker := &db.TriggerWorker{RuleID: rule.ID, FiringID: firingID, ActionIndex: index, AgentID: agentID, ConvID: out.ConvID, State: state, CreatedAt: now}
-	if spec.WorkerDeadlineSeconds > 0 {
-		worker.DeadlineAt = now.Add(time.Duration(spec.WorkerDeadlineSeconds) * time.Second)
-	}
-	if err := db.InsertTriggerWorker(worker); err != nil {
-		return "spawned_untracked", err.Error(), agentID
+	if err := db.MarkTriggerWorkerDispatched(workerID, out.ConvID, out.Label); err != nil {
+		return "spawned_tracking_pending", err.Error(), agentID
 	}
 	_ = db.AddAgentTags(agentID, fmt.Sprintf("trigger:%d", rule.ID))
 	return "spawned", "", agentID

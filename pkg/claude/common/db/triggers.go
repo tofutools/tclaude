@@ -26,6 +26,7 @@ const (
 	TriggerEventPending     = "pending"
 	TriggerEventProcessed   = "processed"
 	TriggerEventPreexisting = "preexisting"
+	TriggerEventInterrupted = "interrupted"
 )
 
 const (
@@ -181,25 +182,43 @@ type TriggerPREvent struct {
 }
 
 type TriggerFiring struct {
-	ID, RuleID, RuleRevision, EventID int64
-	EventRef, Outcome, Detail         string
-	StartedAt, FinishedAt             time.Time
-	Actions                           []TriggerActionOutcome
+	ID           int64                  `json:"id"`
+	RuleID       int64                  `json:"rule_id"`
+	RuleRevision int64                  `json:"rule_revision"`
+	EventID      int64                  `json:"event_id"`
+	EventRef     string                 `json:"event_ref"`
+	Outcome      string                 `json:"outcome"`
+	Detail       string                 `json:"detail,omitempty"`
+	StartedAt    time.Time              `json:"started_at"`
+	FinishedAt   time.Time              `json:"finished_at,omitempty"`
+	Actions      []TriggerActionOutcome `json:"actions"`
 }
 
 type TriggerActionOutcome struct {
-	ID, FiringID                              int64
-	ActionIndex                               int
-	ActionType, Outcome, Detail, SpawnedAgent string
-	MessageID                                 int64
-	CreatedAt                                 time.Time
+	ID           int64     `json:"id"`
+	FiringID     int64     `json:"firing_id"`
+	ActionIndex  int       `json:"action_index"`
+	ActionType   string    `json:"action_type"`
+	Outcome      string    `json:"outcome"`
+	Detail       string    `json:"detail,omitempty"`
+	SpawnedAgent string    `json:"spawned_agent,omitempty"`
+	MessageID    int64     `json:"message_id,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 type TriggerWorker struct {
-	ID, RuleID, FiringID               int64
-	ActionIndex                        int
-	AgentID, ConvID, State, Detail     string
-	DeadlineAt, CreatedAt, CompletedAt time.Time
+	ID           int64     `json:"id"`
+	RuleID       int64     `json:"rule_id"`
+	FiringID     int64     `json:"firing_id"`
+	ActionIndex  int       `json:"action_index"`
+	AgentID      string    `json:"agent_id"`
+	ConvID       string    `json:"conv_id,omitempty"`
+	PendingLabel string    `json:"pending_label,omitempty"`
+	State        string    `json:"state"`
+	Detail       string    `json:"detail,omitempty"`
+	DeadlineAt   time.Time `json:"deadline_at,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	CompletedAt  time.Time `json:"completed_at,omitempty"`
 }
 
 func InsertTriggerRule(r *TriggerRule) (int64, error) {
@@ -435,7 +454,7 @@ func ListPendingTriggerPREvents(limit int) ([]TriggerPREvent, error) {
 	}
 	rows, err := d.Query(`SELECT id,agent_pr_id,event_ref,pr_url,pr_number,pr_branch,pr_author_agent,draft,
 		group_ids_json,occurred_at,updated_at,status,processed_at FROM trigger_pr_events
-		WHERE status='pending' ORDER BY occurred_at,id LIMIT ?`, limit)
+		WHERE status IN ('pending','interrupted') AND processed_at IS NULL ORDER BY occurred_at,id LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -468,8 +487,61 @@ func MarkTriggerPREventProcessed(id int64, now time.Time) error {
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`UPDATE trigger_pr_events SET status='processed',processed_at=? WHERE id=? AND status='pending'`, dbTime(now.UTC()), id)
+	_, err = d.Exec(`UPDATE trigger_pr_events SET status=CASE WHEN status='interrupted' THEN status ELSE 'processed' END,processed_at=? WHERE id=? AND status IN ('pending','interrupted') AND processed_at IS NULL`, dbTime(now.UTC()), id)
 	return err
+}
+
+func MarkTriggerPREventInterrupted(id int64, now time.Time) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`UPDATE trigger_pr_events SET status='interrupted',processed_at=NULL WHERE id=? AND status='pending'`, id)
+	return err
+}
+
+// InterruptRunningTriggerFirings closes crash-left firing rows without replaying
+// their side effects, then moves their source events to an equally explicit
+// terminal state. A duplicate automated spawn is riskier than an operator-
+// visible missed firing, so restart recovery is evidence-first and no-replay.
+func InterruptRunningTriggerFirings(now time.Time) (int64, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var ids []int64
+	rows, err := tx.Query(`SELECT event_id FROM trigger_firings WHERE outcome='running' AND finished_at IS NULL`)
+	if err != nil {
+		return 0, err
+	}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return 0, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Close(); err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(`UPDATE trigger_firings SET outcome='interrupted',detail='daemon stopped before firing completed',finished_at=? WHERE outcome='running' AND finished_at IS NULL`, dbTime(now.UTC())); err != nil {
+		return 0, err
+	}
+	for _, eventID := range ids {
+		if _, err := tx.Exec(`UPDATE trigger_pr_events SET status='interrupted',processed_at=NULL WHERE id=? AND status='pending'`, eventID); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return int64(len(ids)), nil
 }
 
 func InsertTriggerFiring(ruleID, revision, eventID int64, eventRef, outcome, detail string, now time.Time) (int64, bool, error) {
@@ -519,7 +591,7 @@ func LatestCompletedTriggerFiring(ruleID int64) (*TriggerFiring, error) {
 	var f TriggerFiring
 	var started dbTimestamp
 	var finished sql.NullInt64
-	err = d.QueryRow(`SELECT id,rule_id,rule_revision,event_id,event_ref,outcome,detail,started_at,finished_at FROM trigger_firings WHERE rule_id=? AND finished_at IS NOT NULL AND outcome IN ('ok','partial_failure') ORDER BY finished_at DESC,id DESC LIMIT 1`, ruleID).Scan(&f.ID, &f.RuleID, &f.RuleRevision, &f.EventID, &f.EventRef, &f.Outcome, &f.Detail, &started, &finished)
+	err = d.QueryRow(`SELECT id,COALESCE(rule_id,0),rule_revision,event_id,event_ref,outcome,detail,started_at,finished_at FROM trigger_firings WHERE rule_id=? AND finished_at IS NOT NULL AND outcome IN ('ok','partial_failure') ORDER BY finished_at DESC,id DESC LIMIT 1`, ruleID).Scan(&f.ID, &f.RuleID, &f.RuleRevision, &f.EventID, &f.EventRef, &f.Outcome, &f.Detail, &started, &finished)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -541,7 +613,7 @@ func ListTriggerFirings(ruleID int64, limit int) ([]TriggerFiring, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT id,rule_id,rule_revision,event_id,event_ref,outcome,detail,started_at,finished_at FROM trigger_firings WHERE (?=0 OR rule_id=?) ORDER BY started_at DESC,id DESC LIMIT ?`, ruleID, ruleID, limit)
+	rows, err := d.Query(`SELECT id,COALESCE(rule_id,0),rule_revision,event_id,event_ref,outcome,detail,started_at,finished_at FROM trigger_firings WHERE (?=0 OR rule_id=?) ORDER BY started_at DESC,id DESC LIMIT ?`, ruleID, ruleID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -591,25 +663,41 @@ func ListTriggerActionOutcomes(firingID int64) ([]TriggerActionOutcome, error) {
 	return out, rows.Err()
 }
 
-func CountLiveTriggerWorkers(ruleID int64) (int, error) {
+func CountLiveTriggerWorkers(ruleID int64, actionIndex int) (int, error) {
 	d, err := Open()
 	if err != nil {
 		return 0, err
 	}
 	var n int
-	err = d.QueryRow(`SELECT COUNT(*) FROM trigger_workers WHERE rule_id=? AND state IN ('pending','live')`, ruleID).Scan(&n)
+	err = d.QueryRow(`SELECT COUNT(*) FROM trigger_workers WHERE rule_id=? AND action_index=? AND state IN ('reserved','pending','live')`, ruleID, actionIndex).Scan(&n)
 	return n, err
 }
-func InsertTriggerWorker(w *TriggerWorker) error {
+func InsertTriggerWorker(w *TriggerWorker) (int64, error) {
 	d, err := Open()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	var deadline any
 	if !w.DeadlineAt.IsZero() {
 		deadline = dbTime(w.DeadlineAt.UTC())
 	}
-	_, err = d.Exec(`INSERT INTO trigger_workers(rule_id,firing_id,action_index,agent_id,conv_id,state,deadline_at,created_at) VALUES(?,?,?,?,?,?,?,?)`, w.RuleID, w.FiringID, w.ActionIndex, w.AgentID, w.ConvID, w.State, deadline, dbTime(w.CreatedAt.UTC()))
+	res, err := d.Exec(`INSERT INTO trigger_workers(rule_id,firing_id,action_index,agent_id,conv_id,pending_label,state,deadline_at,created_at) VALUES(?,?,?,?,?,?,?,?,?)`, w.RuleID, w.FiringID, w.ActionIndex, w.AgentID, w.ConvID, w.PendingLabel, w.State, deadline, dbTime(w.CreatedAt.UTC()))
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func MarkTriggerWorkerDispatched(id int64, convID, pendingLabel string) error {
+	state := "pending"
+	if strings.TrimSpace(convID) != "" {
+		state = "live"
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`UPDATE trigger_workers SET conv_id=?,pending_label=?,state=? WHERE id=? AND state='reserved'`, strings.TrimSpace(convID), strings.TrimSpace(pendingLabel), state, id)
 	return err
 }
 func RuleSpawnedAgent(ruleID int64, agentID string) (bool, error) {
@@ -627,9 +715,9 @@ func ListActiveTriggerWorkers() ([]TriggerWorker, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT id,rule_id,firing_id,action_index,agent_id,conv_id,state,
+	rows, err := d.Query(`SELECT id,COALESCE(rule_id,0),firing_id,action_index,agent_id,conv_id,pending_label,state,
 		deadline_at,created_at,completed_at,detail FROM trigger_workers
-		WHERE state IN ('pending','live') ORDER BY created_at,id`)
+		WHERE state IN ('reserved','pending','live') ORDER BY created_at,id`)
 	if err != nil {
 		return nil, err
 	}
@@ -639,7 +727,7 @@ func ListActiveTriggerWorkers() ([]TriggerWorker, error) {
 		var w TriggerWorker
 		var deadline, completed sql.NullInt64
 		var created dbTimestamp
-		if err := rows.Scan(&w.ID, &w.RuleID, &w.FiringID, &w.ActionIndex, &w.AgentID, &w.ConvID, &w.State, &deadline, &created, &completed, &w.Detail); err != nil {
+		if err := rows.Scan(&w.ID, &w.RuleID, &w.FiringID, &w.ActionIndex, &w.AgentID, &w.ConvID, &w.PendingLabel, &w.State, &deadline, &created, &completed, &w.Detail); err != nil {
 			return nil, err
 		}
 		w.CreatedAt = created.Time()
@@ -655,13 +743,13 @@ func ListActiveTriggerWorkers() ([]TriggerWorker, error) {
 }
 
 func CompleteTriggerWorker(id int64, state, detail string, now time.Time) error {
-	if state != "exited" && state != "deadline_exceeded" {
+	if state != "failed" && state != "exited" && state != "deadline_exceeded" {
 		return errors.New("invalid trigger worker terminal state")
 	}
 	d, err := Open()
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`UPDATE trigger_workers SET state=?,detail=?,completed_at=? WHERE id=? AND state IN ('pending','live')`, state, detail, dbTime(now.UTC()), id)
+	_, err = d.Exec(`UPDATE trigger_workers SET state=?,detail=?,completed_at=? WHERE id=? AND state IN ('reserved','pending','live')`, state, detail, dbTime(now.UTC()), id)
 	return err
 }
