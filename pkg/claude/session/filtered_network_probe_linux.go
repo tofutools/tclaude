@@ -186,7 +186,7 @@ func probeFilteredNetworkPrerequisite() FilteredNetworkPrerequisite {
 	}
 	return FilteredNetworkPrerequisite{
 		Detected: true,
-		Detail: "bubblewrap user/network namespace execution with namespace-root CAP_NET_ADMIN and CAP_NET_BIND_SERVICE passed; trusted root-owned pasta and nft executables " +
+		Detail: "bubblewrap user/network namespace execution with namespace-root CAP_NET_ADMIN passed; trusted root-owned pasta and nft executables " +
 			"were found; end-to-end gateway readiness is decided at the gated launch boundary",
 	}
 }

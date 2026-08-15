@@ -72,7 +72,7 @@ func TestFilteredNetworkPrerequisiteProbeNamesEveryBuildingBlock(t *testing.T) {
 	assert.Contains(t, got.Detail, "bubblewrap")
 	assert.Contains(t, got.Detail, "user/network namespace")
 	assert.Contains(t, got.Detail, "CAP_NET_ADMIN")
-	assert.Contains(t, got.Detail, "CAP_NET_BIND_SERVICE")
+	assert.NotContains(t, got.Detail, "CAP_NET_BIND_SERVICE")
 	assert.Contains(t, got.Detail, "pasta")
 	assert.Contains(t, got.Detail, "nft")
 	assert.Contains(t, got.Detail, "gated launch boundary")
@@ -157,10 +157,10 @@ func TestFilteredNetworkProbeArgsRequireNamespaceRootCapability(t *testing.T) {
 	require.NoError(t, err)
 	joined := strings.Join(args, " ")
 	assert.Contains(t, joined,
-		"--unshare-user --uid 0 --gid 0 --unshare-net --unshare-pid --cap-add CAP_NET_ADMIN --cap-add CAP_NET_BIND_SERVICE")
+		"--unshare-user --uid 0 --gid 0 --unshare-net --unshare-pid --cap-add CAP_NET_ADMIN")
+	assert.NotContains(t, joined, "CAP_NET_BIND_SERVICE")
 	assert.Contains(t, joined, `case "$cap_eff" in`)
 	assert.Contains(t, joined, "[13579bBdDfF]???")
-	assert.Contains(t, joined, "[4567cCdDeEfF]??")
 }
 
 func TestFilteredNetworkPrerequisiteProbeReportsFirstMissingCapability(t *testing.T) {

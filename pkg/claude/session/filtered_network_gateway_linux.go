@@ -58,7 +58,6 @@ func filteredNetworkHelperEnv() []string {
 func filteredNetworkBootstrapCapabilityArgs() []string {
 	return []string{
 		"--cap-add", "CAP_NET_ADMIN",
-		"--cap-add", "CAP_NET_BIND_SERVICE",
 	}
 }
 
@@ -877,7 +876,7 @@ func parseFilteredNetworkCapabilityState(
 func openFilteredNetworkDNSDescriptors() ([]*os.File, error) {
 	address := net.JoinHostPort(
 		sandboxpolicy.FilteredNetworkDNSIPv4,
-		strconv.Itoa(filteredNetworkDNSPort),
+		strconv.Itoa(sandboxpolicy.FilteredNetworkDNSListenerPort),
 	)
 	udpAddress, err := net.ResolveUDPAddr("udp4", address)
 	if err != nil {

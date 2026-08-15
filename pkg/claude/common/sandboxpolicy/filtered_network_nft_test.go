@@ -1,6 +1,7 @@
 package sandboxpolicy
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -28,6 +29,20 @@ func TestRenderFilteredNetworkNFTDenyPrecedesEstablishedAndAllow(t *testing.T) {
 	require.Contains(t, got, dnsDeny)
 	assert.Less(t, strings.Index(got, staticDeny), strings.Index(got, established))
 	assert.Less(t, strings.Index(got, dnsDeny), strings.Index(got, established))
+}
+
+func TestRenderFilteredNetworkNFTRedirectsPrivateDNSWithoutPrivilegedBind(t *testing.T) {
+	ir, err := CompileFilteredNetworkRules(NetworkRules{Mode: AccessModeOpen})
+	require.NoError(t, err)
+	got, err := RenderFilteredNetworkNFT(ir)
+	require.NoError(t, err)
+
+	assert.Contains(t, got, "type nat hook output priority dstnat; policy accept;")
+	for _, protocol := range []string{"udp", "tcp"} {
+		assert.Contains(t, got,
+			"ip daddr "+FilteredNetworkDNSIPv4+" "+protocol+
+				" dport 53 redirect to :"+strconv.Itoa(FilteredNetworkDNSListenerPort))
+	}
 }
 
 func TestRenderFilteredNetworkNFTRendersCIDRPortsAndSyntheticLoopback(t *testing.T) {

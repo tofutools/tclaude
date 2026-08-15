@@ -27,7 +27,6 @@ func TestFilteredNetworkHelperEnvExcludesAmbientInjectionVariables(t *testing.T)
 func TestFilteredNetworkBootstrapCapabilitiesAreMinimal(t *testing.T) {
 	assert.Equal(t, []string{
 		"--cap-add", "CAP_NET_ADMIN",
-		"--cap-add", "CAP_NET_BIND_SERVICE",
 	}, filteredNetworkBootstrapCapabilityArgs())
 }
 
