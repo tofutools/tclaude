@@ -9,12 +9,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMigrateV212toV213PreservesTriggerWorkersAndDefaultsCronToMessage(t *testing.T) {
-	d, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "v212.sqlite"))
+func TestMigrateV213toV214PreservesTriggerWorkersAndDefaultsCronToMessage(t *testing.T) {
+	d, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "v213.sqlite"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = d.Close() })
 	mustExec(t, d, `
-		CREATE TABLE schema_version (version INTEGER NOT NULL); INSERT INTO schema_version VALUES (212);
+		CREATE TABLE schema_version (version INTEGER NOT NULL); INSERT INTO schema_version VALUES (213);
 		CREATE TABLE trigger_rules (id INTEGER PRIMARY KEY);
 		CREATE TABLE trigger_firings (id INTEGER PRIMARY KEY);
 		CREATE TABLE agent_cron_jobs (id INTEGER PRIMARY KEY, name TEXT NOT NULL DEFAULT '');
@@ -31,8 +31,8 @@ func TestMigrateV212toV213PreservesTriggerWorkersAndDefaultsCronToMessage(t *tes
 		INSERT INTO agent_cron_jobs VALUES (3,'legacy-message');
 		INSERT INTO trigger_workers(rule_id,firing_id,action_index,agent_id,state,created_at) VALUES(1,2,0,'agt_legacy','live',10);
 	`)
-	require.NoError(t, migrateV212toV213(d))
-	assert.Equal(t, 213, schemaVersion(d))
+	require.NoError(t, migrateV213toV214(d))
+	assert.Equal(t, 214, schemaVersion(d))
 	var action, policy string
 	var maxLive int
 	require.NoError(t, d.QueryRow(`SELECT action_kind,spawn_concurrency_policy,spawn_max_live_workers FROM agent_cron_jobs WHERE id=3`).Scan(&action, &policy, &maxLive))
