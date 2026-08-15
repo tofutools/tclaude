@@ -1937,7 +1937,8 @@ launching a fresh one, and `Allow` admits concurrent workers up to
 through the same managed-worker ledger used by event triggers. The full stop
 protocol is intentionally separate; history reports the outcome agentd could
 actually establish. `{{fire_time}}` may be used in the name or instruction
-template and expands to the firing time in RFC 3339 form.
+template. Instructions receive RFC 3339; names receive a title-safe compact
+UTC timestamp such as `20260815T153000Z`.
 
 ### Git, GitHub and Linear — see `tclaude proxy`
 

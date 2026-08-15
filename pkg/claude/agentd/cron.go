@@ -103,18 +103,25 @@ func fireScheduledCronJob(jobID int64, now time.Time) {
 // anchor to now. Callers serialize it with cronAuthorityMu when it can race the
 // scheduler. Run-history is best-effort because delivery has already happened.
 func fireCronJobAndRecord(j *db.AgentCronJob, now time.Time) (string, error) {
+	if j.ActionKind != db.CronActionSpawn {
+		status := fireCronJob(j, now)
+		if err := db.UpdateAgentCronJobLastRun(j.ID, now, status); err != nil {
+			return status, err
+		}
+		if _, err := db.InsertAgentCronRun(&db.AgentCronRun{
+			JobID: j.ID, FiredAt: now, Status: status,
+		}); err != nil {
+			slog.Warn("cron: insert run row failed", "job", j.ID, "error", err)
+		}
+		return status, nil
+	}
 	runID, err := db.InsertAgentCronRun(&db.AgentCronRun{
 		JobID: j.ID, FiredAt: now, Status: "running",
 	})
 	if err != nil {
 		return "history_failed", err
 	}
-	status, detail, workerID, workerAgent := "", "", int64(0), ""
-	if j.ActionKind == db.CronActionSpawn {
-		status, detail, workerID, workerAgent = fireCronSpawn(j, runID, now)
-	} else {
-		status = fireCronJob(j, now)
-	}
+	status, detail, workerID, workerAgent := fireCronSpawn(j, runID, now)
 	if err := db.FinishAgentCronRun(runID, status, detail, workerID, workerAgent); err != nil {
 		slog.Warn("cron: finish run row failed", "job", j.ID, "run", runID, "error", err)
 	}
@@ -164,7 +171,7 @@ func fireCronSpawn(j *db.AgentCronJob, runID int64, now time.Time) (string, stri
 		return "spawn_failed", "invalid concurrency policy", 0, ""
 	}
 
-	nameTemplate := strings.ReplaceAll(j.SpawnNameTemplate, "{{fire_time}}", now.UTC().Format(time.RFC3339))
+	nameTemplate := strings.ReplaceAll(j.SpawnNameTemplate, "{{fire_time}}", now.UTC().Format("20060102T150405Z"))
 	instructionTemplate := strings.ReplaceAll(j.SpawnInstructionTemplate, "{{fire_time}}", now.UTC().Format(time.RFC3339))
 	spec := &db.TriggerSpawnAction{
 		Profile: j.SpawnProfile, RoleRefs: j.SpawnRoleRefs, NameTemplate: nameTemplate,
