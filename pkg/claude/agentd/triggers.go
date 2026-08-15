@@ -424,22 +424,21 @@ func observeTriggerAgentFact(source string, agent *db.Agent, rows []*db.SessionR
 		if !knownHarness.SupportsAwaitingInputObservation() {
 			observation.result = triggerlogic.FactUnknown
 			observation.detail = "harness does not expose awaiting-input observation; awaiting_permission is explicitly excluded"
-		} else if knownHarness.Name == harness.CodexName {
-			runtime, err := db.GetCodexAppServerRuntimeByConvID(current.ConvID)
-			if err != nil || runtime == nil || runtime.State != db.CodexAppServerReady {
-				observation.result = triggerlogic.FactUnknown
-				observation.detail = "Codex awaiting-input observation requires a ready managed app-server; awaiting_permission is explicitly excluded"
-				break
+		} else {
+			if knownHarness.Name == harness.CodexName {
+				runtime, err := db.GetCodexAppServerRuntimeByConvID(current.ConvID)
+				if err != nil || runtime == nil || runtime.State != db.CodexAppServerReady {
+					observation.result = triggerlogic.FactUnknown
+					observation.detail = "Codex awaiting-input observation requires a ready managed app-server; awaiting_permission is explicitly excluded"
+					break
+				}
 			}
-			if current.Status == "" {
+			switch current.Status {
+			case "":
 				observation.result = triggerlogic.FactUnknown
-			} else if current.Status == session.StatusAwaitingInput {
+			case session.StatusAwaitingInput:
 				observation.result = triggerlogic.FactTrue
 			}
-		} else if current.Status == "" {
-			observation.result = triggerlogic.FactUnknown
-		} else if current.Status == session.StatusAwaitingInput {
-			observation.result = triggerlogic.FactTrue
 		}
 	}
 	_ = agent
