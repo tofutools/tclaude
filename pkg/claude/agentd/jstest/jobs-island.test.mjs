@@ -297,7 +297,9 @@ test('Triggers sub-view renders rule summaries and expands the firing inspector'
   const row = mounted.container.querySelector('tr[data-key="trigger-7"]');
   assert.match(row.textContent, /review new PRs/);
   assert.match(row.textContent, /group:alpha/);
-  await harness.act(() => harness.fireEvent(row, 'click'));
+  const open = harness.fireEvent(row, 'keydown', { key: 'Enter' });
+  assert.equal(open.defaultPrevented, true);
+  await harness.act(() => Promise.resolve());
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   assert.match(mounted.container.querySelector('.trigger-inspector').textContent, /permission_denied/);
   assert.match(mounted.container.querySelector('.trigger-inspector').textContent, /message.send not held/);

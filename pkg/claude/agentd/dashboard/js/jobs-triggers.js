@@ -134,7 +134,12 @@ function TriggerRow({ rule, selected, actions, onSelect, onEdit, onChanged }) {
   const state = triggerState(rule);
   return html`<${Fragment}>
     <tr class=${`trigger-row${selected ? ' selected' : ''}`} data-key=${`trigger-${rule.id}`}
-      onClick=${() => onSelect(rule.id)} aria-expanded=${selected ? 'true' : 'false'}>
+      tabindex="0" onClick=${() => onSelect(rule.id)}
+      onKeyDown=${(event) => {
+        if (event.key !== 'Enter' && event.key !== ' ' && event.key !== 'Spacebar') return;
+        event.preventDefault();
+        onSelect(rule.id);
+      }} aria-expanded=${selected ? 'true' : 'false'}>
       <td class="trigger-disclosure">${selected ? '▾' : '▸'}</td>
       <td><div class="rowname">${rule.name}</div><div class="muted">${ownerSummary(rule)}</div></td>
       <td><strong class="trigger-source">${rule.source}</strong><div class="muted">${whenSummary(rule).replace(`${rule.source} · `, '')}</div></td>
@@ -144,7 +149,11 @@ function TriggerRow({ rule, selected, actions, onSelect, onEdit, onChanged }) {
       <td><span class=${`trigger-state ${state.key}`}>${state.label}</span></td>
       <td><label class="trigger-switch" onClick=${(event) => event.stopPropagation()}>
         <input type="checkbox" checked=${!!rule.enabled} aria-label=${`${rule.enabled ? 'Disable' : 'Enable'} ${rule.name}`}
-          onChange=${async () => { if (await actions.toggleTrigger(rule)) onChanged(); }} /><span></span></label></td>
+          onChange=${async (event) => {
+            const input = event.currentTarget;
+            if (await actions.toggleTrigger(rule)) onChanged();
+            else input.checked = !!rule.enabled;
+          }} /><span></span></label></td>
       <td><div class="row-actions" onClick=${(event) => event.stopPropagation()}>
         <button type="button" onClick=${onEdit}>edit</button>
         <button type="button" class="danger" onClick=${async () => { if (await actions.deleteTrigger(rule)) onChanged(); }}>delete</button>
