@@ -15,6 +15,22 @@ func migrateV213toV214(d *sql.DB) error {
 		return fmt.Errorf("migrate v213→v214 (cron spawn): begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	// Some old healing tests (and installations recovered from their same
+	// pre-cron partial shape) legitimately have no cron subsystem at all. Keep
+	// advancing that sparse database; there is no cron state to transform.
+	var hasCronJobs int
+	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_cron_jobs')`).Scan(&hasCronJobs); err != nil {
+		return fmt.Errorf("migrate v213→v214 (cron spawn): inspect cron schema: %w", err)
+	}
+	if hasCronJobs == 0 {
+		if _, err = tx.Exec(`UPDATE schema_version SET version=214`); err != nil {
+			return fmt.Errorf("migrate v213→v214 (cron spawn): sparse version: %w", err)
+		}
+		if err = tx.Commit(); err != nil {
+			return fmt.Errorf("migrate v213→v214 (cron spawn): sparse commit: %w", err)
+		}
+		return nil
+	}
 	for _, stmt := range []string{
 		`ALTER TABLE agent_cron_jobs ADD COLUMN action_kind TEXT NOT NULL DEFAULT 'message' CHECK (action_kind IN ('message','spawn'))`,
 		`ALTER TABLE agent_cron_jobs ADD COLUMN spawn_profile TEXT NOT NULL DEFAULT ''`,

@@ -48,3 +48,12 @@ func TestMigrateV213toV214PreservesTriggerWorkersAndDefaultsCronToMessage(t *tes
 	_, err = d.Exec(`INSERT INTO trigger_workers(cron_job_id,cron_run_id,action_index,agent_id,state,created_at) VALUES(3,4,0,'agt_cron','reserved',20)`)
 	require.NoError(t, err)
 }
+
+func TestMigrateV213toV214ToleratesSparsePreCronRecoverySchema(t *testing.T) {
+	d, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "sparse-v213.sqlite"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+	mustExec(t, d, `CREATE TABLE schema_version (version INTEGER NOT NULL); INSERT INTO schema_version VALUES (213);`)
+	require.NoError(t, migrateV213toV214(d))
+	assert.Equal(t, 214, schemaVersion(d))
+}
