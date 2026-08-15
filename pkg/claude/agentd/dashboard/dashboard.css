@@ -6507,6 +6507,20 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
   font-size: .78rem;
   line-height: 1.35;
 }
+.sbx-constructed-root-warning {
+  background: rgba(210, 153, 34, .1);
+  border-left: 3px solid var(--warning-text, #d99a2b);
+  border-radius: .25rem;
+  color: var(--warning-text, #d99a2b);
+  font-size: .85rem;
+  line-height: 1.4;
+  margin: .65rem 0;
+  padding: .5rem .65rem;
+}
+.sbx-constructed-root-warning strong {
+  display: block;
+  margin-bottom: .15rem;
+}
 .sbx-socket-row {
   grid-template-columns: 6.75rem minmax(12rem, 1fr) auto;
 }

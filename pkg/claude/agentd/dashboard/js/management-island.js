@@ -9,6 +9,7 @@ import { grantListToOverrides, grantOverridesToList } from './permission-grant-l
 import {
   sandboxAccessAxes,
   sandboxAccessDraftErrors,
+  sandboxConstructedRootWarning,
   sandboxNetworkAuthoring,
   sandboxOtherAssignmentWarnings,
   sandboxOtherContextRefusals,
@@ -1664,6 +1665,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   // Same guard as the Save button, so the hotkey can never reach a save the
   // mouse path refuses.
   const selectedEffective = prediction?.contexts?.[effectiveContext] || null;
+  const constructedRootWarning = sandboxConstructedRootWarning(prediction, effectiveContext);
   const effectivePolicyAttention = !!selectedEffective
     && (prediction?.targets || []).some((target) =>
       sandboxPolicyNeedsAttention(target, selectedEffective, effectiveContext));
@@ -1675,6 +1677,13 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
       packVisibilityAttention=${!!networkPackVisibilityError && commonRuleFeedSettled}
       retryPackCatalog=${loadCommonRules}
       packCatalogBusy=${commonRuleFeedBusy}/><${SocketAccessEditor} draft=${draft} setDraft=${setDraft} catalog=${commonRules} notice=${socketTemplateNotice} setNotice=${setSocketTemplateNotice}/>`}
+    ${constructedRootWarning && html`<div class="sbx-constructed-root-warning" role="alert">
+      <strong>⚠ Separate filesystem root</strong>
+      <div>${constructedRootWarning.reasons.length
+        ? `${constructedRootWarning.reasons.join(' and ')} ${constructedRootWarning.reasons.length === 1 ? 'requires' : 'require'}`
+        : 'This resolved sandbox policy requires'} a separate, minimal filesystem root on ${constructedRootWarning.targets.join('; ')}.</div>
+      <div>Only the fixed read-only OS/runtime surface and filesystem paths explicitly mounted below remain visible. Home-installed tools elsewhere may disappear unless you grant their paths.</div>
+    </div>`}
     <${SandboxSection} id="sandbox-profile-editor-filesystem-section" label="Filesystem"
       help=${FILESYSTEM_HELP} hidden=${advanced}
       attention=${globalConfigWarnings.length > 0 || !!commonRuleFeedError}

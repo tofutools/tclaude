@@ -609,3 +609,36 @@ export function sandboxTargetLabel(value = {}) {
     : '';
   return `${harness} on ${platform} · ${implementation}${undecided}${networkDisclosure}`;
 }
+
+// The daemon's per-context axis is authoritative: the same authored rule can
+// require a constructed root on Linux tclaude-layer and remain on the host root
+// everywhere else. Keep the explanation close to the controls that caused the
+// change, while leaving the effective-policy preview to describe the complete
+// resolved filesystem posture.
+export function sandboxConstructedRootWarning(prediction = {}, contextIndex = 0) {
+  const targets = (prediction?.targets || []).filter((target) => {
+    const axes = target.context_axes?.[contextIndex] || target.axes || {};
+    return axes.constructed_root === true;
+  });
+  if (!targets.length) return null;
+
+  // An effective-context response keeps assignment identity under `.context`;
+  // the resolved policy axes are siblings on this object.
+  const effective = prediction?.contexts?.[contextIndex] || {};
+  const authoredNetwork = sandboxNetworkAuthoring(effective);
+  const axes = sandboxAccessAxes(effective);
+  const reasons = [];
+  if (authoredNetwork.namespace === 'private') reasons.push('the private network namespace');
+  if (authoredNetwork.baseline === 'deny' || ['closed', 'list'].includes(axes.network.mode)
+      || authoredNetwork.deny_packs.length || (axes.network.deny || []).length) {
+    reasons.push('the restricted network rules');
+  }
+  if (['closed', 'list'].includes(axes.unix_sockets.mode)) {
+    reasons.push('the Unix-socket restriction');
+  }
+
+  return {
+    reasons,
+    targets: targets.map(sandboxTargetLabel),
+  };
+}
