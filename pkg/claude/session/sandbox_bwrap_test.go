@@ -1352,6 +1352,39 @@ func TestAppendTclaudeLayerTclaudeCLIRejectsNonExecutableFile(t *testing.T) {
 	require.ErrorContains(t, err, "is not an executable regular file")
 }
 
+func TestConstructedRootTclaudePathExportSurvivesHarnessEnvironmentForwarding(t *testing.T) {
+	ambient := "export PATH=/home/operator/go/bin:/usr/bin; "
+	preLaunch := "printf pre-launch; "
+	exports := appendTclaudeLayerConstructedRootPathExport(ambient)
+
+	for _, harnessName := range []string{
+		harness.DefaultName,
+		harness.CodexName,
+		harness.OpenCodeName,
+		harness.CopilotName,
+	} {
+		t.Run(harnessName, func(t *testing.T) {
+			got := harness.MustGet(harnessName).Spawn.BuildCommand(harness.SpawnSpec{
+				ExecutablePath:  "/usr/bin/agent-harness",
+				EnvExports:      exports,
+				PreLaunchScript: preLaunch,
+				ServerURL:       "http://127.0.0.1:4096",
+			})
+			ambientAt := strings.Index(got, ambient)
+			projectedAt := strings.Index(got,
+				"export PATH="+tclaudeLayerConstructedRootTclaudeBin+":\"$PATH\"; ")
+			preLaunchAt := strings.Index(got, preLaunch)
+			require.NotEqual(t, -1, ambientAt)
+			require.NotEqual(t, -1, projectedAt)
+			require.NotEqual(t, -1, preLaunchAt)
+			assert.Less(t, ambientAt, projectedAt,
+				"the harness must not overwrite the projected CLI PATH")
+			assert.Less(t, projectedAt, preLaunchAt,
+				"operator pre-launch PATH changes retain their established final precedence")
+		})
+	}
+}
+
 func TestBwrapArgsOperatorHideCanShadowConstructedRootTclaudeCLI(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

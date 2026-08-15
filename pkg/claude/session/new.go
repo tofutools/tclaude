@@ -1429,6 +1429,14 @@ func runNew(params *NewParams) error {
 		)
 		envExports = clcommon.BuildEnvExports(additionalEnv)
 	}
+	if outerLayer && tclaudeLayerRoot == sandboxpolicy.RootConstructed {
+		// Bubblewrap seeds this PATH too, which is sufficient for direct
+		// namespace helpers. Production harness commands then replay the ambient
+		// environment inside that namespace, including PATH, so the trusted
+		// single-file CLI directory must be restored after those generated
+		// exports and before any operator-authored pre-launch script.
+		envExports = appendTclaudeLayerConstructedRootPathExport(envExports)
+	}
 
 	// Sandbox cwd-safety guard: a writable sandbox (Codex workspace-write)
 	// confines writes to the cwd subtree, so a cwd at/above $HOME would make

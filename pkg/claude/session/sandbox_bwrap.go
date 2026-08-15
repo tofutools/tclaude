@@ -2464,6 +2464,10 @@ const (
 // shared sibling/PATH-aware resolver.
 var tclaudeLayerTclaudeCLIPath = clcommon.SelfTclaudePath
 
+func appendTclaudeLayerConstructedRootPathExport(exports string) string {
+	return exports + "export PATH=" + tclaudeLayerConstructedRootTclaudeBin + ":\"$PATH\"; "
+}
+
 // appendTclaudeLayerStaticOSRoot constructs the fixed executable/runtime
 // surface approved for the isolated posture. Merged-usr aliases remain
 // symlinks instead of becoming separate recursive host binds.
