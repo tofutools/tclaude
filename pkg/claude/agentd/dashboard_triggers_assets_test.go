@@ -17,6 +17,8 @@ func TestDashboardTriggersAssets(t *testing.T) {
 		"WHEN", "WHERE", "THEN", "trigger-permission-warning",
 		"cron-create-modal trigger-modal",
 		"{{pr.url}}", "{{pr.number}}", "{{pr.branch}}", "{{pr.author_agent}}", "{{group}}",
+		"pr.updated", "pr.merged", "ci.failed", "ci.succeeded",
+		"{{event.source}}", "{{event.previous_state}}", "{{event.current_state}}",
 		"The current API does not expose a live fact snapshot",
 	} {
 		if !strings.Contains(triggerUI, want) {
@@ -43,7 +45,7 @@ func TestDashboardTriggersAssets(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		".trigger-inspector-grid", ".trigger-editor-step", ".trigger-permission-warning",
+		".trigger-inspector-grid", ".trigger-editor-step", ".trigger-permission-warning", ".trigger-firing-context",
 		".group-triggers-section", "grid-template-columns: 1fr",
 		"#trigger-modal .trigger-modal :is(input:not([type=checkbox]):not([type=radio]), select, textarea)",
 		"body.wizard #trigger-modal .trigger-modal",

@@ -5,7 +5,22 @@ import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { relTime } from './helpers.js';
 
 const html = htm.bind(h);
-const PLACEHOLDERS = ['{{pr.url}}', '{{pr.number}}', '{{pr.branch}}', '{{pr.author_agent}}', '{{group}}'];
+const TRIGGER_SOURCES = Object.freeze([
+  { value: 'pr.opened', label: 'PR opened', summary: 'a PR is opened' },
+  { value: 'pr.updated', label: 'PR updated', summary: 'a PR is updated' },
+  { value: 'pr.merged', label: 'PR merged', summary: 'a PR is merged' },
+  { value: 'ci.failed', label: 'CI failed', summary: 'CI transitions to failing' },
+  { value: 'ci.succeeded', label: 'CI succeeded', summary: 'CI transitions to passing' },
+]);
+const PLACEHOLDERS = [
+  '{{pr.url}}', '{{pr.number}}', '{{pr.branch}}', '{{pr.author_agent}}', '{{group}}',
+  '{{event.source}}', '{{event.previous_state}}', '{{event.current_state}}',
+];
+
+function triggerSource(source) {
+  return TRIGGER_SOURCES.find((entry) => entry.value === source) ||
+    { value: source || 'pr.opened', label: source || 'PR opened', summary: source || 'a PR event occurs' };
+}
 
 function secondsLabel(value) {
   const seconds = Number(value || 0);
@@ -79,7 +94,7 @@ function TriggerInspector({ rule, actions, onEdit }) {
     return () => { active = false; };
   }, [rule.id, rule.row_version]);
   const configured = [
-    ['source', 'PR opened'],
+    ['source', triggerSource(rule.source).label],
     ['author', rule.author_is_agent === true ? 'agent only' : rule.author_is_agent === false ? 'human only' : 'any author'],
     ['draft policy', rule.draft_filter || 'include'],
     ['scope', scopeSummary(rule)],
@@ -109,11 +124,18 @@ function TriggerInspector({ rule, actions, onEdit }) {
               const outcome = firingField(firing, 'outcome', 'Outcome');
               const detail = firingField(firing, 'detail', 'Detail');
               const eventRef = firingField(firing, 'event_ref', 'EventRef');
+              const source = firingField(firing, 'source', 'Source');
+              const previousState = firingField(firing, 'previous_state', 'PreviousState');
+              const currentState = firingField(firing, 'current_state', 'CurrentState');
               const outcomes = firingField(firing, 'actions', 'Actions') || [];
               return html`<div class="trigger-firing" key=${id}>
                 <div><strong class=${outcome === 'ok' ? 'trigger-ok' : 'trigger-warn'}>${outcome}</strong>
                   <span>${started ? new Date(started).toLocaleString() : ''}</span>
                   <span class="muted">${eventRef || ''}</span></div>
+                ${(source || previousState || currentState) && html`<div class="trigger-firing-context">
+                  ${source && html`<span><span class="muted">source</span> <code>${source}</code></span>`}
+                  ${(previousState || currentState) && html`<span><span class="muted">transition</span> ${previousState || 'unknown'} → ${currentState || 'unknown'}</span>`}
+                </div>`}
                 ${detail && html`<div class="muted">${detail}</div>`}
                 ${outcomes.map((action) => {
                   const actionOutcome = firingField(action, 'outcome', 'Outcome');
@@ -203,7 +225,7 @@ export function TriggerWorkspace({ state, actions }) {
     </div>
     ${error && html`<div class="jobs-error" role="alert">${error}<button onClick=${() => void load()}>retry</button></div>`}
     ${loading ? html`<div class="empty">Loading triggers…</div>` : shown.length === 0
-      ? html`<div class="empty">${rules.length ? 'No triggers match this filter.' : 'No triggers yet. Create a PR-opened rule to automate a bounded response.'}</div>`
+      ? html`<div class="empty">${rules.length ? 'No triggers match this filter.' : 'No triggers yet. Create an event rule to automate a bounded response.'}</div>`
       : html`<table class="triggers-table"><thead><tr><th></th><th>Trigger</th><th>When</th><th>Where</th><th>Then</th><th>Last fired</th><th>State</th><th>Enabled</th><th></th></tr></thead>
           <tbody>${shown.map((rule) => html`<${TriggerRow} key=${rule.id} rule=${rule} selected=${selected === rule.id}
             actions=${actions} onSelect=${(id) => setSelected(selected === id ? null : id)}
@@ -220,7 +242,7 @@ function emptyAction(type = 'spawn') {
 function createDraft(rule = {}) {
   return {
     name: rule.name || '', enabled: rule.enabled ?? true, row_version: rule.row_version,
-    source: 'pr.opened', author_is_agent: rule.author_is_agent === undefined ? true : rule.author_is_agent,
+    source: rule.source || 'pr.opened', author_is_agent: rule.author_is_agent === undefined ? true : rule.author_is_agent,
     draft_filter: rule.draft_filter || 'exclude', debounce_seconds: Number(rule.debounce_seconds || 0),
     cooldown_seconds: Number(rule.cooldown_seconds || 0), scope: rule.scope || 'global', group: rule.group || '',
     actions: (rule.actions || []).length ? structuredClone(rule.actions) : [emptyAction()],
@@ -298,6 +320,7 @@ function TriggerDialog({ descriptor, state, actions }) {
   const [error, setError] = useState('');
   const snapshot = state.view.value.dashboard;
   const groups = (snapshot?.groups || []).filter((group) => !group.virtual).map((group) => group.name);
+  const source = triggerSource(draft.source);
   const updateAction = (index, action) => setDraft((value) => ({ ...value, actions: value.actions.map((item, i) => i === index ? action : item) }));
   const removeAction = (index) => setDraft((value) => ({ ...value, actions: value.actions.filter((_, i) => i !== index) }));
   const whenValid = !!draft.source;
@@ -323,9 +346,11 @@ function TriggerDialog({ descriptor, state, actions }) {
       <label class="trigger-name-field">Name<input autofocus required maxlength="80" value=${draft.name}
         onInput=${(event) => setDraft({ ...draft, name: event.currentTarget.value })} /></label>
       <${Step} name="WHEN" expanded=${step === 'when'} onToggle=${() => setStep(step === 'when' ? '' : 'when')}
-        valid=${whenValid} summary=${`a PR is opened · ${draft.author_is_agent === true ? 'by an agent' : draft.author_is_agent === false ? 'by a human' : 'any author'} · ${draft.draft_filter === 'exclude' ? 'not a draft' : draft.draft_filter === 'only' ? 'draft only' : 'drafts included'} · debounce ${secondsLabel(draft.debounce_seconds)}`}>
+        valid=${whenValid} summary=${`${source.summary} · ${draft.author_is_agent === true ? 'by an agent' : draft.author_is_agent === false ? 'by a human' : 'any author'} · ${draft.draft_filter === 'exclude' ? 'not a draft' : draft.draft_filter === 'only' ? 'draft only' : 'drafts included'} · debounce ${secondsLabel(draft.debounce_seconds)}`}>
         <div class="trigger-fields">
-          <label>Source<select value="pr.opened" disabled><option value="pr.opened">pr.opened</option></select></label>
+          <label>Source<select value=${draft.source} onChange=${(event) => setDraft({ ...draft, source: event.currentTarget.value })}>
+            ${TRIGGER_SOURCES.map((entry) => html`<option key=${entry.value} value=${entry.value}>${entry.label} · ${entry.value}</option>`)}
+          </select></label>
           <label>Author<select value=${String(draft.author_is_agent)} onChange=${(event) => setDraft({ ...draft, author_is_agent: event.currentTarget.value === 'null' ? null : event.currentTarget.value === 'true' })}>
             <option value="true">agent only</option><option value="false">human only</option><option value="null">any author</option></select></label>
           <label>Draft PRs<select value=${draft.draft_filter} onChange=${(event) => setDraft({ ...draft, draft_filter: event.currentTarget.value })}>
@@ -361,4 +386,4 @@ function TriggerDialog({ descriptor, state, actions }) {
   </${Overlay}>`;
 }
 
-export { actionSummary, scopeSummary, triggerState, whenSummary };
+export { actionSummary, scopeSummary, triggerSource, triggerState, whenSummary };
