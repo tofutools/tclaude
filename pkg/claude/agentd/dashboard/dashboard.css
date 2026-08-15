@@ -14645,6 +14645,15 @@ body.wizard .jobs-subnav {
 .trigger-fields { display: grid; grid-template-columns: repeat(3, minmax(150px, 1fr)); gap: 10px; }
 .trigger-fields label, .trigger-action-fields label { display: flex; flex-direction: column; gap: 4px; color: #8b949e; font-size: 11px; }
 .trigger-fields :is(input, select), .trigger-action-fields :is(input, select, textarea), .trigger-name-field input { width: 100%; }
+#trigger-modal .trigger-modal :is(input:not([type=checkbox]):not([type=radio]), select, textarea) {
+  box-sizing: border-box; padding: 5px 7px;
+  background: #0d1117; border: 1px solid #30363d; border-radius: 4px;
+  color: #c9d1d9; font: inherit; color-scheme: dark;
+}
+#trigger-modal .trigger-modal :is(input:not([type=checkbox]):not([type=radio]), select, textarea):focus {
+  outline: none; border-color: #58a6ff; box-shadow: 0 0 0 1px rgba(88, 166, 255, .18);
+}
+#trigger-modal .trigger-modal select option { color: #c9d1d9; background: #0d1117; }
 .trigger-scope-fields { display: flex; align-items: center; }
 .trigger-scope-fields > label { flex-direction: row; align-items: center; }
 .trigger-scope-fields > label:last-child { flex: 1; flex-direction: column; align-items: stretch; }
@@ -14657,6 +14666,14 @@ body.wizard .jobs-subnav {
 .trigger-template-field textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .trigger-placeholder-chips { display: flex; flex-wrap: wrap; gap: 5px; }
 .trigger-placeholder-chips button { padding: 2px 6px; color: #e3a54b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
+.trigger-inspector-head button, .trigger-action-editor-head button, .trigger-placeholder-chips button, .trigger-add-actions button {
+  background: #161b22; border: 1px solid #30363d; color: #c9d1d9;
+}
+.trigger-inspector-head button:hover, .trigger-action-editor-head button:hover, .trigger-placeholder-chips button:hover, .trigger-add-actions button:hover {
+  background: #21262d; border-color: #58a6ff;
+}
+.trigger-action-editor-head button.danger { color: #ff7b72; }
+.trigger-placeholder-chips button { color: #e3a54b; }
 .trigger-add-actions { display: flex; gap: 7px; }
 .trigger-permission-warning { padding: 8px 10px; border: 1px solid #614d14; border-radius: 6px; color: #e3b341; background: #2b2208; font-size: 11px; }
 
@@ -14688,6 +14705,53 @@ body.wizard .jobs-subtab.active {
   background: #3a2a63; color: #f3e6c0;
   text-shadow: 0 0 6px rgba(169, 123, 214, 0.55);
 }
+/* Trigger automation surfaces have their own component structure, so they
+   need the same explicit arcane field and panel treatment as the older cron
+   editor instead of falling back to browser-native controls. */
+body.wizard #trigger-modal .trigger-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border-color: #7a5db0; color: #e7d9f5;
+  box-shadow: 0 0 32px rgba(122, 93, 176, .35);
+}
+body.wizard #trigger-modal .trigger-modal-heading h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px; text-shadow: 0 0 8px rgba(169, 123, 214, .6), 0 1px 0 #1e1640;
+}
+body.wizard #trigger-modal :is(.trigger-name-field, .trigger-enabled-label, .trigger-fields label, .trigger-action-fields label) {
+  color: #b39ddb;
+}
+body.wizard #trigger-modal .trigger-modal :is(input:not([type=checkbox]):not([type=radio]), select, textarea) {
+  background: #140f28; border-color: rgba(122, 93, 176, .65); color: #f3e6c0;
+}
+body.wizard #trigger-modal .trigger-modal :is(input:not([type=checkbox]):not([type=radio]), select, textarea):focus {
+  border-color: #d9b45a; box-shadow: 0 0 0 1px rgba(217, 180, 90, .2), 0 0 8px rgba(169, 123, 214, .25);
+}
+body.wizard #trigger-modal .trigger-modal select option { color: #1a1330; background: #e7d9f5; }
+body.wizard #trigger-modal .trigger-editor-step,
+body.wizard #trigger-modal .trigger-action-editor { background: #18122b; border-color: rgba(122, 93, 176, .55); }
+body.wizard #trigger-modal .trigger-step-head,
+body.wizard #trigger-modal .trigger-action-editor-head { background: #241b3d; border-color: rgba(122, 93, 176, .55); }
+body.wizard #trigger-modal .trigger-step-body { border-color: rgba(122, 93, 176, .55); }
+body.wizard :is(.trigger-inspector-head button, #trigger-modal .trigger-action-editor-head button, #trigger-modal .trigger-placeholder-chips button, #trigger-modal .trigger-add-actions button, #trigger-modal .modal-buttons button:not(.primary)) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard :is(.trigger-inspector-head button, #trigger-modal .trigger-action-editor-head button, #trigger-modal .trigger-placeholder-chips button, #trigger-modal .trigger-add-actions button, #trigger-modal .modal-buttons button:not(.primary)):hover {
+  background: #3a2a63; border-color: #f3e6c0;
+}
+body.wizard #trigger-modal .trigger-placeholder-chips button { color: #f0d066; }
+body.wizard #trigger-modal .modal-buttons button.primary {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  border: 2px solid #d9b45a; color: #f3e6c0;
+  box-shadow: 0 3px 0 #1e1640, 0 0 8px rgba(169, 123, 214, .5);
+}
+body.wizard .trigger-row:hover, body.wizard .trigger-row.selected { background: #211934; }
+body.wizard .trigger-inspector-row > td { background: #140f28; }
+body.wizard :is(.trigger-verdicts, .trigger-firings, .group-triggers-section) {
+  background: #18122b; border-color: rgba(122, 93, 176, .55);
+}
+body.wizard .group-triggers-section > summary { color: #f3e6c0; }
+body.wizard .group-triggers-section > summary > a { color: #d9b45a; }
 body.wizard .access-intro,
 body.wizard .access-sub-intro { color: #b39ddb; }
 body.wizard .access-intro strong { color: #f3e6c0; }

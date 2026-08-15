@@ -45,6 +45,9 @@ func TestDashboardTriggersAssets(t *testing.T) {
 	for _, want := range []string{
 		".trigger-inspector-grid", ".trigger-editor-step", ".trigger-permission-warning",
 		".group-triggers-section", "grid-template-columns: 1fr",
+		"#trigger-modal .trigger-modal :is(input:not([type=checkbox]):not([type=radio]), select, textarea)",
+		"body.wizard #trigger-modal .trigger-modal",
+		"body.wizard :is(.trigger-verdicts, .trigger-firings, .group-triggers-section)",
 	} {
 		if !strings.Contains(css, want) {
 			t.Errorf("trigger CSS missing %q", want)
