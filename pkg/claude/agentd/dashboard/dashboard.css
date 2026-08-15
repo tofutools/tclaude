@@ -14623,6 +14623,8 @@ body.wizard .jobs-subnav {
 .trigger-firing { padding: 7px 9px; border-bottom: 1px solid #21262d; font-size: 11px; }
 .trigger-firing:last-child { border-bottom: 0; }
 .trigger-firing > div:first-child { display: flex; gap: 8px; align-items: baseline; }
+.trigger-firing-context { display: flex; align-items: baseline; gap: 8px; margin: 4px 0 0 14px; color: #8b949e; }
+.trigger-firing-context code { color: #e3a54b; }
 .trigger-action-outcome { display: grid; grid-template-columns: 15px 60px 110px 1fr; gap: 5px; margin: 4px 0 0 14px; }
 
 #trigger-modal .trigger-modal { width: min(920px, calc(100vw - 32px)); max-width: 920px; }

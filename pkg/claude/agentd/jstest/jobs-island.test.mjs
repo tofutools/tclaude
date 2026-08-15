@@ -301,12 +301,13 @@ test('Triggers sub-view renders rule summaries and expands the firing inspector'
   state.commitRequest(1);
   const rule = {
     id: 7, name: 'review new PRs', row_version: 3, enabled: true,
-    operator_authored: true, scope: 'group', group: 'alpha', source: 'pr.opened',
+    operator_authored: true, scope: 'group', group: 'alpha', source: 'ci.failed',
     author_is_agent: false, draft_filter: 'only', debounce_seconds: 60, cooldown_seconds: 300,
     actions: [{ type: 'message', message: { target: 'pr.author_agent', body_template: 'Review {{pr.url}}' } }],
   };
   const firing = {
     id: 9, outcome: 'partial_failure', detail: 'one action denied', event_ref: 'pr.opened:agt_author:https://example/pr/2',
+    source: 'ci.failed', previous_state: 'success', current_state: 'failure',
     started_at: '2026-07-11T11:00:00Z', finished_at: '2026-07-11T11:00:01Z',
     actions: [
       { id: 10, action_type: 'message', outcome: 'permission_denied', detail: 'message.send not held' },
@@ -335,6 +336,9 @@ test('Triggers sub-view renders rule summaries and expands the firing inspector'
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   assert.match(mounted.container.querySelector('.trigger-inspector').textContent, /permission_denied/);
   assert.match(mounted.container.querySelector('.trigger-inspector').textContent, /message.send not held/);
+  assert.match(mounted.container.querySelector('.trigger-firing-context').textContent, /ci.failed/);
+  assert.match(mounted.container.querySelector('.trigger-firing-context').textContent, /success → failure/,
+    'recorded CI transition evidence is shown without inferring live state');
   assert.equal(mounted.container.querySelectorAll('.trigger-verdicts .trigger-fail').length, 0,
     'valid configured alternatives are never presented as failed event facts');
   assert.equal(mounted.container.querySelectorAll('.trigger-action-outcome .trigger-fail').length, 2,
@@ -363,13 +367,36 @@ test('Trigger editor uses stacked WHEN WHERE THEN steps and shows spawn authorit
   assert.match(mounted.container.textContent, /WHEN/);
   assert.match(mounted.container.textContent, /WHERE/);
   assert.match(mounted.container.textContent, /THEN/);
+  const source = mounted.container.querySelector('.trigger-fields select');
+  assert.deepEqual([...source.options].map((option) => option.value),
+    ['pr.opened', 'pr.updated', 'pr.merged', 'ci.failed', 'ci.succeeded']);
   const then = [...mounted.container.querySelectorAll('.trigger-step-head')]
     .find((button) => button.textContent.includes('THEN'));
   await harness.act(() => harness.fireEvent(then, 'click'));
   assert.match(mounted.container.textContent, /Firings are re-authorized as the owning principal/);
   assert.ok(mounted.container.querySelector('.trigger-placeholder-chips'));
   assert.match(mounted.container.querySelector('.trigger-placeholder-chips').textContent, /{{pr.url}}/);
+  assert.match(mounted.container.querySelector('.trigger-placeholder-chips').textContent, /{{event.source}}/);
+  assert.match(mounted.container.querySelector('.trigger-placeholder-chips').textContent, /{{event.previous_state}}/);
+  assert.match(mounted.container.querySelector('.trigger-placeholder-chips').textContent, /{{event.current_state}}/);
   await mounted.unmount();
+
+  state.closeTriggerDialog();
+  state.openTriggerEdit({
+    id: 9, name: 'merged PR follow-up', enabled: true, row_version: 2, source: 'pr.merged',
+    scope: 'global', draft_filter: 'include', actions: [{ type: 'message', message: {
+      target: 'pr.author_agent', subject_template: '', body_template: 'Merged {{pr.url}}',
+    } }],
+  });
+  let saved = null;
+  const edited = await harness.mount(harness.html`<${TriggerDialogRoot} state=${state} actions=${{
+    saveTrigger: async (request) => { saved = request; return {}; },
+  }} />`);
+  assert.match(edited.container.querySelector('.trigger-step-summary').textContent, /a PR is merged/);
+  await harness.act(() => harness.fireEvent(edited.container.querySelector('#trigger-modal form'), 'submit'));
+  assert.equal(saved.payload.source, 'pr.merged',
+    'editing an additive source preserves it instead of resetting to pr.opened');
+  await edited.unmount();
 });
 
 test('creating a trigger invalidates and reloads the visible list', async (t) => {
