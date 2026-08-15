@@ -11,6 +11,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -248,8 +249,8 @@ func runCronAdd(p *cronAddParams, stdin io.Reader, stdout, stderr io.Writer) int
 	var deadlineSeconds int64
 	if strings.TrimSpace(p.WorkerDeadline) != "" {
 		d, err := time.ParseDuration(p.WorkerDeadline)
-		if err != nil || d <= 0 {
-			fmt.Fprintln(stderr, "Error: --worker-deadline must be a positive Go duration")
+		if err != nil || d < time.Second || d > time.Duration(db.TriggerMaxDelaySeconds)*time.Second {
+			fmt.Fprintln(stderr, "Error: --worker-deadline must be between 1s and 8760h")
 			return rcInvalidArg
 		}
 		deadlineSeconds = int64(d.Seconds())

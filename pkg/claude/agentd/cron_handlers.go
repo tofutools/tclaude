@@ -467,11 +467,19 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_arg", "spawn_profile and spawn_instruction_template are required for spawn jobs")
 			return
 		}
+		if len(body.SpawnInstructionTemplate) > db.TriggerTemplateMaxLen || len(body.SpawnNameTemplate) > db.TriggerNameMaxLen {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "spawn instruction or name template is too long")
+			return
+		}
 		if body.SpawnWorkerDeadlineSeconds < 0 || body.SpawnWorkerDeadlineSeconds > db.TriggerMaxDelaySeconds {
 			writeError(w, http.StatusBadRequest, "invalid_arg", "spawn_worker_deadline_seconds is out of range")
 			return
 		}
-		if body.SpawnMaxLiveWorkers <= 0 {
+		if body.SpawnMaxLiveWorkers < 0 {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "spawn_max_live_workers must be positive")
+			return
+		}
+		if body.SpawnMaxLiveWorkers == 0 {
 			body.SpawnMaxLiveWorkers = 1
 		}
 		policy := strings.TrimSpace(body.SpawnConcurrencyPolicy)
