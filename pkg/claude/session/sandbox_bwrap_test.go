@@ -3,6 +3,7 @@ package session
 import (
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -1356,6 +1357,7 @@ func TestConstructedRootTclaudePathExportSurvivesHarnessEnvironmentForwarding(t 
 	ambient := "export PATH=/home/operator/go/bin:/usr/bin; "
 	preLaunch := "printf pre-launch; "
 	exports := appendTclaudeLayerConstructedRootPathExport(ambient)
+	projectedExport := appendTclaudeLayerConstructedRootPathExport("")
 
 	for _, harnessName := range []string{
 		harness.DefaultName,
@@ -1371,8 +1373,7 @@ func TestConstructedRootTclaudePathExportSurvivesHarnessEnvironmentForwarding(t 
 				ServerURL:       "http://127.0.0.1:4096",
 			})
 			ambientAt := strings.Index(got, ambient)
-			projectedAt := strings.Index(got,
-				"export PATH="+tclaudeLayerConstructedRootTclaudeBin+":\"$PATH\"; ")
+			projectedAt := strings.Index(got, projectedExport)
 			preLaunchAt := strings.Index(got, preLaunch)
 			require.NotEqual(t, -1, ambientAt)
 			require.NotEqual(t, -1, projectedAt)
@@ -1381,6 +1382,40 @@ func TestConstructedRootTclaudePathExportSurvivesHarnessEnvironmentForwarding(t 
 				"the harness must not overwrite the projected CLI PATH")
 			assert.Less(t, projectedAt, preLaunchAt,
 				"operator pre-launch PATH changes retain their established final precedence")
+		})
+	}
+}
+
+func TestConstructedRootTclaudePathExportDoesNotAddCurrentDirectory(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+		set  bool
+		want string
+	}{
+		{name: "unset", want: tclaudeLayerConstructedRootTclaudeBin},
+		{name: "empty", set: true, want: tclaudeLayerConstructedRootTclaudeBin},
+		{name: "nonempty", path: "/usr/bin:/bin", set: true, want: tclaudeLayerConstructedRootTclaudeBin + ":/usr/bin:/bin"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command("/bin/sh", "-c",
+				appendTclaudeLayerConstructedRootPathExport("")+`printf '%s' "$PATH"`)
+			cmd.Env = []string{}
+			if tc.set {
+				cmd.Env = []string{"PATH=" + tc.path}
+			}
+			got, err := cmd.Output()
+			require.NoError(t, err)
+			if tc.name == "unset" {
+				assert.True(t,
+					string(got) == tclaudeLayerConstructedRootTclaudeBin ||
+						strings.HasPrefix(string(got), tclaudeLayerConstructedRootTclaudeBin+":"),
+					"the shell may synthesize a default PATH, but the trusted directory must remain first: %q", got)
+			} else {
+				assert.Equal(t, tc.want, string(got))
+			}
+			assert.False(t, strings.HasSuffix(string(got), ":"),
+				"an empty PATH component would add the current directory to command lookup")
 		})
 	}
 }

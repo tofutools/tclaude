@@ -2465,7 +2465,9 @@ const (
 var tclaudeLayerTclaudeCLIPath = clcommon.SelfTclaudePath
 
 func appendTclaudeLayerConstructedRootPathExport(exports string) string {
-	return exports + "export PATH=" + tclaudeLayerConstructedRootTclaudeBin + ":\"$PATH\"; "
+	return exports + "if [ -n \"${PATH:-}\" ]; then export PATH=" +
+		tclaudeLayerConstructedRootTclaudeBin + ":\"$PATH\"; else export PATH=" +
+		tclaudeLayerConstructedRootTclaudeBin + "; fi; "
 }
 
 // appendTclaudeLayerStaticOSRoot constructs the fixed executable/runtime
