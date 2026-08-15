@@ -622,9 +622,11 @@ export function sandboxConstructedRootWarning(prediction = {}, contextIndex = 0)
   });
   if (!targets.length) return null;
 
-  const context = prediction?.contexts?.[contextIndex]?.context || {};
-  const authoredNetwork = sandboxNetworkAuthoring(context);
-  const axes = sandboxAccessAxes(context);
+  // An effective-context response keeps assignment identity under `.context`;
+  // the resolved policy axes are siblings on this object.
+  const effective = prediction?.contexts?.[contextIndex] || {};
+  const authoredNetwork = sandboxNetworkAuthoring(effective);
+  const axes = sandboxAccessAxes(effective);
   const reasons = [];
   if (authoredNetwork.namespace === 'private') reasons.push('the private network namespace');
   if (authoredNetwork.baseline === 'deny' || ['closed', 'list'].includes(axes.network.mode)

@@ -1278,12 +1278,12 @@ test('sandbox access-axis model preserves legacy meaning and validates structure
     implementation: 'harness-builtin', harness: 'codex', platform: 'darwin',
   }), 'Codex on macOS · built-in sandbox · no filtered network sandbox yet');
   assert.deepEqual(model.sandboxConstructedRootWarning({
-    contexts: [{ context: {
+    contexts: [{ context: { group: 'crew' },
       // Prediction contexts carry the resolved legacy/effective shape: Mode
       // plus materialized Deny rows, not necessarily the authored Baseline.
       network: { mode: 'open', namespace: 'private', deny: [{ cidr: '192.0.2.0/24' }] },
       unix_sockets: { mode: 'closed' },
-    } }],
+    }],
     targets: [{
       target: { implementation: 'tclaude-layer', harness: 'codex', platform: 'linux' },
       context_axes: [{ constructed_root: true }],
@@ -2129,7 +2129,7 @@ test('sandbox editor warns immediately when the resolved target constructs a fil
             target: { implementation: 'tclaude-layer', harness: 'opencode', platform: 'linux' },
             axes, context_axes: [axes],
           }],
-          contexts: [{ context, network: context.network, unix_sockets: context.unix_sockets }],
+          contexts: [{ context: { group: 'crew' }, network: context.network, unix_sockets: context.unix_sockets }],
         };
       },
     });
