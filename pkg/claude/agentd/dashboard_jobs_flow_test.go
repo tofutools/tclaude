@@ -24,9 +24,17 @@ type jobsPage struct {
 			Status string `json:"status"`
 		} `json:"export"`
 		Cron *struct {
-			ID         int64  `json:"id"`
-			Name       string `json:"name"`
-			TargetRole string `json:"target_role"`
+			ID                         int64    `json:"id"`
+			Name                       string   `json:"name"`
+			TargetRole                 string   `json:"target_role"`
+			ActionKind                 string   `json:"action_kind"`
+			SpawnProfile               string   `json:"spawn_profile"`
+			SpawnRoles                 []string `json:"spawn_roles"`
+			SpawnNameTemplate          string   `json:"spawn_name_template"`
+			SpawnInstructionTemplate   string   `json:"spawn_instruction_template"`
+			SpawnConcurrencyPolicy     string   `json:"spawn_concurrency_policy"`
+			SpawnMaxLiveWorkers        int      `json:"spawn_max_live_workers"`
+			SpawnWorkerDeadlineSeconds int64    `json:"spawn_worker_deadline_seconds"`
 		} `json:"cron"`
 		Order *struct {
 			ID      int64  `json:"id"`
@@ -90,6 +98,10 @@ func TestDashboardJobs_UnifiedListing(t *testing.T) {
 		Name: "gamma-ping", TargetKind: db.CronTargetGroup,
 		GroupID: group.ID, TargetRole: "reviewer",
 		IntervalSeconds: 300, Subject: "ping", Body: "status?", Enabled: true,
+		ActionKind: db.CronActionSpawn, SpawnProfile: "scanner", SpawnRoleRefs: []string{"reviewer"},
+		SpawnNameTemplate: "worker", SpawnInstructionTemplate: "scan",
+		SpawnConcurrencyPolicy: db.CronConcurrencyReplace, SpawnMaxLiveWorkers: 3,
+		SpawnWorkerDeadlineSeconds: 120,
 	})
 	require.NoError(t, err)
 	orderID, err := db.InsertStandingOrder(&db.StandingOrder{
@@ -128,6 +140,19 @@ func TestDashboardJobs_UnifiedListing(t *testing.T) {
 	all := getJobs(t, dash, "")
 	assert.Equal(t, 4, all.Total)
 	assert.Equal(t, 4, all.TotalUnfiltered)
+	for _, row := range all.Rows {
+		if row.Cron == nil {
+			continue
+		}
+		assert.Equal(t, db.CronActionSpawn, row.Cron.ActionKind)
+		assert.Equal(t, "scanner", row.Cron.SpawnProfile)
+		assert.Equal(t, []string{"reviewer"}, row.Cron.SpawnRoles)
+		assert.Equal(t, "worker", row.Cron.SpawnNameTemplate)
+		assert.Equal(t, "scan", row.Cron.SpawnInstructionTemplate)
+		assert.Equal(t, db.CronConcurrencyReplace, row.Cron.SpawnConcurrencyPolicy)
+		assert.Equal(t, 3, row.Cron.SpawnMaxLiveWorkers)
+		assert.EqualValues(t, 120, row.Cron.SpawnWorkerDeadlineSeconds)
+	}
 	require.Len(t, all.Rows, 4)
 	kinds := map[string]int{}
 	for _, r := range all.Rows {
