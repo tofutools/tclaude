@@ -628,7 +628,7 @@ export function sandboxConstructedRootWarning(prediction = {}, contextIndex = 0)
   const reasons = [];
   if (authoredNetwork.namespace === 'private') reasons.push('the private network namespace');
   if (authoredNetwork.baseline === 'deny' || ['closed', 'list'].includes(axes.network.mode)
-      || authoredNetwork.deny_packs.length || authoredNetwork.deny.length) {
+      || authoredNetwork.deny_packs.length || (axes.network.deny || []).length) {
     reasons.push('the restricted network rules');
   }
   if (['closed', 'list'].includes(axes.unix_sockets.mode)) {

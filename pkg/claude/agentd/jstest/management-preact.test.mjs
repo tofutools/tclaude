@@ -1279,7 +1279,9 @@ test('sandbox access-axis model preserves legacy meaning and validates structure
   }), 'Codex on macOS · built-in sandbox · no filtered network sandbox yet');
   assert.deepEqual(model.sandboxConstructedRootWarning({
     contexts: [{ context: {
-      network: { baseline: 'allow', namespace: 'private', deny: [{ cidr: '192.0.2.0/24' }] },
+      // Prediction contexts carry the resolved legacy/effective shape: Mode
+      // plus materialized Deny rows, not necessarily the authored Baseline.
+      network: { mode: 'open', namespace: 'private', deny: [{ cidr: '192.0.2.0/24' }] },
       unix_sockets: { mode: 'closed' },
     } }],
     targets: [{
