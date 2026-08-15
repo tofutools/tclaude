@@ -783,6 +783,23 @@ func TestOpenCodeRuntimeReplacementPreservesCgroupUntilFinalRetirement(t *testin
 	require.NoError(t, stopOpenCodeRuntime(runtime.SessionID))
 	assert.Equal(t, []string{runtime.ResourceCgroupDir}, removed,
 		"final retirement must dispose of the durable boundary")
+
+	assert.True(t, openCodeReplacementReusesResourceCgroup(
+		runtime.ResourceCgroupDir, runtime.ResourceCgroupDir))
+	assert.False(t, openCodeReplacementReusesResourceCgroup(
+		runtime.ResourceCgroupDir, ""),
+		"a replacement without a boundary must dispose of the old one")
+	assert.False(t, openCodeReplacementReusesResourceCgroup("", ""))
+
+	removed = nil
+	require.NoError(t, cleanupAbandonedOpenCodeReplacementCgroup(
+		true, false, runtime.ResourceCgroupDir))
+	assert.Equal(t, []string{runtime.ResourceCgroupDir}, removed,
+		"a failed same-boundary replacement must not orphan its cgroup")
+	removed = nil
+	require.NoError(t, cleanupAbandonedOpenCodeReplacementCgroup(
+		true, true, runtime.ResourceCgroupDir))
+	assert.Empty(t, removed, "a successful replacement retains its live boundary")
 }
 
 func TestRandomOpenCodePassword(t *testing.T) {
