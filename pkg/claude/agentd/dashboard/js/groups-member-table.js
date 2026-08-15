@@ -374,7 +374,8 @@ function codexOwnSandboxUnlockUnsupported(member, unlocked) {
     && (implementation === 'harness-builtin' || implementation === 'stacked');
 }
 
-function sandboxTooltip(member, badge, actionable, unlocked, unlockUnsupported = false) {
+function sandboxTooltip(member, badge, actionable, unlocked) {
+  const unlockUnsupported = !badge.danger && codexOwnSandboxUnlockUnsupported(member, unlocked);
   const lines = [
     `Status: ${unlocked && badge.status === 'OFF' ? 'TEMP OFF' : badge.status}`,
     `Implementation: ${sandboxImplementationLabel(member, badge)}`,
@@ -481,7 +482,7 @@ export function SandboxBadge({ member, showDetails = false }) {
   const unlockUnsupported = !badge.danger && codexOwnSandboxUnlockUnsupported(member, unlocked);
   const actionable = !!member.online && !unlockUnsupported && (unlocked || !badge.danger);
   const action = unlocked ? 'restore' : 'unlock';
-  const title = sandboxTooltip(member, badge, actionable, unlocked, unlockUnsupported);
+  const title = sandboxTooltip(member, badge, actionable, unlocked);
   const className = `sandbox-badge${badge.danger ? ' sandbox-danger' : ''}${badge.offline ? ' runtime-meta-offline' : ''}${actionable ? ' sandbox-action' : ''}`;
   // aria-label carries the same full text as the tooltip: a glyph-only
   // indicator whose whole meaning is the hover would otherwise be pointer-only.
