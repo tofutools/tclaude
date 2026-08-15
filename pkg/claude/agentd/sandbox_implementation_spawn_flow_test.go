@@ -357,6 +357,39 @@ func TestSandboxRestart_RefusesCodexHarnessBuiltinUnlock(t *testing.T) {
 		"the server must refuse before stopping the live Codex conversation")
 }
 
+func TestSandboxRestart_RefusesCodexStackedUnlock(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	t.Cleanup(agentd.SetStackedSandboxHostAvailabilityForTest(
+		func(*harness.Harness) error { return nil },
+	))
+	f := newFlow(t)
+	f.HaveGroup("crew")
+
+	source := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name":                   "codex-stacked-source",
+		"harness":                harness.CodexName,
+		"sandbox_implementation": string(sandboxpolicy.ImplementationStacked),
+	})
+	require.Equalf(t, http.StatusOK, source.Code, "spawn body=%s", source.Raw)
+
+	f.SetSessionStatus(source.ConvID, "idle")
+	unlock := testharness.Serve(agentd.BuildDashboardHandlerForTest(),
+		testharness.JSONRequest(t, http.MethodPost,
+			"/api/agents/"+source.ConvID+"/sandbox-restart",
+			map[string]any{"action": "unlock"}))
+	require.Equalf(t, http.StatusConflict, unlock.Code, "unlock body=%s", unlock.Body.String())
+	assert.Contains(t, unlock.Body.String(), "Codex restores the persisted sandbox policy on resume")
+
+	_, active, err := db.TemporaryHarnessBuiltinModeForConv(source.ConvID)
+	require.NoError(t, err)
+	assert.False(t, active, "a refused unlock must not persist a temporary override")
+	row, err := db.FindSessionByConvID(source.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, "idle", row.Status,
+		"the server must refuse before removing either stacked sandbox layer")
+}
+
 func TestSandboxRestart_AllowsCodexTclaudeLayerUnlock(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	f := newFlow(t)

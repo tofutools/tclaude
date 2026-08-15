@@ -25,8 +25,8 @@ func TestDashboardHTML_TemporarySandboxRestartWired(t *testing.T) {
 	must("/sandbox-restart`", "the browser posts to the dedicated agent endpoint")
 	must("no background agents or shell commands",
 		"the confirmation explains the authoritative idle gate")
-	must("Codex restores its persisted built-in sandbox policy",
-		"Codex harness-builtin agents explain why temporary unlock is unavailable")
+	must("Codex restores its persisted sandbox policy",
+		"Codex-owned sandbox agents explain why temporary unlock is unavailable")
 	must("event.key !== 'Enter' || (!event.ctrlKey && !event.metaKey)",
 		"the confirmation accepts Ctrl/Cmd+Enter")
 	must("body.wizard #confirm-modal .modal {",
