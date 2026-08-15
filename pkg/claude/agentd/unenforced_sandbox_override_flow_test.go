@@ -153,7 +153,7 @@ func TestDashboardClosedNetworkOverrideIsFreshSpawnOnlyAndDisclosed(t *testing.T
 
 func TestDashboardReducedNetworkDenyOverrideRequiresFreshConfirmation(t *testing.T) {
 	if runtime.GOOS != "linux" {
-		t.Skip("Codex builtin deny omission is pinned by the Linux capability cell")
+		t.Skip("Claude builtin deny omission is pinned by the Linux capability cell")
 	}
 	restoreURL := agentd.SetPopupBaseURLForTest(dashboardOverrideTestOrigin)
 	t.Cleanup(restoreURL)
@@ -168,9 +168,9 @@ func TestDashboardReducedNetworkDenyOverrideRequiresFreshConfirmation(t *testing
 	})
 	require.NoError(t, err)
 	body := map[string]any{
-		"name":                   "worker",
-		"harness":                harness.CodexName,
-		"sandbox":                harness.SandboxManagedProfile,
+		"name":                   "deny-worker",
+		"harness":                harness.DefaultName,
+		"sandbox":                harness.ClaudeSandboxOn,
 		"sandbox_implementation": string(sandboxpolicy.ImplementationHarnessBuiltin),
 		"sandbox_profile":        "unsupported-deny",
 	}
