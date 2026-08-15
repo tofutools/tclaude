@@ -12,6 +12,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	triggerlogic "github.com/tofutools/tclaude/pkg/claude/triggers"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -320,6 +321,97 @@ func TestTriggerExplainRejectsUnknownSource(t *testing.T) {
 		"/v1/triggers/explain", map[string]any{"source": "ci.typo", "pr_url": "https://github.com/o/r/pull/1"}), "explain-source"))
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), `"code":"invalid_arg"`)
+}
+
+func TestTriggerExplainSurfacesUnknownAgentFact(t *testing.T) {
+	f := triggerFlow(t)
+	const conv = "explain-idle-conv"
+	f.HaveConvWithTitle(conv, "idle")
+	agentID, _, err := db.EnsureAgentForConv(conv, "test")
+	require.NoError(t, err)
+	_, err = db.InsertTriggerRule(&db.TriggerRule{Name: "idle-dwell", Enabled: true, OperatorAuthored: true,
+		ScopeKind: db.TriggerScopeGlobal, Source: db.TriggerSourceAgentIdle, DraftFilter: db.TriggerDraftInclude,
+		ForSeconds: 60, Actions: []db.TriggerAction{{Type: db.TriggerActionMessage,
+			Message: &db.TriggerMessageAction{Target: "agent", BodyTemplate: "wake"}}}})
+	require.NoError(t, err)
+
+	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost,
+		"/v1/triggers/explain", map[string]any{"source": db.TriggerSourceAgentIdle, "agent_id": agentID})))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var body struct {
+		Results []struct {
+			Outcome    string `json:"outcome"`
+			FactResult string `json:"fact_result"`
+			Detail     string `json:"detail"`
+		} `json:"results"`
+	}
+	testharness.DecodeJSON(t, rec, &body)
+	require.Len(t, body.Results, 1)
+	assert.Equal(t, "unknown", body.Results[0].Outcome)
+	assert.Equal(t, "unknown", body.Results[0].FactResult)
+	assert.NotEmpty(t, body.Results[0].Detail)
+}
+
+func TestTriggerExplainDoesNotExposeOutOfScopeAgentFact(t *testing.T) {
+	f := triggerFlow(t)
+	const caller = "explain-group-owner"
+	const target = "explain-outside-target"
+	f.HaveConvWithTitle(caller, "owner")
+	f.HaveConvWithTitle(target, "outside")
+	group := f.HaveGroup("explain-owned")
+	require.NoError(t, db.AddAgentGroupOwner(group.ID, caller, "test"))
+	targetAgent, _, err := db.EnsureAgentForConv(target, "test")
+	require.NoError(t, err)
+	_, err = db.InsertTriggerRule(&db.TriggerRule{Name: "owned-idle", Enabled: true, OperatorAuthored: true,
+		ScopeKind: db.TriggerScopeGroup, GroupID: group.ID, Source: db.TriggerSourceAgentIdle,
+		DraftFilter: db.TriggerDraftInclude, ForSeconds: 60, Actions: []db.TriggerAction{{Type: db.TriggerActionMessage,
+			Message: &db.TriggerMessageAction{Target: "agent", BodyTemplate: "wake"}}}})
+	require.NoError(t, err)
+
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
+		"/v1/triggers/explain", map[string]any{"source": db.TriggerSourceAgentIdle,
+			"agent_id": targetAgent, "group": group.Name}), caller))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var body struct {
+		Results []struct {
+			Outcome        string    `json:"outcome"`
+			Detail         string    `json:"detail"`
+			FactResult     string    `json:"fact_result"`
+			FactObservedAt time.Time `json:"fact_observed_at"`
+		} `json:"results"`
+	}
+	testharness.DecodeJSON(t, rec, &body)
+	require.Len(t, body.Results, 1)
+	assert.Equal(t, triggerlogic.OutcomeOutOfScope, body.Results[0].Outcome)
+	assert.Empty(t, body.Results[0].FactResult)
+	assert.True(t, body.Results[0].FactObservedAt.IsZero())
+}
+
+func TestDashboardTriggerStateSourceRoundTripsDwell(t *testing.T) {
+	triggerFlow(t)
+	dash := agentd.BuildDashboardHandlerForTest()
+	rec := testharness.Serve(dash, dashReq(t, http.MethodPost, "/api/triggers", map[string]any{
+		"name": "awaiting-human", "enabled": true, "scope": "global",
+		"source": db.TriggerSourceAgentAwaitingInput, "draft_filter": db.TriggerDraftInclude,
+		"for_seconds": 300, "actions": []map[string]any{{"type": "message", "message": map[string]any{
+			"target": "agent", "body_template": "Question waiting for {{agent.id}}",
+		}}},
+	}))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var created struct {
+		Source     string `json:"source"`
+		ForSeconds int64  `json:"for_seconds"`
+		Actions    []struct {
+			Message struct {
+				Target string `json:"target"`
+			} `json:"message"`
+		} `json:"actions"`
+	}
+	testharness.DecodeJSON(t, rec, &created)
+	assert.Equal(t, db.TriggerSourceAgentAwaitingInput, created.Source)
+	assert.Equal(t, int64(300), created.ForSeconds)
+	require.Len(t, created.Actions, 1)
+	assert.Equal(t, "agent", created.Actions[0].Message.Target)
 }
 
 func TestDashboardTriggersCRUDContract(t *testing.T) {

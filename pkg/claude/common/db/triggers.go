@@ -12,13 +12,15 @@ import (
 )
 
 const (
-	TriggerScopeGlobal       = "global"
-	TriggerScopeGroup        = "group"
-	TriggerSourcePROpened    = "pr.opened"
-	TriggerSourcePRUpdated   = "pr.updated"
-	TriggerSourcePRMerged    = "pr.merged"
-	TriggerSourceCIFailed    = "ci.failed"
-	TriggerSourceCISucceeded = "ci.succeeded"
+	TriggerScopeGlobal              = "global"
+	TriggerScopeGroup               = "group"
+	TriggerSourcePROpened           = "pr.opened"
+	TriggerSourcePRUpdated          = "pr.updated"
+	TriggerSourcePRMerged           = "pr.merged"
+	TriggerSourceCIFailed           = "ci.failed"
+	TriggerSourceCISucceeded        = "ci.succeeded"
+	TriggerSourceAgentIdle          = "agent.idle"
+	TriggerSourceAgentAwaitingInput = "agent.awaiting_input"
 
 	TriggerDraftInclude = "include"
 	TriggerDraftExclude = "exclude"
@@ -48,7 +50,12 @@ var (
 
 func IsTriggerSource(source string) bool {
 	return slices.Contains([]string{TriggerSourcePROpened, TriggerSourcePRUpdated, TriggerSourcePRMerged,
-		TriggerSourceCIFailed, TriggerSourceCISucceeded}, strings.TrimSpace(source))
+		TriggerSourceCIFailed, TriggerSourceCISucceeded, TriggerSourceAgentIdle,
+		TriggerSourceAgentAwaitingInput}, strings.TrimSpace(source))
+}
+
+func IsTriggerStateSource(source string) bool {
+	return slices.Contains([]string{TriggerSourceAgentIdle, TriggerSourceAgentAwaitingInput}, strings.TrimSpace(source))
 }
 
 type TriggerAction struct {
@@ -87,6 +94,7 @@ type TriggerRule struct {
 	DraftFilter      string          `json:"draft_filter"`
 	DebounceSeconds  int64           `json:"debounce_seconds,omitempty"`
 	CooldownSeconds  int64           `json:"cooldown_seconds,omitempty"`
+	ForSeconds       int64           `json:"for_seconds,omitempty"`
 	Actions          []TriggerAction `json:"actions"`
 	CreatedAt        time.Time       `json:"created_at"`
 	UpdatedAt        time.Time       `json:"updated_at"`
@@ -120,13 +128,24 @@ func (r *TriggerRule) Validate() error {
 		return fmt.Errorf("%w: draft_filter must be include, exclude, or only", ErrTriggerInvalid)
 	}
 	if r.DebounceSeconds < 0 || r.DebounceSeconds > TriggerMaxDelaySeconds ||
-		r.CooldownSeconds < 0 || r.CooldownSeconds > TriggerMaxDelaySeconds {
+		r.CooldownSeconds < 0 || r.CooldownSeconds > TriggerMaxDelaySeconds ||
+		r.ForSeconds < 0 || r.ForSeconds > TriggerMaxDelaySeconds {
 		return fmt.Errorf("%w: debounce and cooldown must be between 0 and %d seconds", ErrTriggerInvalid, TriggerMaxDelaySeconds)
+	}
+	if IsTriggerStateSource(r.Source) && r.ForSeconds <= 0 {
+		return fmt.Errorf("%w: agent state sources require for_seconds greater than zero", ErrTriggerInvalid)
+	}
+	if !IsTriggerStateSource(r.Source) && r.ForSeconds != 0 {
+		return fmt.Errorf("%w: for_seconds is only valid for agent state sources", ErrTriggerInvalid)
 	}
 	if len(r.Actions) == 0 || len(r.Actions) > TriggerMaxActions {
 		return fmt.Errorf("%w: actions must contain 1-%d entries", ErrTriggerInvalid, TriggerMaxActions)
 	}
 	for i := range r.Actions {
+		if IsTriggerStateSource(r.Source) && r.Actions[i].Type == TriggerActionMessage &&
+			r.Actions[i].Message != nil && strings.TrimSpace(r.Actions[i].Message.Target) == "" {
+			r.Actions[i].Message.Target = "agent"
+		}
 		if err := r.Actions[i].validate(); err != nil {
 			return fmt.Errorf("%w: action %d: %v", ErrTriggerInvalid, i, err)
 		}
@@ -162,8 +181,8 @@ func (a *TriggerAction) validate() error {
 		if a.Message.Target == "" {
 			a.Message.Target = "pr.author_agent"
 		}
-		if a.Message.Target != "pr.author_agent" && a.Message.Target != "group" {
-			return errors.New("message target must be pr.author_agent or group")
+		if a.Message.Target != "pr.author_agent" && a.Message.Target != "agent" && a.Message.Target != "group" {
+			return errors.New("message target must be pr.author_agent, agent, or group")
 		}
 		if strings.TrimSpace(a.Message.BodyTemplate) == "" || len(a.Message.BodyTemplate) > TriggerTemplateMaxLen {
 			return errors.New("body_template is required and too long")
@@ -175,38 +194,63 @@ func (a *TriggerAction) validate() error {
 }
 
 type TriggerPREvent struct {
-	ID            int64     `json:"id"`
-	AgentPRID     int64     `json:"agent_pr_id"`
-	Source        string    `json:"source"`
-	EventRef      string    `json:"event_ref"`
-	PRURL         string    `json:"pr_url"`
-	PRNumber      int       `json:"pr_number"`
-	PRBranch      string    `json:"pr_branch,omitempty"`
-	PRAuthorAgent string    `json:"pr_author_agent"`
-	Draft         bool      `json:"draft"`
-	GroupIDs      []int64   `json:"group_ids"`
-	PreviousState string    `json:"previous_state,omitempty"`
-	CurrentState  string    `json:"current_state,omitempty"`
-	OccurredAt    time.Time `json:"occurred_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
-	Status        string    `json:"status"`
-	ProcessedAt   time.Time `json:"processed_at,omitempty"`
+	ID             int64     `json:"id"`
+	AgentPRID      int64     `json:"agent_pr_id"`
+	OriginRuleID   int64     `json:"origin_rule_id,omitempty"`
+	Source         string    `json:"source"`
+	EventRef       string    `json:"event_ref"`
+	PRURL          string    `json:"pr_url"`
+	PRNumber       int       `json:"pr_number"`
+	PRBranch       string    `json:"pr_branch,omitempty"`
+	PRAuthorAgent  string    `json:"pr_author_agent"`
+	AgentID        string    `json:"agent_id,omitempty"`
+	AgentHarness   string    `json:"agent_harness,omitempty"`
+	FactResult     string    `json:"fact_result,omitempty"`
+	FactObservedAt time.Time `json:"fact_observed_at,omitempty"`
+	DwellStartedAt time.Time `json:"dwell_started_at,omitempty"`
+	Draft          bool      `json:"draft"`
+	GroupIDs       []int64   `json:"group_ids"`
+	PreviousState  string    `json:"previous_state,omitempty"`
+	CurrentState   string    `json:"current_state,omitempty"`
+	OccurredAt     time.Time `json:"occurred_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	Status         string    `json:"status"`
+	ProcessedAt    time.Time `json:"processed_at,omitempty"`
+}
+
+type TriggerDwellState struct {
+	RuleID         int64     `json:"rule_id"`
+	AgentID        string    `json:"agent_id"`
+	RuleRevision   int64     `json:"rule_revision"`
+	Episode        int64     `json:"episode"`
+	Result         string    `json:"result"`
+	Detail         string    `json:"detail,omitempty"`
+	Harness        string    `json:"harness,omitempty"`
+	FactObservedAt time.Time `json:"fact_observed_at,omitempty"`
+	TrueSince      time.Time `json:"true_since,omitempty"`
+	FiredAt        time.Time `json:"fired_at,omitempty"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 type TriggerFiring struct {
-	ID            int64                  `json:"id"`
-	RuleID        int64                  `json:"rule_id"`
-	RuleRevision  int64                  `json:"rule_revision"`
-	EventID       int64                  `json:"event_id"`
-	EventRef      string                 `json:"event_ref"`
-	Source        string                 `json:"source,omitempty"`
-	PreviousState string                 `json:"previous_state,omitempty"`
-	CurrentState  string                 `json:"current_state,omitempty"`
-	Outcome       string                 `json:"outcome"`
-	Detail        string                 `json:"detail,omitempty"`
-	StartedAt     time.Time              `json:"started_at"`
-	FinishedAt    time.Time              `json:"finished_at,omitempty"`
-	Actions       []TriggerActionOutcome `json:"actions"`
+	ID             int64                  `json:"id"`
+	RuleID         int64                  `json:"rule_id"`
+	RuleRevision   int64                  `json:"rule_revision"`
+	EventID        int64                  `json:"event_id"`
+	EventRef       string                 `json:"event_ref"`
+	Source         string                 `json:"source,omitempty"`
+	PreviousState  string                 `json:"previous_state,omitempty"`
+	CurrentState   string                 `json:"current_state,omitempty"`
+	AgentID        string                 `json:"agent_id,omitempty"`
+	AgentHarness   string                 `json:"agent_harness,omitempty"`
+	FactResult     string                 `json:"fact_result,omitempty"`
+	FactObservedAt time.Time              `json:"fact_observed_at,omitempty"`
+	DwellStartedAt time.Time              `json:"dwell_started_at,omitempty"`
+	Outcome        string                 `json:"outcome"`
+	Detail         string                 `json:"detail,omitempty"`
+	StartedAt      time.Time              `json:"started_at"`
+	FinishedAt     time.Time              `json:"finished_at,omitempty"`
+	Actions        []TriggerActionOutcome `json:"actions"`
 }
 
 type TriggerActionOutcome struct {
@@ -254,10 +298,10 @@ func InsertTriggerRule(r *TriggerRule) (int64, error) {
 	}
 	res, err := d.Exec(`INSERT INTO trigger_rules
 		(name, enabled, owner_agent, operator_authored, scope_kind, group_id, source,
-		 author_is_agent, draft_filter, debounce_seconds, cooldown_seconds, actions_json, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 author_is_agent, draft_filter, debounce_seconds, cooldown_seconds, for_seconds, actions_json, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.Name, r.Enabled, r.OwnerAgent, r.OperatorAuthored, r.ScopeKind, group, r.Source,
-		boolPtrToNull(r.AuthorIsAgent), r.DraftFilter, r.DebounceSeconds, r.CooldownSeconds,
+		boolPtrToNull(r.AuthorIsAgent), r.DraftFilter, r.DebounceSeconds, r.CooldownSeconds, r.ForSeconds,
 		string(actions), dbTime(now), dbTime(now))
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "unique") {
@@ -284,12 +328,25 @@ func UpdateTriggerRule(id, rowVersion int64, r *TriggerRule) error {
 	if err != nil {
 		return err
 	}
-	res, err := d.Exec(`UPDATE trigger_rules SET name=?, enabled=?, owner_agent=?, operator_authored=?,
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var previousSource string
+	if err := tx.QueryRow(`SELECT source FROM trigger_rules WHERE id=? AND row_version=?`, id, rowVersion).
+		Scan(&previousSource); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrTriggerVersionConflict
+		}
+		return err
+	}
+	res, err := tx.Exec(`UPDATE trigger_rules SET name=?, enabled=?, owner_agent=?, operator_authored=?,
 		scope_kind=?, group_id=?, source=?, author_is_agent=?, draft_filter=?, debounce_seconds=?,
-		cooldown_seconds=?, actions_json=?, row_version=row_version+1, revision=revision+1, updated_at=?
+		cooldown_seconds=?, for_seconds=?, actions_json=?, row_version=row_version+1, revision=revision+1, updated_at=?
 		WHERE id=? AND row_version=?`, r.Name, r.Enabled, r.OwnerAgent, r.OperatorAuthored,
 		r.ScopeKind, group, r.Source, boolPtrToNull(r.AuthorIsAgent), r.DraftFilter,
-		r.DebounceSeconds, r.CooldownSeconds, string(actions), dbTime(time.Now().UTC()), id, rowVersion)
+		r.DebounceSeconds, r.CooldownSeconds, r.ForSeconds, string(actions), dbTime(time.Now().UTC()), id, rowVersion)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "unique") {
 			return ErrTriggerNameTaken
@@ -303,7 +360,12 @@ func UpdateTriggerRule(id, rowVersion int64, r *TriggerRule) error {
 	if n == 0 {
 		return ErrTriggerVersionConflict
 	}
-	return nil
+	if previousSource != r.Source {
+		if _, err := tx.Exec(`DELETE FROM trigger_dwell_states WHERE rule_id=?`, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func DeleteTriggerRule(id, rowVersion int64) error {
@@ -395,7 +457,7 @@ func HasEnabledTriggerSource(source string) (bool, error) {
 
 const triggerRuleSelect = `SELECT id, name, row_version, revision, enabled, owner_agent,
 	operator_authored, scope_kind, COALESCE(group_id,0), source, author_is_agent,
-	draft_filter, debounce_seconds, cooldown_seconds, actions_json, created_at, updated_at FROM trigger_rules`
+	draft_filter, debounce_seconds, cooldown_seconds, for_seconds, actions_json, created_at, updated_at FROM trigger_rules`
 
 type triggerRuleScanner interface{ Scan(...any) error }
 
@@ -406,7 +468,7 @@ func scanTriggerRule(s triggerRuleScanner) (*TriggerRule, error) {
 	var created, updated dbTimestamp
 	err := s.Scan(&r.ID, &r.Name, &r.RowVersion, &r.Revision, &r.Enabled, &r.OwnerAgent, &r.OperatorAuthored,
 		&r.ScopeKind, &r.GroupID, &r.Source, &author, &r.DraftFilter, &r.DebounceSeconds, &r.CooldownSeconds,
-		&actions, &created, &updated)
+		&r.ForSeconds, &actions, &created, &updated)
 	if err != nil {
 		return nil, err
 	}
@@ -661,6 +723,130 @@ func ObserveTriggerPRCI(agentPRID int64, state string, observedAt time.Time) (bo
 	return emitted, nil
 }
 
+func GetTriggerDwellState(ruleID int64, agentID string) (*TriggerDwellState, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	row := d.QueryRow(`SELECT rule_id,agent_id,rule_revision,episode,result,detail,harness,
+		fact_observed_at,true_since,fired_at,updated_at FROM trigger_dwell_states WHERE rule_id=? AND agent_id=?`,
+		ruleID, strings.TrimSpace(agentID))
+	state, err := scanTriggerDwellState(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return state, err
+}
+
+func ListTriggerDwellStates(ruleID int64) ([]TriggerDwellState, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT rule_id,agent_id,rule_revision,episode,result,detail,harness,
+		fact_observed_at,true_since,fired_at,updated_at FROM trigger_dwell_states
+		WHERE (?=0 OR rule_id=?) ORDER BY agent_id`, ruleID, ruleID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []TriggerDwellState
+	for rows.Next() {
+		state, err := scanTriggerDwellState(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *state)
+	}
+	return out, rows.Err()
+}
+
+func scanTriggerDwellState(row rowScanner) (*TriggerDwellState, error) {
+	var state TriggerDwellState
+	var observed, since, fired sql.NullInt64
+	var updated dbTimestamp
+	if err := row.Scan(&state.RuleID, &state.AgentID, &state.RuleRevision, &state.Episode,
+		&state.Result, &state.Detail, &state.Harness, &observed, &since, &fired, &updated); err != nil {
+		return nil, err
+	}
+	if observed.Valid {
+		state.FactObservedAt = time.Unix(0, observed.Int64).UTC()
+	}
+	if since.Valid {
+		state.TrueSince = time.Unix(0, since.Int64).UTC()
+	}
+	if fired.Valid {
+		state.FiredAt = time.Unix(0, fired.Int64).UTC()
+	}
+	state.UpdatedAt = updated.Time()
+	return &state, nil
+}
+
+// ApplyTriggerDwellState atomically persists one planned fact episode and, if
+// it matured, enqueues its immutable event. The rule revision/enabled check
+// prevents a cached scheduler plan from surviving a concurrent edit/disable.
+func ApplyTriggerDwellState(rule *TriggerRule, state TriggerDwellState, detail, harness string,
+	factObservedAt, now time.Time, fire bool) (bool, error) {
+	if rule == nil || rule.ID <= 0 || !IsTriggerStateSource(rule.Source) {
+		return false, ErrTriggerInvalid
+	}
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var source string
+	var enabled bool
+	var revision int64
+	if err := tx.QueryRow(`SELECT source,enabled,revision FROM trigger_rules WHERE id=?`, rule.ID).
+		Scan(&source, &enabled, &revision); err != nil {
+		return false, err
+	}
+	if !enabled || revision != rule.Revision || source != rule.Source {
+		return false, nil
+	}
+	_, err = tx.Exec(`INSERT INTO trigger_dwell_states
+		(rule_id,agent_id,rule_revision,episode,result,detail,harness,fact_observed_at,true_since,fired_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(rule_id,agent_id) DO UPDATE SET
+		rule_revision=excluded.rule_revision,episode=excluded.episode,result=excluded.result,
+		detail=excluded.detail,harness=excluded.harness,fact_observed_at=excluded.fact_observed_at,
+		true_since=excluded.true_since,fired_at=excluded.fired_at,updated_at=excluded.updated_at`,
+		rule.ID, state.AgentID, state.RuleRevision, state.Episode, state.Result, detail, harness,
+		nullableDBTime(factObservedAt), nullableDBTime(state.TrueSince), nullableDBTime(state.FiredAt), dbTime(now.UTC()))
+	if err != nil {
+		return false, err
+	}
+	if fire {
+		groups, err := triggerPRGroupsJSONTx(tx, state.AgentID)
+		if err != nil {
+			return false, err
+		}
+		eventRef := fmt.Sprintf("%s:%d:%d:%s:%d", source, rule.ID, rule.Revision, state.AgentID, state.Episode)
+		res, err := tx.Exec(`INSERT INTO trigger_pr_events
+			(origin_rule_id,source,event_ref,agent_id,agent_harness,fact_result,fact_observed_at,dwell_started_at,
+			 group_ids_json,occurred_at,updated_at,status)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(event_ref) DO NOTHING`, rule.ID, source, eventRef,
+			state.AgentID, strings.TrimSpace(harness), state.Result, nullableDBTime(factObservedAt),
+			nullableDBTime(state.TrueSince), groups, dbTime(now.UTC()), dbTime(now.UTC()), TriggerEventPending)
+		if err != nil {
+			return false, err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return false, err
+		}
+		fire = n == 1
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return fire, nil
+}
+
 func ListPendingTriggerPREvents(limit int) ([]TriggerPREvent, error) {
 	if limit <= 0 {
 		limit = 100
@@ -669,7 +855,8 @@ func ListPendingTriggerPREvents(limit int) ([]TriggerPREvent, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT id,agent_pr_id,source,event_ref,pr_url,pr_number,pr_branch,pr_author_agent,draft,
+	rows, err := d.Query(`SELECT id,agent_pr_id,origin_rule_id,source,event_ref,pr_url,pr_number,pr_branch,pr_author_agent,
+		agent_id,agent_harness,fact_result,fact_observed_at,dwell_started_at,draft,
 		group_ids_json,previous_state,current_state,occurred_at,updated_at,status,processed_at FROM trigger_pr_events
 		WHERE status IN ('pending','interrupted') AND processed_at IS NULL ORDER BY occurred_at,id LIMIT ?`, limit)
 	if err != nil {
@@ -679,15 +866,30 @@ func ListPendingTriggerPREvents(limit int) ([]TriggerPREvent, error) {
 	var out []TriggerPREvent
 	for rows.Next() {
 		var e TriggerPREvent
+		var agentPRID, originRuleID sql.NullInt64
 		var groups string
 		var occurred, updated dbTimestamp
-		var processed sql.NullInt64
-		if err := rows.Scan(&e.ID, &e.AgentPRID, &e.Source, &e.EventRef, &e.PRURL, &e.PRNumber, &e.PRBranch, &e.PRAuthorAgent, &e.Draft, &groups, &e.PreviousState, &e.CurrentState, &occurred, &updated, &e.Status, &processed); err != nil {
+		var observed, dwell, processed sql.NullInt64
+		if err := rows.Scan(&e.ID, &agentPRID, &originRuleID, &e.Source, &e.EventRef, &e.PRURL, &e.PRNumber, &e.PRBranch, &e.PRAuthorAgent,
+			&e.AgentID, &e.AgentHarness, &e.FactResult, &observed, &dwell, &e.Draft, &groups,
+			&e.PreviousState, &e.CurrentState, &occurred, &updated, &e.Status, &processed); err != nil {
 			return nil, err
+		}
+		if agentPRID.Valid {
+			e.AgentPRID = agentPRID.Int64
+		}
+		if originRuleID.Valid {
+			e.OriginRuleID = originRuleID.Int64
 		}
 		_ = json.Unmarshal([]byte(groups), &e.GroupIDs)
 		e.OccurredAt = occurred.Time()
 		e.UpdatedAt = updated.Time()
+		if observed.Valid {
+			e.FactObservedAt = time.Unix(0, observed.Int64).UTC()
+		}
+		if dwell.Valid {
+			e.DwellStartedAt = time.Unix(0, dwell.Int64).UTC()
+		}
 		if e.PRNumber == 0 {
 			e.PRNumber = derivePRNumber(e.PRURL)
 		}
@@ -832,6 +1034,7 @@ func ListTriggerFirings(ruleID int64, limit int) ([]TriggerFiring, error) {
 	}
 	rows, err := d.Query(`SELECT f.id,COALESCE(f.rule_id,0),f.rule_revision,f.event_id,f.event_ref,
 		COALESCE(e.source,''),COALESCE(e.previous_state,''),COALESCE(e.current_state,''),
+		COALESCE(e.agent_id,''),COALESCE(e.agent_harness,''),COALESCE(e.fact_result,''),e.fact_observed_at,e.dwell_started_at,
 		f.outcome,f.detail,f.started_at,f.finished_at FROM trigger_firings f
 		LEFT JOIN trigger_pr_events e ON e.id=f.event_id
 		WHERE (?=0 OR f.rule_id=?) ORDER BY f.started_at DESC,f.id DESC LIMIT ?`, ruleID, ruleID, limit)
@@ -843,10 +1046,17 @@ func ListTriggerFirings(ruleID int64, limit int) ([]TriggerFiring, error) {
 	for rows.Next() {
 		var f TriggerFiring
 		var st dbTimestamp
-		var fin sql.NullInt64
+		var observed, dwell, fin sql.NullInt64
 		if err := rows.Scan(&f.ID, &f.RuleID, &f.RuleRevision, &f.EventID, &f.EventRef, &f.Source,
-			&f.PreviousState, &f.CurrentState, &f.Outcome, &f.Detail, &st, &fin); err != nil {
+			&f.PreviousState, &f.CurrentState, &f.AgentID, &f.AgentHarness, &f.FactResult, &observed, &dwell,
+			&f.Outcome, &f.Detail, &st, &fin); err != nil {
 			return nil, err
+		}
+		if observed.Valid {
+			f.FactObservedAt = time.Unix(0, observed.Int64).UTC()
+		}
+		if dwell.Valid {
+			f.DwellStartedAt = time.Unix(0, dwell.Int64).UTC()
 		}
 		f.StartedAt = st.Time()
 		if fin.Valid {

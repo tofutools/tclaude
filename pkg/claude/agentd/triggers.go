@@ -13,6 +13,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	triggerlogic "github.com/tofutools/tclaude/pkg/claude/triggers"
 )
@@ -270,6 +271,7 @@ func runTriggerTick(now time.Time) {
 		slog.Warn("triggers: reconcile PR events", "error", err)
 		return
 	}
+	evaluateTriggerDwell(now)
 	events, err := db.ListPendingTriggerPREvents(100)
 	if err != nil {
 		slog.Warn("triggers: list pending PR events", "error", err)
@@ -279,6 +281,168 @@ func runTriggerTick(now time.Time) {
 		processTriggerPREvent(event, now)
 	}
 	reconcileTriggerWorkers(now)
+}
+
+type triggerFactObservation struct {
+	result   string
+	detail   string
+	harness  string
+	observed time.Time
+	since    time.Time
+}
+
+func evaluateTriggerDwell(now time.Time) {
+	rules, err := db.ListTriggerRules()
+	if err != nil {
+		slog.Warn("triggers: list dwell rules", "error", err)
+		return
+	}
+	agents, err := db.ListActiveAgents()
+	if err != nil {
+		slog.Warn("triggers: list dwell targets", "error", err)
+		return
+	}
+	sessions, sessionsErr := db.ListSessions()
+	alive, aliveErr := cachedLiveTmuxSessions()
+	byConv := make(map[string][]*db.SessionRow)
+	for _, row := range sessions {
+		byConv[row.ConvID] = append(byConv[row.ConvID], row)
+	}
+	for _, rule := range rules {
+		if !rule.Enabled || !db.IsTriggerStateSource(rule.Source) {
+			continue
+		}
+		seen := make(map[string]struct{})
+		for _, agent := range agents {
+			if !triggerDwellAgentInScope(rule, agent.AgentID) {
+				continue
+			}
+			seen[agent.AgentID] = struct{}{}
+			observation := observeTriggerAgentFact(rule.Source, agent, byConv[agent.CurrentConvID], alive,
+				sessionsErr, aliveErr, now)
+			previous, err := db.GetTriggerDwellState(rule.ID, agent.AgentID)
+			if err != nil {
+				slog.Warn("triggers: read dwell state", "rule", rule.ID, "agent", agent.AgentID, "error", err)
+				continue
+			}
+			var prior *triggerlogic.DwellState
+			if previous != nil {
+				prior = &triggerlogic.DwellState{RuleRevision: previous.RuleRevision, Episode: previous.Episode,
+					Result: previous.Result, TrueSince: previous.TrueSince, FiredAt: previous.FiredAt}
+			}
+			plan := triggerlogic.PlanDwell(prior, triggerlogic.DwellInput{RuleRevision: rule.Revision,
+				For: time.Duration(rule.ForSeconds) * time.Second, Result: observation.result,
+				FactSince: observation.since, Now: now})
+			state := db.TriggerDwellState{RuleID: rule.ID, AgentID: agent.AgentID, RuleRevision: plan.State.RuleRevision,
+				Episode: plan.State.Episode, Result: plan.State.Result, Detail: observation.detail,
+				Harness: observation.harness, FactObservedAt: observation.observed, TrueSince: plan.State.TrueSince,
+				FiredAt: plan.State.FiredAt, UpdatedAt: now}
+			if _, err := db.ApplyTriggerDwellState(rule, state, observation.detail, observation.harness,
+				observation.observed, now, plan.Fire); err != nil {
+				slog.Warn("triggers: apply dwell state", "rule", rule.ID, "agent", agent.AgentID, "error", err)
+			}
+		}
+		states, err := db.ListTriggerDwellStates(rule.ID)
+		if err != nil {
+			slog.Warn("triggers: list prior dwell targets", "rule", rule.ID, "error", err)
+			continue
+		}
+		for _, previous := range states {
+			if _, ok := seen[previous.AgentID]; ok {
+				continue
+			}
+			prior := triggerlogic.DwellState{RuleRevision: previous.RuleRevision, Episode: previous.Episode,
+				Result: previous.Result, TrueSince: previous.TrueSince, FiredAt: previous.FiredAt}
+			plan := triggerlogic.PlanDwell(&prior, triggerlogic.DwellInput{RuleRevision: rule.Revision,
+				For: time.Duration(rule.ForSeconds) * time.Second, Result: triggerlogic.FactUnknown, Now: now})
+			state := db.TriggerDwellState{RuleID: rule.ID, AgentID: previous.AgentID,
+				RuleRevision: plan.State.RuleRevision, Episode: plan.State.Episode, Result: plan.State.Result,
+				Detail: "agent is not currently active in the rule scope", Harness: previous.Harness,
+				FactObservedAt: now, FiredAt: plan.State.FiredAt, UpdatedAt: now}
+			if _, err := db.ApplyTriggerDwellState(rule, state, state.Detail, state.Harness, now, now, false); err != nil {
+				slog.Warn("triggers: interrupt out-of-scope dwell", "rule", rule.ID, "agent", previous.AgentID, "error", err)
+			}
+		}
+	}
+}
+
+func triggerDwellAgentInScope(rule *db.TriggerRule, agentID string) bool {
+	if rule.ScopeKind == db.TriggerScopeGlobal {
+		return true
+	}
+	groups, err := db.ListGroupsForAgent(agentID)
+	if err != nil {
+		return false
+	}
+	for _, group := range groups {
+		if group.ID == rule.GroupID && !group.IsArchived() {
+			return true
+		}
+	}
+	return false
+}
+
+func observeTriggerAgentFact(source string, agent *db.Agent, rows []*db.SessionRow,
+	alive map[string]struct{}, sessionsErr, aliveErr error, now time.Time) triggerFactObservation {
+	unknown := func(detail string) triggerFactObservation {
+		return triggerFactObservation{result: triggerlogic.FactUnknown, detail: detail, observed: now}
+	}
+	if sessionsErr != nil || aliveErr != nil {
+		return unknown("live session observation is unavailable")
+	}
+	var current *db.SessionRow
+	for _, row := range rows {
+		if _, ok := alive[row.TmuxSession]; !ok || row.TmuxSession == "" {
+			continue
+		}
+		if current == nil || row.UpdatedAt.After(current.UpdatedAt) {
+			current = row
+		}
+	}
+	if current == nil {
+		return unknown("agent has no live observed session")
+	}
+	knownHarness, ok := harness.Get(current.Harness)
+	if !ok {
+		obs := unknown("agent harness is unknown to this tclaude build")
+		obs.harness = current.Harness
+		return obs
+	}
+	observation := triggerFactObservation{result: triggerlogic.FactFalse, harness: knownHarness.Name, observed: now}
+	switch source {
+	case db.TriggerSourceAgentIdle:
+		observation.detail = "agent.idle uses only the live session idle status and last harness hook; group messages and pane keystrokes are excluded"
+		if current.Status == "" || current.LastHook.IsZero() {
+			observation.result = triggerlogic.FactUnknown
+			observation.detail = "agent.idle has no usable harness-hook observation"
+		} else if current.Status == session.StatusIdle {
+			observation.result = triggerlogic.FactTrue
+			observation.since = current.LastHook.UTC()
+		}
+	case db.TriggerSourceAgentAwaitingInput:
+		observation.detail = "agent.awaiting_input is exact harness question-waiting state; awaiting_permission is explicitly excluded"
+		if !knownHarness.SupportsAwaitingInputObservation() {
+			observation.result = triggerlogic.FactUnknown
+			observation.detail = "harness does not expose awaiting-input observation; awaiting_permission is explicitly excluded"
+		} else {
+			if knownHarness.Name == harness.CodexName {
+				runtime, err := db.GetCodexAppServerRuntimeByConvID(current.ConvID)
+				if err != nil || runtime == nil || runtime.State != db.CodexAppServerReady {
+					observation.result = triggerlogic.FactUnknown
+					observation.detail = "Codex awaiting-input observation requires a ready managed app-server; awaiting_permission is explicitly excluded"
+					break
+				}
+			}
+			switch current.Status {
+			case "":
+				observation.result = triggerlogic.FactUnknown
+			case session.StatusAwaitingInput:
+				observation.result = triggerlogic.FactTrue
+			}
+		}
+	}
+	_ = agent
+	return observation
 }
 
 // RunTriggerTickForTest executes one complete reconciliation synchronously.
@@ -292,6 +456,9 @@ func processTriggerPREvent(event db.TriggerPREvent, now time.Time) {
 	}
 	allTerminal := true
 	for _, candidate := range rules {
+		if db.IsTriggerStateSource(event.Source) && candidate.ID != event.OriginRuleID {
+			continue
+		}
 		last, err := db.LatestCompletedTriggerFiring(candidate.ID)
 		if err != nil {
 			slog.Warn("triggers: read cooldown", "rule", candidate.ID, "error", err)
@@ -301,7 +468,11 @@ func processTriggerPREvent(event db.TriggerPREvent, now time.Time) {
 		if last != nil {
 			lastAt = last.FinishedAt
 		}
-		spawnedByRule, err := db.RuleSpawnedAgent(candidate.ID, event.PRAuthorAgent)
+		selectedAgent := event.PRAuthorAgent
+		if event.AgentID != "" {
+			selectedAgent = event.AgentID
+		}
+		spawnedByRule, err := db.RuleSpawnedAgent(candidate.ID, selectedAgent)
 		if err != nil {
 			slog.Warn("triggers: read loop provenance", "rule", candidate.ID, "error", err)
 			return
@@ -614,7 +785,11 @@ func executeManagedSpawn(rule *db.TriggerRule, index int, spec *db.TriggerSpawnA
 
 	name := triggerlogic.RenderTemplate(spec.NameTemplate, event, g.Name)
 	if strings.TrimSpace(name) == "" {
-		name = fmt.Sprintf("trigger-%d-pr-%d", rule.ID, event.PRNumber)
+		if event.AgentID != "" {
+			name = fmt.Sprintf("trigger-%d-agent", rule.ID)
+		} else {
+			name = fmt.Sprintf("trigger-%d-pr-%d", rule.ID, event.PRNumber)
+		}
 	}
 	p := spawnParams{Name: name, Role: roleLabel, Descr: profile.Descr, InitialMessage: triggerlogic.RenderTemplate(spec.InstructionTemplate, event, g.Name),
 		ProfileContext: profileContext, Cwd: cwd, ReplyToConv: ownerConv, SpawnedByConv: ownerConv, IsOwner: isOwner, PermissionOverrides: overrides, Async: true}
@@ -728,12 +903,16 @@ func executeTriggerMessage(rule *db.TriggerRule, spec *db.TriggerMessageAction, 
 		}
 		groupName = g.Name
 		groupID = g.ID
-		// The bounded v1 message action addresses the PR author while stamping
+		// The bounded group message action addresses the selected agent while stamping
 		// the rule's group route; later slices may add explicit multicast.
 	}
-	targetConv, err = db.CurrentConvForAgent(event.PRAuthorAgent)
+	targetAgent := event.PRAuthorAgent
+	if spec.Target == "agent" || targetAgent == "" {
+		targetAgent = event.AgentID
+	}
+	targetConv, err = db.CurrentConvForAgent(targetAgent)
 	if err != nil || targetConv == "" {
-		return "target_invalid", "PR author has no current conversation", 0
+		return "target_invalid", "selected agent has no current conversation", 0
 	}
 	if !rule.OperatorAuthored {
 		via, _, routeErr := db.CanSenderReachTarget(ownerConv, targetConv)
@@ -744,7 +923,7 @@ func executeTriggerMessage(rule *db.TriggerRule, spec *db.TriggerMessageAction, 
 			groupID = via.ID
 			groupName = via.Name
 		} else if resolvePermission(ownerConv, PermMessageDirect) != permAllow {
-			return "permission_denied", "owner cannot reach PR author and lacks " + PermMessageDirect, 0
+			return "permission_denied", "owner cannot reach selected agent and lacks " + PermMessageDirect, 0
 		}
 	}
 	subject := triggerlogic.RenderTemplate(spec.SubjectTemplate, event, groupName)

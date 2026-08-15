@@ -42,22 +42,28 @@ func Evaluate(rule *db.TriggerRule, event db.TriggerPREvent, now time.Time, last
 		return Decision{Outcome: OutcomeRuleTooNew, Detail: "rule was installed after this event occurred"}
 	}
 	if spawnedByRule {
-		return Decision{Outcome: OutcomeSuppressedLoop, Detail: "PR author was spawned by this rule"}
+		return Decision{Outcome: OutcomeSuppressedLoop, Detail: "selected agent was spawned by this rule"}
 	}
-	if rule.AuthorIsAgent != nil && !*rule.AuthorIsAgent {
+	stateSource := db.IsTriggerStateSource(rule.Source)
+	if !stateSource && rule.AuthorIsAgent != nil && !*rule.AuthorIsAgent {
 		return Decision{Outcome: OutcomeOutOfScope, Detail: "PR observations are agent-authored"}
 	}
 	if rule.ScopeKind == db.TriggerScopeGroup && !containsID(event.GroupIDs, rule.GroupID) {
+		if stateSource {
+			return Decision{Outcome: OutcomeOutOfScope, Detail: fmt.Sprintf("selected agent is not in group %d", rule.GroupID)}
+		}
 		return Decision{Outcome: OutcomeOutOfScope, Detail: fmt.Sprintf("PR author was not in group %d when the PR was presented", rule.GroupID)}
 	}
-	switch rule.DraftFilter {
-	case db.TriggerDraftExclude:
-		if event.Draft {
-			return Decision{Outcome: OutcomeDraftFiltered, Detail: "draft PR excluded"}
-		}
-	case db.TriggerDraftOnly:
-		if !event.Draft {
-			return Decision{Outcome: OutcomeDraftFiltered, Detail: "non-draft PR excluded"}
+	if !stateSource {
+		switch rule.DraftFilter {
+		case db.TriggerDraftExclude:
+			if event.Draft {
+				return Decision{Outcome: OutcomeDraftFiltered, Detail: "draft PR excluded"}
+			}
+		case db.TriggerDraftOnly:
+			if !event.Draft {
+				return Decision{Outcome: OutcomeDraftFiltered, Detail: "non-draft PR excluded"}
+			}
 		}
 	}
 	due := event.UpdatedAt.Add(time.Duration(rule.DebounceSeconds) * time.Second)
@@ -89,6 +95,11 @@ func RenderTemplate(raw string, event db.TriggerPREvent, group string) string {
 		"{{event.source}}", event.Source,
 		"{{event.previous_state}}", event.PreviousState,
 		"{{event.current_state}}", event.CurrentState,
+		"{{event.fact_result}}", event.FactResult,
+		"{{event.fact_observed_at}}", formatTriggerTime(event.FactObservedAt),
+		"{{event.dwell_started_at}}", formatTriggerTime(event.DwellStartedAt),
+		"{{agent.id}}", event.AgentID,
+		"{{agent.harness}}", event.AgentHarness,
 		"{{pr.url}}", event.PRURL,
 		"{{pr.number}}", fmt.Sprintf("%d", event.PRNumber),
 		"{{pr.branch}}", event.PRBranch,
@@ -96,4 +107,11 @@ func RenderTemplate(raw string, event db.TriggerPREvent, group string) string {
 		"{{group}}", group,
 	}
 	return strings.NewReplacer(replacements...).Replace(raw)
+}
+
+func formatTriggerTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }

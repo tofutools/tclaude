@@ -30,9 +30,13 @@ func TestMigrateV212toV213PreservesRuleEventAndFiringLedger(t *testing.T) {
 
 	d, err := Open()
 	require.NoError(t, err)
-	_, err = d.Exec(`DROP TABLE trigger_pr_observations; UPDATE schema_version SET version=212`)
+	_, err = d.Exec(`DROP TABLE trigger_pr_observations; DROP TABLE trigger_dwell_states; UPDATE schema_version SET version=212`)
 	require.NoError(t, err)
 	require.NoError(t, migrateV212toV213(d))
+	// Restore today's additive dwell columns before exercising today's read
+	// helpers. This test deliberately rolls only the trigger tables back to the
+	// v212 shape; the unrelated cron-managed-worker schema is already v214.
+	require.NoError(t, migrateV214toV215(d))
 
 	rule, err := GetTriggerRule(ruleID)
 	require.NoError(t, err)
