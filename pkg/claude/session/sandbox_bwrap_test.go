@@ -1302,6 +1302,8 @@ func TestBwrapArgsConstructsHostOpenRootWithoutUnsharingNetwork(t *testing.T) {
 	assert.NotEqual(t, -1, indexOfBwrapTriplet(inherited, "--ro-bind", "/"))
 	assert.NotContains(t, inherited, "--unshare-pid")
 	assert.Equal(t, -1, indexOfBwrapTriplet(inherited, "--ro-bind", "/usr"))
+	assert.NotContains(t, inherited, tclaudeLayerConstructedRootTclaudePath,
+		"an inherited root already exposes the host CLI and needs no projected copy")
 	assert.Empty(t, indicesOfBwrapTriplet(inherited, "--ro-bind", policySocket),
 		"an inherited root has no constructed root to allowlist sockets into")
 }
