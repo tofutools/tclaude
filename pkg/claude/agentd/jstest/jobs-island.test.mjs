@@ -189,6 +189,62 @@ test('Standing-order target renders from the stable agent without a live convers
   await mounted.unmount();
 });
 
+test('cron spawn rows expose honest action and worker outcomes while feature-off editing stays inert', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createJobsState }, { JobsApp }] = await Promise.all([
+    harness.importDashboardModule('js/jobs-state.js'),
+    harness.importDashboardModule('js/jobs-island.js'),
+  ]);
+  const data = page();
+  data.jobs = [{ kind: 'cron', cron: {
+    id: 11, name: 'night-review', enabled: true, target_kind: 'group', group_name: 'alpha',
+    owner_label: 'Johan', last_run_status: 'permission_denied', last_run_at: '2026-07-11T10:00:00Z',
+    interval_seconds: 3600, action_kind: 'spawn', spawn_profile: 'reviewer',
+    spawn_roles: ['reviewer'], spawn_instruction_template: 'Review the queue',
+    spawn_concurrency_policy: 'Allow', spawn_max_live_workers: 2,
+  } }];
+  data.paging.jobs = { offset: 0, limit: 50, total: 1, total_unfiltered: 1 };
+  const snapshot = harness.signals.signal(data);
+  const state = createJobsState({ snapshot, prefs: prefs() });
+  state.initialize(); state.beginRequest(1); state.commitRequest(1);
+  let logLoads = 0;
+  const actions = {
+    refresh: () => {}, openCronCreate: () => {}, openCronEdit: () => {}, openCronDuplicate: () => {},
+    runCron: () => {}, toggleCron: () => {}, deleteCron: () => {},
+    loadCronLogs: async () => {
+      logLoads += 1;
+      return [
+        { id: 2, fired_at: '2026-07-11T10:00:00Z', status: 'permission_denied', error_msg: 'owner lacks permission' },
+        { id: 1, fired_at: '2026-07-11T09:00:00Z', status: 'spawned', worker_id: 42, worker_agent: 'agt_worker_identity' },
+      ];
+    },
+    downloadExport: () => {}, dismissExport: () => {},
+  };
+  const mounted = await harness.mount(harness.html`<${JobsApp} state=${state} actions=${actions} />`);
+  const row = mounted.container.querySelector('tr[data-key="cron-11"]');
+  assert.match(row.textContent, /⚡ spawn/);
+  assert.match(row.textContent, /reviewer.*Allow.*up to 2/);
+  assert.ok(row.querySelector('.state-error'), 'the real permission denial is never painted as success');
+  await harness.act(() => harness.fireEvent(getByRole(row, 'button', { name: 'logs' }), 'click'));
+  await harness.act(() => Promise.resolve());
+  assert.equal(logLoads, 1);
+  const inspector = mounted.container.querySelector('.cron-run-inspector-row');
+  assert.match(inspector.textContent, /permission_denied/);
+  assert.match(inspector.textContent, /owner lacks permission/);
+  assert.match(inspector.textContent, /spawned/);
+  assert.match(inspector.textContent, /agt_worker/);
+  assert.match(inspector.textContent, /worker #42/);
+
+  await harness.act(() => { snapshot.value = { ...data, triggers_enabled: false }; });
+  const gatedRow = mounted.container.querySelector('tr[data-key="cron-11"]');
+  assert.equal(getByRole(gatedRow, 'button', { name: 'edit' }).disabled, true);
+  assert.equal(getByRole(gatedRow, 'button', { name: 'duplicate' }).disabled, true);
+  assert.match(getByRole(gatedRow, 'button', { name: 'edit' }).title, /features\.triggers/);
+  assert.match(gatedRow.textContent, /features\.triggers is off.*editing unavailable/);
+  assert.match(gatedRow.textContent, /⚡ spawn/, 'feature-off history remains readable');
+  await mounted.unmount();
+});
+
 test('Triggers sub-view stays absent and a stale deep link falls back while the feature is off', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createJobsState }, { JobsApp }] = await Promise.all([

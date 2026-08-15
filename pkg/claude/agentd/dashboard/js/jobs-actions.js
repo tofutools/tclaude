@@ -105,6 +105,12 @@ export function createJobsActions({
     explainCron: (expr) => requestMutation('/api/cron/explain', {
       body: { expr }, refreshAfter: false,
     }),
+    loadCronLogs: async (id) => {
+      const response = await requestMutation(`/api/cron/${encodeURIComponent(id)}/logs?limit=25`, {
+        method: 'GET', refreshAfter: false,
+      });
+      return Array.isArray(response?.runs) ? response.runs : [];
+    },
     saveCron: async ({ path, method, payload }) => {
       try {
         const cron = await requestMutation(path, {
@@ -151,9 +157,12 @@ export function createJobsActions({
         requestMutation(`/api/cron/${encodeURIComponent(job.id)}/${verb}`, { method: 'POST' }));
     },
     runCron: async (job) => {
+      const spawn = job.action_kind === 'spawn';
       const yes = await confirm({
         title: 'Fire this cron job now?',
-        body: "Sends the job's message to its target immediately. Stamps last_run_at so the regular cadence resumes from now.",
+        body: spawn
+          ? 'Attempts the configured worker spawn immediately. The firing is re-authorized and recorded in run history. Stamps last_run_at so the regular cadence resumes from now.'
+          : "Sends the job's message to its target immediately. Stamps last_run_at so the regular cadence resumes from now.",
         meta: job.name,
         okLabel: 'Fire now',
       });

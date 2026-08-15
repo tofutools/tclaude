@@ -285,7 +285,9 @@ func jobRowMatches(r dashboardJobRow, q string) bool {
 		hay = []string{jobKindCron, c.Name, c.Subject, c.Body,
 			c.OwnerLabel, c.OwnerAgent, c.OwnerConv,
 			c.TargetLabel, c.TargetAgent, c.TargetConv,
-			c.GroupName, c.LastRunStatus}
+			c.GroupName, c.LastRunStatus, c.ActionKind, c.SpawnProfile,
+			strings.Join(c.SpawnRoleRefs, " "), c.SpawnNameTemplate,
+			c.SpawnInstructionTemplate, c.SpawnConcurrencyPolicy}
 	case r.Order != nil:
 		o := r.Order
 		hay = []string{jobKindStandingOrder, o.Name, o.Summary,

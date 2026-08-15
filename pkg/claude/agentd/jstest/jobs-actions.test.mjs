@@ -113,12 +113,14 @@ test('Jobs cron transport returns canonical rows without awaiting the follow-up 
     requestMutation: async (path, options) => {
       calls.push({ path, options });
       if (path === '/api/cron/explain') return { valid: true, description: 'daily' };
+      if (path.includes('/logs')) return { runs: [{ id: 3, status: 'spawned', worker_agent: 'agt_worker' }] };
       return { id: 8, name: 'saved' };
     },
     refresh: () => { refreshed += 1; return new Promise(() => {}); },
     confirm: async () => true, notify: () => {}, download: () => {},
   });
   assert.deepEqual(await actions.explainCron('@daily'), { valid: true, description: 'daily' });
+  assert.deepEqual(await actions.loadCronLogs(8), [{ id: 3, status: 'spawned', worker_agent: 'agt_worker' }]);
   const saved = await actions.saveCron({
     path: '/api/cron', method: 'POST', payload: { target: 'agt_one' },
   });
@@ -127,6 +129,7 @@ test('Jobs cron transport returns canonical rows without awaiting the follow-up 
   assert.equal(refreshed, 1, 'refresh starts but cannot pin the accepted dialog mutation');
   assert.deepEqual(calls, [
     { path: '/api/cron/explain', options: { body: { expr: '@daily' }, refreshAfter: false } },
+    { path: '/api/cron/8/logs?limit=25', options: { method: 'GET', refreshAfter: false } },
     { path: '/api/cron', options: { method: 'POST', body: { target: 'agt_one' }, refreshAfter: false } },
   ]);
 });

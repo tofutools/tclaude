@@ -21,6 +21,10 @@ test('cron dialog model preserves create, edit, duplicate, and validation contra
       name: 'daily', body: 'Report', subject: 'Status', enabled: true,
       run_immediately: false,
       queue_when_offline: false,
+      action_kind: 'message', spawn_profile: '', spawn_roles: [],
+      spawn_name_template: '', spawn_instruction_template: '',
+      spawn_concurrency_policy: 'Forbid', spawn_max_live_workers: 1,
+      spawn_worker_deadline_seconds: 0,
       owner: 'agt_owner', interval: '5m', cron_expr: '',
     },
   }, 'an untouched solo target is omitted from PATCH');
@@ -30,6 +34,10 @@ test('cron dialog model preserves create, edit, duplicate, and validation contra
     name: 'daily', body: 'Report', subject: 'Status', enabled: true,
     run_immediately: false,
     queue_when_offline: false,
+    action_kind: 'message', spawn_profile: '', spawn_roles: [],
+    spawn_name_template: '', spawn_instruction_template: '',
+    spawn_concurrency_policy: 'Forbid', spawn_max_live_workers: 1,
+    spawn_worker_deadline_seconds: 0,
     owner: 'agt_owner', interval: '5m', cron_expr: '', target: 'agt_next', group_id: 0,
   });
 
@@ -41,7 +49,8 @@ test('cron dialog model preserves create, edit, duplicate, and validation contra
     path: '/api/cron', method: 'POST',
     payload: {
       name: 'fanout', target: 'group:alpha', subject: '', body: 'Standup',
-      enabled: false, run_immediately: false, queue_when_offline: false, cron_expr: '@daily', role: 'dev',
+      enabled: false, run_immediately: false, queue_when_offline: false,
+      action_kind: 'message', cron_expr: '@daily', role: 'dev',
     },
   });
 
@@ -67,6 +76,50 @@ test('cron dialog model preserves create, edit, duplicate, and validation contra
   assert.equal(model.validateCronDraft({ kind: 'edit', originalExpr: '@daily' }, expressionEdit).code, 'edit-interval');
   assert.equal(model.cronDraftDirty(draft, model.createCronDraft(model.cronJobToPrefill(job))), false);
   assert.equal(model.cronDraftDirty({ ...draft, body: 'changed' }, draft), true);
+
+  const spawn = model.createCronDraft({
+    name: 'night-review', owner: 'agt_owner', targetMode: 'group', groupName: 'alpha',
+    interval: '1h', actionKind: 'spawn', spawnProfile: 'reviewer',
+    spawnRoles: ['reviewer'], spawnNameTemplate: 'review-{{fire_time}}',
+    spawnInstructionTemplate: 'Review the queue at {{fire_time}}',
+    spawnConcurrencyPolicy: 'Allow', spawnMaxLiveWorkers: 2,
+    spawnWorkerDeadlineSeconds: 1800,
+  });
+  assert.equal(model.validateCronDraft({ kind: 'create' }, spawn), null);
+  assert.deepEqual(model.buildCronMutation({ kind: 'create' }, spawn), {
+    path: '/api/cron', method: 'POST', payload: {
+      name: 'night-review', target: 'group:alpha', subject: '', body: '', enabled: true,
+      run_immediately: false, queue_when_offline: false, action_kind: 'spawn',
+      spawn_profile: 'reviewer', spawn_roles: ['reviewer'],
+      spawn_name_template: 'review-{{fire_time}}',
+      spawn_instruction_template: 'Review the queue at {{fire_time}}',
+      spawn_concurrency_policy: 'Allow', spawn_max_live_workers: 2,
+      spawn_worker_deadline_seconds: 1800, interval: '1h', owner: 'agt_owner',
+    },
+  });
+  spawn.target.mode = 'solo';
+  assert.equal(model.validateCronDraft({ kind: 'create' }, spawn).code, 'spawn-group');
+  spawn.target.mode = 'group';
+  spawn.spawn.roles = [];
+  assert.deepEqual(model.buildCronMutation({ kind: 'edit', id: 7 }, spawn).payload.spawn_roles, [],
+    'an explicit empty role array clears the replacement set');
+
+  const spawnEdit = model.createCronDraft(model.cronJobToPrefill({
+    id: 12, name: 'existing-spawn', owner_agent: 'agt_owner', target_kind: 'group', group_name: 'alpha',
+    interval_seconds: 900, action_kind: 'spawn', spawn_profile: 'review-kit', spawn_roles: ['reviewer'],
+    spawn_name_template: 'worker-{{fire_time}}', spawn_instruction_template: 'Review at {{fire_time}}',
+    spawn_concurrency_policy: 'Replace', spawn_max_live_workers: 1,
+    spawn_worker_deadline_seconds: 900, enabled: true,
+  }));
+  assert.equal(spawnEdit.actionKind, 'spawn');
+  assert.equal(spawnEdit.target.mode, 'group');
+  assert.equal(spawnEdit.spawn.profile, 'review-kit');
+  assert.deepEqual(spawnEdit.spawn.roles, ['reviewer']);
+  const spawnPatch = model.buildCronMutation({ kind: 'edit', id: 12, originalExpr: '' }, spawnEdit);
+  assert.equal(spawnPatch.method, 'PATCH');
+  assert.equal(spawnPatch.payload.action_kind, 'spawn');
+  assert.equal(spawnPatch.payload.spawn_concurrency_policy, 'Replace');
+  assert.equal(spawnPatch.payload.target, 'group:alpha');
 });
 
 test('standing-order dialog model preserves stable targets, explicit any-source semantics, and row-version CAS', async (t) => {
