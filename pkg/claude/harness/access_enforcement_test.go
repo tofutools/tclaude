@@ -1644,6 +1644,26 @@ func TestPrivateRoutedNamespaceRequiresExactReadyLinuxLayer(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, EnforceNone, filteredCopilot.NetworkList,
 		"private default-allow evidence must not overclaim destination filtering")
+	for _, rules := range []sandboxpolicy.NetworkRules{
+		{
+			Mode:      sandboxpolicy.AccessModeList,
+			Allow:     []sandboxpolicy.NetworkAllowEntry{{CIDR: "192.0.2.0/24"}},
+			Namespace: sandboxpolicy.NetworkNamespacePrivate,
+			Engine:    sandboxpolicy.NetworkEngineProxy,
+		},
+		{
+			Mode:      sandboxpolicy.AccessModeOpen,
+			Deny:      []sandboxpolicy.NetworkAllowEntry{{CIDR: "192.0.2.0/24"}},
+			Namespace: sandboxpolicy.NetworkNamespacePrivate,
+			Engine:    sandboxpolicy.NetworkEngineProxy,
+		},
+	} {
+		_, proxyErr := accessEnforcementTable(
+			MustGet(CopilotName), sandboxpolicy.ImplementationTclaudeLayer,
+			sandboxpolicy.ResolvedAxes{Network: rules}, CopilotSandboxOff, "linux", true)
+		require.ErrorContains(t, proxyErr,
+			"widening them would switch the launch to the packet gateway")
+	}
 	h := MustGet(OpenCodeName)
 
 	_, err = accessEnforcementTable(

@@ -64,7 +64,7 @@ func TestCopilotTclaudeLayerNetworkSmoke(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dirs := copilotfixture.NewSandboxDirs(t)
+			dirs := newCopilotTclaudeLayerSmokeDirs(t)
 			mock := copilotfixture.NewMockProviderAt(t,
 				tc.providerAddress+":0",
 				[]copilotfixture.Turn{{Text: "MOCK SANDBOX ANSWER"}})
@@ -120,4 +120,29 @@ func TestCopilotTclaudeLayerNetworkSmoke(t *testing.T) {
 				fmt.Sprintf("%s must preserve Copilot session state", tc.name))
 		})
 	}
+}
+
+func newCopilotTclaudeLayerSmokeDirs(t *testing.T) copilotfixture.Dirs {
+	t.Helper()
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	base := filepath.Join(home, ".cache")
+	require.NoError(t, os.MkdirAll(base, 0o700))
+	root, err := os.MkdirTemp(base, "tclaude-copilot-network-smoke-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	root, err = filepath.EvalSymlinks(root)
+	require.NoError(t, err)
+
+	dirs := copilotfixture.Dirs{
+		Root:     root,
+		Home:     filepath.Join(root, "copilot-home"),
+		Cache:    filepath.Join(root, "cache"),
+		XDGCache: filepath.Join(root, "xdg-cache"),
+		WorkDir:  filepath.Join(root, "work"),
+	}
+	for _, dir := range []string{dirs.Home, dirs.Cache, dirs.XDGCache, dirs.WorkDir} {
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+	}
+	return dirs
 }

@@ -365,6 +365,18 @@ func accessEnforcementTable(
 				"network.namespace %q requires the Linux private-network prerequisites (user/network namespaces, bubblewrap, pasta, nftables, and required capabilities)",
 				axes.Network.Namespace)
 		}
+		if h.Name == CopilotName && axes.Network.Engine == sandboxpolicy.NetworkEngineProxy {
+			discriminating, discriminatingErr :=
+				sandboxpolicy.NetworkRulesAreDiscriminating(axes.Network)
+			if discriminatingErr != nil {
+				return accessEnforcementTableRow{}, discriminatingErr
+			}
+			if discriminating {
+				return accessEnforcementTableRow{}, fmt.Errorf(
+					"network.engine %q cannot be used with Copilot destination rules in a private namespace: Copilot does not enforce those rules, and widening them would switch the launch to the packet gateway after proxy prerequisites were checked; remove the destination rules to use private routed networking, or select the packet engine and accept the disclosed unsupported-rule widening",
+					axes.Network.Engine)
+			}
+		}
 	}
 	if implementation.OmitsOSConfinement() {
 		// `resource-only` shares every verdict AND the mechanism string with
