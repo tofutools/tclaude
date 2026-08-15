@@ -536,6 +536,22 @@ var permissionRegistry = []PermSlug{
 		Description: "Create, resume, and explicitly reconcile daemon-owned process runs, including executing the run's persisted authorized program profiles. Not default-granted; requires an explicit grant or one-shot human approval.",
 	},
 	{
+		Slug: PermTriggersRead, GroupSibling: PermGroupsTriggersRead,
+		Description: "Read global trigger rules and their firing ledger. Group-scoped authority uses groups.triggers.read.",
+	},
+	{
+		Slug: PermTriggersManage, GroupSibling: PermGroupsTriggersManage,
+		Description: "Create and mutate global trigger rules. Group-scoped authority uses groups.triggers.manage.",
+	},
+	{
+		Slug: PermGroupsTriggersRead, OwnerImplied: true, ScopeDims: []ScopeDim{ScopeDimGroup},
+		Description: "Read trigger rules and firing history for an owned group.",
+	},
+	{
+		Slug: PermGroupsTriggersManage, OwnerImplied: true, ScopeDims: []ScopeDim{ScopeDimGroup},
+		Description: "Create and mutate trigger rules for an owned group.",
+	},
+	{
 		Slug:          PermHumanNotify,
 		OwnerImplied:  true,
 		AutoGrantable: true,

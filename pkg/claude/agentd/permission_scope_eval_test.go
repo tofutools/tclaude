@@ -397,6 +397,8 @@ var scopedSlugEnforcementPaths = map[string]string{
 	PermProcessRunsManage:                 "requirePermission — run create supplies ActionContext{ProcessTemplate}",
 	PermRoutesPublish:                     "requireRoutePermissionForIdentity — central resolver plus ActionContext{Group}",
 	PermRoutesConsume:                     "requireRoutePermissionForIdentity — central resolver plus ActionContext{Group}",
+	PermGroupsTriggersRead:                "requireGroupPermission / triggerRuleReadable — fills ActionContext{Group}",
+	PermGroupsTriggersManage:              "triggerOwnerConv — evaluates ActionContext{Group} again at fire time",
 	PermGitRead:                           "git proxy handlers — resolved fetch remote in ActionContext{Remote}",
 	PermGitPush:                           "git proxy handler — resolved push remote in ActionContext{Remote}",
 	PermGitHubRead:                        "GitHub proxy handlers — derived repository remote in ActionContext{Remote}",

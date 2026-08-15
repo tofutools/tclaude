@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
 // AgentPR is one explicitly presented pull request. The agent_id is the stable
@@ -25,6 +27,16 @@ type AgentPR struct {
 // UpsertAgentPR presents or refreshes a PR for an agent, deduped by
 // (agent_id, PR URL).
 func UpsertAgentPR(agentID, prURL, summary, state string) (AgentPR, error) {
+	return UpsertAgentPRDetails(agentID, prURL, summary, state, "", strings.EqualFold(strings.TrimSpace(state), "draft"))
+}
+
+// UpsertAgentPRDetails is the trigger-aware presentation boundary. When the
+// opt-in trigger feature is enabled, the PR row and its pr.opened observation
+// commit together: agentd may crash before evaluation, but a restart can
+// reconcile the durable pending row. With the feature off, presentation stays
+// unchanged and writes no trigger event. Re-presenting the same PR only
+// refreshes a still-pending event and can never create a second opening edge.
+func UpsertAgentPRDetails(agentID, prURL, summary, state, branch string, draft bool) (AgentPR, error) {
 	agentID = strings.TrimSpace(agentID)
 	prURL = strings.TrimSpace(prURL)
 	summary = strings.TrimSpace(summary)
@@ -40,7 +52,12 @@ func UpsertAgentPR(agentID, prURL, summary, state string) (AgentPR, error) {
 	if err != nil {
 		return AgentPR{}, err
 	}
-	if _, err := d.Exec(`INSERT INTO agent_prs
+	tx, err := d.Begin()
+	if err != nil {
+		return AgentPR{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`INSERT INTO agent_prs
 		(agent_id, pr_url, summary, state, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(agent_id, pr_url) DO UPDATE SET
@@ -50,7 +67,25 @@ func UpsertAgentPR(agentID, prURL, summary, state string) (AgentPR, error) {
 		agentID, prURL, summary, state, dbTime(now), dbTime(now)); err != nil {
 		return AgentPR{}, err
 	}
-	return GetAgentPR(agentID, prURL)
+	var row AgentPR
+	var created, updated dbTimestamp
+	if err := tx.QueryRow(`SELECT id, agent_id, pr_url, summary, state, created_at, updated_at
+		FROM agent_prs WHERE agent_id = ? AND pr_url = ?`, agentID, prURL).
+		Scan(&row.ID, &row.AgentID, &row.PRURL, &row.Summary, &row.State, &created, &updated); err != nil {
+		return AgentPR{}, err
+	}
+	row.CreatedAt = created.Time()
+	row.UpdatedAt = updated.Time()
+	cfg, configErr := config.Load()
+	if configErr == nil && cfg.TriggersEnabled() {
+		if err := enqueueTriggerPREventTx(tx, row, branch, draft, now); err != nil {
+			return AgentPR{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return AgentPR{}, err
+	}
+	return row, nil
 }
 
 // MarkAgentPRHandled marks one PR as handled without deleting the historical

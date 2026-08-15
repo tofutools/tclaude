@@ -94,6 +94,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/pr-checks", handleDashboardPRChecks)
 	registerDashboardCronRoutes(mux)
 	registerDashboardStandingOrderRoutes(mux)
+	registerDashboardTriggerRoutes(mux)
 	registerDashboardMessageRoutes(mux)
 	registerDashboardOperatorMessageRoutes(mux)
 	registerDashboardMailboxRoutes(mux)

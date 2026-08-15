@@ -164,6 +164,20 @@ func claimSpawnRateSlot(w http.ResponseWriter, spawnerConvID string) bool {
 	return true
 }
 
+func claimDaemonSpawnRateSlot(w http.ResponseWriter, principal string) bool {
+	if err := db.ClaimDaemonSpawnSlot(principal, SpawnMaxPerWindow, SpawnRateWindow, time.Now().UTC()); err != nil {
+		if errors.Is(err, db.ErrSpawnRateLimited) {
+			writeError(w, http.StatusTooManyRequests, "rate_limited",
+				fmt.Sprintf("spawn rate limit reached for daemon principal %s: at most %d spawns per %s",
+					principal, SpawnMaxPerWindow, SpawnRateWindow))
+			return false
+		}
+		writeError(w, http.StatusInternalServerError, "io", "spawn rate-limit check: "+err.Error())
+		return false
+	}
+	return true
+}
+
 // checkSpawnGroupRestriction enforces guardrail 2: an agent caller may
 // only spawn into a group it is a member or owner of, unless the group
 // is allowlisted or the restriction is globally off. Owner counts

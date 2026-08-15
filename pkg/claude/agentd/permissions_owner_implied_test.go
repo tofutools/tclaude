@@ -32,6 +32,7 @@ func TestPermissionRegistry_OwnerImpliedSet(t *testing.T) {
 		PermGroupsMembersAdd, PermGroupsMembersRemove, PermGroupsMembersUpdate,
 		PermGroupsMessagesSchedule, PermGroupsArchive, PermGroupsAttachment,
 		PermGroupsLinkAdd, PermGroupsLinkRemove, PermGroupsNest,
+		PermGroupsTriggersRead, PermGroupsTriggersManage,
 		PermProcessAdvance, PermTemplatesUse,
 	}
 	want := append([]string{}, wantGroupScoped...)
@@ -89,6 +90,8 @@ func TestPermissionRegistry_OwnerImpliedSet(t *testing.T) {
 		PermAgentRetire:        PermGroupsMembersRetire,
 		PermAgentRemoteControl: PermGroupsMembersRemoteControl,
 		PermAgentInboxWatch:    PermGroupsMembersInboxWatch,
+		PermTriggersRead:       PermGroupsTriggersRead,
+		PermTriggersManage:     PermGroupsTriggersManage,
 	}
 	for slug, sibling := range wantSibling {
 		if got := GroupSiblingForSlug(slug); got != sibling {
