@@ -18,7 +18,7 @@ func TestMigrateV212toV213PreservesRuleEventAndFiringLedger(t *testing.T) {
 	require.NoError(t, err)
 	agentID, _, err := EnsureAgentForConv("v213-ledger-author", "test")
 	require.NoError(t, err)
-	_, err = UpsertAgentPR(agentID, "https://github.com/o/r/pull/213", "migration", "open")
+	pr, err := UpsertAgentPRDetails(agentID, "https://github.com/o/r/pull/213", "migration", "open", "migrated-topic", false)
 	require.NoError(t, err)
 	events, err := ListPendingTriggerPREvents(10)
 	require.NoError(t, err)
@@ -43,6 +43,9 @@ func TestMigrateV212toV213PreservesRuleEventAndFiringLedger(t *testing.T) {
 	require.Len(t, rows, 1)
 	assert.Equal(t, events[0].EventRef, rows[0].EventRef)
 	assert.Equal(t, TriggerSourcePROpened, rows[0].Source)
+	var branch string
+	require.NoError(t, d.QueryRow(`SELECT branch_context FROM trigger_pr_observations WHERE agent_pr_id=?`, pr.ID).Scan(&branch))
+	assert.Equal(t, "migrated-topic", branch)
 	var violations int
 	require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM pragma_foreign_key_check`).Scan(&violations))
 	assert.Zero(t, violations)

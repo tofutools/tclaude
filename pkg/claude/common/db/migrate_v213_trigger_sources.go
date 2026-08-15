@@ -88,10 +88,13 @@ func migrateV212toV213(d *sql.DB) error {
 			ci_state TEXT NOT NULL DEFAULT '',
 			ci_observed_at INTEGER,
 			ci_polled_at INTEGER,
+			branch_context TEXT NOT NULL DEFAULT '',
 			updated_at INTEGER NOT NULL
 		) STRICT;
-		INSERT INTO trigger_pr_observations(agent_pr_id, updated_at)
-		SELECT id, updated_at FROM agent_prs;
+		INSERT INTO trigger_pr_observations(agent_pr_id, branch_context, updated_at)
+		SELECT p.id, COALESCE((SELECT e.pr_branch FROM trigger_pr_events e
+			WHERE e.agent_pr_id=p.id AND e.pr_branch<>'' ORDER BY e.id DESC LIMIT 1), ''), p.updated_at
+		FROM agent_prs p;
 	`); err != nil {
 		return fmt.Errorf("migrate v212→v213: rebuild: %w", err)
 	}

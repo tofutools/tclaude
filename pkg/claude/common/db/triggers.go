@@ -46,6 +46,11 @@ var (
 	ErrTriggerVersionConflict = errors.New("trigger rule version conflict")
 )
 
+func IsTriggerSource(source string) bool {
+	return slices.Contains([]string{TriggerSourcePROpened, TriggerSourcePRUpdated, TriggerSourcePRMerged,
+		TriggerSourceCIFailed, TriggerSourceCISucceeded}, strings.TrimSpace(source))
+}
+
 type TriggerAction struct {
 	Type    string                `json:"type"`
 	Spawn   *TriggerSpawnAction   `json:"spawn,omitempty"`
@@ -108,8 +113,7 @@ func (r *TriggerRule) Validate() error {
 	if (r.ScopeKind == TriggerScopeGroup) != (r.GroupID > 0) {
 		return fmt.Errorf("%w: group scope requires exactly one group", ErrTriggerInvalid)
 	}
-	if !slices.Contains([]string{TriggerSourcePROpened, TriggerSourcePRUpdated, TriggerSourcePRMerged,
-		TriggerSourceCIFailed, TriggerSourceCISucceeded}, r.Source) {
+	if !IsTriggerSource(r.Source) {
 		return fmt.Errorf("%w: unsupported source %q", ErrTriggerInvalid, r.Source)
 	}
 	if !slices.Contains([]string{TriggerDraftInclude, TriggerDraftExclude, TriggerDraftOnly}, r.DraftFilter) {
@@ -452,7 +456,8 @@ func enqueueTriggerPREventTx(tx *sql.Tx, pr AgentPR, branch string, draft bool, 
 			group_ids_json=CASE WHEN trigger_pr_events.status='pending' THEN excluded.group_ids_json ELSE trigger_pr_events.group_ids_json END`,
 		pr.ID, TriggerSourcePROpened, "pr.opened:"+pr.AgentID+":"+pr.PRURL, pr.PRURL, derivePRNumber(pr.PRURL), strings.TrimSpace(branch), pr.AgentID, draft, groups, dbTime(pr.CreatedAt), dbTime(now), TriggerEventPending)
 	if err == nil {
-		_, err = tx.Exec(`INSERT OR IGNORE INTO trigger_pr_observations(agent_pr_id,event_sequence,updated_at) VALUES(?,1,?)`, pr.ID, dbTime(now))
+		_, err = tx.Exec(`INSERT OR IGNORE INTO trigger_pr_observations(agent_pr_id,event_sequence,branch_context,updated_at) VALUES(?,1,?,?)`,
+			pr.ID, strings.TrimSpace(branch), dbTime(now))
 	}
 	return err
 }
@@ -462,22 +467,32 @@ func enqueueTriggerTransitionTx(tx *sql.Tx, pr AgentPR, source, previous, curren
 	if err != nil {
 		return err
 	}
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		_ = tx.QueryRow(`SELECT branch_context FROM trigger_pr_observations WHERE agent_pr_id=?`, pr.ID).Scan(&branch)
+	}
 	if source == TriggerSourcePRUpdated {
 		res, err := tx.Exec(`UPDATE trigger_pr_events SET pr_branch=?,draft=?,group_ids_json=?,
 			previous_state=CASE WHEN previous_state='' THEN ? ELSE previous_state END,current_state=?,
 			occurred_at=?,updated_at=? WHERE id=(SELECT id FROM trigger_pr_events
 			WHERE agent_pr_id=? AND source='pr.updated' AND status='pending' AND processed_at IS NULL
-			ORDER BY id DESC LIMIT 1)`, strings.TrimSpace(branch), draft, groups, strings.TrimSpace(previous),
+			ORDER BY id DESC LIMIT 1)`, branch, draft, groups, strings.TrimSpace(previous),
 			strings.TrimSpace(current), dbTime(now), dbTime(now), pr.ID)
 		if err != nil {
 			return err
 		}
 		if n, err := res.RowsAffected(); err != nil || n > 0 {
+			if err == nil && branch != "" {
+				_, err = tx.Exec(`UPDATE trigger_pr_observations SET branch_context=?,updated_at=? WHERE agent_pr_id=?`,
+					branch, dbTime(now), pr.ID)
+			}
 			return err
 		}
 	}
-	if _, err := tx.Exec(`INSERT INTO trigger_pr_observations(agent_pr_id,event_sequence,updated_at)
-		VALUES(?,1,?) ON CONFLICT(agent_pr_id) DO UPDATE SET event_sequence=event_sequence+1,updated_at=excluded.updated_at`, pr.ID, dbTime(now)); err != nil {
+	if _, err := tx.Exec(`INSERT INTO trigger_pr_observations(agent_pr_id,event_sequence,branch_context,updated_at)
+		VALUES(?,1,?,?) ON CONFLICT(agent_pr_id) DO UPDATE SET event_sequence=event_sequence+1,
+		branch_context=CASE WHEN excluded.branch_context<>'' THEN excluded.branch_context ELSE trigger_pr_observations.branch_context END,
+		updated_at=excluded.updated_at`, pr.ID, branch, dbTime(now)); err != nil {
 		return err
 	}
 	var sequence int64
@@ -489,7 +504,7 @@ func enqueueTriggerTransitionTx(tx *sql.Tx, pr AgentPR, source, previous, curren
 		(agent_pr_id,source,event_ref,pr_url,pr_number,pr_branch,pr_author_agent,draft,group_ids_json,
 		 previous_state,current_state,occurred_at,updated_at,status)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, pr.ID, source, eventRef, pr.PRURL, derivePRNumber(pr.PRURL),
-		strings.TrimSpace(branch), pr.AgentID, draft, groups, strings.TrimSpace(previous), strings.TrimSpace(current),
+		branch, pr.AgentID, draft, groups, strings.TrimSpace(previous), strings.TrimSpace(current),
 		dbTime(now), dbTime(now), TriggerEventPending)
 	return err
 }
@@ -514,20 +529,23 @@ func ReconcileTriggerPREvents() (int64, error) {
 // ListTriggerCIWatchPRs returns the bounded set of non-terminal presented PRs
 // that are in scope for at least one enabled CI transition rule.
 func ListTriggerCIWatchPRs(limit int) ([]AgentPR, error) {
-	if limit <= 0 {
-		limit = 50
-	}
 	d, err := Open()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT DISTINCT p.id,p.agent_id,p.pr_url,p.summary,p.state,p.created_at,p.updated_at
+	query := `SELECT DISTINCT p.id,p.agent_id,p.pr_url,p.summary,p.state,p.created_at,p.updated_at
 		FROM agent_prs p JOIN trigger_rules r ON r.enabled=1 AND r.source IN ('ci.failed','ci.succeeded')
 		LEFT JOIN trigger_pr_observations o ON o.agent_pr_id=p.id
 		WHERE lower(trim(p.state)) NOT IN ('handled','merged','closed')
 		  AND (r.scope_kind='global' OR EXISTS (SELECT 1 FROM agent_group_members m
 		      WHERE m.agent_id=p.agent_id AND m.group_id=r.group_id))
-		ORDER BY COALESCE(o.ci_polled_at,0),p.id LIMIT ?`, limit)
+		ORDER BY COALESCE(o.ci_polled_at,0),p.id`
+	var rows *sql.Rows
+	if limit > 0 {
+		rows, err = d.Query(query+` LIMIT ?`, limit)
+	} else {
+		rows, err = d.Query(query)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -556,6 +574,26 @@ func MarkTriggerCIPollAttempt(agentPRID int64, attemptedAt time.Time) error {
 	_, err = d.Exec(`INSERT INTO trigger_pr_observations(agent_pr_id,event_sequence,ci_polled_at,updated_at)
 		VALUES(?,1,?,?) ON CONFLICT(agent_pr_id) DO UPDATE SET ci_polled_at=excluded.ci_polled_at`,
 		agentPRID, dbTime(attemptedAt.UTC()), dbTime(attemptedAt.UTC()))
+	return err
+}
+
+// BaselineTriggerPRCI records a fresh watched-state baseline without emitting
+// an event. It is used when a PR identity enters the enabled watcher set after
+// a gap, so transitions that happened while unwatched are never replayed.
+func BaselineTriggerPRCI(agentPRID int64, state string, observedAt time.Time) error {
+	state = strings.ToLower(strings.TrimSpace(state))
+	if !slices.Contains([]string{"passing", "failing", "pending", "none"}, state) {
+		return fmt.Errorf("%w: unsupported CI state %q", ErrTriggerInvalid, state)
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`INSERT INTO trigger_pr_observations
+		(agent_pr_id,event_sequence,ci_state,ci_observed_at,ci_polled_at,updated_at)
+		VALUES(?,1,?,?,?,?) ON CONFLICT(agent_pr_id) DO UPDATE SET ci_state=excluded.ci_state,
+		ci_observed_at=excluded.ci_observed_at,ci_polled_at=excluded.ci_polled_at,updated_at=excluded.updated_at`,
+		agentPRID, state, dbTime(observedAt.UTC()), dbTime(observedAt.UTC()), dbTime(observedAt.UTC()))
 	return err
 }
 

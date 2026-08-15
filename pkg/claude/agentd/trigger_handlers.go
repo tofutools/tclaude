@@ -126,6 +126,10 @@ func handleTriggerExplain(w http.ResponseWriter, r *http.Request) {
 	if source == "" {
 		source = db.TriggerSourcePROpened
 	}
+	if !db.IsTriggerSource(source) {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "unsupported trigger source")
+		return
+	}
 	event := db.TriggerPREvent{Source: source, PRURL: strings.TrimSpace(body.PRURL), PRNumber: body.PRNumber, PRBranch: body.PRBranch, PRAuthorAgent: strings.TrimSpace(body.PRAuthorAgent), Draft: body.Draft, OccurredAt: now, UpdatedAt: now}
 	if body.Group != "" {
 		g, err := resolveTriggerGroup(body.Group)

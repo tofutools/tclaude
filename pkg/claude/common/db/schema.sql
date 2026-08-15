@@ -1429,6 +1429,7 @@ CREATE TABLE trigger_pr_observations (
 			ci_state TEXT NOT NULL DEFAULT '',
 			ci_observed_at INTEGER,
 			ci_polled_at INTEGER,
+			branch_context TEXT NOT NULL DEFAULT '',
 			updated_at INTEGER NOT NULL
 		) STRICT;
 

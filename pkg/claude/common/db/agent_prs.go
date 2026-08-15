@@ -64,7 +64,6 @@ func UpsertAgentPRDetails(agentID, prURL, summary, state, branch string, draft b
 	case err == nil:
 		existed = true
 	case errors.Is(err, sql.ErrNoRows):
-		err = nil
 	default:
 		return AgentPR{}, err
 	}
@@ -146,6 +145,16 @@ func MarkAgentPRHandled(agentID, prURL string) (int64, error) {
 // regardless of its write time. Only an explicit re-present via UpsertAgentPR
 // may bring a handled PR back.
 func UpdateAgentPRState(agentID, prURL, state string) (int64, error) {
+	return updateAgentPRState(agentID, prURL, state, true)
+}
+
+// UpdateAgentPRStateQuiet applies a resolver result to a duplicate presentation
+// without creating a second lifecycle edge for the same canonical PR.
+func UpdateAgentPRStateQuiet(agentID, prURL, state string) (int64, error) {
+	return updateAgentPRState(agentID, prURL, state, false)
+}
+
+func updateAgentPRState(agentID, prURL, state string, emitTrigger bool) (int64, error) {
 	agentID = strings.TrimSpace(agentID)
 	prURL = strings.TrimSpace(prURL)
 	state = strings.TrimSpace(state)
@@ -189,7 +198,7 @@ func UpdateAgentPRState(agentID, prURL, state string) (int64, error) {
 	if err != nil || n == 0 {
 		return n, err
 	}
-	if cfg, cfgErr := config.Load(); cfgErr == nil && cfg.TriggersEnabled() &&
+	if cfg, cfgErr := config.Load(); emitTrigger && cfgErr == nil && cfg.TriggersEnabled() &&
 		!strings.EqualFold(strings.TrimSpace(before.State), "merged") && strings.EqualFold(state, "merged") {
 		previous := before.State
 		before.State = state

@@ -24,11 +24,11 @@ func TestTriggerCIPollerUsesFreshTransitionsAndDurableBaseline(t *testing.T) {
 	ruleID, err := db.InsertTriggerRule(&db.TriggerRule{Name: "ci-failure", Enabled: true, OperatorAuthored: true,
 		ScopeKind: db.TriggerScopeGroup, GroupID: g.ID, Source: db.TriggerSourceCIFailed,
 		DraftFilter: db.TriggerDraftInclude, Actions: []db.TriggerAction{{Type: db.TriggerActionMessage,
-			Message: &db.TriggerMessageAction{BodyTemplate: "CI {{event.previous_state}} -> {{event.current_state}} for {{pr.url}}"}}}})
+			Message: &db.TriggerMessageAction{BodyTemplate: "CI {{event.previous_state}} -> {{event.current_state}} on {{pr.branch}} for {{pr.url}}"}}}})
 	require.NoError(t, err)
 	agentID, err := db.AgentIDForConv(author)
 	require.NoError(t, err)
-	_, err = db.UpsertAgentPR(agentID, "https://github.com/o/r/pull/90", "checks", "open")
+	_, err = db.UpsertAgentPRDetails(agentID, "https://github.com/o/r/pull/90", "checks", "open", "ci-topic", false)
 	require.NoError(t, err)
 	var calls atomic.Int32
 	t.Cleanup(agentd.SetPRChecksResolverForTest(func(string) (string, bool) {
@@ -49,6 +49,10 @@ func TestTriggerCIPollerUsesFreshTransitionsAndDurableBaseline(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, firings, 1)
 	assert.Equal(t, "ok", firings[0].Outcome)
+	messages, err := db.ListAgentMessagesForConv(author, 10)
+	require.NoError(t, err)
+	require.Len(t, messages, 1)
+	assert.Contains(t, messages[0].Body, "on ci-topic")
 
 	// Re-reading the same fresh failing state, including after another engine
 	// tick, cannot synthesize a restart edge.
@@ -62,6 +66,140 @@ func TestTriggerCIPollerUsesFreshTransitionsAndDurableBaseline(t *testing.T) {
 	before := calls.Load()
 	agentd.PollTriggerCITransitionsForTest(base.Add(3 * time.Second))
 	assert.Equal(t, before, calls.Load(), "flag-off poller does not resolve GitHub state")
+}
+
+func TestTriggerCIPollerAppliesTerminalStateBeforeChecks(t *testing.T) {
+	f := triggerFlow(t)
+	f.HaveGroup("terminal-ci")
+	f.HaveConvWithTitle("terminal-ci-author", "author")
+	f.HaveMember("terminal-ci", "terminal-ci-author")
+	agentID, err := db.AgentIDForConv("terminal-ci-author")
+	require.NoError(t, err)
+	pr, err := db.UpsertAgentPR(agentID, "https://github.com/o/r/pull/91", "terminal", "open")
+	require.NoError(t, err)
+	ruleID, err := db.InsertTriggerRule(&db.TriggerRule{Name: "terminal-ci", Enabled: true, OperatorAuthored: true,
+		ScopeKind: db.TriggerScopeGlobal, Source: db.TriggerSourceCIFailed, DraftFilter: db.TriggerDraftInclude,
+		Actions: []db.TriggerAction{{Type: db.TriggerActionMessage, Message: &db.TriggerMessageAction{BodyTemplate: "fail"}}}})
+	require.NoError(t, err)
+	var calls atomic.Int32
+	t.Cleanup(agentd.SetPRChecksStateResolverForTest(func(string) (string, string, bool) {
+		if calls.Add(1) == 1 {
+			return `[{"__typename":"CheckRun","name":"build","status":"IN_PROGRESS"}]`, "open", true
+		}
+		return `[{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"FAILURE"}]`, "merged", true
+	}))
+	base := time.Now().UTC().Add(time.Second)
+	agentd.PollTriggerCITransitionsForTest(base)
+	agentd.PollTriggerCITransitionsForTest(base.Add(time.Second))
+	agentd.RunTriggerTickForTest(base.Add(2 * time.Second))
+	firings, err := db.ListTriggerFirings(ruleID, 10)
+	require.NoError(t, err)
+	assert.Empty(t, firings, "terminal response must not create a late CI edge")
+	got, err := db.GetAgentPR(pr.AgentID, pr.PRURL)
+	require.NoError(t, err)
+	assert.Equal(t, "merged", got.State)
+	agentd.PollTriggerCITransitionsForTest(base.Add(3 * time.Second))
+	assert.Equal(t, int32(2), calls.Load(), "terminal PR leaves the watched set")
+}
+
+func TestTriggerCIPollerRebaselinesOnlyNewlyReenabledScope(t *testing.T) {
+	f := triggerFlow(t)
+	groupA := f.HaveGroup("ci-a")
+	groupB := f.HaveGroup("ci-b")
+	f.HaveConvWithTitle("ci-author-a", "a")
+	f.HaveConvWithTitle("ci-author-b", "b")
+	f.HaveMember("ci-a", "ci-author-a")
+	f.HaveMember("ci-b", "ci-author-b")
+	makeRule := func(name string, groupID int64) int64 {
+		id, err := db.InsertTriggerRule(&db.TriggerRule{Name: name, Enabled: true, OperatorAuthored: true,
+			ScopeKind: db.TriggerScopeGroup, GroupID: groupID, Source: db.TriggerSourceCIFailed,
+			DraftFilter: db.TriggerDraftInclude, Actions: []db.TriggerAction{{Type: db.TriggerActionMessage,
+				Message: &db.TriggerMessageAction{BodyTemplate: "failed"}}}})
+		require.NoError(t, err)
+		return id
+	}
+	ruleA, ruleB := makeRule("ci-a-fail", groupA.ID), makeRule("ci-b-fail", groupB.ID)
+	agentA, err := db.AgentIDForConv("ci-author-a")
+	require.NoError(t, err)
+	agentB, err := db.AgentIDForConv("ci-author-b")
+	require.NoError(t, err)
+	_, err = db.UpsertAgentPR(agentA, "https://github.com/o/r/pull/101", "a", "open")
+	require.NoError(t, err)
+	_, err = db.UpsertAgentPR(agentB, "https://github.com/o/r/pull/102", "b", "open")
+	require.NoError(t, err)
+	states := map[string]string{"101": "pending", "102": "pending"}
+	t.Cleanup(agentd.SetPRChecksResolverForTest(func(rawURL string) (string, bool) {
+		state := states[rawURL[len(rawURL)-3:]]
+		if state == "failing" {
+			return `[{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"FAILURE"}]`, true
+		}
+		return `[{"__typename":"CheckRun","name":"build","status":"IN_PROGRESS"}]`, true
+	}))
+	base := time.Now().UTC().Add(time.Second)
+	agentd.PollTriggerCITransitionsForTest(base)
+	rule, err := db.GetTriggerRule(ruleB)
+	require.NoError(t, err)
+	require.NoError(t, db.SetTriggerRuleEnabled(ruleB, rule.RowVersion, false))
+	agentd.PollTriggerCITransitionsForTest(base.Add(time.Second)) // observes B leaving the watched set
+	states["101"], states["102"] = "failing", "failing"
+	agentd.PollTriggerCITransitionsForTest(base.Add(2 * time.Second))
+	rule, err = db.GetTriggerRule(ruleB)
+	require.NoError(t, err)
+	require.NoError(t, db.SetTriggerRuleEnabled(ruleB, rule.RowVersion, true))
+	agentd.PollTriggerCITransitionsForTest(base.Add(3 * time.Second))
+	agentd.RunTriggerTickForTest(base.Add(4 * time.Second))
+	firingsA, err := db.ListTriggerFirings(ruleA, 10)
+	require.NoError(t, err)
+	firingsB, err := db.ListTriggerFirings(ruleB, 10)
+	require.NoError(t, err)
+	require.Len(t, firingsA, 1, "continuously watched scope keeps its transition")
+	assert.Empty(t, firingsB, "re-enabled scope baselines current state instead of replaying the gap")
+}
+
+func TestTriggerCIPollerDedupesCanonicalPRIdentityAcrossPresentations(t *testing.T) {
+	f := triggerFlow(t)
+	f.HaveGroup("ci-dup")
+	f.HaveConvWithTitle("ci-dup-a", "a")
+	f.HaveConvWithTitle("ci-dup-b", "b")
+	f.HaveMember("ci-dup", "ci-dup-a")
+	f.HaveMember("ci-dup", "ci-dup-b")
+	agentA, err := db.AgentIDForConv("ci-dup-a")
+	require.NoError(t, err)
+	agentB, err := db.AgentIDForConv("ci-dup-b")
+	require.NoError(t, err)
+	_, err = db.UpsertAgentPR(agentA, "https://github.com/Owner/Repo/pull/103", "a", "open")
+	require.NoError(t, err)
+	_, err = db.UpsertAgentPR(agentB, "https://github.com/owner/repo/pull/103/files", "b", "open")
+	require.NoError(t, err)
+	ruleID, err := db.InsertTriggerRule(&db.TriggerRule{Name: "ci-dedup", Enabled: true, OperatorAuthored: true,
+		ScopeKind: db.TriggerScopeGlobal, Source: db.TriggerSourceCIFailed, DraftFilter: db.TriggerDraftInclude,
+		Actions: []db.TriggerAction{{Type: db.TriggerActionMessage, Message: &db.TriggerMessageAction{BodyTemplate: "fail"}}}})
+	require.NoError(t, err)
+	var calls atomic.Int32
+	t.Cleanup(agentd.SetPRChecksResolverForTest(func(string) (string, bool) {
+		if calls.Add(1) == 1 {
+			return `[{"__typename":"CheckRun","name":"build","status":"IN_PROGRESS"}]`, true
+		}
+		return `[{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"FAILURE"}]`, true
+	}))
+	base := time.Now().UTC().Add(time.Second)
+	agentd.PollTriggerCITransitionsForTest(base)
+	agentd.PollTriggerCITransitionsForTest(base.Add(time.Second))
+	agentd.RunTriggerTickForTest(base.Add(2 * time.Second))
+	firings, err := db.ListTriggerFirings(ruleID, 10)
+	require.NoError(t, err)
+	require.Len(t, firings, 1)
+	assert.Equal(t, int32(2), calls.Load(), "one fresh resolver call per canonical identity and cadence")
+
+	// A daemon restart with the feature and rule still enabled initializes the
+	// watched set without clearing the durable identity owner's baseline.
+	agentd.InitializeTriggerCIWatchStateForTest()
+	agentd.PollTriggerCITransitionsForTest(base.Add(3 * time.Second))
+	agentd.RunTriggerTickForTest(base.Add(4 * time.Second))
+	firings, err = db.ListTriggerFirings(ruleID, 10)
+	require.NoError(t, err)
+	assert.Len(t, firings, 1)
+	assert.Equal(t, int32(3), calls.Load())
 }
 
 func TestDashboardSnapshotDynamicallyGatesTriggers(t *testing.T) {
@@ -86,6 +224,8 @@ func triggerMessageBody(group string, debounce int64) map[string]any {
 
 func triggerFlow(t *testing.T) *testharness.Flow {
 	t.Helper()
+	agentd.ResetTriggerCIWatchStateForTest()
+	t.Cleanup(agentd.ResetTriggerCIWatchStateForTest)
 	f := newFlow(t)
 	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Triggers: true}}))
 	return f
@@ -139,6 +279,47 @@ func TestTriggersFeatureFlagGatesRoutesAndEngine(t *testing.T) {
 	events, err = db.ListPendingTriggerPREvents(10)
 	require.NoError(t, err)
 	require.NotEmpty(t, events, "enabled fire point persists the opening edge")
+}
+
+func TestTriggerRuntimeHotEnableStartsDormantSchedulers(t *testing.T) {
+	f := newFlow(t)
+	agentd.ResetTriggerCIWatchStateForTest()
+	t.Cleanup(agentd.ResetTriggerCIWatchStateForTest)
+	f.HaveGroup("hot-enable")
+	const author = "hot-enable-author"
+	f.HaveConvWithTitle(author, "author")
+	f.HaveMember("hot-enable", author)
+	restore := agentd.SetTriggerIntervalsForTest(10*time.Millisecond, 10*time.Millisecond)
+	t.Cleanup(restore)
+	stop := make(chan struct{})
+	agentd.StartTriggerRuntimeForTest(stop)
+	t.Cleanup(func() { close(stop) })
+
+	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Triggers: true}}))
+	g, err := db.GetAgentGroupByName("hot-enable")
+	require.NoError(t, err)
+	ruleID, err := db.InsertTriggerRule(&db.TriggerRule{Name: "hot-enabled", Enabled: true, OperatorAuthored: true,
+		ScopeKind: db.TriggerScopeGroup, GroupID: g.ID, Source: db.TriggerSourcePROpened,
+		DraftFilter: db.TriggerDraftInclude, Actions: []db.TriggerAction{{Type: db.TriggerActionMessage,
+			Message: &db.TriggerMessageAction{BodyTemplate: "hot {{pr.url}}"}}}})
+	require.NoError(t, err)
+	agentID, err := db.AgentIDForConv(author)
+	require.NoError(t, err)
+	_, err = db.UpsertAgentPR(agentID, "https://github.com/o/r/pull/2", "hot", "open")
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		rows, listErr := db.ListTriggerFirings(ruleID, 10)
+		return listErr == nil && len(rows) == 1 && rows[0].Outcome == "ok"
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestTriggerExplainRejectsUnknownSource(t *testing.T) {
+	f := triggerFlow(t)
+	f.HaveConvWithTitle("explain-source", "explain")
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
+		"/v1/triggers/explain", map[string]any{"source": "ci.typo", "pr_url": "https://github.com/o/r/pull/1"}), "explain-source"))
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"code":"invalid_arg"`)
 }
 
 func TestDashboardTriggersCRUDContract(t *testing.T) {
