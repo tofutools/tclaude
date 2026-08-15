@@ -50,6 +50,57 @@ export function createJobsActions({
     openStandingOrderCreate: state.openStandingOrderCreate,
     openStandingOrderEdit: state.openStandingOrderEdit,
     closeStandingOrderDialog: state.closeStandingOrderDialog,
+    openTriggerCreate: state.openTriggerCreate,
+    openTriggerEdit: state.openTriggerEdit,
+    closeTriggerDialog: state.closeTriggerDialog,
+    loadTriggers: async () => {
+      const response = await requestMutation('/api/triggers', { method: 'GET', refreshAfter: false });
+      const rules = Array.isArray(response?.triggers) ? response.triggers : [];
+      return Promise.all(rules.map(async (rule) => {
+        const history = await requestMutation(`/api/triggers/${encodeURIComponent(rule.id)}/firings?limit=1`, {
+          method: 'GET', refreshAfter: false,
+        });
+        return { ...rule, firings: Array.isArray(history?.firings) ? history.firings : [] };
+      }));
+    },
+    loadTriggerFirings: async (id) => {
+      const response = await requestMutation(`/api/triggers/${encodeURIComponent(id)}/firings?limit=20`, {
+        method: 'GET', refreshAfter: false,
+      });
+      return Array.isArray(response?.firings) ? response.firings : [];
+    },
+    saveTrigger: async ({ editing, id, payload }) => {
+      try {
+        const trigger = await requestMutation(editing
+          ? `/api/triggers/${encodeURIComponent(id)}` : '/api/triggers', {
+          method: editing ? 'PATCH' : 'POST', body: payload, refreshAfter: false,
+        });
+        notify(`trigger ${editing ? 'saved' : 'created'}: ${trigger?.name || ('#' + (trigger?.id || ''))}`);
+        return trigger;
+      } catch (error) {
+        throw new Error(detail(error), { cause: error });
+      }
+    },
+    toggleTrigger: (rule) => {
+      const verb = rule.enabled ? 'disable' : 'enable';
+      return run(`trigger ${verb}: ${rule.name}`, () => requestMutation(
+        `/api/triggers/${encodeURIComponent(rule.id)}/${verb}?row_version=${encodeURIComponent(rule.row_version)}`,
+        { method: 'POST', refreshAfter: false },
+      ));
+    },
+    deleteTrigger: async (rule) => {
+      const yes = await confirm({
+        title: 'Delete trigger?',
+        body: 'Removes the trigger and its firing history. Spawned workers and messages are unaffected.',
+        meta: rule.name,
+        okLabel: 'Delete trigger',
+      });
+      if (!yes) return false;
+      return run(`trigger delete: ${rule.name}`, () => requestMutation(
+        `/api/triggers/${encodeURIComponent(rule.id)}?row_version=${encodeURIComponent(rule.row_version)}`,
+        { method: 'DELETE', refreshAfter: false },
+      ));
+    },
     explainCron: (expr) => requestMutation('/api/cron/explain', {
       body: { expr }, refreshAfter: false,
     }),

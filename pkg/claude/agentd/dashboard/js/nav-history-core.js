@@ -53,7 +53,7 @@ export const KNOWN_TABS = new Set([
 export const KNOWN_SUBTABS = {
   groups: new Set(['members', 'routes']),
   access: new Set(['permissions', 'slugs', 'sudo']),
-  jobs: new Set(['exports', 'cron-jobs', 'standing-orders']),
+  jobs: new Set(['exports', 'cron-jobs', 'standing-orders', 'triggers']),
   processes: new Set(['templates']),
 };
 

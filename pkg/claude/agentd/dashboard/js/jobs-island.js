@@ -10,6 +10,7 @@ import { idTooltip, isModifiedClick, relTime, shortAgentId } from './helpers.js'
 import { AsyncLoadState } from './async-load-state.js';
 import { JobsCronDialogRoot } from './jobs-dialog-island.js';
 import { JobsStandingOrderDialogRoot } from './jobs-standing-order-dialog-island.js';
+import { TriggerDialogRoot, TriggerWorkspace } from './jobs-triggers.js';
 import { registerJobsController } from './jobs-controller.js';
 
 const html = htm.bind(h);
@@ -325,6 +326,7 @@ const JOB_KIND_LABELS = {
   'export': 'Exports',
   cron: 'Cron jobs',
   'standing-order': 'Standing orders',
+  trigger: 'Triggers',
 };
 const JOB_KIND_COUNT_LABELS = {
   'export': ['export', 'exports'],
@@ -349,7 +351,7 @@ export function JobsApp({ state, actions }) {
   const paging = current.paging;
   const total = paging.total || 0;
   const totalAll = paging.total_unfiltered || 0;
-  const count = current.query
+  const count = current.kind === 'trigger' ? '' : current.query
     ? `${total} / ${totalAll}`
     : `${totalAll} ${current.kind === 'all'
       ? `item${totalAll === 1 ? '' : 's'}`
@@ -380,7 +382,7 @@ export function JobsApp({ state, actions }) {
         onClick=${(event) => selectKind(event, kind)}
         onKeyDown=${(event) => keyDownKind(event, kind)}>${JOB_KIND_LABELS[kind]}</a>`)}
     </div>
-    <div class="filter-bar">
+    ${current.kind !== 'trigger' && html`<div class="filter-bar">
       <input ref=${inputRef} id="filter-jobs" type="text" aria-label="Filter automations"
         placeholder="Filter this view (name + agent/owner/target + subject + body + status)"
         autocomplete="off" spellcheck=${false} value=${current.query}
@@ -399,7 +401,8 @@ export function JobsApp({ state, actions }) {
         <button id="standing-order-create-open" class="primary"
           title="Create a standing instruction triggered at session boundaries"
           onClick=${() => actions.openStandingOrderCreate({})}>+ new standing order</button>`}
-    </div>
+    </div>`}
+    ${current.kind === 'trigger' ? html`<${TriggerWorkspace} state=${state} actions=${actions} />` : html`<${Fragment}>
     <${AsyncLoadState} label="Automations" request=${current.request}
       retry=${() => void actions.refresh()} errorClass="jobs-error" />
     <div id="jobs-list" aria-busy=${current.request.phase === 'loading' ? 'true' : 'false'}>
@@ -421,7 +424,7 @@ export function JobsApp({ state, actions }) {
             <${Pager} state=${state} paging=${paging} refresh=${actions.refresh}
               disabled=${(paging.offset || 0) !== state.offset.value} />
           </${Fragment}>`}
-    </div>
+    </div></${Fragment}>`}
   </div>`;
 }
 
@@ -455,6 +458,7 @@ export function mountJobsIsland({
     attempt(() => { unregister?.(); unregister = null; });
     attempt(() => state.closeCronDialog());
     attempt(() => state.closeStandingOrderDialog());
+    attempt(() => state.closeTriggerDialog());
     attempt(() => render(null, dialogHost));
     attempt(() => render(null, badgeHost));
     attempt(() => render(null, host));
@@ -468,6 +472,7 @@ export function mountJobsIsland({
     render(html`<${Fragment}>
       <${JobsCronDialogRoot} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>
       <${JobsStandingOrderDialogRoot} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>
+      <${TriggerDialogRoot} state=${state} actions=${actions}/>
     </${Fragment}>` , dialogHost);
     registerCleanup(cleanup);
   } catch (error) {

@@ -58,7 +58,7 @@ func TestDashboardAppPaths_SPAFallback(t *testing.T) {
 
 	// Deep dashboard paths — top-level and nested — serve the SPA HTML.
 	for _, path := range []string{
-		"/", "/dashboard", "/automations", "/automations/standing-orders",
+		"/", "/dashboard", "/automations", "/automations/standing-orders", "/automations/triggers",
 		"/jobs", // historical alias remains reload-safe
 		"/processes", "/access", "/access/sudo",
 		"/processes/runs/run-42", "/usage", "/costs", "/audit", "/logs", "/debug", "/plugins", "/messages", "/config",

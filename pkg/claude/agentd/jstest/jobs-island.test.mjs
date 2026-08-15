@@ -259,3 +259,72 @@ test('production loader dynamically mounts and unmounts the Jobs feature graph',
   assert.equal(badgeHost.childElementCount, 0);
   assert.equal(dialogHost.childElementCount, 0);
 });
+
+test('Triggers sub-view renders rule summaries and expands the firing inspector', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createJobsState }, { JobsApp }] = await Promise.all([
+    harness.importDashboardModule('js/jobs-state.js'),
+    harness.importDashboardModule('js/jobs-island.js'),
+  ]);
+  const snapshot = harness.signals.signal({ ...page(), groups: [{ id: 2, name: 'alpha' }] });
+  const state = createJobsState({ snapshot, prefs: prefs() });
+  state.initialize();
+  state.beginRequest(1);
+  state.commitRequest(1);
+  const rule = {
+    id: 7, name: 'review new PRs', row_version: 3, enabled: true,
+    operator_authored: true, scope: 'group', group: 'alpha', source: 'pr.opened',
+    author_is_agent: true, draft_filter: 'exclude', debounce_seconds: 60, cooldown_seconds: 300,
+    actions: [{ type: 'message', message: { target: 'pr.author_agent', body_template: 'Review {{pr.url}}' } }],
+  };
+  const firing = {
+    id: 9, outcome: 'partial_failure', detail: 'one action denied', event_ref: 'pr.opened:agt_author:https://example/pr/2',
+    started_at: '2026-07-11T11:00:00Z', finished_at: '2026-07-11T11:00:01Z',
+    actions: [{ id: 10, action_type: 'message', outcome: 'permission_denied', detail: 'message.send not held' }],
+  };
+  const actions = {
+    refresh: async () => {}, loadTriggers: async () => [{ ...rule, firings: [firing] }],
+    loadTriggerFirings: async () => [firing], toggleTrigger: async () => true,
+    deleteTrigger: async () => true, openTriggerCreate: state.openTriggerCreate,
+  };
+  const mounted = await harness.mount(harness.html`<${JobsApp} state=${state} actions=${actions} />`);
+  const tab = getByRole(mounted.container, 'tab', { name: 'Triggers' });
+  assert.equal(tab.getAttribute('href'), '/automations/triggers');
+  await harness.act(() => harness.fireEvent(tab, 'click', { button: 0 }));
+  await harness.act(() => Promise.resolve());
+  assert.equal(state.kind.value, 'trigger');
+  assert.doesNotMatch(state.params.value, /kind=trigger/, 'the separate trigger collection never leaks into /api/jobs');
+  const row = mounted.container.querySelector('tr[data-key="trigger-7"]');
+  assert.match(row.textContent, /review new PRs/);
+  assert.match(row.textContent, /group:alpha/);
+  await harness.act(() => harness.fireEvent(row, 'click'));
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.match(mounted.container.querySelector('.trigger-inspector').textContent, /permission_denied/);
+  assert.match(mounted.container.querySelector('.trigger-inspector').textContent, /message.send not held/);
+  await harness.act(() => harness.fireEvent(getByRole(mounted.container, 'button', { name: '+ new trigger' }), 'click'));
+  assert.equal(state.triggerDialog.value.kind, 'create');
+  await mounted.unmount();
+});
+
+test('Trigger editor uses stacked WHEN WHERE THEN steps and shows spawn authority provenance', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createJobsState }, { TriggerDialogRoot }] = await Promise.all([
+    harness.importDashboardModule('js/jobs-state.js'),
+    harness.importDashboardModule('js/jobs-triggers.js'),
+  ]);
+  const snapshot = harness.signals.signal({ groups: [{ id: 2, name: 'alpha' }] });
+  const state = createJobsState({ snapshot, prefs: prefs() });
+  state.initialize();
+  state.openTriggerCreate();
+  const mounted = await harness.mount(harness.html`<${TriggerDialogRoot} state=${state} actions=${{ saveTrigger: async () => ({}) }} />`);
+  assert.match(mounted.container.textContent, /WHEN/);
+  assert.match(mounted.container.textContent, /WHERE/);
+  assert.match(mounted.container.textContent, /THEN/);
+  const then = [...mounted.container.querySelectorAll('.trigger-step-head')]
+    .find((button) => button.textContent.includes('THEN'));
+  await harness.act(() => harness.fireEvent(then, 'click'));
+  assert.match(mounted.container.textContent, /Firings are re-authorized as the owning principal/);
+  assert.ok(mounted.container.querySelector('.trigger-placeholder-chips'));
+  assert.match(mounted.container.querySelector('.trigger-placeholder-chips').textContent, /{{pr.url}}/);
+  await mounted.unmount();
+});

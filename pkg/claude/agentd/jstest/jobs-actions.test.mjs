@@ -175,3 +175,45 @@ test('Jobs cron PATCH target and owner denials reject without optimistic success
   assert.equal(refreshed, 0, 'a denied PATCH must not schedule a success refresh');
   assert.deepEqual(notices, [], 'the dialog owns error presentation; no success notice is emitted');
 });
+
+test('Trigger actions use the frozen REST contract and row-version CAS', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createJobsActions } = await harness.importDashboardModule('js/jobs-actions.js');
+  const calls = [];
+  const notices = [];
+  const state = {
+    upsertCron: () => {},
+    openCronCreate: () => {}, openCronEdit: () => {}, openCronDuplicate: () => {}, closeCronDialog: () => {},
+    openStandingOrderCreate: () => {}, openStandingOrderEdit: () => {}, closeStandingOrderDialog: () => {},
+    openTriggerCreate: () => {}, openTriggerEdit: () => {}, closeTriggerDialog: () => {},
+  };
+  const actions = createJobsActions({
+    state,
+    requestMutation: async (path, options) => {
+      calls.push({ path, options });
+      if (path === '/api/triggers') return { triggers: [{ id: 4, name: 'review' }] };
+      if (path.includes('/firings')) return { firings: [{ id: 8, outcome: 'ok' }] };
+      return { id: 4, name: 'review' };
+    },
+    refresh: async () => {}, confirm: async () => true,
+    notify: (...args) => notices.push(args), download: () => {},
+  });
+
+  assert.deepEqual(await actions.loadTriggers(), [{ id: 4, name: 'review', firings: [{ id: 8, outcome: 'ok' }] }]);
+  assert.deepEqual(await actions.loadTriggerFirings(4), [{ id: 8, outcome: 'ok' }]);
+  await actions.saveTrigger({ editing: false, payload: { name: 'review' } });
+  await actions.saveTrigger({ editing: true, id: 4, payload: { name: 'review 2', row_version: 7 } });
+  await actions.toggleTrigger({ id: 4, row_version: 7, name: 'review', enabled: true });
+  await actions.deleteTrigger({ id: 4, row_version: 8, name: 'review' });
+
+  assert.deepEqual(calls.map((call) => [call.path, call.options.method]), [
+    ['/api/triggers', 'GET'],
+    ['/api/triggers/4/firings?limit=1', 'GET'],
+    ['/api/triggers/4/firings?limit=20', 'GET'],
+    ['/api/triggers', 'POST'],
+    ['/api/triggers/4', 'PATCH'],
+    ['/api/triggers/4/disable?row_version=7', 'POST'],
+    ['/api/triggers/4?row_version=8', 'DELETE'],
+  ]);
+  assert.match(notices.at(-1)[0], /trigger delete/);
+});
