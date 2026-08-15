@@ -246,11 +246,12 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 		Mode: sandboxpolicy.AccessModeOpen,
 		Deny: []sandboxpolicy.NetworkAllowEntry{{Host: "metadata.google.internal"}},
 	}
-	caps, err = accessEnforcementForTargetForTest(
+	filteredRow, err := accessEnforcementTable(
 		h, sandboxpolicy.ImplementationTclaudeLayer, hostOpenDeniedClosedSockets,
-		ClaudeSandboxOff, "linux",
+		ClaudeSandboxOff, "linux", true,
 	)
 	require.NoError(t, err)
+	caps = accessEnforcementFromTable(filteredRow)
 	assert.Equal(t, EnforcePartial, caps.socketClosed)
 	assert.NotContains(t, caps.mechanism, "host-network",
 		"a filtered private namespace must retain the gateway mechanism name")
@@ -272,17 +273,53 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 	}
 	openCode, err = Resolve(OpenCodeName)
 	require.NoError(t, err)
-	caps, err = accessEnforcementForTargetForTest(
+	filteredRow, err = accessEnforcementTable(
 		openCode, sandboxpolicy.ImplementationTclaudeLayer,
-		blockedBaselineClosedSockets, OpenCodeSandboxTclaudeLayer, "linux",
+		blockedBaselineClosedSockets, OpenCodeSandboxTclaudeLayer, "linux", true,
 	)
 	require.NoError(t, err)
+	caps = accessEnforcementFromTable(filteredRow)
 	assert.Equal(t, EnforcePartial, caps.socketClosed)
 	rendered, notices, err = PlanAccessEnforcement(
 		blockedBaselineClosedSockets, caps)
 	require.NoError(t, err)
 	assert.Equal(t, sandboxpolicy.AccessModeClosed,
 		rendered.UnixSockets.Mode)
+
+	// An authored filtered posture can still be widened to host-open when the
+	// target cannot enforce its network rules. Do not let that widening smuggle
+	// an unsupported host-open constructed root past the explicit harness and
+	// implementation gate.
+	for _, tc := range []struct {
+		name           string
+		harness        *Harness
+		implementation sandboxpolicy.Implementation
+		mode           string
+	}{
+		{
+			name: "stacked", harness: h,
+			implementation: sandboxpolicy.ImplementationStacked,
+			mode:           ClaudeSandboxOff,
+		},
+		{
+			name: "copilot", harness: MustGet(CopilotName),
+			implementation: sandboxpolicy.ImplementationTclaudeLayer,
+			mode:           CopilotSandboxOff,
+		},
+	} {
+		t.Run("filtered fallback "+tc.name, func(t *testing.T) {
+			fallbackCaps, fallbackErr := accessEnforcementForTargetForTest(
+				tc.harness, tc.implementation, blockedBaselineClosedSockets,
+				tc.mode, "linux",
+			)
+			require.NoError(t, fallbackErr)
+			assert.Equal(t, EnforceNone, fallbackCaps.socketClosed)
+			_, _, fallbackErr = PlanAccessEnforcement(
+				blockedBaselineClosedSockets, fallbackCaps)
+			require.ErrorContains(t, fallbackErr,
+				`unix_sockets "closed" cannot be enforced with open network access`)
+		})
+	}
 
 	// The public resolver consumes the same axes rather than returning a static
 	// per-target capability descriptor. Unlike the table helper above it reads

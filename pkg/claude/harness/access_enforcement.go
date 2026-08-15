@@ -720,7 +720,7 @@ func accessEnforcementTable(
 		// only on the legacy exact `closed` spelling incorrectly classified a
 		// modern block-baseline/list policy as host-open.
 		networkConfinesLinuxSockets := goos == "linux" &&
-			networkPosture != sandboxpolicy.NetworkHostOpen
+			linuxPlannedNetworkConfinesSockets(axes.Network, caps)
 		if axes.Network.Mode == sandboxpolicy.AccessModeClosed ||
 			networkConfinesLinuxSockets {
 			caps.SocketClosed = EnforceFull
@@ -990,6 +990,38 @@ func linuxHostOpenConstructedRootAvailable(
 	}
 	posture, err := sandboxpolicy.NetworkPostureForRules(axes.Network)
 	return err == nil && posture == sandboxpolicy.NetworkHostOpen
+}
+
+// linuxPlannedNetworkConfinesSockets reports whether capability planning will
+// preserve a private network namespace for these authored rules. Looking only
+// at the authored posture is unsafe: an unsupported list, or a deny set whose
+// entries cannot be expressed, is widened to host-open later in the ladder.
+// Socket planning must anticipate that widening so it cannot preserve a socket
+// tier whose eventual host-open root the target does not support.
+func linuxPlannedNetworkConfinesSockets(
+	rules sandboxpolicy.NetworkRules,
+	caps accessEnforcementTableRow,
+) bool {
+	switch rules.Mode {
+	case sandboxpolicy.AccessModeClosed:
+		return caps.NetworkClosed != EnforceNone
+	case sandboxpolicy.AccessModeList:
+		return caps.NetworkList != EnforceNone &&
+			len(networkUnsupportedEntries(rules.Allow, caps.NetworkSelectors)) == 0
+	case sandboxpolicy.AccessModeOpen:
+		for _, entry := range rules.Deny {
+			capability, ok := networkSelectorCapability(
+				caps.NetworkDenySelectors, networkSelectorForEntry(entry))
+			if !ok || capability.Level == EnforceNone {
+				continue
+			}
+			if len(entry.Ports) > 0 && caps.NetworkDenyPorts == EnforceNone {
+				continue
+			}
+			return true
+		}
+	}
+	return false
 }
 
 // SupportsHostOpenConstructedRoot reports whether this launch target would get
