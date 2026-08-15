@@ -71,6 +71,9 @@ export function createJobsActions({
       });
       return Array.isArray(response?.firings) ? response.firings : [];
     },
+    loadTriggerDetail: (id) => requestMutation(`/api/triggers/${encodeURIComponent(id)}`, {
+      method: 'GET', refreshAfter: false,
+    }),
     saveTrigger: async ({ editing, id, payload }) => {
       try {
         const trigger = await requestMutation(editing

@@ -12,6 +12,19 @@ function prefs() {
   };
 }
 
+function choose(select, value) {
+  for (const option of select.options) {
+    if (option.value === value) option.setAttribute('selected', '');
+    else option.removeAttribute('selected');
+  }
+  Object.defineProperty(select, 'value', { configurable: true, writable: true, value });
+}
+
+function controlForLabel(root, prefix) {
+  return [...root.querySelectorAll('label')]
+    .find((label) => label.textContent.trim().startsWith(prefix))?.querySelector('input,select,textarea');
+}
+
 function page(name = 'Daily summary') {
   return {
     triggers_enabled: true,
@@ -374,6 +387,7 @@ test('Triggers sub-view renders rule summaries and expands the firing inspector'
   const firing = {
     id: 9, outcome: 'partial_failure', detail: 'one action denied', event_ref: 'pr.opened:agt_author:https://example/pr/2',
     source: 'ci.failed', previous_state: 'success', current_state: 'failure',
+    fact_observed_at: '0001-01-01T00:00:00Z', dwell_started_at: '0001-01-01T00:00:00Z',
     started_at: '2026-07-11T11:00:00Z', finished_at: '2026-07-11T11:00:01Z',
     actions: [
       { id: 10, action_type: 'message', outcome: 'permission_denied', detail: 'message.send not held' },
@@ -383,7 +397,7 @@ test('Triggers sub-view renders rule summaries and expands the firing inspector'
   let toggleSucceeds = false;
   const actions = {
     refresh: async () => {}, loadTriggers: async () => [{ ...rule, firings: [firing] }],
-    loadTriggerFirings: async () => [firing], toggleTrigger: async () => toggleSucceeds,
+    loadTriggerDetail: async () => ({ ...rule, firings: [firing], dwell_states: [] }), toggleTrigger: async () => toggleSucceeds,
     deleteTrigger: async () => true, openTriggerCreate: state.openTriggerCreate,
   };
   const mounted = await harness.mount(harness.html`<${JobsApp} state=${state} actions=${actions} />`);
@@ -405,6 +419,8 @@ test('Triggers sub-view renders rule summaries and expands the firing inspector'
   assert.match(mounted.container.querySelector('.trigger-firing-context').textContent, /ci.failed/);
   assert.match(mounted.container.querySelector('.trigger-firing-context').textContent, /success → failure/,
     'recorded CI transition evidence is shown without inferring live state');
+  assert.doesNotMatch(mounted.container.querySelector('.trigger-firing-context').textContent, /0001|observed|dwell began/,
+    'Go zero timestamps are not presented as real PR firing evidence');
   assert.equal(mounted.container.querySelectorAll('.trigger-verdicts .trigger-fail').length, 0,
     'valid configured alternatives are never presented as failed event facts');
   assert.equal(mounted.container.querySelectorAll('.trigger-action-outcome .trigger-fail').length, 2,
@@ -425,26 +441,70 @@ test('Trigger editor uses stacked WHEN WHERE THEN steps and shows spawn authorit
     harness.importDashboardModule('js/jobs-state.js'),
     harness.importDashboardModule('js/jobs-triggers.js'),
   ]);
-  const snapshot = harness.signals.signal({ groups: [{ id: 2, name: 'alpha' }] });
+  const snapshot = harness.signals.signal({ groups: [{ id: 2, name: 'alpha' }], harnesses: [
+    { name: 'claude', display_name: 'Claude Code', can_observe_awaiting_input: true },
+    { name: 'codex', display_name: 'Codex CLI', can_observe_awaiting_input: true },
+    { name: 'copilot', display_name: 'GitHub Copilot CLI', can_observe_awaiting_input: false },
+  ] });
   const state = createJobsState({ snapshot, prefs: prefs() });
   state.initialize();
   state.openTriggerCreate();
-  const mounted = await harness.mount(harness.html`<${TriggerDialogRoot} state=${state} actions=${{ saveTrigger: async () => ({}) }} />`);
+  let convertedSaved = null;
+  const mounted = await harness.mount(harness.html`<${TriggerDialogRoot} state=${state} actions=${{
+    saveTrigger: async (request) => { convertedSaved = request; return {}; },
+  }} />`);
   assert.match(mounted.container.textContent, /WHEN/);
   assert.match(mounted.container.textContent, /WHERE/);
   assert.match(mounted.container.textContent, /THEN/);
-  const source = mounted.container.querySelector('.trigger-fields select');
+  let source = mounted.container.querySelector('.trigger-fields select');
   assert.deepEqual([...source.options].map((option) => option.value),
-    ['pr.opened', 'pr.updated', 'pr.merged', 'ci.failed', 'ci.succeeded']);
+    ['pr.opened', 'pr.updated', 'pr.merged', 'ci.failed', 'ci.succeeded', 'agent.idle', 'agent.awaiting_input']);
+  await harness.input(controlForLabel(mounted.container, 'Debounce (seconds)'), '600');
   const then = [...mounted.container.querySelectorAll('.trigger-step-head')]
     .find((button) => button.textContent.includes('THEN'));
   await harness.act(() => harness.fireEvent(then, 'click'));
   assert.match(mounted.container.textContent, /Firings are re-authorized as the owning principal/);
-  assert.ok(mounted.container.querySelector('.trigger-placeholder-chips'));
   assert.match(mounted.container.querySelector('.trigger-placeholder-chips').textContent, /{{pr.url}}/);
-  assert.match(mounted.container.querySelector('.trigger-placeholder-chips').textContent, /{{event.source}}/);
   assert.match(mounted.container.querySelector('.trigger-placeholder-chips').textContent, /{{event.previous_state}}/);
   assert.match(mounted.container.querySelector('.trigger-placeholder-chips').textContent, /{{event.current_state}}/);
+  const when = [...mounted.container.querySelectorAll('.trigger-step-head')]
+    .find((button) => button.textContent.includes('WHEN'));
+  await harness.act(() => harness.fireEvent(when, 'click'));
+  source = mounted.container.querySelector('.trigger-fields select');
+  await harness.act(() => {
+    choose(source, 'agent.awaiting_input');
+    harness.fireEvent(source, 'change');
+  });
+  const sustained = mounted.container.querySelector('.trigger-fields input[type="number"][min="1"]');
+  assert.equal(sustained.value, '300', 'entering the state-source family applies a valid sustained default');
+  assert.equal(controlForLabel(mounted.container, 'Debounce after dwell').value, '600',
+    'source conversion keeps the evaluator delay visible instead of silently clearing or hiding it');
+  assert.match(mounted.container.textContent, /Debounce then delays firing after the dwell matures/);
+  assert.doesNotMatch(mounted.container.textContent, /Draft PRs/, 'PR-only predicates are not presented as state predicates');
+  const capabilities = mounted.container.querySelector('.trigger-harness-capabilities');
+  assert.match(capabilities.textContent, /Claude Codeobservable/);
+  assert.match(capabilities.textContent, /Codex CLIobservablerequires a ready managed app-server/);
+  assert.match(capabilities.textContent, /GitHub Copilot CLIunknown only/);
+  await harness.act(() => harness.fireEvent(then, 'click'));
+  assert.ok(mounted.container.querySelector('.trigger-placeholder-chips'));
+  assert.match(mounted.container.querySelector('.trigger-placeholder-chips').textContent, /{{event.source}}/);
+  assert.match(mounted.container.querySelector('.trigger-placeholder-chips').textContent, /{{agent.id}}/);
+  assert.match(mounted.container.querySelector('.trigger-placeholder-chips').textContent, /{{event.fact_result}}/);
+  assert.doesNotMatch(mounted.container.querySelector('.trigger-placeholder-chips').textContent, /{{pr.url}}/,
+    'state actions only offer placeholders backed by state-event facts');
+  const kind = mounted.container.querySelector('.trigger-action-editor-head select');
+  choose(kind, 'message');
+  await harness.act(() => harness.fireEvent(kind, 'change'));
+  const target = mounted.container.querySelector('.trigger-action-fields select');
+  assert.deepEqual([...target.options].map((option) => option.value), ['agent', 'group'],
+    'a converted state message offers the selected fact agent, not a PR author');
+  await harness.input(mounted.container.querySelector('.trigger-name-field input'), 'waiting question');
+  await harness.input(mounted.container.querySelector('.trigger-template-field textarea'), 'Answer {{agent.id}}');
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('#trigger-modal form'), 'submit'));
+  assert.equal(convertedSaved.payload.source, 'agent.awaiting_input');
+  assert.equal(convertedSaved.payload.for_seconds, 300);
+  assert.equal(convertedSaved.payload.debounce_seconds, 600);
+  assert.equal(convertedSaved.payload.actions[0].message.target, 'agent');
   await mounted.unmount();
 
   state.closeTriggerDialog();
@@ -463,6 +523,97 @@ test('Trigger editor uses stacked WHEN WHERE THEN steps and shows spawn authorit
   assert.equal(saved.payload.source, 'pr.merged',
     'editing an additive source preserves it instead of resetting to pr.opened');
   await edited.unmount();
+});
+
+test('State-source trigger authoring persists dwell duration and targets the selected fact agent', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createJobsState }, { TriggerDialogRoot }] = await Promise.all([
+    harness.importDashboardModule('js/jobs-state.js'),
+    harness.importDashboardModule('js/jobs-triggers.js'),
+  ]);
+  const snapshot = harness.signals.signal({ groups: [], harnesses: [
+    { name: 'claude', display_name: 'Claude Code', can_observe_awaiting_input: true },
+  ] });
+  const state = createJobsState({ snapshot, prefs: prefs() });
+  state.initialize();
+  state.openTriggerEdit({
+    id: 12, name: 'wake idle agent', enabled: true, row_version: 4,
+    source: 'agent.idle', for_seconds: 120, cooldown_seconds: 60,
+    scope: 'global', draft_filter: 'include', actions: [{ type: 'message', message: {
+      target: 'agent', subject_template: 'Still idle', body_template: 'Wake {{agent.id}}',
+    } }],
+  });
+  let saved = null;
+  const mounted = await harness.mount(harness.html`<${TriggerDialogRoot} state=${state} actions=${{
+    saveTrigger: async (request) => { saved = request; return {}; },
+  }} />`);
+  assert.match(mounted.container.querySelector('.trigger-step-summary').textContent, /stays idle for 2m/);
+  assert.equal(mounted.container.querySelector('.trigger-fields input[type="number"][min="1"]').value, '120');
+  const then = [...mounted.container.querySelectorAll('.trigger-step-head')]
+    .find((button) => button.textContent.includes('THEN'));
+  await harness.act(() => harness.fireEvent(then, 'click'));
+  const target = mounted.container.querySelector('.trigger-action-fields select');
+  assert.deepEqual([...target.options].map((option) => option.value), ['agent', 'group']);
+  assert.match(target.options[0].textContent, /selected fact agent/);
+  assert.match(mounted.container.querySelector('.trigger-placeholder-chips').textContent, /{{event.dwell_started_at}}/);
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('#trigger-modal form'), 'submit'));
+  assert.equal(saved.payload.source, 'agent.idle');
+  assert.equal(saved.payload.for_seconds, 120);
+  assert.equal(saved.payload.actions[0].message.target, 'agent');
+  await mounted.unmount();
+});
+
+test('State trigger inspector renders persisted unknown observations and firing facts honestly', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { TriggerWorkspace } = await harness.importDashboardModule('js/jobs-triggers.js');
+  const rule = {
+    id: 14, name: 'question dwell', enabled: true, row_version: 2,
+    operator_authored: true, scope: 'global', source: 'agent.awaiting_input',
+    for_seconds: 300, cooldown_seconds: 60, draft_filter: 'include',
+    actions: [{ type: 'message', message: { target: 'agent', body_template: 'Answer {{agent.id}}' } }],
+    firings: [],
+  };
+  const detail = {
+    ...rule,
+    dwell_states: [{
+      rule_id: 14, agent_id: 'agt_unknown_state', result: 'unknown', harness: 'copilot',
+      detail: 'harness does not expose awaiting-input observation; awaiting_permission is explicitly excluded',
+      fact_observed_at: '2026-08-15T10:00:00Z', true_since: '0001-01-01T00:00:00Z',
+      fired_at: '0001-01-01T00:00:00Z', updated_at: '2026-08-15T10:00:00Z',
+    }],
+    firings: [{
+      id: 31, outcome: 'ok', source: 'agent.awaiting_input', agent_id: 'agt_answering',
+      agent_harness: 'claude', fact_result: 'true', fact_observed_at: '2026-08-15T10:05:00Z',
+      dwell_started_at: '2026-08-15T10:00:00Z', started_at: '2026-08-15T10:05:00Z',
+      actions: [{ id: 32, action_type: 'message', outcome: 'queued' }],
+    }],
+  };
+  const state = {
+    triggerRevision: harness.signals.signal(0), openTriggerCreate: () => {}, openTriggerEdit: () => {},
+  };
+  const actions = {
+    loadTriggers: async () => [rule], loadTriggerDetail: async () => detail,
+    toggleTrigger: async () => true, deleteTrigger: async () => true,
+  };
+  const mounted = await harness.mount(harness.html`<${TriggerWorkspace} state=${state} actions=${actions} />`);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  const row = mounted.container.querySelector('tr[data-key="trigger-14"]');
+  assert.match(row.textContent, /for 5m/);
+  await harness.act(() => harness.fireEvent(row, 'click'));
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  const inspector = mounted.container.querySelector('.trigger-inspector');
+  assert.match(inspector.textContent, /Current agent observations/);
+  assert.match(inspector.textContent, /unknown/);
+  assert.match(inspector.textContent, /awaiting_permission is explicitly excluded/);
+  assert.doesNotMatch(inspector.textContent, /0001|true since/,
+    'zero true_since is absence, not fabricated year-1 evidence');
+  assert.ok(inspector.querySelector('.trigger-fact-result.unknown'));
+  assert.equal(inspector.querySelectorAll('.trigger-dwell-state .trigger-fail').length, 0,
+    'an unavailable fact is rendered unknown, never false');
+  assert.match(inspector.querySelector('.trigger-firing-context').textContent, /agt_answer/);
+  assert.match(inspector.querySelector('.trigger-firing-context').textContent, /claude/);
+  assert.ok(inspector.querySelector('.trigger-firing-context .trigger-fact-result.true'));
+  await mounted.unmount();
 });
 
 test('creating a trigger invalidates and reloads the visible list', async (t) => {

@@ -1359,6 +1359,11 @@ type dashboardHarness struct {
 	// one without it (Codex). The per-row remote-control toggle gates on
 	// this exactly the way the rename control gates on CanRename (JOH-259).
 	CanRemoteControl bool `json:"can_remote_control"`
+	// CanObserveAwaitingInput mirrors the registry's live question-waiting
+	// capability. Trigger authoring uses it to explain when an
+	// agent.awaiting_input fact can be known rather than silently treating an
+	// unsupported harness as false.
+	CanObserveAwaitingInput bool `json:"can_observe_awaiting_input"`
 	// CanAutoMemory mirrors Harness.CanAutoMemory — true only for a harness
 	// with an auto-memory system tclaude can steer (Claude Code), false for one
 	// without it (Codex). The spawn dialog and profile editor gate their
@@ -1440,23 +1445,24 @@ func buildHarnessCatalog() []dashboardHarness {
 			continue // not spawnable — skip
 		}
 		dh := dashboardHarness{
-			Name:                h.Name,
-			DisplayName:         h.DisplayName,
-			Models:              h.Models.Models(),
-			EffortLevels:        h.Models.EffortLevels(),
-			CanRename:           h.CanRename(),
-			CanCompact:          h.CanCompact(),
-			CanSandbox:          h.SupportsSandbox(),
-			CanBuiltinOSSandbox: h.SupportsBuiltinOSSandbox(),
-			CanApproval:         h.SupportsApproval(),
-			CanTools:            h.SupportsToolGovernance(),
-			CanAutoReview:       h.SupportsAutoReview(),
-			CanDirTrust:         h.SupportsDirTrust(),
-			DirTrustStore:       harness.DirTrustStore(h),
-			CanAskTimeout:       h.SupportsAskTimeout(),
-			CanRemoteControl:    h.CanRemoteControl(),
-			CanAutoMemory:       h.CanAutoMemory(),
-			CanSSHWorkaround:    h.CanSSHWorkaround(),
+			Name:                    h.Name,
+			DisplayName:             h.DisplayName,
+			Models:                  h.Models.Models(),
+			EffortLevels:            h.Models.EffortLevels(),
+			CanRename:               h.CanRename(),
+			CanCompact:              h.CanCompact(),
+			CanSandbox:              h.SupportsSandbox(),
+			CanBuiltinOSSandbox:     h.SupportsBuiltinOSSandbox(),
+			CanApproval:             h.SupportsApproval(),
+			CanTools:                h.SupportsToolGovernance(),
+			CanAutoReview:           h.SupportsAutoReview(),
+			CanDirTrust:             h.SupportsDirTrust(),
+			DirTrustStore:           harness.DirTrustStore(h),
+			CanAskTimeout:           h.SupportsAskTimeout(),
+			CanRemoteControl:        h.CanRemoteControl(),
+			CanObserveAwaitingInput: h.SupportsAwaitingInputObservation(),
+			CanAutoMemory:           h.CanAutoMemory(),
+			CanSSHWorkaround:        h.CanSSHWorkaround(),
 
 			CanContextFeatures:         h.CanContextFeatures(),
 			CanAutoCompactWindow:       h.CanAutoCompactWindow(),

@@ -75,6 +75,8 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	assert.Contains(t, claude.ApprovalModeHelp["inherit"], "⚠", "inherit is no longer the default and flags its can-block caveat")
 	assert.Contains(t, claude.ApprovalModeHelp["bypassPermissions"], "⚠", "bypassPermissions flags its no-guardrails caveat")
 	assert.True(t, claude.CanRemoteControl, "claude has built-in Remote Access (/remote-control)")
+	assert.Equal(t, harness.MustGet(harness.DefaultName).SupportsAwaitingInputObservation(),
+		claude.CanObserveAwaitingInput, "awaiting-input observation follows the harness registry")
 
 	codex := findDashHarness(snap, "codex")
 	require.NotNil(t, codex, "catalog missing codex; have %+v", snap.Harnesses)
@@ -89,6 +91,8 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	assert.True(t, codex.CanSandbox, "codex takes a launch sandbox flag")
 	assert.True(t, codex.CanBuiltinOSSandbox, "Codex owns a real built-in OS sandbox")
 	assert.False(t, codex.CanRemoteControl, "codex has no built-in Remote Access — the toggle must be gated off")
+	assert.Equal(t, harness.MustGet(harness.CodexName).SupportsAwaitingInputObservation(),
+		codex.CanObserveAwaitingInput, "awaiting-input observation follows the harness registry")
 	assert.Equal(t, []string{"tclaude-agent", "workspace-write", "read-only", "danger-full-access"}, codex.HarnessBuiltinModes)
 	assert.Equal(t, "tclaude-agent", codex.DefaultSandbox, "managed-profile default pre-selected")
 	// Every selectable mode carries a one-line help string the dialog renders
@@ -144,6 +148,8 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	}
 	assert.False(t, opencode.CanAutoReview)
 	assert.False(t, opencode.CanRemoteControl)
+	assert.Equal(t, harness.MustGet(harness.OpenCodeName).SupportsAwaitingInputObservation(),
+		opencode.CanObserveAwaitingInput, "awaiting-input observation follows the harness registry")
 
 	copilot := findDashHarness(snap, harness.CopilotName)
 	require.NotNil(t, copilot, "catalog missing copilot; have %+v", snap.Harnesses)
@@ -151,6 +157,8 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	assert.Equal(t, harness.MustGet(harness.CopilotName).Models.Models(), copilot.Models,
 		"the dashboard must expose the complete Copilot model catalog")
 	assert.Len(t, copilot.Models, 26, "auto plus the 25 concrete Copilot 1.0.77 models")
+	assert.Equal(t, harness.MustGet(harness.CopilotName).SupportsAwaitingInputObservation(),
+		copilot.CanObserveAwaitingInput, "awaiting-input observation follows the harness registry")
 }
 
 // Scenario: a per-agent harness + sandbox badge needs the snapshot to
