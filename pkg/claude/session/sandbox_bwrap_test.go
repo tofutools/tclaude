@@ -1314,12 +1314,14 @@ func TestAppendTclaudeLayerTclaudeCLIResolvesOneExecutableFile(t *testing.T) {
 	require.NoError(t, os.WriteFile(realBinary, []byte("fixture"), 0o755))
 	linkedBinary := filepath.Join(root, "tclaude")
 	require.NoError(t, os.Symlink(realBinary, linkedBinary))
+	resolvedBinary, err := filepath.EvalSymlinks(linkedBinary)
+	require.NoError(t, err)
 
 	got, err := appendTclaudeLayerTclaudeCLI([]string{"prefix"}, linkedBinary)
 	require.NoError(t, err)
 	assert.Equal(t, []string{
 		"prefix",
-		"--ro-bind", realBinary, tclaudeLayerConstructedRootTclaudePath,
+		"--ro-bind", resolvedBinary, tclaudeLayerConstructedRootTclaudePath,
 	}, got)
 }
 
