@@ -34,3 +34,25 @@ func TestExplicitFilesystemRootLaunchPostureUsesProvenTargetMatrix(t *testing.T)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "filesystem_root")
 }
+
+func TestRunNewRefusesRootOnlySnapshotOnUnconfinedImplementation(t *testing.T) {
+	snapshot := sandboxpolicy.NewSnapshot(sandboxpolicy.EffectiveProfile{
+		FilesystemRoot: sandboxpolicy.FilesystemRootSeparate,
+	}, nil)
+	path, digest, err := sandboxpolicy.WriteSnapshotFile(t.TempDir(), snapshot)
+	require.NoError(t, err)
+
+	err = runNew(&NewParams{
+		Harness:               harness.CodexName,
+		Sandbox:               harness.SandboxDangerFull,
+		SandboxImpl:           string(sandboxpolicy.ImplementationOff),
+		SandboxSnapshotPath:   path,
+		SandboxSnapshotDigest: digest,
+		Dir:                   t.TempDir(),
+		Detached:              true,
+	})
+	require.Error(t, err)
+	var capabilityErr *harness.SandboxCapabilityError
+	require.ErrorAs(t, err, &capabilityErr)
+	assert.Equal(t, harness.SandboxCapabilityFilesystemRoot, capabilityErr.Kind)
+}

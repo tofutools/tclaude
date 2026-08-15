@@ -348,20 +348,10 @@ func accessEnforcementTable(
 	validatedBuiltinMode, goos string,
 	filteredNetworkReady bool,
 ) (accessEnforcementTableRow, error) {
-	if axes.FilesystemRoot == sandboxpolicy.FilesystemRootSeparate {
-		harnessName := "<unresolved>"
-		if h != nil {
-			harnessName = h.Name
-		}
-		if !SupportsExplicitFilesystemRoot(h, implementation, goos) {
-			return accessEnforcementTableRow{}, &SandboxCapabilityError{
-				Harness: harnessName,
-				Kind:    SandboxCapabilityFilesystemRoot,
-				Message: fmt.Sprintf(
-					"filesystem_root %q requires Linux tclaude-layer with Claude Code, Codex, OpenCode, or Copilot; resolved target is harness %q, sandbox implementation %q, platform %q",
-					axes.FilesystemRoot, harnessName, implementation, goos),
-			}
-		}
+	if err := ValidateExplicitFilesystemRoot(
+		h, implementation, axes.FilesystemRoot, goos,
+	); err != nil {
+		return accessEnforcementTableRow{}, err
 	}
 	if axes.Network.Namespace == sandboxpolicy.NetworkNamespacePrivate {
 		if implementation != sandboxpolicy.ImplementationTclaudeLayer ||
@@ -1109,6 +1099,32 @@ func SupportsExplicitFilesystemRoot(
 		implementation == sandboxpolicy.ImplementationTclaudeLayer &&
 		h != nil && (h.Name == DefaultName || h.Name == CodexName ||
 		h.Name == OpenCodeName || h.Name == CopilotName)
+}
+
+// ValidateExplicitFilesystemRoot applies the explicit-root target matrix at
+// launch boundaries, including boundaries that would otherwise skip access
+// planning because the profile has no network or Unix-socket rules.
+func ValidateExplicitFilesystemRoot(
+	h *Harness,
+	implementation sandboxpolicy.Implementation,
+	mode sandboxpolicy.FilesystemRootMode,
+	goos string,
+) error {
+	if mode != sandboxpolicy.FilesystemRootSeparate ||
+		SupportsExplicitFilesystemRoot(h, implementation, goos) {
+		return nil
+	}
+	harnessName := "<unresolved>"
+	if h != nil {
+		harnessName = h.Name
+	}
+	return &SandboxCapabilityError{
+		Harness: harnessName,
+		Kind:    SandboxCapabilityFilesystemRoot,
+		Message: fmt.Sprintf(
+			"filesystem_root %q requires Linux tclaude-layer with Claude Code, Codex, OpenCode, or Copilot; resolved target is harness %q, sandbox implementation %q, platform %q",
+			mode, harnessName, implementation, goos),
+	}
 }
 
 func accessEnforcementFromTable(row accessEnforcementTableRow) AccessEnforcement {

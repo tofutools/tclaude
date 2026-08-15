@@ -65,6 +65,32 @@ func TestSandboxProfileFilesystemRootRoundTripAndExportGate(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "requires export format version 14")
 }
 
+func TestSandboxProfileExportUsesHighestVersionAcrossOrderedProfiles(t *testing.T) {
+	f := newFlow(t)
+	for _, profile := range []map[string]any{
+		{
+			"name": "private-first",
+			"network": map[string]any{
+				"baseline": "allow", "namespace": "private",
+			},
+		},
+		{"name": "root-second", "filesystem_root": "separate"},
+	} {
+		rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", profile)
+		require.Equalf(t, http.StatusCreated, rec.Code, "create body=%s", rec.Body.String())
+	}
+
+	rec := profileReq(t, f, http.MethodGet,
+		"/v1/sandbox-profiles/export?name=private-first&name=root-second", nil)
+	require.Equalf(t, http.StatusOK, rec.Code, "export body=%s", rec.Body.String())
+	var bundle map[string]any
+	testharness.DecodeJSON(t, rec, &bundle)
+	assert.Equal(t, float64(14), bundle["format_version"])
+
+	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import/inspect", bundle)
+	assert.Equalf(t, http.StatusOK, rec.Code, "inspect body=%s", rec.Body.String())
+}
+
 func TestSandboxProfileFilesystemRootPredictionRefusesUnsupportedTargets(t *testing.T) {
 	f := newFlow(t)
 	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", map[string]any{

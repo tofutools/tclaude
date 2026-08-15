@@ -748,6 +748,14 @@ func runNew(params *NewParams) error {
 	// daemon seam's arm in sandboxProfileCapabilityFailure; mount paths are
 	// still refused above, where an empty authored path is a real failure.
 	unconfined := sandboxImplementation.OmitsOSConfinement()
+	if launchSandbox != nil {
+		if err := harness.ValidateExplicitFilesystemRoot(
+			h, sandboxImplementation, launchSandbox.Effective.FilesystemRoot,
+			runtime.GOOS,
+		); err != nil {
+			return err
+		}
+	}
 	if !outerLayer && !unconfined && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
 		h.Name == harness.CodexName && params.PermissionProfile != harness.CodexAgentProfile {
 		return fmt.Errorf("unsupported_sandbox_profile_filesystem: codex filesystem rules require sandbox %s", harness.SandboxManagedProfile)
@@ -782,7 +790,9 @@ func runNew(params *NewParams) error {
 	}
 	networkAccess := sandboxSnapshotNetworkAccess(launchSandbox)
 	hasNewAccessAxes := launchSandbox != nil &&
-		(launchSandbox.Effective.Network != nil || launchSandbox.Effective.UnixSockets != nil)
+		(launchSandbox.Effective.Network != nil ||
+			launchSandbox.Effective.UnixSockets != nil ||
+			launchSandbox.Effective.FilesystemRoot == sandboxpolicy.FilesystemRootSeparate)
 	if networkAccess != sandboxpolicy.NetworkAccessInherit && !hasNewAccessAxes && !outerLayer && !unconfined {
 		switch h.Name {
 		case harness.CodexName:
@@ -1579,7 +1589,9 @@ func runNew(params *NewParams) error {
 		}
 	}
 	if !unconfined && launchSandbox != nil &&
-		(launchSandbox.Effective.Network != nil || launchSandbox.Effective.UnixSockets != nil) {
+		(launchSandbox.Effective.Network != nil ||
+			launchSandbox.Effective.UnixSockets != nil ||
+			launchSandbox.Effective.FilesystemRoot == sandboxpolicy.FilesystemRootSeparate) {
 		axes, axesErr := sandboxpolicy.EffectiveAccessAxes(launchSandbox.Effective)
 		if axesErr != nil {
 			return fmt.Errorf("derive sandbox access axes: %w", axesErr)

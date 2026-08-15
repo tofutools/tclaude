@@ -499,6 +499,7 @@ func UnconfinedLaunchSnapshot(in Snapshot) Snapshot {
 	effective.DarwinAllowMachRegister = false
 	effective.AccessNotices = nil
 	effective.Provenance.Filesystem = nil
+	effective.Provenance.FilesystemRoot = nil
 	effective.Provenance.AgentDirectories = nil
 	effective.Provenance.Network = nil
 	effective.Provenance.UnixSockets = nil

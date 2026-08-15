@@ -734,8 +734,9 @@ func handleSandboxProfilesExport(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		if profile.Network != nil && profile.Network.Namespace != "" {
-			formatVersion = 13
-			break
+			if formatVersion < 13 {
+				formatVersion = 13
+			}
 		}
 		if profile.DarwinAllowMachRegister {
 			if formatVersion < 12 {

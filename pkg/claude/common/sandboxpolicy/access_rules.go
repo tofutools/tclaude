@@ -1485,6 +1485,7 @@ func UnconfinedAccessRulesNotice(
 	}
 	authored := len(filesystem) > 0 ||
 		len(effective.AgentDirectories) > 0 ||
+		effective.FilesystemRoot != FilesystemRootAutomatic ||
 		effective.Network != nil ||
 		effective.UnixSockets != nil ||
 		effective.NetworkAccess != NetworkAccessInherit
@@ -1502,7 +1503,7 @@ func UnconfinedAccessRulesNotice(
 		// limits outright. Naming one implementation's guarantee in a message
 		// the other can reach is how a disclosure becomes false later.
 		Detail: fmt.Sprintf(
-			"sandbox implementation %q enforces no access confinement; the resolved profile chain's filesystem, network and socket rules are recorded but NOT enforced for this launch.",
+			"sandbox implementation %q enforces no access confinement; the resolved profile chain's filesystem, filesystem-root, network and socket rules are recorded but NOT enforced for this launch.",
 			implementation),
 	}, true
 }

@@ -969,11 +969,10 @@ func TclaudeLayerLaunchRootPosture(
 	if err != nil {
 		return sandboxpolicy.RootHostInherited, err
 	}
-	if effective.FilesystemRoot == sandboxpolicy.FilesystemRootSeparate &&
-		!harness.SupportsExplicitFilesystemRoot(h, implementation, runtime.GOOS) {
-		return sandboxpolicy.RootHostInherited, fmt.Errorf(
-			"filesystem_root %q requires Linux tclaude-layer with Claude Code, Codex, OpenCode, or Copilot",
-			effective.FilesystemRoot)
+	if err := harness.ValidateExplicitFilesystemRoot(
+		h, implementation, effective.FilesystemRoot, runtime.GOOS,
+	); err != nil {
+		return sandboxpolicy.RootHostInherited, err
 	}
 	sockets := axes.UnixSockets.Mode
 	if !harness.SupportsHostOpenConstructedRoot(
