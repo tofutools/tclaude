@@ -86,6 +86,7 @@ func handleTriggerRead(w http.ResponseWriter, r *http.Request) {
 	}
 	view := triggerView(rule)
 	view.Firings, _ = db.ListTriggerFirings(rule.ID, 20)
+	view.DwellStates, _ = db.ListTriggerDwellStates(rule.ID)
 	writeJSON(w, http.StatusOK, view)
 }
 
@@ -95,16 +96,21 @@ type triggerExplainRequest struct {
 	PRNumber      int    `json:"pr_number"`
 	PRBranch      string `json:"pr_branch"`
 	PRAuthorAgent string `json:"author_agent"`
+	AgentID       string `json:"agent_id"`
 	Group         string `json:"group"`
 	Draft         bool   `json:"draft"`
 }
 
 type triggerExplainResult struct {
-	RuleID   int64  `json:"rule_id"`
-	RuleName string `json:"rule_name"`
-	Fire     bool   `json:"fire"`
-	Outcome  string `json:"outcome"`
-	Detail   string `json:"detail"`
+	RuleID         int64     `json:"rule_id"`
+	RuleName       string    `json:"rule_name"`
+	Fire           bool      `json:"fire"`
+	Outcome        string    `json:"outcome"`
+	Detail         string    `json:"detail"`
+	FactResult     string    `json:"fact_result,omitempty"`
+	FactObservedAt time.Time `json:"fact_observed_at,omitempty"`
+	TrueSince      time.Time `json:"true_since,omitempty"`
+	DueAt          time.Time `json:"due_at,omitempty"`
 }
 
 func handleTriggerExplain(w http.ResponseWriter, r *http.Request) {
@@ -131,6 +137,13 @@ func handleTriggerExplain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	event := db.TriggerPREvent{Source: source, PRURL: strings.TrimSpace(body.PRURL), PRNumber: body.PRNumber, PRBranch: body.PRBranch, PRAuthorAgent: strings.TrimSpace(body.PRAuthorAgent), Draft: body.Draft, OccurredAt: now, UpdatedAt: now}
+	if db.IsTriggerStateSource(source) {
+		event.AgentID = strings.TrimSpace(body.AgentID)
+		if event.AgentID == "" {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "agent_id is required for agent state sources")
+			return
+		}
+	}
 	if body.Group != "" {
 		g, err := resolveTriggerGroup(body.Group)
 		if err != nil || g == nil {
@@ -145,8 +158,68 @@ func handleTriggerExplain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	results := make([]triggerExplainResult, 0, len(rules))
+	var observed triggerFactObservation
+	if db.IsTriggerStateSource(source) {
+		agent, err := db.GetAgent(event.AgentID)
+		if err != nil || agent == nil || !agent.Active() {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "active agent not found")
+			return
+		}
+		sessions, sessionsErr := db.ListSessions()
+		alive, aliveErr := cachedLiveTmuxSessions()
+		var rows []*db.SessionRow
+		for _, row := range sessions {
+			if row.ConvID == agent.CurrentConvID {
+				rows = append(rows, row)
+			}
+		}
+		observed = observeTriggerAgentFact(source, agent, rows, alive, sessionsErr, aliveErr, now)
+		event.AgentHarness, event.FactResult, event.FactObservedAt = observed.harness, observed.result, observed.observed
+		groups, _ := db.ListGroupsForAgent(agent.AgentID)
+		for _, group := range groups {
+			event.GroupIDs = append(event.GroupIDs, group.ID)
+		}
+	}
 	for _, rule := range rules {
 		if !human && !triggerRuleReadable(r, caller, rule) {
+			continue
+		}
+		if db.IsTriggerStateSource(source) && rule.Source == source {
+			previous, _ := db.GetTriggerDwellState(rule.ID, event.AgentID)
+			var prior *triggerlogic.DwellState
+			if previous != nil {
+				prior = &triggerlogic.DwellState{RuleRevision: previous.RuleRevision, Episode: previous.Episode,
+					Result: previous.Result, TrueSince: previous.TrueSince, FiredAt: previous.FiredAt}
+			}
+			plan := triggerlogic.PlanDwell(prior, triggerlogic.DwellInput{RuleRevision: rule.Revision,
+				For: time.Duration(rule.ForSeconds) * time.Second, Result: observed.result, FactSince: observed.since, Now: now})
+			result := triggerExplainResult{RuleID: rule.ID, RuleName: rule.Name, Detail: observed.detail,
+				FactResult: observed.result, FactObservedAt: observed.observed, TrueSince: plan.State.TrueSince, DueAt: plan.DueAt}
+			switch {
+			case observed.result == triggerlogic.FactUnknown:
+				result.Outcome = "unknown"
+			case observed.result == triggerlogic.FactFalse:
+				result.Outcome = "condition-false"
+			case !plan.State.FiredAt.IsZero() && !plan.Fire:
+				result.Outcome = "episode-already-fired"
+			case !plan.DueAt.IsZero():
+				result.Outcome = "dwelling"
+			default:
+				event.DwellStartedAt = plan.State.TrueSince
+				last, _ := db.LatestCompletedTriggerFiring(rule.ID)
+				var lastAt time.Time
+				if last != nil {
+					lastAt = last.FinishedAt
+				}
+				loop, _ := db.RuleSpawnedAgent(rule.ID, event.AgentID)
+				decision := triggerlogic.Evaluate(rule, event, now, lastAt, loop)
+				result.Fire, result.Outcome = decision.Fire, decision.Outcome
+				if decision.Detail != "" {
+					result.Detail = decision.Detail
+				}
+				result.DueAt = decision.DueAt
+			}
+			results = append(results, result)
 			continue
 		}
 		last, _ := db.LatestCompletedTriggerFiring(rule.ID)

@@ -1877,6 +1877,38 @@ physical startup directory recorded by tclaude; it accepts no selector or path,
 refuses symlink substitution, and does not reconstruct Git metadata or later
 directories the agent moved into.
 
+### event and agent-state triggers
+
+Trigger rules are an experimental, daemon-owned automation surface gated by
+`features.triggers=true`. The dashboard creates and edits rules; agents can
+inspect them with `tclaude agent triggers ls`, `show`, and `explain`. PR and CI
+sources are edge events. The two agent-state sources instead require a
+positive `for_seconds` dwell and fire once per continuously true episode:
+
+- `agent.idle` means the selected live session reports exactly `idle`. Its
+  duration is anchored only to that session's last harness hook. Group
+  messages, inbox delivery, and pane keystrokes are deliberately not activity
+  for this fact.
+- `agent.awaiting_input` means the harness reports its concrete question-
+  waiting state: Claude Code's elicitation dialog, a managed Codex app-server's
+  `waitingOnUserInput`, or OpenCode's question event. Copilot and unknown
+  harnesses report `unknown`. `awaiting_permission` is explicitly excluded; it
+  is an approval state, not part of this fact.
+
+No live session, an unavailable observation path, or an unsupported harness is
+`unknown`, never false. Unknown interrupts continuous truth and a later true
+observation starts the dwell clock again. It does not re-arm an episode that
+already fired: only an observed false condition does that. The episode ledger
+is durable, so daemon restarts do not repeat a mature episode. Cooldown is
+checked after dwell maturity and composes with these once-per-episode rules.
+
+`triggers show` includes current per-agent fact episodes and firing evidence.
+For state rules, `triggers explain --source agent.idle --agent-id agt_...` (or
+`agent.awaiting_input`) reports the observed `true`, `false`, or `unknown`
+result without executing an action. State-trigger templates may use
+`{{agent.id}}`, `{{agent.harness}}`, `{{event.fact_result}}`,
+`{{event.fact_observed_at}}`, and `{{event.dwell_started_at}}`.
+
 ### cron
 
 Recurring scheduled nudges. The daemon's scheduler ticks every 30s. By default,

@@ -279,6 +279,13 @@ type Harness struct {
 	// capability bit stays a coarse harness-level gate. See db.MonitorSet.
 	Monitors bool
 
+	// AwaitingInputObservation declares that this adapter has a concrete live
+	// signal for a harness question waiting on a human answer. It deliberately
+	// excludes approval/permission prompts, which are a separate fact. A false
+	// value means callers must report agent.awaiting_input as unknown rather
+	// than infer false from an idle/working status.
+	AwaitingInputObservation bool
+
 	// OfflineModelTransport marks a harness for which tclaude has a supported
 	// way to run the model/control transport without IP networking. It does not
 	// assert that a particular launch configured such a transport; the
@@ -340,6 +347,10 @@ func (h *Harness) SupportsBackgroundShells() bool {
 // cannot reason about never grows a ledger nothing would ever retire.
 func (h *Harness) SupportsMonitors() bool {
 	return h != nil && h.Monitors
+}
+
+func (h *Harness) SupportsAwaitingInputObservation() bool {
+	return h != nil && h.AwaitingInputObservation
 }
 
 // SupportsOfflineModelTransport reports whether the harness descriptor can

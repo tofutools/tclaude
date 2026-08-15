@@ -17,8 +17,9 @@ import (
 
 type triggerViewJSON struct {
 	*db.TriggerRule
-	Group   string             `json:"group,omitempty"`
-	Firings []db.TriggerFiring `json:"firings,omitempty"`
+	Group       string                 `json:"group,omitempty"`
+	Firings     []db.TriggerFiring     `json:"firings,omitempty"`
+	DwellStates []db.TriggerDwellState `json:"dwell_states,omitempty"`
 }
 
 func triggersCmd() *cobra.Command {
@@ -77,7 +78,7 @@ func runTriggersShow(stdout, stderr io.Writer, selector string) int {
 	if !r.OperatorAuthored {
 		owner = r.OwnerAgent
 	}
-	fmt.Fprintf(stdout, "Owner:     %s\nEnabled:   %v\nScope:     %s\nSource:    %s\nDrafts:    %s\nDebounce:  %s\nCooldown:  %s\n", owner, r.Enabled, triggerScopeLabel(r, view.Group), r.Source, r.DraftFilter, durationLabel(r.DebounceSeconds), durationLabel(r.CooldownSeconds))
+	fmt.Fprintf(stdout, "Owner:     %s\nEnabled:   %v\nScope:     %s\nSource:    %s\nDrafts:    %s\nDebounce:  %s\nCooldown:  %s\nFor:       %s\n", owner, r.Enabled, triggerScopeLabel(r, view.Group), r.Source, r.DraftFilter, durationLabel(r.DebounceSeconds), durationLabel(r.CooldownSeconds), durationLabel(r.ForSeconds))
 	fmt.Fprintln(stdout, "Actions:")
 	for i, a := range r.Actions {
 		switch a.Type {
@@ -97,6 +98,13 @@ func runTriggersShow(stdout, stderr io.Writer, selector string) int {
 			fmt.Fprintf(stdout, "      %d %-8s %-20s %s\n", a.ActionIndex, a.ActionType, a.Outcome, a.Detail)
 		}
 	}
+	if len(view.DwellStates) > 0 {
+		fmt.Fprintln(stdout, "Current fact episodes:")
+		for _, state := range view.DwellStates {
+			fmt.Fprintf(stdout, "  %-20s %-8s since=%s fired=%v %s\n", state.AgentID, state.Result,
+				state.TrueSince.Format(time.RFC3339), !state.FiredAt.IsZero(), state.Detail)
+		}
+	}
 	return rcOK
 }
 
@@ -106,12 +114,13 @@ type triggersExplainParams struct {
 	Number int    `long:"pr-number" optional:"true"`
 	Branch string `long:"pr-branch" optional:"true"`
 	Author string `long:"author-agent" help:"Stable author agent id."`
+	Agent  string `long:"agent-id" optional:"true" help:"Stable selected agent id for agent state sources."`
 	Group  string `long:"group" optional:"true" help:"Group name or numeric id at open time."`
 	Draft  bool   `long:"draft" optional:"true"`
 }
 
 func triggersExplainCmd() *cobra.Command {
-	return boa.CmdT[triggersExplainParams]{Use: "explain", Short: "Dry-run pr.opened against every trigger", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *triggersExplainParams, _ *cobra.Command, _ []string) {
+	return boa.CmdT[triggersExplainParams]{Use: "explain", Short: "Dry-run an event or agent fact against every trigger", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *triggersExplainParams, _ *cobra.Command, _ []string) {
 		os.Exit(runTriggersExplain(os.Stdout, os.Stderr, p))
 	}}.ToCobra()
 }
@@ -128,7 +137,7 @@ func runTriggersExplain(stdout, stderr io.Writer, p *triggersExplainParams) int 
 			Detail   string `json:"detail"`
 		} `json:"results"`
 	}
-	body := map[string]any{"source": strings.TrimSpace(p.Source), "pr_url": strings.TrimSpace(p.URL), "pr_number": p.Number, "pr_branch": p.Branch, "author_agent": strings.TrimSpace(p.Author), "group": strings.TrimSpace(p.Group), "draft": p.Draft}
+	body := map[string]any{"source": strings.TrimSpace(p.Source), "pr_url": strings.TrimSpace(p.URL), "pr_number": p.Number, "pr_branch": p.Branch, "author_agent": strings.TrimSpace(p.Author), "agent_id": strings.TrimSpace(p.Agent), "group": strings.TrimSpace(p.Group), "draft": p.Draft}
 	if err := DaemonRequest(http.MethodPost, "/v1/triggers/explain", body, &resp, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)

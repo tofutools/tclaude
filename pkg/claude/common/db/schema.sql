@@ -1358,54 +1358,6 @@ CREATE TABLE daemon_spawn_history (
 CREATE INDEX idx_daemon_spawn_history_principal
 			ON daemon_spawn_history(principal, spawned_at);
 
-CREATE TABLE "trigger_rules" (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			name TEXT NOT NULL UNIQUE,
-			row_version INTEGER NOT NULL DEFAULT 1,
-			revision INTEGER NOT NULL DEFAULT 1,
-			enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
-			owner_agent TEXT NOT NULL DEFAULT '',
-			operator_authored INTEGER NOT NULL DEFAULT 0 CHECK (operator_authored IN (0, 1)),
-			scope_kind TEXT NOT NULL CHECK (scope_kind IN ('global', 'group')),
-			group_id INTEGER REFERENCES agent_groups(id) ON DELETE CASCADE,
-			source TEXT NOT NULL CHECK (source IN ('pr.opened','pr.updated','pr.merged','ci.failed','ci.succeeded')),
-			author_is_agent INTEGER CHECK (author_is_agent IS NULL OR author_is_agent IN (0, 1)),
-			draft_filter TEXT NOT NULL DEFAULT 'include' CHECK (draft_filter IN ('include', 'exclude', 'only')),
-			debounce_seconds INTEGER NOT NULL DEFAULT 0 CHECK (debounce_seconds >= 0),
-			cooldown_seconds INTEGER NOT NULL DEFAULT 0 CHECK (cooldown_seconds >= 0),
-			actions_json TEXT NOT NULL,
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL,
-			CHECK ((scope_kind = 'group') = (group_id IS NOT NULL))
-		) STRICT;
-
-CREATE INDEX idx_trigger_rules_enabled ON trigger_rules(enabled, source);
-
-CREATE INDEX idx_trigger_rules_group ON trigger_rules(group_id);
-
-CREATE TABLE "trigger_pr_events" (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			agent_pr_id INTEGER NOT NULL REFERENCES agent_prs(id) ON DELETE CASCADE,
-			source TEXT NOT NULL CHECK (source IN ('pr.opened','pr.updated','pr.merged','ci.failed','ci.succeeded')),
-			event_ref TEXT NOT NULL UNIQUE,
-			pr_url TEXT NOT NULL,
-			pr_number INTEGER NOT NULL DEFAULT 0,
-			pr_branch TEXT NOT NULL DEFAULT '',
-			pr_author_agent TEXT NOT NULL,
-			draft INTEGER NOT NULL DEFAULT 0 CHECK (draft IN (0, 1)),
-			group_ids_json TEXT NOT NULL DEFAULT '[]',
-			previous_state TEXT NOT NULL DEFAULT '',
-			current_state TEXT NOT NULL DEFAULT '',
-			occurred_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL,
-			status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processed', 'preexisting', 'interrupted')),
-			processed_at INTEGER
-		) STRICT;
-
-CREATE INDEX idx_trigger_pr_events_pending ON trigger_pr_events(status, updated_at);
-
-CREATE INDEX idx_trigger_pr_events_pr_source ON trigger_pr_events(agent_pr_id, source, id);
-
 CREATE TABLE trigger_pr_observations (
 			agent_pr_id INTEGER PRIMARY KEY REFERENCES agent_prs(id) ON DELETE CASCADE,
 			event_sequence INTEGER NOT NULL DEFAULT 1,
@@ -1437,4 +1389,75 @@ CREATE TABLE trigger_workers (
 CREATE INDEX idx_trigger_workers_rule_live ON trigger_workers(rule_id,state);
 
 CREATE INDEX idx_trigger_workers_cron_live ON trigger_workers(cron_job_id,state);
+
+CREATE TABLE "trigger_rules" (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL UNIQUE,
+			row_version INTEGER NOT NULL DEFAULT 1,
+			revision INTEGER NOT NULL DEFAULT 1,
+			enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+			owner_agent TEXT NOT NULL DEFAULT '',
+			operator_authored INTEGER NOT NULL DEFAULT 0 CHECK (operator_authored IN (0, 1)),
+			scope_kind TEXT NOT NULL CHECK (scope_kind IN ('global', 'group')),
+			group_id INTEGER REFERENCES agent_groups(id) ON DELETE CASCADE,
+			source TEXT NOT NULL CHECK (source IN ('pr.opened','pr.updated','pr.merged','ci.failed','ci.succeeded','agent.idle','agent.awaiting_input')),
+			author_is_agent INTEGER CHECK (author_is_agent IS NULL OR author_is_agent IN (0, 1)),
+			draft_filter TEXT NOT NULL DEFAULT 'include' CHECK (draft_filter IN ('include', 'exclude', 'only')),
+			debounce_seconds INTEGER NOT NULL DEFAULT 0 CHECK (debounce_seconds >= 0),
+			cooldown_seconds INTEGER NOT NULL DEFAULT 0 CHECK (cooldown_seconds >= 0),
+			for_seconds INTEGER NOT NULL DEFAULT 0 CHECK (for_seconds >= 0),
+			actions_json TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			CHECK ((scope_kind = 'group') = (group_id IS NOT NULL))
+		) STRICT;
+
+CREATE INDEX idx_trigger_rules_enabled ON trigger_rules(enabled, source);
+
+CREATE INDEX idx_trigger_rules_group ON trigger_rules(group_id);
+
+CREATE TABLE "trigger_pr_events" (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			agent_pr_id INTEGER REFERENCES agent_prs(id) ON DELETE CASCADE,
+			source TEXT NOT NULL CHECK (source IN ('pr.opened','pr.updated','pr.merged','ci.failed','ci.succeeded','agent.idle','agent.awaiting_input')),
+			event_ref TEXT NOT NULL UNIQUE,
+			pr_url TEXT NOT NULL DEFAULT '',
+			pr_number INTEGER NOT NULL DEFAULT 0,
+			pr_branch TEXT NOT NULL DEFAULT '',
+			pr_author_agent TEXT NOT NULL DEFAULT '',
+			agent_id TEXT NOT NULL DEFAULT '',
+			agent_harness TEXT NOT NULL DEFAULT '',
+			fact_result TEXT NOT NULL DEFAULT '',
+			fact_observed_at INTEGER,
+			dwell_started_at INTEGER,
+			draft INTEGER NOT NULL DEFAULT 0 CHECK (draft IN (0, 1)),
+			group_ids_json TEXT NOT NULL DEFAULT '[]',
+			previous_state TEXT NOT NULL DEFAULT '',
+			current_state TEXT NOT NULL DEFAULT '',
+			occurred_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processed', 'preexisting', 'interrupted')),
+			processed_at INTEGER
+		) STRICT;
+
+CREATE INDEX idx_trigger_pr_events_pending ON trigger_pr_events(status, updated_at);
+
+CREATE INDEX idx_trigger_pr_events_pr_source ON trigger_pr_events(agent_pr_id, source, id);
+
+CREATE TABLE trigger_dwell_states (
+			rule_id INTEGER NOT NULL REFERENCES trigger_rules(id) ON DELETE CASCADE,
+			agent_id TEXT NOT NULL,
+			rule_revision INTEGER NOT NULL,
+			episode INTEGER NOT NULL DEFAULT 0 CHECK (episode >= 0),
+			result TEXT NOT NULL CHECK (result IN ('true','false','unknown')),
+			detail TEXT NOT NULL DEFAULT '',
+			harness TEXT NOT NULL DEFAULT '',
+			fact_observed_at INTEGER,
+			true_since INTEGER,
+			fired_at INTEGER,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(rule_id, agent_id)
+		) STRICT;
+
+CREATE INDEX idx_trigger_dwell_states_due ON trigger_dwell_states(result, true_since, fired_at);
 

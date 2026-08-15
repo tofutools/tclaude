@@ -32,13 +32,15 @@ type dashboardTriggerMutation struct {
 	DraftFilter     string             `json:"draft_filter"`
 	DebounceSeconds int64              `json:"debounce_seconds,omitempty"`
 	CooldownSeconds int64              `json:"cooldown_seconds,omitempty"`
+	ForSeconds      int64              `json:"for_seconds,omitempty"`
 	Actions         []db.TriggerAction `json:"actions"`
 }
 
 type dashboardTriggerView struct {
 	*db.TriggerRule
-	Group   string             `json:"group,omitempty"`
-	Firings []db.TriggerFiring `json:"firings,omitempty"`
+	Group       string                 `json:"group,omitempty"`
+	Firings     []db.TriggerFiring     `json:"firings,omitempty"`
+	DwellStates []db.TriggerDwellState `json:"dwell_states,omitempty"`
 }
 
 func handleDashboardTriggers(w http.ResponseWriter, r *http.Request) {
@@ -138,6 +140,7 @@ func handleDashboardTrigger(w http.ResponseWriter, r *http.Request) {
 		firings, _ := db.ListTriggerFirings(id, 20)
 		view := triggerView(rule)
 		view.Firings = firings
+		view.DwellStates, _ = db.ListTriggerDwellStates(id)
 		writeJSON(w, 200, view)
 	case http.MethodPatch:
 		replacement, rv, ok := decodeDashboardTrigger(w, r, rule)
@@ -220,6 +223,9 @@ func decodeDashboardTrigger(w http.ResponseWriter, r *http.Request, existing *db
 	}
 	if _, ok := present["cooldown_seconds"]; ok {
 		rule.CooldownSeconds = body.CooldownSeconds
+	}
+	if _, ok := present["for_seconds"]; ok {
+		rule.ForSeconds = body.ForSeconds
 	}
 	if _, ok := present["actions"]; ok {
 		rule.Actions = body.Actions
