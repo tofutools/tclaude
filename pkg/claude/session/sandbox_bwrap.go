@@ -2452,7 +2452,11 @@ var tclaudeLayerStaticOSPaths = []string{
 	"/opt",
 }
 
-const tclaudeLayerConstructedRootTclaudePath = "/usr/bin/tclaude"
+const (
+	tclaudeLayerConstructedRootTclaudeDir  = "/.tclaude"
+	tclaudeLayerConstructedRootTclaudeBin  = "/.tclaude/bin"
+	tclaudeLayerConstructedRootTclaudePath = "/.tclaude/bin/tclaude"
+)
 
 // tclaudeLayerTclaudeCLIPath is a seam for the real bubblewrap smoke, whose
 // renderer runs inside a Go test executable but must project the separately
@@ -2518,8 +2522,18 @@ func appendTclaudeLayerTclaudeCLI(args []string, candidate string) ([]string, er
 	if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
 		return nil, fmt.Errorf("tclaude CLI path %q is not an executable regular file", resolved)
 	}
+	path := os.Getenv("PATH")
+	if path == "" {
+		path = tclaudeLayerConstructedRootTclaudeBin
+	} else {
+		path = tclaudeLayerConstructedRootTclaudeBin + string(os.PathListSeparator) + path
+	}
 	return append(args,
-		"--ro-bind", resolved, tclaudeLayerConstructedRootTclaudePath), nil
+		"--dir", tclaudeLayerConstructedRootTclaudeDir,
+		"--dir", tclaudeLayerConstructedRootTclaudeBin,
+		"--ro-bind", resolved, tclaudeLayerConstructedRootTclaudePath,
+		"--setenv", "PATH", path,
+	), nil
 }
 
 // tclaudeLayerHostResolverRuntimeRoot is the only directory outside the static

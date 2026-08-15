@@ -1309,6 +1309,7 @@ func TestBwrapArgsConstructsHostOpenRootWithoutUnsharingNetwork(t *testing.T) {
 }
 
 func TestAppendTclaudeLayerTclaudeCLIResolvesOneExecutableFile(t *testing.T) {
+	t.Setenv("PATH", "/usr/bin:/bin")
 	root := t.TempDir()
 	realBinary := filepath.Join(root, "real-tclaude")
 	require.NoError(t, os.WriteFile(realBinary, []byte("fixture"), 0o755))
@@ -1321,18 +1322,25 @@ func TestAppendTclaudeLayerTclaudeCLIResolvesOneExecutableFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{
 		"prefix",
+		"--dir", tclaudeLayerConstructedRootTclaudeDir,
+		"--dir", tclaudeLayerConstructedRootTclaudeBin,
 		"--ro-bind", resolvedBinary, tclaudeLayerConstructedRootTclaudePath,
+		"--setenv", "PATH", tclaudeLayerConstructedRootTclaudeBin + ":/usr/bin:/bin",
 	}, got)
 }
 
 func TestAppendTclaudeLayerTclaudeCLIProjectsExecutableAlreadyInStaticRoot(t *testing.T) {
+	t.Setenv("PATH", "/usr/bin:/bin")
 	resolved, err := filepath.EvalSymlinks("/bin/sh")
 	require.NoError(t, err)
 	got, err := appendTclaudeLayerTclaudeCLI([]string{"prefix"}, "/bin/sh")
 	require.NoError(t, err)
 	assert.Equal(t, []string{
 		"prefix",
+		"--dir", tclaudeLayerConstructedRootTclaudeDir,
+		"--dir", tclaudeLayerConstructedRootTclaudeBin,
 		"--ro-bind", resolved, tclaudeLayerConstructedRootTclaudePath,
+		"--setenv", "PATH", tclaudeLayerConstructedRootTclaudeBin + ":/usr/bin:/bin",
 	}, got, "the active CLI must land on PATH even when its source is under /opt or another static root")
 }
 
@@ -1350,7 +1358,7 @@ func TestBwrapArgsOperatorHideCanShadowConstructedRootTclaudeCLI(t *testing.T) {
 	plan := sandboxpolicy.MountPlan{
 		NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd,
 		Entries: []sandboxpolicy.MountEntry{{
-			Path: "/usr",
+			Path: tclaudeLayerConstructedRootTclaudeDir,
 			Mode: sandboxpolicy.MountHide,
 		}},
 	}
@@ -1365,10 +1373,10 @@ func TestBwrapArgsOperatorHideCanShadowConstructedRootTclaudeCLI(t *testing.T) {
 		t.Skip("test executable is already provided by the static OS root")
 	}
 	cliBind := indexOfBwrapBind(got, "--ro-bind", resolvedSelf, tclaudeLayerConstructedRootTclaudePath)
-	usrHide := indexOfBwrapTriplet(got, "--tmpfs", "/usr")
+	cliDirHide := indexOfBwrapTriplet(got, "--tmpfs", tclaudeLayerConstructedRootTclaudeDir)
 	require.NotEqual(t, -1, cliBind)
-	require.NotEqual(t, -1, usrHide)
-	assert.Less(t, cliBind, usrHide,
+	require.NotEqual(t, -1, cliDirHide)
+	assert.Less(t, cliBind, cliDirHide,
 		"authored policy replay must be able to shadow the coordination convenience")
 	assert.Len(t, indicesOfBwrapBind(got, "--ro-bind", resolvedSelf, tclaudeLayerConstructedRootTclaudePath), 1,
 		"the applier must not repair the CLI bind after an authored hide")
