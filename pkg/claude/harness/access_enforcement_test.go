@@ -655,9 +655,8 @@ func TestLinuxTclaudeLayerDenyCapabilityDrivesPredictionAndLaunchPlan(t *testing
 		DefaultName:  ClaudeSandboxOff,
 		CodexName:    SandboxDangerFull,
 		OpenCodeName: OpenCodeSandboxTclaudeLayer,
-		CopilotName:  CopilotSandboxOff,
 	}
-	for _, harnessName := range []string{DefaultName, CodexName, OpenCodeName, CopilotName} {
+	for _, harnessName := range []string{DefaultName, CodexName, OpenCodeName} {
 		t.Run(harnessName, func(t *testing.T) {
 			row, err := accessEnforcementTable(
 				MustGet(harnessName),
@@ -1624,19 +1623,30 @@ func TestPrivateRoutedNamespaceRequiresExactReadyLinuxLayer(t *testing.T) {
 			Mode: sandboxpolicy.AccessModeClosed,
 		},
 	}
-	for _, harnessName := range []string{DefaultName, CodexName, OpenCodeName} {
+	for _, harnessName := range []string{DefaultName, CodexName, OpenCodeName, CopilotName} {
 		t.Run(harnessName, func(t *testing.T) {
 			row, err := accessEnforcementTable(
 				MustGet(harnessName), sandboxpolicy.ImplementationTclaudeLayer, axes,
 				OpenCodeSandboxTclaudeLayer, "linux", true)
 			require.NoError(t, err)
+			assert.Equal(t, EnforceFull, row.NetworkList)
 			assert.Equal(t, EnforcePartial, row.SocketClosed)
 			assert.True(t, row.ConstructedRoot)
 		})
 	}
+	filteredCopilotAxes := sandboxpolicy.ResolvedAxes{Network: sandboxpolicy.NetworkRules{
+		Mode:  sandboxpolicy.AccessModeList,
+		Allow: []sandboxpolicy.NetworkAllowEntry{{CIDR: "192.0.2.0/24"}},
+	}}
+	filteredCopilot, err := accessEnforcementTable(
+		MustGet(CopilotName), sandboxpolicy.ImplementationTclaudeLayer,
+		filteredCopilotAxes, CopilotSandboxOff, "linux", true)
+	require.NoError(t, err)
+	assert.Equal(t, EnforceNone, filteredCopilot.NetworkList,
+		"private default-allow evidence must not overclaim destination filtering")
 	h := MustGet(OpenCodeName)
 
-	_, err := accessEnforcementTable(
+	_, err = accessEnforcementTable(
 		h, sandboxpolicy.ImplementationTclaudeLayer, axes,
 		OpenCodeSandboxTclaudeLayer, "linux", false)
 	require.ErrorContains(t, err, "private-network prerequisites")

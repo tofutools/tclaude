@@ -10,7 +10,7 @@ applies to tool calls. In this mode tclaude wraps the complete tool-executing
 harness process in its own Linux boundary.
 
 Filtered `list` enforcement is currently enabled for exact `tclaude-layer`
-Claude Code, Codex, OpenCode, and Copilot launches. The `stacked` implementation does
+Claude Code, Codex, and OpenCode launches. The `stacked` implementation does
 not claim this filtered-network boundary.
 
 For the filesystem side of that boundary, profile composition, and the
@@ -146,7 +146,7 @@ intersected with an explicit rule allowing only `api.example.com:443`, becomes
 the exact host and port rule. Disjoint lists produce an empty list, which
 allows no new external flow.
 
-Network denies are active only for Claude Code, Codex, OpenCode, and Copilot launches
+Network denies are active only for Claude Code, Codex, and OpenCode launches
 using the Linux `tclaude-layer` filtered gateway. Other implementation,
 harness, and platform cells omit each deny row individually with a persisted
 disclosure; an unsupported port-scoped row is never widened into a

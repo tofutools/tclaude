@@ -421,50 +421,54 @@ func accessEnforcementTable(
 		// launch does not run. The proxy's own cells stay EnforceNone until
 		// their carriage smokes land.
 		packetGateway := deployedEngine != sandboxpolicy.NetworkEngineProxy
+		filteredGatewayHarness := h.Name == DefaultName || h.Name == CodexName ||
+			h.Name == OpenCodeName
+		privateRoutedCopilot := h.Name == CopilotName &&
+			sandboxpolicy.NetworkRulesArePrivateRoutedOpen(axes.Network)
 		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
 			packetGateway &&
 			goos == "linux" && filteredNetworkReady &&
-			(h.Name == DefaultName || h.Name == CodexName ||
-				h.Name == OpenCodeName || h.Name == CopilotName) {
+			(filteredGatewayHarness || privateRoutedCopilot) {
 			caps.NetworkList = EnforceFull
-			caps.NetworkSelectors = []NetworkSelectorCapability{
-				{
-					Selector: string(sandboxpolicy.NetworkSelectorHost),
-					Level:    EnforceFull,
-					Detail:   filteredNetworkDNSCaveat(),
-				},
-				{
-					Selector: string(sandboxpolicy.NetworkSelectorDomain),
-					Level:    EnforceFull,
-					Detail:   filteredNetworkDNSCaveat(),
-				},
-				{
-					Selector: string(sandboxpolicy.NetworkSelectorCIDR),
-					Level:    EnforceFull,
-				},
-				{
-					Selector: string(sandboxpolicy.NetworkSelectorLoopback),
-					Level:    EnforceFull,
-					Detail:   FilteredNetworkLoopbackCaveat,
-				},
-			}
-			caps.NetworkPorts = EnforceFull
-			caps.NetworkListCondition =
-				"At launch, bubblewrap, pasta, and nft must pass live checks. If any check fails, these rules are not enforced and outbound traffic is open."
-			if h.Name == OpenCodeName {
-				// Preview and runtime must not disagree: OpenCode reaches this
-				// gateway only through an inspected explicit provider, and a
-				// launch without one is refused rather than started unfiltered.
-				caps.NetworkListCondition +=
-					" " + OpenCodeFilteredExplicitProviderCaveat
+			if filteredGatewayHarness {
+				caps.NetworkSelectors = []NetworkSelectorCapability{
+					{
+						Selector: string(sandboxpolicy.NetworkSelectorHost),
+						Level:    EnforceFull,
+						Detail:   filteredNetworkDNSCaveat(),
+					},
+					{
+						Selector: string(sandboxpolicy.NetworkSelectorDomain),
+						Level:    EnforceFull,
+						Detail:   filteredNetworkDNSCaveat(),
+					},
+					{
+						Selector: string(sandboxpolicy.NetworkSelectorCIDR),
+						Level:    EnforceFull,
+					},
+					{
+						Selector: string(sandboxpolicy.NetworkSelectorLoopback),
+						Level:    EnforceFull,
+						Detail:   FilteredNetworkLoopbackCaveat,
+					},
+				}
+				caps.NetworkPorts = EnforceFull
+				caps.NetworkListCondition =
+					"At launch, bubblewrap, pasta, and nft must pass live checks. If any check fails, these rules are not enforced and outbound traffic is open."
+				if h.Name == OpenCodeName {
+					// Preview and runtime must not disagree: OpenCode reaches this
+					// gateway only through an inspected explicit provider, and a
+					// launch without one is refused rather than started unfiltered.
+					caps.NetworkListCondition +=
+						" " + OpenCodeFilteredExplicitProviderCaveat
+				}
 			}
 			caps.Mechanism = "tclaude-layer bubblewrap + supervised DNS/pasta/nftables gateway"
 		}
 		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
 			packetGateway &&
 			goos == "linux" && filteredNetworkReady &&
-			(h.Name == DefaultName || h.Name == CodexName ||
-				h.Name == OpenCodeName || h.Name == CopilotName) {
+			filteredGatewayHarness {
 			dnsDenyLevel := EnforceFull
 			dnsDenyDetail := ""
 			if axes.Network.Mode == sandboxpolicy.AccessModeOpen {

@@ -1120,7 +1120,7 @@ half: that one closes only when the network namespace does. Opt into its adjacen
 `sandbox-profiles plan` for a dry-run of explicit inputs.
 
 The Linux `filtered` posture enforces the packet and DNS subset for exact
-`tclaude-layer` Claude Code, Codex, OpenCode, and Copilot launches: IPv4/IPv6 CIDR destinations,
+`tclaude-layer` Claude Code, Codex, and OpenCode launches: IPv4/IPv6 CIDR destinations,
 exact DNS hosts, label-bound domains with optional subdomains, TCP/UDP
 destination ports (including QUIC as UDP), and synthetic host loopback. Raw and
 packet sockets, including authored ICMP access, are not part of the network-list
