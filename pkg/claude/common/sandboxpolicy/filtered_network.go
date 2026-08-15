@@ -37,8 +37,12 @@ type FilteredNetworkRuleSet struct {
 	// DefaultVerdict is omitted by legacy allow-only relays. An absent value
 	// therefore means drop forever.
 	DefaultVerdict FilteredNetworkDefaultVerdict `json:"default_verdict,omitempty"`
-	Rules          []FilteredNetworkRule         `json:"rules"`
-	DenyRules      []FilteredNetworkRule         `json:"deny_rules,omitempty"`
+	// BlockHostLoopback closes pasta's fixed synthetic mapping to the host's
+	// loopback namespace. It is set by an explicitly private, default-accept
+	// profile; legacy default-accept deny policies retain their prior topology.
+	BlockHostLoopback bool                  `json:"block_host_loopback,omitempty"`
+	Rules             []FilteredNetworkRule `json:"rules"`
+	DenyRules         []FilteredNetworkRule `json:"deny_rules,omitempty"`
 }
 
 // FilteredNetworkRule uses a stable polarity-local index after canonical
@@ -115,6 +119,8 @@ func CompileFilteredNetworkRules(rules NetworkRules) (FilteredNetworkRuleSet, er
 	out := FilteredNetworkRuleSet{
 		ProtocolContract: FilteredNetworkProtocolContract,
 		DefaultVerdict:   FilteredNetworkDefaultDrop,
+		BlockHostLoopback: rules.Namespace == NetworkNamespacePrivate &&
+			(rules.Mode == AccessModeUnset || rules.Mode == AccessModeOpen),
 	}
 	if rules.Mode == AccessModeOpen ||
 		(rules.Mode == AccessModeUnset && rules.Namespace == NetworkNamespacePrivate) {

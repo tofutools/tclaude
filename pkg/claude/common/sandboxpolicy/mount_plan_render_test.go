@@ -760,6 +760,17 @@ func TestPrivateRoutedOpenUsesDefaultAcceptFilteredGateway(t *testing.T) {
 		plan.FilteredNetwork.DefaultVerdict != FilteredNetworkDefaultAccept {
 		t.Fatalf("private routed filtered plan = %#v, want default accept", plan.FilteredNetwork)
 	}
+	if !plan.FilteredNetwork.BlockHostLoopback {
+		t.Fatal("private routed plan did not block pasta's host-loopback mapping")
+	}
+	nft, err := RenderFilteredNetworkNFT(*plan.FilteredNetwork)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(nft, "ip daddr "+FilteredNetworkLoopbackIPv4+"/32 drop") ||
+		!strings.Contains(nft, "ip6 daddr "+FilteredNetworkLoopbackIPv6+"/128 drop") {
+		t.Fatalf("private routed nft policy leaves host loopback mapped:\n%s", nft)
+	}
 	if plan.RootPosture != RootConstructed {
 		t.Fatalf("private routed root = %s, want constructed", plan.RootPosture)
 	}
