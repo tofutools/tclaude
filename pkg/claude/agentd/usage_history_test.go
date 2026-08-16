@@ -177,11 +177,12 @@ func TestForecastUsageDetectsUnexpectedNonzeroReset(t *testing.T) {
 		rows[i].ResetsAt = base.Add(10 * time.Hour)
 	}
 
-	forecast, resets := forecastUsage(rows, rows[len(rows)-1].ObservedAt)
+	forecasts, resets := forecastUsage(rows, rows[len(rows)-1].ObservedAt, base)
 	require.Len(t, resets, 1)
 	assert.Equal(t, 20.0, resets[0].Pct, "the observed post-reset minimum is retained; no synthetic zero")
+	forecast := forecasts[usageForecastAlgoFit]
 	assert.Equal(t, "before_reset", forecast.Status)
-	assert.Equal(t, 20.0, forecast.BaselinePct)
+	assert.Equal(t, 20.0, forecast.WindowBaselinePct)
 	assert.Equal(t, 3, forecast.SampleCount)
 	assert.InDelta(t, 20.0, forecast.RatePctPerHour, 1e-9)
 	assert.Equal(t, base.Add(4*time.Hour+15*time.Minute).Format(time.RFC3339Nano), forecast.HitsLimitAt)
@@ -195,9 +196,10 @@ func TestForecastUsageKnownBoundaryStartsNewSegmentWithoutDrop(t *testing.T) {
 		rows[i].ResetsAt = base.Add(5 * time.Hour)
 	}
 
-	forecast, resets := forecastUsage(rows, rows[len(rows)-1].ObservedAt)
+	forecasts, resets := forecastUsage(rows, rows[len(rows)-1].ObservedAt, base)
 	require.Len(t, resets, 1, "a crossed declared boundary is recorded exactly once")
-	assert.Equal(t, 15.0, forecast.BaselinePct)
+	forecast := forecasts[usageForecastDefaultAlgo]
+	assert.Equal(t, 15.0, forecast.WindowBaselinePct)
 	assert.Equal(t, 3, forecast.SampleCount)
 	assert.Equal(t, "before_reset", forecast.Status)
 }
@@ -205,10 +207,12 @@ func TestForecastUsageKnownBoundaryStartsNewSegmentWithoutDrop(t *testing.T) {
 func TestForecastUsageRequiresEnoughPostResetHistory(t *testing.T) {
 	base := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
 	rows := usageHistoryRows(base, 12, 13)
-	forecast, resets := forecastUsage(rows, rows[len(rows)-1].ObservedAt)
+	forecasts, resets := forecastUsage(rows, rows[len(rows)-1].ObservedAt, base)
 	assert.Empty(t, resets)
-	assert.Equal(t, "insufficient", forecast.Status)
-	assert.Zero(t, forecast.RatePctPerHour)
+	for algo, forecast := range forecasts {
+		assert.Equal(t, "insufficient", forecast.Status, algo)
+		assert.Zero(t, forecast.RatePctPerHour, algo)
+	}
 }
 
 func TestForecastUsageReportsResetFirstAndFlatPaces(t *testing.T) {
@@ -217,28 +221,123 @@ func TestForecastUsageReportsResetFirstAndFlatPaces(t *testing.T) {
 	for i := range slow {
 		slow[i].ResetsAt = base.Add(time.Hour)
 	}
-	forecast, _ := forecastUsage(slow, slow[len(slow)-1].ObservedAt)
+	forecasts, _ := forecastUsage(slow, slow[len(slow)-1].ObservedAt, base)
+	forecast := forecasts[usageForecastDefaultAlgo]
 	assert.Equal(t, "after_reset", forecast.Status)
 	assert.NotEmpty(t, forecast.HitsLimitAt, "the response still exposes the straight-line crossing for comparison")
 
 	flatRows := usageHistoryRows(base, 10, 10, 10)
-	flat, _ := forecastUsage(flatRows, flatRows[len(flatRows)-1].ObservedAt)
-	assert.Equal(t, "flat", flat.Status)
-	assert.Empty(t, flat.HitsLimitAt)
+	flatForecasts, _ := forecastUsage(flatRows, flatRows[len(flatRows)-1].ObservedAt, base)
+	for algo, flat := range flatForecasts {
+		assert.Equal(t, "flat", flat.Status, algo)
+		assert.Empty(t, flat.HitsLimitAt, algo)
+	}
 }
 
 func TestForecastUsagePausesStaleReadings(t *testing.T) {
 	base := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
 	rows := usageHistoryRows(base, 10, 15, 20)
-	forecast, _ := forecastUsage(rows, rows[len(rows)-1].ObservedAt.Add(usageForecastStaleAfter+time.Minute))
+	forecasts, _ := forecastUsage(rows, rows[len(rows)-1].ObservedAt.Add(usageForecastStaleAfter+time.Minute), base)
+	forecast := forecasts[usageForecastDefaultAlgo]
 	assert.Equal(t, "stale", forecast.Status, "an old sample cannot masquerade as a current pace")
 	assert.Empty(t, forecast.HitsLimitAt)
 
 	for i := range rows {
 		rows[i].ResetsAt = rows[len(rows)-1].ObservedAt
 	}
-	forecast, _ = forecastUsage(rows, rows[len(rows)-1].ObservedAt.Add(time.Minute))
-	assert.Equal(t, "stale", forecast.Status, "a passed declared reset invalidates the old percentage immediately")
+	forecasts, _ = forecastUsage(rows, rows[len(rows)-1].ObservedAt.Add(time.Minute), base)
+	assert.Equal(t, "stale", forecasts[usageForecastDefaultAlgo].Status,
+		"a passed declared reset invalidates the old percentage immediately")
+}
+
+// An idle stretch followed by a burst is the shape that made the old
+// least-squares-only forecast unreadable: it weights the idle hours so heavily
+// that the drawn line barely rises while usage is climbing steeply.
+func usageIdleThenBurstRows(base time.Time) []db.SubscriptionUsageHistoryRow {
+	values := make([]float64, 0, 37)
+	for range 32 { // 8 idle hours at 10%.
+		values = append(values, 10)
+	}
+	for i := 1; i <= 4; i++ { // One hour climbing to 50%.
+		values = append(values, 10+float64(i)*10)
+	}
+	return usageHistoryRows(base, values...)
+}
+
+func TestForecastUsageAlgorithmsDisagreeOnIdleThenBurst(t *testing.T) {
+	base := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	rows := usageIdleThenBurstRows(base)
+	last := rows[len(rows)-1].ObservedAt
+
+	forecasts, resets := forecastUsage(rows, last, base)
+	require.Empty(t, resets)
+	require.Len(t, forecasts, 3)
+
+	// Span: first to last sample of the view, 40 points over 8h45m.
+	assert.InDelta(t, 40.0/8.75, forecasts[usageForecastAlgoSpan].RatePctPerHour, 1e-9)
+	assert.Equal(t, len(rows), forecasts[usageForecastAlgoSpan].SampleCount)
+	// Recent: the newest five samples, which is the burst alone.
+	assert.InDelta(t, 40.0, forecasts[usageForecastAlgoRecent].RatePctPerHour, 1e-9)
+	assert.Equal(t, usageForecastRecentCount, forecasts[usageForecastAlgoRecent].SampleCount)
+	// Fit lags both by design; the burst is a fraction of the segment it averages.
+	assert.Less(t, forecasts[usageForecastAlgoFit].RatePctPerHour, forecasts[usageForecastAlgoSpan].RatePctPerHour)
+
+	for algo, forecast := range forecasts {
+		assert.Equal(t, algo, forecast.Algorithm)
+		assert.Equal(t, "projected", forecast.Status, algo)
+	}
+}
+
+func TestForecastUsageSpanHonorsTheCardsHistoryRange(t *testing.T) {
+	base := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	rows := usageIdleThenBurstRows(base)
+	last := rows[len(rows)-1].ObservedAt
+
+	// A card narrowed to the burst asks for the burst's pace: the samples before
+	// its view start are excluded from the span line, but not from the segment
+	// the other algorithms average.
+	forecasts, _ := forecastUsage(rows, last, last.Add(-time.Hour))
+	assert.InDelta(t, 40.0, forecasts[usageForecastAlgoSpan].RatePctPerHour, 1e-9)
+	assert.Equal(t, 5, forecasts[usageForecastAlgoSpan].SampleCount)
+	assert.Equal(t, 10.0, forecasts[usageForecastAlgoSpan].WindowBaselinePct)
+	assert.Less(t, forecasts[usageForecastAlgoFit].RatePctPerHour, forecasts[usageForecastAlgoSpan].RatePctPerHour)
+
+	// A view that starts after every sample has nothing to draw a line through.
+	forecasts, _ = forecastUsage(rows, last, last.Add(time.Minute))
+	assert.Equal(t, "insufficient", forecasts[usageForecastAlgoSpan].Status)
+	assert.Zero(t, forecasts[usageForecastAlgoSpan].SampleCount)
+	assert.Equal(t, "projected", forecasts[usageForecastAlgoRecent].Status,
+		"the other algorithms are anchored on the segment, not the view")
+}
+
+func TestForecastUsageRecentReachesBackForEnoughElapsedTime(t *testing.T) {
+	base := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	rows := usageHistoryRows(base, 10, 12, 14, 16, 18, 20)
+	// Squeeze the newest five samples into twenty minutes, as a burst of turns
+	// does — less than the minimum elapsed time a pace may be divided by.
+	for i := 1; i < len(rows); i++ {
+		rows[i].ObservedAt = base.Add(time.Duration(i-1)*5*time.Minute + time.Hour)
+	}
+	last := rows[len(rows)-1].ObservedAt
+
+	forecasts, _ := forecastUsage(rows, last, base)
+	recent := forecasts[usageForecastAlgoRecent]
+	assert.Equal(t, len(rows), recent.SampleCount,
+		"the window widens until it covers the minimum elapsed time")
+	assert.InDelta(t, 10.0/(last.Sub(base).Hours()), recent.RatePctPerHour, 1e-9)
+}
+
+func TestForecastUsageStraightLineIgnoresDownwardNoise(t *testing.T) {
+	base := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	// A sub-threshold dip is noise rather than a reset, so it stays in the
+	// segment; a negative pace would still be nonsense to draw.
+	rows := usageHistoryRows(base, 20, 19.5, 19, 18.5)
+	forecasts, resets := forecastUsage(rows, rows[len(rows)-1].ObservedAt, base)
+	assert.Empty(t, resets)
+	for algo, forecast := range forecasts {
+		assert.Equal(t, "flat", forecast.Status, algo)
+		assert.Zero(t, forecast.RatePctPerHour, algo)
+	}
 }
 
 func TestDownsampleUsageRowsBoundsWireAndPreservesReset(t *testing.T) {

@@ -12,6 +12,40 @@ export const USAGE_LOOKAHEAD_SPANS = [
   { hours: 720, label: '30d' },
 ];
 
+// The prediction algorithms the server computes for every series. The ids
+// match usageForecastAlgos in usage_history.go; `span` is the server's default
+// and stays this tab's default too, so an unset preference and an unknown
+// stored one both land on the same line the operator can read off the chart.
+export const USAGE_FORECAST_ALGOS = [
+  {
+    id: 'span', label: 'Span', wizardLabel: 'Arc',
+    description: 'straight line through the first and last sample in view',
+    wizardDescription: 'an arc drawn from the first reading in the span to the last',
+  },
+  {
+    id: 'recent', label: 'Recent', wizardLabel: 'Pulse',
+    description: 'pace of the newest few samples, reaching further back only when they are too close together',
+    wizardDescription: 'the pace of the last few readings, reaching back only when they crowd together',
+  },
+  {
+    id: 'fit', label: 'Fit', wizardLabel: 'Weave',
+    description: 'least-squares pace over the whole post-reset segment',
+    wizardDescription: 'a weave of every reading since the last replenishment',
+  },
+];
+export const USAGE_DEFAULT_FORECAST_ALGO = 'span';
+
+export function usageForecastAlgoOf(value) {
+  return USAGE_FORECAST_ALGOS.some((algo) => algo.id === value) ? value : USAGE_DEFAULT_FORECAST_ALGO;
+}
+
+// usageForecastOf picks a series' forecast for the selected algorithm. Older
+// payloads (and a series the server could not compute the selection for) fall
+// back to `forecast`, the default algorithm's own entry.
+export function usageForecastOf(series, algo) {
+  return series?.forecasts?.[usageForecastAlgoOf(algo)] || series?.forecast || null;
+}
+
 // usageSeriesKeyOf identifies a series (provider × quota window) for the
 // per-series span preferences and the request's `spans` overrides. Provider
 // and window names are server-defined slugs without ':' or ','.
@@ -152,9 +186,12 @@ export function usageForecastView(forecast, now = Date.now(), latestAt = '', wiz
   };
   return {
     tone: 'muted', headline: w('Prediction warming up', 'The vision is still forming'),
+    // Sample count is per algorithm — `span` counts only what is inside the
+    // card's history range — so the copy names the pace window rather than
+    // claiming every post-reset sample was considered.
     lines: [w(
-      `${forecast.sample_count || 0} post-reset sample${forecast.sample_count === 1 ? '' : 's'} · needs 3 over 30m`,
-      `${forecast.sample_count || 0} reading${forecast.sample_count === 1 ? '' : 's'} since replenishment · needs 3 over 30m`,
+      `${forecast.sample_count || 0} sample${forecast.sample_count === 1 ? '' : 's'} in the prediction window · needs 3 over 30m`,
+      `${forecast.sample_count || 0} reading${forecast.sample_count === 1 ? '' : 's'} in the divination · needs 3 over 30m`,
     )],
   };
 }

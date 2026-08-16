@@ -85,3 +85,35 @@ test('usage copy speaks the wizard voice without changing the reading', async (t
     assert.ok(wizardFigures.has(figure), `wizard copy dropped or altered the figure ${figure}`);
   }
 });
+
+test('forecast selection falls back to the default algorithm, never to nothing', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { USAGE_FORECAST_ALGOS, usageForecastAlgoOf, usageForecastOf } =
+    await harness.importDashboardModule('js/usage-history-model.js');
+  assert.deepEqual(USAGE_FORECAST_ALGOS.map((algo) => algo.id), ['span', 'recent', 'fit'],
+    'the ids must match usageForecastAlgos in usage_history.go');
+  for (const algo of USAGE_FORECAST_ALGOS) {
+    assert.ok(algo.label && algo.wizardLabel && algo.description && algo.wizardDescription,
+      `${algo.id} needs copy in both voices`);
+  }
+  assert.equal(usageForecastAlgoOf('recent'), 'recent');
+  assert.equal(usageForecastAlgoOf('guesswork'), 'span', 'an unknown stored preference lands on the default');
+  assert.equal(usageForecastAlgoOf(undefined), 'span');
+
+  const series = {
+    forecast: { algorithm: 'span', status: 'projected' },
+    forecasts: {
+      span: { algorithm: 'span', status: 'projected' },
+      recent: { algorithm: 'recent', status: 'flat' },
+    },
+  };
+  assert.equal(usageForecastOf(series, 'recent').status, 'flat');
+  assert.equal(usageForecastOf(series, 'guesswork').status, 'projected', 'unknown selection reads the default entry');
+  // A series the server could not compute the selection for, and a payload
+  // from before the algorithms existed, both still draw the default line
+  // rather than leaving the card and the chart with nothing to show.
+  assert.equal(usageForecastOf(series, 'fit'), series.forecast);
+  assert.equal(usageForecastOf({ forecast: series.forecast }, 'recent'), series.forecast);
+  assert.equal(usageForecastOf({}, 'span'), null);
+  assert.equal(usageForecastOf(undefined, 'span'), null);
+});

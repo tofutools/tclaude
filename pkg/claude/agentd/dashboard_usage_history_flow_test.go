@@ -30,10 +30,17 @@ type usageHistoryResp struct {
 			Pct float64 `json:"pct"`
 		} `json:"resets"`
 		Forecast struct {
-			Status      string  `json:"status"`
-			BaselinePct float64 `json:"baseline_pct"`
-			ResetAt     string  `json:"reset_at"`
+			Status            string  `json:"status"`
+			Algorithm         string  `json:"algorithm"`
+			WindowBaselinePct float64 `json:"window_baseline_pct"`
+			RatePctPerHour    float64 `json:"rate_pct_per_hour"`
+			ResetAt           string  `json:"reset_at"`
 		} `json:"forecast"`
+		Forecasts map[string]struct {
+			Status         string  `json:"status"`
+			Algorithm      string  `json:"algorithm"`
+			RatePctPerHour float64 `json:"rate_pct_per_hour"`
+		} `json:"forecasts"`
 	} `json:"series"`
 }
 
@@ -95,7 +102,7 @@ func TestDashboardUsageHistoryExcludesAndRestoresPoint(t *testing.T) {
 	require.Len(t, out.Series[0].Points, 4, "excluded observation remains reversible chart data")
 	assert.True(t, out.Series[0].Points[1].Excluded)
 	assert.Empty(t, out.Series[0].Resets, "excluded spike cannot manufacture a reset")
-	assert.Equal(t, 10.0, out.Series[0].Forecast.BaselinePct)
+	assert.Equal(t, 10.0, out.Series[0].Forecast.WindowBaselinePct)
 	assert.Equal(t, "before_reset", out.Series[0].Forecast.Status)
 
 	rec = setExcluded(false)
@@ -106,7 +113,7 @@ func TestDashboardUsageHistoryExcludesAndRestoresPoint(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
 	assert.False(t, out.Series[0].Points[1].Excluded)
 	require.Len(t, out.Series[0].Resets, 1, "restored spike participates in reset detection again")
-	assert.Equal(t, 20.0, out.Series[0].Forecast.BaselinePct)
+	assert.Equal(t, 20.0, out.Series[0].Forecast.WindowBaselinePct)
 }
 
 func TestDashboardUsageHistorySeriesForecastAndVisibility(t *testing.T) {
@@ -129,8 +136,17 @@ func TestDashboardUsageHistorySeriesForecastAndVisibility(t *testing.T) {
 	assert.Len(t, out.Series[0].Points, 4)
 	require.Len(t, out.Series[0].Resets, 1)
 	assert.Equal(t, 20.0, out.Series[0].Resets[0].Pct)
-	assert.Equal(t, 20.0, out.Series[0].Forecast.BaselinePct)
+	assert.Equal(t, 20.0, out.Series[0].Forecast.WindowBaselinePct)
 	assert.Equal(t, "before_reset", out.Series[0].Forecast.Status)
+	// Every algorithm rides on the response so the dashboard can switch graphs
+	// between them without a refetch, and `forecast` is the default one's entry.
+	require.Len(t, out.Series[0].Forecasts, 3)
+	for algo, forecast := range out.Series[0].Forecasts {
+		assert.Equal(t, algo, forecast.Algorithm)
+		assert.NotEmpty(t, forecast.Status, algo)
+	}
+	assert.Equal(t, "span", out.Series[0].Forecast.Algorithm)
+	assert.Equal(t, out.Series[0].Forecasts["span"].RatePctPerHour, out.Series[0].Forecast.RatePctPerHour)
 
 	snapshot := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodGet, "/api/snapshot", nil))
 	require.Equal(t, http.StatusOK, snapshot.Code, snapshot.Body.String())

@@ -53,6 +53,14 @@ func TestDashboardUsageHistoryPreactBoundary(t *testing.T) {
 		"'Forecast'} lookahead, ${scope}`",
 		"aria-pressed=",
 		"usage-card-controls",
+		// The prediction algorithm is a per-graph control next to the spans, and
+		// the chart draws the selected algorithm's line rather than always the
+		// server's default one.
+		"USAGE_FORECAST_ALGOS",
+		"'Prediction'} algorithm, ${scope}`",
+		"setSeriesForecastAlgo",
+		"usageForecastOf(series, span.algo)",
+		"forecast=${selectedForecast}",
 		"&spans=",
 		"tclaude.dash.usage.seriesSpans",
 		// A provider's quota windows share one centred row, capped at the
