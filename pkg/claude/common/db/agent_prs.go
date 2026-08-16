@@ -263,18 +263,31 @@ func GetAgentPR(agentID, prURL string) (AgentPR, error) {
 	return row, nil
 }
 
-// ListUnhandledAgentPRs returns repository-validated presented PRs whose state
-// is not handled, keyed by agent_id for dashboard preloading. Rows predating
-// validation remain quarantined until an agent presents them again.
+// ListUnhandledAgentPRs returns all presented PRs whose state is not handled.
+// This preserves the pre-Git-proxy presentation behavior when that proxy is
+// disabled.
 func ListUnhandledAgentPRs() (map[string][]AgentPR, error) {
+	return listUnhandledAgentPRs(false)
+}
+
+// ListValidatedUnhandledAgentPRs excludes rows without repository provenance
+// for credentialed consumers used while the Git proxy is active.
+func ListValidatedUnhandledAgentPRs() (map[string][]AgentPR, error) {
+	return listUnhandledAgentPRs(true)
+}
+
+func listUnhandledAgentPRs(requireValidation bool) (map[string][]AgentPR, error) {
 	d, err := Open()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT id, agent_id, pr_url, summary, state, validated_repo_root, created_at, updated_at
-		FROM agent_prs
-		WHERE state <> 'handled' AND validated_repo_root <> ''
-		ORDER BY updated_at DESC, id DESC`)
+	query := `SELECT id, agent_id, pr_url, summary, state, validated_repo_root, created_at, updated_at
+		FROM agent_prs WHERE state <> 'handled'`
+	if requireValidation {
+		query += ` AND validated_repo_root <> ''`
+	}
+	query += ` ORDER BY updated_at DESC, id DESC`
+	rows, err := d.Query(query)
 	if err != nil {
 		return nil, err
 	}

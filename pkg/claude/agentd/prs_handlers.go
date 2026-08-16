@@ -67,7 +67,8 @@ func runPRUpdate(w http.ResponseWriter, r *http.Request, target, caller string) 
 	}
 	body.URL = strings.TrimSpace(body.URL)
 	body.Summary = strings.TrimSpace(body.Summary)
-	if err := validateAgentPRURL(body.URL); err != nil {
+	gitProxyEnabled := presentedPRGitProxyEnabled()
+	if err := validateAgentPRURL(body.URL, gitProxyEnabled); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_pr_url", err.Error())
 		return
 	}
@@ -80,7 +81,7 @@ func runPRUpdate(w http.ResponseWriter, r *http.Request, target, caller string) 
 		writeError(w, http.StatusBadRequest, "invalid_pr_state", err.Error())
 		return
 	}
-	if !body.Handled && state != "handled" {
+	if gitProxyEnabled && !body.Handled && state != "handled" {
 		repoRoot, err := presentedPRAccessValidator(r.Context(), caller, body.RepoDir, body.URL)
 		if err != nil {
 			writeError(w, http.StatusForbidden, "pr_repo_refused", err.Error())
@@ -107,7 +108,12 @@ func runPRUpdate(w http.ResponseWriter, r *http.Request, target, caller string) 
 		writePRUpdateResponse(w, target, caller, presentedPRView{URL: body.URL, Number: deriveGitHubPRNumber(body.URL), State: "handled"}, true)
 		return
 	}
-	row, err := db.UpsertValidatedAgentPR(agentID, body.URL, body.Summary, state, body.RepoDir)
+	var row db.AgentPR
+	if gitProxyEnabled {
+		row, err = db.UpsertValidatedAgentPR(agentID, body.URL, body.Summary, state, body.RepoDir)
+	} else {
+		row, err = db.UpsertAgentPR(agentID, body.URL, body.Summary, state)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db", err.Error())
 		return
@@ -130,7 +136,7 @@ func writePRsResponse(w http.ResponseWriter, convID, caller string) {
 		writeError(w, http.StatusNotFound, "not_found", "no agent enrolled for conv "+short8(convID))
 		return
 	}
-	all, err := db.ListUnhandledAgentPRs()
+	all, err := listVisiblePresentedPRs()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db", err.Error())
 		return

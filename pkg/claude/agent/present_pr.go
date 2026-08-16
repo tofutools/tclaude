@@ -33,7 +33,7 @@ func presentPRCmd() *cobra.Command {
 }
 
 type presentPRParams struct {
-	URL      string `pos:"true" help:"Canonical GitHub pull request URL to show in the dashboard"`
+	URL      string `pos:"true" help:"HTTP(S) pull request URL to show in the dashboard; Git proxy mode requires a canonical GitHub PR URL"`
 	Summary  string `long:"summary" short:"s" optional:"true" help:"Optional short label/summary for the PR badge"`
 	State    string `long:"state" optional:"true" help:"Optional PR state: open, draft, merged, or closed"`
 	Handled  bool   `long:"handled" optional:"true" help:"Mark this presented PR handled so it no longer appears in the dashboard"`

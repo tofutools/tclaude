@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -94,7 +95,7 @@ func presentedPRViews(rows []db.AgentPR) []presentedPRView {
 // stale GitHub PRs schedule an async `gh` refresh, and terminal PRs stay
 // visible for one TTL before being marked handled and omitted.
 func preloadPresentedPRsForDashboard(now time.Time) map[string][]db.AgentPR {
-	all, err := db.ListUnhandledAgentPRs()
+	all, err := listVisiblePresentedPRs()
 	if err != nil {
 		return map[string][]db.AgentPR{}
 	}
@@ -208,7 +209,7 @@ func refreshPresentedPR(agentID, rawURL, key string) {
 }
 
 func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
-	args, ok := presentedPRViewArgs(rawURL, "number,url,state,isDraft,statusCheckRollup")
+	args, ok := presentedPRViewArgs(rawURL, "number,url,state,isDraft,statusCheckRollup", presentedPRGitProxyEnabled())
 	if !ok {
 		return presentedPRInfo{}, false
 	}
@@ -243,7 +244,7 @@ func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
 // set only — no isDraft, for the reason documented there. A draft that has
 // to come through this retry renders as a plain open badge.
 func livePresentedPRInfoWithoutChecks(rawURL string) (presentedPRInfo, bool) {
-	args, ok := presentedPRViewArgs(rawURL, "number,url,state")
+	args, ok := presentedPRViewArgs(rawURL, "number,url,state", presentedPRGitProxyEnabled())
 	if !ok {
 		return presentedPRInfo{}, false
 	}
@@ -457,7 +458,7 @@ type dashboardPRTarget struct {
 // page, or a failed search — remains covered by the existing per-PR resolver
 // and the branch-link TTL refresh.
 func pollRecentlyMergedPRs() (bool, error) {
-	all, err := db.ListUnhandledAgentPRs()
+	all, err := listVisiblePresentedPRs()
 	if err != nil {
 		return false, fmt.Errorf("list presented PRs: %w", err)
 	}
@@ -697,7 +698,7 @@ func presentedPRCacheKey(rawURL string) string {
 	return "ppr_" + hex.EncodeToString(h[:8])
 }
 
-func validateAgentPRURL(rawURL string) error {
+func validateAgentPRURL(rawURL string, strict bool) error {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
 		return fmt.Errorf("PR URL is empty")
@@ -705,11 +706,37 @@ func validateAgentPRURL(rawURL string) error {
 	if len(rawURL) > maxAgentPRURLLen {
 		return fmt.Errorf("PR URL is too long (%d > %d chars)", len(rawURL), maxAgentPRURLLen)
 	}
-	ref, ok := githubPRRefFromURL(rawURL)
-	if !ok || rawURL != "https://github.com/"+ref.repo+"/pull/"+strconv.Itoa(ref.number) {
-		return fmt.Errorf("PR URL must have the form https://github.com/<owner>/<repo>/pull/<number>")
+	if strict {
+		ref, ok := githubPRRefFromURL(rawURL)
+		if !ok || rawURL != "https://github.com/"+ref.repo+"/pull/"+strconv.Itoa(ref.number) {
+			return fmt.Errorf("PR URL must have the form https://github.com/<owner>/<repo>/pull/<number>")
+		}
+		return nil
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("PR URL is not a valid URL: %w", err)
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("PR URL must be http(s), got %q", u.Scheme)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("PR URL must include a host")
 	}
 	return nil
+}
+
+func presentedPRGitProxyEnabled() bool {
+	cfg, err := config.Load()
+	return err == nil && cfg.GitProxyEnabled()
+}
+
+func listVisiblePresentedPRs() (map[string][]db.AgentPR, error) {
+	if presentedPRGitProxyEnabled() {
+		return db.ListValidatedUnhandledAgentPRs()
+	}
+	return db.ListUnhandledAgentPRs()
 }
 
 func validateAgentPRSummary(summary string) error {

@@ -549,7 +549,7 @@ func schedulePRChecksRefresh(rawURL string) bool {
 // rides an existing `gh pr view`; this one is the extra call a hovering
 // human explicitly asked for.
 func livePRChecksResolver(rawURL string) (prChecksInfo, bool) {
-	args, ok := presentedPRViewArgs(rawURL, "state,statusCheckRollup")
+	args, ok := presentedPRViewArgs(rawURL, "state,statusCheckRollup", presentedPRGitProxyEnabled())
 	if !ok {
 		return prChecksInfo{}, false
 	}

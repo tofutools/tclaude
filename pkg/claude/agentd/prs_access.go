@@ -3,6 +3,7 @@ package agentd
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -55,7 +56,14 @@ func livePresentedPRAccessValidator(ctx context.Context, caller, requestedDir, r
 	return repoRoot, nil
 }
 
-func presentedPRViewArgs(rawURL, fields string) ([]string, bool) {
+func presentedPRViewArgs(rawURL, fields string, strict bool) ([]string, bool) {
+	if !strict {
+		u, err := url.Parse(strings.TrimSpace(rawURL))
+		if err != nil || (!strings.EqualFold(u.Scheme, "http") && !strings.EqualFold(u.Scheme, "https")) || u.Host == "" {
+			return nil, false
+		}
+		return []string{"pr", "view", strings.TrimSpace(rawURL), "--json", fields}, true
+	}
 	ref, ok := githubPRRefFromURL(rawURL)
 	if !ok {
 		return nil, false
@@ -64,13 +72,16 @@ func presentedPRViewArgs(rawURL, fields string) ([]string, bool) {
 }
 
 func validatePresentedPRRemotePolicy(rawURL string) error {
-	ref, ok := githubPRRefFromURL(rawURL)
-	if !ok {
-		return fmt.Errorf("the URL does not identify a GitHub pull request")
-	}
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("could not load git proxy policy: %w", err)
+	}
+	if !cfg.GitProxyEnabled() {
+		return nil
+	}
+	ref, ok := githubPRRefFromURL(rawURL)
+	if !ok {
+		return fmt.Errorf("the URL does not identify a GitHub pull request")
 	}
 	policy := cfg.ResolvedGitProxy()
 	if !presentedPRRemoteAllowed(ref, policy.AllowedRemotes) {

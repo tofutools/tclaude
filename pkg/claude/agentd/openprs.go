@@ -252,7 +252,7 @@ func applyAuthoredStatesToPresentedPRs(view dashboardAuthoredOpenPRs) {
 	if len(observed) == 0 {
 		return
 	}
-	all, err := db.ListUnhandledAgentPRs()
+	all, err := listVisiblePresentedPRs()
 	if err != nil {
 		slog.Warn("open-prs: failed to reconcile presented PR rows", "error", err, "module", "agentd")
 		return

@@ -71,7 +71,7 @@ func TestAgentPR_UpsertDedupeAndHandled(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, second.ID, other.ID, "same URL is allowed for a different agent")
 
-	rows, err := ListUnhandledAgentPRs()
+	rows, err := ListValidatedUnhandledAgentPRs()
 	require.NoError(t, err)
 	require.Len(t, rows[agentID], 1)
 	require.Len(t, rows[otherAgentID], 1)
@@ -79,7 +79,7 @@ func TestAgentPR_UpsertDedupeAndHandled(t *testing.T) {
 	n, err := MarkAgentPRHandled(agentID, "https://github.com/tofutools/tclaude/pull/7")
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), n)
-	rows, err = ListUnhandledAgentPRs()
+	rows, err = ListValidatedUnhandledAgentPRs()
 	require.NoError(t, err)
 	assert.Empty(t, rows[agentID], "handled PR is omitted")
 	require.Len(t, rows[otherAgentID], 1, "handling one agent's PR leaves the other agent's presentation visible")

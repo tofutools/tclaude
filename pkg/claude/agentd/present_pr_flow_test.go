@@ -38,6 +38,7 @@ func TestPresentPR_RequiresCanonicalGitHubPullURL(t *testing.T) {
 	const worker = "ppru-aaaa-bbbb-cccc-dddd"
 	f.HaveConvWithTitle(worker, "worker")
 	f.HaveAliveSession(worker, "lbl-ppru", "tmux-ppru", f.TestCwd("ppru"))
+	savePresentedPRPolicy(t, "github.com/tofutools")
 	require.NoError(t, db.SetAgentPermissionOverride(worker, agentd.PermSelfPR, db.PermEffectGrant, "test"))
 
 	for _, rawURL := range []string{
@@ -51,6 +52,31 @@ func TestPresentPR_RequiresCanonicalGitHubPullURL(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, rec.Code, rawURL+": "+rec.Body.String())
 		assert.Contains(t, rec.Body.String(), "invalid_pr_url")
 	}
+}
+
+func TestPresentPR_GitProxyDisabledAcceptsLegacyHTTPURL(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	const (
+		worker = "pprc-aaaa-bbbb-cccc-dddd"
+		prURL  = "https://gitlab.example.com/acme/app/-/merge_requests/42"
+	)
+	f.HaveGroup("alpha")
+	f.HaveConvWithTitle(worker, "worker")
+	f.HaveAliveSession(worker, "lbl-pprc", "tmux-pprc", f.TestCwd("not-a-repo"))
+	f.HaveMember("alpha", worker)
+	require.NoError(t, db.SetAgentPermissionOverride(worker, agentd.PermSelfPR, db.PermEffectGrant, "test"))
+
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(
+		testharness.JSONRequest(t, http.MethodPost, "/v1/whoami/prs",
+			map[string]any{"url": prURL, "summary": "legacy compatible"}), worker))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	member := findDashMember(snap, "alpha", worker)
+	require.NotNil(t, member)
+	require.Len(t, member.PresentedPRs, 1)
+	assert.Equal(t, prURL, member.PresentedPRs[0].URL)
 }
 
 type presentPRResp struct {
