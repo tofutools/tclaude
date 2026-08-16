@@ -1,88 +1,95 @@
-# Task Management
+# Task runner
 
-Run a list of tasks sequentially with Claude Code, with automatic git commits and progress tracking.
+`tclaude task` (alias `tasks`) runs a list of tasks sequentially with Claude
+Code: each task gets a fresh context, its changes are committed with the task
+title as the commit message, and the list advances automatically — with
+optional verify and review loops between tasks.
 
-!!! note "Claude Code-only"
-    The `tclaude task` runner directly drives Claude Code's interactive,
-    plan-mode, hook, skill, and `/exit` contracts. It is not part of the shared
-    harness seam and does not currently run tasks through Codex CLI. For
-    mixed-harness team execution, use [Agent Coordination](agent.md); for
-    structured repeatable workflows, see [Processes](processes.md).
+!!! note "Claude Code only"
+    The task runner drives Claude Code's interactive plan-mode, hook, skill,
+    and `/exit` contracts directly; it is not on the shared harness seam and
+    does not run tasks through the other harnesses. For mixed-harness team
+    execution, see [Agents and groups](agents-and-groups.md); for structured,
+    repeatable workflows, see [Processes](processes.md).
 
-## Overview
+## The model
 
-Define tasks in a `TODO.md` file at the root of your project (or in a custom directory with `-C`). Each task has a title and a prompt. When you run `tclaude task run`, tasks are executed one by one in a tmux session. After each task:
+Tasks live in a `TODO.md` at the root of your project (or a directory chosen
+with `-C`). `tclaude task run` starts a tmux session and works through them
+one by one. After each task:
 
-1. Check if any files have changed (including commits made by the agent during the task); if not, the user is notified and the task runner waits for manual intervention.
-2. All repository changes are committed to git (using the task title as the commit message)
-3. The task is removed from `TODO.md` and recorded in `DONE.md` with status info
-4. Claude Code's context is cleared (each task runs in a fresh session)
-5. The next task starts automatically
+1. If no files changed (and the agent made no commits), the runner notifies
+   you and waits for manual intervention.
+2. All repository changes are committed, with the task title as the message.
+3. The task moves from `TODO.md` to `DONE.md` with status, timestamp, commit
+   hash, and the agent's report.
+4. The next task starts in a fresh Claude Code context.
 
-When all tasks are done, a desktop notification is sent.
+The session stays interactive throughout — attach to approve permissions,
+answer questions, or add context — and a desktop notification is sent when
+the list is done (run `tclaude setup` once for
+[notifications](notifications.md)).
 
-## Prerequisites
+## TODO.md format
 
-- **tmux** - Required for the task runner session
-- **Run setup** - For notifications: `tclaude setup`
-
-## TODO.md Format
-
-Tasks are defined as `##` headers followed by the prompt text:
+Each `## ` header starts a task; the header is the title (and commit
+message), and everything until the next header is the prompt:
 
 ```markdown
 ## Add input validation
 
 Add input validation to the user registration endpoint.
 Validate email format, password strength, and required fields.
-Return appropriate error messages.
 
 ## Write API tests
 
 Write integration tests for all REST API endpoints using
 the httptest package. Cover success and error cases.
-
-## Update README
-
-Update the README with the new API endpoints, request/response
-examples, and setup instructions.
 ```
 
-Each `## ` header starts a new task. The header text becomes the task title (and git commit message). Everything until the next header or end of the file is the prompt sent to Claude Code.
+The runner re-reads `TODO.md` before each task, so you can add, remove, or
+reorder tasks while it is active.
 
-### Plan Mode
+### Plan markers
 
-Prefix a task title with `[plan]` to run it with `--permission-mode plan` instead of the default `acceptEdits`. This is useful for tasks that require architectural planning or design work where you want Claude to propose changes without applying them directly.
+Prefix a title with `[plan]` to run that task with
+`--permission-mode plan` instead of the default `acceptEdits` — Claude
+proposes changes without applying them. Prefix it with `[plan-auto]` to plan
+first and then auto-accept the plan and implement, in one task: the runner
+detects the finished plan via the `ExitPlanMode` permission-request hook and
+accepts it after a 5-second grace period (start typing before then and your
+interaction takes priority). Both markers are stripped from the commit
+message.
 
-```markdown
-## [plan] Design the new billing API
+## Commands
 
-Design the REST API for the billing service. Consider
-authentication, rate limiting, and error handling.
+```bash
+# Add a task (title + prompt, or prompt only — Claude derives the title)
+tclaude task add "Fix login bug" "Fix the NPE in the login handler"
+tclaude task add "Fix the NPE in the login handler"
 
-## Implement billing endpoints
+# Plan variants of add
+tclaude task add --plan "Design auth system" "Design the auth architecture"
+tclaude task add --plan-auto "Design and build auth" "Design and implement it"
 
-Build the billing endpoints based on the plan.
+# List pending tasks (bare `tclaude task` does the same)
+tclaude task list
+
+# Run all tasks: starts a tmux session and attaches
+tclaude task run
+tclaude task run -d          # detached; check back later
+tclaude task run -w          # watch mode: wait for new tasks instead of exiting
+tclaude task run -C ~/proj   # -C works on add/list/run and the parent command
+tclaude task run -- --dangerously-skip-permissions   # extra Claude Code flags
 ```
 
-The `[plan]` prefix is stripped from the task title before it's used as a git commit message.
+Attach and detach freely with `tclaude session attach <session-id>` and
+`Ctrl+B D`; the runner continues in the background. Type `/exit` in the pane
+when you are satisfied with a task's result. See [Sessions](sessions.md).
 
-### Plan Auto-Accept Mode
+## Project configuration
 
-Prefix a task title with `[plan-auto]` to run Claude in plan mode, then automatically accept the plan and proceed to implementation — all in a single task. Claude first creates a plan (using `--permission-mode plan`), and when the plan is ready (detected via the `ExitPlanMode` permission request hook), the task runner automatically accepts it so Claude exits plan mode and implements the changes.
-
-```markdown
-## [plan-auto] Design and implement billing API
-
-Design the REST API for the billing service, then implement it.
-Consider authentication, rate limiting, and error handling.
-```
-
-The session remains interactive throughout — you can still attach to approve permissions or answer questions during implementation. The standard grace period (5 seconds) applies before auto-accept, so if you start typing before then, your interaction takes priority.
-
-## Project Configuration
-
-Optional project-level settings are stored in `.claude/tclaude/tasks.json`:
+Optional per-project settings live in `.claude/tclaude/tasks.json`:
 
 ```json
 {
@@ -90,7 +97,6 @@ Optional project-level settings are stored in `.claude/tclaude/tasks.json`:
   "max_verify_iterations": 5,
   "verify_timeout": "2m",
   "review_skill": "task-review",
-  "review_prefix": "You messed up! Please fix this:",
   "max_review_iterations": 3,
   "review_timeout": "5m",
   "review_diff": true,
@@ -99,41 +105,39 @@ Optional project-level settings are stored in `.claude/tclaude/tasks.json`:
 }
 ```
 
-| Field                   | Description                                                                                                                                                                  |
-|-------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `verify`                | Shell command run after each task to verify success (e.g. `go test ./...`)                                                                                                   |
-| `max_verify_iterations` | Max fix-and-retry attempts on verify failure (default: 3)                                                                                                                    |
-| `verify_timeout`        | Timeout for each verify command run, e.g. `"30s"`, `"2m"` (default: `"1m"`)                                                                                                  |
-| `review_skill`          | Claude Code skill to run as a review agent after the task (e.g. `"task-review"`)                                                                                             |
-| `review_prefix`         | String to put before the review agent output when feeding back into main agent (default: `"Consider the following review feedback and fix the issues that seems relevant:"`) |
-| `max_review_iterations` | Max review-and-fix cycles per task (default: 1)                                                                                                                              |
-| `review_timeout`        | Timeout for each review run, e.g. `"5m"` (default: `"5m"`)                                                                                                                   |
-| `review_diff`           | Whether to pass the git diff to the review agent (default: `true`)                                                                                                           |
-| `stuck_timeout`         | How long Claude can be idle (no hook activity) before being considered stuck; set `"0s"` to disable (default: `"5m"`, minimum: `"30s"`)                                      |
-| `max_stuck_nudges`      | Max "continue" nudges sent to a stuck agent before giving up (default: 3)                                                                                                    |
-
-
-### Stuck Agent Detection
-
-When a task is running, the task runner monitors Claude's session state. If Claude stays in a working state without any hook activity for longer than `stuck_timeout` (default: 5 minutes), it is considered stuck. The runner then sends a `continue` message to the tmux session to prompt Claude to resume.
-
-This repeats up to `max_stuck_nudges` times (default: 3). If Claude is still stuck after all nudges are exhausted, a desktop notification is sent and stuck detection is disabled for the remainder of that task.
-
-**Note:** Hooks do not fire while a tool command is actively running (e.g., a long build or test). A slow-but-healthy tool call that exceeds `stuck_timeout` will trigger a spurious nudge. The agent will typically ignore it and continue normally. Set `stuck_timeout` to a value larger than your longest expected tool call to avoid this, or set `"0s"` to disable the feature entirely. The minimum allowed value is `"30s"`.
+| Field | Description |
+|---|---|
+| `verify` | Shell command run after each task to verify success |
+| `max_verify_iterations` | Fix-and-retry attempts on verify failure (default 3) |
+| `verify_timeout` | Timeout per verify run (default `"1m"`) |
+| `review_skill` | Claude Code skill run as a review agent after verify passes |
+| `review_prefix` | Text prepended to review feedback when fed back to the agent |
+| `max_review_iterations` | Review-and-fix cycles per task (default 1) |
+| `review_timeout` | Timeout per review run (default `"5m"`) |
+| `review_diff` | Pass the git diff to the review agent (default `true`) |
+| `stuck_timeout` | Idle time before a nudge; `"0s"` disables (default `"5m"`, min `"30s"`) |
+| `max_stuck_nudges` | "continue" nudges before giving up (default 3) |
 
 ### Verify
 
-When a `verify` command is set, the task runner executes it after Claude finishes. If it fails, Claude is given the output and asked to fix the issue, then the command is re-run — up to `max_verify_iterations` times. If retries are exhausted, the task runner notifies the user and waits for manual intervention.
+When `verify` is set, the runner executes it after Claude finishes. On
+failure, Claude is given the output and asked to fix the issue, then the
+command re-runs — up to `max_verify_iterations` times. If retries are
+exhausted, the runner notifies you and waits for manual intervention.
 
 ### Review
 
-When `review_skill` is set, the task runner invokes that skill as an automated review agent after verify passes. The agent receives the git diff of all changes made during the task (committed and uncommitted). If the review returns feedback, it is sent to Claude as a prompt to address — then verify runs again, and if it passes, another review cycle begins. This continues up to `max_review_iterations` times.
+When `review_skill` is set, the runner invokes that skill as an automated
+review agent after verify passes, giving it the git diff of everything the
+task changed (committed and uncommitted; set `review_diff: false` for skills
+that read files or run commands themselves). If the review returns feedback,
+Claude is asked to address it, verify runs again, and another review cycle
+begins — up to `max_review_iterations`. An empty review output means the
+review passed. Unlike verify, exhausting review iterations does not block:
+the runner proceeds anyway.
 
-If the review returns no output (i.e. nothing to address), the review passes and the task completes normally. If `max_review_iterations` is exhausted with feedback still outstanding, the runner proceeds anyway — unlike verify exhaustion, it does not block for manual intervention.
-
-Set `review_diff: false` to run the review agent without passing a diff — useful for skills that read files or run commands directly rather than relying on the diff as input.
-
-To create a review skill, add a skill file under `.claude/skills/<skill-name>/SKILL.md`. For example:
+A review skill is an ordinary skill file under
+`.claude/skills/<skill-name>/SKILL.md`:
 
 ```markdown
 ---
@@ -142,158 +146,37 @@ description: Review the diff when a task is finished.
 disable-model-invocation: true
 ---
 
-You are an expert code reviewer. Analyze the following diff and provide a thorough
-code review. If there is nothing worth changing, do not output anything.
+You are an expert code reviewer. Analyze the following diff and provide a
+thorough code review. If there is nothing worth changing, do not output
+anything.
 ```
 
-> **Note:** `disable-model-invocation: true` prevents the skill from triggering a model call when invoked interactively — where no diff is available and the skill would have nothing to review. The task runner always invokes the model by running `claude --print` with the diff regardless of this flag.
+`disable-model-invocation: true` keeps the skill from triggering a model call
+when invoked interactively, where no diff exists; the task runner always
+invokes the model itself via `claude --print` with the diff.
 
-## Commands
+### Stuck-agent detection
 
-### task add
+If Claude stays in a working state with no hook activity for longer than
+`stuck_timeout`, the runner sends a `continue` message to the pane, up to
+`max_stuck_nudges` times. If the agent is still stuck after that, a desktop
+notification is sent and detection is disabled for the rest of that task.
 
-Add a task to `TODO.md`.
+Hooks do not fire while a tool command is actively running, so a slow but
+healthy build or test that outlasts `stuck_timeout` triggers a spurious nudge
+(which the agent typically ignores). Set `stuck_timeout` above your longest
+expected tool call, or `"0s"` to disable the feature.
 
-```bash
-tclaude task add "Fix login bug" "Fix the null pointer exception in the login handler"
+## Failure handling and DONE.md
 
-# Specify prompt only, and let Claude determine the title (which is used as commit message)
-tclaude task add "Fix the null pointer exception in the login handler"
+If a task fails (Claude exits with an error), the runner records the failure
+in `DONE.md` with the error message, commits any partial changes, stops
+without starting the next task, and sends a notification.
 
-# Add a task that requires planning (runs with --permission-mode plan)
-tclaude task add --plan "Design auth system" "Design the authentication architecture"
+Completed tasks are appended to `DONE.md` with their status, completion time,
+commit hash, and collapsible sections carrying the original prompt and
+Claude's closing report.
 
-# Add a task that plans then auto-accepts and implements
-tclaude task add --plan-auto "Design and build auth" "Design and implement the auth system"
-
-# Add to a specific directory's TODO.md
-tclaude task add -C /path/to/project "Fix login bug" "Fix the null pointer exception"
-```
-
-### task list
-
-List pending tasks from `TODO.md`.
-
-```bash
-tclaude task list
-
-# List tasks from a specific directory
-tclaude task list -C /path/to/project
-```
-
-### task run
-
-Run all tasks sequentially.
-
-```bash
-# Run tasks (starts tmux session and attaches)
-tclaude task run
-
-# Run detached (in the background)
-tclaude task run -d
-
-# Run in a specific directory
-tclaude task run -C /path/to/project
-
-# Pass extra flags to Claude Code
-tclaude task run -- --dangerously-skip-permissions
-```
-
-**Flags:**
-
-| Flag                  | Description                                                  |
-|-----------------------|--------------------------------------------------------------|
-| `-d, --detached`      | Start detached (don't attach to session)                     |
-| `-C, --dir <path>`    | Directory containing task files (defaults to current)        |
-| `-w, --watch`         | Watch for new tasks instead of exiting when TODO.md is empty |
-
-> **Note:** The `-C, --dir` flag is available on all task subcommands (`add`, `list`, `run`) and the parent `task` command itself.
-
-## How It Works
-
-When you run `tclaude task run`:
-
-1. A tmux session is created for the task runner
-2. For each task in `TODO.md`:
-    - Claude Code launches interactively with the task prompt
-    - You can attach to the session to approve permissions, answer questions, or monitor progress
-    - When Claude is done, type `/exit` to finish the task
-    - If configured, the verify command runs; on failure Claude is asked to fix and retry
-    - If configured, the review skill runs; if it returns feedback Claude is asked to address it
-    - The runner commits changes, updates tracking files, and starts the next task
-3. A notification is sent when all tasks are complete (or if a task fails)
-
-### Interactive Session
-
-The task runner creates a tmux session you can attach to and detach from freely:
-
-```bash
-# If you started detached, attach with:
-tclaude session attach <session-id>
-
-# Detach at any time:
-Ctrl+B D
-
-# The task runner continues in the background
-```
-
-Inside the session, Claude Code runs with full interactive capabilities. You can:
-
-- Approve or deny tool permissions
-- Answer questions Claude asks
-- Provide additional context
-- Type `/exit` when you're satisfied with the result
-
-### Git Commits
-
-After each task the changes are committed with the task title as the commit message.
-
-### Failure Handling
-
-If a task fails (Claude exits with an error), the runner:
-
-- Records the failure in `DONE.md` with the error message
-- Commits any partial changes
-- Stops execution (does not continue to the next task)
-- Sends a notification
-
-## DONE.md
-
-Completed tasks are appended to `DONE.md` with status information:
-
-```markdown
-## Add input validation
-
-- **Status:** completed
-- **Completed:** 2026-03-07 14:30:00
-- **Commit:** a1b2c3d
-
-<details>
-<summary>Prompt</summary>
-
-Add input validation to the user registration endpoint.
-Validate email format, password strength, and required fields.
-Return appropriate error messages.
-
-</details>
-
-<details>
-<summary>Report</summary>
-
-Claude's response describing what was done...
-
-</details>
-
----
-```
-
-## Tips
-
-- **Edit TODO.md between tasks** — The runner re-reads `TODO.md` before each task, so you can add, remove, or reorder tasks while the runner is active.
-- **Use descriptive titles** — Task titles become git commit messages, so keep them clear and concise.
-- **Start detached for long task lists** — Use `tclaude task run -d` and check back later. You'll get a notification when everything is done.
-- **Pass Claude flags** — Use `--` to forward flags like `--dangerously-skip-permissions` or `--allowedTools` for unattended execution.
-
-## Caveat
-
-Using the task runner with a Claude Pro or Max subscription might violate Anthropic's terms of service. Use at your own risk.  
+!!! warning
+    Driving the task runner with a Claude Pro or Max subscription may violate
+    Anthropic's terms of service. Use at your own risk.

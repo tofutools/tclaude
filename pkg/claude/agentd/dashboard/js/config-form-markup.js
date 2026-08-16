@@ -651,7 +651,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         Expose this <strong>dashboard</strong> to your phone or another machine over the
         network (LAN / mesh VPN / tunnel), behind <strong>mTLS (a client certificate) +
         a passphrase</strong>. A <em>separate</em> HTTPS listener — the loopback dashboard
-        you're using now is never weakened. See <a href="https://github.com/tofutools/tclaude/blob/main/docs/remote-access.md" target="_blank" rel="noopener">docs/remote-access.md</a>.
+        you're using now is never weakened. See <a href="https://github.com/tofutools/tclaude/blob/main/docs/remote.md" target="_blank" rel="noopener">docs/remote.md</a>.
       </p>
       <div class="cfg-field">
         <span class="cfg-label">Prerequisite</span>

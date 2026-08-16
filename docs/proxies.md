@@ -1,0 +1,164 @@
+# Credential proxies
+
+A hardened sandbox denies `~/.ssh`, `~/.config/gh`, and every other credential
+store — which also strips the agent of `git push`, `gh pr create`, and the
+issue tracker. The credential proxies give those workflows back without
+putting a secret inside the wall: the agent describes a *semantic* operation
+("push my branch", "comment on this PR"), and the `agentd` daemon builds the
+actual git invocation or API call on the host, where the credentials live.
+There is no passthrough flag and no raw-query escape hatch; every gate is
+enforced daemon-side.
+
+Three proxies exist, as subcommands of a top-level command:
+
+```bash
+tclaude proxy git     # fetch, pull, push through the daemon
+tclaude proxy github  # PRs, issues, and Actions runs (alias: gh)
+tclaude proxy linear  # Linear issues, bounded by a team allow-list
+```
+
+None of their permissions are granted by default, and none are implied by
+group ownership. Every gated verb supports `--ask-human <timeout>` (capped at
+300 seconds): on a permission denial, the operator gets a popup approval, and a
+timeout counts as a deny.
+
+## The command only appears when configured
+
+`tclaude proxy` is **conditionally registered**. On a host where no proxy is
+configured, it is an unknown command and does not appear in `tclaude --help` —
+by design, so unconfigured operators do not advertise a capability their
+agents cannot use. The command registers when either holds:
+
+- the host config has a non-empty `agent.git_proxy.allowed_remotes`, or
+- the caller is a managed agent and a capability probe of agentd's
+  `GET /v1/info` reports proxy support (daemons predating that projection keep
+  the command visible).
+
+If an agent reports that `tclaude proxy` does not exist, that is the symptom
+of an operator who has not opted in — not a broken install.
+
+## Git proxy
+
+```bash
+tclaude proxy git remotes     # list remotes with a per-remote verdict
+tclaude proxy git ls-remote origin
+tclaude proxy git fetch origin
+tclaude proxy git pull        # daemon fetches, then fast-forwards locally
+tclaude proxy git push origin my-branch
+```
+
+`pull` is deliberately split: the daemon only fetches, and the fast-forward
+happens locally, so the daemon never merges or checks out in the agent's
+tree. `push` supports force only as `--force-with-lease`, and only when the
+operator config sets `allow_force_push`; plain `--force` is never available.
+Pushes to `protected_refs` are refused.
+
+Permissions, both scopable to a `remote` dimension:
+
+- `proxy.git.read` — `remotes`, `ls-remote`, `fetch`, `pull`.
+- `proxy.git.push` — `push`.
+
+### Operator configuration
+
+The `agent.git_proxy` block lives in `~/.tclaude/data/config.json` (private
+daemon state; migrated automatically from the legacy `~/.tclaude/config.json`):
+
+- `allowed_remotes` — the operator-global allow-list of `host/owner[/repo]`
+  patterns, matched segment-wise (`*` matches one segment, and a shorter
+  pattern is a prefix match). SSH and HTTPS URLs normalize to the same key.
+  Authorization is the per-agent `remote`-scoped grant, or this list, or both
+  must match when both exist; there is deliberately no "allow everything"
+  setting. A non-empty list is also what registers the command, and it bounds
+  the dashboard's Branch-column PR/branch links, which spend the same `gh`
+  credentials.
+- `protected_refs` — default `["main", "master"]`; an explicit `[]` disables.
+- `allow_force_push` — default false.
+- `ssh_key` — pin one key; empty uses the daemon's ambient ssh-agent.
+- `github_token_file` — the GitHub token source (GitHub proxy only); empty
+  falls back to `gh auth token`, and that is the entire token chain.
+
+`~/` expands in these values; shell variables do not.
+
+## GitHub proxy
+
+```bash
+tclaude proxy github pr create --title "Fix the flake" --body-file pr.md
+tclaude proxy github pr view 2277
+# other pr verbs: ls, checks, comments, ready, comment, edit, merge
+# issue verbs:    ls, view, comment
+# run verbs:      ls, log-failed, artifacts, download
+```
+
+Operations are restricted to the repository that the agent's own recorded
+launch remote resolves to — and only when that remote is allowed. The token
+travels as an Authorization header to the API, never through child process
+argv or environment.
+
+Permissions:
+
+- `proxy.github.read` — `pr ls/view/checks/comments`, `issue ls/view`, and the
+  `run` verbs. `run download` does write, but only into `.tclaude-artifacts/`
+  inside the agent's own work tree (a computed destination, capped at 512 MiB
+  compressed / 2 GiB unpacked per download, with at most 3 run directories
+  kept).
+- `proxy.github.write` — `pr create/edit/comment/ready`, `issue comment`. Does
+  not imply merge.
+- `proxy.github.merge` — `pr merge` only, split from write on purpose: an
+  operator can let agents open and discuss PRs while keeping the merge button
+  human. GitHub's own branch protection still applies; `protected_refs` does
+  not (it bounds direct pushes only).
+
+## Linear proxy
+
+```bash
+tclaude proxy linear whoami            # key identity + reachable teams
+tclaude proxy linear issue view TCL-123
+# other issue verbs: ls, search, comments, comment, create, update, link
+```
+
+There is no CLI tool underneath: the daemon speaks Linear GraphQL directly,
+and every GraphQL document is a compile-time constant with caller values
+carried only in variables. Unlike git, Linear has no filesystem anchor — no
+remote to resolve — so the **team allow-list is the entire scope gate,
+mandatory and fail-closed**.
+
+Permissions, scoped on the `linear_team` dimension (for example
+`--scope linear_team=TCL`):
+
+- `proxy.linear.read`
+- `proxy.linear.write` — additionally requires the operator config
+  `agent.linear_proxy.allow_write`.
+
+Scoped grants intersect with the operator's `allowed_teams` list when one
+exists; an *unscoped* grant is refused outright when the operator has no list.
+Read and write scopes are independent.
+
+The `agent.linear_proxy` block in `~/.tclaude/data/config.json`:
+
+- `allowed_teams` — team keys, case-insensitive, no wildcard by design.
+- `api_key_file` — the default key; empty falls back to `LINEAR_API_KEY` in
+  agentd's environment, and with neither the proxy refuses.
+- `workspaces` — routes named teams to a different key, because one Linear
+  personal key is scoped to one workspace; each workspace entry requires its
+  own `api_key_file`, with no environment fallback.
+
+## Teaching agents to use the proxies
+
+```bash
+tclaude setup --install-proxy-skills
+```
+
+installs the `proxy-git` and `proxy-linear` agent skills into the Claude Code
+and Codex skill directories, so agents discover the semantic commands instead
+of fighting their missing credentials. The flag is deliberately excluded from
+`--install-agent-skills` and `--install-all`: an operator who has not
+configured the proxies should not advertise them to agents.
+
+## See also
+
+- [Sandboxing](sandboxing.md) — the hardening posture these proxies make
+  survivable.
+- [Permissions and audit](permissions-and-audit.md) — scoped grants, denies,
+  and `--ask-human`.
+- [Network filtering](network-filtering.md) — reaching hosts directly when a
+  proxy is the wrong shape.

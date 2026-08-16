@@ -105,7 +105,7 @@ import (
 // What this is NOT
 //
 // agentd's permission layer is a coordination guardrail, not a security
-// boundary (docs/sandbox-hardening.md). This feature does not change that. A
+// boundary (docs/sandboxing.md). This feature does not change that. A
 // same-uid agent that is not actually confined by the OS sandbox can read
 // ~/.ssh directly and has no need of the proxy. The proxy is what makes
 // *denying* those paths survivable; it is not what enforces the denial.

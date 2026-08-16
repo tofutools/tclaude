@@ -1,6 +1,6 @@
 site_name: tclaude
 site_url: https://tofutools.github.io/tclaude/
-site_description: Session, conversation, and multi-agent tooling for Claude Code and OpenAI Codex CLI
+site_description: A self-hosted agentic dev environment — sessions, fleet operations, permissions, and sandboxing for Claude Code, Codex CLI, OpenCode, and Copilot CLI
 repo_url: https://github.com/tofutools/tclaude
 repo_name: tofutools/tclaude
 
@@ -36,28 +36,30 @@ markdown_extensions:
 
 nav:
   - Home: index.md
-  - Core Use:
+  - Architecture: architecture.md
+  - Everyday use:
       - Harnesses: harnesses.md
       - Sessions: sessions.md
       - Conversations: conversations.md
-      - Ask from the Shell: ask.md
-      - Git Worktrees: worktrees.md
-      - Semantic Search: semantic-search.md
+      - Ask from the shell: ask.md
+      - Git worktrees: worktrees.md
       - Notifications: notifications.md
-  - Agent Operations:
-      - Coordination: agent.md
+  - Fleet operations:
+      - Agents and groups: agents-and-groups.md
+      - Spawning and lifecycle: spawning-and-lifecycle.md
+      - Permissions and audit: permissions-and-audit.md
+      - Teams at scale: teams-at-scale.md
+      - Group routes: group-routes.md
       - Dashboard: dashboard.md
-      - Startup Context: startup-context.md
-      - Remote Control: remote-control.md
-      - Remote Dashboard Access: remote-access.md
+      - Operating remotely: remote.md
+  - Confinement:
       - Sandboxing: sandboxing.md
-      - Sandbox Hardening: sandbox-hardening.md
-      - Git & GitHub Proxy: git-proxy.md
-      - Linux Network Filtering (packet engine): linux-network-filtering.md
-      - Proxy Network Filtering (proxy engine): proxy-network-filtering.md
+      - Network filtering: network-filtering.md
+      - Credential proxies: proxies.md
+  - Automation:
       - Processes: processes.md
-  - Claude Code Utilities:
-      - Task Runner: tasks.md
-      - Status Bar: status-bar.md
-  - Contributors:
-      - Adding a Harness: adding-a-harness.md
+      - Task runner: tasks.md
+  - Reference:
+      - Utilities: utilities.md
+      - Adding a harness: adding-a-harness.md
+      - History: history.md

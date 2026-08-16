@@ -308,7 +308,7 @@ func newGHProxySession(ctx context.Context, convID, requestedRemote string, remo
 // extractZip re-opening it as its own os.Root, so an agent that swaps a
 // component in between can still redirect the extraction. That race is real,
 // bounded by the same-uid reality the whole proxy sits inside
-// (docs/git-proxy.md), and deliberately not papered over here.
+// (docs/proxies.md), and deliberately not papered over here.
 func (g *ghProxySession) artifactDest(runID string) (string, *proxyFault) {
 	if g.repoRoot == "" {
 		return "", faultf(http.StatusConflict, "repo_unresolved",

@@ -6,7 +6,6 @@ on:
     paths:
       - .github/workflows/group-route-feasibility.yml
       - scripts/group-route-feasibility/**
-      - docs/group-route-feasibility.md
       - docs/group-routes.md
       - pkg/claude/agentd/**
       - pkg/claude/common/db/**

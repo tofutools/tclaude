@@ -1106,7 +1106,7 @@ func appendSeatbeltRouteBindDeny(profile *strings.Builder, routeSlots []int) {
 // decided it will stand: the operator ruled document-and-disclose rather than
 // a launch-time collision check, so there is no follow-up that closes it. A
 // Darwin rating may be Partial with the scope stated, never Full. See the
-// activation record in docs/proxy-network-filtering.md.
+// activation record in docs/network-filtering.md.
 // sandboxpolicy.AddrIsLoopbackIdentity governs which endpoints are accepted by
 // the renderer; it cannot narrow what Seatbelt's localhost token matches.
 func appendSeatbeltIsolatedNetworkRules(

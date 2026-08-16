@@ -16,7 +16,7 @@ import (
 )
 
 // sandboxHardeningSpec returns the entries the agent-sandbox hardening
-// guide (docs/sandbox-hardening.md) recommends adding to the user-level
+// guide (docs/sandboxing.md) recommends adding to the user-level
 // Claude Code settings file, expressed as a generic JSON tree.
 //
 // It is a faithful copy of that doc's recommended config block — the

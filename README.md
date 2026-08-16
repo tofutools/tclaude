@@ -4,43 +4,60 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/tofutools/tclaude)](https://goreportcard.com/report/github.com/tofutools/tclaude)
 [![Docs](https://img.shields.io/badge/docs-tofutools.github.io%2Ftclaude-blue)](https://tofutools.github.io/tclaude/)
 
-`tclaude` is a tmux-based control layer for agentic coding CLIs. It gives
-[Claude Code](https://claude.ai/code) and
-[OpenAI Codex CLI](https://developers.openai.com/codex/cli) the same durable
-session, conversation, and multi-agent operating environment.
+`tclaude` is a self-hosted agentic dev environment: a Go CLI plus daemon that
+wraps vendor coding CLIs ("harnesses") in tmux and adds the operations layer
+you need to run many agents seriously. The bottleneck is no longer writing
+code — it is operating the things that write code. tclaude is that layer:
+durable sessions, searchable history, a fleet dashboard, agent-to-agent mail,
+teams with identity and permissions, sandboxing, and automation, all running
+on your own machine.
 
-Claude Code remains the default harness for compatibility; Codex is a
-first-class supported harness. tclaude records the harness on each conversation,
-so the conversation browser, `conv resume`, agent lifecycle, and dashboard
-operations continue through the correct CLI automatically.
+It wraps four harnesses — [Claude Code](https://claude.ai/code),
+[OpenAI Codex CLI](https://developers.openai.com/codex/cli),
+[OpenCode](https://opencode.ai), and
+[GitHub Copilot CLI](https://github.com/features/copilot/cli) — behind one
+workflow, so a team can mix vendors and switch as models improve. Everything
+routes through one daemon, `agentd`, which owns identity, permissions, audit,
+spawning, and mail — fail-closed. tclaude is MIT-licensed; the models are the
+only external part.
+
+![The tclaude operations dashboard watching a mixed-harness fleet](docs/assets/dashboard-groups.png)
 
 ## What it adds
 
-- **Persistent sessions** — run either harness in an isolated tmux server,
-  detach and reattach, and see live working/idle/blocked status.
-- **Conversation tools** — browse, text-search, and resume work from either
-  harness; archive, copy, move, or delete Claude Code transcripts.
-- **Fast terminal questions** — use `tclaude ask` for a resumable answer from
-  your shell, including piped input such as `git diff`.
-- **Agent coordination** — create mixed-harness groups, message peers, spawn and
-  manage agents, schedule nudges, delegate permissions, and deploy reusable task
-  forces through `agentd`.
-- **Operations dashboard** — manage the fleet, messages, profiles, permissions,
-  templates, audit history, usage, and experimental process-template authoring from a browser.
-- **Developer utilities** — worktree helpers, semantic conversation search,
-  notifications, subscription/activity reporting, and Claude-specific task and
-  statusline integrations.
+- **Durable sessions and history** — every harness runs in an isolated tmux
+  server: detach, reattach, resume, and watch live working/idle/blocked
+  status. Conversations outlive their sessions and are indexed across all
+  harnesses for listing, text search, and local semantic search.
+- **Fleet observability** — a browser dashboard answers "what is my fleet
+  doing" at a glance: per-agent status, cost, context left, branch/PR/CI,
+  linked tickets, quota forecasts — with zoom from fleet to group to one
+  agent's live terminal and back out.
+- **Agent mail and teams** — every agent and the operator have a mailbox.
+  Groups are allow-listed teams — flat or hierarchical, mixed-vendor by
+  design — deployable from reusable templates with one mission statement.
+- **Identity, permissions, and audit** — callers are identified from kernel
+  socket peer credentials, not tokens. Grants are scoped, elevation asks the
+  human, and the audit trail records denials as well as what landed.
+- **Sandboxing and network filtering** — one Kubernetes-shaped sandbox
+  profile, projected onto bubblewrap (Linux), Seatbelt (macOS), the
+  harnesses' native sandboxes, and packet- or proxy-based network filtering.
+  Children can never be less confined than their parents.
+- **Automation** — scheduled nudges, standing orders, process-template
+  workflows, credential proxies for tokenless git/GitHub/Linear access, and
+  everyday helpers: shell-native `tclaude ask`, git worktree lifecycle,
+  desktop notifications, and status bars.
 
-Harnesses do not expose identical primitives. Remote Control, the command-backed
-status bar, and the sequential task runner are Claude Code-specific; Codex has
-its own sandbox, approval, and statusline integration. See the
-[capability matrix](https://tofutools.github.io/tclaude/harnesses/#capability-matrix)
-for the precise differences.
+The harnesses do not expose identical primitives, and tclaude reports the
+differences instead of pretending capabilities exist: features degrade with a
+clear message when a harness lacks the contract. See the
+[capability matrix](https://tofutools.github.io/tclaude/harnesses/) for
+exactly what each harness supports.
 
 ## Install
 
-tclaude supports Linux and macOS. WSL is treated as Linux; native Windows is not
-supported. You also need the CLI for whichever harness you intend to run.
+tclaude supports Linux and macOS. WSL is treated as Linux; native Windows is
+not supported. You also need the CLI for whichever harness you intend to run.
 
 Choose one installation method:
 
@@ -70,9 +87,10 @@ go install github.com/tofutools/tclaude/cmd/tclaude-agentd@latest
 
 From a source checkout, `go install . ./cmd/...` installs both at once.
 
-**Prebuilt release** — download a Linux amd64/arm64 or macOS arm64 archive from
-the [Releases page](https://github.com/tofutools/tclaude/releases), extract it,
-and put `tclaude` on your `PATH`. Each binary and platform gets its own archive,
+**Prebuilt release** — download a Linux amd64/arm64 or macOS arm64 archive
+from the [Releases page](https://github.com/tofutools/tclaude/releases),
+extract it, and put `tclaude` on your `PATH`. Each binary and platform gets
+its own archive,
 named after the build that produced it: take a `tclaude-no-cgo_linux_*` or
 `tclaude-darwin_*` archive for the CLI, and the matching `tclaude-agentd-*` one
 if you also want the standalone daemon. The two are never packed together, so
@@ -84,82 +102,96 @@ Installation is not complete until setup has installed the hooks and local
 integration:
 
 ```bash
-# Claude Code integration plus the agent skills/permissions most users want
+# Harness hooks/status integration plus the agent skills and default
+# permissions most users want
 tclaude setup --install-agent-skills --install-default-agent-permissions
 
-# Install or repair Codex hooks explicitly
-tclaude setup --harness codex
-
-# Verify both sides at any time
+# Verify at any time
 tclaude setup --check
-tclaude setup --check --harness codex
 ```
 
-Plain `tclaude setup` configures Claude Code and, when Codex is found on `PATH`,
-offers to configure Codex too. Setup is idempotent. The optional `--install-all`
-flag also installs Claude sandbox hardening and the scripted-resume threshold
-override; review those policies before enabling them. Credential-proxy skills
-are a separate opt-in for operators who use those services:
+Plain `tclaude setup` configures Claude Code, and auto-detects Codex and
+Copilot on `PATH` to offer their integrations too. Setup is idempotent. The
+optional `--install-all` flag also installs Claude Code sandbox hardening and
+the scripted-resume threshold override; review those policies before enabling
+them. Credential-proxy skills are a separate opt-in, excluded even from
+`--install-all`, so agents are not shown proxy capabilities that are not
+configured:
 
 ```bash
 tclaude setup --install-proxy-skills
 ```
 
-They are intentionally excluded from both `--install-agent-skills` and
-`--install-all`, so agents are not shown proxy capabilities that are unavailable.
-
-Full walkthrough: [Installation and quick start](https://tofutools.github.io/tclaude/#installation).
+Full walkthrough: [Getting started](https://tofutools.github.io/tclaude/).
 
 ## Quick start
 
-```bash
-# Claude Code is the default
-tclaude session new
+Start a solo session — bare `tclaude` launches your default harness in the
+current directory:
 
-# Codex is an equal launch target
-tclaude session new --harness codex
+```bash
+tclaude                              # default harness (Claude Code unless
+                                     # your default profile says otherwise)
+tclaude session new --harness codex  # or opencode, or copilot
 
 # Detach with Ctrl+B D, then browse or reattach later
 tclaude session watch
 tclaude conv watch -g
+tclaude conv resume <id>             # resumes through the recorded harness
+```
 
-# Ask from the current shell; the thread continues per terminal + directory
+Ask from your shell without a session; the thread continues per terminal and
+directory:
+
+```bash
 tclaude ask "what should I know before changing this package?"
 git diff | tclaude ask "spot correctness risks in this diff"
 ```
 
-To operate multiple agents, keep the daemon running in a non-sandboxed terminal:
+To operate a fleet, keep the daemon running in a non-sandboxed terminal and
+open the dashboard:
 
 ```bash
-tclaude agentd serve
-
-# Or, from the standalone daemon binary released alongside tclaude:
-tclaude-agentd serve
+tclaude agentd serve      # or the standalone tclaude-agentd binary
+tclaude agent dashboard
 ```
 
-Then open `tclaude agent dashboard` or use `tclaude agent` from another shell.
-Groups can freely mix Claude Code and Codex agents.
+From there, `tclaude agent` (and the dashboard) create groups, spawn agents
+into them, message peers, and manage permissions. Groups freely mix agents
+from all four harnesses.
 
 ## Documentation
 
-- [Getting started](https://tofutools.github.io/tclaude/) — installation,
-  setup, first sessions, and a map of the CLI.
-- [Harnesses](https://tofutools.github.io/tclaude/harnesses/) — choosing Claude
-  or Codex, setup, capabilities, sandboxing, and approvals.
-- [Sessions](https://tofutools.github.io/tclaude/sessions/) and
-  [conversations](https://tofutools.github.io/tclaude/conversations/) — the
-  everyday tmux and history workflows.
-- [Ask](https://tofutools.github.io/tclaude/ask/) — shell-native questions,
-  piped input, thread continuity, and harness selection.
-- [Agent coordination](https://tofutools.github.io/tclaude/agent/) and
-  [dashboard](https://tofutools.github.io/tclaude/dashboard/) — groups,
-  messaging, lifecycle, profiles, permissions, templates, and task forces.
-- [Processes](https://tofutools.github.io/tclaude/processes/) — the opt-in
-  process-template library and editor; runtime execution is temporarily unavailable.
-- [Remote control](https://tofutools.github.io/tclaude/remote-control/) and
-  [remote access](https://tofutools.github.io/tclaude/remote-access/) — two
-  distinct ways to operate away from the host terminal.
+Full documentation lives at
+[tofutools.github.io/tclaude](https://tofutools.github.io/tclaude/):
+
+- [Getting started](https://tofutools.github.io/tclaude/) — install, setup,
+  first session, and an orientation map.
+- [Architecture](https://tofutools.github.io/tclaude/architecture/) — the
+  mental model: sessions, conversations, agents, and the daemon.
+- [Harnesses](https://tofutools.github.io/tclaude/harnesses/) — the four
+  harnesses, per-harness setup, and the capability matrix.
+- [Sessions](https://tofutools.github.io/tclaude/sessions/),
+  [conversations](https://tofutools.github.io/tclaude/conversations/),
+  [ask](https://tofutools.github.io/tclaude/ask/), and
+  [worktrees](https://tofutools.github.io/tclaude/worktrees/) — everyday use.
+- [Agents and groups](https://tofutools.github.io/tclaude/agents-and-groups/),
+  [spawning and
+  lifecycle](https://tofutools.github.io/tclaude/spawning-and-lifecycle/),
+  and [teams at scale](https://tofutools.github.io/tclaude/teams-at-scale/) —
+  fleet operations.
+- [Permissions and
+  audit](https://tofutools.github.io/tclaude/permissions-and-audit/) — the
+  grant model, elevation, and the audit trail.
+- [Dashboard](https://tofutools.github.io/tclaude/dashboard/) and
+  [remote](https://tofutools.github.io/tclaude/remote/) — observing and
+  reaching the fleet.
+- [Sandboxing](https://tofutools.github.io/tclaude/sandboxing/),
+  [network filtering](https://tofutools.github.io/tclaude/network-filtering/),
+  and [proxies](https://tofutools.github.io/tclaude/proxies/) — confinement.
+- [Processes](https://tofutools.github.io/tclaude/processes/) and
+  [tasks](https://tofutools.github.io/tclaude/tasks/) — automation.
 - [Adding a harness](https://tofutools.github.io/tclaude/adding-a-harness/) —
   contributor guide to the capability-based harness seam.
 
-[Full documentation](https://tofutools.github.io/tclaude/) · [License](LICENSE)
+[License](LICENSE) (MIT)

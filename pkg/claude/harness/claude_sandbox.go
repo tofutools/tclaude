@@ -131,7 +131,7 @@ func (claudeSandbox) ModeHelp(mode string) string {
 // `on` mode injects via `--settings` — and the single source of truth the
 // global `tclaude setup --install-sandbox-hardening` reuses for its own
 // `sandbox` block, so the per-session override and the global hardening can
-// never drift (docs/sandbox-hardening.md is the human-facing source of truth).
+// never drift (docs/sandboxing.md is the human-facing source of truth).
 //
 // It enables the sandbox AND preserves the properties a daemon-spawned agent
 // needs: the agent-reachable agentd Unix socket (~/.tclaude/api/…) stays

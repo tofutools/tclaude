@@ -23,7 +23,7 @@ import (
 // What the agent supplies is a semantic request — "push my branch" — not a
 // command line. There is no passthrough flag and no way to influence git's
 // argv; the daemon builds it from validated scalars. See
-// pkg/claude/agentd/gitproxy.go for the hardening, and docs/git-proxy.md for
+// pkg/claude/agentd/gitproxy.go for the hardening, and docs/proxies.md for
 // the operator-facing picture.
 //
 // `pull` is the one verb that is split across the boundary. See runGitPull.

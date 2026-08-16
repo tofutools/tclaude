@@ -1,125 +1,86 @@
-# Conversation Management 💬
+# Conversations
 
-Browse and search Claude Code and OpenAI Codex CLI conversations together.
-Each indexed conversation records its harness, so resume and watch-mode launch
-use the correct CLI automatically.
+A conversation is the durable transcript behind a session, plus tclaude's
+index entry for it. Sessions are live tmux processes; conversations persist
+in each harness's own store and outlive the session that produced them. A
+session row can exit while its conversation stays listed, searchable, and
+resumable.
 
-Listing, text search, native archive visibility, and resume are
-harness-agnostic. The `archive` / `unarchive` commands, semantic index, and
-physical `delete`, `prune-empty`, `cp`, and `mv` commands still operate on
-Claude Code's indexed project `.jsonl` store only; those sections are labelled
-explicitly below.
+`tclaude conv` is one merged index across all four harnesses: listings load
+Claude Code's cwd-indexed `.jsonl` store and merge in conversations from
+every other registered harness — Codex, OpenCode, and Copilot — read-only,
+each entry tagged with its harness. Resume and watch-mode launch use the
+recorded harness automatically.
 
-## Commands
+Listing, search, resume, and archive are harness-agnostic. The physical
+transcript operations — `delete`, `prune-empty`, `cp`, `mv` — and the
+semantic index operate on Claude Code's store only; those sections say so.
 
-### conv ls
+The conversation record is independent of tmux process history: pruning an
+exited row from `session ls` does not touch the conversation, its recorded
+harness, or its resume provenance. Listing, search, archive, and resume also
+work for conversations that were never enrolled as agents.
 
-List conversations.
+## Listing
 
 ```bash
-# List conversations for current project
-tclaude conv ls
-
-# Interactive watch mode
-tclaude conv ls -w
-
-# Global - all projects
-tclaude conv ls -g
-
-# Global interactive
-tclaude conv ls -g -w
-
-# Limit results
-tclaude conv ls -n 10
-
-# Filter by time
-tclaude conv ls --since 7d
-tclaude conv ls --before 2024-01-01
+tclaude conv ls              # conversations for the current project
+tclaude conv ls -g           # all projects
+tclaude conv ls -n 10        # limit
+tclaude conv ls --since 7d   # time filter
+tclaude conv ls -w           # interactive watch mode
 ```
 
-**Flags:**
+Useful flags: `-l/--long`, `-j/--json`, `-c/--count`, `-s/--sort-by
+created|modified|messages|prompt|project` with `-a/--asc`, `--since` and
+`-b/--before` (durations like `1h30m`/`7d` or dates), `-r/--reindex` to force
+a rescan of transcript files, and `--show-archived` to include conversations
+hidden by tclaude archival (plus Codex conversations archived in Codex's own
+native store).
 
-| Flag | Description |
-|------|-------------|
-| `-w, --watch` | Interactive watch mode |
-| `-g, --global` | Search all projects |
-| `-n, --limit` | Limit number of results |
-| `--since` | Show only after this time |
-| `--before` | Show only before this time |
-| `--show-archived` | Include Claude conversations hidden by tclaude archival and Codex conversations archived in Codex's native store |
+`tclaude conv watch` is a shortcut for `conv ls -w`; in watch form only
+`-g`, `--since`, and `--before` apply.
 
-### conv watch
+Conversations are indexed per project directory, so a plain `conv ls` in a
+repo shows that repo's history — including a worktree's own history when run
+inside the worktree — and `-g` widens to everything tclaude knows about.
 
-Shortcut for `conv ls -w` — jumps straight into interactive watch mode. Takes the same
-`-g`, `--since`, and `--before` flags as `conv ls`.
+## Searching
 
 ```bash
-tclaude conv watch
-tclaude conv watch -g
+tclaude conv search "authentication"           # title/prompt search
+tclaude conv search -g --since 24h "bug fix"   # global, time-filtered
+tclaude conv search --content "exact error"    # full transcript search
 ```
 
-### conv search
+Title-and-first-prompt search is the default. `--content` also reads the
+transcript files themselves — slower, and cold Codex rollouts stored as
+compressed `.jsonl.zst` are not decompressed, so those are matched on
+metadata only. Other flags: `-C/--context` for surrounding lines,
+`-s/--case-sensitive`, `--sort-by … matches`, plus the usual `-g`, `-l`,
+`-n`, `-j`, `-c`, and time filters.
 
-Search conversation content.
-
-```bash
-# Search in current project
-tclaude conv search "authentication"
-
-# Search globally
-tclaude conv search -g "authentication"
-
-# Search with time filter
-tclaude conv search --since 24h "bug fix"
-
-# Full content search (slower, more thorough)
-tclaude conv search --content "specific error message"
-```
-
-`--content` reads uncompressed transcript/rollout files in addition to the
-metadata search. Cold Codex rollouts stored as compressed `.jsonl.zst` files are
-not decompressed, so those conversations are searched by title, summary, and
-first prompt only.
-
-**Flags:**
-
-| Flag | Description |
-|------|-------------|
-| `-g, --global` | Search all projects |
-| `--content` | Also search uncompressed conversation content |
-| `--since` | Filter by time |
-| `--before` | Filter by time |
-
-### conv resume
-
-Resume a conversation in a new tmux session through its recorded harness.
+## Resuming
 
 ```bash
-# Resume by ID (creates a new tmux session)
 tclaude conv resume <conv-id>
-
-# Resume detached
-tclaude conv resume -d <conv-id>
+tclaude conv resume -d <conv-id>   # detached
 ```
 
-Unlike the lower-level `session new --resume`, this command searches all
-supported harness stores and selects the recorded harness automatically. The
-direct equivalents are:
+`conv resume` finds the conversation in any harness's store, changes to its
+project directory, and relaunches it through its **recorded harness** in a
+new tmux session — you never tell it which CLI to use. The relaunch also
+carries the conversation's recorded launch posture; see
+[Sessions](sessions.md#a-resume-keeps-its-recorded-posture).
 
-```bash
-tclaude session new --resume <claude-conv-id>
-tclaude session new --harness codex --resume <codex-conv-id>
-```
+The lower-level equivalent is `tclaude session new --resume <id>`, which
+needs `--harness` for non-Claude conversations.
 
-The durable conversation record is independent of tmux process history.
-Removing an exited row from `session ls -w` therefore does not remove the
-conversation's harness, resume provenance, or unmanaged launch fallback.
-Standalone conversation listing, search, archive, and resume do not require an
-agent record.
+One gate: a conversation whose live agent is driven through Copilot's API
+drive is refused a plain relaunch; pass `-s/--send-keys` to explicitly
+proceed with a tmux send-keys launch instead.
 
-### conv archive / unarchive (Claude Code only)
-
-Hide a conversation from default listings without deleting its harness data:
+## Archiving
 
 ```bash
 tclaude conv archive <conv-id>
@@ -127,147 +88,131 @@ tclaude conv ls -g --show-archived
 tclaude conv unarchive <conv-id>
 ```
 
-Archiving stamps tclaude's SQLite conversation index only; the Claude Code
-`.jsonl` stays in place. It is reversible, and reincarnation hides a Claude
-predecessor through the same mechanism. Codex archive state comes from Codex's
-own thread store and is visible through `--show-archived`; these commands do not
-change that native state.
+Archiving works for any indexed conversation, whatever its harness. It
+stamps `archived_at` in tclaude's SQLite conversation index; the transcript
+on disk is untouched and the operation is fully reversible. Archived
+conversations are hidden from `conv ls` unless `--show-archived`.
+Reincarnation archives the predecessor conversation through the same
+mechanism.
 
-### conv delete (Claude Code only)
+Codex additionally has its own native archive state; tclaude surfaces it via
+`--show-archived` but never modifies it.
 
-Delete a conversation.
+## Claude Code transcript operations
 
-```bash
-# Delete by ID
-tclaude conv delete <conv-id>
+These commands manipulate transcript files in Claude Code's cwd-indexed
+store. They do not touch Codex, OpenCode, or Copilot stores.
 
-# Skip confirmation
-tclaude conv delete -y <conv-id>
-
-# Search globally
-tclaude conv delete -g <conv-id>
-```
-
-### conv prune-empty (Claude Code only)
-
-Delete conversations with no messages.
+### conv delete
 
 ```bash
-# Prune current project
-tclaude conv prune-empty
-
-# Prune globally
-tclaude conv prune-empty -g
-
-# Preview only (dry run)
-tclaude conv prune-empty --dry-run
+tclaude conv delete <conv-id>      # with confirmation
+tclaude conv delete -y -g <id>     # skip confirmation, search globally
 ```
 
-### conv cp / conv mv (Claude Code only)
+Deletes the transcript, including any resumed "generations" of the same
+conversation.
 
-Copy or move conversations.
+### conv prune-empty
 
 ```bash
-# Copy a conversation
-tclaude conv cp <conv-id> /path/to/dest
-
-# Move a conversation
-tclaude conv mv <conv-id> /path/to/dest
+tclaude conv prune-empty           # current project
+tclaude conv prune-empty -g -n     # global, dry run
 ```
 
-These commands transform Claude Code's cwd-indexed transcript files. They do
-not copy or move Codex rollout/state-store conversations.
+Deletes conversations with no user messages, stale index entries, and
+dangling companion directories (subagent transcripts).
 
-## Interactive Watch Mode
+### conv cp / conv mv
 
-Press `w` or use `-w` flag to enter interactive mode.
+```bash
+tclaude conv cp <conv-id> /path/to/other/project
+tclaude conv mv <conv-id> /path/to/other/project
+```
 
-### Navigation
+Copies or moves a transcript to another real project path so it lists (and
+resumes) there. `cp` assigns the copy a new UUID. `-f` overwrites, `-g`
+searches globally.
+
+## Watch mode
+
+`tclaude conv watch` (or `conv ls -w`) is an interactive picker over the
+merged conversation list:
+
+![Conversation watch across all projects and harnesses](assets/term-conv-watch.png)
+
+*Conversation watch across all projects and harnesses*
 
 | Key | Action |
 |-----|--------|
-| `↑`/`k` | Move up |
-| `↓`/`j` | Move down |
-| `PgUp`/`Ctrl+B` | Page up |
-| `PgDn`/`Ctrl+F` | Page down |
-| `g`/`Home` | Go to first |
-| `G`/`End` | Go to last |
-| `Enter` | Create/attach to session |
-| `q`/`Esc` | Quit |
+| `↑`/`↓`, `j`/`k`, `PgUp`/`PgDn`, `g`/`G` | Navigate |
+| `Enter` | Create or attach a session for the selected conversation |
+| `/` | Text search: title, first prompt, project path, git branch, session id |
+| `s` | [Semantic search](#semantic-search) (requires Ollama) |
+| `x`/`Del` | Delete (session-aware confirmation, below) |
+| `W` | Create a [worktree](worktrees.md) from the selected conversation |
+| `r` | Refresh |
+| `h`/`?` | Help |
 
-### Search
+Session indicators in the list: `⚡` means the conversation has an attached
+session; `○` means an active background session.
 
-| Key | Action |
-|-----|--------|
-| `/` | Start text search (title, prompt, project, branch, ID) |
-| `s` | Start [semantic search](semantic-search.md) (requires Ollama) |
-| `Esc` | Clear search / exit search or semantic mode |
-| `Ctrl+U` | Clear search input |
-| `↑`/`↓` | Exit search and navigate |
+Deleting a conversation that has an active session asks what to do: `y`
+deletes the conversation and stops the session, `s` stops the session only,
+`n` cancels.
 
-Text search (`/`) matches against: title, first prompt, project path, git branch, session ID.
+For a Claude Code entry, delete removes the transcript file itself. For an
+entry from any other harness, it removes only tclaude's index rows — the
+conversation disappears from the merged list, but the harness's own
+transcript store is untouched.
 
-Semantic search (`s`) finds conversations by meaning using local embeddings. See [Semantic Search](semantic-search.md) for setup and details.
-It currently indexes Claude Code transcripts only.
+## Semantic search
 
-### Actions
+Semantic search ranks conversations by meaning rather than exact text, using
+**local Ollama embeddings**. The default model is `qwen3-embedding:0.6b`
+(`nomic-embed-text` also works); override with `--model` /
+`TCLAUDE_EMBED_MODEL` and `--url` / `TCLAUDE_OLLAMA_URL` (default
+`http://localhost:11434`).
 
-| Key | Action |
-|-----|--------|
-| `Del`/`x` | Delete conversation |
-| `r` | Refresh list |
-| `h`/`?` | Show help |
+!!! note "Claude Code transcripts only"
+    The semantic index reads Claude Code's transcript store. Codex,
+    OpenCode, and Copilot conversations are not indexed.
 
-### Delete Confirmation
-
-When deleting a conversation:
-
-- **No active session:** `y` to confirm, `n` to cancel
-- **Has active session:**
-  - `y` - Delete conversation AND stop session
-  - `s` - Stop session only (keep conversation)
-  - `n` - Cancel
-
-## Session Indicators ⚡
-
-In the conversation list, indicators show session status:
-
-| Indicator | Meaning |
-|-----------|---------|
-| ⚡ | Conversation has an attached session (someone's watching!) |
-| ○ | Conversation has an active session (running in background) |
-| (none) | No active session |
-
-## Time Filters
-
-Commands support flexible time formats:
-
-| Format | Example | Description |
-|--------|---------|-------------|
-| Duration | `24h`, `7d`, `2w` | Relative time |
-| Date | `2024-01-15` | Specific date |
-| DateTime | `2024-01-15T10:30` | Date and time |
+Requirements: a running Ollama with the embedding model pulled:
 
 ```bash
-# Last 24 hours
-tclaude conv ls --since 24h
-
-# Last week
-tclaude conv ls --since 7d
-
-# Before a specific date
-tclaude conv ls --before 2024-01-01
-
-# Date range
-tclaude conv ls --since 2024-01-01 --before 2024-02-01
+ollama pull qwen3-embedding:0.6b
 ```
 
-## Session ID Formats
+Build or update the index, then query it:
 
-Conversations can be referenced by:
+```bash
+tclaude conv index-embeddings         # incremental, by file mtime
+tclaude conv index-embeddings -r      # full rebuild (needed after a model switch)
+tclaude conv search-embeddings "that refactor where we split the parser"
+tclaude conv search-embeddings -n 5 -l "flaky test investigation"
+```
 
-- **Full ID:** `abc12345-def6-7890-abcd-ef1234567890`
-- **Short prefix:** `abc12345` (if unique)
-- **Autocomplete format:** `abc12345_[project]_prompt...` (from shell completion)
+Indexing chunks each conversation (a metadata chunk plus ~24K-character
+content chunks split at turn boundaries), embeds the chunks via Ollama, and
+stores the vectors in tclaude's SQLite database. Embeddings are
+model-specific, hence the `-r` rebuild when switching models. Queries rank
+conversations by their best-matching chunk; `-l` shows the matched chunk
+text, `-j` emits JSON, `-g` searches globally.
 
-Shell completions automatically provide the full format with context.
+In watch mode, `s` enters semantic search — offering to index unindexed
+conversations first — and adds a SCORE column; `Esc` returns to the normal
+listing.
+
+## Conversation IDs and time filters
+
+Conversation IDs are accepted as the full UUID, any unique prefix of 8+
+characters, or the decorated form shell completion produces
+(`abc12345_[title]_prompt…`).
+
+Time filters take durations relative to now (`24h`, `7d`, `2w`) or dates
+(`2026-01-15`, `2026-01-15T10:30`):
+
+```bash
+tclaude conv ls --since 2026-01-01 --before 2026-02-01
+```
