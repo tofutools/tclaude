@@ -346,18 +346,21 @@ func TestManagedServerStillRefusesUnenforceableCeiling(t *testing.T) {
 func TestManagedServerDropsStoredCgroupFromPreviousDelegationBeforeReprepare(t *testing.T) {
 	setupTestDB(t)
 	t.Setenv("TMUX", "")
+	oldCgroup := filepath.Join(t.TempDir(), "tclaude-old")
+	require.NoError(t, os.Mkdir(oldCgroup, 0o755))
+	delegation := t.TempDir()
+	newCgroup := filepath.Join(delegation, "tclaude-new")
 	require.NoError(t, db.UpsertOpenCodeRuntime(db.OpenCodeRuntime{
 		SessionID: "managed-old-cgroup", ConvID: "ses_old_cgroup",
 		ServerURL: "http://127.0.0.1:43210", Cwd: t.TempDir(),
-		ResourceCgroupDir: "/sys/fs/cgroup/system.slice/tclaude-agentd.service/tclaude-old",
+		ResourceCgroupDir: oldCgroup,
 	}))
-	t.Setenv(session.ResourceDelegationDirEnv,
-		"/sys/fs/cgroup/system.slice/tclaude-tmux.service")
+	t.Setenv(session.ResourceDelegationDirEnv, delegation)
 	previousPrepare := prepareResourceCgroup
 	prepareResourceCgroup = func(sessionID string, limits sandboxpolicy.ResourceLimits) (string, func(), error) {
 		assert.Equal(t, "managed-old-cgroup", sessionID)
 		assert.Equal(t, "128MB", limits.Memory)
-		return "/sys/fs/cgroup/system.slice/tclaude-tmux.service/tclaude-new", func() {}, nil
+		return newCgroup, func() {}, nil
 	}
 	t.Cleanup(func() { prepareResourceCgroup = previousPrepare })
 	snapshot := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
@@ -367,7 +370,8 @@ func TestManagedServerDropsStoredCgroupFromPreviousDelegationBeforeReprepare(t *
 	dir, _, err := prepareManagedServerResourceCgroup(
 		"managed-old-cgroup", snapshot, string(sandboxpolicy.ImplementationHarnessBuiltin), false, false)
 	require.NoError(t, err)
-	assert.Equal(t, "/sys/fs/cgroup/system.slice/tclaude-tmux.service/tclaude-new", dir)
+	assert.Equal(t, newCgroup, dir)
+	assert.NoDirExists(t, oldCgroup, "the invalid old-root cgroup must be retired before replacement")
 	stored, lookupErr := db.GetOpenCodeRuntime("managed-old-cgroup")
 	require.NoError(t, lookupErr)
 	assert.Nil(t, stored, "the invalid old-root runtime must be stopped before a fresh cgroup is prepared")
