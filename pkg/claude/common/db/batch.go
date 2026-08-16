@@ -387,10 +387,9 @@ type ConvAgent struct {
 	AgentID       string
 	CurrentConvID string
 	PendingName   string
-	// FastMode is the explicit Codex service tier recorded for this agent's
-	// launch. nil means inherit/unknown; false is an explicit standard-tier
-	// launch. The dashboard uses it only until a live rollout event supersedes
-	// the launch observation.
+	// FastMode is the best-known Codex service tier at launch: an explicit
+	// override when present, otherwise the inherited main-config observation.
+	// The dashboard uses it only until a live rollout event supersedes it.
 	FastMode *bool
 	// TemporaryHarnessBuiltinMode is the active reversible relaunch override. Empty
 	// means normal posture. It rides this existing dashboard batch so the
@@ -590,6 +589,9 @@ func AgentsByConv(convIDs []string) (map[string]ConvAgent, error) {
 					ca.TemporaryHarnessBuiltinMode = strings.TrimSpace(*profile.TemporaryHarnessBuiltinMode)
 				}
 				ca.FastMode = profile.FastMode
+				if ca.FastMode == nil {
+					ca.FastMode = profile.FastModeAtLaunch
+				}
 			}
 			ca.Retired = retiredAt.valid
 			// Canonicalise to UTC RFC3339Nano (keeping full sub-second precision)

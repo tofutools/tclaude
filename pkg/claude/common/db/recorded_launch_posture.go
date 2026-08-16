@@ -78,6 +78,9 @@ func ComposeAgentRelaunchProfile(base, overlay *AgentRelaunchProfile) *AgentRela
 	if overlay.FastMode != nil {
 		merged.FastMode = overlay.FastMode
 	}
+	if overlay.FastModeAtLaunch != nil {
+		merged.FastModeAtLaunch = overlay.FastModeAtLaunch
+	}
 	if overlay.AskUserQuestionTimeout != nil {
 		merged.AskUserQuestionTimeout = overlay.AskUserQuestionTimeout
 	}

@@ -342,14 +342,20 @@ func TestRelaunchProfileForSpawn_FreezesToolGovernance(t *testing.T) {
 }
 
 func TestRelaunchProfileForSpawn_FreezesCodexStateRoot(t *testing.T) {
+	fastAtLaunch := true
 	profile := relaunchProfileForSpawn(spawnParams{
 		Harness: harness.CodexName, CodexStateRoot: "/host/codex-state",
 		CodexStateRootSource: codexStateRootSourceCodexHome,
+		FastModeAtLaunch:     &fastAtLaunch,
 	})
 	require.NotNil(t, profile.CodexStateRoot)
 	assert.Equal(t, "/host/codex-state", *profile.CodexStateRoot)
 	require.NotNil(t, profile.CodexStateRootSource)
 	assert.Equal(t, codexStateRootSourceCodexHome, *profile.CodexStateRootSource)
+	assert.Nil(t, profile.FastMode,
+		"an inherited effective state must not become a relaunch override")
+	require.NotNil(t, profile.FastModeAtLaunch)
+	assert.True(t, *profile.FastModeAtLaunch)
 }
 
 func TestRelaunchProfileForSpawn_FreezesSandboxImplementation(t *testing.T) {

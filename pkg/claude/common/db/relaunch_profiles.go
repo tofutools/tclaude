@@ -114,7 +114,11 @@ type AgentRelaunchProfile struct {
 	CodexStateRootSource *string `json:"codex_state_root_source,omitempty"`
 	// FastMode preserves an explicit Codex tier across relaunches. nil means
 	// inherit config.toml; true/false force fast/standard respectively.
-	FastMode               *bool   `json:"fast_mode,omitempty"`
+	FastMode *bool `json:"fast_mode,omitempty"`
+	// FastModeAtLaunch is the effective Fast state observed from the main Codex
+	// config when an inherited launch began. It is display/runtime evidence, not
+	// relaunch intent: FastMode remains nil so later launches keep inheriting.
+	FastModeAtLaunch       *bool   `json:"fast_mode_at_launch,omitempty"`
 	AskUserQuestionTimeout *string `json:"ask_user_question_timeout,omitempty"`
 	RemoteControl          *bool   `json:"remote_control,omitempty"`
 	AutoMemory             *bool   `json:"auto_memory,omitempty"`

@@ -129,6 +129,38 @@ func TestDashboardCodexFastMode_ExplicitLaunchSeedsIndicatorUntilRuntimeEvent(t 
 	assert.False(t, *row.State.FastMode, "live standard-tier event overrides launch Fast")
 }
 
+func TestDashboardCodexFastMode_InheritedLaunchSeedsIndicatorUntilRuntimeEvent(t *testing.T) {
+	const conv = "019ec064-4250-79b1-9ade-ebaea4170648"
+	agentd.ResetCodexContextRefreshForTest()
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	f.HaveGroup("fast-squad")
+	cx := f.HaveAliveCodexSession(conv, "spwn-fast-inherited-launch", "tmux-fast-inherited-launch", f.TestCwd("fast-inherited-launch"))
+	f.HaveMember("fast-squad", conv)
+	agentID, err := db.AgentIDForConv(conv)
+	require.NoError(t, err)
+	fast := true
+	require.NoError(t, db.SetAgentRelaunchProfile(agentID, db.AgentRelaunchProfile{
+		Version: db.RelaunchProfileVersion, FastModeAtLaunch: &fast,
+	}))
+
+	handler := agentd.BuildDashboardHandlerForTest()
+	snap := fetchDashSnapshot(t, handler)
+	row := findDashAgent(snap, conv)
+	require.NotNil(t, row)
+	require.NotNil(t, row.State.FastMode, "inherited launch state seeds the indicator")
+	assert.True(t, *row.State.FastMode)
+
+	// Runtime telemetry is newer and authoritative even though the launch
+	// inherited Fast mode from the main config.
+	require.NoError(t, cx.WriteThreadSettingsApplied("default"))
+	snap = fetchDashSnapshot(t, handler)
+	row = findDashAgent(snap, conv)
+	require.NotNil(t, row)
+	require.NotNil(t, row.State.FastMode)
+	assert.False(t, *row.State.FastMode, "live standard-tier event overrides inherited launch Fast")
+}
+
 func TestDashboardCodexFastMode_AppServerDriveStillUsesPaneToggle(t *testing.T) {
 	const conv = "019ec064-4250-79b1-9ade-ebaea4170645"
 	agentd.ResetCodexContextRefreshForTest()

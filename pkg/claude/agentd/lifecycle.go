@@ -5218,6 +5218,9 @@ type spawnParams struct {
 	// unset inherits config.toml, false forces standard, true forces fast.
 	FastMode    bool
 	FastModeSet bool
+	// FastModeAtLaunch records the effective state shown in the dashboard until
+	// Codex emits a newer thread-settings event. It never becomes launch intent.
+	FastModeAtLaunch *bool
 	// AskUserQuestionTimeout is the resolved per-session Claude Code
 	// AskUserQuestion idle-timeout override (never|60s|5m|10m), forwarding
 	// `--ask-user-question-timeout <v>` to `tclaude session new`; "" omits it.
@@ -6694,6 +6697,21 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		return nil, &spawnFailure{http.StatusUnprocessableEntity, "codex_state_root", stateRootErr.Error()}
 	}
 	p.CodexStateRoot, p.CodexStateRootSource = stateRoot, stateRootSource
+	if harnessOrDefault(p.Harness) == harness.CodexName {
+		effectiveFast := p.FastMode
+		if !p.FastModeSet {
+			var readErr error
+			effectiveFast, readErr = harness.CodexMainConfigFastMode(p.CodexStateRoot)
+			if readErr != nil {
+				slog.Debug("Codex launch Fast-mode baseline unavailable", "error", readErr,
+					"codex_state_root", p.CodexStateRoot)
+			} else {
+				p.FastModeAtLaunch = &effectiveFast
+			}
+		} else {
+			p.FastModeAtLaunch = &effectiveFast
+		}
+	}
 
 	spawnArgs := clcommon.SpawnArgs{
 		EffectiveSandbox:           p.EffectiveSandbox,
@@ -7984,6 +8002,9 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 			return err
 		}
 		profile := relaunchProfileForSpawn(p)
+		// Unlike durable launch intent, this observation belongs to the launch
+		// being enrolled. Do not let an older agent profile win the composition.
+		fastModeAtLaunch := profile.FastModeAtLaunch
 		// A pending Codex spawn is enrolled after its session row has
 		// materialised. Its persisted pending-spawn intent predates some
 		// launch flags, while SaveSession has already recorded the exact
@@ -8003,6 +8024,7 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 		if existing != nil {
 			profile = *db.ComposeAgentRelaunchProfile(&profile, existing)
 		}
+		profile.FastModeAtLaunch = fastModeAtLaunch
 		if err := db.SetAgentRelaunchProfile(agentID, profile); err != nil {
 			return err
 		}

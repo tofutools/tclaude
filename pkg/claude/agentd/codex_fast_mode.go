@@ -52,6 +52,8 @@ func codexFastModeFromFollowerNow(sess *db.SessionRow) (fast, known bool, err er
 		}
 		if profile != nil && profile.FastMode != nil {
 			fast, known = *profile.FastMode, true
+		} else if profile != nil && profile.FastModeAtLaunch != nil {
+			fast, known = *profile.FastModeAtLaunch, true
 		}
 	}
 	if !known {

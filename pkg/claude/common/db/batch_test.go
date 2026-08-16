@@ -90,6 +90,36 @@ func TestAgentsByConvCarriesExplicitFastModeLaunchIntent(t *testing.T) {
 	assert.True(t, *rows["fast-conv"].FastMode)
 }
 
+func TestAgentsByConvCarriesInheritedFastModeLaunchObservation(t *testing.T) {
+	setupTestDB(t)
+	agentID, err := AllocateAgent("inherited-fast-conv", "spawn")
+	require.NoError(t, err)
+	fast := true
+	require.NoError(t, SetAgentRelaunchProfile(agentID, AgentRelaunchProfile{
+		Version: RelaunchProfileVersion, FastModeAtLaunch: &fast,
+	}))
+
+	rows, err := AgentsByConv([]string{"inherited-fast-conv"})
+	require.NoError(t, err)
+	require.NotNil(t, rows["inherited-fast-conv"].FastMode)
+	assert.True(t, *rows["inherited-fast-conv"].FastMode)
+}
+
+func TestAgentsByConvExplicitFastModeWinsLaunchObservation(t *testing.T) {
+	setupTestDB(t)
+	agentID, err := AllocateAgent("explicit-fast-conv", "spawn")
+	require.NoError(t, err)
+	explicit, observed := false, true
+	require.NoError(t, SetAgentRelaunchProfile(agentID, AgentRelaunchProfile{
+		Version: RelaunchProfileVersion, FastMode: &explicit, FastModeAtLaunch: &observed,
+	}))
+
+	rows, err := AgentsByConv([]string{"explicit-fast-conv"})
+	require.NoError(t, err)
+	require.NotNil(t, rows["explicit-fast-conv"].FastMode)
+	assert.False(t, *rows["explicit-fast-conv"].FastMode)
+}
+
 func TestAgentsByIDUsesStableActorKey(t *testing.T) {
 	setupTestDB(t)
 	agentID, err := AllocateAgent("old-conv", "spawn")
