@@ -828,12 +828,37 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, packVisibilit
 
 function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice, platform, generatedAlignment }) {
   const rules = sandboxAccessAxes({ unix_sockets: draft.unix_sockets }).unix_sockets;
+  const authoredNetwork = sandboxNetworkAuthoring(draft);
   const update = (patch) => setDraft((value) => ({ ...value, unix_sockets: { ...value.unix_sockets, ...patch } }));
-  const linuxClosedAligned = platform === 'linux' && draft.network?.engine === 'packet'
-    && draft.network?.namespace === 'private' && draft.filesystem_root === 'separate';
+  // Automatic is aligned too: this socket/network combination resolves it to
+  // a constructed root. Only an explicit inherited root conflicts with the
+  // boundary. Compare the network values through the same authoring adapter
+  // that renders the controls, so legacy and baseline-shaped drafts agree.
+  const linuxClosedPrerequisites = [
+    {
+      key: 'engine', label: 'Packet filtering', aligned: authoredNetwork.engine === 'packet',
+      state: authoredNetwork.engine === 'packet' ? 'Selected'
+        : `Currently: ${{ proxy: 'Proxy filter' }[authoredNetwork.engine] || 'No override'}`,
+    },
+    {
+      key: 'namespace', label: 'Private, routed network namespace',
+      aligned: authoredNetwork.namespace === 'private',
+      state: authoredNetwork.namespace === 'private' ? 'Selected'
+        : `Currently: ${{ host: 'Shared host' }[authoredNetwork.namespace] || 'No override'}`,
+    },
+    {
+      key: 'filesystem-root', label: 'Separate filesystem root',
+      aligned: draft.filesystem_root !== 'inherit',
+      state: draft.filesystem_root === 'separate' ? 'Selected'
+        : draft.filesystem_root === 'inherit' ? 'Currently: Inherit host filesystem root'
+          : 'Automatic — required by this socket boundary',
+    },
+  ];
+  const missingLinuxClosedPrerequisites = linuxClosedPrerequisites.filter((item) => !item.aligned);
+  const linuxClosedAligned = platform === 'linux' && missingLinuxClosedPrerequisites.length === 0;
   const linuxClosedChanges = (mode) => mode === 'closed' && platform === 'linux' ? {
-    engine: draft.network?.engine !== 'packet',
-    namespace: draft.network?.namespace !== 'private',
+    engine: authoredNetwork.engine !== 'packet',
+    namespace: authoredNetwork.namespace !== 'private',
     filesystemRoot: draft.filesystem_root !== 'separate',
   } : null;
   const updateMode = (mode, allow) => {
@@ -878,12 +903,21 @@ function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice, platf
       updateMode(mode, mode === 'list' ? rules.allow : []);
       setNotice(null);
     }} options=${ACCESS_MODE_OPTIONS}/>
-    ${platform === 'linux' && rules.mode === 'closed' && (linuxClosedAligned
-      ? html`<div class="sbx-inline-note sbx-unix-root-note" role="note"><strong>⚠ Linux “No access” requires a separate filesystem root.</strong> tclaude also selects packet filtering and a private, routed network namespace to enforce this boundary. Only the fixed OS/runtime surface, harness state, and filesystem paths mounted by this profile remain visible; other host paths and abstract Unix sockets do not. The network baseline and destination rules still control internet access.</div>`
-      : html`<div class="sbx-inline-note sbx-unix-root-note sbx-unix-root-note-incomplete" role="note"><strong>⚠ Linux “No access” requires additional isolation settings.</strong> This profile is not yet aligned, so Unix-socket enforcement may remain partial. Apply packet filtering, a private routed network namespace, and a separate minimal filesystem root; the network baseline and destination rules will remain unchanged. <button type="button" class="sbx-add-row" onClick=${() => {
+    ${platform === 'linux' && rules.mode === 'closed' && html`<div class=${`sbx-inline-note sbx-unix-root-note${linuxClosedAligned ? '' : ' sbx-unix-root-note-incomplete'}`} role="note">
+      <strong>⚠ ${linuxClosedAligned
+        ? 'Linux “No access” uses an isolated filesystem and network boundary'
+        : `Linux “No access” needs ${missingLinuxClosedPrerequisites.length} setting change${missingLinuxClosedPrerequisites.length === 1 ? '' : 's'}`}</strong>
+      <div class="sbx-unix-root-checklist">${linuxClosedPrerequisites.map((item) => html`<div key=${item.key} class=${`sbx-unix-root-prerequisite ${item.aligned ? 'is-aligned' : 'is-missing'}`} data-aligned=${String(item.aligned)}>
+        <span class="sbx-unix-root-status" aria-hidden="true">${item.aligned ? '✓' : '×'}</span>
+        <span><b>${item.label}</b><small>${item.state}</small></span>
+      </div>`)}</div>
+      ${linuxClosedAligned
+        ? html`<p>Only the fixed OS/runtime surface, harness state, and filesystem paths mounted by this profile remain visible; other host paths and abstract Unix sockets do not. The network baseline and destination rules still control internet access.</p>`
+        : html`<p>Until these settings are aligned, the requested Unix-socket boundary is only partially enforced. The network baseline and destination rules will remain unchanged.</p><button type="button" class="sbx-add-row" onClick=${() => {
         updateMode('closed', rules.allow);
         setNotice(null);
-      }}>Apply required settings</button></div>`)}
+      }}>Apply ${missingLinuxClosedPrerequisites.length} required setting${missingLinuxClosedPrerequisites.length === 1 ? '' : 's'}</button>`}
+    </div>`}
     ${rules.mode === 'list' && html`<div class="sbx-rows sbx-socket-rows">${rules.allow.map((row, index) => { const glob = Object.hasOwn(row, 'path_glob'); return html`<div key=${index} class="sbx-row sbx-access-row sbx-socket-row">
       <${SegmentedControl} className="sbx-socket-selector" label=${`Unix socket row ${index + 1} kind`}
         value=${glob ? 'path_glob' : 'path'} onChange=${(kind) => {

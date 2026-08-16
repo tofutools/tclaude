@@ -6521,6 +6521,35 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
   display: block;
   margin-bottom: .15rem;
 }
+.sbx-unix-root-note p {
+  color: var(--text-primary);
+  margin: .55rem 0 0;
+}
+.sbx-unix-root-checklist {
+  display: grid;
+  gap: .35rem;
+  margin: .5rem 0;
+}
+.sbx-unix-root-prerequisite {
+  display: grid;
+  grid-template-columns: 1.15rem minmax(0, 1fr);
+}
+.sbx-unix-root-prerequisite b,
+.sbx-unix-root-prerequisite small {
+  display: block;
+}
+.sbx-unix-root-prerequisite small {
+  color: var(--text-muted);
+}
+.sbx-unix-root-prerequisite.is-aligned .sbx-unix-root-status {
+  color: var(--success, #3fb950);
+}
+.sbx-unix-root-prerequisite.is-missing .sbx-unix-root-status {
+  color: var(--danger, #f85149);
+}
+.sbx-unix-root-status {
+  font-weight: 700;
+}
 .sbx-socket-row {
   grid-template-columns: 6.75rem minmax(12rem, 1fr) auto;
 }

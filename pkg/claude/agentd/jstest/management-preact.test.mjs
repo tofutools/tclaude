@@ -1708,8 +1708,10 @@ test('sandbox editor discloses the Linux filesystem-root consequence of blocking
   assert.equal(note.closest('.sbx-access-axis').id,
     'sandbox-profile-editor-unix-sockets-section',
     'the warning stays with the Unix-socket choice instead of appearing after target selection');
-  assert.match(note.textContent, /No access.*requires a separate filesystem root.*private, routed network namespace/s);
+  assert.match(note.textContent,
+    /No access.*Packet filtering.*Private, routed network namespace.*Separate filesystem root/s);
   assert.match(note.textContent, /harness state/);
+  assert.equal(note.querySelectorAll('.sbx-unix-root-prerequisite.is-aligned').length, 3);
   assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-engine')), 'packet');
   assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-namespace')), 'private');
   assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-filesystem-root')), 'separate');
@@ -1734,12 +1736,32 @@ test('sandbox editor discloses the Linux filesystem-root consequence of blocking
   await harness.act(() => Promise.resolve());
   state.openDialog({
     kind: 'sandbox-editor',
+    seed: {
+      name: 'legacy-linux-auto-root', filesystem: [], environment: [],
+      network: { baseline: 'allow', engine: 'packet', namespace: 'private' },
+      unix_sockets: { mode: 'closed' },
+    },
+    options: {}, sandboxImpl: { ...sandboxImpl, platform: 'linux' },
+  });
+  await harness.act(() => Promise.resolve());
+  assertAbsent(host.querySelector('.sbx-unix-root-note-incomplete'));
+  assert.match(host.querySelector('.sbx-unix-root-note').textContent,
+    /Separate filesystem root.*Automatic — required by this socket boundary/s,
+    'Automatic root is aligned because the socket and network rules resolve it to a constructed root');
+
+  state.closeDialog();
+  await harness.act(() => Promise.resolve());
+  state.openDialog({
+    kind: 'sandbox-editor',
     seed: { name: 'legacy-linux-closed', filesystem: [], environment: [], unix_sockets: { mode: 'closed' } },
     options: {}, sandboxImpl: { ...sandboxImpl, platform: 'linux' },
   });
   await harness.act(() => Promise.resolve());
   const incomplete = host.querySelector('.sbx-unix-root-note-incomplete');
-  assert.match(incomplete.textContent, /not yet aligned.*enforcement may remain partial/);
+  assert.match(incomplete.textContent,
+    /needs 2 setting changes.*Packet filtering.*Currently: No override.*Private, routed network namespace.*Currently: No override.*Separate filesystem root.*Automatic — required by this socket boundary.*partially enforced/s);
+  assert.equal(incomplete.querySelectorAll('.sbx-unix-root-prerequisite.is-missing').length, 2);
+  assert.match(incomplete.querySelector('button').textContent, /Apply 2 required settings/);
   await harness.act(() => harness.fireEvent(incomplete.querySelector('button'), 'click'));
   assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-engine')), 'packet');
   assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-namespace')), 'private');
@@ -1756,7 +1778,8 @@ test('sandbox editor discloses the Linux filesystem-root consequence of blocking
   await harness.act(() => harness.fireEvent(rawNetwork, 'input'));
   await harness.act(() => harness.fireEvent(legacyAdvanced, 'click'));
   assert.match(host.querySelector('.sbx-unix-root-note-incomplete').textContent,
-    /not yet aligned/, 'a raw edit to a generated field invalidates the reversible alignment record');
+    /needs 1 setting change.*Private, routed network namespace.*Currently: Shared host/s,
+    'a raw edit to a generated field invalidates the reversible alignment record');
 
   state.closeDialog();
   await harness.act(() => Promise.resolve());
