@@ -208,11 +208,11 @@ func refreshPresentedPR(agentID, rawURL, key string) {
 }
 
 func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
-	ref, ok := githubPRRefFromURL(rawURL)
+	args, ok := presentedPRViewArgs(rawURL, "number,url,state,isDraft,statusCheckRollup")
 	if !ok {
 		return presentedPRInfo{}, false
 	}
-	out := runInDir("", "gh", "pr", "view", strconv.Itoa(ref.number), "--repo", ref.repo, "--json", "number,url,state,isDraft,statusCheckRollup")
+	out := runInDir("", "gh", args...)
 	if out == "" {
 		// Same reasoning as ghPRForBranch: the rollup is an enhancement, the
 		// PR's own state is what the badge colour depends on. Retry without
@@ -243,11 +243,11 @@ func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
 // set only — no isDraft, for the reason documented there. A draft that has
 // to come through this retry renders as a plain open badge.
 func livePresentedPRInfoWithoutChecks(rawURL string) (presentedPRInfo, bool) {
-	ref, ok := githubPRRefFromURL(rawURL)
+	args, ok := presentedPRViewArgs(rawURL, "number,url,state")
 	if !ok {
 		return presentedPRInfo{}, false
 	}
-	out := runInDir("", "gh", "pr", "view", strconv.Itoa(ref.number), "--repo", ref.repo, "--json", "number,url,state")
+	out := runInDir("", "gh", args...)
 	if out == "" {
 		return presentedPRInfo{}, false
 	}
@@ -503,7 +503,7 @@ func pollRecentlyMergedPRs() (bool, error) {
 				continue
 			}
 			ref, ok := githubPRRefFromURL(row.PRURL)
-			if !ok {
+			if !ok || presentedPRRemotePolicyCheck(row.PRURL) != nil {
 				continue
 			}
 			targets[ref.key()] = append(targets[ref.key()], row)
@@ -513,6 +513,9 @@ func pollRecentlyMergedPRs() (bool, error) {
 	urlTargets := dashboardPRSearchTargets(time.Now())
 	targetCount := len(targets)
 	for key, t := range urlTargets {
+		if presentedPRRemotePolicyCheck("https://github.com/"+t.repo+"/pull/1") != nil {
+			continue
+		}
 		reposByKey[strings.ToLower(t.repo)] = t.repo
 		if _, dup := targets[key]; !dup {
 			targetCount++
@@ -735,12 +738,8 @@ func validateAgentPRURL(rawURL string) error {
 	if len(rawURL) > maxAgentPRURLLen {
 		return fmt.Errorf("PR URL is too long (%d > %d chars)", len(rawURL), maxAgentPRURLLen)
 	}
-	u, err := url.Parse(rawURL)
-	if err != nil || u.Scheme != "https" || !strings.EqualFold(u.Host, "github.com") ||
-		u.User != nil || u.RawQuery != "" || u.Fragment != "" || len(pathSegments(u.Path)) != 4 {
-		return fmt.Errorf("PR URL must have the form https://github.com/<owner>/<repo>/pull/<number>")
-	}
-	if _, ok := githubPRRefFromURL(rawURL); !ok {
+	ref, ok := githubPRRefFromURL(rawURL)
+	if !ok || rawURL != "https://github.com/"+ref.repo+"/pull/"+strconv.Itoa(ref.number) {
 		return fmt.Errorf("PR URL must have the form https://github.com/<owner>/<repo>/pull/<number>")
 	}
 	return nil

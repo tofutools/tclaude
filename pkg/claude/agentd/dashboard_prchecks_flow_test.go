@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 	"testing"
@@ -12,6 +13,24 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
+
+func TestDashboardPRChecks_HoverRejectsPROutsideRemotePolicy(t *testing.T) {
+	const prURL = "https://github.com/victim/private/pull/1"
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	t.Cleanup(agentd.SetPresentedPRRemotePolicyCheckForTest(func(string) error {
+		return errors.New("not allow-listed")
+	}))
+	called := false
+	t.Cleanup(agentd.SetPRChecksResolverForTest(func(string) (string, bool) {
+		called = true
+		return "", false
+	}))
+
+	first := fetchPRChecks(t, agentd.BuildDashboardHandlerForTest(), prURL)
+	assert.False(t, first.Refreshing)
+	agentd.WaitForBackgroundForTest()
+	assert.False(t, called, "hover must not spend credentials outside remote policy")
+}
 
 // Scenario: an agent is on a feature branch with an open PR, and the operator
 // hovers that PR's badge in the Groups tab.

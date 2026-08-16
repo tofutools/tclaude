@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -52,6 +53,14 @@ func livePresentedPRAccessValidator(ctx context.Context, caller, requestedDir, r
 		return fmt.Errorf("pull request repository github.com/%s does not match repository origin %s", ref.repo, remoteParsed.Key())
 	}
 	return nil
+}
+
+func presentedPRViewArgs(rawURL, fields string) ([]string, bool) {
+	ref, ok := githubPRRefFromURL(rawURL)
+	if !ok {
+		return nil, false
+	}
+	return []string{"pr", "view", strconv.Itoa(ref.number), "--repo", ref.repo, "--json", fields}, true
 }
 
 func validatePresentedPRRemotePolicy(rawURL string) error {

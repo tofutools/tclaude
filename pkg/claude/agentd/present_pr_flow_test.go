@@ -265,6 +265,30 @@ func TestPresentPR_RecentlyMergedPollIsGlobalAndRepoDeduped(t *testing.T) {
 	assert.Equal(t, "merged", memberB.PresentedPRs[0].State)
 }
 
+func TestPresentPR_RecentlyMergedPollRejectsLegacyRowsOutsidePolicy(t *testing.T) {
+	f := newFlow(t)
+	const worker = "pprg-aaaa-bbbb-cccc-dddd"
+	f.HaveConvWithTitle(worker, "worker")
+	f.HaveAliveSession(worker, "lbl-pprg", "tmux-pprg", f.TestCwd("pprg"))
+	_, _, err := db.EnsureAgentForConv(worker, "test")
+	require.NoError(t, err)
+	agentID, err := db.AgentIDForConv(worker)
+	require.NoError(t, err)
+	_, err = db.UpsertAgentPR(agentID, "https://github.com/victim/private/pull/1", "legacy row", "open")
+	require.NoError(t, err)
+
+	t.Cleanup(agentd.SetPresentedPRRemotePolicyCheckForTest(func(string) error {
+		return errors.New("not allow-listed")
+	}))
+	called := false
+	t.Cleanup(agentd.SetRecentlyMergedPRsResolverForTest(func([]string, int) ([]string, bool) {
+		called = true
+		return nil, true
+	}))
+	agentd.PollRecentlyMergedPRsForTest()
+	assert.False(t, called, "an untrusted legacy row must not trigger an authenticated search")
+}
+
 func TestPresentPR_OwnerPresentsWorkerWithoutSlug(t *testing.T) {
 	f := newFlow(t)
 	const lead = "pprl-aaaa-bbbb-cccc-dddd"

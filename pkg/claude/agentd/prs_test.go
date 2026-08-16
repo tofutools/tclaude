@@ -17,6 +17,25 @@ func TestValidatePresentedPRRemotePolicy(t *testing.T) {
 		"an absent allow-list must not silently authorize credential use")
 }
 
+func TestPresentedPRViewArgsNeverUsesURLSelector(t *testing.T) {
+	args, ok := presentedPRViewArgs("https://github.com/tofutools/tclaude/pull/42", "state,statusCheckRollup")
+	require.True(t, ok)
+	assert.Equal(t, []string{"pr", "view", "42", "--repo", "tofutools/tclaude", "--json", "state,statusCheckRollup"}, args)
+}
+
+func TestValidateAgentPRURLRequiresExactCanonicalSpelling(t *testing.T) {
+	require.NoError(t, validateAgentPRURL("https://github.com/tofutools/tclaude/pull/42"))
+	for _, rawURL := range []string{
+		"https://github.com//tofutools/tclaude/pull/42",
+		"https://github.com/tofutools/tclaude/pull/42/",
+		"https://github.com/tofutools/tclaude/pull/042",
+		"https://github.com/tofutools/tclaude/pull/42?",
+		"https://github.com/tofutools/tclaude/pull/42#",
+	} {
+		assert.Error(t, validateAgentPRURL(rawURL), rawURL)
+	}
+}
+
 func TestGitHubPRRefFromURL(t *testing.T) {
 	tests := []struct {
 		name   string
