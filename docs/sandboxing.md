@@ -1282,7 +1282,8 @@ refused. A ChatGPT-authenticated launch resolves to the effective
 `chatgpt_base_url` (default `https://chatgpt.com/backend-api/`) plus the
 token-refresh endpoint `auth.openai.com`, which is a constant in the harness and
 cannot be moved by any config layer. Both must be covered by the authored list;
-the opt-in `net-openai-chatgpt` pack provides them. Provider-changing
+the `net-openai-chatgpt` pack provides them and is enabled by default on new
+Deny-all drafts. Provider-changing
 pass-through overrides, an unresolvable effective config, a selected profile,
 and credential routes tclaude cannot inspect — `CODEX_ACCESS_TOKEN` and the
 keyring/ephemeral credential stores — still refuse, because they leave the
@@ -1346,8 +1347,10 @@ The built-in `net-anthropic` and `net-openai-codex` packs are backed by the
 named CI origin audit against Claude Code 2.1.220 and Codex CLI 0.145.0. The
 active minimal evidence set is `api.anthropic.com:443` for Claude and
 `api.openai.com:443` for API-key Codex. The same audit records ChatGPT model and refresh traffic
-at `chatgpt.com:443` and `auth.openai.com:443`, which back the separate opt-in
-`net-openai-chatgpt` pack. Those destinations stay out of `net-openai-codex` so
+at `chatgpt.com:443` and `auth.openai.com:443`, which back the separate
+`net-openai-chatgpt` pack. New Deny-all drafts enable both Codex packs, but they
+remain independent controls so an operator can turn off the unused route.
+Those destinations stay out of `net-openai-codex` so
 an API-key profile does not silently gain them. Any
 undeclared mandatory origin fails the audit.
 Codex's optional plugin-marketplace synchronization is not model transport; it
