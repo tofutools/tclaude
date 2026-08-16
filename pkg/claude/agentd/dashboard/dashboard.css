@@ -8030,6 +8030,15 @@ body.wizard .directory-picker-modal .modal-buttons { border-top-color: rgba(122,
    to 0, so the buttons scroll with the form as before — no regression. */
 #agent-spawn-modal .modal-buttons,
 #clone-agent-modal .modal-buttons { margin-top: auto; }
+#agent-spawn-modal .agent-spawn-progress {
+  align-self: center;
+  color: #8b949e;
+  font-size: 12px;
+  max-width: 430px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* Import-group modal — the ⤒ import overlay. Reuses .cron-create-modal
    for the shell + rows; these rules style the file picker and the
    dry-run preview panel (manifest summary + collision report). */

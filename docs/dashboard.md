@@ -214,6 +214,15 @@ only; default resolved from group policy, then profile; the per-spawn value
 wins), Claude context-features trim, keep-CC-auto-memory, and the
 experimental Copilot API and Codex app-server drives.
 
+For a newly created worktree, **Fetch latest worktree base** defaults on. It
+fetches the selected base branch, then cuts the new branch from the refreshed
+remote-tracking ref. If Git cannot write the inferred upstream because the
+shared repository config is locked, creation retries once per second for ten
+seconds. If the lock remains, the worktree is created without upstream
+tracking so the spawn can continue; the dialog shows the retry progress and
+the Messages tab gets a warning with the command to restore tracking after the
+lock clears.
+
 ## Terminals
 
 The Terminals tab is the in-dashboard terminal multiplexer. It stays hidden

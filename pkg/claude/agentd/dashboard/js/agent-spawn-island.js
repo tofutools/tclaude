@@ -249,6 +249,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   const [attachments, setAttachments] = useState([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState('');
   const [browseBusy, setBrowseBusy] = useState('');
   const [helpOpen, setHelpOpen] = useState('');
   const wizard = useWizardTheme();
@@ -761,6 +762,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     next = prepareSpawnDraft(next, context, derived, worktrees.isRepo);
     setDraft(next);
     setError('');
+    setProgress('Preparing spawn…');
     busyRef.current = true;
     setBusy(true);
     actions.rememberLaunchPreferences(next);
@@ -771,7 +773,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       let worktreeSelection = resolvedWorktree.current.key === worktreeKey
         ? resolvedWorktree.current.value : null;
       if (!worktreeSelection) {
-        worktreeSelection = await actions.resolveWorktree(next, worktrees);
+        worktreeSelection = await actions.resolveWorktree(next, worktrees, setProgress);
         resolvedWorktree.current = { key: worktreeKey, value: worktreeSelection };
       }
       if (!state.isCurrent(current.generation)) return;
@@ -785,6 +787,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       if (!state.isCurrent(current.generation)) return;
       const request = buildSpawnRequest(next, context, worktreeSelection, attachmentPaths);
       if (policyDrifted()) throw new Error(STALE_POLICY_ERROR);
+      setProgress('Launching agent…');
       const payload = await actions.spawn(request);
       if (!state.isCurrent(current.generation)) return;
       state.close();
@@ -792,6 +795,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     } catch (cause) {
       if (state.isCurrent(current.generation)) {
         setError(errorMessage(cause));
+        setProgress('');
         busyRef.current = false;
         setBusy(false);
         submitLock.current = false;
@@ -1367,6 +1371,9 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     <${ErrorBanner} error=${error} onDismiss=${() => setError('')} />
     <div class="modal-buttons">
       <button id="agent-spawn-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
+      <span id="agent-spawn-progress" class="agent-spawn-progress" role="status" aria-live="polite">
+        ${busy ? progress : ''}
+      </span>
       <span class="spacer"></span>
       <button id="agent-spawn-submit" class=${`primary${busy ? ' slop-pull-active' : ''}`} type="button"
         disabled=${busy} aria-busy=${busy ? 'true' : undefined} onClick=${() => { void submit(); }}>

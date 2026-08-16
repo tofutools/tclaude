@@ -1,6 +1,7 @@
 package worktree
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -175,6 +176,29 @@ func TestAddWorktreeInExplicitPath(t *testing.T) {
 	info, statErr := os.Stat(path)
 	require.NoError(t, statErr)
 	assert.True(t, info.IsDir())
+}
+
+func TestAddWorktreeInWithoutTrackingIgnoresLockedConfig(t *testing.T) {
+	repoPath, parentDir := setupTestRepo(t)
+	require.NoError(t, exec.Command("git", "-C", repoPath, "remote", "add", "origin", repoPath).Run())
+	require.NoError(t, exec.Command("git", "-C", repoPath, "update-ref",
+		"refs/remotes/origin/main", "HEAD").Run())
+	lockPath := filepath.Join(repoPath, ".git", "config.lock")
+	require.NoError(t, os.WriteFile(lockPath, nil, 0o644))
+	t.Cleanup(func() { _ = os.Remove(lockPath) })
+
+	path, err := AddWorktreeInWithoutTracking(repoPath, "fallback", "refs/remotes/origin/main", "")
+	require.NoError(t, err)
+	assert.Equal(t, normalizePath(filepath.Join(parentDir, "test-repo-fallback")), normalizePath(path))
+	_, err = gitIn(repoPath, "rev-parse", "--abbrev-ref", "fallback@{upstream}")
+	assert.Error(t, err, "the fallback must not claim origin/main as its upstream")
+}
+
+func TestConfigLockErrorClassification(t *testing.T) {
+	lockErr := fmt.Errorf("failed to create worktree: git worktree add: error: could not lock config file .git/config: File exists\nerror: unable to write upstream branch configuration")
+	assert.True(t, IsConfigLockError(lockErr))
+	assert.True(t, IsUpstreamConfigLockError(lockErr))
+	assert.False(t, IsUpstreamConfigLockError(fmt.Errorf("could not lock config file .git/config: Permission denied")))
 }
 
 func TestFindSubRepos(t *testing.T) {

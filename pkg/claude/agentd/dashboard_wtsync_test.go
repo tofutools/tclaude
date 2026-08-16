@@ -54,4 +54,9 @@ func TestDashboardHTML_WorktreeFetchLatestWired(t *testing.T) {
 	must("fetchLatestWorktree: true", "blank spawn drafts fetch by default")
 	must("fetch_latest: !!draft.fetchLatestWorktree", "worktree creation posts the explicit choice")
 	must("fetch_latest_worktree: !!draft.fetchLatestWorktree", "saved profiles retain the choice")
+	must(`id="agent-spawn-progress" class="agent-spawn-progress" role="status" aria-live="polite"`,
+		"spawn modal exposes worktree retry progress accessibly")
+	must("Git config busy — retrying upstream setup", "the backend's live retry state reaches the dialog")
+	must("/api/worktrees/progress?id=", "retry progress is polled from the authoritative backend operation")
+	must("payload.tracking_fallback", "the final untracked fallback is disclosed before agent launch")
 }

@@ -26,6 +26,10 @@ import (
 func gitIn(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
+	// Retry classification depends on Git's stable diagnostic text. The daemon
+	// may inherit any operator locale, so pin only these subprocesses rather
+	// than guessing translated variants of lock-file errors.
+	cmd.Env = append(os.Environ(), "LC_ALL=C", "LANG=C")
 	out, err := cmd.Output()
 	if err != nil {
 		var ee *exec.ExitError
@@ -594,6 +598,19 @@ func HasCommitsIn(dir string) bool {
 // else named, so the checkout runs with the repo's own hooks disabled
 // (see gitInNoRepoHooks).
 func AddWorktreeIn(repoPath, branch, fromBranch, path string) (string, error) {
+	return addWorktreeIn(repoPath, branch, fromBranch, path, true)
+}
+
+// AddWorktreeInWithoutTracking is AddWorktreeIn with Git's automatic upstream
+// setup disabled. It is the recovery path for a worktree whose ordinary
+// creation could not write branch tracking configuration because the shared
+// repository config stayed locked. The new branch still starts at fromBranch;
+// only branch.<name>.remote / merge are omitted.
+func AddWorktreeInWithoutTracking(repoPath, branch, fromBranch, path string) (string, error) {
+	return addWorktreeIn(repoPath, branch, fromBranch, path, false)
+}
+
+func addWorktreeIn(repoPath, branch, fromBranch, path string, track bool) (string, error) {
 	branch = strings.TrimSpace(branch)
 	if branch == "" {
 		return "", fmt.Errorf("branch name is required")
@@ -646,7 +663,11 @@ func AddWorktreeIn(repoPath, branch, fromBranch, path string) (string, error) {
 		// agent still gets its own worktree to bootstrap the repo in.
 		args = []string{"worktree", "add", "--orphan", "-b", branch, worktreePath}
 	default:
-		args = []string{"worktree", "add", "-b", branch, worktreePath, baseBranch}
+		args = []string{"worktree", "add"}
+		if !track {
+			args = append(args, "--no-track")
+		}
+		args = append(args, "-b", branch, worktreePath, baseBranch)
 	}
 	if _, err := gitInNoRepoHooks(repoRoot, args...); err != nil {
 		if !hasCommits {
@@ -656,6 +677,42 @@ func AddWorktreeIn(repoPath, branch, fromBranch, path string) (string, error) {
 		return "", fmt.Errorf("failed to create worktree: %w", err)
 	}
 	return worktreePath, nil
+}
+
+// IsUpstreamConfigLockError reports the narrow partial-success failure emitted
+// by `git worktree add -b` after it has created the branch but cannot write the
+// branch's automatically inferred upstream configuration. Callers may retry
+// that configuration step without repeating the checkout.
+func IsUpstreamConfigLockError(err error) bool {
+	return IsConfigLockError(err) &&
+		strings.Contains(err.Error(), "unable to write upstream branch configuration")
+}
+
+// IsConfigLockError reports Git's lock-file-exists refusal for repository
+// config writes. Unlike IsUpstreamConfigLockError it also recognizes a direct
+// `git branch --set-upstream-to` retry, whose error has no worktree wrapper.
+func IsConfigLockError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "could not lock config file") &&
+		strings.Contains(msg, "File exists")
+}
+
+// SetBranchUpstreamIn completes the tracking setup that `git worktree add -b`
+// attempted automatically. upstream may be a full remote-tracking ref such as
+// refs/remotes/origin/main; Git stores its canonical remote + merge pair.
+func SetBranchUpstreamIn(dir, branch, upstream string) error {
+	branch = strings.TrimSpace(branch)
+	upstream = strings.TrimSpace(upstream)
+	if branch == "" || upstream == "" {
+		return fmt.Errorf("branch and upstream are required")
+	}
+	if _, err := gitIn(dir, "branch", "--set-upstream-to="+upstream, branch); err != nil {
+		return fmt.Errorf("set branch %s upstream to %s: %w", branch, upstream, err)
+	}
+	return nil
 }
 
 // SubRepo is one nested git repository discovered under a directory

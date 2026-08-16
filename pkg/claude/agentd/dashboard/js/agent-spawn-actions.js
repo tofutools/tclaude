@@ -30,6 +30,12 @@ async function jsonRequest(fetchImpl, path, options = {}) {
   return response.json().catch(() => ({}));
 }
 
+const worktreeProgressDelay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function worktreeProgressID() {
+  return `wt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 14)}`;
+}
+
 function readEffortMap(prefs) {
   try {
     const value = JSON.parse(prefs.getItem(EFFORT_KEY));
@@ -117,7 +123,7 @@ export function createAgentSpawnActions({
       };
     },
 
-    async resolveWorktree(draft, worktrees) {
+    async resolveWorktree(draft, worktrees, onProgress = () => {}) {
       const selected = String(draft.worktree || '');
       if (!selected) return { path: '', branch: '' };
       const expectedRepo = String(draft.wtRepo || '').trim();
@@ -132,19 +138,49 @@ export function createAgentSpawnActions({
       if (selected !== WT_NEW) return { path: '', branch: '' };
       const branch = String(draft.worktreeBranch || '').trim();
       if (!branch) throw new Error('enter a branch name for the new worktree');
-      const response = await fetchImpl('/api/worktrees', {
-        method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          repo: worktrees?.repoRoot || String(draft.wtRepo || '').trim(),
-          branch,
-          from_branch: draft.worktreeBase || '',
-          fetch_latest: !!draft.fetchLatestWorktree,
-        }),
-      });
-      if (!response.ok) throw new Error((await responseText(response)) || `HTTP ${response.status}`);
-      const payload = await response.json();
-      return { path: payload.path || '', branch: payload.branch || branch };
+      onProgress('Creating worktree…');
+      const progressID = worktreeProgressID();
+      let finished = false;
+      const pollProgress = (async () => {
+        while (!finished) {
+          await worktreeProgressDelay(200);
+          if (finished) break;
+          try {
+            const response = await fetchImpl(`/api/worktrees/progress?id=${encodeURIComponent(progressID)}`, {
+              credentials: 'same-origin',
+            });
+            if (!response.ok) continue;
+            const status = await response.json();
+            if (status.retrying) {
+              onProgress(`Git config busy — retrying upstream setup (${status.attempt}/${status.max})…`);
+            }
+          } catch (_) {
+            // Progress is advisory; the authoritative POST below still owns
+            // success/failure and must not be cancelled by a polling blip.
+          }
+        }
+      })();
+      try {
+        const response = await fetchImpl('/api/worktrees', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            repo: worktrees?.repoRoot || String(draft.wtRepo || '').trim(),
+            branch,
+            from_branch: draft.worktreeBase || '',
+            fetch_latest: !!draft.fetchLatestWorktree,
+            progress_id: progressID,
+          }),
+        });
+        if (!response.ok) throw new Error((await responseText(response)) || `HTTP ${response.status}`);
+        const payload = await response.json();
+        if (payload.tracking_fallback) onProgress('Worktree created without tracking; spawning agent…');
+        else onProgress('Worktree ready; spawning agent…');
+        return { path: payload.path || '', branch: payload.branch || branch };
+      } finally {
+        finished = true;
+        await pollProgress;
+      }
     },
 
     /* Ask the daemon what a launch would resolve for the fields this dialog

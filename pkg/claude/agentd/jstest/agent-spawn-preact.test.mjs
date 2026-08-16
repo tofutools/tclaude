@@ -606,6 +606,46 @@ test('spawn sandbox-policy preview surfaces daemon-owned access warnings before 
   assert.equal(JSON.parse(prediction[1].body).draft.id, 7);
 });
 
+test('worktree creation reports backend-owned config-lock retry progress', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createAgentSpawnActions } = await harness.importDashboardModule('js/agent-spawn-actions.js');
+  const progress = [];
+  let finishCreate;
+  let postedProgressID = '';
+  let polledProgressID = '';
+  const json = (body) => ({
+    ok: true, status: 200,
+    json: async () => body,
+    text: async () => JSON.stringify(body),
+  });
+  const actions = createAgentSpawnActions({
+    fetchImpl: async (url, options = {}) => {
+      if (url === '/api/worktrees') {
+        postedProgressID = JSON.parse(options.body).progress_id;
+        return new Promise((resolve) => { finishCreate = () => resolve(json({
+          path: '/repo-worker', branch: 'worker', tracking_retries: 2, tracking_fallback: false,
+        })); });
+      }
+      if (url.startsWith('/api/worktrees/progress?id=')) {
+        polledProgressID = decodeURIComponent(url.split('=')[1]);
+        setTimeout(() => finishCreate(), 10);
+        return json({ retrying: true, attempt: 2, max: 10 });
+      }
+      throw new Error(`unexpected URL ${url}`);
+    },
+  });
+
+  const selected = await actions.resolveWorktree({
+    worktree: '__new__', wtRepo: '/repo', worktreeBranch: 'worker', worktreeBase: 'main',
+  }, {
+    phase: 'ready', repo: '/repo', repoRoot: '/repo', worktrees: [],
+  }, (message) => progress.push(message));
+
+  assert.deepEqual(selected, { path: '/repo-worker', branch: 'worker' });
+  assert.equal(polledProgressID, postedProgressID, 'the poll observes the same server operation');
+  assert.ok(progress.some((message) => /retrying upstream setup \(2\/10\)/.test(message)));
+});
+
 async function mountSpawn(t, overrides = {}) {
   const harness = await createPreactHarness(t);
   const [{ AgentSpawnApp }, { createAgentSpawnState }] = await Promise.all([
