@@ -146,8 +146,13 @@ func (codexHookInstaller) Check() (installed bool, missing []string, needsRepair
 	}
 
 	want := codexHookCommandStr()
-	for _, groupsRaw := range hooks {
-		if codexHooksNeedCleanup(groupsRaw, want) {
+	desired := make(map[string]bool, len(desiredCodexHookEvents()))
+	for _, event := range desiredCodexHookEvents() {
+		desired[event] = true
+	}
+	for event, groupsRaw := range hooks {
+		if codexHooksNeedCleanup(groupsRaw, want) ||
+			(!desired[event] && codexHooksContain(groupsRaw, want)) {
 			needsRepair = true
 			break
 		}
@@ -290,6 +295,10 @@ func readCodexHooks(path string) (hooks map[string]json.RawMessage, top map[stri
 	if err != nil {
 		return nil, nil, err
 	}
+	return decodeCodexHooks(data, path)
+}
+
+func decodeCodexHooks(data []byte, path string) (hooks map[string]json.RawMessage, top map[string]json.RawMessage, err error) {
 	// An empty or whitespace-only file is treated as "no hooks yet" rather
 	// than a parse error, so Install can populate it and Check reports it
 	// as missing (not unreadable).
@@ -315,18 +324,38 @@ func codexHooksContain(groupsRaw json.RawMessage, want string) bool {
 	if len(groupsRaw) == 0 {
 		return false
 	}
-	var groups []codexMatcherGroup
+	var groups []json.RawMessage
 	if err := json.Unmarshal(groupsRaw, &groups); err != nil {
 		return false
 	}
-	for _, g := range groups {
-		for _, h := range g.Hooks {
-			if h.Command == want {
-				return true
-			}
+	for _, group := range groups {
+		if exactTclaudeCodexHookGroup(group, want) {
+			return true
 		}
 	}
 	return false
+}
+
+// exactTclaudeCodexHookGroup recognizes only the declaration shape tclaude
+// writes: one matcher-less group containing one command hook and no optional
+// fields. Trust must never bless a same-command declaration modified by a user
+// or another tool.
+func exactTclaudeCodexHookGroup(groupRaw json.RawMessage, want string) bool {
+	var group map[string]json.RawMessage
+	if json.Unmarshal(groupRaw, &group) != nil || len(group) != 1 {
+		return false
+	}
+	var hooks []json.RawMessage
+	if json.Unmarshal(group["hooks"], &hooks) != nil || len(hooks) != 1 {
+		return false
+	}
+	var hook map[string]json.RawMessage
+	if json.Unmarshal(hooks[0], &hook) != nil || len(hook) != 2 {
+		return false
+	}
+	var hookType, command string
+	return json.Unmarshal(hook["type"], &hookType) == nil && hookType == "command" &&
+		json.Unmarshal(hook["command"], &command) == nil && command == want
 }
 
 // codexHooksNeedCleanup reports whether an event's groups carry a stale
@@ -336,15 +365,23 @@ func codexHooksContain(groupsRaw json.RawMessage, want string) bool {
 // "missing": Install's strip pass errors out on the same unparseable
 // groups, so the two surfaces agree that the file needs attention.
 func codexHooksNeedCleanup(groupsRaw json.RawMessage, want string) bool {
-	var groups []codexMatcherGroup
+	var groups []json.RawMessage
 	if err := json.Unmarshal(groupsRaw, &groups); err != nil {
 		return true
 	}
 	ours := 0
-	for _, g := range groups {
-		for _, h := range g.Hooks {
-			if isOurCodexHook(h.Command) {
-				if h.Command != want {
+	for _, groupRaw := range groups {
+		var group struct {
+			Hooks []struct {
+				Command string `json:"command"`
+			} `json:"hooks"`
+		}
+		if json.Unmarshal(groupRaw, &group) != nil {
+			return true
+		}
+		for _, hook := range group.Hooks {
+			if isOurCodexHook(hook.Command) {
+				if hook.Command != want || !exactTclaudeCodexHookGroup(groupRaw, want) {
 					return true
 				}
 				ours++
