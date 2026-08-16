@@ -1730,6 +1730,9 @@ test('sandbox editor discloses the Linux filesystem-root consequence of blocking
   assert.match(adjustment.textContent, /Filesystem root → Separate\/minimal/);
   assert.match(adjustment.textContent, /baseline and destination rules were left unchanged/);
 
+  const advanced = host.querySelector('.sbx-advanced-toggle');
+  await harness.act(() => harness.fireEvent(advanced, 'click'));
+  await harness.act(() => harness.fireEvent(advanced, 'click'));
   choose(mode, 'open');
   await harness.act(() => harness.fireEvent(mode, 'change'));
   assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-engine')), '');
@@ -1756,6 +1759,17 @@ test('sandbox editor discloses the Linux filesystem-root consequence of blocking
   assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-filesystem-root')), 'separate');
   assertAbsent(host.querySelector('.sbx-unix-root-note-incomplete'));
   assert.match(host.querySelector('.sbx-unix-root-note').textContent, /other host paths and abstract Unix sockets do not/);
+
+  const legacyAdvanced = host.querySelector('.sbx-advanced-toggle');
+  await harness.act(() => harness.fireEvent(legacyAdvanced, 'click'));
+  const rawNetwork = host.querySelector('#sandbox-profile-editor-network');
+  const editedNetwork = JSON.parse(rawNetwork.value);
+  editedNetwork.namespace = 'host';
+  rawNetwork.value = JSON.stringify(editedNetwork, null, 2);
+  await harness.act(() => harness.fireEvent(rawNetwork, 'input'));
+  await harness.act(() => harness.fireEvent(legacyAdvanced, 'click'));
+  assert.match(host.querySelector('.sbx-unix-root-note-incomplete').textContent,
+    /not yet aligned/, 'a raw edit to a generated field invalidates the reversible alignment record');
 
   state.closeDialog();
   await harness.act(() => Promise.resolve());
