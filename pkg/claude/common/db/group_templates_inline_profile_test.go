@@ -82,3 +82,28 @@ func TestInlineProfileRoundTripsCopilotDrive(t *testing.T) {
 		})
 	}
 }
+
+func TestInlineProfileRoundTripsFetchLatestWorktree(t *testing.T) {
+	on, off := true, false
+	for _, tc := range []struct {
+		name string
+		want *bool
+	}{
+		{"unset", nil},
+		{"enabled", &on},
+		{"disabled", &off},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			encoded := inlineProfileToJSON(&SpawnProfile{FetchLatestWorktree: tc.want})
+			require.NotEmpty(t, encoded)
+			decoded := inlineProfileFromJSON(encoded)
+			require.NotNil(t, decoded)
+			if tc.want == nil {
+				assert.Nil(t, decoded.FetchLatestWorktree)
+				return
+			}
+			require.NotNil(t, decoded.FetchLatestWorktree)
+			assert.Equal(t, *tc.want, *decoded.FetchLatestWorktree)
+		})
+	}
+}

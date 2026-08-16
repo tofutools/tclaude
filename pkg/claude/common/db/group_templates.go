@@ -209,6 +209,7 @@ type templateInlineProfileJSON struct {
 	RemoteControl          *bool                         `json:"remote_control,omitempty"`
 	AutoMemory             *bool                         `json:"auto_memory,omitempty"`
 	SSHWorkaround          *bool                         `json:"ssh_workaround,omitempty"`
+	FetchLatestWorktree    *bool                         `json:"fetch_latest_worktree,omitempty"`
 	IsOwner                *bool                         `json:"is_owner,omitempty"`
 	PermissionOverrides    map[string]PermissionOverride `json:"permission_overrides,omitempty"`
 	ContextFeatures        map[string]string             `json:"context_features,omitempty"`
@@ -241,6 +242,7 @@ func inlineProfileToJSON(p *SpawnProfile) string {
 		RemoteControl:          p.RemoteControl,
 		AutoMemory:             p.AutoMemory,
 		SSHWorkaround:          p.SSHWorkaround,
+		FetchLatestWorktree:    p.FetchLatestWorktree,
 		IsOwner:                p.IsOwner,
 		PermissionOverrides:    p.PermissionOverrides,
 		ContextFeatures:        p.ContextFeatures,
@@ -282,6 +284,7 @@ func inlineProfileFromJSON(s string) *SpawnProfile {
 		RemoteControl:          j.RemoteControl,
 		AutoMemory:             j.AutoMemory,
 		SSHWorkaround:          j.SSHWorkaround,
+		FetchLatestWorktree:    j.FetchLatestWorktree,
 		IsOwner:                j.IsOwner,
 		PermissionOverrides:    j.PermissionOverrides,
 		ContextFeatures:        j.ContextFeatures,
