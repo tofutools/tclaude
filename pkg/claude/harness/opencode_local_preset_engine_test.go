@@ -9,19 +9,11 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/sandboxproxy"
 )
 
-// TCL-895. The OpenCode local-preset override zeroes the network cells and
-// renders the packet gateway's model-transport refusal. That refusal exists
-// because the gateway admits a destination only against a launch endpoint
-// resolved AHEAD of time, and these presets give nothing to resolve one from.
-// A proxy-engine launch resolves nothing ahead of time — it decides on the
-// identity the client states at connect time — so the override is gated on the
-// deployed engine, from the same derivation every other packet rating uses.
-//
-// Both presets are `mode: list` by definition, so the baseline axis these
-// tests vary is the one the defect is about: the DEPLOYED ENGINE. Each case
-// asserts the packet rendering is untouched and the proxy rendering changed,
-// so a revert of the gate fails the proxy half rather than silently passing.
-func TestOpenCodeLocalPresetOverrideIsGatedOnTheDeployedEngine(t *testing.T) {
+// Local presets describe enforceable network rules independently of whether a
+// launch model was selected. Both engines therefore advertise and plan their
+// actual network enforcement; provider coverage is checked later only for an
+// explicitly selected model.
+func TestOpenCodeLocalPresetsDoNotRequireProviderSelection(t *testing.T) {
 	for _, preset := range []struct {
 		name  string
 		rules sandboxpolicy.NetworkRules
@@ -60,16 +52,15 @@ func TestOpenCodeLocalPresetOverrideIsGatedOnTheDeployedEngine(t *testing.T) {
 					IsLocalModelAPIsNetworkPreset(preset.rules),
 				"this case must actually be one of the two presets the override names")
 
-			// Packet engine (nothing authored): unchanged, still refused.
+			// Packet engine enforces the authored preset without inventing a
+			// provider requirement.
 			packet, err := PredictAccessEnforcement(
 				MustGet(OpenCodeName), sandboxpolicy.ImplementationTclaudeLayer,
 				sandboxpolicy.ResolvedAxes{Network: preset.rules}, "", "linux",
 			)
 			require.NoError(t, err)
-			assert.Equal(t, EnforceNone, packet.NetworkList,
-				"the packet gateway's refusal for these presets is not what this change touches")
-			assert.Contains(t, packet.NetworkListRefusal,
-				SandboxCapabilityModelTransport)
+			assert.Equal(t, EnforceFull, packet.NetworkList)
+			assert.Empty(t, packet.NetworkListRefusal)
 
 			// Proxy engine: the activated proxy cells, no packet refusal.
 			proxyRules := preset.rules
@@ -89,10 +80,8 @@ func TestOpenCodeLocalPresetOverrideIsGatedOnTheDeployedEngine(t *testing.T) {
 			assert.Equal(t, EnforceFull, proxy.NetworkList)
 			assert.Equal(t, EnforceFull, proxy.NetworkPorts)
 			require.NotEmpty(t, proxy.NetworkSelectors)
-			// The launch gate is engine-INDEPENDENT and still applies, so the
-			// activated row has to keep saying so: raising these cells without
-			// the caveat would advertise enforcement for a launch that is then
-			// refused for want of an explicit provider.
+			// The condition explains the selected-model check and the no-model
+			// user-managed behavior without making it an unconditional gate.
 			assert.Contains(t, proxy.NetworkListCondition,
 				OpenCodeFilteredExplicitProviderCaveat)
 
@@ -112,7 +101,7 @@ func TestOpenCodeLocalPresetOverrideIsGatedOnTheDeployedEngine(t *testing.T) {
 				"a destination outside the preset must be refused, or Full is an over-claim")
 
 			// And the preset composes into a plan at all, which is the
-			// user-visible symptom: the packet shape below cannot.
+			// user-visible symptom: both engine shapes compose successfully.
 			_, _, err = PlanAccessEnforcement(
 				sandboxpolicy.ResolvedAxes{Network: proxyRules},
 				accessEnforcementFromTable(mustAccessEnforcementTable(
@@ -122,15 +111,12 @@ func TestOpenCodeLocalPresetOverrideIsGatedOnTheDeployedEngine(t *testing.T) {
 				sandboxpolicy.ResolvedAxes{Network: preset.rules},
 				accessEnforcementFromTable(mustAccessEnforcementTable(
 					t, preset.rules)))
-			require.ErrorContains(t, err, SandboxCapabilityModelTransport)
+			require.NoError(t, err)
 		})
 	}
 }
 
-// The override is OpenCode's alone: no other harness has a preset-shaped
-// capability override to gate, so TCL-895's "check the other two while in
-// there" is recorded as an assertion rather than as prose in a PR body.
-func TestLocalPresetOverrideAppliesOnlyToOpenCode(t *testing.T) {
+func TestOtherHarnessesAlsoEnforceLocalPresets(t *testing.T) {
 	rules := sandboxpolicy.NetworkRules{
 		Mode:  sandboxpolicy.AccessModeList,
 		Allow: []sandboxpolicy.NetworkAllowEntry{{Loopback: true}},
@@ -142,7 +128,7 @@ func TestLocalPresetOverrideAppliesOnlyToOpenCode(t *testing.T) {
 		)
 		require.NoErrorf(t, err, "harness %s", name)
 		assert.Emptyf(t, predicted.NetworkListRefusal,
-			"harness %s has no local-preset override to gate", name)
+			"harness %s should enforce the local preset", name)
 	}
 }
 
@@ -160,15 +146,9 @@ func mustAccessEnforcementTable(
 	return row
 }
 
-// The gate's dangerous direction, pinned. Dropping the refusal for EVERY
-// proxy-deployed policy — rather than only where the proxy cells are activated
-// — would leave a row that enforces nothing, and the plan widens such a row to
-// open. A "local only" preset would then start a launch with open outbound
-// where it used to be refused: fail-closed turning into fail-open on a platform
-// this change was never about.
-//
-// goos is a parameter of the renderer, so this holds from any host.
-func TestOpenCodeLocalPresetKeepsTheRefusalWhereProxyCellsAreNotActivated(t *testing.T) {
+// An unactivated platform still refuses because it cannot enforce the network
+// posture, not because OpenCode lacks a selected provider.
+func TestOpenCodeLocalPresetKeepsNetworkRefusalWhereProxyCellsAreNotActivated(t *testing.T) {
 	rules := sandboxpolicy.NetworkRules{
 		Mode: sandboxpolicy.AccessModeList,
 		Allow: []sandboxpolicy.NetworkAllowEntry{
@@ -192,7 +172,8 @@ func TestOpenCodeLocalPresetKeepsTheRefusalWhereProxyCellsAreNotActivated(t *tes
 	)
 	require.NoError(t, err)
 	assert.Equal(t, EnforceNone, predicted.NetworkList)
-	assert.Contains(t, predicted.NetworkListRefusal, SandboxCapabilityModelTransport)
+	assert.Contains(t, predicted.NetworkListRefusal, "unsupported_filtered_network_posture")
+	assert.NotContains(t, predicted.NetworkListRefusal, SandboxCapabilityModelTransport)
 
 	// And the plan refuses rather than widening. Without the activation
 	// condition this call returns a widened, open policy with a notice.
@@ -202,7 +183,7 @@ func TestOpenCodeLocalPresetKeepsTheRefusalWhereProxyCellsAreNotActivated(t *tes
 	)
 	require.NoError(t, err)
 	rendered, _, err := PlanAccessEnforcement(axes, accessEnforcementFromTable(row))
-	require.ErrorContains(t, err, SandboxCapabilityModelTransport)
+	require.ErrorContains(t, err, "unsupported_filtered_network_posture")
 	assert.NotEqual(t, sandboxpolicy.AccessModeOpen, rendered.Network.Mode,
 		"a refused local preset must never reach a launch widened to open")
 }

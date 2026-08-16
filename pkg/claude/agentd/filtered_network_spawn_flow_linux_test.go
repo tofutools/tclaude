@@ -126,11 +126,10 @@ func TestDefaultAllowDenySpawnSelectsFilteredNetworkPosture(t *testing.T) {
 	}
 }
 
-// TestOpenCodeDefaultAllowDenyRefusesWithoutExplicitProvider records the honest
-// cost of that activation: an OpenCode deny can no longer be dropped to keep a
-// launch alive, so a profile OpenCode cannot filter is refused rather than
-// started with the deny silently omitted.
-func TestOpenCodeDefaultAllowDenyRefusesWithoutExplicitProvider(t *testing.T) {
+// TestOpenCodeDefaultAllowDenyAllowsUserManagedInference records the no-model
+// contract: the authored deny is still enforced, but tclaude does not require
+// provider configuration merely to prove that inference will remain reachable.
+func TestOpenCodeDefaultAllowDenyAllowsUserManagedInference(t *testing.T) {
 	testharness.ClearModelTransportProxyEnv(t)
 	f := newFlow(t)
 	f.HaveGroup("crew")
@@ -170,14 +169,24 @@ func TestOpenCodeDefaultAllowDenyRefusesWithoutExplicitProvider(t *testing.T) {
 		"sandbox_implementation": string(sandboxpolicy.ImplementationTclaudeLayer),
 		"sandbox_profile":        "opencode-default-allow-deny-no-provider",
 	})
-	require.Equal(t, http.StatusUnprocessableEntity, resp.Code)
-	body := string(resp.Raw)
-	assert.Contains(t, body, "unsupported_filtered_model_transport")
-	// The refusal must name what forced the filtered gateway, not only the
-	// model transport the operator never asked about.
-	assert.Contains(t, body, "open apart from 1 enforced deny rule")
-	assert.Contains(t, body, "remove the deny rules to launch with open network")
-	assert.Contains(t, body, "explicit provider/model launch model")
+	if resp.Code != http.StatusOK {
+		failure := decodeFailure(t, resp.Raw)
+		assert.NotEqual(t, harness.SandboxCapabilityModelTransport, failure.Code)
+		if strings.Contains(failure.Error, "bwrap") ||
+			strings.Contains(failure.Error, "bubblewrap") ||
+			strings.Contains(failure.Error, "user namespaces") {
+			t.Logf("floor unavailable on this host; no-model launch passed the provider gate: %s",
+				failure.Error)
+			return
+		}
+		require.Failf(t, "unexpected spawn refusal", "%s: %s", failure.Code, failure.Error)
+	}
+	require.NotEmpty(t, resp.ConvID)
+	snapshot, ok := f.World.SpawnSandboxPolicy(resp.ConvID)
+	require.True(t, ok)
+	require.Equal(t, []sandboxpolicy.NetworkAllowEntry{{
+		CIDR: "192.0.2.0/24", Ports: []int{443},
+	}}, snapshot.Effective.Network.Deny)
 }
 
 func TestLocalAccessSpawnRefusesCloudModelWithoutExplicitEndpoint(t *testing.T) {
@@ -373,7 +382,7 @@ func TestLocalModelAPIsSpawnAllowsFirstPartyCloudProvider(t *testing.T) {
 	require.NotEmpty(t, resp.ConvID)
 }
 
-func TestLocalPresetsOpenCodeRefuseAtNamedModelTransportSeam(t *testing.T) {
+func TestLocalPresetsOpenCodeAllowUserManagedInference(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		allow []sandboxpolicy.NetworkAllowEntry
@@ -411,27 +420,27 @@ func TestLocalPresetsOpenCodeRefuseAtNamedModelTransportSeam(t *testing.T) {
 				"sandbox_implementation": string(sandboxpolicy.ImplementationTclaudeLayer),
 				"sandbox_profile":        profileName,
 			})
-			require.Equalf(t, http.StatusUnprocessableEntity, resp.Code,
-				"spawn body=%s", resp.Raw)
-			failure := decodeFailure(t, resp.Raw)
-			assert.Equal(t, harness.SandboxCapabilityModelTransport, failure.Code)
-			assert.Contains(t, failure.Error, "OpenCode")
-			assert.Contains(t, failure.Error, "no explicit provider")
-			assert.Contains(t, failure.Error, "network open")
-			assert.Empty(t, resp.ConvID)
+			if resp.Code != http.StatusOK {
+				failure := decodeFailure(t, resp.Raw)
+				assert.NotEqual(t, harness.SandboxCapabilityModelTransport, failure.Code)
+				if strings.Contains(failure.Error, "bwrap") ||
+					strings.Contains(failure.Error, "bubblewrap") ||
+					strings.Contains(failure.Error, "user namespaces") {
+					t.Logf("floor unavailable on this host; no-model launch passed the provider gate: %s",
+						failure.Error)
+					return
+				}
+				require.Failf(t, "unexpected spawn refusal", "%s: %s", failure.Code, failure.Error)
+			}
+			require.NotEmpty(t, resp.ConvID)
 		})
 	}
 }
 
-// TCL-895 at the surface an operator actually meets. The seam test above pins
-// the PACKET gateway's refusal; this one pins what changed — a local preset
-// that deploys an activated proxy engine is no longer refused for the packet
-// gateway's reason, and is still refused for the engine-independent one.
-//
-// The two messages are the whole point: "these presets name no explicit
-// provider" describes machinery a proxy launch never runs, while "requires an
-// explicit provider/model launch model" is the contract that still binds it.
-func TestLocalPresetsOpenCodeProxyEngineRefusesForTheProviderNotThePreset(t *testing.T) {
+// A proxy-engine local preset also allows a no-model launch. The packet
+// prerequisite does not apply to this engine, and provider validation is only
+// activated when the operator selects a model.
+func TestLocalPresetsOpenCodeProxyEngineAllowsUserManagedInference(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	const profileName = "opencode-local-model-apis-proxy"
@@ -456,30 +465,20 @@ func TestLocalPresetsOpenCodeProxyEngineRefusesForTheProviderNotThePreset(t *tes
 		"sandbox_implementation": string(sandboxpolicy.ImplementationTclaudeLayer),
 		"sandbox_profile":        profileName,
 	})
-	require.Equalf(t, http.StatusUnprocessableEntity, resp.Code,
-		"spawn body=%s", resp.Raw)
-	failure := decodeFailure(t, resp.Raw)
-	// The load-bearing half, and it holds on ANY host: whatever refuses this
-	// launch, it is no longer the packet gateway's preset refusal. Revert the
-	// gate and this is exactly the message that comes back.
-	assert.NotContains(t, failure.Error, "local presets name no explicit provider",
-		"the packet gateway's preset refusal must not be rendered for a proxy launch")
-	assert.Empty(t, resp.ConvID)
-
-	// The other half needs the launch to get PAST the floor, and the ordinary
-	// test job has no bubblewrap. Asserting it unconditionally would make this
-	// test depend on a host capability it is not about, so the floor's own
-	// refusal is recognized and reported rather than silently accepted.
-	if strings.Contains(failure.Error, "bwrap") ||
-		strings.Contains(failure.Error, "bubblewrap") ||
-		strings.Contains(failure.Error, "user namespaces") {
-		t.Logf("floor unavailable on this host, so only the preset-refusal half is asserted: %s",
-			failure.Error)
-		return
+	if resp.Code != http.StatusOK {
+		failure := decodeFailure(t, resp.Raw)
+		assert.NotEqual(t, harness.SandboxCapabilityModelTransport, failure.Code)
+		assert.NotContains(t, failure.Error, "local presets name no explicit provider")
+		if strings.Contains(failure.Error, "bwrap") ||
+			strings.Contains(failure.Error, "bubblewrap") ||
+			strings.Contains(failure.Error, "user namespaces") {
+			t.Logf("floor unavailable on this host; no-model launch passed the provider gate: %s",
+				failure.Error)
+			return
+		}
+		require.Failf(t, "unexpected spawn refusal", "%s: %s", failure.Code, failure.Error)
 	}
-	assert.Equal(t, harness.SandboxCapabilityModelTransport, failure.Code)
-	assert.Contains(t, failure.Error, "explicit provider/model launch model",
-		"the engine-independent model-transport contract still binds this launch")
+	require.NotEmpty(t, resp.ConvID)
 }
 
 // TestProxyEngineSpawnOmitsThePacketPrerequisiteNotice is the daemon-spawn half

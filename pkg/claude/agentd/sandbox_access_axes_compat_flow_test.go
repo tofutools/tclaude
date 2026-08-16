@@ -946,9 +946,8 @@ func TestSandboxProfileDraftEnforcementProjectsMaterializedPackRows(t *testing.T
 	openCodeRows := request(t, "opencode")
 	require.Len(t, openCodeRows, 3)
 	for _, row := range openCodeRows {
-		assert.Equal(t, harness.AccessPredictionRefused, row.Outcome,
-			"the exact built-in local/model combination refuses as a whole")
-		assert.Contains(t, row.Detail, "no explicit provider")
+		assert.Equal(t, harness.AccessPredictionEnforced, row.Outcome)
+		assert.NotContains(t, row.Detail, "no explicit provider")
 	}
 
 	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", map[string]any{
@@ -1031,8 +1030,7 @@ func TestSandboxProfileDraftEnforcementActivatesOpenCodeLinuxDenyRows(t *testing
 	assert.Equal(t, harness.AccessPredictionEnforced, axes.Network.Outcome)
 	assert.Contains(t, axes.Network.Detail,
 		"explicit provider/model launch model",
-		"the preview must disclose the launch gate that decides whether these "+
-			"rules ever apply")
+		"the preview must disclose when tclaude checks selected-model access")
 	require.Len(t, rows, 3)
 	for _, row := range rows {
 		if row.Mode != "deny" {
@@ -1075,9 +1073,8 @@ func TestSandboxProfileDraftEnforcementActivatesOpenCodeLinuxDenyRows(t *testing
 		assert.Equal(t, harness.PredictedNetworkDenyNotEnforcedDetail, row.Detail)
 	}
 
-	// The local presets remain launch-refused for want of an explicit provider;
-	// advertising a
-	// deny capability there would disagree with that refusal.
+	// Local presets enforce their deny rows without inventing a provider
+	// prerequisite when no launch model was selected.
 	_, rows = request(t, map[string]any{
 		"baseline": "deny",
 		"packs":    []string{"net-local"},
@@ -1088,8 +1085,9 @@ func TestSandboxProfileDraftEnforcementActivatesOpenCodeLinuxDenyRows(t *testing
 		if row.Mode != "deny" {
 			continue
 		}
-		assert.Equal(t, harness.AccessPredictionNotEnforced, row.Outcome)
-		assert.Equal(t, harness.PredictedNetworkDenyNotEnforcedDetail, row.Detail)
+		assert.Equal(t, harness.AccessPredictionEnforced, row.Outcome)
+		assert.Contains(t, row.Detail,
+			harness.OpenCodeFilteredExplicitProviderCaveat)
 	}
 }
 

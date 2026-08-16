@@ -1022,6 +1022,18 @@ func ValidateTclaudeLayerNetwork(
 		if engineErr != nil {
 			return nil, engineErr
 		}
+		// OpenCode has no effective-config read from which to infer a provider
+		// when the operator did not select a launch model. In that case the
+		// authored rules are the complete policy: do not invent a provider,
+		// automatically add model access, or refuse the launch merely because
+		// inference may be unreachable. If a model was selected, the resolver
+		// above must still prove its provider and the normal coverage gate below
+		// ensures the authored rules admit it.
+		if h != nil && h.Name == harness.OpenCodeName &&
+			strings.TrimSpace(resolvedModel.Model) == "" &&
+			!resolvedModel.ProviderResolved {
+			return nil, nil
+		}
 		if endpointErr := validateModelTransportLoopbackForPlatform(
 			h, resolvedModel, runtime.GOOS, deployedEngine,
 		); endpointErr != nil {

@@ -43,6 +43,13 @@ func ResolveTclaudeLayerModelTransport(
 		return harness.ResolvedModelTransport{}, modelTransportLaunchError(
 			nil, "cannot resolve provider configuration without a harness")
 	}
+	// With no selected OpenCode model there is no provider route for tclaude to
+	// inspect, including no claim that an inherited proxy is part of model
+	// transport. The authored network rules are the complete policy in this
+	// user-managed mode, so enter it before the generic provider-proxy gate.
+	if h.Name == harness.OpenCodeName && strings.TrimSpace(context.Model) == "" {
+		return harness.ResolvedModelTransport{}, nil
+	}
 	environment := launchModelEnvironment(context.Environment)
 	if variable := modelTransportProxyVariable(environment); variable != "" {
 		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
@@ -122,20 +129,24 @@ type openCodeFilteredProvider struct {
 	} `json:"options"`
 }
 
-// resolveOpenCodeModelTransport accepts only the pinned OpenCode loader's
-// explicit-provider shape. The executing server separately forces the loader's
-// own isolation affordances, making this inline, frozen profile value the
-// provider authority instead of guessing a built-in or remotely mutable
-// default.
+// resolveOpenCodeModelTransport inspects the pinned OpenCode loader's
+// explicit-provider shape when the launch selects a model. A launch without a
+// model leaves inference access entirely to the authored network rules; there
+// is no provider choice for tclaude to resolve or validate in that case.
+//
+// The executing server separately forces the loader's own isolation
+// affordances, making an inline, frozen profile value the provider authority
+// instead of guessing a built-in or remotely mutable default.
 func resolveOpenCodeModelTransport(
 	h *harness.Harness,
 	context ModelTransportLaunchContext,
 	environment map[string]string,
 ) (harness.ResolvedModelTransport, error) {
-	provider, modelID, ok := strings.Cut(strings.TrimSpace(context.Model), "/")
+	model := strings.TrimSpace(context.Model)
+	provider, modelID, ok := strings.Cut(model, "/")
 	if !ok || strings.TrimSpace(provider) == "" || strings.TrimSpace(modelID) == "" {
 		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
-			"OpenCode filtered networking requires an explicit provider/model launch model and inline explicit-provider config; choose one or use network open")
+			"OpenCode filtered networking with a selected model requires an explicit provider/model launch model and inline explicit-provider config so tclaude can check inference access; omit the launch model to manage inference access through the authored network rules, choose an inspectable provider/model, or use network open")
 	}
 	provider = strings.TrimSpace(provider)
 	modelID = strings.TrimSpace(modelID)
@@ -237,63 +248,6 @@ func resolveOpenCodeModelTransport(
 		BaseURL:          baseURL,
 		ProviderResolved: true,
 	}, nil
-}
-
-// ValidateTclaudeLayerOpenCodeLocalModelTransport keeps the local convenience
-// presets behind the existing model-transport launch gate. General OpenCode
-// explicit-provider filtering is supported because the frozen inline config is
-// the provider authority; the local presets have no such authority and OpenCode
-// exposes no effective-config read of its own loader, so they stay refused.
-//
-// TCL-895: that refusal is the PACKET gateway's. Its whole reason is that the
-// gateway admits a destination only if the authored allow list can be checked
-// against a launch endpoint resolved ahead of time, and these presets offer
-// nothing to resolve one from. A proxy-engine launch decides on the identity
-// the client states at connect time and needs no such pre-resolution, so
-// refusing it here would describe a mechanism this launch does not run.
-//
-// The relaxation is additionally conditioned on the proxy cells being ACTIVATED
-// for this harness on this platform. Without that, a platform whose proxy cells
-// enforce nothing would have this refusal dropped and its policy widened to
-// open — turning a launch that was refused into one that starts with open
-// outbound, for a preset whose whole purpose is "local only".
-//
-// The engine gate lives INSIDE this function rather than at its call sites,
-// because both launch seams — the session boundary and the daemon spawn guard
-// — call it, and a gate applied at one of them could drift from the other and
-// from the rendered row. The renderer reaches the same two predicates through
-// accessEnforcementTable. Same predicates, but note the inputs differ by
-// design: the renderer derives its engine from EffectiveAccessAxes and this
-// seam from PlannedEffectiveAccessAxes, which absorbs prior degradation
-// notices. A profile carrying one can therefore look non-discriminating here
-// and discriminating there; the divergence direction is to REFUSE, so it
-// cannot open a launch the row says is closed.
-//
-// This is not a hole in the OpenCode launch gate: the ENGINE-INDEPENDENT
-// model-transport resolve still runs for any filtered posture, so a
-// proxy-engine local-preset launch without an explicit provider/model and
-// inline explicit-provider config is still refused — which is exactly what the
-// proxy row's OpenCodeFilteredExplicitProviderCaveat discloses.
-func ValidateTclaudeLayerOpenCodeLocalModelTransport(
-	h *harness.Harness,
-	effective sandboxpolicy.EffectiveProfile,
-	_ ModelTransportLaunchContext,
-) error {
-	engine, err := TclaudeLayerNetworkEngine(effective)
-	if err != nil {
-		// Not a model-transport capability error: this is a malformed or
-		// unmaterialized profile, and mislabelling it would send the operator
-		// to the provider-configuration remedy for a problem that is not one.
-		// Both call sites derive their axes before reaching here, so this is
-		// close to unreachable; it fails closed rather than silently relaxing.
-		return fmt.Errorf("derive network engine for OpenCode local preset: %w", err)
-	}
-	if engine == sandboxpolicy.NetworkEngineProxy &&
-		harness.ProxyEngineActivated(h.Name, runtime.GOOS) {
-		return nil
-	}
-	return modelTransportLaunchError(h,
-		"OpenCode's local presets name no explicit provider and OpenCode exposes no effective-config read of its own loader, so their launch endpoint cannot be resolved; use an explicit-provider OpenCode config, use Claude Code or Codex with a resolvable provider, or use network open")
 }
 
 // resolveCopilotModelTransport admits exactly one Copilot route: the default
