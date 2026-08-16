@@ -609,7 +609,12 @@ const NETWORK_NAMESPACE_OPTIONS = [
   ['private', 'Private, routed'],
 ];
 
-const DEFAULT_NETWORK_PACKS = ['net-local', 'net-anthropic', 'net-openai-codex'];
+const DEFAULT_NETWORK_PACKS = [
+  'net-local',
+  'net-anthropic',
+  'net-openai-codex',
+  'net-openai-chatgpt',
+];
 
 function networkEntriesMayOverlap(left = {}, right = {}) {
   const leftPorts = new Set(Array.isArray(left.ports) ? left.ports.map(Number) : []);

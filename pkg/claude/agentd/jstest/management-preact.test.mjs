@@ -1619,6 +1619,7 @@ const COMMON_RULES = {
     { id: 'net-local', label: 'Local access', entries: [{ loopback: true }], note: 'local services' },
     { id: 'net-anthropic', label: 'Anthropic API', group: 'Cloud model APIs', entries: [{ domain: 'api.anthropic.com', ports: [443] }] },
     { id: 'net-openai-codex', label: 'OpenAI API', group: 'Cloud model APIs', entries: [{ domain: 'api.openai.com', ports: [443] }] },
+    { id: 'net-openai-chatgpt', label: 'ChatGPT (Codex sign-in)', group: 'Cloud model APIs', entries: [{ domain: 'chatgpt.com', ports: [443] }, { domain: 'auth.openai.com', ports: [443] }] },
   ],
   network_templates: [{ id: 'net-anthropic', label: 'Anthropic API', mode: 'list', entries: [{ domain: 'api.anthropic.com' }], note: 'official API endpoint' }],
   socket_templates: [{ id: 'sockets-agentd-only', label: 'tclaude agentd only', mode: 'closed', entries: [], note: 'floor is always reachable' }],
@@ -2650,17 +2651,17 @@ test('new deny drafts apply default pack references once and pack rows stay read
   assert.equal(selectedValue(newBaseline), 'inherit');
   await harness.act(() => { choose(newBaseline, 'deny'); harness.fireEvent(newBaseline, 'change'); });
   const packModes = await waitForSelectorCount(
-    harness, newDraft.host, '.sbx-network-pack-mode', 3,
+    harness, newDraft.host, '.sbx-network-pack-mode', 4,
   );
   const packDisclosure = newDraft.host.querySelector('.sbx-network-packs');
   assert.equal(packDisclosure.hasAttribute('open'), false,
     'built-in packs use the editor collapsed-by-default disclosure pattern');
   const allowed = packModes.filter((control) => segmentedValue(control) === 'allow');
-  assert.equal(allowed.length, 3);
+  assert.equal(allowed.length, 4);
   assert.match(allowed.map((control) => control.parentElement.textContent).join(' '),
-    /Local access.*Anthropic API.*OpenAI API/s);
+    /Local access.*Anthropic API.*OpenAI API.*ChatGPT \(Codex sign-in\)/s);
   const packRows = [...newDraft.host.querySelectorAll('.sbx-network-pack')];
-  assert.equal(packRows.length, 3);
+  assert.equal(packRows.length, 4);
   assert.equal(packRows.every((row) => row.querySelectorAll('.sbx-network-pack-mode').length === 1), true,
     'built-in packs render as one dense three-state row each');
   assert.equal(packRows.every((row) => row.querySelector('.sbx-network-pack-mode').getAttribute('role') === 'radiogroup'), true,
@@ -2674,7 +2675,8 @@ test('new deny drafts apply default pack references once and pack rows stay read
   await harness.act(() => harness.fireEvent(localHelp, 'click'));
   assert.equal(localHelp.getAttribute('aria-expanded'), 'true');
   assert.match(packRows[0].querySelector('.spawn-field-description').textContent, /local services/);
-  assert.equal(newDraft.host.querySelectorAll('.sbx-network-pack-row').length, 3);
+  assert.equal(newDraft.host.querySelectorAll('.sbx-network-pack-row').length, 5,
+    'the default packs include both ChatGPT model and token-refresh destinations');
   assertAbsent(newDraft.host.querySelector('.sbx-network-pack-row input'), 'expanded pack destinations are read-only');
   assertAbsent(newDraft.host.querySelector('.sbx-network-pack-row .sbx-segmented-control'), 'read-only expanded destinations never instantiate the segmented component');
   assert.ok(newDraft.host.querySelector('.sbx-network-pack-row .sbx-network-mode-readonly.sbx-state-allow'),
@@ -2711,7 +2713,7 @@ test('new deny drafts apply default pack references once and pack rows stay read
 
   await harness.act(() => { choose(newBaseline, 'allow'); harness.fireEvent(newBaseline, 'change'); });
   assert.equal([...newDraft.host.querySelectorAll('.sbx-network-pack-mode')]
-    .filter((control) => segmentedValue(control) === 'allow').length, 3,
+    .filter((control) => segmentedValue(control) === 'allow').length, 4,
     'allow-all retains explicitly authored allow packs');
   assert.equal([...newDraft.host.querySelectorAll('.sbx-network-pack-mode')]
     .every((control) => [...control.querySelectorAll('[role="radio"]')].every((radio) => !radio.disabled)), true,
@@ -2725,11 +2727,11 @@ test('new deny drafts apply default pack references once and pack rows stay read
     'the container does not contradict its intentionally operable help controls');
   await harness.act(() => { choose(newBaseline, 'deny'); harness.fireEvent(newBaseline, 'change'); });
   assert.equal([...newDraft.host.querySelectorAll('.sbx-network-pack-mode')]
-    .filter((control) => segmentedValue(control) === 'allow').length, 3,
+    .filter((control) => segmentedValue(control) === 'allow').length, 4,
     'returning to Deny all retains authored pack modes');
   const turnOff = newDraft.host.querySelector('.sbx-network-pack-mode');
   await harness.act(() => harness.fireEvent(segment(turnOff, 'off'), 'click'));
-  assert.equal(newDraft.host.querySelectorAll('.sbx-network-pack-row').length, 2,
+  assert.equal(newDraft.host.querySelectorAll('.sbx-network-pack-row').length, 4,
     'turning off a default pack takes effect');
   const currentBaseline = newDraft.host.querySelector('#sandbox-profile-editor-network-baseline');
   await harness.act(() => { choose(currentBaseline, 'inherit'); harness.fireEvent(currentBaseline, 'change'); });
@@ -2738,7 +2740,7 @@ test('new deny drafts apply default pack references once and pack rows stay read
     'No override disables all pack mode controls');
   const inheritedBaseline = newDraft.host.querySelector('#sandbox-profile-editor-network-baseline');
   await harness.act(() => { choose(inheritedBaseline, 'deny'); harness.fireEvent(inheritedBaseline, 'change'); });
-  assert.equal(newDraft.host.querySelectorAll('.sbx-network-pack-row').length, 2,
+  assert.equal(newDraft.host.querySelectorAll('.sbx-network-pack-row').length, 4,
     'an Off default stays Off across No override flips; defaults are never re-applied');
   newDraft.unmount();
   newDraft.host.remove();
@@ -3414,7 +3416,7 @@ test('a failing common-rule feed blocks hidden pack authority but leaves manual 
   assert.equal(host.querySelector('.sbx-network-packs').hasAttribute('open'), true,
     'a blocking pack-catalog diagnostic opens the nested pack disclosure');
   assert.match(host.querySelector('.sbx-network-pack-visibility-error').textContent,
-    /Saving is paused.*net-local.*net-anthropic.*net-openai-codex/s);
+    /Saving is paused.*net-local.*net-anthropic.*net-openai-codex.*net-openai-chatgpt/s);
   assert.equal(host.querySelectorAll('.sbx-network-pack-visibility-error').length, 1,
     'the authority warning is rendered and announced exactly once');
   assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, true,
@@ -3429,7 +3431,7 @@ test('a failing common-rule feed blocks hidden pack authority but leaves manual 
   assert.equal(host.querySelectorAll('.sbx-common-rule-entry').length, COMMON_RULES.categories.length);
   assert.equal(host.querySelector('.sbx-common-rule-summary').textContent.includes('unavailable'), false);
   assertAbsent(host.querySelector('.sbx-network-pack-visibility-error'));
-  assert.equal(host.querySelectorAll('.sbx-network-pack-row').length, 3);
+  assert.equal(host.querySelectorAll('.sbx-network-pack-row').length, 5);
   assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, false);
   unmount();
 });
