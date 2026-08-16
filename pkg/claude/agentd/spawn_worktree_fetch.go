@@ -38,7 +38,7 @@ func fetchLatestWorktreeBase(ctx context.Context, repoRoot, base string) (string
 func fetchWorktreeBaseIsolated(ctx context.Context, repoRoot, remote, branch string, enforceProxyPolicy bool) error {
 	s, fault := newGitProxySessionBase(ctx, !enforceProxyPolicy)
 	if fault != nil {
-		return fmt.Errorf("Git proxy: %s", fault.Msg)
+		return fmt.Errorf("git proxy: %s", fault.Msg)
 	}
 	if !enforceProxyPolicy {
 		s.pins = operatorWorktreeFetchPins(s.pins)
@@ -46,15 +46,15 @@ func fetchWorktreeBaseIsolated(ctx context.Context, repoRoot, remote, branch str
 	s.repoRoot = repoRoot
 	resolved, fault := resolveWorktreeFetchRemote(ctx, s, remote, enforceProxyPolicy)
 	if fault != nil {
-		return fmt.Errorf("Git proxy: %s", fault.Msg)
+		return fmt.Errorf("git proxy: %s", fault.Msg)
 	}
 	xfer, fault := newGitProxyXfer(ctx, s, xferShareObjects)
 	if fault != nil {
-		return fmt.Errorf("Git proxy: %s", fault.Msg)
+		return fmt.Errorf("git proxy: %s", fault.Msg)
 	}
 	defer xfer.cleanup()
 	if fault := xfer.seedRefs(ctx, s, resolved.Name); fault != nil {
-		return fmt.Errorf("Git proxy: %s", fault.Msg)
+		return fmt.Errorf("git proxy: %s", fault.Msg)
 	}
 
 	args := []string{"fetch", gitProxyUploadPack, "--no-recurse-submodules", "--", resolved.FetchURL}
@@ -63,24 +63,24 @@ func fetchWorktreeBaseIsolated(ctx context.Context, repoRoot, remote, branch str
 	defer cancel()
 	result, err := xfer.git(runCtx, s, args...)
 	if err != nil {
-		return fmt.Errorf("Git proxy fetch %s/%s: %w", remote, branch, err)
+		return fmt.Errorf("git proxy fetch %s/%s: %w", remote, branch, err)
 	}
 	if result.TimedOut {
-		return fmt.Errorf("Git proxy fetch %s/%s timed out", remote, branch)
+		return fmt.Errorf("git proxy fetch %s/%s timed out", remote, branch)
 	}
 	imported, fault := xfer.importRefs(ctx, s, resolved.Name, false)
 	if fault != nil {
-		return fmt.Errorf("Git proxy: %s", fault.Msg)
+		return fmt.Errorf("git proxy: %s", fault.Msg)
 	}
 	if result.ExitCode != 0 {
-		return fmt.Errorf("Git proxy fetch %s/%s failed: %s", remote, branch, proxyResultMessage(result))
+		return fmt.Errorf("git proxy fetch %s/%s failed: %s", remote, branch, proxyResultMessage(result))
 	}
 	if imported.ExitCode != 0 {
 		msg := strings.TrimSpace(imported.Stderr)
 		if msg == "" {
 			msg = fmt.Sprintf("git exited %d", imported.ExitCode)
 		}
-		return fmt.Errorf("Git proxy could not import %s/%s: %s", remote, branch, msg)
+		return fmt.Errorf("git proxy could not import %s/%s: %s", remote, branch, msg)
 	}
 	return nil
 }
