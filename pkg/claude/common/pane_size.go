@@ -22,7 +22,7 @@ package common
 // and none of it solved the drift problem it targeted.
 //
 // 200x50 rather than tmux's 80x24: it is close to what real browser/desktop
-// terminals actually are, so the attach→fit→detach→normalize cycle moves the
+// terminals actually are, so the attach→fit→detach cycle moves the
 // window less (smaller SIGWINCH deltas for the harness to re-layout through),
 // and wide panes render modern TUIs and forensic screen captures better. One
 // constant for every harness — OpenCode's runtime previously pinned its own
