@@ -37,6 +37,7 @@ import {
   shellConfirmDiscard as confirmDiscard,
 } from './shell-state.js';
 import { disclosurePreference } from './group-tree-activity.js';
+import { checkAssetsVersion } from './assets-version.js';
 import { setTerminalAttachConfig } from './terminal-attach-config.js';
 
 // groupsTabActive reports whether the Groups tab is the visible one — used to
@@ -167,6 +168,17 @@ export async function refresh(options) {
     const data = await snapR.json();
     if (!dashboardState.isCurrentRequest(requestId)) {
       jobs?.discardRequest(requestId);
+      return;
+    }
+    // agentd was upgraded under this open page: the daemon now serves a
+    // different embedded frontend than the modules running here. Reload the
+    // whole page (assets are no-store, so everything refetches) instead of
+    // letting stale renderers paint a snapshot from a newer daemon. The
+    // check latches, so ticks racing the navigation bail here too.
+    if (checkAssetsVersion(data.assets_version)) {
+      showStatus('tclaude updated — reloading…', false);
+      jobs?.discardRequest(requestId);
+      dashboardState.discardRequest(requestId, { responded });
       return;
     }
     // Query/page controls invalidate the feature request immediately, before

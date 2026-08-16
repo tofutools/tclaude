@@ -56,7 +56,7 @@ var dashboardAssetsFS = mustSubFS(dashboardFS, "dashboard")
 // modulepreload block + module-total for the boot progress bar, so the entry
 // import graph is fetched in parallel rather than as a discover-one-at-a-time
 // waterfall.
-var dashboardIndexHTML = injectBootPreload(mustReadFS(dashboardAssetsFS, "dashboard.html"), dashboardAssetsFS)
+var dashboardIndexHTML = injectAssetsVersion(injectBootPreload(mustReadFS(dashboardAssetsFS, "dashboard.html"), dashboardAssetsFS))
 
 func mustSubFS(f embed.FS, dir string) fs.FS {
 	sub, err := fs.Sub(f, dir)
@@ -882,9 +882,15 @@ func dashboardAuthResult(r *http.Request) (ok bool, loginRequired bool, code int
 // gives the page everything it needs to render every tab; the page
 // re-fetches on a 2s timer.
 type snapshotPayload struct {
-	GeneratedAt string               `json:"generated_at"`
-	Version     string               `json:"version"`
-	AuthSession dashboardAuthSession `json:"auth_session"`
+	GeneratedAt string `json:"generated_at"`
+	Version     string `json:"version"`
+	// AssetsVersion fingerprints the embedded dashboard tree this daemon
+	// serves (dashboard_assets_version.go). The page compares it against the
+	// fingerprint stamped into its own HTML and reloads itself when the
+	// daemon starts serving a different frontend — the "agentd upgraded under
+	// an open dashboard" case.
+	AssetsVersion string               `json:"assets_version"`
+	AuthSession   dashboardAuthSession `json:"auth_session"`
 	// StaticVersion fingerprints the registry-shaped payload fields that rarely
 	// change. The browser echoes it on the next poll; when it still matches,
 	// StaticUnchanged is true and those fields are sent as null then restored
@@ -3279,6 +3285,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out := snapshotPayload{
 		GeneratedAt:          time.Now().Format(time.RFC3339),
 		Version:              buildversion.AppVersion(),
+		AssetsVersion:        dashboardAssetsVersion,
 		AuthSession:          authSession,
 		PopupBase:            popupBaseURL,
 		UserDefaultModel:     userModel,

@@ -40,6 +40,13 @@
      discovering it one importer at a time. The marker must stay verbatim — a
      server-side invariant asserts on it. -->
 <!--BOOT_PRELOAD-->
+<!-- Embedded-assets fingerprint. agentd (injectAssetsVersion) replaces this
+     marker with a <meta name="tclaude-assets-version"> carrying the hash of
+     the embedded dashboard tree that served THIS page. The poll compares it
+     against the snapshot's assets_version and reloads the page when the
+     daemon starts serving a different frontend (see js/assets-version.js).
+     The marker must stay verbatim — a server-side invariant asserts on it. -->
+<!--ASSETS_VERSION-->
 <!-- Boot progress counter. Runs before the module graph is fetched and drives
      #boot-progress through three bands so the bar covers the WHOLE boot, not
      just the module downloads:

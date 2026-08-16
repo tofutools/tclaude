@@ -1834,3 +1834,8 @@ func SetPowerOnOnlineGraceForTest(d time.Duration) func() {
 	powerOnOnlineGrace = d
 	return func() { powerOnOnlineGrace = prev }
 }
+
+// DashboardAssetsVersionForTest exposes the embedded-frontend fingerprint so
+// flow tests can assert /api/snapshot surfaces the exact value the served
+// page was stamped with.
+func DashboardAssetsVersionForTest() string { return dashboardAssetsVersion }
