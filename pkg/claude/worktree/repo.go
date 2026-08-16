@@ -26,6 +26,10 @@ import (
 func gitIn(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
+	// Retry classification depends on Git's stable diagnostic text. The daemon
+	// may inherit any operator locale, so pin only these subprocesses rather
+	// than guessing translated variants of lock-file errors.
+	cmd.Env = append(os.Environ(), "LC_ALL=C", "LANG=C")
 	out, err := cmd.Output()
 	if err != nil {
 		var ee *exec.ExitError

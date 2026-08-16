@@ -7,8 +7,10 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/worktree"
 )
@@ -53,6 +55,16 @@ func handleDashboardWorktreesAPI(w http.ResponseWriter, r *http.Request) {
 const subRepoScanDepth = 4
 
 const dashboardWorktreeTrackingRetries = 10
+
+type dashboardWorktreeProgress struct {
+	Attempt int `json:"attempt"`
+	Max     int `json:"max"`
+}
+
+var (
+	dashboardWorktreeProgressMu sync.Mutex
+	dashboardWorktreeProgresses = map[string]dashboardWorktreeProgress{}
+)
 
 // dashboardListWorktrees answers GET /api/worktrees?repo=<path>.
 //
@@ -115,6 +127,7 @@ func dashboardCreateWorktree(w http.ResponseWriter, r *http.Request) {
 		FromBranch  string `json:"from_branch"`
 		Path        string `json:"path"`
 		FetchLatest bool   `json:"fetch_latest"`
+		ProgressID  string `json:"progress_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -149,8 +162,16 @@ func dashboardCreateWorktree(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	progressID := strings.TrimSpace(body.ProgressID)
+	if progressID != "" && !validWorktreeProgressID(progressID) {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid worktree progress id")
+		return
+	}
+	defer clearDashboardWorktreeProgress(progressID)
 	path, retries, fallback, err := createDashboardWorktree(r.Context(), root, body.Branch, base,
-		expandTilde(strings.TrimSpace(body.Path)), waitOneSecond)
+		expandTilde(strings.TrimSpace(body.Path)), waitOneSecond, func(attempt int) {
+			setDashboardWorktreeProgress(progressID, attempt)
+		})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "worktree", err.Error())
 		return
@@ -164,6 +185,68 @@ func dashboardCreateWorktree(w http.ResponseWriter, r *http.Request) {
 		"tracking_retries":  retries,
 		"tracking_fallback": fallback,
 	})
+}
+
+func dashboardWorktreeProgressAPI(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	if !validWorktreeProgressID(id) {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid worktree progress id")
+		return
+	}
+	dashboardWorktreeProgressMu.Lock()
+	progress, ok := dashboardWorktreeProgresses[id]
+	dashboardWorktreeProgressMu.Unlock()
+	if !ok {
+		writeJSON(w, http.StatusOK, map[string]any{"retrying": false})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"retrying": true,
+		"attempt":  progress.Attempt,
+		"max":      progress.Max,
+	})
+}
+
+func validWorktreeProgressID(id string) bool {
+	if len(id) < 8 || len(id) > 128 {
+		return false
+	}
+	for _, r := range id {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '-' || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func setDashboardWorktreeProgress(id string, attempt int) {
+	if id == "" {
+		return
+	}
+	dashboardWorktreeProgressMu.Lock()
+	dashboardWorktreeProgresses[id] = dashboardWorktreeProgress{
+		Attempt: attempt,
+		Max:     dashboardWorktreeTrackingRetries,
+	}
+	dashboardWorktreeProgressMu.Unlock()
+}
+
+func clearDashboardWorktreeProgress(id string) {
+	if id == "" {
+		return
+	}
+	dashboardWorktreeProgressMu.Lock()
+	delete(dashboardWorktreeProgresses, id)
+	dashboardWorktreeProgressMu.Unlock()
 }
 
 func waitOneSecond(ctx context.Context) error {
@@ -187,6 +270,7 @@ func createDashboardWorktree(
 	ctx context.Context,
 	repoRoot, branch, base, path string,
 	wait func(context.Context) error,
+	onRetry func(attempt int),
 ) (createdPath string, retries int, fallback bool, err error) {
 	createdPath, err = worktree.AddWorktreeIn(repoRoot, branch, base, path)
 	if err == nil || !worktree.IsUpstreamConfigLockError(err) {
@@ -194,6 +278,9 @@ func createDashboardWorktree(
 	}
 
 	for retries = 1; retries <= dashboardWorktreeTrackingRetries; retries++ {
+		if onRetry != nil {
+			onRetry(retries)
+		}
 		if waitErr := wait(ctx); waitErr != nil {
 			return "", retries - 1, false, waitErr
 		}
@@ -230,8 +317,9 @@ func postWorktreeTrackingFallbackNotice(repoRoot, branch, upstream string) {
 	body := fmt.Sprintf(
 		"Git's repository config stayed locked for 10 seconds while creating branch %q in %s. "+
 			"The worktree was created so the agent could still spawn, but the branch does not have complete upstream tracking. "+
-			"After the lock clears, run: git branch --set-upstream-to=%s %s",
-		branch, repoRoot, upstream, branch)
+			"After the lock clears, run: git -C %s branch --set-upstream-to=%s %s",
+		branch, repoRoot, clcommon.ShellQuoteArg(repoRoot), clcommon.ShellQuoteArg(upstream),
+		clcommon.ShellQuoteArg(branch))
 	if _, err := db.InsertHumanMessage(&db.HumanMessage{
 		FromTitle: "worktree spawn",
 		Subject:   subject,

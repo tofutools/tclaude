@@ -30,6 +30,12 @@ async function jsonRequest(fetchImpl, path, options = {}) {
   return response.json().catch(() => ({}));
 }
 
+const worktreeProgressDelay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function worktreeProgressID() {
+  return `wt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 14)}`;
+}
+
 function readEffortMap(prefs) {
   try {
     const value = JSON.parse(prefs.getItem(EFFORT_KEY));
@@ -133,13 +139,27 @@ export function createAgentSpawnActions({
       const branch = String(draft.worktreeBranch || '').trim();
       if (!branch) throw new Error('enter a branch name for the new worktree');
       onProgress('Creating worktree…');
-      let elapsed = 0;
-      const progressTimer = setInterval(() => {
-        elapsed += 1;
-        if (elapsed <= 10) {
-          onProgress(`Creating worktree… retrying a busy Git config for up to 10s (${elapsed}s)`);
+      const progressID = worktreeProgressID();
+      let finished = false;
+      const pollProgress = (async () => {
+        while (!finished) {
+          await worktreeProgressDelay(200);
+          if (finished) break;
+          try {
+            const response = await fetchImpl(`/api/worktrees/progress?id=${encodeURIComponent(progressID)}`, {
+              credentials: 'same-origin',
+            });
+            if (!response.ok) continue;
+            const status = await response.json();
+            if (status.retrying) {
+              onProgress(`Git config busy — retrying upstream setup (${status.attempt}/${status.max})…`);
+            }
+          } catch (_) {
+            // Progress is advisory; the authoritative POST below still owns
+            // success/failure and must not be cancelled by a polling blip.
+          }
         }
-      }, 1000);
+      })();
       try {
         const response = await fetchImpl('/api/worktrees', {
           method: 'POST', credentials: 'same-origin',
@@ -149,6 +169,7 @@ export function createAgentSpawnActions({
             branch,
             from_branch: draft.worktreeBase || '',
             fetch_latest: !!draft.fetchLatestWorktree,
+            progress_id: progressID,
           }),
         });
         if (!response.ok) throw new Error((await responseText(response)) || `HTTP ${response.status}`);
@@ -157,7 +178,8 @@ export function createAgentSpawnActions({
         else onProgress('Worktree ready; spawning agent…');
         return { path: payload.path || '', branch: payload.branch || branch };
       } finally {
-        clearInterval(progressTimer);
+        finished = true;
+        await pollProgress;
       }
     },
 

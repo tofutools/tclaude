@@ -53,6 +53,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/agents/", handleDashboardAgentsAPI)
 	mux.HandleFunc("/api/agent-generations/", handleDashboardAgentGenerationDelete)
 	mux.HandleFunc("/api/worktrees", handleDashboardWorktreesAPI)
+	mux.HandleFunc("/api/worktrees/progress", dashboardWorktreeProgressAPI)
 	mux.HandleFunc("/api/worktrees/cleanup", handleDashboardWorktreeCleanup)
 	mux.HandleFunc("/api/jump/", handleDashboardJumpAPI)
 	mux.HandleFunc("/api/hide/", handleDashboardHideAPI)

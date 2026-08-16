@@ -81,6 +81,8 @@ func TestOperatorWorktreeFetchPinsPreserveTrustedTransportConfig(t *testing.T) {
 }
 
 func TestCreateDashboardWorktreeRetriesTrackingConfigLock(t *testing.T) {
+	t.Setenv("LC_ALL", "sv_SE.UTF-8")
+	t.Setenv("LANG", "sv_SE.UTF-8")
 	repo, _, _, _ := worktreeFetchFixture(t)
 	lockPath := filepath.Join(repo, ".git", "config.lock")
 	require.NoError(t, os.WriteFile(lockPath, nil, 0o644))
@@ -95,7 +97,7 @@ func TestCreateDashboardWorktreeRetriesTrackingConfigLock(t *testing.T) {
 		return nil
 	}
 	path, retries, fallback, err := createDashboardWorktree(context.Background(), repo,
-		"retry-tracking", "refs/remotes/upstream/main", "", wait)
+		"retry-tracking", "refs/remotes/upstream/main", "", wait, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 3, retries)
 	assert.False(t, fallback)
@@ -111,14 +113,16 @@ func TestCreateDashboardWorktreeFallsBackAfterTrackingRetries(t *testing.T) {
 	t.Cleanup(func() { _ = os.Remove(lockPath) })
 
 	waits := 0
+	var attempts []int
 	path, retries, fallback, err := createDashboardWorktree(context.Background(), repo,
 		"fallback-tracking", "refs/remotes/upstream/main", "", func(context.Context) error {
 			waits++
 			return nil
-		})
+		}, func(attempt int) { attempts = append(attempts, attempt) })
 	require.NoError(t, err)
 	assert.Equal(t, dashboardWorktreeTrackingRetries, waits)
 	assert.Equal(t, dashboardWorktreeTrackingRetries, retries)
+	assert.Equal(t, []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, attempts)
 	assert.True(t, fallback)
 	assert.DirExists(t, path)
 	assert.Empty(t, gitOutputAllowError(t, repo, "config", "--get", "branch.fallback-tracking.merge"),
@@ -129,14 +133,15 @@ func TestPostWorktreeTrackingFallbackNotice(t *testing.T) {
 	setupTestDB(t)
 	before, err := db.ListHumanMessages()
 	require.NoError(t, err)
-	postWorktreeTrackingFallbackNotice("/repo", "feature/locked", "refs/remotes/origin/main")
+	postWorktreeTrackingFallbackNotice("/repo with spaces", "feature;echo-pwned", "refs/remotes/origin/main")
 	after, err := db.ListHumanMessages()
 	require.NoError(t, err)
 	require.Len(t, after, len(before)+1)
 	assert.Equal(t, "worktree spawn", after[0].FromTitle)
 	assert.Equal(t, "Worktree branch created without upstream tracking", after[0].Subject)
-	assert.Contains(t, after[0].Body, "feature/locked")
-	assert.Contains(t, after[0].Body, "git branch --set-upstream-to=refs/remotes/origin/main feature/locked")
+	assert.Contains(t, after[0].Body, "feature;echo-pwned")
+	assert.Contains(t, after[0].Body,
+		"git -C '/repo with spaces' branch --set-upstream-to=refs/remotes/origin/main 'feature;echo-pwned'")
 }
 
 func postDashboardWorktree(t *testing.T, body map[string]any) *httptest.ResponseRecorder {
