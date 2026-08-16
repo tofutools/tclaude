@@ -1208,6 +1208,22 @@ test('sandbox access-axis model preserves legacy meaning and validates structure
       (rule) => rule.startsWith('Block: every other host path')),
     'a constructed root must appear as a visible filesystem rule',
   );
+  const confinedSocketBuckets = model.sandboxRuleBuckets({
+    filesystem: { outcome: 'enforced', detail: '' },
+    unix_sockets: {
+      outcome: 'enforced',
+      detail: 'bubblewrap enforces closed Unix-socket access; filesystem mounts compose with Unix-socket isolation',
+    },
+    constructed_root: true,
+  }, {
+    filesystem: [{ path: '/home/operator/work', access: 'write' }],
+    network: { mode: 'list' },
+    unix_sockets: { mode: 'closed' },
+  });
+  assert.deepEqual(confinedSocketBuckets.applied.reasons, [{
+    label: 'Note',
+    detail: 'bubblewrap enforces closed Unix-socket access; filesystem mounts compose with Unix-socket isolation',
+  }], 'a fully enforced constructed-root socket boundary keeps its composition note visible');
   const inheritedRootBuckets = model.sandboxRuleBuckets({
     filesystem: { outcome: 'enforced', detail: '' },
     unix_sockets: { outcome: 'enforced', detail: '' },
@@ -1724,11 +1740,8 @@ test('sandbox editor discloses the Linux filesystem-root consequence of blocking
   assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-engine')), 'packet');
   assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-namespace')), 'private');
   assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-filesystem-root')), 'separate');
-  const adjustment = host.querySelector('.sbx-socket-adjustment-notice');
-  assert.match(adjustment.textContent, /Filtering engine → Packet filter/);
-  assert.match(adjustment.textContent, /Network namespace → Private, routed/);
-  assert.match(adjustment.textContent, /Filesystem root → Separate\/minimal/);
-  assert.match(adjustment.textContent, /baseline and destination rules were left unchanged/);
+  assertAbsent(host.querySelector('.sbx-socket-adjustment-notice'),
+    'the editor shows the resulting boundary, not an intermittent interaction-history banner');
 
   const advanced = host.querySelector('.sbx-advanced-toggle');
   await harness.act(() => harness.fireEvent(advanced, 'click'));

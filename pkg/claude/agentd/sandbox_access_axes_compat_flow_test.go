@@ -184,8 +184,10 @@ func TestSandboxProfileEnforcementPredictionIsOrderedAndCannotGateLaunch(t *test
 	}
 	testharness.DecodeJSON(t, rec, &blocked)
 	require.Len(t, blocked.Targets, 1)
-	assert.Equal(t, harness.AccessPredictionEnforcedPartial,
+	assert.Equal(t, harness.AccessPredictionEnforced,
 		blocked.Targets[0].Axes.UnixSockets.Outcome)
+	assert.Contains(t, blocked.Targets[0].Axes.UnixSockets.Detail,
+		"filesystem mounts compose with Unix-socket isolation")
 	assert.True(t, blocked.Targets[0].Axes.ConstructedRoot)
 
 	// Mutation guard for the same condition: the identical profile WITHOUT the

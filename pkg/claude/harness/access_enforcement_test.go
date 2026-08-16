@@ -69,15 +69,20 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 		h, sandboxpolicy.ImplementationTclaudeLayer, closed, ClaudeSandboxOff, "linux",
 	)
 	require.NoError(t, err)
-	assert.Equal(t, EnforcePartial, caps.socketClosed)
+	assert.Equal(t, EnforceFull, caps.socketClosed)
 	_, notices, err := PlanAccessEnforcement(closed, caps)
 	require.NoError(t, err)
-	require.Len(t, notices, 1,
-		"claiming Full or suppressing the partial disclosure must fail this guard")
-	assert.Equal(t, sandboxpolicy.AccessNoticeEffectEnforcedWider, notices[0].Effect)
-	assert.Contains(t, notices[0].Detail, "readable/writable directories")
-	assert.Contains(t, notices[0].Detail, "remain reachable")
-	assert.Contains(t, notices[0].Detail, "outside")
+	assert.Empty(t, notices,
+		"filesystem mount composition is disclosed in the Full prediction, not as degradation")
+	predictedCaps, err := PredictAccessEnforcement(
+		h, sandboxpolicy.ImplementationTclaudeLayer, closed, ClaudeSandboxOff, "linux",
+	)
+	require.NoError(t, err)
+	closedPrediction := DescribePredictedAccess(closed, predictedCaps)
+	assert.Equal(t, AccessPredictionEnforced, closedPrediction.UnixSockets.Outcome)
+	assert.Contains(t, closedPrediction.UnixSockets.Detail, "filesystem mounts compose")
+	assert.Contains(t, closedPrediction.UnixSockets.Detail, "avoid mounting directories containing sockets")
+	assert.Contains(t, closedPrediction.UnixSockets.Detail, "control socket remains reachable by design")
 
 	explicitOpenSockets := sandboxpolicy.ResolvedAxes{
 		Network:     sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeClosed},
@@ -116,18 +121,18 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 		h, sandboxpolicy.ImplementationTclaudeLayer, closedNetworkSocketList, ClaudeSandboxOff, "linux",
 	)
 	require.NoError(t, err)
-	assert.Equal(t, EnforcePartial, caps.socketList)
+	assert.Equal(t, EnforceFull, caps.socketList)
 	rendered, notices, err := PlanAccessEnforcement(closedNetworkSocketList, caps)
 	require.NoError(t, err)
 	assert.Equal(t, closedNetworkSocketList.UnixSockets, rendered.UnixSockets)
-	require.Len(t, notices, 1,
-		"claiming Full or suppressing the partial disclosure must fail this guard")
-	assert.Equal(t, "partial_mechanism", notices[0].Reason)
-	assert.Equal(t, sandboxpolicy.AccessNoticeEffectEnforcedWider, notices[0].Effect)
-	assert.Contains(t, notices[0].Detail, "listed Unix sockets are bound")
-	assert.Contains(t, notices[0].Detail, "readable/writable directories")
-	assert.Contains(t, notices[0].Detail, "remain reachable")
-	assert.Contains(t, notices[0].Detail, "outside")
+	assert.Empty(t, notices)
+	predictedCaps, err = PredictAccessEnforcement(
+		h, sandboxpolicy.ImplementationTclaudeLayer, closedNetworkSocketList, ClaudeSandboxOff, "linux",
+	)
+	require.NoError(t, err)
+	listPrediction := DescribePredictedAccess(closedNetworkSocketList, predictedCaps)
+	assert.Equal(t, AccessPredictionEnforced, listPrediction.UnixSockets.Outcome)
+	assert.Contains(t, listPrediction.UnixSockets.Detail, "filesystem mounts compose")
 
 	// TCL-798: the constructed root no longer requires giving up host
 	// networking, so both restricting tiers are enforceable here — Partial, and
@@ -258,7 +263,7 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 	assert.Equal(t, EnforceNone, caps.socketClosed)
 
 	// A deny entry renders the filtered posture instead of host-open. Its
-	// private network namespace and constructed root enforce the same partial
+	// private network namespace and constructed root enforce the same full
 	// socket boundary as closed networking.
 	hostOpenDeniedClosedSockets := hostOpenClosedSockets
 	hostOpenDeniedClosedSockets.Network = sandboxpolicy.NetworkRules{
@@ -271,7 +276,7 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 	)
 	require.NoError(t, err)
 	caps = accessEnforcementFromTable(filteredRow)
-	assert.Equal(t, EnforcePartial, caps.socketClosed)
+	assert.Equal(t, EnforceFull, caps.socketClosed)
 	assert.NotContains(t, caps.mechanism, "host-network",
 		"a filtered private namespace must retain the gateway mechanism name")
 	rendered, notices, err = PlanAccessEnforcement(
@@ -279,9 +284,9 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, sandboxpolicy.AccessModeClosed,
 		rendered.UnixSockets.Mode)
-	require.Len(t, notices, 2,
-		"the default-allow DNS deny and socket remainder are both partial")
-	assert.Contains(t, notices[0].Detail, "listed Unix sockets are bound")
+	require.Len(t, notices, 1,
+		"only the default-allow DNS deny is partial; the socket boundary is full")
+	assert.Contains(t, notices[0].Detail, "DNS")
 
 	// The dashboard's block-all baseline is a list posture, not the legacy
 	// exact `closed` spelling. It still builds a private network namespace and
@@ -298,7 +303,7 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 	)
 	require.NoError(t, err)
 	caps = accessEnforcementFromTable(filteredRow)
-	assert.Equal(t, EnforcePartial, caps.socketClosed)
+	assert.Equal(t, EnforceFull, caps.socketClosed)
 	rendered, _, err = PlanAccessEnforcement(
 		blockedBaselineClosedSockets, caps)
 	require.NoError(t, err)
@@ -1653,7 +1658,7 @@ func TestPrivateRoutedNamespaceRequiresExactReadyLinuxLayer(t *testing.T) {
 				OpenCodeSandboxTclaudeLayer, "linux", true)
 			require.NoError(t, err)
 			assert.Equal(t, EnforceFull, row.NetworkList)
-			assert.Equal(t, EnforcePartial, row.SocketClosed)
+			assert.Equal(t, EnforceFull, row.SocketClosed)
 			assert.True(t, row.ConstructedRoot)
 		})
 	}
