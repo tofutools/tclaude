@@ -83,9 +83,10 @@ daemon state; migrated automatically from the legacy `~/.tclaude/config.json`):
 
 ```bash
 tclaude proxy github pr create --title "Fix the flake" --body-file pr.md
-tclaude proxy github pr ls|view|checks|comments|ready|comment|edit|merge
-tclaude proxy github issue ls|view|comment
-tclaude proxy github run ls|log-failed|artifacts|download
+tclaude proxy github pr view 2277
+# other pr verbs: ls, checks, comments, ready, comment, edit, merge
+# issue verbs:    ls, view, comment
+# run verbs:      ls, log-failed, artifacts, download
 ```
 
 Operations are restricted to the repository that the agent's own recorded
@@ -112,7 +113,7 @@ Permissions:
 ```bash
 tclaude proxy linear whoami            # key identity + reachable teams
 tclaude proxy linear issue view TCL-123
-tclaude proxy linear issue ls|search|comments|comment|create|update|link
+# other issue verbs: ls, search, comments, comment, create, update, link
 ```
 
 There is no CLI tool underneath: the daemon speaks Linear GraphQL directly,

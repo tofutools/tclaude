@@ -61,8 +61,13 @@ Client private keys exist only inside the one-time `.p12` you install on the
 device — the host keeps no copy.
 
 On a phone: install the `.p12` (iOS profile install; Android VPN & app user
-certificate), browse to `https://host:8443`, accept the self-signed warning
-(on a LAN), pick the certificate when prompted, and enter the passphrase.
+certificate) and trust the generated CA on the device — the add-device flow
+offers a CA download. With the CA trusted, the browser reaches
+`https://host:8443` without warnings; pick the certificate when prompted and
+enter the passphrase. Do not click through a certificate warning instead of
+installing the CA: an untrusted server certificate on this setup means the
+CA is missing from the device — or that something else is answering as the
+dashboard and could capture the passphrase.
 You get the full desktop dashboard — it is desktop-first, with no PWA or Web
 Push on a self-signed LAN setup.
 

@@ -188,9 +188,11 @@ The tmux session name is the first 8 characters of the session id, or your
 directory's basename instead (sanitized, capped at 32 characters,
 disambiguated with `-2`, `-3`, … suffixes).
 
-Plain launches are auto-enrolled as agents and get a deterministic display
-name such as `20260728-1017-f3e10b1d` (launch timestamp plus a stable
-agent-id suffix). The opt-in `session.auto_name_from_prompt` config setting
+A launch that reaches `agentd` is auto-enrolled as an agent and gets a
+deterministic display name such as `20260728-1017-f3e10b1d` (launch
+timestamp plus a stable agent-id suffix). A solo launch — `--no-daemon`, or
+no daemon running — stays a plain session with no agent identity, mail, or
+permissions; it can be promoted later. The opt-in `session.auto_name_from_prompt` config setting
 (default false, since it costs a model call) instead infers a short name from
 the session's first prompt. An explicit rename always wins.
 

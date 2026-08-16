@@ -161,6 +161,11 @@ Deleting a conversation that has an active session asks what to do: `y`
 deletes the conversation and stops the session, `s` stops the session only,
 `n` cancels.
 
+For a Claude Code entry, delete removes the transcript file itself. For an
+entry from any other harness, it removes only tclaude's index rows — the
+conversation disappears from the merged list, but the harness's own
+transcript store is untouched.
+
 ## Semantic search
 
 Semantic search ranks conversations by meaning rather than exact text, using
