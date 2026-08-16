@@ -106,6 +106,28 @@ func TestCreateDashboardWorktreeRetriesTrackingConfigLock(t *testing.T) {
 		"rev-parse", "--abbrev-ref", "retry-tracking@{upstream}"))
 }
 
+func TestCreateDashboardWorktreeRemovesSandboxConfigLock(t *testing.T) {
+	repo, _, _, _ := worktreeFetchFixture(t)
+	lockPath := filepath.Join(repo, ".git", "config.lock")
+	require.NoError(t, os.WriteFile(lockPath, nil, 0o444))
+	t.Cleanup(func() { _ = os.Remove(lockPath) })
+
+	waits := 0
+	path, retries, fallback, err := createDashboardWorktree(context.Background(), repo,
+		"sandbox-lock", "refs/remotes/upstream/main", "", func(context.Context) error {
+			waits++
+			return nil
+		}, nil)
+	require.NoError(t, err)
+	assert.Zero(t, retries)
+	assert.Zero(t, waits)
+	assert.False(t, fallback)
+	assert.DirExists(t, path)
+	assert.NoFileExists(t, lockPath)
+	assert.Equal(t, "upstream/main", gitOutput(t, repo,
+		"rev-parse", "--abbrev-ref", "sandbox-lock@{upstream}"))
+}
+
 func TestCreateDashboardWorktreeFallsBackAfterTrackingRetries(t *testing.T) {
 	repo, _, _, _ := worktreeFetchFixture(t)
 	lockPath := filepath.Join(repo, ".git", "config.lock")

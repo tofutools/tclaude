@@ -201,6 +201,29 @@ func TestConfigLockErrorClassification(t *testing.T) {
 	assert.False(t, IsUpstreamConfigLockError(fmt.Errorf("could not lock config file .git/config: Permission denied")))
 }
 
+func TestRemoveSandboxConfigLockInPreservesOtherLockShapes(t *testing.T) {
+	tests := []struct {
+		name string
+		data []byte
+		perm os.FileMode
+	}{
+		{name: "writable empty Git lock", perm: 0o644},
+		{name: "read-only nonempty file", data: []byte("config in progress"), perm: 0o444},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repoPath, _ := setupTestRepo(t)
+			lockPath := filepath.Join(repoPath, ".git", "config.lock")
+			require.NoError(t, os.WriteFile(lockPath, tt.data, tt.perm))
+
+			removed, err := RemoveSandboxConfigLockIn(repoPath)
+			require.NoError(t, err)
+			assert.False(t, removed)
+			assert.FileExists(t, lockPath)
+		})
+	}
+}
+
 func TestFindSubRepos(t *testing.T) {
 	// A "virtual monorepo": a plain dir holding docs plus nested git
 	// repos at varying depths — exactly the layout RepoRootForPath

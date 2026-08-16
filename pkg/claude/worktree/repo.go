@@ -700,6 +700,51 @@ func IsConfigLockError(err error) bool {
 		strings.Contains(msg, "File exists")
 }
 
+// RemoveSandboxConfigLockIn removes the read-only empty config.lock sentinel
+// created by harness sandboxes when they protect repository configuration.
+// The sentinel lives in the real shared Git directory and can outlive the
+// sandbox mount that needed it, at which point daemon-side Git mistakes it for
+// an active config transaction.
+//
+// A real Git lock is deliberately left alone. Cleanup requires the repository
+// config to be a normal owner-writable file and its sibling lock to be a
+// regular, empty, exactly 0444 file: the observed sandbox fingerprint. Any
+// other shape continues through the ordinary retry/fallback path.
+func RemoveSandboxConfigLockIn(dir string) (bool, error) {
+	common, err := gitIn(dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return false, fmt.Errorf("resolve Git common dir for config-lock cleanup: %w", err)
+	}
+	common = filepath.Clean(strings.TrimSpace(common))
+	if common == "." || !filepath.IsAbs(common) {
+		return false, fmt.Errorf("resolve Git common dir for config-lock cleanup: unsafe path %q", common)
+	}
+
+	configInfo, err := os.Lstat(filepath.Join(common, "config"))
+	if err != nil {
+		return false, fmt.Errorf("inspect Git config for config-lock cleanup: %w", err)
+	}
+	if !configInfo.Mode().IsRegular() || configInfo.Mode().Perm()&0o200 == 0 {
+		return false, nil
+	}
+
+	lockPath := filepath.Join(common, "config.lock")
+	lockInfo, err := os.Lstat(lockPath)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect Git config lock: %w", err)
+	}
+	if !lockInfo.Mode().IsRegular() || lockInfo.Size() != 0 || lockInfo.Mode().Perm() != 0o444 {
+		return false, nil
+	}
+	if err := os.Remove(lockPath); err != nil {
+		return false, fmt.Errorf("remove sandbox Git config lock %s: %w", lockPath, err)
+	}
+	return true, nil
+}
+
 // SetBranchUpstreamIn completes the tracking setup that `git worktree add -b`
 // attempted automatically. upstream may be a full remote-tracking ref such as
 // refs/remotes/origin/main; Git stores its canonical remote + merge pair.
