@@ -7,38 +7,45 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 )
 
-const (
-	tmuxDetachNormalizeOption    = "@tclaude_detach_normalize"
-	tmuxDetachNormalizeHookIndex = "9001136"
-)
+const tmuxDetachNormalizeHookIndex = "9001136"
 
-// ConfigureTmuxDetachNormalization opts one managed session into the shared
-// client-detached hook. A global hook in a dedicated array slot is necessary for detach
-// paths with no returning tclaude caller, notably switch-client from an
-// agentd TUI and clients attached directly with tmux. The per-session option
-// keeps unrelated sessions on the shared tclaude tmux server untouched.
+// ConfigureTmuxDetachNormalization installs the client-detached hook that
+// restores one managed session to the canonical detached size. The hook is
+// necessary for detach paths with no returning tclaude caller, notably
+// switch-client from an agentd TUI and clients attached directly with tmux.
+//
+// The hook is SESSION-scoped with the session name baked in as a literal, and
+// its body is plain tmux commands — deliberately not the earlier global
+// `run-shell -C "… #{session_name} …"` formulation. That formulation
+// segfaulted the shared tmux server (observed on tmux 3.7b): run-shell defers
+// its command through a callback attributed to the detaching client, and when
+// several clients detach at once while other commands (for example
+// NormalizeTmuxPaneAfterDetach from a returning caller) interleave in the
+// server's command queue, the callback can run after that client is freed —
+// a use-after-free in cmdq_next → proc_get_peer_uid that takes down every
+// agent on the server. Directly-queued hook commands do not take that
+// deferred path, and the literal target also fixes a mistargeting bug the
+// global hook had: with several simultaneous detaches, #{session_name}
+// resolution after client destruction could land every resize on one session.
+//
+// Installation is idempotent: every call overwrites the same tclaude-owned
+// hook-array slot on the same session, and the hook dies with the session, so
+// nothing global is left behind. Operator hooks at other indices are never
+// touched.
 func ConfigureTmuxDetachNormalization(tmuxSession string) {
 	if tmuxSession == "" {
 		return
 	}
 	target := clcommon.ExactTarget(tmuxSession) + ":"
-	_ = clcommon.TmuxCommand("set-option", "-t", target,
-		tmuxDetachNormalizeOption, "on").Run()
-	ensureTmuxDetachNormalizeHook()
-}
-
-func ensureTmuxDetachNormalizeHook() {
-	// A fixed, tclaude-owned hook-array slot makes concurrent installation
-	// idempotent: every caller overwrites the same entry. An absent-check plus
-	// append is not atomic across tmux client command queues — concurrent
-	// launches can all observe absence before any queued append executes.
-	// Setting one explicit slot preserves every operator hook at other indices
-	// and self-repairs if this slot is later removed or replaced.
-	hook := "if-shell -F '#{&&:#{==:#{" + tmuxDetachNormalizeOption +
-		"},on},#{==:#{session_attached},0}}' '" +
-		"run-shell -C \"" + tmuxDetachNormalizeCommand("=#{session_name}:") + "\"'"
-	_ = clcommon.TmuxCommand("set-hook", "-g",
+	hook := "if-shell -F -t " + target + " '#{==:#{session_attached},0}' '" +
+		tmuxDetachNormalizeCommand(target) + "'"
+	_ = clcommon.TmuxCommand("set-hook", "-t", target,
 		"client-detached["+tmuxDetachNormalizeHookIndex+"]", hook).Run()
+	// Long-lived tmux servers may still carry the crash-prone global hook an
+	// earlier tclaude installed; drop it so an upgrade actually ends the
+	// segfaults without a server restart. Best-effort and idempotent.
+	_ = clcommon.TmuxCommand("set-hook", "-gu",
+		"client-detached["+tmuxDetachNormalizeHookIndex+"]").Run()
 }
 
 // NormalizeTmuxPaneAfterDetach restores a managed window to the canonical

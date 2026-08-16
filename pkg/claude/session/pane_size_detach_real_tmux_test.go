@@ -16,6 +16,10 @@ func TestDetachSizeNormalizationRealTmuxHookAndAttachedGuard(t *testing.T) {
 	tmux := withIsolatedRealTmux(t)
 	require.NoError(t, tmux.Command("set-hook", "-g", "client-detached[0]", "display-message operator-zero").Run())
 	require.NoError(t, tmux.Command("set-hook", "-g", "client-detached[100]", "display-message operator-hundred").Run())
+	// A crash-prone legacy global hook from an earlier tclaude must be swept
+	// away by the first configure call on an upgraded binary.
+	require.NoError(t, tmux.Command("set-hook", "-g",
+		"client-detached["+tmuxDetachNormalizeHookIndex+"]", "display-message legacy-normalize").Run())
 	require.NoError(t, launchDetachedTmuxSession("detach-size", t.TempDir(), "exec sleep 300"),
 		"detached creation must install the normalization hook before any client attaches")
 
@@ -28,22 +32,21 @@ func TestDetachSizeNormalizationRealTmuxHookAndAttachedGuard(t *testing.T) {
 		}()
 	}
 	installers.Wait()
-	hooks, err := tmux.Command("show-hooks", "-g", "client-detached").Output()
+	globalHooks, err := tmux.Command("show-hooks", "-g", "client-detached").Output()
 	require.NoError(t, err)
-	require.Contains(t, string(hooks), "client-detached[0] display-message operator-zero")
-	require.Contains(t, string(hooks), "client-detached[100] display-message operator-hundred")
-	require.Contains(t, string(hooks), "client-detached["+tmuxDetachNormalizeHookIndex+"]")
-	require.Equal(t, 1, strings.Count(string(hooks), tmuxDetachNormalizeOption))
+	require.Contains(t, string(globalHooks), "client-detached[0] display-message operator-zero")
+	require.Contains(t, string(globalHooks), "client-detached[100] display-message operator-hundred")
+	require.NotContains(t, string(globalHooks), "client-detached["+tmuxDetachNormalizeHookIndex+"]",
+		"legacy global normalization hook must be removed")
+	sessionHooks, err := tmux.Command("show-hooks", "-t", "=detach-size:", "client-detached").Output()
+	require.NoError(t, err)
+	require.Equal(t, 1, strings.Count(string(sessionHooks), "client-detached["+tmuxDetachNormalizeHookIndex+"]"))
 
-	// Replacing the global hook array removes our entry. The next attach setup
-	// must inspect the actual hooks and repair it without replacing the new
-	// operator entry.
-	require.NoError(t, tmux.Command("set-hook", "-g", "client-detached[0]", "display-message operator-replacement").Run())
+	// Re-running configure must stay idempotent and keep operator hooks.
 	ConfigureTmuxDetachNormalization("detach-size")
-	hooks, err = tmux.Command("show-hooks", "-g", "client-detached").Output()
+	sessionHooks, err = tmux.Command("show-hooks", "-t", "=detach-size:", "client-detached").Output()
 	require.NoError(t, err)
-	require.Contains(t, string(hooks), "client-detached[0] display-message operator-replacement")
-	require.Equal(t, 1, strings.Count(string(hooks), tmuxDetachNormalizeOption))
+	require.Equal(t, 1, strings.Count(string(sessionHooks), "client-detached["+tmuxDetachNormalizeHookIndex+"]"))
 
 	// Control mode is a real tmux client without a terminal-emulator dependency,
 	// so this stays stable on headless CI while exercising the same server hook.
