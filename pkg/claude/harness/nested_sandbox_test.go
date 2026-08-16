@@ -190,7 +190,9 @@ func TestResolveClaudeLaunchExecutableDoesNotExecuteCandidate(t *testing.T) {
 
 	resolved, err := ResolveClaudeLaunchExecutable()
 	require.NoError(t, err)
-	assert.Equal(t, executable, resolved.Path)
+	canonicalExecutable, err := filepath.EvalSymlinks(executable)
+	require.NoError(t, err)
+	assert.Equal(t, canonicalExecutable, resolved.Path)
 	assert.NoFileExists(t, sentinel,
 		"ordinary tclaude-layer resolution must not run code outside the sandbox")
 }
