@@ -207,9 +207,11 @@ func TestRemoveSandboxConfigLockInPreservesOtherLockShapes(t *testing.T) {
 		name string
 		data []byte
 		perm os.FileMode
+		age  time.Duration
 	}{
 		{name: "writable empty Git lock", perm: 0o644},
 		{name: "fresh read-only empty Git lock", perm: 0o444},
+		{name: "recent read-only empty Git lock", perm: 0o444, age: 2 * time.Second},
 		{name: "read-only nonempty file", data: []byte("config in progress"), perm: 0o444},
 	}
 	for _, tt := range tests {
@@ -217,6 +219,10 @@ func TestRemoveSandboxConfigLockInPreservesOtherLockShapes(t *testing.T) {
 			repoPath, _ := setupTestRepo(t)
 			lockPath := filepath.Join(repoPath, ".git", "config.lock")
 			require.NoError(t, os.WriteFile(lockPath, tt.data, tt.perm))
+			if tt.age > 0 {
+				stamp := time.Now().Add(-tt.age)
+				require.NoError(t, os.Chtimes(lockPath, stamp, stamp))
+			}
 
 			removed, err := RemoveSandboxConfigLockIn(repoPath)
 			require.NoError(t, err)

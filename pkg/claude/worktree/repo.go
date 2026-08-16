@@ -186,7 +186,7 @@ var worktreePruneMu sync.Mutex
 // it read before A's removal.
 var sandboxConfigLockCleanupMu sync.Mutex
 
-const sandboxConfigLockMinAge = time.Second
+const sandboxConfigLockMinAge = 10 * time.Second
 
 // PruneProtectionRestoreError means prune may have cleared the requested
 // invisible records, but tclaude could not restore one of the temporary locks
@@ -718,11 +718,11 @@ func IsConfigLockError(err error) bool {
 //
 // A real Git lock is deliberately left alone. Cleanup requires the repository
 // config to be a normal owner-writable file and its sibling lock to be a
-// regular, empty, exactly 0444 file that has remained unchanged for at least
-// one retry interval: the observed stale sandbox fingerprint. The age guard
-// avoids the brief empty-file window of a real Git lock created under an
-// unusually restrictive umask. Any other shape continues through the ordinary
-// retry/fallback path.
+// regular, empty, exactly 0444 file that has remained unchanged for the full
+// dashboard retry window: the observed stale sandbox fingerprint. The age
+// guard avoids both the brief empty-file window and the normal lifetime of a
+// real Git lock created under an unusually restrictive umask. Any other shape
+// continues through the ordinary retry/fallback path.
 func RemoveSandboxConfigLockIn(dir string) (bool, error) {
 	return removeSandboxConfigLockIn(dir, nil)
 }
