@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -184,6 +185,98 @@ func isConvTransitionStart(input HookCallbackInput) bool {
 	switch input.Source {
 	case "clear", "resume", "compact":
 		return true
+	}
+	return false
+}
+
+// Caps for the transcript head-scan in isVerifiedConvContinuation. The
+// lineage marker (the first copied user/assistant entry) sits right after the
+// rotated file's preamble (custom-title / mode / file-history-snapshot
+// records), so a bounded read finds it; the byte cap keeps a pathological
+// preamble (huge file-history snapshots) from turning every foreign-hook drop
+// into an unbounded file read. `var` so tests can shrink them.
+var (
+	convContinuationScanMaxBytes int64 = 8 << 20
+	convContinuationScanMaxLines       = 500
+)
+
+// convLineageProbe is the per-line projection isVerifiedConvContinuation
+// reads. Claude Code writes BOTH spellings on ordinary transcript entries:
+// `session_id` (the conv the entry was originally created under) and
+// `sessionId` (the conv whose file the entry lives in). In a file produced by
+// an in-process conversation rotation (observed with the /remote-control
+// bridge handoff, which copies the full history into a fresh conv file) the
+// copied entries therefore carry session_id=<old conv> next to
+// sessionId=<new conv> — a marker no independent one-shot (`claude -p`, a
+// plugin probe) ever produces, because a one-shot's entries were all created
+// under its own conv-id. Top-level fields only: conversation CONTENT that
+// merely quotes the old conv-id (pasted JSONL, a log excerpt) lives inside
+// nested message strings and cannot match.
+type convLineageProbe struct {
+	SessionID    string `json:"session_id"`
+	SessionIDAlt string `json:"sessionId"`
+}
+
+// isVerifiedConvContinuation reports whether the mismatched conv-id a hook
+// carries belongs to a transcript that is a verified in-process continuation
+// of the conv the session row tracks — i.e. the rotation is real but was
+// never announced by a transition SessionStart the foreign-process guard
+// accepts. Claude Code's /remote-control bridge activation is the observed
+// producer: it rotates the conversation to a fresh conv-id, copies the full
+// history into the new file, and announces it only with a
+// SessionStart(source=startup) — indistinguishable by source from a foreign
+// one-shot booting in the pane's env, so the guard dropped every later hook
+// and the session froze on its pre-rotation status.
+//
+// Verification reads a bounded head of the new conv's transcript (the hook's
+// own transcript_path when it names <conv-id>.jsonl, else the path derived
+// from the hook/session cwd) and looks for a top-level entry created under
+// the tracked conv but stored in the new conv's file — see convLineageProbe.
+// Failure modes all fail closed to the existing drop: a missing file (the
+// rotation's own SessionStart can fire before the copied file exists — the
+// next hook retries), a marker beyond the scan caps, or a genuinely foreign
+// transcript whose entries only ever name its own conv-id.
+func isVerifiedConvContinuation(input HookCallbackInput, state *SessionState) bool {
+	if input.ConvID == "" || state == nil || state.ConvID == "" {
+		return false
+	}
+	path := input.TranscriptPath
+	if filepath.Base(path) != input.ConvID+".jsonl" {
+		path = ""
+	}
+	if path == "" {
+		cwd := input.Cwd
+		if cwd == "" {
+			cwd = state.Cwd
+		}
+		if cwd == "" {
+			return false
+		}
+		projectDir := convops.GetClaudeProjectPath(cwd)
+		if projectDir == "" {
+			return false
+		}
+		path = filepath.Join(projectDir, input.ConvID+".jsonl")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+
+	reader := bufio.NewReader(io.LimitReader(f, convContinuationScanMaxBytes))
+	for range convContinuationScanMaxLines {
+		line, err := reader.ReadBytes('\n')
+		if len(line) > 0 {
+			var probe convLineageProbe
+			if json.Unmarshal(line, &probe) == nil &&
+				probe.SessionID == state.ConvID && probe.SessionIDAlt == input.ConvID {
+				return true
+			}
+		}
+		if err != nil {
+			return false
+		}
 	}
 	return false
 }
@@ -761,7 +854,20 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 	// BEFORE the row advances, so the migration-failure retry keeps
 	// working: post-/clear hooks carry the announced conv-id and pass
 	// this guard via the pending_conv match, while a foreign conv-id
-	// was never announced and cannot match. PostCompact is exempt — it
+	// was never announced and cannot match.
+	//
+	// One rotation is real but NEVER announced by an accepted source:
+	// Claude Code's /remote-control bridge handoff rotates the
+	// conversation to a fresh conv-id (full history copied into the new
+	// file) and fires only SessionStart(source=startup) — by source
+	// alone a foreign one-shot. For that case a mismatched hook gets one
+	// more chance before the drop: a bounded transcript head-scan that
+	// proves the new conv is an in-process continuation of the tracked
+	// one (isVerifiedConvContinuation). A verified continuation is
+	// recorded as pending_conv exactly like an announced transition, so
+	// the same conv-advance/identity-migration/retry machinery runs.
+	//
+	// PostCompact is exempt — it
 	// only resets per-env-session compact state and returns before any
 	// status or conv mutation, and it may legitimately arrive carrying
 	// a rotated conv-id.
@@ -789,14 +895,29 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 		} else if pending, err := db.GetSessionPendingConv(state.ID); err != nil || pending != input.ConvID {
 			if err != nil {
 				slog.Warn("failed to read pending conv; dropping mismatched-conv hook", "error", err, "module", "hooks")
+				return nil
+			}
+			if isVerifiedConvContinuation(input, state) {
+				// An unannounced in-process rotation (the /remote-control
+				// bridge handoff) proven by transcript lineage. Record it
+				// as pending_conv like an announced transition would —
+				// later hooks then pass via the pending match without
+				// re-reading the transcript, even if this call's
+				// conv-advance/migration fails and has to retry.
+				slog.Info("accepting unannounced conv rotation: transcript verified as in-process continuation",
+					"event", input.HookEventName, "new_conv", input.ConvID,
+					"tracked_conv", state.ConvID, "session_id", state.ID, "module", "hooks")
+				if err := db.SetSessionPendingConv(state.ID, input.ConvID); err != nil {
+					slog.Warn("failed to record pending conv", "error", err, "module", "hooks")
+				}
 			} else {
 				slog.Info("ignoring hook from foreign claude process",
 					"event", input.HookEventName, "foreign_conv", input.ConvID,
 					"tracked_conv", state.ConvID, "session_id", state.ID, "module", "hooks")
+				// Deliberately NOT stamping last_hook: a foreign process's
+				// event is no evidence the host session itself is alive.
+				return nil
 			}
-			// Deliberately NOT stamping last_hook: a foreign process's
-			// event is no evidence the host session itself is alive.
-			return nil
 		}
 	}
 
