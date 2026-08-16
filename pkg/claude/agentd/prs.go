@@ -209,7 +209,7 @@ func refreshPresentedPR(agentID, rawURL, key string) {
 }
 
 func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
-	args, ok := presentedPRViewArgs(rawURL, "number,url,state,isDraft,statusCheckRollup", presentedPRGitProxyEnabled())
+	args, ok := presentedPRViewArgs(rawURL, "number,url,state,isDraft,statusCheckRollup", presentedPRSecurityActive())
 	if !ok {
 		return presentedPRInfo{}, false
 	}
@@ -244,7 +244,7 @@ func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
 // set only — no isDraft, for the reason documented there. A draft that has
 // to come through this retry renders as a plain open badge.
 func livePresentedPRInfoWithoutChecks(rawURL string) (presentedPRInfo, bool) {
-	args, ok := presentedPRViewArgs(rawURL, "number,url,state", presentedPRGitProxyEnabled())
+	args, ok := presentedPRViewArgs(rawURL, "number,url,state", presentedPRSecurityActive())
 	if !ok {
 		return presentedPRInfo{}, false
 	}
@@ -727,13 +727,23 @@ func validateAgentPRURL(rawURL string, strict bool) error {
 	return nil
 }
 
-func presentedPRGitProxyEnabled() bool {
+func presentedPRGitProxyMode() (bool, error) {
 	cfg, err := config.Load()
-	return err == nil && cfg.GitProxyEnabled()
+	if err != nil {
+		return false, err
+	}
+	return cfg.GitProxyEnabled(), nil
+}
+
+// presentedPRSecurityActive fails closed when configuration cannot be read.
+// A transient config fault must not silently restore legacy credential paths.
+func presentedPRSecurityActive() bool {
+	enabled, err := presentedPRGitProxyMode()
+	return err != nil || enabled
 }
 
 func listVisiblePresentedPRs() (map[string][]db.AgentPR, error) {
-	if presentedPRGitProxyEnabled() {
+	if presentedPRSecurityActive() {
 		return db.ListValidatedUnhandledAgentPRs()
 	}
 	return db.ListUnhandledAgentPRs()

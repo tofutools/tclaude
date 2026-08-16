@@ -79,6 +79,22 @@ func TestPresentPR_GitProxyDisabledAcceptsLegacyHTTPURL(t *testing.T) {
 	assert.Equal(t, prURL, member.PresentedPRs[0].URL)
 }
 
+func TestPresentPR_ConfigFailureDoesNotEnableLegacyMode(t *testing.T) {
+	f := newFlow(t)
+	const worker = "pprf-aaaa-bbbb-cccc-dddd"
+	f.HaveConvWithTitle(worker, "worker")
+	f.HaveAliveSession(worker, "lbl-pprf", "tmux-pprf", f.TestCwd("not-a-repo"))
+	require.NoError(t, db.SetAgentPermissionOverride(worker, agentd.PermSelfPR, db.PermEffectGrant, "test"))
+	savePresentedPRPolicy(t, "github.com/tofutools")
+	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte("{not-json"), 0o600))
+
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(
+		testharness.JSONRequest(t, http.MethodPost, "/v1/whoami/prs",
+			map[string]any{"url": "https://example.com/arbitrary/review/1"}), worker))
+	require.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "could not determine Git proxy mode")
+}
+
 type presentPRResp struct {
 	ConvID        string `json:"conv_id"`
 	Handled       bool   `json:"handled"`
