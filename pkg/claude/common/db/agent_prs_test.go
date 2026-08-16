@@ -8,6 +8,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestListUnhandledAgentPRsValidationModes(t *testing.T) {
+	setupTestDB(t)
+	agent, _, err := EnsureAgentForConv("prmode-aaaa-bbbb-cccc-000000000001", "test")
+	require.NoError(t, err)
+	const legacyURL = "https://gitlab.example.com/acme/app/-/merge_requests/1"
+	_, err = UpsertAgentPR(agent, legacyURL, "legacy", "open")
+	require.NoError(t, err)
+
+	all, err := ListUnhandledAgentPRs()
+	require.NoError(t, err)
+	require.Len(t, all[agent], 1, "proxy-disabled callers retain legacy rows")
+
+	validated, err := ListValidatedUnhandledAgentPRs()
+	require.NoError(t, err)
+	assert.Empty(t, validated[agent], "credentialed callers quarantine unproven rows")
+}
+
 func TestUpdateAgentPRState_RefreshesSameStateObservationTime(t *testing.T) {
 	setupTestDB(t)
 	const url = "https://github.com/tofutools/tclaude/pull/125"

@@ -248,6 +248,12 @@ func TestGHProxy_WriteRequiresItsOwnSlug(t *testing.T) {
 			map[string]any{"title": "Add a thing", "body": "why", "base": "main"})
 		require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
 		assert.Equal(t, 1, gh.count())
+		agentID, err := db.AgentIDForConv(gitProxyTestConv)
+		require.NoError(t, err)
+		presented, err := db.GetAgentPR(agentID, "https://github.com/tofutools/tclaude/pull/42")
+		require.NoError(t, err)
+		assert.NotEmpty(t, presented.ValidatedRepoRoot,
+			"a PR created through the repository-gated proxy remains visible to credentialed refresh paths")
 	})
 }
 

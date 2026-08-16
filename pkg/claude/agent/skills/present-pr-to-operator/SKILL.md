@@ -20,7 +20,13 @@ tclaude dashboard:
 tclaude agent present-pr https://github.com/owner/repo/pull/42 --summary "ready for review" --state open
 ```
 
-The URL must be http(s). GitHub PR URLs get a `#42` badge automatically;
+When the Git proxy is active, the URL must be a canonical
+`https://github.com/<owner>/<repo>/pull/<number>` URL. Run the command from that
+repository: the daemon verifies that its origin matches the PR, that the
+repository is inside your recorded launch directory, and that the operator
+allow-listed it in `agent.git_proxy.allowed_remotes`. When the Git proxy is not
+active, presentation retains its legacy behavior and accepts any valid HTTP(S)
+URL without repository or allow-list checks.
 `--summary` is a short optional tooltip/label. The dashboard also keeps its
 existing branch/statusline PR detection and dedupes by PR URL, so presenting a
 PR is safe even when the automatic path already found the same link.

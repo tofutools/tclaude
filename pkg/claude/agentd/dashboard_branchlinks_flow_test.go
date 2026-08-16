@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"net/http"
 	"testing"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
 // Scenario: two agents working on feature branches of a GitHub repo —
@@ -50,6 +52,7 @@ func TestDashboardBranchLinks_SurfacedInSnapshot(t *testing.T) {
 		}))
 
 	f := newFlow(t)
+	savePresentedPRPolicy(t, "github.com/acme")
 	f.HaveGroup("squad")
 	f.HaveAliveSessionOnBranch(aliceConv, "spwn-alice", "tmux-alice", f.TestCwd("wt/login"), "feature-login")
 	f.HaveAliveSessionOnBranch(bobConv, "spwn-bob", "tmux-bob", f.TestCwd("wt/crash"), "bugfix-crash")
@@ -127,8 +130,10 @@ func TestDashboardBranchLinks_DuplicateUsesFreshestPresentedState(t *testing.T) 
 
 	f := newFlow(t)
 	f.HaveGroup("squad")
-	f.HaveAliveSessionOnBranch(conv, "spwn-freshpr", "tmux-freshpr", f.TestCwd("wt/freshpr"), branch)
+	repo := presentedPRTestRepo(t, f, "wt/freshpr", "git@github.com:acme/app.git", "github.com/acme")
+	f.HaveAliveSessionOnBranch(conv, "spwn-freshpr", "tmux-freshpr", repo, branch)
 	f.HaveMember("squad", conv)
+	require.NoError(t, db.SetAgentPermissionOverride(conv, agentd.PermSelfPR, db.PermEffectGrant, "test"))
 	require.NotNil(t, agent.FreshConvRowResolved(conv), "conv_index scan")
 
 	mux := agentd.BuildDashboardHandlerForTest()
@@ -139,9 +144,11 @@ func TestDashboardBranchLinks_DuplicateUsesFreshestPresentedState(t *testing.T) 
 	require.NotNil(t, row)
 	require.Equal(t, "open", row.BranchPRState, "automatic branch cache starts open")
 
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(
+		testharness.JSONRequest(t, http.MethodPost, "/v1/whoami/prs",
+			map[string]any{"url": prURL, "summary": "ready", "state": "open"}), conv))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	agentID, err := db.AgentIDForConv(conv)
-	require.NoError(t, err)
-	_, err = db.UpsertAgentPR(agentID, prURL, "ready", "open")
 	require.NoError(t, err)
 	t.Cleanup(agentd.SetRecentlyMergedPRsResolverForTest(
 		func([]string, int) ([]string, bool) { return []string{prURL}, true }))
@@ -187,6 +194,7 @@ func TestDashboardBranchLinks_BranchOnlyPRCoveredByMergedPoll(t *testing.T) {
 		}))
 
 	f := newFlow(t)
+	savePresentedPRPolicy(t, "github.com/acme")
 	f.HaveGroup("squad")
 	f.HaveAliveSessionOnBranch(conv, "spwn-blonly", "tmux-blonly", f.TestCwd("wt/blonly"), branch)
 	f.HaveMember("squad", conv)

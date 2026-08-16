@@ -9,6 +9,52 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestValidatePresentedPRRemotePolicy(t *testing.T) {
+	allowed := []string{"github.com/tofutools/tclaude"}
+	assert.True(t, presentedPRRemoteAllowed(githubPRRef{repo: "tofutools/tclaude", number: 1}, allowed))
+	assert.False(t, presentedPRRemoteAllowed(githubPRRef{repo: "victim/private", number: 1}, allowed))
+	assert.False(t, presentedPRRemoteAllowed(githubPRRef{repo: "tofutools/tclaude", number: 1}, nil),
+		"an absent allow-list must not silently authorize credential use")
+}
+
+func TestPresentedPRViewArgsNeverUsesURLSelector(t *testing.T) {
+	args, ok := presentedPRViewArgs("https://github.com/tofutools/tclaude/pull/42", "state,statusCheckRollup", true)
+	require.True(t, ok)
+	assert.Equal(t, []string{"pr", "view", "42", "--repo", "tofutools/tclaude", "--json", "state,statusCheckRollup"}, args)
+}
+
+func TestPresentedPRViewArgsUsesLegacyURLSelectorWithoutGitProxy(t *testing.T) {
+	const rawURL = "https://gitlab.example.com/acme/app/-/merge_requests/42"
+	args, ok := presentedPRViewArgs(rawURL, "state", false)
+	require.True(t, ok)
+	assert.Equal(t, []string{"pr", "view", rawURL, "--json", "state"}, args)
+}
+
+func TestValidateAgentPRURLRequiresExactCanonicalSpelling(t *testing.T) {
+	require.NoError(t, validateAgentPRURL("https://github.com/tofutools/tclaude/pull/42", true))
+	for _, rawURL := range []string{
+		"https://github.com//tofutools/tclaude/pull/42",
+		"https://github.com/tofutools/tclaude/pull/42/",
+		"https://github.com/tofutools/tclaude/pull/042",
+		"https://github.com/tofutools/tclaude/pull/42?",
+		"https://github.com/tofutools/tclaude/pull/42#",
+	} {
+		assert.Error(t, validateAgentPRURL(rawURL, true), rawURL)
+	}
+}
+
+func TestValidateAgentPRURLAcceptsHTTPURLsWithoutGitProxy(t *testing.T) {
+	for _, rawURL := range []string{
+		"https://gitlab.example.com/acme/app/-/merge_requests/42",
+		"http://code.example.test/review/7?tab=files",
+	} {
+		require.NoError(t, validateAgentPRURL(rawURL, false), rawURL)
+	}
+	for _, rawURL := range []string{"ssh://example.com/review/7", "/relative", "https:///missing-host"} {
+		assert.Error(t, validateAgentPRURL(rawURL, false), rawURL)
+	}
+}
+
 func TestGitHubPRRefFromURL(t *testing.T) {
 	tests := []struct {
 		name   string

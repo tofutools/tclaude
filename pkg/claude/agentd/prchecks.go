@@ -514,6 +514,11 @@ func (v repoLinksView) withPRChecks(idx map[string]*prChecksSummary) repoLinksVi
 // key is a no-op, and saying "refreshing" there would promise the caller a
 // newer answer that nobody is fetching.
 func schedulePRChecksRefresh(rawURL string) bool {
+	if err := presentedPRRemotePolicyCheck(rawURL); err != nil {
+		slog.Warn("pr-checks: refusing refresh outside git proxy policy",
+			"error", err, "url", rawURL, "module", "agentd")
+		return false
+	}
 	key := prChecksCacheKey(rawURL)
 	if _, busy := prChecksInflight.LoadOrStore(key, struct{}{}); busy {
 		return false
@@ -544,7 +549,11 @@ func schedulePRChecksRefresh(rawURL string) bool {
 // rides an existing `gh pr view`; this one is the extra call a hovering
 // human explicitly asked for.
 func livePRChecksResolver(rawURL string) (prChecksInfo, bool) {
-	out := runInDir("", "gh", "pr", "view", strings.TrimSpace(rawURL), "--json", "state,statusCheckRollup")
+	args, ok := presentedPRViewArgs(rawURL, "state,statusCheckRollup", presentedPRSecurityActive())
+	if !ok {
+		return prChecksInfo{}, false
+	}
+	out := runInDir("", "gh", args...)
 	if out == "" {
 		return prChecksInfo{}, false
 	}

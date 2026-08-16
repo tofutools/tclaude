@@ -59,6 +59,7 @@ func runPRUpdate(w http.ResponseWriter, r *http.Request, target, caller string) 
 		Summary string `json:"summary"`
 		State   string `json:"state"`
 		Handled bool   `json:"handled"`
+		RepoDir string `json:"repo_dir"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -66,7 +67,12 @@ func runPRUpdate(w http.ResponseWriter, r *http.Request, target, caller string) 
 	}
 	body.URL = strings.TrimSpace(body.URL)
 	body.Summary = strings.TrimSpace(body.Summary)
-	if err := validateAgentPRURL(body.URL); err != nil {
+	gitProxyEnabled, err := presentedPRGitProxyMode()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "config", "could not determine Git proxy mode: "+err.Error())
+		return
+	}
+	if err := validateAgentPRURL(body.URL, gitProxyEnabled); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_pr_url", err.Error())
 		return
 	}
@@ -78,6 +84,15 @@ func runPRUpdate(w http.ResponseWriter, r *http.Request, target, caller string) 
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_pr_state", err.Error())
 		return
+	}
+	if gitProxyEnabled && !body.Handled && state != "handled" {
+		repoRoot, err := presentedPRAccessValidator(r.Context(), caller, body.RepoDir, body.URL)
+		if err != nil {
+			writeError(w, http.StatusForbidden, "pr_repo_refused", err.Error())
+			return
+		}
+		body.RepoDir = repoRoot
+		setAuditDetail(r, body.URL)
 	}
 
 	agentID, err := db.AgentIDForConv(target)
@@ -97,7 +112,12 @@ func runPRUpdate(w http.ResponseWriter, r *http.Request, target, caller string) 
 		writePRUpdateResponse(w, target, caller, presentedPRView{URL: body.URL, Number: deriveGitHubPRNumber(body.URL), State: "handled"}, true)
 		return
 	}
-	row, err := db.UpsertAgentPR(agentID, body.URL, body.Summary, state)
+	var row db.AgentPR
+	if gitProxyEnabled {
+		row, err = db.UpsertValidatedAgentPR(agentID, body.URL, body.Summary, state, body.RepoDir)
+	} else {
+		row, err = db.UpsertAgentPR(agentID, body.URL, body.Summary, state)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db", err.Error())
 		return
@@ -120,7 +140,7 @@ func writePRsResponse(w http.ResponseWriter, convID, caller string) {
 		writeError(w, http.StatusNotFound, "not_found", "no agent enrolled for conv "+short8(convID))
 		return
 	}
-	all, err := db.ListUnhandledAgentPRs()
+	all, err := listVisiblePresentedPRs()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db", err.Error())
 		return

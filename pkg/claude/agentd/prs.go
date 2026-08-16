@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -33,6 +34,8 @@ var (
 	presentedPRInflight           sync.Map
 	presentedPRCacheMu            sync.Mutex
 	presentedPRInfoResolver       = livePresentedPRInfoResolver
+	presentedPRAccessValidator    = livePresentedPRAccessValidator
+	presentedPRRemotePolicyCheck  = validatePresentedPRRemotePolicy
 	recentlyMergedPRsResolver     = liveRecentlyMergedPRsResolver
 	recentlyMergedPRSearch        = liveRecentlyMergedPRSearch
 	githubLoginResolver           = liveGitHubLoginResolver
@@ -92,7 +95,7 @@ func presentedPRViews(rows []db.AgentPR) []presentedPRView {
 // stale GitHub PRs schedule an async `gh` refresh, and terminal PRs stay
 // visible for one TTL before being marked handled and omitted.
 func preloadPresentedPRsForDashboard(now time.Time) map[string][]db.AgentPR {
-	all, err := db.ListUnhandledAgentPRs()
+	all, err := listVisiblePresentedPRs()
 	if err != nil {
 		return map[string][]db.AgentPR{}
 	}
@@ -176,6 +179,11 @@ func schedulePresentedPRRefresh(agentID, rawURL string) {
 }
 
 func refreshPresentedPR(agentID, rawURL, key string) {
+	if err := presentedPRRemotePolicyCheck(rawURL); err != nil {
+		slog.Warn("presented-pr: refusing refresh outside git proxy policy",
+			"error", err, "agent_id", agentID, "url", rawURL, "module", "agentd")
+		return
+	}
 	info, ok := presentedPRInfoResolver(rawURL)
 	now := time.Now()
 	if !ok {
@@ -201,7 +209,11 @@ func refreshPresentedPR(agentID, rawURL, key string) {
 }
 
 func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
-	out := runInDir("", "gh", "pr", "view", strings.TrimSpace(rawURL), "--json", "number,url,state,isDraft,statusCheckRollup")
+	args, ok := presentedPRViewArgs(rawURL, "number,url,state,isDraft,statusCheckRollup", presentedPRSecurityActive())
+	if !ok {
+		return presentedPRInfo{}, false
+	}
+	out := runInDir("", "gh", args...)
 	if out == "" {
 		// Same reasoning as ghPRForBranch: the rollup is an enhancement, the
 		// PR's own state is what the badge colour depends on. Retry without
@@ -232,7 +244,11 @@ func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
 // set only — no isDraft, for the reason documented there. A draft that has
 // to come through this retry renders as a plain open badge.
 func livePresentedPRInfoWithoutChecks(rawURL string) (presentedPRInfo, bool) {
-	out := runInDir("", "gh", "pr", "view", strings.TrimSpace(rawURL), "--json", "number,url,state")
+	args, ok := presentedPRViewArgs(rawURL, "number,url,state", presentedPRSecurityActive())
+	if !ok {
+		return presentedPRInfo{}, false
+	}
+	out := runInDir("", "gh", args...)
 	if out == "" {
 		return presentedPRInfo{}, false
 	}
@@ -442,7 +458,7 @@ type dashboardPRTarget struct {
 // page, or a failed search — remains covered by the existing per-PR resolver
 // and the branch-link TTL refresh.
 func pollRecentlyMergedPRs() (bool, error) {
-	all, err := db.ListUnhandledAgentPRs()
+	all, err := listVisiblePresentedPRs()
 	if err != nil {
 		return false, fmt.Errorf("list presented PRs: %w", err)
 	}
@@ -455,7 +471,7 @@ func pollRecentlyMergedPRs() (bool, error) {
 				continue
 			}
 			ref, ok := githubPRRefFromURL(row.PRURL)
-			if !ok {
+			if !ok || presentedPRRemotePolicyCheck(row.PRURL) != nil {
 				continue
 			}
 			targets[ref.key()] = append(targets[ref.key()], row)
@@ -465,6 +481,9 @@ func pollRecentlyMergedPRs() (bool, error) {
 	urlTargets := dashboardPRSearchTargets(time.Now())
 	targetCount := len(targets)
 	for key, t := range urlTargets {
+		if presentedPRRemotePolicyCheck("https://github.com/"+t.repo+"/pull/1") != nil {
+			continue
+		}
 		reposByKey[strings.ToLower(t.repo)] = t.repo
 		if _, dup := targets[key]; !dup {
 			targetCount++
@@ -679,13 +698,20 @@ func presentedPRCacheKey(rawURL string) string {
 	return "ppr_" + hex.EncodeToString(h[:8])
 }
 
-func validateAgentPRURL(rawURL string) error {
+func validateAgentPRURL(rawURL string, strict bool) error {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
 		return fmt.Errorf("PR URL is empty")
 	}
 	if len(rawURL) > maxAgentPRURLLen {
 		return fmt.Errorf("PR URL is too long (%d > %d chars)", len(rawURL), maxAgentPRURLLen)
+	}
+	if strict {
+		ref, ok := githubPRRefFromURL(rawURL)
+		if !ok || rawURL != "https://github.com/"+ref.repo+"/pull/"+strconv.Itoa(ref.number) {
+			return fmt.Errorf("PR URL must have the form https://github.com/<owner>/<repo>/pull/<number>")
+		}
+		return nil
 	}
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -699,6 +725,28 @@ func validateAgentPRURL(rawURL string) error {
 		return fmt.Errorf("PR URL must include a host")
 	}
 	return nil
+}
+
+func presentedPRGitProxyMode() (bool, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return false, err
+	}
+	return cfg.GitProxyEnabled(), nil
+}
+
+// presentedPRSecurityActive fails closed when configuration cannot be read.
+// A transient config fault must not silently restore legacy credential paths.
+func presentedPRSecurityActive() bool {
+	enabled, err := presentedPRGitProxyMode()
+	return err != nil || enabled
+}
+
+func listVisiblePresentedPRs() (map[string][]db.AgentPR, error) {
+	if presentedPRSecurityActive() {
+		return db.ListValidatedUnhandledAgentPRs()
+	}
+	return db.ListUnhandledAgentPRs()
 }
 
 func validateAgentPRSummary(summary string) error {
