@@ -154,6 +154,7 @@ func TestDashboardCodexFastMode_InheritedLaunchSeedsIndicatorUntilRuntimeEvent(t
 	// Runtime telemetry is newer and authoritative even though the launch
 	// inherited Fast mode from the main config.
 	require.NoError(t, cx.WriteThreadSettingsApplied("default"))
+	agentd.ResetCodexContextRefreshForTest()
 	snap = fetchDashSnapshot(t, handler)
 	row = findDashAgent(snap, conv)
 	require.NotNil(t, row)
