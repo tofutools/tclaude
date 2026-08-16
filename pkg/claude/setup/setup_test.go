@@ -55,7 +55,7 @@ func seedSupportedCodexOnPath(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "codex")
-	require.NoError(t, os.WriteFile(bin, []byte("#!/bin/sh\necho 'codex-cli 0.144.1'\n"), 0o755))
+	require.NoError(t, os.WriteFile(bin, []byte("#!/bin/sh\necho 'codex-cli 0.147.0'\n"), 0o755))
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 

@@ -62,14 +62,21 @@ func (codexHookInstaller) AutoTrustSupported() (bool, string) {
 	major, _ := strconv.Atoi(string(m[1]))
 	minor, _ := strconv.Atoi(string(m[2]))
 	patch, _ := strconv.Atoi(string(m[3]))
-	if major != 0 || minor < 139 || minor > 144 || (minor == 144 && patch > 1) {
-		return false, fmt.Sprintf("Codex %s is outside tclaude's verified hook-trust range (0.139.0–0.144.1)", strings.Join([]string{string(m[1]), string(m[2]), string(m[3])}, "."))
+	legacyVerified := major == 0 && minor >= 139 &&
+		(minor < 144 || minor == 144 && patch <= 1)
+	// Re-verified against openai/codex rust-v0.147.0 at commit
+	// be6e8eac029b183056b7e4402879f15d2c85f61b. Its discovery path still
+	// builds the same normalized matcher-less command identity and feeds it
+	// through version_for_toml, so the hashes pinned below remain exact.
+	codex147Verified := major == 0 && minor == 147 && patch == 0
+	if !legacyVerified && !codex147Verified {
+		return false, fmt.Sprintf("Codex %s is outside tclaude's verified hook-trust versions (0.139.0–0.144.1 and 0.147.0)", strings.Join([]string{string(m[1]), string(m[2]), string(m[3])}, "."))
 	}
 	return true, ""
 }
 
 // codexCommandHookHash reproduces Codex's command_hook_hash for the exact
-// matcher-less command hook tclaude installs. Codex 0.144.1 builds a normalized
+// matcher-less command hook tclaude installs. Codex 0.144.1 and 0.147.0 build a normalized
 // TOML identity, converts it to canonical JSON, then prefixes its SHA-256 with
 // "sha256:". The absent optional TOML fields disappear during conversion;
 // timeout and async are normalized to their effective defaults.

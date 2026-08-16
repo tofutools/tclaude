@@ -13,7 +13,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/hookevents"
 )
 
-// These are hashes produced by Codex CLI 0.144.1 for tclaude's normalized
+// These are hashes produced by Codex CLI 0.144.1 and 0.147.0 for tclaude's normalized
 // matcher-less command hooks. They pin every detail that affects compatibility:
 // event labels, default timeout, async=false, absent optional fields, canonical
 // JSON ordering, and the sha256: prefix.
@@ -191,6 +191,10 @@ func TestCodexHookTrustVersionGate(t *testing.T) {
 		{"codex-cli 0.144.2", false},
 		{"codex-cli 0.138.0", false},
 		{"codex-cli 0.145.0", false},
+		{"codex-cli 0.146.0", false},
+		{"codex-cli 0.147.0", true},
+		{"codex-cli 0.147.1", false},
+		{"codex-cli 0.148.0", false},
 		{"future-format", false},
 	} {
 		t.Run(tc.version, func(t *testing.T) {
