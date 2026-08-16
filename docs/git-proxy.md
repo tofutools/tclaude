@@ -149,10 +149,12 @@ SSH and HTTPS URLs for the same repository therefore produce the same key:
 
 ### What else the allow-list turns on
 
-Configuring `allowed_remotes` is the only place an operator states which
-repositories the daemon's credentials may reach, so two surfaces that spend the
-same `gh` credential without going through a proxy verb are bounded by it too,
-and only once it exists:
+`allowed_remotes` is the operator's **daemon-wide** statement about which
+repositories the daemon's credentials may reach. A `remote`-scoped grant states
+the same thing for one agent, which is why it authorizes the proxy verbs on its
+own — but it cannot bound a surface that is not per-agent. So two surfaces that
+spend the same `gh` credential without going through a proxy verb are bounded by
+`allowed_remotes` too, and only once it exists:
 
 - **The dashboard's Branch column.** Its branch and pull-request links are
   resolved by running `git` and `gh` for an agent's working directory. With the

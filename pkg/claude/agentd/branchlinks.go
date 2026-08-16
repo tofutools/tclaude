@@ -514,11 +514,14 @@ func branchWebURL(repoURL, defaultBranch, branch string) string {
 //     bounds the whole answer by agent.git_proxy.allowed_remotes;
 //   - not configured — legacyGitInfo, the long-standing unbounded resolution.
 //
-// The split exists because the allow-list is the only place an operator states
-// which repositories the daemon's credentials may reach. Applying it to an
-// operator who never wrote one would blank the Branch column rather than
-// protect it, so the hardening arrives with the configuration that gives it
-// meaning. See branchlinks_repo.go for the gate itself.
+// The split exists because the allow-list is the operator's DAEMON-WIDE
+// statement about which repositories the daemon's credentials may reach, and
+// this surface has no calling agent to read a per-agent one from: the dashboard
+// renders every row on the operator's poll. A remote-scoped grant is therefore
+// not a substitute here, and an operator who wrote neither has stated nothing —
+// bounding them would blank the Branch column rather than protect it. So the
+// hardening arrives with the configuration that gives it meaning. See
+// branchlinks_repo.go for the gate itself.
 func liveGitInfoResolver(repoDir, branch string) (repoBranchInfo, bool) {
 	if repoDir == "" || branch == "" {
 		return repoBranchInfo{}, false

@@ -178,9 +178,9 @@ func TestBranchLinkRepoIgnoresGhResolved(t *testing.T) {
 
 // TestBranchLinkRepoBoundsResolutionByTheOperatorsAllowList is the deliberate
 // decision TCL-1169 asked for: the resolution is bounded by
-// agent.git_proxy.allowed_remotes. That list is the only statement an operator
-// makes about which repositories the daemon's credentials may reach, and this
-// path spends the same `gh` credential the proxy does.
+// agent.git_proxy.allowed_remotes. That list is the operator's daemon-wide
+// statement about which repositories the daemon's credentials may reach, and
+// this path spends the same `gh` credential the proxy does.
 func TestBranchLinkRepoBoundsResolutionByTheOperatorsAllowList(t *testing.T) {
 	gitPath, root := branchLinkFixture(t, "github.com/tofutools/*")
 

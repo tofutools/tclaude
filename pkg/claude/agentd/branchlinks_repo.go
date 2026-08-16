@@ -35,11 +35,14 @@ import (
 //
 // This file closes that by resolving the repository the way resolveProxyRepo
 // does — physical path, work-tree root, git-dir containment, linked-worktree
-// proof — and then naming the repository EXPLICITLY (`gh --repo owner/repo`
-// from a neutral directory) instead of letting the working directory select it.
-// Finally it bounds the answer by the operator's own
-// `agent.git_proxy.allowed_remotes` list, which is the only statement in the
-// system about which repositories the daemon's credentials may reach.
+// proof — and then naming the repository EXPLICITLY (`gh --repo owner/repo`,
+// outside the agent's work tree) instead of letting the working directory
+// select it. Finally it bounds the answer by the operator's own
+// `agent.git_proxy.allowed_remotes` list — their daemon-wide statement about
+// which repositories the daemon's credentials may reach. A remote-scoped
+// permission grant states the same thing per agent and authorizes the proxy
+// verbs on its own, but there is no calling agent here to read one from, so it
+// cannot bound this surface.
 //
 // That last gate is why the whole path is conditional. An operator who has not
 // configured the Git proxy has stated nothing, so applying the allow-list to
