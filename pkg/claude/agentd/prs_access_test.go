@@ -27,7 +27,9 @@ func TestPresentedPRAccessRequiresMatchingRepoInsideLaunchTree(t *testing.T) {
 	gotRoot, err := livePresentedPRAccessValidator(context.Background(), conv, repo,
 		"https://github.com/tofutools/tclaude/pull/1")
 	require.NoError(t, err)
-	require.Equal(t, repo, gotRoot)
+	canonicalRepo, err := filepath.EvalSymlinks(repo)
+	require.NoError(t, err)
+	require.Equal(t, canonicalRepo, gotRoot)
 	_, err = livePresentedPRAccessValidator(context.Background(), conv, repo,
 		"https://github.com/victim/private/pull/1")
 	require.ErrorContains(t, err, "does not match repository origin")

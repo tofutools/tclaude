@@ -48,6 +48,12 @@ func UpsertAgentPRDetails(agentID, prURL, summary, state, branch string, draft b
 	return upsertAgentPRDetails(agentID, prURL, summary, state, branch, draft, "")
 }
 
+// UpsertValidatedAgentPRDetails combines repository validation provenance with
+// the trigger-aware presentation fields used when the GitHub proxy creates a PR.
+func UpsertValidatedAgentPRDetails(agentID, prURL, summary, state, branch string, draft bool, repoRoot string) (AgentPR, error) {
+	return upsertAgentPRDetails(agentID, prURL, summary, state, branch, draft, strings.TrimSpace(repoRoot))
+}
+
 func upsertAgentPRDetails(agentID, prURL, summary, state, branch string, draft bool, repoRoot string) (AgentPR, error) {
 	agentID = strings.TrimSpace(agentID)
 	prURL = strings.TrimSpace(prURL)

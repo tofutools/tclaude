@@ -210,8 +210,8 @@ func handleGHProxyPRCreate(w http.ResponseWriter, r *http.Request) {
 		if body.Draft {
 			state = "draft"
 		}
-		if _, persistErr := db.UpsertAgentPRDetails(agentID, created.HTMLURL,
-			strings.TrimSpace(body.Title), state, head, body.Draft); persistErr != nil {
+		if _, persistErr := db.UpsertValidatedAgentPRDetails(agentID, created.HTMLURL,
+			strings.TrimSpace(body.Title), state, head, body.Draft, g.repoRoot); persistErr != nil {
 			slog.Warn("github proxy: persist created PR for trigger reconciliation",
 				"conv", g.convID, "pr", created.HTMLURL, "error", persistErr)
 		}

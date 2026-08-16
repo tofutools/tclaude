@@ -203,7 +203,7 @@ func TestApplyAuthoredStatesExpiresAndReopensPresentedPRs(t *testing.T) {
 	const prURL = "https://github.com/acme/app/pull/12"
 	agentID, _, err := db.EnsureAgentForConv("conv_1", "test")
 	require.NoError(t, err)
-	_, err = db.UpsertAgentPR(agentID, prURL, "Ship it", "open")
+	_, err = db.UpsertValidatedAgentPR(agentID, prURL, "Ship it", "open", t.TempDir())
 	require.NoError(t, err)
 
 	applyAuthoredStatesToPresentedPRs(dashboardAuthoredOpenPRs{Recent: []dashboardAuthoredOpenPR{{
