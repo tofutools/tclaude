@@ -70,24 +70,29 @@ const (
 var usageForecastAlgos = []string{usageForecastAlgoSpan, usageForecastAlgoRecent, usageForecastAlgoFit}
 
 type usageHistoryForecast struct {
-	Algorithm        string  `json:"algorithm,omitempty"`
-	Status           string  `json:"status"`
-	SegmentStartedAt string  `json:"segment_started_at"`
-	BaselinePct      float64 `json:"baseline_pct"`
-	SampleCount      int     `json:"sample_count"`
-	RatePctPerHour   float64 `json:"rate_pct_per_hour,omitempty"`
-	HitsLimitAt      string  `json:"hits_limit_at,omitempty"`
-	ResetAt          string  `json:"reset_at,omitempty"`
+	Algorithm string `json:"algorithm,omitempty"`
+	Status    string `json:"status"`
+	// The window is the slice of the current segment this algorithm derived its
+	// pace from, which is the whole segment only for `fit`. It is named for the
+	// window rather than the segment because `span` clips to the graph's history
+	// range and `recent` to the newest few samples: reporting either one as the
+	// post-reset baseline would be a lie.
+	WindowStartedAt   string  `json:"window_started_at"`
+	WindowBaselinePct float64 `json:"window_baseline_pct"`
+	SampleCount       int     `json:"sample_count"`
+	RatePctPerHour    float64 `json:"rate_pct_per_hour,omitempty"`
+	HitsLimitAt       string  `json:"hits_limit_at,omitempty"`
+	ResetAt           string  `json:"reset_at,omitempty"`
 }
 
 type usageHistorySeries struct {
-	Provider        string               `json:"provider"`
-	WindowName      string               `json:"window_name"`
-	DurationSeconds int64                `json:"duration_seconds,omitempty"`
-	From            string               `json:"from"`
-	Points          []usageHistoryPoint  `json:"points"`
-	Resets          []usageHistoryReset  `json:"resets"`
-	ResetCount      int                  `json:"reset_count"`
+	Provider        string              `json:"provider"`
+	WindowName      string              `json:"window_name"`
+	DurationSeconds int64               `json:"duration_seconds,omitempty"`
+	From            string              `json:"from"`
+	Points          []usageHistoryPoint `json:"points"`
+	Resets          []usageHistoryReset `json:"resets"`
+	ResetCount      int                 `json:"reset_count"`
 	// Forecast is the default algorithm's prediction; Forecasts carries every
 	// algorithm keyed by name so the dashboard can switch without a refetch.
 	Forecast  usageHistoryForecast            `json:"forecast"`
@@ -453,8 +458,10 @@ func resetMarkersSince(resets []usageHistoryReset, since time.Time) []usageHisto
 // forecastUsage treats provider-declared reset boundaries and meaningful
 // downward steps as change points. The latter catches out-of-cycle resets; the
 // new segment starts at the observed post-reset minimum rather than inventing
-// a 0% sample. Every algorithm then estimates a pace from some slice of that
-// current segment; see usageForecastAlgos for what each one looks at.
+// a 0% sample — that minimum is the segment's baseline, reported on the reset
+// marker. Every algorithm then estimates a pace from some slice of the current
+// segment; see usageForecastAlgos for what each one looks at, and
+// usageHistoryForecast for why its own window is reported instead.
 //
 // viewFrom is the graph's own history span. Only the default `span` algorithm
 // honours it — the operator narrowing a card to 24h is how they ask that card's
@@ -520,15 +527,16 @@ func usageForecastSamples(algo string, segment []db.SubscriptionUsageHistoryRow,
 }
 
 // forecastUsageSegment reports one algorithm's view of the current segment.
-// Status, the declared reset and the staleness/limit gates are shared: they
-// describe the samples themselves rather than any particular pace.
+// Status is per algorithm — a pace that is flat for one window is projected
+// for another — but the declared reset and the staleness/limit short-circuits
+// are shared: those describe the samples themselves rather than any pace.
 func forecastUsageSegment(algo string, segment []db.SubscriptionUsageHistoryRow, now, viewFrom time.Time) usageHistoryForecast {
 	samples := usageForecastSamples(algo, segment, viewFrom)
 	last := segment[len(segment)-1]
 	forecast := usageHistoryForecast{Algorithm: algo, Status: "insufficient", SampleCount: len(samples)}
 	if len(samples) > 0 {
-		forecast.SegmentStartedAt = samples[0].ObservedAt.UTC().Format(time.RFC3339Nano)
-		forecast.BaselinePct = samples[0].UsedPercent
+		forecast.WindowStartedAt = samples[0].ObservedAt.UTC().Format(time.RFC3339Nano)
+		forecast.WindowBaselinePct = samples[0].UsedPercent
 	}
 	if !last.ResetsAt.IsZero() {
 		forecast.ResetAt = last.ResetsAt.UTC().Format(time.RFC3339Nano)

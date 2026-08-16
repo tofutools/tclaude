@@ -182,7 +182,7 @@ func TestForecastUsageDetectsUnexpectedNonzeroReset(t *testing.T) {
 	assert.Equal(t, 20.0, resets[0].Pct, "the observed post-reset minimum is retained; no synthetic zero")
 	forecast := forecasts[usageForecastAlgoFit]
 	assert.Equal(t, "before_reset", forecast.Status)
-	assert.Equal(t, 20.0, forecast.BaselinePct)
+	assert.Equal(t, 20.0, forecast.WindowBaselinePct)
 	assert.Equal(t, 3, forecast.SampleCount)
 	assert.InDelta(t, 20.0, forecast.RatePctPerHour, 1e-9)
 	assert.Equal(t, base.Add(4*time.Hour+15*time.Minute).Format(time.RFC3339Nano), forecast.HitsLimitAt)
@@ -199,7 +199,7 @@ func TestForecastUsageKnownBoundaryStartsNewSegmentWithoutDrop(t *testing.T) {
 	forecasts, resets := forecastUsage(rows, rows[len(rows)-1].ObservedAt, base)
 	require.Len(t, resets, 1, "a crossed declared boundary is recorded exactly once")
 	forecast := forecasts[usageForecastDefaultAlgo]
-	assert.Equal(t, 15.0, forecast.BaselinePct)
+	assert.Equal(t, 15.0, forecast.WindowBaselinePct)
 	assert.Equal(t, 3, forecast.SampleCount)
 	assert.Equal(t, "before_reset", forecast.Status)
 }
@@ -299,7 +299,7 @@ func TestForecastUsageSpanHonorsTheCardsHistoryRange(t *testing.T) {
 	forecasts, _ := forecastUsage(rows, last, last.Add(-time.Hour))
 	assert.InDelta(t, 40.0, forecasts[usageForecastAlgoSpan].RatePctPerHour, 1e-9)
 	assert.Equal(t, 5, forecasts[usageForecastAlgoSpan].SampleCount)
-	assert.Equal(t, 10.0, forecasts[usageForecastAlgoSpan].BaselinePct)
+	assert.Equal(t, 10.0, forecasts[usageForecastAlgoSpan].WindowBaselinePct)
 	assert.Less(t, forecasts[usageForecastAlgoFit].RatePctPerHour, forecasts[usageForecastAlgoSpan].RatePctPerHour)
 
 	// A view that starts after every sample has nothing to draw a line through.

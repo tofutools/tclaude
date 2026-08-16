@@ -24,8 +24,8 @@ export const USAGE_FORECAST_ALGOS = [
   },
   {
     id: 'recent', label: 'Recent', wizardLabel: 'Pulse',
-    description: 'pace of the newest few samples only',
-    wizardDescription: 'the pace of the last few readings alone',
+    description: 'pace of the newest few samples, reaching further back only when they are too close together',
+    wizardDescription: 'the pace of the last few readings, reaching back only when they crowd together',
   },
   {
     id: 'fit', label: 'Fit', wizardLabel: 'Weave',

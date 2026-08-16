@@ -54,7 +54,7 @@ function UsageSpanControls({ scope, span, onSetHours, onSetLookahead, onSetForec
         rather than sitting once at the top of the tab: the answer differs per
         graph (a 5-hour window mid-burst and a 7-day window want different
         algorithms), and it reads against the same chart the spans do. */''}
-    <div class="usage-control-group" role="group" aria-label=${`${wizard ? 'Prophecy' : 'Prediction'} algorithm, ${scope}`}>
+    <div class="usage-control-group" role="group" aria-label=${`${wizard ? 'Divination' : 'Prediction'} algorithm, ${scope}`}>
       <span class="usage-control-label" aria-hidden="true">${wizard ? 'Divination' : 'Prediction'}</span>
       ${USAGE_FORECAST_ALGOS.map((option) => {
         const label = wizard ? option.wizardLabel : option.label;
@@ -62,7 +62,7 @@ function UsageSpanControls({ scope, span, onSetHours, onSetLookahead, onSetForec
         return html`<button type="button"
           class=${`tool${span.algo === option.id ? ' active' : ''}`}
           title=${`${label}: ${description}`}
-          aria-label=${`${wizard ? 'Prophecy' : 'Prediction'} ${label}, ${description}, ${scope}`}
+          aria-label=${`${wizard ? 'Divination' : 'Prediction'} ${label}, ${description}, ${scope}`}
           aria-pressed=${span.algo === option.id}
           onClick=${() => onSetForecastAlgo(option.id)}>${label}</button>`;
       })}
