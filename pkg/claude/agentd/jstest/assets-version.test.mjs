@@ -18,9 +18,17 @@ async function watcher(t, metaContent) {
   }
   const { checkAssetsVersion } = await harness.importDashboardModule('js/assets-version.js');
   const reloads = [];
+  // The cancellation timer is captured, never armed for real: a test decides
+  // explicitly when "the page is still alive after asking to navigate".
+  let cancelNavigation = null;
   return {
     reloads,
-    check: (version) => checkAssetsVersion(version, () => reloads.push(version)),
+    check: (version) => checkAssetsVersion(
+      version,
+      () => reloads.push(version),
+      (fn) => { cancelNavigation = fn; },
+    ),
+    navigationCancelled: () => { cancelNavigation?.(); cancelNavigation = null; },
   };
 }
 
@@ -52,6 +60,23 @@ test('without a meta tag the first snapshot seeds the baseline', async (t) => {
   assert.deepEqual(w.reloads, []);
   assert.equal(w.check('dddd000011112222'), true);
   assert.deepEqual(w.reloads, ['dddd000011112222']);
+});
+
+test('a cancelled navigation un-latches, adopts the new baseline, and re-arms for the NEXT upgrade', async (t) => {
+  // With a terminal pane open the beforeunload confirm can refuse the reload.
+  // The latch must not freeze the page then: rendering resumes, the SAME
+  // version never re-prompts, and a further upgrade prompts again.
+  const w = await watcher(t, 'aaaa000011112222');
+  assert.equal(w.check('bbbb000011112222'), true);
+  assert.deepEqual(w.reloads, ['bbbb000011112222']);
+  w.navigationCancelled();
+  // The rejected version is now the baseline — polls render again, no re-prompt.
+  assert.equal(w.check('bbbb000011112222'), false);
+  assert.equal(w.check('bbbb000011112222'), false);
+  assert.deepEqual(w.reloads, ['bbbb000011112222']);
+  // Another upgrade still triggers a fresh reload attempt.
+  assert.equal(w.check('cccc000011112222'), true);
+  assert.deepEqual(w.reloads, ['bbbb000011112222', 'cccc000011112222']);
 });
 
 test('an absent fingerprint (older daemon) never reloads and never seeds', async (t) => {

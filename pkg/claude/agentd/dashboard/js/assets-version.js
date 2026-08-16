@@ -19,11 +19,26 @@
 let baseline;
 let reloading = false;
 
+// The un-latch delay after requesting navigation. If the reload proceeds the
+// JS context is destroyed and the timer never matters; if the page is still
+// alive when it fires, the navigation was cancelled (see below).
+const RELOAD_CANCELLED_MS = 5000;
+
 // checkAssetsVersion notes one poll's assets_version and returns true when the
 // page is (now) reloading and the caller must stop rendering this tick —
 // stale modules must not paint a snapshot from a newer daemon. An empty /
 // absent fingerprint (older daemon) never triggers a reload.
-export function checkAssetsVersion(version, reloadImpl) {
+//
+// The requested navigation can be REFUSED: with a terminal pane open the
+// terminals island arms a beforeunload confirm, and the operator may click
+// "stay" (reasonable mid-command). The latch must not brick the page then, so
+// it self-releases: still being alive RELOAD_CANCELLED_MS after asking to
+// navigate means the reload was cancelled, and the new fingerprint is adopted
+// as the baseline — rendering resumes (stale-but-chosen beats frozen), the
+// poll does not re-prompt every tick for the SAME version, and the NEXT
+// upgrade prompts again. The native confirm dialog suspends timers while it
+// is up, so a slow human decision cannot fire the un-latch early.
+export function checkAssetsVersion(version, reloadImpl, scheduleImpl) {
   if (reloading) return true;
   if (!version) return false;
   if (baseline === undefined) {
@@ -32,6 +47,10 @@ export function checkAssetsVersion(version, reloadImpl) {
   }
   if (baseline === version) return false;
   reloading = true;
+  (scheduleImpl || ((fn) => setTimeout(fn, RELOAD_CANCELLED_MS)))(() => {
+    reloading = false;
+    baseline = version;
+  });
   (reloadImpl || (() => location.reload()))();
   return true;
 }
