@@ -792,7 +792,11 @@ window there (the same out-of-sandbox spawn the **term** button does, minus the
 dir picker). The **branch** cell links to the branch's GitHub compare view, and
 when the branch has a pull request a `#<num>` link to it is shown alongside.
 Branch/PR links resolve in the background (cached, best-effort) and are simply
-absent for a non-GitHub repo or when `gh` is unavailable.
+absent for a non-GitHub repo or when `gh` is unavailable. When the Git proxy's
+`agent.git_proxy.allowed_remotes` list is configured, they are also absent for a
+repository that is not on it, and for a working directory whose git metadata
+points somewhere else — see
+[What else the allow-list turns on](git-proxy.md#what-else-the-allow-list-turns-on).
 
 The fixed footer also shows an **Open PRs** count for pull requests the active
 GitHub identity has authored across any repository. Hover previews the list;

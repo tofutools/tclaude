@@ -147,6 +147,34 @@ SSH and HTTPS URLs for the same repository therefore produce the same key:
 `https://github.com/your-org/repo.git` both become
 `github.com/your-org/repo`.
 
+### What else the allow-list turns on
+
+Configuring `allowed_remotes` is the only place an operator states which
+repositories the daemon's credentials may reach, so two surfaces that spend the
+same `gh` credential without going through a proxy verb are bounded by it too,
+and only once it exists:
+
+- **The dashboard's Branch column.** Its branch and pull-request links are
+  resolved by running `git` and `gh` for an agent's working directory. With the
+  allow-list configured, that directory is validated the way a proxy verb's
+  repository is — physical path, work-tree root, git-dir containment, linked
+  worktrees proved by their back-pointer — the repository is read from the
+  validated work tree's own `origin` and matched against the list, and `gh` is
+  then told which repository to use (`--repo owner/repo`) from a neutral
+  directory. A repository off the list resolves to no links.
+- **Presented pull requests.** `tclaude agent present-pr` accepts only a
+  `https://github.com/<owner>/<repo>/pull/<number>` URL for an allow-listed
+  repository inside the calling agent's own launch tree.
+
+Without the list, both keep their older, unbounded behaviour: the agent's
+working directory selects the repository, and a presented URL is taken at face
+value. That is deliberate — an operator who has stated nothing has no list to
+bound anything by, and blanking their Branch column would not protect them. If
+you rely on a `remote`-scoped grant alone and leave `allowed_remotes` empty, the
+proxy verbs are still authorized by the grant, but these two surfaces stay on
+the older behaviour, because a grant scope describes one agent while these are
+daemon-wide.
+
 ### Granting the permissions
 
 Five slugs, none granted by default and none conferred by group ownership:

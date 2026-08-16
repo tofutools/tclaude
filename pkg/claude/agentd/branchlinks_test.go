@@ -300,7 +300,7 @@ func TestGHPRListArgsCannotNameARepository(t *testing.T) {
 	} {
 		t.Run(branch, func(t *testing.T) {
 			for _, rich := range []bool{true, false} {
-				args := ghPRListArgs(branch, rich)
+				args := ghPRListArgs("", branch, rich)
 
 				// The whole argv is fixed literals except one slot. Pinning it
 				// exactly is what proves the branch is ONLY ever the value of
@@ -318,6 +318,38 @@ func TestGHPRListArgsCannotNameARepository(t *testing.T) {
 					"the field list is a fixed literal and must never carry caller data")
 			}
 		})
+	}
+}
+
+// TestGHPRListArgsNamesTheRepositoryExplicitly pins the other half of TCL-1169.
+//
+// The branch gate above stops a branch string from selecting a repository. It
+// says nothing about the repository gh picks when nobody names one — and that
+// was the hole: gh reads `remote.origin.gh-resolved` from the work tree it runs
+// in, which the agent owns, so the operator's token went wherever that config
+// pointed while `git remote get-url origin` (and therefore the dashboard) still
+// reported the agent's own repo.
+//
+// The fix is to say it out loud. The hardened caller passes a daemon-resolved
+// owner/repo, which must appear as the VALUE of --repo and nowhere else; the
+// legacy caller passes "" and must get an argv with no --repo at all, because
+// that path deliberately keeps the old work-tree-selects-the-repo behaviour for
+// an operator who has not configured the Git proxy.
+func TestGHPRListArgsNamesTheRepositoryExplicitly(t *testing.T) {
+	for _, rich := range []bool{true, false} {
+		args := ghPRListArgs("tofutools/tclaude", "feature", rich)
+		require.Len(t, args, 12, "the fixed prefix, one --json field list, and --repo <owner/repo>")
+		assert.Equal(t, []string{"pr", "list", "--head", "feature",
+			"--state", "all", "--limit", "10", "--json"}, args[:9],
+			"naming the repository must not disturb the branch's own slot")
+		assert.Equal(t, "--repo", args[10])
+		assert.Equal(t, "tofutools/tclaude", args[11],
+			"the repository may only ever be the VALUE of --repo")
+
+		assert.NotContains(t, ghPRListArgs("", "feature", rich), "--repo",
+			"the legacy path must keep gh's own repository selection")
+		assert.NotContains(t, ghPRListArgs("   ", "feature", rich), "--repo",
+			"a blank repository is not a repository")
 	}
 }
 
