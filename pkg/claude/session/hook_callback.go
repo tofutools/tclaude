@@ -178,6 +178,12 @@ func lateSessionStart(state *SessionState) bool {
 // inputs don't carry. Accepted residual: plain one-shots (`claude -p`,
 // `claude mcp …`, source=startup) are the case observed in production;
 // resumed one-shots inside an agent's pane are rare and deliberate.
+// The same residual has a second admission path since the
+// verified-continuation fallback (isVerifiedConvContinuation): a
+// resumed one-shot's transcript legitimately contains the lineage
+// marker (its copied history was created under the tracked conv), so
+// ANY of its hooks — not just the SessionStart(source=resume) — can
+// pass the guard. Same failure class, same rarity, same acceptance.
 func isConvTransitionStart(input HookCallbackInput) bool {
 	if input.HookEventName != "SessionStart" {
 		return false
@@ -1866,6 +1872,27 @@ func shouldEnrollLaunchedSessionFromHook(state *SessionState, input HookCallback
 		return false
 	}
 	if input.HookEventName == "SessionStart" && !isConvTransitionStart(input) {
+		// A SessionStart admitted by the verified-continuation path is a
+		// conversation ROTATION announced as pending_conv, not a fresh boot —
+		// even though its source says "startup" (the /remote-control bridge
+		// handoff announces itself that way). Instant-enrolling it would
+		// EnsureAgentForConv a rotated conv exactly like the source=clear
+		// promotion regression (#407): an actor the human deliberately
+		// retired would come back as a fresh agent row on its next bridge
+		// rotation. Give it the same treatment as an announced transition;
+		// on a read error, err on not enrolling — the reaper's
+		// online-enrollment sweep remains the backstop either way.
+		if input.ConvID != "" {
+			pending, err := db.GetSessionPendingConv(state.ID)
+			if err != nil {
+				slog.Warn("failed to check pending conv before hook enrollment",
+					"session_id", state.ID, "error", err, "module", "hooks")
+				return false
+			}
+			if pending == input.ConvID {
+				return false
+			}
+		}
 		return true
 	}
 	if state.Harness != harness.CodexName {

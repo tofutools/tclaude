@@ -517,6 +517,87 @@ func TestRunHookCallback_UnannouncedRotationVerifiedByTranscript(t *testing.T) {
 		"the verified rotation must be recorded as pending_conv for the retry path")
 }
 
+// The bridge rotation's OWN SessionStart(source=startup) — the exact event
+// the /remote-control handoff announces itself with — must be accepted once
+// the transcript verifies, advance the row, and NOT instant-enroll the
+// rotated conv as a fresh agent: by source alone it looks like a fresh boot,
+// but it is a rotation, and promoting it would resurrect a deliberately
+// retired actor the same way the source=clear promotion regression (#407)
+// did. Enrollment stays with the reaper backstop.
+func TestRunHookCallback_VerifiedRotationSessionStartDoesNotEnroll(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:     "bridge-sess",
+		ConvID: "conv-old",
+		Status: StatusWorking,
+	}))
+
+	transcript := filepath.Join(dir, "conv-new.jsonl")
+	require.NoError(t, os.WriteFile(transcript, []byte(
+		`{"type":"user","message":{"role":"user","content":"hi"},"session_id":"conv-old","sessionId":"conv-new"}`+"\n"), 0o600))
+
+	feedHook(t, "bridge-sess", map[string]any{
+		"session_id":      "conv-new",
+		"hook_event_name": "SessionStart",
+		"source":          "startup",
+		"transcript_path": transcript,
+		"cwd":             dir,
+	})
+
+	got, err := LoadSessionState("bridge-sess")
+	require.NoError(t, err)
+	assert.Equal(t, "conv-new", got.ConvID,
+		"the rotation's own SessionStart must advance the tracked conv-id once verified")
+
+	agentState, err := db.AgentState("conv-new")
+	require.NoError(t, err)
+	assert.NotEqual(t, db.AgentStateActive, agentState,
+		"a verified rotation's SessionStart must not instant-enroll the rotated conv as a fresh agent")
+}
+
+// The lineage marker must sit within the head-scan caps; one past the line
+// cap fails closed to the ordinary foreign drop.
+func TestRunHookCallback_ContinuationMarkerBeyondScanCapIgnored(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+
+	origLines := convContinuationScanMaxLines
+	convContinuationScanMaxLines = 2
+	t.Cleanup(func() { convContinuationScanMaxLines = origLines })
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:     "cap-sess",
+		ConvID: "conv-old",
+		Status: StatusIdle,
+	}))
+
+	transcript := filepath.Join(dir, "conv-new.jsonl")
+	require.NoError(t, os.WriteFile(transcript, []byte(
+		`{"type":"custom-title","customTitle":"agent","sessionId":"conv-new"}`+"\n"+
+			`{"type":"mode","mode":"normal","sessionId":"conv-new"}`+"\n"+
+			`{"type":"user","message":{"role":"user","content":"hi"},"session_id":"conv-old","sessionId":"conv-new"}`+"\n"), 0o600))
+
+	feedHook(t, "cap-sess", map[string]any{
+		"session_id":      "conv-new",
+		"hook_event_name": "UserPromptSubmit",
+		"transcript_path": transcript,
+		"cwd":             dir,
+	})
+
+	got, err := LoadSessionState("cap-sess")
+	require.NoError(t, err)
+	assert.Equal(t, "conv-old", got.ConvID,
+		"a marker beyond the scan cap must fail closed to the foreign drop")
+	assert.Equal(t, StatusIdle, got.Status,
+		"the capped-out hook must not be processed")
+}
+
 // A genuinely foreign transcript — every entry created under the foreign
 // conv's own id — must NOT pass the lineage check, even when the file
 // exists and is readable: a `claude -p` one-shot in the same cwd stays
