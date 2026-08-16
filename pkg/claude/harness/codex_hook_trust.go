@@ -88,7 +88,7 @@ func (codexHookInstaller) InstallTrusted() error {
 			return err
 		}
 		if err := backup.validateInstalledState(hookPlan.out); err != nil {
-			return fmt.Errorf("Codex hooks changed during authoritative discovery: %w", err)
+			return fmt.Errorf("codex hooks changed during authoritative discovery: %w", err)
 		}
 		if err := ensureCodexHookTrustInFile(configPath, entries); err != nil {
 			return fmt.Errorf("write Codex hook trust: %w", err)
@@ -201,14 +201,14 @@ func (codexHookInstaller) TrustInstalled() error {
 			return err
 		}
 		if !snapshot.existed {
-			return fmt.Errorf("Codex hooks file %s does not exist", path)
+			return fmt.Errorf("codex hooks file %s does not exist", path)
 		}
 		hooks, _, err := decodeCodexHooks(snapshot.data, path)
 		if err != nil {
 			return err
 		}
 		if err := snapshot.validateUnchanged(snapshot.data); err != nil {
-			return fmt.Errorf("Codex hooks changed during authoritative discovery: %w", err)
+			return fmt.Errorf("codex hooks changed during authoritative discovery: %w", err)
 		}
 		want := codexHookCommandStr()
 		if err := validateTrustedCodexHookCommand(want); err != nil {
@@ -229,7 +229,7 @@ func (codexHookInstaller) TrustInstalled() error {
 			return err
 		}
 		if err := snapshot.validateUnchanged(snapshot.data); err != nil {
-			return fmt.Errorf("Codex hooks changed during authoritative discovery: %w", err)
+			return fmt.Errorf("codex hooks changed during authoritative discovery: %w", err)
 		}
 		return ensureCodexHookTrustInFile(configPath, entries)
 	})
@@ -281,7 +281,7 @@ func validateExactCodexTclaudeHooks(hooks map[string]json.RawMessage, want strin
 	}
 	for event, groups := range hooks {
 		if codexHooksNeedCleanup(groups, want) {
-			return fmt.Errorf("Codex hook declarations differ from tclaude's exact managed shape; repair them before trust")
+			return fmt.Errorf("codex hook declarations differ from tclaude's exact managed shape; repair them before trust")
 		}
 		if !desired[event] && codexHooksContain(groups, want) {
 			return fmt.Errorf("stale tclaude hook declaration remains for non-required Codex event %s", event)

@@ -190,7 +190,7 @@ func readCodexHookRPCResult(
 			continue
 		}
 		if response.Error != nil {
-			return nil, fmt.Errorf("Codex app-server request failed (%d): %s",
+			return nil, fmt.Errorf("codex app-server request failed (%d): %s",
 				response.Error.Code, response.Error.Message)
 		}
 		return response.Result, nil
@@ -214,7 +214,7 @@ func selectCodexHookTrustEntries(
 	seenKeys := make(map[string]bool, len(wantEvents))
 	for _, group := range result.Data {
 		for _, discoveryErr := range group.Errors {
-			return nil, fmt.Errorf("Codex hooks/list failed for %s: %s",
+			return nil, fmt.Errorf("codex hooks/list failed for %s: %s",
 				discoveryErr.Path, discoveryErr.Message)
 		}
 		for _, hook := range group.Hooks {
@@ -227,13 +227,13 @@ func selectCodexHookTrustEntries(
 				return nil, fmt.Errorf("multiple current tclaude hooks discovered for Codex event %s", hook.EventName)
 			}
 			if err := validateCodexHookHash(hook.CurrentHash); err != nil {
-				return nil, fmt.Errorf("Codex event %s: %w", hook.EventName, err)
+				return nil, fmt.Errorf("codex event %s: %w", hook.EventName, err)
 			}
 			if strings.TrimSpace(hook.Key) == "" {
-				return nil, fmt.Errorf("Codex event %s returned an empty hook trust key", hook.EventName)
+				return nil, fmt.Errorf("codex event %s returned an empty hook trust key", hook.EventName)
 			}
 			if seenKeys[hook.Key] {
-				return nil, fmt.Errorf("Codex returned duplicate hook trust key %q", hook.Key)
+				return nil, fmt.Errorf("codex returned duplicate hook trust key %q", hook.Key)
 			}
 			seen[hook.EventName] = true
 			seenKeys[hook.Key] = true
