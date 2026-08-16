@@ -1,14 +1,19 @@
 package agentd_test
 
 import (
+	"bytes"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -25,6 +30,27 @@ import (
 func postDashReply(t *testing.T, mux http.Handler, body map[string]any) *httptest.ResponseRecorder {
 	t.Helper()
 	return testharness.Serve(mux, testharness.JSONRequest(t, http.MethodPost, "/api/human-messages/reply", body))
+}
+
+func uploadDashReplyAttachment(t *testing.T, mux http.Handler, name string, content []byte) string {
+	t.Helper()
+	var wire bytes.Buffer
+	writer := multipart.NewWriter(&wire)
+	part, err := writer.CreateFormFile("file", name)
+	require.NoError(t, err)
+	_, err = part.Write(content)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	req := httptest.NewRequest(http.MethodPost, "/api/spawn-attachments", &wire)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec := testharness.Serve(mux, req)
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var response struct {
+		Token string `json:"token"`
+	}
+	testharness.DecodeJSON(t, rec, &response)
+	require.NotEmpty(t, response.Token)
+	return response.Token
 }
 
 // Scenario: replying to an ONLINE agent delivers the operator's answer to
@@ -76,6 +102,46 @@ func TestHumanReply_OnlineAgent_DeliversAndNudges(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, orig)
 	assert.True(t, orig.IsRead(), "replying marks the answered notification read")
+}
+
+// Scenario: the reply dialog may answer with attachments and no text. Browser
+// uploads are promoted into durable agent-message storage, linked to the reply,
+// and readable through the same inbox attachment metadata as regular operator
+// messages.
+func TestHumanReply_AttachmentOnly_DeliversFile(t *testing.T) {
+	f := newFlow(t)
+	staging, durable := t.TempDir(), t.TempDir()
+	t.Cleanup(agentd.SetOperatorMessageAttachmentBasesForTest(staging, durable))
+
+	const sender = "hrpl-file-bbbb-cccc-000000000009"
+	f.HaveGroup("tclaude-dev")
+	f.HaveMember("tclaude-dev", sender)
+	f.HaveAliveSession(sender, "hrpl-file", "tclaude-hrpl-file", f.TestCwd("work"))
+	msgID, err := db.InsertHumanMessage(&db.HumanMessage{
+		FromConv: sender, Subject: "show me the screenshot", Body: "please attach it",
+	})
+	require.NoError(t, err)
+
+	mux := dashMessageMux(t)
+	token := uploadDashReplyAttachment(t, mux, "screenshot.png", []byte("image bytes"))
+	rec := postDashReply(t, mux, map[string]any{
+		"id": msgID, "body": "", "attachment_token": token,
+	})
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	rows, err := db.ListAgentMessagesForConv(sender, 100)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Empty(t, rows[0].Body)
+	attachments, err := db.ListAgentMessageAttachments(rows[0].ID)
+	require.NoError(t, err)
+	require.Len(t, attachments, 1)
+	assert.Equal(t, "screenshot.png", attachments[0].Filename)
+	content, err := os.ReadFile(attachments[0].StoragePath)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("image bytes"), content)
+	_, err = os.Stat(filepath.Join(staging, token))
+	assert.ErrorIs(t, err, os.ErrNotExist, "consumed browser staging is removed")
 }
 
 // Scenario: a notification with no subject still gets a sensible reply

@@ -97,11 +97,13 @@ type profileJSON struct {
 	SSHWorkaround *bool `json:"ssh_workaround,omitempty"`
 
 	// Identity / enrollment fields.
-	AgentName      string `json:"agent_name,omitempty"`
-	Role           string `json:"role,omitempty"`
-	Descr          string `json:"descr,omitempty"`
-	InitialMessage string `json:"initial_message,omitempty"`
-	StartupContext string `json:"startup_context,omitempty"`
+	AgentName      string   `json:"agent_name,omitempty"`
+	Role           string   `json:"role,omitempty"`
+	RoleRef        string   `json:"role_ref,omitempty"`
+	RoleRefs       []string `json:"role_refs,omitempty"`
+	Descr          string   `json:"descr,omitempty"`
+	InitialMessage string   `json:"initial_message,omitempty"`
+	StartupContext string   `json:"startup_context,omitempty"`
 
 	// Dialog toggles.
 	SyncWorktree               *bool `json:"sync_worktree,omitempty"`
@@ -782,6 +784,13 @@ func printProfileHuman(w io.Writer, p profileJSON) {
 	}
 	if p.Role != "" {
 		ident = append(ident, "role="+p.Role)
+	}
+	roleRefs := p.RoleRefs
+	if len(roleRefs) == 0 && p.RoleRef != "" {
+		roleRefs = []string{p.RoleRef}
+	}
+	if len(roleRefs) > 0 {
+		ident = append(ident, "roles="+strings.Join(roleRefs, ","))
 	}
 	if len(ident) > 0 {
 		fmt.Fprintf(w, "  agent:   %s\n", strings.Join(ident, " · "))

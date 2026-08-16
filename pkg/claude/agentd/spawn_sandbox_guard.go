@@ -296,6 +296,19 @@ func planSandboxProfileAccessForLaunch(
 		snapshot.Effective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
 			snapshot.Effective.AccessNotices, resourceNotices...)
 	}
+	if snapshot.Effective.FilesystemRoot == sandboxpolicy.FilesystemRootSeparate {
+		h, resolveErr := harness.Resolve(harnessOrDefault(harnessName))
+		if resolveErr != nil {
+			return nil, &spawnFailure{http.StatusUnprocessableEntity,
+				"unsupported_sandbox_profile_access", resolveErr.Error()}
+		}
+		if rootErr := harness.ValidateExplicitFilesystemRoot(
+			h, implementation, snapshot.Effective.FilesystemRoot, runtime.GOOS,
+		); rootErr != nil {
+			return nil, sandboxCapabilitySpawnFailure(
+				rootErr, harness.SandboxCapabilityFilesystemRoot)
+		}
+	}
 	if notice, ok := sandboxpolicy.UnconfinedAccessRulesNotice(
 		implementation, snapshot.Effective,
 	); ok {
@@ -304,7 +317,8 @@ func planSandboxProfileAccessForLaunch(
 			snapshot.Effective.AccessNotices, resourceNotices...)
 		return resourceNotices, nil
 	}
-	if snapshot.Effective.Network == nil && snapshot.Effective.UnixSockets == nil {
+	if snapshot.Effective.Network == nil && snapshot.Effective.UnixSockets == nil &&
+		snapshot.Effective.FilesystemRoot != sandboxpolicy.FilesystemRootSeparate {
 		return resourceNotices, nil
 	}
 	h, err := harness.Resolve(harnessOrDefault(harnessName))
@@ -393,7 +407,8 @@ func planSandboxProfileAccessForLaunch(
 			h, implementation, axes, runtime.GOOS) {
 			sockets = sandboxpolicy.AccessModeUnset
 		}
-		root := sandboxpolicy.RootPostureFor(posture, sockets)
+		root := sandboxpolicy.RootPostureForMode(
+			posture, sockets, axes.FilesystemRoot)
 		deployedEngine, engineErr :=
 			sandboxpolicy.DeployedNetworkEngineForRules(axes.Network)
 		if engineErr != nil {
@@ -419,6 +434,7 @@ func planSandboxProfileAccessForLaunch(
 	rendered, notices, err := harness.PlanAccessEnforcement(
 		axes, caps, harness.AccessEnforcementOptions{
 			AllowUnenforcedNetworkClosed: allowUnenforcedSandbox,
+			AllowReducedNetworkDeny:      allowUnenforcedSandbox,
 		},
 	)
 	notices = append(resourceNotices, notices...)
@@ -477,13 +493,17 @@ func planSandboxProfileAccessForLaunch(
 		); noProxyNotice != nil {
 			notices = append(notices, *noProxyNotice)
 		}
-		resolvedModel, resolveModelErr := session.ResolveTclaudeLayerModelTransport(
-			h, modelContext)
-		if resolveModelErr != nil {
-			return nil, sandboxCapabilitySpawnFailure(
-				session.AnnotateDenyDrivenFilteredModelTransport(
-					rendered.Network, resolveModelErr),
-				harness.SandboxCapabilityModelTransport)
+		resolvedModel := harness.ResolvedModelTransport{}
+		if !sandboxpolicy.NetworkRulesArePrivateRoutedOpen(rendered.Network) {
+			var resolveModelErr error
+			resolvedModel, resolveModelErr = session.ResolveTclaudeLayerModelTransport(
+				h, modelContext)
+			if resolveModelErr != nil {
+				return nil, sandboxCapabilitySpawnFailure(
+					session.AnnotateDenyDrivenFilteredModelTransport(
+						rendered.Network, resolveModelErr),
+					harness.SandboxCapabilityModelTransport)
+			}
 		}
 		modelNotices, modelErr := session.ValidateTclaudeLayerNetwork(
 			h, plannedEffective, resolvedModel,

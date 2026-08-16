@@ -67,6 +67,27 @@ test('standing-order dialog creates explicit session-boundary mutations and prev
   await mounted.unmount();
 });
 
+test('standing-order dialog marks guarded dismissal as cancellation', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { StandingOrderDialog } = await harness.importDashboardModule(
+    'js/jobs-standing-order-dialog-island.js',
+  );
+  const closes = [];
+  const mounted = await harness.mount(harness.html`<${StandingOrderDialog}
+    descriptor=${{ kind: 'create', prefill: {} }}
+    snapshot=${snapshot()} actions=${{
+      saveStandingOrder: async () => {},
+      closeStandingOrderDialog: (options) => closes.push(options),
+    }} confirmDiscard=${async () => true} />`);
+
+  await harness.act(async () => {
+    harness.fireEvent(mounted.container.querySelector('#standing-order-cancel'), 'click');
+    await Promise.resolve();
+  });
+  assert.deepEqual(closes, [{ cancelled: true }]);
+  await mounted.unmount();
+});
+
 test('standing-order dialog authors a prompt RE2 condition', async (t) => {
   const harness = await createPreactHarness(t);
   const { StandingOrderDialog } = await harness.importDashboardModule(

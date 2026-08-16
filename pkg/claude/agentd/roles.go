@@ -9,15 +9,13 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // Roles — the role library (JOH-240): named, reusable bundles of defaults a
 // template roster agent can reference instead of re-typing them. A role
 // carries a canonical role-brief (guidance folded into a "## Role" block in the
-// referencing agent's startup context), a default launch shape (the same
-// launch fields template agents carry — JOH-239), and a default permission
-// set. See pkg/claude/common/db/roles.go for the row shape.
+// referencing agent's startup context) and a default permission set. Launch
+// policy belongs to spawn profiles. See pkg/claude/common/db/roles.go.
 //
 // Wire surface (daemon Unix socket, SO_PEERCRED auth):
 //
@@ -29,27 +27,18 @@ import (
 //
 // Reads are open (introspection, like /v1/templates and /v1/spawn-profiles);
 // mutations are gated on roles.manage (effectively human-only — a role is
-// shared team config). The launch fields are validated against the ROLE'S OWN
-// harness at save (model/effort through that harness's ModelCatalog), exactly
-// as a spawn profile is — so a role stays harness-correct.
+// shared team config).
 
 // roleJSON is the wire shape for a role. CreatedAt / UpdatedAt are
 // response-only (ignored on input). Permissions is non-omitempty so a consumer
 // can range over it safely.
 type roleJSON struct {
-	Name           string               `json:"name"`
-	Descr          string               `json:"descr,omitempty"`
-	Brief          string               `json:"brief,omitempty"`
-	SpawnProfile   string               `json:"spawn_profile,omitempty"`
-	Harness        string               `json:"harness,omitempty"`
-	Model          string               `json:"model,omitempty"`
-	Effort         string               `json:"effort,omitempty"`
-	Sandbox        string               `json:"sandbox,omitempty"`
-	Approval       string               `json:"approval,omitempty"`
-	ToolGovernance string               `json:"tools,omitempty"`
-	Permissions    []db.PermissionGrant `json:"permissions"`
-	CreatedAt      string               `json:"created_at,omitempty"`
-	UpdatedAt      string               `json:"updated_at,omitempty"`
+	Name        string               `json:"name"`
+	Descr       string               `json:"descr,omitempty"`
+	Brief       string               `json:"brief,omitempty"`
+	Permissions []db.PermissionGrant `json:"permissions"`
+	CreatedAt   string               `json:"created_at,omitempty"`
+	UpdatedAt   string               `json:"updated_at,omitempty"`
 }
 
 // roleToJSON projects a db.Role onto the wire shape, with a non-nil
@@ -60,17 +49,10 @@ func roleToJSON(rl *db.Role) roleJSON {
 		perms = []db.PermissionGrant{}
 	}
 	out := roleJSON{
-		Name:           rl.Name,
-		Descr:          rl.Descr,
-		Brief:          rl.Brief,
-		SpawnProfile:   rl.SpawnProfile,
-		Harness:        rl.Harness,
-		Model:          rl.Model,
-		Effort:         rl.Effort,
-		Sandbox:        rl.Sandbox,
-		Approval:       rl.Approval,
-		ToolGovernance: rl.ToolGovernance,
-		Permissions:    perms,
+		Name:        rl.Name,
+		Descr:       rl.Descr,
+		Brief:       rl.Brief,
+		Permissions: perms,
 	}
 	if !rl.CreatedAt.IsZero() {
 		out.CreatedAt = rl.CreatedAt.Format(time.RFC3339)
@@ -88,9 +70,7 @@ func roleToJSON(rl *db.Role) roleJSON {
 // Validation mirrors buildProfileFromJSON + validateTemplateAgentLaunch: the
 // name is a group-name-shaped handle (and may not be a reserved routing target
 // like "all"); the brief is normalized like a group context (CRLF fold + length
-// cap); the launch fields are validated against the role's own harness; a
-// spawn-profile reference must exist; and every permission slug must be known.
-// Blank launch fields stay blank ("" = inherit at instantiate).
+// cap); and every permission slug must be known.
 func buildRoleFromJSON(body roleJSON) (*db.Role, *spawnFailure) {
 	name := strings.TrimSpace(body.Name)
 	if err := validateGroupName(name); err != nil {
@@ -109,67 +89,16 @@ func buildRoleFromJSON(body roleJSON) (*db.Role, *spawnFailure) {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg", "brief: " + err.Error()}
 	}
 
-	// Resolve the role's harness — empty means Claude (the default). The
-	// resolved harness gives the catalog the launch fields are validated
-	// against; the harness is stored as the trimmed input (blank stays unset).
-	hName := strings.TrimSpace(body.Harness)
-	h, err := harness.ResolveSpawnable(hName)
-	if err != nil {
-		return nil, &spawnFailure{http.StatusBadRequest, "invalid_harness", err.Error()}
-	}
-	model, err := h.Models.ValidateModel(strings.TrimSpace(body.Model))
-	if err != nil {
-		return nil, &spawnFailure{http.StatusBadRequest, "invalid_model", err.Error()}
-	}
-	effort, err := h.Models.ValidateEffort(strings.TrimSpace(body.Effort))
-	if err != nil {
-		return nil, &spawnFailure{http.StatusBadRequest, "invalid_effort", err.Error()}
-	}
-	sandbox, err := harness.ValidateHarnessBuiltinMode(h, body.Sandbox)
-	if err != nil {
-		return nil, &spawnFailure{http.StatusBadRequest, "invalid_sandbox", err.Error()}
-	}
-	approval, err := harness.ValidateApprovalPolicy(h, body.Approval)
-	if err != nil {
-		return nil, &spawnFailure{http.StatusBadRequest, "invalid_approval", err.Error()}
-	}
-	toolGovernance, err := harness.ValidateToolGovernance(h, body.ToolGovernance)
-	if err != nil {
-		return nil, &spawnFailure{http.StatusBadRequest, "invalid_tools", err.Error()}
-	}
-
-	// A referenced spawn profile must exist here — same existence check the
-	// template-agent launch validation applies.
-	profRef := strings.TrimSpace(body.SpawnProfile)
-	if profRef != "" {
-		p, err := db.ResolveSpawnProfile(profRef)
-		if err != nil {
-			return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
-		}
-		if p == nil {
-			return nil, &spawnFailure{http.StatusBadRequest, "invalid_profile",
-				fmt.Sprintf("no spawn profile named %q", profRef)}
-		}
-		profRef = p.Name
-	}
-
 	perms, permFail := normalizeBlueprintGrants(body.Permissions)
 	if permFail != nil {
 		return nil, permFail
 	}
 
 	return &db.Role{
-		Name:           name,
-		Descr:          strings.TrimSpace(body.Descr),
-		Brief:          brief,
-		SpawnProfile:   profRef,
-		Harness:        hName,
-		Model:          model,
-		Effort:         effort,
-		Sandbox:        sandbox,
-		Approval:       approval,
-		ToolGovernance: toolGovernance,
-		Permissions:    perms,
+		Name:        name,
+		Descr:       strings.TrimSpace(body.Descr),
+		Brief:       brief,
+		Permissions: perms,
 	}, nil
 }
 
@@ -321,6 +250,17 @@ func handleRoleByName(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "role_in_use",
 				fmt.Sprintf("role %q is still referenced by %d template%s (%s) — edit those templates to drop or repoint the reference before deleting the role",
 					name, len(refs), plural, strings.Join(refs, ", ")))
+			return
+		}
+		profiles, err := db.SpawnProfilesReferencingRole(name)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		if len(profiles) > 0 {
+			writeError(w, http.StatusConflict, "role_in_use",
+				fmt.Sprintf("role %q is still referenced by %d spawn profile(s) (%s) — edit those profiles to drop or repoint the role preset before deleting the role",
+					name, len(profiles), strings.Join(profiles, ", ")))
 			return
 		}
 		n, err := db.DeleteRole(name)

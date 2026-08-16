@@ -84,6 +84,7 @@ func init() {
 	// ES module ships as .mjs — a type the host table often does not carry.
 	_ = mime.AddExtensionType(".mjs", "text/javascript")
 	_ = mime.AddExtensionType(".css", "text/css")
+	_ = mime.AddExtensionType(".svg", "image/svg+xml")
 	_ = mime.AddExtensionType(".map", "application/json")
 }
 
@@ -959,6 +960,11 @@ type snapshotPayload struct {
 	// rolling windows) rendered in the dashboard's top bar. Always
 	// present — Available=false carries the graceful "n/a" state.
 	Usage dashboardUsage `json:"usage"`
+	// AuthoredOpenPRs is the cached cross-repository list behind the fixed
+	// footer's Open PRs popover. The background poller owns GitHub access; the
+	// snapshot only performs one bounded cache read and associates matching
+	// agent PR URLs in memory.
+	AuthoredOpenPRs dashboardAuthoredOpenPRs `json:"authored_open_prs"`
 	// Templates are the group-template blueprints rendered in the
 	// Templates tab. Empty slice (not nil) so JS .map() is safe.
 	Templates []templateJSON `json:"templates"`
@@ -1019,6 +1025,10 @@ type snapshotPayload struct {
 	// surface. It is re-read on every snapshot so changing config takes effect
 	// without restarting agentd, matching processRoute.
 	ProcessesEnabled bool `json:"processes_enabled"`
+	// TriggersEnabled gates the experimental Automations subview and compact
+	// Groups projection. Re-read on every snapshot so Config changes take
+	// effect without restarting agentd, matching triggerRoute.
+	TriggersEnabled bool `json:"triggers_enabled"`
 	// GroupsRouteMapEnabled gates the experimental Members | Route map Groups
 	// subview and its bounded route projection. Re-read on every snapshot so a
 	// Config-tab change takes effect without restarting agentd.
@@ -1349,6 +1359,11 @@ type dashboardHarness struct {
 	// one without it (Codex). The per-row remote-control toggle gates on
 	// this exactly the way the rename control gates on CanRename (JOH-259).
 	CanRemoteControl bool `json:"can_remote_control"`
+	// CanObserveAwaitingInput mirrors the registry's live question-waiting
+	// capability. Trigger authoring uses it to explain when an
+	// agent.awaiting_input fact can be known rather than silently treating an
+	// unsupported harness as false.
+	CanObserveAwaitingInput bool `json:"can_observe_awaiting_input"`
 	// CanAutoMemory mirrors Harness.CanAutoMemory — true only for a harness
 	// with an auto-memory system tclaude can steer (Claude Code), false for one
 	// without it (Codex). The spawn dialog and profile editor gate their
@@ -1430,23 +1445,24 @@ func buildHarnessCatalog() []dashboardHarness {
 			continue // not spawnable — skip
 		}
 		dh := dashboardHarness{
-			Name:                h.Name,
-			DisplayName:         h.DisplayName,
-			Models:              h.Models.Models(),
-			EffortLevels:        h.Models.EffortLevels(),
-			CanRename:           h.CanRename(),
-			CanCompact:          h.CanCompact(),
-			CanSandbox:          h.SupportsSandbox(),
-			CanBuiltinOSSandbox: h.SupportsBuiltinOSSandbox(),
-			CanApproval:         h.SupportsApproval(),
-			CanTools:            h.SupportsToolGovernance(),
-			CanAutoReview:       h.SupportsAutoReview(),
-			CanDirTrust:         h.SupportsDirTrust(),
-			DirTrustStore:       harness.DirTrustStore(h),
-			CanAskTimeout:       h.SupportsAskTimeout(),
-			CanRemoteControl:    h.CanRemoteControl(),
-			CanAutoMemory:       h.CanAutoMemory(),
-			CanSSHWorkaround:    h.CanSSHWorkaround(),
+			Name:                    h.Name,
+			DisplayName:             h.DisplayName,
+			Models:                  h.Models.Models(),
+			EffortLevels:            h.Models.EffortLevels(),
+			CanRename:               h.CanRename(),
+			CanCompact:              h.CanCompact(),
+			CanSandbox:              h.SupportsSandbox(),
+			CanBuiltinOSSandbox:     h.SupportsBuiltinOSSandbox(),
+			CanApproval:             h.SupportsApproval(),
+			CanTools:                h.SupportsToolGovernance(),
+			CanAutoReview:           h.SupportsAutoReview(),
+			CanDirTrust:             h.SupportsDirTrust(),
+			DirTrustStore:           harness.DirTrustStore(h),
+			CanAskTimeout:           h.SupportsAskTimeout(),
+			CanRemoteControl:        h.CanRemoteControl(),
+			CanObserveAwaitingInput: h.SupportsAwaitingInputObservation(),
+			CanAutoMemory:           h.CanAutoMemory(),
+			CanSSHWorkaround:        h.CanSSHWorkaround(),
 
 			CanContextFeatures:         h.CanContextFeatures(),
 			CanAutoCompactWindow:       h.CanAutoCompactWindow(),
@@ -1556,31 +1572,39 @@ type dashboardLink struct {
 // dashboard can render a self-contained table without a second
 // fetch per row.
 type dashboardCronJob struct {
-	ID               int64  `json:"id"`
-	Name             string `json:"name"`
-	OwnerAgent       string `json:"owner_agent,omitempty"`
-	OwnerConv        string `json:"owner_conv"`
-	OwnerLabel       string `json:"owner_label"`
-	TargetKind       string `json:"target_kind"`
-	TargetAgent      string `json:"target_agent,omitempty"`
-	TargetConv       string `json:"target_conv,omitempty"`
-	TargetLabel      string `json:"target_label,omitempty"`
-	GroupID          int64  `json:"group_id"`
-	GroupName        string `json:"group_name,omitempty"`
-	TargetRole       string `json:"target_role,omitempty"`
-	IntervalSeconds  int64  `json:"interval_seconds"`
-	CronExpr         string `json:"cron_expr,omitempty"`
-	CronDesc         string `json:"cron_desc,omitempty"` // English rendering of CronExpr; best-effort, may be empty
-	Subject          string `json:"subject,omitempty"`
-	Body             string `json:"body"`
-	Enabled          bool   `json:"enabled"`
-	RunImmediately   bool   `json:"run_immediately"`
-	QueueWhenOffline bool   `json:"queue_when_offline"`
-	OperatorAuthored bool   `json:"operator_authored,omitempty"`
-	CreatedAt        string `json:"created_at,omitempty"`
-	LastRunAt        string `json:"last_run_at,omitempty"`
-	LastRunStatus    string `json:"last_run_status,omitempty"`
-	NextDueAt        string `json:"next_due_at,omitempty"`
+	ID                         int64    `json:"id"`
+	Name                       string   `json:"name"`
+	OwnerAgent                 string   `json:"owner_agent,omitempty"`
+	OwnerConv                  string   `json:"owner_conv"`
+	OwnerLabel                 string   `json:"owner_label"`
+	TargetKind                 string   `json:"target_kind"`
+	TargetAgent                string   `json:"target_agent,omitempty"`
+	TargetConv                 string   `json:"target_conv,omitempty"`
+	TargetLabel                string   `json:"target_label,omitempty"`
+	GroupID                    int64    `json:"group_id"`
+	GroupName                  string   `json:"group_name,omitempty"`
+	TargetRole                 string   `json:"target_role,omitempty"`
+	IntervalSeconds            int64    `json:"interval_seconds"`
+	CronExpr                   string   `json:"cron_expr,omitempty"`
+	CronDesc                   string   `json:"cron_desc,omitempty"` // English rendering of CronExpr; best-effort, may be empty
+	Subject                    string   `json:"subject,omitempty"`
+	Body                       string   `json:"body"`
+	ActionKind                 string   `json:"action_kind"`
+	SpawnProfile               string   `json:"spawn_profile,omitempty"`
+	SpawnRoleRefs              []string `json:"spawn_roles,omitempty"`
+	SpawnNameTemplate          string   `json:"spawn_name_template,omitempty"`
+	SpawnInstructionTemplate   string   `json:"spawn_instruction_template,omitempty"`
+	SpawnConcurrencyPolicy     string   `json:"spawn_concurrency_policy,omitempty"`
+	SpawnMaxLiveWorkers        int      `json:"spawn_max_live_workers,omitempty"`
+	SpawnWorkerDeadlineSeconds int64    `json:"spawn_worker_deadline_seconds,omitempty"`
+	Enabled                    bool     `json:"enabled"`
+	RunImmediately             bool     `json:"run_immediately"`
+	QueueWhenOffline           bool     `json:"queue_when_offline"`
+	OperatorAuthored           bool     `json:"operator_authored,omitempty"`
+	CreatedAt                  string   `json:"created_at,omitempty"`
+	LastRunAt                  string   `json:"last_run_at,omitempty"`
+	LastRunStatus              string   `json:"last_run_status,omitempty"`
+	NextDueAt                  string   `json:"next_due_at,omitempty"`
 }
 
 type snapshotPermissionsView struct {
@@ -3062,6 +3086,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		presentedPRs      map[string][]db.AgentPR
 		cachedPRStates    prStateIndex
 		allTags           map[string][]string
+		authoredOpenPRs   dashboardAuthoredOpenPRs
 		branchPRCacheURLs []string
 	)
 	rc := newSnapshotRowCache(convIDs, aliveSessions, func(phases []perfPhase) {
@@ -3089,8 +3114,25 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			taskRefs, _ = db.ListAgentTaskRefsByAgentIDs(visibleAgentIDs)
 		}},
 		snapshotNamedLoad{"presented_prs", func() { presentedPRs = preloadPresentedPRsForDashboard(time.Now()) }},
-		snapshotNamedLoad{"pr_state_cache", func() { cachedPRStates = cachedPresentedPRStates(branchPRCacheURLs) }},
 		snapshotNamedLoad{"tags", func() { allTags, _ = db.ListAllAgentTags() }},
+		snapshotNamedLoad{"authored_open_prs", func() { authoredOpenPRs = loadAuthoredOpenPRsSnapshot(cfg) }},
+	)...)
+	// Every PR visualization draws state and checks from these two canonical
+	// identity-keyed caches. Build the union first so branch/startup,
+	// explicitly presented and footer-only PRs share one bounded batch read.
+	allPRCacheURLs := append([]string(nil), branchPRCacheURLs...)
+	for _, rows := range presentedPRs {
+		for _, row := range rows {
+			allPRCacheURLs = append(allPRCacheURLs, row.PRURL)
+		}
+	}
+	for _, list := range [][]dashboardAuthoredOpenPR{authoredOpenPRs.Items, authoredOpenPRs.Recent} {
+		for _, pr := range list {
+			allPRCacheURLs = append(allPRCacheURLs, pr.URL)
+		}
+	}
+	span.addChildren("preload", runSnapshotNamedLoads(
+		snapshotNamedLoad{"pr_state_cache", func() { cachedPRStates = cachedPresentedPRStates(allPRCacheURLs) }},
 	)...)
 
 	taskRefFor := func(agentID string) taskRefView {
@@ -3104,6 +3146,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// an automatic branch link on another are observations of the same PR, not
 	// independent display state.
 	freshPRStates := make(prStateIndex)
+	addAuthoredOpenPRStates(freshPRStates, authoredOpenPRs)
 	for _, convID := range convIDs {
 		freshPRStates.addRepoLinks(rc.viewFor(convID).Links)
 	}
@@ -3127,14 +3170,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// the branch-link / presented-PR refreshes that already run `gh`, and by
 	// the hover endpoint. Presented PR URLs join the branch/startup ones so a
 	// presented badge gets the same indicator as an automatic one.
-	checkURLs := make([]string, 0, len(branchPRCacheURLs)+len(presentedPRs))
-	checkURLs = append(checkURLs, branchPRCacheURLs...)
-	for _, rows := range presentedPRs {
-		for _, row := range rows {
-			checkURLs = append(checkURLs, row.PRURL)
-		}
-	}
-	prChecks := prChecksIndexFor(checkURLs)
+	prChecks := prChecksIndexFor(allPRCacheURLs)
 	// Same preload discipline as taskRefs: one ListAllAgentTags per snapshot,
 	// keyed by agent_id, looked up per row (not a query per member/agent in
 	// this 2s-polled path). The stored set is already sorted alphabetically.
@@ -3270,6 +3306,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		ShowAgentHideButton:      cfg.ShowAgentHideButton(),
 		ShowGroupDescription:     cfg.ShowGroupDescription(),
 		ProcessesEnabled:         cfg.ProcessesEnabled(),
+		TriggersEnabled:          cfg.TriggersEnabled(),
 		GroupsRouteMapEnabled:    groupsRouteMapEnabled,
 		GroupAttachmentsMode:     cfg.GroupAttachmentsMode(),
 		TerminalPaletteShortcut:  cfg.TerminalCommandPaletteShortcutEnabled(),
@@ -3710,6 +3747,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.ExportJobsActive = exportJobsActive
 	out.Links = links
 	out.Usage = usage
+	out.AuthoredOpenPRs = associateAuthoredOpenPRs(
+		reconcileAuthoredOpenPRs(authoredOpenPRs, freshPRStates, prChecks, time.Now()),
+		out.Agents,
+	)
 	// Costs-tab visibility: show when there is real pay-per-token spend to
 	// display, OR a subscription account has opted into the WHAT-IF view
 	// (cost.show_on_subscription). A subscription-only account with the opt-in
@@ -3810,6 +3851,10 @@ func applyCostDisplayFactor(out *snapshotPayload, factor float64) {
 	}
 	out.Usage.TotalCostUSD *= factor
 	out.Usage.TodayCostUSD *= factor
+	for i := range out.Usage.APICosts {
+		out.Usage.APICosts[i].TotalCostUSD *= factor
+		out.Usage.APICosts[i].TodayCostUSD *= factor
+	}
 	scaleAgents := func(rows []dashboardAgent) {
 		for i := range rows {
 			rows[i].State.CostUSD *= factor
@@ -3959,26 +4004,34 @@ func collectCronSnapshot() []dashboardCronJob {
 // /api/jobs listing (dashboard_jobs.go).
 func cronJobToView(j *db.AgentCronJob, groupNames map[int64]string) dashboardCronJob {
 	row := dashboardCronJob{
-		ID:               j.ID,
-		Name:             j.Name,
-		OwnerAgent:       j.OwnerAgent,
-		OwnerConv:        j.OwnerConv,
-		OwnerLabel:       labelForConv(j.OwnerConv),
-		TargetKind:       j.TargetKind,
-		TargetAgent:      j.TargetAgent,
-		TargetConv:       j.TargetConv,
-		GroupID:          j.GroupID,
-		TargetRole:       j.TargetRole,
-		IntervalSeconds:  j.IntervalSeconds,
-		CronExpr:         j.CronExpr,
-		CronDesc:         cronexpr.Describe(j.CronExpr),
-		Subject:          j.Subject,
-		Body:             j.Body,
-		Enabled:          j.Enabled,
-		RunImmediately:   j.RunImmediately,
-		QueueWhenOffline: j.QueueWhenOffline,
-		OperatorAuthored: j.OperatorAuthored,
-		LastRunStatus:    j.LastRunStatus,
+		ID:                         j.ID,
+		Name:                       j.Name,
+		OwnerAgent:                 j.OwnerAgent,
+		OwnerConv:                  j.OwnerConv,
+		OwnerLabel:                 labelForConv(j.OwnerConv),
+		TargetKind:                 j.TargetKind,
+		TargetAgent:                j.TargetAgent,
+		TargetConv:                 j.TargetConv,
+		GroupID:                    j.GroupID,
+		TargetRole:                 j.TargetRole,
+		IntervalSeconds:            j.IntervalSeconds,
+		CronExpr:                   j.CronExpr,
+		CronDesc:                   cronexpr.Describe(j.CronExpr),
+		Subject:                    j.Subject,
+		Body:                       j.Body,
+		ActionKind:                 j.ActionKind,
+		SpawnProfile:               j.SpawnProfile,
+		SpawnRoleRefs:              j.SpawnRoleRefs,
+		SpawnNameTemplate:          j.SpawnNameTemplate,
+		SpawnInstructionTemplate:   j.SpawnInstructionTemplate,
+		SpawnConcurrencyPolicy:     j.SpawnConcurrencyPolicy,
+		SpawnMaxLiveWorkers:        j.SpawnMaxLiveWorkers,
+		SpawnWorkerDeadlineSeconds: j.SpawnWorkerDeadlineSeconds,
+		Enabled:                    j.Enabled,
+		RunImmediately:             j.RunImmediately,
+		QueueWhenOffline:           j.QueueWhenOffline,
+		OperatorAuthored:           j.OperatorAuthored,
+		LastRunStatus:              j.LastRunStatus,
 	}
 	if j.TargetConv != "" {
 		row.TargetLabel = labelForConv(j.TargetConv)

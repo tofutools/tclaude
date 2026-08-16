@@ -3,6 +3,7 @@ package session
 import (
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -703,6 +704,26 @@ func TestBuildTclaudeLayerLaunchSpecMaterializesSharedContract(t *testing.T) {
 	}
 }
 
+func TestBuildTclaudeLayerLaunchSpecIncludesResolvedHarnessRuntime(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	t.Setenv("HOME", home)
+	workspace := filepath.Join(home, "work")
+	runtimeRoot := filepath.Join(home, ".codex", "packages", "standalone", "release")
+	require.NoError(t, os.MkdirAll(workspace, 0o700))
+	require.NoError(t, os.MkdirAll(runtimeRoot, 0o700))
+
+	spec, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
+		HarnessName:      harness.CodexName,
+		Cwd:              workspace,
+		HarnessReadPaths: []string{runtimeRoot},
+	})
+	require.NoError(t, err)
+	assert.Contains(t, spec.Effective.Filesystem, sandboxpolicy.FilesystemGrant{
+		Path: runtimeRoot, Access: sandboxpolicy.AccessRead,
+	})
+}
+
 func TestBuildTclaudeLayerLaunchSpecBindsDarwinReservationToContract(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -858,6 +879,8 @@ func TestValidateTclaudeLayerNetworkRequiresDescriptorAndExplicitTransportAssert
 	require.NoError(t, err)
 	openCode, err := harness.Resolve(harness.OpenCodeName)
 	require.NoError(t, err)
+	copilot, err := harness.Resolve(harness.CopilotName)
+	require.NoError(t, err)
 
 	closed := sandboxpolicy.EffectiveProfile{NetworkAccess: sandboxpolicy.NetworkAccessNone}
 	_, validateErr := ValidateTclaudeLayerNetwork(openCode, closed, harness.ResolvedModelTransport{})
@@ -882,6 +905,18 @@ func TestValidateTclaudeLayerNetworkRequiresDescriptorAndExplicitTransportAssert
 		NetworkAccess: sandboxpolicy.NetworkAccessInternet,
 	}, harness.ResolvedModelTransport{})
 	require.NoError(t, validateErr)
+
+	// Private routing leaves destinations unrestricted. In particular,
+	// Copilot's first-party route does not need a provider endpoint assertion;
+	// the namespace is a topology boundary, not a destination allow list.
+	privateOpen := sandboxpolicy.EffectiveProfile{Network: &sandboxpolicy.NetworkRules{
+		Mode:      sandboxpolicy.AccessModeOpen,
+		Namespace: sandboxpolicy.NetworkNamespacePrivate,
+	}}
+	notices, validateErr := ValidateTclaudeLayerNetwork(
+		copilot, privateOpen, harness.ResolvedModelTransport{})
+	require.NoError(t, validateErr)
+	assert.Empty(t, notices)
 }
 
 func TestValidateTclaudeLayerFilteredNetworkRequiresHonestModelResolution(t *testing.T) {
@@ -1302,8 +1337,151 @@ func TestBwrapArgsConstructsHostOpenRootWithoutUnsharingNetwork(t *testing.T) {
 	assert.NotEqual(t, -1, indexOfBwrapTriplet(inherited, "--ro-bind", "/"))
 	assert.NotContains(t, inherited, "--unshare-pid")
 	assert.Equal(t, -1, indexOfBwrapTriplet(inherited, "--ro-bind", "/usr"))
+	assert.NotContains(t, inherited, tclaudeLayerConstructedRootTclaudePath,
+		"an inherited root already exposes the host CLI and needs no projected copy")
 	assert.Empty(t, indicesOfBwrapTriplet(inherited, "--ro-bind", policySocket),
 		"an inherited root has no constructed root to allowlist sockets into")
+}
+
+func TestAppendTclaudeLayerTclaudeCLIResolvesOneExecutableFile(t *testing.T) {
+	t.Setenv("PATH", "/usr/bin:/bin")
+	root := t.TempDir()
+	realBinary := filepath.Join(root, "real-tclaude")
+	require.NoError(t, os.WriteFile(realBinary, []byte("fixture"), 0o755))
+	linkedBinary := filepath.Join(root, "tclaude")
+	require.NoError(t, os.Symlink(realBinary, linkedBinary))
+	resolvedBinary, err := filepath.EvalSymlinks(linkedBinary)
+	require.NoError(t, err)
+
+	got, err := appendTclaudeLayerTclaudeCLI([]string{"prefix"}, linkedBinary)
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"prefix",
+		"--dir", tclaudeLayerConstructedRootTclaudeDir,
+		"--dir", tclaudeLayerConstructedRootTclaudeBin,
+		"--ro-bind", resolvedBinary, tclaudeLayerConstructedRootTclaudePath,
+		"--setenv", "PATH", tclaudeLayerConstructedRootTclaudeBin + ":/usr/bin:/bin",
+	}, got)
+}
+
+func TestAppendTclaudeLayerTclaudeCLIProjectsExecutableAlreadyInStaticRoot(t *testing.T) {
+	t.Setenv("PATH", "/usr/bin:/bin")
+	resolved, err := filepath.EvalSymlinks("/bin/sh")
+	require.NoError(t, err)
+	got, err := appendTclaudeLayerTclaudeCLI([]string{"prefix"}, "/bin/sh")
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"prefix",
+		"--dir", tclaudeLayerConstructedRootTclaudeDir,
+		"--dir", tclaudeLayerConstructedRootTclaudeBin,
+		"--ro-bind", resolved, tclaudeLayerConstructedRootTclaudePath,
+		"--setenv", "PATH", tclaudeLayerConstructedRootTclaudeBin + ":/usr/bin:/bin",
+	}, got, "the active CLI must land on PATH even when its source is under /opt or another static root")
+}
+
+func TestAppendTclaudeLayerTclaudeCLIRejectsNonExecutableFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tclaude")
+	require.NoError(t, os.WriteFile(path, []byte("fixture"), 0o644))
+
+	_, err := appendTclaudeLayerTclaudeCLI(nil, path)
+	require.ErrorContains(t, err, "is not an executable regular file")
+}
+
+func TestConstructedRootTclaudePathExportSurvivesHarnessEnvironmentForwarding(t *testing.T) {
+	ambient := "export PATH=/home/operator/go/bin:/usr/bin; "
+	preLaunch := "printf pre-launch; "
+	exports := appendTclaudeLayerConstructedRootPathExport(ambient)
+	projectedExport := appendTclaudeLayerConstructedRootPathExport("")
+
+	for _, harnessName := range []string{
+		harness.DefaultName,
+		harness.CodexName,
+		harness.OpenCodeName,
+		harness.CopilotName,
+	} {
+		t.Run(harnessName, func(t *testing.T) {
+			got := harness.MustGet(harnessName).Spawn.BuildCommand(harness.SpawnSpec{
+				ExecutablePath:  "/usr/bin/agent-harness",
+				EnvExports:      exports,
+				PreLaunchScript: preLaunch,
+				ServerURL:       "http://127.0.0.1:4096",
+			})
+			ambientAt := strings.Index(got, ambient)
+			projectedAt := strings.Index(got, projectedExport)
+			preLaunchAt := strings.Index(got, preLaunch)
+			require.NotEqual(t, -1, ambientAt)
+			require.NotEqual(t, -1, projectedAt)
+			require.NotEqual(t, -1, preLaunchAt)
+			assert.Less(t, ambientAt, projectedAt,
+				"the harness must not overwrite the projected CLI PATH")
+			assert.Less(t, projectedAt, preLaunchAt,
+				"operator pre-launch PATH changes retain their established final precedence")
+		})
+	}
+}
+
+func TestConstructedRootTclaudePathExportDoesNotAddCurrentDirectory(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+		set  bool
+		want string
+	}{
+		{name: "unset", want: tclaudeLayerConstructedRootTclaudeBin},
+		{name: "empty", set: true, want: tclaudeLayerConstructedRootTclaudeBin},
+		{name: "nonempty", path: "/usr/bin:/bin", set: true, want: tclaudeLayerConstructedRootTclaudeBin + ":/usr/bin:/bin"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command("/bin/sh", "-c",
+				appendTclaudeLayerConstructedRootPathExport("")+`printf '%s' "$PATH"`)
+			cmd.Env = []string{}
+			if tc.set {
+				cmd.Env = []string{"PATH=" + tc.path}
+			}
+			got, err := cmd.Output()
+			require.NoError(t, err)
+			if tc.name == "unset" {
+				assert.True(t,
+					string(got) == tclaudeLayerConstructedRootTclaudeBin ||
+						strings.HasPrefix(string(got), tclaudeLayerConstructedRootTclaudeBin+":"),
+					"the shell may synthesize a default PATH, but the trusted directory must remain first: %q", got)
+			} else {
+				assert.Equal(t, tc.want, string(got))
+			}
+			assert.False(t, strings.HasSuffix(string(got), ":"),
+				"an empty PATH component would add the current directory to command lookup")
+		})
+	}
+}
+
+func TestBwrapArgsOperatorHideCanShadowConstructedRootTclaudeCLI(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	plan := sandboxpolicy.MountPlan{
+		NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd,
+		Entries: []sandboxpolicy.MountEntry{{
+			Path: tclaudeLayerConstructedRootTclaudeDir,
+			Mode: sandboxpolicy.MountHide,
+		}},
+	}
+
+	got, err := bwrapArgsWithDaemonFinal(
+		nil, plan, nil, nil, nil, nil, "", nil)
+	require.NoError(t, err)
+
+	resolvedSelf, err := filepath.EvalSymlinks(clcommon.SelfTclaudePath())
+	require.NoError(t, err)
+	if tclaudeLayerStaticOSRootProvides(resolvedSelf) {
+		t.Skip("test executable is already provided by the static OS root")
+	}
+	cliBind := indexOfBwrapBind(got, "--ro-bind", resolvedSelf, tclaudeLayerConstructedRootTclaudePath)
+	cliDirHide := indexOfBwrapTriplet(got, "--tmpfs", tclaudeLayerConstructedRootTclaudeDir)
+	require.NotEqual(t, -1, cliBind)
+	require.NotEqual(t, -1, cliDirHide)
+	assert.Less(t, cliBind, cliDirHide,
+		"authored policy replay must be able to shadow the coordination convenience")
+	assert.Len(t, indicesOfBwrapBind(got, "--ro-bind", resolvedSelf, tclaudeLayerConstructedRootTclaudePath), 1,
+		"the applier must not repair the CLI bind after an authored hide")
 }
 
 func TestBwrapArgsIsolatedAliasesRespectHideAndRemountOrdering(t *testing.T) {
@@ -1495,6 +1673,16 @@ func indicesOfBwrapTriplet(args []string, flag, path string) []int {
 	return indices
 }
 
+func indicesOfBwrapBind(args []string, flag, source, target string) []int {
+	var indices []int
+	for i := 0; i+2 < len(args); i++ {
+		if args[i] == flag && args[i+1] == source && args[i+2] == target {
+			indices = append(indices, i)
+		}
+	}
+	return indices
+}
+
 func indicesOfBwrapSymlink(args []string, target, link string) []int {
 	var indices []int
 	for i := 0; i+2 < len(args); i++ {
@@ -1563,22 +1751,20 @@ func TestBwrapCommandShellQuotesHarnessCommand(t *testing.T) {
 	assert.Contains(t, got, "--new-session")
 }
 
-// TestLaunchContractReachesExactlyOneProtectedRootPath is the enumeration the
+// TestLaunchContractDoesNotReachProtectedRootPath is the enumeration the
 // protected-root invariant needs in order to be checkable rather than merely
 // asserted (TCL-791, required by the sandbox-v2 lead before merge).
 //
 // The invariant is absolute for POLICY input: no profile, include,
-// acknowledgement, or flag reaches a protected root. The launch contract is
-// the one channel that does, exactly once — the per-session spawn-attachment
-// drop-box, which is daemon-owned, path-derived from the session identity, and
-// bound on top of the hide that already covers the rest of the root.
+// acknowledgement, flag, or daemon-authored launch-contract entry reaches a
+// protected root. The per-session spawn-attachment drop-box is daemon-owned
+// and path-derived from the session identity, but now lives in the
+// agent-reachable API tree rather than making an exception below data/.
 //
 // Prose cannot guard that. This test enumerates EVERY bwrap operation that
 // makes host content visible inside the sandbox at or below a protected root
-// and asserts the resulting set is exactly {drop-box child}. A second such
-// path — from any channel, whether a new launch-contract field, a plan entry,
-// or a repair mount — fails here with the offending path named.
-func TestLaunchContractReachesExactlyOneProtectedRootPath(t *testing.T) {
+// and asserts the resulting set is empty.
+func TestLaunchContractDoesNotReachProtectedRootPath(t *testing.T) {
 	home, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	t.Setenv("HOME", home)
@@ -1594,14 +1780,13 @@ func TestLaunchContractReachesExactlyOneProtectedRootPath(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, protected)
 
-	// The real drop-box paths, so relocating them without revisiting this
-	// invariant fails here rather than silently widening the allowed set.
+	// The real drop-box paths must stay outside protected state while remaining
+	// part of the launch contract.
 	dropBoxParent := common.SpawnAttachmentsPrivateBase()
 	dropBoxChild := common.SpawnAttachmentsPrivateDir("session-under-test")
 	require.NoError(t, os.MkdirAll(dropBoxChild, 0o700))
-	require.Truef(t, underAnyProtectedRoot(protected, dropBoxChild),
-		"precondition: the drop-box %s must itself sit under a protected root, "+
-			"or this test proves nothing", dropBoxChild)
+	require.Falsef(t, underAnyProtectedRoot(protected, dropBoxChild),
+		"the agent-facing drop-box %s must not sit under protected state", dropBoxChild)
 
 	// The widest legal policy shape: deny the ancestor, reopen an ordinary
 	// child. Built through Normalize and RenderMountPlan because that is the
@@ -1637,16 +1822,10 @@ func TestLaunchContractReachesExactlyOneProtectedRootPath(t *testing.T) {
 		}
 	}
 
-	require.Contains(t, reached, dropBoxChild,
-		"the drop-box bind must actually land, or the equality below is vacuous")
-	for dst, flag := range reached {
-		assert.Equalf(t, dropBoxChild, dst,
-			"%s %s reaches protected state through the launch contract. The "+
-				"spawn-attachment drop-box is the ONLY sanctioned path below a "+
-				"protected root (TCL-791). If this is deliberate, it needs a ruling "+
-				"and this test updated — not a silent second exception.", flag, dst)
-	}
-	assert.Len(t, reached, 1)
+	assert.Empty(t, reached,
+		"no bind may reach protected state through the launch contract")
+	assert.Contains(t, args, dropBoxChild,
+		"the drop-box child must still be present in the launch contract")
 }
 
 func underAnyProtectedRoot(protected []string, path string) bool {

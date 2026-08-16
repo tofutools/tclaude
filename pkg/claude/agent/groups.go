@@ -25,14 +25,14 @@ import (
 // hold the matching slug in `agent.default_permissions` or
 // `agent.permission_overrides[<conv>]` in `~/.tclaude/config.json`.
 //
-// Slugs: groups.create, groups.rm, member.add, member.remove,
-// member.redesignate. Read-only subcommands (`ls`, `members`) are open
+// Slugs: groups.create, groups.delete, groups.members.add, groups.members.remove,
+// groups.members.update. Read-only subcommands (`ls`, `members`) are open
 // to any caller.
 func groupsCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:         "groups",
 		Short:       "Manage agent groups (allow-listed who can talk to whom)",
-		Long:        "`ls` and `members` are open. Mutating subcommands (create, rm, add, remove, update-member) are gated server-side on a permission slug: humans always pass; agents need the slug granted in agent.default_permissions or agent.permission_overrides in ~/.tclaude/config.json. Slugs: groups.create, groups.rm, member.add, member.remove, member.redesignate.",
+		Long:        "`ls` and `members` are open. Mutating subcommands (create, rm, add, remove, update-member) are gated server-side on a permission slug: humans always pass; agents need the slug granted in agent.default_permissions or agent.permission_overrides in ~/.tclaude/config.json. Slugs: groups.create, groups.delete, groups.members.add, groups.members.remove, groups.members.update.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			groupsLsCmd(),
@@ -203,7 +203,7 @@ func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
 // GroupsCreateParams drives `tclaude agent groups create`. The optional
 // repeatable `--member` flag bootstraps a team in one shot: the CLI
 // creates the group first, then spawns one fresh CC session per member
-// (via the existing `groups.spawn` daemon endpoint).
+// (via the existing `groups.members.spawn` daemon endpoint).
 type GroupsCreateParams struct {
 	Name        string `pos:"true" help:"Group name"`
 	Descr       string `long:"descr" short:"d" optional:"true" help:"Optional description"`
@@ -229,7 +229,7 @@ func groupsCreateCmd() *cobra.Command {
 			"spawn fresh CC sessions for each member and add them to the group. Each " +
 			"`--member` value is a comma-separated list of key=value pairs: " +
 			"`name=lead,role=tech-lead,descr=Owns the diff,cwd=.`. The `name` becomes " +
-			"the new agent's conversation title. Member spawn requires `groups.spawn` " +
+			"the new agent's conversation title. Member spawn requires `groups.members.spawn` " +
 			"(default human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *GroupsCreateParams, cmd *cobra.Command) error {
@@ -380,7 +380,7 @@ func RunGroupsCreate(p *GroupsCreateParams, stdout, stderr io.Writer) int {
 }
 
 // bootstrapMembers iterates parsed member specs, calling the
-// `groups.spawn` daemon endpoint for each. Returns (spawned, failed).
+// `groups.members.spawn` daemon endpoint for each. Returns (spawned, failed).
 // Cwd defaults to the caller's cwd when the spec doesn't pin one,
 // matching the pattern `agent spawn` and `--join-group` use.
 func bootstrapMembers(groupName string, specs []*memberSpec, stdout, stderr io.Writer) (spawned, failed int) {
@@ -798,7 +798,7 @@ func groupsRetireCmd() *cobra.Command {
 			"the processes running. The CALLER's own conversation is always skipped — an agent never retires itself. Members that " +
 			"aren't active agents (placeholders, already-retired convs) are skipped; retire is idempotent. " +
 			"\n\n" +
-			"Gated on the `groups.retire` permission (default human-only). Note retire leaves ALL of a member's groups, not just this one.",
+			"Gated on the `groups.members.retire` permission (default human-only). Note retire leaves ALL of a member's groups, not just this one.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *groupsRetireParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Name).SetAlternativesFunc(completeGroupNames)
@@ -1390,7 +1390,7 @@ func groupsSetDescrCmd() *cobra.Command {
 			"description, distinct from the per-member descr edited with " +
 			"`groups update-member`. Pass the new description as the second " +
 			"argument; omit it to clear the description. Gated on the " +
-			"`groups.rename` permission (default human-only).",
+			"`groups.settings.description` permission (or the `groups.admin` umbrella; default human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *groupsSetDescrParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
@@ -1457,7 +1457,7 @@ func groupsSetDefaultDirCmd() *cobra.Command {
 			"blank, so `tclaude agent spawn <group>` and the dashboard's " +
 			"'+ spawn agent' button both inherit it. Omit <dir> to clear " +
 			"the default (spawns then fall back to the daemon's own cwd). " +
-			"Gated on the `groups.rename` permission (default human-only).",
+			"Gated on the `groups.settings.default-dir` permission (or the `groups.admin` umbrella; default human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *groupsSetDefaultDirParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
@@ -1534,7 +1534,7 @@ func groupsSetDefaultProfileCmd() *cobra.Command {
 			"carries its own harness, so a group can default its team onto a Codex " +
 			"profile — the harness-correct replacement for the retired " +
 			"`set-default-model`. Omit <profile> to clear the default. Gated on " +
-			"the `groups.rename` permission (default human-only).",
+			"the `groups.settings.default-profile` permission (or the `groups.admin` umbrella; default human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *groupsSetDefaultProfileParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
@@ -1602,7 +1602,7 @@ func groupsSetRemoteControlCmd() *cobra.Command {
 			"profile. This is a default, not a lock — an explicit per-spawn value (the dashboard " +
 			"checkbox / `agent spawn --remote-control`) wins over it. Omit <policy> to clear back " +
 			"to inherit. Codex agents have no Remote Access, so a default-on is silently a no-op " +
-			"for them. Gated on the `groups.rename` permission (default human-only).",
+			"for them. Gated on the `groups.settings.remote-control-policy` permission (or the `groups.admin` umbrella; default human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *groupsSetRemoteControlParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
@@ -1657,7 +1657,7 @@ func runGroupsSetRemoteControl(p *groupsSetRemoteControlParams, stdout, stderr i
 
 type groupsSetOwnerScopesParams struct {
 	Group    string `pos:"true" help:"Group to configure"`
-	Scopes   string `pos:"true" optional:"true" help:"Owner-scope map as JSON: a permission slug mapped to the scope its owner-implied bypass is confined to, e.g. '{\"groups.spawn\": {\"spawn_profile\": [\"reviewer\"]}}'. Omit (and omit --file) to clear every narrowing."`
+	Scopes   string `pos:"true" optional:"true" help:"Owner-grant constraint map as JSON, e.g. '{\"groups.members.spawn\": {\"spawn_profile\": [\"reviewer\"]}}'. Omit (and omit --file) to clear every constraint."`
 	File     string `long:"file" short:"f" optional:"true" help:"Read the JSON map from this file instead of the positional argument ('-' reads stdin). Mutually exclusive with the positional argument."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 }
@@ -1665,17 +1665,17 @@ type groupsSetOwnerScopesParams struct {
 func groupsSetOwnerScopesCmd() *cobra.Command {
 	return boa.CmdT[groupsSetOwnerScopesParams]{
 		Use:   "set-owner-scopes",
-		Short: "Narrow (or clear) what OWNING this group structurally confers",
-		Long: "Owning a group structurally confers a set of permissions without an explicit grant — " +
-			"the owner-implied bypass. This command CONFINES that bypass for one group, as a JSON map " +
-			"from permission slug to scope: '{\"groups.spawn\": {\"spawn_profile\": [\"reviewer\"]}}' " +
-			"means an owner of this group with no grant of its own may spawn into it only with the " +
+		Short: "Constrain (or clear) this group's automatic owner grants",
+		Long: "Owning a group contributes a documented set of ordinary permission grants scoped to that group. " +
+			"This command adds constraints to those grants for one group, as a JSON map " +
+			"from permission slug to scope: '{\"groups.members.spawn\": {\"spawn_profile\": [\"reviewer\"]}}' " +
+			"means this group's automatic owner grant permits spawning only with the " +
 			"reviewer profile, and is refused otherwise.\n\n" +
-			"It narrows ONLY the bypass. An explicit grant the owner separately holds resolves first and " +
-			"is untouched — narrow that with `permissions grant --scope`. It is also per-group: an owner " +
+			"It constrains ONLY this group's owner-contributed grant. Other positive grants compose with it " +
+			"and are untouched — constrain those with `permissions grant --scope`. It is also per-group: an owner " +
 			"of this group and another is confined only when acting on this one. Omit <scopes> (and " +
-			"--file) to clear the narrowing and restore the unrestricted bypass. " +
-			"Gated on `groups.rename` plus `permissions.grant` and `permissions.revoke` " +
+			"--file) to clear the extra constraints. " +
+			"Gated on `groups.settings.owner-scopes` (or `groups.admin`) plus `permissions.grant` and `permissions.revoke` " +
 			"(default human-only), because a write can both add and remove a narrowing.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *groupsSetOwnerScopesParams, _ *cobra.Command) error {
@@ -1731,15 +1731,15 @@ func runGroupsSetOwnerScopes(p *groupsSetOwnerScopesParams, stdin io.Reader, std
 		return MapDaemonErrorToRC(err)
 	}
 	if len(resp.OwnerScopes) == 0 {
-		fmt.Fprintf(stdout, "%s: owner-bypass narrowing cleared (owners hold the full owner-implied set here)\n", resp.Group)
+		fmt.Fprintf(stdout, "%s: owner-grant constraints cleared\n", resp.Group)
 		return rcOK
 	}
 	rendered, err := json.Marshal(resp.OwnerScopes)
 	if err != nil {
-		fmt.Fprintf(stdout, "%s: owner-bypass narrowing set for %d slug(s)\n", resp.Group, len(resp.OwnerScopes))
+		fmt.Fprintf(stdout, "%s: owner-grant constraints set for %d slug(s)\n", resp.Group, len(resp.OwnerScopes))
 		return rcOK
 	}
-	fmt.Fprintf(stdout, "%s: owner-bypass narrowing set to %s\n", resp.Group, rendered)
+	fmt.Fprintf(stdout, "%s: owner-grant constraints set to %s\n", resp.Group, rendered)
 	return rcOK
 }
 
@@ -1764,7 +1764,7 @@ func groupsSetContextCmd() *cobra.Command {
 			"the shell would otherwise eat from an inline string. Omit both to " +
 			"clear it. Each spawn can still opt out individually (the dashboard's " +
 			"'include group default context' checkbox). Gated on the " +
-			"`groups.rename` permission (default human-only).",
+			"`groups.settings.default-context` permission (or the `groups.admin` umbrella; default human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *groupsSetContextParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
@@ -1833,8 +1833,8 @@ func groupsSetMaxMembersCmd() *cobra.Command {
 			"a team without bound. The cap is a hard property of the group: it " +
 			"applies to every caller, the human included; a human raises it to " +
 			"add more. Omit <max> or pass 0 to clear it (unlimited, the " +
-			"default). Gated on the `groups.rename` permission (default " +
-			"human-only).",
+			"default). Gated on the `groups.settings.max-members` permission (or the " +
+			"`groups.admin` umbrella; default human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *groupsSetMaxMembersParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
@@ -1912,7 +1912,7 @@ func groupsSetNotificationsCmd() *cobra.Command {
 			"`on` restores the default. A per-agent override (set from the " +
 			"dashboard) still wins either way, and the global " +
 			"notifications.enabled config toggle sits above both. Gated on " +
-			"the `groups.rename` permission (default human-only).",
+			"the `groups.settings.notifications` permission (or the `groups.admin` umbrella; default human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *groupsSetNotificationsParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)

@@ -45,8 +45,8 @@ func stopCmd() *cobra.Command {
 			"Idempotent: agents already offline come back as " +
 			"`skipped:already_offline`. " +
 			"\n\n" +
-			"Auth: requires the agent.stop permission OR being an owner of a " +
-			"group containing the target. The single-conv variant of " +
+			"Auth: requires global agent.stop, or groups.members.stop covering " +
+			"every current active group containing the target. Ownership automatically contributes the latter for owned groups. The single-conv variant of " +
 			"`tclaude agent groups stop`.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *stopParams, _ *cobra.Command) error {
@@ -132,8 +132,8 @@ func resumeCmd() *cobra.Command {
 			"Malformed, missing, or changed provenance also fails closed; a direct " +
 			"human resume or an approved `--ask-human` request may recapture it. " +
 			"\n\n" +
-			"Auth: requires the agent.resume permission OR being an owner of a " +
-			"group containing the target. The single-conv variant of " +
+			"Auth: requires global agent.resume, or groups.members.resume covering " +
+			"every current active group containing the target. Ownership automatically contributes the latter for owned groups. The single-conv variant of " +
 			"`tclaude agent groups resume`.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *resumeParams, _ *cobra.Command) error {

@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	filteredNetworkDNSPort             = 53
+	filteredNetworkDNSUpstreamPort     = 53
 	filteredNetworkDNSMaxMessage       = 64 << 10
 	filteredNetworkDNSMaxChain         = 8
 	filteredNetworkDNSMaxAnswers       = 64
@@ -823,7 +823,7 @@ func parseFilteredNetworkDNSUpstreams(resolvConf []byte) ([]string, error) {
 				"host resolv.conf nameserver %q is invalid", fields[1])
 		}
 		upstreams = append(upstreams, net.JoinHostPort(
-			address.String(), strconv.Itoa(filteredNetworkDNSPort)))
+			address.String(), strconv.Itoa(filteredNetworkDNSUpstreamPort)))
 		if len(upstreams) == maxUpstreams {
 			break
 		}

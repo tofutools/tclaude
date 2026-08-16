@@ -78,12 +78,20 @@ const harnesses = [{
 const profiles = [{
   name: 'group-default', harness: 'claude', model: 'opus', effort: 'high',
   role: 'reviewer', initial_message: 'review this', remote_control: true,
-  is_owner: true, permission_overrides: { 'groups.spawn': 'grant' },
+  is_owner: true, permission_overrides: { 'groups.members.spawn': 'grant' },
 }, {
   name: 'codex-profile', aliases: ['codex-fast'], harness: 'codex',
   model: 'gpt-5.6', sandbox: 'danger-full-access', approval: 'on-request',
   auto_review: true, trust_dir: false,
   remote_control: true,
+}];
+
+const roles = [{
+  name: 'reviewer', descr: 'Cold review', brief: 'Review carefully.',
+  permissions: ['human.notify'],
+}, {
+  name: 'go-maintainer', descr: 'Own Go quality', brief: 'Keep Go healthy.',
+  permissions: [{ slug: 'groups.members.spawn', scope: { group: ['alpha'] } }],
 }];
 
 const sandboxImpl = {
@@ -170,7 +178,7 @@ test('agent-spawn model preserves precedence, sparse profiles, gates, and hidden
   assert.equal(draft.role, 'reviewer');
   assert.equal(draft.remoteControl, true);
   assert.equal(draft.owner, true);
-  assert.deepEqual(draft.permissionOverrides, { 'groups.spawn': 'grant' });
+  assert.deepEqual(draft.permissionOverrides, { 'groups.members.spawn': 'grant' });
 
   const sparse = model.applySpawnProfile(
     { ...draft, model: 'sonnet' }, { harness: 'claude', role: 'navigator' }, context, remembered,
@@ -315,7 +323,7 @@ test('agent-spawn model normalizes names and builds exact launch bodies', async 
     name: 'worker', role: 'reviewer', descr: 'does review', task: 'https://linear.app/TCL-458',
     initialMessage: 'ship it', model: 'opus', effort: 'high', sandbox: 'on',
     approval: 'plan', askTimeout: 'never', sandboxProfile: 'strict',
-    remoteControl: false, owner: true, permissionOverrides: { 'groups.spawn': 'grant' },
+    remoteControl: false, owner: true, permissionOverrides: { 'groups.members.spawn': 'grant' },
     cwd: '/mono', wtRepo: '/mono/sub', profile: 'group-default',
   };
   const request = model.buildSpawnRequest(
@@ -323,13 +331,13 @@ test('agent-spawn model normalizes names and builds exact launch bodies', async 
   );
   assert.equal(request.url, '/api/groups/alpha/spawn');
   assert.deepEqual(request.body, {
-    name: 'worker', role: 'reviewer', descr: 'does review', initial_message: 'ship it',
+    name: 'worker', role: 'reviewer', role_refs: [], descr: 'does review', initial_message: 'ship it',
     auto_focus: true, include_group_context: true, profile: 'group-default',
     attachments: ['/tmp/a.png'], effort: 'high', model: 'opus',
     task_ref_url: 'https://linear.app/TCL-458', harness: 'claude', sandbox: 'on',
     sandbox_profile: 'strict', approval: 'plan', ask_user_question_timeout: 'never',
     remote_control: false, auto_memory: false, is_owner: true,
-    permission_overrides: { 'groups.spawn': 'grant' },
+    permission_overrides: { 'groups.members.spawn': 'grant' },
     // Always present for a trim-capable harness, empty when nothing is trimmed:
     // the form is the authoritative statement of what the agent loads, so an
     // omitted field would let the daemon's profile tier stack re-apply a
@@ -606,7 +614,7 @@ async function mountSpawn(t, overrides = {}) {
   ]);
   const state = createAgentSpawnState({
     getSnapshot: () => ({
-      groups, harnesses, sandbox_impl: sandboxImpl, user_default_model: 'sonnet',
+      groups, harnesses, roles, sandbox_impl: sandboxImpl, user_default_model: 'sonnet',
     }),
   });
   const calls = [];
@@ -649,7 +657,53 @@ async function mountSpawn(t, overrides = {}) {
   return { harness, host, state, actions, calls, cleanup: mounted.unmount };
 }
 
-test('Preact agent-spawn renders the unenforced-network checkbox under the sandbox profile', async (t) => {
+test('spawn role chips compose multiple roles, inspect details, and feed the permission preview', async (t) => {
+  const mounted = await mountSpawn(t);
+  const { harness, host, state, calls } = mounted;
+  state.open({ groupName: 'alpha' });
+  await flush(harness);
+
+  assertAbsent(host.querySelector('.spawn-form-section'));
+  assertAbsent(host.querySelector('#agent-spawn-roles-hint'));
+  assert.equal(host.querySelector('.agent-spawn-roles-row').nextElementSibling.classList.contains('spawn-role-row'), true,
+    'Roles remains a normal row directly above display identity');
+
+  let add = host.querySelector('#agent-spawn-role-add');
+  assert.equal(add.options[0].textContent, '＋ Add role…');
+  harness.document.body.classList.add('wizard');
+  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:wizard', { detail: { active: true } }));
+  await flush(harness);
+  add = host.querySelector('#agent-spawn-role-add');
+  assert.equal(add.options[0].textContent, '＋ Add class…');
+  assert.equal(add.getAttribute('aria-label'), 'Add class');
+  harness.document.body.classList.remove('wizard');
+  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:wizard', { detail: { active: false } }));
+  await flush(harness);
+  add = host.querySelector('#agent-spawn-role-add');
+  for (const role of ['reviewer', 'go-maintainer']) {
+    setValue(add, role);
+    await harness.act(() => harness.fireEvent(add, 'change'));
+  }
+  assert.deepEqual([...host.querySelectorAll('.agent-spawn-role-chip .role-chip-inspect')]
+    .map((button) => button.textContent), ['reviewer', 'go-maintainer']);
+
+  const reviewer = host.querySelector('.agent-spawn-role-chip .role-chip-inspect');
+  assert.match(reviewer.title, /Review carefully/);
+  assert.match(reviewer.title, /human.notify/);
+  reviewer.click();
+  await flush(harness);
+  assert.match(host.querySelector('.agent-spawn-role-inspect').textContent, /Review carefully/);
+
+  host.querySelector('#agent-spawn-perms').click();
+  const descriptor = calls.find(([kind]) => kind === 'permissions')?.[1];
+  assert.deepEqual(descriptor.roleGrants, [
+    { slug: 'human.notify', scope: '', role: 'reviewer' },
+    { slug: 'groups.members.spawn', scope: 'group=alpha', role: 'go-maintainer' },
+  ]);
+  await mounted.cleanup();
+});
+
+test('Preact agent-spawn renders the unenforced-rules checkbox under the sandbox profile', async (t) => {
   const mounted = await mountSpawn(t);
   const { harness, host, state } = mounted;
   try {
@@ -663,9 +717,9 @@ test('Preact agent-spawn renders the unenforced-network checkbox under the sandb
     assert.equal(row.id, 'agent-spawn-allow-unenforced-sandbox-row');
     assert.equal(row.previousElementSibling.id, 'agent-spawn-sandbox-profile-row');
     const label = checkbox.closest('label');
-    assert.match(label.textContent, /Allow launch without enforcement/);
+    assert.match(label.textContent, /Allow launch with unenforced rules/);
     assert.match(label.title, /Operator-only escape hatch/);
-    assert.match(label.title, /outbound network access open/);
+    assert.match(label.title, /individual network deny rules/);
     assert.match(label.title, /not saved and starts unchecked every time/);
     const description = host.querySelector('#agent-spawn-allow-unenforced-sandbox-description');
     assert.equal(checkbox.getAttribute('aria-describedby'), description.id);
@@ -1200,7 +1254,7 @@ test('Preact agent-spawn preserves failed drafts, permission handoff, IME-safe h
   await harness.act(() => harness.fireEvent(host.querySelector('#agent-spawn-perms'), 'click'));
   assert.ok(calls.filter(([kind]) => kind === 'permissions').length >= 1, JSON.stringify(calls));
   const permissions = calls.find(([kind]) => kind === 'permissions')[1];
-  permissions.onSave({ 'groups.spawn': 'deny' });
+  permissions.onSave({ 'groups.members.spawn': 'deny' });
   await flush(harness);
   assert.match(host.querySelector('#agent-spawn-perms-indicator').textContent, /1 deny/);
 
@@ -1258,8 +1312,8 @@ test('Preact agent-spawn collapses mode help behind [?] and keeps only ⚠ cavea
       ['SELECT', 'BUTTON', 'SPAN'], `${id} renders only the select, its [?], and the collapsed help`);
   }
 
-  // The name normalization feedback is the only surviving inline hint. Count
-  // exact ids so an accidental id-less help paragraph cannot ride along.
+  // Only persistent, field-specific hints survive; mode explanations remain
+  // behind their [?] controls. Count exact ids so accidental prose cannot ride along.
   const persistent = [...host.querySelectorAll('.spawn-field-hint')];
   assert.deepEqual(persistent.map((node) => node.id), ['agent-spawn-name-hint']);
 

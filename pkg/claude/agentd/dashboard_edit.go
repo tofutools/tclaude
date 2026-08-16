@@ -94,6 +94,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/pr-checks", handleDashboardPRChecks)
 	registerDashboardCronRoutes(mux)
 	registerDashboardStandingOrderRoutes(mux)
+	registerDashboardTriggerRoutes(mux)
 	registerDashboardMessageRoutes(mux)
 	registerDashboardOperatorMessageRoutes(mux)
 	registerDashboardMailboxRoutes(mux)
@@ -343,12 +344,12 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 			}
 			dashboardSandboxRestartAgent(w, r, convSelector)
 			return
-		case "fast-mode/disable":
+		case "fast-mode/enable", "fast-mode/disable":
 			if r.Method != http.MethodPost {
 				http.Error(w, "POST only", http.StatusMethodNotAllowed)
 				return
 			}
-			dashboardDisableCodexFastModeAgent(w, r, convSelector)
+			dashboardSetCodexFastModeAgent(w, r, convSelector, parts[1] == "fast-mode/enable")
 			return
 		case "sandbox-impl":
 			if r.Method != http.MethodGet && r.Method != http.MethodPost {
@@ -774,7 +775,7 @@ func registerDashboardGroupRoutes(mux *http.ServeMux) {
 	// deploy-seeded rhythms and pending waves, keeping the group row.
 	// asDashboardHumanPeer so the shared, permission-checked handler sees the
 	// cookie-authed dashboard caller as the human (stand-down is
-	// groups.retire-gated on the /v1 path).
+	// groups.members.retire-gated on the /v1 path).
 	mux.HandleFunc("POST /api/groups/{name}/stand-down", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		handleGroupStandDown(w, asDashboardHumanPeer(r), g)
 	}))
@@ -1009,7 +1010,7 @@ func dashboardRenameGroup(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 // /v1/groups/{name}/retire (handleGroupRetire) — the human-driven bulk
 // retire behind the command palette's "Retire idle/offline agents in
 // <group>". It trusts the cookie-authed caller (the dashboard is
-// human-only, so caller=""), hence no groups.retire slug check, and
+// human-only, so caller=""), hence no groups.members.retire slug check, and
 // shares the same parallel core.
 //
 // Two cohort-selection modes, chosen by the request body:
@@ -1159,7 +1160,7 @@ func dashboardUpdateMember(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 
 // dashboardStopAgent is the cookie-auth twin of POST
 // /v1/agent/{conv}/stop. Body is optional `{"force": true}`. Calls
-// the same `stopOneConv` helper the bulk groups.stop path uses, so
+// the same `stopOneConv` helper the bulk groups.members.stop path uses, so
 // "soft exit" / "force kill" semantics match exactly.
 func dashboardStopAgent(w http.ResponseWriter, r *http.Request, convSelector string) {
 	res, _, err := agent.ResolveSelector(convSelector)
@@ -1245,7 +1246,7 @@ func dashboardCloneAgent(w http.ResponseWriter, r *http.Request, convSelector st
 	if !ok {
 		return
 	}
-	runCloneOrchestration(w, r, res.ConvID, dashboardGranter, "", body)
+	runCloneOrchestration(w, r, res.ConvID, dashboardGranter, "", nil, body)
 }
 
 // reincarnateMode* are the two modes the dashboard reincarnate button

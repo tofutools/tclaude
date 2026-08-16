@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
-	"golang.org/x/sys/unix"
 )
 
 func TestFilteredNetworkHelperEnvExcludesAmbientInjectionVariables(t *testing.T) {
@@ -24,45 +23,37 @@ func TestFilteredNetworkHelperEnvExcludesAmbientInjectionVariables(t *testing.T)
 	}, filteredNetworkHelperEnv())
 }
 
-func TestFilteredNetworkBootstrapCapabilitiesAreMinimal(t *testing.T) {
+func TestFilteredNetworkNsenterArgsJoinOwnerUsernsFirst(t *testing.T) {
+	// fd 3 is the netns's OWNING user namespace, fd 4 the netns itself, matching
+	// the ExtraFiles order installBasePolicy passes. --preserve-credentials is
+	// mandatory because bubblewrap sets setgroups=deny on the sandbox userns.
 	assert.Equal(t, []string{
-		"--cap-add", "CAP_NET_ADMIN",
-		"--cap-add", "CAP_NET_BIND_SERVICE",
-	}, filteredNetworkBootstrapCapabilityArgs())
+		"--preserve-credentials",
+		"--user=/proc/self/fd/3",
+		"--net=/proc/self/fd/4",
+		"--",
+		"/usr/sbin/nft", "-f", "-",
+	}, filteredNetworkNsenterArgs("/usr/sbin/nft"))
 }
 
-func TestFilteredNetworkNFTCommandCarriesOnlyRequiredAmbientCapability(t *testing.T) {
-	cmd := filteredNetworkNFTCommand("/usr/sbin/nft")
-	assert.Equal(t, []string{
-		sandboxpolicy.FilteredNetworkBootstrapPath,
-		"session",
-		tclaudeLayerFilteredNFTCommand,
-		"--nft", "/usr/sbin/nft",
-	}, cmd.Args)
-	assert.Equal(t, []uintptr{unix.CAP_NET_ADMIN}, cmd.SysProcAttr.AmbientCaps)
-	assert.Equal(t, filteredNetworkHelperEnv(), cmd.Env)
-}
-
-func TestParseFilteredNetworkCapabilityStateRequiresEverySet(t *testing.T) {
-	got, err := parseFilteredNetworkCapabilityState([]byte(
-		"Name:\ttclaude\n" +
-			"CapInh:\t0000000000001000\n" +
-			"CapPrm:\t0000000000001000\n" +
-			"CapEff:\t0000000000001000\n" +
-			"CapAmb:\t0000000000001000\n",
-	))
-	require.NoError(t, err)
-	assert.Equal(t, filteredNetworkCapabilityState{
-		Effective: 0x1000, Permitted: 0x1000,
-		Inheritable: 0x1000, Ambient: 0x1000,
-	}, got)
-
-	_, err = parseFilteredNetworkCapabilityState([]byte(
-		"CapInh:\t0000000000001000\n" +
-			"CapPrm:\t0000000000001000\n" +
-			"CapEff:\t0000000000001000\n",
-	))
-	require.ErrorContains(t, err, "CapAmb")
+func TestFilteredNetworkInstallBasePolicyValidatesInputs(t *testing.T) {
+	// A nil relay is a no-op (non-filtered launch).
+	var nilRelay *preparedFilteredNetworkRelay
+	require.NoError(t, nilRelay.installBasePolicy(123))
+	// An active relay with no rendered ruleset must fail closed rather than come
+	// up unfiltered.
+	require.ErrorContains(t,
+		(&preparedFilteredNetworkRelay{}).installBasePolicy(123), "no rendered policy")
+	// A rendered policy with no helper paths must fail loudly rather than exec a
+	// bare command name.
+	relay := &preparedFilteredNetworkRelay{Policy: "flush ruleset\n"}
+	require.ErrorContains(t, relay.installBasePolicy(123), "helper paths")
+	// With no pinned namespace fd, an invalid namespace pid is rejected before
+	// any namespace work.
+	relay = &preparedFilteredNetworkRelay{
+		Policy: "flush ruleset\n", NsenterPath: "/usr/bin/nsenter", NFTPath: "/usr/sbin/nft",
+	}
+	require.ErrorContains(t, relay.installBasePolicy(0), "namespace pid")
 }
 
 func TestFilteredNetworkPastaArgsGiveSyntheticIPv6MappingARoute(t *testing.T) {

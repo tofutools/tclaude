@@ -81,7 +81,7 @@ func TestRole_RoundTrip(t *testing.T) {
 
 	id, err := CreateRole(&Role{
 		Name: "auditor", Descr: "d", Brief: "You audit.",
-		Harness: "claude", Model: "opus", Permissions: UnscopedGrants([]string{"human.notify"}),
+		Permissions: UnscopedGrants([]string{"human.notify"}),
 	})
 	require.NoError(t, err)
 	require.NotZero(t, id)
@@ -91,8 +91,6 @@ func TestRole_RoundTrip(t *testing.T) {
 	require.NotNil(t, rl)
 	assert.Equal(t, "auditor", rl.Name)
 	assert.Equal(t, "You audit.", rl.Brief)
-	assert.Equal(t, "claude", rl.Harness)
-	assert.Equal(t, "opus", rl.Model)
 	assert.Equal(t, UnscopedGrants([]string{"human.notify"}), rl.Permissions)
 
 	// A duplicate name surfaces as ErrRoleNameTaken.
@@ -115,6 +113,43 @@ func TestRole_RoundTrip(t *testing.T) {
 	gone, err := GetRole("auditor")
 	require.NoError(t, err)
 	assert.Nil(t, gone)
+}
+
+func TestRoleRenameUpdatesTemplateAndSpawnProfileReferences(t *testing.T) {
+	setupTestDB(t)
+	id, err := CreateRole(&Role{Name: "audit-helper", Brief: "Review."})
+	require.NoError(t, err)
+	_, err = CreateSpawnProfile(&SpawnProfile{Name: "review-kit", RoleRef: "audit-helper"})
+	require.NoError(t, err)
+	_, err = CreateGroupTemplate(&GroupTemplate{Name: "reviewers", Agents: []GroupTemplateAgent{{Name: "one", RoleRef: "audit-helper"}}})
+	require.NoError(t, err)
+
+	require.NoError(t, UpdateRole(&Role{ID: id, Name: "audit-chief", Brief: "Review."}))
+	profile, err := GetSpawnProfile("review-kit")
+	require.NoError(t, err)
+	assert.Equal(t, "audit-chief", profile.RoleRef)
+	tmpl, err := GetGroupTemplate("reviewers")
+	require.NoError(t, err)
+	require.Len(t, tmpl.Agents, 1)
+	assert.Equal(t, "audit-chief", tmpl.Agents[0].RoleRef)
+}
+
+func TestRoleRenameUpdatesEverySpawnProfileRoleReference(t *testing.T) {
+	setupTestDB(t)
+	id, err := CreateRole(&Role{Name: "audit-helper", Brief: "Review."})
+	require.NoError(t, err)
+	_, err = CreateRole(&Role{Name: "go-helper", Brief: "Maintain."})
+	require.NoError(t, err)
+	_, err = CreateSpawnProfile(&SpawnProfile{Name: "review-kit", RoleRefs: []string{"go-helper", "audit-helper"}})
+	require.NoError(t, err)
+
+	require.NoError(t, UpdateRole(&Role{ID: id, Name: "audit-chief", Brief: "Review."}))
+	profile, err := GetSpawnProfile("review-kit")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"go-helper", "audit-chief"}, profile.RoleRefs)
+	refs, err := SpawnProfilesReferencingRole("audit-chief")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"review-kit"}, refs)
 }
 
 // TestEnsureSeededRoles proves the canonical roles are seeded on Open and that

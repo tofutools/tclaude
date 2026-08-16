@@ -102,12 +102,12 @@ func firstShellCommandWord(command string) string {
 type TrustedHookInstaller interface {
 	HookInstaller
 
-	// AutoTrustSupported verifies that this tclaude build knows the selected
-	// harness version's private trust-key/hash contract.
+	// AutoTrustSupported reports whether automatic trust can be attempted in
+	// this environment. The operation itself must obtain harness-authoritative
+	// identity and fail closed when that capability is unavailable.
 	AutoTrustSupported() (bool, string)
-	// InstallTrusted preflights both files, persists trust first, then installs
-	// the matching hook declarations. A stale trust record without a matching
-	// declaration is inert; the reverse order can create a startup review gate.
+	// InstallTrusted preflights both files, installs the declarations, then asks
+	// the harness for their authoritative identity and persists only that trust.
 	InstallTrusted() error
 	// TrustInstalled trusts the already-installed current declarations.
 	TrustInstalled() error

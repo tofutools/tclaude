@@ -120,6 +120,15 @@ func collectUsageHistory(since time.Time, seriesSince map[usageSeriesKey]time.Ti
 	}
 	for _, key := range keys {
 		rows := bySeries[key]
+		// Older Copilot samples may contain the CLI account snapshot's raw
+		// timestamp_utc mislabeled as resetDate. The allowance boundary is
+		// documented independently: the first day of the next calendar month at
+		// 00:00 UTC. Derive it from each observation so old and new history agree.
+		if key.provider == db.SubscriptionProviderGitHub {
+			for i := range rows {
+				rows[i].ResetsAt = copilotMonthlyResetAt(rows[i].ObservedAt)
+			}
+		}
 		seriesFrom := since
 		if override, ok := seriesSince[key]; ok {
 			seriesFrom = override

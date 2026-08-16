@@ -188,7 +188,8 @@ func quoteName(name string) string { return `"` + name + `"` }
 type SpawnRequest struct {
 	// AllowUnenforcedSandbox is the dashboard-only, fresh-spawn authorization
 	// to proceed when the selected implementation cannot enforce closed network
-	// access. It is accepted only from the cookie-authenticated dashboard route,
+	// access or every authored network deny entry. It is accepted only from the
+	// cookie-authenticated dashboard route,
 	// is never profile/config-backed, and has no CLI flag. False or absent keeps
 	// the ordinary fail-closed behavior.
 	AllowUnenforcedSandbox bool `json:"allow_unenforced_sandbox,omitempty"`
@@ -221,6 +222,12 @@ type SpawnRequest struct {
 	// per-group handle.
 	Name string `json:"name,omitempty"`
 	Role string `json:"role,omitempty"`
+	// RoleRef selects behavioral guidance and access defaults from the role
+	// library. RoleRefs is the multi-role form; RoleRef remains accepted as a
+	// compatibility shorthand for one role. Role remains the independent
+	// membership/routing label.
+	RoleRef  string   `json:"role_ref,omitempty"`
+	RoleRefs []string `json:"role_refs,omitempty"`
 	// Descr is the short, one-line description shown on the dashboard
 	// (the group-member "Description" column). Keep it terse — the
 	// agent's actual task brief goes in InitialMessage instead.
@@ -503,7 +510,7 @@ type SpawnRequest struct {
 	// group (and thus holding its owner-conferred slugs). false (the default)
 	// spawns an ordinary member. Mirrors the group-template
 	// GroupTemplateAgent.IsOwner field; honoured only for a human (dashboard)
-	// caller or a caller holding groups.own (the daemon rejects an escalation
+	// caller or a caller holding groups.owners.manage (the daemon rejects an escalation
 	// attempt by an unprivileged agent).
 	//
 	// OMITTING the key is not the same as sending false: the daemon resolves
@@ -549,6 +556,8 @@ type SpawnRequest struct {
 	// and inherits the profile's value. Populated by UnmarshalJSON, off the wire.
 	nameSpecified                bool
 	roleSpecified                bool
+	roleRefSpecified             bool
+	roleRefsSpecified            bool
 	descrSpecified               bool
 	initialMessageSpecified      bool
 	autoFocusSpecified           bool
@@ -575,6 +584,8 @@ func (r *SpawnRequest) UnmarshalJSON(data []byte) error {
 	_, r.trustDirSpecified = fields["trust_dir"]
 	_, r.nameSpecified = fields["name"]
 	_, r.roleSpecified = fields["role"]
+	_, r.roleRefSpecified = fields["role_ref"]
+	_, r.roleRefsSpecified = fields["role_refs"]
 	_, r.descrSpecified = fields["descr"]
 	_, r.initialMessageSpecified = fields["initial_message"]
 	_, r.autoFocusSpecified = fields["auto_focus"]
@@ -606,6 +617,12 @@ func (r SpawnRequest) MarshalJSON() ([]byte, error) {
 	}
 	if r.roleSpecified {
 		stated["role"] = r.Role
+	}
+	if r.roleRefSpecified {
+		stated["role_ref"] = r.RoleRef
+	}
+	if r.roleRefsSpecified {
+		stated["role_refs"] = r.RoleRefs
 	}
 	if r.descrSpecified {
 		stated["descr"] = r.Descr
@@ -674,6 +691,12 @@ func (r SpawnRequest) NameSpecified() bool { return r.nameSpecified }
 // RoleSpecified reports whether role appeared in decoded JSON.
 func (r SpawnRequest) RoleSpecified() bool { return r.roleSpecified }
 
+// RoleRefSpecified reports whether role_ref appeared in decoded JSON.
+func (r SpawnRequest) RoleRefSpecified() bool { return r.roleRefSpecified }
+
+// RoleRefsSpecified reports whether role_refs appeared in decoded JSON.
+func (r SpawnRequest) RoleRefsSpecified() bool { return r.roleRefsSpecified }
+
 // DescrSpecified reports whether descr appeared in decoded JSON.
 func (r SpawnRequest) DescrSpecified() bool { return r.descrSpecified }
 
@@ -696,6 +719,7 @@ type SpawnParams struct {
 	Group          string `pos:"true" help:"Existing group to join the new agent into"`
 	Name           string `long:"name" short:"n" optional:"true" help:"Name for the new agent (e.g. 'reviewer'). Becomes its conversation title via /rename"`
 	Role           string `long:"role" short:"r" optional:"true" help:"Role tag for the new member (e.g. 'tech-lead')"`
+	RoleRef        string `long:"role-ref" optional:"true" help:"Behavioral guidance and default access from a saved role (see 'tclaude agent roles ls'); independent of --role's routing/display label"`
 	Descr          string `long:"descr" short:"d" optional:"true" help:"Short one-line description shown on the dashboard. Keep it terse — use --initial-message for the task brief"`
 	InitialMessage string `long:"initial-message" short:"m" optional:"true" help:"Task brief delivered to the new agent's inbox. Newlines are preserved — pass a full multi-line brief if you like"`
 	File           string `long:"file" short:"f" optional:"true" help:"Read the task brief from this file instead of --initial-message ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing briefs. Mutually exclusive with --initial-message; same 16384-byte cap"`
@@ -829,7 +853,7 @@ type SpawnParams struct {
 	// before this flag existed.
 	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"EXPERIMENTAL OS containment: off | resource-only (Linux only; no access confinement, but the launch gets a per-launch cgroup: the profile's CPU/memory limits if it authored any, otherwise accounting and OOM attribution only; no bwrap or namespaces) | harness-builtin (only for a harness with a real built-in OS sandbox) | tclaude-layer (tclaude outer wall, inner OS sandbox off) | stacked (Linux Claude/Codex only; live model-free real-engine probe, both walls). Copilot children spawned by an agent are admitted in exactly one topology: tclaude-layer. Experimental implementations refuse naming the missing capability and never fall back. Unset = profile chain, then historical harness behavior; for OpenCode that is a command filter, not confinement"`
 
-	Owner bool `long:"owner" help:"Make the new agent a group owner (requires groups.own authority)"`
+	Owner bool `long:"owner" help:"Make the new agent a group owner (requires groups.owners.manage authority)"`
 	// NoOwner declines group ownership for the new agent whatever the profile
 	// chain says. It is the explicit-false twin of --owner.
 	NoOwner bool `long:"no-owner" help:"Do not make the new agent a group owner, whatever the selected or a default spawn profile says (default: the profile chain decides, and unset everywhere spawns an ordinary member)"`
@@ -893,7 +917,7 @@ func spawnCmd() *cobra.Command {
 			"inspect the defaults up front with `tclaude agent profiles default show` " +
 			"and `tclaude agent groups ls` (PROFILE column). " +
 			"\n\n" +
-			"Requires the `groups.spawn` permission (default: human-only).",
+			"Requires the `groups.members.spawn` permission (default: human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *SpawnParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
@@ -941,6 +965,8 @@ type resolvedSpawnFields struct {
 
 	Name           string
 	Role           string
+	RoleRef        string
+	RoleRefs       []string
 	Descr          string
 	InitialMessage string
 
@@ -986,7 +1012,7 @@ func harnessEquivalent(a, b string) bool {
 // profile. A spawn that pins a *different* --harness brings its own launch
 // config (validated against that harness); copying the profile's foreign model/
 // sandbox over it would just 400 at validation. A blank --harness adopts the
-// profile's. Identity fields (name/role/descr/initial_message) and the harness-
+// profile's. Identity fields (name/role/role_ref/descr/initial_message) and the harness-
 // agnostic toggles (auto_focus, include_group_context, is_owner,
 // permission_overrides) are inherited regardless of harness.
 //
@@ -1040,6 +1066,17 @@ func mergeProfileIntoSpawn(p *SpawnParams, explicitMessage string, prof *profile
 	// Identity fields — harness-agnostic, always inherited (flag wins).
 	out.Name = pick(p.Name, profStr(prof, func(pf *profileJSON) string { return pf.AgentName }))
 	out.Role = pick(p.Role, profStr(prof, func(pf *profileJSON) string { return pf.Role }))
+	if strings.TrimSpace(p.RoleRef) != "" {
+		out.RoleRefs = []string{strings.TrimSpace(p.RoleRef)}
+	} else if prof != nil {
+		out.RoleRefs = append([]string(nil), prof.RoleRefs...)
+		if len(out.RoleRefs) == 0 && strings.TrimSpace(prof.RoleRef) != "" {
+			out.RoleRefs = []string{strings.TrimSpace(prof.RoleRef)}
+		}
+	}
+	if len(out.RoleRefs) > 0 {
+		out.RoleRef = out.RoleRefs[0]
+	}
 	out.Descr = pick(p.Descr, profStr(prof, func(pf *profileJSON) string { return pf.Descr }))
 	if out.InitialMessage == "" && prof != nil {
 		out.InitialMessage = strings.TrimSpace(prof.InitialMessage)
@@ -1493,6 +1530,8 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		OmitSandboxProfiles:    p.OmitSandboxProfiles,
 		Name:                   name,
 		Role:                   merged.Role,
+		RoleRef:                merged.RoleRef,
+		RoleRefs:               append([]string(nil), merged.RoleRefs...),
 		Descr:                  merged.Descr,
 		TaskURL:                strings.TrimSpace(p.Task),
 		TaskLabel:              strings.TrimSpace(p.TaskLabel),
@@ -1587,7 +1626,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		if worktreeRepo == "" {
 			worktreeRepo = cwd
 		}
-		prepared, wtErr := resolveSpawnWorktree(worktreeRepo, wt, p.WorktreeBase, ask)
+		prepared, wtErr := resolveSpawnWorktree(p.Group, worktreeRepo, wt, p.WorktreeBase, ask)
 		if wtErr != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", wtErr)
 			// The failure now comes off the wire, so it carries the

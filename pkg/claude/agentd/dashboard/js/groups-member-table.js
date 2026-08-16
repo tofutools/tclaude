@@ -365,7 +365,17 @@ function resourceLimitLines(member) {
   ];
 }
 
+const CODEX_OWN_SANDBOX_UNLOCK_UNAVAILABLE = 'Temporary disable unavailable: Codex restores its persisted sandbox policy when this conversation resumes. Use the tclaude-layer implementation or start a new Codex conversation without the built-in sandbox.';
+
+function codexOwnSandboxUnlockUnsupported(member, unlocked) {
+  const state = member.state || {};
+  const implementation = state.sandbox_implementation || 'harness-builtin';
+  return !unlocked && state.harness === 'codex'
+    && (implementation === 'harness-builtin' || implementation === 'stacked');
+}
+
 function sandboxTooltip(member, badge, actionable, unlocked) {
+  const unlockUnsupported = !badge.danger && codexOwnSandboxUnlockUnsupported(member, unlocked);
   const lines = [
     `Status: ${unlocked && badge.status === 'OFF' ? 'TEMP OFF' : badge.status}`,
     `Implementation: ${sandboxImplementationLabel(member, badge)}`,
@@ -377,6 +387,8 @@ function sandboxTooltip(member, badge, actionable, unlocked) {
   }
   if (actionable) {
     lines.push(unlocked ? 'Click to restore normal sandbox' : 'Click to temporarily disable');
+  } else if (unlockUnsupported) {
+    lines.push(CODEX_OWN_SANDBOX_UNLOCK_UNAVAILABLE);
   }
   return lines.join('\n');
 }
@@ -467,7 +479,8 @@ export function SandboxBadge({ member, showDetails = false }) {
   // verdict. Only the warning produced by this temporary override is a
   // restore shortcut; otherwise clicking a warning would misleadingly offer
   // to "unlock" an agent that is already unconfined.
-  const actionable = !!member.online && (unlocked || !badge.danger);
+  const unlockUnsupported = !badge.danger && codexOwnSandboxUnlockUnsupported(member, unlocked);
+  const actionable = !!member.online && !unlockUnsupported && (unlocked || !badge.danger);
   const action = unlocked ? 'restore' : 'unlock';
   const title = sandboxTooltip(member, badge, actionable, unlocked);
   const className = `sandbox-badge${badge.danger ? ' sandbox-danger' : ''}${badge.offline ? ' runtime-meta-offline' : ''}${actionable ? ' sandbox-action' : ''}`;
@@ -743,6 +756,23 @@ function RemoteMenuItem({ member, canRemote }) {
   return html`<${MenuButton} member=${member} act="toggle-remote-control" attrs=${{ 'data-intent': on ? 'off' : 'on' }} regular=${`${glyph} remote: ${on ? 'on' : 'off'}`} wizard=${`${glyph} remote scrying: ${on ? 'on' : 'off'}`} title=${title} />`;
 }
 
+function FastModeMenuItem({ member }) {
+  if (member.state?.harness !== 'codex') return null;
+  const label = member.title || member.conv_id;
+  const known = typeof member.state?.fast_mode === 'boolean';
+  const on = member.state?.fast_mode === true;
+  const intent = on ? 'off' : 'on';
+  const regular = known ? `⚡ ${on ? 'disable' : 'enable'} fast mode` : '⚡ enable fast mode';
+  const title = !member.online
+    ? `${regular} is unavailable while ${label} is offline`
+    : !known
+      ? `Enable Fast mode for ${label}; the current tier is unknown, so tclaude will infer the inherited setting and sync from Codex's next readback.`
+      : `${on ? 'Disable' : 'Enable'} Fast mode for ${label}; the agent stays running and the change applies to subsequent turns.`;
+  return html`<${MenuButton} member=${member} act="fast-mode-set"
+    attrs=${{ 'data-intent': intent }} regular=${regular} wizard=${regular}
+    title=${title} disabled=${!member.online} />`;
+}
+
 function RestartMenuItem({ member }) {
   const label = member.title || member.conv_id;
   const regular = '↻ restart';
@@ -757,10 +787,13 @@ function RestartMenuItem({ member }) {
 
 function SandboxRestartMenuItem({ member }) {
   const unlocked = !!member.state?.temporary_sandbox_mode;
+  const unlockUnsupported = codexOwnSandboxUnlockUnsupported(member, unlocked);
   const label = member.title || member.conv_id;
   const regular = unlocked ? '🔒 restore sandbox + restart' : '⚠ restart without sandbox';
   const wizard = unlocked ? '🔒 restore ward + reincant' : '⚠ reincant without ward';
-  const title = !member.online
+  const title = unlockUnsupported
+    ? CODEX_OWN_SANDBOX_UNLOCK_UNAVAILABLE
+    : !member.online
     ? `${regular} is unavailable while ${label} is offline`
     : unlocked
       ? `Stop and restart ${label} with its preserved normal sandbox configuration. Requires the agent to be fully idle with no background agents or shell commands.`
@@ -768,7 +801,7 @@ function SandboxRestartMenuItem({ member }) {
   return html`<${MenuButton}
     member=${member} act="sandbox-restart" className=${unlocked ? undefined : 'danger'}
     attrs=${{ 'data-action': unlocked ? 'restore' : 'unlock' }}
-    regular=${regular} wizard=${wizard} title=${title} disabled=${!member.online}
+    regular=${regular} wizard=${wizard} title=${title} disabled=${!member.online || unlockUnsupported}
   />`;
 }
 
@@ -821,6 +854,7 @@ function MemberMenu({ member, group, snapshot, actions, ungrouped }) {
     <${MenuButton} member=${member} act="sudo-grant" regular="+ sudo" wizard="+ sudo" title=${wizardCopy('Grant a time-bounded sudo elevation to this agent', 'Grant this familiar a time-bounded sudo boon')} />
     <${NotifyMenuItem} member=${member} />
     <${RemoteMenuItem} member=${member} canRemote=${canRemote} />
+    <${FastModeMenuItem} member=${member} />
     <${MenuButton} member=${member} selector="label" act="cron-new" attrs=${{ 'data-prefill': prefill }} regular="⏰ schedule…" wizard="⏳ bind ritual…" title=${wizardCopy(`Schedule a recurring nudge for ${label}`, `Bind a recurring ritual for familiar ${label}`)} />
     <${MenuSeparator} />
     <${MenuButton} member=${member} act="clone" attrs=${{ 'data-cwd': member.state?.cwd || member.cwd || '' }} regular="clone" wizard="mirror familiar" title=${wizardCopy('Fork a sibling agent that inherits identity (groups, perms, ownership). The original keeps running.', 'Mirror this familiar into a sibling that inherits its parties, boons, and ownership. The original keeps channeling.')} />

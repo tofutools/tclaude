@@ -30,6 +30,10 @@ func TestManagedOpenCodeExternalResourceCgroupLaunchUsesTmuxWrapper(t *testing.T
 		[]string{"serve", "--port", "43210"}, []string{"HOME=/srv/agent"}, nil)
 	assert.Contains(t, command, "session resource-limit-exec")
 	assert.Contains(t, command, "--cgroup-dir")
+	assert.Contains(t, command, "--preserve-boundary",
+		"the agentd-owned boundary must survive a failed port attempt")
+	assert.NotContains(t, command, "--shared-boundary",
+		"the server wrapper must still reap its own failed workload")
 	assert.Contains(t, command, "tclaude-tmux.service/tclaude-test")
 	assert.Contains(t, command, "'env HOME=/srv/agent /opt/opencode serve --port 43210'")
 }

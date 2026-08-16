@@ -499,7 +499,10 @@ All mutating subcommands take `--ask-human <duration>` (see
 
 ### spawn profiles
 
-Spawn profiles are reusable launch and identity presets. They can be paused
+Spawn profiles are reusable launch and identity presets. A profile may also
+select saved role presets with `role_refs`; their behavioral guidance and
+baseline access compose while the profile continues to own launch policy.
+Profiles can be paused
 without being deleted:
 
 ```bash
@@ -533,7 +536,7 @@ Template and wave deploys are the exception: they compose each agent's startup
 context themselves from the template and the mission, so this toggle has no
 meaning there and is not part of a template-local inline profile.
 
-The profile's identity fields (`agent_name`, `role`, `descr`,
+The profile's identity fields (`agent_name`, free-text `role`, `role_refs`, `descr`,
 `initial_message`), its `auto_focus` and `remote_control` toggles and its
 birth-time access controls (`is_owner`, `permission_overrides`) ride the same
 daemon-side tier stack, so naming a profile is enough to get them — the agentd
@@ -547,13 +550,13 @@ An `agent_name` that is not a safe spawn-name token is normalized the same way
 a typed name is, and skipped with a note if it still cannot be one.
 
 The birth-time access controls stay gated on the caller's own authority, now
-applied to the RESOLVED value. An agent caller still needs `groups.own` to mint
+applied to the RESOLVED value. An agent caller still needs `groups.owners.manage` to mint
 an owner and `permissions.grant` to seed overrides. A profile the caller NAMED
 is direct intent, so an unauthorized caller is refused; a group or global
 DEFAULT profile is ambient configuration nobody typed at this launch, so it is
 skipped and disclosed in the `resolved` echo instead of failing the spawn.
 `tclaude agent spawn --owner` explicitly makes the new agent a group owner;
-the caller needs `groups.own`. `--no-owner` declines ownership a profile would
+the caller needs `groups.owners.manage`. `--no-owner` declines ownership a profile would
 otherwise confer, the same shape as `--no-group-context`. The two flags are
 mutually exclusive. Bare and explicit group-joined `tclaude` launches accept
 the same pair.
@@ -640,6 +643,14 @@ expanded authority. Manual entries select exactly one host, domain, CIDR, or
 loopback destination and may narrow it to integer ports. Legacy `network.mode`
 payloads remain readable, but the editor preserves their list entries as
 manual rows and never infers pack ownership.
+
+`network.namespace` accepts `host`, `private`, or omission. `private` is an
+exact Linux `tclaude-layer` option: it uses the packet gateway with a
+default-accept policy when the baseline is otherwise open, preserving ordinary
+TCP/UDP egress while separating host loopback and abstract Unix sockets. It
+fails closed when its Linux prerequisites are unavailable. Namespace policy
+composes restrictively, so a private parent cannot be widened to host-shared by
+a child profile.
 
 `unix_sockets.mode` accepts `open`, `closed`, `list`, or may be omitted to
 preserve the next tier's posture. Unix-socket list entries select an absolute
@@ -914,14 +925,12 @@ must work without the protected-root wall launches with the sandbox disabled
 instead — a posture that is visible and unambiguous, rather than an agent that
 looks sandboxed while holding daemon-state access.
 
-One daemon-owned mount does land inside a protected root, and it is not a
-policy reopen: the spawn-attachment drop-box
-(`~/.tclaude/data/spawn-attachments/<session hash>`). Attachments have to reach
-the agent, its path is derived from the session identity rather than named by
-any profile or agent, and it is bound on top of the hide that already covers
-the rest of the root — so what becomes visible is that session's own attachment
-area (daemon-created, session-writable, holding the promoted attachment batch),
-never the database or another session's state beneath it.
+Spawn attachments live outside the protected roots under the agent-reachable
+API tree (`~/.tclaude/api/spawn-attachments/<session hash>`). Their path is
+derived from the session identity rather than named by any profile or agent.
+The tclaude sandbox hides the shared parent and reopens only the current
+session's daemon-created attachment area, so sibling sessions' files remain
+hidden without contradicting the protected-root deny.
 
 `~/.codex` is **not** a protected root — it is ordinary harness state that an
 agent normally needs to read. An ordinary `deny` row may cover it, and a
@@ -1291,7 +1300,7 @@ replacing it, so an assignment is refused while one is active
 ### spawn
 
 ```bash
-tclaude agent spawn <group> [--profile P] [--name N --role R --descr T --cwd DIR]
+tclaude agent spawn <group> [--profile P] [--role-ref ROLE] [--name N --role R --descr T --cwd DIR]
                             [--initial-message MSG | --file PATH] [--reply-to SEL]
                             [--worktree BRANCH [--worktree-base B] [--worktree-repo DIR]]
                             [--sandbox-profile P | --omit-sandbox-profiles]
@@ -1301,7 +1310,7 @@ tclaude agent spawn <group> [--profile P] [--name N --role R --descr T --cwd DIR
 Launches a fresh detached CC session, waits for its conv-id to
 materialise, and adds it to `<group>`. The new session lands in
 `--cwd` (defaults to the caller's cwd, or the group's
-[default dir](#groups)). Requires the `groups.spawn` permission
+[default dir](#groups)). Requires the `groups.members.spawn` permission
 (human-only by default).
 
 **Prefer a spawn profile.** With `--profile <name>` (an operator-preconfigured
@@ -1309,6 +1318,11 @@ materialise, and adds it to `<group>`. The new session lands in
 other launch flags are needed. Explicit harness/model/effort/sandbox/approval
 flags are for when no suitable profile exists or a policy pins a specific
 vendor/model; see the default-resolution chain in `tclaude agent spawn --help`.
+
+`--role-ref <name>` selects a saved [role preset](#roles): its brief is added to
+startup context and its permission grants become baseline access. It does not
+select or change the harness, model, sandbox, or approval mode. `--role` remains
+the separate free-text membership label used for display and routing.
 
 `--initial-message` (or `--file PATH` / `--file -` for stdin) delivers
 the new agent a task brief in its inbox; `--reply-to` routes its reply
@@ -1458,7 +1472,7 @@ a stand-by seed and its inbox-pointer welcome is injected post-connect, once
 the inbox row exists. The legacy Claude-Code `spawn_legacy_injection` revert
 always uses the post-connect inbox pointer.
 
-**Spawn guardrails.** `groups.spawn` is human-only by default, but the
+**Spawn guardrails.** `groups.members.spawn` is human-only by default, but the
 human can grant it to a coordinator agent so it can grow its own team.
 To keep a spawn-capable agent from running away (a recursive spawn
 explosion) or minting a less-confined child, an **agent** caller is
@@ -1871,6 +1885,38 @@ physical startup directory recorded by tclaude; it accepts no selector or path,
 refuses symlink substitution, and does not reconstruct Git metadata or later
 directories the agent moved into.
 
+### event and agent-state triggers
+
+Trigger rules are an experimental, daemon-owned automation surface gated by
+`features.triggers=true`. The trigger REST API creates and edits rules; agents
+can inspect them with `tclaude agent triggers ls`, `show`, and `explain`. PR and CI
+sources are edge events. The two agent-state sources instead require a
+positive `for_seconds` dwell and fire once per continuously true episode:
+
+- `agent.idle` means the selected live session reports exactly `idle`. Its
+  duration is anchored only to that session's last harness hook. Group
+  messages, inbox delivery, and pane keystrokes are deliberately not activity
+  for this fact.
+- `agent.awaiting_input` means the harness reports its concrete question-
+  waiting state: Claude Code's elicitation dialog, a managed Codex app-server's
+  `waitingOnUserInput`, or OpenCode's question event. Copilot and unknown
+  harnesses report `unknown`. `awaiting_permission` is explicitly excluded; it
+  is an approval state, not part of this fact.
+
+No live session, an unavailable observation path, or an unsupported harness is
+`unknown`, never false. Unknown interrupts continuous truth and a later true
+observation starts the dwell clock again. It does not re-arm an episode that
+already fired: only an observed false condition does that. The episode ledger
+is durable, so daemon restarts do not repeat a mature episode. Cooldown is
+checked after dwell maturity and composes with these once-per-episode rules.
+
+`triggers show` includes current per-agent fact episodes and firing evidence.
+For state rules, `triggers explain --source agent.idle --agent-id agt_...` (or
+`agent.awaiting_input`) reports the observed `true`, `false`, or `unknown`
+result without executing an action. State-trigger templates may use
+`{{agent.id}}`, `{{agent.harness}}`, `{{event.fact_result}}`,
+`{{event.fact_observed_at}}`, and `{{event.dwell_started_at}}`.
+
 ### cron
 
 Recurring scheduled nudges. The daemon's scheduler ticks every 30s. By default,
@@ -1884,6 +1930,9 @@ tclaude agent cron add --interval 10m --body "status check?" [--target SEL --nam
 tclaude agent cron add --interval 10m --run-immediately --body "start now, then repeat"
 tclaude agent cron add --interval 10m --queue-when-offline --body "retain until resume"
 tclaude agent cron add --cron "0 9 * * 1-5" --body "morning standup"   # cron expression instead of interval
+tclaude agent cron add --interval 8h --action spawn --target group:maintainers \
+  --spawn-profile flaky-fixer --concurrency Forbid --worker-deadline 2h \
+  --name-template flaky-scanner --file scanner-instructions.md
 tclaude agent cron ls
 tclaude agent cron disable <id>      # pause without deleting
 tclaude agent cron enable <id>
@@ -1894,7 +1943,10 @@ tclaude agent cron rm <id>
 
 Cron jobs default to self-targeted; `--target group:<name>`
 multicasts. Managing your own jobs needs `self.schedule`; managing
-another agent's needs `agent.schedule` (or group ownership).
+another agent's needs `agent.schedule`; creating or managing a group-targeted
+job needs `groups.messages.schedule`. Membership or ownership confers the
+latter only for that group. A one-off `group:` message remains an ordinary group
+participation operation and does not install a durable sender.
 
 New jobs wait for their first scheduled due time. `--run-immediately` opts
 into one immediate first delivery and then preserves the normal cadence from
@@ -1908,6 +1960,29 @@ opts the job into durable delivery while its target is down. Group jobs apply
 the policy per member: online members still receive a tick when other members
 are offline. `cron logs` records `skipped_offline` when all eligible recipients
 were offline and `partial_offline` for a mixed group delivery.
+
+A cron job can instead spawn one managed worker on every tick with
+`--action spawn`. This experimental action is available only while
+`features.triggers=true`; existing message jobs remain available and unchanged
+when the flag is off. Spawn jobs require a `group:` target, a spawn profile,
+and worker instructions (`--instruction` or `--file`). The job's owning
+principal is re-authorized at every firing, including any spawn-profile-scoped
+grant, so revoking authority prevents later launches without rewriting the
+job.
+
+Overlap follows Kubernetes CronJob vocabulary: `Forbid` (the default) records
+`skipped_concurrent`, `Replace` waits for a bounded stop before launching a
+fresh worker (and records `replace_stop_failed` without launching if it cannot
+confirm the stop), and `Allow` admits concurrent workers up to
+`--max-live-workers`. `--worker-deadline` adds best-effort deadline enforcement
+through the same managed-worker ledger used by event triggers. The full stop
+protocol is intentionally separate; history reports the outcome agentd could
+actually establish, including `interrupted` crash recovery and
+`spawned_tracking_failed` when dispatch loses its worker reservation race.
+Spawn payload and target fields are not PATCH-editable in this initial API;
+recreate the job to change them. `{{fire_time}}` may be used in the name or instruction
+template. Instructions receive RFC 3339; names receive a title-safe compact
+UTC timestamp such as `20260815T153000Z`.
 
 ### Git, GitHub and Linear — see `tclaude proxy`
 
@@ -1982,8 +2057,8 @@ tclaude agent alias ls / get / rm
 ```
 
 `rename` injects `/rename <title>` into the target's CC pane via
-`tmux send-keys`; gated on `self.rename` (self) or `agent.rename`
-(another). The title charset is strict
+`tmux send-keys`; gated on `self.rename` for self, or global `agent.rename` /
+complete `groups.members.rename` coverage for another agent. The title charset is strict
 (`[A-Za-z0-9_\-\[\]{}() ]`, single ASCII spaces, max 64 chars) — a
 hard security gate, because the title becomes literal keystroke
 input. Harnesses that are not driven by keystrokes take their own
@@ -2126,7 +2201,7 @@ harness default (Claude Code at its default model/effort). To run scribes on a
 different harness/model — e.g. Codex, or a cheaper model for their light
 editing — set `scribe.profile` in `~/.tclaude/data/config.json` (or pick it from the
 dashboard **Config tab → Ask & scribe defaults**) to the name of a saved [spawn
-profile](#roles); each fresh summon adopts that profile's whole launch
+profile](#spawn-profiles); each fresh summon adopts that profile's whole launch
 shape, and the harness-matched dir-trust pre-seed follows it automatically.
 Resolved live at summon time — a deleted or renamed profile self-heals to the
 default rather than wedging the summon. Every click creates an independently
@@ -2166,27 +2241,26 @@ to install a fresh copy. See [Starter task forces](dashboard.md#starter-task-for
 
 ### roles
 
-Manage the [role library](dashboard.md#roles-library) — named, reusable agent
-defaults a template agent references via its `role_ref` field. `ls` / `show`
-are open; writes need `roles.manage` (effectively human-only). Like templates, a
-role carries a multi-line brief, so it is authored as JSON via `--file`. `show`
-without `--json` prints the role's brief, launch shape and permission slugs — so
-you can see at a glance what picking the role implies (the same transparency the
-dashboard role picker surfaces inline):
+Manage the [role library](dashboard.md#roles-library) — named, reusable
+behavior and access presets selected with `role_ref` from direct spawns and
+template agents, or `role_refs` from spawn profiles. `ls` / `show` are open; writes need
+`roles.manage` (effectively human-only). Like templates, a role carries a
+multi-line brief, so it is authored as JSON via `--file`. `show` without
+`--json` prints the role's brief and permission slugs:
 
 ```bash
 tclaude agent roles ls
 tclaude agent roles show <name> [--json]
-tclaude agent roles create --file <path>          # {name, descr, brief, spawn_profile, harness, model, effort, sandbox, approval, permissions}
+tclaude agent roles create --file <path>          # {name, descr, brief, permissions}
 tclaude agent roles edit <name> --file <path>     # full replace
-tclaude agent roles rm <name>                     # refused while a template still references the role; a deleted seed reappears on the next daemon open
+tclaude agent roles rm <name>                     # refused while a template/profile references it; deleted seeds reappear on next daemon open
 ```
 
-Roles resolve at **deploy time**: editing a role changes what *future* deploys
-of a referencing template inherit; already-deployed agents are untouched. Because
-a live reference matters, `rm` is refused while any template still names the role
-(the error lists them) — edit those templates to drop or repoint the reference
-first.
+Roles resolve at **spawn time**: editing a role changes what *future* direct or
+template spawns inherit; already-running agents are untouched. Because a live
+reference matters, `rm` is refused while any template or spawn profile still
+names the role (the error lists them) — edit those references to drop or
+repoint the role first.
 
 ### task-force deploy
 
@@ -2262,7 +2336,7 @@ sweeps (deletes) the deploy-seeded runtime — the group-target rhythm cron jobs
 and any pending wave choreography — while **keeping the group row** as a dormant
 record (mission, provenance, and process history preserved). It is deliberately
 *not* a group delete (`groups rm` does that). Gated on the human, group owners,
-or `groups.retire`.
+or `groups.members.retire`.
 
 ```bash
 tclaude agent task-force stand-down <group> [--no-shutdown] [--reason "<why>"] [--ask-human <duration>]
@@ -2345,10 +2419,17 @@ has [classified the caller](#identity), it decides:
    (global), a live grant from any active group it belongs to, the agent's
    per-conv grants (SQLite), or an active
    `sudo` elevation. **Group-owner state** raises an owner's default
-   slugs: owning a group confers, for that group, the `agent.*`
-   manager-pattern checks against its members, the group-lifecycle
-   verbs (`groups.spawn` / `groups.stop` / `groups.retire` /
-   `groups.resume`), and — for owning *any* group — `human.notify` plus
+   slugs: owning a group confers, for that group, its group-local roster,
+   settings, ownership-delegation, archive, link, attachment, nesting,
+   recurring-message scheduling and lifecycle verbs, plus the `agent.*`
+   manager-pattern checks against members.
+   Because an `agent.*` action changes the whole agent, not one membership,
+   that structural source applies only when the caller owns **every active
+   group containing the target**. The same rule protects bulk stop, resume and
+   retire: an owner cannot use an owned group to alter a member shared with an
+   unowned active group. Such an action requires an explicit operation slug or
+   one-shot approval. Owning
+   *any* group also confers `human.notify` plus
    `process.runs.read`. These owner
    defaults fill only the *undecided* gap — an explicit **deny** override
    is always authoritative and suppresses them, read or write.
@@ -2358,6 +2439,29 @@ has [classified the caller](#identity), it decides:
    one-shot `--ask-human` approval. A group may also *narrow* what owning
    it confers — see [Owner-bypass narrowing](#owner-bypass-narrowing).
 3. **Neither?** Refused fail-closed — see [Identity](#identity).
+
+`groups.admin` is the explicit umbrella for the registered `groups.*`
+administration vocabulary. A grant of it satisfies those gates,
+but a deny on a dedicated operation (for example `groups.settings.default-dir`) still
+wins. Group settings use dedicated capabilities: granting
+`groups.settings.default-dir` does not permit rename, context changes, or any other
+mutation.
+
+Compatibility note: older builds used the then-unregistered `groups.rename`
+string as a catch-all for group settings. It is now registered and strictly
+rename-only. Existing stored/configured `groups.rename` grants remain valid
+for rename but are deliberately not broadened during migration; replace an
+old catch-all grant with `groups.admin`, or preferably the dedicated setting
+slugs actually needed. This avoids silently converting a rename-only grant
+into full administration.
+
+Older installations may also contain the pre-namespace group slugs such as
+`groups.spawn`, `groups.stop`, `groups.own`, `member.add`, `groups.default-dir`,
+or `groups.rm`. On upgrade, SQLite and config migrations rewrite these to the
+canonical `groups.members.*`, `groups.owners.*`, `groups.settings.*`, and
+`groups.delete` names. Legacy group-export archives are canonicalized when
+imported. If both spellings exist for the same subject, the canonical entry is
+kept so an explicitly authored new grant or deny remains authoritative.
 
 ### Storage split
 
@@ -2388,7 +2492,7 @@ scope is a map of typed dimensions to matchers:
 
 ```bash
 # spawn into "dev" and nowhere else
-tclaude agent permissions grant p7-worker groups.spawn --scope group=dev
+tclaude agent permissions grant p7-worker groups.members.spawn --scope group=dev
 
 # start runs of either release process, no others
 tclaude agent permissions grant lead process.runs.manage \
@@ -2409,10 +2513,10 @@ that description:
 - Matchers **within one dimension OR**: `group=dev,ops` means either group.
 - Dimensions **AND**: `group=dev spawn_profile=p1` means both must match.
 - A dimension the scope does not mention is **unconstrained**.
-- Only the **winning tier** is consulted (per-agent override, else group
-  grants, else defaults). A per-agent grant scoped to `dev` applies `dev`
-  even when a group grant underneath is broader — that is what lets an
-  operator narrow one agent without touching its group.
+- Standing grants use the normal winning tier (per-agent override, else group
+  grants, else defaults). Owner-contributed grants are an additional positive
+  source: explicit scope B plus owner scope A authorizes A or B. A same-slug
+  explicit deny still suppresses the owner source.
 - Scopes **union within a tier**: an agent in two groups that both grant the
   slug may act within either scope. One **unscoped row absorbs the tier** —
   union with unscoped is unscoped — no matter where it sorts.
@@ -2424,7 +2528,7 @@ to write one.
 
 **A scope that does not match decides nothing** — it does not deny. The
 allow simply stops applying to this action, leaving the same gap an agent
-with no grant leaves: the structural owner bypass may still fill it, then
+with no grant leaves: an owner-contributed grant may still fill it, then
 `--ask-human` may, and otherwise the call is a 403. This matters at gate
 sites that have not been taught to describe their action yet: a dimension
 the site did not describe **fails closed**, so a scoped grant there degrades
@@ -2483,44 +2587,49 @@ Consequently `@descendants` and `@self-spawned` cover agents spawned after the
 lineage table landed; pre-existing agents have no inferred ancestry and fail
 closed.
 
-### Owner-bypass narrowing
+### Owner-contributed grants
 
-Owning a group confers the slugs above *structurally*, without a grant. A group
-may confine that bypass — and only that bypass — with an owner-scope map from
-slug to the same scope shape a grant takes:
+Owning an active group contributes a documented set of ordinary permission
+slugs. Every owner-conferred `groups.*` slug is scoped to the owned group; it
+does not change the meaning of a global `agent.*` slug. `human.notify` and
+`process.runs.read` are the two deliberate unscoped owner bonuses.
+
+For a whole-agent operation, global `agent.<verb>` remains the fleet-wide
+capability. Its `groups.members.<verb>` sibling works only when its positive
+scopes collectively cover every current active group containing the target.
+The check uses a bounded current-membership footprint, ignores archived and
+historical memberships, and rejects atomically if any group is uncovered.
+Clone additionally covers every current group whose membership or ownership
+the clone will inherit.
+
+A group may add constraints to the ordinary grant it contributes, using an
+owner-scope map from slug to the same scope shape a direct grant takes:
 
 ```bash
 tclaude agent groups set-owner-scopes reviewers \
-  '{"groups.spawn": {"spawn_profile": ["reviewer"]}}'
+  '{"groups.members.spawn": {"spawn_profile": ["reviewer"]}}'
 ```
 
-An owner of `reviewers` that holds no `groups.spawn` grant of its own may now
-spawn into it with the `reviewer` profile, and is refused (popup, then 403)
-with any other profile or with an inline launch shape that names none. Omit the
-map (or pass `{}`) to clear the narrowing. The dashboard writes the same field
+The `reviewers` owner grant now permits spawning only with the `reviewer`
+profile. Omit the map (or pass `{}`) to clear the extra constraint. The dashboard writes the same field
 from Groups tab → group ⚙ → **group permissions…**, and a group template can
 declare it so every force deployed from the template is born with it.
 
-Four properties are worth stating plainly:
+Three properties are worth stating plainly:
 
-- **Bypass only.** An *explicit* grant the owner separately holds resolves
-  first, under the ordinary precedence, and is untouched. Narrow that with
-  `permissions grant --scope`.
+- **One positive source.** The constraint applies only to the grant contributed
+  by this owned group. Other positive grants compose with it and are untouched;
+  constrain those with `permissions grant --scope`.
 - **Per group.** An owner of a narrowed group and an unnarrowed one is confined
   only when acting on the narrowed one.
-- **Fail-closed where the target group is unknown.** A few endpoints take the
-  bypass on "owns *any* group" and describe no group at all (`human.notify`,
-  `process.runs.read`, worktree prepare/discard). A narrowed group contributes
-  nothing there, so an owner whose *only* group narrows the slug is refused;
-  owning one unnarrowed group is enough to pass.
-- **It only takes reach away.** A deny still suppresses the bypass entirely,
+- **It only takes reach away.** A same-slug deny suppresses the owner grant,
   and a narrowed owner cannot confer a *wider* grant than its narrowing
   through the spawn / grant / template-deploy minting surfaces.
 
 Every slug in the map must be one ownership actually confers, and every
 dimension must be one that slug declares — the same validation a grant scope
 gets. `permissions ls` renders the result, e.g.
-`groups.spawn … owner:group [spawn_profile=reviewer]`.
+`groups.members.spawn … owner [group=reviewers spawn_profile=reviewer]`.
 
 ### Slugs
 
@@ -2531,9 +2640,8 @@ gate group, messaging, template, and permission administration.
 | Family        | Slugs |
 |---------------|-------|
 | `self.*`      | `self.rename`, `self.compact`, `self.interrupt`, `self.clone`, `self.schedule`, `self.remote-control`, `self.task`, `self.pr`, `self.tags`, `self.dir-repair` |
-| `agent.*`     | `agent.rename`, `agent.compact`, `agent.interrupt`, `agent.reincarnate`, `agent.clone`, `agent.context-info`, `agent.resume`, `agent.stop`, `agent.delete`, `agent.schedule`, `agent.promote`, `agent.retire`, `agent.remote-control`, `agent.sandbox-impl` (not owner-conferred) |
-| `groups.*`    | `groups.create`, `groups.rm`, `groups.archive`, `groups.stop`, `groups.resume`, `groups.retire`, `groups.spawn`, `groups.own`, `groups.link.add`, `groups.link.rm`, `groups.export`, `groups.import` |
-| `member.*`    | `member.add`, `member.remove`, `member.redesignate` |
+| `agent.*`     | Global cross-agent capabilities: `agent.rename`, `agent.compact`, `agent.interrupt`, `agent.reincarnate`, `agent.clone`, `agent.context-info`, `agent.resume`, `agent.stop`, `agent.delete`, `agent.schedule`, `agent.promote`, `agent.retire`, `agent.remote-control`, `agent.inbox-watch`, `agent.sandbox-impl` |
+| `groups.*`    | Group objects/settings plus `groups.members.{reincarnate,compact,interrupt,rename,clone,context-info,task,pr,tags,schedule,stop,resume,delete,promote,retire,remote-control,inbox-watch,spawn,add,remove,update}`. Run `permissions slugs` for the complete registry. |
 | `permissions.*` | `permissions.grant`, `permissions.revoke` |
 | `message.*`   | `message.direct` |
 | `templates.*` | `templates.manage`, `templates.instantiate` |
@@ -2562,8 +2670,10 @@ tclaude agent groups create foo --ask-human 30s
 # → human clicks Deny or timeout fires → CLI fails with 403
 ```
 
-**Timeout = Deny** so an unattended request never silently grants. The
-request surface is authenticated by the same init-token exchange the
+**Timeout = Deny** so an unattended request never silently grants. Unknown
+permission strings are rejected before an approval request is created; the
+live registry is the only valid vocabulary. The request surface is
+authenticated by the same init-token exchange the
 [dashboard](dashboard.md#auth) uses. By default no browser is opened and
 no OS banner is sent; opt into those extra alerts with
 `agent.access_request_auto_open_browser` and
@@ -2587,7 +2697,7 @@ the [dashboard](dashboard.md) permission editor as a normal allow override
 `tclaude agent permissions revoke <agent> <slug>`. A **deny** override
 still beats it — deny is always authoritative. The button is rendered (and
 its action accepted) **only** for eligible slugs; destructive or
-fleet-affecting slugs (e.g. `agent.delete`, `groups.rm`) never offer it.
+fleet-affecting slugs (e.g. `agent.delete`, `groups.delete`) never offer it.
 
 **Always allow — this scope.** When the gated action is one the gate
 describes in [scope](#scoped-grants) dimensions, the card offers a second,

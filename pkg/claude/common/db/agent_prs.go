@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
 // AgentPR is one explicitly presented pull request. The agent_id is the stable
@@ -26,17 +28,27 @@ type AgentPR struct {
 // UpsertAgentPR presents or refreshes a PR for an agent, deduped by
 // (agent_id, PR URL).
 func UpsertAgentPR(agentID, prURL, summary, state string) (AgentPR, error) {
-	return upsertAgentPR(agentID, prURL, summary, state, "")
+	return upsertAgentPRDetails(agentID, prURL, summary, state, "", strings.EqualFold(strings.TrimSpace(state), "draft"), "")
 }
 
 // UpsertValidatedAgentPR records the daemon-proved local repository root.
 // Credentialed consumers ignore rows without this proof, quarantining rows
 // written before repository validation existed.
 func UpsertValidatedAgentPR(agentID, prURL, summary, state, repoRoot string) (AgentPR, error) {
-	return upsertAgentPR(agentID, prURL, summary, state, strings.TrimSpace(repoRoot))
+	return upsertAgentPRDetails(agentID, prURL, summary, state, "", strings.EqualFold(strings.TrimSpace(state), "draft"), strings.TrimSpace(repoRoot))
 }
 
-func upsertAgentPR(agentID, prURL, summary, state, repoRoot string) (AgentPR, error) {
+// UpsertAgentPRDetails is the trigger-aware presentation boundary. When the
+// opt-in trigger feature is enabled, the PR row and its opened/updated
+// observation commit together: agentd may crash before evaluation, but a
+// restart can reconcile the durable pending row. With the feature off,
+// presentation stays unchanged and writes no trigger event. Re-presenting the
+// same PR never creates a second opening edge; pending update edges coalesce.
+func UpsertAgentPRDetails(agentID, prURL, summary, state, branch string, draft bool) (AgentPR, error) {
+	return upsertAgentPRDetails(agentID, prURL, summary, state, branch, draft, "")
+}
+
+func upsertAgentPRDetails(agentID, prURL, summary, state, branch string, draft bool, repoRoot string) (AgentPR, error) {
 	agentID = strings.TrimSpace(agentID)
 	prURL = strings.TrimSpace(prURL)
 	summary = strings.TrimSpace(summary)
@@ -52,7 +64,22 @@ func upsertAgentPR(agentID, prURL, summary, state, repoRoot string) (AgentPR, er
 	if err != nil {
 		return AgentPR{}, err
 	}
-	if _, err := d.Exec(`INSERT INTO agent_prs
+	tx, err := d.Begin()
+	if err != nil {
+		return AgentPR{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var existed bool
+	var previousState string
+	err = tx.QueryRow(`SELECT state FROM agent_prs WHERE agent_id=? AND pr_url=?`, agentID, prURL).Scan(&previousState)
+	switch {
+	case err == nil:
+		existed = true
+	case errors.Is(err, sql.ErrNoRows):
+	default:
+		return AgentPR{}, err
+	}
+	if _, err := tx.Exec(`INSERT INTO agent_prs
 		(agent_id, pr_url, summary, state, validated_repo_root, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(agent_id, pr_url) DO UPDATE SET
@@ -63,7 +90,33 @@ func upsertAgentPR(agentID, prURL, summary, state, repoRoot string) (AgentPR, er
 		agentID, prURL, summary, state, repoRoot, dbTime(now), dbTime(now)); err != nil {
 		return AgentPR{}, err
 	}
-	return GetAgentPR(agentID, prURL)
+	var row AgentPR
+	var created, updated dbTimestamp
+	if err := tx.QueryRow(`SELECT id, agent_id, pr_url, summary, state, validated_repo_root, created_at, updated_at
+		FROM agent_prs WHERE agent_id = ? AND pr_url = ?`, agentID, prURL).
+		Scan(&row.ID, &row.AgentID, &row.PRURL, &row.Summary, &row.State, &row.ValidatedRepoRoot, &created, &updated); err != nil {
+		return AgentPR{}, err
+	}
+	row.CreatedAt = created.Time()
+	row.UpdatedAt = updated.Time()
+	cfg, configErr := config.Load()
+	if configErr == nil && cfg.TriggersEnabled() {
+		if !existed {
+			err = enqueueTriggerPREventTx(tx, row, branch, draft, now)
+		} else {
+			err = enqueueTriggerTransitionTx(tx, row, TriggerSourcePRUpdated, previousState, state, branch, draft, now)
+			if err == nil && !strings.EqualFold(strings.TrimSpace(previousState), "merged") && strings.EqualFold(state, "merged") {
+				err = enqueueTriggerTransitionTx(tx, row, TriggerSourcePRMerged, previousState, "merged", branch, draft, now)
+			}
+		}
+		if err != nil {
+			return AgentPR{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return AgentPR{}, err
+	}
+	return row, nil
 }
 
 // MarkAgentPRHandled marks one PR as handled without deleting the historical
@@ -105,6 +158,16 @@ func MarkAgentPRHandled(agentID, prURL string) (int64, error) {
 // regardless of its write time. Only an explicit re-present via UpsertAgentPR
 // may bring a handled PR back.
 func UpdateAgentPRState(agentID, prURL, state string) (int64, error) {
+	return updateAgentPRState(agentID, prURL, state, true)
+}
+
+// UpdateAgentPRStateQuiet applies a resolver result to a duplicate presentation
+// without creating a second lifecycle edge for the same canonical PR.
+func UpdateAgentPRStateQuiet(agentID, prURL, state string) (int64, error) {
+	return updateAgentPRState(agentID, prURL, state, false)
+}
+
+func updateAgentPRState(agentID, prURL, state string, emitTrigger bool) (int64, error) {
 	agentID = strings.TrimSpace(agentID)
 	prURL = strings.TrimSpace(prURL)
 	state = strings.TrimSpace(state)
@@ -118,15 +181,49 @@ func UpdateAgentPRState(agentID, prURL, state string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	res, err := d.Exec(`UPDATE agent_prs
-		SET state = ?, updated_at = ?
-		WHERE agent_id = ? AND pr_url = ? AND state <> 'handled'
-			AND (LOWER(TRIM(state)) <> 'merged' OR LOWER(TRIM(?)) = 'merged')`,
-		state, dbTime(time.Now().UTC()), agentID, prURL, state)
+	tx, err := d.Begin()
 	if err != nil {
 		return 0, err
 	}
-	return res.RowsAffected()
+	defer func() { _ = tx.Rollback() }()
+	var before AgentPR
+	var created, updated dbTimestamp
+	err = tx.QueryRow(`SELECT id,agent_id,pr_url,summary,state,created_at,updated_at FROM agent_prs
+		WHERE agent_id=? AND pr_url=?`, agentID, prURL).Scan(&before.ID, &before.AgentID, &before.PRURL,
+		&before.Summary, &before.State, &created, &updated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	before.CreatedAt, before.UpdatedAt = created.Time(), updated.Time()
+	now := time.Now().UTC()
+	res, err := tx.Exec(`UPDATE agent_prs
+		SET state = ?, updated_at = ?
+		WHERE agent_id = ? AND pr_url = ? AND state <> 'handled'
+			AND (LOWER(TRIM(state)) <> 'merged' OR LOWER(TRIM(?)) = 'merged')`,
+		state, dbTime(now), agentID, prURL, state)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil || n == 0 {
+		return n, err
+	}
+	if cfg, cfgErr := config.Load(); emitTrigger && cfgErr == nil && cfg.TriggersEnabled() &&
+		!strings.EqualFold(strings.TrimSpace(before.State), "merged") && strings.EqualFold(state, "merged") {
+		previous := before.State
+		before.State = state
+		before.UpdatedAt = now
+		if err := enqueueTriggerTransitionTx(tx, before, TriggerSourcePRMerged, previous, "merged", "", strings.EqualFold(previous, "draft"), now); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // GetAgentPR returns the row for an agent+URL pair, or the zero value when

@@ -16,5 +16,13 @@ import (
 // which restores this scrubbed default afterwards.
 func TestMain(m *testing.M) {
 	_ = os.Unsetenv("TCLAUDE_EXIT_GENERATION")
+	// Gated namespace smokes render bubblewrap arguments in this Go test
+	// process but launch a separately built tclaude binary. Without this seam,
+	// the constructed root would project the test executable as /usr/bin/tclaude
+	// and the smoke would test the wrong program. Ordinary unit-test runs keep
+	// the production resolver and therefore continue exercising os.Executable.
+	if binary := os.Getenv("TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY"); binary != "" {
+		tclaudeLayerTclaudeCLIPath = func() string { return binary }
+	}
 	os.Exit(m.Run())
 }

@@ -2,6 +2,8 @@ package setup
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -52,9 +54,52 @@ func tempHome(t *testing.T) string {
 
 func seedSupportedCodexOnPath(t *testing.T) {
 	t.Helper()
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	hooksPath := filepath.Join(home, ".codex", "hooks.json")
+	events := []struct{ rpc, key string }{
+		{"preToolUse", "pre_tool_use"},
+		{"permissionRequest", "permission_request"},
+		{"postToolUse", "post_tool_use"},
+		{"preCompact", "pre_compact"},
+		{"postCompact", "post_compact"},
+		{"sessionStart", "session_start"},
+		{"userPromptSubmit", "user_prompt_submit"},
+		{"subagentStart", "subagent_start"},
+		{"subagentStop", "subagent_stop"},
+		{"stop", "stop"},
+	}
+	hooks := make([]map[string]any, 0, len(events))
+	for i, event := range events {
+		hooks = append(hooks, map[string]any{
+			"key":       fmt.Sprintf("%s:%s:0:0", hooksPath, event.key),
+			"eventName": event.rpc, "command": "tclaude session hook-callback",
+			"sourcePath": hooksPath, "currentHash": fmt.Sprintf("sha256:%064x", i+1),
+		})
+	}
+	initResponse, err := json.Marshal(map[string]any{"id": 1, "result": map[string]any{
+		"userAgent": "codex_cli_rs/0.147.0", "codexHome": filepath.Join(home, ".codex"),
+		"platformFamily": "unix", "platformOs": runtime.GOOS,
+	}})
+	require.NoError(t, err)
+	listResponse, err := json.Marshal(map[string]any{"id": 2, "result": map[string]any{
+		"data": []any{map[string]any{"cwd": home, "hooks": hooks, "warnings": []any{}, "errors": []any{}}},
+	}})
+	require.NoError(t, err)
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "codex")
-	require.NoError(t, os.WriteFile(bin, []byte("#!/bin/sh\necho 'codex-cli 0.144.1'\n"), 0o755))
+	script := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "app-server" ]; then
+  IFS= read -r _
+  printf '%%s\n' '%s'
+  IFS= read -r _
+  IFS= read -r _
+  printf '%%s\n' '%s'
+  exit 0
+fi
+echo 'codex-cli 0.147.0'
+`, initResponse, listResponse)
+	require.NoError(t, os.WriteFile(bin, []byte(script), 0o755))
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
@@ -386,6 +431,22 @@ func TestInstallHooksForHarness_Codex_WritesHooksFile(t *testing.T) {
 	})
 
 	assert.FileExists(t, hooksPath, "codex hooks.json must be written")
+	hooksData, err := os.ReadFile(hooksPath)
+	require.NoError(t, err)
+	var hooksFile struct {
+		Hooks map[string][]struct {
+			Hooks []struct {
+				Command string `json:"command"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	require.NoError(t, json.Unmarshal(hooksData, &hooksFile))
+	for event, groups := range hooksFile.Hooks {
+		require.Len(t, groups, 1, "event %s", event)
+		require.Len(t, groups[0].Hooks, 1, "event %s", event)
+		assert.Equal(t, "tclaude session hook-callback", groups[0].Hooks[0].Command,
+			"event %s must remain portable across install paths and constructed roots", event)
+	}
 	config, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
 	require.NoError(t, err)
 	assert.Equal(t, 10, strings.Count(string(config), "trusted_hash = "),

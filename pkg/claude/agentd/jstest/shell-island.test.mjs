@@ -14,6 +14,7 @@ test('shell island reacts to snapshots while preserving keyed usage and footer n
   const feedback = createShellState();
   const snapshot = {
     version: 'v1', popup_base: 'http://127.0.0.1:9999', generated_at: '2026-07-13T10:00:00Z',
+    auth_session: { minted_at: '2026-07-13T09:00:00Z' },
     messages_unread: 2, access_requests_pending: 1,
     usage: { available: true, five_hour: { pct: 17, remaining: '2h' }, seven_day: { pct: 20, remaining: '4d' } },
     groups: [], ungrouped: [],
@@ -25,15 +26,17 @@ test('shell island reacts to snapshots while preserving keyed usage and footer n
   state.beginRequest();
   await harness.act(() => state.commitRequest(1, snapshot));
   const fiveHour = usage.container.querySelector('.uw');
-  const baseText = meta.container.querySelector('.meta-base').firstChild;
+  const version = meta.container.querySelector('.meta-version');
   assert.equal(badge.container.querySelector('#messages-badge').textContent, '3');
   assert.ok(badge.container.querySelector('#messages-badge').classList.contains('blink'));
+  assertAbsent(meta.container.querySelector('.meta-base'), 'footer omits the dashboard URL');
+  assertAbsent(meta.container.querySelector('.footer-session-toggle'), 'footer omits auth controls');
 
   state.beginRequest();
   await harness.act(() => state.commitRequest(2, { ...snapshot, generated_at: '2026-07-13T10:00:02Z' }));
   assertSameNode(usage.container.querySelector('.uw'), fiveHour, 'stable usage token survives a poll');
-  assertSameNode(meta.container.querySelector('.meta-base').firstChild, baseText,
-    'unchanged base URL remains a valid selection anchor');
+  assertSameNode(meta.container.querySelector('.meta-version'), version,
+    'unchanged version remains a valid selection anchor');
 
   feedback.showStatus('live');
   const status = await harness.mount(harness.html`<${island.Status} feedback=${feedback} />`);
@@ -58,6 +61,152 @@ test('disconnect overlay is removed on reconnect so its compositor layers cannot
   await harness.act(() => state.setConnection('connected'));
   assertAbsent(mounted.container.querySelector('#disconnect-overlay'),
     'reconnect destroys the backdrop-filter and animation subtree');
+  await mounted.unmount();
+});
+
+test('footer open PRs disclosure pins, filters, and closes accessibly', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { OpenPRs }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<${OpenPRs} state=${state} />`);
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, { authored_open_prs: {
+    available: true, total: 3, updated_at: '2026-08-13T08:00:00Z',
+    search_url: 'https://github.com/pulls?q=open',
+    items: [
+      { number: 1, url: 'https://github.com/acme/app/pull/1', title: 'Fails', repository: 'acme/app', agent_id: 'agt_1', agent_title: 'builder', checks: { total: 1, failed: 1, state: 'failing' } },
+      { number: 2, url: 'https://github.com/acme/app/pull/2', title: 'Runs', repository: 'acme/app', checks: { total: 1, pending: 1, state: 'pending' } },
+      { number: 3, url: 'https://github.com/acme/app/pull/3', title: 'Passes', repository: 'acme/app', agent_id: 'agt_3', checks: { total: 1, passed: 1, state: 'passing' } },
+    ],
+  } }));
+  const trigger = getByRole(mounted.container, 'button', { name: /Open PRs/ });
+  assert.ok(mounted.container.querySelector('.open-prs.has-attention'),
+    'the counter is highlighted while at least one PR needs attention');
+  assert.equal(trigger.getAttribute('aria-expanded'), 'false');
+  await harness.act(() => trigger.click());
+  assert.equal(trigger.getAttribute('aria-expanded'), 'true');
+  assert.equal(mounted.container.querySelectorAll('.open-pr-row').length, 3);
+
+  await harness.act(() => getByRole(mounted.container, 'button', { name: /Unattached 1/ }).click());
+  assert.deepEqual([...mounted.container.querySelectorAll('.open-pr-title')].map((node) => node.textContent), ['Runs']);
+
+  await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }));
+  assertAbsent(mounted.container.querySelector('#open-prs-popover'));
+  assertSameNode(harness.document.activeElement, trigger);
+  await mounted.unmount();
+});
+
+test('footer open PR counter is neutral while only clean CI is running', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { OpenPRs }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<${OpenPRs} state=${state} />`);
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, { authored_open_prs: {
+    available: true, total: 1, items: [
+      { number: 1, url: 'https://github.com/acme/app/pull/1', checks: { total: 2, pending: 2, state: 'pending' } },
+    ],
+  } }));
+  assert.ok(mounted.container.querySelector('.open-prs'));
+  assertAbsent(mounted.container.querySelector('.open-prs.has-attention'),
+    'an open PR with clean ongoing CI keeps the counter grey');
+  await mounted.unmount();
+});
+
+test('footer open PRs gives the pointer one second to reach the popover', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { OpenPRs }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<${OpenPRs} state=${state} />`);
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, { authored_open_prs: {
+    available: true, total: 1, items: [
+      { number: 1, url: 'https://github.com/acme/app/pull/1', title: 'Open', repository: 'acme/app' },
+    ],
+  } }));
+  const root = mounted.container.querySelector('.open-prs');
+
+  await harness.act(() => harness.fireEvent(root, 'mouseenter'));
+  assert.ok(mounted.container.querySelector('#open-prs-popover'));
+  await harness.act(() => harness.fireEvent(root, 'mouseleave'));
+  assert.ok(mounted.container.querySelector('#open-prs-popover'),
+    'leaving does not close the popover immediately');
+
+  // Returning before the grace period expires cancels that close. A second
+  // leave starts a fresh, complete grace period: 800ms after that second
+  // leave, the original timer would already have fired if it survived.
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 300)));
+  await harness.act(() => harness.fireEvent(root, 'mouseenter'));
+  await harness.act(() => harness.fireEvent(root, 'mouseleave'));
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 800)));
+  assert.ok(mounted.container.querySelector('#open-prs-popover'),
+    're-entry cancels the old timer and the final leave gets a full grace period');
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 300)));
+  assertAbsent(mounted.container.querySelector('#open-prs-popover'));
+
+  const trigger = getByRole(mounted.container, 'button', { name: /Open PRs/ });
+  await harness.act(() => harness.fireEvent(root, 'mouseenter'));
+  await harness.act(() => trigger.click());
+  await harness.act(() => harness.fireEvent(root, 'mouseleave'));
+  await harness.act(() => harness.fireEvent(harness.document.body, 'pointerdown'));
+  assertAbsent(mounted.container.querySelector('#open-prs-popover'),
+    'an explicit outside dismissal does not inherit the hover grace period');
+  await mounted.unmount();
+});
+
+test('footer open PRs stays mounted at zero and lists recently closed PRs', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { OpenPRs }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<${OpenPRs} state=${state} />`);
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, { authored_open_prs: {
+    available: true, always_show: true, total: 0, updated_at: '2026-08-13T08:00:00Z',
+    items: [],
+    recent_window_days: 3,
+    recent_search_url: 'https://github.com/pulls?q=closed',
+    recent: [
+      { number: 9, url: 'https://github.com/acme/app/pull/9', title: 'Landed', repository: 'acme/app', state: 'merged', closed_at: '2026-08-12T10:00:00Z' },
+    ],
+  } }));
+  const trigger = getByRole(mounted.container, 'button', { name: /Open PRs/ });
+  assert.ok(mounted.container.querySelector('.open-prs.is-empty'), 'zero open PRs reads as idle, not as a live counter');
+
+  await harness.act(() => trigger.click());
+  assert.equal(mounted.container.querySelectorAll('.open-pr-row').length, 0);
+  assert.match(mounted.container.querySelector('.open-prs-empty').textContent, /No open pull requests\./);
+
+  await harness.act(() => getByRole(mounted.container, 'button', { name: /Closed 3d 1/ }).click());
+  assert.deepEqual([...mounted.container.querySelectorAll('.open-pr-title')].map((node) => node.textContent), ['Landed']);
+  assert.ok(mounted.container.querySelector('.open-pr-state-merged'), 'a merged PR is dotted by its terminal state');
+  await mounted.unmount();
+});
+
+test('footer open PRs can be opted out of the permanent indicator', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { OpenPRs }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<${OpenPRs} state=${state} />`);
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, { authored_open_prs: {
+    available: true, always_show: false, total: 0, items: [], recent_window_days: 3, recent: [],
+  } }));
+  assertAbsent(mounted.container.querySelector('.open-prs'));
   await mounted.unmount();
 });
 

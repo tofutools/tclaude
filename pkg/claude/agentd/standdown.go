@@ -31,8 +31,8 @@ import (
 //
 //	POST /v1/groups/{name}/stand-down → retire members + sweep the seeded runtime
 //
-// Gating: requireGroupPermission(groups.retire) — the SAME bar as retire (the
-// human always passes, a group owner passes structurally, else the groups.retire
+// Gating: requireGroupPermission(groups.members.retire) — the SAME bar as retire (the
+// human always passes, a group owner passes structurally, else the groups.members.retire
 // slug). Stand-down of ANY group is fine — it is retire + sweep, and a plain
 // group simply has no rhythms/waves to sweep — so it is not over-gated on
 // "is a deployed force".
@@ -48,7 +48,7 @@ func handleGroupStandDown(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST")
 		return
 	}
-	caller, ok := requireGroupPermission(w, r, PermGroupsRetire, g)
+	caller, ok := requireGroupPermission(w, r, PermGroupsMembersRetire, g)
 	if !ok {
 		return
 	}

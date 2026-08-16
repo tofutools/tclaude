@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -89,12 +90,25 @@ const overrunText = "MOCK SCENARIO OVERRUN"
 // NewMockProvider starts a mock on loopback that replays turns in order. The
 // server is closed via t.Cleanup.
 func NewMockProvider(t *testing.T, turns []Turn) *MockProvider {
+	return NewMockProviderAt(t, "127.0.0.1:0", turns)
+}
+
+// NewMockProviderAt is NewMockProvider with an explicit listener address.
+// Linux private-network smokes use a host-side veth address because the
+// sandbox intentionally cannot reach the host's loopback namespace.
+func NewMockProviderAt(t *testing.T, address string, turns []Turn) *MockProvider {
 	t.Helper()
 	if len(turns) == 0 {
 		t.Fatal("copilotfixture: scenario needs at least one turn")
 	}
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		t.Fatalf("copilotfixture: listen on %s: %v", address, err)
+	}
 	m := &MockProvider{turns: turns}
-	m.server = httptest.NewServer(http.HandlerFunc(m.handle))
+	m.server = httptest.NewUnstartedServer(http.HandlerFunc(m.handle))
+	m.server.Listener = listener
+	m.server.Start()
 	t.Cleanup(func() {
 		// Client connections are dropped BEFORE Close, because Close waits for
 		// outstanding ones and several scenarios end with one deliberately

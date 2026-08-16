@@ -10,7 +10,7 @@ import (
 // copilotKnownModels is a SUGGESTION list, not an allow-list. It mirrors the
 // documented "Supported models" table plus `auto` (Copilot picks the best
 // available model), and gives every ModelCatalog-driven surface — the spawn
-// dialog, profiles, roles, template-local launch profiles — the same dropdown.
+// dialog, profiles, and template-local launch profiles — the same dropdown.
 //
 // `auto` leads because it is the choice that never goes stale.
 var copilotKnownModels = []string{

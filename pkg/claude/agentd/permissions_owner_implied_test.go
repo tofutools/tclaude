@@ -1,85 +1,58 @@
 package agentd
 
 import (
+	"slices"
 	"sort"
 	"testing"
 )
 
-// TestPermissionRegistry_OwnerImpliedSet pins the EXACT set of slugs the
-// registry marks OwnerImplied. The flag drives what the dashboard editor +
-// the CLI `permissions ls` show as "held via ownership", so it must stay in
-// lockstep with the daemon's actual owner-bypass call sites:
-//
-//   - requireGroupPermission     → groups.{stop,resume,retire,spawn,attachment}
-//   - groups_links owner bypass  → groups.link.{add,rm}
-//   - requireCrossAgentPermission/requireGroupContextAccess →
-//     agent.{reincarnate,compact,rename,clone,context-info,task,pr,tags,
-//     schedule,stop,resume,delete,promote,retire}
-//   - requireNotifyHumanPermission → human.notify
-//   - requireProcessRunReadPermission → process.runs.read
-//
-// Known limit of this test: it mirrors the registry by hand, so it
-// catches a slug whose SCOPE drifts from its call site, but not a slug
-// that has an owner bypass and was never registered at all. agent.
-// remote-control and agent.inbox-watch were exactly that until TCL-1013.
-// When adding a gated endpoint, register its slug.
-//
-// If you add/remove an owner-bypass call site, update both the registry
-// scope AND this map — a drift here means the UI lies about what an owner
-// can actually do. Slugs gated by plain requirePermission (no owner
-// bypass — e.g. groups.create/rm/own, member.*, groups.rename/clone,
-// permissions.*, message.direct) must NOT be marked.
+// TestPermissionRegistry_OwnerImpliedSet pins the exact ordinary permission
+// slugs ownership confers. Group-local grants declare the group dimension;
+// the two intentional global bonuses do not.
 func TestPermissionRegistry_OwnerImpliedSet(t *testing.T) {
-	// Each slug mapped to the reach its bypass call site actually has.
-	// The UI renders this scope verbatim ("via ownership of: dev, qa"),
-	// so a wrong entry here tells an owner it can act on groups the gate
-	// will refuse.
-	wantScope := map[string]ownerScope{
-		// requireCrossAgentPermission / requireGroupContextAccess —
-		// members of owned groups.
-		PermAgentReincarnate:   ownerScopeMember,
-		PermAgentCompact:       ownerScopeMember,
-		PermAgentInterrupt:     ownerScopeMember,
-		PermAgentRename:        ownerScopeMember,
-		PermAgentClone:         ownerScopeMember,
-		PermAgentContextInfo:   ownerScopeMember,
-		PermAgentTask:          ownerScopeMember,
-		PermAgentPR:            ownerScopeMember,
-		PermAgentTags:          ownerScopeMember,
-		PermAgentSchedule:      ownerScopeMember,
-		PermAgentStop:          ownerScopeMember,
-		PermAgentResume:        ownerScopeMember,
-		PermAgentDelete:        ownerScopeMember,
-		PermAgentPromote:       ownerScopeMember,
-		PermAgentRetire:        ownerScopeMember,
-		PermAgentRemoteControl: ownerScopeMember,
-		PermAgentInboxWatch:    ownerScopeMember,
-		// requireGroupPermission and the other group-scoped endpoints —
-		// the owned group itself.
-		PermGroupsStop:       ownerScopeGroup,
-		PermGroupsResume:     ownerScopeGroup,
-		PermGroupsRetire:     ownerScopeGroup,
-		PermGroupsSpawn:      ownerScopeGroup,
-		PermGroupsAttachment: ownerScopeGroup,
-		PermGroupsLinkAdd:    ownerScopeGroup,
-		PermGroupsLinkRm:     ownerScopeGroup,
-		PermGroupsNest:       ownerScopeGroup,
-		PermProcessAdvance:   ownerScopeGroup,
-		// Both of templates.instantiate's owner-bypass sites are
-		// requireGroupPermission over an EXISTING group (rebrief and
-		// reinforce). Its other two sites take plain requirePermission,
-		// so the group scope is what keeps the display honest: an owner
-		// may rebrief/reinforce a group it owns, never instantiate a new
-		// one without the slug.
-		PermTemplatesUse: ownerScopeGroup,
-		// ownsAnyGroup — unscoped, because there is no per-group surface
-		// to scope them to.
-		PermProcessRunsRead: ownerScopeAny,
-		PermHumanNotify:     ownerScopeAny,
+	entries := make(map[string]PermSlug, len(permissionRegistry))
+	for _, entry := range permissionRegistry {
+		entries[entry.Slug] = entry
 	}
-	want := make([]string, 0, len(wantScope))
-	for slug := range wantScope {
-		want = append(want, slug)
+	wantGroupScoped := []string{
+		PermGroupsMembersReincarnate, PermGroupsMembersCompact,
+		PermGroupsMembersInterrupt, PermGroupsMembersRename,
+		PermGroupsMembersClone, PermGroupsMembersContextInfo,
+		PermGroupsMembersTask, PermGroupsMembersPR, PermGroupsMembersTags,
+		PermGroupsMembersSchedule, PermGroupsMembersStop,
+		PermGroupsMembersResume, PermGroupsMembersDelete,
+		PermGroupsMembersPromote, PermGroupsMembersRetire,
+		PermGroupsMembersRemoteControl, PermGroupsMembersInboxWatch,
+		PermGroupsMembersSpawn, PermGroupsOwnersManage, PermGroupsRename,
+		PermGroupsSettingsDescription, PermGroupsSettingsDefaultDir,
+		PermGroupsSettingsDefaultContext, PermGroupsSettingsDefaultProfile,
+		PermGroupsSettingsMaxMembers, PermGroupsSettingsNotifications,
+		PermGroupsSettingsRemoteControlPolicy,
+		PermGroupsSettingsMemberPermissions, PermGroupsSettingsOwnerScopes,
+		PermGroupsMembersAdd, PermGroupsMembersRemove, PermGroupsMembersUpdate,
+		PermGroupsMessagesSchedule, PermGroupsArchive, PermGroupsAttachment,
+		PermGroupsLinkAdd, PermGroupsLinkRemove, PermGroupsNest,
+		PermGroupsTriggersRead, PermGroupsTriggersManage,
+		PermProcessAdvance, PermTemplatesUse,
+	}
+	want := append([]string{}, wantGroupScoped...)
+	want = append(want, PermProcessRunsRead, PermHumanNotify)
+	for _, slug := range want {
+		if !IsKnownPermSlug(slug) {
+			t.Errorf("owner-implied slug %q is not registered", slug)
+		}
+	}
+	for _, slug := range wantGroupScoped {
+		entry := entries[slug]
+		if !containsScopeDim(entry.ScopeDims, ScopeDimGroup) {
+			t.Errorf("owner-implied slug %q does not declare group scope", slug)
+		}
+	}
+	for _, slug := range []string{PermProcessRunsRead, PermHumanNotify} {
+		entry := entries[slug]
+		if containsScopeDim(entry.ScopeDims, ScopeDimGroup) {
+			t.Errorf("global owner bonus %q unexpectedly declares group scope", slug)
+		}
 	}
 	sort.Strings(want)
 
@@ -93,41 +66,61 @@ func TestPermissionRegistry_OwnerImpliedSet(t *testing.T) {
 			t.Errorf("owner-implied slug[%d] = %q, want %q", i, got[i], want[i])
 		}
 	}
-	// The scope itself is the part the UI phrases, so pin it too — a slug
-	// silently re-scoped from "member" to "any" would widen what the
-	// listing claims without changing the set above.
-	for slug, wantScope := range wantScope {
-		if got := OwnerScopeForSlug(slug); got != string(wantScope) {
-			t.Errorf("OwnerScopeForSlug(%q) = %q, want %q", slug, got, wantScope)
+	for _, slug := range got {
+		if !IsOwnerImpliedSlug(slug) {
+			t.Errorf("IsOwnerImpliedSlug(%q) = false, want true", slug)
 		}
-	}
-	// A slug with no bypass must report no scope at all — that is what
-	// keeps it out of the owner-conferred rows.
-	if got := OwnerScopeForSlug(PermGroupsCreate); got != "" {
-		t.Errorf("OwnerScopeForSlug(%q) = %q, want \"\" (no owner bypass)", PermGroupsCreate, got)
 	}
 
-	// Every OwnerImplied slug must be a registered slug, and the
-	// IsOwnerImpliedSlug helper must agree with the OwnerImpliedSlugs set.
-	for _, s := range got {
-		if !IsKnownPermSlug(s) {
-			t.Errorf("owner-implied slug %q is not in the registry", s)
-		}
-		if !IsOwnerImpliedSlug(s) {
-			t.Errorf("IsOwnerImpliedSlug(%q) = false, want true", s)
+	wantSibling := map[string]string{
+		PermAgentReincarnate:   PermGroupsMembersReincarnate,
+		PermAgentCompact:       PermGroupsMembersCompact,
+		PermAgentInterrupt:     PermGroupsMembersInterrupt,
+		PermAgentRename:        PermGroupsMembersRename,
+		PermAgentClone:         PermGroupsMembersClone,
+		PermAgentContextInfo:   PermGroupsMembersContextInfo,
+		PermAgentTask:          PermGroupsMembersTask,
+		PermAgentPR:            PermGroupsMembersPR,
+		PermAgentTags:          PermGroupsMembersTags,
+		PermAgentSchedule:      PermGroupsMembersSchedule,
+		PermAgentStop:          PermGroupsMembersStop,
+		PermAgentResume:        PermGroupsMembersResume,
+		PermAgentDelete:        PermGroupsMembersDelete,
+		PermAgentPromote:       PermGroupsMembersPromote,
+		PermAgentRetire:        PermGroupsMembersRetire,
+		PermAgentRemoteControl: PermGroupsMembersRemoteControl,
+		PermAgentInboxWatch:    PermGroupsMembersInboxWatch,
+		PermTriggersRead:       PermGroupsTriggersRead,
+		PermTriggersManage:     PermGroupsTriggersManage,
+	}
+	for slug, sibling := range wantSibling {
+		if got := GroupSiblingForSlug(slug); got != sibling {
+			t.Errorf("GroupSiblingForSlug(%q) = %q, want %q", slug, got, sibling)
 		}
 	}
-	// Clearly-not-owner-implied slugs stay false. The process mutation slugs
-	// are listed explicitly: ownership confers the process.runs.read READ,
-	// and must never widen into template authoring or run execution.
-	for _, s := range []string{
+
+	// Slugs that ownership must not confer stay outside the set.
+	for _, slug := range []string{
+		PermAgentClone,
 		PermGroupsCreate,
 		PermProcessRunsManage,
 		PermProcessTemplatesRead,
 		PermProcessTemplatesManage,
 	} {
-		if IsOwnerImpliedSlug(s) {
-			t.Errorf("IsOwnerImpliedSlug(%q) = true, want false (no owner bypass)", s)
+		if IsOwnerImpliedSlug(slug) {
+			t.Errorf("IsOwnerImpliedSlug(%q) = true, want false", slug)
 		}
+	}
+}
+
+func TestPermissionRegistry_MemberImpliedSet(t *testing.T) {
+	var got []string
+	for _, entry := range permissionRegistry {
+		if entry.MemberImplied {
+			got = append(got, entry.Slug)
+		}
+	}
+	if want := []string{PermGroupsMessagesSchedule}; !slices.Equal(got, want) {
+		t.Fatalf("member-implied slugs = %v, want %v", got, want)
 	}
 }

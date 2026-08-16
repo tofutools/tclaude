@@ -15,7 +15,8 @@ import (
 //	  data/   private/internal — denied (read+write) to sandboxed agents.
 //	          db.sqlite (+ -wal/-shm/*.bak), operator_token, processes/,
 //	          output.log, debug.log, config.json, and all other daemon state.
-//	  api/    agent-reachable surface — the agentd Unix socket lives here.
+//	  api/    agent-reachable surface — the agentd Unix socket and files
+//	          intentionally handed to agents live here.
 //
 // The Claude/Codex sandbox resolves paths deny-before-allow, so a whole-tree
 // deny on ~/.tclaude could not be allow-carved back to expose api/. Keeping the
@@ -49,7 +50,8 @@ func TclaudeDataDir() string {
 }
 
 // TclaudeAPIDir returns the agent-reachable directory (~/.tclaude/api) that
-// holds the agentd socket, or "" if the home directory cannot be resolved.
+// holds the agentd socket and agent-facing files, or "" if the home directory
+// cannot be resolved.
 func TclaudeAPIDir() string {
 	root := TclaudeDir()
 	if root == "" {

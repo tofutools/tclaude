@@ -39,7 +39,8 @@ func TestOmittedProfilesSnapshotSurvivesRevalidation(t *testing.T) {
 func TestUnconfinedLaunchSnapshotRetainsOnlyEnvironmentAndAudit(t *testing.T) {
 	root := t.TempDir()
 	effective, err := Resolve(Scopes{Global: &Profile{
-		Name: "developer",
+		Name:           "developer",
+		FilesystemRoot: FilesystemRootSeparate,
 		Filesystem: []FilesystemGrant{{
 			Path: root, Access: AccessWrite,
 		}},
@@ -55,6 +56,8 @@ func TestUnconfinedLaunchSnapshotRetainsOnlyEnvironmentAndAudit(t *testing.T) {
 	assert.Equal(t, []EnvironmentEntry{{Name: "SAFE_LITERAL", Value: "yes"}}, got.Effective.Environment)
 	assert.Empty(t, got.Effective.Filesystem)
 	assert.Empty(t, got.Effective.AgentDirectories)
+	assert.Equal(t, FilesystemRootAutomatic, got.Effective.FilesystemRoot)
+	assert.Empty(t, got.Effective.Provenance.FilesystemRoot)
 	assert.Equal(t, NetworkAccessInherit, got.Effective.NetworkAccess)
 	assert.Equal(t, stable.Applied, got.Applied)
 	assert.Equal(t, int64(42), got.ResolutionGroupID)
@@ -66,7 +69,17 @@ func TestUnconfinedLaunchSnapshotRetainsOnlyEnvironmentAndAudit(t *testing.T) {
 
 	// The stable source remains untouched for restoration.
 	assert.NotEmpty(t, stable.Effective.Filesystem)
+	assert.Equal(t, FilesystemRootSeparate, stable.Effective.FilesystemRoot)
 	assert.Equal(t, NetworkAccessInternet, stable.Effective.NetworkAccess)
+}
+
+func TestUnconfinedAccessRulesNoticeDisclosesFilesystemRoot(t *testing.T) {
+	notice, ok := UnconfinedAccessRulesNotice(ImplementationOff, EffectiveProfile{
+		FilesystemRoot: FilesystemRootSeparate,
+	})
+	require.True(t, ok)
+	assert.Equal(t, "access_rules", notice.Axis)
+	assert.Contains(t, notice.Detail, "filesystem-root")
 }
 func TestRevalidateSnapshotUpgradesLegacyVersion(t *testing.T) {
 	legacy := EmptySnapshot()

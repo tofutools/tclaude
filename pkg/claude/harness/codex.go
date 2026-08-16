@@ -49,7 +49,8 @@ func init() {
 		// opt-in can route approval prompts to (approvals_reviewer=auto_review).
 		// Claude Code has no such reviewer, so only Codex sets this; it is the
 		// gate for --auto-review, distinct from the Approval catalog. JOH-200 pt2.
-		ApprovalsReviewer: true,
+		ApprovalsReviewer:        true,
+		AwaitingInputObservation: true,
 		// Codex's TUI scrolls through the terminal rather than rendering its
 		// own scrollback, so a tmux pane needs mouse mode on for the wheel to
 		// reach history (Claude Code, which owns its scrollback, leaves this

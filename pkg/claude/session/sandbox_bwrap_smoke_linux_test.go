@@ -201,7 +201,6 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 			{Path: root, Access: sandboxpolicy.AccessDeny},
 			{Path: allowed, Access: sandboxpolicy.AccessWrite},
 			{Path: aliasTools, Access: sandboxpolicy.AccessRead},
-			{Path: filepath.Dir(tclaudeBinary), Access: sandboxpolicy.AccessRead},
 			// The applier's final host-control phase must override even an
 			// ordinary write grant on the tmux socket directory's parent.
 			{Path: tmuxBase, Access: sandboxpolicy.AccessWrite},
@@ -380,7 +379,6 @@ func TestTclaudeLayerHostNetworkConstructedRootHelper(t *testing.T) {
 	tmuxSocket := os.Getenv(smokeTmuxSocketEnv)
 	hostPID := os.Getenv(smokeHostPIDEnv)
 	hostLoopbackAddr := os.Getenv(smokeLoopbackAddrEnv)
-	tclaudeBinary := os.Getenv(smokeTclaudeBinaryEnv)
 
 	// 1. Ambient filesystem sockets are gone, which is the capability being
 	//    claimed, and the /proc/<pid>/root route around it is closed too.
@@ -407,7 +405,10 @@ func TestTclaudeLayerHostNetworkConstructedRootHelper(t *testing.T) {
 	conn, err := net.DialTimeout("unix", allowedSocket, 250*time.Millisecond)
 	require.NoError(t, err, "the allowlisted socket must be reachable")
 	require.NoError(t, conn.Close())
-	whoami, err := exec.Command(tclaudeBinary, "agent", "whoami").CombinedOutput()
+	resolvedTclaude, err := exec.LookPath("tclaude")
+	require.NoError(t, err, "the constructed root must put the tclaude CLI on PATH")
+	assert.Equal(t, tclaudeLayerConstructedRootTclaudePath, resolvedTclaude)
+	whoami, err := exec.Command("tclaude", "agent", "whoami").CombinedOutput()
 	require.NoErrorf(t, err, "authenticated tclaude agent whoami inside namespace: %s", whoami)
 	assert.True(t, strings.HasPrefix(strings.TrimSpace(string(whoami)), "agt_"),
 		"agentd must stay reachable through the constructed root; got %q", whoami)
@@ -640,7 +641,6 @@ func TestTclaudeLayerSmokeHelper(t *testing.T) {
 	runtimeSocket := os.Getenv(smokeRuntimeSocketEnv)
 	hostPID := os.Getenv(smokeHostPIDEnv)
 	hostLoopbackAddr := os.Getenv(smokeLoopbackAddrEnv)
-	tclaudeBinary := os.Getenv(smokeTclaudeBinaryEnv)
 	privateOwnFile := os.Getenv(smokePrivateOwnFileEnv)
 	privateSiblingDir := os.Getenv(smokePrivateSiblingDirEnv)
 
@@ -745,7 +745,10 @@ func TestTclaudeLayerSmokeHelper(t *testing.T) {
 
 	assertTclaudeLayerReapsOrphan(t)
 
-	whoami, err := exec.Command(tclaudeBinary, "agent", "whoami").CombinedOutput()
+	resolvedTclaude, err := exec.LookPath("tclaude")
+	require.NoError(t, err, "the constructed root must put the tclaude CLI on PATH")
+	assert.Equal(t, tclaudeLayerConstructedRootTclaudePath, resolvedTclaude)
+	whoami, err := exec.Command("tclaude", "agent", "whoami").CombinedOutput()
 	require.NoErrorf(t, err, "authenticated tclaude agent whoami inside namespace: %s", whoami)
 	assert.True(t, strings.HasPrefix(strings.TrimSpace(string(whoami)), "agt_"),
 		"agentd must resolve a stable managed identity through bwrap ancestry; got %q", whoami)

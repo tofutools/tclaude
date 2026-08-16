@@ -41,8 +41,8 @@ func TestDashboardHTML_ModelCaptureOutOfCatalog(t *testing.T) {
 // model the presets don't list (a brand-new alias, or a full id) had no way to
 // enter one by hand. Each editor's <select> now ends with a "Custom model id…"
 // sentinel <option> that reveals a free-text <input>; picking it routes submit
-// and seeding through that input. This pins the wiring across the three editors
-// (spawn dialog, profile editor, role editor) through controlled Preact state.
+// and seeding through that input. This pins the wiring across the spawn and
+// spawn-profile editors; roles deliberately carry no model or harness fields.
 func TestDashboardHTML_CustomModelFreeText(t *testing.T) {
 	if !strings.Contains(dashboardAssets, "export const MODEL_CUSTOM_VALUE = '__custom__';") {
 		t.Error("Preact spawn model state must retain the Custom model sentinel")
@@ -65,11 +65,11 @@ func TestDashboardHTML_CustomModelFreeText(t *testing.T) {
 			}
 		}
 	}
-	// Preact profile/role editors retain the curated dropdown for harnesses with
+	// The Preact profile editor retains the curated dropdown for harnesses with
 	// a model catalog, plus a controlled custom-ID fallback. Harnesses without a
 	// catalog use the free-text branch directly.
 	for _, needle := range []string{
-		`const modelID = profile ? 'profile-editor-model' : 'role-editor-model'`,
+		`const modelID = 'profile-editor-model'`,
 		`const modelControl = hasModelList ? html`,
 		`['__custom__', 'Custom model id…']`,
 		`setCustomModel(true)`,
@@ -81,7 +81,7 @@ func TestDashboardHTML_CustomModelFreeText(t *testing.T) {
 		}
 	}
 
-	// Each editor rebuilds that shared selector from the selected harness's
+	// Each launch editor rebuilds its selector from the selected harness's
 	// catalog, so Codex and Claude receive the same preset + custom-ID behavior.
 	for _, call := range []string{
 		"view.models.map((model)",

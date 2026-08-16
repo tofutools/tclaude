@@ -113,7 +113,7 @@ func TestDashboardHTML_SpawnProfilesUI(t *testing.T) {
 	present(`.template-card .tc-actions { flex: none;`, "the action buttons are never squashed or pushed out of the row")
 	present(`profileSummary(item, { status: false })`, "the manager card leaves the status to its badge")
 	present(`function profileSummary(p, { status = true } = {})`, "surfaces without a status badge still get it in the summary")
-	present(`id=${profile ? 'profile-editor-harness'`, "the editor's harness selector")
+	present(`id="profile-editor-harness"`, "the editor's harness selector")
 	present(`id="profile-editor-submit"`, "the editor's Save button")
 	present(`function ProfileExport(`, "profile export component")
 	present(`function ProfileImport(`, "profile import component")

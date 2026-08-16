@@ -66,7 +66,7 @@ type instantiateMemb struct {
 }
 
 // Scenario: a human defines a 3-agent template — a PO marked owner and
-// granted groups.spawn, plus two devs — then instantiates a group from
+// granted groups.members.spawn, plus two devs — then instantiates a group from
 // it. The daemon must create the group, spawn one agent per spec with
 // "<group>-<name>" final names, grant the owner ownership + its
 // permission slugs, and fold the per-instantiation task into the group
@@ -84,7 +84,7 @@ func TestGroupTemplate_InstantiateSpawnsTeam(t *testing.T) {
 		"descr":           "a PO and two devs",
 		"default_context": boilerplate,
 		"agents": []templateAgentSpec{
-			{Name: "PO", Role: "product-owner", Descr: "leads", InitialMessage: "Coordinate the team.", IsOwner: true, Permissions: []string{agentd.PermGroupsSpawn}},
+			{Name: "PO", Role: "product-owner", Descr: "leads", InitialMessage: "Coordinate the team.", IsOwner: true, Permissions: []string{agentd.PermGroupsMembersSpawn}},
 			{Name: "dev1", Role: "dev", InitialMessage: "Build feature A."},
 			{Name: "dev2", Role: "dev", InitialMessage: "Build feature B."},
 		},
@@ -112,7 +112,7 @@ func TestGroupTemplate_InstantiateSpawnsTeam(t *testing.T) {
 		if a.Name == "PO" {
 			poConv = a.ConvID
 			assert.True(t, a.Owner, "PO is the group owner")
-			assert.Contains(t, a.Granted, agentd.PermGroupsSpawn, "PO granted groups.spawn")
+			assert.Contains(t, a.Granted, agentd.PermGroupsMembersSpawn, "PO granted groups.members.spawn")
 		}
 	}
 	require.NotEmpty(t, poConv, "PO conv-id in response")
@@ -137,7 +137,7 @@ func TestGroupTemplate_InstantiateSpawnsTeam(t *testing.T) {
 	// The PO's permission grant is a real per-conv override.
 	perms, err := db.ListAgentPermissionsForConv(poConv)
 	require.NoError(t, err)
-	assert.Contains(t, perms, agentd.PermGroupsSpawn, "PO holds groups.spawn")
+	assert.Contains(t, perms, agentd.PermGroupsMembersSpawn, "PO holds groups.members.spawn")
 
 	// Every member's startup briefing carries the task.
 	for _, m := range members {

@@ -84,10 +84,10 @@ func TestAgentGroupPermissionsFollowActiveMembership(t *testing.T) {
 	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{GroupID: groupID, ConvID: "conv-member"}))
 
 	require.NoError(t, ReplaceAgentGroupPermissions(groupID,
-		[]string{"human.notify", "human.notify", "groups.spawn"}, "human:test"))
+		[]string{"human.notify", "human.notify", "groups.members.spawn"}, "human:test"))
 	grants, err := ListAgentGroupPermissions(groupID)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"groups.spawn", "human.notify"}, grants)
+	assert.Equal(t, []string{"groups.members.spawn", "human.notify"}, grants)
 
 	ok, err := HasAgentGroupPermission("conv-member", "human.notify")
 	require.NoError(t, err)
@@ -121,11 +121,11 @@ func TestAgentPermissions_GrantRevokeIdempotent(t *testing.T) {
 	require.True(t, ok, "expected perm")
 
 	// Multiple slugs sort correctly.
-	require.NoError(t, GrantAgentPermission(conv, "member.add", ""))
+	require.NoError(t, GrantAgentPermission(conv, "groups.members.add", ""))
 	perms, err = ListAgentPermissionsForConv(conv)
 	require.NoError(t, err)
-	require.Len(t, perms, 2, "expected sorted list [member.add self.rename], got %v", perms)
-	assert.Equal(t, "member.add", perms[0])
+	require.Len(t, perms, 2, "expected sorted list [groups.members.add self.rename], got %v", perms)
+	assert.Equal(t, "groups.members.add", perms[0])
 	assert.Equal(t, "self.rename", perms[1])
 
 	// Revoke.
@@ -141,8 +141,8 @@ func TestAgentPermissions_GrantRevokeIdempotent(t *testing.T) {
 	all, err := ListAllAgentPermissions()
 	require.NoError(t, err)
 	got := all[conv]
-	require.Len(t, got, 1, "expected [member.add], got %v", got)
-	assert.Equal(t, "member.add", got[0])
+	require.Len(t, got, 1, "expected [groups.members.add], got %v", got)
+	assert.Equal(t, "groups.members.add", got[0])
 }
 
 func TestSetAgentPermissionOverrideByAgentID_RejectsMissingAndRetired(t *testing.T) {
@@ -175,7 +175,7 @@ func TestSetAgentPermissionOverrideByAgentIDWithScope_RejectsScopedDeny(t *testi
 
 	err = SetAgentPermissionOverrideByAgentIDWithScope(
 		agentID,
-		"groups.spawn",
+		"groups.members.spawn",
 		PermEffectDeny,
 		`{"group":["dev"]}`,
 		"test",
@@ -193,7 +193,7 @@ func TestAgentPermissions_ApplyOverridesPreservesProvenanceAndClearsAtomically(t
 	setupTestDB(t)
 
 	const conv = "abcd1234-0000-0000-0000-000000000002"
-	require.NoError(t, SetAgentPermissionOverride(conv, "groups.spawn", PermEffectDeny, "<scribe-summon>"))
+	require.NoError(t, SetAgentPermissionOverride(conv, "groups.members.spawn", PermEffectDeny, "<scribe-summon>"))
 	require.NoError(t, SetAgentPermissionOverride(conv, "self.rename", PermEffectDeny, "<human>"))
 	require.NoError(t, SetAgentPermissionOverride(conv, "templates.manage", PermEffectGrant, "<scribe-summon>"))
 
@@ -204,7 +204,7 @@ func TestAgentPermissions_ApplyOverridesPreservesProvenanceAndClearsAtomically(t
 
 	overrides, err := ListAgentPermissionOverridesForConv(conv)
 	require.NoError(t, err)
-	assert.NotContains(t, overrides, "groups.spawn", "matching generated deny removed")
+	assert.NotContains(t, overrides, "groups.members.spawn", "matching generated deny removed")
 	assert.Equal(t, PermEffectDeny, overrides["self.rename"], "human-authored deny preserved")
 	assert.Equal(t, PermEffectGrant, overrides["templates.manage"], "same-granter grant preserved")
 	assert.Equal(t, PermEffectGrant, overrides["sandbox-profiles.draft"], "requested grant applied")
@@ -258,12 +258,12 @@ func TestRetireAgentAuthorizationRejectsLateGrants(t *testing.T) {
 	assert.False(t, cron.Enabled, "retirement disables owned cron authority")
 	assert.Equal(t, CronDisabledReasonAgentRetired, cron.DisabledReason)
 
-	err = GrantAgentPermission(conv, "groups.spawn", "late")
+	err = GrantAgentPermission(conv, "groups.members.spawn", "late")
 	assert.ErrorContains(t, err, "is retired")
-	err = ApplyAgentPermissionOverrides(conv, UnscopedOverrides(map[string]string{"groups.spawn": PermEffectGrant}), "late", false, false)
+	err = ApplyAgentPermissionOverrides(conv, UnscopedOverrides(map[string]string{"groups.members.spawn": PermEffectGrant}), "late", false, false)
 	assert.ErrorContains(t, err, "is retired")
 	_, err = InsertSudoGrant(&SudoGrant{
-		ConvID: conv, Slug: "groups.spawn", GrantedAt: time.Now(),
+		ConvID: conv, Slug: "groups.members.spawn", GrantedAt: time.Now(),
 		ExpiresAt: time.Now().Add(time.Hour), GrantedBy: "late", Reason: "post-retire",
 	})
 	assert.ErrorContains(t, err, "is retired")

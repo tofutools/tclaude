@@ -17,7 +17,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
-// Scenario: agent calls sudo for `groups.spawn`, popup approves, the
+// Scenario: agent calls sudo for `groups.members.spawn`, popup approves, the
 // slug holds. requirePermission elsewhere now passes for that conv
 // against that slug while the window is open.
 //
@@ -35,7 +35,7 @@ func TestSudo_Approved_GrantsForDuration(t *testing.T) {
 	f.HaveConvWithTitle(conv, "worker")
 
 	body := map[string]any{
-		"slugs":    []string{"groups.spawn"},
+		"slugs":    []string{"groups.members.spawn"},
 		"duration": "5m",
 		"reason":   "team-bootstrap",
 	}
@@ -50,7 +50,7 @@ func TestSudo_Approved_GrantsForDuration(t *testing.T) {
 	require.NoError(t, err, "ListActiveSudoGrants")
 	require.Len(t, rows, 1, "active grants for %s", conv)
 	got := rows[0]
-	assert.Equal(t, "groups.spawn", got.Slug, "slug")
+	assert.Equal(t, "groups.members.spawn", got.Slug, "slug")
 	assert.Equal(t, "team-bootstrap", got.Reason, "reason")
 	assert.True(t, strings.HasPrefix(got.GrantedBy, "human:popup-id="),
 		"granted_by = %q, want prefix human:popup-id=", got.GrantedBy)
@@ -59,7 +59,7 @@ func TestSudo_Approved_GrantsForDuration(t *testing.T) {
 		got.ExpiresAt, got.RevokedAt)
 
 	// HasActiveSudoGrant — the hot path requirePermission calls.
-	ok, err := db.HasActiveSudoGrant(conv, "groups.spawn")
+	ok, err := db.HasActiveSudoGrant(conv, "groups.members.spawn")
 	require.NoError(t, err, "HasActiveSudoGrant")
 	assert.True(t, ok, "HasActiveSudoGrant must return true for the freshly-granted slug")
 
@@ -92,6 +92,23 @@ func TestSudo_Approved_GrantsForDuration(t *testing.T) {
 	assert.Equal(t, wantAgent, listed[0].AgentID, "listing should carry the stable agent_id")
 }
 
+func TestSudo_UnknownSlugRejectedBeforeApproval(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+
+	f := newFlow(t)
+	const conv = "sudo-unknown-aaaa-bbbb-1111"
+	f.HaveConvWithTitle(conv, "worker")
+	r := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/sudo", map[string]any{
+		"slugs": []string{"groups.teleport"}, "duration": "5m",
+	}), conv)
+	rec := testharness.Serve(f.Mux, r)
+	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "unknown_slug")
+	snapshot := fetchAccessReqSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	assert.Zero(t, snapshot.AccessRequestsPending, "unknown slugs must never reach approval")
+}
+
 // Scenario: popup denies; no rows are inserted. Pins the explicit
 // deny path — without it, a denied request might silently leak rows
 // (defense-in-depth against handler ordering bugs).
@@ -106,7 +123,7 @@ func TestSudo_Denied_NoGrant(t *testing.T) {
 	f.HaveConvWithTitle(conv, "worker")
 
 	body := map[string]any{
-		"slugs":    []string{"groups.spawn"},
+		"slugs":    []string{"groups.members.spawn"},
 		"duration": "5m",
 	}
 	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
@@ -135,7 +152,7 @@ func TestSudo_Blocklist_RefusesWithoutPopup(t *testing.T) {
 	f.HaveConvWithTitle(conv, "worker")
 
 	body := map[string]any{
-		"slugs":    []string{"groups.spawn", "permissions.grant"},
+		"slugs":    []string{"groups.members.spawn", "permissions.grant"},
 		"duration": "5m",
 	}
 	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
@@ -164,7 +181,7 @@ func TestSudo_DurationCap_RejectedWithoutPopup(t *testing.T) {
 	f.HaveConvWithTitle(conv, "worker")
 
 	body := map[string]any{
-		"slugs":    []string{"groups.spawn"},
+		"slugs":    []string{"groups.members.spawn"},
 		"duration": "24h",
 	}
 	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
@@ -191,7 +208,7 @@ func TestSudo_RevokedEarly_TakesEffectImmediately(t *testing.T) {
 	f.HaveConvWithTitle(conv, "worker")
 
 	// Request + approve.
-	body := map[string]any{"slugs": []string{"groups.spawn"}, "duration": "5m"}
+	body := map[string]any{"slugs": []string{"groups.members.spawn"}, "duration": "5m"}
 	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodPost, "/v1/sudo", body), conv)
 	rec := testharness.Serve(f.Mux, r)
@@ -207,7 +224,7 @@ func TestSudo_RevokedEarly_TakesEffectImmediately(t *testing.T) {
 	grantID := resp.Grants[0].ID
 
 	// Pre-revoke: HasActiveSudoGrant returns true.
-	ok, _ := db.HasActiveSudoGrant(conv, "groups.spawn")
+	ok, _ := db.HasActiveSudoGrant(conv, "groups.members.spawn")
 	require.True(t, ok, "pre-revoke: grant should be active")
 
 	// Revoke as human.
@@ -219,7 +236,7 @@ func TestSudo_RevokedEarly_TakesEffectImmediately(t *testing.T) {
 
 	// Post-revoke: HasActiveSudoGrant returns false (no time travel
 	// needed — revoked_at filter does the work).
-	ok, _ = db.HasActiveSudoGrant(conv, "groups.spawn")
+	ok, _ = db.HasActiveSudoGrant(conv, "groups.members.spawn")
 	assert.False(t, ok, "post-revoke: grant must NOT be active")
 }
 
@@ -241,7 +258,7 @@ func TestSudo_Ls_AgentSeesOnlyOwnGrants(t *testing.T) {
 
 	// Both agents request and get approved.
 	for _, conv := range []string{aliceConv, bobConv} {
-		body := map[string]any{"slugs": []string{"groups.spawn"}, "duration": "5m"}
+		body := map[string]any{"slugs": []string{"groups.members.spawn"}, "duration": "5m"}
 		r := agentd.AsAgentPeer(testharness.JSONRequest(t,
 			http.MethodPost, "/v1/sudo", body), conv)
 		rec := testharness.Serve(f.Mux, r)
@@ -312,7 +329,7 @@ func TestSudo_ConfigMaxDuration_LowersTheCap(t *testing.T) {
 	f.HaveConvWithTitle(conv, "worker")
 
 	body := map[string]any{
-		"slugs":    []string{"groups.spawn"},
+		"slugs":    []string{"groups.members.spawn"},
 		"duration": "1h",
 	}
 	r := agentd.AsAgentPeer(testharness.JSONRequest(t,
@@ -357,7 +374,7 @@ func TestSudo_PerConvOverrideMaxDuration_AppliedByTitle(t *testing.T) {
 	f.HaveConvWithTitle(workerConv, "plain-worker")
 
 	// Manager: 30m is allowed (under the 45m override).
-	mgrBody := map[string]any{"slugs": []string{"groups.spawn"}, "duration": "30m"}
+	mgrBody := map[string]any{"slugs": []string{"groups.members.spawn"}, "duration": "30m"}
 	mgrReq := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodPost, "/v1/sudo", mgrBody), managerConv)
 	mgrRec := testharness.Serve(f.Mux, mgrReq)
@@ -367,7 +384,7 @@ func TestSudo_PerConvOverrideMaxDuration_AppliedByTitle(t *testing.T) {
 	assert.Len(t, mgrRows, 1, "manager grant must land")
 
 	// Worker: same 30m is rejected against the global 15m cap.
-	wrkBody := map[string]any{"slugs": []string{"groups.spawn"}, "duration": "30m"}
+	wrkBody := map[string]any{"slugs": []string{"groups.members.spawn"}, "duration": "30m"}
 	wrkReq := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodPost, "/v1/sudo", wrkBody), workerConv)
 	wrkRec := testharness.Serve(f.Mux, wrkReq)
@@ -378,7 +395,7 @@ func TestSudo_PerConvOverrideMaxDuration_AppliedByTitle(t *testing.T) {
 }
 
 // Scenario: human runs `tclaude agent sudo request --target alice
-// groups.spawn -d 5m`. POST /v1/sudo carries body.target → daemon
+// groups.members.spawn -d 5m`. POST /v1/sudo carries body.target → daemon
 // takes the proactive (no-popup) path. Grant lands with the CLI's
 // proactive audit label. Pins the new --target dispatch on the
 // daemon side; the same body shape is what the CLI sends.
@@ -392,7 +409,7 @@ func TestSudo_Proactive_HumanWithTarget_NoPopup(t *testing.T) {
 	f.HaveConvWithTitle(targetConv, "alice")
 
 	body := map[string]any{
-		"slugs":    []string{"groups.spawn"},
+		"slugs":    []string{"groups.members.spawn"},
 		"duration": "5m",
 		"reason":   "team-bootstrap",
 		"target":   targetConv,
@@ -407,7 +424,7 @@ func TestSudo_Proactive_HumanWithTarget_NoPopup(t *testing.T) {
 	require.NoError(t, err, "ListActiveSudoGrants")
 	require.Len(t, rows, 1, "active grants")
 	got := rows[0]
-	assert.Equal(t, "groups.spawn", got.Slug, "slug")
+	assert.Equal(t, "groups.members.spawn", got.Slug, "slug")
 	assert.Equal(t, "<human-cli>:proactive", got.GrantedBy,
 		"granted_by (CLI label distinguishes from dashboard + popup-approved)")
 }
@@ -423,7 +440,7 @@ func TestSudo_RevokeByConv_ResponseLeadsWithAgentID(t *testing.T) {
 
 	// Proactive human grant mints the actor and lands two grants.
 	grantBody := map[string]any{
-		"slugs":    []string{"groups.spawn", "member.add"},
+		"slugs":    []string{"groups.members.spawn", "groups.members.add"},
 		"duration": "5m",
 		"target":   targetConv,
 	}
@@ -464,7 +481,7 @@ func TestSudo_Proactive_AgentWithTarget_Refused(t *testing.T) {
 	f.HaveConvWithTitle(targetConv, "victim")
 
 	body := map[string]any{
-		"slugs":    []string{"groups.spawn"},
+		"slugs":    []string{"groups.members.spawn"},
 		"duration": "5m",
 		"target":   targetConv,
 	}
@@ -542,6 +559,39 @@ func TestSudo_DownstreamAuditAnnotation_GroupsCreateOwner(t *testing.T) {
 	assert.Equal(t, want, owners[0].GrantedBy, "granted_by")
 }
 
+func TestSudo_DownstreamAuditAnnotation_GroupsAdminUmbrella(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+	t.Cleanup(agentd.StubApprovalForTest(true))
+
+	f := newFlow(t)
+	const conv = "aud-admin-aaaa-bbbb-1111"
+	f.HaveConvWithTitle(conv, "group-admin")
+	sudoReq := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/sudo", map[string]any{
+		"slugs": []string{agentd.PermGroupsAdmin}, "duration": "5m",
+	}), conv)
+	sudoRec := testharness.Serve(f.Mux, sudoReq)
+	require.Equal(t, http.StatusOK, sudoRec.Code, sudoRec.Body.String())
+	var sudoResp struct {
+		Grants []struct {
+			ID int64 `json:"id"`
+		} `json:"grants"`
+	}
+	require.NoError(t, json.Unmarshal(sudoRec.Body.Bytes(), &sudoResp))
+	require.Len(t, sudoResp.Grants, 1)
+
+	createReq := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
+		"/v1/groups", map[string]any{"name": "team-via-admin-sudo"}), conv)
+	createRec := testharness.Serve(f.Mux, createReq)
+	require.Equal(t, http.StatusCreated, createRec.Code, createRec.Body.String())
+	g, err := db.GetAgentGroupByName("team-via-admin-sudo")
+	require.NoError(t, err)
+	owners, err := db.ListAgentGroupOwners(g.ID)
+	require.NoError(t, err)
+	require.Len(t, owners, 1)
+	assert.Equal(t, fmt.Sprintf("%s:via-sudo:grant-id=%d", conv, sudoResp.Grants[0].ID), owners[0].GrantedBy)
+}
+
 // Scenario: agent has groups.create via the normal permission_overrides
 // path (agent_permissions row), then creates a group. The auto-owner's
 // granted_by is the plain conv-id — NO via-sudo annotation, because
@@ -572,7 +622,7 @@ func TestSudo_DownstreamAuditAnnotation_NoSudoNoAnnotation(t *testing.T) {
 // Scenario: config-supplied blocklist replaces the hardcoded default.
 // A slug that v1 hardcoded as blocked (permissions.grant) becomes
 // allowable when config sets blocklist to a different list — and a
-// fresh entry the human added (groups.own) becomes blocked. Pins the
+// fresh entry the human added (groups.owners.manage) becomes blocked. Pins the
 // "replace, not merge" semantics: the human is fully in control.
 func TestSudo_ConfigBlocklist_ReplacesDefaults(t *testing.T) {
 	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
@@ -584,7 +634,7 @@ func TestSudo_ConfigBlocklist_ReplacesDefaults(t *testing.T) {
 	writeSudoConfig(t, `{
 	  "agent": {
 	    "sudo": {
-	      "blocklist": ["groups.own"]
+	      "blocklist": ["groups.owners.manage"]
 	    }
 	  }
 	}`)
@@ -592,7 +642,7 @@ func TestSudo_ConfigBlocklist_ReplacesDefaults(t *testing.T) {
 	f.HaveConvWithTitle(conv, "worker")
 
 	// permissions.grant — hardcoded-blocked in v1, but config replaced
-	// the list with just [groups.own]. Request should now reach the
+	// the list with just [groups.owners.manage]. Request should now reach the
 	// popup (and succeed under the stub-approval).
 	allowBody := map[string]any{"slugs": []string{"permissions.grant"}, "duration": "5m"}
 	allowReq := agentd.AsAgentPeer(testharness.JSONRequest(t,
@@ -602,13 +652,13 @@ func TestSudo_ConfigBlocklist_ReplacesDefaults(t *testing.T) {
 		"config replaced blocklist; permissions.grant should be allowable now: body=%s",
 		allowRec.Body.String())
 
-	// groups.own — newly blocked by config. Should 403 without popup.
-	denyBody := map[string]any{"slugs": []string{"groups.own"}, "duration": "5m"}
+	// groups.owners.manage — newly blocked by config. Should 403 without popup.
+	denyBody := map[string]any{"slugs": []string{"groups.owners.manage"}, "duration": "5m"}
 	denyReq := agentd.AsAgentPeer(testharness.JSONRequest(t,
 		http.MethodPost, "/v1/sudo", denyBody), conv)
 	denyRec := testharness.Serve(f.Mux, denyReq)
 	assert.Equal(t, http.StatusForbidden, denyRec.Code,
-		"groups.own newly blocked by config body=%s", denyRec.Body.String())
-	assert.Contains(t, denyRec.Body.String(), "groups.own",
+		"groups.owners.manage newly blocked by config body=%s", denyRec.Body.String())
+	assert.Contains(t, denyRec.Body.String(), "groups.owners.manage",
 		"error must name the blocked slug")
 }

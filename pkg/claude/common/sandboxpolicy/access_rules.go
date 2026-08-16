@@ -45,6 +45,17 @@ const (
 	NetworkBaselineDeny    NetworkBaseline = "deny"
 )
 
+// NetworkNamespace selects whether the harness shares the host network
+// namespace or runs behind tclaude's routed namespace. Omitted preserves the
+// historical target default.
+type NetworkNamespace string
+
+const (
+	NetworkNamespaceUnset   NetworkNamespace = ""
+	NetworkNamespaceHost    NetworkNamespace = "host"
+	NetworkNamespacePrivate NetworkNamespace = "private"
+)
+
 type NetworkRules struct {
 	// Mode is the forever-readable legacy/effective representation. Newly
 	// authored profiles use Baseline; resolved launch authority uses Mode.
@@ -54,6 +65,7 @@ type NetworkRules struct {
 	DenyPacks []string            `json:"deny_packs,omitempty"`
 	Allow     []NetworkAllowEntry `json:"allow,omitempty"`
 	Deny      []NetworkAllowEntry `json:"deny,omitempty"`
+	Namespace NetworkNamespace    `json:"namespace,omitempty"`
 	// Engine names HOW a discriminating rule set is enforced. It is not an
 	// access axis: it can neither widen nor narrow the destinations the rest of
 	// this struct authorizes, which is why it composes by most-explicit-wins
@@ -92,6 +104,9 @@ type SocketAllowEntry struct {
 type ResolvedAxes struct {
 	Network     NetworkRules
 	UnixSockets UnixSocketRules
+	// FilesystemRoot is carried to capability planning so prediction and launch
+	// validation can refuse an explicit separate root on unsupported targets.
+	FilesystemRoot FilesystemRootMode `json:"-"`
 	// Filesystem is the authored filesystem authority this policy grants,
 	// carried alongside the two access axes rather than folded into them.
 	//
@@ -134,6 +149,12 @@ const (
 	// snapshot carries this exact notice through the forked session launcher;
 	// profiles cannot author it.
 	AccessNoticeReasonOperatorUnenforcedLaunchOverride = "operator_unenforced_launch_override"
+	// AccessNoticeReasonOperatorReducedNetworkDenyOverride records the
+	// dashboard-only, fresh-spawn authorization to omit deny entries that the
+	// selected launch target cannot enforce. Keeping this distinct from the
+	// closed-network override prevents either narrow authorization from being
+	// reused for the other refusal by the forked session launcher.
+	AccessNoticeReasonOperatorReducedNetworkDenyOverride = "operator_reduced_network_deny_override"
 	// AccessNoticeReasonUnconfinedImplementation records that the resolved
 	// profile chain authored access rules which the selected implementation
 	// confines nothing to enforce them with. It exists for `resource-only`,
@@ -228,8 +249,9 @@ func DeriveAccessAxes(p Profile) (ResolvedAxes, error) {
 		sockets.Mode = AccessModeClosed
 	}
 	return ResolvedAxes{
-		Network:     network,
-		UnixSockets: sockets,
+		Network:        network,
+		UnixSockets:    sockets,
+		FilesystemRoot: p.FilesystemRoot,
 		// Taken from the profile this derivation was handed, so every caller
 		// that already builds axes from a whole profile — the editor
 		// prediction, the spawn guard, the launch boundary — gains the
@@ -355,10 +377,13 @@ func normalizeNetworkRules(in *NetworkRules) (*NetworkRules, error) {
 	if err := ValidateNetworkEngine(in.Engine); err != nil {
 		return nil, err
 	}
+	if err := ValidateNetworkNamespace(in.Namespace); err != nil {
+		return nil, err
+	}
 	out := &NetworkRules{
 		Mode: in.Mode, Baseline: in.Baseline,
 		Packs: packs, DenyPacks: denyPacks,
-		Engine: in.Engine,
+		Engine: in.Engine, Namespace: in.Namespace,
 	}
 	out.Allow, err = normalizeNetworkEntries(in.Allow, "allow")
 	if err != nil {
@@ -409,7 +434,10 @@ func normalizeEffectiveNetworkRules(in *NetworkRules) (*NetworkRules, error) {
 	if err := ValidateNetworkEngine(in.Engine); err != nil {
 		return nil, err
 	}
-	out := &NetworkRules{Mode: in.Mode, Engine: in.Engine}
+	if err := ValidateNetworkNamespace(in.Namespace); err != nil {
+		return nil, err
+	}
+	out := &NetworkRules{Mode: in.Mode, Engine: in.Engine, Namespace: in.Namespace}
 	var err error
 	out.Allow, err = normalizeNetworkEntries(in.Allow, "allow")
 	if err != nil {
@@ -1053,7 +1081,31 @@ func intersectNetworkRules(left, right NetworkRules) NetworkRules {
 	out := intersectNetworkBaselines(left, right)
 	out.Deny = unionNetworkEntries(left.Deny, right.Deny)
 	out.Engine = mergeNetworkEngines(left.Engine, right.Engine)
+	out.Namespace = intersectNetworkNamespaces(left.Namespace, right.Namespace)
 	return out
+}
+
+// A private namespace is the restrictive choice and cannot be widened by a
+// more-specific profile selecting the shared host namespace.
+func intersectNetworkNamespaces(left, right NetworkNamespace) NetworkNamespace {
+	if left == NetworkNamespacePrivate || right == NetworkNamespacePrivate {
+		return NetworkNamespacePrivate
+	}
+	if right != NetworkNamespaceUnset {
+		return right
+	}
+	return left
+}
+
+func ValidateNetworkNamespace(namespace NetworkNamespace) error {
+	switch namespace {
+	case NetworkNamespaceUnset, NetworkNamespaceHost, NetworkNamespacePrivate:
+		return nil
+	default:
+		return fmt.Errorf(
+			"network.namespace %q is invalid (want host, private, or omitted)",
+			namespace)
+	}
 }
 
 // mergeNetworkEngines carries the engine across a merge that intersects
@@ -1439,6 +1491,7 @@ func UnconfinedAccessRulesNotice(
 	}
 	authored := len(filesystem) > 0 ||
 		len(effective.AgentDirectories) > 0 ||
+		effective.FilesystemRoot != FilesystemRootAutomatic ||
 		effective.Network != nil ||
 		effective.UnixSockets != nil ||
 		effective.NetworkAccess != NetworkAccessInherit
@@ -1456,7 +1509,7 @@ func UnconfinedAccessRulesNotice(
 		// limits outright. Naming one implementation's guarantee in a message
 		// the other can reach is how a disclosure becomes false later.
 		Detail: fmt.Sprintf(
-			"sandbox implementation %q enforces no access confinement; the resolved profile chain's filesystem, network and socket rules are recorded but NOT enforced for this launch.",
+			"sandbox implementation %q enforces no access confinement; the resolved profile chain's filesystem, filesystem-root, network and socket rules are recorded but NOT enforced for this launch.",
 			implementation),
 	}, true
 }

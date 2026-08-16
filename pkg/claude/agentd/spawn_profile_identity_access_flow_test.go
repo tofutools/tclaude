@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
 	"time"
@@ -120,8 +121,8 @@ func TestSpawnProfileAccess_NamedProfileAppliesOverrides(t *testing.T) {
 	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
 		"name": "granting",
 		"permission_overrides": map[string]any{
-			agentd.PermGroupsSpawn: "grant",
-			"self.rename":          "deny",
+			agentd.PermGroupsMembersSpawn: "grant",
+			"self.rename":                 "deny",
 		},
 	}).Code)
 
@@ -130,8 +131,146 @@ func TestSpawnProfileAccess_NamedProfileAppliesOverrides(t *testing.T) {
 
 	overrides, err := db.ListAgentPermissionOverridesForConv(spawn.ConvID)
 	require.NoError(t, err)
-	assert.Equal(t, "grant", overrides[agentd.PermGroupsSpawn], "profile grant applied at birth")
+	assert.Equal(t, "grant", overrides[agentd.PermGroupsMembersSpawn], "profile grant applied at birth")
 	assert.Equal(t, "deny", overrides["self.rename"], "profile deny applied at birth")
+}
+
+// A saved role is a behavior/access preset independent of launch policy. A
+// direct spawn that selects one gets its brief and grants, and defaults the
+// membership label to the role name when no distinct label was supplied.
+func TestSpawnRoleRef_AppliesBehaviorAndAccess(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	require.Equal(t, http.StatusCreated, createRole(t, f, map[string]any{
+		"name": "cold-auditor", "brief": "Review this change cold.",
+		"permissions": []string{"human.notify"},
+	}).Code)
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+		"name": "worker", "role_ref": "cold-auditor",
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+
+	overrides, err := db.ListAgentPermissionOverridesForConv(spawn.ConvID)
+	require.NoError(t, err)
+	assert.Equal(t, "grant", overrides["human.notify"])
+	msg := soleInboxMessage(t, spawn.ConvID)
+	assert.Contains(t, msg.Body, "## Role")
+	assert.Contains(t, msg.Body, "Review this change cold.")
+	members := f.ListGroupMembers("alpha")
+	for _, member := range members {
+		if member.ConvID == spawn.ConvID {
+			assert.Equal(t, "cold-auditor", member.Role)
+			return
+		}
+	}
+	t.Fatal("spawned member not found")
+}
+
+func TestSpawnRoleRefs_ComposeBehaviorAndAccess(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	require.Equal(t, http.StatusCreated, createRole(t, f, map[string]any{
+		"name": "review-composer", "brief": "Review every change.",
+		"permissions": []string{"human.notify"},
+	}).Code)
+	require.Equal(t, http.StatusCreated, createRole(t, f, map[string]any{
+		"name": "maintainer", "brief": "Keep the Go code healthy.",
+		"permissions": []string{"self.rename"},
+	}).Code)
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+		"name": "worker", "role": "review lead", "role_refs": []string{"review-composer", "maintainer"},
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	overrides, err := db.ListAgentPermissionOverridesForConv(spawn.ConvID)
+	require.NoError(t, err)
+	assert.Equal(t, "grant", overrides["human.notify"])
+	assert.Equal(t, "grant", overrides["self.rename"])
+	msg := soleInboxMessage(t, spawn.ConvID)
+	assert.Contains(t, msg.Body, "Review every change.")
+	assert.Contains(t, msg.Body, "Keep the Go code healthy.")
+	for _, member := range f.ListGroupMembers("alpha") {
+		if member.ConvID == spawn.ConvID {
+			assert.Equal(t, "review lead", member.Role, "display label remains independent")
+			return
+		}
+	}
+	t.Fatal("spawned member not found")
+}
+
+func TestSpawnRoleRefs_RejectIncompatibleScopes(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	for _, tc := range []struct {
+		name  string
+		group string
+	}{{"alpha-spawner", "alpha"}, {"beta-spawner", "beta"}} {
+		require.Equal(t, http.StatusCreated, createRole(t, f, map[string]any{
+			"name": tc.name,
+			"permissions": []any{map[string]any{
+				"slug":  agentd.PermGroupsMembersSpawn,
+				"scope": map[string]any{"group": []string{tc.group}},
+			}},
+		}).Code)
+	}
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+		"name": "worker", "role_refs": []string{"alpha-spawner", "beta-spawner"},
+	})
+	assert.Equal(t, http.StatusBadRequest, spawn.Code)
+	assert.Contains(t, string(spawn.Raw), "role_scope_conflict")
+}
+
+func TestSpawnProfileRoleRef_AppliesAndRoleDeleteIsGuarded(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	require.Equal(t, http.StatusCreated, createRole(t, f, map[string]any{
+		"name": "ux-tester", "brief": "Test the user-visible behavior.",
+	}).Code)
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "test-kit", "role_ref": "ux-tester", "model": "haiku",
+	}).Code)
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
+		"name": "worker", "profile": "test-kit",
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	assert.Contains(t, soleInboxMessage(t, spawn.ConvID).Body, "Test the user-visible behavior.")
+
+	rec := humanReq(t, f, http.MethodDelete, "/v1/roles/ux-tester", nil)
+	assert.Equal(t, http.StatusConflict, rec.Code)
+	assert.Contains(t, rec.Body.String(), "test-kit")
+}
+
+func TestSpawnProfileRoleRefs_RoundTripAndCompose(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	for _, role := range []map[string]any{
+		{"name": "profile-reviewer", "brief": "Review from profile.", "permissions": []string{"human.notify"}},
+		{"name": "profile-maintainer", "brief": "Maintain from profile.", "permissions": []string{"self.rename"}},
+	} {
+		require.Equal(t, http.StatusCreated, createRole(t, f, role).Code)
+	}
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "combined-kit", "role_refs": []string{"profile-reviewer", "profile-maintainer"},
+	}).Code)
+
+	get := humanReq(t, f, http.MethodGet, "/v1/spawn-profiles/combined-kit", nil)
+	require.Equal(t, http.StatusOK, get.Code)
+	var profile map[string]any
+	require.NoError(t, json.Unmarshal(get.Body.Bytes(), &profile))
+	assert.Equal(t, []any{"profile-reviewer", "profile-maintainer"}, profile["role_refs"])
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "worker", "profile": "combined-kit"})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	overrides, err := db.ListAgentPermissionOverridesForConv(spawn.ConvID)
+	require.NoError(t, err)
+	assert.Equal(t, "grant", overrides["human.notify"])
+	assert.Equal(t, "grant", overrides["self.rename"])
+	brief := soleInboxMessage(t, spawn.ConvID).Body
+	assert.Contains(t, brief, "Review from profile.")
+	assert.Contains(t, brief, "Maintain from profile.")
 }
 
 // Scenario: the dashboard posts permission_overrides as an empty object when the
@@ -143,7 +282,7 @@ func TestSpawnProfileAccess_ExplicitEmptyOverridesBeatProfile(t *testing.T) {
 
 	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
 		"name":                 "granting",
-		"permission_overrides": map[string]any{agentd.PermGroupsSpawn: "grant"},
+		"permission_overrides": map[string]any{agentd.PermGroupsMembersSpawn: "grant"},
 	}).Code)
 
 	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{
@@ -158,7 +297,7 @@ func TestSpawnProfileAccess_ExplicitEmptyOverridesBeatProfile(t *testing.T) {
 }
 
 // Scenario: the escalation gate still binds a profile-supplied owner flag. A
-// profile the caller NAMED is direct intent, so an agent without groups.own is
+// profile the caller NAMED is direct intent, so an agent without groups.owners.manage is
 // refused loudly rather than quietly getting a non-owner child — the same 403 an
 // explicit is_owner already produced.
 func TestSpawnProfileAccess_NamedProfileOwnerStillGated(t *testing.T) {
@@ -171,13 +310,13 @@ func TestSpawnProfileAccess_NamedProfileOwnerStillGated(t *testing.T) {
 
 	const spawner = "spwn-1111-2222-3333-4444"
 	f.HaveMember("alpha", spawner)
-	require.NoError(t, db.GrantAgentPermission(spawner, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(spawner, agentd.PermGroupsMembersSpawn, "test"))
 
 	spawn := f.AsAgent(spawner).SpawnWith("alpha", map[string]any{
 		"name": "henchman", "profile": "lead-profile",
 	})
 	assert.Equalf(t, http.StatusForbidden, spawn.Code,
-		"a NAMED profile's is_owner is direct intent and must 403 without groups.own; body=%s", spawn.Raw)
+		"a NAMED profile's is_owner is direct intent and must 403 without groups.owners.manage; body=%s", spawn.Raw)
 }
 
 // Scenario: the same flag one tier down is ambient configuration nobody typed at
@@ -194,14 +333,14 @@ func TestSpawnProfileAccess_DefaultTierOwnerFallsThroughForUnprivilegedAgent(t *
 
 	const spawner = "spwn-2222-3333-4444-5555"
 	f.HaveMember("alpha", spawner)
-	require.NoError(t, db.GrantAgentPermission(spawner, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(spawner, agentd.PermGroupsMembersSpawn, "test"))
 
 	spawn := f.AsAgent(spawner).SpawnWith("alpha", map[string]any{"name": "worker"})
 	require.Equalf(t, http.StatusOK, spawn.Code,
 		"an ambient default profile must not fail the spawn; body=%s", spawn.Raw)
 
 	assert.False(t, ownsGroup(t, g.ID, spawn.ConvID), "the unauthorized owner grant was skipped")
-	assert.Contains(t, string(spawn.Raw), `is_owner ignored (caller lacks `+agentd.PermGroupsOwn,
+	assert.Contains(t, string(spawn.Raw), `is_owner ignored (caller lacks `+agentd.PermGroupsOwnersManage,
 		"the skip is disclosed rather than silent")
 }
 
@@ -384,12 +523,12 @@ func TestSpawnProfileAccess_NamedProfileOverridesStillGated(t *testing.T) {
 
 	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
 		"name":                 "granting",
-		"permission_overrides": map[string]any{agentd.PermGroupsSpawn: "grant"},
+		"permission_overrides": map[string]any{agentd.PermGroupsMembersSpawn: "grant"},
 	}).Code)
 
 	const spawner = "spwn-3333-4444-5555-6666"
 	f.HaveMember("alpha", spawner)
-	require.NoError(t, db.GrantAgentPermission(spawner, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(spawner, agentd.PermGroupsMembersSpawn, "test"))
 
 	spawn := f.AsAgent(spawner).SpawnWith("alpha", map[string]any{
 		"name": "henchman", "profile": "granting",
@@ -408,13 +547,13 @@ func TestSpawnProfileAccess_DefaultTierOverridesFallThroughForUnprivilegedAgent(
 
 	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
 		"name":                 "team-default",
-		"permission_overrides": map[string]any{agentd.PermGroupsSpawn: "grant"},
+		"permission_overrides": map[string]any{agentd.PermGroupsMembersSpawn: "grant"},
 	}).Code)
 	require.Equal(t, http.StatusOK, setGroupProfile(t, f, "alpha", "team-default").Code)
 
 	const spawner = "spwn-4444-5555-6666-7777"
 	f.HaveMember("alpha", spawner)
-	require.NoError(t, db.GrantAgentPermission(spawner, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(spawner, agentd.PermGroupsMembersSpawn, "test"))
 
 	spawn := f.AsAgent(spawner).SpawnWith("alpha", map[string]any{"name": "worker"})
 	require.Equalf(t, http.StatusOK, spawn.Code,

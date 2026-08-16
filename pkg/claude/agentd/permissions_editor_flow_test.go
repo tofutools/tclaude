@@ -130,19 +130,19 @@ func TestPermEditorFlow_DashboardBatchEndpoint(t *testing.T) {
 	}
 
 	// Grant one slug, deny another, in one batch.
-	resp := postPerms(map[string]string{"groups.spawn": "grant", "self.rename": "deny"})
+	resp := postPerms(map[string]string{"groups.members.spawn": "grant", "self.rename": "deny"})
 	assert.EqualValues(t, 2, resp["changed"], "two overrides written")
 
 	snap := fetchPermSnapshot(t, mux)
-	assert.Equal(t, map[string]string{"groups.spawn": "grant", "self.rename": "deny"},
+	assert.Equal(t, map[string]string{"groups.members.spawn": "grant", "self.rename": "deny"},
 		snap.Permissions.Overrides[convD], "snapshot must carry the raw tri-state overrides")
 	eff := effectiveFor(snap, convD)
 	require.NotNil(t, eff, "agent D missing from snapshot agents[]")
-	assert.Contains(t, eff, "groups.spawn", "granted slug must appear in effective")
+	assert.Contains(t, eff, "groups.members.spawn", "granted slug must appear in effective")
 	assert.NotContains(t, eff, "self.rename", "denied slug must not appear in effective")
 
 	// Re-running with default clears both rows.
-	resp = postPerms(map[string]string{"groups.spawn": "default", "self.rename": "default"})
+	resp = postPerms(map[string]string{"groups.members.spawn": "default", "self.rename": "default"})
 	assert.EqualValues(t, 2, resp["changed"], "two overrides cleared")
 
 	snap = fetchPermSnapshot(t, mux)

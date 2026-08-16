@@ -4,7 +4,7 @@ import { createPreactHarness } from './preact-harness.mjs';
 
 test('shell models preserve usage layouts, badge urgency, footer, and activity deduplication', async (t) => {
   const harness = await createPreactHarness(t);
-  const { usageView, messagesBadgeView, footerMetaView, globalActivityView } =
+  const { usageView, messagesBadgeView, footerMetaView, authoredOpenPRsView, globalActivityView } =
     await harness.importDashboardModule('js/shell-model.js');
 
   assert.equal(usageView(null).text, 'usage: n/a');
@@ -14,9 +14,12 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
     seven_day: { pct: 80, remaining: '5d' },
     total_cost_usd: 0.42,
     today_cost_usd: 0.12,
+    api_costs: [{ provider: 'anthropic', total_cost_usd: 0.42, today_cost_usd: 0.12 }],
   });
-  assert.equal(claude.multiline, false);
-  assert.deepEqual(claude.lines[0].tokens.map((token) => token.key), ['claude-5h', 'claude-7d', 'api-cost']);
+  assert.equal(claude.multiline, true);
+  assert.deepEqual(claude.lines.map((line) => line.label), ['Claude:', 'Anthropic API:']);
+  assert.deepEqual(claude.lines[0].tokens.map((token) => token.key), ['claude-5h', 'claude-7d']);
+  assert.equal(claude.lines[1].tokens[0].key, 'api-cost-anthropic');
   assert.equal(claude.lines[0].tokens[0].filled, 1);
   assert.equal(claude.lines[0].tokens[1].color, '#f85149');
 
@@ -29,9 +32,73 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
   assert.deepEqual(mixed.lines.map((line) => line.label), ['Claude:', 'Codex:']);
   assert.equal(mixed.lines[1].tokens[0].hidden, true, 'missing Codex 5h retains its geometry');
 
+  const copilot = usageView({
+    copilot: { available: true, monthly: { pct: 58.2, remaining: '18d' } },
+  });
+  assert.deepEqual(copilot.lines.map((line) => line.label), ['Copilot:']);
+  assert.equal(copilot.lines[0].tokens[0].label, '', 'monthly word stays hidden so bars align');
+  assert.equal(copilot.lines[0].tokens[0].pct, 58);
+
   assert.deepEqual(messagesBadgeView({ messages_unread: 98, access_requests_pending: 3 }),
     { text: '99+', hidden: false, blink: true });
-  assert.equal(footerMetaView({ version: 'v1', popup_base: 'http://x', generated_at: 'now' }).base, 'http://x');
+  assert.deepEqual(
+    footerMetaView({ version: 'v1', popup_base: 'http://x', generated_at: 'now', auth_session: { minted_at: 'then' } }),
+    { version: 'v1', generatedAt: 'now' },
+    'footer excludes the dashboard URL and auth session metadata',
+  );
+  const prs = {
+    available: true, total: 5, updated_at: 'now', search_url: 'https://github.com/pulls?q=x',
+    items: [
+      { number: 1, url: 'https://github.com/acme/app/pull/1', agent_id: 'agt_1', checks: { total: 2, failed: 1, pending: 1, state: 'failing' } },
+      { number: 2, url: 'https://github.com/acme/app/pull/2', checks: { total: 2, pending: 2, state: 'pending' } },
+      { number: 3, url: 'https://github.com/acme/app/pull/3', checks: { total: 2, passed: 2, state: 'passing' } },
+      { number: 4, url: 'https://github.com/acme/app/pull/4' },
+      { number: 5, url: 'https://github.com/acme/app/pull/5', checks: { total: 0, state: 'none' } },
+    ],
+  };
+  assert.deepEqual(
+    authoredOpenPRsView({ authored_open_prs: prs }, 'attention').items.map((pr) => pr.number),
+    [1, 3, 4, 5],
+    'failed, completed, and no-CI PRs need attention; clean CI still running does not',
+  );
+  assert.deepEqual(authoredOpenPRsView({ authored_open_prs: prs }, 'unattached').items.map((pr) => pr.number), [2, 3, 4, 5]);
+  assert.equal(authoredOpenPRsView({ authored_open_prs: prs }).attention, 4);
+  assert.equal(authoredOpenPRsView({ authored_open_prs: { ...prs, search_url: 'javascript:alert(1)' } }).searchURL, '');
+
+  // Recently closed PRs live in their own filter: they must not reach the open
+  // list, the open count, or the attention/unattached tallies.
+  const withRecent = {
+    ...prs,
+    always_show: true,
+    recent_window_days: 3,
+    recent_search_url: 'https://github.com/pulls?q=closed',
+    recent: [
+      { number: 9, url: 'https://github.com/acme/app/pull/9', state: 'merged', closed_at: '2026-08-12T10:00:00Z' },
+      { number: 8, url: 'not-a-pr-url', state: 'closed', closed_at: '2026-08-11T10:00:00Z' },
+    ],
+  };
+  const openView = authoredOpenPRsView({ authored_open_prs: withRecent });
+  assert.deepEqual(openView.items.map((pr) => pr.number), [1, 2, 3, 4, 5]);
+  assert.equal(openView.recentCount, 1, 'a malformed recent URL is dropped');
+  assert.equal(openView.attention, 4, 'recent PRs never inflate the open tallies');
+  assert.equal(openView.alwaysShow, true);
+  const recentView = authoredOpenPRsView({ authored_open_prs: withRecent }, 'recent');
+  assert.deepEqual(recentView.items.map((pr) => pr.number), [9]);
+  assert.equal(recentView.showingRecent, true);
+  assert.equal(recentView.searchURL, 'https://github.com/pulls?q=closed');
+  assert.equal(recentView.total, 5, 'the trigger count stays the OPEN count');
+  assert.equal(recentView.truncated, false);
+  assert.equal(
+    authoredOpenPRsView({ authored_open_prs: { ...withRecent, truncated: true, recent_truncated: true } }, 'recent').truncated,
+    true, 'a capped recent page is disclosed, not presented as complete');
+  assert.equal(
+    authoredOpenPRsView({ authored_open_prs: { ...withRecent, recent_truncated: true } }).truncated,
+    false, 'the open list keeps its own truncation flag');
+  // Window 0 disables the filter; a stale "recent" selection falls back to open.
+  const off = authoredOpenPRsView({ authored_open_prs: { ...withRecent, recent_window_days: 0 } }, 'recent');
+  assert.equal(off.showingRecent, false);
+  assert.equal(off.recentCount, 0);
+  assert.deepEqual(off.items.map((pr) => pr.number), [1, 2, 3, 4, 5]);
 
   const member = { conv_id: 'same', online: true, state: { status: 'working' } };
   const activity = globalActivityView({
@@ -47,6 +114,91 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
   assert.equal(activity.details.total, 1);
   assert.equal(activity.details.groups[0].name, 'alpha');
   assert.equal(activity.details.groups[0].states[0].members[0].name, 'same');
+});
+
+test('usage model trims only placeholder columns that no source occupies', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { usageView } = await harness.importDashboardModule('js/shell-model.js');
+  const window = (pct = 10) => ({ pct, remaining: '1h' });
+  const codex = (windows) => ({ codex: { available: true, ...windows } });
+  const cost = { total_cost_usd: 1, api_costs: [{ provider: 'openai', total_cost_usd: 1 }] };
+
+  const cases = [
+    {
+      name: 'weekly-only Codex is compact on its own',
+      usage: codex({ seven_day: window() }),
+      want: { codex: ['codex-7d'] },
+    },
+    {
+      name: '5h-only Codex is compact on its own',
+      usage: codex({ five_hour: window() }),
+      want: { codex: ['codex-5h'] },
+    },
+    {
+      name: 'both Codex windows remain visible',
+      usage: codex({ five_hour: window(), seven_day: window() }),
+      want: { codex: ['codex-5h', 'codex-7d'] },
+    },
+    {
+      name: 'Claude 5h keeps the missing Codex 5h alignment slot',
+      usage: {
+        available: true, five_hour: window(), seven_day: window(),
+        ...codex({ seven_day: window() }),
+      },
+      want: { claude: ['claude-5h', 'claude-7d'], codex: ['(codex-5h)', 'codex-7d'] },
+    },
+    {
+      name: 'API cost does not impersonate the 5h quota column',
+      usage: { ...codex({ seven_day: window() }), ...cost },
+      want: { codex: ['codex-7d'], 'cost-openai': ['api-cost-openai'] },
+    },
+    {
+      name: 'Copilot monthly usage does not impersonate the 5h quota column',
+      usage: {
+        ...codex({ seven_day: window() }),
+        copilot: { available: true, monthly: window() },
+      },
+      want: { codex: ['codex-7d'], copilot: ['copilot-monthly'] },
+    },
+    {
+      name: 'Claude still preserves quota alignment when API cost is also present',
+      usage: {
+        available: true, five_hour: window(), seven_day: window(),
+        ...codex({ seven_day: window() }),
+        ...cost,
+      },
+      want: {
+        claude: ['claude-5h', 'claude-7d'],
+        codex: ['(codex-5h)', 'codex-7d'],
+        'cost-openai': ['api-cost-openai'],
+      },
+    },
+    {
+      name: 'a zero cost row does not reserve a column',
+      usage: {
+        ...codex({ seven_day: window() }),
+        total_cost_usd: 0,
+        api_costs: [{ provider: 'openai', total_cost_usd: 0 }],
+      },
+      want: { codex: ['codex-7d'] },
+    },
+    {
+      name: 'unreported Codex windows do not create an empty row',
+      usage: codex({}),
+      want: {},
+      na: true,
+    },
+  ];
+
+  for (const tc of cases) {
+    const view = usageView(tc.usage);
+    assert.equal(view.na, !!tc.na, tc.name);
+    const got = Object.fromEntries(view.lines.map((line) => [
+      line.key,
+      line.tokens.map((token) => token.hidden ? `(${token.key})` : token.key),
+    ]));
+    assert.deepEqual(got, tc.want, tc.name);
+  }
 });
 
 test('global activity details mirror pulse buckets, dedup members, and annotate finer states', async (t) => {

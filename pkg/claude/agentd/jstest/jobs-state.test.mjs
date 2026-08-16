@@ -111,10 +111,20 @@ test('Jobs state explicitly owns query, paging, sort, requests, and derived rows
   assert.equal(state.dialog.value.prefill.name, 'daily-copy');
   state.closeCronDialog();
 
-  assert.equal(state.openStandingOrderCreate({ target: 'agt_one' }), true);
+  let cancelReturns = 0;
+  const returnOnCancel = () => { cancelReturns += 1; };
+  assert.equal(state.openStandingOrderCreate(
+    { target: 'agt_one' }, { onCancel: returnOnCancel },
+  ), true);
   assert.equal(state.orderDialog.value.kind, 'create');
   assert.equal(state.openCronCreate({}), false, 'only one automation editor owns the overlay');
   state.closeStandingOrderDialog();
+  assert.equal(cancelReturns, 0, 'normal close after save does not return to the caller');
+  assert.equal(state.openStandingOrderCreate(
+    { target: 'agt_one' }, { onCancel: returnOnCancel },
+  ), true);
+  state.closeStandingOrderDialog({ cancelled: true });
+  assert.equal(cancelReturns, 1, 'explicit cancellation returns to the launching surface');
   assert.equal(state.openStandingOrderEdit({
     id: 9, name: 'pr-early', revision: 2, row_version: 4, enabled: true,
     updated_at: '2026-07-29T12:00:00Z',

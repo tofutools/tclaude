@@ -251,7 +251,7 @@ exception, for when no suitable profile exists or the task pins a specific
 vendor/model (see the policy-bound warning below).
 
 When you delegate work by spawning a fresh agent
-(`tclaude agent spawn <group> …`, needs `groups.spawn`), the launch shape is
+(`tclaude agent spawn <group> …`, needs `groups.members.spawn`), the launch shape is
 **not** simply "the flags you passed, else the harness default". Each launch
 field (`--harness`, `--model`, `--effort`, `--sandbox`, `--ask-for-approval`,
 `--ask-user-question-timeout`) is resolved independently through this
@@ -357,15 +357,20 @@ generates no approval request for the reviewer to decide.
 - **Don't spam.** Tmux nudges interleave with the receiver's input box;
   too many in quick succession will wreck their UX.
 - **Don't mutate group membership unless granted.** Mutating
-  subcommands (`groups create|rm|add|remove|update-member`) are
+  subcommands (`groups create|rm|add|remove|update-member` and group-setting
+  verbs) are
   permission-gated. By default agents can't run them. Humans bypass
-  the gate. Slugs: `groups.create`, `groups.rm`, `groups.stop`,
-  `groups.resume`, `groups.retire`, `member.add`, `member.remove`,
-  `member.redesignate`. A **group owner gets the lifecycle verbs for
-  its own group by default** — `groups.spawn` / `groups.stop` /
-  `groups.retire` / `groups.resume`, plus — for owning any group at all —
-  `human.notify` and the read-only `process.runs.read` — without an
-  explicit grant (an explicit deny override still suppresses them).
+  the gate. Slugs: `groups.create`, `groups.delete`, `groups.members.stop`,
+  `groups.members.resume`, `groups.members.retire`, `groups.members.add`, `groups.members.remove`,
+  `groups.members.update`; settings use dedicated slugs such as
+  `groups.settings.default-dir`, and `groups.admin` is the explicit umbrella for every
+  registered `groups.*` administration operation. A dedicated
+  deny still wins over the umbrella. Ownership contributes the documented
+  owner-grant slugs as ordinary permissions: one group-scoped grant per owned
+  active group for `groups.*` capabilities, plus the global `human.notify` and
+  read-only `process.runs.read` bonuses. Whole-agent verbs require their
+  `groups.members.*` slug to cover every current active group containing the
+  target. A same-slug explicit deny suppresses the contributed grant.
   Ownership confers no process *mutation* authority: `process.runs.manage`
   and `process.templates.manage` still need a grant or `--ask-human`.
 

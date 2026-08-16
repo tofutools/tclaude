@@ -9,8 +9,9 @@ description: >-
   Claude Code; Codex agents should normally run to full context and use native
   automatic compaction instead. Claude Code thresholds and cadence are
   project/operator policy. Manager pattern: every verb accepts `--target
-  <peer>` to act on another agent (requires the matching `agent.<verb>` slug,
-  OR ownership of a group containing the target).
+  <peer>` to act on another agent (requires global `agent.<verb>`, or the
+  matching `groups.members.<verb>` covering every current active group that
+  contains the target; ownership contributes the latter for owned groups).
 ---
 
 # Self-lifecycle: keep yourself fresh on long tasks
@@ -30,10 +31,10 @@ You have three commands for managing your own context window:
 | `tclaude agent clone [follow-up] [--no-copy-conv]` | Fork yourself into a SIBLING. Original keeps running; clone inherits identity (renamed `<title>-c-<N>`) and, by default, conv history. |
 
 `context-info` on **yourself** is read-only and needs no slug. Reading
-**another** agent's context (`--target`) or a whole group's
-(`--group`) is gated on `agent.context-info`, OR being an owner of a
-group containing the target — same manager-pattern gate as the other
-cross-agent verbs (see "Manager pattern" below).
+**another** agent's context (`--target`) or a whole group's (`--group`) needs
+global `agent.context-info`, or `groups.members.context-info` covering every
+current active group containing each target. Ownership contributes the latter
+for owned groups (see "Manager pattern" below).
 `compact` and `clone` are gated on `self.compact` and `self.clone`.
 Self-reincarnation is intrinsic to every active agent and needs no slug. The
 gated self-lifecycle slugs are default-granted by
@@ -429,15 +430,16 @@ tclaude agent clone --target worker-1 \
   "explore the no-prepared-statement branch while worker-1 keeps the prepared-statement path"
 ```
 
-Auth model (same for all four verbs): the caller passes if EITHER
+Auth model (same for all four verbs): the caller passes if either
 
 - they hold the matching `agent.<verb>` slug (`agent.compact`,
   `agent.reincarnate`, `agent.clone`, `agent.context-info`; default
   human-only — granted via
-  `tclaude agent permissions grant <caller> agent.<verb>`), OR
-- they own at least one group that contains the target (mirrors how
-  `tclaude agent message` already special-cases group owners). For
-  `--group`, ownership of THAT group is the bypass.
+  `tclaude agent permissions grant <caller> agent.<verb>`), or
+- the matching `groups.members.<verb>` has positive scope coverage for every
+  current active group containing the target. Ownership contributes that
+  group slug for each owned group. For `--group`, every directly affected
+  member must be covered.
 
 The response includes `caller_conv` so the target's audit trail
 records who acted. For `reincarnate`, the handoff message uses

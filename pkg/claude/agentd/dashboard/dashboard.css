@@ -106,7 +106,7 @@ header {
   align-items: center;
   gap: 16px;
 }
-header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+header h1 { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 600; }
 header .meta { color: #7d8590; font-size: 12px; }
 /* Stable Preact ownership hosts should not add a new flex/inline layout box;
    their rendered child keeps the exact shell geometry that preceded them. */
@@ -135,37 +135,119 @@ footer {
   border-top: 1px solid #2a3340;
 }
 .footer-inner {
-  padding: 6px 24px;
+  height: 100%; padding: 0 24px;
   display: flex;
   align-items: center;
   gap: 16px;
 }
+.open-prs { display: inline-flex; height: calc(var(--footer-h) - 1px); align-items: stretch; margin-left: auto; }
+.open-prs-trigger {
+  display: inline-flex; align-items: center; gap: 7px; height: 100%; padding: 0 12px;
+  border: 0; border-left: 1px solid #2a3340; border-right: 1px solid #2a3340;
+  border-radius: 0; background: transparent; color: #aeb9c6; cursor: pointer;
+  font: inherit; font-size: 12px;
+}
+.open-prs-trigger:hover, .open-prs-trigger:focus-visible, .open-prs.is-open .open-prs-trigger {
+  color: #d4d4d4; background: #1b222b;
+}
+.open-prs-trigger:focus-visible { outline: 2px solid #58a6ff; outline-offset: -2px; }
+.open-prs-dot { width: 7px; height: 7px; border-radius: 50%; background: #d29922; }
+.open-prs-count {
+  min-width: 18px; padding: 1px 5px; border-radius: 9px; background: #21262d;
+  color: #8b949e; font-size: 10px; font-weight: 700; text-align: center;
+}
+.open-prs.has-attention .open-prs-count { background: #1f6feb; color: #fff; }
+.open-prs-chevron { color: #6e7681; font-size: 10px; }
+/* Zero open PRs. The indicator is permanent by default, so at rest it must
+   read as "nothing waiting" rather than as another live counter: the amber
+   dot goes neutral. The count badge is already neutral whenever no PR needs
+   attention, including when clean CI is still running.
+   The label is muted AT REST only. This selector outranks the shared
+   hover/focus/open rule above, so it has to exclude those states itself —
+   otherwise the state that is now permanent by default would be the one
+   control in the footer that never brightens under the pointer. The dot and
+   count stay muted throughout: they carry "nothing waiting", not focus. */
+.open-prs.is-empty:not(.is-open) .open-prs-trigger:not(:hover):not(:focus-visible) { color: #7d8590; }
+.open-prs.is-empty .open-prs-dot { background: #30363d; }
+.open-prs-popover {
+  position: fixed; right: 12px; bottom: calc(var(--footer-h) + 10px); z-index: 43;
+  width: min(470px, calc(100vw - 24px)); max-height: min(560px, calc(100vh - var(--footer-h) - 24px));
+  display: flex; flex-direction: column; overflow: hidden; border: 1px solid #3a4654;
+  border-radius: 9px; background: #161b22; box-shadow: 0 14px 45px rgba(0,0,0,.55);
+  color: #c9d1d9; text-align: left;
+}
+/* Keep the footer disclosure hovered while the pointer crosses the visual gap
+   to its popover. The bridge matches the popover's fixed positioning so it
+   continues to work when the agent dock shifts both surfaces left. */
+.open-prs.is-open::before {
+  content: ""; position: fixed; right: 12px; bottom: var(--footer-h); z-index: 42;
+  width: min(470px, calc(100vw - 24px)); height: 10px;
+}
+/* The dock normally paints above the footer. Lift the footer only while this
+   disclosure is open so the bridge can receive hover across the dock's bottom
+   edge; its visible popover is already shifted clear of the dock. */
+footer:has(.open-prs.is-open) { z-index: 46; }
+body.dock-open .open-prs-popover { right: calc(var(--dock-w) + 12px); }
+body.dock-open .open-prs.is-open::before {
+  right: 12px; width: calc(var(--dock-w) + min(470px, calc(100vw - 24px)));
+}
+.open-prs-head { display: flex; align-items: center; gap: 8px; padding: 13px 14px 10px; border-bottom: 1px solid #2a3340; }
+.open-prs-head strong { font-size: 13px; }
+.open-prs-age { margin-left: auto; color: #7d8590; font-size: 10px; }
+.open-prs-filters { display: flex; gap: 6px; padding: 8px 12px; border-bottom: 1px solid #222b35; }
+.open-prs-filters button {
+  padding: 3px 8px; border: 1px solid #303946; border-radius: 10px;
+  background: transparent; color: #8b949e; cursor: pointer; font-size: 10px;
+}
+.open-prs-filters button.active { color: #c9d1d9; border-color: #385b81; background: #172a40; }
+.open-pr-list { min-height: 0; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+/* The list is the popover's only scrolling surface. Match the dashboard's
+   other dark panes in both Firefox and Chromium/WebKit instead of exposing
+   the browser's light native scrollbar inside the dark footer disclosure. */
+@supports not selector(::-webkit-scrollbar) {
+  .open-pr-list { scrollbar-width: thin; scrollbar-color: #6e7681 #0d1117; }
+  body.wizard .open-pr-list { scrollbar-color: #7a5db0 #140f28; }
+}
+.open-pr-list::-webkit-scrollbar { width: 10px; height: 10px; }
+.open-pr-list::-webkit-scrollbar-track,
+.open-pr-list::-webkit-scrollbar-corner { background: #0d1117; }
+.open-pr-list::-webkit-scrollbar-thumb {
+  background: #6e7681; border: 2px solid #0d1117; border-radius: 6px;
+}
+.open-pr-list::-webkit-scrollbar-thumb:hover { background: #8b949e; }
+.open-pr-list::-webkit-scrollbar-thumb:active { background: #b1bac4; }
+.open-pr-row { display: grid; grid-template-columns: 9px minmax(0,1fr) auto; gap: 9px; align-items: center; padding: 10px 13px; border-bottom: 1px solid #222b35; }
+.open-pr-state { width: 7px; height: 7px; border-radius: 50%; background: #6e7681; }
+.open-pr-state-passing { background: #3fb950; }
+.open-pr-state-pending { background: #d29922; }
+.open-pr-state-failing { background: #f85149; }
+/* Terminal states, used only by the "recently closed" filter. They reuse the
+   same purple/red vocabulary as the member table's PR links. */
+.open-pr-state-merged { background: #a371f7; }
+.open-pr-state-closed { background: #f85149; }
+.open-pr-main { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.open-pr-title { overflow: hidden; color: #d6dde5; font-size: 12px; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
+.open-pr-title:hover { color: #79c0ff; text-decoration: underline; }
+.open-pr-meta { overflow: hidden; color: #7d8590; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.open-prs-empty { margin: 0; padding: 20px 14px; color: #7d8590; font-size: 11px; }
+.open-prs-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  min-height: 33px; padding: 7px 13px; background: #141920;
+}
+.open-prs-foot a { color: #79c0ff; font-size: 10px; text-decoration: none; }
+.open-prs-foot a:hover { text-decoration: underline; }
+.open-prs-final-ci {
+  display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto;
+  color: #8b949e; cursor: help; font-size: 10px; user-select: none;
+}
+.open-prs-final-ci:hover { color: #c9d1d9; }
+.open-prs-final-ci input { width: 14px; height: 14px; margin: 0; accent-color: #1f6feb; cursor: pointer; }
+.open-prs-final-ci:has(input:focus-visible) { color: #c9d1d9; outline: 2px solid #58a6ff; outline-offset: 2px; border-radius: 2px; }
+@media (max-width: 620px) {
+  .open-prs-popover, .open-prs.is-open::before { right: 8px; width: calc(100vw - 16px); }
+  body.dock-open .open-prs-popover, body.dock-open .open-prs.is-open::before { right: 8px; }
+}
 footer .meta { color: #7d8590; font-size: 12px; }
-.footer-session-toggle {
-  margin-left: 10px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: #8c959f;
-  font: inherit;
-  cursor: pointer;
-}
-.footer-session-toggle:hover { color: #c9d1d9; }
-.footer-session-panel {
-  position: absolute;
-  right: 24px;
-  bottom: calc(100% + 8px);
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 270px;
-  padding: 10px 12px;
-  color: #c9d1d9;
-  background: #161b22;
-  border: 1px solid #30363d;
-  border-radius: 6px;
-  box-shadow: 0 8px 24px #01040999;
-}
 /* Reserve the fixed footer's height at the page bottom so scrolling to the
    end never leaves the last row hidden behind the bar. The Messages tab
    pins body to the viewport height and scrolls internally, so it shrinks
@@ -744,10 +826,21 @@ button.tool:hover { border-color: #58a6ff; }
 .mail-row-party { color: #d4d4d4; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mail-row-group { color: #7d8590; font-size: 11px; }
 .mail-row-time { margin-left: auto; color: #7d8590; font-size: 11px; flex: 0 0 auto; }
+.mail-row-subject-line {
+  display: flex; align-items: center; gap: 6px; min-width: 0;
+}
 .mail-row-subject {
+  flex: 1 1 auto; min-width: 0;
   color: #8b949e; font-size: 13px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.mail-row-attachments {
+  display: inline-flex; align-items: center; gap: 2px; flex: 0 0 auto;
+  color: #8b949e; font: 11px ui-monospace, monospace;
+}
+.mail-row-attachments svg { width: 15px; height: 15px; }
+.mail-row.active .mail-row-attachments,
+.mail-row.unread .mail-row-attachments { color: #adbac7; }
 
 /* Reading pane */
 .mail-reader-head { border-bottom: 1px solid #2a3340; padding-bottom: 10px; margin-bottom: 10px; }
@@ -3192,16 +3285,22 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   gap: 2px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-#usage .uline { display: inline-flex; align-items: center; gap: 12px; white-space: nowrap; }
-/* Source label ("Claude:" / "Codex:") — right-aligned in a box wide enough
-   for the longest label so the colons stack and "Codex:" gains its leading
-   space. inline-block (not a bare inline span) so min-width/text-align
-   actually apply. */
+#usage .uline {
+  display: inline-flex;
+  align-items: center;
+  align-self: stretch;
+  gap: 12px;
+  white-space: nowrap;
+}
+/* Provider/source label — always present, even with one source. The box fits
+   the longest normal row ("Anthropic API:") so quota bars and cost figures
+   start on one stable column as sources appear and disappear. */
 #usage .usrc {
   display: inline-block;
   color: #7d8590;
   text-align: right;
-  min-width: 7ch; /* "Claude:" */
+  width: 14ch; /* "Anthropic API:" */
+  flex: 0 0 14ch;
 }
 /* Per-field column widths inside each window, worst-case sized so 5h/7d,
    the bars, the percents, and the reset hints all line up between the two
@@ -6087,7 +6186,6 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
 }
 
 .sbx-access-axis > .sbx-section-body > select,
-.sbx-network-baseline-label > select,
 .sbx-effective-preview > .sbx-section-body > label > select {
   min-width: 11rem;
 }
@@ -6095,13 +6193,53 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
   align-self: flex-start;
   flex: 0 0 auto;
 }
-.sbx-network-baseline-label {
-  align-items: center;
+.sbx-network-controls {
+  display: grid;
+  gap: .65rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.sbx-network-control {
+  background: rgba(13, 17, 23, .45);
+  border: 1px solid #30363d;
+  border-radius: .35rem;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: .6rem;
+}
+.sbx-network-control-kind {
   color: var(--text-muted);
-  display: inline-flex;
-  font-size: .82rem;
-  gap: .5rem;
-  width: max-content;
+  font-size: .7rem;
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+.sbx-network-control-label {
+  font-size: .85rem;
+  font-weight: 700;
+  margin: .15rem 0 .35rem;
+}
+.sbx-network-control > select {
+  width: 100%;
+}
+.sbx-network-control-help {
+  color: var(--text-muted);
+  font-size: .75rem;
+  line-height: 1.35;
+  margin-top: .4rem;
+}
+.sbx-network-namespace-note {
+  background: rgba(56, 139, 253, .08);
+  border-left: 3px solid #58a6ff;
+  border-radius: .25rem;
+  color: var(--text-primary);
+  margin: .35rem 0;
+  padding: .45rem .6rem;
+}
+@media (max-width: 760px) {
+  .sbx-network-controls {
+    grid-template-columns: 1fr;
+  }
 }
 .sbx-network-unlocks {
   border: 0;
@@ -6407,6 +6545,49 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
   color: var(--text-muted);
   font-size: .78rem;
   line-height: 1.35;
+}
+.sbx-unix-root-note {
+  background: rgba(210, 153, 34, .1);
+  border-left: 3px solid var(--warning-text, #d99a2b);
+  border-radius: .25rem;
+  color: var(--warning-text, #d99a2b);
+  font-size: .85rem;
+  line-height: 1.4;
+  margin: .65rem 0;
+  padding: .5rem .65rem;
+}
+.sbx-unix-root-note strong {
+  display: block;
+  margin-bottom: .15rem;
+}
+.sbx-unix-root-note p {
+  color: var(--text-primary);
+  margin: .55rem 0 0;
+}
+.sbx-unix-root-checklist {
+  display: grid;
+  gap: .35rem;
+  margin: .5rem 0;
+}
+.sbx-unix-root-prerequisite {
+  display: grid;
+  grid-template-columns: 1.15rem minmax(0, 1fr);
+}
+.sbx-unix-root-prerequisite b,
+.sbx-unix-root-prerequisite small {
+  display: block;
+}
+.sbx-unix-root-prerequisite small {
+  color: var(--text-muted);
+}
+.sbx-unix-root-prerequisite.is-aligned .sbx-unix-root-status {
+  color: var(--success, #3fb950);
+}
+.sbx-unix-root-prerequisite.is-missing .sbx-unix-root-status {
+  color: var(--danger, #f85149);
+}
+.sbx-unix-root-status {
+  font-weight: 700;
 }
 .sbx-socket-row {
   grid-template-columns: 6.75rem minmax(12rem, 1fr) auto;
@@ -7100,6 +7281,41 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
 .spawn-role-row .spawn-perms-indicator {
   flex: 0 0 auto; padding-top: 6px; color: #7d8590; white-space: nowrap;
 }
+.agent-spawn-role-picker { flex: 1 1 auto; min-width: 0; }
+/* Match the normal row select's 29px closed height and chrome. The role pills
+   remain outlined inside it, while the add selector reads as the field's plain
+   current value instead of a second dashed control nested inside the first. */
+.agent-spawn-role-chips {
+  box-sizing: border-box; min-height: 29px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  border: 1px solid #2a3340; border-radius: 4px; background: #0d1117; padding: 3px 7px;
+}
+.agent-spawn-role-chips:focus-within { border-color: #58a6ff; }
+.agent-spawn-role-chips select option { color: #c9d1d9; background: #0d1117; }
+.agent-spawn-role-chip {
+  display: inline-flex; align-items: stretch; overflow: hidden; border: 1px solid #315b87;
+  border-radius: 999px; background: #17345a; color: #dbeaff;
+}
+.agent-spawn-role-chip.missing { border-color: #9e6a03; background: rgba(187, 128, 9, .16); }
+.agent-spawn-role-chip button { border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.agent-spawn-role-chip .role-chip-inspect { padding: 3px 3px 3px 9px; }
+.agent-spawn-role-chip .role-chip-remove { padding: 3px 8px 3px 4px; color: #9fc6ef; }
+.agent-spawn-role-chip button:hover { color: #fff; }
+#agent-spawn-role-add {
+  box-sizing: border-box; width: auto; min-width: 112px; min-height: 21px;
+  flex: 1 1 112px; align-self: center;
+  border: 0; border-radius: 0; background: transparent;
+  color: #c9d1d9; padding: 2px 24px 2px 2px; font-size: 13px;
+}
+#agent-spawn-role-add:focus { border: 0; }
+.agent-spawn-role-inspect {
+  display: grid; gap: 5px; margin-top: 6px; border: 1px solid #303b49; border-radius: 5px;
+  background: #111820; padding: 8px 10px; color: #aebdcd; font-size: 12px;
+}
+.agent-spawn-role-inspect.missing { border-color: #9e6a03; color: #d29922; }
+.agent-spawn-role-inspect b { display: inline-block; min-width: 46px; color: #d7e3f1; }
+.agent-spawn-role-inspect .role-inspect-grants { display: inline-flex; flex-wrap: wrap; gap: 5px; }
+.agent-spawn-role-inspect code { border-radius: 3px; background: #1b2632; padding: 1px 4px; color: #8ed5b1; }
 .cron-create-row input[type=text]:focus,
 .cron-create-row input:not([type]):focus,
 .sbx-section input:not([type]):focus,
@@ -7136,15 +7352,14 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
 .cron-create-row > button.tool {
   flex: 0 0 auto; align-self: stretch; padding: 0 12px; white-space: nowrap;
 }
-/* The spawn-profile editor's Permissions… and Context… rows carry a label, a
+/* The profile/role editors' Permissions… and Context… rows carry a label, a
    button and a summary badge — no input or select for the button to match — so
-   the stretch above has nothing to size against and just inflates the button to
-   the row height. That is invisible next to the one-line "Permissions" label and
-   obvious next to "Startup context", which wraps to two lines in the 72px label
-   column and left the Context… button visibly taller than its twin. Top-align
-   both and restore button.tool's own vertical padding so they render at the same
-   height as the spawn dialog's Role-row buttons. */
-.cron-create-row > button.tool:is(#profile-editor-perms, #profile-editor-context-features) {
+   the stretch above has nothing to size against and leaves the button's text
+   vertically cramped. This was initially applied only to the profile editor,
+   making the later role-editor twin visibly thinner. Top-align all three and
+   restore button.tool's own vertical padding so they match the spawn dialog's
+   Role-row buttons. */
+.cron-create-row > button.tool:is(#profile-editor-perms, #profile-editor-context-features, #role-editor-perms) {
   align-self: flex-start; padding: 5px 12px;
 }
 /* Live inline help under the one spawn-dialog control that still needs it: the
@@ -7331,12 +7546,264 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
   padding: 2px;
 }
 .group-standing-order-choice {
-  padding: 8px 10px; border: 1px solid #2a3340;
+  display: grid; grid-template-columns: 20px minmax(0, 1fr) auto auto;
+  align-items: center; gap: 9px;
+  padding: 9px 10px; border: 1px solid #2a3340;
   border-radius: 4px; background: #0d1117;
 }
 .group-standing-order-choice:hover { border-color: #3d4b5d; }
 .group-standing-order-choice.disabled { opacity: 0.7; }
 .group-standing-order-choice input:disabled { cursor: not-allowed; }
+.group-standing-orders-heading {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  margin: -18px -22px 18px; padding: 18px 22px 15px;
+  border-bottom: 1px solid #2a3340;
+}
+.group-standing-orders-heading p { margin: 4px 0 0; }
+.group-standing-orders-close {
+  flex: 0 0 auto; border: 0 !important; padding: 0 2px !important;
+  background: transparent !important; color: #7d8590 !important;
+  font-size: 19px !important; line-height: 1; box-shadow: none !important;
+}
+.group-standing-orders-close:hover { color: #c9d1d9 !important; }
+#group-standing-orders-modal .cron-create-modal button:not(.group-standing-orders-close) {
+  border: 1px solid #3a4654; border-radius: 4px;
+  padding: 6px 10px; background: #21262d; color: #c9d1d9;
+  font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+#group-standing-orders-modal .cron-create-modal button:not(.group-standing-orders-close):hover:not(:disabled) {
+  background: #2d333b; border-color: #58a6ff;
+}
+#group-standing-orders-modal .cron-create-modal button.primary {
+  background: #1f6feb; border-color: #388bfd; color: #fff;
+}
+#group-standing-orders-modal .cron-create-modal button.primary:hover:not(:disabled) {
+  background: #388bfd; border-color: #58a6ff;
+}
+#group-standing-orders-modal .cron-create-modal button:disabled { opacity: 0.65; cursor: not-allowed; }
+.group-standing-orders-summary {
+  display: flex; align-items: center; gap: 18px;
+  padding: 9px 11px; margin-bottom: 14px;
+  border: 1px solid #2a3340; border-radius: 4px; background: #11161d;
+}
+.group-standing-orders-summary strong { color: #e6edf3; }
+.group-standing-orders-summary > span { color: #8b949e; }
+.group-standing-orders-live {
+  display: inline-block; width: 7px; height: 7px; margin-right: 7px;
+  border-radius: 50%; background: #3fb950; box-shadow: 0 0 7px #3fb95088;
+}
+.group-standing-orders-section-heading {
+  display: flex; justify-content: space-between; align-items: baseline;
+  gap: 12px; margin: 13px 1px 7px;
+}
+.group-standing-orders-add-heading { margin-top: 16px; }
+.group-standing-orders-section-heading > span { font-size: 11px; text-align: right; }
+.group-standing-orders-empty {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 22px 12px; border: 1px dashed #34404e; border-radius: 4px;
+  background: #10151b; text-align: center;
+}
+.group-standing-orders-first-run {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 34px 20px 30px; border: 1px dashed #34404e; border-radius: 5px;
+  background: #10151b; text-align: center;
+}
+.group-standing-orders-first-icon {
+  display: grid; place-items: center; width: 44px; height: 44px; margin-bottom: 13px;
+  border: 1px solid #38516d; border-radius: 50%; background: #10243a;
+  color: #79c0ff; font-size: 21px;
+}
+.group-standing-orders-first-run > strong { color: #e6edf3; font-size: 14px; }
+.group-standing-orders-first-run > p {
+  max-width: 430px; margin: 5px auto 17px; color: #8b949e;
+}
+.group-standing-orders-first-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.group-standing-orders-explainer {
+  max-width: 460px; margin-top: 14px; padding: 9px 11px;
+  border-left: 2px solid #388bfd; background: #0d1117; color: #9ca8b4;
+  font-size: 11px; text-align: left;
+}
+.group-standing-orders-first-hint { margin: 12px 0 0; color: #7d8590; font-size: 11px; }
+.group-standing-orders-first-hint strong { color: #9ca8b4; }
+.group-standing-orders-load-failed {
+  display: flex; flex-direction: column; align-items: center; gap: 7px;
+  padding: 24px 14px; border: 1px solid #6e3b3b; border-radius: 4px;
+  background: #211416; text-align: center;
+}
+.group-standing-orders-paused-heading { margin-top: 16px; }
+.group-standing-orders-paused { opacity: 0.75; }
+.group-standing-order-origin { color: #58a6ff; text-align: center; }
+.group-standing-order-origin.locked { color: #8b949e; }
+.group-standing-order-details { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+.group-standing-order-details > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.group-standing-order-scope {
+  padding: 1px 6px; border: 1px solid #3d4b5d; border-radius: 999px;
+  color: #aab5c0; font-size: 10px; white-space: nowrap;
+}
+.group-standing-order-scope.global { color: #9fdaaa; border-color: #315d3b; background: #112a19; }
+.group-standing-order-scope.group { color: #79c0ff; border-color: #275b8e; background: #0b2742; }
+.group-standing-order-lock { color: #6e7681; text-align: center; }
+.group-standing-order-remove { font-size: 11px; }
+.group-standing-orders-library {
+  padding: 8px; border: 1px solid #2a3340; border-radius: 4px; background: #10151b;
+}
+.group-standing-orders-library-toolbar { display: flex; gap: 6px; margin-bottom: 7px; }
+.group-standing-orders-library-toolbar input { flex: 1; min-width: 0; }
+.group-standing-orders-library-callout {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  padding: 11px; border: 1px dashed #3a4654; border-radius: 4px; background: #10151b;
+}
+.group-standing-orders-library-callout > div:first-child {
+  display: flex; flex-direction: column; min-width: 0; gap: 2px;
+}
+.group-standing-orders-library-callout > div:first-child > span { font-size: 11px; }
+.group-standing-orders-callout-actions { display: flex; flex: 0 0 auto; gap: 6px; }
+.group-standing-orders-managed-note { margin-right: auto; color: #8b949e; font-size: 11px; }
+body.wizard #group-standing-orders-modal .cron-create-modal {
+  background: radial-gradient(circle at 50% 0, #271934 0%, #1b1524 42%, #15101d 100%);
+  border: 1px solid #6e4c86; box-shadow: 0 22px 70px #000d, 0 0 32px #a96ee628;
+  color: #e7d9f5;
+}
+body.wizard #group-standing-orders-modal .group-standing-orders-heading {
+  border-bottom-color: #4e3961;
+  background: linear-gradient(110deg, #291b36, #1b1524);
+}
+body.wizard #group-standing-orders-modal .group-standing-orders-heading h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  font-size: 16px; letter-spacing: 0.3px; text-shadow: 0 0 7px #a97bd699;
+}
+body.wizard #group-standing-orders-modal .group-standing-orders-heading p,
+body.wizard #group-standing-orders-modal .muted { color: #ad9abb; }
+body.wizard #group-standing-orders-modal .group-standing-orders-close { color: #9d87ad !important; }
+body.wizard #group-standing-orders-modal .group-standing-orders-close:hover { color: #f3e6c0 !important; }
+body.wizard #group-standing-orders-modal .cron-create-modal button:not(.group-standing-orders-close) {
+  background: #2a2034; border-color: #59466b; color: #e7d9f5;
+}
+body.wizard #group-standing-orders-modal .cron-create-modal button:not(.group-standing-orders-close):hover:not(:disabled) {
+  background: #39294a; border-color: #d9b45a;
+}
+body.wizard #group-standing-orders-modal .cron-create-modal button.primary {
+  background: linear-gradient(180deg, #7650a5, #563477);
+  border-color: #b184d1; color: #fff7dc; box-shadow: 0 0 12px #b26de840;
+}
+body.wizard #group-standing-orders-modal .cron-create-modal button.primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #8d65ba, #654087);
+  border-color: #f3e6c0; box-shadow: 0 0 17px #b26de866;
+}
+body.wizard #group-standing-orders-modal .group-standing-orders-first-run {
+  border-color: #694f7e; background: linear-gradient(145deg, #17101f, #120e19);
+}
+body.wizard #group-standing-orders-modal .group-standing-orders-first-icon {
+  border-color: #9370b2; background: #2b1940; color: #e4bfff;
+  box-shadow: 0 0 18px #b878ee4d;
+}
+body.wizard #group-standing-orders-modal .group-standing-orders-first-run > strong {
+  color: #f3e6c0; font-family: Georgia, serif; font-size: 15px;
+}
+body.wizard #group-standing-orders-modal .group-standing-orders-first-run > p,
+body.wizard #group-standing-orders-modal .group-standing-orders-first-hint,
+body.wizard #group-standing-orders-modal .group-standing-orders-managed-note { color: #a795b2; }
+body.wizard #group-standing-orders-modal .group-standing-orders-first-hint strong { color: #c9b5d7; }
+body.wizard #group-standing-orders-modal .group-standing-orders-explainer {
+  border-left-color: #a97bd6; background: #100c17; color: #b9a8c5;
+}
+body.wizard #group-standing-orders-modal .modal-buttons { border-top-color: #40304f; }
+body.wizard .group-standing-orders-live {
+  background: #c084fc; box-shadow: 0 0 8px #c084fcaa;
+}
+body.wizard .group-standing-orders-summary,
+body.wizard .group-standing-orders-library-callout,
+body.wizard .group-standing-orders-library { border-color: #4b3a5d; background: #17111f; }
+body.wizard .group-standing-order-scope.global { color: #e6c878; border-color: #765f28; background: #2b230e; }
+body.wizard .group-standing-order-scope.group { color: #ddb6ff; border-color: #76539a; background: #28193a; }
+body.wizard .group-standing-order-origin { color: #c084fc; }
+
+/* The standing-order editor is the authoring half of the group rulebook. In
+   wizard mode it uses the same violet-void surface, parchment text, and
+   gilded actions as the decree picker rather than inheriting the plain cron
+   form chrome. The fields remain structurally identical across themes. */
+body.wizard #standing-order-modal .cron-create-modal {
+  background: radial-gradient(circle at 50% 0, #271934 0%, #1b1524 38%, #140f1c 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 22px 70px #000d, 0 0 32px rgba(122, 93, 176, 0.38);
+  color: #e7d9f5;
+}
+body.wizard #standing-order-modal #standing-order-title {
+  font-size: 0; color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 0.7px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.7), 0 1px 0 #1e1640;
+}
+body.wizard #standing-order-modal #standing-order-title::before {
+  content: "📜 Inscribe a standing decree"; font-size: 16px;
+}
+body.wizard #standing-order-modal.standing-order-editing #standing-order-title::before {
+  content: "📜 Re-inscribe the standing decree";
+}
+body.wizard #standing-order-modal :is(.cron-create-label, .muted) { color: #ad9abb; }
+body.wizard #standing-order-modal .standing-order-choice strong,
+body.wizard #standing-order-modal .cron-target-modes { color: #e7d9f5; }
+body.wizard #standing-order-modal :is(input[type=checkbox], input[type=radio]) { accent-color: #a97bd6; }
+body.wizard #standing-order-modal :is(
+  input[type=text], input[type=number], select, textarea
+) {
+  background: #100c17; border-color: rgba(122, 93, 176, 0.58); color: #f3e6c0;
+}
+body.wizard #standing-order-modal :is(
+  input[type=text], input[type=number], select, textarea
+):focus {
+  border-color: #a97bd6; box-shadow: 0 0 0 1px rgba(169, 123, 214, 0.35);
+  outline: none;
+}
+body.wizard #standing-order-modal select option { color: #1a1330; background: #e7d9f5; }
+body.wizard #standing-order-modal :is(.standing-order-options, .standing-order-native-hooks details) {
+  background: #100c17; border-color: rgba(122, 93, 176, 0.5);
+}
+body.wizard #standing-order-modal .standing-order-native-hooks summary {
+  color: #f3e6c0; border-bottom-color: rgba(122, 93, 176, 0.35);
+}
+body.wizard #standing-order-modal .modal-meta {
+  background: #100c17; border-left-color: #d9b45a; color: #ad9abb;
+}
+body.wizard #standing-order-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.45); }
+body.wizard #standing-order-modal #standing-order-cancel {
+  font-size: 0; background: #2a2034; border-color: #59466b; color: #e7d9f5;
+}
+body.wizard #standing-order-modal #standing-order-cancel::before {
+  content: "Abandon inscription"; font-size: 12px;
+}
+body.wizard #standing-order-modal #standing-order-cancel:hover:not(:disabled) {
+  background: #39294a; border-color: #d9b45a;
+}
+body.wizard #standing-order-modal #standing-order-submit {
+  font-size: 0;
+  background: linear-gradient(180deg, #7650a5, #563477);
+  border: 2px solid #d9b45a; border-radius: 6px; color: #fff7dc;
+  box-shadow: 0 3px 0 #1e1640, 0 0 12px rgba(178, 109, 232, 0.35);
+}
+body.wizard #standing-order-modal #standing-order-submit::before {
+  content: "✦ Seal decree"; font-size: 13px;
+}
+body.wizard #standing-order-modal.standing-order-editing #standing-order-submit::before {
+  content: "✦ Re-seal decree";
+}
+body.wizard #standing-order-modal #standing-order-submit:hover:not(:disabled) {
+  background: linear-gradient(180deg, #8d65ba, #654087);
+  border-color: #f3e6c0; box-shadow: 0 3px 0 #1e1640, 0 0 17px #b26de866;
+}
+body.wizard #standing-order-modal #standing-order-submit:disabled::before { content: "⏳ Inscribing…"; }
+body.wizard #standing-order-modal.standing-order-editing #standing-order-submit:disabled::before {
+  content: "⏳ Re-inscribing…";
+}
+@media (max-width: 720px) {
+  .group-standing-orders-summary,
+  .group-standing-orders-library-callout { align-items: stretch; flex-direction: column; }
+  .group-standing-orders-callout-actions { flex-wrap: wrap; }
+  .group-standing-orders-first-actions { flex-direction: column; }
+  .group-standing-order-choice { grid-template-columns: 20px minmax(0, 1fr) auto; }
+  .group-standing-order-scope { grid-column: 2; justify-self: start; }
+}
 .standing-order-retirement-warning { margin: 0; }
 .spawn-unenforced-toggle {
   display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
@@ -7740,19 +8207,6 @@ body.wizard .directory-picker-modal .modal-buttons { border-top-color: rgba(122,
 .tpl-concepts-table thead th { color: #7d8590; font-weight: 600; background: #161b22; }
 .tpl-concepts-table tbody th { color: #58a6ff; font-weight: 600; white-space: nowrap; }
 .tpl-concepts-table td { color: #adbac7; }
-/* Permission checkbox list — the template editor's inline list is gone
-   (JOH-350: permissions ride the picked profile), but the role editor
-   (modal-roles.js) still renders one into #role-editor-perms-list, so its
-   container + label layout stays shared here. */
-.ta-perms-list {
-  display: flex; flex-wrap: wrap; gap: 3px 12px; margin-top: 6px;
-  max-height: 150px; overflow-y: auto;
-}
-.ta-perms-list label {
-  display: flex; align-items: center; gap: 4px; color: #c9d1d9;
-  cursor: pointer; flex: 0 0 calc(50% - 6px);
-}
-.ta-perms-list label input { margin: 0; }
 /* JOH-364: input[type=number] (the per-agent .ta-wave field) was missing from
    this list, so in PLAIN mode it fell back to the browser's white UA field and
    a content-width box — out of step with its .ta-name / .ta-role siblings in
@@ -8436,6 +8890,15 @@ body.slop header button {
   border-radius: 4px; padding: 4px 10px;
 }
 body.slop header button:hover { background: #4a0a0a; }
+/* Keep the product-mark button compact; the broad rule above styles the
+   full-size header actions, whose padding would squeeze this 28px control. */
+body.slop header h1 .slop-icon {
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  padding: 3px;
+}
+body.slop header h1 .slop-icon:hover { background: #4a0a0a; }
 body.slop nav {
   background: #2a0808;
   border-bottom: 1px solid #ffd700;
@@ -8469,12 +8932,41 @@ body.slop .online          { color: #56d364; text-shadow: 0 0 6px rgba(86, 211, 
 /* The header icon is the easter-egg toggle: click it to flip slop
    mode on or off (see js/slop.js). `cursor: pointer` is the only
    affordance — discoverable to anyone who hovers, silent otherwise.
-   In slop mode the icon also jiggles; the wrapper span keeps the
-   animation isolated to the glyph so the rest of the h1 stays still. */
+   In slop mode the icon also jiggles; the button keeps the animation
+   isolated to the mark so the rest of the h1 stays still. */
 .slop-icon {
+  position: relative;
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  padding: 3px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
   cursor: pointer;
-  display: inline-block;
 }
+.slop-icon:hover { background: #262e38; }
+.slop-icon:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
+.slop-icon img { display: block; width: 22px; height: 22px; }
+.theme-mode-badge {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  display: none;
+  width: 15px;
+  height: 15px;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #161b22;
+  border-radius: 50%;
+  background: #8b0000;
+  font-size: 8px;
+  line-height: 1;
+}
+body:is(.slop, .wizard) .theme-mode-badge { display: inline-flex; }
+body.wizard .theme-mode-badge { border-color: #170f2e; background: #3a2f57; }
 body.slop header h1 .slop-icon {
   animation: slop-jiggle 2.4s ease-in-out infinite;
 }
@@ -9725,6 +10217,15 @@ body.wizard header button {
   border-radius: 4px; padding: 4px 10px;
 }
 body.wizard header button:hover { background: #3a2a63; }
+/* The product-mark button keeps its compact icon geometry; the broad themed
+   header-button rule above is for the full-size action controls beside it. */
+body.wizard header h1 .slop-icon {
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  padding: 3px;
+}
+body.wizard header h1 .slop-icon:hover { background: #3a2a63; }
 body.wizard nav {
   background: #1c1436;
   border-bottom: 1px solid #d9b45a;
@@ -9740,6 +10241,45 @@ body.wizard footer {
   border-top: 1px solid #d9b45a;
 }
 body.wizard footer .meta { color: #e7d9f5; opacity: 0.85; }
+/* The PR disclosure lives above the themed footer but is fixed outside its
+   visual box, so it needs its own arcane surface and descendant colours. */
+body.wizard .open-prs-popover {
+  border-color: #7a5db0;
+  background: linear-gradient(180deg, #241b3d 0%, #140f28 100%);
+  color: #e7d9f5;
+  box-shadow: 0 0 24px rgba(122, 93, 176, 0.35), 0 14px 45px rgba(0, 0, 0, 0.55);
+}
+body.wizard .open-prs-head,
+body.wizard .open-prs-filters,
+body.wizard .open-pr-row { border-color: #33284d; }
+body.wizard .open-prs-head strong {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 0.4px;
+}
+body.wizard .open-prs-age,
+body.wizard .open-pr-meta,
+body.wizard .open-prs-empty { color: #9a86c4; }
+body.wizard .open-prs-filters button { border-color: #4a3d6b; color: #b39ddb; }
+body.wizard .open-prs-filters button:hover { border-color: #7a5db0; color: #e7d9f5; }
+body.wizard .open-prs-filters button.active {
+  border-color: #d9b45a; background: #3a2a63; color: #f3e6c0;
+}
+body.wizard .open-pr-title { color: #e7d9f5; }
+body.wizard .open-pr-title:hover { color: #f3d58b; }
+body.wizard .open-prs-foot { background: #1c1436; }
+body.wizard .open-prs-foot a { color: #d9b45a; }
+body.wizard .open-prs-final-ci { color: #b39ddb; }
+body.wizard .open-prs-final-ci:hover,
+body.wizard .open-prs-final-ci:has(input:focus-visible) { color: #f3e6c0; }
+body.wizard .open-prs-final-ci input { accent-color: #7a5db0; }
+body.wizard .open-pr-list::-webkit-scrollbar-track,
+body.wizard .open-pr-list::-webkit-scrollbar-corner { background: #140f28; }
+body.wizard .open-pr-list::-webkit-scrollbar-thumb {
+  background: #7a5db0; border-color: #140f28;
+}
+body.wizard .open-pr-list::-webkit-scrollbar-thumb:hover { background: #a97bd6; }
+body.wizard .open-pr-list::-webkit-scrollbar-thumb:active { background: #c9a6f0; }
 /* State pills keep their default fill; a purple/gold/emerald edge makes them
    pop on the violet background (mirrors slop's gold-edge tweak). */
 body.wizard .state-working   { border-color: #a97bd6; }
@@ -10637,6 +11177,7 @@ body.wizard #cron-create-modal .modal-meta {
 body.wizard #cron-create-modal .cron-create-label,
 body.wizard #cron-create-modal .cron-create-enabled { color: #b39ddb; }
 body.wizard #cron-create-modal .cron-create-row input[type=text],
+body.wizard #cron-create-modal .cron-create-row input[type=number],
 body.wizard #cron-create-modal .cron-create-row select,
 body.wizard #cron-create-modal .cron-create-row textarea {
   background: #140f28;
@@ -10644,6 +11185,7 @@ body.wizard #cron-create-modal .cron-create-row textarea {
   color: #f3e6c0;
 }
 body.wizard #cron-create-modal .cron-create-row input[type=text]:focus,
+body.wizard #cron-create-modal .cron-create-row input[type=number]:focus,
 body.wizard #cron-create-modal .cron-create-row select:focus,
 body.wizard #cron-create-modal .cron-create-row textarea:focus {
   border-color: #a97bd6;
@@ -10673,6 +11215,50 @@ body.wizard #cron-create-modal .cron-schedule-chips button.selected {
   box-shadow: 0 0 8px rgba(169, 123, 214, 0.55);
 }
 body.wizard #cron-create-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+
+/* Scheduled spawn action. The shared field component also powers trigger
+   spawn actions; this wrapper only supplies the cron dialog's aligned shell. */
+.cron-spawn-action { align-items: flex-start; }
+.cron-spawn-action-body {
+  flex: 1; min-width: 0; overflow: hidden;
+  border: 1px solid #30363d; border-radius: 6px; background: #0d141c;
+}
+.cron-spawn-action-body .trigger-action-fields + .trigger-action-fields {
+  padding-top: 0;
+}
+.cron-spawn-action-body .trigger-permission-warning { margin: 0 10px 10px; }
+body.wizard #cron-create-modal .cron-spawn-action-body {
+  background: #18122b; border-color: rgba(122, 93, 176, .55);
+}
+body.wizard #cron-create-modal .cron-spawn-action-body .trigger-action-fields label { color: #b39ddb; }
+
+/* Cron action identity and on-demand run ledger. The list remains compact;
+   worker details are paid for only when the operator expands one row. */
+.cron-action-kind {
+  display: inline-flex; align-items: center; margin-top: 4px; padding: 1px 7px;
+  border: 1px solid #30363d; border-radius: 999px; font-size: 10px; line-height: 16px;
+}
+.cron-action-kind.message { color: #79c0ff; border-color: #275b8e; background: #0b2742; }
+.cron-action-kind.spawn { color: #d2a8ff; border-color: #593a78; background: #241536; }
+.cron-spawn-summary { margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cron-feature-note { margin-top: 3px; color: #e3b341; font-size: 10px; }
+.cron-run-inspector-row > td { padding: 0 !important; background: #0f151c; }
+.cron-run-inspector { padding: 12px 18px 16px 34px; border-bottom: 1px solid #30363d; }
+.cron-run-inspector-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.cron-run-inspector-head .muted { flex: 1; }
+.cron-runs { border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
+.cron-run {
+  display: grid; grid-template-columns: minmax(150px, .8fr) minmax(110px, auto) minmax(180px, 1.4fr) minmax(150px, .8fr);
+  gap: 10px; align-items: center; padding: 7px 9px; border-bottom: 1px solid #21262d; font-size: 11px;
+}
+.cron-run:last-child { border-bottom: 0; }
+.cron-run-detail { min-width: 0; overflow-wrap: anywhere; white-space: normal; }
+.cron-run-worker { white-space: nowrap; }
+body.wizard .cron-run-inspector-row > td { background: #140f28; }
+body.wizard .cron-runs { background: #18122b; border-color: rgba(122, 93, 176, .55); }
+@media (max-width: 900px) {
+  .cron-run { grid-template-columns: 1fr; gap: 4px; }
+}
 
 /* Create = ⏳ Bind it! — the submit button re-skinned into a gilded conjuring
    lever, the cron twin of the spawn dialog's 🔮 Summon! and the retire dialog's
@@ -12618,8 +13204,7 @@ body.wizard #template-editor-modal .template-agent-row {
   background: #1b1338; border-color: rgba(122, 93, 176, 0.4);
 }
 body.wizard #template-editor-modal .template-agent-num { color: #a97bd6; }
-body.wizard #template-editor-modal .template-agent-owner,
-body.wizard #template-editor-modal .ta-perms-list label { color: #e7d9f5; }
+body.wizard #template-editor-modal .template-agent-owner { color: #e7d9f5; }
 /* Work-pattern rows ride the .template-agent-row re-skin above; only
    their send-to select needs its own arcane coat. */
 body.wizard #template-editor-modal .template-pattern-sendto { color: #b39ddb; }
@@ -13557,10 +14142,8 @@ body.wizard #roles-manage-modal .modal-buttons button:hover { background: #3a2a6
    The role-editor dialog (JOH-349 sweep). Its inner div carries the
    .template-editor-modal CLASS (not the id), so the editor re-skin above never
    reaches it — this block scopes to #role-editor-modal by id, the same
-   id-only discipline the profile editor follows. The .ta-perms-list is the
-   shared permission-checkbox list JOH-350 deliberately kept for modal-roles;
-   it is skinned here via body.wizard scoping only — the plain-mode base rules
-   are untouched. All of Name / Descr / model-codex are text inputs; Harness /
+   id-only discipline the profile editor follows. All of Name / Descr /
+   model-codex are text inputs; Harness /
    Model / Effort / Sandbox / Permission-mode / Spawn-profile are selects. */
 body.wizard #role-editor-modal .cron-create-modal {
   background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
@@ -13589,11 +14172,6 @@ body.wizard #role-editor-modal .cron-create-row select:focus,
 body.wizard #role-editor-modal .cron-create-row textarea:focus { border-color: #a97bd6; }
 /* Open <select> options render on the OS layer — dark ink on parchment. */
 body.wizard #role-editor-modal .cron-create-row select option { color: #1a1330; background: #e7d9f5; }
-/* The shared permission-checkbox list (.ta-perms-list): parchment labels,
-   arcane-purple checkbox accents — skinned via body.wizard scope, plain-mode
-   base rules left intact. */
-body.wizard #role-editor-modal .ta-perms-list label { color: #e7d9f5; }
-body.wizard #role-editor-modal .ta-perms-list input[type=checkbox] { accent-color: #a97bd6; }
 /* Secondary + inline buttons (Cancel): tarnished-gold; the exclusion keeps the
    Save lever below out of reach. */
 body.wizard #role-editor-modal button:not(#role-editor-submit) {
@@ -14120,6 +14698,163 @@ body.wizard .access-subnav {
 body.wizard .jobs-subnav {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5);
 }
+
+/* PR triggers are a distinct automation kind. Their list stays information
+   dense, while the expanded row owns the diagnostic ledger instead of adding
+   another nested navigation level. */
+.trigger-filter-bar { margin-top: 0; }
+.trigger-filter-bar > input { min-width: 280px; }
+.triggers-table { width: 100%; table-layout: fixed; }
+.triggers-table th:nth-child(1) { width: 22px; }
+.triggers-table th:nth-child(2) { width: 15%; }
+.triggers-table th:nth-child(3) { width: 17%; }
+.triggers-table th:nth-child(4) { width: 12%; }
+.triggers-table th:nth-child(5) { width: 20%; }
+.triggers-table th:nth-child(6) { width: 11%; }
+.triggers-table th:nth-child(7) { width: 11%; }
+.triggers-table th:nth-child(8) { width: 58px; }
+.trigger-row { cursor: pointer; }
+.trigger-row:hover, .trigger-row.selected { background: #111a24; }
+.trigger-disclosure { color: #58a6ff; padding-right: 0 !important; }
+.trigger-source { color: #e3a54b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.trigger-scope, .trigger-state {
+  display: inline-flex; align-items: center; max-width: 100%; padding: 1px 7px;
+  border: 1px solid #30363d; border-radius: 999px; font-size: 10px; line-height: 16px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.trigger-scope.global { color: #d2a8ff; border-color: #593a78; background: #241536; }
+.trigger-scope.group { color: #79c0ff; border-color: #275b8e; background: #0b2742; }
+.trigger-state.armed { color: #7ee787; border-color: #275d36; background: #0f2d17; }
+.trigger-state.cooling, .trigger-state.cooldown { color: #e3b341; border-color: #614d14; background: #2b2408; }
+.trigger-state.disabled { color: #8b949e; background: #20252b; }
+.trigger-action-chip { color: #c9d1d9; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trigger-action-chip::before { content: '→ '; color: #bc8cff; }
+.trigger-ok, .trigger-pass { color: #3fb950; }
+.trigger-warn { color: #e3b341; }
+.trigger-fail { color: #f85149; }
+.trigger-switch { display: inline-flex; position: relative; width: 30px; height: 17px; }
+.trigger-switch input { opacity: 0; width: 0; height: 0; }
+.trigger-switch span { position: absolute; inset: 0; border-radius: 999px; background: #3b434d; cursor: pointer; }
+.trigger-switch span::after { content: ''; position: absolute; width: 13px; height: 13px; left: 2px; top: 2px; border-radius: 50%; background: #c9d1d9; transition: transform .12s; }
+.trigger-switch input:checked + span { background: #1f6feb; }
+.trigger-switch input:checked + span::after { transform: translateX(13px); background: white; }
+.trigger-inspector-row > td { padding: 0 !important; background: #0f151c; }
+.trigger-inspector { padding: 12px 18px 16px 34px; border-bottom: 1px solid #30363d; }
+.trigger-inspector-head { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.trigger-inspector-head > div { display: flex; flex-direction: column; gap: 2px; }
+.trigger-inspector-grid { display: grid; grid-template-columns: minmax(260px, .8fr) minmax(360px, 1.2fr); gap: 18px; }
+.trigger-inspector h4 { margin: 0 0 8px; color: #8b949e; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
+.trigger-verdicts { border: 1px solid #30363d; border-radius: 6px; padding: 8px 10px; }
+.trigger-verdicts > div { display: grid; grid-template-columns: 18px 105px 1fr; gap: 4px; line-height: 22px; }
+.trigger-fact-note { margin-top: 7px; color: #7d8590; font-size: 10px; }
+.trigger-dwell-section { margin-top: 14px; }
+.trigger-dwell-states { display: flex; flex-direction: column; gap: 6px; }
+.trigger-dwell-state {
+  display: grid; grid-template-columns: minmax(78px, auto) 58px minmax(72px, auto) 1fr;
+  gap: 7px; align-items: baseline; padding: 6px 8px;
+  border: 1px solid #30363d; border-radius: 5px; font-size: 10px;
+}
+.trigger-dwell-detail { grid-column: 1 / -1; overflow-wrap: anywhere; }
+.trigger-fact-result.true { color: #3fb950; }
+.trigger-fact-result.false { color: #8b949e; }
+.trigger-fact-result.unknown { color: #e3b341; }
+.trigger-firings { border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
+.trigger-firing { padding: 7px 9px; border-bottom: 1px solid #21262d; font-size: 11px; }
+.trigger-firing:last-child { border-bottom: 0; }
+.trigger-firing > div:first-child { display: flex; gap: 8px; align-items: baseline; }
+.trigger-firing-context { display: flex; align-items: baseline; gap: 8px; margin: 4px 0 0 14px; color: #8b949e; }
+.trigger-firing-context code { color: #e3a54b; }
+.trigger-action-outcome { display: grid; grid-template-columns: 15px 60px 110px 1fr; gap: 5px; margin: 4px 0 0 14px; }
+
+#trigger-modal .trigger-modal { width: min(920px, calc(100vw - 32px)); max-width: 920px; }
+.trigger-modal form { display: flex; flex-direction: column; gap: 10px; }
+.trigger-modal-heading { display: flex; justify-content: space-between; align-items: start; gap: 16px; }
+.trigger-modal-heading h3 { margin: 0; }
+.trigger-modal-heading p { margin: 3px 0 0; }
+.trigger-enabled-label { white-space: nowrap; }
+.trigger-name-field { display: grid; grid-template-columns: 90px 1fr; align-items: center; gap: 8px; }
+/* Steps are semantic <section>s inside the dialog. Override the page-level
+   tab rule (`section { display: none; }`) so the editor body stays visible. */
+.trigger-editor-step { display: block; border: 1px solid #30363d; border-radius: 7px; overflow: hidden; background: #111820; }
+.trigger-step-head { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto 14px; gap: 8px; align-items: center; width: 100%; padding: 9px 11px; border: 0; border-radius: 0; text-align: left; background: #161e28; }
+.trigger-step-label { width: fit-content; padding: 2px 7px; border-radius: 4px; font-weight: 700; font-size: 10px; letter-spacing: .08em; }
+.trigger-step-label.when { color: #ffb454; background: #422b0a; }
+.trigger-step-label.where { color: #79c0ff; background: #0d3455; }
+.trigger-step-label.then { color: #d2a8ff; background: #32164d; }
+.trigger-step-summary { overflow: hidden; color: #9ca8b4; text-overflow: ellipsis; white-space: nowrap; }
+.trigger-step-valid { color: #3fb950; }
+.trigger-step-required { color: #e3b341; font-size: 10px; }
+.trigger-step-body { padding: 12px; border-top: 1px solid #30363d; }
+.trigger-fields { display: grid; grid-template-columns: repeat(3, minmax(150px, 1fr)); gap: 10px; }
+.trigger-fields label, .trigger-action-fields label { display: flex; flex-direction: column; gap: 4px; color: #8b949e; font-size: 11px; }
+.trigger-fields :is(input:not([type=checkbox]):not([type=radio]), select), .trigger-action-fields :is(input, select, textarea), .trigger-name-field input { width: 100%; }
+.trigger-dwell-timing-note { margin-top: 8px; color: #8b949e; font-size: 10px; }
+#trigger-modal .trigger-modal :is(input:not([type=checkbox]):not([type=radio]), select, textarea) {
+  box-sizing: border-box; padding: 5px 7px;
+  background: #0d1117; border: 1px solid #30363d; border-radius: 4px;
+  color: #c9d1d9; font: inherit; color-scheme: dark;
+}
+#trigger-modal .trigger-modal :is(input:not([type=checkbox]):not([type=radio]), select, textarea):focus {
+  outline: none; border-color: #58a6ff; box-shadow: 0 0 0 1px rgba(88, 166, 255, .18);
+}
+#trigger-modal .trigger-modal select option { color: #c9d1d9; background: #0d1117; }
+.trigger-scope-fields { display: flex; align-items: center; gap: 14px; }
+.trigger-scope-fields > .trigger-scope-option {
+  flex: 0 0 auto; flex-direction: row; align-items: center; gap: 6px;
+  cursor: pointer; white-space: nowrap;
+}
+.trigger-scope-option input[type=radio] {
+  flex: 0 0 auto; width: 14px; height: 14px; margin: 0;
+  accent-color: #58a6ff; color-scheme: dark; cursor: pointer;
+}
+.trigger-scope-fields > .trigger-scope-group {
+  flex: 1; min-width: 0; flex-direction: column; align-items: stretch;
+}
+.trigger-actions-editor { display: flex; flex-direction: column; gap: 9px; }
+.trigger-action-editor { border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
+.trigger-action-editor-head { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-bottom: 1px solid #30363d; background: #0d141c; }
+.trigger-action-editor-head strong { margin-right: auto; }
+.trigger-action-fields { display: grid; grid-template-columns: repeat(2, minmax(170px, 1fr)); gap: 10px; padding: 10px; }
+.trigger-template-field { grid-column: 1 / -1; }
+.trigger-template-field textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.trigger-placeholder-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.trigger-placeholder-chips button { padding: 2px 6px; color: #e3a54b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
+.trigger-inspector-head button, .trigger-action-editor-head button, .trigger-placeholder-chips button, .trigger-add-actions button {
+  background: #161b22; border: 1px solid #30363d; color: #c9d1d9;
+}
+.trigger-inspector-head button:hover, .trigger-action-editor-head button:hover, .trigger-placeholder-chips button:hover, .trigger-add-actions button:hover {
+  background: #21262d; border-color: #58a6ff;
+}
+.trigger-action-editor-head button.danger { color: #ff7b72; }
+.trigger-placeholder-chips button { color: #e3a54b; }
+.trigger-harness-capabilities {
+  display: flex; flex-direction: column; gap: 5px; margin-top: 10px; padding: 8px 10px;
+  border: 1px solid #30363d; border-radius: 6px; background: #0d141c; font-size: 10px;
+}
+.trigger-harness-capabilities > div { display: flex; flex-wrap: wrap; gap: 6px; }
+.trigger-harness-capability { display: inline-flex; align-items: baseline; gap: 5px; padding: 3px 7px; border: 1px solid #30363d; border-radius: 999px; }
+.trigger-harness-capability.supported { color: #7ee787; border-color: #275d36; background: #0f2d17; }
+.trigger-harness-capability.unknown { color: #e3b341; border-color: #614d14; background: #2b2408; }
+.trigger-harness-capability small { color: #8b949e; }
+.trigger-add-actions { display: flex; gap: 7px; }
+.trigger-permission-warning { padding: 8px 10px; border: 1px solid #614d14; border-radius: 6px; color: #e3b341; background: #2b2208; font-size: 11px; }
+
+/* Per-group triggers are a deliberately small projection: collapsed by
+   default, read-only, capped to five rows, and linked back to Automations. */
+.group-triggers-section { margin: 7px 0 10px; border: 1px solid #30363d; border-radius: 6px; background: #0d141b; }
+.group-triggers-section > summary { display: flex; align-items: center; gap: 8px; padding: 6px 9px; cursor: pointer; font-size: 11px; }
+.group-triggers-section > summary > a { margin-left: auto; color: #58a6ff; }
+.group-triggers-section table { margin: 0; width: 100%; font-size: 10px; }
+.group-triggers-section th, .group-triggers-section td { padding: 4px 9px; }
+.group-triggers-section td:first-child .trigger-scope { margin-left: 6px; }
+.group-triggers-section > .muted { display: block; padding: 5px 9px; }
+
+@media (max-width: 900px) {
+  .triggers-table { table-layout: auto; min-width: 980px; }
+  .trigger-inspector-grid { grid-template-columns: 1fr; }
+  .trigger-fields, .trigger-action-fields { grid-template-columns: 1fr; }
+  .trigger-template-field { grid-column: auto; }
+}
 body.wizard .access-subtab,
 body.wizard .jobs-subtab { color: #b39ddb; }
 body.wizard .access-subtab:hover,
@@ -14132,9 +14867,77 @@ body.wizard .jobs-subtab.active {
   background: #3a2a63; color: #f3e6c0;
   text-shadow: 0 0 6px rgba(169, 123, 214, 0.55);
 }
+/* Trigger automation surfaces have their own component structure, so they
+   need the same explicit arcane field and panel treatment as the older cron
+   editor instead of falling back to browser-native controls. */
+body.wizard #trigger-modal .trigger-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border-color: #7a5db0; color: #e7d9f5;
+  box-shadow: 0 0 32px rgba(122, 93, 176, .35);
+}
+body.wizard #trigger-modal .trigger-modal-heading h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px; text-shadow: 0 0 8px rgba(169, 123, 214, .6), 0 1px 0 #1e1640;
+}
+body.wizard #trigger-modal :is(.trigger-name-field, .trigger-enabled-label, .trigger-fields label, .trigger-action-fields label) {
+  color: #b39ddb;
+}
+body.wizard #trigger-modal .trigger-modal :is(input:not([type=checkbox]):not([type=radio]), select, textarea) {
+  background: #140f28; border-color: rgba(122, 93, 176, .65); color: #f3e6c0;
+}
+body.wizard #trigger-modal .trigger-modal :is(input:not([type=checkbox]):not([type=radio]), select, textarea):focus {
+  border-color: #d9b45a; box-shadow: 0 0 0 1px rgba(217, 180, 90, .2), 0 0 8px rgba(169, 123, 214, .25);
+}
+body.wizard #trigger-modal .trigger-modal select option { color: #1a1330; background: #e7d9f5; }
+body.wizard #trigger-modal .trigger-scope-option input[type=radio] { accent-color: #a97bd6; }
+body.wizard #trigger-modal .trigger-editor-step,
+body.wizard #trigger-modal .trigger-action-editor { background: #18122b; border-color: rgba(122, 93, 176, .55); }
+body.wizard #trigger-modal .trigger-step-head,
+body.wizard #trigger-modal .trigger-action-editor-head { background: #241b3d; border-color: rgba(122, 93, 176, .55); }
+body.wizard #trigger-modal .trigger-step-body { border-color: rgba(122, 93, 176, .55); }
+body.wizard :is(.trigger-inspector-head button, #trigger-modal .trigger-action-editor-head button, #trigger-modal .trigger-placeholder-chips button, #trigger-modal .trigger-add-actions button, #trigger-modal .modal-buttons button:not(.primary)) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard :is(.trigger-inspector-head button, #trigger-modal .trigger-action-editor-head button, #trigger-modal .trigger-placeholder-chips button, #trigger-modal .trigger-add-actions button, #trigger-modal .modal-buttons button:not(.primary)):hover {
+  background: #3a2a63; border-color: #f3e6c0;
+}
+body.wizard #trigger-modal .trigger-placeholder-chips button { color: #f0d066; }
+body.wizard #trigger-modal .modal-buttons button.primary {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  border: 2px solid #d9b45a; color: #f3e6c0;
+  box-shadow: 0 3px 0 #1e1640, 0 0 8px rgba(169, 123, 214, .5);
+}
+body.wizard .trigger-row:hover, body.wizard .trigger-row.selected { background: #211934; }
+body.wizard .trigger-inspector-row > td { background: #140f28; }
+body.wizard :is(.trigger-verdicts, .trigger-firings, .group-triggers-section) {
+  background: #18122b; border-color: rgba(122, 93, 176, .55);
+}
+body.wizard :is(.trigger-dwell-state, #trigger-modal .trigger-harness-capabilities) {
+  background: #18122b; border-color: rgba(122, 93, 176, .55);
+}
+body.wizard .group-triggers-section > summary { color: #f3e6c0; }
+body.wizard .group-triggers-section > summary > a { color: #d9b45a; }
 body.wizard .access-intro,
 body.wizard .access-sub-intro { color: #b39ddb; }
 body.wizard .access-intro strong { color: #f3e6c0; }
+/* The Slug registry's name filter is an arcane scrying field in wizard mode.
+   The shared filter-bar rules supply the palette; this scoped treatment gives
+   the Wards control its own subtle rune-line and focus glow without repainting
+   the read-only data table. */
+body.wizard #access-slugs .filter-bar {
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(122, 93, 176, 0.32);
+}
+body.wizard #access-slugs .filter-bar input {
+  box-shadow: inset 0 0 10px rgba(169, 123, 214, 0.08);
+}
+body.wizard #access-slugs .filter-bar input:focus {
+  box-shadow: inset 0 0 12px rgba(169, 123, 214, 0.14), 0 0 8px rgba(169, 123, 214, 0.28);
+}
+body.wizard #access-slugs .filter-bar button.clear-filter {
+  text-shadow: 0 0 6px rgba(169, 123, 214, 0.42);
+}
 
 /* ─── Wizard cogwheels — enchanted clockwork (body.wizard) ───────────
    Every ⚙ "more actions" cog — the filter-bar "more group actions" cog,
@@ -14455,6 +15258,9 @@ body.wizard .mail-row.active {
 body.wizard .mail-row-party { color: #e7d9f5; }
 body.wizard .mail-row-subject { color: #cbbfe8; }
 body.wizard .mail-row.unread .mail-row-subject { color: #f3e6c0; }
+body.wizard .mail-row-attachments { color: #9a86c4; }
+body.wizard .mail-row.active .mail-row-attachments,
+body.wizard .mail-row.unread .mail-row-attachments { color: #d8cef0; }
 body.wizard .mail-row-time,
 body.wizard .mail-row-group { color: #9a86c4; }
 body.wizard .mail-row-arrow { color: #9a86c4; }

@@ -1384,7 +1384,7 @@ func baseStates() []dashsnap.State {
 		{
 			Key:      "management-roles",
 			Title:    "Management — role library",
-			Caption:  "Preact-owned role library with stable role cards and canonical brief/launch/permission editing.",
+			Caption:  "Preact-owned role library with stable role cards and canonical brief/permission editing.",
 			JS:       managementModalJS("/static/js/modal-roles.js", "openRolesManageModal", "#roles-manage-modal"),
 			SettleMS: 700,
 		},

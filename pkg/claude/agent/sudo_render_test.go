@@ -18,9 +18,9 @@ func TestRenderSudoGrants(t *testing.T) {
 	const agentB = "agt_bbbb1111cccc2222dddd3333eeee4444"
 	rows := []sudoGrantJSON{
 		// agent A, generation 1
-		{ID: 1, AgentID: agentA, ConvID: "conv-a-gen1", ConvTitle: "alpha", Slug: "groups.spawn", RemainingSeconds: 600},
+		{ID: 1, AgentID: agentA, ConvID: "conv-a-gen1", ConvTitle: "alpha", Slug: "groups.members.spawn", RemainingSeconds: 600},
 		// agent B
-		{ID: 2, AgentID: agentB, ConvID: "conv-b", ConvTitle: "bravo", Slug: "member.add", RemainingSeconds: 120},
+		{ID: 2, AgentID: agentB, ConvID: "conv-b", ConvTitle: "bravo", Slug: "groups.members.add", RemainingSeconds: 120},
 		// agent A, generation 2 (rotated conv) — must collapse into A's block
 		{ID: 3, AgentID: agentA, ConvID: "conv-a-gen2", ConvTitle: "alpha", Slug: "agent.rename", RemainingSeconds: 60},
 		// non-actor grant (no agent_id) — falls back to its conv-id
@@ -39,7 +39,7 @@ func TestRenderSudoGrants(t *testing.T) {
 	// Agent A's two generations collapse into ONE block: its header appears once.
 	assert.Equal(t, 1, strings.Count(out, agentA+"  alpha"))
 	// Both of A's slugs render under that single block.
-	assert.Contains(t, out, "groups.spawn")
+	assert.Contains(t, out, "groups.members.spawn")
 	assert.Contains(t, out, "agent.rename")
 }
 

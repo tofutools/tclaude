@@ -794,6 +794,35 @@ when the branch has a pull request a `#<num>` link to it is shown alongside.
 Branch/PR links resolve in the background (cached, best-effort) and are simply
 absent for a non-GitHub repo or when `gh` is unavailable.
 
+The fixed footer also shows an **Open PRs** count for pull requests the active
+GitHub identity has authored across any repository. Hover previews the list;
+click/tap or keyboard activation pins it while you inspect or filter it. The
+popover puts failing and running checks first, identifies the active agent
+attached to a PR when one exists, and can narrow to PRs needing attention or
+PRs with no active agent. Its GitHub search link is the escape hatch for the
+complete list when the bounded dashboard result is truncated. The daemon polls
+and caches this list in the background; the two-second dashboard snapshot never
+runs `gh` itself.
+
+The indicator is **permanent by default**: it stays in the footer at zero open
+PRs (rendered muted rather than as a live counter), so it is a fixed place to
+look rather than something that appears and disappears as the last PR merges.
+Set `dashboard.always_show_open_prs` to `false` (Config tab → Dashboard → Open
+PRs indicator) to go back to showing it only while something is open. Either
+way it stays hidden until the daemon has resolved a GitHub identity — with no
+`gh` login there is nothing to count.
+
+The popover carries one more filter, **Closed Nd**, listing pull requests you
+merged or closed within `dashboard.recent_pr_window_days` (default `3`, max
+`30`). It is deliberately a separate list: recently closed PRs never enter the
+open list, the footer count, or the attention/unattached tallies, and they are
+dotted by their terminal state (purple merged, red closed) instead of by CI
+state. The recent page is capped like the open one, and says so ("Showing the
+first N") rather than presenting the cap as a complete count. Setting the
+window to `0` removes the filter. The shared dashboard PR poll still searches
+a one-day terminal window so Groups badges stay current. Narrowing applies on the next
+dashboard poll; widening it takes effect on the next background search.
+
 Each PR link carries a **CI indicator** — a compact `n/m` pill coloured green
 (passing), red (failing) or amber (something still running). Skipped checks are
 excluded from the denominator, so `12/14` means twelve of the fourteen checks
@@ -830,6 +859,18 @@ working directory, **clone**, **reincarnate**, **restart**, **rename**, edit
 group. (Turning the agent on/off is the status dot's job — see above.
 Permanently *deleting* an agent is offered on the virtual Ungrouped
 group's rows, not on grouped rows — see below.)
+
+For a live Codex agent, the same ⚙ menu offers
+**enable fast mode** or **disable fast mode** according to its current state.
+For an inherited launch, the initial state comes from `service_tier` in the
+main Codex `config.toml` used by that agent. A later Codex settings event in the
+conversation log supersedes that launch-time baseline, including after `/fast`.
+The server re-checks that state before sending Codex's `/fast` toggle, so a
+stale menu cannot knowingly reverse an already-completed change. The item is
+disabled while the agent is offline. If Codex has not reported its tier yet,
+tclaude makes a best-effort inference from the inherited effective config and
+syncs the displayed state from Codex's next settings readback; if even that
+probe is unavailable, the requested toggle is still delivered.
 
 The member ⚙ menu's ordinary **↻ restart** stops and resumes the same
 conversation under its current durable launch configuration. This is the
@@ -1031,8 +1072,8 @@ itself creates the clone beside it.
 
 Reusable launch presets for agents. A spawn profile can carry the harness,
 model, effort, sandbox / permission-mode defaults, OpenCode tool governance,
-agent name, role, description, initial message, profile-specific startup
-context, dialog toggles, owner default, and per-slug permission
+agent name, free-text display-role label, saved behavior/access roles, description, initial
+message, profile-specific startup context, dialog toggles, owner default, and per-slug permission
 overrides. It deliberately does **not** carry a working directory or worktree:
 those stay per-spawn.
 
@@ -1052,7 +1093,7 @@ non-empty context wins; contexts are not concatenated.
 A profile may also have multiple **aliases**: alternate handles such as
 `codex-reviewer` for a canonically named `gpt5.6-sol-high` profile. Aliases
 resolve anywhere a spawn profile is accepted, including `agent spawn
---profile`, defaults, roles, templates, process agent performers, Ask, and
+--profile`, defaults, templates, process agent performers, Ask, and
 Scribe. The palette keeps one card per real profile and shows its aliases next
 to the primary name. Cards stay compact with a truncated chip list; hover the
 card, or keyboard-focus its action button, to open a tooltip to its left with
@@ -1320,8 +1361,7 @@ required concepts. A full template can carry:
 - a **roster** of agent specs — name, role label, description, task brief, and
   an **owner** flag (which member leads the group);
 - a **role reference** per agent (`role_ref`) into the [roles library](#roles-library),
-  so the agent inherits that role's canonical brief and launch defaults beneath
-  its own fields;
+  so the agent inherits that role's canonical brief and baseline permissions;
 - **a launch profile per agent** — the agent's launch shape *and* its birth-time
   permissions are a single **pick a stored [spawn profile](#spawn-profiles)**: the
   profile's harness / model / effort / sandbox / approval and its
@@ -1352,7 +1392,7 @@ required concepts. A full template can carry:
 > **⚠ legacy inline** notice and an **Extract to profile…** button that
 > materializes the inline values into a reusable spawn profile and points the
 > agent at it. (Bundled [starters](#starter-task-forces) that still list an
-> inline `groups.spawn` grant on their lead deploy correctly for the same
+> inline `groups.members.spawn` grant on their lead deploy correctly for the same
 > reason.)
 
 Per-card actions: **🚀 deploy** (against a mission — see
@@ -1469,37 +1509,37 @@ tclaude agent task-force deploy dev-squad --mission "…"  # then deploy it agai
 ### Roles library
 
 Open it from the Groups tab's filter-bar cog (**⚙ → ⧉ roles…**; **⧉ classes…**
-in wizard mode). A **role** is a named, reusable bundle of defaults a template
-roster agent can point at: a canonical **role-brief** (folded into that agent's
-startup context under a `## Role` block), a default **launch shape**
-(spawn-profile reference, or inline harness / model / effort / sandbox /
-approval / OpenCode tool governance), and a default **permission set**. A template agent references a role
-by name in its `role_ref` field; the role fills whatever the agent leaves blank
-and the agent's own fields always override it. This is distinct from the
-freeform `role` **label** on an agent (e.g. `tech-lead`), which is just
-display / routing text and carries no defaults.
+in wizard mode). A **role** is a named, reusable behavior and access preset: a
+canonical **role brief** (folded into startup context under a `## Role` block)
+and a baseline **permission set**. It deliberately carries no harness, model,
+effort, sandbox, approval, tool-governance, or spawn-profile setting; those
+remain launch policy owned by spawn profiles and launch controls.
 
-Each saved role is fully **editable** — create, edit or delete any of them, over
-every field above, from this dialog (**+ new role** / per-card **edit** /
-**delete**). Every role picker (today: the templates editor's per-agent **Role
-library** dropdown) shows an inline **inspect panel** beneath the selection —
-the role's description, its launch shape (spawn-profile / harness / model /
-effort / sandbox / approval / tool governance), its granted permission **slugs**, and its brief
-(expandable) — so picking a role is never blind. The same view is available from
-the CLI with `tclaude agent roles show <name>`.
+One or more roles can be selected in the direct spawn dialog or saved in a
+spawn profile; a template agent can reference one directly through `role_ref`
+and can inherit a profile's complete role set. Their briefs and permission
+grants compose. This is distinct from the freeform `role` **label** (for
+example `tech-lead`), which is display/routing text and carries no defaults.
+Role chips can be hovered or clicked to inspect their description, brief, and
+grants. The spawn dialog's **Permissions…** editor shows the fully composed
+result—including global and group defaults, every selected role, ownership,
+and explicit overrides—with the source of each effective grant.
 
-**Roles resolve at deploy time.** A template stores only a role's *name* in its
-`role_ref`; the role's actual fields are read when the template is deployed. So
-editing a role changes what **future** deploys inherit — already-deployed groups
-are untouched (they captured the role's values at their own deploy). Because a
-live reference matters, **deleting a role is refused while any template still
-references it** — the dialog surfaces the referencing templates so you can edit
-them to drop or repoint the reference first, then delete the role.
+Each saved role is fully **editable** from this dialog (**+ new role** /
+per-card **edit** / **delete**). The template editor's role picker also shows
+an inline inspect panel with the role's description, permission slugs, and
+expandable brief. The same view is available from the CLI with
+`tclaude agent roles show <name>`.
+
+**Roles resolve at spawn time.** A template stores a role name in `role_ref`;
+a profile stores its role names in `role_refs`. Current briefs and permissions are read when an agent is
+spawned. Editing a role therefore changes future spawns, not running agents.
+Deleting a role is refused while any template or spawn profile still references
+it; the dialog identifies those references so they can be dropped or repointed.
 
 tclaude ships six **seed roles** — `po`, `lead`, `dev`, `designer`, `reviewer`,
 and `tester` — as short, generic starting points. Their briefs are sensible
-defaults, not policy, and their launch fields and permissions are deliberately
-left blank (what a role launches on or is granted is your call). The seeds are
+defaults, not policy, and their permissions are deliberately empty. The seeds are
 **self-healing**: they are re-checked on every daemon start, so a seed you
 delete (once no template references it) reappears on the next open — but **your
 edits are sacred**, never overwritten by the re-seed. Edit a seed to taste, or
@@ -1599,7 +1639,7 @@ Group policy is allow-only so membership in several groups composes as a union;
 an explicit Deny on an individual agent still wins.
 
 The same dialog carries the group's **owner-bypass narrowing** as a small JSON
-box: `{"groups.spawn": {"spawn_profile": ["reviewer"]}}` confines what OWNING
+box: `{"groups.members.spawn": {"spawn_profile": ["reviewer"]}}` confines what OWNING
 this group confers by itself, without touching any explicit grant an owner
 holds. Empty means the unrestricted bypass. Saving sends it on the same PATCH
 as the grants above, and the daemon rejects a map naming an unknown slug or a
@@ -1611,7 +1651,7 @@ dimension that slug does not declare. See
 Notifications agents have sent the human via `tclaude agent notify-human`
 (see [Agent Coordination → bundled skills](agent.md#bundled-skills)). Each row
 shows the sender, group, subject, and body; the nav tab carries an
-unread-count badge. **✓ mark all read** clears the badge; **🧹 clear read**
+unread-count badge. **✓ mark all read** clears the badge; **🗑 delete read**
 deletes every already-read message. It is the human's side of the
 human-notify channel — an explicit nudge surface kept separate from the busy
 terminal. When the badge shows waiting work, selecting **Messages** opens the
@@ -1765,9 +1805,17 @@ the bundled `human-notify` skill so agents discover the `--attach` workflow.
 
 ### Usage
 
-Subscription accounts get an account-wide **Usage** tab once Claude or Codex
-has supplied a quota reading. OpenCode provider/model activity also reveals the
-tab even when it cannot supply a quota reading. It plots the retained
+Subscription accounts get an account-wide **Usage** tab once Claude, Codex, or
+GitHub Copilot has supplied a quota reading. Copilot's installed CLI normalizes
+the authenticated account allowance; agentd samples its finite monthly
+premium-request (AIC) quota every 15 minutes. Unlimited Copilot plans have no
+percentage ceiling and therefore add no graph. The CLI payload's raw timestamp
+is not used as a reset time; Copilot's countdown follows GitHub's
+[documented calendar-month boundary](https://docs.github.com/en/copilot/concepts/billing/usage-based-billing-for-individuals)
+(the first day at 00:00 UTC; GitHub documents the
+[same boundary for legacy premium requests](https://docs.github.com/en/copilot/reference/copilot-billing/request-based-billing-legacy/monitor-premium-requests)). OpenCode
+provider/model activity also reveals the tab even when it cannot supply a quota
+reading. It plots the retained
 15-minute samples as one line chart per provider and quota window, with
 24-hour, 7-day, 30-day, and 90-day history views. A separate 5-hour, 24-hour,
 7-day, or 30-day lookahead controls the future portion of every chart without
@@ -1808,6 +1856,12 @@ old. Long views are downsampled for display while forecast calculations still
 use the full retained series. Provider quota data is account-wide and does not
 reliably attribute consumption to individual models, so forecasts are per
 provider and window rather than per model.
+
+The Groups header uses the same current readings as a compact provider-row
+glance. Claude, Codex, and Copilot rows are always named, even when only one is
+available. Real API-cost rows are likewise attributed (`Anthropic API`,
+`OpenAI API`, and so on) instead of collapsing a single source into an
+ambiguous bare `api` figure.
 
 ### Debug
 
@@ -2308,7 +2362,7 @@ shared, so the terminal and the dashboard never disagree about who is stalling.
   refused cleanly (nothing is sent).
 - **Stand down.** **⏻ stand down** winds the whole force down — the mirror of
   deploy (see [Winding a force down](#winding-a-force-down)). It is gated on the
-  human, group owners, or the **`groups.retire`** slug.
+  human, group owners, or the **`groups.members.retire`** slug.
 
 ### The rhythm model
 
@@ -2348,7 +2402,7 @@ Three verbs, with different blast radii:
   choreography**. It **keeps the group row** as a dormant record — the mission,
   provenance, and process history all survive — so it is *not* a delete. Reach
   for it when a mission is done and you want the force wound down but its record
-  kept. Gated on the human, group owners, or `groups.retire`.
+  kept. Gated on the human, group owners, or `groups.members.retire`.
 - **Delete group** (the group ⚙ cog, or `groups rm`) is the **full sweep**: it
   removes the group and, in one transaction, its advisory **process state** and
   transition log, its staged-spawn **wave choreography**, and its group-target

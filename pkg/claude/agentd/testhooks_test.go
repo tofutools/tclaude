@@ -1141,6 +1141,42 @@ func SetPRChecksResolverForTest(fn func(rawURL string) (rollupJSON string, ok bo
 	return func() { prChecksResolver = prev }
 }
 
+// SetPRChecksStateResolverForTest also supplies the fresh PR lifecycle state
+// returned by the production gh-pr-view resolver.
+func SetPRChecksStateResolverForTest(fn func(rawURL string) (rollupJSON, state string, ok bool)) func() {
+	prev := prChecksResolver
+	prChecksResolver = func(rawURL string) (prChecksInfo, bool) {
+		rollup, state, ok := fn(rawURL)
+		if !ok {
+			return prChecksInfo{}, false
+		}
+		info := parseStatusCheckRollup(json.RawMessage(rollup), time.Now())
+		info.PRState = state
+		return info, true
+	}
+	return func() { prChecksResolver = prev }
+}
+
+func ResetTriggerCIWatchStateForTest() {
+	triggerCIWatchState.Lock()
+	triggerCIWatchState.initialized = false
+	triggerCIWatchState.identities = make(map[string]struct{})
+	triggerCIWatchState.Unlock()
+}
+
+func InitializeTriggerCIWatchStateForTest() { initializeTriggerCIWatchState() }
+
+func StartTriggerRuntimeForTest(stop <-chan struct{}) {
+	startTriggerScheduler(stop)
+	startTriggerSourcePollers(stop)
+}
+
+func SetTriggerIntervalsForTest(tick, ci time.Duration) func() {
+	previousTick, previousCI := triggerTickInterval, triggerCIPollInterval
+	triggerTickInterval, triggerCIPollInterval = tick, ci
+	return func() { triggerTickInterval, triggerCIPollInterval = previousTick, previousCI }
+}
+
 // SetRecentlyMergedPRsResolverForTest swaps the single bulk GitHub-search
 // boundary behind the daemon-wide presented-PR poller. The fake receives the
 // deduped repository list and returns merged PR URLs.
@@ -1579,6 +1615,19 @@ func WaitForCodexApprovalProcessingForTest(t *testing.T, m *codexApprovalMonitor
 // flow test asserting on /api/perf starts from an empty recorder rather
 // than samples recorded by earlier tests in the same process.
 func ResetPerfForTest() { perfReset() }
+
+// SetOperatorMessageAttachmentBasesForTest isolates browser attachment staging
+// and durable agent-message files for flow tests.
+func SetOperatorMessageAttachmentBasesForTest(staging, durable string) func() {
+	previousStaging := spawnAttachmentsBase
+	previousDurable := operatorMessageAttachmentsBase
+	spawnAttachmentsBase = staging
+	operatorMessageAttachmentsBase = durable
+	return func() {
+		spawnAttachmentsBase = previousStaging
+		operatorMessageAttachmentsBase = previousDurable
+	}
+}
 
 type dashTestHandler struct{ inner http.Handler }
 

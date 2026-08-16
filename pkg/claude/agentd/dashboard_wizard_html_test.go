@@ -117,6 +117,8 @@ func TestDashboardHTML_WizardTheme(t *testing.T) {
 	// Sudo) is themed too — frame + active chamber.
 	must("body.wizard .access-subnav {", "the access sub-nav frame is themed in wizard mode")
 	must("body.wizard .access-subtab.active {", "the active access sub-tab is gilt-lit in wizard mode")
+	must("body.wizard #access-slugs .filter-bar {", "the slug-registry filter gets a scoped wizard treatment")
+	must("body.wizard #access-slugs .filter-bar input:focus {", "the slug-registry scrying field has an arcane focus state")
 }
 
 // TestDashboardHTML_WizardTabNames pins the arcane nav-tab names — every tab
@@ -755,8 +757,8 @@ func TestDashboardHTML_WizardGrimoireCopy(t *testing.T) {
 	}
 
 	// Title copy: a pure-CSS span swap, "Edit permanent permissions" → "📕 The Grimoire".
-	must(`<span class="perm-edit-title-regular">${groupMode ? 'Edit group permissions' : 'Edit permanent permissions'}</span>`, "the default perm-editor title span")
-	must(`<span class="perm-edit-title-wizard">${groupMode ? '✨ Party Boons' : '📕 The Grimoire'}</span>`, "the wizard perm-editor title span")
+	must(`<span class="perm-edit-title-regular">${groupMode ? 'Edit group permissions' : roleMode ? 'Edit role permissions' : 'Edit permanent permissions'}</span>`, "the default perm-editor title span")
+	must(`<span class="perm-edit-title-wizard">${groupMode ? '✨ Party Boons' : roleMode ? '📕 Class Boons' : '📕 The Grimoire'}</span>`, "the wizard perm-editor title span")
 	must("body.wizard #perm-edit-title .perm-edit-title-regular", "wizard hides the default title")
 	must("body.wizard #perm-edit-title .perm-edit-title-wizard", "wizard shows the Grimoire title")
 
@@ -787,7 +789,7 @@ func TestDashboardHTML_WizardPartyBoons(t *testing.T) {
 
 	must(`<span class="group-perms-word-wizard">party boons</span>`, "the group menu names party boons")
 	must("body.wizard .group-perms-word-wizard { display: inline; }", "wizard reveals party-boon vocabulary")
-	must("groupMode ? '✨ Party Boons' : '📕 The Grimoire'", "the group editor receives its own wizard title")
+	must("groupMode ? '✨ Party Boons' : roleMode ? '📕 Class Boons' : '📕 The Grimoire'", "the group editor receives its own wizard title")
 	must("<strong>PARTY BOONS</strong>", "the group editor explains boons rather than per-agent overrides")
 	must("every familiar receives these boons immediately", "the group editor subtitle uses party vocabulary")
 	must(`plain="Grant" wizard="Bestow"`, "Grant becomes Bestow")
@@ -1975,7 +1977,7 @@ func TestDashboardHTML_WizardTemplateNativeControlSweep(t *testing.T) {
 	must("body.wizard #roles-manage-modal .manage-modal", "the roles-library overlay surface is re-skinned")
 	must("body.wizard #roles-manage-modal #role-create-open.primary", "the + new class primary gets the gilded-arcane chrome")
 	must("body.wizard #role-editor-modal .cron-create-modal", "the role-editor surface is re-skinned")
-	must("body.wizard #role-editor-modal .ta-perms-list input[type=checkbox] { accent-color: #a97bd6; }", "the shared perm-checkbox list gets the arcane accent via wizard scope")
+	must("body.wizard #role-editor-modal button:not(#role-editor-submit)", "the shared permission editor entry gets the secondary wizard chrome")
 	must("body.wizard #role-editor-modal #role-editor-submit", "the Save-role button gets the gilded lever chrome")
 }
 

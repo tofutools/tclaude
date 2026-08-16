@@ -687,7 +687,7 @@ func notifyHumanSenderSessionID(callerConv string) string {
 // callerConvID is "" for the human path. On failure the response is
 // already written.
 func requireNotifyHumanPermission(w http.ResponseWriter, r *http.Request) (string, bool) {
-	return requirePermissionEx(w, r, PermHumanNotify, ownsAnyGroupPermitting)
+	return requirePermission(w, r, PermHumanNotify)
 }
 
 // notifyHumanCallerTitle resolves a caller conv-id to its display title
@@ -1297,8 +1297,9 @@ func replySubjectFor(orig string, originalMessageID int64) string {
 
 // handleDashboardHumanMessagesReply serves POST /api/human-messages/reply
 // — the operator's answer to a `notify-human` ping, sent back to the
-// agent that raised it. Body: {"id": N, "body": "..."} where id is the
-// human_messages row being replied to.
+// agent that raised it. Body: {"id": N, "body": "...", "attachment_token":
+// "..."} where id is the human_messages row being replied to and the optional
+// token names a daemon-staged browser upload batch.
 //
 // The reply target is resolved AUTHORITATIVELY from the stored row (the
 // browser passes only the message id + text), so a reply can only route
@@ -1327,8 +1328,9 @@ func handleDashboardHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 	// inbox, same reason to bound it. Cap the wire bytes before decode.
 	r.Body = http.MaxBytesReader(w, r.Body, maxNotifyHumanRequestBytes)
 	var body struct {
-		ID   int64  `json:"id"`
-		Body string `json:"body"`
+		ID              int64  `json:"id"`
+		Body            string `json:"body"`
+		AttachmentToken string `json:"attachment_token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -1339,8 +1341,8 @@ func handleDashboardHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "id is required")
 		return
 	}
-	if body.Body == "" {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "body is required (the reply text)")
+	if body.Body == "" && body.AttachmentToken == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "reply body or attachment is required")
 		return
 	}
 	if len(body.Body) > maxNotifyHumanBodyLen {
@@ -1359,6 +1361,10 @@ func handleDashboardHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if orig.ProcessCommandID != "" {
+		if body.AttachmentToken != "" {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "attachments are not supported for process replies")
+			return
+		}
 		// The replacement-engine seam is deliberately nil-capable even though
 		// its temporary no-engine stub below always returns an error.
 		if err := resolveProcessHumanMessage(r.Context(), orig, body.Body); err != nil { //nolint:staticcheck
@@ -1402,9 +1408,21 @@ func handleDashboardHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "offline", "the agent is offline — it has no live session to receive a reply")
 		return
 	}
+	attachments, durableDir, err := consumeOperatorAttachmentBatch(body.AttachmentToken)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "attachments", err.Error())
+		return
+	}
+	if body.Body == "" && len(attachments) == 0 {
+		if durableDir != "" {
+			_ = os.RemoveAll(durableDir)
+		}
+		writeError(w, http.StatusBadRequest, "invalid_arg", "reply body or attachment is required")
+		return
+	}
 	// Deliver as a sender-less operator message on the universal inbox.
 	// The async worker owns readiness/hold checks, retries, and consumption.
-	id, pending, err := queueRegularAgentMessage(&db.AgentMessage{
+	id, pending, err := queueRegularAgentMessageWithAttachments(&db.AgentMessage{
 		GroupID:          0,
 		FromConv:         "",
 		ToConv:           target,
@@ -1412,14 +1430,22 @@ func handleDashboardHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 		Body:             body.Body,
 		ToRecipients:     []string{target},
 		OperatorAuthored: true,
-	})
+	}, attachments)
 	if err != nil {
+		if durableDir != "" {
+			_ = os.RemoveAll(durableDir)
+		}
 		if full, ok := agentMessageQueueFull(err); ok {
 			writeQueueFull(w, target, full)
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "io", "queue reply: "+err.Error())
 		return
+	}
+	if body.AttachmentToken != "" {
+		_ = removeDaemonStagedAttachmentBatch(
+			filepath.Join(spawnAttachmentsBaseDir(), body.AttachmentToken),
+		)
 	}
 	// Replying means the operator has handled this notification — mark the
 	// original read (idempotent). Merely opening the reader deliberately does
@@ -1430,10 +1456,11 @@ func handleDashboardHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("reply: mark original human message read failed", "id", body.ID, "error", err)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"message_id": id,
-		"conv_id":    target,
-		"queued":     true,
-		"pending":    pending,
+		"message_id":  id,
+		"conv_id":     target,
+		"queued":      true,
+		"pending":     pending,
+		"attachments": attachments,
 	})
 }
 

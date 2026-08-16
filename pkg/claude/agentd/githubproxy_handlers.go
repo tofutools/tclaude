@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 // githubproxy_handlers.go is the HTTP surface of `tclaude proxy github`.
@@ -195,6 +198,23 @@ func handleGHProxyPRCreate(w http.ResponseWriter, r *http.Request) {
 		g.respond(w, r, "pr.create", ProxyResult{},
 			fmt.Errorf("the pull request was created but the response could not be read: %w", err))
 		return
+	}
+	// Persist the same pr.opened edge the explicit `present-pr` path uses.
+	// GitHub has already committed the PR, so a local persistence failure is
+	// reported as a warning and the successful create response is preserved.
+	// The write itself atomically queues the durable trigger observation.
+	if agentID, lookupErr := db.AgentIDForConv(g.convID); lookupErr != nil {
+		slog.Warn("github proxy: resolve PR author for trigger", "conv", g.convID, "error", lookupErr)
+	} else if agentID != "" {
+		state := "open"
+		if body.Draft {
+			state = "draft"
+		}
+		if _, persistErr := db.UpsertAgentPRDetails(agentID, created.HTMLURL,
+			strings.TrimSpace(body.Title), state, head, body.Draft); persistErr != nil {
+			slog.Warn("github proxy: persist created PR for trigger reconciliation",
+				"conv", g.convID, "pr", created.HTMLURL, "error", persistErr)
+		}
 	}
 	// The URL alone, as text rather than JSON. That is what this verb has
 	// always printed, it is what an agent pastes into a report, and it is the

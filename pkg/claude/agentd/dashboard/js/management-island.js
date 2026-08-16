@@ -1,11 +1,11 @@
 import { h, render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { profileSummary, profileAliasesLabel, profileChoices, findProfileByHandle } from './profiles.js';
+import { profileSummary, profileAliasesLabel } from './profiles.js';
 import { roleSummary } from './roles.js';
 import { AUTO_MEMORY_TRI_OPTIONS, CODEX_APP_SERVER_TRI_OPTIONS, COPILOT_API_TRI_OPTIONS, FAST_MODE_TRI_OPTIONS, dirtyDraft, harnessByName, harnessDefaults, profileDraft, profileHarnessDefaults, profilePayload, readTri, roleDraft, rolePayload, TRI_OPTIONS } from './management-model.js';
 import { registerManagementController } from './management-controller.js';
-import { grantScopeLabel, grantSlug, hasGrant, toggleGrant } from './permission-grant-list.js';
+import { grantListToOverrides, grantOverridesToList } from './permission-grant-list.js';
 import {
   sandboxAccessAxes,
   sandboxAccessDraftErrors,
@@ -603,6 +603,12 @@ const NETWORK_ENGINE_OPTIONS = [
   ['proxy', 'Proxy filter'],
 ];
 
+const NETWORK_NAMESPACE_OPTIONS = [
+  ['', 'No override'],
+  ['host', 'Shared host'],
+  ['private', 'Private, routed'],
+];
+
 const DEFAULT_NETWORK_PACKS = ['net-local', 'net-anthropic', 'net-openai-codex'];
 
 function networkEntriesMayOverlap(left = {}, right = {}) {
@@ -707,7 +713,11 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, packVisibilit
       // The engine survives a baseline change: it is not one of the rules the
       // baseline governs, and silently clearing it would change the mechanism
       // as a side effect of an unrelated edit.
-      return { ...value, network: { baseline, ...next, ...(current.engine ? { engine: current.engine } : {}) } };
+      return { ...value, network: {
+        baseline, ...next,
+        ...(current.engine ? { engine: current.engine } : {}),
+        ...(current.namespace ? { namespace: current.namespace } : {}),
+      } };
     });
   };
   const packMode = (id) => rules.packs.includes(id) ? 'allow'
@@ -748,8 +758,12 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, packVisibilit
       label="Network" help=${NETWORK_ACCESS_HELP} helpID="sandbox-profile-editor-network-help"
       attention=${packVisibilityAttention}
       entryCount=${rules.packs.length + rules.deny_packs.length + manualRows.length}>
-    <label class="sbx-network-baseline-label">Baseline <${Select} id="sandbox-profile-editor-network-baseline" value=${rules.baseline} onChange=${changeBaseline} options=${NETWORK_BASELINE_OPTIONS}/></label>
-    <label class="sbx-network-baseline-label">Filtering engine <${Select} id="sandbox-profile-editor-network-engine" value=${rules.engine || ''} onChange=${(engine) => update({ engine })} options=${NETWORK_ENGINE_OPTIONS}/></label>
+    <div class="sbx-network-controls">
+      <label class="sbx-network-control"><span class="sbx-network-control-kind">Traffic policy</span><span class="sbx-network-control-label">Baseline</span><${Select} id="sandbox-profile-editor-network-baseline" value=${rules.baseline} onChange=${changeBaseline} options=${NETWORK_BASELINE_OPTIONS}/><span class="sbx-network-control-help">What destinations are permitted before individual rules are applied.</span></label>
+      <label class="sbx-network-control"><span class="sbx-network-control-kind">Filtering mechanism</span><span class="sbx-network-control-label">Engine</span><${Select} id="sandbox-profile-editor-network-engine" value=${rules.engine || ''} onChange=${(engine) => update({ engine })} options=${NETWORK_ENGINE_OPTIONS}/><span class="sbx-network-control-help">How destination rules are enforced when the composed policy has them.</span></label>
+      <label class="sbx-network-control"><span class="sbx-network-control-kind">Network isolation</span><span class="sbx-network-control-label">Namespace</span><${Select} id="sandbox-profile-editor-network-namespace" value=${rules.namespace || ''} onChange=${(namespace) => update({ namespace })} options=${NETWORK_NAMESPACE_OPTIONS}/><span class="sbx-network-control-help">Whether the agent shares host localhost and abstract Unix sockets.</span></label>
+    </div>
+    ${rules.namespace === 'private' && html`<p class="sbx-inline-note sbx-network-namespace-note"><strong>Private, routed:</strong> internet traffic is routed normally, while host localhost services, IDE bridges, and abstract Unix sockets are not shared. Linux tclaude-layer only.</p>`}
     ${packVisibilityError && html`<div class="sbx-network-pack-visibility-error" role="alert"><span>⚠ ${packVisibilityError}</span>
       <button type="button" onClick=${retryPackCatalog}>${packCatalogBusy ? 'retry loading' : 'retry catalog'}</button></div>`}
     <fieldset class=${`sbx-network-unlocks${editable ? '' : ' sbx-disabled'}`}>
@@ -814,9 +828,70 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, packVisibilit
   </${SandboxSection}>`;
 }
 
-function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice }) {
+function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice, platform, generatedAlignment }) {
   const rules = sandboxAccessAxes({ unix_sockets: draft.unix_sockets }).unix_sockets;
+  const authoredNetwork = sandboxNetworkAuthoring(draft);
   const update = (patch) => setDraft((value) => ({ ...value, unix_sockets: { ...value.unix_sockets, ...patch } }));
+  // Automatic is aligned too: this socket/network combination resolves it to
+  // a constructed root. Only an explicit inherited root conflicts with the
+  // boundary. Compare the network values through the same authoring adapter
+  // that renders the controls, so legacy and baseline-shaped drafts agree.
+  const linuxClosedPrerequisites = [
+    {
+      key: 'engine', label: 'Packet filtering', aligned: authoredNetwork.engine === 'packet',
+      state: authoredNetwork.engine === 'packet' ? 'Selected'
+        : `Currently: ${{ proxy: 'Proxy filter' }[authoredNetwork.engine] || 'No override'}`,
+    },
+    {
+      key: 'namespace', label: 'Private, routed network namespace',
+      aligned: authoredNetwork.namespace === 'private',
+      state: authoredNetwork.namespace === 'private' ? 'Selected'
+        : `Currently: ${{ host: 'Shared host' }[authoredNetwork.namespace] || 'No override'}`,
+    },
+    {
+      key: 'filesystem-root', label: 'Separate filesystem root',
+      aligned: draft.filesystem_root !== 'inherit',
+      state: draft.filesystem_root === 'separate' ? 'Selected'
+        : draft.filesystem_root === 'inherit' ? 'Currently: Inherit host filesystem root'
+          : 'Automatic — required by this socket boundary',
+    },
+  ];
+  const missingLinuxClosedPrerequisites = linuxClosedPrerequisites.filter((item) => !item.aligned);
+  const linuxClosedAligned = platform === 'linux' && missingLinuxClosedPrerequisites.length === 0;
+  const linuxClosedChanges = (mode) => mode === 'closed' && platform === 'linux' ? {
+    engine: authoredNetwork.engine !== 'packet',
+    namespace: authoredNetwork.namespace !== 'private',
+    filesystemRoot: draft.filesystem_root === 'inherit',
+  } : null;
+  const updateMode = (mode, allow) => {
+    const changes = linuxClosedChanges(mode);
+    if (changes && Object.values(changes).some(Boolean) && !generatedAlignment.current) {
+      generatedAlignment.current = {
+        engine: { changed: changes.engine, value: draft.network?.engine || '' },
+        namespace: { changed: changes.namespace, value: draft.network?.namespace || '' },
+        filesystemRoot: { changed: changes.filesystemRoot, value: draft.filesystem_root || '' },
+      };
+    }
+    const prior = mode === 'closed' ? null : generatedAlignment.current;
+    if (prior) generatedAlignment.current = null;
+    setDraft((value) => {
+      const next = { ...value, unix_sockets: { ...value.unix_sockets, mode, allow } };
+      if (mode === 'closed' && platform === 'linux') {
+        return {
+          ...next,
+          network: { ...value.network, engine: 'packet', namespace: 'private' },
+          filesystem_root: value.filesystem_root === 'inherit' ? 'separate' : value.filesystem_root,
+        };
+      }
+      if (!prior) return next;
+      const network = { ...value.network };
+      if (prior.engine.changed && network.engine === 'packet') network.engine = prior.engine.value;
+      if (prior.namespace.changed && network.namespace === 'private') network.namespace = prior.namespace.value;
+      const filesystemRoot = prior.filesystemRoot.changed && value.filesystem_root === 'separate'
+        ? prior.filesystemRoot.value : value.filesystem_root;
+      return { ...next, network, filesystem_root: filesystemRoot };
+    });
+  };
   const updateRow = (index, patch) => update({ allow: rules.allow.map((row, i) => i === index ? { ...row, ...patch } : row) });
   const insert = (entry) => {
     const mode = entry.mode || 'list';
@@ -824,13 +899,31 @@ function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice }) {
     const existing = new Set(rules.allow.map((row) => JSON.stringify(row)));
     const added = incoming.filter((row) => !existing.has(JSON.stringify(row)));
     const removed = mode === 'list' ? 0 : rules.allow.length;
-    update({ mode, allow: mode === 'list' ? [...rules.allow, ...added] : [] });
+    updateMode(mode, mode === 'list' ? [...rules.allow, ...added] : []);
     setNotice({ label: entry.label, added: added.length, skipped: incoming.length - added.length, removed, warning: entry.warning || '' });
   };
   return html`<${SandboxSection} id="sandbox-profile-editor-unix-sockets-section"
       className="sbx-access-axis" label="Unix sockets" help=${UNIX_SOCKETS_HELP}
       entryCount=${rules.allow.length}>
-    <${Select} id="sandbox-profile-editor-unix-sockets-mode" value=${rules.mode || ''} onChange=${(mode) => update({ mode, allow: mode === 'list' ? rules.allow : [] })} options=${ACCESS_MODE_OPTIONS}/>
+    <${Select} id="sandbox-profile-editor-unix-sockets-mode" value=${rules.mode || ''} onChange=${(mode) => {
+      updateMode(mode, mode === 'list' ? rules.allow : []);
+      setNotice(null);
+    }} options=${ACCESS_MODE_OPTIONS}/>
+    ${platform === 'linux' && rules.mode === 'closed' && html`<div class=${`sbx-inline-note sbx-unix-root-note${linuxClosedAligned ? '' : ' sbx-unix-root-note-incomplete'}`} role="note">
+      <strong>⚠ ${linuxClosedAligned
+        ? 'Linux “No access” uses an isolated filesystem and network boundary'
+        : `Linux “No access” needs ${missingLinuxClosedPrerequisites.length} setting change${missingLinuxClosedPrerequisites.length === 1 ? '' : 's'}`}</strong>
+      <div class="sbx-unix-root-checklist">${linuxClosedPrerequisites.map((item) => html`<div key=${item.key} class=${`sbx-unix-root-prerequisite ${item.aligned ? 'is-aligned' : 'is-missing'}`} data-aligned=${String(item.aligned)}>
+        <span class="sbx-unix-root-status" aria-hidden="true">${item.aligned ? '✓' : '×'}</span>
+        <span><b>${item.label}</b><small>${item.state}</small></span>
+      </div>`)}</div>
+      ${linuxClosedAligned
+        ? html`<p>Only the fixed OS/runtime surface, harness state, and filesystem paths mounted by this profile remain visible; other host paths and abstract Unix sockets do not. The network baseline and destination rules still control internet access.</p>`
+        : html`<p>Until these settings are aligned, the requested Unix-socket boundary is only partially enforced. The network baseline and destination rules will remain unchanged.</p><button type="button" class="sbx-add-row" onClick=${() => {
+        updateMode('closed', rules.allow);
+        setNotice(null);
+      }}>Apply ${missingLinuxClosedPrerequisites.length} required setting${missingLinuxClosedPrerequisites.length === 1 ? '' : 's'}</button>`}
+    </div>`}
     ${rules.mode === 'list' && html`<div class="sbx-rows sbx-socket-rows">${rules.allow.map((row, index) => { const glob = Object.hasOwn(row, 'path_glob'); return html`<div key=${index} class="sbx-row sbx-access-row sbx-socket-row">
       <${SegmentedControl} className="sbx-socket-selector" label=${`Unix socket row ${index + 1} kind`}
         value=${glob ? 'path_glob' : 'path'} onChange=${(kind) => {
@@ -844,7 +937,7 @@ function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice }) {
     <button type="button" class="sbx-add-row" onClick=${() => update({ allow: [...rules.allow, { path: '' }] })}>＋ add socket</button>`}
     <details class="sbx-common-rules"><summary>＋ insert socket template</summary><div class="sbx-common-rule-list">${(catalog.socket_templates || []).map((entry) => html`<${CommonRuleEntry} key=${entry.id} variant="access" entry=${{ ...entry, description: entry.note, paths: (entry.entries || []).map((row) => row.path || row.path_glob) }} onAdd=${() => insert(entry)}/>` )}</div></details>
     ${(catalog.global_unix_sockets || []).length > 0 && html`<details class="sbx-inherited-access"><summary>Inherited global socket config (${catalog.global_unix_sockets.length})</summary>${catalog.global_unix_sockets.map((row, index) => html`<div key=${index} class="sbx-rule-note"><strong>${row.origin?.harness} · ${row.origin?.setting}:</strong> ${JSON.stringify(row.entry || { mode: row.mode })}</div>`)}</details>`}
-    ${notice && html`<div class="sbx-common-rule-notice" role="status">Inserted “${notice.label}”: ${notice.added} added, ${notice.skipped} already present.${notice.removed ? ` ${notice.removed} incompatible existing row${notice.removed === 1 ? '' : 's'} removed.` : ''}${notice.warning ? ` ⚠ ${notice.warning}` : ''}</div>`}
+    ${notice?.label && html`<div class="sbx-common-rule-notice" role="status">Inserted “${notice.label}”: ${notice.added} added, ${notice.skipped} already present.${notice.removed ? ` ${notice.removed} incompatible existing row${notice.removed === 1 ? '' : 's'} removed.` : ''}${notice.warning ? ` ⚠ ${notice.warning}` : ''}</div>`}
   </${SandboxSection}>`;
 }
 
@@ -949,7 +1042,7 @@ function Manager({ kind, current, state, actions, confirmDiscard }) {
   // shortened box whenever the live listing refreshes.
   return html`<${Overlay} id=${`${domKind}-manage-modal`} manage labelledby=${`${domKind}-manage-title`} onClose=${state.closeManager} confirmDiscard=${confirmDiscard} resizeKey=${`tclaude.dash.modalSize.${domKind}-manage`} fitContent=${false}>
     <h3 id=${`${domKind}-manage-title`}>${title}</h3>
-    <p class="manage-intro">${profiles ? "Reusable bundles of the spawn dialog's launch and identity fields." : roles ? 'Named reusable role briefs, launch defaults, and permissions.' : 'Filesystem and environment policy applied when an agent launches.'}</p>
+    <p class="manage-intro">${profiles ? "Reusable bundles of the spawn dialog's launch and identity fields." : roles ? 'Named reusable behavior, guidance, and access presets.' : 'Filesystem and environment policy applied when an agent launches.'}</p>
     <div class="filter-bar"><input id=${`filter-${kind}`} value=${filter} onInput=${(event) => { setFilter.value = event.currentTarget.value; }} placeholder="Filter" autocomplete="off" spellcheck="false" autofocus /><span class="filter-count" id=${`filter-${kind}-count`}>${q ? `${list.length} / ${all.length}` : all.length}</span><button class="clear-filter" onClick=${() => { setFilter.value = ''; }}>×</button><span class="spacer"></span>
       ${profiles && html`<button id="profile-export-open" class="tool" onClick=${() => state.openDialog({ kind: 'profile-export' })}>⇪ export</button><button id="profile-import-open" class="tool" onClick=${() => state.openDialog({ kind: 'profile-import' })}>⤒ import</button>`}
       ${kind === 'sandbox' && html`<button id="sandbox-profile-export-open" class="tool" onClick=${() => state.openDialog({ kind: 'sandbox-export' })}>⇪ export</button><button id="sandbox-profile-import-open" class="tool" onClick=${() => state.openDialog({ kind: 'sandbox-import' })}>⤒ import</button><button id="sandbox-profile-scribe-open" class="tool" onClick=${() => actions.configureSandboxWithAgent({ name: '', filesystem: [], environment: [], network_access: '' })}>🤖 configure with agent</button>`}
@@ -1015,10 +1108,10 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
     });
   };
   const [helpOpen, setHelpOpen] = useState('');
-  const modelID = profile ? 'profile-editor-model' : 'role-editor-model';
-  const approvalID = profile ? 'profile-editor-approval' : 'role-editor-approval';
-  const sandboxID = profile ? 'profile-editor-sandbox' : 'role-editor-sandbox';
-  const toolsID = profile ? 'profile-editor-tools' : 'role-editor-tools';
+  const modelID = 'profile-editor-model';
+  const approvalID = 'profile-editor-approval';
+  const sandboxID = 'profile-editor-sandbox';
+  const toolsID = 'profile-editor-tools';
   const approvalLabel = draft.harness === 'codex' ? 'Approval policy' : 'Permission mode';
   const recommendedApproval = profile
     ? hEntry?.profile_recommended_approval || hEntry?.default_approval
@@ -1101,7 +1194,7 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
   const reviewerHelp = approvalReviewerHelp(draft.approval_reviewer, draft.approval);
   const modelControl = hasModelList ? html`<div class="cron-create-target"><${Select} id=${modelID} value=${customModel ? '__custom__' : draft.model} onChange=${(value) => { if (value === '__custom__') { setCustomModel(true); change(setDraft, 'model', ''); } else { setCustomModel(false); change(setDraft, 'model', value); } }} options=${[['', 'Default (unset)'], ...models.map((model) => [model, model]), ['__custom__', 'Custom model id…']]} />${customModel && html`<input id=${`${modelID}-custom`} type="text" aria-label="Custom model id" value=${draft.model} onInput=${(event) => change(setDraft, 'model', event.currentTarget.value)} placeholder="model id or alias" autocomplete="off" spellcheck="false" autofocus />`}</div>` : html`<input id=${modelID} type="text" aria-label="Model id" value=${draft.model} onInput=${(event) => change(setDraft, 'model', event.currentTarget.value)} placeholder="blank = unset; model id or alias" autocomplete="off" spellcheck="false"/>`;
   return html`
-    <${Row} label="Harness"><${Select} id=${profile ? 'profile-editor-harness' : 'role-editor-harness'} value=${draft.harness} onChange=${updateHarness} options=${catalog.map((entry) => [entry.name, entry.display_name || entry.name])} /></${Row}>
+    <${Row} label="Harness"><${Select} id="profile-editor-harness" value=${draft.harness} onChange=${updateHarness} options=${catalog.map((entry) => [entry.name, entry.display_name || entry.name])} /></${Row}>
     <${Row} label="Model" title="Model suggested by the selected harness. Blank leaves it unset; Custom model id accepts an out-of-catalog model supported by that harness.">${modelControl}</${Row}>
     <${Row} label="Effort"><${Select} value=${draft.effort} onChange=${(value) => change(setDraft, 'effort', value)} options=${[['', "Default (harness's own)"], ...(hEntry?.effort_levels || ['low', 'medium', 'high', 'xhigh', 'max']).map((value) => [value, value])]} /></${Row}>
     ${profile && hEntry && html`<${Row} label="Sandbox"
@@ -1214,11 +1307,12 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
   `;
 }
 
-function ProfileEditor({ descriptor, state, actions, confirmDiscard, openProfilePermissions, openProfileContextFeatures }) {
+function ProfileEditor({ descriptor, roles = [], state, actions, confirmDiscard, openProfilePermissions, openProfileContextFeatures }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const { seed, options = {}, catalog = [] } = descriptor;
   const baseline = useMemo(() => profileDraft(seed, options, catalog), [descriptor]);
   const [draft, setDraft] = useState(() => clone(baseline));
+  const [inspectedRole, setInspectedRole] = useState('');
   const dirty = dirtyDraft(draft, baseline); const local = !!options.local;
   const hEntry = harnessByName(catalog, draft.harness);
   const submit = async () => {
@@ -1240,6 +1334,19 @@ function ProfileEditor({ descriptor, state, actions, confirmDiscard, openProfile
   const saving = state.busy.value === 'profile-save';
   const sshWorkaroundAvailable = !!hEntry?.can_ssh_workaround
     && draft.sandbox === 'tclaude-agent';
+  const selectedRoles = (draft.role_refs || []).map((name) => roles.find((role) => role.name === name) || { name, missing: true });
+  const inspected = selectedRoles.find((role) => role.name === inspectedRole);
+  const roleGrantSlug = (grant) => typeof grant === 'string' ? grant : String(grant?.slug || '');
+  const roleGrantScope = (grant) => {
+    if (typeof grant?.scope === 'string') return grant.scope;
+    return Object.entries(grant?.scope || {})
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([dimension, values]) => `${dimension}=${(values || []).join(', ')}`)
+      .join('; ');
+  };
+  const roleTitle = (role) => [role.descr, role.brief,
+    (role.permissions || []).length ? `Grants: ${role.permissions.map((grant) => roleGrantSlug(grant)).join(', ')}` : 'Grants: none']
+    .filter(Boolean).join('\n\n');
   return html`<${Overlay} id="profile-editor-modal" labelledby="profile-editor-title" onClose=${state.closeDialog} onSubmitHotkey=${saving ? null : submit} dirty=${dirty} blocked=${saving} confirmDiscard=${confirmDiscard} registerClose=${registerClose}><h3 id="profile-editor-title">${local ? wizWord('Custom launch — this agent only', 'Bespoke summons — this familiar only') : options.cloneSourceName ? wizWord(`Clone profile: ${options.cloneSourceName}`, `Mirror pattern: ${options.cloneSourceName}`) : seed && options.editExisting !== false ? wizWord(`Edit profile: ${seed.name}`, `Edit pattern: ${seed.name}`) : wizWord('New spawn profile', 'New familiar pattern')}</h3>
     <${Row} label="Name" hidden=${local}><input id="profile-editor-name" value=${draft.name} onInput=${(event) => change(setDraft, 'name', event.currentTarget.value)} placeholder="profile name — kebab-or-snake-case label" autofocus autocomplete="off" spellcheck="false" /></${Row}>
     <${Row} label="Aliases" hidden=${local} title="Alternate handles for this same profile. Separate multiple aliases with commas."><input id="profile-editor-aliases" value=${draft.aliases_text} onInput=${(event) => change(setDraft, 'aliases_text', event.currentTarget.value)} placeholder="e.g. codex-reviewer, cold-reviewer" autocomplete="off" spellcheck="false" /></${Row}>
@@ -1255,39 +1362,38 @@ function ProfileEditor({ descriptor, state, actions, confirmDiscard, openProfile
     <${Row} label="Codex drive" hidden=${hEntry && !hEntry.can_codex_app_server} title="EXPERIMENTAL: launch the normal Codex TUI against a private per-agent app-server. The TUI is the sole birth writer and agentd binds the created thread without replay. Requires Codex 0.147.x and fails closed if unavailable. Unset means send-keys for deliberate A/B testing."><${Select} id="profile-editor-codex-app-server" value=${draft.codex_app_server} onChange=${(value) => change(setDraft, 'codex_app_server', value)} options=${CODEX_APP_SERVER_TRI_OPTIONS}/></${Row}>
     <${Row} label="Fast mode" hidden=${hEntry && !hEntry.can_fast_mode} title="Codex fast mode uses a higher-cost, lower-latency service tier. Harness default leaves the global Codex config in charge."><${Select} id="profile-editor-fast-mode" value=${draft.fast_mode} onChange=${(value) => change(setDraft, 'fast_mode', value)} options=${FAST_MODE_TRI_OPTIONS}/></${Row}>
     <${Row} label="SSH workaround" hidden=${!hEntry?.can_ssh_workaround} title=${sshWorkaroundAvailable ? "Use an agent-owned copy of the host SSH client config to avoid Codex sandbox ownership errors. This overrides Git core.sshCommand; uncheck it if the workaround conflicts with your setup." : "Available only for the Codex tclaude-agent managed sandbox."}><input id="profile-editor-ssh-workaround" type="checkbox" checked=${sshWorkaroundAvailable && draft.ssh_workaround} disabled=${!sshWorkaroundAvailable} onChange=${(event) => change(setDraft, 'ssh_workaround', event.currentTarget.checked)} /></${Row}>
-    ${[['Agent name', 'agent_name', 'optional — names the spawned agent'], ['Role', 'role', 'optional — e.g. researcher, planner'], ['Descr', 'descr', 'optional — short one-line description']].map(([label, key, placeholder]) => html`<${Row} key=${key} label=${label} hidden=${local}><input value=${draft[key]} onInput=${(event) => change(setDraft, key, event.currentTarget.value)} placeholder=${placeholder} autocomplete="off" spellcheck="false"/></${Row}>`)}
+    <${Row} label="Roles" hidden=${local} title="Behavioral guidance and default access from the role library. Launch settings remain owned by this spawn profile."><div class="agent-spawn-role-picker">
+      <div class="agent-spawn-role-chips" id="profile-editor-role-refs">${selectedRoles.map((role) => html`<span key=${role.name} class=${`agent-spawn-role-chip${role.missing ? ' missing' : ''}`}>
+        <button type="button" class="role-chip-inspect" title=${role.missing ? 'This role is missing from the library' : roleTitle(role)} onClick=${() => setInspectedRole(inspectedRole === role.name ? '' : role.name)}>${role.name}</button>
+        <button type="button" class="role-chip-remove" aria-label=${`Remove role ${role.name}`} onClick=${() => { setInspectedRole(inspectedRole === role.name ? '' : inspectedRole); change(setDraft, 'role_refs', draft.role_refs.filter((name) => name !== role.name)); }}>×</button>
+      </span>`)}<select id="profile-editor-role-add" value="" aria-label="Add role" onChange=${(event) => { const value = event.currentTarget.value; if (value) change(setDraft, 'role_refs', [...draft.role_refs, value]); event.currentTarget.value = ''; }}><option value="">＋ Add role…</option>${roles.filter((role) => !draft.role_refs.includes(role.name)).map((role) => html`<option value=${role.name}>${role.name}${role.descr ? ` — ${role.descr}` : ''}</option>`)}</select></div>
+      <div class="spawn-field-hint">Hover or click a role to inspect its brief and grants.</div>
+      ${inspected && html`<div class=${`agent-spawn-role-inspect${inspected.missing ? ' missing' : ''}`}>${inspected.missing ? '⚠ This role is no longer in the library.' : html`<div>${inspected.descr || ''}</div><div><b>Brief</b> ${inspected.brief || 'none'}</div><div><b>Grants</b> ${(inspected.permissions || []).length ? html`<span class="role-inspect-grants">${inspected.permissions.map((grant) => html`<code>${roleGrantSlug(grant)}${roleGrantScope(grant) ? ` · ${roleGrantScope(grant)}` : ''}</code>`)}</span>` : 'none'}</div>`}</div>`}
+    </div></${Row}>
+    ${[['Agent name', 'agent_name', 'optional — names the spawned agent'], ['Role label', 'role', 'optional — routing/display label; defaults independently of the role preset'], ['Descr', 'descr', 'optional — short one-line description']].map(([label, key, placeholder]) => html`<${Row} key=${key} label=${label} hidden=${local}><input value=${draft[key]} onInput=${(event) => change(setDraft, key, event.currentTarget.value)} placeholder=${placeholder} autocomplete="off" spellcheck="false"/></${Row}>`)}
     <${Row} label="Initial msg" hidden=${local}><textarea value=${draft.initial_message} onInput=${(event) => change(setDraft, 'initial_message', event.currentTarget.value)} rows="3" placeholder="optional — task brief pre-filled into the spawn dialog" spellcheck="false" /></${Row}>
     <${Row} label="Profile context" title="Extra startup guidance delivered to every agent that resolves this profile. It is kept separate from the per-spawn task brief and group context."><textarea id="profile-editor-startup-context" value=${draft.startup_context} onInput=${(event) => change(setDraft, 'startup_context', event.currentTarget.value)} rows="5" placeholder="optional — model/profile-specific guidance injected into every spawn" spellcheck="false" /></${Row}>
     ${[['Sync worktree', 'sync_worktree'], ['Auto focus', 'auto_focus'], ['Group context', 'include_group_default_context'], ['Group owner', 'is_owner']].map(([label, key]) => html`<${Row} key=${key} label=${label} hidden=${local && key !== 'is_owner'}><${Select} id=${key === 'is_owner' ? 'profile-editor-owner' : `profile-editor-${key.replaceAll('_', '-')}`} value=${draft[key]} onChange=${(value) => change(setDraft, key, value)} options=${TRI_OPTIONS}/></${Row}>`)}
-    <div class="cron-create-row"><span class="cron-create-label">Permissions</span><button id="profile-editor-perms" class="tool" type="button" onClick=${() => openProfilePermissions({ overrides: draft.permission_overrides, ownsGroup: readTri(draft.is_owner) === true, label: draft.agent_name.trim(), onSave: (kept) => change(setDraft, 'permission_overrides', kept) })}>Permissions…</button><span>${Object.keys(draft.permission_overrides).length || ''}</span></div>
+    <div class="cron-create-row"><span class="cron-create-label">Permissions</span><button id="profile-editor-perms" class="tool" type="button" onClick=${() => openProfilePermissions({ overrides: draft.permission_overrides, ownsGroup: readTri(draft.is_owner) === true, label: draft.agent_name.trim(), roleGrants: selectedRoles.filter((role) => !role.missing).flatMap((role) => (role.permissions || []).map((grant) => ({ slug: roleGrantSlug(grant), scope: roleGrantScope(grant), role: role.name }))), onSave: (kept) => change(setDraft, 'permission_overrides', kept) })}>Permissions…</button><span>${Object.keys(draft.permission_overrides).length || ''}</span></div>
     ${(!hEntry || hEntry.can_context_features) && html`<div class="cron-create-row" title="How much of Claude Code's startup context agents from this profile load. Trimming bundled skills, unused tool schemas and system-prompt blocks leaves more of the window for the actual task."><span class="cron-create-label">Startup context</span><button id="profile-editor-context-features" class="tool" type="button" onClick=${() => openProfileContextFeatures({ catalog: hEntry?.context_features || [], selection: draft.context_features, label: draft.agent_name.trim(), onSave: (kept) => change(setDraft, 'context_features', kept) })}>Context…</button><span>${contextFeatureSummary(draft.context_features)}</span></div>`}
     <div class="cron-create-error" role="alert">${state.error.value}</div><div class="modal-buttons"><button disabled=${saving} onClick=${() => { void requestClose(); }}>Cancel</button><span class="spacer"></span><button id="profile-editor-submit" class="primary" disabled=${saving} onClick=${submit}>${saving ? 'Saving…' : local ? 'Apply' : 'Save profile'}</button></div>
   </${Overlay}>`;
 }
 
-function RoleEditor({ descriptor, current, state, actions, confirmDiscard }) {
+function RoleEditor({ descriptor, state, actions, confirmDiscard, openProfilePermissions }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
-  const { seed, catalog = [], slugs = [] } = descriptor;
-  const baseline = useMemo(() => roleDraft(seed, catalog), [descriptor]);
+  const { seed } = descriptor;
+  const baseline = useMemo(() => roleDraft(seed), [descriptor]);
   const [draft, setDraft] = useState(() => clone(baseline)); const dirty = dirtyDraft(draft, baseline);
   const saving = state.busy.value === 'role-save';
-  const choices = profileChoices(current.profiles); const selectedProfile = findProfileByHandle(current.profiles, draft.spawn_profile); if (draft.spawn_profile && !selectedProfile) choices.push({ value: draft.spawn_profile, label: `${draft.spawn_profile} (missing)` });
-  // A role's grants may be scoped ({slug, scope}), which these checkboxes
-  // cannot express. They must still round-trip: a save from this dialog is
-  // about the boxes the operator ticked, and must not quietly widen a grant
-  // someone narrowed. Ticked = the slug is present at all; unticking removes
-  // it whatever shape it had; ticking adds the plain unscoped grant.
-  const toggle = (slug) => setDraft((value) => ({ ...value, permissions: toggleGrant(value.permissions, slug) }));
-  const submit = async () => { state.error.value = ''; if (!draft.name.trim()) { state.error.value = 'role name is required'; return; } await actions.saveRole({ draft, original: seed, payload: rolePayload(draft, catalog) }); };
+  const submit = async () => { state.error.value = ''; if (!draft.name.trim()) { state.error.value = 'role name is required'; return; } await actions.saveRole({ draft, original: seed, payload: rolePayload(draft) }); };
   return html`<${Overlay} id="role-editor-modal" labelledby="role-editor-title" onClose=${state.closeDialog} dirty=${dirty} blocked=${saving} confirmDiscard=${confirmDiscard} registerClose=${registerClose}><h3 id="role-editor-title">${seed ? `Edit role: ${seed.name}` : 'New role'}</h3>
     <${Row} label="Name"><input id="role-editor-name" value=${draft.name} onInput=${(event) => change(setDraft, 'name', event.currentTarget.value)} placeholder="role name — kebab-or-snake-case label (e.g. reviewer)" autofocus autocomplete="off" spellcheck="false" /></${Row}><${Row} label="Descr"><input id="role-editor-descr" value=${draft.descr} onInput=${(event) => change(setDraft, 'descr', event.currentTarget.value)} placeholder="optional — short one-line description" autocomplete="off" spellcheck="false" /></${Row}><${Row} label="Brief"><textarea id="role-editor-brief" rows="5" value=${draft.brief} onInput=${(event) => change(setDraft, 'brief', event.currentTarget.value)} placeholder="canonical role-brief — prepended to a referencing agent's startup context (newlines OK)" spellcheck="false" /></${Row}>
-    <${HarnessFields} draft=${draft} setDraft=${setDraft} catalog=${catalog} actions=${actions}/><${Row} label="Spawn profile"><${Select} value=${draft.spawn_profile} onChange=${(value) => change(setDraft, 'spawn_profile', value)} options=${[['', '(none)'], ...choices.map((choice) => [choice.value, choice.label])]} /></${Row}>
-    <div class="cron-create-row"><span class="cron-create-label">Permissions (${draft.permissions.length})</span><div class="ta-perms-list">${slugs.map((slug) => {
-    const scoped = grantScopeLabel((draft.permissions || []).find((entry) => grantSlug(entry) === slug.slug));
-    return html`<label key=${slug.slug} title=${slug.description || ''}><input type="checkbox" checked=${hasGrant(draft.permissions, slug.slug)} onChange=${() => toggle(slug.slug)} /> ${slug.slug}${scoped
-      ? html` <span class="perm-scope-chip" title=${`This grant is narrowed to ${scoped}. It is kept as-is on save; edit it with the tclaude agent CLI.`}>${scoped}</span>`
-      : null}</label>`;
-  })}</div></div>
+    <div class="cron-create-row"><span class="cron-create-label">Permissions</span><button id="role-editor-perms" class="tool" type="button" onClick=${() => openProfilePermissions({
+      overrides: grantListToOverrides(draft.permissions), grantOnly: true, subject: 'role',
+      label: draft.name.trim(),
+      onSave: (kept) => change(setDraft, 'permissions', grantOverridesToList(kept)),
+    })}>Permissions…</button><span>${draft.permissions.length || ''}</span></div>
     <div class="cron-create-error" role="alert">${state.error.value}</div><div class="modal-buttons"><button disabled=${saving} onClick=${() => { void requestClose(); }}>Cancel</button><span class="spacer"></span><button id="role-editor-submit" class="primary" disabled=${saving} onClick=${submit}>${saving ? 'Saving…' : 'Save role'}</button></div>
   </${Overlay}>`;
 }
@@ -1423,10 +1529,14 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     const axes = sandboxAccessAxes(seed || {});
     const network = sandboxNetworkAuthoring(seed || {});
     const filesystem_spellings = clone(seed?.filesystem_spellings ?? null);
-    return { id: seed?.id || 0, name: seed?.name || '', filesystem: sandboxFilesystemEditorRows(seed?.filesystem || [], filesystem_spellings), filesystem_spellings, environment: clone(seed?.environment || []), includes: clone(seed?.includes || []), agent_directories: clone(seed?.agent_directories || []), network_access: '', network, unix_sockets: axes.unix_sockets, resource_limits: { memory: seed?.resource_limits?.memory || '', cpu: seed?.resource_limits?.cpu == null ? '' : String(seed.resource_limits.cpu) }, darwin_allow_mach_register: !!seed?.darwin_allow_mach_register, ...(seed?.pre_launch ? { pre_launch: sandboxPreLaunchEditorRows(seed.pre_launch) } : {}) };
+    return { id: seed?.id || 0, name: seed?.name || '', filesystem: sandboxFilesystemEditorRows(seed?.filesystem || [], filesystem_spellings), filesystem_spellings, filesystem_root: seed?.filesystem_root || '', environment: clone(seed?.environment || []), includes: clone(seed?.includes || []), agent_directories: clone(seed?.agent_directories || []), network_access: '', network, unix_sockets: axes.unix_sockets, resource_limits: { memory: seed?.resource_limits?.memory || '', cpu: seed?.resource_limits?.cpu == null ? '' : String(seed.resource_limits.cpu) }, darwin_allow_mach_register: !!seed?.darwin_allow_mach_register, ...(seed?.pre_launch ? { pre_launch: sandboxPreLaunchEditorRows(seed.pre_launch) } : {}) };
   }, [descriptor]);
   const initialFilesystemWire = sandboxFilesystemWire(baseline, baseline);
   const [draft, setDraft] = useState(() => clone(baseline)); const [advanced, setAdvanced] = useState(false); const [rawFS, setRawFS] = useState(() => JSON.stringify(initialFilesystemWire.filesystem, null, 2)); const [rawSpellings, setRawSpellings] = useState(() => JSON.stringify(initialFilesystemWire.filesystem_spellings, null, 2)); const [rawEnv, setRawEnv] = useState(() => JSON.stringify(baseline.environment, null, 2)); const [rawIncludes, setRawIncludes] = useState(() => JSON.stringify(baseline.includes, null, 2)); const [rawAgentDirs, setRawAgentDirs] = useState(() => JSON.stringify(baseline.agent_directories, null, 2)); const [rawNetwork, setRawNetwork] = useState(() => JSON.stringify(baseline.network, null, 2)); const [rawSockets, setRawSockets] = useState(() => JSON.stringify(baseline.unix_sockets, null, 2)); const [rawResources, setRawResources] = useState(() => JSON.stringify(sandboxResourceLimitsForWire(baseline.resource_limits), null, 2)); const [rawPreLaunch, setRawPreLaunch] = useState(() => JSON.stringify(sandboxPreLaunchForWire(baseline.pre_launch || []), null, 2));
+  // This provenance outlives the structured socket editor, which unmounts
+  // while Advanced JSON is open. It lets a change of mind restore only the
+  // fields generated by the closed-socket convenience action.
+  const socketGeneratedAlignment = useRef(null);
   // The audited common-rule presets. They are pure row inserters: nothing from
   // the catalog is persisted, so a profile never depends on it being loaded.
   const [commonRules, setCommonRules] = useState({ version: 0, categories: [], informational: [], global_filesystem: [], global_network: [], global_unix_sockets: [], network_packs: [], network_templates: [], socket_templates: [], global_config_warnings: [] });
@@ -1515,7 +1625,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
      blocks still emits the explicit empty array the daemon needs to distinguish "clear" from "leave alone". */
   return { filesystem, filesystem_spellings, environment, includes, agent_directories, ...(baseline.pre_launch === undefined && draft.pre_launch === undefined && pre_launch.length === 0 ? {} : { pre_launch }), network: axes.network, unix_sockets: axes.unix_sockets, resource_limits: sandboxResourceLimitsForWire(resource_limits) }; };
   const rawDraftForWire = (parsed) => { const next = { ...draft, ...parsed }; if (parsed.pre_launch === undefined) delete next.pre_launch; else next.pre_launch = sandboxPreLaunchForWire(parsed.pre_launch); return next; };
-  const applyRaw = () => { try { const parsed = parseRaw(); setDraft((value) => { const next = { ...value, ...parsed, filesystem: sandboxFilesystemEditorRows(parsed.filesystem, parsed.filesystem_spellings) }; if (parsed.pre_launch === undefined) delete next.pre_launch; else next.pre_launch = sandboxPreLaunchEditorRows(parsed.pre_launch, value.pre_launch); return next; }); state.error.value = ''; return true; } catch (error) { state.error.value = error.message || String(error); return false; } };
+  const applyRaw = () => { try { const parsed = parseRaw(); if (parsed.network.engine !== draft.network.engine || parsed.network.namespace !== draft.network.namespace || parsed.unix_sockets.mode !== draft.unix_sockets.mode) socketGeneratedAlignment.current = null; setDraft((value) => { const next = { ...value, ...parsed, filesystem: sandboxFilesystemEditorRows(parsed.filesystem, parsed.filesystem_spellings) }; if (parsed.pre_launch === undefined) delete next.pre_launch; else next.pre_launch = sandboxPreLaunchEditorRows(parsed.pre_launch, value.pre_launch); return next; }); state.error.value = ''; return true; } catch (error) { state.error.value = error.message || String(error); return false; } };
   const toggleAdvanced = () => { if (advanced && !applyRaw()) return; if (!advanced) { const wire = sandboxFilesystemWire(draft, baseline); setRawFS(JSON.stringify(wire.filesystem, null, 2)); setRawSpellings(JSON.stringify(wire.filesystem_spellings, null, 2)); setRawEnv(JSON.stringify(draft.environment, null, 2)); setRawIncludes(JSON.stringify(draft.includes, null, 2)); setRawAgentDirs(JSON.stringify(draft.agent_directories, null, 2)); setRawNetwork(JSON.stringify(draft.network, null, 2)); setRawSockets(JSON.stringify(draft.unix_sockets, null, 2)); setRawResources(JSON.stringify(sandboxResourceLimitsForWire(draft.resource_limits), null, 2)); setRawPreLaunch(JSON.stringify(sandboxPreLaunchForWire(draft.pre_launch || []), null, 2)); } setAdvanced(!advanced); };
   const submit = async () => {
     let value = { ...draft, ...sandboxFilesystemWire(draft, baseline), resource_limits: sandboxResourceLimitsForWire(draft.resource_limits), ...(draft.pre_launch === undefined ? {} : { pre_launch: sandboxPreLaunchForWire(draft.pre_launch) }) };
@@ -1649,11 +1759,17 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
       packVisibilityError=${networkPackVisibilityError}
       packVisibilityAttention=${!!networkPackVisibilityError && commonRuleFeedSettled}
       retryPackCatalog=${loadCommonRules}
-      packCatalogBusy=${commonRuleFeedBusy}/><${SocketAccessEditor} draft=${draft} setDraft=${setDraft} catalog=${commonRules} notice=${socketTemplateNotice} setNotice=${setSocketTemplateNotice}/>`}
+      packCatalogBusy=${commonRuleFeedBusy}/><${SocketAccessEditor} draft=${draft} setDraft=${setDraft} catalog=${commonRules} notice=${socketTemplateNotice} setNotice=${setSocketTemplateNotice} platform=${descriptor.sandboxImpl?.platform} generatedAlignment=${socketGeneratedAlignment}/>`}
     <${SandboxSection} id="sandbox-profile-editor-filesystem-section" label="Filesystem"
       help=${FILESYSTEM_HELP} hidden=${advanced}
       attention=${globalConfigWarnings.length > 0 || !!commonRuleFeedError}
       entryCount=${draft.filesystem.length}>
+      <div class="sbx-resource-fields"><label>Filesystem root <select id="sandbox-profile-editor-filesystem-root" value=${draft.filesystem_root || ''} onChange=${(event) => setDraft((value) => ({ ...value, filesystem_root: event.currentTarget.value }))}>
+        <option value="">Automatic (from other rules)</option>
+        <option value="inherit">Inherit host filesystem root</option>
+        <option value="separate">Separate/minimal filesystem root</option>
+      </select></label></div>
+      <div class="sbx-resource-intro">A separate root exposes only the fixed read-only OS/runtime surface and the directory mounts in this policy. Network or Unix-socket restrictions can still require it even when “inherit” is selected. Explicit separation currently requires Linux tclaude-layer.</div>
       ${(globalFilesystem.length > 0 || globalConfigWarnings.length > 0) && html`<div class="sbx-global-filesystem">
         <div class="sbx-global-controls"><label class="sbx-global-toggle" title="These read-only rows come from Claude Code and Codex global sandbox config. They are launch context, not part of the named profile."><input id="sandbox-profile-editor-show-global-filesystem" type="checkbox" checked=${showGlobalFilesystem} onChange=${(event) => setShowGlobalFilesystem(event.currentTarget.checked)}/> Show inherited global config rules${globalFilesystem.length ? ` (${globalFilesystem.length})` : ''}</label>
           ${showGlobalFilesystem && globalFilesystem.length > 0 && html`<label class="sbx-global-filter" for="sandbox-profile-editor-global-harness-filter">Builtins <select id="sandbox-profile-editor-global-harness-filter" value=${globalHarnessFilter} onChange=${(event) => setGlobalHarnessFilter(event.currentTarget.value)}><option value="both">Claude + Codex</option><option value="claude">Claude only</option><option value="codex">Codex only</option><option value="none">None</option></select></label>`}
@@ -1844,6 +1960,7 @@ function sandboxImportNetworkRows(profile) {
 
 function sandboxImportPolicyRows(profile) {
   const rows = [];
+  if (profile.filesystem_root) rows.push({ kind: 'root', value: profile.filesystem_root === 'separate' ? 'separate/minimal filesystem root' : 'inherit host filesystem root' });
   for (const entry of profile.filesystem || []) rows.push({ kind: entry.access, value: entry.mount_path ? `${entry.path} → ${entry.mount_path}` : entry.path });
   for (const rule of profile.filesystem_spellings?.rules || []) {
     for (const spelling of rule.spellings || []) rows.push({ kind: 'alias', value: `${spelling} → ${rule.resolved_path}` });
@@ -1888,7 +2005,7 @@ function SandboxImport({ current, state, actions, confirmDiscard }) {
     setError(''); setBusy('inspect');
     try {
       const parsed = JSON.parse(raw);
-      if (parsed?.format !== 'tclaude-sandbox-profiles' || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].includes(parsed?.format_version)) throw new Error('not a tclaude sandbox-profile export');
+      if (parsed?.format !== 'tclaude-sandbox-profiles' || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].includes(parsed?.format_version)) throw new Error('not a tclaude sandbox-profile export');
       const found = await actions.inspectSandboxBundle(parsed);
       setEnvelope(parsed); setPreview(found);
     } catch (e) {
@@ -2016,9 +2133,9 @@ function DialogSlot({ state, actions, confirmDiscard, openProfilePermissions, op
   const descriptor = state.dialog.value;
   switch (descriptor?.kind) {
     case 'profile-editor':
-      return html`<${ProfileEditor} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions} openProfileContextFeatures=${openProfileContextFeatures}/>`;
+      return html`<${ProfileEditor} descriptor=${descriptor} roles=${state.roles.value || []} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions} openProfileContextFeatures=${openProfileContextFeatures}/>`;
     case 'role-editor':
-      return html`<${RoleEditor} descriptor=${descriptor} current=${{ profiles: state.profiles.value || [] }} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+      return html`<${RoleEditor} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions}/>`;
     case 'profile-export':
       return html`<${ProfileExport} current=${{ profiles: state.profiles.value || [] }} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
     case 'profile-import':

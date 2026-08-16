@@ -79,7 +79,7 @@ func dashboardSourceContains(source, needle string) bool {
 // — a renamed or misplaced file would otherwise fail only at runtime,
 // when the daemon serves an empty page or 404s a module.
 func TestDashboardEmbed_HasExpectedFiles(t *testing.T) {
-	for _, name := range []string{"dashboard.html", "dashboard.css", "js/dashboard.js"} {
+	for _, name := range []string{"dashboard.html", "dashboard.css", "tclaude-icon.svg", "js/dashboard.js"} {
 		data, err := fs.ReadFile(dashboardAssetsFS, name)
 		if err != nil {
 			t.Errorf("embedded dashboard asset %q not found: %v", name, err)
@@ -95,22 +95,28 @@ func TestDashboardEmbed_HasExpectedFiles(t *testing.T) {
 }
 
 // TestDashboardFooterVersionWired guards the footer's status line: it should
-// show the running tclaude version alongside the dashboard URL and refresh
-// heartbeat. The JSON field itself is covered by the snapshot flow test; this
-// pins the client-side render contract.
+// show the running tclaude version alongside the refresh heartbeat, without
+// exposing the dashboard URL or authentication details. The JSON fields are
+// covered by the snapshot flow test; this pins the client-side render contract.
 func TestDashboardFooterVersionWired(t *testing.T) {
 	for _, needle := range []string{
 		`id="shell-meta-root"`,
 		`const view = footerMetaView(state.snapshot.value);`,
 		`class="meta-version">tclaude version ${view.version}</span>`,
-		`class="meta-base">${view.base}</span>`,
 		`refreshed <span class="meta-time">${new Date(view.generatedAt).toLocaleTimeString()}</span>`,
-		`const FOOTER_SESSION_EXPANDED_PREF = 'tclaude.dash.footer.session_expanded';`,
-		`auth cookie expires ${auth.expires_at ?`,
-		`minted ${new Date(auth.minted_at).toLocaleString()}`,
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard footer missing %q", needle)
+		}
+	}
+	for _, needle := range []string{
+		`class="meta-base"`,
+		`footer-session-toggle`,
+		`footer-session-panel`,
+		`auth cookie expires`,
+	} {
+		if strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard footer still contains %q", needle)
 		}
 	}
 }
@@ -356,17 +362,23 @@ func TestDashboardJS_SelectTooltipWired(t *testing.T) {
 	}
 }
 
-// TestDashboardJS_ModalResizePersisted guards that the resizable spawn /
-// clone dialogs persist their dragged size: a helper stores width+height
-// in dashPrefs and both the legacy spawn binder and Preact clone overlay wire
-// it to their resizable card. A drop
+// TestDashboardJS_ModalResizePersisted guards that resizable dialogs persist
+// their dragged size in dashPrefs. Agent spawn opts out of height persistence
+// so its content determines the height on every open; clone and the other
+// overlays retain the shared width+height default. A drop
 // here means the modal would silently forget its size across reopens.
 func TestDashboardJS_ModalResizePersisted(t *testing.T) {
 	for _, needle := range []string{
-		"function makeModalResizable(",                     // helper exists (helpers.js)
-		`resizeKey="tclaude.dash.modalSize.agent-spawn"`,   // Preact spawn overlay wires it
-		`resizeKey="tclaude.dash.modalSize.clone-agent"`,   // Preact clone modal wires it
-		"makeModalResizable(dialogRef.current, resizeKey)", // Preact management overlays wire it
+		"function makeModalResizable(",                                                    // helper exists (helpers.js)
+		"const persistHeight = opts.persistHeight !== false;",                             // helper supports width-only persistence
+		"if (persistHeight && saved.h)",                                                   // old saved heights are ignored in width-only mode
+		"persistHeight ? { w, h } : { w }",                                                // width-only mode does not write a height field
+		"const pointerTarget = modalEl.ownerDocument || modalEl;",                         // resize completion is tracked beyond the card boundary
+		"pointerTarget.addEventListener('pointerup', onPointerUp, true)",                  // native drag releases outside the card still save
+		`resizeKey="tclaude.dash.modalSize.agent-spawn"`,                                  // Preact spawn overlay wires it
+		`persistHeight=${false}`,                                                          // spawn restores width but recalculates height
+		`resizeKey="tclaude.dash.modalSize.clone-agent"`,                                  // Preact clone modal wires it
+		"makeModalResizable(dialogRef.current, resizeKey, { fitContent, persistHeight })", // overlays wire options
 		`resizeKey: 'tclaude.dash.modalSize.templates-manage'`,
 		`fitContent: false`,
 		"tclaude.dash.modalSize.agent-spawn",            // per-modal pref key
@@ -1042,6 +1054,7 @@ func TestDashboardAssets_FeatureFlagsWired(t *testing.T) {
 	owners := map[string][]string{
 		"js/config-form-markup.js": {
 			`id="cfg-feature-processes"`, `features.processes`,
+			`id="cfg-feature-triggers"`, `features.triggers`,
 			`id="cfg-feature-groups-route-map"`, `features.groups_route_map`,
 			`id="cfg-feature-group-attachments"`, `features.group_attachments`,
 			`id="cfg-feature-terminal-command-palette-shortcut"`,
@@ -1051,6 +1064,7 @@ func TestDashboardAssets_FeatureFlagsWired(t *testing.T) {
 		},
 		"js/config-form-adapter.js": {
 			"#cfg-feature-processes", "feats.processes = true",
+			"#cfg-feature-triggers", "feats.triggers = true",
 			"#cfg-feature-groups-route-map", "feats.groups_route_map = true",
 			"#cfg-feature-group-attachments", "feats.group_attachments = groupAttachments",
 			"#cfg-feature-terminal-command-palette-shortcut",

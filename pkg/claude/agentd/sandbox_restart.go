@@ -86,6 +86,14 @@ func dashboardSandboxRestartAgent(w http.ResponseWriter, r *http.Request, convSe
 	}
 	var override *string
 	if action == sandboxRestartUnlock {
+		implementation, implErr := sandboxpolicy.NormalizeImplementation(
+			normal.SandboxImplementation,
+		)
+		if implErr != nil {
+			writeError(w, http.StatusConflict, "relaunch_profile",
+				"invalid normal sandbox implementation: "+implErr.Error())
+			return
+		}
 		// "Restart without sandbox" trades access confinement away, which is
 		// what the operator is asking for. An implementation that has no
 		// access confinement has nothing to trade: the relaunch would force
@@ -94,9 +102,7 @@ func dashboardSandboxRestartAgent(w http.ResponseWriter, r *http.Request, convSe
 		// only thing this action would actually remove from a resource-only
 		// agent is its per-agent cgroup, under a label that says sandbox.
 		// Refuse instead of silently dropping the one boundary it applies.
-		if implementation, implErr := sandboxpolicy.NormalizeImplementation(
-			normal.SandboxImplementation,
-		); implErr == nil && implementation == sandboxpolicy.ImplementationResourceOnly {
+		if implementation == sandboxpolicy.ImplementationResourceOnly {
 			writeError(w, http.StatusConflict, "unsupported",
 				fmt.Sprintf("this agent runs under sandbox implementation %q, which already has no OS-level access confinement to unlock; restarting without a sandbox would only remove the per-agent cgroup it does apply",
 					implementation))
@@ -105,6 +111,21 @@ func dashboardSandboxRestartAgent(w http.ResponseWriter, r *http.Request, convSe
 		h, resolveErr := harness.Resolve(normal.Harness)
 		if resolveErr != nil {
 			writeError(w, http.StatusConflict, "harness", resolveErr.Error())
+			return
+		}
+		// Codex restores its persisted built-in permission profile while resuming
+		// a conversation. In practice that overwrites both the explicit
+		// danger-full-access resume flag and a pre-launch repair of Codex's thread
+		// row. Refuse before stopping the live agent: offering a temporary unlock
+		// here claims a security transition that the resumed process does not make.
+		// A Codex launch under tclaude-layer remains eligible because its normal
+		// harness mode is already sandbox-off; the temporary transition only
+		// removes tclaude's independently controlled outer boundary.
+		if h.Name == harness.CodexName &&
+			(implementation == sandboxpolicy.ImplementationHarnessBuiltin ||
+				implementation == sandboxpolicy.ImplementationStacked) {
+			writeError(w, http.StatusConflict, "unsupported",
+				fmt.Sprintf("Codex cannot restart this conversation without its own sandbox under implementation %q because Codex restores the persisted sandbox policy on resume; choose the tclaude-layer sandbox implementation or start a new Codex conversation without the built-in sandbox", implementation))
 			return
 		}
 		mode, modeErr := harness.SandboxOffMode(h)

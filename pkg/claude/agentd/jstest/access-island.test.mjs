@@ -7,7 +7,10 @@ const prefs = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
 const payload = (title = 'Alpha') => ({
   generated_at: '2026-07-12T00:00:00Z',
   permissions: { defaults: ['agent.send'], overrides: { a: { 'agent.spawn': 'grant' } } },
-  slugs: [{ slug: 'agent.send', description: 'Send messages', owner_implied: true }],
+  slugs: [
+    { slug: 'agent.send', description: 'Send messages', owner_implied: true },
+    { slug: 'groups.members.spawn', description: 'Create workers', owner_implied: false },
+  ],
   agents: [{ conv_id: 'a', agent_id: 'agt_alpha', title }],
   sudo: [{ id: 7, conv_id: 'a', agent_id: 'agt_alpha', conv_title: title, slug: 'agent.send', granted_at: '2026-07-11T23:00:00Z', expires_at: '2026-07-12T00:00:05Z' }],
 });
@@ -39,6 +42,26 @@ test('Access island owns navigation, filtering, keyed rows, and local countdowns
   assert.equal(state.view.value.subtab, 'slugs');
   assert.deepEqual(navigated, { tab: 'access', subtab: 'slugs' }, 'navigation announces the new subtab without waiting for a DOM commit');
   assert.match(mounted.container.textContent, /Send messages/);
+  const slugFilter = getByRole(mounted.container, 'textbox', { name: 'Filter permission slugs by name' });
+  await harness.input(slugFilter, 'GROUPS.MEMBERS');
+  assert.ok(mounted.container.querySelector('tr[data-key="groups.members.spawn"]'));
+  assert.equal(mounted.container.querySelector('tr[data-key="agent.send"]'), null);
+  assert.match(mounted.container.textContent, /1 \/ 2/);
+  await harness.input(slugFilter, 'Send messages');
+  assert.match(mounted.container.textContent, /No matching permission slugs/,
+    'the filter matches slug names only, not descriptions');
+  await harness.act(() => harness.fireEvent(slugFilter, 'keydown', { key: 'Escape' }));
+  assert.equal(slugFilter.value, '');
+  assert.ok(mounted.container.querySelector('tr[data-key="agent.send"]'), 'Escape restores the full slug list');
+  await harness.input(slugFilter, '   ');
+  assert.equal(slugFilter.value, '', 'whitespace-only input is normalized to an empty query');
+  assert.match(mounted.container.textContent, /2 slugs/);
+  await harness.input(slugFilter, 'agent');
+  const clearSlugFilter = getByRole(mounted.container, 'button', { name: 'Clear slug filter' });
+  await harness.act(() => harness.fireEvent(clearSlugFilter, 'click'));
+  assert.equal(slugFilter.value, '');
+  assertSameNode(harness.document.activeElement, slugFilter);
+  assert.ok(mounted.container.querySelector('tr[data-key="agent.send"]'));
   await mounted.unmount();
 });
 
@@ -106,14 +129,9 @@ test('Access navigation updates history from the announced subtab before its DOM
   assert.deepEqual(pushed[0].state.navStack.at(-1), { tab: 'access', subtab: 'slugs' });
 });
 
-// TCL-1013: the Owner column must say how far the bypass reaches; a bare
-// crown for all three scopes reads as fleet-wide authority the gate refuses.
-test('Slug table owner badge spells out the ownership scope', async (t) => {
+test('Slug table owner badge describes ordinary scoped grants', async (t) => {
   const harness = await createPreactHarness(t);
   const island = await harness.importDashboardModule('js/access-island.js');
-  assert.match(island.ownerScopeTitle('group'), /groups you own/);
-  assert.match(island.ownerScopeTitle('member'), /members of the groups you own/);
-  assert.match(island.ownerScopeTitle('any'), /unscoped/);
-  // Legacy daemon sends no scope at all.
-  assert.equal(island.ownerScopeTitle(undefined), 'Conferred by group ownership');
+  assert.match(island.ownerGrantTitle(['group']), /scoped to each group you own/);
+  assert.match(island.ownerGrantTitle([]), /ordinary global grant/);
 });

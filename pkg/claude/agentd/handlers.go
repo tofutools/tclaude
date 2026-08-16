@@ -43,6 +43,7 @@ func handleInfo(w http.ResponseWriter, r *http.Request) {
 		"popup_base_url": popupBaseURL,
 		"idempotency":    "v1",
 		"processes":      processRoutesEnabled(),
+		"triggers":       triggerRoutesEnabled(),
 		"proxy":          gitProxyRoutesEnabled(r),
 	})
 }
@@ -1465,8 +1466,8 @@ func messageInlineText(m *db.AgentMessage) (string, bool) {
 	return text, true
 }
 
-// injectSlashCommand finds an alive tmux session for convID and types the
-// given slash-command line into its CC pane, followed by a submit Enter.
+// injectSlashCommandOn finds an alive tmux session for convID and dispatches
+// the given slash-command line through the selected harness control channel.
 // If followUp is non-empty, it is sent as a fresh prompt right after the
 // slash submit. Returns true on successful delivery.
 //
@@ -1491,14 +1492,8 @@ func messageInlineText(m *db.AgentMessage) (string, bool) {
 // each atomic, but NOT the pair: another injector can take the pane
 // between them. That is consistent with the best-effort follow-up
 // ordering described above and is not a regression.
-func injectSlashCommand(convID, line, followUp, reason string) bool {
-	return injectSlashCommandOn(convID, line, followUp, reason, deliveryChannelRouted)
-}
-
-// injectSlashCommandOn is injectSlashCommand with the caller's delivery channel
-// carried through to the dispatch.
-//
-// It exists because an override applied only at the top is not an override. The
+// The explicit delivery channel exists because an override applied only at the
+// top is not an override. The
 // first version of the spawn's pane fallback set the channel at deliverRenameOn
 // and stopped there; the rename it forced to the pane was then refused by
 // dispatchSlashCommand, which asks copilotAPIDriven again on its own account
@@ -3707,7 +3702,7 @@ func registerV1GroupRoutes(mux *http.ServeMux) {
 
 	// Stand down a task force (JOH-345): retire the roster + sweep the
 	// deploy-seeded rhythms and pending waves, keeping the group as a dormant
-	// record. The mirror of `task-force deploy`. Gated on groups.retire +
+	// record. The mirror of `task-force deploy`. Gated on groups.members.retire +
 	// owner-pass (see handleGroupStandDown).
 	mux.HandleFunc("POST /v1/groups/{name}/stand-down", v1GroupRoute(handleGroupStandDown))
 
@@ -3759,11 +3754,11 @@ func v1GroupRoute(fn func(http.ResponseWriter, *http.Request, *db.AgentGroup)) h
 	}
 }
 
-// handleGroupDelete deletes a group. Permission slug: groups.rm
+// handleGroupDelete deletes a group. Permission slug: groups.delete
 // (default human-only). db.DeleteAgentGroup fails with a constraint
 // error if the group still has blocking references.
 func handleGroupDelete(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	if _, ok := requirePermission(w, r, PermGroupsRm); !ok {
+	if _, ok := requirePermission(w, r, PermGroupsDelete); !ok {
 		return
 	}
 	hookHarnesses := standingOrderHookHarnessesForGroupBestEffort(g.ID)
@@ -3868,25 +3863,15 @@ func normalizeGroupDescr(s string) string {
 // *int and clears to "unlimited" with 0. An empty body (no field) is a
 // 400.
 //
-// Permission: groups.rename. Setting a group's description / default
-// cwd / context / profile / member cap is the same class of human-curated
-// group config as renaming it (the blast radius is a dashboard label /
-// UI prefill / spawn-time injection / spawn refusal, strictly lower
-// than a rename), so it rides the existing slug rather than minting a
-// new one. Default human-only.
+// Each independently meaningful setting has its own permission. This keeps a
+// default-directory grant from also authorizing a rename, context injection,
+// or a member-cap change. groups.admin is accepted centrally as an umbrella.
 //
 // permissions AND owner_scopes are permission administration and additionally
 // require permissions.grant + permissions.revoke — the same pair, because both
 // fields can widen (clearing a narrowing) and narrow (adding one) in a single
 // write.
 func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	caller, ok := requirePermission(w, r, PermGroupsRename)
-	if !ok {
-		return
-	}
-	if !requireGroupActive(w, g) {
-		return
-	}
 	var body struct {
 		Descr             *string `json:"descr,omitempty"`
 		DefaultCwd        *string `json:"default_cwd,omitempty"`
@@ -3921,6 +3906,53 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "json", err.Error())
+		return
+	}
+	if body.Descr == nil && body.DefaultCwd == nil && body.DefaultContext == nil && body.DefaultSpawnGroup == nil && body.DefaultProfile == nil && body.MaxMembers == nil && body.NotifyEnabled == nil && body.RemoteControlPolicy == nil && body.Permissions == nil && body.OwnerScopes == nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			"nothing to update (expected descr, default_cwd, default_context, default_spawn_group, default_profile, max_members, notify_enabled, remote_control_policy, permissions and/or owner_scopes)")
+		return
+	}
+	required := make([]string, 0, 10)
+	if body.Descr != nil {
+		required = append(required, PermGroupsSettingsDescription)
+	}
+	if body.DefaultCwd != nil {
+		required = append(required, PermGroupsSettingsDefaultDir)
+	}
+	if body.DefaultContext != nil {
+		required = append(required, PermGroupsSettingsDefaultContext)
+	}
+	if body.DefaultSpawnGroup != nil {
+		required = append(required, PermGroupsSettingsDefaultSpawnTarget)
+	}
+	if body.DefaultProfile != nil {
+		required = append(required, PermGroupsSettingsDefaultProfile)
+	}
+	if body.MaxMembers != nil {
+		required = append(required, PermGroupsSettingsMaxMembers)
+	}
+	if body.NotifyEnabled != nil {
+		required = append(required, PermGroupsSettingsNotifications)
+	}
+	if body.RemoteControlPolicy != nil {
+		required = append(required, PermGroupsSettingsRemoteControlPolicy)
+	}
+	if body.Permissions != nil {
+		required = append(required, PermGroupsSettingsMemberPermissions)
+	}
+	if body.OwnerScopes != nil {
+		required = append(required, PermGroupsSettingsOwnerScopes)
+	}
+	caller := ""
+	for _, perm := range required {
+		resolved, ok := requireGroupPermission(w, r, perm, g, ActionContext{Group: g.Name})
+		if !ok {
+			return
+		}
+		caller = resolved
+	}
+	if !requireGroupActive(w, g) {
 		return
 	}
 	if body.Permissions != nil || body.OwnerScopes != nil {
@@ -3970,11 +4002,6 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 			writeError(w, http.StatusForbidden, "scope_not_attenuated", err.Error())
 			return
 		}
-	}
-	if body.Descr == nil && body.DefaultCwd == nil && body.DefaultContext == nil && body.DefaultSpawnGroup == nil && body.DefaultProfile == nil && body.MaxMembers == nil && body.NotifyEnabled == nil && body.RemoteControlPolicy == nil && body.Permissions == nil && body.OwnerScopes == nil {
-		writeError(w, http.StatusBadRequest, "invalid_arg",
-			"nothing to update (expected descr, default_cwd, default_context, default_spawn_group, default_profile, max_members, notify_enabled, remote_control_policy, permissions and/or owner_scopes)")
-		return
 	}
 	resp := map[string]any{"group": g.Name}
 
@@ -4387,12 +4414,12 @@ func handleGroupContext(w http.ResponseWriter, r *http.Request, g *db.AgentGroup
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET only")
 		return
 	}
-	if _, ok := requireGroupContextAccess(w, r, g); !ok {
-		return
-	}
 	members, err := db.ListAgentGroupMembers(g.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	if _, ok := requireGroupContextAccess(w, r, g, members); !ok {
 		return
 	}
 	// One tmux ls for the whole listing; the per-member snapshot read
@@ -4451,51 +4478,30 @@ func agentStateHasSnapshot(s agentState) bool {
 	})
 }
 
-// requireGroupContextAccess gates the group-wide context read. The human
-// operator always passes. An agent passes if it holds the
-// agent.context-info slug, or if it owns this group (the owner bypass) —
-// but an explicit deny override is ALWAYS authoritative and suppresses
-// the owner bypass, mirroring the universal precedence in
-// resolvePermission / requireCrossAgentPermission (the owner bypass only
-// fills the "undecided" gap). Unidentified / unconfirmed / unidentifiable
-// callers are refused fail-closed. Returns the caller's conv-id ("" for
-// humans) on success; on failure the error response is already written.
-func requireGroupContextAccess(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) (string, bool) {
-	p := peerFromContext(r.Context())
-	switch classify(p) {
-	case classUnidentified:
-		writeUnidentified(w)
-		return "", false
-	case classHuman:
-		return "", true
-	case classAgentUnknown:
-		writeAgentUnknown(w)
-		return "", false
-	case classUnconfirmed:
-		writeUnconfirmed(w, r)
-		return "", false
-	case classAgent:
-		// Confirmed agent — evaluate slug + owner bypass below.
+// requireGroupContextAccess gates the group-wide context read through the
+// global agent.context-info slug OR the dedicated groups.members.context-info
+// sibling. The sibling must cover every active group containing every returned
+// member; ownership contributes it only for owned groups.
+func requireGroupContextAccess(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, members []*db.AgentGroupMember) (string, bool) {
+	affected := make([]string, 0, len(members))
+	caller := ""
+	if p := peerFromContext(r.Context()); classify(p) == classAgent {
+		caller = p.ConvID
 	}
-	switch resolvePermission(p.ConvID, PermAgentContextInfo) {
-	case permAllow:
-		return p.ConvID, true
-	case permUndecided:
-		// No grant/deny source — the owner bypass applies, narrowed by g's
-		// own owner-scope map (TCL-1071). The group is the whole subject of
-		// this endpoint, so the context names it and no other group's map
-		// can be consulted by mistake.
-		if ownerOfGroupPermitting(g, p.ConvID, PermAgentContextInfo, ActionContext{Group: g.Name}) {
-			return p.ConvID, true
+	for _, member := range members {
+		if sameActor(caller, member.ConvID) {
+			continue
 		}
-	case permDeny:
-		// Explicit deny is authoritative — it suppresses the owner bypass.
+		affected = append(affected, member.ConvID)
 	}
-	writeError(w, http.StatusForbidden, "permission",
-		fmt.Sprintf("caller is not granted %q and is not an owner of group %q "+
-			"(be added as a group owner, or grant via `tclaude agent permissions grant %s %s`)",
-			PermAgentContextInfo, g.Name, PermAgentContextInfo, short8(p.ConvID)))
-	return "", false
+	ctx := ActionContext{
+		Group:                   g.Name,
+		structuralGroup:         g.Name,
+		affectedConvs:           affected,
+		bulkGroupMemberCoverage: true,
+		alternatePermission:     PermGroupsMembersContextInfo,
+	}
+	return requirePermission(w, r, PermAgentContextInfo, ctx)
 }
 
 type ownerJSON struct {
@@ -4539,11 +4545,11 @@ func handleGroupOwnersList(w http.ResponseWriter, _ *http.Request, g *db.AgentGr
 }
 
 // handleGroupOwnersAdd grants ownership of g to a conv. Permission-
-// gated on groups.own (default human-only). The granted_by column
+// gated on groups.owners.manage (default human-only). The granted_by column
 // records "" for human-issued grants and the agent's conv-id for
 // agent-issued ones.
 func handleGroupOwnersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	grantedBy, ok := requirePermission(w, r, PermGroupsOwn)
+	grantedBy, ok := requireGroupPermission(w, r, PermGroupsOwnersManage, g)
 	if !ok {
 		return
 	}
@@ -4566,7 +4572,7 @@ func handleGroupOwnersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
 		return
 	}
-	if err := db.AddAgentGroupOwner(g.ID, res.ConvID, auditedCaller(grantedBy, PermGroupsOwn)); err != nil {
+	if err := db.AddAgentGroupOwner(g.ID, res.ConvID, auditedCaller(grantedBy, PermGroupsOwnersManage)); err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
@@ -4579,9 +4585,9 @@ func handleGroupOwnersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 
 // handleGroupOwnersRemove revokes ownership. 404 when convID wasn't
 // an owner — distinct from "no such group" (which the dispatcher
-// catches). Permission-gated on groups.own.
+// catches). Permission-gated on groups.owners.manage.
 func handleGroupOwnersRemove(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, convSelector string) {
-	if _, ok := requirePermission(w, r, PermGroupsOwn); !ok {
+	if _, ok := requireGroupPermission(w, r, PermGroupsOwnersManage, g); !ok {
 		return
 	}
 	if !requireGroupActive(w, g) {
@@ -4606,7 +4612,7 @@ func handleGroupOwnersRemove(w http.ResponseWriter, r *http.Request, g *db.Agent
 }
 
 func handleGroupMembersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	if _, ok := requirePermission(w, r, PermMemberAdd); !ok {
+	if _, ok := requireGroupPermission(w, r, PermGroupsMembersAdd, g); !ok {
 		return
 	}
 	if !requireGroupActive(w, g) {
@@ -4647,9 +4653,9 @@ func handleGroupMembersAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 
 // handleGroupMembersUpdate patches role/descr on an existing member.
 // Only fields explicitly present in the request body are touched — pass
-// `null` (or omit) to leave a field unchanged. Gated on member.redesignate.
+// `null` (or omit) to leave a field unchanged. Gated on groups.members.update.
 func handleGroupMembersUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, convSelector string) {
-	if _, ok := requirePermission(w, r, PermMemberRedesignate); !ok {
+	if _, ok := requireGroupPermission(w, r, PermGroupsMembersUpdate, g); !ok {
 		return
 	}
 	if !requireGroupActive(w, g) {
@@ -4685,7 +4691,7 @@ func handleGroupMembersUpdate(w http.ResponseWriter, r *http.Request, g *db.Agen
 }
 
 func handleGroupMembersRemove(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, convSelector string) {
-	if _, ok := requirePermission(w, r, PermMemberRemove); !ok {
+	if _, ok := requireGroupPermission(w, r, PermGroupsMembersRemove, g); !ok {
 		return
 	}
 	if !requireGroupActive(w, g) {

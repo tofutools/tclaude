@@ -52,7 +52,7 @@ func haveLineageParent(
 ) {
 	t.Helper()
 	f.HaveMember(group, convID)
-	require.NoError(t, db.GrantAgentPermission(convID, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(convID, agentd.PermGroupsMembersSpawn, "test"))
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID:                    "sess-" + convID,
 		TmuxSession:           "tmux-" + convID,
@@ -645,7 +645,7 @@ func TestCopilotLineage_TemporaryUnlockRevokesSpawnAuthority(t *testing.T) {
 		"trust_dir":              true,
 	})
 	require.Equalf(t, http.StatusOK, spawn.Code, "source spawn; body=%s", spawn.Raw)
-	require.NoError(t, db.GrantAgentPermission(spawn.ConvID, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(spawn.ConvID, agentd.PermGroupsMembersSpawn, "test"))
 
 	// While confined, it may mint the proven child.
 	admitted := f.AsAgent(spawn.ConvID).SpawnWith("alpha", map[string]any{

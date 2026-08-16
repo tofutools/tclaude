@@ -141,7 +141,43 @@ for (var field of document.querySelectorAll('#agent-spawn-modal input, #agent-sp
 }
 submit.scrollIntoView({block:'end'});
 `),
+		agentSpawnResizePersistenceBrowserState(),
 	}
+}
+
+func agentSpawnResizePersistenceBrowserState() dashsnap.State {
+	state := agentSpawnBrowserState("plain-resize-persistence", "Plain resized spawn reopen", false, "")
+	state.Actions = []dashsnap.BrowserAction{
+		{Kind: "mouse-down-at", JS: `
+var card = document.querySelector('#agent-spawn-modal .cron-create-modal');
+var rect = card.getBoundingClientRect();
+return {x:rect.right - 2, y:rect.bottom - 2};
+`},
+		{Kind: "move-by", DX: 160, Steps: 12},
+		{Kind: "mouse-up"},
+		{Kind: "eval", JS: `
+return (async function(){
+  var card = document.querySelector('#agent-spawn-modal .cron-create-modal');
+  var draggedWidth = card.offsetWidth;
+  if (draggedWidth < 750) throw new Error('native resize did not widen the spawn card: ' + draggedWidth);
+  var prefs = await import('/static/js/prefs.js');
+  var saved = JSON.parse(prefs.dashPrefs.getItem('tclaude.dash.modalSize.agent-spawn'));
+  if (!saved || saved.w !== draggedWidth) throw new Error('dragged width was not cached: ' + JSON.stringify(saved));
+  if (Object.prototype.hasOwnProperty.call(saved, 'h')) throw new Error('spawn resize persisted height: ' + JSON.stringify(saved));
+  document.querySelector('#agent-spawn-cancel').click();
+  var deadline = Date.now() + 2000;
+  while (document.querySelector('#agent-spawn-modal') && Date.now() < deadline) await new Promise(function(resolve){ setTimeout(resolve, 20); });
+  if (document.querySelector('#agent-spawn-modal')) throw new Error('spawn modal did not close');
+  var controller = await import('/static/js/agent-spawn-controller.js');
+  controller.openAgentSpawnModal({groupName:'frontend-squad'});
+  while (!document.querySelector('#agent-spawn-modal') && Date.now() < deadline) await new Promise(function(resolve){ setTimeout(resolve, 20); });
+  card = document.querySelector('#agent-spawn-modal .cron-create-modal');
+  if (!card) throw new Error('spawn modal did not reopen');
+  if (card.offsetWidth !== draggedWidth) throw new Error('reopened width reset: dragged=' + draggedWidth + ' reopened=' + card.offsetWidth);
+})();
+`},
+	}
+	return state
 }
 
 func agentSpawnBrowserState(key, title string, wizard bool, body string) dashsnap.State {

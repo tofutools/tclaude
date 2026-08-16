@@ -26,7 +26,10 @@ test('Jobs actions preserve confirmation, mutation, modal, download, and error b
   };
   const actions = createJobsActions({
     state,
-    requestMutation: async (path, options) => { mutations.push({ path, options }); },
+    requestMutation: async (path, options) => {
+      mutations.push({ path, options });
+      if (path.endsWith('/run-now')) return { status: 'ok' };
+    },
     refresh: async () => {},
     confirm: async () => confirms,
     notify: (...args) => notices.push(args),
@@ -98,6 +101,25 @@ test('Jobs actions preserve confirmation, mutation, modal, download, and error b
   ]);
 });
 
+test('Jobs run-now reports recorded 200-level failure outcomes honestly', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createJobsActions } = await harness.importDashboardModule('js/jobs-actions.js');
+  const notices = [];
+  const state = {
+    upsertCron: () => {}, openCronCreate: () => {}, openCronEdit: () => {},
+    openCronDuplicate: () => {}, closeCronDialog: () => {},
+  };
+  const actions = createJobsActions({
+    state,
+    requestMutation: async () => ({ status: 'permission_denied' }),
+    refresh: async () => {}, confirm: async () => true,
+    notify: (...args) => notices.push(args), download: () => {},
+  });
+
+  assert.equal(await actions.runCron({ id: 4, name: 'daily', action_kind: 'spawn' }), false);
+  assert.deepEqual(notices, [['cron run now: daily — permission_denied', true]]);
+});
+
 test('Jobs cron transport returns canonical rows without awaiting the follow-up refresh', async (t) => {
   const harness = await createPreactHarness(t);
   const { createJobsActions } = await harness.importDashboardModule('js/jobs-actions.js');
@@ -113,12 +135,14 @@ test('Jobs cron transport returns canonical rows without awaiting the follow-up 
     requestMutation: async (path, options) => {
       calls.push({ path, options });
       if (path === '/api/cron/explain') return { valid: true, description: 'daily' };
+      if (path.includes('/logs')) return { runs: [{ id: 3, status: 'spawned', worker_agent: 'agt_worker' }] };
       return { id: 8, name: 'saved' };
     },
     refresh: () => { refreshed += 1; return new Promise(() => {}); },
     confirm: async () => true, notify: () => {}, download: () => {},
   });
   assert.deepEqual(await actions.explainCron('@daily'), { valid: true, description: 'daily' });
+  assert.deepEqual(await actions.loadCronLogs(8), [{ id: 3, status: 'spawned', worker_agent: 'agt_worker' }]);
   const saved = await actions.saveCron({
     path: '/api/cron', method: 'POST', payload: { target: 'agt_one' },
   });
@@ -127,6 +151,7 @@ test('Jobs cron transport returns canonical rows without awaiting the follow-up 
   assert.equal(refreshed, 1, 'refresh starts but cannot pin the accepted dialog mutation');
   assert.deepEqual(calls, [
     { path: '/api/cron/explain', options: { body: { expr: '@daily' }, refreshAfter: false } },
+    { path: '/api/cron/8/logs?limit=25', options: { method: 'GET', refreshAfter: false } },
     { path: '/api/cron', options: { method: 'POST', body: { target: 'agt_one' }, refreshAfter: false } },
   ]);
 });
@@ -174,4 +199,50 @@ test('Jobs cron PATCH target and owner denials reject without optimistic success
   assert.deepEqual(upserts, [], 'a denied PATCH must not optimistically replace the stored row');
   assert.equal(refreshed, 0, 'a denied PATCH must not schedule a success refresh');
   assert.deepEqual(notices, [], 'the dialog owns error presentation; no success notice is emitted');
+});
+
+test('Trigger actions use the frozen REST contract and row-version CAS', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createJobsActions } = await harness.importDashboardModule('js/jobs-actions.js');
+  const calls = [];
+  const notices = [];
+  const state = {
+    upsertCron: () => {},
+    openCronCreate: () => {}, openCronEdit: () => {}, openCronDuplicate: () => {}, closeCronDialog: () => {},
+    openStandingOrderCreate: () => {}, openStandingOrderEdit: () => {}, closeStandingOrderDialog: () => {},
+    openTriggerCreate: () => {}, openTriggerEdit: () => {}, closeTriggerDialog: () => {},
+    invalidateTriggers: () => {},
+  };
+  const actions = createJobsActions({
+    state,
+    requestMutation: async (path, options) => {
+      calls.push({ path, options });
+      if (path === '/api/triggers') return { triggers: [{ id: 4, name: 'review' }] };
+      if (path.includes('/firings')) return { firings: [{ id: 8, outcome: 'ok' }] };
+      if (path === '/api/triggers/4' && options.method === 'GET') return { id: 4, dwell_states: [{ result: 'unknown' }] };
+      return { id: 4, name: 'review' };
+    },
+    refresh: async () => {}, confirm: async () => true,
+    notify: (...args) => notices.push(args), download: () => {},
+  });
+
+  assert.deepEqual(await actions.loadTriggers(), [{ id: 4, name: 'review', firings: [{ id: 8, outcome: 'ok' }] }]);
+  assert.deepEqual(await actions.loadTriggerFirings(4), [{ id: 8, outcome: 'ok' }]);
+  assert.deepEqual(await actions.loadTriggerDetail(4), { id: 4, dwell_states: [{ result: 'unknown' }] });
+  await actions.saveTrigger({ editing: false, payload: { name: 'review' } });
+  await actions.saveTrigger({ editing: true, id: 4, payload: { name: 'review 2', row_version: 7 } });
+  await actions.toggleTrigger({ id: 4, row_version: 7, name: 'review', enabled: true });
+  await actions.deleteTrigger({ id: 4, row_version: 8, name: 'review' });
+
+  assert.deepEqual(calls.map((call) => [call.path, call.options.method]), [
+    ['/api/triggers', 'GET'],
+    ['/api/triggers/4/firings?limit=1', 'GET'],
+    ['/api/triggers/4/firings?limit=20', 'GET'],
+    ['/api/triggers/4', 'GET'],
+    ['/api/triggers', 'POST'],
+    ['/api/triggers/4', 'PATCH'],
+    ['/api/triggers/4/disable?row_version=7', 'POST'],
+    ['/api/triggers/4?row_version=8', 'DELETE'],
+  ]);
+  assert.match(notices.at(-1)[0], /trigger delete/);
 });

@@ -549,7 +549,7 @@ func TestSeatbeltOrdinaryAncestorHideRepairsRequiredAgentdSocket(t *testing.T) {
 
 func TestSeatbeltPrivateAttachmentParentUsesUniformReadAndUnixConnectHide(t *testing.T) {
 	const (
-		parent  = "/Users/dev/.tclaude/data/spawn-attachments"
+		parent  = "/Users/dev/.tclaude/api/spawn-attachments"
 		current = parent + "/current-session"
 		sibling = parent + "/sibling-session"
 	)

@@ -2,6 +2,7 @@ package db
 
 import (
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -80,6 +81,43 @@ func ClaimSpawnSlot(spawnerConvID string, maxPerWindow int, window time.Duration
 			WHERE spawner_agent_id = ? AND spawned_at > ?
 		) < ?`,
 		spawnerAgentID, nowStr, spawnerAgentID, threshold, maxPerWindow)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrSpawnRateLimited
+	}
+	return nil
+}
+
+// ClaimDaemonSpawnSlot is the daemon-owned counterpart to ClaimSpawnSlot.
+// Background automations have no caller conv-id, but they are not the human
+// trust root and must still consume a rolling rate slot. principal is a stable
+// provenance key such as "trigger:12".
+func ClaimDaemonSpawnSlot(principal string, maxPerWindow int, window time.Duration, now time.Time) error {
+	principal = strings.TrimSpace(principal)
+	if principal == "" {
+		return errors.New("ClaimDaemonSpawnSlot: principal required")
+	}
+	if maxPerWindow <= 0 {
+		return nil
+	}
+	if window < 0 {
+		window = 0
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	now = now.UTC()
+	threshold := dbTime(now.Add(-window))
+	res, err := d.Exec(`INSERT INTO daemon_spawn_history(principal,spawned_at)
+		SELECT ?,? WHERE (SELECT COUNT(*) FROM daemon_spawn_history
+		WHERE principal=? AND spawned_at>?) < ?`, principal, dbTime(now), principal, threshold, maxPerWindow)
 	if err != nil {
 		return err
 	}

@@ -35,15 +35,29 @@ func TestDashboardAssets_RoleLibraryWired(t *testing.T) {
 		"id=${`${domKind}-manage-modal`}",
 		`id="role-editor-modal"`,
 		`id="role-editor-brief"`,
+		`id="role-editor-perms" class="tool"`,
 		`id="role-editor-submit"`,
+		`id="agent-spawn-role-refs"`,
+		`id="profile-editor-role-refs"`,
+		`role_refs: [...new Set((draft.roleRefs || [])`,
 		`.cron-create-row input:not([type])`,
 		`body.wizard #role-editor-modal .cron-create-row input:not([type])`,
 		`id="profile-editor-perms" class="tool"`,
+		`.cron-create-row > button.tool:is(#profile-editor-perms, #profile-editor-context-features, #role-editor-perms)`,
 		// dashboard.css — the pure-CSS wizard vocabulary swap ("roles" → "classes").
 		"body.wizard .roles-word-wizard { display: inline; }",
 	} {
 		if !dashboardSourceContains(dashboardAssets, needle) {
 			t.Errorf("dashboard assets missing %q — role-library wiring broken", needle)
+		}
+	}
+	for _, obsolete := range []string{
+		`id="role-editor-harness"`, `id="role-editor-model"`,
+		`id="role-editor-sandbox"`, `id="role-editor-approval"`,
+		`border: 1px dashed #426084`,
+	} {
+		if dashboardSourceContains(dashboardAssets, obsolete) {
+			t.Errorf("dashboard assets still expose role-owned launch control %q", obsolete)
 		}
 	}
 }

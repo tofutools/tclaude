@@ -757,6 +757,51 @@ func TestStopLoopbackRuntimeRetainsAuthorityWhileRecordedProcessLives(t *testing
 		"a live loopback process must retain the claim that protects its worktree")
 }
 
+func TestOpenCodeRuntimeReplacementPreservesCgroupUntilFinalRetirement(t *testing.T) {
+	setupTestDB(t)
+	oldRemove := removeOpenCodeResourceCgroup
+	t.Cleanup(func() { removeOpenCodeResourceCgroup = oldRemove })
+	var removed []string
+	removeOpenCodeResourceCgroup = func(dir string) error {
+		removed = append(removed, dir)
+		return nil
+	}
+	runtime := db.OpenCodeRuntime{
+		SessionID: "spwn-cgroup-replacement", PID: 0,
+		ServerURL: "http://127.0.0.1:43210", Cwd: t.TempDir(),
+		Transport:         db.OpenCodeTransportLoopbackTCP,
+		ResourceCgroupDir: "/sys/fs/cgroup/system.slice/tclaude-tmux.service/tclaude-replacement",
+	}
+	record := func() { require.NoError(t, db.UpsertOpenCodeRuntime(runtime)) }
+
+	record()
+	require.NoError(t, stopOpenCodeRuntimeForReplacement(runtime.SessionID))
+	assert.Empty(t, removed,
+		"same-session replacement must retain the prepared boundary it will reuse")
+
+	record()
+	require.NoError(t, stopOpenCodeRuntime(runtime.SessionID))
+	assert.Equal(t, []string{runtime.ResourceCgroupDir}, removed,
+		"final retirement must dispose of the durable boundary")
+
+	assert.True(t, openCodeReplacementReusesResourceCgroup(
+		runtime.ResourceCgroupDir, runtime.ResourceCgroupDir))
+	assert.False(t, openCodeReplacementReusesResourceCgroup(
+		runtime.ResourceCgroupDir, ""),
+		"a replacement without a boundary must dispose of the old one")
+	assert.False(t, openCodeReplacementReusesResourceCgroup("", ""))
+
+	removed = nil
+	require.NoError(t, cleanupAbandonedOpenCodeReplacementCgroup(
+		true, false, runtime.ResourceCgroupDir))
+	assert.Equal(t, []string{runtime.ResourceCgroupDir}, removed,
+		"a failed same-boundary replacement must not orphan its cgroup")
+	removed = nil
+	require.NoError(t, cleanupAbandonedOpenCodeReplacementCgroup(
+		true, true, runtime.ResourceCgroupDir))
+	assert.Empty(t, removed, "a successful replacement retains its live boundary")
+}
+
 func TestRandomOpenCodePassword(t *testing.T) {
 	first, err := randomOpenCodePassword()
 	require.NoError(t, err)
@@ -801,14 +846,14 @@ func TestOpenCodeRuntimeSandboxSpecRoundTripsAndRevalidates(t *testing.T) {
 	for _, protected := range protectedPaths {
 		if sandboxpolicy.PathContainsOrEqual(
 			protected,
-			tclcommon.SpawnAttachmentsPrivateBase(),
+			tclcommon.LegacySpawnAttachmentsPrivateBase(),
 		) {
 			privateParentProtected = true
 			break
 		}
 	}
 	assert.True(t, privateParentProtected,
-		"pre-field v2 servers must inherit the existing daemon-data hide over the private parent")
+		"pre-field v2 servers must inherit the daemon-data hide over the legacy private parent")
 
 	_, err = openCodeRuntimeSandboxSpec(db.OpenCodeRuntime{
 		Cwd:                   cwd,
@@ -1230,4 +1275,21 @@ func TestOpenCodeCredentialHandoffNeverEntersWrapperArgv(t *testing.T) {
 	joined := strings.Join(args, " ")
 	assert.NotContains(t, joined, "top-secret")
 	assert.NotContains(t, joined, "43210")
+}
+
+func TestOpenCodePrivateRoutedNetworkIsNotProviderFiltered(t *testing.T) {
+	spec := &session.TclaudeLayerLaunchSpec{Effective: sandboxpolicy.EffectiveProfile{
+		Network: &sandboxpolicy.NetworkRules{
+			Mode:      sandboxpolicy.AccessModeOpen,
+			Namespace: sandboxpolicy.NetworkNamespacePrivate,
+		},
+	}}
+	assert.False(t, openCodeFilteredNetworkSpec(spec),
+		"unrestricted private routing must not activate provider authority isolation")
+
+	spec.Effective.Network.Deny = []sandboxpolicy.NetworkAllowEntry{{
+		CIDR: "192.0.2.0/24",
+	}}
+	assert.True(t, openCodeFilteredNetworkSpec(spec),
+		"a private namespace with destination rules remains provider-filtered")
 }

@@ -66,13 +66,14 @@ func TestPermOwnerVisible_SlugsExposeOwnerImplied(t *testing.T) {
 func assertOwnerImpliedShape(t *testing.T, m map[string]bool) {
 	t.Helper()
 	for _, owner := range []string{
-		agentd.PermGroupsSpawn, agentd.PermGroupsRetire, agentd.PermAgentReincarnate,
+		agentd.PermGroupsMembersSpawn, agentd.PermGroupsMembersRetire, agentd.PermGroupsMembersReincarnate,
 		agentd.PermHumanNotify, agentd.PermGroupsLinkAdd, agentd.PermProcessRunsRead,
+		agentd.PermGroupsMembersAdd, agentd.PermGroupsRename, agentd.PermGroupsSettingsDescription,
 	} {
 		assert.Truef(t, m[owner], "slug %q must be marked owner_implied", owner)
 	}
 	for _, plain := range []string{
-		agentd.PermGroupsCreate, agentd.PermPermissionsGrant, agentd.PermMemberAdd,
+		agentd.PermGroupsCreate, agentd.PermPermissionsGrant, agentd.PermGroupsDelete,
 		agentd.PermSelfRename, agentd.PermProcessRunsManage, agentd.PermProcessTemplatesManage,
 	} {
 		assert.Falsef(t, m[plain], "slug %q must NOT be marked owner_implied", plain)

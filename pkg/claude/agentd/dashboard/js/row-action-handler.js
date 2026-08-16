@@ -121,7 +121,7 @@ export async function handleRowAction(action) {
         // Stand down the force (JOH-345): the mirror of deploy. Retires every
         // member and sweeps the deploy-seeded rhythms + pending waves, keeping
         // the group as a dormant record. Destructive to the running roster, so
-        // confirm first. Server-gated (groups.retire / owner-pass) — a
+        // confirm first. Server-gated (groups.members.retire / owner-pass) — a
         // non-permitted click surfaces as a 403 toast.
         const confirmed = await confirmModal({
           title: 'Stand down the force?',
@@ -259,14 +259,17 @@ export async function handleRowAction(action) {
         refresh();
         return;
       }
-      case 'fast-mode-disable': {
+      case 'fast-mode-disable':
+      case 'fast-mode-set': {
+        const intent = act === 'fast-mode-disable' ? 'off' : (data.intent === 'on' ? 'on' : 'off');
+        const enabling = intent === 'on';
         const confirmed = await confirmModal({
-          title: `Disable Fast mode for ${label}?`,
-          body: 'This sends Codex’s /fast toggle after the server re-checks that Fast mode is still on. The agent stays running and subsequent turns use standard routing.',
-          okLabel: 'Disable Fast mode',
+          title: `${enabling ? 'Enable' : 'Disable'} Fast mode for ${label}?`,
+          body: `This sends Codex’s /fast toggle after the server re-checks the live state and, when needed, infers the inherited setting. The agent stays running and subsequent turns use ${enabling ? 'faster, higher-cost' : 'standard'} routing.`,
+          okLabel: `${enabling ? 'Enable' : 'Disable'} Fast mode`,
         });
         if (!confirmed) return;
-        const r = await fetch(`/api/agents/${encodeURIComponent(agent)}/fast-mode/disable`, {
+        const r = await fetch(`/api/agents/${encodeURIComponent(agent)}/fast-mode/${enabling ? 'enable' : 'disable'}`, {
           method: 'POST', credentials: 'same-origin',
         });
         if (!r.ok) {
@@ -275,11 +278,11 @@ export async function handleRowAction(action) {
             const parsed = JSON.parse(detail);
             detail = parsed.error || parsed.message || detail;
           } catch (_) { /* plain error */ }
-          toast(`Fast mode disable failed: ${detail}`, true);
+          toast(`Fast mode ${intent} failed: ${detail}`, true);
           refresh();
           return;
         }
-        toast(`${label}: Fast mode disable requested`);
+        toast(`${label}: Fast mode ${intent} requested`);
         refresh();
         return;
       }
@@ -1039,17 +1042,17 @@ export async function handleRowAction(action) {
       }
       case 'msg-clear': {
         const confirmed = await confirmModal({
-          title: 'Clear read messages?',
+          title: 'Delete read messages?',
           body: 'Permanently deletes every message that has been marked read. Unread messages are kept.',
-          okLabel: 'Clear read',
+          okLabel: 'Delete read',
         });
         if (!confirmed) return;
         const r = await fetch('/api/human-messages/clear', {
           method: 'POST', credentials: 'same-origin',
         });
-        if (!r.ok) { toast(`Clear failed: ${await r.text()}`, true); return; }
+        if (!r.ok) { toast(`Delete failed: ${await r.text()}`, true); return; }
         const res = await r.json().catch(() => ({}));
-        toast(`cleared ${res.deleted || 0} read message(s)`);
+        toast(`deleted ${res.deleted || 0} read message(s)`);
         refresh();
         return;
       }

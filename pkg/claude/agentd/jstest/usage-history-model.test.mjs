@@ -2,6 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
 
+test('Copilot monthly quota uses product and AIC vocabulary', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { usageProviderLabel, usageWindowLabel, usageWindowScopeLabel } =
+    await harness.importDashboardModule('js/usage-history-model.js');
+  const series = { provider: 'github', window_name: 'monthly', duration_seconds: 30 * 24 * 3600 };
+  assert.equal(usageProviderLabel(series.provider), 'GitHub Copilot');
+  assert.equal(usageWindowLabel(series.window_name, series.duration_seconds), 'Monthly premium requests (AIC)');
+  assert.equal(usageWindowScopeLabel(series), 'Monthly premium requests (AIC)');
+});
+
 test('usage prediction copy states lockout duration and unambiguous average rate', async (t) => {
   const harness = await createPreactHarness(t);
   const { formatUsageDuration, formatUsageResetCountdown, usageForecastView } =
@@ -21,6 +31,7 @@ test('usage prediction copy states lockout duration and unambiguous average rate
     'resets in 6d 23h 17m',
   );
   assert.equal(formatUsageResetCountdown(new Date(now - 60_001).toISOString(), now), 'reset 1m ago');
+  assert.equal(formatUsageResetCountdown('', now), '', 'missing reset metadata adds no confusing unknown/reset copy');
   assert.equal(forecast.headline, 'Prediction: limit hit in 47h (5d 1h before reset)');
   assert.deepEqual(forecast.lines, [
     'Predicted time without quota access: 5d 1h',

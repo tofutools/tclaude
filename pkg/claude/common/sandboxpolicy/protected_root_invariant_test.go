@@ -219,7 +219,9 @@ func TestNoProfileFieldCanCarryProtectedAccess(t *testing.T) {
 			// that emitted real entries while skipping normalizeFilesystem.
 			// TestPreLaunchBlocksCannotInjectFilesystemAuthority below checks
 			// this rather than leaving it as a claim.
-			want: []string{"Name", "Filesystem", "FilesystemSpellings", "Environment", "AgentDirectories", "NetworkAccess", "Network", "UnixSockets", "ResourceLimits", "DarwinAllowMachRegister", "PreLaunch", "Includes"},
+			// FilesystemRoot is a closed posture enum; it names no path and can
+			// only remove ambient visibility by selecting a constructed root.
+			want: []string{"Name", "Filesystem", "FilesystemSpellings", "Environment", "AgentDirectories", "FilesystemRoot", "NetworkAccess", "Network", "UnixSockets", "ResourceLimits", "DarwinAllowMachRegister", "PreLaunch", "Includes"},
 		},
 		{
 			name: "EffectiveProfile",
@@ -227,7 +229,7 @@ func TestNoProfileFieldCanCarryProtectedAccess(t *testing.T) {
 			// PreLaunch: see the Profile note above. It survives resolution so
 			// the launch path can run it, but it is never consulted by anything
 			// that renders access.
-			want: []string{"Filesystem", "MountAliases", "Environment", "AgentDirectories", "NetworkAccess", "Network", "UnixSockets", "ResourceLimits", "DarwinAllowMachRegister", "PreLaunch", "AccessNotices", "Provenance"},
+			want: []string{"Filesystem", "MountAliases", "Environment", "AgentDirectories", "FilesystemRoot", "NetworkAccess", "Network", "UnixSockets", "ResourceLimits", "DarwinAllowMachRegister", "PreLaunch", "AccessNotices", "Provenance"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

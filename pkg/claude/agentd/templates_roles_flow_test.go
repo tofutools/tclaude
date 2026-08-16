@@ -1,7 +1,6 @@
 package agentd_test
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,9 +13,9 @@ import (
 )
 
 // JOH-240: the role library. A template roster agent REFERENCES a role and
-// inherits its defaults — a canonical role-brief (rendered as a "## Role" block
-// in the agent's startup context), a default launch shape, and a default
-// permission set — BENEATH the agent's own overrides. These flow tests assert
+// inherits its behavior/access defaults — a canonical role brief (rendered as
+// a "## Role" block in startup context) and a default permission set — beneath
+// the agent's own overrides. Launch policy stays independent. These flow tests assert
 // the resolved effects at real surfaces: the Spawner boundary (SpawnModel), the
 // granted-permission rows, and the composed spawn-context inbox message.
 
@@ -27,11 +26,10 @@ func createRole(t *testing.T, f *testharness.Flow, body map[string]any) *httptes
 	return testharness.Serve(f.Mux, r)
 }
 
-// Scenario: a template agent references a role that carries a default model, a
-// default permission set, and a canonical brief. On instantiate the spawned
-// agent (a) launches on the role's model, (b) is granted the role's permission,
-// and (c) sees the role's brief as a "## Role" block in its startup context.
-// This is the core win: the role's defaults reach the spawned agent.
+// Scenario: a template agent references a role that carries a default
+// permission set and a canonical brief. On instantiate the spawned agent is
+// granted the role's permission and sees its brief as a "## Role" block.
+// This is the core win: the role's behavior/access defaults reach the agent.
 func TestGroupTemplate_RoleRef_AppliesDefaults(t *testing.T) {
 	f := newFlow(t)
 
@@ -41,7 +39,6 @@ func TestGroupTemplate_RoleRef_AppliesDefaults(t *testing.T) {
 		"name":        "cold-reviewer",
 		"descr":       "cold reviewer",
 		"brief":       "You review changes with fresh eyes.",
-		"model":       "haiku",
 		"permissions": []string{"human.notify"},
 	}).Code, "create role")
 
@@ -67,12 +64,7 @@ func TestGroupTemplate_RoleRef_AppliesDefaults(t *testing.T) {
 	conv := res.Agents[0].ConvID
 	require.NotEmpty(t, conv, "rev conv-id")
 
-	// (a) Launched on the role's default model.
-	model, ok := f.World.SpawnModel(conv)
-	require.Truef(t, ok, "no spawn recorded for conv %s", conv)
-	assert.Equal(t, "haiku", model, "agent inherits the role's default model")
-
-	// (b) Granted the role's default permission.
+	// Granted the role's default permission.
 	assert.Contains(t, res.Agents[0].Granted, "human.notify",
 		"the role's default permission is granted at instantiate")
 	perms, err := db.ListAgentPermissionsForConv(conv)
@@ -80,30 +72,103 @@ func TestGroupTemplate_RoleRef_AppliesDefaults(t *testing.T) {
 	assert.Containsf(t, perms, "human.notify",
 		"the role's default permission is persisted on the conv: %+v", perms)
 
-	// (c) The role's brief renders as a "## Role" block in the startup context.
+	// The role's brief renders as a "## Role" block in the startup context.
 	msg := soleInboxMessage(t, conv)
 	assert.Contains(t, msg.Body, "## Role", "composed context carries the ## Role block")
 	assert.Contains(t, msg.Body, "You review changes with fresh eyes.",
 		"the role's canonical brief is in the composed context")
 }
 
-// Scenario: the agent's own fields WIN over the role's (role = defaults, agent =
-// specifics). The agent pins an inline model and brings an extra permission; the
-// resolved launch uses the agent's model and the grant set is the UNION.
+// A saved spawn profile may select the role preset for a template member, just
+// as it does for a direct spawn. The template's own role_ref remains optional.
+func TestGroupTemplate_ProfileRoleRef_AppliesDefaults(t *testing.T) {
+	f := newFlow(t)
+	require.Equal(t, http.StatusCreated, createRole(t, f, map[string]any{
+		"name": "profile-auditor", "brief": "Audit from the saved profile.",
+		"permissions": []string{"human.notify"},
+	}).Code)
+	require.Equal(t, http.StatusCreated, createRole(t, f, map[string]any{
+		"name": "profile-maintainer", "brief": "Maintain from the saved profile.",
+		"permissions": []string{"self.rename"},
+	}).Code)
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "audit-kit", "role_refs": []string{"profile-auditor", "profile-maintainer"}, "model": "haiku",
+	}).Code)
+	require.Equal(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+		"name":   "profile-role-team",
+		"agents": []map[string]any{{"name": "auditor", "spawn_profile": "audit-kit"}},
+	}).Code)
+
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/profile-role-team/instantiate",
+		map[string]any{"group_name": "profile-role-group"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "instantiate: %s", rec.Body.String())
+	var res instantiateResult
+	testharness.DecodeJSON(t, rec, &res)
+	require.Equal(t, 1, res.Spawned)
+	require.Equal(t, 0, res.Failed, "%+v", res.Agents)
+	agentd.WaitForBackgroundForTest()
+
+	assert.Contains(t, res.Agents[0].Granted, "human.notify")
+	assert.Contains(t, res.Agents[0].Granted, "self.rename")
+	msg := soleInboxMessage(t, res.Agents[0].ConvID)
+	assert.Contains(t, msg.Body, "Audit from the saved profile.")
+	assert.Contains(t, msg.Body, "Maintain from the saved profile.")
+	model, ok := f.World.SpawnModel(res.Agents[0].ConvID)
+	require.True(t, ok)
+	assert.Equal(t, "haiku", model, "launch policy still comes from the profile")
+}
+
+func TestGroupTemplate_ProfileRoleRefs_RejectScopeConflictBeforeSpawn(t *testing.T) {
+	f := newFlow(t)
+	for _, tc := range []struct {
+		name  string
+		group string
+	}{{"profile-alpha-spawner", "alpha"}, {"profile-beta-spawner", "beta"}} {
+		require.Equal(t, http.StatusCreated, createRole(t, f, map[string]any{
+			"name": tc.name,
+			"permissions": []any{map[string]any{
+				"slug":  agentd.PermGroupsMembersSpawn,
+				"scope": map[string]any{"group": []string{tc.group}},
+			}},
+		}).Code)
+	}
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name":      "conflicting-access-kit",
+		"role_refs": []string{"profile-alpha-spawner", "profile-beta-spawner"},
+	}).Code)
+	require.Equal(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+		"name":   "conflicting-access-team",
+		"agents": []map[string]any{{"name": "worker", "spawn_profile": "conflicting-access-kit"}},
+	}).Code)
+
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/conflicting-access-team/instantiate",
+		map[string]any{"group_name": "conflicting-access-group"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "instantiate: %s", rec.Body.String())
+	var res instantiateResult
+	testharness.DecodeJSON(t, rec, &res)
+	assert.Equal(t, 0, res.Spawned)
+	assert.Equal(t, 1, res.Failed)
+	require.Len(t, res.Agents, 1)
+	assert.Equal(t, "role_scope_conflict", res.Agents[0].ErrorKind)
+	assert.Empty(t, res.Agents[0].ConvID, "invalid role access must fail before a harness is spawned")
+	assert.Empty(t, f.ListGroupMembers("conflicting-access-group"))
+}
+
+// Scenario: launch settings stay independent of roles, while role grants and
+// an agent's inline grants compose as a union.
 func TestGroupTemplate_RoleRef_AgentOverridesWinAndPermsUnion(t *testing.T) {
 	f := newFlow(t)
 
 	require.Equalf(t, http.StatusCreated, createRole(t, f, map[string]any{
 		"name":        "coder",
-		"model":       "haiku",
 		"permissions": []string{"human.notify"},
 	}).Code, "create role")
 
 	createBody := map[string]any{
 		"name": "team",
 		"agents": []map[string]any{
-			// Inline model overrides the role's; the agent adds its own perm.
-			{"name": "d1", "role_ref": "coder", "model": "opus", "permissions": []string{"groups.spawn"}},
+			// Inline launch policy remains the agent's; it also adds its own perm.
+			{"name": "d1", "role_ref": "coder", "model": "opus", "permissions": []string{"groups.members.spawn"}},
 		},
 	}
 	require.Equalf(t, http.StatusCreated,
@@ -121,10 +186,10 @@ func TestGroupTemplate_RoleRef_AgentOverridesWinAndPermsUnion(t *testing.T) {
 	conv := res.Agents[0].ConvID
 	model, ok := f.World.SpawnModel(conv)
 	require.True(t, ok)
-	assert.Equal(t, "opus", model, "the agent's inline model wins over the role default")
+	assert.Equal(t, "opus", model, "the agent's inline model is unaffected by the role")
 
 	// The grant set is the union of role + agent permissions, deduped.
-	assert.ElementsMatch(t, []string{"human.notify", "groups.spawn"}, res.Agents[0].Granted,
+	assert.ElementsMatch(t, []string{"human.notify", "groups.members.spawn"}, res.Agents[0].Granted,
 		"granted set is the role UNION agent permissions")
 }
 
@@ -177,29 +242,6 @@ func TestRole_RejectsReservedName(t *testing.T) {
 		"reserved role name should 400; body=%s", rec.Body.String())
 }
 
-func TestRole_OpenCodeToolGovernanceRoundTripsAndValidates(t *testing.T) {
-	f := newFlow(t)
-	rec := createRole(t, f, map[string]any{
-		"name": "opencode-auditor", "harness": "opencode", "tools": "deny",
-	})
-	require.Equalf(t, http.StatusCreated, rec.Code, "create body=%s", rec.Body.String())
-
-	rec = humanReq(t, f, http.MethodGet, "/v1/roles/opencode-auditor", nil)
-	require.Equal(t, http.StatusOK, rec.Code)
-	var got struct {
-		Tools string `json:"tools"`
-	}
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
-	assert.Equal(t, "deny", got.Tools)
-
-	for _, harnessName := range []string{"claude", "codex"} {
-		rec = createRole(t, f, map[string]any{
-			"name": "bad-tools-" + harnessName, "harness": harnessName, "tools": "ask",
-		})
-		assert.Equalf(t, http.StatusBadRequest, rec.Code, "%s must reject OpenCode tools; body=%s", harnessName, rec.Body.String())
-	}
-}
-
 // Scenario: the canonical seed roles are present via the read API right after a
 // fresh daemon boot (self-healing seed on Open).
 func TestRoles_SeededOnBoot(t *testing.T) {
@@ -228,7 +270,7 @@ func TestTemplate_ExportImport_EmbedsAndRecreatesRole(t *testing.T) {
 	f := newFlow(t)
 
 	require.Equalf(t, http.StatusCreated, createRole(t, f, map[string]any{
-		"name": "auditor", "brief": "You audit.", "model": "haiku",
+		"name": "auditor", "brief": "You audit.",
 	}).Code, "create role")
 	require.Equalf(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
 		"name":   "audit-team",

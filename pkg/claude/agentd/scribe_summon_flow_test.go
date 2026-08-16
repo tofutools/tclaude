@@ -28,7 +28,7 @@ import (
 // pre-granted scribe; an unscoped repeat click starts another fresh agent;
 // an exact structured scope safely reuses a compatible live agent; and
 // an agent caller is gated exactly like the spawn path
-// (groups.spawn + — because a summon carries birth-time grants —
+// (groups.members.spawn + — because a summon carries birth-time grants —
 // permissions.grant). Asserted at the real surfaces the dashboard reads:
 // db.ListAgentGroupMembers (the agent listing) and
 // db.ListAgentPermissionOverridesForConv (the granted slugs).
@@ -374,7 +374,7 @@ func TestScribeSummon_ScopedExclusiveDoesNotReuseOrRevokeLaterSudo(t *testing.T)
 	}
 	first := post()
 	_, err := db.InsertSudoGrant(&db.SudoGrant{
-		ConvID: first.ConvID, Slug: agentd.PermGroupsSpawn,
+		ConvID: first.ConvID, Slug: agentd.PermGroupsMembersSpawn,
 		GrantedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
 		GrantedBy: "test", Reason: "verify exclusive reuse",
 	})
@@ -521,7 +521,7 @@ func TestScribeSummon_ConcurrentScribeGetsExplicitDenies(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, db.PermEffectGrant, overrides[agentd.PermSandboxProfilesDraft])
 	assert.Equal(t, db.PermEffectDeny, overrides[agentd.PermSandboxProfilesManage])
-	assert.Equal(t, db.PermEffectDeny, overrides[agentd.PermGroupsSpawn])
+	assert.Equal(t, db.PermEffectDeny, overrides[agentd.PermGroupsMembersSpawn])
 	assert.Equal(t, db.PermEffectDeny, overrides[agentd.PermTemplatesUse])
 	assert.Equal(t, db.PermEffectDeny, overrides[agentd.PermSelfClone])
 	assert.Equal(t, db.PermEffectDeny, overrides[agentd.PermPermissionsGrant])
@@ -564,7 +564,7 @@ func TestScribeSummon_FreshOrdinaryDoesNotInheritExclusiveDenies(t *testing.T) {
 	overrides, err := db.ListAgentPermissionOverridesForConv(second.ConvID)
 	require.NoError(t, err)
 	assert.Equal(t, db.PermEffectGrant, overrides[agentd.PermSandboxProfilesDraft])
-	assert.NotContains(t, overrides, agentd.PermGroupsSpawn, "exclusive deny is not inherited")
+	assert.NotContains(t, overrides, agentd.PermGroupsMembersSpawn, "exclusive deny is not inherited")
 	assert.NotContains(t, overrides, agentd.PermTemplatesUse, "generated denies are not inherited")
 	assert.NotContains(t, overrides, agentd.PermSelfRename, "human-authored deny is not inherited")
 }
@@ -612,7 +612,7 @@ func TestScribeSummon_DeadScribePrunedOnResummon(t *testing.T) {
 }
 
 // Scenario: gating parity with the spawn path. An agent caller is refused
-// unless it holds groups.spawn AND — because a summon applies birth-time grants
+// unless it holds groups.members.spawn AND — because a summon applies birth-time grants
 // — permissions.grant; the human always passes.
 func TestScribeSummon_AgentGatedLikeSpawn(t *testing.T) {
 	f := newFlow(t)
@@ -639,13 +639,13 @@ func TestScribeSummon_AgentGatedLikeSpawn(t *testing.T) {
 	const bare = "bare-1111-2222-3333-4444"
 	f.HaveMember("callers", bare)
 	assert.Equalf(t, http.StatusForbidden, post(bare).Code,
-		"an agent without groups.spawn is refused")
+		"an agent without groups.members.spawn is refused")
 
-	// (b) An agent with groups.spawn but NOT permissions.grant is still refused —
+	// (b) An agent with groups.members.spawn but NOT permissions.grant is still refused —
 	// a summon carries birth-time grants, so it needs the grant slug too.
 	const spawnOnly = "spwn-1111-2222-3333-4444"
 	f.HaveMember("callers", spawnOnly)
-	require.NoError(t, db.GrantAgentPermission(spawnOnly, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(spawnOnly, agentd.PermGroupsMembersSpawn, "test"))
 	assert.Equalf(t, http.StatusForbidden, post(spawnOnly).Code,
 		"granting a scribe slugs needs permissions.grant")
 
@@ -653,7 +653,7 @@ func TestScribeSummon_AgentGatedLikeSpawn(t *testing.T) {
 	const granter = "good-1111-2222-3333-4444"
 	f.HaveMember("callers", granter)
 	recordBypassParent(granter)
-	require.NoError(t, db.GrantAgentPermission(granter, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(granter, agentd.PermGroupsMembersSpawn, "test"))
 	require.NoError(t, db.GrantAgentPermission(granter, agentd.PermPermissionsGrant, "test"))
 	rec := post(granter)
 	require.Equalf(t, http.StatusOK, rec.Code, "authorised agent summon body=%s", rec.Body.String())
@@ -666,7 +666,7 @@ func TestScribeSummon_AgentGatedLikeSpawn(t *testing.T) {
 	const elevated = "sudo-1111-2222-3333-4444"
 	f.HaveMember("callers", elevated)
 	recordBypassParent(elevated)
-	require.NoError(t, db.GrantAgentPermission(elevated, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(elevated, agentd.PermGroupsMembersSpawn, "test"))
 	sudoID, err := db.InsertSudoGrant(&db.SudoGrant{
 		ConvID: elevated, Slug: agentd.PermPermissionsGrant,
 		GrantedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
@@ -691,7 +691,7 @@ func TestScribeSummon_SpawnsInSharedTrustedWorkdir(t *testing.T) {
 	// Paths derived from the flow's temp HOME (World.New t.Setenv's HOME to it,
 	// so summonScribe's os.UserHomeDir() resolves here — no real ~ is touched).
 	wantCwd := filepath.Join(f.World.HomeDir, ".tclaude", "scribe")
-	claudeJSON := filepath.Join(f.World.HomeDir, ".claude.json")
+	claudeJSON := filepath.Join(f.World.HomeDir, ".claude", ".claude.json")
 
 	summon := func() scribeSummonResp {
 		rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe",
@@ -723,7 +723,7 @@ func TestScribeSummon_SpawnsInSharedTrustedWorkdir(t *testing.T) {
 	// (3) The CC folder-trust store was pre-seeded for that dir, so an
 	// interactive CC start there won't raise the trust dialog.
 	assert.True(t, claudeDirTrusted(t, claudeJSON, wantCwd),
-		"~/.claude.json marks the scribe workdir hasTrustDialogAccepted=true")
+		"the relocated ~/.claude/.claude.json marks the scribe workdir hasTrustDialogAccepted=true")
 
 	// (4) The second scribe is fresh but uses the SAME stable trusted cwd.
 	second := summon()
@@ -940,7 +940,7 @@ func TestScribeSummon_DisabledConfiguredProfileRejectsBeforeTrustSeed(t *testing
 	assert.True(t, os.IsNotExist(err), "a rejected summon must not create the scribe workdir")
 	_, err = os.Stat(filepath.Join(f.World.HomeDir, ".codex", "config.toml"))
 	assert.True(t, os.IsNotExist(err), "a rejected summon must not seed Codex trust")
-	_, err = os.Stat(filepath.Join(f.World.HomeDir, ".claude.json"))
+	_, err = os.Stat(filepath.Join(f.World.HomeDir, ".claude", ".claude.json"))
 	assert.True(t, os.IsNotExist(err), "a rejected summon must not seed Claude trust")
 }
 
@@ -960,7 +960,7 @@ func TestScribeSummon_CodexProfileSeedsCodexTrust(t *testing.T) {
 
 	wantCwd := filepath.Join(f.World.HomeDir, ".tclaude", "scribe")
 	codexTOML := filepath.Join(f.World.HomeDir, ".codex", "config.toml")
-	claudeJSON := filepath.Join(f.World.HomeDir, ".claude.json")
+	claudeJSON := filepath.Join(f.World.HomeDir, ".claude", ".claude.json")
 
 	resp := summonCircleScribe(t, f)
 	require.NotEmpty(t, resp.ConvID)
@@ -983,7 +983,7 @@ func TestScribeSummon_CodexProfileSeedsCodexTrust(t *testing.T) {
 	// ~/.claude.json (that would be the wrong-harness trust seed the ticket
 	// explicitly warns against).
 	_, err = os.Stat(claudeJSON)
-	assert.Truef(t, os.IsNotExist(err), "codex-profile scribe must not seed the CC trust store (~/.claude.json), got err=%v", err)
+	assert.Truef(t, os.IsNotExist(err), "codex-profile scribe must not seed the CC trust store (~/.claude/.claude.json), got err=%v", err)
 }
 
 // Scenario (JOH-371): a config.scribe.profile that names a since-deleted /
@@ -1002,7 +1002,7 @@ func TestScribeSummon_DeletedProfileSelfHeals(t *testing.T) {
 	}))
 
 	wantCwd := filepath.Join(f.World.HomeDir, ".tclaude", "scribe")
-	claudeJSON := filepath.Join(f.World.HomeDir, ".claude.json")
+	claudeJSON := filepath.Join(f.World.HomeDir, ".claude", ".claude.json")
 
 	resp := summonCircleScribe(t, f)
 	require.NotEmpty(t, resp.ConvID, "the scribe still summoned despite the dangling profile")

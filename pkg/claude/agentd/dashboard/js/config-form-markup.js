@@ -245,6 +245,12 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         <span class="cfg-hint">The <strong>Plugins</strong> tab manages human-defined integration bundles (e.g. a docker-backed MCP server). By default it <em>auto-hides</em> when you have no plugins installed — most setups never define one, so the empty tab is just clutter. Enable this to keep it visible regardless, e.g. to reach the built-in catalog and install one from there. (A broken <code>plugins.json</code> always shows the tab so the error isn't hidden.) Off by default. Stored as <code>dashboard.always_show_plugins_tab</code>.</span>
       </div>
       <div class="cfg-field">
+        <span class="cfg-label">Open PRs indicator</span>
+        <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-dashboard-always-show-open-prs" /> always show the footer's Open PRs indicator, even at zero</label>
+        <label class="cfg-inline">show pull requests merged or closed in the last <${ConfigInput} type="number" id="cfg-dashboard-recent-pr-window-days" min="0" max="30" step="1" placeholder="3" aria-label="Recently closed pull request window (days)" style="width:6em" /> days</label>
+        <span class="cfg-hint">The bottom-right <strong>Open PRs</strong> indicator opens a popover listing the pull requests <em>you</em> have open across every repository, with CI state and the agent working each one. <strong>Checked</strong> (default) keeps it in the footer permanently, so it stays a fixed entry point (and reaches the recently-closed list) even when nothing is open; unchecked hides it whenever you have no open PRs. It is always hidden until the daemon has resolved a GitHub identity — with no <code>gh</code> login there is nothing to count. The <strong>days</strong> field adds a separate <em>Closed Nd</em> filter in the popover listing your recently merged and closed PRs; it never mixes into the open list or the count. Default 3 days, max 30; <strong>0</strong> hides the filter, while the shared dashboard PR poll still checks a one-day terminal window to keep Groups badges current. Stored as <code>dashboard.always_show_open_prs</code> (default true, so only <code>false</code> is written) and <code>dashboard.recent_pr_window_days</code> (the default is omitted).</span>
+      </div>
+      <div class="cfg-field">
         <span class="cfg-label">Horizontal scroll</span>
         <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-dashboard-hscroll-follow" /> keep the header & tabs pinned while scrolled sideways (follow mode)</label>
         <span class="cfg-hint">On a window too narrow for a wide member table, the page scrolls sideways. The full-bleed bars (header, tabs, slop marquee) always stretch to fill the width so they never look ragged — this controls their <em>content</em>. <strong>Follow</strong> (default, checked) pins the header controls and tab strip to the viewport and makes them sticky-left, so they stay put and usable while you're scrolled right. <strong>Static</strong> (unchecked) lets that content scroll off with the page — the bars still fill the width, but the controls aren't reachable until you scroll back. Stored as <code>dashboard.hscroll_follow</code> (the default is omitted; static writes <code>false</code>).</span>
@@ -602,6 +608,11 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         <span class="cfg-label">Processes</span>
         <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-feature-processes" /> enable the in-development <strong>Processes</strong> feature</label>
         <span class="cfg-hint">BPMN-lite repeatable process graphs with a drag-and-drop template editor. Runtime execution is temporarily unavailable while the engine is rebuilt. Stored as <code>features.processes</code>.</span>
+      </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Triggers</span>
+        <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-feature-triggers" /> enable the in-development <strong>Triggers</strong> automation feature</label>
+        <span class="cfg-hint">PR-opened rules with bounded spawn and message actions. Off by default; the Automations subview, Groups projection, engine, and API stay absent until enabled. Takes effect on the next dashboard refresh. Stored as <code>features.triggers</code>.</span>
       </div>
       <div class="cfg-field">
         <span class="cfg-label">Groups Route map</span>

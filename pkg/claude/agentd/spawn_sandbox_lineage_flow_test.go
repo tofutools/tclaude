@@ -309,7 +309,7 @@ func TestSpawnSandboxLineage_StagedTemplateWaveRejected(t *testing.T) {
 func haveSpawnCapableSandboxParent(t *testing.T, f *testharness.Flow, group, convID, h, sandbox string) {
 	t.Helper()
 	f.HaveMember(group, convID)
-	require.NoError(t, db.GrantAgentPermission(convID, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(convID, agentd.PermGroupsMembersSpawn, "test"))
 	approval := "bypassPermissions"
 	switch h {
 	case harness.CodexName:

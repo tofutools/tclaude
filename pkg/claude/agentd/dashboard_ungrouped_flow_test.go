@@ -33,6 +33,7 @@ type dashSnapshot struct {
 	PluginsTabVisible         bool               `json:"plugins_tab_visible"`
 	DebugTabVisible           bool               `json:"debug_tab_visible"`
 	ProcessesEnabled          bool               `json:"processes_enabled"`
+	TriggersEnabled           bool               `json:"triggers_enabled"`
 	GroupsRouteMapEnabled     bool               `json:"groups_route_map_enabled"`
 	GroupAttachmentsMode      string             `json:"group_attachments_mode"`
 	TerminalPaletteShortcut   bool               `json:"terminal_command_palette_shortcut_enabled"`
@@ -198,6 +199,7 @@ type dashHarness struct {
 	CanTools                   bool              `json:"can_tools"`
 	CanAutoReview              bool              `json:"can_auto_review"`
 	CanRemoteControl           bool              `json:"can_remote_control"`
+	CanObserveAwaitingInput    bool              `json:"can_observe_awaiting_input"`
 	CanTclaudeLayer            bool              `json:"can_tclaude_layer"`
 	TclaudeLayerServerBoundary bool              `json:"tclaude_layer_server_boundary"`
 }

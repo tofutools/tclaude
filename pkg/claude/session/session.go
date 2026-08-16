@@ -257,7 +257,6 @@ func Cmd() *cobra.Command {
 			tclaudeLayerRouteHelperCmd(),
 			tclaudeLayerRouteHelperBootstrapCmd(),
 			tclaudeLayerFilteredBootstrapCmd(),
-			tclaudeLayerFilteredNFTCmd(),
 			tclaudeLayerProxyBootstrapCmd(),
 			tclaudeLayerDarwinProxyLauncherCmd(),
 			codexAppServerRelayCmd(),

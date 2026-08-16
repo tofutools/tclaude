@@ -327,6 +327,98 @@ func TestReincarnate_TemporaryOffDisablesTclaudeOuterLayer(t *testing.T) {
 		"temporary off must also disable the harness-native sandbox")
 }
 
+func TestSandboxRestart_RefusesCodexHarnessBuiltinUnlock(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	f.HaveGroup("crew")
+
+	source := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name":    "codex-unlock-source",
+		"harness": harness.CodexName,
+		"sandbox": harness.SandboxManagedProfile,
+	})
+	require.Equalf(t, http.StatusOK, source.Code, "spawn body=%s", source.Raw)
+	f.SetSessionStatus(source.ConvID, "idle")
+	unlock := testharness.Serve(agentd.BuildDashboardHandlerForTest(),
+		testharness.JSONRequest(t, http.MethodPost,
+			"/api/agents/"+source.ConvID+"/sandbox-restart",
+			map[string]any{"action": "unlock"}))
+	require.Equalf(t, http.StatusConflict, unlock.Code, "unlock body=%s", unlock.Body.String())
+	assert.Contains(t, unlock.Body.String(), "Codex restores the persisted sandbox policy on resume")
+
+	mode, active, err := db.TemporaryHarnessBuiltinModeForConv(source.ConvID)
+	require.NoError(t, err)
+	assert.False(t, active, "a refused unlock must not persist a temporary override")
+	assert.Empty(t, mode)
+	row, err := db.FindSessionByConvID(source.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, "idle", row.Status,
+		"the server must refuse before stopping the live Codex conversation")
+}
+
+func TestSandboxRestart_RefusesCodexStackedUnlock(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	t.Cleanup(agentd.SetStackedSandboxHostAvailabilityForTest(
+		func(*harness.Harness) error { return nil },
+	))
+	f := newFlow(t)
+	f.HaveGroup("crew")
+
+	source := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name":                   "codex-stacked-source",
+		"harness":                harness.CodexName,
+		"sandbox_implementation": string(sandboxpolicy.ImplementationStacked),
+	})
+	require.Equalf(t, http.StatusOK, source.Code, "spawn body=%s", source.Raw)
+
+	f.SetSessionStatus(source.ConvID, "idle")
+	unlock := testharness.Serve(agentd.BuildDashboardHandlerForTest(),
+		testharness.JSONRequest(t, http.MethodPost,
+			"/api/agents/"+source.ConvID+"/sandbox-restart",
+			map[string]any{"action": "unlock"}))
+	require.Equalf(t, http.StatusConflict, unlock.Code, "unlock body=%s", unlock.Body.String())
+	assert.Contains(t, unlock.Body.String(), "Codex restores the persisted sandbox policy on resume")
+
+	_, active, err := db.TemporaryHarnessBuiltinModeForConv(source.ConvID)
+	require.NoError(t, err)
+	assert.False(t, active, "a refused unlock must not persist a temporary override")
+	row, err := db.FindSessionByConvID(source.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, "idle", row.Status,
+		"the server must refuse before removing either stacked sandbox layer")
+}
+
+func TestSandboxRestart_AllowsCodexTclaudeLayerUnlock(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	f.HaveGroup("crew")
+
+	source := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name":                   "codex-outer-layer-source",
+		"harness":                harness.CodexName,
+		"sandbox_implementation": string(sandboxpolicy.ImplementationTclaudeLayer),
+	})
+	require.Equalf(t, http.StatusOK, source.Code, "spawn body=%s", source.Raw)
+
+	f.SetSessionStatus(source.ConvID, "idle")
+	unlock := testharness.Serve(agentd.BuildDashboardHandlerForTest(),
+		testharness.JSONRequest(t, http.MethodPost,
+			"/api/agents/"+source.ConvID+"/sandbox-restart",
+			map[string]any{"action": "unlock"}))
+	require.Equalf(t, http.StatusOK, unlock.Code, "unlock body=%s", unlock.Body.String())
+
+	implementation, ok := f.World.SpawnSandboxImplementation(source.ConvID)
+	require.True(t, ok, "temporary restart must reach the simulated spawner")
+	assert.Equal(t, string(sandboxpolicy.ImplementationHarnessBuiltin), implementation,
+		"the supported Codex transition removes tclaude's outer layer")
+	mode, ok := f.World.SpawnSandbox(source.ConvID)
+	require.True(t, ok)
+	assert.Equal(t, harness.SandboxDangerFull, mode,
+		"Codex was already launched with its built-in sandbox disabled under the outer layer")
+}
+
 func TestSandboxRestart_RestoresExactDurableImplementation(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	t.Cleanup(agentd.SetStackedSandboxHostAvailabilityForTest(

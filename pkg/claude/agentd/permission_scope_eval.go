@@ -15,9 +15,9 @@ import (
 // site says "this request spawns with p1", and the resolver's winning scope
 // is evaluated against it.
 //
-// One field per ScopeDim, and nothing else — this is deliberately not a
-// general fact bag. A new dimension adds a field here and a case in value();
-// TestActionContextCoversEveryScopeDimension fails if the two drift.
+// The exported fields are one-per-ScopeDim. The two unexported fields identify
+// the ownership subject used by the same central permission resolver: they are
+// authorization context, not operator-configurable scope dimensions.
 //
 // The zero value means "the call site said nothing about this action", which
 // is exactly how the ~129 gate sites that pass no context behave. A scoped
@@ -47,6 +47,33 @@ type ActionContext struct {
 	// action that spans several teams describes each of them in turn rather
 	// than passing a set, so every check is one team against one grant.
 	LinearTeam string
+
+	// structuralGroup is the group whose ownership or membership may confer the requested slug.
+	// It is deliberately distinct from Group: Group evaluates an explicit
+	// grant's scope, while structuralGroup selects a structural permission source.
+	// Keeping both lets an inbound-link mutation describe its group to scoped
+	// grants without accidentally treating ownership of the destination as
+	// authority over the source's link.
+	structuralGroup string
+	// targetConv is the live conversation acted on by a whole-agent operation.
+	// TargetAgent remains the stable, operator-facing scope value.
+	targetConv string
+	// affectedConvs, when non-nil, is a stable, precomputed cohort for a bulk
+	// whole-agent mutation. Nil means the operation can affect the live roster.
+	affectedConvs []string
+	// affectedGroups, when non-nil, is a stable, precomputed authorization
+	// footprint for an operation such as clone that also creates inherited
+	// ownership relationships. It is already deduplicated by the producer.
+	affectedGroups []string
+	// bulkGroupMemberCoverage asks the central evaluator to require this slug
+	// for every current active group containing every affected conversation.
+	// Keeping the check inside the evaluator means an uncovered footprint is
+	// still eligible for the ordinary one-shot human approval path.
+	bulkGroupMemberCoverage bool
+	// alternatePermission is an ordinary second slug that may authorize the
+	// same action. Group-wide views use it to preserve a global agent.* grant
+	// while also accepting the dedicated groups.members.* capability.
+	alternatePermission string
 }
 
 // value projects the context onto one scope dimension. An unknown dimension

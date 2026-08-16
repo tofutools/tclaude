@@ -133,7 +133,7 @@ func runTaskForceDeploy(p *taskForceDeployParams, stdin io.Reader, stdout, stder
 			}
 			worktreeRepo = wd
 		}
-		prepared, wtErr := resolveSpawnWorktree(worktreeRepo, wt, p.WorktreeBase, 0)
+		prepared, wtErr := resolveSpawnWorktree(p.Group, worktreeRepo, wt, p.WorktreeBase, 0)
 		if wtErr != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", wtErr)
 			return MapDaemonErrorToRC(wtErr)
@@ -249,7 +249,7 @@ func taskForceStandDownCmd() *cobra.Command {
 			"Deliberately NOT a group delete (`tclaude agent groups rm` does that). By default each member's running pane " +
 			"is soft-exited (sends /exit); pass --no-shutdown to leave them running. The caller's own conversation is " +
 			"always skipped. Standing down a plain group (no template) simply retires its members — there is nothing to " +
-			"sweep. Gated: the human always, group owners of the group, otherwise the `groups.retire` permission.",
+			"sweep. Gated: the human always, group owners of the group, otherwise the `groups.members.retire` permission.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *taskForceStandDownParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Name).SetAlternativesFunc(completeGroupNames)

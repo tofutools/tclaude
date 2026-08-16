@@ -40,7 +40,7 @@ func TestSpawn_ReplyTo_RoutesStartupBriefToNamedTarget(t *testing.T) {
 	f.HaveConvWithTitle(coordConv, "coordinator")
 	f.HaveMember("alpha", poConv)
 	f.HaveMember("alpha", coordConv)
-	require.NoError(t, db.GrantAgentPermission(poConv, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(poConv, agentd.PermGroupsMembersSpawn, "test"))
 
 	resp := f.AsAgent(poConv).SpawnWith("alpha", map[string]any{
 		"name":            "worker",
@@ -68,7 +68,7 @@ func TestSpawn_NoReplyTo_AgentCaller_WorkerReplyReachesSpawner(t *testing.T) {
 
 	const poConv = "popo-aaaa-bbbb-cccc-111111111111"
 	f.HaveMember("alpha", poConv)
-	require.NoError(t, db.GrantAgentPermission(poConv, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(poConv, agentd.PermGroupsMembersSpawn, "test"))
 
 	resp := f.AsAgent(poConv).SpawnWith("alpha", map[string]any{
 		"name":            "worker",
@@ -144,7 +144,7 @@ func TestSpawn_ReplyTo_UnresolvableSelector_Rejected(t *testing.T) {
 
 	const poConv = "popo-aaaa-bbbb-cccc-111111111111"
 	f.HaveMember("alpha", poConv)
-	require.NoError(t, db.GrantAgentPermission(poConv, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(poConv, agentd.PermGroupsMembersSpawn, "test"))
 
 	resp := f.AsAgent(poConv).SpawnWith("alpha", map[string]any{
 		"name":            "worker",

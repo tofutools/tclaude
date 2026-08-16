@@ -17,8 +17,8 @@ import (
 // authority than it holds itself. Before scopes existed there was nothing to
 // compare: every grant was the whole slug, so "holds permissions.grant" was the
 // only question. A scoped grant makes the question real, and its most
-// dangerous answer is the quiet one: an agent whose own groups.spawn is pinned
-// to one profile minting a child an UNSCOPED groups.spawn, then acting through
+// dangerous answer is the quiet one: an agent whose own groups.members.spawn is pinned
+// to one profile minting a child an UNSCOPED groups.members.spawn, then acting through
 // the child.
 //
 // So: for every conferred grant, the granter's effective scope for that slug
@@ -137,22 +137,12 @@ func permissionScopeCovers(granter, conferred PermissionScope) bool {
 //   - nothing grants the granter this slug, so there is no shape to attenuate
 //     against (see the "what this check is NOT" note above).
 //
-// EXPLICIT grants resolve through the plain resolver, NOT the group-owner
-// bypass. That ordering is the settled precedence: an operator narrowing a
-// group's owner bypass has said nothing about the grants that owner separately
-// holds, and those are individually controllable.
-//
-// ownerTier is consulted only where the plain resolver is UNDECIDED — the gap
-// the owner bypass fills at the gate. Before TCL-1071 that gap always meant
-// "unconstrained", because ownership conferred whole slugs and carried no
-// shape. A NARROWED owner bypass does carry one, and it must attenuate: an
-// owner whose spawn is pinned to one profile could otherwise mint a child an
-// unscoped groups.spawn and act through it — the exact escalation this rule
-// exists to stop, arriving through the bypass instead of a grant. An
-// unrestricted owner tier still reads as unconstrained, so no pre-Phase-6
-// delegation changes.
+// Positive sources compose. A scoped explicit grant for group B and an owner
+// grant for group A therefore attenuate against A OR B, just as the action
+// gate authorizes either. An unscoped row from either source absorbs the union.
 func granterScopesForSlug(src permSources, cfg *config.Config, ownerTier ownerImpliedTier, slug string) ([]PermissionScope, bool) {
-	v := resolvePermissionVerdictFrom(src, slug, cfg.HasDefaultPermission(slug))
+	v := resolveEffectivePermissionVerdictFrom(src, slug,
+		cfg.HasDefaultPermission(slug), cfg.HasDefaultPermission(PermGroupsAdmin))
 	if v.Resolution == permDeny {
 		// A granter DENIED a slug may confer nothing through it. Reading a deny
 		// as "unconstrained" (the same answer as "does not hold it") would make
@@ -203,6 +193,12 @@ func granterScopesForSlug(src permSources, cfg *config.Config, ownerTier ownerIm
 		// Every row in the winning tier was undecodable: the granter can act
 		// on nothing through this slug, so it may confer nothing through it.
 		return []PermissionScope{}, true
+	}
+	if entry, conferred := ownerTier[slug]; conferred {
+		if entry.Unrestricted {
+			return nil, false
+		}
+		scopes = append(scopes, entry.Scopes...)
 	}
 	return scopes, true
 }
@@ -457,22 +453,14 @@ func checkTemplateDeployAttenuation(agents []db.GroupTemplateAgent, callerConvID
 		return nil
 	}
 	for _, a := range agents {
-		var role *db.Role
-		if ref := strings.TrimSpace(a.RoleRef); ref != "" {
-			rl, err := db.GetRole(ref)
-			if err != nil {
-				// Fail the DEPLOY, do not check a smaller grant set. A role
-				// carries default grants, so a lookup that errors makes this
-				// check judge strictly LESS than the deploy will confer. The
-				// wave runner reads the role again at spawn time, and a
-				// transient failure here that succeeds there would mint the
-				// role's grants having never compared them to anything.
-				return fmt.Errorf("template agent %q: could not read role %q to check "+
-					"what this deploy would confer: %w", a.Name, ref, err)
-			}
-			role = rl
+		roles, roleFail := resolveTemplateAgentRoles(a)
+		if roleFail != nil {
+			// Fail rather than judge a smaller grant set than the wave runner may
+			// confer. Profile resolution failures are reported by deploy as well.
+			return fmt.Errorf("template agent %q: could not resolve role to check what this deploy would confer: %s",
+				a.Name, roleFail.Msg)
 		}
-		_, overrides, fail := resolveTemplateAgentAccess(a, role)
+		_, overrides, fail := resolveTemplateAgentAccess(a, roles)
 		if fail != nil {
 			continue
 		}

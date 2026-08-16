@@ -961,6 +961,9 @@ var copilotAPIKeystrokeSinkFiles = map[string]string{
 	// Lifecycle returns "" for RemoteControlCommand, so no Copilot agent — API
 	// or not — ever reaches this sink.
 	"remote_control.go": "gated on CanRemoteControl(); Copilot has no remote-control command",
+	// Unreachable: the endpoint resolves the live harness and requires Codex's
+	// FastModeCommand before it calls the exact-token pane helper.
+	"codex_fast_mode.go": "gated on Codex FastModeCommand; Copilot has no fast-mode command",
 }
 
 // copilotAPIKeystrokeSinks are the helpers that type into a pane. Bare

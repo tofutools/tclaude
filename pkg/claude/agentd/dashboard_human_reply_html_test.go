@@ -65,6 +65,9 @@ func TestDashboardHTML_HumanReplyWired(t *testing.T) {
 	must(`id="message-access-dialog-root"`, "the stable dialog island host ships")
 	must(`id="human-reply-modal"`, "the Preact reply component owns the modal id")
 	must(`id="human-reply-body"`, "the reply textarea ships")
+	must(`id="human-reply-attach-input"`, "the reply attachment picker ships")
+	must("payload.attachment_token = attachmentToken", "the staged attachment token rides with the reply")
+	must("onDrop=${(event) => {", "the reply dialog accepts dropped files")
 	must(`id="human-reply-status"`, "the online-status line ships")
 	must(`id="human-reply-submit"`, "the Send button ships")
 }

@@ -20,15 +20,18 @@ const (
 
 const (
 	SandboxCapabilityNetworkAllowlist = "unsupported_sandbox_profile_network_allowlist"
+	SandboxCapabilityNetworkDeny      = "unsupported_sandbox_profile_network_deny"
 	SandboxCapabilitySocketAllowlist  = "unsupported_sandbox_profile_socket_allowlist"
+	SandboxCapabilityFilesystemRoot   = "unsupported_sandbox_profile_filesystem_root"
 )
 
 // AccessEnforcementOptions contains launch-boundary decisions that may widen
-// the ordinary capability plan. Its only caller-settable field is deliberately
-// specific to the exact refusal it can suppress; it is not a generic bypass
-// for SandboxCapabilityError kinds.
+// the ordinary capability plan. Each caller-settable field is deliberately
+// specific to the exact refusal it can suppress; neither is a generic bypass
+// for SandboxCapabilityError kinds or for the other field's refusal.
 type AccessEnforcementOptions struct {
 	AllowUnenforcedNetworkClosed bool
+	AllowReducedNetworkDeny      bool
 }
 
 // AccessEnforcement is an opaque launch-only capability token. Its fields stay
@@ -347,6 +350,48 @@ func accessEnforcementTable(
 	validatedBuiltinMode, goos string,
 	filteredNetworkReady bool,
 ) (accessEnforcementTableRow, error) {
+	if err := ValidateExplicitFilesystemRoot(
+		h, implementation, axes.FilesystemRoot, goos,
+	); err != nil {
+		return accessEnforcementTableRow{}, err
+	}
+	if axes.Network.Namespace == sandboxpolicy.NetworkNamespacePrivate {
+		if implementation != sandboxpolicy.ImplementationTclaudeLayer ||
+			goos != "linux" || h == nil ||
+			(h.Name != DefaultName && h.Name != CodexName && h.Name != OpenCodeName &&
+				h.Name != CopilotName) {
+			harnessName := "<unresolved>"
+			if h != nil {
+				harnessName = h.Name
+			}
+			return accessEnforcementTableRow{}, fmt.Errorf(
+				"network.namespace %q requires Linux tclaude-layer with Claude Code, Codex, OpenCode, or Copilot; resolved target is harness %q, sandbox implementation %q, platform %q",
+				axes.Network.Namespace, harnessName, implementation, goos)
+		}
+		// A deny-all baseline materializes as closed networking. That posture
+		// already runs in an isolated namespace and has no routed traffic, so it
+		// does not launch pasta, nftables, or the filtered DNS broker. Keep the
+		// explicit private-namespace target gate above, but require the packet
+		// gateway probe only for postures that actually route through it.
+		if axes.Network.Mode != sandboxpolicy.AccessModeClosed &&
+			!filteredNetworkReady {
+			return accessEnforcementTableRow{}, fmt.Errorf(
+				"network.namespace %q requires the Linux private-network prerequisites (user/network namespaces, bubblewrap, pasta, nftables, and required capabilities)",
+				axes.Network.Namespace)
+		}
+		if h.Name == CopilotName && axes.Network.Engine == sandboxpolicy.NetworkEngineProxy {
+			discriminating, discriminatingErr :=
+				sandboxpolicy.NetworkRulesAreDiscriminating(axes.Network)
+			if discriminatingErr != nil {
+				return accessEnforcementTableRow{}, discriminatingErr
+			}
+			if discriminating {
+				return accessEnforcementTableRow{}, fmt.Errorf(
+					"network.engine %q cannot be used with Copilot destination rules in a private namespace: Copilot does not enforce those rules, and widening them would switch the launch to the packet gateway after proxy prerequisites were checked; remove the destination rules to use private routed networking, or select the packet engine and accept the disclosed unsupported-rule widening",
+					axes.Network.Engine)
+			}
+		}
+	}
 	if implementation.OmitsOSConfinement() {
 		// `resource-only` shares every verdict AND the mechanism string with
 		// `off`. It is tempting to name its cgroup here, but this table only
@@ -402,50 +447,54 @@ func accessEnforcementTable(
 		// launch does not run. The proxy's own cells stay EnforceNone until
 		// their carriage smokes land.
 		packetGateway := deployedEngine != sandboxpolicy.NetworkEngineProxy
+		filteredGatewayHarness := h.Name == DefaultName || h.Name == CodexName ||
+			h.Name == OpenCodeName
+		privateRoutedCopilot := h.Name == CopilotName &&
+			sandboxpolicy.NetworkRulesArePrivateRoutedOpen(axes.Network)
 		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
 			packetGateway &&
 			goos == "linux" && filteredNetworkReady &&
-			(h.Name == DefaultName || h.Name == CodexName ||
-				h.Name == OpenCodeName) {
+			(filteredGatewayHarness || privateRoutedCopilot) {
 			caps.NetworkList = EnforceFull
-			caps.NetworkSelectors = []NetworkSelectorCapability{
-				{
-					Selector: string(sandboxpolicy.NetworkSelectorHost),
-					Level:    EnforceFull,
-					Detail:   filteredNetworkDNSCaveat(),
-				},
-				{
-					Selector: string(sandboxpolicy.NetworkSelectorDomain),
-					Level:    EnforceFull,
-					Detail:   filteredNetworkDNSCaveat(),
-				},
-				{
-					Selector: string(sandboxpolicy.NetworkSelectorCIDR),
-					Level:    EnforceFull,
-				},
-				{
-					Selector: string(sandboxpolicy.NetworkSelectorLoopback),
-					Level:    EnforceFull,
-					Detail:   FilteredNetworkLoopbackCaveat,
-				},
-			}
-			caps.NetworkPorts = EnforceFull
-			caps.NetworkListCondition =
-				"At launch, bubblewrap, pasta, and nft must pass live checks. If any check fails, these rules are not enforced and outbound traffic is open."
-			if h.Name == OpenCodeName {
-				// Preview and runtime must not disagree: OpenCode reaches this
-				// gateway only through an inspected explicit provider, and a
-				// launch without one is refused rather than started unfiltered.
-				caps.NetworkListCondition +=
-					" " + OpenCodeFilteredExplicitProviderCaveat
+			if filteredGatewayHarness {
+				caps.NetworkSelectors = []NetworkSelectorCapability{
+					{
+						Selector: string(sandboxpolicy.NetworkSelectorHost),
+						Level:    EnforceFull,
+						Detail:   filteredNetworkDNSCaveat(),
+					},
+					{
+						Selector: string(sandboxpolicy.NetworkSelectorDomain),
+						Level:    EnforceFull,
+						Detail:   filteredNetworkDNSCaveat(),
+					},
+					{
+						Selector: string(sandboxpolicy.NetworkSelectorCIDR),
+						Level:    EnforceFull,
+					},
+					{
+						Selector: string(sandboxpolicy.NetworkSelectorLoopback),
+						Level:    EnforceFull,
+						Detail:   FilteredNetworkLoopbackCaveat,
+					},
+				}
+				caps.NetworkPorts = EnforceFull
+				caps.NetworkListCondition =
+					"At launch, bubblewrap, pasta, and nft must pass live checks. If any check fails, these rules are not enforced and outbound traffic is open."
+				if h.Name == OpenCodeName {
+					// Preview and runtime must not disagree: OpenCode reaches this
+					// gateway only through an inspected explicit provider, and a
+					// launch without one is refused rather than started unfiltered.
+					caps.NetworkListCondition +=
+						" " + OpenCodeFilteredExplicitProviderCaveat
+				}
 			}
 			caps.Mechanism = "tclaude-layer bubblewrap + supervised DNS/pasta/nftables gateway"
 		}
 		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
 			packetGateway &&
 			goos == "linux" && filteredNetworkReady &&
-			(h.Name == DefaultName || h.Name == CodexName ||
-				h.Name == OpenCodeName) {
+			filteredGatewayHarness {
 			dnsDenyLevel := EnforceFull
 			dnsDenyDetail := ""
 			if axes.Network.Mode == sandboxpolicy.AccessModeOpen {
@@ -709,7 +758,20 @@ func accessEnforcementTable(
 			caps.NetworkListRefusal =
 				"missing capability unsupported_filtered_network_posture: this platform does not enforce OpenCode's local-only network list, so the launch would start with outbound network access fully open rather than restricted to this machine; use Claude Code or Codex, which enforce a local-only list here, or use network open deliberately if unrestricted outbound is intended"
 		}
-		if axes.Network.Mode == sandboxpolicy.AccessModeClosed {
+		networkPosture, postureErr := sandboxpolicy.NetworkPostureForRules(
+			axes.Network)
+		if postureErr != nil {
+			return accessEnforcementTableRow{}, postureErr
+		}
+		// On Linux both isolated and filtered networking build the same
+		// constructed filesystem root and private network namespace. Socket
+		// confinement therefore works under either posture; keying this branch
+		// only on the legacy exact `closed` spelling incorrectly classified a
+		// modern block-baseline/list policy as host-open.
+		networkConfinesLinuxSockets := goos == "linux" &&
+			linuxPlannedNetworkConfinesSockets(axes.Network, caps)
+		if axes.Network.Mode == sandboxpolicy.AccessModeClosed ||
+			networkConfinesLinuxSockets {
 			caps.SocketClosed = EnforceFull
 			// M3 materializes the resolved list at launch. Seatbelt provides
 			// connect-level enforcement for the same paths.
@@ -719,23 +781,16 @@ func accessEnforcementTable(
 				`ambient unix-socket access is not yet enforceable under closed network access on macOS tclaude-layer; ` +
 					`leave unix_sockets unset (agentd only) or use open network access`
 			if goos == "linux" {
-				// Bubblewrap has no independent AF_UNIX connect filter.
-				// Its constructed root hides sockets generally and binds listed
-				// paths, but recursive readable/writable roots also expose any
-				// sockets beneath them.
-				caps.SocketClosed = EnforcePartial
-				caps.SocketList = EnforcePartial
-				// Name the posture in the mechanism itself. Every disclosure
-				// that prints a mechanism — the launch degradation notice, the
-				// predicted axis detail, the spawn warning — then says WHICH
-				// boundary is active. An operator whose pre-existing
-				// sockets+open profile starts behaving differently after an
-				// upgrade learns why from the launch notes rather than from a
-				// build that stopped working.
-				caps.Mechanism = mechanism + " (host-network constructed root)"
+				// The private network namespace hides abstract host sockets and
+				// the constructed root hides ambient filesystem sockets. Sockets
+				// below paths deliberately projected into that root compose with
+				// the filesystem policy; that is an operator-visible composition
+				// rule, not a platform enforcement remainder.
 				caps.SocketCombinationDetail =
-					"listed Unix sockets are bound and sockets outside the sandbox's readable/writable directories remain hidden, " +
-						"but sockets beneath those readable/writable directories remain reachable"
+					"filesystem mounts compose with Unix-socket isolation: sockets beneath paths visible in the sandbox " +
+						"remain reachable, including the workspace, harness state, fixed OS/runtime surface, and operator filesystem grants; " +
+						"avoid mounting directories containing sockets you do not intend to expose. " +
+						"The tclaude agent control socket remains reachable by design"
 				caps.SocketOpenRefusal =
 					`unix_sockets "open" cannot preserve ambient host socket visibility with closed network access on Linux tclaude-layer; ` +
 						`use a socket access list or leave unix_sockets unset`
@@ -794,8 +849,6 @@ func accessEnforcementTable(
 		// disagree with the applier. Linux only: Seatbelt is a path filter over
 		// the host namespace and has no root to construct.
 		if goos == "linux" {
-			networkPosture, postureErr := sandboxpolicy.NetworkPostureForRules(
-				axes.Network)
 			socketTier := axes.UnixSockets.Mode
 			if !linuxHostOpenConstructedRootAvailable(
 				h, implementation, axes, goos) {
@@ -806,6 +859,8 @@ func accessEnforcementTable(
 			caps.ConstructedRoot = postureErr == nil &&
 				sandboxpolicy.RootPostureFor(networkPosture, socketTier) ==
 					sandboxpolicy.RootConstructed
+			caps.ConstructedRoot = caps.ConstructedRoot ||
+				axes.FilesystemRoot == sandboxpolicy.FilesystemRootSeparate
 		}
 		// Carried security item: an authored resolver socket restores in-sandbox
 		// name-to-literal conversion and defeats the proxy engine's name
@@ -949,9 +1004,10 @@ func accessEnforcementTable(
 //     a harness-native inner sandbox whose interaction with a constructed
 //     host-open root has no smoke evidence, and an unproven combination may not
 //     raise a capability rating.
-//   - Claude Code or Codex. OpenCode's boundary is its agentd-owned server with
-//     a control plane of its own; its host-open arm is deliberately left on the
-//     pre-TCL-798 path.
+//   - A harness whose tclaude-layer renderer supports a constructed root.
+//     Claude Code, Codex, and Copilot render the pane inside that root;
+//     OpenCode renders its agentd-owned tool server there while its attach pane
+//     remains outside.
 //   - A host-open network posture. An allow list or any deny renders the
 //     filtered posture instead, which already constructs its root beneath a
 //     private network namespace and is rated separately.
@@ -979,11 +1035,47 @@ func linuxHostOpenConstructedRootAvailable(
 	if implementation != sandboxpolicy.ImplementationTclaudeLayer {
 		return false
 	}
-	if h == nil || (h.Name != DefaultName && h.Name != CodexName) {
+	if h == nil || (h.Name != DefaultName && h.Name != CodexName &&
+		h.Name != OpenCodeName && h.Name != CopilotName) {
 		return false
 	}
 	posture, err := sandboxpolicy.NetworkPostureForRules(axes.Network)
 	return err == nil && posture == sandboxpolicy.NetworkHostOpen
+}
+
+// linuxPlannedNetworkConfinesSockets reports whether capability planning will
+// preserve a private network namespace for these authored rules. Looking only
+// at the authored posture is unsafe: an unsupported list, or a deny set whose
+// entries cannot be expressed, is widened to host-open later in the ladder.
+// Socket planning must anticipate that widening so it cannot preserve a socket
+// tier whose eventual host-open root the target does not support.
+func linuxPlannedNetworkConfinesSockets(
+	rules sandboxpolicy.NetworkRules,
+	caps accessEnforcementTableRow,
+) bool {
+	if rules.Namespace == sandboxpolicy.NetworkNamespacePrivate {
+		return caps.NetworkList != EnforceNone
+	}
+	switch rules.Mode {
+	case sandboxpolicy.AccessModeClosed:
+		return caps.NetworkClosed != EnforceNone
+	case sandboxpolicy.AccessModeList:
+		return caps.NetworkList != EnforceNone &&
+			len(networkUnsupportedEntries(rules.Allow, caps.NetworkSelectors)) == 0
+	case sandboxpolicy.AccessModeOpen:
+		for _, entry := range rules.Deny {
+			capability, ok := networkSelectorCapability(
+				caps.NetworkDenySelectors, networkSelectorForEntry(entry))
+			if !ok || capability.Level == EnforceNone {
+				continue
+			}
+			if len(entry.Ports) > 0 && caps.NetworkDenyPorts == EnforceNone {
+				continue
+			}
+			return true
+		}
+	}
+	return false
 }
 
 // SupportsHostOpenConstructedRoot reports whether this launch target would get
@@ -1002,6 +1094,46 @@ func SupportsHostOpenConstructedRoot(
 	goos string,
 ) bool {
 	return linuxHostOpenConstructedRootAvailable(h, implementation, axes, goos)
+}
+
+// SupportsExplicitFilesystemRoot reports the proven target matrix for an
+// operator-authored separate root. Unlike the socket helper above, this is
+// independent of network posture: the explicit control owns the request.
+func SupportsExplicitFilesystemRoot(
+	h *Harness,
+	implementation sandboxpolicy.Implementation,
+	goos string,
+) bool {
+	return goos == "linux" &&
+		implementation == sandboxpolicy.ImplementationTclaudeLayer &&
+		h != nil && (h.Name == DefaultName || h.Name == CodexName ||
+		h.Name == OpenCodeName || h.Name == CopilotName)
+}
+
+// ValidateExplicitFilesystemRoot applies the explicit-root target matrix at
+// launch boundaries, including boundaries that would otherwise skip access
+// planning because the profile has no network or Unix-socket rules.
+func ValidateExplicitFilesystemRoot(
+	h *Harness,
+	implementation sandboxpolicy.Implementation,
+	mode sandboxpolicy.FilesystemRootMode,
+	goos string,
+) error {
+	if mode != sandboxpolicy.FilesystemRootSeparate ||
+		SupportsExplicitFilesystemRoot(h, implementation, goos) {
+		return nil
+	}
+	harnessName := "<unresolved>"
+	if h != nil {
+		harnessName = h.Name
+	}
+	return &SandboxCapabilityError{
+		Harness: harnessName,
+		Kind:    SandboxCapabilityFilesystemRoot,
+		Message: fmt.Sprintf(
+			"filesystem_root %q requires Linux tclaude-layer with Claude Code, Codex, OpenCode, or Copilot; resolved target is harness %q, sandbox implementation %q, platform %q",
+			mode, harnessName, implementation, goos),
+	}
 }
 
 func accessEnforcementFromTable(row accessEnforcementTableRow) AccessEnforcement {
@@ -1469,7 +1601,11 @@ func predictSocketAxis(
 	case sandboxpolicy.AccessModeClosed:
 		switch caps.SocketClosed {
 		case EnforceFull:
-			return predictedEnforced(tier, caps.Mechanism, "closed Unix-socket access")
+			subject := "closed Unix-socket access"
+			if caps.SocketCombinationDetail != "" {
+				subject += "; " + caps.SocketCombinationDetail
+			}
+			return predictedEnforced(tier, caps.Mechanism, subject)
 		case EnforcePartial:
 			detail := caps.SocketCombinationDetail
 			if detail == "" {
@@ -1507,7 +1643,11 @@ func predictSocketAxis(
 			return predictedPartial(tier, caps.Mechanism,
 				"the Unix-socket allow list applies only to tool execution, not the harness process")
 		}
-		return predictedEnforced(tier, caps.Mechanism, "the Unix-socket allow list")
+		subject := "the Unix-socket allow list"
+		if caps.SocketCombinationDetail != "" {
+			subject += "; " + caps.SocketCombinationDetail
+		}
+		return predictedEnforced(tier, caps.Mechanism, subject)
 	default:
 		return PredictedAccessAxis{Tier: tier, Outcome: AccessPredictionRefused,
 			Detail: "the Unix-socket tier is invalid"}
@@ -1566,6 +1706,8 @@ func PlanAccessEnforcement(
 
 	allowUnenforcedNetworkClosed := len(options) > 0 &&
 		options[0].AllowUnenforcedNetworkClosed
+	allowReducedNetworkDeny := len(options) > 0 &&
+		options[0].AllowReducedNetworkDeny
 	if axes.Network.Mode == sandboxpolicy.AccessModeClosed && caps.networkClosed == EnforceNone {
 		if !allowUnenforcedNetworkClosed {
 			return sandboxpolicy.ResolvedAxes{}, nil, &SandboxCapabilityError{
@@ -1575,6 +1717,7 @@ func PlanAccessEnforcement(
 		}
 		rendered.Network = sandboxpolicy.NetworkRules{
 			Mode: sandboxpolicy.AccessModeOpen, Engine: axes.Network.Engine,
+			Namespace: axes.Network.Namespace,
 		}
 		notices = append(notices, degradationNotice(
 			"network",
@@ -1649,9 +1792,10 @@ func PlanAccessEnforcement(
 			// policy that lost its engine would deploy the pre-engine default
 			// while the preview named the authored one.
 			rendered.Network = sandboxpolicy.NetworkRules{
-				Mode:   sandboxpolicy.AccessModeOpen,
-				Deny:   cloneNetworkEntries(axes.Network.Deny),
-				Engine: axes.Network.Engine,
+				Mode:      sandboxpolicy.AccessModeOpen,
+				Deny:      cloneNetworkEntries(axes.Network.Deny),
+				Engine:    axes.Network.Engine,
+				Namespace: axes.Network.Namespace,
 			}
 			notices = append(notices, degradationNotice(
 				"network", "no_mechanism", sandboxpolicy.AccessNoticeEffectNotEnforced,
@@ -1671,9 +1815,10 @@ func PlanAccessEnforcement(
 					}
 				}
 				rendered.Network = sandboxpolicy.NetworkRules{
-					Mode:   sandboxpolicy.AccessModeOpen,
-					Deny:   cloneNetworkEntries(axes.Network.Deny),
-					Engine: axes.Network.Engine,
+					Mode:      sandboxpolicy.AccessModeOpen,
+					Deny:      cloneNetworkEntries(axes.Network.Deny),
+					Engine:    axes.Network.Engine,
+					Namespace: axes.Network.Namespace,
 				}
 				notices = append(notices, degradationNotice(
 					"network", "selector_unsupported", sandboxpolicy.AccessNoticeEffectNotEnforced,
@@ -1751,6 +1896,18 @@ func PlanAccessEnforcement(
 			}
 		}
 		rendered.Network.Deny = kept
+		omitted := append(slices.Clone(selectorOmitted), portOmitted...)
+		slices.Sort(omitted)
+		omitted = slices.Compact(omitted)
+		if len(omitted) > 0 && !allowReducedNetworkDeny {
+			return sandboxpolicy.ResolvedAxes{}, nil, &SandboxCapabilityError{
+				Kind: SandboxCapabilityNetworkDeny,
+				Message: fmt.Sprintf(
+					"%s (%s scope) cannot enforce every authored network deny entry; affected authored entries: %s; choose a sandbox implementation that enforces these entries, remove them, or enable “Allow launch with unenforced rules” in the dashboard spawn dialog",
+					caps.mechanism, caps.scope, formatEntryIndices(omitted),
+				),
+			}
+		}
 		if len(selectorOmitted) > 0 {
 			notices = append(notices, degradationNotice(
 				"network", "deny_selector_unsupported",
@@ -1765,6 +1922,14 @@ func PlanAccessEnforcement(
 				sandboxpolicy.AccessNoticeEffectNotEnforced,
 				caps, "the listed port-scoped deny destinations cannot be expressed and are omitted; they are not widened into whole-destination blocks",
 				portOmitted,
+			))
+		}
+		if len(omitted) > 0 {
+			notices = append(notices, degradationNotice(
+				"network", sandboxpolicy.AccessNoticeReasonOperatorReducedNetworkDenyOverride,
+				sandboxpolicy.AccessNoticeEffectNotEnforced,
+				caps, "the human operator used the dashboard launch override; the listed unsupported network deny entries are omitted from this launch",
+				omitted,
 			))
 		}
 		if len(selectorPartial) > 0 {
@@ -1823,7 +1988,7 @@ func PlanAccessEnforcement(
 
 func closedNetworkRefusal(mechanism, scope string) string {
 	return fmt.Sprintf(
-		"%s (%s scope) cannot enforce closed network access; choose a sandbox implementation that can enforce closed network access, use network open, or enable “Allow launch without enforcement” in the dashboard spawn dialog",
+		"%s (%s scope) cannot enforce closed network access; choose a sandbox implementation that can enforce closed network access, use network open, or enable “Allow launch with unenforced rules” in the dashboard spawn dialog",
 		mechanism, scope,
 	)
 }

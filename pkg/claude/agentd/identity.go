@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -298,57 +299,83 @@ func requireAgent(w http.ResponseWriter, r *http.Request) (string, bool) {
 // `agent.default_permissions` / `agent.permission_overrides`. Keep this
 // list in sync with the agent-coord skill / docs.
 const (
-	PermSelfRename         = "self.rename"
-	PermSelfCompact        = "self.compact"
-	PermSelfInterrupt      = "self.interrupt"
-	PermSelfClone          = "self.clone"
-	PermSelfRemoteControl  = "self.remote-control"
-	PermSelfTask           = "self.task"
-	PermSelfPR             = "self.pr"
-	PermSelfTags           = "self.tags"
-	PermSelfDirRepair      = "self.dir-repair"
-	PermAgentReincarnate   = "agent.reincarnate"
-	PermAgentCompact       = "agent.compact"
-	PermAgentInterrupt     = "agent.interrupt"
-	PermAgentRename        = "agent.rename"
-	PermAgentRemoteControl = "agent.remote-control"
-	PermAgentClone         = "agent.clone"
-	PermAgentContextInfo   = "agent.context-info"
-	PermAgentTask          = "agent.task"
-	PermAgentPR            = "agent.pr"
-	PermAgentTags          = "agent.tags"
-	PermGroupsCreate       = "groups.create"
-	PermGroupsRm           = "groups.rm"
-	PermGroupsStop         = "groups.stop"
-	PermGroupsResume       = "groups.resume"
-	PermGroupsRetire       = "groups.retire"
-	PermGroupsSpawn        = "groups.spawn"
-	PermGroupsOwn          = "groups.own"
-	PermMemberAdd          = "member.add"
-	PermMemberRemove       = "member.remove"
-	PermMemberRedesignate  = "member.redesignate"
-	PermSelfSchedule       = "self.schedule"
-	PermAgentSchedule      = "agent.schedule"
-	PermAgentStop          = "agent.stop"
-	PermAgentResume        = "agent.resume"
-	PermAgentDelete        = "agent.delete"
-	PermGroupsArchive      = "groups.archive"
-	PermGroupsNest         = "groups.nest"
-	PermAgentInboxWatch    = "agent.inbox-watch"
-	PermGroupsRename       = "groups.rename"
-	PermGroupsAttachment   = "groups.attachment"
-	PermGroupsClone        = "groups.clone"
-	PermGroupsLinkAdd      = "groups.link.add"
-	PermGroupsLinkRm       = "groups.link.rm"
-	PermAgentPromote       = "agent.promote"
-	PermAgentRetire        = "agent.retire"
-	PermAgentStanddown     = "agent.standdown"
-	PermMessageDirect      = "message.direct"
-	PermGroupsExport       = "groups.export"
-	PermGroupsImport       = "groups.import"
-	PermTemplatesManage    = "templates.manage"
-	PermTemplatesUse       = "templates.instantiate"
-	PermProfilesManage     = "profiles.manage"
+	PermSelfRename                        = "self.rename"
+	PermSelfCompact                       = "self.compact"
+	PermSelfInterrupt                     = "self.interrupt"
+	PermSelfClone                         = "self.clone"
+	PermSelfRemoteControl                 = "self.remote-control"
+	PermSelfTask                          = "self.task"
+	PermSelfPR                            = "self.pr"
+	PermSelfTags                          = "self.tags"
+	PermSelfDirRepair                     = "self.dir-repair"
+	PermAgentReincarnate                  = "agent.reincarnate"
+	PermAgentCompact                      = "agent.compact"
+	PermAgentInterrupt                    = "agent.interrupt"
+	PermAgentRename                       = "agent.rename"
+	PermAgentRemoteControl                = "agent.remote-control"
+	PermAgentClone                        = "agent.clone"
+	PermAgentContextInfo                  = "agent.context-info"
+	PermAgentTask                         = "agent.task"
+	PermAgentPR                           = "agent.pr"
+	PermAgentTags                         = "agent.tags"
+	PermGroupsAdmin                       = "groups.admin"
+	PermGroupsCreate                      = "groups.create"
+	PermGroupsDelete                      = "groups.delete"
+	PermGroupsMembersStop                 = "groups.members.stop"
+	PermGroupsMembersResume               = "groups.members.resume"
+	PermGroupsMembersRetire               = "groups.members.retire"
+	PermGroupsMembersSpawn                = "groups.members.spawn"
+	PermGroupsMembersReincarnate          = "groups.members.reincarnate"
+	PermGroupsMembersCompact              = "groups.members.compact"
+	PermGroupsMembersInterrupt            = "groups.members.interrupt"
+	PermGroupsMembersRename               = "groups.members.rename"
+	PermGroupsMembersClone                = "groups.members.clone"
+	PermGroupsMembersContextInfo          = "groups.members.context-info"
+	PermGroupsMembersTask                 = "groups.members.task"
+	PermGroupsMembersPR                   = "groups.members.pr"
+	PermGroupsMembersTags                 = "groups.members.tags"
+	PermGroupsMembersSchedule             = "groups.members.schedule"
+	PermGroupsMembersDelete               = "groups.members.delete"
+	PermGroupsMembersPromote              = "groups.members.promote"
+	PermGroupsMembersRemoteControl        = "groups.members.remote-control"
+	PermGroupsMembersInboxWatch           = "groups.members.inbox-watch"
+	PermGroupsOwnersManage                = "groups.owners.manage"
+	PermGroupsMembersAdd                  = "groups.members.add"
+	PermGroupsMembersRemove               = "groups.members.remove"
+	PermGroupsMembersUpdate               = "groups.members.update"
+	PermGroupsMessagesSchedule            = "groups.messages.schedule"
+	PermSelfSchedule                      = "self.schedule"
+	PermAgentSchedule                     = "agent.schedule"
+	PermAgentStop                         = "agent.stop"
+	PermAgentResume                       = "agent.resume"
+	PermAgentDelete                       = "agent.delete"
+	PermGroupsArchive                     = "groups.archive"
+	PermGroupsNest                        = "groups.nest"
+	PermAgentInboxWatch                   = "agent.inbox-watch"
+	PermGroupsRename                      = "groups.rename"
+	PermGroupsSettingsDescription         = "groups.settings.description"
+	PermGroupsSettingsDefaultDir          = "groups.settings.default-dir"
+	PermGroupsSettingsDefaultContext      = "groups.settings.default-context"
+	PermGroupsSettingsDefaultSpawnTarget  = "groups.settings.default-spawn-target"
+	PermGroupsSettingsDefaultProfile      = "groups.settings.default-profile"
+	PermGroupsSettingsMaxMembers          = "groups.settings.max-members"
+	PermGroupsSettingsNotifications       = "groups.settings.notifications"
+	PermGroupsSettingsRemoteControlPolicy = "groups.settings.remote-control-policy"
+	PermGroupsSettingsMemberPermissions   = "groups.settings.member-permissions"
+	PermGroupsSettingsOwnerScopes         = "groups.settings.owner-scopes"
+	PermGroupsAttachment                  = "groups.attachment"
+	PermGroupsClone                       = "groups.clone"
+	PermGroupsLinkAdd                     = "groups.link.add"
+	PermGroupsLinkRemove                  = "groups.link.remove"
+	PermAgentPromote                      = "agent.promote"
+	PermAgentRetire                       = "agent.retire"
+	PermAgentStanddown                    = "agent.standdown"
+	PermMessageDirect                     = "message.direct"
+	PermGroupsExport                      = "groups.export"
+	PermGroupsImport                      = "groups.import"
+	PermTemplatesManage                   = "templates.manage"
+	PermTemplatesUse                      = "templates.instantiate"
+	PermProfilesManage                    = "profiles.manage"
 	// Rewriting an EXISTING agent's durable sandbox implementation. It
 	// deliberately confers no owner bypass: the assignment can move an agent onto
 	// an implementation with no access confinement at all, which is the boundary
@@ -370,6 +397,10 @@ const (
 	PermProcessTemplatesManage = "process.templates.manage"
 	PermProcessRunsRead        = "process.runs.read"
 	PermProcessRunsManage      = "process.runs.manage"
+	PermTriggersRead           = "triggers.read"
+	PermTriggersManage         = "triggers.manage"
+	PermGroupsTriggersRead     = "groups.triggers.read"
+	PermGroupsTriggersManage   = "groups.triggers.manage"
 	PermHumanNotify            = "human.notify"
 	PermHumanClipboard         = "human.clipboard"
 	// PermSettingsDefaultModel gates writing the user-level default
@@ -451,7 +482,9 @@ func resolvePermission(convID, slug string) permResolution {
 // provenance without re-querying a grant that may expire or be replaced.
 func resolvePermissionWithSudoGrantID(convID, slug string) (permResolution, int64) {
 	cfg, _ := config.Load()
-	return resolvePermissionWithDefault(convID, slug, cfg.HasDefaultPermission(slug))
+	v := resolveEffectivePermissionVerdict(convID, slug,
+		cfg.HasDefaultPermission(slug), cfg.HasDefaultPermission(PermGroupsAdmin))
+	return contextFreeResolution(v), v.SudoGrantID
 }
 
 // resolvePermissionVerdictForRequest is the request-scoped resolver the two
@@ -459,15 +492,43 @@ func resolvePermissionWithSudoGrantID(convID, slug string) (permResolution, int6
 // scoped allow can only be answered against the request's ActionContext.
 func resolvePermissionVerdictForRequest(r *http.Request, convID, slug string) permVerdict {
 	if defaults, ok := r.Context().Value(permissionDefaultsKey{}).(map[string]bool); ok {
-		return resolvePermissionVerdict(convID, slug, defaults[slug])
+		return resolveEffectivePermissionVerdict(convID, slug, defaults[slug], defaults[PermGroupsAdmin])
 	}
 	cfg, _ := config.Load()
-	return resolvePermissionVerdict(convID, slug, cfg.HasDefaultPermission(slug))
+	return resolveEffectivePermissionVerdict(convID, slug,
+		cfg.HasDefaultPermission(slug), cfg.HasDefaultPermission(PermGroupsAdmin))
 }
 
-func resolvePermissionWithDefault(convID, slug string, defaultAllowed bool) (permResolution, int64) {
-	v := resolvePermissionVerdict(convID, slug, defaultAllowed)
-	return contextFreeResolution(v), v.SudoGrantID
+// resolveEffectivePermissionVerdict adds the groups.admin umbrella to the
+// ordinary exact-slug resolver. Exact decisions always go first: in
+// particular, a dedicated deny suppresses an umbrella grant. An umbrella deny
+// does not suppress a separately granted dedicated capability; it only removes
+// the umbrella source.
+func resolveEffectivePermissionVerdict(convID, slug string, defaultAllowed, adminDefaultAllowed bool) permVerdict {
+	src := loadPermSources(convID)
+	return resolveEffectivePermissionVerdictFrom(src, slug, defaultAllowed, adminDefaultAllowed)
+}
+
+func resolveEffectivePermissionVerdictFrom(src permSources, slug string, defaultAllowed, adminDefaultAllowed bool) permVerdict {
+	if !IsKnownPermSlug(slug) {
+		return permVerdict{Resolution: permUndecided, Source: permSourceNone}
+	}
+	exact := resolvePermissionVerdictFrom(src, slug, defaultAllowed)
+	if exact.Resolution == permDeny || !IsGroupsAdminImpliedSlug(slug) {
+		return exact
+	}
+	admin := resolvePermissionVerdictFrom(src, PermGroupsAdmin, adminDefaultAllowed)
+	if exact.Resolution == permUndecided && admin.Resolution == permAllow {
+		return admin
+	}
+	// A scoped dedicated allow may not cover this particular action. An
+	// unscoped umbrella still does, so prefer it here; otherwise the gate would
+	// stop at the unsatisfied dedicated scope and never reach groups.admin.
+	if exact.Resolution == permAllow && contextFreeResolution(exact) == permUndecided &&
+		admin.Resolution == permAllow && contextFreeResolution(admin) == permAllow {
+		return admin
+	}
+	return exact
 }
 
 // contextFreeResolution collapses a verdict for a reader that cannot say what
@@ -513,6 +574,9 @@ const (
 	// the structural group-owner bypass that call sites (and the listing)
 	// apply to fill the permUndecided gap.
 	permSourceOwner permSource = "owner"
+	// permSourceMember is a registry-declared capability conferred by active
+	// membership in the action's target group.
+	permSourceMember permSource = "member"
 )
 
 // permVerdict is a resolution plus the provenance behind it.
@@ -666,10 +730,6 @@ func resolveGroupBoundPermissionVerdictForRequest(r *http.Request, convID, slug 
 // here shows up in the listing for free rather than silently making the
 // listing wrong (an agent held human.notify via a group grant while
 // `permissions ls` reported it absent).
-func resolvePermissionVerdict(convID, slug string, defaultAllowed bool) permVerdict {
-	return resolvePermissionVerdictFrom(loadPermSources(convID), slug, defaultAllowed)
-}
-
 // resolvePermissionVerdictFrom applies the precedence to already-read
 // sources. This is the one place the ordering lives; a caller resolving
 // many slugs for one agent loads the sources once and calls this per
@@ -714,45 +774,172 @@ func resolvePermissionVerdictFrom(src permSources, slug string, defaultAllowed b
 // may be scoped (§4). Omitting it is the norm and costs nothing for an
 // unscoped grant; see requirePermissionEx for what a scoped grant does then.
 func requirePermission(w http.ResponseWriter, r *http.Request, perm string, actx ...ActionContext) (string, bool) {
-	return requirePermissionEx(w, r, perm, nil, actx...)
+	return requirePermissionEx(w, r, perm, actx...)
 }
 
-// requireGroupPermission gates a GROUP-scoped endpoint behind perm with
-// the structural rule that OWNING g confers perm by default. It is
-// requirePermission plus an owner-of-this-group bypass: owner-state
-// raises the default group-lifecycle slugs (groups.spawn / groups.stop /
-// groups.retire / groups.resume) so a lead can run its own team's
-// lifecycle without an explicit grant. Consistent with the universal
-// precedence — the bypass fills only the permUndecided gap, an explicit
-// deny override still suppresses it, and a non-owner still needs the slug.
+// requireGroupPermission gates a group-scoped endpoint behind perm. Ownership
+// contributes ordinary OwnerImplied grants scoped to each owned group; this
+// gate identifies which group is the ownership subject. Exact denies still
+// suppress the derived grant, and non-owners need another positive source.
 //
 // It is also the one gate that fills in an ActionContext by itself: the
 // target group is its whole reason for existing, so a grant scoped to
 // {"group": [...]} is evaluated here rather than waiting for a per-handler
 // migration. Any caller-supplied context wins, so a handler that also knows
 // the profile or template can pass a fuller one.
-// The bypass is narrowed by g's OWN owner-scope map (TCL-1071): this gate
-// knows exactly which group is being acted on, so it consults that group's map
-// and no other. An owner of a narrowed g1 and an unnarrowed g2 acting on g2 is
-// therefore unaffected.
+// Owner-grant constraints are read from g itself. An owner of a constrained
+// g1 and an unconstrained g2 acting on g2 is therefore unaffected.
 func requireGroupPermission(w http.ResponseWriter, r *http.Request, perm string, g *db.AgentGroup, actx ...ActionContext) (string, bool) {
 	ctx := actionContextOf(actx)
 	if ctx.Group == "" {
 		ctx.Group = g.Name
 	}
-	return requirePermissionEx(w, r, perm, func(convID, slug string, bypassCtx ActionContext) bool {
-		return ownerOfGroupPermitting(g, convID, slug, bypassCtx)
-	}, ctx)
+	ctx.structuralGroup = g.Name
+	if isBulkGroupMemberPermission(perm) {
+		ctx.bulkGroupMemberCoverage = true
+	}
+	return requirePermissionEx(w, r, perm, ctx)
+}
+
+func isBulkGroupMemberPermission(slug string) bool {
+	switch slug {
+	case PermGroupsMembersStop, PermGroupsMembersResume, PermGroupsMembersRetire:
+		return true
+	default:
+		return false
+	}
+}
+
+// permissionAllowsAction evaluates all standing sources for one slug and one
+// concrete action. A scoped positive source that misses the action does not
+// revoke lower positive authority: the owner/member tier may still cover it.
+// An explicit deny remains authoritative and suppresses structural grants.
+func permissionAllowsAction(r *http.Request, convID, perm string, actx ActionContext) (bool, string, error) {
+	v := resolvePermissionVerdictForRequest(r, convID, perm)
+	if !actx.bulkGroupMemberCoverage {
+		allowed, matched := permissionVerdictAllowsAction(v, convID, perm, actx)
+		return allowed, matched, nil
+	}
+	coverageSlug := perm
+	if actx.alternatePermission != "" {
+		base := actx
+		base.bulkGroupMemberCoverage = false
+		if allowed, matched := permissionVerdictAllowsAction(v, convID, perm, base); allowed {
+			return true, matched, nil
+		}
+		coverageSlug = actx.alternatePermission
+		v = resolvePermissionVerdictForRequest(r, convID, coverageSlug)
+	}
+	return permissionVerdictAllowsBulkGroupAction(v, convID, coverageSlug, actx)
+}
+
+func permissionVerdictAllowsBulkGroupAction(v permVerdict, convID, perm string, actx ActionContext) (bool, string, error) {
+	targets := actx.affectedConvs
+	if targets == nil {
+		g, err := db.GetAgentGroupByName(actx.structuralGroup)
+		if err != nil {
+			return false, "", fmt.Errorf("resolve target group: %w", err)
+		}
+		if g == nil {
+			return false, "", fmt.Errorf("resolve target group: group %q not found", actx.structuralGroup)
+		}
+		members, err := db.ListAgentGroupMembers(g.ID)
+		if err != nil {
+			return false, "", fmt.Errorf("resolve affected members: %w", err)
+		}
+		for _, member := range members {
+			if perm == PermGroupsMembersRetire && sameActor(convID, member.ConvID) {
+				continue
+			}
+			targets = append(targets, member.ConvID)
+		}
+	}
+	if len(targets) == 0 {
+		base := actx
+		base.bulkGroupMemberCoverage = false
+		allowed, matched := permissionVerdictAllowsAction(v, convID, perm, base)
+		return allowed, matched, nil
+	}
+	seenGroups := map[string]bool{}
+	for _, target := range targets {
+		groups, err := activeGroupNamesForConvs(target)
+		if err != nil {
+			return false, "", fmt.Errorf("resolve affected groups: %w", err)
+		}
+		if len(groups) == 0 {
+			return false, "", nil
+		}
+		targetAgent, err := db.AgentIDForConv(target)
+		if err != nil {
+			return false, "", fmt.Errorf("resolve affected agent: %w", err)
+		}
+		for _, group := range groups {
+			candidate := actx
+			candidate.bulkGroupMemberCoverage = false
+			candidate.Group = group
+			candidate.structuralGroup = group
+			candidate.TargetAgent = targetAgent
+			candidate.targetConv = target
+			if allowed, _ := permissionVerdictAllowsAction(v, convID, perm, candidate); !allowed {
+				return false, "", nil
+			}
+			seenGroups[group] = true
+		}
+	}
+	groups := make([]string, 0, len(seenGroups))
+	for group := range seenGroups {
+		groups = append(groups, group)
+	}
+	sort.Strings(groups)
+	return true, "group=" + strings.Join(groups, ","), nil
+}
+
+func permissionVerdictAllowsAction(v permVerdict, convID, perm string, actx ActionContext) (bool, string) {
+	switch v.Resolution {
+	case permAllow:
+		eval := evalPermissionScope(v, convID, actx)
+		if eval.Satisfied {
+			return true, eval.Matched
+		}
+		return structuralPermissionMatch(convID, perm, actx)
+	case permUndecided:
+		return structuralPermissionMatch(convID, perm, actx)
+	case permDeny:
+		return false, ""
+	default:
+		return false, ""
+	}
+}
+
+// loadBearingSudoGrantID returns the durable grant responsible for an action,
+// but only when the same action is not already covered by standing sources
+// (including owner/member-derived grants). This decision-time check retains
+// scoped sudo provenance that a context-free audit re-resolution cannot see.
+func loadBearingSudoGrantID(r *http.Request, convID, perm string, actx ActionContext) int64 {
+	cfg, _ := config.Load()
+	src := loadPermSources(convID)
+	withoutSudo := src
+	withoutSudo.sudo = map[string]sudoPermSource{}
+	standing := resolveEffectivePermissionVerdictFrom(withoutSudo, perm,
+		cfg.HasDefaultPermission(perm), cfg.HasDefaultPermission(PermGroupsAdmin))
+	if allowed, _ := permissionVerdictAllowsAction(standing, convID, perm, actx); allowed {
+		return 0
+	}
+	effective := resolvePermissionVerdictForRequest(r, convID, perm)
+	if allowed, _ := permissionVerdictAllowsAction(effective, convID, perm, actx); allowed && effective.SudoGrantID > 0 {
+		return effective.SudoGrantID
+	}
+	return 0
 }
 
 // requirePermissionEx is the shared core of requirePermission and
-// requireGroupPermission. ownerBypass, when non-nil, is consulted with
-// the resolved caller conv-id ONLY when the slug is otherwise undecided
-// (no grant, no deny) — a structural grant that fills the default-slug
-// gap. It is deliberately NOT consulted on permDeny: a deny override is
-// always authoritative and suppresses the bypass, the same precedence
-// every other gate follows. ownerBypass == nil reproduces plain
-// requirePermission behaviour exactly.
+// requireGroupPermission. Group ownership and group membership are consulted
+// from the registry with the resolved caller conv-id ONLY when the slug is
+// otherwise undecided (no grant, no deny) — derived positive sources that fill
+// the default-slug gap. Neither is consulted on permDeny: a deny override is
+// always authoritative and suppresses them, the same precedence every other
+// gate follows. Slugs not marked OwnerImplied receive no ownership source; a slug that is not
+// MemberImplied, or a call with no structuralGroup, receives no member source.
 //
 // actx (at most one) describes what the request targets, and is evaluated
 // against the winning grant's scope (§4/§6):
@@ -763,15 +950,19 @@ func requireGroupPermission(w http.ResponseWriter, r *http.Request, perm string,
 //   - Scoped allow the context satisfies → pass, and the matched scope is
 //     recorded on the request's audit row.
 //   - Scoped allow the context does not satisfy, or a scoped dimension the
-//     site did not describe → the grant does not decide this action: the
-//     structural owner bypass may still fill the gap, then the ask-human
-//     popup, then 403. Never a silent allow.
-//
-// The bypass receives the slug and the SAME ActionContext, because the
-// owner-implied bypass is itself scopeable per group (TCL-1071): a bypass that
-// could not see what the action targets could not tell a permitted spawn from
-// a refused one.
-func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ownerBypass ownerBypassFunc, actx ...ActionContext) (string, bool) {
+//     site did not describe → that source does not decide this action. An
+//     owner/member-derived grant may still cover it, then the ask-human popup,
+//     then 403. Never a silent allow.
+func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, actx ...ActionContext) (string, bool) {
+	// Authorization code may only name capabilities in the central registry.
+	// Fail before identity resolution (including the implicit-human path), so a
+	// typo can never appear as a valid denial or reach one-time approval.
+	if !IsKnownPermSlug(perm) {
+		slog.Error("authorization gate references unregistered permission", "permission", perm, "path", r.URL.Path)
+		writeError(w, http.StatusInternalServerError, "unregistered_permission",
+			fmt.Sprintf("authorization gate references unregistered permission %q", perm))
+		return "", false
+	}
 	p := peerFromContext(r.Context())
 	switch classify(p) {
 	case classUnidentified:
@@ -809,8 +1000,8 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ow
 	}
 	// Defaults, per-conv grant/deny overrides, and sudo grants all
 	// resolve in resolvePermission. A permAllow passes; a permUndecided
-	// may still pass via the structural owner bypass; permDeny is
-	// authoritative and (like an undecided with no bypass) falls through
+	// may still pass via an owner/member-derived grant; permDeny is
+	// authoritative and (like an undecided with no derived grant) falls through
 	// to the popup-or-403 path below.
 	allowed := false
 	if hasWriteProofApprovalContinuation(r, p.ConvID, perm, p.ConvID) ||
@@ -819,24 +1010,15 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ow
 		// grants (and their scopes) are not consulted at all.
 		allowed = true
 	} else {
-		v := resolvePermissionVerdictForRequest(r, p.ConvID, perm)
-		bypassCtx := actionContextOf(actx)
-		switch v.Resolution {
-		case permAllow:
-			eval := evalPermissionScope(v, p.ConvID, bypassCtx)
-			if eval.Satisfied {
-				allowed = true
-				recordAuditPermissionScope(r, perm, eval.Matched)
-			} else {
-				// The grant is scoped away from this action, so it decides
-				// nothing here — the same gap permUndecided leaves.
-				allowed = ownerBypass != nil && ownerBypass(p.ConvID, perm, bypassCtx)
-			}
-		case permUndecided:
-			allowed = ownerBypass != nil && ownerBypass(p.ConvID, perm, bypassCtx)
-		case permDeny:
-			// Authoritative deny — suppresses the owner bypass.
+		actionCtx := actionContextOf(actx)
+		var matched string
+		var evalErr error
+		allowed, matched, evalErr = permissionAllowsAction(r, p.ConvID, perm, actionCtx)
+		if evalErr != nil {
+			writeError(w, http.StatusInternalServerError, "io", evalErr.Error())
+			return "", false
 		}
+		recordAuditPermissionScope(r, perm, matched)
 	}
 	if !allowed {
 		// Permission denied. If the caller asked for a human-override

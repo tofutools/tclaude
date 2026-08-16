@@ -42,18 +42,18 @@ func TestGroupOwnerDefaultPerms_OwnerPassesWithoutSlug(t *testing.T) {
 
 	// stop / resume / retire: the owner passes the permission gate.
 	assert.Equal(t, http.StatusOK, serveGroupVerbAs(t, f, "stop", "squad", owner),
-		"owner should stop its own group without groups.stop")
+		"owner should stop its own group without groups.members.stop")
 	assert.Equal(t, http.StatusOK, serveGroupVerbAs(t, f, "resume", "squad", owner),
-		"owner should resume its own group without groups.resume")
+		"owner should resume its own group without groups.members.resume")
 	assert.Equal(t, http.StatusOK, serveGroupVerbAs(t, f, "retire", "squad", owner),
-		"owner should retire its own group without groups.retire")
+		"owner should retire its own group without groups.members.retire")
 
 	// spawn: the owner passes the permission gate AND the spawn
 	// guardrails (which already treat an owner as allowed), so a fresh
 	// agent lands in the group.
 	resp := f.AsAgent(owner).SpawnWith("squad", map[string]any{"name": "newbie"})
 	assert.Equal(t, http.StatusOK, resp.Code,
-		"owner should spawn into its own group without groups.spawn; body=%s", string(resp.Raw))
+		"owner should spawn into its own group without groups.members.spawn; body=%s", string(resp.Raw))
 	assert.NotEmpty(t, resp.ConvID, "spawn returned a conv-id")
 }
 
@@ -104,16 +104,16 @@ func TestGroupOwnerDefaultPerms_DenyOverrideBeatsOwner(t *testing.T) {
 	// Deny the two lifecycle slugs specifically — owner status must not raise
 	// either one back above an explicit deny.
 	require.NoError(t,
-		db.SetAgentPermissionOverride(owner, agentd.PermGroupsStop, db.PermEffectDeny, "test"),
-		"seed deny override on groups.stop")
+		db.SetAgentPermissionOverride(owner, agentd.PermGroupsMembersStop, db.PermEffectDeny, "test"),
+		"seed deny override on groups.members.stop")
 	require.NoError(t,
-		db.SetAgentPermissionOverride(owner, agentd.PermGroupsResume, db.PermEffectDeny, "test"),
-		"seed deny override on groups.resume")
+		db.SetAgentPermissionOverride(owner, agentd.PermGroupsMembersResume, db.PermEffectDeny, "test"),
+		"seed deny override on groups.members.resume")
 
 	assert.Equal(t, http.StatusForbidden, serveGroupVerbAs(t, f, "stop", "squad", owner),
-		"deny override on groups.stop must beat the owner default")
+		"deny override on groups.members.stop must beat the owner default")
 	assert.Equal(t, http.StatusForbidden, serveGroupVerbAs(t, f, "resume", "squad", owner),
-		"deny override on groups.resume must beat the owner default")
+		"deny override on groups.members.resume must beat the owner default")
 	// An un-denied sibling still rides the owner default.
 	assert.Equal(t, http.StatusOK, serveGroupVerbAs(t, f, "retire", "squad", owner),
 		"owner still retires when only stop and resume are denied")

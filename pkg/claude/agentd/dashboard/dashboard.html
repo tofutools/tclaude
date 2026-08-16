@@ -3,11 +3,8 @@
 <head>
 <meta charset="utf-8">
 <title>tclaude agent dashboard</title>
-<!-- Favicon: the 🤝 emoji drawn straight into an inline SVG data URI.
-     No extra route or embedded asset — it rides along in this page,
-     which is already served behind the dashboard auth cookie. The
-     handshake mirrors tclaude's agent-coordination theme. -->
-<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text x="50" y="52" font-size="78" text-anchor="middle" dominant-baseline="central">🤝</text></svg>'>
+<!-- The favicon shares the agent-network mark with the system tray. -->
+<link rel="icon" href="/static/tclaude-icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/dashboard.css">
 <!-- Vendored (not CDN, like every other dashboard asset) — backs the opaque
      xterm hosts mounted inside the Preact terminal shell. -->
@@ -176,7 +173,13 @@
        scrollable content width (JOH-313). In follow mode it's sticky-left
        so the controls stay usable while the page is scrolled sideways. -->
   <div class="bar-inner header-inner">
-  <h1>🤝 tclaude agent dashboard</h1>
+  <h1>
+    <button class="slop-icon" type="button" title="Change dashboard mode" aria-label="Change dashboard mode">
+      <img src="/static/tclaude-icon.svg" alt="">
+      <span class="theme-mode-badge" aria-hidden="true"></span>
+    </button>
+    <span class="dashboard-title">tclaude agent dashboard</span>
+  </h1>
   <!-- Global activity pulse — a deduped row of status "bots" aggregated
        across every group + the ungrouped bucket by the Preact shell's
        accepted-snapshot view. One glance answers
@@ -607,6 +610,7 @@
 <footer>
   <div class="footer-inner">
     <span class="shell-contents-root" id="shell-meta-root"></span>
+    <span class="shell-contents-root" id="shell-open-prs-root"></span>
   </div>
 </footer>
 <!-- Slop-mode side pull-lever — a casino lever pinned to the right edge,

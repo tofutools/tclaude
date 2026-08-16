@@ -202,8 +202,8 @@ test('the panel is placed against the usable area, flipping above when that is w
     // The reported case: a row near the bottom of a long table.
     const placed = placePRChecksPanel({ anchor: anchorAt(700), panel, area });
     assert.equal(placed.placement, 'above');
-    assert.ok(placed.top >= 8, 'stays inside the usable area');
-    assert.ok(placed.top + placed.maxHeight <= 700 - 7, 'clears the badge');
+    assert.equal(placed.top, 700 - 7, 'the CSS anchor is the panel bottom, just above the badge');
+    assert.ok(placed.top - placed.maxHeight >= 8, 'even a max-height panel stays in the usable area');
   });
 
   await t.test('the side does not depend on how much content is loaded', () => {
@@ -225,19 +225,21 @@ test('the panel is placed against the usable area, flipping above when that is w
     const short = { top: 0, left: 0, right: 1200, bottom: 400, width: 1200, height: 400 };
     const placed = placePRChecksPanel({ anchor: anchorAt(330), panel, area: short });
     assert.equal(placed.placement, 'above');
-    assert.ok(placed.top >= 8, 'never above the top edge');
-    assert.ok(placed.top + placed.maxHeight <= short.bottom - 8,
+    assert.ok(placed.top - placed.maxHeight >= 8, 'never above the top edge');
+    assert.ok(placed.top <= short.bottom - 8,
       'and never past the bottom edge either');
   });
 
   await t.test('a viewport too short for the minimum still keeps the panel on screen', () => {
-    // The min-height floor can exceed the room available; the position is
+    // The max-height floor can exceed the room available; the anchor edge is
     // clamped rather than trusted, so the panel overlaps the badge instead of
     // leaving the screen.
     const tiny = { top: 0, left: 0, right: 800, bottom: 180, width: 800, height: 180 };
     const placed = placePRChecksPanel({ anchor: anchorAt(150), panel, area: tiny });
-    assert.ok(placed.top >= 8 && placed.top + placed.maxHeight <= tiny.bottom - 8,
-      `panel at ${placed.top}+${placed.maxHeight} must stay inside a ${tiny.bottom}px area`);
+    const panelTop = placed.placement === 'above' ? placed.top - placed.maxHeight : placed.top;
+    const panelBottom = placed.placement === 'above' ? placed.top : placed.top + placed.maxHeight;
+    assert.ok(panelTop >= 8 && panelBottom <= tiny.bottom - 8,
+      `panel at ${panelTop}..${panelBottom} must stay inside a ${tiny.bottom}px area`);
   });
 
   await t.test('fixed chrome owning an edge is excluded, not painted over', () => {
@@ -246,7 +248,9 @@ test('the panel is placed against the usable area, flipping above when that is w
     // hidden behind them.
     const inset = { top: 0, left: 0, right: 1200 - 264, bottom: 800 - 29, width: 936, height: 771 };
     const belowFooter = placePRChecksPanel({ anchor: anchorAt(430), panel, area: inset });
-    assert.ok(belowFooter.top + belowFooter.maxHeight <= inset.bottom - 8,
+    const panelBottom = belowFooter.placement === 'above'
+      ? belowFooter.top : belowFooter.top + belowFooter.maxHeight;
+    assert.ok(panelBottom <= inset.bottom - 8,
       'the panel must clear the footer bar');
     const nearDock = placePRChecksPanel({ anchor: anchorAt(200, 900), panel, area: inset });
     assert.equal(nearDock.left, inset.right - 360 - 8, 'and stay clear of the dock rail');
@@ -271,8 +275,8 @@ test('the panel is placed against the usable area, flipping above when that is w
     assert.equal(bridge.height, placed.top - 116);
 
     const above = placePRChecksPanel({ anchor: anchorAt(700), panel, area });
-    assert.equal(above.bridge.top, above.top + above.maxHeight, 'and above it when flipped');
-    assert.equal(above.bridge.height, 700 - (above.top + above.maxHeight));
+    assert.equal(above.bridge.top, above.top, 'and above it when flipped');
+    assert.equal(above.bridge.height, 700 - above.top);
   });
 });
 
@@ -454,6 +458,8 @@ test('the measured panel is positioned and follows the viewport', async (t) => {
     assert.match(style, /top:\d+px/, `panel must be positioned, got style=${style}`);
     assert.match(style, /left:\d+px/);
     assert.match(style, /max-height:\d+px/);
+    assert.match(style, /transform:translateY\(-100%\)/,
+      'an above panel is positioned from its actual CSS height, not the maximum-height allowance');
     assert.doesNotMatch(style, /visibility:hidden/, 'a measured panel must be visible');
     assert.ok(root.className.includes('ci-place-above'),
       `a badge at 700px of an 800px viewport belongs above it, got ${root.className}`);

@@ -472,12 +472,13 @@ function populateConfigForm(cfg) {
   // lives in the slop block.
   $('#cfg-slop-hide-lever').checked = !!(cfg.slop && cfg.slop.hide_pull_lever);
 
-  // Feature switches (config features.*). Groups Route map, Processes, the
+  // Feature switches (config features.*). Groups Route map, Processes, Triggers, the
   // terminal command palette shortcut, and recorded sandbox details default
   // off; group attachments has off/float/fixed presentation modes; mounting
   // the shared agent-directory parent defaults on and only an explicit false
   // unchecks it.
   $('#cfg-feature-processes').checked = !!(cfg.features && cfg.features.processes);
+  $('#cfg-feature-triggers').checked = !!(cfg.features && cfg.features.triggers);
   $('#cfg-feature-groups-route-map').checked = !!(cfg.features && cfg.features.groups_route_map);
   setSelectValue(
     $('#cfg-feature-group-attachments'),
@@ -499,6 +500,13 @@ function populateConfigForm(cfg) {
   // Always show the Plugins tab even with no plugins installed. Default off
   // (the tab auto-hides when empty); lives in the dashboard block.
   $('#cfg-dashboard-always-show-plugins').checked = !!(cfg.dashboard && cfg.dashboard.always_show_plugins_tab);
+
+  // Footer Open PRs indicator. Default permanent (checked); only an explicit
+  // dashboard.always_show_open_prs:false unchecks it. The window field shows
+  // its default (3) as a placeholder, so an absent key stays blank.
+  $('#cfg-dashboard-always-show-open-prs').checked = !(cfg.dashboard && cfg.dashboard.always_show_open_prs === false);
+  $('#cfg-dashboard-recent-pr-window-days').value = cfg.dashboard && cfg.dashboard.recent_pr_window_days != null
+    ? cfg.dashboard.recent_pr_window_days : '';
 
   // Horizontal-scroll chrome-bar mode. Default follow (checked); only an
   // explicit dashboard.hscroll_follow:false (static) unchecks it.
@@ -757,13 +765,14 @@ function assembleConfig() {
 
   // features is an optional block for in-development feature switches. Clone
   // the existing one so a future flag with no widget round-trips. Groups Route
-  // map, Processes, terminal_command_palette_shortcut, and
+  // map, Processes, Triggers, terminal_command_palette_shortcut, and
   // recorded_sandbox_details default off; group_attachments omits its "off"
   // default; agent_dirs_mount_parent defaults on. Drop the block when it is
   // empty so an all-default config does not marshal a spurious "features": {}
   // diff.
   const feats = (cfg.features && typeof cfg.features === 'object') ? cfg.features : {};
   if ($('#cfg-feature-processes').checked) feats.processes = true; else delete feats.processes;
+  if ($('#cfg-feature-triggers').checked) feats.triggers = true; else delete feats.triggers;
   if ($('#cfg-feature-groups-route-map').checked) feats.groups_route_map = true; else delete feats.groups_route_map;
   const groupAttachments = controlValue($('#cfg-feature-group-attachments'));
   if (groupAttachments === 'float' || groupAttachments === 'fixed') {
@@ -815,6 +824,19 @@ function assembleConfig() {
   // the omitempty default) so an all-default dashboard block doesn't marshal a
   // spurious key.
   if ($('#cfg-dashboard-always-show-plugins').checked) dashboard.always_show_plugins_tab = true; else delete dashboard.always_show_plugins_tab;
+  // always_show_open_prs: permanent is the default, so store only the
+  // NON-default false — mirrors the Go *bool omitempty + default-true
+  // resolver.
+  if (!$('#cfg-dashboard-always-show-open-prs').checked) dashboard.always_show_open_prs = false;
+  else delete dashboard.always_show_open_prs;
+  // recent_pr_window_days: blank means "use the default" and drops the key; 0
+  // is a meaningful value (filter off), so it is stored like any other number.
+  // The daemon clamps out-of-range values, but keep the field honest here too.
+  const recentPRDaysRaw = $('#cfg-dashboard-recent-pr-window-days').value.trim();
+  const recentPRDays = parseInt(recentPRDaysRaw, 10);
+  if (recentPRDaysRaw !== '' && Number.isFinite(recentPRDays)) {
+    dashboard.recent_pr_window_days = Math.min(30, Math.max(0, recentPRDays));
+  } else delete dashboard.recent_pr_window_days;
   // hscroll_follow: follow is the default, so store only the NON-default
   // static (false) and drop the key when following — mirrors the Go *bool
   // omitempty + default-true resolver.

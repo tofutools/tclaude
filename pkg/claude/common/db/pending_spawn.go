@@ -87,6 +87,9 @@ type PendingSpawn struct {
 	CodexAppServerSource string
 	CodexStateRoot       string
 	CodexStateRootSource string
+	// FastModeAtLaunch is the effective state captured before the process fork.
+	// It is nullable for legacy rows and read failures, and never launch intent.
+	FastModeAtLaunch *bool
 	// EffectiveSandbox is the exact value snapshot authorized for the launch.
 	// A nil value is reserved for legacy rows created before snapshot support;
 	// recovery paths must not re-resolve mutable registry assignments for it.
@@ -119,13 +122,14 @@ func InsertPendingSpawn(p *PendingSpawn) error {
 			(label, agent_id, launching, group_id, role, descr, name, initial_message, group_context, profile_context,
 			 reply_to_conv, spawned_by_conv, reply_to_agent, spawned_by_agent,
 			 worktree_path, worktree_branch, is_owner, permission_overrides, process_command_id,
-			 task_url, task_label, codex_app_server, codex_app_server_source, codex_state_root, codex_state_root_source,
+			 task_url, task_label, codex_app_server, codex_app_server_source, codex_state_root, codex_state_root_source, fast_mode_at_launch,
 			 effective_sandbox_config, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`, `+agentForConvExpr+`, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`, `+agentForConvExpr+`, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.Label, p.AgentID, boolToInt(p.Launching), p.GroupID, p.Role, p.Descr, p.Name, p.InitialMessage, p.GroupContext, p.ProfileContext,
 		p.ReplyToConv, p.SpawnedByConv, p.ReplyToConv, p.SpawnedByConv,
 		p.WorktreePath, p.WorktreeBranch, boolToInt(p.IsOwner), marshalPermissionOverrides(p.PermissionOverrides), p.ProcessCommandID,
-		p.TaskURL, p.TaskLabel, boolPtrToNull(p.CodexAppServer), p.CodexAppServerSource, p.CodexStateRoot, p.CodexStateRootSource, effectiveSandbox,
+		p.TaskURL, p.TaskLabel, boolPtrToNull(p.CodexAppServer), p.CodexAppServerSource, p.CodexStateRoot, p.CodexStateRootSource,
+		boolPtrToNull(p.FastModeAtLaunch), effectiveSandbox,
 		dbTime(time.Now()))
 	return err
 }
@@ -178,7 +182,7 @@ func GetPendingSpawn(label string) (*PendingSpawn, error) {
 		SELECT label, agent_id, launching, group_id, role, descr, name, initial_message, group_context, profile_context,
 			reply_to_conv, spawned_by_conv, reply_to_agent, spawned_by_agent,
 			worktree_path, worktree_branch, is_owner, permission_overrides, process_command_id,
-			task_url, task_label, codex_app_server, codex_app_server_source, codex_state_root, codex_state_root_source,
+			task_url, task_label, codex_app_server, codex_app_server_source, codex_state_root, codex_state_root_source, fast_mode_at_launch,
 			effective_sandbox_config, created_at
 		FROM pending_spawns WHERE label = ?`, label)
 	p, err := scanPendingSpawn(row)
@@ -199,7 +203,7 @@ func ListPendingSpawns() ([]*PendingSpawn, error) {
 		SELECT label, agent_id, launching, group_id, role, descr, name, initial_message, group_context, profile_context,
 			reply_to_conv, spawned_by_conv, reply_to_agent, spawned_by_agent,
 			worktree_path, worktree_branch, is_owner, permission_overrides, process_command_id,
-			task_url, task_label, codex_app_server, codex_app_server_source, codex_state_root, codex_state_root_source,
+			task_url, task_label, codex_app_server, codex_app_server_source, codex_state_root, codex_state_root_source, fast_mode_at_launch,
 			effective_sandbox_config, created_at
 		FROM pending_spawns ORDER BY created_at ASC`)
 	if err != nil {
@@ -362,13 +366,14 @@ func scanPendingSpawn(s rowScanner) (*PendingSpawn, error) {
 	var isOwner int
 	var permOverrides string
 	var codexAppServer sql.NullInt64
+	var fastModeAtLaunch sql.NullInt64
 	var effectiveSandbox string
 	var createdAt dbTimestamp
 	if err := s.Scan(&p.Label, &p.AgentID, &launching, &p.GroupID, &p.Role, &p.Descr, &p.Name,
 		&p.InitialMessage, &p.GroupContext, &p.ProfileContext, &p.ReplyToConv, &p.SpawnedByConv,
 		&p.ReplyToAgent, &p.SpawnedByAgent,
 		&p.WorktreePath, &p.WorktreeBranch, &isOwner, &permOverrides, &p.ProcessCommandID,
-		&p.TaskURL, &p.TaskLabel, &codexAppServer, &p.CodexAppServerSource, &p.CodexStateRoot, &p.CodexStateRootSource,
+		&p.TaskURL, &p.TaskLabel, &codexAppServer, &p.CodexAppServerSource, &p.CodexStateRoot, &p.CodexStateRootSource, &fastModeAtLaunch,
 		&effectiveSandbox, &createdAt); err != nil {
 		return nil, err
 	}
@@ -379,6 +384,10 @@ func scanPendingSpawn(s rowScanner) (*PendingSpawn, error) {
 	if codexAppServer.Valid {
 		selected := codexAppServer.Int64 != 0
 		p.CodexAppServer = &selected
+	}
+	if fastModeAtLaunch.Valid {
+		observed := fastModeAtLaunch.Int64 != 0
+		p.FastModeAtLaunch = &observed
 	}
 	var err error
 	p.EffectiveSandbox, err = unmarshalEffectiveSandboxSnapshot(effectiveSandbox)

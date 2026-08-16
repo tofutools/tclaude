@@ -32,7 +32,7 @@ func sampleExport() *Export {
 			{ConvID: "conv-b", Role: "worker", JoinedAt: "2026-05-01T02:00:00Z"},
 		},
 		Owners:      []Owner{{ConvID: "conv-a", GrantedAt: "2026-05-01T03:00:00Z", GrantedBy: "human"}},
-		Permissions: []Permission{{ConvID: "conv-a", Slug: "groups.spawn", Effect: "grant", GrantedAt: "2026-05-01T04:00:00Z"}},
+		Permissions: []Permission{{ConvID: "conv-a", Slug: "groups.members.spawn", Effect: "grant", GrantedAt: "2026-05-01T04:00:00Z"}},
 		Messages:    []Message{{ID: 1, FromConv: "conv-a", ToConv: "conv-b", Body: "hi", CreatedAt: "2026-05-01T05:00:00Z"}},
 		Convs: []Conv{
 			{ConvID: "conv-a", SourceCwd: "/home/alice/proj", Title: "alice", Content: []byte(`{"type":"summary"}` + "\n")},
@@ -86,11 +86,11 @@ func TestScopedPermissionFieldsRequireV4(t *testing.T) {
 	assert.Equal(t, 4, FormatVersion, "scope-bearing archives must be rejected by v3 readers")
 	exp := sampleExport()
 	exp.Group.Permissions = []GroupPermission{{
-		Slug: "groups.spawn", ScopeJSON: `{"group":["dev"]}`,
+		Slug: "groups.members.spawn", ScopeJSON: `{"group":["dev"]}`,
 	}}
 	exp.Permissions[0].ScopeJSON = `{"group":["dev"]}`
 	exp.SudoGrants = []SudoGrant{{
-		ConvID: "conv-a", Slug: "groups.spawn", ScopeJSON: `{"group":["dev"]}`,
+		ConvID: "conv-a", Slug: "groups.members.spawn", ScopeJSON: `{"group":["dev"]}`,
 	}}
 
 	archive, err := Marshal(exp)

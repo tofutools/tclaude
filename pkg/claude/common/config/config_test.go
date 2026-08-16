@@ -410,34 +410,37 @@ func TestSave_AtomicAndRepeatable(t *testing.T) {
 	assert.Equal(t, "warn", got.LogLevel)
 }
 
-func TestMigrateSemanticProxyPermissions(t *testing.T) {
+func TestMigratePermissionNames(t *testing.T) {
 	isolateConfigHome(t)
 	require.NoError(t, os.MkdirAll(filepath.Dir(ConfigPath()), 0o700))
 	require.NoError(t, os.WriteFile(ConfigPath(), []byte(`{
   "agent": {
-    "default_permissions": ["git.read", "proxy.git.read", "linear.write"],
+    "default_permissions": ["git.read", "proxy.git.read", "linear.write", "groups.spawn", "groups.members.spawn"],
     "sudo": {
-      "blocklist": ["github.write"],
-      "overrides": {"worker": {"blocklist": ["linear.read"]}}
+      "blocklist": ["github.write", "groups.rm"],
+      "overrides": {"worker": {"blocklist": ["linear.read", "member.add"]}}
     }
   }
 }`), 0o600))
 
-	require.NoError(t, MigrateSemanticProxyPermissions())
+	require.NoError(t, MigratePermissionNames())
 	raw, err := os.ReadFile(ConfigPath())
 	require.NoError(t, err)
 	assert.NotContains(t, string(raw), `"git.read"`)
 	assert.NotContains(t, string(raw), `"linear.write"`)
 	assert.NotContains(t, string(raw), `"github.write"`)
 	assert.NotContains(t, string(raw), `"linear.read"`)
+	assert.NotContains(t, string(raw), `"groups.spawn"`)
+	assert.NotContains(t, string(raw), `"groups.rm"`)
+	assert.NotContains(t, string(raw), `"member.add"`)
 
 	cfg, err := Load()
 	require.NoError(t, err)
-	assert.Equal(t, []string{"proxy.git.read", "proxy.linear.write"}, cfg.Agent.DefaultPermissions,
+	assert.Equal(t, []string{"proxy.git.read", "proxy.linear.write", "groups.members.spawn"}, cfg.Agent.DefaultPermissions,
 		"an already-canonical entry wins a collision without duplication")
-	assert.Equal(t, []string{"proxy.github.write"}, *cfg.Agent.Sudo.Blocklist)
-	assert.Equal(t, []string{"proxy.linear.read"}, *cfg.Agent.Sudo.Overrides["worker"].Blocklist)
-	require.NoError(t, MigrateSemanticProxyPermissions(), "migration is idempotent")
+	assert.Equal(t, []string{"proxy.github.write", "groups.delete"}, *cfg.Agent.Sudo.Blocklist)
+	assert.Equal(t, []string{"proxy.linear.read", "groups.members.add"}, *cfg.Agent.Sudo.Overrides["worker"].Blocklist)
+	require.NoError(t, MigratePermissionNames(), "migration is idempotent")
 }
 
 // A config with no log_rotation block — or a nil config — resolves to
@@ -1193,6 +1196,14 @@ func TestProcessesEnabled(t *testing.T) {
 	assert.True(t, (&Config{Features: &FeaturesConfig{Processes: true}}).ProcessesEnabled(), "explicit true → true")
 }
 
+func TestTriggersEnabled(t *testing.T) {
+	var nilCfg *Config
+	assert.False(t, nilCfg.TriggersEnabled(), "nil config → false")
+	assert.False(t, (&Config{}).TriggersEnabled(), "no features block → false")
+	assert.False(t, (&Config{Features: &FeaturesConfig{}}).TriggersEnabled(), "features block, flag unset → false")
+	assert.True(t, (&Config{Features: &FeaturesConfig{Triggers: true}}).TriggersEnabled(), "explicit true → true")
+}
+
 func TestGroupsRouteMapEnabled(t *testing.T) {
 	var nilCfg *Config
 	assert.False(t, nilCfg.GroupsRouteMapEnabled(), "nil config → false")
@@ -1246,6 +1257,7 @@ func TestFeaturesConfig_RoundTrips(t *testing.T) {
 	in := &Config{Features: &FeaturesConfig{
 		GroupsRouteMap:                 true,
 		Processes:                      true,
+		Triggers:                       true,
 		GroupAttachments:               GroupAttachmentsFixed,
 		TerminalCommandPaletteShortcut: true,
 		RecordedSandboxDetails:         true,
@@ -1253,11 +1265,12 @@ func TestFeaturesConfig_RoundTrips(t *testing.T) {
 	data, err := json.Marshal(in)
 	require.NoError(t, err)
 	assert.Contains(t, string(data),
-		`"features":{"groups_route_map":true,"processes":true,"group_attachments":"fixed","terminal_command_palette_shortcut":true,"recorded_sandbox_details":true}`)
+		`"features":{"groups_route_map":true,"processes":true,"triggers":true,"group_attachments":"fixed","terminal_command_palette_shortcut":true,"recorded_sandbox_details":true}`)
 
 	var out Config
 	require.NoError(t, json.Unmarshal(data, &out))
 	assert.True(t, out.ProcessesEnabled())
+	assert.True(t, out.TriggersEnabled())
 	assert.True(t, out.GroupsRouteMapEnabled())
 	assert.Equal(t, GroupAttachmentsFixed, out.GroupAttachmentsMode())
 	assert.True(t, out.TerminalCommandPaletteShortcutEnabled())
@@ -1301,4 +1314,58 @@ func TestAgentDirsMountParentEnabled(t *testing.T) {
 	var out Config
 	require.NoError(t, json.Unmarshal(data, &out))
 	assert.False(t, out.AgentDirsMountParentEnabled(), "explicit false survives round-trip")
+}
+
+// TestAlwaysShowOpenPRs covers the dashboard.always_show_open_prs resolver:
+// nil config / absent block / nil pointer all default to a permanent footer
+// indicator (true); only an explicit false hides it at zero. A default config
+// marshals no dashboard block, and the explicit opt-out survives Save/Load.
+func TestAlwaysShowOpenPRs(t *testing.T) {
+	bp := func(b bool) *bool { return &b }
+
+	assert.True(t, (*Config)(nil).AlwaysShowOpenPRs(), "nil → permanent")
+	assert.True(t, (&Config{}).AlwaysShowOpenPRs(), "no block → permanent")
+	assert.True(t, (&Config{Dashboard: &DashboardConfig{}}).AlwaysShowOpenPRs(), "nil pointer → permanent")
+	assert.True(t, (&Config{Dashboard: &DashboardConfig{AlwaysShowOpenPRs: bp(true)}}).AlwaysShowOpenPRs())
+	assert.False(t, (&Config{Dashboard: &DashboardConfig{AlwaysShowOpenPRs: bp(false)}}).AlwaysShowOpenPRs(),
+		"explicit false → hide at zero")
+
+	clean, err := json.Marshal(&Config{})
+	require.NoError(t, err)
+	assert.NotContains(t, string(clean), "always_show_open_prs")
+
+	t.Setenv("HOME", t.TempDir())
+	require.NoError(t, Save(&Config{Dashboard: &DashboardConfig{AlwaysShowOpenPRs: bp(false)}}))
+	loaded, err := Load()
+	require.NoError(t, err)
+	assert.False(t, loaded.AlwaysShowOpenPRs(), "the opt-out survives round-trip")
+}
+
+// TestRecentPRWindowDays covers the dashboard.recent_pr_window_days resolver:
+// absent falls back to the default, 0 means "filter off" (and must survive as
+// a real value, not be mistaken for absent), and out-of-range values clamp
+// instead of asking GitHub for unbounded history.
+func TestRecentPRWindowDays(t *testing.T) {
+	ip := func(i int) *int { return &i }
+	days := func(p *int) int {
+		return (&Config{Dashboard: &DashboardConfig{RecentPRWindowDays: p}}).RecentPRWindowDays()
+	}
+
+	assert.Equal(t, RecentPRWindowDaysDefault, (*Config)(nil).RecentPRWindowDays(), "nil → default")
+	assert.Equal(t, RecentPRWindowDaysDefault, (&Config{}).RecentPRWindowDays(), "no block → default")
+	assert.Equal(t, RecentPRWindowDaysDefault, days(nil), "absent key → default")
+	assert.Equal(t, 0, days(ip(0)), "explicit 0 → filter off, not default")
+	assert.Equal(t, 7, days(ip(7)))
+	assert.Equal(t, RecentPRWindowDaysMax, days(ip(365)), "an over-long window clamps")
+	assert.Equal(t, 0, days(ip(-5)), "a negative window reads as off")
+
+	clean, err := json.Marshal(&Config{})
+	require.NoError(t, err)
+	assert.NotContains(t, string(clean), "recent_pr_window_days")
+
+	t.Setenv("HOME", t.TempDir())
+	require.NoError(t, Save(&Config{Dashboard: &DashboardConfig{RecentPRWindowDays: ip(0)}}))
+	loaded, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, 0, loaded.RecentPRWindowDays(), "an explicit 0 is not lost to omitempty")
 }

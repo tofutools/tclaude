@@ -100,12 +100,14 @@ func EnsureDirTrusted(h *Harness, projectDir string) error {
 }
 
 // EnsureDirTrustedForLaunch is EnsureDirTrusted with the LAUNCH's environment
-// supplied, for the one harness whose trust store moves with it.
+// supplied, for the harnesses whose trust store can move with it.
 //
-// Codex and Claude Code key their trust records on a fixed path under the
-// operator's home, so their editors ignore both arguments. Copilot's store
-// lives under COPILOT_HOME, which a spawn profile can relocate — and seeding
-// the ambient location for a launch that reads another one writes a file the
+// Codex keys its trust record on a fixed path under the operator's home, so
+// its editor ignores both arguments. Copilot's store lives under COPILOT_HOME,
+// which a spawn profile can relocate, and Claude Code's lives under
+// CLAUDE_CONFIG_DIR when that variable is set — tclaude's constructed-root
+// sandbox launches set it (see session.ApplyClaudeConfigDirEnv). Seeding the
+// ambient location for a launch that reads another one writes a file the
 // agent never opens, leaving the pane parked on the modal it was supposed to
 // clear. getenv nil (and home "") means "the ambient environment", which is
 // what every caller outside the profile-aware launch path wants.
@@ -122,7 +124,10 @@ func EnsureDirTrustedForLaunch(
 	case CodexName:
 		return EnsureCodexDirTrusted(projectDir)
 	case DefaultName:
-		return EnsureClaudeDirTrusted(projectDir)
+		if getenv == nil {
+			return EnsureClaudeDirTrusted(projectDir)
+		}
+		return EnsureClaudeDirTrustedForLaunch(getenv, projectDir)
 	case CopilotName:
 		if getenv == nil && strings.TrimSpace(home) == "" {
 			return EnsureCopilotDirTrusted(projectDir)

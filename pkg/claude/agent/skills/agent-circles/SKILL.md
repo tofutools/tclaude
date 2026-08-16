@@ -120,7 +120,7 @@ Each roster agent (`templateAgentJSON`):
 | `initial_message` | string | The agent's task brief. ≤ 16384 bytes; newlines and tabs allowed, other control chars not. |
 | `is_owner` | bool | Marks this agent a group owner (may be several). |
 | `permissions` | array of slug strings | Per-agent grants; each validated against the slug registry. |
-| `role_ref` | string | By-name reference into the role library; the agent inherits that role's defaults beneath its own fields. Must exist at save. |
+| `role_ref` | string | By-name reference into the role library; the agent inherits that role's brief and baseline permissions. It does not affect launch settings. Must exist at save. |
 | `spawn_profile` | string | By-name reference to a saved spawn profile (launch shape + birth-time permissions/owner). Must exist at save. |
 | `profile_inline` | object | A template-LOCAL spawn profile: the spawn-profile shape (`harness`/`model`/`effort`/`sandbox`/`approval`/`ask_user_question_timeout`/`auto_review`/`trust_dir`/`remote_control`/`startup_context`/`is_owner`/`permission_overrides`) embedded in the template — a bespoke per-agent launch config with no registry entry, carried along on export/import. No `name`, no identity fields (`agent_name`/`role`/`descr`/`initial_message` — those live on the roster agent), no dialog-only toggles (`sync_worktree`/`auto_focus`/`include_group_default_context`); all rejected at save. Sits between the legacy inline fields and `spawn_profile` in launch resolution. |
 | `harness` `model` `effort` `sandbox` `approval` | string | Legacy inline launch overrides that win over every profile tier. Validated against the resolved harness catalog. Leave blank to inherit — prefer `profile_inline` for new configs. |
@@ -171,7 +171,7 @@ it only when asked. Example minimal body:
   "default_context": "Use worktrees and open PRs.",
   "agents": [
     { "name": "PO",   "role": "product-owner", "is_owner": true,
-      "initial_message": "Coordinate the team.", "permissions": ["groups.spawn"] },
+      "initial_message": "Coordinate the team.", "permissions": ["groups.members.spawn"] },
     { "name": "dev1", "role": "dev", "initial_message": "Build feature A." },
     { "name": "dev2", "role": "dev", "initial_message": "Build feature B." }
   ]

@@ -529,7 +529,35 @@ function GroupLinksSection({ group, snapshot }) {
   </div>`;
 }
 
-function RealGroup({ node, snapshot, actions, hoveredGroupKey }) {
+function compactTriggerState(rule) {
+  if (!rule.enabled) return 'disabled';
+  const firing = rule.firings?.[0];
+  const finished = firing?.finished_at ?? firing?.FinishedAt;
+  const cooldown = Number(rule.cooldown_seconds || 0) * 1000;
+  if (finished && cooldown && new Date(finished).getTime() + cooldown > Date.now()) return 'cooldown';
+  return 'armed';
+}
+
+function GroupTriggersSection({ group, triggers }) {
+  const rows = (triggers || []).filter((rule) => rule.scope === 'global' ||
+    (rule.scope === 'group' && (rule.group === group.name || Number(rule.group_id) === Number(group.id))));
+  if (!rows.length) return null;
+  const visible = rows.slice(0, 5);
+  return html`<details class="group-triggers-section">
+    <summary><strong>Triggers</strong><span class="muted">${rows.length} installed here</span>
+      <a href="/automations/triggers" onClick=${(event) => event.stopPropagation()}>edit in Automations →</a></summary>
+    <table><thead><tr><th>Name</th><th>When</th><th>State</th><th>Enabled</th></tr></thead><tbody>
+      ${visible.map((rule) => html`<tr key=${rule.id}>
+        <td><span class="rowname">${rule.name}</span>${rule.scope === 'global' && html`<span class="trigger-scope global">global</span>`}</td>
+        <td><code>${rule.source}</code><span class="muted">${rule.author_is_agent === true ? ' · agent PRs' : ''}</span></td>
+        <td><span class=${`trigger-state ${compactTriggerState(rule)}`}>${compactTriggerState(rule)}</span></td>
+        <td>${rule.enabled ? 'yes' : 'no'}</td>
+      </tr>`)}</tbody></table>
+    ${rows.length > visible.length && html`<div class="muted">+ ${rows.length - visible.length} more — edit in Automations</div>`}
+  </details>`;
+}
+
+function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
   const { group } = node;
   const view = groupMembersView(group, groupShowOffline(group.name));
   const quickPinned = dashPrefs.getItem(`tclaude.dash.quickpin.${group.name}`) === '1';
@@ -543,10 +571,11 @@ function RealGroup({ node, snapshot, actions, hoveredGroupKey }) {
   >
     <${RealGroupSummary} group=${group} activity=${node.activity} membersView=${view} snapshot=${snapshot} actions=${actions} />
     <div class="subtable">
-      ${node.children.length ? html`<div class="group-subgroups">${node.children.map((child) => html`<${GroupNode} key=${child.key} node=${child} snapshot=${snapshot} actions=${actions} hoveredGroupKey=${hoveredGroupKey} />`)}</div>` : null}
+      ${node.children.length ? html`<div class="group-subgroups">${node.children.map((child) => html`<${GroupNode} key=${child.key} node=${child} snapshot=${snapshot} actions=${actions} triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} />`)}</div>` : null}
       ${group.pending?.length ? html`<div class="group-pending-block"><div class="group-pending-title"><span class="group-pending-title-regular">Pending spawns</span><span class="group-pending-title-wizard">Currently summoning...</span></div><${PendingTable} rows=${group.pending} /></div>` : null}
       <div class="group-header-actions"><${GroupActions} group=${group} actions=${actions} /></div>
       <${ForceBlock} group=${group} />
+      <${GroupTriggersSection} group=${group} triggers=${triggers} />
       ${!view.members.length
         ? html`<div class="muted">(no members yet)</div>`
         : !view.visible.length
@@ -673,9 +702,9 @@ const VIRTUAL_NAMES = {
   },
 };
 
-function GroupNode({ node, snapshot, actions, hoveredGroupKey }) {
+function GroupNode({ node, snapshot, actions, triggers, hoveredGroupKey }) {
   const group = node.group;
-  if (!group.virtual) return html`<${RealGroup} node=${node} snapshot=${snapshot} actions=${actions} hoveredGroupKey=${hoveredGroupKey} />`;
+  if (!group.virtual) return html`<${RealGroup} node=${node} snapshot=${snapshot} actions=${actions} triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} />`;
   if (group.conversations) return html`<${VirtualList} group=${group} kind="conversations" Table=${ConversationsTable} names=${VIRTUAL_NAMES.conversations} />`;
   if (group.retired) return html`<${VirtualList} group=${group} kind="retired" Table=${RetiredTable} names=${VIRTUAL_NAMES.retired} target="retired" />`;
   if (group.replaced) return html`<${VirtualList} group=${group} kind="replaced" Table=${ReplacedTable} names=${VIRTUAL_NAMES.replaced} />`;
@@ -683,8 +712,8 @@ function GroupNode({ node, snapshot, actions, hoveredGroupKey }) {
   return html`<${VirtualUngrouped} group=${group} snapshot=${snapshot} actions=${actions} />`;
 }
 
-export function GroupsNativeList({ groups, snapshot, actions, hoveredGroupKey = null }) {
+export function GroupsNativeList({ groups, snapshot, actions, triggers = [], hoveredGroupKey = null }) {
   if (!groups?.length) return html`<div class="empty">No groups yet. Create one with the <strong><span class="group-create-label-regular">+ new group</span><span class="group-create-label-wizard">⚔ Form a party</span></strong> button above.</div>`;
   const tree = buildGroupTree(groups, (group) => realGroupOpen(group, dashPrefs));
-  return tree.map((node) => html`<${GroupNode} key=${node.key} node=${node} snapshot=${snapshot} actions=${actions} hoveredGroupKey=${hoveredGroupKey} />`);
+  return tree.map((node) => html`<${GroupNode} key=${node.key} node=${node} snapshot=${snapshot} actions=${actions} triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} />`);
 }

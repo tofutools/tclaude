@@ -76,7 +76,8 @@ func init() {
 		// taskId in the same namespace as a background shell. An agent
 		// watching a CI job has work outstanding and must not read as idle.
 		// See Monitors + db.MonitorSet.
-		Monitors: true,
+		Monitors:                 true,
+		AwaitingInputObservation: true,
 		// Claude Code blocks a first launch in an untrusted dir on its "Do you
 		// trust the files in this folder?" dialog — the same startup gate as
 		// Codex's trust-folder modal, and equally fatal to an unattended pane.

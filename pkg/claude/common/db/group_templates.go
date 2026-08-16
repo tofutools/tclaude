@@ -137,9 +137,10 @@ type GroupTemplateAgent struct {
 	Permissions []PermissionGrant
 
 	// RoleRef is a by-name reference to a roles row (JOH-240): the agent
-	// inherits that role's defaults (canonical role-brief, launch shape,
-	// permission set) BENEATH its own overrides. No DB-level FK — existence is
-	// validated at the wire boundary, following SpawnProfile. "" = no role.
+	// inherits that role's behavior and access defaults (canonical role brief
+	// and permission set) beneath its own overrides. Launch policy remains
+	// independent. No DB-level FK — existence is validated at the wire
+	// boundary, following SpawnProfile. "" = no role.
 	RoleRef string
 
 	// Per-role launch profile (JOH-239). SpawnProfile is the current display

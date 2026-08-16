@@ -17,7 +17,7 @@ import (
 
 const closedNetworkOverrideRefusal = "Codex builtin sandbox (tools-only scope) cannot enforce closed network access; " +
 	"choose a sandbox implementation that can enforce closed network access, use network open, " +
-	"or enable “Allow launch without enforcement” in the dashboard spawn dialog"
+	"or enable “Allow launch with unenforced rules” in the dashboard spawn dialog"
 
 const dashboardOverrideTestOrigin = "http://127.0.0.1:0"
 
@@ -151,6 +151,78 @@ func TestDashboardClosedNetworkOverrideIsFreshSpawnOnlyAndDisclosed(t *testing.T
 		"resume must require a new dashboard authorization")
 }
 
+func TestDashboardReducedNetworkDenyOverrideRequiresFreshConfirmation(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Claude builtin deny omission is pinned by the Linux capability cell")
+	}
+	restoreURL := agentd.SetPopupBaseURLForTest(dashboardOverrideTestOrigin)
+	t.Cleanup(restoreURL)
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+		Name: "unsupported-deny",
+		Network: &sandboxpolicy.NetworkRules{
+			Baseline: sandboxpolicy.NetworkBaselineAllow,
+			Deny:     []sandboxpolicy.NetworkAllowEntry{{Host: "blocked.example"}},
+		},
+	})
+	require.NoError(t, err)
+	body := map[string]any{
+		"name":                   "deny-worker",
+		"harness":                harness.DefaultName,
+		"sandbox":                harness.ClaudeSandboxOn,
+		"sandbox_implementation": string(sandboxpolicy.ImplementationHarnessBuiltin),
+		"sandbox_profile":        "unsupported-deny",
+	}
+
+	without := f.AsHuman().SpawnWith("crew", body)
+	require.Equal(t, http.StatusUnprocessableEntity, without.Code)
+	var failure struct {
+		Code  string `json:"code"`
+		Error string `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(without.Raw, &failure))
+	assert.Equal(t, harness.SandboxCapabilityNetworkDeny, failure.Code)
+	assert.Contains(t, failure.Error, "cannot enforce every authored network deny entry")
+	assert.Contains(t, failure.Error, "affected authored entries: 0")
+	assert.Contains(t, failure.Error, "Allow launch with unenforced rules")
+
+	dashboardBody := make(map[string]any, len(body)+1)
+	for key, value := range body {
+		dashboardBody[key] = value
+	}
+	dashboardBody["allow_unenforced_sandbox"] = true
+	dashboard := agentd.BuildDashboardHandlerForTest()
+	spawn := testharness.Serve(dashboard, dashboardOverrideRequest(
+		t, http.MethodPost, "/api/groups/crew/spawn", dashboardBody))
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Body.String())
+	var launched struct {
+		ConvID string `json:"conv_id"`
+	}
+	testharness.DecodeJSON(t, spawn, &launched)
+	require.NotEmpty(t, launched.ConvID)
+
+	snapshot, err := db.AgentEffectiveSandboxConfigForConv(launched.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, snapshot)
+	require.Len(t, snapshot.Effective.AccessNotices, 2)
+	assert.Equal(t, "deny_selector_unsupported",
+		snapshot.Effective.AccessNotices[0].Reason)
+	authorization := snapshot.Effective.AccessNotices[1]
+	assert.Equal(t, sandboxpolicy.AccessNoticeReasonOperatorReducedNetworkDenyOverride,
+		authorization.Reason)
+	assert.Equal(t, sandboxpolicy.AccessNoticeEffectNotEnforced, authorization.Effect)
+	assert.Equal(t, []int{0}, authorization.Entries)
+	assert.Contains(t, authorization.Detail, "human operator used the dashboard launch override")
+
+	clone := f.AsHuman().CloneWith(launched.ConvID, map[string]any{
+		"no_copy_conv": true,
+	})
+	require.Equal(t, http.StatusUnprocessableEntity, clone.Code)
+	assert.Contains(t, string(clone.Raw), "cannot enforce every authored network deny entry",
+		"the predecessor's disclosure notice must not authorize a clone")
+}
+
 func TestUnenforcedSandboxOverrideRejectsEveryRawV1Caller(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("crew")
@@ -171,7 +243,7 @@ func TestUnenforcedSandboxOverrideRejectsEveryRawV1Caller(t *testing.T) {
 
 	const parent = "raw-agent-1111-2222-3333-444444444444"
 	f.HaveMember("crew", parent)
-	require.NoError(t, db.GrantAgentPermission(parent, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(parent, agentd.PermGroupsMembersSpawn, "test"))
 	agent := f.AsAgent(parent).SpawnWith("crew", body)
 	require.Equal(t, http.StatusForbidden, agent.Code)
 	assert.JSONEq(t, `{

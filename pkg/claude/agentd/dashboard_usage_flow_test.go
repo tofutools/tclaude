@@ -31,6 +31,20 @@ type dashUsage struct {
 	// subscription windows, lifted from Codex's local rollout files.
 	// nil when Codex has no recent usage data.
 	Codex *dashCodexUsage `json:"codex"`
+	// Copilot mirrors the account-wide finite monthly premium-request quota.
+	Copilot  *dashCopilotUsage `json:"copilot"`
+	APICosts []dashAPICost     `json:"api_costs"`
+}
+
+type dashCopilotUsage struct {
+	Available bool          `json:"available"`
+	Monthly   *dashUsageWin `json:"monthly"`
+}
+
+type dashAPICost struct {
+	Provider     string  `json:"provider"`
+	TotalCostUSD float64 `json:"total_cost_usd"`
+	TodayCostUSD float64 `json:"today_cost_usd"`
 }
 
 // dashCodexUsage mirrors agentd.codexDashboardUsage.
@@ -96,6 +110,32 @@ func TestDashboardUsage_SurfacedInSnapshot(t *testing.T) {
 	assert.Equal(t, 10.0, snap.Usage.SevenDay.Pct, "7d percent")
 	assert.Regexp(t, `^\d+d\d+h$`, snap.Usage.SevenDay.Remaining, "7d remaining time format")
 	assert.NotEmpty(t, snap.Usage.SevenDay.ResetsAt, "7d resets_at populated")
+}
+
+func TestDashboardUsage_CopilotMonthlyQuotaSurfacedInSnapshot(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+	newFlow(t)
+
+	now := time.Now().UTC()
+	_, err := db.SaveSubscriptionUsageSample(db.SubscriptionUsageSample{
+		Provider: db.SubscriptionProviderGitHub, ObservedAt: now,
+		Source: "account.getQuota", Windows: []db.SubscriptionUsageWindow{{
+			Name: "monthly", Duration: 30 * 24 * time.Hour,
+			UsedPercent: 58.2, ResetsAt: now.Add(18 * 24 * time.Hour),
+		}},
+	})
+	require.NoError(t, err)
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	require.NotNil(t, snap.Usage.Copilot)
+	assert.True(t, snap.Usage.Copilot.Available)
+	require.NotNil(t, snap.Usage.Copilot.Monthly)
+	assert.InDelta(t, 58.2, snap.Usage.Copilot.Monthly.Pct, 1e-9)
+	wantReset := time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC)
+	assert.Equal(t, wantReset.Format(time.RFC3339Nano), snap.Usage.Copilot.Monthly.ResetsAt,
+		"the snapshot ignores old raw reset metadata and uses the documented month boundary")
+	assert.NotEmpty(t, snap.Usage.Copilot.Monthly.Remaining)
 }
 
 // Scenario: subscription usage is "sometimes not available". The
@@ -355,6 +395,10 @@ func TestDashboardUsage_TotalCostSurfacedWithoutSubscription(t *testing.T) {
 	// coincide here, and both must surface.
 	assert.InDelta(t, 1.75, snap.Usage.TodayCostUSD, 1e-9,
 		"today's cost surfaced alongside the month-to-date total")
+	require.Len(t, snap.Usage.APICosts, 1)
+	assert.Equal(t, db.SubscriptionProviderAnthropic, snap.Usage.APICosts[0].Provider,
+		"the single API-cost source still carries an explicit provider")
+	assert.InDelta(t, 1.75, snap.Usage.APICosts[0].TotalCostUSD, 1e-9)
 }
 
 // Scenario: spend straddles a day boundary — a session that spent on an

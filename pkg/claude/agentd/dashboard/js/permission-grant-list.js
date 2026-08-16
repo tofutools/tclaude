@@ -49,3 +49,21 @@ export function grantToOverride(entry) {
   const scope = grantScope(entry);
   return scope ? { effect: 'grant', scope } : 'grant';
 }
+
+// grantListToOverrides and grantOverridesToList bridge blueprint permissions
+// (roles/templates) to the shared buffered permission editor's override union.
+// Blueprint permissions are grant-only, so a defensive deny in the returned
+// map is ignored rather than leaking an unsupported effect into the role wire
+// shape.
+export function grantListToOverrides(list) {
+  return Object.fromEntries((list || []).map((entry) => [grantSlug(entry), grantToOverride(entry)]));
+}
+
+export function grantOverridesToList(overrides) {
+  return Object.entries(overrides || {})
+    .filter(([, override]) => (typeof override === 'string' ? override : override?.effect) === 'grant')
+    .map(([slug, override]) => {
+      const scope = typeof override === 'object' && override ? override.scope : null;
+      return scope && Object.keys(scope).length ? { slug, scope } : slug;
+    });
+}

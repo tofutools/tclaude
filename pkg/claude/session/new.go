@@ -308,7 +308,7 @@ type NewParams struct {
 
 	// --join-group makes the new session auto-join an existing agent group
 	// the moment its conv-id materialises. Routed through the daemon's
-	// `groups.spawn` orchestration; not compatible with --resume / --label.
+	// `groups.members.spawn` orchestration; not compatible with --resume / --label.
 	JoinGroup string `long:"join-group" optional:"true" help:"Spawn the session and add it to an existing agent group (shorthand for agent spawn + foreground attach)"`
 	Name      string `long:"name" optional:"true" help:"Display name for the session (claude --name; becomes its conversation title). With --join-group it is the new agent's name"`
 	Role      string `long:"role" optional:"true" help:"Role tag for the new member in --join-group (e.g. 'tech-lead')"`
@@ -339,7 +339,7 @@ type NewParams struct {
 	NoGroupContext      bool   `long:"no-group-context" help:"Do not include the selected group's shared startup context"`
 	Task                string `long:"task" optional:"true" help:"Task-reference URL for the group-joined agent"`
 	TaskLabel           string `long:"task-label" optional:"true" help:"Display label overriding the value derived from --task"`
-	Owner               bool   `long:"owner" help:"Make the group-joined agent a group owner (requires groups.own authority)"`
+	Owner               bool   `long:"owner" help:"Make the group-joined agent a group owner (requires groups.owners.manage authority)"`
 	NoOwner             bool   `long:"no-owner" help:"Do not make the group-joined agent an owner even if a profile would"`
 
 	// InitialPrompt is a first-turn prompt the harness submits itself at
@@ -748,6 +748,14 @@ func runNew(params *NewParams) error {
 	// daemon seam's arm in sandboxProfileCapabilityFailure; mount paths are
 	// still refused above, where an empty authored path is a real failure.
 	unconfined := sandboxImplementation.OmitsOSConfinement()
+	if launchSandbox != nil {
+		if err := harness.ValidateExplicitFilesystemRoot(
+			h, sandboxImplementation, launchSandbox.Effective.FilesystemRoot,
+			runtime.GOOS,
+		); err != nil {
+			return err
+		}
+	}
 	if !outerLayer && !unconfined && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
 		h.Name == harness.CodexName && params.PermissionProfile != harness.CodexAgentProfile {
 		return fmt.Errorf("unsupported_sandbox_profile_filesystem: codex filesystem rules require sandbox %s", harness.SandboxManagedProfile)
@@ -782,7 +790,9 @@ func runNew(params *NewParams) error {
 	}
 	networkAccess := sandboxSnapshotNetworkAccess(launchSandbox)
 	hasNewAccessAxes := launchSandbox != nil &&
-		(launchSandbox.Effective.Network != nil || launchSandbox.Effective.UnixSockets != nil)
+		(launchSandbox.Effective.Network != nil ||
+			launchSandbox.Effective.UnixSockets != nil ||
+			launchSandbox.Effective.FilesystemRoot == sandboxpolicy.FilesystemRootSeparate)
 	if networkAccess != sandboxpolicy.NetworkAccessInherit && !hasNewAccessAxes && !outerLayer && !unconfined {
 		switch h.Name {
 		case harness.CodexName:
@@ -1061,7 +1071,7 @@ func runNew(params *NewParams) error {
 	// Self-guard: a Claude Code instance must not directly launch
 	// another Claude Code session. Placed after the --join-group and
 	// pass-through branches on purpose: --join-group delegates to the
-	// agentd daemon (gated there by the `groups.spawn` permission), and
+	// agentd daemon (gated there by the `groups.members.spawn` permission), and
 	// pass-through only prints `claude --help`/`--version`. Daemon-forked
 	// spawns are unaffected — see GuardAgainstNestedSpawn.
 	if err := GuardAgainstNestedSpawn(); err != nil {
@@ -1355,6 +1365,14 @@ func runNew(params *NewParams) error {
 	); err != nil {
 		return err
 	}
+	// Every tclaude-launched Claude pane reads its config from the state root
+	// rather than the top-level ~/.claude.json, which a constructed root could
+	// not see (the pane would park on the login wizard) and which would
+	// otherwise fork state between an agent's sandboxed and unsandboxed
+	// launches. No-op for other harnesses. See ApplyClaudeConfigDirEnv.
+	if err := ApplyClaudeConfigDirEnv(h.Name, additionalEnv); err != nil {
+		return err
+	}
 	// Keep Claude Code's interactive "Resume from summary" chooser from blocking
 	// this detached pane (the daemon forks `tclaude session new -r` here, and a
 	// tmux-driven flow can't answer a TUI it didn't expect). No-op for non-Claude
@@ -1428,6 +1446,14 @@ func runNew(params *NewParams) error {
 			os.Getenv(clcommon.OpenCodeStateIsolationEnv),
 		)
 		envExports = clcommon.BuildEnvExports(additionalEnv)
+	}
+	if outerLayer && tclaudeLayerRoot == sandboxpolicy.RootConstructed {
+		// Bubblewrap seeds this PATH too, which is sufficient for direct
+		// namespace helpers. Production harness commands then replay the ambient
+		// environment inside that namespace, including PATH, so the trusted
+		// single-file CLI directory must be restored after those generated
+		// exports and before any operator-authored pre-launch script.
+		envExports = appendTclaudeLayerConstructedRootPathExport(envExports)
 	}
 
 	// Sandbox cwd-safety guard: a writable sandbox (Codex workspace-write)
@@ -1571,7 +1597,9 @@ func runNew(params *NewParams) error {
 		}
 	}
 	if !unconfined && launchSandbox != nil &&
-		(launchSandbox.Effective.Network != nil || launchSandbox.Effective.UnixSockets != nil) {
+		(launchSandbox.Effective.Network != nil ||
+			launchSandbox.Effective.UnixSockets != nil ||
+			launchSandbox.Effective.FilesystemRoot == sandboxpolicy.FilesystemRootSeparate) {
 		axes, axesErr := sandboxpolicy.EffectiveAccessAxes(launchSandbox.Effective)
 		if axesErr != nil {
 			return fmt.Errorf("derive sandbox access axes: %w", axesErr)
@@ -1599,20 +1627,10 @@ func runNew(params *NewParams) error {
 		if capsErr != nil {
 			return capsErr
 		}
-		allowUnenforcedNetworkClosed := false
-		for _, notice := range launchSandbox.Effective.AccessNotices {
-			if notice.Class == sandboxpolicy.AccessNoticeClassDegradation &&
-				notice.Axis == "network" &&
-				notice.Reason == sandboxpolicy.AccessNoticeReasonOperatorUnenforcedLaunchOverride &&
-				notice.Effect == sandboxpolicy.AccessNoticeEffectNotEnforced {
-				allowUnenforcedNetworkClosed = true
-				break
-			}
-		}
+		accessOptions := accessEnforcementOptionsFromLaunchNotices(
+			launchSandbox.Effective.AccessNotices)
 		rendered, notices, planErr := harness.PlanAccessEnforcement(
-			axes, caps, harness.AccessEnforcementOptions{
-				AllowUnenforcedNetworkClosed: allowUnenforcedNetworkClosed,
-			},
+			axes, caps, accessOptions,
 		)
 		if planErr != nil {
 			return planErr
@@ -1684,7 +1702,8 @@ func runNew(params *NewParams) error {
 			); noProxyNotice != nil {
 				notices = append(notices, *noProxyNotice)
 			}
-			if plannedNetworkPosture == sandboxpolicy.NetworkFiltered {
+			if plannedNetworkPosture == sandboxpolicy.NetworkFiltered &&
+				!sandboxpolicy.NetworkRulesArePrivateRoutedOpen(plannedAxes.Network) {
 				var resolveModelErr error
 				resolvedModel, resolveModelErr = ResolveTclaudeLayerModelTransport(
 					h,
@@ -1842,6 +1861,13 @@ func runNew(params *NewParams) error {
 			launchEnvironment = launchSandbox.Effective.Environment
 		}
 		trustEnv := launchModelEnvironment(launchEnvironment)
+		if configDir, ok := additionalEnv["CLAUDE_CONFIG_DIR"]; ok {
+			// Launch-owned, never profile-authored (the name is reserved): a
+			// constructed-root Claude launch relocates its config file into the
+			// state root, and the trust entry must land in the file that launch
+			// will actually read. See ApplyClaudeConfigDirEnv.
+			trustEnv["CLAUDE_CONFIG_DIR"] = configDir
+		}
 		if err := harness.EnsureDirTrustedForLaunch(h, cwd,
 			func(name string) string { return trustEnv[name] },
 			strings.TrimSpace(trustEnv["HOME"]),
@@ -1974,8 +2000,23 @@ func runNew(params *NewParams) error {
 		}
 	}
 	executablePath := ""
+	var harnessReadPaths []string
 	if launchCodexSplitCapability != nil {
 		executablePath = launchCodexSplitCapability.ExecutablePath
+	} else if tclaudeLayerOnly && h.Name == harness.CodexName && runtime.GOOS == "linux" {
+		resolvedCodex, resolveErr := harness.ResolveCodexLaunchExecutable()
+		if resolveErr != nil {
+			return fmt.Errorf("resolve Codex executable for tclaude-layer: %w", resolveErr)
+		}
+		executablePath = resolvedCodex.Path
+		harnessReadPaths = append(harnessReadPaths, resolvedCodex.RuntimeRoot)
+	} else if tclaudeLayerOnly && h.Name == harness.DefaultName && runtime.GOOS == "linux" {
+		resolvedClaude, resolveErr := harness.ResolveClaudeLaunchExecutable()
+		if resolveErr != nil {
+			return fmt.Errorf("resolve Claude executable for tclaude-layer: %w", resolveErr)
+		}
+		executablePath = resolvedClaude.Path
+		harnessReadPaths = append(harnessReadPaths, resolvedClaude.Path)
 	} else if h.Name == harness.OpenCodeName {
 		executablePath, err = harness.OpenCodeExecutable()
 		if err != nil {
@@ -2139,11 +2180,15 @@ func runNew(params *NewParams) error {
 			}(),
 			DarwinRouteReservation: darwinRouteReservation,
 			RouteHelper:            routeHelper,
+			HarnessReadPaths:       harnessReadPaths,
 		})
 		if specErr != nil {
 			return fmt.Errorf("build tclaude-layer launch spec: %w", specErr)
 		}
 		layerSpec = spec
+		if prepareErr := PrepareTclaudeLayerHarnessState(layerSpec); prepareErr != nil {
+			return fmt.Errorf("prepare tclaude-layer launch state: %w", prepareErr)
+		}
 		if stacked {
 			stackedProof, err = ProbeStackedSandbox(bwrapBinary, spec, h, cwd)
 			if err != nil {
@@ -2232,7 +2277,7 @@ func runNew(params *NewParams) error {
 				// accounting. Shared: the wrapper must not reap or remove the
 				// boundary when the attach client exits.
 				wrapped = wrapPreparedResourceCgroupCommand(
-					sessionID, params.ResourceCgroupDir, harnessCmd, params.AllowUnenforcedSandbox, true)
+					sessionID, params.ResourceCgroupDir, harnessCmd, params.AllowUnenforcedSandbox, true, false)
 				cleanup = func() {}
 			} else {
 				wrapped, cleanup, resourceErr = wrapResourceLimitedCommand(
@@ -2481,6 +2526,26 @@ func runNew(params *NewParams) error {
 	launchRowCommitted = true
 	darwinRouteCommitted = true
 	return announceAndAttach(fmt.Sprintf("Created session %s", tmuxSession), sessionID, tmuxSession, cwd, params.Detached)
+}
+
+func accessEnforcementOptionsFromLaunchNotices(
+	notices []sandboxpolicy.AccessNotice,
+) harness.AccessEnforcementOptions {
+	options := harness.AccessEnforcementOptions{}
+	for _, notice := range notices {
+		if notice.Class != sandboxpolicy.AccessNoticeClassDegradation ||
+			notice.Axis != "network" ||
+			notice.Effect != sandboxpolicy.AccessNoticeEffectNotEnforced {
+			continue
+		}
+		switch notice.Reason {
+		case sandboxpolicy.AccessNoticeReasonOperatorUnenforcedLaunchOverride:
+			options.AllowUnenforcedNetworkClosed = true
+		case sandboxpolicy.AccessNoticeReasonOperatorReducedNetworkDenyOverride:
+			options.AllowReducedNetworkDeny = true
+		}
+	}
+	return options
 }
 
 func validateSandboxImplementationDecision(

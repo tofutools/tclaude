@@ -210,7 +210,7 @@ func TclaudeLayerHarnessBuiltinMode(h *Harness) (string, error) {
 // SpawnSandboxWarnings is the single harness-neutral entry point every spawn
 // surface uses to describe a launch posture whose sandboxing is weaker than it
 // looks — the HTTP effective-sandbox probe behind the spawn dialog and the
-// profile/role editors, template/wave deploys, `tclaude session new`, and the
+// profile editor, template/wave deploys, `tclaude session new`, and the
 // daemon spawn response. Routing all of them through one function keeps every
 // surface saying the same sentence for the same inputs.
 //

@@ -134,6 +134,7 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 	codexStateRoot := (*string)(nil)
 	codexStateRootSource := (*string)(nil)
 	fastMode := (*bool)(nil)
+	fastModeAtLaunch := p.FastModeAtLaunch
 	if harnessOrDefault(p.Harness) == harness.CopilotName {
 		value := p.ContextWindowMax
 		configuredContextWindowMax = &value
@@ -187,6 +188,7 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 		CodexStateRoot:             codexStateRoot,
 		CodexStateRootSource:       codexStateRootSource,
 		FastMode:                   fastMode,
+		FastModeAtLaunch:           fastModeAtLaunch,
 		AskUserQuestionTimeout:     &askTimeout,
 		RemoteControl:              &remoteControl,
 		AutoMemory:                 &autoMemory,

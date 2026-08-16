@@ -56,6 +56,7 @@ import { registerAgentSpawnController } from './agent-spawn-controller.js';
 import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
 import { HelpDisclosure, HelpField } from './help-field.js';
 import { SandboxImplHint } from './sandbox-impl-hint.js';
+import { isWizardActive } from './slop.js';
 import {
   RESOLVED_DEFAULTS_CHAIN, SANDBOX_PROFILE_COMPOSITION,
   resolvedDefaultOption, harnessBuiltinModeOptionLabel,
@@ -90,11 +91,12 @@ const SANDBOX_IMPL_TITLE = 'Which layer owns OS-level containment for the new ag
   + 'sandbox off inside it. Linux only, and it needs bwrap plus unprivileged user namespaces — '
   + 'a host without them refuses the launch instead of falling back. '
   + `Blank uses the resolved defaults. ${RESOLVED_DEFAULTS_CHAIN}`;
-const UNENFORCED_SANDBOX_TITLE = 'Operator-only escape hatch. If closed network access cannot '
-  + 'be enforced, launch with outbound network access open. Enforceable filesystem and '
-  + 'Unix-socket rules still apply. This choice is not saved and starts unchecked every time.';
+const UNENFORCED_SANDBOX_TITLE = 'Operator-only escape hatch. If closed network access or individual '
+  + 'network deny rules cannot be enforced, launch with those rules unenforced. Other enforceable '
+  + 'filesystem, network, and Unix-socket rules still apply. This choice is not saved and starts '
+  + 'unchecked every time.';
 const PROFILE_OWNED_FIELDS = [
-  'profile', 'name', 'role', 'descr', 'task', 'initialMessage',
+  'profile', 'name', 'role', 'roleRefs', 'descr', 'task', 'initialMessage',
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'tools', 'askTimeout',
   'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'sshWorkaround', 'owner', 'permissionOverrides',
   'contextFeatures', 'autoCompactWindow', 'contextWindowMax', 'copilotAPI', 'codexAppServer', 'fastMode', 'sandboxImpl', 'sandboxImplCleared',
@@ -117,6 +119,18 @@ function sandboxPolicyKey(group, sandboxProfile, revision) {
 
 function Words({ plain, wizard, prefix = 'theme-copy' }) {
   return html`<span class=${`${prefix}-regular`}>${plain}</span><span class=${`${prefix}-wizard`}>${wizard}</span>`;
+}
+
+function useWizardTheme() {
+  const [wizard, setWizard] = useState(isWizardActive());
+  useEffect(() => {
+    const update = (event) => setWizard(
+      event.detail?.active == null ? isWizardActive() : Boolean(event.detail.active),
+    );
+    document.addEventListener('tclaude:wizard', update);
+    return () => document.removeEventListener('tclaude:wizard', update);
+  }, []);
+  return wizard;
 }
 
 function ErrorBanner({ error, onDismiss }) {
@@ -165,11 +179,31 @@ function AttachmentList({ attachments, remove, busy }) {
   </ul>`;
 }
 
+function roleGrantSlug(grant) {
+  return typeof grant === 'string' ? grant : String(grant?.slug || '');
+}
+
+function roleGrantScope(grant) {
+  if (!grant || typeof grant !== 'object' || !grant.scope) return '';
+  if (typeof grant.scope === 'string') return grant.scope;
+  return Object.entries(grant.scope).map(([key, values]) => `${key}=${(values || []).join(',')}`).join(' · ');
+}
+
+function roleHoverText(role) {
+  const grants = (role?.permissions || []).map((grant) => {
+    const scope = roleGrantScope(grant);
+    return `${roleGrantSlug(grant)}${scope ? ` (${scope})` : ''}`;
+  });
+  return [role?.descr, role?.brief, grants.length ? `Grants: ${grants.join(', ')}` : 'Grants: none']
+    .filter(Boolean).join('\n\n');
+}
+
 function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const context = useMemo(() => ({
     groups: current.groups,
     harnesses: current.harnesses,
+    roles: current.roles,
     sandboxImpl: current.sandboxImpl,
     userDefaultModel: current.userDefaultModel,
     defaultTerminal: current.defaultTerminal,
@@ -217,6 +251,8 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   const [busy, setBusy] = useState(false);
   const [browseBusy, setBrowseBusy] = useState('');
   const [helpOpen, setHelpOpen] = useState('');
+  const wizard = useWizardTheme();
+  const [inspectedRole, setInspectedRole] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const nameRef = useRef(null);
   const fileRef = useRef(null);
@@ -259,6 +295,9 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   const dirty = spawnDraftIsDirty(draft, baseline, attachments.length);
   const nameHint = spawnNameHint(draft.name, context.normalizeNames);
   const permissionsLabel = spawnPermissionIndicator(draft.permissionOverrides);
+  const selectedRoles = (draft.roleRefs || []).map((name) =>
+    (context.roles || []).find((role) => role.name === name) || { name, missing: true });
+  const inspected = selectedRoles.find((role) => role.name === inspectedRole);
   const contextFeaturesLabel = spawnContextFeatureIndicator(draft.contextFeatures);
 
   useEffect(() => () => {
@@ -630,6 +669,10 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       overrides: draft.permissionOverrides,
       ownsGroup: draft.owner,
       group: draft.group,
+      roleGrants: selectedRoles.filter((role) => !role.missing).flatMap((role) =>
+        (role.permissions || []).map((grant) => ({
+          slug: roleGrantSlug(grant), scope: roleGrantScope(grant), role: role.name,
+        }))),
       label: draft.name.trim(),
       onSave: (kept) => {
         if (!state.isCurrent(generation)) return;
@@ -808,6 +851,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     confirmDiscard=${confirmDiscard}
     registerClose=${registerClose}
     resizeKey="tclaude.dash.modalSize.agent-spawn"
+    persistHeight=${false}
     guardBackdropDrag=${true}
     initialFocusRef=${nameRef}
     dialogClass=${`cron-create-modal${dragOver ? ' spawn-drag-over' : ''}`}
@@ -876,11 +920,45 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         <${AttachmentList} attachments=${attachments} remove=${removeAttachment} busy=${busy} />
       </div>
     </div>
+    <div class="cron-create-row agent-spawn-roles-row">
+      <span class="cron-create-label"><${Words} plain="Roles" wizard="Classes" /></span>
+      <div class="agent-spawn-role-picker">
+        <div class="agent-spawn-role-chips" id="agent-spawn-role-refs">
+          ${selectedRoles.map((role) => html`<span key=${role.name} class=${`agent-spawn-role-chip${role.missing ? ' missing' : ''}`}>
+            <button type="button" class="role-chip-inspect" disabled=${busy} title=${role.missing ? 'This role is missing from the library' : roleHoverText(role)}
+              aria-expanded=${inspectedRole === role.name ? 'true' : 'false'} onClick=${() => setInspectedRole(inspectedRole === role.name ? '' : role.name)}>${role.name}</button>
+            <button type="button" class="role-chip-remove" disabled=${busy} title=${`Remove ${role.name}`}
+              aria-label=${`Remove role ${role.name}`} onClick=${() => {
+                setInspectedRole((currentRole) => currentRole === role.name ? '' : currentRole);
+                update('roleRefs', (draft.roleRefs || []).filter((name) => name !== role.name));
+              }}>×</button>
+          </span>`)}
+          <select id="agent-spawn-role-add" value="" disabled=${busy || (context.roles || []).every((role) => (draft.roleRefs || []).includes(role.name))}
+            aria-label=${wizard ? 'Add class' : 'Add role'} onChange=${(event) => {
+              const next = event.currentTarget.value;
+              if (!next) return;
+              const before = draft.roleRefs || [];
+              update('roleRefs', [...before, next]);
+              event.currentTarget.value = '';
+            }}>
+            <option value="">${wizard ? '＋ Add class…' : '＋ Add role…'}</option>
+            ${(context.roles || []).filter((role) => !(draft.roleRefs || []).includes(role.name))
+              .map((role) => html`<option key=${role.name} value=${role.name}>${role.name}${role.descr ? ` — ${role.descr}` : ''}</option>`)}
+          </select>
+        </div>
+        ${inspected && html`<div class=${`agent-spawn-role-inspect${inspected.missing ? ' missing' : ''}`}>
+          ${inspected.missing ? html`⚠ This role is no longer in the library.` : html`
+            ${inspected.descr && html`<div class="role-inspect-descr">${inspected.descr}</div>`}
+            <div><b>Brief</b> ${inspected.brief || html`<span class="muted">none</span>`}</div>
+            <div><b>Grants</b> ${(inspected.permissions || []).length ? html`<span class="role-inspect-grants">${inspected.permissions.map((grant) => html`<code key=${roleGrantSlug(grant)}>${roleGrantSlug(grant)}${roleGrantScope(grant) ? ` · ${roleGrantScope(grant)}` : ''}</code>`)}</span>` : html`<span class="muted">none</span>`}</div>`}
+        </div>`}
+      </div>
+    </div>
     <div class="cron-create-row spawn-role-row">
-      <span class="cron-create-label">Role</span>
+      <span class="cron-create-label">Display role</span>
       <input id="agent-spawn-role" type="text" value=${draft.role} disabled=${busy}
         onInput=${(event) => update('role', event.currentTarget.value)}
-        placeholder="optional — short tag (e.g. researcher, planner)" autocomplete="off" spellcheck="false" />
+        placeholder="optional — dashboard and routing label; grants no access" autocomplete="off" spellcheck="false" />
       <label class="spawn-owner-toggle" title="Make the new agent a group owner of the destination group at birth.">
         <input id="agent-spawn-owner" type="checkbox" checked=${draft.owner} disabled=${busy}
           onChange=${(event) => update('owner', event.currentTarget.checked)} /> owner
@@ -1078,7 +1156,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
             aria-describedby="agent-spawn-allow-unenforced-sandbox-description"
             checked=${draft.allowUnenforcedSandbox} disabled=${busy}
             onChange=${(event) => update('allowUnenforcedSandbox', event.currentTarget.checked)} />
-          Allow launch without enforcement
+          Allow launch with unenforced rules
         </label>
         <span id="agent-spawn-allow-unenforced-sandbox-description"
           class="spawn-field-description">${UNENFORCED_SANDBOX_TITLE}</span>

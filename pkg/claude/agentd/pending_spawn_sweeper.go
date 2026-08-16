@@ -237,6 +237,7 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 		IsOwner:             ps.IsOwner,
 		PermissionOverrides: ps.PermissionOverrides,
 		ProcessCommandID:    ps.ProcessCommandID,
+		FastModeAtLaunch:    ps.FastModeAtLaunch,
 	}
 	if ps.CodexAppServer != nil {
 		p.CodexAppServer = *ps.CodexAppServer

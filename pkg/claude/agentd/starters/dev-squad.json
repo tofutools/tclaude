@@ -13,7 +13,7 @@
         "descr": "Tech lead — sets the approach and vets what ships.",
         "initial_message": "You lead this squad. Turn the mission into a short plan: the approach, who does what, and the done-criteria. Drive the work through design → implement → review → test → ship, keep everyone pointed at the same goal, unblock people, and do the final technical vet before anything merges. Spawn another pair of hands if the work genuinely needs it.",
         "is_owner": true,
-        "permissions": ["groups.spawn"],
+        "permissions": ["groups.members.spawn"],
         "model": "opus",
         "wave": 0
       },

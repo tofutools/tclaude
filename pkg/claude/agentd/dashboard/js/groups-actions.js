@@ -16,6 +16,7 @@ import {
 } from './add-member-actions.js';
 import { openSpawnHarnessPolicy } from './spawn-harness-policy-controller.js';
 import { openGroupAttachmentDialog } from './action-dialog-controller.js';
+import { openStandingOrderCreateModal } from './jobs-controller.js';
 
 // Claude Code applies /rename in-pane, then the conversation monitor indexes
 // its JSONL write after a 500ms quiet window. The mutation response therefore
@@ -90,6 +91,16 @@ export function createGroupsActions({
     closeStandingOrders() {
       state.closeStandingOrders();
     },
+    openStandingOrderCreate(group) {
+      const name = group?.name || group || '';
+      const opened = openStandingOrderCreateModal({
+        targetMode: 'group', groupName: name, scopeGroup: name,
+      }, {
+        onCancel: () => state.openStandingOrders({ name }),
+      });
+      if (opened) state.closeStandingOrders();
+      return opened;
+    },
     async loadStandingOrders(group) {
       const response = await fetchImpl(
         `/api/groups/${encodeURIComponent(group)}/standing-orders`,
@@ -99,6 +110,23 @@ export function createGroupsActions({
         throw new Error(`load standing orders failed: ${await responseError(response)}`);
       }
       return response.json();
+    },
+    async loadTriggers() {
+      const response = await fetchImpl('/api/triggers', { credentials: 'same-origin' });
+      if (!response.ok) {
+        throw new Error(`load triggers failed: ${await responseError(response)}`);
+      }
+      const body = await response.json();
+      const rules = Array.isArray(body?.triggers) ? body.triggers : [];
+      return Promise.all(rules.map(async (rule) => {
+        const history = await fetchImpl(
+          `/api/triggers/${encodeURIComponent(rule.id)}/firings?limit=1`,
+          { credentials: 'same-origin' },
+        );
+        if (!history.ok) throw new Error(`load trigger state failed: ${await responseError(history)}`);
+        const ledger = await history.json();
+        return { ...rule, firings: Array.isArray(ledger?.firings) ? ledger.firings : [] };
+      }));
     },
     async setStandingOrderScope(group, row, assigned) {
       const order = row?.order || {};

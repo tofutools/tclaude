@@ -12,8 +12,22 @@ function prefs() {
   };
 }
 
+function choose(select, value) {
+  for (const option of select.options) {
+    if (option.value === value) option.setAttribute('selected', '');
+    else option.removeAttribute('selected');
+  }
+  Object.defineProperty(select, 'value', { configurable: true, writable: true, value });
+}
+
+function controlForLabel(root, prefix) {
+  return [...root.querySelectorAll('label')]
+    .find((label) => label.textContent.trim().startsWith(prefix))?.querySelector('input,select,textarea');
+}
+
 function page(name = 'Daily summary') {
   return {
+    triggers_enabled: true,
     export_jobs_active: 1,
     jobs: [
       { kind: 'cron', cron: {
@@ -188,6 +202,99 @@ test('Standing-order target renders from the stable agent without a live convers
   await mounted.unmount();
 });
 
+test('cron spawn rows expose honest action and worker outcomes while feature-off editing stays inert', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createJobsState }, { JobsApp }] = await Promise.all([
+    harness.importDashboardModule('js/jobs-state.js'),
+    harness.importDashboardModule('js/jobs-island.js'),
+  ]);
+  const data = page();
+  data.jobs = [{ kind: 'cron', cron: {
+    id: 11, name: 'night-review', enabled: true, target_kind: 'group', group_name: 'alpha',
+    owner_label: 'Johan', last_run_status: 'permission_denied', last_run_at: '2026-07-11T10:00:00Z',
+    interval_seconds: 3600, action_kind: 'spawn', spawn_profile: 'reviewer',
+    spawn_roles: ['reviewer'], spawn_instruction_template: 'Review the queue',
+    spawn_concurrency_policy: 'Allow', spawn_max_live_workers: 2,
+  } }];
+  data.paging.jobs = { offset: 0, limit: 50, total: 1, total_unfiltered: 1 };
+  const snapshot = harness.signals.signal(data);
+  const state = createJobsState({ snapshot, prefs: prefs() });
+  state.initialize(); state.beginRequest(1); state.commitRequest(1);
+  let logLoads = 0;
+  const actions = {
+    refresh: () => {}, openCronCreate: () => {}, openCronEdit: () => {}, openCronDuplicate: () => {},
+    runCron: () => {}, toggleCron: () => {}, deleteCron: () => {},
+    loadCronLogs: async () => {
+      logLoads += 1;
+      if (logLoads > 1) return [
+        { id: 3, fired_at: '2026-07-11T11:00:00Z', status: 'spawn_failed', error_msg: 'a long actionable failure detail that must remain fully available to the operator' },
+      ];
+      return [
+        { id: 2, fired_at: '2026-07-11T10:00:00Z', status: 'permission_denied', error_msg: 'owner lacks permission' },
+        { id: 1, fired_at: '2026-07-11T09:00:00Z', status: 'spawned', worker_id: 42, worker_agent: 'agt_worker_identity' },
+      ];
+    },
+    downloadExport: () => {}, dismissExport: () => {},
+  };
+  const mounted = await harness.mount(harness.html`<${JobsApp} state=${state} actions=${actions} />`);
+  const row = mounted.container.querySelector('tr[data-key="cron-11"]');
+  assert.match(row.textContent, /⚡ spawn/);
+  assert.match(row.textContent, /reviewer.*Allow.*up to 2/);
+  assert.ok(row.querySelector('.state-error'), 'the real permission denial is never painted as success');
+  await harness.act(() => harness.fireEvent(getByRole(row, 'button', { name: 'logs' }), 'click'));
+  await harness.act(() => Promise.resolve());
+  assert.equal(logLoads, 1);
+  const inspector = mounted.container.querySelector('.cron-run-inspector-row');
+  assert.match(inspector.textContent, /permission_denied/);
+  assert.match(inspector.textContent, /owner lacks permission/);
+  assert.match(inspector.textContent, /spawned/);
+  assert.match(inspector.textContent, /agt_worker/);
+  assert.match(inspector.textContent, /worker #42/);
+  await harness.act(() => harness.fireEvent(getByRole(row, 'button', { name: 'hide logs' }), 'click'));
+  await harness.act(() => harness.fireEvent(getByRole(row, 'button', { name: 'logs' }), 'click'));
+  await harness.act(() => Promise.resolve());
+  assert.equal(logLoads, 2, 'each expansion refreshes the ledger rather than reusing a stale snapshot');
+  const refreshedDetail = mounted.container.querySelector('.cron-run-detail');
+  assert.match(refreshedDetail.textContent, /long actionable failure detail/);
+  assert.equal(refreshedDetail.title, refreshedDetail.textContent, 'full error detail is exposed accessibly');
+
+  await harness.act(() => { snapshot.value = { ...data, triggers_enabled: false }; });
+  const gatedRow = mounted.container.querySelector('tr[data-key="cron-11"]');
+  assert.equal(getByRole(gatedRow, 'button', { name: 'edit' }).disabled, true);
+  assert.equal(getByRole(gatedRow, 'button', { name: 'duplicate' }).disabled, true);
+  assert.match(getByRole(gatedRow, 'button', { name: 'edit' }).title, /features\.triggers/);
+  assert.match(gatedRow.textContent, /features\.triggers is off.*editing unavailable/);
+  assert.match(gatedRow.textContent, /⚡ spawn/, 'feature-off history remains readable');
+  await mounted.unmount();
+});
+
+test('Triggers sub-view stays absent and a stale deep link falls back while the feature is off', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createJobsState }, { JobsApp }] = await Promise.all([
+    harness.importDashboardModule('js/jobs-state.js'),
+    harness.importDashboardModule('js/jobs-island.js'),
+  ]);
+  const snapshot = harness.signals.signal({ ...page(), triggers_enabled: false });
+  const state = createJobsState({ snapshot, prefs: prefs() });
+  state.initialize();
+  state.setKind('trigger');
+  state.beginRequest(1);
+  state.commitRequest(1);
+  let triggerLoads = 0;
+  const actions = {
+    refresh: () => {}, loadTriggers: async () => { triggerLoads += 1; return []; },
+    openCronCreate: () => {}, openCronEdit: () => {}, openCronDuplicate: () => {}, runCron: () => {},
+    toggleCron: () => {}, deleteCron: () => {}, downloadExport: () => {}, dismissExport: () => {},
+  };
+  const mounted = await harness.mount(harness.html`<${JobsApp} state=${state} actions=${actions} />`);
+  await harness.act(() => Promise.resolve());
+  assert.equal(mounted.container.querySelector('[role="tab"][href="/automations/triggers"]'), null);
+  assert.equal(mounted.container.querySelector('.trigger-filter-bar'), null);
+  assert.equal(triggerLoads, 0, 'the gated trigger API is not called');
+  assert.equal(state.kind.value, 'all', 'a stale trigger deep link returns to Automations');
+  await mounted.unmount();
+});
+
 test('Jobs island exposes loading, empty, badge, and retry states', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createJobsState }, { JobsApp }] = await Promise.all([
@@ -258,4 +365,309 @@ test('production loader dynamically mounts and unmounts the Jobs feature graph',
   assert.equal(host.childElementCount, 0);
   assert.equal(badgeHost.childElementCount, 0);
   assert.equal(dialogHost.childElementCount, 0);
+});
+
+test('Triggers sub-view renders rule summaries and expands the firing inspector', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createJobsState }, { JobsApp }] = await Promise.all([
+    harness.importDashboardModule('js/jobs-state.js'),
+    harness.importDashboardModule('js/jobs-island.js'),
+  ]);
+  const snapshot = harness.signals.signal({ ...page(), groups: [{ id: 2, name: 'alpha' }] });
+  const state = createJobsState({ snapshot, prefs: prefs() });
+  state.initialize();
+  state.beginRequest(1);
+  state.commitRequest(1);
+  const rule = {
+    id: 7, name: 'review new PRs', row_version: 3, enabled: true,
+    operator_authored: true, scope: 'group', group: 'alpha', source: 'ci.failed',
+    author_is_agent: false, draft_filter: 'only', debounce_seconds: 60, cooldown_seconds: 300,
+    actions: [{ type: 'message', message: { target: 'pr.author_agent', body_template: 'Review {{pr.url}}' } }],
+  };
+  const firing = {
+    id: 9, outcome: 'partial_failure', detail: 'one action denied', event_ref: 'pr.opened:agt_author:https://example/pr/2',
+    source: 'ci.failed', previous_state: 'success', current_state: 'failure',
+    fact_observed_at: '0001-01-01T00:00:00Z', dwell_started_at: '0001-01-01T00:00:00Z',
+    started_at: '2026-07-11T11:00:00Z', finished_at: '2026-07-11T11:00:01Z',
+    actions: [
+      { id: 10, action_type: 'message', outcome: 'permission_denied', detail: 'message.send not held' },
+      { id: 11, action_type: 'spawn', outcome: 'max_live_workers', detail: 'one worker still active' },
+    ],
+  };
+  let toggleSucceeds = false;
+  const actions = {
+    refresh: async () => {}, loadTriggers: async () => [{ ...rule, firings: [firing] }],
+    loadTriggerDetail: async () => ({ ...rule, firings: [firing], dwell_states: [] }), toggleTrigger: async () => toggleSucceeds,
+    deleteTrigger: async () => true, openTriggerCreate: state.openTriggerCreate,
+  };
+  const mounted = await harness.mount(harness.html`<${JobsApp} state=${state} actions=${actions} />`);
+  const tab = getByRole(mounted.container, 'tab', { name: 'Triggers' });
+  assert.equal(tab.getAttribute('href'), '/automations/triggers');
+  await harness.act(() => harness.fireEvent(tab, 'click', { button: 0 }));
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.equal(state.kind.value, 'trigger');
+  assert.doesNotMatch(state.params.value, /kind=trigger/, 'the separate trigger collection never leaks into /api/jobs');
+  const row = mounted.container.querySelector('tr[data-key="trigger-7"]');
+  assert.match(row.textContent, /review new PRs/);
+  assert.match(row.textContent, /group:alpha/);
+  const open = harness.fireEvent(row, 'keydown', { key: 'Enter' });
+  assert.equal(open.defaultPrevented, true);
+  await harness.act(() => Promise.resolve());
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.match(mounted.container.querySelector('.trigger-inspector').textContent, /permission_denied/);
+  assert.match(mounted.container.querySelector('.trigger-inspector').textContent, /message.send not held/);
+  assert.match(mounted.container.querySelector('.trigger-firing-context').textContent, /ci.failed/);
+  assert.match(mounted.container.querySelector('.trigger-firing-context').textContent, /success → failure/,
+    'recorded CI transition evidence is shown without inferring live state');
+  assert.doesNotMatch(mounted.container.querySelector('.trigger-firing-context').textContent, /0001|observed|dwell began/,
+    'Go zero timestamps are not presented as real PR firing evidence');
+  assert.equal(mounted.container.querySelectorAll('.trigger-verdicts .trigger-fail').length, 0,
+    'valid configured alternatives are never presented as failed event facts');
+  assert.equal(mounted.container.querySelectorAll('.trigger-action-outcome .trigger-fail').length, 2,
+    'permission and concurrency failures are both visibly failures');
+  const enabled = row.querySelector('input[type="checkbox"]');
+  enabled.checked = false;
+  await harness.act(() => harness.fireEvent(enabled, 'change'));
+  assert.equal(enabled.checked, true, 'failed toggle rolls the native control back to server state');
+  toggleSucceeds = true;
+  await harness.act(() => harness.fireEvent(getByRole(mounted.container, 'button', { name: '+ new trigger' }), 'click'));
+  assert.equal(state.triggerDialog.value.kind, 'create');
+  await mounted.unmount();
+});
+
+test('Trigger editor uses stacked WHEN WHERE THEN steps and shows spawn authority provenance', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createJobsState }, { TriggerDialogRoot }] = await Promise.all([
+    harness.importDashboardModule('js/jobs-state.js'),
+    harness.importDashboardModule('js/jobs-triggers.js'),
+  ]);
+  const snapshot = harness.signals.signal({ groups: [{ id: 2, name: 'alpha' }], harnesses: [
+    { name: 'claude', display_name: 'Claude Code', can_observe_awaiting_input: true },
+    { name: 'codex', display_name: 'Codex CLI', can_observe_awaiting_input: true },
+    { name: 'copilot', display_name: 'GitHub Copilot CLI', can_observe_awaiting_input: false },
+  ] });
+  const state = createJobsState({ snapshot, prefs: prefs() });
+  state.initialize();
+  state.openTriggerCreate();
+  let convertedSaved = null;
+  const mounted = await harness.mount(harness.html`<${TriggerDialogRoot} state=${state} actions=${{
+    saveTrigger: async (request) => { convertedSaved = request; return {}; },
+  }} />`);
+  assert.match(mounted.container.textContent, /WHEN/);
+  assert.match(mounted.container.textContent, /WHERE/);
+  assert.match(mounted.container.textContent, /THEN/);
+  let source = mounted.container.querySelector('.trigger-fields select');
+  assert.deepEqual([...source.options].map((option) => option.value),
+    ['pr.opened', 'pr.updated', 'pr.merged', 'ci.failed', 'ci.succeeded', 'agent.idle', 'agent.awaiting_input']);
+  await harness.input(controlForLabel(mounted.container, 'Debounce (seconds)'), '600');
+  const then = [...mounted.container.querySelectorAll('.trigger-step-head')]
+    .find((button) => button.textContent.includes('THEN'));
+  await harness.act(() => harness.fireEvent(then, 'click'));
+  assert.match(mounted.container.textContent, /Firings are re-authorized as the owning principal/);
+  assert.match(mounted.container.querySelector('.trigger-placeholder-chips').textContent, /{{pr.url}}/);
+  assert.match(mounted.container.querySelector('.trigger-placeholder-chips').textContent, /{{event.previous_state}}/);
+  assert.match(mounted.container.querySelector('.trigger-placeholder-chips').textContent, /{{event.current_state}}/);
+  const when = [...mounted.container.querySelectorAll('.trigger-step-head')]
+    .find((button) => button.textContent.includes('WHEN'));
+  await harness.act(() => harness.fireEvent(when, 'click'));
+  source = mounted.container.querySelector('.trigger-fields select');
+  await harness.act(() => {
+    choose(source, 'agent.awaiting_input');
+    harness.fireEvent(source, 'change');
+  });
+  const sustained = mounted.container.querySelector('.trigger-fields input[type="number"][min="1"]');
+  assert.equal(sustained.value, '300', 'entering the state-source family applies a valid sustained default');
+  assert.equal(controlForLabel(mounted.container, 'Debounce after dwell').value, '600',
+    'source conversion keeps the evaluator delay visible instead of silently clearing or hiding it');
+  assert.match(mounted.container.textContent, /Debounce then delays firing after the dwell matures/);
+  assert.doesNotMatch(mounted.container.textContent, /Draft PRs/, 'PR-only predicates are not presented as state predicates');
+  const capabilities = mounted.container.querySelector('.trigger-harness-capabilities');
+  assert.match(capabilities.textContent, /Claude Codeobservable/);
+  assert.match(capabilities.textContent, /Codex CLIobservablerequires a ready managed app-server/);
+  assert.match(capabilities.textContent, /GitHub Copilot CLIunknown only/);
+  await harness.act(() => harness.fireEvent(then, 'click'));
+  assert.ok(mounted.container.querySelector('.trigger-placeholder-chips'));
+  assert.match(mounted.container.querySelector('.trigger-placeholder-chips').textContent, /{{event.source}}/);
+  assert.match(mounted.container.querySelector('.trigger-placeholder-chips').textContent, /{{agent.id}}/);
+  assert.match(mounted.container.querySelector('.trigger-placeholder-chips').textContent, /{{event.fact_result}}/);
+  assert.doesNotMatch(mounted.container.querySelector('.trigger-placeholder-chips').textContent, /{{pr.url}}/,
+    'state actions only offer placeholders backed by state-event facts');
+  const kind = mounted.container.querySelector('.trigger-action-editor-head select');
+  choose(kind, 'message');
+  await harness.act(() => harness.fireEvent(kind, 'change'));
+  const target = mounted.container.querySelector('.trigger-action-fields select');
+  assert.deepEqual([...target.options].map((option) => option.value), ['agent', 'group'],
+    'a converted state message offers the selected fact agent, not a PR author');
+  await harness.input(mounted.container.querySelector('.trigger-name-field input'), 'waiting question');
+  await harness.input(mounted.container.querySelector('.trigger-template-field textarea'), 'Answer {{agent.id}}');
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('#trigger-modal form'), 'submit'));
+  assert.equal(convertedSaved.payload.source, 'agent.awaiting_input');
+  assert.equal(convertedSaved.payload.for_seconds, 300);
+  assert.equal(convertedSaved.payload.debounce_seconds, 600);
+  assert.equal(convertedSaved.payload.actions[0].message.target, 'agent');
+  await mounted.unmount();
+
+  state.closeTriggerDialog();
+  state.openTriggerEdit({
+    id: 9, name: 'merged PR follow-up', enabled: true, row_version: 2, source: 'pr.merged',
+    scope: 'global', draft_filter: 'include', actions: [{ type: 'message', message: {
+      target: 'pr.author_agent', subject_template: '', body_template: 'Merged {{pr.url}}',
+    } }],
+  });
+  let saved = null;
+  const edited = await harness.mount(harness.html`<${TriggerDialogRoot} state=${state} actions=${{
+    saveTrigger: async (request) => { saved = request; return {}; },
+  }} />`);
+  assert.match(edited.container.querySelector('.trigger-step-summary').textContent, /a PR is merged/);
+  await harness.act(() => harness.fireEvent(edited.container.querySelector('#trigger-modal form'), 'submit'));
+  assert.equal(saved.payload.source, 'pr.merged',
+    'editing an additive source preserves it instead of resetting to pr.opened');
+  await edited.unmount();
+});
+
+test('State-source trigger authoring persists dwell duration and targets the selected fact agent', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createJobsState }, { TriggerDialogRoot }] = await Promise.all([
+    harness.importDashboardModule('js/jobs-state.js'),
+    harness.importDashboardModule('js/jobs-triggers.js'),
+  ]);
+  const snapshot = harness.signals.signal({ groups: [], harnesses: [
+    { name: 'claude', display_name: 'Claude Code', can_observe_awaiting_input: true },
+  ] });
+  const state = createJobsState({ snapshot, prefs: prefs() });
+  state.initialize();
+  state.openTriggerEdit({
+    id: 12, name: 'wake idle agent', enabled: true, row_version: 4,
+    source: 'agent.idle', for_seconds: 120, cooldown_seconds: 60,
+    scope: 'global', draft_filter: 'include', actions: [{ type: 'message', message: {
+      target: 'agent', subject_template: 'Still idle', body_template: 'Wake {{agent.id}}',
+    } }],
+  });
+  let saved = null;
+  const mounted = await harness.mount(harness.html`<${TriggerDialogRoot} state=${state} actions=${{
+    saveTrigger: async (request) => { saved = request; return {}; },
+  }} />`);
+  assert.match(mounted.container.querySelector('.trigger-step-summary').textContent, /stays idle for 2m/);
+  assert.equal(mounted.container.querySelector('.trigger-fields input[type="number"][min="1"]').value, '120');
+  const then = [...mounted.container.querySelectorAll('.trigger-step-head')]
+    .find((button) => button.textContent.includes('THEN'));
+  await harness.act(() => harness.fireEvent(then, 'click'));
+  const target = mounted.container.querySelector('.trigger-action-fields select');
+  assert.deepEqual([...target.options].map((option) => option.value), ['agent', 'group']);
+  assert.match(target.options[0].textContent, /selected fact agent/);
+  assert.match(mounted.container.querySelector('.trigger-placeholder-chips').textContent, /{{event.dwell_started_at}}/);
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('#trigger-modal form'), 'submit'));
+  assert.equal(saved.payload.source, 'agent.idle');
+  assert.equal(saved.payload.for_seconds, 120);
+  assert.equal(saved.payload.actions[0].message.target, 'agent');
+  await mounted.unmount();
+});
+
+test('State trigger inspector renders persisted unknown observations and firing facts honestly', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { TriggerWorkspace } = await harness.importDashboardModule('js/jobs-triggers.js');
+  const rule = {
+    id: 14, name: 'question dwell', enabled: true, row_version: 2,
+    operator_authored: true, scope: 'global', source: 'agent.awaiting_input',
+    for_seconds: 300, cooldown_seconds: 60, draft_filter: 'include',
+    actions: [{ type: 'message', message: { target: 'agent', body_template: 'Answer {{agent.id}}' } }],
+    firings: [],
+  };
+  const detail = {
+    ...rule,
+    dwell_states: [{
+      rule_id: 14, agent_id: 'agt_unknown_state', result: 'unknown', harness: 'copilot',
+      detail: 'harness does not expose awaiting-input observation; awaiting_permission is explicitly excluded',
+      fact_observed_at: '2026-08-15T10:00:00Z', true_since: '0001-01-01T00:00:00Z',
+      fired_at: '0001-01-01T00:00:00Z', updated_at: '2026-08-15T10:00:00Z',
+    }],
+    firings: [{
+      id: 31, outcome: 'ok', source: 'agent.awaiting_input', agent_id: 'agt_answering',
+      agent_harness: 'claude', fact_result: 'true', fact_observed_at: '2026-08-15T10:05:00Z',
+      dwell_started_at: '2026-08-15T10:00:00Z', started_at: '2026-08-15T10:05:00Z',
+      actions: [{ id: 32, action_type: 'message', outcome: 'queued' }],
+    }],
+  };
+  const state = {
+    triggerRevision: harness.signals.signal(0), openTriggerCreate: () => {}, openTriggerEdit: () => {},
+  };
+  const actions = {
+    loadTriggers: async () => [rule], loadTriggerDetail: async () => detail,
+    toggleTrigger: async () => true, deleteTrigger: async () => true,
+  };
+  const mounted = await harness.mount(harness.html`<${TriggerWorkspace} state=${state} actions=${actions} />`);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  const row = mounted.container.querySelector('tr[data-key="trigger-14"]');
+  assert.match(row.textContent, /for 5m/);
+  await harness.act(() => harness.fireEvent(row, 'click'));
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  const inspector = mounted.container.querySelector('.trigger-inspector');
+  assert.match(inspector.textContent, /Current agent observations/);
+  assert.match(inspector.textContent, /unknown/);
+  assert.match(inspector.textContent, /awaiting_permission is explicitly excluded/);
+  assert.doesNotMatch(inspector.textContent, /0001|true since/,
+    'zero true_since is absence, not fabricated year-1 evidence');
+  assert.ok(inspector.querySelector('.trigger-fact-result.unknown'));
+  assert.equal(inspector.querySelectorAll('.trigger-dwell-state .trigger-fail').length, 0,
+    'an unavailable fact is rendered unknown, never false');
+  assert.match(inspector.querySelector('.trigger-firing-context').textContent, /agt_answer/);
+  assert.match(inspector.querySelector('.trigger-firing-context').textContent, /claude/);
+  assert.ok(inspector.querySelector('.trigger-firing-context .trigger-fact-result.true'));
+  await mounted.unmount();
+});
+
+test('creating a trigger invalidates and reloads the visible list', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createJobsState }, { JobsApp }, { TriggerDialogRoot }, { createJobsActions }] = await Promise.all([
+    harness.importDashboardModule('js/jobs-state.js'),
+    harness.importDashboardModule('js/jobs-island.js'),
+    harness.importDashboardModule('js/jobs-triggers.js'),
+    harness.importDashboardModule('js/jobs-actions.js'),
+  ]);
+  const snapshot = harness.signals.signal({ ...page(), groups: [{ id: 2, name: 'alpha' }] });
+  const state = createJobsState({ snapshot, prefs: prefs() });
+  state.initialize();
+  state.setKind('trigger');
+  state.beginRequest(1);
+  state.commitRequest(1);
+  let rules = [];
+  const requests = [];
+  const actions = createJobsActions({
+    state,
+    requestMutation: async (path, options) => {
+      requests.push(`${options.method} ${path}`);
+      if (path === '/api/triggers' && options.method === 'GET') return { triggers: rules };
+      if (path.endsWith('/firings?limit=1')) return { firings: [] };
+      if (path === '/api/triggers' && options.method === 'POST') {
+        rules = [{ id: 7, row_version: 1, operator_authored: true, ...options.body }];
+        return rules[0];
+      }
+      throw new Error(`unexpected request ${options.method} ${path}`);
+    },
+    refresh: async () => {}, confirm: async () => true, notify: () => {}, download: () => {},
+  });
+  const mounted = await harness.mount(harness.html`<${harness.preact.Fragment}>
+    <${JobsApp} state=${state} actions=${actions} />
+    <${TriggerDialogRoot} state=${state} actions=${actions} />
+  </${harness.preact.Fragment}>`);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.match(mounted.container.textContent, /No triggers yet/);
+  await harness.act(() => harness.fireEvent(getByRole(mounted.container, 'button', { name: '+ new trigger' }), 'click'));
+  const name = mounted.container.querySelector('.trigger-name-field input');
+  await harness.input(name, 'new name');
+  const then = [...mounted.container.querySelectorAll('.trigger-step-head')]
+    .find((button) => button.textContent.includes('THEN'));
+  await harness.act(() => harness.fireEvent(then, 'click'));
+  const actionFields = mounted.container.querySelector('.trigger-action-fields');
+  await harness.input(actionFields.querySelector('input'), 'sol-med');
+  await harness.input(actionFields.querySelector('textarea'), 'Review {{pr.url}}');
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('#trigger-modal form'), 'submit'));
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.equal(state.triggerDialog.value, null);
+  const updatedRow = mounted.container.querySelector('tr[data-key="trigger-7"]');
+  assert.ok(updatedRow, `updated trigger row missing (${requests.join(', ')}): ${mounted.container.textContent}`);
+  assert.match(updatedRow.textContent, /new name/,
+    'successful POST refreshes the still-mounted trigger list');
+  await mounted.unmount();
 });

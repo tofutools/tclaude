@@ -69,15 +69,20 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 		h, sandboxpolicy.ImplementationTclaudeLayer, closed, ClaudeSandboxOff, "linux",
 	)
 	require.NoError(t, err)
-	assert.Equal(t, EnforcePartial, caps.socketClosed)
+	assert.Equal(t, EnforceFull, caps.socketClosed)
 	_, notices, err := PlanAccessEnforcement(closed, caps)
 	require.NoError(t, err)
-	require.Len(t, notices, 1,
-		"claiming Full or suppressing the partial disclosure must fail this guard")
-	assert.Equal(t, sandboxpolicy.AccessNoticeEffectEnforcedWider, notices[0].Effect)
-	assert.Contains(t, notices[0].Detail, "readable/writable directories")
-	assert.Contains(t, notices[0].Detail, "remain reachable")
-	assert.Contains(t, notices[0].Detail, "outside")
+	assert.Empty(t, notices,
+		"filesystem mount composition is disclosed in the Full prediction, not as degradation")
+	predictedCaps, err := PredictAccessEnforcement(
+		h, sandboxpolicy.ImplementationTclaudeLayer, closed, ClaudeSandboxOff, "linux",
+	)
+	require.NoError(t, err)
+	closedPrediction := DescribePredictedAccess(closed, predictedCaps)
+	assert.Equal(t, AccessPredictionEnforced, closedPrediction.UnixSockets.Outcome)
+	assert.Contains(t, closedPrediction.UnixSockets.Detail, "filesystem mounts compose")
+	assert.Contains(t, closedPrediction.UnixSockets.Detail, "avoid mounting directories containing sockets")
+	assert.Contains(t, closedPrediction.UnixSockets.Detail, "control socket remains reachable by design")
 
 	explicitOpenSockets := sandboxpolicy.ResolvedAxes{
 		Network:     sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeClosed},
@@ -116,18 +121,18 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 		h, sandboxpolicy.ImplementationTclaudeLayer, closedNetworkSocketList, ClaudeSandboxOff, "linux",
 	)
 	require.NoError(t, err)
-	assert.Equal(t, EnforcePartial, caps.socketList)
+	assert.Equal(t, EnforceFull, caps.socketList)
 	rendered, notices, err := PlanAccessEnforcement(closedNetworkSocketList, caps)
 	require.NoError(t, err)
 	assert.Equal(t, closedNetworkSocketList.UnixSockets, rendered.UnixSockets)
-	require.Len(t, notices, 1,
-		"claiming Full or suppressing the partial disclosure must fail this guard")
-	assert.Equal(t, "partial_mechanism", notices[0].Reason)
-	assert.Equal(t, sandboxpolicy.AccessNoticeEffectEnforcedWider, notices[0].Effect)
-	assert.Contains(t, notices[0].Detail, "listed Unix sockets are bound")
-	assert.Contains(t, notices[0].Detail, "readable/writable directories")
-	assert.Contains(t, notices[0].Detail, "remain reachable")
-	assert.Contains(t, notices[0].Detail, "outside")
+	assert.Empty(t, notices)
+	predictedCaps, err = PredictAccessEnforcement(
+		h, sandboxpolicy.ImplementationTclaudeLayer, closedNetworkSocketList, ClaudeSandboxOff, "linux",
+	)
+	require.NoError(t, err)
+	listPrediction := DescribePredictedAccess(closedNetworkSocketList, predictedCaps)
+	assert.Equal(t, AccessPredictionEnforced, listPrediction.UnixSockets.Outcome)
+	assert.Contains(t, listPrediction.UnixSockets.Detail, "filesystem mounts compose")
 
 	// TCL-798: the constructed root no longer requires giving up host
 	// networking, so both restricting tiers are enforceable here — Partial, and
@@ -173,6 +178,47 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 		"read-only OS surface it mounts (/usr, /bin, /sbin, /lib*, /etc, /opt)",
 		"sockets on the static OS surface stay connectable; naming it is what makes the remainder honest")
 
+	// OpenCode's attach pane remains outside the sandbox, but its agentd-owned
+	// tool server uses the same constructed-root renderer. It must therefore
+	// receive the same partial socket boundary instead of refusing this profile.
+	openCode, err := Resolve(OpenCodeName)
+	require.NoError(t, err)
+	openCodeCaps, err := accessEnforcementForTargetForTest(
+		openCode, sandboxpolicy.ImplementationTclaudeLayer,
+		hostOpenClosedSockets, OpenCodeSandboxTclaudeLayer, "linux",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, EnforcePartial, openCodeCaps.socketClosed)
+	openCodeRendered, openCodeNotices, err := PlanAccessEnforcement(
+		hostOpenClosedSockets, openCodeCaps)
+	require.NoError(t, err)
+	assert.Equal(t, sandboxpolicy.AccessModeClosed,
+		openCodeRendered.UnixSockets.Mode)
+	require.Len(t, openCodeNotices, 1)
+	assert.Contains(t, openCodeNotices[0].Detail,
+		"host-network constructed root")
+	assert.Contains(t, openCodeNotices[0].Detail,
+		"abstract-namespace Unix sockets")
+
+	// Copilot's state/cache/executable catalog is materialized by the same
+	// constructed-root renderer. Its real launch smoke is the evidence that
+	// those grants are sufficient, so the capability table may now admit it.
+	copilot := MustGet(CopilotName)
+	copilotCaps, err := accessEnforcementForTargetForTest(
+		copilot, sandboxpolicy.ImplementationTclaudeLayer,
+		hostOpenClosedSockets, CopilotSandboxOff, "linux",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, EnforcePartial, copilotCaps.socketClosed)
+	copilotRendered, copilotNotices, err := PlanAccessEnforcement(
+		hostOpenClosedSockets, copilotCaps)
+	require.NoError(t, err)
+	assert.Equal(t, sandboxpolicy.AccessModeClosed,
+		copilotRendered.UnixSockets.Mode)
+	require.Len(t, copilotNotices, 1)
+	assert.Contains(t, copilotNotices[0].Detail,
+		"host-network constructed root")
+
 	hostOpenSocketList := sandboxpolicy.ResolvedAxes{
 		Network: sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeOpen},
 		UnixSockets: sandboxpolicy.UnixSocketRules{
@@ -216,19 +262,83 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, EnforceNone, caps.socketClosed)
 
-	// A deny entry renders the filtered posture instead of host-open; that
-	// combination is rated by its own row, not by this one.
+	// A deny entry renders the filtered posture instead of host-open. Its
+	// private network namespace and constructed root enforce the same full
+	// socket boundary as closed networking.
 	hostOpenDeniedClosedSockets := hostOpenClosedSockets
 	hostOpenDeniedClosedSockets.Network = sandboxpolicy.NetworkRules{
 		Mode: sandboxpolicy.AccessModeOpen,
 		Deny: []sandboxpolicy.NetworkAllowEntry{{Host: "metadata.google.internal"}},
 	}
-	caps, err = accessEnforcementForTargetForTest(
+	filteredRow, err := accessEnforcementTable(
 		h, sandboxpolicy.ImplementationTclaudeLayer, hostOpenDeniedClosedSockets,
-		ClaudeSandboxOff, "linux",
+		ClaudeSandboxOff, "linux", true,
 	)
 	require.NoError(t, err)
-	assert.Equal(t, EnforceNone, caps.socketClosed)
+	caps = accessEnforcementFromTable(filteredRow)
+	assert.Equal(t, EnforceFull, caps.socketClosed)
+	assert.NotContains(t, caps.mechanism, "host-network",
+		"a filtered private namespace must retain the gateway mechanism name")
+	rendered, notices, err = PlanAccessEnforcement(
+		hostOpenDeniedClosedSockets, caps)
+	require.NoError(t, err)
+	assert.Equal(t, sandboxpolicy.AccessModeClosed,
+		rendered.UnixSockets.Mode)
+	require.Len(t, notices, 1,
+		"only the default-allow DNS deny is partial; the socket boundary is full")
+	assert.Contains(t, notices[0].Detail, "DNS")
+
+	// The dashboard's block-all baseline is a list posture, not the legacy
+	// exact `closed` spelling. It still builds a private network namespace and
+	// must not fall through to the host-open socket refusal.
+	blockedBaselineClosedSockets := hostOpenClosedSockets
+	blockedBaselineClosedSockets.Network = sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeList,
+	}
+	openCode, err = Resolve(OpenCodeName)
+	require.NoError(t, err)
+	filteredRow, err = accessEnforcementTable(
+		openCode, sandboxpolicy.ImplementationTclaudeLayer,
+		blockedBaselineClosedSockets, OpenCodeSandboxTclaudeLayer, "linux", true,
+	)
+	require.NoError(t, err)
+	caps = accessEnforcementFromTable(filteredRow)
+	assert.Equal(t, EnforceFull, caps.socketClosed)
+	rendered, _, err = PlanAccessEnforcement(
+		blockedBaselineClosedSockets, caps)
+	require.NoError(t, err)
+	assert.Equal(t, sandboxpolicy.AccessModeClosed,
+		rendered.UnixSockets.Mode)
+
+	// An authored filtered posture can still be widened to host-open when the
+	// target cannot enforce its network rules. Do not let that widening smuggle
+	// an unsupported host-open constructed root past the explicit harness and
+	// implementation gate.
+	for _, tc := range []struct {
+		name           string
+		harness        *Harness
+		implementation sandboxpolicy.Implementation
+		mode           string
+	}{
+		{
+			name: "stacked", harness: h,
+			implementation: sandboxpolicy.ImplementationStacked,
+			mode:           ClaudeSandboxOff,
+		},
+	} {
+		t.Run("filtered fallback "+tc.name, func(t *testing.T) {
+			fallbackCaps, fallbackErr := accessEnforcementForTargetForTest(
+				tc.harness, tc.implementation, blockedBaselineClosedSockets,
+				tc.mode, "linux",
+			)
+			require.NoError(t, fallbackErr)
+			assert.Equal(t, EnforceNone, fallbackCaps.socketClosed)
+			_, _, fallbackErr = PlanAccessEnforcement(
+				blockedBaselineClosedSockets, fallbackCaps)
+			require.ErrorContains(t, fallbackErr,
+				`unix_sockets "closed" cannot be enforced with open network access`)
+		})
+	}
 
 	// The public resolver consumes the same axes rather than returning a static
 	// per-target capability descriptor. Unlike the table helper above it reads
@@ -414,16 +524,32 @@ func TestPlanAccessEnforcementOmitsUnsupportedDeniesIndividually(t *testing.T) {
 		mechanism:        "test gateway",
 		scope:            "process",
 	}
-	rendered, notices, err := PlanAccessEnforcement(axes, caps)
+	_, _, err := PlanAccessEnforcement(axes, caps)
+	var capability *SandboxCapabilityError
+	require.ErrorAs(t, err, &capability)
+	assert.Equal(t, SandboxCapabilityNetworkDeny, capability.Kind)
+	assert.Contains(t, capability.Message, "affected authored entries: 1, 2")
+	assert.Contains(t, capability.Message, "Allow launch with unenforced rules")
+	_, _, err = PlanAccessEnforcement(
+		axes, caps, AccessEnforcementOptions{AllowUnenforcedNetworkClosed: true})
+	require.ErrorAs(t, err, &capability)
+	assert.Equal(t, SandboxCapabilityNetworkDeny, capability.Kind,
+		"the closed-network option must not authorize omitted deny entries")
+
+	rendered, notices, err := PlanAccessEnforcement(
+		axes, caps, AccessEnforcementOptions{AllowReducedNetworkDeny: true})
 	require.NoError(t, err)
 	assert.Equal(t, []sandboxpolicy.NetworkAllowEntry{{
 		CIDR: "192.0.2.0/24",
 	}}, rendered.Network.Deny)
-	require.Len(t, notices, 2)
+	require.Len(t, notices, 3)
 	assert.Equal(t, "deny_selector_unsupported", notices[0].Reason)
 	assert.Equal(t, []int{2}, notices[0].Entries)
 	assert.Equal(t, "deny_ports_unsupported", notices[1].Reason)
 	assert.Equal(t, []int{1}, notices[1].Entries)
+	assert.Equal(t, sandboxpolicy.AccessNoticeReasonOperatorReducedNetworkDenyOverride,
+		notices[2].Reason)
+	assert.Equal(t, []int{1, 2}, notices[2].Entries)
 	assert.NotContains(t, rendered.Network.Deny,
 		sandboxpolicy.NetworkAllowEntry{Domain: "blocked.example"},
 		"an unsupported port-scoped deny must never widen to all ports")
@@ -620,13 +746,16 @@ func TestLinuxTclaudeLayerDenyCapabilityDrivesPredictionAndLaunchPlan(t *testing
 	)
 	require.NoError(t, err)
 	rendered, notices, err := PlanAccessEnforcement(
-		axes, accessEnforcementFromTable(row))
+		axes, accessEnforcementFromTable(row),
+		AccessEnforcementOptions{AllowReducedNetworkDeny: true})
 	require.NoError(t, err)
 	assert.Empty(t, rendered.Network.Deny,
 		"a cell without deny capability must omit deny rows")
-	require.Len(t, notices, 1)
+	require.Len(t, notices, 2)
 	assert.Equal(t, "deny_selector_unsupported", notices[0].Reason)
 	assert.Equal(t, []int{0, 1}, notices[0].Entries)
+	assert.Equal(t, sandboxpolicy.AccessNoticeReasonOperatorReducedNetworkDenyOverride,
+		notices[1].Reason)
 }
 
 func TestCodexBuiltinFilteredNetworkPredictionDisclosesUnavailableCapability(t *testing.T) {
@@ -694,7 +823,7 @@ func TestSandboxOffPredictionNeverCreditsBuiltinEnforcement(t *testing.T) {
 			Mode: sandboxpolicy.AccessModeClosed,
 		},
 	}
-	for _, harnessName := range []string{DefaultName, CodexName, OpenCodeName} {
+	for _, harnessName := range []string{DefaultName, CodexName, OpenCodeName, CopilotName} {
 		t.Run(harnessName, func(t *testing.T) {
 			prediction, err := PredictAccessEnforcement(
 				MustGet(harnessName), sandboxpolicy.ImplementationOff,
@@ -1258,13 +1387,17 @@ func TestClosedNetworkOverrideWidensOnlyThatAxisAndPinsRefusalCopy(t *testing.T)
 	}
 	const refusal = "Codex builtin sandbox (tools-only scope) cannot enforce closed network access; " +
 		"choose a sandbox implementation that can enforce closed network access, use network open, " +
-		"or enable “Allow launch without enforcement” in the dashboard spawn dialog"
+		"or enable “Allow launch with unenforced rules” in the dashboard spawn dialog"
 
 	_, _, err := PlanAccessEnforcement(axes, caps)
 	var capability *SandboxCapabilityError
 	require.ErrorAs(t, err, &capability)
 	assert.Equal(t, SandboxCapabilityNetworkAllowlist, capability.Kind)
 	assert.Equal(t, refusal, capability.Message)
+	_, _, err = PlanAccessEnforcement(
+		axes, caps, AccessEnforcementOptions{AllowReducedNetworkDeny: true})
+	require.ErrorContains(t, err, "cannot enforce closed network access",
+		"the reduced-deny option must not authorize a closed-network widening")
 
 	predicted := DescribePredictedAccess(axes, PredictedAccessEnforcement{
 		NetworkClosed: EnforceNone,
@@ -1506,4 +1639,125 @@ func TestResolveAccessEnforcementAdmitsUnconfinedImplementations(t *testing.T) {
 	require.Error(t, err,
 		"a layer launch with no functioning boundary must still refuse")
 	assert.Contains(t, err.Error(), "requires a functioning OS sandbox")
+}
+
+func TestPrivateRoutedNamespaceRequiresExactReadyLinuxLayer(t *testing.T) {
+	axes := sandboxpolicy.ResolvedAxes{
+		Network: sandboxpolicy.NetworkRules{
+			Mode:      sandboxpolicy.AccessModeOpen,
+			Namespace: sandboxpolicy.NetworkNamespacePrivate,
+		},
+		UnixSockets: sandboxpolicy.UnixSocketRules{
+			Mode: sandboxpolicy.AccessModeClosed,
+		},
+	}
+	for _, harnessName := range []string{DefaultName, CodexName, OpenCodeName, CopilotName} {
+		t.Run(harnessName, func(t *testing.T) {
+			row, err := accessEnforcementTable(
+				MustGet(harnessName), sandboxpolicy.ImplementationTclaudeLayer, axes,
+				OpenCodeSandboxTclaudeLayer, "linux", true)
+			require.NoError(t, err)
+			assert.Equal(t, EnforceFull, row.NetworkList)
+			assert.Equal(t, EnforceFull, row.SocketClosed)
+			assert.True(t, row.ConstructedRoot)
+		})
+	}
+	filteredCopilotAxes := sandboxpolicy.ResolvedAxes{Network: sandboxpolicy.NetworkRules{
+		Mode:  sandboxpolicy.AccessModeList,
+		Allow: []sandboxpolicy.NetworkAllowEntry{{CIDR: "192.0.2.0/24"}},
+	}}
+	filteredCopilot, err := accessEnforcementTable(
+		MustGet(CopilotName), sandboxpolicy.ImplementationTclaudeLayer,
+		filteredCopilotAxes, CopilotSandboxOff, "linux", true)
+	require.NoError(t, err)
+	assert.Equal(t, EnforceNone, filteredCopilot.NetworkList,
+		"private default-allow evidence must not overclaim destination filtering")
+	for _, rules := range []sandboxpolicy.NetworkRules{
+		{
+			Mode:      sandboxpolicy.AccessModeList,
+			Allow:     []sandboxpolicy.NetworkAllowEntry{{CIDR: "192.0.2.0/24"}},
+			Namespace: sandboxpolicy.NetworkNamespacePrivate,
+			Engine:    sandboxpolicy.NetworkEngineProxy,
+		},
+		{
+			Mode:      sandboxpolicy.AccessModeOpen,
+			Deny:      []sandboxpolicy.NetworkAllowEntry{{CIDR: "192.0.2.0/24"}},
+			Namespace: sandboxpolicy.NetworkNamespacePrivate,
+			Engine:    sandboxpolicy.NetworkEngineProxy,
+		},
+	} {
+		_, proxyErr := accessEnforcementTable(
+			MustGet(CopilotName), sandboxpolicy.ImplementationTclaudeLayer,
+			sandboxpolicy.ResolvedAxes{Network: rules}, CopilotSandboxOff, "linux", true)
+		require.ErrorContains(t, proxyErr,
+			"widening them would switch the launch to the packet gateway")
+	}
+	h := MustGet(OpenCodeName)
+
+	_, err = accessEnforcementTable(
+		h, sandboxpolicy.ImplementationTclaudeLayer, axes,
+		OpenCodeSandboxTclaudeLayer, "linux", false)
+	require.ErrorContains(t, err, "private-network prerequisites")
+
+	closedPrivate := sandboxpolicy.ResolvedAxes{Network: sandboxpolicy.NetworkRules{
+		Mode:      sandboxpolicy.AccessModeClosed,
+		Namespace: sandboxpolicy.NetworkNamespacePrivate,
+	}}
+	closedRow, err := accessEnforcementTable(
+		MustGet(CodexName), sandboxpolicy.ImplementationTclaudeLayer,
+		closedPrivate, SandboxDangerFull, "linux", false)
+	require.NoError(t, err,
+		"deny-all uses the isolated namespace and must not require the routed packet gateway")
+	assert.Equal(t, EnforceFull, closedRow.NetworkClosed)
+	listPrivate := sandboxpolicy.ResolvedAxes{Network: sandboxpolicy.NetworkRules{
+		Mode:      sandboxpolicy.AccessModeList,
+		Namespace: sandboxpolicy.NetworkNamespacePrivate,
+		Allow: []sandboxpolicy.NetworkAllowEntry{{
+			Domain: "api.openai.com", Ports: []int{443},
+		}},
+	}}
+	_, err = accessEnforcementTable(
+		MustGet(CodexName), sandboxpolicy.ImplementationTclaudeLayer,
+		listPrivate, SandboxDangerFull, "linux", false)
+	require.ErrorContains(t, err, "private-network prerequisites",
+		"deny-all with an allowed exception still needs the routed packet gateway")
+	_, err = accessEnforcementTable(
+		h, sandboxpolicy.ImplementationTclaudeLayer, axes,
+		OpenCodeSandboxTclaudeLayer, "darwin", true)
+	require.ErrorContains(t, err, "requires Linux tclaude-layer")
+	_, err = accessEnforcementTable(
+		h, sandboxpolicy.ImplementationStacked, axes,
+		OpenCodeSandboxTclaudeLayer, "linux", true)
+	require.ErrorContains(t, err, "requires Linux tclaude-layer")
+	require.ErrorContains(t, err, `harness "opencode", sandbox implementation "stacked", platform "linux"`)
+}
+
+func TestExplicitSeparateFilesystemRootRequiresProvenLinuxLayer(t *testing.T) {
+	axes := sandboxpolicy.ResolvedAxes{
+		Network:        sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeOpen},
+		FilesystemRoot: sandboxpolicy.FilesystemRootSeparate,
+	}
+	row, err := accessEnforcementTable(
+		MustGet(CodexName), sandboxpolicy.ImplementationTclaudeLayer,
+		axes, "", "linux", true)
+	require.NoError(t, err)
+	assert.True(t, row.ConstructedRoot)
+
+	for _, tc := range []struct {
+		implementation sandboxpolicy.Implementation
+		platform       string
+	}{
+		{sandboxpolicy.ImplementationHarnessBuiltin, "linux"},
+		{sandboxpolicy.ImplementationStacked, "linux"},
+		{sandboxpolicy.ImplementationTclaudeLayer, "darwin"},
+	} {
+		_, err := accessEnforcementTable(
+			MustGet(CodexName), tc.implementation, axes,
+			"", tc.platform, true)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "filesystem_root")
+		var capability *SandboxCapabilityError
+		require.ErrorAs(t, err, &capability)
+		assert.Equal(t, SandboxCapabilityFilesystemRoot, capability.Kind)
+	}
 }

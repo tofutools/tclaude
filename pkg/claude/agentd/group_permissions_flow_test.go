@@ -99,12 +99,12 @@ func TestDashboardGroupPermissionsReplaceAndValidate(t *testing.T) {
 	mux := agentd.BuildDashboardHandlerForTest()
 
 	r := testharness.JSONRequest(t, http.MethodPatch, "/api/groups/trusted",
-		map[string]any{"permissions": []string{agentd.PermHumanNotify, agentd.PermGroupsSpawn}})
+		map[string]any{"permissions": []string{agentd.PermHumanNotify, agentd.PermGroupsMembersSpawn}})
 	rec := testharness.Serve(mux, r)
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	got, err := db.ListAgentGroupPermissions(g.ID)
 	require.NoError(t, err)
-	assert.Equal(t, []string{agentd.PermGroupsSpawn, agentd.PermHumanNotify}, got)
+	assert.Equal(t, []string{agentd.PermGroupsMembersSpawn, agentd.PermHumanNotify}, got)
 	snapshot := fetchSnapshotOnly(t, mux)
 	require.Len(t, snapshot.Groups, 1)
 	assert.Equal(t, got, snapshot.Groups[0].Permissions, "group policy surfaces in the dashboard snapshot")
@@ -119,7 +119,7 @@ func TestDashboardGroupPermissionsReplaceAndValidate(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
 	got, err = db.ListAgentGroupPermissions(g.ID)
 	require.NoError(t, err)
-	assert.Equal(t, []string{agentd.PermGroupsSpawn, agentd.PermHumanNotify}, got)
+	assert.Equal(t, []string{agentd.PermGroupsMembersSpawn, agentd.PermHumanNotify}, got)
 	unchanged, err := db.GetAgentGroupByName("trusted")
 	require.NoError(t, err)
 	assert.Empty(t, unchanged.Descr, "invalid mixed PATCH applies no earlier field")

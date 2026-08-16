@@ -40,14 +40,43 @@ function subscriptionWindows(source, prefix, hideMissing = false) {
   ];
 }
 
-function costToken(today, mtd) {
+function costToken(key, today, mtd) {
   return {
-    key: 'api-cost',
+    key,
     kind: 'cost',
-    label: 'api',
+    label: '',
     today: today > 0 ? fmtUSD(today) : '',
     mtd: fmtUSD(mtd),
   };
+}
+
+function providerLabel(provider) {
+  if (provider === 'anthropic') return 'Anthropic';
+  if (provider === 'openai') return 'OpenAI';
+  if (provider === 'github') return 'GitHub Copilot';
+  if (provider === 'opencode') return 'OpenCode';
+  if (provider === 'unknown') return 'Unknown';
+  return String(provider || 'Unknown');
+}
+
+// Missing subscription windows are initially represented by hidden tokens so
+// rows from different sources can share stable columns. A placeholder has no
+// alignment work to do, though, when every other quota row leaves that same
+// window empty too. Drop only those globally-empty quota placeholders: a
+// weekly-only Codex row becomes compact on its own or beside unrelated monthly
+// usage / API cost, while a Claude 5h token keeps Codex's missing 5h slot
+// reserved.
+function trimEmptyUsageColumns(lines) {
+  const occupiedWindows = new Set();
+  for (const line of lines) {
+    for (const token of line.tokens) {
+      if (token.kind === 'window' && token.label && !token.hidden) occupiedWindows.add(token.label);
+    }
+  }
+  return lines.map((line) => ({
+    ...line,
+    tokens: line.tokens.filter((token) => !token.hidden || occupiedWindows.has(token.label)),
+  }));
 }
 
 export function usageView(usage) {
@@ -66,27 +95,43 @@ export function usageView(usage) {
     titles.push(`Codex subscription usage ${noun} — ${codexPeriods.join(' and ')} rolling ${windowNoun}`);
   }
 
+  const copilotUsage = usage?.copilot;
+  const copilot = copilotUsage?.available && copilotUsage?.monthly
+    ? [usageWindow('copilot-monthly', '', copilotUsage.monthly)]
+    : [];
+  if (copilot.length) titles.push('GitHub Copilot monthly premium-request (AIC) allowance');
+
   const mtd = Number(usage?.total_cost_usd || 0);
   const today = Number(usage?.today_cost_usd || 0);
-  const cost = mtd > 0 ? costToken(today, mtd) : null;
-  if (cost) {
+  const apiCosts = (usage?.api_costs || [])
+    .map((item) => ({
+      provider: item.provider || 'unknown',
+      today: Number(item.today_cost_usd || 0),
+      mtd: Number(item.total_cost_usd || 0),
+    }))
+    .filter((item) => item.mtd > 0);
+  // Older daemons supplied only an aggregate. Keep that wire shape readable,
+  // but current snapshots always provide provider-attributed rows.
+  if (!apiCosts.length && mtd > 0) apiCosts.push({ provider: 'unknown', today, mtd });
+  if (apiCosts.length) {
     let title = `API cost month-to-date: ${fmtExactUSD(mtd)}, summed across agent sessions recorded in tclaude's DB`;
     if (today > 0) title += ` · today: ${fmtExactUSD(today)}`;
     titles.push(title + ' · click to open the Costs tab');
   }
 
-  if (codex.length) {
-    const lines = [];
-    if (claude.length) lines.push({ key: 'claude', label: 'Claude:', tokens: claude });
-    lines.push({ key: 'codex', label: 'Codex:', tokens: codex });
-    if (cost) lines.push({ key: 'cost', label: '', tokens: [cost] });
-    return { na: false, multiline: true, title: titles.join(' · '), lines };
+  const lines = [];
+  if (claude.length) lines.push({ key: 'claude', label: 'Claude:', tokens: claude });
+  if (codex.length && codexPeriods.length) lines.push({ key: 'codex', label: 'Codex:', tokens: codex });
+  if (copilot.length) lines.push({ key: 'copilot', label: 'Copilot:', tokens: copilot });
+  for (const item of apiCosts) {
+    lines.push({
+      key: `cost-${item.provider}`,
+      label: `${providerLabel(item.provider)} API:`,
+      tokens: [costToken(`api-cost-${item.provider}`, item.today, item.mtd)],
+    });
   }
-
-  const tokens = [...claude];
-  if (cost) tokens.push(cost);
-  if (tokens.length) {
-    return { na: false, multiline: false, title: titles.join(' · '), lines: [{ key: 'usage', label: null, tokens }] };
+  if (lines.length) {
+    return { na: false, multiline: true, title: titles.join(' · '), lines: trimEmptyUsageColumns(lines) };
   }
   return {
     na: true,
@@ -107,9 +152,50 @@ export function footerMetaView(snapshot) {
   if (!snapshot) return null;
   return {
     version: snapshot.version || 'unknown',
-    base: snapshot.popup_base || '',
     generatedAt: snapshot.generated_at || '',
-    authSession: snapshot.auth_session || null,
+  };
+}
+
+const PR_URL_RE = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*(?:\/.*)?$/;
+
+export function authoredOpenPRsView(snapshot, filter = 'all') {
+  const source = snapshot?.authored_open_prs;
+  if (!source?.available) return { available: false, items: [], total: 0, recentCount: 0, recentWindowDays: 0 };
+  const sane = (list) => (list || []).filter((pr) => PR_URL_RE.test(pr?.url || ''));
+  const all = sane(source.items);
+  // The recent list is deliberately kept out of `all`: the trigger count, the
+  // attention/unattached tallies and their filters are about OPEN work, and a
+  // merged PR must never inflate them.
+  const recentWindowDays = Math.max(0, Number(source.recent_window_days || 0));
+  const recent = recentWindowDays > 0 ? sane(source.recent) : [];
+  // A clean run that is still in flight needs time, not operator attention.
+  // Everything terminal (red or green) is ready for a decision, while a PR
+  // with no checks at all is ready for the operator to notice that absence.
+  const needsAttention = (pr) => {
+    const checks = pr?.checks;
+    if (!checks || Number(checks.total || 0) === 0) return true;
+    return checks.state === 'failing' || checks.state === 'passing';
+  };
+  const showingRecent = filter === 'recent' && recentWindowDays > 0;
+  const filtered = showingRecent ? recent : all.filter((pr) => {
+    if (filter === 'attention') return needsAttention(pr);
+    if (filter === 'unattached') return !pr?.agent_id;
+    return true;
+  });
+  const searchURL = (raw) => (/^https:\/\/github\.com\//.test(raw || '') ? raw : '');
+  return {
+    available: true,
+    alwaysShow: !!source.always_show,
+    total: Number(source.total || all.length),
+    truncated: showingRecent ? !!source.recent_truncated : !!source.truncated,
+    updatedAt: source.updated_at || '',
+    searchURL: showingRecent ? searchURL(source.recent_search_url) : searchURL(source.search_url),
+    attention: all.filter(needsAttention).length,
+    unattached: all.filter((pr) => !pr?.agent_id).length,
+    recentCount: recent.length,
+    recentWindowDays,
+    showingRecent,
+    items: filtered,
   };
 }
 

@@ -105,7 +105,9 @@ func TestSandboxProfileEnforcementPredictionIsOrderedAndCannotGateLaunch(t *test
 	rec = profileReq(t, f, http.MethodGet,
 		"/v1/sandbox-profiles/socket-wall/enforcement?"+
 			"for=tclaude-layer%2Fclaude%2Flinux&"+
-			"for=harness-builtin%2Fcodex%2Fdarwin", nil)
+			"for=harness-builtin%2Fcodex%2Fdarwin&"+
+			"for=tclaude-layer%2Fopencode%2Flinux&"+
+			"for=tclaude-layer%2Fcopilot%2Flinux", nil)
 	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	var got struct {
 		Profile string `json:"profile"`
@@ -120,7 +122,7 @@ func TestSandboxProfileEnforcementPredictionIsOrderedAndCannotGateLaunch(t *test
 	}
 	testharness.DecodeJSON(t, rec, &got)
 	assert.Equal(t, "socket-wall", got.Profile)
-	require.Len(t, got.Targets, 2)
+	require.Len(t, got.Targets, 4)
 	assert.Equal(t, "tclaude-layer", got.Targets[0].Implementation)
 	assert.Equal(t, "linux", got.Targets[0].Platform)
 	assert.True(t, got.Targets[0].Predicted)
@@ -144,6 +146,49 @@ func TestSandboxProfileEnforcementPredictionIsOrderedAndCannotGateLaunch(t *test
 	assert.Equal(t, "harness-builtin", got.Targets[1].Implementation)
 	assert.Equal(t, harness.AccessPredictionEnforced,
 		got.Targets[1].Axes.UnixSockets.Outcome)
+	assert.Equal(t, "opencode", got.Targets[2].Harness)
+	assert.Equal(t, "tclaude-layer", got.Targets[2].Implementation)
+	assert.Equal(t, harness.AccessPredictionEnforcedPartial,
+		got.Targets[2].Axes.UnixSockets.Outcome)
+	assert.True(t, got.Targets[2].Axes.ConstructedRoot,
+		"OpenCode's tool server uses the host-network constructed root")
+	assert.Contains(t, got.Targets[2].Axes.UnixSockets.Detail,
+		"abstract-namespace Unix sockets")
+	assert.Equal(t, "copilot", got.Targets[3].Harness)
+	assert.Equal(t, "tclaude-layer", got.Targets[3].Implementation)
+	assert.Equal(t, harness.AccessPredictionEnforcedPartial,
+		got.Targets[3].Axes.UnixSockets.Outcome)
+	assert.True(t, got.Targets[3].Axes.ConstructedRoot,
+		"Copilot's state and executable catalog is projected into the constructed root")
+	assert.Contains(t, got.Targets[3].Axes.UnixSockets.Detail,
+		"abstract-namespace Unix sockets")
+
+	// The editor's Block all baseline is represented as a list posture with an
+	// empty allow set. It still creates a private network namespace on Linux;
+	// do not misreport it as open networking and reject the socket rule.
+	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
+		"name": "blocked-network-socket-wall", "filesystem": []any{},
+		"environment":  []any{},
+		"network":      map[string]any{"mode": "list", "allow": []any{}},
+		"unix_sockets": map[string]any{"mode": "closed"},
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+	rec = profileReq(t, f, http.MethodGet,
+		"/v1/sandbox-profiles/blocked-network-socket-wall/enforcement?"+
+			"for=tclaude-layer%2Fopencode%2Flinux", nil)
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var blocked struct {
+		Targets []struct {
+			Axes harness.PredictedAccessAxes `json:"axes"`
+		} `json:"targets"`
+	}
+	testharness.DecodeJSON(t, rec, &blocked)
+	require.Len(t, blocked.Targets, 1)
+	assert.Equal(t, harness.AccessPredictionEnforced,
+		blocked.Targets[0].Axes.UnixSockets.Outcome)
+	assert.Contains(t, blocked.Targets[0].Axes.UnixSockets.Detail,
+		"filesystem mounts compose with Unix-socket isolation")
+	assert.True(t, blocked.Targets[0].Axes.ConstructedRoot)
 
 	// Mutation guard for the same condition: the identical profile WITHOUT the
 	// socket axis must not claim a constructed root, so the row appears exactly
@@ -1417,6 +1462,26 @@ func TestSpawnAccessPlannerWarnsAndRefusesThroughExistingChannels(t *testing.T) 
 			"abstract-namespace Unix sockets"),
 			"closed-socket warnings %v must disclose the abstract-socket remainder",
 			closedSpawn.Resolved.Warnings)
+
+		// OpenCode confines its agentd-owned tool server rather than the attach
+		// pane, but that server uses the same host-network constructed root. The
+		// capability planner must not reject the profile before that renderer can
+		// apply it.
+		openCodeClosedSockets := f.AsHuman().SpawnWith("crew", map[string]any{
+			"name": "opencode-closed-sockets", "harness": harness.OpenCodeName,
+			"sandbox_profile":        "socket-closed",
+			"sandbox_implementation": "tclaude-layer",
+		})
+		require.Equalf(t, http.StatusOK, openCodeClosedSockets.Code,
+			"OpenCode host-open socket confinement must launch: body=%s",
+			openCodeClosedSockets.Raw)
+		var openCodeSpawn agent.SpawnResponse
+		require.NoError(t, json.Unmarshal(openCodeClosedSockets.Raw, &openCodeSpawn))
+		require.NotNil(t, openCodeSpawn.Resolved)
+		assert.Truef(t, containsSubstring(openCodeSpawn.Resolved.Warnings,
+			"abstract-namespace Unix sockets"),
+			"OpenCode warnings %v must disclose the partial boundary",
+			openCodeSpawn.Resolved.Warnings)
 	}
 
 	for _, tc := range refusedProfiles {

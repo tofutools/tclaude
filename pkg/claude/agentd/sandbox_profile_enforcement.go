@@ -180,18 +180,19 @@ type sandboxProfileDraftEnforcementTarget struct {
 }
 
 type sandboxProfileEffectiveContext struct {
-	Context                 map[string]string               `json:"context"`
-	Filesystem              []sandboxpolicy.FilesystemGrant `json:"filesystem"`
-	Environment             []string                        `json:"environment"`
-	AgentDirectories        []string                        `json:"agent_directories"`
-	Network                 sandboxpolicy.NetworkRules      `json:"network"`
-	UnixSockets             sandboxpolicy.UnixSocketRules   `json:"unix_sockets"`
-	ResourceLimits          sandboxpolicy.ResourceLimits    `json:"resource_limits,omitempty"`
-	DarwinAllowMachRegister bool                            `json:"darwin_allow_mach_register,omitempty"`
-	MemoryLimitBytes        string                          `json:"memory_limit_bytes,omitempty"`
-	CPUQuota                string                          `json:"cpu_max,omitempty"`
-	AgentdSocket            string                          `json:"agentd_socket"`
-	Notices                 []sandboxpolicy.AccessNotice    `json:"notices"`
+	Context                 map[string]string                `json:"context"`
+	Filesystem              []sandboxpolicy.FilesystemGrant  `json:"filesystem"`
+	Environment             []string                         `json:"environment"`
+	AgentDirectories        []string                         `json:"agent_directories"`
+	FilesystemRoot          sandboxpolicy.FilesystemRootMode `json:"filesystem_root,omitempty"`
+	Network                 sandboxpolicy.NetworkRules       `json:"network"`
+	UnixSockets             sandboxpolicy.UnixSocketRules    `json:"unix_sockets"`
+	ResourceLimits          sandboxpolicy.ResourceLimits     `json:"resource_limits,omitempty"`
+	DarwinAllowMachRegister bool                             `json:"darwin_allow_mach_register,omitempty"`
+	MemoryLimitBytes        string                           `json:"memory_limit_bytes,omitempty"`
+	CPUQuota                string                           `json:"cpu_max,omitempty"`
+	AgentdSocket            string                           `json:"agentd_socket"`
+	Notices                 []sandboxpolicy.AccessNotice     `json:"notices"`
 	policy                  sandboxpolicy.Profile
 }
 
@@ -863,6 +864,7 @@ func effectiveDraftSandboxProfileContexts(
 			}
 		}
 		effectivePolicy := sandboxpolicy.Profile{
+			FilesystemRoot:          effective.FilesystemRoot,
 			NetworkAccess:           effective.NetworkAccess,
 			Network:                 effective.Network,
 			UnixSockets:             effective.UnixSockets,
@@ -894,6 +896,7 @@ func effectiveDraftSandboxProfileContexts(
 			Filesystem:              append([]sandboxpolicy.FilesystemGrant(nil), effective.Filesystem...),
 			Environment:             append([]sandboxpolicy.EnvironmentEntry(nil), effective.Environment...),
 			AgentDirectories:        append([]string(nil), effective.AgentDirectories...),
+			FilesystemRoot:          effective.FilesystemRoot,
 			NetworkAccess:           effective.NetworkAccess,
 			Network:                 effective.Network,
 			UnixSockets:             effective.UnixSockets,
@@ -917,6 +920,7 @@ func effectiveDraftSandboxProfileContexts(
 			Filesystem:              policy.Filesystem,
 			Environment:             environment,
 			AgentDirectories:        policy.AgentDirectories,
+			FilesystemRoot:          policy.FilesystemRoot,
 			Network:                 axes.Network,
 			UnixSockets:             axes.UnixSockets,
 			ResourceLimits:          policy.ResourceLimits,
@@ -1075,7 +1079,8 @@ func sandboxProfileDBToPolicy(profile *db.SandboxProfile) *sandboxpolicy.Profile
 		Name: profile.Name, Filesystem: profile.Filesystem,
 		FilesystemSpellings: profile.FilesystemSpellings,
 		Environment:         profile.Environment, AgentDirectories: profile.AgentDirectories,
-		NetworkAccess: profile.NetworkAccess, Network: profile.Network,
+		FilesystemRoot: profile.FilesystemRoot,
+		NetworkAccess:  profile.NetworkAccess, Network: profile.Network,
 		UnixSockets: profile.UnixSockets, ResourceLimits: profile.ResourceLimits,
 		DarwinAllowMachRegister: profile.DarwinAllowMachRegister, Includes: profile.Includes,
 	}
@@ -1101,7 +1106,7 @@ func parseSandboxProfileEnforcementTarget(raw string) (parsedSandboxProfileEnfor
 		harnessName = parts[1]
 	}
 	switch harnessName {
-	case harness.DefaultName, harness.CodexName, harness.OpenCodeName:
+	case harness.DefaultName, harness.CodexName, harness.OpenCodeName, harness.CopilotName:
 	default:
 		return parsedSandboxProfileEnforcementTarget{}, invalidSandboxProfileTarget(raw)
 	}

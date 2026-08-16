@@ -8,8 +8,9 @@ description: >-
   Product Owner agent pinging workers every 10 minutes), self-check-ins, or any
   task that's currently a `/loop` or external cron. Self-targeted scheduling
   needs `self.schedule` (default-granted alongside the other self-lifecycle
-  slugs); cross-agent scheduling needs `agent.schedule` OR being an owner of a
-  group containing the target.
+  slugs); cross-agent scheduling needs global `agent.schedule`, or
+  `groups.members.schedule` covering every current active group containing the
+  target. Ownership contributes the latter for owned groups.
 ---
 
 # Recurring scheduled jobs
@@ -130,7 +131,8 @@ Same as the rest of the lifecycle verbs. To schedule a job on
 ANOTHER agent (instead of yourself):
 
 ```bash
-# Requires agent.schedule, OR being an owner of a group containing the target.
+# Requires global agent.schedule, or groups.members.schedule covering every
+# current active group containing the target.
 tclaude agent cron add \
   --target some-other-agent \
   --interval 30m \

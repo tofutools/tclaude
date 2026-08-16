@@ -193,26 +193,22 @@ function membershipGroups(snapshot, descriptor) {
   return [];
 }
 
-// ownerSource phrases where an owner-conferred slug actually reaches.
-// Naming the owned groups is right for a group- or member-scoped slug,
-// but wrong for an unscoped one (human.notify, process.runs.read): those
-// come from owning ANYTHING, so listing particular groups reads as a
-// limit that is not there. A daemon that predates owner_scope sends no
-// scope, and keeps the historical group-naming wording.
-export function ownerSource(scope, ownedGroups) {
-  if (scope === 'group') return `owner: ${ownedGroups.join(', ')}`;
-  if (scope === 'member') return `owner: members of ${ownedGroups.join(', ')}`;
-  if (scope === 'any') return 'owner: any group owned';
-  // Legacy daemons send no scope at all — keep the historical wording.
-  // A scope this build does not recognise is deliberately NOT guessed
-  // into the narrower group phrasing.
-  return scope ? 'owner: conferred by group ownership' : `owner: ${ownedGroups.join(', ')}`;
+export function ownerSource(scopeDims, ownedGroups) {
+  if ((scopeDims || []).includes('group')) return `owner grant: ${ownedGroups.join(', ')}`;
+  return 'owner grant: global';
 }
 
 export function permissionRows(snapshot, descriptor, selection) {
   const defaults = new Set(snapshot?.permissions?.defaults || []);
   const groups = membershipGroups(snapshot, descriptor);
   const groupGrants = new Map();
+  const roleGrants = new Map();
+  for (const grant of descriptor.roleGrants || []) {
+    const slug = permissionGrantSlug(grant);
+    if (!slug) continue;
+    if (!roleGrants.has(slug)) roleGrants.set(slug, []);
+    roleGrants.get(slug).push({ role: String(grant?.role || ''), scope: String(grant?.scope || '') });
+  }
   for (const groupName of groups) {
     const group = (snapshot?.groups || []).find((item) => item.name === groupName);
     for (const grant of group?.permissions || []) {
@@ -232,8 +228,16 @@ export function permissionRows(snapshot, descriptor, selection) {
     if (effect === 'default' && groupGrants.has(slug.slug)) {
       sources.push(`group: ${groupGrants.get(slug.slug).join(', ')}`);
     }
+    if (effect === 'default' && roleGrants.has(slug.slug)) {
+      for (const grant of roleGrants.get(slug.slug)) {
+        sources.push(`role: ${grant.role}${grant.scope ? ` [${grant.scope}]` : ''}`);
+      }
+    }
     if (effect === 'default' && slug.owner_implied && ownedGroups.length) {
-      sources.push(ownerSource(slug.owner_scope, ownedGroups));
+      sources.push(ownerSource(slug.scope_dims, ownedGroups));
+    }
+    if (effect === 'default' && slug.member_implied && descriptor.mode === 'agent' && groups.length) {
+      sources.push(`member: ${groups.join(', ')}`);
     }
     const granted = descriptor.mode === 'group' ? effect === 'grant' : effect !== 'deny' && sources.length > 0;
     return { ...slug, effect, granted, sources, ownedGroups, inDefault: defaults.has(slug.slug) };

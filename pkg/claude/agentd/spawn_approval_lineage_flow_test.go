@@ -179,7 +179,7 @@ func TestSpawnApprovalLineage_MissingParentSessionFailsClosed(t *testing.T) {
 	f.HaveGroup("alpha")
 	const parent = "approval-missing-parent-aaaa-bbbb-cccccccccccc"
 	f.HaveMember("alpha", parent)
-	require.NoError(t, db.GrantAgentPermission(parent, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(parent, agentd.PermGroupsMembersSpawn, "test"))
 
 	rec := agentReqProof(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", map[string]any{
 		"name": "worker", "harness": harness.DefaultName,
@@ -477,7 +477,7 @@ func TestSpawnApprovalLineage_AgentScribeSummonAllowedFromInSandboxParent(t *tes
 func haveSpawnCapableApprovalParent(t *testing.T, f *testharness.Flow, group, convID, h, approval string, autoReview bool) {
 	t.Helper()
 	f.HaveMember(group, convID)
-	require.NoError(t, db.GrantAgentPermission(convID, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(convID, agentd.PermGroupsMembersSpawn, "test"))
 	sandbox := harness.ClaudeSandboxOff
 	switch h {
 	case harness.CodexName:

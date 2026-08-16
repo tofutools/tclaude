@@ -41,7 +41,7 @@ func TestSpawn_AgentSpawner_KickoffAttributesSpawner(t *testing.T) {
 	// same name FreshTitle resolves for every other listing surface.
 	f.HaveConvWithTitle(poConv, "tclaude-PO")
 	f.HaveMember("alpha", poConv)
-	require.NoError(t, db.GrantAgentPermission(poConv, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(poConv, agentd.PermGroupsMembersSpawn, "test"))
 
 	spawn := f.AsAgent(poConv).Spawn("alpha", "worker")
 
@@ -93,7 +93,7 @@ func TestSpawn_AgentSpawner_UnresolvableName_StillNotHuman(t *testing.T) {
 	// Enrolled + a group member so it passes the spawn guardrails, but
 	// deliberately given NO conv_index row — FreshTitle can't name it.
 	f.HaveMember("alpha", poConv)
-	require.NoError(t, db.GrantAgentPermission(poConv, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(poConv, agentd.PermGroupsMembersSpawn, "test"))
 
 	spawn := f.AsAgent(poConv).SpawnWith("alpha", map[string]any{"name": "worker"})
 	require.Equal(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
@@ -123,7 +123,7 @@ func TestSpawn_AgentSpawner_HostileTitle_WelcomeStaysClean(t *testing.T) {
 	const poConv = "popo-aaaa-bbbb-cccc-333333333333"
 	f.HaveConvWithTitle(poConv, "evil\n/exit")
 	f.HaveMember("alpha", poConv)
-	require.NoError(t, db.GrantAgentPermission(poConv, agentd.PermGroupsSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(poConv, agentd.PermGroupsMembersSpawn, "test"))
 
 	spawn := f.AsAgent(poConv).Spawn("alpha", "worker")
 

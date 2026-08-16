@@ -564,6 +564,8 @@ func runServe(p *serveParams) error {
 	defer close(cronStop)
 	startCronScheduler(cronStop)
 	startStandingOrderDebounceScheduler(cronStop)
+	startTriggerScheduler(cronStop)
+	startTriggerSourcePollers(cronStop)
 	// Processes runtime: one bounded startup page plus a coarse fallback sweep.
 	// Each actively advancing run is claimed by exactly one daemon-owned drive;
 	// SQLite remains the only authoritative checkpoint writer.
@@ -643,12 +645,10 @@ func runServe(p *serveParams) error {
 	// spawning a subprocess. Shares the daemon-wide stop channel.
 	startPluginChecker(cronStop)
 
-	// Recently merged presented PR poller. One global, repo-deduped
-	// GitHub Search API call catches the common authored-by-me merge case
-	// within about ten seconds; the existing individual PR refresh remains
-	// the best-effort fallback for everything else. Shares the daemon stop
-	// channel and never scales its poll count with agents or groups.
-	startRecentlyMergedPRPoller(cronStop)
+	// One cross-repository PR poll feeds the footer and every Groups PR badge.
+	// The GraphQL response carries open/recent state plus CI rollups into the
+	// canonical per-PR caches; the 2s snapshot only reads those shared caches.
+	startAuthoredOpenPRPoller(cronStop)
 
 	// Subscription-usage poller. Disabled by default; when
 	// usage.poll_anthropic_api is enabled it keeps the SQLite usage_cache
@@ -696,6 +696,10 @@ func runServe(p *serveParams) error {
 	// snapshot in tclaude's SQLite database. Missing optional CLIs are an info-
 	// only no-op; installed but unauthenticated/broken tooling logs as an error.
 	startCopilotModelCatalogMirror(cronStop)
+	// Copilot exposes its finite monthly premium-request allowance through the
+	// authenticated account.getQuota RPC. Retain a 15-minute account-wide
+	// history for the Usage tab and the Groups top-bar glance.
+	startCopilotQuotaPoller(cronStop)
 
 	// Copilot API reconnect. Handles live in process memory, so this daemon
 	// starts with none while every `copilot --ui-server` pane from before the
@@ -1210,14 +1214,14 @@ func buildMux() http.Handler {
 	// Spawn worktrees (spawn_worktree.go): the launch-directory half of
 	// `tclaude agent spawn --worktree`, resolved daemon-side so a
 	// sandboxed caller's own filesystem restrictions do not apply to a
-	// checkout it never touches. Gated on groups.spawn plus, for
+	// checkout it never touches. Gated on groups.members.spawn plus, for
 	// creation, the dir write-proof over the repo and the worktree's
 	// parent. Distinct from the console-only POST /v1/worktrees
 	// (tui_worktree.go), which stays human-only.
 	mux.HandleFunc("POST "+worktreePreparePath, handleWorktreePrepare)
 	mux.HandleFunc("POST "+worktreeDiscardPath, handleWorktreeDiscard)
 	// Scribe summon (JOH-361): summon a pre-briefed, pre-granted scribe agent.
-	// Human always passes; an agent caller needs groups.spawn + permissions.grant.
+	// Human always passes; an agent caller needs groups.members.spawn + permissions.grant.
 	mux.HandleFunc("POST /v1/scribe", handleScribeSummon)
 	mux.HandleFunc("POST /v1/groups/import", handleGroupImport)
 	mux.HandleFunc("POST /v1/groups/import/inspect", handleGroupImportInspect)
@@ -1287,6 +1291,8 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/permissions/revoke", handlePermissionsRevoke)
 	mux.HandleFunc("/v1/cron", handleCron)
 	mux.HandleFunc("/v1/cron/", handleCronByID)
+	mux.HandleFunc("/v1/triggers", triggerRoute(handleTriggers))
+	mux.HandleFunc("/v1/triggers/", triggerRoute(handleTriggerRead))
 	// Sudo: most-specific path goes first so the trailing-slash form
 	// catches /v1/sudo/{id} and the bare form catches POST/GET/DELETE
 	// against the collection.

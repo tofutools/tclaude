@@ -18,7 +18,7 @@ func PrepareResourceCgroup(string, sandboxpolicy.ResourceLimits) (string, func()
 	return "", func() {}, fmt.Errorf("resource limits are Linux only")
 }
 
-func wrapPreparedResourceCgroupCommand(string, string, string, bool, bool) string { return "" }
+func wrapPreparedResourceCgroupCommand(string, string, string, bool, bool, bool) string { return "" }
 
 func WrapPreparedResourceCgroupCommand(string, string, string, bool) string { return "" }
 
@@ -33,6 +33,8 @@ func ValidatePreparedResourceCgroup(string, sandboxpolicy.ResourceLimits) error 
 // KillResourceCgroupMembers is a no-op off Linux: no prepared cgroup can exist
 // there, so teardown has nothing to reap.
 func KillResourceCgroupMembers(string) error { return nil }
+
+func RemoveResourceCgroup(string) error { return nil }
 
 func ValidateResourceDelegationDir(string) (string, error) {
 	return "", fmt.Errorf("external resource delegation is Linux only")

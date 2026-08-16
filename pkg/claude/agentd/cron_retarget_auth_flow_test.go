@@ -336,12 +336,13 @@ func TestCronPatchRetarget_UsesCanonicalAgentAndGroupAuthority(t *testing.T) {
 		assert.Equal(t, proposed, after.TargetConv)
 	})
 
-	t.Run("shared group membership allows group retarget", func(t *testing.T) {
+	t.Run("group schedule grant allows group retarget", func(t *testing.T) {
 		f := newFlow(t)
 		const caller = "crtm-caller-aaaa-bbbb-cccc-000000000001"
 		job := createSelfManagedCron(t, f, caller)
 		g := f.HaveGroup("shared-destination")
 		f.HaveMember(g.Name, caller)
+		require.NoError(t, db.GrantAgentPermission(caller, agentd.PermGroupsMessagesSchedule, "test"))
 
 		rec := patchCronAsAgent(t, f, caller, job.ID, map[string]any{"target": "group:" + g.Name})
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -388,7 +389,7 @@ func TestCronPatchRetarget_UsesCanonicalAgentAndGroupAuthority(t *testing.T) {
 		f.HaveMember(g.Name, proposed)
 		require.NoError(t, db.AddAgentGroupOwner(g.ID, caller, "test"))
 		require.NoError(t, db.SetAgentPermissionOverride(
-			caller, agentd.PermAgentSchedule, db.PermEffectDeny, "test"))
+			caller, agentd.PermGroupsMembersSchedule, db.PermEffectDeny, "test"))
 		before, err := db.GetAgentCronJob(job.ID)
 		require.NoError(t, err)
 

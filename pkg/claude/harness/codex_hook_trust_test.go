@@ -1,6 +1,8 @@
 package harness
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,33 +14,6 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/hookevents"
 )
-
-// These are hashes produced by Codex CLI 0.144.1 for tclaude's normalized
-// matcher-less command hooks. They pin every detail that affects compatibility:
-// event labels, default timeout, async=false, absent optional fields, canonical
-// JSON ordering, and the sha256: prefix.
-func TestCodexCommandHookHash_MatchesCodex(t *testing.T) {
-	want := map[string]string{
-		"PreToolUse":        "sha256:0b06c3473e84898c495b7804f84f05d09b11483947bf8d2787b79fc43671f268",
-		"PermissionRequest": "sha256:7c001c8d98a4fcf3e6bf8a1615691a0028475822c21cb46fbd089be47cefdba6",
-		"PostToolUse":       "sha256:7eb9492c941845940b4a5f87dc2b3cec6c6fc6bb8135ca5bda19565c60a389c2",
-		"PreCompact":        "sha256:a30dbd618660604bd234d59027d3eb285e92bd92828d59c89fcc6429357240e4",
-		"PostCompact":       "sha256:7624b9c1ebd2364f2f65c4fd9eb67cc5da5672254d2ed2e1a341db631ec53d01",
-		"SessionStart":      "sha256:fba122487574da025c47c9a445d4827ea37ee36aaa90750a4cf87e1c6eb55056",
-		"UserPromptSubmit":  "sha256:b9ba39553233e0a09a41830ba214d99c1e64f59cd022d2ca0a30c063d647cdd0",
-		"SubagentStart":     "sha256:c4d98aa42973379b1afac8074318bdb3b3db55863d12ebf20561b58eeab02ea2",
-		"SubagentStop":      "sha256:c6fc15f4cbc9d1bee08c3105eccd54da292789d8b67d78e78624e32b68a0b1e5",
-		"Stop":              "sha256:f436f2d9b7539704b18d1a4122d4251fdac1c378f0741f40a7a329584d507c2a",
-		"SessionEnd":        "sha256:3e46a74f8ca1ddc19eccbd273bc2a661001bd08e6fe183c04a482b10b7282b4f",
-	}
-	for event, expected := range want {
-		t.Run(event, func(t *testing.T) {
-			got, err := codexCommandHookHash(event, "tclaude session hook-callback")
-			require.NoError(t, err)
-			assert.Equal(t, expected, got)
-		})
-	}
-}
 
 func TestCodexHookInstaller_TrustsEnabledNativeSelectorHooks(t *testing.T) {
 	home := t.TempDir()
@@ -68,9 +43,7 @@ func TestCodexHookInstaller_TrustsEnabledNativeSelectorHooks(t *testing.T) {
 	config, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
 	require.NoError(t, err)
 	assert.Contains(t, string(config), ":session_end:")
-	sessionEndHash, err := codexCommandHookHash("SessionEnd", codexHookCommandStr())
-	require.NoError(t, err)
-	assert.Contains(t, string(config), sessionEndHash)
+	assert.Contains(t, string(config), fmt.Sprintf("sha256:%064x", len(desiredCodexHookEvents())))
 }
 
 func TestPlanCodexHookTrust_AddsPreservesAndIsIdempotent(t *testing.T) {
@@ -179,42 +152,26 @@ func TestEnsureCodexHookTrustInFile_PreservesSymlink(t *testing.T) {
 	assert.Contains(t, string(data), `trusted_hash = "sha256:abc"`)
 }
 
-func TestCodexHookTrustVersionGate(t *testing.T) {
-	old := codexVersionOutput
-	t.Cleanup(func() { codexVersionOutput = old })
-	for _, tc := range []struct {
-		version string
-		ok      bool
-	}{
-		{"codex-cli 0.139.0", true},
-		{"codex-cli 0.144.1", true},
-		{"codex-cli 0.144.2", false},
-		{"codex-cli 0.138.0", false},
-		{"codex-cli 0.145.0", false},
-		{"future-format", false},
-	} {
-		t.Run(tc.version, func(t *testing.T) {
-			codexVersionOutput = func() ([]byte, error) { return []byte(tc.version), nil }
-			got, _ := (codexHookInstaller{}).AutoTrustSupported()
-			assert.Equal(t, tc.ok, got)
-		})
-	}
+func TestCodexHookTrustHasNoVersionGate(t *testing.T) {
+	oldLookPath := codexLookPath
+	codexLookPath = func(file string) (string, error) { return "/fixture/codex-any-version", nil }
+	t.Cleanup(func() { codexLookPath = oldLookPath })
+	ok, reason := (codexHookInstaller{}).AutoTrustSupported()
+	assert.True(t, ok)
+	assert.Empty(t, reason)
 }
 
-func TestCodexHookInstaller_RefusesToTrustRelativeExecutable(t *testing.T) {
+func TestCodexHookInstaller_RefusesToTrustNonPortableRelativeExecutable(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	oldCommand := codexHookCommandString
-	oldVersion := codexVersionOutput
 	t.Cleanup(func() {
 		codexHookCommandString = oldCommand
-		codexVersionOutput = oldVersion
 	})
-	codexHookCommandString = func() string { return "tclaude session hook-callback" }
-	codexVersionOutput = func() ([]byte, error) { return []byte("codex-cli 0.144.1"), nil }
+	codexHookCommandString = func() string { return "bin/tclaude session hook-callback" }
 
 	err := (codexHookInstaller{}).InstallTrusted()
-	require.ErrorContains(t, err, "non-absolute executable")
+	require.ErrorContains(t, err, "non-portable relative executable")
 	assert.NoFileExists(t, filepath.Join(home, ".codex", "hooks.json"))
 	assert.NoFileExists(t, filepath.Join(home, ".codex", "config.toml"))
 }
@@ -282,4 +239,132 @@ func TestCodexHookInstaller_PreflightsTrustBeforeChangingHooks(t *testing.T) {
 	after, err := os.ReadFile(hooksPath)
 	require.NoError(t, err)
 	assert.Equal(t, original, after, "hooks.json must not change when trust preflight fails")
+}
+
+func TestCodexHookInstaller_RollsBackHooksWhenDiscoveryFails(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	seedTclaudeOnPath(t)
+	dir := filepath.Join(home, ".codex")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	hooksPath := filepath.Join(dir, "hooks.json")
+	original := []byte(`{"description":"no startup gate"}`)
+	require.NoError(t, os.WriteFile(hooksPath, original, 0o600))
+
+	oldDiscovery := discoverCodexHookTrustEntries
+	discoverCodexHookTrustEntries = func(path, want string) ([]codexHookTrustEntry, error) {
+		return nil, fmt.Errorf("hooks/list unavailable")
+	}
+	t.Cleanup(func() { discoverCodexHookTrustEntries = oldDiscovery })
+
+	require.ErrorContains(t, (codexHookInstaller{}).InstallTrusted(), "hooks/list unavailable")
+	after, err := os.ReadFile(hooksPath)
+	require.NoError(t, err)
+	assert.Equal(t, original, after)
+	info, err := os.Stat(hooksPath)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+}
+
+func TestCodexHookInstaller_RefusesModifiedManagedShapeBeforeTrust(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	seedTclaudeOnPath(t)
+	inst := codexHookInstaller{}
+	require.NoError(t, inst.Install())
+
+	path := inst.ConfigTarget()
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	data = []byte(strings.Replace(string(data), `"type": "command"`, `"type": "command", "async": true`, 1))
+	require.NoError(t, os.WriteFile(path, data, 0o644))
+
+	require.ErrorContains(t, inst.TrustInstalled(), "exact managed shape")
+	assert.False(t, inst.Trusted())
+	assert.NoFileExists(t, filepath.Join(home, ".codex", "config.toml"))
+}
+
+func TestCodexHookInstaller_RefusesStaleManagedEventBeforeTrust(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	seedTclaudeOnPath(t)
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+	inst := codexHookInstaller{}
+	require.NoError(t, inst.Install())
+
+	path := inst.ConfigTarget()
+	hooks, top, err := readCodexHooks(path)
+	require.NoError(t, err)
+	hooks["SessionEnd"] = append(json.RawMessage(nil), hooks["SessionStart"]...)
+	top["hooks"], err = json.Marshal(hooks)
+	require.NoError(t, err)
+	data, err := json.MarshalIndent(top, "", "  ")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, data, 0o644))
+
+	installed, _, needsRepair := inst.Check()
+	assert.True(t, installed, "all currently required events are still present")
+	assert.True(t, needsRepair, "the no-longer-required tclaude event must be removed")
+	require.ErrorContains(t, inst.TrustInstalled(), "non-required Codex event SessionEnd")
+	assert.False(t, inst.Trusted())
+}
+
+func TestCodexHooksRollbackRefusesConcurrentMetadataChanges(t *testing.T) {
+	t.Run("mode", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "hooks.json")
+		require.NoError(t, os.WriteFile(path, []byte("old"), 0o600))
+		snapshot, err := snapshotCodexHooksFile(path)
+		require.NoError(t, err)
+		require.NoError(t, atomicWritePreservingMode(path, []byte("installed"), 0o644))
+		require.NoError(t, snapshot.validateInstalledState([]byte("installed")))
+		require.NoError(t, os.Chmod(path, 0o640))
+		require.ErrorContains(t, snapshot.restoreIfUnchanged([]byte("installed")), "mode changed")
+	})
+
+	t.Run("symlink target", func(t *testing.T) {
+		dir := t.TempDir()
+		first := filepath.Join(dir, "first.json")
+		second := filepath.Join(dir, "second.json")
+		link := filepath.Join(dir, "hooks.json")
+		require.NoError(t, os.WriteFile(first, []byte("old"), 0o600))
+		require.NoError(t, os.WriteFile(second, []byte("other"), 0o600))
+		require.NoError(t, os.Symlink(first, link))
+		snapshot, err := snapshotCodexHooksFile(link)
+		require.NoError(t, err)
+		require.NoError(t, atomicWritePreservingMode(link, []byte("installed"), 0o644))
+		require.NoError(t, snapshot.validateInstalledState([]byte("installed")))
+		require.NoError(t, os.Remove(link))
+		require.NoError(t, os.Symlink(second, link))
+		require.ErrorContains(t, snapshot.restoreIfUnchanged([]byte("installed")), "target changed")
+	})
+}
+
+func TestCodexHookInstaller_RefusesBytesChangedDuringDiscovery(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	seedTclaudeOnPath(t)
+	inst := codexHookInstaller{}
+	require.NoError(t, inst.Install())
+
+	oldDiscovery := discoverCodexHookTrustEntries
+	discoverCodexHookTrustEntries = func(path, want string) ([]codexHookTrustEntry, error) {
+		entries, err := oldDiscovery(path, want)
+		if err != nil {
+			return nil, err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		data = append(data, '\n')
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			return nil, err
+		}
+		return entries, nil
+	}
+	t.Cleanup(func() { discoverCodexHookTrustEntries = oldDiscovery })
+
+	require.ErrorContains(t, inst.TrustInstalled(), "changed during authoritative discovery")
+	assert.NoFileExists(t, filepath.Join(home, ".codex", "config.toml"))
 }

@@ -194,6 +194,7 @@ func SetMaxArtifactUnpackedBytesForTest(n int64) func() {
 // ghProxySession is one GitHub invocation context: the repo slug the agent's
 // own remote resolved to, plus the resolved credential.
 type ghProxySession struct {
+	convID    string
 	owner     string
 	repo      string
 	ownerRepo string
@@ -270,6 +271,7 @@ func newGHProxySession(ctx context.Context, convID, requestedRemote string, remo
 	}
 	slog.Debug("github proxy resolved a token", "repo", ownerRepo, "source", string(source))
 	return &ghProxySession{
+		convID:    convID,
 		owner:     owner,
 		repo:      repo,
 		ownerRepo: ownerRepo,

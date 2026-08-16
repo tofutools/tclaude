@@ -10,7 +10,8 @@ import (
 	"time"
 )
 
-// SnapshotVersion 10 adds operator-authored pre-launch script blocks. An older
+// SnapshotVersion 11 adds the explicit filesystem-root posture. Version 10
+// adds operator-authored pre-launch script blocks. An older
 // binary must REJECT such a snapshot rather than ignore the field: silently
 // dropping the blocks would start an agent whose environment was never
 // prepared, failing later and far from the cause.
@@ -22,7 +23,7 @@ import (
 // bump preserved the fail-closed downgrade property, where an older binary
 // rejects a newer snapshot rather than ignoring a marker it does not
 // understand. Version 5 removed the retired read-baseline mechanism (TCL-623).
-const SnapshotVersion = 10
+const SnapshotVersion = 11
 
 // AppliedProfile preserves stable registry provenance without making the
 // registry row authoritative after resolution. The effective values in the
@@ -142,6 +143,10 @@ func RequireContained(parent, child Snapshot) error {
 	if !unixSocketRulesContained(parentAxes.UnixSockets, childAxes.UnixSockets) {
 		return fmt.Errorf("unix-socket rules are not contained by the parent snapshot")
 	}
+	if parent.Effective.FilesystemRoot == FilesystemRootSeparate &&
+		child.Effective.FilesystemRoot != FilesystemRootSeparate {
+		return fmt.Errorf("separate filesystem root is not preserved from the parent snapshot")
+	}
 	return nil
 }
 
@@ -158,10 +163,11 @@ func networkAccessContained(parent, child NetworkAccess) bool {
 
 func deriveEffectiveAccessAxes(effective EffectiveProfile) (ResolvedAxes, error) {
 	return DeriveAccessAxes(Profile{
-		Name:          "effective-sandbox-access",
-		NetworkAccess: effective.NetworkAccess,
-		Network:       effective.Network,
-		UnixSockets:   effective.UnixSockets,
+		Name:           "effective-sandbox-access",
+		NetworkAccess:  effective.NetworkAccess,
+		Network:        effective.Network,
+		UnixSockets:    effective.UnixSockets,
+		FilesystemRoot: effective.FilesystemRoot,
 		// The resolved filesystem authority rides along so capability planning
 		// can answer the one question that spans the filesystem and the network
 		// engine at once. This is the EFFECTIVE grant set — what the launch will
@@ -204,9 +210,10 @@ func PlannedEffectiveAccessAxes(effective EffectiveProfile) (ResolvedAxes, error
 				// different engine here than the preview named would be exactly
 				// the disclosure-does-not-match-rendered-surface bug.
 				axes.Network = NetworkRules{
-					Mode:   AccessModeOpen,
-					Deny:   cloneNetworkRules(axes.Network).Deny,
-					Engine: axes.Network.Engine,
+					Mode:      AccessModeOpen,
+					Deny:      cloneNetworkRules(axes.Network).Deny,
+					Engine:    axes.Network.Engine,
+					Namespace: axes.Network.Namespace,
 				}
 			case "ports_unsupported":
 				if axes.Network.Mode != AccessModeList {
@@ -265,6 +272,10 @@ func omitNetworkEntries(
 }
 
 func networkRulesContained(parent, child NetworkRules) bool {
+	if parent.Namespace == NetworkNamespacePrivate &&
+		child.Namespace != NetworkNamespacePrivate {
+		return false
+	}
 	// A replacement must retain every launched deny. Requiring explicit
 	// coverage is intentionally conservative even when the child baseline
 	// would happen to make a particular deny redundant.
@@ -480,6 +491,7 @@ func UnconfinedLaunchSnapshot(in Snapshot) Snapshot {
 	effective.Filesystem = nil
 	effective.MountAliases = nil
 	effective.AgentDirectories = nil
+	effective.FilesystemRoot = FilesystemRootAutomatic
 	effective.NetworkAccess = NetworkAccessInherit
 	effective.Network = nil
 	effective.UnixSockets = nil
@@ -487,6 +499,7 @@ func UnconfinedLaunchSnapshot(in Snapshot) Snapshot {
 	effective.DarwinAllowMachRegister = false
 	effective.AccessNotices = nil
 	effective.Provenance.Filesystem = nil
+	effective.Provenance.FilesystemRoot = nil
 	effective.Provenance.AgentDirectories = nil
 	effective.Provenance.Network = nil
 	effective.Provenance.UnixSockets = nil
@@ -514,6 +527,7 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 		len(in.Effective.MountAliases) > 0 ||
 		len(in.Effective.Environment) > 0 ||
 		len(in.Effective.AgentDirectories) > 0 ||
+		in.Effective.FilesystemRoot != FilesystemRootAutomatic ||
 		in.Effective.NetworkAccess != NetworkAccessInherit ||
 		in.Effective.Network != nil ||
 		in.Effective.UnixSockets != nil ||
@@ -528,6 +542,7 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 		Name:                    "effective-sandbox-snapshot",
 		Filesystem:              in.Effective.Filesystem,
 		Environment:             in.Effective.Environment,
+		FilesystemRoot:          in.Effective.FilesystemRoot,
 		NetworkAccess:           in.Effective.NetworkAccess,
 		UnixSockets:             in.Effective.UnixSockets,
 		ResourceLimits:          in.Effective.ResourceLimits,
@@ -592,6 +607,9 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 	}
 	if normalized.NetworkAccess != in.Effective.NetworkAccess {
 		return Snapshot{}, fmt.Errorf("effective sandbox network access changed since resolution")
+	}
+	if normalized.FilesystemRoot != in.Effective.FilesystemRoot {
+		return Snapshot{}, fmt.Errorf("effective sandbox filesystem root changed since resolution")
 	}
 	if !reflect.DeepEqual(normalized.Network, in.Effective.Network) {
 		return Snapshot{}, fmt.Errorf("effective sandbox network rules changed since resolution")
@@ -658,7 +676,7 @@ func NormalizeSnapshotVersion(in Snapshot) (Snapshot, error) {
 	// left out of this list strands every live agent's resume on upgrade, which
 	// is the outcome the paragraphs above exist to avoid.
 	// TestEverySnapshotVersionUpToCurrentIsAccepted pins that.
-	case 1, 2, 3, 4, 5, 6, 7, 8, 9, SnapshotVersion:
+	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, SnapshotVersion:
 		in.Version = SnapshotVersion
 		return in, nil
 	default:
@@ -699,6 +717,7 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 		MountAliases:            append([]MountAlias(nil), in.MountAliases...),
 		Environment:             append([]EnvironmentEntry{}, in.Environment...),
 		AgentDirectories:        append([]string{}, in.AgentDirectories...),
+		FilesystemRoot:          in.FilesystemRoot,
 		NetworkAccess:           in.NetworkAccess,
 		Network:                 cloneNetworkRulesPtr(in.Network),
 		UnixSockets:             cloneUnixSocketRulesPtr(in.UnixSockets),
@@ -711,6 +730,7 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 			Filesystem:       make(map[string][]ProfileSource, len(in.Provenance.Filesystem)),
 			Environment:      make(map[string]ProfileSource, len(in.Provenance.Environment)),
 			AgentDirectories: make(map[string][]ProfileSource, len(in.Provenance.AgentDirectories)),
+			FilesystemRoot:   nil,
 			Network:          nil,
 			UnixSockets:      nil,
 			ResourceMemory:   nil,
@@ -725,6 +745,10 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 	}
 	for name, sources := range in.Provenance.AgentDirectories {
 		out.Provenance.AgentDirectories[name] = cloneProfileSources(sources)
+	}
+	if in.Provenance.FilesystemRoot != nil {
+		source := cloneProfileSource(*in.Provenance.FilesystemRoot)
+		out.Provenance.FilesystemRoot = &source
 	}
 	if in.Provenance.Network != nil {
 		source := cloneProfileSource(*in.Provenance.Network)

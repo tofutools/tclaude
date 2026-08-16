@@ -54,7 +54,7 @@ func TestTaskForceDeploy_RendersMissionAndRecordsProvenance(t *testing.T) {
 		"descr":           "a lead and a dev",
 		"default_context": boilerplate,
 		"agents": []templateAgentSpec{
-			{Name: "lead", Role: "lead", InitialMessage: "You lead.", IsOwner: true, Permissions: []string{agentd.PermGroupsSpawn}},
+			{Name: "lead", Role: "lead", InitialMessage: "You lead.", IsOwner: true, Permissions: []string{agentd.PermGroupsMembersSpawn}},
 			{Name: "dev", Role: "dev"},
 		},
 		"work_pattern": []map[string]string{

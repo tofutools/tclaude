@@ -1187,13 +1187,21 @@ function accessRequestById(id) {
   return accessRequests().find(r => r.id === String(id)) || null;
 }
 
-function accessWho(r) {
+export function accessWho(r) {
   const id = shortAgentId(r.agent_id, r.conv_id) || wz('unknown agent', 'unknown familiar');
-  const title = r.conv_title || '(title unavailable)';
+  // Lead with the human-readable agent name whenever caller refresh found one.
+  // The row and reader both carry the stable agent + conversation identifiers
+  // in their hover title, so repeating the short id in visible text only makes
+  // the operator scan past the least useful part first. Older daemon snapshots
+  // did not send title_status, hence the explicit legacy sentinel check.
+  const titleKnown = Boolean(r.conv_title) && (r.title_status
+    ? r.title_status !== 'unavailable'
+    : r.conv_title !== '(title unavailable)');
+  const who = titleKnown ? r.conv_title : id;
   const state = r.caller_state === 'retired'
     ? wz(' · retired', ' · banished')
     : r.caller_state === 'missing' ? wz(' · metadata missing', ' · lost to the mists') : '';
-  return `${id} · ${title}${state}`;
+  return `${who}${state}`;
 }
 
 function accessSubject(r) {

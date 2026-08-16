@@ -18,6 +18,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // Scribe summon (JOH-361) — the "summon a pre-briefed, pre-granted
@@ -104,7 +105,7 @@ type scribeOutcome struct {
 }
 
 // handleScribeSummon is the shared /v1 handler. The human (dashboard peer or a
-// human on the socket) always passes; an agent caller must hold groups.spawn —
+// human on the socket) always passes; an agent caller must hold groups.members.spawn —
 // and, because a summon applies birth-time grants, permissions.grant too. That
 // is exactly the bar handleGroupSpawn sets for a birth-time-granted spawn, so
 // no new privilege model is introduced.
@@ -115,7 +116,7 @@ func handleScribeSummon(w http.ResponseWriter, r *http.Request) {
 	}
 	// requirePermission hands back the caller's conv-id: a real agent resolves
 	// to its conv, the human resolves to "".
-	spawnerConvID, ok := requirePermission(w, r, PermGroupsSpawn)
+	spawnerConvID, ok := requirePermission(w, r, PermGroupsMembersSpawn)
 	if !ok {
 		return
 	}
@@ -179,7 +180,7 @@ func handleScribeSummon(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// A summon applies birth-time grants, so an agent caller (not the human)
-	// needs permissions.grant on top of groups.spawn — the same guard
+	// needs permissions.grant on top of groups.members.spawn — the same guard
 	// handleGroupSpawn puts on a spawn carrying permission_overrides.
 	var permissionGrantSudoID int64
 	if spawnerConvID != "" {
@@ -575,7 +576,12 @@ func seedScribeDirTrust(harnessName, dir string) {
 			slog.Warn("scribe: pre-trust codex workdir failed", "dir", dir, "error", err)
 		}
 	case harness.DefaultName: // "claude"
-		if err := harness.EnsureClaudeDirTrusted(dir); err != nil {
+		// Through the launch-aware path, not EnsureClaudeDirTrusted: every
+		// tclaude-launched Claude pane reads its config from the state root
+		// (session.ApplyClaudeConfigDirEnv), so the trust entry must land in
+		// that relocated file — the ambient ~/.claude.json is one the scribe
+		// pane never opens.
+		if err := session.PretrustClaudeLaunchDir(dir); err != nil {
 			slog.Warn("scribe: pre-trust claude workdir failed", "dir", dir, "error", err)
 		}
 	case harness.CopilotName:

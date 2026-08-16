@@ -108,6 +108,13 @@ test('Messages island preserves native controls, CSS hooks, focus, reader, and k
   assert.equal(mounted.container.querySelector('.mail-reader-body a').getAttribute('href'), 'https://example.com/report');
   assert.equal(mounted.container.querySelector('.mail-attachment a').getAttribute('download'), 'report.md');
   assert.equal(mounted.container.querySelector('.mail-attachment-size').textContent, '1.5 KiB');
+  const attachmentIndicator = mounted.container.querySelector('.mail-row-attachments');
+  assert.equal(attachmentIndicator.getAttribute('title'), '1 attachment');
+  assert.equal(attachmentIndicator.getAttribute('role'), 'img');
+  assert.equal(attachmentIndicator.getAttribute('aria-label'), '1 attachment');
+  assert.ok(attachmentIndicator.querySelector('svg'));
+  assert.equal(attachmentIndicator.querySelector('.mail-row-attachment-count'), null,
+    'a single attachment needs no redundant numeric count');
   assert.equal(mounted.container.querySelector('[data-act="msg-focus"]').dataset.harness, 'copilot',
     'message focus carries the live sender harness into the terminal launcher');
 
@@ -121,6 +128,15 @@ test('Messages island preserves native controls, CSS hooks, focus, reader, and k
   assertSameNode(mounted.container.querySelector('#mail-reader'), originalReader);
   assert.equal(originalReader.scrollTop, 37);
   assertSameNode(harness.document.activeElement, messageFilter);
+
+  await harness.act(() => { state.value = { ...state.value, messages: state.value.messages.map((item) => (
+    item.id === 1 ? { ...item, attachments: [item.attachment, {
+      filename: 'screenshot.png', content_type: 'image/png', size_bytes: 2048,
+    }], attachment: undefined } : item
+  )) }; });
+  const multiIndicator = mounted.container.querySelector('.mail-row-attachments');
+  assert.equal(multiIndicator.getAttribute('title'), '2 attachments');
+  assert.equal(multiIndicator.querySelector('.mail-row-attachment-count').textContent, '2');
 
   harness.document.body.classList.add('wizard');
   await harness.act(() => { state.value = { ...state.value }; });
@@ -145,8 +161,11 @@ test('Messages access request view retains decree hooks and decision controls', 
   assert.equal(mounted.container.querySelector('#mail-reader').dataset.kind, 'decree');
   const headerRows = [...mounted.container.querySelectorAll('.mail-headers .mail-hrow')]
     .map((row) => row.textContent.replace(/\s+/g, ' ').trim());
-  assert.ok(headerRows.some((row) => row.startsWith('Fromagt_alpha · Alpha')),
-    'stable caller agent id must lead the mutable title');
+  assert.ok(headerRows.some((row) => row.startsWith('FromAlpha')),
+    'the readable caller name must lead while its identifiers stay on hover');
+  const fromValue = mounted.container.querySelector('.mail-headers .mail-hval span');
+  assert.equal(fromValue.getAttribute('title'), 'agt_alpha / conv-b');
+  assert.doesNotMatch(fromValue.textContent, /agt_alpha/);
   assert.ok(headerRows.some((row) => row.startsWith('Request generationconv-a')));
   assert.ok(headerRows.some((row) => row.startsWith('Current generationconv-b')));
   assert.match(mounted.container.textContent, /Always allow/);
@@ -205,7 +224,20 @@ test('Messages clear action keeps the cleared query when the input has not repai
   });
   t.after(() => { globalThis.fetch = previousFetch; });
 
-  const { mailController } = await harness.importDashboardModule('js/mail.js');
+  const { accessWho, mailController } = await harness.importDashboardModule('js/mail.js');
+  assert.equal(accessWho({ agent_id: 'agt_alpha', conv_id: 'conv-a', conv_title: 'Alpha', title_status: 'current' }), 'Alpha');
+  assert.equal(accessWho({ agent_id: 'agt_alpha', conv_id: 'conv-a', conv_title: '(title unavailable)', title_status: 'unavailable' }), 'agt_alpha');
+  assert.equal(accessWho({
+    agent_id: 'agt_alpha', conv_id: 'conv-a', conv_title: '(title unavailable)',
+  }), 'agt_alpha');
+  assert.equal(accessWho({
+    agent_id: 'agt_alpha', conv_id: 'conv-a', conv_title: 'Alpha',
+    title_status: 'current', caller_state: 'retired',
+  }), 'Alpha · retired');
+  assert.equal(accessWho({
+    agent_id: 'agt_alpha', conv_id: 'conv-a', conv_title: 'Alpha',
+    title_status: 'current', caller_state: 'missing',
+  }), 'Alpha · metadata missing');
   const input = harness.document.body.appendChild(harness.document.createElement('input'));
   input.id = 'filter-messages';
   input.value = 'stale query';

@@ -4,32 +4,21 @@
 // through the auth redirect (see handleDashboardRoot in agentd/dashboard.go)
 // so the bare-path URL still carries it.
 //
-// Click the header icon (🤝 / 🎰) — or hit the global hotkey
+// Click the header agent-network icon — or hit the global hotkey
 // Ctrl/⌘ + Alt/⌥ + Shift + S (see bindSlopHotkey) — to toggle slop mode
 // at runtime. The URL is rewritten in place via history.replaceState so
 // a refresh preserves the chosen state without leaving an extra history
 // entry.
 
-const SLOP_FAVICON =
-  'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">' +
-  '<text x="50" y="52" font-size="78" text-anchor="middle" dominant-baseline="central">🎰</text></svg>';
-const SLOP_EMOJI = '🎰';
 const SLOP_REST = 'The slop machine';
-// The slop favicon is itself a 🎰 (see SLOP_FAVICON), and the browser
-// renders the favicon to the left of the tab title — so prefixing the
-// title with a 🎰 too gave every tab two slot machines side-by-side.
-// Drop the leading emoji here; the favicon is enough.
 const SLOP_TITLE = 'The slop machine';
 
 // Wizard theme chrome — the 🧙 "it's wizard time" re-skin, sibling of the
 // slop constants above, tagged onto the URL with ?wizard=1. Same data, same
 // routes; a sarcastic over-the-top DnD paint job. Mutually exclusive with
-// slop (the header icon cycles regular → slop → wizard). The favicon carries
-// the 🧙 so the title, like SLOP_TITLE, doesn't repeat it.
-const WIZARD_FAVICON =
-  'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">' +
-  '<text x="50" y="52" font-size="78" text-anchor="middle" dominant-baseline="central">🧙</text></svg>';
-const WIZARD_EMOJI = '🧙';
+// slop (the header icon cycles regular → slop → wizard). A small badge on the
+// shared agent-network mark carries the mode without replacing the product
+// icon in either the header or browser tab.
 const WIZARD_REST = "The Wizard's Tower";
 const WIZARD_TITLE = "The Wizard's Tower";
 
@@ -46,7 +35,6 @@ let faviconRevision = 0;
 // pre-slop state. Reading from the DOM rather than hard-coding the
 // strings keeps slop.js in sync with whatever dashboard.html ships.
 const original = {
-  emoji: '',
   rest: '',
   title: '',
   favicon: '',
@@ -55,41 +43,33 @@ const original = {
 
 let iconSpan = null;
 let restNode = null;
+let modeBadge = null;
 
 function captureOriginal() {
   if (original.captured) return;
   const h1 = document.querySelector('header h1');
   const link = document.querySelector('link[rel="icon"]');
-  const text = h1 ? h1.textContent.trim() : '';
-  // Split "🤝 tclaude agent dashboard" into [emoji, rest]. The leading
-  // glyph may be a multi-codepoint emoji, so we slice on the first space
-  // rather than the first character.
-  const idx = text.indexOf(' ');
-  original.emoji = idx > 0 ? text.slice(0, idx) : text;
-  original.rest = idx > 0 ? text.slice(idx + 1) : '';
+  const title = h1 ? h1.querySelector('.dashboard-title') : null;
+  original.rest = title ? title.textContent.trim() : '';
   original.title = document.title;
   original.favicon = link ? link.getAttribute('href') || '' : '';
   original.captured = true;
 }
 
-// Replace the h1's text with `<span class="slop-icon">…</span> rest`
-// so we have a stable click target for the toggle. The span has no
-// visual treatment beyond `cursor: pointer` — the easter egg lives
-// or dies by the curious user hovering the header icon.
+// Bind the static header button as the theme-cycle target. Keeping the
+// agent-network SVG in dashboard.html means the product mark is present at
+// first paint; this module only changes its small mode badge and title copy.
 function ensureH1Structure() {
   const h1 = document.querySelector('header h1');
   if (!h1 || iconSpan) return;
   captureOriginal();
-  h1.textContent = '';
-  iconSpan = document.createElement('span');
-  iconSpan.className = 'slop-icon';
-  iconSpan.textContent = original.emoji;
+  iconSpan = h1.querySelector('.slop-icon');
+  restNode = h1.querySelector('.dashboard-title');
+  modeBadge = h1.querySelector('.theme-mode-badge');
+  if (!iconSpan || !restNode || !modeBadge) return;
   // The header icon cycles regular → slop → wizard → regular. It's the
   // discoverable easter-egg toggle; a single click steps to the next theme.
   iconSpan.addEventListener('click', cycleTheme);
-  restNode = document.createTextNode(' ' + original.rest);
-  h1.appendChild(iconSpan);
-  h1.appendChild(restNode);
 }
 
 // currentTheme reads the live cosmetic theme off the body class. slop and
@@ -114,12 +94,11 @@ function renderState() {
   const isSlop = theme === 'slop';
   const isWizard = theme === 'wizard';
   document.title = isSlop ? SLOP_TITLE : isWizard ? WIZARD_TITLE : original.title;
-  if (iconSpan) iconSpan.textContent = isSlop ? SLOP_EMOJI : isWizard ? WIZARD_EMOJI : original.emoji;
-  if (restNode) restNode.nodeValue = ' ' + (isSlop ? SLOP_REST : isWizard ? WIZARD_REST : original.rest);
-  setFavicon(
-    isSlop ? SLOP_FAVICON : isWizard ? WIZARD_FAVICON : original.favicon,
-    theme,
-  );
+  if (modeBadge) modeBadge.textContent = isSlop ? '🎰' : isWizard ? '🧙' : '';
+  if (restNode) restNode.textContent = isSlop ? SLOP_REST : isWizard ? WIZARD_REST : original.rest;
+  // The favicon stays the same product mark in every cosmetic mode. Replacing
+  // and versioning its link still defeats Chromium's stale decoded-icon cache.
+  setFavicon(original.favicon, theme);
   // Broadcast the current slop state so feature modules can react without
   // importing slop.js internals — slop-audio.js listens here to suspend /
   // resume its FX AudioContext. (slop-fx and the marquee don't subscribe;

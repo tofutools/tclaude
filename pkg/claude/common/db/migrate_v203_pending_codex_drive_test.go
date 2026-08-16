@@ -62,3 +62,22 @@ func TestPendingSpawnCodexDriveRoundTripsUnsetTrueAndFalse(t *testing.T) {
 		assert.Equal(t, "CODEX_HOME", got.CodexStateRootSource)
 	}
 }
+
+func TestPendingSpawnFastModeAtLaunchRoundTripsUnsetTrueAndFalse(t *testing.T) {
+	setupTestDB(t)
+	for i, value := range []*bool{nil, boolPtr(true), boolPtr(false)} {
+		label := []string{"pending-fast-unset", "pending-fast-true", "pending-fast-false"}[i]
+		require.NoError(t, InsertPendingSpawn(&PendingSpawn{
+			Label: label, GroupID: 1, FastModeAtLaunch: value,
+		}))
+		got, err := GetPendingSpawn(label)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		if value == nil {
+			assert.Nil(t, got.FastModeAtLaunch)
+		} else {
+			require.NotNil(t, got.FastModeAtLaunch)
+			assert.Equal(t, *value, *got.FastModeAtLaunch)
+		}
+	}
+}

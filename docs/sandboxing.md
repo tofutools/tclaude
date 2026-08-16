@@ -519,6 +519,38 @@ OpenCode's inner access profile permits all paths without compiling the sandbox
 profile's path scoping; its selected approval policy and independent
 tool-governance setting remain active. OpenCode has no stacked contract.
 
+### Claude Code config and login state under tclaude
+
+Claude Code keeps its OAuth tokens in `~/.claude/.credentials.json` (inside
+the state root the launch contract binds), but its account and onboarding
+state — `oauthAccount`, `hasCompletedOnboarding`, per-project trust — lives in
+the top-level `~/.claude.json`, a file directly in `$HOME`. A constructed
+filesystem root leaves `$HOME` itself read-only scaffolding, so that file
+would be invisible and every sandboxed launch would park on the login wizard.
+
+tclaude therefore launches EVERY Claude Code pane — sandboxed or not — with
+`CLAUDE_CONFIG_DIR` pointed at the state root, which moves the config file —
+and the lock, temp and backup siblings Claude Code writes next to it — to
+`~/.claude/.claude.json`, inside the directory every posture keeps writable.
+Applying it across all tclaude launches rather than only constructed-root
+ones means one config file for all tclaude agents: an agent's state cannot
+fork between its sandboxed and unsandboxed launches, and the assignment does
+not depend on a root posture that launch degradation can revise. Nothing else
+moves — credentials, `settings.json`, sessions, plugins and skills already
+live under `~/.claude` and stay the very same files.
+
+On the first such launch the operator's ambient config is copied there once
+(never overwritten afterwards; an ambient `CLAUDE_CONFIG_DIR` is honored as
+the source, a symlinked file is followed but must resolve to a regular file),
+so agents start from the operator's logged-in state. After that first copy
+the tclaude-shared config and the ambient file evolve independently; ambient
+`claude` runs outside tclaude keep using the legacy `~/.claude.json`. Token
+refresh and re-login stay effectively shared either way, because the
+credentials file is common to both. The `--trust-dir` seed and the daemon's
+scribe pre-trust follow the launch and write their trust entries into the
+relocated file. `CLAUDE_CONFIG_DIR` is a reserved profile environment name,
+so a profile cannot redirect or unset this assignment.
+
 ### OpenCode state under `tclaude-layer`
 
 A new OpenCode agent using `tclaude-layer` receives durable per-agent mutable
@@ -843,12 +875,27 @@ wraps the whole harness process, not only its tool executions:
   launch-contract path.
 
 Since TCL-798 the constructed root is no longer welded to the network posture.
+A sandbox profile can select the filesystem root explicitly with
+`filesystem_root`: omit it for **Automatic**, use `inherit` to prefer the
+read-only host root, or use `separate` to request the minimal constructed root
+even when network and Unix sockets remain open. Explicit separation is
+supported by Linux `tclaude-layer` for Claude Code, Codex, OpenCode, and
+Copilot; other targets refuse it during preview/spawn rather than ignoring it.
+
+The setting composes monotonically. `separate` in any included, global, group,
+or explicit profile wins. `inherit` cannot weaken a private/restricted network
+or Unix-socket rule whose enforcement itself requires a constructed root. This
+keeps existing profiles unchanged: an omitted setting retains the same
+automatic derivation they had before the control existed.
+
 A profile that leaves network access open but authors the `unix_sockets` axis
 as `closed` or an allow `list` gets a **host-network constructed root** on
-Linux: bubblewrap builds the same fresh root and PID namespace as the isolated
-posture, binds the agentd socket and any listed sockets back, and does NOT
-create a network namespace, so host IP networking, host loopback services, and
-the IDE bridge keep working.
+Linux for Claude Code, Codex, OpenCode, and Copilot: bubblewrap builds the same fresh
+root and PID namespace as the isolated posture, binds the agentd socket and any
+listed sockets back, and does NOT create a network namespace, so host IP
+networking, host loopback services, and the IDE bridge keep working. For
+OpenCode, the attach pane remains outside while its agentd-owned tool server is
+wrapped by that root.
 
 That posture is deliberately rated **partially enforced**, permanently. With the
 host network namespace shared, Linux abstract-namespace Unix sockets (`@…`) are
@@ -865,9 +912,10 @@ consequence is that the agent cannot see or signal host processes, and tools
 that read the host process table stop working. This is stated in the launch
 warning alongside the abstract-socket caveat.
 
-It is never on by default. A profile that says nothing about `unix_sockets`, or
-sets it to `open`, launches with exactly the read-only host root it launched
-with before.
+It is never newly enabled by an omitted setting. A profile that says nothing
+about `filesystem_root`, says nothing about `unix_sockets` (or sets sockets to
+`open`), and has no network rule requiring construction launches with exactly
+the read-only host root it launched with before.
 
 Two consequences of building the root reach beyond sockets, and both are stated
 in the launch warning rather than left to be discovered:
@@ -949,6 +997,18 @@ Allow rules are unlocks while non-overlapping Deny rules are redundant. Under
 Allow all, Deny rules are restrictions while Allow rules are redundant. The
 editor labels either redundant case instead of rejecting it. No override
 carries no rows.
+
+The adjacent **Network namespace** selector is independent of the baseline and
+filtering engine. **Shared host** preserves the historical host network.
+**Private, routed** (`network.namespace: "private"`) uses the existing Linux
+`tclaude-layer` namespace and `pasta` gateway while an Allow all baseline keeps
+ordinary TCP/UDP destinations unrestricted. This separates abstract Unix
+sockets from the host without requiring the IP network to be deny-by-default.
+Host localhost services and IDE bridges are not shared in this posture. It is
+supported only for exact Linux `tclaude-layer` Claude Code, Codex, OpenCode, and Copilot
+launches; missing prerequisites or another target refuse the launch rather
+than falling back to the host namespace. A private namespace in an included or
+global profile cannot be widened by a child profile selecting Shared host.
 
 Network denies are enforced for Claude Code and Codex on the Linux
 `tclaude-layer` filtered gateway. CIDR and local-machine denies are fully
@@ -1129,9 +1189,10 @@ only the resolved launch verdict can mint enforcement.
 On a positive launch, bubblewrap creates the constructed network/PID namespace
 without connectivity. Rootless bubblewrap maps the invoking host user to
 namespace UID/GID 0 so the pinned bootstrap can receive namespace-local
-`CAP_NET_ADMIN` for the atomic nft policy and `CAP_NET_BIND_SERVICE` for the
-private port-53 DNS listener; host file ownership remains mapped to the
-invoking user. The final harness also runs as namespace UID/GID 0 after the
+`CAP_NET_ADMIN` for the atomic nft policy. The private DNS listener uses
+unprivileged port 1053 behind an nft redirect from `127.0.0.53:53`, avoiding
+`CAP_NET_BIND_SERVICE`; host file ownership remains mapped to the invoking
+user. The final harness also runs as namespace UID/GID 0 after the
 verified capability drop. This is a one-ID rootless mapping, not host root: the
 invoking user's files appear owned by namespace root inside the wall, and
 files the harness creates map back to the invoking host UID/GID. The bootstrap

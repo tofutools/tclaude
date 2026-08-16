@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -10,6 +11,28 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
+
+func TestCloneAuthorizationGroupsIncludesMembershipsAndInheritedOwnerships(t *testing.T) {
+	setupTestDB(t)
+	const target = "clone-auth-target-0001"
+	_, _, err := db.EnsureAgentForConv(target, "test")
+	require.NoError(t, err)
+	memberID, err := db.CreateAgentGroup("member-group", "")
+	require.NoError(t, err)
+	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: memberID, ConvID: target}))
+	ownedID, err := db.CreateAgentGroup("owned-group", "")
+	require.NoError(t, err)
+	require.NoError(t, db.AddAgentGroupOwner(ownedID, target, "test"))
+	archivedID, err := db.CreateAgentGroup("archived-owned", "")
+	require.NoError(t, err)
+	require.NoError(t, db.AddAgentGroupOwner(archivedID, target, "test"))
+	require.NoError(t, db.ArchiveAgentGroup("archived-owned"))
+
+	groups, err := cloneAuthorizationGroups(target)
+	require.NoError(t, err)
+	assert.True(t, slices.Equal(groups, []string{"member-group", "owned-group"}),
+		"clone authorization uses one current pre-mutation footprint")
+}
 
 // A legacy Codex row with a blank approval column recorded no approval INPUT,
 // so it re-resolves under current config — to `never`, the Codex default —

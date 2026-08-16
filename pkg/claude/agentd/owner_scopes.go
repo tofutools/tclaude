@@ -13,44 +13,28 @@ import (
 
 // Per-group owner scopes (§6 of the scoped-permissions design, TCL-1071).
 //
-// Group ownership structurally confers a set of slugs — the owner-implied
-// BYPASS, which fills the permUndecided gap at every gate that takes one (see
-// PermSlug.OwnerScope). Until now that bypass was all-or-nothing: an owner
-// either got the whole slug or was not an owner.
-//
-// A group may now carry an owner-scope map, slug → scope, that CONFINES that
-// bypass for that group. {"groups.spawn":{"spawn_profile":["p1"]}} on group g1
-// means: an owner of g1 with no grant of its own may spawn into g1 with
-// profile p1, and is refused (popup, then 403) with p2 or an inline profile.
+// Group ownership contributes ordinary permission grants. Group-aware slugs
+// get one grant scoped to each owned active group; the two declared global
+// bonuses are unscoped. A group's owner-scope map adds AND constraints to the
+// grant that group contributes. For example, a spawn_profile constraint on g1
+// permits that owner grant only for the named profiles in g1.
 //
 // Three properties are load-bearing, and each is settled operator policy:
 //
-//   - It narrows ONLY the bypass. An EXPLICIT grant the owner holds resolves
-//     first, under the ordinary precedence, and is untouched — an operator who
-//     wants that narrowed edits the grant's own scope, which is individually
-//     controllable. So an owner holding an unscoped groups.spawn grant is
-//     unaffected by any owner-scope map.
+//   - It narrows ONLY this group's contributed grant. Other positive grants
+//     compose with it and retain their own scopes.
 //   - It is PER GROUP. An owner of g1 (narrowed) and g2 (not) acting on g2 is
-//     unaffected; acting on g1 is confined. Every bypass site therefore has to
-//     pick the RIGHT group's map, which is why the helpers below take a group
-//     (or enumerate owned groups) rather than a boolean "is an owner".
+//     unaffected; acting on g1 is confined.
 //   - Where no target group is in context, a narrowed map fails CLOSED for
 //     that group's contribution: an owner-scope map that cannot be evaluated
 //     must never read as "unrestricted".
 //
-// Deny still suppresses the bypass entirely, and grants stay monotonic: a map
-// can only take reach AWAY from the structural bypass, never add any.
-
-// ownerBypassFunc is the structural owner bypass a gate hands to
-// requirePermissionEx. It receives the resolved caller, the slug under
-// evaluation and the request's ActionContext — the last two because the
-// bypass is itself narrowable per group, so "is this caller an owner" is no
-// longer a sufficient question.
-type ownerBypassFunc func(convID, slug string, actx ActionContext) bool
+// A same-slug deny suppresses the owner source, and a constraint can only take
+// reach away from the contributed grant.
 
 // ownerScopeMap is a group's owner-scope map in evaluated form: slug → the
-// scope that slug's owner-implied bypass is confined to for this group. A slug
-// ABSENT from the map is unrestricted (today's bypass); the map never widens.
+// extra scope applied to that group's contributed grant. A slug absent from
+// the map gets no extra constraints beyond the mandatory owned-group scope.
 type ownerScopeMap map[string]PermissionScope
 
 // parseOwnerScopes parses, validates and canonicalizes an owner-scope map from
@@ -59,7 +43,7 @@ type ownerScopeMap map[string]PermissionScope
 //
 // The per-slug scope goes through exactly the validation a GRANT scope does —
 // same dimension registry, same declared-dimension rule — so an operator
-// cannot narrow an owner bypass along a dimension no gate evaluates.
+// cannot constrain an owner-derived grant along a dimension no gate evaluates.
 func parseOwnerScopes(raw json.RawMessage) (ownerScopeMap, string, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
@@ -94,7 +78,7 @@ func parseOwnerScopes(raw json.RawMessage) (ownerScopeMap, string, error) {
 			// Narrowing something ownership never conferred would silently do
 			// nothing; say so rather than storing a no-op the operator will
 			// later read as protection.
-			return nil, "", fmt.Errorf("permission %q has no owner-implied bypass to narrow", slug)
+			return nil, "", fmt.Errorf("permission %q is not contributed by group ownership", slug)
 		}
 		scope, _, err := parsePermissionScope(rawScope)
 		if err != nil {
@@ -102,11 +86,11 @@ func parseOwnerScopes(raw json.RawMessage) (ownerScopeMap, string, error) {
 		}
 		if len(scope) == 0 {
 			// {} would parse as "unscoped", i.e. exactly the unrestricted
-			// bypass the operator was trying to constrain. Refuse the
+			// grant the operator was trying to constrain. Refuse the
 			// ambiguity instead of storing the widest possible reading of a
 			// value written to narrow.
 			return nil, "", fmt.Errorf("permission %q: an owner scope must name at least one dimension "+
-				"(omit the slug entirely to leave its owner bypass unrestricted)", slug)
+				"(omit the slug entirely to leave its owner-contributed grant unrestricted)", slug)
 		}
 		if err := validatePermissionScopeForSlug(slug, scope); err != nil {
 			return nil, "", err
@@ -151,133 +135,44 @@ func ownerScopesForEval(raw string) (ownerScopeMap, error) {
 	return scopes, err
 }
 
-// ownerBypassPermittedForGroup reports whether g's owner-implied bypass for
-// slug may fire for the action actx describes.
-//
-// It answers ONLY the narrowing question — the caller has already established
-// that convID owns g. Three outcomes:
-//
-//   - g has no owner-scope map, or none for slug → true (today's bypass).
-//   - g narrows slug and actx satisfies the scope → true.
-//   - g narrows slug and actx does not satisfy it (including an actx that says
-//     nothing about a constrained dimension) → false, and the gate falls
-//     through to the popup, then 403. This is the fail-closed case a site with
-//     no target group in context also lands in.
-//
-// An undecodable map denies the bypass for the whole group. That is louder
-// than ignoring it, and it is the only reading that cannot widen authority.
-func ownerBypassPermittedForGroup(g *db.AgentGroup, convID, slug string, actx ActionContext) bool {
-	if g == nil {
-		return false
+func ownerPermissionMatch(convID, slug string, actx ActionContext) (bool, string) {
+	entry, ok := ownerImpliedTierFor(convID)[slug]
+	if !ok || !entry.confers() {
+		return false, ""
 	}
-	scopes, err := ownerScopesForEval(g.OwnerScopesJSON)
-	if err != nil {
-		slog.Warn("permissions: undecodable group owner scopes ignored (bypass fails closed)",
-			"group", g.Name, "slug", slug, "error", err)
-		return false
+	if entry.Unrestricted {
+		return true, ""
 	}
-	scope, narrowed := scopes[slug]
-	if !narrowed {
-		return true
+	if actx.structuralGroup == "" {
+		return false, ""
 	}
-	return permissionScopeSatisfied(convID, scope, actx)
+	ownerCtx := actx
+	ownerCtx.Group = actx.structuralGroup
+	for _, scope := range entry.Scopes {
+		if permissionScopeSatisfied(convID, scope, ownerCtx) {
+			return true, permissionScopeDisplay(scope)
+		}
+	}
+	return false, ""
 }
 
-// ownerOfGroupPermitting is the group-scoped bypass predicate: convID owns g
-// AND g's owner-scope map permits slug for this action. It replaces the bare
-// db.IsAgentGroupOwner test at every gate whose bypass reach is the group.
-//
-// It fills in the group dimension when the gate did not. Every caller is a gate
-// whose action's subject IS g — that is what makes owning g relevant at all —
-// so "which group does this act on" is known here even at the sites that pass
-// no context (the group-link gates). Without this, a map written as
-// {"groups.link.add": {"group": ["g1"]}} ON g1 would refuse every time instead
-// of confining the bypass to g1, which reads as a revoke rather than the
-// narrowing the operator wrote.
-//
-// Deliberately NOT done in ownsAnyGroupPermitting: there the owned group is not
-// the action's subject, and asserting it were would be fail-OPEN.
-func ownerOfGroupPermitting(g *db.AgentGroup, convID, slug string, actx ActionContext) bool {
-	if g == nil {
+func memberPermissionPermitted(convID, slug string, actx ActionContext) bool {
+	if !IsMemberImpliedSlug(slug) || actx.structuralGroup == "" {
 		return false
 	}
-	owns, err := db.IsAgentGroupOwner(g.ID, convID)
-	if err != nil || !owns {
+	g, err := db.GetAgentGroupByName(actx.structuralGroup)
+	if err != nil || g == nil || g.IsArchived() {
 		return false
 	}
-	if actx.Group == "" {
-		actx.Group = g.Name
-	}
-	return ownerBypassPermittedForGroup(g, convID, slug, actx)
+	member, err := db.FindMemberInGroup(g.ID, convID)
+	return err == nil && member != nil
 }
 
-// ownsAnyGroupPermitting backs the bypasses that are scoped to NO particular
-// group — human.notify, process.runs.read, and the worktree prepare/discard
-// pair — where owning anything at all marks the caller as a coordinating role.
-//
-// It is the multi-group rule in its plainest form: the caller passes if ANY
-// owned group would permit the action. A group that narrows the slug
-// contributes only when the ActionContext satisfies its scope, so at a site
-// that describes nothing (the ownsAnyGroup sites describe no group and no
-// profile) a narrowed group contributes NOTHING and an unnarrowed one still
-// carries the caller. An owner whose ONLY group narrows the slug is therefore
-// refused here — the fail-closed answer the design mandates when the target
-// group is absent from context.
-func ownsAnyGroupPermitting(convID, slug string, actx ActionContext) bool {
-	owned, err := db.ListOwnedGroupScopes(convID)
-	if err != nil {
-		slog.Warn("permissions: owned-group lookup failed", "conv", convID, "error", err)
-		return false
+func structuralPermissionMatch(convID, slug string, actx ActionContext) (bool, string) {
+	if ok, scope := ownerPermissionMatch(convID, slug, actx); ok {
+		return true, scope
 	}
-	for _, g := range owned {
-		if ownerBypassPermittedForGroup(
-			&db.AgentGroup{ID: g.ID, Name: g.Name, OwnerScopesJSON: g.OwnerScopesJSON},
-			convID, slug, actx) {
-			return true
-		}
-	}
-	return false
-}
-
-// ownerOfGroupContainingPermitting is the cross-agent form: convID owns at
-// least one group containing targetConv whose owner-scope map permits slug for
-// this action. Narrowing is evaluated per candidate group, so an owner of a
-// narrowed g1 and an unnarrowed g2 that both contain the target still passes
-// through g2 — the same union the plain multi-group rule gives.
-//
-// Each candidate is evaluated with the GROUP DIMENSION set to that candidate,
-// because the authority being exercised flows through exactly that group: it is
-// the group the caller owns and the group the target is a member of. The
-// cross-agent gate itself cannot fill this in — it targets an agent, and which
-// group carries the bypass is only decided here, one candidate at a time.
-//
-// It cannot widen anything: a map on g1 naming g2 still refuses, since only g1's
-// own map is consulted while g1 is the candidate. Without it, the obvious
-// narrowing {"agent.retire": {"group": ["g1"]}} on g1 would refuse every time
-// and read as a revoke rather than the confinement the operator wrote.
-func ownerOfGroupContainingPermitting(convID, targetConv, slug string, actx ActionContext) bool {
-	ids, err := db.ListOwnedGroupIDsContaining(convID, targetConv)
-	if err != nil {
-		slog.Warn("permissions: owner-of-group-containing lookup failed",
-			"conv", convID, "target", targetConv, "error", err)
-		return false
-	}
-	for _, id := range ids {
-		g, err := db.GetAgentGroupByID(id)
-		if err != nil || g == nil {
-			slog.Warn("permissions: owner-scope group lookup failed (bypass fails closed)",
-				"group_id", id, "slug", slug, "error", err)
-			continue
-		}
-		candidate := actx
-		if candidate.Group == "" {
-			candidate.Group = g.Name
-		}
-		if ownerBypassPermittedForGroup(g, convID, slug, candidate) {
-			return true
-		}
-	}
-	return false
+	return memberPermissionPermitted(convID, slug, actx), ""
 }
 
 // ownerTierEntry is what group ownership confers on one agent for one slug,
@@ -398,20 +293,51 @@ func ownerImpliedTierFor(convID string) ownerImpliedTier {
 				tier[slug] = entry
 				continue
 			}
-			if entry.Unrestricted {
-				continue
-			}
-			scope, narrowed := scopes[slug]
-			if !narrowed {
+			constraint := scopes[slug]
+			if containsScopeDim(permissionScopeDimsForSlug(slug), ScopeDimGroup) {
+				scope, ok := ownerDerivedGroupScope(g.Name, constraint)
+				if ok {
+					entry.Scopes = append(entry.Scopes, scope)
+				}
+			} else if len(constraint) == 0 {
 				entry.Unrestricted = true
 				entry.Scopes = nil
-			} else {
-				entry.Scopes = append(entry.Scopes, scope)
+			} else if !entry.Unrestricted {
+				entry.Scopes = append(entry.Scopes, clonePermissionScope(constraint))
 			}
 			tier[slug] = entry
 		}
 	}
 	return tier
+}
+
+// ownerDerivedGroupScope intersects the mandatory owned-group boundary with
+// the group's optional owner constraint. A conflicting explicit group matcher
+// contributes no grant; it can never widen ownership to another group.
+func ownerDerivedGroupScope(group string, constraint PermissionScope) (PermissionScope, bool) {
+	out := clonePermissionScope(constraint)
+	if matchers, constrained := out[ScopeDimGroup]; constrained {
+		matched := false
+		for _, matcher := range matchers {
+			if matcher == group {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return nil, false
+		}
+	}
+	out[ScopeDimGroup] = []string{group}
+	return out, true
+}
+
+func clonePermissionScope(in PermissionScope) PermissionScope {
+	out := make(PermissionScope, len(in)+1)
+	for dim, matchers := range in {
+		out[dim] = append([]string(nil), matchers...)
+	}
+	return out
 }
 
 // ownerScopeDisplay renders the owner tier's reach for one slug, appended to

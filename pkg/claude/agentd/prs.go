@@ -333,39 +333,6 @@ func cachedPresentedPRStates(rawURLs []string) prStateIndex {
 	return idx
 }
 
-// startRecentlyMergedPRPoller runs one daemon-wide GitHub search immediately,
-// then once per interval. Consecutive failures exponentially back off to five
-// minutes; warnings are emitted only while that delay grows, then one recovery
-// message closes the incident. The search input comes from all unhandled
-// presented PR rows in one DB read, so its cadence and subprocess count never
-// scale with the number of agents or groups.
-func startRecentlyMergedPRPoller(stop <-chan struct{}) {
-	go func() {
-		timer := time.NewTimer(0)
-		defer timer.Stop()
-		var backoff recentlyMergedPRPollBackoff
-		for {
-			select {
-			case <-stop:
-				return
-			case <-timer.C:
-				attempted, err := pollRecentlyMergedPRs()
-				delay, warn, recovered, previousFailures := backoff.next(attempted, err)
-				if warn {
-					slog.Warn("presented-pr: recently merged search failed; backing off",
-						"error", err, "consecutive_failures", backoff.failures,
-						"retry_in", delay, "module", "agentd")
-				}
-				if recovered {
-					slog.Info("presented-pr: recently merged search recovered",
-						"previous_failures", previousFailures, "module", "agentd")
-				}
-				timer.Reset(delay)
-			}
-		}
-	}()
-}
-
 type recentlyMergedPRPollBackoff struct {
 	failures int
 }

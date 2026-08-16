@@ -53,7 +53,7 @@ var snapshotMergeExemptFields = map[string]bool{
 	"ID": true, "Name": true, "Aliases": true,
 	"CreatedAt": true, "UpdatedAt": true,
 	"Disabled": true, "DisabledReason": true, "OperatorOnly": true,
-	"AgentName": true, "Role": true, "Descr": true, "InitialMessage": true,
+	"AgentName": true, "Role": true, "RoleRef": true, "RoleRefs": true, "Descr": true, "InitialMessage": true,
 	// Spawn-dialog-only toggles: meaningless for a template deploy.
 	"SyncWorktree": true, "AutoFocus": true, "IncludeGroupDefaultContext": true,
 }

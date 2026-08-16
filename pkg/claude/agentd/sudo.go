@@ -62,7 +62,7 @@ const sudoDefaultPopupTimeout = 60 * time.Second
 // the request-validation layer (no popup) so a misclick or runaway
 // loop can't even surface them to the human.
 //
-// Group ownership (`groups.own`) is intentionally NOT blocklisted —
+// Group ownership (`groups.owners.manage`) is intentionally NOT blocklisted —
 // it spreads power but the time-bound + popup audit make it
 // recoverable. Forbid only the truly recursive escalation.
 //
@@ -235,6 +235,14 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
 			"slugs[] is required (at least one slug to elevate)")
 		return
+	}
+	for _, slug := range body.Slugs {
+		if !IsKnownPermSlug(slug) {
+			writeError(w, http.StatusBadRequest, "unknown_slug",
+				fmt.Sprintf("unknown permission slug %q. Known slugs: %s.",
+					slug, strings.Join(knownSlugs(), ", ")))
+			return
+		}
 	}
 
 	// Two paths through this endpoint:

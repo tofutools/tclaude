@@ -245,7 +245,7 @@ func TestEvalPermissionScopeMatchedIsDeterministic(t *testing.T) {
 // Precedence is unchanged by scopes: the winning tier decides, and the scope
 // it carries out is the winning tier's — never a broader one from below.
 func TestResolvePermissionVerdictFromCarriesWinningTierScope(t *testing.T) {
-	const slug = PermGroupsSpawn
+	const slug = PermGroupsMembersSpawn
 	for _, tc := range []struct {
 		name           string
 		src            permSources
@@ -352,17 +352,58 @@ func TestContextFreeResolutionFailsClosedOnScopedAllow(t *testing.T) {
 // gap it closes is the one that shipped routes.publish/routes.consume with a
 // bespoke, scope-blind gate for the better part of a phase.
 var scopedSlugEnforcementPaths = map[string]string{
-	PermGroupsSpawn:       "requireGroupPermission — fills ActionContext{Group}",
-	PermAgentRetire:       "requireCrossAgentPermission — derives stable target_agent and evaluates lineage selectors",
-	PermAgentStanddown:    "requireCrossAgentPermission — same as agent.retire",
-	PermProcessRunsManage: "requirePermission — run create supplies ActionContext{ProcessTemplate}",
-	PermRoutesPublish:     "requireRoutePermissionForIdentity — central resolver plus ActionContext{Group}",
-	PermRoutesConsume:     "requireRoutePermissionForIdentity — central resolver plus ActionContext{Group}",
-	PermGitRead:           "git proxy handlers — resolved fetch remote in ActionContext{Remote}",
-	PermGitPush:           "git proxy handler — resolved push remote in ActionContext{Remote}",
-	PermGitHubRead:        "GitHub proxy handlers — derived repository remote in ActionContext{Remote}",
-	PermGitHubWrite:       "GitHub proxy handlers — derived repository remote in ActionContext{Remote}",
-	PermGitHubMerge:       "GitHub proxy pr merge handler — derived repository remote in ActionContext{Remote}",
+	PermGroupsMembersSpawn:                "requireGroupPermission — fills ActionContext{Group}",
+	PermGroupsMembersReincarnate:          "requireCrossAgentPermission — checks every current active group",
+	PermGroupsMembersCompact:              "requireCrossAgentPermission — checks every current active group",
+	PermGroupsMembersInterrupt:            "requireCrossAgentPermission — checks every current active group",
+	PermGroupsMembersRename:               "requireCrossAgentPermission — checks every current active group",
+	PermGroupsMembersClone:                "requireCrossAgentPermission — checks the frozen clone footprint",
+	PermGroupsMembersContextInfo:          "requireCrossAgentPermission / requireGroupContextAccess — check every affected group",
+	PermGroupsMembersTask:                 "requireCrossAgentPermission — checks every current active group",
+	PermGroupsMembersPR:                   "requireCrossAgentPermission — checks every current active group",
+	PermGroupsMembersTags:                 "requireCrossAgentPermission — checks every current active group",
+	PermGroupsMembersStop:                 "requireCrossAgentPermission / requireGroupPermission — check every affected group",
+	PermGroupsMembersResume:               "requireCrossAgentPermission / requireGroupPermission — check every affected group",
+	PermGroupsMembersRetire:               "requireCrossAgentPermission / requireGroupPermission — check group and target_agent",
+	PermGroupsOwnersManage:                "requireGroupPermission — fills ActionContext{Group}",
+	PermGroupsRename:                      "requireGroupPermission — fills ActionContext{Group}",
+	PermGroupsSettingsDescription:         "requireGroupPermission — fills ActionContext{Group}",
+	PermGroupsSettingsDefaultDir:          "requireGroupPermission — fills ActionContext{Group}",
+	PermGroupsSettingsDefaultContext:      "requireGroupPermission — fills ActionContext{Group}",
+	PermGroupsSettingsDefaultProfile:      "requireGroupPermission — fills ActionContext{Group}",
+	PermGroupsSettingsMaxMembers:          "requireGroupPermission — fills ActionContext{Group}",
+	PermGroupsSettingsNotifications:       "requireGroupPermission — fills ActionContext{Group}",
+	PermGroupsSettingsRemoteControlPolicy: "requireGroupPermission — fills ActionContext{Group}",
+	PermGroupsSettingsMemberPermissions:   "requireGroupPermission — fills ActionContext{Group}",
+	PermGroupsSettingsOwnerScopes:         "requireGroupPermission — fills ActionContext{Group}",
+	PermGroupsMembersAdd:                  "requireGroupPermission — fills ActionContext{Group}",
+	PermGroupsMembersRemove:               "requireGroupPermission — fills ActionContext{Group}",
+	PermGroupsMembersUpdate:               "requireGroupPermission — fills ActionContext{Group}",
+	PermGroupsMessagesSchedule:            "requireGroupPermission — fills ActionContext{Group}",
+	PermGroupsMembersSchedule:             "requireCrossAgentPermission — checks every current active group",
+	PermGroupsArchive:                     "requireGroupPermission — fills ActionContext{Group}",
+	PermGroupsNest:                        "requireGroupPermission — fills ActionContext{Group}",
+	PermGroupsAttachment:                  "requireGroupPermission — fills ActionContext{Group}",
+	PermGroupsMembersDelete:               "requireCrossAgentPermission — checks every current active group",
+	PermGroupsLinkAdd:                     "requireGroupLinkAuthority — identifies the outbound ownership subject",
+	PermGroupsLinkRemove:                  "requireScopedLinkAuthority — separates grant scope from ownership subject",
+	PermGroupsMembersPromote:              "requireCrossAgentPermission — checks every current active group",
+	PermGroupsMembersRemoteControl:        "requireCrossAgentPermission — checks every current active group",
+	PermGroupsMembersInboxWatch:           "requireCrossAgentPermission — checks every current active group",
+	PermTemplatesUse:                      "requireGroupPermission — fills ActionContext{Group}",
+	PermProcessAdvance:                    "requireGroupPermission — fills ActionContext{Group}",
+	PermAgentRetire:                       "requireCrossAgentPermission — derives stable target_agent and evaluates lineage selectors",
+	PermAgentStanddown:                    "requireCrossAgentPermission — same as agent.retire",
+	PermProcessRunsManage:                 "requirePermission — run create supplies ActionContext{ProcessTemplate}",
+	PermRoutesPublish:                     "requireRoutePermissionForIdentity — central resolver plus ActionContext{Group}",
+	PermRoutesConsume:                     "requireRoutePermissionForIdentity — central resolver plus ActionContext{Group}",
+	PermGroupsTriggersRead:                "requireGroupPermission / triggerRuleReadable — fills ActionContext{Group}",
+	PermGroupsTriggersManage:              "triggerOwnerConv — evaluates ActionContext{Group} again at fire time",
+	PermGitRead:                           "git proxy handlers — resolved fetch remote in ActionContext{Remote}",
+	PermGitPush:                           "git proxy handler — resolved push remote in ActionContext{Remote}",
+	PermGitHubRead:                        "GitHub proxy handlers — derived repository remote in ActionContext{Remote}",
+	PermGitHubWrite:                       "GitHub proxy handlers — derived repository remote in ActionContext{Remote}",
+	PermGitHubMerge:                       "GitHub proxy pr merge handler — derived repository remote in ActionContext{Remote}",
 	PermLinearRead: "Linear proxy — linearEffectiveTeams evaluates ActionContext{LinearTeam} per candidate team " +
 		"into the session's effective set, which every team check reads",
 	PermLinearWrite: "Linear proxy — same effective-set resolution as proxy.linear.read",
@@ -395,7 +436,7 @@ func TestApplyClonedIdentityPreservesGrantScopes(t *testing.T) {
 	setupTestDB(t)
 	const src = "clone-scope-src-0001"
 	const dst = "clone-scope-dst-0001"
-	require.NoError(t, db.GrantAgentPermissionWithScope(src, PermGroupsSpawn, `{"group":["alpha"]}`, "test"))
+	require.NoError(t, db.GrantAgentPermissionWithScope(src, PermGroupsMembersSpawn, `{"group":["alpha"]}`, "test"))
 	require.NoError(t, db.SetAgentPermissionOverride(src, PermHumanClipboard, db.PermEffectDeny, "test"))
 
 	perms, err := db.ListAgentPermissionOverrideRowsForConv(src)
@@ -408,10 +449,10 @@ func TestApplyClonedIdentityPreservesGrantScopes(t *testing.T) {
 	for _, row := range rows {
 		got[row.Slug] = row
 	}
-	require.Contains(t, got, PermGroupsSpawn)
-	assert.Equal(t, `{"group":["alpha"]}`, got[PermGroupsSpawn].ScopeJSON,
+	require.Contains(t, got, PermGroupsMembersSpawn)
+	assert.Equal(t, `{"group":["alpha"]}`, got[PermGroupsMembersSpawn].ScopeJSON,
 		"the clone must inherit the source's scope, not a wildcard")
-	assert.Equal(t, db.PermEffectGrant, got[PermGroupsSpawn].Effect)
+	assert.Equal(t, db.PermEffectGrant, got[PermGroupsMembersSpawn].Effect)
 	require.Contains(t, got, PermHumanClipboard)
 	assert.Equal(t, db.PermEffectDeny, got[PermHumanClipboard].Effect, "denies still ride along")
 }
@@ -431,7 +472,7 @@ func TestPermissionProvenanceMarksUndecodableScopes(t *testing.T) {
 // that already filled the detail budget must not be able to push it off.
 func TestJoinAuditDetailKeepsTheAppendedClause(t *testing.T) {
 	long := strings.Repeat("x", 400)
-	got := joinAuditDetail(long, "scope: groups.spawn [group=alpha]")
-	assert.Contains(t, got, "scope: groups.spawn [group=alpha]")
+	got := joinAuditDetail(long, "scope: groups.members.spawn [group=alpha]")
+	assert.Contains(t, got, "scope: groups.members.spawn [group=alpha]")
 	assert.LessOrEqual(t, len(got), 240)
 }

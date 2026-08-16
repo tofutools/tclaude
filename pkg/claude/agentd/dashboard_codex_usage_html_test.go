@@ -61,9 +61,10 @@ func TestDashboardHTML_CodexUsageColumnAlignment(t *testing.T) {
 	// The reset hint is 8ch (not 7ch): the 7-day/weekly window in its final
 	// sub-24h stretch renders "(23h59m)" = 8 chars, and a 7ch reserve let it
 	// overflow and desync the right-aligned rows (see
-	// TestDashboardCSS_UsageRemColumnFitsWorstCaseRemaining). 7ch survives as
-	// the source-label column ("Claude:").
-	must("min-width: 7ch;", "the source-label column reserves \"Claude:\"")
+	// TestDashboardCSS_UsageRemColumnFitsWorstCaseRemaining). The source-label
+	// column also fits provider-prefixed API-cost rows.
+	must("width: 14ch;", "the source-label column fixes the \"Anthropic API:\" width")
+	must("align-self: stretch;", "short provider rows share the longest row's data start")
 	must("min-width: 4ch;", "the percent column reserves up to \"100%\"")
 	must("min-width: 8ch;", "the reset-hint column reserves its worst case \"(23h59m)\"")
 	must("#usage.multiline .upct", "the percent column is fixed-width + right-aligned")
@@ -82,10 +83,14 @@ func TestDashboardHTML_CodexUsageColumnAlignment(t *testing.T) {
 }
 
 // TestDashboardHTML_UsageAlwaysReservesBothWindows guards the two-line
-// readout's alignment rule: both window slots are emitted even when a source
-// omits one. Codex's omitted slot is hidden rather than rendered as a
-// misleading 0%, but visibility:hidden preserves its geometry so 7d remains
-// under 7d. Claude retains its visible zero placeholder behavior.
+// readout's alignment rule: both window slots are initially emitted even when
+// a source omits one. Codex's omitted slot is hidden rather than rendered as a
+// misleading 0%, and retains its geometry whenever another quota row occupies
+// that same window column. A quota column that is empty across every matching
+// source is trimmed by the model; unrelated monthly usage and API cost do not
+// impersonate 5h/7d columns. That behavioural matrix lives in
+// jstest/shell-model.test.mjs. Claude retains its visible zero placeholder
+// behavior.
 func TestDashboardHTML_UsageAlwaysReservesBothWindows(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
@@ -102,6 +107,7 @@ func TestDashboardHTML_UsageAlwaysReservesBothWindows(t *testing.T) {
 	must("usageWindow(`${prefix}-5h`, '5h', source.five_hour || zero, hideMissing && !source.five_hour)", "the 5h slot is always emitted and can be hidden when absent")
 	must("usageWindow(`${prefix}-7d`, '7d', source.seven_day || zero, hideMissing && !source.seven_day)", "the 7d slot is always emitted and can be hidden when absent")
 	must("subscriptionWindows(codexUsage, 'codex', true)", "Codex hides missing limit placeholders")
+	must("trimEmptyUsageColumns(lines)", "globally empty placeholder columns are trimmed after all sources are known")
 	must("#usage .uw.umissing { visibility: hidden; }", "missing Codex windows retain their alignment geometry")
 	must("aria-hidden=${token.hidden ? 'true' : null}", "hidden placeholders are omitted from the accessibility tree")
 	// Tooltip periods are derived from reported windows, so weekly-only Codex

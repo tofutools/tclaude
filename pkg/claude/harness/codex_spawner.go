@@ -308,7 +308,7 @@ type codexModels struct{}
 
 // codexKnownModels is deliberately a suggestion list, not an allow-list.
 // Keeping the current first-party choices here gives every ModelCatalog-driven
-// surface (spawn, profiles, roles, and template-local launch profiles) the same
+// surface (spawn, profiles, and template-local launch profiles) the same
 // dropdown while ValidateModel continues to pass future/custom OpenAI IDs
 // through to Codex.
 var codexKnownModels = []string{

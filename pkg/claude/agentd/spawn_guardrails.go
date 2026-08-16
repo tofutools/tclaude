@@ -14,7 +14,7 @@ import (
 )
 
 // Spawn guardrails — runaway-prevention for the case where the human
-// grants an AGENT the `groups.spawn` permission. `groups.spawn` is
+// grants an AGENT the `groups.members.spawn` permission. `groups.members.spawn` is
 // default human-only; granting it to an agent used to come with no
 // limits at all, so a spawn-capable agent stuck in a loop could fork
 // CC instances and tmux sessions until the host fell over.
@@ -164,6 +164,20 @@ func claimSpawnRateSlot(w http.ResponseWriter, spawnerConvID string) bool {
 	return true
 }
 
+func claimDaemonSpawnRateSlot(w http.ResponseWriter, principal string) bool {
+	if err := db.ClaimDaemonSpawnSlot(principal, SpawnMaxPerWindow, SpawnRateWindow, time.Now().UTC()); err != nil {
+		if errors.Is(err, db.ErrSpawnRateLimited) {
+			writeError(w, http.StatusTooManyRequests, "rate_limited",
+				fmt.Sprintf("spawn rate limit reached for daemon principal %s: at most %d spawns per %s",
+					principal, SpawnMaxPerWindow, SpawnRateWindow))
+			return false
+		}
+		writeError(w, http.StatusInternalServerError, "io", "spawn rate-limit check: "+err.Error())
+		return false
+	}
+	return true
+}
+
 // checkSpawnGroupRestriction enforces guardrail 2: an agent caller may
 // only spawn into a group it is a member or owner of, unless the group
 // is allowlisted or the restriction is globally off. Owner counts
@@ -211,7 +225,7 @@ func checkSpawnGroupRestriction(w http.ResponseWriter, g *db.AgentGroup, spawner
 // spawn matrix after all profile/default tiers have resolved the target
 // harness. Human-initiated spawns have no spawner conv-id and bypass it; the
 // matrix exists specifically to constrain agents that otherwise hold
-// groups.spawn. Same-harness delegation is never restricted by this feature.
+// groups.members.spawn. Same-harness delegation is never restricted by this feature.
 func spawnHarnessPolicyFailure(g *db.AgentGroup, spawnerConvID, targetHarness string) *spawnFailure {
 	if spawnerConvID == "" {
 		return nil

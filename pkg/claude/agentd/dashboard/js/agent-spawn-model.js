@@ -769,7 +769,7 @@ export function createSpawnDraft({
     group: text(group?.name),
     fixedGroup: !!groupName,
     profile: '',
-    name: '', role: '', descr: '', task: '', initialMessage: '',
+    name: '', role: '', roleRefs: [], descr: '', task: '', initialMessage: '',
     ...harnessDefaults(harness, rememberedEffort),
     owner: false,
     permissionOverrides: {},
@@ -935,6 +935,9 @@ export function applySpawnProfile(
   next.sandboxImplCleared = null;
   if (profile.agent_name) next.name = text(profile.agent_name);
   if (profile.role) next.role = text(profile.role);
+  next.roleRefs = Array.isArray(profile.role_refs) && profile.role_refs.length
+    ? [...new Set(profile.role_refs.map(text).filter(Boolean))]
+    : (text(profile.role_ref) ? [text(profile.role_ref)] : []);
   if (profile.descr) next.descr = text(profile.descr);
   if (profile.initial_message) next.initialMessage = text(profile.initial_message);
   if (profile.auto_focus != null) next.autoFocus = !!profile.auto_focus;
@@ -981,7 +984,7 @@ export function clearSpawnProfileFields(draft, context, {
   return syncSpawnWorktree({
     ...draft,
     profile: '',
-    name: '', role: '', descr: '', task: '', initialMessage: '',
+    name: '', role: '', roleRefs: [], descr: '', task: '', initialMessage: '',
     harness: defaults.harness,
     model: defaults.model,
     customModel: defaults.customModel,
@@ -1129,6 +1132,7 @@ export function spawnProfileSeed(draft, context) {
     effort: draft.effort,
     agent_name: text(draft.name).trim(),
     role: text(draft.role).trim(),
+    role_refs: [...new Set((draft.roleRefs || []).map((value) => text(value).trim()).filter(Boolean))],
     descr: text(draft.descr).trim(),
     initial_message: draft.initialMessage,
     auto_focus: !!draft.autoFocus,
@@ -1193,6 +1197,7 @@ export function spawnDraftIsDirty(draft, baseline, attachmentCount = 0) {
   if (DIRTY_FIELDS.some((key) => draft[key] !== baseline[key])) return true;
   if (JSON.stringify(draft.permissionOverrides || {})
     !== JSON.stringify(baseline.permissionOverrides || {})) return true;
+  if (JSON.stringify(draft.roleRefs || []) !== JSON.stringify(baseline.roleRefs || [])) return true;
   return contextFeaturesKey(draft.contextFeatures) !== contextFeaturesKey(baseline.contextFeatures);
 }
 
@@ -1242,6 +1247,7 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
   const body = {
     name: text(draft.name).trim(),
     role: text(draft.role).trim(),
+    role_refs: [...new Set((draft.roleRefs || []).map((value) => text(value).trim()).filter(Boolean))],
     descr: text(draft.descr).trim(),
     initial_message: draft.initialMessage,
     auto_focus: !!draft.autoFocus,

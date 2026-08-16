@@ -125,6 +125,10 @@ type TclaudeLayerLaunchInput struct {
 	Environment      []sandboxpolicy.EnvironmentEntry
 	FinalHideDirs    []string
 	ReadOnlyBinds    []TclaudeLayerReadOnlyBind
+	// HarnessReadPaths are host-resolved launch requirements, such as a
+	// harness-native runtime closure. They become ordinary read grants so the
+	// same policy ordering and constructed-root renderer govern them.
+	HarnessReadPaths []string
 	OpenCodeControl  *TclaudeLayerOpenCodeControl
 	// NetworkEngine is the resolved engine selection for this launch. See the
 	// contract field of the same name; production callers leave it unset until
@@ -286,6 +290,7 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		sandboxDirsForEffective(effective, sandboxpolicy.AccessRead),
 		launchContractReadDirs...,
 	)
+	launchReadDirs = append(launchReadDirs, input.HarnessReadPaths...)
 	launchDenyDirs := sandboxDirsForEffective(effective, sandboxpolicy.AccessDeny)
 	remappedGrants := remappedGrantsForEffective(effective)
 	var err error
@@ -398,7 +403,10 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 	// launch-required in exactly the same way, and a mount shadowing one would
 	// otherwise slip past the named refusal and silently hide it.
 	if err := validateRemappedGuestPathsAgainstContract(
-		remappedGrants, append(append([]string(nil), contractWriteDirs...), launchContractReadDirs...),
+		remappedGrants, append(
+			append(append([]string(nil), contractWriteDirs...), launchContractReadDirs...),
+			input.HarnessReadPaths...,
+		),
 	); err != nil {
 		return TclaudeLayerLaunchSpec{}, err
 	}
@@ -749,12 +757,29 @@ func ProbeFilteredNetworkPrerequisite() FilteredNetworkPrerequisite {
 // ValidateFilteredNetworkHarnessSupport is the harness activation seam. All
 // currently registered tclaude-layer harnesses consume the Linux filtered
 // gateway; provider-specific model transport remains independently fail-closed.
+//
+// Ordinary filtered rules retain the historical widen-and-disclose behavior
+// when the gateway is unavailable. An explicitly private namespace is
+// different: its topology is the policy, so falling back to host networking
+// would violate the operator's selection. Refuse it here, where the exact live
+// probe detail is still available, rather than later in the capability table
+// after that result has been reduced to a boolean.
 func ValidateFilteredNetworkHarnessSupport(
 	_ *harness.Harness,
 	_ sandboxpolicy.Implementation,
-	_ sandboxpolicy.ResolvedAxes,
-	_ FilteredNetworkPrerequisite,
+	axes sandboxpolicy.ResolvedAxes,
+	probe FilteredNetworkPrerequisite,
 ) error {
+	if axes.Network.Namespace == sandboxpolicy.NetworkNamespacePrivate &&
+		!probe.Detected {
+		detail := strings.TrimSpace(probe.Detail)
+		if detail == "" {
+			detail = "the prerequisite probe returned no detail"
+		}
+		return fmt.Errorf(
+			"network.namespace %q requires the Linux private-network prerequisites: %s",
+			axes.Network.Namespace, detail)
+	}
 	return nil
 }
 
@@ -927,7 +952,8 @@ func TclaudeLayerRootPosture(
 	if err != nil {
 		return sandboxpolicy.RootHostInherited, err
 	}
-	return sandboxpolicy.RootPostureFor(posture, axes.UnixSockets.Mode), nil
+	return sandboxpolicy.RootPostureForMode(
+		posture, axes.UnixSockets.Mode, effective.FilesystemRoot), nil
 }
 
 // TclaudeLayerLaunchRootPosture is TclaudeLayerRootPosture for a launch surface
@@ -935,12 +961,12 @@ func TclaudeLayerRootPosture(
 // authored one.
 //
 // The extra gate matters because the socket-driven constructed root is a Linux
-// tclaude-layer mechanism for Claude Code and Codex only. Everywhere else the
-// ladder is about to widen the axis away, and the applier will render an
-// inherited root — so deriving a constructed root here would make the probe
-// demand a namespace the launch does not need, and, worse, make
-// ApplyAgentSocketEnv refuse an operator's explicit agentd socket for a launch
-// that never confines sockets at all.
+// tclaude-layer mechanism only for harness renderers with matching launch
+// coverage. Everywhere else the ladder is about to widen the axis away, and
+// the applier will render an inherited root — so deriving a constructed root
+// here would make the probe demand a namespace the launch does not need, and,
+// worse, make ApplyAgentSocketEnv refuse an operator's explicit agentd socket
+// for a launch that never confines sockets at all.
 func TclaudeLayerLaunchRootPosture(
 	h *harness.Harness,
 	implementation sandboxpolicy.Implementation,
@@ -951,13 +977,19 @@ func TclaudeLayerLaunchRootPosture(
 	if err != nil {
 		return sandboxpolicy.RootHostInherited, err
 	}
+	if err := harness.ValidateExplicitFilesystemRoot(
+		h, implementation, effective.FilesystemRoot, runtime.GOOS,
+	); err != nil {
+		return sandboxpolicy.RootHostInherited, err
+	}
 	sockets := axes.UnixSockets.Mode
 	if !harness.SupportsHostOpenConstructedRoot(
 		h, implementation, axes, runtime.GOOS) {
 		// Keep only the network posture's own implication.
 		sockets = sandboxpolicy.AccessModeUnset
 	}
-	return sandboxpolicy.RootPostureFor(posture, sockets), nil
+	return sandboxpolicy.RootPostureForMode(
+		posture, sockets, effective.FilesystemRoot), nil
 }
 
 // ValidateTclaudeLayerNetwork refuses an isolated whole-process launch unless
@@ -972,6 +1004,9 @@ func ValidateTclaudeLayerNetwork(
 	axes, err := sandboxpolicy.PlannedEffectiveAccessAxes(effective)
 	if err != nil {
 		return nil, err
+	}
+	if sandboxpolicy.NetworkRulesArePrivateRoutedOpen(axes.Network) {
+		return nil, nil
 	}
 	switch axes.Network.Mode {
 	case sandboxpolicy.AccessModeUnset:
@@ -1613,10 +1648,17 @@ func ValidateTclaudeLayerLaunchSpec(spec TclaudeLayerLaunchSpec) error {
 	return err
 }
 
-// PrepareTclaudeLayerHarnessState materializes only the harness-owned state
-// roots named explicitly by a frozen launch spec. Operator-authored profile
-// paths remain non-creating: a future allow path must not appear on the host
-// merely because a launch mentioned it.
+// PrepareTclaudeLayerHarnessState materializes the harness-owned state roots
+// named explicitly by a frozen launch spec, plus the fixed protected-root
+// mountpoints every outer layer hides. Operator-authored profile paths remain
+// non-creating: a future allow path must not appear on the host merely because
+// a launch mentioned it.
+//
+// Protected mountpoints must exist before bubblewrap starts. Its root is
+// read-only, so `--tmpfs ~/.claude/sessions` cannot create a missing target at
+// mount time. This matters on a Codex-only host where ~/.claude/sessions has
+// never existed: the path is still hidden to prevent cross-harness state
+// disclosure, but it is not harness state Codex would otherwise prepare.
 func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
 	if !supportedTclaudeLayerLaunchSpecVersion(spec.Version) {
 		return fmt.Errorf("unsupported tclaude-layer launch spec version %d", spec.Version)
@@ -1639,6 +1681,9 @@ func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
 	protectedRoots, err := sandboxpolicy.ProtectedPaths()
 	if err != nil {
 		return fmt.Errorf("resolve protected paths before preparing harness state: %w", err)
+	}
+	if err := prepareTclaudeLayerProtectedMountpoints(protectedRoots); err != nil {
+		return err
 	}
 	for index, path := range stateDirs {
 		path = filepath.Clean(strings.TrimSpace(path))
@@ -1875,8 +1920,8 @@ func bwrapArgsWithDaemonFinal(
 	case sandboxpolicy.NetworkFiltered:
 		// Rootless bubblewrap maps the invoking host user to namespace root.
 		// That identity is required only so the sealed bootstrap can receive
-		// CAP_NET_ADMIN for the namespace-local nft policy and
-		// CAP_NET_BIND_SERVICE for its private DNS listener. Host file ownership
+		// CAP_NET_ADMIN for the namespace-local nft policy. The private DNS
+		// listener uses an unprivileged port behind an nft redirect. Host file ownership
 		// remains the invoking user's, and the bootstrap zeroes and verifies
 		// every capability set before the harness exec.
 		args = append(args,
@@ -1914,6 +1959,10 @@ func bwrapArgsWithDaemonFinal(
 		if err != nil {
 			return nil, err
 		}
+		args, err = appendTclaudeLayerTclaudeCLI(args, tclaudeLayerTclaudeCLIPath())
+		if err != nil {
+			return nil, err
+		}
 		args, resolverTarget, err = appendTclaudeLayerHostResolver(args, plan)
 		if err != nil {
 			return nil, err
@@ -1948,12 +1997,6 @@ func bwrapArgsWithDaemonFinal(
 	// still lands, and appendTclaudeLayerProtectedRehides restores the hides on
 	// top of it.
 	//
-	// The one thing mounted back inside a protected root afterwards is the
-	// daemon's own spawn-attachment drop-box (class 4 below). It is not policy
-	// input — its path is derived from the session identity, never named by a
-	// profile or an agent — and it exposes a single daemon-created directory
-	// holding this session's own attachments, not the protected state
-	// underneath it.
 	protectedRoots, err := sandboxpolicy.ProtectedPaths()
 	if err != nil {
 		return nil, fmt.Errorf("resolve protected sandbox roots: %w", err)
@@ -2087,14 +2130,11 @@ func bwrapArgsWithDaemonFinal(
 	// read-only remount is non-recursive, so the child remains writable while
 	// sibling names stay absent.
 	//
-	// This is the sole bind that lands at or below a protected root, and it is
-	// deliberate: attachments have to reach the agent. It is not a policy
-	// reopen. The path comes from the session identity via
+	// The path comes from the session identity via
 	// SpawnAttachmentsPrivateDir, so neither a profile nor the agent can steer
-	// it, and the class-3 tmpfs still covers everything else under the root —
-	// what becomes visible is this session's own attachment area, not protected
-	// state. It is daemon-created and session-writable; it holds the promoted
-	// attachment batch, never the database or another session's directory.
+	// it. What becomes visible is this session's own attachment area, not
+	// another session's directory. It is daemon-created and session-writable;
+	// it holds the promoted attachment batch.
 	for _, privateDir := range privateWriteDirs {
 		args = hideRemounts.appendHide(args, privateDir.Parent)
 		args = append(args, "--bind", privateDir.Current, privateDir.Current)
@@ -2427,6 +2467,24 @@ var tclaudeLayerStaticOSPaths = []string{
 	"/opt",
 }
 
+const (
+	tclaudeLayerConstructedRootTclaudeDir  = "/.tclaude"
+	tclaudeLayerConstructedRootTclaudeBin  = "/.tclaude/bin"
+	tclaudeLayerConstructedRootTclaudePath = "/.tclaude/bin/tclaude"
+)
+
+// tclaudeLayerTclaudeCLIPath is a seam for the real bubblewrap smoke, whose
+// renderer runs inside a Go test executable but must project the separately
+// built tclaude CLI. Production always resolves the active CLI through the
+// shared sibling/PATH-aware resolver.
+var tclaudeLayerTclaudeCLIPath = clcommon.SelfTclaudePath
+
+func appendTclaudeLayerConstructedRootPathExport(exports string) string {
+	return exports + "if [ -n \"${PATH:-}\" ]; then export PATH=" +
+		tclaudeLayerConstructedRootTclaudeBin + ":\"$PATH\"; else export PATH=" +
+		tclaudeLayerConstructedRootTclaudeBin + "; fi; "
+}
+
 // appendTclaudeLayerStaticOSRoot constructs the fixed executable/runtime
 // surface approved for the isolated posture. Merged-usr aliases remain
 // symlinks instead of becoming separate recursive host binds.
@@ -2451,6 +2509,52 @@ func appendTclaudeLayerStaticOSRoot(args []string) ([]string, error) {
 		args = append(args, "--ro-bind", path, path)
 	}
 	return args, nil
+}
+
+// appendTclaudeLayerTclaudeCLI keeps the coordination client available inside
+// a constructed root. That root already allowlists the agentd socket, but a
+// tclaude installed outside the fixed OS surface (for example ~/go/bin) would
+// otherwise disappear with its parent directory.
+//
+// Exactly one resolved executable file is exposed, read-only, at a fixed PATH
+// destination. The bind deliberately lands before operator policy replay: a
+// later filesystem hide or replacement therefore still wins, and this
+// coordination convenience cannot weaken any authored filesystem decision.
+// SelfTclaudePath is resolved by the caller so the standalone tclaude-agentd
+// binary selects the real tclaude CLI rather than binding itself.
+func appendTclaudeLayerTclaudeCLI(args []string, candidate string) ([]string, error) {
+	candidate = strings.TrimSpace(candidate)
+	if candidate == "" {
+		return nil, fmt.Errorf("resolve tclaude CLI for constructed root: path is empty")
+	}
+	absolute, err := filepath.Abs(candidate)
+	if err != nil {
+		return nil, fmt.Errorf("resolve tclaude CLI path %q: %w", candidate, err)
+	}
+	resolved, err := filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return nil, fmt.Errorf("resolve tclaude CLI path %q: %w", absolute, err)
+	}
+	resolved = filepath.Clean(resolved)
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("inspect tclaude CLI path %q: %w", resolved, err)
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		return nil, fmt.Errorf("tclaude CLI path %q is not an executable regular file", resolved)
+	}
+	path := os.Getenv("PATH")
+	if path == "" {
+		path = tclaudeLayerConstructedRootTclaudeBin
+	} else {
+		path = tclaudeLayerConstructedRootTclaudeBin + string(os.PathListSeparator) + path
+	}
+	return append(args,
+		"--dir", tclaudeLayerConstructedRootTclaudeDir,
+		"--dir", tclaudeLayerConstructedRootTclaudeBin,
+		"--ro-bind", resolved, tclaudeLayerConstructedRootTclaudePath,
+		"--setenv", "PATH", path,
+	), nil
 }
 
 // tclaudeLayerHostResolverRuntimeRoot is the only directory outside the static

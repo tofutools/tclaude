@@ -11,12 +11,13 @@ const KIND_KEY = 'tclaude.dash.jobs.kind';
 const PAGE_SIZE_KEY = 'tclaude.dash.list.jobs.pagesize';
 const SORT_KEY = 'tclaude.dash.sort';
 export const JOBS_PAGE_SIZES = [25, 50, 100, 200];
-export const JOBS_KINDS = ['all', 'export', 'cron', 'standing-order'];
+export const JOBS_KINDS = ['all', 'export', 'cron', 'standing-order', 'trigger'];
 export const JOBS_KIND_SUBTABS = Object.freeze({
   all: '',
   'export': 'exports',
   cron: 'cron-jobs',
   'standing-order': 'standing-orders',
+  trigger: 'triggers',
 });
 const DEFAULT_PAGE_SIZE = 50;
 
@@ -55,6 +56,8 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
   });
   const dialog = signal(null);
   const orderDialog = signal(null);
+  const triggerDialog = signal(null);
+  const triggerRevision = signal(0);
   let initialized = false;
   let nextLaunchID = 0;
 
@@ -63,9 +66,12 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
       offset: String(offset.value),
       limit: String(limit.value),
     });
-    if (kind.value !== 'all') search.set('kind', kind.value);
+    // Triggers have their own REST collection rather than participating in
+    // the paged /api/jobs union. Keep the background dashboard poll valid
+    // while that sub-view is active.
+    if (kind.value !== 'all' && kind.value !== 'trigger') search.set('kind', kind.value);
     const value = query.value.trim();
-    if (value) search.set('q', value);
+    if (value && kind.value !== 'trigger') search.set('q', value);
     return search.toString();
   });
   const location = computed(() => jobsLocation(kind.value));
@@ -89,6 +95,7 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
       request: request.value,
       dialog: dialog.value,
       orderDialog: orderDialog.value,
+      triggerDialog: triggerDialog.value,
       dashboard: value,
     };
   });
@@ -243,7 +250,7 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
   }
 
   function openCronDialog(descriptor) {
-    if (dialog.value || orderDialog.value) return false;
+    if (dialog.value || orderDialog.value || triggerDialog.value) return false;
     dialog.value = { ...descriptor, launchID: ++nextLaunchID };
     return true;
   }
@@ -273,13 +280,13 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
   }
 
   function openStandingOrderDialog(descriptor) {
-    if (dialog.value || orderDialog.value) return false;
+    if (dialog.value || orderDialog.value || triggerDialog.value) return false;
     orderDialog.value = { ...descriptor, launchID: ++nextLaunchID };
     return true;
   }
 
-  function openStandingOrderCreate(prefill = {}) {
-    return openStandingOrderDialog({ kind: 'create', prefill: { ...prefill } });
+  function openStandingOrderCreate(prefill = {}, { onCancel = null } = {}) {
+    return openStandingOrderDialog({ kind: 'create', prefill: { ...prefill }, onCancel });
   }
 
   function openStandingOrderEdit(order = {}) {
@@ -289,17 +296,42 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
     });
   }
 
-  function closeStandingOrderDialog() {
+  function closeStandingOrderDialog({ cancelled = false } = {}) {
+    const closing = orderDialog.value;
     orderDialog.value = null;
+    if (cancelled && typeof closing?.onCancel === 'function') closing.onCancel();
+  }
+
+  function openTriggerDialog(descriptor) {
+    if (dialog.value || orderDialog.value || triggerDialog.value) return false;
+    triggerDialog.value = { ...descriptor, launchID: ++nextLaunchID };
+    return true;
+  }
+
+  function openTriggerCreate() {
+    return openTriggerDialog({ kind: 'create' });
+  }
+
+  function openTriggerEdit(rule = {}) {
+    return openTriggerDialog({ kind: 'edit', rule: { ...rule } });
+  }
+
+  function closeTriggerDialog() {
+    triggerDialog.value = null;
+  }
+
+  function invalidateTriggers() {
+    triggerRevision.value += 1;
   }
 
   return Object.freeze({
-    query, kind, offset, limit, sort, request, dialog, orderDialog, params, view, location,
+    query, kind, offset, limit, sort, request, dialog, orderDialog, triggerDialog, triggerRevision, params, view, location,
     initialize, setQuery, setKind, applyLocation, cycleSort, page, setPageSize, syncServedOffset,
     beginRequest, acceptsRequest, invalidateRequest,
     commitRequest, failRequest, discardRequest, upsertCron,
     openCronCreate, openCronEdit, openCronDuplicate, closeCronDialog,
     openStandingOrderCreate, openStandingOrderEdit, closeStandingOrderDialog,
+    openTriggerCreate, openTriggerEdit, closeTriggerDialog, invalidateTriggers,
   });
 }
 

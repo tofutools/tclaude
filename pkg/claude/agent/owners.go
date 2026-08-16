@@ -104,7 +104,7 @@ func groupsGrantOwnerCmd() *cobra.Command {
 		Use:   "grant-owner",
 		Short: "Grant ownership of a group to a conversation",
 		Long: "Owners can message the group's members and multicast to the group " +
-			"without being members themselves. Permission slug `groups.own` (default: " +
+			"without being members themselves. Permission slug `groups.owners.manage` (default: " +
 			"human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *groupsGrantOwnerParams, _ *cobra.Command) error {

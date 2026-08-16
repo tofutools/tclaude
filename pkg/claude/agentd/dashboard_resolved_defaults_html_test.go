@@ -20,7 +20,6 @@ var resolvedDefaultsConsumers = []string{
 	"js/groups-list.js",                   // group default-profile / sandbox-profile chips
 	"js/toolbar-profile-picker-island.js", // global default-profile / sandbox-profile chips
 	"js/profiles.js",                      // spawn-profile summaries
-	"js/roles.js",                         // role summaries
 	"js/template-management-island.js",    // template roster summaries
 }
 
@@ -63,7 +62,6 @@ func TestDashboardHTML_ResolvedDefaultsVocabulary(t *testing.T) {
 		`label: harnessBuiltinModeOptionLabel(draft.harness, value, hEntry.default_sandbox)`: "the profile editor's sandbox modes go through the same labeller",
 		`harnessBuiltinModeDetail(target.target.harness, target.target.sandbox)`:             "a reported resolved mode is explained, not echoed",
 		`' (enabled only if Claude settings enable it)'`:                                     "naming the implementation owner never asserts the sandbox is on",
-		"`sandbox ${harnessBuiltinModeLabel(rl.harness || 'claude', rl.sandbox)}`":           "role summaries explain the mode they print",
 		"`sandbox ${harnessBuiltinModeLabel(agent.harness || 'claude', agent.sandbox)}`":     "template roster summaries explain the mode they print",
 		`text('sandbox', harnessBuiltinModeLabel(p.harness || 'claude', p.sandbox))`:         "spawn-profile detail chips explain the mode they print",
 	} {

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -79,6 +80,86 @@ func TestRequireCrossAgentPermission_GroupOwnerOfTargetAllows(t *testing.T) {
 	caller, ok := requireCrossAgentPermission(w, r, PermAgentReincarnate, "worker")
 	require.True(t, ok, "group owner of target should allow without slug; body=%s", w.Body.String())
 	assert.Equal(t, "manager", caller, "caller")
+}
+
+func TestRequireCrossAgentPermission_GroupSiblingWorksForNonOwner(t *testing.T) {
+	setupTestDB(t)
+	gID, err := db.CreateAgentGroup("team", "")
+	require.NoError(t, err)
+	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "worker"}))
+	require.NoError(t, db.GrantAgentPermissionWithScope("manager", PermGroupsMembersReincarnate,
+		`{"group":["team"]}`, "<test>"))
+
+	w := httptest.NewRecorder()
+	r := requestWithPeer(&peer{PID: 999, HasClaudeAncestor: true, ConvID: "manager"})
+	caller, ok := requireCrossAgentPermission(w, r, PermAgentReincarnate, "worker")
+	require.True(t, ok, "group-scoped sibling should allow; body=%s", w.Body.String())
+	assert.Equal(t, "manager", caller)
+}
+
+func TestRequireCrossAgentPermission_GroupSiblingRequiresEveryCurrentGroup(t *testing.T) {
+	setupTestDB(t)
+	for _, name := range []string{"owned", "other"} {
+		gID, err := db.CreateAgentGroup(name, "")
+		require.NoError(t, err)
+		require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "worker"}))
+		if name == "owned" {
+			require.NoError(t, db.AddAgentGroupOwner(gID, "manager", "<test>"))
+		}
+	}
+
+	w := httptest.NewRecorder()
+	r := requestWithPeer(&peer{PID: 999, HasClaudeAncestor: true, ConvID: "manager"})
+	_, ok := requireCrossAgentPermission(w, r, PermAgentReincarnate, "worker")
+	assert.False(t, ok, "one uncovered current membership must reject the whole-agent action")
+	assert.Equal(t, http.StatusForbidden, w.Code)
+
+	require.NoError(t, db.GrantAgentPermissionWithScope("manager", PermGroupsMembersReincarnate,
+		`{"group":["other"]}`, "<test>"))
+	w = httptest.NewRecorder()
+	r = requestWithPeer(&peer{PID: 999, HasClaudeAncestor: true, ConvID: "manager"})
+	_, ok = requireCrossAgentPermission(w, r, PermAgentReincarnate, "worker")
+	assert.True(t, ok, "owner and explicit positive scopes compose across the finite footprint")
+}
+
+func TestRequireCrossAgentPermission_GlobalDenyDoesNotDenyDistinctGroupSlug(t *testing.T) {
+	setupTestDB(t)
+	gID, err := db.CreateAgentGroup("team", "")
+	require.NoError(t, err)
+	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "worker"}))
+	require.NoError(t, db.AddAgentGroupOwner(gID, "manager", "<test>"))
+	require.NoError(t, db.SetAgentPermissionOverride("manager", PermAgentReincarnate, db.PermEffectDeny, "<test>"))
+
+	w := httptest.NewRecorder()
+	r := requestWithPeer(&peer{PID: 999, HasClaudeAncestor: true, ConvID: "manager"})
+	_, ok := requireCrossAgentPermission(w, r, PermAgentReincarnate, "worker")
+	assert.True(t, ok, "a deny applies to its exact global slug, not its distinct group sibling")
+}
+
+func TestRequireCrossAgentPermission_RecordsScopedSiblingSudoProvenance(t *testing.T) {
+	setupTestDB(t)
+	_, _, err := db.EnsureAgentForConv("manager", "test")
+	require.NoError(t, err)
+	gID, err := db.CreateAgentGroup("team", "")
+	require.NoError(t, err)
+	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: "worker"}))
+	now := time.Now()
+	grantID, err := db.InsertSudoGrant(&db.SudoGrant{
+		ConvID: "manager", Slug: PermGroupsMembersReincarnate,
+		ScopeJSON: `{"group":["team"]}`,
+		GrantedAt: now, ExpiresAt: now.Add(time.Minute), GrantedBy: "human:test",
+	})
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	r := requestWithPeer(&peer{PID: 999, HasClaudeAncestor: true, ConvID: "manager"})
+	_, ok := requireCrossAgentPermission(w, r, PermAgentReincarnate, "worker")
+	require.True(t, ok, "scoped sibling sudo should authorize; body=%s", w.Body.String())
+	assert.Equal(t, PermGroupsMembersReincarnate, authorizedPermissionForRequest(r, ""))
+	assert.Equal(t, grantID, authorizedSudoGrantIDForRequest(r))
+	assert.Equal(t, fmt.Sprintf("manager:via-sudo:grant-id=%d", grantID),
+		auditedCallerWithSudoGrant("manager", authorizedPermissionForRequest(r, ""),
+			authorizedSudoGrantIDForRequest(r)))
 }
 
 func TestRequireCrossAgentPermission_OwnerOfDifferentGroupDoesNotAllow(t *testing.T) {

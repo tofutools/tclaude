@@ -163,6 +163,7 @@ func TestNormalizeAccessRules(t *testing.T) {
 		want string
 	}{
 		{"bad mode", NetworkRules{Mode: "filtered"}, `network.mode "filtered" is invalid`},
+		{"bad namespace", NetworkRules{Mode: AccessModeOpen, Namespace: "container"}, `network.namespace "container" is invalid`},
 		{"allow outside list", NetworkRules{Mode: AccessModeOpen, Allow: []NetworkAllowEntry{{Host: "example.com"}}}, `network.allow is only valid with mode "list"`},
 		{"multiple selectors", NetworkRules{Mode: AccessModeList, Allow: []NetworkAllowEntry{{Host: "a.test", Domain: "b.test"}}}, "must set exactly one"},
 		{"wildcard", NetworkRules{Mode: AccessModeList, Allow: []NetworkAllowEntry{{Host: "*.example.com"}}}, "without scheme, path, port, or wildcard"},
@@ -336,6 +337,26 @@ func TestNetworkCompositionIntersectsAllowsAndUnionsDenies(t *testing.T) {
 		{Host: "one.example.test"},
 		{Host: "two.example.test"},
 	}, forward.Deny)
+}
+
+func TestNetworkNamespaceCompositionCannotWidenPrivate(t *testing.T) {
+	for _, got := range []NetworkRules{
+		intersectNetworkRules(
+			NetworkRules{Mode: AccessModeOpen, Namespace: NetworkNamespacePrivate},
+			NetworkRules{Mode: AccessModeOpen, Namespace: NetworkNamespaceHost}),
+		intersectNetworkRules(
+			NetworkRules{Mode: AccessModeOpen, Namespace: NetworkNamespaceHost},
+			NetworkRules{Mode: AccessModeOpen, Namespace: NetworkNamespacePrivate}),
+	} {
+		assert.Equal(t, NetworkNamespacePrivate, got.Namespace)
+	}
+	materialized, err := MaterializeNetworkRules(NetworkRules{
+		Baseline: NetworkBaselineAllow, Namespace: NetworkNamespacePrivate,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, NetworkRules{
+		Mode: AccessModeOpen, Namespace: NetworkNamespacePrivate,
+	}, materialized)
 }
 
 func TestNetworkDenyAuthoringRejectsAmbiguousOrUnsupportedShapes(t *testing.T) {

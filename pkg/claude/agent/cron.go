@@ -11,6 +11,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -40,27 +41,36 @@ func cronCmd() *cobra.Command {
 }
 
 type cronJobJSON struct {
-	ID               int64  `json:"id"`
-	Name             string `json:"name,omitempty"`
-	OwnerAgent       string `json:"owner_agent,omitempty"`
-	OwnerConv        string `json:"owner_conv"`
-	TargetKind       string `json:"target_kind"`
-	TargetAgent      string `json:"target_agent,omitempty"`
-	TargetConv       string `json:"target_conv"`
-	GroupID          int64  `json:"group_id,omitempty"`
-	GroupName        string `json:"group_name,omitempty"`
-	TargetRole       string `json:"target_role,omitempty"`
-	IntervalSeconds  int64  `json:"interval_seconds"`
-	CronExpr         string `json:"cron_expr,omitempty"`
-	Subject          string `json:"subject,omitempty"`
-	Body             string `json:"body"`
-	Enabled          bool   `json:"enabled"`
-	RunImmediately   bool   `json:"run_immediately"`
-	QueueWhenOffline bool   `json:"queue_when_offline"`
-	DisabledReason   string `json:"disabled_reason,omitempty"`
-	CreatedAt        string `json:"created_at,omitempty"`
-	LastRunAt        string `json:"last_run_at,omitempty"`
-	LastRunStatus    string `json:"last_run_status,omitempty"`
+	ID                         int64    `json:"id"`
+	Name                       string   `json:"name,omitempty"`
+	OwnerAgent                 string   `json:"owner_agent,omitempty"`
+	OwnerConv                  string   `json:"owner_conv"`
+	TargetKind                 string   `json:"target_kind"`
+	TargetAgent                string   `json:"target_agent,omitempty"`
+	TargetConv                 string   `json:"target_conv"`
+	GroupID                    int64    `json:"group_id,omitempty"`
+	GroupName                  string   `json:"group_name,omitempty"`
+	TargetRole                 string   `json:"target_role,omitempty"`
+	IntervalSeconds            int64    `json:"interval_seconds"`
+	CronExpr                   string   `json:"cron_expr,omitempty"`
+	Subject                    string   `json:"subject,omitempty"`
+	Body                       string   `json:"body"`
+	ActionKind                 string   `json:"action_kind"`
+	SpawnProfile               string   `json:"spawn_profile,omitempty"`
+	SpawnRoleRefs              []string `json:"spawn_roles,omitempty"`
+	SpawnNameTemplate          string   `json:"spawn_name_template,omitempty"`
+	SpawnInstructionTemplate   string   `json:"spawn_instruction_template,omitempty"`
+	SpawnConcurrencyPolicy     string   `json:"spawn_concurrency_policy,omitempty"`
+	SpawnMaxLiveWorkers        int      `json:"spawn_max_live_workers,omitempty"`
+	SpawnWorkerDeadlineSeconds int64    `json:"spawn_worker_deadline_seconds,omitempty"`
+	Enabled                    bool     `json:"enabled"`
+	RunImmediately             bool     `json:"run_immediately"`
+	QueueWhenOffline           bool     `json:"queue_when_offline"`
+	DisabledReason             string   `json:"disabled_reason,omitempty"`
+	CreatedAt                  string   `json:"created_at,omitempty"`
+	LastRunAt                  string   `json:"last_run_at,omitempty"`
+	LastRunStatus              string   `json:"last_run_status,omitempty"`
+	Warnings                   []string `json:"warnings,omitempty"`
 }
 
 // ---- ls ----
@@ -94,8 +104,8 @@ func runCronLs(stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "(no scheduled cron jobs)")
 		return rcOK
 	}
-	fmt.Fprintf(stdout, "%-4s  %-14s  %-9s  %-9s  %-8s  %-16s  %-15s  %s\n",
-		"ID", "SCHEDULE", "ENABLED", "IMMEDIATE", "OFFLINE", "TARGET", "LAST", "NAME / BODY")
+	fmt.Fprintf(stdout, "%-4s  %-14s  %-8s  %-9s  %-9s  %-8s  %-16s  %-15s  %s\n",
+		"ID", "SCHEDULE", "ACTION", "ENABLED", "IMMEDIATE", "OFFLINE", "TARGET", "LAST", "NAME / BODY")
 	fmt.Fprintln(stdout, strings.Repeat("─", 112))
 	for _, j := range resp.Jobs {
 		interval := cronScheduleLabel(j)
@@ -122,8 +132,12 @@ func runCronLs(stdout, stderr io.Writer) int {
 		if desc == "" {
 			desc = truncate(j.Body, 40)
 		}
-		fmt.Fprintf(stdout, "%-4d  %-14s  %-9s  %-9s  %-8s  %-16s  %-15s  %s\n",
-			j.ID, interval, enabled, immediate, offline, cronTargetLabel(j), last, desc)
+		action := j.ActionKind
+		if action == "" {
+			action = "message"
+		}
+		fmt.Fprintf(stdout, "%-4d  %-14s  %-8s  %-9s  %-9s  %-8s  %-16s  %-15s  %s\n",
+			j.ID, interval, action, enabled, immediate, offline, cronTargetLabel(j), last, desc)
 	}
 	return rcOK
 }
@@ -160,16 +174,24 @@ func cronTargetLabel(j cronJobJSON) string {
 // ---- add ----
 
 type cronAddParams struct {
-	Target           string `long:"target" optional:"true" help:"Selector for the conv that receives the cron message, or group:NAME to multicast to every member of a group. Defaults to self when omitted."`
-	Interval         string `long:"interval" optional:"true" help:"Recurrence interval as a Go duration (e.g. 10m, 1h, 30s). Minimum 30s (the scheduler tick). Mutually exclusive with --cron."`
-	Cron             string `long:"cron" optional:"true" help:"Recurrence as a cron expression (e.g. '*/5 * * * *', '@daily', 'CRON_TZ=UTC 0 9 * * 1'). Evaluated in the daemon's local timezone unless CRON_TZ is given. Mutually exclusive with --interval."`
-	Body             string `long:"body" optional:"true" help:"Message body the cron job sends each tick. Required unless --file is given."`
-	File             string `long:"file" short:"f" optional:"true" help:"Read the message body from this file instead of --body ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing bodies. Mutually exclusive with --body."`
-	Subject          string `long:"subject" optional:"true" help:"Optional subject. Auto-prefixed with [cron:<name>] when delivered."`
-	Name             string `long:"name" optional:"true" help:"Short label for the job (used in dashboard + log lines)."`
-	Role             string `long:"role" optional:"true" help:"For a group:NAME target only: deliver only to members whose role matches (resolved at fire time). 'all' or empty = whole group."`
-	RunImmediately   bool   `long:"run-immediately" optional:"true" help:"Fire the new job once immediately, then continue on its normal cadence. Omitted jobs wait until the first scheduled due time."`
-	QueueWhenOffline bool   `long:"queue-when-offline" optional:"true" help:"Persist scheduled messages while a target is offline. By default offline ticks are discarded so stale cron nudges do not accumulate."`
+	Action            string   `long:"action" optional:"true" help:"Action per tick: message (default) or spawn. Spawn is gated by features.triggers."`
+	Target            string   `long:"target" optional:"true" help:"Selector for the conv that receives the cron message, or group:NAME to multicast to every member of a group. Defaults to self when omitted."`
+	Interval          string   `long:"interval" optional:"true" help:"Recurrence interval as a Go duration (e.g. 10m, 1h, 30s). Minimum 30s (the scheduler tick). Mutually exclusive with --cron."`
+	Cron              string   `long:"cron" optional:"true" help:"Recurrence as a cron expression (e.g. '*/5 * * * *', '@daily', 'CRON_TZ=UTC 0 9 * * 1'). Evaluated in the daemon's local timezone unless CRON_TZ is given. Mutually exclusive with --interval."`
+	Body              string   `long:"body" optional:"true" help:"Message body the cron job sends each tick. Required unless --file is given."`
+	File              string   `long:"file" short:"f" optional:"true" help:"Read the message body from this file instead of --body ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing bodies. Mutually exclusive with --body."`
+	Subject           string   `long:"subject" optional:"true" help:"Optional subject. Auto-prefixed with [cron:<name>] when delivered."`
+	Name              string   `long:"name" optional:"true" help:"Short label for the job (used in dashboard + log lines)."`
+	Role              string   `long:"role" optional:"true" help:"For a group:NAME target only: deliver only to members whose role matches (resolved at fire time). 'all' or empty = whole group."`
+	RunImmediately    bool     `long:"run-immediately" optional:"true" help:"Fire the new job once immediately, then continue on its normal cadence. Omitted jobs wait until the first scheduled due time."`
+	QueueWhenOffline  bool     `long:"queue-when-offline" optional:"true" help:"Persist scheduled messages while a target is offline. By default offline ticks are discarded so stale cron nudges do not accumulate."`
+	SpawnProfile      string   `long:"spawn-profile" optional:"true" help:"Spawn profile for --action spawn."`
+	SpawnRoles        []string `long:"spawn-role" optional:"true" help:"Role reference for the worker; repeat for multiple roles."`
+	SpawnNameTemplate string   `long:"name-template" optional:"true" help:"Worker name template. {{fire_time}} expands to the scheduled firing time."`
+	Instruction       string   `long:"instruction" optional:"true" help:"Worker instruction template for --action spawn. Use --file for multiline instructions."`
+	Concurrency       string   `long:"concurrency" optional:"true" help:"Spawn overlap policy: Forbid (default), Replace, or Allow."`
+	MaxLiveWorkers    int      `long:"max-live-workers" optional:"true" help:"Maximum concurrent workers for Allow (default 1)."`
+	WorkerDeadline    string   `long:"worker-deadline" optional:"true" help:"Optional worker deadline as a Go duration (for example 2h)."`
 }
 
 func cronAddCmd() *cobra.Command {
@@ -199,13 +221,40 @@ func runCronAdd(p *cronAddParams, stdin io.Reader, stdout, stderr io.Writer) int
 		fmt.Fprintln(stderr, "Error: --interval and --cron are mutually exclusive — pick one schedule mode")
 		return rcInvalidArg
 	}
-	jobBody, rc := resolveBodyInput(p.Body, p.File, "--body", stdin, stderr)
+	action := strings.ToLower(strings.TrimSpace(p.Action))
+	if action == "" {
+		action = "message"
+	}
+	if action != "message" && action != "spawn" {
+		fmt.Fprintln(stderr, "Error: --action must be message or spawn")
+		return rcInvalidArg
+	}
+	inlinePayload := p.Body
+	payloadFlag := "--body"
+	if action == "spawn" {
+		inlinePayload = p.Instruction
+		payloadFlag = "--instruction"
+	}
+	jobBody, rc := resolveBodyInput(inlinePayload, p.File, payloadFlag, stdin, stderr)
 	if rc != rcOK {
 		return rc
 	}
 	if strings.TrimSpace(jobBody) == "" {
-		fmt.Fprintln(stderr, "Error: a message body is required — pass --body or --file")
+		fmt.Fprintf(stderr, "Error: a %s is required — pass %s or --file\n", map[bool]string{true: "worker instruction", false: "message body"}[action == "spawn"], payloadFlag)
 		return rcInvalidArg
+	}
+	if action == "spawn" && strings.TrimSpace(p.SpawnProfile) == "" {
+		fmt.Fprintln(stderr, "Error: --spawn-profile is required for --action spawn")
+		return rcInvalidArg
+	}
+	var deadlineSeconds int64
+	if strings.TrimSpace(p.WorkerDeadline) != "" {
+		d, err := time.ParseDuration(p.WorkerDeadline)
+		if err != nil || d < time.Second || d > time.Duration(db.TriggerMaxDelaySeconds)*time.Second {
+			fmt.Fprintln(stderr, "Error: --worker-deadline must be between 1s and 8760h")
+			return rcInvalidArg
+		}
+		deadlineSeconds = int64(d.Seconds())
 	}
 	target := strings.TrimSpace(p.Target)
 	if target == "" {
@@ -221,6 +270,17 @@ func runCronAdd(p *cronAddParams, stdin io.Reader, stdout, stderr io.Writer) int
 		"body":               jobBody,
 		"run_immediately":    p.RunImmediately,
 		"queue_when_offline": p.QueueWhenOffline,
+		"action_kind":        action,
+	}
+	if action == "spawn" {
+		body["body"] = ""
+		body["spawn_profile"] = strings.TrimSpace(p.SpawnProfile)
+		body["spawn_roles"] = p.SpawnRoles
+		body["spawn_name_template"] = p.SpawnNameTemplate
+		body["spawn_instruction_template"] = jobBody
+		body["spawn_concurrency_policy"] = p.Concurrency
+		body["spawn_max_live_workers"] = p.MaxLiveWorkers
+		body["spawn_worker_deadline_seconds"] = deadlineSeconds
 	}
 	if cronExpr != "" {
 		body["cron_expr"] = cronExpr
@@ -253,10 +313,18 @@ func runCronAdd(p *cronAddParams, stdin io.Reader, stdout, stderr io.Writer) int
 	} else {
 		fmt.Fprintln(stdout, "  First run waits until the schedule is due.")
 	}
-	if resp.QueueWhenOffline {
+	if resp.ActionKind == "spawn" {
+		fmt.Fprintf(stdout, "  Spawn profile %q; concurrency %s (max live %d).\n", resp.SpawnProfile, resp.SpawnConcurrencyPolicy, resp.SpawnMaxLiveWorkers)
+		if resp.SpawnWorkerDeadlineSeconds > 0 {
+			fmt.Fprintf(stdout, "  Worker deadline: %s.\n", time.Duration(resp.SpawnWorkerDeadlineSeconds)*time.Second)
+		}
+	} else if resp.QueueWhenOffline {
 		fmt.Fprintln(stdout, "  Offline delivery is durable; ticks queue until the target returns.")
 	} else {
 		fmt.Fprintln(stdout, "  Offline ticks are discarded (pass --queue-when-offline to retain them).")
+	}
+	for _, warning := range resp.Warnings {
+		fmt.Fprintf(stdout, "  Warning: %s\n", warning)
 	}
 	switch {
 	case resp.TargetKind == "group":
@@ -432,11 +500,13 @@ func runCronLogs(p *cronLogsParams, stdout, stderr io.Writer) int {
 	}
 	var resp struct {
 		Runs []struct {
-			ID       int64  `json:"id"`
-			JobID    int64  `json:"job_id"`
-			FiredAt  string `json:"fired_at"`
-			Status   string `json:"status"`
-			ErrorMsg string `json:"error_msg"`
+			ID          int64  `json:"id"`
+			JobID       int64  `json:"job_id"`
+			FiredAt     string `json:"fired_at"`
+			Status      string `json:"status"`
+			ErrorMsg    string `json:"error_msg"`
+			WorkerID    int64  `json:"worker_id"`
+			WorkerAgent string `json:"worker_agent"`
 		} `json:"runs"`
 	}
 	if err := DaemonRequest(http.MethodGet, path, nil, &resp, DaemonOpts{}); err != nil {
@@ -447,14 +517,18 @@ func runCronLogs(p *cronLogsParams, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "(no runs yet)")
 		return rcOK
 	}
-	fmt.Fprintf(stdout, "%-20s  %-12s  %s\n", "FIRED", "STATUS", "ERROR")
+	fmt.Fprintf(stdout, "%-20s  %-20s  %-14s  %s\n", "FIRED", "STATUS", "WORKER", "ERROR")
 	fmt.Fprintln(stdout, strings.Repeat("─", 60))
 	for _, run := range resp.Runs {
 		fired := run.FiredAt
 		if t, err := time.Parse(time.RFC3339, run.FiredAt); err == nil {
 			fired = t.Local().Format("2006-01-02 15:04:05")
 		}
-		fmt.Fprintf(stdout, "%-20s  %-12s  %s\n", fired, run.Status, run.ErrorMsg)
+		worker := shortAgentID(run.WorkerAgent, "")
+		if worker == "" {
+			worker = "-"
+		}
+		fmt.Fprintf(stdout, "%-20s  %-20s  %-14s  %s\n", fired, run.Status, worker, run.ErrorMsg)
 	}
 	return rcOK
 }

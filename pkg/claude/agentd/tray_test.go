@@ -1,6 +1,10 @@
 package agentd
 
 import (
+	"bytes"
+	"image"
+	"image/color"
+	"image/png"
 	"strings"
 	"sync"
 	"testing"
@@ -135,6 +139,34 @@ func TestRenderTrayIcon(t *testing.T) {
 	assert.Equal(t, "green", string(renderTrayIcon(trayBlink, false, g, y, o, r)), "blink off → green")
 }
 
+func TestMakeIconPNGDrawsAgentNetwork(t *testing.T) {
+	status := color.RGBA{R: 30, G: 180, B: 30, A: 255}
+	img, err := png.Decode(bytes.NewReader(makeIconPNG(status)))
+	require.NoError(t, err)
+	assert.Equal(t, image.Rect(0, 0, 22, 22), img.Bounds())
+
+	// Transparent corner, coloured status field, three white agents, and the
+	// coloured coordinator centre pin the icon's essential visual structure.
+	assert.Equal(t, uint32(0), alpha16(img.At(0, 0)))
+	assert.Equal(t, color16(status), rgba16(img.At(11, 1)))
+	assert.Equal(t, color16(color.RGBA{R: 255, G: 255, B: 255, A: 255}), rgba16(img.At(11, 5)))
+	assert.Equal(t, color16(color.RGBA{R: 255, G: 255, B: 255, A: 255}), rgba16(img.At(6, 16)))
+	assert.Equal(t, color16(color.RGBA{R: 255, G: 255, B: 255, A: 255}), rgba16(img.At(16, 16)))
+	assert.Equal(t, color16(status), rgba16(img.At(11, 10)))
+}
+
+func rgba16(c color.Color) [4]uint32 {
+	r, g, b, a := c.RGBA()
+	return [4]uint32{r, g, b, a}
+}
+
+func color16(c color.Color) [4]uint32 { return rgba16(c) }
+
+func alpha16(c color.Color) uint32 {
+	_, _, _, a := c.RGBA()
+	return a
+}
+
 // countAgentStates reduces session rows + the live tmux set to per-status
 // counts over ONLINE convs. Offline convs (no alive tmux row) are
 // skipped; per-conv the most-recently-updated alive row wins.
@@ -218,14 +250,14 @@ func TestApprovalRegistry_SnapshotSortsOldestFirst(t *testing.T) {
 func TestFormatApprovalSlotLabel_UsesConvTitleWhenPresent(t *testing.T) {
 	row := pendingApprovalSummary{
 		ID:        "abcdef0123",
-		Perm:      "groups.spawn",
+		Perm:      "groups.members.spawn",
 		AgentID:   "agt_1234567890abcdef",
 		ConvTitle: "alice",
 		ConvID:    "aaaa-bbbb",
 		CreatedAt: time.Now().Add(-90 * time.Second),
 	}
 	label := formatApprovalSlotLabel(row)
-	assert.Contains(t, label, "groups.spawn", "label should mention perm")
+	assert.Contains(t, label, "groups.members.spawn", "label should mention perm")
 	assert.Contains(t, label, "agt_12345678", "label should lead caller metadata with the stable id")
 	assert.Contains(t, label, "alice", "label should mention conv title")
 	assert.Less(t, strings.Index(label, "agt_12345678"), strings.Index(label, "alice"),

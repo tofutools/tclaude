@@ -251,6 +251,118 @@ func TestPlanSandboxProfileAccessActivatesReadyOpenCodeWithExplicitProvider(t *t
 	require.Nil(t, failure)
 }
 
+func TestPlanSandboxProfileAccessPrivateNetworkReportsExactProbeFailure(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("private routed networking is Linux-only")
+	}
+	oldProbe := probeFilteredNetworkPrerequisite
+	t.Cleanup(func() { probeFilteredNetworkPrerequisite = oldProbe })
+	probeFilteredNetworkPrerequisite = func() session.FilteredNetworkPrerequisite {
+		return session.FilteredNetworkPrerequisite{
+			Detail: "rootless pasta is required: executable file not found in $PATH",
+		}
+	}
+	snapshot := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
+		Network: &sandboxpolicy.NetworkRules{
+			Mode:      sandboxpolicy.AccessModeOpen,
+			Namespace: sandboxpolicy.NetworkNamespacePrivate,
+		},
+	}}
+
+	_, failure := planSandboxProfileAccessForLaunch(
+		harness.OpenCodeName,
+		harness.OpenCodeSandboxTclaudeLayer,
+		snapshot,
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+		session.ModelTransportLaunchContext{},
+		false,
+	)
+	require.NotNil(t, failure)
+	require.Contains(t, failure.Msg,
+		"rootless pasta is required: executable file not found in $PATH")
+}
+
+func TestPlanSandboxProfileAccessPrivateDenyAllSkipsRoutedGatewayProbe(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("private networking is Linux-only")
+	}
+	oldProbe := probeFilteredNetworkPrerequisite
+	oldVerdict := resolveTclaudeLayerAccessVerdict
+	t.Cleanup(func() {
+		probeFilteredNetworkPrerequisite = oldProbe
+		resolveTclaudeLayerAccessVerdict = oldVerdict
+	})
+	probeFilteredNetworkPrerequisite = func() session.FilteredNetworkPrerequisite {
+		t.Fatal("deny-all must not probe the routed pasta/nft gateway")
+		return session.FilteredNetworkPrerequisite{}
+	}
+	var gotPosture sandboxpolicy.NetworkPosture
+	resolveTclaudeLayerAccessVerdict = func(
+		_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture,
+		_ sandboxpolicy.NetworkEngine,
+	) (harness.LaunchOSSandbox, error) {
+		gotPosture = posture
+		return harness.LaunchOSSandbox{State: "on", Source: "test isolated bwrap"}, nil
+	}
+	snapshot := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
+		Network: &sandboxpolicy.NetworkRules{
+			Mode:      sandboxpolicy.AccessModeClosed,
+			Namespace: sandboxpolicy.NetworkNamespacePrivate,
+		},
+	}}
+
+	notices, failure := planSandboxProfileAccessForLaunch(
+		harness.CodexName, harness.SandboxDangerFull, snapshot,
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+		session.ModelTransportLaunchContext{}, false,
+	)
+	require.Nil(t, failure)
+	assert.Empty(t, notices)
+	assert.Equal(t, sandboxpolicy.NetworkIsolatedWithAgentd, gotPosture)
+}
+
+func TestPlanSandboxProfileAccessRootOnlyUsesConstructedRootAndRefusesUnsupportedTargets(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("explicit constructed roots are Linux-only")
+	}
+	oldVerdict := resolveTclaudeLayerAccessVerdict
+	t.Cleanup(func() { resolveTclaudeLayerAccessVerdict = oldVerdict })
+	var gotRoot sandboxpolicy.RootPosture
+	resolveTclaudeLayerAccessVerdict = func(
+		_ string, _ sandboxpolicy.NetworkPosture, root sandboxpolicy.RootPosture,
+		_ sandboxpolicy.NetworkEngine,
+	) (harness.LaunchOSSandbox, error) {
+		gotRoot = root
+		return harness.LaunchOSSandbox{State: "on", Source: "test constructed root"}, nil
+	}
+	newSnapshot := func() *sandboxpolicy.Snapshot {
+		return &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
+			FilesystemRoot: sandboxpolicy.FilesystemRootSeparate,
+		}}
+	}
+
+	_, failure := planSandboxProfileAccessForLaunch(
+		harness.CodexName, harness.SandboxDangerFull, newSnapshot(),
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+		session.ModelTransportLaunchContext{}, false,
+	)
+	require.Nil(t, failure)
+	assert.Equal(t, sandboxpolicy.RootConstructed, gotRoot)
+
+	for _, implementation := range []sandboxpolicy.Implementation{
+		sandboxpolicy.ImplementationHarnessBuiltin,
+		sandboxpolicy.ImplementationResourceOnly,
+		sandboxpolicy.ImplementationOff,
+	} {
+		_, failure = planSandboxProfileAccessForLaunch(
+			harness.CodexName, harness.SandboxDangerFull, newSnapshot(),
+			string(implementation), session.ModelTransportLaunchContext{}, false,
+		)
+		require.NotNil(t, failure, "implementation %s", implementation)
+		assert.Equal(t, harness.SandboxCapabilityFilesystemRoot, failure.Kind)
+	}
+}
+
 // TestPlanSandboxProfileAccessEnforcesOpenCodeLinuxDenyRows pins the launch
 // side of the OpenCode deny activation: a default-allow profile carrying a deny
 // row must resolve the filtered posture and keep that row, instead of omitting

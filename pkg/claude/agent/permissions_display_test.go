@@ -27,7 +27,7 @@ func TestRenderPermissionsState_LeadsWithAgentID(t *testing.T) {
 	t.Run("known agent_id leads the ID column", func(t *testing.T) {
 		state := permissionsState{
 			Defaults:  []string{"groups.create"},
-			Overrides: map[string]map[string]string{conv: {"groups.spawn": "grant", "human.notify": "deny"}},
+			Overrides: map[string]map[string]string{conv: {"groups.members.spawn": "grant", "human.notify": "deny"}},
 			AgentIDs:  map[string]string{conv: agentID},
 		}
 		var buf bytes.Buffer
@@ -45,7 +45,7 @@ func TestRenderPermissionsState_LeadsWithAgentID(t *testing.T) {
 
 	t.Run("missing agent_id falls back to the conv prefix", func(t *testing.T) {
 		state := permissionsState{
-			Overrides: map[string]map[string]string{conv: {"groups.spawn": "grant"}},
+			Overrides: map[string]map[string]string{conv: {"groups.members.spawn": "grant"}},
 			// AgentIDs intentionally empty — the daemon couldn't project one.
 		}
 		var buf bytes.Buffer
@@ -59,10 +59,7 @@ func TestRenderPermissionsState_LeadsWithAgentID(t *testing.T) {
 	})
 }
 
-// TestPermSourceNote_OwnerScope pins how an owner-conferred slug is
-// phrased (TCL-1013). The gate scopes the owner bypass to owned groups or
-// their members for most slugs; rendering all of them as a bare "(via
-// ownership)" reads as fleet-wide authority the gate refuses.
+// TestPermSourceNote_OwnerScope pins ordinary scoped owner-grant provenance.
 func TestPermSourceNote_OwnerScope(t *testing.T) {
 	owned := []string{"dev", "qa"}
 
@@ -73,22 +70,10 @@ func TestPermSourceNote_OwnerScope(t *testing.T) {
 		want   string
 	}{
 		{
-			name:   "group-scoped names the owned groups",
-			source: "owner:group",
+			name:   "group-scoped owner grant displays its ordinary scope",
+			source: "owner [group=dev]",
 			owned:  owned,
-			want:   "(via ownership of: dev, qa)",
-		},
-		{
-			name:   "member-scoped says it reaches their members",
-			source: "owner:member",
-			owned:  owned,
-			want:   "(via ownership of: dev, qa — their members only)",
-		},
-		{
-			name:   "unscoped must not claim a per-group limit",
-			source: "owner:any",
-			owned:  owned,
-			want:   "(via ownership)",
+			want:   "(via ownership; scope: [group=dev])",
 		},
 		{
 			// An older daemon sends bare "owner" with no scope.
@@ -135,19 +120,15 @@ func TestPermSourceNote_OwnerScope(t *testing.T) {
 	}
 }
 
-// TestOwnerScopeCell pins the OWNER column of `permissions slugs`: three
-// call-site families confer three different reaches, and collapsing them
-// into one tick is what let the table imply fleet-wide authority.
+// TestOwnerScopeCell pins the OWNER GRANT column of `permissions slugs`.
 func TestOwnerScopeCell(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		in   permSlugEntry
 		want string
 	}{
-		{"group scope", permSlugEntry{OwnerImplied: true, OwnerScope: "group"}, "✔ group"},
-		{"member scope", permSlugEntry{OwnerImplied: true, OwnerScope: "member"}, "✔ member"},
-		{"any scope", permSlugEntry{OwnerImplied: true, OwnerScope: "any"}, "✔ any"},
-		{"older daemon sends no scope", permSlugEntry{OwnerImplied: true}, "✔"},
+		{"group scope", permSlugEntry{OwnerImplied: true, ScopeDims: []string{"group"}}, "✔ owned groups"},
+		{"global", permSlugEntry{OwnerImplied: true}, "✔ global"},
 		{"no owner bypass", permSlugEntry{}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -185,16 +166,16 @@ func TestPermissionScopeFlagAndDisplay(t *testing.T) {
 func TestRenderPermissionsStateShowsScopes(t *testing.T) {
 	const conv = "scope-1111-2222-3333"
 	state := permissionsState{
-		Overrides: map[string]map[string]string{conv: {"groups.spawn": "grant"}},
+		Overrides: map[string]map[string]string{conv: {"groups.members.spawn": "grant"}},
 		Scopes: map[string]map[string]permissionScope{conv: {
-			"groups.spawn": {"group": {"dev"}, "spawn_profile": {"locked"}},
+			"groups.members.spawn": {"group": {"dev"}, "spawn_profile": {"locked"}},
 		}},
 	}
 	var out bytes.Buffer
 	if rc := renderPermissionsState(state, &out); rc != rcOK {
 		t.Fatalf("renderPermissionsState rc = %d", rc)
 	}
-	if want := "groups.spawn [group=dev spawn_profile=locked]"; !strings.Contains(out.String(), want) {
+	if want := "groups.members.spawn [group=dev spawn_profile=locked]"; !strings.Contains(out.String(), want) {
 		t.Errorf("scope missing from roster; want %q in:\n%s", want, out.String())
 	}
 }

@@ -165,15 +165,15 @@ func TestPermissionsLsTarget_OwnerImpliedAndDeny(t *testing.T) {
 	require.NoError(t, db.AddAgentGroupOwner(g.ID, owner, "test"), "seed owner")
 
 	v := decodeEffective(t, getPermissionsTarget(t, f, caller, owner))
-	assert.Contains(t, v.Effective, agentd.PermGroupsSpawn, "owner holds the owner-implied slug")
-	assert.Contains(t, v.OwnerImplied, agentd.PermGroupsSpawn, "and it is flagged as owner-conferred")
+	assert.Contains(t, v.Effective, agentd.PermGroupsMembersSpawn, "owner holds the owner-implied slug")
+	assert.Contains(t, v.OwnerImplied, agentd.PermGroupsMembersSpawn, "and it is flagged as owner-conferred")
 	assert.Contains(t, v.Source, "+owner", "source notes the ownership contribution")
 
 	// A per-conv deny suppresses the owner bypass in both projections.
-	permMutate(t, f, "deny", owner, agentd.PermGroupsSpawn)
+	permMutate(t, f, "deny", owner, agentd.PermGroupsMembersSpawn)
 	v = decodeEffective(t, getPermissionsTarget(t, f, caller, owner))
-	assert.NotContains(t, v.Effective, agentd.PermGroupsSpawn, "deny beats the owner bypass")
-	assert.NotContains(t, v.OwnerImplied, agentd.PermGroupsSpawn, "and the annotation goes with it")
+	assert.NotContains(t, v.Effective, agentd.PermGroupsMembersSpawn, "deny beats the owner bypass")
+	assert.NotContains(t, v.OwnerImplied, agentd.PermGroupsMembersSpawn, "and the annotation goes with it")
 	assert.Contains(t, v.Source, "−denies", "source notes the deny")
 }
 
@@ -297,10 +297,10 @@ func TestPermissionsLsCLI_RendersFromDaemonResponse(t *testing.T) {
 		out := stdout.String()
 		assert.Contains(t, out, "squad-lead", "renders the resolved title")
 		assert.Contains(t, out, "self.rename", "renders the effective slugs")
-		// The annotation names WHERE the bypass reaches (TCL-1013):
-		// groups.spawn is group-scoped, so it must name the owned group
+		// The annotation names WHERE the owner-contributed grant reaches:
+		// groups.members.spawn is group-scoped, so it must name the owned group
 		// rather than implying fleet-wide authority.
-		assert.Contains(t, out, agentd.PermGroupsSpawn+"  (via ownership of: squad)",
+		assert.Contains(t, out, agentd.PermGroupsMembersSpawn+"  (via ownership; scope: [group=squad])",
 			"annotates owner-conferred slugs with their scope; got:\n%s", out)
 		assert.Empty(t, stderr.String(), "clean run writes nothing to stderr")
 	})

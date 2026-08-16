@@ -205,9 +205,22 @@ function MessageHead({ message, aggregate, controller }) {
     ${party && html`<span class="mail-row-party" title=${conv ? idTooltip(agent, conv) : undefined}>${party}</span>`}</${Fragment}>`;
 }
 
+function MessageAttachmentIndicator({ count }) {
+  if (!count) return null;
+  const label = `${count} attachment${count === 1 ? '' : 's'}`;
+  return html`<span class="mail-row-attachments" role="img" title=${label} aria-label=${label}>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+      stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="m21.4 11.6-8.9 8.9a6 6 0 0 1-8.5-8.5l9.7-9.7a4 4 0 0 1 5.7 5.7l-9.7 9.7a2 2 0 0 1-2.8-2.8l8.9-8.9" />
+    </svg>
+    ${count > 1 && html`<span class="mail-row-attachment-count" aria-hidden="true">${count}</span>`}
+  </span>`;
+}
+
 function MessageRow({ message, current, aggregate, controller }) {
   const active = message.id === current.selectedMsgId;
   const unread = !message.read;
+  const attachmentCount = messageAttachments(message).length;
   return html`<div class="mail-row-wrap" data-key=${message.id} data-kind=${controller.msgKind(message)}>
     <input type="checkbox" class="mail-msg-check" data-id=${message.id} checked=${current.selectedMsgs.has(message.id)}
       disabled=${current.busy} title="Select message"
@@ -221,7 +234,10 @@ function MessageRow({ message, current, aggregate, controller }) {
         ${message.group && html`<span class="mail-row-group">${message.group}</span>`}
         <span class="mail-row-time">${relTime(message.created_at)}</span>
       </span>
-      <span class="mail-row-subject">${controller.msgPreview(message)}</span>
+      <span class="mail-row-subject-line">
+        <span class="mail-row-subject">${controller.msgPreview(message)}</span>
+        <${MessageAttachmentIndicator} count=${attachmentCount} />
+      </span>
     </button>
     <button class="mail-row-del" data-id=${message.id}
       title="Delete this message" disabled=${current.busy}
@@ -399,16 +415,12 @@ function AccessReader({ request, controller }) {
     ? 'Choose a petition to weigh its boon.' : 'Select an access request to review its details.'}</div>`;
   const handled = !controller.accessIsPending(request);
   const outcome = handled ? controller.accessOutcome(request.status) : null;
-  const callerState = request.caller_state === 'retired'
-    ? (wizard ? 'banished' : 'retired')
-    : request.caller_state === 'missing' ? (wizard ? 'lost to the mists' : 'metadata missing') : '';
   return html`<${Fragment}>
     <div class="mail-reader-head">
       <div class="mail-subject">${wizard ? 'Petition' : 'Access request'} <span class="mail-id">#${shortId(request.id)}</span></div>
       <div class="mail-headers">
-        <${HeaderRow} label="From"><span class="mail-cid"
-          title=${idTooltip(request.agent_id, request.current_conv_id || request.conv_id)}>${shortAgentId(request.agent_id, request.conv_id)}</span>
-          ${request.conv_title ? ` · ${request.conv_title}` : ' · (title unavailable)'}${callerState ? ` · ${callerState}` : ''}</${HeaderRow}>
+        <${HeaderRow} label="From"><span
+          title=${idTooltip(request.agent_id, request.current_conv_id || request.conv_id)}>${controller.accessWho(request)}</span></${HeaderRow}>
         <${HeaderRow} label=${wizard ? 'Calling incarnation' : 'Request generation'}><span class="mail-cid"
           title=${request.conv_id}>${shortAgentId('', request.conv_id)}</span></${HeaderRow}>
         ${request.current_conv_id && request.current_conv_id !== request.conv_id && html`<${HeaderRow}
@@ -580,7 +592,7 @@ export function MailApp({ controller }) {
       <button class="tool" id="mail-mark-all" data-act="msg-mark-all-read"
         title="Mark every human notification read" hidden=${current.selected !== 'human'}>✓ mark all read</button>
       <button class="tool" id="mail-clear-read" data-act="msg-clear"
-        title="Delete every human notification that has been marked read" hidden=${current.selected !== 'human'}>🧹 clear read</button>
+        title="Delete every human notification that has been marked read" hidden=${current.selected !== 'human'}>🗑 delete read</button>
       <button class="tool" id="mail-agent-mark-all" data-act="mail-agent-mark-all"
         title="Mark every message this agent has received as read (on its behalf)"
         onClick=${controller.markAllAgentRead}

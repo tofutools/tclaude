@@ -83,6 +83,12 @@ func tclaudeLayerProbeArgs(
 	case sandboxpolicy.NetworkIsolatedWithAgentd:
 		args = append(args, "--unshare-net", "--unshare-pid")
 	case sandboxpolicy.NetworkFiltered:
+		// The filtered launch builds the same user, network, and PID namespaces.
+		// It no longer needs CAP_NET_ADMIN inside the sandbox: the base nft policy
+		// is installed from the supervisor, which joins the namespace from outside
+		// bubblewrap's AppArmor confinement. Probing an in-sandbox capability here
+		// would spuriously refuse the launch on hosts (e.g. stock Ubuntu) whose
+		// bwrap AppArmor profile denies capabilities to the sandboxed process.
 		args = append(args,
 			"--unshare-user",
 			"--uid", "0",
@@ -90,7 +96,6 @@ func tclaudeLayerProbeArgs(
 			"--unshare-net",
 			"--unshare-pid",
 		)
-		args = append(args, filteredNetworkBootstrapCapabilityArgs()...)
 	default:
 		return nil, fmt.Errorf("invalid tclaude-layer network posture %d", posture)
 	}
@@ -108,22 +113,9 @@ func tclaudeLayerProbeArgs(
 		"--ro-bind", "/dev/null", probeBind,
 		"--remount-ro", "/tmp",
 		"--", "/bin/sh", "-c",
-		"test -e "+probeBind+" && ! touch "+probeWrite+
-			filteredNetworkProbeCapabilityCheck(posture),
+		"test -e "+probeBind+" && ! touch "+probeWrite,
 	)
 	return args, nil
-}
-
-func filteredNetworkProbeCapabilityCheck(posture sandboxpolicy.NetworkPosture) string {
-	if posture != sandboxpolicy.NetworkFiltered {
-		return ""
-	}
-	// CAP_NET_ADMIN is bit 12: the fourth hex digit from the right must be
-	// odd. CAP_NET_BIND_SERVICE is bit 10: the third digit must have bit 2.
-	// This stays within POSIX shell vocabulary and needs no probe helper.
-	return ` && cap_eff=$(sed -n 's/^CapEff:[[:space:]]*//p' /proc/self/status)` +
-		` && case "$cap_eff" in *[13579bBdDfF]???) true ;; *) false ;; esac` +
-		` && case "$cap_eff" in *[4567cCdDeEfF]??) true ;; *) false ;; esac`
 }
 
 func resolveBwrapBinary(

@@ -24,18 +24,20 @@ export function createMessageAccessDialogActions({
   notify = () => {},
   words = (plain) => plain,
 } = {}) {
+  async function uploadOperatorAttachments(files) {
+    if (!files?.length) return '';
+    const form = new FormData();
+    files.forEach((file, index) => {
+      form.append('file', file, file.name || `pasted-image-${index + 1}.png`);
+    });
+    const uploaded = await requestJSON(fetchImpl, '/api/spawn-attachments', {
+      method: 'POST', body: form,
+    });
+    return uploaded.token || '';
+  }
+
   async function sendOperatorMessage(draft) {
-    let attachmentToken = '';
-    if (draft.files.length) {
-      const form = new FormData();
-      draft.files.forEach((file, index) => {
-        form.append('file', file, file.name || `pasted-image-${index + 1}.png`);
-      });
-      const uploaded = await requestJSON(fetchImpl, '/api/spawn-attachments', {
-        method: 'POST', body: form,
-      });
-      attachmentToken = uploaded.token || '';
-    }
+    const attachmentToken = await uploadOperatorAttachments(draft.files);
     return requestJSON(fetchImpl, '/api/operator-message', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(draft.allLive ? {
@@ -82,10 +84,13 @@ export function createMessageAccessDialogActions({
     return response;
   }
 
-  async function replyHuman({ id, body, label }) {
+  async function replyHuman({ id, body, files, label }) {
+    const attachmentToken = await uploadOperatorAttachments(files);
+    const payload = { id, body };
+    if (attachmentToken) payload.attachment_token = attachmentToken;
     const response = await requestJSON(fetchImpl, '/api/human-messages/reply', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, body }),
+      body: JSON.stringify(payload),
     });
     notify(response.queued
       ? `reply queued for ${label}`
@@ -152,7 +157,7 @@ export function createMessageAccessDialogActions({
     }
     const kept = {};
     for (const [slug, effect] of Object.entries(selection)) {
-      if (effect === 'grant' || effect === 'deny') {
+      if (effect === 'grant' || (!descriptor.grantOnly && effect === 'deny')) {
         kept[slug] = effect === 'grant' && Object.keys(scopes[slug] || {}).length
           ? { effect, scope: scopes[slug] } : effect;
       }

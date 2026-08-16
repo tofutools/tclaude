@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -23,6 +24,15 @@ const (
 	// resolves that group's membership at fire time and delivers the
 	// body to every current member. target_conv is unused.
 	CronTargetGroup = "group"
+)
+
+const (
+	CronActionMessage = "message"
+	CronActionSpawn   = "spawn"
+
+	CronConcurrencyForbid  = "Forbid"
+	CronConcurrencyReplace = "Replace"
+	CronConcurrencyAllow   = "Allow"
 )
 
 // Cron disabled_reason markers (schema v94). The value distinguishes a job
@@ -78,12 +88,20 @@ type AgentCronJob struct {
 	// resolved at fire time against the live roster (JOH-244). "" or "all" =
 	// the whole group. Unused for a conv-target job. A first-class cron
 	// primitive; template rhythms materialize onto it.
-	TargetRole      string
-	IntervalSeconds int64  // fixed-interval mode; 0 when CronExpr is set
-	CronExpr        string // cron-expression mode (cronexpr syntax); "" = interval mode
-	Subject         string
-	Body            string
-	Enabled         bool
+	TargetRole                 string
+	IntervalSeconds            int64  // fixed-interval mode; 0 when CronExpr is set
+	CronExpr                   string // cron-expression mode (cronexpr syntax); "" = interval mode
+	Subject                    string
+	Body                       string
+	ActionKind                 string
+	SpawnProfile               string
+	SpawnRoleRefs              []string
+	SpawnNameTemplate          string
+	SpawnInstructionTemplate   string
+	SpawnConcurrencyPolicy     string
+	SpawnMaxLiveWorkers        int
+	SpawnWorkerDeadlineSeconds int64
+	Enabled                    bool
 	// RunImmediately is the persisted creation/edit preference. It is acted on
 	// only by the write path: create=true and a PATCH false→true each trigger
 	// one fire. The scheduler never consumes it, so restarts cannot replay the
@@ -190,7 +208,7 @@ func cronConvToAgentTx(tx *sql.Tx, convID string) (string, error) {
 // on agent_id (JOH-26 PR3a); each LEFT JOIN resolves the actor back to its
 // CURRENT conv so OwnerConv / TargetConv present (and the fire path delivers to)
 // the live generation. LEFT JOIN + COALESCE so a group-target job (target_agent
-// '') or an owner-less job keeps an empty string rather than dropping the row.
+// ”) or an owner-less job keeps an empty string rather than dropping the row.
 // The 21 projected columns match scanAgentCronJob's field order. owner_agent /
 // target_agent are projected raw (the stable keys) alongside the LEFT-JOIN-
 // resolved current convs.
@@ -198,7 +216,10 @@ const cronSelect = `SELECT j.id, j.name,
 	COALESCE(ow.current_conv_id, ''), j.target_kind, COALESCE(tg.current_conv_id, ''),
 	j.group_id, j.interval_seconds, j.subject, j.body, j.enabled, j.created_at,
 	j.last_run_at, j.last_run_status, j.owner_agent, j.target_agent, j.cron_expr, j.target_role,
-	j.disabled_reason, j.run_immediately, j.queue_when_offline, j.operator_authored
+	j.disabled_reason, j.run_immediately, j.queue_when_offline, j.operator_authored,
+	j.action_kind,j.spawn_profile,j.spawn_role_refs_json,j.spawn_name_template,
+	j.spawn_instruction_template,j.spawn_concurrency_policy,j.spawn_max_live_workers,
+	j.spawn_worker_deadline_seconds
 	FROM agent_cron_jobs j
 	LEFT JOIN agents ow ON ow.agent_id = j.owner_agent
 	LEFT JOIN agents tg ON tg.agent_id = j.target_agent`
@@ -258,12 +279,33 @@ func insertAgentCronJob(j *AgentCronJob, routingCaller *string) (int64, error) {
 	if kind == "" {
 		kind = CronTargetConv
 	}
+	rolesJSON, err := json.Marshal(j.SpawnRoleRefs)
+	if err != nil {
+		return 0, err
+	}
+	actionKind := j.ActionKind
+	if actionKind == "" {
+		actionKind = CronActionMessage
+	}
+	policy := j.SpawnConcurrencyPolicy
+	if policy == "" {
+		policy = CronConcurrencyForbid
+	}
+	maxLive := j.SpawnMaxLiveWorkers
+	if maxLive <= 0 {
+		maxLive = 1
+	}
 	res, err := tx.Exec(`INSERT INTO agent_cron_jobs
 		(name, owner_agent, target_kind, target_agent, group_id, target_role, interval_seconds,
-		 cron_expr, subject, body, enabled, run_immediately, queue_when_offline, operator_authored, created_at, last_run_at, last_run_status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '')`,
+		 cron_expr, subject, body, enabled, run_immediately, queue_when_offline, operator_authored,
+		 action_kind,spawn_profile,spawn_role_refs_json,spawn_name_template,spawn_instruction_template,
+		 spawn_concurrency_policy,spawn_max_live_workers,spawn_worker_deadline_seconds,
+		 created_at,last_run_at,last_run_status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '')`,
 		j.Name, ownerAgent, kind, targetAgent, j.GroupID, j.TargetRole, j.IntervalSeconds,
-		j.CronExpr, j.Subject, j.Body, boolToInt(j.Enabled), boolToInt(j.RunImmediately), boolToInt(j.QueueWhenOffline), boolToInt(j.OperatorAuthored), now)
+		j.CronExpr, j.Subject, j.Body, boolToInt(j.Enabled), boolToInt(j.RunImmediately), boolToInt(j.QueueWhenOffline), boolToInt(j.OperatorAuthored),
+		actionKind, j.SpawnProfile, string(rolesJSON), j.SpawnNameTemplate, j.SpawnInstructionTemplate,
+		policy, maxLive, j.SpawnWorkerDeadlineSeconds, now)
 	if err != nil {
 		return 0, err
 	}
@@ -540,7 +582,7 @@ func UpdateAgentCronJobLastRun(id int64, when time.Time, status string) error {
 // the last_run_at timestamp (so re-enabling a paused job doesn't
 // immediately fire if it ran recently).
 //
-// It also clears any auto-disabled marker (disabled_reason → ''): an explicit
+// It also clears any auto-disabled marker (disabled_reason → ”): an explicit
 // enable/disable is a human-managed decision, so the job stops being a
 // candidate for the group-resume auto-re-enable (JOH-345). A job the human
 // manually re-enabled after an emptying retire therefore won't be silently
@@ -576,7 +618,7 @@ func SetAgentCronJobEnabled(id int64, enabled bool) error {
 // nobody to receive them. Returns the number of jobs disabled.
 //
 // The `enabled = 1` guard is the crux: a job the human already disabled by hand
-// (enabled=0, disabled_reason='') is left untouched, so a later resume does not
+// (enabled=0, disabled_reason=”) is left untouched, so a later resume does not
 // silently re-enable it. Only jobs this call paused carry the marker.
 func DisableGroupTargetCronJobsForRetire(groupID int64) (int, error) {
 	d, err := Open()
@@ -596,11 +638,11 @@ func DisableGroupTargetCronJobsForRetire(groupID int64) (int, error) {
 
 // ReenableGroupRetiredCronJobs re-enables every group-target cron job for
 // groupID that tclaude auto-disabled on an emptying retire (disabled_reason =
-// CronDisabledReasonGroupRetired), clearing the marker back to ''. Called when a
+// CronDisabledReasonGroupRetired), clearing the marker back to ”. Called when a
 // group is resumed. Returns the number of jobs re-enabled.
 //
 // The disabled_reason match is the crux: only jobs THIS mechanism paused are
-// touched — a job the human disabled by hand (disabled_reason='') stays
+// touched — a job the human disabled by hand (disabled_reason=”) stays
 // disabled. last_run_at is deliberately left alone (like SetAgentCronJobEnabled),
 // so re-enabling after a long pause does not fire a flood of catch-ups.
 func ReenableGroupRetiredCronJobs(groupID int64) (int, error) {
@@ -647,19 +689,27 @@ func DeleteGroupTargetCronJobs(groupID int64) (int, error) {
 // nil → leave field unchanged. Pointer-shaped so callers can distinguish
 // "set to zero" from "don't touch".
 type UpdateCronPatch struct {
-	Name             *string
-	OwnerConv        *string
-	TargetKind       *string
-	TargetConv       *string
-	GroupID          *int64
-	TargetRole       *string
-	IntervalSeconds  *int64
-	CronExpr         *string
-	Subject          *string
-	Body             *string
-	Enabled          *bool
-	RunImmediately   *bool
-	QueueWhenOffline *bool
+	Name                       *string
+	OwnerConv                  *string
+	TargetKind                 *string
+	TargetConv                 *string
+	GroupID                    *int64
+	TargetRole                 *string
+	IntervalSeconds            *int64
+	CronExpr                   *string
+	Subject                    *string
+	Body                       *string
+	Enabled                    *bool
+	RunImmediately             *bool
+	QueueWhenOffline           *bool
+	ActionKind                 *string
+	SpawnProfile               *string
+	SpawnRoleRefs              *[]string
+	SpawnNameTemplate          *string
+	SpawnInstructionTemplate   *string
+	SpawnConcurrencyPolicy     *string
+	SpawnMaxLiveWorkers        *int
+	SpawnWorkerDeadlineSeconds *int64
 	// OperatorAuthored, when non-nil, re-syncs human-operator attribution with a
 	// changed owner: a job re-owned to a sender agent must stop firing as the
 	// operator, and one cleared back to no owner resumes it.
@@ -672,7 +722,10 @@ func (p UpdateCronPatch) Empty() bool {
 		p.TargetConv == nil && p.GroupID == nil && p.TargetRole == nil &&
 		p.IntervalSeconds == nil && p.CronExpr == nil && p.Subject == nil &&
 		p.Body == nil && p.Enabled == nil && p.RunImmediately == nil &&
-		p.QueueWhenOffline == nil
+		p.QueueWhenOffline == nil && p.ActionKind == nil && p.SpawnProfile == nil &&
+		p.SpawnRoleRefs == nil && p.SpawnNameTemplate == nil &&
+		p.SpawnInstructionTemplate == nil && p.SpawnConcurrencyPolicy == nil &&
+		p.SpawnMaxLiveWorkers == nil && p.SpawnWorkerDeadlineSeconds == nil
 }
 
 // UpdateAgentCronJobFields applies a partial update to one row. Only
@@ -776,6 +829,42 @@ func UpdateAgentCronJobFields(id int64, p UpdateCronPatch) (int, error) {
 		sets = append(sets, "queue_when_offline = ?")
 		args = append(args, boolToInt(*p.QueueWhenOffline))
 	}
+	if p.ActionKind != nil {
+		sets = append(sets, "action_kind = ?")
+		args = append(args, *p.ActionKind)
+	}
+	if p.SpawnProfile != nil {
+		sets = append(sets, "spawn_profile = ?")
+		args = append(args, *p.SpawnProfile)
+	}
+	if p.SpawnRoleRefs != nil {
+		rolesJSON, err := json.Marshal(*p.SpawnRoleRefs)
+		if err != nil {
+			return 0, err
+		}
+		sets = append(sets, "spawn_role_refs_json = ?")
+		args = append(args, string(rolesJSON))
+	}
+	if p.SpawnNameTemplate != nil {
+		sets = append(sets, "spawn_name_template = ?")
+		args = append(args, *p.SpawnNameTemplate)
+	}
+	if p.SpawnInstructionTemplate != nil {
+		sets = append(sets, "spawn_instruction_template = ?")
+		args = append(args, *p.SpawnInstructionTemplate)
+	}
+	if p.SpawnConcurrencyPolicy != nil {
+		sets = append(sets, "spawn_concurrency_policy = ?")
+		args = append(args, *p.SpawnConcurrencyPolicy)
+	}
+	if p.SpawnMaxLiveWorkers != nil {
+		sets = append(sets, "spawn_max_live_workers = ?")
+		args = append(args, *p.SpawnMaxLiveWorkers)
+	}
+	if p.SpawnWorkerDeadlineSeconds != nil {
+		sets = append(sets, "spawn_worker_deadline_seconds = ?")
+		args = append(args, *p.SpawnWorkerDeadlineSeconds)
+	}
 	if p.OperatorAuthored != nil {
 		sets = append(sets, "operator_authored = ?")
 		args = append(args, boolToInt(*p.OperatorAuthored))
@@ -805,11 +894,13 @@ func UpdateAgentCronJobFields(id int64, p UpdateCronPatch) (int, error) {
 // scheduler-fire of a cron job. Lets `cron logs` show the recent
 // execution history without mining slog output.
 type AgentCronRun struct {
-	ID       int64
-	JobID    int64
-	FiredAt  time.Time
-	Status   string
-	ErrorMsg string
+	ID          int64
+	JobID       int64
+	FiredAt     time.Time
+	Status      string
+	ErrorMsg    string
+	WorkerID    int64
+	WorkerAgent string
 }
 
 // InsertAgentCronRun appends one execution record. Returns the
@@ -820,13 +911,26 @@ func InsertAgentCronRun(r *AgentCronRun) (int64, error) {
 		return 0, err
 	}
 	res, err := d.Exec(`INSERT INTO agent_cron_runs
-		(job_id, fired_at, status, error_msg)
-		VALUES (?, ?, ?, ?)`,
-		r.JobID, dbTime(r.FiredAt.UTC()), r.Status, r.ErrorMsg)
+		(job_id, fired_at, status, error_msg, worker_id, worker_agent)
+		VALUES (?, ?, ?, ?, NULLIF(?,0), ?)`,
+		r.JobID, dbTime(r.FiredAt.UTC()), r.Status, r.ErrorMsg, r.WorkerID, r.WorkerAgent)
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// FinishAgentCronRun records the terminal outcome of a run row inserted before
+// dispatch. Pre-dispatch insertion is what makes restart recovery evidence-
+// first: a crash can leave "running", but can never launch an untracked worker.
+func FinishAgentCronRun(id int64, status, errorMsg string, workerID int64, workerAgent string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`UPDATE agent_cron_runs SET status=?,error_msg=?,worker_id=NULLIF(?,0),worker_agent=? WHERE id=?`,
+		status, errorMsg, workerID, strings.TrimSpace(workerAgent), id)
+	return err
 }
 
 // ListAgentCronRunsForJob returns the most-recent runs for one job,
@@ -844,7 +948,7 @@ func ListAgentCronRunsForJob(jobID int64, limit int) ([]*AgentCronRun, error) {
 	if err != nil {
 		return nil, err
 	}
-	q := `SELECT id, job_id, fired_at, status, error_msg
+	q := `SELECT id, job_id, fired_at, status, error_msg, COALESCE(worker_id,0), worker_agent
 		FROM agent_cron_runs WHERE job_id = ? ORDER BY id DESC`
 	args := []any{jobID}
 	if limit > 0 {
@@ -860,7 +964,7 @@ func ListAgentCronRunsForJob(jobID int64, limit int) ([]*AgentCronRun, error) {
 	for rows.Next() {
 		var r AgentCronRun
 		var fired dbTimestamp
-		if err := rows.Scan(&r.ID, &r.JobID, &fired, &r.Status, &r.ErrorMsg); err != nil {
+		if err := rows.Scan(&r.ID, &r.JobID, &fired, &r.Status, &r.ErrorMsg, &r.WorkerID, &r.WorkerAgent); err != nil {
 			return nil, err
 		}
 		r.FiredAt = fired.Time()
@@ -871,17 +975,23 @@ func ListAgentCronRunsForJob(jobID int64, limit int) ([]*AgentCronRun, error) {
 
 func scanAgentCronJob(s rowScanner) (*AgentCronJob, error) {
 	var j AgentCronJob
+	var rolesJSON string
 	var enabled, runImmediately, queueWhenOffline, operatorAuthored int
 	var created, lastRun dbTimestamp
 	err := s.Scan(&j.ID, &j.Name, &j.OwnerConv, &j.TargetKind, &j.TargetConv, &j.GroupID,
 		&j.IntervalSeconds, &j.Subject, &j.Body, &enabled, &created,
 		&lastRun, &j.LastRunStatus, &j.OwnerAgent, &j.TargetAgent, &j.CronExpr, &j.TargetRole,
-		&j.DisabledReason, &runImmediately, &queueWhenOffline, &operatorAuthored)
+		&j.DisabledReason, &runImmediately, &queueWhenOffline, &operatorAuthored,
+		&j.ActionKind, &j.SpawnProfile, &rolesJSON, &j.SpawnNameTemplate, &j.SpawnInstructionTemplate,
+		&j.SpawnConcurrencyPolicy, &j.SpawnMaxLiveWorkers, &j.SpawnWorkerDeadlineSeconds)
 	if err != nil {
 		return nil, err
 	}
 	if j.TargetKind == "" {
 		j.TargetKind = CronTargetConv
+	}
+	if err := json.Unmarshal([]byte(rolesJSON), &j.SpawnRoleRefs); err != nil {
+		return nil, fmt.Errorf("decode cron job %d spawn roles: %w", j.ID, err)
 	}
 	j.Enabled = enabled != 0
 	j.RunImmediately = runImmediately != 0

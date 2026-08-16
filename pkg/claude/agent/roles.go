@@ -19,8 +19,7 @@ import (
 //
 // A role is a named, reusable bundle of defaults a template roster agent can
 // reference: a canonical role-brief (folded into the agent's startup context),
-// a default launch shape (harness/model/effort/sandbox/approval/tools or a spawn
-// profile), and a default permission set. The CLI twin of the dashboard's
+// and a default permission set. The CLI twin of the dashboard's
 // Roles editor — a thin client over the daemon's /v1/roles endpoints.
 //
 // Verbs: ls, show, create, edit, rm. Writes are gated daemon-side on
@@ -29,19 +28,12 @@ import (
 // roleJSON mirrors the daemon's wire shape (see agentd/roles.go). create /
 // edit accept this JSON via --file; show --json emits it.
 type roleJSON struct {
-	Name           string               `json:"name"`
-	Descr          string               `json:"descr,omitempty"`
-	Brief          string               `json:"brief,omitempty"`
-	SpawnProfile   string               `json:"spawn_profile,omitempty"`
-	Harness        string               `json:"harness,omitempty"`
-	Model          string               `json:"model,omitempty"`
-	Effort         string               `json:"effort,omitempty"`
-	Sandbox        string               `json:"sandbox,omitempty"`
-	Approval       string               `json:"approval,omitempty"`
-	ToolGovernance string               `json:"tools,omitempty"`
-	Permissions    []db.PermissionGrant `json:"permissions"`
-	CreatedAt      string               `json:"created_at,omitempty"`
-	UpdatedAt      string               `json:"updated_at,omitempty"`
+	Name        string               `json:"name"`
+	Descr       string               `json:"descr,omitempty"`
+	Brief       string               `json:"brief,omitempty"`
+	Permissions []db.PermissionGrant `json:"permissions"`
+	CreatedAt   string               `json:"created_at,omitempty"`
+	UpdatedAt   string               `json:"updated_at,omitempty"`
 }
 
 func rolesCmd() *cobra.Command {
@@ -49,9 +41,8 @@ func rolesCmd() *cobra.Command {
 		Use:   "roles",
 		Short: "Manage the role library (named, reusable agent-role defaults)",
 		Long: "List, inspect, create, edit and delete roles. A role is a named bundle of defaults a template roster " +
-			"agent can reference: a canonical role-brief (prepended to that agent's startup context), a default " +
-			"launch shape (harness/model/effort/sandbox/approval/tools or a spawn profile), and a default permission set. " +
-			"A referencing agent's own fields override the role's; the role fills what the agent leaves blank. The " +
+			"agent can reference: a canonical role-brief (prepended to that agent's startup context) and a default permission set. " +
+			"Launch shape is configured independently through spawn profiles. The " +
 			"CLI twin of the dashboard's Roles editor.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
@@ -70,7 +61,7 @@ func rolesLsCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:         "ls",
 		Short:       "List roles in the library",
-		Long:        "Returns every role with its default launch shape, permission count and one-line description.",
+		Long:        "Returns every role with its permission count and one-line description.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
 			os.Exit(runRolesLs(os.Stdout, os.Stderr))
@@ -91,30 +82,13 @@ func runRolesLs(stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "(no roles)")
 		return rcOK
 	}
-	fmt.Fprintf(stdout, "%-16s  %-10s  %-7s  %s\n", "NAME", "LAUNCH", "PERMS", "DESCR")
+	fmt.Fprintf(stdout, "%-16s  %-7s  %s\n", "NAME", "PERMS", "DESCR")
 	fmt.Fprintln(stdout, strings.Repeat("─", 80))
 	for _, rl := range roles {
-		launch := roleLaunchSummary(rl)
-		fmt.Fprintf(stdout, "%-16s  %-10s  %-7d  %s\n",
-			rl.Name, truncate(launch, 10), len(rl.Permissions), truncate(rl.Descr, 40))
+		fmt.Fprintf(stdout, "%-16s  %-7d  %s\n",
+			rl.Name, len(rl.Permissions), truncate(rl.Descr, 40))
 	}
 	return rcOK
-}
-
-// roleLaunchSummary renders a compact one-cell view of a role's default launch
-// shape for the ls table: the spawn-profile name if set, else the model /
-// harness, else "—".
-func roleLaunchSummary(rl roleJSON) string {
-	switch {
-	case rl.SpawnProfile != "":
-		return "@" + rl.SpawnProfile
-	case rl.Model != "":
-		return rl.Model
-	case rl.Harness != "":
-		return rl.Harness
-	default:
-		return "—"
-	}
 }
 
 // ---- show ----
@@ -128,7 +102,7 @@ func rolesShowCmd() *cobra.Command {
 	return boa.CmdT[rolesShowParams]{
 		Use:         "show <name>",
 		Short:       "Show one role in detail",
-		Long:        "Prints a role's brief, default launch shape and default permissions. With --json, emits the raw wire JSON — the same shape 'create' / 'edit' accept via --file.",
+		Long:        "Prints a role's brief and default permissions. With --json, emits the raw wire JSON — the same shape 'create' / 'edit' accept via --file.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *rolesShowParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Name).SetAlternativesFunc(completeRoleNames)
@@ -167,31 +141,15 @@ func runRolesShow(p *rolesShowParams, stdout, stderr io.Writer) int {
 	return rcOK
 }
 
-// printRoleHuman renders a role's human-readable detail view — name, descr, the
-// set launch fields (stable order), the permission slugs, and the brief. The
-// transparency floor for a terminal-driven operator (JOH-351): the same
-// descr / launch / grants / brief the dashboard role-inspect panel surfaces.
+// printRoleHuman renders a role's human-readable detail view — name, descr,
+// permission slugs and brief. This is the transparency floor for a
+// terminal-driven operator: the same behavior/access preset the dashboard
+// role-inspect panel surfaces.
 // Pure (writer in) so it is unit-tested without a daemon.
 func printRoleHuman(w io.Writer, rl roleJSON) {
 	fmt.Fprintf(w, "Role: %s\n", rl.Name)
 	if rl.Descr != "" {
 		fmt.Fprintf(w, "  descr:   %s\n", rl.Descr)
-	}
-	launch := []string{}
-	if rl.SpawnProfile != "" {
-		launch = append(launch, "profile="+rl.SpawnProfile)
-	}
-	// Render launch fields in a stable order.
-	for _, kv := range []struct{ k, v string }{
-		{"harness", rl.Harness}, {"model", rl.Model}, {"effort", rl.Effort},
-		{"sandbox", rl.Sandbox}, {"approval", rl.Approval}, {"tools", rl.ToolGovernance},
-	} {
-		if kv.v != "" {
-			launch = append(launch, kv.k+"="+kv.v)
-		}
-	}
-	if len(launch) > 0 {
-		fmt.Fprintf(w, "  launch:  %s\n", strings.Join(launch, " · "))
 	}
 	if len(rl.Permissions) > 0 {
 		fmt.Fprintf(w, "  perms:   %s\n", strings.Join(permissionGrantDisplays(rl.Permissions), ", "))
@@ -215,8 +173,7 @@ func rolesCreateCmd() *cobra.Command {
 		Use:   "create --file <path>",
 		Short: "Create a role from a JSON file",
 		Long: "Reads a role definition as JSON from --file (or --file - for stdin) and creates it. The JSON shape is " +
-			"what 'roles show <name> --json' emits: {name, descr, brief, spawn_profile, harness, model, effort, " +
-			"sandbox, approval, permissions}. A role carries a multi-line brief, so it is supplied as a file rather " +
+			"what 'roles show <name> --json' emits: {name, descr, brief, permissions}. A role carries a multi-line brief, so it is supplied as a file rather " +
 			"than via flags.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *rolesCreateParams, _ *cobra.Command, _ []string) {

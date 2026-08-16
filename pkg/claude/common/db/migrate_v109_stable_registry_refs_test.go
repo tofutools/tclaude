@@ -35,8 +35,8 @@ func TestMigrateV108toV109BackfillsStableRegistryReferences(t *testing.T) {
 	require.NoError(t, err)
 	_, err = SetAgentGroupDeployMeta("legacy-group", "", "legacy-template")
 	require.NoError(t, err)
-	_, err = CreateRole(&Role{Name: "legacy-ref-role", SpawnProfile: "legacy-profile"})
-	require.NoError(t, err)
+	mustExec(t, d, `INSERT INTO roles (name, spawn_profile, permissions, created_at, updated_at)
+		VALUES ('legacy-ref-role', 'legacy-profile', '[]', 0, 0)`)
 	require.NoError(t, SetDashboardPref("tclaude.dash.default_profile", "legacy-profile"))
 	require.NoError(t, DeleteDashboardPref("tclaude.dash.default_profile_id"))
 	require.NoError(t, UpsertWaveChoreography(&WaveChoreography{

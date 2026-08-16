@@ -23,6 +23,7 @@ type usageHistoryResp struct {
 		Points     []struct {
 			At       string  `json:"at"`
 			Pct      float64 `json:"pct"`
+			ResetsAt string  `json:"resets_at"`
 			Excluded bool    `json:"excluded"`
 		} `json:"points"`
 		Resets []struct {
@@ -31,8 +32,35 @@ type usageHistoryResp struct {
 		Forecast struct {
 			Status      string  `json:"status"`
 			BaselinePct float64 `json:"baseline_pct"`
+			ResetAt     string  `json:"reset_at"`
 		} `json:"forecast"`
 	} `json:"series"`
+}
+
+func TestDashboardUsageHistoryDerivesDocumentedCopilotReset(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	newFlow(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	observed := now.Add(-time.Minute)
+	_, err := db.SaveSubscriptionUsageSample(db.SubscriptionUsageSample{
+		Provider: db.SubscriptionProviderGitHub, ObservedAt: observed,
+		Source: "account.getQuota", Windows: []db.SubscriptionUsageWindow{{
+			Name: "monthly", UsedPercent: 7,
+			ResetsAt: observed.Add(-12 * time.Hour), // Old CLI payload mapped timestamp_utc as resetDate.
+		}},
+	})
+	require.NoError(t, err)
+
+	rec := testharness.Serve(agentd.BuildDashboardHandlerForTest(),
+		testharness.JSONRequest(t, http.MethodGet, "/api/usage-history?hours=24", nil))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var out usageHistoryResp
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	require.Len(t, out.Series, 1)
+	require.Len(t, out.Series[0].Points, 1)
+	wantReset := time.Date(observed.Year(), observed.Month()+1, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339Nano)
+	assert.Equal(t, wantReset, out.Series[0].Points[0].ResetsAt)
+	assert.Equal(t, wantReset, out.Series[0].Forecast.ResetAt)
 }
 
 func TestDashboardUsageHistoryExcludesAndRestoresPoint(t *testing.T) {

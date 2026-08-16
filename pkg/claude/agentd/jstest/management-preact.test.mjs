@@ -61,14 +61,16 @@ async function waitForCondition(harness, condition, message) {
 test('management model preserves full-replace profile and role semantics', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/management-model.js');
-  const original = { name: 'old', aliases: ['codex-reviewer'], harness: 'codex', approval: 'never', auto_review: true, model: 'gpt-5', disabled: false, disabled_reason: 'previous outage', operator_only: true };
+  const original = { name: 'old', aliases: ['codex-reviewer'], harness: 'codex', approval: 'never', auto_review: true, model: 'gpt-5', role_refs: ['reviewer', 'go-maintainer'], disabled: false, disabled_reason: 'previous outage', operator_only: true };
   const draft = model.profileDraft(original, {}, catalog); draft.name = 'renamed'; draft.trust_dir = '1';
   assert.equal(draft.approval_reviewer, 'auto_review');
+  assert.deepEqual(draft.role_refs, ['reviewer', 'go-maintainer']);
   draft.aliases_text += ', cold-reviewer';
   const payload = model.profilePayload(draft, original, catalog);
   assert.equal(payload.name, 'renamed'); assert.equal(payload.approval, 'never'); assert.equal(payload.auto_review, true); assert.equal(payload.trust_dir, true);
   assert.equal(payload.disabled, false); assert.equal(payload.disabled_reason, 'previous outage');
   assert.equal(payload.operator_only, true);
+  assert.deepEqual(payload.role_refs, ['reviewer', 'go-maintainer']);
   draft.approval_reviewer = 'human'; assert.equal(model.profilePayload(draft, original, catalog).auto_review, false);
   assert.deepEqual(payload.aliases, ['codex-reviewer', 'cold-reviewer']);
   draft.harness = 'claude'; draft.approval = 'plan'; draft.sandbox = 'on';
@@ -82,8 +84,10 @@ test('management model preserves full-replace profile and role semantics', async
   assert.equal(toOpenCode.trust_dir, undefined, 'a harness with no trust dialog drops trust_dir');
   const role = model.roleDraft({ name: 'reviewer', permissions: ['read'] }, catalog);
   assert.deepEqual(model.rolePayload(role, catalog).permissions, ['read']);
-  const openCodeRole = model.roleDraft({ name: 'locked', harness: 'opencode', tools: 'ask' }, catalog);
-  assert.equal(model.rolePayload(openCodeRole, catalog).tools, 'ask');
+  const legacyRole = model.roleDraft({ name: 'locked', harness: 'opencode', tools: 'ask', model: 'old-model' }, catalog);
+  assert.deepEqual(model.rolePayload(legacyRole, catalog), {
+    name: 'locked', descr: '', brief: '', permissions: [],
+  }, 'role payloads contain behavior/access only, even for legacy rows');
   const defaults = model.profileDraft(null, {}, catalog); assert.equal(defaults.sandbox, 'inherit'); assert.equal(defaults.approval, 'inherit'); assert.equal(defaults.ask_user_question_timeout, 'inherit');
   const legacyCodex = model.profileDraft({ name: 'legacy', harness: 'codex', approval: '' }, {}, catalog);
   assert.equal(legacyCodex.approval, 'never', 'an empty legacy Codex profile renders the explicit daemon default');
@@ -499,9 +503,7 @@ test('OpenCode profile editor replaces the unsandboxed warning with its tclaude-
   cleanups.reverse().forEach((fn) => fn());
 });
 
-// The role editor shares HarnessFields, so it must show the same warning under
-// its own element id — asserted here, not just by comment.
-test('role editor shows the unsandboxed-autonomy warning', async (t) => {
+test('role editor carries no launch controls or autonomy warning', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
@@ -511,26 +513,22 @@ test('role editor shows the unsandboxed-autonomy warning', async (t) => {
   const cleanups = [];
   const host = harness.document.createElement('div');
   harness.document.body.appendChild(host);
-  const loadUnsandboxedAutonomy = async ({ sandbox, approval }) => ({
-    warnings: sandbox === 'off' && approval === 'auto' ? ['⚠ this role runs commands unattended with no sandbox.'] : [],
-  });
+  let autonomyLoads = 0;
+  const loadUnsandboxedAutonomy = async () => { autonomyLoads += 1; return { warnings: ['unexpected'] }; };
   mountManagementIsland({
     host, state,
     actions: { async saveRole() {}, loadUnsandboxedAutonomy },
     confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); },
   });
   await harness.act(() => Promise.resolve());
-  await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 260)); });
-
-  const warning = host.querySelector('#role-editor-autonomy-warning');
-  assert.ok(warning, 'the role editor renders the warning under its own id');
-  assert.equal(warning.querySelector('[role="alert"]').getAttribute('role'), 'alert');
-  assert.match(warning.textContent, /commands unattended/);
+  assertAbsent(host.querySelector('#role-editor-autonomy-warning'));
+  assertAbsent(host.querySelector('#role-editor-harness'));
+  assertAbsent(host.querySelector('#role-editor-model'));
+  assert.equal(autonomyLoads, 0, 'a behavior/access preset never probes launch posture');
   cleanups.reverse().forEach((fn) => fn());
 });
 
-// A role editor shares HarnessFields, so it gets the same warning; and an
-// actions object without the probe method (older callers, or a harness that
+// An actions object without the probe method (older callers, or a harness that
 // never wires it) must simply render no warning rather than throw.
 test('profile editor tolerates an actions object without the autonomy probe', async (t) => {
   const harness = await createPreactHarness(t);
@@ -568,7 +566,7 @@ test('profile choices expose aliases as distinct handles tied to one profile', a
     agent_name: 'worker', role: 'reviewer', descr: 'cold\nreview', initial_message: 'check this',
     sync_worktree: true, auto_focus: false, include_group_default_context: true, is_owner: false,
     permission_overrides: {
-      'human.notify': 'grant', 'groups.spawn': 'deny',
+      'human.notify': 'grant', 'groups.members.spawn': 'deny',
       'routes.publish': { effect: 'grant', scope: { group: ['tofutools'] } },
     },
   }), [
@@ -577,7 +575,7 @@ test('profile choices expose aliases as distinct handles tied to one profile', a
     'ask-timeout 5m', 'auto-review off', 'trust-dir on', 'remote-control off', 'auto-memory on',
     'name worker', 'role reviewer', 'descr cold review', 'initial message · 10 chars',
     'sync-wt on', 'focus off', 'group-ctx on', 'owner off',
-    'perm groups.spawn deny', 'perm human.notify grant', 'perm routes.publish grant[group=tofutools]',
+    'perm groups.members.spawn deny', 'perm human.notify grant', 'perm routes.publish grant[group=tofutools]',
   ]);
 });
 
@@ -1210,6 +1208,22 @@ test('sandbox access-axis model preserves legacy meaning and validates structure
       (rule) => rule.startsWith('Block: every other host path')),
     'a constructed root must appear as a visible filesystem rule',
   );
+  const confinedSocketBuckets = model.sandboxRuleBuckets({
+    filesystem: { outcome: 'enforced', detail: '' },
+    unix_sockets: {
+      outcome: 'enforced',
+      detail: 'bubblewrap enforces closed Unix-socket access; filesystem mounts compose with Unix-socket isolation',
+    },
+    constructed_root: true,
+  }, {
+    filesystem: [{ path: '/home/operator/work', access: 'write' }],
+    network: { mode: 'list' },
+    unix_sockets: { mode: 'closed' },
+  });
+  assert.deepEqual(confinedSocketBuckets.applied.reasons, [{
+    label: 'Note',
+    detail: 'bubblewrap enforces closed Unix-socket access; filesystem mounts compose with Unix-socket isolation',
+  }], 'a fully enforced constructed-root socket boundary keeps its composition note visible');
   const inheritedRootBuckets = model.sandboxRuleBuckets({
     filesystem: { outcome: 'enforced', detail: '' },
     unix_sockets: { outcome: 'enforced', detail: '' },
@@ -1664,6 +1678,121 @@ test('sandbox editor offers Mach registration only on a macOS agentd', async (t)
   });
   await harness.act(() => Promise.resolve());
   assertAbsent(host.querySelector('#sandbox-profile-editor-compatibility-section'));
+  unmount();
+});
+
+test('sandbox editor discloses the Linux filesystem-root consequence of blocking Unix sockets', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: {
+      name: 'linux-closed', filesystem: [], environment: [],
+      network: { baseline: 'allow', deny: [{ domain: 'blocked.example' }] },
+      unix_sockets: { mode: '' },
+    },
+    options: {}, sandboxImpl: { ...sandboxImpl, platform: 'linux' },
+  });
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state);
+  await harness.act(() => Promise.resolve());
+  assertAbsent(host.querySelector('.sbx-unix-root-note'));
+
+  const mode = host.querySelector('#sandbox-profile-editor-unix-sockets-mode');
+  choose(mode, 'closed');
+  await harness.act(() => harness.fireEvent(mode, 'change'));
+  const note = host.querySelector('.sbx-unix-root-note');
+  assert.ok(note);
+  assert.equal(note.closest('.sbx-access-axis').id,
+    'sandbox-profile-editor-unix-sockets-section',
+    'the warning stays with the Unix-socket choice instead of appearing after target selection');
+  assert.match(note.textContent,
+    /No access.*Packet filtering.*Private, routed network namespace.*Separate filesystem root/s);
+  assert.match(note.textContent, /harness state/);
+  assert.equal(note.querySelectorAll('.sbx-unix-root-prerequisite.is-aligned').length, 3);
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-engine')), 'packet');
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-namespace')), 'private');
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-filesystem-root')), '',
+    'Automatic remains automatic because this boundary already resolves it to a constructed root');
+  assertAbsent(host.querySelector('.sbx-socket-adjustment-notice'),
+    'the editor shows the resulting boundary, not an intermittent interaction-history banner');
+
+  const advanced = host.querySelector('.sbx-advanced-toggle');
+  await harness.act(() => harness.fireEvent(advanced, 'click'));
+  await harness.act(() => harness.fireEvent(advanced, 'click'));
+  const remountedMode = host.querySelector('#sandbox-profile-editor-unix-sockets-mode');
+  choose(remountedMode, 'open');
+  await harness.act(() => harness.fireEvent(remountedMode, 'change'));
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-engine')), '');
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-namespace')), '');
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-filesystem-root')), '');
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-baseline')), 'allow');
+  assert.equal(host.querySelector('#sandbox-profile-editor-network-section .sbx-network-value').value,
+    'blocked.example', 'undoing generated enforcement settings preserves authored network rules');
+  assertAbsent(host.querySelector('.sbx-unix-root-note'));
+
+  state.closeDialog();
+  await harness.act(() => Promise.resolve());
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: {
+      name: 'legacy-linux-auto-root', filesystem: [], environment: [],
+      network: { baseline: 'allow', engine: 'packet', namespace: 'private' },
+      unix_sockets: { mode: 'closed' },
+    },
+    options: {}, sandboxImpl: { ...sandboxImpl, platform: 'linux' },
+  });
+  await harness.act(() => Promise.resolve());
+  assertAbsent(host.querySelector('.sbx-unix-root-note-incomplete'));
+  assert.match(host.querySelector('.sbx-unix-root-note').textContent,
+    /Separate filesystem root.*Automatic — required by this socket boundary/s,
+    'Automatic root is aligned because the socket and network rules resolve it to a constructed root');
+
+  state.closeDialog();
+  await harness.act(() => Promise.resolve());
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: { name: 'legacy-linux-closed', filesystem: [], environment: [], unix_sockets: { mode: 'closed' } },
+    options: {}, sandboxImpl: { ...sandboxImpl, platform: 'linux' },
+  });
+  await harness.act(() => Promise.resolve());
+  const incomplete = host.querySelector('.sbx-unix-root-note-incomplete');
+  assert.match(incomplete.textContent,
+    /needs 2 setting changes.*Packet filtering.*Currently: No override.*Private, routed network namespace.*Currently: No override.*Separate filesystem root.*Automatic — required by this socket boundary.*partially enforced/s);
+  assert.equal(incomplete.querySelectorAll('.sbx-unix-root-prerequisite.is-missing').length, 2);
+  assert.match(incomplete.querySelector('button').textContent, /Apply 2 required settings/);
+  await harness.act(() => harness.fireEvent(incomplete.querySelector('button'), 'click'));
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-engine')), 'packet');
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-namespace')), 'private');
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-filesystem-root')), '',
+    'Apply changes exactly the two missing settings and preserves the aligned Automatic root');
+  assertAbsent(host.querySelector('.sbx-unix-root-note-incomplete'));
+  assert.match(host.querySelector('.sbx-unix-root-note').textContent, /other host paths and abstract Unix sockets do not/);
+
+  const legacyAdvanced = host.querySelector('.sbx-advanced-toggle');
+  await harness.act(() => harness.fireEvent(legacyAdvanced, 'click'));
+  const rawNetwork = host.querySelector('#sandbox-profile-editor-network');
+  const editedNetwork = JSON.parse(rawNetwork.value);
+  editedNetwork.namespace = 'host';
+  rawNetwork.value = JSON.stringify(editedNetwork, null, 2);
+  await harness.act(() => harness.fireEvent(rawNetwork, 'input'));
+  await harness.act(() => harness.fireEvent(legacyAdvanced, 'click'));
+  assert.match(host.querySelector('.sbx-unix-root-note-incomplete').textContent,
+    /needs 1 setting change.*Private, routed network namespace.*Currently: Shared host/s,
+    'a raw edit to a generated field invalidates the reversible alignment record');
+
+  state.closeDialog();
+  await harness.act(() => Promise.resolve());
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: { name: 'darwin-closed', filesystem: [], environment: [], unix_sockets: { mode: 'closed' } },
+    options: {}, sandboxImpl: { ...sandboxImpl, platform: 'darwin' },
+  });
+  await harness.act(() => Promise.resolve());
+  assertAbsent(host.querySelector('.sbx-unix-root-note'),
+    'the consequence is specific to Linux tclaude-layer enforcement');
   unmount();
 });
 
@@ -3540,19 +3669,67 @@ test('common-rule controls are described and named for assistive technology', as
   unmount();
 });
 
-test('role editor preserves missing profile references and nested permission focus', async (t) => {
+test('role editor preserves nested permission focus and saves behavior/access only', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
   ]);
-  const state = createManagementState(); state.openDialog({ kind: 'role-editor', seed: { name: 'reviewer', spawn_profile: 'removed-profile', permissions: ['read'] }, catalog, slugs: [{ slug: 'read' }, { slug: 'write', description: 'write things' }] });
-  let saved = null; const actions = { async saveRole(value) { saved = value; state.closeDialog(); } }; const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
-  mountManagementIsland({ host, state, actions, confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } }); await harness.act(() => Promise.resolve());
-  const profile = [...host.querySelectorAll('option')].find((option) => option.value === 'removed-profile'); assert.match(profile.textContent, /missing/);
-  assert.match(host.querySelector('#role-editor-name').placeholder, /reviewer/); assert.equal(host.querySelector('#role-editor-model').tagName, 'SELECT'); assert.ok([...host.querySelector('#role-editor-harness').options].some((option) => option.value === 'claude'));
-  const write = [...host.querySelectorAll('.ta-perms-list input')][1]; write.focus(); write.checked = true; write.dispatchEvent(new harness.window.Event('change', { bubbles: true })); await harness.act(() => Promise.resolve());
-  assertSameNode(harness.document.activeElement, write); assert.match(host.querySelector('.cron-create-label').parentElement.parentElement.textContent, /reviewer|Role/i);
+  const state = createManagementState(); state.openDialog({ kind: 'role-editor', seed: { name: 'reviewer', spawn_profile: 'removed-profile', model: 'legacy-model', permissions: ['read'] }, catalog, slugs: [{ slug: 'read' }, { slug: 'write', description: 'write things' }] });
+  let saved = null; let permissionOptions = null; const actions = { async saveRole(value) { saved = value; state.closeDialog(); } }; const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  mountManagementIsland({ host, state, actions, confirmDiscard: async () => true, openProfilePermissions(options) { permissionOptions = options; }, registerCleanup(fn) { cleanups.push(fn); } }); await harness.act(() => Promise.resolve());
+  assert.match(host.querySelector('#role-editor-name').placeholder, /reviewer/);
+  assertAbsent(host.querySelector('#role-editor-model')); assertAbsent(host.querySelector('#role-editor-harness'));
+  const permissions = host.querySelector('#role-editor-perms'); permissions.focus(); permissions.click(); await harness.act(() => Promise.resolve());
+  assertSameNode(harness.document.activeElement, permissions); assert.equal(permissionOptions.grantOnly, true);
+  await harness.act(() => permissionOptions.onSave({ read: 'grant', write: 'grant' }));
   host.querySelector('#role-editor-modal .primary').click(); await harness.act(() => Promise.resolve()); assert.ok(saved); assert.deepEqual(saved.payload.permissions, ['read', 'write']);
+  assert.equal(saved.payload.spawn_profile, undefined); assert.equal(saved.payload.model, undefined);
+  cleanups.reverse().forEach((fn) => fn());
+});
+
+test('profile editor composes inspectable roles into its permission preview', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.roles.value = [
+    { name: 'reviewer', descr: 'Checks correctness', brief: 'Review the change.', permissions: ['messages.send'] },
+    { name: 'maintainer', descr: 'Maintains Go code', brief: 'Keep the tree healthy.', permissions: [{ slug: 'groups.members.spawn', scope: { group: ['alpha'] } }] },
+  ];
+  state.openDialog({ kind: 'profile-editor', seed: { name: 'review-kit', harness: 'claude', role_refs: ['reviewer'] }, options: {}, catalog });
+  let permissionOptions = null;
+  let saved = null;
+  const cleanups = [];
+  const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  mountManagementIsland({
+    host, state,
+    actions: { async saveProfile(value) { saved = value; } },
+    confirmDiscard: async () => true,
+    openProfilePermissions(options) { permissionOptions = options; },
+    registerCleanup(fn) { cleanups.push(fn); },
+  });
+  await harness.act(() => Promise.resolve());
+
+  const reviewer = host.querySelector('.role-chip-inspect');
+  assert.match(reviewer.title, /Checks correctness/);
+  assert.match(reviewer.title, /messages.send/);
+  reviewer.click(); await harness.act(() => Promise.resolve());
+  assert.match(host.querySelector('.agent-spawn-role-inspect').textContent, /Review the change/);
+
+  const add = host.querySelector('#profile-editor-role-add');
+  choose(add, 'maintainer');
+  add.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual([...host.querySelectorAll('.role-chip-inspect')].map((chip) => chip.textContent), ['reviewer', 'maintainer']);
+
+  host.querySelector('#profile-editor-perms').click();
+  assert.deepEqual(permissionOptions.roleGrants, [
+    { slug: 'messages.send', scope: '', role: 'reviewer' },
+    { slug: 'groups.members.spawn', scope: 'group=alpha', role: 'maintainer' },
+  ]);
+  host.querySelector('#profile-editor-submit').click(); await harness.act(() => Promise.resolve());
+  assert.deepEqual(saved.payload.role_refs, ['reviewer', 'maintainer']);
   cleanups.reverse().forEach((fn) => fn());
 });
 
@@ -4060,6 +4237,11 @@ test('network filtering engine is authorable, survives a baseline change, and is
     network: { baseline: 'deny', allow: [{ domain: 'example.com' }], engine: 'proxy' },
     unix_sockets: { mode: '', allow: [] },
   }).network.engine, 'proxy');
+  assert.equal(model.sandboxProfileForWire({
+    name: 'private', filesystem: [], environment: [],
+    network: { baseline: 'allow', namespace: 'private' },
+    unix_sockets: { mode: '', allow: [] },
+  }).network.namespace, 'private');
   assert.equal(Object.hasOwn(model.sandboxProfileForWire({
     name: 'plain', filesystem: [], environment: [],
     network: { baseline: 'deny', allow: [{ domain: 'example.com' }] },
@@ -4075,6 +4257,9 @@ test('network filtering engine is authorable, survives a baseline change, and is
   assert.match(model.sandboxAccessDraftErrors({
     network: { baseline: 'deny', packs: [], deny_packs: [], allow: [], deny: [], engine: 'socks' },
   }).join(' '), /filtering engine is invalid/);
+  assert.match(model.sandboxAccessDraftErrors({
+    network: { baseline: 'allow', packs: [], deny_packs: [], allow: [], deny: [], namespace: 'container' },
+  }).join(' '), /namespace is invalid/);
   assert.deepEqual(model.sandboxAccessDraftErrors({
     name: 'ok', filesystem: [], environment: [],
     network: { baseline: 'deny', packs: [], deny_packs: [], allow: [], deny: [], engine: 'proxy' },
@@ -4110,10 +4295,24 @@ test('profile editor engine control selects an engine and keeps it across a base
 
   const engine = host.querySelector('#sandbox-profile-editor-network-engine');
   assert.ok(engine, 'the editor offers a filtering-engine control');
+  assert.deepEqual([...host.querySelectorAll('.sbx-network-control-kind')].map((node) => node.textContent),
+    ['Traffic policy', 'Filtering mechanism', 'Network isolation']);
+  assert.match(host.querySelector('.sbx-network-controls').textContent,
+    /What destinations are permitted.*How destination rules are enforced.*Whether the agent shares host localhost/s);
   assert.deepEqual([...engine.options].map((option) => option.value),
     ['', 'packet', 'proxy']);
   choose(engine, 'proxy');
   await harness.act(() => harness.fireEvent(engine, 'change'));
+
+  const namespace = host.querySelector('#sandbox-profile-editor-network-namespace');
+  assert.ok(namespace, 'the editor offers a network-namespace control');
+  assert.deepEqual([...namespace.options].map((option) => option.value),
+    ['', 'host', 'private']);
+  choose(namespace, 'private');
+  await harness.act(() => harness.fireEvent(namespace, 'change'));
+  assert.match(host.textContent, /host localhost services, IDE bridges/);
+  assert.equal(engine.disabled, false, 'engine remains independent of the baseline and namespace');
+  assert.equal(namespace.disabled, false, 'private routing remains valid with the proxy engine');
 
   // Changing the baseline must not clear the engine: it is not one of the
   // rules the baseline governs, and losing it would swap the mechanism as a
@@ -4124,10 +4323,14 @@ test('profile editor engine control selects an engine and keeps it across a base
   assert.equal(
     host.querySelector('#sandbox-profile-editor-network-engine').value, 'proxy',
     'the engine survives a baseline change');
+  assert.equal(
+    host.querySelector('#sandbox-profile-editor-network-namespace').value, 'private',
+    'the namespace survives a baseline change');
 
   await harness.act(() => harness.fireEvent(
     host.querySelector('#sandbox-profile-editor-submit'), 'click'));
   assert.equal(saved.draft.network.engine, 'proxy');
+  assert.equal(saved.draft.network.namespace, 'private');
   assert.equal(saved.draft.network.baseline, 'allow');
 
   unmount();
@@ -4148,7 +4351,7 @@ test('cloning a spawn profile opens a create-mode editor on a free, alias-safe h
   const source = {
     name: 'luna', aliases: ['moon'], operator_only: true, harness: 'codex',
     model: 'gpt-5.6-luna', effort: 'high', sandbox: 'workspace-write',
-    approval: 'never', permission_overrides: { 'groups.spawn': 'grant' },
+    approval: 'never', permission_overrides: { 'groups.members.spawn': 'grant' },
   };
   const profiles = [source, { name: 'other', aliases: ['luna-copy'] }];
   const created = [];
@@ -4203,7 +4406,7 @@ test('cloning a spawn profile opens a create-mode editor on a free, alias-safe h
     {
       name: 'luna-copy-2', harness: 'codex', model: 'gpt-5.6-luna', effort: 'high',
       sandbox: 'workspace-write', approval: 'never', operator_only: true,
-      permission_overrides: { 'groups.spawn': 'grant' },
+      permission_overrides: { 'groups.members.spawn': 'grant' },
     },
   );
 

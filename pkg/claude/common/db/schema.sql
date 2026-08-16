@@ -260,7 +260,7 @@ CREATE TABLE "agent_cron_jobs" (
 			last_run_at      INTEGER,
 			last_run_status  TEXT NOT NULL DEFAULT ''
 		, target_kind TEXT NOT NULL DEFAULT 'conv'
-			CHECK (target_kind IN ('conv', 'group')), cron_expr TEXT NOT NULL DEFAULT '', target_role TEXT NOT NULL DEFAULT '', disabled_reason TEXT NOT NULL DEFAULT '', run_immediately INTEGER NOT NULL DEFAULT 0, queue_when_offline INTEGER NOT NULL DEFAULT 0, operator_authored INTEGER NOT NULL DEFAULT 0) STRICT;
+			CHECK (target_kind IN ('conv', 'group')), cron_expr TEXT NOT NULL DEFAULT '', target_role TEXT NOT NULL DEFAULT '', disabled_reason TEXT NOT NULL DEFAULT '', run_immediately INTEGER NOT NULL DEFAULT 0, queue_when_offline INTEGER NOT NULL DEFAULT 0, operator_authored INTEGER NOT NULL DEFAULT 0, action_kind TEXT NOT NULL DEFAULT 'message' CHECK (action_kind IN ('message','spawn')), spawn_profile TEXT NOT NULL DEFAULT '', spawn_role_refs_json TEXT NOT NULL DEFAULT '[]', spawn_name_template TEXT NOT NULL DEFAULT '', spawn_instruction_template TEXT NOT NULL DEFAULT '', spawn_concurrency_policy TEXT NOT NULL DEFAULT 'Forbid' CHECK (spawn_concurrency_policy IN ('Forbid','Replace','Allow')), spawn_max_live_workers INTEGER NOT NULL DEFAULT 1 CHECK (spawn_max_live_workers > 0), spawn_worker_deadline_seconds INTEGER NOT NULL DEFAULT 0 CHECK (spawn_worker_deadline_seconds >= 0)) STRICT;
 
 CREATE INDEX idx_agent_cron_jobs_owner ON agent_cron_jobs(owner_agent);
 
@@ -272,7 +272,7 @@ CREATE TABLE "agent_cron_runs" (
 			fired_at  INTEGER NOT NULL,
 			status    TEXT NOT NULL DEFAULT '',
 			error_msg TEXT NOT NULL DEFAULT ''
-		) STRICT;
+		, worker_id INTEGER, worker_agent TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE INDEX idx_agent_cron_runs_job
 			ON agent_cron_runs(job_id, fired_at DESC);
@@ -501,7 +501,7 @@ CREATE TABLE "pending_spawns" (
 			worktree_path   TEXT NOT NULL DEFAULT '',
 			worktree_branch TEXT NOT NULL DEFAULT '',
 			created_at      INTEGER NOT NULL
-		, reply_to_agent TEXT NOT NULL DEFAULT '', spawned_by_agent TEXT NOT NULL DEFAULT '', is_owner INTEGER NOT NULL DEFAULT 0, permission_overrides TEXT NOT NULL DEFAULT '', process_command_id TEXT NOT NULL DEFAULT '', effective_sandbox_config TEXT NOT NULL DEFAULT '', agent_id TEXT NOT NULL DEFAULT '', launching INTEGER NOT NULL DEFAULT 0, task_url TEXT NOT NULL DEFAULT '', task_label TEXT NOT NULL DEFAULT '', profile_context TEXT NOT NULL DEFAULT '', codex_app_server INTEGER, codex_app_server_source TEXT NOT NULL DEFAULT '', codex_state_root TEXT NOT NULL DEFAULT '', codex_state_root_source TEXT NOT NULL DEFAULT '') STRICT;
+		, reply_to_agent TEXT NOT NULL DEFAULT '', spawned_by_agent TEXT NOT NULL DEFAULT '', is_owner INTEGER NOT NULL DEFAULT 0, permission_overrides TEXT NOT NULL DEFAULT '', process_command_id TEXT NOT NULL DEFAULT '', effective_sandbox_config TEXT NOT NULL DEFAULT '', agent_id TEXT NOT NULL DEFAULT '', launching INTEGER NOT NULL DEFAULT 0, task_url TEXT NOT NULL DEFAULT '', task_label TEXT NOT NULL DEFAULT '', profile_context TEXT NOT NULL DEFAULT '', codex_app_server INTEGER, codex_app_server_source TEXT NOT NULL DEFAULT '', codex_state_root TEXT NOT NULL DEFAULT '', codex_state_root_source TEXT NOT NULL DEFAULT '', fast_mode_at_launch INTEGER) STRICT;
 
 CREATE UNIQUE INDEX idx_pending_spawns_process_command ON pending_spawns(process_command_id) WHERE process_command_id <> '';
 
@@ -527,7 +527,7 @@ CREATE TABLE "spawn_profiles" (
 			include_group_default_context INTEGER,
 			created_at                    INTEGER NOT NULL,
 			updated_at                    INTEGER NOT NULL
-		, remote_control INTEGER, is_owner INTEGER, permission_overrides TEXT NOT NULL DEFAULT '', ask_user_question_timeout TEXT NOT NULL DEFAULT '', disabled_reason TEXT NOT NULL DEFAULT '', disabled INTEGER NOT NULL DEFAULT 0, auto_memory INTEGER, tools TEXT NOT NULL DEFAULT '', context_features TEXT NOT NULL DEFAULT '', auto_compact_window TEXT NOT NULL DEFAULT '', ssh_workaround INTEGER, sandbox_implementation TEXT NOT NULL DEFAULT '', operator_only INTEGER NOT NULL DEFAULT 0, startup_context TEXT NOT NULL DEFAULT '', context_window_max INTEGER NOT NULL DEFAULT 0, copilot_api INTEGER, fast_mode INTEGER, codex_app_server INTEGER) STRICT;
+		, remote_control INTEGER, is_owner INTEGER, permission_overrides TEXT NOT NULL DEFAULT '', ask_user_question_timeout TEXT NOT NULL DEFAULT '', disabled_reason TEXT NOT NULL DEFAULT '', disabled INTEGER NOT NULL DEFAULT 0, auto_memory INTEGER, tools TEXT NOT NULL DEFAULT '', context_features TEXT NOT NULL DEFAULT '', auto_compact_window TEXT NOT NULL DEFAULT '', ssh_workaround INTEGER, sandbox_implementation TEXT NOT NULL DEFAULT '', operator_only INTEGER NOT NULL DEFAULT 0, startup_context TEXT NOT NULL DEFAULT '', context_window_max INTEGER NOT NULL DEFAULT 0, copilot_api INTEGER, fast_mode INTEGER, codex_app_server INTEGER, role_ref TEXT NOT NULL DEFAULT '', role_refs TEXT NOT NULL DEFAULT '[]') STRICT;
 
 CREATE TRIGGER spawn_profile_name_not_alias_insert
 		BEFORE INSERT ON spawn_profiles
@@ -794,7 +794,7 @@ CREATE TABLE "sandbox_profiles" (
 			environment_json TEXT NOT NULL DEFAULT '[]',
 			created_at       INTEGER NOT NULL,
 			updated_at       INTEGER NOT NULL
-		, includes_json TEXT NOT NULL DEFAULT '[]', agent_directories_json TEXT NOT NULL DEFAULT '[]', network_access TEXT NOT NULL DEFAULT '', network_json TEXT NOT NULL DEFAULT '', unix_sockets_json TEXT NOT NULL DEFAULT '', filesystem_spellings_json TEXT NOT NULL DEFAULT '', resource_limits_json TEXT NOT NULL DEFAULT '{}', darwin_allow_mach_register INTEGER NOT NULL DEFAULT 0 CHECK (darwin_allow_mach_register IN (0, 1)), pre_launch_json TEXT NOT NULL DEFAULT '[]') STRICT;
+		, includes_json TEXT NOT NULL DEFAULT '[]', agent_directories_json TEXT NOT NULL DEFAULT '[]', network_access TEXT NOT NULL DEFAULT '', network_json TEXT NOT NULL DEFAULT '', unix_sockets_json TEXT NOT NULL DEFAULT '', filesystem_spellings_json TEXT NOT NULL DEFAULT '', resource_limits_json TEXT NOT NULL DEFAULT '{}', darwin_allow_mach_register INTEGER NOT NULL DEFAULT 0 CHECK (darwin_allow_mach_register IN (0, 1)), pre_launch_json TEXT NOT NULL DEFAULT '[]', filesystem_root TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE TABLE "agent_group_permissions" (
 			group_id   INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
@@ -1321,4 +1321,144 @@ CREATE TABLE codex_native_permission_profiles (
 			cleanup_pending INTEGER NOT NULL DEFAULT 0 CHECK (cleanup_pending IN (0, 1)),
 			created_at   INTEGER NOT NULL
 		, owner_agent_id TEXT NOT NULL DEFAULT '', owner_conv_id TEXT NOT NULL DEFAULT '', launch_id TEXT NOT NULL DEFAULT '', launch_ready INTEGER NOT NULL DEFAULT 0 CHECK (launch_ready IN (0, 1))) STRICT;
+
+CREATE TABLE trigger_firings (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			rule_id INTEGER REFERENCES trigger_rules(id) ON DELETE SET NULL,
+			rule_revision INTEGER NOT NULL,
+			event_id INTEGER NOT NULL REFERENCES trigger_pr_events(id) ON DELETE CASCADE,
+			event_ref TEXT NOT NULL,
+			outcome TEXT NOT NULL,
+			detail TEXT NOT NULL DEFAULT '',
+			started_at INTEGER NOT NULL,
+			finished_at INTEGER,
+			UNIQUE(rule_id, rule_revision, event_id)
+		) STRICT;
+
+CREATE INDEX idx_trigger_firings_rule ON trigger_firings(rule_id, started_at DESC);
+
+CREATE TABLE trigger_action_outcomes (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			firing_id INTEGER NOT NULL REFERENCES trigger_firings(id) ON DELETE CASCADE,
+			action_index INTEGER NOT NULL,
+			action_type TEXT NOT NULL,
+			outcome TEXT NOT NULL,
+			detail TEXT NOT NULL DEFAULT '',
+			spawned_agent TEXT NOT NULL DEFAULT '',
+			message_id INTEGER,
+			created_at INTEGER NOT NULL,
+			UNIQUE(firing_id, action_index)
+		) STRICT;
+
+CREATE TABLE daemon_spawn_history (
+			principal TEXT NOT NULL,
+			spawned_at INTEGER NOT NULL
+		) STRICT;
+
+CREATE INDEX idx_daemon_spawn_history_principal
+			ON daemon_spawn_history(principal, spawned_at);
+
+CREATE TABLE trigger_pr_observations (
+			agent_pr_id INTEGER PRIMARY KEY REFERENCES agent_prs(id) ON DELETE CASCADE,
+			event_sequence INTEGER NOT NULL DEFAULT 1,
+			ci_state TEXT NOT NULL DEFAULT '',
+			ci_observed_at INTEGER,
+			ci_polled_at INTEGER,
+			branch_context TEXT NOT NULL DEFAULT '',
+			updated_at INTEGER NOT NULL
+		) STRICT;
+
+CREATE TABLE trigger_workers (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			rule_id INTEGER REFERENCES trigger_rules(id) ON DELETE SET NULL,
+			firing_id INTEGER REFERENCES trigger_firings(id) ON DELETE SET NULL,
+			cron_job_id INTEGER REFERENCES agent_cron_jobs(id) ON DELETE SET NULL,
+			cron_run_id INTEGER REFERENCES agent_cron_runs(id) ON DELETE SET NULL,
+			action_index INTEGER NOT NULL,
+			agent_id TEXT NOT NULL UNIQUE,
+			conv_id TEXT NOT NULL DEFAULT '',
+			state TEXT NOT NULL DEFAULT 'reserved' CHECK (state IN ('reserved','pending','live','failed','exited','deadline_exceeded','replaced','interrupted')),
+			pending_label TEXT NOT NULL DEFAULT '',
+			deadline_at INTEGER,
+			created_at INTEGER NOT NULL,
+			completed_at INTEGER,
+			detail TEXT NOT NULL DEFAULT '',
+			CHECK (rule_id IS NULL OR cron_job_id IS NULL)
+		) STRICT;
+
+CREATE INDEX idx_trigger_workers_rule_live ON trigger_workers(rule_id,state);
+
+CREATE INDEX idx_trigger_workers_cron_live ON trigger_workers(cron_job_id,state);
+
+CREATE TABLE "trigger_rules" (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL UNIQUE,
+			row_version INTEGER NOT NULL DEFAULT 1,
+			revision INTEGER NOT NULL DEFAULT 1,
+			enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+			owner_agent TEXT NOT NULL DEFAULT '',
+			operator_authored INTEGER NOT NULL DEFAULT 0 CHECK (operator_authored IN (0, 1)),
+			scope_kind TEXT NOT NULL CHECK (scope_kind IN ('global', 'group')),
+			group_id INTEGER REFERENCES agent_groups(id) ON DELETE CASCADE,
+			source TEXT NOT NULL CHECK (source IN ('pr.opened','pr.updated','pr.merged','ci.failed','ci.succeeded','agent.idle','agent.awaiting_input')),
+			author_is_agent INTEGER CHECK (author_is_agent IS NULL OR author_is_agent IN (0, 1)),
+			draft_filter TEXT NOT NULL DEFAULT 'include' CHECK (draft_filter IN ('include', 'exclude', 'only')),
+			debounce_seconds INTEGER NOT NULL DEFAULT 0 CHECK (debounce_seconds >= 0),
+			cooldown_seconds INTEGER NOT NULL DEFAULT 0 CHECK (cooldown_seconds >= 0),
+			for_seconds INTEGER NOT NULL DEFAULT 0 CHECK (for_seconds >= 0),
+			actions_json TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			CHECK ((scope_kind = 'group') = (group_id IS NOT NULL))
+		) STRICT;
+
+CREATE INDEX idx_trigger_rules_enabled ON trigger_rules(enabled, source);
+
+CREATE INDEX idx_trigger_rules_group ON trigger_rules(group_id);
+
+CREATE TABLE "trigger_pr_events" (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			agent_pr_id INTEGER REFERENCES agent_prs(id) ON DELETE CASCADE,
+			origin_rule_id INTEGER REFERENCES trigger_rules(id) ON DELETE SET NULL,
+			source TEXT NOT NULL CHECK (source IN ('pr.opened','pr.updated','pr.merged','ci.failed','ci.succeeded','agent.idle','agent.awaiting_input')),
+			event_ref TEXT NOT NULL UNIQUE,
+			pr_url TEXT NOT NULL DEFAULT '',
+			pr_number INTEGER NOT NULL DEFAULT 0,
+			pr_branch TEXT NOT NULL DEFAULT '',
+			pr_author_agent TEXT NOT NULL DEFAULT '',
+			agent_id TEXT NOT NULL DEFAULT '',
+			agent_harness TEXT NOT NULL DEFAULT '',
+			fact_result TEXT NOT NULL DEFAULT '',
+			fact_observed_at INTEGER,
+			dwell_started_at INTEGER,
+			draft INTEGER NOT NULL DEFAULT 0 CHECK (draft IN (0, 1)),
+			group_ids_json TEXT NOT NULL DEFAULT '[]',
+			previous_state TEXT NOT NULL DEFAULT '',
+			current_state TEXT NOT NULL DEFAULT '',
+			occurred_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processed', 'preexisting', 'interrupted')),
+			processed_at INTEGER
+		) STRICT;
+
+CREATE INDEX idx_trigger_pr_events_pending ON trigger_pr_events(status, updated_at);
+
+CREATE INDEX idx_trigger_pr_events_pr_source ON trigger_pr_events(agent_pr_id, source, id);
+
+CREATE TABLE trigger_dwell_states (
+			rule_id INTEGER NOT NULL REFERENCES trigger_rules(id) ON DELETE CASCADE,
+			agent_id TEXT NOT NULL,
+			rule_revision INTEGER NOT NULL,
+			episode INTEGER NOT NULL DEFAULT 0 CHECK (episode >= 0),
+			result TEXT NOT NULL CHECK (result IN ('true','false','unknown')),
+			detail TEXT NOT NULL DEFAULT '',
+			harness TEXT NOT NULL DEFAULT '',
+			fact_observed_at INTEGER,
+			true_since INTEGER,
+			fired_at INTEGER,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(rule_id, agent_id)
+		) STRICT;
+
+CREATE INDEX idx_trigger_dwell_states_due ON trigger_dwell_states(result, true_since, fired_at);
 

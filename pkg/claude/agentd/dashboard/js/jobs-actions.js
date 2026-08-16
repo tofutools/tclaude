@@ -1,3 +1,5 @@
+import { cronRunSucceeded } from './jobs-format.js';
+
 export function createJobsActions({
   state,
   requestMutation,
@@ -50,9 +52,70 @@ export function createJobsActions({
     openStandingOrderCreate: state.openStandingOrderCreate,
     openStandingOrderEdit: state.openStandingOrderEdit,
     closeStandingOrderDialog: state.closeStandingOrderDialog,
+    openTriggerCreate: state.openTriggerCreate,
+    openTriggerEdit: state.openTriggerEdit,
+    closeTriggerDialog: state.closeTriggerDialog,
+    loadTriggers: async () => {
+      const response = await requestMutation('/api/triggers', { method: 'GET', refreshAfter: false });
+      const rules = Array.isArray(response?.triggers) ? response.triggers : [];
+      return Promise.all(rules.map(async (rule) => {
+        const history = await requestMutation(`/api/triggers/${encodeURIComponent(rule.id)}/firings?limit=1`, {
+          method: 'GET', refreshAfter: false,
+        });
+        return { ...rule, firings: Array.isArray(history?.firings) ? history.firings : [] };
+      }));
+    },
+    loadTriggerFirings: async (id) => {
+      const response = await requestMutation(`/api/triggers/${encodeURIComponent(id)}/firings?limit=20`, {
+        method: 'GET', refreshAfter: false,
+      });
+      return Array.isArray(response?.firings) ? response.firings : [];
+    },
+    loadTriggerDetail: (id) => requestMutation(`/api/triggers/${encodeURIComponent(id)}`, {
+      method: 'GET', refreshAfter: false,
+    }),
+    saveTrigger: async ({ editing, id, payload }) => {
+      try {
+        const trigger = await requestMutation(editing
+          ? `/api/triggers/${encodeURIComponent(id)}` : '/api/triggers', {
+          method: editing ? 'PATCH' : 'POST', body: payload, refreshAfter: false,
+        });
+        state.invalidateTriggers();
+        notify(`trigger ${editing ? 'saved' : 'created'}: ${trigger?.name || ('#' + (trigger?.id || ''))}`);
+        return trigger;
+      } catch (error) {
+        throw new Error(detail(error), { cause: error });
+      }
+    },
+    toggleTrigger: (rule) => {
+      const verb = rule.enabled ? 'disable' : 'enable';
+      return run(`trigger ${verb}: ${rule.name}`, () => requestMutation(
+        `/api/triggers/${encodeURIComponent(rule.id)}/${verb}?row_version=${encodeURIComponent(rule.row_version)}`,
+        { method: 'POST', refreshAfter: false },
+      ));
+    },
+    deleteTrigger: async (rule) => {
+      const yes = await confirm({
+        title: 'Delete trigger?',
+        body: 'Removes the trigger and its firing history. Spawned workers and messages are unaffected.',
+        meta: rule.name,
+        okLabel: 'Delete trigger',
+      });
+      if (!yes) return false;
+      return run(`trigger delete: ${rule.name}`, () => requestMutation(
+        `/api/triggers/${encodeURIComponent(rule.id)}?row_version=${encodeURIComponent(rule.row_version)}`,
+        { method: 'DELETE', refreshAfter: false },
+      ));
+    },
     explainCron: (expr) => requestMutation('/api/cron/explain', {
       body: { expr }, refreshAfter: false,
     }),
+    loadCronLogs: async (id) => {
+      const response = await requestMutation(`/api/cron/${encodeURIComponent(id)}/logs?limit=25`, {
+        method: 'GET', refreshAfter: false,
+      });
+      return Array.isArray(response?.runs) ? response.runs : [];
+    },
     saveCron: async ({ path, method, payload }) => {
       try {
         const cron = await requestMutation(path, {
@@ -99,15 +162,26 @@ export function createJobsActions({
         requestMutation(`/api/cron/${encodeURIComponent(job.id)}/${verb}`, { method: 'POST' }));
     },
     runCron: async (job) => {
+      const spawn = job.action_kind === 'spawn';
       const yes = await confirm({
         title: 'Fire this cron job now?',
-        body: "Sends the job's message to its target immediately. Stamps last_run_at so the regular cadence resumes from now.",
+        body: spawn
+          ? 'Attempts the configured worker spawn immediately. The firing is re-authorized and recorded in run history. Stamps last_run_at so the regular cadence resumes from now.'
+          : "Sends the job's message to its target immediately. Stamps last_run_at so the regular cadence resumes from now.",
         meta: job.name,
         okLabel: 'Fire now',
       });
       if (!yes) return false;
-      return run(`cron run now: ${job.name}`, () =>
-        requestMutation(`/api/cron/${encodeURIComponent(job.id)}/run-now`, { method: 'POST' }));
+      try {
+        const result = await requestMutation(`/api/cron/${encodeURIComponent(job.id)}/run-now`, { method: 'POST' });
+        const status = result?.status || 'unknown';
+        const succeeded = cronRunSucceeded(status);
+        notify(`cron run now: ${job.name} — ${status}`, !succeeded);
+        return succeeded;
+      } catch (error) {
+        notify(`Request failed: ${detail(error)}`, true);
+        return false;
+      }
     },
     deleteCron: async (job) => {
       const yes = await confirm({

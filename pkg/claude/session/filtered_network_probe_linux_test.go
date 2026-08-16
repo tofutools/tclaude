@@ -71,8 +71,8 @@ func TestFilteredNetworkPrerequisiteProbeNamesEveryBuildingBlock(t *testing.T) {
 	require.True(t, got.Detected)
 	assert.Contains(t, got.Detail, "bubblewrap")
 	assert.Contains(t, got.Detail, "user/network namespace")
-	assert.Contains(t, got.Detail, "CAP_NET_ADMIN")
-	assert.Contains(t, got.Detail, "CAP_NET_BIND_SERVICE")
+	assert.Contains(t, got.Detail, "nsenter")
+	assert.NotContains(t, got.Detail, "CAP_NET_BIND_SERVICE")
 	assert.Contains(t, got.Detail, "pasta")
 	assert.Contains(t, got.Detail, "nft")
 	assert.Contains(t, got.Detail, "gated launch boundary")
@@ -151,16 +151,18 @@ func TestFilteredNetworkPrerequisiteProbeRefusesOlderPasta(t *testing.T) {
 	assert.Contains(t, got.LaunchWhy(false), "outbound remains open")
 }
 
-func TestFilteredNetworkProbeArgsRequireNamespaceRootCapability(t *testing.T) {
+func TestFilteredNetworkProbeArgsBuildTheNamespaceShapeWithoutInSandboxCapability(t *testing.T) {
 	args, err := tclaudeLayerProbeArgs(
 		sandboxpolicy.NetworkFiltered, sandboxpolicy.RootConstructed)
 	require.NoError(t, err)
 	joined := strings.Join(args, " ")
 	assert.Contains(t, joined,
-		"--unshare-user --uid 0 --gid 0 --unshare-net --unshare-pid --cap-add CAP_NET_ADMIN --cap-add CAP_NET_BIND_SERVICE")
-	assert.Contains(t, joined, `case "$cap_eff" in`)
-	assert.Contains(t, joined, "[13579bBdDfF]???")
-	assert.Contains(t, joined, "[4567cCdDeEfF]??")
+		"--unshare-user --uid 0 --gid 0 --unshare-net --unshare-pid")
+	// The base policy is installed by the supervisor via nsenter, so the probe
+	// no longer grants or checks any in-sandbox capability.
+	assert.NotContains(t, joined, "--cap-add")
+	assert.NotContains(t, joined, "CAP_NET_ADMIN")
+	assert.NotContains(t, joined, `case "$cap_eff" in`)
 }
 
 func TestFilteredNetworkPrerequisiteProbeReportsFirstMissingCapability(t *testing.T) {
@@ -220,6 +222,32 @@ func TestOpenCodeFilteredNetworkUsesSharedPrerequisiteContract(t *testing.T) {
 
 	err = ValidateFilteredNetworkHarnessSupport(
 		harness.Default(),
+		sandboxpolicy.ImplementationTclaudeLayer,
+		axes,
+		FilteredNetworkPrerequisite{Detected: true},
+	)
+	require.NoError(t, err)
+}
+
+func TestPrivateNetworkPrerequisiteRefusalNamesExactProbeFailure(t *testing.T) {
+	axes := sandboxpolicy.ResolvedAxes{Network: sandboxpolicy.NetworkRules{
+		Mode:      sandboxpolicy.AccessModeOpen,
+		Namespace: sandboxpolicy.NetworkNamespacePrivate,
+	}}
+	err := ValidateFilteredNetworkHarnessSupport(
+		harness.MustGet(harness.OpenCodeName),
+		sandboxpolicy.ImplementationTclaudeLayer,
+		axes,
+		FilteredNetworkPrerequisite{
+			Detail: "rootless pasta is required: executable file not found in $PATH",
+		},
+	)
+	require.ErrorContains(t, err,
+		"rootless pasta is required: executable file not found in $PATH")
+	require.ErrorContains(t, err, `network.namespace "private"`)
+
+	err = ValidateFilteredNetworkHarnessSupport(
+		harness.MustGet(harness.OpenCodeName),
 		sandboxpolicy.ImplementationTclaudeLayer,
 		axes,
 		FilteredNetworkPrerequisite{Detected: true},

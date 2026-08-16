@@ -13,8 +13,8 @@ import (
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
-// Flow coverage for the bulk groups.retire endpoint — the group-level
-// parallel of `agent retire`, completing the groups.stop / groups.resume
+// Flow coverage for the bulk groups.members.retire endpoint — the group-level
+// parallel of `agent retire`, completing the groups.members.stop / groups.members.resume
 // lifecycle family. These scenarios drive POST /v1/groups/{name}/retire
 // on the SO_PEERCRED-authed mux (f.Mux), the same surface
 // `tclaude agent groups retire` hits, and assert at real surfaces:
@@ -124,7 +124,7 @@ func TestGroupRetire_HumanRetiresEveryMember(t *testing.T) {
 	assert.False(t, hasPerm, "retire must revoke permission grants")
 }
 
-// Scenario: an agent caller that does NOT hold groups.retire is refused
+// Scenario: an agent caller that does NOT hold groups.members.retire is refused
 // with 403 — the slug is the only silent path for an agent on this bulk
 // endpoint (no group-owner structural bypass at the bulk level). The
 // group's members are left completely untouched.
@@ -139,12 +139,12 @@ func TestGroupRetire_AgentWithoutSlugRefused(t *testing.T) {
 	f.HaveConvWithTitle(worker, "worker")
 	f.HaveAliveSession(worker, "spwn-nswk", "tmux-nswk", f.TestCwd("nswk"))
 	f.HaveMember(group, worker)
-	// caller is an agent, but holds no groups.retire grant.
+	// caller is an agent, but holds no groups.members.retire grant.
 	f.HaveConvWithTitle(caller, "ungranted-coordinator")
 
 	wrap := func(r *http.Request) *http.Request { return agentd.AsAgentPeer(r, caller) }
 	code, _ := postGroupRetire(t, f.Mux, wrap, group, "")
-	require.Equal(t, http.StatusForbidden, code, "an agent without groups.retire must be refused")
+	require.Equal(t, http.StatusForbidden, code, "an agent without groups.members.retire must be refused")
 
 	// The worker is untouched: still an active agent, still a member,
 	// still online.
@@ -155,7 +155,7 @@ func TestGroupRetire_AgentWithoutSlugRefused(t *testing.T) {
 	assert.True(t, f.World.Tmux.IsAlive("tmux-nswk"), "a refused retire must not stop sessions")
 }
 
-// Scenario: an agent that holds groups.retire retires the OTHER members
+// Scenario: an agent that holds groups.members.retire retires the OTHER members
 // of its group but is itself skipped (skipped:self) — an agent never
 // demotes itself out from under the request it is serving. The caller
 // stays an active agent and a group member; the workers are retired.
@@ -177,7 +177,7 @@ func TestGroupRetire_AgentWithSlugSkipsSelf(t *testing.T) {
 	f.HaveMember(group, caller)
 	f.HaveMember(group, workerA)
 	f.HaveMember(group, workerB)
-	require.NoError(t, db.GrantAgentPermission(caller, "groups.retire", "human"))
+	require.NoError(t, db.GrantAgentPermission(caller, "groups.members.retire", "human"))
 
 	wrap := func(r *http.Request) *http.Request { return agentd.AsAgentPeer(r, caller) }
 	code, resp := postGroupRetire(t, f.Mux, wrap, group, "")
@@ -306,6 +306,86 @@ func TestGroupRetire_StatusFilterIdleOnly(t *testing.T) {
 		assert.True(t, flowGroupHasMember(f, group, c), "%s must stay a member", c)
 	}
 	assert.True(t, f.World.Tmux.IsAlive("tmux-work"), "a working member's pane must not be touched")
+}
+
+func TestGroupRetire_OwnerFilterAuthorizesOnlyAffectedCohort(t *testing.T) {
+	f := newFlow(t)
+	const owner = "ret-filter-owner-1111-2222-3333"
+	const idle = "ret-filter-idle-1111-2222-3333"
+	const sharedWorking = "ret-filter-work-1111-2222-3333"
+	owned := f.HaveGroup("ret-filter-owned")
+	unowned := f.HaveGroup("ret-filter-unowned")
+	f.HaveEnrolledAgent(owner)
+	for _, conv := range []string{idle, sharedWorking} {
+		f.HaveConvWithTitle(conv, conv)
+		f.HaveMember(owned.Name, conv)
+	}
+	f.HaveMember(unowned.Name, sharedWorking)
+	require.NoError(t, db.AddAgentGroupOwner(owned.ID, owner, "test"))
+	f.HaveAliveSession(idle, "spwn-ret-idle", "tmux-ret-idle", f.TestCwd("idle"))
+	f.HaveAliveSession(sharedWorking, "spwn-ret-work", "tmux-ret-work", f.TestCwd("work"))
+	setConvStatus(t, idle, "idle")
+	setConvStatus(t, sharedWorking, "working")
+
+	code, resp := postGroupRetire(t, f.Mux, func(r *http.Request) *http.Request {
+		return agentd.AsAgentPeer(r, owner)
+	}, owned.Name, "status=idle")
+	require.Equal(t, http.StatusOK, code)
+	assert.Equal(t, "retired", retireMemberAction(resp, idle), "members=%+v", resp.Members)
+	assert.Empty(t, retireMemberAction(resp, sharedWorking), "filtered shared member must be untouched")
+	state, err := db.AgentState(sharedWorking)
+	require.NoError(t, err)
+	assert.Equal(t, db.AgentStateActive, state)
+}
+
+func TestGroupRetire_HumanApprovalCoversSharedMemberFootprint(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://popup.test"))
+	t.Cleanup(agentd.StubApprovalForTest(true))
+	f := newFlow(t)
+	const owner = "ret-approval-owner-1111-2222"
+	const shared = "ret-approval-shared-1111-2222"
+	owned := f.HaveGroup("ret-approval-owned")
+	unowned := f.HaveGroup("ret-approval-unowned")
+	f.HaveEnrolledAgent(owner)
+	f.HaveConvWithTitle(shared, "shared-worker")
+	f.HaveMember(owned.Name, shared)
+	f.HaveMember(unowned.Name, shared)
+	require.NoError(t, db.AddAgentGroupOwner(owned.ID, owner, "test"))
+
+	r := testharness.JSONRequest(t, http.MethodPost,
+		"/v1/groups/"+owned.Name+"/retire?shutdown=0", nil)
+	r.Header.Set("X-Tclaude-Ask-Human", "5s")
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(r, owner))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	state, err := db.AgentState(shared)
+	require.NoError(t, err)
+	assert.Equal(t, db.AgentStateRetired, state,
+		"one-shot human approval must cover the whole shared-member mutation")
+}
+
+func TestGroupRetire_OwnerEmptyFilterCohortIsAuthorized(t *testing.T) {
+	f := newFlow(t)
+	const owner = "ret-empty-owner-1111-2222-3333"
+	const sharedWorking = "ret-empty-work-1111-2222-3333"
+	owned := f.HaveGroup("ret-empty-owned")
+	unowned := f.HaveGroup("ret-empty-unowned")
+	f.HaveEnrolledAgent(owner)
+	f.HaveConvWithTitle(sharedWorking, "working")
+	f.HaveMember(owned.Name, sharedWorking)
+	f.HaveMember(unowned.Name, sharedWorking)
+	require.NoError(t, db.AddAgentGroupOwner(owned.ID, owner, "test"))
+	f.HaveAliveSession(sharedWorking, "spwn-ret-empty", "tmux-ret-empty", f.TestCwd("work"))
+	setConvStatus(t, sharedWorking, "working")
+
+	code, resp := postGroupRetire(t, f.Mux, func(r *http.Request) *http.Request {
+		return agentd.AsAgentPeer(r, owner)
+	}, owned.Name, "status=offline")
+	require.Equal(t, http.StatusOK, code)
+	assert.Empty(t, resp.Members)
+	state, err := db.AgentState(sharedWorking)
+	require.NoError(t, err)
+	assert.Equal(t, db.AgentStateActive, state)
 }
 
 // Scenario: ?status=offline retires ONLY the members with no live

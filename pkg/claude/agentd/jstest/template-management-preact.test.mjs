@@ -146,8 +146,6 @@ test('template manager and editor retain native markup, wizard variants, nested 
   state.roles.value = [
     {
       name: 'reviewer',
-      harness: 'opencode',
-      tools: 'ask',
       brief: 'Review carefully',
       permissions: ['read'],
     },
@@ -216,7 +214,7 @@ test('template manager and editor retain native markup, wizard variants, nested 
     host.querySelector('.ta-role-inspect').textContent,
     /Review carefully/,
   );
-  assert.match(host.querySelector('.ta-role-inspect').textContent, /tools ask/);
+  assert.match(host.querySelector('.ta-role-inspect').textContent, /grantsread/);
   assert.equal(
     host.querySelector('#template-editor-wave-max-wait').type,
     'number',

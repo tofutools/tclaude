@@ -2,33 +2,20 @@ import { h, render } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { syncBotAnimations } from './helpers.js';
-import { dashPrefs } from './prefs.js';
 import { ActivityModes } from './activity-bots.js';
 import { ActivityHover } from './activity-hover.js';
 import {
   footerMetaView,
+  authoredOpenPRsView,
   globalActivityView,
   messagesBadgeView,
   usageView,
 } from './shell-model.js';
+import { PRChecksBadge } from './pr-checks-hover.js';
 import { hasUnreadHumanNotifications } from './human-notification-attention.js';
 
 const html = htm.bind(h);
-const FOOTER_SESSION_EXPANDED_PREF = 'tclaude.dash.footer.session_expanded';
-
-function formatDuration(milliseconds) {
-  if (!Number.isFinite(milliseconds)) return 'unknown';
-  if (milliseconds <= 0) return 'expired';
-  const totalMinutes = Math.ceil(milliseconds / 60000);
-  const days = Math.floor(totalMinutes / 1440);
-  const hours = Math.floor((totalMinutes % 1440) / 60);
-  const minutes = totalMinutes % 60;
-  return [
-    days ? `${days}d` : '',
-    hours ? `${hours}h` : '',
-    (!days && minutes) ? `${minutes}m` : '',
-  ].filter(Boolean).join(' ');
-}
+const OPEN_PRS_HOVER_CLOSE_DELAY_MS = 1000;
 
 function UsageToken({ token }) {
   if (token.kind === 'cost') {
@@ -118,33 +105,147 @@ function MessagesBadge({ state }) {
 
 function FooterMeta({ state }) {
   const view = footerMetaView(state.snapshot.value);
-  const [expanded, setExpanded] = useState(() => dashPrefs.getItem(FOOTER_SESSION_EXPANDED_PREF) === '1');
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!expanded || !view?.authSession?.expires_at) return undefined;
-    const timer = setInterval(() => setNow(Date.now()), 30000);
-    return () => clearInterval(timer);
-  }, [expanded, view?.authSession?.expires_at]);
   if (!view) return html`<span class="meta" id="meta">loading…</span>`;
-  const auth = view.authSession;
-  const toggle = () => {
-    const next = !expanded;
-    setNow(Date.now());
-    setExpanded(next);
-    dashPrefs.setItem(FOOTER_SESSION_EXPANDED_PREF, next ? '1' : '0');
-  };
   return html`
     <span class="meta" id="meta">
       <span class="meta-version">tclaude version ${view.version}</span>
-      <span class="meta-sep"> · </span><span class="meta-base">${view.base}</span>
       <span class="meta-sep"> · </span>refreshed <span class="meta-time">${new Date(view.generatedAt).toLocaleTimeString()}</span>
-      <button class="footer-session-toggle" type="button" aria-expanded=${expanded ? 'true' : 'false'} aria-controls="footer-session-panel" onClick=${toggle}>auth ${expanded ? '▾' : '▴'}</button>
-      ${expanded && auth ? html`
-        <span class="footer-session-panel" id="footer-session-panel">
-          <span>auth cookie expires ${auth.expires_at ? `in ${formatDuration(new Date(auth.expires_at).getTime() - now)}` : 'when this browser session closes'}</span>
-          <span>minted ${new Date(auth.minted_at).toLocaleString()}</span>
-          ${!auth.expires_at ? html`<span class="footer-session-note">after a clean daemon restart, the prior cookie is accepted for up to 30m and rotated on reconnect</span>` : null}
+    </span>
+  `;
+}
+
+// A closed/merged row is dotted by its terminal state instead of its CI state
+// — checks on something already landed say nothing useful — and it drops the
+// "no active agent" note, which only means something for open work.
+function OpenPRRow({ pr, showFinalCI = false }) {
+  const terminal = pr.state === 'merged' || pr.state === 'closed';
+  const dot = terminal ? pr.state : (pr?.checks?.state || 'unknown');
+  return html`
+    <li class="open-pr-row">
+      <span class=${`open-pr-state open-pr-state-${dot}`} aria-hidden="true"></span>
+      <span class="open-pr-main">
+        <a class="open-pr-title" href=${pr.url} target="_blank" rel="noopener noreferrer">${pr.title || `Pull request #${pr.number}`}</a>
+        <span class="open-pr-meta">
+          <span>${pr.repository}</span><span> · #${pr.number}</span>
+          ${terminal ? html`<span> · ${pr.state}${pr.closed_at ? ` ${new Date(pr.closed_at).toLocaleDateString()}` : ''}</span>` : null}
+          ${!terminal && pr.agent_title ? html`<span> · ${pr.agent_title}</span>` : null}
+          ${!terminal && !pr.agent_title ? html`<span> · no active agent</span>` : null}
+          ${pr.draft && !terminal ? html`<span> · draft</span>` : null}
         </span>
+      </span>
+      <${PRChecksBadge} url=${pr.url} prNumber=${pr.number}
+        summary=${terminal && !showFinalCI ? null : pr.checks} />
+    </li>
+  `;
+}
+
+function OpenPRs({ state }) {
+  const [filter, setFilter] = useState('all');
+  // Closed/merged work is history, so its last CI result stays quiet unless
+  // the operator explicitly asks for it. This is intentionally local UI
+  // state: enabling it reveals the cached snapshot summary but changes no
+  // daemon setting and triggers no terminal-PR refresh on its own.
+  const [showFinalCI, setShowFinalCI] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const rootRef = useRef(null);
+  const hoverCloseTimer = useRef(null);
+  const view = authoredOpenPRsView(state.snapshot.value, filter);
+  // The indicator is permanent by default (dashboard.always_show_open_prs), so
+  // the popover must open at zero open PRs too — that is where the recently
+  // closed list lives. It still stays out of the footer entirely until the
+  // daemon has resolved a GitHub identity, since a fixed "Open PRs 0" would be
+  // a lie when `gh` is missing or logged out.
+  const visible = view.available && (view.total > 0 || view.alwaysShow);
+  const open = visible && (hovered || pinned);
+
+  const cancelHoverClose = () => {
+    if (hoverCloseTimer.current === null) return;
+    clearTimeout(hoverCloseTimer.current);
+    hoverCloseTimer.current = null;
+  };
+  const enter = () => {
+    cancelHoverClose();
+    setHovered(true);
+  };
+  const leave = () => {
+    cancelHoverClose();
+    hoverCloseTimer.current = setTimeout(() => {
+      hoverCloseTimer.current = null;
+      setHovered(false);
+    }, OPEN_PRS_HOVER_CLOSE_DELAY_MS);
+  };
+
+  useEffect(() => () => cancelHoverClose(), []);
+
+  useEffect(() => {
+    if (!pinned) return undefined;
+    const outside = (event) => {
+      if (rootRef.current?.contains(event.target)) return;
+      cancelHoverClose();
+      setPinned(false);
+      setHovered(false);
+    };
+    document.addEventListener('pointerdown', outside);
+    return () => document.removeEventListener('pointerdown', outside);
+  }, [pinned]);
+  useEffect(() => {
+    if (!open) return undefined;
+    const escape = (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setPinned(false);
+      setHovered(false);
+      rootRef.current?.querySelector('.open-prs-trigger')?.focus();
+    };
+    document.addEventListener('keydown', escape);
+    return () => document.removeEventListener('keydown', escape);
+  }, [open]);
+
+  if (!visible) return null;
+  const age = view.updatedAt ? new Date(view.updatedAt).toLocaleTimeString() : '';
+  // A rolling 24h window is not "today" — a PR closed at 23:00 yesterday is in
+  // it — so every window reads as a span, including the 1-day one.
+  const recentLabel = `Closed ${view.recentWindowDays}d`;
+  // "recent" selected while the window is configured off falls back to the
+  // open list, so the Open chip — not a vanished chip — must read as active.
+  const openFilterActive = !view.showingRecent && filter !== 'attention' && filter !== 'unattached';
+  return html`
+    <span ref=${rootRef} class=${`open-prs${open ? ' is-open' : ''}${view.total > 0 ? '' : ' is-empty'}${view.attention > 0 ? ' has-attention' : ''}`}
+      onMouseEnter=${enter} onMouseLeave=${leave}>
+      <button type="button" class="open-prs-trigger" aria-haspopup="dialog"
+        aria-expanded=${open ? 'true' : 'false'} aria-controls="open-prs-popover"
+        onClick=${() => setPinned((value) => !value)}>
+        <span class="open-prs-dot" aria-hidden="true"></span>
+        <span>Open PRs</span><span class="open-prs-count">${view.total}</span>
+        <span class="open-prs-chevron" aria-hidden="true">⌃</span>
+      </button>
+      ${open ? html`
+        <div id="open-prs-popover" class="open-prs-popover" role="dialog" aria-label="Your pull requests">
+          <div class="open-prs-head"><strong>Your pull requests</strong><span class="open-prs-count">${view.total}</span>${age ? html`<span class="open-prs-age">updated ${age}</span>` : null}</div>
+          ${view.items.length
+            ? html`<ul class="open-pr-list">${view.items.map((pr) => html`<${OpenPRRow} key=${pr.url} pr=${pr} showFinalCI=${view.showingRecent && showFinalCI} />`)}</ul>`
+            : html`<p class="open-prs-empty">${view.showingRecent
+              ? `Nothing merged or closed in the last ${view.recentWindowDays} day(s).`
+              : (openFilterActive && view.total <= 0 ? 'No open pull requests.' : 'No pull requests match this filter.')}</p>`}
+          <div class="open-prs-filters" role="group" aria-label="Filter pull requests">
+            <button class=${openFilterActive ? 'active' : ''} aria-pressed=${openFilterActive} onClick=${() => setFilter('all')}>Open ${view.total}</button>
+            <button class=${filter === 'attention' ? 'active' : ''} aria-pressed=${filter === 'attention'} onClick=${() => setFilter('attention')}>Needs attention ${view.attention}</button>
+            <button class=${filter === 'unattached' ? 'active' : ''} aria-pressed=${filter === 'unattached'} onClick=${() => setFilter('unattached')}>Unattached ${view.unattached}</button>
+            ${view.recentWindowDays > 0 ? html`<button class=${view.showingRecent ? 'active' : ''} aria-pressed=${view.showingRecent}
+              title=${`Pull requests you merged or closed in the last ${view.recentWindowDays} day(s)`}
+              onClick=${() => setFilter('recent')}>${recentLabel} ${view.recentCount}</button>` : null}
+          </div>
+          ${view.searchURL || view.showingRecent ? html`<div class="open-prs-foot">
+            <span>${view.truncated ? html`<span>Showing the first ${view.items.length} · </span>` : null}${view.searchURL ? html`<a href=${view.searchURL} target="_blank" rel="noopener noreferrer">${view.showingRecent ? 'See them all on GitHub ↗' : 'Open all on GitHub ↗'}</a>` : null}</span>
+            ${view.showingRecent ? html`<label class="open-prs-final-ci"
+              title="Show the last cached CI result. Closed and merged pull requests are never refreshed.">
+              <input type="checkbox" checked=${showFinalCI}
+                onChange=${(event) => setShowFinalCI(event.currentTarget.checked)} />
+              <span>Final CI</span>
+            </label>` : null}
+          </div>` : null}
+        </div>
       ` : null}
     </span>
   `;
@@ -240,6 +341,7 @@ export function mountShellIsland({ hosts, state, groupsState, feedback, register
     [hosts.statusHost, html`<${Status} feedback=${feedback} />`],
     [hosts.messagesBadgeHost, html`<${MessagesBadge} state=${state} />`],
     [hosts.metaHost, html`<${FooterMeta} state=${state} />`],
+    [hosts.openPRsHost, html`<${OpenPRs} state=${state} />`],
     [hosts.disconnectHost, html`<${Disconnect} state=${state} />`],
     [hosts.toastHost, html`<${Toast} feedback=${feedback} />`],
     [hosts.confirmHost, html`<${Confirm} feedback=${feedback} />`],
@@ -255,4 +357,4 @@ export function mountShellIsland({ hosts, state, groupsState, feedback, register
   }
 }
 
-export { Confirm, Disconnect, FooterMeta, GlobalActivity, MessagesBadge, Status, Toast, Usage };
+export { Confirm, Disconnect, FooterMeta, GlobalActivity, MessagesBadge, OpenPRs, Status, Toast, Usage };

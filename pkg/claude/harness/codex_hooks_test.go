@@ -2,6 +2,7 @@ package harness
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,29 +14,64 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/hookevents"
 )
 
-// seedTclaudeOnPath makes clcommon.DetectCmd resolve to a bare "tclaude"
-// for the duration of a test by putting an executable named "tclaude" on
-// PATH. Without this, DetectCmd falls back to os.Executable() — under `go
-// test` that's the test binary (e.g. "harness.test"), whose basename is NOT
-// "tclaude", so isOurCodexHook (a basename==tclaude match) fails to
-// recognise the freshly-installed hook. In production the binary IS
-// tclaude, so the two always agree; this only removes the dependency on
-// whether the developer happens to have tclaude on PATH (it's absent in
-// CI). Unix-only stub, which matches the CI matrix (ubuntu + macos).
+// testCodexHookEventLabels is only fixture data. Production trust discovery
+// gets Codex's key directly from hooks/list and does not reproduce this schema.
+var testCodexHookEventLabels = map[string]string{
+	"PreToolUse":        "pre_tool_use",
+	"PermissionRequest": "permission_request",
+	"PostToolUse":       "post_tool_use",
+	"PreCompact":        "pre_compact",
+	"PostCompact":       "post_compact",
+	"SessionStart":      "session_start",
+	"UserPromptSubmit":  "user_prompt_submit",
+	"SubagentStart":     "subagent_start",
+	"SubagentStop":      "subagent_stop",
+	"Stop":              "stop",
+	"SessionEnd":        "session_end",
+}
+
+// seedTclaudeOnPath retains the historical command seam while pinning the
+// portable command every installer now writes.
 func seedTclaudeOnPath(t *testing.T) {
 	t.Helper()
-	dir := t.TempDir()
-	bin := filepath.Join(dir, "tclaude")
-	require.NoError(t, os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755))
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	oldCommand := codexHookCommandString
-	oldVersion := codexVersionOutput
-	codexHookCommandString = func() string { return bin + " session hook-callback" }
-	codexVersionOutput = func() ([]byte, error) { return []byte("codex-cli 0.144.1\n"), nil }
+	oldDiscovery := discoverCodexHookTrustEntries
+	oldLookPath := codexLookPath
+	codexHookCommandString = func() string { return "tclaude session hook-callback" }
+	codexLookPath = func(file string) (string, error) { return "/fixture/codex", nil }
+	discoverCodexHookTrustEntries = func(path, want string) ([]codexHookTrustEntry, error) {
+		hooks, _, err := readCodexHooks(path)
+		if err != nil {
+			return nil, err
+		}
+		var entries []codexHookTrustEntry
+		for eventIndex, event := range desiredCodexHookEvents() {
+			var groups []codexMatcherGroup
+			if err := json.Unmarshal(hooks[event], &groups); err != nil {
+				return nil, err
+			}
+			for groupIndex, group := range groups {
+				for handlerIndex, hook := range group.Hooks {
+					if hook.Command == want {
+						entries = append(entries, codexHookTrustEntry{
+							Key:  fmt.Sprintf("%s:%s:%d:%d", path, testCodexHookEventLabels[event], groupIndex, handlerIndex),
+							Hash: fmt.Sprintf("sha256:%064x", eventIndex+1),
+						})
+					}
+				}
+			}
+		}
+		return entries, nil
+	}
 	t.Cleanup(func() {
 		codexHookCommandString = oldCommand
-		codexVersionOutput = oldVersion
+		discoverCodexHookTrustEntries = oldDiscovery
+		codexLookPath = oldLookPath
 	})
+}
+
+func TestCodexHookCommandIsPortable(t *testing.T) {
+	assert.Equal(t, "tclaude session hook-callback", codexHookCommandStr())
 }
 
 // TestCodexHookInstaller_InstallAndCheck installs into a temp ~/.codex and
@@ -154,6 +190,21 @@ func TestCodexHookInstaller_Idempotent(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, count, "exactly one tclaude hook per event after re-install")
+}
+
+func TestCodexHookInstaller_CheckRejectsModifiedManagedShape(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	seedTclaudeOnPath(t)
+	dir := filepath.Join(home, ".codex")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	modified := fmt.Sprintf(`{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":%q,"timeout":7}]}]}}`, codexHookCommandStr())
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "hooks.json"), []byte(modified), 0o644))
+
+	installed, missing, needsRepair := (codexHookInstaller{}).Check()
+	assert.False(t, installed)
+	assert.Contains(t, missing, "SessionStart")
+	assert.True(t, needsRepair)
 }
 
 func TestIsOurCodexHook_QuotedAbsolutePath(t *testing.T) {

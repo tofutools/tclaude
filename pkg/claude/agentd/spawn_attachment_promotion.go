@@ -195,13 +195,22 @@ func sweepStalePrivateAttachmentRoots() {
 		}
 		if _, live := liveTmux[row.TmuxSession]; live && row.TmuxSession != "" {
 			liveRoots[tclcommon.SpawnAttachmentsPrivateDir(row.ID)] = true
+			liveRoots[tclcommon.LegacySpawnAttachmentsPrivateDir(row.ID)] = true
 		}
 	}
 	sweepPrivateAttachmentRootsAt(time.Now(), liveRoots)
 }
 
 func sweepPrivateAttachmentRootsAt(now time.Time, liveRoots map[string]bool) {
-	base := tclcommon.SpawnAttachmentsPrivateBase()
+	for _, base := range []string{
+		tclcommon.SpawnAttachmentsPrivateBase(),
+		tclcommon.LegacySpawnAttachmentsPrivateBase(),
+	} {
+		sweepPrivateAttachmentRootsBaseAt(base, now, liveRoots)
+	}
+}
+
+func sweepPrivateAttachmentRootsBaseAt(base string, now time.Time, liveRoots map[string]bool) {
 	roots, err := os.ReadDir(base)
 	if err != nil {
 		return

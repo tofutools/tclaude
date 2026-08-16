@@ -53,7 +53,7 @@ type AgentGroup struct {
 	// OwnerScopesJSON narrows the STRUCTURAL owner-implied permission bypass
 	// for THIS group (TCL-1071): canonical JSON mapping a permission slug to
 	// the scope an owner's bypass is confined to, e.g.
-	// {"groups.spawn":{"spawn_profile":["p1"]}}. "" (the default) means the
+	// {"groups.members.spawn":{"spawn_profile":["p1"]}}. "" (the default) means the
 	// historical unrestricted bypass. It never touches an EXPLICIT grant the
 	// owner holds — those resolve first, under the ordinary precedence — only
 	// the gap-filling bypass that fires when nothing else decided.
@@ -62,7 +62,7 @@ type AgentGroup struct {
 
 // IsArchived reports whether the group has been soft-deleted via
 // `groups archive`. Archived groups are hidden from default listings
-// and reject mutating operations (member.add / member.remove /
+// and reject mutating operations (groups.members.add / groups.members.remove /
 // owners.* / message), while preserving message history.
 func (g *AgentGroup) IsArchived() bool {
 	return !g.ArchivedAt.IsZero()
@@ -1723,7 +1723,7 @@ type AgentGroupAudit struct {
 }
 
 // ArchiveAgentGroup soft-deletes a group: stamps archived_at = now and
-// leaves all rows intact. Mutating operations (member.add, owners.*,
+// leaves all rows intact. Mutating operations (groups.members.add, owners.*,
 // message) refuse on archived groups; listing endpoints filter them out
 // by default. Idempotent — re-archiving an already-archived group bumps
 // the timestamp without erroring. Returns sql.ErrNoRows if the group
@@ -2866,7 +2866,8 @@ func ListOwnedGroupScopes(convID string) ([]OwnedGroupScopes, error) {
 	rows, err := d.Query(`SELECT g.id, g.name, g.owner_scopes_json
 		FROM agent_group_owners o
 		JOIN agent_groups g ON g.id = o.group_id
-		WHERE o.agent_id = (SELECT agent_id FROM agent_conversations WHERE conv_id = ?)`, convID)
+		WHERE o.agent_id = (SELECT agent_id FROM agent_conversations WHERE conv_id = ?)
+		  AND g.archived_at IS NULL`, convID)
 	if err != nil {
 		return nil, err
 	}

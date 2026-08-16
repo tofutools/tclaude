@@ -1,6 +1,8 @@
 package agentd_test
 
 import (
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,12 +12,18 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
 func postDashboardFastDisable(t *testing.T, handler http.Handler, convID string) *httptest.ResponseRecorder {
+	return postDashboardFastMode(t, handler, convID, "disable")
+}
+
+func postDashboardFastMode(t *testing.T, handler http.Handler, convID, direction string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, "/api/agents/"+convID+"/fast-mode/disable", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/agents/"+convID+"/fast-mode/"+direction, nil)
 	req.Header.Set("Origin", "http://127.0.0.1:0")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, agentd.AsHumanPeer(req))
@@ -67,6 +75,20 @@ func TestDashboardCodexFastMode_LiveIndicatorAndDisable(t *testing.T) {
 	rec = postDashboardFastDisable(t, handler, conv)
 	assert.Equal(t, http.StatusConflict, rec.Code, "body=%s", rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "already_off")
+
+	// The same guarded toggle works in the opposite direction from the row
+	// menu, and refuses a duplicate enable after Codex reports the change.
+	cx.OnInput("/fast", func(c *testharness.CodexSim, _ string) bool {
+		require.NoError(t, c.WriteThreadSettingsApplied("priority"))
+		return true
+	})
+	rec = postDashboardFastMode(t, handler, conv, "enable")
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	f.AssertSentContains("tmux-fast-live:0.0", "/fast", 10*time.Second)
+
+	rec = postDashboardFastMode(t, handler, conv, "enable")
+	assert.Equal(t, http.StatusConflict, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "already_on")
 }
 
 func TestDashboardCodexFastMode_ExplicitLaunchSeedsIndicatorUntilRuntimeEvent(t *testing.T) {
@@ -107,14 +129,73 @@ func TestDashboardCodexFastMode_ExplicitLaunchSeedsIndicatorUntilRuntimeEvent(t 
 	assert.False(t, *row.State.FastMode, "live standard-tier event overrides launch Fast")
 }
 
-func TestDashboardCodexFastMode_UnknownRefusesWithoutInference(t *testing.T) {
+func TestDashboardCodexFastMode_InheritedLaunchSeedsIndicatorUntilRuntimeEvent(t *testing.T) {
+	const conv = "019ec064-4250-79b1-9ade-ebaea4170648"
+	agentd.ResetCodexContextRefreshForTest()
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	f.HaveGroup("fast-squad")
+	cx := f.HaveAliveCodexSession(conv, "spwn-fast-inherited-launch", "tmux-fast-inherited-launch", f.TestCwd("fast-inherited-launch"))
+	f.HaveMember("fast-squad", conv)
+	agentID, err := db.AgentIDForConv(conv)
+	require.NoError(t, err)
+	fast := true
+	require.NoError(t, db.SetAgentRelaunchProfile(agentID, db.AgentRelaunchProfile{
+		Version: db.RelaunchProfileVersion, FastModeAtLaunch: &fast,
+	}))
+
+	handler := agentd.BuildDashboardHandlerForTest()
+	snap := fetchDashSnapshot(t, handler)
+	row := findDashAgent(snap, conv)
+	require.NotNil(t, row)
+	require.NotNil(t, row.State.FastMode, "inherited launch state seeds the indicator")
+	assert.True(t, *row.State.FastMode)
+
+	// Runtime telemetry is newer and authoritative even though the launch
+	// inherited Fast mode from the main config.
+	require.NoError(t, cx.WriteThreadSettingsApplied("default"))
+	agentd.ResetCodexContextRefreshForTest()
+	snap = fetchDashSnapshot(t, handler)
+	row = findDashAgent(snap, conv)
+	require.NotNil(t, row)
+	require.NotNil(t, row.State.FastMode)
+	assert.False(t, *row.State.FastMode, "live standard-tier event overrides inherited launch Fast")
+}
+
+func TestDashboardCodexFastMode_AppServerDriveStillUsesPaneToggle(t *testing.T) {
+	const conv = "019ec064-4250-79b1-9ade-ebaea4170645"
+	agentd.ResetCodexContextRefreshForTest()
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	f.HaveGroup("fast-squad")
+	cx := f.HaveAliveCodexSession(conv, "spwn-fast-app-server", "tmux-fast-app-server", f.TestCwd("fast-app-server"))
+	f.HaveMember("fast-squad", conv)
+	_, _, err := db.EnsureAgentForConv(conv, "test")
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentCodexAppServerSelectionForConv(conv, true, "explicit test selection"))
+	require.NoError(t, cx.WriteThreadSettingsApplied("default"))
+	cx.OnInput("/fast", func(c *testharness.CodexSim, _ string) bool {
+		require.NoError(t, c.WriteThreadSettingsApplied("priority"))
+		return true
+	})
+
+	rec := postDashboardFastMode(t, agentd.BuildDashboardHandlerForTest(), conv, "enable")
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	f.AssertSentContains("tmux-fast-app-server:0.0", "/fast", 10*time.Second)
+}
+
+func TestDashboardCodexFastMode_InheritedConfigAllowsToggle(t *testing.T) {
 	const conv = "019ec064-4250-79b1-9ade-ebaea4170641"
 	agentd.ResetCodexContextRefreshForTest()
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	f := newFlow(t)
 	f.HaveGroup("fast-squad")
-	f.HaveAliveCodexSession(conv, "spwn-fast-unknown", "tmux-fast-unknown", f.TestCwd("fast-unknown"))
+	cx := f.HaveAliveCodexSession(conv, "spwn-fast-unknown", "tmux-fast-unknown", f.TestCwd("fast-unknown"))
 	f.HaveMember("fast-squad", conv)
+	cx.OnInput("/fast", func(c *testharness.CodexSim, _ string) bool {
+		require.NoError(t, c.WriteThreadSettingsApplied("priority"))
+		return true
+	})
 
 	handler := agentd.BuildDashboardHandlerForTest()
 	snap := fetchDashSnapshot(t, handler)
@@ -122,11 +203,89 @@ func TestDashboardCodexFastMode_UnknownRefusesWithoutInference(t *testing.T) {
 	require.NotNil(t, row)
 	assert.Nil(t, row.State.FastMode, "an inherited launch remains unknown without a live event")
 
-	rec := postDashboardFastDisable(t, handler, conv)
+	rec := postDashboardFastMode(t, handler, conv, "enable")
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	f.AssertSentContains("tmux-fast-unknown:0.0", "/fast", 10*time.Second)
+
+	snap = fetchDashSnapshot(t, handler)
+	row = findDashAgent(snap, conv)
+	require.NotNil(t, row)
+	require.NotNil(t, row.State.FastMode, "the next Codex readback heals inherited state")
+	assert.True(t, *row.State.FastMode)
+}
+
+func TestDashboardCodexFastMode_InheritedFastAvoidsWrongToggle(t *testing.T) {
+	const conv = "019ec064-4250-79b1-9ade-ebaea4170646"
+	agentd.ResetCodexContextRefreshForTest()
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	t.Cleanup(session.SetCodexEffectiveConfigProbeForTest(
+		func(string, []sandboxpolicy.EnvironmentEntry, string) (json.RawMessage, error) {
+			return json.RawMessage(`{"config":{"service_tier":"priority"},"origins":{}}`), nil
+		}))
+	f := newFlow(t)
+	f.HaveGroup("fast-squad")
+	f.HaveAliveCodexSession(conv, "spwn-fast-inherited", "tmux-fast-inherited", f.TestCwd("fast-inherited"))
+	f.HaveMember("fast-squad", conv)
+
+	handler := agentd.BuildDashboardHandlerForTest()
+	rec := postDashboardFastMode(t, handler, conv, "enable")
 	assert.Equal(t, http.StatusConflict, rec.Code, "body=%s", rec.Body.String())
-	assert.Contains(t, rec.Body.String(), "unknown")
+	assert.Contains(t, rec.Body.String(), "already_on")
+
+	snap := fetchDashSnapshot(t, handler)
+	row := findDashAgent(snap, conv)
+	require.NotNil(t, row)
+	require.NotNil(t, row.State.FastMode, "best-effort inherited state remains visible until live readback")
+	assert.True(t, *row.State.FastMode)
+}
+
+func TestDashboardCodexFastMode_ProbeFailureStillToggles(t *testing.T) {
+	const conv = "019ec064-4250-79b1-9ade-ebaea4170647"
+	agentd.ResetCodexContextRefreshForTest()
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	t.Cleanup(session.SetCodexEffectiveConfigProbeForTest(
+		func(string, []sandboxpolicy.EnvironmentEntry, string) (json.RawMessage, error) {
+			return nil, errors.New("probe unavailable")
+		}))
+	f := newFlow(t)
+	f.HaveGroup("fast-squad")
+	f.HaveAliveCodexSession(conv, "spwn-fast-no-probe", "tmux-fast-no-probe", f.TestCwd("fast-no-probe"))
+	f.HaveMember("fast-squad", conv)
+
+	rec := postDashboardFastMode(t, agentd.BuildDashboardHandlerForTest(), conv, "enable")
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	f.AssertSentContains("tmux-fast-no-probe:0.0", "/fast", 10*time.Second)
+}
+
+func TestDashboardCodexFastMode_ReadbackDuringProbeWins(t *testing.T) {
+	const conv = "019ec064-4250-79b1-9ade-ebaea4170648"
+	agentd.ResetCodexContextRefreshForTest()
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	probeStarted := make(chan struct{})
+	releaseProbe := make(chan struct{})
+	t.Cleanup(session.SetCodexEffectiveConfigProbeForTest(
+		func(string, []sandboxpolicy.EnvironmentEntry, string) (json.RawMessage, error) {
+			close(probeStarted)
+			<-releaseProbe
+			return json.RawMessage(`{"config":{"service_tier":"default"},"origins":{}}`), nil
+		}))
+	f := newFlow(t)
+	f.HaveGroup("fast-squad")
+	cx := f.HaveAliveCodexSession(conv, "spwn-fast-probe-race", "tmux-fast-probe-race", f.TestCwd("fast-probe-race"))
+	f.HaveMember("fast-squad", conv)
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		done <- postDashboardFastMode(t, agentd.BuildDashboardHandlerForTest(), conv, "enable")
+	}()
+	<-probeStarted
+	require.NoError(t, cx.WriteThreadSettingsApplied("priority"))
+	close(releaseProbe)
+	rec := <-done
+	assert.Equal(t, http.StatusConflict, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "already_on")
 	for _, sent := range f.World.Tmux.Sent() {
-		assert.NotEqual(t, "/fast", sent.Text, "unknown state must not reach the injection sink")
+		assert.NotEqual(t, "/fast", sent.Text, "authoritative readback during the probe must prevent a stale toggle")
 	}
 }
 

@@ -85,7 +85,7 @@ const CASES = [
       sandbox_implementation: 'stacked',
     },
     glyph: '🔒²', danger: false,
-    tooltip: 'Status: ON\nImplementation: Codex+TClaude\nProfile: None\nClick to temporarily disable',
+    tooltip: 'Status: ON\nImplementation: Codex+TClaude\nProfile: None\nTemporary disable unavailable: Codex restores its persisted sandbox policy when this conversation resumes. Use the tclaude-layer implementation or start a new Codex conversation without the built-in sandbox.',
   },
   {
     name: 'an unknown implementation earns no lock',
@@ -129,7 +129,7 @@ const CASES = [
       harness: 'codex', sandbox_mode: 'workspace-write',
     },
     glyph: '🔒', danger: false,
-    tooltip: 'Status: ON\nImplementation: Codex\nProfile: None\nClick to temporarily disable',
+    tooltip: 'Status: ON\nImplementation: Codex\nProfile: None\nTemporary disable unavailable: Codex restores its persisted sandbox policy when this conversation resumes. Use the tclaude-layer implementation or start a new Codex conversation without the built-in sandbox.',
   },
   {
     name: 'a Codex full-access launch',
@@ -159,7 +159,7 @@ const CASES = [
       ],
     },
     glyph: '🔒', danger: false,
-    tooltip: 'Status: ON\nImplementation: Codex\nProfile: base + team + tight\nClick to temporarily disable',
+    tooltip: 'Status: ON\nImplementation: Codex\nProfile: base + team + tight\nTemporary disable unavailable: Codex restores its persisted sandbox policy when this conversation resumes. Use the tclaude-layer implementation or start a new Codex conversation without the built-in sandbox.',
   },
   {
     name: 'persisted access notices ride the launch badge',
@@ -228,7 +228,7 @@ const CASES = [
       resource_cgroup: true, resource_cpu_limit: 1,
     },
     glyph: '🔒', danger: false,
-    tooltip: 'Status: ON\nImplementation: Codex\nProfile: None\nCgroup: on\nMemory limit: unlimited\nCPU limit: 1 core\nClick to temporarily disable',
+    tooltip: 'Status: ON\nImplementation: Codex\nProfile: None\nCgroup: on\nMemory limit: unlimited\nCPU limit: 1 core\nTemporary disable unavailable: Codex restores its persisted sandbox policy when this conversation resumes. Use the tclaude-layer implementation or start a new Codex conversation without the built-in sandbox.',
   },
   {
     name: 'a recorded budget that never took effect says so',
@@ -343,6 +343,50 @@ test('SandboxBadge shortcuts only valid temporary sandbox transitions', async (t
       assert.equal(badge.dataset.action, 'restore');
       assert.equal(badge.title,
         'Status: TEMP OFF\nImplementation: None\nProfile: None\nClick to restore normal sandbox');
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  await t.test('a Codex harness-builtin lock does not offer an unreliable unlock', async () => {
+    const mounted = await mount({
+      harness: 'codex', sandbox_mode: 'tclaude-agent', os_sandbox_state: 'on',
+      sandbox_implementation: 'harness-builtin',
+    });
+    try {
+      const badge = mounted.container.querySelector('.sandbox-badge');
+      assert.equal(badge.getAttribute('role'), 'note');
+      assert.equal(badge.hasAttribute('data-act'), false);
+      assert.match(badge.title, /Codex restores its persisted sandbox policy/);
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  await t.test('a stacked Codex lock does not offer an unreliable full unlock', async () => {
+    const mounted = await mount({
+      harness: 'codex', sandbox_mode: 'workspace-write', os_sandbox_state: 'on',
+      sandbox_implementation: 'stacked',
+    });
+    try {
+      const badge = mounted.container.querySelector('.sandbox-badge');
+      assert.equal(badge.getAttribute('role'), 'note');
+      assert.equal(badge.hasAttribute('data-act'), false);
+      assert.match(badge.title, /Codex restores its persisted sandbox policy/);
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  await t.test('a Codex tclaude-layer lock still offers outer-layer removal', async () => {
+    const mounted = await mount({
+      harness: 'codex', sandbox_mode: 'danger-full-access', os_sandbox_state: 'on',
+      sandbox_implementation: 'tclaude-layer',
+    });
+    try {
+      const badge = mounted.container.querySelector('.sandbox-badge');
+      assert.equal(badge.getAttribute('role'), 'button');
+      assert.equal(badge.dataset.action, 'unlock');
     } finally {
       await mounted.unmount();
     }

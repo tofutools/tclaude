@@ -497,6 +497,14 @@ func refreshCodexContextSnapshotOnReadBatched(
 		return codexContextRefreshResultFromCache(sess, cached)
 	}
 	runtimeFastMode, runtimeHasFastMode := codexFastModeForSession(snap, sess)
+	if !runtimeHasFastMode && cached.sessionConvID == sess.ConvID &&
+		cached.sessionCreatedAt.Equal(sess.CreatedAt) && cached.runtimeHasFastMode {
+		// A focused Fast-mode action may have resolved an inherited launch from
+		// Codex's effective config. Retain that best-effort baseline until the
+		// current generation emits its authoritative settings readback.
+		runtimeFastMode = cached.runtimeFastMode
+		runtimeHasFastMode = true
+	}
 	checkpointData := cached.checkpointData
 	checkpointFailures := cached.checkpointFailures
 	checkpointPersistedAt := cached.checkpointPersistedAt

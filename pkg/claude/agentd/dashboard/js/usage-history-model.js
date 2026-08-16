@@ -22,6 +22,7 @@ export function usageSeriesKeyOf(series) {
 export function usageProviderLabel(provider) {
   if (provider === 'anthropic') return 'Claude';
   if (provider === 'openai') return 'Codex';
+  if (provider === 'github') return 'GitHub Copilot';
   return provider || 'Provider';
 }
 
@@ -29,6 +30,7 @@ export function usageWindowLabel(name, durationSeconds = 0) {
   if (name === 'five_hour') return '5 hour';
   if (name === 'seven_day') return '7 day';
   if (name === 'seven_day_sonnet') return '7 day Sonnet';
+  if (name === 'monthly') return 'Monthly premium requests (AIC)';
   if (durationSeconds > 0) {
     const hours = durationSeconds / 3600;
     return hours >= 24 && hours % 24 === 0 ? `${hours / 24} day` : `${hours} hour`;
@@ -42,6 +44,9 @@ export function usageWindowLabel(name, durationSeconds = 0) {
 // same window/cycle swap — editing one and not the other would desync a
 // graph's spoken name from its visible tooltip.
 export function usageWindowScopeLabel(series, wizard = false) {
+  if (series.window_name === 'monthly') {
+    return wizard ? 'Monthly AIC reserve' : 'Monthly premium requests (AIC)';
+  }
   return `${usageWindowLabel(series.window_name, series.duration_seconds)} ${wizard ? 'cycle' : 'window'}`;
 }
 
@@ -85,7 +90,7 @@ export function formatUsageDuration(milliseconds) {
 // strings are safe for the whole tab and one mechanism covers it.
 export function formatUsageResetCountdown(value, now = Date.now(), wizard = false) {
   const at = new Date(value).getTime();
-  if (!Number.isFinite(at)) return wizard ? 'replenishment unknown' : 'reset unknown';
+  if (!Number.isFinite(at)) return '';
   const delta = at - now;
   if (Math.abs(delta) <= 60_000) return wizard ? 'replenishing now' : 'resets now';
   if (wizard) {

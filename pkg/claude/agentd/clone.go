@@ -9,6 +9,8 @@ import (
 	"os"
 	"regexp"
 	"runtime"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -205,14 +207,31 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		}
 	}
 	effort, model = relaunch.Effort, relaunch.Model
+	var fastModeAtLaunch *bool
+	if relaunch.Harness == harness.CodexName && relaunch.CodexStateRoot != "" {
+		fastModeAtLaunch = codexFastModeAtLaunch(relaunch.FastMode, relaunch.CodexStateRoot)
+	}
 	persistCodexStateRoot := func(convID string) *cloneSpawnError {
-		if relaunch.Harness != harness.CodexName || relaunch.CodexStateRoot == "" {
+		if relaunch.Harness != harness.CodexName {
 			return nil
 		}
-		if err := db.SetConversationCodexStateRoot(convID, relaunch.Harness, cwd,
-			relaunch.CodexStateRoot, relaunch.CodexStateRootSource); err != nil {
+		if relaunch.CodexStateRoot != "" {
+			if err := db.SetConversationCodexStateRoot(convID, relaunch.Harness, cwd,
+				relaunch.CodexStateRoot, relaunch.CodexStateRootSource); err != nil {
+				return &cloneSpawnError{Status: http.StatusInternalServerError, Code: "io",
+					Msg: "persist clone Codex state root: " + err.Error()}
+			}
+		}
+		if err := db.SetConversationFastModeAtLaunch(
+			convID, relaunch.Harness, cwd, fastModeAtLaunch); err != nil {
 			return &cloneSpawnError{Status: http.StatusInternalServerError, Code: "io",
-				Msg: "persist clone Codex state root: " + err.Error()}
+				Msg: "persist clone Fast-mode baseline: " + err.Error()}
+		}
+		if agentID, err := db.AgentIDForConv(convID); err == nil && agentID != "" {
+			if err := db.SetAgentFastModeAtLaunchForConv(convID, fastModeAtLaunch); err != nil {
+				return &cloneSpawnError{Status: http.StatusInternalServerError, Code: "io",
+					Msg: "persist clone agent Fast-mode baseline: " + err.Error()}
+			}
 		}
 		return nil
 	}
@@ -1118,7 +1137,7 @@ func handleWhoamiClone(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	runCloneOrchestration(w, r, caller, caller, PermSelfClone, body)
+	runCloneOrchestration(w, r, caller, caller, PermSelfClone, nil, body)
 }
 
 // handleAgentClone handles POST /v1/agent/{conv}/clone (cross-agent).
@@ -1128,7 +1147,13 @@ func handleAgentClone(w http.ResponseWriter, r *http.Request, targetConv string)
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
 		return
 	}
-	caller, ok := requireCrossAgentPermission(w, r, PermAgentClone, targetConv)
+	groups, err := cloneAuthorizationGroups(targetConv)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "snapshot clone authorization groups: "+err.Error())
+		return
+	}
+	caller, ok := requireCrossAgentPermission(w, r, PermAgentClone, targetConv,
+		ActionContext{affectedGroups: groups})
 	if !ok {
 		return
 	}
@@ -1136,7 +1161,34 @@ func handleAgentClone(w http.ResponseWriter, r *http.Request, targetConv string)
 	if !ok {
 		return
 	}
-	runCloneOrchestration(w, r, targetConv, caller, PermAgentClone, body)
+	runCloneOrchestration(w, r, targetConv, caller, authorizedPermissionForRequest(r, PermAgentClone), groups, body)
+}
+
+func cloneAuthorizationGroups(targetConv string) ([]string, error) {
+	groups, err := activeGroupNamesForConvs(targetConv)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool, len(groups))
+	for _, name := range groups {
+		seen[name] = true
+	}
+	ownedIDs, err := db.ListGroupsOwnedBy(targetConv)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range ownedIDs {
+		group, err := db.GetAgentGroupByID(id)
+		if err != nil {
+			return nil, err
+		}
+		if group != nil && !group.IsArchived() && !seen[group.Name] {
+			groups = append(groups, group.Name)
+			seen[group.Name] = true
+		}
+	}
+	sort.Strings(groups)
+	return groups, nil
 }
 
 // cloneBody is the decoded, validated POST body shared by the clone
@@ -1206,7 +1258,7 @@ func decodeCloneBody(w http.ResponseWriter, r *http.Request) (cloneBody, bool) {
 //     before use; a bad value fails the whole clone with a 400. An
 //     AGENT caller must additionally pass the dir write-proof for it
 //     (see below).
-func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, caller, perm string, body cloneBody) {
+func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, caller, perm string, authorizedGroups []string, body cloneBody) {
 	followUp, noCopyConv, cwdOverride := body.FollowUp, body.NoCopyConv, body.Cwd
 	// 1. Snapshot target state. Same shape as reincarnate's snapshot
 	// pass.
@@ -1348,6 +1400,20 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 		if g != nil {
 			policyGroups = append(policyGroups, g)
 			seenPolicyGroup[groupID] = struct{}{}
+		}
+	}
+	if authorizedGroups != nil {
+		actual := make([]string, 0, len(policyGroups))
+		for _, group := range policyGroups {
+			if group != nil && !group.IsArchived() {
+				actual = append(actual, group.Name)
+			}
+		}
+		sort.Strings(actual)
+		if !slices.Equal(actual, authorizedGroups) {
+			writeError(w, http.StatusConflict, "authorization_footprint_changed",
+				"the target's current group footprint changed during clone authorization; retry the request")
+			return
 		}
 	}
 	// A clone is a fresh agent process even though it inherits the target's
@@ -1497,7 +1563,8 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	// the CLI.
 	granter := "system:clone"
 	if caller != target {
-		granter = "system:clone:by=" + auditedCaller(caller, perm)
+		granter = "system:clone:by=" + auditedCallerWithSudoGrant(caller, perm,
+			authorizedSudoGrantIDForRequest(r))
 	} else if grantID, _ := db.LookupActiveSudoGrantID(caller, perm); grantID > 0 {
 		// Self-clone via sudo: no :by= (it's just the target itself)
 		// but still surface the via-sudo annotation so forensics can

@@ -27,8 +27,9 @@ var (
 )
 
 type filteredNetworkExecutables struct {
-	Pasta string
-	NFT   string
+	Pasta   string
+	NFT     string
+	Nsenter string
 }
 
 var requiredFilteredNetworkPastaOptions = []string{
@@ -60,7 +61,15 @@ func resolveFilteredNetworkExecutables() (filteredNetworkExecutables, error) {
 	if err != nil {
 		return filteredNetworkExecutables{}, fmt.Errorf("nftables (`nft`) is required: %w", err)
 	}
-	return filteredNetworkExecutables{Pasta: pasta, NFT: nft}, nil
+	// The base policy is installed by the supervisor, which joins the sandbox
+	// namespace through nsenter (setns(CLONE_NEWUSER) is illegal from the
+	// multithreaded Go runtime). nsenter (util-linux) is therefore required.
+	nsenter, err := resolveFilteredNetworkExecutable("nsenter")
+	if err != nil {
+		return filteredNetworkExecutables{}, fmt.Errorf(
+			"util-linux `nsenter` is required: %w", err)
+	}
+	return filteredNetworkExecutables{Pasta: pasta, NFT: nft, Nsenter: nsenter}, nil
 }
 
 func resolveFilteredNetworkExecutable(name string) (string, error) {
@@ -186,7 +195,7 @@ func probeFilteredNetworkPrerequisite() FilteredNetworkPrerequisite {
 	}
 	return FilteredNetworkPrerequisite{
 		Detected: true,
-		Detail: "bubblewrap user/network namespace execution with namespace-root CAP_NET_ADMIN and CAP_NET_BIND_SERVICE passed; trusted root-owned pasta and nft executables " +
-			"were found; end-to-end gateway readiness is decided at the gated launch boundary",
+		Detail: "bubblewrap user/network namespace execution passed; trusted root-owned pasta, nft, and nsenter executables " +
+			"were found; the base nft policy is installed from the supervisor via nsenter, and end-to-end gateway readiness is decided at the gated launch boundary",
 	}
 }

@@ -357,6 +357,17 @@ func TestResolveComposesDarwinMachRegisterCapability(t *testing.T) {
 	assert.True(t, plan.DarwinAllowMachRegister)
 }
 
+func TestResolveFilesystemRootUsesRestrictiveLattice(t *testing.T) {
+	effective, err := Resolve(Scopes{
+		Global:   &Profile{Name: "global", FilesystemRoot: FilesystemRootSeparate},
+		Explicit: &Profile{Name: "explicit", FilesystemRoot: FilesystemRootInherit},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, FilesystemRootSeparate, effective.FilesystemRoot)
+	require.NotNil(t, effective.Provenance.FilesystemRoot)
+	assert.Equal(t, "global", effective.Provenance.FilesystemRoot.Profile)
+}
+
 func TestAliasDiscoveryValidatesTheTargetCapturedByTheSameWalk(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
