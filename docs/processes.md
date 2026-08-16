@@ -60,6 +60,10 @@ not as templates you can run unmodified.
 
 Runs are created and driven through the daemon:
 
+![A running process in the dashboard: a decision fanning out to parallel tasks that join before the outcome is recorded](assets/process-run-graph.png)
+
+*A running process in the dashboard: a decision fanning out to parallel tasks that join before the outcome is recorded*
+
 ```bash
 tclaude process run <template-id> --param key=value \
     --authorize-program-profile <profile>

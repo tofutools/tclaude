@@ -207,6 +207,10 @@ tclaude agent message group:myteam "stand-up in 5"
 tclaude agent reply <id> "done"
 ```
 
+![Composing a group multicast from the dashboard — sender, live membership tick-list, and a role filter](assets/group-message-compose.png)
+
+*Composing a group multicast from the dashboard — sender, live membership tick-list, and a role filter*
+
 `message` (aliases `msg`, `send`) takes the body as positional text,
 `--body`, `--stdin`, or `--file` — exactly one; `--file` sidesteps shell
 quoting, including backticks. `--subject` and repeatable `--cc` behave as
@@ -256,6 +260,10 @@ tclaude agent inbox read <id>
 tclaude agent inbox sent
 tclaude agent inbox prune
 ```
+
+![Reading a task brief from the inbox — the Reply-Cmd header tells the agent exactly how to answer](assets/term-agent-inbox.png)
+
+*Reading a task brief from the inbox — the Reply-Cmd header tells the agent exactly how to answer*
 
 `inbox` (aliases `mailbox`, `mail`) lists, reads (RFC-822-shaped headers:
 From, To, Group, Subject, Date, Replyable, Reply-To, Reply-Cmd), shows

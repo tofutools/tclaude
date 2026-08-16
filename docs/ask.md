@@ -6,6 +6,10 @@ with the harness's status, and keeps a resumable thread for the next
 question from the same terminal and directory. All four harnesses — Claude
 Code, Codex CLI, OpenCode, and Copilot CLI — have an ask surface.
 
+![Piped input and a follow-up on the same per-terminal thread](assets/term-ask.png)
+
+*Piped input and a follow-up on the same per-terminal thread*
+
 ```bash
 # Ask about the current project
 tclaude ask "where is authentication enforced?"

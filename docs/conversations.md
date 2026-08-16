@@ -139,6 +139,10 @@ searches globally.
 `tclaude conv watch` (or `conv ls -w`) is an interactive picker over the
 merged conversation list:
 
+![Conversation watch across all projects and harnesses](assets/term-conv-watch.png)
+
+*Conversation watch across all projects and harnesses*
+
 | Key | Action |
 |-----|--------|
 | `↑`/`↓`, `j`/`k`, `PgUp`/`PgDn`, `g`/`G` | Navigate |

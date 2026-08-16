@@ -11,6 +11,10 @@ It is served by the `agentd` daemon and is human-only: agents talk to `agentd`
 over its API, not through this UI. For the daemon itself and how agents relate
 to it, see [Agents and groups](agents-and-groups.md).
 
+![The Groups home view: a nested group with per-agent state, cost, context, roles, task links — and the profile/template/role libraries on the right rail](assets/dashboard-groups.png)
+
+*The Groups home view: a nested group with per-agent state, cost, context, roles, task links — and the profile/template/role libraries on the right rail*
+
 ## Opening it
 
 ```bash
@@ -70,6 +74,10 @@ toggles wizard), or force one with `?slop=1` / `?wizard=1`.
 The default view is a compact roster: groups, and under each group its member
 agents, one row per agent. An optional read-only route-map island
 (feature-flagged) draws the group topology.
+
+![Activity badges on a busy fleet: sub-agents, background shells, and monitors counted next to each state pill](assets/dashboard-activity-badges.png)
+
+*Activity badges on a busy fleet: sub-agents, background shells, and monitors counted next to each state pill*
 
 The filter bar holds query/visibility/column controls, a `💲` toggle for
 per-row cost badges, default spawn- and sandbox-profile pickers, `+ new
@@ -289,6 +297,10 @@ markers, attachment counts, and bulk actions; the reader renders Markdown,
 offers downloadable agent-published attachments with image preview, and can
 reply (human folder), focus the sender's terminal, or toggle read state.
 
+![The Messages tab: mailbox tree on the left, thread list and reader on the right](assets/dashboard-messages.png)
+
+*The Messages tab: mailbox tree on the left, thread list and reader on the right*
+
 The **🔐 Access requests** folder is where blocked permission requests
 (`--ask-human` and friends) arrive as Approve / Decline / scoped Always-allow
 cards with an auto-decline countdown and a "+5m" extend button. A banner and
@@ -307,6 +319,10 @@ line, reset markers, a now marker, and excluded points. Sampling runs every
 15 minutes with 90-day retention; history spans 24h to 90d and look-ahead 5h
 to 30d, persisted per series.
 
+![Per-provider quota windows with least-squares forecasts — here predicting the Claude five-hour window goes dark 1h38m before reset](assets/dashboard-usage.png)
+
+*Per-provider quota windows with least-squares forecasts — here predicting the Claude five-hour window goes dark 1h38m before reset*
+
 The forecast detects resets (a declared boundary, or a downward step of at
 least 2 points), then fits a least-squares slope on the post-reset baseline —
 a running max, so brief dips don't lower the pace — yielding %/hour and an
@@ -324,6 +340,10 @@ Spend over time: a stacked daily bar chart per harness, a per-model rollup
 strip, and a sortable per-agent table with totals and cross-day agent chains.
 Spans are This month (the only span with a projection), 7d/30d/90d, and a
 month browser going 24 months back.
+
+![The Costs tab: month bars, per-model breakdown cards, and the per-agent table](assets/dashboard-costs.png)
+
+*The Costs tab: month bars, per-model breakdown cards, and the per-agent table*
 
 Real API spend and subscription **what-if** estimates are kept visually
 distinct throughout: totals split into `$real + ≈$whatif`, a banner appears
@@ -424,6 +444,56 @@ connect through the remote-access mTLS listener**; the supported network path
 is the plain dashboard listener exposed via `--dashboard-bind` /
 `agent.dashboard_bind` behind your own auth or VPN (see
 [Operating remotely](remote.md)).
+
+## Frontend ownership and imperative boundaries
+
+Preact is the default owner for operator-facing markup, drafts, validation,
+busy/error state, dialogs, lists, and forms. Static dashboard HTML may provide
+an empty stable host, but it must not contain a second dialog implementation.
+Snapshot polling and reconciliation must not inspect UI draft state or pause
+because an editor is open. Cross-feature `data-act` routing snapshots an
+immutable plain descriptor before starting an operation; DOM attributes are
+not request or application state.
+
+Imperative code remains only at the following explicit boundaries. A module
+that directly creates or injects DOM carries a
+`dashboard-imperative-boundary` marker naming one of these categories; the
+architecture test discovers markers rather than maintaining a filename
+allowlist.
+
+| Marker / surface | Ownership | Lifetime and disposal | Behavioral test expectation |
+|---|---|---|---|
+| xterm terminal core | Preact owns terminal tabs, shells, and stable hosts; xterm owns only the opaque descendants handed to `terminals-core.js`. | Terminal close/unmount disposes the terminal, addons, socket, resize observer, and listeners. Reconciliation may retain or retire a host but never rebuild xterm children. | Mount/close/pop-out and roster reconciliation tests must prove opaque-node identity and teardown. |
+| `process-graph` | Preact owns editor/dialog state; `process-graph.js` and `process-graph-adapter.js` exclusively own their SVG/canvas-like host. The connector-drop `process-node-chooser.js` owns its anchored combobox/listbox subtree. | The adapter removes pointer/key listeners, connection bands, and graph instances on keyed replacement/unmount. Closing or disposing the chooser removes its document listener and subtree; cancellation restores focus, while unmount disposal leaves focus to the next owner. | Graph interaction tests cover selection, drag/connect, rerender identity, and disposal; chooser tests cover selection, cancellation, focus, click-away, and idempotent disposal. |
+| `cost-chart` | Preact owns filters, data derivation, and the chart host; `costs-chart.js` owns the chart's drawing nodes only. | Each effect clears/replaces the chart host and returns cleanup before the next draw or unmount. | Costs tests cover filtered redraw, empty/error states, and chart cleanup without asserting incidental node layout. |
+| drag and drop | Preact emits live keyed producers and semantic `data-*` descriptors; `dnd.js`, `group-reorder.js`, `dock-dnd.js`, and `dock-save-dnd.js` adapt native `DataTransfer` events. | Every binder is idempotent, returns cleanup, resets gesture state on `dragend`/unmount, and rejects detached producers. | DnD tests cover copy/move/delete intent, cancellation, cleanup, and live-source guards. |
+| `media-effects` | The Vegas audio player and slop/wizard cosmetic modules are boot-time, page-lifetime effects that own media elements, particles, and the explicitly opaque reel host. They do not own operational state. | Their delegated document listeners intentionally live until navigation and are not `pageCleanups`. Within that page lifetime, transient nodes self-remove, Vegas stops audio and polling timers when inactive, and identity tokens prevent stale timers from overwriting a newer Preact host. | Reduced-motion, stale-timer, inactive-audio, and opaque reel hand-back tests are required. |
+| `platform-layout` | Scoped browser effects own focus traps, resize, horizontal scroll, navigation history, overlay stacking, and stable shell/dock re-homing. The dashboard profile controls are Preact-owned inside named stable hosts; the hosts move between the toolbar and dock while each chip can turn into an inline picker. `island-lifecycle.js` owns only its claimed host's load-failure alert. | Effects attach to refs/stable shell nodes and return cleanup. Focus returns to the remounted chip after keyboard cancellation. Island failure rendering replaces only the claimed host; successful cleanup releases host ownership. | Binder lifecycle, inline-picker focus, overlay stack, dock identity, refresh-generation, and island rollback/ownership tests cover these contracts. |
+| `browser-io` | Operation modules may create a short-lived download anchor, clipboard textarea fallback, or standalone Preact host solely to invoke a browser API. `xterm-loader.js` owns the non-visual script node used to fetch the classic xterm runtime on first valid terminal intent. | Temporary operation nodes and object URLs are removed/revoked in the same operation; no draft or request state is stored on them. The xterm script and installed global intentionally live for the page lifetime, while an in-flight promise deduplicates concurrent opens and a failed load is retryable. An auth-aware HEAD preflight preserves the dashboard's expired-session redirect before script injection. | Payload/download/clipboard tests assert the invoked browser contract and cleanup. The xterm loader test proves imports cause no fetch, auth failure causes no injection, concurrent requests append one script, and a ready runtime is reused; facade tests prove canceled/invalid requests do not prepare it. |
+| `config-adapter` | `config-form-adapter.js` and `remote-admin.js` are bounded adapters for server-described native controls embedded in Preact-owned config surfaces. | Activation is generation-guarded; option/list replacement is scoped to the supplied control, and the Config island owns activation cleanup. | Config activation and retry tests must prove stale loads cannot publish into a replacement control. |
+| `preact-compat` | Preact remains the visual owner. This marker covers trusted legacy readback HTML and standalone process-dialog wrappers used outside the main editor tree, not permission to build new imperative UI. | Injected markup is escaped/trusted at its model boundary; standalone hosts unmount Preact and remove themselves on completion. | Readback escaping and standalone-dialog close/disposal tests are required. New uses need explicit review and documentation here. |
+
+One surface sits just inside that allowance and is worth naming, because it
+reads at a glance like an exception: `menu-filter.js`, the type-to-filter core
+behind the ⚙ cog menus, decides which items a query keeps by **reading the
+rendered menu** rather than from data. It is not new imperative UI — it creates
+no nodes, and Preact still owns the box, the query and every item — but it does
+mark items on a Preact-rendered subtree. Two properties keep that safe. Its
+three `data-menu-*` attributes are declared by no vnode, so Preact never diffs
+them and a snapshot publish cannot fight them; and `ActionMenu` re-applies the
+filter after every render, so items that appear or disappear with the snapshot
+are re-evaluated. Reading the DOM is also the only complete option here: several
+items (`NotifyMenuItem`, `RemoteMenuItem`, `RestartMenuItem`,
+`SandboxRestartMenuItem`) compute their own label inside the component from live
+member state, so no call site knows what they say — and matching the rendered
+text means the filter cannot drift from the labels the operator can see.
+
+The guard intentionally allows ordinary ref-based effects (`focus`, measure,
+scroll, browser APIs) and rejects undocumented DOM ownership. If a new surface
+needs imperative ownership, first prove that Preact cannot own the ordinary UI,
+add a documented category/lifecycle/test contract, and then add the source
+marker. Do not solve a guard failure with a compatibility re-export, static
+dialog markup, or a blanket filename exception.
 
 ## Visual smoke testing (contributors)
 

@@ -8,6 +8,10 @@ inspection, and the Claude Code context knobs.
 
 ### Claude Code: command-backed status bar
 
+![The Claude Code status line: model and context bar, five-hour and seven-day rate-limit windows, effort — with the branch and PR link line below](assets/term-status-line.png)
+
+*The Claude Code status line: model and context bar, five-hour and seven-day rate-limit windows, effort — with the branch and PR link line below*
+
 `tclaude setup` offers to install tclaude's status bar as Claude Code's
 command-backed statusline (`statusLine: {type: command, command: "tclaude
 status-bar"}` in `~/.claude/settings.json`). Requires Claude Code >= 2.1.80,

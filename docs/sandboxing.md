@@ -521,6 +521,229 @@ fires wherever auto-approval pairs with an unprovable sandbox. The
 [credential proxies](proxies.md) are what make denying `~/.ssh` and
 `~/.config/gh` survivable for agents that still need to push branches.
 
+## Deep dives
+
+### Isolated-with-agentd network posture
+
+The profile's `network_access` field maps differently because the outer layer
+wraps the whole harness process, not only its tool executions:
+
+- omitted (`inherit`) and `internet` use the **host-open** posture. This
+  preserves the walking skeleton: the host network namespace and read-only
+  host root remain visible, including host localhost services and ambient
+  filesystem Unix sockets. `internet` therefore means more here than a
+  tool-only Internet switch; the launch record calls this `host network` rather
+  than repeating the profile word.
+- `none` requests **isolated-with-agentd**. Bubblewrap creates a fresh network
+  namespace (with loopback up), a fresh PID namespace, and a constructed
+  filesystem root. Bubblewrap remains PID 1 so orphaned harness subprocesses
+  are reaped. There is no blanket bind of `/`: the static OS surface is
+  read-only (`/usr`, `/bin`, `/sbin`, `/lib*`, `/etc`, and `/opt`, accounting
+  for merged-usr symlinks); `/dev` and `/proc` are fresh, `/tmp` is tmpfs, and
+  `/run`, `/var`, `/srv`, `/media`, `/mnt`, `/boot`, and `/root` are absent.
+  Home paths exist only where the launch contract or ordered profile plan binds
+  them. The canonical `~/.tclaude/api/agentd.sock` is bound read-only as a
+  launch-contract path.
+
+Since TCL-798 the constructed root is no longer welded to the network posture.
+A sandbox profile can select the filesystem root explicitly with
+`filesystem_root`: omit it for **Automatic**, use `inherit` to prefer the
+read-only host root, or use `separate` to request the minimal constructed root
+even when network and Unix sockets remain open. Explicit separation is
+supported by Linux `tclaude-layer` for Claude Code, Codex, OpenCode, and
+Copilot; other targets refuse it during preview/spawn rather than ignoring it.
+
+The setting composes monotonically. `separate` in any included, global, group,
+or explicit profile wins. `inherit` cannot weaken a private/restricted network
+or Unix-socket rule whose enforcement itself requires a constructed root. This
+keeps existing profiles unchanged: an omitted setting retains the same
+automatic derivation they had before the control existed.
+
+A profile that leaves network access open but authors the `unix_sockets` axis
+as `closed` or an allow `list` gets a **host-network constructed root** on
+Linux for Claude Code, Codex, OpenCode, and Copilot: bubblewrap builds the same fresh
+root and PID namespace as the isolated posture, binds the agentd socket and any
+listed sockets back, and does NOT create a network namespace, so host IP
+networking, host loopback services, and the IDE bridge keep working. For
+OpenCode, the attach pane remains outside while its agentd-owned tool server is
+wrapped by that root.
+
+That posture is deliberately rated **partially enforced**, permanently. With the
+host network namespace shared, Linux abstract-namespace Unix sockets (`@…`) are
+not filesystem objects at all, so no mount plan can hide them; close network
+access as well if you need those confined too. The recursive-root remainder
+applies here as it does under closed network access: a socket beneath a
+directory the profile makes readable or writable stays reachable.
+
+The PID namespace is a **requirement** of this posture rather than a side
+effect, and it has a cost worth knowing before you author the axis. Without it a
+host process's `/proc/<pid>/root` leads straight back to the sockets the
+constructed root just hid, so the posture's whole claim would be false. The
+consequence is that the agent cannot see or signal host processes, and tools
+that read the host process table stop working. This is stated in the launch
+warning alongside the abstract-socket caveat.
+
+It is never newly enabled by an omitted setting. A profile that says nothing
+about `filesystem_root`, says nothing about `unix_sockets` (or sets sockets to
+`open`), and has no network rule requiring construction launches with exactly
+the read-only host root it launched with before.
+
+Two consequences of building the root reach beyond sockets, and both are stated
+in the launch warning rather than left to be discovered:
+
+- **What the agent can see narrows.** Host paths outside your filesystem grants
+  and the static OS surface are no longer present at all, where a host-open
+  launch without this rule showed the whole read-only host root. Before adding a
+  socket rule to an existing host-open profile, check that anything the agent
+  needs — toolchains under your home, `/var`, `/srv`, `/opt`-style installs — is
+  actually granted.
+- **Sockets on the static OS surface stay reachable.** `/usr`, `/bin`, `/sbin`,
+  `/lib*`, `/etc`, and `/opt` are mounted read-only, and a read-only mount does
+  not block `connect()`, so an AF_UNIX socket living under one of those paths
+  remains connectable. This is the same remainder the closed-network posture
+  has, named here because a host-open profile is a far more common shape.
+
+The isolated posture has an explicit platform delta:
+
+| Property | Linux (`bubblewrap`) | macOS (`Seatbelt`) |
+| --- | --- | --- |
+| Public and host-loopback connectivity | Unavailable outside the private network namespace | Refused by Seatbelt network operations |
+| Harness-internal localhost server | Works on the private namespace's own loopback | Refused: Darwin loopback is host loopback, so reopening it would also reopen the IDE-bridge/host-service surface |
+| Agentd | Canonical socket bind-mounted into the constructed root | Canonical socket and surviving aliases are the only outbound Unix-socket exceptions |
+| Processes and filesystem root | Isolated PIDs and a constructed root | No PID isolation and no constructed root; hidden paths remain enumerable |
+
+The stricter Darwin localhost behavior is deliberate. If a real harness later
+requires an internal localhost server, the remedy is a harness-descriptor
+capability plus launch-time refusal for Darwin isolated mode. It must not gain a
+loopback exception that silently reopens host services.
+
+If a fresh dashboard spawn requests closed network access on an implementation
+that cannot enforce it, the launch normally refuses with:
+
+```text
+<harness> (<scope> scope) cannot enforce closed network access; choose a sandbox implementation that can enforce closed network access, use network open, or enable “Allow launch without enforcement” in the dashboard spawn dialog
+```
+
+The human operator may explicitly check that named dashboard escape hatch for
+one fresh launch. Only this exact closed-network capability gap is widened:
+network access becomes open, while enforceable filesystem and Unix-socket rules
+keep their planned posture. Protected-root checks, filtered model-transport
+gates, implementation availability, and every other launch refusal remain
+non-overridable. Raw API callers, including agents and human-class credentials,
+cannot set the override.
+
+The authorization is deliberately neither saved nor inherited. Resume,
+reincarnate, and clone of an overridden agent do not carry it forward and refuse
+again unless a future fresh spawn is explicitly authorized in the dashboard.
+The launch snapshot records a degradation notice with network reason
+`operator_unenforced_launch_override` and effect `not_enforced`; the dashboard
+renders a warning badge and the exact notice rather than claiming a sandbox
+lock or changing the recorded OS-sandbox verdict.
+
+### Stacked refuses on AppArmor-restricted hosts
+
+On a stock Ubuntu 24.04 or newer host, `--sandbox-impl stacked` refuses at
+launch even though everything it needs looks installed. This is the host, not a
+broken install, and the refusal is the correct outcome.
+
+**Symptom.** The launch ends with a named capability refusal —
+`stacked_claude_inner_policy` or `stacked_claude_srt_probe` for Claude Code
+(which one depends on how far the inner harness got), `stacked_codex_bwrap_backend`
+for Codex — and the detail carries an inner `bwrap` complaint along the lines
+of *No permissions to create a new namespace*. Ordinary single-layer
+`tclaude-layer` on the same host works fine: the outer wall is not the problem.
+
+**Cause.** Ubuntu ships and enforces an AppArmor policy,
+`/etc/apparmor.d/bwrap-userns-restrict`, whose whole purpose is to let `bwrap`
+create a user namespace while denying capabilities to what runs inside it. The
+outer bwrap is permitted; its children are pivoted into the policy's
+`unpriv_bwrap` child profile, whose rule is `audit deny capability,` — all
+capabilities, not one. The inner bwrap needs `CAP_SYS_ADMIN` *within the user
+namespace it just created* — normally free, because it owns that namespace —
+but AppArmor's `capable` check applies to the profile regardless of namespace
+ownership. So the second wall can never be built while that policy is
+enforcing. The kernel audit line, which names whichever capability was asked
+for first, is the proof:
+
+```text
+apparmor="DENIED" operation="capable" class="cap" profile="unpriv_bwrap" comm="bwrap" capname="sys_admin"
+```
+
+**What is not the cause.** The userns sysctls are a red herring here.
+`kernel.apparmor_restrict_unprivileged_userns=0` alone does *not* fix it, and
+the denial reproduces with `kernel.unprivileged_userns_clone=1`: the deny is
+profile-local. CI is blind to this failure because its runners do not ship the
+policy, so a green nested-namespace assumption pin says nothing about your
+laptop.
+
+**Diagnose it without root.** If the policy file exists and nothing disables
+it, this is almost certainly what you are hitting:
+
+```bash
+ls -l /etc/apparmor.d/bwrap-userns-restrict   # present on stock Ubuntu 24.04+
+ls -l /etc/apparmor.d/disable/                # an entry here means it is unloaded
+ls -l /etc/apparmor.d/force-complain/         # an entry here means it only logs
+grep -n 'flags=(' /etc/apparmor.d/bwrap-userns-restrict   # `complain` here means the same
+```
+
+Confirm it, with root, from the audit log and the loaded-profile list:
+
+```bash
+sudo dmesg | grep -F 'profile="unpriv_bwrap"'
+sudo aa-status | grep -F bwrap
+```
+
+**Workaround, and what it costs.** Both halves are required, and the reason is
+worth understanding before you run them: the policy is also what *grants*
+`/usr/bin/bwrap` its `userns` permission. Unload it and bwrap becomes
+unconfined — at which point the global unprivileged-userns restriction, which
+the profile had been standing in front of, applies to it. So unloading alone
+breaks the outer wall too, and the sysctl alone leaves the child-profile deny
+in place. Persist the sysctl and unload the policy:
+
+```bash
+echo 'kernel.apparmor_restrict_unprivileged_userns = 0' \
+  | sudo tee /etc/sysctl.d/99-tclaude-userns.conf
+sudo sysctl --system
+sudo ln -s /etc/apparmor.d/bwrap-userns-restrict /etc/apparmor.d/disable/
+sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict
+```
+
+This is a **host-wide security trade-off, not a tclaude setting**: it removes
+Ubuntu's defence-in-depth around unprivileged user namespaces for every process
+on the machine, including ones that have nothing to do with tclaude. Stacked is
+experimental; single-layer `tclaude-layer` needs none of this. Decide
+accordingly, and prefer the temporary form when you only want to observe
+stacked once:
+
+```bash
+sudo aa-complain /etc/apparmor.d/bwrap-userns-restrict
+sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+# … run the stacked launch …
+sudo aa-enforce /etc/apparmor.d/bwrap-userns-restrict
+sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
+```
+
+**Reversal** of the persistent form is symmetric — reload the policy and drop
+the sysctl file:
+
+```bash
+sudo rm /etc/apparmor.d/disable/bwrap-userns-restrict
+sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
+sudo rm /etc/sysctl.d/99-tclaude-userns.conf
+sudo sysctl --system
+```
+
+Expect the dashboard's stacked *availability* to look green on such a host
+anyway: that disclosure resolves the harness engine only, and the live nested
+round-trip at launch is the authority. What the dashboard does add is a warning
+that stacked is *likely* blocked when it sees this shape — the policy file
+present, with no `disable/` or `force-complain/` entry — with a link here, and
+the launch refusal names the same likely cause when its own output matches. Both
+are guesses made from what an unprivileged daemon can read, not determinations:
+agentd cannot read `dmesg` or `aa-status`. The supported posture for these hosts
+is still open; what stands today is that stacked fails closed and says so.
+
 ## Symptom → cause
 
 | Symptom | Likely cause |

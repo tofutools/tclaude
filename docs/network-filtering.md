@@ -28,6 +28,10 @@ Rows are built from these selectors:
 - `loopback` — the host's own loopback services.
 - `ports[]` — TCP and UDP both (QUIC counts as UDP); empty means all ports.
 
+![The sandbox-profile network editor: baseline, engine, and namespace selectors above authored deny rows](assets/sandbox-profile-network-editor.png)
+
+*The sandbox-profile network editor: baseline, engine, and namespace selectors above authored deny rows*
+
 Deny rows compose as a union and win every overlap; rule order is irrelevant.
 Under a deny baseline, allow rows are unlocks; under an allow baseline, deny
 rows are restrictions — the editor labels the redundant cases instead of

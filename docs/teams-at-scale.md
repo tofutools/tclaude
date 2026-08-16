@@ -65,6 +65,10 @@ in `~/.tclaude/data/config.json`.
 A **task force** is the mission-framed twin of `templates instantiate`: the
 same deployment path, framed around the problem instead of the team.
 
+![Deploying a task force from a template: mission, group name, worktree options, and a roster preview](assets/task-force-deploy.png)
+
+*Deploying a task force from a template: mission, group name, worktree options, and a roster preview*
+
 ```bash
 tclaude agent task-force deploy review-team \
   --mission "Harden the release pipeline before the 2.0 cut"
@@ -103,6 +107,10 @@ is up.
 
 The daemon runs a scheduler that ticks every 30 seconds. The stable core is
 **message jobs**: a body delivered to a target on a cadence.
+
+![Scheduling a recurring group message from the dashboard’s Automations tab](assets/cron-job-create.png)
+
+*Scheduling a recurring group message from the dashboard’s Automations tab*
 
 ```bash
 tclaude agent cron add --name standup --interval 10m \

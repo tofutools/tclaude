@@ -6,6 +6,10 @@ for running many agents seriously — durable sessions, conversation history
 and search, an operations dashboard, agent-to-agent mail, teams, identity and
 permissions with audit, sandboxing, and automation.
 
+![The operations dashboard watching a mixed-harness fleet](assets/dashboard-groups.png)
+
+*The operations dashboard watching a mixed-harness fleet*
+
 Four harnesses are supported behind one workflow: Claude Code, OpenAI Codex
 CLI, OpenCode, and GitHub Copilot CLI. tclaude records the harness on every
 conversation, so listings, resume, lifecycle operations, and the dashboard

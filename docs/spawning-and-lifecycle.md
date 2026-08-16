@@ -94,6 +94,10 @@ A human spawning agents is one thing; agents spawning agents is where
 things can run away. Seven checks bound every agent-initiated spawn. The
 human bypasses the agent-only ones — but not all seven are agent-only.
 
+![The global cross-harness spawn policy matrix: which harness may spawn which, with a reason returned to the refused spawner](assets/spawn-cross-harness-policy.png)
+
+*The global cross-harness spawn policy matrix: which harness may spawn which, with a reason returned to the refused spawner*
+
 **1. Group restriction.** An agent may only spawn into a group it belongs
 to or owns (`403 group_restricted`). Config:
 `agent.spawn_group_restriction`, `agent.spawn_allowed_groups`.

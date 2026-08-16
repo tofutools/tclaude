@@ -167,6 +167,10 @@ one, and `session prune` clears exited session state (`--max-age 7d`,
 `tclaude session watch` (alias for `session ls -w`; bare `tclaude session`
 opens the same viewer) is an interactive table of sessions:
 
+![Watch mode: every session across harnesses, with live working/idle/blocked status and what each agent is really running](assets/term-session-watch.png)
+
+*Watch mode: every session across harnesses, with live working/idle/blocked status and what each agent is really running*
+
 - `↑`/`↓` (or `j`/`k`) navigate; `Enter` attaches.
 - `/` searches; `Esc` clears.
 - `x`/`Del` kills the selected session (with confirmation).

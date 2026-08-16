@@ -202,6 +202,10 @@ command, from both the CLI and the dashboard: **who** ran **what** against
 verb, target, group, a short bounded detail — never pane content, prompts,
 or subprocess output.
 
+![An audit row recording a rejected spawn: actor, verb, target, detail, and outcome](assets/audit-denial.png)
+
+*An audit row recording a rejected spawn: actor, verb, target, detail, and outcome*
+
 Three properties make the trail defensible rather than decorative:
 
 - **Denials are recorded too.** A 403 or any other failure writes a row, so
