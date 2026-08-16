@@ -1709,6 +1709,18 @@ func TestPrivateRoutedNamespaceRequiresExactReadyLinuxLayer(t *testing.T) {
 	require.NoError(t, err,
 		"deny-all uses the isolated namespace and must not require the routed packet gateway")
 	assert.Equal(t, EnforceFull, closedRow.NetworkClosed)
+	listPrivate := sandboxpolicy.ResolvedAxes{Network: sandboxpolicy.NetworkRules{
+		Mode:      sandboxpolicy.AccessModeList,
+		Namespace: sandboxpolicy.NetworkNamespacePrivate,
+		Allow: []sandboxpolicy.NetworkAllowEntry{{
+			Domain: "api.openai.com", Ports: []int{443},
+		}},
+	}}
+	_, err = accessEnforcementTable(
+		MustGet(CodexName), sandboxpolicy.ImplementationTclaudeLayer,
+		listPrivate, SandboxDangerFull, "linux", false)
+	require.ErrorContains(t, err, "private-network prerequisites",
+		"deny-all with an allowed exception still needs the routed packet gateway")
 	_, err = accessEnforcementTable(
 		h, sandboxpolicy.ImplementationTclaudeLayer, axes,
 		OpenCodeSandboxTclaudeLayer, "darwin", true)
