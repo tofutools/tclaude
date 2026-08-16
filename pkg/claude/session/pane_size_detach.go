@@ -33,7 +33,13 @@ const tmuxDetachNormalizeHookIndex = "9001136"
 // nothing global is left behind. Operator hooks at other indices are never
 // touched.
 func ConfigureTmuxDetachNormalization(tmuxSession string) {
-	if tmuxSession == "" {
+	// The name is interpolated into a hook body (a tmux command string), so it
+	// is an injection sink: gate it on the managed-name charset every producer
+	// (ValidateSessionLabel, sanitizeTmuxName, UUID-prefix fallback) already
+	// guarantees, rather than trusting future name sources to keep doing so.
+	// A name that fails the gate simply gets no hook; the returning-caller
+	// normalize and agentd's periodic reconciliation still cover it.
+	if tmuxSession == "" || !isSafeTmuxHookName(tmuxSession) {
 		return
 	}
 	target := clcommon.ExactTarget(tmuxSession) + ":"
@@ -66,6 +72,20 @@ func NormalizeTmuxPaneAfterDetach(tmuxSession string) {
 		slog.Warn("pane size normalize after detach failed",
 			"tmux_session", tmuxSession, "error", err)
 	}
+}
+
+// isSafeTmuxHookName reports whether a session name stays within the managed
+// [A-Za-z0-9_-] charset and so cannot break out of the quoted hook body it is
+// interpolated into.
+func isSafeTmuxHookName(name string) bool {
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func tmuxDetachNormalizeCommand(target string) string {
