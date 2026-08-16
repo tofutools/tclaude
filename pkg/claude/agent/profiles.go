@@ -107,6 +107,7 @@ type profileJSON struct {
 
 	// Dialog toggles.
 	SyncWorktree               *bool `json:"sync_worktree,omitempty"`
+	FetchLatestWorktree        *bool `json:"fetch_latest_worktree,omitempty"`
 	AutoFocus                  *bool `json:"auto_focus,omitempty"`
 	IncludeGroupDefaultContext *bool `json:"include_group_default_context,omitempty"`
 
@@ -801,7 +802,7 @@ func printProfileHuman(w io.Writer, p profileJSON) {
 		k string
 		v *bool
 	}{
-		{"auto_focus", p.AutoFocus}, {"sync_worktree", p.SyncWorktree},
+		{"auto_focus", p.AutoFocus}, {"sync_worktree", p.SyncWorktree}, {"fetch_latest_worktree", p.FetchLatestWorktree},
 		{"include_group_context", p.IncludeGroupDefaultContext},
 	})
 	if len(toggles) > 0 {

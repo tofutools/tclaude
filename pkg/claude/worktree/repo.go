@@ -471,6 +471,59 @@ func DefaultBranchIn(dir string) (string, error) {
 	return "", fmt.Errorf("could not determine default branch (tried main, master)")
 }
 
+// FetchTargetForBranchIn resolves the remote branch that should refresh a
+// local base branch before a new worktree is cut. A configured upstream wins;
+// otherwise origin is preferred, falling back to the repository's sole
+// remote. The returned ref is the remote-tracking ref callers should use as
+// the worktree base after a successful fetch.
+func FetchTargetForBranchIn(dir, branch string) (remote, remoteBranch, trackingRef string, err error) {
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return "", "", "", fmt.Errorf("base branch is required")
+	}
+	remote, _ = gitIn(dir, "config", "--get", "branch."+branch+".remote")
+	merge, _ := gitIn(dir, "config", "--get", "branch."+branch+".merge")
+	if remote == "." {
+		return "", "", "", fmt.Errorf("base branch %q tracks a local branch, not a fetchable remote", branch)
+	}
+	remoteBranch = strings.TrimPrefix(strings.TrimSpace(merge), "refs/heads/")
+	if remote == "" {
+		remotes, listErr := gitIn(dir, "remote")
+		if listErr != nil {
+			return "", "", "", fmt.Errorf("list remotes: %w", listErr)
+		}
+		var names []string
+		remoteNames := map[string]bool{}
+		for _, name := range strings.Fields(remotes) {
+			names = append(names, name)
+			remoteNames[name] = true
+		}
+		// BranchesIn preserves non-origin remote qualifiers (for example
+		// upstream/topic). Recognize that shape when there is no same-named
+		// local branch, so the picker fetches topic from upstream rather than
+		// asking upstream for a branch literally named upstream/topic.
+		if !branchExistsIn(dir, "refs/heads/"+branch) {
+			if qualifier, rest, ok := strings.Cut(branch, "/"); ok && remoteNames[qualifier] && rest != "" {
+				remote, remoteBranch = qualifier, rest
+			}
+		}
+		if remote == "" && remoteNames["origin"] {
+			remote = "origin"
+		}
+		if remote == "" && len(names) == 1 {
+			remote = names[0]
+		}
+		if remote == "" {
+			return "", "", "", fmt.Errorf("base branch %q has no upstream and the repository has no unambiguous remote", branch)
+		}
+	}
+	if remoteBranch == "" {
+		remoteBranch = branch
+	}
+	trackingRef = "refs/remotes/" + remote + "/" + remoteBranch
+	return remote, remoteBranch, trackingRef, nil
+}
+
 // branchExistsIn reports whether branch resolves in the repo at dir.
 func branchExistsIn(dir, branch string) bool {
 	_, err := gitIn(dir, "rev-parse", "--verify", "--quiet", branch)

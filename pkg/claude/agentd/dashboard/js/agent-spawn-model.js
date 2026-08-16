@@ -785,6 +785,7 @@ export function createSpawnDraft({
     worktreeBranch: '',
     worktreeBase: '',
     syncWorktree: true,
+    fetchLatestWorktree: true,
     autoFocus: !!autoFocus,
     includeGroupContext: true,
     remoteControl: groupRemoteControlDefault(group),
@@ -942,6 +943,7 @@ export function applySpawnProfile(
   if (profile.initial_message) next.initialMessage = text(profile.initial_message);
   if (profile.auto_focus != null) next.autoFocus = !!profile.auto_focus;
   if (profile.sync_worktree != null) next.syncWorktree = !!profile.sync_worktree;
+  if (profile.fetch_latest_worktree != null) next.fetchLatestWorktree = !!profile.fetch_latest_worktree;
   // Only the SELECTED profile pre-fills the checkbox. The daemon resolves this
   // toggle down the whole tier stack (named > group default > global default),
   // but the form always posts an explicit include_group_context, and explicit
@@ -1010,6 +1012,7 @@ export function clearSpawnProfileFields(draft, context, {
     permissionOverrides: {},
     contextFeatures: {},
     syncWorktree: defaults.syncWorktree,
+    fetchLatestWorktree: defaults.fetchLatestWorktree,
     autoFocus: defaults.autoFocus,
     includeGroupContext: true,
   }, false);
@@ -1137,6 +1140,7 @@ export function spawnProfileSeed(draft, context) {
     initial_message: draft.initialMessage,
     auto_focus: !!draft.autoFocus,
     sync_worktree: !!draft.syncWorktree,
+    fetch_latest_worktree: !!draft.fetchLatestWorktree,
     include_group_default_context: !!draft.includeGroupContext,
     is_owner: !!draft.owner,
   };
@@ -1189,7 +1193,7 @@ const DIRTY_FIELDS = [
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'sandboxProfile', 'approval',
   'approvalReviewer', 'tools', 'askTimeout', 'autoCompactWindow', 'contextWindowMax', 'copilotAPI', 'fastMode', 'sandboxImpl', 'allowUnenforcedSandbox', 'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'sshWorkaround', 'owner',
   'cwd', 'wtRepo', 'worktree', 'worktreeBranch', 'worktreeBase',
-  'syncWorktree', 'autoFocus', 'includeGroupContext',
+  'syncWorktree', 'fetchLatestWorktree', 'autoFocus', 'includeGroupContext',
 ];
 
 export function spawnDraftIsDirty(draft, baseline, attachmentCount = 0) {

@@ -252,6 +252,7 @@ function profileSummary(p, { status = true } = {}) {
   if (p.codex_app_server != null) parts.push(`drive ${p.codex_app_server ? 'app-server' : 'send-keys'}`);
   if (p.fast_mode != null) parts.push(`fast ${p.fast_mode ? 'on' : 'off'}`);
   if (p.sync_worktree != null) parts.push(`sync-wt ${p.sync_worktree ? 'on' : 'off'}`);
+  if (p.fetch_latest_worktree != null) parts.push(`fetch-wt ${p.fetch_latest_worktree ? 'on' : 'off'}`);
   if (p.auto_focus != null) parts.push(`focus ${p.auto_focus ? 'on' : 'off'}`);
   if (p.include_group_default_context != null) {
     parts.push(`group-ctx ${p.include_group_default_context ? 'on' : 'off'}`);
@@ -313,6 +314,7 @@ function profileDetailChips(p) {
 	if (p.initial_message) parts.push(`initial message · ${p.initial_message.length} chars`);
 	if (p.startup_context) parts.push(`profile context · ${p.startup_context.length} chars`);
   toggle('sync-wt', p.sync_worktree);
+  toggle('fetch-wt', p.fetch_latest_worktree);
   toggle('focus', p.auto_focus);
   toggle('group-ctx', p.include_group_default_context);
   toggle('owner', p.is_owner);

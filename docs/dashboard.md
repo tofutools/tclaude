@@ -2423,6 +2423,15 @@ group's start-dir default pre-fills the directory when present, and — when the
 group has a shared startup context — a checkbox offers to include it in the
 briefing.
 
+For a newly created worktree, **Fetch latest worktree base** defaults on beside
+the name-sync checkbox. It fetches the selected base branch through the
+configured Git remote proxy when that proxy is enabled, then cuts the new
+branch from the refreshed remote-tracking ref. The network command always uses
+the proxy's isolated, hook-free transfer machinery; enabling the Git remote
+proxy additionally enforces its remote allow-list. A failed fetch stops the spawn
+instead of silently using stale local state. Untick it to retain the existing
+local-base behavior; both worktree checkboxes can be saved in a spawn profile.
+
 The modal also takes **attachments**, added three ways: click **📎 Attach
 files** to pick one or more with the native picker; **drag files from
 Finder/Explorer** onto the dialog (it highlights as a drop target); or **paste**

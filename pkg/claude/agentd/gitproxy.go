@@ -797,6 +797,24 @@ type gitProxySession struct {
 // the hardened argv prefix for one request. remoteName may be empty for
 // operations that name no remote.
 func newGitProxySession(ctx context.Context, convID string, remoteScoped bool) (*gitProxySession, *proxyFault) {
+	s, fault := newGitProxySessionBase(ctx, remoteScoped)
+	if fault != nil {
+		return nil, fault
+	}
+	repoRoot, fault := resolveProxyRepo(ctx, s.gitPath, convID)
+	if fault != nil {
+		return nil, fault
+	}
+	s.repoRoot = repoRoot
+	return s, nil
+}
+
+// newGitProxySessionBase constructs the credential and hardening half of a
+// proxy session before its trusted repository root is attached. Normal agent
+// proxy calls resolve that root from daemon-recorded launch state above; the
+// operator-authenticated worktree picker attaches the repository it already
+// resolved from the dashboard request.
+func newGitProxySessionBase(ctx context.Context, remoteScoped bool) (*gitProxySession, *proxyFault) {
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, faultf(500, "config", "could not read the daemon configuration: %v", err)
@@ -813,13 +831,9 @@ func newGitProxySession(ctx context.Context, convID string, remoteScoped bool) (
 	if err != nil {
 		return nil, faultf(500, "io", "%v", err)
 	}
-	repoRoot, fault := resolveProxyRepo(ctx, gitPath, convID)
-	if fault != nil {
-		return nil, fault
-	}
 	pins := gitProxyConfigPins(hooksDir, gitProxySSHCommand(policy),
 		globalCredentialHelpers(ctx, gitPath))
-	return &gitProxySession{policy: policy, gitPath: gitPath, repoRoot: repoRoot, pins: pins}, nil
+	return &gitProxySession{policy: policy, gitPath: gitPath, pins: pins}, nil
 }
 
 // gitProxyUploadPack / gitProxyReceivePack are the stock transport programs.

@@ -119,6 +119,7 @@ type spawnProfileJSON struct {
 
 	// Dialog toggles.
 	SyncWorktree               *bool `json:"sync_worktree,omitempty"`
+	FetchLatestWorktree        *bool `json:"fetch_latest_worktree,omitempty"`
 	AutoFocus                  *bool `json:"auto_focus,omitempty"`
 	IncludeGroupDefaultContext *bool `json:"include_group_default_context,omitempty"`
 
@@ -173,6 +174,7 @@ func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 		InitialMessage:             p.InitialMessage,
 		StartupContext:             p.StartupContext,
 		SyncWorktree:               p.SyncWorktree,
+		FetchLatestWorktree:        p.FetchLatestWorktree,
 		AutoFocus:                  p.AutoFocus,
 		IncludeGroupDefaultContext: p.IncludeGroupDefaultContext,
 		IsOwner:                    p.IsOwner,
@@ -487,6 +489,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		InitialMessage:             im,
 		StartupContext:             startupContext,
 		SyncWorktree:               body.SyncWorktree,
+		FetchLatestWorktree:        body.FetchLatestWorktree,
 		AutoFocus:                  body.AutoFocus,
 		IncludeGroupDefaultContext: body.IncludeGroupDefaultContext,
 		IsOwner:                    body.IsOwner,
@@ -508,7 +511,7 @@ func buildInlineProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawn
 		return &spawnFailure{http.StatusBadRequest, "invalid_arg", fmt.Sprintf(
 			"profile_inline: %q is not supported on a template-local profile — identity fields "+
 				"(agent_name/role/descr/initial_message) belong on the template agent itself, and the "+
-				"spawn-dialog toggles (sync_worktree/auto_focus/include_group_default_context) do not "+
+				"spawn-dialog toggles (sync_worktree/fetch_latest_worktree/auto_focus/include_group_default_context) do not "+
 				"apply to a template deploy", field)}
 	}
 	if strings.TrimSpace(body.Name) != "" {
@@ -534,6 +537,8 @@ func buildInlineProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawn
 		return nil, reject("initial_message")
 	case body.SyncWorktree != nil:
 		return nil, reject("sync_worktree")
+	case body.FetchLatestWorktree != nil:
+		return nil, reject("fetch_latest_worktree")
 	case body.AutoFocus != nil:
 		return nil, reject("auto_focus")
 	case body.IncludeGroupDefaultContext != nil:
