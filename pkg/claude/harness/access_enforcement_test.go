@@ -1698,6 +1698,17 @@ func TestPrivateRoutedNamespaceRequiresExactReadyLinuxLayer(t *testing.T) {
 		h, sandboxpolicy.ImplementationTclaudeLayer, axes,
 		OpenCodeSandboxTclaudeLayer, "linux", false)
 	require.ErrorContains(t, err, "private-network prerequisites")
+
+	closedPrivate := sandboxpolicy.ResolvedAxes{Network: sandboxpolicy.NetworkRules{
+		Mode:      sandboxpolicy.AccessModeClosed,
+		Namespace: sandboxpolicy.NetworkNamespacePrivate,
+	}}
+	closedRow, err := accessEnforcementTable(
+		MustGet(CodexName), sandboxpolicy.ImplementationTclaudeLayer,
+		closedPrivate, SandboxDangerFull, "linux", false)
+	require.NoError(t, err,
+		"deny-all uses the isolated namespace and must not require the routed packet gateway")
+	assert.Equal(t, EnforceFull, closedRow.NetworkClosed)
 	_, err = accessEnforcementTable(
 		h, sandboxpolicy.ImplementationTclaudeLayer, axes,
 		OpenCodeSandboxTclaudeLayer, "darwin", true)
