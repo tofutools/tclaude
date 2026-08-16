@@ -219,11 +219,11 @@ func TestPresentPR_RecentlyMergedPollIsGlobalAndRepoDeduped(t *testing.T) {
 	require.NoError(t, err)
 	agentC, err := db.AgentIDForConv(workerC)
 	require.NoError(t, err)
-	_, err = db.UpsertAgentPR(agentA, merged, "same PR, first group", "open")
+	_, err = db.UpsertValidatedAgentPR(agentA, merged, "same PR, first group", "open", "/repo/a")
 	require.NoError(t, err)
-	_, err = db.UpsertAgentPR(agentB, merged, "same PR, second group", "open")
+	_, err = db.UpsertValidatedAgentPR(agentB, merged, "same PR, second group", "open", "/repo/b")
 	require.NoError(t, err)
-	_, err = db.UpsertAgentPR(agentC, other, "different repo", "open")
+	_, err = db.UpsertValidatedAgentPR(agentC, other, "different repo", "open", "/repo/c")
 	require.NoError(t, err)
 
 	var calls int
@@ -265,7 +265,7 @@ func TestPresentPR_RecentlyMergedPollIsGlobalAndRepoDeduped(t *testing.T) {
 	assert.Equal(t, "merged", memberB.PresentedPRs[0].State)
 }
 
-func TestPresentPR_RecentlyMergedPollRejectsLegacyRowsOutsidePolicy(t *testing.T) {
+func TestPresentPR_RecentlyMergedPollQuarantinesLegacyRowsInsideBroadPolicy(t *testing.T) {
 	f := newFlow(t)
 	const worker = "pprg-aaaa-bbbb-cccc-dddd"
 	f.HaveConvWithTitle(worker, "worker")
@@ -277,9 +277,7 @@ func TestPresentPR_RecentlyMergedPollRejectsLegacyRowsOutsidePolicy(t *testing.T
 	_, err = db.UpsertAgentPR(agentID, "https://github.com/victim/private/pull/1", "legacy row", "open")
 	require.NoError(t, err)
 
-	t.Cleanup(agentd.SetPresentedPRRemotePolicyCheckForTest(func(string) error {
-		return errors.New("not allow-listed")
-	}))
+	t.Cleanup(agentd.SetPresentedPRRemotePolicyCheckForTest(func(string) error { return nil }))
 	called := false
 	t.Cleanup(agentd.SetRecentlyMergedPRsResolverForTest(func([]string, int) ([]string, bool) {
 		called = true

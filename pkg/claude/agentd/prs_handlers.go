@@ -81,10 +81,12 @@ func runPRUpdate(w http.ResponseWriter, r *http.Request, target, caller string) 
 		return
 	}
 	if !body.Handled && state != "handled" {
-		if err := presentedPRAccessValidator(r.Context(), caller, body.RepoDir, body.URL); err != nil {
+		repoRoot, err := presentedPRAccessValidator(r.Context(), caller, body.RepoDir, body.URL)
+		if err != nil {
 			writeError(w, http.StatusForbidden, "pr_repo_refused", err.Error())
 			return
 		}
+		body.RepoDir = repoRoot
 		setAuditDetail(r, body.URL)
 	}
 
@@ -105,7 +107,7 @@ func runPRUpdate(w http.ResponseWriter, r *http.Request, target, caller string) 
 		writePRUpdateResponse(w, target, caller, presentedPRView{URL: body.URL, Number: deriveGitHubPRNumber(body.URL), State: "handled"}, true)
 		return
 	}
-	row, err := db.UpsertAgentPR(agentID, body.URL, body.Summary, state)
+	row, err := db.UpsertValidatedAgentPR(agentID, body.URL, body.Summary, state, body.RepoDir)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db", err.Error())
 		return

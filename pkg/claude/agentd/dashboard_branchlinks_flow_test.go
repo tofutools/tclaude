@@ -141,7 +141,7 @@ func TestDashboardBranchLinks_DuplicateUsesFreshestPresentedState(t *testing.T) 
 
 	agentID, err := db.AgentIDForConv(conv)
 	require.NoError(t, err)
-	_, err = db.UpsertAgentPR(agentID, prURL, "ready", "open")
+	_, err = db.UpsertValidatedAgentPR(agentID, prURL, "ready", "open", f.TestCwd("repo"))
 	require.NoError(t, err)
 	t.Cleanup(agentd.SetRecentlyMergedPRsResolverForTest(
 		func([]string, int) ([]string, bool) { return []string{prURL}, true }))

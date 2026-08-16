@@ -13,18 +13,30 @@ import (
 // intentionally loose: callers currently use "", "open", "draft", "merged",
 // or "handled".
 type AgentPR struct {
-	ID        int64
-	AgentID   string
-	PRURL     string
-	Summary   string
-	State     string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID                int64
+	AgentID           string
+	PRURL             string
+	Summary           string
+	State             string
+	ValidatedRepoRoot string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 // UpsertAgentPR presents or refreshes a PR for an agent, deduped by
 // (agent_id, PR URL).
 func UpsertAgentPR(agentID, prURL, summary, state string) (AgentPR, error) {
+	return upsertAgentPR(agentID, prURL, summary, state, "")
+}
+
+// UpsertValidatedAgentPR records the daemon-proved local repository root.
+// Credentialed consumers ignore rows without this proof, quarantining rows
+// written before repository validation existed.
+func UpsertValidatedAgentPR(agentID, prURL, summary, state, repoRoot string) (AgentPR, error) {
+	return upsertAgentPR(agentID, prURL, summary, state, strings.TrimSpace(repoRoot))
+}
+
+func upsertAgentPR(agentID, prURL, summary, state, repoRoot string) (AgentPR, error) {
 	agentID = strings.TrimSpace(agentID)
 	prURL = strings.TrimSpace(prURL)
 	summary = strings.TrimSpace(summary)
@@ -41,13 +53,14 @@ func UpsertAgentPR(agentID, prURL, summary, state string) (AgentPR, error) {
 		return AgentPR{}, err
 	}
 	if _, err := d.Exec(`INSERT INTO agent_prs
-		(agent_id, pr_url, summary, state, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+		(agent_id, pr_url, summary, state, validated_repo_root, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(agent_id, pr_url) DO UPDATE SET
 			summary = excluded.summary,
 			state = excluded.state,
+			validated_repo_root = excluded.validated_repo_root,
 			updated_at = excluded.updated_at`,
-		agentID, prURL, summary, state, dbTime(now), dbTime(now)); err != nil {
+		agentID, prURL, summary, state, repoRoot, dbTime(now), dbTime(now)); err != nil {
 		return AgentPR{}, err
 	}
 	return GetAgentPR(agentID, prURL)
@@ -133,9 +146,9 @@ func GetAgentPR(agentID, prURL string) (AgentPR, error) {
 	}
 	var row AgentPR
 	var created, updated dbTimestamp
-	err = d.QueryRow(`SELECT id, agent_id, pr_url, summary, state, created_at, updated_at
+	err = d.QueryRow(`SELECT id, agent_id, pr_url, summary, state, validated_repo_root, created_at, updated_at
 		FROM agent_prs WHERE agent_id = ? AND pr_url = ?`, agentID, prURL).
-		Scan(&row.ID, &row.AgentID, &row.PRURL, &row.Summary, &row.State, &created, &updated)
+		Scan(&row.ID, &row.AgentID, &row.PRURL, &row.Summary, &row.State, &row.ValidatedRepoRoot, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AgentPR{}, nil
 	}
@@ -147,16 +160,17 @@ func GetAgentPR(agentID, prURL string) (AgentPR, error) {
 	return row, nil
 }
 
-// ListUnhandledAgentPRs returns all explicitly presented PRs whose state is not
-// handled, keyed by agent_id for dashboard preloading.
+// ListUnhandledAgentPRs returns repository-validated presented PRs whose state
+// is not handled, keyed by agent_id for dashboard preloading. Rows predating
+// validation remain quarantined until an agent presents them again.
 func ListUnhandledAgentPRs() (map[string][]AgentPR, error) {
 	d, err := Open()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT id, agent_id, pr_url, summary, state, created_at, updated_at
+	rows, err := d.Query(`SELECT id, agent_id, pr_url, summary, state, validated_repo_root, created_at, updated_at
 		FROM agent_prs
-		WHERE state <> 'handled'
+		WHERE state <> 'handled' AND validated_repo_root <> ''
 		ORDER BY updated_at DESC, id DESC`)
 	if err != nil {
 		return nil, err
@@ -167,7 +181,7 @@ func ListUnhandledAgentPRs() (map[string][]AgentPR, error) {
 	for rows.Next() {
 		var row AgentPR
 		var created, updated dbTimestamp
-		if err := rows.Scan(&row.ID, &row.AgentID, &row.PRURL, &row.Summary, &row.State, &created, &updated); err != nil {
+		if err := rows.Scan(&row.ID, &row.AgentID, &row.PRURL, &row.Summary, &row.State, &row.ValidatedRepoRoot, &created, &updated); err != nil {
 			return nil, err
 		}
 		row.CreatedAt = created.Time()

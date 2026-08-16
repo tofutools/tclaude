@@ -10,7 +10,7 @@ import (
 )
 
 func TestMigrateV206toV207AddsAndBackfillsNativeProfileOwnership(t *testing.T) {
-	assert.Equal(t, 207, currentVersion, "tripwire: bump this with the next migration")
+	assert.Equal(t, 208, currentVersion, "tripwire: bump this with the next migration")
 	d, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "v206.sqlite"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = d.Close() })

@@ -1088,8 +1088,11 @@ func SetPresentedPRInfoResolverForTest(fn func(rawURL string) (number int, resol
 // policy proof on the presentation request path.
 func SetPresentedPRAccessValidatorForTest(fn func(caller, repoDir, rawURL string) error) func() {
 	prev := presentedPRAccessValidator
-	presentedPRAccessValidator = func(_ context.Context, caller, repoDir, rawURL string) error {
-		return fn(caller, repoDir, rawURL)
+	presentedPRAccessValidator = func(_ context.Context, caller, repoDir, rawURL string) (string, error) {
+		if err := fn(caller, repoDir, rawURL); err != nil {
+			return "", err
+		}
+		return "test-validated-repo", nil
 	}
 	return func() { presentedPRAccessValidator = prev }
 }

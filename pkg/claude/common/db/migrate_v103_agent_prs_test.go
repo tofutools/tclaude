@@ -60,14 +60,14 @@ func TestAgentPR_UpsertDedupeAndHandled(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, otherAgentID)
 
-	first, err := UpsertAgentPR(agentID, "https://github.com/tofutools/tclaude/pull/7", "first", "open")
+	first, err := UpsertValidatedAgentPR(agentID, "https://github.com/tofutools/tclaude/pull/7", "first", "open", "/repo/a")
 	require.NoError(t, err)
-	second, err := UpsertAgentPR(agentID, "https://github.com/tofutools/tclaude/pull/7", "second", "merged")
+	second, err := UpsertValidatedAgentPR(agentID, "https://github.com/tofutools/tclaude/pull/7", "second", "merged", "/repo/a")
 	require.NoError(t, err)
 	assert.Equal(t, first.ID, second.ID, "same URL updates existing row")
 	assert.Equal(t, "second", second.Summary)
 	assert.Equal(t, "merged", second.State)
-	other, err := UpsertAgentPR(otherAgentID, "https://github.com/tofutools/tclaude/pull/7", "other agent", "open")
+	other, err := UpsertValidatedAgentPR(otherAgentID, "https://github.com/tofutools/tclaude/pull/7", "other agent", "open", "/repo/b")
 	require.NoError(t, err)
 	assert.NotEqual(t, second.ID, other.ID, "same URL is allowed for a different agent")
 

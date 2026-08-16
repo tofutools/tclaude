@@ -779,7 +779,7 @@ CREATE TABLE "agent_prs" (
 			summary     TEXT NOT NULL DEFAULT '',
 			state       TEXT NOT NULL DEFAULT '',
 			created_at  INTEGER NOT NULL,
-			updated_at  INTEGER NOT NULL,
+			updated_at  INTEGER NOT NULL, validated_repo_root TEXT NOT NULL DEFAULT '',
 			UNIQUE(agent_id, pr_url)
 		) STRICT;
 
