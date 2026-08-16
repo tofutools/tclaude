@@ -21,6 +21,7 @@ const (
 	usageForecastMinSamples  = 3
 	usageForecastMinElapsed  = 30 * time.Minute
 	usageForecastStaleAfter  = 2 * time.Hour
+	usageForecastRecentCount = 5
 	maxUsageChartPoints      = 1200
 	maxUsageResetMarkers     = 500
 	maxUsageSpanOverrides    = 100
@@ -46,7 +47,30 @@ type usageHistoryReset struct {
 	Pct float64 `json:"pct"`
 }
 
+// Forecast algorithms. Each derives a pace from a different slice of the
+// current post-reset segment; the operator picks one per graph and the wire
+// carries all of them so switching needs no refetch.
+const (
+	// usageForecastAlgoSpan draws a straight line through the first and last
+	// included sample inside the graph's own view. It is the default: it is the
+	// pace the operator can read off the chart with a ruler, and narrowing the
+	// history span is how they ask for a more recent pace.
+	usageForecastAlgoSpan = "span"
+	// usageForecastAlgoRecent uses only the newest few samples, so a burst that
+	// started minutes ago dominates instead of being averaged against idle time.
+	usageForecastAlgoRecent = "recent"
+	// usageForecastAlgoFit is the original least-squares slope over the whole
+	// post-reset segment, anchored at the post-reset baseline. It is the
+	// smoothest and the slowest to react; long idle stretches hold it down.
+	usageForecastAlgoFit = "fit"
+
+	usageForecastDefaultAlgo = usageForecastAlgoSpan
+)
+
+var usageForecastAlgos = []string{usageForecastAlgoSpan, usageForecastAlgoRecent, usageForecastAlgoFit}
+
 type usageHistoryForecast struct {
+	Algorithm        string  `json:"algorithm,omitempty"`
 	Status           string  `json:"status"`
 	SegmentStartedAt string  `json:"segment_started_at"`
 	BaselinePct      float64 `json:"baseline_pct"`
@@ -64,7 +88,10 @@ type usageHistorySeries struct {
 	Points          []usageHistoryPoint  `json:"points"`
 	Resets          []usageHistoryReset  `json:"resets"`
 	ResetCount      int                  `json:"reset_count"`
-	Forecast        usageHistoryForecast `json:"forecast"`
+	// Forecast is the default algorithm's prediction; Forecasts carries every
+	// algorithm keyed by name so the dashboard can switch without a refetch.
+	Forecast  usageHistoryForecast            `json:"forecast"`
+	Forecasts map[string]usageHistoryForecast `json:"forecasts"`
 }
 
 type usageHistoryResponse struct {
@@ -157,7 +184,8 @@ func collectUsageHistory(since time.Time, seriesSince map[usageSeriesKey]time.Ti
 		}
 		// Excluded observations remain display data, but are absent from every
 		// derived value: reset detection, reset timing, pace, and prediction.
-		series.Forecast, series.Resets = forecastUsage(includedRows, now)
+		series.Forecasts, series.Resets = forecastUsage(includedRows, now, seriesFrom)
+		series.Forecast = series.Forecasts[usageForecastDefaultAlgo]
 		series.Resets = resetMarkersSince(series.Resets, seriesFrom)
 		series.ResetCount = len(series.Resets)
 		series.Resets = downsampleUsageResets(series.Resets, maxUsageResetMarkers)
@@ -425,13 +453,22 @@ func resetMarkersSince(resets []usageHistoryReset, since time.Time) []usageHisto
 // forecastUsage treats provider-declared reset boundaries and meaningful
 // downward steps as change points. The latter catches out-of-cycle resets; the
 // new segment starts at the observed post-reset minimum rather than inventing
-// a 0% sample. A least-squares slope anchored at that baseline then estimates
-// the current segment's consumption rate.
+// a 0% sample. Every algorithm then estimates a pace from some slice of that
+// current segment; see usageForecastAlgos for what each one looks at.
+//
+// viewFrom is the graph's own history span. Only the default `span` algorithm
+// honours it — the operator narrowing a card to 24h is how they ask that card's
+// prediction to ignore what happened before that.
+//
 // A forecast is paused once its declared reset passes or its newest sample is
 // older than usageForecastStaleAfter; retained history must not read as live.
-func forecastUsage(points []db.SubscriptionUsageHistoryRow, now time.Time) (usageHistoryForecast, []usageHistoryReset) {
+func forecastUsage(points []db.SubscriptionUsageHistoryRow, now, viewFrom time.Time) (map[string]usageHistoryForecast, []usageHistoryReset) {
 	if len(points) == 0 {
-		return usageHistoryForecast{Status: "insufficient"}, []usageHistoryReset{}
+		out := make(map[string]usageHistoryForecast, len(usageForecastAlgos))
+		for _, algo := range usageForecastAlgos {
+			out[algo] = usageHistoryForecast{Algorithm: algo, Status: "insufficient"}
+		}
+		return out, []usageHistoryReset{}
 	}
 	segmentStart := 0
 	resets := make([]usageHistoryReset, 0)
@@ -447,10 +484,51 @@ func forecastUsage(points []db.SubscriptionUsageHistoryRow, now time.Time) (usag
 		}
 	}
 	segment := points[segmentStart:]
-	first, last := segment[0], segment[len(segment)-1]
-	forecast := usageHistoryForecast{
-		Status: "insufficient", SegmentStartedAt: first.ObservedAt.UTC().Format(time.RFC3339Nano),
-		BaselinePct: first.UsedPercent, SampleCount: len(segment),
+	out := make(map[string]usageHistoryForecast, len(usageForecastAlgos))
+	for _, algo := range usageForecastAlgos {
+		out[algo] = forecastUsageSegment(algo, segment, now, viewFrom)
+	}
+	return out, resets
+}
+
+// usageForecastSamples is the slice of the current segment an algorithm reads.
+// It always ends on the newest sample: every algorithm anchors its line at the
+// current value and differs only in how far back it looks to find a slope.
+func usageForecastSamples(algo string, segment []db.SubscriptionUsageHistoryRow, viewFrom time.Time) []db.SubscriptionUsageHistoryRow {
+	switch algo {
+	case usageForecastAlgoSpan:
+		for i, point := range segment {
+			if !point.ObservedAt.Before(viewFrom) {
+				return segment[i:]
+			}
+		}
+		return nil
+	case usageForecastAlgoRecent:
+		start := max(0, len(segment)-usageForecastRecentCount)
+		last := segment[len(segment)-1].ObservedAt
+		// A burst can produce several samples inside a few minutes, which would
+		// leave the newest few spanning less than the minimum elapsed time and
+		// report nothing at all. Reach further back until there is enough of a
+		// baseline to divide by.
+		for start > 0 && last.Sub(segment[start].ObservedAt) < usageForecastMinElapsed {
+			start--
+		}
+		return segment[start:]
+	default:
+		return segment
+	}
+}
+
+// forecastUsageSegment reports one algorithm's view of the current segment.
+// Status, the declared reset and the staleness/limit gates are shared: they
+// describe the samples themselves rather than any particular pace.
+func forecastUsageSegment(algo string, segment []db.SubscriptionUsageHistoryRow, now, viewFrom time.Time) usageHistoryForecast {
+	samples := usageForecastSamples(algo, segment, viewFrom)
+	last := segment[len(segment)-1]
+	forecast := usageHistoryForecast{Algorithm: algo, Status: "insufficient", SampleCount: len(samples)}
+	if len(samples) > 0 {
+		forecast.SegmentStartedAt = samples[0].ObservedAt.UTC().Format(time.RFC3339Nano)
+		forecast.BaselinePct = samples[0].UsedPercent
 	}
 	if !last.ResetsAt.IsZero() {
 		forecast.ResetAt = last.ResetsAt.UTC().Format(time.RFC3339Nano)
@@ -459,20 +537,56 @@ func forecastUsage(points []db.SubscriptionUsageHistoryRow, now time.Time) (usag
 	observationStale := now.Sub(last.ObservedAt) > usageForecastStaleAfter
 	if knownResetPassed || observationStale {
 		forecast.Status = "stale"
-		return forecast, resets
+		return forecast
 	}
 	if last.UsedPercent >= 100 {
 		forecast.Status = "limit"
 		forecast.HitsLimitAt = last.ObservedAt.UTC().Format(time.RFC3339Nano)
-		return forecast, resets
+		return forecast
 	}
-	if len(segment) < usageForecastMinSamples || last.ObservedAt.Sub(first.ObservedAt) < usageForecastMinElapsed {
-		return forecast, resets
+	if len(samples) < usageForecastMinSamples || last.ObservedAt.Sub(samples[0].ObservedAt) < usageForecastMinElapsed {
+		return forecast
+	}
+	rate, ok := usageForecastRate(algo, samples)
+	if !ok {
+		return forecast
+	}
+	if rate < 0.01 {
+		forecast.Status = "flat"
+		return forecast
+	}
+	forecast.RatePctPerHour = rate
+	hitAt := last.ObservedAt.Add(time.Duration((100 - last.UsedPercent) / rate * float64(time.Hour)))
+	forecast.HitsLimitAt = hitAt.UTC().Format(time.RFC3339Nano)
+	switch {
+	case last.ResetsAt.IsZero():
+		forecast.Status = "projected"
+	case hitAt.Before(last.ResetsAt):
+		forecast.Status = "before_reset"
+	default:
+		forecast.Status = "after_reset"
+	}
+	return forecast
+}
+
+// usageForecastRate turns the chosen samples into percentage points per hour.
+// The straight-line algorithms report the average pace actually observed
+// between their two endpoints — the slope a ruler laid on the chart would
+// give. `fit` keeps the original least-squares slope through the baseline,
+// which is smoother but lags a change in pace by roughly the segment's length.
+func usageForecastRate(algo string, samples []db.SubscriptionUsageHistoryRow) (float64, bool) {
+	first, last := samples[0], samples[len(samples)-1]
+	if algo != usageForecastAlgoFit {
+		hours := last.ObservedAt.Sub(first.ObservedAt).Hours()
+		if hours <= 0 {
+			return 0, false
+		}
+		return math.Max(0, last.UsedPercent-first.UsedPercent) / hours, true
 	}
 	baseline := first.UsedPercent
 	maxPct := baseline
 	var numerator, denominator float64
-	for _, point := range segment[1:] {
+	for _, point := range samples[1:] {
 		hours := point.ObservedAt.Sub(first.ObservedAt).Hours()
 		if hours <= 0 {
 			continue
@@ -482,24 +596,9 @@ func forecastUsage(points []db.SubscriptionUsageHistoryRow, now time.Time) (usag
 		denominator += hours * hours
 	}
 	if denominator == 0 {
-		return forecast, resets
+		return 0, false
 	}
-	rate := numerator / denominator
-	if rate < 0.01 {
-		forecast.Status = "flat"
-		return forecast, resets
-	}
-	forecast.RatePctPerHour = rate
-	hitAt := last.ObservedAt.Add(time.Duration((100 - last.UsedPercent) / rate * float64(time.Hour)))
-	forecast.HitsLimitAt = hitAt.UTC().Format(time.RFC3339Nano)
-	if last.ResetsAt.IsZero() {
-		forecast.Status = "projected"
-	} else if hitAt.Before(last.ResetsAt) {
-		forecast.Status = "before_reset"
-	} else {
-		forecast.Status = "after_reset"
-	}
-	return forecast, resets
+	return numerator / denominator, true
 }
 
 // parseUsageHistorySpans parses the `spans` query parameter: a comma-separated

@@ -5,9 +5,9 @@ import { AsyncLoadState } from './async-load-state.js';
 import { UsageHistoryChart } from './usage-history-chart.js';
 import { isWizardActive } from './slop.js';
 import {
-  USAGE_HISTORY_SPANS, USAGE_LOOKAHEAD_SPANS, formatUsageDuration, formatUsageResetCountdown,
-  formatUsageTime, usageForecastView, usageProviderLabel, usageScopeLabel, usageSeriesKeyOf,
-  usageWindowScopeLabel,
+  USAGE_FORECAST_ALGOS, USAGE_HISTORY_SPANS, USAGE_LOOKAHEAD_SPANS, formatUsageDuration,
+  formatUsageResetCountdown, formatUsageTime, usageForecastOf, usageForecastView, usageProviderLabel,
+  usageScopeLabel, usageSeriesKeyOf, usageWindowScopeLabel,
 } from './usage-history-model.js';
 
 const html = htm.bind(h);
@@ -32,7 +32,7 @@ function useWizardTheme() {
   return wizard;
 }
 
-function UsageSpanControls({ scope, span, onSetHours, onSetLookahead, wizard }) {
+function UsageSpanControls({ scope, span, onSetHours, onSetLookahead, onSetForecastAlgo, wizard }) {
   return html`<div class="usage-card-controls">
     <div class="usage-control-group" role="group" aria-label=${`${wizard ? 'Chronicle' : 'History'} range, ${scope}`}>
       <span class="usage-control-label" aria-hidden="true">${wizard ? 'Chronicle' : 'History'}</span>
@@ -48,6 +48,24 @@ function UsageSpanControls({ scope, span, onSetHours, onSetLookahead, wizard }) 
         class=${`tool${span.lookaheadHours === option.hours ? ' active' : ''}`}
         aria-label=${`${wizard ? 'Scry ahead' : 'Look ahead'} ${option.label}, ${scope}`} aria-pressed=${span.lookaheadHours === option.hours}
         onClick=${() => onSetLookahead(option.hours)}>${option.label}</button>`)}
+    </div>
+    <span class="usage-control-divider" aria-hidden="true"></span>
+    ${/* Which pace the dashed line is drawn at. It rides with the span controls
+        rather than sitting once at the top of the tab: the answer differs per
+        graph (a 5-hour window mid-burst and a 7-day window want different
+        algorithms), and it reads against the same chart the spans do. */''}
+    <div class="usage-control-group" role="group" aria-label=${`${wizard ? 'Prophecy' : 'Prediction'} algorithm, ${scope}`}>
+      <span class="usage-control-label" aria-hidden="true">${wizard ? 'Divination' : 'Prediction'}</span>
+      ${USAGE_FORECAST_ALGOS.map((option) => {
+        const label = wizard ? option.wizardLabel : option.label;
+        const description = wizard ? option.wizardDescription : option.description;
+        return html`<button type="button"
+          class=${`tool${span.algo === option.id ? ' active' : ''}`}
+          title=${`${label}: ${description}`}
+          aria-label=${`${wizard ? 'Prophecy' : 'Prediction'} ${label}, ${description}, ${scope}`}
+          aria-pressed=${span.algo === option.id}
+          onClick=${() => onSetForecastAlgo(option.id)}>${label}</button>`;
+      })}
     </div>
   </div>`;
 }
@@ -86,12 +104,15 @@ function UsageChartLegend({ wizard }) {
   </div>`;
 }
 
-function UsageSeriesCard({ series, payload, span, onSetHours, onSetLookahead, onTogglePoint, wizard }) {
+function UsageSeriesCard({
+  series, payload, span, onSetHours, onSetLookahead, onSetForecastAlgo, onTogglePoint, wizard,
+}) {
   const w = (plain, wizardly) => (wizard ? wizardly : plain);
   const includedPoints = (series.points || []).filter((point) => !point.excluded);
   const latest = includedPoints[includedPoints.length - 1];
   const now = new Date(payload.generated_at).getTime();
-  const forecast = usageForecastView(series.forecast, now, latest?.at, wizard);
+  const selectedForecast = usageForecastOf(series, span.algo);
+  const forecast = usageForecastView(selectedForecast, now, latest?.at, wizard);
   const resetCount = series.reset_count ?? series.resets?.length ?? 0;
   const windowLabel = usageWindowScopeLabel(series, wizard);
   const scope = usageScopeLabel(series, wizard);
@@ -104,9 +125,10 @@ function UsageSeriesCard({ series, payload, span, onSetHours, onSetLookahead, on
       <div class="usage-current"><strong>${latest ? `${latest.pct.toFixed(1)}%` : '—'}</strong>
         <span>${sampled}${reset ? ` · ${reset}` : ''}</span></div>
     </div>
-    <${UsageSpanControls} scope=${scope} span=${span} onSetHours=${onSetHours} onSetLookahead=${onSetLookahead} wizard=${wizard} />
+    <${UsageSpanControls} scope=${scope} span=${span} onSetHours=${onSetHours} onSetLookahead=${onSetLookahead}
+      onSetForecastAlgo=${onSetForecastAlgo} wizard=${wizard} />
     <${UsageHistoryChart} series=${series} from=${series.from ?? payload.from} generatedAt=${payload.generated_at}
-      lookaheadHours=${span.lookaheadHours} wizard=${wizard} onTogglePoint=${onTogglePoint} />
+      forecast=${selectedForecast} lookaheadHours=${span.lookaheadHours} wizard=${wizard} onTogglePoint=${onTogglePoint} />
     <${UsageChartLegend} wizard=${wizard} />
     <div class=${`usage-card-footer usage-forecast ${forecast.tone}`}>
       <strong>${forecast.headline}</strong>
@@ -184,6 +206,7 @@ export function UsageHistoryApp({ state, actions }) {
   const setSpan = (key, hours) => { if (state.setSeriesHours(key, hours)) void actions.load(); };
   const setDefaultSpan = (hours) => { if (state.setDefaultHours(hours)) void actions.load(); };
   const setLookahead = (key, hours) => state.setSeriesLookaheadHours(key, hours);
+  const setForecastAlgo = (key, algo) => state.setSeriesForecastAlgo(key, algo);
   const togglePoint = (series, point) => actions.setPointExcluded(series, point, !point.excluded);
   // Nothing but load state sits above the graphs: the legend now rides with
   // each chart and the explanatory note is a footnote below the grid, so the
@@ -207,6 +230,7 @@ export function UsageHistoryApp({ state, actions }) {
                 return html`<${UsageSeriesCard} key=${key} series=${series} payload=${current.payload}
                   span=${current.spanFor(key)} onSetHours=${(hours) => setSpan(key, hours)}
                   onSetLookahead=${(hours) => setLookahead(key, hours)}
+                  onSetForecastAlgo=${(algo) => setForecastAlgo(key, algo)}
                   onTogglePoint=${(point) => togglePoint(series, point)} wizard=${wizard} />`;
               })}
             </div>`)}</div>`
@@ -215,8 +239,8 @@ export function UsageHistoryApp({ state, actions }) {
           </div>`}
     </${Fragment}>`}
     <p class="usage-history-note">${w(
-      'Account-wide provider limits, sampled every 15 minutes; click a point to exclude or restore it. Excluded points stay visible but do not affect lines, resets, current values, or predictions. History and look-ahead spans persist per graph. Forecasts are per provider × quota window. Providers do not expose reliable per-model quota attribution. A dashed line is the current post-reset pace; downward steps of at least 2 points are treated as out-of-cycle resets.',
-      'Account-wide provider wards, scried every 15 minutes; click a reading to veil or reveal it. Veiled readings remain visible but do not shape traces, replenishments, current reserves, or prophecies. Chronicle and scry-ahead spans persist per graph. Prophecies are cast per provider × mana cycle. The providers reveal no trustworthy per-model attribution. A dashed line is the pace of channeling since the last replenishment; downward steps of at least 2 percentage points are read as an unforeseen replenishment.',
+      'Account-wide provider limits, sampled every 15 minutes; click a point to exclude or restore it. Excluded points stay visible but do not affect lines, resets, current values, or predictions. History and look-ahead spans persist per graph. Forecasts are per provider × quota window. Providers do not expose reliable per-model quota attribution. A dashed line is the predicted pace, drawn with the algorithm each graph selects: Span extrapolates the straight line from the first to the last sample in view, Recent uses only the newest few samples, and Fit is a least-squares pace over the whole post-reset segment. Downward steps of at least 2 points are treated as out-of-cycle resets.',
+      'Account-wide provider wards, scried every 15 minutes; click a reading to veil or reveal it. Veiled readings remain visible but do not shape traces, replenishments, current reserves, or prophecies. Chronicle and scry-ahead spans persist per graph. Prophecies are cast per provider × mana cycle. The providers reveal no trustworthy per-model attribution. A dashed line is the foretold pace, cast by the divination each graph selects: Arc extends the line from the first reading in the span to the last, Pulse heeds only the last few readings, and Weave averages every reading since the last replenishment. Downward steps of at least 2 percentage points are read as an unforeseen replenishment.',
     )}</p>
   </div>`;
 }

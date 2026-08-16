@@ -118,7 +118,9 @@ function ariaClauses(parts) {
   return parts.filter(Boolean).join('; ');
 }
 
-export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 168, wizard = false, onTogglePoint }) {
+export function UsageHistoryChart({
+  series, from, generatedAt, forecast: selectedForecast, lookaheadHours = 168, wizard = false, onTogglePoint,
+}) {
   const w = (plain, wizardly) => (wizard ? wizardly : plain);
   const [tooltip, setTooltip] = useState(null);
   const [keyboardPointAt, setKeyboardPointAt] = useState(null);
@@ -133,7 +135,9 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
   if (!points.length) return html`<div class="usage-chart-empty">${w('No samples in this range.', 'No readings in this span of the scrying.')}</div>`;
   const now = finiteDate(generatedAt) ?? points[points.length - 1].time;
   const start = usageAxisStart(finiteDate(from), points[0].time, now);
-  const forecast = series.forecast || {};
+  // The selected algorithm's forecast, falling back to the server's default
+  // one so the chart never draws a line the card's footer disagrees with.
+  const forecast = selectedForecast || series.forecast || {};
   const rate = Number(forecast.rate_pct_per_hour) || 0;
   const hitAt = finiteDate(forecast.hits_limit_at);
   const resetAt = finiteDate(forecast.reset_at);

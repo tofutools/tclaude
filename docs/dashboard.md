@@ -324,9 +324,25 @@ to 30d, persisted per series.
 *Per-provider quota windows with least-squares forecasts — here predicting the Claude five-hour window goes dark 1h38m before reset*
 
 The forecast detects resets (a declared boundary, or a downward step of at
-least 2 points), then fits a least-squares slope on the post-reset baseline —
-a running max, so brief dips don't lower the pace — yielding %/hour and an
-ETA to 100%. It needs at least 3 samples over 30 minutes before it commits
+least 2 points), then estimates a pace on the post-reset segment, yielding
+%/hour and an ETA to 100%. Each card picks which estimator draws its dashed
+line with its own **Prediction** control, next to the span controls, and the
+choice persists per series:
+
+- **Span** (default) extends the straight line through the first and last
+  sample inside that card's history range. Narrowing the range to 24h is how
+  you ask for a more recent pace.
+- **Recent** uses only the newest few samples, so a burst that started minutes
+  ago is not averaged against the idle hours before it; it reaches further back
+  only when those samples are bunched too close together to divide by.
+- **Fit** is a least-squares slope on the post-reset baseline — a running max,
+  so brief dips don't lower the pace. It is the smoothest and the slowest to
+  react: a long idle stretch holds it down well after usage starts climbing.
+
+All three are computed server-side for every card and ride on the same
+response, so switching is instant; all are anchored at the latest sample and
+clipped to the current segment, so no line is drawn across a reset. A forecast
+needs at least 3 samples over 30 minutes in its own window before it commits
 ("Prediction warming up"), and reports statuses such as "limit hit Xh before
 reset" with the predicted no-quota window. **Click any point to exclude it**
 from all the math (and click again to restore) — useful when a one-off spike
