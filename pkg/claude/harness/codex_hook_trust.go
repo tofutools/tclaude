@@ -78,6 +78,9 @@ func (codexHookInstaller) InstallTrusted() error {
 				retErr = fmt.Errorf("%w; additionally failed to roll back Codex hooks: %v", retErr, rollbackErr)
 			}
 		}()
+		if err := backup.validateInstalledState(); err != nil {
+			return fmt.Errorf("validate installed Codex hooks state: %w", err)
+		}
 		// Ask Codex only after the final declaration is on disk. A discovery or
 		// trust-write failure leaves the hook untrusted and therefore fail-closed.
 		entries, err := codexTclaudeHookTrustEntries(hookPlan.path, hookPlan.want)
@@ -92,9 +95,11 @@ func (codexHookInstaller) InstallTrusted() error {
 }
 
 type codexHooksFileSnapshot struct {
+	path    string
 	target  string
 	data    []byte
 	perm    os.FileMode
+	newPerm os.FileMode
 	existed bool
 }
 
@@ -103,7 +108,7 @@ func snapshotCodexHooksFile(path string) (codexHooksFileSnapshot, error) {
 	if err != nil {
 		return codexHooksFileSnapshot{}, err
 	}
-	snapshot := codexHooksFileSnapshot{target: target, perm: 0o644}
+	snapshot := codexHooksFileSnapshot{path: path, target: target, perm: 0o644, newPerm: 0o644}
 	data, err := os.ReadFile(target)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -115,14 +120,49 @@ func snapshotCodexHooksFile(path string) (codexHooksFileSnapshot, error) {
 	snapshot.existed = true
 	if info, err := os.Stat(target); err == nil {
 		snapshot.perm = info.Mode().Perm()
+		snapshot.newPerm = snapshot.perm
 	}
 	return snapshot, nil
+}
+
+func (s codexHooksFileSnapshot) validateInstalledState() error {
+	target, err := atomicWriteTarget(s.path)
+	if err != nil {
+		return err
+	}
+	if target != s.target {
+		return fmt.Errorf("%s target changed from %s to %s", s.path, s.target, target)
+	}
+	info, err := os.Stat(s.target)
+	if err != nil {
+		return err
+	}
+	if info.Mode().Perm() != s.newPerm {
+		return fmt.Errorf("%s installed with unexpected mode %04o (want %04o)",
+			s.target, info.Mode().Perm(), s.newPerm)
+	}
+	return nil
 }
 
 // restoreIfUnchanged rolls back only while the file still contains the bytes
 // this install wrote. A concurrent external edit wins rather than being
 // overwritten by error recovery.
 func (s codexHooksFileSnapshot) restoreIfUnchanged(installed []byte) error {
+	target, err := atomicWriteTarget(s.path)
+	if err != nil {
+		return err
+	}
+	if target != s.target {
+		return fmt.Errorf("%s target changed from %s to %s; refusing rollback", s.path, s.target, target)
+	}
+	info, err := os.Stat(s.target)
+	if err != nil {
+		return err
+	}
+	if info.Mode().Perm() != s.newPerm {
+		return fmt.Errorf("%s mode changed from %04o to %04o; refusing rollback",
+			s.target, s.newPerm, info.Mode().Perm())
+	}
 	current, err := os.ReadFile(s.target)
 	if err != nil {
 		return err
@@ -198,9 +238,16 @@ func (codexHookInstaller) Trusted() bool {
 }
 
 func validateExactCodexTclaudeHooks(hooks map[string]json.RawMessage, want string) error {
-	for _, groups := range hooks {
+	desired := make(map[string]bool, len(desiredCodexHookEvents()))
+	for _, event := range desiredCodexHookEvents() {
+		desired[event] = true
+	}
+	for event, groups := range hooks {
 		if codexHooksNeedCleanup(groups, want) {
 			return fmt.Errorf("Codex hook declarations differ from tclaude's exact managed shape; repair them before trust")
+		}
+		if !desired[event] && codexHooksContain(groups, want) {
+			return fmt.Errorf("stale tclaude hook declaration remains for non-required Codex event %s", event)
 		}
 	}
 	for _, event := range desiredCodexHookEvents() {

@@ -146,8 +146,13 @@ func (codexHookInstaller) Check() (installed bool, missing []string, needsRepair
 	}
 
 	want := codexHookCommandStr()
-	for _, groupsRaw := range hooks {
-		if codexHooksNeedCleanup(groupsRaw, want) {
+	desired := make(map[string]bool, len(desiredCodexHookEvents()))
+	for _, event := range desiredCodexHookEvents() {
+		desired[event] = true
+	}
+	for event, groupsRaw := range hooks {
+		if codexHooksNeedCleanup(groupsRaw, want) ||
+			(!desired[event] && codexHooksContain(groupsRaw, want)) {
 			needsRepair = true
 			break
 		}

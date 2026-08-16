@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -281,4 +282,60 @@ func TestCodexHookInstaller_RefusesModifiedManagedShapeBeforeTrust(t *testing.T)
 	require.ErrorContains(t, inst.TrustInstalled(), "exact managed shape")
 	assert.False(t, inst.Trusted())
 	assert.NoFileExists(t, filepath.Join(home, ".codex", "config.toml"))
+}
+
+func TestCodexHookInstaller_RefusesStaleManagedEventBeforeTrust(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	seedTclaudeOnPath(t)
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+	inst := codexHookInstaller{}
+	require.NoError(t, inst.Install())
+
+	path := inst.ConfigTarget()
+	hooks, top, err := readCodexHooks(path)
+	require.NoError(t, err)
+	hooks["SessionEnd"] = append(json.RawMessage(nil), hooks["SessionStart"]...)
+	top["hooks"], err = json.Marshal(hooks)
+	require.NoError(t, err)
+	data, err := json.MarshalIndent(top, "", "  ")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, data, 0o644))
+
+	installed, _, needsRepair := inst.Check()
+	assert.True(t, installed, "all currently required events are still present")
+	assert.True(t, needsRepair, "the no-longer-required tclaude event must be removed")
+	require.ErrorContains(t, inst.TrustInstalled(), "non-required Codex event SessionEnd")
+	assert.False(t, inst.Trusted())
+}
+
+func TestCodexHooksRollbackRefusesConcurrentMetadataChanges(t *testing.T) {
+	t.Run("mode", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "hooks.json")
+		require.NoError(t, os.WriteFile(path, []byte("old"), 0o600))
+		snapshot, err := snapshotCodexHooksFile(path)
+		require.NoError(t, err)
+		require.NoError(t, atomicWritePreservingMode(path, []byte("installed"), 0o644))
+		require.NoError(t, snapshot.validateInstalledState())
+		require.NoError(t, os.Chmod(path, 0o640))
+		require.ErrorContains(t, snapshot.restoreIfUnchanged([]byte("installed")), "mode changed")
+	})
+
+	t.Run("symlink target", func(t *testing.T) {
+		dir := t.TempDir()
+		first := filepath.Join(dir, "first.json")
+		second := filepath.Join(dir, "second.json")
+		link := filepath.Join(dir, "hooks.json")
+		require.NoError(t, os.WriteFile(first, []byte("old"), 0o600))
+		require.NoError(t, os.WriteFile(second, []byte("other"), 0o600))
+		require.NoError(t, os.Symlink(first, link))
+		snapshot, err := snapshotCodexHooksFile(link)
+		require.NoError(t, err)
+		require.NoError(t, atomicWritePreservingMode(link, []byte("installed"), 0o644))
+		require.NoError(t, snapshot.validateInstalledState())
+		require.NoError(t, os.Remove(link))
+		require.NoError(t, os.Symlink(second, link))
+		require.ErrorContains(t, snapshot.restoreIfUnchanged([]byte("installed")), "target changed")
+	})
 }
