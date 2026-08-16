@@ -161,7 +161,7 @@ func resolveSymlinks(p string) string {
 
 // codexProtectedSubdirs are the $HOME-relative trees that must stay
 // unwritable by a sandboxed agent — the daemon state + identity files
-// docs/sandbox-hardening.md names, plus Codex's own config/state home
+// docs/sandboxing.md names, plus Codex's own config/state home
 // (~/.codex holds hooks.json + state_5.sqlite + the rollout tree).
 //
 // Only ~/.tclaude/data (the private-state subtree) is protected, NOT the whole

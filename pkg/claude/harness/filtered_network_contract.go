@@ -47,7 +47,7 @@ const (
 //
 // SCOPE OF THE MEASUREMENT. TCP. External UDP was measured on neither Seatbelt
 // path, so the operator-facing strings below say TCP rather than claiming IP
-// generally — the policy recorded in docs/proxy-network-filtering.md. See the
+// generally — the policy recorded in docs/network-filtering.md. See the
 // same note at appendSeatbeltLoopbackNetworkRules.
 //
 // WIDENING IS NOT DETECTABLE. No test would notice if Apple made `localhost`

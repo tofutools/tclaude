@@ -562,7 +562,7 @@ func sanitizeFilteredDNSResponse(response *dnsmessage.Message) {
 // ECHConfigList that TLS Encrypted Client Hello needs, so sandboxed clients
 // keep sending a plaintext SNI. Relaxing those two therefore also gives up
 // that name visibility; see "SVCB/HTTPS stripping also keeps TLS SNI
-// observable" in docs/linux-network-filtering.md before changing it.
+// observable" in docs/network-filtering.md before changing it.
 func filterAddressBearingDNSResources(
 	resources []dnsmessage.Resource,
 ) []dnsmessage.Resource {

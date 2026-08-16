@@ -1,231 +1,138 @@
-# Git Worktrees
+# Worktrees
 
-Manage Git worktrees for parallel branches and coding sessions.
+Git worktrees give each branch its own checkout directory, and `tclaude
+worktree` pairs that with sessions: one worktree per branch, one coding
+session per worktree, so parallel work never fights over a single checkout.
+Each worktree keeps its own conversation history, and switching tasks is a
+directory change rather than a stash.
 
-!!! note "Automatic launch is currently Claude Code-only"
-    `tclaude worktree add` creates a harness-neutral Git worktree, but its
-    optional automatic session launch still starts Claude Code. For Codex,
-    create the worktree detached and launch the desired harness explicitly:
-
-    ```bash
-    tclaude worktree add feat/my-feature --detached
-    tclaude session new -C ../myrepo-feat--my-feature --harness codex
-    ```
-
-## Why Worktrees?
-
-Git worktrees allow you to have multiple branches checked out simultaneously in separate directories. Combined with coding-harness sessions, this enables:
-
-- **Parallel development** - Work on multiple features at once, each with its own session
-- **Context isolation** - Each worktree maintains its own conversation history
-- **Quick context switching** - Jump between branches without stashing or committing WIP
-
-## Commands
-
-| Command                     | Description                                       |
-|------------------------------|---------------------------------------------------|
-| `worktree add <branch>`      | Create a new worktree (and, by default, a Claude session) |
-| `worktree restore <branch>`  | Restore a worktree from a local or remote branch  |
-| `worktree ls`                | List all worktrees                                |
-| `worktree switch <branch>`   | Switch to a worktree (requires shell wrapper)     |
-| `worktree rm <branch>`       | Remove a worktree                                 |
-
-## Creating a Worktree
+## Creating a worktree
 
 ```bash
-# Create a new worktree for a feature branch
+# New branch + worktree + session
 tclaude worktree add feat/my-feature
 
-# Create from a specific base branch
+# Base it on another branch (default: main/master)
 tclaude worktree add feat/my-feature --from-branch develop
 
-# Copy a conversation to the new worktree
-tclaude worktree add feat/my-feature --from-conv abc123
+# Copy an existing conversation into the new worktree
+tclaude worktree add feat/my-feature --from-conv abc12345
 
-# Create without starting a session
-tclaude worktree add feat/my-feature --detached
+# Create only — no session
+tclaude worktree add feat/my-feature -d
 ```
 
-This will:
+`worktree add` creates the branch if needed, adds a worktree at
+`../<repo>-<branch>` (slashes in the branch name become `--`; `-p/--path`
+overrides), optionally copies a conversation over (`--from-conv`, with `-g`
+to search globally), and then starts a session in the new directory unless
+`-d/--detached` is set.
 
-1. Create a new branch (if it doesn't exist)
-2. Create a worktree at `../<repo>-feat--my-feature`
-3. Optionally copy a conversation to the new project
-4. Start a Claude Code session in the new worktree unless `--detached` was set
-
-### Options
-
-| Flag             | Description                                           |
-|------------------|-------------------------------------------------------|
-| `--from-branch`  | Base branch to create from (defaults to main/master)  |
-| `--from-conv`    | Conversation ID to copy to the new worktree           |
-| `--path`         | Custom path for the worktree                          |
-| `-d, --detached` | Don't start the default Claude Code session           |
-| `-g`             | Search globally for conversation (with `--from-conv`) |
-
-## Listing Worktrees
+The launched session resolves its harness the same way a bare `tclaude`
+does: global default spawn profile first, then an installed harness from
+`PATH` (Claude Code preferred). It is not pinned to any harness — though the
+printed progress strings still say "Starting Claude session". `worktree add`
+takes no harness or model flags of its own; to force a specific harness,
+create the worktree detached and launch explicitly:
 
 ```bash
-# List all worktrees
-tclaude worktree ls
-
-# Or just
-tclaude worktree
+tclaude worktree add feat/my-feature -d
+tclaude session new -C ../myrepo-feat--my-feature --harness codex
 ```
 
-Output shows the path, branch, and commit for each worktree:
+Agent spawns can also create their worktree at spawn time with `tclaude
+agent spawn --worktree` and friends — see
+[Spawning](spawning-and-lifecycle.md).
 
-```
-PATH                              BRANCH           COMMIT
-/home/user/myrepo                 main             abc1234 (main)
-/home/user/myrepo-feat--feature   feat/feature     def5678
-```
-
-## Switching Worktrees
-
-The `switch` command outputs a worktree path, which a shell wrapper can use to `cd` to that directory.
+## Restoring a worktree
 
 ```bash
-# With shell wrapper installed:
-tclaude worktree switch feat/my-feature
-
-# Aliases also work:
-tclaude worktree s main
-tclaude worktree c develop  # checkout alias
+tclaude worktree restore feat/my-feature
 ```
 
-### Shell Wrapper Setup
+`restore` recreates a removed worktree from the local branch, or — when the
+branch only exists on the remote — fetches it and creates a tracking branch
+first. Like `add`, it then starts a session in the restored directory unless
+`-d` is set, through the same harness resolution.
 
-The `switch` command requires a shell wrapper to actually change directories (a subprocess can't change the parent shell's directory). Add one of these to your shell config:
+## Listing and removing
+
+```bash
+tclaude worktree ls        # path / branch / commit table (-v for more)
+tclaude worktree rm feat/my-feature
+tclaude worktree rm feat/my-feature -D    # also delete the branch
+```
+
+`rm` accepts a branch name or a path and refuses to remove a worktree with
+uncommitted changes unless `-f/--force` is passed.
+
+## Switching between worktrees
+
+`switch` (aliases `s`, `checkout`, `c`) prints the target worktree's path. A
+subprocess cannot change your shell's directory, so actually cd-ing needs a
+small shell wrapper — source the one for your shell from the repo's
+`scripts/` directory:
 
 === "Zsh"
 
     Add to `~/.zshrc`:
+
     ```bash
     source /path/to/tclaude/scripts/tclaude-worktree-switch.zsh
-    ```
-
-    Or copy the function directly:
-    ```bash
-    tclaude() {
-        if [[ $# -ge 3 && "$1" == "worktree" && "$2" =~ ^(switch|s|checkout|c)$ ]]; then
-            local dir
-            dir=$(command tclaude "$@" 2>&1)
-            local status_code=$?
-            if [[ $status_code -eq 0 && -n "$dir" && -d "$dir" ]]; then
-                cd "$dir"
-            else
-                echo "$dir" >&2
-                return $status_code
-            fi
-        else
-            command tclaude "$@"
-        fi
-    }
     ```
 
 === "Bash"
 
     Add to `~/.bashrc`:
+
     ```bash
     source /path/to/tclaude/scripts/tclaude-worktree-switch.bash
-    ```
-
-    Or copy the function directly:
-    ```bash
-    tclaude() {
-        if [[ $# -ge 3 && "$1" == "worktree" && "$2" =~ ^(switch|s|checkout|c)$ ]]; then
-            local dir
-            dir=$(command tclaude "$@" 2>&1)
-            local status_code=$?
-            if [[ $status_code -eq 0 && -n "$dir" && -d "$dir" ]]; then
-                cd "$dir"
-            else
-                echo "$dir" >&2
-                return $status_code
-            fi
-        else
-            command tclaude "$@"
-        fi
-    }
     ```
 
 === "Fish"
 
     Add to `~/.config/fish/config.fish`:
+
     ```fish
     source /path/to/tclaude/scripts/tclaude-worktree-switch.fish
     ```
 
-    Or copy the function directly:
-    ```fish
-    function tclaude
-        if test (count $argv) -ge 3; and test "$argv[1]" = "worktree"; and string match -qr '^(switch|s|checkout|c)$' "$argv[2]"
-            set -l dir (command tclaude $argv 2>&1)
-            set -l status_code $status
-            if test $status_code -eq 0; and test -n "$dir"; and test -d "$dir"
-                cd "$dir"
-            else
-                echo "$dir" >&2
-                return $status_code
-            end
-        else
-            command tclaude $argv
-        end
-    end
-    ```
-
-## Removing Worktrees
+The wrapper intercepts `tclaude worktree switch` (and its aliases), runs the
+real command, and `cd`s to the printed path on success; every other tclaude
+invocation passes through untouched. Then:
 
 ```bash
-# Remove a worktree by branch name
-tclaude worktree rm feat/my-feature
-
-# Remove by path
-tclaude worktree rm /path/to/worktree
-
-# Force remove (even if dirty)
-tclaude worktree rm feat/my-feature --force
-
-# Also delete the branch
-tclaude worktree rm feat/my-feature --delete-branch
+tclaude worktree switch feat/my-feature
+tclaude worktree s main
 ```
 
-### Options
+## Worktrees and sessions
 
-| Flag              | Description                                    |
-|-------------------|------------------------------------------------|
-| `-f, --force`     | Force removal even if worktree has changes     |
-| `--delete-branch` | Also delete the branch after removing worktree |
+Each worktree is its own project directory, so sessions launched in it index
+their conversations there: `tclaude conv ls` inside a worktree shows that
+branch's history, and the conversation copied in by `--from-conv` resumes in
+the worktree, not the original checkout. Sessions in different worktrees of
+the same repo run fully in parallel — separate checkouts, separate
+conversation histories, no shared working tree to trip over.
 
-## Interactive Mode
+## From the conversation browser
 
-The conversation watch mode (`tclaude conv ls -w` or `tclaude conv watch`) supports creating worktrees directly:
+In [conversation watch mode](conversations.md#watch-mode), `W` creates a
+worktree from the selected conversation: it prompts for a branch name, then
+creates the worktree with that conversation copied into it.
 
-| Key | Action                                     |
-|-----|--------------------------------------------|
-| `W` | Create worktree from selected conversation |
-
-This opens a prompt for the branch name and creates a worktree with the selected conversation copied to it.
-
-## Example Workflow
+## Example workflow
 
 ```bash
-# Start working on a feature
 tclaude worktree add feat/auth-refactor
+# ... work in the new session ...
 
-# ... work on auth refactor with Claude ...
-
-# Need to fix an urgent bug? Create another worktree
+# Urgent bug? Second worktree, second session, no stashing
 tclaude worktree add fix/critical-bug --from-branch main
 
-# Switch between them
 tclaude worktree switch feat/auth-refactor
 tclaude worktree switch fix/critical-bug
 
-# Done with the bug fix
-tclaude worktree rm fix/critical-bug --delete-branch
-
-# List what's still active
+tclaude worktree rm fix/critical-bug -D
 tclaude worktree ls
 ```

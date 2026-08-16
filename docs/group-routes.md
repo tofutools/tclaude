@@ -1,142 +1,112 @@
 # Group routes
 
-Group routes are explicit, named TCP capabilities between members of one
-agent group. A publisher names a loopback target; a current group member opens
-that named route and receives an opaque byte stream. The route is an authority
-record, not a general network bridge.
+Sandboxed agents normally cannot open network paths to each other — that is
+the point of the sandbox. But some collaborations need a real byte stream: a
+backend agent serving an API that a frontend agent's tests hit, a database
+one agent hosts and another queries. **Group routes** are the sanctioned
+path: explicit, named, opaque TCP capabilities between members of one
+[group](agents-and-groups.md). A publisher names a loopback target; a
+current member of the same group opens the named route and receives a
+consumer-local endpoint. The route is an authority record `agentd` enforces,
+not a general network bridge.
 
 ```bash
-tclaude routes publish --group <group> --name api --target tcp://127.0.0.1:43130
-tclaude routes open --group <group> --route <publisher-agent>/api
-tclaude routes ls --group <group>
+# Publisher: expose the service listening on local port 43130
+tclaude agent routes publish api -g dev-team -t tcp://127.0.0.1:43130
+
+# Consumer (same group): open it and get a local endpoint to connect to
+tclaude agent routes open backend/api -g dev-team
+
+tclaude agent routes ls
+tclaude agent routes close <lease-or-route>
 ```
 
-Routes are opt-in per launch and fail closed. The launch must have the current
-agent identity, launch generation, group generation, and route-helper
-credential. Membership changes invalidate old group generations; stale or
-unpublished routes, wrong-group opens, and publisher exit are refused or
-withdrawn. Targets are loopback-only. There is no UDP, ambient mesh
-networking, peer discovery, arbitrary host/Internet access, or route-based
-credential sharing. Ordinary agent messaging remains a separate control-plane
-path.
+`publish` names the route (no `/` allowed in the name) and points it at a
+publisher-local TCP endpoint with `-t`; `--transport tcp` is the only
+transport. `open` takes a route ID or the message-friendly reference
+`<publisher>/<name>` (or `<group-id>/<publisher>/<name>` when the publisher
+name alone is ambiguous), waits for the platform adapter, and prints the
+consumer-local endpoint plus a lease ID. `close` takes the lease ID printed
+by `open`, or a route reference together with `-g`; the daemon works out
+whether you own the published route or a consumer lease. All four accept
+`--json` where output matters for scripting.
 
-## Platform capability matrix
+Publishing needs `routes.publish` and opening needs `routes.consume` —
+neither is default-granted, and both additionally require *current*
+membership in the named group. See
+[Permissions and audit](permissions-and-audit.md).
 
-| Platform | Activation | Contract and disclosure |
+## What a route is not
+
+Targets are loopback-only. There is no UDP, no ambient mesh networking, no
+peer discovery, no arbitrary host or Internet access, and no route-based
+credential sharing. Ordinary agent messaging remains a separate
+control-plane path and keeps working while route traffic flows. A route
+carries exactly one thing: the named target's opaque TCP stream.
+
+## Fail-closed by generation
+
+Routes fail closed. Every membership or permission change in a group
+advances the group's **route generation**, and a helper presenting a
+generation captured before the change is refused as stale — removing an
+agent from a group instantly invalidates its route access, on both ends.
+Stale or unpublished routes, wrong-group opens, and non-loopback targets are
+refused before any data channel is admitted. When a publisher exits, the
+route is withdrawn: its leases close, and consumer endpoints go with it.
+
+## Platform support
+
+| Platform | Support | Contract |
 |---|---|---|
-| Linux | **Full** when the route-capable launch and namespace-local helper are active | The helper reaches agentd through the authenticated Unix relay. Only the named route's opaque TCP stream crosses the boundary; the launch retains its existing provider/host policy floor. |
-| macOS | **Partial** | A bounded, exact Seatbelt TCP slot pool per route-capable launch. Same-port host-local reachability remains a documented limitation. |
-| Other platforms | **Unavailable** | Route activation returns an explicit unsupported-platform error. It does not silently create a route with a weaker boundary. |
+| Linux | **Full** | A namespace-local helper reaches `agentd` over the authenticated Unix relay. Only the named route's opaque TCP stream crosses the sandbox boundary; the launch's existing network policy floor stays intact. |
+| macOS | **Partial** | Seatbelt admits a bounded, exact TCP slot pool per route-capable launch. Because macOS localhost is host-wide, same-port local reachability remains a documented limitation. |
+| Other | Unavailable | Route activation returns an explicit unsupported-platform error rather than silently creating a route with a weaker boundary. |
 
-Each platform's exact-head CI artifact is the authority for that platform's
-claim; neither cell establishes the other's boundary.
+Each platform's claim is backed by its own CI evidence run at the exact
+checked-out commit: real sandboxed publishers and consumers proving, per
+platform, that traffic flows over the named route, that stale-generation,
+unpublished-route, wrong-group, and non-loopback opens are refused, that
+publisher exit withdraws everything, and that the sandbox still denies the
+host and the Internet while the route is active. Neither platform's evidence
+establishes the other's boundary — a Linux pass says nothing about macOS,
+and vice versa.
 
-## Linux activation boundary
+## Disclosure
 
-Linux activation is **Full**. The namespace-local helper reaches agentd over the
-authenticated Unix relay and attaches through an HTTP upgrade that is
-authenticated, identity-checked, and generation-checked before the connection is
-hijacked. Only the named route's opaque stream crosses the boundary.
+When the route capability is active, launch and session details disclose the
+platform contract and current route state; a macOS launch shows `Partial`,
+and a missing or stale contract is never presented as active.
 
-The Linux M6 activation cell runs a publisher and a consumer in real unshared
-Bubblewrap network namespaces against the production API, relay, and
-`routeadapter`. It proves:
+The [dashboard](dashboard.md) offers an opt-in **Route map** — a read-only
+projection of current routes, leases, health, and stale/wrong-group
+boundaries. Enable it under Config → Experimental features → Groups Route
+map (`features.groups_route_map`); enabling the map grants no route
+authority, and it never displays helper credentials or raw socket material.
 
-- the namespace policy floor still denies the host control listener and the
-  Internet after the route capability is active;
-- opaque TCP flowing end to end over the named route;
-- refusal of an unpublished neighbour, a wrong-group open, a stale group
-  generation, a stale launch generation, and a non-loopback target, each before
-  any data channel is admitted;
-- ordinary agent messaging staying accepted and readable while route traffic
-  runs;
-- explicit withdrawal closing attached channels;
-- a generation-bound publisher exit withdrawing the route and closing the lease,
-  the broker channel, and the consumer endpoint.
+## Relationship to the sandbox network boundary
 
-The Linux production cell asserts the checked-out commit and its Linux CI
-artifact is authoritative. This activation makes no Darwin claim.
-
-### Stage evidence
-
-Each namespace child publishes a bounded `stage:` marker as it crosses a
-production boundary — control-file hand-off, authenticated endpoint status, Unix
-dial, HTTP upgrade, and broker attach — and publishes `stage-failed:` naming the
-failing boundary before it exits. The host cell fails immediately on a published
-stage failure and logs the ordered stage list on success, so a stalled helper
-names the boundary it stalled on instead of expiring as an anonymous timeout.
-Every child wait is bounded strictly below the host's marker deadline, and a
-control path that was never handed to the child fails at once rather than
-consuming the wait budget.
-
-A publisher admits a stream as soon as the channel opens it, and dials the
-target off the read loop. Bytes a client writes immediately after connecting are
-held in arrival order and flushed when the target connects, so a short-lived
-connection cannot race its own open. A frame for a stream the channel does not
-know closes that one stream; it never fails the channel and never disturbs the
-other streams on the same route.
-
-A helper must present the group generation carried by its own route or lease
-row. Every membership and permission change advances a group's route generation,
-so a generation captured before such a change is refused by the channel endpoint
-as a stale publisher or consumer identity.
-
-## Darwin activation boundary
-
-macOS activation is **Partial**. Seatbelt admits a bounded, exact TCP slot pool
-per route-capable launch. The host-wide localhost model means same-port local
-reachability remains a documented limitation; the dashboard and launch
-evidence must continue to disclose `Partial`.
-
-The Darwin M6 activation cell runs the production `session.RunNew`, Seatbelt,
-exact-slot allocator, production adapter, and agentd API paths. It proves:
-
-- exact-slot publisher and consumer authorization, including release and
-  reuse of slot `45203`;
-- stale-generation, unpublished-route, and wrong-group refusal;
-- 96/96 ordinary messages while sustained opaque route traffic continues;
-- route withdrawal and idle-consumer cleanup;
-- publisher-death withdrawal, including closure of the live consumer endpoint;
-- provider and host policy-floor preservation, with the documented same-host
-  localhost limitation and Internet denial.
-
-The exact-head evidence workflow is
-`.github/workflows/group-route-feasibility.yml`. The Darwin production cell
-asserts the checked-out commit and its macOS CI artifact is authoritative;
-local Linux runs cannot establish this boundary. This closeout makes no Linux
-activation claim.
-
-## Dashboard and launch disclosure
-
-The Groups **Route map** is a read-only projection of current routes, leases,
-health, and stale/wrong-group boundaries. It is deliberately off by default.
-Enable it in **Config → Experimental features → Groups Route map**, stored as
-`features.groups_route_map`; changing it affects the next dashboard refresh and
-does not grant route authority.
-
-When the route capability is active, launch/session details disclose the
-platform contract and current route state. A Darwin launch must continue to
-show `Partial`; a missing or stale launch contract must not be presented as
-active. The route map never displays helper credentials or raw authenticated
-socket material.
+Routes ride *inside* the sandbox model described in
+[Sandboxing](sandboxing.md) and [Network filtering](network-filtering.md),
+they do not punch through it. A route-capable launch keeps its network
+policy floor: the allowed-host and provider rules still apply, the host
+control listener and the Internet stay denied, and the only new reachability
+is the named route's stream, admitted through an authenticated,
+identity-checked, generation-checked attach. If a route refusal tempts you
+to widen an agent's network profile instead — don't; that trades a named,
+auditable capability for an ambient one.
 
 ## Troubleshooting
 
-* `route_generation_stale`: restart or relaunch the affected agent so its
-  launch generation and group generation are current. Do not reuse an old
-  helper credential.
-* `route_not_found` or `route_not_member`: use the exact current route
-  reference and verify that publisher and consumer are members of the same
+- `route_generation_stale`: restart or relaunch the affected agent so its
+  launch and group generations are current. Old helper credentials are not
+  reusable.
+- `route_not_found` / `route_not_member`: use the exact current route
+  reference and verify both publisher and consumer are members of the same
   current group roster.
-* A lease remains `pending`: confirm the route-capable launch is active and
-  that its helper can reach the agentd Unix relay. A pending lease is not a
-  permission to connect directly to the publisher target.
-* `publisher-lost` or a closed lease: the publisher exited or withdrew the
+- A lease stays `pending`: confirm the route-capable launch is active and
+  its helper can reach the `agentd` Unix relay. A pending lease is not
+  permission to connect directly to the publisher's target.
+- `publisher-lost` or a closed lease: the publisher exited or withdrew the
   route. Publish a new named route from a current launch.
-* An unsupported-platform error is expected outside supported route hosts. Do
-  not widen network policy to work around it.
-
-For a security or boundary question, start with [Sandboxing](sandboxing.md),
-then inspect the exact evidence artifact for the checked-out head. A green
-dashboard Route map only describes current authority; it does not prove that
-an old launch, arbitrary target, or different group can connect.
+- An unsupported-platform error is expected outside Linux and macOS. Do not
+  widen network policy to work around it.

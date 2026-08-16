@@ -11,7 +11,7 @@
 // The CLI half is deliberately thin. Every gate — which repository, which
 // remote, which ref, which permission slug — lives in the daemon, because a
 // check made in this process is a check the caller could have skipped. See
-// pkg/claude/agentd/gitproxy.go and docs/git-proxy.md.
+// pkg/claude/agentd/gitproxy.go and docs/proxies.md.
 package proxy
 
 import (

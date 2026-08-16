@@ -18,7 +18,7 @@ import (
 
 // The Playwright reference block (TCL-1042), kept here rather than only in the
 // docs so the shell an operator is told to copy is executed by a test instead
-// of being prose nobody runs. docs/agent.md quotes this verbatim; if you change
+// of being prose nobody runs. docs/sandboxing.md quotes this verbatim; if you change
 // one, change the other.
 //
 // The shape is the one the docs argue for: a wrapper earlier on PATH that
@@ -376,13 +376,13 @@ func TestPlaywrightReferenceTwoAgentsRenderConcurrently(t *testing.T) {
 // being true. Compare them rather than trusting a comment telling the next
 // person to update both.
 func TestPlaywrightReferenceDocsMatchTheExecutedScript(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "agent.md"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "sandboxing.md"))
 	require.NoError(t, err)
 	doc := string(raw)
 
 	heading := "### Reference: scoping `playwright-cli` to one agent"
 	start := strings.Index(doc, heading)
-	require.GreaterOrEqual(t, start, 0, "the reference section must exist in docs/agent.md")
+	require.GreaterOrEqual(t, start, 0, "the reference section must exist in docs/sandboxing.md")
 
 	fence := "```bash\n"
 	open := strings.Index(doc[start:], fence)
@@ -392,6 +392,6 @@ func TestPlaywrightReferenceDocsMatchTheExecutedScript(t *testing.T) {
 	require.GreaterOrEqual(t, end, 0, "the bash block must be closed")
 
 	assert.Equal(t, playwrightReferenceScript, body[:end],
-		"docs/agent.md and playwrightReferenceScript have drifted; the docs quote a "+
+		"docs/sandboxing.md and playwrightReferenceScript have drifted; the docs quote a "+
 			"block no test executes")
 }

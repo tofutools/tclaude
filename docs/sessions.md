@@ -1,503 +1,226 @@
-# Session Management 📺
+# Sessions
 
-Run Claude Code, OpenAI Codex CLI, or a plain shell in persistent tmux sessions
-with detach/reattach and live status tracking.
+A session is a live tmux instance running a coding harness (or a plain
+shell). tclaude launches the harness inside its own tmux server (`-L
+tclaude`), tracks the session's status through harness hooks, and lets you
+detach, reattach, watch, and kill sessions from anywhere. The durable
+transcript behind a session is a [conversation](conversations.md) — it
+outlives the tmux process and stays resumable after the session exits.
 
-## Prerequisites
+## Launching a session
 
-- **tmux** - Required for session management
-- **Run setup** — `tclaude setup` for Claude Code and `tclaude setup --harness
-  codex` for Codex hooks/status. See [Harnesses](harnesses.md#per-harness-setup).
-
-## Commands
-
-### session new
-
-Start a coding harness in a new tmux session. Pass `--harness claude` or
-`--harness codex` to select one explicitly; fresh-launch defaults are described
-below.
+Bare `tclaude` starts a new coding session in the current directory. It takes
+the same flags as the underlying `tclaude session new`:
 
 ```bash
-# Start a new session in current directory
-tclaude session new
+# New session in the current directory
+tclaude
 
-# Start Codex instead
-tclaude session new --harness codex
+# Pick the harness explicitly
+tclaude --harness codex
+tclaude session new --harness opencode
 
-# Start in a specific directory
-tclaude session new -C /path/to/project
+# In another directory, with a label
+tclaude session new -C /path/to/project --label review
 
-# Resume a Claude Code conversation
-tclaude session new --resume <conv-id>
-
-# Resume a Codex conversation (this lower-level command needs the harness)
-tclaude session new --harness codex --resume <conv-id>
-
-# Start detached (don't attach immediately)
-tclaude session new -d
+# Start detached (don't attach)
+tclaude -d
 ```
 
-### Bare startup and directory groups
+`--harness` accepts `claude`, `codex`, `opencode`, `copilot`, and `shell`.
+When unset, the harness (and model/effort) come from the global default spawn
+profile (dashboard, or `tclaude agent profiles default set`); explicit
+`--harness`, `--model`, or `--effort` flags win per field. Without a global
+profile, tclaude picks an installed harness from `PATH`, preferring Claude
+Code. Per-harness knobs — models, effort, sandbox and approval flags — are
+covered in [Harnesses](harnesses.md).
 
-A fresh terminal launch automatically looks for an active agent group whose
-configured **default directory** is the same directory as the launch. Both
-paths are made absolute, cleaned, and resolved through symlinks when possible;
-the match is exact rather than parent/child containment. Thus, after setting a
-group's default directory in the dashboard, this is enough to start an agent
-inside that group:
+Sessions attach immediately by default; detach with `Ctrl+B D`. Useful launch
+flags beyond the basics:
+
+- `-d/--detached` starts the session without attaching.
+- `--trust-dir` pre-trusts the launch directory so a detached pane doesn't
+  freeze on the harness's trust-folder dialog. It edits that harness's own
+  config (Claude Code's `~/.claude.json`, Codex's `~/.codex/config.toml`,
+  Copilot's trusted-folders list), so it is opt-in. Applies to Claude Code,
+  Codex, and Copilot.
+- `-w/--wait-for-rate-limit` waits for the 5-hour and 7-day rate-limit
+  windows to reset before starting — handy for queueing a session to launch
+  when quota returns.
+- `-r/--resume <conv-id>` relaunches an existing conversation (see
+  [resume posture](#a-resume-keeps-its-recorded-posture) below).
+- `-l/--label` names the tmux session; `-n/--name` sets the display name
+  (for Claude Code it becomes the conversation title).
+
+## Group auto-join on launch
+
+A fresh terminal launch checks whether an active agent group's configured
+default directory exactly matches the launch directory (both normalized and
+symlink-resolved). If one does, tclaude spawns through the `agentd` daemon
+into that group — with agent identity, permissions, and messaging — and
+attaches. Setting a group's default directory in the dashboard makes this the
+whole workflow:
 
 ```bash
 cd /path/to/project
-tclaude
+tclaude          # joins the project's group automatically
 ```
 
-The grouped launch uses the same daemon spawn orchestration as `tclaude agent
-spawn` and the dashboard modal. Consequently the top-level command accepts the
-applicable spawn controls, including `--profile`, `--name`, `--role`, `--owner`,
-`--descr`, `--initial-message`/`--file`, `--task`, `--worktree`, sandbox and
-approval controls, and harness/model/effort. It attaches to the spawned agent
-unless `--detached` is set. `--cwd` is the spawn-compatible alias for
-`-C`/`--dir`.
+Controls:
 
-Directory matching defaults on. `--auto-join-group=false` disables it for one
-launch. `--auto-join-or-create-group` additionally creates a group when no
-active group matches, using a normalized directory basename (`repo`, then
-`repo-2`, etc. when names are taken) and recording the canonical directory as
-that group's default. Auto-create defaults off. Both defaults are editable in
-the dashboard Config tab and stored as `session.auto_join_group` and
-`session.auto_join_or_create_group` in tclaude's config file. Explicit CLI
-flags override those settings, and an explicit `--join-group <name>` always
-wins. If more than one active group has the same canonical directory, mark one
-as the directory auto-join default from that group's **⚙** menu in the
-dashboard Groups tab. Startup uses that marked group; without one, its
-ambiguity error points to both the dashboard setting and `--join-group`.
+- `--auto-join-group` — the directory matching described above. Default on;
+  config key `session.auto_join_group`.
+- `--auto-join-or-create-group` — additionally creates a group when nothing
+  matches, named after the directory basename (`repo`, then `repo-2`, …).
+  Default off.
+- `-j/--join-group <name>` — join a named group explicitly (daemon
+  required). The root command then accepts the daemon spawn controls:
+  `--profile`, `--name`, `--role`, `--descr`, `--owner`,
+  `--initial-message`/`--file`, `--task`, `--worktree`, `--sandbox-profile`,
+  and friends. See [Spawning](spawning-and-lifecycle.md).
+- `--no-daemon` — solo session: skip group discovery and agent features
+  entirely. It is also the required opt-in for non-interactive launches to
+  fall back to a solo session when `agentd` is down (interactive launches
+  get an offer to continue solo instead).
 
-If directory discovery finds a group but agentd is unavailable, an interactive
-launch offers to continue as a solo session without group membership or agent
-features. Non-interactive callers must opt into that fallback with
-`--no-daemon`; the same flag skips discovery and its prompt for interactive
-launches too. Explicit `--join-group` remains daemon-required.
+Resume, managed daemon launches, and `--shell` never do directory discovery.
 
-Resume, managed daemon launches, and `--shell` never perform directory
-discovery. When matching is enabled but finds nothing and auto-create is off,
-the command retains the historical solo-session behavior. Spawn-only flags are
-rejected in that fallback rather than silently ignored.
+## A resume keeps its recorded posture
 
-For a fresh terminal launch, `tclaude` and `tclaude session new` inherit the
-**harness, model, and effort** from the global default spawn profile selected
-in the dashboard (or with `tclaude agent profiles default set`). An explicit
-`--harness`, `--model`, or `--effort` wins for that field. If no global profile
-field is set, the chosen harness keeps its own default. A selected profile with
-a blank harness retains the profile system's historical Claude meaning. When no
-global profile exists at all and no `--harness` is given, tclaude instead
-chooses an installed harness from `PATH`, preferring Claude Code when both
-Claude and Codex are installed. If neither is installed, the historical Claude
-fallback remains and launch reports the missing executable.
+`tclaude session new --resume <id>` (and `tclaude conv resume`, watch-mode
+resume, and the daemon's resume/clone/reincarnate paths) relaunch a
+conversation the way it was recorded, not the way a fresh session would
+start. Every recorded posture flag — `--sandbox`, `--ask-for-approval`,
+`--auto-review`, `--tools`, `--ask-user-question-timeout`,
+`--remote-control`, `--auto-memory`, `--context-features`,
+`--auto-compact-window`, `--copilot-api`, `--codex-app-server` — is carried
+over from the record unless you pass that flag yourself. Passing it wins,
+even when you pass the default value.
 
-This inheritance is for fresh, human-owned terminal sessions only. Resume and
-agentd-managed launches retain their existing resolved launch shape, and the
-profile's sandbox, approval, identity, and permission fields remain agent-spawn
-policy rather than overrides for a directly attached human session.
-
-### A resume keeps the posture it was launched with
-
-`tclaude session new --resume <id>` relaunches the conversation the way it was
-recorded, not the way a fresh session would start. Every launch parameter tclaude
-records — `--sandbox`, `--ask-for-approval`, `--auto-review`, `--tools`,
-`--ask-user-question-timeout`, `--remote-control`, `--auto-memory`,
-`--context-features`, `--auto-compact-window`, `--copilot-api`,
-`--codex-app-server` — is carried over unless you pass
-that flag yourself. Passing it wins, including when you pass the value that is
-also the default (`--auto-memory=false` keeps memory off even if the recorded
-posture had it on).
-
-This matters beyond the one launch: a resume records the posture it resolved, so
-a flag that silently fell back to its default would overwrite the recorded value
-and the original intent would be unrecoverable on the next resume. `tclaude conv
-resume`, the watch-mode resume, and the daemon's resume/clone/reincarnate paths
-follow the same rule.
-
-Model and effort are not on that list because they need no help: the harness
-itself remembers which model a conversation runs on across a resume, and the
-status line re-records both on every render.
-
-Because a resume can apply a posture you did not type, it says so: the carried
-flags are echoed on stderr, e.g.
+Because a resume can apply a posture you did not type, the carried flags are
+echoed on stderr:
 
 ```
-Resuming with this conversation's recorded launch posture (--sandbox --auto-compact-window). Pass a flag explicitly to override it.
+Resuming with this conversation's recorded launch posture (--sandbox
+--auto-compact-window). Pass a flag explicitly to override it.
 ```
 
-Only postures that make the launch differ from a fresh one are listed. Most
-conversations pin nothing on most axes, and a resume that reproduces a recorded
-"nothing pinned" is byte-identical to one without the carryover — announcing
-those would put the line on every ordinary resume, which is how a line stops
-being read. That includes `inherit`, which is the recorded spelling of "nothing
-pinned" for `--sandbox`, `--ask-for-approval` and
-`--ask-user-question-timeout`: it is still carried, because keeping it distinct
-from *unrecorded* is what stops a profile or group default from silently winning
-on the next hop, but it changes nothing about this launch.
+A recorded value the relaunch cannot honour — a Claude-only posture on a
+Codex resume, for example — is dropped rather than failing the resume. When
+the drop leaves the launch *less* confined than the record (`--sandbox`,
+`--ask-for-approval`), it is warned about on stderr rather than only logged.
 
-A recorded value the relaunch harness cannot honour — a Claude-only posture on a
-Codex resume, or a startup-context feature since retired from the catalog — is
-dropped rather than failing the resume. For `--sandbox` and `--ask-for-approval`
-that drop leaves the launch *less* confined than the record, so it is warned
-about on stderr rather than only logged.
+Model and effort are not on the carried list: the harness itself remembers
+which model a conversation runs on.
 
-**Flags:**
+`session new --resume` needs `--harness` for non-Claude conversations;
+`tclaude conv resume <id>` looks the harness up from the conversation index
+and is usually what you want. See [Conversations](conversations.md).
 
-| Flag               | Description                                              |
-|--------------------|----------------------------------------------------------|
-| `-d, --detached`   | Start session without attaching                          |
-| `-C, --dir <path>` / `--cwd <path>` | Directory to start the session in       |
-| `--resume <id>`    | Resume from the selected harness's conversation store     |
-| `--label <name>`   | Custom label for the session                             |
-| `--harness <name>` | Coding harness: `claude` \| `codex` \| `shell` (unset: global profile, then an installed harness; Claude preferred) |
-| `--fast-mode <mode>` | Codex speed tier: `inherit` \| `on` \| `off` |
-| `-s, --shell`      | Start a plain shell instead of a coding harness (shorthand for `--harness shell`) |
+## Shell sessions
 
-Model, effort, sandbox, approval, and lifecycle options differ by harness. The
-[capability matrix](harnesses.md#capability-matrix) documents the supported
-values and defaults; `tclaude session new --help` is the live flag reference.
-If you do not want to select the harness yourself, `tclaude conv resume <id>`
-looks it up from the conversation index.
-
-### Shell sessions
-
-`--harness shell` (or its shorthand, `-s`/`--shell`) starts a plain
-interactive shell — your `$SHELL` (falling back to `/bin/sh`) — in a tmux
-session instead of a coding harness. It gets the same detach/reattach,
-`session ls`/watch visibility, and attach/kill as any other session, but it
-is **ephemeral**: there is no conversation, no hooks, and none of the
-model/sandbox/approval/rename/compact machinery a coding-harness session
-carries.
+`--shell` (or `--harness shell`) is not a harness — it is a convenience hack
+that starts your `$SHELL` in a managed tmux session, so you get the same
+detach/reattach, `session ls` visibility, and kill handling for a plain
+terminal:
 
 ```bash
-# Start a plain shell in the current directory
-tclaude session new --shell
-
-# In a specific directory, with a label
+tclaude --shell
 tclaude session new --shell -C /path/to/project --label scratch
 ```
 
-`--shell` and `--harness shell` are interchangeable; combining `--shell` with
-an explicit `--harness` naming anything else (e.g. `--shell --harness codex`)
-is an error rather than silently picking one.
+Shell sessions are ephemeral: no conversation, no hooks, none of the
+model/sandbox/approval machinery. Only `-C/--dir`, `--label`, and
+`-d/--detached` apply; any other `session new` flag errors out. Their status
+is `running` while the tmux session is alive and `exited` afterwards.
 
-Only `-C/--dir`, `--label`, and `-d/--detached` apply. Every other `session
-new` flag (`--resume`, `--model`, `--effort`, `--sandbox`,
-`--ask-for-approval`, `--auto-review`, `--trust-dir`, `--remote-control`,
-`--join-group`, `--name`, `--session-id`, post-`--` passthrough args, …) is
-coding-harness-only and errors out if set alongside `--harness shell`.
-
-A shell session shows up in `session ls` / watch mode with status `running`
-(green) for as long as its tmux session is alive, and `exited` once it ends —
-there's no hook to report anything finer-grained. It's also reachable from
-the watch-mode `n` ("new session") prompt: cycle the harness field
-(↑/↓/Tab) past the coding harnesses to `shell`.
-
-While it is alive it is also listed by the `agentd serve --tui` console,
-below the agents and marked `(session)` — see [Two kinds of
-row](dashboard.md#two-kinds-of-row). The same goes for any other non-agent
-session, including a plain `tclaude session new`.
-
-### session ls
-
-List active sessions.
+## Listing, attaching, and status
 
 ```bash
-# List sessions
-tclaude session ls
-
-# Interactive watch mode
-tclaude session ls -w
-
-# Include exited sessions
-tclaude session ls -a
-
-# Filter by status
-tclaude session ls --show idle
-tclaude session ls --hide exited
+tclaude session ls           # list active sessions
+tclaude session ls -a        # include exited ones
+tclaude session ls -j        # JSON
+tclaude session attach <id>  # reattach (Ctrl+B D detaches)
+tclaude session kill <id>    # kill one; --all, --idle also exist
+tclaude session focus <id>   # focus (or open) the session's terminal window
 ```
 
-**Flags:**
+`session ls` supports `--show`/`--hide <status>` filters and `-s/--sort`
+with `--asc`/`--desc`. Statuses, reported through the harness's hooks:
 
-| Flag           | Description                                  |
-|----------------|----------------------------------------------|
-| `-w, --watch`  | Interactive watch mode                       |
-| `-a, --all`    | Include exited sessions                      |
-| `--show <s>`   | Show only these statuses                     |
-| `--hide <s>`   | Hide these statuses                          |
-| `--sort <col>` | Sort by: id, directory, status, age, updated |
+| Status                | Meaning                                        |
+|-----------------------|------------------------------------------------|
+| `idle`                | The harness is waiting for input               |
+| `working`             | The harness is processing                      |
+| `running`             | A shell session is alive (no finer status)     |
+| `awaiting_permission` | Needs a permission approval                    |
+| `awaiting_input`      | The harness is asking a question               |
+| `error`               | The last turn ended in an error                |
+| `exited`              | The session has ended                          |
 
-**Status values:** `idle`, `working`, `running`, `awaiting_permission`, `awaiting_input`, `error`, `exited`
+`session goto next|prev` cycles between alive attached sessions from inside
+one, and `session prune` clears exited session state (`--max-age 7d`,
+`--dry-run`).
 
-### session watch
+## Watch mode
 
-Shortcut for `session ls -w` — jumps straight into interactive watch mode. Takes the same
-`-a`, `--show`, `--hide`, and `--sort` flags as `session ls`.
+`tclaude session watch` (alias for `session ls -w`; bare `tclaude session`
+opens the same viewer) is an interactive table of sessions:
+
+- `↑`/`↓` (or `j`/`k`) navigate; `Enter` attaches.
+- `/` searches; `Esc` clears.
+- `x`/`Del` kills the selected session (with confirmation).
+- `f` opens the status filter menu; `1`–`5` pick a sort column (press again
+  to toggle direction).
+- `n` opens a new-session prompt; its harness field cycles through the
+  coding harnesses and `shell`.
+- `h`/`?` shows help.
+
+## Labels and names
+
+The tmux session name is the first 8 characters of the session id, or your
+`--label` verbatim. Setting `session.tmux_name_style` to `"dir"` in
+`~/.tclaude/data/config.json` names unlabelled sessions after the working
+directory's basename instead (sanitized, capped at 32 characters,
+disambiguated with `-2`, `-3`, … suffixes).
+
+Plain launches are auto-enrolled as agents and get a deterministic display
+name such as `20260728-1017-f3e10b1d` (launch timestamp plus a stable
+agent-id suffix). The opt-in `session.auto_name_from_prompt` config setting
+(default false, since it costs a model call) instead infers a short name from
+the session's first prompt. An explicit rename always wins.
+
+## Claude Code session machinery
+
+Three Claude-Code-specific behaviors ride along with sessions:
+
+- **Pre-compact guard** — the `pre_compact_guard` config block installs a
+  `PreCompact` hook that blocks Claude Code's *automatic* compaction until
+  used context passes a per-window-size floor. Fail-open: if the guard is
+  off or the context snapshot is missing, compaction proceeds. It only ever
+  delays an early compaction, never forces one.
+- **Resume-from-summary suppression** — Claude Code's interactive "resume
+  from summary" chooser would hang a scripted, send-keys-driven resume.
+  `tclaude setup --install-resume-threshold-override` configures
+  `claude_resume.threshold_minutes` / `token_threshold` so the chooser never
+  appears for tclaude-spawned panes; your manual `claude` runs are
+  untouched.
+- **Transcript retention** — Claude Code deletes transcripts inactive longer
+  than its `cleanupPeriodDays` setting (30 days by default). Set
+  `claude_cleanup_period_days` in tclaude's config to keep conversations
+  resumable longer; tclaude syncs the value into `~/.claude/settings.json`
+  on session start.
+
+## Direct tmux access
+
+Everything runs in a dedicated tmux server, so plain tmux works too:
 
 ```bash
-tclaude session watch
+tmux -L tclaude ls              # list tclaude sessions
+tmux -L tclaude attach -t abc1  # manual attach
 ```
 
-### session attach
-
-Attach to an existing session.
-
-```bash
-# Attach by session ID
-tclaude session attach <id>
-
-# Force attach (even if the session already has clients attached)
-tclaude session attach -f <id>
-```
-
-### session kill
-
-Kill one or more sessions.
-
-```bash
-# Kill a specific session
-tclaude session kill <id>
-
-# Kill all sessions
-tclaude session kill --all
-
-# Kill only idle sessions
-tclaude session kill --idle
-
-# Force (no confirmation)
-tclaude session kill -f <id>
-```
-
-## Interactive Watch Mode
-
-Press `w` or use `-w` flag to enter interactive mode.
-
-### Navigation
-
-| Key       | Action            |
-|-----------|-------------------|
-| `↑`/`k`   | Move up           |
-| `↓`/`j`   | Move down         |
-| `Enter`   | Attach to session |
-| `q`/`Esc` | Quit              |
-
-### Search
-
-| Key      | Action                          |
-|----------|---------------------------------|
-| `/`      | Start search                    |
-| `Esc`    | Clear search / exit search mode |
-| `Ctrl+U` | Clear search input              |
-| `↑`/`↓`  | Exit search and navigate        |
-
-### Actions
-
-| Key       | Action                           |
-|-----------|----------------------------------|
-| `Del`/`x` | Kill session (with confirmation) |
-| `r`       | Refresh list                     |
-| `h`/`?`   | Show help                        |
-
-### Filtering
-
-| Key     | Action               |
-|---------|----------------------|
-| `f`     | Open filter menu     |
-| `Space` | Toggle filter option |
-| `Enter` | Apply filter         |
-
-### Sorting
-
-| Key      | Action            |
-|----------|-------------------|
-| `1`/`F1` | Sort by ID        |
-| `2`/`F2` | Sort by Directory |
-| `3`/`F3` | Sort by Status    |
-| `4`/`F4` | Sort by Age       |
-| `5`/`F5` | Sort by Updated   |
-
-Press the same key again to toggle ascending/descending/off.
-
-## Session Status 🔮
-
-Coding sessions report their status through the selected harness's hooks:
-
-| Status                | Color     | Description                          |
-|-----------------------|-----------|--------------------------------------|
-| `idle`                | 🟡 Yellow | The harness is waiting for input     |
-| `working`             | 🟢 Green  | The harness is processing            |
-| `running`             | 🟢 Green  | A plain shell session is alive (no hooks, so no finer-grained status) |
-| `awaiting_permission` | 🔴 Red    | Needs permission approval            |
-| `awaiting_input`      | 🔴 Red    | Waiting for user input               |
-| `error`               | 🔴 Red    | Last turn ended in an error          |
-| `exited`              | ⚫ Gray    | Session has ended                    |
-
-## Claude Code: pre-compact guard
-
-The pre-compact guard **refuses Claude Code's own automatic compaction until context has grown past a floor.**
-
-It exists because Claude Code can compact *too early*. CC sizes its compaction window from the model class, defaulting to **200K even on a 1M-context model**, so a 1M session can auto-compact at the 200K boundary — about **20% of the 1M status bar**. If you'd rather let context accrue and then [reincarnate](agent.md) (a directed handoff) than have CC blindly summarise at 20%, the guard holds compaction off until a chosen level.
-
-How it works: tclaude installs a `PreCompact` hook that, when the guard is enabled, compares the conversation's used context against a per-window-size floor and returns a `block` decision to Claude Code if it's still below the floor. It is **fail-open** — if the guard is off, the trigger can't be classified, or the context snapshot is missing, compaction proceeds. It only ever *delays* an early compaction; it never forces one. By default it blocks only Claude Code's **automatic** compaction, never a `/compact` you type yourself (set `block_manual` to also guard manual compaction).
-
-Enable it in `~/.tclaude/data/config.json` or via the dashboard **Config** tab:
-
-```json
-{
-  "pre_compact_guard": {
-    "enabled": true,
-    "block_manual": false,
-    "thresholds": [
-      { "window_size": 200000,  "min_tokens": 150000 },
-      { "window_size": 1000000, "min_tokens": 800000 }
-    ]
-  }
-}
-```
-
-`thresholds` maps a context-window size (tokens) to the minimum used context (tokens) required before compaction is allowed on that window. Omit `thresholds` to use the built-in defaults shown above (hold off until 150K/200K and 800K/1M). The reported window is matched to the nearest configured size, so a slightly-off window (e.g. 1048576) still resolves to its class.
-
-> Note: the guard refuses an *early* compaction; it does not move CC's trigger point. If CC re-attempts auto-compaction every turn past its boundary, the guard refuses each attempt (and logs it to `~/.tclaude/data/output.log`) until the floor is reached.
-
-## Claude Code: resume-from-summary prompt
-
-When you resume a conversation that is **both old and large**, Claude Code shows an interactive *"Resume from summary"* chooser — a multiple-choice prompt offering to compact the session before resuming. That's fine when you're sitting at the keyboard, but it **breaks tclaude's scripted resume**: the daemon (and watch-mode resume) launch a detached `claude --resume` in a tmux pane and drive it with `send-keys`, and a tmux-driven flow can't answer a TUI it didn't expect — so the resume just hangs on the chooser.
-
-tclaude suppresses the chooser for the panes it spawns by raising the thresholds Claude Code uses to decide whether to show it. CC only shows the prompt when **both** the session age (`CLAUDE_CODE_RESUME_THRESHOLD_MINUTES`, default 70) **and** the estimated size (`CLAUDE_CODE_RESUME_TOKEN_THRESHOLD`, default 100,000 tokens) are exceeded, so lifting **either** one high enough switches it off. tclaude applies these as environment variables on the spawned `claude` process **only** — it never writes them into `~/.claude/settings.json`, so your manual `claude` runs are untouched and the values live in tclaude's own config (where the dashboard **Config** tab and its diff viewer can edit them). The overrides are Claude-Code-specific; Codex CLI has no such prompt and ignores them.
-
-Install the default suppression with either flag (idempotent — it skips if you've already configured a value, and never overwrites it):
-
-```bash
-tclaude setup --install-resume-threshold-override   # or: --install-all
-```
-
-That writes a large `threshold_minutes` (≈1000 years) so a resumed session's age can never reach it. Tune it by hand in `~/.tclaude/data/config.json` or via the dashboard **Config** tab:
-
-```json
-{
-  "claude_resume": {
-    "threshold_minutes": 525600000,
-    "token_threshold": 100000
-  }
-}
-```
-
-Omit a field to leave that threshold on Claude Code's own default; set a small value (e.g. `0`) to make the prompt *always* show. The thresholds are undocumented, version-specific Claude Code knobs (verified against CC 2.1.187), so tclaude treats them as best-effort — if a future CC build renames or drops them the override simply becomes a no-op rather than an error.
-
-## Claude Code: transcript retention
-
-Claude Code sweeps its local storage at startup and **deletes any conversation transcript** (plus other stale session data and orphaned worktrees) that has been *inactive* longer than its `cleanupPeriodDays` setting — **30 days by default**. So a session you haven't touched in a month is gone, and with it tclaude's ability to resume or inspect that conversation.
-
-To keep transcripts longer, set `claude_cleanup_period_days` in `~/.tclaude/data/config.json` (or via the dashboard **Config** tab, under *General → Transcript retention*):
-
-```json
-{
-  "claude_cleanup_period_days": 99999
-}
-```
-
-Unlike the resume-threshold overrides above, this **is** written into `~/.claude/settings.json` (as `cleanupPeriodDays`) — tclaude syncs the value there on every session start, before the `claude` process that would run the sweep launches. Because it lands in the real settings file, it also protects transcripts from your own plain `claude` runs, not just tclaude-spawned panes. Set a large value like `99999` to effectively keep transcripts forever (Claude Code rejects `0` and has no dedicated "never" option). Leave the key unset (or `0`) to let Claude Code's default — or whatever you've set in `settings.json` by hand — stand; tclaude then never touches the key.
-
-## Free-floating session display names
-
-A coding session launched with plain `tclaude` or `tclaude session new` is
-automatically enrolled as an agent. Until you rename it, tclaude gives that
-agent a deterministic display name such as
-`20260728-1017-f3e10b1d`: the launch date and time in UTC, to the minute, plus a short stable
-agent-id suffix. This is deliberately cheap and avoids turning the full first
-prompt into the dashboard identity. Agentd-managed group spawns retain their
-requested names.
-
-Optionally, agentd can replace that fallback with a short name inferred from
-the session's first prompt:
-
-```json
-{
-  "session": {
-    "auto_name_from_prompt": true
-  }
-}
-```
-
-This setting defaults to `false` because it normally makes an additional model
-call for each eligible session. When enabled, the call is non-interactive,
-read-only, and ephemeral. Agentd keeps a bounded recent-attempt cache to avoid
-repeatedly spending tokens on later prompts after a failure; restarting the
-daemon or eventually evicting an old entry permits a retry. When the single
-naming slot is busy, the attempt is dropped rather than queued and a later
-prompt may retry. The work runs asynchronously after the prompt hook has
-completed, so a slow, failed, unsupported, or malformed response leaves the
-deterministic fallback in place and never delays session startup or waits on
-the user's turn. Claude Code and Codex both use their own one-shot harness
-adapter for the same flow. An explicit rename always wins.
-
-## Tmux Integration
-
-tmux is run with `-L tclaude` to create an isolated environemt and a namespace for sessions. 
-
-```bash
-# List all tclaude tmux sessions
-tmux -L tclaude ls
-
-# Manually attach
-tmux -L tclaude attach -t abc123
-
-# Detach from inside tmux
-Ctrl+B D
-```
-
-### Tmux session names
-
-By default a session's tmux name is the first 8 characters of its id — or your `--label`, verbatim. If you switch between sessions with plain tmux (`tmux -L tclaude choose-tree`, status-line tabs), descriptive names help. Opt in via `~/.tclaude/data/config.json`:
-
-```json
-{
-  "session": {
-    "tmux_name_style": "dir"
-  }
-}
-```
-
-With `"dir"`, an unlabelled session is named after its working directory's basename — sanitized to a tmux-safe charset (`.`/`:` and anything outside `[A-Za-z0-9_-]` become `-`), capped at 32 chars, and disambiguated with a `-2`, `-3`, … suffix when the name is already taken by a live session.
-
-The tmux name is only the human-facing handle: lookups, resume, attach and hooks all key on the full session identity stored in tclaude's DB, so you can switch styles (or back — the default is `"id"`) at any time; the change only affects newly launched sessions. Agent spawns always pass an explicit label, so `tmux_name_style` does not apply to them: by default that label is an opaque `spwn-XXXXXX` token, and with `agent.spawn_label_from_name` the agent's name becomes the base candidate it is derived from — normalized, length-capped, and suffixed if already taken. See *Naming the tmux session after the agent* in [`agent.md`](agent.md).
-
-### Recommended Tmux Configuration
-
-There are two approaches for scroll support - **choose one, not both**:
-
-#### Option 1: Tmux Mouse Mode
-
-```bash
-# Enable mouse support (scroll, click, resize panes)
-set -g mouse on
-```
-
-Scroll wheel works inside tmux, but the native terminal scrollbar is hidden.
-
-#### Option 2: Native Terminal Scrollbar
-
-```bash
-# Disable alternate screen buffer - keeps native scrollbar
-set -ga terminal-overrides ',*256color*:smcup@:rmcup@'
-```
-
-Keeps your terminal's native scrollbar visible. This disables the `smcup` (enter alternate screen) and `rmcup` (exit alternate screen) terminal capabilities.
-
-**Trade-off:** Full-screen applications (vim, less, etc.) will leave their content in your scrollback history instead of restoring the previous screen when they exit.
-
-#### Why Not Both?
-
-Using both options simultaneously causes conflicts - the scroll wheel behavior becomes unpredictable. Pick whichever suits your workflow better.
-
-### Other Useful Settings
-
-```bash
-# Increase scrollback buffer (default is 2000)
-set -g history-limit 10000
-```
-
-Reload config after changes: `tmux -L tclaude source ~/.tmux.conf`
+For scrollback, either enable tmux mouse mode (`set -g mouse on`) or disable
+the alternate screen to keep your terminal's native scrollbar
+(`set -ga terminal-overrides ',*256color*:smcup@:rmcup@'`) — one or the
+other, not both.

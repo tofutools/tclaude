@@ -1,225 +1,213 @@
 # Processes
 
-Processes is an experimental feature for authoring reusable process templates
-and running them through the daemon. Enable it with `features.processes` in
-tclaude's config. The dashboard then shows the Templates library and
-drag-and-drop editor; the daemon accepts run creation and the runtime verbs
-below.
+Processes are reusable, versioned workflow templates — task chains, decisions,
+parallel fan-out, retries, human approvals — authored once and executed as
+daemon-owned runs with durable state and an auditable evidence trail. The
+feature is experimental and off by default: enable it with the
+`features.processes` config flag (in the [dashboard's](dashboard.md) Config tab
+or in config.json). While the flag is off, every process route in the daemon
+returns 404 with the code `processes_disabled` and a message pointing at the
+flag.
 
-## Authoring
+The runtime is partially implemented: a substantial subset of the engine is
+live, and the rest of the CLI surface is stubbed. This page states exactly
+which half is which.
 
-Template parameters, performers, edges, layout, snippets, version history,
-authorship, and source-hash CAS checks are available in the dashboard editor.
-Agents author the same templates through:
+!!! note "Not `tclaude agent process`"
+    `tclaude agent process` shows and advances a *group's* advisory phase list
+    from a task-force template — a checklist for coordination, never enforced.
+    That is a different feature; see [Teams at scale](teams-at-scale.md). This
+    page is about `tclaude process`: executable templates run by the daemon.
+
+## Authoring templates
+
+Templates are YAML documents with `apiVersion: tclaude.dev/v1alpha1` and
+`kind: ProcessTemplate`. The primary authoring surface is the dashboard's
+Templates library and drag-and-drop editor, which covers parameters,
+performers, edges, layout, snippets, version history, authorship, and
+source-hash CAS checks. Agents author the same templates from the CLI:
 
 ```bash
 tclaude agent process-templates ls [--json]
 tclaude agent process-templates show <template-id>
 tclaude agent process-templates validate --file template.yaml
-tclaude agent process-templates save --file template.yaml --expect-source-hash <hash>
+tclaude agent process-templates save --file template.yaml \
+    --expect-source-hash <hash>
 ```
 
-`ls --json` emits the same bounded listing the dashboard reads as one
-`{"templates": [...]}` document instead of the human table, so scripts and
-agents never parse columns. It carries every field the REST response has,
-including each template's full `versions` history; version `actor` and
-`authoredAt` attribution is optional and omitted where absent.
+Saves are compare-and-swap: `--expect-source-hash` must match the current
+stored version, so two writers cannot silently clobber each other — a stale
+hash is a refused save, and the caller re-reads with `show` and merges. The
+bundled `process-templates` agent skill and the CLI's `--help` are the deep
+reference for the authoring shape and the safe show-edit-validate-save loop;
+this page does not repeat them.
 
-Reads require `process.templates.read` — installed as an ordinary agent
-default by `tclaude setup --install-default-agent-permissions`, so every agent
-can list, show, and validate templates. Saves require
-`process.templates.manage`, which is never a default. These permissions
-authorize authoring only and do not execute a template.
+Two permissions govern authoring, and neither executes anything:
+
+- `process.templates.read` — list, show, validate. Installed as an ordinary
+  agent default by `tclaude setup --install-default-agent-permissions`.
+- `process.templates.manage` — save. Never a default.
+
+Two worked examples live in the repo under `docs/examples/`
+(`code-change-with-review.yaml`, `parallel-any-review.yaml`). They are valid
+authoring-shape templates and pass template validation, but note that they use
+agent and human performers, `approvalRetry`, and same-session retry feedback —
+features the current engine does not execute yet (see below) — so run creation
+refuses them today. Read them as illustrations of the full authoring format,
+not as templates you can run unmodified.
 
 ## Running
 
+Runs are created and driven through the daemon:
+
 ```bash
-tclaude process run <template-id> --param key=value --authorize-program-profile <profile>
+tclaude process run <template-id> --param key=value \
+    --authorize-program-profile <profile>
 tclaude process runs ls
 tclaude process show <run-id>
 tclaude process events <run-id>
-tclaude process decide <run-id> --node <node> --verdict <verdict> [--attempt <n>]
 tclaude process resume <run-id>
+tclaude process decide <run-id> --node <node> --verdict <verdict> [--attempt N]
 tclaude process reconcile <run-id>
 tclaude process reissue <run-id> [--node <node>]
-tclaude process record-outcome <run-id> [--node <node>] --outcome succeeded|failed
+tclaude process record-outcome <run-id> [--node <node>] \
+    --outcome succeeded|failed
+tclaude process resolve-blocked <run-id> --node <node> --attempt <n> \
+    --action retry|skip|cancel [--note "why"]
+tclaude process templates ls
 ```
 
-Creating a run pins the exact saved template head and its parameters, so later
+Creating a run pins the exact saved template head and its parameters; later
 edits to the template never change a run already in flight. Every program
 profile a run may execute must be authorized explicitly at creation with
-`--authorize-program-profile`; nothing is authorized implicitly.
+`--authorize-program-profile` — nothing is authorized implicitly, and that
+includes every derived stage of a compound task, not just the parent's
+performer.
 
-Reads (`runs ls`, `show`, `events`) require `process.runs.read` and mutations
-require `process.runs.manage`. Neither is an ordinary default, but **owning a
-group confers `process.runs.read`**: a coordinating agent driving a validation
-reads run status and evidence without a human approval per read. Plain members
-need the slug granted. An explicit per-agent **deny** overrides both the
-defaults and the owner grant. Ownership confers reads only — every mutating
-verb above still needs `process.runs.manage` (an explicit grant or a one-shot
-`--ask-human` approval), and it never grants `process.templates.manage`.
+Permissions: reads (`runs ls`, `show`, `events`) require `process.runs.read`;
+every mutating verb requires `process.runs.manage`. Neither is an ordinary
+default, but owning a group confers `process.runs.read`, so a coordinating
+agent can watch run status and evidence without a human approval per read.
+Ownership confers reads only — mutations always need an explicit
+`process.runs.manage` grant or a one-shot `--ask-human` approval — and an
+explicit per-agent deny overrides everything, the owner grant included. See
+[Permissions and audit](permissions-and-audit.md).
 
 ## What executes today
 
-- Any executable node kind as the template's entry. Top-level `start` names the
-  graph's single entry node; a separate `start`-typed node is optional, so a
-  template may begin directly at a task, a decision, or a parallel fork.
-- Sequential task chains, and exclusive decisions whose verdict selects exactly
-  one authored outcome edge and closes the alternatives.
-- Structured fan-out (`type: parallel`) reduced by `join: all` or `join: any`.
-  Branches of one run execute concurrently, bounded to four external programs
-  at a time; ready branches past that bound wait for a slot. A branch parked on
-  a human decision does not block its siblings, and that decision can be
-  answered while the sibling programs are still running.
-- `join: any` races its branches: the first arrival wins, and only the winner
-  activates the reducer and everything downstream of it. Losing branches are
-  **not** cancelled, closed, or compensated — they run on to their own settled
-  outcome and arrive late at the reducer, where they are recorded as honest
-  evidence that cannot replace the winner or run the downstream route twice.
-  The run therefore does not report a terminal status until every branch that
-  was dispatched or queued has settled. A losing branch that *fails* still
-  fails the run, exactly as under `join: all`.
-- Program task performers (`performer.kind: program`), executed as argv without
-  a shell, with a bounded environment and output.
-- Human deciders on decision nodes.
-- Bounded program retries. A program task may declare
-  `retry.maxAttempts: <n>`, which **includes the first attempt** and is capped
-  at 100 — retries here run back to back and nothing can interrupt a task that
-  is still spending its budget, so an unbounded budget would be an unthrottled
-  loop. (The `cancel` resolution below acts on a branch that has already
-  exhausted its budget, not on one mid-loop.) A failed attempt inside
-  the budget re-readies only that node and runs a fresh attempt;
-  parallel siblings are untouched and are neither cancelled nor renumbered. A
-  task with no `retry` stays fail-fast. Every attempt of a node carries its own
-  attempt number and its own command id, so a delayed or duplicated report from
-  an earlier attempt is refused as stale rather than credited to the current
-  one. Attempt numbers are visible in `tclaude process show --json` (the
-  checkpoint's sparse `attempts` map and each outstanding command's `attempt`)
-  and in the `program_prepared` / `program_observed` rows of `tclaude process
-  events`; the plain `show` table's COMMAND column carries the same attempt in
-  the command id.
-- Blocked branches and audited resolution. When an explicitly retry-authored
-  task exhausts its budget, that branch is **parked**, not failed: the node
-  becomes `blocked`, the run stays running, and unaffected siblings keep
-  executing. A task with no `retry` policy still fails the run outright — so
-  `retry.maxAttempts: 1` and no policy at all behave differently on purpose.
-  `tclaude process show` lists each parked branch with the exact attempt it is
-  blocked at and the reason from the failed attempt, and an operator resolves it
-  with
+- **Sequential task chains** starting at any executable node kind — top-level
+  `start` names the entry node, and a separate `start`-typed node is optional.
+- **Exclusive decisions** with human deciders: the verdict selects exactly one
+  authored outcome edge and closes the alternatives. Authored decisions open
+  exactly once and need no `--attempt`.
+- **Parallel fan-out** (`type: parallel`) reduced by `join: all` or
+  `join: any`. Branches execute concurrently, bounded to four external
+  programs at a time; ready branches past the bound wait for a slot. A branch
+  parked on a human decision does not block its siblings.
+- **`join: any` races its branches.** The first arrival wins and alone
+  activates the reducer and everything downstream. Losing branches are not
+  cancelled — they run to their own settled outcome and are recorded as
+  evidence that cannot replace the winner or run the downstream route twice,
+  and the run reports no terminal status until every dispatched branch has
+  settled. A losing branch that *fails* still fails the run, exactly as under
+  `join: all`.
+- **Program performers** (`performer.kind: program`): executed as argv without
+  a shell, with a bounded environment and bounded output.
+- **Bounded program retries.** `retry.maxAttempts: <n>` includes the first
+  attempt and is capped at 100; attempts run back to back, and nothing can
+  interrupt a task still spending its budget. A failed attempt inside the
+  budget re-readies only that node; parallel siblings are untouched. A task
+  with no `retry` policy stays fail-fast. Every attempt carries its own
+  attempt number and command id, so a delayed report from an earlier attempt
+  is refused as stale rather than credited to the current one. Attempt numbers
+  are visible in `show --json` and in the `program_prepared` /
+  `program_observed` rows of `events`.
+- **Blocked-branch parking.** When a retry-authored task exhausts its budget,
+  the branch is parked, not failed: the node becomes `blocked`, the run stays
+  running, and siblings keep executing. (`retry.maxAttempts: 1` and no policy
+  at all therefore behave differently on purpose.) `show` lists each parked
+  branch with the exact blocked attempt and the failure reason; an operator
+  resolves it with `resolve-blocked`. `retry` opens one more authored-size
+  attempt window (attempt numbers keep counting up); `skip` settles the task
+  through its authored route as a success would, distinguished only by the
+  `blocked_resolved` evidence; `cancel` gives up on the whole run — parked
+  branches and awaited decisions are dropped, already-dispatched programs
+  drain honestly, and the run finishes `canceled`. The node and attempt must
+  match exactly, so a stale or wrong-branch resolution is refused. A parked
+  branch keeps the run open: an end node will not complete around a resolution
+  still on offer.
+- **Compound tasks.** A task declaring `plan`, `checks`, or `review` runs its
+  stages in order — `<id>.plan`, `<id>.do`, `<id>.test.<step>`, `<id>.review`,
+  and the engine-owned `<id>.done`. Each stage is an ordinary node under its
+  derived id: dispatched, observed, reconciled, and shown like a plain program
+  task. Stages are derived from the pinned template on every load, never
+  stored, so nothing can drift. The parent stays `running` while any stage is
+  live and settles its single authored route exactly once, when `done`
+  completes; a failed stage fails the run like any fail-fast task. In this
+  slice every stage performer must be a program, and stage-level `retry` /
+  `approvalRetry` are not executable yet.
+- **Human plan approval.** A compound whose `plan` declares `approval: human`
+  gains one extra stage between plan and do, `<id>.plan.approval`: an awaited
+  decision with the fixed verdicts `approve` and `rework`, decided through the
+  ordinary `decide` command and permission. `approve` readies the do stage;
+  `rework` returns the plan stage to ready, and the window reopens when the
+  re-run plan succeeds. There is no approval budget — each rework is one
+  explicit, audited human action buying exactly one more plan execution.
+  Because the window can reopen, a verdict must name it:
 
   ```bash
-  tclaude process resolve-blocked <run> --node <node> --attempt <n> \
-      --action retry|skip|cancel [--note "why"]
+  tclaude process decide <run-id> --node <id>.plan.approval \
+      --attempt N --verdict approve|rework
   ```
 
-  `retry` opens one more authored-size attempt window — attempt numbers keep
-  going up rather than being reset or reused, so an earlier attempt's report is
-  still refused as stale — and the branch parks again if that window is spent
-  too. `skip` settles the task through its authored route and activates
-  downstream work as a successful run would have; only the `blocked_resolved`
-  evidence distinguishes the two. `cancel` gives up on the whole run: it stops
-  further planning, drops every parked branch and awaited decision, lets
-  already-dispatched programs drain honestly, and finishes the run `canceled`.
-  The node and attempt must match exactly, so a stale, duplicated, or
-  wrong-branch resolution is refused rather than applied to whatever is parked
-  now. A run whose branches are all parked is left alone by the periodic
-  recovery sweep, and a parked branch keeps the run open — an end node will not
-  complete around a resolution that is still on offer.
+  `show` reports the exact `--attempt` in its next-step hint, and the run
+  refuses any other value — including a verdict formed against an earlier
+  window and submitted late.
 
-- Compound tasks. A task that declares `plan`, `checks`, or `review` runs its
-  stages in order: `<id>.plan`, `<id>.do`, `<id>.test.<step>`, `<id>.review`,
-  and finally the engine-owned `<id>.done`. The stages are ordinary nodes —
-  each is dispatched, observed, reconciled, and shown exactly like a plain
-  program task, under the derived id — so nothing about a compound is a special
-  case for an operator. They are derived once from the pinned template when the
-  run is created, and re-derived identically on every load; no expansion is
-  stored, so there is nothing that can drift from the template.
+One sizing rule applies only to running: a run records durable evidence per
+node, and that row bounds node ids at 256 bytes. Run creation refuses a
+template whose node ids — authored or derived from compound stages — exceed
+it; editing and storing such a template still works.
 
-  The parent stays `running` for as long as any stage is live and settles its
-  single authored route exactly once, when its `done` stage completes, so
-  downstream work never starts early. A failed stage fails the run the same way
-  a plain fail-fast task does; the parent is left `running` while the doomed run
-  drains, because only the `done` stage ever completes it. If an exclusive
-  decision routes around a compound, every derived stage is skipped with its
-  parent. Because each stage is a real program, **every stage profile has to be
-  authorized when the run is created**, not just the parent's `performer`.
+## What does not execute yet
 
-  In this slice each stage performer must be a program with no `contact`
-  schedule, and stage-level `retry` / `approvalRetry` are not executable yet.
+These CLI verbs are stubs that return a "process runtime is temporarily
+unavailable: no engine is installed" error: `preview`, `apply`, `worklist`,
+`advance`, `unblock`, `observe`, `resolve`, `report`, `verify`, `repair`.
 
-- Human plan approval. A compound whose `plan` declares `approval: human`
-  expands one extra stage between plan and do, `<id>.plan.approval`. It runs no
-  program: it is an ordinary awaited decision with the fixed verdicts `approve`
-  and `rework`, decided over the same `tclaude process decide` command,
-  permission, and state-version CAS as an authored decision.
-
-  `approve` readies the do stage. `rework` returns the plan stage to ready and
-  closes the gate, so ordinary planning runs the plan once more and the window
-  reopens when it succeeds; nothing after the approval is touched, because
-  nothing after it has run. There is no approval budget: each rework is one
-  explicit audited human action that buys exactly one more plan execution. A
-  plan program that *fails* is still fail-fast, and a failed check or review
-  gate reworks the do stage without ever reopening an approval that was already
-  given.
-
-  Because the window reopens, a verdict has to name it:
-
-  ```bash
-  tclaude process decide <run-id> --node <id>.plan.approval --attempt N --verdict approve|rework
-  ```
-
-  `tclaude process show` reports the exact `--attempt` in its next-step hint,
-  and the run refuses any other value — including a verdict a person formed
-  against an earlier window and submitted late. Authored decisions open exactly
-  once, so they need no `--attempt` and their output is unchanged.
-
-- A node id ceiling that only applies to *running* a template. Authoring bounds
-  what characters a node id may contain, not how long it is, but a run has to
-  record durable evidence per node, and that row bounds the id at 256 bytes. Run
-  creation therefore refuses a template whose node ids — authored **or derived
-  from a compound's stages** — exceed it, rather than creating a run that could
-  never commit a transition. Editing and storing such a template still works.
-
-Not executable yet: agent deciders, agent or human task performers, retry
-backoff waits, same-session retry feedback (`retry.onFail:
-feedback-same-session`), retries on compound stages, `plan.approvalRetry`,
-human or agent stage performers, poison handling, wait nodes, and captures.
-Template validation and run creation both refuse these with a path-specific
-diagnostic rather than failing later.
+These authoring features are valid in a stored template but refused at run
+creation with a path-specific diagnostic, rather than failing later: agent
+deciders; agent or human task performers; retry backoff waits; same-session
+retry feedback (`retry.onFail: feedback-same-session`); retries on compound
+stages; `plan.approvalRetry`; human or agent stage performers; poison
+handling; wait nodes; captures.
 
 ## Crashes and reconciliation
 
 A command is durable before its program starts, so after a daemon restart
 tclaude cannot know whether an outstanding command's program actually ran. It
-never guesses and never silently re-runs one. `tclaude process show` reports
-each outstanding command as `needs_reconcile`, and an operator resolves it
-explicitly with `record-outcome` (I checked out of band; here is what
-happened) or `reissue` (run it again). When a run holds more than one such
-command, both verbs require `--node` to name which one.
+never guesses and never silently re-runs one. `show` reports each outstanding
+command as `needs_reconcile`, and an operator resolves it explicitly:
+`record-outcome` ("I checked out of band; here is what happened") or `reissue`
+("run it again"). When a run holds more than one such command, both verbs
+require `--node`.
 
-A restart preserves each node's exact attempt number, and an outstanding
-retried attempt is reported `needs_reconcile` like any other — never silently
-re-run. `reissue` re-runs that same durable attempt rather than spending
-another one from the budget; `record-outcome --outcome failed` spends it, and
-the next attempt starts if the budget allows.
+A restart preserves each node's exact attempt number. `reissue` re-runs the
+same durable attempt rather than spending another from the retry budget;
+`record-outcome --outcome failed` spends it, and the next attempt starts if
+the budget allows. A failed branch fails the run, but the run is only reported
+`failed` (or `canceled`, after a cancel resolution) once every in-flight
+command has been accounted for.
 
-A failed branch fails the run, but the run is only reported failed once every
-command still in flight has been accounted for. The same holds for a `cancel`
-resolution: the run reports `canceled` only after its last in-flight program
-has been accounted for.
-
-A parked branch survives a restart unchanged — the checkpoint carries the
-obligation and the exact blocked attempt, so nothing has to be replayed from
-evidence — and a blocked run is never re-run by itself. If some other branch
-fails or is cancelled while a branch is parked, the parked obligations are
-dropped: the run is over, so it stops offering a resolution nothing could act
-on.
+Parked branches survive restarts unchanged — the checkpoint carries the
+obligation and the blocked attempt. If another branch fails or the run is
+cancelled while a branch is parked, the parked obligations are dropped: the
+run is over, so it stops offering a resolution nothing could act on.
 
 ## Storage
 
 Run state lives in SQLite under `~/.tclaude/data/`; the checkpoint there is
-authoritative. Ordered human-facing evidence per run is available through
-`tclaude process events`. On daemon startup, tclaude removes obsolete
-filesystem run data and legacy run lock files, and deliberately preserves the
-complete Processes authoring root, including all template versions, heads,
-layouts, snippets, authorship records, and template locks.
+authoritative, and `tclaude process events` renders the ordered human-facing
+evidence per run. On startup the daemon removes obsolete filesystem run data
+and legacy lock files while preserving the complete authoring root — template
+versions, heads, layouts, snippets, authorship records, and template locks.

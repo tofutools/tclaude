@@ -10,9 +10,10 @@ implementation diary, roadmap, or project-management scratchpad.
 session management, conversation search, usage/status reporting, worktree
 helpers, and multi-agent coordination.
 
-The project is harness-agnostic. Claude Code is the default harness and OpenAI
-Codex CLI is also supported via `--harness claude|codex`; the selected harness
-is persisted per conversation. The harness seam lives in `pkg/claude/harness`.
+The project is harness-agnostic. Four harnesses are registered via
+`--harness claude|codex|opencode|copilot` (Claude Code is the default); the
+selected harness is persisted per conversation. The harness seam lives in
+`pkg/claude/harness`.
 
 Many identifiers still contain historical `Claude`/`claude`/`TCLAUDE_` names
 even when the code is now harness-agnostic. Treat those names as historical,
@@ -53,7 +54,8 @@ features around native Windows behavior unless the operator explicitly asks.
 - Root command wiring: `pkg/claude/claude.go`.
 - Harness design and capability matrix: `docs/harnesses.md`.
 - Adding another harness: `docs/adding-a-harness.md`.
-- Agent coordination: `docs/agent.md`.
+- Agent coordination: `docs/agents-and-groups.md` and
+  `docs/spawning-and-lifecycle.md`.
 - Dashboard: `docs/dashboard.md`.
 - Sessions, conversations, worktrees, tasks, status bar, notifications:
   corresponding files under `docs/`.
