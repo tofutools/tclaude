@@ -1703,7 +1703,11 @@ test('sandbox editor discloses the Linux filesystem-root consequence of blocking
   const state = createManagementState();
   state.openDialog({
     kind: 'sandbox-editor',
-    seed: { name: 'linux-closed', filesystem: [], environment: [], unix_sockets: { mode: '' } },
+    seed: {
+      name: 'linux-closed', filesystem: [], environment: [],
+      network: { baseline: 'allow', deny: [{ domain: 'blocked.example' }] },
+      unix_sockets: { mode: '' },
+    },
     options: {}, sandboxImpl: { ...sandboxImpl, platform: 'linux' },
   });
   const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state);
@@ -1725,6 +1729,33 @@ test('sandbox editor discloses the Linux filesystem-root consequence of blocking
   assert.match(adjustment.textContent, /Network namespace → Private, routed/);
   assert.match(adjustment.textContent, /Filesystem root → Separate\/minimal/);
   assert.match(adjustment.textContent, /baseline and destination rules were left unchanged/);
+
+  choose(mode, 'open');
+  await harness.act(() => harness.fireEvent(mode, 'change'));
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-engine')), '');
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-namespace')), '');
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-filesystem-root')), '');
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-baseline')), 'allow');
+  assert.equal(host.querySelector('#sandbox-profile-editor-network-section .sbx-network-value').value,
+    'blocked.example', 'undoing generated enforcement settings preserves authored network rules');
+  assertAbsent(host.querySelector('.sbx-unix-root-note'));
+
+  state.closeDialog();
+  await harness.act(() => Promise.resolve());
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: { name: 'legacy-linux-closed', filesystem: [], environment: [], unix_sockets: { mode: 'closed' } },
+    options: {}, sandboxImpl: { ...sandboxImpl, platform: 'linux' },
+  });
+  await harness.act(() => Promise.resolve());
+  const incomplete = host.querySelector('.sbx-unix-root-note-incomplete');
+  assert.match(incomplete.textContent, /not yet aligned.*enforcement may remain partial/);
+  await harness.act(() => harness.fireEvent(incomplete.querySelector('button'), 'click'));
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-engine')), 'packet');
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-namespace')), 'private');
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-filesystem-root')), 'separate');
+  assertAbsent(host.querySelector('.sbx-unix-root-note-incomplete'));
+  assert.match(host.querySelector('.sbx-unix-root-note').textContent, /other host paths and abstract Unix sockets do not/);
 
   state.closeDialog();
   await harness.act(() => Promise.resolve());

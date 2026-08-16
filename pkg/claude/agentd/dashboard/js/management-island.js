@@ -829,22 +829,45 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, packVisibilit
 
 function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice, platform }) {
   const rules = sandboxAccessAxes({ unix_sockets: draft.unix_sockets }).unix_sockets;
+  const generatedAlignment = useRef(null);
   const update = (patch) => setDraft((value) => ({ ...value, unix_sockets: { ...value.unix_sockets, ...patch } }));
-  const linuxClosedAdjustments = (mode) => mode === 'closed' && platform === 'linux' ? [
-    draft.network?.engine !== 'packet' && 'Filtering engine → Packet filter',
-    draft.network?.namespace !== 'private' && 'Network namespace → Private, routed',
-    draft.filesystem_root !== 'separate' && 'Filesystem root → Separate/minimal',
+  const linuxClosedAligned = platform === 'linux' && draft.network?.engine === 'packet'
+    && draft.network?.namespace === 'private' && draft.filesystem_root === 'separate';
+  const linuxClosedChanges = (mode) => mode === 'closed' && platform === 'linux' ? {
+    engine: draft.network?.engine !== 'packet',
+    namespace: draft.network?.namespace !== 'private',
+    filesystemRoot: draft.filesystem_root !== 'separate',
+  } : null;
+  const linuxClosedAdjustments = (changes) => changes ? [
+    changes.engine && 'Filtering engine → Packet filter',
+    changes.namespace && 'Network namespace → Private, routed',
+    changes.filesystemRoot && 'Filesystem root → Separate/minimal',
   ].filter(Boolean) : [];
   const updateMode = (mode, allow) => {
-    const adjustments = linuxClosedAdjustments(mode);
-    setDraft((value) => ({
-      ...value,
-      unix_sockets: { ...value.unix_sockets, mode, allow },
-      ...(mode === 'closed' && platform === 'linux' ? {
-        network: { ...value.network, engine: 'packet', namespace: 'private' },
-        filesystem_root: 'separate',
-      } : {}),
-    }));
+    const changes = linuxClosedChanges(mode);
+    const adjustments = linuxClosedAdjustments(changes);
+    if (changes && adjustments.length > 0 && !generatedAlignment.current) {
+      generatedAlignment.current = {
+        engine: { changed: changes.engine, value: draft.network?.engine || '' },
+        namespace: { changed: changes.namespace, value: draft.network?.namespace || '' },
+        filesystemRoot: { changed: changes.filesystemRoot, value: draft.filesystem_root || '' },
+      };
+    }
+    const prior = mode === 'closed' ? null : generatedAlignment.current;
+    if (prior) generatedAlignment.current = null;
+    setDraft((value) => {
+      const next = { ...value, unix_sockets: { ...value.unix_sockets, mode, allow } };
+      if (mode === 'closed' && platform === 'linux') {
+        return { ...next, network: { ...value.network, engine: 'packet', namespace: 'private' }, filesystem_root: 'separate' };
+      }
+      if (!prior) return next;
+      const network = { ...value.network };
+      if (prior.engine.changed && network.engine === 'packet') network.engine = prior.engine.value;
+      if (prior.namespace.changed && network.namespace === 'private') network.namespace = prior.namespace.value;
+      const filesystemRoot = prior.filesystemRoot.changed && value.filesystem_root === 'separate'
+        ? prior.filesystemRoot.value : value.filesystem_root;
+      return { ...next, network, filesystem_root: filesystemRoot };
+    });
     return adjustments;
   };
   const updateRow = (index, patch) => update({ allow: rules.allow.map((row, i) => i === index ? { ...row, ...patch } : row) });
@@ -864,7 +887,12 @@ function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice, platf
       const adjustments = updateMode(mode, mode === 'list' ? rules.allow : []);
       setNotice(adjustments.length ? { adjustments } : null);
     }} options=${ACCESS_MODE_OPTIONS}/>
-    ${platform === 'linux' && rules.mode === 'closed' && html`<p class="sbx-inline-note sbx-unix-root-note" role="note"><strong>Linux “No access” boundary:</strong> tclaude uses packet filtering inside a private, routed network namespace plus a separate, minimal filesystem root. The network baseline and destination rules still control internet access. The fixed OS/runtime surface, harness state, and filesystem paths mounted by the profile remain visible; other host paths and abstract Unix sockets do not.</p>`}
+    ${platform === 'linux' && rules.mode === 'closed' && (linuxClosedAligned
+      ? html`<p class="sbx-inline-note sbx-unix-root-note" role="note"><strong>Linux “No access” boundary:</strong> tclaude uses packet filtering inside a private, routed network namespace plus a separate, minimal filesystem root. The network baseline and destination rules still control internet access. The fixed OS/runtime surface, harness state, and filesystem paths mounted by the profile remain visible; other host paths and abstract Unix sockets do not.</p>`
+      : html`<div class="sbx-inline-note sbx-unix-root-note sbx-unix-root-note-incomplete" role="note"><strong>Linux “No access” needs additional isolation.</strong> This profile is not yet aligned, so Unix-socket enforcement may remain partial. Apply packet filtering, a private routed network namespace, and a separate minimal filesystem root; the network baseline and destination rules will remain unchanged. <button type="button" class="sbx-add-row" onClick=${() => {
+        const adjustments = updateMode('closed', rules.allow);
+        setNotice({ adjustments });
+      }}>Apply required settings</button></div>`)}
     ${rules.mode === 'list' && html`<div class="sbx-rows sbx-socket-rows">${rules.allow.map((row, index) => { const glob = Object.hasOwn(row, 'path_glob'); return html`<div key=${index} class="sbx-row sbx-access-row sbx-socket-row">
       <${SegmentedControl} className="sbx-socket-selector" label=${`Unix socket row ${index + 1} kind`}
         value=${glob ? 'path_glob' : 'path'} onChange=${(kind) => {
