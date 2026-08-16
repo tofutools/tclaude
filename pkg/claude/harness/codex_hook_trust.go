@@ -220,16 +220,16 @@ func (codexHookInstaller) TrustInstalled() error {
 		if ok, reason := (codexHookInstaller{}).AutoTrustSupported(); !ok {
 			return fmt.Errorf("automatic Codex hook trust is unavailable: %s", reason)
 		}
+		configPath, err := codexConfigTomlPath()
+		if err != nil {
+			return err
+		}
 		entries, err := codexTclaudeHookTrustEntries(path, want)
 		if err != nil {
 			return err
 		}
 		if err := snapshot.validateUnchanged(snapshot.data); err != nil {
 			return fmt.Errorf("Codex hooks changed during authoritative discovery: %w", err)
-		}
-		configPath, err := codexConfigTomlPath()
-		if err != nil {
-			return err
 		}
 		return ensureCodexHookTrustInFile(configPath, entries)
 	})
