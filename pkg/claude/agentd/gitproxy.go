@@ -1122,6 +1122,35 @@ func (s *gitProxySession) gitProbeStrict(ctx context.Context, args ...string) (v
 }
 
 // ---------------------------------------------------------------------------
+// The activation gate — "has the operator opted in at all"
+// ---------------------------------------------------------------------------
+
+// gitProxyActivated reports whether the operator has opted into the Git proxy,
+// keeping "no" and "could not tell" apart so a caller that must fail closed can
+// see the difference.
+func gitProxyActivated() (bool, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return false, err
+	}
+	return cfg.GitProxyEnabled(), nil
+}
+
+// gitProxyHardeningActive is the read every credential-spending surface gates
+// its hardened path on: the Git proxy is configured, therefore the operator has
+// stated which repositories the daemon's credentials may reach, and the
+// stricter behaviour can be applied without silently blanking the dashboard for
+// an operator who never configured the proxy.
+//
+// It fails CLOSED when configuration cannot be read. A transient config fault
+// must not restore a legacy credential path, so "could not tell" is treated as
+// "active".
+func gitProxyHardeningActive() bool {
+	enabled, err := gitProxyActivated()
+	return err != nil || enabled
+}
+
+// ---------------------------------------------------------------------------
 // The repo gate — "where may this run"
 // ---------------------------------------------------------------------------
 

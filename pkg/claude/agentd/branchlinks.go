@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -504,10 +505,80 @@ func branchWebURL(repoURL, defaultBranch, branch string) string {
 // to `git` (origin remote, default branch) and `gh` (the branch's PR).
 // Every call is best-effort — a missing `gh`, an unauthenticated `gh`,
 // or a non-GitHub remote just yields fewer links, never an error.
+//
+// Which of the two resolutions runs is decided by whether the operator has
+// configured the Git proxy (TCL-1169):
+//
+//   - configured — hardenedGitInfo, which validates the directory the way
+//     resolveProxyRepo does, names the repository explicitly to `gh`, and
+//     bounds the whole answer by agent.git_proxy.allowed_remotes;
+//   - not configured — legacyGitInfo, the long-standing unbounded resolution.
+//
+// The split exists because the allow-list is the operator's DAEMON-WIDE
+// statement about which repositories the daemon's credentials may reach, and
+// this surface has no calling agent to read a per-agent one from: the dashboard
+// renders every row on the operator's poll. A remote-scoped grant is therefore
+// not a substitute here, and an operator who wrote neither has stated nothing —
+// bounding them would blank the Branch column rather than protect it. So the
+// hardening arrives with the configuration that gives it meaning. See
+// branchlinks_repo.go for the gate itself.
 func liveGitInfoResolver(repoDir, branch string) (repoBranchInfo, bool) {
 	if repoDir == "" || branch == "" {
 		return repoBranchInfo{}, false
 	}
+	// One config read decides both questions — which path to take, and, for the
+	// hardened path, the policy it runs under. gitProxyHardeningActive() would
+	// answer the first on its own, but it reloads the file, and this is a
+	// background refresh that fires per (repoDir, branch) per TTL.
+	cfg, err := config.Load()
+	if err != nil {
+		// Fail closed, the same way gitProxyHardeningActive does: a config that
+		// cannot be read must not silently restore the unbounded path. With no
+		// policy to run under there is nothing to resolve either, so the answer
+		// is no links rather than legacy links.
+		slog.Debug("branchlinks: refusing resolution, configuration unreadable",
+			"error", err, "module", "agentd")
+		return repoBranchInfo{}, false
+	}
+	if !cfg.GitProxyEnabled() {
+		return legacyGitInfo(repoDir, branch)
+	}
+	return hardenedGitInfo(cfg.ResolvedGitProxy(), repoDir, branch)
+}
+
+// hardenedGitInfo resolves a branch's links through the repository gate. The
+// directory selects nothing: the work-tree root is proved, the repository is
+// read from that root's own remote and checked against the operator's
+// allow-list, and `gh` is then told which repository to talk to rather than
+// inferring it from a directory the agent controls.
+func hardenedGitInfo(policy config.GitProxyConfig, repoDir, branch string) (repoBranchInfo, bool) {
+	repo, ok := resolveBranchLinkRepo(context.Background(), policy, repoDir)
+	if !ok {
+		return repoBranchInfo{}, false
+	}
+	info := repoBranchInfo{
+		RepoURL:       repo.RepoURL,
+		Branch:        branch,
+		DefaultBranch: repo.DefaultBranch,
+	}
+	if info.DefaultBranch == "" || branch != info.DefaultBranch {
+		// An explicit --repo, and a working directory that is not the agent's.
+		// The guarantee is the flag: it names the repository outright, so gh
+		// never runs its base-repo resolution and a repo-local
+		// `remote.origin.gh-resolved` has nothing to influence. The empty dir
+		// leaves gh in the daemon's own cwd — out of the agent's work tree,
+		// which is the point, though it is the daemon's directory rather than
+		// an empty one. Same shape as the presented-PR resolvers in prs.go.
+		info.PRNumber, info.PRURL, info.PRState, info.Checks = ghPRForBranch("", repo.OwnerRepo, branch)
+	}
+	return info, true
+}
+
+// legacyGitInfo is the resolution as it stood before TCL-1169: git and gh both
+// run inside the agent's own work tree, which is what lets that directory's
+// configuration choose the repository. It remains the behaviour for an operator
+// who has not configured the Git proxy — see liveGitInfoResolver for why.
+func legacyGitInfo(repoDir, branch string) (repoBranchInfo, bool) {
 	repoURL := repoHTTPSFromRemote(gitInDir(repoDir, "remote", "get-url", "origin"))
 	if repoURL == "" {
 		// Not a GitHub repo (or no remote): nothing to link to.
@@ -523,7 +594,7 @@ func liveGitInfoResolver(repoDir, branch string) (repoBranchInfo, bool) {
 	// skips the slowest call (`gh` hits the network) for the common
 	// case of an agent sitting on main.
 	if info.DefaultBranch == "" || branch != info.DefaultBranch {
-		info.PRNumber, info.PRURL, info.PRState, info.Checks = ghPRForBranch(repoDir, branch)
+		info.PRNumber, info.PRURL, info.PRState, info.Checks = ghPRForBranch(repoDir, "", branch)
 	}
 	return info, true
 }
@@ -575,7 +646,16 @@ func gitInDir(dir string, args ...string) string {
 // target when known, else whichever of main/master exists. "" when
 // neither resolves.
 func gitDefaultBranch(dir string) string {
-	if ref := gitInDir(dir, "symbolic-ref", "refs/remotes/origin/HEAD", "--short"); ref != "" {
+	return gitDefaultBranchWith(func(args ...string) string { return gitInDir(dir, args...) })
+}
+
+// gitDefaultBranchWith is gitDefaultBranch over an injected git probe, so the
+// hardened path can ask the same questions through the proxy's pinned
+// invocation instead of a bare `git -C`. The two callers must keep agreeing on
+// what "the default branch" means — the answer decides whether a branch gets a
+// compare link or a tree link, and whether it is worth a `gh` call at all.
+func gitDefaultBranchWith(probe func(args ...string) string) string {
+	if ref := probe("symbolic-ref", "refs/remotes/origin/HEAD", "--short"); ref != "" {
 		// ref looks like "origin/main" — take the segment after the last /.
 		if i := strings.LastIndexByte(ref, '/'); i >= 0 && i+1 < len(ref) {
 			return ref[i+1:]
@@ -583,7 +663,7 @@ func gitDefaultBranch(dir string) string {
 		return ref
 	}
 	for _, b := range []string{"main", "master"} {
-		if gitInDir(dir, "rev-parse", "--verify", "--quiet", "refs/heads/"+b) != "" {
+		if probe("rev-parse", "--verify", "--quiet", "refs/heads/"+b) != "" {
 			return b
 		}
 	}
@@ -591,25 +671,33 @@ func gitDefaultBranch(dir string) string {
 }
 
 // ghPRForBranch returns the number, URL, state and CI check rollup of the
-// pull request whose head is branch, via `gh pr view`. The state is
+// pull request whose head is branch, via `gh pr list`. The state is
 // lower-cased to open|draft|merged|closed. Returns zero values when there's no
 // PR, gh isn't installed, or gh isn't authenticated — all best-effort.
 //
+// dir and ownerRepo are the two ways the repository can be selected, and only
+// one of them is ever set. ownerRepo is the hardened form: the repository was
+// resolved and allow-listed by the caller, gh is TOLD which one it is, and dir
+// is left empty so gh runs somewhere neutral. An empty ownerRepo is the legacy
+// form, where gh picks the repository out of the work tree at dir — including
+// out of `remote.origin.gh-resolved`, which is precisely why the hardened form
+// exists. See liveGitInfoResolver for which operator gets which.
+//
 // statusCheckRollup rides this existing call rather than getting one of
-// its own: the dashboard already pays for a `gh pr view` per branch PR per
+// its own: the dashboard already pays for a `gh pr list` per branch PR per
 // branchLinkTTL, and asking for one more JSON field is free next to a
 // second network round-trip per PR.
-func ghPRForBranch(dir, branch string) (number int, url, state string, checks *prChecksInfo) {
+func ghPRForBranch(dir, ownerRepo, branch string) (number int, url, state string, checks *prChecksInfo) {
 	if !safeBranchForGH(dir, branch) {
 		return 0, "", "", nil
 	}
-	out := runInDir(dir, "gh", ghPRListArgs(branch, true)...)
+	out := runInDir(dir, "gh", ghPRListArgs(ownerRepo, branch, true)...)
 	if out == "" {
 		// The CI rollup is an enhancement; the PR link is not. A `gh` that
 		// rejects the field (old version, or a host that doesn't serve it)
 		// must not take the branch's PR number/URL/state down with it, so
 		// retry once for the fields that predate this feature.
-		return ghPRForBranchWithoutChecks(dir, branch)
+		return ghPRForBranchWithoutChecks(dir, ownerRepo, branch)
 	}
 	var prs []struct {
 		Number            int             `json:"number"`
@@ -663,12 +751,23 @@ func ghPRForBranch(dir, branch string) (number int, url, state string, checks *p
 // of the same would defeat it. isCrossRepository stays in both because without
 // it a fork's identically-named branch is rendered as this branch's PR, which
 // is a wrong answer rather than a missing enhancement.
-func ghPRListArgs(branch string, rich bool) []string {
+//
+// ownerRepo, when set, becomes the value of `--repo` and nothing else. It is
+// daemon-resolved — read from a validated work tree's own remote and matched
+// against the operator's allow-list (resolveBranchLinkRepo) — never a string
+// that arrived from an agent, so the concern here is only that it stay in its
+// own slot. An empty ownerRepo omits the flag, leaving gh to select the
+// repository from its working directory as it always did.
+func ghPRListArgs(ownerRepo, branch string, rich bool) []string {
 	fields := "number,url,state,isCrossRepository"
 	if rich {
 		fields += ",isDraft,statusCheckRollup"
 	}
-	return []string{"pr", "list", "--head", branch, "--state", "all", "--limit", "10", "--json", fields}
+	args := []string{"pr", "list", "--head", branch, "--state", "all", "--limit", "10", "--json", fields}
+	if strings.TrimSpace(ownerRepo) != "" {
+		args = append(args, "--repo", ownerRepo)
+	}
+	return args
 }
 
 // safeBranchForGH is the gate in front of every `gh` call this file makes, and
@@ -730,11 +829,11 @@ func prStateFromGH(state string, isDraft bool) string {
 // another one that could be rejected too would defeat it. The cost is that
 // a draft resolved down here renders as a plain open badge, which is what
 // it did before drafts had a colour of their own.
-func ghPRForBranchWithoutChecks(dir, branch string) (int, string, string, *prChecksInfo) {
+func ghPRForBranchWithoutChecks(dir, ownerRepo, branch string) (int, string, string, *prChecksInfo) {
 	if !safeBranchForGH(dir, branch) {
 		return 0, "", "", nil
 	}
-	out := runInDir(dir, "gh", ghPRListArgs(branch, false)...)
+	out := runInDir(dir, "gh", ghPRListArgs(ownerRepo, branch, false)...)
 	if out == "" {
 		return 0, "", "", nil
 	}

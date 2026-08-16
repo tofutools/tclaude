@@ -67,7 +67,7 @@ func runPRUpdate(w http.ResponseWriter, r *http.Request, target, caller string) 
 	}
 	body.URL = strings.TrimSpace(body.URL)
 	body.Summary = strings.TrimSpace(body.Summary)
-	gitProxyEnabled, err := presentedPRGitProxyMode()
+	gitProxyEnabled, err := gitProxyActivated()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "config", "could not determine Git proxy mode: "+err.Error())
 		return
