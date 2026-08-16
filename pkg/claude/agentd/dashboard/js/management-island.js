@@ -827,7 +827,7 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, packVisibilit
   </${SandboxSection}>`;
 }
 
-function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice }) {
+function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice, platform }) {
   const rules = sandboxAccessAxes({ unix_sockets: draft.unix_sockets }).unix_sockets;
   const update = (patch) => setDraft((value) => ({ ...value, unix_sockets: { ...value.unix_sockets, ...patch } }));
   const updateRow = (index, patch) => update({ allow: rules.allow.map((row, i) => i === index ? { ...row, ...patch } : row) });
@@ -844,6 +844,7 @@ function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice }) {
       className="sbx-access-axis" label="Unix sockets" help=${UNIX_SOCKETS_HELP}
       entryCount=${rules.allow.length}>
     <${Select} id="sandbox-profile-editor-unix-sockets-mode" value=${rules.mode || ''} onChange=${(mode) => update({ mode, allow: mode === 'list' ? rules.allow : [] })} options=${ACCESS_MODE_OPTIONS}/>
+    ${platform === 'linux' && rules.mode === 'closed' && html`<p class="sbx-inline-note sbx-unix-root-note" role="note"><strong>Separate filesystem root:</strong> On Linux, “No access” requires the tclaude sandbox to construct a separate, minimal filesystem root. The fixed OS/runtime surface, harness state, and filesystem paths mounted by the profile remain visible; other host paths do not.</p>`}
     ${rules.mode === 'list' && html`<div class="sbx-rows sbx-socket-rows">${rules.allow.map((row, index) => { const glob = Object.hasOwn(row, 'path_glob'); return html`<div key=${index} class="sbx-row sbx-access-row sbx-socket-row">
       <${SegmentedControl} className="sbx-socket-selector" label=${`Unix socket row ${index + 1} kind`}
         value=${glob ? 'path_glob' : 'path'} onChange=${(kind) => {
@@ -1676,7 +1677,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
       packVisibilityError=${networkPackVisibilityError}
       packVisibilityAttention=${!!networkPackVisibilityError && commonRuleFeedSettled}
       retryPackCatalog=${loadCommonRules}
-      packCatalogBusy=${commonRuleFeedBusy}/><${SocketAccessEditor} draft=${draft} setDraft=${setDraft} catalog=${commonRules} notice=${socketTemplateNotice} setNotice=${setSocketTemplateNotice}/>`}
+      packCatalogBusy=${commonRuleFeedBusy}/><${SocketAccessEditor} draft=${draft} setDraft=${setDraft} catalog=${commonRules} notice=${socketTemplateNotice} setNotice=${setSocketTemplateNotice} platform=${descriptor.sandboxImpl?.platform}/>`}
     ${constructedRootWarning && html`<div class="sbx-constructed-root-warning" role="alert">
       <strong>⚠ Separate filesystem root</strong>
       <div>${constructedRootWarning.reasons.length

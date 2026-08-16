@@ -1695,6 +1695,42 @@ test('sandbox editor offers Mach registration only on a macOS agentd', async (t)
   unmount();
 });
 
+test('sandbox editor discloses the Linux filesystem-root consequence of blocking Unix sockets', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: { name: 'linux-closed', filesystem: [], environment: [], unix_sockets: { mode: '' } },
+    options: {}, sandboxImpl: { ...sandboxImpl, platform: 'linux' },
+  });
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state);
+  await harness.act(() => Promise.resolve());
+  assertAbsent(host.querySelector('.sbx-unix-root-note'));
+
+  const mode = host.querySelector('#sandbox-profile-editor-unix-sockets-mode');
+  choose(mode, 'closed');
+  await harness.act(() => harness.fireEvent(mode, 'change'));
+  const note = host.querySelector('.sbx-unix-root-note');
+  assert.ok(note);
+  assert.match(note.textContent, /No access.*separate, minimal filesystem root/);
+  assert.match(note.textContent, /harness state/);
+
+  state.closeDialog();
+  await harness.act(() => Promise.resolve());
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: { name: 'darwin-closed', filesystem: [], environment: [], unix_sockets: { mode: 'closed' } },
+    options: {}, sandboxImpl: { ...sandboxImpl, platform: 'darwin' },
+  });
+  await harness.act(() => Promise.resolve());
+  assertAbsent(host.querySelector('.sbx-unix-root-note'),
+    'the consequence is specific to Linux tclaude-layer enforcement');
+  unmount();
+});
+
 test('sandbox editor sections start collapsed and keep disclosure help reachable', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
