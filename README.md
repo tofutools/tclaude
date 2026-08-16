@@ -6,11 +6,9 @@
 
 `tclaude` is a self-hosted agentic dev environment: a Go CLI plus daemon that
 wraps vendor coding CLIs ("harnesses") in tmux and adds the operations layer
-you need to run many agents seriously. The bottleneck is no longer writing
-code — it is operating the things that write code. tclaude is that layer:
-durable sessions, searchable history, a fleet dashboard, agent-to-agent mail,
-teams with identity and permissions, sandboxing, and automation, all running
-on your own machine.
+you need to run many agents seriously. Durable sessions, searchable history, 
+a fleet dashboard, agent-to-agent mail, teams with identity and permissions,
+sandboxing, and automation, all running on your own machine.
 
 It wraps four harnesses — [Claude Code](https://claude.ai/code),
 [OpenAI Codex CLI](https://developers.openai.com/codex/cli),
