@@ -21,6 +21,8 @@ routes through one daemon, `agentd`, which owns identity, permissions, audit,
 spawning, and mail — fail-closed. tclaude is MIT-licensed; the models are the
 only external part.
 
+![The tclaude operations dashboard watching a mixed-harness fleet](docs/assets/dashboard-groups.png)
+
 ## What it adds
 
 - **Durable sessions and history** — every harness runs in an isolated tmux
