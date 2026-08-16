@@ -1733,8 +1733,9 @@ test('sandbox editor discloses the Linux filesystem-root consequence of blocking
   const advanced = host.querySelector('.sbx-advanced-toggle');
   await harness.act(() => harness.fireEvent(advanced, 'click'));
   await harness.act(() => harness.fireEvent(advanced, 'click'));
-  choose(mode, 'open');
-  await harness.act(() => harness.fireEvent(mode, 'change'));
+  const remountedMode = host.querySelector('#sandbox-profile-editor-unix-sockets-mode');
+  choose(remountedMode, 'open');
+  await harness.act(() => harness.fireEvent(remountedMode, 'change'));
   assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-engine')), '');
   assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-namespace')), '');
   assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-filesystem-root')), '');
