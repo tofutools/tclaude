@@ -150,6 +150,7 @@ export function profileDraft(seed = null, { editExisting = true, local = null, c
       ? [...new Set(seed.role_refs)] : (seed?.role_ref ? [seed.role_ref] : []),
     descr: seed?.descr || '',
     initial_message: seed?.initial_message || '', sync_worktree: triValue(seed?.sync_worktree),
+    fetch_latest_worktree: triValue(seed?.fetch_latest_worktree),
     startup_context: seed?.startup_context || '',
     auto_focus: triValue(seed?.auto_focus), include_group_default_context: triValue(seed?.include_group_default_context),
     is_owner: triValue(seed?.is_owner), permission_overrides: { ...(seed?.permission_overrides || {}) },
@@ -209,7 +210,7 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
   if (h?.can_ssh_workaround) {
     body.ssh_workaround = draft.sandbox === 'tclaude-agent' && !!draft.ssh_workaround;
   }
-  for (const [key, value] of [['sync_worktree', draft.sync_worktree], ['auto_focus', draft.auto_focus], ['include_group_default_context', draft.include_group_default_context], ['is_owner', draft.is_owner]]) {
+  for (const [key, value] of [['sync_worktree', draft.sync_worktree], ['fetch_latest_worktree', draft.fetch_latest_worktree], ['auto_focus', draft.auto_focus], ['include_group_default_context', draft.include_group_default_context], ['is_owner', draft.is_owner]]) {
     const parsed = readTri(value); if (parsed != null) body[key] = parsed;
   }
   if (Object.keys(draft.permission_overrides).length) body.permission_overrides = { ...draft.permission_overrides };
@@ -225,7 +226,7 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
     if (!h?.can_auto_review && original.auto_review != null) body.auto_review = original.auto_review;
   }
   if (local) {
-    for (const key of ['name', 'aliases', 'disabled', 'disabled_reason', 'agent_name', 'role', 'role_ref', 'role_refs', 'descr', 'initial_message', 'sync_worktree', 'auto_focus', 'include_group_default_context']) delete body[key];
+    for (const key of ['name', 'aliases', 'disabled', 'disabled_reason', 'agent_name', 'role', 'role_ref', 'role_refs', 'descr', 'initial_message', 'sync_worktree', 'fetch_latest_worktree', 'auto_focus', 'include_group_default_context']) delete body[key];
   }
   return body;
 }

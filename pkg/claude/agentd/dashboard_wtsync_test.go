@@ -41,3 +41,17 @@ func TestDashboardHTML_WorktreeNameSyncWired(t *testing.T) {
 	must("syncWorktree: value === WT_NEW ? draft.syncWorktree : false",
 		"manual worktree choice turns the sync off")
 }
+
+func TestDashboardHTML_WorktreeFetchLatestWired(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets missing %q (%s)", needle, why)
+		}
+	}
+	must(`<input id="agent-spawn-wt-fetch" type="checkbox" checked=${draft.fetchLatestWorktree}`,
+		"default-on fetch checkbox renders beside worktree sync")
+	must("fetchLatestWorktree: true", "blank spawn drafts fetch by default")
+	must("fetch_latest: !!draft.fetchLatestWorktree", "worktree creation posts the explicit choice")
+	must("fetch_latest_worktree: !!draft.fetchLatestWorktree", "saved profiles retain the choice")
+}

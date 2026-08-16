@@ -29,21 +29,22 @@ func profileReq(t *testing.T, f *testharness.Flow, method, path string, body any
 // spawnProfileJSON is unexported); the *bool toggles let the test assert the
 // unset (null/absent) tri-state round-trips.
 type wireProfile struct {
-	Name           string   `json:"name"`
-	Aliases        []string `json:"aliases"`
-	Disabled       bool     `json:"disabled"`
-	DisabledReason string   `json:"disabled_reason"`
-	Harness        string   `json:"harness"`
-	Model          string   `json:"model"`
-	Effort         string   `json:"effort"`
-	Sandbox        string   `json:"sandbox"`
-	Approval       string   `json:"approval"`
-	Tools          string   `json:"tools"`
-	AutoReview     *bool    `json:"auto_review"`
-	CodexAppServer *bool    `json:"codex_app_server"`
-	FastMode       *bool    `json:"fast_mode"`
-	SyncWorktree   *bool    `json:"sync_worktree"`
-	StartupContext string   `json:"startup_context"`
+	Name                string   `json:"name"`
+	Aliases             []string `json:"aliases"`
+	Disabled            bool     `json:"disabled"`
+	DisabledReason      string   `json:"disabled_reason"`
+	Harness             string   `json:"harness"`
+	Model               string   `json:"model"`
+	Effort              string   `json:"effort"`
+	Sandbox             string   `json:"sandbox"`
+	Approval            string   `json:"approval"`
+	Tools               string   `json:"tools"`
+	AutoReview          *bool    `json:"auto_review"`
+	CodexAppServer      *bool    `json:"codex_app_server"`
+	FastMode            *bool    `json:"fast_mode"`
+	SyncWorktree        *bool    `json:"sync_worktree"`
+	FetchLatestWorktree *bool    `json:"fetch_latest_worktree"`
+	StartupContext      string   `json:"startup_context"`
 }
 
 func TestSpawnProfiles_CodexAppServerTriStateAndHarnessGate(t *testing.T) {
@@ -408,7 +409,7 @@ func TestSpawnProfiles_ToggleTristateRoundTrip(t *testing.T) {
 
 	// auto_review only validates true on a harness with a guardian (codex).
 	rec := profileReq(t, f, http.MethodPost, "/v1/spawn-profiles",
-		map[string]any{"name": "tg", "harness": "codex", "auto_review": true, "sync_worktree": false})
+		map[string]any{"name": "tg", "harness": "codex", "auto_review": true, "sync_worktree": false, "fetch_latest_worktree": false})
 	require.Equalf(t, http.StatusCreated, rec.Code, "create body=%s", rec.Body.String())
 
 	rec = profileReq(t, f, http.MethodGet, "/v1/spawn-profiles/tg", nil)
@@ -419,6 +420,8 @@ func TestSpawnProfiles_ToggleTristateRoundTrip(t *testing.T) {
 	assert.True(t, *got.AutoReview, "auto_review true round-trips")
 	require.NotNil(t, got.SyncWorktree, "sync_worktree was set false, must round-trip non-nil")
 	assert.False(t, *got.SyncWorktree, "sync_worktree false round-trips")
+	require.NotNil(t, got.FetchLatestWorktree, "fetch_latest_worktree was set false, must round-trip non-nil")
+	assert.False(t, *got.FetchLatestWorktree, "fetch_latest_worktree false round-trips")
 
 	// A profile that omits the toggles reads them back as unset (null).
 	require.Equal(t, http.StatusCreated,
@@ -429,4 +432,5 @@ func TestSpawnProfiles_ToggleTristateRoundTrip(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
 	assert.Nil(t, got.AutoReview, "omitted auto_review stays unset")
 	assert.Nil(t, got.SyncWorktree, "omitted sync_worktree stays unset")
+	assert.Nil(t, got.FetchLatestWorktree, "omitted fetch_latest_worktree stays unset")
 }

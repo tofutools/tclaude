@@ -471,6 +471,60 @@ func DefaultBranchIn(dir string) (string, error) {
 	return "", fmt.Errorf("could not determine default branch (tried main, master)")
 }
 
+// FetchTargetForBranchIn resolves the remote branch that should refresh a
+// local base branch before a new worktree is cut. A configured upstream wins;
+// otherwise origin is preferred, falling back to the repository's sole
+// remote. The returned ref is the remote-tracking ref callers should use as
+// the worktree base after a successful fetch.
+func FetchTargetForBranchIn(dir, branch string) (remote, remoteBranch, trackingRef string, err error) {
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return "", "", "", fmt.Errorf("base branch is required")
+	}
+	remote, _ = gitIn(dir, "config", "--get", "branch."+branch+".remote")
+	merge, _ := gitIn(dir, "config", "--get", "branch."+branch+".merge")
+	if remote == "." {
+		return "", "", "", fmt.Errorf("base branch %q tracks a local branch, not a fetchable remote", branch)
+	}
+	remoteBranch = strings.TrimPrefix(strings.TrimSpace(merge), "refs/heads/")
+	if remote == "" {
+		remotes, listErr := gitIn(dir, "remote")
+		if listErr != nil {
+			return "", "", "", fmt.Errorf("list remotes: %w", listErr)
+		}
+		var names []string
+		for _, name := range strings.Fields(remotes) {
+			if name == "origin" {
+				remote = name
+			}
+			names = append(names, name)
+		}
+		if remote == "" && len(names) == 1 {
+			remote = names[0]
+		}
+		if remote == "" {
+			return "", "", "", fmt.Errorf("base branch %q has no upstream and the repository has no unambiguous remote", branch)
+		}
+	}
+	if remoteBranch == "" {
+		remoteBranch = branch
+	}
+	trackingRef = "refs/remotes/" + remote + "/" + remoteBranch
+	return remote, remoteBranch, trackingRef, nil
+}
+
+// FetchBranchIn refreshes exactly one remote-tracking branch using ordinary
+// Git credential resolution. The dashboard uses this path only when the Git
+// remote proxy is disabled; when it is enabled, agentd uses the proxy's
+// isolated credentialed transfer instead.
+func FetchBranchIn(dir, remote, branch string) error {
+	refspec := "+refs/heads/" + branch + ":refs/remotes/" + remote + "/" + branch
+	if _, err := gitIn(dir, "fetch", "--no-recurse-submodules", "--", remote, refspec); err != nil {
+		return err
+	}
+	return nil
+}
+
 // branchExistsIn reports whether branch resolves in the repo at dir.
 func branchExistsIn(dir, branch string) bool {
 	_, err := gitIn(dir, "rev-parse", "--verify", "--quiet", branch)

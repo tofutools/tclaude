@@ -568,10 +568,14 @@ agent. `is_owner` is the exception, because it is tri-state and so can say no.
 To keep a group default profile's overrides off one agent, post an explicit
 empty map (the dashboard's cleared permission editor does exactly that).
 
-`sync_worktree` is the one profile field the daemon cannot resolve: a worktree
-is cut before the spawn request goes out. The dashboard's spawn modal and the
-agentd TUI's spawn form each apply it themselves, and it stays inert on the CLI,
-where worktrees are flag-driven (`--worktree <branch>`).
+`sync_worktree` and `fetch_latest_worktree` are the profile fields the daemon
+cannot resolve as part of the spawn itself: a worktree is cut before the spawn
+request goes out. The dashboard's spawn modal applies both; the agentd TUI's
+spawn form applies name sync only. They stay inert on the CLI, where worktrees
+are flag-driven (`--worktree <branch>`). Fetch-latest defaults on in the dashboard.
+After a successful fetch the new branch is cut from the refreshed
+remote-tracking ref, not the possibly stale checked-out local default branch.
+An explicit profile `false` opts out and retains the local-base behavior.
 
 Codex profiles may also carry `fast_mode` as a three-state launch choice:
 unset inherits the operator's `~/.codex/config.toml`, `true` forces the fast

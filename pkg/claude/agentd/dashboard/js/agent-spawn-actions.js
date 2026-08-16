@@ -139,6 +139,7 @@ export function createAgentSpawnActions({
           repo: worktrees?.repoRoot || String(draft.wtRepo || '').trim(),
           branch,
           from_branch: draft.worktreeBase || '',
+          fetch_latest: !!draft.fetchLatestWorktree,
         }),
       });
       if (!response.ok) throw new Error((await responseText(response)) || `HTTP ${response.status}`);

@@ -100,7 +100,7 @@ const PROFILE_OWNED_FIELDS = [
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'tools', 'askTimeout',
   'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'sshWorkaround', 'owner', 'permissionOverrides',
   'contextFeatures', 'autoCompactWindow', 'contextWindowMax', 'copilotAPI', 'codexAppServer', 'fastMode', 'sandboxImpl', 'sandboxImplCleared',
-  'syncWorktree', 'autoFocus', 'includeGroupContext',
+  'syncWorktree', 'fetchLatestWorktree', 'autoFocus', 'includeGroupContext',
 ];
 const WORKTREE_SELECTION_FIELDS = ['worktree', 'worktreeBranch', 'worktreeBase'];
 
@@ -766,7 +766,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     actions.rememberLaunchPreferences(next);
     try {
       const worktreeKey = JSON.stringify([
-        next.wtRepo, next.worktree, next.worktreeBranch, next.worktreeBase,
+        next.wtRepo, next.worktree, next.worktreeBranch, next.worktreeBase, next.fetchLatestWorktree,
       ]);
       let worktreeSelection = resolvedWorktree.current.key === worktreeKey
         ? resolvedWorktree.current.value : null;
@@ -1270,6 +1270,16 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
           setDraft((before) => syncSpawnWorktree({ ...before, syncWorktree: event.currentTarget.checked }, worktreeUsable));
         }} />
       Sync worktree branch with name
+    </label>
+    <label class=${`cron-create-enabled cron-check-aligned${worktreeUsable ? '' : ' disabled'}`} id="agent-spawn-wt-fetch-row"
+      title="Before cutting a new worktree branch, fetch its base branch and use the freshly updated remote-tracking ref. Fetch failure stops the spawn.">
+      <input id="agent-spawn-wt-fetch" type="checkbox" checked=${draft.fetchLatestWorktree} disabled=${busy || !worktreeUsable}
+        onChange=${(event) => {
+          touched.current.add('fetchLatestWorktree');
+          profileOverrides.current.add('fetchLatestWorktree');
+          setDraft((before) => ({ ...before, fetchLatestWorktree: event.currentTarget.checked }));
+        }} />
+      Fetch latest worktree base
     </label>
     <label class="cron-create-row" id="agent-spawn-wt-new-row" hidden=${draft.worktree !== WT_NEW}>
       <span class="cron-create-label">New branch</span>

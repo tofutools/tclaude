@@ -103,10 +103,11 @@ func dashboardListWorktrees(w http.ResponseWriter, r *http.Request) {
 // returns its absolute path so the caller can spawn into it.
 func dashboardCreateWorktree(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Repo       string `json:"repo"`
-		Branch     string `json:"branch"`
-		FromBranch string `json:"from_branch"`
-		Path       string `json:"path"`
+		Repo        string `json:"repo"`
+		Branch      string `json:"branch"`
+		FromBranch  string `json:"from_branch"`
+		Path        string `json:"path"`
+		FetchLatest bool   `json:"fetch_latest"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -121,7 +122,27 @@ func dashboardCreateWorktree(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "branch is required")
 		return
 	}
-	path, err := worktree.AddWorktreeIn(repo, body.Branch, body.FromBranch,
+	root, err := worktree.RepoRootForPath(repo)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "worktree", err.Error())
+		return
+	}
+	base := strings.TrimSpace(body.FromBranch)
+	if body.FetchLatest && worktree.HasCommitsIn(root) && !worktree.BranchExistsIn(root, body.Branch) {
+		if base == "" {
+			base, err = worktree.DefaultBranchIn(root)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "worktree_fetch", "determine worktree base: "+err.Error())
+				return
+			}
+		}
+		base, err = fetchLatestWorktreeBase(r.Context(), root, base)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "worktree_fetch", "fetch latest worktree base: "+err.Error())
+			return
+		}
+	}
+	path, err := worktree.AddWorktreeIn(root, body.Branch, base,
 		expandTilde(strings.TrimSpace(body.Path)))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "worktree", err.Error())

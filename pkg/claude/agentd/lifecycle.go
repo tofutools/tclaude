@@ -3399,6 +3399,7 @@ func spawnAuditProfileSnapshot(p *db.SpawnProfile) any {
 		"initial_message":               redactedAuditText(p.InitialMessage),
 		"startup_context":               redactedAuditText(p.StartupContext),
 		"sync_worktree":                 p.SyncWorktree,
+		"fetch_latest_worktree":         p.FetchLatestWorktree,
 		"auto_focus":                    p.AutoFocus,
 		"include_group_default_context": p.IncludeGroupDefaultContext,
 		"is_owner":                      p.IsOwner,
