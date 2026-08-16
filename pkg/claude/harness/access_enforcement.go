@@ -775,15 +775,16 @@ func accessEnforcementTable(
 				`ambient unix-socket access is not yet enforceable under closed network access on macOS tclaude-layer; ` +
 					`leave unix_sockets unset (agentd only) or use open network access`
 			if goos == "linux" {
-				// Bubblewrap has no independent AF_UNIX connect filter.
-				// Its constructed root hides sockets generally and binds listed
-				// paths, but recursive readable/writable roots also expose any
-				// sockets beneath them.
-				caps.SocketClosed = EnforcePartial
-				caps.SocketList = EnforcePartial
+				// The private network namespace hides abstract host sockets and
+				// the constructed root hides ambient filesystem sockets. Sockets
+				// below paths deliberately projected into that root compose with
+				// the filesystem policy; that is an operator-visible composition
+				// rule, not a platform enforcement remainder.
 				caps.SocketCombinationDetail =
-					"listed Unix sockets are bound and sockets outside the sandbox's readable/writable directories remain hidden, " +
-						"but sockets beneath those readable/writable directories remain reachable"
+					"filesystem mounts compose with Unix-socket isolation: sockets beneath paths visible in the sandbox " +
+						"remain reachable, including the workspace, harness state, fixed OS/runtime surface, and operator filesystem grants; " +
+						"avoid mounting directories containing sockets you do not intend to expose. " +
+						"The tclaude agent control socket remains reachable by design"
 				caps.SocketOpenRefusal =
 					`unix_sockets "open" cannot preserve ambient host socket visibility with closed network access on Linux tclaude-layer; ` +
 						`use a socket access list or leave unix_sockets unset`
@@ -1594,7 +1595,11 @@ func predictSocketAxis(
 	case sandboxpolicy.AccessModeClosed:
 		switch caps.SocketClosed {
 		case EnforceFull:
-			return predictedEnforced(tier, caps.Mechanism, "closed Unix-socket access")
+			subject := "closed Unix-socket access"
+			if caps.SocketCombinationDetail != "" {
+				subject += "; " + caps.SocketCombinationDetail
+			}
+			return predictedEnforced(tier, caps.Mechanism, subject)
 		case EnforcePartial:
 			detail := caps.SocketCombinationDetail
 			if detail == "" {
@@ -1632,7 +1637,11 @@ func predictSocketAxis(
 			return predictedPartial(tier, caps.Mechanism,
 				"the Unix-socket allow list applies only to tool execution, not the harness process")
 		}
-		return predictedEnforced(tier, caps.Mechanism, "the Unix-socket allow list")
+		subject := "the Unix-socket allow list"
+		if caps.SocketCombinationDetail != "" {
+			subject += "; " + caps.SocketCombinationDetail
+		}
+		return predictedEnforced(tier, caps.Mechanism, subject)
 	default:
 		return PredictedAccessAxis{Tier: tier, Outcome: AccessPredictionRefused,
 			Detail: "the Unix-socket tier is invalid"}

@@ -544,13 +544,16 @@ export function sandboxRuleBuckets(axes = {}, context = {}, networkEntries = [],
     // Per-rule prediction detail belongs behind that row's keyboard-reachable
     // help affordance. Keep only target/axis-wide reasons visible beneath the
     // bucket, or an 8-row DNS policy repeats the same long caveat eight times.
-    if (!rowPrediction && bucket !== buckets.applied && verdict.detail) {
+    const appliedSocketCompositionNote = bucket === buckets.applied
+      && rule.axis === 'unix_sockets' && axes?.constructed_root === true;
+    if (!rowPrediction && (bucket !== buckets.applied || appliedSocketCompositionNote) && verdict.detail) {
       const identity = `${rule.axis}\0${verdict.outcome}\0${verdict.detail}`;
       if (!seenReasons.has(identity)) {
         seenReasons.add(identity);
         bucket.reasons.push({
-          label: verdict.outcome === 'refused' ? 'Launch blocked'
-            : verdict.outcome === 'enforced_partial' ? 'Limitation' : 'Unsupported',
+          label: appliedSocketCompositionNote ? 'Note'
+            : verdict.outcome === 'refused' ? 'Launch blocked'
+              : verdict.outcome === 'enforced_partial' ? 'Limitation' : 'Unsupported',
           detail: verdict.detail,
         });
       }

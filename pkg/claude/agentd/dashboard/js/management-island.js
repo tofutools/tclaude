@@ -837,15 +837,9 @@ function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice, platf
     namespace: draft.network?.namespace !== 'private',
     filesystemRoot: draft.filesystem_root !== 'separate',
   } : null;
-  const linuxClosedAdjustments = (changes) => changes ? [
-    changes.engine && 'Filtering engine → Packet filter',
-    changes.namespace && 'Network namespace → Private, routed',
-    changes.filesystemRoot && 'Filesystem root → Separate/minimal',
-  ].filter(Boolean) : [];
   const updateMode = (mode, allow) => {
     const changes = linuxClosedChanges(mode);
-    const adjustments = linuxClosedAdjustments(changes);
-    if (changes && adjustments.length > 0 && !generatedAlignment.current) {
+    if (changes && Object.values(changes).some(Boolean) && !generatedAlignment.current) {
       generatedAlignment.current = {
         engine: { changed: changes.engine, value: draft.network?.engine || '' },
         namespace: { changed: changes.namespace, value: draft.network?.namespace || '' },
@@ -867,7 +861,6 @@ function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice, platf
         ? prior.filesystemRoot.value : value.filesystem_root;
       return { ...next, network, filesystem_root: filesystemRoot };
     });
-    return adjustments;
   };
   const updateRow = (index, patch) => update({ allow: rules.allow.map((row, i) => i === index ? { ...row, ...patch } : row) });
   const insert = (entry) => {
@@ -876,21 +869,21 @@ function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice, platf
     const existing = new Set(rules.allow.map((row) => JSON.stringify(row)));
     const added = incoming.filter((row) => !existing.has(JSON.stringify(row)));
     const removed = mode === 'list' ? 0 : rules.allow.length;
-    const adjustments = updateMode(mode, mode === 'list' ? [...rules.allow, ...added] : []);
-    setNotice({ label: entry.label, added: added.length, skipped: incoming.length - added.length, removed, warning: entry.warning || '', adjustments });
+    updateMode(mode, mode === 'list' ? [...rules.allow, ...added] : []);
+    setNotice({ label: entry.label, added: added.length, skipped: incoming.length - added.length, removed, warning: entry.warning || '' });
   };
   return html`<${SandboxSection} id="sandbox-profile-editor-unix-sockets-section"
       className="sbx-access-axis" label="Unix sockets" help=${UNIX_SOCKETS_HELP}
       entryCount=${rules.allow.length}>
     <${Select} id="sandbox-profile-editor-unix-sockets-mode" value=${rules.mode || ''} onChange=${(mode) => {
-      const adjustments = updateMode(mode, mode === 'list' ? rules.allow : []);
-      setNotice(adjustments.length ? { adjustments } : null);
+      updateMode(mode, mode === 'list' ? rules.allow : []);
+      setNotice(null);
     }} options=${ACCESS_MODE_OPTIONS}/>
     ${platform === 'linux' && rules.mode === 'closed' && (linuxClosedAligned
       ? html`<p class="sbx-inline-note sbx-unix-root-note" role="note"><strong>Linux “No access” boundary:</strong> tclaude uses packet filtering inside a private, routed network namespace plus a separate, minimal filesystem root. The network baseline and destination rules still control internet access. The fixed OS/runtime surface, harness state, and filesystem paths mounted by the profile remain visible; other host paths and abstract Unix sockets do not.</p>`
       : html`<div class="sbx-inline-note sbx-unix-root-note sbx-unix-root-note-incomplete" role="note"><strong>Linux “No access” needs additional isolation.</strong> This profile is not yet aligned, so Unix-socket enforcement may remain partial. Apply packet filtering, a private routed network namespace, and a separate minimal filesystem root; the network baseline and destination rules will remain unchanged. <button type="button" class="sbx-add-row" onClick=${() => {
-        const adjustments = updateMode('closed', rules.allow);
-        setNotice({ adjustments });
+        updateMode('closed', rules.allow);
+        setNotice(null);
       }}>Apply required settings</button></div>`)}
     ${rules.mode === 'list' && html`<div class="sbx-rows sbx-socket-rows">${rules.allow.map((row, index) => { const glob = Object.hasOwn(row, 'path_glob'); return html`<div key=${index} class="sbx-row sbx-access-row sbx-socket-row">
       <${SegmentedControl} className="sbx-socket-selector" label=${`Unix socket row ${index + 1} kind`}
@@ -905,10 +898,7 @@ function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice, platf
     <button type="button" class="sbx-add-row" onClick=${() => update({ allow: [...rules.allow, { path: '' }] })}>＋ add socket</button>`}
     <details class="sbx-common-rules"><summary>＋ insert socket template</summary><div class="sbx-common-rule-list">${(catalog.socket_templates || []).map((entry) => html`<${CommonRuleEntry} key=${entry.id} variant="access" entry=${{ ...entry, description: entry.note, paths: (entry.entries || []).map((row) => row.path || row.path_glob) }} onAdd=${() => insert(entry)}/>` )}</div></details>
     ${(catalog.global_unix_sockets || []).length > 0 && html`<details class="sbx-inherited-access"><summary>Inherited global socket config (${catalog.global_unix_sockets.length})</summary>${catalog.global_unix_sockets.map((row, index) => html`<div key=${index} class="sbx-rule-note"><strong>${row.origin?.harness} · ${row.origin?.setting}:</strong> ${JSON.stringify(row.entry || { mode: row.mode })}</div>`)}</details>`}
-    ${notice && html`<div class="sbx-common-rule-notice sbx-socket-adjustment-notice" role="status">
-      ${notice.label && html`<span>Inserted “${notice.label}”: ${notice.added} added, ${notice.skipped} already present.${notice.removed ? ` ${notice.removed} incompatible existing row${notice.removed === 1 ? '' : 's'} removed.` : ''}${notice.warning ? ` ⚠ ${notice.warning}` : ''}</span>`}
-      ${(notice.adjustments || []).length > 0 && html`<span><strong>Adjusted Linux enforcement settings:</strong> ${notice.adjustments.join(' · ')}. Your network baseline and destination rules were left unchanged.</span>`}
-    </div>`}
+    ${notice?.label && html`<div class="sbx-common-rule-notice" role="status">Inserted “${notice.label}”: ${notice.added} added, ${notice.skipped} already present.${notice.removed ? ` ${notice.removed} incompatible existing row${notice.removed === 1 ? '' : 's'} removed.` : ''}${notice.warning ? ` ⚠ ${notice.warning}` : ''}</div>`}
   </${SandboxSection}>`;
 }
 
