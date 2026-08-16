@@ -9,7 +9,6 @@ import { grantListToOverrides, grantOverridesToList } from './permission-grant-l
 import {
   sandboxAccessAxes,
   sandboxAccessDraftErrors,
-  sandboxConstructedRootWarning,
   sandboxNetworkAuthoring,
   sandboxOtherAssignmentWarnings,
   sandboxOtherContextRefusals,
@@ -759,10 +758,12 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, packVisibilit
       label="Network" help=${NETWORK_ACCESS_HELP} helpID="sandbox-profile-editor-network-help"
       attention=${packVisibilityAttention}
       entryCount=${rules.packs.length + rules.deny_packs.length + manualRows.length}>
-    <label class="sbx-network-baseline-label">Baseline <${Select} id="sandbox-profile-editor-network-baseline" value=${rules.baseline} onChange=${changeBaseline} options=${NETWORK_BASELINE_OPTIONS}/></label>
-    <label class="sbx-network-baseline-label">Filtering engine <${Select} id="sandbox-profile-editor-network-engine" value=${rules.engine || ''} onChange=${(engine) => update({ engine })} options=${NETWORK_ENGINE_OPTIONS}/></label>
-    <label class="sbx-network-baseline-label">Network namespace <${Select} id="sandbox-profile-editor-network-namespace" value=${rules.namespace || ''} onChange=${(namespace) => update({ namespace })} options=${NETWORK_NAMESPACE_OPTIONS}/></label>
-    ${rules.namespace === 'private' && html`<p class="sbx-inline-note">Linux tclaude-layer only. Internet traffic is routed normally, but host localhost services, IDE bridges, and abstract Unix sockets are not shared.</p>`}
+    <div class="sbx-network-controls">
+      <label class="sbx-network-control"><span class="sbx-network-control-kind">Traffic policy</span><span class="sbx-network-control-label">Baseline</span><${Select} id="sandbox-profile-editor-network-baseline" value=${rules.baseline} onChange=${changeBaseline} options=${NETWORK_BASELINE_OPTIONS}/><span class="sbx-network-control-help">What destinations are permitted before individual rules are applied.</span></label>
+      <label class="sbx-network-control"><span class="sbx-network-control-kind">Filtering mechanism</span><span class="sbx-network-control-label">Engine</span><${Select} id="sandbox-profile-editor-network-engine" value=${rules.engine || ''} onChange=${(engine) => update({ engine })} options=${NETWORK_ENGINE_OPTIONS}/><span class="sbx-network-control-help">How destination rules are enforced when the composed policy has them.</span></label>
+      <label class="sbx-network-control"><span class="sbx-network-control-kind">Network isolation</span><span class="sbx-network-control-label">Namespace</span><${Select} id="sandbox-profile-editor-network-namespace" value=${rules.namespace || ''} onChange=${(namespace) => update({ namespace })} options=${NETWORK_NAMESPACE_OPTIONS}/><span class="sbx-network-control-help">Whether the agent shares host localhost and abstract Unix sockets.</span></label>
+    </div>
+    ${rules.namespace === 'private' && html`<p class="sbx-inline-note sbx-network-namespace-note"><strong>Private, routed:</strong> internet traffic is routed normally, while host localhost services, IDE bridges, and abstract Unix sockets are not shared. Linux tclaude-layer only.</p>`}
     ${packVisibilityError && html`<div class="sbx-network-pack-visibility-error" role="alert"><span>⚠ ${packVisibilityError}</span>
       <button type="button" onClick=${retryPackCatalog}>${packCatalogBusy ? 'retry loading' : 'retry catalog'}</button></div>`}
     <fieldset class=${`sbx-network-unlocks${editable ? '' : ' sbx-disabled'}`}>
@@ -829,13 +830,38 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, packVisibilit
 
 function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice, platform, generatedAlignment }) {
   const rules = sandboxAccessAxes({ unix_sockets: draft.unix_sockets }).unix_sockets;
+  const authoredNetwork = sandboxNetworkAuthoring(draft);
   const update = (patch) => setDraft((value) => ({ ...value, unix_sockets: { ...value.unix_sockets, ...patch } }));
-  const linuxClosedAligned = platform === 'linux' && draft.network?.engine === 'packet'
-    && draft.network?.namespace === 'private' && draft.filesystem_root === 'separate';
+  // Automatic is aligned too: this socket/network combination resolves it to
+  // a constructed root. Only an explicit inherited root conflicts with the
+  // boundary. Compare the network values through the same authoring adapter
+  // that renders the controls, so legacy and baseline-shaped drafts agree.
+  const linuxClosedPrerequisites = [
+    {
+      key: 'engine', label: 'Packet filtering', aligned: authoredNetwork.engine === 'packet',
+      state: authoredNetwork.engine === 'packet' ? 'Selected'
+        : `Currently: ${{ proxy: 'Proxy filter' }[authoredNetwork.engine] || 'No override'}`,
+    },
+    {
+      key: 'namespace', label: 'Private, routed network namespace',
+      aligned: authoredNetwork.namespace === 'private',
+      state: authoredNetwork.namespace === 'private' ? 'Selected'
+        : `Currently: ${{ host: 'Shared host' }[authoredNetwork.namespace] || 'No override'}`,
+    },
+    {
+      key: 'filesystem-root', label: 'Separate filesystem root',
+      aligned: draft.filesystem_root !== 'inherit',
+      state: draft.filesystem_root === 'separate' ? 'Selected'
+        : draft.filesystem_root === 'inherit' ? 'Currently: Inherit host filesystem root'
+          : 'Automatic — required by this socket boundary',
+    },
+  ];
+  const missingLinuxClosedPrerequisites = linuxClosedPrerequisites.filter((item) => !item.aligned);
+  const linuxClosedAligned = platform === 'linux' && missingLinuxClosedPrerequisites.length === 0;
   const linuxClosedChanges = (mode) => mode === 'closed' && platform === 'linux' ? {
-    engine: draft.network?.engine !== 'packet',
-    namespace: draft.network?.namespace !== 'private',
-    filesystemRoot: draft.filesystem_root !== 'separate',
+    engine: authoredNetwork.engine !== 'packet',
+    namespace: authoredNetwork.namespace !== 'private',
+    filesystemRoot: draft.filesystem_root === 'inherit',
   } : null;
   const updateMode = (mode, allow) => {
     const changes = linuxClosedChanges(mode);
@@ -851,7 +877,11 @@ function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice, platf
     setDraft((value) => {
       const next = { ...value, unix_sockets: { ...value.unix_sockets, mode, allow } };
       if (mode === 'closed' && platform === 'linux') {
-        return { ...next, network: { ...value.network, engine: 'packet', namespace: 'private' }, filesystem_root: 'separate' };
+        return {
+          ...next,
+          network: { ...value.network, engine: 'packet', namespace: 'private' },
+          filesystem_root: value.filesystem_root === 'inherit' ? 'separate' : value.filesystem_root,
+        };
       }
       if (!prior) return next;
       const network = { ...value.network };
@@ -879,12 +909,21 @@ function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice, platf
       updateMode(mode, mode === 'list' ? rules.allow : []);
       setNotice(null);
     }} options=${ACCESS_MODE_OPTIONS}/>
-    ${platform === 'linux' && rules.mode === 'closed' && (linuxClosedAligned
-      ? html`<p class="sbx-inline-note sbx-unix-root-note" role="note"><strong>Linux “No access” boundary:</strong> tclaude uses packet filtering inside a private, routed network namespace plus a separate, minimal filesystem root. The network baseline and destination rules still control internet access. The fixed OS/runtime surface, harness state, and filesystem paths mounted by the profile remain visible; other host paths and abstract Unix sockets do not.</p>`
-      : html`<div class="sbx-inline-note sbx-unix-root-note sbx-unix-root-note-incomplete" role="note"><strong>Linux “No access” needs additional isolation.</strong> This profile is not yet aligned, so Unix-socket enforcement may remain partial. Apply packet filtering, a private routed network namespace, and a separate minimal filesystem root; the network baseline and destination rules will remain unchanged. <button type="button" class="sbx-add-row" onClick=${() => {
+    ${platform === 'linux' && rules.mode === 'closed' && html`<div class=${`sbx-inline-note sbx-unix-root-note${linuxClosedAligned ? '' : ' sbx-unix-root-note-incomplete'}`} role="note">
+      <strong>⚠ ${linuxClosedAligned
+        ? 'Linux “No access” uses an isolated filesystem and network boundary'
+        : `Linux “No access” needs ${missingLinuxClosedPrerequisites.length} setting change${missingLinuxClosedPrerequisites.length === 1 ? '' : 's'}`}</strong>
+      <div class="sbx-unix-root-checklist">${linuxClosedPrerequisites.map((item) => html`<div key=${item.key} class=${`sbx-unix-root-prerequisite ${item.aligned ? 'is-aligned' : 'is-missing'}`} data-aligned=${String(item.aligned)}>
+        <span class="sbx-unix-root-status" aria-hidden="true">${item.aligned ? '✓' : '×'}</span>
+        <span><b>${item.label}</b><small>${item.state}</small></span>
+      </div>`)}</div>
+      ${linuxClosedAligned
+        ? html`<p>Only the fixed OS/runtime surface, harness state, and filesystem paths mounted by this profile remain visible; other host paths and abstract Unix sockets do not. The network baseline and destination rules still control internet access.</p>`
+        : html`<p>Until these settings are aligned, the requested Unix-socket boundary is only partially enforced. The network baseline and destination rules will remain unchanged.</p><button type="button" class="sbx-add-row" onClick=${() => {
         updateMode('closed', rules.allow);
         setNotice(null);
-      }}>Apply required settings</button></div>`)}
+      }}>Apply ${missingLinuxClosedPrerequisites.length} required setting${missingLinuxClosedPrerequisites.length === 1 ? '' : 's'}</button>`}
+    </div>`}
     ${rules.mode === 'list' && html`<div class="sbx-rows sbx-socket-rows">${rules.allow.map((row, index) => { const glob = Object.hasOwn(row, 'path_glob'); return html`<div key=${index} class="sbx-row sbx-access-row sbx-socket-row">
       <${SegmentedControl} className="sbx-socket-selector" label=${`Unix socket row ${index + 1} kind`}
         value=${glob ? 'path_glob' : 'path'} onChange=${(kind) => {
@@ -1710,7 +1749,6 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   // Same guard as the Save button, so the hotkey can never reach a save the
   // mouse path refuses.
   const selectedEffective = prediction?.contexts?.[effectiveContext] || null;
-  const constructedRootWarning = sandboxConstructedRootWarning(prediction, effectiveContext);
   const effectivePolicyAttention = !!selectedEffective
     && (prediction?.targets || []).some((target) =>
       sandboxPolicyNeedsAttention(target, selectedEffective, effectiveContext));
@@ -1722,13 +1760,6 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
       packVisibilityAttention=${!!networkPackVisibilityError && commonRuleFeedSettled}
       retryPackCatalog=${loadCommonRules}
       packCatalogBusy=${commonRuleFeedBusy}/><${SocketAccessEditor} draft=${draft} setDraft=${setDraft} catalog=${commonRules} notice=${socketTemplateNotice} setNotice=${setSocketTemplateNotice} platform=${descriptor.sandboxImpl?.platform} generatedAlignment=${socketGeneratedAlignment}/>`}
-    ${constructedRootWarning && html`<div class="sbx-constructed-root-warning" role="alert">
-      <strong>⚠ Separate filesystem root</strong>
-      <div>${constructedRootWarning.reasons.length
-        ? `${constructedRootWarning.reasons.join(' and ')} ${constructedRootWarning.reasons.length === 1 ? 'requires' : 'require'}`
-        : 'This resolved sandbox policy requires'} a separate, minimal filesystem root on ${constructedRootWarning.targets.join('; ')}.</div>
-      <div>Only the fixed read-only OS/runtime surface and filesystem paths explicitly mounted below remain visible. Home-installed tools elsewhere may disappear unless you grant their paths.</div>
-    </div>`}
     <${SandboxSection} id="sandbox-profile-editor-filesystem-section" label="Filesystem"
       help=${FILESYSTEM_HELP} hidden=${advanced}
       attention=${globalConfigWarnings.length > 0 || !!commonRuleFeedError}
