@@ -4243,6 +4243,11 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile, observed bool) (*
 	if out.SSHWorkaround == nil {
 		out.SSHWorkaround = prev.SSHWorkaround
 	}
+	// Worktree preparation happens before the member launch and is not observable
+	// from its running session, so preserve the template's curated setting.
+	if out.FetchLatestWorktree == nil {
+		out.FetchLatestWorktree = prev.FetchLatestWorktree
+	}
 	// The drive IS observable (traceMemberLaunch reads it off the member's
 	// durable relaunch profile), so a traced answer wins — including a traced
 	// false, which is how a member moved back to send-keys clears the template's
@@ -4313,7 +4318,8 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile, observed bool) (*
 		out.AutoCompactWindow == "" && out.SandboxImplementation == "" &&
 		out.ContextWindowMax == 0 &&
 		out.AutoReview == nil && out.TrustDir == nil && out.RemoteControl == nil && out.AutoMemory == nil &&
-		out.SSHWorkaround == nil && out.CopilotAPI == nil && out.CodexAppServer == nil && out.FastMode == nil &&
+		out.SSHWorkaround == nil && out.FetchLatestWorktree == nil &&
+		out.CopilotAPI == nil && out.CodexAppServer == nil && out.FastMode == nil &&
 		len(out.ContextFeatures) == 0 &&
 		out.IsOwner == nil && len(out.PermissionOverrides) == 0 {
 		return nil, drop
