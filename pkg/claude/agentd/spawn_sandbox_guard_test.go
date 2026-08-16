@@ -282,6 +282,45 @@ func TestPlanSandboxProfileAccessPrivateNetworkReportsExactProbeFailure(t *testi
 		"rootless pasta is required: executable file not found in $PATH")
 }
 
+func TestPlanSandboxProfileAccessPrivateDenyAllSkipsRoutedGatewayProbe(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("private networking is Linux-only")
+	}
+	oldProbe := probeFilteredNetworkPrerequisite
+	oldVerdict := resolveTclaudeLayerAccessVerdict
+	t.Cleanup(func() {
+		probeFilteredNetworkPrerequisite = oldProbe
+		resolveTclaudeLayerAccessVerdict = oldVerdict
+	})
+	probeFilteredNetworkPrerequisite = func() session.FilteredNetworkPrerequisite {
+		t.Fatal("deny-all must not probe the routed pasta/nft gateway")
+		return session.FilteredNetworkPrerequisite{}
+	}
+	var gotPosture sandboxpolicy.NetworkPosture
+	resolveTclaudeLayerAccessVerdict = func(
+		_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture,
+		_ sandboxpolicy.NetworkEngine,
+	) (harness.LaunchOSSandbox, error) {
+		gotPosture = posture
+		return harness.LaunchOSSandbox{State: "on", Source: "test isolated bwrap"}, nil
+	}
+	snapshot := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
+		Network: &sandboxpolicy.NetworkRules{
+			Mode:      sandboxpolicy.AccessModeClosed,
+			Namespace: sandboxpolicy.NetworkNamespacePrivate,
+		},
+	}}
+
+	notices, failure := planSandboxProfileAccessForLaunch(
+		harness.CodexName, harness.SandboxDangerFull, snapshot,
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+		session.ModelTransportLaunchContext{}, false,
+	)
+	require.Nil(t, failure)
+	assert.Empty(t, notices)
+	assert.Equal(t, sandboxpolicy.NetworkIsolatedWithAgentd, gotPosture)
+}
+
 func TestPlanSandboxProfileAccessRootOnlyUsesConstructedRootAndRefusesUnsupportedTargets(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("explicit constructed roots are Linux-only")

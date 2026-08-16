@@ -368,7 +368,13 @@ func accessEnforcementTable(
 				"network.namespace %q requires Linux tclaude-layer with Claude Code, Codex, OpenCode, or Copilot; resolved target is harness %q, sandbox implementation %q, platform %q",
 				axes.Network.Namespace, harnessName, implementation, goos)
 		}
-		if !filteredNetworkReady {
+		// A deny-all baseline materializes as closed networking. That posture
+		// already runs in an isolated namespace and has no routed traffic, so it
+		// does not launch pasta, nftables, or the filtered DNS broker. Keep the
+		// explicit private-namespace target gate above, but require the packet
+		// gateway probe only for postures that actually route through it.
+		if axes.Network.Mode != sandboxpolicy.AccessModeClosed &&
+			!filteredNetworkReady {
 			return accessEnforcementTableRow{}, fmt.Errorf(
 				"network.namespace %q requires the Linux private-network prerequisites (user/network namespaces, bubblewrap, pasta, nftables, and required capabilities)",
 				axes.Network.Namespace)
