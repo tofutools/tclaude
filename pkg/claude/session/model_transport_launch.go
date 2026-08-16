@@ -43,6 +43,13 @@ func ResolveTclaudeLayerModelTransport(
 		return harness.ResolvedModelTransport{}, modelTransportLaunchError(
 			nil, "cannot resolve provider configuration without a harness")
 	}
+	// With no selected OpenCode model there is no provider route for tclaude to
+	// inspect, including no claim that an inherited proxy is part of model
+	// transport. The authored network rules are the complete policy in this
+	// user-managed mode, so enter it before the generic provider-proxy gate.
+	if h.Name == harness.OpenCodeName && strings.TrimSpace(context.Model) == "" {
+		return harness.ResolvedModelTransport{}, nil
+	}
 	environment := launchModelEnvironment(context.Environment)
 	if variable := modelTransportProxyVariable(environment); variable != "" {
 		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
@@ -136,9 +143,6 @@ func resolveOpenCodeModelTransport(
 	environment map[string]string,
 ) (harness.ResolvedModelTransport, error) {
 	model := strings.TrimSpace(context.Model)
-	if model == "" {
-		return harness.ResolvedModelTransport{}, nil
-	}
 	provider, modelID, ok := strings.Cut(model, "/")
 	if !ok || strings.TrimSpace(provider) == "" || strings.TrimSpace(modelID) == "" {
 		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,

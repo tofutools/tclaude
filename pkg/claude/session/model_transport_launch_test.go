@@ -407,11 +407,16 @@ func TestResolveTclaudeLayerOpenCodeRequiresAndResolvesStrictInlineProvider(t *t
 
 	resolved, err := ResolveTclaudeLayerModelTransport(
 		openCode,
-		ModelTransportLaunchContext{Cwd: cwd},
+		ModelTransportLaunchContext{
+			Cwd: cwd,
+			Environment: []sandboxpolicy.EnvironmentEntry{{
+				Name: "HTTPS_PROXY", Value: "http://corporate-proxy.example:8080",
+			}},
+		},
 	)
 	require.NoError(t, err)
 	assert.Equal(t, harness.ResolvedModelTransport{}, resolved,
-		"without a selected model, inference access is left to the authored rules")
+		"without a selected model, even proxy-mediated inference access is left to the authored rules")
 
 	resolved, err = ResolveTclaudeLayerModelTransport(
 		openCode,
