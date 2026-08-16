@@ -40,6 +40,9 @@ func fetchWorktreeBaseIsolated(ctx context.Context, repoRoot, remote, branch str
 	if fault != nil {
 		return fmt.Errorf("Git proxy: %s", fault.Msg)
 	}
+	if !enforceProxyPolicy {
+		s.pins = operatorWorktreeFetchPins(s.pins)
+	}
 	s.repoRoot = repoRoot
 	resolved, fault := resolveWorktreeFetchRemote(ctx, s, remote, enforceProxyPolicy)
 	if fault != nil {
@@ -89,9 +92,6 @@ func resolveWorktreeFetchRemote(ctx context.Context, s *gitProxySession, remote 
 	if fault := validateRemoteName(remote); fault != nil {
 		return resolvedRemote{}, fault
 	}
-	if fault := refuseHostileRepoConfig(ctx, s, remote); fault != nil {
-		return resolvedRemote{}, fault
-	}
 	urls, fault := s.remoteURLs(ctx, remote, false)
 	if fault != nil {
 		return resolvedRemote{}, fault
@@ -100,6 +100,30 @@ func resolveWorktreeFetchRemote(ctx context.Context, s *gitProxySession, remote 
 		return resolvedRemote{}, faultf(404, "unknown_remote", "no remote named %q is configured", remote)
 	}
 	return resolvedRemote{Name: remote, FetchURL: urls[0]}, nil
+}
+
+// operatorWorktreeFetchPins keeps the execution-safety pins while allowing
+// trusted global/system transport configuration in non-proxy mode. The
+// credentialed command runs from a daemon-owned bare repository, so local and
+// worktree config from the selected repo is already absent; clearing the
+// operator's global HTTP proxy, CA, askpass, or SSH command would add no safety
+// and would break common corporate/self-hosted setups.
+func operatorWorktreeFetchPins(pins []string) []string {
+	keep := make([]string, 0, len(pins))
+	for i := 0; i < len(pins); i++ {
+		if pins[i] == "-c" && i+1 < len(pins) {
+			value := pins[i+1]
+			if strings.HasPrefix(value, "http.proxy=") ||
+				strings.HasPrefix(value, "core.sshCommand=") ||
+				strings.HasPrefix(value, "core.askPass=") ||
+				strings.HasPrefix(value, "core.gitProxy=") {
+				i++
+				continue
+			}
+		}
+		keep = append(keep, pins[i])
+	}
+	return keep
 }
 
 func proxyResultMessage(result ProxyResult) string {

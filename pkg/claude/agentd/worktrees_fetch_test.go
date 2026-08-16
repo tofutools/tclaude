@@ -26,6 +26,7 @@ func TestDashboardCreateWorktree_FetchLatestUsesFreshConfiguredUpstream(t *testi
 	sshShim := "#!/bin/sh\nfor arg do command=$arg; done\nexec /bin/sh -c \"$command\"\n"
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "ssh"), []byte(sshShim), 0o755))
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	gitRun(t, home, "config", "--global", "http.sslCAInfo", filepath.Join(home, "corporate-ca.pem"))
 	repo, writer, initial, latest := worktreeFetchFixture(t)
 	hookSentinel := filepath.Join(home, "repo-hook-ran")
 	hook := "#!/bin/sh\ntouch '" + hookSentinel + "'\n"
@@ -58,6 +59,23 @@ func TestDashboardCreateWorktree_FetchLatestUsesFreshConfiguredUpstream(t *testi
 	assert.Equal(t, http.StatusBadGateway, failed.Code)
 	assert.Contains(t, failed.Body.String(), "fetch latest worktree base")
 	assert.False(t, worktree.BranchExistsIn(repo, "fetch-failed"))
+}
+
+func TestOperatorWorktreeFetchPinsPreserveTrustedTransportConfig(t *testing.T) {
+	pins := operatorWorktreeFetchPins([]string{
+		"-c", "core.hooksPath=/safe/hooks",
+		"-c", "http.proxy=",
+		"-c", "core.sshCommand=ssh -o BatchMode=yes",
+		"-c", "core.askPass=",
+		"-c", "core.gitProxy=",
+		"-c", "protocol.ext.allow=never",
+		"--no-pager",
+	})
+	assert.Equal(t, []string{
+		"-c", "core.hooksPath=/safe/hooks",
+		"-c", "protocol.ext.allow=never",
+		"--no-pager",
+	}, pins)
 }
 
 func postDashboardWorktree(t *testing.T, body map[string]any) *httptest.ResponseRecorder {
