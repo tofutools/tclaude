@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -199,6 +200,89 @@ func TestConfigLockErrorClassification(t *testing.T) {
 	assert.True(t, IsConfigLockError(lockErr))
 	assert.True(t, IsUpstreamConfigLockError(lockErr))
 	assert.False(t, IsUpstreamConfigLockError(fmt.Errorf("could not lock config file .git/config: Permission denied")))
+}
+
+func TestRemoveSandboxConfigLockInPreservesOtherLockShapes(t *testing.T) {
+	tests := []struct {
+		name string
+		data []byte
+		perm os.FileMode
+		age  time.Duration
+	}{
+		{name: "writable empty Git lock", perm: 0o644},
+		{name: "fresh read-only empty Git lock", perm: 0o444},
+		{name: "recent read-only empty Git lock", perm: 0o444, age: 2 * time.Second},
+		{name: "read-only nonempty file", data: []byte("config in progress"), perm: 0o444},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repoPath, _ := setupTestRepo(t)
+			lockPath := filepath.Join(repoPath, ".git", "config.lock")
+			require.NoError(t, os.WriteFile(lockPath, tt.data, tt.perm))
+			if tt.age > 0 {
+				stamp := time.Now().Add(-tt.age)
+				require.NoError(t, os.Chtimes(lockPath, stamp, stamp))
+			}
+
+			removed, err := RemoveSandboxConfigLockIn(repoPath)
+			require.NoError(t, err)
+			assert.False(t, removed)
+			assert.FileExists(t, lockPath)
+		})
+	}
+}
+
+func TestRemoveSandboxConfigLockInSerializesInspectionAndRemoval(t *testing.T) {
+	repoPath, _ := setupTestRepo(t)
+	lockPath := filepath.Join(repoPath, ".git", "config.lock")
+	require.NoError(t, os.WriteFile(lockPath, nil, 0o444))
+	old := time.Now().Add(-2 * sandboxConfigLockMinAge)
+	require.NoError(t, os.Chtimes(lockPath, old, old))
+
+	type cleanupResult struct {
+		removed bool
+		err     error
+	}
+	firstCandidate := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	firstResult := make(chan cleanupResult, 1)
+	go func() {
+		removed, err := removeSandboxConfigLockIn(repoPath, func() {
+			close(firstCandidate)
+			<-releaseFirst
+		})
+		firstResult <- cleanupResult{removed: removed, err: err}
+	}()
+	<-firstCandidate
+
+	var secondSawCandidate atomic.Bool
+	secondResult := make(chan cleanupResult, 1)
+	go func() {
+		removed, err := removeSandboxConfigLockIn(repoPath, func() {
+			secondSawCandidate.Store(true)
+		})
+		secondResult <- cleanupResult{removed: removed, err: err}
+	}()
+
+	// The second cleanup must remain outside the inspect/remove critical
+	// section until the first request has unlinked the validated inode.
+	select {
+	case <-secondResult:
+		close(releaseFirst)
+		<-firstResult
+		t.Fatal("concurrent cleanup completed while the first removal was paused")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(releaseFirst)
+
+	first := <-firstResult
+	require.NoError(t, first.err)
+	assert.True(t, first.removed)
+	second := <-secondResult
+	require.NoError(t, second.err)
+	assert.False(t, second.removed)
+	assert.False(t, secondSawCandidate.Load())
+	assert.NoFileExists(t, lockPath)
 }
 
 func TestFindSubRepos(t *testing.T) {

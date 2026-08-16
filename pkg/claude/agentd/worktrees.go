@@ -272,6 +272,7 @@ func createDashboardWorktree(
 	wait func(context.Context) error,
 	onRetry func(attempt int),
 ) (createdPath string, retries int, fallback bool, err error) {
+	removeSandboxConfigLock(repoRoot)
 	createdPath, err = worktree.AddWorktreeIn(repoRoot, branch, base, path)
 	if err == nil || !worktree.IsUpstreamConfigLockError(err) {
 		return createdPath, 0, false, err
@@ -284,6 +285,7 @@ func createDashboardWorktree(
 		if waitErr := wait(ctx); waitErr != nil {
 			return "", retries - 1, false, waitErr
 		}
+		removeSandboxConfigLock(repoRoot)
 		if worktree.BranchExistsIn(repoRoot, branch) {
 			err = worktree.SetBranchUpstreamIn(repoRoot, branch, base)
 			if err == nil {
@@ -310,6 +312,17 @@ func createDashboardWorktree(
 		createdPath, err = worktree.AddWorktreeInWithoutTracking(repoRoot, branch, base, path)
 	}
 	return createdPath, dashboardWorktreeTrackingRetries, err == nil, err
+}
+
+func removeSandboxConfigLock(repoRoot string) {
+	removed, err := worktree.RemoveSandboxConfigLockIn(repoRoot)
+	if err != nil {
+		slog.Warn("worktree spawn: failed to inspect sandbox config-lock sentinel", "repo", repoRoot, "error", err)
+		return
+	}
+	if removed {
+		slog.Warn("worktree spawn: removed sandbox config-lock sentinel", "repo", repoRoot)
+	}
 }
 
 func postWorktreeTrackingFallbackNotice(repoRoot, branch, upstream string) {

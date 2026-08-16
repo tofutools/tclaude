@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // repo.go holds repo-path-aware twins of the CWD-implicit helpers in
@@ -177,6 +178,15 @@ type PrunableWorktree struct {
 const tclaudePruneProtectionReason = "tclaude cleanup protects individually managed worktree"
 
 var worktreePruneMu sync.Mutex
+
+// sandboxConfigLockCleanupMu keeps two daemon requests from validating the
+// same sentinel and then unlinking different files at the same path. Without
+// this critical section, request A can remove the sentinel, Git can create a
+// real config.lock, and request B can unlink that replacement using metadata
+// it read before A's removal.
+var sandboxConfigLockCleanupMu sync.Mutex
+
+const sandboxConfigLockMinAge = 10 * time.Second
 
 // PruneProtectionRestoreError means prune may have cleared the requested
 // invisible records, but tclaude could not restore one of the temporary locks
@@ -698,6 +708,68 @@ func IsConfigLockError(err error) bool {
 	msg := err.Error()
 	return strings.Contains(msg, "could not lock config file") &&
 		strings.Contains(msg, "File exists")
+}
+
+// RemoveSandboxConfigLockIn removes the read-only empty config.lock sentinel
+// created by harness sandboxes when they protect repository configuration.
+// The sentinel lives in the real shared Git directory and can outlive the
+// sandbox mount that needed it, at which point daemon-side Git mistakes it for
+// an active config transaction.
+//
+// A real Git lock is deliberately left alone. Cleanup requires the repository
+// config to be a normal owner-writable file and its sibling lock to be a
+// regular, empty, exactly 0444 file that has remained unchanged for the full
+// dashboard retry window: the observed stale sandbox fingerprint. The age
+// guard avoids both the brief empty-file window and the normal lifetime of a
+// real Git lock created under an unusually restrictive umask. Any other shape
+// continues through the ordinary retry/fallback path.
+func RemoveSandboxConfigLockIn(dir string) (bool, error) {
+	return removeSandboxConfigLockIn(dir, nil)
+}
+
+// removeSandboxConfigLockIn owns the inspection/removal critical section in
+// RemoveSandboxConfigLockIn. onCandidate is a deterministic test seam invoked
+// after the sentinel fingerprint is validated and immediately before unlink.
+func removeSandboxConfigLockIn(dir string, onCandidate func()) (bool, error) {
+	sandboxConfigLockCleanupMu.Lock()
+	defer sandboxConfigLockCleanupMu.Unlock()
+
+	common, err := gitIn(dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return false, fmt.Errorf("resolve Git common dir for config-lock cleanup: %w", err)
+	}
+	common = filepath.Clean(strings.TrimSpace(common))
+	if common == "." || !filepath.IsAbs(common) {
+		return false, fmt.Errorf("resolve Git common dir for config-lock cleanup: unsafe path %q", common)
+	}
+
+	configInfo, err := os.Lstat(filepath.Join(common, "config"))
+	if err != nil {
+		return false, fmt.Errorf("inspect Git config for config-lock cleanup: %w", err)
+	}
+	if !configInfo.Mode().IsRegular() || configInfo.Mode().Perm()&0o200 == 0 {
+		return false, nil
+	}
+
+	lockPath := filepath.Join(common, "config.lock")
+	lockInfo, err := os.Lstat(lockPath)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect Git config lock: %w", err)
+	}
+	if !lockInfo.Mode().IsRegular() || lockInfo.Size() != 0 || lockInfo.Mode().Perm() != 0o444 ||
+		time.Since(lockInfo.ModTime()) < sandboxConfigLockMinAge {
+		return false, nil
+	}
+	if onCandidate != nil {
+		onCandidate()
+	}
+	if err := os.Remove(lockPath); err != nil {
+		return false, fmt.Errorf("remove sandbox Git config lock %s: %w", lockPath, err)
+	}
+	return true, nil
 }
 
 // SetBranchUpstreamIn completes the tracking setup that `git worktree add -b`

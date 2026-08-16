@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -104,6 +105,30 @@ func TestCreateDashboardWorktreeRetriesTrackingConfigLock(t *testing.T) {
 	assert.DirExists(t, path)
 	assert.Equal(t, "upstream/main", gitOutput(t, repo,
 		"rev-parse", "--abbrev-ref", "retry-tracking@{upstream}"))
+}
+
+func TestCreateDashboardWorktreeRemovesSandboxConfigLock(t *testing.T) {
+	repo, _, _, _ := worktreeFetchFixture(t)
+	lockPath := filepath.Join(repo, ".git", "config.lock")
+	require.NoError(t, os.WriteFile(lockPath, nil, 0o444))
+	old := time.Now().Add(-20 * time.Second)
+	require.NoError(t, os.Chtimes(lockPath, old, old))
+	t.Cleanup(func() { _ = os.Remove(lockPath) })
+
+	waits := 0
+	path, retries, fallback, err := createDashboardWorktree(context.Background(), repo,
+		"sandbox-lock", "refs/remotes/upstream/main", "", func(context.Context) error {
+			waits++
+			return nil
+		}, nil)
+	require.NoError(t, err)
+	assert.Zero(t, retries)
+	assert.Zero(t, waits)
+	assert.False(t, fallback)
+	assert.DirExists(t, path)
+	assert.NoFileExists(t, lockPath)
+	assert.Equal(t, "upstream/main", gitOutput(t, repo,
+		"rev-parse", "--abbrev-ref", "sandbox-lock@{upstream}"))
 }
 
 func TestCreateDashboardWorktreeFallsBackAfterTrackingRetries(t *testing.T) {
