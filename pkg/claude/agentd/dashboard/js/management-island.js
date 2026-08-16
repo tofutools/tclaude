@@ -859,7 +859,7 @@ function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice, platf
   const linuxClosedChanges = (mode) => mode === 'closed' && platform === 'linux' ? {
     engine: authoredNetwork.engine !== 'packet',
     namespace: authoredNetwork.namespace !== 'private',
-    filesystemRoot: draft.filesystem_root !== 'separate',
+    filesystemRoot: draft.filesystem_root === 'inherit',
   } : null;
   const updateMode = (mode, allow) => {
     const changes = linuxClosedChanges(mode);
@@ -875,7 +875,11 @@ function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice, platf
     setDraft((value) => {
       const next = { ...value, unix_sockets: { ...value.unix_sockets, mode, allow } };
       if (mode === 'closed' && platform === 'linux') {
-        return { ...next, network: { ...value.network, engine: 'packet', namespace: 'private' }, filesystem_root: 'separate' };
+        return {
+          ...next,
+          network: { ...value.network, engine: 'packet', namespace: 'private' },
+          filesystem_root: value.filesystem_root === 'inherit' ? 'separate' : value.filesystem_root,
+        };
       }
       if (!prior) return next;
       const network = { ...value.network };

@@ -1714,7 +1714,8 @@ test('sandbox editor discloses the Linux filesystem-root consequence of blocking
   assert.equal(note.querySelectorAll('.sbx-unix-root-prerequisite.is-aligned').length, 3);
   assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-engine')), 'packet');
   assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-namespace')), 'private');
-  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-filesystem-root')), 'separate');
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-filesystem-root')), '',
+    'Automatic remains automatic because this boundary already resolves it to a constructed root');
   assertAbsent(host.querySelector('.sbx-socket-adjustment-notice'),
     'the editor shows the resulting boundary, not an intermittent interaction-history banner');
 
@@ -1765,7 +1766,8 @@ test('sandbox editor discloses the Linux filesystem-root consequence of blocking
   await harness.act(() => harness.fireEvent(incomplete.querySelector('button'), 'click'));
   assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-engine')), 'packet');
   assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-namespace')), 'private');
-  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-filesystem-root')), 'separate');
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-filesystem-root')), '',
+    'Apply changes exactly the two missing settings and preserves the aligned Automatic root');
   assertAbsent(host.querySelector('.sbx-unix-root-note-incomplete'));
   assert.match(host.querySelector('.sbx-unix-root-note').textContent, /other host paths and abstract Unix sockets do not/);
 
