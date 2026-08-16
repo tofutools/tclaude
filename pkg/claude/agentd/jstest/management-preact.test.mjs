@@ -4295,6 +4295,10 @@ test('profile editor engine control selects an engine and keeps it across a base
 
   const engine = host.querySelector('#sandbox-profile-editor-network-engine');
   assert.ok(engine, 'the editor offers a filtering-engine control');
+  assert.deepEqual([...host.querySelectorAll('.sbx-network-control-kind')].map((node) => node.textContent),
+    ['Traffic policy', 'Filtering mechanism', 'Network isolation']);
+  assert.match(host.querySelector('.sbx-network-controls').textContent,
+    /What destinations are permitted.*How destination rules are enforced.*Whether the agent shares host localhost/s);
   assert.deepEqual([...engine.options].map((option) => option.value),
     ['', 'packet', 'proxy']);
   choose(engine, 'proxy');
@@ -4307,6 +4311,8 @@ test('profile editor engine control selects an engine and keeps it across a base
   choose(namespace, 'private');
   await harness.act(() => harness.fireEvent(namespace, 'change'));
   assert.match(host.textContent, /host localhost services, IDE bridges/);
+  assert.equal(engine.disabled, false, 'engine remains independent of the baseline and namespace');
+  assert.equal(namespace.disabled, false, 'private routing remains valid with the proxy engine');
 
   // Changing the baseline must not clear the engine: it is not one of the
   // rules the baseline governs, and losing it would swap the mechanism as a

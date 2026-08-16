@@ -758,10 +758,12 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, packVisibilit
       label="Network" help=${NETWORK_ACCESS_HELP} helpID="sandbox-profile-editor-network-help"
       attention=${packVisibilityAttention}
       entryCount=${rules.packs.length + rules.deny_packs.length + manualRows.length}>
-    <label class="sbx-network-baseline-label">Baseline <${Select} id="sandbox-profile-editor-network-baseline" value=${rules.baseline} onChange=${changeBaseline} options=${NETWORK_BASELINE_OPTIONS}/></label>
-    <label class="sbx-network-baseline-label">Filtering engine <${Select} id="sandbox-profile-editor-network-engine" value=${rules.engine || ''} onChange=${(engine) => update({ engine })} options=${NETWORK_ENGINE_OPTIONS}/></label>
-    <label class="sbx-network-baseline-label">Network namespace <${Select} id="sandbox-profile-editor-network-namespace" value=${rules.namespace || ''} onChange=${(namespace) => update({ namespace })} options=${NETWORK_NAMESPACE_OPTIONS}/></label>
-    ${rules.namespace === 'private' && html`<p class="sbx-inline-note">Linux tclaude-layer only. Internet traffic is routed normally, but host localhost services, IDE bridges, and abstract Unix sockets are not shared.</p>`}
+    <div class="sbx-network-controls">
+      <label class="sbx-network-control"><span class="sbx-network-control-kind">Traffic policy</span><span class="sbx-network-control-label">Baseline</span><${Select} id="sandbox-profile-editor-network-baseline" value=${rules.baseline} onChange=${changeBaseline} options=${NETWORK_BASELINE_OPTIONS}/><span class="sbx-network-control-help">What destinations are permitted before individual rules are applied.</span></label>
+      <label class="sbx-network-control"><span class="sbx-network-control-kind">Filtering mechanism</span><span class="sbx-network-control-label">Engine</span><${Select} id="sandbox-profile-editor-network-engine" value=${rules.engine || ''} onChange=${(engine) => update({ engine })} options=${NETWORK_ENGINE_OPTIONS}/><span class="sbx-network-control-help">How destination rules are enforced when the composed policy has them.</span></label>
+      <label class="sbx-network-control"><span class="sbx-network-control-kind">Network isolation</span><span class="sbx-network-control-label">Namespace</span><${Select} id="sandbox-profile-editor-network-namespace" value=${rules.namespace || ''} onChange=${(namespace) => update({ namespace })} options=${NETWORK_NAMESPACE_OPTIONS}/><span class="sbx-network-control-help">Whether the agent shares host localhost and abstract Unix sockets.</span></label>
+    </div>
+    ${rules.namespace === 'private' && html`<p class="sbx-inline-note sbx-network-namespace-note"><strong>Private, routed:</strong> internet traffic is routed normally, while host localhost services, IDE bridges, and abstract Unix sockets are not shared. Linux tclaude-layer only.</p>`}
     ${packVisibilityError && html`<div class="sbx-network-pack-visibility-error" role="alert"><span>⚠ ${packVisibilityError}</span>
       <button type="button" onClick=${retryPackCatalog}>${packCatalogBusy ? 'retry loading' : 'retry catalog'}</button></div>`}
     <fieldset class=${`sbx-network-unlocks${editable ? '' : ' sbx-disabled'}`}>
