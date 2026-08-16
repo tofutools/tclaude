@@ -1715,8 +1715,16 @@ test('sandbox editor discloses the Linux filesystem-root consequence of blocking
   await harness.act(() => harness.fireEvent(mode, 'change'));
   const note = host.querySelector('.sbx-unix-root-note');
   assert.ok(note);
-  assert.match(note.textContent, /No access.*separate, minimal filesystem root/);
+  assert.match(note.textContent, /No access.*private, routed network namespace.*separate, minimal filesystem root/);
   assert.match(note.textContent, /harness state/);
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-engine')), 'packet');
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-namespace')), 'private');
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-filesystem-root')), 'separate');
+  const adjustment = host.querySelector('.sbx-socket-adjustment-notice');
+  assert.match(adjustment.textContent, /Filtering engine → Packet filter/);
+  assert.match(adjustment.textContent, /Network namespace → Private, routed/);
+  assert.match(adjustment.textContent, /Filesystem root → Separate\/minimal/);
+  assert.match(adjustment.textContent, /baseline and destination rules were left unchanged/);
 
   state.closeDialog();
   await harness.act(() => Promise.resolve());
