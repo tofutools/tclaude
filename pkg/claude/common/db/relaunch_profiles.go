@@ -330,6 +330,54 @@ func SetAgentCodexAppServerSelectionForConv(convID string, selected bool, source
 	return tx.Commit()
 }
 
+// SetAgentFastModeAtLaunchForConv records runtime evidence for the current
+// launch without changing FastMode, which remains the durable relaunch intent.
+// A nil observation clears stale evidence when the new launch could not be
+// inspected.
+func SetAgentFastModeAtLaunchForConv(convID string, observed *bool) error {
+	convID = strings.TrimSpace(convID)
+	if convID == "" {
+		return errors.New("SetAgentFastModeAtLaunchForConv: conversation required")
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var agentID, raw string
+	err = tx.QueryRow(`SELECT a.agent_id, a.relaunch_profile
+		FROM agent_conversations ac
+		JOIN agents a ON a.agent_id = ac.agent_id
+		WHERE ac.conv_id = ?`, convID).Scan(&agentID, &raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("SetAgentFastModeAtLaunchForConv: conversation %s is not an agent", convID)
+	}
+	if err != nil {
+		return err
+	}
+	profile, err := decodeAgentRelaunchProfile(raw)
+	if err != nil {
+		return err
+	}
+	if profile == nil {
+		profile = &AgentRelaunchProfile{Version: RelaunchProfileVersion}
+	}
+	profile.FastModeAtLaunch = observed
+	encoded, err := encodeRelaunchProfile(*profile)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE agents SET relaunch_profile = ? WHERE agent_id = ?`, encoded, agentID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // SetTemporaryHarnessBuiltinMode atomically sets or clears a stable agent's temporary
 // sandbox override. When enabling it, normalMode/normalImplementation/
 // normalSource freeze the already-resolved normal launch posture if the
@@ -685,6 +733,16 @@ func SetConversationCodexStateRoot(convID, harnessName, cwd, root, source string
 		func(fallback *AgentRelaunchProfile) {
 			fallback.CodexStateRoot = stringPtr(root)
 			fallback.CodexStateRootSource = stringPtr(strings.TrimSpace(source))
+		})
+}
+
+// SetConversationFastModeAtLaunch records the effective state for launches
+// whose stable actor may not exist yet (notably clones). It remains runtime
+// evidence and never fills the explicit FastMode intent field.
+func SetConversationFastModeAtLaunch(convID, harnessName, cwd string, observed *bool) error {
+	return updateConversationFallbackRelaunch(convID, harnessName, cwd,
+		func(fallback *AgentRelaunchProfile) {
+			fallback.FastModeAtLaunch = observed
 		})
 }
 

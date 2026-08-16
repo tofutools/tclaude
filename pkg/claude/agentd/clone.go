@@ -207,14 +207,31 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		}
 	}
 	effort, model = relaunch.Effort, relaunch.Model
+	var fastModeAtLaunch *bool
+	if relaunch.Harness == harness.CodexName && relaunch.CodexStateRoot != "" {
+		fastModeAtLaunch = codexFastModeAtLaunch(relaunch.FastMode, relaunch.CodexStateRoot)
+	}
 	persistCodexStateRoot := func(convID string) *cloneSpawnError {
-		if relaunch.Harness != harness.CodexName || relaunch.CodexStateRoot == "" {
+		if relaunch.Harness != harness.CodexName {
 			return nil
 		}
-		if err := db.SetConversationCodexStateRoot(convID, relaunch.Harness, cwd,
-			relaunch.CodexStateRoot, relaunch.CodexStateRootSource); err != nil {
+		if relaunch.CodexStateRoot != "" {
+			if err := db.SetConversationCodexStateRoot(convID, relaunch.Harness, cwd,
+				relaunch.CodexStateRoot, relaunch.CodexStateRootSource); err != nil {
+				return &cloneSpawnError{Status: http.StatusInternalServerError, Code: "io",
+					Msg: "persist clone Codex state root: " + err.Error()}
+			}
+		}
+		if err := db.SetConversationFastModeAtLaunch(
+			convID, relaunch.Harness, cwd, fastModeAtLaunch); err != nil {
 			return &cloneSpawnError{Status: http.StatusInternalServerError, Code: "io",
-				Msg: "persist clone Codex state root: " + err.Error()}
+				Msg: "persist clone Fast-mode baseline: " + err.Error()}
+		}
+		if agentID, err := db.AgentIDForConv(convID); err == nil && agentID != "" {
+			if err := db.SetAgentFastModeAtLaunchForConv(convID, fastModeAtLaunch); err != nil {
+				return &cloneSpawnError{Status: http.StatusInternalServerError, Code: "io",
+					Msg: "persist clone agent Fast-mode baseline: " + err.Error()}
+			}
 		}
 		return nil
 	}

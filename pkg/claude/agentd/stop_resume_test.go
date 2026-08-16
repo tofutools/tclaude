@@ -738,6 +738,9 @@ func TestResumeOneConv_CodexCrashRecoveryKeepsPersistedStateRootAndThread(t *tes
 	rec := installRecordingResumeSpawner(t)
 	home := t.TempDir()
 	stateRoot := filepath.Join(t.TempDir(), "codex-state")
+	require.NoError(t, os.MkdirAll(stateRoot, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(stateRoot, "config.toml"),
+		[]byte("service_tier = \"fast\"\n"), 0o600))
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", filepath.Join(t.TempDir(), "daemon-wrong-state"))
 	const convID = "019fe740-43a4-7023-b8ae-1ee64459f2a1"
@@ -764,6 +767,13 @@ func TestResumeOneConv_CodexCrashRecoveryKeepsPersistedStateRootAndThread(t *tes
 		"durable recovery must select the exact existing-thread bootstrap contract")
 	assert.Equal(t, 1, rec.resumeCalls)
 	assert.Zero(t, rec.newCalls, "recovery must not create an empty replacement generation")
+	updated, err := db.AgentRelaunchProfileForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, updated)
+	assert.Nil(t, updated.FastMode, "resume must keep inherited mode unpinned")
+	require.NotNil(t, updated.FastModeAtLaunch)
+	assert.True(t, *updated.FastModeAtLaunch,
+		"resume refreshes the dashboard baseline from the launch's main config")
 }
 
 func TestResumeOneConv_SessionProvenanceUsesClaudeHarness(t *testing.T) {

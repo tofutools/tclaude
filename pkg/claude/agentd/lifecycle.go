@@ -2001,6 +2001,10 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 			return res
 		}
 	}
+	var fastModeAtLaunch *bool
+	if harnessName == harness.CodexName {
+		fastModeAtLaunch = codexFastModeAtLaunch(launchConfig.FastMode, launchConfig.CodexStateRoot)
+	}
 	if err := SpawnDetachedTclaudeResume(clcommon.SpawnArgs{
 		EffectiveSandbox:           effectiveSandbox,
 		AgentID:                    persistedAgentID,
@@ -2071,6 +2075,9 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		}
 	} else {
 		res.Action = "resumed"
+		if harnessName == harness.CodexName {
+			persistCodexFastModeAtLaunch(convID, fastModeAtLaunch)
+		}
 		if !launchConfig.TemporaryHarnessBuiltinMode && resumePolicy != nil && resumePolicy.Previous != nil && effectiveSandbox != nil {
 			if _, cleanupErr := removeSupersededMaterializedAgentDirectories(*resumePolicy.Previous, *effectiveSandbox); cleanupErr != nil {
 				res.Detail = "resumed; remove superseded agent-owned directories: " + cleanupErr.Error()
@@ -6698,19 +6705,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	}
 	p.CodexStateRoot, p.CodexStateRootSource = stateRoot, stateRootSource
 	if harnessOrDefault(p.Harness) == harness.CodexName {
-		effectiveFast := p.FastMode
-		if !p.FastModeSet {
-			var readErr error
-			effectiveFast, readErr = harness.CodexMainConfigFastMode(p.CodexStateRoot)
-			if readErr != nil {
-				slog.Debug("Codex launch Fast-mode baseline unavailable", "error", readErr,
-					"codex_state_root", p.CodexStateRoot)
-			} else {
-				p.FastModeAtLaunch = &effectiveFast
-			}
-		} else {
-			p.FastModeAtLaunch = &effectiveFast
-		}
+		p.FastModeAtLaunch = codexFastModeAtLaunch(
+			fastModeLaunchValue(p.FastMode, p.FastModeSet), p.CodexStateRoot)
 	}
 
 	spawnArgs := clcommon.SpawnArgs{
@@ -7737,6 +7733,7 @@ func pendingSpawnFromParams(g *db.AgentGroup, p spawnParams, label string) *db.P
 		pending.CodexAppServerSource = p.CodexAppServerSource
 		pending.CodexStateRoot = p.CodexStateRoot
 		pending.CodexStateRootSource = p.CodexStateRootSource
+		pending.FastModeAtLaunch = p.FastModeAtLaunch
 	}
 	return pending
 }
