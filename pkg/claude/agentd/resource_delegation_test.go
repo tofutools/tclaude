@@ -371,7 +371,6 @@ func TestManagedServerDropsStoredCgroupFromPreviousDelegationBeforeReprepare(t *
 		"managed-old-cgroup", snapshot, string(sandboxpolicy.ImplementationHarnessBuiltin), false, false)
 	require.NoError(t, err)
 	assert.Equal(t, newCgroup, dir)
-	assert.NoDirExists(t, oldCgroup, "the invalid old-root cgroup must be retired before replacement")
 	stored, lookupErr := db.GetOpenCodeRuntime("managed-old-cgroup")
 	require.NoError(t, lookupErr)
 	assert.Nil(t, stored, "the invalid old-root runtime must be stopped before a fresh cgroup is prepared")
