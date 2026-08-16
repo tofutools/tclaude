@@ -138,6 +138,14 @@ func (claudeNestedSandbox) ResolveExecutable(ctx context.Context) (NestedSandbox
 	return resolveNestedExecutable(ctx, "claude", "stacked_claude_srt_probe")
 }
 
+// ResolveClaudeLaunchExecutable freezes the Claude entry point before a
+// tclaude-layer launch enters its filesystem namespace. Native Claude installs
+// commonly place only a symlink on PATH while the versioned executable lives
+// beneath ~/.local/share, which a constructed root intentionally omits.
+func ResolveClaudeLaunchExecutable(ctx context.Context) (NestedSandboxExecutable, error) {
+	return resolveNestedExecutable(ctx, "claude", "claude_launch_executable")
+}
+
 func (claudeNestedSandbox) EnginePresence() error {
 	return nestedEnginePresence("claude", "stacked_claude_srt_probe")
 }
@@ -303,7 +311,19 @@ func (codexNestedSandbox) ResolveExecutable(ctx context.Context) (NestedSandboxE
 	if err != nil {
 		return NestedSandboxExecutable{}, err
 	}
-	return resolveCodexNativeExecutable(ctx, launcher)
+	return resolveCodexNativeExecutable(ctx, launcher, "stacked_codex_bwrap_backend")
+}
+
+// ResolveCodexLaunchExecutable freezes the native Codex executable and its
+// tightly coupled runtime directory before a tclaude-layer launch enters its
+// filesystem namespace. Codex installations commonly expose a symlink or npm
+// launcher from PATH while the executable that must run lives elsewhere.
+func ResolveCodexLaunchExecutable(ctx context.Context) (NestedSandboxExecutable, error) {
+	launcher, err := resolveNestedExecutable(ctx, "codex", "codex_launch_executable")
+	if err != nil {
+		return NestedSandboxExecutable{}, err
+	}
+	return resolveCodexNativeExecutable(ctx, launcher, "codex_launch_executable")
 }
 
 func (codexNestedSandbox) EnginePresence() error {
@@ -468,8 +488,8 @@ func inspectNestedExecutable(
 func resolveCodexNativeExecutable(
 	ctx context.Context,
 	launcher NestedSandboxExecutable,
+	capability string,
 ) (NestedSandboxExecutable, error) {
-	const capability = "stacked_codex_bwrap_backend"
 	file, err := os.Open(launcher.Path)
 	if err != nil {
 		return NestedSandboxExecutable{}, &NestedSandboxCapabilityError{

@@ -125,6 +125,10 @@ type TclaudeLayerLaunchInput struct {
 	Environment      []sandboxpolicy.EnvironmentEntry
 	FinalHideDirs    []string
 	ReadOnlyBinds    []TclaudeLayerReadOnlyBind
+	// HarnessReadPaths are host-resolved launch requirements, such as a
+	// harness-native runtime closure. They become ordinary read grants so the
+	// same policy ordering and constructed-root renderer govern them.
+	HarnessReadPaths []string
 	OpenCodeControl  *TclaudeLayerOpenCodeControl
 	// NetworkEngine is the resolved engine selection for this launch. See the
 	// contract field of the same name; production callers leave it unset until
@@ -286,6 +290,7 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		sandboxDirsForEffective(effective, sandboxpolicy.AccessRead),
 		launchContractReadDirs...,
 	)
+	launchReadDirs = append(launchReadDirs, input.HarnessReadPaths...)
 	launchDenyDirs := sandboxDirsForEffective(effective, sandboxpolicy.AccessDeny)
 	remappedGrants := remappedGrantsForEffective(effective)
 	var err error
@@ -398,7 +403,10 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 	// launch-required in exactly the same way, and a mount shadowing one would
 	// otherwise slip past the named refusal and silently hide it.
 	if err := validateRemappedGuestPathsAgainstContract(
-		remappedGrants, append(append([]string(nil), contractWriteDirs...), launchContractReadDirs...),
+		remappedGrants, append(
+			append(append([]string(nil), contractWriteDirs...), launchContractReadDirs...),
+			input.HarnessReadPaths...,
+		),
 	); err != nil {
 		return TclaudeLayerLaunchSpec{}, err
 	}

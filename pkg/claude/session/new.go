@@ -1985,8 +1985,23 @@ func runNew(params *NewParams) error {
 		}
 	}
 	executablePath := ""
+	var harnessReadPaths []string
 	if launchCodexSplitCapability != nil {
 		executablePath = launchCodexSplitCapability.ExecutablePath
+	} else if tclaudeLayerOnly && h.Name == harness.CodexName && runtime.GOOS == "linux" {
+		resolvedCodex, resolveErr := harness.ResolveCodexLaunchExecutable(ctx)
+		if resolveErr != nil {
+			return fmt.Errorf("resolve Codex executable for tclaude-layer: %w", resolveErr)
+		}
+		executablePath = resolvedCodex.Path
+		harnessReadPaths = append(harnessReadPaths, resolvedCodex.RuntimeRoot)
+	} else if tclaudeLayerOnly && h.Name == harness.DefaultName && runtime.GOOS == "linux" {
+		resolvedClaude, resolveErr := harness.ResolveClaudeLaunchExecutable(ctx)
+		if resolveErr != nil {
+			return fmt.Errorf("resolve Claude executable for tclaude-layer: %w", resolveErr)
+		}
+		executablePath = resolvedClaude.Path
+		harnessReadPaths = append(harnessReadPaths, resolvedClaude.Path)
 	} else if h.Name == harness.OpenCodeName {
 		executablePath, err = harness.OpenCodeExecutable()
 		if err != nil {
@@ -2150,6 +2165,7 @@ func runNew(params *NewParams) error {
 			}(),
 			DarwinRouteReservation: darwinRouteReservation,
 			RouteHelper:            routeHelper,
+			HarnessReadPaths:       harnessReadPaths,
 		})
 		if specErr != nil {
 			return fmt.Errorf("build tclaude-layer launch spec: %w", specErr)

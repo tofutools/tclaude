@@ -704,6 +704,26 @@ func TestBuildTclaudeLayerLaunchSpecMaterializesSharedContract(t *testing.T) {
 	}
 }
 
+func TestBuildTclaudeLayerLaunchSpecIncludesResolvedHarnessRuntime(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	t.Setenv("HOME", home)
+	workspace := filepath.Join(home, "work")
+	runtimeRoot := filepath.Join(home, ".codex", "packages", "standalone", "release")
+	require.NoError(t, os.MkdirAll(workspace, 0o700))
+	require.NoError(t, os.MkdirAll(runtimeRoot, 0o700))
+
+	spec, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
+		HarnessName:      harness.CodexName,
+		Cwd:              workspace,
+		HarnessReadPaths: []string{runtimeRoot},
+	})
+	require.NoError(t, err)
+	assert.Contains(t, spec.Effective.Filesystem, sandboxpolicy.FilesystemGrant{
+		Path: runtimeRoot, Access: sandboxpolicy.AccessRead,
+	})
+}
+
 func TestBuildTclaudeLayerLaunchSpecBindsDarwinReservationToContract(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

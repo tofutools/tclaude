@@ -143,6 +143,7 @@ func TestCodexNestedSandboxResolvesNPMNativeBackend(t *testing.T) {
 	resolved, err := resolveCodexNativeExecutable(
 		context.Background(),
 		NestedSandboxExecutable{Path: launcher, Version: "launcher"},
+		"stacked_codex_bwrap_backend",
 	)
 	require.NoError(t, err)
 	assert.Equal(t, native, resolved.Path)
