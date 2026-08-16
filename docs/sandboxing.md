@@ -519,7 +519,7 @@ OpenCode's inner access profile permits all paths without compiling the sandbox
 profile's path scoping; its selected approval policy and independent
 tool-governance setting remain active. OpenCode has no stacked contract.
 
-### Claude Code login state under a constructed root
+### Claude Code config and login state under tclaude
 
 Claude Code keeps its OAuth tokens in `~/.claude/.credentials.json` (inside
 the state root the launch contract binds), but its account and onboarding
@@ -528,19 +528,28 @@ the top-level `~/.claude.json`, a file directly in `$HOME`. A constructed
 filesystem root leaves `$HOME` itself read-only scaffolding, so that file
 would be invisible and every sandboxed launch would park on the login wizard.
 
-tclaude therefore launches constructed-root Claude Code panes with
+tclaude therefore launches EVERY Claude Code pane — sandboxed or not — with
 `CLAUDE_CONFIG_DIR` pointed at the state root, which moves the config file —
 and the lock, temp and backup siblings Claude Code writes next to it — to
-`~/.claude/.claude.json`, inside the writable bind. On the first such launch
-the legacy `~/.claude.json` is copied there once (never overwritten
-afterwards, symlinks refused), so the agent starts from the operator's
-logged-in ambient state. After that first copy the two files evolve
-independently: the sandboxed config is shared by all constructed-root Claude
-agents, while ambient `claude` runs and host-inherited-root launches keep
-using the legacy file. The `--trust-dir` seed follows the launch — a
-constructed-root spawn writes its trust entry into the relocated file.
-`CLAUDE_CONFIG_DIR` is a reserved profile environment name, so a profile
-cannot redirect or unset this assignment. Host-inherited roots are unchanged.
+`~/.claude/.claude.json`, inside the directory every posture keeps writable.
+Applying it across all tclaude launches rather than only constructed-root
+ones means one config file for all tclaude agents: an agent's state cannot
+fork between its sandboxed and unsandboxed launches, and the assignment does
+not depend on a root posture that launch degradation can revise. Nothing else
+moves — credentials, `settings.json`, sessions, plugins and skills already
+live under `~/.claude` and stay the very same files.
+
+On the first such launch the operator's ambient config is copied there once
+(never overwritten afterwards; an ambient `CLAUDE_CONFIG_DIR` is honored as
+the source, a symlinked file is followed but must resolve to a regular file),
+so agents start from the operator's logged-in state. After that first copy
+the tclaude-shared config and the ambient file evolve independently; ambient
+`claude` runs outside tclaude keep using the legacy `~/.claude.json`. Token
+refresh and re-login stay effectively shared either way, because the
+credentials file is common to both. The `--trust-dir` seed and the daemon's
+scribe pre-trust follow the launch and write their trust entries into the
+relocated file. `CLAUDE_CONFIG_DIR` is a reserved profile environment name,
+so a profile cannot redirect or unset this assignment.
 
 ### OpenCode state under `tclaude-layer`
 

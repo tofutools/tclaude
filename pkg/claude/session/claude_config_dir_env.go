@@ -4,25 +4,33 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
-// ApplyClaudeConfigDirEnv pins a constructed-root Claude Code launch's config
-// directory to the harness state root, seeding the config file once from the
-// legacy top-level ~/.claude.json.
+// ApplyClaudeConfigDirEnv pins a Claude Code launch's config directory to the
+// harness state root, seeding the config file once from the operator's ambient
+// config.
 //
-// Why this exists: a constructed filesystem root binds the state root
-// (~/.claude) read-write, but $HOME itself is read-only scaffolding. Claude
-// Code's account and onboarding state — oauthAccount, hasCompletedOnboarding,
-// per-project trust — lives in ~/.claude.json, a file directly in $HOME (the
-// OAuth tokens in ~/.claude/.credentials.json are already inside the state
-// root). With that file invisible, Claude Code treats the launch as a fresh
-// install and parks the detached pane on the login wizard; and even a
-// completed login could not persist into a read-only $HOME. Pointing
-// CLAUDE_CONFIG_DIR at the state root moves the config file — and its lock,
-// temp and backup siblings, which Claude Code creates next to it — inside the
-// directory the launch contract already keeps writable.
+// Why this exists: Claude Code's account and onboarding state — oauthAccount,
+// hasCompletedOnboarding, per-project trust — lives in ~/.claude.json, a file
+// directly in $HOME, while everything else (OAuth tokens, settings, sessions,
+// plugins) already lives under the ~/.claude state root. Under a constructed
+// filesystem root that split is fatal: the launch contract binds the state
+// root read-write but $HOME stays read-only scaffolding, so the top-level file
+// is invisible, Claude Code treats the launch as a fresh install, and the
+// detached pane parks on the login wizard. Pointing CLAUDE_CONFIG_DIR at the
+// state root moves the config file — and the lock, temp and backup siblings
+// Claude Code creates next to it — inside the directory every posture keeps
+// writable.
+//
+// It is applied to EVERY tclaude-launched Claude pane rather than only to
+// constructed-root ones (settled operator decision): one file for all tclaude
+// agents means no state fork between an agent's sandboxed and unsandboxed
+// launches, and no dependence on a root posture that launch degradation can
+// re-derive after the environment is already composed. Only ambient `claude`
+// runs outside tclaude keep reading the legacy top-level file.
 //
 // CLAUDE_CONFIG_DIR is a reserved profile environment name
 // (sandboxpolicy.reservedEnvironmentNames), so no operator profile can
@@ -30,15 +38,10 @@ import (
 //
 // Both launch paths route through here — session.runNew (spawn and daemon
 // resume) and conv.resumeLaunchCmd (watch-mode resume) — mirroring
-// ApplyAgentSocketEnv. Deliberately gated on the CONSTRUCTED root posture
-// only: a host-inherited root sees the real ~/.claude.json, and relocating the
-// config for launches that never lost it would fork their state for no gain.
-func ApplyClaudeConfigDirEnv(
-	harnessName string,
-	constructedRoot bool,
-	env map[string]string,
-) error {
-	if harnessName != harness.DefaultName || !constructedRoot || env == nil {
+// ApplyAgentSocketEnv. The daemon-side scribe pre-trust reaches the same seed
+// through PretrustClaudeLaunchDir.
+func ApplyClaudeConfigDirEnv(harnessName string, env map[string]string) error {
+	if harnessName != harness.DefaultName || env == nil {
 		return nil
 	}
 	stateRoot, err := TclaudeLayerHarnessStateRoot(harnessName)
@@ -52,42 +55,65 @@ func ApplyClaudeConfigDirEnv(
 	return nil
 }
 
-// seedClaudeConfigJSON copies the operator's legacy top-level ~/.claude.json
-// into the state root exactly once, so a relocated-config launch starts from
-// the already-logged-in ambient state instead of Claude Code's onboarding
-// wizard. An existing target is never touched — after the first copy the
-// relocated config evolves on its own and the two files are expected to
-// diverge. A missing legacy file is a clean no-op: the machine genuinely has
-// no login to carry over, and the wizard the agent then sees is the truth. A
-// symlinked legacy config is refused rather than resolved, mirroring the
-// OpenCode credential copy's contract.
+// PretrustClaudeLaunchDir is the daemon-side pre-trust entry for dirs a Claude
+// agent is about to be spawned into: it seeds and resolves the same relocated
+// config file the launched pane will read, then records the trust entry there.
+// Calling harness.EnsureClaudeDirTrusted directly would write the ambient
+// ~/.claude.json — a file tclaude-launched panes no longer open.
+func PretrustClaudeLaunchDir(projectDir string) error {
+	env := map[string]string{}
+	if err := ApplyClaudeConfigDirEnv(harness.DefaultName, env); err != nil {
+		return err
+	}
+	return harness.EnsureClaudeDirTrustedForLaunch(
+		func(name string) string { return env[name] }, projectDir)
+}
+
+// seedClaudeConfigJSON copies the operator's ambient Claude Code config into
+// the state root exactly once, so a relocated-config launch starts from the
+// already-logged-in ambient state instead of Claude Code's onboarding wizard.
+// The ambient source honors an operator's own CLAUDE_CONFIG_DIR; without one
+// it is the legacy top-level ~/.claude.json. An existing target is never
+// touched — after the first copy the relocated config evolves on its own and
+// the source is expected to go stale. A missing source is a clean no-op: the
+// machine genuinely has no login to carry over, and the wizard the agent then
+// sees is the truth. A symlinked source is followed (dotfile managers commonly
+// symlink it) but must resolve to a regular file.
+//
+// The state root itself is ensured 0700 up front — matching the layer
+// launch-state preparation — so a later trust write cannot be the first
+// creator of ~/.claude with a wider default mode.
 func seedClaudeConfigJSON(stateRoot string) error {
+	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
+		return err
+	}
 	target := filepath.Join(stateRoot, harness.ClaudeConfigJSONName)
 	if _, err := os.Lstat(target); err == nil {
 		return nil
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("inspect %s: %w", target, err)
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("cannot determine home dir: %w", err)
+	sourceDir := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR"))
+	if sourceDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("cannot determine home dir: %w", err)
+		}
+		sourceDir = home
 	}
-	legacy := filepath.Join(home, harness.ClaudeConfigJSONName)
-	info, err := os.Lstat(legacy)
+	source := filepath.Join(sourceDir, harness.ClaudeConfigJSONName)
+	info, err := os.Stat(source)
 	if os.IsNotExist(err) {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("inspect %s: %w", legacy, err)
+		return fmt.Errorf("inspect %s: %w", source, err)
 	}
 	if !info.Mode().IsRegular() {
-		return fmt.Errorf("%s is not a regular file; refusing to seed from it", legacy)
+		return fmt.Errorf("%s is not a regular file; refusing to seed from it", source)
 	}
-	data, err := os.ReadFile(legacy)
+	data, err := os.ReadFile(source)
 	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
 		return err
 	}
 	// CreateTemp creates 0600, which is also Claude Code's own mode for this

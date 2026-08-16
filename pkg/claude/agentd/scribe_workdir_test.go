@@ -143,9 +143,12 @@ func TestSeedScribeDirTrust_SeedsThePerHarnessStore(t *testing.T) {
 	scribeDir := filepath.Join(home, ".tclaude", "scribe")
 	require.NoError(t, os.MkdirAll(scribeDir, 0o700))
 
-	// Claude branch → ~/.claude.json gains the trust entry.
+	// Claude branch → the relocated ~/.claude/.claude.json gains the trust
+	// entry (every tclaude-launched Claude pane reads its config from the
+	// state root; see session.ApplyClaudeConfigDirEnv).
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	seedScribeDirTrust(harness.DefaultName, scribeDir)
-	claudeData, err := os.ReadFile(filepath.Join(home, ".claude.json"))
+	claudeData, err := os.ReadFile(filepath.Join(home, ".claude", ".claude.json"))
 	require.NoError(t, err, "the claude trust store was written")
 	assert.Contains(t, string(claudeData), `"hasTrustDialogAccepted": true`)
 	assert.Contains(t, string(claudeData), scribeDir)

@@ -18,6 +18,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // Scribe summon (JOH-361) — the "summon a pre-briefed, pre-granted
@@ -575,7 +576,12 @@ func seedScribeDirTrust(harnessName, dir string) {
 			slog.Warn("scribe: pre-trust codex workdir failed", "dir", dir, "error", err)
 		}
 	case harness.DefaultName: // "claude"
-		if err := harness.EnsureClaudeDirTrusted(dir); err != nil {
+		// Through the launch-aware path, not EnsureClaudeDirTrusted: every
+		// tclaude-launched Claude pane reads its config from the state root
+		// (session.ApplyClaudeConfigDirEnv), so the trust entry must land in
+		// that relocated file — the ambient ~/.claude.json is one the scribe
+		// pane never opens.
+		if err := session.PretrustClaudeLaunchDir(dir); err != nil {
 			slog.Warn("scribe: pre-trust claude workdir failed", "dir", dir, "error", err)
 		}
 	case harness.CopilotName:

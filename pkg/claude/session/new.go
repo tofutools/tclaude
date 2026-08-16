@@ -1365,17 +1365,12 @@ func runNew(params *NewParams) error {
 	); err != nil {
 		return err
 	}
-	// A constructed root binds the harness state root but leaves $HOME itself
-	// read-only scaffolding, so Claude Code's top-level ~/.claude.json — the
-	// file carrying its account and onboarding state — would be invisible and
-	// the detached pane would park on the login wizard. Relocate the launch's
-	// config dir into the state root (seeding it once from the legacy file).
-	// No-op for other harnesses and root postures. See ApplyClaudeConfigDirEnv.
-	if err := ApplyClaudeConfigDirEnv(
-		h.Name,
-		outerLayer && tclaudeLayerRoot == sandboxpolicy.RootConstructed,
-		additionalEnv,
-	); err != nil {
+	// Every tclaude-launched Claude pane reads its config from the state root
+	// rather than the top-level ~/.claude.json, which a constructed root could
+	// not see (the pane would park on the login wizard) and which would
+	// otherwise fork state between an agent's sandboxed and unsandboxed
+	// launches. No-op for other harnesses. See ApplyClaudeConfigDirEnv.
+	if err := ApplyClaudeConfigDirEnv(h.Name, additionalEnv); err != nil {
 		return err
 	}
 	// Keep Claude Code's interactive "Resume from summary" chooser from blocking
