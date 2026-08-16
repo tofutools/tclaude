@@ -6507,7 +6507,7 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
   font-size: .78rem;
   line-height: 1.35;
 }
-.sbx-constructed-root-warning {
+.sbx-unix-root-note {
   background: rgba(210, 153, 34, .1);
   border-left: 3px solid var(--warning-text, #d99a2b);
   border-radius: .25rem;
@@ -6517,7 +6517,7 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
   margin: .65rem 0;
   padding: .5rem .65rem;
 }
-.sbx-constructed-root-warning strong {
+.sbx-unix-root-note strong {
   display: block;
   margin-bottom: .15rem;
 }

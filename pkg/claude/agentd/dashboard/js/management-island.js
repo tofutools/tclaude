@@ -9,7 +9,6 @@ import { grantListToOverrides, grantOverridesToList } from './permission-grant-l
 import {
   sandboxAccessAxes,
   sandboxAccessDraftErrors,
-  sandboxConstructedRootWarning,
   sandboxNetworkAuthoring,
   sandboxOtherAssignmentWarnings,
   sandboxOtherContextRefusals,
@@ -880,8 +879,8 @@ function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice, platf
       setNotice(null);
     }} options=${ACCESS_MODE_OPTIONS}/>
     ${platform === 'linux' && rules.mode === 'closed' && (linuxClosedAligned
-      ? html`<p class="sbx-inline-note sbx-unix-root-note" role="note"><strong>Linux “No access” boundary:</strong> tclaude uses packet filtering inside a private, routed network namespace plus a separate, minimal filesystem root. The network baseline and destination rules still control internet access. The fixed OS/runtime surface, harness state, and filesystem paths mounted by the profile remain visible; other host paths and abstract Unix sockets do not.</p>`
-      : html`<div class="sbx-inline-note sbx-unix-root-note sbx-unix-root-note-incomplete" role="note"><strong>Linux “No access” needs additional isolation.</strong> This profile is not yet aligned, so Unix-socket enforcement may remain partial. Apply packet filtering, a private routed network namespace, and a separate minimal filesystem root; the network baseline and destination rules will remain unchanged. <button type="button" class="sbx-add-row" onClick=${() => {
+      ? html`<div class="sbx-inline-note sbx-unix-root-note" role="note"><strong>⚠ Linux “No access” requires a separate filesystem root.</strong> tclaude also selects packet filtering and a private, routed network namespace to enforce this boundary. Only the fixed OS/runtime surface, harness state, and filesystem paths mounted by this profile remain visible; other host paths and abstract Unix sockets do not. The network baseline and destination rules still control internet access.</div>`
+      : html`<div class="sbx-inline-note sbx-unix-root-note sbx-unix-root-note-incomplete" role="note"><strong>⚠ Linux “No access” requires additional isolation settings.</strong> This profile is not yet aligned, so Unix-socket enforcement may remain partial. Apply packet filtering, a private routed network namespace, and a separate minimal filesystem root; the network baseline and destination rules will remain unchanged. <button type="button" class="sbx-add-row" onClick=${() => {
         updateMode('closed', rules.allow);
         setNotice(null);
       }}>Apply required settings</button></div>`)}
@@ -1710,7 +1709,6 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   // Same guard as the Save button, so the hotkey can never reach a save the
   // mouse path refuses.
   const selectedEffective = prediction?.contexts?.[effectiveContext] || null;
-  const constructedRootWarning = sandboxConstructedRootWarning(prediction, effectiveContext);
   const effectivePolicyAttention = !!selectedEffective
     && (prediction?.targets || []).some((target) =>
       sandboxPolicyNeedsAttention(target, selectedEffective, effectiveContext));
@@ -1722,13 +1720,6 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
       packVisibilityAttention=${!!networkPackVisibilityError && commonRuleFeedSettled}
       retryPackCatalog=${loadCommonRules}
       packCatalogBusy=${commonRuleFeedBusy}/><${SocketAccessEditor} draft=${draft} setDraft=${setDraft} catalog=${commonRules} notice=${socketTemplateNotice} setNotice=${setSocketTemplateNotice} platform=${descriptor.sandboxImpl?.platform} generatedAlignment=${socketGeneratedAlignment}/>`}
-    ${constructedRootWarning && html`<div class="sbx-constructed-root-warning" role="alert">
-      <strong>⚠ Separate filesystem root</strong>
-      <div>${constructedRootWarning.reasons.length
-        ? `${constructedRootWarning.reasons.join(' and ')} ${constructedRootWarning.reasons.length === 1 ? 'requires' : 'require'}`
-        : 'This resolved sandbox policy requires'} a separate, minimal filesystem root on ${constructedRootWarning.targets.join('; ')}.</div>
-      <div>Only the fixed read-only OS/runtime surface and filesystem paths explicitly mounted below remain visible. Home-installed tools elsewhere may disappear unless you grant their paths.</div>
-    </div>`}
     <${SandboxSection} id="sandbox-profile-editor-filesystem-section" label="Filesystem"
       help=${FILESYSTEM_HELP} hidden=${advanced}
       attention=${globalConfigWarnings.length > 0 || !!commonRuleFeedError}
