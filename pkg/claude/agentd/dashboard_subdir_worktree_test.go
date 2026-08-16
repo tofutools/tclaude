@@ -22,7 +22,7 @@ func TestDashboardHTML_SubdirWorktreeWired(t *testing.T) {
 	must(`list="agent-spawn-subrepo-list"`, "input is bound to the datalist")
 
 	// The picker helpers the field drives.
-	must("async resolveWorktree(draft, worktrees)", "selection resolver ({path,branch})")
+	must("async resolveWorktree(draft, worktrees, onProgress", "selection resolver ({path,branch})")
 	must("subRepos: Array.isArray(data.sub_repos)", "sub-repo results are normalized")
 
 	// Submit threads the worktree through as separate fields when the
