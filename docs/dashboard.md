@@ -24,8 +24,10 @@ token expires in about a minute, so treat a `--print`ed URL as
 use-immediately. `--slop` and `--wizard` open the cosmetic re-skin themes
 (mutually exclusive; slop wins).
 
-The dashboard listens on loopback only by default (`127.0.0.1`) on the fixed
-port from `agent.dashboard_port`, and fails loudly if the port is taken.
+The dashboard listens on loopback only by default (`127.0.0.1`). By default
+the port is random per `agentd serve` (so the URL changes across restarts);
+set `agent.dashboard_port` for a fixed port, which then fails loudly if
+taken.
 Whether `tclaude agentd serve` auto-launches a browser is configurable in
 Config → agentd daemon & server. For reaching the dashboard from another
 machine or a phone, see [Operating remotely](remote.md).
@@ -60,8 +62,8 @@ The **wizard** theme renames everything (Parties, Scrying, Labours, Rites,
 Contraptions, Wards, Missives, Reserves, Coffers, Chronicle, Runes, Alchemy,
 Almanac, The Tavern) and the **slop** theme goes full casino; both are
 re-skins of the same dashboard, not different feature sets. Cycle themes with
-the header icon or Ctrl/⌘+Alt+Shift+S, or force one with `?slop=1` /
-`?wizard=1`.
+the header icon (Ctrl/⌘+Alt+Shift+S toggles slop, the same chord with W
+toggles wizard), or force one with `?slop=1` / `?wizard=1`.
 
 ## Groups — the home view
 
@@ -289,7 +291,7 @@ reply (human folder), focus the sender's terminal, or toggle read state.
 
 The **🔐 Access requests** folder is where blocked permission requests
 (`--ask-human` and friends) arrive as Approve / Decline / scoped Always-allow
-cards with an auto-decline countdown and a "+extend" button. A banner and
+cards with an auto-decline countdown and a "+5m" extend button. A banner and
 blinking badge surface pending requests from any tab, requests are actionable
 remotely, and history survives restarts. Compose paths: a group's cog
 ✉ message (whole group or a ticked subset) and a top-level `+ message`

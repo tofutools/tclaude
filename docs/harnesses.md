@@ -124,8 +124,9 @@ into `~/.claude/settings.json`, and offers the command-backed
 setup repairs them.
 
 **Models and effort.** `--model` accepts the aliases `fable`, `opus`,
-`sonnet`, `haiku`, `opusplan` (each with an optional `[1m]` long-context
-suffix, e.g. `sonnet[1m]`) or any full `claude-*` model ID. `--effort` is
+`sonnet`, `haiku`, `opusplan` — `fable`, `opus`, and `sonnet` also take the
+`[1m]` long-context suffix, e.g. `sonnet[1m]` — or any full `claude-*` model
+ID. `--effort` is
 `low`/`medium`/`high`/`xhigh`/`max`. Empty means "let the harness decide".
 
 **Sandbox.** Claude Code's own OS sandbox is configured in `settings.json`,
@@ -344,10 +345,10 @@ never reaches its first turn. `--trust-dir` seeds the entry in
   one claimed boundary. Every other spelling is refused as
   `sandbox_restricted`. Interactive human sessions are not restricted this
   way.
-- **Usage in Copilot's own units.** Cost is carried in the nano-AI units
-  Copilot emits; no USD figure is derived, because Copilot nowhere states the
-  exchange rate. The dashboard also samples premium-request quota for
-  metered plans.
+- **Usage in AI credits.** Cost is carried in the nano-AI-credit units
+  Copilot emits; the dashboard derives a *virtual* USD value from the fixed
+  1 credit = $0.01 gross subscription rate (labeled as derived, not billed).
+  The dashboard also samples premium-request quota for metered plans.
 - **No status line, no remote control, no tool governance, no streaming
   `ask`** — each an honest absence, refused or degraded with a message.
 

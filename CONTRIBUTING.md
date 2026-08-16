@@ -26,9 +26,9 @@ go test ./...
 golangci-lint run ./...
 ```
 
-Platform sandbox assumptions are separate hardware-backed hard gates. See
-[Platform assumption tests](docs/sandboxing.md#platform-assumption-tests) for
-the contract and commands. On a compatible Linux host:
+Platform sandbox assumptions are separate hardware-backed hard gates; the
+contract lives in `pkg/claude/sandboxassumptions`. On a compatible Linux
+host:
 
 ```bash
 TCLAUDE_SANDBOX_ASSUMPTIONS=1 \

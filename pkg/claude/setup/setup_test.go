@@ -493,7 +493,7 @@ func TestSandboxHardeningDocExists(t *testing.T) {
 // the const and the file but leaves a markdown cross-reference dangling.
 func TestSandboxDocCrossReferencesConsistent(t *testing.T) {
 	root := findRepoRoot(t)
-	base := filepath.Base(sandboxHardeningDocPath) // sandbox-hardening.md
+	base := filepath.Base(sandboxHardeningDocPath) // sandboxing.md
 	for _, ref := range []string{
 		filepath.Join("docs", "index.md"),
 	} {

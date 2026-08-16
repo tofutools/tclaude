@@ -111,7 +111,7 @@ tclaude agent promote <selector>
 
 Promote also reinstates a retired agent. Cross-agent promotion is gated
 (`agent.promote`, or the group-scoped manager equivalent — see the
-[manager pattern](spawning-and-lifecycle.md#the-target-manager-pattern)).
+[manager pattern](spawning-and-lifecycle.md#the-manager-pattern)).
 
 ## Groups
 

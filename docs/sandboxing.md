@@ -166,9 +166,10 @@ The axes:
   automatic derivation. Composes monotonically: `separate` anywhere in the
   chain wins, and `inherit` cannot weaken a rule whose enforcement itself
   requires a constructed root.
-- **`network`** — baseline `open` | `closed` | `list`, allow/deny rows, packs,
-  and a `namespace` selector (the legacy `network_access: internet|none`
-  spelling maps to open/closed). Covered on the
+- **`network`** — an authored `baseline` of `inherit` | `allow` | `deny`,
+  allow/deny rows, packs, and a `namespace` selector (the legacy
+  `network_access: internet|none` spelling is still accepted). The composed
+  result resolves to an open, closed, or list-filtered launch. Covered on the
   [network-filtering](network-filtering.md) page.
 - **`unix_sockets`** — `mode: open|closed|list` plus `path`/`path_glob` entries
   (`**` is refused). The agentd socket is a non-removable floor. Authoring this

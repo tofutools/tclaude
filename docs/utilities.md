@@ -128,11 +128,11 @@ profile trimmed it). Nothing is trimmed unless you ask.
 
 ```bash
 # A bare feature name means "trim"
-tclaude agent spawn --group crew --name lean-worker \
+tclaude agent spawn crew --name lean-worker \
   --context-features bundled-skills,workflows,artifact
 
 # Keep one thing a lean profile trimmed
-tclaude agent spawn --group crew --profile lean --name needs-artifacts \
+tclaude agent spawn crew --profile lean --name needs-artifacts \
   --context-features artifact=on
 
 # List the catalog, with what each trim costs

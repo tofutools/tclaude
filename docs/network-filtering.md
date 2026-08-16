@@ -14,10 +14,11 @@ it, and where each engine's guarantees end. The profile model itself is on the
 
 ## Expressing policy in a profile
 
-The resolved `network` rules give each launch a baseline — `open`, `closed`,
-or `list` (the legacy `network_access: internet|none` spelling maps to
-open/closed; a list has no legacy spelling) — plus allow and deny rows built
-from these selectors:
+A profile's `network` block authors a `baseline` — `inherit`, `allow`, or
+`deny` (the legacy `network_access: internet|none` spelling is still
+accepted) — plus allow and deny rows. Composed across scopes, the rules
+resolve each launch to an effective open, closed, or list-filtered posture.
+Rows are built from these selectors:
 
 - `host` — an exact DNS name.
 - `domain` — a DNS domain, optionally with `include_subdomains`; matching is

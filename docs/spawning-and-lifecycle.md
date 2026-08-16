@@ -185,7 +185,7 @@ as an agent, and also reinstates a retired one. Authorization:
 `agent.promote`, or `groups.members.promote` under the manager pattern
 below.
 
-## The --target manager pattern
+## The manager pattern
 
 Every lifecycle verb defaults to acting on the calling agent itself, and
 most accept `--target <selector>` to act on another agent. The

@@ -18,8 +18,8 @@ tclaude proxy linear  # Linear issues, bounded by a team allow-list
 ```
 
 None of their permissions are granted by default, and none are implied by
-group ownership. Every verb supports `--ask-human <timeout>` (capped at 300
-seconds): on a permission denial, the operator gets a popup approval, and a
+group ownership. Every gated verb supports `--ask-human <timeout>` (capped at
+300 seconds): on a permission denial, the operator gets a popup approval, and a
 timeout counts as a deny.
 
 ## The command only appears when configured
