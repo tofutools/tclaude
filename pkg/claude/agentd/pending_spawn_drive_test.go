@@ -26,15 +26,18 @@ func TestPendingSpawnFromParamsFreezesResolvedCodexDrive(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stateRoot := "/host/codex-state"
+			fastAtLaunch := true
 			pending := pendingSpawnFromParams(group, spawnParams{
 				Harness: tc.harness, CodexAppServer: tc.selected,
 				CodexAppServerSource: tc.source,
 				CodexStateRoot:       stateRoot, CodexStateRootSource: codexStateRootSourceCodexHome,
+				FastModeAtLaunch: &fastAtLaunch,
 			}, "pending-drive")
 			if tc.want == nil {
 				assert.Nil(t, pending.CodexAppServer)
 				assert.Empty(t, pending.CodexAppServerSource)
 				assert.Empty(t, pending.CodexStateRoot)
+				assert.Nil(t, pending.FastModeAtLaunch)
 				return
 			}
 			require.NotNil(t, pending.CodexAppServer)
@@ -42,6 +45,8 @@ func TestPendingSpawnFromParamsFreezesResolvedCodexDrive(t *testing.T) {
 			assert.Equal(t, tc.source, pending.CodexAppServerSource)
 			assert.Equal(t, stateRoot, pending.CodexStateRoot)
 			assert.Equal(t, codexStateRootSourceCodexHome, pending.CodexStateRootSource)
+			require.NotNil(t, pending.FastModeAtLaunch)
+			assert.True(t, *pending.FastModeAtLaunch)
 		})
 	}
 }

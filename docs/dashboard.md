@@ -862,6 +862,9 @@ group's rows, not on grouped rows — see below.)
 
 For a live Codex agent, the same ⚙ menu offers
 **enable fast mode** or **disable fast mode** according to its current state.
+For an inherited launch, the initial state comes from `service_tier` in the
+main Codex `config.toml` used by that agent. A later Codex settings event in the
+conversation log supersedes that launch-time baseline, including after `/fast`.
 The server re-checks that state before sending Codex's `/fast` toggle, so a
 stale menu cannot knowingly reverse an already-completed change. The item is
 disabled while the agent is offline. If Codex has not reported its tier yet,

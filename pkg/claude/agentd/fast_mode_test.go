@@ -1,6 +1,8 @@
 package agentd
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -11,6 +13,19 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
+
+func TestCodexFastModeAtLaunchExplicitOverrideAndInheritedConfig(t *testing.T) {
+	stateRoot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(stateRoot, "config.toml"),
+		[]byte("service_tier = \"fast\"\n"), 0o600))
+
+	inherited := codexFastModeAtLaunch(harness.FastModeInherit, stateRoot)
+	require.NotNil(t, inherited)
+	assert.True(t, *inherited)
+	explicitOff := codexFastModeAtLaunch(harness.FastModeOff, stateRoot)
+	require.NotNil(t, explicitOff)
+	assert.False(t, *explicitOff, "an explicit launch override wins the main config")
+}
 
 func TestSessionArgsCarryExplicitFastMode(t *testing.T) {
 	bare := sessionNewArgs(clcommon.SpawnArgs{Label: "worker", Harness: harness.CodexName})

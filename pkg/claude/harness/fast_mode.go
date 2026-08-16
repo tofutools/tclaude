@@ -2,7 +2,11 @@ package harness
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+
+	"github.com/pelletier/go-toml/v2"
 )
 
 const (
@@ -50,4 +54,27 @@ func ResolveFastModeFlag(h *Harness, raw string) (string, error) {
 	default:
 		return "", fmt.Errorf("invalid fast mode %q: expected inherit, on, or off", strings.TrimSpace(raw))
 	}
+}
+
+// CodexMainConfigFastMode reads the inherited Fast-mode baseline from the
+// main config.toml in the Codex state root used by a launch. It deliberately
+// does not inspect generated launch profiles: an explicit tclaude FastMode is
+// already known by the caller, while an inherited launch gets service_tier
+// from this main config. Missing config means Codex's standard-tier default.
+func CodexMainConfigFastMode(codexStateRoot string) (bool, error) {
+	data, err := os.ReadFile(filepath.Join(codexStateRoot, "config.toml"))
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	var config struct {
+		ServiceTier string `toml:"service_tier"`
+	}
+	if err := toml.Unmarshal(data, &config); err != nil {
+		return false, err
+	}
+	tier := strings.TrimSpace(config.ServiceTier)
+	return strings.EqualFold(tier, "fast") || strings.EqualFold(tier, "priority"), nil
 }

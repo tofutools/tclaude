@@ -497,6 +497,10 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		}
 	}
 	approval, autoReview := relaunch.Approval, relaunch.AutoReview
+	var fastModeAtLaunch *bool
+	if relaunch.Harness == harness.CodexName {
+		fastModeAtLaunch = codexFastModeAtLaunch(relaunch.FastMode, relaunch.CodexStateRoot)
+	}
 	spawnArgs := clcommon.SpawnArgs{
 		AgentID:               persistedAgentID,
 		EffectiveSandbox:      effectiveSandbox,
@@ -802,6 +806,9 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		writeError(w, http.StatusInternalServerError, "identity_migration",
 			"failed to advance agent identity to successor conversation: "+err.Error())
 		return
+	}
+	if relaunch.Harness == harness.CodexName {
+		persistCodexFastModeAtLaunch(newConv, fastModeAtLaunch)
 	}
 
 	// 5. Carry any tmux clients attached to the old session over to

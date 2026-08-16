@@ -145,6 +145,8 @@ var launchCarryoverExcused = map[string]string{
 		"session-new flag and carrying it here would be too late to locate the conversation",
 	"CodexStateRootSource": "attribution for the environment-only CodexStateRoot, not an " +
 		"independent session-new launch parameter",
+	"FastModeAtLaunch": "an observed dashboard baseline, not launch intent; agentd recomputes " +
+		"it from the explicit FastMode or the frozen CodexStateRoot for each managed launch",
 	"SSHWorkaroundSource": "not a launch parameter of its own — it is the attribution for " +
 		"SSHWorkaround, which is itself excused above",
 }

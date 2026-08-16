@@ -14,6 +14,35 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
+// codexFastModeAtLaunch resolves the effective state a launch receives while
+// preserving the distinction between explicit intent and inherited runtime
+// evidence. A nil result means the main config could not be inspected.
+func codexFastModeAtLaunch(mode, stateRoot string) *bool {
+	var fast bool
+	switch strings.TrimSpace(mode) {
+	case harness.FastModeOn:
+		fast = true
+	case harness.FastModeOff:
+		fast = false
+	default:
+		var err error
+		fast, err = harness.CodexMainConfigFastMode(stateRoot)
+		if err != nil {
+			slog.Debug("Codex launch Fast-mode baseline unavailable", "error", err,
+				"codex_state_root", stateRoot)
+			return nil
+		}
+	}
+	return &fast
+}
+
+func persistCodexFastModeAtLaunch(convID string, observed *bool) {
+	if err := db.SetAgentFastModeAtLaunchForConv(convID, observed); err != nil {
+		slog.Warn("record Codex launch Fast-mode baseline failed", "error", err,
+			"conv_id", convID)
+	}
+}
+
 // codexFastModeFromFollowerNow bypasses the dashboard's one-second presentation
 // throttle while reusing the same incremental follower and cursor. It never
 // reparses an unchanged prefix: RuntimeTelemetry stats the memoized rollout and
@@ -52,6 +81,8 @@ func codexFastModeFromFollowerNow(sess *db.SessionRow) (fast, known bool, err er
 		}
 		if profile != nil && profile.FastMode != nil {
 			fast, known = *profile.FastMode, true
+		} else if profile != nil && profile.FastModeAtLaunch != nil {
+			fast, known = *profile.FastModeAtLaunch, true
 		}
 	}
 	if !known {
