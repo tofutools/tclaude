@@ -360,6 +360,10 @@ func TestManagedServerDropsStoredCgroupFromPreviousDelegationBeforeReprepare(t *
 	prepareResourceCgroup = func(sessionID string, limits sandboxpolicy.ResourceLimits) (string, func(), error) {
 		assert.Equal(t, "managed-old-cgroup", sessionID)
 		assert.Equal(t, "128MB", limits.Memory)
+		stored, lookupErr := db.GetOpenCodeRuntime(sessionID)
+		require.NoError(t, lookupErr)
+		assert.Nil(t, stored,
+			"the invalid old-root runtime must be stopped before a fresh cgroup is prepared")
 		return newCgroup, func() {}, nil
 	}
 	t.Cleanup(func() { prepareResourceCgroup = previousPrepare })
@@ -371,7 +375,4 @@ func TestManagedServerDropsStoredCgroupFromPreviousDelegationBeforeReprepare(t *
 		"managed-old-cgroup", snapshot, string(sandboxpolicy.ImplementationHarnessBuiltin), false, false)
 	require.NoError(t, err)
 	assert.Equal(t, newCgroup, dir)
-	stored, lookupErr := db.GetOpenCodeRuntime("managed-old-cgroup")
-	require.NoError(t, lookupErr)
-	assert.Nil(t, stored, "the invalid old-root runtime must be stopped before a fresh cgroup is prepared")
 }
