@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -110,6 +111,8 @@ func TestCreateDashboardWorktreeRemovesSandboxConfigLock(t *testing.T) {
 	repo, _, _, _ := worktreeFetchFixture(t)
 	lockPath := filepath.Join(repo, ".git", "config.lock")
 	require.NoError(t, os.WriteFile(lockPath, nil, 0o444))
+	old := time.Now().Add(-2 * time.Second)
+	require.NoError(t, os.Chtimes(lockPath, old, old))
 	t.Cleanup(func() { _ = os.Remove(lockPath) })
 
 	waits := 0
