@@ -62,7 +62,7 @@ var sandboxHardeningDocURL = "https://github.com/tofutools/tclaude/blob/main/" +
 type Params struct {
 	Check         bool `short:"c" long:"check" help:"Only check setup status, don't install anything"`
 	Force         bool `short:"f" long:"force" help:"Force re-registration of protocol handler"`
-	AbsolutePaths bool `long:"absolute-paths" help:"Use absolute paths to tclaude for status-bar and desktop integrations (installed harness hooks remain portable)"`
+	AbsolutePaths bool `long:"absolute-paths" help:"Use absolute paths to tclaude for desktop integrations (installed harness hooks and the Claude status bar remain portable)"`
 	Yes           bool `short:"y" long:"yes" help:"Assume yes on all prompts (for scripted usage)"`
 	// The --install-* flags add optional extras on top of the baseline
 	// setup (which always runs). They do not replace or gate the baseline.
@@ -114,10 +114,11 @@ func runSetup(params *Params) error {
 		return err
 	}
 
-	// Configure path mode for hooks and callbacks
+	// Configure the path mode for host-side integrations. Harness hooks and
+	// Claude's status line remain PATH-based because they can execute inside a
+	// constructed sandbox root where the host installation path is hidden.
 	if params.AbsolutePaths {
 		clcommon.SetAbsolutePaths(true)
-		statusbar.ReinitStatusLineCommand()
 	}
 
 	// The baseline setup below always runs — hooks, status bar,

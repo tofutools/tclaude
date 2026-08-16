@@ -15,14 +15,10 @@ type StatusLineConfig struct {
 	Command string `json:"command"`
 }
 
-// StatusLineCommand is the status-bar command (detected at startup)
-var StatusLineCommand = common.DetectCmd("status-bar")
-
-// ReinitStatusLineCommand re-evaluates the status-bar command path using current DetectCmd settings.
-// Call this after changing common.SetAbsolutePaths().
-func ReinitStatusLineCommand() {
-	StatusLineCommand = common.DetectCmd("status-bar")
-}
+// StatusLineCommand is PATH-based because Claude Code invokes it inside the
+// active sandbox. Constructed roots expose tclaude through a trusted PATH
+// projection, not through the host installation path stored by setup.
+const StatusLineCommand = common.StatusBarCommand
 
 // CheckInstalled checks if the current tclaude status-bar command is configured in Claude settings.
 // Returns true only if the command matches the current binary exactly, not a stale reference.
