@@ -336,18 +336,6 @@ func planSandboxProfileAccessForLaunch(
 		return nil, &spawnFailure{http.StatusUnprocessableEntity,
 			"invalid_sandbox_profile", err.Error()}
 	}
-	if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
-		h.Name == harness.OpenCodeName &&
-		(harness.IsLocalAccessNetworkPreset(axes.Network) ||
-			harness.IsLocalModelAPIsNetworkPreset(axes.Network)) {
-		modelContext.Environment = snapshot.Effective.Environment
-		if modelErr := session.ValidateTclaudeLayerOpenCodeLocalModelTransport(
-			h, snapshot.Effective, modelContext,
-		); modelErr != nil {
-			return nil, sandboxCapabilitySpawnFailure(
-				modelErr, harness.SandboxCapabilityModelTransport)
-		}
-	}
 	var verdict harness.LaunchOSSandbox
 	var filteredProbe *session.FilteredNetworkPrerequisite
 	if implementation == sandboxpolicy.ImplementationHarnessBuiltin {

@@ -1604,23 +1604,6 @@ func runNew(params *NewParams) error {
 		if axesErr != nil {
 			return fmt.Errorf("derive sandbox access axes: %w", axesErr)
 		}
-		if sandboxImplementation == sandboxpolicy.ImplementationTclaudeLayer &&
-			h.Name == harness.OpenCodeName &&
-			(harness.IsLocalAccessNetworkPreset(axes.Network) ||
-				harness.IsLocalModelAPIsNetworkPreset(axes.Network)) {
-			if modelErr := ValidateTclaudeLayerOpenCodeLocalModelTransport(
-				h,
-				launchSandbox.Effective,
-				ModelTransportLaunchContext{
-					Model:       model,
-					Cwd:         cwd,
-					Environment: launchSandbox.Effective.Environment,
-					ExtraArgs:   extraArgs,
-				},
-			); modelErr != nil {
-				return modelErr
-			}
-		}
 		caps, capsErr := harness.ResolveAccessEnforcement(
 			h, sandboxImplementation, axes, launchOSSandbox, effectiveHarnessBuiltinMode,
 		)

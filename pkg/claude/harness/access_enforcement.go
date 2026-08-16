@@ -139,11 +139,11 @@ type PredictedNetworkEntry struct {
 
 const PredictedNetworkDenyNotEnforcedDetail = "This deny rule is saved, but this launch target does not apply network deny entries; traffic matching this destination is not blocked by this rule. Choose Linux tclaude sandbox for enforced deny rules."
 
-// OpenCodeFilteredExplicitProviderCaveat is the launch gate every OpenCode
-// filtered row depends on. It is disclosed on the rows themselves so the
-// effective-policy preview and the runtime cannot disagree about whether the
-// rules will apply.
-const OpenCodeFilteredExplicitProviderCaveat = "OpenCode additionally requires an explicit provider/model launch model and inline explicit-provider config; a launch without one is refused, not started with these rules dropped."
+// OpenCodeFilteredExplicitProviderCaveat explains the conditional provider
+// validation on OpenCode filtered launches. Selecting a model asks tclaude to
+// resolve and check its inference endpoint; omitting one deliberately leaves
+// inference access under the operator's authored network rules.
+const OpenCodeFilteredExplicitProviderCaveat = "When OpenCode selects an explicit provider/model launch model, tclaude also requires inline explicit-provider config and checks that provider endpoint against these rules. Without a launch model, only the authored network rules apply and inference access is user-managed."
 
 const FilteredNetworkDNSDenyDefaultAllowCaveat = "tclaude blocks addresses observed for this denied name through the sandbox DNS broker. With Allow all, another address for the same service, or encrypted DNS that bypasses the broker, can remain reachable. A blocked shared address also affects other names until the DNS lease expires."
 
@@ -482,9 +482,9 @@ func accessEnforcementTable(
 				caps.NetworkListCondition =
 					"At launch, bubblewrap, pasta, and nft must pass live checks. If any check fails, these rules are not enforced and outbound traffic is open."
 				if h.Name == OpenCodeName {
-					// Preview and runtime must not disagree: OpenCode reaches this
-					// gateway only through an inspected explicit provider, and a
-					// launch without one is refused rather than started unfiltered.
+					// Disclose both runtime paths: a selected model is inspected and
+					// checked for coverage, while a no-model launch applies only the
+					// authored rules.
 					caps.NetworkListCondition +=
 						" " + OpenCodeFilteredExplicitProviderCaveat
 				}
@@ -522,11 +522,8 @@ func accessEnforcementTable(
 				},
 			}
 			if h.Name == OpenCodeName {
-				// A deny-only profile has no allow list, so the launch-gate
-				// disclosure on NetworkListCondition would never reach the
-				// operator. Carry it on each deny selector instead: the row
-				// says enforced, and the launch it depends on is refused rather
-				// than started with the row dropped.
+				// A deny-only profile has no allow row to carry the conditional
+				// selected-model disclosure, so repeat it on each deny selector.
 				for index := range caps.NetworkDenySelectors {
 					caps.NetworkDenySelectors[index].Detail = strings.TrimSpace(
 						caps.NetworkDenySelectors[index].Detail + " " +
@@ -615,22 +612,12 @@ func accessEnforcementTable(
 			caps.NetworkDenyPorts = EnforceFull
 			caps.NetworkListCondition = ProxyEngineLaunchCondition
 			if h.Name == OpenCodeName {
-				// Preview and runtime must not disagree, exactly as on the
-				// packet branch above. The model-transport gate this caveat
-				// describes is ENGINE-INDEPENDENT — it fires for any filtered
-				// posture (see ResolveTclaudeLayerModelTransport at the launch
-				// seam) — so activating these cells without carrying it would
-				// render network.list Full for a launch that is then refused
-				// with unsupported_filtered_model_transport.
-				//
-				// It was invisible until TCL-891: while the proxy cells were
-				// EnforceNone for OpenCode this string was never populated, so
-				// the flip is what exposes the gap rather than what creates it.
+				// Match the packet branch's disclosure of selected-model
+				// validation versus user-managed no-model access.
 				caps.NetworkListCondition +=
 					" " + OpenCodeFilteredExplicitProviderCaveat
-				// And on every deny selector, for the same reason the packet
-				// branch does it: a deny-only profile has no allow list, so the
-				// condition above would never reach the operator at all.
+				// A deny-only profile has no allow row to carry the condition, so
+				// repeat the disclosure on each deny selector.
 				for index := range caps.NetworkDenySelectors {
 					caps.NetworkDenySelectors[index].Detail = strings.TrimSpace(
 						caps.NetworkDenySelectors[index].Detail + " " +
@@ -675,57 +662,9 @@ func accessEnforcementTable(
 			caps.NetworkListCondition = SeatbeltNativeLoopbackCondition
 			caps.Mechanism = "tclaude-layer Seatbelt native host-loopback filter"
 		}
-		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
-			!proxyCellsActivated &&
-			h.Name == OpenCodeName &&
-			(IsLocalAccessNetworkPreset(axes.Network) ||
-				IsLocalModelAPIsNetworkPreset(axes.Network)) {
-			// General explicit-provider OpenCode filtering is supported on
-			// Linux. These two convenience presets are narrower: they name no
-			// explicit provider, and OpenCode exposes no effective-config read
-			// to resolve one from, so advertising their packet capability would
-			// make the rendered surface disagree with the launch-gated
-			// model-transport refusal.
-			//
-			// TCL-895: dropped only when the proxy cells above ACTUALLY
-			// applied. The refusal is the packet gateway's — pre-resolving a
-			// launch endpoint to check the authored list against — and a
-			// proxy-engine launch runs none of it, so an activated engine:proxy
-			// profile on one of these presets kept rendering a refusal for
-			// machinery it never reaches.
-			//
-			// The condition is proxyCellsActivated rather than merely "the
-			// deployed engine is the proxy", and the difference is the whole
-			// safety of this gate. On a platform or harness whose proxy cells
-			// are NOT activated, dropping the refusal would leave a row that
-			// enforces nothing — which the plan then widens to open. That would
-			// turn a launch that used to be refused into one that starts with
-			// open outbound, which is the wrong direction for a preset whose
-			// entire purpose is "local only".
-			//
-			// The launch seam mirrors this exactly, in
-			// session.ValidateTclaudeLayerOpenCodeLocalModelTransport, so
-			// preview and runtime still answer together.
-			caps.NetworkList = EnforceNone
-			caps.NetworkSelectors = nil
-			caps.NetworkPorts = EnforceNone
-			caps.NetworkDenySelectors = nil
-			caps.NetworkDenyPorts = EnforceNone
-			caps.NetworkListCondition = ""
-			caps.NetworkListRefusal =
-				"missing capability unsupported_filtered_model_transport: OpenCode's local presets name no explicit provider and OpenCode exposes no effective-config read of its own loader, so their launch endpoint cannot be resolved; use an explicit-provider OpenCode config, use Claude Code or Codex with a resolvable provider, or use network open"
-		}
-		// TCL-931. The rule above fires on the EXACT preset shapes. This one
-		// covers the rest of the local-only-intent family, and it exists
-		// because the gap between them was NON-MONOTONIC: a bare loopback
-		// preset was refused, while the same preset with a PORT — a strictly
-		// tighter policy — fell through both predicates and planned OPEN.
-		// Tightening the authored policy made the launch more permissive.
-		//
-		// That is the exact inversion the comment above argues against for the
-		// adjacent shape, reached through a predicate gap rather than a
-		// decision. See IsLocalOnlyNetworkIntent for why this asks a different
-		// question than the recognizers rather than widening them.
+		// TCL-931. This rule covers local-only intent on platforms where the
+		// policy cannot be enforced. Without it, a tighter local-only policy
+		// could fall through and launch with fully open outbound access.
 		//
 		// WHY THIS IS GATED ON EnforceNone RATHER THAN ON goos == "darwin".
 		// The harm is not "macOS"; it is "this platform and harness cannot
@@ -738,14 +677,16 @@ func accessEnforcementTable(
 		// so this no longer fires there and remains only for an unactivated
 		// future platform instead of lingering as a stale Darwin special case.
 		//
-		// The empty-refusal clause preserves the more specific message above
-		// when both would apply, rather than overwriting it with this one.
+		// The empty-refusal clause preserves any more specific capability
+		// message rather than overwriting it with this one.
 		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
 			!proxyCellsActivated &&
 			h.Name == OpenCodeName &&
 			caps.NetworkList == EnforceNone &&
 			caps.NetworkListRefusal == "" &&
-			IsLocalOnlyNetworkIntent(axes.Network) {
+			(IsLocalOnlyNetworkIntent(axes.Network) ||
+				IsLocalAccessNetworkPreset(axes.Network) ||
+				IsLocalModelAPIsNetworkPreset(axes.Network)) {
 			caps.NetworkSelectors = nil
 			caps.NetworkPorts = EnforceNone
 			caps.NetworkDenySelectors = nil
@@ -756,7 +697,7 @@ func accessEnforcementTable(
 			// does not activate OpenCode's local enforcement at all, so the
 			// list would be unenforced with or without one.
 			caps.NetworkListRefusal =
-				"missing capability unsupported_filtered_network_posture: this platform does not enforce OpenCode's local-only network list, so the launch would start with outbound network access fully open rather than restricted to this machine; use Claude Code or Codex, which enforce a local-only list here, or use network open deliberately if unrestricted outbound is intended"
+				"missing capability unsupported_filtered_network_posture: this platform does not enforce this OpenCode restricted network list, so the launch would start with outbound network access fully open rather than restricted to the authored destinations; use Claude Code or Codex, which enforce this list here, or use network open deliberately if unrestricted outbound is intended"
 		}
 		networkPosture, postureErr := sandboxpolicy.NetworkPostureForRules(
 			axes.Network)

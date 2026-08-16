@@ -235,21 +235,14 @@ func TestOpenCodeProxyEngineCellsFollowTheActivationRecord(t *testing.T) {
 		harness.ProxyEngineNotActivatedNotice,
 		"the unactivated platform must still disclose that it is not activated")
 
-	// PREVIEW AND RUNTIME MUST NOT DISAGREE. The model-transport gate that
-	// refuses an OpenCode filtered launch without an explicit provider/model is
-	// ENGINE-INDEPENDENT — it fires for any filtered posture — so an activated
-	// proxy row that did not carry its caveat would render network.list Full
-	// for a launch then refused with unsupported_filtered_model_transport.
-	//
-	// This was invisible until the flip: while these cells were EnforceNone the
-	// condition string was never populated for OpenCode, so activation is what
-	// exposed the gap. The packet branch has carried the same caveat all along.
+	// Preview and runtime disclose the same conditional behavior: selected
+	// models are checked against the rules, while no-model launches leave
+	// inference access user-managed.
 	assert.Contains(t, predicted.NetworkListCondition,
 		harness.OpenCodeFilteredExplicitProviderCaveat,
-		"an activated OpenCode proxy row must disclose the explicit-provider launch gate")
+		"an activated OpenCode proxy row must disclose selected-model validation")
 
-	// And on the deny selectors, because a deny-only profile has no allow list
-	// and would never reach the condition above.
+	// Deny selectors carry it too because a deny-only profile has no allow row.
 	denyOnly := sandboxpolicy.EmptySnapshot()
 	denyOnly.Effective.Network = &sandboxpolicy.NetworkRules{
 		Mode:   sandboxpolicy.AccessModeOpen,
@@ -270,7 +263,7 @@ func TestOpenCodeProxyEngineCellsFollowTheActivationRecord(t *testing.T) {
 	for _, capability := range denyPredicted.NetworkDenySelectors {
 		assert.Containsf(t, capability.Detail,
 			harness.OpenCodeFilteredExplicitProviderCaveat,
-			"deny selector %s must carry the launch gate a deny-only profile cannot read elsewhere",
+			"deny selector %s must carry the selected-model disclosure",
 			capability.Selector)
 	}
 

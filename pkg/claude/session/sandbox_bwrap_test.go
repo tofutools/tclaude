@@ -936,7 +936,14 @@ func TestValidateTclaudeLayerFilteredNetworkRequiresHonestModelResolution(t *tes
 	require.ErrorContains(t, err, "model provider configuration was not resolved")
 	require.ErrorContains(t, err, "use network open")
 
-	notices, err := ValidateTclaudeLayerNetwork(claude, effective, harness.ResolvedModelTransport{
+	openCode := harness.MustGet(harness.OpenCodeName)
+	notices, err := ValidateTclaudeLayerNetwork(
+		openCode, effective, harness.ResolvedModelTransport{})
+	require.NoError(t, err)
+	assert.Empty(t, notices,
+		"without a selected model, OpenCode inference access is user-managed")
+
+	notices, err = ValidateTclaudeLayerNetwork(claude, effective, harness.ResolvedModelTransport{
 		Model:            "claude-sonnet",
 		Provider:         "anthropic",
 		ProviderResolved: true,
@@ -972,8 +979,6 @@ func TestValidateTclaudeLayerFilteredNetworkRequiresHonestModelResolution(t *tes
 	assert.Contains(t, notices[0].Detail, "remote managed settings")
 	assert.Contains(t, notices[0].Detail, "denied fail-closed for new flows")
 
-	openCode, resolveErr := harness.Resolve(harness.OpenCodeName)
-	require.NoError(t, resolveErr)
 	notices, err = ValidateTclaudeLayerNetwork(
 		openCode, custom, harness.ResolvedModelTransport{
 			Model:            "test/test-model",

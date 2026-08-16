@@ -708,10 +708,8 @@ func TestLinuxTclaudeLayerDenyCapabilityDrivesPredictionAndLaunchPlan(t *testing
 		})
 	}
 
-	// The OpenCode local presets stay outside the activation: their filtered
-	// list is refused at launch for want of an explicit provider, so their deny
-	// rows must keep
-	// disclosing omission rather than inheriting the flipped cell.
+	// OpenCode local presets use the same activated deny enforcement. Omitting
+	// a launch model no longer invents a provider prerequisite for these rows.
 	localPresetAxes := sandboxpolicy.ResolvedAxes{
 		Network: sandboxpolicy.NetworkRules{
 			Mode:  sandboxpolicy.AccessModeList,
@@ -729,15 +727,13 @@ func TestLinuxTclaudeLayerDenyCapabilityDrivesPredictionAndLaunchPlan(t *testing
 		localPresetAxes.Network.Deny,
 		predictedAccessEnforcementFromTable(presetRow))
 	require.Len(t, presetRows, 2)
-	for _, predictedRow := range presetRows {
-		assert.Equal(t, AccessPredictionNotEnforced, predictedRow.Outcome)
-		assert.Equal(t, PredictedNetworkDenyNotEnforcedDetail,
-			predictedRow.Detail)
-	}
-	// That preset never reaches a plan at all: its filtered list is refused.
-	_, _, err = PlanAccessEnforcement(
+	assert.Equal(t, AccessPredictionEnforced, presetRows[0].Outcome)
+	assert.Equal(t, AccessPredictionEnforced, presetRows[1].Outcome)
+	// The preset composes into a filtered plan without a provider prerequisite.
+	_, presetNotices, err := PlanAccessEnforcement(
 		localPresetAxes, accessEnforcementFromTable(presetRow))
-	require.ErrorContains(t, err, "unsupported_filtered_model_transport")
+	require.NoError(t, err)
+	assert.Empty(t, presetNotices)
 
 	// A cell without any executing deny smoke still omits each deny row.
 	row, err := accessEnforcementTable(
@@ -925,9 +921,11 @@ func TestM3OpenCodeFilteredPredictionAndReadyPlanActivate(t *testing.T) {
 			)
 			require.NoError(t, err)
 			preview = DescribePredictedAccess(local, prediction).Network
-			assert.Equal(t, AccessPredictionRefused, preview.Outcome)
-			assert.Contains(t, preview.Detail, SandboxCapabilityModelTransport)
-			assert.Contains(t, preview.Detail, "no explicit provider")
+			assert.NotContains(t, preview.Detail, SandboxCapabilityModelTransport)
+			assert.NotContains(t, preview.Detail, "no explicit provider")
+			if platform == "linux" {
+				assert.Equal(t, AccessPredictionEnforced, preview.Outcome)
+			}
 		}
 	}
 
@@ -1198,13 +1196,14 @@ func TestOpenCodeLocalOnlyIntentIsRefusedWhereItCannotBeEnforced(t *testing.T) {
 		})
 	}
 
-	// THE BARE PRESET keeps its own, more specific refusal rather than being
-	// overwritten by the broader one.
-	t.Run("darwin/opencode/bare preset keeps its own message", func(t *testing.T) {
+	// The bare preset is governed by the same platform capability refusal; it
+	// no longer invents a provider requirement when no model was selected.
+	t.Run("darwin/opencode/bare preset uses platform message", func(t *testing.T) {
 		_, planErr := plan(t, MustGet(OpenCodeName),
 			listOf(sandboxpolicy.NetworkAllowEntry{Loopback: true}), "darwin")
 		require.Error(t, planErr)
-		assert.Contains(t, planErr.Error(), "unsupported_filtered_model_transport")
+		assert.Contains(t, planErr.Error(), "unsupported_filtered_network_posture")
+		assert.NotContains(t, planErr.Error(), "explicit provider")
 	})
 
 	// NO LINUX REGRESSION. Linux activates these cells, so the same shapes must

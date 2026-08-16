@@ -407,6 +407,14 @@ func TestResolveTclaudeLayerOpenCodeRequiresAndResolvesStrictInlineProvider(t *t
 
 	resolved, err := ResolveTclaudeLayerModelTransport(
 		openCode,
+		ModelTransportLaunchContext{Cwd: cwd},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, harness.ResolvedModelTransport{}, resolved,
+		"without a selected model, inference access is left to the authored rules")
+
+	resolved, err = ResolveTclaudeLayerModelTransport(
+		openCode,
 		ModelTransportLaunchContext{Model: "provider/model", Cwd: cwd},
 	)
 	require.Error(t, err)
