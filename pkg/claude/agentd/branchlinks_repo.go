@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -58,26 +59,29 @@ type branchLinkRepo struct {
 	DefaultBranch string // the repo's default branch, resolved under the same pins
 }
 
+// branchLinkRepoResolveTimeout bounds the WHOLE repository resolution, not each
+// probe within it. Five or so local git calls share it, which is deliberate:
+// the alternative is a per-probe deadline whose worst case is the sum, and this
+// runs on a background refresh goroutine whose single-flight key is held until
+// it returns. A budget the caller can reason about matters more here than
+// letting a stalled filesystem have another 12 seconds per probe.
+const branchLinkRepoResolveTimeout = 30 * time.Second
+
 // resolveBranchLinkRepo validates dir and resolves the repository it belongs
-// to. It returns ok=false for every refusal — an unreachable path, a
-// non-repository, a redirected git dir, a non-GitHub or non-allow-listed
-// remote — because the caller's contract is "no links", not "an error". The
-// caller writes a negative cache entry either way, so a refused directory is
-// not re-probed on every 2s snapshot.
-func resolveBranchLinkRepo(ctx context.Context, dir string) (branchLinkRepo, bool) {
-	cfg, err := config.Load()
-	if err != nil {
-		slog.Debug("branchlinks: refusing resolution, configuration unreadable",
-			"error", err, "module", "agentd")
-		return branchLinkRepo{}, false
-	}
-	policy := cfg.ResolvedGitProxy()
+// to, under the operator policy the caller already loaded. It returns ok=false
+// for every refusal — an unreachable path, a non-repository, a redirected git
+// dir, a non-GitHub or non-allow-listed remote — because the caller's contract
+// is "no links", not "an error". The caller writes a negative cache entry
+// either way, so a refused directory is not re-probed on every 2s snapshot.
+func resolveBranchLinkRepo(ctx context.Context, policy config.GitProxyConfig, dir string) (branchLinkRepo, bool) {
 	if len(policy.AllowedRemotes) == 0 {
-		// Reached only when the config became readable-but-empty between the
-		// activation check and here. Nothing is allow-listed, so nothing may
-		// be resolved.
+		// No allow-list is no authorization. The caller only reaches here with
+		// a non-empty one, but the gate is cheap and this function must not
+		// depend on that for its safety.
 		return branchLinkRepo{}, false
 	}
+	ctx, cancel := context.WithTimeout(ctx, branchLinkRepoResolveTimeout)
+	defer cancel()
 	gitPath, err := proxyBinary("git")
 	if err != nil {
 		return branchLinkRepo{}, false
@@ -94,8 +98,15 @@ func resolveBranchLinkRepo(ctx context.Context, dir string) (branchLinkRepo, boo
 	// select a PROGRAM rather than describe a value. The pins are what stop a
 	// repository from executing something on the daemon host merely by being
 	// looked at.
-	pins := gitProxyConfigPins(hooksDir, gitProxySSHCommand(policy),
-		globalCredentialHelpers(ctx, gitPath))
+	//
+	// The credential-helper list is deliberately empty. gitProxyConfigPins
+	// clears the helper list and re-adds the operator's own global ones so a
+	// PROXIED FETCH can still authenticate; nothing here authenticates, so
+	// re-adding them buys nothing and costs two `git config --get-all`
+	// subprocesses on every refresh — subprocesses that read the operator's
+	// HOME and would spend this function's whole budget first if that home ever
+	// stalled. Clearing without re-adding is the stricter half of the pin.
+	pins := gitProxyConfigPins(hooksDir, gitProxySSHCommand(policy), nil)
 	// Every probe names its directory twice — as `-C <dir>` and as the child's
 	// working directory — so neither the daemon's own cwd nor a later argv
 	// change can move where git looks.
@@ -132,13 +143,39 @@ func resolveBranchLinkRepo(ctx context.Context, dir string) (branchLinkRepo, boo
 			"repo", ref.Key(), "module", "agentd")
 		return branchLinkRepo{}, false
 	}
+	// EXACTLY two path segments, then a slug check on each — the same refusal
+	// githubproxy.go makes, for the same reason. matchRemotePattern admits a
+	// pattern shorter than the target as a PREFIX, while OwnerRepo() is first
+	// segment + last segment, so the two rules disagree the moment a remote has
+	// more than two segments:
+	//
+	//   allow-list  github.com/acme/widgets        (the "one repo" form)
+	//   remote      github.com/acme/widgets/secret
+	//
+	// The allow-list admits that remote and the derived slug becomes
+	// acme/secret — a repository the operator never listed, handed straight to
+	// `gh --repo`. Re-deriving a repository from a path matched under a
+	// different rule is an allow-list escape, not a nicety. A GitHub repository
+	// is always owner/repo, and branch links are GitHub-only anyway, so
+	// refusing anything else costs nothing here.
+	if len(ref.Path) != 2 {
+		slog.Debug("branchlinks: refusing to derive a repository from a nested remote path",
+			"repo", ref.Key(), "module", "agentd")
+		return branchLinkRepo{}, false
+	}
+	ownerRepo := ref.OwnerRepo()
+	owner, repoName, _ := strings.Cut(ownerRepo, "/")
+	if !isGitHubOwnerSlug(owner) || !isGitHubRepoSlug(repoName) {
+		slog.Debug("branchlinks: refusing a remote that is not a valid github owner/repo pair",
+			"repo", ref.Key(), "module", "agentd")
+		return branchLinkRepo{}, false
+	}
 	// parseRemoteURL has already applied git's url.<base>.insteadOf rewrites,
 	// so the allow-list above saw the destination git would actually use. What
 	// is left for repoHTTPSFromRemote is the web-link form, which exists only
 	// for github.com.
 	repoURL := repoHTTPSFromRemote(remote)
-	ownerRepo := ref.OwnerRepo()
-	if repoURL == "" || ownerRepo == "" {
+	if repoURL == "" {
 		return branchLinkRepo{}, false
 	}
 	return branchLinkRepo{
@@ -190,6 +227,12 @@ func branchLinkRepoRoot(ctx context.Context, gitPath, dir string, probe func(str
 		// project's own worktree helpers create them, so they are admitted —
 		// but only on the back-pointer that PROVES the link, never on the
 		// shape alone.
+		//
+		// This is the one probe on this path that runs UNPINNED: the shared
+		// helper builds its own argv, as it does for resolveProxyRepoAt, which
+		// has no pins at the point it calls this either. Its single verb is
+		// `rev-parse --git-common-dir`, a path lookup that consults none of the
+		// program-selecting keys the pins exist for.
 		if fault := acceptLinkedWorktree(ctx, gitPath, resolved, root, gitDir); fault != nil {
 			slog.Debug("branchlinks: refusing a work tree whose git dir is redirected",
 				"root", root, "git_dir", gitDir, "module", "agentd")

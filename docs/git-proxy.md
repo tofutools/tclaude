@@ -160,8 +160,11 @@ and only once it exists:
   repository is — physical path, work-tree root, git-dir containment, linked
   worktrees proved by their back-pointer — the repository is read from the
   validated work tree's own `origin` and matched against the list, and `gh` is
-  then told which repository to use (`--repo owner/repo`) from a neutral
-  directory. A repository off the list resolves to no links.
+  then told which repository to use (`--repo owner/repo`) rather than being left
+  to infer it from the agent's work tree. Only a plain `owner/repo` remote
+  qualifies — a longer path would be matched by the allow-list under one rule
+  and turned into a repository slug under another. A repository off the list
+  resolves to no links.
 - **Presented pull requests.** `tclaude agent present-pr` accepts only a
   `https://github.com/<owner>/<repo>/pull/<number>` URL for an allow-listed
   repository inside the calling agent's own launch tree.

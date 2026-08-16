@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -522,10 +523,24 @@ func liveGitInfoResolver(repoDir, branch string) (repoBranchInfo, bool) {
 	if repoDir == "" || branch == "" {
 		return repoBranchInfo{}, false
 	}
-	if gitProxyHardeningActive() {
-		return hardenedGitInfo(repoDir, branch)
+	// One config read decides both questions — which path to take, and, for the
+	// hardened path, the policy it runs under. gitProxyHardeningActive() would
+	// answer the first on its own, but it reloads the file, and this is a
+	// background refresh that fires per (repoDir, branch) per TTL.
+	cfg, err := config.Load()
+	if err != nil {
+		// Fail closed, the same way gitProxyHardeningActive does: a config that
+		// cannot be read must not silently restore the unbounded path. With no
+		// policy to run under there is nothing to resolve either, so the answer
+		// is no links rather than legacy links.
+		slog.Debug("branchlinks: refusing resolution, configuration unreadable",
+			"error", err, "module", "agentd")
+		return repoBranchInfo{}, false
 	}
-	return legacyGitInfo(repoDir, branch)
+	if !cfg.GitProxyEnabled() {
+		return legacyGitInfo(repoDir, branch)
+	}
+	return hardenedGitInfo(cfg.ResolvedGitProxy(), repoDir, branch)
 }
 
 // hardenedGitInfo resolves a branch's links through the repository gate. The
@@ -533,10 +548,8 @@ func liveGitInfoResolver(repoDir, branch string) (repoBranchInfo, bool) {
 // read from that root's own remote and checked against the operator's
 // allow-list, and `gh` is then told which repository to talk to rather than
 // inferring it from a directory the agent controls.
-func hardenedGitInfo(repoDir, branch string) (repoBranchInfo, bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), branchLinkCmdTimeout)
-	defer cancel()
-	repo, ok := resolveBranchLinkRepo(ctx, repoDir)
+func hardenedGitInfo(policy config.GitProxyConfig, repoDir, branch string) (repoBranchInfo, bool) {
+	repo, ok := resolveBranchLinkRepo(context.Background(), policy, repoDir)
 	if !ok {
 		return repoBranchInfo{}, false
 	}
@@ -546,9 +559,13 @@ func hardenedGitInfo(repoDir, branch string) (repoBranchInfo, bool) {
 		DefaultBranch: repo.DefaultBranch,
 	}
 	if info.DefaultBranch == "" || branch != info.DefaultBranch {
-		// Neutral directory + explicit --repo. Between them there is no
-		// repo-local `remote.origin.gh-resolved` for gh to read and no
-		// ambiguity about which repository the token is spent on.
+		// An explicit --repo, and a working directory that is not the agent's.
+		// The guarantee is the flag: it names the repository outright, so gh
+		// never runs its base-repo resolution and a repo-local
+		// `remote.origin.gh-resolved` has nothing to influence. The empty dir
+		// leaves gh in the daemon's own cwd — out of the agent's work tree,
+		// which is the point, though it is the daemon's directory rather than
+		// an empty one. Same shape as the presented-PR resolvers in prs.go.
 		info.PRNumber, info.PRURL, info.PRState, info.Checks = ghPRForBranch("", repo.OwnerRepo, branch)
 	}
 	return info, true

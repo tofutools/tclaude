@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -66,6 +67,37 @@ func branchLinkFixture(t *testing.T, allowedRemotes ...string) (string, string) 
 	return gitPath, root
 }
 
+// branchLinkPolicy is the effective policy the production caller
+// (liveGitInfoResolver) would hand resolveBranchLinkRepo, read back from the
+// config the fixture just wrote.
+func branchLinkPolicy(t *testing.T) config.GitProxyConfig {
+	t.Helper()
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	return cfg.ResolvedGitProxy()
+}
+
+// ghShim puts a fake `gh` first on PATH and returns the path of the file it
+// records each invocation to: one line of "cwd\targ\targ…" per call.
+//
+// A shim is the only way to see what the daemon actually asks gh for. Asserting
+// on ghPRListArgs alone leaves the wiring untested — hardenedGitInfo could pass
+// the agent's own directory and the resolved repository could go unused, which
+// is TCL-1169 reintroduced in full, and every argv-level test would still pass.
+func ghShim(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	log := filepath.Join(dir, "calls.log")
+	script := "#!/bin/sh\n" +
+		"printf '%s' \"$PWD\" >> " + log + "\n" +
+		"for a in \"$@\"; do printf '\\t%s' \"$a\" >> " + log + "; done\n" +
+		"printf '\\n' >> " + log + "\n" +
+		"echo '[]'\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755))
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return log
+}
+
 // TestBranchLinkRepoRefusesAGitfileRedirect covers vector 2 of TCL-1169.
 //
 // A one-line `.git` file — "gitdir: /elsewhere/.git" — is enough to make every
@@ -88,7 +120,7 @@ func TestBranchLinkRepoRefusesAGitfileRedirect(t *testing.T) {
 		repoHTTPSFromRemote(gitInDir(attacker, "remote", "get-url", "origin")),
 		"fixture check: without the gate the redirect resolves the victim's repo")
 
-	_, ok := resolveBranchLinkRepo(context.Background(), attacker)
+	_, ok := resolveBranchLinkRepo(context.Background(), branchLinkPolicy(t), attacker)
 	assert.False(t, ok, "a work tree whose git dir points elsewhere must not resolve")
 }
 
@@ -108,7 +140,7 @@ func TestBranchLinkRepoAcceptsALinkedWorktree(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	require.NoErrorf(t, err, "git worktree add: %s", out)
 
-	repo, ok := resolveBranchLinkRepo(context.Background(), linked)
+	repo, ok := resolveBranchLinkRepo(context.Background(), branchLinkPolicy(t), linked)
 	require.True(t, ok, "a registered linked worktree is the agent's own repository")
 	assert.Equal(t, linked, repo.Root)
 	assert.Equal(t, "https://github.com/tofutools/tclaude", repo.RepoURL)
@@ -138,7 +170,7 @@ func TestBranchLinkRepoIgnoresGhResolved(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	require.NoErrorf(t, err, "git config: %s", out)
 
-	repo, ok := resolveBranchLinkRepo(context.Background(), repoDir)
+	repo, ok := resolveBranchLinkRepo(context.Background(), branchLinkPolicy(t), repoDir)
 	require.True(t, ok)
 	assert.Equal(t, "tofutools/tclaude", repo.OwnerRepo,
 		"the repository gh is told about comes from the remote, not from gh-resolved")
@@ -154,12 +186,12 @@ func TestBranchLinkRepoBoundsResolutionByTheOperatorsAllowList(t *testing.T) {
 
 	outside := branchLinkGitRepo(t, gitPath, filepath.Join(root, "outside"),
 		"https://github.com/other-org/other-repo.git")
-	_, ok := resolveBranchLinkRepo(context.Background(), outside)
+	_, ok := resolveBranchLinkRepo(context.Background(), branchLinkPolicy(t), outside)
 	assert.False(t, ok, "a repository the operator never allow-listed must not be resolved")
 
 	inside := branchLinkGitRepo(t, gitPath, filepath.Join(root, "inside"),
 		"git@github.com:tofutools/tclaude.git")
-	repo, ok := resolveBranchLinkRepo(context.Background(), inside)
+	repo, ok := resolveBranchLinkRepo(context.Background(), branchLinkPolicy(t), inside)
 	require.True(t, ok, "an allow-listed repository still resolves, ssh remote included")
 	assert.Equal(t, "https://github.com/tofutools/tclaude", repo.RepoURL)
 }
@@ -180,7 +212,7 @@ func TestBranchLinkRepoAppliesInsteadOfBeforeTheAllowList(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	require.NoErrorf(t, err, "git config: %s", out)
 
-	_, ok := resolveBranchLinkRepo(context.Background(), repoDir)
+	_, ok := resolveBranchLinkRepo(context.Background(), branchLinkPolicy(t), repoDir)
 	assert.False(t, ok, "the rewritten destination is what the allow-list is applied to")
 }
 
@@ -196,7 +228,7 @@ func TestBranchLinkRepoResolvesASymlinkedPath(t *testing.T) {
 	alias := filepath.Join(root, "alias")
 	require.NoError(t, os.Symlink(repoDir, alias))
 
-	repo, ok := resolveBranchLinkRepo(context.Background(), alias)
+	repo, ok := resolveBranchLinkRepo(context.Background(), branchLinkPolicy(t), alias)
 	require.True(t, ok)
 	assert.Equal(t, repoDir, repo.Root, "the resolved root is the physical path")
 }
@@ -209,10 +241,10 @@ func TestBranchLinkRepoRefusesANonRepository(t *testing.T) {
 
 	plain := filepath.Join(root, "plain")
 	require.NoError(t, os.MkdirAll(plain, 0o755))
-	_, ok := resolveBranchLinkRepo(context.Background(), plain)
+	_, ok := resolveBranchLinkRepo(context.Background(), branchLinkPolicy(t), plain)
 	assert.False(t, ok)
 
-	_, ok = resolveBranchLinkRepo(context.Background(), "relative/path")
+	_, ok = resolveBranchLinkRepo(context.Background(), branchLinkPolicy(t), "relative/path")
 	assert.False(t, ok, "a non-absolute directory is never resolved")
 }
 
@@ -234,13 +266,119 @@ func TestLiveGitInfoResolverGatesHardeningOnTheGitProxy(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(attacker, ".git"),
 		[]byte("gitdir: "+filepath.Join(victim, ".git")+"\n"), 0o644))
 
-	_, ok := liveGitInfoResolver(attacker, "feat")
+	// `main` rather than a feature branch on purpose: both halves short-circuit
+	// the PR lookup on the default branch, so this exercises the repository
+	// resolution without either half shelling out to the host's real `gh` —
+	// which, on a developer machine where gh is installed and authenticated,
+	// would issue a live GitHub request for the victim's repository.
+	_, ok := liveGitInfoResolver(attacker, "main")
 	assert.False(t, ok, "with the Git proxy configured, the redirect is refused")
 
 	// The same daemon, the same directory, an operator who configured no proxy.
 	require.NoError(t, config.Save(&config.Config{}))
 	require.False(t, gitProxyHardeningActive())
-	info, ok := liveGitInfoResolver(attacker, "feat")
+	info, ok := liveGitInfoResolver(attacker, "main")
 	require.True(t, ok, "the pre-existing behaviour is unchanged when the proxy is absent")
 	assert.Equal(t, "https://github.com/victim-org/private-repo", info.RepoURL)
+}
+
+// TestBranchLinkRepoRefusesANestedRemotePath closes the escape the two matchers
+// disagree about, and it is the one the allow-list gate cannot catch by itself.
+//
+// matchRemotePattern admits a pattern SHORTER than the target as a prefix —
+// deliberate, so `github.com/your-org` covers everything in that owner, and
+// necessary for nested GitLab groups. remoteRef.OwnerRepo() is first segment +
+// last segment. For a remote with more than two segments the two rules name
+// different repositories, and the one the operator authorized is not the one gh
+// would be pointed at. `origin` is repo-local config, so setting it is within
+// an agent's reach.
+func TestBranchLinkRepoRefusesANestedRemotePath(t *testing.T) {
+	gitPath, root := branchLinkFixture(t, "github.com/tofutools/tclaude")
+
+	repoDir := branchLinkGitRepo(t, gitPath, filepath.Join(root, "work"),
+		"https://github.com/tofutools/tclaude/secret.git")
+
+	// Control: the attack is armed. The allow-list on its own admits this
+	// remote, and the slug derived from it names a repository nobody listed.
+	ref, err := parseRemoteURL("https://github.com/tofutools/tclaude/secret.git")
+	require.NoError(t, err)
+	require.True(t, remoteAllowed(ref, branchLinkPolicy(t).AllowedRemotes),
+		"fixture check: the allow-list matches a longer path as a prefix")
+	require.Equal(t, "tofutools/secret", ref.OwnerRepo(),
+		"fixture check: the derived slug is a repository the operator never listed")
+
+	_, ok := resolveBranchLinkRepo(context.Background(), branchLinkPolicy(t), repoDir)
+	assert.False(t, ok,
+		"a repository may only be derived from a plain owner/repo path")
+}
+
+// TestBranchLinkRepoRefusesAMalformedOwnerRepo keeps the string that becomes a
+// `gh --repo` value inside GitHub's own slug charset, using the same two
+// validators githubproxy.go applies to the slug it derives.
+//
+// The property that carries weight is the leading character. parseRemoteURL
+// refuses a `-` at the start of the whole URL but says nothing about a path
+// SEGMENT, so without the owner check a remote of `https://github.com/--evil/repo`
+// puts `--evil/repo` in an argv slot. isGitHubOwnerSlug requires an
+// alphanumeric first character, which is what makes the value unmistakably a
+// value rather than a flag.
+func TestBranchLinkRepoRefusesAMalformedOwnerRepo(t *testing.T) {
+	gitPath, root := branchLinkFixture(t, "github.com")
+
+	for i, origin := range []string{
+		"https://github.com/--evil/repo.git",
+		"https://github.com/-evil/repo.git",
+		"https://github.com/ow ner/repo.git",
+		"https://github.com/owner/re po.git",
+	} {
+		repoDir := branchLinkGitRepo(t, gitPath,
+			filepath.Join(root, "work", strconv.Itoa(i)), origin)
+		_, ok := resolveBranchLinkRepo(context.Background(), branchLinkPolicy(t), repoDir)
+		assert.Falsef(t, ok, "%s must not reach a gh argv", origin)
+	}
+}
+
+// TestHardenedGitInfoTellsGhWhichRepository joins the two halves of the fix.
+//
+// The gate resolving a repository and ghPRListArgs being able to name one are
+// each necessary and neither is sufficient: the wiring between them is what
+// closes vector 1, and reverting it — passing the agent's own directory, or
+// dropping the resolved slug — would leave both of those tests passing. So this
+// asserts on what `gh` was actually invoked with.
+func TestHardenedGitInfoTellsGhWhichRepository(t *testing.T) {
+	gitPath, root := branchLinkFixture(t, "github.com/tofutools/*")
+	log := ghShim(t)
+
+	repoDir := branchLinkGitRepo(t, gitPath, filepath.Join(root, "work"),
+		"https://github.com/tofutools/tclaude.git")
+	// The vector itself: gh's own default-repo key, pointing elsewhere.
+	cmd := exec.Command(gitPath, "config", "remote.origin.gh-resolved", "victim-org/private-repo")
+	cmd.Dir = repoDir
+	cmd.Env = realGitEnv(repoDir)
+	out, err := cmd.CombinedOutput()
+	require.NoErrorf(t, err, "git config: %s", out)
+
+	info, ok := hardenedGitInfo(branchLinkPolicy(t), repoDir, "feat")
+	require.True(t, ok)
+	assert.Equal(t, "https://github.com/tofutools/tclaude", info.RepoURL)
+
+	recorded, err := os.ReadFile(log)
+	require.NoError(t, err, "gh must have been invoked at all")
+	calls := strings.Split(strings.TrimSpace(string(recorded)), "\n")
+	require.NotEmpty(t, calls)
+	for _, call := range calls {
+		fields := strings.Split(call, "\t")
+		require.GreaterOrEqual(t, len(fields), 2)
+		cwd, args := fields[0], fields[1:]
+		assert.NotEqual(t, repoDir, cwd,
+			"gh must not run inside the agent's work tree, where gh-resolved lives")
+		require.Contains(t, args, "--repo")
+		for i, a := range args {
+			if a == "--repo" {
+				require.Less(t, i+1, len(args))
+				assert.Equal(t, "tofutools/tclaude", args[i+1],
+					"gh is told the repository the daemon resolved, not the one the work tree names")
+			}
+		}
+	}
 }
