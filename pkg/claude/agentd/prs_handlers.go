@@ -59,6 +59,7 @@ func runPRUpdate(w http.ResponseWriter, r *http.Request, target, caller string) 
 		Summary string `json:"summary"`
 		State   string `json:"state"`
 		Handled bool   `json:"handled"`
+		RepoDir string `json:"repo_dir"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -78,6 +79,13 @@ func runPRUpdate(w http.ResponseWriter, r *http.Request, target, caller string) 
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_pr_state", err.Error())
 		return
+	}
+	if !body.Handled && state != "handled" {
+		if err := presentedPRAccessValidator(r.Context(), caller, body.RepoDir, body.URL); err != nil {
+			writeError(w, http.StatusForbidden, "pr_repo_refused", err.Error())
+			return
+		}
+		setAuditDetail(r, body.URL)
 	}
 
 	agentID, err := db.AgentIDForConv(target)

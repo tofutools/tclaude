@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"errors"
 	"net/http"
 	"slices"
 	"testing"
@@ -12,6 +13,49 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
+
+func TestPresentPR_RejectsURLOutsideCallingAgentRepository(t *testing.T) {
+	f := newFlow(t)
+	const worker = "pprr-aaaa-bbbb-cccc-dddd"
+	f.HaveConvWithTitle(worker, "worker")
+	f.HaveAliveSession(worker, "lbl-pprr", "tmux-pprr", f.TestCwd("pprr"))
+	require.NoError(t, db.SetAgentPermissionOverride(worker, agentd.PermSelfPR, db.PermEffectGrant, "test"))
+
+	var gotCaller, gotDir, gotURL string
+	t.Cleanup(agentd.SetPresentedPRAccessValidatorForTest(func(caller, repoDir, rawURL string) error {
+		gotCaller, gotDir, gotURL = caller, repoDir, rawURL
+		return errors.New("repository is outside the caller's launch tree")
+	}))
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(
+		testharness.JSONRequest(t, http.MethodPost, "/v1/whoami/prs", map[string]any{
+			"url": "https://github.com/victim/private/pull/1", "repo_dir": "/victim/private",
+		}), worker))
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "pr_repo_refused")
+	assert.Equal(t, worker, gotCaller)
+	assert.Equal(t, "/victim/private", gotDir)
+	assert.Equal(t, "https://github.com/victim/private/pull/1", gotURL)
+}
+
+func TestPresentPR_RequiresCanonicalGitHubPullURL(t *testing.T) {
+	f := newFlow(t)
+	const worker = "ppru-aaaa-bbbb-cccc-dddd"
+	f.HaveConvWithTitle(worker, "worker")
+	f.HaveAliveSession(worker, "lbl-ppru", "tmux-ppru", f.TestCwd("ppru"))
+	require.NoError(t, db.SetAgentPermissionOverride(worker, agentd.PermSelfPR, db.PermEffectGrant, "test"))
+
+	for _, rawURL := range []string{
+		"http://github.com/tofutools/tclaude/pull/1",
+		"https://example.com/tofutools/tclaude/pull/1",
+		"https://github.com/tofutools/tclaude/pull/1/files",
+		"https://github.com/tofutools/tclaude/pull/1?x=1",
+	} {
+		rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(
+			testharness.JSONRequest(t, http.MethodPost, "/v1/whoami/prs", map[string]any{"url": rawURL}), worker))
+		assert.Equal(t, http.StatusBadRequest, rec.Code, rawURL+": "+rec.Body.String())
+		assert.Contains(t, rec.Body.String(), "invalid_pr_url")
+	}
+}
 
 type presentPRResp struct {
 	ConvID        string `json:"conv_id"`
@@ -50,6 +94,10 @@ func TestPresentPR_SelfPresentsAndDashboardRenders(t *testing.T) {
 	assert.Equal(t, 123, resp.PR.Number)
 	assert.Equal(t, "ready", resp.PR.Summary)
 	assert.Empty(t, resp.CallerConv, "self write carries no caller_conv")
+	auditRows, err := db.ListAuditLog(db.AuditLogFilter{Verb: "present-pr"})
+	require.NoError(t, err)
+	require.Len(t, auditRows, 1, "credential-triggering presentation is audited")
+	assert.Equal(t, worker, auditRows[0].ActorConv)
 
 	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
 	m := findDashMember(snap, "alpha", worker)

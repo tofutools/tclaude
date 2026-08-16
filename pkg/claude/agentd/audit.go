@@ -156,6 +156,10 @@ type auditRoute struct {
 // dashboard (/api) surfaces. New commands that should appear in the trail
 // add an entry here; a command with no entry is simply not audited.
 var auditRoutes = []auditRoute{
+	// Explicit PR presentation triggers a credentialed GitHub read from the
+	// dashboard refresh path, so presenting is part of the audit trail too.
+	{method: http.MethodPost, segs: []string{"whoami", "prs"}, verb: "present-pr"},
+	{method: http.MethodPost, segs: []string{"agent", "{conv}", "prs"}, verb: "present-pr", describe: describeAgentTarget},
 	// Messaging.
 	{method: http.MethodPost, segs: []string{"messages"}, verb: "message", describe: describeMessage},
 	// Reply to a received message — `tclaude agent reply` / `inbox watch`,

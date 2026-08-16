@@ -1129,6 +1129,15 @@ func (s *gitProxySession) gitProbeStrict(ctx context.Context, args ...string) (v
 // authority would hand an agent exactly the aiming primitive this function
 // exists to withhold.
 func resolveProxyRepo(ctx context.Context, gitPath, convID string) (string, *proxyFault) {
+	return resolveProxyRepoAt(ctx, gitPath, convID, "")
+}
+
+// resolveProxyRepoAt is resolveProxyRepo with an optional repository directory
+// selected by the caller. The selection is admitted only inside the caller's
+// immutable launch tree; this supports agents launched at a workspace root
+// containing several repositories without turning the path into an aiming
+// primitive.
+func resolveProxyRepoAt(ctx context.Context, gitPath, convID, requestedDir string) (string, *proxyFault) {
 	sess, err := db.FindSessionByConvID(convID)
 	if err != nil {
 		return "", faultf(500, "repo_unresolved", "could not load your session record: %v", err)
@@ -1144,6 +1153,13 @@ func resolveProxyRepo(ctx context.Context, gitPath, convID string) (string, *pro
 	if !filepath.IsAbs(launchDir) {
 		return "", faultf(409, "repo_unresolved",
 			"the recorded launch directory is not absolute; refusing to run git against it")
+	}
+	if strings.TrimSpace(requestedDir) != "" {
+		launchDir = strings.TrimSpace(requestedDir)
+		if !callerOwnedDirTrust(convID, launchDir) {
+			return "", faultf(403, "repo_outside_launch_dir",
+				"the repository directory must be the calling agent's launch directory or a subdirectory of it")
+		}
 	}
 	// Resolve symlinks before asking git anything, so the path we hand the
 	// subprocess is the physical one and cannot be re-aimed by swapping a link

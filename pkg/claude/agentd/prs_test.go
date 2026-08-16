@@ -9,6 +9,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestValidatePresentedPRRemotePolicy(t *testing.T) {
+	allowed := []string{"github.com/tofutools/tclaude"}
+	assert.True(t, presentedPRRemoteAllowed(githubPRRef{repo: "tofutools/tclaude", number: 1}, allowed))
+	assert.False(t, presentedPRRemoteAllowed(githubPRRef{repo: "victim/private", number: 1}, allowed))
+	assert.False(t, presentedPRRemoteAllowed(githubPRRef{repo: "tofutools/tclaude", number: 1}, nil),
+		"an absent allow-list must not silently authorize credential use")
+}
+
 func TestGitHubPRRefFromURL(t *testing.T) {
 	tests := []struct {
 		name   string

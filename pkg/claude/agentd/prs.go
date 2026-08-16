@@ -33,6 +33,8 @@ var (
 	presentedPRInflight           sync.Map
 	presentedPRCacheMu            sync.Mutex
 	presentedPRInfoResolver       = livePresentedPRInfoResolver
+	presentedPRAccessValidator    = livePresentedPRAccessValidator
+	presentedPRRemotePolicyCheck  = validatePresentedPRRemotePolicy
 	recentlyMergedPRsResolver     = liveRecentlyMergedPRsResolver
 	recentlyMergedPRSearch        = liveRecentlyMergedPRSearch
 	githubLoginResolver           = liveGitHubLoginResolver
@@ -176,6 +178,11 @@ func schedulePresentedPRRefresh(agentID, rawURL string) {
 }
 
 func refreshPresentedPR(agentID, rawURL, key string) {
+	if err := presentedPRRemotePolicyCheck(rawURL); err != nil {
+		slog.Warn("presented-pr: refusing refresh outside git proxy policy",
+			"error", err, "agent_id", agentID, "url", rawURL, "module", "agentd")
+		return
+	}
 	info, ok := presentedPRInfoResolver(rawURL)
 	now := time.Now()
 	if !ok {
@@ -201,7 +208,11 @@ func refreshPresentedPR(agentID, rawURL, key string) {
 }
 
 func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
-	out := runInDir("", "gh", "pr", "view", strings.TrimSpace(rawURL), "--json", "number,url,state,isDraft,statusCheckRollup")
+	ref, ok := githubPRRefFromURL(rawURL)
+	if !ok {
+		return presentedPRInfo{}, false
+	}
+	out := runInDir("", "gh", "pr", "view", strconv.Itoa(ref.number), "--repo", ref.repo, "--json", "number,url,state,isDraft,statusCheckRollup")
 	if out == "" {
 		// Same reasoning as ghPRForBranch: the rollup is an enhancement, the
 		// PR's own state is what the badge colour depends on. Retry without
@@ -232,7 +243,11 @@ func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
 // set only — no isDraft, for the reason documented there. A draft that has
 // to come through this retry renders as a plain open badge.
 func livePresentedPRInfoWithoutChecks(rawURL string) (presentedPRInfo, bool) {
-	out := runInDir("", "gh", "pr", "view", strings.TrimSpace(rawURL), "--json", "number,url,state")
+	ref, ok := githubPRRefFromURL(rawURL)
+	if !ok {
+		return presentedPRInfo{}, false
+	}
+	out := runInDir("", "gh", "pr", "view", strconv.Itoa(ref.number), "--repo", ref.repo, "--json", "number,url,state")
 	if out == "" {
 		return presentedPRInfo{}, false
 	}
@@ -721,15 +736,12 @@ func validateAgentPRURL(rawURL string) error {
 		return fmt.Errorf("PR URL is too long (%d > %d chars)", len(rawURL), maxAgentPRURLLen)
 	}
 	u, err := url.Parse(rawURL)
-	if err != nil {
-		return fmt.Errorf("PR URL is not a valid URL: %w", err)
+	if err != nil || u.Scheme != "https" || !strings.EqualFold(u.Host, "github.com") ||
+		u.User != nil || u.RawQuery != "" || u.Fragment != "" || len(pathSegments(u.Path)) != 4 {
+		return fmt.Errorf("PR URL must have the form https://github.com/<owner>/<repo>/pull/<number>")
 	}
-	scheme := strings.ToLower(u.Scheme)
-	if scheme != "http" && scheme != "https" {
-		return fmt.Errorf("PR URL must be http(s), got %q", u.Scheme)
-	}
-	if u.Host == "" {
-		return fmt.Errorf("PR URL must include a host")
+	if _, ok := githubPRRefFromURL(rawURL); !ok {
+		return fmt.Errorf("PR URL must have the form https://github.com/<owner>/<repo>/pull/<number>")
 	}
 	return nil
 }

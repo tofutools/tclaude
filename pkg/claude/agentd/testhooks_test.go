@@ -1084,6 +1084,22 @@ func SetPresentedPRInfoResolverForTest(fn func(rawURL string) (number int, resol
 		})
 }
 
+// SetPresentedPRAccessValidatorForTest swaps the local-repository and remote
+// policy proof on the presentation request path.
+func SetPresentedPRAccessValidatorForTest(fn func(caller, repoDir, rawURL string) error) func() {
+	prev := presentedPRAccessValidator
+	presentedPRAccessValidator = func(_ context.Context, caller, repoDir, rawURL string) error {
+		return fn(caller, repoDir, rawURL)
+	}
+	return func() { presentedPRAccessValidator = prev }
+}
+
+func SetPresentedPRRemotePolicyCheckForTest(fn func(rawURL string) error) func() {
+	prev := presentedPRRemotePolicyCheck
+	presentedPRRemotePolicyCheck = fn
+	return func() { presentedPRRemotePolicyCheck = prev }
+}
+
 // SetPresentedPRInfoWithChecksResolverForTest is the presented-PR twin of
 // SetGitInfoResolverWithChecksForTest: it also supplies the statusCheckRollup
 // that rides the same `gh pr view`, so the presented-PR piggyback write is

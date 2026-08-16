@@ -33,7 +33,7 @@ func presentPRCmd() *cobra.Command {
 }
 
 type presentPRParams struct {
-	URL      string `pos:"true" help:"Pull request URL (http(s)) to show in the dashboard"`
+	URL      string `pos:"true" help:"Canonical GitHub pull request URL to show in the dashboard"`
 	Summary  string `long:"summary" short:"s" optional:"true" help:"Optional short label/summary for the PR badge"`
 	State    string `long:"state" optional:"true" help:"Optional PR state: open, draft, merged, or closed"`
 	Handled  bool   `long:"handled" optional:"true" help:"Mark this presented PR handled so it no longer appears in the dashboard"`
@@ -72,6 +72,9 @@ func runPresentPR(p *presentPRParams, stdout, stderr io.Writer) int {
 		"summary": strings.TrimSpace(p.Summary),
 		"state":   strings.TrimSpace(p.State),
 		"handled": p.Handled,
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		body["repo_dir"] = cwd
 	}
 	var resp presentPRResp
 	if err := DaemonRequest(http.MethodPost, path, body, &resp, DaemonOpts{AskHuman: ask}); err != nil {
