@@ -117,7 +117,7 @@ export function createAgentSpawnActions({
       };
     },
 
-    async resolveWorktree(draft, worktrees) {
+    async resolveWorktree(draft, worktrees, onProgress = () => {}) {
       const selected = String(draft.worktree || '');
       if (!selected) return { path: '', branch: '' };
       const expectedRepo = String(draft.wtRepo || '').trim();
@@ -132,19 +132,33 @@ export function createAgentSpawnActions({
       if (selected !== WT_NEW) return { path: '', branch: '' };
       const branch = String(draft.worktreeBranch || '').trim();
       if (!branch) throw new Error('enter a branch name for the new worktree');
-      const response = await fetchImpl('/api/worktrees', {
-        method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          repo: worktrees?.repoRoot || String(draft.wtRepo || '').trim(),
-          branch,
-          from_branch: draft.worktreeBase || '',
-          fetch_latest: !!draft.fetchLatestWorktree,
-        }),
-      });
-      if (!response.ok) throw new Error((await responseText(response)) || `HTTP ${response.status}`);
-      const payload = await response.json();
-      return { path: payload.path || '', branch: payload.branch || branch };
+      onProgress('Creating worktree…');
+      let elapsed = 0;
+      const progressTimer = setInterval(() => {
+        elapsed += 1;
+        if (elapsed <= 10) {
+          onProgress(`Creating worktree… retrying a busy Git config for up to 10s (${elapsed}s)`);
+        }
+      }, 1000);
+      try {
+        const response = await fetchImpl('/api/worktrees', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            repo: worktrees?.repoRoot || String(draft.wtRepo || '').trim(),
+            branch,
+            from_branch: draft.worktreeBase || '',
+            fetch_latest: !!draft.fetchLatestWorktree,
+          }),
+        });
+        if (!response.ok) throw new Error((await responseText(response)) || `HTTP ${response.status}`);
+        const payload = await response.json();
+        if (payload.tracking_fallback) onProgress('Worktree created without tracking; spawning agent…');
+        else onProgress('Worktree ready; spawning agent…');
+        return { path: payload.path || '', branch: payload.branch || branch };
+      } finally {
+        clearInterval(progressTimer);
+      }
     },
 
     /* Ask the daemon what a launch would resolve for the fields this dialog

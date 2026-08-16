@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/worktree"
 )
 
@@ -78,6 +80,65 @@ func TestOperatorWorktreeFetchPinsPreserveTrustedTransportConfig(t *testing.T) {
 	}, pins)
 }
 
+func TestCreateDashboardWorktreeRetriesTrackingConfigLock(t *testing.T) {
+	repo, _, _, _ := worktreeFetchFixture(t)
+	lockPath := filepath.Join(repo, ".git", "config.lock")
+	require.NoError(t, os.WriteFile(lockPath, nil, 0o644))
+	t.Cleanup(func() { _ = os.Remove(lockPath) })
+
+	waits := 0
+	wait := func(context.Context) error {
+		waits++
+		if waits == 3 {
+			require.NoError(t, os.Remove(lockPath))
+		}
+		return nil
+	}
+	path, retries, fallback, err := createDashboardWorktree(context.Background(), repo,
+		"retry-tracking", "refs/remotes/upstream/main", "", wait)
+	require.NoError(t, err)
+	assert.Equal(t, 3, retries)
+	assert.False(t, fallback)
+	assert.DirExists(t, path)
+	assert.Equal(t, "upstream/main", gitOutput(t, repo,
+		"rev-parse", "--abbrev-ref", "retry-tracking@{upstream}"))
+}
+
+func TestCreateDashboardWorktreeFallsBackAfterTrackingRetries(t *testing.T) {
+	repo, _, _, _ := worktreeFetchFixture(t)
+	lockPath := filepath.Join(repo, ".git", "config.lock")
+	require.NoError(t, os.WriteFile(lockPath, nil, 0o644))
+	t.Cleanup(func() { _ = os.Remove(lockPath) })
+
+	waits := 0
+	path, retries, fallback, err := createDashboardWorktree(context.Background(), repo,
+		"fallback-tracking", "refs/remotes/upstream/main", "", func(context.Context) error {
+			waits++
+			return nil
+		})
+	require.NoError(t, err)
+	assert.Equal(t, dashboardWorktreeTrackingRetries, waits)
+	assert.Equal(t, dashboardWorktreeTrackingRetries, retries)
+	assert.True(t, fallback)
+	assert.DirExists(t, path)
+	assert.Empty(t, gitOutputAllowError(t, repo, "config", "--get", "branch.fallback-tracking.merge"),
+		"the config-lock failure may leave a partial remote key but no usable upstream")
+}
+
+func TestPostWorktreeTrackingFallbackNotice(t *testing.T) {
+	setupTestDB(t)
+	before, err := db.ListHumanMessages()
+	require.NoError(t, err)
+	postWorktreeTrackingFallbackNotice("/repo", "feature/locked", "refs/remotes/origin/main")
+	after, err := db.ListHumanMessages()
+	require.NoError(t, err)
+	require.Len(t, after, len(before)+1)
+	assert.Equal(t, "worktree spawn", after[0].FromTitle)
+	assert.Equal(t, "Worktree branch created without upstream tracking", after[0].Subject)
+	assert.Contains(t, after[0].Body, "feature/locked")
+	assert.Contains(t, after[0].Body, "git branch --set-upstream-to=refs/remotes/origin/main feature/locked")
+}
+
 func postDashboardWorktree(t *testing.T, body map[string]any) *httptest.ResponseRecorder {
 	t.Helper()
 	b, err := json.Marshal(body)
@@ -136,5 +197,13 @@ func gitOutput(t *testing.T, dir string, args ...string) string {
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	require.NoErrorf(t, err, "git %s: %s", strings.Join(args, " "), out)
+	return strings.TrimSpace(string(out))
+}
+
+func gitOutputAllowError(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, _ := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out))
 }
