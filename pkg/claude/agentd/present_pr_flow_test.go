@@ -1,8 +1,9 @@
 package agentd_test
 
 import (
-	"errors"
 	"net/http"
+	"os"
+	"os/exec"
 	"slices"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -18,23 +20,17 @@ func TestPresentPR_RejectsURLOutsideCallingAgentRepository(t *testing.T) {
 	f := newFlow(t)
 	const worker = "pprr-aaaa-bbbb-cccc-dddd"
 	f.HaveConvWithTitle(worker, "worker")
-	f.HaveAliveSession(worker, "lbl-pprr", "tmux-pprr", f.TestCwd("pprr"))
+	repo := presentedPRTestRepo(t, f, "pprr", "git@github.com:tofutools/tclaude.git", "github.com")
+	f.HaveAliveSession(worker, "lbl-pprr", "tmux-pprr", repo)
 	require.NoError(t, db.SetAgentPermissionOverride(worker, agentd.PermSelfPR, db.PermEffectGrant, "test"))
 
-	var gotCaller, gotDir, gotURL string
-	t.Cleanup(agentd.SetPresentedPRAccessValidatorForTest(func(caller, repoDir, rawURL string) error {
-		gotCaller, gotDir, gotURL = caller, repoDir, rawURL
-		return errors.New("repository is outside the caller's launch tree")
-	}))
 	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(
 		testharness.JSONRequest(t, http.MethodPost, "/v1/whoami/prs", map[string]any{
 			"url": "https://github.com/victim/private/pull/1", "repo_dir": "/victim/private",
 		}), worker))
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "pr_repo_refused")
-	assert.Equal(t, worker, gotCaller)
-	assert.Equal(t, "/victim/private", gotDir)
-	assert.Equal(t, "https://github.com/victim/private/pull/1", gotURL)
+	assert.Contains(t, rec.Body.String(), "launch directory or a subdirectory")
 }
 
 func TestPresentPR_RequiresCanonicalGitHubPullURL(t *testing.T) {
@@ -77,7 +73,8 @@ func TestPresentPR_SelfPresentsAndDashboardRenders(t *testing.T) {
 
 	f.HaveGroup("alpha")
 	f.HaveConvWithTitle(worker, "worker")
-	f.HaveAliveSession(worker, "lbl-pprs", "tmux-pprs", f.TestCwd("pprs"))
+	repo := presentedPRTestRepo(t, f, "pprs", "git@github.com:tofutools/tclaude.git", "github.com/tofutools")
+	f.HaveAliveSession(worker, "lbl-pprs", "tmux-pprs", repo)
 	f.HaveMember("alpha", worker)
 	require.NoError(t, db.SetAgentPermissionOverride(worker, agentd.PermSelfPR, db.PermEffectGrant, "test"))
 
@@ -119,7 +116,8 @@ func TestPresentPR_DedupesByURLAndCanMarkHandled(t *testing.T) {
 
 	f.HaveGroup("alpha")
 	f.HaveConvWithTitle(worker, "worker")
-	f.HaveAliveSession(worker, "lbl-pprd", "tmux-pprd", f.TestCwd("pprd"))
+	repo := presentedPRTestRepo(t, f, "pprd", "git@github.com:tofutools/tclaude.git", "github.com/tofutools")
+	f.HaveAliveSession(worker, "lbl-pprd", "tmux-pprd", repo)
 	f.HaveMember("alpha", worker)
 	require.NoError(t, db.SetAgentPermissionOverride(worker, agentd.PermSelfPR, db.PermEffectGrant, "test"))
 
@@ -157,7 +155,8 @@ func TestPresentPR_DashboardRefreshesAndExpiresTerminalState(t *testing.T) {
 
 	f.HaveGroup("alpha")
 	f.HaveConvWithTitle(worker, "worker")
-	f.HaveAliveSession(worker, "lbl-pprx", "tmux-pprx", f.TestCwd("pprx"))
+	repo := presentedPRTestRepo(t, f, "pprx", "git@github.com:tofutools/tclaude.git", "github.com/tofutools")
+	f.HaveAliveSession(worker, "lbl-pprx", "tmux-pprx", repo)
 	f.HaveMember("alpha", worker)
 	require.NoError(t, db.SetAgentPermissionOverride(worker, agentd.PermSelfPR, db.PermEffectGrant, "test"))
 
@@ -209,6 +208,9 @@ func TestPresentPR_RecentlyMergedPollIsGlobalAndRepoDeduped(t *testing.T) {
 		f.HaveConvWithTitle(worker, worker)
 		f.HaveAliveSession(worker, "lbl-"+worker, "tmux-"+worker, f.TestCwd(worker))
 	}
+	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{GitProxy: &config.GitProxyConfig{
+		AllowedRemotes: []string{"github.com/tofutools"},
+	}}}))
 	f.HaveMember("alpha", workerA)
 	f.HaveMember("beta", workerB)
 	f.HaveMember("beta", workerC)
@@ -277,7 +279,9 @@ func TestPresentPR_RecentlyMergedPollQuarantinesLegacyRowsInsideBroadPolicy(t *t
 	_, err = db.UpsertAgentPR(agentID, "https://github.com/victim/private/pull/1", "legacy row", "open")
 	require.NoError(t, err)
 
-	t.Cleanup(agentd.SetPresentedPRRemotePolicyCheckForTest(func(string) error { return nil }))
+	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{GitProxy: &config.GitProxyConfig{
+		AllowedRemotes: []string{"github.com"},
+	}}}))
 	called := false
 	t.Cleanup(agentd.SetRecentlyMergedPRsResolverForTest(func([]string, int) ([]string, bool) {
 		called = true
@@ -294,7 +298,10 @@ func TestPresentPR_OwnerPresentsWorkerWithoutSlug(t *testing.T) {
 
 	g := f.HaveGroup("squad")
 	f.HaveConvWithTitle(worker, "worker")
-	f.HaveAliveSession(worker, "lbl-pprw", "tmux-pprw", f.TestCwd("pprw"))
+	repo := presentedPRTestRepo(t, f, "pprw", "git@github.com:tofutools/tclaude.git", "github.com/tofutools")
+	f.HaveAliveSession(worker, "lbl-pprw", "tmux-pprw", repo)
+	f.HaveConvWithTitle(lead, "lead")
+	f.HaveAliveSession(lead, "lbl-pprl", "tmux-pprl", repo)
 	f.HaveMember("squad", worker)
 	require.NoError(t, db.AddAgentGroupOwner(g.ID, lead, "test"), "seed owner")
 
@@ -306,6 +313,25 @@ func TestPresentPR_OwnerPresentsWorkerWithoutSlug(t *testing.T) {
 	testharness.DecodeJSON(t, rec, &resp)
 	assert.Equal(t, lead, resp.CallerConv)
 	assert.Equal(t, 125, resp.PR.Number)
+}
+
+func presentedPRTestRepo(t *testing.T, f *testharness.Flow, name, remote string, allowed ...string) string {
+	t.Helper()
+	repo := f.TestCwd(name)
+	require.NoError(t, os.MkdirAll(repo, 0o755))
+	for _, args := range [][]string{{"init"}, {"remote", "add", "origin", remote}} {
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		require.NoError(t, cmd.Run())
+	}
+	savePresentedPRPolicy(t, allowed...)
+	return repo
+}
+
+func savePresentedPRPolicy(t *testing.T, allowed ...string) {
+	t.Helper()
+	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{GitProxy: &config.GitProxyConfig{
+		AllowedRemotes: allowed,
+	}}}))
 }
 
 func agePresentedPR(t *testing.T, agentID, prURL string, age time.Duration) {

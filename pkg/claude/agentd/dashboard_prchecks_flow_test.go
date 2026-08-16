@@ -1,7 +1,6 @@
 package agentd_test
 
 import (
-	"errors"
 	"net/http"
 	"net/url"
 	"testing"
@@ -16,10 +15,9 @@ import (
 
 func TestDashboardPRChecks_HoverRejectsPROutsideRemotePolicy(t *testing.T) {
 	const prURL = "https://github.com/victim/private/pull/1"
+	_ = newFlow(t)
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	t.Cleanup(agentd.SetPresentedPRRemotePolicyCheckForTest(func(string) error {
-		return errors.New("not allow-listed")
-	}))
+	savePresentedPRPolicy(t, "github.com/tofutools")
 	called := false
 	t.Cleanup(agentd.SetPRChecksResolverForTest(func(string) (string, bool) {
 		called = true
@@ -74,6 +72,7 @@ func TestDashboardPRChecks_HoverRefreshReachesSnapshotBadge(t *testing.T) {
 	}))
 
 	f := newFlow(t)
+	savePresentedPRPolicy(t, "github.com/acme")
 	f.HaveGroup("squad")
 	f.HaveAliveSessionOnBranch(conv, "spwn-prchecks", "tmux-prchecks", f.TestCwd("wt/ci"), branch)
 	f.HaveMember("squad", conv)
@@ -170,7 +169,8 @@ func TestDashboardPRChecks_BackgroundRefreshesPopulateBadges(t *testing.T) {
 
 	f := newFlow(t)
 	f.HaveGroup("squad")
-	f.HaveAliveSessionOnBranch(conv, "spwn-piggy", "tmux-piggy", f.TestCwd("wt/piggy"), branch)
+	repo := presentedPRTestRepo(t, f, "wt/piggy", "git@github.com:acme/app.git", "github.com/acme")
+	f.HaveAliveSessionOnBranch(conv, "spwn-piggy", "tmux-piggy", repo, branch)
 	f.HaveMember("squad", conv)
 	require.NoError(t, db.SetAgentPermissionOverride(conv, agentd.PermSelfPR, db.PermEffectGrant, "test"))
 	require.NotNil(t, agent.FreshConvRowResolved(conv), "conv_index scan")
@@ -215,7 +215,8 @@ func TestDashboardPRChecks_TerminalPRStopsPolling(t *testing.T) {
 
 	f.HaveGroup("alpha")
 	f.HaveConvWithTitle(worker, "worker")
-	f.HaveAliveSession(worker, "lbl-prcm", "tmux-prcm", f.TestCwd("prcm"))
+	repo := presentedPRTestRepo(t, f, "prcm", "git@github.com:acme/app.git", "github.com/acme")
+	f.HaveAliveSession(worker, "lbl-prcm", "tmux-prcm", repo)
 	f.HaveMember("alpha", worker)
 	require.NoError(t, db.SetAgentPermissionOverride(worker, agentd.PermSelfPR, db.PermEffectGrant, "test"))
 

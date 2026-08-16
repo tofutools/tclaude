@@ -34,8 +34,6 @@ var agentdTestTmuxBase string
 // `package agentd` test files compiled alongside this external
 // package.
 func TestMain(m *testing.M) {
-	agentd.SetPresentedPRAccessValidatorForTest(func(string, string, string) error { return nil })
-	agentd.SetPresentedPRRemotePolicyCheckForTest(func(string) error { return nil })
 	// Keep every tmux command in this test binary away from the operator's
 	// live `-L tclaude` server. This belongs here rather than in newFlow:
 	// internal package agentd tests share this binary but cannot call the
