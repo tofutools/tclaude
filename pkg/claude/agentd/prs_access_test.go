@@ -8,11 +8,15 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 func TestPresentedPRAccessRequiresMatchingRepoInsideLaunchTree(t *testing.T) {
 	setupTestDB(t)
+	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{GitProxy: &config.GitProxyConfig{
+		AllowedRemotes: []string{"github.com"},
+	}}}))
 	workspace := t.TempDir()
 	repo := filepath.Join(workspace, "nested", "repo")
 	require.NoError(t, os.MkdirAll(repo, 0o755))
