@@ -295,6 +295,10 @@ func readCodexHooks(path string) (hooks map[string]json.RawMessage, top map[stri
 	if err != nil {
 		return nil, nil, err
 	}
+	return decodeCodexHooks(data, path)
+}
+
+func decodeCodexHooks(data []byte, path string) (hooks map[string]json.RawMessage, top map[string]json.RawMessage, err error) {
 	// An empty or whitespace-only file is treated as "no hooks yet" rather
 	// than a parse error, so Install can populate it and Check reports it
 	// as missing (not unreadable).

@@ -317,7 +317,7 @@ func TestCodexHooksRollbackRefusesConcurrentMetadataChanges(t *testing.T) {
 		snapshot, err := snapshotCodexHooksFile(path)
 		require.NoError(t, err)
 		require.NoError(t, atomicWritePreservingMode(path, []byte("installed"), 0o644))
-		require.NoError(t, snapshot.validateInstalledState())
+		require.NoError(t, snapshot.validateInstalledState([]byte("installed")))
 		require.NoError(t, os.Chmod(path, 0o640))
 		require.ErrorContains(t, snapshot.restoreIfUnchanged([]byte("installed")), "mode changed")
 	})
@@ -333,9 +333,38 @@ func TestCodexHooksRollbackRefusesConcurrentMetadataChanges(t *testing.T) {
 		snapshot, err := snapshotCodexHooksFile(link)
 		require.NoError(t, err)
 		require.NoError(t, atomicWritePreservingMode(link, []byte("installed"), 0o644))
-		require.NoError(t, snapshot.validateInstalledState())
+		require.NoError(t, snapshot.validateInstalledState([]byte("installed")))
 		require.NoError(t, os.Remove(link))
 		require.NoError(t, os.Symlink(second, link))
 		require.ErrorContains(t, snapshot.restoreIfUnchanged([]byte("installed")), "target changed")
 	})
+}
+
+func TestCodexHookInstaller_RefusesBytesChangedDuringDiscovery(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	seedTclaudeOnPath(t)
+	inst := codexHookInstaller{}
+	require.NoError(t, inst.Install())
+
+	oldDiscovery := discoverCodexHookTrustEntries
+	discoverCodexHookTrustEntries = func(path, want string) ([]codexHookTrustEntry, error) {
+		entries, err := oldDiscovery(path, want)
+		if err != nil {
+			return nil, err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		data = append(data, '\n')
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			return nil, err
+		}
+		return entries, nil
+	}
+	t.Cleanup(func() { discoverCodexHookTrustEntries = oldDiscovery })
+
+	require.ErrorContains(t, inst.TrustInstalled(), "changed during authoritative discovery")
+	assert.NoFileExists(t, filepath.Join(home, ".codex", "config.toml"))
 }

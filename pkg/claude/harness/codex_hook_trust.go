@@ -78,7 +78,7 @@ func (codexHookInstaller) InstallTrusted() error {
 				retErr = fmt.Errorf("%w; additionally failed to roll back Codex hooks: %v", retErr, rollbackErr)
 			}
 		}()
-		if err := backup.validateInstalledState(); err != nil {
+		if err := backup.validateInstalledState(hookPlan.out); err != nil {
 			return fmt.Errorf("validate installed Codex hooks state: %w", err)
 		}
 		// Ask Codex only after the final declaration is on disk. A discovery or
@@ -86,6 +86,9 @@ func (codexHookInstaller) InstallTrusted() error {
 		entries, err := codexTclaudeHookTrustEntries(hookPlan.path, hookPlan.want)
 		if err != nil {
 			return err
+		}
+		if err := backup.validateInstalledState(hookPlan.out); err != nil {
+			return fmt.Errorf("Codex hooks changed during authoritative discovery: %w", err)
 		}
 		if err := ensureCodexHookTrustInFile(configPath, entries); err != nil {
 			return fmt.Errorf("write Codex hook trust: %w", err)
@@ -125,7 +128,7 @@ func snapshotCodexHooksFile(path string) (codexHooksFileSnapshot, error) {
 	return snapshot, nil
 }
 
-func (s codexHooksFileSnapshot) validateInstalledState() error {
+func (s codexHooksFileSnapshot) validateInstalledState(installed []byte) error {
 	target, err := atomicWriteTarget(s.path)
 	if err != nil {
 		return err
@@ -141,6 +144,13 @@ func (s codexHooksFileSnapshot) validateInstalledState() error {
 		return fmt.Errorf("%s installed with unexpected mode %04o (want %04o)",
 			s.target, info.Mode().Perm(), s.newPerm)
 	}
+	current, err := os.ReadFile(s.target)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(current, installed) {
+		return fmt.Errorf("%s contents changed; refusing trust", s.target)
+	}
 	return nil
 }
 
@@ -148,6 +158,16 @@ func (s codexHooksFileSnapshot) validateInstalledState() error {
 // this install wrote. A concurrent external edit wins rather than being
 // overwritten by error recovery.
 func (s codexHooksFileSnapshot) restoreIfUnchanged(installed []byte) error {
+	if err := s.validateUnchanged(installed); err != nil {
+		return err
+	}
+	if !s.existed {
+		return os.Remove(s.target)
+	}
+	return atomicWriteFile(s.target, s.data, s.perm)
+}
+
+func (s codexHooksFileSnapshot) validateUnchanged(expected []byte) error {
 	target, err := atomicWriteTarget(s.path)
 	if err != nil {
 		return err
@@ -167,21 +187,28 @@ func (s codexHooksFileSnapshot) restoreIfUnchanged(installed []byte) error {
 	if err != nil {
 		return err
 	}
-	if !bytes.Equal(current, installed) {
+	if !bytes.Equal(current, expected) {
 		return fmt.Errorf("%s changed concurrently; refusing to overwrite it", s.target)
 	}
-	if !s.existed {
-		return os.Remove(s.target)
-	}
-	return atomicWriteFile(s.target, s.data, s.perm)
+	return nil
 }
 
 func (codexHookInstaller) TrustInstalled() error {
 	return withCodexHooksInstallLock(func() error {
 		path := codexHooksPath()
-		hooks, _, err := readCodexHooks(path)
+		snapshot, err := snapshotCodexHooksFile(path)
 		if err != nil {
 			return err
+		}
+		if !snapshot.existed {
+			return fmt.Errorf("Codex hooks file %s does not exist", path)
+		}
+		hooks, _, err := decodeCodexHooks(snapshot.data, path)
+		if err != nil {
+			return err
+		}
+		if err := snapshot.validateUnchanged(snapshot.data); err != nil {
+			return fmt.Errorf("Codex hooks changed during authoritative discovery: %w", err)
 		}
 		want := codexHookCommandStr()
 		if err := validateTrustedCodexHookCommand(want); err != nil {
@@ -197,6 +224,9 @@ func (codexHookInstaller) TrustInstalled() error {
 		if err != nil {
 			return err
 		}
+		if err := snapshot.validateUnchanged(snapshot.data); err != nil {
+			return fmt.Errorf("Codex hooks changed during authoritative discovery: %w", err)
+		}
 		configPath, err := codexConfigTomlPath()
 		if err != nil {
 			return err
@@ -210,7 +240,11 @@ func (codexHookInstaller) Trusted() bool {
 		return false
 	}
 	path := codexHooksPath()
-	hooks, _, err := readCodexHooks(path)
+	snapshot, err := snapshotCodexHooksFile(path)
+	if err != nil || !snapshot.existed {
+		return false
+	}
+	hooks, _, err := decodeCodexHooks(snapshot.data, path)
 	if err != nil {
 		return false
 	}
@@ -223,6 +257,9 @@ func (codexHookInstaller) Trusted() bool {
 	}
 	entries, err := codexTclaudeHookTrustEntries(path, want)
 	if err != nil {
+		return false
+	}
+	if snapshot.validateUnchanged(snapshot.data) != nil {
 		return false
 	}
 	configPath, err := codexConfigTomlPath()
