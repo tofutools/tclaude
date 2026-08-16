@@ -1355,23 +1355,13 @@ func TestAppendTclaudeLayerTclaudeCLIResolvesOneExecutableFile(t *testing.T) {
 
 	got, err := appendTclaudeLayerTclaudeCLI([]string{"prefix"}, linkedBinary)
 	require.NoError(t, err)
-	want := []string{
+	assert.Equal(t, []string{
 		"prefix",
 		"--dir", tclaudeLayerConstructedRootTclaudeDir,
 		"--dir", tclaudeLayerConstructedRootTclaudeBin,
 		"--ro-bind", resolvedBinary, tclaudeLayerConstructedRootTclaudePath,
-	}
-	parents := []string{}
-	for parent := filepath.Dir(resolvedBinary); parent != string(filepath.Separator); parent = filepath.Dir(parent) {
-		parents = append([]string{parent}, parents...)
-	}
-	for _, parent := range parents {
-		want = append(want, "--dir", parent)
-	}
-	want = append(want,
-		"--ro-bind", resolvedBinary, resolvedBinary,
-		"--setenv", "PATH", tclaudeLayerConstructedRootTclaudeBin+":/usr/bin:/bin")
-	assert.Equal(t, want, got)
+		"--setenv", "PATH", tclaudeLayerConstructedRootTclaudeBin + ":/usr/bin:/bin",
+	}, got)
 }
 
 func TestAppendTclaudeLayerTclaudeCLIProjectsExecutableAlreadyInStaticRoot(t *testing.T) {

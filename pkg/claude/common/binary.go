@@ -7,6 +7,11 @@ import (
 	"strings"
 )
 
+// HookCallbackCommand is intentionally PATH-based. Harness hook files outlive
+// any one tclaude installation path and run inside constructed roots where the
+// trusted tclaude projection is placed first on PATH.
+const HookCallbackCommand = "tclaude session hook-callback"
+
 // absolutePaths controls whether DetectArgs returns absolute paths.
 // When false (default), prefers bare "tclaude" if it's found on PATH.
 var absolutePaths bool

@@ -13,29 +13,22 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/hookevents"
 )
 
-// seedTclaudeOnPath makes clcommon.DetectCmd resolve to a bare "tclaude"
-// for the duration of a test by putting an executable named "tclaude" on
-// PATH. Without this, DetectCmd falls back to os.Executable() — under `go
-// test` that's the test binary (e.g. "harness.test"), whose basename is NOT
-// "tclaude", so isOurCodexHook (a basename==tclaude match) fails to
-// recognise the freshly-installed hook. In production the binary IS
-// tclaude, so the two always agree; this only removes the dependency on
-// whether the developer happens to have tclaude on PATH (it's absent in
-// CI). Unix-only stub, which matches the CI matrix (ubuntu + macos).
+// seedTclaudeOnPath retains the historical command seam while pinning the
+// portable command every installer now writes.
 func seedTclaudeOnPath(t *testing.T) {
 	t.Helper()
-	dir := t.TempDir()
-	bin := filepath.Join(dir, "tclaude")
-	require.NoError(t, os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755))
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	oldCommand := codexHookCommandString
 	oldVersion := codexVersionOutput
-	codexHookCommandString = func() string { return bin + " session hook-callback" }
+	codexHookCommandString = func() string { return "tclaude session hook-callback" }
 	codexVersionOutput = func() ([]byte, error) { return []byte("codex-cli 0.144.1\n"), nil }
 	t.Cleanup(func() {
 		codexHookCommandString = oldCommand
 		codexVersionOutput = oldVersion
 	})
+}
+
+func TestCodexHookCommandIsPortable(t *testing.T) {
+	assert.Equal(t, "tclaude session hook-callback", codexHookCommandStr())
 }
 
 // TestCodexHookInstaller_InstallAndCheck installs into a temp ~/.codex and

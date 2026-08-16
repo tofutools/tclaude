@@ -2517,10 +2517,7 @@ func appendTclaudeLayerStaticOSRoot(args []string) ([]string, error) {
 // otherwise disappear with its parent directory.
 //
 // Exactly one resolved executable file is exposed, read-only, at a fixed PATH
-// destination and, when the host path is outside the static OS surface, at its
-// canonical host path. The second spelling is required by harness hook files:
-// they intentionally record DetectAbsoluteCmd output and therefore do not use
-// PATH. Both binds deliberately land before operator policy replay: a
+// destination. The bind deliberately lands before operator policy replay: a
 // later filesystem hide or replacement therefore still wins, and this
 // coordination convenience cannot weaken any authored filesystem decision.
 // SelfTclaudePath is resolved by the caller so the standalone tclaude-agentd
@@ -2552,22 +2549,12 @@ func appendTclaudeLayerTclaudeCLI(args []string, candidate string) ([]string, er
 	} else {
 		path = tclaudeLayerConstructedRootTclaudeBin + string(os.PathListSeparator) + path
 	}
-	args = append(args,
+	return append(args,
 		"--dir", tclaudeLayerConstructedRootTclaudeDir,
 		"--dir", tclaudeLayerConstructedRootTclaudeBin,
 		"--ro-bind", resolved, tclaudeLayerConstructedRootTclaudePath,
-	)
-	if !tclaudeLayerStaticOSRootProvides(resolved) {
-		parents := []string{}
-		for parent := filepath.Dir(resolved); parent != string(filepath.Separator); parent = filepath.Dir(parent) {
-			parents = append([]string{parent}, parents...)
-		}
-		for _, parent := range parents {
-			args = append(args, "--dir", parent)
-		}
-		args = append(args, "--ro-bind", resolved, resolved)
-	}
-	return append(args, "--setenv", "PATH", path), nil
+		"--setenv", "PATH", path,
+	), nil
 }
 
 // tclaudeLayerHostResolverRuntimeRoot is the only directory outside the static

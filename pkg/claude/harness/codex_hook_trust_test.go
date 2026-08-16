@@ -201,7 +201,7 @@ func TestCodexHookTrustVersionGate(t *testing.T) {
 	}
 }
 
-func TestCodexHookInstaller_RefusesToTrustRelativeExecutable(t *testing.T) {
+func TestCodexHookInstaller_RefusesToTrustNonPortableRelativeExecutable(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	oldCommand := codexHookCommandString
@@ -210,11 +210,11 @@ func TestCodexHookInstaller_RefusesToTrustRelativeExecutable(t *testing.T) {
 		codexHookCommandString = oldCommand
 		codexVersionOutput = oldVersion
 	})
-	codexHookCommandString = func() string { return "tclaude session hook-callback" }
+	codexHookCommandString = func() string { return "bin/tclaude session hook-callback" }
 	codexVersionOutput = func() ([]byte, error) { return []byte("codex-cli 0.144.1"), nil }
 
 	err := (codexHookInstaller{}).InstallTrusted()
-	require.ErrorContains(t, err, "non-absolute executable")
+	require.ErrorContains(t, err, "non-portable relative executable")
 	assert.NoFileExists(t, filepath.Join(home, ".codex", "hooks.json"))
 	assert.NoFileExists(t, filepath.Join(home, ".codex", "config.toml"))
 }

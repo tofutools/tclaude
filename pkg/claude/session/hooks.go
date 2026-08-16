@@ -77,9 +77,9 @@ func init() {
 	initHookCommands()
 }
 
-// initHookCommands sets HookCommand and RequiredHooks based on current DetectCmd output.
+// initHookCommands sets the portable callback command shared by every harness.
 func initHookCommands() {
-	HookCommand = common.DetectCmd("session", "hook-callback")
+	HookCommand = common.HookCallbackCommand
 	hook := HookConfig{Type: "command", Command: HookCommand}
 	newMatcher := func() HookMatcher { return HookMatcher{Hooks: []HookConfig{hook}} }
 	RequiredHooks = map[string][]HookMatcher{
@@ -98,12 +98,6 @@ func initHookCommands() {
 		"PreCompact":         {newMatcher()}, // pre-compact guard: may refuse an early auto-compaction
 		"PostCompact":        {newMatcher()},
 	}
-}
-
-// ReinitHookCommand re-evaluates the hook command path using current DetectCmd settings.
-// Call this after changing common.SetAbsolutePaths().
-func ReinitHookCommand() {
-	initHookCommands()
 }
 
 // containsCurrentHook checks if a raw matchers JSON contains the current HookCommand
@@ -187,7 +181,7 @@ func ClaudeSettingsPath() string {
 }
 
 // CheckHooksInstalled checks if tclaude hooks are installed in Claude settings.
-// Returns: installed (all required hooks present with current binary), missing event names, needsRepair (stale or duplicate hooks detected).
+// Returns: installed (all required hooks use the portable callback command), missing event names, needsRepair (stale or duplicate hooks detected).
 func CheckHooksInstalled() (installed bool, missing []string, needsRepair bool) {
 	settingsPath := ClaudeSettingsPath()
 	if settingsPath == "" {

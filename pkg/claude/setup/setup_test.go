@@ -2,6 +2,7 @@ package setup
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -386,6 +387,22 @@ func TestInstallHooksForHarness_Codex_WritesHooksFile(t *testing.T) {
 	})
 
 	assert.FileExists(t, hooksPath, "codex hooks.json must be written")
+	hooksData, err := os.ReadFile(hooksPath)
+	require.NoError(t, err)
+	var hooksFile struct {
+		Hooks map[string][]struct {
+			Hooks []struct {
+				Command string `json:"command"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	require.NoError(t, json.Unmarshal(hooksData, &hooksFile))
+	for event, groups := range hooksFile.Hooks {
+		require.Len(t, groups, 1, "event %s", event)
+		require.Len(t, groups[0].Hooks, 1, "event %s", event)
+		assert.Equal(t, "tclaude session hook-callback", groups[0].Hooks[0].Command,
+			"event %s must remain portable across install paths and constructed roots", event)
+	}
 	config, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
 	require.NoError(t, err)
 	assert.Equal(t, 10, strings.Count(string(config), "trusted_hash = "),
