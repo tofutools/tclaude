@@ -7,6 +7,16 @@ import (
 	"strings"
 )
 
+// HookCallbackCommand is intentionally PATH-based. Harness hook files outlive
+// any one tclaude installation path and run inside constructed roots where the
+// trusted tclaude projection is placed first on PATH.
+const HookCallbackCommand = "tclaude session hook-callback"
+
+// StatusBarCommand is intentionally PATH-based for the same reason as hooks:
+// Claude Code invokes it from inside the active sandbox, where a host-specific
+// installation path may be hidden but tclaude's trusted projection is on PATH.
+const StatusBarCommand = "tclaude status-bar"
+
 // absolutePaths controls whether DetectArgs returns absolute paths.
 // When false (default), prefers bare "tclaude" if it's found on PATH.
 var absolutePaths bool

@@ -192,7 +192,7 @@ type copilotHookFile struct {
 // invokes. No per-harness flag is needed because Copilot's compatible dialect
 // IS the canonical payload. Kept behind a var so tests can pin it.
 var copilotHookCommandString = func() string {
-	return clcommon.DetectAbsoluteCmd("session", "hook-callback")
+	return clcommon.HookCallbackCommand
 }
 
 // copilotHookStdoutSink is appended to every installed command, and it is a

@@ -13,6 +13,11 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/hookevents"
 )
 
+func TestClaudeHookCommandIsPortable(t *testing.T) {
+	initHookCommands()
+	assert.Equal(t, "tclaude session hook-callback", HookCommand)
+}
+
 // setTestHookCommand overrides HookCommand and rebuilds RequiredHooks for testing
 func setTestHookCommand(t *testing.T) {
 	t.Helper()

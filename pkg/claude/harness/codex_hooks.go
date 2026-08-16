@@ -114,7 +114,7 @@ func (codexHookInstaller) TrustNote() string {
 // reads a snake_case JSON payload from stdin; Codex's payload matches
 // Claude Code's field-for-field).
 var codexHookCommandString = func() string {
-	return clcommon.DetectAbsoluteCmd("session", "hook-callback")
+	return clcommon.HookCallbackCommand
 }
 
 func codexHookCommandStr() string { return codexHookCommandString() }
@@ -131,7 +131,7 @@ func isOurCodexHook(command string) bool {
 }
 
 // Check reports whether the tclaude callback is installed for every
-// required Codex event with the current binary. missing lists events that
+// required Codex event with the portable callback command. missing lists events that
 // lack it; needsRepair is true when a stale (wrong-binary) or duplicate
 // tclaude hook is present.
 func (codexHookInstaller) Check() (installed bool, missing []string, needsRepair bool) {

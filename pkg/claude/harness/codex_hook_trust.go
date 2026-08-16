@@ -239,8 +239,10 @@ func (codexHookInstaller) Trusted() bool {
 
 func validateTrustedCodexHookCommand(command string) error {
 	executable := firstShellCommandWord(command)
-	if !filepath.IsAbs(executable) {
-		return fmt.Errorf("refusing automatic Codex hook trust for non-absolute executable %q", executable)
+	if executable != "tclaude" && !filepath.IsAbs(executable) {
+		return fmt.Errorf(
+			"refusing automatic Codex hook trust for non-portable relative executable %q",
+			executable)
 	}
 	return nil
 }

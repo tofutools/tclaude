@@ -1695,6 +1695,96 @@ test('sandbox editor offers Mach registration only on a macOS agentd', async (t)
   unmount();
 });
 
+test('sandbox editor discloses the Linux filesystem-root consequence of blocking Unix sockets', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: {
+      name: 'linux-closed', filesystem: [], environment: [],
+      network: { baseline: 'allow', deny: [{ domain: 'blocked.example' }] },
+      unix_sockets: { mode: '' },
+    },
+    options: {}, sandboxImpl: { ...sandboxImpl, platform: 'linux' },
+  });
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state);
+  await harness.act(() => Promise.resolve());
+  assertAbsent(host.querySelector('.sbx-unix-root-note'));
+
+  const mode = host.querySelector('#sandbox-profile-editor-unix-sockets-mode');
+  choose(mode, 'closed');
+  await harness.act(() => harness.fireEvent(mode, 'change'));
+  const note = host.querySelector('.sbx-unix-root-note');
+  assert.ok(note);
+  assert.match(note.textContent, /No access.*private, routed network namespace.*separate, minimal filesystem root/);
+  assert.match(note.textContent, /harness state/);
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-engine')), 'packet');
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-namespace')), 'private');
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-filesystem-root')), 'separate');
+  const adjustment = host.querySelector('.sbx-socket-adjustment-notice');
+  assert.match(adjustment.textContent, /Filtering engine → Packet filter/);
+  assert.match(adjustment.textContent, /Network namespace → Private, routed/);
+  assert.match(adjustment.textContent, /Filesystem root → Separate\/minimal/);
+  assert.match(adjustment.textContent, /baseline and destination rules were left unchanged/);
+
+  const advanced = host.querySelector('.sbx-advanced-toggle');
+  await harness.act(() => harness.fireEvent(advanced, 'click'));
+  await harness.act(() => harness.fireEvent(advanced, 'click'));
+  const remountedMode = host.querySelector('#sandbox-profile-editor-unix-sockets-mode');
+  choose(remountedMode, 'open');
+  await harness.act(() => harness.fireEvent(remountedMode, 'change'));
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-engine')), '');
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-namespace')), '');
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-filesystem-root')), '');
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-baseline')), 'allow');
+  assert.equal(host.querySelector('#sandbox-profile-editor-network-section .sbx-network-value').value,
+    'blocked.example', 'undoing generated enforcement settings preserves authored network rules');
+  assertAbsent(host.querySelector('.sbx-unix-root-note'));
+
+  state.closeDialog();
+  await harness.act(() => Promise.resolve());
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: { name: 'legacy-linux-closed', filesystem: [], environment: [], unix_sockets: { mode: 'closed' } },
+    options: {}, sandboxImpl: { ...sandboxImpl, platform: 'linux' },
+  });
+  await harness.act(() => Promise.resolve());
+  const incomplete = host.querySelector('.sbx-unix-root-note-incomplete');
+  assert.match(incomplete.textContent, /not yet aligned.*enforcement may remain partial/);
+  await harness.act(() => harness.fireEvent(incomplete.querySelector('button'), 'click'));
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-engine')), 'packet');
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-network-namespace')), 'private');
+  assert.equal(selectedValue(host.querySelector('#sandbox-profile-editor-filesystem-root')), 'separate');
+  assertAbsent(host.querySelector('.sbx-unix-root-note-incomplete'));
+  assert.match(host.querySelector('.sbx-unix-root-note').textContent, /other host paths and abstract Unix sockets do not/);
+
+  const legacyAdvanced = host.querySelector('.sbx-advanced-toggle');
+  await harness.act(() => harness.fireEvent(legacyAdvanced, 'click'));
+  const rawNetwork = host.querySelector('#sandbox-profile-editor-network');
+  const editedNetwork = JSON.parse(rawNetwork.value);
+  editedNetwork.namespace = 'host';
+  rawNetwork.value = JSON.stringify(editedNetwork, null, 2);
+  await harness.act(() => harness.fireEvent(rawNetwork, 'input'));
+  await harness.act(() => harness.fireEvent(legacyAdvanced, 'click'));
+  assert.match(host.querySelector('.sbx-unix-root-note-incomplete').textContent,
+    /not yet aligned/, 'a raw edit to a generated field invalidates the reversible alignment record');
+
+  state.closeDialog();
+  await harness.act(() => Promise.resolve());
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: { name: 'darwin-closed', filesystem: [], environment: [], unix_sockets: { mode: 'closed' } },
+    options: {}, sandboxImpl: { ...sandboxImpl, platform: 'darwin' },
+  });
+  await harness.act(() => Promise.resolve());
+  assertAbsent(host.querySelector('.sbx-unix-root-note'),
+    'the consequence is specific to Linux tclaude-layer enforcement');
+  unmount();
+});
+
 test('sandbox editor sections start collapsed and keep disclosure help reachable', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([

@@ -12,25 +12,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// seedCopilotHome points the installer at a disposable COPILOT_HOME and makes
-// the installed command a real absolute path whose basename is "tclaude" — the
-// same problem seedTclaudeOnPath solves for Codex: under `go test` the running
-// binary is "harness.test", so a freshly installed hook would not be
-// recognised as tclaude's own by the basename match every installer uses.
+// seedCopilotHome points the installer at a disposable COPILOT_HOME and pins
+// the portable command every installer now writes.
 func seedCopilotHome(t *testing.T) (home, command string) {
 	t.Helper()
 	home = t.TempDir()
 	t.Setenv(CopilotHomeEnvVar, home)
 
-	bin := filepath.Join(t.TempDir(), "tclaude")
-	require.NoError(t, os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755))
-
 	old := copilotHookCommandString
-	copilotHookCommandString = func() string { return bin + " session hook-callback" }
+	copilotHookCommandString = func() string { return "tclaude session hook-callback" }
 	t.Cleanup(func() { copilotHookCommandString = old })
 	// The installed command is the callback PLUS the stdout sink; tests assert
 	// against what actually lands in the file.
 	return home, copilotHookCommandStr()
+}
+
+func TestCopilotHookCommandIsPortable(t *testing.T) {
+	assert.Equal(t, "tclaude session hook-callback >/dev/null || true",
+		copilotHookCommandStr())
 }
 
 // TestCopilotHookCommand_IsInertToCopilot pins the two safety properties every
