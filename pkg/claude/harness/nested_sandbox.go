@@ -142,8 +142,8 @@ func (claudeNestedSandbox) ResolveExecutable(ctx context.Context) (NestedSandbox
 // tclaude-layer launch enters its filesystem namespace. Native Claude installs
 // commonly place only a symlink on PATH while the versioned executable lives
 // beneath ~/.local/share, which a constructed root intentionally omits.
-func ResolveClaudeLaunchExecutable(ctx context.Context) (NestedSandboxExecutable, error) {
-	return resolveNestedExecutable(ctx, "claude", "claude_launch_executable")
+func ResolveClaudeLaunchExecutable() (NestedSandboxExecutable, error) {
+	return resolveLaunchExecutable("claude", "claude_launch_executable")
 }
 
 func (claudeNestedSandbox) EnginePresence() error {
@@ -311,19 +311,20 @@ func (codexNestedSandbox) ResolveExecutable(ctx context.Context) (NestedSandboxE
 	if err != nil {
 		return NestedSandboxExecutable{}, err
 	}
-	return resolveCodexNativeExecutable(ctx, launcher, "stacked_codex_bwrap_backend")
+	return resolveCodexNativeExecutable(ctx, launcher, "stacked_codex_bwrap_backend", true)
 }
 
 // ResolveCodexLaunchExecutable freezes the native Codex executable and its
 // tightly coupled runtime directory before a tclaude-layer launch enters its
 // filesystem namespace. Codex installations commonly expose a symlink or npm
 // launcher from PATH while the executable that must run lives elsewhere.
-func ResolveCodexLaunchExecutable(ctx context.Context) (NestedSandboxExecutable, error) {
-	launcher, err := resolveNestedExecutable(ctx, "codex", "codex_launch_executable")
+func ResolveCodexLaunchExecutable() (NestedSandboxExecutable, error) {
+	launcher, err := resolveLaunchExecutable("codex", "codex_launch_executable")
 	if err != nil {
 		return NestedSandboxExecutable{}, err
 	}
-	return resolveCodexNativeExecutable(ctx, launcher, "codex_launch_executable")
+	return resolveCodexNativeExecutable(
+		context.Background(), launcher, "codex_launch_executable", false)
 }
 
 func (codexNestedSandbox) EnginePresence() error {
@@ -431,6 +432,14 @@ func resolveNestedExecutable(
 	ctx context.Context,
 	name, capability string,
 ) (NestedSandboxExecutable, error) {
+	executable, err := resolveLaunchExecutable(name, capability)
+	if err != nil {
+		return NestedSandboxExecutable{}, err
+	}
+	return probeNestedExecutableVersion(ctx, executable, name, capability)
+}
+
+func resolveLaunchExecutable(name, capability string) (NestedSandboxExecutable, error) {
 	path, err := exec.LookPath(name)
 	if err != nil {
 		return NestedSandboxExecutable{}, &NestedSandboxCapabilityError{
@@ -438,13 +447,21 @@ func resolveNestedExecutable(
 			Detail:     fmt.Sprintf("model-free %s entry point is not on PATH: %v", name, err),
 		}
 	}
-	return inspectNestedExecutable(ctx, path, name, capability)
+	return inspectExecutableFile(path, name, capability)
 }
 
 func inspectNestedExecutable(
 	ctx context.Context,
 	path, name, capability string,
 ) (NestedSandboxExecutable, error) {
+	executable, err := inspectExecutableFile(path, name, capability)
+	if err != nil {
+		return NestedSandboxExecutable{}, err
+	}
+	return probeNestedExecutableVersion(ctx, executable, name, capability)
+}
+
+func inspectExecutableFile(path, name, capability string) (NestedSandboxExecutable, error) {
 	path, err := filepath.Abs(path)
 	if err != nil {
 		return NestedSandboxExecutable{}, &NestedSandboxCapabilityError{
@@ -462,15 +479,25 @@ func inspectNestedExecutable(
 			Detail:     fmt.Sprintf("inspect %s entry point: %v", name, err),
 		}
 	}
-	if !info.Mode().IsRegular() {
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
 		return NestedSandboxExecutable{}, &NestedSandboxCapabilityError{
 			Capability: capability,
-			Detail:     fmt.Sprintf("%s entry point %q is not a regular file", name, path),
+			Detail: fmt.Sprintf(
+				"%s entry point %q is not an executable regular file", name, path),
 		}
 	}
+	return NestedSandboxExecutable{Path: path, fileInfo: info}, nil
+}
+
+func probeNestedExecutableVersion(
+	ctx context.Context,
+	executable NestedSandboxExecutable,
+	name, capability string,
+) (NestedSandboxExecutable, error) {
 	versionCtx, cancel := context.WithTimeout(ctx, nestedSandboxIdentityTimeout)
 	defer cancel()
-	output, err := exec.CommandContext(versionCtx, path, "--version").CombinedOutput()
+	output, err := exec.CommandContext(
+		versionCtx, executable.Path, "--version").CombinedOutput()
 	if err != nil {
 		return NestedSandboxExecutable{}, &NestedSandboxCapabilityError{
 			Capability: capability,
@@ -478,17 +505,15 @@ func inspectNestedExecutable(
 				name, err, boundedNestedOutput(output)),
 		}
 	}
-	return NestedSandboxExecutable{
-		Path:     path,
-		Version:  boundedNestedOutput(output),
-		fileInfo: info,
-	}, nil
+	executable.Version = boundedNestedOutput(output)
+	return executable, nil
 }
 
 func resolveCodexNativeExecutable(
 	ctx context.Context,
 	launcher NestedSandboxExecutable,
 	capability string,
+	probeVersion bool,
 ) (NestedSandboxExecutable, error) {
 	file, err := os.Open(launcher.Path)
 	if err != nil {
@@ -539,12 +564,14 @@ func resolveCodexNativeExecutable(
 			),
 		}
 	}
-	native, err := inspectNestedExecutable(
-		ctx,
-		nativePath,
-		"codex native backend",
-		capability,
-	)
+	var native NestedSandboxExecutable
+	if probeVersion {
+		native, err = inspectNestedExecutable(
+			ctx, nativePath, "codex native backend", capability)
+	} else {
+		native, err = inspectExecutableFile(
+			nativePath, "codex native backend", capability)
+	}
 	if err != nil {
 		return NestedSandboxExecutable{}, err
 	}

@@ -1989,14 +1989,14 @@ func runNew(params *NewParams) error {
 	if launchCodexSplitCapability != nil {
 		executablePath = launchCodexSplitCapability.ExecutablePath
 	} else if tclaudeLayerOnly && h.Name == harness.CodexName && runtime.GOOS == "linux" {
-		resolvedCodex, resolveErr := harness.ResolveCodexLaunchExecutable(ctx)
+		resolvedCodex, resolveErr := harness.ResolveCodexLaunchExecutable()
 		if resolveErr != nil {
 			return fmt.Errorf("resolve Codex executable for tclaude-layer: %w", resolveErr)
 		}
 		executablePath = resolvedCodex.Path
 		harnessReadPaths = append(harnessReadPaths, resolvedCodex.RuntimeRoot)
 	} else if tclaudeLayerOnly && h.Name == harness.DefaultName && runtime.GOOS == "linux" {
-		resolvedClaude, resolveErr := harness.ResolveClaudeLaunchExecutable(ctx)
+		resolvedClaude, resolveErr := harness.ResolveClaudeLaunchExecutable()
 		if resolveErr != nil {
 			return fmt.Errorf("resolve Claude executable for tclaude-layer: %w", resolveErr)
 		}

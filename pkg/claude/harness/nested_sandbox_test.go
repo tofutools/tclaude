@@ -144,6 +144,7 @@ func TestCodexNestedSandboxResolvesNPMNativeBackend(t *testing.T) {
 		context.Background(),
 		NestedSandboxExecutable{Path: launcher, Version: "launcher"},
 		"stacked_codex_bwrap_backend",
+		true,
 	)
 	require.NoError(t, err)
 	assert.Equal(t, native, resolved.Path)
@@ -177,6 +178,63 @@ func TestCodexNPMNativeBackendDoesNotSearchAboveLauncherPackage(t *testing.T) {
 
 	_, err = findCodexNPMNativeBackend(launcher, packageName, targetTriple)
 	require.ErrorContains(t, err, "outside a recognized node_modules/@openai/codex package")
+}
+
+func TestResolveClaudeLaunchExecutableDoesNotExecuteCandidate(t *testing.T) {
+	root := t.TempDir()
+	sentinel := filepath.Join(root, "executed")
+	executable := filepath.Join(root, "claude")
+	require.NoError(t, os.WriteFile(executable, []byte(
+		"#!/bin/sh\ntouch "+clcommon.ShellQuoteArg(sentinel)+"\n"), 0o700))
+	t.Setenv("PATH", root)
+
+	resolved, err := ResolveClaudeLaunchExecutable()
+	require.NoError(t, err)
+	assert.Equal(t, executable, resolved.Path)
+	assert.NoFileExists(t, sentinel,
+		"ordinary tclaude-layer resolution must not run code outside the sandbox")
+}
+
+func TestResolveCodexNativeLaunchExecutableDoesNotProbeVersion(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Codex native runtime resolution is Linux-only")
+	}
+	packageName, targetTriple, err := codexLinuxNativeTarget()
+	require.NoError(t, err)
+	root := t.TempDir()
+	launcher := filepath.Join(root, "node_modules", "@openai", "codex", "bin", "codex.js")
+	require.NoError(t, os.MkdirAll(filepath.Dir(launcher), 0o700))
+	require.NoError(t, os.WriteFile(launcher, []byte("#!/bin/sh\nexit 99\n"), 0o700))
+	packageParts := strings.Split(packageName, "/")
+	native := filepath.Join(
+		root, "node_modules", packageParts[0], packageParts[1], "vendor",
+		targetTriple, "bin", "codex")
+	sentinel := filepath.Join(root, "native-executed")
+	require.NoError(t, os.MkdirAll(filepath.Dir(native), 0o700))
+	require.NoError(t, os.WriteFile(native, []byte(
+		"#!/bin/sh\ntouch "+clcommon.ShellQuoteArg(sentinel)+"\n"), 0o700))
+	nativeRoot := filepath.Dir(filepath.Dir(native))
+	for _, relative := range []string{
+		"codex-package.json",
+		filepath.Join("codex-path", "rg"),
+		filepath.Join("codex-resources", "bwrap"),
+	} {
+		path := filepath.Join(nativeRoot, relative)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+		require.NoError(t, os.WriteFile(path, []byte(relative), 0o700))
+	}
+
+	resolved, err := resolveCodexNativeExecutable(
+		context.Background(),
+		NestedSandboxExecutable{Path: launcher},
+		"codex_launch_executable",
+		false,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, native, resolved.Path)
+	assert.Equal(t, nativeRoot, resolved.RuntimeRoot)
+	assert.NoFileExists(t, sentinel,
+		"ordinary tclaude-layer resolution must not run the native backend")
 }
 
 func TestNestedSandboxProbeCommandsAreModelFreeAndPolicyShaped(t *testing.T) {
