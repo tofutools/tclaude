@@ -519,6 +519,29 @@ OpenCode's inner access profile permits all paths without compiling the sandbox
 profile's path scoping; its selected approval policy and independent
 tool-governance setting remain active. OpenCode has no stacked contract.
 
+### Claude Code login state under a constructed root
+
+Claude Code keeps its OAuth tokens in `~/.claude/.credentials.json` (inside
+the state root the launch contract binds), but its account and onboarding
+state — `oauthAccount`, `hasCompletedOnboarding`, per-project trust — lives in
+the top-level `~/.claude.json`, a file directly in `$HOME`. A constructed
+filesystem root leaves `$HOME` itself read-only scaffolding, so that file
+would be invisible and every sandboxed launch would park on the login wizard.
+
+tclaude therefore launches constructed-root Claude Code panes with
+`CLAUDE_CONFIG_DIR` pointed at the state root, which moves the config file —
+and the lock, temp and backup siblings Claude Code writes next to it — to
+`~/.claude/.claude.json`, inside the writable bind. On the first such launch
+the legacy `~/.claude.json` is copied there once (never overwritten
+afterwards, symlinks refused), so the agent starts from the operator's
+logged-in ambient state. After that first copy the two files evolve
+independently: the sandboxed config is shared by all constructed-root Claude
+agents, while ambient `claude` runs and host-inherited-root launches keep
+using the legacy file. The `--trust-dir` seed follows the launch — a
+constructed-root spawn writes its trust entry into the relocated file.
+`CLAUDE_CONFIG_DIR` is a reserved profile environment name, so a profile
+cannot redirect or unset this assignment. Host-inherited roots are unchanged.
+
 ### OpenCode state under `tclaude-layer`
 
 A new OpenCode agent using `tclaude-layer` receives durable per-agent mutable

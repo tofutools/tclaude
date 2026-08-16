@@ -1365,6 +1365,19 @@ func runNew(params *NewParams) error {
 	); err != nil {
 		return err
 	}
+	// A constructed root binds the harness state root but leaves $HOME itself
+	// read-only scaffolding, so Claude Code's top-level ~/.claude.json — the
+	// file carrying its account and onboarding state — would be invisible and
+	// the detached pane would park on the login wizard. Relocate the launch's
+	// config dir into the state root (seeding it once from the legacy file).
+	// No-op for other harnesses and root postures. See ApplyClaudeConfigDirEnv.
+	if err := ApplyClaudeConfigDirEnv(
+		h.Name,
+		outerLayer && tclaudeLayerRoot == sandboxpolicy.RootConstructed,
+		additionalEnv,
+	); err != nil {
+		return err
+	}
 	// Keep Claude Code's interactive "Resume from summary" chooser from blocking
 	// this detached pane (the daemon forks `tclaude session new -r` here, and a
 	// tmux-driven flow can't answer a TUI it didn't expect). No-op for non-Claude
@@ -1853,6 +1866,13 @@ func runNew(params *NewParams) error {
 			launchEnvironment = launchSandbox.Effective.Environment
 		}
 		trustEnv := launchModelEnvironment(launchEnvironment)
+		if configDir, ok := additionalEnv["CLAUDE_CONFIG_DIR"]; ok {
+			// Launch-owned, never profile-authored (the name is reserved): a
+			// constructed-root Claude launch relocates its config file into the
+			// state root, and the trust entry must land in the file that launch
+			// will actually read. See ApplyClaudeConfigDirEnv.
+			trustEnv["CLAUDE_CONFIG_DIR"] = configDir
+		}
 		if err := harness.EnsureDirTrustedForLaunch(h, cwd,
 			func(name string) string { return trustEnv[name] },
 			strings.TrimSpace(trustEnv["HOME"]),

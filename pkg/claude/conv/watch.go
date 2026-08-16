@@ -2453,6 +2453,22 @@ func resumeLaunchCmdWithStackedProof(
 		); err != nil {
 			return "", "", nil, err
 		}
+		// Mirror the spawn seam: a constructed root hides the top-level
+		// ~/.claude.json, so the resumed pane must read its config from the
+		// state root exactly as the spawn did, or it would park on the login
+		// wizard mid-conversation. Same root derivation the outer-layer binary
+		// resolution below uses. See session.ApplyClaudeConfigDirEnv.
+		root, err := session.TclaudeLayerRootPosture(posture, effectiveProfile)
+		if err != nil {
+			return "", "", nil, err
+		}
+		if err := session.ApplyClaudeConfigDirEnv(
+			h.Name,
+			root == sandboxpolicy.RootConstructed,
+			resumeEnv,
+		); err != nil {
+			return "", "", nil, err
+		}
 	}
 	// Mirror the spawn path: keep Claude Code's "Resume from summary" chooser
 	// from interrupting this resume. No-op for non-Claude harnesses. See

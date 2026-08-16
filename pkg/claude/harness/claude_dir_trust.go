@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Claude Code directory trust (JOH-369; generalised to the trust-dir opt-in).
@@ -102,6 +103,13 @@ import (
 //   - Fail-safe: a config whose `projects` (or the target entry) is bound to a
 //     non-object is refused rather than corrupted.
 
+// ClaudeConfigJSONName is the basename of Claude Code's global config / state
+// file — the file that carries oauthAccount, onboarding state and the
+// per-project trust flags. It sits directly in $HOME by default and inside
+// $CLAUDE_CONFIG_DIR when that variable relocates the config directory; the
+// basename is identical in both locations.
+const ClaudeConfigJSONName = ".claude.json"
+
 // claudeConfigJSONPath returns ~/.claude.json, the global Claude Code config /
 // state file that carries the per-project trust flags.
 func claudeConfigJSONPath() (string, error) {
@@ -109,7 +117,26 @@ func claudeConfigJSONPath() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("cannot determine home dir: %w", err)
 	}
-	return filepath.Join(home, ".claude.json"), nil
+	return filepath.Join(home, ClaudeConfigJSONName), nil
+}
+
+// claudeConfigJSONPathForLaunch resolves the config file the LAUNCH will
+// actually read: $CLAUDE_CONFIG_DIR/.claude.json when the launch environment
+// relocates the config directory — tclaude's constructed-root sandbox launches
+// do exactly that (see session.ApplyClaudeConfigDirEnv) — and the fixed
+// ~/.claude.json otherwise. Seeding the ambient location for a launch that
+// reads a relocated one would leave the pane parked on the trust dialog the
+// seed was supposed to clear.
+func claudeConfigJSONPathForLaunch(getenv func(string) string) (string, error) {
+	if getenv != nil {
+		if dir := strings.TrimSpace(getenv("CLAUDE_CONFIG_DIR")); dir != "" {
+			if !filepath.IsAbs(dir) {
+				return "", fmt.Errorf("claude dir-trust: CLAUDE_CONFIG_DIR %q is not absolute", dir)
+			}
+			return filepath.Join(filepath.Clean(dir), ClaudeConfigJSONName), nil
+		}
+	}
+	return claudeConfigJSONPath()
 }
 
 // EnsureClaudeDirTrusted pre-trusts projectDir for Claude Code by ensuring
@@ -124,6 +151,16 @@ func claudeConfigJSONPath() (string, error) {
 // an arbitrary cwd.
 func EnsureClaudeDirTrusted(projectDir string) error {
 	path, err := claudeConfigJSONPath()
+	if err != nil {
+		return err
+	}
+	return ensureClaudeDirTrustedInFile(path, projectDir)
+}
+
+// EnsureClaudeDirTrustedForLaunch is EnsureClaudeDirTrusted against the config
+// file the launch's environment selects (see claudeConfigJSONPathForLaunch).
+func EnsureClaudeDirTrustedForLaunch(getenv func(string) string, projectDir string) error {
+	path, err := claudeConfigJSONPathForLaunch(getenv)
 	if err != nil {
 		return err
 	}
