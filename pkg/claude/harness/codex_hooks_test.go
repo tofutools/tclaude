@@ -36,7 +36,9 @@ func seedTclaudeOnPath(t *testing.T) {
 	t.Helper()
 	oldCommand := codexHookCommandString
 	oldDiscovery := discoverCodexHookTrustEntries
+	oldLookPath := codexLookPath
 	codexHookCommandString = func() string { return "tclaude session hook-callback" }
+	codexLookPath = func(file string) (string, error) { return "/fixture/codex", nil }
 	discoverCodexHookTrustEntries = func(path, want string) ([]codexHookTrustEntry, error) {
 		hooks, _, err := readCodexHooks(path)
 		if err != nil {
@@ -64,6 +66,7 @@ func seedTclaudeOnPath(t *testing.T) {
 	t.Cleanup(func() {
 		codexHookCommandString = oldCommand
 		discoverCodexHookTrustEntries = oldDiscovery
+		codexLookPath = oldLookPath
 	})
 }
 
@@ -187,6 +190,21 @@ func TestCodexHookInstaller_Idempotent(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, count, "exactly one tclaude hook per event after re-install")
+}
+
+func TestCodexHookInstaller_CheckRejectsModifiedManagedShape(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	seedTclaudeOnPath(t)
+	dir := filepath.Join(home, ".codex")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	modified := fmt.Sprintf(`{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":%q,"timeout":7}]}]}}`, codexHookCommandStr())
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "hooks.json"), []byte(modified), 0o644))
+
+	installed, missing, needsRepair := (codexHookInstaller{}).Check()
+	assert.False(t, installed)
+	assert.Contains(t, missing, "SessionStart")
+	assert.True(t, needsRepair)
 }
 
 func TestIsOurCodexHook_QuotedAbsolutePath(t *testing.T) {

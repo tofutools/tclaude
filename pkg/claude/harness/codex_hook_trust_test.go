@@ -152,6 +152,9 @@ func TestEnsureCodexHookTrustInFile_PreservesSymlink(t *testing.T) {
 }
 
 func TestCodexHookTrustHasNoVersionGate(t *testing.T) {
+	oldLookPath := codexLookPath
+	codexLookPath = func(file string) (string, error) { return "/fixture/codex-any-version", nil }
+	t.Cleanup(func() { codexLookPath = oldLookPath })
 	ok, reason := (codexHookInstaller{}).AutoTrustSupported()
 	assert.True(t, ok)
 	assert.Empty(t, reason)
@@ -235,4 +238,47 @@ func TestCodexHookInstaller_PreflightsTrustBeforeChangingHooks(t *testing.T) {
 	after, err := os.ReadFile(hooksPath)
 	require.NoError(t, err)
 	assert.Equal(t, original, after, "hooks.json must not change when trust preflight fails")
+}
+
+func TestCodexHookInstaller_RollsBackHooksWhenDiscoveryFails(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	seedTclaudeOnPath(t)
+	dir := filepath.Join(home, ".codex")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	hooksPath := filepath.Join(dir, "hooks.json")
+	original := []byte(`{"description":"no startup gate"}`)
+	require.NoError(t, os.WriteFile(hooksPath, original, 0o600))
+
+	oldDiscovery := discoverCodexHookTrustEntries
+	discoverCodexHookTrustEntries = func(path, want string) ([]codexHookTrustEntry, error) {
+		return nil, fmt.Errorf("hooks/list unavailable")
+	}
+	t.Cleanup(func() { discoverCodexHookTrustEntries = oldDiscovery })
+
+	require.ErrorContains(t, (codexHookInstaller{}).InstallTrusted(), "hooks/list unavailable")
+	after, err := os.ReadFile(hooksPath)
+	require.NoError(t, err)
+	assert.Equal(t, original, after)
+	info, err := os.Stat(hooksPath)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+}
+
+func TestCodexHookInstaller_RefusesModifiedManagedShapeBeforeTrust(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	seedTclaudeOnPath(t)
+	inst := codexHookInstaller{}
+	require.NoError(t, inst.Install())
+
+	path := inst.ConfigTarget()
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	data = []byte(strings.Replace(string(data), `"type": "command"`, `"type": "command", "async": true`, 1))
+	require.NoError(t, os.WriteFile(path, data, 0o644))
+
+	require.ErrorContains(t, inst.TrustInstalled(), "exact managed shape")
+	assert.False(t, inst.Trusted())
+	assert.NoFileExists(t, filepath.Join(home, ".codex", "config.toml"))
 }

@@ -373,10 +373,11 @@ will run. A harness like that implements this optional extension (Codex's
 `codex_hook_trust.go` is the worked example). Setup invokes the trusted path only
 when the operator **explicitly selects that harness**: merely finding another
 harness on `PATH` is enough to install its declarations, but never to grant it
-execution trust. `InstallTrusted` deliberately persists trust *before* installing
-the matching declarations — a stale trust record without a declaration is inert,
-whereas the reverse order can leave a startup review gate. Leave it unimplemented
-and hooks still install; they just won't carry auto-trust.
+execution trust. When authoritative identity is available only for installed
+declarations, `InstallTrusted` may install first, discover identity, and then
+persist trust, but it must roll the declaration back on any discovery or trust
+failure so it cannot leave an invisible startup review gate. Leave it
+unimplemented and hooks still install; they just won't carry auto-trust.
 
 ### `SandboxCatalog` / `ApprovalCatalog` / `AskTimeoutCatalog` — launch-time safety *(optional)*
 

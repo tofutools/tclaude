@@ -19,6 +19,7 @@ const codexHookDiscoveryTimeout = 10 * time.Second
 const codexHookDiscoveryStderrLimit = 32 << 10
 
 var discoverCodexHookTrustEntries = discoverCodexHookTrustEntriesViaAppServer
+var codexLookPath = exec.LookPath
 
 type codexHookRPCResponse struct {
 	ID     json.RawMessage `json:"id"`
@@ -99,7 +100,7 @@ var codexHookEventRPCNames = map[string]string{
 func discoverCodexHookTrustEntriesViaAppServer(
 	hooksPath, want string,
 ) ([]codexHookTrustEntry, error) {
-	binary, err := exec.LookPath("codex")
+	binary, err := codexLookPath("codex")
 	if err != nil {
 		return nil, fmt.Errorf("locate Codex for authoritative hook trust: %w", err)
 	}
