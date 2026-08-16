@@ -1098,9 +1098,6 @@ func startOpenCodeProcessThroughTmux(runtime *db.OpenCodeRuntime, command string
 		cleanupScript()
 		return nil, fmt.Errorf("launch OpenCode server through external tmux: %w: %s", err, stderr.String())
 	}
-	// OpenCode owns a separate tmux creation path, so opt it into the same
-	// immediate detach normalization as session.launchDetachedTmuxSession.
-	session.ConfigureTmuxDetachNormalization(tmuxSession)
 	pidOut, err := clcommon.Default.Command(session.ExternalTmuxNoStartArgs(
 		"display-message", "-p", "-t", clcommon.ExactTarget(tmuxSession)+":0.0", "#{pane_pid}")...).Output()
 	if err != nil {
