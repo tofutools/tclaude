@@ -2426,7 +2426,9 @@ briefing.
 For a newly created worktree, **Fetch latest worktree base** defaults on beside
 the name-sync checkbox. It fetches the selected base branch through the
 configured Git remote proxy when that proxy is enabled, then cuts the new
-branch from the refreshed remote-tracking ref. A failed fetch stops the spawn
+branch from the refreshed remote-tracking ref. The network command always uses
+the proxy's isolated, hook-free transfer machinery; enabling the Git remote
+proxy additionally enforces its remote allow-list. A failed fetch stops the spawn
 instead of silently using stale local state. Untick it to retain the existing
 local-base behavior; both worktree checkboxes can be saved in a spawn profile.
 

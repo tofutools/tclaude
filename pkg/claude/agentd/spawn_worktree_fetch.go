@@ -22,28 +22,26 @@ func fetchLatestWorktreeBase(ctx context.Context, repoRoot, base string) (string
 	if err != nil {
 		return "", fmt.Errorf("read Git proxy configuration: %w", err)
 	}
-	if cfg.GitProxyEnabled() {
-		if err := fetchWorktreeBaseThroughProxy(ctx, repoRoot, remote, remoteBranch); err != nil {
-			return "", err
-		}
-	} else if err := worktree.FetchBranchIn(repoRoot, remote, remoteBranch); err != nil {
-		return "", fmt.Errorf("fetch %s/%s: %w", remote, remoteBranch, err)
+	if err := fetchWorktreeBaseIsolated(ctx, repoRoot, remote, remoteBranch, cfg.GitProxyEnabled()); err != nil {
+		return "", err
 	}
 	return trackingRef, nil
 }
 
-// fetchWorktreeBaseThroughProxy reuses the proxy's isolated transfer, URL
-// allow-list, credential pins, hostile-config gates, object sharing, and
-// compare-and-swap ref import. The only different seam is repository
-// selection: this endpoint is operator-authenticated, so its already-resolved
-// dashboard repo replaces an agent's daemon-recorded launch repo.
-func fetchWorktreeBaseThroughProxy(ctx context.Context, repoRoot, remote, branch string) error {
-	s, fault := newGitProxySessionBase(ctx, false)
+// fetchWorktreeBaseIsolated reuses the proxy's isolated transfer, credential
+// pins, hostile-config gates, object sharing, timeout, and compare-and-swap ref
+// import for every dashboard fetch. When the Git proxy is enabled its remote
+// allow-list is enforced too. When disabled the operator-authenticated picker
+// does not add an allow-list, but the transfer still permits only the proxy's
+// hardened HTTPS and SSH transports and never runs a credentialed command in
+// the agent-writable repository.
+func fetchWorktreeBaseIsolated(ctx context.Context, repoRoot, remote, branch string, enforceProxyPolicy bool) error {
+	s, fault := newGitProxySessionBase(ctx, !enforceProxyPolicy)
 	if fault != nil {
 		return fmt.Errorf("Git proxy: %s", fault.Msg)
 	}
 	s.repoRoot = repoRoot
-	resolved, fault := resolveProxyRemote(ctx, s, remote)
+	resolved, fault := resolveWorktreeFetchRemote(ctx, s, remote, enforceProxyPolicy)
 	if fault != nil {
 		return fmt.Errorf("Git proxy: %s", fault.Msg)
 	}
@@ -82,6 +80,26 @@ func fetchWorktreeBaseThroughProxy(ctx context.Context, repoRoot, remote, branch
 		return fmt.Errorf("Git proxy could not import %s/%s: %s", remote, branch, msg)
 	}
 	return nil
+}
+
+func resolveWorktreeFetchRemote(ctx context.Context, s *gitProxySession, remote string, enforceProxyPolicy bool) (resolvedRemote, *proxyFault) {
+	if enforceProxyPolicy {
+		return resolveProxyRemote(ctx, s, remote)
+	}
+	if fault := validateRemoteName(remote); fault != nil {
+		return resolvedRemote{}, fault
+	}
+	if fault := refuseHostileRepoConfig(ctx, s, remote); fault != nil {
+		return resolvedRemote{}, fault
+	}
+	urls, fault := s.remoteURLs(ctx, remote, false)
+	if fault != nil {
+		return resolvedRemote{}, fault
+	}
+	if len(urls) == 0 {
+		return resolvedRemote{}, faultf(404, "unknown_remote", "no remote named %q is configured", remote)
+	}
+	return resolvedRemote{Name: remote, FetchURL: urls[0]}, nil
 }
 
 func proxyResultMessage(result ProxyResult) string {

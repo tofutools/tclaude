@@ -493,11 +493,22 @@ func FetchTargetForBranchIn(dir, branch string) (remote, remoteBranch, trackingR
 			return "", "", "", fmt.Errorf("list remotes: %w", listErr)
 		}
 		var names []string
+		remoteNames := map[string]bool{}
 		for _, name := range strings.Fields(remotes) {
-			if name == "origin" {
-				remote = name
-			}
 			names = append(names, name)
+			remoteNames[name] = true
+		}
+		// BranchesIn preserves non-origin remote qualifiers (for example
+		// upstream/topic). Recognize that shape when there is no same-named
+		// local branch, so the picker fetches topic from upstream rather than
+		// asking upstream for a branch literally named upstream/topic.
+		if !branchExistsIn(dir, "refs/heads/"+branch) {
+			if qualifier, rest, ok := strings.Cut(branch, "/"); ok && remoteNames[qualifier] && rest != "" {
+				remote, remoteBranch = qualifier, rest
+			}
+		}
+		if remote == "" && remoteNames["origin"] {
+			remote = "origin"
 		}
 		if remote == "" && len(names) == 1 {
 			remote = names[0]
@@ -511,18 +522,6 @@ func FetchTargetForBranchIn(dir, branch string) (remote, remoteBranch, trackingR
 	}
 	trackingRef = "refs/remotes/" + remote + "/" + remoteBranch
 	return remote, remoteBranch, trackingRef, nil
-}
-
-// FetchBranchIn refreshes exactly one remote-tracking branch using ordinary
-// Git credential resolution. The dashboard uses this path only when the Git
-// remote proxy is disabled; when it is enabled, agentd uses the proxy's
-// isolated credentialed transfer instead.
-func FetchBranchIn(dir, remote, branch string) error {
-	refspec := "+refs/heads/" + branch + ":refs/remotes/" + remote + "/" + branch
-	if _, err := gitIn(dir, "fetch", "--no-recurse-submodules", "--", remote, refspec); err != nil {
-		return err
-	}
-	return nil
 }
 
 // branchExistsIn reports whether branch resolves in the repo at dir.

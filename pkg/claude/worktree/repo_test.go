@@ -307,3 +307,16 @@ func TestBranchesAndDefaultBranchIn(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "main", def)
 }
+
+func TestFetchTargetForBranchInRecognizesRemoteQualifiedPickerBranch(t *testing.T) {
+	repoPath, _ := setupTestRepo(t)
+	require.NoError(t, exec.Command("git", "-C", repoPath, "remote", "add", "upstream", repoPath).Run())
+	require.NoError(t, exec.Command("git", "-C", repoPath, "update-ref",
+		"refs/remotes/upstream/topic", "HEAD").Run())
+
+	remote, branch, tracking, err := FetchTargetForBranchIn(repoPath, "upstream/topic")
+	require.NoError(t, err)
+	assert.Equal(t, "upstream", remote)
+	assert.Equal(t, "topic", branch)
+	assert.Equal(t, "refs/remotes/upstream/topic", tracking)
+}
