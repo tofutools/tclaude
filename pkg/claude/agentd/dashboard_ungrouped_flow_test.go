@@ -17,6 +17,7 @@ import (
 // when more assertions need them.
 type dashSnapshot struct {
 	Version                   string             `json:"version"`
+	AssetsVersion             string             `json:"assets_version"`
 	Groups                    []dashGroup        `json:"groups"`
 	Agents                    []dashAgent        `json:"agents"`
 	AgentRosterAuthoritative  bool               `json:"agent_roster_authoritative"`
@@ -289,6 +290,10 @@ func TestDashboardSnapshot_VersionSurfaced(t *testing.T) {
 
 	snap := fetchSnapshotOnly(t, agentd.BuildDashboardHandlerForTest())
 	assert.Equal(t, "v9.8.7-test", snap.Version)
+	// The embedded-frontend fingerprint rides on every snapshot so an open
+	// dashboard can detect an agentd upgrade and reload itself.
+	assert.Equal(t, agentd.DashboardAssetsVersionForTest(), snap.AssetsVersion)
+	assert.NotEmpty(t, snap.AssetsVersion)
 	assert.True(t, snap.AgentRosterAuthoritative)
 }
 
