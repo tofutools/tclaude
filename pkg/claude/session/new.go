@@ -1365,6 +1365,14 @@ func runNew(params *NewParams) error {
 	); err != nil {
 		return err
 	}
+	// Every tclaude-launched Claude pane reads its config from the state root
+	// rather than the top-level ~/.claude.json, which a constructed root could
+	// not see (the pane would park on the login wizard) and which would
+	// otherwise fork state between an agent's sandboxed and unsandboxed
+	// launches. No-op for other harnesses. See ApplyClaudeConfigDirEnv.
+	if err := ApplyClaudeConfigDirEnv(h.Name, additionalEnv); err != nil {
+		return err
+	}
 	// Keep Claude Code's interactive "Resume from summary" chooser from blocking
 	// this detached pane (the daemon forks `tclaude session new -r` here, and a
 	// tmux-driven flow can't answer a TUI it didn't expect). No-op for non-Claude
@@ -1853,6 +1861,13 @@ func runNew(params *NewParams) error {
 			launchEnvironment = launchSandbox.Effective.Environment
 		}
 		trustEnv := launchModelEnvironment(launchEnvironment)
+		if configDir, ok := additionalEnv["CLAUDE_CONFIG_DIR"]; ok {
+			// Launch-owned, never profile-authored (the name is reserved): a
+			// constructed-root Claude launch relocates its config file into the
+			// state root, and the trust entry must land in the file that launch
+			// will actually read. See ApplyClaudeConfigDirEnv.
+			trustEnv["CLAUDE_CONFIG_DIR"] = configDir
+		}
 		if err := harness.EnsureDirTrustedForLaunch(h, cwd,
 			func(name string) string { return trustEnv[name] },
 			strings.TrimSpace(trustEnv["HOME"]),

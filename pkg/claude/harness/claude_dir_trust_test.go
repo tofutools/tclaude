@@ -225,3 +225,41 @@ func TestPlanClaudeDirTrust_DoesNotEscapeHTMLCharacters(t *testing.T) {
 	assert.NotContains(t, string(out), `\u003c`)
 	assert.NotContains(t, string(out), `\u0026`)
 }
+
+// A launch that relocates the config dir (tclaude's constructed-root sandbox
+// launches set CLAUDE_CONFIG_DIR; see session.ApplyClaudeConfigDirEnv) must
+// have its trust entry written into the relocated file — seeding the ambient
+// ~/.claude.json would leave the pane parked on the dialog.
+func TestEnsureClaudeDirTrustedForLaunch_HonorsClaudeConfigDir(t *testing.T) {
+	configDir := t.TempDir()
+	getenv := func(name string) string {
+		if name == "CLAUDE_CONFIG_DIR" {
+			return configDir
+		}
+		return ""
+	}
+	require.NoError(t, EnsureClaudeDirTrustedForLaunch(getenv, "/work/proj"))
+
+	out, err := os.ReadFile(filepath.Join(configDir, ClaudeConfigJSONName))
+	require.NoError(t, err, "trust entry lands in $CLAUDE_CONFIG_DIR/.claude.json")
+	assert.True(t, trustedInParsed(t, out, "/work/proj"))
+}
+
+func TestEnsureClaudeDirTrustedForLaunch_RefusesRelativeConfigDir(t *testing.T) {
+	getenv := func(name string) string {
+		if name == "CLAUDE_CONFIG_DIR" {
+			return "relative/dir"
+		}
+		return ""
+	}
+	require.Error(t, EnsureClaudeDirTrustedForLaunch(getenv, "/work/proj"))
+}
+
+// An empty CLAUDE_CONFIG_DIR means the ambient default: the launch-aware path
+// resolver must fall back to ~/.claude.json rather than fail or write "".
+func TestClaudeConfigJSONPathForLaunch_EmptyFallsBackToHome(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	path, err := claudeConfigJSONPathForLaunch(func(string) string { return "" })
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(os.Getenv("HOME"), ClaudeConfigJSONName), path)
+}
